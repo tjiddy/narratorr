@@ -123,6 +123,10 @@ All GitHub commands use: `node scripts/gh.ts` (referred to as `gh` below).
    - **Granularity mirroring:** If the reviewer split a finding into sub-items (e.g., F2a, F2b, F2c), the response table must have one row per sub-item — not a single collapsed "F2: fixed" row. Fixes should line up 1:1 with findings so the re-review is verification, not reinterpretation.
    - Clean up temp file
 
+<!-- DISABLED: Review CL retrospectives produced 785 micro-specific suggestions with no recurring
+     patterns beyond what's already captured in CLAUDE.md/testing.md. Re-enable if needed for a
+     future project phase with complex multi-file features.
+
 6. **Prompt improvement retrospective (for `fixed` findings only):**
    For each finding resolved as `fixed`, analyze: "Why did I miss this during implementation? What specific addition or change to a skill prompt (`/plan`, `/implement`, or CLAUDE.md) would have helped me catch this before it went out for review?"
 
@@ -148,8 +152,9 @@ All GitHub commands use: `node scripts/gh.ts` (referred to as `gh` below).
    ```
 
    Be specific in "Prompt fix" — "be more careful" is useless. "Add to /plan step 3: 'When modifying query filters, verify cache invalidation logic still matches'" is actionable.
+-->
 
-7. **Commit and push CL files:** Learning and retrospective files from step 6 should be included in the feature branch push so they land on main when the PR merges:
+7. **Commit and push CL files:** Learning files from step 5 should be included in the feature branch push so they land on main when the PR merges:
    ```bash
    git add .narratorr/cl/
    git commit -m "CL from PR #<pr-number> review response"

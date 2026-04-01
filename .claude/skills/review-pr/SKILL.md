@@ -267,6 +267,10 @@ All GitHub commands use: `node scripts/gh.ts` (referred to as `gh` below).
     - Cross-check `Interaction Checks`: each checked intersection must map to either a finding or `verified-correct` evidence.
     - Cross-check blocking test findings for specificity: each one should point to a concrete behavior, branch, or side effect that is still unproven. If a finding could be "satisfied" by adding some tests while leaving another enumerated behavior in the same unit uncovered, split or refine the finding before posting.
 
+<!-- DISABLED: Review CL retrospectives produced 785 micro-specific suggestions with no recurring
+     patterns beyond what's already captured in CLAUDE.md/testing.md. Re-enable if needed for a
+     future project phase with complex multi-file features.
+
 11b. **Reviewer self-critique (round 2+ only, when new findings exist on original code):**
     If this is a re-review (prior `## Verdict:` comments exist) and any new findings target code that was present in the original diff (NOT code introduced by fix commits since the last review), perform a self-critique:
 
@@ -294,6 +298,7 @@ All GitHub commands use: `node scripts/gh.ts` (referred to as `gh` below).
     ```
 
     Skip this step if all new findings are on code introduced by fix commits (those are genuinely new issues, not round-1 misses).
+-->
 
 11c. **Write review file and phase marker:**
     - Write the full review comment body (from the template below) to `.narratorr/state/review-pr-<pr-number>/review.md`

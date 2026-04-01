@@ -89,6 +89,8 @@ Graduated learnings from the CL system — non-obvious patterns that have caused
 - **Fire-and-forget pre-flight:** When a service method creates a background job (`.start()`), pre-flight checks MUST happen before job creation — not inside the async work function. Throws inside async work are unreachable by the caller (route already returned 202). Make the method `async` and validate synchronously before creating the job.
 - **Bitrate unit boundary (bps vs kbps):** `music-metadata` returns bitrate in bps (128000), settings/schemas use kbps (128), DB stores bps. Always convert at the call site with `Math.floor(bps / 1000)` — never compare raw values across boundaries.
 - **Drizzle enum type derivation:** Drizzle inline `text('col', { enum: [...] })` produces narrow literal unions in `$inferInsert`. Derive shared types from the schema (`NonNullable<typeof table.$inferInsert['col']>`) instead of using bare `string`.
+- **Zod + zodResolver type divergence:** `z.preprocess()`, `z.transform()`, and `z.default()` create ZodEffects where input ≠ output type. `zodResolver` requires aligned types. Fix: omit `.default()` in form schemas (forms always have explicit `defaultValues`), use `setValueAs` in `register()` for coercion instead of `z.preprocess()`. See `stripDefaults()` for removing defaults from server schemas before form use.
+- **Settings dual default path:** New settings fields need TWO places: Zod schema `.default()` AND `settingsRegistry.*.defaults` / `DEFAULT_SETTINGS` in `registry.ts`. Runtime uses `DEFAULT_SETTINGS` (not Zod parsing), so adding only to the schema leaves runtime and mock factories missing the field.
 
 ## Frontend Design Quality
 

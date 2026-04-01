@@ -58,11 +58,13 @@ All GitHub commands use: `node scripts/gh.ts` (referred to as `gh` below).
    a. **Learnings:** Read all files in `.narratorr/cl/learnings/`.
    b. **Debt:** Read `.narratorr/cl/debt.md` if it exists.
    c. **Workflow log:** Read `.narratorr/cl/workflow-log.md`. Extract `### Wish I'd Known` entries.
+   <!-- DISABLED: Review retrospectives capture is turned off — see review-pr and respond-to-pr-review skills.
    d. **Review retrospectives:** Read all files in `.narratorr/cl/reviews/`. These contain "Prompt fix" suggestions from implementers and reviewers.
+   -->
 
    ### Classification — three categories
 
-   Every learning, debt item, wish-I'd-known entry, and retrospective must be classified into exactly one of:
+   Every learning, debt item, and wish-I'd-known entry must be classified into exactly one of:
 
    **Category 1: Framework / third-party gotcha (keep)**
    A real constraint imposed by a tool, library, or runtime that we can't fix — only know. Worth keeping if the gotcha applies broadly (multiple files, multiple use cases). Delete if it's so narrow it'll never come up again.
@@ -145,7 +147,7 @@ All GitHub commands use: `node scripts/gh.ts` (referred to as `gh` below).
    ### Execution
 
    After user reviews and approves:
-   - **Delete** all dogshit files and graduated files from `.narratorr/cl/learnings/` and `.narratorr/cl/reviews/`.
+   - **Delete** all dogshit files and graduated files from `.narratorr/cl/learnings/`.
    - **Remove** resolved debt items from `.narratorr/cl/debt.md`.
    - **Truncate** `.narratorr/cl/workflow-log.md` to `# Workflow Log\n`.
    - **Do NOT auto-create issues or edit skills** — the report is the deliverable. User acts on actionable items manually or queues them.
