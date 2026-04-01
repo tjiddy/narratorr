@@ -1,5 +1,34 @@
 # Workflow Log
 
+## #288 Migrate raw selects to SelectWithChevron in FilterRow and ImportSummaryBar — 2026-04-01
+**Skill path:** /elaborate → /respond-to-spec-review → /implement → /claim → /plan → /handoff
+**Outcome:** success — PR #293
+
+### Metrics
+- Files changed: 4 source + 2 test + 1 debt.md | Tests added/modified: 10
+- Quality gate runs: 2 (pass on attempt 1 both times)
+- Fix iterations: 0
+- Context compactions: 0
+
+### Workflow experience
+- What went smoothly: Clean migration — existing behavioral tests (aria-label queries, role queries) were transparent to the component swap. Red/green TDD worked well for the variant prop.
+- Friction / issues encountered: Spec review round-trip was necessary — initial spec had a single "compact" variant that couldn't serve two callers with different padding/font-size. Resolved by splitting into shared base + caller className.
+
+### Token efficiency
+- Highest-token actions: Explore subagents for elaboration and plan (reading 6+ files each)
+- Avoidable waste: Elaboration and plan subagents overlapped significantly in reading the same files
+- Suggestions: For simple migration issues, a lighter-weight plan phase would suffice
+
+### Infrastructure gaps
+- Repeated workarounds: None
+- Missing tooling / config: `frontend-design` skill not available — skipped design pass
+- Unresolved debt: None introduced
+
+### Wish I'd Known
+1. When adding a variant to a shared component, design the variant as a base that omits conflicting utilities and delegates caller-specific sizing to className — avoids Tailwind class override issues without `tailwind-merge`
+2. Existing FilterRow/ImportSummaryBar tests use behavioral queries (aria-label, role, displayValue) that are component-structure agnostic — migration required zero test changes
+3. The spec review process caught a real design flaw (single compact preset for two different sizing needs) that would have caused implementation confusion
+
 ## #289 Extract shared inputClass constants and ToggleSwitch component — 2026-04-01
 **Skill path:** /implement → /claim → /plan → /handoff
 **Outcome:** success — PR #292
