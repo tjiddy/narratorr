@@ -175,7 +175,9 @@ export class NZBGetClient implements DownloadClientAdapter {
     }
 
     if (parsed.data.error) {
-      throw new Error(`NZBGet RPC error: ${parsed.data.error}`);
+      const { message, code, name } = parsed.data.error;
+      const detail = message || `${name} (code ${code})`;
+      throw new Error(`NZBGet RPC error: ${detail}`);
     }
 
     return parsed.data.result as T;
