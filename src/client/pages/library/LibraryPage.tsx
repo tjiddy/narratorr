@@ -46,13 +46,12 @@ export function LibraryPage() {
   // Settled-gated grid key: holds old sort params during placeholderData phase,
   // updates only when the sorted response settles. This ensures the grid remounts
   // (replaying entrance animations) only after the new sort order arrives.
+  // Pattern: "adjusting state when a prop changes" — React re-renders before commit.
   const currentSortKey = `${filters.state.sortField}-${filters.state.sortDirection}`;
   const [settledGridKey, setSettledGridKey] = useState(currentSortKey);
-  useEffect(() => {
-    if (!isPlaceholderData) {
-      setSettledGridKey(currentSortKey);
-    }
-  }, [isPlaceholderData, currentSortKey]);
+  if (!isPlaceholderData && settledGridKey !== currentSortKey) {
+    setSettledGridKey(currentSortKey);
+  }
 
   // Clamp page when total shrinks (e.g., after deleting last item on a page)
   useEffect(() => {
