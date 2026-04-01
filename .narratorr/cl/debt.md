@@ -2,6 +2,13 @@
 
 ## Actionable
 
+- **`src/server/utils/paths.ts` / `src/server/utils/import-helpers.ts`**: `extractYear()` is duplicated — both have identical date-string→year helpers. One should import from the other (discovered in #210 → tracked in #287)
+- **`src/client/components/ManualAddForm.tsx`**: `seriesPosition` conversion uses falsy check (`data.seriesPosition ? Number(...)`) which treats `"0"` as falsy. Should use explicit empty/undefined check (discovered in #246 → tracked in #287)
+- **`src/core/download-clients/types.ts`**: `addDownload()` returns `Promise<string | null>` but no adapter returns null — all throw on failure. Interface should be `Promise<string>` (discovered in #270 → tracked in #287)
+- **`src/client/pages/library/helpers.ts`**: `compareNullable` encodes null-last only in ascending. When caller negates for descending, nulls flip to front. Affects nullable sort fields in descending mode (discovered in #266 → tracked in #287)
+- **`src/client/pages/library/FilterRow.tsx` + `src/client/components/manual-import/ImportSummaryBar.tsx`**: 4 raw `<select>` elements still use manual `appearance-none` + `ChevronDownIcon` instead of shared `SelectWithChevron` (discovered in #224 → tracked in #288)
+- **`src/client/components/settings/` inputClass duplication**: `inputClass` / `errorInputClass` constants copy-pasted across 3 settings field components. Could be extracted to shared `formStyles.ts` (discovered in #216 → tracked in #289)
+- **Toggle switch markup duplication across settings sections**: Inline Tailwind toggle pattern copy-pasted in 7 settings section files. Should be extracted to a shared `<ToggleSwitch>` component (discovered in #265 → tracked in #289)
 - **`src/server/services/blacklist.service.ts`**: `isBlacklisted(infoHash)` method still only checks `infoHash`, not `guid`. If usenet-only blacklisted entries exist (guid-only, no infoHash), `isBlacklisted()` won't find them. Low priority — only called from quality gate pre-check, not from reject flow (discovered in #248)
 - **`src/server/services/search-pipeline.ts`**: `searchAndGrabForBook()` still has no blacklist filtering — only `retrySearch()` filters. Scheduled search and manual search can re-grab blacklisted releases. Spec explicitly deferred this as out-of-scope (discovered in #248)
 
