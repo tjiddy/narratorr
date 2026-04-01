@@ -229,10 +229,11 @@ describe('SelectWithChevron', () => {
       expect(select).toHaveClass('text-foreground');
       expect(select).not.toHaveClass('w-full');
       expect(select).not.toHaveClass('bg-background');
+      expect(select).not.toHaveClass('border');
       expect(select).not.toHaveClass('rounded-xl');
     });
 
-    it('compact variant chevron uses w-3 h-3', () => {
+    it('compact variant chevron uses w-3 h-3 and right-2 positioning', () => {
       render(
         <SelectWithChevron id="test" variant="compact" label="Test">
           <option value="a">A</option>
@@ -241,6 +242,17 @@ describe('SelectWithChevron', () => {
       const svg = screen.getByLabelText('Test').parentElement!.querySelector('svg');
       expect(svg).toHaveClass('w-3');
       expect(svg).toHaveClass('h-3');
+      expect(svg).toHaveClass('right-2');
+    });
+
+    it('default variant chevron uses right-3 positioning', () => {
+      render(
+        <SelectWithChevron id="test" variant="default" label="Test">
+          <option value="a">A</option>
+        </SelectWithChevron>
+      );
+      const svg = screen.getByLabelText('Test').parentElement!.querySelector('svg');
+      expect(svg).toHaveClass('right-3');
     });
 
     it('variant defaults to default when omitted — no class change for existing callers', () => {
