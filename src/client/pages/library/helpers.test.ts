@@ -544,6 +544,18 @@ describe('sortBooks — descending nulls-last (#287)', () => {
     expect(sorted.map((b) => b.id)).toEqual([2, 4, 1, 3]);
   });
 
+  it('sorts nullable numeric field (size) descending with nulls last', () => {
+    const books = [
+      makeBook({ id: 1, audioTotalSize: 500, size: null }),
+      makeBook({ id: 2, audioTotalSize: null, size: null }),
+      makeBook({ id: 3, audioTotalSize: 100, size: null }),
+    ];
+
+    const sorted = sortBooks(books, 'size', 'desc');
+    // Descending numeric: 500, 100, then null last
+    expect(sorted.map((b) => b.id)).toEqual([1, 3, 2]);
+  });
+
   it('series position tiebreaker keeps null positions last regardless of direction', () => {
     const books = [
       makeBook({ id: 1, seriesName: 'WoT', seriesPosition: null }),
