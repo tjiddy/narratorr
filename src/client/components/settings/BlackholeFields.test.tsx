@@ -5,7 +5,7 @@ import { useForm } from 'react-hook-form';
 import { BlackholeFields } from './BlackholeFields';
 import type { CreateDownloadClientFormData } from '../../../shared/schemas.js';
 
-function FieldWrapper({ isEdit, protocolError }: { isEdit?: boolean; protocolError?: boolean }) {
+function FieldWrapper({ isEdit, protocolError, watchDirError }: { isEdit?: boolean; protocolError?: boolean; watchDirError?: boolean }) {
   const { register, formState: { errors }, setError } = useForm<CreateDownloadClientFormData>({
     defaultValues: { name: 'Test', type: 'blackhole', enabled: true, priority: 50, settings: { watchDir: '', protocol: 'torrent' } },
   });
@@ -13,6 +13,9 @@ function FieldWrapper({ isEdit, protocolError }: { isEdit?: boolean; protocolErr
   // Inject protocol error via setError on mount if requested
   if (protocolError && !errors.settings?.protocol) {
     setError('settings.protocol', { type: 'validate', message: 'Invalid protocol' });
+  }
+  if (watchDirError && !errors.settings?.watchDir) {
+    setError('settings.watchDir', { type: 'validate', message: 'Watch directory is required' });
   }
 
   return <BlackholeFields register={register} errors={errors} isEdit={isEdit} />;
@@ -77,6 +80,21 @@ describe('BlackholeFields', () => {
 
     expect(screen.queryByText('Enabled')).not.toBeInTheDocument();
     expect(screen.queryByText('Priority')).not.toBeInTheDocument();
+  });
+
+  it('watch directory input uses shared formStyles non-error border', () => {
+    render(<FieldWrapper />);
+    const input = screen.getByPlaceholderText('/downloads/watch');
+    expect(input).toHaveClass('border-border');
+    expect(input).not.toHaveClass('border-destructive');
+  });
+
+  it('watch directory input shows error border when validation fails', () => {
+    render(<FieldWrapper watchDirError />);
+    const input = screen.getByPlaceholderText('/downloads/watch');
+    expect(input).toHaveClass('border-destructive');
+    expect(input).not.toHaveClass('border-border');
+    expect(screen.getByText('Watch directory is required')).toBeInTheDocument();
   });
 
   it('protocol select uses shared SelectWithChevron contract', () => {

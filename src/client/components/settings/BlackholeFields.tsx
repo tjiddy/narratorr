@@ -1,6 +1,7 @@
 import type { UseFormRegister, FieldErrors } from 'react-hook-form';
 import type { CreateDownloadClientFormData } from '../../../shared/schemas.js';
 import { SelectWithChevron } from './SelectWithChevron';
+import { inputClass, errorInputClass } from './formStyles';
 
 interface BlackholeFieldsProps {
   register: UseFormRegister<CreateDownloadClientFormData>;
@@ -8,15 +9,12 @@ interface BlackholeFieldsProps {
   isEdit?: boolean;
 }
 
-const inputClass = 'w-full px-4 py-3 bg-background border border-border rounded-xl focus-ring focus:border-transparent transition-all';
-const errorInputClass = 'w-full px-4 py-3 bg-background border border-destructive rounded-xl focus-ring focus:border-transparent transition-all';
-
 export function BlackholeFields({ register, errors, isEdit }: BlackholeFieldsProps) {
   return (
     <>
       <div className="sm:col-span-2">
         <label htmlFor="clientWatchDir" className="block text-sm font-medium mb-2">Watch Directory</label>
-        <input id="clientWatchDir" type="text" {...register('settings.watchDir')} className={errors.settings?.watchDir ? errorInputClass : inputClass} placeholder="/downloads/watch" />
+        <input id="clientWatchDir" type="text" {...register('settings.watchDir')} className={errorInputClass(!!errors.settings?.watchDir)} placeholder="/downloads/watch" />
         {errors.settings?.watchDir ? (
           <p className="text-sm text-destructive mt-1">{errors.settings.watchDir.message}</p>
         ) : (

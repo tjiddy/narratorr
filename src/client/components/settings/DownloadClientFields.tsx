@@ -5,6 +5,7 @@ import { DOWNLOAD_CLIENT_REGISTRY } from '../../../shared/download-client-regist
 import { RefreshIcon } from '../icons';
 import { ToolbarDropdown } from '../ToolbarDropdown';
 import { useFetchCategories } from './useFetchCategories';
+import { inputClass, errorInputClass } from './formStyles';
 
 interface DownloadClientFieldsProps {
   selectedType: string;
@@ -31,15 +32,12 @@ export function DownloadClientFields({ selectedType, register, errors, clientId,
     setShowDropdown(false);
   }
 
-  const inputClass = 'w-full px-4 py-3 bg-background border border-border rounded-xl focus-ring focus:border-transparent transition-all';
-  const errorInputClass = 'w-full px-4 py-3 bg-background border border-destructive rounded-xl focus-ring focus:border-transparent transition-all';
-
   return (
     <>
       <div className="sm:col-span-2 grid gap-5 sm:grid-cols-[2fr_1fr_auto]" data-testid="connection-row">
         <div>
           <label htmlFor="clientHost" className="block text-sm font-medium mb-2">Host</label>
-          <input id="clientHost" type="text" {...register('settings.host')} className={errors.settings?.host ? errorInputClass : inputClass} placeholder="localhost" />
+          <input id="clientHost" type="text" {...register('settings.host')} className={errorInputClass(!!errors.settings?.host)} placeholder="localhost" />
           {errors.settings?.host ? (
             <p className="text-sm text-destructive mt-1">{errors.settings.host.message}</p>
           ) : (
@@ -48,7 +46,7 @@ export function DownloadClientFields({ selectedType, register, errors, clientId,
         </div>
         <div>
           <label htmlFor="clientPort" className="block text-sm font-medium mb-2">Port</label>
-          <input id="clientPort" type="number" {...register('settings.port', { valueAsNumber: true })} className={errors.settings?.port ? errorInputClass : inputClass} />
+          <input id="clientPort" type="number" {...register('settings.port', { valueAsNumber: true })} className={errorInputClass(!!errors.settings?.port)} />
           {errors.settings?.port && <p className="text-sm text-destructive mt-1">{errors.settings.port.message}</p>}
         </div>
         {fields.useSsl && (
@@ -75,7 +73,7 @@ export function DownloadClientFields({ selectedType, register, errors, clientId,
       {fields.apiKey && (
         <div className="sm:col-span-2" data-testid="api-key-field">
           <label htmlFor="clientApiKey" className="block text-sm font-medium mb-2">API Key</label>
-          <input id="clientApiKey" type="password" {...register('settings.apiKey')} className={errors.settings?.apiKey ? errorInputClass : inputClass} />
+          <input id="clientApiKey" type="password" {...register('settings.apiKey')} className={errorInputClass(!!errors.settings?.apiKey)} />
           {errors.settings?.apiKey && <p className="text-sm text-destructive mt-1">{errors.settings.apiKey.message}</p>}
         </div>
       )}

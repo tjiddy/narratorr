@@ -3,6 +3,7 @@ import type { CreateIndexerFormData } from '../../../shared/schemas.js';
 import { useQuery } from '@tanstack/react-query';
 import { queryKeys } from '@/lib/queryKeys';
 import { api } from '@/lib/api';
+import { ToggleSwitch } from './ToggleSwitch';
 
 interface IndexerFieldsProps {
   selectedType: string;
@@ -191,8 +192,7 @@ function UseProxyField({ register, watch }: { register: UseFormRegister<CreateIn
           </p>
         </div>
         <label className="relative inline-flex items-center cursor-pointer">
-          <input id="indexerUseProxy" type="checkbox" {...register('settings.useProxy')} className="sr-only peer" />
-          <div className="w-11 h-6 bg-muted rounded-full peer peer-checked:bg-primary transition-colors peer-focus-visible:ring-2 peer-focus-visible:ring-primary after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:after:translate-x-full" />
+          <ToggleSwitch id="indexerUseProxy" {...register('settings.useProxy')} />
         </label>
       </div>
       {useProxy && !hasGlobalProxy && (

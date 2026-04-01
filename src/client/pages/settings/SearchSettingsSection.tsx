@@ -7,6 +7,7 @@ import { toast } from 'sonner';
 import { api } from '@/lib/api';
 import { queryKeys } from '@/lib/queryKeys';
 import { SearchIcon } from '@/components/icons';
+import { ToggleSwitch } from '@/components/settings/ToggleSwitch';
 import { DEFAULT_SETTINGS, type AppSettings } from '../../../shared/schemas.js';
 import { SettingsSection } from './SettingsSection';
 
@@ -90,8 +91,7 @@ export function SearchSettingsSection() {
             </p>
           </div>
           <label className="relative inline-flex items-center cursor-pointer">
-            <input id="searchEnabled" type="checkbox" {...register('searchEnabled')} className="sr-only peer" />
-            <div className="w-11 h-6 bg-muted rounded-full peer peer-checked:bg-primary transition-colors peer-focus-visible:ring-2 peer-focus-visible:ring-primary after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:after:translate-x-full" />
+            <ToggleSwitch id="searchEnabled" {...register('searchEnabled')} />
           </label>
         </div>
 
@@ -149,8 +149,7 @@ export function SearchSettingsSection() {
               </p>
             </div>
             <label className="relative inline-flex items-center cursor-pointer">
-              <input id="rssEnabled" type="checkbox" {...register('rssEnabled')} className="sr-only peer" />
-              <div className="w-11 h-6 bg-muted rounded-full peer peer-checked:bg-primary transition-colors peer-focus-visible:ring-2 peer-focus-visible:ring-primary after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:after:translate-x-full" />
+              <ToggleSwitch id="rssEnabled" {...register('rssEnabled')} />
             </label>
           </div>
 

@@ -1,17 +1,12 @@
 import type { UseFormRegister, FieldErrors } from 'react-hook-form';
 import type { CreateNotifierFormData } from '../../../shared/schemas.js';
 import { SelectWithChevron } from './SelectWithChevron';
+import { inputClass, errorInputClass } from './formStyles';
 
 interface NotifierFieldsProps {
   selectedType: string;
   register: UseFormRegister<CreateNotifierFormData>;
   errors: FieldErrors<CreateNotifierFormData>;
-}
-
-const inputClass = 'w-full px-4 py-3 bg-background border border-border rounded-xl focus-ring focus:border-transparent transition-all';
-
-function errorInputClass(hasError: boolean) {
-  return `w-full px-4 py-3 bg-background border rounded-xl focus-ring focus:border-transparent transition-all ${hasError ? 'border-destructive' : 'border-border'}`;
 }
 
 function WebhookFields({ register, errors }: Omit<NotifierFieldsProps, 'selectedType'>) {
