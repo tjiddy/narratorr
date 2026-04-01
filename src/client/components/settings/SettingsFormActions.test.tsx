@@ -104,6 +104,30 @@ describe('SettingsFormActions', () => {
     expect(submitButton).toBeDisabled();
   });
 
+  it('Cancel button fires onCancel during pending submit in create mode', async () => {
+    const onCancel = vi.fn();
+    const user = userEvent.setup();
+
+    render(
+      <SettingsFormActions
+        isEdit={false}
+        isPending={true}
+        onFormTest={vi.fn()}
+        onCancel={onCancel}
+        entityLabel="Indexer"
+      />,
+    );
+
+    expect(screen.getByText('Adding...')).toBeInTheDocument();
+    const submitButton = screen.getByText('Adding...').closest('button')!;
+    expect(submitButton).toBeDisabled();
+
+    const cancelButton = screen.getByText('Cancel');
+    expect(cancelButton.closest('button')).not.toBeDisabled();
+    await user.click(cancelButton);
+    expect(onCancel).toHaveBeenCalledOnce();
+  });
+
   it('shows Cancel button in create mode when onCancel is provided', () => {
     render(
       <SettingsFormActions
