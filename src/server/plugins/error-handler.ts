@@ -10,6 +10,7 @@ import { UserExistsError, AuthConfigError, IncorrectPasswordError } from '../ser
 import { ScanInProgressError, LibraryPathError } from '../services/library-scan.service.js';
 import { DownloadError, DuplicateDownloadError } from '../services/download.service.js';
 import { TaskRegistryError } from '../services/task-registry.js';
+import { BookRejectionError } from '../services/book-rejection.service.js';
 
 // ---------------------------------------------------------------------------
 // Error → HTTP status registry
@@ -35,6 +36,7 @@ const ERROR_REGISTRY = new Map<new (...args: any[]) => Error, ErrorEntry>([
   [DownloadError, { type: 'coded', codes: { NOT_FOUND: 404, NO_BOOK_LINKED: 404, INVALID_STATUS: 400 } }],
   [DuplicateDownloadError, { type: 'coded', codes: { ACTIVE_DOWNLOAD_EXISTS: 409, PIPELINE_ACTIVE: 409 } }],
   [TaskRegistryError, { type: 'coded', codes: { NOT_FOUND: 404, ALREADY_RUNNING: 409 } }],
+  [BookRejectionError, { type: 'coded', codes: { NOT_FOUND: 404, NOT_IMPORTED: 400, NO_IDENTIFIERS: 400 } }],
 ]);
 
 /** Maps typed error codes to HTTP status codes. */

@@ -7,6 +7,7 @@ import { RenameError } from '../services/rename.service.js';
 import { RetagError } from '../services/tagging.service.js';
 import { MergeError } from '../services/merge.service.js';
 import { DuplicateDownloadError } from '../services/download.service.js';
+import { BookRejectionError } from '../services/book-rejection.service.js';
 import { readdir, readFile, stat } from 'node:fs/promises';
 
 vi.mock('node:fs/promises', async (importOriginal) => {
@@ -1555,6 +1556,45 @@ describe('PUT /api/books/:id — array update contract (#71)', () => {
       const res = await app.inject({ method: 'POST', url: '/api/books/1/merge-to-m4b' });
 
       expect(res.statusCode).toBe(503);
+    });
+  });
+
+  describe('POST /api/books/:id/wrong-release', () => {
+    it('returns 200 and calls bookRejectionService for imported book with identifiers', async () => {
+      (services.bookRejection.rejectAsWrongRelease as Mock).mockResolvedValue(undefined);
+
+      const res = await app.inject({ method: 'POST', url: '/api/books/1/wrong-release' });
+
+      expect(res.statusCode).toBe(200);
+      expect(JSON.parse(res.payload)).toEqual({ success: true });
+      expect(services.bookRejection.rejectAsWrongRelease).toHaveBeenCalledWith(1);
+    });
+
+    it('returns 400 when book status is not imported', async () => {
+      (services.bookRejection.rejectAsWrongRelease as Mock).mockRejectedValue(new BookRejectionError('Book is not imported', 'NOT_IMPORTED'));
+
+      const res = await app.inject({ method: 'POST', url: '/api/books/1/wrong-release' });
+
+      expect(res.statusCode).toBe(400);
+      expect(JSON.parse(res.payload)).toEqual({ error: 'Book is not imported' });
+    });
+
+    it('returns 400 when book has no lastGrabGuid or lastGrabInfoHash', async () => {
+      (services.bookRejection.rejectAsWrongRelease as Mock).mockRejectedValue(new BookRejectionError('Book has no release identifiers', 'NO_IDENTIFIERS'));
+
+      const res = await app.inject({ method: 'POST', url: '/api/books/1/wrong-release' });
+
+      expect(res.statusCode).toBe(400);
+      expect(JSON.parse(res.payload)).toEqual({ error: 'Book has no release identifiers' });
+    });
+
+    it('returns 404 when book does not exist', async () => {
+      (services.bookRejection.rejectAsWrongRelease as Mock).mockRejectedValue(new BookRejectionError('Book not found', 'NOT_FOUND'));
+
+      const res = await app.inject({ method: 'POST', url: '/api/books/1/wrong-release' });
+
+      expect(res.statusCode).toBe(404);
+      expect(JSON.parse(res.payload)).toEqual({ error: 'Book not found' });
     });
   });
 });

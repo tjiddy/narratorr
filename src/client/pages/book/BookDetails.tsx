@@ -19,6 +19,10 @@ function getArrowTabIndex(key: string, currentIndex: number, length: number): nu
   return null;
 }
 
+function canShowWrongRelease(book: BookWithAuthor): boolean {
+  return book.status === 'imported' && !!(book.lastGrabGuid || book.lastGrabInfoHash);
+}
+
 // eslint-disable-next-line max-lines-per-function -- page orchestrator with multiple confirm modals
 export function BookDetails({ libraryBook, metadataBook }: {
   libraryBook: BookWithAuthor;
@@ -31,14 +35,17 @@ export function BookDetails({ libraryBook, metadataBook }: {
   const [confirmRetagOpen, setConfirmRetagOpen] = useState(false);
   const [confirmMergeOpen, setConfirmMergeOpen] = useState(false);
   const [confirmDeleteOpen, setConfirmDeleteOpen] = useState(false);
+  const [confirmWrongReleaseOpen, setConfirmWrongReleaseOpen] = useState(false);
   const [tab, setTab] = useState<'details' | 'history'>('details');
 
   const tabRefs = useRef<(HTMLButtonElement | null)[]>([]);
   const tabs = ['details', 'history'] as const;
 
   const merged = mergeBookData(libraryBook, metadataBook);
-  const { renameMutation, mergeMutation, retagMutation, deleteMutation, monitorMutation, ffmpegConfigured, isSaving, handleSave } =
+  const { renameMutation, mergeMutation, retagMutation, deleteMutation, monitorMutation, wrongReleaseMutation, ffmpegConfigured, isSaving, handleSave } =
     useBookActions(libraryBook.id, libraryBook.monitorForUpgrades);
+
+  const showWrongRelease = canShowWrongRelease(libraryBook);
 
   const mergeProgress = useMergeProgress(libraryBook.id);
   const canMerge = libraryBook.status === 'imported' &&
@@ -82,6 +89,9 @@ export function BookDetails({ libraryBook, metadataBook }: {
         mergeTooltip={!ffmpegConfigured ? 'Requires ffmpeg — configure in Settings > Post Processing' : undefined}
         onRemoveClick={() => setConfirmDeleteOpen(true)}
         isRemoving={deleteMutation.isPending}
+        showWrongRelease={showWrongRelease}
+        onWrongReleaseClick={() => setConfirmWrongReleaseOpen(true)}
+        isWrongReleasing={wrongReleaseMutation.isPending}
         importListName={libraryBook.importListName}
         monitorForUpgrades={libraryBook.monitorForUpgrades}
         onMonitorToggle={() => monitorMutation.mutate()}
@@ -185,6 +195,15 @@ export function BookDetails({ libraryBook, metadataBook }: {
         confirmLabel="Merge"
         onConfirm={() => { setConfirmMergeOpen(false); mergeMutation.mutate(); }}
         onCancel={() => setConfirmMergeOpen(false)}
+      />
+
+      <ConfirmModal
+        isOpen={confirmWrongReleaseOpen}
+        title="Wrong Release?"
+        message={`This will delete the files for "${libraryBook.title}", blacklist this release, and search for a new one. This cannot be undone.`}
+        confirmLabel="Wrong Release"
+        onConfirm={() => { setConfirmWrongReleaseOpen(false); wrongReleaseMutation.mutate(); }}
+        onCancel={() => setConfirmWrongReleaseOpen(false)}
       />
 
       <DeleteBookModal

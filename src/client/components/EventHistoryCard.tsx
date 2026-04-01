@@ -35,6 +35,7 @@ const EVENT_CONFIG: Record<string, EventTypeConfig> = {
   merged: { icon: CheckCircleIcon, label: 'Merged', color: 'text-success', bgColor: 'bg-success/10' },
   merge_started: { icon: RefreshIcon, label: 'Merge Started', color: 'text-blue-400', bgColor: 'bg-blue-500/10' },
   merge_failed: { icon: XCircleIcon, label: 'Merge Failed', color: 'text-destructive', bgColor: 'bg-destructive/10' },
+  wrong_release: { icon: XCircleIcon, label: 'Wrong Release', color: 'text-destructive', bgColor: 'bg-destructive/10' },
 };
 
 const DEFAULT_CONFIG: EventTypeConfig = { icon: ClockIcon, label: 'Unknown', color: 'text-muted-foreground', bgColor: 'bg-muted' };

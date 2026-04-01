@@ -4,6 +4,7 @@ import type { FastifyInstance, FastifyBaseLogger } from 'fastify';
 import type { BookService, BookListService, DownloadService, SettingsService, RenameService, EventHistoryService, TaggingService, IndexerService } from '../services/index.js';
 import type { DownloadOrchestrator } from '../services/download-orchestrator.js';
 import type { MergeService } from '../services/merge.service.js';
+import type { BookRejectionService } from '../services/book-rejection.service.js';
 export interface BookRouteDeps {
   bookService: BookService;
   bookListService: BookListService;
@@ -15,6 +16,7 @@ export interface BookRouteDeps {
   taggingService: TaggingService;
   eventHistory?: EventHistoryService;
   indexerService?: IndexerService;
+  bookRejectionService?: BookRejectionService;
 }
 import { searchAndGrabForBook } from '../services/search-pipeline.js';
 import { type z } from 'zod';
@@ -279,6 +281,21 @@ export async function booksRoutes(app: FastifyInstance, deps: BookRouteDeps) {
       return result;
     },
   );
+
+  // POST /api/books/:id/wrong-release
+  if (deps.bookRejectionService) {
+    const bookRejectionService = deps.bookRejectionService;
+    app.post<{ Params: IdParam }>(
+      '/api/books/:id/wrong-release',
+      { schema: { params: idParamSchema } },
+      async (request) => {
+        const { id } = request.params;
+        await bookRejectionService.rejectAsWrongRelease(id);
+        request.log.info({ id }, 'Book marked as wrong release');
+        return { success: true };
+      },
+    );
+  }
 }
 
 export async function bookFilesRoute(app: FastifyInstance, bookService: BookService) {

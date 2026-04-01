@@ -45,6 +45,7 @@ vi.mock('@/lib/api', async (importOriginal) => {
       renameBook: vi.fn(),
       retagBook: vi.fn(),
       mergeBookToM4b: vi.fn(),
+      markBookAsWrongRelease: vi.fn(),
       deleteBook: vi.fn(),
       getSettings: vi.fn(),
     },
@@ -1194,6 +1195,101 @@ describe('#257 merge observability — BookDetails progress', () => {
     await waitFor(() => {
       const mergeButton = screen.getByRole('button', { name: /Merging/i });
       expect(mergeButton).toBeDisabled();
+    });
+  });
+
+  describe('Wrong Release action', () => {
+    it('shows Wrong Release button when book is imported with lastGrabGuid', async () => {
+      renderBookDetails({ status: 'imported', path: '/lib/test', lastGrabGuid: 'guid-abc' });
+
+      await waitFor(() => {
+        expect(screen.getByRole('button', { name: /Wrong Release/ })).toBeInTheDocument();
+      });
+    });
+
+    it('shows Wrong Release button when book is imported with lastGrabInfoHash', async () => {
+      renderBookDetails({ status: 'imported', path: '/lib/test', lastGrabInfoHash: 'hash-123' });
+
+      await waitFor(() => {
+        expect(screen.getByRole('button', { name: /Wrong Release/ })).toBeInTheDocument();
+      });
+    });
+
+    it('hides Wrong Release button when book status is wanted', async () => {
+      renderBookDetails({ status: 'wanted', lastGrabGuid: 'guid-abc' });
+
+      await waitFor(() => {
+        expect(screen.queryByRole('button', { name: /Wrong Release/ })).not.toBeInTheDocument();
+      });
+    });
+
+    it('hides Wrong Release button when imported but both identifiers are null', async () => {
+      renderBookDetails({ status: 'imported', path: '/lib/test', lastGrabGuid: null, lastGrabInfoHash: null });
+
+      await waitFor(() => {
+        expect(screen.queryByRole('button', { name: /Wrong Release/ })).not.toBeInTheDocument();
+      });
+    });
+
+    it('opens confirmation modal when Wrong Release button is clicked', async () => {
+      const user = userEvent.setup();
+      renderBookDetails({ status: 'imported', path: '/lib/test', lastGrabGuid: 'guid-abc' });
+
+      await waitFor(() => {
+        expect(screen.getByRole('button', { name: /Wrong Release/ })).toBeInTheDocument();
+      });
+
+      await user.click(screen.getByRole('button', { name: /Wrong Release/ }));
+
+      await waitFor(() => {
+        expect(screen.getByText(/blacklist this release/)).toBeInTheDocument();
+      });
+    });
+
+    it('calls wrong release mutation when modal is confirmed', async () => {
+      (api.markBookAsWrongRelease as Mock).mockResolvedValue({ success: true });
+      const user = userEvent.setup();
+      renderBookDetails({ status: 'imported', path: '/lib/test', lastGrabGuid: 'guid-abc' });
+
+      await waitFor(() => {
+        expect(screen.getByRole('button', { name: /Wrong Release/ })).toBeInTheDocument();
+      });
+
+      await user.click(screen.getByRole('button', { name: /Wrong Release/ }));
+
+      await waitFor(() => {
+        expect(screen.getByText(/blacklist this release/)).toBeInTheDocument();
+      });
+
+      // Click the confirm button inside the modal dialog
+      const dialog = screen.getByRole('dialog');
+      const confirmButton = within(dialog).getByRole('button', { name: /Wrong Release/i });
+      await user.click(confirmButton);
+
+      await waitFor(() => {
+        expect(api.markBookAsWrongRelease).toHaveBeenCalledWith(expect.any(Number));
+      });
+    });
+
+    it('does not call mutation when modal is cancelled', async () => {
+      vi.mocked(api.markBookAsWrongRelease).mockClear();
+      const user = userEvent.setup();
+      renderBookDetails({ status: 'imported', path: '/lib/test', lastGrabGuid: 'guid-abc' });
+
+      await waitFor(() => {
+        expect(screen.getByRole('button', { name: /Wrong Release/ })).toBeInTheDocument();
+      });
+
+      await user.click(screen.getByRole('button', { name: /Wrong Release/ }));
+
+      await waitFor(() => {
+        expect(screen.getByText(/blacklist this release/)).toBeInTheDocument();
+      });
+
+      // Click cancel
+      await user.click(screen.getByRole('button', { name: /Cancel/i }));
+
+      expect(api.markBookAsWrongRelease).not.toHaveBeenCalled();
     });
   });
 });

@@ -1,6 +1,6 @@
 import { Link } from 'react-router-dom';
 import { resolveUrl } from '@/lib/url-utils';
-import { ArrowLeftIcon, SearchIcon, BookOpenIcon, PencilIcon, RefreshIcon, TagIcon, PackageIcon, TrashIcon } from '@/components/icons';
+import { ArrowLeftIcon, SearchIcon, BookOpenIcon, PencilIcon, RefreshIcon, TagIcon, PackageIcon, TrashIcon, XCircleIcon } from '@/components/icons';
 
 interface BookHeroProps {
   title: string;
@@ -29,13 +29,16 @@ interface BookHeroProps {
   mergeTooltip?: string;
   onRemoveClick: () => void;
   isRemoving: boolean;
+  showWrongRelease?: boolean;
+  onWrongReleaseClick?: () => void;
+  isWrongReleasing?: boolean;
   importListName?: string | null;
   monitorForUpgrades: boolean;
   onMonitorToggle: () => void;
   isMonitorToggling: boolean;
 }
 
-// eslint-disable-next-line complexity -- flat JSX conditionals for optional props, no branching logic
+// eslint-disable-next-line complexity, max-lines-per-function -- flat JSX conditionals for optional props, no branching logic
 export function BookHero({
   title, subtitle, authorName, authorAsin, narratorNames,
   coverUrl, metaDots, statusLabel, statusDotClass,
@@ -43,6 +46,7 @@ export function BookHero({
   onRetagClick, isRetagging, retagDisabled, retagTooltip,
   onMergeClick, isMerging, canMerge, mergeDisabled, mergeTooltip,
   onRemoveClick, isRemoving,
+  showWrongRelease, onWrongReleaseClick, isWrongReleasing,
   importListName, monitorForUpgrades, onMonitorToggle, isMonitorToggling,
 }: BookHeroProps) {
   return (
@@ -172,6 +176,17 @@ export function BookHero({
               >
                 <PackageIcon className={`w-3.5 h-3.5 ${isMerging ? 'animate-spin' : ''}`} />
                 {isMerging ? 'Merging...' : 'Merge to M4B'}
+              </button>
+            )}
+            {showWrongRelease && onWrongReleaseClick && (
+              <button
+                type="button"
+                onClick={onWrongReleaseClick}
+                disabled={isWrongReleasing}
+                className="inline-flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-medium text-destructive hover:text-destructive glass-card hover:border-destructive/30 transition-all duration-200 focus-ring disabled:opacity-40 disabled:cursor-not-allowed"
+              >
+                <XCircleIcon className={`w-3.5 h-3.5 ${isWrongReleasing ? 'animate-spin' : ''}`} />
+                {isWrongReleasing ? 'Rejecting...' : 'Wrong Release'}
               </button>
             )}
             <button

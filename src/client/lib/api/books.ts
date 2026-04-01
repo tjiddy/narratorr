@@ -45,6 +45,8 @@ export interface BookWithAuthor {
   topLevelAudioFileCount?: number | null;
   audioTotalSize?: number | null;
   audioDuration?: number | null;
+  lastGrabGuid?: string | null;
+  lastGrabInfoHash?: string | null;
   monitorForUpgrades: boolean;
   importListId?: number | null;
   importListName?: string | null;
@@ -226,4 +228,6 @@ export const booksApi = {
     fetchApi<SingleBookSearchResult>(`/books/${id}/search`, { method: 'POST' }),
   mergeBookToM4b: (id: number) =>
     fetchApi<MergeResult>(`/books/${id}/merge-to-m4b`, { method: 'POST' }),
+  markBookAsWrongRelease: (id: number) =>
+    fetchApi<{ success: boolean }>(`/books/${id}/wrong-release`, { method: 'POST' }),
 };

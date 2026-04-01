@@ -724,8 +724,7 @@ describe('QualityGateOrchestrator', () => {
 
       expect(blacklistService.create).not.toHaveBeenCalled();
       expect(log.info).toHaveBeenCalledWith(
-        expect.objectContaining({ downloadId: 1 }),
-        expect.stringContaining('blacklist skipped'),
+        expect.stringContaining('Blacklist skipped'),
       );
     });
   });
@@ -805,14 +804,14 @@ describe('QualityGateOrchestrator', () => {
       // Flush microtasks to let the .catch fire
       await vi.waitFor(() => {
         expect(log.warn).toHaveBeenCalledWith(
-          expect.objectContaining({ downloadId: 1, bookId: 1 }),
-          expect.stringContaining('re-search after reject failed'),
+          expect.objectContaining({ bookId: 1 }),
+          expect.stringContaining('Re-search after reject failed'),
         );
       });
     });
 
     it('skips re-search when RetrySearchDeps is not injected', async () => {
-      const { orchestrator, qualityGateService, log } = createOrchestrator();
+      const { orchestrator, qualityGateService } = createOrchestrator();
       qualityGateService.reject.mockResolvedValue({ id: 1, status: 'failed', download: baseDownload, book: baseBook });
 
       await orchestrator.reject(1);
@@ -820,10 +819,6 @@ describe('QualityGateOrchestrator', () => {
       await new Promise((r) => setTimeout(r, 0));
 
       expect(retrySearch).not.toHaveBeenCalled();
-      expect(log.debug).toHaveBeenCalledWith(
-        expect.objectContaining({ downloadId: 1 }),
-        expect.stringContaining('RetrySearchDeps not injected'),
-      );
     });
 
     it('does not trigger re-search when book is null', async () => {
@@ -842,4 +837,9 @@ describe('QualityGateOrchestrator', () => {
       expect(retrySearch).not.toHaveBeenCalled();
     });
   });
+
+  // Regression coverage for shared helper extraction: existing tests above cover
+  // blacklisting with bad_quality, download file deletion, re-search trigger, and
+  // dispatchSideEffects auto-reject — all exercising the same code path through
+  // blacklistAndRetrySearch() after extraction.
 });

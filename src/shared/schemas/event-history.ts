@@ -10,6 +10,7 @@ export const eventTypeSchema = z.enum([
   'deleted', 'renamed', 'merged',
   'file_tagged', 'held_for_review',
   'merge_started', 'merge_failed',
+  'wrong_release',
 ]);
 
 export type EventType = z.infer<typeof eventTypeSchema>;

@@ -309,4 +309,32 @@ describe('BookHero', () => {
       expect(button).toHaveTextContent('Remove');
     });
   });
+
+  describe('Wrong Release button', () => {
+    it('renders Wrong Release button when showWrongRelease is true', () => {
+      renderHero({ showWrongRelease: true, onWrongReleaseClick: vi.fn(), isWrongReleasing: false });
+      expect(screen.getByRole('button', { name: /Wrong Release/ })).toBeInTheDocument();
+    });
+
+    it('does not render Wrong Release button when showWrongRelease is false', () => {
+      renderHero({ showWrongRelease: false, onWrongReleaseClick: vi.fn() });
+      expect(screen.queryByRole('button', { name: /Wrong Release/ })).not.toBeInTheDocument();
+    });
+
+    it('calls onWrongReleaseClick when Wrong Release button is clicked', async () => {
+      const user = userEvent.setup();
+      const onWrongReleaseClick = vi.fn();
+      renderHero({ showWrongRelease: true, onWrongReleaseClick, isWrongReleasing: false });
+
+      await user.click(screen.getByRole('button', { name: /Wrong Release/ }));
+      expect(onWrongReleaseClick).toHaveBeenCalledTimes(1);
+    });
+
+    it('disables button and shows pending label when isWrongReleasing is true', () => {
+      renderHero({ showWrongRelease: true, onWrongReleaseClick: vi.fn(), isWrongReleasing: true });
+      const button = screen.getByRole('button', { name: /Rejecting/ });
+      expect(button).toBeDisabled();
+      expect(button).toHaveTextContent('Rejecting...');
+    });
+  });
 });

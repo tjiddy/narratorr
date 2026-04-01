@@ -74,6 +74,9 @@ export const books = sqliteTable('books', {
   topLevelAudioFileCount: integer('top_level_audio_file_count'),
   audioTotalSize: integer('audio_total_size'),
   audioDuration: integer('audio_duration'),
+  // Last grab identifiers (populated from download record at import time, cleared on wrong-release)
+  lastGrabGuid: text('last_grab_guid'),
+  lastGrabInfoHash: text('last_grab_info_hash'),
   monitorForUpgrades: integer('monitor_for_upgrades', { mode: 'boolean' }).notNull().default(false),
   importListId: integer('import_list_id').references(() => importLists.id, { onDelete: 'set null' }),
   createdAt: integer('created_at', { mode: 'timestamp' })
@@ -238,6 +241,7 @@ export const bookEvents = sqliteTable('book_events', {
       'deleted', 'renamed', 'merged',
       'file_tagged', 'held_for_review',
       'merge_started', 'merge_failed',
+      'wrong_release',
     ],
   }).notNull(),
   source: text('source', {

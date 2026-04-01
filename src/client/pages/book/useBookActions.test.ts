@@ -22,6 +22,7 @@ vi.mock('@/lib/api', async (importOriginal) => {
       renameBook: vi.fn(),
       retagBook: vi.fn(),
       mergeBookToM4b: vi.fn(),
+      markBookAsWrongRelease: vi.fn(),
       deleteBook: vi.fn(),
       getSettings: vi.fn().mockResolvedValue({
         processing: { ffmpegPath: '/usr/bin/ffmpeg', enabled: false, outputFormat: 'm4b', keepOriginalBitrate: false, bitrate: 128, mergeBehavior: 'multi-file-only', maxConcurrentProcessing: 2 },
@@ -440,6 +441,65 @@ describe('useBookActions', () => {
 
       await waitFor(() => {
         expect(toast.error).toHaveBeenCalledWith('Failed to remove book: Permission denied');
+      });
+    });
+  });
+
+  describe('wrongReleaseMutation', () => {
+    it('calls api.markBookAsWrongRelease with correct book ID', async () => {
+      (api.markBookAsWrongRelease as Mock).mockResolvedValue({ success: true });
+      const { wrapper } = createTestHarness();
+      const { result } = renderHook(() => useBookActions(1, false), { wrapper });
+
+      await act(async () => {
+        result.current.wrongReleaseMutation.mutate();
+      });
+
+      await waitFor(() => {
+        expect(api.markBookAsWrongRelease).toHaveBeenCalledWith(1);
+      });
+    });
+
+    it('shows success toast on successful wrong release', async () => {
+      (api.markBookAsWrongRelease as Mock).mockResolvedValue({ success: true });
+      const { wrapper } = createTestHarness();
+      const { result } = renderHook(() => useBookActions(1, false), { wrapper });
+
+      await act(async () => {
+        result.current.wrongReleaseMutation.mutate();
+      });
+
+      await waitFor(() => {
+        expect(toast.success).toHaveBeenCalledWith(expect.stringContaining('wrong release'));
+      });
+    });
+
+    it('shows error toast on wrong release failure', async () => {
+      (api.markBookAsWrongRelease as Mock).mockRejectedValue(new Error('not imported'));
+      const { wrapper } = createTestHarness();
+      const { result } = renderHook(() => useBookActions(1, false), { wrapper });
+
+      await act(async () => {
+        result.current.wrongReleaseMutation.mutate();
+      });
+
+      await waitFor(() => {
+        expect(toast.error).toHaveBeenCalledWith('Wrong release failed: not imported');
+      });
+    });
+
+    it('invalidates book, bookFiles, and books queries on success', async () => {
+      (api.markBookAsWrongRelease as Mock).mockResolvedValue({ success: true });
+      const { queryClient, wrapper } = createTestHarness();
+      const invalidateSpy = vi.spyOn(queryClient, 'invalidateQueries');
+      const { result } = renderHook(() => useBookActions(5, false), { wrapper });
+
+      act(() => { result.current.wrongReleaseMutation.mutate(); });
+
+      await waitFor(() => {
+        expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: ['books', 5] });
+        expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: ['books', 5, 'files'] });
+        expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: ['books'] });
       });
     });
   });
