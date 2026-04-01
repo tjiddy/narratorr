@@ -342,3 +342,28 @@ describe('filterAndRankResults — minSeeders default', () => {
     expect(results).toHaveLength(1);
   });
 });
+
+describe('canonicalCompare — grabs tiebreaker (#272)', () => {
+  it.todo('higher grabs wins when matchScore, MB/hr, protocol, and language are equal');
+  it.todo('title similarity (matchScore > 0.1 diff) beats grabs');
+  it.todo('MB/hr quality beats grabs');
+  it.todo('grabs=undefined on one result, grabs=1000 on other → result with grabs wins');
+  it.todo('both grabs=undefined → falls through to seeders tiebreaker');
+  it.todo('Math.log10(grabs+1) normalization: 10 vs 100 grabs produces meaningful difference');
+  it.todo('Math.log10(grabs+1) normalization: 5000 vs 10000 grabs produces small difference');
+  it.todo('grabs=0 → Math.log10(1)=0, lowest-popularity, not treated as missing');
+});
+
+describe('canonicalCompare — language tier (#272)', () => {
+  it.todo('language mismatch ranks below matching-language result within same tier');
+  it.todo('language mismatch ranks below unknown-language result (absence ≠ mismatch)');
+  it.todo('result with no language field → no penalty applied');
+  it.todo('language tier does not cross 0.1 matchScore gate (title similarity wins)');
+  it.todo('preferredLanguage="" (default) → no language penalty applied to any result');
+  it.todo('language match ranks equal to unknown-language result');
+});
+
+describe('filterAndRankResults — preferredLanguage param (#272)', () => {
+  it.todo('passes preferredLanguage through to canonicalCompare');
+  it.todo('auto-search selects higher-grabs result when title scores are equal');
+});

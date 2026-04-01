@@ -207,3 +207,9 @@ describe('createIndexerFormSchema — trim behavior', () => {
     if (result.success) expect(result.data.name).toBe('My Indexer');
   });
 });
+
+describe('createIndexerFormSchema — apiUrl/apiKey trim (#272)', () => {
+  it.todo('trims leading/trailing whitespace from settings.apiUrl');
+  it.todo('trims leading/trailing whitespace from settings.apiKey');
+  it.todo('rejects whitespace-only apiUrl (normalized to empty string)');
+});

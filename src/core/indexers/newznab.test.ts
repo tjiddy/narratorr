@@ -621,4 +621,15 @@ describe('NewznabIndexer', () => {
       fetchSpy.mockRestore();
     });
   });
+
+  describe('search — extended attrs (#272)', () => {
+    it.todo('includes attrs=grabs,language,group,files in search URL');
+    it.todo('extracts language from newznab:attr into SearchResult.language');
+    it.todo('extracts newsgroup from newznab:attr into SearchResult.newsgroup');
+    it.todo('normalizes language code to lowercase full name (e.g. ENG → english)');
+    it.todo('returns undefined language when language attr is missing');
+    it.todo('returns undefined newsgroup when group attr is missing');
+    it.todo('handles non-numeric grabs value gracefully');
+    it.todo('handles grabs value of "0" as 0 not undefined');
+  });
 });

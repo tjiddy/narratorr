@@ -739,4 +739,10 @@ describe('MyAnonamouseIndexer', () => {
     });
   });
 
+  describe('search — language parsing (#272)', () => {
+    it.todo('parses lang_code into SearchResult.language normalized to full name (ENG → english)');
+    it.todo('returns undefined language when lang_code is missing from response');
+    it.todo('handles unknown lang_code by storing as-is lowercase');
+  });
+
 });

@@ -679,4 +679,11 @@ describe('TorznabIndexer', () => {
       fetchSpy.mockRestore();
     });
   });
+
+  describe('search — extended attrs (#272)', () => {
+    it.todo('includes attrs=grabs,language in search URL');
+    it.todo('extracts language from torznab:attr into SearchResult.language');
+    it.todo('normalizes language code to lowercase full name');
+    it.todo('returns undefined language when language attr is missing');
+  });
 });
