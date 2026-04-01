@@ -117,12 +117,23 @@ describe('CrudSettingsPage', () => {
       expect(screen.queryByRole('button', { name: 'Cancel' })).toBeNull();
     });
 
-    it('button text shows Cancel when form is open', () => {
+    it('header button shows addLabel text and is disabled when form is open', () => {
       mockUseCrudSettings.mockReturnValue(createMockHookReturn({ state: { showForm: true } }));
       render(<CrudSettingsPage {...baseProps} />);
 
-      expect(screen.getByRole('button', { name: 'Cancel' })).toBeDefined();
-      expect(screen.queryByRole('button', { name: 'Add Widget' })).toBeNull();
+      const addButton = screen.getByRole('button', { name: 'Add Widget' });
+      expect(addButton).toBeDefined();
+      expect(addButton).toBeDisabled();
+      expect(screen.queryByRole('button', { name: 'Cancel' })).toBeNull();
+    });
+
+    it('header button is enabled when form is closed', () => {
+      mockUseCrudSettings.mockReturnValue(createMockHookReturn({ state: { showForm: false } }));
+      render(<CrudSettingsPage {...baseProps} />);
+
+      const addButton = screen.getByRole('button', { name: 'Add Widget' });
+      expect(addButton).toBeDefined();
+      expect(addButton).not.toBeDisabled();
     });
   });
 
@@ -139,6 +150,22 @@ describe('CrudSettingsPage', () => {
       render(<CrudSettingsPage {...baseProps} />);
 
       expect(screen.queryByTestId('add-form')).toBeNull();
+    });
+
+    it('passes handleToggleForm as onCancel to renderForm', () => {
+      const handleToggleForm = vi.fn();
+      mockUseCrudSettings.mockReturnValue(createMockHookReturn({
+        state: { showForm: true },
+        actions: { handleToggleForm },
+      }));
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any -- capture handlers from mock call
+      let capturedHandlers: any;
+      const renderForm = vi.fn((handlers: unknown) => { capturedHandlers = handlers; return null; });
+      render(<CrudSettingsPage {...baseProps} renderForm={renderForm} />);
+
+      expect(renderForm).toHaveBeenCalledOnce();
+      capturedHandlers.onCancel();
+      expect(handleToggleForm).toHaveBeenCalledOnce();
     });
 
     it('passes createMutation.mutate as onSubmit to renderForm', () => {

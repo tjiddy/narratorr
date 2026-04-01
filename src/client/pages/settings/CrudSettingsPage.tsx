@@ -4,7 +4,6 @@ import { ConfirmModal } from '@/components/ConfirmModal';
 import {
   LoadingSpinner,
   PlusIcon,
-  XIcon,
 } from '@/components/icons';
 import { useCrudSettings, type CrudSettingsConfig } from '@/hooks/useCrudSettings';
 import type { IdTestResult } from '@/hooks/useConnectionTest';
@@ -38,6 +37,7 @@ interface CrudSettingsPageProps<TItem extends { id: number; name: string }, TFor
   renderForm: (handlers: {
     onSubmit: (data: TFormData) => void;
     onFormTest: (data: TFormData) => void;
+    onCancel: () => void;
     isPending: boolean;
     testingForm: boolean;
     formTestResult: TestResult | null;
@@ -81,14 +81,15 @@ export function CrudSettingsPage<TItem extends { id: number; name: string }, TFo
           {headerExtra}
           <button
             onClick={handleToggleForm}
+            disabled={showForm}
             className={`flex items-center gap-2 px-4 py-2.5 font-medium rounded-xl transition-all focus-ring ${
               showForm
-                ? 'bg-muted text-muted-foreground hover:bg-muted/80'
+                ? 'bg-muted text-muted-foreground opacity-50 cursor-not-allowed'
                 : 'bg-primary text-primary-foreground hover:opacity-90'
             }`}
           >
-            {showForm ? <XIcon className="w-4 h-4" /> : <PlusIcon className="w-4 h-4" />}
-            <span className="hidden sm:inline">{showForm ? 'Cancel' : addLabel}</span>
+            <PlusIcon className="w-4 h-4" />
+            <span className="hidden sm:inline">{addLabel}</span>
           </button>
         </div>
       </div>
@@ -97,6 +98,7 @@ export function CrudSettingsPage<TItem extends { id: number; name: string }, TFo
       {showForm && renderForm({
         onSubmit: (data) => createMutation.mutate(data),
         onFormTest: handleFormTest,
+        onCancel: handleToggleForm,
         isPending: createMutation.isPending,
         testingForm,
         formTestResult,

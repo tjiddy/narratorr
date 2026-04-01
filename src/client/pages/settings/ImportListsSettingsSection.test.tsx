@@ -157,7 +157,7 @@ describe('ImportListsSettings', () => {
     await user.clear(nameInput);
     await user.type(nameInput, 'New List');
 
-    const submitButton = screen.getByRole('button', { name: /Add Import List/i });
+    const submitButton = screen.getByText('Add Import List', { selector: 'button[type="submit"]' });
     await user.click(submitButton);
 
     await waitFor(() => {
@@ -183,7 +183,7 @@ describe('ImportListsSettings', () => {
     await user.clear(nameInput);
     await user.type(nameInput, 'Fail List');
 
-    await user.click(screen.getByRole('button', { name: /Add Import List/i }));
+    await user.click(screen.getByText('Add Import List', { selector: 'button[type="submit"]' }));
 
     await waitFor(() => {
       expect(toast.error).toHaveBeenCalledWith('Failed to add import list');
@@ -471,6 +471,94 @@ describe('ImportListsSettings', () => {
       await waitFor(() => {
         expect(screen.getByText('Failed to fetch libraries')).toBeInTheDocument();
       });
+    });
+  });
+
+  describe('add form cancel button', () => {
+    it('add form shows Cancel button in bottom row', async () => {
+      (api.getImportLists as Mock).mockResolvedValue([]);
+      const user = userEvent.setup();
+      renderWithProviders(<ImportListsSettings />);
+
+      await waitFor(() => {
+        expect(screen.getByText('No import lists configured')).toBeInTheDocument();
+      });
+
+      await user.click(screen.getByText('Add Import List').closest('button')!);
+
+      expect(screen.getByRole('button', { name: 'Cancel' })).toBeInTheDocument();
+    });
+
+    it('clicking Cancel in add form closes the form', async () => {
+      (api.getImportLists as Mock).mockResolvedValue([]);
+      const user = userEvent.setup();
+      renderWithProviders(<ImportListsSettings />);
+
+      await waitFor(() => {
+        expect(screen.getByText('No import lists configured')).toBeInTheDocument();
+      });
+
+      await user.click(screen.getByText('Add Import List').closest('button')!);
+      expect(screen.getByLabelText('Name')).toBeInTheDocument();
+
+      await user.click(screen.getByRole('button', { name: 'Cancel' }));
+      expect(screen.queryByLabelText('Name')).not.toBeInTheDocument();
+    });
+
+    it('header button shows "+ Add Import List" and is disabled when add form is open', async () => {
+      (api.getImportLists as Mock).mockResolvedValue([]);
+      const user = userEvent.setup();
+      renderWithProviders(<ImportListsSettings />);
+
+      await waitFor(() => {
+        expect(screen.getByText('No import lists configured')).toBeInTheDocument();
+      });
+
+      const headerButton = screen.getByText('Add Import List').closest('button')!;
+      expect(headerButton).not.toBeDisabled();
+
+      await user.click(headerButton);
+
+      // Header button should still show "Add Import List" but be disabled
+      const headerButtons = screen.getAllByText('Add Import List');
+      const headerBtn = headerButtons.find(el => el.closest('button')?.getAttribute('type') !== 'submit')?.closest('button');
+      expect(headerBtn).toBeDisabled();
+    });
+
+    it('Cancel button closes form while create submission is pending', async () => {
+      (api.getImportLists as Mock).mockResolvedValue([mockList]);
+      // Never-resolving promise keeps mutation in pending state
+      (api.createImportList as Mock).mockImplementation(() => new Promise(() => {}));
+      const user = userEvent.setup();
+      renderWithProviders(<ImportListsSettings />);
+
+      await waitFor(() => {
+        expect(screen.getByText('My ABS List')).toBeInTheDocument();
+      });
+
+      await user.click(screen.getByText('Add Import List').closest('button')!);
+
+      // Fill name (clear default, type new) and submit to enter pending state
+      const nameInput = screen.getByLabelText('Name');
+      await user.clear(nameInput);
+      await user.type(nameInput, 'Pending List');
+      await user.click(screen.getByText('Add Import List', { selector: 'button[type="submit"]' }));
+
+      // Verify mutation was called and submit button shows pending state
+      await waitFor(() => {
+        expect(api.createImportList).toHaveBeenCalled();
+      });
+      await waitFor(() => {
+        expect(screen.getByText('Saving...')).toBeInTheDocument();
+      });
+
+      // Cancel button should still be clickable during pending submit
+      const cancelButton = screen.getByRole('button', { name: 'Cancel' });
+      expect(cancelButton).not.toBeDisabled();
+      await user.click(cancelButton);
+
+      // Form should be closed
+      expect(screen.queryByLabelText('Name')).not.toBeInTheDocument();
     });
   });
 

@@ -11,7 +11,6 @@ import {
   LoadingSpinner,
   ListIcon,
   PlusIcon,
-  XIcon,
   TrashIcon,
   CheckCircleIcon,
   AlertCircleIcon,
@@ -44,10 +43,12 @@ function getDefaults(initial?: ImportList) {
 
 function ImportListForm({
   onSubmit,
+  onCancel,
   isPending,
   initial,
 }: {
   onSubmit: (data: ImportListFormData) => void;
+  onCancel?: () => void;
   isPending: boolean;
   initial?: ImportList;
 }) {
@@ -188,9 +189,16 @@ function ImportListForm({
           <div className="w-9 h-5 bg-muted rounded-full peer peer-checked:bg-primary transition-colors after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:after:translate-x-4 relative" />
           <span className="text-sm">Enabled</span>
         </label>
-        <button type="submit" disabled={isPending} className="px-4 py-2 bg-primary text-primary-foreground rounded-lg hover:opacity-90 disabled:opacity-50 transition-all">
-          {submitLabel}
-        </button>
+        <div className="flex items-center gap-3">
+          {onCancel && (
+            <button type="button" onClick={onCancel} className="px-4 py-2 border border-border rounded-lg text-muted-foreground hover:bg-muted transition-all">
+              Cancel
+            </button>
+          )}
+          <button type="submit" disabled={isPending} className="px-4 py-2 bg-primary text-primary-foreground rounded-lg hover:opacity-90 disabled:opacity-50 transition-all">
+            {submitLabel}
+          </button>
+        </div>
       </div>
     </form>
   );
@@ -280,14 +288,15 @@ export function ImportListsSettings() {
         <button
           type="button"
           onClick={handleToggleForm}
+          disabled={showForm}
           className={`flex items-center gap-2 px-4 py-2.5 font-medium rounded-xl transition-all focus-ring ${
             showForm
-              ? 'bg-muted text-muted-foreground hover:bg-muted/80'
+              ? 'bg-muted text-muted-foreground opacity-50 cursor-not-allowed'
               : 'bg-primary text-primary-foreground hover:opacity-90'
           }`}
         >
-          {showForm ? <XIcon className="w-4 h-4" /> : <PlusIcon className="w-4 h-4" />}
-          <span className="hidden sm:inline">{showForm ? 'Cancel' : 'Add Import List'}</span>
+          <PlusIcon className="w-4 h-4" />
+          <span className="hidden sm:inline">Add Import List</span>
         </button>
       </div>
 
@@ -295,6 +304,7 @@ export function ImportListsSettings() {
       {showForm && (
         <ImportListForm
           onSubmit={(data) => createMutation.mutate(data)}
+          onCancel={handleToggleForm}
           isPending={createMutation.isPending}
         />
       )}

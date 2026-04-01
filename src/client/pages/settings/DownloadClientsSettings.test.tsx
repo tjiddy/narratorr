@@ -84,7 +84,7 @@ describe('DownloadClientsSettings', () => {
     await user.click(screen.getByText('Add Client').closest('button')!);
     await user.type(screen.getByPlaceholderText('qBittorrent'), 'New Client');
     await user.type(screen.getByPlaceholderText('localhost'), '192.168.1.5');
-    await user.click(screen.getByRole('button', { name: /Add Client/i }));
+    await user.click(screen.getByText('Add Client', { selector: 'button[type="submit"]' }));
 
     await waitFor(() => {
       expect(api.createClient).toHaveBeenCalled();
@@ -121,7 +121,7 @@ describe('DownloadClientsSettings', () => {
     expect(screen.getByText('/local/downloads')).toBeInTheDocument();
 
     // Submit form
-    await user.click(screen.getByRole('button', { name: /Add Client/i }));
+    await user.click(screen.getByText('Add Client', { selector: 'button[type="submit"]' }));
 
     await waitFor(() => {
       expect(api.createClient).toHaveBeenCalled();
@@ -144,7 +144,7 @@ describe('DownloadClientsSettings', () => {
     await user.click(screen.getByText('Add Client').closest('button')!);
     await user.type(screen.getByPlaceholderText('qBittorrent'), 'Fail');
     await user.type(screen.getByPlaceholderText('localhost'), 'example.com');
-    await user.click(screen.getByRole('button', { name: /Add Client/i }));
+    await user.click(screen.getByText('Add Client', { selector: 'button[type="submit"]' }));
 
     await assertErrorToast('Failed to add download client');
   });
@@ -218,7 +218,7 @@ describe('DownloadClientsSettings', () => {
 
     await user.click(screen.getByText('Add Client').closest('button')!);
     await user.type(screen.getByPlaceholderText('localhost'), 'example.com');
-    await user.click(screen.getByRole('button', { name: /Add Client/i }));
+    await user.click(screen.getByText('Add Client', { selector: 'button[type="submit"]' }));
 
     await waitFor(() => {
       expect(screen.getByText('Name is required')).toBeInTheDocument();
@@ -233,7 +233,7 @@ describe('DownloadClientsSettings', () => {
 
     await user.click(screen.getByText('Add Client').closest('button')!);
     await user.type(screen.getByPlaceholderText('qBittorrent'), 'Test');
-    await user.click(screen.getByRole('button', { name: /Add Client/i }));
+    await user.click(screen.getByText('Add Client', { selector: 'button[type="submit"]' }));
 
     await waitFor(() => {
       expect(screen.getByText('Host is required')).toBeInTheDocument();
