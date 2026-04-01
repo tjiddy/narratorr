@@ -1,5 +1,34 @@
 # Workflow Log
 
+## #263 Download client setup — path mappings on create, remove redundant downloadRoot — 2026-04-01
+**Skill path:** /implement → /claim → /plan → /handoff
+**Outcome:** success — PR #271
+
+### Metrics
+- Files changed: 18 | Tests added/modified: 27 new tests across 8 test files
+- Quality gate runs: 2 (pass on attempt 2 — first run caught blast radius in DownloadClientCard.test.tsx)
+- Fix iterations: 1 (button label mismatch in create-mode form tests — used /save/i instead of /add client/i)
+- Context compactions: 0
+
+### Workflow experience
+- What went smoothly: Service-layer extension pattern (modify `create()` to delegate to `createWithMappings()`) avoided touching generic CRUD infrastructure entirely. Spec review process caught the trust model gap early — hardening resolveOutputPath was already planned before implementation.
+- Friction / issues encountered: Form submit button label differs between create/edit mode ("Add Client" vs "Save Changes") — caused test failures when using `/save/i` matcher for create-mode tests. Also, blast radius in DownloadClientCard.test.tsx was missed initially — the test expected no path mappings in create mode but now PathMappingEditor renders there.
+
+### Token efficiency
+- Highest-token actions: Explore subagent for plan (read many files), coverage review subagent
+- Avoidable waste: None significant — modules were well-scoped
+- Suggestions: The spec review process (3 rounds) front-loaded the architectural thinking, which made implementation straightforward
+
+### Infrastructure gaps
+- Repeated workarounds: None
+- Missing tooling / config: `frontend-design` skill not available — PathMappingEditor follows existing patterns manually
+- Unresolved debt: None new — existing inputClass duplication (debt.md item) applies to PathMappingEditor but was out of scope
+
+### Wish I'd Known
+1. **Generic CRUD `service.create()` receives the full Zod-parsed body** — no need to override the route handler. The service layer is the right extension point for child-record creation.
+2. **`SettingsFormActions` uses "Add {entityLabel}" in create mode** — test matchers must account for this. See `.narratorr/cl/learnings/form-submit-button-label-in-crud.md`.
+3. **Create-mode components can't share hooks with edit-mode** — conditional hooks are illegal in React, so a separate local-state component is the right pattern. See `.narratorr/cl/learnings/create-mode-local-state-vs-api-backed.md`.
+
 ## #265 Settings UX — rename Grab Floor, relocate new-book defaults — 2026-03-31
 **Skill path:** /elaborate → /respond-to-spec-review → /implement → /claim → /plan → /handoff
 **Outcome:** success — PR #269
