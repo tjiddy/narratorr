@@ -412,4 +412,121 @@ describe('useSearchStream', () => {
     expect(result.current.state.indexers).toEqual([]);
     expect(es.closed).toBe(true);
   });
+
+  describe('AC2 — finalizing timeout', () => {
+    it('shows error state when timeout fires with no search-complete received', async () => {
+      const { result } = renderHook(
+        () => useSearchStream('test query', undefined, { finalizingTimeoutMs: 100 }),
+        { wrapper: createWrapper() },
+      );
+
+      await waitForAuth(result);
+      act(() => { result.current.actions.start(); });
+
+      const es = MockEventSource.instances[0];
+      act(() => {
+        es.emit('search-start', {
+          sessionId: 'session-123',
+          indexers: [{ id: 1, name: 'ABB' }],
+        });
+      });
+
+      act(() => { result.current.actions.showResults(); });
+      expect(result.current.state.phase).toBe('results');
+      expect(result.current.state.results).toBeNull();
+
+      // Wait for real timeout to fire
+      await waitFor(() => {
+        expect(result.current.state.error).toBe('Search timed out waiting for results');
+      });
+      expect(result.current.state.phase).toBe('idle');
+    });
+
+    it('clears timeout when search-complete arrives before timeout', async () => {
+      const { result } = renderHook(
+        () => useSearchStream('test query', undefined, { finalizingTimeoutMs: 200 }),
+        { wrapper: createWrapper() },
+      );
+
+      await waitForAuth(result);
+      act(() => { result.current.actions.start(); });
+
+      const es = MockEventSource.instances[0];
+      act(() => {
+        es.emit('search-start', { sessionId: 'session-123', indexers: [{ id: 1, name: 'ABB' }] });
+      });
+
+      act(() => { result.current.actions.showResults(); });
+
+      // search-complete arrives before timeout
+      act(() => {
+        es.emit('search-complete', { results: [], durationUnknown: false, unsupportedResults: { count: 0, titles: [] } });
+      });
+
+      expect(result.current.state.results).not.toBeNull();
+      expect(result.current.state.phase).toBe('results');
+      expect(result.current.state.error).toBeNull();
+
+      // Wait past timeout — should NOT trigger error
+      await new Promise(r => setTimeout(r, 300));
+      expect(result.current.state.error).toBeNull();
+      expect(result.current.state.phase).toBe('results');
+    });
+
+    it('re-enters searching phase when retry is triggered after timeout', async () => {
+      const { result } = renderHook(
+        () => useSearchStream('test query', undefined, { finalizingTimeoutMs: 100 }),
+        { wrapper: createWrapper() },
+      );
+
+      await waitForAuth(result);
+      act(() => { result.current.actions.start(); });
+
+      const es = MockEventSource.instances[0];
+      act(() => {
+        es.emit('search-start', { sessionId: 'session-123', indexers: [{ id: 1, name: 'ABB' }] });
+      });
+
+      act(() => { result.current.actions.showResults(); });
+
+      // Wait for timeout
+      await waitFor(() => {
+        expect(result.current.state.phase).toBe('idle');
+      });
+      expect(result.current.state.error).toBeTruthy();
+
+      // Retry
+      act(() => { result.current.actions.reset(); });
+      act(() => { result.current.actions.start(); });
+
+      expect(result.current.state.phase).toBe('searching');
+      expect(MockEventSource.instances).toHaveLength(2);
+    });
+
+    it('falls back to error immediately when onerror fires while in finalizing state', async () => {
+      const { result } = renderHook(
+        () => useSearchStream('test query', undefined, { finalizingTimeoutMs: 10000 }),
+        { wrapper: createWrapper() },
+      );
+
+      await waitForAuth(result);
+      act(() => { result.current.actions.start(); });
+
+      const es = MockEventSource.instances[0];
+      act(() => {
+        es.emit('search-start', { sessionId: 'session-123', indexers: [{ id: 1, name: 'ABB' }] });
+      });
+
+      act(() => { result.current.actions.showResults(); });
+      expect(result.current.state.phase).toBe('results');
+
+      // SSE connection drops while finalizing
+      act(() => {
+        if (es.onerror) es.onerror(new Event('error'));
+      });
+
+      expect(result.current.state.error).toBe('Search connection failed');
+      expect(result.current.state.phase).toBe('idle');
+    });
+  });
 });

@@ -216,6 +216,7 @@ export function SearchReleasesModal({ isOpen, book, onClose }: SearchReleasesMod
         role="dialog"
         aria-modal="true"
         tabIndex={-1}
+        className="flex flex-col min-h-0 flex-1"
       >
         {/* Header */}
         <div className="flex items-center justify-between px-6 py-4 border-b border-border/50">

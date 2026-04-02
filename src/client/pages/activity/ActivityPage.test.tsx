@@ -516,6 +516,62 @@ describe('ActivityPage', () => {
     });
   });
 
+  it('reject spinner shows only on the clicked row, not sibling pending-review rows', async () => {
+    const user = userEvent.setup();
+    const gate = {
+      action: 'held' as const,
+      mbPerHour: 80,
+      existingMbPerHour: 100,
+      narratorMatch: true,
+      existingNarrator: null,
+      downloadNarrator: null,
+      durationDelta: 0.02,
+      existingDuration: null,
+      downloadedDuration: null,
+      codec: 'mp3',
+      channels: 1,
+      existingCodec: null,
+      existingChannels: null,
+      probeFailure: false,
+      probeError: null,
+      holdReasons: [],
+    };
+    const row1 = makeDownload({ id: 30, title: 'Row One', status: 'pending_review', qualityGate: gate });
+    const row2 = makeDownload({ id: 31, title: 'Row Two', status: 'pending_review', qualityGate: gate });
+
+    mockActivitySections([row1, row2], []);
+    // Never resolve — keeps mutation in pending state
+    vi.mocked(api.rejectDownload).mockReturnValue(new Promise(() => {}));
+
+    renderWithProviders(<ActivityPage />);
+
+    await waitFor(() => {
+      expect(screen.getByText('Row One')).toBeInTheDocument();
+      expect(screen.getByText('Row Two')).toBeInTheDocument();
+    });
+
+    // Expand both panels
+    const expandToggles = screen.getAllByRole('button', { expanded: false });
+    for (const toggle of expandToggles) {
+      await user.click(toggle);
+    }
+
+    // Click "Reject" on Row One
+    const rejectButtons = screen.getAllByText('Reject');
+    await user.click(rejectButtons[0].closest('button')!);
+
+    // Row One shows spinner on its Reject button
+    await waitFor(() => {
+      expect(screen.getByText('Rejecting...')).toBeInTheDocument();
+    });
+
+    // Row Two's Reject button stays non-loading
+    const remainingRejectButtons = screen.getAllByText('Reject');
+    expect(remainingRejectButtons.length).toBeGreaterThanOrEqual(1);
+    // "Rejecting..." should appear exactly once (only on Row One)
+    expect(screen.getAllByText('Rejecting...')).toHaveLength(1);
+  });
+
   it('shows retry button only on linked failed download in a mixed history list', async () => {
     const orphaned = makeDownload({
       id: 10,

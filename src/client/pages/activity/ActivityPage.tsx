@@ -128,7 +128,8 @@ export function ActivityPage() {
                     onRejectWithSearch={() => rejectMutation.mutate({ id: download.id, retry: true })}
                     isCancelling={cancelMutation.isPending}
                     isApproving={approveMutation.isPending}
-                    isRejecting={rejectMutation.isPending}
+                    isRejectingDismiss={rejectMutation.isPending && rejectMutation.variables?.id === download.id && !rejectMutation.variables?.retry}
+                    isRejectingWithSearch={rejectMutation.isPending && rejectMutation.variables?.id === download.id && !!rejectMutation.variables?.retry}
                     isRetrying={retryMutation.isPending}
                     index={index}
                   />

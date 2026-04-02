@@ -28,13 +28,14 @@ export function ManualAddFormModal({ isOpen, onClose, defaultTitle }: ManualAddF
         ref={modalRef}
         role="dialog"
         aria-modal="true"
+        aria-labelledby="manual-add-form-title"
         tabIndex={-1}
         className="p-6"
       >
         <div className="flex items-center justify-end mb-2">
           <button
             type="button"
-            onClick={onClose}
+            onClick={() => { if (!isPending) onClose(); }}
             disabled={isPending}
             className="p-1.5 text-muted-foreground hover:text-foreground rounded-lg transition-colors focus-ring disabled:opacity-50 disabled:cursor-not-allowed"
             aria-label="Close"
