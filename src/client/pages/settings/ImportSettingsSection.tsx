@@ -82,7 +82,7 @@ export function ImportSettingsSection() {
             min={0}
             placeholder="60"
           />
-          {errors.minSeedTime && deleteAfterImport && (
+          {errors.minSeedTime && (
             <p className="text-sm text-destructive mt-1">{errors.minSeedTime.message}</p>
           )}
           <p className="text-sm text-muted-foreground mt-2">

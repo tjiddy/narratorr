@@ -315,6 +315,42 @@ describe('ImportSettingsSection', () => {
       });
     });
 
+    it('shows validation error when invalid minSeedTime exists and field is disabled', async () => {
+      const enabledSettings = createMockSettings({
+        import: { deleteAfterImport: true, minSeedTime: 60, minFreeSpaceGB: 5, redownloadFailed: true },
+      });
+      mockApi.getSettings.mockResolvedValue(enabledSettings);
+      mockApi.updateSettings.mockResolvedValue(enabledSettings);
+      const user = userEvent.setup();
+      renderWithProviders(<ImportSettingsSection />);
+
+      await waitFor(() => {
+        expect(screen.getByLabelText('Minimum Seed Time (minutes)')).not.toBeDisabled();
+      });
+
+      // Enter invalid value
+      const input = screen.getByLabelText('Minimum Seed Time (minutes)');
+      await user.tripleClick(input);
+      await user.keyboard('-1');
+
+      // Toggle delete off — field becomes disabled
+      await user.click(screen.getByLabelText('Delete After Import'));
+
+      await waitFor(() => {
+        expect(screen.getByLabelText('Minimum Seed Time (minutes)')).toBeDisabled();
+      });
+
+      // Try to save — should not call updateSettings (validation blocks it)
+      await user.click(screen.getByRole('button', { name: /save/i }));
+
+      await waitFor(() => {
+        expect(mockApi.updateSettings).not.toHaveBeenCalled();
+      });
+
+      // Validation error should still be visible even though the field is disabled
+      expect(screen.getByText(/Too small/i)).toBeInTheDocument();
+    });
+
     it('preserves edited minSeedTime in save payload when field is disabled', async () => {
       const enabledSettings = createMockSettings({
         import: { deleteAfterImport: true, minSeedTime: 60, minFreeSpaceGB: 5, redownloadFailed: true },
