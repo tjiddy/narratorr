@@ -35,7 +35,7 @@ export function ImportSettingsSection() {
   }, [settings, reset, isDirty]);
 
   // eslint-disable-next-line react-hooks/incompatible-library
-  const deleteAfterImport = watch('deleteAfterImport');
+  const deleteAfterImport = watch('deleteAfterImport') as boolean;
 
   const mutation = useMutation({
     mutationFn: (data: ImportFormData) =>
