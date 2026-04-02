@@ -20,7 +20,10 @@ import type { RetrySearchDeps } from './retry-search.js';
 import { blacklistAndRetrySearch } from '../utils/rejection-helpers.js';
 import type { SettingsService } from './settings.service.js';
 import { rm, stat } from 'node:fs/promises';
+import { eq, isNotNull } from 'drizzle-orm';
+import { downloads } from '../../db/schema.js';
 
+const MS_PER_MINUTE = 60_000;
 type BookRow = typeof books.$inferSelect;
 
 export class QualityGateOrchestrator {
@@ -200,8 +203,38 @@ export class QualityGateOrchestrator {
       });
     }
 
-    await this.removeDownloadFiles(download);
-    await this.fallbackFileDelete(download);
+    // Read import settings to gate destructive cleanup
+    let shouldDelete = true;
+    let minSeedTimeMinutes = 0;
+    try {
+      if (this.settingsService) {
+        const importSettings = await this.settingsService.get('import');
+        shouldDelete = importSettings.deleteAfterImport;
+        minSeedTimeMinutes = importSettings.minSeedTime;
+      }
+    } catch (error: unknown) {
+      this.log.warn({ downloadId: download.id, error }, 'Quality gate: failed to read import settings — defaulting to non-destructive cleanup');
+      shouldDelete = false;
+    }
+
+    if (!shouldDelete) {
+      this.log.warn({ downloadId: download.id }, 'Quality gate: deleteAfterImport disabled — skipping file and client cleanup for rejected download');
+    } else if (download.protocol === 'torrent' && minSeedTimeMinutes > 0 && download.completedAt) {
+      const elapsedMs = Date.now() - download.completedAt.getTime();
+      const minSeedMs = minSeedTimeMinutes * MS_PER_MINUTE;
+      if (elapsedMs < minSeedMs) {
+        // Defer cleanup — mark for revisit
+        this.log.info({ downloadId: download.id, remainingMinutes: Math.ceil((minSeedMs - elapsedMs) / MS_PER_MINUTE) }, 'Quality gate: deferring rejection cleanup — min seed time not elapsed');
+        await this.db.update(downloads).set({ pendingCleanup: new Date() }).where(eq(downloads.id, download.id));
+      } else {
+        await this.removeDownloadFiles(download);
+        await this.fallbackFileDelete(download);
+      }
+    } else {
+      // deleteAfterImport=true and either usenet, minSeedTime=0, or completedAt=null → immediate cleanup
+      await this.removeDownloadFiles(download);
+      await this.fallbackFileDelete(download);
+    }
 
     // Recover book status — errors propagate to caller (manual reject → 500, auto-reject → outer catch → pending_review)
     if (book) {

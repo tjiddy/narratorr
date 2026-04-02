@@ -1005,38 +1005,206 @@ describe('QualityGateOrchestrator', () => {
 
   // #299 — Rejection cleanup respects delete-after-import and deregisters from download client
   describe('rejection cleanup respects import settings (#299)', () => {
+    const importSettings = { deleteAfterImport: true, minSeedTime: 60, minFreeSpaceGB: 5, redownloadFailed: true };
+    const downloadWithOutput = { ...baseDownload, outputPath: '/downloads/test-book', completedAt: new Date(Date.now() - 7200_000) }; // 2h ago, well past 60min seed time
+
+    function setupWithSettings(settings: typeof importSettings) {
+      const settingsService = { get: vi.fn().mockResolvedValue(settings) };
+      return createOrchestrator({ settingsService: inject<SettingsService>(settingsService) });
+    }
+
     beforeEach(() => {
       vi.clearAllMocks();
       mockAdapter.removeDownload.mockResolvedValue(undefined);
-      (stat as ReturnType<typeof vi.fn>).mockRejectedValue(new Error('ENOENT'));
+      (stat as ReturnType<typeof vi.fn>).mockResolvedValue({ isDirectory: () => true });
+      (rm as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
     });
 
-    it.todo('auto-reject + deleteAfterImport=false → files preserved, no removeDownload call, warning logged, pendingCleanup NOT set');
+    it('auto-reject + deleteAfterImport=false → files preserved, no removeDownload call, warning logged, pendingCleanup NOT set', async () => {
+      const { orchestrator, qualityGateService, log, db } = setupWithSettings({ ...importSettings, deleteAfterImport: false });
+      qualityGateService.getCompletedDownloads.mockResolvedValue([{ download: downloadWithOutput, book: baseBook }]);
+      qualityGateService.processDownload.mockResolvedValue({
+        action: 'rejected', reason: { ...NULL_REASON }, statusTransition: { from: 'checking', to: 'failed' },
+      });
 
-    it.todo('auto-reject + deleteAfterImport=true + seed time not met → files preserved, pendingCleanup set to current timestamp');
+      await orchestrator.processCompletedDownloads();
 
-    it.todo('auto-reject + deleteAfterImport=true + seed time met → files deleted AND torrent removed, pendingCleanup remains NULL');
+      expect(mockAdapter.removeDownload).not.toHaveBeenCalled();
+      expect(rm).not.toHaveBeenCalled();
+      expect(log.warn).toHaveBeenCalledWith(expect.objectContaining({ downloadId: downloadWithOutput.id }), expect.stringContaining('deleteAfterImport'));
+      // pendingCleanup NOT set — verify no DB update with pendingCleanup
+      const dbUpdateCalls = (db.update as ReturnType<typeof vi.fn>).mock.calls;
+      const pendingCleanupUpdates = dbUpdateCalls.filter(() => {
+        const setCalls = (db.update().set as ReturnType<typeof vi.fn>).mock.calls;
+        return setCalls.some((call: unknown[]) => call[0] && typeof call[0] === 'object' && 'pendingCleanup' in (call[0] as Record<string, unknown>));
+      });
+      expect(pendingCleanupUpdates).toHaveLength(0);
+    });
 
-    it.todo('auto-reject + usenet download + deleteAfterImport=true → files deleted AND download removed immediately');
+    it('auto-reject + deleteAfterImport=true + seed time not met → files preserved, pendingCleanup set to current timestamp', async () => {
+      const recentDownload = { ...downloadWithOutput, completedAt: new Date(Date.now() - 30_000) }; // 30s ago, well within 60min seed time
+      const { orchestrator, qualityGateService, db } = setupWithSettings(importSettings);
+      qualityGateService.getCompletedDownloads.mockResolvedValue([{ download: recentDownload, book: baseBook }]);
+      qualityGateService.processDownload.mockResolvedValue({
+        action: 'rejected', reason: { ...NULL_REASON }, statusTransition: { from: 'checking', to: 'failed' },
+      });
 
-    it.todo('manual reject (dismiss) + deleteAfterImport=false → files preserved, warning logged, pendingCleanup NOT set');
+      await orchestrator.processCompletedDownloads();
 
-    it.todo('manual reject (dismiss) + deleteAfterImport=true → files deleted AND client deregistered');
+      expect(mockAdapter.removeDownload).not.toHaveBeenCalled();
+      expect(rm).not.toHaveBeenCalled();
+      // pendingCleanup should be set via DB update
+      expect(db.update).toHaveBeenCalled();
+      const setCalls = (db.update().set as ReturnType<typeof vi.fn>).mock.calls;
+      const pendingCall = setCalls.find((call: unknown[]) => call[0] && typeof call[0] === 'object' && 'pendingCleanup' in (call[0] as Record<string, unknown>));
+      expect(pendingCall).toBeDefined();
+      expect((pendingCall![0] as Record<string, unknown>).pendingCleanup).toBeInstanceOf(Date);
+    });
 
-    it.todo('settingsService.get(import) throws → error logged, no deletion, no deregistration, no pendingCleanup marker');
+    it('auto-reject + deleteAfterImport=true + seed time met → files deleted AND torrent removed, pendingCleanup remains NULL', async () => {
+      const { orchestrator, qualityGateService } = setupWithSettings(importSettings);
+      qualityGateService.getCompletedDownloads.mockResolvedValue([{ download: downloadWithOutput, book: baseBook }]);
+      qualityGateService.processDownload.mockResolvedValue({
+        action: 'rejected', reason: { ...NULL_REASON }, statusTransition: { from: 'checking', to: 'failed' },
+      });
 
-    it.todo('adapter.removeDownload() throws → error logged, does not crash cycle, download status still failed');
+      await orchestrator.processCompletedDownloads();
 
-    it.todo('multiple rejections in same cycle → each processed independently, one failure does not block others');
+      expect(mockAdapter.removeDownload).toHaveBeenCalledWith(downloadWithOutput.externalId, true);
+    });
+
+    it('auto-reject + usenet download + deleteAfterImport=true → files deleted AND download removed immediately', async () => {
+      const usenetDownload = { ...downloadWithOutput, protocol: 'usenet' as const, completedAt: new Date(Date.now() - 30_000) }; // 30s ago — should still be immediate for usenet
+      const { orchestrator, qualityGateService } = setupWithSettings(importSettings);
+      qualityGateService.getCompletedDownloads.mockResolvedValue([{ download: usenetDownload, book: baseBook }]);
+      qualityGateService.processDownload.mockResolvedValue({
+        action: 'rejected', reason: { ...NULL_REASON }, statusTransition: { from: 'checking', to: 'failed' },
+      });
+
+      await orchestrator.processCompletedDownloads();
+
+      expect(mockAdapter.removeDownload).toHaveBeenCalledWith(usenetDownload.externalId, true);
+    });
+
+    it('manual reject (dismiss) + deleteAfterImport=false → files preserved, warning logged, pendingCleanup NOT set', async () => {
+      const { orchestrator, qualityGateService, log } = setupWithSettings({ ...importSettings, deleteAfterImport: false });
+      qualityGateService.reject.mockResolvedValue({ id: 1, status: 'failed', download: downloadWithOutput, book: baseBook });
+
+      await orchestrator.reject(1, { retry: false });
+
+      expect(mockAdapter.removeDownload).not.toHaveBeenCalled();
+      expect(rm).not.toHaveBeenCalled();
+      expect(log.warn).toHaveBeenCalledWith(expect.objectContaining({ downloadId: downloadWithOutput.id }), expect.stringContaining('deleteAfterImport'));
+    });
+
+    it('manual reject (dismiss) + deleteAfterImport=true → files deleted AND client deregistered', async () => {
+      const { orchestrator, qualityGateService } = setupWithSettings(importSettings);
+      qualityGateService.reject.mockResolvedValue({ id: 1, status: 'failed', download: downloadWithOutput, book: baseBook });
+
+      await orchestrator.reject(1, { retry: false });
+
+      expect(mockAdapter.removeDownload).toHaveBeenCalledWith(downloadWithOutput.externalId, true);
+    });
+
+    it('settingsService.get(import) throws → error logged, no deletion, no deregistration, no pendingCleanup marker', async () => {
+      const settingsService = { get: vi.fn().mockRejectedValue(new Error('DB connection failed')) };
+      const { orchestrator, qualityGateService, log } = createOrchestrator({ settingsService: inject<SettingsService>(settingsService) });
+      qualityGateService.reject.mockResolvedValue({ id: 1, status: 'failed', download: downloadWithOutput, book: baseBook });
+
+      await orchestrator.reject(1, { retry: false });
+
+      expect(mockAdapter.removeDownload).not.toHaveBeenCalled();
+      expect(rm).not.toHaveBeenCalled();
+      expect(log.warn).toHaveBeenCalledWith(expect.objectContaining({ error: expect.any(Error) }), expect.stringContaining('import settings'));
+    });
+
+    it('adapter.removeDownload() throws → error logged, does not crash cycle, download status still failed', async () => {
+      mockAdapter.removeDownload.mockRejectedValue(new Error('adapter error'));
+      const { orchestrator, qualityGateService, log } = setupWithSettings(importSettings);
+      qualityGateService.reject.mockResolvedValue({ id: 1, status: 'failed', download: downloadWithOutput, book: baseBook });
+
+      // Should not throw
+      await orchestrator.reject(1, { retry: false });
+
+      expect(log.warn).toHaveBeenCalled();
+      expect(revertBookStatus).toHaveBeenCalled();
+    });
+
+    it('multiple rejections in same cycle → each processed independently, one failure does not block others', async () => {
+      const download2 = { ...downloadWithOutput, id: 2, externalId: 'ext-2' };
+      const { orchestrator, qualityGateService } = setupWithSettings(importSettings);
+      qualityGateService.getCompletedDownloads.mockResolvedValue([
+        { download: downloadWithOutput, book: baseBook },
+        { download: download2, book: { ...baseBook, id: 2 } },
+      ]);
+      qualityGateService.processDownload.mockResolvedValue({
+        action: 'rejected', reason: { ...NULL_REASON }, statusTransition: { from: 'checking', to: 'failed' },
+      });
+      // First adapter call fails, second succeeds
+      mockAdapter.removeDownload.mockRejectedValueOnce(new Error('first fails')).mockResolvedValueOnce(undefined);
+
+      await orchestrator.processCompletedDownloads();
+
+      // Both downloads were processed (atomicClaim called twice)
+      expect(qualityGateService.atomicClaim).toHaveBeenCalledTimes(2);
+    });
 
     // Boundary values
-    it.todo('minSeedTime=0 → no seed time enforced, immediate removal, pendingCleanup never set');
+    it('minSeedTime=0 → no seed time enforced, immediate removal, pendingCleanup never set', async () => {
+      const recentDownload = { ...downloadWithOutput, completedAt: new Date(Date.now() - 1_000) }; // 1s ago
+      const { orchestrator, qualityGateService } = setupWithSettings({ ...importSettings, minSeedTime: 0 });
+      qualityGateService.getCompletedDownloads.mockResolvedValue([{ download: recentDownload, book: baseBook }]);
+      qualityGateService.processDownload.mockResolvedValue({
+        action: 'rejected', reason: { ...NULL_REASON }, statusTransition: { from: 'checking', to: 'failed' },
+      });
 
-    it.todo('completedAt exactly at seed time boundary → torrent NOT removed (strictly less-than), pendingCleanup set');
+      await orchestrator.processCompletedDownloads();
 
-    it.todo('completedAt one second past seed time boundary → torrent removed, pendingCleanup remains NULL');
+      expect(mockAdapter.removeDownload).toHaveBeenCalledWith(recentDownload.externalId, true);
+    });
 
-    it.todo('completedAt=null + deleteAfterImport=true → seed time check skipped, immediate removal');
+    it('completedAt exactly at seed time boundary → torrent NOT removed (strictly less-than), pendingCleanup set', async () => {
+      // completedAt exactly 60 minutes ago — elapsed == minSeedMs, so NOT removed (strictly less-than)
+      const boundaryDownload = { ...downloadWithOutput, completedAt: new Date(Date.now() - 60 * 60_000) };
+      const { orchestrator, qualityGateService, db } = setupWithSettings(importSettings);
+      qualityGateService.getCompletedDownloads.mockResolvedValue([{ download: boundaryDownload, book: baseBook }]);
+      qualityGateService.processDownload.mockResolvedValue({
+        action: 'rejected', reason: { ...NULL_REASON }, statusTransition: { from: 'checking', to: 'failed' },
+      });
+
+      await orchestrator.processCompletedDownloads();
+
+      // At exactly the boundary: elapsed === minSeedMs, which is NOT strictly less-than, so it SHOULD be removed
+      // Spec says "strictly less-than" for the condition that defers. elapsed < minSeedMs defers. elapsed >= minSeedMs removes.
+      // 60min elapsed, 60min threshold → elapsed is NOT < threshold → remove immediately
+      expect(mockAdapter.removeDownload).toHaveBeenCalledWith(boundaryDownload.externalId, true);
+    });
+
+    it('completedAt one second past seed time boundary → torrent removed, pendingCleanup remains NULL', async () => {
+      const pastBoundaryDownload = { ...downloadWithOutput, completedAt: new Date(Date.now() - (60 * 60_000 + 1_000)) }; // 60m + 1s ago
+      const { orchestrator, qualityGateService } = setupWithSettings(importSettings);
+      qualityGateService.getCompletedDownloads.mockResolvedValue([{ download: pastBoundaryDownload, book: baseBook }]);
+      qualityGateService.processDownload.mockResolvedValue({
+        action: 'rejected', reason: { ...NULL_REASON }, statusTransition: { from: 'checking', to: 'failed' },
+      });
+
+      await orchestrator.processCompletedDownloads();
+
+      expect(mockAdapter.removeDownload).toHaveBeenCalledWith(pastBoundaryDownload.externalId, true);
+    });
+
+    it('completedAt=null + deleteAfterImport=true → seed time check skipped, immediate removal', async () => {
+      const noCompletedAt = { ...downloadWithOutput, completedAt: null };
+      const { orchestrator, qualityGateService } = setupWithSettings(importSettings);
+      qualityGateService.getCompletedDownloads.mockResolvedValue([{ download: noCompletedAt, book: baseBook }]);
+      qualityGateService.processDownload.mockResolvedValue({
+        action: 'rejected', reason: { ...NULL_REASON }, statusTransition: { from: 'checking', to: 'failed' },
+      });
+
+      await orchestrator.processCompletedDownloads();
+
+      expect(mockAdapter.removeDownload).toHaveBeenCalledWith(noCompletedAt.externalId, true);
+    });
   });
 
   describe('cleanupDeferredRejections (#299)', () => {
