@@ -45,7 +45,7 @@ export function startJobs(db: Db, services: Services, log: FastifyBaseLogger) {
   const jobRegistry: JobEntry[] = [
     { name: 'monitor', type: 'cron', schedule: MONITOR_CRON_INTERVAL, callback: () => monitorDownloads(db, services.downloadClient, services.notifier, log, retryDeps, services.eventBroadcaster, services.remotePathMapping) },
     { name: 'enrichment', type: 'cron', schedule: '*/5 * * * *', callback: () => runEnrichment(db, services.metadata, log) },
-    { name: 'import', type: 'cron', schedule: '*/60 * * * * *', callback: async () => { await services.qualityGateOrchestrator.processCompletedDownloads(); await services.importOrchestrator.processCompletedDownloads(); } },
+    { name: 'import', type: 'cron', schedule: '*/60 * * * * *', callback: async () => { await services.qualityGateOrchestrator.processCompletedDownloads(); await services.importOrchestrator.processCompletedDownloads(); await services.qualityGateOrchestrator.cleanupDeferredRejections(); } },
     { name: 'search', type: 'timeout', getIntervalMinutes: () => services.settings.get('search').then((s) => s.intervalMinutes), callback: () => runSearchJob(services.settings, services.bookList, services.indexer, services.downloadOrchestrator, log, services.retryBudget) },
     { name: 'rss', type: 'timeout', getIntervalMinutes: () => services.settings.get('rss').then((s) => s.intervalMinutes), callback: () => runRssJob(services.settings, services.bookList, services.book, services.indexer, services.downloadOrchestrator, services.blacklist, log) },
     { name: 'backup', type: 'timeout', getIntervalMinutes: () => services.settings.get('system').then((s) => s.backupIntervalMinutes), callback: () => runBackupJob(services.backup, log) },
