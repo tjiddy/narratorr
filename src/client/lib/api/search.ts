@@ -47,6 +47,11 @@ export const searchApi = {
     return fetchApi<SearchResponse>(`/search?${params.toString()}`);
   },
 
+  cancelSearchIndexer: (sessionId: string, indexerId: number) =>
+    fetchApi<{ cancelled: boolean }>(`/search/stream/${sessionId}/cancel/${indexerId}`, {
+      method: 'POST',
+    }),
+
   searchGrab: (params: {
     downloadUrl: string;
     title: string;
