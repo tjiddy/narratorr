@@ -1478,11 +1478,52 @@ describe('SearchReleasesModal — streaming search (Phase 1/Phase 2)', () => {
   });
 
   describe('AC1 — modal overflow', () => {
-    it.todo('renders dialog wrapper with flex constraints that propagate max-height to scrollable body');
+    it('renders dialog wrapper with flex constraints that propagate max-height to scrollable body', () => {
+      setStreamResults(mockResults);
+
+      renderWithProviders(
+        <SearchReleasesModal isOpen={true} book={mockBook} onClose={vi.fn()} />,
+      );
+
+      const dialog = screen.getByRole('dialog');
+      // The dialog wrapper must be a flex column with min-h-0 to propagate max-height
+      // to the scrollable body. Without min-h-0, flex children default to min-height: auto
+      // and overflow past the parent's max-height.
+      expect(dialog.className).toMatch(/flex/);
+      expect(dialog.className).toMatch(/flex-col/);
+      expect(dialog.className).toMatch(/min-h-0/);
+    });
   });
 
   describe('AC2 — finalizing timeout error state', () => {
-    it.todo('renders error state with retry button when finalizing times out');
-    it.todo('renders normal results when search-complete arrives in time');
+    it('renders error state with retry button when finalizing times out', () => {
+      mockStreamState = {
+        phase: 'idle',
+        sessionId: null,
+        indexers: [],
+        results: null,
+        error: 'Search timed out waiting for results',
+        hasResults: false,
+        authReady: true,
+      };
+
+      renderWithProviders(
+        <SearchReleasesModal isOpen={true} book={mockBook} onClose={vi.fn()} />,
+      );
+
+      expect(screen.getByText(/Search timed out waiting for results/)).toBeInTheDocument();
+      expect(screen.getByText('Retry')).toBeInTheDocument();
+    });
+
+    it('renders normal results when search-complete arrives in time', () => {
+      setStreamResults(mockResults);
+
+      renderWithProviders(
+        <SearchReleasesModal isOpen={true} book={mockBook} onClose={vi.fn()} />,
+      );
+
+      expect(screen.getByText('The Way of Kings [Unabridged]')).toBeInTheDocument();
+      expect(screen.queryByText(/timed out/)).not.toBeInTheDocument();
+    });
   });
 });
