@@ -590,6 +590,59 @@ describe('IndexerCard — Prowlarr-managed indicators (AC8)', () => {
     });
   });
 
+  describe('create-mode MAM flow — searchLanguages and searchType (#291)', () => {
+    it('switches to MAM type, shows default English + active, toggles French, and submits with correct payload', async () => {
+      const onSubmit = vi.fn();
+      const user = userEvent.setup();
+
+      renderWithProviders(
+        <IndexerCard
+          mode="create"
+          onSubmit={onSubmit}
+          onFormTest={vi.fn()}
+        />,
+      );
+
+      // Switch type to myanonamouse
+      await user.selectOptions(screen.getByLabelText('Type'), 'myanonamouse');
+
+      // Fill required MAM ID
+      const mamIdInput = screen.getByLabelText('MAM ID');
+      await user.type(mamIdInput, 'test-mam-id');
+
+      // Fill name
+      await user.type(screen.getByPlaceholderText('MyAnonamouse'), 'My MAM');
+
+      // Verify defaults: English checked, search type = active (1)
+      expect(screen.getByLabelText('English')).toBeChecked();
+      expect(screen.getByLabelText('French')).not.toBeChecked();
+      expect(screen.getByLabelText('Search Type')).toHaveValue('1');
+
+      // Toggle French on
+      await user.click(screen.getByLabelText('French'));
+      expect(screen.getByLabelText('French')).toBeChecked();
+
+      // Change search type to Freeleech
+      await user.selectOptions(screen.getByLabelText('Search Type'), '2');
+
+      // Submit
+      await user.click(screen.getByText('Add Indexer'));
+
+      await waitFor(() => {
+        expect(onSubmit).toHaveBeenCalled();
+      });
+      expect(onSubmit.mock.calls[0][0]).toMatchObject({
+        name: 'My MAM',
+        type: 'myanonamouse',
+        settings: expect.objectContaining({
+          mamId: 'test-mam-id',
+          searchLanguages: expect.arrayContaining([1, 36]),
+          searchType: 2,
+        }),
+      });
+    });
+  });
+
   describe('edit-mode hydration — searchLanguages and searchType (#291)', () => {
     it('pre-fills saved searchLanguages and searchType when editing MAM indexer', () => {
       const mamIndexer: Indexer = createMockIndexer({
