@@ -694,8 +694,10 @@ describe('QualityGateService', () => {
       const reason = {
         action: 'held' as const,
         mbPerHour: 60, existingMbPerHour: 40, narratorMatch: false,
-        durationDelta: 0.05, codec: 'AAC', channels: 1,
-        probeFailure: false, holdReasons: ['narrator_mismatch'],
+        existingNarrator: null, downloadNarrator: null,
+        durationDelta: 0.05, existingDuration: null, downloadedDuration: null,
+        codec: 'AAC', channels: 1, existingCodec: null, existingChannels: null,
+        probeFailure: false, probeError: null, holdReasons: ['narrator_mismatch'],
       };
       db.select
         .mockReturnValueOnce(mockDbChain([{ ...baseDownload, status: 'pending_review' }]))
@@ -710,8 +712,10 @@ describe('QualityGateService', () => {
     const batchReason = {
       action: 'held' as const,
       mbPerHour: 60, existingMbPerHour: 40, narratorMatch: false,
-      durationDelta: 0.05, codec: 'AAC', channels: 1,
-      probeFailure: false, holdReasons: ['narrator_mismatch'],
+      existingNarrator: null, downloadNarrator: null,
+      durationDelta: 0.05, existingDuration: null, downloadedDuration: null,
+      codec: 'AAC', channels: 1, existingCodec: null, existingChannels: null,
+      probeFailure: false, probeError: null, holdReasons: ['narrator_mismatch'],
     };
 
     it('returns Map of downloadId → QualityDecisionReason for multiple downloads', async () => {
