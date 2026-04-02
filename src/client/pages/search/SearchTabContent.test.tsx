@@ -301,6 +301,25 @@ describe('#296 modal behavior', () => {
     expect(getModal()).not.toBeNull();
   });
 
+  it('Escape dismisses modal after API error', async () => {
+    const user = userEvent.setup();
+    mockedApi.addBook.mockRejectedValue(new Error('Server error'));
+    renderBooksTab([]);
+
+    await user.click(screen.getByRole('button', { name: /add manually/i }));
+    await user.type(screen.getByLabelText(/title/i), 'Test');
+    await user.click(screen.getByRole('button', { name: /add book/i }));
+
+    // Wait for error to surface
+    await waitFor(() => {
+      expect(getModal()).not.toBeNull();
+    });
+
+    // Escape should still work after error (not pending anymore)
+    await user.keyboard('{Escape}');
+    expect(getModal()).toBeNull();
+  });
+
   it('validation error (empty title) keeps modal open with error message visible', async () => {
     const user = userEvent.setup();
     renderBooksTab([]);
@@ -315,6 +334,56 @@ describe('#296 modal behavior', () => {
     // Modal stays open
     expect(getModal()).not.toBeNull();
     expect(mockedApi.addBook).not.toHaveBeenCalled();
+  });
+
+  it('Escape dismisses modal after validation error', async () => {
+    const user = userEvent.setup();
+    renderBooksTab([]);
+
+    await user.click(screen.getByRole('button', { name: /add manually/i }));
+    // Submit without title to trigger validation
+    await user.click(screen.getByRole('button', { name: /add book/i }));
+
+    await waitFor(() => {
+      expect(screen.getByText('Title is required')).toBeInTheDocument();
+    });
+
+    // Escape should still work after validation error
+    await user.keyboard('{Escape}');
+    expect(getModal()).toBeNull();
+  });
+
+  it('close button closes modal', async () => {
+    const user = userEvent.setup();
+    renderBooksTab([]);
+
+    await user.click(screen.getByRole('button', { name: /add manually/i }));
+    expect(getModal()).not.toBeNull();
+
+    await user.click(screen.getByRole('button', { name: /close/i }));
+    expect(getModal()).toBeNull();
+    expect(mockedApi.addBook).not.toHaveBeenCalled();
+  });
+
+  it('close button disabled while mutation is pending', async () => {
+    const user = userEvent.setup();
+    let resolveAdd!: (value: unknown) => void;
+    mockedApi.addBook.mockImplementation(() => new Promise((resolve) => { resolveAdd = resolve; }));
+    renderBooksTab([]);
+
+    await user.click(screen.getByRole('button', { name: /add manually/i }));
+    await user.type(screen.getByLabelText(/title/i), 'Test');
+    await user.click(screen.getByRole('button', { name: /add book/i }));
+
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: /close/i })).toBeDisabled();
+    });
+
+    // Resolve to clean up
+    resolveAdd({ id: 1, title: 'Test' });
+    await waitFor(() => {
+      expect(getModal()).toBeNull();
+    });
   });
 });
 
