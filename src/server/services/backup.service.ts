@@ -5,13 +5,9 @@ import os from 'os';
 import archiver from 'archiver';
 import unzipper from 'unzipper';
 import { createClient } from '@libsql/client';
-import { fileURLToPath } from 'url';
 import type { FastifyBaseLogger } from 'fastify';
 import type { Readable } from 'stream';
 import type { SettingsService } from './settings.service.js';
-
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const JOURNAL_PATH = path.join(__dirname, '../../../drizzle/meta/_journal.json');
 
 export interface BackupMetadata {
   filename: string;
@@ -60,15 +56,17 @@ export class BackupService {
     return this._pendingRestore;
   }
 
-  /** Get the app's current migration count from _journal.json */
+  /** Get the app's current migration count from the live database */
   private async getAppMigrationCount(): Promise<number> {
+    const client = createClient({ url: `file:${this.dbPath}` });
     try {
-      const journalRaw = await fs.readFile(JOURNAL_PATH, 'utf-8');
-      const journal = JSON.parse(journalRaw) as { entries: unknown[] };
-      return journal.entries.length;
+      const result = await client.execute('SELECT COUNT(*) as count FROM __drizzle_migrations');
+      return Number(result.rows[0].count);
     } catch {
-      this.log.warn('Could not read _journal.json, assuming 0 migrations');
+      this.log.warn('Could not query app migration count, assuming 0');
       return 0;
+    } finally {
+      client.close();
     }
   }
 

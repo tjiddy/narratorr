@@ -348,11 +348,12 @@ describe('BackupService', () => {
   });
 
   describe('validateRestore', () => {
-    it('falls back to appMigrationCount=0 and logs warning when _journal.json is unreadable', async () => {
-      // Spy on fs.readFile and make it throw for the journal path
-      const readFileSpy = vi.spyOn(fs, 'readFile').mockRejectedValueOnce(new Error('ENOENT'));
-      // sqlite_master check passes, backup has 1 migration
+    it('falls back to appMigrationCount=0 and logs warning when app DB query fails', async () => {
+      // First call: getAppMigrationCount — app DB query fails
+      mockExecute.mockRejectedValueOnce(new Error('database is locked'));
+      // Second call: sqlite_master check on backup DB — table exists
       mockExecute.mockResolvedValueOnce({ rows: [{ count: 1 }] });
+      // Third call: backup migration count
       mockExecute.mockResolvedValueOnce({ rows: [{ count: 1 }] });
 
       const mockLog = createMockLog() as unknown as { warn: ReturnType<typeof vi.fn>; [k: string]: unknown };
@@ -364,9 +365,7 @@ describe('BackupService', () => {
       expect(result.appMigrationCount).toBe(0);
       expect(result.backupMigrationCount).toBe(1);
       expect(result.error).toContain('newer version');
-      expect(mockLog.warn).toHaveBeenCalledWith('Could not read _journal.json, assuming 0 migrations');
-
-      readFileSpy.mockRestore();
+      expect(mockLog.warn).toHaveBeenCalledWith('Could not query app migration count, assuming 0');
     });
 
     it('returns valid=true for DB with same migration count as app', async () => {
@@ -381,21 +380,27 @@ describe('BackupService', () => {
     });
 
     it('returns valid=true for DB with fewer migrations than app', async () => {
-      // First call: sqlite_master table check (table exists)
+      // First call: getAppMigrationCount — app has 2 migrations
+      mockExecute.mockResolvedValueOnce({ rows: [{ count: 2 }] });
+      // Second call: sqlite_master table check (table exists)
       mockExecute.mockResolvedValueOnce({ rows: [{ count: 1 }] });
-      // Second call: migration count
+      // Third call: backup migration count — backup has 1
       mockExecute.mockResolvedValueOnce({ rows: [{ count: 1 }] });
 
       const service = new BackupService(configPath, dbPath, createMockSettingsService(), createMockLog());
       const result = await service.validateRestore('/tmp/test.db');
 
       expect(result.valid).toBe(true);
+      expect(result.appMigrationCount).toBe(2);
+      expect(result.backupMigrationCount).toBe(1);
     });
 
     it('returns valid=false for DB with more migrations than app', async () => {
-      // First call: sqlite_master table check (table exists)
+      // First call: getAppMigrationCount — app has 1
       mockExecute.mockResolvedValueOnce({ rows: [{ count: 1 }] });
-      // Second call: migration count
+      // Second call: sqlite_master table check (table exists)
+      mockExecute.mockResolvedValueOnce({ rows: [{ count: 1 }] });
+      // Third call: backup migration count — backup has 99
       mockExecute.mockResolvedValueOnce({ rows: [{ count: 99 }] });
 
       const service = new BackupService(configPath, dbPath, createMockSettingsService(), createMockLog());
@@ -407,7 +412,9 @@ describe('BackupService', () => {
 
     // #197 — structured table-existence check replaces string matching (ERR-1)
     it('detects missing migrations table via structured sqlite_master query (not message.includes)', async () => {
-      // sqlite_master returns 0 — table does not exist
+      // First call: getAppMigrationCount — app has 1
+      mockExecute.mockResolvedValueOnce({ rows: [{ count: 1 }] });
+      // Second call: sqlite_master returns 0 — table does not exist
       mockExecute.mockResolvedValueOnce({ rows: [{ count: 0 }] });
 
       const service = new BackupService(configPath, dbPath, createMockSettingsService(), createMockLog());
@@ -422,7 +429,9 @@ describe('BackupService', () => {
     });
 
     it('returns valid=false for DB without __drizzle_migrations table', async () => {
-      // sqlite_master returns 0 — table does not exist
+      // First call: getAppMigrationCount — app has 1
+      mockExecute.mockResolvedValueOnce({ rows: [{ count: 1 }] });
+      // Second call: sqlite_master returns 0 — table does not exist
       mockExecute.mockResolvedValueOnce({ rows: [{ count: 0 }] });
 
       const service = new BackupService(configPath, dbPath, createMockSettingsService(), createMockLog());
@@ -433,7 +442,10 @@ describe('BackupService', () => {
     });
 
     it('returns valid=false for invalid database file', async () => {
-      mockExecute.mockRejectedValue(new Error('file is not a database'));
+      // First call: getAppMigrationCount — succeeds
+      mockExecute.mockResolvedValueOnce({ rows: [{ count: 1 }] });
+      // Second call: backup DB sqlite_master query fails — not a real DB
+      mockExecute.mockRejectedValueOnce(new Error('file is not a database'));
 
       const service = new BackupService(configPath, dbPath, createMockSettingsService(), createMockLog());
       const result = await service.validateRestore('/tmp/test.db');
