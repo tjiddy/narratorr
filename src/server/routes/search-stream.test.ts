@@ -169,6 +169,31 @@ describe('searchStreamRoutes', () => {
       expect(data).toHaveProperty('unsupportedResults');
     });
 
+    it('streams indexer-cancelled event when onCancelled callback fires', async () => {
+      indexerService.searchAllStreaming = vi.fn().mockImplementation(
+        async (_q: string, _o: unknown, _c: Map<number, AbortController>, callbacks: {
+          onComplete: (indexerId: number, name: string, resultCount: number, elapsedMs: number) => void;
+          onError: (indexerId: number, name: string, error: string, elapsedMs: number) => void;
+          onCancelled: (indexerId: number, name: string) => void;
+        }) => {
+          callbacks.onCancelled(2, 'MAM');
+          return [];
+        },
+      );
+
+      const { reply, request, write } = createMockReplyAndRequest();
+      await streamHandler!(request, reply);
+
+      const cancelledCall = write.mock.calls.find(
+        (call: unknown[]) => typeof call[0] === 'string' && (call[0] as string).includes('event: indexer-cancelled'),
+      );
+      expect(cancelledCall).toBeDefined();
+
+      const dataLine = (cancelledCall![0] as string).split('\n').find((l: string) => l.startsWith('data: '));
+      const data = JSON.parse(dataLine!.replace('data: ', ''));
+      expect(data).toEqual({ indexerId: 2, name: 'MAM' });
+    });
+
     it('registers close handler for client disconnect cleanup', async () => {
       const { reply, request, onClose } = createMockReplyAndRequest();
       await streamHandler!(request, reply);

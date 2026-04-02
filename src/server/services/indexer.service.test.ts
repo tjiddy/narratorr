@@ -1276,7 +1276,7 @@ describe('IndexerService', () => {
       expect(results).toHaveLength(1);
     });
 
-    it('excludes cancelled indexer results', async () => {
+    it('excludes cancelled indexer results and calls onCancelled', async () => {
       db.select.mockReturnValue(mockDbChain([mockIndexer]));
 
       const controller = new AbortController();
@@ -1289,11 +1289,13 @@ describe('IndexerService', () => {
 
       const onComplete = vi.fn();
       const onError = vi.fn();
+      const onCancelled = vi.fn();
 
-      const results = await service.searchAllStreaming('test', undefined, controllers, { onComplete, onError });
+      const results = await service.searchAllStreaming('test', undefined, controllers, { onComplete, onError, onCancelled });
 
       expect(onComplete).not.toHaveBeenCalled();
       expect(onError).not.toHaveBeenCalled(); // Cancelled, not errored
+      expect(onCancelled).toHaveBeenCalledWith(mockIndexer.id, mockIndexer.name);
       expect(results).toHaveLength(0);
     });
 
