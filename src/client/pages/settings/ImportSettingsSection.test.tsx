@@ -221,6 +221,22 @@ describe('ImportSettingsSection', () => {
     });
   });
 
+  describe('field order', () => {
+    it.todo('renders fields in order: Delete After Import → Minimum Seed Time → Redownload Failed → Minimum Free Space');
+  });
+
+  describe('seed time disabled state', () => {
+    it.todo('seed time input is disabled when deleteAfterImport is off (default)');
+
+    it.todo('seed time input is enabled when deleteAfterImport is on');
+
+    it.todo('toggling delete off disables seed time');
+
+    it.todo('toggling delete on enables seed time');
+
+    it.todo('preserves edited minSeedTime in save payload when field is disabled');
+  });
+
   it('shows error toast on save failure', async () => {
     mockApi.updateSettings.mockRejectedValue(new Error('Save failed'));
     const user = userEvent.setup();
