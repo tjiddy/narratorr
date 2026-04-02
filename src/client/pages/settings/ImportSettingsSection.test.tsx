@@ -85,6 +85,10 @@ describe('ImportSettingsSection', () => {
   });
 
   it('allows changing the minimum seed time', async () => {
+    const enabledSettings = createMockSettings({
+      import: { deleteAfterImport: true, minSeedTime: 60, minFreeSpaceGB: 5, redownloadFailed: true },
+    });
+    mockApi.getSettings.mockResolvedValue(enabledSettings);
     const user = userEvent.setup();
     renderWithProviders(<ImportSettingsSection />);
 
@@ -99,7 +103,11 @@ describe('ImportSettingsSection', () => {
   });
 
   it('rejects minSeedTime < 0', async () => {
-    mockApi.updateSettings.mockResolvedValue(mockSettings);
+    const enabledSettings = createMockSettings({
+      import: { deleteAfterImport: true, minSeedTime: 60, minFreeSpaceGB: 5, redownloadFailed: true },
+    });
+    mockApi.getSettings.mockResolvedValue(enabledSettings);
+    mockApi.updateSettings.mockResolvedValue(enabledSettings);
     const user = userEvent.setup();
     renderWithProviders(<ImportSettingsSection />);
 
@@ -118,7 +126,11 @@ describe('ImportSettingsSection', () => {
   });
 
   it('sends edited minSeedTime in save payload', async () => {
-    mockApi.updateSettings.mockResolvedValue(mockSettings);
+    const enabledSettings = createMockSettings({
+      import: { deleteAfterImport: true, minSeedTime: 60, minFreeSpaceGB: 5, redownloadFailed: true },
+    });
+    mockApi.getSettings.mockResolvedValue(enabledSettings);
+    mockApi.updateSettings.mockResolvedValue(enabledSettings);
     const user = userEvent.setup();
     renderWithProviders(<ImportSettingsSection />);
 
@@ -133,7 +145,7 @@ describe('ImportSettingsSection', () => {
 
     await waitFor(() => {
       expect(mockApi.updateSettings).toHaveBeenCalledWith({
-        import: { deleteAfterImport: false, minSeedTime: 120, minFreeSpaceGB: 5, redownloadFailed: true },
+        import: { deleteAfterImport: true, minSeedTime: 120, minFreeSpaceGB: 5, redownloadFailed: true },
       });
     });
   });
@@ -222,19 +234,121 @@ describe('ImportSettingsSection', () => {
   });
 
   describe('field order', () => {
-    it.todo('renders fields in order: Delete After Import → Minimum Seed Time → Redownload Failed → Minimum Free Space');
+    it('renders fields in order: Delete After Import → Minimum Seed Time → Redownload Failed → Minimum Free Space', async () => {
+      renderWithProviders(<ImportSettingsSection />);
+
+      await waitFor(() => {
+        expect(screen.getByText('Delete After Import')).toBeInTheDocument();
+      });
+
+      const form = screen.getByText('Delete After Import').closest('form')!;
+      const labels = Array.from(form.querySelectorAll('label[for]')).map(
+        (el) => el.getAttribute('for'),
+      );
+
+      const deleteIdx = labels.indexOf('deleteAfterImport');
+      const seedIdx = labels.indexOf('minSeedTime');
+      const redownloadIdx = labels.indexOf('redownloadFailed');
+      const freeSpaceIdx = labels.indexOf('minFreeSpaceGB');
+
+      expect(deleteIdx).toBeGreaterThanOrEqual(0);
+      expect(seedIdx).toBeGreaterThan(deleteIdx);
+      expect(redownloadIdx).toBeGreaterThan(seedIdx);
+      expect(freeSpaceIdx).toBeGreaterThan(redownloadIdx);
+    });
   });
 
   describe('seed time disabled state', () => {
-    it.todo('seed time input is disabled when deleteAfterImport is off (default)');
+    it('seed time input is disabled when deleteAfterImport is off (default)', async () => {
+      renderWithProviders(<ImportSettingsSection />);
 
-    it.todo('seed time input is enabled when deleteAfterImport is on');
+      await waitFor(() => {
+        expect(screen.getByLabelText('Minimum Seed Time (minutes)')).toBeInTheDocument();
+      });
 
-    it.todo('toggling delete off disables seed time');
+      expect(screen.getByLabelText('Minimum Seed Time (minutes)')).toBeDisabled();
+    });
 
-    it.todo('toggling delete on enables seed time');
+    it('seed time input is enabled when deleteAfterImport is on', async () => {
+      const enabledSettings = createMockSettings({
+        import: { deleteAfterImport: true, minSeedTime: 60, minFreeSpaceGB: 5, redownloadFailed: true },
+      });
+      mockApi.getSettings.mockResolvedValue(enabledSettings);
+      renderWithProviders(<ImportSettingsSection />);
 
-    it.todo('preserves edited minSeedTime in save payload when field is disabled');
+      await waitFor(() => {
+        expect(screen.getByLabelText('Minimum Seed Time (minutes)')).not.toBeDisabled();
+      });
+    });
+
+    it('toggling delete off disables seed time', async () => {
+      const enabledSettings = createMockSettings({
+        import: { deleteAfterImport: true, minSeedTime: 60, minFreeSpaceGB: 5, redownloadFailed: true },
+      });
+      mockApi.getSettings.mockResolvedValue(enabledSettings);
+      const user = userEvent.setup();
+      renderWithProviders(<ImportSettingsSection />);
+
+      await waitFor(() => {
+        expect(screen.getByLabelText('Minimum Seed Time (minutes)')).not.toBeDisabled();
+      });
+
+      await user.click(screen.getByLabelText('Delete After Import'));
+
+      await waitFor(() => {
+        expect(screen.getByLabelText('Minimum Seed Time (minutes)')).toBeDisabled();
+      });
+    });
+
+    it('toggling delete on enables seed time', async () => {
+      const user = userEvent.setup();
+      renderWithProviders(<ImportSettingsSection />);
+
+      await waitFor(() => {
+        expect(screen.getByLabelText('Minimum Seed Time (minutes)')).toBeDisabled();
+      });
+
+      await user.click(screen.getByLabelText('Delete After Import'));
+
+      await waitFor(() => {
+        expect(screen.getByLabelText('Minimum Seed Time (minutes)')).not.toBeDisabled();
+      });
+    });
+
+    it('preserves edited minSeedTime in save payload when field is disabled', async () => {
+      const enabledSettings = createMockSettings({
+        import: { deleteAfterImport: true, minSeedTime: 60, minFreeSpaceGB: 5, redownloadFailed: true },
+      });
+      mockApi.getSettings.mockResolvedValue(enabledSettings);
+      mockApi.updateSettings.mockResolvedValue(enabledSettings);
+      const user = userEvent.setup();
+      renderWithProviders(<ImportSettingsSection />);
+
+      await waitFor(() => {
+        expect(screen.getByLabelText('Minimum Seed Time (minutes)')).not.toBeDisabled();
+      });
+
+      // Edit minSeedTime
+      const input = screen.getByLabelText('Minimum Seed Time (minutes)');
+      await user.tripleClick(input);
+      await user.keyboard('120');
+
+      // Toggle delete off — seed time becomes disabled
+      await user.click(screen.getByLabelText('Delete After Import'));
+
+      await waitFor(() => {
+        expect(screen.getByLabelText('Minimum Seed Time (minutes)')).toBeDisabled();
+      });
+
+      // Save — should include the edited minSeedTime value
+      await user.click(screen.getByRole('button', { name: /save/i }));
+
+      await waitFor(() => {
+        expect(mockApi.updateSettings).toHaveBeenCalledWith({
+          import: { deleteAfterImport: false, minSeedTime: 120, minFreeSpaceGB: 5, redownloadFailed: true },
+        });
+      });
+    });
   });
 
   it('shows error toast on save failure', async () => {
