@@ -1,5 +1,34 @@
 # Workflow Log
 
+## #301 Split reject into Reject (dismiss) and Reject & Search — 2026-04-02
+**Skill path:** /elaborate → /respond-to-spec-review (x2) → /implement → /claim → /plan → /handoff
+**Outcome:** success — PR #303
+
+### Metrics
+- Files changed: 12 | Tests added/modified: 24 new + 13 updated
+- Quality gate runs: 2 (pass on attempt 1 both times)
+- Fix iterations: 1 (existing orchestrator tests needed `{ retry: true }` after default behavior change)
+- Context compactions: 0
+
+### Workflow experience
+- What went smoothly: Clean separation of concerns — backend helper flag, orchestrator conditional, route schema, frontend prop threading all fell into place naturally
+- Friction / issues encountered: Fastify's body schema validation rejected empty POST bodies when using Zod `.optional().default({})`. Switched to manual safeParse in handler.
+
+### Token efficiency
+- Highest-token actions: Elaborate + 2 rounds of spec review responses consumed significant context before implementation started
+- Avoidable waste: Spec review caught the `rejected` status literal, `redownloadFailed` ambiguity, and null-qualityGate gap — these could have been caught during elaboration with deeper source reading
+- Suggestions: During elaboration, always verify status literals and setting interactions against source code before writing spec
+
+### Infrastructure gaps
+- Repeated workarounds: None
+- Missing tooling / config: frontend-design skill not available — design pass skipped
+- Unresolved debt: None introduced
+
+### Wish I'd Known
+1. Changing a method's default behavior (reject no longer blacklists) causes a blast radius across 9+ existing tests — grep for all callers before committing the production change
+2. Fastify body schema validation via `schema: { body: zodSchema }` doesn't handle empty POST bodies gracefully with `.optional().default({})` — use safeParse in the handler instead
+3. The `blacklistAndRetrySearch` helper separates blacklist eligibility (needs identifiers) from retry eligibility (needs book + deps) — reading the source before spec review would have prevented the F6 round-trip
+
 ## #298 Streaming search with indexer status view and per-indexer cancel — 2026-04-02
 **Skill path:** /elaborate → /respond-to-spec-review → /implement → /claim → /plan → /handoff
 **Outcome:** success — PR #302
