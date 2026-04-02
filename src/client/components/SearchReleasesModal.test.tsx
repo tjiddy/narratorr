@@ -28,12 +28,42 @@ vi.mock('@/lib/api', () => ({
     searchBooks: vi.fn(),
     searchGrab: vi.fn(),
     addToBlacklist: vi.fn(),
+    cancelSearchIndexer: vi.fn().mockResolvedValue({ cancelled: true }),
+    getAuthConfig: vi.fn().mockResolvedValue({ apiKey: 'test-key' }),
   },
   formatBytes: (bytes?: number) => {
     if (!bytes) return '0 B';
     return `${(bytes / (1024 * 1024 * 1024)).toFixed(1)} GB`;
   },
   ApiError: MockApiError,
+}));
+
+// Mock useSearchStream — existing tests provide results via mockStreamState
+const mockStreamActions = {
+  start: vi.fn(),
+  cancelIndexer: vi.fn(),
+  showResults: vi.fn(),
+  reset: vi.fn(),
+};
+
+let mockStreamState: {
+  phase: 'idle' | 'searching' | 'results';
+  sessionId: string | null;
+  indexers: Array<{ id: number; name: string; status: string; resultCount?: number; error?: string }>;
+  results: { results: SearchResult[]; durationUnknown: boolean; unsupportedResults: { count: number; titles: string[] } } | null;
+  error: string | null;
+  hasResults: boolean;
+} = {
+  phase: 'idle',
+  sessionId: null,
+  indexers: [],
+  results: null,
+  error: null,
+  hasResults: false,
+};
+
+vi.mock('@/hooks/useSearchStream', () => ({
+  useSearchStream: () => ({ state: mockStreamState, actions: mockStreamActions }),
 }));
 
 vi.mock('sonner', () => ({
@@ -81,8 +111,44 @@ function searchResponse(results: SearchResult[], unsupported?: { count: number; 
   };
 }
 
+/** Helper: set stream state to Phase 2 (results) with given data */
+function setStreamResults(results: SearchResult[], unsupported?: { count: number; titles: string[] }, durationUnknown = false) {
+  mockStreamState = {
+    phase: 'results',
+    sessionId: 'test-session',
+    indexers: [],
+    results: {
+      results,
+      durationUnknown,
+      unsupportedResults: unsupported ?? { count: 0, titles: [] },
+    },
+    error: null,
+    hasResults: results.length > 0,
+  };
+}
+
+/** Helper: set stream state to Phase 1 (searching) */
+function setStreamSearching(indexers: Array<{ id: number; name: string; status: string; resultCount?: number; error?: string }> = []) {
+  mockStreamState = {
+    phase: 'searching',
+    sessionId: 'test-session',
+    indexers,
+    results: null,
+    error: null,
+    hasResults: indexers.some(i => i.status === 'complete' && (i.resultCount ?? 0) > 0),
+  };
+}
+
 beforeEach(() => {
   vi.clearAllMocks();
+  mockStreamState = {
+    phase: 'idle',
+    sessionId: null,
+    indexers: [],
+    results: null,
+    error: null,
+    hasResults: false,
+  };
 });
 
 describe('SearchReleasesModal', () => {
@@ -95,7 +161,7 @@ describe('SearchReleasesModal', () => {
   });
 
   it('shows book title and author in header', async () => {
-    vi.mocked(api.searchBooks).mockResolvedValue(searchResponse(mockResults));
+    setStreamResults(mockResults);
 
     renderWithProviders(
       <SearchReleasesModal isOpen={true} book={mockBook} onClose={vi.fn()} />,
@@ -105,23 +171,20 @@ describe('SearchReleasesModal', () => {
     expect(screen.getByText('by Brandon Sanderson')).toBeInTheDocument();
   });
 
-  it('auto-searches with book title and author name', async () => {
-    vi.mocked(api.searchBooks).mockResolvedValue(searchResponse(mockResults));
+  it('auto-starts streaming search when opened', async () => {
+    setStreamResults(mockResults);
 
     renderWithProviders(
       <SearchReleasesModal isOpen={true} book={mockBook} onClose={vi.fn()} />,
     );
 
     await waitFor(() => {
-      expect(api.searchBooks).toHaveBeenCalledWith(
-        'The Way of Kings Brandon Sanderson',
-        { title: 'The Way of Kings', author: 'Brandon Sanderson', bookDuration: 3139200 },
-      );
+      expect(mockStreamActions.start).toHaveBeenCalled();
     });
   });
 
   it('shows loading state then results', async () => {
-    vi.mocked(api.searchBooks).mockResolvedValue(searchResponse(mockResults));
+    setStreamResults(mockResults);
 
     renderWithProviders(
       <SearchReleasesModal isOpen={true} book={mockBook} onClose={vi.fn()} />,
@@ -139,7 +202,7 @@ describe('SearchReleasesModal', () => {
   });
 
   it('shows empty state when no results', async () => {
-    vi.mocked(api.searchBooks).mockResolvedValue(searchResponse([]));
+    setStreamResults([]);
 
     renderWithProviders(
       <SearchReleasesModal isOpen={true} book={mockBook} onClose={vi.fn()} />,
@@ -151,7 +214,7 @@ describe('SearchReleasesModal', () => {
   });
 
   it('grab passes bookId and calls onClose on success', async () => {
-    vi.mocked(api.searchBooks).mockResolvedValue(searchResponse(mockResults));
+    setStreamResults(mockResults);
     vi.mocked(api.searchGrab).mockResolvedValue({
       id: 1,
       title: 'The Way of Kings [Unabridged]',
@@ -198,7 +261,7 @@ describe('SearchReleasesModal', () => {
   });
 
   it('does not call onClose when backdrop is clicked (closeOnBackdropClick={false})', async () => {
-    vi.mocked(api.searchBooks).mockResolvedValue(searchResponse([]));
+    setStreamResults([]);
     const onClose = vi.fn();
     const user = userEvent.setup();
 
@@ -212,7 +275,7 @@ describe('SearchReleasesModal', () => {
   });
 
   it('calls onClose when Escape is pressed', async () => {
-    vi.mocked(api.searchBooks).mockResolvedValue(searchResponse([]));
+    setStreamResults([]);
     const onClose = vi.fn();
     const user = userEvent.setup();
 
@@ -230,7 +293,7 @@ describe('SearchReleasesModal', () => {
       { ...mockResults[0], protocol: 'torrent' },
       { ...mockResults[1], protocol: 'usenet' },
     ];
-    vi.mocked(api.searchBooks).mockResolvedValue(searchResponse(mixedResults));
+    setStreamResults(mixedResults);
 
     renderWithProviders(
       <SearchReleasesModal isOpen={true} book={mockBook} onClose={vi.fn()} />,
@@ -249,7 +312,7 @@ describe('SearchReleasesModal', () => {
   });
 
   it('calls onClose when X button is clicked', async () => {
-    vi.mocked(api.searchBooks).mockResolvedValue(searchResponse([]));
+    setStreamResults([]);
     const onClose = vi.fn();
     const user = userEvent.setup();
 
@@ -266,7 +329,7 @@ describe('SearchReleasesModal', () => {
 
   describe('replacement confirmation flow', () => {
     it('shows ConfirmModal instead of error toast when grab returns 409 ACTIVE_DOWNLOAD_EXISTS', async () => {
-      vi.mocked(api.searchBooks).mockResolvedValue(searchResponse(mockResults));
+      setStreamResults(mockResults);
       vi.mocked(api.searchGrab).mockRejectedValue(new MockApiError(409, { code: 'ACTIVE_DOWNLOAD_EXISTS' }));
       const user = userEvent.setup();
 
@@ -284,7 +347,7 @@ describe('SearchReleasesModal', () => {
     });
 
     it('releases modal remains visible behind the confirmation modal', async () => {
-      vi.mocked(api.searchBooks).mockResolvedValue(searchResponse(mockResults));
+      setStreamResults(mockResults);
       vi.mocked(api.searchGrab).mockRejectedValue(new MockApiError(409, { code: 'ACTIVE_DOWNLOAD_EXISTS' }));
       const user = userEvent.setup();
 
@@ -303,7 +366,7 @@ describe('SearchReleasesModal', () => {
     });
 
     it('confirming replacement calls searchGrab with replaceExisting: true and same release params', async () => {
-      vi.mocked(api.searchBooks).mockResolvedValue(searchResponse(mockResults));
+      setStreamResults(mockResults);
       vi.mocked(api.searchGrab)
         .mockRejectedValueOnce(new MockApiError(409, { code: 'ACTIVE_DOWNLOAD_EXISTS' }))
         .mockResolvedValueOnce({
@@ -344,7 +407,7 @@ describe('SearchReleasesModal', () => {
     });
 
     it('both modals close and queue invalidates on replacement success', async () => {
-      vi.mocked(api.searchBooks).mockResolvedValue(searchResponse(mockResults));
+      setStreamResults(mockResults);
       vi.mocked(api.searchGrab)
         .mockRejectedValueOnce(new MockApiError(409, { code: 'ACTIVE_DOWNLOAD_EXISTS' }))
         .mockResolvedValueOnce({
@@ -379,7 +442,7 @@ describe('SearchReleasesModal', () => {
     });
 
     it('cancelling confirmation modal closes it and leaves releases modal open', async () => {
-      vi.mocked(api.searchBooks).mockResolvedValue(searchResponse(mockResults));
+      setStreamResults(mockResults);
       vi.mocked(api.searchGrab).mockRejectedValue(new MockApiError(409, { code: 'ACTIVE_DOWNLOAD_EXISTS' }));
       const onClose = vi.fn();
       const user = userEvent.setup();
@@ -406,7 +469,7 @@ describe('SearchReleasesModal', () => {
     });
 
     it('confirmed retry failure closes the confirm modal, keeps releases modal open, and shows an error toast', async () => {
-      vi.mocked(api.searchBooks).mockResolvedValue(searchResponse(mockResults));
+      setStreamResults(mockResults);
       vi.mocked(api.searchGrab)
         .mockRejectedValueOnce(new MockApiError(409, { code: 'ACTIVE_DOWNLOAD_EXISTS' }))
         .mockRejectedValue(new MockApiError(500, { error: 'Client unavailable' }));
@@ -435,7 +498,7 @@ describe('SearchReleasesModal', () => {
     });
 
     it('shows error toast for non-409 grab failures (not treated as replacement)', async () => {
-      vi.mocked(api.searchBooks).mockResolvedValue(searchResponse(mockResults));
+      setStreamResults(mockResults);
       vi.mocked(api.searchGrab).mockRejectedValue(new MockApiError(500, { error: 'Internal server error' }));
       const user = userEvent.setup();
 
@@ -454,7 +517,7 @@ describe('SearchReleasesModal', () => {
   });
 
   it('shows error toast when grab fails', async () => {
-    vi.mocked(api.searchBooks).mockResolvedValue(searchResponse(mockResults));
+    setStreamResults(mockResults);
     vi.mocked(api.searchGrab).mockRejectedValue(new Error('Download client unavailable'));
     const user = userEvent.setup();
 
@@ -485,7 +548,7 @@ describe('SearchReleasesModal', () => {
         indexer: 'TestIndexer',
       },
     ];
-    vi.mocked(api.searchBooks).mockResolvedValue(searchResponse(resultsWithoutUrl));
+    setStreamResults(resultsWithoutUrl);
 
     renderWithProviders(
       <SearchReleasesModal isOpen={true} book={mockBook} onClose={vi.fn()} />,
@@ -514,7 +577,7 @@ describe('SearchReleasesModal', () => {
         indexer: 'TestIndexer',
       },
     ];
-    vi.mocked(api.searchBooks).mockResolvedValue(searchResponse(resultsWithLongTitle));
+    setStreamResults(resultsWithLongTitle);
 
     renderWithProviders(
       <SearchReleasesModal isOpen={true} book={mockBook} onClose={vi.fn()} />,
@@ -565,7 +628,7 @@ describe('SearchReleasesModal', () => {
     };
 
     it('shows warning indicator for lower quality release on imported book', async () => {
-      vi.mocked(api.searchBooks).mockResolvedValue(searchResponse([lowerQualityResult]));
+      setStreamResults([lowerQualityResult]);
 
       renderWithProviders(
         <SearchReleasesModal isOpen={true} book={importedBook} onClose={vi.fn()} />,
@@ -577,7 +640,7 @@ describe('SearchReleasesModal', () => {
     });
 
     it('does not show warning for higher quality release on imported book', async () => {
-      vi.mocked(api.searchBooks).mockResolvedValue(searchResponse([higherQualityResult]));
+      setStreamResults([higherQualityResult]);
 
       renderWithProviders(
         <SearchReleasesModal isOpen={true} book={importedBook} onClose={vi.fn()} />,
@@ -590,7 +653,7 @@ describe('SearchReleasesModal', () => {
     });
 
     it('does not show quality comparison for non-imported book', async () => {
-      vi.mocked(api.searchBooks).mockResolvedValue(searchResponse([lowerQualityResult]));
+      setStreamResults([lowerQualityResult]);
 
       renderWithProviders(
         <SearchReleasesModal isOpen={true} book={mockBook} onClose={vi.fn()} />,
@@ -603,7 +666,7 @@ describe('SearchReleasesModal', () => {
     });
 
     it('warning tooltip explains existing quality is better', async () => {
-      vi.mocked(api.searchBooks).mockResolvedValue(searchResponse([lowerQualityResult]));
+      setStreamResults([lowerQualityResult]);
 
       renderWithProviders(
         <SearchReleasesModal isOpen={true} book={importedBook} onClose={vi.fn()} />,
@@ -615,7 +678,7 @@ describe('SearchReleasesModal', () => {
     });
 
     it('warning does not disable grab button', async () => {
-      vi.mocked(api.searchBooks).mockResolvedValue(searchResponse([lowerQualityResult]));
+      setStreamResults([lowerQualityResult]);
 
       renderWithProviders(
         <SearchReleasesModal isOpen={true} book={importedBook} onClose={vi.fn()} />,
@@ -636,7 +699,7 @@ describe('SearchReleasesModal', () => {
         size: null,
         audioDuration: 36000,
       });
-      vi.mocked(api.searchBooks).mockResolvedValue(searchResponse([lowerQualityResult]));
+      setStreamResults([lowerQualityResult]);
 
       renderWithProviders(
         <SearchReleasesModal isOpen={true} book={importedNoSize} onClose={vi.fn()} />,
@@ -656,7 +719,7 @@ describe('SearchReleasesModal', () => {
         audioDuration: null,
         duration: null,
       });
-      vi.mocked(api.searchBooks).mockResolvedValue(searchResponse([lowerQualityResult]));
+      setStreamResults([lowerQualityResult]);
 
       renderWithProviders(
         <SearchReleasesModal isOpen={true} book={importedNoDuration} onClose={vi.fn()} />,
@@ -682,7 +745,7 @@ describe('SearchReleasesModal', () => {
         indexer: 'TestIndexer',
       },
     ];
-    vi.mocked(api.searchBooks).mockResolvedValue(searchResponse(resultsWithoutHash));
+    setStreamResults(resultsWithoutHash);
 
     renderWithProviders(
       <SearchReleasesModal isOpen={true} book={mockBook} onClose={vi.fn()} />,
@@ -697,7 +760,7 @@ describe('SearchReleasesModal', () => {
   });
 
   it('blacklists a search result with reason: other and shows success toast', async () => {
-    vi.mocked(api.searchBooks).mockResolvedValue(searchResponse(mockResults));
+    setStreamResults(mockResults);
     vi.mocked(api.addToBlacklist).mockResolvedValue({
       id: 1,
       infoHash: 'abc123',
@@ -732,7 +795,7 @@ describe('SearchReleasesModal', () => {
   });
 
   it('shows error toast when blacklist fails', async () => {
-    vi.mocked(api.searchBooks).mockResolvedValue(searchResponse(mockResults));
+    setStreamResults(mockResults);
     vi.mocked(api.addToBlacklist).mockRejectedValue(new Error('Server error'));
     const user = userEvent.setup();
 
@@ -751,9 +814,7 @@ describe('SearchReleasesModal', () => {
   });
 
   it('Grab, Blacklist, and unsupported-toggle buttons have explicit type="button"', async () => {
-    vi.mocked(api.searchBooks).mockResolvedValue(
-      searchResponse(mockResults, { count: 1, titles: ['Part "1" of "2"'] }),
-    );
+    setStreamResults(mockResults, { count: 1, titles: ['Part "1" of "2"'] });
 
     renderWithProviders(
       <SearchReleasesModal isOpen={true} book={mockBook} onClose={vi.fn()} />,
@@ -771,8 +832,8 @@ describe('SearchReleasesModal', () => {
     expect(toggleBtn).toHaveAttribute('type', 'button');
   });
 
-  it('refresh button is disabled while query is fetching', () => {
-    vi.mocked(api.searchBooks).mockReturnValue(new Promise(() => {})); // never resolves
+  it('refresh button is disabled while searching', () => {
+    setStreamSearching([{ id: 1, name: 'ABB', status: 'pending' }]);
 
     renderWithProviders(
       <SearchReleasesModal isOpen={true} book={mockBook} onClose={vi.fn()} />,
@@ -781,26 +842,8 @@ describe('SearchReleasesModal', () => {
     expect(screen.getByLabelText('Refresh results')).toBeDisabled();
   });
 
-  it('refresh button click triggers a refetch', async () => {
-    vi.mocked(api.searchBooks)
-      .mockResolvedValueOnce(searchResponse(mockResults))
-      .mockResolvedValue(searchResponse([]));
-    const user = userEvent.setup();
-
-    renderWithProviders(
-      <SearchReleasesModal isOpen={true} book={mockBook} onClose={vi.fn()} />,
-    );
-
-    await screen.findByText('The Way of Kings [Unabridged]');
-    await user.click(screen.getByLabelText('Refresh results'));
-
-    await waitFor(() => {
-      expect(api.searchBooks).toHaveBeenCalledTimes(2);
-    });
-  });
-
   it('grab buttons are all disabled while a grab mutation is pending', async () => {
-    vi.mocked(api.searchBooks).mockResolvedValue(searchResponse(mockResults));
+    setStreamResults(mockResults);
     vi.mocked(api.searchGrab).mockReturnValue(new Promise(() => {})); // never resolves
     const user = userEvent.setup();
 
@@ -820,7 +863,7 @@ describe('SearchReleasesModal', () => {
   });
 
   it('blacklist buttons are all disabled while a blacklist mutation is pending', async () => {
-    vi.mocked(api.searchBooks).mockResolvedValue(searchResponse(mockResults));
+    setStreamResults(mockResults);
     vi.mocked(api.addToBlacklist).mockReturnValue(new Promise(() => {})); // never resolves
     const user = userEvent.setup();
 
@@ -840,7 +883,7 @@ describe('SearchReleasesModal', () => {
   });
 
   it('invalidates books and activity queries on successful grab', async () => {
-    vi.mocked(api.searchBooks).mockResolvedValue(searchResponse(mockResults));
+    setStreamResults(mockResults);
     vi.mocked(api.searchGrab).mockResolvedValue({
       id: 1,
       title: 'The Way of Kings [Unabridged]',
@@ -875,11 +918,7 @@ describe('SearchReleasesModal', () => {
 
 describe('SearchReleasesModal duration unknown', () => {
   it('shows duration unknown banner when durationUnknown is true', async () => {
-    vi.mocked(api.searchBooks).mockResolvedValue({
-      results: mockResults,
-      durationUnknown: true,
-      unsupportedResults: { count: 0, titles: [] },
-    });
+    setStreamResults(mockResults, undefined, true);
 
     renderWithProviders(
       <SearchReleasesModal isOpen={true} book={mockBook} onClose={vi.fn()} />,
@@ -894,7 +933,7 @@ describe('SearchReleasesModal duration unknown', () => {
   });
 
   it('does not show duration unknown banner when durationUnknown is false', async () => {
-    vi.mocked(api.searchBooks).mockResolvedValue(searchResponse(mockResults));
+    setStreamResults(mockResults);
 
     renderWithProviders(
       <SearchReleasesModal isOpen={true} book={mockBook} onClose={vi.fn()} />,
@@ -912,10 +951,7 @@ describe('SearchReleasesModal duration unknown', () => {
 
 describe('SearchReleasesModal unsupported results', () => {
   it('shows collapsed unsupported section when count > 0', async () => {
-    vi.mocked(api.searchBooks).mockResolvedValue(searchResponse(mockResults, {
-      count: 3,
-      titles: ['Book "1" of "3"', 'Book "2" of "3"', 'Book "3" of "3"'],
-    }));
+    setStreamResults(mockResults, { count: 3, titles: ['Book "1" of "3"', 'Book "2" of "3"', 'Book "3" of "3"'] });
 
     renderWithProviders(
       <SearchReleasesModal isOpen={true} book={mockBook} onClose={vi.fn()} />,
@@ -932,7 +968,7 @@ describe('SearchReleasesModal unsupported results', () => {
   });
 
   it('does not render unsupported section when count is 0', async () => {
-    vi.mocked(api.searchBooks).mockResolvedValue(searchResponse(mockResults));
+    setStreamResults(mockResults);
 
     renderWithProviders(
       <SearchReleasesModal isOpen={true} book={mockBook} onClose={vi.fn()} />,
@@ -949,10 +985,7 @@ describe('SearchReleasesModal unsupported results', () => {
 
   it('expands to show raw titles when clicked', async () => {
     const unsupportedTitles = ['hp02.Harry Potter "28" of "30" yEnc', 'hp02.Harry Potter "29" of "30" yEnc'];
-    vi.mocked(api.searchBooks).mockResolvedValue(searchResponse([], {
-      count: 2,
-      titles: unsupportedTitles,
-    }));
+    setStreamResults([], { count: 2, titles: unsupportedTitles });
     const user = userEvent.setup();
 
     renderWithProviders(
@@ -974,10 +1007,7 @@ describe('SearchReleasesModal unsupported results', () => {
   });
 
   it('shows unsupported section alongside normal results', async () => {
-    vi.mocked(api.searchBooks).mockResolvedValue(searchResponse(mockResults, {
-      count: 5,
-      titles: ['Ch1', 'Ch2', 'Ch3', 'Ch4', 'Ch5'],
-    }));
+    setStreamResults(mockResults, { count: 5, titles: ['Ch1', 'Ch2', 'Ch3', 'Ch4', 'Ch5'] });
 
     renderWithProviders(
       <SearchReleasesModal isOpen={true} book={mockBook} onClose={vi.fn()} />,
@@ -1012,7 +1042,7 @@ describe('SearchReleasesModal unsupported results', () => {
           indexer: 'NZBgeek',
         },
       ];
-      vi.mocked(api.searchBooks).mockResolvedValue(searchResponse(usenetResults));
+      setStreamResults(usenetResults);
 
       renderWithProviders(
         <SearchReleasesModal isOpen={true} book={mockBook} onClose={vi.fn()} />,
@@ -1047,7 +1077,7 @@ describe('SearchReleasesModal unsupported results', () => {
           indexer: 'NZBgeek',
         },
       ];
-      vi.mocked(api.searchBooks).mockResolvedValue(searchResponse(dupeResults));
+      setStreamResults(dupeResults);
 
       renderWithProviders(
         <SearchReleasesModal isOpen={true} book={mockBook} onClose={vi.fn()} />,
@@ -1076,9 +1106,7 @@ describe('SearchReleasesModal unsupported results', () => {
     };
 
     it('hides size field when result.size is -1 (negative sentinel)', async () => {
-      vi.mocked(api.searchBooks).mockResolvedValue(
-        searchResponse([{ ...baseResult, size: -1 }]),
-      );
+      setStreamResults([{ ...baseResult, size: -1 }]);
 
       renderWithProviders(<SearchReleasesModal isOpen={true} book={mockBook} onClose={vi.fn()} />);
 
@@ -1091,9 +1119,7 @@ describe('SearchReleasesModal unsupported results', () => {
     });
 
     it('hides size field when result.size is 0', async () => {
-      vi.mocked(api.searchBooks).mockResolvedValue(
-        searchResponse([{ ...baseResult, size: 0 }]),
-      );
+      setStreamResults([{ ...baseResult, size: 0 }]);
 
       renderWithProviders(<SearchReleasesModal isOpen={true} book={mockBook} onClose={vi.fn()} />);
 
@@ -1106,9 +1132,7 @@ describe('SearchReleasesModal unsupported results', () => {
     });
 
     it('hides size field when result.size is null', async () => {
-      vi.mocked(api.searchBooks).mockResolvedValue(
-        searchResponse([{ ...baseResult, size: null as unknown as number }]),
-      );
+      setStreamResults([{ ...baseResult, size: null as unknown as number }]);
 
       renderWithProviders(<SearchReleasesModal isOpen={true} book={mockBook} onClose={vi.fn()} />);
 
@@ -1121,9 +1145,7 @@ describe('SearchReleasesModal unsupported results', () => {
 
     it('shows size field when result.size is a valid positive number', async () => {
       const size = 500 * 1024 * 1024;
-      vi.mocked(api.searchBooks).mockResolvedValue(
-        searchResponse([{ ...baseResult, size }]),
-      );
+      setStreamResults([{ ...baseResult, size }]);
 
       renderWithProviders(<SearchReleasesModal isOpen={true} book={mockBook} onClose={vi.fn()} />);
 
@@ -1138,7 +1160,7 @@ describe('SearchReleasesModal unsupported results', () => {
 
   describe('nested ConfirmModal stacking', () => {
     it('inner ConfirmModal is interactive and visible while SearchReleasesModal is open', async () => {
-      vi.mocked(api.searchBooks).mockResolvedValue(searchResponse(mockResults));
+      setStreamResults(mockResults);
       vi.mocked(api.searchGrab).mockRejectedValue(new MockApiError(409, { code: 'ACTIVE_DOWNLOAD_EXISTS' }));
       const user = userEvent.setup();
 
@@ -1168,7 +1190,7 @@ describe('SearchReleasesModal unsupported results', () => {
     });
 
     it('clicking ConfirmModal backdrop closes only the inner ConfirmModal, not SearchReleasesModal', async () => {
-      vi.mocked(api.searchBooks).mockResolvedValue(searchResponse(mockResults));
+      setStreamResults(mockResults);
       vi.mocked(api.searchGrab).mockRejectedValue(new MockApiError(409, { code: 'ACTIVE_DOWNLOAD_EXISTS' }));
       const onClose = vi.fn();
       const user = userEvent.setup();
@@ -1224,9 +1246,7 @@ describe('ReleaseCard', () => {
       seeders: 1,
       indexer: 'Test',
     };
-    vi.mocked(api.searchBooks).mockResolvedValue(
-      searchResponse([withNarrator, withoutNarrator]),
-    );
+    setStreamResults([withNarrator, withoutNarrator]);
 
     renderWithProviders(
       <SearchReleasesModal isOpen={true} book={mockBook} onClose={vi.fn()} />,
@@ -1247,31 +1267,194 @@ describe('ReleaseCard', () => {
 
 describe('SearchReleasesModal — streaming search (Phase 1/Phase 2)', () => {
   describe('Phase 1 — Indexer status view', () => {
-    it.todo('renders indexer list with pending status indicators when stream starts');
-    it.todo('updates indexer status to complete with result count as events arrive');
-    it.todo('updates indexer status to error with message on indexer-error event');
-    it.todo('shows cancelled status after cancel button click');
-    it.todo('cancel button hidden for already-completed indexers');
-    it.todo('cancel button hidden for already-failed indexers');
+    it('renders indexer list with pending status indicators when stream starts', () => {
+      setStreamSearching([
+        { id: 1, name: 'AudioBookBay', status: 'pending' },
+        { id: 2, name: 'MAM', status: 'pending' },
+      ]);
+
+      renderWithProviders(
+        <SearchReleasesModal isOpen={true} book={mockBook} onClose={vi.fn()} />,
+      );
+
+      expect(screen.getByText('AudioBookBay')).toBeInTheDocument();
+      expect(screen.getByText('MAM')).toBeInTheDocument();
+      expect(screen.getAllByText('Searching...')).toHaveLength(2);
+    });
+
+    it('shows result count for completed indexer', () => {
+      setStreamSearching([
+        { id: 1, name: 'AudioBookBay', status: 'complete', resultCount: 5 },
+        { id: 2, name: 'MAM', status: 'pending' },
+      ]);
+
+      renderWithProviders(
+        <SearchReleasesModal isOpen={true} book={mockBook} onClose={vi.fn()} />,
+      );
+
+      expect(screen.getByText('5 results')).toBeInTheDocument();
+      expect(screen.getByText('Searching...')).toBeInTheDocument();
+    });
+
+    it('shows error message for failed indexer', () => {
+      setStreamSearching([
+        { id: 1, name: 'AudioBookBay', status: 'error', error: 'FlareSolverr timed out' },
+      ]);
+
+      renderWithProviders(
+        <SearchReleasesModal isOpen={true} book={mockBook} onClose={vi.fn()} />,
+      );
+
+      expect(screen.getByText('FlareSolverr timed out')).toBeInTheDocument();
+    });
+
+    it('cancel button hidden for already-completed indexers', () => {
+      setStreamSearching([
+        { id: 1, name: 'AudioBookBay', status: 'complete', resultCount: 3 },
+        { id: 2, name: 'MAM', status: 'pending' },
+      ]);
+
+      renderWithProviders(
+        <SearchReleasesModal isOpen={true} book={mockBook} onClose={vi.fn()} />,
+      );
+
+      // Only one Cancel button (for the pending indexer)
+      const cancelButtons = screen.getAllByText('Cancel');
+      expect(cancelButtons).toHaveLength(1);
+    });
+
+    it('calls cancelIndexer when cancel button is clicked', async () => {
+      setStreamSearching([
+        { id: 1, name: 'AudioBookBay', status: 'pending' },
+      ]);
+      const user = userEvent.setup();
+
+      renderWithProviders(
+        <SearchReleasesModal isOpen={true} book={mockBook} onClose={vi.fn()} />,
+      );
+
+      await user.click(screen.getByText('Cancel'));
+      expect(mockStreamActions.cancelIndexer).toHaveBeenCalledWith(1);
+    });
   });
 
   describe('Show results button', () => {
-    it.todo('appears after first indexer completes with raw results (count > 0)');
-    it.todo('does not appear when indexer completes with 0 results');
-    it.todo('cancels all remaining pending indexers on click');
-    it.todo('transitions to Phase 2 results view on click');
+    it('appears when hasResults is true', () => {
+      mockStreamState = {
+        phase: 'searching',
+        sessionId: 'test',
+        indexers: [{ id: 1, name: 'ABB', status: 'complete', resultCount: 3 }],
+        results: null,
+        error: null,
+        hasResults: true,
+      };
+
+      renderWithProviders(
+        <SearchReleasesModal isOpen={true} book={mockBook} onClose={vi.fn()} />,
+      );
+
+      expect(screen.getByText('Show results')).toBeInTheDocument();
+    });
+
+    it('does not appear when hasResults is false', () => {
+      setStreamSearching([
+        { id: 1, name: 'ABB', status: 'complete', resultCount: 0 },
+      ]);
+
+      renderWithProviders(
+        <SearchReleasesModal isOpen={true} book={mockBook} onClose={vi.fn()} />,
+      );
+
+      expect(screen.queryByText('Show results')).not.toBeInTheDocument();
+    });
+
+    it('calls showResults when clicked', async () => {
+      mockStreamState = {
+        phase: 'searching',
+        sessionId: 'test',
+        indexers: [{ id: 1, name: 'ABB', status: 'complete', resultCount: 3 }],
+        results: null,
+        error: null,
+        hasResults: true,
+      };
+      const user = userEvent.setup();
+
+      renderWithProviders(
+        <SearchReleasesModal isOpen={true} book={mockBook} onClose={vi.fn()} />,
+      );
+
+      await user.click(screen.getByText('Show results'));
+      expect(mockStreamActions.showResults).toHaveBeenCalled();
+    });
   });
 
   describe('Phase 2 — Results view', () => {
-    it.todo('automatic transition when all indexers settle');
-    it.todo('shows empty state when all indexers return 0 results');
-    it.todo('renders duration-unknown banner when durationUnknown is true');
-    it.todo('renders unsupported results section when count > 0');
-    it.todo('renders scored results list in Phase 2');
+    it('shows empty state when results are empty', () => {
+      setStreamResults([]);
+
+      renderWithProviders(
+        <SearchReleasesModal isOpen={true} book={mockBook} onClose={vi.fn()} />,
+      );
+
+      expect(screen.getByText('No releases found')).toBeInTheDocument();
+    });
+
+    it('renders duration-unknown banner when durationUnknown is true', () => {
+      setStreamResults(mockResults, undefined, true);
+
+      renderWithProviders(
+        <SearchReleasesModal isOpen={true} book={mockBook} onClose={vi.fn()} />,
+      );
+
+      expect(screen.getByText(/duration unknown/i)).toBeInTheDocument();
+    });
+
+    it('renders unsupported results section when count > 0', () => {
+      setStreamResults(mockResults, { count: 2, titles: ['Part 1', 'Part 2'] });
+
+      renderWithProviders(
+        <SearchReleasesModal isOpen={true} book={mockBook} onClose={vi.fn()} />,
+      );
+
+      expect(screen.getByText('Found, but unsupported format (2)')).toBeInTheDocument();
+    });
   });
 
   describe('error handling', () => {
-    it.todo('shows error state on SSE connection failure');
-    it.todo('allows retry after connection error');
+    it('shows error state on SSE connection failure', () => {
+      mockStreamState = {
+        phase: 'idle',
+        sessionId: null,
+        indexers: [],
+        results: null,
+        error: 'Search connection failed',
+        hasResults: false,
+      };
+
+      renderWithProviders(
+        <SearchReleasesModal isOpen={true} book={mockBook} onClose={vi.fn()} />,
+      );
+
+      expect(screen.getByText('Search failed: Search connection failed')).toBeInTheDocument();
+    });
+
+    it('shows retry button after connection error', async () => {
+      mockStreamState = {
+        phase: 'idle',
+        sessionId: null,
+        indexers: [],
+        results: null,
+        error: 'Search connection failed',
+        hasResults: false,
+      };
+      const user = userEvent.setup();
+
+      renderWithProviders(
+        <SearchReleasesModal isOpen={true} book={mockBook} onClose={vi.fn()} />,
+      );
+
+      await user.click(screen.getByText('Retry'));
+      expect(mockStreamActions.start).toHaveBeenCalled();
+    });
   });
 });
