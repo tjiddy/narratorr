@@ -14,8 +14,12 @@ const baseGateData: QualityGateData = {
   existingNarrator: null,
   downloadNarrator: null,
   durationDelta: 0.05,
+  existingDuration: null,
+  downloadedDuration: null,
   codec: 'AAC',
   channels: 1,
+  existingCodec: null,
+  existingChannels: null,
   probeFailure: false,
   probeError: null,
   holdReasons: ['narrator_mismatch'],
@@ -192,22 +196,116 @@ describe('QualityComparisonPanel — probe error display', () => {
 });
 
 describe('QualityComparisonPanel — existing audio metadata display', () => {
-  it.todo('renders existing codec in Current column when existingCodec is non-null');
-  it.todo('renders existing channels with Mono/Stereo/Nch formatting when existingChannels is non-null');
-  it.todo('renders existing duration formatted as "Xh Ym" when existingDuration is non-null');
-  it.todo('renders downloadedDuration formatted as "Xh Ym" in Downloaded column');
-  it.todo('shows absolute duration values for both sides (not relative delta %)');
-  it.todo('flags duration row when durationDelta exceeds 15% tolerance');
-  it.todo('does NOT flag duration row when delta is exactly 15% (boundary exclusive)');
-  it.todo('shows dashes when existing codec/channels/duration are null');
-  it.todo('does NOT render codec row when both existing and downloaded codec are null');
-  it.todo('does NOT render channels row when both existing and downloaded channels are null');
-  it.todo('does NOT render duration row when both existingDuration and downloadedDuration are null');
-  it.todo('renders channels formatting: 1→Mono, 2→Stereo, 6→6ch for existing side');
+  it('renders existing codec in Current column when existingCodec is non-null', () => {
+    render(<QualityComparisonPanel data={{ ...baseGateData, existingCodec: 'AAC', codec: 'MP3' }} />);
+    expect(screen.getByText('AAC')).toBeInTheDocument();
+    expect(screen.getByText('MP3')).toBeInTheDocument();
+  });
+
+  it('renders existing channels with Mono/Stereo/Nch formatting when existingChannels is non-null', () => {
+    render(<QualityComparisonPanel data={{ ...baseGateData, existingChannels: 2, channels: 1 }} />);
+    expect(screen.getByText('Stereo')).toBeInTheDocument();
+    expect(screen.getByText('Mono')).toBeInTheDocument();
+  });
+
+  it('renders existing duration formatted as "Xh Ym" when existingDuration is non-null', () => {
+    render(<QualityComparisonPanel data={{ ...baseGateData, existingDuration: 51840, downloadedDuration: 51840, durationDelta: 0 }} />);
+    // 51840s = 14h 24m
+    expect(screen.getAllByText('14h 24m')).toHaveLength(2);
+  });
+
+  it('renders downloadedDuration formatted as "Xh Ym" in Downloaded column', () => {
+    render(<QualityComparisonPanel data={{ ...baseGateData, existingDuration: null, downloadedDuration: 3660, durationDelta: null }} />);
+    // 3660s = 1h 1m
+    expect(screen.getByText('1h 1m')).toBeInTheDocument();
+  });
+
+  it('shows absolute duration values for both sides (not relative delta %)', () => {
+    render(<QualityComparisonPanel data={{ ...baseGateData, existingDuration: 7200, downloadedDuration: 7500, durationDelta: 0.042 }} />);
+    expect(screen.getByText('2h 0m')).toBeInTheDocument();
+    expect(screen.getByText('2h 5m')).toBeInTheDocument();
+    // Should NOT render delta percentage
+    expect(screen.queryByText('+4%')).not.toBeInTheDocument();
+  });
+
+  it('flags duration row when durationDelta exceeds 15% tolerance', () => {
+    const { container } = render(<QualityComparisonPanel data={{
+      ...baseGateData, existingDuration: 7200, downloadedDuration: 9000,
+      durationDelta: 0.25, narratorMatch: null,
+    }} />);
+    // Should have a warning icon on the duration row
+    expect(container.querySelectorAll('svg').length).toBeGreaterThanOrEqual(1);
+  });
+
+  it('does NOT flag duration row when delta is exactly 15% (boundary exclusive)', () => {
+    const { container } = render(<QualityComparisonPanel data={{
+      ...baseGateData, existingDuration: 7200, downloadedDuration: 8280,
+      durationDelta: 0.15, narratorMatch: null, codec: null, channels: null,
+      existingCodec: null, existingChannels: null,
+    }} />);
+    expect(container.querySelectorAll('svg')).toHaveLength(0);
+  });
+
+  it('shows dashes when existing codec/channels/duration are null', () => {
+    const { container } = render(<QualityComparisonPanel data={{
+      ...baseGateData, existingCodec: null, existingChannels: null, existingDuration: null,
+      codec: 'AAC', channels: 2, downloadedDuration: 7200, durationDelta: null,
+    }} />);
+    const dashes = Array.from(container.querySelectorAll('*')).filter(el => el.textContent === '—');
+    expect(dashes.length).toBeGreaterThanOrEqual(3);
+  });
+
+  it('does NOT render codec row when both existing and downloaded codec are null', () => {
+    render(<QualityComparisonPanel data={{ ...baseGateData, existingCodec: null, codec: null }} />);
+    expect(screen.queryByText('Codec')).not.toBeInTheDocument();
+  });
+
+  it('does NOT render channels row when both existing and downloaded channels are null', () => {
+    render(<QualityComparisonPanel data={{ ...baseGateData, existingChannels: null, channels: null }} />);
+    expect(screen.queryByText('Channels')).not.toBeInTheDocument();
+  });
+
+  it('does NOT render duration row when both existingDuration and downloadedDuration are null', () => {
+    render(<QualityComparisonPanel data={{ ...baseGateData, existingDuration: null, downloadedDuration: null, durationDelta: null }} />);
+    expect(screen.queryByText('Duration')).not.toBeInTheDocument();
+  });
+
+  it('renders channels formatting: 1→Mono, 2→Stereo, 6→6ch for existing side', () => {
+    const { rerender } = render(<QualityComparisonPanel data={{ ...baseGateData, existingChannels: 1, channels: 1 }} />);
+    expect(screen.getAllByText('Mono')).toHaveLength(2);
+
+    rerender(<QualityComparisonPanel data={{ ...baseGateData, existingChannels: 2, channels: 2 }} />);
+    expect(screen.getAllByText('Stereo')).toHaveLength(2);
+
+    rerender(<QualityComparisonPanel data={{ ...baseGateData, existingChannels: 6, channels: 6 }} />);
+    expect(screen.getAllByText('6ch')).toHaveLength(2);
+  });
 });
 
 describe('QualityComparisonPanel — legacy backward compatibility', () => {
-  it.todo('renders correctly when existingCodec/existingChannels/existingDuration/downloadedDuration are absent from data (legacy event)');
+  it('renders correctly when new fields are absent from data (legacy event)', () => {
+    // Simulate a legacy event object missing the new fields entirely
+    const legacyData = {
+      action: 'held' as const,
+      mbPerHour: 60,
+      existingMbPerHour: 40,
+      narratorMatch: null,
+      existingNarrator: null,
+      downloadNarrator: null,
+      durationDelta: null,
+      codec: 'AAC',
+      channels: 2,
+      probeFailure: false,
+      probeError: null,
+      holdReasons: [],
+    } as QualityGateData;
+
+    // Should not throw — legacy fields missing should render as dashes/hidden
+    render(<QualityComparisonPanel data={legacyData} />);
+    expect(screen.getByText('Quality Comparison')).toBeInTheDocument();
+    expect(screen.getByText('AAC')).toBeInTheDocument();
+    expect(screen.getByText('Stereo')).toBeInTheDocument();
+  });
 });
 
 describe('QualityComparisonPanel — stereo flag removal', () => {

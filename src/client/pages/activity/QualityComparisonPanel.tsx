@@ -6,10 +6,18 @@ function formatMbPerHour(mbPerHour: number | null): string {
   return `${Math.round(mbPerHour)} MB/hr`;
 }
 
-function formatDurationDelta(delta: number | null): string {
-  if (delta === null) return '—';
-  const percent = Math.round(delta * 100);
-  return `${percent > 0 ? '+' : ''}${percent}%`;
+function formatDuration(seconds: number | null): string {
+  if (seconds === null) return '—';
+  const hours = Math.floor(seconds / 3600);
+  const minutes = Math.floor((seconds % 3600) / 60);
+  return `${hours}h ${minutes}m`;
+}
+
+function formatChannels(channels: number | null): string {
+  if (channels === null) return '—';
+  if (channels === 1) return 'Mono';
+  if (channels === 2) return 'Stereo';
+  return `${channels}ch`;
 }
 
 type Row = { label: string; current: string; downloaded: string; flagged?: boolean };
@@ -32,24 +40,32 @@ function buildRows(data: QualityGateData): Row[] {
     });
   }
 
-  if (data.durationDelta !== null) {
+  const curDuration = data.existingDuration ?? null;
+  const dlDuration = data.downloadedDuration ?? null;
+  if (curDuration !== null || dlDuration !== null) {
     rows.push({
-      label: 'Duration Delta',
-      current: '—',
-      downloaded: formatDurationDelta(data.durationDelta),
-      flagged: Math.abs(data.durationDelta) > 0.15,
+      label: 'Duration',
+      current: formatDuration(curDuration),
+      downloaded: formatDuration(dlDuration),
+      flagged: data.durationDelta !== null && Math.abs(data.durationDelta) > 0.15,
     });
   }
 
-  if (data.codec !== null) {
-    rows.push({ label: 'Codec', current: '—', downloaded: data.codec });
+  const curCodec = data.existingCodec ?? null;
+  if (curCodec !== null || data.codec !== null) {
+    rows.push({
+      label: 'Codec',
+      current: curCodec ?? '—',
+      downloaded: data.codec ?? '—',
+    });
   }
 
-  if (data.channels !== null) {
+  const curChannels = data.existingChannels ?? null;
+  if (curChannels !== null || data.channels !== null) {
     rows.push({
       label: 'Channels',
-      current: '—',
-      downloaded: data.channels === 1 ? 'Mono' : data.channels === 2 ? 'Stereo' : `${data.channels}ch`,
+      current: formatChannels(curChannels),
+      downloaded: formatChannels(data.channels),
     });
   }
 
