@@ -6,54 +6,64 @@ function formatMbPerHour(mbPerHour: number | null): string {
   return `${Math.round(mbPerHour)} MB/hr`;
 }
 
-function formatDurationDelta(delta: number | null): string {
-  if (delta === null) return '—';
-  const percent = Math.round(delta * 100);
-  return `${percent > 0 ? '+' : ''}${percent}%`;
+function formatDuration(seconds: number | null): string {
+  if (seconds === null) return '—';
+  const hours = Math.floor(seconds / 3600);
+  const minutes = Math.floor((seconds % 3600) / 60);
+  return `${hours}h ${minutes}m`;
+}
+
+function formatChannels(channels: number | null): string {
+  if (channels === null) return '—';
+  if (channels === 1) return 'Mono';
+  if (channels === 2) return 'Stereo';
+  return `${channels}ch`;
 }
 
 type Row = { label: string; current: string; downloaded: string; flagged?: boolean };
 
+function narratorRow(data: QualityGateData): Row | null {
+  if (data.narratorMatch === null) return null;
+  return {
+    label: 'Narrator',
+    current: data.existingNarrator ?? '—',
+    downloaded: data.downloadNarrator ?? '—',
+    flagged: data.narratorMatch === false,
+  };
+}
+
+function durationRow(data: QualityGateData): Row | null {
+  const curDuration = data.existingDuration ?? null;
+  const dlDuration = data.downloadedDuration ?? null;
+  if (curDuration === null && dlDuration === null) return null;
+  return {
+    label: 'Duration',
+    current: formatDuration(curDuration),
+    downloaded: formatDuration(dlDuration),
+    flagged: data.durationDelta !== null && Math.abs(data.durationDelta) > 0.15,
+  };
+}
+
+function codecRow(data: QualityGateData): Row | null {
+  const curCodec = data.existingCodec ?? null;
+  if (curCodec === null && data.codec === null) return null;
+  return { label: 'Codec', current: curCodec ?? '—', downloaded: data.codec ?? '—' };
+}
+
+function channelsRow(data: QualityGateData): Row | null {
+  const curChannels = data.existingChannels ?? null;
+  if (curChannels === null && data.channels === null) return null;
+  return { label: 'Channels', current: formatChannels(curChannels), downloaded: formatChannels(data.channels) };
+}
+
 function buildRows(data: QualityGateData): Row[] {
-  const rows: Row[] = [];
-
-  rows.push({
-    label: 'Quality',
-    current: formatMbPerHour(data.existingMbPerHour),
-    downloaded: formatMbPerHour(data.mbPerHour),
-  });
-
-  if (data.narratorMatch !== null) {
-    rows.push({
-      label: 'Narrator',
-      current: data.existingNarrator ?? '—',
-      downloaded: data.downloadNarrator ?? '—',
-      flagged: data.narratorMatch === false,
-    });
-  }
-
-  if (data.durationDelta !== null) {
-    rows.push({
-      label: 'Duration Delta',
-      current: '—',
-      downloaded: formatDurationDelta(data.durationDelta),
-      flagged: Math.abs(data.durationDelta) > 0.15,
-    });
-  }
-
-  if (data.codec !== null) {
-    rows.push({ label: 'Codec', current: '—', downloaded: data.codec });
-  }
-
-  if (data.channels !== null) {
-    rows.push({
-      label: 'Channels',
-      current: '—',
-      downloaded: data.channels === 1 ? 'Mono' : data.channels === 2 ? 'Stereo' : `${data.channels}ch`,
-    });
-  }
-
-  return rows;
+  return [
+    { label: 'Quality', current: formatMbPerHour(data.existingMbPerHour), downloaded: formatMbPerHour(data.mbPerHour) },
+    narratorRow(data),
+    durationRow(data),
+    codecRow(data),
+    channelsRow(data),
+  ].filter((row): row is Row => row !== null);
 }
 
 function ProbeFailureMessage({ probeError, holdReasons }: { probeError: string | null; holdReasons: string[] }) {

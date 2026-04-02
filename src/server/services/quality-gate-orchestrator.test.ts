@@ -251,7 +251,7 @@ describe('QualityGateOrchestrator', () => {
     it('emits download_status_change and review_needed SSE, records event', async () => {
       const { orchestrator, qualityGateService, broadcaster, eventHistory } = createOrchestrator();
       const holdDecision: QualityDecision = {
-        action: 'held', reason: { action: 'held', mbPerHour: 60, existingMbPerHour: 40, narratorMatch: false, existingNarrator: null, downloadNarrator: null, durationDelta: 0.05, codec: 'AAC', channels: 1, probeFailure: false, probeError: null, holdReasons: ['narrator_mismatch'] },
+        action: 'held', reason: { action: 'held', mbPerHour: 60, existingMbPerHour: 40, narratorMatch: false, existingNarrator: null, downloadNarrator: null, durationDelta: 0.05, existingDuration: 36000, downloadedDuration: 36000, codec: 'AAC', channels: 1, existingCodec: null, existingChannels: null, probeFailure: false, probeError: null, holdReasons: ['narrator_mismatch'] },
         statusTransition: { from: 'checking', to: 'pending_review' },
       };
       qualityGateService.getCompletedDownloads.mockResolvedValue([{ download: baseDownload, book: baseBook }]);
@@ -276,7 +276,7 @@ describe('QualityGateOrchestrator', () => {
         { download: { ...baseDownload, bookId: 1 }, book: null },
       ]);
       qualityGateService.processDownload.mockResolvedValue({
-        action: 'held', reason: { action: 'held', mbPerHour: null, existingMbPerHour: null, narratorMatch: null, existingNarrator: null, downloadNarrator: null, durationDelta: null, codec: null, channels: null, probeFailure: false, probeError: null, holdReasons: ['no_quality_data'] },
+        action: 'held', reason: { action: 'held', mbPerHour: null, existingMbPerHour: null, narratorMatch: null, existingNarrator: null, downloadNarrator: null, durationDelta: null, existingDuration: null, downloadedDuration: null, codec: null, channels: null, existingCodec: null, existingChannels: null, probeFailure: false, probeError: null, holdReasons: ['no_quality_data'] },
         statusTransition: { from: 'checking', to: 'pending_review' },
       });
 
@@ -438,7 +438,7 @@ describe('QualityGateOrchestrator', () => {
       eventHistory.create.mockRejectedValue(new Error('event DB error'));
       qualityGateService.getCompletedDownloads.mockResolvedValue([{ download: baseDownload, book: baseBook }]);
       qualityGateService.processDownload.mockResolvedValue({
-        action: 'held', reason: { action: 'held', mbPerHour: 60, existingMbPerHour: 40, narratorMatch: false, existingNarrator: null, downloadNarrator: null, durationDelta: 0.05, codec: 'AAC', channels: 1, probeFailure: false, probeError: null, holdReasons: ['narrator_mismatch'] },
+        action: 'held', reason: { action: 'held', mbPerHour: 60, existingMbPerHour: 40, narratorMatch: false, existingNarrator: null, downloadNarrator: null, durationDelta: 0.05, existingDuration: 36000, downloadedDuration: 36000, codec: 'AAC', channels: 1, existingCodec: null, existingChannels: null, probeFailure: false, probeError: null, holdReasons: ['narrator_mismatch'] },
         statusTransition: { from: 'checking', to: 'pending_review' },
       });
 
@@ -1390,6 +1390,39 @@ describe('QualityGateOrchestrator', () => {
         return payload && 'pendingCleanup' in payload && payload.pendingCleanup === null;
       });
       expect(clearCall).toBeDefined();
+    });
+  });
+
+  // #300 — Persisted payload includes new existing audio metadata fields
+  describe('persisted payload — existing audio metadata (#300)', () => {
+    it('stored reason JSON includes existingCodec, existingChannels, existingDuration, downloadedDuration for held downloads with existing book metadata', async () => {
+      const { orchestrator, qualityGateService, eventHistory } = createOrchestrator();
+      const bookWithAudio = { ...baseBook, audioCodec: 'AAC', audioChannels: 2, audioDuration: 36000 };
+      const holdDecision: QualityDecision = {
+        action: 'held',
+        reason: {
+          action: 'held', mbPerHour: 60, existingMbPerHour: 40,
+          narratorMatch: false, existingNarrator: null, downloadNarrator: null,
+          durationDelta: 0.05, existingDuration: 36000, downloadedDuration: 36000,
+          codec: 'AAC', channels: 2, existingCodec: 'AAC', existingChannels: 2,
+          probeFailure: false, probeError: null, holdReasons: ['narrator_mismatch'],
+        },
+        statusTransition: { from: 'checking', to: 'pending_review' },
+      };
+      qualityGateService.getCompletedDownloads.mockResolvedValue([{ download: baseDownload, book: bookWithAudio }]);
+      qualityGateService.processDownload.mockResolvedValue(holdDecision);
+
+      await orchestrator.processCompletedDownloads();
+
+      expect(eventHistory.create).toHaveBeenCalledWith(expect.objectContaining({
+        eventType: 'held_for_review',
+        reason: expect.objectContaining({
+          existingCodec: 'AAC',
+          existingChannels: 2,
+          existingDuration: 36000,
+          downloadedDuration: 36000,
+        }),
+      }));
     });
   });
 });

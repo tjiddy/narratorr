@@ -1,5 +1,34 @@
 # Workflow Log
 
+## #300 Quality comparison panel missing existing book codec, channels, and duration — 2026-04-02
+**Skill path:** /respond-to-spec-review → /implement → /claim → /plan → /handoff
+**Outcome:** success — PR #307
+
+### Metrics
+- Files changed: 11 | Tests added/modified: 29 new tests, fixtures updated in 4 files
+- Quality gate runs: 2 (pass on attempt 2 — first attempt failed on ESLint complexity)
+- Fix iterations: 1 (refactored buildRows into row-builder helpers for complexity)
+- Context compactions: 0
+
+### Workflow experience
+- What went smoothly: Clean additive pattern — type extension → helper population → readback normalization → UI display. Each module was self-contained with clear test boundaries.
+- Friction / issues encountered: ESLint complexity limit (15) hit after adding conditional row logic to buildRows(). Needed to extract row builders.
+
+### Token efficiency
+- Highest-token actions: Explore subagent for plan codebase exploration, coverage review subagent
+- Avoidable waste: None significant — blast radius was well-documented in spec
+- Suggestions: Spec's fixture blast radius section was very helpful for scoping work
+
+### Infrastructure gaps
+- Repeated workarounds: None
+- Missing tooling / config: `frontend-design` skill unavailable (external plugin)
+- Unresolved debt: `resolveBookQualityInputs()` called twice in `buildQualityAssessment()` (pre-existing, logged to debt.md)
+
+### Wish I'd Known
+1. Adding conditional rows to a `buildRows()` function hits ESLint complexity fast — extract row-builder helpers from the start (see `eslint-complexity-row-builders.md`)
+2. JSON stored in DB needs `NULL_REASON` spread on readback when new fields are added — `undefined !== null` breaks `!== null` guards (see `null-reason-spread-legacy-compat.md`)
+3. The spec's fixture blast radius section was accurate and complete — trust it and update all listed files
+
 ## #296 Move 'Add manually' form into a modal on search results page — 2026-04-02
 **Skill path:** /elaborate → /respond-to-spec-review → /implement → /claim → /plan → /handoff
 **Outcome:** success — PR #305

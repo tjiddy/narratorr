@@ -17,8 +17,12 @@ export interface QualityDecisionReason {
   existingNarrator: string | null;
   downloadNarrator: string | null;
   durationDelta: number | null;
+  existingDuration: number | null;
+  downloadedDuration: number | null;
   codec: string | null;
   channels: number | null;
+  existingCodec: string | null;
+  existingChannels: number | null;
   probeFailure: boolean;
   probeError: string | null;
   holdReasons: string[];
@@ -34,8 +38,12 @@ export const NULL_REASON: QualityDecisionReason = {
   existingNarrator: null,
   downloadNarrator: null,
   durationDelta: null,
+  existingDuration: null,
+  downloadedDuration: null,
   codec: null,
   channels: null,
+  existingCodec: null,
+  existingChannels: null,
   probeFailure: false,
   probeError: null,
   holdReasons: [],
