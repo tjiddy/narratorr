@@ -1335,7 +1335,7 @@ describe('monitor job', () => {
   describe('resolveOutputPath trust model', () => {
     /** Normalize path separators for cross-platform assertions (path.join uses backslash on Windows). */
     const normPath = (s: string) => s.split('\\').join('/');
-    const baseDownload = { id: 1, externalId: 'ext-1', downloadClientId: 10, status: 'downloading', completedAt: null, bookId: null, outputPath: null };
+    const baseDownload = { id: 1, externalId: 'ext-1', downloadClientId: 10, status: 'downloading', completedAt: null, bookId: null, outputPath: null, pendingCleanup: null };
     const baseItem = { progress: 50, status: 'downloading', savePath: '/remote/downloads', name: 'my-book', size: 1000 };
 
     it('returns mapped path when getByClientId returns mappings', async () => {

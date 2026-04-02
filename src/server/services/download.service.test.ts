@@ -28,6 +28,7 @@ const mockDownload = {
   errorMessage: null,
   addedAt: now,
   completedAt: null,
+  guid: null, outputPath: null, progressUpdatedAt: null, pendingCleanup: null,
 };
 
 function createMockDownloadClientService(): DownloadClientService {

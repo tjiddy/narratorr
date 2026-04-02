@@ -218,10 +218,12 @@ export const downloads = sqliteTable('downloads', {
     .default(sql`(unixepoch())`),
   completedAt: integer('completed_at', { mode: 'timestamp' }),
   progressUpdatedAt: integer('progress_updated_at', { mode: 'timestamp' }),
+  pendingCleanup: integer('pending_cleanup', { mode: 'timestamp' }),
 }, (table) => [
   index('idx_downloads_status').on(table.status),
   index('idx_downloads_status_completed').on(table.status, table.completedAt),
   index('idx_downloads_book_id').on(table.bookId),
+  index('idx_downloads_pending_cleanup').on(table.pendingCleanup),
 ]);
 
 // ============ EVENT HISTORY ============

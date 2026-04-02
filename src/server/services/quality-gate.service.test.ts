@@ -24,7 +24,7 @@ const baseDownload = {
   protocol: 'torrent' as const, downloadUrl: null, size: 500_000_000,
   seeders: 10, progress: 1, errorMessage: null,
   addedAt: new Date(), completedAt: new Date(), indexerId: 1,
-  progressUpdatedAt: null, guid: null, outputPath: null,
+  progressUpdatedAt: null, guid: null, outputPath: null, pendingCleanup: null,
 };
 
 const baseBook = {
@@ -910,5 +910,31 @@ describe('Quality gate — narrator array comparison (#71)', () => {
 
     expect(result.action).toBe('imported');
     expect(result.reason.narratorMatch).toBeNull();
+  });
+
+  // #299 — getDeferredCleanupCandidates
+  describe('getDeferredCleanupCandidates', () => {
+    it('queries with where(isNotNull(downloads.pendingCleanup)) and returns matching rows', async () => {
+      const { service, db } = createService();
+      const deferredDownload = { ...baseDownload, id: 10, status: 'failed', pendingCleanup: new Date() };
+      db.select.mockReturnValue(mockDbChain([deferredDownload]));
+
+      const result = await service.getDeferredCleanupCandidates();
+
+      expect(result).toEqual([deferredDownload]);
+      const chain = db.select.mock.results[0].value;
+      expect(chain.where).toHaveBeenCalledWith(isNotNull(downloads.pendingCleanup));
+    });
+
+    it('returns empty array when no deferred downloads exist', async () => {
+      const { service, db } = createService();
+      db.select.mockReturnValue(mockDbChain([]));
+
+      const result = await service.getDeferredCleanupCandidates();
+
+      expect(result).toEqual([]);
+      const chain = db.select.mock.results[0].value;
+      expect(chain.where).toHaveBeenCalledWith(isNotNull(downloads.pendingCleanup));
+    });
   });
 });

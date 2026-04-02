@@ -8,6 +8,13 @@
       "when": 1775039756226,
       "tag": "0000_romantic_barracuda",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "6",
+      "when": 1775125029259,
+      "tag": "0001_chemical_corsair",
+      "breakpoints": true
     }
   ]
 }

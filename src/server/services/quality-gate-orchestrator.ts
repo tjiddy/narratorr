@@ -20,7 +20,10 @@ import type { RetrySearchDeps } from './retry-search.js';
 import { blacklistAndRetrySearch } from '../utils/rejection-helpers.js';
 import type { SettingsService } from './settings.service.js';
 import { rm, stat } from 'node:fs/promises';
+import { eq } from 'drizzle-orm';
+import { downloads } from '../../db/schema.js';
 
+const MS_PER_MINUTE = 60_000;
 type BookRow = typeof books.$inferSelect;
 
 export class QualityGateOrchestrator {
@@ -101,6 +104,106 @@ export class QualityGateOrchestrator {
         const probeError = error instanceof Error ? error.message : String(error);
         this.recordDecision(row.download, row.book, { ...NULL_REASON, probeFailure: true, probeError, holdReasons: ['unhandled_error'] });
       }
+    }
+  }
+
+  /**
+   * Process deferred rejection cleanups — downloads where seed time was not yet elapsed
+   * at rejection time. Re-checks seed time and performs file deletion + client deregistration
+   * for candidates where the threshold has now passed.
+   */
+  async cleanupDeferredRejections(): Promise<void> {
+    let minSeedTimeMinutes = 0;
+    try {
+      if (this.settingsService) {
+        const importSettings = await this.settingsService.get('import');
+        minSeedTimeMinutes = importSettings.minSeedTime;
+      }
+    } catch (error: unknown) {
+      this.log.warn({ error }, 'Quality gate: failed to read import settings for deferred cleanup — skipping cycle');
+      return;
+    }
+
+    const candidates = await this.qualityGateService.getDeferredCleanupCandidates();
+    if (candidates.length === 0) return;
+
+    for (const download of candidates) {
+      try {
+        await this.processDeferredCandidate(download, minSeedTimeMinutes);
+      } catch (error: unknown) {
+        this.log.warn({ downloadId: download.id, error }, 'Quality gate: deferred cleanup error — will retry next cycle');
+      }
+    }
+  }
+
+  /** Process a single deferred-cleanup candidate: check seed time, delete files, deregister, update markers. */
+  private async processDeferredCandidate(download: DownloadRow, minSeedTimeMinutes: number): Promise<void> {
+    // Check if seed time has now elapsed
+    if (download.completedAt && minSeedTimeMinutes > 0) {
+      const elapsedMs = Date.now() - download.completedAt.getTime();
+      const minSeedMs = minSeedTimeMinutes * MS_PER_MINUTE;
+      if (elapsedMs < minSeedMs) {
+        this.log.debug({ downloadId: download.id, remainingMinutes: Math.ceil((minSeedMs - elapsedMs) / MS_PER_MINUTE) }, 'Quality gate: deferred cleanup skipped — seed time still not elapsed');
+        return;
+      }
+    }
+
+    // Seed time elapsed (or no completedAt / minSeedTime=0) — perform cleanup
+    const adapterSuccess = await this.deferredRemoveFromClient(download);
+    const filesDeleted = await this.deferredDeleteFiles(download);
+
+    if (adapterSuccess && filesDeleted) {
+      // Full success — clear both markers
+      await this.db.update(downloads).set({ pendingCleanup: null, outputPath: null }).where(eq(downloads.id, download.id));
+    } else if (filesDeleted && !adapterSuccess) {
+      // Files gone but adapter failed — clear outputPath only, keep pendingCleanup for retry
+      await this.db.update(downloads).set({ outputPath: null }).where(eq(downloads.id, download.id));
+    }
+    // If files not deleted (regardless of adapter), leave everything for retry
+  }
+
+  /** Attempt to deregister download from client. Returns true on success, false on error. */
+  private async deferredRemoveFromClient(download: DownloadRow): Promise<boolean> {
+    try {
+      if (download.downloadClientId && download.externalId) {
+        const adapter = await this.downloadClientService.getAdapter(download.downloadClientId);
+        if (adapter) {
+          await adapter.removeDownload(download.externalId, true);
+          this.log.info({ downloadId: download.id }, 'Quality gate: deferred cleanup — removed download from client');
+        }
+      }
+      return true;
+    } catch (error: unknown) {
+      this.log.warn({ downloadId: download.id, error }, 'Quality gate: deferred cleanup — failed to remove from client');
+      return false;
+    }
+  }
+
+  /** Attempt filesystem deletion for deferred cleanup. Returns true if files are gone, false if deletion failed. */
+  private async deferredDeleteFiles(download: DownloadRow): Promise<boolean> {
+    if (!download.outputPath) return true; // No outputPath means files were already cleaned up in a prior cycle
+
+    // Check if path exists — ENOENT means files are already gone
+    try {
+      await stat(download.outputPath);
+    } catch (error: unknown) {
+      const code = error instanceof Error && 'code' in error ? (error as NodeJS.ErrnoException).code : undefined;
+      if (code === 'ENOENT') {
+        this.log.debug({ downloadId: download.id }, 'Quality gate: deferred cleanup — outputPath does not exist or already removed');
+        return true; // Files are gone
+      }
+      this.log.warn({ downloadId: download.id, outputPath: download.outputPath, error }, 'Quality gate: deferred cleanup — stat failed (non-ENOENT)');
+      return false; // Can't verify file state — preserve retry
+    }
+
+    // Path exists — attempt deletion
+    try {
+      await rm(download.outputPath, { recursive: true, force: true });
+      this.log.info({ downloadId: download.id, outputPath: download.outputPath }, 'Quality gate: deferred cleanup — deleted files');
+      return true;
+    } catch (error: unknown) {
+      this.log.warn({ downloadId: download.id, outputPath: download.outputPath, error }, 'Quality gate: deferred cleanup — file deletion failed');
+      return false; // Files still on disk — keep pendingCleanup for retry
     }
   }
 
@@ -200,8 +303,38 @@ export class QualityGateOrchestrator {
       });
     }
 
-    await this.removeDownloadFiles(download);
-    await this.fallbackFileDelete(download);
+    // Read import settings to gate destructive cleanup
+    let shouldDelete = true;
+    let minSeedTimeMinutes = 0;
+    try {
+      if (this.settingsService) {
+        const importSettings = await this.settingsService.get('import');
+        shouldDelete = importSettings.deleteAfterImport;
+        minSeedTimeMinutes = importSettings.minSeedTime;
+      }
+    } catch (error: unknown) {
+      this.log.warn({ downloadId: download.id, error }, 'Quality gate: failed to read import settings — defaulting to non-destructive cleanup');
+      shouldDelete = false;
+    }
+
+    if (!shouldDelete) {
+      this.log.warn({ downloadId: download.id }, 'Quality gate: deleteAfterImport disabled — skipping file and client cleanup for rejected download');
+    } else if (download.protocol === 'torrent' && minSeedTimeMinutes > 0 && download.completedAt) {
+      const elapsedMs = Date.now() - download.completedAt.getTime();
+      const minSeedMs = minSeedTimeMinutes * MS_PER_MINUTE;
+      if (elapsedMs < minSeedMs) {
+        // Defer cleanup — mark for revisit
+        this.log.info({ downloadId: download.id, remainingMinutes: Math.ceil((minSeedMs - elapsedMs) / MS_PER_MINUTE) }, 'Quality gate: deferring rejection cleanup — min seed time not elapsed');
+        await this.db.update(downloads).set({ pendingCleanup: new Date() }).where(eq(downloads.id, download.id));
+      } else {
+        await this.removeDownloadFiles(download);
+        await this.fallbackFileDelete(download);
+      }
+    } else {
+      // deleteAfterImport=true and either usenet, minSeedTime=0, or completedAt=null → immediate cleanup
+      await this.removeDownloadFiles(download);
+      await this.fallbackFileDelete(download);
+    }
 
     // Recover book status — errors propagate to caller (manual reject → 500, auto-reject → outer catch → pending_review)
     if (book) {

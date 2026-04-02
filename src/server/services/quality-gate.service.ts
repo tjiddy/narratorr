@@ -265,4 +265,15 @@ export class QualityGateService {
 
     return result;
   }
+
+  /**
+   * Query downloads with pendingCleanup set (deferred rejection cleanup candidates).
+   * Returns raw download rows — the orchestrator handles seed-time checks and cleanup.
+   */
+  async getDeferredCleanupCandidates(): Promise<DownloadRow[]> {
+    return this.db
+      .select()
+      .from(downloads)
+      .where(isNotNull(downloads.pendingCleanup));
+  }
 }

@@ -85,11 +85,14 @@ describe('startJobs', () => {
 
     expect(services.qualityGateOrchestrator.processCompletedDownloads).toHaveBeenCalledTimes(1);
     expect(services.importOrchestrator.processCompletedDownloads).toHaveBeenCalledTimes(1);
+    expect(services.qualityGateOrchestrator.cleanupDeferredRejections).toHaveBeenCalledTimes(1);
 
-    // Quality gate must be called before import orchestrator
+    // Quality gate must be called before import orchestrator, deferred cleanup last
     const qgOrder = (services.qualityGateOrchestrator.processCompletedDownloads as ReturnType<typeof vi.fn>).mock.invocationCallOrder[0];
     const ioOrder = (services.importOrchestrator.processCompletedDownloads as ReturnType<typeof vi.fn>).mock.invocationCallOrder[0];
+    const dcOrder = (services.qualityGateOrchestrator.cleanupDeferredRejections as ReturnType<typeof vi.fn>).mock.invocationCallOrder[0];
     expect(qgOrder).toBeLessThan(ioOrder);
+    expect(ioOrder).toBeLessThan(dcOrder);
   });
 
   it('schedules discovery timeout loop using intervalHours * 60 from discovery settings', async () => {
