@@ -271,7 +271,7 @@ export class QualityGateService {
    * Returns raw download rows — the orchestrator handles seed-time checks and cleanup.
    */
   async getDeferredCleanupCandidates(): Promise<DownloadRow[]> {
-    return await this.db
+    return this.db
       .select()
       .from(downloads)
       .where(isNotNull(downloads.pendingCleanup));

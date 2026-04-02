@@ -1167,7 +1167,7 @@ describe('QualityGateOrchestrator', () => {
     it('completedAt exactly at seed time boundary → torrent NOT removed (strictly less-than), pendingCleanup set', async () => {
       // completedAt exactly 60 minutes ago — elapsed == minSeedMs, so NOT removed (strictly less-than)
       const boundaryDownload = { ...downloadWithOutput, completedAt: new Date(Date.now() - 60 * 60_000) };
-      const { orchestrator, qualityGateService, db } = setupWithSettings(importSettings);
+      const { orchestrator, qualityGateService } = setupWithSettings(importSettings);
       qualityGateService.getCompletedDownloads.mockResolvedValue([{ download: boundaryDownload, book: baseBook }]);
       qualityGateService.processDownload.mockResolvedValue({
         action: 'rejected', reason: { ...NULL_REASON }, statusTransition: { from: 'checking', to: 'failed' },
