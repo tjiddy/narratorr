@@ -784,4 +784,12 @@ describe('activity routes', () => {
       });
     });
   });
+
+  // #301 — Reject endpoint with retry body field
+  describe('POST /api/activity/:id/reject with retry flag (#301)', () => {
+    it.todo('passes retry=true from request body to orchestrator.reject(id, { retry: true })');
+    it.todo('defaults retry to false when body is empty — calls orchestrator.reject(id, { retry: false })');
+    it.todo('defaults retry to false when body has no retry field — calls orchestrator.reject(id, { retry: false })');
+    it.todo('returns 409 for non-pending_review download with retry=true');
+  });
 });

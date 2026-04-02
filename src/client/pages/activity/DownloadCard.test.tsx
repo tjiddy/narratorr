@@ -318,4 +318,16 @@ describe('DownloadCard', () => {
       expect(container).toBeInTheDocument();
     });
   });
+
+  // #301 — Split reject into Reject (dismiss) and Reject & Search
+  describe('split reject buttons (#301)', () => {
+    it.todo('both Reject and Reject & Search buttons render on pending_review downloads with qualityGate data');
+    it.todo('both Reject and Reject & Search buttons render on pending_review downloads without qualityGate data');
+    it.todo('clicking Reject calls onReject callback');
+    it.todo('clicking Reject & Search calls onRejectWithSearch callback');
+    it.todo('Reject and Reject & Search buttons not shown on non-pending downloads');
+    it.todo('Reject button has primary destructive styling, Reject & Search has secondary/outline styling');
+    it.todo('loading state: clicking Reject disables both buttons and shows spinner');
+    it.todo('loading state: clicking Reject & Search disables both buttons and shows spinner');
+  });
 });

@@ -842,4 +842,18 @@ describe('QualityGateOrchestrator', () => {
   // blacklisting with bad_quality, download file deletion, re-search trigger, and
   // dispatchSideEffects auto-reject — all exercising the same code path through
   // blacklistAndRetrySearch() after extraction.
+
+  // #301 — Split reject into dismiss (retry=false) vs reject-and-search (retry=true)
+  describe('reject with retry flag (#301)', () => {
+    it.todo('reject(id) without retry flag skips blacklistAndRetrySearch — no blacklist created, no retry search');
+    it.todo('reject(id, { retry: false }) skips blacklistAndRetrySearch — no blacklist created, no retry search');
+    it.todo('reject(id, { retry: true }) calls blacklistAndRetrySearch — blacklist created, retry search triggered');
+    it.todo('reject(id, { retry: true }) triggers retry search even when redownloadFailed is false (overrides setting)');
+    it.todo('reject(id, { retry: false }) still cleans up download files from client');
+    it.todo('reject(id, { retry: false }) still reverts book status correctly');
+    it.todo('reject(id, { retry: true }) still reverts book status correctly');
+    it.todo('reject(id, { retry: false }) with null bookId: cleanup succeeds, no book revert, no book_status_change SSE');
+    it.todo('reject(id, { retry: true }) with null infoHash+guid: blacklist skipped, retry search still triggered');
+    it.todo('reject(id, { retry: false }) — file delete failure logged as warning, does not prevent book revert');
+  });
 });
