@@ -5,7 +5,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { MemoryRouter } from 'react-router-dom';
 import { renderWithProviders } from '@/__tests__/helpers';
 import { SearchReleasesModal } from '@/components/SearchReleasesModal';
-import type { SearchResult, SearchResponse } from '@/lib/api';
+import type { SearchResult } from '@/lib/api';
 import { createMockBook } from '@/__tests__/factories';
 import { queryKeys } from '@/lib/queryKeys';
 
@@ -103,13 +103,6 @@ const mockResults: SearchResult[] = [
   },
 ];
 
-function searchResponse(results: SearchResult[], unsupported?: { count: number; titles: string[] }): SearchResponse {
-  return {
-    results,
-    durationUnknown: false,
-    unsupportedResults: unsupported ?? { count: 0, titles: [] },
-  };
-}
 
 /** Helper: set stream state to Phase 2 (results) with given data */
 function setStreamResults(results: SearchResult[], unsupported?: { count: number; titles: string[] }, durationUnknown = false) {

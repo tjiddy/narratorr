@@ -52,9 +52,9 @@ describe('routeRegistry', () => {
   it('contains all 23 route factories', () => {
     // books, bookFiles, search, activity, indexers, downloadClients,
     // settings, metadata, libraryScan, system, update, notifiers, blacklist,
-    // auth, remotePathMapping, filesystem, eventHistory, events,
+    // auth, remotePathMapping, filesystem, eventHistory, events, searchStream,
     // prowlarrCompat, importLists, discover, bulkOperations
-    expect(routeRegistry).toHaveLength(22);
+    expect(routeRegistry).toHaveLength(23);
   });
 
   it('every entry is a function', () => {

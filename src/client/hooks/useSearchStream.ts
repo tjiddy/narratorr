@@ -148,8 +148,7 @@ export function useSearchStream(
       setPhase('idle');
       es.close();
     };
-  // eslint-disable-next-line react-hooks/exhaustive-deps -- start should only be called explicitly
-  }, [query, context?.author, context?.title, context?.bookDuration, authConfig?.apiKey, cleanup]);
+  }, [query, context, authConfig?.apiKey, cleanup]);
 
   const cancelIndexer = useCallback((indexerId: number) => {
     if (!sessionId || cancelledRef.current.has(indexerId)) return;

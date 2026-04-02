@@ -43,7 +43,6 @@ export class AudioBookBayIndexer implements IndexerAdapter {
     const pageLimit = this.config.pageLimit || 2;
 
     for (let page = 1; page <= pageLimit; page++) {
-      // ABB search URL format: /?s=query&tt=1 (tt=1 filters to audiobooks)
       const url = page === 1
         ? `${this.baseUrl}/?s=${encodedQuery}&tt=1`
         : `${this.baseUrl}/page/${page}/?s=${encodedQuery}&tt=1`;
@@ -53,46 +52,49 @@ export class AudioBookBayIndexer implements IndexerAdapter {
         const pageResults = this.parseSearchPage(html);
 
         if (pageResults.length === 0) {
-          break; // No more results
+          break;
         }
 
-        // Fetch detail pages to get info hashes (with rate limiting)
-        for (const result of pageResults) {
-          if (result.detailsUrl) {
-            try {
-              // Add small delay to avoid rate limiting
-              await this.delay(500);
-              const detailHtml = await this.fetchPage(result.detailsUrl, options?.signal);
-              const details = this.parseDetailPage(detailHtml);
-              Object.assign(result, details);
-            } catch (error: unknown) {
-              // Proxy errors bubble up — consistent with outer catch behavior
-              if (isProxyRelatedError(error)) {
-                throw error;
-              }
-              // Skip non-proxy detail page failures — result won't have download URL and will be filtered out
-            }
-          }
-
-          // Only include results with download URLs
-          if (result.downloadUrl) {
-            results.push(result);
-          }
-
-          if (results.length >= limit) {
-            return results;
-          }
-        }
+        const done = await this.enrichAndCollect(pageResults, results, limit, options?.signal);
+        if (done) return results;
       } catch (error: unknown) {
-        // Proxy errors bubble up to IndexerService.searchAll() for warn logging
         if (isProxyRelatedError(error)) {
           throw error;
         }
-        break; // Stop pagination on fetch failure
+        break;
       }
     }
 
     return results;
+  }
+
+  /** Fetch detail pages, enrich results, and collect those with download URLs. Returns true when limit reached. */
+  private async enrichAndCollect(
+    pageResults: SearchResult[], results: SearchResult[], limit: number, signal?: AbortSignal,
+  ): Promise<boolean> {
+    for (const result of pageResults) {
+      if (result.detailsUrl) {
+        try {
+          await this.delay(500);
+          const detailHtml = await this.fetchPage(result.detailsUrl, signal);
+          const details = this.parseDetailPage(detailHtml);
+          Object.assign(result, details);
+        } catch (error: unknown) {
+          if (isProxyRelatedError(error)) {
+            throw error;
+          }
+        }
+      }
+
+      if (result.downloadUrl) {
+        results.push(result);
+      }
+
+      if (results.length >= limit) {
+        return true;
+      }
+    }
+    return false;
   }
 
   private async fetchPage(url: string, signal?: AbortSignal): Promise<string> {

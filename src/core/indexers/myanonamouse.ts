@@ -125,13 +125,17 @@ export class MyAnonamouseIndexer implements IndexerAdapter {
       return [];
     }
 
+    return this.buildResults(response.data, options?.signal);
+  }
+
+  private async buildResults(data: MAMSearchResult[], signal?: AbortSignal): Promise<SearchResult[]> {
     const results: SearchResult[] = [];
-    for (const item of response.data) {
+    for (const item of data) {
       if (!item.title) continue;
 
       let downloadUrl: string | undefined;
       if (item.id != null) {
-        downloadUrl = await this.fetchTorrentAsDataUri(item.id, options?.signal);
+        downloadUrl = await this.fetchTorrentAsDataUri(item.id, signal);
       }
 
       results.push({

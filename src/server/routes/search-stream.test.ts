@@ -16,7 +16,7 @@ vi.mock('../services/search-pipeline.js', () => ({
 
 import { filterAndRankResults } from '../services/search-pipeline.js';
 
-function createMockReplyAndRequest(query = 'test+query') {
+function createMockReplyAndRequest(_query = 'test+query') {
   const writeHead = vi.fn();
   const write = vi.fn();
   const hijack = vi.fn();
