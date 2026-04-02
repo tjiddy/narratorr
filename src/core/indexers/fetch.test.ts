@@ -332,4 +332,13 @@ describe('fetchWithProxy', () => {
       }
     });
   });
+
+  describe('AbortSignal threading', () => {
+    it.todo('passes caller signal to direct fetch when provided');
+    it.todo('passes caller signal to proxy fetch when provided');
+    it.todo('uses internal timeout controller when no caller signal provided');
+    it.todo('composes caller signal with timeout — caller abort rejects fetch');
+    it.todo('composes caller signal with timeout — timeout abort rejects fetch');
+    it.todo('pre-aborted caller signal rejects immediately');
+  });
 });

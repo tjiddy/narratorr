@@ -1244,3 +1244,34 @@ describe('ReleaseCard', () => {
     expect(screen.getAllByRole('button', { name: /grab/i })).toHaveLength(2);
   });
 });
+
+describe('SearchReleasesModal — streaming search (Phase 1/Phase 2)', () => {
+  describe('Phase 1 — Indexer status view', () => {
+    it.todo('renders indexer list with pending status indicators when stream starts');
+    it.todo('updates indexer status to complete with result count as events arrive');
+    it.todo('updates indexer status to error with message on indexer-error event');
+    it.todo('shows cancelled status after cancel button click');
+    it.todo('cancel button hidden for already-completed indexers');
+    it.todo('cancel button hidden for already-failed indexers');
+  });
+
+  describe('Show results button', () => {
+    it.todo('appears after first indexer completes with raw results (count > 0)');
+    it.todo('does not appear when indexer completes with 0 results');
+    it.todo('cancels all remaining pending indexers on click');
+    it.todo('transitions to Phase 2 results view on click');
+  });
+
+  describe('Phase 2 — Results view', () => {
+    it.todo('automatic transition when all indexers settle');
+    it.todo('shows empty state when all indexers return 0 results');
+    it.todo('renders duration-unknown banner when durationUnknown is true');
+    it.todo('renders unsupported results section when count > 0');
+    it.todo('renders scored results list in Phase 2');
+  });
+
+  describe('error handling', () => {
+    it.todo('shows error state on SSE connection failure');
+    it.todo('allows retry after connection error');
+  });
+});
