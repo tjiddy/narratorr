@@ -1,5 +1,34 @@
 # Workflow Log
 
+## #291 MAM indexer — add language filter and search type settings — 2026-04-02
+**Skill path:** /elaborate → /respond-to-spec-review (x2) → /implement → /claim → /plan → /handoff
+**Outcome:** success — PR #294
+
+### Metrics
+- Files changed: 11 | Tests added/modified: 24 new tests across 6 files
+- Quality gate runs: 2 (pass on attempt 1 both times)
+- Fix iterations: 1 (coverage review found missing schema validation tests; added 4)
+- Context compactions: 0
+
+### Workflow experience
+- What went smoothly: Spec was very well-defined after 2 rounds of review — default contract, exact language list, all artifact surfaces named. Implementation was mechanical.
+- Friction / issues encountered: The spec review cycle (2 rounds) caught real issues: client/server boundary violation for constants, wrong test surfaces, wrong method name. These would have been expensive to fix during PR review.
+
+### Token efficiency
+- Highest-token actions: Elaborate + 2 respond-to-spec-review rounds consumed significant context before implementation started
+- Avoidable waste: None — the spec precision paid off during implementation (zero ambiguity)
+- Suggestions: None
+
+### Infrastructure gaps
+- Repeated workarounds: None
+- Missing tooling / config: `frontend-design` skill not available — UI polish pass skipped
+- Unresolved debt: FieldComponent type in IndexerFields.tsx now passes watch/setValue to all field components even though only MamFields uses them (minor, acceptable)
+
+### Wish I'd Known
+1. Making MAMConfig fields non-optional causes blast radius across 5 test constructor sites — enumerate all call sites before changing the interface
+2. `??` vs `||` matters at every layer when settings have valid falsy values (0, []) — the spec review caught this before implementation, saving significant rework
+3. React Hook Form `register()` doesn't work for numeric array fields — must use `setValue()`/`watch()` pattern (prior art in NotifierCard.tsx)
+
 ## #288 Migrate raw selects to SelectWithChevron in FilterRow and ImportSummaryBar — 2026-04-01
 **Skill path:** /elaborate → /respond-to-spec-review → /implement → /claim → /plan → /handoff
 **Outcome:** success — PR #293
