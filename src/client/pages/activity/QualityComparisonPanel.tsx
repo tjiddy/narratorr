@@ -22,54 +22,48 @@ function formatChannels(channels: number | null): string {
 
 type Row = { label: string; current: string; downloaded: string; flagged?: boolean };
 
-function buildRows(data: QualityGateData): Row[] {
-  const rows: Row[] = [];
+function narratorRow(data: QualityGateData): Row | null {
+  if (data.narratorMatch === null) return null;
+  return {
+    label: 'Narrator',
+    current: data.existingNarrator ?? '—',
+    downloaded: data.downloadNarrator ?? '—',
+    flagged: data.narratorMatch === false,
+  };
+}
 
-  rows.push({
-    label: 'Quality',
-    current: formatMbPerHour(data.existingMbPerHour),
-    downloaded: formatMbPerHour(data.mbPerHour),
-  });
-
-  if (data.narratorMatch !== null) {
-    rows.push({
-      label: 'Narrator',
-      current: data.existingNarrator ?? '—',
-      downloaded: data.downloadNarrator ?? '—',
-      flagged: data.narratorMatch === false,
-    });
-  }
-
+function durationRow(data: QualityGateData): Row | null {
   const curDuration = data.existingDuration ?? null;
   const dlDuration = data.downloadedDuration ?? null;
-  if (curDuration !== null || dlDuration !== null) {
-    rows.push({
-      label: 'Duration',
-      current: formatDuration(curDuration),
-      downloaded: formatDuration(dlDuration),
-      flagged: data.durationDelta !== null && Math.abs(data.durationDelta) > 0.15,
-    });
-  }
+  if (curDuration === null && dlDuration === null) return null;
+  return {
+    label: 'Duration',
+    current: formatDuration(curDuration),
+    downloaded: formatDuration(dlDuration),
+    flagged: data.durationDelta !== null && Math.abs(data.durationDelta) > 0.15,
+  };
+}
 
+function codecRow(data: QualityGateData): Row | null {
   const curCodec = data.existingCodec ?? null;
-  if (curCodec !== null || data.codec !== null) {
-    rows.push({
-      label: 'Codec',
-      current: curCodec ?? '—',
-      downloaded: data.codec ?? '—',
-    });
-  }
+  if (curCodec === null && data.codec === null) return null;
+  return { label: 'Codec', current: curCodec ?? '—', downloaded: data.codec ?? '—' };
+}
 
+function channelsRow(data: QualityGateData): Row | null {
   const curChannels = data.existingChannels ?? null;
-  if (curChannels !== null || data.channels !== null) {
-    rows.push({
-      label: 'Channels',
-      current: formatChannels(curChannels),
-      downloaded: formatChannels(data.channels),
-    });
-  }
+  if (curChannels === null && data.channels === null) return null;
+  return { label: 'Channels', current: formatChannels(curChannels), downloaded: formatChannels(data.channels) };
+}
 
-  return rows;
+function buildRows(data: QualityGateData): Row[] {
+  return [
+    { label: 'Quality', current: formatMbPerHour(data.existingMbPerHour), downloaded: formatMbPerHour(data.mbPerHour) },
+    narratorRow(data),
+    durationRow(data),
+    codecRow(data),
+    channelsRow(data),
+  ].filter((row): row is Row => row !== null);
 }
 
 function ProbeFailureMessage({ probeError, holdReasons }: { probeError: string | null; holdReasons: string[] }) {
