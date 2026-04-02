@@ -52,6 +52,8 @@ import { remotePathMappingRoutes } from './remote-path-mappings.js';
 import { eventHistoryRoutes } from './event-history.js';
 import { prowlarrCompatRoutes } from './prowlarr-compat.js';
 import { eventsRoutes } from './events.js';
+import { searchStreamRoutes } from './search-stream.js';
+import { SearchSessionManager } from '../services/search-session.js';
 import { importListsRoutes } from './import-lists.js';
 import { updateRoutes } from './update.js';
 import { discoverRoutes } from './discover.js';
@@ -232,6 +234,7 @@ const routeRegistry: RouteFactory[] = [
   (app) => filesystemRoutes(app),
   (app, s) => eventHistoryRoutes(app, s.eventHistory),
   (app, s) => eventsRoutes(app, s.eventBroadcaster),
+  (app, s) => searchStreamRoutes(app, s.indexer, s.blacklist, s.settings, new SearchSessionManager()),
   (app, s) => prowlarrCompatRoutes(app, s.indexer),
   (app, s) => importListsRoutes(app, s.importList),
   (app, s) => discoverRoutes(app, {

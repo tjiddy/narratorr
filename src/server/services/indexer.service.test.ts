@@ -1220,4 +1220,108 @@ describe('IndexerService', () => {
       expect(results[0].title).toBe('Book');
     });
   });
+
+  describe('searchAllStreaming', () => {
+    const mockIndexer2 = createMockDbIndexer({ id: 2, name: 'MAM', type: 'myanonamouse' });
+
+    it('calls onComplete for each successful indexer', async () => {
+      db.select.mockReturnValue(mockDbChain([mockIndexer, mockIndexer2]));
+
+      const adapter1 = { search: vi.fn().mockResolvedValue([{ title: 'Book1', indexer: 'ABB' }]), test: vi.fn() };
+      const adapter2 = { search: vi.fn().mockResolvedValue([{ title: 'Book2', indexer: 'MAM' }]), test: vi.fn() };
+      let callCount = 0;
+      vi.spyOn(service, 'getAdapter').mockImplementation(async () => {
+        callCount++;
+        return (callCount === 1 ? adapter1 : adapter2) as never;
+      });
+
+      const controllers = new Map<number, AbortController>();
+      controllers.set(mockIndexer.id, new AbortController());
+      controllers.set(2, new AbortController());
+
+      const onComplete = vi.fn();
+      const onError = vi.fn();
+
+      const results = await service.searchAllStreaming('test', undefined, controllers, { onComplete, onError });
+
+      expect(onComplete).toHaveBeenCalledTimes(2);
+      expect(onComplete).toHaveBeenCalledWith(mockIndexer.id, mockIndexer.name, 1, expect.any(Number));
+      expect(onComplete).toHaveBeenCalledWith(2, 'MAM', 1, expect.any(Number));
+      expect(onError).not.toHaveBeenCalled();
+      expect(results).toHaveLength(2);
+    });
+
+    it('calls onError for failed indexer and continues', async () => {
+      db.select.mockReturnValue(mockDbChain([mockIndexer, mockIndexer2]));
+
+      const adapter1 = { search: vi.fn().mockRejectedValue(new Error('Timeout')), test: vi.fn() };
+      const adapter2 = { search: vi.fn().mockResolvedValue([{ title: 'Book2', indexer: 'MAM' }]), test: vi.fn() };
+      let callCount = 0;
+      vi.spyOn(service, 'getAdapter').mockImplementation(async () => {
+        callCount++;
+        return (callCount === 1 ? adapter1 : adapter2) as never;
+      });
+
+      const controllers = new Map<number, AbortController>();
+      controllers.set(mockIndexer.id, new AbortController());
+      controllers.set(2, new AbortController());
+
+      const onComplete = vi.fn();
+      const onError = vi.fn();
+
+      const results = await service.searchAllStreaming('test', undefined, controllers, { onComplete, onError });
+
+      expect(onError).toHaveBeenCalledWith(mockIndexer.id, mockIndexer.name, 'Timeout', expect.any(Number));
+      expect(onComplete).toHaveBeenCalledWith(2, 'MAM', 1, expect.any(Number));
+      expect(results).toHaveLength(1);
+    });
+
+    it('excludes cancelled indexer results and calls onCancelled', async () => {
+      db.select.mockReturnValue(mockDbChain([mockIndexer]));
+
+      const controller = new AbortController();
+      controller.abort();
+      const adapter = { search: vi.fn().mockRejectedValue(new DOMException('aborted', 'AbortError')), test: vi.fn() };
+      vi.spyOn(service, 'getAdapter').mockResolvedValue(adapter as never);
+
+      const controllers = new Map<number, AbortController>();
+      controllers.set(mockIndexer.id, controller);
+
+      const onComplete = vi.fn();
+      const onError = vi.fn();
+      const onCancelled = vi.fn();
+
+      const results = await service.searchAllStreaming('test', undefined, controllers, { onComplete, onError, onCancelled });
+
+      expect(onComplete).not.toHaveBeenCalled();
+      expect(onError).not.toHaveBeenCalled(); // Cancelled, not errored
+      expect(onCancelled).toHaveBeenCalledWith(mockIndexer.id, mockIndexer.name);
+      expect(results).toHaveLength(0);
+    });
+
+    it('scores results when title provided', async () => {
+      db.select.mockReturnValue(mockDbChain([mockIndexer]));
+
+      const adapter = {
+        search: vi.fn().mockResolvedValue([
+          { title: 'The Way of Kings', author: 'Brandon Sanderson', indexer: 'ABB' },
+        ]),
+        test: vi.fn(),
+      };
+      vi.spyOn(service, 'getAdapter').mockResolvedValue(adapter as never);
+
+      const controllers = new Map<number, AbortController>();
+      controllers.set(mockIndexer.id, new AbortController());
+
+      const results = await service.searchAllStreaming(
+        'way of kings',
+        { title: 'The Way of Kings', author: 'Brandon Sanderson' },
+        controllers,
+        { onComplete: vi.fn(), onError: vi.fn() },
+      );
+
+      expect(results[0].matchScore).toBeDefined();
+      expect(results[0].matchScore).toBeGreaterThan(0);
+    });
+  });
 });

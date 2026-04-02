@@ -26,6 +26,7 @@ export interface SearchOptions {
   limit?: number;
   author?: string;
   title?: string;
+  signal?: AbortSignal;
 }
 
 export interface IndexerAdapter {

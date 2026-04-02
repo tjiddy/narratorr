@@ -45,6 +45,7 @@ export async function fetchWithProxyAgent(
     proxyUrl?: string;
     headers?: Record<string, string>;
     timeoutMs?: number;
+    signal?: AbortSignal;
   } = {},
 ): Promise<string> {
   const { proxyUrl, headers, timeoutMs = PROXY_TIMEOUT_MS } = options;
@@ -52,11 +53,14 @@ export async function fetchWithProxyAgent(
 
   const controller = new AbortController();
   const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+  const signal = options.signal
+    ? AbortSignal.any([controller.signal, options.signal])
+    : controller.signal;
 
   try {
     const fetchOptions: RequestInit & { dispatcher?: unknown } = {
       headers,
-      signal: controller.signal,
+      signal,
     };
 
     if (dispatcher) {

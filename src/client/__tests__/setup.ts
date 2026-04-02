@@ -5,6 +5,17 @@ import { cleanup } from '@testing-library/react';
 // Auto-cleanup DOM between tests
 afterEach(cleanup);
 
+// jsdom doesn't implement EventSource — provide a no-op stub
+if (typeof globalThis.EventSource === 'undefined') {
+  globalThis.EventSource = class MockEventSource {
+    url: string;
+    onerror: ((event: Event) => void) | null = null;
+    constructor(url: string) { this.url = url; }
+    addEventListener() { /* stub */ }
+    close() { /* stub */ }
+  } as unknown as typeof EventSource;
+}
+
 // jsdom doesn't implement window.matchMedia — provide a default stub
 // Guard for node environment where window.matchMedia doesn't exist
 if (typeof window !== 'undefined') {

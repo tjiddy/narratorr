@@ -50,7 +50,7 @@ export class TorznabIndexer implements IndexerAdapter {
 
     // All errors (fetch, parse, proxy) bubble up to IndexerService.searchAll()
     // which catches and logs warnings per-indexer, then continues with remaining indexers
-    const xml = await this.fetchXml(url);
+    const xml = await this.fetchXml(url, options?.signal);
     return this.parseSearchResults(xml, limit);
   }
 
@@ -87,19 +87,21 @@ export class TorznabIndexer implements IndexerAdapter {
     }
   }
 
-  private async fetchXml(url: string): Promise<string> {
+  private async fetchXml(url: string, signal?: AbortSignal): Promise<string> {
     // FlareSolverr takes precedence over standard proxy
     if (this.flareSolverrUrl) {
       return fetchWithProxy({
         url,
         headers: { Accept: 'application/rss+xml, application/xml, text/xml' },
         proxyUrl: this.flareSolverrUrl,
+        signal,
       });
     }
 
     return fetchWithProxyAgent(url, {
       proxyUrl: this.proxyUrl,
       headers: { Accept: 'application/rss+xml, application/xml, text/xml' },
+      signal,
     });
   }
 

@@ -1,4 +1,4 @@
-import type { IndexerAdapter, SearchResult } from './types.js';
+import type { IndexerAdapter, SearchOptions, SearchResult } from './types.js';
 import { IndexerAuthError, ProxyError } from './errors.js';
 import { createProxyAgent, resolveProxyIp } from './proxy.js';
 import { normalizeLanguage } from '../utils/language-codes.js';
@@ -81,7 +81,7 @@ export class MyAnonamouseIndexer implements IndexerAdapter {
     this.name = name || 'MyAnonamouse';
   }
 
-  async search(query: string): Promise<SearchResult[]> {
+  async search(query: string, options?: SearchOptions): Promise<SearchResult[]> {
     const params = new URLSearchParams({
       'tor[text]': query,
       'tor[srchIn][title]': 'true',
@@ -98,7 +98,7 @@ export class MyAnonamouseIndexer implements IndexerAdapter {
     }
 
     const url = `${this.baseUrl}/tor/js/loadSearchJSONbasic.php?${params.toString()}`;
-    const body = await this.fetchWithCookie(url);
+    const body = await this.fetchWithCookie(url, options?.signal);
 
     // Check for auth failure in response body
     if (body.includes('Error, you are not signed in')) {
@@ -125,13 +125,17 @@ export class MyAnonamouseIndexer implements IndexerAdapter {
       return [];
     }
 
+    return this.buildResults(response.data, options?.signal);
+  }
+
+  private async buildResults(data: MAMSearchResult[], signal?: AbortSignal): Promise<SearchResult[]> {
     const results: SearchResult[] = [];
-    for (const item of response.data) {
+    for (const item of data) {
       if (!item.title) continue;
 
       let downloadUrl: string | undefined;
       if (item.id != null) {
-        downloadUrl = await this.fetchTorrentAsDataUri(item.id);
+        downloadUrl = await this.fetchTorrentAsDataUri(item.id, signal);
       }
 
       results.push({
@@ -195,9 +199,12 @@ export class MyAnonamouseIndexer implements IndexerAdapter {
    * Fetch a URL with the mam_id cookie for authentication.
    * Throws on HTTP 403 with an auth-specific error message.
    */
-  private async fetchWithCookie(url: string): Promise<string> {
+  private async fetchWithCookie(url: string, callerSignal?: AbortSignal): Promise<string> {
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+    const signal = callerSignal
+      ? AbortSignal.any([controller.signal, callerSignal])
+      : controller.signal;
     const dispatcher = createProxyAgent(this.proxyUrl);
 
     try {
@@ -205,7 +212,7 @@ export class MyAnonamouseIndexer implements IndexerAdapter {
         headers: {
           Cookie: `mam_id=${this.mamId}`,
         },
-        signal: controller.signal,
+        signal,
       };
 
       if (dispatcher) {
@@ -273,10 +280,13 @@ export class MyAnonamouseIndexer implements IndexerAdapter {
    * Fetch .torrent file bytes and encode as a data: URI.
    * Returns undefined on failure (result is kept but not grabbable).
    */
-  private async fetchTorrentAsDataUri(torrentId: number): Promise<string | undefined> {
+  private async fetchTorrentAsDataUri(torrentId: number, callerSignal?: AbortSignal): Promise<string | undefined> {
     const url = `${this.baseUrl}/tor/download.php?tid=${torrentId}`;
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+    const signal = callerSignal
+      ? AbortSignal.any([controller.signal, callerSignal])
+      : controller.signal;
     const dispatcher = createProxyAgent(this.proxyUrl);
 
     try {
@@ -284,7 +294,7 @@ export class MyAnonamouseIndexer implements IndexerAdapter {
         headers: {
           Cookie: `mam_id=${this.mamId}`,
         },
-        signal: controller.signal,
+        signal,
       };
 
       if (dispatcher) {

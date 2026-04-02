@@ -254,6 +254,15 @@ export class IndexerService {
     return results;
   }
 
+  async getEnabledIndexers(): Promise<Array<{ id: number; name: string }>> {
+    const rows = await this.db
+      .select({ id: indexers.id, name: indexers.name })
+      .from(indexers)
+      .where(eq(indexers.enabled, true))
+      .orderBy(indexers.priority);
+    return rows;
+  }
+
   async searchAll(query: string, options?: SearchOptions): Promise<SearchResult[]> {
     const enabledIndexers = await this.db
       .select()
@@ -299,6 +308,82 @@ export class IndexerService {
     }
 
     this.log.debug({ totalResults: results.length }, 'Search complete');
+    return results;
+  }
+
+  /**
+   * Streaming search: calls per-indexer callbacks as each settles.
+   * Returns aggregate results (same shape as searchAll) for post-processing.
+   * Each indexer gets its own signal from the controllers map.
+   */
+  async searchAllStreaming(
+    query: string,
+    options: SearchOptions | undefined,
+    controllers: Map<number, AbortController>,
+    callbacks: {
+      onComplete: (indexerId: number, name: string, resultCount: number, elapsedMs: number) => void;
+      onError: (indexerId: number, name: string, error: string, elapsedMs: number) => void;
+      onCancelled?: (indexerId: number, name: string) => void;
+    },
+  ): Promise<SearchResult[]> {
+    const enabledIndexers = await this.db
+      .select()
+      .from(indexers)
+      .where(eq(indexers.enabled, true))
+      .orderBy(indexers.priority);
+
+    this.log.debug({ query, indexers: enabledIndexers.map(i => i.name), count: enabledIndexers.length }, 'Streaming search started');
+
+    const perIndexerResults = new Map<number, SearchResult[]>();
+
+    await Promise.allSettled(
+      enabledIndexers.map(async (indexer) => {
+        const indexerStartMs = Date.now();
+        const controller = controllers.get(indexer.id);
+        const signal = controller?.signal;
+
+        try {
+          const adapter = await this.getAdapter(indexer);
+          const indexerResults = await adapter.search(query, { ...options, signal });
+          const elapsedMs = Date.now() - indexerStartMs;
+          const mapped = indexerResults.map(r => ({ ...r, indexerId: indexer.id }));
+          this.parseReleaseNames(mapped, indexer.name);
+          perIndexerResults.set(indexer.id, mapped);
+          callbacks.onComplete(indexer.id, indexer.name, mapped.length, elapsedMs);
+        } catch (error: unknown) {
+          const elapsedMs = Date.now() - indexerStartMs;
+          // Cancelled indexers report as cancelled, not error
+          if (signal?.aborted) {
+            this.log.debug({ indexer: indexer.name }, 'Indexer search cancelled');
+            callbacks.onCancelled?.(indexer.id, indexer.name);
+            return;
+          }
+          const message = error instanceof Error ? error.message : 'Unknown error';
+          this.log.warn({ indexer: indexer.name, query, err: error }, 'Error searching indexer');
+          callbacks.onError(indexer.id, indexer.name, message, elapsedMs);
+        }
+      }),
+    );
+
+    // Aggregate results from non-cancelled indexers
+    const results: SearchResult[] = [];
+    for (const indexerResults of perIndexerResults.values()) {
+      results.push(...indexerResults);
+    }
+
+    // Score results
+    if (options?.title) {
+      const context = { title: options.title, author: options.author };
+      for (const result of results) {
+        result.matchScore = scoreResult(
+          { title: result.title, author: result.author },
+          context,
+        );
+      }
+      results.sort((a, b) => (b.matchScore ?? 0) - (a.matchScore ?? 0));
+    }
+
+    this.log.debug({ totalResults: results.length }, 'Streaming search complete');
     return results;
   }
 }

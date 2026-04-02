@@ -332,4 +332,70 @@ describe('fetchWithProxy', () => {
       }
     });
   });
+
+  describe('AbortSignal threading', () => {
+    afterEach(() => {
+      vi.restoreAllMocks();
+    });
+
+    it('passes caller signal through to direct fetch — aborted signal is visible', async () => {
+      let capturedSignal: AbortSignal | undefined;
+      vi.spyOn(globalThis, 'fetch').mockImplementation(async (_url, init) => {
+        capturedSignal = init?.signal ?? undefined;
+        return new Response('ok');
+      });
+
+      const controller = new AbortController();
+      await fetchWithProxy({ url: TARGET_URL, signal: controller.signal });
+
+      // The composed signal should be linked to caller — aborting caller should abort the composed signal
+      expect(capturedSignal).toBeDefined();
+      controller.abort();
+      expect(capturedSignal!.aborted).toBe(true);
+    });
+
+    it('passes caller signal through to proxy fetch — aborted signal is visible', async () => {
+      let capturedSignal: AbortSignal | undefined;
+      vi.spyOn(globalThis, 'fetch').mockImplementation(async (_url, init) => {
+        capturedSignal = init?.signal ?? undefined;
+        return new Response(JSON.stringify({
+          status: 'ok',
+          solution: { response: 'proxied', status: 200 },
+        }), { headers: { 'Content-Type': 'application/json' } });
+      });
+
+      const controller = new AbortController();
+      await fetchWithProxy({ url: TARGET_URL, proxyUrl: PROXY_URL, signal: controller.signal });
+
+      expect(capturedSignal).toBeDefined();
+      controller.abort();
+      expect(capturedSignal!.aborted).toBe(true);
+    });
+
+    it('pre-aborted signal rejects immediately for direct fetch', async () => {
+      vi.spyOn(globalThis, 'fetch').mockImplementation(async (_url, init) => {
+        // Real fetch would throw on aborted signal — simulate that
+        if (init?.signal?.aborted) {
+          throw new DOMException('The operation was aborted', 'AbortError');
+        }
+        return new Response('should not reach');
+      });
+
+      const controller = new AbortController();
+      controller.abort();
+
+      await expect(fetchWithProxy({ url: TARGET_URL, signal: controller.signal })).rejects.toThrow();
+    });
+
+    it('works without caller signal (backward compat)', async () => {
+      server.use(
+        http.get('https://indexer.test/api', () => {
+          return new HttpResponse('ok');
+        }),
+      );
+
+      const result = await fetchWithProxy({ url: TARGET_URL });
+      expect(result).toBe('ok');
+    });
+  });
 });

@@ -6,6 +6,9 @@
 - **`src/server/services/blacklist.service.ts`**: `isBlacklisted(infoHash)` method still only checks `infoHash`, not `guid`. If usenet-only blacklisted entries exist (guid-only, no infoHash), `isBlacklisted()` won't find them. Low priority — only called from quality gate pre-check, not from reject flow (discovered in #248)
 - **`src/server/services/search-pipeline.ts`**: `searchAndGrabForBook()` still has no blacklist filtering — only `retrySearch()` filters. Scheduled search and manual search can re-grab blacklisted releases. Spec explicitly deferred this as out-of-scope (discovered in #248)
 
+- **`src/server/services/indexer.service.ts`**: `searchAllStreaming()` and `searchAll()` both query enabled indexers from the DB independently. Could share a common `getEnabledIndexerRows()` that returns full rows, with `getEnabledIndexers()` projecting just id+name. Minor DRY issue. (discovered in #298)
+- **`src/client/pages/activity/ActivityPage.test.tsx`**: "queue page clamps to last valid page" test is flaky — fails intermittently in CI. Likely a timing issue with pagination state updates. (discovered in #298)
+
 ## Accepted Debt
 
 Items below are real but not worth fixing — the cost of change outweighs the benefit.

@@ -15,6 +15,7 @@ export interface FetchWithProxyOptions {
   headers?: Record<string, string>;
   timeoutMs?: number;
   proxyUrl?: string;
+  signal?: AbortSignal;
 }
 
 interface FlareSolverrResponse {
@@ -39,26 +40,30 @@ export async function fetchWithProxy(options: FetchWithProxyOptions): Promise<st
   const { url, headers, proxyUrl } = options;
 
   if (proxyUrl) {
-    return fetchViaProxy(url, headers, proxyUrl, options.timeoutMs ?? PROXY_TIMEOUT_MS);
+    return fetchViaProxy(url, headers, proxyUrl, options.timeoutMs ?? PROXY_TIMEOUT_MS, options.signal);
   }
 
-  return fetchDirect(url, headers, options.timeoutMs ?? DEFAULT_TIMEOUT_MS);
+  return fetchDirect(url, headers, options.timeoutMs ?? DEFAULT_TIMEOUT_MS, options.signal);
 }
 
 async function fetchDirect(
   url: string,
   headers: Record<string, string> | undefined,
   timeoutMs: number,
+  callerSignal?: AbortSignal,
 ): Promise<string> {
   const controller = new AbortController();
   const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+  const signal = callerSignal
+    ? AbortSignal.any([controller.signal, callerSignal])
+    : controller.signal;
 
   try {
     let response: Response;
     try {
       response = await fetch(url, {
         headers,
-        signal: controller.signal,
+        signal,
       });
     } catch (error: unknown) {
       throw mapNetworkError(error);
@@ -79,9 +84,13 @@ async function fetchViaProxy(
   headers: Record<string, string> | undefined,
   proxyUrl: string,
   timeoutMs: number,
+  callerSignal?: AbortSignal,
 ): Promise<string> {
   const controller = new AbortController();
   const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+  const signal = callerSignal
+    ? AbortSignal.any([controller.signal, callerSignal])
+    : controller.signal;
 
   const proxyEndpoint = `${proxyUrl.replace(/\/+$/, '')}/v1`;
 
@@ -102,7 +111,7 @@ async function fetchViaProxy(
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(body),
-        signal: controller.signal,
+        signal,
       });
     } catch (error: unknown) {
       // Network-level failure reaching the proxy itself

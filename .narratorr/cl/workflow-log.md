@@ -1,5 +1,34 @@
 # Workflow Log
 
+## #298 Streaming search with indexer status view and per-indexer cancel — 2026-04-02
+**Skill path:** /elaborate → /respond-to-spec-review → /implement → /claim → /plan → /handoff
+**Outcome:** success — PR #302
+
+### Metrics
+- Files changed: 18 | Tests added/modified: 6 test files (~110 new tests)
+- Quality gate runs: 3 (pass on attempt 3 — 1st had lint, 2nd had flaky ActivityPage test)
+- Fix iterations: 1 (self-review caught 3 bugs: empty session controllers, missing cancel events, missing getEnabledIndexers)
+- Context compactions: 0
+
+### Workflow experience
+- What went smoothly: Module-by-module TDD approach worked well for this cross-cutting feature. AbortSignal threading was straightforward once the pattern was established.
+- Friction / issues encountered: Massive test file refactoring when switching SearchReleasesModal from useQuery to useSearchStream — 40+ mock calls needed updating. Self-review caught critical bug where session was created with empty indexer list.
+
+### Token efficiency
+- Highest-token actions: SearchReleasesModal test file refactoring (1200+ lines, many individual edits), Explore subagent for codebase exploration
+- Avoidable waste: Could have designed the session creation correctly from the start if the route pattern had been sketched before coding
+- Suggestions: For SSE streaming features, sketch the data flow (who queries what, who creates what) before starting implementation
+
+### Infrastructure gaps
+- Repeated workarounds: None
+- Missing tooling / config: Global EventSource stub was missing from test setup — had to add it
+- Unresolved debt: searchAllStreaming and searchAll both independently query enabled indexers; flaky ActivityPage pagination test
+
+### Wish I'd Known
+1. Per-request SSE streams are architecturally different from the global broadcast channel — don't try to reuse the EventBroadcaster service or its event type registry
+2. Session with AbortControllers must be populated with real indexer IDs before streaming starts — can't defer to the streaming method's internal DB query
+3. Switching a component from useQuery to a custom hook requires wholesale test file refactoring — mock the hook module-level to minimize churn
+
 ## #295 Import settings — reorder fields and disable seed time when delete is off — 2026-04-02
 **Skill path:** /elaborate → /respond-to-spec-review (x2) → /implement → /claim → /plan → /handoff
 **Outcome:** success — PR #297

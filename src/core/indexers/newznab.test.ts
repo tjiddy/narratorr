@@ -622,6 +622,28 @@ describe('NewznabIndexer', () => {
     });
   });
 
+  describe('AbortSignal threading', () => {
+    it('forwards signal to fetch helper when provided via options', async () => {
+      let capturedSignal: AbortSignal | undefined;
+
+      // Spy on fetch to capture the signal
+      const fetchSpy = vi.spyOn(globalThis, 'fetch').mockImplementation(async (_url, init) => {
+        capturedSignal = init?.signal ?? undefined;
+        return new Response(searchXml, { headers: { 'Content-Type': 'application/rss+xml' } });
+      });
+
+      const controller = new AbortController();
+      await indexer.search('test', { signal: controller.signal });
+
+      expect(capturedSignal).toBeDefined();
+      // Aborting the caller signal should propagate through the composed signal
+      controller.abort();
+      expect(capturedSignal!.aborted).toBe(true);
+
+      fetchSpy.mockRestore();
+    });
+  });
+
   describe('search — extended attrs (#272)', () => {
     it('includes attrs=grabs,language,group,files in search URL', async () => {
       let capturedUrl = '';
