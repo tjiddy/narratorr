@@ -1,10 +1,15 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import Fastify from 'fastify';
+import cookie from '@fastify/cookie';
 import type { FastifyReply, FastifyRequest } from 'fastify';
+import { validatorCompiler, serializerCompiler, type ZodTypeProvider } from 'fastify-type-provider-zod';
 import { SearchSessionManager } from '../services/search-session.js';
 import type { IndexerService } from '../services/indexer.service.js';
 import type { BlacklistService } from '../services/blacklist.service.js';
 import type { SettingsService } from '../services/settings.service.js';
+import type { AuthService } from '../services/auth.service.js';
 import { DEFAULT_SETTINGS } from '../../shared/schemas/settings/registry.js';
+import authPlugin from '../plugins/auth.js';
 
 // Mock the search pipeline
 vi.mock('../services/search-pipeline.js', () => ({
@@ -255,5 +260,144 @@ describe('searchStreamRoutes', () => {
       expect(session.controllers.get(1)!.signal.aborted).toBe(true);
       expect(session.controllers.get(2)!.signal.aborted).toBe(false);
     });
+  });
+
+  describe('client disconnect cleanup', () => {
+    it('invokes close callback which removes session and aborts pending controllers during search', async () => {
+      // Make searchAllStreaming hang so the close handler fires mid-search
+      let resolveSearch: (v: never[]) => void;
+      indexerService.searchAllStreaming = vi.fn().mockImplementation(
+        () => new Promise<never[]>((resolve) => { resolveSearch = resolve; }),
+      );
+
+      const { reply, request, onClose } = createMockReplyAndRequest();
+      // Start handler (it will await the hanging search)
+      const handlerPromise = streamHandler!(request, reply);
+      // Flush microtask queue so the handler reaches the await on searchAllStreaming
+      await new Promise(resolve => setTimeout(resolve, 0));
+
+      // Extract session ID from the search-start event that was already written
+      const writeCall = (reply.raw.write as ReturnType<typeof vi.fn>).mock.calls.find(
+        (call: unknown[]) => typeof call[0] === 'string' && (call[0] as string).includes('event: search-start'),
+      );
+      const dataLine = (writeCall![0] as string).split('\n').find((l: string) => l.startsWith('data: '));
+      const data = JSON.parse(dataLine!.replace('data: ', ''));
+      const sid = data.sessionId as string;
+
+      // Session exists while search is in-flight
+      expect(sessionManager.get(sid)).toBeDefined();
+      const session = sessionManager.get(sid)!;
+
+      // Simulate client disconnect (fires before search completes)
+      const closeHandler = onClose.mock.calls[0][1] as () => void;
+      closeHandler();
+
+      // Session removed and controllers aborted by the close callback
+      expect(sessionManager.get(sid)).toBeUndefined();
+      for (const [, controller] of session.controllers) {
+        expect(controller.signal.aborted).toBe(true);
+      }
+
+      // Let the search resolve so the handler completes cleanly
+      resolveSearch!([] as never[]);
+      await handlerPromise;
+    });
+  });
+});
+
+vi.mock('../config.js', () => ({
+  config: { authBypass: false, isDev: true },
+}));
+
+describe('searchStreamRoutes — app.inject() integration', () => {
+  function createMockAuthService(valid = false) {
+    return {
+      validateApiKey: vi.fn().mockResolvedValue(valid),
+      getStatus: vi.fn().mockResolvedValue({ mode: 'forms', hasUser: true, localBypass: false }),
+      hasUser: vi.fn().mockResolvedValue(true),
+    } as unknown as AuthService;
+  }
+
+  it('rejects unauthenticated request with 401', async () => {
+    const authService = createMockAuthService(false);
+    const app = Fastify({ logger: false }).withTypeProvider<ZodTypeProvider>();
+    app.setValidatorCompiler(validatorCompiler);
+    app.setSerializerCompiler(serializerCompiler);
+    await app.register(cookie);
+    await app.register(authPlugin, { authService });
+
+    const { searchStreamRoutes } = await import('./search-stream.js');
+    await searchStreamRoutes(
+      app,
+      createMockIndexerService(),
+      createMockBlacklistService(),
+      createMockSettingsService(),
+      new SearchSessionManager(),
+    );
+    await app.ready();
+
+    const res = await app.inject({ method: 'GET', url: '/api/search/stream?q=test' });
+    expect(res.statusCode).toBe(401);
+
+    await app.close();
+  });
+
+  it('cancel route returns expected response through registered app path', async () => {
+    const authService = createMockAuthService(true);
+    const sessionMgr = new SearchSessionManager();
+    const app = Fastify({ logger: false }).withTypeProvider<ZodTypeProvider>();
+    app.setValidatorCompiler(validatorCompiler);
+    app.setSerializerCompiler(serializerCompiler);
+    await app.register(cookie);
+    await app.register(authPlugin, { authService });
+
+    const { searchStreamRoutes } = await import('./search-stream.js');
+    await searchStreamRoutes(
+      app,
+      createMockIndexerService(),
+      createMockBlacklistService(),
+      createMockSettingsService(),
+      sessionMgr,
+    );
+    await app.ready();
+
+    // Create a session so cancel has something to target
+    const session = sessionMgr.create([{ id: 1, name: 'Test' }]);
+
+    const res = await app.inject({
+      method: 'POST',
+      url: `/api/search/stream/${session.sessionId}/cancel/1?apikey=valid-key`,
+    });
+    expect(res.statusCode).toBe(200);
+    expect(JSON.parse(res.body)).toEqual({ cancelled: true });
+
+    await app.close();
+  });
+
+  it('cancel route returns 404 for unknown session through registered app path', async () => {
+    const authService = createMockAuthService(true);
+    const app = Fastify({ logger: false }).withTypeProvider<ZodTypeProvider>();
+    app.setValidatorCompiler(validatorCompiler);
+    app.setSerializerCompiler(serializerCompiler);
+    await app.register(cookie);
+    await app.register(authPlugin, { authService });
+
+    const { searchStreamRoutes } = await import('./search-stream.js');
+    await searchStreamRoutes(
+      app,
+      createMockIndexerService(),
+      createMockBlacklistService(),
+      createMockSettingsService(),
+      new SearchSessionManager(),
+    );
+    await app.ready();
+
+    const res = await app.inject({
+      method: 'POST',
+      url: '/api/search/stream/nonexistent/cancel/1?apikey=valid-key',
+    });
+    expect(res.statusCode).toBe(404);
+
+    await app.close();
   });
 });
