@@ -208,6 +208,31 @@ describe('searchStreamRoutes', () => {
       // Verify onClose was registered to handle client disconnects
       expect(onClose).toHaveBeenCalledWith('close', expect.any(Function));
     });
+
+    it('calls reply.hijack() before any reply.raw.write() calls', async () => {
+      const callOrder: string[] = [];
+      const { reply, request } = createMockReplyAndRequest();
+
+      (reply.hijack as ReturnType<typeof vi.fn>).mockImplementation(() => {
+        callOrder.push('hijack');
+      });
+      (reply.raw.write as ReturnType<typeof vi.fn>).mockImplementation(() => {
+        callOrder.push('write');
+        return true;
+      });
+      (reply.raw.writeHead as ReturnType<typeof vi.fn>).mockImplementation(() => {
+        callOrder.push('writeHead');
+      });
+
+      await streamHandler!(request, reply);
+
+      expect(callOrder[0]).toBe('writeHead');
+      const hijackIndex = callOrder.indexOf('hijack');
+      const firstWriteIndex = callOrder.indexOf('write');
+      expect(hijackIndex).toBeGreaterThan(-1);
+      expect(firstWriteIndex).toBeGreaterThan(-1);
+      expect(hijackIndex).toBeLessThan(firstWriteIndex);
+    });
   });
 
   describe('POST /api/search/stream/:sessionId/cancel/:indexerId', () => {
@@ -467,7 +492,4 @@ describe('searchStreamRoutes — app.inject() integration', () => {
     await app.close();
   });
 
-  describe('AC3 — hijack ordering', () => {
-    it.todo('calls reply.hijack() before any reply.raw.write() calls');
-  });
 });

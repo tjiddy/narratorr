@@ -48,6 +48,8 @@ export async function searchStreamRoutes(
         'X-Accel-Buffering': 'no',
       });
 
+      reply.hijack();
+
       // Create session with actual indexer list so controllers are populated
       const session = sessionManager.create(enabledIndexers);
 
@@ -61,8 +63,6 @@ export async function searchStreamRoutes(
       request.raw.on('close', () => {
         sessionManager.cleanup(session.sessionId);
       });
-
-      reply.hijack();
 
       // Run streaming search
       try {
