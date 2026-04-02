@@ -1,3 +1,4 @@
+import { useEffect } from 'react';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
@@ -20,9 +21,10 @@ const manualAddSchema = z.object({
 
 type ManualAddFormData = z.infer<typeof manualAddSchema>;
 
-export function ManualAddForm({ defaultTitle, onSuccess }: {
+export function ManualAddForm({ defaultTitle, onSuccess, onPendingChange }: {
   defaultTitle?: string;
   onSuccess?: () => void;
+  onPendingChange?: (pending: boolean) => void;
 }) {
   const queryClient = useQueryClient();
 
@@ -61,6 +63,10 @@ export function ManualAddForm({ defaultTitle, onSuccess }: {
       toast.error(`Failed to add book: ${err.message}`);
     },
   });
+
+  useEffect(() => {
+    onPendingChange?.(addMutation.isPending);
+  }, [addMutation.isPending, onPendingChange]);
 
   return (
     <form

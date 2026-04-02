@@ -1,5 +1,5 @@
-import { describe, it, expect, vi } from 'vitest';
-import { render, screen, waitFor } from '@testing-library/react';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { BooksTabContent, AuthorsTabContent } from './SearchTabContent';
@@ -12,6 +12,7 @@ vi.mock('@/lib/api', async (importOriginal) => {
     api: {
       ...(actual.api as Record<string, unknown>),
       addBook: vi.fn(),
+      getSettings: vi.fn().mockResolvedValue({}),
     },
   };
 });
@@ -24,6 +25,15 @@ vi.mock('sonner', () => ({
   },
 }));
 
+let mockedApi: { addBook: ReturnType<typeof vi.fn>; getSettings: ReturnType<typeof vi.fn> };
+
+beforeEach(async () => {
+  const { api } = await import('@/lib/api');
+  mockedApi = api as unknown as typeof mockedApi;
+  mockedApi.addBook.mockReset();
+  mockedApi.getSettings.mockResolvedValue({});
+});
+
 function renderBooksTab(books = [createMockBookMetadata()], searchTerm?: string) {
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   return render(
@@ -31,6 +41,10 @@ function renderBooksTab(books = [createMockBookMetadata()], searchTerm?: string)
       <BooksTabContent books={books} libraryBooks={undefined} queryClient={queryClient} searchTerm={searchTerm} />
     </QueryClientProvider>,
   );
+}
+
+function getModal() {
+  return document.querySelector('[data-testid="modal-backdrop"]')?.closest('[class*="fixed inset-0"]') ?? null;
 }
 
 describe('BooksTabContent', () => {
@@ -42,37 +56,38 @@ describe('BooksTabContent', () => {
   it('renders "Add manually" CTA button in empty state (#246)', () => {
     renderBooksTab([]);
     expect(screen.getByRole('button', { name: /add manually/i })).toBeInTheDocument();
-    // Form should NOT be visible until CTA is clicked
-    expect(screen.queryByLabelText(/title/i)).not.toBeInTheDocument();
+    // Modal should NOT be open until CTA is clicked
+    expect(getModal()).toBeNull();
   });
 
-  it('opens form with pre-filled title on CTA click in empty state (#246)', async () => {
+  it('opens modal with pre-filled title on CTA click in empty state (#246)', async () => {
     const user = userEvent.setup();
     renderBooksTab([], 'Obscure Book');
 
     await user.click(screen.getByRole('button', { name: /add manually/i }));
 
+    expect(getModal()).not.toBeNull();
     expect(screen.getByLabelText(/title/i)).toHaveValue('Obscure Book');
   });
 
-  it('closes form after successful submit in empty state (#246)', async () => {
+  it('closes modal after successful submit in empty state (#246)', async () => {
     const user = userEvent.setup();
-    const { api: mockedApi } = await import('@/lib/api');
-    (mockedApi.addBook as ReturnType<typeof vi.fn>).mockResolvedValue({ id: 1, title: 'Test' });
+    mockedApi.addBook.mockResolvedValue({ id: 1, title: 'Test' });
     renderBooksTab([]);
 
     await user.click(screen.getByRole('button', { name: /add manually/i }));
     await user.type(screen.getByLabelText(/title/i), 'Test Book');
     await user.click(screen.getByRole('button', { name: /add book/i }));
 
-    // After success, form should close and CTA should reappear
+    // After success, modal should close
     await waitFor(() => {
-      expect(screen.getByRole('button', { name: /add manually/i })).toBeInTheDocument();
+      expect(getModal()).toBeNull();
     });
-    expect(screen.queryByLabelText(/title/i)).not.toBeInTheDocument();
+    // CTA button should still be there
+    expect(screen.getByRole('button', { name: /add manually/i })).toBeInTheDocument();
   });
 
-  it('shows "Can\'t find it?" toggle below results that reveals form (#246)', async () => {
+  it('shows "Can\'t find it?" link below results that opens modal (#246)', async () => {
     const user = userEvent.setup();
     renderBooksTab([createMockBookMetadata()]);
 
@@ -80,6 +95,7 @@ describe('BooksTabContent', () => {
     expect(toggle).toBeInTheDocument();
 
     await user.click(toggle);
+    expect(getModal()).not.toBeNull();
     expect(screen.getByLabelText(/title/i)).toBeInTheDocument();
   });
 
@@ -108,6 +124,197 @@ describe('AuthorsTabContent', () => {
     render(<AuthorsTabContent authors={authors} />);
     expect(screen.getByText('Author One')).toBeInTheDocument();
     expect(screen.getByText('Author Two')).toBeInTheDocument();
+  });
+});
+
+describe('#296 modal behavior', () => {
+  it('clicking "Add manually" button in empty state opens a modal', async () => {
+    const user = userEvent.setup();
+    renderBooksTab([]);
+
+    await user.click(screen.getByRole('button', { name: /add manually/i }));
+
+    expect(getModal()).not.toBeNull();
+    expect(screen.getByText('Add manually', { selector: 'h3' })).toBeInTheDocument();
+  });
+
+  it('clicking "Can\'t find it?" link in results state opens a modal', async () => {
+    const user = userEvent.setup();
+    renderBooksTab([createMockBookMetadata()]);
+
+    await user.click(screen.getByText(/can.*t find it/i));
+
+    expect(getModal()).not.toBeNull();
+    expect(screen.getByText('Add manually', { selector: 'h3' })).toBeInTheDocument();
+  });
+
+  it('modal contains Title, Author, Series, Position fields', async () => {
+    const user = userEvent.setup();
+    renderBooksTab([]);
+
+    await user.click(screen.getByRole('button', { name: /add manually/i }));
+
+    expect(screen.getByLabelText(/title/i)).toBeInTheDocument();
+    expect(screen.getByLabelText(/author/i)).toBeInTheDocument();
+    expect(screen.getByLabelText(/series/i)).toBeInTheDocument();
+    expect(screen.getByLabelText(/position/i)).toBeInTheDocument();
+  });
+
+  it('submitting form in modal adds book and closes modal', async () => {
+    const user = userEvent.setup();
+    mockedApi.addBook.mockResolvedValue({ id: 1, title: 'My Book' });
+    renderBooksTab([]);
+
+    await user.click(screen.getByRole('button', { name: /add manually/i }));
+    await user.type(screen.getByLabelText(/title/i), 'My Book');
+    await user.click(screen.getByRole('button', { name: /add book/i }));
+
+    await waitFor(() => {
+      expect(getModal()).toBeNull();
+    });
+    expect(mockedApi.addBook).toHaveBeenCalledWith(expect.objectContaining({ title: 'My Book' }));
+  });
+
+  it('Escape closes modal without adding', async () => {
+    const user = userEvent.setup();
+    renderBooksTab([]);
+
+    await user.click(screen.getByRole('button', { name: /add manually/i }));
+    expect(getModal()).not.toBeNull();
+
+    await user.keyboard('{Escape}');
+
+    expect(getModal()).toBeNull();
+    expect(mockedApi.addBook).not.toHaveBeenCalled();
+  });
+
+  it('backdrop click does NOT close modal (closeOnBackdropClick={false})', async () => {
+    const user = userEvent.setup();
+    renderBooksTab([]);
+
+    await user.click(screen.getByRole('button', { name: /add manually/i }));
+    expect(getModal()).not.toBeNull();
+
+    const backdrop = screen.getByTestId('modal-backdrop');
+    await user.click(backdrop);
+
+    // Modal should still be open
+    expect(getModal()).not.toBeNull();
+  });
+
+  it('modal is not visible before link is clicked', () => {
+    renderBooksTab([]);
+    expect(getModal()).toBeNull();
+  });
+
+  it('form resets between close and re-open (no stale values)', async () => {
+    const user = userEvent.setup();
+    renderBooksTab([]);
+
+    // Open, type something, close via Escape
+    await user.click(screen.getByRole('button', { name: /add manually/i }));
+    await user.type(screen.getByLabelText(/title/i), 'Stale Value');
+    await user.keyboard('{Escape}');
+
+    // Re-open — title should be empty (form remounted)
+    await user.click(screen.getByRole('button', { name: /add manually/i }));
+    expect(screen.getByLabelText(/title/i)).toHaveValue('');
+  });
+
+  it('submit button disabled and shows "Adding..." while mutation is pending', async () => {
+    const user = userEvent.setup();
+    let resolveAdd!: (value: unknown) => void;
+    mockedApi.addBook.mockImplementation(() => new Promise((resolve) => { resolveAdd = resolve; }));
+    renderBooksTab([]);
+
+    await user.click(screen.getByRole('button', { name: /add manually/i }));
+    await user.type(screen.getByLabelText(/title/i), 'Test');
+    await user.click(screen.getByRole('button', { name: /add book/i }));
+
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: /adding/i })).toBeDisabled();
+    });
+
+    // Resolve to clean up
+    resolveAdd({ id: 1, title: 'Test' });
+    await waitFor(() => {
+      expect(getModal()).toBeNull();
+    });
+  });
+
+  it('Escape disabled while mutation is pending', async () => {
+    const user = userEvent.setup();
+    let resolveAdd!: (value: unknown) => void;
+    mockedApi.addBook.mockImplementation(() => new Promise((resolve) => { resolveAdd = resolve; }));
+    renderBooksTab([]);
+
+    await user.click(screen.getByRole('button', { name: /add manually/i }));
+    await user.type(screen.getByLabelText(/title/i), 'Test');
+    await user.click(screen.getByRole('button', { name: /add book/i }));
+
+    // Wait for pending state
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: /adding/i })).toBeDisabled();
+    });
+
+    // Escape should NOT close modal while pending
+    await user.keyboard('{Escape}');
+    expect(getModal()).not.toBeNull();
+
+    // Resolve to clean up
+    resolveAdd({ id: 1, title: 'Test' });
+    await waitFor(() => {
+      expect(getModal()).toBeNull();
+    });
+  });
+
+  it('empty state trigger prefills Title from search term', async () => {
+    const user = userEvent.setup();
+    renderBooksTab([], 'My Search');
+
+    await user.click(screen.getByRole('button', { name: /add manually/i }));
+    expect(screen.getByLabelText(/title/i)).toHaveValue('My Search');
+  });
+
+  it('results state trigger leaves Title blank', async () => {
+    const user = userEvent.setup();
+    renderBooksTab([createMockBookMetadata()]);
+
+    await user.click(screen.getByText(/can.*t find it/i));
+    expect(screen.getByLabelText(/title/i)).toHaveValue('');
+  });
+
+  it('API rejection shows error toast, modal stays open for retry', async () => {
+    const user = userEvent.setup();
+    const { toast } = await import('sonner');
+    mockedApi.addBook.mockRejectedValue(new Error('Server error'));
+    renderBooksTab([]);
+
+    await user.click(screen.getByRole('button', { name: /add manually/i }));
+    await user.type(screen.getByLabelText(/title/i), 'Test');
+    await user.click(screen.getByRole('button', { name: /add book/i }));
+
+    await waitFor(() => {
+      expect(toast.error).toHaveBeenCalledWith('Failed to add book: Server error');
+    });
+    // Modal stays open
+    expect(getModal()).not.toBeNull();
+  });
+
+  it('validation error (empty title) keeps modal open with error message visible', async () => {
+    const user = userEvent.setup();
+    renderBooksTab([]);
+
+    await user.click(screen.getByRole('button', { name: /add manually/i }));
+    // Don't type a title — submit immediately
+    await user.click(screen.getByRole('button', { name: /add book/i }));
+
+    await waitFor(() => {
+      expect(screen.getByText('Title is required')).toBeInTheDocument();
+    });
+    // Modal stays open
+    expect(getModal()).not.toBeNull();
+    expect(mockedApi.addBook).not.toHaveBeenCalled();
   });
 });
 

@@ -4,7 +4,7 @@ import type { BookMetadata, AuthorMetadata, BookWithAuthor } from '@/lib/api';
 import { bookMetadataKey, authorMetadataKey, deduplicateKeys } from '@/lib/stableKeys.js';
 import { SearchBookCard } from './SearchBookCard.js';
 import { SearchAuthorCard } from './SearchAuthorCard.js';
-import { ManualAddForm } from '@/components/ManualAddForm';
+import { ManualAddFormModal } from '@/components/ManualAddFormModal';
 
 export function BooksTabContent({
   books,
@@ -18,25 +18,32 @@ export function BooksTabContent({
   searchTerm?: string;
 }) {
   const keys = useMemo(() => deduplicateKeys(books.map(bookMetadataKey)), [books]);
-  const [showForm, setShowForm] = useState(false);
+  const [showModal, setShowModal] = useState(false);
+  const [modalDefaultTitle, setModalDefaultTitle] = useState<string | undefined>();
+
+  const openModal = (defaultTitle?: string) => {
+    setModalDefaultTitle(defaultTitle);
+    setShowModal(true);
+  };
 
   if (books.length === 0) {
     return (
       <div className="space-y-6">
         <p className="text-center text-muted-foreground py-8">No books found</p>
-        {showForm ? (
-          <ManualAddForm defaultTitle={searchTerm} onSuccess={() => setShowForm(false)} />
-        ) : (
-          <p className="text-center">
-            <button
-              type="button"
-              onClick={() => setShowForm(true)}
-              className="px-6 py-3 bg-primary text-primary-foreground rounded-xl font-medium transition-all hover:bg-primary/90"
-            >
-              Add manually
-            </button>
-          </p>
-        )}
+        <p className="text-center">
+          <button
+            type="button"
+            onClick={() => openModal(searchTerm)}
+            className="px-6 py-3 bg-primary text-primary-foreground rounded-xl font-medium transition-all hover:bg-primary/90"
+          >
+            Add manually
+          </button>
+        </p>
+        <ManualAddFormModal
+          isOpen={showModal}
+          onClose={() => setShowModal(false)}
+          defaultTitle={modalDefaultTitle}
+        />
       </div>
     );
   }
@@ -55,19 +62,21 @@ export function BooksTabContent({
         ))}
       </div>
 
-      {showForm ? (
-        <ManualAddForm onSuccess={() => setShowForm(false)} />
-      ) : (
-        <p className="text-center py-4">
-          <button
-            type="button"
-            onClick={() => setShowForm(true)}
-            className="text-muted-foreground hover:text-primary transition-colors text-sm"
-          >
-            Can&apos;t find it? <span className="underline">Add manually</span>
-          </button>
-        </p>
-      )}
+      <p className="text-center py-4">
+        <button
+          type="button"
+          onClick={() => openModal(undefined)}
+          className="text-muted-foreground hover:text-primary transition-colors text-sm"
+        >
+          Can&apos;t find it? <span className="underline">Add manually</span>
+        </button>
+      </p>
+
+      <ManualAddFormModal
+        isOpen={showModal}
+        onClose={() => setShowModal(false)}
+        defaultTitle={modalDefaultTitle}
+      />
     </div>
   );
 }
