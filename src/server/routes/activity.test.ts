@@ -821,6 +821,18 @@ describe('activity routes', () => {
       expect(services.qualityGateOrchestrator.reject).toHaveBeenCalledWith(1, { retry: false });
     });
 
+    it('returns 400 when retry is a string instead of boolean', async () => {
+      const res = await app.inject({
+        method: 'POST',
+        url: '/api/activity/1/reject',
+        payload: { retry: 'true' },
+      });
+
+      expect(res.statusCode).toBe(400);
+      expect(JSON.parse(res.payload)).toEqual(expect.objectContaining({ error: 'Invalid request body' }));
+      expect(services.qualityGateOrchestrator.reject).not.toHaveBeenCalled();
+    });
+
     it('returns 409 for non-pending_review download with retry=true', async () => {
       (services.qualityGateOrchestrator.reject as Mock).mockRejectedValue(new QualityGateServiceError('Download is not pending review', 'INVALID_STATUS'));
 

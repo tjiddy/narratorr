@@ -169,10 +169,13 @@ export async function activityRoutes(app: FastifyInstance, downloadService: Down
   app.post<{ Params: IdParam }>(
     '/api/activity/:id/reject',
     { schema: { params: idParamSchema } },
-    async (request) => {
+    async (request, reply) => {
       const { id } = request.params;
-      const body = rejectBodySchema.safeParse(request.body);
-      const retry = body.success ? body.data.retry : false;
+      const parsed = rejectBodySchema.safeParse(request.body ?? {});
+      if (!parsed.success) {
+        return reply.status(400).send({ error: 'Invalid request body', details: parsed.error.issues });
+      }
+      const { retry } = parsed.data;
 
       request.log.info({ id, retry }, 'Download rejected');
       return qualityGateOrchestrator.reject(id, { retry });
