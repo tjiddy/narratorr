@@ -453,11 +453,54 @@ describe('ActivityPage', () => {
     const expandToggle = screen.getByRole('button', { expanded: false });
     await user.click(expandToggle);
 
-    const rejectSpan = screen.getByText('Reject');
-    await user.click(rejectSpan.closest('button')!);
+    const rejectBtn = screen.getByText('Reject');
+    await user.click(rejectBtn.closest('button')!);
 
     await waitFor(() => {
-      expect(vi.mocked(api.rejectDownload).mock.calls[0][0]).toBe(21);
+      expect(api.rejectDownload).toHaveBeenCalledWith(21, { retry: false });
+    });
+  });
+
+  it('reject & search from pending_review download sends retry=true', async () => {
+    const user = userEvent.setup();
+    const pending = makeDownload({
+      id: 22,
+      title: 'Search Again',
+      status: 'pending_review',
+      qualityGate: {
+        action: 'held',
+        mbPerHour: 80,
+        existingMbPerHour: 100,
+        narratorMatch: true,
+        existingNarrator: null,
+        downloadNarrator: null,
+        durationDelta: 0.02,
+        codec: 'mp3',
+        channels: 1,
+        probeFailure: false,
+        probeError: null,
+        holdReasons: [],
+      },
+    });
+
+    mockActivitySections([pending], []);
+    vi.mocked(api.rejectDownload).mockResolvedValue({ id: 22, status: 'failed' });
+
+    renderWithProviders(<ActivityPage />);
+
+    await waitFor(() => {
+      expect(screen.getByText('Search Again')).toBeInTheDocument();
+    });
+
+    // Expand the pending review panel
+    const expandToggle = screen.getByRole('button', { expanded: false });
+    await user.click(expandToggle);
+
+    const rejectSearchBtn = screen.getByText('Reject & Search');
+    await user.click(rejectSearchBtn.closest('button')!);
+
+    await waitFor(() => {
+      expect(api.rejectDownload).toHaveBeenCalledWith(22, { retry: true });
     });
   });
 
