@@ -216,7 +216,7 @@ describe('DownloadCard', () => {
     });
 
     it('reject button shows pending state while rejecting and disables both reject buttons', async () => {
-      const { user } = renderPendingReview(undefined, { isRejecting: true });
+      const { user } = renderPendingReview(undefined, { isRejectingDismiss: true });
       await user.click(screen.getByRole('button', { name: /expand quality comparison/i }));
 
       const rejectBtn = screen.getByText('Rejecting...');
@@ -451,7 +451,7 @@ describe('DownloadCard', () => {
           download={createMockDownload({ status: 'pending_review', qualityGate: gateData301 })}
           onReject={vi.fn()}
           onRejectWithSearch={vi.fn()}
-          isRejecting
+          isRejectingDismiss
         />,
       );
 
@@ -479,9 +479,63 @@ describe('DownloadCard', () => {
   });
 
   describe('AC5 — reject button spinner scoping', () => {
-    it.todo('shows spinner on Reject button only when reject action is pending for this card');
-    it.todo('shows spinner on Reject & Search button only when reject-with-search is pending for this card');
-    it.todo('shows no spinner on either button when reject is pending for a different card');
-    it.todo('disables both buttons on this card when either reject action is pending for this card');
+    it('shows spinner on Reject button only when reject-dismiss is pending for this card', () => {
+      render(
+        <DownloadCard
+          download={createMockDownload({ status: 'pending_review', qualityGate: undefined })}
+          onReject={vi.fn()}
+          onRejectWithSearch={vi.fn()}
+          isRejectingDismiss
+        />,
+      );
+
+      expect(screen.getByText('Rejecting...')).toBeInTheDocument();
+      expect(screen.getByText('Reject & Search').closest('button')).not.toHaveTextContent('Rejecting');
+    });
+
+    it('shows spinner on Reject & Search button only when reject-with-search is pending for this card', () => {
+      render(
+        <DownloadCard
+          download={createMockDownload({ status: 'pending_review', qualityGate: undefined })}
+          onReject={vi.fn()}
+          onRejectWithSearch={vi.fn()}
+          isRejectingWithSearch
+        />,
+      );
+
+      expect(screen.getByText('Rejecting...')).toBeInTheDocument();
+      // The "Reject" dismiss button should NOT show spinner
+      const rejectBtn = screen.getAllByRole('button').find(b => b.textContent === 'Reject');
+      expect(rejectBtn).toBeDefined();
+      expect(rejectBtn!.textContent).toBe('Reject');
+    });
+
+    it('shows no spinner on either button when reject is pending for a different card', () => {
+      render(
+        <DownloadCard
+          download={createMockDownload({ status: 'pending_review', qualityGate: undefined })}
+          onReject={vi.fn()}
+          onRejectWithSearch={vi.fn()}
+        />,
+      );
+
+      expect(screen.getByText('Reject')).toBeInTheDocument();
+      expect(screen.getByText('Reject & Search')).toBeInTheDocument();
+      expect(screen.queryByText('Rejecting...')).not.toBeInTheDocument();
+    });
+
+    it('disables both buttons on this card when either reject action is pending for this card', () => {
+      render(
+        <DownloadCard
+          download={createMockDownload({ status: 'pending_review', qualityGate: undefined })}
+          onReject={vi.fn()}
+          onRejectWithSearch={vi.fn()}
+          isRejectingDismiss
+        />,
+      );
+
+      expect(screen.getByText('Rejecting...').closest('button')).toBeDisabled();
+      expect(screen.getByText('Reject & Search').closest('button')).toBeDisabled();
+    });
   });
 });

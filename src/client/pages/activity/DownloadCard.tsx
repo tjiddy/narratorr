@@ -12,15 +12,17 @@ function PendingReviewActions({
   onReject,
   onRejectWithSearch,
   isApproving,
-  isRejecting,
+  isRejectingDismiss,
+  isRejectingWithSearch,
 }: {
   onApprove?: () => void;
   onReject?: () => void;
   onRejectWithSearch?: () => void;
   isApproving?: boolean;
-  isRejecting?: boolean;
+  isRejectingDismiss?: boolean;
+  isRejectingWithSearch?: boolean;
 }) {
-  const isAnyPending = isApproving || isRejecting;
+  const isAnyPending = isApproving || isRejectingDismiss || isRejectingWithSearch;
 
   return (
     <div className="flex items-center gap-2 mt-3">
@@ -41,7 +43,7 @@ function PendingReviewActions({
           disabled={isAnyPending}
           className="flex items-center gap-1.5 px-3 py-2 text-sm font-medium bg-destructive/10 text-destructive rounded-xl hover:bg-destructive hover:text-destructive-foreground disabled:opacity-50 transition-all focus-ring"
         >
-          {isRejecting ? 'Rejecting...' : 'Reject'}
+          {isRejectingDismiss ? 'Rejecting...' : 'Reject'}
         </button>
       )}
       {onRejectWithSearch && (
@@ -51,7 +53,7 @@ function PendingReviewActions({
           disabled={isAnyPending}
           className="flex items-center gap-1.5 px-3 py-2 text-sm font-medium text-destructive/70 border border-destructive/20 rounded-xl hover:bg-destructive/10 disabled:opacity-50 transition-all focus-ring"
         >
-          Reject &amp; Search
+          {isRejectingWithSearch ? 'Rejecting...' : 'Reject & Search'}
         </button>
       )}
     </div>
@@ -64,14 +66,16 @@ function PendingReviewDetails({
   onReject,
   onRejectWithSearch,
   isApproving,
-  isRejecting,
+  isRejectingDismiss,
+  isRejectingWithSearch,
 }: {
   download: Download;
   onApprove?: () => void;
   onReject?: () => void;
   onRejectWithSearch?: () => void;
   isApproving?: boolean;
-  isRejecting?: boolean;
+  isRejectingDismiss?: boolean;
+  isRejectingWithSearch?: boolean;
 }) {
   const [expanded, setExpanded] = useState(!download.qualityGate ? true : false);
   const hasGate = !!download.qualityGate;
@@ -102,7 +106,8 @@ function PendingReviewDetails({
               onReject={onReject}
               onRejectWithSearch={onRejectWithSearch}
               isApproving={isApproving}
-              isRejecting={isRejecting}
+              isRejectingDismiss={isRejectingDismiss}
+              isRejectingWithSearch={isRejectingWithSearch}
             />
           </div>
         )}
@@ -118,7 +123,8 @@ function PendingReviewDetails({
         onReject={onReject}
         onRejectWithSearch={onRejectWithSearch}
         isApproving={isApproving}
-        isRejecting={isRejecting}
+        isRejectingDismiss={isRejectingDismiss}
+        isRejectingWithSearch={isRejectingWithSearch}
       />
     </div>
   );
@@ -130,14 +136,16 @@ function DownloadStatusDetails({
   onReject,
   onRejectWithSearch,
   isApproving,
-  isRejecting,
+  isRejectingDismiss,
+  isRejectingWithSearch,
 }: {
   download: Download;
   onApprove?: () => void;
   onReject?: () => void;
   onRejectWithSearch?: () => void;
   isApproving?: boolean;
-  isRejecting?: boolean;
+  isRejectingDismiss?: boolean;
+  isRejectingWithSearch?: boolean;
 }) {
   return (
     <>
@@ -160,7 +168,8 @@ function DownloadStatusDetails({
           onReject={onReject}
           onRejectWithSearch={onRejectWithSearch}
           isApproving={isApproving}
-          isRejecting={isRejecting}
+          isRejectingDismiss={isRejectingDismiss}
+          isRejectingWithSearch={isRejectingWithSearch}
         />
       )}
     </>
@@ -177,7 +186,8 @@ export function DownloadCard({
   onDelete,
   isCancelling,
   isApproving,
-  isRejecting,
+  isRejectingDismiss,
+  isRejectingWithSearch,
   isDeleting,
   isRetrying,
   showProgress = true,
@@ -193,7 +203,8 @@ export function DownloadCard({
   onDelete?: () => void;
   isCancelling?: boolean;
   isApproving?: boolean;
-  isRejecting?: boolean;
+  isRejectingDismiss?: boolean;
+  isRejectingWithSearch?: boolean;
   isDeleting?: boolean;
   isRetrying?: boolean;
   showProgress?: boolean;
@@ -250,7 +261,7 @@ export function DownloadCard({
                 onDelete={onDelete}
                 isCancelling={isCancelling}
                 isApproving={isApproving}
-                isRejecting={isRejecting}
+                isRejecting={isRejectingDismiss}
                 isDeleting={isDeleting}
                 isRetrying={isRetrying}
               />
@@ -263,7 +274,8 @@ export function DownloadCard({
             onReject={onReject}
             onRejectWithSearch={onRejectWithSearch}
             isApproving={isApproving}
-            isRejecting={isRejecting}
+            isRejectingDismiss={isRejectingDismiss}
+            isRejectingWithSearch={isRejectingWithSearch}
           />
 
           {showProgress && download.status === 'downloading' && (
