@@ -312,8 +312,16 @@ export function SearchReleasesModal({ isOpen, book, onClose }: SearchReleasesMod
           {/* Phase 2: Results view */}
           {isResults && (
             <>
+              {/* Loading — results not yet received from server */}
+              {!state.results && (
+                <div className="flex flex-col items-center justify-center py-12">
+                  <LoadingSpinner className="w-8 h-8 text-primary mb-4" />
+                  <p className="text-muted-foreground">Finalizing results...</p>
+                </div>
+              )}
+
               {/* Empty */}
-              {results?.length === 0 && (
+              {results?.length === 0 && state.results && (
                 <div className="flex flex-col items-center justify-center py-12">
                   <SearchIcon className="w-10 h-10 text-muted-foreground/40 mb-4" />
                   <p className="text-muted-foreground">No releases found</p>

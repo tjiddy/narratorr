@@ -1388,6 +1388,24 @@ describe('SearchReleasesModal — streaming search (Phase 1/Phase 2)', () => {
   });
 
   describe('Phase 2 — Results view', () => {
+    it('shows loading state when phase is results but results data has not arrived yet', () => {
+      mockStreamState = {
+        phase: 'results',
+        sessionId: 'test',
+        indexers: [],
+        results: null,
+        error: null,
+        hasResults: false,
+        authReady: true,
+      };
+
+      renderWithProviders(
+        <SearchReleasesModal isOpen={true} book={mockBook} onClose={vi.fn()} />,
+      );
+
+      expect(screen.getByText('Finalizing results...')).toBeInTheDocument();
+    });
+
     it('shows empty state when results are empty', () => {
       setStreamResults([]);
 
