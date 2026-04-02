@@ -374,6 +374,72 @@ describe('searchStreamRoutes — app.inject() integration', () => {
     await app.close();
   });
 
+  it('successful GET with valid apikey and zero indexers returns SSE stream with empty results', async () => {
+    // app.inject() hangs on hijacked SSE responses (per fastify-sse-hijack-testing learning),
+    // so use app.listen(0) + real HTTP fetch to test the full Fastify stack.
+    // Reset the shared mock to return empty results for zero-indexer case
+    (postProcessSearchResults as ReturnType<typeof vi.fn>).mockResolvedValue({
+      results: [],
+      durationUnknown: false,
+      unsupportedResults: { count: 0, titles: [] },
+    });
+
+    const authService = createMockAuthService(true);
+    const zeroIndexerService = {
+      ...createMockIndexerService(),
+      getEnabledIndexers: vi.fn().mockResolvedValue([]),
+      searchAllStreaming: vi.fn().mockResolvedValue([]),
+    } as unknown as IndexerService;
+
+    const app = Fastify({ logger: false }).withTypeProvider<ZodTypeProvider>();
+    app.setValidatorCompiler(validatorCompiler);
+    app.setSerializerCompiler(serializerCompiler);
+    await app.register(cookie);
+    await app.register(authPlugin, { authService });
+
+    const { searchStreamRoutes } = await import('./search-stream.js');
+    await searchStreamRoutes(
+      app,
+      zeroIndexerService,
+      createMockBlacklistService(),
+      createMockSettingsService(),
+      new SearchSessionManager(),
+    );
+
+    const address = await app.listen({ port: 0, host: '127.0.0.1' });
+
+    try {
+      const res = await fetch(`${address}/api/search/stream?q=test&apikey=valid-key`);
+
+      // Auth accepted — 200 with SSE headers
+      expect(res.status).toBe(200);
+      expect(res.headers.get('content-type')).toBe('text/event-stream');
+      expect(res.headers.get('cache-control')).toBe('no-cache');
+
+      // Read the full SSE body
+      const body = await res.text();
+
+      // Should contain search-start with empty indexer list
+      expect(body).toContain('event: search-start');
+      const searchStartMatch = body.match(/event: search-start\ndata: (.+)\n/);
+      expect(searchStartMatch).not.toBeNull();
+      const startData = JSON.parse(searchStartMatch![1]);
+      expect(startData.sessionId).toBeDefined();
+      expect(startData.indexers).toEqual([]);
+
+      // Should contain search-complete with empty SearchResponse
+      expect(body).toContain('event: search-complete');
+      const searchCompleteMatch = body.match(/event: search-complete\ndata: (.+)\n/);
+      expect(searchCompleteMatch).not.toBeNull();
+      const completeData = JSON.parse(searchCompleteMatch![1]);
+      expect(completeData.results).toEqual([]);
+      expect(completeData).toHaveProperty('durationUnknown');
+      expect(completeData).toHaveProperty('unsupportedResults');
+    } finally {
+      await app.close();
+    }
+  });
+
   it('cancel route returns 404 for unknown session through registered app path', async () => {
     const authService = createMockAuthService(true);
     const app = Fastify({ logger: false }).withTypeProvider<ZodTypeProvider>();
