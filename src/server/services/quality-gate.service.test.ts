@@ -914,11 +914,57 @@ describe('Quality gate — narrator array comparison (#71)', () => {
 
   // #300 — Legacy backward compatibility (readback normalization)
   describe('getQualityGateData — legacy event normalization', () => {
-    it.todo('returns null for new fields when stored reason JSON predates the schema change (missing existingCodec/existingChannels/existingDuration/downloadedDuration)');
+    it('returns null for new fields when stored reason JSON predates the schema change', async () => {
+      const { service, db } = createService();
+      // Legacy reason missing the 4 new fields
+      const legacyReason = {
+        action: 'held' as const,
+        mbPerHour: 60, existingMbPerHour: 40, narratorMatch: false,
+        existingNarrator: null, downloadNarrator: null,
+        durationDelta: 0.05, codec: 'AAC', channels: 1,
+        probeFailure: false, probeError: null, holdReasons: ['narrator_mismatch'],
+      };
+      db.select
+        .mockReturnValueOnce(mockDbChain([{ ...baseDownload, status: 'pending_review' }]))
+        .mockReturnValueOnce(mockDbChain([{ reason: legacyReason }]));
+
+      const result = await service.getQualityGateData(1);
+
+      expect(result).not.toBeNull();
+      expect(result!.existingCodec).toBeNull();
+      expect(result!.existingChannels).toBeNull();
+      expect(result!.existingDuration).toBeNull();
+      expect(result!.downloadedDuration).toBeNull();
+      // Existing fields preserved
+      expect(result!.mbPerHour).toBe(60);
+      expect(result!.codec).toBe('AAC');
+    });
   });
 
   describe('getQualityGateDataBatch — legacy event normalization', () => {
-    it.todo('normalizes legacy events identically — missing keys become null, not undefined');
+    it('normalizes legacy events identically — missing keys become null, not undefined', async () => {
+      const { service, db } = createService();
+      const legacyReason = {
+        action: 'held' as const,
+        mbPerHour: 60, existingMbPerHour: 40, narratorMatch: false,
+        durationDelta: 0.05, codec: 'AAC', channels: 1,
+        probeFailure: false, holdReasons: ['narrator_mismatch'],
+      };
+      db.select
+        .mockReturnValueOnce(mockDbChain([{ ...baseDownload, id: 1, bookId: 10, status: 'pending_review' }]))
+        .mockReturnValueOnce(mockDbChain([{ downloadId: 1, reason: legacyReason }]));
+
+      const result = await service.getQualityGateDataBatch([1]);
+
+      const data = result.get(1);
+      expect(data).not.toBeNull();
+      expect(data!.existingCodec).toBeNull();
+      expect(data!.existingChannels).toBeNull();
+      expect(data!.existingDuration).toBeNull();
+      expect(data!.downloadedDuration).toBeNull();
+      // Existing fields preserved
+      expect(data!.mbPerHour).toBe(60);
+    });
   });
 
   // #299 — getDeferredCleanupCandidates

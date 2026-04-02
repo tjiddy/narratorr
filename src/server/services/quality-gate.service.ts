@@ -5,7 +5,7 @@ import { downloads, books, bookEvents, bookNarrators, narrators } from '../../db
 
 import type { DownloadRow } from './types.js';
 import { buildQualityAssessment } from './quality-gate.helpers.js';
-import { QualityGateServiceError } from './quality-gate.types.js';
+import { QualityGateServiceError, NULL_REASON } from './quality-gate.types.js';
 import type { QualityDecisionReason } from './quality-gate.types.js';
 
 export { QualityGateServiceError, type QualityDecisionReason } from './quality-gate.types.js';
@@ -201,7 +201,8 @@ export class QualityGateService {
 
     if (eventResults.length === 0) return null;
 
-    return (eventResults[0].reason as QualityDecisionReason | null) ?? null;
+    const stored = (eventResults[0].reason as QualityDecisionReason | null) ?? null;
+    return stored ? { ...NULL_REASON, ...stored } : null;
   }
 
   /**
@@ -259,7 +260,8 @@ export class QualityGateService {
     for (const event of allEvents) {
       if (event.downloadId !== null && !result.has(event.downloadId)) continue;
       if (event.downloadId !== null && result.get(event.downloadId) === null) {
-        result.set(event.downloadId, (event.reason as QualityDecisionReason | null) ?? null);
+        const stored = (event.reason as QualityDecisionReason | null) ?? null;
+        result.set(event.downloadId, stored ? { ...NULL_REASON, ...stored } : null);
       }
     }
 
