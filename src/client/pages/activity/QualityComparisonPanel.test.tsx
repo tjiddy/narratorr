@@ -191,6 +191,25 @@ describe('QualityComparisonPanel — probe error display', () => {
   });
 });
 
+describe('QualityComparisonPanel — existing audio metadata display', () => {
+  it.todo('renders existing codec in Current column when existingCodec is non-null');
+  it.todo('renders existing channels with Mono/Stereo/Nch formatting when existingChannels is non-null');
+  it.todo('renders existing duration formatted as "Xh Ym" when existingDuration is non-null');
+  it.todo('renders downloadedDuration formatted as "Xh Ym" in Downloaded column');
+  it.todo('shows absolute duration values for both sides (not relative delta %)');
+  it.todo('flags duration row when durationDelta exceeds 15% tolerance');
+  it.todo('does NOT flag duration row when delta is exactly 15% (boundary exclusive)');
+  it.todo('shows dashes when existing codec/channels/duration are null');
+  it.todo('does NOT render codec row when both existing and downloaded codec are null');
+  it.todo('does NOT render channels row when both existing and downloaded channels are null');
+  it.todo('does NOT render duration row when both existingDuration and downloadedDuration are null');
+  it.todo('renders channels formatting: 1→Mono, 2→Stereo, 6→6ch for existing side');
+});
+
+describe('QualityComparisonPanel — legacy backward compatibility', () => {
+  it.todo('renders correctly when existingCodec/existingChannels/existingDuration/downloadedDuration are absent from data (legacy event)');
+});
+
 describe('QualityComparisonPanel — stereo flag removal', () => {
   it('renders Stereo without warning icon for channels=2', () => {
     const { container } = render(<QualityComparisonPanel data={{ ...baseGateData, channels: 2, probeFailure: false, durationDelta: null, narratorMatch: null }} />);

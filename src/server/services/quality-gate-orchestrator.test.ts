@@ -1392,4 +1392,9 @@ describe('QualityGateOrchestrator', () => {
       expect(clearCall).toBeDefined();
     });
   });
+
+  // #300 — Persisted payload includes new existing audio metadata fields
+  describe('persisted payload — existing audio metadata (#300)', () => {
+    it.todo('stored reason JSON includes existingCodec, existingChannels, existingDuration, downloadedDuration for held downloads with existing book metadata');
+  });
 });

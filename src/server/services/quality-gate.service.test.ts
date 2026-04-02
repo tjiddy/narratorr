@@ -912,6 +912,15 @@ describe('Quality gate — narrator array comparison (#71)', () => {
     expect(result.reason.narratorMatch).toBeNull();
   });
 
+  // #300 — Legacy backward compatibility (readback normalization)
+  describe('getQualityGateData — legacy event normalization', () => {
+    it.todo('returns null for new fields when stored reason JSON predates the schema change (missing existingCodec/existingChannels/existingDuration/downloadedDuration)');
+  });
+
+  describe('getQualityGateDataBatch — legacy event normalization', () => {
+    it.todo('normalizes legacy events identically — missing keys become null, not undefined');
+  });
+
   // #299 — getDeferredCleanupCandidates
   describe('getDeferredCleanupCandidates', () => {
     it('queries with where(isNotNull(downloads.pendingCleanup)) and returns matching rows', async () => {
