@@ -49,10 +49,18 @@ export interface SearchStreamActions {
 // Hook
 // ============================================================================
 
+export interface SearchStreamOptions {
+  finalizingTimeoutMs?: number;
+}
+
+const DEFAULT_FINALIZING_TIMEOUT_MS = 10_000;
+
 export function useSearchStream(
   query: string,
   context?: SearchContext,
+  options?: SearchStreamOptions,
 ): { state: SearchStreamState; actions: SearchStreamActions } {
+  const finalizingTimeoutMs = options?.finalizingTimeoutMs ?? DEFAULT_FINALIZING_TIMEOUT_MS;
   const [phase, setPhase] = useState<SearchPhase>('idle');
   const [sessionId, setSessionId] = useState<string | null>(null);
   const [indexers, setIndexers] = useState<IndexerState[]>([]);
@@ -61,6 +69,7 @@ export function useSearchStream(
 
   const esRef = useRef<EventSource | null>(null);
   const cancelledRef = useRef(new Set<number>());
+  const finalizingTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const { data: authConfig } = useQuery({
     queryKey: queryKeys.auth.config(),
@@ -68,12 +77,20 @@ export function useSearchStream(
     staleTime: Infinity,
   });
 
+  const clearFinalizingTimeout = useCallback(() => {
+    if (finalizingTimeoutRef.current !== null) {
+      clearTimeout(finalizingTimeoutRef.current);
+      finalizingTimeoutRef.current = null;
+    }
+  }, []);
+
   const cleanup = useCallback(() => {
+    clearFinalizingTimeout();
     if (esRef.current) {
       esRef.current.close();
       esRef.current = null;
     }
-  }, []);
+  }, [clearFinalizingTimeout]);
 
   const start = useCallback(() => {
     // Gate on auth config readiness — don't open an unauthenticated stream
@@ -147,6 +164,7 @@ export function useSearchStream(
     es.addEventListener('search-complete', (event: MessageEvent) => {
       try {
         const data = JSON.parse(event.data) as SearchResponse;
+        clearFinalizingTimeout();
         setResults(data);
         setPhase('results');
       } catch { /* malformed event */ }
@@ -154,6 +172,7 @@ export function useSearchStream(
     });
 
     es.onerror = () => {
+      clearFinalizingTimeout();
       setError('Search connection failed');
       setPhase('idle');
       es.close();
@@ -184,7 +203,17 @@ export function useSearchStream(
     // Transition to Phase 2 immediately — don't wait for search-complete
     // The search-complete event will still arrive and set results data
     setPhase('results');
-  }, [indexers, cancelIndexer]);
+
+    // Start a finalizing timeout — if search-complete doesn't arrive in time,
+    // fall back to error state so the user isn't stuck on the spinner forever
+    clearFinalizingTimeout();
+    finalizingTimeoutRef.current = setTimeout(() => {
+      finalizingTimeoutRef.current = null;
+      setError('Search timed out waiting for results');
+      setPhase('idle');
+      cleanup();
+    }, finalizingTimeoutMs);
+  }, [indexers, cancelIndexer, finalizingTimeoutMs, clearFinalizingTimeout, cleanup]);
 
   const reset = useCallback(() => {
     cleanup();
