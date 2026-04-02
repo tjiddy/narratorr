@@ -579,6 +579,35 @@ describe('MyAnonamouseIndexer', () => {
     });
   });
 
+  describe('AbortSignal threading', () => {
+    it('forwards signal to fetch helpers for both search and torrent download', async () => {
+      const capturedSignals: (AbortSignal | undefined)[] = [];
+      const fetchSpy = vi.spyOn(globalThis, 'fetch').mockImplementation(async (url, init) => {
+        capturedSignals.push(init?.signal ?? undefined);
+        const urlStr = typeof url === 'string' ? url : url.toString();
+        if (urlStr.includes('loadSearchJSONbasic')) {
+          return new Response(JSON.stringify({
+            data: [{ id: 1, title: 'Test Book', seeders: 5, leechers: 1, size: '500 MB' }],
+          }));
+        }
+        // Torrent download response
+        return new Response('torrent-data', { headers: { 'Content-Type': 'application/x-bittorrent' } });
+      });
+
+      const controller = new AbortController();
+      await indexer.search('test', { signal: controller.signal });
+
+      // Should have at least 2 fetch calls: search JSON + torrent download
+      expect(capturedSignals.length).toBeGreaterThanOrEqual(2);
+      expect(capturedSignals.every(s => s !== undefined)).toBe(true);
+      // Verify caller abort propagates
+      controller.abort();
+      expect(capturedSignals[0]!.aborted).toBe(true);
+
+      fetchSpy.mockRestore();
+    });
+  });
+
   describe('proxy support', () => {
     const PROXY_URL = 'http://proxy.test:8080';
     let proxiedIndexer: MyAnonamouseIndexer;

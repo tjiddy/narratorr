@@ -158,6 +158,34 @@ describe('fetchWithProxyAgent', () => {
   });
 });
 
+describe('fetchWithProxyAgent — AbortSignal threading', () => {
+  it('composes caller signal with timeout — caller abort propagates', async () => {
+    let capturedSignal: AbortSignal | undefined;
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async (_url, init) => {
+      capturedSignal = init?.signal ?? undefined;
+      return new Response('ok');
+    });
+
+    const controller = new AbortController();
+    await fetchWithProxyAgent('https://example.com', { signal: controller.signal });
+
+    expect(capturedSignal).toBeDefined();
+    controller.abort();
+    expect(capturedSignal!.aborted).toBe(true);
+
+    vi.restoreAllMocks();
+  });
+
+  it('works without caller signal (backward compat)', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response('ok'));
+
+    const result = await fetchWithProxyAgent('https://example.com');
+    expect(result).toBe('ok');
+
+    vi.restoreAllMocks();
+  });
+});
+
 describe('resolveProxyIp', () => {
   beforeEach(() => {
     vi.restoreAllMocks();

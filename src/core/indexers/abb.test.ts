@@ -481,6 +481,32 @@ describe('AudioBookBayIndexer', () => {
     });
   });
 
+  describe('AbortSignal threading', () => {
+    it('forwards signal to search page fetch and detail page fetch', async () => {
+      const capturedSignals: (AbortSignal | undefined)[] = [];
+      const fetchSpy = vi.spyOn(globalThis, 'fetch').mockImplementation(async (url, init) => {
+        capturedSignals.push(init?.signal ?? undefined);
+        const urlStr = typeof url === 'string' ? url : url.toString();
+        if (urlStr.includes('/audio-books/')) {
+          return new Response(detailHtml, { headers: { 'Content-Type': 'text/html' } });
+        }
+        return new Response(searchHtml, { headers: { 'Content-Type': 'text/html' } });
+      });
+
+      const controller = new AbortController();
+      await indexer.search('test', { signal: controller.signal });
+
+      // At least one fetch call should have a signal linked to the caller
+      expect(capturedSignals.length).toBeGreaterThan(0);
+      expect(capturedSignals.every(s => s !== undefined)).toBe(true);
+      // Verify caller abort propagates
+      controller.abort();
+      expect(capturedSignals[0]!.aborted).toBe(true);
+
+      fetchSpy.mockRestore();
+    });
+  });
+
   describe('proxy support', () => {
     const PROXY_URL = 'http://proxy.test:8080';
     let proxiedIndexer: AudioBookBayIndexer;
