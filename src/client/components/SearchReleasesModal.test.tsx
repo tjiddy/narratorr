@@ -170,8 +170,7 @@ describe('SearchReleasesModal', () => {
   });
 
   it('auto-starts streaming search when opened', async () => {
-    setStreamResults(mockResults);
-
+    // Start with idle phase (default from beforeEach) — authReady is true
     renderWithProviders(
       <SearchReleasesModal isOpen={true} book={mockBook} onClose={vi.fn()} />,
     );
