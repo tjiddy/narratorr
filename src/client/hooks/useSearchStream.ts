@@ -29,6 +29,7 @@ export interface SearchStreamState {
   results: SearchResponse | null;
   error: string | null;
   hasResults: boolean;
+  authReady: boolean;
 }
 
 export interface SearchStreamActions {
@@ -69,6 +70,9 @@ export function useSearchStream(
   }, []);
 
   const start = useCallback(() => {
+    // Gate on auth config readiness — don't open an unauthenticated stream
+    if (!authConfig) return;
+
     cleanup();
     setPhase('searching');
     setResults(null);
@@ -82,7 +86,7 @@ export function useSearchStream(
     if (context?.title) params.set('title', context.title);
     if (context?.bookDuration) params.set('bookDuration', String(context.bookDuration));
 
-    const apiKey = authConfig?.apiKey ?? '';
+    const apiKey = authConfig.apiKey ?? '';
     if (apiKey) params.set('apikey', apiKey);
 
     const url = `${URL_BASE}/api/search/stream?${params.toString()}`;
@@ -171,7 +175,9 @@ export function useSearchStream(
         cancelIndexer(idx.id);
       }
     }
-    // The search-complete event will arrive from the server and trigger transition
+    // Transition to Phase 2 immediately — don't wait for search-complete
+    // The search-complete event will still arrive and set results data
+    setPhase('results');
   }, [indexers, cancelIndexer]);
 
   const reset = useCallback(() => {
@@ -189,8 +195,10 @@ export function useSearchStream(
 
   const hasResults = indexers.some(idx => idx.status === 'complete' && (idx.resultCount ?? 0) > 0);
 
+  const authReady = !!authConfig;
+
   return {
-    state: { phase, sessionId, indexers, results, error, hasResults },
+    state: { phase, sessionId, indexers, results, error, hasResults, authReady },
     actions: { start, cancelIndexer, showResults, reset },
   };
 }

@@ -297,6 +297,73 @@ describe('useSearchStream', () => {
     expect(es.closed).toBe(true);
   });
 
+  it('showResults() transitions to Phase 2 immediately and cancels pending indexers', () => {
+    const { result } = renderHook(() => useSearchStream('test query'), { wrapper: createWrapper() });
+
+    act(() => {
+      result.current.actions.start();
+    });
+
+    const es = MockEventSource.instances[0];
+    act(() => {
+      es.emit('search-start', {
+        sessionId: 'session-123',
+        indexers: [{ id: 1, name: 'ABB' }, { id: 2, name: 'MAM' }],
+      });
+      es.emit('indexer-complete', { indexerId: 1, name: 'ABB', resultCount: 5, elapsedMs: 200 });
+    });
+
+    act(() => {
+      result.current.actions.showResults();
+    });
+
+    // Phase transitions to results IMMEDIATELY — doesn't wait for search-complete
+    expect(result.current.state.phase).toBe('results');
+    // Pending indexer was cancelled
+    expect(result.current.state.indexers[1].status).toBe('cancelled');
+    expect(api.cancelSearchIndexer).toHaveBeenCalledWith('session-123', 2);
+  });
+
+  it('indexer-cancelled event updates only the matching row', () => {
+    const { result } = renderHook(() => useSearchStream('test query'), { wrapper: createWrapper() });
+
+    act(() => {
+      result.current.actions.start();
+    });
+
+    const es = MockEventSource.instances[0];
+    act(() => {
+      es.emit('search-start', {
+        sessionId: 'session-123',
+        indexers: [{ id: 1, name: 'ABB' }, { id: 2, name: 'MAM' }, { id: 3, name: 'Newznab' }],
+      });
+    });
+
+    act(() => {
+      es.emit('indexer-cancelled', { indexerId: 2, name: 'MAM' });
+    });
+
+    // Only indexer 2 is cancelled
+    expect(result.current.state.indexers[0].status).toBe('pending');
+    expect(result.current.state.indexers[1].status).toBe('cancelled');
+    expect(result.current.state.indexers[2].status).toBe('pending');
+  });
+
+  it('does not open EventSource when auth config is not yet loaded', () => {
+    // Override mock to return pending promise (never resolves during this test)
+    (api.getAuthConfig as ReturnType<typeof vi.fn>).mockReturnValue(new Promise(() => {}));
+
+    const { result } = renderHook(() => useSearchStream('test query'), { wrapper: createWrapper() });
+
+    act(() => {
+      result.current.actions.start();
+    });
+
+    // Should remain idle — no EventSource opened
+    expect(result.current.state.phase).toBe('idle');
+    expect(MockEventSource.instances).toHaveLength(0);
+  });
+
   it('reset clears all state and closes EventSource', () => {
     const { result } = renderHook(() => useSearchStream('test query'), { wrapper: createWrapper() });
 

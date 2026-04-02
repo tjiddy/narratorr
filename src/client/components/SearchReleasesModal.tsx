@@ -116,10 +116,10 @@ export function SearchReleasesModal({ isOpen, book, onClose }: SearchReleasesMod
   const unsupportedResults = state.results?.unsupportedResults;
   const resultKeys = useMemo(() => deduplicateKeys((results ?? []).map(searchResultKey)), [results]);
 
-  // Auto-start search when modal opens
+  // Auto-start search when modal opens (retries when auth becomes ready)
   const hasStartedRef = useRef(false);
   useEffect(() => {
-    if (isOpen && searchQuery.length >= 2 && !hasStartedRef.current) {
+    if (isOpen && searchQuery.length >= 2 && state.phase === 'idle' && state.authReady) {
       hasStartedRef.current = true;
       actions.start();
     }
@@ -127,8 +127,8 @@ export function SearchReleasesModal({ isOpen, book, onClose }: SearchReleasesMod
       hasStartedRef.current = false;
       actions.reset();
     }
-  // eslint-disable-next-line react-hooks/exhaustive-deps -- only trigger on isOpen change
-  }, [isOpen]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- trigger on isOpen and authReady
+  }, [isOpen, state.authReady]);
 
   const blacklistMutation = useMutation({
     mutationFn: api.addToBlacklist,
