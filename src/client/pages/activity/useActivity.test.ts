@@ -176,7 +176,7 @@ describe('useActivity', () => {
     });
 
     await act(async () => {
-      result.current.mutations.rejectMutation.mutate(42);
+      result.current.mutations.rejectMutation.mutate({ id: 42 });
     });
 
     await waitFor(() => {

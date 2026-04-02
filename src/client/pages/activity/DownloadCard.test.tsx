@@ -160,6 +160,7 @@ describe('DownloadCard', () => {
           download={download}
           onApprove={vi.fn()}
           onReject={vi.fn()}
+          onRejectWithSearch={vi.fn()}
           {...cardProps}
         />,
       );
@@ -187,7 +188,7 @@ describe('DownloadCard', () => {
       expect(toggle).toHaveAttribute('aria-expanded', 'true');
     });
 
-    it('approve/reject buttons render inside expanded panel', async () => {
+    it('approve/reject/reject-and-search buttons render inside expanded panel', async () => {
       const { user } = renderPendingReview();
       // Before expanding, no approve/reject buttons
       expect(screen.queryByText('Approve')).not.toBeInTheDocument();
@@ -196,6 +197,7 @@ describe('DownloadCard', () => {
       await user.click(screen.getByRole('button', { name: /expand quality comparison/i }));
       expect(screen.getByText('Approve')).toBeInTheDocument();
       expect(screen.getByText('Reject')).toBeInTheDocument();
+      expect(screen.getByText('Reject & Search')).toBeInTheDocument();
     });
 
     it('approve button shows pending state while approving', async () => {
@@ -209,13 +211,15 @@ describe('DownloadCard', () => {
       expect(screen.getByText('Quality Comparison')).toBeInTheDocument();
     });
 
-    it('reject button shows pending state while rejecting', async () => {
+    it('reject button shows pending state while rejecting and disables both reject buttons', async () => {
       const { user } = renderPendingReview(undefined, { isRejecting: true });
       await user.click(screen.getByRole('button', { name: /expand quality comparison/i }));
 
       const rejectBtn = screen.getByText('Rejecting...');
       expect(rejectBtn).toBeInTheDocument();
       expect(rejectBtn.closest('button')).toBeDisabled();
+      // Reject & Search is also disabled during pending state
+      expect(screen.getByText('Reject & Search').closest('button')).toBeDisabled();
       // Panel remains expanded during the async operation
       expect(screen.getByText('Quality Comparison')).toBeInTheDocument();
     });
@@ -234,15 +238,20 @@ describe('DownloadCard', () => {
       expect(screen.queryByText('Reject')).not.toBeInTheDocument();
     });
 
-    it('handles null quality gate data gracefully', () => {
+    it('handles null quality gate data — shows reject buttons without comparison panel', () => {
       render(
         <DownloadCard
           download={createMockDownload({ status: 'pending_review', qualityGate: undefined })}
+          onReject={vi.fn()}
+          onRejectWithSearch={vi.fn()}
         />,
       );
-      // No expand toggle should render when qualityGate is absent
+      // No expand toggle or comparison panel when qualityGate is absent
       expect(screen.queryByRole('button', { name: /expand quality comparison/i })).not.toBeInTheDocument();
       expect(screen.queryByText('Quality Comparison')).not.toBeInTheDocument();
+      // But reject buttons are still shown (#301)
+      expect(screen.getByText('Reject')).toBeInTheDocument();
+      expect(screen.getByText('Reject & Search')).toBeInTheDocument();
     });
 
     it('handles probeFailure=true with warning', async () => {
@@ -321,13 +330,143 @@ describe('DownloadCard', () => {
 
   // #301 — Split reject into Reject (dismiss) and Reject & Search
   describe('split reject buttons (#301)', () => {
-    it.todo('both Reject and Reject & Search buttons render on pending_review downloads with qualityGate data');
-    it.todo('both Reject and Reject & Search buttons render on pending_review downloads without qualityGate data');
-    it.todo('clicking Reject calls onReject callback');
-    it.todo('clicking Reject & Search calls onRejectWithSearch callback');
-    it.todo('Reject and Reject & Search buttons not shown on non-pending downloads');
-    it.todo('Reject button has primary destructive styling, Reject & Search has secondary/outline styling');
-    it.todo('loading state: clicking Reject disables both buttons and shows spinner');
-    it.todo('loading state: clicking Reject & Search disables both buttons and shows spinner');
+    const gateData301: QualityGateData = {
+      action: 'held',
+      mbPerHour: 60,
+      existingMbPerHour: 40,
+      narratorMatch: true,
+      existingNarrator: null,
+      downloadNarrator: null,
+      durationDelta: 0.05,
+      codec: 'AAC',
+      channels: 1,
+      probeFailure: false,
+      probeError: null,
+      holdReasons: ['narrator_mismatch'],
+    };
+
+    it('both Reject and Reject & Search buttons render on pending_review downloads with qualityGate data', async () => {
+      const user = userEvent.setup();
+      render(
+        <DownloadCard
+          download={createMockDownload({ status: 'pending_review', qualityGate: gateData301 })}
+          onReject={vi.fn()}
+          onRejectWithSearch={vi.fn()}
+        />,
+      );
+
+      await user.click(screen.getByRole('button', { name: /expand quality comparison/i }));
+      expect(screen.getByText('Reject')).toBeInTheDocument();
+      expect(screen.getByText('Reject & Search')).toBeInTheDocument();
+    });
+
+    it('both Reject and Reject & Search buttons render on pending_review downloads without qualityGate data', () => {
+      render(
+        <DownloadCard
+          download={createMockDownload({ status: 'pending_review', qualityGate: undefined })}
+          onReject={vi.fn()}
+          onRejectWithSearch={vi.fn()}
+        />,
+      );
+
+      // No expand toggle needed — buttons render directly
+      expect(screen.getByText('Reject')).toBeInTheDocument();
+      expect(screen.getByText('Reject & Search')).toBeInTheDocument();
+    });
+
+    it('clicking Reject calls onReject callback', async () => {
+      const user = userEvent.setup();
+      const onReject = vi.fn();
+      render(
+        <DownloadCard
+          download={createMockDownload({ status: 'pending_review', qualityGate: undefined })}
+          onReject={onReject}
+          onRejectWithSearch={vi.fn()}
+        />,
+      );
+
+      await user.click(screen.getByText('Reject'));
+      expect(onReject).toHaveBeenCalledTimes(1);
+    });
+
+    it('clicking Reject & Search calls onRejectWithSearch callback', async () => {
+      const user = userEvent.setup();
+      const onRejectWithSearch = vi.fn();
+      render(
+        <DownloadCard
+          download={createMockDownload({ status: 'pending_review', qualityGate: undefined })}
+          onReject={vi.fn()}
+          onRejectWithSearch={onRejectWithSearch}
+        />,
+      );
+
+      await user.click(screen.getByText('Reject & Search'));
+      expect(onRejectWithSearch).toHaveBeenCalledTimes(1);
+    });
+
+    it('Reject and Reject & Search buttons not shown on non-pending downloads', () => {
+      render(
+        <DownloadCard
+          download={createMockDownload({ status: 'failed' })}
+          onReject={vi.fn()}
+          onRejectWithSearch={vi.fn()}
+        />,
+      );
+
+      expect(screen.queryByText('Reject')).not.toBeInTheDocument();
+      expect(screen.queryByText('Reject & Search')).not.toBeInTheDocument();
+    });
+
+    it('Reject button has primary destructive styling, Reject & Search has secondary/outline styling', async () => {
+      const user = userEvent.setup();
+      render(
+        <DownloadCard
+          download={createMockDownload({ status: 'pending_review', qualityGate: gateData301 })}
+          onReject={vi.fn()}
+          onRejectWithSearch={vi.fn()}
+        />,
+      );
+
+      await user.click(screen.getByRole('button', { name: /expand quality comparison/i }));
+      const rejectBtn = screen.getByText('Reject').closest('button')!;
+      const rejectSearchBtn = screen.getByText('Reject & Search').closest('button')!;
+
+      // Primary reject has filled background, secondary has border/outline
+      expect(rejectBtn.className).toContain('bg-destructive');
+      expect(rejectSearchBtn.className).toContain('border');
+    });
+
+    it('loading state: rejecting disables both buttons and shows spinner', async () => {
+      const user = userEvent.setup();
+      render(
+        <DownloadCard
+          download={createMockDownload({ status: 'pending_review', qualityGate: gateData301 })}
+          onReject={vi.fn()}
+          onRejectWithSearch={vi.fn()}
+          isRejecting
+        />,
+      );
+
+      await user.click(screen.getByRole('button', { name: /expand quality comparison/i }));
+      expect(screen.getByText('Rejecting...').closest('button')).toBeDisabled();
+      expect(screen.getByText('Reject & Search').closest('button')).toBeDisabled();
+    });
+
+    it('loading state: approving disables both reject buttons', async () => {
+      const user = userEvent.setup();
+      render(
+        <DownloadCard
+          download={createMockDownload({ status: 'pending_review', qualityGate: gateData301 })}
+          onApprove={vi.fn()}
+          onReject={vi.fn()}
+          onRejectWithSearch={vi.fn()}
+          isApproving
+        />,
+      );
+
+      await user.click(screen.getByRole('button', { name: /expand quality comparison/i }));
+      expect(screen.getByText('Reject').closest('button')).toBeDisabled();
+      expect(screen.getByText('Reject & Search').closest('button')).toBeDisabled();
+    });
   });
 });

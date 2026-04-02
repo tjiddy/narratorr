@@ -124,7 +124,8 @@ export function ActivityPage() {
                     onCancel={() => cancelMutation.mutate(download.id)}
                     onRetry={() => retryMutation.mutate(download.id)}
                     onApprove={() => approveMutation.mutate(download.id)}
-                    onReject={() => rejectMutation.mutate(download.id)}
+                    onReject={() => rejectMutation.mutate({ id: download.id, retry: false })}
+                    onRejectWithSearch={() => rejectMutation.mutate({ id: download.id, retry: true })}
                     isCancelling={cancelMutation.isPending}
                     isApproving={approveMutation.isPending}
                     isRejecting={rejectMutation.isPending}

@@ -967,7 +967,7 @@ describe('QualityGateOrchestrator', () => {
       expect(mockAdapter.removeDownload).toHaveBeenCalled();
       // No book_status_change SSE — only download_status_change if book is present
       const bookSSECalls = (broadcaster.emit as ReturnType<typeof vi.fn>).mock.calls.filter(
-        ([event]: [string]) => event === 'book_status_change',
+        (call: unknown[]) => call[0] === 'book_status_change',
       );
       expect(bookSSECalls).toHaveLength(0);
     });
