@@ -33,12 +33,24 @@ export function buildQualityAssessment(
 
   // Resolve existing book quality
   let existingMbPerHour: number | null = null;
+  let existingCodec: string | null = null;
+  let existingChannels: number | null = null;
+  let existingDuration: number | null = null;
   if (book) {
     const existing = resolveBookQualityInputs(book);
     if (existing.sizeBytes && existing.durationSeconds && existing.durationSeconds > 0) {
       existingMbPerHour = (existing.sizeBytes / (1024 * 1024)) / (existing.durationSeconds / 3600);
     }
+    // Populate existing audio metadata (only for books with files on disk)
+    if (book.path !== null) {
+      existingCodec = book.audioCodec || null;
+      existingChannels = book.audioChannels || null;
+      existingDuration = existing.durationSeconds;
+    }
   }
+
+  // Downloaded duration (null when 0 — no valid duration)
+  const downloadedDuration = newDurationSeconds > 0 ? newDurationSeconds : null;
 
   // Check narrator match (skip for first imports — no existing file to protect)
   let narratorMatch: boolean | null = null;
@@ -88,8 +100,12 @@ export function buildQualityAssessment(
     existingNarrator,
     downloadNarrator,
     durationDelta,
+    existingDuration,
+    downloadedDuration,
     codec: scanResult.codec || null,
     channels: scanResult.channels || null,
+    existingCodec,
+    existingChannels,
     probeFailure: false,
     probeError: null,
     holdReasons,
