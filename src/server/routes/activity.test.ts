@@ -437,17 +437,17 @@ describe('activity routes', () => {
   });
 
   describe('POST /api/activity/:id/reject', () => {
-    it('transitions pending_review download to failed', async () => {
+    it('transitions pending_review download to failed with default retry=false', async () => {
       (services.qualityGateOrchestrator.reject as Mock).mockResolvedValue({ id: 1, status: 'failed' });
 
       const res = await app.inject({ method: 'POST', url: '/api/activity/1/reject' });
 
       expect(res.statusCode).toBe(200);
       expect(JSON.parse(res.payload)).toEqual({ id: 1, status: 'failed' });
-      expect(services.qualityGateOrchestrator.reject).toHaveBeenCalledWith(1);
+      expect(services.qualityGateOrchestrator.reject).toHaveBeenCalledWith(1, { retry: false });
     });
 
-    it('ignores reason in body — parameter was removed (L-11)', async () => {
+    it('ignores unknown body fields and defaults retry to false', async () => {
       (services.qualityGateOrchestrator.reject as Mock).mockResolvedValue({ id: 1, status: 'failed' });
 
       const res = await app.inject({
@@ -457,8 +457,7 @@ describe('activity routes', () => {
       });
 
       expect(res.statusCode).toBe(200);
-      // reject() should only receive downloadId, not reason
-      expect(services.qualityGateOrchestrator.reject).toHaveBeenCalledWith(1);
+      expect(services.qualityGateOrchestrator.reject).toHaveBeenCalledWith(1, { retry: false });
     });
 
     it('returns 409 when download is not in pending_review status', async () => {
@@ -787,9 +786,51 @@ describe('activity routes', () => {
 
   // #301 — Reject endpoint with retry body field
   describe('POST /api/activity/:id/reject with retry flag (#301)', () => {
-    it.todo('passes retry=true from request body to orchestrator.reject(id, { retry: true })');
-    it.todo('defaults retry to false when body is empty — calls orchestrator.reject(id, { retry: false })');
-    it.todo('defaults retry to false when body has no retry field — calls orchestrator.reject(id, { retry: false })');
-    it.todo('returns 409 for non-pending_review download with retry=true');
+    it('passes retry=true from request body to orchestrator.reject(id, { retry: true })', async () => {
+      (services.qualityGateOrchestrator.reject as Mock).mockResolvedValue({ id: 1, status: 'failed' });
+
+      const res = await app.inject({
+        method: 'POST',
+        url: '/api/activity/1/reject',
+        payload: { retry: true },
+      });
+
+      expect(res.statusCode).toBe(200);
+      expect(services.qualityGateOrchestrator.reject).toHaveBeenCalledWith(1, { retry: true });
+    });
+
+    it('defaults retry to false when body is empty — calls orchestrator.reject(id, { retry: false })', async () => {
+      (services.qualityGateOrchestrator.reject as Mock).mockResolvedValue({ id: 1, status: 'failed' });
+
+      const res = await app.inject({ method: 'POST', url: '/api/activity/1/reject' });
+
+      expect(res.statusCode).toBe(200);
+      expect(services.qualityGateOrchestrator.reject).toHaveBeenCalledWith(1, { retry: false });
+    });
+
+    it('defaults retry to false when body has no retry field — calls orchestrator.reject(id, { retry: false })', async () => {
+      (services.qualityGateOrchestrator.reject as Mock).mockResolvedValue({ id: 1, status: 'failed' });
+
+      const res = await app.inject({
+        method: 'POST',
+        url: '/api/activity/1/reject',
+        payload: { someOtherField: 'value' },
+      });
+
+      expect(res.statusCode).toBe(200);
+      expect(services.qualityGateOrchestrator.reject).toHaveBeenCalledWith(1, { retry: false });
+    });
+
+    it('returns 409 for non-pending_review download with retry=true', async () => {
+      (services.qualityGateOrchestrator.reject as Mock).mockRejectedValue(new QualityGateServiceError('Download is not pending review', 'INVALID_STATUS'));
+
+      const res = await app.inject({
+        method: 'POST',
+        url: '/api/activity/1/reject',
+        payload: { retry: true },
+      });
+
+      expect(res.statusCode).toBe(409);
+    });
   });
 });

@@ -126,11 +126,11 @@ export class QualityGateOrchestrator {
    * Reject a pending_review download — delegates DB transition to service,
    * dispatches event recording + rejection cleanup.
    */
-  async reject(downloadId: number): Promise<{ id: number; status: string }> {
+  async reject(downloadId: number, options?: { retry?: boolean }): Promise<{ id: number; status: string }> {
     const result = await this.qualityGateService.reject(downloadId);
 
-    // Side effects
-    await this.performRejectionCleanup(result.download, result.book, 'pending_review');
+    // Side effects — retry=true includes blacklist + re-search; retry=false (default) is dismiss-only
+    await this.performRejectionCleanup(result.download, result.book, 'pending_review', options?.retry ?? false);
 
     return { id: result.id, status: result.status };
   }
@@ -176,26 +176,29 @@ export class QualityGateOrchestrator {
         this.emitSSE('download_status_change', { download_id: download.id, book_id: book.id, old_status: statusTransition.from as DownloadStatus, new_status: statusTransition.to as DownloadStatus });
       }
     } else if (action === 'rejected') {
-      await this.performRejectionCleanup(download, book, statusTransition.from as DownloadStatus);
+      await this.performRejectionCleanup(download, book, statusTransition.from as DownloadStatus, true);
     }
   }
 
-  /** Shared cleanup for rejection: blacklist, delete files, revert book status + SSE, fire-and-forget re-search. */
-  private async performRejectionCleanup(download: DownloadRow, book: BookRow | null, oldStatus: DownloadStatus = 'pending_review'): Promise<void> {
-    await blacklistAndRetrySearch({
-      identifiers: {
-        infoHash: download.infoHash ?? undefined,
-        guid: download.guid ?? undefined,
-        title: download.title,
-        bookId: download.bookId ?? undefined,
-      },
-      reason: 'bad_quality',
-      book,
-      blacklistService: this.blacklistService,
-      retrySearchDeps: this.retrySearchDeps,
-      settingsService: this.settingsService,
-      log: this.log,
-    });
+  /** Shared cleanup for rejection: optionally blacklist + re-search, delete files, revert book status + SSE. */
+  private async performRejectionCleanup(download: DownloadRow, book: BookRow | null, oldStatus: DownloadStatus = 'pending_review', retry = false): Promise<void> {
+    if (retry) {
+      await blacklistAndRetrySearch({
+        identifiers: {
+          infoHash: download.infoHash ?? undefined,
+          guid: download.guid ?? undefined,
+          title: download.title,
+          bookId: download.bookId ?? undefined,
+        },
+        reason: 'bad_quality',
+        book,
+        blacklistService: this.blacklistService,
+        retrySearchDeps: this.retrySearchDeps,
+        settingsService: this.settingsService,
+        log: this.log,
+        overrideRetry: true,
+      });
+    }
 
     await this.removeDownloadFiles(download);
     await this.fallbackFileDelete(download);
