@@ -45,6 +45,8 @@ function settingsFromIndexer(indexer: Indexer): CreateIndexerFormData['settings'
     mamId: (s.mamId as string) || '',
     baseUrl: (s.baseUrl as string) || '',
     useProxy: (s.useProxy as boolean) || false,
+    searchLanguages: (s.searchLanguages as number[]) ?? [1],
+    searchType: (s.searchType as number) ?? 1,
   };
 }
 

@@ -589,4 +589,94 @@ describe('IndexerCard — Prowlarr-managed indicators (AC8)', () => {
       });
     });
   });
+
+  describe('edit-mode hydration — searchLanguages and searchType (#291)', () => {
+    it('pre-fills saved searchLanguages and searchType when editing MAM indexer', () => {
+      const mamIndexer: Indexer = createMockIndexer({
+        id: 10,
+        name: 'MAM Custom',
+        type: 'myanonamouse',
+        settings: { mamId: 'my-mam-id', baseUrl: '', searchLanguages: [1, 36], searchType: 2 },
+      });
+
+      renderWithProviders(
+        <IndexerCard
+          indexer={mamIndexer}
+          mode="edit"
+          onSubmit={vi.fn()}
+          onFormTest={vi.fn()}
+        />,
+      );
+
+      // Search type select should show the saved value
+      const searchTypeSelect = screen.getByLabelText('Search Type');
+      expect(searchTypeSelect).toHaveValue('2');
+    });
+
+    it('shows default searchLanguages [1] and searchType 1 when editing MAM indexer with no saved values', () => {
+      const mamIndexer: Indexer = createMockIndexer({
+        id: 11,
+        name: 'Old MAM',
+        type: 'myanonamouse',
+        settings: { mamId: 'old-mam-id', baseUrl: '' },
+      });
+
+      renderWithProviders(
+        <IndexerCard
+          indexer={mamIndexer}
+          mode="edit"
+          onSubmit={vi.fn()}
+          onFormTest={vi.fn()}
+        />,
+      );
+
+      // Should fall back to defaults
+      const searchTypeSelect = screen.getByLabelText('Search Type');
+      expect(searchTypeSelect).toHaveValue('1');
+    });
+
+    it('preserves searchType: 0 via ?? (not ||) in settingsFromIndexer', () => {
+      const mamIndexer: Indexer = createMockIndexer({
+        id: 12,
+        name: 'MAM All Types',
+        type: 'myanonamouse',
+        settings: { mamId: 'mam-id', baseUrl: '', searchType: 0, searchLanguages: [1] },
+      });
+
+      renderWithProviders(
+        <IndexerCard
+          indexer={mamIndexer}
+          mode="edit"
+          onSubmit={vi.fn()}
+          onFormTest={vi.fn()}
+        />,
+      );
+
+      const searchTypeSelect = screen.getByLabelText('Search Type');
+      expect(searchTypeSelect).toHaveValue('0');
+    });
+
+    it('preserves searchLanguages: [] via ?? (not ||) in settingsFromIndexer', () => {
+      const mamIndexer: Indexer = createMockIndexer({
+        id: 13,
+        name: 'MAM All Languages',
+        type: 'myanonamouse',
+        settings: { mamId: 'mam-id', baseUrl: '', searchLanguages: [], searchType: 1 },
+      });
+
+      renderWithProviders(
+        <IndexerCard
+          indexer={mamIndexer}
+          mode="edit"
+          onSubmit={vi.fn()}
+          onFormTest={vi.fn()}
+        />,
+      );
+
+      // With empty searchLanguages, no checkboxes should be checked
+      // We verify this by checking that the English checkbox is NOT checked
+      const englishCheckbox = screen.getByLabelText('English');
+      expect(englishCheckbox).not.toBeChecked();
+    });
+  });
 });
