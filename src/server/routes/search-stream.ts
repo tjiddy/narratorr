@@ -3,8 +3,7 @@ import { type IndexerService } from '../services/indexer.service.js';
 import { type BlacklistService } from '../services/blacklist.service.js';
 import { type SettingsService } from '../services/settings.service.js';
 import { type SearchSessionManager } from '../services/search-session.js';
-import { isMultiPartUsenetPost } from '../../core/utils/index.js';
-import { filterAndRankResults } from '../services/search-pipeline.js';
+import { postProcessSearchResults } from '../services/search-pipeline.js';
 import { searchQuerySchema, type SearchQuery } from '../../shared/schemas.js';
 
 function writeSSE(reply: FastifyReply, event: string, data: unknown): void {
@@ -77,49 +76,8 @@ export async function searchStreamRoutes(
           },
         );
 
-        // Filter multi-part Usenet posts
-        const unsupportedTitles: string[] = [];
-        const filtered = allResults.filter((r) => {
-          if (r.protocol !== 'usenet') return true;
-          const sourceTitle = r.rawTitle ?? r.title;
-          const multiPart = isMultiPartUsenetPost(sourceTitle);
-          if (multiPart.match && multiPart.total! > 1) {
-            unsupportedTitles.push(sourceTitle);
-            return false;
-          }
-          return true;
-        });
-
-        // Blacklist filtering
-        const hashes = filtered.map(r => r.infoHash).filter((h): h is string => !!h);
-        const guids = filtered.map(r => r.guid).filter((g): g is string => !!g);
-        let filteredResults = filtered;
-        if (hashes.length > 0 || guids.length > 0) {
-          const { blacklistedHashes, blacklistedGuids } = await blacklistService.getBlacklistedIdentifiers(hashes, guids);
-          filteredResults = filtered.filter(r =>
-            (!r.infoHash || !blacklistedHashes.has(r.infoHash)) &&
-            (!r.guid || !blacklistedGuids.has(r.guid)),
-          );
-        }
-
-        // Quality filtering and ranking
-        const qualitySettings = await settingsService.get('quality');
-        const ranked = filterAndRankResults(
-          filteredResults,
-          bookDuration,
-          qualitySettings.grabFloor,
-          qualitySettings.minSeeders,
-          qualitySettings.protocolPreference,
-          qualitySettings.rejectWords,
-          qualitySettings.requiredWords,
-          qualitySettings.preferredLanguage,
-        );
-
-        writeSSE(reply, 'search-complete', {
-          results: ranked.results,
-          durationUnknown: ranked.durationUnknown,
-          unsupportedResults: { count: unsupportedTitles.length, titles: unsupportedTitles },
-        });
+        const processed = await postProcessSearchResults(allResults, bookDuration, blacklistService, settingsService);
+        writeSSE(reply, 'search-complete', processed);
       } catch (error: unknown) {
         request.log.error(error, 'Search stream error');
         writeSSE(reply, 'search-complete', {

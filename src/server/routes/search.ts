@@ -3,10 +3,9 @@ import { type IndexerService } from '../services';
 import { type DownloadOrchestrator } from '../services/download-orchestrator.js';
 import { type BlacklistService } from '../services';
 import { type SettingsService } from '../services';
-import { isMultiPartUsenetPost } from '../../core/utils/index.js';
 import { getErrorMessage } from '../utils/error-message.js';
 import { DuplicateDownloadError } from '../services/download.service.js';
-import { filterAndRankResults } from '../services/search-pipeline.js';
+import { postProcessSearchResults } from '../services/search-pipeline.js';
 import {
   searchQuerySchema,
   grabSchema,
@@ -40,50 +39,7 @@ export async function searchRoutes(
       request.log.debug({ q, author, title, bookDuration }, 'Search request');
       const allResults = await indexerService.searchAll(q, { limit, author, title });
 
-      // Filter multi-part Usenet posts
-      const unsupportedTitles: string[] = [];
-      const results = allResults.filter((r) => {
-        if (r.protocol !== 'usenet') return true;
-        const sourceTitle = r.rawTitle ?? r.title;
-        const multiPart = isMultiPartUsenetPost(sourceTitle);
-        if (multiPart.match && multiPart.total! > 1) {
-          request.log.debug(`Filtered multi-part Usenet result: ${sourceTitle} (part ${multiPart.part} of ${multiPart.total})`);
-          unsupportedTitles.push(sourceTitle);
-          return false;
-        }
-        return true;
-      });
-
-      // Blacklist filtering by infoHash and/or guid
-      const hashes = results.map((r: { infoHash?: string }) => r.infoHash).filter((h): h is string => !!h);
-      const guids = results.map((r: { guid?: string }) => r.guid).filter((g): g is string => !!g);
-      let filteredResults = results;
-      if (hashes.length > 0 || guids.length > 0) {
-        const { blacklistedHashes, blacklistedGuids } = await blacklistService.getBlacklistedIdentifiers(hashes, guids);
-        filteredResults = results.filter((r: { infoHash?: string; guid?: string }) =>
-          (!r.infoHash || !blacklistedHashes.has(r.infoHash)) &&
-          (!r.guid || !blacklistedGuids.has(r.guid)),
-        );
-      }
-
-      // Quality filtering and ranking
-      const qualitySettings = await settingsService.get('quality');
-      const ranked = filterAndRankResults(
-        filteredResults,
-        bookDuration,
-        qualitySettings.grabFloor,
-        qualitySettings.minSeeders,
-        qualitySettings.protocolPreference,
-        qualitySettings.rejectWords,
-        qualitySettings.requiredWords,
-        qualitySettings.preferredLanguage,
-      );
-
-      return {
-        results: ranked.results,
-        durationUnknown: ranked.durationUnknown,
-        unsupportedResults: { count: unsupportedTitles.length, titles: unsupportedTitles },
-      };
+      return await postProcessSearchResults(allResults, bookDuration, blacklistService, settingsService);
     }
   );
 

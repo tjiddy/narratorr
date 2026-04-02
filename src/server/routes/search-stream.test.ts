@@ -8,13 +8,14 @@ import { DEFAULT_SETTINGS } from '../../shared/schemas/settings/registry.js';
 
 // Mock the search pipeline
 vi.mock('../services/search-pipeline.js', () => ({
-  filterAndRankResults: vi.fn().mockReturnValue({
+  postProcessSearchResults: vi.fn().mockResolvedValue({
     results: [],
     durationUnknown: false,
+    unsupportedResults: { count: 0, titles: [] },
   }),
 }));
 
-import { filterAndRankResults } from '../services/search-pipeline.js';
+import { postProcessSearchResults } from '../services/search-pipeline.js';
 
 function createMockReplyAndRequest(_query = 'test+query') {
   const writeHead = vi.fn();
@@ -148,11 +149,12 @@ describe('searchStreamRoutes', () => {
     });
 
     it('streams search-complete with full SearchResponse shape', async () => {
-      const mockRanked = {
+      const mockProcessed = {
         results: [{ title: 'Book', indexer: 'test' }],
         durationUnknown: true,
+        unsupportedResults: { count: 1, titles: ['Multi-part'] },
       };
-      (filterAndRankResults as ReturnType<typeof vi.fn>).mockReturnValue(mockRanked);
+      (postProcessSearchResults as ReturnType<typeof vi.fn>).mockResolvedValue(mockProcessed);
 
       const { reply, request, write } = createMockReplyAndRequest();
       await streamHandler!(request, reply);

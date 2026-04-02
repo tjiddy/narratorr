@@ -1,9 +1,11 @@
 import type { FastifyBaseLogger } from 'fastify';
-import { calculateQuality } from '../../core/utils/index.js';
+import { calculateQuality, isMultiPartUsenetPost } from '../../core/utils/index.js';
 import type { SearchResult } from '../../core/index.js';
 import type { IndexerService } from './indexer.service.js';
 import type { DownloadOrchestrator } from './download-orchestrator.js';
 import { DuplicateDownloadError } from './download.service.js';
+import type { BlacklistService } from './blacklist.service.js';
+import type { SettingsService } from './settings.service.js';
 
 /** Build a search query string from a book's title and primary author. */
 export function buildSearchQuery(book: { title: string; authors?: Array<{ name: string }> | null }): string {
@@ -136,6 +138,66 @@ export function filterAndRankResults(
   filtered.sort((a, b) => canonicalCompare(a, b, bookDuration, durationUnknown, protocolPreference, preferredLanguage ?? ''));
 
   return { results: filtered, durationUnknown };
+}
+
+/**
+ * Shared post-processing pipeline for search results.
+ * Applies multi-part Usenet filtering, blacklist filtering, and quality ranking.
+ * Used by both JSON and SSE search routes.
+ */
+export async function postProcessSearchResults(
+  allResults: SearchResult[],
+  bookDuration: number | undefined,
+  blacklistService: BlacklistService,
+  settingsService: SettingsService,
+): Promise<{
+  results: SearchResult[];
+  durationUnknown: boolean;
+  unsupportedResults: { count: number; titles: string[] };
+}> {
+  // Filter multi-part Usenet posts
+  const unsupportedTitles: string[] = [];
+  const results = allResults.filter((r) => {
+    if (r.protocol !== 'usenet') return true;
+    const sourceTitle = r.rawTitle ?? r.title;
+    const multiPart = isMultiPartUsenetPost(sourceTitle);
+    if (multiPart.match && multiPart.total! > 1) {
+      unsupportedTitles.push(sourceTitle);
+      return false;
+    }
+    return true;
+  });
+
+  // Blacklist filtering by infoHash and/or guid
+  const hashes = results.map(r => r.infoHash).filter((h): h is string => !!h);
+  const guids = results.map(r => r.guid).filter((g): g is string => !!g);
+  let filteredResults = results;
+  if (hashes.length > 0 || guids.length > 0) {
+    const { blacklistedHashes, blacklistedGuids } = await blacklistService.getBlacklistedIdentifiers(hashes, guids);
+    filteredResults = results.filter(r =>
+      (!r.infoHash || !blacklistedHashes.has(r.infoHash)) &&
+      (!r.guid || !blacklistedGuids.has(r.guid)),
+    );
+  }
+
+  // Quality filtering and ranking
+  const qualitySettings = await settingsService.get('quality');
+  const ranked = filterAndRankResults(
+    filteredResults,
+    bookDuration,
+    qualitySettings.grabFloor,
+    qualitySettings.minSeeders,
+    qualitySettings.protocolPreference,
+    qualitySettings.rejectWords,
+    qualitySettings.requiredWords,
+    qualitySettings.preferredLanguage,
+  );
+
+  return {
+    results: ranked.results,
+    durationUnknown: ranked.durationUnknown,
+    unsupportedResults: { count: unsupportedTitles.length, titles: unsupportedTitles },
+  };
 }
 
 export type SingleBookSearchResult =
