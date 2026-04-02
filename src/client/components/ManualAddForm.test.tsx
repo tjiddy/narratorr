@@ -28,7 +28,7 @@ vi.mock('sonner', () => ({
   },
 }));
 
-function renderForm(props: { defaultTitle?: string; onSuccess?: () => void } = {}) {
+function renderForm(props: { defaultTitle?: string; onSuccess?: () => void; onPendingChange?: (pending: boolean) => void } = {}) {
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   return {
     queryClient,
@@ -247,6 +247,31 @@ describe('ManualAddForm', () => {
 
       await waitFor(() => {
         expect(onSuccess).toHaveBeenCalled();
+      });
+    });
+  });
+
+  describe('#296 onPendingChange callback', () => {
+    it('calls onPendingChange with true when mutation starts and false when it completes', async () => {
+      const user = userEvent.setup();
+      const onPendingChange = vi.fn();
+      let resolveAdd!: (value: unknown) => void;
+      (api.addBook as ReturnType<typeof vi.fn>).mockImplementation(
+        () => new Promise((resolve) => { resolveAdd = resolve; }),
+      );
+      renderForm({ onPendingChange });
+
+      await user.type(screen.getByLabelText(/title/i), 'Test');
+      await user.click(screen.getByRole('button', { name: /add book/i }));
+
+      await waitFor(() => {
+        expect(onPendingChange).toHaveBeenCalledWith(true);
+      });
+
+      resolveAdd({ id: 1, title: 'Test' });
+
+      await waitFor(() => {
+        expect(onPendingChange).toHaveBeenCalledWith(false);
       });
     });
   });
