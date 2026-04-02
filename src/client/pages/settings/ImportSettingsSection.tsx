@@ -34,6 +34,7 @@ export function ImportSettingsSection() {
     }
   }, [settings, reset, isDirty]);
 
+  // eslint-disable-next-line react-hooks/incompatible-library
   const deleteAfterImport = watch('deleteAfterImport');
 
   const mutation = useMutation({
