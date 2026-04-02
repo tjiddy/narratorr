@@ -163,7 +163,32 @@ describe('useActivity', () => {
     expect(vi.mocked(api.approveDownload).mock.calls[0][0]).toBe(42);
   });
 
-  it('reject mutation calls api and invalidates queries', async () => {
+  it('reject mutation with retry=false calls api.rejectDownload(id, { retry: false }) and invalidates on success', async () => {
+    vi.mocked(api.getActivity).mockResolvedValue({ data: [], total: 0 });
+    vi.mocked(api.rejectDownload).mockResolvedValue(undefined as never);
+
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const invalidateSpy = vi.spyOn(queryClient, 'invalidateQueries');
+    const wrapper = ({ children }: { children: React.ReactNode }) =>
+      createElement(QueryClientProvider, { client: queryClient }, children);
+
+    const { result } = renderHook(() => useActivity(), { wrapper });
+
+    await waitFor(() => {
+      expect(result.current.status.isLoading).toBe(false);
+    });
+
+    await act(async () => {
+      result.current.mutations.rejectMutation.mutate({ id: 42, retry: false });
+    });
+
+    await waitFor(() => {
+      expect(api.rejectDownload).toHaveBeenCalledWith(42, { retry: false });
+    });
+    expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: ['activity'] });
+  });
+
+  it('reject mutation with retry=true calls api.rejectDownload(id, { retry: true })', async () => {
     vi.mocked(api.getActivity).mockResolvedValue({ data: [], total: 0 });
     vi.mocked(api.rejectDownload).mockResolvedValue(undefined as never);
 
@@ -176,13 +201,40 @@ describe('useActivity', () => {
     });
 
     await act(async () => {
-      result.current.mutations.rejectMutation.mutate(42);
+      result.current.mutations.rejectMutation.mutate({ id: 42, retry: true });
     });
 
     await waitFor(() => {
-      expect(api.rejectDownload).toHaveBeenCalled();
+      expect(api.rejectDownload).toHaveBeenCalledWith(42, { retry: true });
     });
-    expect(vi.mocked(api.rejectDownload).mock.calls[0][0]).toBe(42);
+  });
+
+  it('reject mutation does not invalidate queries on failure', async () => {
+    vi.mocked(api.getActivity).mockResolvedValue({ data: [], total: 0 });
+    vi.mocked(api.rejectDownload).mockRejectedValue(new Error('reject failed'));
+
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
+    const invalidateSpy = vi.spyOn(queryClient, 'invalidateQueries');
+    const wrapper = ({ children }: { children: React.ReactNode }) =>
+      createElement(QueryClientProvider, { client: queryClient }, children);
+
+    const { result } = renderHook(() => useActivity(), { wrapper });
+
+    await waitFor(() => {
+      expect(result.current.status.isLoading).toBe(false);
+    });
+
+    invalidateSpy.mockClear();
+
+    await act(async () => {
+      result.current.mutations.rejectMutation.mutate({ id: 42, retry: false });
+    });
+
+    await waitFor(() => {
+      expect(result.current.mutations.rejectMutation.isError).toBe(true);
+    });
+    // invalidateQueries should NOT have been called after the initial query setup
+    expect(invalidateSpy).not.toHaveBeenCalled();
   });
 
   it('sets isError when API rejects', async () => {

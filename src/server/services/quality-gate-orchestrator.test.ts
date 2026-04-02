@@ -419,7 +419,8 @@ describe('QualityGateOrchestrator', () => {
       expect(qualityGateService.reject).toHaveBeenCalledWith(1);
       expect(result).toEqual({ id: 1, status: 'failed' });
       expect(eventHistory.create).not.toHaveBeenCalled();
-      expect(blacklistService.create).toHaveBeenCalled();
+      // Default reject (no retry) skips blacklist (#301)
+      expect(blacklistService.create).not.toHaveBeenCalled();
     });
 
     it('propagates QualityGateServiceError from service', async () => {
@@ -688,12 +689,12 @@ describe('QualityGateOrchestrator', () => {
   // ===== #248 — Reject cleanup: blacklist with guid =====
 
   describe('performRejectionCleanup — GUID blacklisting', () => {
-    it('blacklists by infoHash when present (existing behavior)', async () => {
+    it('blacklists by infoHash when present (retry=true)', async () => {
       const { orchestrator, qualityGateService, blacklistService } = createOrchestrator();
       const download = { ...baseDownload, infoHash: 'hash123', guid: 'guid456' };
       qualityGateService.reject.mockResolvedValue({ id: 1, status: 'failed', download, book: baseBook });
 
-      await orchestrator.reject(1);
+      await orchestrator.reject(1, { retry: true });
 
       expect(blacklistService.create).toHaveBeenCalledWith(expect.objectContaining({
         infoHash: 'hash123',
@@ -702,12 +703,12 @@ describe('QualityGateOrchestrator', () => {
       }));
     });
 
-    it('blacklists by guid when infoHash is absent but guid is present', async () => {
+    it('blacklists by guid when infoHash is absent but guid is present (retry=true)', async () => {
       const { orchestrator, qualityGateService, blacklistService } = createOrchestrator();
       const download = { ...baseDownload, infoHash: null, guid: 'guid789' };
       qualityGateService.reject.mockResolvedValue({ id: 1, status: 'failed', download, book: baseBook });
 
-      await orchestrator.reject(1);
+      await orchestrator.reject(1, { retry: true });
 
       expect(blacklistService.create).toHaveBeenCalledWith(expect.objectContaining({
         guid: 'guid789',
@@ -715,12 +716,12 @@ describe('QualityGateOrchestrator', () => {
       }));
     });
 
-    it('skips blacklist and logs when neither infoHash nor guid is available', async () => {
+    it('skips blacklist and logs when neither infoHash nor guid is available (retry=true)', async () => {
       const { orchestrator, qualityGateService, blacklistService, log } = createOrchestrator();
       const download = { ...baseDownload, infoHash: null, guid: null };
       qualityGateService.reject.mockResolvedValue({ id: 1, status: 'failed', download, book: baseBook });
 
-      await orchestrator.reject(1);
+      await orchestrator.reject(1, { retry: true });
 
       expect(blacklistService.create).not.toHaveBeenCalled();
       expect(log.info).toHaveBeenCalledWith(
@@ -732,7 +733,7 @@ describe('QualityGateOrchestrator', () => {
   // ===== #248 — Reject cleanup: fire-and-forget re-search =====
 
   describe('performRejectionCleanup — re-search on reject', () => {
-    it('triggers retrySearch fire-and-forget when redownloadFailed is true and book reverts to wanted', async () => {
+    it('triggers retrySearch fire-and-forget when retry=true and redownloadFailed is true', async () => {
       const mockRetrySearchDeps = { log: createMockLogger() } as unknown as RetrySearchDeps;
       const settingsService = { get: vi.fn().mockResolvedValue({ redownloadFailed: true }) };
       const { orchestrator, qualityGateService } = createOrchestrator({
@@ -742,7 +743,7 @@ describe('QualityGateOrchestrator', () => {
       qualityGateService.reject.mockResolvedValue({ id: 1, status: 'failed', download: baseDownload, book: baseBook });
       (retrySearch as ReturnType<typeof vi.fn>).mockResolvedValue({ outcome: 'retried' });
 
-      await orchestrator.reject(1);
+      await orchestrator.reject(1, { retry: true });
 
       // Fire-and-forget — flush microtasks
       await vi.waitFor(() => {
@@ -750,16 +751,16 @@ describe('QualityGateOrchestrator', () => {
       });
     });
 
-    it('does not trigger re-search when redownloadFailed is false', async () => {
+    it('does not trigger re-search when retry=false even with redownloadFailed=true', async () => {
       const mockRetrySearchDeps = { log: createMockLogger() } as unknown as RetrySearchDeps;
-      const settingsService = { get: vi.fn().mockResolvedValue({ redownloadFailed: false }) };
+      const settingsService = { get: vi.fn().mockResolvedValue({ redownloadFailed: true }) };
       const { orchestrator, qualityGateService } = createOrchestrator({
         retrySearchDeps: mockRetrySearchDeps,
         settingsService: inject<SettingsService>(settingsService),
       });
       qualityGateService.reject.mockResolvedValue({ id: 1, status: 'failed', download: baseDownload, book: baseBook });
 
-      await orchestrator.reject(1);
+      await orchestrator.reject(1, { retry: false });
 
       // Flush microtasks
       await new Promise((r) => setTimeout(r, 0));
@@ -780,7 +781,7 @@ describe('QualityGateOrchestrator', () => {
       (retrySearch as ReturnType<typeof vi.fn>).mockReturnValue(retryPromise);
 
       // reject() should return without waiting for retrySearch
-      const result = await orchestrator.reject(1);
+      const result = await orchestrator.reject(1, { retry: true });
       expect(result).toEqual({ id: 1, status: 'failed' });
 
       // retrySearch should have been triggered but not yet resolved
@@ -798,7 +799,7 @@ describe('QualityGateOrchestrator', () => {
       (retrySearch as ReturnType<typeof vi.fn>).mockRejectedValue(new Error('search failed'));
 
       // Should not throw
-      const result = await orchestrator.reject(1);
+      const result = await orchestrator.reject(1, { retry: true });
       expect(result).toEqual({ id: 1, status: 'failed' });
 
       // Flush microtasks to let the .catch fire
@@ -810,18 +811,18 @@ describe('QualityGateOrchestrator', () => {
       });
     });
 
-    it('skips re-search when RetrySearchDeps is not injected', async () => {
+    it('skips re-search when retry=true but RetrySearchDeps is not injected', async () => {
       const { orchestrator, qualityGateService } = createOrchestrator();
       qualityGateService.reject.mockResolvedValue({ id: 1, status: 'failed', download: baseDownload, book: baseBook });
 
-      await orchestrator.reject(1);
+      await orchestrator.reject(1, { retry: true });
 
       await new Promise((r) => setTimeout(r, 0));
 
       expect(retrySearch).not.toHaveBeenCalled();
     });
 
-    it('does not trigger re-search when book is null', async () => {
+    it('does not trigger re-search when retry=true but book is null', async () => {
       const mockRetrySearchDeps = { log: createMockLogger() } as unknown as RetrySearchDeps;
       const settingsService = { get: vi.fn().mockResolvedValue({ redownloadFailed: true }) };
       const { orchestrator, qualityGateService } = createOrchestrator({
@@ -830,7 +831,7 @@ describe('QualityGateOrchestrator', () => {
       });
       qualityGateService.reject.mockResolvedValue({ id: 1, status: 'failed', download: baseDownload, book: null });
 
-      await orchestrator.reject(1);
+      await orchestrator.reject(1, { retry: true });
 
       await new Promise((r) => setTimeout(r, 0));
 
@@ -842,4 +843,163 @@ describe('QualityGateOrchestrator', () => {
   // blacklisting with bad_quality, download file deletion, re-search trigger, and
   // dispatchSideEffects auto-reject — all exercising the same code path through
   // blacklistAndRetrySearch() after extraction.
+
+  // #301 — Split reject into dismiss (retry=false) vs reject-and-search (retry=true)
+  describe('reject with retry flag (#301)', () => {
+    beforeEach(() => {
+      vi.clearAllMocks();
+      mockAdapter.removeDownload.mockResolvedValue(undefined);
+      (stat as ReturnType<typeof vi.fn>).mockRejectedValue(new Error('ENOENT'));
+    });
+
+    it('reject(id) without retry flag skips blacklistAndRetrySearch — no blacklist created, no retry search', async () => {
+      const mockRetrySearchDeps = { log: createMockLogger() } as unknown as RetrySearchDeps;
+      const settingsService = { get: vi.fn().mockResolvedValue({ redownloadFailed: true }) };
+      const { orchestrator, qualityGateService, blacklistService } = createOrchestrator({
+        retrySearchDeps: mockRetrySearchDeps,
+        settingsService: inject<SettingsService>(settingsService),
+      });
+      qualityGateService.reject.mockResolvedValue({ id: 1, status: 'failed', download: baseDownload, book: baseBook });
+
+      await orchestrator.reject(1);
+      await new Promise((r) => setTimeout(r, 0));
+
+      expect(blacklistService.create).not.toHaveBeenCalled();
+      expect(retrySearch).not.toHaveBeenCalled();
+    });
+
+    it('reject(id, { retry: false }) skips blacklistAndRetrySearch — no blacklist created, no retry search', async () => {
+      const mockRetrySearchDeps = { log: createMockLogger() } as unknown as RetrySearchDeps;
+      const settingsService = { get: vi.fn().mockResolvedValue({ redownloadFailed: true }) };
+      const { orchestrator, qualityGateService, blacklistService } = createOrchestrator({
+        retrySearchDeps: mockRetrySearchDeps,
+        settingsService: inject<SettingsService>(settingsService),
+      });
+      qualityGateService.reject.mockResolvedValue({ id: 1, status: 'failed', download: baseDownload, book: baseBook });
+
+      await orchestrator.reject(1, { retry: false });
+      await new Promise((r) => setTimeout(r, 0));
+
+      expect(blacklistService.create).not.toHaveBeenCalled();
+      expect(retrySearch).not.toHaveBeenCalled();
+    });
+
+    it('reject(id, { retry: true }) calls blacklistAndRetrySearch — blacklist created, retry search triggered', async () => {
+      const mockRetrySearchDeps = { log: createMockLogger() } as unknown as RetrySearchDeps;
+      const settingsService = { get: vi.fn().mockResolvedValue({ redownloadFailed: true }) };
+      const { orchestrator, qualityGateService, blacklistService } = createOrchestrator({
+        retrySearchDeps: mockRetrySearchDeps,
+        settingsService: inject<SettingsService>(settingsService),
+      });
+      qualityGateService.reject.mockResolvedValue({ id: 1, status: 'failed', download: baseDownload, book: baseBook });
+      (retrySearch as ReturnType<typeof vi.fn>).mockResolvedValue({ outcome: 'retried' });
+
+      await orchestrator.reject(1, { retry: true });
+
+      expect(blacklistService.create).toHaveBeenCalledWith(expect.objectContaining({
+        infoHash: baseDownload.infoHash,
+        title: baseDownload.title,
+        reason: 'bad_quality',
+      }));
+      await vi.waitFor(() => {
+        expect(retrySearch).toHaveBeenCalledWith(baseBook.id, mockRetrySearchDeps);
+      });
+    });
+
+    it('reject(id, { retry: true }) triggers retry search even when redownloadFailed is false (overrides setting)', async () => {
+      const mockRetrySearchDeps = { log: createMockLogger() } as unknown as RetrySearchDeps;
+      const settingsService = { get: vi.fn().mockResolvedValue({ redownloadFailed: false }) };
+      const { orchestrator, qualityGateService } = createOrchestrator({
+        retrySearchDeps: mockRetrySearchDeps,
+        settingsService: inject<SettingsService>(settingsService),
+      });
+      qualityGateService.reject.mockResolvedValue({ id: 1, status: 'failed', download: baseDownload, book: baseBook });
+      (retrySearch as ReturnType<typeof vi.fn>).mockResolvedValue({ outcome: 'retried' });
+
+      await orchestrator.reject(1, { retry: true });
+
+      await vi.waitFor(() => {
+        expect(retrySearch).toHaveBeenCalledWith(baseBook.id, mockRetrySearchDeps);
+      });
+    });
+
+    it('reject(id, { retry: false }) still cleans up download files from client', async () => {
+      const { orchestrator, qualityGateService } = createOrchestrator();
+      qualityGateService.reject.mockResolvedValue({ id: 1, status: 'failed', download: baseDownload, book: baseBook });
+
+      await orchestrator.reject(1, { retry: false });
+
+      expect(mockAdapter.removeDownload).toHaveBeenCalled();
+    });
+
+    it('reject(id, { retry: false }) still reverts book status correctly', async () => {
+      const { orchestrator, qualityGateService } = createOrchestrator();
+      qualityGateService.reject.mockResolvedValue({ id: 1, status: 'failed', download: baseDownload, book: baseBook });
+
+      await orchestrator.reject(1, { retry: false });
+
+      expect(revertBookStatus).toHaveBeenCalled();
+    });
+
+    it('reject(id, { retry: true }) still reverts book status correctly', async () => {
+      const mockRetrySearchDeps = { log: createMockLogger() } as unknown as RetrySearchDeps;
+      const settingsService = { get: vi.fn().mockResolvedValue({ redownloadFailed: true }) };
+      const { orchestrator, qualityGateService } = createOrchestrator({
+        retrySearchDeps: mockRetrySearchDeps,
+        settingsService: inject<SettingsService>(settingsService),
+      });
+      qualityGateService.reject.mockResolvedValue({ id: 1, status: 'failed', download: baseDownload, book: baseBook });
+      (retrySearch as ReturnType<typeof vi.fn>).mockResolvedValue({ outcome: 'retried' });
+
+      await orchestrator.reject(1, { retry: true });
+
+      expect(revertBookStatus).toHaveBeenCalled();
+    });
+
+    it('reject(id, { retry: false }) with null bookId: cleanup succeeds, no book revert, no book_status_change SSE', async () => {
+      const { orchestrator, qualityGateService, broadcaster } = createOrchestrator();
+      const orphanDownload = { ...baseDownload, bookId: null };
+      qualityGateService.reject.mockResolvedValue({ id: 1, status: 'failed', download: orphanDownload, book: null });
+
+      await orchestrator.reject(1, { retry: false });
+
+      expect(revertBookStatus).not.toHaveBeenCalled();
+      expect(mockAdapter.removeDownload).toHaveBeenCalled();
+      // No book_status_change SSE — only download_status_change if book is present
+      const bookSSECalls = (broadcaster.emit as ReturnType<typeof vi.fn>).mock.calls.filter(
+        (call: unknown[]) => call[0] === 'book_status_change',
+      );
+      expect(bookSSECalls).toHaveLength(0);
+    });
+
+    it('reject(id, { retry: true }) with null infoHash+guid: blacklist skipped, retry search still triggered', async () => {
+      const mockRetrySearchDeps = { log: createMockLogger() } as unknown as RetrySearchDeps;
+      const settingsService = { get: vi.fn().mockResolvedValue({ redownloadFailed: false }) };
+      const { orchestrator, qualityGateService, blacklistService } = createOrchestrator({
+        retrySearchDeps: mockRetrySearchDeps,
+        settingsService: inject<SettingsService>(settingsService),
+      });
+      const noIdDownload = { ...baseDownload, infoHash: null, guid: null };
+      qualityGateService.reject.mockResolvedValue({ id: 1, status: 'failed', download: noIdDownload, book: baseBook });
+      (retrySearch as ReturnType<typeof vi.fn>).mockResolvedValue({ outcome: 'retried' });
+
+      await orchestrator.reject(1, { retry: true });
+
+      expect(blacklistService.create).not.toHaveBeenCalled();
+      await vi.waitFor(() => {
+        expect(retrySearch).toHaveBeenCalledWith(baseBook.id, mockRetrySearchDeps);
+      });
+    });
+
+    it('reject(id, { retry: false }) — file delete failure logged as warning, does not prevent book revert', async () => {
+      const { orchestrator, qualityGateService, log } = createOrchestrator();
+      mockAdapter.removeDownload.mockRejectedValue(new Error('adapter delete failed'));
+      qualityGateService.reject.mockResolvedValue({ id: 1, status: 'failed', download: baseDownload, book: baseBook });
+
+      await orchestrator.reject(1, { retry: false });
+
+      expect(log.warn).toHaveBeenCalled();
+      expect(revertBookStatus).toHaveBeenCalled();
+    });
+  });
 });

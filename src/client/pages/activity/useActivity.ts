@@ -56,7 +56,7 @@ export function useActivity(queueParams: ActivityListParams = {}, historyParams:
   });
 
   const rejectMutation = useMutation({
-    mutationFn: (id: number) => api.rejectDownload(id),
+    mutationFn: ({ id, retry }: { id: number; retry?: boolean }) => api.rejectDownload(id, { retry }),
     onSuccess: invalidateActivity,
   });
 

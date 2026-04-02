@@ -7,67 +7,119 @@ import { DownloadProgress } from './DownloadProgress.js';
 import { DownloadActions } from './DownloadActions.js';
 import { QualityComparisonPanel } from './QualityComparisonPanel.js';
 
+function PendingReviewActions({
+  onApprove,
+  onReject,
+  onRejectWithSearch,
+  isApproving,
+  isRejecting,
+}: {
+  onApprove?: () => void;
+  onReject?: () => void;
+  onRejectWithSearch?: () => void;
+  isApproving?: boolean;
+  isRejecting?: boolean;
+}) {
+  const isAnyPending = isApproving || isRejecting;
+
+  return (
+    <div className="flex items-center gap-2 mt-3">
+      {onApprove && (
+        <button
+          type="button"
+          onClick={onApprove}
+          disabled={isAnyPending}
+          className="flex items-center gap-1.5 px-3 py-2 text-sm font-medium bg-success/10 text-success rounded-xl hover:bg-success hover:text-white disabled:opacity-50 transition-all focus-ring"
+        >
+          {isApproving ? 'Approving...' : 'Approve'}
+        </button>
+      )}
+      {onReject && (
+        <button
+          type="button"
+          onClick={onReject}
+          disabled={isAnyPending}
+          className="flex items-center gap-1.5 px-3 py-2 text-sm font-medium bg-destructive/10 text-destructive rounded-xl hover:bg-destructive hover:text-destructive-foreground disabled:opacity-50 transition-all focus-ring"
+        >
+          {isRejecting ? 'Rejecting...' : 'Reject'}
+        </button>
+      )}
+      {onRejectWithSearch && (
+        <button
+          type="button"
+          onClick={onRejectWithSearch}
+          disabled={isAnyPending}
+          className="flex items-center gap-1.5 px-3 py-2 text-sm font-medium text-destructive/70 border border-destructive/20 rounded-xl hover:bg-destructive/10 disabled:opacity-50 transition-all focus-ring"
+        >
+          Reject &amp; Search
+        </button>
+      )}
+    </div>
+  );
+}
+
 function PendingReviewDetails({
   download,
   onApprove,
   onReject,
+  onRejectWithSearch,
   isApproving,
   isRejecting,
 }: {
   download: Download;
   onApprove?: () => void;
   onReject?: () => void;
+  onRejectWithSearch?: () => void;
   isApproving?: boolean;
   isRejecting?: boolean;
 }) {
-  const [expanded, setExpanded] = useState(false);
+  const [expanded, setExpanded] = useState(!download.qualityGate ? true : false);
+  const hasGate = !!download.qualityGate;
 
-  if (!download.qualityGate) return null;
+  if (hasGate) {
+    const holdCount = download.qualityGate!.holdReasons.length;
+    const summary = holdCount > 0
+      ? `${holdCount} hold reason${holdCount !== 1 ? 's' : ''}`
+      : 'Pending review';
 
-  const holdCount = download.qualityGate.holdReasons.length;
-  const summary = holdCount > 0
-    ? `${holdCount} hold reason${holdCount !== 1 ? 's' : ''}`
-    : 'Pending review';
+    return (
+      <div className="mt-3">
+        <button
+          type="button"
+          onClick={() => setExpanded(!expanded)}
+          className="flex items-center gap-2 px-3 py-1.5 text-sm font-medium text-amber-600 dark:text-amber-400 bg-amber-500/10 rounded-lg hover:bg-amber-500/20 transition-all focus-ring"
+          aria-expanded={expanded}
+          aria-label={expanded ? 'Collapse quality comparison' : 'Expand quality comparison'}
+        >
+          <ChevronDownIcon className={`w-3.5 h-3.5 transition-transform duration-200 ${expanded ? 'rotate-180' : ''}`} />
+          {summary}
+        </button>
+        {expanded && (
+          <div className="mt-3 animate-fade-in">
+            <QualityComparisonPanel data={download.qualityGate!} />
+            <PendingReviewActions
+              onApprove={onApprove}
+              onReject={onReject}
+              onRejectWithSearch={onRejectWithSearch}
+              isApproving={isApproving}
+              isRejecting={isRejecting}
+            />
+          </div>
+        )}
+      </div>
+    );
+  }
 
+  // No qualityGate data — show action buttons directly without comparison panel
   return (
     <div className="mt-3">
-      <button
-        type="button"
-        onClick={() => setExpanded(!expanded)}
-        className="flex items-center gap-2 px-3 py-1.5 text-sm font-medium text-amber-600 dark:text-amber-400 bg-amber-500/10 rounded-lg hover:bg-amber-500/20 transition-all focus-ring"
-        aria-expanded={expanded}
-        aria-label={expanded ? 'Collapse quality comparison' : 'Expand quality comparison'}
-      >
-        <ChevronDownIcon className={`w-3.5 h-3.5 transition-transform duration-200 ${expanded ? 'rotate-180' : ''}`} />
-        {summary}
-      </button>
-      {expanded && (
-        <div className="mt-3 animate-fade-in">
-          <QualityComparisonPanel data={download.qualityGate} />
-          <div className="flex items-center gap-2 mt-3">
-            {onApprove && (
-              <button
-                type="button"
-                onClick={onApprove}
-                disabled={isApproving}
-                className="flex items-center gap-1.5 px-3 py-2 text-sm font-medium bg-success/10 text-success rounded-xl hover:bg-success hover:text-white disabled:opacity-50 transition-all focus-ring"
-              >
-                {isApproving ? 'Approving...' : 'Approve'}
-              </button>
-            )}
-            {onReject && (
-              <button
-                type="button"
-                onClick={onReject}
-                disabled={isRejecting}
-                className="flex items-center gap-1.5 px-3 py-2 text-sm font-medium bg-destructive/10 text-destructive rounded-xl hover:bg-destructive hover:text-destructive-foreground disabled:opacity-50 transition-all focus-ring"
-              >
-                {isRejecting ? 'Rejecting...' : 'Reject'}
-              </button>
-            )}
-          </div>
-        </div>
-      )}
+      <PendingReviewActions
+        onApprove={onApprove}
+        onReject={onReject}
+        onRejectWithSearch={onRejectWithSearch}
+        isApproving={isApproving}
+        isRejecting={isRejecting}
+      />
     </div>
   );
 }
@@ -76,12 +128,14 @@ function DownloadStatusDetails({
   download,
   onApprove,
   onReject,
+  onRejectWithSearch,
   isApproving,
   isRejecting,
 }: {
   download: Download;
   onApprove?: () => void;
   onReject?: () => void;
+  onRejectWithSearch?: () => void;
   isApproving?: boolean;
   isRejecting?: boolean;
 }) {
@@ -99,11 +153,12 @@ function DownloadStatusDetails({
           Checking audio quality...
         </div>
       )}
-      {download.status === 'pending_review' && download.qualityGate && (
+      {download.status === 'pending_review' && (
         <PendingReviewDetails
           download={download}
           onApprove={onApprove}
           onReject={onReject}
+          onRejectWithSearch={onRejectWithSearch}
           isApproving={isApproving}
           isRejecting={isRejecting}
         />
@@ -118,6 +173,7 @@ export function DownloadCard({
   onRetry,
   onApprove,
   onReject,
+  onRejectWithSearch,
   onDelete,
   isCancelling,
   isApproving,
@@ -133,6 +189,7 @@ export function DownloadCard({
   onRetry?: () => void;
   onApprove?: () => void;
   onReject?: () => void;
+  onRejectWithSearch?: () => void;
   onDelete?: () => void;
   isCancelling?: boolean;
   isApproving?: boolean;
@@ -204,6 +261,7 @@ export function DownloadCard({
             download={download}
             onApprove={onApprove}
             onReject={onReject}
+            onRejectWithSearch={onRejectWithSearch}
             isApproving={isApproving}
             isRejecting={isRejecting}
           />

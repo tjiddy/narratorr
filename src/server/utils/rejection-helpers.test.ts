@@ -96,4 +96,28 @@ describe('blacklistAndRetrySearch', () => {
     await new Promise((r) => setTimeout(r, 0));
     expect(retrySearch).not.toHaveBeenCalled();
   });
+
+  // #301 — overrideRetry flag bypasses redownloadFailed setting
+  it('triggers re-search when overrideRetry is true even if redownloadFailed is false', async () => {
+    const req = makeRequest({
+      settingsService: inject<SettingsService>({ get: vi.fn().mockResolvedValue({ redownloadFailed: false }) }),
+      overrideRetry: true,
+    });
+    await blacklistAndRetrySearch(req);
+
+    await vi.waitFor(() => {
+      expect(retrySearch).toHaveBeenCalledWith(1, req.retrySearchDeps);
+    });
+  });
+
+  it('overrideRetry=false still respects redownloadFailed setting', async () => {
+    const req = makeRequest({
+      settingsService: inject<SettingsService>({ get: vi.fn().mockResolvedValue({ redownloadFailed: false }) }),
+      overrideRetry: false,
+    });
+    await blacklistAndRetrySearch(req);
+
+    await new Promise((r) => setTimeout(r, 0));
+    expect(retrySearch).not.toHaveBeenCalled();
+  });
 });

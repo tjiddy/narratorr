@@ -70,10 +70,10 @@ export const activityApi = {
     fetchApi<RetryResponse>(`/activity/${id}/retry`, { method: 'POST' }),
   approveDownload: (id: number) =>
     fetchApi<{ id: number; status: string }>(`/activity/${id}/approve`, { method: 'POST' }),
-  rejectDownload: (id: number, reason?: string) =>
+  rejectDownload: (id: number, options?: { retry?: boolean }) =>
     fetchApi<{ id: number; status: string }>(`/activity/${id}/reject`, {
       method: 'POST',
-      body: JSON.stringify({ reason }),
+      body: JSON.stringify({ retry: options?.retry ?? false }),
       headers: { 'Content-Type': 'application/json' },
     }),
   deleteHistoryDownload: (id: number) =>

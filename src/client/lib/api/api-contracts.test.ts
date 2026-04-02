@@ -72,6 +72,24 @@ describe('activityApi', () => {
     await activityApi.retryDownload(3);
     expect(mockFetchApi).toHaveBeenCalledWith('/activity/3/retry', expect.objectContaining({ method: 'POST' }));
   });
+
+  it('rejectDownload(id) → POST /activity/:id/reject with { retry: false }', async () => {
+    await activityApi.rejectDownload(7);
+    expect(mockFetchApi).toHaveBeenCalledWith('/activity/7/reject', expect.objectContaining({
+      method: 'POST',
+      body: JSON.stringify({ retry: false }),
+      headers: { 'Content-Type': 'application/json' },
+    }));
+  });
+
+  it('rejectDownload(id, { retry: true }) → POST /activity/:id/reject with { retry: true }', async () => {
+    await activityApi.rejectDownload(7, { retry: true });
+    expect(mockFetchApi).toHaveBeenCalledWith('/activity/7/reject', expect.objectContaining({
+      method: 'POST',
+      body: JSON.stringify({ retry: true }),
+      headers: { 'Content-Type': 'application/json' },
+    }));
+  });
 });
 
 describe('authApi', () => {
