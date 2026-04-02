@@ -1,5 +1,34 @@
 # Workflow Log
 
+## #296 Move 'Add manually' form into a modal on search results page — 2026-04-02
+**Skill path:** /elaborate → /respond-to-spec-review → /implement → /claim → /plan → /handoff
+**Outcome:** success — PR #305
+
+### Metrics
+- Files changed: 4 | Tests added/modified: 16 new + 6 updated
+- Quality gate runs: 2 (pass on attempt 2 — unused import lint fix)
+- Fix iterations: 1 (unused `within` import)
+- Context compactions: 0
+
+### Workflow experience
+- What went smoothly: Small, well-scoped frontend issue. Spec review caught real convention mismatches (backdrop-close). ManualAddForm was self-contained and didn't need refactoring — just wrapped in a modal.
+- Friction / issues encountered: querySelector optional chain returning undefined vs null caught by test — easy fix but non-obvious pattern.
+
+### Token efficiency
+- Highest-token actions: Explore subagent for plan (read many modal files for pattern matching)
+- Avoidable waste: None significant — issue was well-scoped
+- Suggestions: For simple frontend refactors with established patterns, a lighter explore pass would suffice
+
+### Infrastructure gaps
+- Repeated workarounds: None
+- Missing tooling / config: `frontend-design` skill not available — skipped UI polish pass
+- Unresolved debt: None introduced
+
+### Wish I'd Known
+1. `querySelector()?.closest()` returns `undefined` not `null` — caused 7 test failures that all resolved with one `?? null` fix (see `queryselector-optional-chain-null.md`)
+2. Every form modal in the app uses `closeOnBackdropClick={false}` — spec review caught this before implementation, saving a round-trip
+3. Unmount/remount pattern for form reset is simpler than explicit reset on close (see `modal-form-reset-via-unmount.md`)
+
 ## #299 Quality gate orphan cleanup respects delete-after-import and deregisters from client — 2026-04-02
 **Skill path:** /elaborate → /respond-to-spec-review (x2) → /implement → /claim → /plan → /handoff
 **Outcome:** success — PR #304
