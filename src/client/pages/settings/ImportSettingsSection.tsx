@@ -23,7 +23,7 @@ export function ImportSettingsSection() {
     queryFn: api.getSettings,
   });
 
-  const { register, handleSubmit, reset, formState: { errors, isDirty } } = useForm<ImportFormData>({
+  const { register, handleSubmit, reset, watch, formState: { errors, isDirty } } = useForm<ImportFormData>({
     defaultValues: DEFAULT_SETTINGS.import,
     resolver: zodResolver(importFormSchema),
   });
@@ -33,6 +33,9 @@ export function ImportSettingsSection() {
       reset(settings.import);
     }
   }, [settings, reset, isDirty]);
+
+  // eslint-disable-next-line react-hooks/incompatible-library
+  const deleteAfterImport = watch('deleteAfterImport') as boolean;
 
   const mutation = useMutation({
     mutationFn: (data: ImportFormData) =>
@@ -66,25 +69,14 @@ export function ImportSettingsSection() {
           </label>
         </div>
 
-        <div className="flex items-center justify-between">
-          <div>
-            <label htmlFor="redownloadFailed" className="block text-sm font-medium">Redownload Failed</label>
-            <p className="text-sm text-muted-foreground mt-0.5">
-              Automatically search for and attempt to download a different release when a download fails
-            </p>
-          </div>
-          <label className="relative inline-flex items-center cursor-pointer">
-            <ToggleSwitch id="redownloadFailed" {...register('redownloadFailed')} />
-          </label>
-        </div>
-
         <div>
           <label htmlFor="minSeedTime" className="block text-sm font-medium mb-2">Minimum Seed Time (minutes)</label>
           <input
             id="minSeedTime"
             type="number"
             {...register('minSeedTime', { valueAsNumber: true })}
-            className={`w-full px-4 py-3 bg-background border rounded-xl focus-ring focus:border-transparent transition-all ${
+            disabled={!deleteAfterImport}
+            className={`w-full px-4 py-3 bg-background border rounded-xl focus-ring focus:border-transparent transition-all disabled:cursor-not-allowed disabled:opacity-50 ${
               errors.minSeedTime ? 'border-destructive' : 'border-border'
             }`}
             min={0}
@@ -96,6 +88,18 @@ export function ImportSettingsSection() {
           <p className="text-sm text-muted-foreground mt-2">
             How long to seed before removing the torrent (only applies when delete after import is enabled)
           </p>
+        </div>
+
+        <div className="flex items-center justify-between">
+          <div>
+            <label htmlFor="redownloadFailed" className="block text-sm font-medium">Redownload Failed</label>
+            <p className="text-sm text-muted-foreground mt-0.5">
+              Automatically search for and attempt to download a different release when a download fails
+            </p>
+          </div>
+          <label className="relative inline-flex items-center cursor-pointer">
+            <ToggleSwitch id="redownloadFailed" {...register('redownloadFailed')} />
+          </label>
         </div>
 
         <div>
