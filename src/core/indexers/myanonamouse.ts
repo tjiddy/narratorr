@@ -7,6 +7,8 @@ export interface MAMConfig {
   mamId: string;
   baseUrl?: string;
   proxyUrl?: string;
+  searchLanguages: number[];
+  searchType: number;
 }
 
 const DEFAULT_BASE_URL = 'https://www.myanonamouse.net';
@@ -67,11 +69,15 @@ export class MyAnonamouseIndexer implements IndexerAdapter {
   private baseUrl: string;
   private mamId: string;
   private proxyUrl?: string;
+  private searchLanguages: number[];
+  private searchType: number;
 
   constructor(config: MAMConfig, name?: string) {
     this.mamId = config.mamId;
     this.baseUrl = (config.baseUrl || DEFAULT_BASE_URL).replace(/\/+$/, '');
     this.proxyUrl = config.proxyUrl;
+    this.searchLanguages = config.searchLanguages;
+    this.searchType = config.searchType;
     this.name = name || 'MyAnonamouse';
   }
 
@@ -82,6 +88,14 @@ export class MyAnonamouseIndexer implements IndexerAdapter {
       'tor[srchIn][author]': 'true',
       'tor[main_cat][]': '13',
     });
+
+    // Append search type parameter
+    params.set('tor[searchType]', String(this.searchType));
+
+    // Append language filter parameters (indexed array format)
+    for (let i = 0; i < this.searchLanguages.length; i++) {
+      params.set(`tor[browse_lang][${i}]`, String(this.searchLanguages[i]));
+    }
 
     const url = `${this.baseUrl}/tor/js/loadSearchJSONbasic.php?${params.toString()}`;
     const body = await this.fetchWithCookie(url);
