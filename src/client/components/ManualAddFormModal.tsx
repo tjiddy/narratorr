@@ -24,7 +24,13 @@ export function ManualAddFormModal({ isOpen, onClose, defaultTitle }: ManualAddF
 
   return (
     <Modal onClose={onClose} closeOnBackdropClick={false} className="w-full max-w-lg">
-      <div ref={modalRef} className="p-6">
+      <div
+        ref={modalRef}
+        role="dialog"
+        aria-modal="true"
+        tabIndex={-1}
+        className="p-6"
+      >
         <div className="flex items-center justify-end mb-2">
           <button
             type="button"
