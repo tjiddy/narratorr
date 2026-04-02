@@ -53,6 +53,8 @@ export const createIndexerFormSchema = z.object({
     mamId: z.string().optional(),
     baseUrl: z.string().trim().optional(),
     useProxy: z.boolean().optional(),
+    searchLanguages: z.array(z.number()).optional(),
+    searchType: z.number().optional(),
   }),
 }).superRefine((data, ctx) => {
   const meta = INDEXER_REGISTRY[data.type];

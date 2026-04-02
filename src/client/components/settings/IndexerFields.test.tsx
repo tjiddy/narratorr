@@ -180,7 +180,7 @@ describe('IndexerFields', () => {
         await waitFor(() => {
           expect(screen.getByText('Route through proxy')).toBeInTheDocument();
         });
-        expect(screen.getByRole('checkbox')).toBeInTheDocument();
+        expect(screen.getByRole('checkbox', { name: /route through proxy/i })).toBeInTheDocument();
 
         unmount();
       }
@@ -219,6 +219,90 @@ describe('IndexerFields', () => {
       await waitFor(() => {
         expect(screen.getByText(/no proxy url configured/i)).toBeInTheDocument();
       });
+    });
+  });
+
+  describe('MAM language and search type fields (#291)', () => {
+    function MamFieldWrapper({ defaultSearchLanguages, defaultSearchType }: { defaultSearchLanguages?: number[]; defaultSearchType?: number } = {}) {
+      const { register, watch, setValue, formState: { errors } } = useForm<CreateIndexerFormData>({
+        defaultValues: {
+          name: '', type: 'myanonamouse',
+          settings: {
+            mamId: 'test-id',
+            searchLanguages: defaultSearchLanguages ?? [1],
+            searchType: defaultSearchType ?? 1,
+          },
+        },
+      });
+      return <IndexerFields selectedType="myanonamouse" register={register} errors={errors} watch={watch} setValue={setValue} />;
+    }
+
+    it('renders language checkbox group with all 15 languages for myanonamouse type', () => {
+      renderWithProviders(<MamFieldWrapper />);
+      expect(screen.getByText('Languages')).toBeInTheDocument();
+      expect(screen.getByLabelText('English')).toBeInTheDocument();
+      expect(screen.getByLabelText('Chinese')).toBeInTheDocument();
+      expect(screen.getByLabelText('Spanish')).toBeInTheDocument();
+      expect(screen.getByLabelText('French')).toBeInTheDocument();
+      expect(screen.getByLabelText('German')).toBeInTheDocument();
+      expect(screen.getByLabelText('Italian')).toBeInTheDocument();
+      expect(screen.getByLabelText('Japanese')).toBeInTheDocument();
+      expect(screen.getByLabelText('Korean')).toBeInTheDocument();
+      expect(screen.getByLabelText('Norwegian')).toBeInTheDocument();
+      expect(screen.getByLabelText('Polish')).toBeInTheDocument();
+      expect(screen.getByLabelText('Portuguese')).toBeInTheDocument();
+      expect(screen.getByLabelText('Russian')).toBeInTheDocument();
+      expect(screen.getByLabelText('Swedish')).toBeInTheDocument();
+      expect(screen.getByLabelText('Turkish')).toBeInTheDocument();
+      expect(screen.getByLabelText('Dutch')).toBeInTheDocument();
+    });
+
+    it('renders search type dropdown with 4 options for myanonamouse type', () => {
+      renderWithProviders(<MamFieldWrapper />);
+      expect(screen.getByLabelText('Search Type')).toBeInTheDocument();
+      const options = screen.getByLabelText('Search Type').querySelectorAll('option');
+      expect(options).toHaveLength(4);
+      expect(options[0]).toHaveTextContent('All torrents');
+      expect(options[1]).toHaveTextContent('Only active (1+ seeders)');
+      expect(options[2]).toHaveTextContent('Freeleech');
+      expect(options[3]).toHaveTextContent('Freeleech or VIP');
+    });
+
+    it('checking a language checkbox updates form value via setValue', async () => {
+      const user = userEvent.setup();
+      renderWithProviders(<MamFieldWrapper defaultSearchLanguages={[1]} />);
+
+      const frenchCheckbox = screen.getByLabelText('French');
+      expect(frenchCheckbox).not.toBeChecked();
+      await user.click(frenchCheckbox);
+      expect(frenchCheckbox).toBeChecked();
+    });
+
+    it('unchecking a language checkbox removes it from form value', async () => {
+      const user = userEvent.setup();
+      renderWithProviders(<MamFieldWrapper defaultSearchLanguages={[1]} />);
+
+      const englishCheckbox = screen.getByLabelText('English');
+      expect(englishCheckbox).toBeChecked();
+      await user.click(englishCheckbox);
+      expect(englishCheckbox).not.toBeChecked();
+    });
+
+    it('selecting search type updates form value with numeric coercion', async () => {
+      const user = userEvent.setup();
+      renderWithProviders(<MamFieldWrapper />);
+
+      const searchTypeSelect = screen.getByLabelText('Search Type');
+      await user.selectOptions(searchTypeSelect, '2');
+      expect(searchTypeSelect).toHaveValue('2');
+    });
+
+    it('default values show English checked and search type = Only active', () => {
+      renderWithProviders(<MamFieldWrapper />);
+
+      expect(screen.getByLabelText('English')).toBeChecked();
+      expect(screen.getByLabelText('French')).not.toBeChecked();
+      expect(screen.getByLabelText('Search Type')).toHaveValue('1');
     });
   });
 });

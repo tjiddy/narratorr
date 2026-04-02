@@ -1,19 +1,22 @@
-import type { UseFormRegister, FieldErrors, UseFormWatch } from 'react-hook-form';
+import type { UseFormRegister, FieldErrors, UseFormWatch, UseFormSetValue } from 'react-hook-form';
 import type { CreateIndexerFormData } from '../../../shared/schemas.js';
 import { useQuery } from '@tanstack/react-query';
 import { queryKeys } from '@/lib/queryKeys';
 import { api } from '@/lib/api';
 import { ToggleSwitch } from './ToggleSwitch';
+import { SelectWithChevron } from './SelectWithChevron';
+import { MAM_LANGUAGES, MAM_SEARCH_TYPES } from '../../../shared/indexer-registry.js';
 
 interface IndexerFieldsProps {
   selectedType: string;
   register: UseFormRegister<CreateIndexerFormData>;
   errors: FieldErrors<CreateIndexerFormData>;
   watch?: UseFormWatch<CreateIndexerFormData>;
+  setValue?: UseFormSetValue<CreateIndexerFormData>;
   prowlarrManaged?: boolean;
 }
 
-type FieldComponent = (props: Pick<IndexerFieldsProps, 'register' | 'errors'> & { selectedType: string; prowlarrManaged?: boolean }) => React.JSX.Element;
+type FieldComponent = (props: Pick<IndexerFieldsProps, 'register' | 'errors' | 'watch' | 'setValue'> & { selectedType: string; prowlarrManaged?: boolean }) => React.JSX.Element;
 
 function FlareSolverrField({ register, errors }: Pick<IndexerFieldsProps, 'register' | 'errors'>) {
   return (
@@ -123,7 +126,18 @@ function ApiFields({ register, errors, selectedType, prowlarrManaged }: Pick<Ind
   );
 }
 
-function MamFields({ register, errors }: Pick<IndexerFieldsProps, 'register' | 'errors'>) {
+function MamFields({ register, errors, watch, setValue }: Pick<IndexerFieldsProps, 'register' | 'errors' | 'watch' | 'setValue'>) {
+  const searchLanguages = watch ? (watch('settings.searchLanguages') ?? [1]) : [1];
+
+  function toggleLanguage(langId: number) {
+    if (!setValue) return;
+    const current = searchLanguages;
+    const updated = current.includes(langId)
+      ? current.filter((id) => id !== langId)
+      : [...current, langId];
+    setValue('settings.searchLanguages', updated, { shouldValidate: true });
+  }
+
   return (
     <>
       <div className="sm:col-span-2">
@@ -161,6 +175,34 @@ function MamFields({ register, errors }: Pick<IndexerFieldsProps, 'register' | '
         ) : (
           <p className="text-sm text-muted-foreground mt-1">Only change if using a custom MAM mirror</p>
         )}
+      </div>
+      <div className="sm:col-span-2">
+        <SelectWithChevron
+          id="indexerSearchType"
+          label="Search Type"
+          {...register('settings.searchType', { valueAsNumber: true })}
+        >
+          {MAM_SEARCH_TYPES.map((st) => (
+            <option key={st.value} value={st.value}>{st.label}</option>
+          ))}
+        </SelectWithChevron>
+      </div>
+      <div className="sm:col-span-2">
+        <span className="block text-sm font-medium mb-2">Languages</span>
+        <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+          {MAM_LANGUAGES.map((lang) => (
+            <label key={lang.id} className="flex items-center gap-2 text-sm cursor-pointer">
+              <input
+                type="checkbox"
+                checked={searchLanguages.includes(lang.id)}
+                onChange={() => toggleLanguage(lang.id)}
+                className="rounded border-border text-primary focus-ring"
+              />
+              {lang.label}
+            </label>
+          ))}
+        </div>
+        <p className="text-sm text-muted-foreground mt-1">Deselect all for unrestricted language search</p>
       </div>
     </>
   );
@@ -204,12 +246,12 @@ function UseProxyField({ register, watch }: { register: UseFormRegister<CreateIn
   );
 }
 
-export function IndexerFields({ selectedType, register, errors, watch, prowlarrManaged }: IndexerFieldsProps) {
+export function IndexerFields({ selectedType, register, errors, watch, setValue, prowlarrManaged }: IndexerFieldsProps) {
   const Component = FIELD_COMPONENTS[selectedType];
   if (!Component) return null;
   return (
     <>
-      <Component register={register} errors={errors} selectedType={selectedType} prowlarrManaged={prowlarrManaged} />
+      <Component register={register} errors={errors} watch={watch} setValue={setValue} selectedType={selectedType} prowlarrManaged={prowlarrManaged} />
       <UseProxyField register={register} watch={watch} />
     </>
   );

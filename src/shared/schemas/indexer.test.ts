@@ -317,3 +317,49 @@ describe('createIndexerFormSchema — baseUrl trim (#284)', () => {
     if (result.success) expect(result.data.settings.baseUrl).toBe('');
   });
 });
+
+describe('createIndexerFormSchema — searchLanguages and searchType (#291)', () => {
+  const mamBase = {
+    name: 'MAM',
+    type: 'myanonamouse' as const,
+    enabled: true,
+    priority: 50,
+    settings: { mamId: 'test-id' },
+  };
+
+  it('accepts searchLanguages as a number array', () => {
+    const result = createIndexerFormSchema.safeParse({
+      ...mamBase,
+      settings: { ...mamBase.settings, searchLanguages: [1, 36], searchType: 1 },
+    });
+    expect(result.success).toBe(true);
+    if (result.success) expect(result.data.settings.searchLanguages).toEqual([1, 36]);
+  });
+
+  it('accepts empty searchLanguages array (unrestricted search)', () => {
+    const result = createIndexerFormSchema.safeParse({
+      ...mamBase,
+      settings: { ...mamBase.settings, searchLanguages: [], searchType: 1 },
+    });
+    expect(result.success).toBe(true);
+    if (result.success) expect(result.data.settings.searchLanguages).toEqual([]);
+  });
+
+  it('accepts searchType: 0 (falsy but valid — all torrents)', () => {
+    const result = createIndexerFormSchema.safeParse({
+      ...mamBase,
+      settings: { ...mamBase.settings, searchLanguages: [1], searchType: 0 },
+    });
+    expect(result.success).toBe(true);
+    if (result.success) expect(result.data.settings.searchType).toBe(0);
+  });
+
+  it('accepts omitted searchLanguages and searchType (both optional)', () => {
+    const result = createIndexerFormSchema.safeParse(mamBase);
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.settings.searchLanguages).toBeUndefined();
+      expect(result.data.settings.searchType).toBeUndefined();
+    }
+  });
+});

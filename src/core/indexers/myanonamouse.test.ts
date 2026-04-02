@@ -34,7 +34,7 @@ describe('MyAnonamouseIndexer', () => {
   let indexer: MyAnonamouseIndexer;
 
   beforeEach(() => {
-    indexer = new MyAnonamouseIndexer({ mamId: 'test-mam-id', baseUrl: MAM_BASE });
+    indexer = new MyAnonamouseIndexer({ mamId: 'test-mam-id', baseUrl: MAM_BASE, searchLanguages: [1], searchType: 1 });
   });
 
   describe('properties', () => {
@@ -44,7 +44,7 @@ describe('MyAnonamouseIndexer', () => {
     });
 
     it('uses default base URL when not provided', async () => {
-      const defaultIndexer = new MyAnonamouseIndexer({ mamId: 'test' });
+      const defaultIndexer = new MyAnonamouseIndexer({ mamId: 'test', searchLanguages: [1], searchType: 1 });
       expect(defaultIndexer.type).toBe('myanonamouse');
 
       let capturedUrl: string | undefined;
@@ -60,7 +60,7 @@ describe('MyAnonamouseIndexer', () => {
     });
 
     it('uses custom name when provided', () => {
-      const named = new MyAnonamouseIndexer({ mamId: 'test', baseUrl: MAM_BASE }, 'Custom MAM');
+      const named = new MyAnonamouseIndexer({ mamId: 'test', baseUrl: MAM_BASE, searchLanguages: [1], searchType: 1 }, 'Custom MAM');
       expect(named.name).toBe('Custom MAM');
     });
   });
@@ -588,6 +588,8 @@ describe('MyAnonamouseIndexer', () => {
         mamId: 'test-mam-id',
         baseUrl: MAM_BASE,
         proxyUrl: PROXY_URL,
+        searchLanguages: [1],
+        searchType: 1,
       });
     });
 
@@ -693,6 +695,8 @@ describe('MyAnonamouseIndexer', () => {
       const directIndexer = new MyAnonamouseIndexer({
         mamId: 'test-mam-id',
         baseUrl: MAM_BASE,
+        searchLanguages: [1],
+        searchType: 1,
       });
 
       const searchResponse = JSON.stringify({ data: [makeResult()] });
@@ -774,6 +778,134 @@ describe('MyAnonamouseIndexer', () => {
 
       const results = await indexer.search('test');
       expect(results[0].language).toBe('xyz');
+    });
+  });
+
+  describe('search — language and search type params (#291)', () => {
+    it('sends tor[browse_lang][0]=1 when searchLanguages is [1]', async () => {
+      const langIndexer = new MyAnonamouseIndexer({
+        mamId: 'test-mam-id', baseUrl: MAM_BASE,
+        searchLanguages: [1], searchType: 1,
+      });
+      let capturedUrl = '';
+      server.use(
+        http.get(`${MAM_BASE}/tor/js/loadSearchJSONbasic.php`, ({ request }) => {
+          capturedUrl = request.url;
+          return HttpResponse.json({ data: [] });
+        }),
+      );
+      await langIndexer.search('test');
+      const url = new URL(capturedUrl);
+      expect(url.searchParams.get('tor[browse_lang][0]')).toBe('1');
+    });
+
+    it('sends indexed browse_lang params for multiple languages', async () => {
+      const langIndexer = new MyAnonamouseIndexer({
+        mamId: 'test-mam-id', baseUrl: MAM_BASE,
+        searchLanguages: [1, 36], searchType: 1,
+      });
+      let capturedUrl = '';
+      server.use(
+        http.get(`${MAM_BASE}/tor/js/loadSearchJSONbasic.php`, ({ request }) => {
+          capturedUrl = request.url;
+          return HttpResponse.json({ data: [] });
+        }),
+      );
+      await langIndexer.search('test');
+      const url = new URL(capturedUrl);
+      expect(url.searchParams.get('tor[browse_lang][0]')).toBe('1');
+      expect(url.searchParams.get('tor[browse_lang][1]')).toBe('36');
+    });
+
+    it('sends tor[searchType]=1 when searchType is 1 (active)', async () => {
+      const stIndexer = new MyAnonamouseIndexer({
+        mamId: 'test-mam-id', baseUrl: MAM_BASE,
+        searchLanguages: [1], searchType: 1,
+      });
+      let capturedUrl = '';
+      server.use(
+        http.get(`${MAM_BASE}/tor/js/loadSearchJSONbasic.php`, ({ request }) => {
+          capturedUrl = request.url;
+          return HttpResponse.json({ data: [] });
+        }),
+      );
+      await stIndexer.search('test');
+      const url = new URL(capturedUrl);
+      expect(url.searchParams.get('tor[searchType]')).toBe('1');
+    });
+
+    it('sends tor[searchType]=0 when searchType is 0 (all) — falsy but valid', async () => {
+      const stIndexer = new MyAnonamouseIndexer({
+        mamId: 'test-mam-id', baseUrl: MAM_BASE,
+        searchLanguages: [1], searchType: 0,
+      });
+      let capturedUrl = '';
+      server.use(
+        http.get(`${MAM_BASE}/tor/js/loadSearchJSONbasic.php`, ({ request }) => {
+          capturedUrl = request.url;
+          return HttpResponse.json({ data: [] });
+        }),
+      );
+      await stIndexer.search('test');
+      const url = new URL(capturedUrl);
+      expect(url.searchParams.get('tor[searchType]')).toBe('0');
+    });
+
+    it('sends no browse_lang params when searchLanguages is empty array', async () => {
+      const noLangIndexer = new MyAnonamouseIndexer({
+        mamId: 'test-mam-id', baseUrl: MAM_BASE,
+        searchLanguages: [], searchType: 1,
+      });
+      let capturedUrl = '';
+      server.use(
+        http.get(`${MAM_BASE}/tor/js/loadSearchJSONbasic.php`, ({ request }) => {
+          capturedUrl = request.url;
+          return HttpResponse.json({ data: [] });
+        }),
+      );
+      await noLangIndexer.search('test');
+      const url = new URL(capturedUrl);
+      // No browse_lang params should be present
+      const allParams = Array.from(url.searchParams.keys());
+      const browseLangParams = allParams.filter(k => k.startsWith('tor[browse_lang]'));
+      expect(browseLangParams).toHaveLength(0);
+    });
+
+    it('sends all 15 indexed browse_lang params when all languages selected', async () => {
+      const allLangs = [1, 2, 4, 33, 35, 36, 37, 38, 40, 43, 44, 45, 46, 49, 51];
+      const allLangIndexer = new MyAnonamouseIndexer({
+        mamId: 'test-mam-id', baseUrl: MAM_BASE,
+        searchLanguages: allLangs, searchType: 1,
+      });
+      let capturedUrl = '';
+      server.use(
+        http.get(`${MAM_BASE}/tor/js/loadSearchJSONbasic.php`, ({ request }) => {
+          capturedUrl = request.url;
+          return HttpResponse.json({ data: [] });
+        }),
+      );
+      await allLangIndexer.search('test');
+      const url = new URL(capturedUrl);
+      for (let i = 0; i < allLangs.length; i++) {
+        expect(url.searchParams.get(`tor[browse_lang][${i}]`)).toBe(String(allLangs[i]));
+      }
+    });
+  });
+
+  describe('test() with new config fields (#291)', () => {
+    it('adapter.test() succeeds when searchLanguages and searchType are in config', async () => {
+      const configIndexer = new MyAnonamouseIndexer({
+        mamId: 'test-mam-id', baseUrl: MAM_BASE,
+        searchLanguages: [1, 36], searchType: 2,
+      });
+      server.use(
+        http.get(`${MAM_BASE}/jsonLoad.php`, () => {
+          return HttpResponse.json({ username: 'testuser' });
+        }),
+      );
+      const result = await configIndexer.test();
+      expect(result.success).toBe(true);
+      expect(result.message).toBe('Connected as testuser');
     });
   });
 
