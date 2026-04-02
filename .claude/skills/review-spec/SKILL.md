@@ -182,9 +182,12 @@ All GitHub commands use: `node scripts/gh.ts` (referred to as `gh` below).
 
 8. **Post review comment AND set labels (both are MANDATORY GitHub API calls — do not skip either):**
 
-   **8a. Post the review comment:**
-   - Write comment to temp file, then: `node scripts/gh.tsissue comment <id> --body-file <temp-file-path>`
-   - **Verify the comment was posted** — the command should return the comment ID. If it fails, retry once.
+   **8a. Post the review comment (with double-post guard):**
+   - Write the review to state dir: `mkdir -p .narratorr/state/review-spec-<id> && echo '<review body>' > .narratorr/state/review-spec-<id>/review.md`
+   - **Check for posted marker BEFORE posting:** If `.narratorr/state/review-spec-<id>/posted` exists, STOP — a review was already posted in this dispatch. This prevents subagent/main-thread race conditions from posting duplicate reviews.
+   - Post: write review body to temp file, then `node scripts/gh.ts issue comment <id> --body-file <temp-file-path>`
+   - **Verify the comment was posted** — the command should return the comment URL. If it fails, retry once.
+   - **Write posted marker immediately after successful post:** `echo done > .narratorr/state/review-spec-<id>/posted`
    - Template:
      ```
      ## Spec Review
@@ -266,10 +269,9 @@ All GitHub commands use: `node scripts/gh.ts` (referred to as `gh` below).
 
    **You are NOT done until BOTH 8a and 8b have executed.** Posting the comment without setting the label leaves the issue in a dead state — the orchestrator will never pick it up.
 
-9. **Write final phase marker and clean up:** `mkdir -p .narratorr/state/review-spec-<id> && echo done > .narratorr/state/review-spec-<id>/posted`
-    - Then clean up state: `rm -rf .narratorr/state/review-spec-<id>/`
+9. **Clean up state:** `rm -rf .narratorr/state/review-spec-<id>/`
 
-11. **Report:** Summary of verdict and key findings.
+10. **Report:** Summary of verdict and key findings.
 
 ## Important
 
