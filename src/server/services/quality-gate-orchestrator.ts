@@ -152,11 +152,14 @@ export class QualityGateOrchestrator {
     const adapterSuccess = await this.deferredRemoveFromClient(download);
     const filesDeleted = await this.deferredDeleteFiles(download);
 
-    if (adapterSuccess) {
+    if (adapterSuccess && filesDeleted) {
+      // Full success — clear both markers
       await this.db.update(downloads).set({ pendingCleanup: null, outputPath: null }).where(eq(downloads.id, download.id));
-    } else if (filesDeleted) {
+    } else if (filesDeleted && !adapterSuccess) {
+      // Files gone but adapter failed — clear outputPath only, keep pendingCleanup for retry
       await this.db.update(downloads).set({ outputPath: null }).where(eq(downloads.id, download.id));
     }
+    // If files not deleted (regardless of adapter), leave everything for retry
   }
 
   /** Attempt to deregister download from client. Returns true on success, false on error. */
@@ -176,17 +179,26 @@ export class QualityGateOrchestrator {
     }
   }
 
-  /** Attempt filesystem deletion for deferred cleanup. Returns true if files are gone. */
+  /** Attempt filesystem deletion for deferred cleanup. Returns true if files are gone, false if deletion failed. */
   private async deferredDeleteFiles(download: DownloadRow): Promise<boolean> {
     if (!download.outputPath) return false;
+
+    // Check if path exists — ENOENT means files are already gone
     try {
       await stat(download.outputPath);
+    } catch {
+      this.log.debug({ downloadId: download.id }, 'Quality gate: deferred cleanup — outputPath does not exist or already removed');
+      return true; // Files are gone
+    }
+
+    // Path exists — attempt deletion
+    try {
       await rm(download.outputPath, { recursive: true, force: true });
       this.log.info({ downloadId: download.id, outputPath: download.outputPath }, 'Quality gate: deferred cleanup — deleted files');
       return true;
-    } catch {
-      this.log.debug({ downloadId: download.id }, 'Quality gate: deferred cleanup — outputPath does not exist or already removed');
-      return true; // Files are gone regardless
+    } catch (error: unknown) {
+      this.log.warn({ downloadId: download.id, outputPath: download.outputPath, error }, 'Quality gate: deferred cleanup — file deletion failed');
+      return false; // Files still on disk — keep pendingCleanup for retry
     }
   }
 

@@ -1308,5 +1308,46 @@ describe('QualityGateOrchestrator', () => {
       });
       expect(outputPathClearCall).toBeDefined();
     });
+
+    it('rm() fails (permissions/IO error) → pendingCleanup NOT cleared, outputPath NOT cleared, retry preserved', async () => {
+      (rm as ReturnType<typeof vi.fn>).mockRejectedValue(new Error('EACCES: permission denied'));
+      const { orchestrator, qualityGateService, db, log } = setupWithSettings(importSettings);
+      qualityGateService.getDeferredCleanupCandidates = vi.fn().mockResolvedValue([deferredDownload]);
+
+      await orchestrator.cleanupDeferredRejections();
+
+      // rm was attempted
+      expect(rm).toHaveBeenCalledWith(deferredDownload.outputPath, { recursive: true, force: true });
+      // File deletion failure logged as warning
+      expect(log.warn).toHaveBeenCalledWith(
+        expect.objectContaining({ downloadId: deferredDownload.id, outputPath: deferredDownload.outputPath }),
+        expect.stringContaining('file deletion failed'),
+      );
+      // Neither pendingCleanup nor outputPath should be cleared — full retry next cycle
+      const setCalls = (db.update().set as ReturnType<typeof vi.fn>).mock.calls;
+      const clearCall = setCalls.find((call: unknown[]) => {
+        const payload = call[0] as Record<string, unknown>;
+        return payload && ('pendingCleanup' in payload || 'outputPath' in payload);
+      });
+      expect(clearCall).toBeUndefined();
+    });
+
+    it('stat() fails (ENOENT) → files already gone, pendingCleanup cleared along with outputPath', async () => {
+      (stat as ReturnType<typeof vi.fn>).mockRejectedValue(new Error('ENOENT'));
+      const { orchestrator, qualityGateService, db } = setupWithSettings(importSettings);
+      qualityGateService.getDeferredCleanupCandidates = vi.fn().mockResolvedValue([deferredDownload]);
+
+      await orchestrator.cleanupDeferredRejections();
+
+      // rm should NOT be called — files are already gone
+      expect(rm).not.toHaveBeenCalled();
+      // Both markers should be cleared
+      const setCalls = (db.update().set as ReturnType<typeof vi.fn>).mock.calls;
+      const clearBothCall = setCalls.find((call: unknown[]) => {
+        const payload = call[0] as Record<string, unknown>;
+        return payload && 'pendingCleanup' in payload && payload.pendingCleanup === null && 'outputPath' in payload && payload.outputPath === null;
+      });
+      expect(clearBothCall).toBeDefined();
+    });
   });
 });
