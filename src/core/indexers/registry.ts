@@ -28,6 +28,8 @@ export const ADAPTER_FACTORIES: Record<string, AdapterFactory> = {
   myanonamouse: (s, name, proxyUrl) => new MyAnonamouseIndexer({
     mamId: s.mamId as string,
     baseUrl: (s.baseUrl as string) || undefined,
+    searchLanguages: (s.searchLanguages as number[]) ?? [1],
+    searchType: (s.searchType as number) ?? 1,
     proxyUrl,
   }, name),
 };

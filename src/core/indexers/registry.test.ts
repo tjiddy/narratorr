@@ -59,6 +59,44 @@ describe('Indexer ADAPTER_FACTORIES', () => {
     });
   });
 
+  describe('myanonamouse factory — searchLanguages and searchType (#291)', () => {
+    it('creates adapter when searchLanguages and searchType are provided', () => {
+      const adapter = ADAPTER_FACTORIES.myanonamouse(
+        { mamId: 'test-id', searchLanguages: [1, 36], searchType: 2 }, 'MAM',
+      );
+      expect(adapter.type).toBe('myanonamouse');
+      expect(adapter.name).toBe('MAM');
+    });
+
+    it('creates adapter with defaults when searchLanguages is missing/undefined', () => {
+      // Should not throw — factory applies default [1]
+      const adapter = ADAPTER_FACTORIES.myanonamouse({ mamId: 'test-id' }, 'MAM');
+      expect(adapter.type).toBe('myanonamouse');
+    });
+
+    it('creates adapter with defaults when searchType is missing/undefined', () => {
+      // Should not throw — factory applies default 1
+      const adapter = ADAPTER_FACTORIES.myanonamouse({ mamId: 'test-id' }, 'MAM');
+      expect(adapter.type).toBe('myanonamouse');
+    });
+
+    it('preserves searchType: 0 (falsy but valid — uses ?? not ||)', () => {
+      // searchType: 0 means "all torrents" — must not be replaced with default 1
+      const adapter = ADAPTER_FACTORIES.myanonamouse(
+        { mamId: 'test-id', searchType: 0, searchLanguages: [1] }, 'MAM',
+      );
+      expect(adapter.type).toBe('myanonamouse');
+    });
+
+    it('preserves searchLanguages: [] (empty but intentional — uses ?? not ||)', () => {
+      // Empty array means "all languages" — must not be replaced with default [1]
+      const adapter = ADAPTER_FACTORIES.myanonamouse(
+        { mamId: 'test-id', searchLanguages: [], searchType: 1 }, 'MAM',
+      );
+      expect(adapter.type).toBe('myanonamouse');
+    });
+  });
+
   describe('error handling', () => {
     it('returns undefined for unknown indexer type (no factory)', () => {
       expect(ADAPTER_FACTORIES['unknown']).toBeUndefined();
