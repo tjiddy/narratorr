@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen } from '@testing-library/react';
+import { render, screen, fireEvent, waitFor } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { ManualAddFormModal } from './ManualAddFormModal';
 
@@ -63,6 +64,48 @@ describe('ManualAddFormModal', () => {
       const heading = screen.getByRole('heading', { name: 'Add manually' });
       expect(heading).toBeInTheDocument();
       expect(heading.id).toBeTruthy();
+    });
+  });
+
+  describe('close button guard', () => {
+    it('does not call onClose when close button is clicked while form is pending', async () => {
+      const user = userEvent.setup();
+      const onClose = vi.fn();
+
+      // Mock addBook to never resolve — keeps mutation in pending state
+      const { api } = await import('@/lib/api');
+      vi.mocked(api.addBook).mockReturnValue(new Promise(() => {}));
+
+      renderWithQuery(
+        <ManualAddFormModal isOpen={true} onClose={onClose} />,
+      );
+
+      // Fill required field and submit to trigger pending state
+      const titleInput = screen.getByPlaceholderText('Book title');
+      await user.type(titleInput, 'Test Book');
+      await user.click(screen.getByRole('button', { name: /add book/i }));
+
+      // Wait for the close button to become disabled (pending state propagated)
+      await waitFor(() => {
+        expect(screen.getByLabelText('Close')).toBeDisabled();
+      });
+
+      // Use fireEvent to bypass disabled attribute — tests the onClick guard directly
+      fireEvent.click(screen.getByLabelText('Close'));
+
+      expect(onClose).not.toHaveBeenCalled();
+    });
+
+    it('calls onClose when close button is clicked while not pending', async () => {
+      const user = userEvent.setup();
+      const onClose = vi.fn();
+
+      renderWithQuery(
+        <ManualAddFormModal isOpen={true} onClose={onClose} />,
+      );
+
+      await user.click(screen.getByLabelText('Close'));
+      expect(onClose).toHaveBeenCalledTimes(1);
     });
   });
 });
