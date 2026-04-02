@@ -298,7 +298,7 @@ describe('QualityComparisonPanel — legacy backward compatibility', () => {
       probeFailure: false,
       probeError: null,
       holdReasons: [],
-    } as QualityGateData;
+    } as unknown as QualityGateData;
 
     // Should not throw — legacy fields missing should render as dashes/hidden
     render(<QualityComparisonPanel data={legacyData} />);
