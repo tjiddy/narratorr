@@ -158,7 +158,7 @@ export function useSearchStream(
       setPhase('idle');
       es.close();
     };
-  }, [query, context, authConfig?.apiKey, cleanup]);
+  }, [query, context, authConfig, cleanup]);
 
   const cancelIndexer = useCallback((indexerId: number) => {
     if (!sessionId || cancelledRef.current.has(indexerId)) return;

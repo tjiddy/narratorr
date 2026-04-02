@@ -625,14 +625,6 @@ describe('NewznabIndexer', () => {
   describe('AbortSignal threading', () => {
     it('forwards signal to fetch helper when provided via options', async () => {
       let capturedSignal: AbortSignal | undefined;
-      server.use(
-        http.get(`${API_BASE}/api`, ({ request }) => {
-          // MSW doesn't expose signal directly, so we check fetch was called with it
-          return new HttpResponse(searchXml, {
-            headers: { 'Content-Type': 'application/rss+xml' },
-          });
-        }),
-      );
 
       // Spy on fetch to capture the signal
       const fetchSpy = vi.spyOn(globalThis, 'fetch').mockImplementation(async (_url, init) => {

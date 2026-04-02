@@ -39,7 +39,7 @@ export async function searchRoutes(
       request.log.debug({ q, author, title, bookDuration }, 'Search request');
       const allResults = await indexerService.searchAll(q, { limit, author, title });
 
-      return await postProcessSearchResults(allResults, bookDuration, blacklistService, settingsService);
+      return postProcessSearchResults(allResults, bookDuration, blacklistService, settingsService);
     }
   );
 
