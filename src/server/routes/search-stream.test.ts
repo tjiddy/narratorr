@@ -466,4 +466,8 @@ describe('searchStreamRoutes — app.inject() integration', () => {
 
     await app.close();
   });
+
+  describe('AC3 — hijack ordering', () => {
+    it.todo('calls reply.hijack() before any reply.raw.write() calls');
+  });
 });

@@ -1476,4 +1476,13 @@ describe('SearchReleasesModal — streaming search (Phase 1/Phase 2)', () => {
       expect(mockStreamActions.start).toHaveBeenCalled();
     });
   });
+
+  describe('AC1 — modal overflow', () => {
+    it.todo('renders dialog wrapper with flex constraints that propagate max-height to scrollable body');
+  });
+
+  describe('AC2 — finalizing timeout error state', () => {
+    it.todo('renders error state with retry button when finalizing times out');
+    it.todo('renders normal results when search-complete arrives in time');
+  });
 });

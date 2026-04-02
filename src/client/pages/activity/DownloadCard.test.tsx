@@ -477,4 +477,11 @@ describe('DownloadCard', () => {
       expect(screen.getByText('Reject & Search').closest('button')).toBeDisabled();
     });
   });
+
+  describe('AC5 — reject button spinner scoping', () => {
+    it.todo('shows spinner on Reject button only when reject action is pending for this card');
+    it.todo('shows spinner on Reject & Search button only when reject-with-search is pending for this card');
+    it.todo('shows no spinner on either button when reject is pending for a different card');
+    it.todo('disables both buttons on this card when either reject action is pending for this card');
+  });
 });

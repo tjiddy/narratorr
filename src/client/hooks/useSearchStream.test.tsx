@@ -412,4 +412,11 @@ describe('useSearchStream', () => {
     expect(result.current.state.indexers).toEqual([]);
     expect(es.closed).toBe(true);
   });
+
+  describe('AC2 — finalizing timeout', () => {
+    it.todo('shows error state when timeout fires with no search-complete received');
+    it.todo('clears timeout when search-complete arrives before timeout');
+    it.todo('re-enters searching phase when retry is triggered after timeout');
+    it.todo('falls back to error immediately when onerror fires while in finalizing state');
+  });
 });
