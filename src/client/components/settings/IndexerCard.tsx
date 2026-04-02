@@ -207,7 +207,7 @@ export function IndexerCard(props: IndexerCardProps) {
           </>
         )}
 
-        <IndexerFields selectedType={selectedType} register={register} errors={errors} watch={watch} prowlarrManaged={isProwlarrManaged} />
+        <IndexerFields selectedType={selectedType} register={register} errors={errors} watch={watch} setValue={setValue} prowlarrManaged={isProwlarrManaged} />
       </div>
 
       {!isImplemented && (
