@@ -181,14 +181,19 @@ export class QualityGateOrchestrator {
 
   /** Attempt filesystem deletion for deferred cleanup. Returns true if files are gone, false if deletion failed. */
   private async deferredDeleteFiles(download: DownloadRow): Promise<boolean> {
-    if (!download.outputPath) return false;
+    if (!download.outputPath) return true; // No outputPath means files were already cleaned up in a prior cycle
 
     // Check if path exists — ENOENT means files are already gone
     try {
       await stat(download.outputPath);
-    } catch {
-      this.log.debug({ downloadId: download.id }, 'Quality gate: deferred cleanup — outputPath does not exist or already removed');
-      return true; // Files are gone
+    } catch (error: unknown) {
+      const code = error instanceof Error && 'code' in error ? (error as NodeJS.ErrnoException).code : undefined;
+      if (code === 'ENOENT') {
+        this.log.debug({ downloadId: download.id }, 'Quality gate: deferred cleanup — outputPath does not exist or already removed');
+        return true; // Files are gone
+      }
+      this.log.warn({ downloadId: download.id, outputPath: download.outputPath, error }, 'Quality gate: deferred cleanup — stat failed (non-ENOENT)');
+      return false; // Can't verify file state — preserve retry
     }
 
     // Path exists — attempt deletion

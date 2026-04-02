@@ -1333,7 +1333,8 @@ describe('QualityGateOrchestrator', () => {
     });
 
     it('stat() fails (ENOENT) → files already gone, pendingCleanup cleared along with outputPath', async () => {
-      (stat as ReturnType<typeof vi.fn>).mockRejectedValue(new Error('ENOENT'));
+      const enoent = Object.assign(new Error('ENOENT: no such file or directory'), { code: 'ENOENT' });
+      (stat as ReturnType<typeof vi.fn>).mockRejectedValue(enoent);
       const { orchestrator, qualityGateService, db } = setupWithSettings(importSettings);
       qualityGateService.getDeferredCleanupCandidates = vi.fn().mockResolvedValue([deferredDownload]);
 
@@ -1348,6 +1349,47 @@ describe('QualityGateOrchestrator', () => {
         return payload && 'pendingCleanup' in payload && payload.pendingCleanup === null && 'outputPath' in payload && payload.outputPath === null;
       });
       expect(clearBothCall).toBeDefined();
+    });
+
+    it('stat() fails with non-ENOENT error (permissions) → retry markers preserved', async () => {
+      const eacces = Object.assign(new Error('EACCES: permission denied'), { code: 'EACCES' });
+      (stat as ReturnType<typeof vi.fn>).mockRejectedValue(eacces);
+      const { orchestrator, qualityGateService, db, log } = setupWithSettings(importSettings);
+      qualityGateService.getDeferredCleanupCandidates = vi.fn().mockResolvedValue([deferredDownload]);
+
+      await orchestrator.cleanupDeferredRejections();
+
+      expect(rm).not.toHaveBeenCalled();
+      expect(log.warn).toHaveBeenCalledWith(
+        expect.objectContaining({ downloadId: deferredDownload.id, outputPath: deferredDownload.outputPath }),
+        expect.stringContaining('stat failed'),
+      );
+      // Neither marker should be cleared — can't verify file state
+      const setCalls = (db.update().set as ReturnType<typeof vi.fn>).mock.calls;
+      const clearCall = setCalls.find((call: unknown[]) => {
+        const payload = call[0] as Record<string, unknown>;
+        return payload && ('pendingCleanup' in payload || 'outputPath' in payload);
+      });
+      expect(clearCall).toBeUndefined();
+    });
+
+    it('retry after prior adapter failure cleared outputPath → outputPath=null treated as files gone, pendingCleanup cleared', async () => {
+      // Simulate cycle 2: adapter now succeeds, outputPath was already cleared in cycle 1
+      const retryDownload = { ...deferredDownload, outputPath: null };
+      const { orchestrator, qualityGateService, db } = setupWithSettings(importSettings);
+      qualityGateService.getDeferredCleanupCandidates = vi.fn().mockResolvedValue([retryDownload]);
+
+      await orchestrator.cleanupDeferredRejections();
+
+      // Adapter should succeed (default mock), files are already gone (outputPath=null)
+      expect(mockAdapter.removeDownload).toHaveBeenCalledWith(retryDownload.externalId, true);
+      // pendingCleanup should now be cleared — the retry is complete
+      const setCalls = (db.update().set as ReturnType<typeof vi.fn>).mock.calls;
+      const clearCall = setCalls.find((call: unknown[]) => {
+        const payload = call[0] as Record<string, unknown>;
+        return payload && 'pendingCleanup' in payload && payload.pendingCleanup === null;
+      });
+      expect(clearCall).toBeDefined();
     });
   });
 });
