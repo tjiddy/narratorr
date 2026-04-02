@@ -1,5 +1,34 @@
 # Workflow Log
 
+## #306 Post-delivery polish — modal overflow, SSE limbo timeout, minor nits — 2026-04-02
+**Skill path:** /elaborate → /respond-to-spec-review (x3) → /implement → /claim → /plan → /handoff
+**Outcome:** success — PR #308
+
+### Metrics
+- Files changed: 13 | Tests added/modified: 17 new tests across 7 test files
+- Quality gate runs: 2 (pass on attempt 2 — first had exhaustive-deps lint)
+- Fix iterations: 1 (missing `clearFinalizingTimeout` in useCallback deps)
+- Context compactions: 0
+
+### Workflow experience
+- What went smoothly: Each AC was well-isolated — red/green TDD cycle was clean for all 6 items. Existing test patterns (MockEventSource, renderPendingReview helper) were well-established.
+- Friction / issues encountered: Spec review went 3 rounds before approval (AC1 wrong root cause, AC5 row-scoping gap, AC6 untestable AC). Test stubs landed in wrong describe block initially (app.inject integration vs unit test block).
+
+### Token efficiency
+- Highest-token actions: 3 rounds of /respond-to-spec-review consumed significant context pre-implementation
+- Avoidable waste: First spec review response introduced an incorrect root cause for AC1 (said outer max-h was missing when it already existed) — caught in round 2
+- Suggestions: Read source more thoroughly before writing spec responses to avoid round-trips
+
+### Infrastructure gaps
+- Repeated workarounds: None
+- Missing tooling / config: frontend-design skill not available — skipped design pass
+- Unresolved debt: DownloadActions has dead PendingActionButtons branch for pending_review (hidden by parent)
+
+### Wish I'd Known
+1. `vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })` also breaks TanStack Query — not just full fakeTimers. Use real short timeouts + waitFor instead. (→ `fake-timers-break-tanstack-query-settimeout.md`)
+2. The outer `max-h-[85vh]` on SearchReleasesModal already existed — the missing piece was `min-h-0` on the intermediate dialog div. Reading the full modal structure before spec responses would have saved a review round. (→ `flex-min-h-0-overflow-propagation.md`)
+3. `mutation.variables` gives row-level scoping for free when a single mutation serves a list of items — no need for separate state tracking. (→ `mutation-variables-row-scoping.md`)
+
 ## #300 Quality comparison panel missing existing book codec, channels, and duration — 2026-04-02
 **Skill path:** /respond-to-spec-review → /implement → /claim → /plan → /handoff
 **Outcome:** success — PR #307
