@@ -5,6 +5,12 @@ import { type SettingsService } from '../services/settings.service.js';
 import { type SearchSessionManager } from '../services/search-session.js';
 import { postProcessSearchResults } from '../services/search-pipeline.js';
 import { searchQuerySchema, type SearchQuery } from '../../shared/schemas.js';
+import type {
+  SearchStartEvent,
+  IndexerCompleteEvent,
+  IndexerErrorEvent,
+  IndexerCancelledEvent,
+} from '../../shared/schemas/search-stream.js';
 
 function writeSSE(reply: FastifyReply, event: string, data: unknown): void {
   reply.raw.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
@@ -45,10 +51,11 @@ export async function searchStreamRoutes(
       // Create session with actual indexer list so controllers are populated
       const session = sessionManager.create(enabledIndexers);
 
-      writeSSE(reply, 'search-start', {
+      const startEvent: SearchStartEvent = {
         sessionId: session.sessionId,
         indexers: enabledIndexers,
-      });
+      };
+      writeSSE(reply, 'search-start', startEvent);
 
       // Register cleanup on client disconnect
       request.raw.on('close', () => {
@@ -65,13 +72,16 @@ export async function searchStreamRoutes(
           session.controllers,
           {
             onComplete: (indexerId, name, resultCount, elapsedMs) => {
-              writeSSE(reply, 'indexer-complete', { indexerId, name, resultCount, elapsedMs });
+              const event: IndexerCompleteEvent = { indexerId, name, resultCount, elapsedMs };
+              writeSSE(reply, 'indexer-complete', event);
             },
             onError: (indexerId, name, error, elapsedMs) => {
-              writeSSE(reply, 'indexer-error', { indexerId, name, error, elapsedMs });
+              const event: IndexerErrorEvent = { indexerId, name, error, elapsedMs };
+              writeSSE(reply, 'indexer-error', event);
             },
             onCancelled: (indexerId, name) => {
-              writeSSE(reply, 'indexer-cancelled', { indexerId, name });
+              const event: IndexerCancelledEvent = { indexerId, name };
+              writeSSE(reply, 'indexer-cancelled', event);
             },
           },
         );

@@ -4,6 +4,12 @@ import { queryKeys } from '@/lib/queryKeys';
 import { api } from '@/lib/api';
 import { URL_BASE } from '@/lib/api/client';
 import type { SearchResponse, SearchContext } from '@/lib/api/search';
+import type {
+  SearchStartEvent,
+  IndexerCompleteEvent,
+  IndexerErrorEvent,
+  IndexerCancelledEvent,
+} from '../../shared/schemas/search-stream.js';
 
 // ============================================================================
 // Types
@@ -95,7 +101,7 @@ export function useSearchStream(
 
     es.addEventListener('search-start', (event: MessageEvent) => {
       try {
-        const data = JSON.parse(event.data) as { sessionId: string; indexers: Array<{ id: number; name: string }> };
+        const data = JSON.parse(event.data) as SearchStartEvent;
         setSessionId(data.sessionId);
         setIndexers(data.indexers.map(idx => ({
           id: idx.id,
@@ -107,7 +113,7 @@ export function useSearchStream(
 
     es.addEventListener('indexer-complete', (event: MessageEvent) => {
       try {
-        const data = JSON.parse(event.data) as { indexerId: number; name: string; resultCount: number; elapsedMs: number };
+        const data = JSON.parse(event.data) as IndexerCompleteEvent;
         setIndexers(prev => prev.map(idx =>
           idx.id === data.indexerId
             ? { ...idx, status: 'complete' as IndexerStatus, resultCount: data.resultCount, elapsedMs: data.elapsedMs }
@@ -118,7 +124,7 @@ export function useSearchStream(
 
     es.addEventListener('indexer-error', (event: MessageEvent) => {
       try {
-        const data = JSON.parse(event.data) as { indexerId: number; name: string; error: string; elapsedMs: number };
+        const data = JSON.parse(event.data) as IndexerErrorEvent;
         setIndexers(prev => prev.map(idx =>
           idx.id === data.indexerId
             ? { ...idx, status: 'error' as IndexerStatus, error: data.error, elapsedMs: data.elapsedMs }
@@ -129,7 +135,7 @@ export function useSearchStream(
 
     es.addEventListener('indexer-cancelled', (event: MessageEvent) => {
       try {
-        const data = JSON.parse(event.data) as { indexerId: number };
+        const data = JSON.parse(event.data) as IndexerCancelledEvent;
         setIndexers(prev => prev.map(idx =>
           idx.id === data.indexerId
             ? { ...idx, status: 'cancelled' as IndexerStatus }
