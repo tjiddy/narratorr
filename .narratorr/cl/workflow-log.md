@@ -1,5 +1,34 @@
 # Workflow Log
 
+## #299 Quality gate orphan cleanup respects delete-after-import and deregisters from client — 2026-04-02
+**Skill path:** /elaborate → /respond-to-spec-review (x2) → /implement → /claim → /plan → /handoff
+**Outcome:** success — PR #304
+
+### Metrics
+- Files changed: 15 | Tests added/modified: 22
+- Quality gate runs: 2 (pass on attempt 2 — lint complexity violation on first)
+- Fix iterations: 1 (extracted helper methods to reduce cyclomatic complexity from 17 to under 15)
+- Context compactions: 0
+
+### Workflow experience
+- What went smoothly: Spec review cycle was thorough — caught the `bookId=null` misalignment and the broad `outputPath IS NOT NULL` selector before any code was written, saving significant rework
+- Friction / issues encountered: The `pendingCleanup` column addition required updating download fixtures across 8 test files — tedious but the fixture blast radius check in `/elaborate` warned about this upfront
+
+### Token efficiency
+- Highest-token actions: Explore subagent during /elaborate and /plan (deep codebase reads)
+- Avoidable waste: None significant — the spec review rounds were necessary to get the deferred cleanup design right
+- Suggestions: For similar DB column additions, batch all fixture updates as the first module to avoid typecheck failures mid-implementation
+
+### Infrastructure gaps
+- Repeated workarounds: None
+- Missing tooling / config: None
+- Unresolved debt: None introduced
+
+### Wish I'd Known
+1. The quality gate auto-reject path is via `performRejectionCleanup` called from `dispatchSideEffects`, not from `bookId=null` — the spec initially got this wrong (learning: `deferred-cleanup-marker-design.md`)
+2. ESLint complexity limit (≤15) is easily reached with nested try/catch error isolation — plan for helper extraction upfront (learning: `eslint-complexity-extraction.md`)
+3. Seed time boundary semantics: `elapsed < minSeedMs` means exactly-at-boundary does NOT defer — test titles must match (learning: `seed-time-boundary-semantics.md`)
+
 ## #301 Split reject into Reject (dismiss) and Reject & Search — 2026-04-02
 **Skill path:** /elaborate → /respond-to-spec-review (x2) → /implement → /claim → /plan → /handoff
 **Outcome:** success — PR #303
