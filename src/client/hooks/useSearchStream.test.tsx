@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { renderHook, act } from '@testing-library/react';
+import { renderHook, act, waitFor } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import type { ReactNode } from 'react';
 import { useSearchStream } from './useSearchStream';
@@ -60,11 +60,20 @@ describe('useSearchStream', () => {
   beforeEach(() => {
     MockEventSource.instances = [];
     vi.stubGlobal('EventSource', MockEventSource);
+    // Reset mock to default resolved value
+    (api.getAuthConfig as ReturnType<typeof vi.fn>).mockResolvedValue({ apiKey: 'test-key' });
   });
 
   afterEach(() => {
     vi.restoreAllMocks();
   });
+
+  /** Wait for auth config query to resolve before calling start */
+  async function waitForAuth(result: { current: ReturnType<typeof useSearchStream> }) {
+    await waitFor(() => {
+      expect(result.current.state.authReady).toBe(true);
+    });
+  }
 
   it('starts in idle phase', () => {
     const { result } = renderHook(() => useSearchStream('test query'), { wrapper: createWrapper() });
@@ -74,6 +83,8 @@ describe('useSearchStream', () => {
 
   it('opens EventSource with query params on start', async () => {
     const { result } = renderHook(() => useSearchStream('test query', { title: 'Test', author: 'Author' }), { wrapper: createWrapper() });
+
+    await waitForAuth(result);
 
     act(() => {
       result.current.actions.start();
@@ -90,6 +101,7 @@ describe('useSearchStream', () => {
   it('parses search-start event and returns indexer list with pending status', async () => {
     const { result } = renderHook(() => useSearchStream('test query'), { wrapper: createWrapper() });
 
+    await waitForAuth(result);
     act(() => {
       result.current.actions.start();
     });
@@ -108,9 +120,10 @@ describe('useSearchStream', () => {
     expect(result.current.state.indexers[1]).toEqual({ id: 2, name: 'MAM', status: 'pending' });
   });
 
-  it('updates indexer status to complete on indexer-complete event', () => {
+  it('updates indexer status to complete on indexer-complete event', async () => {
     const { result } = renderHook(() => useSearchStream('test query'), { wrapper: createWrapper() });
 
+    await waitForAuth(result);
     act(() => {
       result.current.actions.start();
     });
@@ -133,9 +146,10 @@ describe('useSearchStream', () => {
     expect(result.current.state.indexers[1].status).toBe('pending');
   });
 
-  it('updates indexer status to error on indexer-error event', () => {
+  it('updates indexer status to error on indexer-error event', async () => {
     const { result } = renderHook(() => useSearchStream('test query'), { wrapper: createWrapper() });
 
+    await waitForAuth(result);
     act(() => {
       result.current.actions.start();
     });
@@ -153,9 +167,10 @@ describe('useSearchStream', () => {
     expect(result.current.state.indexers[0].error).toBe('Timeout');
   });
 
-  it('returns search results on search-complete and sets phase to results', () => {
+  it('returns search results on search-complete and sets phase to results', async () => {
     const { result } = renderHook(() => useSearchStream('test query'), { wrapper: createWrapper() });
 
+    await waitForAuth(result);
     act(() => {
       result.current.actions.start();
     });
@@ -176,9 +191,10 @@ describe('useSearchStream', () => {
     expect(es.closed).toBe(true);
   });
 
-  it('sends POST to cancel endpoint with correct sessionId and indexerId', () => {
+  it('sends POST to cancel endpoint with correct sessionId and indexerId', async () => {
     const { result } = renderHook(() => useSearchStream('test query'), { wrapper: createWrapper() });
 
+    await waitForAuth(result);
     act(() => {
       result.current.actions.start();
     });
@@ -199,9 +215,10 @@ describe('useSearchStream', () => {
     expect(result.current.state.indexers[0].status).toBe('cancelled');
   });
 
-  it('optimistically sets cancelled status on cancel', () => {
+  it('optimistically sets cancelled status on cancel', async () => {
     const { result } = renderHook(() => useSearchStream('test query'), { wrapper: createWrapper() });
 
+    await waitForAuth(result);
     act(() => {
       result.current.actions.start();
     });
@@ -224,9 +241,10 @@ describe('useSearchStream', () => {
     expect(result.current.state.indexers[1].status).toBe('pending');
   });
 
-  it('hasResults returns true when any indexer has resultCount > 0', () => {
+  it('hasResults returns true when any indexer has resultCount > 0', async () => {
     const { result } = renderHook(() => useSearchStream('test query'), { wrapper: createWrapper() });
 
+    await waitForAuth(result);
     act(() => {
       result.current.actions.start();
     });
@@ -248,9 +266,10 @@ describe('useSearchStream', () => {
     expect(result.current.state.hasResults).toBe(true);
   });
 
-  it('hasResults returns false when all indexers have resultCount 0', () => {
+  it('hasResults returns false when all indexers have resultCount 0', async () => {
     const { result } = renderHook(() => useSearchStream('test query'), { wrapper: createWrapper() });
 
+    await waitForAuth(result);
     act(() => {
       result.current.actions.start();
     });
@@ -267,9 +286,10 @@ describe('useSearchStream', () => {
     expect(result.current.state.hasResults).toBe(false);
   });
 
-  it('sets error state on EventSource connection failure', () => {
+  it('sets error state on EventSource connection failure', async () => {
     const { result } = renderHook(() => useSearchStream('test query'), { wrapper: createWrapper() });
 
+    await waitForAuth(result);
     act(() => {
       result.current.actions.start();
     });
@@ -283,9 +303,10 @@ describe('useSearchStream', () => {
     expect(result.current.state.phase).toBe('idle');
   });
 
-  it('cleans up EventSource on unmount', () => {
+  it('cleans up EventSource on unmount', async () => {
     const { result, unmount } = renderHook(() => useSearchStream('test query'), { wrapper: createWrapper() });
 
+    await waitForAuth(result);
     act(() => {
       result.current.actions.start();
     });
@@ -297,9 +318,10 @@ describe('useSearchStream', () => {
     expect(es.closed).toBe(true);
   });
 
-  it('showResults() transitions to Phase 2 immediately and cancels pending indexers', () => {
+  it('showResults() transitions to Phase 2 immediately and cancels pending indexers', async () => {
     const { result } = renderHook(() => useSearchStream('test query'), { wrapper: createWrapper() });
 
+    await waitForAuth(result);
     act(() => {
       result.current.actions.start();
     });
@@ -324,9 +346,10 @@ describe('useSearchStream', () => {
     expect(api.cancelSearchIndexer).toHaveBeenCalledWith('session-123', 2);
   });
 
-  it('indexer-cancelled event updates only the matching row', () => {
+  it('indexer-cancelled event updates only the matching row', async () => {
     const { result } = renderHook(() => useSearchStream('test query'), { wrapper: createWrapper() });
 
+    await waitForAuth(result);
     act(() => {
       result.current.actions.start();
     });
@@ -364,9 +387,10 @@ describe('useSearchStream', () => {
     expect(MockEventSource.instances).toHaveLength(0);
   });
 
-  it('reset clears all state and closes EventSource', () => {
+  it('reset clears all state and closes EventSource', async () => {
     const { result } = renderHook(() => useSearchStream('test query'), { wrapper: createWrapper() });
 
+    await waitForAuth(result);
     act(() => {
       result.current.actions.start();
     });
