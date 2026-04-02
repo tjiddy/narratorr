@@ -277,6 +277,11 @@ describe('ManualAddForm', () => {
   });
 
   describe('AC4 — aria-labelledby', () => {
-    it.todo('heading has an id attribute for aria-labelledby reference');
+    it('heading has an id attribute for aria-labelledby reference', () => {
+      renderForm();
+
+      const heading = screen.getByRole('heading', { name: 'Add manually' });
+      expect(heading.id).toBe('manual-add-form-title');
+    });
   });
 });

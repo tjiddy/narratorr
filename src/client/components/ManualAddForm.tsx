@@ -73,7 +73,7 @@ export function ManualAddForm({ defaultTitle, onSuccess, onPendingChange }: {
       onSubmit={handleSubmit((data) => addMutation.mutate(data))}
       className="glass-card rounded-2xl p-6 max-w-lg mx-auto space-y-4"
     >
-      <h3 className="font-display text-lg font-semibold text-center">Add manually</h3>
+      <h3 id="manual-add-form-title" className="font-display text-lg font-semibold text-center">Add manually</h3>
 
       <FormField
         id="manual-title"
