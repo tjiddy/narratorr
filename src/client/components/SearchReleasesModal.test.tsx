@@ -53,6 +53,7 @@ let mockStreamState: {
   results: { results: SearchResult[]; durationUnknown: boolean; unsupportedResults: { count: number; titles: string[] } } | null;
   error: string | null;
   hasResults: boolean;
+  authReady: boolean;
 } = {
   phase: 'idle',
   sessionId: null,
@@ -60,6 +61,7 @@ let mockStreamState: {
   results: null,
   error: null,
   hasResults: false,
+  authReady: true,
 };
 
 vi.mock('@/hooks/useSearchStream', () => ({
@@ -117,6 +119,7 @@ function setStreamResults(results: SearchResult[], unsupported?: { count: number
     },
     error: null,
     hasResults: results.length > 0,
+    authReady: true,
   };
 }
 
@@ -129,6 +132,7 @@ function setStreamSearching(indexers: Array<{ id: number; name: string; status: 
     results: null,
     error: null,
     hasResults: indexers.some(i => i.status === 'complete' && (i.resultCount ?? 0) > 0),
+    authReady: true,
   };
 }
 
@@ -141,6 +145,7 @@ beforeEach(() => {
     results: null,
     error: null,
     hasResults: false,
+    authReady: true,
   };
 });
 
@@ -1340,6 +1345,7 @@ describe('SearchReleasesModal — streaming search (Phase 1/Phase 2)', () => {
         results: null,
         error: null,
         hasResults: true,
+        authReady: true,
       };
 
       renderWithProviders(
@@ -1369,6 +1375,7 @@ describe('SearchReleasesModal — streaming search (Phase 1/Phase 2)', () => {
         results: null,
         error: null,
         hasResults: true,
+        authReady: true,
       };
       const user = userEvent.setup();
 
@@ -1422,6 +1429,7 @@ describe('SearchReleasesModal — streaming search (Phase 1/Phase 2)', () => {
         results: null,
         error: 'Search connection failed',
         hasResults: false,
+        authReady: true,
       };
 
       renderWithProviders(
@@ -1439,6 +1447,7 @@ describe('SearchReleasesModal — streaming search (Phase 1/Phase 2)', () => {
         results: null,
         error: 'Search connection failed',
         hasResults: false,
+        authReady: true,
       };
       const user = userEvent.setup();
 
