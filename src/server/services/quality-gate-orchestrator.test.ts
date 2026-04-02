@@ -88,7 +88,7 @@ const baseDownload = {
   protocol: 'torrent' as const, downloadUrl: null, size: 500_000_000,
   seeders: 10, progress: 1, errorMessage: null, guid: null,
   outputPath: null, addedAt: new Date(), completedAt: new Date(),
-  indexerId: 1, progressUpdatedAt: null,
+  indexerId: 1, progressUpdatedAt: null, pendingCleanup: null,
 };
 
 const baseBook = {
@@ -1001,5 +1001,61 @@ describe('QualityGateOrchestrator', () => {
       expect(log.warn).toHaveBeenCalled();
       expect(revertBookStatus).toHaveBeenCalled();
     });
+  });
+
+  // #299 — Rejection cleanup respects delete-after-import and deregisters from download client
+  describe('rejection cleanup respects import settings (#299)', () => {
+    beforeEach(() => {
+      vi.clearAllMocks();
+      mockAdapter.removeDownload.mockResolvedValue(undefined);
+      (stat as ReturnType<typeof vi.fn>).mockRejectedValue(new Error('ENOENT'));
+    });
+
+    it.todo('auto-reject + deleteAfterImport=false → files preserved, no removeDownload call, warning logged, pendingCleanup NOT set');
+
+    it.todo('auto-reject + deleteAfterImport=true + seed time not met → files preserved, pendingCleanup set to current timestamp');
+
+    it.todo('auto-reject + deleteAfterImport=true + seed time met → files deleted AND torrent removed, pendingCleanup remains NULL');
+
+    it.todo('auto-reject + usenet download + deleteAfterImport=true → files deleted AND download removed immediately');
+
+    it.todo('manual reject (dismiss) + deleteAfterImport=false → files preserved, warning logged, pendingCleanup NOT set');
+
+    it.todo('manual reject (dismiss) + deleteAfterImport=true → files deleted AND client deregistered');
+
+    it.todo('settingsService.get(import) throws → error logged, no deletion, no deregistration, no pendingCleanup marker');
+
+    it.todo('adapter.removeDownload() throws → error logged, does not crash cycle, download status still failed');
+
+    it.todo('multiple rejections in same cycle → each processed independently, one failure does not block others');
+
+    // Boundary values
+    it.todo('minSeedTime=0 → no seed time enforced, immediate removal, pendingCleanup never set');
+
+    it.todo('completedAt exactly at seed time boundary → torrent NOT removed (strictly less-than), pendingCleanup set');
+
+    it.todo('completedAt one second past seed time boundary → torrent removed, pendingCleanup remains NULL');
+
+    it.todo('completedAt=null + deleteAfterImport=true → seed time check skipped, immediate removal');
+  });
+
+  describe('cleanupDeferredRejections (#299)', () => {
+    beforeEach(() => {
+      vi.clearAllMocks();
+      mockAdapter.removeDownload.mockResolvedValue(undefined);
+      (stat as ReturnType<typeof vi.fn>).mockRejectedValue(new Error('ENOENT'));
+    });
+
+    it.todo('finds download with pendingCleanup set + seed time elapsed → files deleted, client deregistered, pendingCleanup cleared, outputPath cleared');
+
+    it.todo('finds download with pendingCleanup set + seed time still not elapsed → skipped, pendingCleanup untouched');
+
+    it.todo('downloads with pendingCleanup=NULL are NOT included in query');
+
+    it.todo('no deferred downloads → no-op, no errors');
+
+    it.todo('adapter error on one download → logged, pendingCleanup NOT cleared, continues to next');
+
+    it.todo('file deletion succeeds but adapter error → pendingCleanup NOT cleared, outputPath cleared');
   });
 });

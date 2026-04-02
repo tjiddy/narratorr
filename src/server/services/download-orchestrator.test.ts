@@ -67,6 +67,7 @@ const mockDownload: DownloadWithBook = {
   completedAt: null,
   addedAt: new Date(),
   progressUpdatedAt: null,
+  pendingCleanup: null,
   book: { id: 2, title: 'Test Book', status: 'downloading', path: null } as DownloadWithBook['book'],
 } as DownloadWithBook;
 

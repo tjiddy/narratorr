@@ -22,6 +22,7 @@ const mockDownload = {
   errorMessage: null,
   addedAt: new Date(),
   completedAt: null,
+  guid: null, outputPath: null, progressUpdatedAt: null, pendingCleanup: null,
 };
 
 describe('activity routes', () => {

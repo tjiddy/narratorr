@@ -114,6 +114,7 @@ const mockDownload = {
   errorMessage: null,
   addedAt: now,
   completedAt: new Date(Date.now() - 3600_000), // 1 hour ago
+  guid: null, outputPath: null, progressUpdatedAt: null, pendingCleanup: null,
 };
 
 const mockAdapter = {

@@ -24,7 +24,7 @@ const baseDownload = {
   protocol: 'torrent' as const, downloadUrl: null, size: 500_000_000,
   seeders: 10, progress: 1, errorMessage: null,
   addedAt: new Date(), completedAt: new Date(), indexerId: 1,
-  progressUpdatedAt: null, guid: null, outputPath: null,
+  progressUpdatedAt: null, guid: null, outputPath: null, pendingCleanup: null,
 };
 
 const baseBook = {
