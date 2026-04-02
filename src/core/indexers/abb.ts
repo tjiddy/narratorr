@@ -49,7 +49,7 @@ export class AudioBookBayIndexer implements IndexerAdapter {
         : `${this.baseUrl}/page/${page}/?s=${encodedQuery}&tt=1`;
 
       try {
-        const html = await this.fetchPage(url);
+        const html = await this.fetchPage(url, options?.signal);
         const pageResults = this.parseSearchPage(html);
 
         if (pageResults.length === 0) {
@@ -62,7 +62,7 @@ export class AudioBookBayIndexer implements IndexerAdapter {
             try {
               // Add small delay to avoid rate limiting
               await this.delay(500);
-              const detailHtml = await this.fetchPage(result.detailsUrl);
+              const detailHtml = await this.fetchPage(result.detailsUrl, options?.signal);
               const details = this.parseDetailPage(detailHtml);
               Object.assign(result, details);
             } catch (error: unknown) {
@@ -95,7 +95,7 @@ export class AudioBookBayIndexer implements IndexerAdapter {
     return results;
   }
 
-  private async fetchPage(url: string): Promise<string> {
+  private async fetchPage(url: string, signal?: AbortSignal): Promise<string> {
     const headers = {
       'User-Agent': this.getNextUserAgent(),
       Accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
@@ -107,10 +107,10 @@ export class AudioBookBayIndexer implements IndexerAdapter {
 
     // FlareSolverr takes precedence over standard proxy
     if (this.flareSolverrUrl) {
-      return fetchWithProxy({ url, headers, proxyUrl: this.flareSolverrUrl });
+      return fetchWithProxy({ url, headers, proxyUrl: this.flareSolverrUrl, signal });
     }
 
-    return fetchWithProxyAgent(url, { proxyUrl: this.proxyUrl, headers });
+    return fetchWithProxyAgent(url, { proxyUrl: this.proxyUrl, headers, signal });
   }
 
   private parseSearchPage(html: string): SearchResult[] {
