@@ -254,6 +254,15 @@ export class IndexerService {
     return results;
   }
 
+  async getEnabledIndexers(): Promise<Array<{ id: number; name: string }>> {
+    const rows = await this.db
+      .select({ id: indexers.id, name: indexers.name })
+      .from(indexers)
+      .where(eq(indexers.enabled, true))
+      .orderBy(indexers.priority);
+    return rows;
+  }
+
   async searchAll(query: string, options?: SearchOptions): Promise<SearchResult[]> {
     const enabledIndexers = await this.db
       .select()
@@ -314,6 +323,7 @@ export class IndexerService {
     callbacks: {
       onComplete: (indexerId: number, name: string, resultCount: number, elapsedMs: number) => void;
       onError: (indexerId: number, name: string, error: string, elapsedMs: number) => void;
+      onCancelled?: (indexerId: number, name: string) => void;
     },
   ): Promise<SearchResult[]> {
     const enabledIndexers = await this.db
@@ -345,6 +355,7 @@ export class IndexerService {
           // Cancelled indexers report as cancelled, not error
           if (signal?.aborted) {
             this.log.debug({ indexer: indexer.name }, 'Indexer search cancelled');
+            callbacks.onCancelled?.(indexer.id, indexer.name);
             return;
           }
           const message = error instanceof Error ? error.message : 'Unknown error';

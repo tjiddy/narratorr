@@ -33,6 +33,9 @@ export async function searchStreamRoutes(
         return reply.status(400).send({ error: 'bookDuration must be a positive number' });
       }
 
+      // Query enabled indexers before starting SSE stream
+      const enabledIndexers = await indexerService.getEnabledIndexers();
+
       reply.raw.writeHead(200, {
         'Content-Type': 'text/event-stream',
         'Cache-Control': 'no-cache',
@@ -40,20 +43,12 @@ export async function searchStreamRoutes(
         'X-Accel-Buffering': 'no',
       });
 
-      // Create session — we need the enabled indexers list first
-      // For now, create with empty list and populate after DB query
-      const session = sessionManager.create([]);
+      // Create session with actual indexer list so controllers are populated
+      const session = sessionManager.create(enabledIndexers);
 
-      // Populate session with actual enabled indexers from the DB
-      // The searchAllStreaming method handles the DB query internally,
-      // but we need indexer IDs for the session. We'll let the streaming
-      // method create the controllers after fetching enabled indexers.
-      // Instead, we emit search-start with the session ID and get indexers from service.
-
-      // Emit search-start (indexers will be populated by the streaming callback)
       writeSSE(reply, 'search-start', {
         sessionId: session.sessionId,
-        indexers: session.indexers,
+        indexers: enabledIndexers,
       });
 
       // Register cleanup on client disconnect
@@ -75,6 +70,9 @@ export async function searchStreamRoutes(
             },
             onError: (indexerId, name, error, elapsedMs) => {
               writeSSE(reply, 'indexer-error', { indexerId, name, error, elapsedMs });
+            },
+            onCancelled: (indexerId, name) => {
+              writeSSE(reply, 'indexer-cancelled', { indexerId, name });
             },
           },
         );

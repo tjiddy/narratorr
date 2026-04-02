@@ -43,6 +43,10 @@ function createMockReplyAndRequest(_query = 'test+query') {
 
 function createMockIndexerService(results: Array<{ indexerId: number; results: Array<Record<string, unknown>> }> = []) {
   return {
+    getEnabledIndexers: vi.fn().mockResolvedValue([
+      { id: 1, name: 'AudioBookBay' },
+      { id: 2, name: 'MAM' },
+    ]),
     searchAllStreaming: vi.fn().mockImplementation(
       async (_query: string, _options: unknown, _controllers: Map<number, AbortController>, callbacks: {
         onComplete: (indexerId: number, name: string, resultCount: number, elapsedMs: number) => void;
