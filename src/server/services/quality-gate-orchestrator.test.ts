@@ -64,6 +64,7 @@ function createOrchestrator(opts?: {
     processDownload: vi.fn().mockResolvedValue({ action: 'imported', reason: { action: 'imported', holdReasons: [] }, statusTransition: { from: 'checking', to: 'completed' } }),
     approve: vi.fn().mockResolvedValue({ id: 1, status: 'importing', download: baseDownload, book: baseBook }),
     reject: vi.fn().mockResolvedValue({ id: 1, status: 'failed', download: baseDownload, book: baseBook }),
+    getDeferredCleanupCandidates: vi.fn().mockResolvedValue([]),
   };
 
   const orchestrator = new QualityGateOrchestrator(
@@ -1208,22 +1209,104 @@ describe('QualityGateOrchestrator', () => {
   });
 
   describe('cleanupDeferredRejections (#299)', () => {
+    const importSettings = { deleteAfterImport: true, minSeedTime: 60, minFreeSpaceGB: 5, redownloadFailed: true };
+    const deferredDownload = {
+      ...baseDownload, id: 10, status: 'failed' as const,
+      outputPath: '/downloads/deferred-book',
+      pendingCleanup: new Date(Date.now() - 3600_000), // marked 1h ago
+      completedAt: new Date(Date.now() - 7200_000), // completed 2h ago — well past 60min seed time
+    };
+
+    function setupWithSettings(settings: typeof importSettings) {
+      const settingsService = { get: vi.fn().mockResolvedValue(settings) };
+      return createOrchestrator({ settingsService: inject<SettingsService>(settingsService) });
+    }
+
     beforeEach(() => {
       vi.clearAllMocks();
       mockAdapter.removeDownload.mockResolvedValue(undefined);
-      (stat as ReturnType<typeof vi.fn>).mockRejectedValue(new Error('ENOENT'));
+      (stat as ReturnType<typeof vi.fn>).mockResolvedValue({ isDirectory: () => true });
+      (rm as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
     });
 
-    it.todo('finds download with pendingCleanup set + seed time elapsed → files deleted, client deregistered, pendingCleanup cleared, outputPath cleared');
+    it('finds download with pendingCleanup set + seed time elapsed → files deleted, client deregistered, pendingCleanup cleared, outputPath cleared', async () => {
+      const { orchestrator, qualityGateService, db } = setupWithSettings(importSettings);
+      qualityGateService.getDeferredCleanupCandidates = vi.fn().mockResolvedValue([deferredDownload]);
 
-    it.todo('finds download with pendingCleanup set + seed time still not elapsed → skipped, pendingCleanup untouched');
+      await orchestrator.cleanupDeferredRejections();
 
-    it.todo('downloads with pendingCleanup=NULL are NOT included in query');
+      expect(mockAdapter.removeDownload).toHaveBeenCalledWith(deferredDownload.externalId, true);
+      expect(rm).toHaveBeenCalledWith(deferredDownload.outputPath, { recursive: true, force: true });
+      // Verify DB update clears pendingCleanup and outputPath
+      expect(db.update).toHaveBeenCalled();
+      const setCalls = (db.update().set as ReturnType<typeof vi.fn>).mock.calls;
+      const clearCall = setCalls.find((call: unknown[]) => {
+        const payload = call[0] as Record<string, unknown>;
+        return payload && 'pendingCleanup' in payload && payload.pendingCleanup === null;
+      });
+      expect(clearCall).toBeDefined();
+      expect((clearCall![0] as Record<string, unknown>).outputPath).toBeNull();
+    });
 
-    it.todo('no deferred downloads → no-op, no errors');
+    it('finds download with pendingCleanup set + seed time still not elapsed → skipped, pendingCleanup untouched', async () => {
+      const recentDownload = { ...deferredDownload, completedAt: new Date(Date.now() - 30_000) }; // completed 30s ago
+      const { orchestrator, qualityGateService } = setupWithSettings(importSettings);
+      qualityGateService.getDeferredCleanupCandidates = vi.fn().mockResolvedValue([recentDownload]);
 
-    it.todo('adapter error on one download → logged, pendingCleanup NOT cleared, continues to next');
+      await orchestrator.cleanupDeferredRejections();
 
-    it.todo('file deletion succeeds but adapter error → pendingCleanup NOT cleared, outputPath cleared');
+      expect(mockAdapter.removeDownload).not.toHaveBeenCalled();
+      expect(rm).not.toHaveBeenCalled();
+    });
+
+    it('downloads with pendingCleanup=NULL are NOT included in query — getDeferredCleanupCandidates handles this', async () => {
+      const { orchestrator, qualityGateService } = setupWithSettings(importSettings);
+      qualityGateService.getDeferredCleanupCandidates = vi.fn().mockResolvedValue([]);
+
+      await orchestrator.cleanupDeferredRejections();
+
+      expect(qualityGateService.getDeferredCleanupCandidates).toHaveBeenCalled();
+      expect(mockAdapter.removeDownload).not.toHaveBeenCalled();
+    });
+
+    it('no deferred downloads → no-op, no errors', async () => {
+      const { orchestrator, qualityGateService } = setupWithSettings(importSettings);
+      qualityGateService.getDeferredCleanupCandidates = vi.fn().mockResolvedValue([]);
+
+      await expect(orchestrator.cleanupDeferredRejections()).resolves.not.toThrow();
+    });
+
+    it('adapter error on one download → logged, pendingCleanup NOT cleared, continues to next', async () => {
+      const download2 = { ...deferredDownload, id: 11, externalId: 'ext-2' };
+      const { orchestrator, qualityGateService, log } = setupWithSettings(importSettings);
+      qualityGateService.getDeferredCleanupCandidates = vi.fn().mockResolvedValue([deferredDownload, download2]);
+      mockAdapter.removeDownload
+        .mockRejectedValueOnce(new Error('adapter fails'))
+        .mockResolvedValueOnce(undefined);
+
+      await orchestrator.cleanupDeferredRejections();
+
+      expect(log.warn).toHaveBeenCalledWith(expect.objectContaining({ downloadId: deferredDownload.id }), expect.any(String));
+      // Second download should still be processed
+      expect(mockAdapter.removeDownload).toHaveBeenCalledTimes(2);
+    });
+
+    it('file deletion succeeds but adapter error → pendingCleanup NOT cleared, outputPath cleared', async () => {
+      mockAdapter.removeDownload.mockRejectedValue(new Error('adapter fails'));
+      const { orchestrator, qualityGateService, db } = setupWithSettings(importSettings);
+      qualityGateService.getDeferredCleanupCandidates = vi.fn().mockResolvedValue([deferredDownload]);
+
+      await orchestrator.cleanupDeferredRejections();
+
+      // outputPath should be cleared (files are deleted by fallback), but pendingCleanup should NOT be cleared
+      expect(rm).toHaveBeenCalledWith(deferredDownload.outputPath, { recursive: true, force: true });
+      const setCalls = (db.update().set as ReturnType<typeof vi.fn>).mock.calls;
+      // Should have an outputPath-clear call but NOT a pendingCleanup-clear call
+      const outputPathClearCall = setCalls.find((call: unknown[]) => {
+        const payload = call[0] as Record<string, unknown>;
+        return payload && 'outputPath' in payload && payload.outputPath === null && !('pendingCleanup' in payload && payload.pendingCleanup === null);
+      });
+      expect(outputPathClearCall).toBeDefined();
+    });
   });
 });
