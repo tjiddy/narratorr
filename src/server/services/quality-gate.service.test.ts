@@ -911,4 +911,27 @@ describe('Quality gate — narrator array comparison (#71)', () => {
     expect(result.action).toBe('imported');
     expect(result.reason.narratorMatch).toBeNull();
   });
+
+  // #299 — getDeferredCleanupCandidates
+  describe('getDeferredCleanupCandidates', () => {
+    it('returns downloads where pendingCleanup IS NOT NULL', async () => {
+      const { service, db } = createService();
+      const deferredDownload = { ...baseDownload, id: 10, status: 'failed', pendingCleanup: new Date() };
+      db.select.mockReturnValue(mockDbChain([deferredDownload]));
+
+      const result = await service.getDeferredCleanupCandidates();
+
+      expect(result).toEqual([deferredDownload]);
+      expect(db.select).toHaveBeenCalled();
+    });
+
+    it('returns empty array when no deferred downloads exist', async () => {
+      const { service, db } = createService();
+      db.select.mockReturnValue(mockDbChain([]));
+
+      const result = await service.getDeferredCleanupCandidates();
+
+      expect(result).toEqual([]);
+    });
+  });
 });
