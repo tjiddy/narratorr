@@ -1164,8 +1164,8 @@ describe('QualityGateOrchestrator', () => {
       expect(mockAdapter.removeDownload).toHaveBeenCalledWith(recentDownload.externalId, true);
     });
 
-    it('completedAt exactly at seed time boundary → torrent NOT removed (strictly less-than), pendingCleanup set', async () => {
-      // completedAt exactly 60 minutes ago — elapsed == minSeedMs, so NOT removed (strictly less-than)
+    it('completedAt exactly at seed time boundary → elapsed equals threshold so torrent IS removed (strictly less-than defers)', async () => {
+      // completedAt exactly 60 minutes ago — elapsed == minSeedMs, NOT strictly less-than, so removed immediately
       const boundaryDownload = { ...downloadWithOutput, completedAt: new Date(Date.now() - 60 * 60_000) };
       const { orchestrator, qualityGateService } = setupWithSettings(importSettings);
       qualityGateService.getCompletedDownloads.mockResolvedValue([{ download: boundaryDownload, book: baseBook }]);
