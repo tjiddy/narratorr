@@ -1,5 +1,34 @@
 # Workflow Log
 
+## #295 Import settings — reorder fields and disable seed time when delete is off — 2026-04-02
+**Skill path:** /elaborate → /respond-to-spec-review (x2) → /implement → /claim → /plan → /handoff
+**Outcome:** success — PR #297
+
+### Metrics
+- Files changed: 2 | Tests added/modified: 9 (6 new, 3 updated)
+- Quality gate runs: 3 (pass on attempt 3 — lint warning then typecheck error)
+- Fix iterations: 2 (eslint react-hooks/incompatible-library suppress, watch() return type cast)
+- Context compactions: 0
+
+### Workflow experience
+- What went smoothly: Narrow scope, clear prior art in ProcessingSettingsSection, spec review caught real RHF behavior nuance
+- Friction / issues encountered: Spec review round-trip on RHF disabled-field semantics required source-level verification of RHF internals to resolve correctly. `stripDefaults()` type erasure caused unexpected `unknown` return from `watch()`.
+
+### Token efficiency
+- Highest-token actions: Spec review response cycle (3 rounds of elaborate/respond), codebase exploration subagents
+- Avoidable waste: The RHF disabled-field debate could have been resolved in round 1 with source-level evidence
+- Suggestions: When a spec review disputes library behavior, verify against the actual library source immediately rather than relying on documentation claims
+
+### Infrastructure gaps
+- Repeated workarounds: `stripDefaults()` type erasure requires `as` casts on `watch()` — accepted debt
+- Missing tooling / config: `frontend-design` skill not available for design pass
+- Unresolved debt: None new — `stripDefaults()` already documented
+
+### Wish I'd Known
+1. RHF `handleSubmit` strips disabled field values ONLY when disabled is passed via `register({ disabled })` — HTML `disabled` attr is safe. Reading the bundled source (`node_modules/react-hook-form/dist/index.esm.mjs:2197-2200`) was the definitive proof.
+2. `stripDefaults()` erases type information — `watch()` returns `unknown`, requiring explicit casts. ProcessingSettingsSection avoids this by defining its schema inline.
+3. Adding `watch()` from RHF triggers a `react-hooks/incompatible-library` lint warning that must be suppressed — established pattern across 6+ files in the codebase.
+
 ## #291 MAM indexer — add language filter and search type settings — 2026-04-02
 **Skill path:** /elaborate → /respond-to-spec-review (x2) → /implement → /claim → /plan → /handoff
 **Outcome:** success — PR #294
