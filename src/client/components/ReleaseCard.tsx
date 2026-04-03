@@ -76,6 +76,16 @@ export function ReleaseCard({
               </span>
             )}
             <ProtocolBadge protocol={result.protocol} />
+            {result.isFreeleech && (
+              <span className="text-xs px-1.5 py-0.5 rounded-md font-medium bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
+                Freeleech
+              </span>
+            )}
+            {result.isVipOnly && (
+              <span className="text-xs px-1.5 py-0.5 rounded-md font-medium bg-amber-500/10 text-amber-400 border border-amber-500/20">
+                VIP
+              </span>
+            )}
             <span className="text-xs px-1.5 py-0.5 bg-muted rounded-md font-medium text-muted-foreground">
               {result.indexer}
             </span>

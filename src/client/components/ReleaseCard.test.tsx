@@ -57,9 +57,30 @@ describe('ReleaseCard', () => {
   });
 
   describe('#317 — freeleech/VIP badges', () => {
-    it.todo('renders Freeleech badge when result.isFreeleech is true');
-    it.todo('renders VIP badge when result.isVipOnly is true');
-    it.todo('renders both badges when both flags are true');
-    it.todo('does not render badges when flags are undefined');
+    it('renders Freeleech badge when result.isFreeleech is true', () => {
+      mockCalculateQuality.mockReturnValue(null);
+      renderWithProviders(<ReleaseCard {...defaultProps} result={{ ...baseResult, isFreeleech: true }} />);
+      expect(screen.getByText('Freeleech')).toBeInTheDocument();
+    });
+
+    it('renders VIP badge when result.isVipOnly is true', () => {
+      mockCalculateQuality.mockReturnValue(null);
+      renderWithProviders(<ReleaseCard {...defaultProps} result={{ ...baseResult, isVipOnly: true }} />);
+      expect(screen.getByText('VIP')).toBeInTheDocument();
+    });
+
+    it('renders both badges when both flags are true', () => {
+      mockCalculateQuality.mockReturnValue(null);
+      renderWithProviders(<ReleaseCard {...defaultProps} result={{ ...baseResult, isFreeleech: true, isVipOnly: true }} />);
+      expect(screen.getByText('Freeleech')).toBeInTheDocument();
+      expect(screen.getByText('VIP')).toBeInTheDocument();
+    });
+
+    it('does not render badges when flags are undefined', () => {
+      mockCalculateQuality.mockReturnValue(null);
+      renderWithProviders(<ReleaseCard {...defaultProps} />);
+      expect(screen.queryByText('Freeleech')).not.toBeInTheDocument();
+      expect(screen.queryByText('VIP')).not.toBeInTheDocument();
+    });
   });
 });
