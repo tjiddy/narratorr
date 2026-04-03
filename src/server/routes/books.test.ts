@@ -9,6 +9,8 @@ import { MergeError } from '../services/merge.service.js';
 import { DuplicateDownloadError } from '../services/download.service.js';
 import { BookRejectionError } from '../services/book-rejection.service.js';
 import { readdir, readFile, stat } from 'node:fs/promises';
+import { createReadStream } from 'node:fs';
+import { Readable } from 'node:stream';
 
 vi.mock('node:fs/promises', async (importOriginal) => {
   const actual = await importOriginal() as Record<string, unknown>;
@@ -17,6 +19,14 @@ vi.mock('node:fs/promises', async (importOriginal) => {
     readdir: vi.fn(),
     readFile: vi.fn(),
     stat: vi.fn(),
+  };
+});
+
+vi.mock('node:fs', async (importOriginal) => {
+  const actual = await importOriginal() as Record<string, unknown>;
+  return {
+    ...actual,
+    createReadStream: vi.fn(),
   };
 });
 
@@ -889,6 +899,194 @@ describe('books routes', () => {
 
       expect(res.statusCode).toBe(200);
       expect(JSON.parse(res.payload)).toEqual([]);
+    });
+  });
+
+  // #320 — Audio preview streaming endpoint
+  describe('GET /api/books/:id/preview (#320)', () => {
+    const bookWithPath = { ...mockBook, path: '/library/book1', status: 'imported' };
+    const fileSize = 10000;
+
+    function mockAudioDir(files: string[] = ['02-chapter.mp3', '10-chapter.mp3']) {
+      (services.book.getById as Mock).mockResolvedValue(bookWithPath);
+      (readdir as Mock).mockResolvedValue(files);
+      (stat as Mock).mockResolvedValue({ size: fileSize });
+      (createReadStream as Mock).mockReturnValue(Readable.from(Buffer.alloc(0)));
+    }
+
+    // Happy path
+    it('returns 200 with full file body and correct Content-Type when no Range header', async () => {
+      mockAudioDir(['chapter.mp3']);
+
+      const res = await app.inject({ method: 'GET', url: '/api/books/1/preview' });
+
+      expect(res.statusCode).toBe(200);
+      expect(res.headers['content-type']).toBe('audio/mpeg');
+      expect(res.headers['accept-ranges']).toBe('bytes');
+      expect(res.headers['content-length']).toBe(String(fileSize));
+    });
+
+    it('returns 206 Partial Content with correct Content-Range and Content-Length for valid Range', async () => {
+      mockAudioDir(['chapter.mp3']);
+
+      const res = await app.inject({
+        method: 'GET',
+        url: '/api/books/1/preview',
+        headers: { range: 'bytes=0-1023' },
+      });
+
+      expect(res.statusCode).toBe(206);
+      expect(res.headers['content-range']).toBe(`bytes 0-1023/${fileSize}`);
+      expect(res.headers['content-length']).toBe('1024');
+      expect(res.headers['accept-ranges']).toBe('bytes');
+    });
+
+    it('selects alphabetically first audio file using numeric collation (02 before 10)', async () => {
+      mockAudioDir(['10-chapter.mp3', '02-chapter.mp3']);
+
+      await app.inject({ method: 'GET', url: '/api/books/1/preview' });
+
+      expect(createReadStream).toHaveBeenCalledWith(
+        '/library/book1/02-chapter.mp3',
+        expect.any(Object),
+      );
+    });
+
+    it('responds with correct MIME type per extension', async () => {
+      const cases: [string, string][] = [
+        ['track.mp3', 'audio/mpeg'],
+        ['track.m4b', 'audio/mp4'],
+        ['track.m4a', 'audio/mp4'],
+        ['track.flac', 'audio/flac'],
+        ['track.ogg', 'audio/ogg'],
+        ['track.opus', 'audio/ogg'],
+        ['track.wma', 'audio/x-ms-wma'],
+        ['track.aac', 'audio/aac'],
+      ];
+
+      for (const [filename, expectedMime] of cases) {
+        mockAudioDir([filename]);
+        const res = await app.inject({ method: 'GET', url: '/api/books/1/preview' });
+        expect(res.headers['content-type']).toBe(expectedMime);
+      }
+    });
+
+    // Error paths
+    it('returns 404 with "Book not found" when book does not exist', async () => {
+      (services.book.getById as Mock).mockResolvedValue(null);
+
+      const res = await app.inject({ method: 'GET', url: '/api/books/999/preview' });
+
+      expect(res.statusCode).toBe(404);
+      expect(JSON.parse(res.payload)).toEqual({ error: 'Book not found' });
+    });
+
+    it('returns 404 with "Book not found" when book exists but path is null', async () => {
+      (services.book.getById as Mock).mockResolvedValue({ ...mockBook, path: null });
+
+      const res = await app.inject({ method: 'GET', url: '/api/books/1/preview' });
+
+      expect(res.statusCode).toBe(404);
+      expect(JSON.parse(res.payload)).toEqual({ error: 'Book not found' });
+    });
+
+    it('returns 404 with "Audio file not found" when directory has no audio files', async () => {
+      (services.book.getById as Mock).mockResolvedValue(bookWithPath);
+      (readdir as Mock).mockResolvedValue(['cover.jpg', 'metadata.nfo']);
+
+      const res = await app.inject({ method: 'GET', url: '/api/books/1/preview' });
+
+      expect(res.statusCode).toBe(404);
+      expect(JSON.parse(res.payload)).toEqual({ error: 'Audio file not found' });
+    });
+
+    it('returns 404 with "Audio file not found" when readdir throws', async () => {
+      (services.book.getById as Mock).mockResolvedValue(bookWithPath);
+      (readdir as Mock).mockRejectedValue(new Error('ENOENT'));
+
+      const res = await app.inject({ method: 'GET', url: '/api/books/1/preview' });
+
+      expect(res.statusCode).toBe(404);
+      expect(JSON.parse(res.payload)).toEqual({ error: 'Audio file not found' });
+    });
+
+    it('returns 404 with "Audio file not found" when stat throws (file disappeared)', async () => {
+      (services.book.getById as Mock).mockResolvedValue(bookWithPath);
+      (readdir as Mock).mockResolvedValue(['chapter.mp3']);
+      (stat as Mock).mockRejectedValue(new Error('ENOENT'));
+
+      const res = await app.inject({ method: 'GET', url: '/api/books/1/preview' });
+
+      expect(res.statusCode).toBe(404);
+      expect(JSON.parse(res.payload)).toEqual({ error: 'Audio file not found' });
+    });
+
+    // Range edge cases
+    it('returns 416 Range Not Satisfiable when start > file size', async () => {
+      mockAudioDir(['chapter.mp3']);
+
+      const res = await app.inject({
+        method: 'GET',
+        url: '/api/books/1/preview',
+        headers: { range: 'bytes=999999-' },
+      });
+
+      expect(res.statusCode).toBe(416);
+      expect(res.headers['content-range']).toBe(`bytes */${fileSize}`);
+    });
+
+    it('returns 416 Range Not Satisfiable when end < start (malformed)', async () => {
+      mockAudioDir(['chapter.mp3']);
+
+      const res = await app.inject({
+        method: 'GET',
+        url: '/api/books/1/preview',
+        headers: { range: 'bytes=500-200' },
+      });
+
+      expect(res.statusCode).toBe(416);
+      expect(res.headers['content-range']).toBe(`bytes */${fileSize}`);
+    });
+
+    it('returns 206 with correct slice for suffix range (bytes=-500)', async () => {
+      mockAudioDir(['chapter.mp3']);
+
+      const res = await app.inject({
+        method: 'GET',
+        url: '/api/books/1/preview',
+        headers: { range: 'bytes=-500' },
+      });
+
+      expect(res.statusCode).toBe(206);
+      expect(res.headers['content-range']).toBe(`bytes ${fileSize - 500}-${fileSize - 1}/${fileSize}`);
+      expect(res.headers['content-length']).toBe('500');
+    });
+
+    it('returns 206 with entire content for open-ended range (bytes=0-)', async () => {
+      mockAudioDir(['chapter.mp3']);
+
+      const res = await app.inject({
+        method: 'GET',
+        url: '/api/books/1/preview',
+        headers: { range: 'bytes=0-' },
+      });
+
+      expect(res.statusCode).toBe(206);
+      expect(res.headers['content-range']).toBe(`bytes 0-${fileSize - 1}/${fileSize}`);
+      expect(res.headers['content-length']).toBe(String(fileSize));
+    });
+
+    it('returns 200 with full file for multi-range request (falls back)', async () => {
+      mockAudioDir(['chapter.mp3']);
+
+      const res = await app.inject({
+        method: 'GET',
+        url: '/api/books/1/preview',
+        headers: { range: 'bytes=0-100, 200-300' },
+      });
+
+      expect(res.statusCode).toBe(200);
+      expect(res.headers['content-length']).toBe(String(fileSize));
     });
   });
 
