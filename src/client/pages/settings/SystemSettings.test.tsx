@@ -207,8 +207,8 @@ describe('SystemSettings', () => {
       expect(screen.getByText(/process supervisor/i)).toBeInTheDocument();
       expect(screen.getByText(/restart manually/i)).toBeInTheDocument();
 
-      // Modal shows migration counts
-      expect(screen.getByText(/2 migrations/i)).toBeInTheDocument();
+      // Modal shows backup filename (not migration counts)
+      expect(screen.getByText(/backup\.zip/)).toBeInTheDocument();
     });
 
     it('uploading invalid file shows error toast', async () => {
@@ -317,8 +317,9 @@ describe('SystemSettings', () => {
         expect(screen.getByText(/confirm restore/i)).toBeInTheDocument();
       });
 
-      // Modal shows migration counts
-      expect(screen.getByText(/2 migrations/i)).toBeInTheDocument();
+      // Modal shows backup filename in the confirmation message (not migration counts)
+      const modal = screen.getByRole('dialog');
+      expect(modal).toHaveTextContent(backupEntry.filename);
     });
 
     it('shows error toast when restoreBackupDirect API returns error (invalid backup)', async () => {
@@ -398,11 +399,12 @@ describe('SystemSettings', () => {
       await user.click(screen.getAllByTitle('Restore backup')[1]);
       expect(mockApi.restoreBackupDirect).toHaveBeenCalledWith(secondBackup.filename);
 
-      // Second resolves immediately — modal opens with second backup's migration counts
+      // Second resolves immediately — modal opens with second backup's filename
       await waitFor(() => {
         expect(screen.getByText(/confirm restore/i)).toBeInTheDocument();
       });
-      expect(screen.getByText(/5 migrations/i)).toBeInTheDocument();
+      const modal = screen.getByRole('dialog');
+      expect(modal).toHaveTextContent(secondBackup.filename);
 
       // Clean up first promise
       resolveFirst({ valid: true, backupMigrationCount: 2, appMigrationCount: 3 });
@@ -491,9 +493,105 @@ describe('GeneralSettingsForm (housekeeping and logging)', () => {
 });
 
 describe('#324 — restore modal contract change', () => {
-  it.todo('when result.valid is true, confirmation modal shows uploaded filename and warning, no migration counts');
-  it.todo('when result.valid is false, modal shows error message from result.error');
-  it.todo('when result.valid is false, confirm/restore button is disabled or hidden');
-  it.todo('uploaded filename shown is File.name');
-  it.todo('modal renders without error when backupMigrationCount is undefined/null in response');
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockApi.getSettings.mockResolvedValue({
+      system: { backupIntervalMinutes: 10080, backupRetention: 7, dismissedUpdateVersion: '' },
+    });
+    mockApi.getBackups.mockResolvedValue([]);
+  });
+
+  it('when result.valid is true, confirmation modal shows uploaded filename and warning, no migration counts', async () => {
+    const user = userEvent.setup();
+    mockApi.uploadRestore.mockResolvedValue({ valid: true, backupMigrationCount: 3, appMigrationCount: 3 });
+
+    renderWithProviders(<SystemSettings />);
+
+    await waitFor(() => {
+      expect(screen.getByText(/restore from backup/i)).toBeInTheDocument();
+    });
+
+    const file = new File(['fake-zip'], 'my-backup.zip', { type: 'application/zip' });
+    const input = document.querySelector('input[type="file"]') as HTMLInputElement;
+    await user.upload(input, file);
+
+    await waitFor(() => {
+      expect(screen.getByText(/confirm restore/i)).toBeInTheDocument();
+    });
+
+    // Shows backup name, not migration counts
+    expect(screen.getByText(/my-backup\.zip/)).toBeInTheDocument();
+    expect(screen.queryByText(/migrations/i)).not.toBeInTheDocument();
+  });
+
+  it('when result.valid is false, modal shows error message from result.error', async () => {
+    const user = userEvent.setup();
+    mockApi.uploadRestore.mockResolvedValue({
+      valid: false,
+      error: 'Backup has 10 migrations but app only has 5. This backup is from a newer version.',
+      backupMigrationCount: 10,
+      appMigrationCount: 5,
+    });
+
+    renderWithProviders(<SystemSettings />);
+
+    await waitFor(() => {
+      expect(screen.getByText(/restore from backup/i)).toBeInTheDocument();
+    });
+
+    const file = new File(['fake-zip'], 'newer-backup.zip', { type: 'application/zip' });
+    const input = document.querySelector('input[type="file"]') as HTMLInputElement;
+    await user.upload(input, file);
+
+    await waitFor(() => {
+      expect(screen.getByText(/restore failed/i)).toBeInTheDocument();
+    });
+
+    expect(screen.getByText(/newer version/i)).toBeInTheDocument();
+  });
+
+  it('when result.valid is false, Restore Now button is not present', async () => {
+    const user = userEvent.setup();
+    mockApi.uploadRestore.mockResolvedValue({
+      valid: false,
+      error: 'This backup is from a newer version.',
+    });
+
+    renderWithProviders(<SystemSettings />);
+
+    await waitFor(() => {
+      expect(screen.getByText(/restore from backup/i)).toBeInTheDocument();
+    });
+
+    const file = new File(['fake-zip'], 'bad.zip', { type: 'application/zip' });
+    const input = document.querySelector('input[type="file"]') as HTMLInputElement;
+    await user.upload(input, file);
+
+    await waitFor(() => {
+      expect(screen.getByText(/restore failed/i)).toBeInTheDocument();
+    });
+
+    // "Restore Now" should not be present — only "Close"
+    expect(screen.queryByText(/restore now/i)).not.toBeInTheDocument();
+    expect(screen.getByText(/close/i)).toBeInTheDocument();
+  });
+
+  it('modal renders without error when backupMigrationCount is undefined in response', async () => {
+    const user = userEvent.setup();
+    mockApi.uploadRestore.mockResolvedValue({ valid: true });
+
+    renderWithProviders(<SystemSettings />);
+
+    await waitFor(() => {
+      expect(screen.getByText(/restore from backup/i)).toBeInTheDocument();
+    });
+
+    const file = new File(['fake-zip'], 'backup.zip', { type: 'application/zip' });
+    const input = document.querySelector('input[type="file"]') as HTMLInputElement;
+    await user.upload(input, file);
+
+    await waitFor(() => {
+      expect(screen.getByText(/confirm restore/i)).toBeInTheDocument();
+    });
+  });
 });

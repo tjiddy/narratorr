@@ -24,6 +24,9 @@ export function SystemSettings() {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [restoreConfirmOpen, setRestoreConfirmOpen] = useState(false);
   const [restoreInfo, setRestoreInfo] = useState<{
+    backupName: string;
+    valid: boolean;
+    error?: string;
     backupMigrationCount?: number;
     appMigrationCount?: number;
   } | null>(null);
@@ -48,10 +51,14 @@ export function SystemSettings() {
     },
   });
 
+  const [pendingFileName, setPendingFileName] = useState('');
   const uploadMutation = useMutation({
     mutationFn: api.uploadRestore,
     onSuccess: (result) => {
       setRestoreInfo({
+        backupName: pendingFileName,
+        valid: result.valid,
+        error: result.error,
         backupMigrationCount: result.backupMigrationCount,
         appMigrationCount: result.appMigrationCount,
       });
@@ -62,10 +69,14 @@ export function SystemSettings() {
     },
   });
 
+  const [pendingBackupName, setPendingBackupName] = useState('');
   const restoreMutation = useMutation({
     mutationFn: (filename: string) => api.restoreBackupDirect(filename),
     onSuccess: (result) => {
       setRestoreInfo({
+        backupName: pendingBackupName,
+        valid: result.valid,
+        error: result.error,
         backupMigrationCount: result.backupMigrationCount,
         appMigrationCount: result.appMigrationCount,
       });
@@ -91,12 +102,14 @@ export function SystemSettings() {
   function handleFileSelect(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
     if (file) {
+      setPendingFileName(file.name);
       uploadMutation.mutate(file);
     }
     e.target.value = '';
   }
 
   function handleRestore(backup: BackupMetadata) {
+    setPendingBackupName(backup.filename);
     restoreMutation.mutate(backup.filename);
   }
 
@@ -151,22 +164,35 @@ export function SystemSettings() {
 
       <ScheduledTasks />
 
-      <ConfirmModal
-        isOpen={restoreConfirmOpen}
-        title="Confirm Restore"
-        message={`This will replace your current database with the backup. The server process will exit and must be restarted to apply the change. If you are running under a process supervisor (Docker, systemd), it will restart automatically. If running via pnpm start or node directly, you will need to restart manually.${
-          restoreInfo?.backupMigrationCount !== undefined
-            ? ` Backup has ${restoreInfo.backupMigrationCount} migrations (app has ${restoreInfo.appMigrationCount}).`
-            : ''
-        }`}
-        confirmLabel="Restore Now"
-        cancelLabel="Cancel"
-        onConfirm={() => confirmMutation.mutate()}
-        onCancel={() => {
-          setRestoreConfirmOpen(false);
-          setRestoreInfo(null);
-        }}
-      />
+      {restoreInfo?.valid === false ? (
+        <ConfirmModal
+          isOpen={restoreConfirmOpen}
+          title="Restore Failed"
+          message={restoreInfo.error ?? 'Validation failed'}
+          confirmLabel="Close"
+          onConfirm={() => {
+            setRestoreConfirmOpen(false);
+            setRestoreInfo(null);
+          }}
+          onCancel={() => {
+            setRestoreConfirmOpen(false);
+            setRestoreInfo(null);
+          }}
+        />
+      ) : (
+        <ConfirmModal
+          isOpen={restoreConfirmOpen}
+          title="Confirm Restore"
+          message={`Restore "${restoreInfo?.backupName ?? 'backup'}"? This will replace your current database. The server process will exit and must be restarted to apply the change. If you are running under a process supervisor (Docker, systemd), it will restart automatically. If running via pnpm start or node directly, you will need to restart manually.`}
+          confirmLabel="Restore Now"
+          cancelLabel="Cancel"
+          onConfirm={() => confirmMutation.mutate()}
+          onCancel={() => {
+            setRestoreConfirmOpen(false);
+            setRestoreInfo(null);
+          }}
+        />
+      )}
     </div>
   );
 }
