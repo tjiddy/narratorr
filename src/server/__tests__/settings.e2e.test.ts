@@ -66,4 +66,34 @@ describe('Settings E2E', () => {
     expect(res.statusCode).toBe(200);
     expect(res.json().general.logLevel).toBe('debug');
   });
+
+  // #318 — minSeedRatio round-trip and validation
+  it('PUT /api/settings persists import.minSeedRatio and GET reflects it', async () => {
+    const putRes = await e2e.app.inject({
+      method: 'PUT',
+      url: '/api/settings',
+      payload: {
+        import: { minSeedRatio: 1.5 },
+      },
+    });
+
+    expect(putRes.statusCode).toBe(200);
+    expect(putRes.json().import.minSeedRatio).toBe(1.5);
+
+    const getRes = await e2e.app.inject({ method: 'GET', url: '/api/settings' });
+    expect(getRes.statusCode).toBe(200);
+    expect(getRes.json().import.minSeedRatio).toBe(1.5);
+  });
+
+  it('PUT /api/settings rejects negative minSeedRatio', async () => {
+    const res = await e2e.app.inject({
+      method: 'PUT',
+      url: '/api/settings',
+      payload: {
+        import: { minSeedRatio: -1 },
+      },
+    });
+
+    expect(res.statusCode).toBe(400);
+  });
 });
