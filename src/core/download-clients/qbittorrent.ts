@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto';
+import { basename, dirname } from 'node:path';
 import { type DownloadClientAdapter, type DownloadItemInfo, type AddDownloadOptions, type DownloadProtocol, ETA_UPPER_BOUND_SEC } from './types.js';
 import { qbTorrentsResponseSchema } from './schemas.js';
 import { fetchWithTimeout } from '../utils/fetch-with-timeout.js';
@@ -25,6 +26,7 @@ interface QBTorrent {
   num_leechs: number;
   eta: number;
   save_path: string;
+  content_path?: string;
   added_on: number;
   completion_on: number;
 }
@@ -312,12 +314,14 @@ export class QBittorrentClient implements DownloadClientAdapter {
   }
 
   private mapItem(qbt: QBTorrent): DownloadItemInfo {
+    const contentPath = qbt.content_path?.replace(/\/+$/, '');
+    const useFallback = !contentPath;
     return {
       id: qbt.hash,
-      name: qbt.name,
+      name: useFallback ? qbt.name : basename(contentPath),
       progress: Math.round(qbt.progress * 100),
       status: this.mapState(qbt.state),
-      savePath: qbt.save_path,
+      savePath: useFallback ? qbt.save_path : dirname(contentPath),
       size: qbt.total_size,
       downloaded: qbt.downloaded,
       uploaded: qbt.uploaded,
