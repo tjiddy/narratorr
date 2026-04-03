@@ -371,16 +371,17 @@ describe('SystemSettings', () => {
       });
     });
 
-    it('all restore buttons are disabled while server restore mutation is pending', async () => {
-      // Use a promise we control to keep the mutation pending
-      let resolveRestore!: (value: unknown) => void;
-      const pendingPromise = new Promise((resolve) => { resolveRestore = resolve; });
-      mockApi.getBackups.mockResolvedValue([backupEntry, {
+    it('clicking a second backup while first is validating replaces the pending selection', async () => {
+      const secondBackup = {
         filename: 'narratorr-backup-20260102T000000000Z.zip',
         timestamp: '2026-01-02T00:00:00Z',
         size: 204800,
-      }]);
-      mockApi.restoreBackupDirect.mockReturnValue(pendingPromise);
+      };
+      let resolveFirst!: (value: unknown) => void;
+      const firstPromise = new Promise((resolve) => { resolveFirst = resolve; });
+      mockApi.getBackups.mockResolvedValue([backupEntry, secondBackup]);
+      mockApi.restoreBackupDirect.mockReturnValueOnce(firstPromise);
+      mockApi.restoreBackupDirect.mockResolvedValueOnce({ valid: true, backupMigrationCount: 5, appMigrationCount: 6 });
 
       const user = userEvent.setup();
       renderWithProviders(<SystemSettings />);
@@ -389,19 +390,22 @@ describe('SystemSettings', () => {
         expect(screen.getAllByTitle('Restore backup')).toHaveLength(2);
       });
 
-      // Click first restore button
+      // Click first backup's restore
       await user.click(screen.getAllByTitle('Restore backup')[0]);
+      expect(mockApi.restoreBackupDirect).toHaveBeenCalledWith(backupEntry.filename);
 
-      // Both restore buttons should be disabled while pending
+      // Click second backup's restore while first is still pending
+      await user.click(screen.getAllByTitle('Restore backup')[1]);
+      expect(mockApi.restoreBackupDirect).toHaveBeenCalledWith(secondBackup.filename);
+
+      // Second resolves immediately — modal opens with second backup's migration counts
       await waitFor(() => {
-        const restoreButtons = screen.getAllByTitle('Restore backup');
-        for (const button of restoreButtons) {
-          expect(button).toBeDisabled();
-        }
+        expect(screen.getByText(/confirm restore/i)).toBeInTheDocument();
       });
+      expect(screen.getByText(/5 migrations/i)).toBeInTheDocument();
 
-      // Resolve the pending promise to clean up
-      resolveRestore({ valid: true, backupMigrationCount: 2, appMigrationCount: 3 });
+      // Clean up first promise
+      resolveFirst({ valid: true, backupMigrationCount: 2, appMigrationCount: 3 });
     });
   });
 

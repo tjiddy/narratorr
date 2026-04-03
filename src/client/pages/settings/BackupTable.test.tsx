@@ -17,28 +17,28 @@ const mockBackups: BackupMetadata[] = [
 describe('BackupTable', () => {
   it('renders loading spinner when isLoading is true', () => {
     renderWithProviders(
-      <BackupTable backups={undefined} isLoading={true} onDownload={vi.fn()} onRestore={vi.fn()} isRestoring={false} />,
+      <BackupTable backups={undefined} isLoading={true} onDownload={vi.fn()} onRestore={vi.fn()} />,
     );
     expect(screen.getByTestId('loading-spinner')).toBeInTheDocument();
   });
 
   it('renders empty state when backups array is empty', () => {
     renderWithProviders(
-      <BackupTable backups={[]} isLoading={false} onDownload={vi.fn()} onRestore={vi.fn()} isRestoring={false} />,
+      <BackupTable backups={[]} isLoading={false} onDownload={vi.fn()} onRestore={vi.fn()} />,
     );
     expect(screen.getByText(/no backups yet/i)).toBeInTheDocument();
   });
 
   it('renders empty state when backups is undefined', () => {
     renderWithProviders(
-      <BackupTable backups={undefined} isLoading={false} onDownload={vi.fn()} onRestore={vi.fn()} isRestoring={false} />,
+      <BackupTable backups={undefined} isLoading={false} onDownload={vi.fn()} onRestore={vi.fn()} />,
     );
     expect(screen.getByText(/no backups yet/i)).toBeInTheDocument();
   });
 
   it('renders backup rows with filename and size', () => {
     renderWithProviders(
-      <BackupTable backups={mockBackups} isLoading={false} onDownload={vi.fn()} onRestore={vi.fn()} isRestoring={false} />,
+      <BackupTable backups={mockBackups} isLoading={false} onDownload={vi.fn()} onRestore={vi.fn()} />,
     );
     expect(screen.getByText('narratorr-backup-20260101T000000000Z.zip')).toBeInTheDocument();
     expect(screen.getByText('narratorr-backup-20260102T000000000Z.zip')).toBeInTheDocument();
@@ -51,7 +51,7 @@ describe('BackupTable', () => {
     const user = userEvent.setup();
 
     renderWithProviders(
-      <BackupTable backups={[mockBackups[0]]} isLoading={false} onDownload={onDownload} onRestore={vi.fn()} isRestoring={false} />,
+      <BackupTable backups={[mockBackups[0]]} isLoading={false} onDownload={onDownload} onRestore={vi.fn()} />,
     );
 
     const downloadButton = screen.getByTitle('Download backup');
@@ -62,7 +62,7 @@ describe('BackupTable', () => {
 
   it('renders restore icon button per backup row alongside download', () => {
     renderWithProviders(
-      <BackupTable backups={mockBackups} isLoading={false} onDownload={vi.fn()} onRestore={vi.fn()} isRestoring={false} />,
+      <BackupTable backups={mockBackups} isLoading={false} onDownload={vi.fn()} onRestore={vi.fn()} />,
     );
 
     const restoreButtons = screen.getAllByTitle('Restore backup');
@@ -76,7 +76,7 @@ describe('BackupTable', () => {
     const user = userEvent.setup();
 
     renderWithProviders(
-      <BackupTable backups={[mockBackups[0]]} isLoading={false} onDownload={vi.fn()} onRestore={onRestore} isRestoring={false} />,
+      <BackupTable backups={[mockBackups[0]]} isLoading={false} onDownload={vi.fn()} onRestore={onRestore} />,
     );
 
     const restoreButton = screen.getByTitle('Restore backup');
@@ -85,14 +85,23 @@ describe('BackupTable', () => {
     expect(onRestore).toHaveBeenCalledWith(mockBackups[0]);
   });
 
-  it('disables restore buttons when isRestoring is true', () => {
+  it('restore buttons remain enabled so user can click a different backup while one is validating', async () => {
+    const onRestore = vi.fn();
+    const user = userEvent.setup();
+
     renderWithProviders(
-      <BackupTable backups={mockBackups} isLoading={false} onDownload={vi.fn()} onRestore={vi.fn()} isRestoring={true} />,
+      <BackupTable backups={mockBackups} isLoading={false} onDownload={vi.fn()} onRestore={onRestore} />,
     );
 
     const restoreButtons = screen.getAllByTitle('Restore backup');
-    for (const button of restoreButtons) {
-      expect(button).toBeDisabled();
-    }
+
+    // Click first backup's restore
+    await user.click(restoreButtons[0]);
+    expect(onRestore).toHaveBeenCalledWith(mockBackups[0]);
+
+    // Click second backup's restore — buttons are still enabled
+    await user.click(restoreButtons[1]);
+    expect(onRestore).toHaveBeenCalledWith(mockBackups[1]);
+    expect(onRestore).toHaveBeenCalledTimes(2);
   });
 });

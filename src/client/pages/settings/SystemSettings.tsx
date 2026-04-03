@@ -142,7 +142,7 @@ export function SystemSettings() {
           <input ref={fileInputRef} type="file" accept=".zip" onChange={handleFileSelect} className="hidden" />
         </div>
 
-        <BackupTable backups={backups} isLoading={isLoading} onDownload={handleDownload} onRestore={handleRestore} isRestoring={restoreMutation.isPending} />
+        <BackupTable backups={backups} isLoading={isLoading} onDownload={handleDownload} onRestore={handleRestore} />
       </SettingsSection>
 
       <SystemInfo />

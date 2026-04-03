@@ -12,10 +12,9 @@ interface BackupTableProps {
   isLoading: boolean;
   onDownload: (backup: BackupMetadata) => void;
   onRestore: (backup: BackupMetadata) => void;
-  isRestoring: boolean;
 }
 
-export function BackupTable({ backups, isLoading, onDownload, onRestore, isRestoring }: BackupTableProps) {
+export function BackupTable({ backups, isLoading, onDownload, onRestore }: BackupTableProps) {
   if (isLoading) {
     return (
       <div className="flex items-center justify-center py-16">
@@ -69,8 +68,7 @@ export function BackupTable({ backups, isLoading, onDownload, onRestore, isResto
                   <button
                     type="button"
                     onClick={() => onRestore(backup)}
-                    disabled={isRestoring}
-                    className="p-2 text-muted-foreground hover:text-primary transition-colors rounded-lg hover:bg-primary/10 focus-ring disabled:opacity-50 disabled:cursor-not-allowed"
+                    className="p-2 text-muted-foreground hover:text-primary transition-colors rounded-lg hover:bg-primary/10 focus-ring"
                     title="Restore backup"
                   >
                     <HistoryIcon className="w-4 h-4" />
