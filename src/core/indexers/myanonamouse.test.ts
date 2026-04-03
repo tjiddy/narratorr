@@ -409,7 +409,9 @@ describe('MyAnonamouseIndexer', () => {
       );
 
       const result = await indexer.test();
-      expect(result).toEqual({ success: true, message: 'Connected as testuser' });
+      expect(result.success).toBe(true);
+      expect(result.message).toBe('Connected as testuser');
+      expect(result.metadata).toEqual({ username: 'testuser', classname: undefined, isVip: false });
     });
 
     it('returns failure message on invalid/expired mam_id (403)', async () => {
@@ -939,32 +941,239 @@ describe('MyAnonamouseIndexer', () => {
   });
 
   describe('#317 — VIP detection in test()', () => {
-    it.todo('returns isVip: true in metadata when classname is "VIP"');
-    it.todo('returns isVip: true in metadata when classname is "Elite VIP"');
-    it.todo('returns isVip: false in metadata when classname is "User"');
-    it.todo('returns isVip: false for other classes (Mouse, Power User, Supporter)');
-    it.todo('returns isVip: false when classname field is missing from response');
-    it.todo('returns isVip: false when classname is empty string');
-    it.todo('returns no metadata on auth failure (403)');
-    it.todo('returns no metadata on "not signed in" body');
-    it.todo('returns no metadata on invalid JSON response');
+    it('returns isVip: true in metadata when classname is "VIP"', async () => {
+      server.use(
+        http.get(`${MAM_BASE}/jsonLoad.php`, () => {
+          return HttpResponse.json({ username: 'VipUser', classname: 'VIP' });
+        }),
+      );
+      const result = await indexer.test();
+      expect(result.success).toBe(true);
+      expect(result.metadata).toEqual({ username: 'VipUser', classname: 'VIP', isVip: true });
+    });
+
+    it('returns isVip: true in metadata when classname is "Elite VIP"', async () => {
+      server.use(
+        http.get(`${MAM_BASE}/jsonLoad.php`, () => {
+          return HttpResponse.json({ username: 'EliteUser', classname: 'Elite VIP' });
+        }),
+      );
+      const result = await indexer.test();
+      expect(result.metadata).toEqual({ username: 'EliteUser', classname: 'Elite VIP', isVip: true });
+    });
+
+    it('returns isVip: false in metadata when classname is "User"', async () => {
+      server.use(
+        http.get(`${MAM_BASE}/jsonLoad.php`, () => {
+          return HttpResponse.json({ username: 'RegularUser', classname: 'User' });
+        }),
+      );
+      const result = await indexer.test();
+      expect(result.metadata).toEqual({ username: 'RegularUser', classname: 'User', isVip: false });
+    });
+
+    it('returns isVip: false for other classes (Mouse, Power User, Supporter)', async () => {
+      for (const classname of ['Mouse', 'Power User', 'Supporter', 'Mouseketeer', 'Star', 'Elite', 'Uploader']) {
+        server.use(
+          http.get(`${MAM_BASE}/jsonLoad.php`, () => {
+            return HttpResponse.json({ username: 'TestUser', classname });
+          }),
+        );
+        const result = await indexer.test();
+        expect(result.metadata?.isVip).toBe(false);
+      }
+    });
+
+    it('returns isVip: false when classname field is missing from response', async () => {
+      server.use(
+        http.get(`${MAM_BASE}/jsonLoad.php`, () => {
+          return HttpResponse.json({ username: 'NoClassUser' });
+        }),
+      );
+      const result = await indexer.test();
+      expect(result.success).toBe(true);
+      expect(result.metadata).toEqual({ username: 'NoClassUser', classname: undefined, isVip: false });
+    });
+
+    it('returns isVip: false when classname is empty string', async () => {
+      server.use(
+        http.get(`${MAM_BASE}/jsonLoad.php`, () => {
+          return HttpResponse.json({ username: 'EmptyClass', classname: '' });
+        }),
+      );
+      const result = await indexer.test();
+      expect(result.metadata?.isVip).toBe(false);
+    });
+
+    it('returns no metadata on auth failure (403)', async () => {
+      server.use(
+        http.get(`${MAM_BASE}/jsonLoad.php`, () => {
+          return new HttpResponse(null, { status: 403 });
+        }),
+      );
+      const result = await indexer.test();
+      expect(result.success).toBe(false);
+      expect(result.metadata).toBeUndefined();
+    });
+
+    it('returns no metadata on "not signed in" body', async () => {
+      server.use(
+        http.get(`${MAM_BASE}/jsonLoad.php`, () => {
+          return new HttpResponse('Error, you are not signed in', { status: 200 });
+        }),
+      );
+      const result = await indexer.test();
+      expect(result.success).toBe(false);
+      expect(result.metadata).toBeUndefined();
+    });
+
+    it('returns no metadata on invalid JSON response', async () => {
+      server.use(
+        http.get(`${MAM_BASE}/jsonLoad.php`, () => {
+          return new HttpResponse('not json at all', { status: 200 });
+        }),
+      );
+      const result = await indexer.test();
+      expect(result.success).toBe(false);
+      expect(result.metadata).toBeUndefined();
+    });
   });
 
   describe('#317 — automatic search type selection', () => {
-    it.todo('sends tor[searchType]=0 when isVip is true');
-    it.todo('sends tor[searchType]=1 when isVip is false');
-    it.todo('sends saved searchType when isVip is undefined (legacy)');
+    it('sends tor[searchType]=0 when isVip is true', async () => {
+      const vipIndexer = new MyAnonamouseIndexer({ mamId: 'test', baseUrl: MAM_BASE, searchLanguages: [1], searchType: 1, isVip: true });
+      let capturedUrl = '';
+      server.use(
+        http.get(`${MAM_BASE}/tor/js/loadSearchJSONbasic.php`, ({ request }) => {
+          capturedUrl = request.url;
+          return HttpResponse.json({ data: [] });
+        }),
+      );
+      await vipIndexer.search('test');
+      expect(new URL(capturedUrl).searchParams.get('tor[searchType]')).toBe('0');
+    });
+
+    it('sends tor[searchType]=1 when isVip is false', async () => {
+      const nonVipIndexer = new MyAnonamouseIndexer({ mamId: 'test', baseUrl: MAM_BASE, searchLanguages: [1], searchType: 3, isVip: false });
+      let capturedUrl = '';
+      server.use(
+        http.get(`${MAM_BASE}/tor/js/loadSearchJSONbasic.php`, ({ request }) => {
+          capturedUrl = request.url;
+          return HttpResponse.json({ data: [] });
+        }),
+      );
+      await nonVipIndexer.search('test');
+      expect(new URL(capturedUrl).searchParams.get('tor[searchType]')).toBe('1');
+    });
+
+    it('sends saved searchType when isVip is undefined (legacy)', async () => {
+      const legacyIndexer = new MyAnonamouseIndexer({ mamId: 'test', baseUrl: MAM_BASE, searchLanguages: [1], searchType: 3 });
+      let capturedUrl = '';
+      server.use(
+        http.get(`${MAM_BASE}/tor/js/loadSearchJSONbasic.php`, ({ request }) => {
+          capturedUrl = request.url;
+          return HttpResponse.json({ data: [] });
+        }),
+      );
+      await legacyIndexer.search('test');
+      expect(new URL(capturedUrl).searchParams.get('tor[searchType]')).toBe('3');
+    });
   });
 
   describe('#317 — freeleech/VIP result flags', () => {
-    it.todo('sets isFreeleech: true when result has free: true');
-    it.todo('sets isFreeleech: true when result has personal_freeleech: true');
-    it.todo('sets isFreeleech: true when result has fl_vip: true and adapter isVip is true');
-    it.todo('does not set isFreeleech when fl_vip: true but adapter isVip is false');
-    it.todo('sets isVipOnly: true when result has vip: true');
-    it.todo('does not set badge flags when all flags are absent');
-    it.todo('sets both isFreeleech and isVipOnly when free: true and vip: true');
-    it.todo('handles missing flag fields gracefully (no crash)');
+    it('sets isFreeleech: true when result has free: true', async () => {
+      server.use(
+        http.get(`${MAM_BASE}/tor/js/loadSearchJSONbasic.php`, () => {
+          return HttpResponse.json({ data: [makeResult({ free: true })] });
+        }),
+      );
+      stubTorrentDownload(server);
+      const results = await indexer.search('test');
+      expect(results[0].isFreeleech).toBe(true);
+    });
+
+    it('sets isFreeleech: true when result has personal_freeleech: true', async () => {
+      server.use(
+        http.get(`${MAM_BASE}/tor/js/loadSearchJSONbasic.php`, () => {
+          return HttpResponse.json({ data: [makeResult({ personal_freeleech: true })] });
+        }),
+      );
+      stubTorrentDownload(server);
+      const results = await indexer.search('test');
+      expect(results[0].isFreeleech).toBe(true);
+    });
+
+    it('sets isFreeleech: true when result has fl_vip: true and adapter isVip is true', async () => {
+      const vipIndexer = new MyAnonamouseIndexer({ mamId: 'test', baseUrl: MAM_BASE, searchLanguages: [1], searchType: 0, isVip: true });
+      server.use(
+        http.get(`${MAM_BASE}/tor/js/loadSearchJSONbasic.php`, () => {
+          return HttpResponse.json({ data: [makeResult({ fl_vip: true })] });
+        }),
+      );
+      stubTorrentDownload(server);
+      const results = await vipIndexer.search('test');
+      expect(results[0].isFreeleech).toBe(true);
+    });
+
+    it('does not set isFreeleech when fl_vip: true but adapter isVip is false', async () => {
+      const nonVipIndexer = new MyAnonamouseIndexer({ mamId: 'test', baseUrl: MAM_BASE, searchLanguages: [1], searchType: 1, isVip: false });
+      server.use(
+        http.get(`${MAM_BASE}/tor/js/loadSearchJSONbasic.php`, () => {
+          return HttpResponse.json({ data: [makeResult({ fl_vip: true })] });
+        }),
+      );
+      stubTorrentDownload(server);
+      const results = await nonVipIndexer.search('test');
+      expect(results[0].isFreeleech).toBeUndefined();
+    });
+
+    it('sets isVipOnly: true when result has vip: true', async () => {
+      server.use(
+        http.get(`${MAM_BASE}/tor/js/loadSearchJSONbasic.php`, () => {
+          return HttpResponse.json({ data: [makeResult({ vip: true })] });
+        }),
+      );
+      stubTorrentDownload(server);
+      const results = await indexer.search('test');
+      expect(results[0].isVipOnly).toBe(true);
+    });
+
+    it('does not set badge flags when all flags are absent', async () => {
+      server.use(
+        http.get(`${MAM_BASE}/tor/js/loadSearchJSONbasic.php`, () => {
+          return HttpResponse.json({ data: [makeResult()] });
+        }),
+      );
+      stubTorrentDownload(server);
+      const results = await indexer.search('test');
+      expect(results[0].isFreeleech).toBeUndefined();
+      expect(results[0].isVipOnly).toBeUndefined();
+    });
+
+    it('sets both isFreeleech and isVipOnly when free: true and vip: true', async () => {
+      server.use(
+        http.get(`${MAM_BASE}/tor/js/loadSearchJSONbasic.php`, () => {
+          return HttpResponse.json({ data: [makeResult({ free: true, vip: true })] });
+        }),
+      );
+      stubTorrentDownload(server);
+      const results = await indexer.search('test');
+      expect(results[0].isFreeleech).toBe(true);
+      expect(results[0].isVipOnly).toBe(true);
+    });
+
+    it('handles missing flag fields gracefully (no crash)', async () => {
+      server.use(
+        http.get(`${MAM_BASE}/tor/js/loadSearchJSONbasic.php`, () => {
+          return HttpResponse.json({ data: [makeResult({ free: undefined, vip: undefined, fl_vip: undefined, personal_freeleech: undefined })] });
+        }),
+      );
+      stubTorrentDownload(server);
+      const results = await indexer.search('test');
+      expect(results).toHaveLength(1);
+      expect(results[0].isFreeleech).toBeUndefined();
+      expect(results[0].isVipOnly).toBeUndefined();
+    });
   });
 
 });
