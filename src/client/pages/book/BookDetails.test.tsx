@@ -127,7 +127,8 @@ describe('BookDetails', () => {
       renderBookDetails({ status: 'imported', path: '/library/book1' }, fullMetadata);
 
       expect(document.querySelector('audio')).not.toBeNull();
-      expect(document.querySelector('audio')!.hasAttribute('controls')).toBe(true);
+      expect(document.querySelector('audio')!.hasAttribute('controls')).toBe(false);
+      expect(document.querySelector('audio')!.hidden).toBe(true);
     });
 
     it('does not render audio preview for non-imported book', () => {

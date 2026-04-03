@@ -1,5 +1,34 @@
 # Workflow Log
 
+## #331 Audio preview — replace native player with simple play button — 2026-04-03
+**Skill path:** /implement → /claim → /plan → /handoff
+**Outcome:** success — PR #332
+
+### Metrics
+- Files changed: 3 | Tests added/modified: 2 new + 2 updated
+- Quality gate runs: 2 (pass on attempt 1 both times)
+- Fix iterations: 0
+- Context compactions: 0
+
+### Workflow experience
+- What went smoothly: Minimal change — single production line edit, clear spec, existing event wiring needed no modification
+- Friction / issues encountered: None — spec review finding F1 (BookDetails.test.tsx blast radius) caught the only sibling impact upfront
+
+### Token efficiency
+- Highest-token actions: Explore subagents (elaborate + plan + self-review) — overkill for a 1-line fix
+- Avoidable waste: Full explore for trivial issues; could short-circuit for issues with ≤3 file changes
+- Suggestions: Consider a "trivial fix" fast path that skips deep codebase exploration when spec is self-contained
+
+### Infrastructure gaps
+- Repeated workarounds: None
+- Missing tooling / config: `frontend-design` skill not available (noted in handoff)
+- Unresolved debt: None discovered
+
+### Wish I'd Known
+1. Trivial issue with no surprises — no learnings to capture. The spec review finding F1 was the only non-obvious detail and it was caught pre-implementation.
+2. The `hidden` HTML attribute is cleaner than `className="hidden"` for elements that should never be visible — it's semantic and doesn't depend on Tailwind.
+3. N/A — issue was too straightforward for a third insight.
+
 ## #322 Add 'Add Book' button to library empty state — 2026-04-03
 **Skill path:** /implement → /claim → /plan → /handoff
 **Outcome:** success — PR #330

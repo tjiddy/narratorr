@@ -72,7 +72,7 @@ export function AudioPreview({ bookId, status, path }: AudioPreviewProps) {
           ? <PauseIcon className="w-4 h-4" />
           : <PlayIcon className="w-4 h-4" />}
       </button>
-      <audio ref={audioRef} controls src={previewUrl} preload="none" className="h-8 flex-1 min-w-0" />
+      <audio ref={audioRef} src={previewUrl} preload="none" hidden />
     </div>
   );
 }
