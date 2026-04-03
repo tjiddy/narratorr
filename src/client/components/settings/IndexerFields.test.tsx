@@ -381,6 +381,101 @@ describe('IndexerFields', () => {
       });
     });
 
+    it('includes current baseUrl in the synthetic test payload', async () => {
+      (api.testIndexerConfig as Mock).mockResolvedValue({
+        success: true,
+        metadata: { username: 'User1', classname: 'User', isVip: false },
+      });
+      const user = userEvent.setup();
+      renderWithProviders(<MamDetectionWrapper />);
+
+      // Fill base URL first, then MAM ID and blur
+      const baseUrlInput = screen.getByLabelText(/Base URL/);
+      await user.type(baseUrlInput, 'https://custom.mam.net');
+      const mamIdInput = screen.getByLabelText('MAM ID');
+      await user.type(mamIdInput, 'my-mam-id');
+      await user.tab();
+
+      await waitFor(() => {
+        expect((api.testIndexerConfig as Mock)).toHaveBeenCalledWith(
+          expect.objectContaining({
+            settings: expect.objectContaining({
+              mamId: 'my-mam-id',
+              baseUrl: 'https://custom.mam.net',
+            }),
+          }),
+        );
+      });
+    });
+
+    it('blocking overlay shows during detection and disappears after completion', async () => {
+      let resolveApi: (v: unknown) => void;
+      (api.testIndexerConfig as Mock).mockReturnValue(new Promise((r) => { resolveApi = r; }));
+      const user = userEvent.setup();
+      renderWithProviders(<MamDetectionWrapper />);
+
+      const mamIdInput = screen.getByLabelText('MAM ID');
+      await user.type(mamIdInput, 'test-id');
+      await user.tab();
+
+      // Overlay should be visible while detecting
+      await waitFor(() => {
+        expect(screen.getByText('Checking MAM status…')).toBeInTheDocument();
+      });
+
+      // Resolve the API call — overlay will remain until ensureMinDuration completes
+      resolveApi!({ success: true, metadata: { username: 'OverlayUser', classname: 'Mouse', isVip: false } });
+
+      // Eventually overlay disappears and badge appears
+      await waitFor(() => {
+        expect(screen.queryByText('Checking MAM status…')).not.toBeInTheDocument();
+      }, { timeout: 3000 });
+      expect(screen.getByText('OverlayUser')).toBeInTheDocument();
+    });
+
+    it('successful detection writes isVip into form state', async () => {
+      (api.testIndexerConfig as Mock).mockResolvedValue({
+        success: true,
+        metadata: { username: 'VipUser', classname: 'VIP', isVip: true },
+      });
+
+      let submittedData: CreateIndexerFormData | null = null;
+      function MamDetectionFormWrapper() {
+        const { register, handleSubmit, watch, setValue, formState: { errors } } = useForm<CreateIndexerFormData>({
+          defaultValues: {
+            name: 'Test', type: 'myanonamouse', enabled: true, priority: 0,
+            settings: { mamId: '', searchLanguages: [1], searchType: 1 },
+          },
+        });
+        return (
+          <form onSubmit={handleSubmit((data) => { submittedData = data; })}>
+            <IndexerFields selectedType="myanonamouse" register={register} errors={errors} watch={watch} setValue={setValue} />
+            <button type="submit">Submit</button>
+          </form>
+        );
+      }
+
+      const user = userEvent.setup();
+      renderWithProviders(<MamDetectionFormWrapper />);
+
+      // Trigger detection
+      const mamIdInput = screen.getByLabelText('MAM ID');
+      await user.type(mamIdInput, 'vip-id');
+      await user.tab();
+
+      // Wait for badge to appear (detection complete including min duration)
+      await waitFor(() => {
+        expect(screen.getByText('VipUser')).toBeInTheDocument();
+      }, { timeout: 3000 });
+
+      // Submit form and check isVip was written
+      await user.click(screen.getByText('Submit'));
+      await waitFor(() => {
+        expect(submittedData).not.toBeNull();
+      });
+      expect(submittedData!.settings.isVip).toBe(true);
+    });
+
     it('refresh button triggers a second detection request', async () => {
       (api.testIndexerConfig as Mock).mockResolvedValue({
         success: true,
