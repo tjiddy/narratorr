@@ -285,6 +285,14 @@ describe('DownloadOrchestrator', () => {
       expect(log.info).toHaveBeenCalledWith(expect.objectContaining({ id: 1 }), expect.stringContaining('Blacklist skipped'));
     });
 
+    it('still runs revertBookStatus and SSE side effects when both identifiers are null', async () => {
+      (downloadService.getById as ReturnType<typeof vi.fn>).mockResolvedValue({ ...mockDownload, infoHash: null, guid: null });
+      await orchestrator.cancel(1);
+      expect(revertBookStatus).toHaveBeenCalledWith(mockDb, { id: 2, path: null });
+      expect(emitBookStatusChange).toHaveBeenCalledWith(expect.objectContaining({ bookId: 2 }));
+      expect(emitDownloadStatusChange).toHaveBeenCalledWith(expect.objectContaining({ downloadId: 1, bookId: 2, newStatus: 'failed' }));
+    });
+
     it('still returns true when blacklistService.create() throws', async () => {
       (blacklistService.create as ReturnType<typeof vi.fn>).mockRejectedValue(new Error('blacklist boom'));
       const result = await orchestrator.cancel(1);
@@ -295,6 +303,14 @@ describe('DownloadOrchestrator', () => {
       (blacklistService.create as ReturnType<typeof vi.fn>).mockRejectedValue(new Error('blacklist boom'));
       await orchestrator.cancel(1);
       expect(log.warn).toHaveBeenCalledWith(expect.any(Error), expect.stringContaining('blacklist'));
+    });
+
+    it('still runs revertBookStatus and SSE side effects after blacklistService.create() rejects', async () => {
+      (blacklistService.create as ReturnType<typeof vi.fn>).mockRejectedValue(new Error('blacklist boom'));
+      await orchestrator.cancel(1);
+      expect(revertBookStatus).toHaveBeenCalledWith(mockDb, { id: 2, path: null });
+      expect(emitBookStatusChange).toHaveBeenCalledWith(expect.objectContaining({ bookId: 2 }));
+      expect(emitDownloadStatusChange).toHaveBeenCalledWith(expect.objectContaining({ downloadId: 1, bookId: 2, newStatus: 'failed' }));
     });
 
     it('does not call blacklistService.create() when download not found', async () => {
