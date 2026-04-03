@@ -117,22 +117,24 @@ const mockDownload = {
   guid: null, outputPath: null, progressUpdatedAt: null, pendingCleanup: null,
 };
 
+const defaultDownloadItem = {
+  id: 'ext-1',
+  name: 'The Way of Kings',
+  progress: 100,
+  status: 'completed',
+  savePath: '/downloads',
+  size: 500_000_000,
+  downloaded: 500_000_000,
+  uploaded: 100_000_000,
+  ratio: 0.2,
+  seeders: 10,
+  leechers: 5,
+  addedAt: now,
+  completedAt: now,
+};
+
 const mockAdapter = {
-  getDownload: vi.fn().mockResolvedValue({
-    id: 'ext-1',
-    name: 'The Way of Kings',
-    progress: 100,
-    status: 'completed',
-    savePath: '/downloads',
-    size: 500_000_000,
-    downloaded: 500_000_000,
-    uploaded: 100_000_000,
-    ratio: 0.2,
-    seeders: 10,
-    leechers: 5,
-    addedAt: now,
-    completedAt: now,
-  }),
+  getDownload: vi.fn().mockResolvedValue(defaultDownloadItem),
   removeDownload: vi.fn().mockResolvedValue(undefined),
 };
 
@@ -1977,27 +1979,267 @@ describe('ImportService consolidation (issue #79)', () => {
 
   // #318 — minSeedRatio gating in handleTorrentRemoval
   describe('seed ratio gating (handleTorrentRemoval)', () => {
-    it.todo('skips torrent removal when ratio below configured minSeedRatio');
-    it.todo('removes torrent when ratio at threshold (strictly-less-than: at boundary = remove)');
-    it.todo('removes torrent when ratio above threshold');
-    it.todo('skips removal when minSeedTime met but minSeedRatio not met');
-    it.todo('skips removal when minSeedRatio met but minSeedTime not met');
-    it.todo('removes torrent when both minSeedTime and minSeedRatio met');
-    it.todo('ratio check disabled when minSeedRatio is 0');
-    it.todo('sets pendingCleanup when removal skipped due to ratio');
-    it.todo('sets pendingCleanup when removal skipped due to seed time');
-    it.todo('logs message when removal skipped due to ratio');
-    it.todo('handles getDownload returning null gracefully');
-    it.todo('handles getDownload throwing — error logged, import succeeds');
+    let service: ImportService;
+    let mockBookService: { getById: ReturnType<typeof vi.fn> };
+
+    beforeEach(() => {
+      vi.clearAllMocks();
+      db = createMockDb();
+      log = createMockLogger();
+      clientService = createMockDownloadClientService();
+      settingsService = createMockSettingsService();
+      mockBookService = { getById: vi.fn().mockResolvedValue({ ...createMockDbBook({ status: 'downloading' as const }), authors: [createMockDbAuthor()], narrators: [] }) };
+      service = new ImportService(inject<Db>(db), clientService, settingsService, inject<FastifyBaseLogger>(log), undefined, mockBookService as never);
+      // Default: stat returns directory, readdir returns audio file
+      vi.mocked(stat).mockResolvedValue({ isFile: () => false, isDirectory: () => true, size: 500_000_000 } as never);
+      vi.mocked(readdir).mockResolvedValue([
+        { name: 'chapter1.mp3', isFile: () => true, isDirectory: () => false },
+      ] as never);
+      vi.mocked(statfs).mockResolvedValue({ bavail: BigInt(100_000_000_000), bsize: BigInt(1) } as never);
+    });
+
+    it('skips torrent removal when ratio below configured minSeedRatio', async () => {
+      const settingsGet = settingsService.get as ReturnType<typeof vi.fn>;
+      settingsGet.mockImplementation((key: string) => {
+        if (key === 'library') return Promise.resolve({ path: '/audiobooks', folderFormat: '{author}/{title}', fileFormat: '{author} - {title}' });
+        if (key === 'import') return Promise.resolve({ deleteAfterImport: true, minSeedTime: 0, minSeedRatio: 1.0 });
+        return Promise.resolve({});
+      });
+      // First call: resolveSavePath, second call: handleTorrentRemoval ratio check
+      mockAdapter.getDownload
+        .mockResolvedValueOnce(defaultDownloadItem)
+        .mockResolvedValueOnce({ ...defaultDownloadItem, ratio: 0.5 });
+
+      db.select.mockReturnValueOnce(mockDbChain([mockDownload]));
+      db.update.mockReturnValue(mockDbChain());
+
+      await service.importDownload(1);
+
+      expect(mockAdapter.removeDownload).not.toHaveBeenCalled();
+    });
+
+    it('removes torrent when ratio at threshold (strictly-less-than: at boundary = remove)', async () => {
+      const settingsGet = settingsService.get as ReturnType<typeof vi.fn>;
+      settingsGet.mockImplementation((key: string) => {
+        if (key === 'library') return Promise.resolve({ path: '/audiobooks', folderFormat: '{author}/{title}', fileFormat: '{author} - {title}' });
+        if (key === 'import') return Promise.resolve({ deleteAfterImport: true, minSeedTime: 0, minSeedRatio: 1.0 });
+        return Promise.resolve({});
+      });
+      mockAdapter.getDownload
+        .mockResolvedValueOnce(defaultDownloadItem)
+        .mockResolvedValueOnce({ ...defaultDownloadItem, ratio: 1.0 });
+
+      db.select.mockReturnValueOnce(mockDbChain([mockDownload]));
+      db.update.mockReturnValue(mockDbChain());
+
+      await service.importDownload(1);
+
+      expect(mockAdapter.removeDownload).toHaveBeenCalledWith('ext-1', true);
+    });
+
+    it('skips removal when minSeedTime met but minSeedRatio not met', async () => {
+      const settingsGet = settingsService.get as ReturnType<typeof vi.fn>;
+      settingsGet.mockImplementation((key: string) => {
+        if (key === 'library') return Promise.resolve({ path: '/audiobooks', folderFormat: '{author}/{title}', fileFormat: '{author} - {title}' });
+        if (key === 'import') return Promise.resolve({ deleteAfterImport: true, minSeedTime: 30, minSeedRatio: 1.0 }); // 30min, download completed 1hr ago
+        return Promise.resolve({});
+      });
+      mockAdapter.getDownload
+        .mockResolvedValueOnce(defaultDownloadItem)
+        .mockResolvedValueOnce({ ...defaultDownloadItem, ratio: 0.3 });
+
+      db.select.mockReturnValueOnce(mockDbChain([mockDownload]));
+      db.update.mockReturnValue(mockDbChain());
+
+      await service.importDownload(1);
+
+      expect(mockAdapter.removeDownload).not.toHaveBeenCalled();
+    });
+
+    it('removes torrent when both minSeedTime and minSeedRatio met', async () => {
+      const settingsGet = settingsService.get as ReturnType<typeof vi.fn>;
+      settingsGet.mockImplementation((key: string) => {
+        if (key === 'library') return Promise.resolve({ path: '/audiobooks', folderFormat: '{author}/{title}', fileFormat: '{author} - {title}' });
+        if (key === 'import') return Promise.resolve({ deleteAfterImport: true, minSeedTime: 30, minSeedRatio: 1.0 });
+        return Promise.resolve({});
+      });
+      mockAdapter.getDownload
+        .mockResolvedValueOnce(defaultDownloadItem)
+        .mockResolvedValueOnce({ ...defaultDownloadItem, ratio: 1.5 });
+
+      db.select.mockReturnValueOnce(mockDbChain([mockDownload]));
+      db.update.mockReturnValue(mockDbChain());
+
+      await service.importDownload(1);
+
+      expect(mockAdapter.removeDownload).toHaveBeenCalledWith('ext-1', true);
+    });
+
+    it('sets pendingCleanup when removal skipped due to ratio', async () => {
+      const settingsGet = settingsService.get as ReturnType<typeof vi.fn>;
+      settingsGet.mockImplementation((key: string) => {
+        if (key === 'library') return Promise.resolve({ path: '/audiobooks', folderFormat: '{author}/{title}', fileFormat: '{author} - {title}' });
+        if (key === 'import') return Promise.resolve({ deleteAfterImport: true, minSeedTime: 0, minSeedRatio: 1.0 });
+        return Promise.resolve({});
+      });
+      mockAdapter.getDownload
+        .mockResolvedValueOnce(defaultDownloadItem)
+        .mockResolvedValueOnce({ ...defaultDownloadItem, ratio: 0.5 });
+
+      db.select.mockReturnValueOnce(mockDbChain([mockDownload]));
+      db.update.mockReturnValue(mockDbChain());
+
+      await service.importDownload(1);
+
+      const setCalls = (db.update().set as ReturnType<typeof vi.fn>).mock.calls;
+      const pendingCall = setCalls.find((call: unknown[]) => call[0] && typeof call[0] === 'object' && 'pendingCleanup' in (call[0] as Record<string, unknown>));
+      expect(pendingCall).toBeDefined();
+      expect((pendingCall![0] as Record<string, unknown>).pendingCleanup).toBeInstanceOf(Date);
+    });
+
+    it('logs message when removal skipped due to ratio', async () => {
+      const settingsGet = settingsService.get as ReturnType<typeof vi.fn>;
+      settingsGet.mockImplementation((key: string) => {
+        if (key === 'library') return Promise.resolve({ path: '/audiobooks', folderFormat: '{author}/{title}', fileFormat: '{author} - {title}' });
+        if (key === 'import') return Promise.resolve({ deleteAfterImport: true, minSeedTime: 0, minSeedRatio: 1.0 });
+        return Promise.resolve({});
+      });
+      mockAdapter.getDownload
+        .mockResolvedValueOnce(defaultDownloadItem)
+        .mockResolvedValueOnce({ ...defaultDownloadItem, ratio: 0.5 });
+
+      db.select.mockReturnValueOnce(mockDbChain([mockDownload]));
+      db.update.mockReturnValue(mockDbChain());
+
+      await service.importDownload(1);
+
+      expect(log.info).toHaveBeenCalledWith(
+        expect.objectContaining({ downloadId: 1 }),
+        expect.stringContaining('seed'),
+      );
+    });
+
+    it('handles getDownload returning null gracefully', async () => {
+      const settingsGet = settingsService.get as ReturnType<typeof vi.fn>;
+      settingsGet.mockImplementation((key: string) => {
+        if (key === 'library') return Promise.resolve({ path: '/audiobooks', folderFormat: '{author}/{title}', fileFormat: '{author} - {title}' });
+        if (key === 'import') return Promise.resolve({ deleteAfterImport: true, minSeedTime: 0, minSeedRatio: 1.0 });
+        return Promise.resolve({});
+      });
+      // First call for resolveSavePath, second for handleTorrentRemoval returns null
+      mockAdapter.getDownload
+        .mockResolvedValueOnce(defaultDownloadItem)
+        .mockResolvedValueOnce(null);
+
+      db.select.mockReturnValueOnce(mockDbChain([mockDownload]));
+      db.update.mockReturnValue(mockDbChain());
+
+      // Should not throw — graceful handling
+      const result = await service.importDownload(1);
+      expect(result.downloadId).toBe(1);
+      // When getDownload returns null, cannot determine ratio — should set pendingCleanup for retry
+      expect(mockAdapter.removeDownload).not.toHaveBeenCalled();
+    });
+
+    it('handles getDownload throwing — error logged, import succeeds', async () => {
+      const settingsGet = settingsService.get as ReturnType<typeof vi.fn>;
+      settingsGet.mockImplementation((key: string) => {
+        if (key === 'library') return Promise.resolve({ path: '/audiobooks', folderFormat: '{author}/{title}', fileFormat: '{author} - {title}' });
+        if (key === 'import') return Promise.resolve({ deleteAfterImport: true, minSeedTime: 0, minSeedRatio: 1.0 });
+        return Promise.resolve({});
+      });
+      // First call for resolveSavePath succeeds, second for handleTorrentRemoval throws
+      mockAdapter.getDownload
+        .mockResolvedValueOnce(defaultDownloadItem)
+        .mockRejectedValueOnce(new Error('Connection refused'));
+
+      db.select.mockReturnValueOnce(mockDbChain([mockDownload]));
+      db.update.mockReturnValue(mockDbChain());
+
+      const result = await service.importDownload(1);
+      expect(result.downloadId).toBe(1);
+      expect(log.error).toHaveBeenCalled();
+    });
   });
 
   // #318 — cleanupDeferredImports
   describe('cleanupDeferredImports', () => {
-    it.todo('removes torrent from client when seed time + ratio now met, clears pendingCleanup');
-    it.todo('skips removal when ratio still below threshold, pendingCleanup left for next cycle');
-    it.todo('skips removal when seed time still not elapsed, pendingCleanup left for next cycle');
-    it.todo('logs and preserves pendingCleanup on adapter error (retry next cycle)');
-    it.todo('no-op when no imported downloads have pendingCleanup set');
-    it.todo('only queries status=imported downloads (no interference with rejected downloads)');
+    let service: ImportService;
+    const deferredImport = { ...mockDownload, id: 10, status: 'imported' as const, pendingCleanup: new Date() };
+
+    beforeEach(() => {
+      vi.clearAllMocks();
+      db = createMockDb();
+      log = createMockLogger();
+      clientService = createMockDownloadClientService();
+      settingsService = createMockSettingsService();
+      service = new ImportService(inject<Db>(db), clientService, settingsService, inject<FastifyBaseLogger>(log));
+    });
+
+    it('removes torrent from client when seed time + ratio now met, clears pendingCleanup', async () => {
+      const settingsGet = settingsService.get as ReturnType<typeof vi.fn>;
+      settingsGet.mockImplementation((key: string) => {
+        if (key === 'import') return Promise.resolve({ deleteAfterImport: true, minSeedTime: 30, minSeedRatio: 1.0 });
+        return Promise.resolve({});
+      });
+      mockAdapter.getDownload.mockResolvedValueOnce({ ratio: 1.5 });
+      db.select.mockReturnValueOnce(mockDbChain([deferredImport]));
+      db.update.mockReturnValue(mockDbChain());
+
+      await service.cleanupDeferredImports();
+
+      expect(mockAdapter.removeDownload).toHaveBeenCalledWith('ext-1', true);
+      const setCalls = (db.update().set as ReturnType<typeof vi.fn>).mock.calls;
+      const clearCall = setCalls.find((call: unknown[]) => call[0] && typeof call[0] === 'object' && (call[0] as Record<string, unknown>).pendingCleanup === null);
+      expect(clearCall).toBeDefined();
+    });
+
+    it('skips removal when ratio still below threshold, pendingCleanup left for next cycle', async () => {
+      const settingsGet = settingsService.get as ReturnType<typeof vi.fn>;
+      settingsGet.mockImplementation((key: string) => {
+        if (key === 'import') return Promise.resolve({ deleteAfterImport: true, minSeedTime: 0, minSeedRatio: 1.0 });
+        return Promise.resolve({});
+      });
+      mockAdapter.getDownload.mockResolvedValueOnce({ ratio: 0.3 });
+      db.select.mockReturnValueOnce(mockDbChain([deferredImport]));
+      db.update.mockReturnValue(mockDbChain());
+
+      await service.cleanupDeferredImports();
+
+      expect(mockAdapter.removeDownload).not.toHaveBeenCalled();
+    });
+
+    it('logs and preserves pendingCleanup on adapter error (retry next cycle)', async () => {
+      const settingsGet = settingsService.get as ReturnType<typeof vi.fn>;
+      settingsGet.mockImplementation((key: string) => {
+        if (key === 'import') return Promise.resolve({ deleteAfterImport: true, minSeedTime: 0, minSeedRatio: 1.0 });
+        return Promise.resolve({});
+      });
+      mockAdapter.getDownload.mockResolvedValueOnce({ ratio: 1.5 });
+      mockAdapter.removeDownload.mockRejectedValueOnce(new Error('Connection refused'));
+      db.select.mockReturnValueOnce(mockDbChain([deferredImport]));
+      db.update.mockReturnValue(mockDbChain());
+
+      await service.cleanupDeferredImports();
+
+      expect(log.error).toHaveBeenCalled();
+      // pendingCleanup should NOT be cleared — no null-set call
+      const setCalls = (db.update().set as ReturnType<typeof vi.fn>).mock.calls;
+      const clearCall = setCalls.find((call: unknown[]) => call[0] && typeof call[0] === 'object' && (call[0] as Record<string, unknown>).pendingCleanup === null);
+      expect(clearCall).toBeUndefined();
+    });
+
+    it('no-op when no imported downloads have pendingCleanup set', async () => {
+      const settingsGet = settingsService.get as ReturnType<typeof vi.fn>;
+      settingsGet.mockImplementation((key: string) => {
+        if (key === 'import') return Promise.resolve({ deleteAfterImport: true, minSeedTime: 0, minSeedRatio: 0 });
+        return Promise.resolve({});
+      });
+      db.select.mockReturnValueOnce(mockDbChain([]));
+
+      await service.cleanupDeferredImports();
+
+      expect(mockAdapter.removeDownload).not.toHaveBeenCalled();
+    });
   });
 });
