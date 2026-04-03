@@ -35,12 +35,23 @@ beforeEach(() => {
 
 describe('AudioPreview (#320)', () => {
   // Render conditions
-  it('renders audio element with controls attribute when book is imported with path', () => {
+  it('renders hidden audio element without native controls when book is imported with path', () => {
     renderWithProviders(<AudioPreview bookId={1} status="imported" path="/library/book1" />);
 
     const audio = document.querySelector('audio');
     expect(audio).not.toBeNull();
-    expect(audio!.hasAttribute('controls')).toBe(true);
+    expect(audio!.hasAttribute('controls')).toBe(false);
+    expect(audio!.hidden).toBe(true);
+  });
+
+  it('renders only the custom play button — no native player UI', () => {
+    renderWithProviders(<AudioPreview bookId={1} status="imported" path="/library/book1" />);
+
+    expect(screen.getByRole('button', { name: /play preview/i })).toBeInTheDocument();
+    // Native audio controls should not be visible
+    const audio = document.querySelector('audio');
+    expect(audio).not.toBeNull();
+    expect(audio!.hasAttribute('controls')).toBe(false);
   });
 
   it('does not render when book status is not imported', () => {
