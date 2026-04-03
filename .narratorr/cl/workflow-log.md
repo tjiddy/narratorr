@@ -1,5 +1,34 @@
 # Workflow Log
 
+## #318 Add minimum seed ratio setting for torrent removal — 2026-04-03
+**Skill path:** /implement → /claim → /plan → /handoff
+**Outcome:** success — PR #325
+
+### Metrics
+- Files changed: 20 | Tests added/modified: 41 new tests across 4 files + 17 fixture updates
+- Quality gate runs: 2 (pass on attempt 2 — lint complexity + typecheck on attempt 1)
+- Fix iterations: 1 (lint complexity in quality-gate-orchestrator extracted to helper)
+- Context compactions: 0
+
+### Workflow experience
+- What went smoothly: Schema + registry + shared helper were straightforward. Test patterns well-established.
+- Friction / issues encountered: Import service tests required double `mockResolvedValueOnce` for adapter because `resolveSavePath` and `handleTorrentRemoval` both call `getDownload`. QGO mock adapter missing `getDownload` caused silent failures swallowed by try-catch.
+
+### Token efficiency
+- Highest-token actions: Fixture blast radius update (17 files) delegated to subagent — good use of parallelism
+- Avoidable waste: Could have anticipated the double-mock issue earlier by reading `resolveSavePath` flow before writing tests
+- Suggestions: For features that add adapter calls, check all call sites of the adapter method before writing test mocks
+
+### Infrastructure gaps
+- Repeated workarounds: none
+- Missing tooling / config: `frontend-design` skill not available for UI polish pass
+- Unresolved debt: none introduced
+
+### Wish I'd Known
+1. `adapter.getDownload()` is called by `resolveSavePath` during `importDownload()` — any test exercising import needs the full adapter response mocked first, then the ratio response second
+2. QGO test suite's `mockAdapter` was incomplete (missing `getDownload`) — errors in new code paths are silently swallowed by the orchestrator's try-catch, making debugging hard
+3. Self-review step is critical for deferred cleanup methods — the `adapter!` non-null assertion and missing `deleteAfterImport` guard would have been blocking review findings
+
 ## #315 Cancel download should also blacklist the release — 2026-04-03
 **Skill path:** /implement → /claim → /plan → /handoff
 **Outcome:** success — PR #319
