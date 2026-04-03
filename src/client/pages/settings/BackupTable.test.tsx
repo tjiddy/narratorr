@@ -17,28 +17,28 @@ const mockBackups: BackupMetadata[] = [
 describe('BackupTable', () => {
   it('renders loading spinner when isLoading is true', () => {
     renderWithProviders(
-      <BackupTable backups={undefined} isLoading={true} onDownload={vi.fn()} />,
+      <BackupTable backups={undefined} isLoading={true} onDownload={vi.fn()} onRestore={vi.fn()} isRestoring={false} />,
     );
     expect(screen.getByTestId('loading-spinner')).toBeInTheDocument();
   });
 
   it('renders empty state when backups array is empty', () => {
     renderWithProviders(
-      <BackupTable backups={[]} isLoading={false} onDownload={vi.fn()} />,
+      <BackupTable backups={[]} isLoading={false} onDownload={vi.fn()} onRestore={vi.fn()} isRestoring={false} />,
     );
     expect(screen.getByText(/no backups yet/i)).toBeInTheDocument();
   });
 
   it('renders empty state when backups is undefined', () => {
     renderWithProviders(
-      <BackupTable backups={undefined} isLoading={false} onDownload={vi.fn()} />,
+      <BackupTable backups={undefined} isLoading={false} onDownload={vi.fn()} onRestore={vi.fn()} isRestoring={false} />,
     );
     expect(screen.getByText(/no backups yet/i)).toBeInTheDocument();
   });
 
   it('renders backup rows with filename and size', () => {
     renderWithProviders(
-      <BackupTable backups={mockBackups} isLoading={false} onDownload={vi.fn()} />,
+      <BackupTable backups={mockBackups} isLoading={false} onDownload={vi.fn()} onRestore={vi.fn()} isRestoring={false} />,
     );
     expect(screen.getByText('narratorr-backup-20260101T000000000Z.zip')).toBeInTheDocument();
     expect(screen.getByText('narratorr-backup-20260102T000000000Z.zip')).toBeInTheDocument();
@@ -51,7 +51,7 @@ describe('BackupTable', () => {
     const user = userEvent.setup();
 
     renderWithProviders(
-      <BackupTable backups={[mockBackups[0]]} isLoading={false} onDownload={onDownload} />,
+      <BackupTable backups={[mockBackups[0]]} isLoading={false} onDownload={onDownload} onRestore={vi.fn()} isRestoring={false} />,
     );
 
     const downloadButton = screen.getByTitle('Download backup');
@@ -60,9 +60,39 @@ describe('BackupTable', () => {
     expect(onDownload).toHaveBeenCalledWith(mockBackups[0]);
   });
 
-  it.todo('renders restore icon button per backup row alongside download');
+  it('renders restore icon button per backup row alongside download', () => {
+    renderWithProviders(
+      <BackupTable backups={mockBackups} isLoading={false} onDownload={vi.fn()} onRestore={vi.fn()} isRestoring={false} />,
+    );
 
-  it.todo('calls onRestore with backup metadata when restore button is clicked');
+    const restoreButtons = screen.getAllByTitle('Restore backup');
+    expect(restoreButtons).toHaveLength(2);
+    const downloadButtons = screen.getAllByTitle('Download backup');
+    expect(downloadButtons).toHaveLength(2);
+  });
 
-  it.todo('disables restore buttons when isRestoring is true');
+  it('calls onRestore with backup metadata when restore button is clicked', async () => {
+    const onRestore = vi.fn();
+    const user = userEvent.setup();
+
+    renderWithProviders(
+      <BackupTable backups={[mockBackups[0]]} isLoading={false} onDownload={vi.fn()} onRestore={onRestore} isRestoring={false} />,
+    );
+
+    const restoreButton = screen.getByTitle('Restore backup');
+    await user.click(restoreButton);
+
+    expect(onRestore).toHaveBeenCalledWith(mockBackups[0]);
+  });
+
+  it('disables restore buttons when isRestoring is true', () => {
+    renderWithProviders(
+      <BackupTable backups={mockBackups} isLoading={false} onDownload={vi.fn()} onRestore={vi.fn()} isRestoring={true} />,
+    );
+
+    const restoreButtons = screen.getAllByTitle('Restore backup');
+    for (const button of restoreButtons) {
+      expect(button).toBeDisabled();
+    }
+  });
 });

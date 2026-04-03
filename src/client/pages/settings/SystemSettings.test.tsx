@@ -19,6 +19,7 @@ vi.mock('@/lib/api', () => ({
     createBackup: vi.fn(),
     getBackupDownloadUrl: vi.fn((filename: string) => `/api/system/backups/${filename}/download`),
     uploadRestore: vi.fn(),
+    restoreBackupDirect: vi.fn(),
     confirmRestore: vi.fn(),
     getHealthStatus: vi.fn().mockResolvedValue([]),
     getHealthSummary: vi.fn().mockResolvedValue({ state: 'healthy' }),
@@ -41,6 +42,7 @@ const mockApi = api as unknown as {
   updateSettings: ReturnType<typeof vi.fn>;
   createBackup: ReturnType<typeof vi.fn>;
   uploadRestore: ReturnType<typeof vi.fn>;
+  restoreBackupDirect: ReturnType<typeof vi.fn>;
   confirmRestore: ReturnType<typeof vi.fn>;
 };
 
@@ -288,13 +290,119 @@ describe('SystemSettings', () => {
   });
 
   describe('direct server restore flow', () => {
-    it.todo('clicking restore button calls restoreBackupDirect API with filename and opens confirmation modal on success');
+    const backupEntry = {
+      filename: 'narratorr-backup-20260101T000000000Z.zip',
+      timestamp: '2026-01-01T00:00:00Z',
+      size: 102400,
+    };
 
-    it.todo('shows error toast when restoreBackupDirect API returns error (invalid backup)');
+    it('clicking restore button calls restoreBackupDirect API with filename and opens confirmation modal on success', async () => {
+      mockApi.getBackups.mockResolvedValue([backupEntry]);
+      mockApi.restoreBackupDirect.mockResolvedValue({ valid: true, backupMigrationCount: 2, appMigrationCount: 3 });
 
-    it.todo('confirm in modal after server restore calls confirmRestore (shared path)');
+      const user = userEvent.setup();
+      renderWithProviders(<SystemSettings />);
 
-    it.todo('all restore buttons are disabled while server restore mutation is pending');
+      await waitFor(() => {
+        expect(screen.getByText(backupEntry.filename)).toBeInTheDocument();
+      });
+
+      await user.click(screen.getByTitle('Restore backup'));
+
+      await waitFor(() => {
+        expect(mockApi.restoreBackupDirect).toHaveBeenCalledWith(backupEntry.filename);
+      });
+
+      await waitFor(() => {
+        expect(screen.getByText(/confirm restore/i)).toBeInTheDocument();
+      });
+
+      // Modal shows migration counts
+      expect(screen.getByText(/2 migrations/i)).toBeInTheDocument();
+    });
+
+    it('shows error toast when restoreBackupDirect API returns error (invalid backup)', async () => {
+      mockApi.getBackups.mockResolvedValue([backupEntry]);
+      mockApi.restoreBackupDirect.mockRejectedValue(new Error('Zip does not contain narratorr.db'));
+
+      const user = userEvent.setup();
+      renderWithProviders(<SystemSettings />);
+
+      await waitFor(() => {
+        expect(screen.getByText(backupEntry.filename)).toBeInTheDocument();
+      });
+
+      await user.click(screen.getByTitle('Restore backup'));
+
+      await waitFor(() => {
+        expect(mockToast.error).toHaveBeenCalledWith('Zip does not contain narratorr.db');
+      });
+
+      // Modal should NOT open
+      expect(screen.queryByText(/confirm restore/i)).not.toBeInTheDocument();
+    });
+
+    it('confirm in modal after server restore calls confirmRestore (shared path)', async () => {
+      mockApi.getBackups.mockResolvedValue([backupEntry]);
+      mockApi.restoreBackupDirect.mockResolvedValue({ valid: true, backupMigrationCount: 2, appMigrationCount: 3 });
+      mockApi.confirmRestore.mockResolvedValue({ message: 'ok' });
+
+      const user = userEvent.setup();
+      renderWithProviders(<SystemSettings />);
+
+      await waitFor(() => {
+        expect(screen.getByText(backupEntry.filename)).toBeInTheDocument();
+      });
+
+      await user.click(screen.getByTitle('Restore backup'));
+
+      await waitFor(() => {
+        expect(screen.getByText(/restore now/i)).toBeInTheDocument();
+      });
+
+      await user.click(screen.getByText(/restore now/i));
+
+      await waitFor(() => {
+        expect(mockApi.confirmRestore).toHaveBeenCalled();
+      });
+
+      await waitFor(() => {
+        expect(screen.queryByText(/confirm restore/i)).not.toBeInTheDocument();
+      });
+    });
+
+    it('all restore buttons are disabled while server restore mutation is pending', async () => {
+      // Use a promise we control to keep the mutation pending
+      let resolveRestore!: (value: unknown) => void;
+      const pendingPromise = new Promise((resolve) => { resolveRestore = resolve; });
+      mockApi.getBackups.mockResolvedValue([backupEntry, {
+        filename: 'narratorr-backup-20260102T000000000Z.zip',
+        timestamp: '2026-01-02T00:00:00Z',
+        size: 204800,
+      }]);
+      mockApi.restoreBackupDirect.mockReturnValue(pendingPromise);
+
+      const user = userEvent.setup();
+      renderWithProviders(<SystemSettings />);
+
+      await waitFor(() => {
+        expect(screen.getAllByTitle('Restore backup')).toHaveLength(2);
+      });
+
+      // Click first restore button
+      await user.click(screen.getAllByTitle('Restore backup')[0]);
+
+      // Both restore buttons should be disabled while pending
+      await waitFor(() => {
+        const restoreButtons = screen.getAllByTitle('Restore backup');
+        for (const button of restoreButtons) {
+          expect(button).toBeDisabled();
+        }
+      });
+
+      // Resolve the pending promise to clean up
+      resolveRestore({ valid: true, backupMigrationCount: 2, appMigrationCount: 3 });
+    });
   });
 
   describe('page-level section wiring', () => {

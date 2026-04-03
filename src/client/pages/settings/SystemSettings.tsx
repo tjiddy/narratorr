@@ -62,6 +62,20 @@ export function SystemSettings() {
     },
   });
 
+  const restoreMutation = useMutation({
+    mutationFn: (filename: string) => api.restoreBackupDirect(filename),
+    onSuccess: (result) => {
+      setRestoreInfo({
+        backupMigrationCount: result.backupMigrationCount,
+        appMigrationCount: result.appMigrationCount,
+      });
+      setRestoreConfirmOpen(true);
+    },
+    onError: (err) => {
+      toast.error(err instanceof Error ? err.message : 'Failed to validate backup');
+    },
+  });
+
   const confirmMutation = useMutation({
     mutationFn: api.confirmRestore,
     onSuccess: () => {
@@ -80,6 +94,10 @@ export function SystemSettings() {
       uploadMutation.mutate(file);
     }
     e.target.value = '';
+  }
+
+  function handleRestore(backup: BackupMetadata) {
+    restoreMutation.mutate(backup.filename);
   }
 
   function handleDownload(backup: BackupMetadata) {
@@ -124,7 +142,7 @@ export function SystemSettings() {
           <input ref={fileInputRef} type="file" accept=".zip" onChange={handleFileSelect} className="hidden" />
         </div>
 
-        <BackupTable backups={backups} isLoading={isLoading} onDownload={handleDownload} />
+        <BackupTable backups={backups} isLoading={isLoading} onDownload={handleDownload} onRestore={handleRestore} isRestoring={restoreMutation.isPending} />
       </SettingsSection>
 
       <SystemInfo />
