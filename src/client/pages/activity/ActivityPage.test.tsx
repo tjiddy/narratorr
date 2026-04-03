@@ -1,10 +1,11 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, waitFor, act } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { MemoryRouter } from 'react-router-dom';
 import { renderWithProviders } from '@/__tests__/helpers';
 import { ActivityPage } from './ActivityPage';
+import { SSEProvider } from '@/components/SSEProvider';
 import { queryKeys } from '@/lib/queryKeys';
 import type { ActivityListParams, Download } from '@/lib/api';
 
@@ -18,6 +19,7 @@ vi.mock('sonner', () => ({
 vi.mock('@/lib/api', () => ({
   api: {
     getActivity: vi.fn(),
+    getAuthConfig: vi.fn(),
     cancelDownload: vi.fn(),
     retryDownload: vi.fn(),
     approveDownload: vi.fn(),
@@ -1081,3 +1083,141 @@ describe('ActivityPage', () => {
       });
     });
   });
+
+// ============================================================================
+// #312 — Page-level SSE integration: ActivityPage + SSEProvider
+// ============================================================================
+
+// Mock EventSource for SSE integration tests
+class MockEventSource {
+  static instances: MockEventSource[] = [];
+  url: string;
+  onopen: ((e: Event) => void) | null = null;
+  onerror: ((e: Event) => void) | null = null;
+  private listeners = new Map<string, ((event: MessageEvent) => void)[]>();
+  readyState = 0;
+
+  constructor(url: string) {
+    this.url = url;
+    MockEventSource.instances.push(this);
+  }
+  addEventListener(type: string, handler: (event: MessageEvent) => void) {
+    const handlers = this.listeners.get(type) || [];
+    handlers.push(handler);
+    this.listeners.set(type, handlers);
+  }
+  removeEventListener() { /* noop */ }
+  close() { this.readyState = 2; }
+
+  simulateOpen() {
+    this.readyState = 1;
+    this.onopen?.(new Event('open'));
+  }
+  simulateEvent(type: string, data: unknown) {
+    const handlers = this.listeners.get(type) || [];
+    const event = new MessageEvent(type, { data: JSON.stringify(data) });
+    for (const handler of handlers) handler(event);
+  }
+}
+
+describe('#312 page-level SSE integration', () => {
+  const originalEventSource = globalThis.EventSource;
+
+  beforeEach(() => {
+    MockEventSource.instances = [];
+    (globalThis as unknown as Record<string, unknown>).EventSource = MockEventSource;
+  });
+  afterEach(() => {
+    (globalThis as unknown as Record<string, unknown>).EventSource = originalEventSource;
+  });
+
+  function renderWithSSE() {
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    });
+
+    // Seed auth config so SSEProvider connects
+    queryClient.setQueryData(['auth', 'config'], { mode: 'apiKey', apiKey: 'test-key', localBypass: false });
+
+    const result = render(
+      <QueryClientProvider client={queryClient}>
+        <MemoryRouter initialEntries={['/activity']}>
+          <SSEProvider />
+          <ActivityPage />
+        </MemoryRouter>
+      </QueryClientProvider>,
+    );
+
+    return { ...result, queryClient };
+  }
+
+  it('transitions from empty state to showing download after cache-miss SSE event triggers refetch', async () => {
+    let callCount = 0;
+    vi.mocked(api.getActivity).mockImplementation((params) => {
+      if (params?.section === 'history') return Promise.resolve({ data: [], total: 0 });
+      callCount++;
+      // First call: empty queue. After invalidation: queue has a download
+      if (callCount <= 1) return Promise.resolve({ data: [], total: 0 });
+      return Promise.resolve({
+        data: [makeDownload({ id: 5, title: 'New Audiobook', status: 'downloading', progress: 0.3 })],
+        total: 1,
+      });
+    });
+
+    renderWithSSE();
+
+    // Wait for initial empty state
+    await waitFor(() => {
+      expect(screen.getByText('No active downloads')).toBeInTheDocument();
+    });
+
+    const es = MockEventSource.instances[0];
+
+    // Simulate SSE event for a download not in cache → triggers cache-miss invalidation → refetch
+    await act(async () => {
+      es.simulateOpen();
+      es.simulateEvent('download_progress', { download_id: 5, book_id: 10, percentage: 0.3, speed: null, eta: null });
+    });
+
+    // After refetch, page should show the download
+    await waitFor(() => {
+      expect(screen.getByText('New Audiobook')).toBeInTheDocument();
+    });
+    expect(screen.queryByText('No active downloads')).not.toBeInTheDocument();
+  });
+
+  it('updates download progress in-place via SSE patch without full page reload', async () => {
+    vi.mocked(api.getActivity).mockImplementation((params) => {
+      if (params?.section === 'history') return Promise.resolve({ data: [], total: 0 });
+      return Promise.resolve({
+        data: [makeDownload({ id: 1, title: 'My Audiobook', status: 'downloading', progress: 0.5 })],
+        total: 1,
+      });
+    });
+
+    renderWithSSE();
+
+    // Wait for initial render with 50% progress
+    await waitFor(() => {
+      expect(screen.getByText('My Audiobook')).toBeInTheDocument();
+    });
+    expect(screen.getByText('50%')).toBeInTheDocument();
+
+    const es = MockEventSource.instances[0];
+    const getActivityCallCount = vi.mocked(api.getActivity).mock.calls.length;
+
+    // Simulate progress update via SSE — should patch cache in-place
+    await act(async () => {
+      es.simulateOpen();
+      es.simulateEvent('download_progress', { download_id: 1, book_id: 2, percentage: 0.75, speed: null, eta: null });
+    });
+
+    // Progress should update without a full refetch
+    await waitFor(() => {
+      expect(screen.getByText('75%')).toBeInTheDocument();
+    });
+
+    // No additional getActivity calls — patched in-place via setQueryData
+    expect(vi.mocked(api.getActivity).mock.calls.length).toBe(getActivityCallCount);
+  });
+});
