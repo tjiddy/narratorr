@@ -276,11 +276,13 @@ export class ImportService {
           continue; // Still deferred — leave pendingCleanup for next cycle
         }
 
-        if (adapter) {
-          const client = await this.downloadClientService.getById(download.downloadClientId);
-          await adapter.removeDownload(download.externalId, true);
-          this.log.info({ downloadId: download.id, externalId: download.externalId, clientType: client?.type }, 'Deferred torrent removal completed after import');
+        if (!adapter) {
+          this.log.warn({ downloadId: download.id }, 'Deferred torrent removal skipped — adapter not found, will retry');
+          continue;
         }
+        const client = await this.downloadClientService.getById(download.downloadClientId);
+        await adapter.removeDownload(download.externalId, true);
+        this.log.info({ downloadId: download.id, externalId: download.externalId, clientType: client?.type }, 'Deferred torrent removal completed after import');
         await this.db.update(downloads).set({ pendingCleanup: null }).where(eq(downloads.id, download.id));
       } catch (error: unknown) {
         this.log.error({ error, downloadId: download.id }, 'Failed deferred torrent removal — will retry next cycle');
