@@ -21,6 +21,8 @@ export interface SearchResult {
   guid?: string;
   coverUrl?: string;
   matchScore?: number;
+  isFreeleech?: boolean;
+  isVipOnly?: boolean;
 }
 
 export interface SearchContext {

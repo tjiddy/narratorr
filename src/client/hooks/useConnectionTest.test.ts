@@ -1,5 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { renderHook, act } from '@testing-library/react';
+import { createElement, type ReactNode } from 'react';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { useConnectionTest } from '@/hooks/useConnectionTest';
 
 vi.mock('sonner', () => ({
@@ -10,6 +12,13 @@ vi.mock('sonner', () => ({
 }));
 
 import { toast } from 'sonner';
+
+function createWrapper() {
+  const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  return function Wrapper({ children }: { children: ReactNode }) {
+    return createElement(QueryClientProvider, { client: queryClient }, children);
+  };
+}
 
 describe('useConnectionTest', () => {
   const testById = vi.fn();
@@ -22,7 +31,7 @@ describe('useConnectionTest', () => {
   function renderTestHook() {
     return renderHook(() =>
       useConnectionTest<{ name: string }>({ testById, testByConfig }),
-    );
+    { wrapper: createWrapper() });
   }
 
   describe('handleTest (by ID)', () => {
