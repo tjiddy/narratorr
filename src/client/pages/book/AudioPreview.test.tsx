@@ -44,11 +44,11 @@ describe('AudioPreview (#320)', () => {
     expect(audio!.hidden).toBe(true);
   });
 
-  it('renders only the custom play button — no native player UI', () => {
+  it('renders play button with Preview label — no native player UI', () => {
     renderWithProviders(<AudioPreview bookId={1} status="imported" path="/library/book1" />);
 
     expect(screen.getByRole('button', { name: /play preview/i })).toBeInTheDocument();
-    // Native audio controls should not be visible
+    expect(screen.getByText('Preview')).toBeInTheDocument();
     const audio = document.querySelector('audio');
     expect(audio).not.toBeNull();
     expect(audio!.hasAttribute('controls')).toBe(false);
@@ -130,6 +130,20 @@ describe('AudioPreview (#320)', () => {
 
     act(() => { audio.dispatchEvent(new Event('ended')); });
     expect(screen.getByRole('button', { name: /play preview/i })).toBeInTheDocument();
+  });
+
+  // Label text
+  it('shows "Playing..." label while audio is playing', async () => {
+    const user = userEvent.setup();
+    renderWithProviders(<AudioPreview bookId={1} status="imported" path="/library/book1" />);
+
+    expect(screen.getByText('Preview')).toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: /play/i }));
+    expect(screen.getByText('Playing...')).toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: /pause/i }));
+    expect(screen.getByText('Preview')).toBeInTheDocument();
   });
 
   // Cleanup / navigation

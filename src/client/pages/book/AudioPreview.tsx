@@ -66,12 +66,15 @@ export function AudioPreview({ bookId, status, path }: AudioPreviewProps) {
         type="button"
         onClick={handlePlayPause}
         aria-label={isPlaying ? 'Pause preview' : 'Play preview'}
-        className="flex items-center justify-center w-9 h-9 rounded-xl text-muted-foreground hover:text-foreground glass-card hover:border-primary/30 transition-all duration-200 focus-ring"
+        className="flex items-center justify-center w-10 h-10 rounded-full text-muted-foreground hover:text-primary glass-card hover:border-primary/30 transition-all duration-200 focus-ring"
       >
         {isPlaying
           ? <PauseIcon className="w-4 h-4" />
-          : <PlayIcon className="w-4 h-4" />}
+          : <PlayIcon className="w-4 h-4 ml-0.5" />}
       </button>
+      <span className="text-xs text-muted-foreground/50 select-none">
+        {isPlaying ? 'Playing...' : 'Preview'}
+      </span>
       <audio ref={audioRef} src={previewUrl} preload="none" hidden />
     </div>
   );
