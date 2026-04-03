@@ -1,5 +1,29 @@
 # Workflow Log
 
+## #323 Fix QB path resolution — use content_path — 2026-04-03
+**Skill path:** /implement → /claim → /plan → /handoff
+**Outcome:** success — PR #327
+
+### Metrics
+- Files changed: 3 (2 source, 1 test) | Tests added: 8
+- Quality gate runs: 2 (pass on both — once mid-implement, once at handoff)
+- Fix iterations: 0
+- Context compactions: 0
+
+### Workflow experience
+- What went smoothly: Very contained fix — single `mapItem()` method change with clear fallback logic. MSW mocks already had `content_path`, so no fixture updates needed. Red/green TDD cycle was clean — 3 tests failed exactly as expected (mismatched name, nested path, mixed batch).
+- Friction / issues encountered: None — the spec review cycle had already identified all caller surfaces (import, quality gate, monitor), so implementation was straightforward.
+
+### Token efficiency
+- Highest-token actions: Elaborate + spec review response consumed most context before implementation started
+- Avoidable waste: None significant — the fix was small and well-scoped
+- Suggestions: For adapter-level fixes like this, the coverage subagent can be skipped (small diff threshold works well)
+
+### Wish I'd Known
+1. MSW mock fixtures were already ahead of the schema — checking test mocks first would have confirmed the fix surface immediately (see `qb-content-path-ahead-of-schema.md`)
+2. `.passthrough()` on Zod schemas silently passes unknown fields — this is why `content_path` worked in e2e tests without being typed
+3. All three downstream path consumers (`resolveSavePath`, `resolveOutputPath`, `download-path.ts`) share the identical `join(savePath, name)` pattern — fixing the adapter was sufficient for all
+
 ## #324 UAT polish — round 1 — 2026-04-03
 **Skill path:** /implement → /claim → /plan → /handoff
 **Outcome:** success — PR #326

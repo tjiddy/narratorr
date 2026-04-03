@@ -604,6 +604,157 @@ describe('QBittorrentClient', () => {
     });
   });
 
+  describe('content_path derivation', () => {
+    it('uses content_path dirname/basename for savePath/name when content_path is present', async () => {
+      server.use(
+        http.get(`${BASE_URL}/api/v2/torrents/info`, () => {
+          return HttpResponse.json([{
+            ...mockTorrent,
+            name: 'The Devils -  Joe Abercrombie',
+            save_path: '/downloads',
+            content_path: '/downloads/Joe Abercrombie - The Devils',
+          }]);
+        }),
+      );
+
+      const result = await client.getDownload('abc123');
+      expect(result!.savePath).toBe('/downloads');
+      expect(result!.name).toBe('Joe Abercrombie - The Devils');
+    });
+
+    it('falls back to save_path/name when content_path is undefined', async () => {
+      server.use(
+        http.get(`${BASE_URL}/api/v2/torrents/info`, () => {
+          return HttpResponse.json([{
+            ...mockTorrent,
+            name: 'My Torrent',
+            save_path: '/downloads',
+            // no content_path
+          }]);
+        }),
+      );
+
+      const result = await client.getDownload('abc123');
+      expect(result!.savePath).toBe('/downloads');
+      expect(result!.name).toBe('My Torrent');
+    });
+
+    it('falls back to save_path/name when content_path is empty string', async () => {
+      server.use(
+        http.get(`${BASE_URL}/api/v2/torrents/info`, () => {
+          return HttpResponse.json([{
+            ...mockTorrent,
+            name: 'My Torrent',
+            save_path: '/downloads',
+            content_path: '',
+          }]);
+        }),
+      );
+
+      const result = await client.getDownload('abc123');
+      expect(result!.savePath).toBe('/downloads');
+      expect(result!.name).toBe('My Torrent');
+    });
+
+    it('handles single-file torrent content_path', async () => {
+      server.use(
+        http.get(`${BASE_URL}/api/v2/torrents/info`, () => {
+          return HttpResponse.json([{
+            ...mockTorrent,
+            name: 'book.m4b',
+            save_path: '/downloads',
+            content_path: '/downloads/book.m4b',
+          }]);
+        }),
+      );
+
+      const result = await client.getDownload('abc123');
+      expect(result!.savePath).toBe('/downloads');
+      expect(result!.name).toBe('book.m4b');
+    });
+
+    it('handles nested subdirectory content_path', async () => {
+      server.use(
+        http.get(`${BASE_URL}/api/v2/torrents/info`, () => {
+          return HttpResponse.json([{
+            ...mockTorrent,
+            name: 'Author - Title',
+            save_path: '/downloads',
+            content_path: '/downloads/category/Author - Title',
+          }]);
+        }),
+      );
+
+      const result = await client.getDownload('abc123');
+      expect(result!.savePath).toBe('/downloads/category');
+      expect(result!.name).toBe('Author - Title');
+    });
+
+    it('handles content_path with trailing slash without producing empty name', async () => {
+      server.use(
+        http.get(`${BASE_URL}/api/v2/torrents/info`, () => {
+          return HttpResponse.json([{
+            ...mockTorrent,
+            name: 'folder',
+            save_path: '/downloads',
+            content_path: '/downloads/folder/',
+          }]);
+        }),
+      );
+
+      const result = await client.getDownload('abc123');
+      expect(result!.savePath).toBe('/downloads');
+      expect(result!.name).toBe('folder');
+    });
+
+    it('content_path matching join(save_path, name) produces same result as fallback', async () => {
+      server.use(
+        http.get(`${BASE_URL}/api/v2/torrents/info`, () => {
+          return HttpResponse.json([{
+            ...mockTorrent,
+            name: 'Test Torrent',
+            save_path: '/downloads',
+            content_path: '/downloads/Test Torrent',
+          }]);
+        }),
+      );
+
+      const result = await client.getDownload('abc123');
+      expect(result!.savePath).toBe('/downloads');
+      expect(result!.name).toBe('Test Torrent');
+    });
+
+    it('getAllDownloads — mixed batch with some items having content_path and some without', async () => {
+      server.use(
+        http.get(`${BASE_URL}/api/v2/torrents/info`, () => {
+          return HttpResponse.json([
+            {
+              ...mockTorrent,
+              hash: 'aaa',
+              name: 'Wrong Name',
+              save_path: '/downloads',
+              content_path: '/downloads/Correct Name',
+            },
+            {
+              ...mockTorrent,
+              hash: 'bbb',
+              name: 'Fallback Name',
+              save_path: '/other',
+              // no content_path
+            },
+          ]);
+        }),
+      );
+
+      const results = await client.getAllDownloads();
+      expect(results).toHaveLength(2);
+      expect(results[0].name).toBe('Correct Name');
+      expect(results[0].savePath).toBe('/downloads');
+      expect(results[1].name).toBe('Fallback Name');
+      expect(results[1].savePath).toBe('/other');
+    });
+  });
+
   describe('edge cases — boundary values and malformed data', () => {
     it('handles invalid base32 characters in hash (skips them)', async () => {
       server.use(
