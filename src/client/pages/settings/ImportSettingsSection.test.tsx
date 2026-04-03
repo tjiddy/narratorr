@@ -80,7 +80,7 @@ describe('ImportSettingsSection', () => {
     renderWithProviders(<ImportSettingsSection />);
 
     await waitFor(() => {
-      expect(screen.getByText(/Set to 0 to disable/)).toBeInTheDocument();
+      expect(screen.getByText(/Block imports when free disk space/)).toBeInTheDocument();
     });
   });
 
@@ -234,7 +234,7 @@ describe('ImportSettingsSection', () => {
   });
 
   describe('field order', () => {
-    it('renders fields in order: Delete After Import → Minimum Seed Time → Redownload Failed → Minimum Free Space', async () => {
+    it('renders fields in order: Delete After Import → Minimum Seed Time → Minimum Seed Ratio → Redownload Failed → Minimum Free Space', async () => {
       renderWithProviders(<ImportSettingsSection />);
 
       await waitFor(() => {
@@ -248,12 +248,14 @@ describe('ImportSettingsSection', () => {
 
       const deleteIdx = labels.indexOf('deleteAfterImport');
       const seedIdx = labels.indexOf('minSeedTime');
+      const ratioIdx = labels.indexOf('minSeedRatio');
       const redownloadIdx = labels.indexOf('redownloadFailed');
       const freeSpaceIdx = labels.indexOf('minFreeSpaceGB');
 
       expect(deleteIdx).toBeGreaterThanOrEqual(0);
       expect(seedIdx).toBeGreaterThan(deleteIdx);
-      expect(redownloadIdx).toBeGreaterThan(seedIdx);
+      expect(ratioIdx).toBeGreaterThan(seedIdx);
+      expect(redownloadIdx).toBeGreaterThan(ratioIdx);
       expect(freeSpaceIdx).toBeGreaterThan(redownloadIdx);
     });
   });
@@ -408,18 +410,110 @@ describe('ImportSettingsSection', () => {
 
   // #318 — Minimum Seed Ratio field
   describe('seed ratio field rendering', () => {
-    it.todo('renders Minimum Seed Ratio field below Minimum Seed Time');
-    it.todo('renders label, placeholder, and helper text correctly');
-    it.todo('accepts fractional input (step="0.1")');
-    it.todo('rejects negative value');
-    it.todo('sends minSeedRatio in save payload with correct numeric value');
+    it('renders Minimum Seed Ratio field below Minimum Seed Time', async () => {
+      renderWithProviders(<ImportSettingsSection />);
+
+      await waitFor(() => {
+        expect(screen.getByLabelText('Minimum Seed Ratio')).toBeInTheDocument();
+      });
+
+      const allLabels = screen.getAllByText(/Minimum Seed/);
+      const seedTimeIdx = allLabels.findIndex(el => el.textContent?.includes('Time'));
+      const seedRatioIdx = allLabels.findIndex(el => el.textContent === 'Minimum Seed Ratio');
+      expect(seedRatioIdx).toBeGreaterThan(seedTimeIdx);
+    });
+
+    it('renders helper text', async () => {
+      renderWithProviders(<ImportSettingsSection />);
+
+      await waitFor(() => {
+        expect(screen.getByText(/Minimum upload ratio before removing/)).toBeInTheDocument();
+      });
+    });
+
+    it('sends minSeedRatio in save payload with correct numeric value', async () => {
+      const enabledSettings = createMockSettings({
+        import: { deleteAfterImport: true, minSeedTime: 60, minSeedRatio: 0, minFreeSpaceGB: 5, redownloadFailed: true },
+      });
+      mockApi.getSettings.mockResolvedValue(enabledSettings);
+      mockApi.updateSettings.mockResolvedValue(enabledSettings);
+      const user = userEvent.setup();
+      renderWithProviders(<ImportSettingsSection />);
+
+      await waitFor(() => {
+        expect(screen.getByLabelText('Minimum Seed Ratio')).toHaveValue(0);
+      });
+
+      const input = screen.getByLabelText('Minimum Seed Ratio');
+      await user.tripleClick(input);
+      await user.keyboard('1.5');
+      await user.click(screen.getByRole('button', { name: /save/i }));
+
+      await waitFor(() => {
+        expect(mockApi.updateSettings).toHaveBeenCalledWith({
+          import: expect.objectContaining({ minSeedRatio: 1.5 }),
+        });
+      });
+    });
   });
 
   describe('seed ratio disabled state', () => {
-    it.todo('seed ratio input is disabled when deleteAfterImport is off (default)');
-    it.todo('seed ratio input is enabled when deleteAfterImport is on');
-    it.todo('toggling delete off disables both seed time and seed ratio fields');
-    it.todo('toggling delete on enables both seed time and seed ratio fields');
-    it.todo('edited minSeedRatio value preserved in save payload when field is disabled');
+    it('seed ratio input is disabled when deleteAfterImport is off (default)', async () => {
+      renderWithProviders(<ImportSettingsSection />);
+
+      await waitFor(() => {
+        expect(screen.getByLabelText('Minimum Seed Ratio')).toBeInTheDocument();
+      });
+
+      expect(screen.getByLabelText('Minimum Seed Ratio')).toBeDisabled();
+    });
+
+    it('seed ratio input is enabled when deleteAfterImport is on', async () => {
+      const enabledSettings = createMockSettings({
+        import: { deleteAfterImport: true, minSeedTime: 60, minSeedRatio: 0, minFreeSpaceGB: 5, redownloadFailed: true },
+      });
+      mockApi.getSettings.mockResolvedValue(enabledSettings);
+      renderWithProviders(<ImportSettingsSection />);
+
+      await waitFor(() => {
+        expect(screen.getByLabelText('Minimum Seed Ratio')).not.toBeDisabled();
+      });
+    });
+
+    it('toggling delete off disables both seed time and seed ratio fields', async () => {
+      const enabledSettings = createMockSettings({
+        import: { deleteAfterImport: true, minSeedTime: 60, minSeedRatio: 0, minFreeSpaceGB: 5, redownloadFailed: true },
+      });
+      mockApi.getSettings.mockResolvedValue(enabledSettings);
+      const user = userEvent.setup();
+      renderWithProviders(<ImportSettingsSection />);
+
+      await waitFor(() => {
+        expect(screen.getByLabelText('Minimum Seed Ratio')).not.toBeDisabled();
+      });
+
+      await user.click(screen.getByLabelText('Delete After Import'));
+
+      await waitFor(() => {
+        expect(screen.getByLabelText('Minimum Seed Ratio')).toBeDisabled();
+        expect(screen.getByLabelText('Minimum Seed Time (minutes)')).toBeDisabled();
+      });
+    });
+
+    it('toggling delete on enables both seed time and seed ratio fields', async () => {
+      const user = userEvent.setup();
+      renderWithProviders(<ImportSettingsSection />);
+
+      await waitFor(() => {
+        expect(screen.getByLabelText('Minimum Seed Ratio')).toBeDisabled();
+      });
+
+      await user.click(screen.getByLabelText('Delete After Import'));
+
+      await waitFor(() => {
+        expect(screen.getByLabelText('Minimum Seed Ratio')).not.toBeDisabled();
+        expect(screen.getByLabelText('Minimum Seed Time (minutes)')).not.toBeDisabled();
+      });
+    });
   });
 });
