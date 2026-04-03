@@ -408,9 +408,13 @@ describe('IndexerFields', () => {
       });
     });
 
-    it('blocking overlay shows during detection and disappears after completion', async () => {
-      let resolveApi: (v: unknown) => void;
-      (api.testIndexerConfig as Mock).mockReturnValue(new Promise((r) => { resolveApi = r; }));
+    it('blocking overlay remains visible for minimum 1 second after fast API response', async () => {
+      // API resolves immediately (fast response)
+      (api.testIndexerConfig as Mock).mockResolvedValue({
+        success: true,
+        metadata: { username: 'OverlayUser', classname: 'Mouse', isVip: false },
+      });
+
       const user = userEvent.setup();
       renderWithProviders(<MamDetectionWrapper />);
 
@@ -418,18 +422,19 @@ describe('IndexerFields', () => {
       await user.type(mamIdInput, 'test-id');
       await user.tab();
 
-      // Overlay should be visible while detecting
+      // Overlay appears — API resolved instantly but ensureMinDuration enforces 1 second
       await waitFor(() => {
         expect(screen.getByText('Checking MAM status…')).toBeInTheDocument();
       });
 
-      // Resolve the API call — overlay will remain until ensureMinDuration completes
-      resolveApi!({ success: true, metadata: { username: 'OverlayUser', classname: 'Mouse', isVip: false } });
+      // Wait 200ms (real time) — overlay MUST still be visible (minimum 1 second not elapsed)
+      await new Promise((r) => setTimeout(r, 200));
+      expect(screen.getByText('Checking MAM status…')).toBeInTheDocument();
 
-      // Eventually overlay disappears and badge appears
+      // Wait for overlay to disappear after the 1 second minimum
       await waitFor(() => {
         expect(screen.queryByText('Checking MAM status…')).not.toBeInTheDocument();
-      }, { timeout: 3000 });
+      }, { timeout: 2000 });
       expect(screen.getByText('OverlayUser')).toBeInTheDocument();
     });
 
