@@ -1,5 +1,34 @@
 # Workflow Log
 
+## #312 Fix #309 follow-up — invalidation spam and missing page-level test — 2026-04-03
+**Skill path:** /implement → /claim → /plan → /handoff
+**Outcome:** success — PR #314
+
+### Metrics
+- Files changed: 3 | Tests added/modified: 7 (5 hook-level + 2 page-level)
+- Quality gate runs: 2 (fail on attempt 1 — ESLint complexity, pass on attempt 2)
+- Fix iterations: 1 (extracted `invalidateFromRule` to reduce `handleEvent` complexity)
+- Context compactions: 0
+
+### Workflow experience
+- What went smoothly: Clean TDD cycle — red phase confirmed the counts-only test failed before the fix, all other tests passed after. Production fix was minimal (filter + flag).
+- Friction / issues encountered: ESLint complexity limit hit after adding the `hasPageQueries` branch — needed to extract `invalidateFromRule`. Also `require()` doesn't work for path-aliased imports in Vite/ESM test context — had to use top-level `import` for `SSEProvider` in page tests.
+
+### Token efficiency
+- Highest-token actions: Explore subagent for codebase validation (comprehensive but necessary for spec review alignment)
+- Avoidable waste: None significant — small focused change
+- Suggestions: For follow-up bugs on recent PRs, the elaborate/spec-review cycle is heavy relative to the fix size
+
+### Infrastructure gaps
+- Repeated workarounds: None
+- Missing tooling / config: None
+- Unresolved debt: None introduced
+
+### Wish I'd Known
+1. `findAll` uses prefix matching and returns ALL queries with that prefix — including counts queries with incompatible shapes. This caused the original bug and required shape-based filtering.
+2. ESM/Vite test environment doesn't support `require()` with path aliases (`@/`) — must use top-level `import` for test dependencies like `SSEProvider`.
+3. `handleEvent` was already at ESLint complexity 15 before #310's patch — any new branch would require extracting helpers first. See `tanstack-findall-prefix-match-filtering.md`.
+
 ## #309 Activity page shows stale empty state after new download grab — 2026-04-03
 **Skill path:** /implement → /claim → /plan → /handoff
 **Outcome:** success — PR #310
