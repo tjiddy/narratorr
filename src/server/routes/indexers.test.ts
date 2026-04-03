@@ -185,6 +185,30 @@ describe('indexers routes', () => {
       expect(body.ip).toBe('203.0.113.42');
     });
 
+    it('#317 passes through metadata in testConfig response', async () => {
+      (services.indexer.testConfig as Mock).mockResolvedValue({
+        success: true,
+        message: 'Connected as VipUser',
+        metadata: { username: 'VipUser', classname: 'VIP', isVip: true },
+      });
+
+      const res = await app.inject({
+        method: 'POST',
+        url: '/api/indexers/test',
+        payload: {
+          name: 'MAM',
+          type: 'myanonamouse',
+          enabled: true,
+          priority: 50,
+          settings: { mamId: 'test-id' },
+        },
+      });
+
+      expect(res.statusCode).toBe(200);
+      const body = JSON.parse(res.payload);
+      expect(body.metadata).toEqual({ username: 'VipUser', classname: 'VIP', isVip: true });
+    });
+
     it('returns 400 for invalid body', async () => {
       const res = await app.inject({
         method: 'POST',
@@ -219,6 +243,20 @@ describe('indexers routes', () => {
       const body = JSON.parse(res.payload);
       expect(body.success).toBe(true);
       expect(body.ip).toBe('203.0.113.42');
+    });
+
+    it('#317 passes through metadata in test-by-ID response', async () => {
+      (services.indexer.test as Mock).mockResolvedValue({
+        success: true,
+        message: 'Connected as VipUser',
+        metadata: { username: 'VipUser', classname: 'VIP', isVip: true },
+      });
+
+      const res = await app.inject({ method: 'POST', url: '/api/indexers/1/test' });
+
+      expect(res.statusCode).toBe(200);
+      const body = JSON.parse(res.payload);
+      expect(body.metadata).toEqual({ username: 'VipUser', classname: 'VIP', isVip: true });
     });
   });
 
