@@ -1,5 +1,34 @@
 # Workflow Log
 
+## #313 Add direct restore button for server-side backups — 2026-04-03
+**Skill path:** /implement → /claim → /plan → /handoff
+**Outcome:** success — PR #316
+
+### Metrics
+- Files changed: 9 | Tests added/modified: 21
+- Quality gate runs: 2 (pass on attempt 1 both times)
+- Fix iterations: 1 (extractDbFromZip cleanup ownership — temp dir leaked on non-zip input after refactor)
+- Context compactions: 0
+
+### Workflow experience
+- What went smoothly: Clean extraction of shared pipeline from processRestoreUpload — the DRY refactor preserved all existing test behavior. Spec review cycle resolved the validation contract ambiguity upfront, preventing implementation guesswork.
+- Friction / issues encountered: Test stubs were initially placed at the wrong describe scope in system.test.ts (standalone block without app/services access). Route test file has two top-level describes with different app configurations — stubs must target the correct parent.
+
+### Token efficiency
+- Highest-token actions: Explore subagents for plan and self-review
+- Avoidable waste: None significant — the spec review cycle caught contract issues before implementation
+- Suggestions: Route test stub placement could be automated by reading the test file structure during /plan
+
+### Infrastructure gaps
+- Repeated workarounds: None
+- Missing tooling / config: frontend-design skill not available — UI polish pass skipped
+- Unresolved debt: None introduced
+
+### Wish I'd Known
+1. When extracting shared logic from a method with try/catch cleanup, the new helper must own its own cleanup — the parent's catch no longer has access to the helper's local state (temp directories).
+2. Route test stubs must go inside the correct top-level describe that has app/services in scope — system.test.ts has two such blocks with different Fastify configurations.
+3. The spec's validation contract (throw on valid:false vs return 200) was the critical design decision — resolving it during spec review saved significant implementation time.
+
 ## #312 Fix #309 follow-up — invalidation spam and missing page-level test — 2026-04-03
 **Skill path:** /implement → /claim → /plan → /handoff
 **Outcome:** success — PR #314

@@ -45,5 +45,8 @@ export const backupsApi = {
     return response.json();
   },
 
+  restoreBackupDirect: (filename: string) =>
+    fetchApi<RestoreValidation>(`/system/backups/${encodeURIComponent(filename)}/restore`, { method: 'POST' }),
+
   confirmRestore: () => fetchApi<{ message: string }>('/system/restore/confirm', { method: 'POST' }),
 };

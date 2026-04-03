@@ -120,6 +120,30 @@ export async function systemRoutes(app: FastifyInstance, services: Services, db:
       .send(stream);
   });
 
+  // POST /api/system/backups/:filename/restore — validate and stage a server-side backup for restore
+  app.post<{ Params: { filename: string } }>('/api/system/backups/:filename/restore', async (request, reply) => {
+    const filePath = services.backup.getBackupPath(request.params.filename);
+    if (!filePath) {
+      return reply.status(400).send({ error: 'Invalid backup filename' });
+    }
+
+    try {
+      await fsp.access(filePath);
+    } catch {
+      return reply.status(404).send({ error: 'Backup not found' });
+    }
+
+    try {
+      return await services.backup.restoreServerBackup(request.params.filename);
+    } catch (error: unknown) {
+      if (error instanceof RestoreUploadError) {
+        return reply.status(400).send({ error: error.message });
+      }
+      request.log.error(error, 'Restore from backup failed');
+      return reply.status(500).send({ error: 'Failed to restore from backup' });
+    }
+  });
+
   // POST /api/system/restore — upload and validate a restore file
   app.post('/api/system/restore', async (request, reply) => {
     const data = await request.file();

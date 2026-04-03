@@ -437,6 +437,161 @@ describe('system routes', () => {
     });
   });
 
+  describe('POST /api/system/backups/:filename/restore', () => {
+    it('returns 200 with RestoreValidation for valid backup filename', async () => {
+      const tmpDir = await fsp.mkdtemp(path.join(os.tmpdir(), 'narratorr-route-test-'));
+      const tmpFile = path.join(tmpDir, 'test.zip');
+      await fsp.writeFile(tmpFile, 'fake');
+      (services.backup.getBackupPath as Mock).mockReturnValue(tmpFile);
+      (services.backup.restoreServerBackup as Mock).mockResolvedValue({
+        valid: true,
+        backupMigrationCount: 2,
+        appMigrationCount: 3,
+      });
+
+      const res = await app.inject({
+        method: 'POST',
+        url: '/api/system/backups/narratorr-backup-test.zip/restore',
+      });
+
+      expect(res.statusCode).toBe(200);
+      const body = JSON.parse(res.payload);
+      expect(body).toEqual({ valid: true, backupMigrationCount: 2, appMigrationCount: 3 });
+      expect(services.backup.restoreServerBackup as Mock).toHaveBeenCalledWith('narratorr-backup-test.zip');
+
+      await fsp.rm(tmpDir, { recursive: true }).catch(() => {});
+    });
+
+    it('rejects path-traversal attempts with 400 (encoded separators via getBackupPath)', async () => {
+      (services.backup.getBackupPath as Mock).mockReturnValue(null);
+
+      const res = await app.inject({
+        method: 'POST',
+        url: '/api/system/backups/..%2F..%2Fetc%2Fpasswd/restore',
+      });
+
+      expect(res.statusCode).toBe(400);
+      expect(JSON.parse(res.payload).error).toBe('Invalid backup filename');
+    });
+
+    it('rejects malformed filename with wrong extension (backup.tar.gz) with 400', async () => {
+      (services.backup.getBackupPath as Mock).mockReturnValue(null);
+
+      const res = await app.inject({
+        method: 'POST',
+        url: '/api/system/backups/backup.tar.gz/restore',
+      });
+
+      expect(res.statusCode).toBe(400);
+      expect(JSON.parse(res.payload).error).toBe('Invalid backup filename');
+    });
+
+    it('rejects malformed filename with encoded separator (path%5Cfile.zip) with 400', async () => {
+      (services.backup.getBackupPath as Mock).mockReturnValue(null);
+
+      const res = await app.inject({
+        method: 'POST',
+        url: '/api/system/backups/path%5Cfile.zip/restore',
+      });
+
+      expect(res.statusCode).toBe(400);
+      expect(JSON.parse(res.payload).error).toBe('Invalid backup filename');
+    });
+
+    it('returns 404 when backup file does not exist on disk', async () => {
+      (services.backup.getBackupPath as Mock).mockReturnValue('/nonexistent/path/backup.zip');
+
+      const res = await app.inject({
+        method: 'POST',
+        url: '/api/system/backups/narratorr-backup-test.zip/restore',
+      });
+
+      expect(res.statusCode).toBe(404);
+      expect(JSON.parse(res.payload).error).toBe('Backup not found');
+    });
+
+    it('returns 400 when restoreServerBackup throws RestoreUploadError (MISSING_DB)', async () => {
+      const { RestoreUploadError } = await import('../services/backup.service.js');
+      const tmpDir = await fsp.mkdtemp(path.join(os.tmpdir(), 'narratorr-route-test-'));
+      const tmpFile = path.join(tmpDir, 'test.zip');
+      await fsp.writeFile(tmpFile, 'fake');
+      (services.backup.getBackupPath as Mock).mockReturnValue(tmpFile);
+      (services.backup.restoreServerBackup as Mock).mockRejectedValue(
+        new RestoreUploadError('Zip does not contain narratorr.db', 'MISSING_DB'),
+      );
+
+      const res = await app.inject({
+        method: 'POST',
+        url: '/api/system/backups/narratorr-backup-test.zip/restore',
+      });
+
+      expect(res.statusCode).toBe(400);
+      expect(JSON.parse(res.payload).error).toBe('Zip does not contain narratorr.db');
+
+      await fsp.rm(tmpDir, { recursive: true }).catch(() => {});
+    });
+
+    it('returns 400 when restoreServerBackup throws RestoreUploadError (INVALID_DB — newer version)', async () => {
+      const { RestoreUploadError } = await import('../services/backup.service.js');
+      const tmpDir = await fsp.mkdtemp(path.join(os.tmpdir(), 'narratorr-route-test-'));
+      const tmpFile = path.join(tmpDir, 'test.zip');
+      await fsp.writeFile(tmpFile, 'fake');
+      (services.backup.getBackupPath as Mock).mockReturnValue(tmpFile);
+      (services.backup.restoreServerBackup as Mock).mockRejectedValue(
+        new RestoreUploadError('Backup is from a newer version', 'INVALID_DB'),
+      );
+
+      const res = await app.inject({
+        method: 'POST',
+        url: '/api/system/backups/narratorr-backup-test.zip/restore',
+      });
+
+      expect(res.statusCode).toBe(400);
+      expect(JSON.parse(res.payload).error).toBe('Backup is from a newer version');
+
+      await fsp.rm(tmpDir, { recursive: true }).catch(() => {});
+    });
+
+    it('returns 500 for unexpected errors from restoreServerBackup', async () => {
+      const tmpDir = await fsp.mkdtemp(path.join(os.tmpdir(), 'narratorr-route-test-'));
+      const tmpFile = path.join(tmpDir, 'test.zip');
+      await fsp.writeFile(tmpFile, 'fake');
+      (services.backup.getBackupPath as Mock).mockReturnValue(tmpFile);
+      (services.backup.restoreServerBackup as Mock).mockRejectedValue(new Error('disk full'));
+
+      const res = await app.inject({
+        method: 'POST',
+        url: '/api/system/backups/narratorr-backup-test.zip/restore',
+      });
+
+      expect(res.statusCode).toBe(500);
+      expect(JSON.parse(res.payload).error).toBe('Failed to restore from backup');
+
+      await fsp.rm(tmpDir, { recursive: true }).catch(() => {});
+    });
+
+    it('returns 400 when restoreServerBackup throws RestoreUploadError (INVALID_ZIP — corrupt file)', async () => {
+      const { RestoreUploadError } = await import('../services/backup.service.js');
+      const tmpDir = await fsp.mkdtemp(path.join(os.tmpdir(), 'narratorr-route-test-'));
+      const tmpFile = path.join(tmpDir, 'test.zip');
+      await fsp.writeFile(tmpFile, 'fake');
+      (services.backup.getBackupPath as Mock).mockReturnValue(tmpFile);
+      (services.backup.restoreServerBackup as Mock).mockRejectedValue(
+        new RestoreUploadError('File is not a valid zip archive', 'INVALID_ZIP'),
+      );
+
+      const res = await app.inject({
+        method: 'POST',
+        url: '/api/system/backups/narratorr-backup-test.zip/restore',
+      });
+
+      expect(res.statusCode).toBe(400);
+      expect(JSON.parse(res.payload).error).toBe('File is not a valid zip archive');
+
+      await fsp.rm(tmpDir, { recursive: true }).catch(() => {});
+    });
+  });
+
   describe('POST /api/system/restore/confirm', () => {
     it('returns 400 if no validated restore pending', async () => {
       (services.backup.confirmRestore as Mock).mockRejectedValue(new Error('No pending restore'));

@@ -4,15 +4,17 @@ import {
   LoadingSpinner,
   HardDriveIcon,
   DownloadIcon,
+  HistoryIcon,
 } from '@/components/icons';
 
 interface BackupTableProps {
   backups: BackupMetadata[] | undefined;
   isLoading: boolean;
   onDownload: (backup: BackupMetadata) => void;
+  onRestore: (backup: BackupMetadata) => void;
 }
 
-export function BackupTable({ backups, isLoading, onDownload }: BackupTableProps) {
+export function BackupTable({ backups, isLoading, onDownload, onRestore }: BackupTableProps) {
   if (isLoading) {
     return (
       <div className="flex items-center justify-center py-16">
@@ -62,14 +64,24 @@ export function BackupTable({ backups, isLoading, onDownload }: BackupTableProps
                 {formatBytes(backup.size)}
               </td>
               <td className="px-3 py-3.5 text-right">
-                <button
-                  type="button"
-                  onClick={() => onDownload(backup)}
-                  className="p-2 text-muted-foreground hover:text-primary transition-colors rounded-lg hover:bg-primary/10 focus-ring"
-                  title="Download backup"
-                >
-                  <DownloadIcon className="w-4 h-4" />
-                </button>
+                <div className="flex items-center justify-end gap-1">
+                  <button
+                    type="button"
+                    onClick={() => onRestore(backup)}
+                    className="p-2 text-muted-foreground hover:text-primary transition-colors rounded-lg hover:bg-primary/10 focus-ring"
+                    title="Restore backup"
+                  >
+                    <HistoryIcon className="w-4 h-4" />
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => onDownload(backup)}
+                    className="p-2 text-muted-foreground hover:text-primary transition-colors rounded-lg hover:bg-primary/10 focus-ring"
+                    title="Download backup"
+                  >
+                    <DownloadIcon className="w-4 h-4" />
+                  </button>
+                </div>
               </td>
             </tr>
           ))}

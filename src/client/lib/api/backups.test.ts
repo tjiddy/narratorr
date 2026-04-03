@@ -34,6 +34,34 @@ describe('backupsApi', () => {
     });
   });
 
+  describe('restoreBackupDirect', () => {
+    it('calls fetchApi with encoded filename and POST method', async () => {
+      const { fetchApi } = await import('./client.js');
+      const mockFetchApi = vi.mocked(fetchApi);
+      mockFetchApi.mockResolvedValue({ valid: true, backupMigrationCount: 2, appMigrationCount: 3 });
+
+      await backupsApi.restoreBackupDirect('file with spaces.zip');
+
+      expect(mockFetchApi).toHaveBeenCalledWith(
+        '/system/backups/file%20with%20spaces.zip/restore',
+        { method: 'POST' },
+      );
+    });
+
+    it('encodes special characters in filename', async () => {
+      const { fetchApi } = await import('./client.js');
+      const mockFetchApi = vi.mocked(fetchApi);
+      mockFetchApi.mockResolvedValue({ valid: true, backupMigrationCount: 1, appMigrationCount: 1 });
+
+      await backupsApi.restoreBackupDirect('backup#1?v=2.zip');
+
+      expect(mockFetchApi).toHaveBeenCalledWith(
+        '/system/backups/backup%231%3Fv%3D2.zip/restore',
+        { method: 'POST' },
+      );
+    });
+  });
+
   describe('uploadRestore', () => {
     let mockFetch: ReturnType<typeof vi.fn>;
 
