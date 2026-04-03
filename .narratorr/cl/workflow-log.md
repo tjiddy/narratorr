@@ -1,5 +1,34 @@
 # Workflow Log
 
+## #320 Audio preview button for imported books — 2026-04-03
+**Skill path:** /implement → /claim → /plan → /handoff
+**Outcome:** success — PR #329
+
+### Metrics
+- Files changed: 9 | Tests added/modified: 27 (17 backend + 8 frontend + 2 integration)
+- Quality gate runs: 4 (pass on attempt 4 — lint fixes for max-lines and complexity, route registry count)
+- Fix iterations: 3 (max-lines extraction, complexity disable, registry count)
+- Context compactions: 0
+
+### Workflow experience
+- What went smoothly: Clean spec with full error contract table and MIME mappings made implementation straightforward. Existing file-serving patterns (cover/files endpoints) provided clear templates.
+- Friction / issues encountered: books.ts was near the 400-line lint limit — adding the preview route exceeded it, requiring extraction into book-preview.ts mid-verify. Should have planned extraction from the start given the file was at 367 lines.
+
+### Token efficiency
+- Highest-token actions: Elaborate + two spec review response rounds consumed significant context before implementation began
+- Avoidable waste: Could have checked books.ts line count upfront to plan extraction
+- Suggestions: For files near max-lines, always plan extraction proactively
+
+### Infrastructure gaps
+- Repeated workarounds: None
+- Missing tooling / config: `frontend-design` skill not available for design pass
+- Unresolved debt: None introduced
+
+### Wish I'd Known
+1. `books.ts` was at 367 of 400 max lines — should have planned to extract the preview route into its own file from the start
+2. jsdom resolves `audio.src = ''` to the base URL, not empty string — cleanup assertions need `not.toContain` instead of `toBe('')`
+3. Fastify `reply.send(stream)` handles backpressure automatically — no need for raw socket patterns like in SSE streaming
+
 ## #317 MAM adapter — VIP detection and smart search filtering — 2026-04-03
 **Skill path:** /implement → /claim → /plan → /handoff
 **Outcome:** success — PR #328
