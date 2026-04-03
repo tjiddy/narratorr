@@ -577,7 +577,9 @@ describe('LibraryPage', () => {
     }, { timeout: 2000 });
 
     const addBookLink = screen.getByText('Add Book').closest('a');
-    expect(addBookLink).toHaveAttribute('href', expect.stringContaining('/search?q='));
+    const href = addBookLink?.getAttribute('href') ?? '';
+    const params = new URLSearchParams(href.split('?')[1]);
+    expect(params.get('q')).toBe('nonexistent book title xyz');
   });
 
   it('renders search input', async () => {
