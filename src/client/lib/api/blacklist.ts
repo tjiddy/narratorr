@@ -6,7 +6,7 @@ export interface BlacklistEntry {
   infoHash?: string | null;
   guid?: string | null;
   title: string;
-  reason: 'wrong_content' | 'bad_quality' | 'wrong_narrator' | 'spam' | 'other' | 'download_failed' | 'infrastructure_error';
+  reason: 'wrong_content' | 'bad_quality' | 'wrong_narrator' | 'spam' | 'other' | 'download_failed' | 'infrastructure_error' | 'user_cancelled';
   note?: string;
   blacklistType: 'temporary' | 'permanent';
   expiresAt?: string | null;

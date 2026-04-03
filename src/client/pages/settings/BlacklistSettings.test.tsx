@@ -177,6 +177,28 @@ describe('BlacklistSettings', () => {
       expect(screen.getByText('Infrastructure Error')).toBeInTheDocument();
     });
 
+    // #315 — user_cancelled reason label
+    it('shows "User Cancelled" label for entries with user_cancelled reason', async () => {
+      const entries = [
+        {
+          id: 10,
+          infoHash: 'cancelled-hash-123',
+          title: 'User Cancelled Release',
+          reason: 'user_cancelled' as const,
+          blacklistType: 'permanent' as const,
+          expiresAt: null,
+          blacklistedAt: '2024-07-01T12:00:00Z',
+        },
+      ];
+      vi.mocked(api.getBlacklist).mockResolvedValue({ data: entries, total: entries.length });
+
+      renderWithProviders(<BlacklistSettings />);
+
+      await waitFor(() => {
+        expect(screen.getByText('User Cancelled')).toBeInTheDocument();
+      });
+    });
+
     it('shows "Permanent" in expiry column for permanent entries', async () => {
       vi.mocked(api.getBlacklist).mockResolvedValue({ data: mockEntries, total: mockEntries.length });
 

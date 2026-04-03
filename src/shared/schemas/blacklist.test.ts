@@ -77,6 +77,13 @@ describe('createBlacklistSchema — trim behavior', () => {
     expect(result.success).toBe(false);
   });
 
+  // #315 — user_cancelled reason
+  it('accepts user_cancelled as a valid blacklist reason', () => {
+    const result = createBlacklistSchema.safeParse({ ...validBase, reason: 'user_cancelled' });
+    expect(result.success).toBe(true);
+    if (result.success) expect(result.data.reason).toBe('user_cancelled');
+  });
+
   it('rejects empty string guid', () => {
     const { infoHash: _, ...base } = validBase;
     const result = createBlacklistSchema.safeParse({ ...base, guid: '' });

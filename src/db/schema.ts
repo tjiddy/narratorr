@@ -280,7 +280,7 @@ export const blacklist = sqliteTable('blacklist', {
   infoHash: text('info_hash'),
   guid: text('guid'),
   title: text('title').notNull(),
-  reason: text('reason', { enum: ['wrong_content', 'bad_quality', 'wrong_narrator', 'spam', 'other', 'download_failed', 'infrastructure_error'] }).notNull().default('other'),
+  reason: text('reason', { enum: ['wrong_content', 'bad_quality', 'wrong_narrator', 'spam', 'other', 'download_failed', 'infrastructure_error', 'user_cancelled'] }).notNull().default('other'),
   note: text('note'),
   blacklistType: text('blacklist_type', { enum: ['temporary', 'permanent'] }).notNull().default('permanent'),
   expiresAt: integer('expires_at', { mode: 'timestamp' }),
