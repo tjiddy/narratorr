@@ -132,11 +132,94 @@ interface MamStatus {
   isVip: boolean;
 }
 
-function MamFields({ register, errors, watch, setValue }: Pick<IndexerFieldsProps, 'register' | 'errors' | 'watch' | 'setValue'>) {
-  const searchLanguages = watch ? (watch('settings.searchLanguages') ?? [1]) : [1];
+function useMamDetection(watch?: UseFormWatch<CreateIndexerFormData>, setValue?: UseFormSetValue<CreateIndexerFormData>) {
   const [mamStatus, setMamStatus] = useState<MamStatus | null>(null);
   const [detectError, setDetectError] = useState<string | null>(null);
   const [isDetecting, setIsDetecting] = useState(false);
+
+  const detect = useCallback(async (mamId: string) => {
+    if (!mamId.trim()) return;
+    setIsDetecting(true);
+    setDetectError(null);
+    const startTime = Date.now();
+
+    async function ensureMinDuration() {
+      const elapsed = Date.now() - startTime;
+      if (elapsed < 1000) await new Promise((r) => setTimeout(r, 1000 - elapsed));
+    }
+
+    try {
+      const baseUrl = watch ? (watch('settings.baseUrl') || '') : '';
+      const result = await api.testIndexerConfig({
+        name: 'Detection', type: 'myanonamouse', enabled: true, priority: 0,
+        settings: { mamId, baseUrl },
+      });
+      await ensureMinDuration();
+
+      if (result.success && result.metadata) {
+        const status: MamStatus = {
+          username: result.metadata.username as string,
+          classname: result.metadata.classname as string | undefined,
+          isVip: result.metadata.isVip as boolean,
+        };
+        setMamStatus(status);
+        if (setValue) setValue('settings.isVip', status.isVip);
+      } else {
+        setDetectError(result.message || 'Detection failed');
+        setMamStatus(null);
+      }
+    } catch {
+      await ensureMinDuration();
+      setDetectError('Connection failed');
+      setMamStatus(null);
+    }
+    setIsDetecting(false);
+  }, [watch, setValue]);
+
+  return { mamStatus, detectError, isDetecting, detect };
+}
+
+function MamStatusBadge({ status, onRefresh }: { status: MamStatus; onRefresh: () => void }) {
+  return (
+    <div className="flex items-center gap-2 mt-1">
+      <span className="text-sm text-muted-foreground">
+        Connected as <span className="font-medium text-foreground">{status.username}</span>
+        {status.classname && <> — <span className={status.isVip ? 'text-amber-400 font-medium' : ''}>{status.classname}</span></>}
+      </span>
+      <button
+        type="button"
+        onClick={onRefresh}
+        className="text-muted-foreground hover:text-foreground transition-colors"
+        title="Refresh VIP status"
+      >
+        <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+          <path d="M21 12a9 9 0 0 0-9-9 9.75 9.75 0 0 0-6.74 2.74L3 8" />
+          <path d="M3 3v5h5" />
+          <path d="M3 12a9 9 0 0 0 9 9 9.75 9.75 0 0 0 6.74-2.74L21 16" />
+          <path d="M16 21h5v-5" />
+        </svg>
+      </button>
+    </div>
+  );
+}
+
+function DetectionOverlay() {
+  return (
+    <div className="sm:col-span-2 fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm">
+      <div className="bg-card border border-border rounded-2xl px-6 py-4 shadow-xl flex items-center gap-3">
+        <svg className="w-5 h-5 animate-spin text-primary" viewBox="0 0 24 24" fill="none">
+          <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+          <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
+        </svg>
+        <span className="text-sm font-medium">Checking MAM status…</span>
+      </div>
+    </div>
+  );
+}
+
+function MamFields({ register, errors, watch, setValue }: Pick<IndexerFieldsProps, 'register' | 'errors' | 'watch' | 'setValue'>) {
+  const searchLanguages = watch ? (watch('settings.searchLanguages') ?? [1]) : [1];
+  const { mamStatus, detectError, isDetecting, detect } = useMamDetection(watch, setValue);
 
   function toggleLanguage(langId: number) {
     if (!setValue) return;
@@ -146,52 +229,6 @@ function MamFields({ register, errors, watch, setValue }: Pick<IndexerFieldsProp
       : [...current, langId];
     setValue('settings.searchLanguages', updated, { shouldValidate: true });
   }
-
-  const detectVipStatus = useCallback(async (mamId: string) => {
-    if (!mamId.trim()) return;
-    setIsDetecting(true);
-    setDetectError(null);
-    const startTime = Date.now();
-    try {
-      const baseUrl = watch ? (watch('settings.baseUrl') || '') : '';
-      const result = await api.testIndexerConfig({
-        name: 'Detection',
-        type: 'myanonamouse',
-        enabled: true,
-        priority: 0,
-        settings: { mamId, baseUrl },
-      });
-
-      // Ensure minimum 1 second display
-      const elapsed = Date.now() - startTime;
-      if (elapsed < 1000) {
-        await new Promise((resolve) => setTimeout(resolve, 1000 - elapsed));
-      }
-
-      if (result.success && result.metadata) {
-        const status: MamStatus = {
-          username: result.metadata.username as string,
-          classname: result.metadata.classname as string | undefined,
-          isVip: result.metadata.isVip as boolean,
-        };
-        setMamStatus(status);
-        if (setValue) {
-          setValue('settings.isVip', status.isVip);
-        }
-      } else {
-        setDetectError(result.message || 'Detection failed');
-        setMamStatus(null);
-      }
-    } catch {
-      const elapsed = Date.now() - startTime;
-      if (elapsed < 1000) {
-        await new Promise((resolve) => setTimeout(resolve, 1000 - elapsed));
-      }
-      setDetectError('Connection failed');
-      setMamStatus(null);
-    }
-    setIsDetecting(false);
-  }, [watch, setValue]);
 
   const mamIdRegistration = register('settings.mamId');
 
@@ -205,9 +242,7 @@ function MamFields({ register, errors, watch, setValue }: Pick<IndexerFieldsProp
           {...mamIdRegistration}
           onBlur={(e) => {
             mamIdRegistration.onBlur(e);
-            if (e.target.value.trim()) {
-              detectVipStatus(e.target.value);
-            }
+            if (e.target.value.trim()) detect(e.target.value);
           }}
           className={`w-full px-4 py-3 bg-background border rounded-xl focus-ring focus:border-transparent transition-all ${
             errors.settings?.mamId ? 'border-destructive' : 'border-border'
@@ -216,28 +251,10 @@ function MamFields({ register, errors, watch, setValue }: Pick<IndexerFieldsProp
         {errors.settings?.mamId ? (
           <p className="text-sm text-destructive mt-1">{errors.settings.mamId.message}</p>
         ) : mamStatus ? (
-          <div className="flex items-center gap-2 mt-1">
-            <span className="text-sm text-muted-foreground">
-              Connected as <span className="font-medium text-foreground">{mamStatus.username}</span>
-              {mamStatus.classname && <> — <span className={mamStatus.isVip ? 'text-amber-400 font-medium' : ''}>{mamStatus.classname}</span></>}
-            </span>
-            <button
-              type="button"
-              onClick={() => {
-                const mamId = watch ? watch('settings.mamId') : '';
-                if (mamId) detectVipStatus(mamId);
-              }}
-              className="text-muted-foreground hover:text-foreground transition-colors"
-              title="Refresh VIP status"
-            >
-              <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                <path d="M21 12a9 9 0 0 0-9-9 9.75 9.75 0 0 0-6.74 2.74L3 8" />
-                <path d="M3 3v5h5" />
-                <path d="M3 12a9 9 0 0 0 9 9 9.75 9.75 0 0 0 6.74-2.74L21 16" />
-                <path d="M16 21h5v-5" />
-              </svg>
-            </button>
-          </div>
+          <MamStatusBadge status={mamStatus} onRefresh={() => {
+            const mamId = watch ? watch('settings.mamId') : '';
+            if (mamId) detect(mamId);
+          }} />
         ) : detectError ? (
           <p className="text-sm text-destructive mt-1">{detectError}</p>
         ) : (
@@ -245,18 +262,7 @@ function MamFields({ register, errors, watch, setValue }: Pick<IndexerFieldsProp
         )}
       </div>
 
-      {/* VIP detection overlay */}
-      {isDetecting && (
-        <div className="sm:col-span-2 fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm">
-          <div className="bg-card border border-border rounded-2xl px-6 py-4 shadow-xl flex items-center gap-3">
-            <svg className="w-5 h-5 animate-spin text-primary" viewBox="0 0 24 24" fill="none">
-              <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-              <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
-            </svg>
-            <span className="text-sm font-medium">Checking MAM status…</span>
-          </div>
-        </div>
-      )}
+      {isDetecting && <DetectionOverlay />}
       <div className="sm:col-span-2">
         <label htmlFor="indexerBaseUrl" className="block text-sm font-medium mb-2">
           Base URL
