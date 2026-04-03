@@ -374,5 +374,41 @@ describe('BookHero', () => {
       await user.keyboard('{Escape}');
       expect(screen.queryByRole('menu')).not.toBeInTheDocument();
     });
+
+    it('ArrowDown moves focus to next menu item', async () => {
+      const user = userEvent.setup();
+      renderHero();
+
+      await openMenu(user);
+      const items = screen.getAllByRole('menuitem');
+      // First item should be focused initially
+      expect(document.activeElement).toBe(items[0]);
+
+      await user.keyboard('{ArrowDown}');
+      expect(document.activeElement).toBe(items[1]);
+    });
+
+    it('ArrowUp wraps focus to last menu item from first', async () => {
+      const user = userEvent.setup();
+      renderHero();
+
+      await openMenu(user);
+      const items = screen.getAllByRole('menuitem');
+      expect(document.activeElement).toBe(items[0]);
+
+      await user.keyboard('{ArrowUp}');
+      expect(document.activeElement).toBe(items[items.length - 1]);
+    });
+
+    it('Enter activates the focused menu item', async () => {
+      const onEditClick = vi.fn();
+      const user = userEvent.setup();
+      renderHero({ onEditClick });
+
+      await openMenu(user);
+      // Edit is the first menu item — press Enter to activate
+      await user.keyboard('{Enter}');
+      expect(onEditClick).toHaveBeenCalledTimes(1);
+    });
   });
 });

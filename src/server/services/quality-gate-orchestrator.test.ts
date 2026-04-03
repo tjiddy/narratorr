@@ -1589,5 +1589,20 @@ describe('QualityGateOrchestrator', () => {
         book_id: 1, new_status: 'wanted',
       }));
     });
+
+    it('does NOT revert book status when book is not importing (guard condition)', async () => {
+      const downloadingBook = { ...baseBook, status: 'downloading' as const };
+      const { orchestrator, qualityGateService, db, broadcaster } = createOrchestrator();
+      qualityGateService.getCompletedDownloads.mockResolvedValue([{ download: baseDownload, book: downloadingBook, narrators: [] }]);
+      (scanAudioDirectory as ReturnType<typeof vi.fn>).mockRejectedValue(new Error('probe failed'));
+      (resolveSavePath as ReturnType<typeof vi.fn>).mockReturnValue('/path');
+
+      await orchestrator.processCompletedDownloads();
+
+      // Should NOT emit book_status_change for the revert (only download_status_change and review_needed)
+      expect(broadcaster.emit).not.toHaveBeenCalledWith('book_status_change', expect.objectContaining({
+        old_status: 'downloading', new_status: 'downloading',
+      }));
+    });
   });
 });
