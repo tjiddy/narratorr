@@ -305,7 +305,18 @@ export class QualityGateOrchestrator {
       });
     }
 
-    // Read import settings to gate destructive cleanup
+    await this.gatedRejectionCleanup(download);
+
+    // Recover book status — errors propagate to caller (manual reject → 500, auto-reject → outer catch → pending_review)
+    if (book) {
+      const revertStatus = await revertBookStatus(this.db, book);
+      this.emitSSE('download_status_change', { download_id: download.id, book_id: book.id, old_status: oldStatus, new_status: 'failed' });
+      this.emitSSE('book_status_change', { book_id: book.id, old_status: book.status as BookStatus, new_status: revertStatus as BookStatus });
+    }
+  }
+
+  /** Read import settings, check seed conditions, and either delete, defer, or skip. */
+  private async gatedRejectionCleanup(download: DownloadRow): Promise<void> {
     let shouldDelete = true;
     let importSettings = { minSeedTime: 0, minSeedRatio: 0 };
     try {
@@ -321,31 +332,26 @@ export class QualityGateOrchestrator {
 
     if (!shouldDelete) {
       this.log.warn({ downloadId: download.id }, 'Quality gate: deleteAfterImport disabled — skipping file and client cleanup for rejected download');
+      return;
+    }
+
+    const currentRatio = await this.fetchCurrentRatio(download, importSettings.minSeedRatio);
+
+    if (isTorrentRemovalDeferred(download, importSettings, currentRatio)) {
+      this.log.info({ downloadId: download.id }, 'Quality gate: deferring rejection cleanup — seed conditions not met');
+      await this.db.update(downloads).set({ pendingCleanup: new Date() }).where(eq(downloads.id, download.id));
     } else {
-      // Fetch current ratio for ratio-gated torrents
-      let currentRatio = 0;
-      if (importSettings.minSeedRatio > 0 && download.downloadClientId && download.externalId) {
-        const adapter = await this.downloadClientService.getAdapter(download.downloadClientId);
-        const liveState = adapter ? await adapter.getDownload(download.externalId) : null;
-        currentRatio = liveState?.ratio ?? 0;
-      }
-
-      if (isTorrentRemovalDeferred(download, importSettings, currentRatio)) {
-        // Defer cleanup — mark for revisit
-        this.log.info({ downloadId: download.id }, 'Quality gate: deferring rejection cleanup — seed conditions not met');
-        await this.db.update(downloads).set({ pendingCleanup: new Date() }).where(eq(downloads.id, download.id));
-      } else {
-        await this.removeDownloadFiles(download);
-        await this.fallbackFileDelete(download);
-      }
+      await this.removeDownloadFiles(download);
+      await this.fallbackFileDelete(download);
     }
+  }
 
-    // Recover book status — errors propagate to caller (manual reject → 500, auto-reject → outer catch → pending_review)
-    if (book) {
-      const revertStatus = await revertBookStatus(this.db, book);
-      this.emitSSE('download_status_change', { download_id: download.id, book_id: book.id, old_status: oldStatus, new_status: 'failed' });
-      this.emitSSE('book_status_change', { book_id: book.id, old_status: book.status as BookStatus, new_status: revertStatus as BookStatus });
-    }
+  /** Fetch current ratio from download client for ratio-gated torrents. Returns 0 if not applicable. */
+  private async fetchCurrentRatio(download: DownloadRow, minSeedRatio: number): Promise<number> {
+    if (minSeedRatio <= 0 || !download.downloadClientId || !download.externalId) return 0;
+    const adapter = await this.downloadClientService.getAdapter(download.downloadClientId);
+    const liveState = adapter ? await adapter.getDownload(download.externalId) : null;
+    return liveState?.ratio ?? 0;
   }
 
   /** Delete downloaded files via the download client adapter. */

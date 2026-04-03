@@ -1506,7 +1506,7 @@ describe('QualityGateOrchestrator', () => {
 
     it('deferred download with ratio now met + seed time met → cleanup proceeds', async () => {
       const settingsService = { get: vi.fn().mockResolvedValue(ratioSettings) };
-      const { orchestrator, qualityGateService, db, downloadClientService } = createOrchestrator({ settingsService: inject<SettingsService>(settingsService) });
+      const { orchestrator, qualityGateService, downloadClientService } = createOrchestrator({ settingsService: inject<SettingsService>(settingsService) });
       (downloadClientService.getAdapter as ReturnType<typeof vi.fn>).mockResolvedValue({ ...mockAdapter, getDownload: vi.fn().mockResolvedValue({ ratio: 1.5 }) });
       qualityGateService.getDeferredCleanupCandidates.mockResolvedValue([deferredDownload]);
 
