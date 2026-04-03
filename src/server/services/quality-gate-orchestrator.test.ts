@@ -41,6 +41,7 @@ import type { RetrySearchDeps } from './retry-search.js';
 
 const mockAdapter = {
   removeDownload: vi.fn().mockResolvedValue(undefined),
+  getDownload: vi.fn().mockResolvedValue({ ratio: 0.2 }),
 };
 
 function createOrchestrator(opts?: {
@@ -1428,15 +1429,114 @@ describe('QualityGateOrchestrator', () => {
 
   // #318 — minSeedRatio in quality-gate rejection cleanup
   describe('seed ratio gating (rejection cleanup)', () => {
-    it.todo('auto-reject + minSeedRatio > 0 + ratio below threshold → pendingCleanup set (deferred)');
-    it.todo('auto-reject + minSeedRatio > 0 + ratio at/above threshold + seed time met → immediate cleanup');
-    it.todo('usenet rejection → ratio check skipped, immediate cleanup regardless of minSeedRatio');
+    const ratioSettings = { deleteAfterImport: true, minSeedTime: 60, minSeedRatio: 1.0, minFreeSpaceGB: 5, redownloadFailed: true };
+    const downloadWithOutput = { ...baseDownload, outputPath: '/downloads/test-book', completedAt: new Date(Date.now() - 7200_000) }; // 2h ago
+
+    beforeEach(() => {
+      vi.clearAllMocks();
+      mockAdapter.removeDownload.mockResolvedValue(undefined);
+      (rm as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
+      (stat as ReturnType<typeof vi.fn>).mockResolvedValue({ isDirectory: () => true });
+    });
+
+    it('auto-reject + minSeedRatio > 0 + ratio below threshold → pendingCleanup set (deferred)', async () => {
+      const settingsService = { get: vi.fn().mockResolvedValue(ratioSettings) };
+      const { orchestrator, qualityGateService, db, downloadClientService } = createOrchestrator({ settingsService: inject<SettingsService>(settingsService) });
+      // Mock getDownload to return low ratio
+      (downloadClientService.getAdapter as ReturnType<typeof vi.fn>).mockResolvedValue({ ...mockAdapter, getDownload: vi.fn().mockResolvedValue({ ratio: 0.3 }) });
+      qualityGateService.getCompletedDownloads.mockResolvedValue([{ download: downloadWithOutput, book: baseBook }]);
+      qualityGateService.processDownload.mockResolvedValue({
+        action: 'rejected', reason: { ...NULL_REASON }, statusTransition: { from: 'checking', to: 'failed' },
+      });
+
+      await orchestrator.processCompletedDownloads();
+
+      expect(mockAdapter.removeDownload).not.toHaveBeenCalled();
+      expect(rm).not.toHaveBeenCalled();
+      const setCalls = (db.update().set as ReturnType<typeof vi.fn>).mock.calls;
+      const pendingCall = setCalls.find((call: unknown[]) => call[0] && typeof call[0] === 'object' && 'pendingCleanup' in (call[0] as Record<string, unknown>));
+      expect(pendingCall).toBeDefined();
+    });
+
+    it('auto-reject + minSeedRatio > 0 + ratio at/above threshold + seed time met → immediate cleanup', async () => {
+      const settingsService = { get: vi.fn().mockResolvedValue(ratioSettings) };
+      const { orchestrator, qualityGateService, downloadClientService } = createOrchestrator({ settingsService: inject<SettingsService>(settingsService) });
+      (downloadClientService.getAdapter as ReturnType<typeof vi.fn>).mockResolvedValue({ ...mockAdapter, getDownload: vi.fn().mockResolvedValue({ ratio: 1.5 }) });
+      qualityGateService.getCompletedDownloads.mockResolvedValue([{ download: downloadWithOutput, book: baseBook }]);
+      qualityGateService.processDownload.mockResolvedValue({
+        action: 'rejected', reason: { ...NULL_REASON }, statusTransition: { from: 'checking', to: 'failed' },
+      });
+
+      await orchestrator.processCompletedDownloads();
+
+      expect(rm).toHaveBeenCalled();
+    });
+
+    it('usenet rejection → ratio check skipped, immediate cleanup regardless of minSeedRatio', async () => {
+      const usenetDownload = { ...downloadWithOutput, protocol: 'usenet' as const };
+      const settingsService = { get: vi.fn().mockResolvedValue(ratioSettings) };
+      const { orchestrator, qualityGateService, db } = createOrchestrator({ settingsService: inject<SettingsService>(settingsService) });
+      qualityGateService.getCompletedDownloads.mockResolvedValue([{ download: usenetDownload, book: baseBook }]);
+      qualityGateService.processDownload.mockResolvedValue({
+        action: 'rejected', reason: { ...NULL_REASON }, statusTransition: { from: 'checking', to: 'failed' },
+      });
+
+      await orchestrator.processCompletedDownloads();
+
+      // removeDownloadFiles calls adapter.removeDownload — proves immediate cleanup, not deferred
+      expect(mockAdapter.removeDownload).toHaveBeenCalledWith(usenetDownload.externalId, true);
+      // No pendingCleanup should be set for usenet
+      const setCalls = (db.update().set as ReturnType<typeof vi.fn>).mock.calls;
+      const pendingCall = setCalls.find((call: unknown[]) => call[0] && typeof call[0] === 'object' && 'pendingCleanup' in (call[0] as Record<string, unknown>));
+      expect(pendingCall).toBeUndefined();
+    });
   });
 
   // #318 — minSeedRatio in cleanupDeferredRejections
   describe('seed ratio gating (deferred rejection cleanup)', () => {
-    it.todo('deferred download with ratio now met + seed time met → cleanup proceeds');
-    it.todo('deferred download with ratio still below threshold → skipped, pendingCleanup untouched');
-    it.todo('deferred download with seed time met but ratio not met → skipped');
+    const ratioSettings = { deleteAfterImport: true, minSeedTime: 60, minSeedRatio: 1.0, minFreeSpaceGB: 5, redownloadFailed: true };
+    const deferredDownload = { ...baseDownload, outputPath: '/downloads/test-book', completedAt: new Date(Date.now() - 7200_000), pendingCleanup: new Date() };
+
+    beforeEach(() => {
+      vi.clearAllMocks();
+      mockAdapter.removeDownload.mockResolvedValue(undefined);
+      (rm as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
+      (stat as ReturnType<typeof vi.fn>).mockResolvedValue({ isDirectory: () => true });
+    });
+
+    it('deferred download with ratio now met + seed time met → cleanup proceeds', async () => {
+      const settingsService = { get: vi.fn().mockResolvedValue(ratioSettings) };
+      const { orchestrator, qualityGateService, db, downloadClientService } = createOrchestrator({ settingsService: inject<SettingsService>(settingsService) });
+      (downloadClientService.getAdapter as ReturnType<typeof vi.fn>).mockResolvedValue({ ...mockAdapter, getDownload: vi.fn().mockResolvedValue({ ratio: 1.5 }) });
+      qualityGateService.getDeferredCleanupCandidates.mockResolvedValue([deferredDownload]);
+
+      await orchestrator.cleanupDeferredRejections();
+
+      expect(mockAdapter.removeDownload).toHaveBeenCalledWith(deferredDownload.externalId, true);
+      expect(rm).toHaveBeenCalled();
+    });
+
+    it('deferred download with ratio still below threshold → skipped, pendingCleanup untouched', async () => {
+      const settingsService = { get: vi.fn().mockResolvedValue(ratioSettings) };
+      const { orchestrator, qualityGateService, downloadClientService } = createOrchestrator({ settingsService: inject<SettingsService>(settingsService) });
+      (downloadClientService.getAdapter as ReturnType<typeof vi.fn>).mockResolvedValue({ ...mockAdapter, getDownload: vi.fn().mockResolvedValue({ ratio: 0.3 }) });
+      qualityGateService.getDeferredCleanupCandidates.mockResolvedValue([deferredDownload]);
+
+      await orchestrator.cleanupDeferredRejections();
+
+      expect(mockAdapter.removeDownload).not.toHaveBeenCalled();
+      expect(rm).not.toHaveBeenCalled();
+    });
+
+    it('deferred download with seed time met but ratio not met → skipped', async () => {
+      const settingsService = { get: vi.fn().mockResolvedValue(ratioSettings) };
+      const { orchestrator, qualityGateService, downloadClientService } = createOrchestrator({ settingsService: inject<SettingsService>(settingsService) });
+      (downloadClientService.getAdapter as ReturnType<typeof vi.fn>).mockResolvedValue({ ...mockAdapter, getDownload: vi.fn().mockResolvedValue({ ratio: 0.5 }) });
+      qualityGateService.getDeferredCleanupCandidates.mockResolvedValue([deferredDownload]);
+
+      await orchestrator.cleanupDeferredRejections();
+
+      expect(mockAdapter.removeDownload).not.toHaveBeenCalled();
+    });
   });
 });
