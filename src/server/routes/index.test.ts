@@ -49,12 +49,12 @@ vi.mock('../../core/utils/audio-processor.js', () => ({ detectFfmpegPath: vi.fn(
 vi.mock('../../core/indexers/proxy.js', () => ({ resolveProxyIp: vi.fn() }));
 
 describe('routeRegistry', () => {
-  it('contains all 23 route factories', () => {
-    // books, bookFiles, search, activity, indexers, downloadClients,
+  it('contains all 24 route factories', () => {
+    // books, bookFiles, bookPreview, search, activity, indexers, downloadClients,
     // settings, metadata, libraryScan, system, update, notifiers, blacklist,
     // auth, remotePathMapping, filesystem, eventHistory, events, searchStream,
     // prowlarrCompat, importLists, discover, bulkOperations
-    expect(routeRegistry).toHaveLength(23);
+    expect(routeRegistry).toHaveLength(24);
   });
 
   it('every entry is a function', () => {

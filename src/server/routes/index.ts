@@ -36,6 +36,7 @@ import { config } from '../config.js';
 import fsp from 'fs/promises';
 
 import { booksRoutes, bookFilesRoute } from './books.js';
+import { bookPreviewRoute } from './book-preview.js';
 import { searchRoutes } from './search.js';
 import { activityRoutes } from './activity.js';
 import { indexersRoutes } from './indexers.js';
@@ -218,6 +219,7 @@ const routeRegistry: RouteFactory[] = [
     bookRejectionService: s.bookRejection,
   }),
   (app, s) => bookFilesRoute(app, s.book),
+  (app, s) => bookPreviewRoute(app, s.book),
   (app, s) => searchRoutes(app, s.indexer, s.downloadOrchestrator, s.blacklist, s.settings),
   (app, s) => activityRoutes(app, s.download, s.downloadOrchestrator, s.qualityGate, s.qualityGateOrchestrator, s.import, s.importOrchestrator),
   (app, s) => indexersRoutes(app, s.indexer),
