@@ -929,3 +929,10 @@ describe('applyPendingRestore (startup swap)', () => {
     expect(fss.existsSync(pendingPath)).toBe(false);
   });
 });
+
+describe('#324 — restore contract change', () => {
+  it.todo('processRestoreUpload returns { valid: false, error } for newer-version backup (does not throw)');
+  it.todo('processRestoreUpload returns { valid: false, error } for missing migrations table (does not throw)');
+  it.todo('processRestoreUpload still throws RestoreUploadError for corrupt zip / system errors');
+  it.todo('restoreServerBackup returns { valid: false, error } for newer-version backup (does not throw)');
+});

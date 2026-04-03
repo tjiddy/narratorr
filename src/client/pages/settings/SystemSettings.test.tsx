@@ -489,3 +489,11 @@ describe('GeneralSettingsForm (housekeeping and logging)', () => {
     });
   });
 });
+
+describe('#324 — restore modal contract change', () => {
+  it.todo('when result.valid is true, confirmation modal shows uploaded filename and warning, no migration counts');
+  it.todo('when result.valid is false, modal shows error message from result.error');
+  it.todo('when result.valid is false, confirm/restore button is disabled or hidden');
+  it.todo('uploaded filename shown is File.name');
+  it.todo('modal renders without error when backupMigrationCount is undefined/null in response');
+});

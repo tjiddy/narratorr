@@ -1403,4 +1403,11 @@ describe('monitor job', () => {
       expect(outputPaths).toContain('/remote/downloads/my-book');
     });
   });
+
+  describe('#324 — book status on download completion', () => {
+    it.todo('when download transitions to completed with a bookId, book status updated to importing in DB');
+    it.todo('when download transitions to completed with a bookId, book_status_change SSE emitted');
+    it.todo('when download has no bookId, no book status change emitted');
+    it.todo('if book status update or SSE emit fails, download completion still succeeds (error isolation)');
+  });
 });

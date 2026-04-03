@@ -294,4 +294,8 @@ describe('NetworkSettingsSection', () => {
       });
     });
   });
+
+  describe('#324 — proxy URL placeholder', () => {
+    it.todo('placeholder text contains user:pass credentials format');
+  });
 });

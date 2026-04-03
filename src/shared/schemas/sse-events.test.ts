@@ -225,4 +225,8 @@ describe('#257 merge observability — SSE payload schemas', () => {
       expect(() => mergeFailedPayload.parse({ book_id: 42, book_title: 'My Book' })).toThrow();
     });
   });
+
+  describe('#324 — grab_started toast removal', () => {
+    it.todo('TOAST_EVENT_CONFIG does not contain grab_started key');
+  });
 });

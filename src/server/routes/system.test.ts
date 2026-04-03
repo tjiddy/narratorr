@@ -809,4 +809,10 @@ describe('POST /api/system/restore', () => {
     expect(res.statusCode).toBe(500);
     expect(JSON.parse(res.payload).error).toBe('Failed to process restore file');
   });
+
+  describe('#324 — restore route contract change', () => {
+    it.todo('upload route returns 200 with { valid: false } for newer-version backup');
+    it.todo('upload route returns 400 for corrupt zip (RestoreUploadError)');
+    it.todo('server-backup restore route returns 200 with { valid: false } for newer-version backup');
+  });
 });

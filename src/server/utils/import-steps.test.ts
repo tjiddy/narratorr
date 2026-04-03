@@ -573,6 +573,11 @@ describe('emitImportFailure', () => {
   });
 });
 
+describe('#324 — emitBookImporting dedupe guard', () => {
+  it.todo('skips SSE emit when bookStatus === importing (already at target)');
+  it.todo('emits SSE when bookStatus !== importing (e.g., downloading, wanted)');
+});
+
 // ── notifyImportFailure ─────────────────────────────────────────────────
 
 describe('notifyImportFailure', () => {

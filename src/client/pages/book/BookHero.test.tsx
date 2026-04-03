@@ -337,4 +337,15 @@ describe('BookHero', () => {
       expect(button).toHaveTextContent('Rejecting...');
     });
   });
+
+  describe('#324 — overflow menu for secondary actions', () => {
+    it.todo('primary actions (Monitor, Search Releases) render as visible buttons outside overflow menu');
+    it.todo('secondary actions (Edit, Rename, Re-tag, Merge, Remove) render inside overflow/kebab menu');
+    it.todo('Wrong Release renders inside overflow menu when showWrongRelease is true');
+    it.todo('Wrong Release does not appear in overflow menu when showWrongRelease is false');
+    it.todo('clicking kebab menu button opens dropdown with secondary action items');
+    it.todo('clicking a secondary action in the dropdown triggers the correct handler');
+    it.todo('disabled secondary actions appear disabled in the dropdown menu');
+    it.todo('keyboard navigation (ArrowUp/Down, Enter, Escape) works in overflow menu');
+  });
 });

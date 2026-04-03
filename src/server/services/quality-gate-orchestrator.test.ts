@@ -1539,4 +1539,10 @@ describe('QualityGateOrchestrator', () => {
       expect(mockAdapter.removeDownload).not.toHaveBeenCalled();
     });
   });
+
+  describe('#324 — quality gate held revert book status', () => {
+    it.todo('when download held for pending_review, book status reverted from importing to downloading in DB');
+    it.todo('when download held for pending_review, book_status_change SSE emitted with revert');
+    it.todo('when download rejected, book status revert still works (existing behavior, no regression)');
+  });
 });
