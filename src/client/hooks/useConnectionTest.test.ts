@@ -267,4 +267,54 @@ describe('useConnectionTest', () => {
       expect(result.current.formTestResult).toBeNull();
     });
   });
+
+  describe('#317 — invalidateOnSuccess', () => {
+    it('invalidates queries on successful test-by-ID when invalidateOnSuccess is set', async () => {
+      testById.mockResolvedValue({ success: true, metadata: { isVip: true } });
+      const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+      const invalidateSpy = vi.spyOn(queryClient, 'invalidateQueries').mockResolvedValue(undefined);
+
+      const wrapper = function Wrapper({ children }: { children: ReactNode }) {
+        return createElement(QueryClientProvider, { client: queryClient }, children);
+      };
+
+      const { result } = renderHook(() =>
+        useConnectionTest<{ name: string }>({
+          testById,
+          testByConfig,
+          invalidateOnSuccess: ['indexers'],
+        }),
+      { wrapper });
+
+      await act(async () => {
+        await result.current.handleTest(5);
+      });
+
+      expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: ['indexers'] });
+    });
+
+    it('does not invalidate queries on failed test-by-ID', async () => {
+      testById.mockResolvedValue({ success: false, message: 'Auth failed' });
+      const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+      const invalidateSpy = vi.spyOn(queryClient, 'invalidateQueries');
+
+      const wrapper = function Wrapper({ children }: { children: ReactNode }) {
+        return createElement(QueryClientProvider, { client: queryClient }, children);
+      };
+
+      const { result } = renderHook(() =>
+        useConnectionTest<{ name: string }>({
+          testById,
+          testByConfig,
+          invalidateOnSuccess: ['indexers'],
+        }),
+      { wrapper });
+
+      await act(async () => {
+        await result.current.handleTest(5);
+      });
+
+      expect(invalidateSpy).not.toHaveBeenCalled();
+    });
+  });
 });

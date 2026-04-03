@@ -56,6 +56,19 @@ describe('INDEXER_REGISTRY', () => {
     it('returns baseUrl for myanonamouse type', () => {
       expect(INDEXER_REGISTRY.myanonamouse.viewSubtitle({ baseUrl: 'https://custom.mam.net' })).toBe('https://custom.mam.net');
     });
+
+    it('#317 returns baseUrl with VIP suffix when isVip is true', () => {
+      expect(INDEXER_REGISTRY.myanonamouse.viewSubtitle({ isVip: true })).toBe('myanonamouse.net — VIP');
+      expect(INDEXER_REGISTRY.myanonamouse.viewSubtitle({ baseUrl: 'https://custom.mam.net', isVip: true })).toBe('https://custom.mam.net — VIP');
+    });
+
+    it('#317 returns baseUrl with User suffix when isVip is false', () => {
+      expect(INDEXER_REGISTRY.myanonamouse.viewSubtitle({ isVip: false })).toBe('myanonamouse.net — User');
+    });
+
+    it('#317 returns baseUrl without suffix when isVip is undefined (legacy)', () => {
+      expect(INDEXER_REGISTRY.myanonamouse.viewSubtitle({})).toBe('myanonamouse.net');
+    });
   });
 
   describe('defaultSettings', () => {
