@@ -123,6 +123,31 @@ describe('createServices', () => {
     vi.clearAllMocks();
   });
 
+  it('wires blacklistService into DownloadOrchestrator constructor', async () => {
+    const { SettingsService, BlacklistService } = await import('../services/index.js');
+    const { DownloadOrchestrator } = await import('../services/download-orchestrator.js');
+
+    vi.mocked(SettingsService).mockImplementation(function(this: Record<string, unknown>) {
+      this.get = vi.fn().mockResolvedValue({ audibleRegion: 'us' });
+      this.bootstrapProcessingDefaults = vi.fn().mockResolvedValue(undefined);
+    } as never);
+
+    const { createServices } = await import('./index.js');
+    const db = {} as unknown as Db;
+    const log = {
+      info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn(),
+      child: vi.fn().mockReturnThis(), trace: vi.fn(), fatal: vi.fn(),
+    } as unknown as FastifyBaseLogger;
+
+    await createServices(db, log);
+
+    // DownloadOrchestrator constructor should receive the BlacklistService instance as 7th arg
+    const orchestratorCalls = vi.mocked(DownloadOrchestrator).mock.calls;
+    expect(orchestratorCalls).toHaveLength(1);
+    const blacklistArg = orchestratorCalls[0][6];
+    expect(blacklistArg).toBeInstanceOf(BlacklistService);
+  });
+
   it('invokes bootstrapProcessingDefaults with detectFfmpegPath on startup', async () => {
     const { SettingsService } = await import('../services/index.js');
     const { detectFfmpegPath } = await import('../../core/utils/audio-processor.js');
