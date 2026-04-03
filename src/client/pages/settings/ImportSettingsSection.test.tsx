@@ -431,6 +431,40 @@ describe('ImportSettingsSection', () => {
       });
     });
 
+    it('ratio input has step="0.1" for fractional values', async () => {
+      renderWithProviders(<ImportSettingsSection />);
+
+      await waitFor(() => {
+        expect(screen.getByLabelText('Minimum Seed Ratio')).toBeInTheDocument();
+      });
+
+      expect(screen.getByLabelText('Minimum Seed Ratio')).toHaveAttribute('step', '0.1');
+    });
+
+    it('rejects negative minSeedRatio via form validation', async () => {
+      const enabledSettings = createMockSettings({
+        import: { deleteAfterImport: true, minSeedTime: 60, minSeedRatio: 0, minFreeSpaceGB: 5, redownloadFailed: true },
+      });
+      mockApi.getSettings.mockResolvedValue(enabledSettings);
+      mockApi.updateSettings.mockResolvedValue(enabledSettings);
+      const user = userEvent.setup();
+      renderWithProviders(<ImportSettingsSection />);
+
+      await waitFor(() => {
+        expect(screen.getByLabelText('Minimum Seed Ratio')).not.toBeDisabled();
+      });
+
+      const input = screen.getByLabelText('Minimum Seed Ratio');
+      await user.tripleClick(input);
+      await user.keyboard('-1');
+      await user.click(screen.getByRole('button', { name: /save/i }));
+
+      await waitFor(() => {
+        // Validation should prevent the API call
+        expect(mockApi.updateSettings).not.toHaveBeenCalled();
+      });
+    });
+
     it('sends minSeedRatio in save payload with correct numeric value', async () => {
       const enabledSettings = createMockSettings({
         import: { deleteAfterImport: true, minSeedTime: 60, minSeedRatio: 0, minFreeSpaceGB: 5, redownloadFailed: true },
