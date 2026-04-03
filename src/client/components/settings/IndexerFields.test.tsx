@@ -305,4 +305,9 @@ describe('IndexerFields', () => {
       expect(screen.getByLabelText('Search Type')).toHaveValue('1');
     });
   });
+
+  describe('#317 — search type dropdown removal', () => {
+    it.todo('MAM settings form does not show search type dropdown');
+    it.todo('language checkboxes still render after dropdown removal');
+  });
 });

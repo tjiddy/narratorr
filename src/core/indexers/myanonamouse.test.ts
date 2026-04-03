@@ -938,4 +938,33 @@ describe('MyAnonamouseIndexer', () => {
     });
   });
 
+  describe('#317 — VIP detection in test()', () => {
+    it.todo('returns isVip: true in metadata when classname is "VIP"');
+    it.todo('returns isVip: true in metadata when classname is "Elite VIP"');
+    it.todo('returns isVip: false in metadata when classname is "User"');
+    it.todo('returns isVip: false for other classes (Mouse, Power User, Supporter)');
+    it.todo('returns isVip: false when classname field is missing from response');
+    it.todo('returns isVip: false when classname is empty string');
+    it.todo('returns no metadata on auth failure (403)');
+    it.todo('returns no metadata on "not signed in" body');
+    it.todo('returns no metadata on invalid JSON response');
+  });
+
+  describe('#317 — automatic search type selection', () => {
+    it.todo('sends tor[searchType]=0 when isVip is true');
+    it.todo('sends tor[searchType]=1 when isVip is false');
+    it.todo('sends saved searchType when isVip is undefined (legacy)');
+  });
+
+  describe('#317 — freeleech/VIP result flags', () => {
+    it.todo('sets isFreeleech: true when result has free: true');
+    it.todo('sets isFreeleech: true when result has personal_freeleech: true');
+    it.todo('sets isFreeleech: true when result has fl_vip: true and adapter isVip is true');
+    it.todo('does not set isFreeleech when fl_vip: true but adapter isVip is false');
+    it.todo('sets isVipOnly: true when result has vip: true');
+    it.todo('does not set badge flags when all flags are absent');
+    it.todo('sets both isFreeleech and isVipOnly when free: true and vip: true');
+    it.todo('handles missing flag fields gracefully (no crash)');
+  });
+
 });

@@ -55,4 +55,11 @@ describe('ReleaseCard', () => {
       expect(screen.getByText(/Good · 64 MB\/hr/)).toBeInTheDocument();
     });
   });
+
+  describe('#317 — freeleech/VIP badges', () => {
+    it.todo('renders Freeleech badge when result.isFreeleech is true');
+    it.todo('renders VIP badge when result.isVipOnly is true');
+    it.todo('renders both badges when both flags are true');
+    it.todo('does not render badges when flags are undefined');
+  });
 });
