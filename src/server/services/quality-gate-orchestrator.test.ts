@@ -1006,7 +1006,7 @@ describe('QualityGateOrchestrator', () => {
 
   // #299 — Rejection cleanup respects delete-after-import and deregisters from download client
   describe('rejection cleanup respects import settings (#299)', () => {
-    const importSettings = { deleteAfterImport: true, minSeedTime: 60, minFreeSpaceGB: 5, redownloadFailed: true };
+    const importSettings = { deleteAfterImport: true, minSeedTime: 60, minSeedRatio: 0, minFreeSpaceGB: 5, redownloadFailed: true };
     const downloadWithOutput = { ...baseDownload, outputPath: '/downloads/test-book', completedAt: new Date(Date.now() - 7200_000) }; // 2h ago, well past 60min seed time
 
     function setupWithSettings(settings: typeof importSettings) {
@@ -1209,7 +1209,7 @@ describe('QualityGateOrchestrator', () => {
   });
 
   describe('cleanupDeferredRejections (#299)', () => {
-    const importSettings = { deleteAfterImport: true, minSeedTime: 60, minFreeSpaceGB: 5, redownloadFailed: true };
+    const importSettings = { deleteAfterImport: true, minSeedTime: 60, minSeedRatio: 0, minFreeSpaceGB: 5, redownloadFailed: true };
     const deferredDownload = {
       ...baseDownload, id: 10, status: 'failed' as const,
       outputPath: '/downloads/deferred-book',

@@ -2228,7 +2228,7 @@ describe('buildBookCreatePayload multi-author (issue #79)', () => {
     };
     const settings = createMockSettingsService({
       library: { path: '/library', folderFormat: '{author}/{title}', fileFormat: '' },
-      import: { minFreeSpaceGB: 0, deleteAfterImport: false, minSeedTime: 0 },
+      import: { minFreeSpaceGB: 0, deleteAfterImport: false, minSeedTime: 0, minSeedRatio: 0 },
     });
     service = new LibraryScanService(
       db as never,

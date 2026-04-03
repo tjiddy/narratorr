@@ -331,7 +331,7 @@ describe('ImportService', () => {
       const settingsGet = settingsService.get as ReturnType<typeof vi.fn>;
       settingsGet.mockImplementation((key: string) => {
         if (key === 'library') return Promise.resolve({ path: '/audiobooks', folderFormat: '{author}/{title}', fileFormat: '{author} - {title}' });
-        if (key === 'import') return Promise.resolve({ deleteAfterImport: true, minSeedTime: 0 });
+        if (key === 'import') return Promise.resolve({ deleteAfterImport: true, minSeedTime: 0, minSeedRatio: 0 });
         return Promise.resolve({});
       });
 
@@ -347,7 +347,7 @@ describe('ImportService', () => {
       const settingsGet = settingsService.get as ReturnType<typeof vi.fn>;
       settingsGet.mockImplementation((key: string) => {
         if (key === 'library') return Promise.resolve({ path: '/audiobooks', folderFormat: '{author}/{title}', fileFormat: '{author} - {title}' });
-        if (key === 'import') return Promise.resolve({ deleteAfterImport: true, minSeedTime: 0 });
+        if (key === 'import') return Promise.resolve({ deleteAfterImport: true, minSeedTime: 0, minSeedRatio: 0 });
         return Promise.resolve({});
       });
 
@@ -367,7 +367,7 @@ describe('ImportService', () => {
       const settingsGet = settingsService.get as ReturnType<typeof vi.fn>;
       settingsGet.mockImplementation((key: string) => {
         if (key === 'library') return Promise.resolve({ path: '/audiobooks', folderFormat: '{author}/{title}', fileFormat: '', namingSeparator: 'period', namingCase: 'upper' });
-        if (key === 'import') return Promise.resolve({ deleteAfterImport: false, minSeedTime: 0, minFreeSpaceGB: 0 });
+        if (key === 'import') return Promise.resolve({ deleteAfterImport: false, minSeedTime: 0, minSeedRatio: 0, minFreeSpaceGB: 0 });
         if (key === 'processing') return Promise.resolve({ enabled: false });
         return Promise.resolve({});
       });
@@ -390,7 +390,7 @@ describe('ImportService', () => {
       const settingsGet = settingsService.get as ReturnType<typeof vi.fn>;
       settingsGet.mockImplementation((key: string) => {
         if (key === 'library') return Promise.resolve({ path: '/audiobooks', folderFormat: '{author}/{title}', fileFormat: '{author} - {title}', namingSeparator: 'period', namingCase: 'upper' });
-        if (key === 'import') return Promise.resolve({ deleteAfterImport: false, minSeedTime: 0, minFreeSpaceGB: 0 });
+        if (key === 'import') return Promise.resolve({ deleteAfterImport: false, minSeedTime: 0, minSeedRatio: 0, minFreeSpaceGB: 0 });
         if (key === 'processing') return Promise.resolve({ enabled: true, ffmpegPath: '/usr/bin/ffmpeg', outputFormat: 'm4b', keepOriginalBitrate: true, bitrate: 128, mergeBehavior: 'always' });
         return Promise.resolve({});
       });
@@ -420,7 +420,7 @@ describe('ImportService', () => {
       const settingsGet = settingsService.get as ReturnType<typeof vi.fn>;
       settingsGet.mockImplementation((key: string) => {
         if (key === 'library') return Promise.resolve({ path: '/audiobooks', folderFormat: '{author}/{title}', fileFormat: '{author} - {title}' });
-        if (key === 'import') return Promise.resolve({ deleteAfterImport: false, minSeedTime: 0, minFreeSpaceGB: 0 });
+        if (key === 'import') return Promise.resolve({ deleteAfterImport: false, minSeedTime: 0, minSeedRatio: 0, minFreeSpaceGB: 0 });
         if (key === 'processing') return Promise.resolve({ enabled: true, ffmpegPath: '/usr/bin/ffmpeg', outputFormat: 'm4b', keepOriginalBitrate: false, bitrate: 128, mergeBehavior: 'always' });
         return Promise.resolve({});
       });
@@ -440,7 +440,7 @@ describe('ImportService', () => {
       const settingsGet = settingsService.get as ReturnType<typeof vi.fn>;
       settingsGet.mockImplementation((key: string) => {
         if (key === 'library') return Promise.resolve({ path: '/audiobooks', folderFormat: '{author}/{title}', fileFormat: '{author} - {title}' });
-        if (key === 'import') return Promise.resolve({ deleteAfterImport: false, minSeedTime: 0, minFreeSpaceGB: 0 });
+        if (key === 'import') return Promise.resolve({ deleteAfterImport: false, minSeedTime: 0, minSeedRatio: 0, minFreeSpaceGB: 0 });
         if (key === 'processing') return Promise.resolve({ enabled: true, ffmpegPath: '/usr/bin/ffmpeg', outputFormat: 'm4b', keepOriginalBitrate: false, bitrate: 128, mergeBehavior: 'always' });
         return Promise.resolve({});
       });
@@ -459,7 +459,7 @@ describe('ImportService', () => {
       const settingsGet = settingsService.get as ReturnType<typeof vi.fn>;
       settingsGet.mockImplementation((key: string) => {
         if (key === 'library') return Promise.resolve({ path: '/audiobooks', folderFormat: '{author}/{title}', fileFormat: '{author} - {title}' });
-        if (key === 'import') return Promise.resolve({ deleteAfterImport: true, minSeedTime: 120 }); // 2 hours
+        if (key === 'import') return Promise.resolve({ deleteAfterImport: true, minSeedTime: 120, minSeedRatio: 0 }); // 2 hours
         return Promise.resolve({});
       });
 
@@ -766,7 +766,7 @@ describe('ImportService', () => {
       const settingsGet = settingsService.get as ReturnType<typeof vi.fn>;
       settingsGet.mockImplementation((key: string) => {
         if (key === 'library') return Promise.resolve({ path: '/audiobooks', folderFormat: '{author}/{title}', fileFormat: '{author} - {title}' });
-        if (key === 'import') return Promise.resolve({ deleteAfterImport: false, minSeedTime: 0 });
+        if (key === 'import') return Promise.resolve({ deleteAfterImport: false, minSeedTime: 0, minSeedRatio: 0 });
         if (key === 'processing') return Promise.resolve({ enabled: false });
         return Promise.resolve({});
       });
@@ -905,7 +905,7 @@ describe('ImportService', () => {
       const settingsGet = settingsService.get as ReturnType<typeof vi.fn>;
       settingsGet.mockImplementation((key: string) => {
         if (key === 'library') return Promise.resolve({ path: '/audiobooks', folderFormat: '{author}/{title}', fileFormat: '{author} - {title}' });
-        if (key === 'import') return Promise.resolve({ deleteAfterImport: false, minSeedTime: 0 });
+        if (key === 'import') return Promise.resolve({ deleteAfterImport: false, minSeedTime: 0, minSeedRatio: 0 });
         if (key === 'processing') return Promise.resolve({
           enabled: true, ffmpegPath: '/usr/bin/ffmpeg', outputFormat: 'm4b',
           keepOriginalBitrate: false, bitrate: 128, mergeBehavior: 'multi-file-only',
@@ -1041,7 +1041,7 @@ describe('ImportService', () => {
       const settingsGet = settingsService.get as ReturnType<typeof vi.fn>;
       settingsGet.mockImplementation((key: string) => {
         if (key === 'library') return Promise.resolve({ path: '/audiobooks', folderFormat: '{author}/{title}', fileFormat: '{author} - {title}' });
-        if (key === 'import') return Promise.resolve({ deleteAfterImport: false, minSeedTime: 0 });
+        if (key === 'import') return Promise.resolve({ deleteAfterImport: false, minSeedTime: 0, minSeedRatio: 0 });
         if (key === 'processing') return Promise.resolve({
           enabled: processingEnabled,
           ffmpegPath: '/usr/bin/ffmpeg',
@@ -1100,7 +1100,7 @@ describe('ImportService', () => {
       const settingsGet = settingsService.get as ReturnType<typeof vi.fn>;
       settingsGet.mockImplementation((key: string) => {
         if (key === 'library') return Promise.resolve({ path: '/audiobooks', folderFormat: '{author}/{title}', fileFormat: '{author} - {title}' });
-        if (key === 'import') return Promise.resolve({ deleteAfterImport: false, minSeedTime: 0 });
+        if (key === 'import') return Promise.resolve({ deleteAfterImport: false, minSeedTime: 0, minSeedRatio: 0 });
         if (key === 'processing') return Promise.resolve({
           enabled: true,
           ffmpegPath: '/usr/bin/ffmpeg',
@@ -1959,7 +1959,7 @@ describe('ImportService consolidation (issue #79)', () => {
       const settingsGet = settingsService.get as ReturnType<typeof vi.fn>;
       settingsGet.mockImplementation((key: string) => {
         if (key === 'library') return Promise.resolve({ path: '/audiobooks', folderFormat: '{author}/{title}', fileFormat: '' });
-        if (key === 'import') return Promise.resolve({ deleteAfterImport: true, minSeedTime: 0 });
+        if (key === 'import') return Promise.resolve({ deleteAfterImport: true, minSeedTime: 0, minSeedRatio: 0 });
         return Promise.resolve({});
       });
 

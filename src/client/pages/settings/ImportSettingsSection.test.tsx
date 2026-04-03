@@ -28,7 +28,7 @@ const mockToast = toast as unknown as {
 };
 
 const mockSettings = createMockSettings({
-  import: { deleteAfterImport: false, minSeedTime: 60, minFreeSpaceGB: 5 },
+  import: { deleteAfterImport: false, minSeedTime: 60, minSeedRatio: 0, minFreeSpaceGB: 5 },
 });
 
 describe('ImportSettingsSection', () => {
@@ -86,7 +86,7 @@ describe('ImportSettingsSection', () => {
 
   it('allows changing the minimum seed time', async () => {
     const enabledSettings = createMockSettings({
-      import: { deleteAfterImport: true, minSeedTime: 60, minFreeSpaceGB: 5, redownloadFailed: true },
+      import: { deleteAfterImport: true, minSeedTime: 60, minSeedRatio: 0, minFreeSpaceGB: 5, redownloadFailed: true },
     });
     mockApi.getSettings.mockResolvedValue(enabledSettings);
     const user = userEvent.setup();
@@ -104,7 +104,7 @@ describe('ImportSettingsSection', () => {
 
   it('rejects minSeedTime < 0', async () => {
     const enabledSettings = createMockSettings({
-      import: { deleteAfterImport: true, minSeedTime: 60, minFreeSpaceGB: 5, redownloadFailed: true },
+      import: { deleteAfterImport: true, minSeedTime: 60, minSeedRatio: 0, minFreeSpaceGB: 5, redownloadFailed: true },
     });
     mockApi.getSettings.mockResolvedValue(enabledSettings);
     mockApi.updateSettings.mockResolvedValue(enabledSettings);
@@ -127,7 +127,7 @@ describe('ImportSettingsSection', () => {
 
   it('sends edited minSeedTime in save payload', async () => {
     const enabledSettings = createMockSettings({
-      import: { deleteAfterImport: true, minSeedTime: 60, minFreeSpaceGB: 5, redownloadFailed: true },
+      import: { deleteAfterImport: true, minSeedTime: 60, minSeedRatio: 0, minFreeSpaceGB: 5, redownloadFailed: true },
     });
     mockApi.getSettings.mockResolvedValue(enabledSettings);
     mockApi.updateSettings.mockResolvedValue(enabledSettings);
@@ -145,7 +145,7 @@ describe('ImportSettingsSection', () => {
 
     await waitFor(() => {
       expect(mockApi.updateSettings).toHaveBeenCalledWith({
-        import: { deleteAfterImport: true, minSeedTime: 120, minFreeSpaceGB: 5, redownloadFailed: true },
+        import: { deleteAfterImport: true, minSeedTime: 120, minSeedRatio: 0, minFreeSpaceGB: 5, redownloadFailed: true },
       });
     });
   });
@@ -168,7 +168,7 @@ describe('ImportSettingsSection', () => {
 
     await waitFor(() => {
       expect(mockApi.updateSettings).toHaveBeenCalledWith({
-        import: { deleteAfterImport: false, minSeedTime: 60, minFreeSpaceGB: 10, redownloadFailed: true },
+        import: { deleteAfterImport: false, minSeedTime: 60, minSeedRatio: 0, minFreeSpaceGB: 10, redownloadFailed: true },
       });
     });
   });
@@ -228,7 +228,7 @@ describe('ImportSettingsSection', () => {
 
     await waitFor(() => {
       expect(mockApi.updateSettings).toHaveBeenCalledWith({
-        import: { deleteAfterImport: false, minSeedTime: 60, minFreeSpaceGB: 5, redownloadFailed: false },
+        import: { deleteAfterImport: false, minSeedTime: 60, minSeedRatio: 0, minFreeSpaceGB: 5, redownloadFailed: false },
       });
     });
   });
@@ -271,7 +271,7 @@ describe('ImportSettingsSection', () => {
 
     it('seed time input is enabled when deleteAfterImport is on', async () => {
       const enabledSettings = createMockSettings({
-        import: { deleteAfterImport: true, minSeedTime: 60, minFreeSpaceGB: 5, redownloadFailed: true },
+        import: { deleteAfterImport: true, minSeedTime: 60, minSeedRatio: 0, minFreeSpaceGB: 5, redownloadFailed: true },
       });
       mockApi.getSettings.mockResolvedValue(enabledSettings);
       renderWithProviders(<ImportSettingsSection />);
@@ -283,7 +283,7 @@ describe('ImportSettingsSection', () => {
 
     it('toggling delete off disables seed time', async () => {
       const enabledSettings = createMockSettings({
-        import: { deleteAfterImport: true, minSeedTime: 60, minFreeSpaceGB: 5, redownloadFailed: true },
+        import: { deleteAfterImport: true, minSeedTime: 60, minSeedRatio: 0, minFreeSpaceGB: 5, redownloadFailed: true },
       });
       mockApi.getSettings.mockResolvedValue(enabledSettings);
       const user = userEvent.setup();
@@ -317,7 +317,7 @@ describe('ImportSettingsSection', () => {
 
     it('shows validation error when invalid minSeedTime exists and field is disabled', async () => {
       const enabledSettings = createMockSettings({
-        import: { deleteAfterImport: true, minSeedTime: 60, minFreeSpaceGB: 5, redownloadFailed: true },
+        import: { deleteAfterImport: true, minSeedTime: 60, minSeedRatio: 0, minFreeSpaceGB: 5, redownloadFailed: true },
       });
       mockApi.getSettings.mockResolvedValue(enabledSettings);
       mockApi.updateSettings.mockResolvedValue(enabledSettings);
@@ -353,7 +353,7 @@ describe('ImportSettingsSection', () => {
 
     it('preserves edited minSeedTime in save payload when field is disabled', async () => {
       const enabledSettings = createMockSettings({
-        import: { deleteAfterImport: true, minSeedTime: 60, minFreeSpaceGB: 5, redownloadFailed: true },
+        import: { deleteAfterImport: true, minSeedTime: 60, minSeedRatio: 0, minFreeSpaceGB: 5, redownloadFailed: true },
       });
       mockApi.getSettings.mockResolvedValue(enabledSettings);
       mockApi.updateSettings.mockResolvedValue(enabledSettings);
@@ -381,7 +381,7 @@ describe('ImportSettingsSection', () => {
 
       await waitFor(() => {
         expect(mockApi.updateSettings).toHaveBeenCalledWith({
-          import: { deleteAfterImport: false, minSeedTime: 120, minFreeSpaceGB: 5, redownloadFailed: true },
+          import: { deleteAfterImport: false, minSeedTime: 120, minSeedRatio: 0, minFreeSpaceGB: 5, redownloadFailed: true },
         });
       });
     });
