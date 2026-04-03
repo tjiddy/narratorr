@@ -65,16 +65,26 @@ export function useEventSource(apiKey: string | null) {
       // Patch progress in-place across all cached activity pages
       const progressData = data as SSEEventPayloads['download_progress'];
       const queryCache = queryClient.getQueryCache();
-      for (const query of queryCache.findAll({ queryKey: ['activity'] })) {
+      const cachedQueries = queryCache.findAll({ queryKey: ['activity'] });
+      let found = false;
+      for (const query of cachedQueries) {
         queryClient.setQueryData<{ data: Download[]; total: number }>(query.queryKey, (old) => {
           if (!old?.data) return old;
-          const patched = old.data.map((d) =>
-            d.id === progressData.download_id
-              ? { ...d, progress: progressData.percentage }
-              : d,
-          );
+          const patched = old.data.map((d) => {
+            if (d.id === progressData.download_id) {
+              found = true;
+              return { ...d, progress: progressData.percentage };
+            }
+            return d;
+          });
           return { ...old, data: patched };
         });
+      }
+      // Cache miss — download not in any cached page. Fall back to full invalidation
+      // so the Activity page refetches and picks up the new download.
+      if (!found) {
+        queryClient.invalidateQueries({ queryKey: ['activity'] });
+        queryClient.invalidateQueries({ queryKey: queryKeys.activityCounts() });
       }
     }
     if (rule.activityCounts) {
