@@ -41,7 +41,7 @@ export const settingsRegistry = {
   }),
   import: defineCategory({
     schema: importSettingsSchema,
-    defaults: { deleteAfterImport: false, minSeedTime: 60, minFreeSpaceGB: 5, redownloadFailed: true },
+    defaults: { deleteAfterImport: false, minSeedTime: 60, minSeedRatio: 0, minFreeSpaceGB: 5, redownloadFailed: true },
   }),
   general: defineCategory({
     schema: generalSettingsSchema,

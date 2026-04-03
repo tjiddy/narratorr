@@ -28,7 +28,7 @@ vi.mock('@/lib/api', async (importOriginal) => {
         processing: { ffmpegPath: '/usr/bin/ffmpeg', enabled: false, outputFormat: 'm4b', keepOriginalBitrate: false, bitrate: 128, mergeBehavior: 'multi-file-only', maxConcurrentProcessing: 2 },
         library: { path: '/audiobooks', folderFormat: '{author}/{title}', fileFormat: '{author} - {title}' },
         search: { intervalMinutes: 360, enabled: true, blacklistTtlDays: 7 },
-        import: { deleteAfterImport: false, minSeedTime: 60, minFreeSpaceGB: 5 },
+        import: { deleteAfterImport: false, minSeedTime: 60, minSeedRatio: 0, minFreeSpaceGB: 5 },
         general: { logLevel: 'info', housekeepingRetentionDays: 90 },
         metadata: { audibleRegion: 'us' },
         tagging: { enabled: false, mode: 'populate_missing', embedCover: false },

@@ -101,6 +101,7 @@ describe('Error recovery E2E', () => {
     await e2e.services.settings.set('import', {
       deleteAfterImport: false,
       minSeedTime: 0,
+      minSeedRatio: 0,
       minFreeSpaceGB: 5,
       redownloadFailed: true,
     });

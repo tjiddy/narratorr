@@ -79,7 +79,7 @@ import { createMockSettings, createMockIndexer, createMockDownloadClient } from 
 
 const mockSettings = createMockSettings({
   search: { enabled: true, intervalMinutes: 30, blacklistTtlDays: 7 },
-  import: { deleteAfterImport: false, minSeedTime: 0, minFreeSpaceGB: 5 },
+  import: { deleteAfterImport: false, minSeedTime: 0, minSeedRatio: 0, minFreeSpaceGB: 5 },
 });
 
 const mockIndexer = createMockIndexer({ id: 1, name: 'AudioBookBay' });

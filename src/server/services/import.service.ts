@@ -17,12 +17,10 @@ import {
   verifyCopy, cleanupOldBookPath, handleImportFailure,
 } from '../utils/import-steps.js';
 import type { DownloadRow } from './types.js';
+import { isTorrentRemovalDeferred } from '../utils/seed-helpers.js';
 
 import type { ImportResult } from '../utils/import-helpers.js';
 export type { ImportResult } from '../utils/import-helpers.js';
-
-/** Milliseconds per minute — used for seed time calculations. */
-const MS_PER_MINUTE = 60_000;
 
 /** Lightweight context for orchestrator side-effect dispatch. */
 export interface ImportContext {
@@ -141,7 +139,7 @@ export class ImportService {
       this.log.info({ downloadId, bookId: book.id, bookTitle: book.title, targetPath, fileCount, totalSize: targetSize, elapsedMs: Date.now() - startMs }, 'Import completed successfully');
 
       if (importSettings.deleteAfterImport) {
-        await this.handleTorrentRemoval(download, importSettings.minSeedTime);
+        await this.handleTorrentRemoval(download, importSettings);
       }
       return { downloadId, bookId: book.id, targetPath, fileCount, totalSize: targetSize };
     } catch (error: unknown) {
@@ -211,19 +209,30 @@ export class ImportService {
     return results[0] ?? null;
   }
 
-  private async handleTorrentRemoval(download: DownloadRow, minSeedTimeMinutes: number): Promise<void> {
+  private async handleTorrentRemoval(download: DownloadRow, importSettings: { minSeedTime: number; minSeedRatio: number }): Promise<void> {
     if (!download.downloadClientId || !download.externalId) return;
 
-    if (download.completedAt && minSeedTimeMinutes > 0) {
-      const elapsedMs = Date.now() - download.completedAt.getTime();
-      const minSeedMs = minSeedTimeMinutes * MS_PER_MINUTE;
-      if (elapsedMs < minSeedMs) {
-        this.log.info({ downloadId: download.id, remainingMinutes: Math.ceil((minSeedMs - elapsedMs) / MS_PER_MINUTE) }, 'Skipping torrent removal — min seed time not elapsed');
+    try {
+      // Fetch current ratio from download client if ratio gating is enabled
+      let currentRatio = 0;
+      if (importSettings.minSeedRatio > 0) {
+        const adapter = await this.downloadClientService.getAdapter(download.downloadClientId);
+        const liveState = adapter ? await adapter.getDownload(download.externalId) : null;
+        if (!liveState) {
+          // Cannot determine ratio — defer for retry
+          this.log.info({ downloadId: download.id }, 'Skipping torrent removal — cannot fetch current state, deferring');
+          await this.db.update(downloads).set({ pendingCleanup: new Date() }).where(eq(downloads.id, download.id));
+          return;
+        }
+        currentRatio = liveState.ratio;
+      }
+
+      if (isTorrentRemovalDeferred(download, importSettings, currentRatio)) {
+        this.log.info({ downloadId: download.id, currentRatio, minSeedRatio: importSettings.minSeedRatio, minSeedTime: importSettings.minSeedTime }, 'Skipping torrent removal — seed conditions not met, deferring');
+        await this.db.update(downloads).set({ pendingCleanup: new Date() }).where(eq(downloads.id, download.id));
         return;
       }
-    }
 
-    try {
       const client = await this.downloadClientService.getById(download.downloadClientId);
       const adapter = await this.downloadClientService.getAdapter(download.downloadClientId);
       if (adapter) {
@@ -232,6 +241,52 @@ export class ImportService {
       }
     } catch (error: unknown) {
       this.log.error({ error, downloadId: download.id }, 'Failed to remove torrent after import');
+    }
+  }
+
+  /**
+   * Re-check imported downloads with pendingCleanup set.
+   * Removes torrent from client when seed time + ratio conditions are met, then clears pendingCleanup.
+   * Called by the import job on a 60-second schedule.
+   */
+  async cleanupDeferredImports(): Promise<void> {
+    let importSettings: { minSeedTime: number; minSeedRatio: number; deleteAfterImport: boolean };
+    try {
+      importSettings = await this.settingsService.get('import');
+    } catch (error: unknown) {
+      this.log.warn({ error }, 'Failed to read import settings for deferred import cleanup — skipping cycle');
+      return;
+    }
+
+    if (!importSettings.deleteAfterImport) return;
+
+    const candidates = await this.db.select().from(downloads)
+      .where(and(eq(downloads.status, 'imported'), isNotNull(downloads.pendingCleanup)));
+    if (candidates.length === 0) return;
+
+    for (const download of candidates) {
+      try {
+        if (!download.downloadClientId || !download.externalId) continue;
+
+        const adapter = await this.downloadClientService.getAdapter(download.downloadClientId);
+        const liveState = adapter ? await adapter.getDownload(download.externalId) : null;
+        const currentRatio = liveState?.ratio ?? 0;
+
+        if (isTorrentRemovalDeferred(download, importSettings, currentRatio)) {
+          continue; // Still deferred — leave pendingCleanup for next cycle
+        }
+
+        if (!adapter) {
+          this.log.warn({ downloadId: download.id }, 'Deferred torrent removal skipped — adapter not found, will retry');
+          continue;
+        }
+        const client = await this.downloadClientService.getById(download.downloadClientId);
+        await adapter.removeDownload(download.externalId, true);
+        this.log.info({ downloadId: download.id, externalId: download.externalId, clientType: client?.type }, 'Deferred torrent removal completed after import');
+        await this.db.update(downloads).set({ pendingCleanup: null }).where(eq(downloads.id, download.id));
+      } catch (error: unknown) {
+        this.log.error({ error, downloadId: download.id }, 'Failed deferred torrent removal — will retry next cycle');
+      }
     }
   }
 }

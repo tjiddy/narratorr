@@ -90,6 +90,28 @@ export function ImportSettingsSection() {
           </p>
         </div>
 
+        <div>
+          <label htmlFor="minSeedRatio" className="block text-sm font-medium mb-2">Minimum Seed Ratio</label>
+          <input
+            id="minSeedRatio"
+            type="number"
+            {...register('minSeedRatio', { valueAsNumber: true })}
+            disabled={!deleteAfterImport}
+            className={`w-full px-4 py-3 bg-background border rounded-xl focus-ring focus:border-transparent transition-all disabled:cursor-not-allowed disabled:opacity-50 ${
+              errors.minSeedRatio ? 'border-destructive' : 'border-border'
+            }`}
+            min={0}
+            step={0.1}
+            placeholder="0"
+          />
+          {errors.minSeedRatio && (
+            <p className="text-sm text-destructive mt-1">{errors.minSeedRatio.message}</p>
+          )}
+          <p className="text-sm text-muted-foreground mt-2">
+            Minimum upload ratio before removing the torrent. Set to 0 to disable (only applies when delete after import is enabled)
+          </p>
+        </div>
+
         <div className="flex items-center justify-between">
           <div>
             <label htmlFor="redownloadFailed" className="block text-sm font-medium">Redownload Failed</label>

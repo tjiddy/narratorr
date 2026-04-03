@@ -22,8 +22,7 @@ import type { SettingsService } from './settings.service.js';
 import { rm, stat } from 'node:fs/promises';
 import { eq } from 'drizzle-orm';
 import { downloads } from '../../db/schema.js';
-
-const MS_PER_MINUTE = 60_000;
+import { isTorrentRemovalDeferred } from '../utils/seed-helpers.js';
 type BookRow = typeof books.$inferSelect;
 
 export class QualityGateOrchestrator {
@@ -113,11 +112,11 @@ export class QualityGateOrchestrator {
    * for candidates where the threshold has now passed.
    */
   async cleanupDeferredRejections(): Promise<void> {
-    let minSeedTimeMinutes = 0;
+    let importSettings = { minSeedTime: 0, minSeedRatio: 0 };
     try {
       if (this.settingsService) {
-        const importSettings = await this.settingsService.get('import');
-        minSeedTimeMinutes = importSettings.minSeedTime;
+        const settings = await this.settingsService.get('import');
+        importSettings = { minSeedTime: settings.minSeedTime, minSeedRatio: settings.minSeedRatio };
       }
     } catch (error: unknown) {
       this.log.warn({ error }, 'Quality gate: failed to read import settings for deferred cleanup — skipping cycle');
@@ -129,23 +128,26 @@ export class QualityGateOrchestrator {
 
     for (const download of candidates) {
       try {
-        await this.processDeferredCandidate(download, minSeedTimeMinutes);
+        await this.processDeferredCandidate(download, importSettings);
       } catch (error: unknown) {
         this.log.warn({ downloadId: download.id, error }, 'Quality gate: deferred cleanup error — will retry next cycle');
       }
     }
   }
 
-  /** Process a single deferred-cleanup candidate: check seed time, delete files, deregister, update markers. */
-  private async processDeferredCandidate(download: DownloadRow, minSeedTimeMinutes: number): Promise<void> {
-    // Check if seed time has now elapsed
-    if (download.completedAt && minSeedTimeMinutes > 0) {
-      const elapsedMs = Date.now() - download.completedAt.getTime();
-      const minSeedMs = minSeedTimeMinutes * MS_PER_MINUTE;
-      if (elapsedMs < minSeedMs) {
-        this.log.debug({ downloadId: download.id, remainingMinutes: Math.ceil((minSeedMs - elapsedMs) / MS_PER_MINUTE) }, 'Quality gate: deferred cleanup skipped — seed time still not elapsed');
-        return;
-      }
+  /** Process a single deferred-cleanup candidate: check seed time + ratio, delete files, deregister, update markers. */
+  private async processDeferredCandidate(download: DownloadRow, importSettings: { minSeedTime: number; minSeedRatio: number }): Promise<void> {
+    // Fetch current ratio for ratio-gated torrents
+    let currentRatio = 0;
+    if (importSettings.minSeedRatio > 0 && download.downloadClientId && download.externalId) {
+      const adapter = await this.downloadClientService.getAdapter(download.downloadClientId);
+      const liveState = adapter ? await adapter.getDownload(download.externalId) : null;
+      currentRatio = liveState?.ratio ?? 0;
+    }
+
+    if (isTorrentRemovalDeferred(download, importSettings, currentRatio)) {
+      this.log.debug({ downloadId: download.id }, 'Quality gate: deferred cleanup skipped — seed conditions not met');
+      return;
     }
 
     // Seed time elapsed (or no completedAt / minSeedTime=0) — perform cleanup
@@ -303,14 +305,25 @@ export class QualityGateOrchestrator {
       });
     }
 
-    // Read import settings to gate destructive cleanup
+    await this.gatedRejectionCleanup(download);
+
+    // Recover book status — errors propagate to caller (manual reject → 500, auto-reject → outer catch → pending_review)
+    if (book) {
+      const revertStatus = await revertBookStatus(this.db, book);
+      this.emitSSE('download_status_change', { download_id: download.id, book_id: book.id, old_status: oldStatus, new_status: 'failed' });
+      this.emitSSE('book_status_change', { book_id: book.id, old_status: book.status as BookStatus, new_status: revertStatus as BookStatus });
+    }
+  }
+
+  /** Read import settings, check seed conditions, and either delete, defer, or skip. */
+  private async gatedRejectionCleanup(download: DownloadRow): Promise<void> {
     let shouldDelete = true;
-    let minSeedTimeMinutes = 0;
+    let importSettings = { minSeedTime: 0, minSeedRatio: 0 };
     try {
       if (this.settingsService) {
-        const importSettings = await this.settingsService.get('import');
-        shouldDelete = importSettings.deleteAfterImport;
-        minSeedTimeMinutes = importSettings.minSeedTime;
+        const settings = await this.settingsService.get('import');
+        shouldDelete = settings.deleteAfterImport;
+        importSettings = { minSeedTime: settings.minSeedTime, minSeedRatio: settings.minSeedRatio };
       }
     } catch (error: unknown) {
       this.log.warn({ downloadId: download.id, error }, 'Quality gate: failed to read import settings — defaulting to non-destructive cleanup');
@@ -319,29 +332,26 @@ export class QualityGateOrchestrator {
 
     if (!shouldDelete) {
       this.log.warn({ downloadId: download.id }, 'Quality gate: deleteAfterImport disabled — skipping file and client cleanup for rejected download');
-    } else if (download.protocol === 'torrent' && minSeedTimeMinutes > 0 && download.completedAt) {
-      const elapsedMs = Date.now() - download.completedAt.getTime();
-      const minSeedMs = minSeedTimeMinutes * MS_PER_MINUTE;
-      if (elapsedMs < minSeedMs) {
-        // Defer cleanup — mark for revisit
-        this.log.info({ downloadId: download.id, remainingMinutes: Math.ceil((minSeedMs - elapsedMs) / MS_PER_MINUTE) }, 'Quality gate: deferring rejection cleanup — min seed time not elapsed');
-        await this.db.update(downloads).set({ pendingCleanup: new Date() }).where(eq(downloads.id, download.id));
-      } else {
-        await this.removeDownloadFiles(download);
-        await this.fallbackFileDelete(download);
-      }
+      return;
+    }
+
+    const currentRatio = await this.fetchCurrentRatio(download, importSettings.minSeedRatio);
+
+    if (isTorrentRemovalDeferred(download, importSettings, currentRatio)) {
+      this.log.info({ downloadId: download.id }, 'Quality gate: deferring rejection cleanup — seed conditions not met');
+      await this.db.update(downloads).set({ pendingCleanup: new Date() }).where(eq(downloads.id, download.id));
     } else {
-      // deleteAfterImport=true and either usenet, minSeedTime=0, or completedAt=null → immediate cleanup
       await this.removeDownloadFiles(download);
       await this.fallbackFileDelete(download);
     }
+  }
 
-    // Recover book status — errors propagate to caller (manual reject → 500, auto-reject → outer catch → pending_review)
-    if (book) {
-      const revertStatus = await revertBookStatus(this.db, book);
-      this.emitSSE('download_status_change', { download_id: download.id, book_id: book.id, old_status: oldStatus, new_status: 'failed' });
-      this.emitSSE('book_status_change', { book_id: book.id, old_status: book.status as BookStatus, new_status: revertStatus as BookStatus });
-    }
+  /** Fetch current ratio from download client for ratio-gated torrents. Returns 0 if not applicable. */
+  private async fetchCurrentRatio(download: DownloadRow, minSeedRatio: number): Promise<number> {
+    if (minSeedRatio <= 0 || !download.downloadClientId || !download.externalId) return 0;
+    const adapter = await this.downloadClientService.getAdapter(download.downloadClientId);
+    const liveState = adapter ? await adapter.getDownload(download.externalId) : null;
+    return liveState?.ratio ?? 0;
   }
 
   /** Delete downloaded files via the download client adapter. */

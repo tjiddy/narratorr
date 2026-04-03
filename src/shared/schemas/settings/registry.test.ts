@@ -74,7 +74,7 @@ describe('settingsRegistry', () => {
     });
 
     it('import schema defaults match registry defaults', () => {
-      expect(DEFAULT_SETTINGS.import).toEqual({ deleteAfterImport: false, minSeedTime: 60, minFreeSpaceGB: 5, redownloadFailed: true });
+      expect(DEFAULT_SETTINGS.import).toEqual({ deleteAfterImport: false, minSeedTime: 60, minSeedRatio: 0, minFreeSpaceGB: 5, redownloadFailed: true });
       const schemaParsed = settingsRegistry.import.schema.parse({});
       expect(schemaParsed.minSeedTime).toBe(60);
       expect(schemaParsed.minFreeSpaceGB).toBe(5);
@@ -548,6 +548,7 @@ describe('settingsRegistry', () => {
       const result = formSchema.safeParse({
         deleteAfterImport: false,
         minSeedTime: 60,
+        minSeedRatio: 0,
         minFreeSpaceGB: 5,
         redownloadFailed: true,
       });
@@ -559,6 +560,7 @@ describe('settingsRegistry', () => {
       const result = formSchema.safeParse({
         deleteAfterImport: false,
         minSeedTime: 0,
+        minSeedRatio: 0,
         minFreeSpaceGB: 0,
         redownloadFailed: true,
       });

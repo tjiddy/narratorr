@@ -76,7 +76,7 @@ describe('startJobs', () => {
     expect(log.info).toHaveBeenCalledWith('Background jobs started');
   });
 
-  it('import task callback calls qualityGate then importOrchestrator processCompletedDownloads', async () => {
+  it('import task callback calls qualityGate then importOrchestrator processCompletedDownloads then deferred cleanups', async () => {
     const { startJobs } = await import('./index.js');
     startJobs(db, services, log);
 
@@ -86,13 +86,16 @@ describe('startJobs', () => {
     expect(services.qualityGateOrchestrator.processCompletedDownloads).toHaveBeenCalledTimes(1);
     expect(services.importOrchestrator.processCompletedDownloads).toHaveBeenCalledTimes(1);
     expect(services.qualityGateOrchestrator.cleanupDeferredRejections).toHaveBeenCalledTimes(1);
+    expect(services.import.cleanupDeferredImports).toHaveBeenCalledTimes(1);
 
-    // Quality gate must be called before import orchestrator, deferred cleanup last
+    // Verify call order: QG process → import process → QG deferred → import deferred
     const qgOrder = (services.qualityGateOrchestrator.processCompletedDownloads as ReturnType<typeof vi.fn>).mock.invocationCallOrder[0];
     const ioOrder = (services.importOrchestrator.processCompletedDownloads as ReturnType<typeof vi.fn>).mock.invocationCallOrder[0];
     const dcOrder = (services.qualityGateOrchestrator.cleanupDeferredRejections as ReturnType<typeof vi.fn>).mock.invocationCallOrder[0];
+    const diOrder = (services.import.cleanupDeferredImports as ReturnType<typeof vi.fn>).mock.invocationCallOrder[0];
     expect(qgOrder).toBeLessThan(ioOrder);
     expect(ioOrder).toBeLessThan(dcOrder);
+    expect(dcOrder).toBeLessThan(diOrder);
   });
 
   it('schedules discovery timeout loop using intervalHours * 60 from discovery settings', async () => {
