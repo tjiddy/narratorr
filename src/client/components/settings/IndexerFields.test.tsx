@@ -439,7 +439,7 @@ describe('IndexerFields', () => {
         metadata: { username: 'VipUser', classname: 'VIP', isVip: true },
       });
 
-      let submittedData: CreateIndexerFormData | null = null;
+      const onSubmit = vi.fn();
       function MamDetectionFormWrapper() {
         const { register, handleSubmit, watch, setValue, formState: { errors } } = useForm<CreateIndexerFormData>({
           defaultValues: {
@@ -448,7 +448,7 @@ describe('IndexerFields', () => {
           },
         });
         return (
-          <form onSubmit={handleSubmit((data) => { submittedData = data; })}>
+          <form onSubmit={handleSubmit(onSubmit)}>
             <IndexerFields selectedType="myanonamouse" register={register} errors={errors} watch={watch} setValue={setValue} />
             <button type="submit">Submit</button>
           </form>
@@ -471,9 +471,9 @@ describe('IndexerFields', () => {
       // Submit form and check isVip was written
       await user.click(screen.getByText('Submit'));
       await waitFor(() => {
-        expect(submittedData).not.toBeNull();
+        expect(onSubmit).toHaveBeenCalled();
       });
-      expect(submittedData!.settings.isVip).toBe(true);
+      expect(onSubmit.mock.calls[0][0].settings.isVip).toBe(true);
     });
 
     it('refresh button triggers a second detection request', async () => {

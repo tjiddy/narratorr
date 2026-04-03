@@ -317,4 +317,41 @@ describe('useConnectionTest', () => {
       expect(invalidateSpy).not.toHaveBeenCalled();
     });
   });
+
+  describe('#317 — metadata pass-through in result state', () => {
+    it('testResult retains metadata from handleTest (by ID)', async () => {
+      const metadata = { isVip: true, username: 'VipUser', classname: 'VIP' };
+      testById.mockResolvedValue({ success: true, message: 'Connected', metadata });
+
+      const { result } = renderTestHook();
+
+      await act(async () => {
+        await result.current.handleTest(7);
+      });
+
+      expect(result.current.testResult).toEqual({
+        id: 7,
+        success: true,
+        message: 'Connected',
+        metadata: { isVip: true, username: 'VipUser', classname: 'VIP' },
+      });
+    });
+
+    it('formTestResult retains metadata from handleFormTest (by config)', async () => {
+      const metadata = { isVip: false, username: 'RegularUser', classname: 'User' };
+      testByConfig.mockResolvedValue({ success: true, message: 'OK', metadata });
+
+      const { result } = renderTestHook();
+
+      await act(async () => {
+        await result.current.handleFormTest({ name: 'test' });
+      });
+
+      expect(result.current.formTestResult).toEqual({
+        success: true,
+        message: 'OK',
+        metadata: { isVip: false, username: 'RegularUser', classname: 'User' },
+      });
+    });
+  });
 });
