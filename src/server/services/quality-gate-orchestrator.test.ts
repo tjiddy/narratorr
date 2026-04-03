@@ -1541,8 +1541,53 @@ describe('QualityGateOrchestrator', () => {
   });
 
   describe('#324 — quality gate held revert book status', () => {
-    it.todo('when download held for pending_review, book status reverted from importing to downloading in DB');
-    it.todo('when download held for pending_review, book_status_change SSE emitted with revert');
-    it.todo('when download rejected, book status revert still works (existing behavior, no regression)');
+    it('when download held for pending_review (probe failure), book status reverted from importing to downloading in DB', async () => {
+      const importingBook = { ...baseBook, status: 'importing' as const };
+      const { orchestrator, qualityGateService, db } = createOrchestrator();
+      qualityGateService.getCompletedDownloads.mockResolvedValue([{ download: baseDownload, book: importingBook, narrators: [] }]);
+      (scanAudioDirectory as ReturnType<typeof vi.fn>).mockRejectedValue(new Error('probe failed'));
+      (resolveSavePath as ReturnType<typeof vi.fn>).mockReturnValue('/path');
+      const chain = { set: vi.fn().mockReturnThis(), where: vi.fn().mockResolvedValue(undefined) };
+      db.update.mockReturnValue(chain as never);
+
+      await orchestrator.processCompletedDownloads();
+
+      // Book status should be reverted to 'downloading'
+      const setCalls = (chain.set as ReturnType<typeof vi.fn>).mock.calls.map((c: unknown[]) => c[0] as Record<string, unknown>);
+      expect(setCalls).toContainEqual(expect.objectContaining({ status: 'downloading' }));
+    });
+
+    it('when download held for pending_review, book_status_change SSE emitted with revert', async () => {
+      const importingBook = { ...baseBook, status: 'importing' as const };
+      const { orchestrator, qualityGateService, broadcaster } = createOrchestrator();
+      qualityGateService.getCompletedDownloads.mockResolvedValue([{ download: baseDownload, book: importingBook, narrators: [] }]);
+      (scanAudioDirectory as ReturnType<typeof vi.fn>).mockRejectedValue(new Error('probe failed'));
+      (resolveSavePath as ReturnType<typeof vi.fn>).mockReturnValue('/path');
+
+      await orchestrator.processCompletedDownloads();
+
+      expect(broadcaster.emit).toHaveBeenCalledWith('book_status_change', {
+        book_id: 1, old_status: 'importing', new_status: 'downloading',
+      });
+    });
+
+    it('when download rejected, book status revert still works (existing behavior)', async () => {
+      const importingBook = { ...baseBook, status: 'importing' as const };
+      const { orchestrator, qualityGateService, broadcaster } = createOrchestrator();
+      qualityGateService.getCompletedDownloads.mockResolvedValue([{ download: baseDownload, book: importingBook, narrators: [] }]);
+      (scanAudioDirectory as ReturnType<typeof vi.fn>).mockResolvedValue({ files: [{ path: '/f.mp3', size: 100 }], totalSize: 100 });
+      (resolveSavePath as ReturnType<typeof vi.fn>).mockReturnValue('/path');
+      qualityGateService.processDownload.mockResolvedValue({
+        action: 'rejected', reason: { ...NULL_REASON, qualityFloorFailed: true }, statusTransition: { from: 'checking', to: 'failed' },
+      });
+      (revertBookStatus as ReturnType<typeof vi.fn>).mockResolvedValue('wanted');
+
+      await orchestrator.processCompletedDownloads();
+
+      expect(revertBookStatus).toHaveBeenCalled();
+      expect(broadcaster.emit).toHaveBeenCalledWith('book_status_change', expect.objectContaining({
+        book_id: 1, new_status: 'wanted',
+      }));
+    });
   });
 });

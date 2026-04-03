@@ -12,7 +12,7 @@ import type { BookStatus } from '../../shared/schemas/book.js';
 import type { DownloadRow } from './types.js';
 import type { QualityDecisionReason } from './quality-gate.types.js';
 import { NULL_REASON } from './quality-gate.types.js';
-import type { books } from '../../db/schema.js';
+import { books } from '../../db/schema.js';
 import { scanAudioDirectory } from '../../core/utils/audio-scanner.js';
 import { resolveSavePath } from '../utils/download-path.js';
 import { revertBookStatus } from '../utils/book-status.js';
@@ -253,6 +253,11 @@ export class QualityGateOrchestrator {
     if (book) {
       this.emitSSE('download_status_change', { download_id: download.id, book_id: book.id, old_status: 'checking', new_status: 'pending_review' });
       this.emitSSE('review_needed', { download_id: download.id, book_id: book.id, book_title: book.title });
+      // Revert book from importing → downloading (monitor pre-promoted on completion)
+      if (book.status === 'importing') {
+        await this.db.update(books).set({ status: 'downloading' }).where(eq(books.id, book.id));
+        this.emitSSE('book_status_change', { book_id: book.id, old_status: 'importing' as BookStatus, new_status: 'downloading' as BookStatus });
+      }
     }
 
     const probeError = error === undefined ? null
@@ -274,6 +279,11 @@ export class QualityGateOrchestrator {
       if (book) {
         this.emitSSE('download_status_change', { download_id: download.id, book_id: book.id, old_status: statusTransition.from as DownloadStatus, new_status: statusTransition.to as DownloadStatus });
         this.emitSSE('review_needed', { download_id: download.id, book_id: book.id, book_title: book.title });
+        // Revert book from importing → downloading (monitor pre-promoted on completion)
+        if (book.status === 'importing') {
+          await this.db.update(books).set({ status: 'downloading' }).where(eq(books.id, book.id));
+          this.emitSSE('book_status_change', { book_id: book.id, old_status: 'importing' as BookStatus, new_status: 'downloading' as BookStatus });
+        }
       }
       this.recordDecision(download, book, reason);
     } else if (action === 'imported') {
