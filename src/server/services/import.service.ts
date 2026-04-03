@@ -250,13 +250,15 @@ export class ImportService {
    * Called by the import job on a 60-second schedule.
    */
   async cleanupDeferredImports(): Promise<void> {
-    let importSettings: { minSeedTime: number; minSeedRatio: number };
+    let importSettings: { minSeedTime: number; minSeedRatio: number; deleteAfterImport: boolean };
     try {
       importSettings = await this.settingsService.get('import');
     } catch (error: unknown) {
       this.log.warn({ error }, 'Failed to read import settings for deferred import cleanup — skipping cycle');
       return;
     }
+
+    if (!importSettings.deleteAfterImport) return;
 
     const candidates = await this.db.select().from(downloads)
       .where(and(eq(downloads.status, 'imported'), isNotNull(downloads.pendingCleanup)));
@@ -274,9 +276,11 @@ export class ImportService {
           continue; // Still deferred — leave pendingCleanup for next cycle
         }
 
-        const client = await this.downloadClientService.getById(download.downloadClientId);
-        await adapter!.removeDownload(download.externalId, true);
-        this.log.info({ downloadId: download.id, externalId: download.externalId, clientType: client?.type }, 'Deferred torrent removal completed after import');
+        if (adapter) {
+          const client = await this.downloadClientService.getById(download.downloadClientId);
+          await adapter.removeDownload(download.externalId, true);
+          this.log.info({ downloadId: download.id, externalId: download.externalId, clientType: client?.type }, 'Deferred torrent removal completed after import');
+        }
         await this.db.update(downloads).set({ pendingCleanup: null }).where(eq(downloads.id, download.id));
       } catch (error: unknown) {
         this.log.error({ error, downloadId: download.id }, 'Failed deferred torrent removal — will retry next cycle');
