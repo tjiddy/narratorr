@@ -84,7 +84,7 @@ describe('DownloadActions', () => {
         const download = createMockDownload({ status });
         render(<DownloadActions download={download} onCancel={vi.fn()} />);
 
-        expect(screen.getByText('Cancel')).toBeInTheDocument();
+        expect(screen.getByText('Cancel & Blacklist')).toBeInTheDocument();
       },
     );
 
@@ -92,7 +92,7 @@ describe('DownloadActions', () => {
       const download = createMockDownload({ status: 'downloading' });
       render(<DownloadActions download={download} />);
 
-      expect(screen.queryByText('Cancel')).not.toBeInTheDocument();
+      expect(screen.queryByText('Cancel & Blacklist')).not.toBeInTheDocument();
     });
 
     it('calls onCancel when cancel button is clicked', async () => {
@@ -101,7 +101,7 @@ describe('DownloadActions', () => {
       const download = createMockDownload({ status: 'queued' });
       render(<DownloadActions download={download} onCancel={onCancel} />);
 
-      await user.click(screen.getByText('Cancel'));
+      await user.click(screen.getByText('Cancel & Blacklist'));
       expect(onCancel).toHaveBeenCalledTimes(1);
     });
 
@@ -121,9 +121,18 @@ describe('DownloadActions', () => {
         render(
           <DownloadActions download={createMockDownload({ status })} onCancel={vi.fn()} />,
         );
-        expect(screen.queryByText('Cancel')).not.toBeInTheDocument();
+        expect(screen.queryByText('Cancel & Blacklist')).not.toBeInTheDocument();
       },
     );
+
+    // #315 — button label change
+    it('shows "Cancel & Blacklist" label instead of "Cancel" for active downloads', () => {
+      const download = createMockDownload({ status: 'downloading' });
+      render(<DownloadActions download={download} onCancel={vi.fn()} />);
+
+      expect(screen.getByText('Cancel & Blacklist')).toBeInTheDocument();
+      expect(screen.queryByText(/^Cancel$/)).not.toBeInTheDocument();
+    });
   });
 
   describe('no action buttons', () => {

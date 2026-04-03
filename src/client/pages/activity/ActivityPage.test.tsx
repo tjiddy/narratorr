@@ -307,7 +307,7 @@ describe('ActivityPage', () => {
       expect(screen.getByText('Queued Audiobook')).toBeInTheDocument();
     });
 
-    const cancelSpans = screen.getAllByText('Cancel');
+    const cancelSpans = screen.getAllByText('Cancel & Blacklist');
     expect(cancelSpans).toHaveLength(2);
   });
 
@@ -341,8 +341,8 @@ describe('ActivityPage', () => {
       expect(screen.getByText('Cancel Me')).toBeInTheDocument();
     });
 
-    // "Cancel" text is inside a hidden sm:inline span, so find via text then traverse to button
-    const cancelSpan = screen.getByText('Cancel');
+    // "Cancel & Blacklist" text is inside a hidden sm:inline span, so find via text then traverse to button
+    const cancelSpan = screen.getByText('Cancel & Blacklist');
     await user.click(cancelSpan.closest('button')!);
 
     // API was called with correct ID (TanStack Query passes extra context arg)
