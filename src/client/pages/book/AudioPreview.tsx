@@ -20,17 +20,26 @@ export function AudioPreview({ bookId, status, path }: AudioPreviewProps) {
     setIsPlaying(false);
   }, []);
 
+  const handlePlay = useCallback(() => setIsPlaying(true), []);
+  const handlePause = useCallback(() => setIsPlaying(false), []);
+
   useEffect(() => {
     const audio = audioRef.current;
     if (!audio) return;
 
     audio.addEventListener('error', handleError);
+    audio.addEventListener('play', handlePlay);
+    audio.addEventListener('pause', handlePause);
+    audio.addEventListener('ended', handlePause);
     return () => {
       audio.removeEventListener('error', handleError);
+      audio.removeEventListener('play', handlePlay);
+      audio.removeEventListener('pause', handlePause);
+      audio.removeEventListener('ended', handlePause);
       audio.pause();
       audio.src = '';
     };
-  }, [handleError]);
+  }, [handleError, handlePlay, handlePause]);
 
   if (!canPreview) return null;
 
@@ -42,14 +51,11 @@ export function AudioPreview({ bookId, status, path }: AudioPreviewProps) {
 
     if (isPlaying) {
       audio.pause();
-      setIsPlaying(false);
     } else {
       try {
         await audio.play();
-        setIsPlaying(true);
       } catch {
         // Browser may block autoplay; error event handles API failures
-        setIsPlaying(false);
       }
     }
   }

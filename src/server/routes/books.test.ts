@@ -907,8 +907,13 @@ describe('books routes', () => {
   describe('GET /api/books/:id/preview (#320)', () => {
     const bookWithPath = { ...mockBook, path: '/library/book1', status: 'imported' };
     const fileSize = 10000;
+    let logWarnSpy: ReturnType<typeof vi.spyOn>;
 
     const mockFileHandle = { fd: 3, close: vi.fn().mockResolvedValue(undefined) };
+
+    beforeEach(() => {
+      logWarnSpy = vi.spyOn(app.log, 'warn');
+    });
 
     function mockAudioDir(files: string[] = ['02-chapter.mp3', '10-chapter.mp3']) {
       (services.book.getById as Mock).mockResolvedValue(bookWithPath);
@@ -1014,6 +1019,10 @@ describe('books routes', () => {
 
       expect(res.statusCode).toBe(404);
       expect(JSON.parse(res.payload)).toEqual({ error: 'Audio file not found' });
+      expect(logWarnSpy).toHaveBeenCalledWith(
+        expect.objectContaining({ bookId: 1, path: '/library/book1' }),
+        expect.any(String),
+      );
     });
 
     it('returns 404 with "Audio file not found" when stat throws (file disappeared)', async () => {
@@ -1025,6 +1034,10 @@ describe('books routes', () => {
 
       expect(res.statusCode).toBe(404);
       expect(JSON.parse(res.payload)).toEqual({ error: 'Audio file not found' });
+      expect(logWarnSpy).toHaveBeenCalledWith(
+        expect.objectContaining({ bookId: 1, path: expect.stringContaining('chapter.mp3') }),
+        expect.any(String),
+      );
     });
 
     // Range edge cases
@@ -1118,6 +1131,10 @@ describe('books routes', () => {
 
       expect(res.statusCode).toBe(404);
       expect(JSON.parse(res.payload)).toEqual({ error: 'Audio file not found' });
+      expect(logWarnSpy).toHaveBeenCalledWith(
+        expect.objectContaining({ bookId: 1, path: expect.stringContaining('chapter.mp3') }),
+        expect.any(String),
+      );
     });
 
     it('returns application/octet-stream for unknown audio extension', async () => {

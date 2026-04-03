@@ -16,8 +16,13 @@ let mockPause: ReturnType<typeof vi.fn>;
 
 beforeEach(() => {
   vi.clearAllMocks();
-  mockPlay = vi.fn().mockResolvedValue(undefined);
-  mockPause = vi.fn();
+  mockPlay = vi.fn().mockImplementation(function (this: HTMLAudioElement) {
+    this.dispatchEvent(new Event('play'));
+    return Promise.resolve();
+  });
+  mockPause = vi.fn().mockImplementation(function (this: HTMLAudioElement) {
+    this.dispatchEvent(new Event('pause'));
+  });
   Object.defineProperty(globalThis.HTMLMediaElement.prototype, 'play', {
     configurable: true,
     value: mockPlay,
@@ -75,6 +80,45 @@ describe('AudioPreview (#320)', () => {
     const pauseButton = screen.getByRole('button', { name: /pause/i });
     await user.click(pauseButton);
     expect(mockPause).toHaveBeenCalled();
+  });
+
+  // Native control sync
+  it('syncs header button to Pause when native controls trigger play event', () => {
+    renderWithProviders(<AudioPreview bookId={1} status="imported" path="/library/book1" />);
+
+    // Initially shows Play
+    expect(screen.getByRole('button', { name: /play preview/i })).toBeInTheDocument();
+
+    const audio = document.querySelector('audio')!;
+    act(() => {
+      audio.dispatchEvent(new Event('play'));
+    });
+
+    // After native play, header button should show Pause
+    expect(screen.getByRole('button', { name: /pause preview/i })).toBeInTheDocument();
+  });
+
+  it('syncs header button to Play when native controls trigger pause event', () => {
+    renderWithProviders(<AudioPreview bookId={1} status="imported" path="/library/book1" />);
+
+    const audio = document.querySelector('audio')!;
+    // Simulate play then pause from native controls
+    act(() => { audio.dispatchEvent(new Event('play')); });
+    expect(screen.getByRole('button', { name: /pause preview/i })).toBeInTheDocument();
+
+    act(() => { audio.dispatchEvent(new Event('pause')); });
+    expect(screen.getByRole('button', { name: /play preview/i })).toBeInTheDocument();
+  });
+
+  it('syncs header button to Play when audio ends', () => {
+    renderWithProviders(<AudioPreview bookId={1} status="imported" path="/library/book1" />);
+
+    const audio = document.querySelector('audio')!;
+    act(() => { audio.dispatchEvent(new Event('play')); });
+    expect(screen.getByRole('button', { name: /pause preview/i })).toBeInTheDocument();
+
+    act(() => { audio.dispatchEvent(new Event('ended')); });
+    expect(screen.getByRole('button', { name: /play preview/i })).toBeInTheDocument();
   });
 
   // Cleanup / navigation
