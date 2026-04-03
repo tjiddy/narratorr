@@ -1449,7 +1449,7 @@ describe('monitor job', () => {
       expect(broadcaster.emit).not.toHaveBeenCalledWith('book_status_change', expect.anything());
     });
 
-    it('if book status update or SSE emit fails, download completion still succeeds (error isolation)', async () => {
+    it('if SSE emit fails, download completion still succeeds (error isolation)', async () => {
       const broadcaster = { emit: vi.fn().mockImplementation((event: string) => {
         if (event === 'book_status_change') throw new Error('SSE broken');
       }) };
@@ -1462,6 +1462,32 @@ describe('monitor job', () => {
       await expect(
         monitorDownloads(inject<Db>(db), inject<DownloadClientService>(downloadClientService), inject<NotifierService>(notifierService), inject<FastifyBaseLogger>(log), undefined, inject<EventBroadcasterService>(broadcaster)),
       ).resolves.not.toThrow();
+    });
+
+    it('if book status DB update fails, download completion still succeeds and no book_status_change SSE emitted', async () => {
+      const broadcaster = { emit: vi.fn() };
+      db.select.mockReturnValueOnce(mockDbChain([
+        { id: 1, externalId: 'ext-1', downloadClientId: 10, status: 'downloading', completedAt: null, bookId: 5 },
+      ]));
+      adapter.getDownload.mockResolvedValueOnce({ progress: 100, status: 'completed' });
+
+      // First db.update (download status) succeeds, second (book status) rejects
+      const downloadChain = mockDbChain();
+      const bookChain = { set: vi.fn().mockReturnThis(), where: vi.fn().mockRejectedValue(new Error('DB write failed')) };
+      db.update
+        .mockReturnValueOnce(downloadChain)
+        .mockReturnValueOnce(bookChain as never);
+
+      await expect(
+        monitorDownloads(inject<Db>(db), inject<DownloadClientService>(downloadClientService), inject<NotifierService>(notifierService), inject<FastifyBaseLogger>(log), undefined, inject<EventBroadcasterService>(broadcaster)),
+      ).resolves.not.toThrow();
+
+      // Download was still marked completed
+      const downloadSetCalls = (downloadChain.set as ReturnType<typeof vi.fn>).mock.calls.map((c: unknown[]) => c[0] as Record<string, unknown>);
+      expect(downloadSetCalls).toContainEqual(expect.objectContaining({ status: 'completed' }));
+
+      // No book_status_change SSE emitted (DB failed before emit could run)
+      expect(broadcaster.emit).not.toHaveBeenCalledWith('book_status_change', expect.anything());
     });
   });
 });
