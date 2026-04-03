@@ -9,6 +9,7 @@ export interface MAMConfig {
   proxyUrl?: string;
   searchLanguages: number[];
   searchType: number;
+  isVip?: boolean;
 }
 
 const DEFAULT_BASE_URL = 'https://www.myanonamouse.net';
@@ -29,6 +30,10 @@ interface MAMSearchResult {
   size?: string | number;
   seeders?: number;
   leechers?: number;
+  free?: boolean;
+  fl_vip?: boolean;
+  vip?: boolean;
+  personal_freeleech?: boolean;
 }
 
 /**
@@ -71,6 +76,7 @@ export class MyAnonamouseIndexer implements IndexerAdapter {
   private proxyUrl?: string;
   private searchLanguages: number[];
   private searchType: number;
+  private isVip?: boolean;
 
   constructor(config: MAMConfig, name?: string) {
     this.mamId = config.mamId;
@@ -78,6 +84,7 @@ export class MyAnonamouseIndexer implements IndexerAdapter {
     this.proxyUrl = config.proxyUrl;
     this.searchLanguages = config.searchLanguages;
     this.searchType = config.searchType;
+    this.isVip = config.isVip;
     this.name = name || 'MyAnonamouse';
   }
 
@@ -89,8 +96,9 @@ export class MyAnonamouseIndexer implements IndexerAdapter {
       'tor[main_cat][]': '13',
     });
 
-    // Append search type parameter
-    params.set('tor[searchType]', String(this.searchType));
+    // Auto-select search type based on VIP status, fall back to saved value for legacy rows
+    const effectiveSearchType = this.isVip === true ? 0 : this.isVip === false ? 1 : this.searchType;
+    params.set('tor[searchType]', String(effectiveSearchType));
 
     // Append language filter parameters (indexed array format)
     for (let i = 0; i < this.searchLanguages.length; i++) {
@@ -138,6 +146,9 @@ export class MyAnonamouseIndexer implements IndexerAdapter {
         downloadUrl = await this.fetchTorrentAsDataUri(item.id, signal);
       }
 
+      const isFreeleech = item.free || item.personal_freeleech || (item.fl_vip && this.isVip) || undefined;
+      const isVipOnly = item.vip || undefined;
+
       results.push({
         title: item.title,
         author: parseDoubleEncodedNames(item.author_info),
@@ -149,13 +160,15 @@ export class MyAnonamouseIndexer implements IndexerAdapter {
         leechers: item.leechers ?? undefined,
         language: normalizeLanguage(item.lang_code),
         indexer: this.name,
+        isFreeleech: isFreeleech || undefined,
+        isVipOnly: isVipOnly || undefined,
       });
     }
 
     return results;
   }
 
-  async test(): Promise<{ success: boolean; message?: string; ip?: string }> {
+  async test(): Promise<{ success: boolean; message?: string; ip?: string; metadata?: Record<string, unknown> }> {
     try {
       const body = await this.fetchWithCookie(`${this.baseUrl}/jsonLoad.php`);
 
@@ -163,17 +176,19 @@ export class MyAnonamouseIndexer implements IndexerAdapter {
         return { success: false, message: 'Authentication failed — check your MAM ID' };
       }
 
-      let data: { username?: string };
+      let data: { username?: string; classname?: string };
       try {
-        data = JSON.parse(body) as { username?: string };
+        data = JSON.parse(body) as { username?: string; classname?: string };
       } catch {
         return { success: false, message: 'MAM returned invalid response' };
       }
 
       if (data.username) {
-        const result: { success: boolean; message: string; ip?: string } = {
+        const isVip = data.classname === 'VIP' || data.classname === 'Elite VIP';
+        const result: { success: boolean; message: string; ip?: string; metadata: Record<string, unknown> } = {
           success: true,
           message: `Connected as ${data.username}`,
+          metadata: { username: data.username, classname: data.classname, isVip },
         };
 
         if (this.proxyUrl) {

@@ -172,6 +172,75 @@ describe('IndexerService', () => {
       expect(result.success).toBe(false);
       expect(result.message).toBe('Indexer not found');
     });
+
+    it('#317 persists isVip metadata on successful MAM test', async () => {
+      const mamIndexer = createMockDbIndexer({
+        id: 5, type: 'myanonamouse',
+        settings: { mamId: 'test-id', searchLanguages: [1], searchType: 1 },
+      });
+      db.select.mockReturnValue(mockDbChain([mamIndexer]));
+
+      const mockAdapter = {
+        test: vi.fn().mockResolvedValue({ success: true, message: 'Connected as VipUser', metadata: { username: 'VipUser', classname: 'VIP', isVip: true } }),
+        search: vi.fn(),
+        type: 'myanonamouse',
+        name: 'MyAnonamouse',
+      };
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      vi.spyOn(service as any, 'getAdapter').mockResolvedValue(mockAdapter as never);
+      const updateSpy = vi.spyOn(service, 'update').mockResolvedValue(mamIndexer as never);
+
+      const result = await service.test(5);
+      expect(result.success).toBe(true);
+      expect(result.metadata).toEqual({ username: 'VipUser', classname: 'VIP', isVip: true });
+      expect(updateSpy).toHaveBeenCalledWith(5, {
+        settings: { mamId: 'test-id', searchLanguages: [1], searchType: 1, isVip: true },
+      });
+    });
+
+    it('#317 does not persist metadata on failed test', async () => {
+      const mamIndexer = createMockDbIndexer({
+        id: 5, type: 'myanonamouse',
+        settings: { mamId: 'bad-id', searchLanguages: [1], searchType: 1 },
+      });
+      db.select.mockReturnValue(mockDbChain([mamIndexer]));
+
+      const mockAdapter = {
+        test: vi.fn().mockResolvedValue({ success: false, message: 'Auth failed' }),
+        search: vi.fn(),
+        type: 'myanonamouse',
+        name: 'MyAnonamouse',
+      };
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      vi.spyOn(service as any, 'getAdapter').mockResolvedValue(mockAdapter as never);
+      const updateSpy = vi.spyOn(service, 'update');
+
+      const result = await service.test(5);
+      expect(result.success).toBe(false);
+      expect(updateSpy).not.toHaveBeenCalled();
+    });
+
+    it('#317 returns test result even if metadata persistence fails', async () => {
+      const mamIndexer = createMockDbIndexer({
+        id: 5, type: 'myanonamouse',
+        settings: { mamId: 'test-id', searchLanguages: [1], searchType: 1 },
+      });
+      db.select.mockReturnValue(mockDbChain([mamIndexer]));
+
+      const mockAdapter = {
+        test: vi.fn().mockResolvedValue({ success: true, message: 'Connected', metadata: { isVip: false } }),
+        search: vi.fn(),
+        type: 'myanonamouse',
+        name: 'MyAnonamouse',
+      };
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      vi.spyOn(service as any, 'getAdapter').mockResolvedValue(mockAdapter as never);
+      vi.spyOn(service, 'update').mockRejectedValue(new Error('DB error'));
+
+      const result = await service.test(5);
+      expect(result.success).toBe(true);
+      expect(result.message).toBe('Connected');
+    });
   });
 
   describe('testConfig', () => {

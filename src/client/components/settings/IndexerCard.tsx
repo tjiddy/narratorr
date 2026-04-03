@@ -47,6 +47,7 @@ function settingsFromIndexer(indexer: Indexer): CreateIndexerFormData['settings'
     useProxy: (s.useProxy as boolean) || false,
     searchLanguages: (s.searchLanguages as number[]) ?? [1],
     searchType: (s.searchType as number) ?? 1,
+    isVip: s.isVip as boolean | undefined,
   };
 }
 

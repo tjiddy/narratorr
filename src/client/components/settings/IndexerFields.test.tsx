@@ -10,6 +10,7 @@ import type { Mock } from 'vitest';
 vi.mock('@/lib/api', () => ({
   api: {
     getSettings: vi.fn(),
+    testIndexerConfig: vi.fn(),
   },
 }));
 
@@ -257,15 +258,9 @@ describe('IndexerFields', () => {
       expect(screen.getByLabelText('Dutch')).toBeInTheDocument();
     });
 
-    it('renders search type dropdown with 4 options for myanonamouse type', () => {
+    it('does not render search type dropdown (auto-selected by VIP status per #317)', () => {
       renderWithProviders(<MamFieldWrapper />);
-      expect(screen.getByLabelText('Search Type')).toBeInTheDocument();
-      const options = screen.getByLabelText('Search Type').querySelectorAll('option');
-      expect(options).toHaveLength(4);
-      expect(options[0]).toHaveTextContent('All torrents');
-      expect(options[1]).toHaveTextContent('Only active (1+ seeders)');
-      expect(options[2]).toHaveTextContent('Freeleech');
-      expect(options[3]).toHaveTextContent('Freeleech or VIP');
+      expect(screen.queryByLabelText('Search Type')).not.toBeInTheDocument();
     });
 
     it('checking a language checkbox updates form value via setValue', async () => {
@@ -288,21 +283,232 @@ describe('IndexerFields', () => {
       expect(englishCheckbox).not.toBeChecked();
     });
 
-    it('selecting search type updates form value with numeric coercion', async () => {
-      const user = userEvent.setup();
-      renderWithProviders(<MamFieldWrapper />);
-
-      const searchTypeSelect = screen.getByLabelText('Search Type');
-      await user.selectOptions(searchTypeSelect, '2');
-      expect(searchTypeSelect).toHaveValue('2');
-    });
-
-    it('default values show English checked and search type = Only active', () => {
+    it('default values show English checked', () => {
       renderWithProviders(<MamFieldWrapper />);
 
       expect(screen.getByLabelText('English')).toBeChecked();
       expect(screen.getByLabelText('French')).not.toBeChecked();
-      expect(screen.getByLabelText('Search Type')).toHaveValue('1');
+    });
+
+    it('#317 — MAM settings form does not show search type dropdown', () => {
+      renderWithProviders(<MamFieldWrapper />);
+      expect(screen.queryByLabelText('Search Type')).not.toBeInTheDocument();
+    });
+
+    it('#317 — language checkboxes still render after dropdown removal', () => {
+      renderWithProviders(<MamFieldWrapper />);
+      expect(screen.getByText('Languages')).toBeInTheDocument();
+      expect(screen.getByLabelText('English')).toBeInTheDocument();
+    });
+  });
+
+  describe('#317 — MAM VIP detection on blur', () => {
+    function MamDetectionWrapper() {
+      const { register, watch, setValue, formState: { errors } } = useForm<CreateIndexerFormData>({
+        defaultValues: {
+          name: '', type: 'myanonamouse',
+          settings: { mamId: '', searchLanguages: [1], searchType: 1 },
+        },
+      });
+      return <IndexerFields selectedType="myanonamouse" register={register} errors={errors} watch={watch} setValue={setValue} />;
+    }
+
+    it('does not call API when MAM ID is blurred empty', async () => {
+      const user = userEvent.setup();
+      renderWithProviders(<MamDetectionWrapper />);
+
+      const mamIdInput = screen.getByLabelText('MAM ID');
+      await user.click(mamIdInput);
+      await user.tab(); // blur with empty value
+
+      expect((api.testIndexerConfig as Mock)).not.toHaveBeenCalled();
+    });
+
+    it('calls testIndexerConfig with correct payload on MAM ID blur', async () => {
+      (api.testIndexerConfig as Mock).mockResolvedValue({
+        success: true,
+        metadata: { username: 'TestUser', classname: 'VIP', isVip: true },
+      });
+      const user = userEvent.setup();
+      renderWithProviders(<MamDetectionWrapper />);
+
+      const mamIdInput = screen.getByLabelText('MAM ID');
+      await user.type(mamIdInput, 'my-mam-id');
+      await user.tab(); // blur triggers detection
+
+      await waitFor(() => {
+        expect((api.testIndexerConfig as Mock)).toHaveBeenCalledWith(
+          expect.objectContaining({
+            type: 'myanonamouse',
+            settings: expect.objectContaining({ mamId: 'my-mam-id' }),
+          }),
+        );
+      });
+    });
+
+    it('renders status badge with username and classname on success', async () => {
+      (api.testIndexerConfig as Mock).mockResolvedValue({
+        success: true,
+        metadata: { username: 'GotaBe1', classname: 'VIP', isVip: true },
+      });
+      const user = userEvent.setup();
+      renderWithProviders(<MamDetectionWrapper />);
+
+      const mamIdInput = screen.getByLabelText('MAM ID');
+      await user.type(mamIdInput, 'valid-id');
+      await user.tab();
+
+      await waitFor(() => {
+        expect(screen.getByText('GotaBe1')).toBeInTheDocument();
+      });
+      expect(screen.getByText('VIP')).toBeInTheDocument();
+    });
+
+    it('renders error message on detection failure', async () => {
+      (api.testIndexerConfig as Mock).mockResolvedValue({
+        success: false,
+        message: 'Authentication failed',
+      });
+      const user = userEvent.setup();
+      renderWithProviders(<MamDetectionWrapper />);
+
+      const mamIdInput = screen.getByLabelText('MAM ID');
+      await user.type(mamIdInput, 'bad-id');
+      await user.tab();
+
+      await waitFor(() => {
+        expect(screen.getByText('Authentication failed')).toBeInTheDocument();
+      });
+    });
+
+    it('includes current baseUrl in the synthetic test payload', async () => {
+      (api.testIndexerConfig as Mock).mockResolvedValue({
+        success: true,
+        metadata: { username: 'User1', classname: 'User', isVip: false },
+      });
+      const user = userEvent.setup();
+      renderWithProviders(<MamDetectionWrapper />);
+
+      // Fill base URL first, then MAM ID and blur
+      const baseUrlInput = screen.getByLabelText(/Base URL/);
+      await user.type(baseUrlInput, 'https://custom.mam.net');
+      const mamIdInput = screen.getByLabelText('MAM ID');
+      await user.type(mamIdInput, 'my-mam-id');
+      await user.tab();
+
+      await waitFor(() => {
+        expect((api.testIndexerConfig as Mock)).toHaveBeenCalledWith(
+          expect.objectContaining({
+            settings: expect.objectContaining({
+              mamId: 'my-mam-id',
+              baseUrl: 'https://custom.mam.net',
+            }),
+          }),
+        );
+      });
+    });
+
+    it('blocking overlay remains visible for minimum 1 second after fast API response', async () => {
+      // API resolves immediately (fast response)
+      (api.testIndexerConfig as Mock).mockResolvedValue({
+        success: true,
+        metadata: { username: 'OverlayUser', classname: 'Mouse', isVip: false },
+      });
+
+      const user = userEvent.setup();
+      renderWithProviders(<MamDetectionWrapper />);
+
+      const mamIdInput = screen.getByLabelText('MAM ID');
+      await user.type(mamIdInput, 'test-id');
+      await user.tab();
+
+      // Overlay appears — API resolved instantly but ensureMinDuration enforces 1 second
+      await waitFor(() => {
+        expect(screen.getByText('Checking MAM status…')).toBeInTheDocument();
+      });
+
+      // At ~900ms the overlay MUST still be visible (proves minimum is ≥900ms, not just >200ms)
+      await new Promise((r) => setTimeout(r, 900));
+      expect(screen.getByText('Checking MAM status…')).toBeInTheDocument();
+
+      // Overlay disappears shortly after the 1 second threshold
+      await waitFor(() => {
+        expect(screen.queryByText('Checking MAM status…')).not.toBeInTheDocument();
+      }, { timeout: 500 });
+      expect(screen.getByText('OverlayUser')).toBeInTheDocument();
+    });
+
+    it('successful detection writes isVip into form state', async () => {
+      (api.testIndexerConfig as Mock).mockResolvedValue({
+        success: true,
+        metadata: { username: 'VipUser', classname: 'VIP', isVip: true },
+      });
+
+      const onSubmit = vi.fn();
+      function MamDetectionFormWrapper() {
+        const { register, handleSubmit, watch, setValue, formState: { errors } } = useForm<CreateIndexerFormData>({
+          defaultValues: {
+            name: 'Test', type: 'myanonamouse', enabled: true, priority: 0,
+            settings: { mamId: '', searchLanguages: [1], searchType: 1 },
+          },
+        });
+        return (
+          <form onSubmit={handleSubmit(onSubmit)}>
+            <IndexerFields selectedType="myanonamouse" register={register} errors={errors} watch={watch} setValue={setValue} />
+            <button type="submit">Submit</button>
+          </form>
+        );
+      }
+
+      const user = userEvent.setup();
+      renderWithProviders(<MamDetectionFormWrapper />);
+
+      // Trigger detection
+      const mamIdInput = screen.getByLabelText('MAM ID');
+      await user.type(mamIdInput, 'vip-id');
+      await user.tab();
+
+      // Wait for badge to appear (detection complete including min duration)
+      await waitFor(() => {
+        expect(screen.getByText('VipUser')).toBeInTheDocument();
+      }, { timeout: 3000 });
+
+      // Submit form and check isVip was written
+      await user.click(screen.getByText('Submit'));
+      await waitFor(() => {
+        expect(onSubmit).toHaveBeenCalled();
+      });
+      expect(onSubmit.mock.calls[0][0].settings.isVip).toBe(true);
+    });
+
+    it('refresh button triggers a second detection request', async () => {
+      (api.testIndexerConfig as Mock).mockResolvedValue({
+        success: true,
+        metadata: { username: 'User1', classname: 'User', isVip: false },
+      });
+      const user = userEvent.setup();
+      renderWithProviders(<MamDetectionWrapper />);
+
+      const mamIdInput = screen.getByLabelText('MAM ID');
+      await user.type(mamIdInput, 'my-id');
+      await user.tab();
+
+      await waitFor(() => {
+        expect(screen.getByText('User1')).toBeInTheDocument();
+      });
+
+      // Clear mock and click refresh
+      (api.testIndexerConfig as Mock).mockClear();
+      (api.testIndexerConfig as Mock).mockResolvedValue({
+        success: true,
+        metadata: { username: 'User1', classname: 'VIP', isVip: true },
+      });
+
+      await user.click(screen.getByTitle('Refresh VIP status'));
+
+      await waitFor(() => {
+        expect((api.testIndexerConfig as Mock)).toHaveBeenCalledTimes(1);
+      });
     });
   });
 });

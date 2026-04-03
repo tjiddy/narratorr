@@ -1,5 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { renderHook, act } from '@testing-library/react';
+import { createElement, type ReactNode } from 'react';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { useConnectionTest } from '@/hooks/useConnectionTest';
 
 vi.mock('sonner', () => ({
@@ -10,6 +12,13 @@ vi.mock('sonner', () => ({
 }));
 
 import { toast } from 'sonner';
+
+function createWrapper() {
+  const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  return function Wrapper({ children }: { children: ReactNode }) {
+    return createElement(QueryClientProvider, { client: queryClient }, children);
+  };
+}
 
 describe('useConnectionTest', () => {
   const testById = vi.fn();
@@ -22,7 +31,7 @@ describe('useConnectionTest', () => {
   function renderTestHook() {
     return renderHook(() =>
       useConnectionTest<{ name: string }>({ testById, testByConfig }),
-    );
+    { wrapper: createWrapper() });
   }
 
   describe('handleTest (by ID)', () => {
@@ -256,6 +265,93 @@ describe('useConnectionTest', () => {
       });
 
       expect(result.current.formTestResult).toBeNull();
+    });
+  });
+
+  describe('#317 — invalidateOnSuccess', () => {
+    it('invalidates queries on successful test-by-ID when invalidateOnSuccess is set', async () => {
+      testById.mockResolvedValue({ success: true, metadata: { isVip: true } });
+      const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+      const invalidateSpy = vi.spyOn(queryClient, 'invalidateQueries').mockResolvedValue(undefined);
+
+      const wrapper = function Wrapper({ children }: { children: ReactNode }) {
+        return createElement(QueryClientProvider, { client: queryClient }, children);
+      };
+
+      const { result } = renderHook(() =>
+        useConnectionTest<{ name: string }>({
+          testById,
+          testByConfig,
+          invalidateOnSuccess: ['indexers'],
+        }),
+      { wrapper });
+
+      await act(async () => {
+        await result.current.handleTest(5);
+      });
+
+      expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: ['indexers'] });
+    });
+
+    it('does not invalidate queries on failed test-by-ID', async () => {
+      testById.mockResolvedValue({ success: false, message: 'Auth failed' });
+      const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+      const invalidateSpy = vi.spyOn(queryClient, 'invalidateQueries');
+
+      const wrapper = function Wrapper({ children }: { children: ReactNode }) {
+        return createElement(QueryClientProvider, { client: queryClient }, children);
+      };
+
+      const { result } = renderHook(() =>
+        useConnectionTest<{ name: string }>({
+          testById,
+          testByConfig,
+          invalidateOnSuccess: ['indexers'],
+        }),
+      { wrapper });
+
+      await act(async () => {
+        await result.current.handleTest(5);
+      });
+
+      expect(invalidateSpy).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('#317 — metadata pass-through in result state', () => {
+    it('testResult retains metadata from handleTest (by ID)', async () => {
+      const metadata = { isVip: true, username: 'VipUser', classname: 'VIP' };
+      testById.mockResolvedValue({ success: true, message: 'Connected', metadata });
+
+      const { result } = renderTestHook();
+
+      await act(async () => {
+        await result.current.handleTest(7);
+      });
+
+      expect(result.current.testResult).toEqual({
+        id: 7,
+        success: true,
+        message: 'Connected',
+        metadata: { isVip: true, username: 'VipUser', classname: 'VIP' },
+      });
+    });
+
+    it('formTestResult retains metadata from handleFormTest (by config)', async () => {
+      const metadata = { isVip: false, username: 'RegularUser', classname: 'User' };
+      testByConfig.mockResolvedValue({ success: true, message: 'OK', metadata });
+
+      const { result } = renderTestHook();
+
+      await act(async () => {
+        await result.current.handleFormTest({ name: 'test' });
+      });
+
+      expect(result.current.formTestResult).toEqual({
+        success: true,
+        message: 'OK',
+        metadata: { isVip: false, username: 'RegularUser', classname: 'User' },
+      });
     });
   });
 });

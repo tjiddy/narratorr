@@ -20,6 +20,8 @@ export interface SearchResult {
   guid?: string;
   coverUrl?: string;
   matchScore?: number;
+  isFreeleech?: boolean;
+  isVipOnly?: boolean;
 }
 
 export interface SearchOptions {
@@ -34,5 +36,5 @@ export interface IndexerAdapter {
   readonly name: string;
 
   search(query: string, options?: SearchOptions): Promise<SearchResult[]>;
-  test(): Promise<{ success: boolean; message?: string }>;
+  test(): Promise<{ success: boolean; message?: string; ip?: string; metadata?: Record<string, unknown> }>;
 }

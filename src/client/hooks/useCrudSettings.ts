@@ -30,7 +30,11 @@ export function useCrudSettings<TItem extends { id: number; name: string }, TFor
   const [editingId, setEditingId] = useState<number | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<TItem | null>(null);
 
-  const connectionTest = useConnectionTest<TFormData>({ testById, testByConfig });
+  const connectionTest = useConnectionTest<TFormData>({
+    testById,
+    testByConfig,
+    invalidateOnSuccess: queryKey as string[],
+  });
 
   const { data: items = [], isLoading } = useQuery({ queryKey, queryFn });
 

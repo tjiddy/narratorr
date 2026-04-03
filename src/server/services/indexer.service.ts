@@ -180,7 +180,7 @@ export class IndexerService {
     this.adapters.clear();
   }
 
-  async testConfig(data: { type: string; settings: Record<string, unknown> }): Promise<{ success: boolean; message?: string; ip?: string }> {
+  async testConfig(data: { type: string; settings: Record<string, unknown> }): Promise<{ success: boolean; message?: string; ip?: string; metadata?: Record<string, unknown> }> {
     try {
       this.log.debug({ type: data.type, hostname: data.settings.hostname, pageLimit: data.settings.pageLimit }, 'Testing indexer config');
       const proxyUrl = await this.getProxyUrl();
@@ -197,7 +197,7 @@ export class IndexerService {
     }
   }
 
-  async test(id: number): Promise<{ success: boolean; message?: string; ip?: string }> {
+  async test(id: number): Promise<{ success: boolean; message?: string; ip?: string; metadata?: Record<string, unknown> }> {
     const indexer = await this.getById(id);
     if (!indexer) {
       return { success: false, message: 'Indexer not found' };
@@ -207,6 +207,18 @@ export class IndexerService {
       const adapter = await this.getAdapter(indexer);
       const result = await adapter.test();
       this.log.debug({ id, success: result.success }, 'Indexer test result');
+
+      // Persist VIP metadata from MAM adapter on successful test
+      if (result.success && result.metadata && 'isVip' in result.metadata) {
+        try {
+          const existingSettings = (indexer.settings ?? {}) as Record<string, unknown>;
+          await this.update(id, { settings: { ...existingSettings, isVip: result.metadata.isVip } });
+          this.log.info({ id, isVip: result.metadata.isVip }, 'Persisted VIP status from test');
+        } catch (error: unknown) {
+          this.log.warn({ id, error }, 'Failed to persist VIP metadata after test');
+        }
+      }
+
       return result;
     } catch (error: unknown) {
       return {

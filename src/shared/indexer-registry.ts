@@ -64,6 +64,11 @@ export const INDEXER_REGISTRY: Record<string, IndexerTypeMetadata> = {
     requiredFields: [
       { path: 'mamId', message: 'MAM ID is required' },
     ],
-    viewSubtitle: (s) => (s.baseUrl as string) || 'myanonamouse.net',
+    viewSubtitle: (s) => {
+      const base = (s.baseUrl as string) || 'myanonamouse.net';
+      if (s.isVip === true) return `${base} — VIP`;
+      if (s.isVip === false) return `${base} — User`;
+      return base;
+    },
   },
 } satisfies Record<IndexerType, IndexerTypeMetadata>;

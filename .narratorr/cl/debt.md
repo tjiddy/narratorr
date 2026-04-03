@@ -10,6 +10,7 @@
 - **`src/client/pages/activity/ActivityPage.test.tsx`**: "queue page clamps to last valid page" test is flaky — fails intermittently in CI. Likely a timing issue with pagination state updates. (discovered in #298)
 - **`src/server/services/quality-gate.helpers.ts`**: `resolveBookQualityInputs(book)` is called twice in `buildQualityAssessment()` — once at line 40 for MB/hr + existing metadata, again at line 79 for duration delta. Could reuse the first result. Pure function so no side effects, just minor waste. (discovered in #300)
 - **`src/client/pages/activity/DownloadActions.tsx`**: `PendingActionButtons` component inside DownloadActions still renders for `pending_review` status (line 78), but the parent `DownloadCard` hides `DownloadActions` entirely for pending_review cards (line 253). Dead code branch that can never execute. (discovered in #306)
+- **`src/core/indexers/types.ts` / `src/client/lib/api/search.ts`**: `SearchResult` is duplicated across core and client — DRY-1 parallel types that must be kept in sync manually. A shared types package or generated types would prevent drift. (discovered in #317)
 
 ## Accepted Debt
 

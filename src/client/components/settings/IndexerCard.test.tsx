@@ -590,8 +590,8 @@ describe('IndexerCard — Prowlarr-managed indicators (AC8)', () => {
     });
   });
 
-  describe('create-mode MAM flow — searchLanguages and searchType (#291)', () => {
-    it('switches to MAM type, shows default English + active, toggles French, and submits with correct payload', async () => {
+  describe('create-mode MAM flow — searchLanguages (#291, #317)', () => {
+    it('switches to MAM type, shows default English, toggles French, and submits with correct payload', async () => {
       const onSubmit = vi.fn();
       const user = userEvent.setup();
 
@@ -613,17 +613,14 @@ describe('IndexerCard — Prowlarr-managed indicators (AC8)', () => {
       // Fill name
       await user.type(screen.getByPlaceholderText('MyAnonamouse'), 'My MAM');
 
-      // Verify defaults: English checked, search type = active (1)
+      // Verify defaults: English checked, no search type dropdown (#317 removed it)
       expect(screen.getByLabelText('English')).toBeChecked();
       expect(screen.getByLabelText('French')).not.toBeChecked();
-      expect(screen.getByLabelText('Search Type')).toHaveValue('1');
+      expect(screen.queryByLabelText('Search Type')).not.toBeInTheDocument();
 
       // Toggle French on
       await user.click(screen.getByLabelText('French'));
       expect(screen.getByLabelText('French')).toBeChecked();
-
-      // Change search type to Freeleech
-      await user.selectOptions(screen.getByLabelText('Search Type'), '2');
 
       // Submit
       await user.click(screen.getByText('Add Indexer'));
@@ -637,14 +634,13 @@ describe('IndexerCard — Prowlarr-managed indicators (AC8)', () => {
         settings: expect.objectContaining({
           mamId: 'test-mam-id',
           searchLanguages: expect.arrayContaining([1, 36]),
-          searchType: 2,
         }),
       });
     });
   });
 
-  describe('edit-mode hydration — searchLanguages and searchType (#291)', () => {
-    it('pre-fills saved searchLanguages and searchType when editing MAM indexer', () => {
+  describe('edit-mode hydration — searchLanguages (#291, #317)', () => {
+    it('pre-fills saved searchLanguages when editing MAM indexer', () => {
       const mamIndexer: Indexer = createMockIndexer({
         id: 10,
         name: 'MAM Custom',
@@ -661,52 +657,38 @@ describe('IndexerCard — Prowlarr-managed indicators (AC8)', () => {
         />,
       );
 
-      // Search type select should show the saved value
-      const searchTypeSelect = screen.getByLabelText('Search Type');
-      expect(searchTypeSelect).toHaveValue('2');
+      // Languages should be pre-filled
+      expect(screen.getByLabelText('English')).toBeChecked();
+      expect(screen.getByLabelText('French')).toBeChecked();
+      // Search type dropdown removed (#317)
+      expect(screen.queryByLabelText('Search Type')).not.toBeInTheDocument();
     });
 
-    it('shows default searchLanguages [1] and searchType 1 when editing MAM indexer with no saved values', () => {
+    it('#317 preserves isVip through edit-mode hydration and save', async () => {
+      const onSubmit = vi.fn();
+      const user = userEvent.setup();
       const mamIndexer: Indexer = createMockIndexer({
-        id: 11,
-        name: 'Old MAM',
+        id: 14,
+        name: 'MAM VIP',
         type: 'myanonamouse',
-        settings: { mamId: 'old-mam-id', baseUrl: '' },
+        settings: { mamId: 'vip-id', baseUrl: '', searchLanguages: [1], searchType: 1, isVip: true },
       });
 
       renderWithProviders(
         <IndexerCard
           indexer={mamIndexer}
           mode="edit"
-          onSubmit={vi.fn()}
+          onSubmit={onSubmit}
           onFormTest={vi.fn()}
         />,
       );
 
-      // Should fall back to defaults
-      const searchTypeSelect = screen.getByLabelText('Search Type');
-      expect(searchTypeSelect).toHaveValue('1');
-    });
-
-    it('preserves searchType: 0 via ?? (not ||) in settingsFromIndexer', () => {
-      const mamIndexer: Indexer = createMockIndexer({
-        id: 12,
-        name: 'MAM All Types',
-        type: 'myanonamouse',
-        settings: { mamId: 'mam-id', baseUrl: '', searchType: 0, searchLanguages: [1] },
+      // Submit without changing anything — isVip should roundtrip
+      await user.click(screen.getByText('Save Changes'));
+      await waitFor(() => {
+        expect(onSubmit).toHaveBeenCalled();
       });
-
-      renderWithProviders(
-        <IndexerCard
-          indexer={mamIndexer}
-          mode="edit"
-          onSubmit={vi.fn()}
-          onFormTest={vi.fn()}
-        />,
-      );
-
-      const searchTypeSelect = screen.getByLabelText('Search Type');
-      expect(searchTypeSelect).toHaveValue('0');
+      expect(onSubmit.mock.calls[0][0].settings).toHaveProperty('isVip', true);
     });
 
     it('preserves searchLanguages: [] via ?? (not ||) in settingsFromIndexer', () => {
