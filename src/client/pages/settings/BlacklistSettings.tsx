@@ -21,6 +21,7 @@ const REASON_LABELS: Record<string, string> = {
   other: 'Other',
   download_failed: 'Download Failed',
   infrastructure_error: 'Infrastructure Error',
+  user_cancelled: 'User Cancelled',
 };
 
 function formatExpiry(entry: BlacklistEntry): string {

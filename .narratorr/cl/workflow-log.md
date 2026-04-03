@@ -1,5 +1,34 @@
 # Workflow Log
 
+## #315 Cancel download should also blacklist the release — 2026-04-03
+**Skill path:** /implement → /claim → /plan → /handoff
+**Outcome:** success — PR #319
+
+### Metrics
+- Files changed: 12 | Tests added/modified: 16
+- Quality gate runs: 2 (pass on attempt 2 — complexity lint fix)
+- Fix iterations: 1 (extracted `blacklistCancelledRelease()` to fix cyclomatic complexity)
+- Context compactions: 0
+
+### Workflow experience
+- What went smoothly: Spec was well-refined after 2 rounds of spec review — all contract surfaces, operation ordering, and field names were pre-verified, eliminating implementation guesswork
+- Friction / issues encountered: First verify run failed on complexity lint (cancel() at 17, max 15). Required extracting a private method. Minor but added an extra commit cycle.
+
+### Token efficiency
+- Highest-token actions: Spec review response rounds (2 rounds before approval), explore subagent for plan
+- Avoidable waste: None significant — spec reviews caught real issues early
+- Suggestions: For small features, the explore subagent could be scoped more tightly
+
+### Infrastructure gaps
+- Repeated workarounds: None
+- Missing tooling / config: `frontend-design` skill not available — skipped design pass
+- Unresolved debt: `isBlacklisted()` only checks infoHash not guid (pre-existing, already in debt.md)
+
+### Wish I'd Known
+1. `DownloadService.cancel()` is called internally by `grab(replaceExisting)` — adding behavior there leaks into replacement flow (see `orchestrator-vs-service-cancel-scope.md`)
+2. The blacklist field is `blacklistType` not `type` — easy to assume wrong, caught in spec review round 2 (see `blacklist-field-name-blacklisttype.md`)
+3. The orchestrator's `cancel()` was already at complexity 13 — adding a try/catch + if/else block pushed it over 15, requiring extraction
+
 ## #313 Add direct restore button for server-side backups — 2026-04-03
 **Skill path:** /implement → /claim → /plan → /handoff
 **Outcome:** success — PR #316

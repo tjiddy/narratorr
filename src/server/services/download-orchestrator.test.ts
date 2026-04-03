@@ -5,6 +5,7 @@ import { DuplicateDownloadError } from './download.service.js';
 import type { NotifierService } from './notifier.service.js';
 import type { EventHistoryService } from './event-history.service.js';
 import type { EventBroadcasterService } from './event-broadcaster.service.js';
+import type { BlacklistService } from './blacklist.service.js';
 import type { FastifyBaseLogger } from 'fastify';
 
 // Mock side-effect helpers — we test orchestrator dispatch, not the helpers
@@ -63,6 +64,7 @@ const mockDownload: DownloadWithBook = {
   size: 500_000,
   seeders: 10,
   infoHash: 'abc',
+  guid: 'guid-123',
   errorMessage: null,
   completedAt: null,
   addedAt: new Date(),
@@ -84,6 +86,7 @@ describe('DownloadOrchestrator', () => {
   let notifier: NotifierService;
   let eventHistory: EventHistoryService;
   let broadcaster: EventBroadcasterService;
+  let blacklistService: BlacklistService;
   let orchestrator: DownloadOrchestrator;
   let mockDb: unknown;
 
@@ -102,10 +105,11 @@ describe('DownloadOrchestrator', () => {
     notifier = inject<NotifierService>({ notify: vi.fn().mockResolvedValue(undefined) });
     eventHistory = inject<EventHistoryService>({ create: vi.fn().mockResolvedValue(undefined) });
     broadcaster = inject<EventBroadcasterService>({ emit: vi.fn() });
+    blacklistService = inject<BlacklistService>({ create: vi.fn().mockResolvedValue({ id: 99 }) });
     const mockWhere = vi.fn().mockResolvedValue(undefined);
     const mockSet = vi.fn().mockReturnValue({ where: mockWhere });
     mockDb = { update: vi.fn().mockReturnValue({ set: mockSet }) };
-    orchestrator = new DownloadOrchestrator(downloadService, mockDb as never, log, notifier, eventHistory, broadcaster);
+    orchestrator = new DownloadOrchestrator(downloadService, mockDb as never, log, notifier, eventHistory, broadcaster, blacklistService);
   });
 
   describe('grab', () => {
@@ -248,6 +252,91 @@ describe('DownloadOrchestrator', () => {
     it('returns same boolean as downloadService.cancel()', async () => {
       const result = await orchestrator.cancel(1);
       expect(result).toBe(true);
+    });
+
+    // #315 — blacklist integration
+    it('calls blacklistService.create() with correct identifiers, reason user_cancelled, and blacklistType permanent when infoHash present', async () => {
+      await orchestrator.cancel(1);
+      expect(blacklistService.create).toHaveBeenCalledWith({
+        infoHash: 'abc',
+        guid: 'guid-123',
+        title: 'Test Book [2024]',
+        bookId: 2,
+        reason: 'user_cancelled',
+        blacklistType: 'permanent',
+      });
+    });
+
+    it('calls blacklistService.create() with guid only when infoHash is null', async () => {
+      (downloadService.getById as ReturnType<typeof vi.fn>).mockResolvedValue({ ...mockDownload, infoHash: null });
+      await orchestrator.cancel(1);
+      expect(blacklistService.create).toHaveBeenCalledWith(expect.objectContaining({
+        infoHash: null,
+        guid: 'guid-123',
+        reason: 'user_cancelled',
+        blacklistType: 'permanent',
+      }));
+    });
+
+    it('skips blacklist when both infoHash and guid are null and logs at info level', async () => {
+      (downloadService.getById as ReturnType<typeof vi.fn>).mockResolvedValue({ ...mockDownload, infoHash: null, guid: null });
+      await orchestrator.cancel(1);
+      expect(blacklistService.create).not.toHaveBeenCalled();
+      expect(log.info).toHaveBeenCalledWith(expect.objectContaining({ id: 1 }), expect.stringContaining('Blacklist skipped'));
+    });
+
+    it('still runs revertBookStatus and SSE side effects when both identifiers are null', async () => {
+      (downloadService.getById as ReturnType<typeof vi.fn>).mockResolvedValue({ ...mockDownload, infoHash: null, guid: null });
+      await orchestrator.cancel(1);
+      expect(revertBookStatus).toHaveBeenCalledWith(mockDb, { id: 2, path: null });
+      expect(emitBookStatusChange).toHaveBeenCalledWith(expect.objectContaining({ bookId: 2 }));
+      expect(emitDownloadStatusChange).toHaveBeenCalledWith(expect.objectContaining({ downloadId: 1, bookId: 2, newStatus: 'failed' }));
+    });
+
+    it('still returns true when blacklistService.create() throws', async () => {
+      (blacklistService.create as ReturnType<typeof vi.fn>).mockRejectedValue(new Error('blacklist boom'));
+      const result = await orchestrator.cancel(1);
+      expect(result).toBe(true);
+    });
+
+    it('logs warning when blacklistService.create() throws', async () => {
+      (blacklistService.create as ReturnType<typeof vi.fn>).mockRejectedValue(new Error('blacklist boom'));
+      await orchestrator.cancel(1);
+      expect(log.warn).toHaveBeenCalledWith(expect.any(Error), expect.stringContaining('blacklist'));
+    });
+
+    it('still runs revertBookStatus and SSE side effects after blacklistService.create() rejects', async () => {
+      (blacklistService.create as ReturnType<typeof vi.fn>).mockRejectedValue(new Error('blacklist boom'));
+      await orchestrator.cancel(1);
+      expect(revertBookStatus).toHaveBeenCalledWith(mockDb, { id: 2, path: null });
+      expect(emitBookStatusChange).toHaveBeenCalledWith(expect.objectContaining({ bookId: 2 }));
+      expect(emitDownloadStatusChange).toHaveBeenCalledWith(expect.objectContaining({ downloadId: 1, bookId: 2, newStatus: 'failed' }));
+    });
+
+    it('does not call blacklistService.create() when download not found', async () => {
+      (downloadService.getById as ReturnType<typeof vi.fn>).mockResolvedValue(null);
+      await orchestrator.cancel(1);
+      expect(blacklistService.create).not.toHaveBeenCalled();
+    });
+
+    it('creates blacklist entry for orphaned download (no bookId) with available identifiers', async () => {
+      (downloadService.getById as ReturnType<typeof vi.fn>).mockResolvedValue({ ...mockDownload, bookId: null, book: undefined });
+      await orchestrator.cancel(1);
+      expect(blacklistService.create).toHaveBeenCalledWith(expect.objectContaining({
+        infoHash: 'abc',
+        guid: 'guid-123',
+        reason: 'user_cancelled',
+        blacklistType: 'permanent',
+      }));
+    });
+
+    it('creates blacklist entry after downloadService.cancel() and before book status revert', async () => {
+      const callOrder: string[] = [];
+      (downloadService.cancel as ReturnType<typeof vi.fn>).mockImplementation(async () => { callOrder.push('cancel'); return true; });
+      (blacklistService.create as ReturnType<typeof vi.fn>).mockImplementation(async () => { callOrder.push('blacklist'); return { id: 99 }; });
+      (revertBookStatus as ReturnType<typeof vi.fn>).mockImplementation(async () => { callOrder.push('revertBookStatus'); return 'wanted'; });
+      await orchestrator.cancel(1);
+      expect(callOrder).toEqual(['cancel', 'blacklist', 'revertBookStatus']);
     });
   });
 

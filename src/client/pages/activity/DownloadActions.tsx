@@ -106,7 +106,7 @@ export function DownloadActions({
           onClick={onCancel}
         >
           <span className="hidden sm:inline">
-            {isCancelling ? 'Cancelling...' : 'Cancel'}
+            {isCancelling ? 'Cancelling...' : 'Cancel & Blacklist'}
           </span>
         </Button>
       )}

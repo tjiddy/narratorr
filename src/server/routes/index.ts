@@ -157,7 +157,7 @@ export async function createServices(db: Db, log: FastifyBaseLogger): Promise<Se
   const eventHistory = new EventHistoryService(db, log, blacklistService, book);
 
   const download = new DownloadService(db, downloadClient, log);
-  const downloadOrchestrator = new DownloadOrchestrator(download, db, log, notifier, eventHistory, eventBroadcaster);
+  const downloadOrchestrator = new DownloadOrchestrator(download, db, log, notifier, eventHistory, eventBroadcaster, blacklistService);
   const remotePathMapping = new RemotePathMappingService(db, log);
   const taggingService = new TaggingService(db, settings, log, book);
   const importService = new ImportService(db, downloadClient, settings, log, remotePathMapping, book);

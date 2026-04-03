@@ -6,6 +6,7 @@ import type { BookStatus } from '../../shared/schemas/book.js';
 import type { NotifierService } from './notifier.service.js';
 import type { EventHistoryService, CreateEventInput } from './event-history.service.js';
 import type { EventBroadcasterService } from './event-broadcaster.service.js';
+import type { BlacklistService } from './blacklist.service.js';
 import type { DownloadProtocol } from '../../core/index.js';
 import { eq } from 'drizzle-orm';
 import { books } from '../../db/schema.js';
@@ -24,6 +25,7 @@ export class DownloadOrchestrator {
     private notifierService?: NotifierService,
     private eventHistory?: EventHistoryService,
     private broadcaster?: EventBroadcasterService,
+    private blacklistService?: BlacklistService,
   ) {}
 
   /**
@@ -88,6 +90,9 @@ export class DownloadOrchestrator {
     const cancelled = await this.downloadService.cancel(id);
     if (!cancelled) return false;
 
+    // Blacklist the release (best-effort — failure must not block cancel)
+    await this.blacklistCancelledRelease(download);
+
     // Side effects — each independently guarded
     if (download.bookId) {
       try {
@@ -138,6 +143,27 @@ export class DownloadOrchestrator {
   /** Run a side-effect function, catching and logging any error. */
   private safe(fn: () => void): void {
     try { fn(); } catch (error: unknown) { this.log.warn(error, 'Side-effect dispatch failed'); }
+  }
+
+  /** Best-effort blacklist of a cancelled release. Skips when no identifiers are present. */
+  private async blacklistCancelledRelease(download: DownloadWithBook): Promise<void> {
+    if (!this.blacklistService) return;
+    if (!download.infoHash && !download.guid) {
+      this.log.info({ id: download.id }, 'Blacklist skipped — no infoHash or guid');
+      return;
+    }
+    try {
+      await this.blacklistService.create({
+        infoHash: download.infoHash,
+        guid: download.guid,
+        title: download.title,
+        bookId: download.bookId ?? undefined,
+        reason: 'user_cancelled',
+        blacklistType: 'permanent',
+      });
+    } catch (error: unknown) {
+      this.log.warn(error, 'Failed to blacklist release during cancel');
+    }
   }
 
   /** Set download error with SSE dispatch. */

@@ -4,7 +4,7 @@ import { z } from 'zod';
 // Blacklist schemas
 // ============================================================================
 
-export const blacklistReasonSchema = z.enum(['wrong_content', 'bad_quality', 'wrong_narrator', 'spam', 'other', 'download_failed', 'infrastructure_error']);
+export const blacklistReasonSchema = z.enum(['wrong_content', 'bad_quality', 'wrong_narrator', 'spam', 'other', 'download_failed', 'infrastructure_error', 'user_cancelled']);
 
 export const blacklistTypeSchema = z.enum(['temporary', 'permanent']);
 
