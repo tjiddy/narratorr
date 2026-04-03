@@ -24,7 +24,7 @@ const baseResult: SearchResult = {
   seeders: 10,
   author: 'Author',
   narrator: 'Narrator',
-  coverUrl: null,
+  coverUrl: undefined,
 };
 
 const defaultProps = {
