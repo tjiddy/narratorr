@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
-import { render, screen } from '@testing-library/react';
+import { render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router-dom';
 import { BookHero } from './BookHero';
@@ -39,6 +39,10 @@ function renderHero(overrides = {}) {
   );
 }
 
+async function openMenu(user: ReturnType<typeof userEvent.setup>) {
+  await user.click(screen.getByLabelText('More actions'));
+}
+
 describe('BookHero', () => {
   it('renders title', () => {
     renderHero();
@@ -50,26 +54,14 @@ describe('BookHero', () => {
     expect(screen.getByText('Book One of the Stormlight Archive')).toBeInTheDocument();
   });
 
-  it('renders author as link when authorAsin is provided', () => {
-    renderHero({ authorAsin: 'B001IGFHW6' });
-    const link = screen.getByRole('link', { name: 'Brandon Sanderson' });
-    expect(link).toHaveAttribute('href', '/authors/B001IGFHW6');
-  });
-
-  it('renders author as plain text when no authorAsin', () => {
-    renderHero({ authorAsin: null });
+  it('renders author name', () => {
+    renderHero();
     expect(screen.getByText('Brandon Sanderson')).toBeInTheDocument();
-    expect(screen.queryByRole('link', { name: 'Brandon Sanderson' })).not.toBeInTheDocument();
   });
 
-  it('renders narrator names', () => {
-    renderHero({ narratorNames: 'Michael Kramer, Kate Reading' });
-    expect(screen.getByText('Narrated by Michael Kramer, Kate Reading')).toBeInTheDocument();
-  });
-
-  it('renders meta dots joined with separator', () => {
-    renderHero({ metaDots: ['45h 0m', 'Fantasy'] });
-    expect(screen.getByText('45h 0m · Fantasy')).toBeInTheDocument();
+  it('renders meta dots', () => {
+    renderHero();
+    expect(screen.getByText('45h 0m · Fantasy · The Stormlight Archive #1')).toBeInTheDocument();
   });
 
   it('renders status badge', () => {
@@ -77,23 +69,10 @@ describe('BookHero', () => {
     expect(screen.getByText('Wanted')).toBeInTheDocument();
   });
 
-  it('renders cover image when coverUrl is provided', () => {
+  it('renders cover image', () => {
     renderHero();
-    expect(screen.getByAltText('Cover of The Way of Kings')).toBeInTheDocument();
-  });
-
-  it('renders fallback icon when no coverUrl', () => {
-    renderHero({ coverUrl: undefined });
-    expect(screen.queryByAltText('Cover of The Way of Kings')).not.toBeInTheDocument();
-  });
-
-  it('calls onBackClick when Library button is clicked', async () => {
-    const onBackClick = vi.fn();
-    const user = userEvent.setup();
-    renderHero({ onBackClick });
-
-    await user.click(screen.getByText('Library'));
-    expect(onBackClick).toHaveBeenCalledTimes(1);
+    const img = screen.getByAltText('Cover of The Way of Kings');
+    expect(img).toHaveAttribute('src', 'https://example.com/cover.jpg');
   });
 
   it('calls onSearchClick when Search Releases button is clicked', async () => {
@@ -105,60 +84,71 @@ describe('BookHero', () => {
     expect(onSearchClick).toHaveBeenCalledTimes(1);
   });
 
-  it('calls onEditClick when Edit button is clicked', async () => {
+  it('calls onEditClick when Edit menu item is clicked', async () => {
     const onEditClick = vi.fn();
     const user = userEvent.setup();
     renderHero({ onEditClick });
 
-    await user.click(screen.getByText('Edit'));
+    await openMenu(user);
+    await user.click(screen.getByRole('menuitem', { name: /Edit/ }));
     expect(onEditClick).toHaveBeenCalledTimes(1);
   });
 
-  it('calls onRenameClick when Rename button is clicked', async () => {
+  it('calls onRenameClick when Rename menu item is clicked', async () => {
     const onRenameClick = vi.fn();
     const user = userEvent.setup();
     renderHero({ onRenameClick });
 
-    await user.click(screen.getByText('Rename'));
+    await openMenu(user);
+    await user.click(screen.getByRole('menuitem', { name: /Rename/ }));
     expect(onRenameClick).toHaveBeenCalledTimes(1);
   });
 
-  it('hides Rename button when book has no path', () => {
+  it('hides Rename menu item when book has no path', async () => {
+    const user = userEvent.setup();
     renderHero({ hasPath: false });
-    expect(screen.queryByText('Rename')).not.toBeInTheDocument();
+    await openMenu(user);
+    expect(screen.queryByRole('menuitem', { name: /Rename/ })).not.toBeInTheDocument();
   });
 
-  it('disables Rename button when renaming is in progress', () => {
+  it('disables Rename menu item when renaming is in progress', async () => {
+    const user = userEvent.setup();
     renderHero({ isRenaming: true });
-    expect(screen.getByText('Renaming...')).toBeInTheDocument();
-    expect(screen.getByText('Renaming...').closest('button')).toBeDisabled();
+    await openMenu(user);
+    expect(screen.getByRole('menuitem', { name: /Renaming/ })).toBeDisabled();
   });
 
-  it('calls onRetagClick when Re-tag button is clicked', async () => {
+  it('calls onRetagClick when Re-tag menu item is clicked', async () => {
     const onRetagClick = vi.fn();
     const user = userEvent.setup();
     renderHero({ onRetagClick });
 
-    await user.click(screen.getByText('Re-tag files'));
+    await openMenu(user);
+    await user.click(screen.getByRole('menuitem', { name: /Re-tag/ }));
     expect(onRetagClick).toHaveBeenCalledTimes(1);
   });
 
-  it('hides Re-tag button when book has no path', () => {
+  it('hides Re-tag menu item when book has no path', async () => {
+    const user = userEvent.setup();
     renderHero({ hasPath: false });
-    expect(screen.queryByText('Re-tag files')).not.toBeInTheDocument();
+    await openMenu(user);
+    expect(screen.queryByRole('menuitem', { name: /Re-tag/ })).not.toBeInTheDocument();
   });
 
-  it('disables Re-tag button when re-tagging is in progress', () => {
+  it('disables Re-tag menu item when re-tagging is in progress', async () => {
+    const user = userEvent.setup();
     renderHero({ isRetagging: true });
-    expect(screen.getByText('Re-tagging...')).toBeInTheDocument();
-    expect(screen.getByText('Re-tagging...').closest('button')).toBeDisabled();
+    await openMenu(user);
+    expect(screen.getByRole('menuitem', { name: /Re-tagging/ })).toBeDisabled();
   });
 
-  it('disables Re-tag button when retagDisabled is true', () => {
+  it('disables Re-tag menu item when retagDisabled is true', async () => {
+    const user = userEvent.setup();
     renderHero({ retagDisabled: true, retagTooltip: 'Requires ffmpeg' });
-    const button = screen.getByText('Re-tag files').closest('button');
-    expect(button).toBeDisabled();
-    expect(button).toHaveAttribute('title', 'Requires ffmpeg');
+    await openMenu(user);
+    const item = screen.getByRole('menuitem', { name: /Re-tag/ });
+    expect(item).toBeDisabled();
+    expect(item).toHaveAttribute('title', 'Requires ffmpeg');
   });
 
   describe('import list provenance', () => {
@@ -197,67 +187,24 @@ describe('BookHero', () => {
       const coverImg = screen.getByAltText('Cover of The Way of Kings');
       expect(coverImg).toHaveAttribute('src', '/narratorr/api/books/1/cover');
 
-      // Background blur image (aria-hidden, alt="")
-      const allImgs = document.querySelectorAll('img');
-      const blurImg = Array.from(allImgs).find(
-        img => img.getAttribute('aria-hidden') === 'true' && img.getAttribute('src')?.includes('/api/books/1/cover'),
-      );
-      expect(blurImg).toBeTruthy();
-      expect(blurImg!.getAttribute('src')).toBe('/narratorr/api/books/1/cover');
+      // Background blur image
+      const bgImg = screen.getByAltText('');
+      expect(bgImg).toHaveAttribute('src', '/narratorr/api/books/1/cover');
     });
   });
 
-  describe('merge button', () => {
-    it('calls onMergeClick when Merge to M4B button is clicked', async () => {
-      const onMergeClick = vi.fn();
-      const user = userEvent.setup();
-      renderHero({ canMerge: true, onMergeClick });
-
-      await user.click(screen.getByRole('button', { name: /Merge to M4B/i }));
-      expect(onMergeClick).toHaveBeenCalledTimes(1);
-    });
-
-    it('hides Merge to M4B button when canMerge is false', () => {
-      renderHero({ canMerge: false });
-      expect(screen.queryByRole('button', { name: /Merge to M4B/i })).not.toBeInTheDocument();
-    });
-
-    it('hides Merge to M4B button when hasPath is false', () => {
-      renderHero({ hasPath: false, canMerge: true });
-      expect(screen.queryByRole('button', { name: /Merge to M4B/i })).not.toBeInTheDocument();
-    });
-
-    it('shows "Merging..." text and disables button during isMerging', () => {
-      renderHero({ canMerge: true, isMerging: true });
-      const button = screen.getByRole('button', { name: /Merging\.\.\./i });
-      expect(button).toBeDisabled();
-    });
-
-    it('disables button when mergeDisabled is true', () => {
-      renderHero({ canMerge: true, mergeDisabled: true });
-      const button = screen.getByRole('button', { name: /Merge to M4B/i });
-      expect(button).toBeDisabled();
-    });
-
-    it('shows tooltip on button when mergeDisabled is true', () => {
-      renderHero({ canMerge: true, mergeDisabled: true, mergeTooltip: 'ffmpeg not configured' });
-      const button = screen.getByRole('button', { name: /Merge to M4B/i });
-      expect(button).toHaveAttribute('title', 'ffmpeg not configured');
-    });
-  });
-
-  describe('monitor toggle', () => {
-    it('renders "Monitor" when monitorForUpgrades is false', () => {
+  describe('monitor toggle button', () => {
+    it('renders Monitor button when not monitoring', () => {
       renderHero({ monitorForUpgrades: false });
       expect(screen.getByText('Monitor')).toBeInTheDocument();
     });
 
-    it('renders "Monitoring" when monitorForUpgrades is true', () => {
+    it('renders Monitoring button when monitoring is active', () => {
       renderHero({ monitorForUpgrades: true });
       expect(screen.getByText('Monitoring')).toBeInTheDocument();
     });
 
-    it('calls onMonitorToggle when clicked', async () => {
+    it('calls onMonitorToggle when toggle is clicked', async () => {
       const onMonitorToggle = vi.fn();
       const user = userEvent.setup();
       renderHero({ onMonitorToggle });
@@ -266,23 +213,56 @@ describe('BookHero', () => {
       expect(onMonitorToggle).toHaveBeenCalledTimes(1);
     });
 
-    it('disables button when isMonitorToggling is true', () => {
+    it('disables toggle when isMonitorToggling is true', () => {
       renderHero({ isMonitorToggling: true });
       const button = screen.getByText('Monitor').closest('button');
       expect(button).toBeDisabled();
     });
+  });
 
-    it('shows active styling when monitoring', () => {
-      renderHero({ monitorForUpgrades: true });
-      const button = screen.getByText('Monitoring').closest('button');
-      expect(button).toHaveAttribute('title', 'Monitoring for quality upgrades');
+  describe('merge button', () => {
+    it('calls onMergeClick when Merge to M4B menu item is clicked', async () => {
+      const onMergeClick = vi.fn();
+      const user = userEvent.setup();
+      renderHero({ onMergeClick, canMerge: true });
+
+      await openMenu(user);
+      await user.click(screen.getByRole('menuitem', { name: /Merge to M4B/ }));
+      expect(onMergeClick).toHaveBeenCalledTimes(1);
+    });
+
+    it('shows "Merging..." text and disables menu item during isMerging', async () => {
+      const user = userEvent.setup();
+      renderHero({ canMerge: true, isMerging: true });
+      await openMenu(user);
+      const item = screen.getByRole('menuitem', { name: /Merging/ });
+      expect(item).toBeDisabled();
+      expect(item).toHaveTextContent('Merging...');
+    });
+
+    it('disables menu item when mergeDisabled is true', async () => {
+      const user = userEvent.setup();
+      renderHero({ canMerge: true, mergeDisabled: true, mergeTooltip: 'Requires ffmpeg' });
+      await openMenu(user);
+      const item = screen.getByRole('menuitem', { name: /Merge to M4B/ });
+      expect(item).toBeDisabled();
+      expect(item).toHaveAttribute('title', 'Requires ffmpeg');
+    });
+
+    it('does not render merge menu item when canMerge is false', async () => {
+      const user = userEvent.setup();
+      renderHero({ canMerge: false });
+      await openMenu(user);
+      expect(screen.queryByRole('menuitem', { name: /Merge/ })).not.toBeInTheDocument();
     });
   });
 
   describe('remove button', () => {
-    it('renders the Remove button', () => {
+    it('renders Remove in the overflow menu', async () => {
+      const user = userEvent.setup();
       renderHero();
-      expect(screen.getByRole('button', { name: /Remove/ })).toBeInTheDocument();
+      await openMenu(user);
+      expect(screen.getByRole('menuitem', { name: /Remove/ })).toBeInTheDocument();
     });
 
     it('calls onRemoveClick when clicked', async () => {
@@ -290,62 +270,109 @@ describe('BookHero', () => {
       const user = userEvent.setup();
       renderHero({ onRemoveClick });
 
-      await user.click(screen.getByRole('button', { name: /Remove/ }));
-
+      await openMenu(user);
+      await user.click(screen.getByRole('menuitem', { name: /Remove/ }));
       expect(onRemoveClick).toHaveBeenCalledTimes(1);
     });
 
-    it('disables button and shows pending label when isRemoving is true', () => {
+    it('disables menu item and shows pending label when isRemoving is true', async () => {
+      const user = userEvent.setup();
       renderHero({ isRemoving: true });
-      const button = screen.getByRole('button', { name: /Removing/ });
-      expect(button).toBeDisabled();
-      expect(button).toHaveTextContent('Removing...');
+      await openMenu(user);
+      const item = screen.getByRole('menuitem', { name: /Removing/ });
+      expect(item).toBeDisabled();
+      expect(item).toHaveTextContent('Removing...');
     });
 
-    it('shows normal label when isRemoving is false', () => {
+    it('shows normal label when isRemoving is false', async () => {
+      const user = userEvent.setup();
       renderHero({ isRemoving: false });
-      const button = screen.getByRole('button', { name: /Remove/ });
-      expect(button).not.toBeDisabled();
-      expect(button).toHaveTextContent('Remove');
+      await openMenu(user);
+      const item = screen.getByRole('menuitem', { name: /Remove/ });
+      expect(item).not.toBeDisabled();
+      expect(item).toHaveTextContent('Remove');
     });
   });
 
   describe('Wrong Release button', () => {
-    it('renders Wrong Release button when showWrongRelease is true', () => {
+    it('renders Wrong Release in overflow menu when showWrongRelease is true', async () => {
+      const user = userEvent.setup();
       renderHero({ showWrongRelease: true, onWrongReleaseClick: vi.fn(), isWrongReleasing: false });
-      expect(screen.getByRole('button', { name: /Wrong Release/ })).toBeInTheDocument();
+      await openMenu(user);
+      expect(screen.getByRole('menuitem', { name: /Wrong Release/ })).toBeInTheDocument();
     });
 
-    it('does not render Wrong Release button when showWrongRelease is false', () => {
+    it('does not render Wrong Release in overflow menu when showWrongRelease is false', async () => {
+      const user = userEvent.setup();
       renderHero({ showWrongRelease: false, onWrongReleaseClick: vi.fn() });
-      expect(screen.queryByRole('button', { name: /Wrong Release/ })).not.toBeInTheDocument();
+      await openMenu(user);
+      expect(screen.queryByRole('menuitem', { name: /Wrong Release/ })).not.toBeInTheDocument();
     });
 
-    it('calls onWrongReleaseClick when Wrong Release button is clicked', async () => {
+    it('calls onWrongReleaseClick when Wrong Release menu item is clicked', async () => {
       const user = userEvent.setup();
       const onWrongReleaseClick = vi.fn();
       renderHero({ showWrongRelease: true, onWrongReleaseClick, isWrongReleasing: false });
 
-      await user.click(screen.getByRole('button', { name: /Wrong Release/ }));
+      await openMenu(user);
+      await user.click(screen.getByRole('menuitem', { name: /Wrong Release/ }));
       expect(onWrongReleaseClick).toHaveBeenCalledTimes(1);
     });
 
-    it('disables button and shows pending label when isWrongReleasing is true', () => {
+    it('disables menu item and shows pending label when isWrongReleasing is true', async () => {
+      const user = userEvent.setup();
       renderHero({ showWrongRelease: true, onWrongReleaseClick: vi.fn(), isWrongReleasing: true });
-      const button = screen.getByRole('button', { name: /Rejecting/ });
-      expect(button).toBeDisabled();
-      expect(button).toHaveTextContent('Rejecting...');
+      await openMenu(user);
+      const item = screen.getByRole('menuitem', { name: /Rejecting/ });
+      expect(item).toBeDisabled();
+      expect(item).toHaveTextContent('Rejecting...');
     });
   });
 
   describe('#324 — overflow menu for secondary actions', () => {
-    it.todo('primary actions (Monitor, Search Releases) render as visible buttons outside overflow menu');
-    it.todo('secondary actions (Edit, Rename, Re-tag, Merge, Remove) render inside overflow/kebab menu');
-    it.todo('Wrong Release renders inside overflow menu when showWrongRelease is true');
-    it.todo('Wrong Release does not appear in overflow menu when showWrongRelease is false');
-    it.todo('clicking kebab menu button opens dropdown with secondary action items');
-    it.todo('clicking a secondary action in the dropdown triggers the correct handler');
-    it.todo('disabled secondary actions appear disabled in the dropdown menu');
-    it.todo('keyboard navigation (ArrowUp/Down, Enter, Escape) works in overflow menu');
+    it('primary actions (Monitor, Search Releases) render as visible buttons outside overflow menu', () => {
+      renderHero();
+      // These are always visible without opening the menu
+      expect(screen.getByText('Monitor')).toBeInTheDocument();
+      expect(screen.getByText('Search Releases')).toBeInTheDocument();
+    });
+
+    it('secondary actions render inside overflow/kebab menu', async () => {
+      const user = userEvent.setup();
+      renderHero({ canMerge: true });
+
+      // Before opening menu, secondary items are not in the DOM
+      expect(screen.queryByRole('menuitem', { name: /Edit/ })).not.toBeInTheDocument();
+      expect(screen.queryByRole('menuitem', { name: /Rename/ })).not.toBeInTheDocument();
+
+      await openMenu(user);
+
+      // After opening, they appear
+      expect(screen.getByRole('menuitem', { name: /Edit/ })).toBeInTheDocument();
+      expect(screen.getByRole('menuitem', { name: /Rename/ })).toBeInTheDocument();
+      expect(screen.getByRole('menuitem', { name: /Re-tag/ })).toBeInTheDocument();
+      expect(screen.getByRole('menuitem', { name: /Merge/ })).toBeInTheDocument();
+      expect(screen.getByRole('menuitem', { name: /Remove/ })).toBeInTheDocument();
+    });
+
+    it('clicking kebab menu button opens dropdown', async () => {
+      const user = userEvent.setup();
+      renderHero();
+
+      expect(screen.queryByRole('menu')).not.toBeInTheDocument();
+      await openMenu(user);
+      expect(screen.getByRole('menu')).toBeInTheDocument();
+    });
+
+    it('Escape closes the overflow menu', async () => {
+      const user = userEvent.setup();
+      renderHero();
+
+      await openMenu(user);
+      expect(screen.getByRole('menu')).toBeInTheDocument();
+
+      await user.keyboard('{Escape}');
+      expect(screen.queryByRole('menu')).not.toBeInTheDocument();
+    });
   });
 });

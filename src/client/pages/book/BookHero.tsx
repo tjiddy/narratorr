@@ -1,6 +1,8 @@
+import { useRef, useState, useEffect, useCallback } from 'react';
 import { Link } from 'react-router-dom';
 import { resolveUrl } from '@/lib/url-utils';
-import { ArrowLeftIcon, SearchIcon, BookOpenIcon, PencilIcon, RefreshIcon, TagIcon, PackageIcon, TrashIcon, XCircleIcon } from '@/components/icons';
+import { ArrowLeftIcon, SearchIcon, BookOpenIcon, PencilIcon, RefreshIcon, TagIcon, PackageIcon, TrashIcon, XCircleIcon, MoreVerticalIcon } from '@/components/icons';
+import { ToolbarDropdown } from '@/components/ToolbarDropdown';
 
 interface BookHeroProps {
   title: string;
@@ -38,7 +40,7 @@ interface BookHeroProps {
   isMonitorToggling: boolean;
 }
 
-// eslint-disable-next-line complexity, max-lines-per-function -- flat JSX conditionals for optional props, no branching logic
+// eslint-disable-next-line complexity, max-lines-per-function -- flat JSX conditionals for optional props, no branching logic; overflow menu adds state hooks
 export function BookHero({
   title, subtitle, authorName, authorAsin, narratorNames,
   coverUrl, metaDots, statusLabel, statusDotClass,
@@ -49,6 +51,40 @@ export function BookHero({
   showWrongRelease, onWrongReleaseClick, isWrongReleasing,
   importListName, monitorForUpgrades, onMonitorToggle, isMonitorToggling,
 }: BookHeroProps) {
+  const [menuOpen, setMenuOpen] = useState(false);
+  const [focusIndex, setFocusIndex] = useState(0);
+  const triggerRef = useRef<HTMLButtonElement>(null);
+  const menuRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!menuOpen) return;
+    const items = Array.from(menuRef.current?.querySelectorAll<HTMLElement>('[role="menuitem"]:not([disabled])') ?? []);
+    items[focusIndex]?.focus();
+  }, [focusIndex, menuOpen]);
+
+  function handleMenuClose() {
+    setFocusIndex(0);
+    setMenuOpen(false);
+    triggerRef.current?.focus();
+  }
+
+  function handleMenuAction(fn: () => void) {
+    fn();
+    handleMenuClose();
+  }
+
+  const handleMenuKeyDown = useCallback((e: React.KeyboardEvent) => {
+    const items = Array.from(menuRef.current?.querySelectorAll<HTMLElement>('[role="menuitem"]:not([disabled])') ?? []);
+    const count = items.length;
+    if (count === 0) return;
+    switch (e.key) {
+      case 'ArrowDown': e.preventDefault(); setFocusIndex((i) => (i + 1) % count); break;
+      case 'ArrowUp': e.preventDefault(); setFocusIndex((i) => (i - 1 + count) % count); break;
+      case 'Enter': e.preventDefault(); items[focusIndex]?.click(); break;
+      case ' ': e.preventDefault(); items[focusIndex]?.click(); break;
+    }
+  }, [focusIndex]);
+
   return (
     <div className="relative -mx-4 sm:-mx-6 lg:-mx-8 -mt-4 sm:-mt-6 px-4 sm:px-6 lg:px-8 pt-6 pb-6 overflow-hidden">
       {coverUrl && (
@@ -138,66 +174,53 @@ export function BookHero({
               <SearchIcon className="w-4 h-4" />
               Search Releases
             </button>
-            <button
-              onClick={onEditClick}
-              className="inline-flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-medium text-muted-foreground hover:text-foreground glass-card hover:border-primary/30 transition-all duration-200 focus-ring"
-            >
-              <PencilIcon className="w-3.5 h-3.5" />
-              Edit
-            </button>
-            {hasPath && (
+            <div className="relative">
               <button
-                onClick={onRenameClick}
-                disabled={isRenaming}
-                className="inline-flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-medium text-muted-foreground hover:text-foreground glass-card hover:border-primary/30 transition-all duration-200 focus-ring disabled:opacity-40 disabled:cursor-not-allowed"
-              >
-                <RefreshIcon className={`w-3.5 h-3.5 ${isRenaming ? 'animate-spin' : ''}`} />
-                {isRenaming ? 'Renaming...' : 'Rename'}
-              </button>
-            )}
-            {hasPath && (
-              <button
-                onClick={onRetagClick}
-                disabled={isRetagging || retagDisabled}
-                title={retagDisabled ? retagTooltip : undefined}
-                className="inline-flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-medium text-muted-foreground hover:text-foreground glass-card hover:border-primary/30 transition-all duration-200 focus-ring disabled:opacity-40 disabled:cursor-not-allowed"
-              >
-                <TagIcon className={`w-3.5 h-3.5 ${isRetagging ? 'animate-spin' : ''}`} />
-                {isRetagging ? 'Re-tagging...' : 'Re-tag files'}
-              </button>
-            )}
-            {hasPath && canMerge && (
-              <button
+                ref={triggerRef}
                 type="button"
-                onClick={onMergeClick}
-                disabled={isMerging || mergeDisabled}
-                title={mergeDisabled ? mergeTooltip : undefined}
-                className="inline-flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-medium text-muted-foreground hover:text-foreground glass-card hover:border-primary/30 transition-all duration-200 focus-ring disabled:opacity-40 disabled:cursor-not-allowed"
+                aria-label="More actions"
+                onClick={() => menuOpen ? handleMenuClose() : setMenuOpen(true)}
+                className="flex items-center justify-center w-9 h-9 rounded-xl text-muted-foreground hover:text-foreground glass-card hover:border-primary/30 transition-all duration-200 focus-ring"
               >
-                <PackageIcon className={`w-3.5 h-3.5 ${isMerging ? 'animate-spin' : ''}`} />
-                {isMerging ? 'Merging...' : 'Merge to M4B'}
+                <MoreVerticalIcon className="w-4 h-4" />
               </button>
-            )}
-            {showWrongRelease && onWrongReleaseClick && (
-              <button
-                type="button"
-                onClick={onWrongReleaseClick}
-                disabled={isWrongReleasing}
-                className="inline-flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-medium text-destructive hover:text-destructive glass-card hover:border-destructive/30 transition-all duration-200 focus-ring disabled:opacity-40 disabled:cursor-not-allowed"
-              >
-                <XCircleIcon className={`w-3.5 h-3.5 ${isWrongReleasing ? 'animate-spin' : ''}`} />
-                {isWrongReleasing ? 'Rejecting...' : 'Wrong Release'}
-              </button>
-            )}
-            <button
-              type="button"
-              onClick={onRemoveClick}
-              disabled={isRemoving}
-              className="inline-flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-medium text-destructive hover:text-destructive glass-card hover:border-destructive/30 transition-all duration-200 focus-ring disabled:opacity-40 disabled:cursor-not-allowed"
-            >
-              <TrashIcon className="w-3.5 h-3.5" />
-              {isRemoving ? 'Removing...' : 'Remove'}
-            </button>
+              <ToolbarDropdown triggerRef={triggerRef} open={menuOpen} onClose={handleMenuClose}>
+                <div ref={menuRef} role="menu" onKeyDown={handleMenuKeyDown} className="min-w-[160px] glass-card rounded-xl overflow-hidden shadow-lg border border-border animate-fade-in">
+                  <button role="menuitem" type="button" onClick={() => handleMenuAction(onEditClick)} className="flex items-center gap-2.5 w-full px-3 py-2.5 text-xs text-left text-muted-foreground hover:bg-muted/50 hover:text-foreground transition-colors focus:bg-muted/50 focus-ring">
+                    <PencilIcon className="w-3.5 h-3.5" />
+                    Edit
+                  </button>
+                  {hasPath && (
+                    <button role="menuitem" type="button" onClick={() => handleMenuAction(onRenameClick)} disabled={isRenaming} className="flex items-center gap-2.5 w-full px-3 py-2.5 text-xs text-left text-muted-foreground hover:bg-muted/50 hover:text-foreground transition-colors disabled:opacity-50 disabled:pointer-events-none focus:bg-muted/50 focus-ring">
+                      <RefreshIcon className={`w-3.5 h-3.5 ${isRenaming ? 'animate-spin' : ''}`} />
+                      {isRenaming ? 'Renaming...' : 'Rename'}
+                    </button>
+                  )}
+                  {hasPath && (
+                    <button role="menuitem" type="button" onClick={() => handleMenuAction(onRetagClick)} disabled={isRetagging || retagDisabled} title={retagDisabled ? retagTooltip : undefined} className="flex items-center gap-2.5 w-full px-3 py-2.5 text-xs text-left text-muted-foreground hover:bg-muted/50 hover:text-foreground transition-colors disabled:opacity-50 disabled:pointer-events-none focus:bg-muted/50 focus-ring">
+                      <TagIcon className={`w-3.5 h-3.5 ${isRetagging ? 'animate-spin' : ''}`} />
+                      {isRetagging ? 'Re-tagging...' : 'Re-tag files'}
+                    </button>
+                  )}
+                  {hasPath && canMerge && (
+                    <button role="menuitem" type="button" onClick={() => handleMenuAction(onMergeClick)} disabled={isMerging || mergeDisabled} title={mergeDisabled ? mergeTooltip : undefined} className="flex items-center gap-2.5 w-full px-3 py-2.5 text-xs text-left text-muted-foreground hover:bg-muted/50 hover:text-foreground transition-colors disabled:opacity-50 disabled:pointer-events-none focus:bg-muted/50 focus-ring">
+                      <PackageIcon className={`w-3.5 h-3.5 ${isMerging ? 'animate-spin' : ''}`} />
+                      {isMerging ? 'Merging...' : 'Merge to M4B'}
+                    </button>
+                  )}
+                  {showWrongRelease && onWrongReleaseClick && (
+                    <button role="menuitem" type="button" onClick={() => handleMenuAction(onWrongReleaseClick)} disabled={isWrongReleasing} className="flex items-center gap-2.5 w-full px-3 py-2.5 text-xs text-left text-destructive hover:bg-destructive/10 transition-colors disabled:opacity-50 disabled:pointer-events-none focus:bg-destructive/10 focus-ring">
+                      <XCircleIcon className={`w-3.5 h-3.5 ${isWrongReleasing ? 'animate-spin' : ''}`} />
+                      {isWrongReleasing ? 'Rejecting...' : 'Wrong Release'}
+                    </button>
+                  )}
+                  <button role="menuitem" type="button" onClick={() => handleMenuAction(onRemoveClick)} disabled={isRemoving} className="flex items-center gap-2.5 w-full px-3 py-2.5 text-xs text-left text-destructive hover:bg-destructive/10 transition-colors disabled:opacity-50 disabled:pointer-events-none focus:bg-destructive/10 focus-ring">
+                    <TrashIcon className="w-3.5 h-3.5" />
+                    {isRemoving ? 'Removing...' : 'Remove'}
+                  </button>
+                </div>
+              </ToolbarDropdown>
+            </div>
           </div>
         </div>
       </div>
