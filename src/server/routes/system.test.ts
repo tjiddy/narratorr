@@ -809,4 +809,69 @@ describe('POST /api/system/restore', () => {
     expect(res.statusCode).toBe(500);
     expect(JSON.parse(res.payload).error).toBe('Failed to process restore file');
   });
+
+  describe('#324 — restore route contract change', () => {
+    it('upload route returns 200 with { valid: false } for newer-version backup', async () => {
+      (services.backup.processRestoreUpload as Mock).mockResolvedValue({
+        valid: false,
+        error: 'Backup has 10 migrations but app only has 5. This backup is from a newer version.',
+        backupMigrationCount: 10,
+        appMigrationCount: 5,
+      });
+
+      const res = await app.inject({
+        method: 'POST',
+        url: '/api/system/restore',
+        payload: '--boundary\r\nContent-Disposition: form-data; name="file"; filename="backup.zip"\r\nContent-Type: application/zip\r\n\r\nfake-zip-data\r\n--boundary--',
+        headers: { 'content-type': 'multipart/form-data; boundary=boundary' },
+      });
+
+      expect(res.statusCode).toBe(200);
+      const body = JSON.parse(res.payload);
+      expect(body.valid).toBe(false);
+      expect(body.error).toContain('newer version');
+    });
+
+    it('upload route returns 400 for corrupt zip (RestoreUploadError)', async () => {
+      const { RestoreUploadError } = await import('../services/backup.service.js');
+      (services.backup.processRestoreUpload as Mock).mockRejectedValue(
+        new RestoreUploadError('File is not a valid zip archive', 'INVALID_ZIP'),
+      );
+
+      const res = await app.inject({
+        method: 'POST',
+        url: '/api/system/restore',
+        payload: '--boundary\r\nContent-Disposition: form-data; name="file"; filename="backup.zip"\r\nContent-Type: application/zip\r\n\r\nfake-zip-data\r\n--boundary--',
+        headers: { 'content-type': 'multipart/form-data; boundary=boundary' },
+      });
+
+      expect(res.statusCode).toBe(400);
+      expect(JSON.parse(res.payload).error).toBe('File is not a valid zip archive');
+    });
+
+    it('server-backup restore route returns 200 with { valid: false } for newer-version backup', async () => {
+      const tmpDir = await fsp.mkdtemp(path.join(os.tmpdir(), 'narratorr-route-324-'));
+      const tmpFile = path.join(tmpDir, 'test.zip');
+      await fsp.writeFile(tmpFile, 'fake');
+      (services.backup.getBackupPath as Mock).mockReturnValue(tmpFile);
+      (services.backup.restoreServerBackup as Mock).mockResolvedValue({
+        valid: false,
+        error: 'Backup has 10 migrations but app only has 5. This backup is from a newer version.',
+        backupMigrationCount: 10,
+        appMigrationCount: 5,
+      });
+
+      const res = await app.inject({
+        method: 'POST',
+        url: '/api/system/backups/narratorr-backup-test.zip/restore',
+      });
+
+      expect(res.statusCode).toBe(200);
+      const body = JSON.parse(res.payload);
+      expect(body.valid).toBe(false);
+      expect(body.error).toContain('newer version');
+
+      await fsp.rm(tmpDir, { recursive: true }).catch(() => {});
+    });
+  });
 });

@@ -169,6 +169,7 @@ async function processDownloadUpdate(
   emitProgressEvents(download, progress, newStatus, broadcaster, log);
   await handleFailureTransition(db, download, newStatus, retryDeps, log);
   handleCompletionNotification(download, item, isCompleted, notifierService, log);
+  await handleBookStatusOnCompletion(db, download, isCompleted, broadcaster, log);
 }
 
 /** Resolve outputPath on first poll — join savePath+name and apply remote path mapping. */
@@ -257,6 +258,31 @@ function handleCompletionNotification(
     log,
     'Failed to send download complete notification',
   );
+}
+
+/** Promote book status to 'importing' immediately when download completes. */
+async function handleBookStatusOnCompletion(
+  db: Db,
+  download: DownloadRow,
+  isCompleted: boolean,
+  broadcaster: EventBroadcasterService | undefined,
+  log: FastifyBaseLogger,
+): Promise<void> {
+  if (!isCompleted || download.status === 'completed') return;
+  if (!download.bookId) return;
+  try {
+    await db
+      .update(books)
+      .set({ status: 'importing' })
+      .where(eq(books.id, download.bookId));
+    broadcaster?.emit('book_status_change', {
+      book_id: download.bookId,
+      old_status: 'downloading' as const,
+      new_status: 'importing' as const,
+    });
+  } catch (error: unknown) {
+    log.debug(error, 'Failed to promote book status on download completion');
+  }
 }
 
 /** Blacklist a release on infrastructure error if retry deps are available. */

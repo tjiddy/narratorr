@@ -233,12 +233,12 @@ export class BackupService {
   }
 
   /** Validate extracted DB, stage for confirmation, and return validation result. */
-  private async validateAndStage(tempDir: string, tempDbPath: string): Promise<RestoreValidation & { valid: true; backupMigrationCount: number; appMigrationCount: number }> {
+  private async validateAndStage(tempDir: string, tempDbPath: string): Promise<RestoreValidation> {
     const validation = await this.validateRestore(tempDbPath);
 
     if (!validation.valid) {
       await fs.rm(tempDir, { recursive: true }).catch(() => {});
-      throw new RestoreUploadError(validation.error!, 'INVALID_DB');
+      return validation;
     }
 
     await this.setPendingRestore(tempDbPath);
@@ -251,7 +251,7 @@ export class BackupService {
   }
 
   /** Process a restore file upload: extract zip, validate DB, stage for confirmation. */
-  async processRestoreUpload(fileStream: Readable): Promise<RestoreValidation & { valid: true; backupMigrationCount: number; appMigrationCount: number }> {
+  async processRestoreUpload(fileStream: Readable): Promise<RestoreValidation> {
     try {
       const { tempDir, tempDbPath } = await this.extractDbFromZip(fileStream);
       return await this.validateAndStage(tempDir, tempDbPath);
@@ -266,7 +266,7 @@ export class BackupService {
   }
 
   /** Restore directly from a server-side backup file: read zip, extract, validate, stage. */
-  async restoreServerBackup(filename: string): Promise<RestoreValidation & { valid: true; backupMigrationCount: number; appMigrationCount: number }> {
+  async restoreServerBackup(filename: string): Promise<RestoreValidation> {
     const filePath = this.getBackupPath(filename);
     if (!filePath) {
       throw new RestoreUploadError('Invalid backup filename', 'INVALID_ZIP');

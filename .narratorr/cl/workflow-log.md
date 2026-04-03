@@ -1,5 +1,34 @@
 # Workflow Log
 
+## #324 UAT polish — round 1 — 2026-04-03
+**Skill path:** /implement → /claim → /plan → /handoff
+**Outcome:** success — PR #326
+
+### Metrics
+- Files changed: 21 | Tests added/modified: 13 test files
+- Quality gate runs: 4 (pass on attempt 4 — lint fixes, e2e update, type fix)
+- Fix iterations: 3 (placeholder text in existing test, e2e assertion for book status, coverUrl null→undefined type)
+- Context compactions: 0
+
+### Workflow experience
+- What went smoothly: The 6 polish items were well-scoped and independent — could implement sequentially with clean commits per module. TDD red/green cycle worked cleanly for each module.
+- Friction / issues encountered: The BookHero overflow menu change had a massive blast radius in BookDetails.test.tsx (40+ lines needed openOverflowMenu + role query changes). Multiple sed/node passes were needed to fix all patterns. The spec review cycle was unusually long (6 rounds) due to a reviewer codebase index mismatch on the server-backup restore surface.
+
+### Token efficiency
+- Highest-token actions: BookDetails.test.tsx blast radius fixes (multiple read-edit-test cycles), spec review dispute rounds
+- Avoidable waste: Could have checked BookDetails.test.tsx references BEFORE implementing the overflow menu to plan the migration
+- Suggestions: When extracting inline buttons into menus, grep all test files for button text references first and plan the migration
+
+### Infrastructure gaps
+- Repeated workarounds: None
+- Missing tooling / config: frontend-design skill not available (skipped design pass)
+- Unresolved debt: None new
+
+### Wish I'd Known
+1. Moving inline buttons to overflow menu breaks ALL parent component tests that reference those buttons — check blast radius first (see `overflow-menu-test-blast-radius.md`)
+2. The backup restore pipeline has a clear 3-guard pattern (monitor promote + QG revert + import dedupe) that must be implemented atomically (see `monitor-book-status-pipeline-interaction.md`)
+3. Changing a service from throw-on-error to return-error-result propagates cleanly through routes but requires updating ALL existing test assertions from `.rejects.toThrow()` to result checks (see `restore-contract-return-not-throw.md`)
+
 ## #318 Add minimum seed ratio setting for torrent removal — 2026-04-03
 **Skill path:** /implement → /claim → /plan → /handoff
 **Outcome:** success — PR #325

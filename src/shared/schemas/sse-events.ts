@@ -136,7 +136,6 @@ export const CACHE_INVALIDATION_MATRIX: Record<SSEEventType, CacheInvalidationRu
 // Event types that should trigger toast notifications
 export const TOAST_EVENT_CONFIG: Partial<Record<SSEEventType, { level: 'success' | 'info' | 'warning' | 'error'; titleKey: string }>> = {
   import_complete: { level: 'success', titleKey: 'book_title' },
-  grab_started: { level: 'info', titleKey: 'book_title' },
   review_needed: { level: 'warning', titleKey: 'book_title' },
   merge_started: { level: 'info', titleKey: 'book_title' },
   merge_failed: { level: 'error', titleKey: 'book_title' },

@@ -164,8 +164,8 @@ describe('monitor job', () => {
 
     await runMonitor();
 
-    // Only 1 update call: download status to completed (import job handles the rest)
-    expect(db.update).toHaveBeenCalledTimes(1);
+    // 2 update calls: download status to completed + book status to importing
+    expect(db.update).toHaveBeenCalledTimes(2);
     expect(log.info).toHaveBeenCalledWith(
       { bookId: 42, downloadId: 1 },
       'Download completed, queued for import',
@@ -1401,6 +1401,93 @@ describe('monitor job', () => {
       const setCalls = (chain.set as ReturnType<typeof vi.fn>).mock.calls.map((c: unknown[]) => c[0] as Record<string, unknown>);
       const outputPaths = setCalls.filter((c) => 'outputPath' in c).map((c) => normPath(c.outputPath as string));
       expect(outputPaths).toContain('/remote/downloads/my-book');
+    });
+  });
+
+  describe('#324 — book status on download completion', () => {
+    it('when download transitions to completed with a bookId, book status updated to importing in DB', async () => {
+      const broadcaster = { emit: vi.fn() };
+      db.select.mockReturnValueOnce(mockDbChain([
+        { id: 1, externalId: 'ext-1', downloadClientId: 10, status: 'downloading', completedAt: null, bookId: 5 },
+      ]));
+      adapter.getDownload.mockResolvedValueOnce({ progress: 100, status: 'completed' });
+      const chain = mockDbChain();
+      db.update.mockReturnValue(chain);
+
+      await monitorDownloads(inject<Db>(db), inject<DownloadClientService>(downloadClientService), inject<NotifierService>(notifierService), inject<FastifyBaseLogger>(log), undefined, inject<EventBroadcasterService>(broadcaster));
+
+      // Should have a second update call for book status
+      const setCalls = (chain.set as ReturnType<typeof vi.fn>).mock.calls.map((c: unknown[]) => c[0] as Record<string, unknown>);
+      expect(setCalls).toContainEqual(expect.objectContaining({ status: 'importing' }));
+    });
+
+    it('when download transitions to completed with a bookId, book_status_change SSE emitted', async () => {
+      const broadcaster = { emit: vi.fn() };
+      db.select.mockReturnValueOnce(mockDbChain([
+        { id: 1, externalId: 'ext-1', downloadClientId: 10, status: 'downloading', completedAt: null, bookId: 5 },
+      ]));
+      adapter.getDownload.mockResolvedValueOnce({ progress: 100, status: 'completed' });
+      db.update.mockReturnValue(mockDbChain());
+
+      await monitorDownloads(inject<Db>(db), inject<DownloadClientService>(downloadClientService), inject<NotifierService>(notifierService), inject<FastifyBaseLogger>(log), undefined, inject<EventBroadcasterService>(broadcaster));
+
+      expect(broadcaster.emit).toHaveBeenCalledWith('book_status_change', {
+        book_id: 5, old_status: 'downloading', new_status: 'importing',
+      });
+    });
+
+    it('when download has no bookId, no book status change emitted', async () => {
+      const broadcaster = { emit: vi.fn() };
+      db.select.mockReturnValueOnce(mockDbChain([
+        { id: 1, externalId: 'ext-1', downloadClientId: 10, status: 'downloading', completedAt: null, bookId: null },
+      ]));
+      adapter.getDownload.mockResolvedValueOnce({ progress: 100, status: 'completed' });
+      db.update.mockReturnValue(mockDbChain());
+
+      await monitorDownloads(inject<Db>(db), inject<DownloadClientService>(downloadClientService), inject<NotifierService>(notifierService), inject<FastifyBaseLogger>(log), undefined, inject<EventBroadcasterService>(broadcaster));
+
+      expect(broadcaster.emit).not.toHaveBeenCalledWith('book_status_change', expect.anything());
+    });
+
+    it('if SSE emit fails, download completion still succeeds (error isolation)', async () => {
+      const broadcaster = { emit: vi.fn().mockImplementation((event: string) => {
+        if (event === 'book_status_change') throw new Error('SSE broken');
+      }) };
+      db.select.mockReturnValueOnce(mockDbChain([
+        { id: 1, externalId: 'ext-1', downloadClientId: 10, status: 'downloading', completedAt: null, bookId: 5 },
+      ]));
+      adapter.getDownload.mockResolvedValueOnce({ progress: 100, status: 'completed' });
+      db.update.mockReturnValue(mockDbChain());
+
+      await expect(
+        monitorDownloads(inject<Db>(db), inject<DownloadClientService>(downloadClientService), inject<NotifierService>(notifierService), inject<FastifyBaseLogger>(log), undefined, inject<EventBroadcasterService>(broadcaster)),
+      ).resolves.not.toThrow();
+    });
+
+    it('if book status DB update fails, download completion still succeeds and no book_status_change SSE emitted', async () => {
+      const broadcaster = { emit: vi.fn() };
+      db.select.mockReturnValueOnce(mockDbChain([
+        { id: 1, externalId: 'ext-1', downloadClientId: 10, status: 'downloading', completedAt: null, bookId: 5 },
+      ]));
+      adapter.getDownload.mockResolvedValueOnce({ progress: 100, status: 'completed' });
+
+      // First db.update (download status) succeeds, second (book status) rejects
+      const downloadChain = mockDbChain();
+      const bookChain = { set: vi.fn().mockReturnThis(), where: vi.fn().mockRejectedValue(new Error('DB write failed')) };
+      db.update
+        .mockReturnValueOnce(downloadChain)
+        .mockReturnValueOnce(bookChain as never);
+
+      await expect(
+        monitorDownloads(inject<Db>(db), inject<DownloadClientService>(downloadClientService), inject<NotifierService>(notifierService), inject<FastifyBaseLogger>(log), undefined, inject<EventBroadcasterService>(broadcaster)),
+      ).resolves.not.toThrow();
+
+      // Download was still marked completed
+      const downloadSetCalls = (downloadChain.set as ReturnType<typeof vi.fn>).mock.calls.map((c: unknown[]) => c[0] as Record<string, unknown>);
+      expect(downloadSetCalls).toContainEqual(expect.objectContaining({ status: 'completed' }));
+
+      // No book_status_change SSE emitted (DB failed before emit could run)
+      expect(broadcaster.emit).not.toHaveBeenCalledWith('book_status_change', expect.anything());
     });
   });
 });

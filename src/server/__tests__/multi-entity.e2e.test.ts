@@ -413,9 +413,9 @@ describe('Job lifecycle E2E', () => {
     expect(updated.status).toBe('completed');
     expect(updated.completedAt).toBeTruthy();
 
-    // Book is NOT imported — monitor only marks completed
+    // Book is promoted to 'importing' immediately (monitor pre-promotion for instant UI feedback)
     const bookCheck = await e2e.app.inject({ method: 'GET', url: `/api/books/${bookId}` });
-    expect(bookCheck.json().status).toBe('downloading');
+    expect(bookCheck.json().status).toBe('importing');
   });
 
   // ── Import job: picks up completed downloads ──────────────────────

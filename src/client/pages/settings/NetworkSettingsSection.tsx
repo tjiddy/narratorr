@@ -104,7 +104,7 @@ export function NetworkSettingsSection() {
               className={`flex-1 px-4 py-3 bg-background border rounded-xl focus-ring focus:border-transparent transition-all ${
                 errors.proxyUrl ? 'border-destructive' : 'border-border'
               }`}
-              placeholder="http://gluetun:8888 or socks5://localhost:1080"
+              placeholder="http://user:pass@proxy:8888 or socks5://localhost:1080"
             />
             <button
               type="button"

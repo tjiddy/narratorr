@@ -40,7 +40,7 @@ describe('NetworkSettingsSection', () => {
 
     await waitFor(() => {
       expect(screen.getByLabelText('Proxy URL')).toBeInTheDocument();
-      expect(screen.getByPlaceholderText('http://gluetun:8888 or socks5://localhost:1080')).toBeInTheDocument();
+      expect(screen.getByPlaceholderText('http://user:pass@proxy:8888 or socks5://localhost:1080')).toBeInTheDocument();
     });
   });
 
@@ -291,6 +291,19 @@ describe('NetworkSettingsSection', () => {
         expect(mockApi.updateSettings).toHaveBeenCalledWith({
           network: { proxyUrl: SENTINEL },
         });
+      });
+    });
+  });
+
+  describe('#324 — proxy URL placeholder', () => {
+    it('placeholder text contains user:pass credentials format', async () => {
+      const settings = createMockSettings({ network: { proxyUrl: '' } });
+      mockApi.getSettings.mockResolvedValue(settings);
+      renderWithProviders(<NetworkSettingsSection />);
+
+      await waitFor(() => {
+        const input = screen.getByLabelText('Proxy URL');
+        expect(input).toHaveAttribute('placeholder', expect.stringContaining('user:pass'));
       });
     });
   });

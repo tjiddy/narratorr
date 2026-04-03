@@ -143,9 +143,8 @@ describe('CACHE_INVALIDATION_MATRIX', () => {
 });
 
 describe('TOAST_EVENT_CONFIG', () => {
-  it('includes grab_started, import_complete, review_needed, and merge lifecycle events', () => {
+  it('includes import_complete, review_needed, and merge lifecycle events', () => {
     expect(TOAST_EVENT_CONFIG.import_complete).toBeDefined();
-    expect(TOAST_EVENT_CONFIG.grab_started).toBeDefined();
     expect(TOAST_EVENT_CONFIG.review_needed).toBeDefined();
     expect(TOAST_EVENT_CONFIG.merge_started).toBeDefined();
     expect(TOAST_EVENT_CONFIG.merge_failed).toBeDefined();
@@ -223,6 +222,12 @@ describe('#257 merge observability — SSE payload schemas', () => {
 
     it('rejects payload with missing error field', () => {
       expect(() => mergeFailedPayload.parse({ book_id: 42, book_title: 'My Book' })).toThrow();
+    });
+  });
+
+  describe('#324 — grab_started toast removal', () => {
+    it('TOAST_EVENT_CONFIG does not contain grab_started key', () => {
+      expect(TOAST_EVENT_CONFIG.grab_started).toBeUndefined();
     });
   });
 });

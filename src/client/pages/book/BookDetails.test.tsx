@@ -52,6 +52,11 @@ vi.mock('@/lib/api', async (importOriginal) => {
   };
 });
 
+/** Open the BookHero overflow menu to reveal secondary actions (Edit, Rename, Re-tag, etc.). */
+async function openOverflowMenu(user: ReturnType<typeof userEvent.setup>) {
+  await user.click(screen.getByLabelText('More actions'));
+}
+
 function makeBook(overrides: Partial<BookWithAuthor> = {}): BookWithAuthor {
   return createMockBook({
     audioCodec: 'AAC',
@@ -261,21 +266,26 @@ describe('BookDetails', () => {
       const user = userEvent.setup();
       renderBookDetails();
 
-      await user.click(screen.getByText('Edit'));
+      await openOverflowMenu(user);
+      await user.click(screen.getByRole("menuitem", { name: /Edit/ }));
 
       expect(screen.getByRole('dialog', { name: /edit book metadata/i })).toBeInTheDocument();
     });
 
-    it('shows Rename button when book has path', () => {
+    it('shows Rename menu item when book has path', async () => {
+      const user = userEvent.setup();
       renderBookDetails({ id: 1, path: '/library/test', status: 'imported' });
 
-      expect(screen.getByText('Rename')).toBeInTheDocument();
+      await openOverflowMenu(user);
+      expect(screen.getByRole('menuitem', { name: /Rename/ })).toBeInTheDocument();
     });
 
-    it('hides Rename button when book has no path', () => {
+    it('hides Rename menu item when book has no path', async () => {
+      const user = userEvent.setup();
       renderBookDetails({ path: null });
 
-      expect(screen.queryByText('Rename')).not.toBeInTheDocument();
+      await openOverflowMenu(user);
+      expect(screen.queryByRole('menuitem', { name: /Rename/ })).not.toBeInTheDocument();
     });
 
     it('calls renameBook API when Rename button is clicked and confirmed', async () => {
@@ -289,7 +299,8 @@ describe('BookDetails', () => {
 
       renderBookDetails({ id: 1, path: '/library/test', status: 'imported' });
 
-      await user.click(screen.getByRole('button', { name: 'Rename' }));
+      await openOverflowMenu(user);
+      await user.click(screen.getByRole("menuitem", { name: /Rename/ }));
       const dialog = screen.getByRole('dialog');
       await user.click(within(dialog).getAllByRole('button')[1]);
 
@@ -310,7 +321,8 @@ describe('BookDetails', () => {
 
       renderBookDetails({ id: 1, path: '/library/test', status: 'imported' });
 
-      await user.click(screen.getByText('Edit'));
+      await openOverflowMenu(user);
+      await user.click(screen.getByRole("menuitem", { name: /Edit/ }));
 
       const dialog = screen.getByRole('dialog', { name: /edit book metadata/i });
       const titleInput = dialog.querySelector('#edit-title') as HTMLInputElement;
@@ -335,7 +347,8 @@ describe('BookDetails', () => {
 
       renderBookDetails({ id: 1, path: '/library/test', status: 'imported' });
 
-      await user.click(screen.getByText('Edit'));
+      await openOverflowMenu(user);
+      await user.click(screen.getByRole("menuitem", { name: /Edit/ }));
 
       const renameCheckbox = screen.getByRole('checkbox');
       await user.click(renameCheckbox);
@@ -356,7 +369,8 @@ describe('BookDetails', () => {
 
       renderBookDetails({ id: 1, path: '/library/test', status: 'imported' });
 
-      await user.click(screen.getByText('Edit'));
+      await openOverflowMenu(user);
+      await user.click(screen.getByRole("menuitem", { name: /Edit/ }));
 
       const dialog = screen.getByRole('dialog', { name: /edit book metadata/i });
       const titleInput = dialog.querySelector('#edit-title') as HTMLInputElement;
@@ -384,11 +398,13 @@ describe('BookDetails', () => {
 
       renderBookDetails({ id: 1, path: '/library/test', status: 'imported' });
 
+      await openOverflowMenu(user);
+
       await waitFor(() => {
-        expect(screen.getByText('Re-tag files')).not.toBeDisabled();
+        expect(screen.getByRole("menuitem", { name: /Re-tag/ })).not.toBeDisabled();
       });
 
-      await user.click(screen.getByText('Re-tag files'));
+      await user.click(screen.getByRole("menuitem", { name: /Re-tag/ }));
       const dialog1 = screen.getByRole('dialog');
       await user.click(within(dialog1).getAllByRole('button')[1]);
 
@@ -409,11 +425,13 @@ describe('BookDetails', () => {
 
       renderBookDetails({ id: 1, path: '/library/test', status: 'imported' });
 
+      await openOverflowMenu(user);
+
       await waitFor(() => {
-        expect(screen.getByText('Re-tag files')).not.toBeDisabled();
+        expect(screen.getByRole("menuitem", { name: /Re-tag/ })).not.toBeDisabled();
       });
 
-      await user.click(screen.getByText('Re-tag files'));
+      await user.click(screen.getByRole("menuitem", { name: /Re-tag/ }));
       const dialog2 = screen.getByRole('dialog');
       await user.click(within(dialog2).getAllByRole('button')[1]);
 
@@ -433,11 +451,13 @@ describe('BookDetails', () => {
 
       renderBookDetails({ id: 1, path: '/library/test', status: 'imported' });
 
+      await openOverflowMenu(user);
+
       await waitFor(() => {
-        expect(screen.getByText('Re-tag files')).not.toBeDisabled();
+        expect(screen.getByRole("menuitem", { name: /Re-tag/ })).not.toBeDisabled();
       });
 
-      await user.click(screen.getByText('Re-tag files'));
+      await user.click(screen.getByRole("menuitem", { name: /Re-tag/ }));
       const dialog3 = screen.getByRole('dialog');
       await user.click(within(dialog3).getAllByRole('button')[1]);
 
@@ -455,11 +475,13 @@ describe('BookDetails', () => {
 
       renderBookDetails({ id: 1, path: '/library/test', status: 'imported' });
 
+      await openOverflowMenu(user);
+
       await waitFor(() => {
-        expect(screen.getByText('Re-tag files')).not.toBeDisabled();
+        expect(screen.getByRole("menuitem", { name: /Re-tag/ })).not.toBeDisabled();
       });
 
-      await user.click(screen.getByText('Re-tag files'));
+      await user.click(screen.getByRole("menuitem", { name: /Re-tag/ }));
       const dialog4 = screen.getByRole('dialog');
       await user.click(within(dialog4).getAllByRole('button')[1]);
 
@@ -469,44 +491,51 @@ describe('BookDetails', () => {
     });
 
     it('disables Re-tag button when ffmpeg is not configured', async () => {
+      const user = userEvent.setup();
       (api.getSettings as Mock).mockResolvedValue(createMockSettings({
         processing: { enabled: false, ffmpegPath: '', outputFormat: 'm4b', keepOriginalBitrate: false, bitrate: 128, mergeBehavior: 'multi-file-only', maxConcurrentProcessing: 2, postProcessingScript: '', postProcessingScriptTimeout: 300 },
       }));
 
       renderBookDetails({ id: 1, path: '/library/test', status: 'imported' });
 
+      await openOverflowMenu(user);
+
       await waitFor(() => {
-        expect(screen.getByText('Re-tag files')).toBeInTheDocument();
+        expect(screen.getByRole("menuitem", { name: /Re-tag/ })).toBeInTheDocument();
       });
 
-      const button = screen.getByText('Re-tag files').closest('button');
+      const button = screen.getByRole("menuitem", { name: /Re-tag/ });
       expect(button).toBeDisabled();
       expect(button).toHaveAttribute('title', 'Requires ffmpeg — configure in Settings > Post Processing');
     });
 
     it('enables Re-tag button when ffmpeg path is configured', async () => {
+      const user = userEvent.setup();
       (api.getSettings as Mock).mockResolvedValue(createMockSettings({
         processing: { enabled: true, ffmpegPath: '/usr/bin/ffmpeg', outputFormat: 'm4b', keepOriginalBitrate: false, bitrate: 128, mergeBehavior: 'multi-file-only', maxConcurrentProcessing: 2, postProcessingScript: '', postProcessingScriptTimeout: 300 },
       }));
 
       renderBookDetails({ id: 1, path: '/library/test', status: 'imported' });
 
+      await openOverflowMenu(user);
       await waitFor(() => {
-        const button = screen.getByText('Re-tag files').closest('button');
+        const button = screen.getByRole("menuitem", { name: /Re-tag/ });
         expect(button).not.toBeDisabled();
       });
     });
 
     it('hides Re-tag button when book has no path', async () => {
+      const user = userEvent.setup();
       (api.getSettings as Mock).mockResolvedValue(createMockSettings({
         processing: { enabled: true, ffmpegPath: '/usr/bin/ffmpeg', outputFormat: 'm4b', keepOriginalBitrate: false, bitrate: 128, mergeBehavior: 'multi-file-only', maxConcurrentProcessing: 2, postProcessingScript: '', postProcessingScriptTimeout: 300 },
       }));
 
       renderBookDetails({ path: null });
 
+      await openOverflowMenu(user);
       // Wait for settings to load, then check button is absent
       await waitFor(() => {
-        expect(screen.queryByText('Re-tag files')).not.toBeInTheDocument();
+        expect(screen.queryByRole("menuitem", { name: /Re-tag/ })).not.toBeInTheDocument();
       });
     });
   });
@@ -678,7 +707,8 @@ describe('BookDetails', () => {
       const user = userEvent.setup();
       renderBookDetails({ id: 1, path: '/library/test', status: 'imported' });
 
-      await user.click(screen.getByRole('button', { name: 'Rename' }));
+      await openOverflowMenu(user);
+      await user.click(screen.getByRole("menuitem", { name: /Rename/ }));
 
       expect(screen.getByRole('dialog')).toBeInTheDocument();
       expect(api.renameBook).not.toHaveBeenCalled();
@@ -688,7 +718,8 @@ describe('BookDetails', () => {
       const user = userEvent.setup();
       renderBookDetails({ id: 1, path: '/library/test', status: 'imported' });
 
-      await user.click(screen.getByRole('button', { name: 'Rename' }));
+      await openOverflowMenu(user);
+      await user.click(screen.getByRole("menuitem", { name: /Rename/ }));
 
       expect(within(screen.getByRole('dialog')).getByText(/The Way of Kings/)).toBeInTheDocument();
     });
@@ -697,7 +728,8 @@ describe('BookDetails', () => {
       const user = userEvent.setup();
       renderBookDetails({ id: 1, path: '/library/test', status: 'imported' });
 
-      await user.click(screen.getByRole('button', { name: 'Rename' }));
+      await openOverflowMenu(user);
+      await user.click(screen.getByRole("menuitem", { name: /Rename/ }));
 
       expect(within(screen.getByRole('dialog')).getByText(/cannot be undone/i)).toBeInTheDocument();
     });
@@ -707,7 +739,8 @@ describe('BookDetails', () => {
       (api.renameBook as Mock).mockResolvedValue({ oldPath: '/old', newPath: '/new', message: 'Moved', filesRenamed: 1 });
       renderBookDetails({ id: 1, path: '/library/test', status: 'imported' });
 
-      await user.click(screen.getByRole('button', { name: 'Rename' }));
+      await openOverflowMenu(user);
+      await user.click(screen.getByRole("menuitem", { name: /Rename/ }));
       const dialog = screen.getByRole('dialog');
       await user.click(within(dialog).getAllByRole('button')[1]);
 
@@ -721,7 +754,8 @@ describe('BookDetails', () => {
       (api.renameBook as Mock).mockReturnValue(new Promise(() => {}));
       renderBookDetails({ id: 1, path: '/library/test', status: 'imported' });
 
-      await user.click(screen.getByRole('button', { name: 'Rename' }));
+      await openOverflowMenu(user);
+      await user.click(screen.getByRole("menuitem", { name: /Rename/ }));
       expect(screen.getByRole('dialog')).toBeInTheDocument();
 
       const dialog = screen.getByRole('dialog');
@@ -735,7 +769,8 @@ describe('BookDetails', () => {
       (api.renameBook as Mock).mockResolvedValue({ oldPath: '/old', newPath: '/new', message: 'Moved', filesRenamed: 1 });
       renderBookDetails({ id: 1, path: '/library/test', status: 'imported' });
 
-      await user.click(screen.getByRole('button', { name: 'Rename' }));
+      await openOverflowMenu(user);
+      await user.click(screen.getByRole("menuitem", { name: /Rename/ }));
       const dialog = screen.getByRole('dialog');
       await user.click(within(dialog).getAllByRole('button')[1]);
       // Modal is now closed — no dialog to click again
@@ -750,7 +785,8 @@ describe('BookDetails', () => {
       const user = userEvent.setup();
       renderBookDetails({ id: 1, path: '/library/test', status: 'imported' });
 
-      await user.click(screen.getByRole('button', { name: 'Rename' }));
+      await openOverflowMenu(user);
+      await user.click(screen.getByRole("menuitem", { name: /Rename/ }));
       expect(screen.getByRole('dialog')).toBeInTheDocument();
 
       await user.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Cancel' }));
@@ -763,7 +799,8 @@ describe('BookDetails', () => {
       const user = userEvent.setup();
       renderBookDetails({ id: 1, path: '/library/test', status: 'imported' });
 
-      await user.click(screen.getByRole('button', { name: 'Rename' }));
+      await openOverflowMenu(user);
+      await user.click(screen.getByRole("menuitem", { name: /Rename/ }));
       expect(screen.getByRole('dialog')).toBeInTheDocument();
 
       await user.keyboard('{Escape}');
@@ -776,7 +813,8 @@ describe('BookDetails', () => {
       const user = userEvent.setup();
       renderBookDetails({ id: 1, path: '/library/test', status: 'imported' });
 
-      await user.click(screen.getByRole('button', { name: 'Rename' }));
+      await openOverflowMenu(user);
+      await user.click(screen.getByRole("menuitem", { name: /Rename/ }));
       expect(screen.getByRole('dialog')).toBeInTheDocument();
 
       // Click the backdrop (fixed overlay behind the modal panel)
@@ -799,8 +837,9 @@ describe('BookDetails', () => {
       mockFfmpegEnabled();
       renderBookDetails({ id: 1, path: '/library/test', status: 'imported' });
 
-      await waitFor(() => expect(screen.getByText('Re-tag files')).not.toBeDisabled());
-      await user.click(screen.getByText('Re-tag files'));
+      await openOverflowMenu(user);
+      await waitFor(() => expect(screen.getByRole("menuitem", { name: /Re-tag/ })).not.toBeDisabled());
+      await user.click(screen.getByRole("menuitem", { name: /Re-tag/ }));
 
       expect(screen.getByRole('dialog')).toBeInTheDocument();
       expect(api.retagBook).not.toHaveBeenCalled();
@@ -811,8 +850,9 @@ describe('BookDetails', () => {
       mockFfmpegEnabled();
       renderBookDetails({ id: 1, path: '/library/test', status: 'imported' });
 
-      await waitFor(() => expect(screen.getByText('Re-tag files')).not.toBeDisabled());
-      await user.click(screen.getByText('Re-tag files'));
+      await openOverflowMenu(user);
+      await waitFor(() => expect(screen.getByRole("menuitem", { name: /Re-tag/ })).not.toBeDisabled());
+      await user.click(screen.getByRole("menuitem", { name: /Re-tag/ }));
 
       expect(within(screen.getByRole('dialog')).getByText(/The Way of Kings/)).toBeInTheDocument();
     });
@@ -822,8 +862,9 @@ describe('BookDetails', () => {
       mockFfmpegEnabled();
       renderBookDetails({ id: 1, path: '/library/test', status: 'imported' });
 
-      await waitFor(() => expect(screen.getByText('Re-tag files')).not.toBeDisabled());
-      await user.click(screen.getByText('Re-tag files'));
+      await openOverflowMenu(user);
+      await waitFor(() => expect(screen.getByRole("menuitem", { name: /Re-tag/ })).not.toBeDisabled());
+      await user.click(screen.getByRole("menuitem", { name: /Re-tag/ }));
 
       expect(within(screen.getByRole('dialog')).getByText(/cannot be undone/i)).toBeInTheDocument();
     });
@@ -834,8 +875,9 @@ describe('BookDetails', () => {
       (api.retagBook as Mock).mockResolvedValue({ bookId: 1, tagged: 1, skipped: 0, failed: 0, warnings: [] });
       renderBookDetails({ id: 1, path: '/library/test', status: 'imported' });
 
-      await waitFor(() => expect(screen.getByText('Re-tag files')).not.toBeDisabled());
-      await user.click(screen.getByText('Re-tag files'));
+      await openOverflowMenu(user);
+      await waitFor(() => expect(screen.getByRole("menuitem", { name: /Re-tag/ })).not.toBeDisabled());
+      await user.click(screen.getByRole("menuitem", { name: /Re-tag/ }));
       const dialog = screen.getByRole('dialog');
       await user.click(within(dialog).getAllByRole('button')[1]);
 
@@ -850,8 +892,9 @@ describe('BookDetails', () => {
       (api.retagBook as Mock).mockReturnValue(new Promise(() => {}));
       renderBookDetails({ id: 1, path: '/library/test', status: 'imported' });
 
-      await waitFor(() => expect(screen.getByText('Re-tag files')).not.toBeDisabled());
-      await user.click(screen.getByText('Re-tag files'));
+      await openOverflowMenu(user);
+      await waitFor(() => expect(screen.getByRole("menuitem", { name: /Re-tag/ })).not.toBeDisabled());
+      await user.click(screen.getByRole("menuitem", { name: /Re-tag/ }));
       expect(screen.getByRole('dialog')).toBeInTheDocument();
 
       const dialog = screen.getByRole('dialog');
@@ -866,8 +909,9 @@ describe('BookDetails', () => {
       (api.retagBook as Mock).mockResolvedValue({ bookId: 1, tagged: 1, skipped: 0, failed: 0, warnings: [] });
       renderBookDetails({ id: 1, path: '/library/test', status: 'imported' });
 
-      await waitFor(() => expect(screen.getByText('Re-tag files')).not.toBeDisabled());
-      await user.click(screen.getByText('Re-tag files'));
+      await openOverflowMenu(user);
+      await waitFor(() => expect(screen.getByRole("menuitem", { name: /Re-tag/ })).not.toBeDisabled());
+      await user.click(screen.getByRole("menuitem", { name: /Re-tag/ }));
       const dialog = screen.getByRole('dialog');
       await user.click(within(dialog).getAllByRole('button')[1]);
       expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
@@ -882,8 +926,9 @@ describe('BookDetails', () => {
       mockFfmpegEnabled();
       renderBookDetails({ id: 1, path: '/library/test', status: 'imported' });
 
-      await waitFor(() => expect(screen.getByText('Re-tag files')).not.toBeDisabled());
-      await user.click(screen.getByText('Re-tag files'));
+      await openOverflowMenu(user);
+      await waitFor(() => expect(screen.getByRole("menuitem", { name: /Re-tag/ })).not.toBeDisabled());
+      await user.click(screen.getByRole("menuitem", { name: /Re-tag/ }));
       expect(screen.getByRole('dialog')).toBeInTheDocument();
 
       await user.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Cancel' }));
@@ -897,8 +942,9 @@ describe('BookDetails', () => {
       mockFfmpegEnabled();
       renderBookDetails({ id: 1, path: '/library/test', status: 'imported' });
 
-      await waitFor(() => expect(screen.getByText('Re-tag files')).not.toBeDisabled());
-      await user.click(screen.getByText('Re-tag files'));
+      await openOverflowMenu(user);
+      await waitFor(() => expect(screen.getByRole("menuitem", { name: /Re-tag/ })).not.toBeDisabled());
+      await user.click(screen.getByRole("menuitem", { name: /Re-tag/ }));
       expect(screen.getByRole('dialog')).toBeInTheDocument();
 
       await user.keyboard('{Escape}');
@@ -912,8 +958,9 @@ describe('BookDetails', () => {
       mockFfmpegEnabled();
       renderBookDetails({ id: 1, path: '/library/test', status: 'imported' });
 
-      await waitFor(() => expect(screen.getByText('Re-tag files')).not.toBeDisabled());
-      await user.click(screen.getByText('Re-tag files'));
+      await openOverflowMenu(user);
+      await waitFor(() => expect(screen.getByRole("menuitem", { name: /Re-tag/ })).not.toBeDisabled());
+      await user.click(screen.getByRole("menuitem", { name: /Re-tag/ }));
       expect(screen.getByRole('dialog')).toBeInTheDocument();
 
       await user.click(document.querySelector('.fixed.inset-0')!);
@@ -923,10 +970,14 @@ describe('BookDetails', () => {
     });
 
     it('Re-tag button is disabled when ffmpegConfigured is false and clicking does not open modal', async () => {
+      const user = userEvent.setup();
+      // ffmpegPath is empty → ffmpegConfigured = false → button disabled
+      (api.getSettings as Mock).mockResolvedValue(createMockSettings({
+        processing: { enabled: false, ffmpegPath: '', outputFormat: 'm4b', keepOriginalBitrate: false, bitrate: 128, mergeBehavior: 'multi-file-only', maxConcurrentProcessing: 2, postProcessingScript: '', postProcessingScriptTimeout: 300 },
+      }));
       renderBookDetails({ id: 1, path: '/library/test', status: 'imported' });
-
-      // getSettings not mocked → ffmpegConfigured = false → button disabled
-      await waitFor(() => expect(screen.getByText('Re-tag files')).toBeDisabled());
+      await openOverflowMenu(user);
+      await waitFor(() => expect(screen.getByRole("menuitem", { name: /Re-tag/ })).toBeDisabled());
 
       expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
     });
@@ -937,7 +988,8 @@ describe('BookDetails', () => {
       renderBookDetails({ id: 1, path: '/library/test', status: 'imported' });
 
       // Open rename modal
-      await user.click(screen.getByRole('button', { name: 'Rename' }));
+      await openOverflowMenu(user);
+      await user.click(screen.getByRole("menuitem", { name: /Rename/ }));
       expect(screen.getByRole('dialog')).toBeInTheDocument();
 
       // Cancel rename — retag modal should not be open
@@ -945,8 +997,9 @@ describe('BookDetails', () => {
       expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
 
       // Open retag modal independently
-      await waitFor(() => expect(screen.getByText('Re-tag files')).not.toBeDisabled());
-      await user.click(screen.getByText('Re-tag files'));
+      await openOverflowMenu(user);
+      await waitFor(() => expect(screen.getByRole("menuitem", { name: /Re-tag/ })).not.toBeDisabled());
+      await user.click(screen.getByRole("menuitem", { name: /Re-tag/ }));
       expect(screen.getByRole('dialog')).toBeInTheDocument();
       expect(api.renameBook).not.toHaveBeenCalled();
     });
@@ -960,52 +1013,61 @@ describe('BookDetails', () => {
     }
 
     it('shows Merge to M4B button for imported book with topLevelAudioFileCount >= 2 and path set', async () => {
+      const user = userEvent.setup();
       mockFfmpegEnabledForMerge();
       renderBookDetails({ id: 1, path: '/library/test', status: 'imported', topLevelAudioFileCount: 12 });
 
-      await waitFor(() => expect(screen.getByRole('button', { name: /Merge to M4B/i })).toBeInTheDocument());
+      await openOverflowMenu(user);
+      await waitFor(() => expect(screen.getByRole("menuitem", { name: /Merge to M4B/i })).toBeInTheDocument());
     });
 
-    it('hides Merge to M4B button when topLevelAudioFileCount is 1 (single top-level file)', () => {
+    it('hides Merge to M4B button when topLevelAudioFileCount is 1 (single top-level file)', async () => {
+      const user = userEvent.setup();
       mockFfmpegEnabledForMerge();
       renderBookDetails({ id: 1, path: '/library/test', status: 'imported', topLevelAudioFileCount: 1 });
 
-      expect(screen.queryByRole('button', { name: /Merge to M4B/i })).not.toBeInTheDocument();
+      await openOverflowMenu(user);
+      expect(screen.queryByRole("menuitem", { name: /Merge to M4B/i })).not.toBeInTheDocument();
     });
 
     it('hides Merge to M4B button when topLevelAudioFileCount is null (not yet enriched)', () => {
       mockFfmpegEnabledForMerge();
       renderBookDetails({ id: 1, path: '/library/test', status: 'imported', topLevelAudioFileCount: null, audioFileCount: 12 });
 
-      expect(screen.queryByRole('button', { name: /Merge to M4B/i })).not.toBeInTheDocument();
+      expect(screen.queryByRole("menuitem", { name: /Merge to M4B/i })).not.toBeInTheDocument();
     });
 
     it('hides Merge to M4B button when topLevelAudioFileCount is 0 (nested-only layout)', () => {
       mockFfmpegEnabledForMerge();
       renderBookDetails({ id: 1, path: '/library/test', status: 'imported', audioFileCount: 12, topLevelAudioFileCount: 0 });
 
-      expect(screen.queryByRole('button', { name: /Merge to M4B/i })).not.toBeInTheDocument();
+      expect(screen.queryByRole("menuitem", { name: /Merge to M4B/i })).not.toBeInTheDocument();
     });
 
     it('hides Merge to M4B button when book has no path', () => {
       mockFfmpegEnabledForMerge();
       renderBookDetails({ id: 1, path: null, status: 'imported', topLevelAudioFileCount: 12 });
 
-      expect(screen.queryByRole('button', { name: /Merge to M4B/i })).not.toBeInTheDocument();
+      expect(screen.queryByRole("menuitem", { name: /Merge to M4B/i })).not.toBeInTheDocument();
     });
 
     it('hides Merge to M4B button when book status is not imported', () => {
       mockFfmpegEnabledForMerge();
       renderBookDetails({ id: 1, path: '/library/test', status: 'wanted', topLevelAudioFileCount: 12 });
 
-      expect(screen.queryByRole('button', { name: /Merge to M4B/i })).not.toBeInTheDocument();
+      expect(screen.queryByRole("menuitem", { name: /Merge to M4B/i })).not.toBeInTheDocument();
     });
 
     it('disables Merge to M4B button when ffmpegConfigured is false', async () => {
-      // getSettings not mocked → ffmpegConfigured = false → button disabled
+      const user = userEvent.setup();
+      // ffmpegPath is empty → ffmpegConfigured = false → button disabled
+      (api.getSettings as Mock).mockResolvedValue(createMockSettings({
+        processing: { enabled: false, ffmpegPath: '', outputFormat: 'm4b', keepOriginalBitrate: false, bitrate: 128, mergeBehavior: 'multi-file-only', maxConcurrentProcessing: 2, postProcessingScript: '', postProcessingScriptTimeout: 300 },
+      }));
       renderBookDetails({ id: 1, path: '/library/test', status: 'imported', topLevelAudioFileCount: 12 });
 
-      await waitFor(() => expect(screen.getByRole('button', { name: /Merge to M4B/i })).toBeDisabled());
+      await openOverflowMenu(user);
+      await waitFor(() => expect(screen.getByRole("menuitem", { name: /Merge to M4B/i })).toBeDisabled());
     });
   });
 
@@ -1021,8 +1083,9 @@ describe('BookDetails', () => {
       mockFfmpegEnabledForMerge();
       renderBookDetails({ id: 1, path: '/library/test', status: 'imported', topLevelAudioFileCount: 12 });
 
-      await waitFor(() => expect(screen.getByRole('button', { name: /Merge to M4B/i })).not.toBeDisabled());
-      await user.click(screen.getByRole('button', { name: /Merge to M4B/i }));
+      await openOverflowMenu(user);
+      await waitFor(() => expect(screen.getByRole("menuitem", { name: /Merge to M4B/i })).not.toBeDisabled());
+      await user.click(screen.getByRole("menuitem", { name: /Merge to M4B/i }));
 
       expect(screen.getByRole('dialog')).toBeInTheDocument();
       expect(api.mergeBookToM4b).not.toHaveBeenCalled();
@@ -1033,8 +1096,9 @@ describe('BookDetails', () => {
       mockFfmpegEnabledForMerge();
       renderBookDetails({ id: 1, path: '/library/test', status: 'imported', topLevelAudioFileCount: 12 });
 
-      await waitFor(() => expect(screen.getByRole('button', { name: /Merge to M4B/i })).not.toBeDisabled());
-      await user.click(screen.getByRole('button', { name: /Merge to M4B/i }));
+      await openOverflowMenu(user);
+      await waitFor(() => expect(screen.getByRole("menuitem", { name: /Merge to M4B/i })).not.toBeDisabled());
+      await user.click(screen.getByRole("menuitem", { name: /Merge to M4B/i }));
       await user.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Cancel' }));
 
       expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
@@ -1047,8 +1111,9 @@ describe('BookDetails', () => {
       (api.mergeBookToM4b as Mock).mockResolvedValue({ bookId: 1, filesReplaced: 12, outputFile: '/lib/book.m4b', message: 'Merged' });
       renderBookDetails({ id: 1, path: '/library/test', status: 'imported', topLevelAudioFileCount: 12 });
 
-      await waitFor(() => expect(screen.getByRole('button', { name: /Merge to M4B/i })).not.toBeDisabled());
-      await user.click(screen.getByRole('button', { name: /Merge to M4B/i }));
+      await openOverflowMenu(user);
+      await waitFor(() => expect(screen.getByRole("menuitem", { name: /Merge to M4B/i })).not.toBeDisabled());
+      await user.click(screen.getByRole("menuitem", { name: /Merge to M4B/i }));
       await user.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Merge' }));
 
       await waitFor(() => expect(api.mergeBookToM4b).toHaveBeenCalledWith(1));
@@ -1056,16 +1121,19 @@ describe('BookDetails', () => {
   });
 
   describe('delete action', () => {
-    it('renders Remove button in action row', () => {
+    it('renders Remove button in action row', async () => {
+      const user = userEvent.setup();
       renderBookDetails({ path: '/lib/test' });
-      expect(screen.getByRole('button', { name: /Remove/ })).toBeInTheDocument();
+      await openOverflowMenu(user);
+      expect(screen.getByRole("menuitem", { name: /Remove/ })).toBeInTheDocument();
     });
 
     it('opens delete confirmation modal when Remove is clicked', async () => {
       const user = userEvent.setup();
       renderBookDetails({ path: '/lib/test' });
 
-      await user.click(screen.getByRole('button', { name: /Remove/ }));
+      await openOverflowMenu(user);
+      await user.click(screen.getByRole("menuitem", { name: /Remove/ }));
 
       expect(screen.getByRole('dialog')).toBeInTheDocument();
       expect(screen.getByText(/Are you sure you want to remove/)).toBeInTheDocument();
@@ -1076,7 +1144,8 @@ describe('BookDetails', () => {
       (api.deleteBook as Mock).mockResolvedValue({ success: true });
       renderBookDetails({ id: 1, path: '/lib/test' });
 
-      await user.click(screen.getByRole('button', { name: /Remove/ }));
+      await openOverflowMenu(user);
+      await user.click(screen.getByRole("menuitem", { name: /Remove/ }));
       await user.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Remove' }));
 
       await waitFor(() => expect(api.deleteBook).toHaveBeenCalledWith(1, undefined));
@@ -1087,7 +1156,8 @@ describe('BookDetails', () => {
       (api.deleteBook as Mock).mockResolvedValue({ success: true });
       renderBookDetails({ id: 1, path: '/lib/test', audioFileCount: 5 });
 
-      await user.click(screen.getByRole('button', { name: /Remove/ }));
+      await openOverflowMenu(user);
+      await user.click(screen.getByRole("menuitem", { name: /Remove/ }));
       await user.click(screen.getByLabelText('Also delete 5 files from disk'));
       await user.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Remove' }));
 
@@ -1099,7 +1169,8 @@ describe('BookDetails', () => {
       (api.deleteBook as Mock).mockRejectedValue(new Error('Permission denied'));
       renderBookDetails({ id: 1, path: '/lib/test' });
 
-      await user.click(screen.getByRole('button', { name: /Remove/ }));
+      await openOverflowMenu(user);
+      await user.click(screen.getByRole("menuitem", { name: /Remove/ }));
       await user.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Remove' }));
 
       await waitFor(() => expect(toast.error).toHaveBeenCalledWith('Failed to remove book: Permission denied'));
@@ -1110,7 +1181,8 @@ describe('BookDetails', () => {
       (api.deleteBook as Mock).mockResolvedValue({ success: true });
       renderBookDetails({ id: 1, path: '/lib/test' });
 
-      await user.click(screen.getByRole('button', { name: /Remove/ }));
+      await openOverflowMenu(user);
+      await user.click(screen.getByRole("menuitem", { name: /Remove/ }));
       await user.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Remove' }));
 
       await waitFor(() => expect(mockNavigate).toHaveBeenCalledWith('/library'));
@@ -1121,7 +1193,8 @@ describe('BookDetails', () => {
       (api.deleteBook as Mock).mockRejectedValue(new Error('Permission denied'));
       renderBookDetails({ id: 1, path: '/lib/test' });
 
-      await user.click(screen.getByRole('button', { name: /Remove/ }));
+      await openOverflowMenu(user);
+      await user.click(screen.getByRole("menuitem", { name: /Remove/ }));
       await user.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Remove' }));
 
       await waitFor(() => expect(toast.error).toHaveBeenCalled());
@@ -1132,7 +1205,8 @@ describe('BookDetails', () => {
       const user = userEvent.setup();
       renderBookDetails({ path: '/lib/test', audioFileCount: 12 });
 
-      await user.click(screen.getByRole('button', { name: /Remove/ }));
+      await openOverflowMenu(user);
+      await user.click(screen.getByRole("menuitem", { name: /Remove/ }));
 
       expect(screen.getByLabelText('Also delete 12 files from disk')).toBeInTheDocument();
     });
@@ -1141,7 +1215,8 @@ describe('BookDetails', () => {
       const user = userEvent.setup();
       renderBookDetails({ path: '/lib/test', audioFileCount: null });
 
-      await user.click(screen.getByRole('button', { name: /Remove/ }));
+      await openOverflowMenu(user);
+      await user.click(screen.getByRole("menuitem", { name: /Remove/ }));
 
       expect(screen.getByLabelText('Delete files from disk')).toBeInTheDocument();
     });
@@ -1185,33 +1260,41 @@ describe('#257 merge observability — BookDetails progress', () => {
   });
 
   it('merge button disabled while progress indicator is visible', async () => {
+    const user = userEvent.setup();
     (api.getSettings as Mock).mockResolvedValue(createMockSettings({
       processing: { enabled: true, ffmpegPath: '/usr/bin/ffmpeg', outputFormat: 'm4b', keepOriginalBitrate: false, bitrate: 128, mergeBehavior: 'multi-file-only', maxConcurrentProcessing: 2, postProcessingScript: '', postProcessingScriptTimeout: 300 },
     }));
     mockUseMergeProgress.mockReturnValue({ phase: 'processing', percentage: 0.5 });
     renderBookDetails({ path: '/library/test', status: 'imported', topLevelAudioFileCount: 3 });
 
+    await openOverflowMenu(user);
     // The merge button should show "Merging..." and be disabled
     await waitFor(() => {
-      const mergeButton = screen.getByRole('button', { name: /Merging/i });
+      const mergeButton = screen.getByRole("menuitem", { name: /Merging/i });
       expect(mergeButton).toBeDisabled();
     });
   });
 
   describe('Wrong Release action', () => {
     it('shows Wrong Release button when book is imported with lastGrabGuid', async () => {
+      const user = userEvent.setup();
       renderBookDetails({ status: 'imported', path: '/lib/test', lastGrabGuid: 'guid-abc' });
 
+      await openOverflowMenu(user);
+
       await waitFor(() => {
-        expect(screen.getByRole('button', { name: /Wrong Release/ })).toBeInTheDocument();
+        expect(screen.getByRole("menuitem", { name: /Wrong Release/ })).toBeInTheDocument();
       });
     });
 
     it('shows Wrong Release button when book is imported with lastGrabInfoHash', async () => {
+      const user = userEvent.setup();
       renderBookDetails({ status: 'imported', path: '/lib/test', lastGrabInfoHash: 'hash-123' });
 
+      await openOverflowMenu(user);
+
       await waitFor(() => {
-        expect(screen.getByRole('button', { name: /Wrong Release/ })).toBeInTheDocument();
+        expect(screen.getByRole("menuitem", { name: /Wrong Release/ })).toBeInTheDocument();
       });
     });
 
@@ -1219,7 +1302,7 @@ describe('#257 merge observability — BookDetails progress', () => {
       renderBookDetails({ status: 'wanted', lastGrabGuid: 'guid-abc' });
 
       await waitFor(() => {
-        expect(screen.queryByRole('button', { name: /Wrong Release/ })).not.toBeInTheDocument();
+        expect(screen.queryByRole("menuitem", { name: /Wrong Release/ })).not.toBeInTheDocument();
       });
     });
 
@@ -1227,7 +1310,7 @@ describe('#257 merge observability — BookDetails progress', () => {
       renderBookDetails({ status: 'imported', path: '/lib/test', lastGrabGuid: null, lastGrabInfoHash: null });
 
       await waitFor(() => {
-        expect(screen.queryByRole('button', { name: /Wrong Release/ })).not.toBeInTheDocument();
+        expect(screen.queryByRole("menuitem", { name: /Wrong Release/ })).not.toBeInTheDocument();
       });
     });
 
@@ -1235,11 +1318,11 @@ describe('#257 merge observability — BookDetails progress', () => {
       const user = userEvent.setup();
       renderBookDetails({ status: 'imported', path: '/lib/test', lastGrabGuid: 'guid-abc' });
 
+      await openOverflowMenu(user);
       await waitFor(() => {
-        expect(screen.getByRole('button', { name: /Wrong Release/ })).toBeInTheDocument();
+        expect(screen.getByRole("menuitem", { name: /Wrong Release/ })).toBeInTheDocument();
       });
-
-      await user.click(screen.getByRole('button', { name: /Wrong Release/ }));
+      await user.click(screen.getByRole("menuitem", { name: /Wrong Release/ }));
 
       await waitFor(() => {
         expect(screen.getByText(/blacklist this release/)).toBeInTheDocument();
@@ -1251,11 +1334,13 @@ describe('#257 merge observability — BookDetails progress', () => {
       const user = userEvent.setup();
       renderBookDetails({ status: 'imported', path: '/lib/test', lastGrabGuid: 'guid-abc' });
 
+      await openOverflowMenu(user);
+
       await waitFor(() => {
-        expect(screen.getByRole('button', { name: /Wrong Release/ })).toBeInTheDocument();
+        expect(screen.getByRole("menuitem", { name: /Wrong Release/ })).toBeInTheDocument();
       });
 
-      await user.click(screen.getByRole('button', { name: /Wrong Release/ }));
+      await user.click(screen.getByRole("menuitem", { name: /Wrong Release/ }));
 
       await waitFor(() => {
         expect(screen.getByText(/blacklist this release/)).toBeInTheDocument();
@@ -1276,11 +1361,13 @@ describe('#257 merge observability — BookDetails progress', () => {
       const user = userEvent.setup();
       renderBookDetails({ status: 'imported', path: '/lib/test', lastGrabGuid: 'guid-abc' });
 
+      await openOverflowMenu(user);
+
       await waitFor(() => {
-        expect(screen.getByRole('button', { name: /Wrong Release/ })).toBeInTheDocument();
+        expect(screen.getByRole("menuitem", { name: /Wrong Release/ })).toBeInTheDocument();
       });
 
-      await user.click(screen.getByRole('button', { name: /Wrong Release/ }));
+      await user.click(screen.getByRole("menuitem", { name: /Wrong Release/ }));
 
       await waitFor(() => {
         expect(screen.getByText(/blacklist this release/)).toBeInTheDocument();

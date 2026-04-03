@@ -573,6 +573,24 @@ describe('emitImportFailure', () => {
   });
 });
 
+describe('#324 — emitBookImporting dedupe guard', () => {
+  it('skips SSE emit when bookStatus === importing (already at target)', () => {
+    const log = createMockLog();
+    const broadcaster = { emit: vi.fn() };
+    emitBookImporting({ broadcaster: broadcaster as never, bookId: 2, bookStatus: 'importing', log });
+    expect(broadcaster.emit).not.toHaveBeenCalled();
+  });
+
+  it('emits SSE when bookStatus !== importing (e.g., downloading, wanted)', () => {
+    const log = createMockLog();
+    const broadcaster = { emit: vi.fn() };
+    emitBookImporting({ broadcaster: broadcaster as never, bookId: 2, bookStatus: 'downloading', log });
+    expect(broadcaster.emit).toHaveBeenCalledWith('book_status_change', expect.objectContaining({
+      book_id: 2, old_status: 'downloading', new_status: 'importing',
+    }));
+  });
+});
+
 // ── notifyImportFailure ─────────────────────────────────────────────────
 
 describe('notifyImportFailure', () => {
