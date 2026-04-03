@@ -664,6 +664,33 @@ describe('IndexerCard — Prowlarr-managed indicators (AC8)', () => {
       expect(screen.queryByLabelText('Search Type')).not.toBeInTheDocument();
     });
 
+    it('#317 preserves isVip through edit-mode hydration and save', async () => {
+      const onSubmit = vi.fn();
+      const user = userEvent.setup();
+      const mamIndexer: Indexer = createMockIndexer({
+        id: 14,
+        name: 'MAM VIP',
+        type: 'myanonamouse',
+        settings: { mamId: 'vip-id', baseUrl: '', searchLanguages: [1], searchType: 1, isVip: true },
+      });
+
+      renderWithProviders(
+        <IndexerCard
+          indexer={mamIndexer}
+          mode="edit"
+          onSubmit={onSubmit}
+          onFormTest={vi.fn()}
+        />,
+      );
+
+      // Submit without changing anything — isVip should roundtrip
+      await user.click(screen.getByText('Save Changes'));
+      await waitFor(() => {
+        expect(onSubmit).toHaveBeenCalled();
+      });
+      expect(onSubmit.mock.calls[0][0].settings).toHaveProperty('isVip', true);
+    });
+
     it('preserves searchLanguages: [] via ?? (not ||) in settingsFromIndexer', () => {
       const mamIndexer: Indexer = createMockIndexer({
         id: 13,
