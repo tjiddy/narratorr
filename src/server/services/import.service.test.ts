@@ -2229,6 +2229,30 @@ describe('ImportService consolidation (issue #79)', () => {
       expect(clearCall).toBeUndefined();
     });
 
+    it('adapter not found → logs warning, preserves pendingCleanup for retry', async () => {
+      const settingsGet = settingsService.get as ReturnType<typeof vi.fn>;
+      settingsGet.mockImplementation((key: string) => {
+        if (key === 'import') return Promise.resolve({ deleteAfterImport: true, minSeedTime: 0, minSeedRatio: 0 });
+        return Promise.resolve({});
+      });
+      // getAdapter returns null — client may have been deleted
+      (clientService.getAdapter as ReturnType<typeof vi.fn>).mockResolvedValueOnce(null);
+      db.select.mockReturnValueOnce(mockDbChain([deferredImport]));
+      db.update.mockReturnValue(mockDbChain());
+
+      await service.cleanupDeferredImports();
+
+      expect(mockAdapter.removeDownload).not.toHaveBeenCalled();
+      expect(log.warn).toHaveBeenCalledWith(
+        expect.objectContaining({ downloadId: deferredImport.id }),
+        expect.stringContaining('adapter not found'),
+      );
+      // pendingCleanup must NOT be cleared — retry next cycle
+      const setCalls = (db.update().set as ReturnType<typeof vi.fn>).mock.calls;
+      const clearCall = setCalls.find((call: unknown[]) => call[0] && typeof call[0] === 'object' && (call[0] as Record<string, unknown>).pendingCleanup === null);
+      expect(clearCall).toBeUndefined();
+    });
+
     it('no-op when no imported downloads have pendingCleanup set', async () => {
       const settingsGet = settingsService.get as ReturnType<typeof vi.fn>;
       settingsGet.mockImplementation((key: string) => {
