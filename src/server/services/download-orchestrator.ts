@@ -91,22 +91,7 @@ export class DownloadOrchestrator {
     if (!cancelled) return false;
 
     // Blacklist the release (best-effort — failure must not block cancel)
-    if (this.blacklistService && (download.infoHash || download.guid)) {
-      try {
-        await this.blacklistService.create({
-          infoHash: download.infoHash,
-          guid: download.guid,
-          title: download.title,
-          bookId: download.bookId ?? undefined,
-          reason: 'user_cancelled',
-          blacklistType: 'permanent',
-        });
-      } catch (error: unknown) {
-        this.log.warn(error, 'Failed to blacklist release during cancel');
-      }
-    } else if (this.blacklistService && !download.infoHash && !download.guid) {
-      this.log.info({ id }, 'Blacklist skipped — no infoHash or guid');
-    }
+    await this.blacklistCancelledRelease(download);
 
     // Side effects — each independently guarded
     if (download.bookId) {
@@ -158,6 +143,27 @@ export class DownloadOrchestrator {
   /** Run a side-effect function, catching and logging any error. */
   private safe(fn: () => void): void {
     try { fn(); } catch (error: unknown) { this.log.warn(error, 'Side-effect dispatch failed'); }
+  }
+
+  /** Best-effort blacklist of a cancelled release. Skips when no identifiers are present. */
+  private async blacklistCancelledRelease(download: DownloadWithBook): Promise<void> {
+    if (!this.blacklistService) return;
+    if (!download.infoHash && !download.guid) {
+      this.log.info({ id: download.id }, 'Blacklist skipped — no infoHash or guid');
+      return;
+    }
+    try {
+      await this.blacklistService.create({
+        infoHash: download.infoHash,
+        guid: download.guid,
+        title: download.title,
+        bookId: download.bookId ?? undefined,
+        reason: 'user_cancelled',
+        blacklistType: 'permanent',
+      });
+    } catch (error: unknown) {
+      this.log.warn(error, 'Failed to blacklist release during cancel');
+    }
   }
 
   /** Set download error with SSE dispatch. */
