@@ -1592,7 +1592,7 @@ describe('QualityGateOrchestrator', () => {
 
     it('does NOT revert book status when book is not importing (guard condition)', async () => {
       const downloadingBook = { ...baseBook, status: 'downloading' as const };
-      const { orchestrator, qualityGateService, db, broadcaster } = createOrchestrator();
+      const { orchestrator, qualityGateService, broadcaster } = createOrchestrator();
       qualityGateService.getCompletedDownloads.mockResolvedValue([{ download: baseDownload, book: downloadingBook, narrators: [] }]);
       (scanAudioDirectory as ReturnType<typeof vi.fn>).mockRejectedValue(new Error('probe failed'));
       (resolveSavePath as ReturnType<typeof vi.fn>).mockReturnValue('/path');
