@@ -1,5 +1,34 @@
 # Workflow Log
 
+## #317 MAM adapter — VIP detection and smart search filtering — 2026-04-03
+**Skill path:** /implement → /claim → /plan → /handoff
+**Outcome:** success — PR #328
+
+### Metrics
+- Files changed: 17 | Tests added/modified: 36
+- Quality gate runs: 2 (pass on attempt 1, then again after coverage fixes)
+- Fix iterations: 1 (ESLint complexity/max-lines on MamFields — extracted hook and components)
+- Context compactions: 0
+
+### Workflow experience
+- What went smoothly: Core adapter changes (types, MAM adapter, result flags) were straightforward with clear spec. TDD cycle worked well — 13 tests failed as expected on first run, all passed after implementation.
+- Friction / issues encountered: Adding `useQueryClient()` to `useConnectionTest` broke all 12 existing tests because the test file was `.test.ts` (no JSX) and used bare `renderHook` without provider. Had to use `createElement` pattern. ESLint complexity/max-lines caught the MamFields bloat early via verify.ts.
+
+### Token efficiency
+- Highest-token actions: Explore subagent for codebase investigation, self-review and coverage review subagents
+- Avoidable waste: Coverage review flagged some false positives (ReleaseCard badges were already tested but subagent didn't find them)
+- Suggestions: For future multi-layer features, plan the hook extraction upfront to avoid the lint → refactor cycle
+
+### Infrastructure gaps
+- Repeated workarounds: None
+- Missing tooling / config: frontend-design skill not available for design pass
+- Unresolved debt: SearchResult type duplication between core and client (DRY-1)
+
+### Wish I'd Known
+1. Adding `useQueryClient()` to a hook used by `.test.ts` files (not `.test.tsx`) requires `createElement` wrapper — JSX isn't available. Check test file extensions before adding provider-dependent hooks.
+2. ESLint complexity limit (15) is easily hit when adding async blur detection with loading/error/success states to form components. Extract the hook and display components upfront.
+3. The shared `CrudService` interface in `crud-routes.ts` had `ip?` returned by all adapters but not declared — the interface was already out of sync. Adding `metadata?` required fixing `ip?` too.
+
 ## #323 Fix QB path resolution — use content_path — 2026-04-03
 **Skill path:** /implement → /claim → /plan → /handoff
 **Outcome:** success — PR #327
