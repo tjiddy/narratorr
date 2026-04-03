@@ -19,6 +19,30 @@ import { ScheduledTasks } from './ScheduledTasks';
 import { SystemInfo } from './SystemInfo';
 import { GeneralSettingsForm } from './GeneralSettingsForm';
 
+function RestoreModal({ isOpen, restoreInfo, onConfirm, onClose }: {
+  isOpen: boolean;
+  restoreInfo: { backupName: string; valid: boolean; error?: string } | null;
+  onConfirm: () => void;
+  onClose: () => void;
+}) {
+  if (restoreInfo?.valid === false) {
+    return (
+      <ConfirmModal isOpen={isOpen} title="Restore Failed" message={restoreInfo.error ?? 'Validation failed'} confirmLabel="Close" onConfirm={onClose} onCancel={onClose} />
+    );
+  }
+  return (
+    <ConfirmModal
+      isOpen={isOpen}
+      title="Confirm Restore"
+      message={`Restore "${restoreInfo?.backupName ?? 'backup'}"? This will replace your current database. The server process will exit and must be restarted to apply the change. If you are running under a process supervisor (Docker, systemd), it will restart automatically. If running via pnpm start or node directly, you will need to restart manually.`}
+      confirmLabel="Restore Now"
+      cancelLabel="Cancel"
+      onConfirm={onConfirm}
+      onCancel={onClose}
+    />
+  );
+}
+
 export function SystemSettings() {
   const queryClient = useQueryClient();
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -164,35 +188,12 @@ export function SystemSettings() {
 
       <ScheduledTasks />
 
-      {restoreInfo?.valid === false ? (
-        <ConfirmModal
-          isOpen={restoreConfirmOpen}
-          title="Restore Failed"
-          message={restoreInfo.error ?? 'Validation failed'}
-          confirmLabel="Close"
-          onConfirm={() => {
-            setRestoreConfirmOpen(false);
-            setRestoreInfo(null);
-          }}
-          onCancel={() => {
-            setRestoreConfirmOpen(false);
-            setRestoreInfo(null);
-          }}
-        />
-      ) : (
-        <ConfirmModal
-          isOpen={restoreConfirmOpen}
-          title="Confirm Restore"
-          message={`Restore "${restoreInfo?.backupName ?? 'backup'}"? This will replace your current database. The server process will exit and must be restarted to apply the change. If you are running under a process supervisor (Docker, systemd), it will restart automatically. If running via pnpm start or node directly, you will need to restart manually.`}
-          confirmLabel="Restore Now"
-          cancelLabel="Cancel"
-          onConfirm={() => confirmMutation.mutate()}
-          onCancel={() => {
-            setRestoreConfirmOpen(false);
-            setRestoreInfo(null);
-          }}
-        />
-      )}
+      <RestoreModal
+        isOpen={restoreConfirmOpen}
+        restoreInfo={restoreInfo}
+        onConfirm={() => confirmMutation.mutate()}
+        onClose={() => { setRestoreConfirmOpen(false); setRestoreInfo(null); }}
+      />
     </div>
   );
 }

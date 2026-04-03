@@ -361,7 +361,7 @@ describe('useEventSource', () => {
       expect(toast.success).toHaveBeenCalledWith('"My Book" imported successfully', { duration: 5000 });
     });
 
-    it('shows info toast on grab_started', () => {
+    it('does NOT show toast on grab_started (removed from TOAST_EVENT_CONFIG)', () => {
       const { wrapper } = createWrapper();
       renderHook(() => useEventSource('key'), { wrapper });
       const es = MockEventSource.instances[0];
@@ -371,7 +371,7 @@ describe('useEventSource', () => {
         es.simulateEvent('grab_started', { download_id: 1, book_id: 2, book_title: 'Grabbed Book', release_title: 'test' });
       });
 
-      expect(toast.info).toHaveBeenCalledWith('Downloading "Grabbed Book"', { duration: 5000 });
+      expect(toast.info).not.toHaveBeenCalled();
     });
 
     it('shows warning toast on review_needed', () => {
