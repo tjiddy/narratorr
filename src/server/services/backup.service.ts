@@ -194,8 +194,8 @@ export class BackupService {
     return path.join(this.backupsDir, filename);
   }
 
-  /** Process a restore file upload: extract zip, validate DB, stage for confirmation. */
-  async processRestoreUpload(fileStream: Readable): Promise<RestoreValidation & { valid: true; backupMigrationCount: number; appMigrationCount: number }> {
+  /** Extract narratorr.db from a zip stream into a temp directory. Returns the temp DB path. */
+  private async extractDbFromZip(source: Readable): Promise<{ tempDir: string; tempDbPath: string }> {
     const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'narratorr-restore-'));
     const tempDbPath = path.join(tempDir, 'narratorr-restore.db');
 
@@ -203,7 +203,7 @@ export class BackupService {
       let found = false;
 
       await new Promise<void>((resolve, reject) => {
-        const zipStream = fileStream.pipe(unzipper.Parse());
+        const zipStream = source.pipe(unzipper.Parse());
         zipStream.on('entry', (entry: { path: string; autodrain: () => void; pipe: (dest: NodeJS.WritableStream) => void }) => {
           if (entry.path === 'narratorr.db') {
             found = true;
@@ -224,25 +224,61 @@ export class BackupService {
         throw new RestoreUploadError('Zip does not contain narratorr.db', 'MISSING_DB');
       }
 
-      const validation = await this.validateRestore(tempDbPath);
-
-      if (!validation.valid) {
-        await fs.rm(tempDir, { recursive: true }).catch(() => {});
-        throw new RestoreUploadError(validation.error!, 'INVALID_DB');
-      }
-
-      await this.setPendingRestore(tempDbPath);
-
-      return {
-        valid: true as const,
-        backupMigrationCount: validation.backupMigrationCount!,
-        appMigrationCount: validation.appMigrationCount!,
-      };
+      return { tempDir, tempDbPath };
     } catch (error: unknown) {
       if (error instanceof RestoreUploadError) throw error;
       await fs.rm(tempDir, { recursive: true }).catch(() => {});
+      throw error;
+    }
+  }
+
+  /** Validate extracted DB, stage for confirmation, and return validation result. */
+  private async validateAndStage(tempDir: string, tempDbPath: string): Promise<RestoreValidation & { valid: true; backupMigrationCount: number; appMigrationCount: number }> {
+    const validation = await this.validateRestore(tempDbPath);
+
+    if (!validation.valid) {
+      await fs.rm(tempDir, { recursive: true }).catch(() => {});
+      throw new RestoreUploadError(validation.error!, 'INVALID_DB');
+    }
+
+    await this.setPendingRestore(tempDbPath);
+
+    return {
+      valid: true as const,
+      backupMigrationCount: validation.backupMigrationCount!,
+      appMigrationCount: validation.appMigrationCount!,
+    };
+  }
+
+  /** Process a restore file upload: extract zip, validate DB, stage for confirmation. */
+  async processRestoreUpload(fileStream: Readable): Promise<RestoreValidation & { valid: true; backupMigrationCount: number; appMigrationCount: number }> {
+    try {
+      const { tempDir, tempDbPath } = await this.extractDbFromZip(fileStream);
+      return await this.validateAndStage(tempDir, tempDbPath);
+    } catch (error: unknown) {
+      if (error instanceof RestoreUploadError) throw error;
       // System-level I/O errors (ENOSPC, EACCES, etc.) should propagate as unexpected failures,
       // not be misreported as bad zip files. Only zip-format parse failures become INVALID_ZIP.
+      const isSystemError = error instanceof Error && 'code' in error && typeof (error as NodeJS.ErrnoException).code === 'string';
+      if (isSystemError) throw error;
+      throw new RestoreUploadError('File is not a valid zip archive', 'INVALID_ZIP');
+    }
+  }
+
+  /** Restore directly from a server-side backup file: read zip, extract, validate, stage. */
+  async restoreServerBackup(filename: string): Promise<RestoreValidation & { valid: true; backupMigrationCount: number; appMigrationCount: number }> {
+    const filePath = this.getBackupPath(filename);
+    if (!filePath) {
+      throw new RestoreUploadError('Invalid backup filename', 'INVALID_ZIP');
+    }
+
+    const source = fss.createReadStream(filePath);
+
+    try {
+      const { tempDir, tempDbPath } = await this.extractDbFromZip(source);
+      return await this.validateAndStage(tempDir, tempDbPath);
+    } catch (error: unknown) {
+      if (error instanceof RestoreUploadError) throw error;
       const isSystemError = error instanceof Error && 'code' in error && typeof (error as NodeJS.ErrnoException).code === 'string';
       if (isSystemError) throw error;
       throw new RestoreUploadError('File is not a valid zip archive', 'INVALID_ZIP');

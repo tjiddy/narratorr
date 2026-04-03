@@ -678,17 +678,139 @@ describe('restoreServerBackup', () => {
     await fs.rm(tempDir, { recursive: true, force: true }).catch(() => {});
   });
 
-  it.todo('returns valid result and stages pending restore for valid server backup zip');
+  it('returns valid result and stages pending restore for valid server backup zip', async () => {
+    // Create a valid backup zip on disk
+    const backupsDir = path.join(configPath, 'backups');
+    await fs.mkdir(backupsDir, { recursive: true });
+    const zipBuffer = await createZipBuffer([
+      { name: 'narratorr.db', content: Buffer.from('fake-sqlite-db') },
+    ]);
+    const backupFilename = 'narratorr-backup-20260101T000000000Z.zip';
+    await fs.writeFile(path.join(backupsDir, backupFilename), zipBuffer);
 
-  it.todo('throws MISSING_DB when server backup zip does not contain narratorr.db');
+    // validateRestore: app migration count, then sqlite_master check, then backup migration count
+    mockExecute.mockResolvedValueOnce({ rows: [{ count: 3 }] }); // app migration count
+    mockExecute.mockResolvedValueOnce({ rows: [{ count: 1 }] }); // sqlite_master table check
+    mockExecute.mockResolvedValueOnce({ rows: [{ count: 2 }] }); // backup migration count
 
-  it.todo('throws INVALID_DB when backup has more migrations than app (newer version)');
+    const service = new BackupService(configPath, dbPath, createMockSettingsService(), createMockLog());
+    const result = await service.restoreServerBackup(backupFilename);
 
-  it.todo('cleans up temp directory when extraction or validation fails');
+    expect(result.valid).toBe(true);
+    expect(result.backupMigrationCount).toBe(2);
+    expect(result.appMigrationCount).toBe(3);
+    expect(service.pendingRestore).not.toBeNull();
+  });
 
-  it.todo('rethrows system-level I/O errors unchanged instead of wrapping as INVALID_ZIP');
+  it('throws MISSING_DB when server backup zip does not contain narratorr.db', async () => {
+    const backupsDir = path.join(configPath, 'backups');
+    await fs.mkdir(backupsDir, { recursive: true });
+    const zipBuffer = await createZipBuffer([
+      { name: 'other-file.txt', content: Buffer.from('not a db') },
+    ]);
+    const backupFilename = 'narratorr-backup-20260101T000000000Z.zip';
+    await fs.writeFile(path.join(backupsDir, backupFilename), zipBuffer);
 
-  it.todo('replaces existing pending restore when called with a new backup');
+    const service = new BackupService(configPath, dbPath, createMockSettingsService(), createMockLog());
+    await expect(service.restoreServerBackup(backupFilename))
+      .rejects.toThrow('Zip does not contain narratorr.db');
+    await expect(service.restoreServerBackup(backupFilename))
+      .rejects.toThrow(RestoreUploadError);
+  });
+
+  it('throws INVALID_DB when backup has more migrations than app (newer version)', async () => {
+    const backupsDir = path.join(configPath, 'backups');
+    await fs.mkdir(backupsDir, { recursive: true });
+    const zipBuffer = await createZipBuffer([
+      { name: 'narratorr.db', content: Buffer.from('fake-sqlite-db') },
+    ]);
+    const backupFilename = 'narratorr-backup-20260101T000000000Z.zip';
+    await fs.writeFile(path.join(backupsDir, backupFilename), zipBuffer);
+
+    // App has 2 migrations, backup has 5 (newer version)
+    mockExecute.mockResolvedValueOnce({ rows: [{ count: 2 }] }); // app migration count
+    mockExecute.mockResolvedValueOnce({ rows: [{ count: 1 }] }); // sqlite_master table check
+    mockExecute.mockResolvedValueOnce({ rows: [{ count: 5 }] }); // backup migration count
+
+    const service = new BackupService(configPath, dbPath, createMockSettingsService(), createMockLog());
+    await expect(service.restoreServerBackup(backupFilename))
+      .rejects.toThrow(RestoreUploadError);
+    // Reset mocks for second call
+    mockExecute.mockResolvedValueOnce({ rows: [{ count: 2 }] });
+    mockExecute.mockResolvedValueOnce({ rows: [{ count: 1 }] });
+    mockExecute.mockResolvedValueOnce({ rows: [{ count: 5 }] });
+    const err = await service.restoreServerBackup(backupFilename).catch((e: unknown) => e) as RestoreUploadError;
+    expect(err.code).toBe('INVALID_DB');
+    expect(err.message).toContain('newer version');
+  });
+
+  it('cleans up temp directory when extraction or validation fails', async () => {
+    const backupsDir = path.join(configPath, 'backups');
+    await fs.mkdir(backupsDir, { recursive: true });
+    const zipBuffer = await createZipBuffer([
+      { name: 'other.txt', content: Buffer.from('x') },
+    ]);
+    const backupFilename = 'narratorr-backup-20260101T000000000Z.zip';
+    await fs.writeFile(path.join(backupsDir, backupFilename), zipBuffer);
+
+    const tmpBefore = (await fs.readdir(os.tmpdir())).filter(f => f.startsWith('narratorr-restore-'));
+
+    const service = new BackupService(configPath, dbPath, createMockSettingsService(), createMockLog());
+    try {
+      await service.restoreServerBackup(backupFilename);
+    } catch { /* expected */ }
+
+    const tmpAfter = (await fs.readdir(os.tmpdir())).filter(f => f.startsWith('narratorr-restore-'));
+    expect(tmpAfter.length).toBe(tmpBefore.length);
+  });
+
+  it('rethrows system-level I/O errors unchanged instead of wrapping as INVALID_ZIP', async () => {
+    const backupsDir = path.join(configPath, 'backups');
+    await fs.mkdir(backupsDir, { recursive: true });
+    const zipBuffer = await createZipBuffer([
+      { name: 'narratorr.db', content: Buffer.from('fake-sqlite-db') },
+    ]);
+    const backupFilename = 'narratorr-backup-20260101T000000000Z.zip';
+    await fs.writeFile(path.join(backupsDir, backupFilename), zipBuffer);
+
+    const service = new BackupService(configPath, dbPath, createMockSettingsService(), createMockLog());
+
+    const ioError = new Error('ENOSPC: no space left on device') as NodeJS.ErrnoException;
+    ioError.code = 'ENOSPC';
+    vi.spyOn(service, 'validateRestore').mockRejectedValueOnce(ioError);
+
+    const err = await service.restoreServerBackup(backupFilename).catch((e: unknown) => e);
+    expect(err).not.toBeInstanceOf(RestoreUploadError);
+    expect(err).toBeInstanceOf(Error);
+    expect((err as NodeJS.ErrnoException).code).toBe('ENOSPC');
+  });
+
+  it('replaces existing pending restore when called with a new backup', async () => {
+    const backupsDir = path.join(configPath, 'backups');
+    await fs.mkdir(backupsDir, { recursive: true });
+
+    const zipBuffer1 = await createZipBuffer([{ name: 'narratorr.db', content: Buffer.from('db-v1') }]);
+    const zipBuffer2 = await createZipBuffer([{ name: 'narratorr.db', content: Buffer.from('db-v2') }]);
+    await fs.writeFile(path.join(backupsDir, 'narratorr-backup-20260101T000000000Z.zip'), zipBuffer1);
+    await fs.writeFile(path.join(backupsDir, 'narratorr-backup-20260102T000000000Z.zip'), zipBuffer2);
+
+    // Mock for first call
+    mockExecute.mockResolvedValueOnce({ rows: [{ count: 3 }] });
+    mockExecute.mockResolvedValueOnce({ rows: [{ count: 1 }] });
+    mockExecute.mockResolvedValueOnce({ rows: [{ count: 2 }] });
+
+    const service = new BackupService(configPath, dbPath, createMockSettingsService(), createMockLog());
+    await service.restoreServerBackup('narratorr-backup-20260101T000000000Z.zip');
+    const firstPending = service.pendingRestore?.tempPath;
+
+    // Mock for second call
+    mockExecute.mockResolvedValueOnce({ rows: [{ count: 3 }] });
+    mockExecute.mockResolvedValueOnce({ rows: [{ count: 1 }] });
+    mockExecute.mockResolvedValueOnce({ rows: [{ count: 2 }] });
+
+    await service.restoreServerBackup('narratorr-backup-20260102T000000000Z.zip');
+    expect(service.pendingRestore?.tempPath).not.toBe(firstPending);
+  });
 });
 
 describe('applyPendingRestore (startup swap)', () => {
