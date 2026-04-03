@@ -6,6 +6,7 @@ import type { BookStatus } from '../../shared/schemas/book.js';
 import type { NotifierService } from './notifier.service.js';
 import type { EventHistoryService, CreateEventInput } from './event-history.service.js';
 import type { EventBroadcasterService } from './event-broadcaster.service.js';
+import type { BlacklistService } from './blacklist.service.js';
 import type { DownloadProtocol } from '../../core/index.js';
 import { eq } from 'drizzle-orm';
 import { books } from '../../db/schema.js';
@@ -24,6 +25,7 @@ export class DownloadOrchestrator {
     private notifierService?: NotifierService,
     private eventHistory?: EventHistoryService,
     private broadcaster?: EventBroadcasterService,
+    private blacklistService?: BlacklistService,
   ) {}
 
   /**
@@ -87,6 +89,24 @@ export class DownloadOrchestrator {
     // Core cancel
     const cancelled = await this.downloadService.cancel(id);
     if (!cancelled) return false;
+
+    // Blacklist the release (best-effort — failure must not block cancel)
+    if (this.blacklistService && (download.infoHash || download.guid)) {
+      try {
+        await this.blacklistService.create({
+          infoHash: download.infoHash,
+          guid: download.guid,
+          title: download.title,
+          bookId: download.bookId ?? undefined,
+          reason: 'user_cancelled',
+          blacklistType: 'permanent',
+        });
+      } catch (error: unknown) {
+        this.log.warn(error, 'Failed to blacklist release during cancel');
+      }
+    } else if (this.blacklistService && !download.infoHash && !download.guid) {
+      this.log.info({ id }, 'Blacklist skipped — no infoHash or guid');
+    }
 
     // Side effects — each independently guarded
     if (download.bookId) {
