@@ -569,6 +569,27 @@ describe('system routes', () => {
 
       await fsp.rm(tmpDir, { recursive: true }).catch(() => {});
     });
+
+    it('returns 400 when restoreServerBackup throws RestoreUploadError (INVALID_ZIP — corrupt file)', async () => {
+      const { RestoreUploadError } = await import('../services/backup.service.js');
+      const tmpDir = await fsp.mkdtemp(path.join(os.tmpdir(), 'narratorr-route-test-'));
+      const tmpFile = path.join(tmpDir, 'test.zip');
+      await fsp.writeFile(tmpFile, 'fake');
+      (services.backup.getBackupPath as Mock).mockReturnValue(tmpFile);
+      (services.backup.restoreServerBackup as Mock).mockRejectedValue(
+        new RestoreUploadError('File is not a valid zip archive', 'INVALID_ZIP'),
+      );
+
+      const res = await app.inject({
+        method: 'POST',
+        url: '/api/system/backups/narratorr-backup-test.zip/restore',
+      });
+
+      expect(res.statusCode).toBe(400);
+      expect(JSON.parse(res.payload).error).toBe('File is not a valid zip archive');
+
+      await fsp.rm(tmpDir, { recursive: true }).catch(() => {});
+    });
   });
 
   describe('POST /api/system/restore/confirm', () => {

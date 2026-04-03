@@ -811,6 +811,27 @@ describe('restoreServerBackup', () => {
     await service.restoreServerBackup('narratorr-backup-20260102T000000000Z.zip');
     expect(service.pendingRestore?.tempPath).not.toBe(firstPending);
   });
+
+  it('throws INVALID_ZIP for a corrupt non-zip backup file on disk', async () => {
+    const backupsDir = path.join(configPath, 'backups');
+    await fs.mkdir(backupsDir, { recursive: true });
+    const backupFilename = 'narratorr-backup-20260101T000000000Z.zip';
+    await fs.writeFile(path.join(backupsDir, backupFilename), 'this is not a zip file');
+
+    const service = new BackupService(configPath, dbPath, createMockSettingsService(), createMockLog());
+    const err = await service.restoreServerBackup(backupFilename).catch((e: unknown) => e) as RestoreUploadError;
+    expect(err).toBeInstanceOf(RestoreUploadError);
+    expect(err.code).toBe('INVALID_ZIP');
+    expect(err.message).toBe('File is not a valid zip archive');
+  });
+
+  it('rejects invalid filenames before touching the filesystem', async () => {
+    const service = new BackupService(configPath, dbPath, createMockSettingsService(), createMockLog());
+    const err = await service.restoreServerBackup('../etc/passwd').catch((e: unknown) => e) as RestoreUploadError;
+    expect(err).toBeInstanceOf(RestoreUploadError);
+    expect(err.code).toBe('INVALID_ZIP');
+    expect(err.message).toBe('Invalid backup filename');
+  });
 });
 
 describe('applyPendingRestore (startup swap)', () => {
