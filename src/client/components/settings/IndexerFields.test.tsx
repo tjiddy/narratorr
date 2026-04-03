@@ -257,15 +257,9 @@ describe('IndexerFields', () => {
       expect(screen.getByLabelText('Dutch')).toBeInTheDocument();
     });
 
-    it('renders search type dropdown with 4 options for myanonamouse type', () => {
+    it('does not render search type dropdown (auto-selected by VIP status per #317)', () => {
       renderWithProviders(<MamFieldWrapper />);
-      expect(screen.getByLabelText('Search Type')).toBeInTheDocument();
-      const options = screen.getByLabelText('Search Type').querySelectorAll('option');
-      expect(options).toHaveLength(4);
-      expect(options[0]).toHaveTextContent('All torrents');
-      expect(options[1]).toHaveTextContent('Only active (1+ seeders)');
-      expect(options[2]).toHaveTextContent('Freeleech');
-      expect(options[3]).toHaveTextContent('Freeleech or VIP');
+      expect(screen.queryByLabelText('Search Type')).not.toBeInTheDocument();
     });
 
     it('checking a language checkbox updates form value via setValue', async () => {
@@ -288,26 +282,22 @@ describe('IndexerFields', () => {
       expect(englishCheckbox).not.toBeChecked();
     });
 
-    it('selecting search type updates form value with numeric coercion', async () => {
-      const user = userEvent.setup();
-      renderWithProviders(<MamFieldWrapper />);
-
-      const searchTypeSelect = screen.getByLabelText('Search Type');
-      await user.selectOptions(searchTypeSelect, '2');
-      expect(searchTypeSelect).toHaveValue('2');
-    });
-
-    it('default values show English checked and search type = Only active', () => {
+    it('default values show English checked', () => {
       renderWithProviders(<MamFieldWrapper />);
 
       expect(screen.getByLabelText('English')).toBeChecked();
       expect(screen.getByLabelText('French')).not.toBeChecked();
-      expect(screen.getByLabelText('Search Type')).toHaveValue('1');
     });
-  });
 
-  describe('#317 — search type dropdown removal', () => {
-    it.todo('MAM settings form does not show search type dropdown');
-    it.todo('language checkboxes still render after dropdown removal');
+    it('#317 — MAM settings form does not show search type dropdown', () => {
+      renderWithProviders(<MamFieldWrapper />);
+      expect(screen.queryByLabelText('Search Type')).not.toBeInTheDocument();
+    });
+
+    it('#317 — language checkboxes still render after dropdown removal', () => {
+      renderWithProviders(<MamFieldWrapper />);
+      expect(screen.getByText('Languages')).toBeInTheDocument();
+      expect(screen.getByLabelText('English')).toBeInTheDocument();
+    });
   });
 });

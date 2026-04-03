@@ -4,8 +4,7 @@ import { useQuery } from '@tanstack/react-query';
 import { queryKeys } from '@/lib/queryKeys';
 import { api } from '@/lib/api';
 import { ToggleSwitch } from './ToggleSwitch';
-import { SelectWithChevron } from './SelectWithChevron';
-import { MAM_LANGUAGES, MAM_SEARCH_TYPES } from '../../../shared/indexer-registry.js';
+import { MAM_LANGUAGES } from '../../../shared/indexer-registry.js';
 
 interface IndexerFieldsProps {
   selectedType: string;
@@ -175,17 +174,6 @@ function MamFields({ register, errors, watch, setValue }: Pick<IndexerFieldsProp
         ) : (
           <p className="text-sm text-muted-foreground mt-1">Only change if using a custom MAM mirror</p>
         )}
-      </div>
-      <div className="sm:col-span-2">
-        <SelectWithChevron
-          id="indexerSearchType"
-          label="Search Type"
-          {...register('settings.searchType', { valueAsNumber: true })}
-        >
-          {MAM_SEARCH_TYPES.map((st) => (
-            <option key={st.value} value={st.value}>{st.label}</option>
-          ))}
-        </SelectWithChevron>
       </div>
       <div className="sm:col-span-2">
         <span className="block text-sm font-medium mb-2">Languages</span>
