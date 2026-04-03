@@ -47,6 +47,26 @@ export function isSSEConnected(): boolean {
   return sseConnected;
 }
 
+/** Patch download progress in-place across cached activity pages; returns true if found. */
+function patchActivityProgress(queryClient: ReturnType<typeof useQueryClient>, progressData: SSEEventPayloads['download_progress']): boolean {
+  const cachedQueries = queryClient.getQueryCache().findAll({ queryKey: ['activity'] });
+  let found = false;
+  for (const query of cachedQueries) {
+    queryClient.setQueryData<{ data: Download[]; total: number }>(query.queryKey, (old) => {
+      if (!old?.data) return old;
+      const patched = old.data.map((d) => {
+        if (d.id === progressData.download_id) {
+          found = true;
+          return { ...d, progress: progressData.percentage };
+        }
+        return d;
+      });
+      return { ...old, data: patched };
+    });
+  }
+  return found;
+}
+
 /**
  * Connects to the SSE endpoint and handles cache invalidation + toast notifications.
  * Should be mounted once at the app root.
@@ -62,19 +82,12 @@ export function useEventSource(apiKey: string | null) {
       // Invalidate ALL activity queries (all pages of queue and history)
       queryClient.invalidateQueries({ queryKey: ['activity'] });
     } else if (rule.activity === 'patch') {
-      // Patch progress in-place across all cached activity pages
-      const progressData = data as SSEEventPayloads['download_progress'];
-      const queryCache = queryClient.getQueryCache();
-      for (const query of queryCache.findAll({ queryKey: ['activity'] })) {
-        queryClient.setQueryData<{ data: Download[]; total: number }>(query.queryKey, (old) => {
-          if (!old?.data) return old;
-          const patched = old.data.map((d) =>
-            d.id === progressData.download_id
-              ? { ...d, progress: progressData.percentage }
-              : d,
-          );
-          return { ...old, data: patched };
-        });
+      const found = patchActivityProgress(queryClient, data as SSEEventPayloads['download_progress']);
+      // Cache miss — download not in any cached page. Fall back to full invalidation
+      // so the Activity page refetches and picks up the new download.
+      if (!found) {
+        queryClient.invalidateQueries({ queryKey: ['activity'] });
+        queryClient.invalidateQueries({ queryKey: queryKeys.activityCounts() });
       }
     }
     if (rule.activityCounts) {

@@ -1,5 +1,34 @@
 # Workflow Log
 
+## #309 Activity page shows stale empty state after new download grab — 2026-04-03
+**Skill path:** /implement → /claim → /plan → /handoff
+**Outcome:** success — PR #310
+
+### Metrics
+- Files changed: 2 | Tests added/modified: 5 (4 new + 1 updated)
+- Quality gate runs: 2 (pass on attempt 2 — first failed on ESLint complexity)
+- Fix iterations: 1 (extracted patchActivityProgress helper to reduce complexity from 16 to under 15)
+- Context compactions: 0
+
+### Workflow experience
+- What went smoothly: Small, well-scoped bug fix — spec clearly identified the exact lines and root cause. Red/green TDD cycle was clean.
+- Friction / issues encountered: ESLint cyclomatic complexity limit hit after adding the cache-miss branch. Should have checked complexity before committing the first pass.
+
+### Token efficiency
+- Highest-token actions: Self-review and coverage review subagents (thorough but proportionate to change size)
+- Avoidable waste: Could have extracted the helper function upfront instead of needing a second commit
+- Suggestions: For functions near complexity limit, extract helpers preemptively before adding branches
+
+### Infrastructure gaps
+- Repeated workarounds: None
+- Missing tooling / config: None
+- Unresolved debt: None introduced
+
+### Wish I'd Known
+1. `handleEvent` was already at complexity 15 — should have extracted the patch logic before adding the fallback branch (see `eslint-complexity-extract-before-adding-branches.md`)
+2. TanStack Query's `setQueryData` gives no signal when a patch doesn't match any entity — you have to track hits manually (see `sse-patch-cache-miss-detection.md`)
+3. The fix was entirely self-contained in one file — no blast radius concerns, which made the implementation very fast
+
 ## #306 Post-delivery polish — modal overflow, SSE limbo timeout, minor nits — 2026-04-02
 **Skill path:** /elaborate → /respond-to-spec-review (x3) → /implement → /claim → /plan → /handoff
 **Outcome:** success — PR #308

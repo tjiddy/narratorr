@@ -154,8 +154,16 @@ describe('useEventSource', () => {
       expect(cached!.data[1].progress).toBe(0.9);  // untouched
     });
 
-    it('does not invalidate activity queries on download_progress', () => {
+    it('does not invalidate activity queries on download_progress when download is in cache', () => {
       const { wrapper, queryClient } = createWrapper();
+
+      // Seed cache with the download present
+      const queueKey = ['activity', { section: 'queue', limit: 50, offset: 0 }];
+      queryClient.setQueryData(queueKey, {
+        data: [{ id: 1, bookId: 2, title: 'Book', progress: 0.1, status: 'downloading' }],
+        total: 1,
+      });
+
       const invalidateSpy = vi.spyOn(queryClient, 'invalidateQueries');
 
       renderHook(() => useEventSource('key'), { wrapper });
@@ -167,6 +175,86 @@ describe('useEventSource', () => {
       });
 
       expect(invalidateSpy).not.toHaveBeenCalledWith({ queryKey: ['activity'] });
+    });
+
+    it('falls back to invalidation when download_progress arrives for a download not in any cached page', () => {
+      const { wrapper, queryClient } = createWrapper();
+
+      // Seed cache with a DIFFERENT download — download_id 99 is not in the cache
+      const queueKey = ['activity', { section: 'queue', limit: 50, offset: 0 }];
+      queryClient.setQueryData(queueKey, {
+        data: [{ id: 99, bookId: 10, title: 'Other Book', progress: 0.5, status: 'downloading' }],
+        total: 1,
+      });
+
+      const invalidateSpy = vi.spyOn(queryClient, 'invalidateQueries');
+
+      renderHook(() => useEventSource('key'), { wrapper });
+      const es = MockEventSource.instances[0];
+
+      act(() => {
+        es.simulateOpen();
+        es.simulateEvent('download_progress', { download_id: 1, book_id: 2, percentage: 0.3, speed: null, eta: null });
+      });
+
+      expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: ['activity'] });
+    });
+
+    it('falls back to invalidation when activity cache is completely empty (no cached pages)', () => {
+      const { wrapper, queryClient } = createWrapper();
+      // No activity data seeded — cache is empty
+      const invalidateSpy = vi.spyOn(queryClient, 'invalidateQueries');
+
+      renderHook(() => useEventSource('key'), { wrapper });
+      const es = MockEventSource.instances[0];
+
+      act(() => {
+        es.simulateOpen();
+        es.simulateEvent('download_progress', { download_id: 1, book_id: 2, percentage: 0.3, speed: null, eta: null });
+      });
+
+      expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: ['activity'] });
+    });
+
+    it('invalidates activityCounts on cache-miss fallback so badge and page stay consistent', () => {
+      const { wrapper, queryClient } = createWrapper();
+      // No activity data seeded — triggers cache-miss fallback
+      const invalidateSpy = vi.spyOn(queryClient, 'invalidateQueries');
+
+      renderHook(() => useEventSource('key'), { wrapper });
+      const es = MockEventSource.instances[0];
+
+      act(() => {
+        es.simulateOpen();
+        es.simulateEvent('download_progress', { download_id: 1, book_id: 2, percentage: 0.3, speed: null, eta: null });
+      });
+
+      expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: queryKeys.activityCounts() });
+    });
+
+    it('does not invalidate when download_progress patches an existing download successfully', () => {
+      const { wrapper, queryClient } = createWrapper();
+
+      // Seed cache with the exact download that will receive the progress event
+      const queueKey = ['activity', { section: 'queue', limit: 50, offset: 0 }];
+      queryClient.setQueryData(queueKey, {
+        data: [{ id: 1, bookId: 2, title: 'Book', progress: 0.1, status: 'downloading' }],
+        total: 1,
+      });
+
+      const invalidateSpy = vi.spyOn(queryClient, 'invalidateQueries');
+
+      renderHook(() => useEventSource('key'), { wrapper });
+      const es = MockEventSource.instances[0];
+
+      act(() => {
+        es.simulateOpen();
+        es.simulateEvent('download_progress', { download_id: 1, book_id: 2, percentage: 0.5, speed: null, eta: null });
+      });
+
+      // Should NOT invalidate — patched in-place instead
+      expect(invalidateSpy).not.toHaveBeenCalledWith({ queryKey: ['activity'] });
+      expect(invalidateSpy).not.toHaveBeenCalledWith({ queryKey: queryKeys.activityCounts() });
     });
 
     it('invalidates activity and activityCounts on download_status_change', () => {
