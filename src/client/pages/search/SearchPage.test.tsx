@@ -273,6 +273,9 @@ describe('SearchPage', () => {
       const input = screen.getByPlaceholderText(/search by title/i);
       expect(input).toHaveValue('a');
 
+      // Search button should be disabled with single-char query
+      expect(screen.getByRole('button', { name: /^search$/i })).toBeDisabled();
+
       // Wait a tick to ensure no search fires
       await new Promise((r) => setTimeout(r, 100));
       expect(api.searchMetadata).not.toHaveBeenCalled();
