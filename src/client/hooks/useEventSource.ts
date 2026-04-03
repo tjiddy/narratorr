@@ -7,6 +7,7 @@ import type { Download } from '@/lib/api';
 import {
   type SSEEventType,
   type SSEEventPayloads,
+  type CacheInvalidationRule,
   CACHE_INVALIDATION_MATRIX,
   TOAST_EVENT_CONFIG,
 } from '../../shared/schemas.js';
@@ -73,6 +74,38 @@ function patchActivityProgress(queryClient: ReturnType<typeof useQueryClient>, p
   return { found, hasPageQueries };
 }
 
+/** Apply cache invalidation rules for an SSE event. */
+function invalidateFromRule(
+  queryClient: ReturnType<typeof useQueryClient>,
+  rule: CacheInvalidationRule,
+  type: SSEEventType,
+  data: SSEEventPayloads[typeof type],
+): void {
+  if (rule.activity === 'invalidate') {
+    queryClient.invalidateQueries({ queryKey: ['activity'] });
+  } else if (rule.activity === 'patch') {
+    const { found, hasPageQueries } = patchActivityProgress(queryClient, data as SSEEventPayloads['download_progress']);
+    // Cache miss — download not in any cached page. Fall back to full invalidation.
+    // Skip when no page queries are cached (only activityCounts) — can't miss from a page that isn't loaded.
+    if (!found && hasPageQueries) {
+      queryClient.invalidateQueries({ queryKey: ['activity'] });
+      queryClient.invalidateQueries({ queryKey: queryKeys.activityCounts() });
+    }
+  }
+  if (rule.activityCounts) {
+    queryClient.invalidateQueries({ queryKey: queryKeys.activityCounts() });
+  }
+  if (rule.books) {
+    queryClient.invalidateQueries({ queryKey: ['books'] });
+    if ('book_id' in data && typeof data.book_id === 'number') {
+      queryClient.invalidateQueries({ queryKey: queryKeys.book(data.book_id) });
+    }
+  }
+  if (rule.eventHistory) {
+    queryClient.invalidateQueries({ queryKey: queryKeys.eventHistory.root() });
+  }
+}
+
 /**
  * Connects to the SSE endpoint and handles cache invalidation + toast notifications.
  * Should be mounted once at the app root.
@@ -82,34 +115,8 @@ export function useEventSource(apiKey: string | null) {
   const esRef = useRef<EventSource | null>(null);
 
   const handleEvent = useCallback((type: SSEEventType, data: SSEEventPayloads[typeof type]) => {
-    // Cache invalidation — uses prefix keys for paginated queries
     const rule = CACHE_INVALIDATION_MATRIX[type];
-    if (rule.activity === 'invalidate') {
-      // Invalidate ALL activity queries (all pages of queue and history)
-      queryClient.invalidateQueries({ queryKey: ['activity'] });
-    } else if (rule.activity === 'patch') {
-      const { found, hasPageQueries } = patchActivityProgress(queryClient, data as SSEEventPayloads['download_progress']);
-      // Cache miss — download not in any cached page. Fall back to full invalidation
-      // so the Activity page refetches and picks up the new download.
-      // Skip when no page queries are cached (only activityCounts) — can't miss from a page that isn't loaded.
-      if (!found && hasPageQueries) {
-        queryClient.invalidateQueries({ queryKey: ['activity'] });
-        queryClient.invalidateQueries({ queryKey: queryKeys.activityCounts() });
-      }
-    }
-    if (rule.activityCounts) {
-      queryClient.invalidateQueries({ queryKey: queryKeys.activityCounts() });
-    }
-    if (rule.books) {
-      queryClient.invalidateQueries({ queryKey: ['books'] });
-      // Also invalidate individual book if we have a book_id
-      if ('book_id' in data && typeof data.book_id === 'number') {
-        queryClient.invalidateQueries({ queryKey: queryKeys.book(data.book_id) });
-      }
-    }
-    if (rule.eventHistory) {
-      queryClient.invalidateQueries({ queryKey: queryKeys.eventHistory.root() });
-    }
+    invalidateFromRule(queryClient, rule, type, data);
 
     // Merge progress tracking — update the reactive store
     updateMergeProgressFromEvent(type, data);
