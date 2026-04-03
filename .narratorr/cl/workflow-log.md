@@ -1,5 +1,34 @@
 # Workflow Log
 
+## #322 Add 'Add Book' button to library empty state — 2026-04-03
+**Skill path:** /implement → /claim → /plan → /handoff
+**Outcome:** success — PR #330
+
+### Metrics
+- Files changed: 4 | Tests added/modified: 11
+- Quality gate runs: 2 (pass on attempt 1 both times)
+- Fix iterations: 0
+- Context compactions: 0
+
+### Workflow experience
+- What went smoothly: Clean frontend-only feature with well-defined AC. Red/green TDD cycle worked perfectly — 2 modules (NoMatchState, SearchPage) each had clear test boundaries. The `useSearchParams` approach was simpler than `useEffect` for URL param initialization.
+- Friction / issues encountered: Coverage review flagged missing LibraryPage integration test for the searchQuery prop wiring — caught before push.
+
+### Token efficiency
+- Highest-token actions: Explore subagent for self-review and coverage review
+- Avoidable waste: None significant — small feature kept context lean
+- Suggestions: For simple frontend features, self-review could be done inline
+
+### Infrastructure gaps
+- Repeated workarounds: None
+- Missing tooling / config: `frontend-design` skill unavailable for UI polish pass
+- Unresolved debt: None introduced
+
+### Wish I'd Known
+1. `useSearchParams` is synchronous on first render — no `useEffect` needed for URL param → state initialization. Avoids REACT-4 entirely.
+2. `URLSearchParams({ q: value }).toString()` handles all encoding automatically — matches existing pattern in `src/client/lib/api/search.ts`.
+3. Coverage review will flag integration tests for prop wiring even when both ends have unit tests — always add at least one parent-level test for new prop passthrough.
+
 ## #320 Audio preview button for imported books — 2026-04-03
 **Skill path:** /implement → /claim → /plan → /handoff
 **Outcome:** success — PR #329

@@ -217,7 +217,7 @@ export function LibraryPage() {
       )}
 
       {displayBooks.length === 0 ? (
-        <NoMatchState onClearFilters={filters.actions.clearAllFilters} />
+        <NoMatchState onClearFilters={filters.actions.clearAllFilters} searchQuery={filters.state.searchQuery} />
       ) : viewMode === 'table' ? (
         <LibraryTableView
           books={displayBooks}

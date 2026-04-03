@@ -253,6 +253,50 @@ describe('SearchPage', () => {
     });
   });
 
+  describe('#322 URL query param pre-fill', () => {
+    it('pre-fills search input from ?q= URL parameter', () => {
+      renderWithProviders(<SearchPage />, { route: '/search?q=Brandon+Sanderson' });
+      const input = screen.getByPlaceholderText(/search by title/i);
+      expect(input).toHaveValue('Brandon Sanderson');
+    });
+
+    it('auto-triggers metadata search when q param length >= 2', async () => {
+      renderWithProviders(<SearchPage />, { route: '/search?q=Way+of+Kings' });
+
+      await waitFor(() => {
+        expect(api.searchMetadata).toHaveBeenCalledWith('Way of Kings');
+      }, { timeout: 2000 });
+    });
+
+    it('does not auto-trigger search when q param length < 2', async () => {
+      renderWithProviders(<SearchPage />, { route: '/search?q=a' });
+      const input = screen.getByPlaceholderText(/search by title/i);
+      expect(input).toHaveValue('a');
+
+      // Search button should be disabled with single-char query
+      expect(screen.getByRole('button', { name: /^search$/i })).toBeDisabled();
+
+      // Wait a tick to ensure no search fires
+      await new Promise((r) => setTimeout(r, 100));
+      expect(api.searchMetadata).not.toHaveBeenCalled();
+    });
+
+    it('treats empty q param as no param — empty input, no search', async () => {
+      renderWithProviders(<SearchPage />, { route: '/search?q=' });
+      const input = screen.getByPlaceholderText(/search by title/i);
+      expect(input).toHaveValue('');
+
+      await new Promise((r) => setTimeout(r, 100));
+      expect(api.searchMetadata).not.toHaveBeenCalled();
+    });
+
+    it('decodes URL-encoded special characters in q param', () => {
+      renderWithProviders(<SearchPage />, { route: "/search?q=king%27s+cage+%26+more" });
+      const input = screen.getByPlaceholderText(/search by title/i);
+      expect(input).toHaveValue("king's cage & more");
+    });
+  });
+
   describe('#99 blank empty states', () => {
     it('shows blank content area (no empty-state text or icon) before searching', () => {
       const { container } = renderWithProviders(<SearchPage />);

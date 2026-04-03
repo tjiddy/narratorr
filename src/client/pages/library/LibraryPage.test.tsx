@@ -557,6 +557,31 @@ describe('LibraryPage', () => {
     });
   });
 
+  it('shows Add Book link with search query in NoMatchState (#322)', async () => {
+    mockLibraryData(mockBooks);
+    const user = userEvent.setup();
+
+    renderWithProviders(<LibraryPage />);
+
+    await waitFor(() => {
+      expect(screen.getByText('The Way of Kings')).toBeInTheDocument();
+    });
+
+    // Search for something that won't match any books
+    const searchInput = screen.getByPlaceholderText('Search library...');
+    await user.type(searchInput, 'nonexistent book title xyz');
+
+    // After debounce, NoMatchState should appear with Add Book link
+    await waitFor(() => {
+      expect(screen.getByText('No books match your filters')).toBeInTheDocument();
+    }, { timeout: 2000 });
+
+    const addBookLink = screen.getByText('Add Book').closest('a');
+    const href = addBookLink?.getAttribute('href') ?? '';
+    const params = new URLSearchParams(href.split('?')[1]);
+    expect(params.get('q')).toBe('nonexistent book title xyz');
+  });
+
   it('renders search input', async () => {
     mockLibraryData(mockBooks);
 
