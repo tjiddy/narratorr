@@ -427,14 +427,14 @@ describe('IndexerFields', () => {
         expect(screen.getByText('Checking MAM status…')).toBeInTheDocument();
       });
 
-      // Wait 200ms (real time) — overlay MUST still be visible (minimum 1 second not elapsed)
-      await new Promise((r) => setTimeout(r, 200));
+      // At ~900ms the overlay MUST still be visible (proves minimum is ≥900ms, not just >200ms)
+      await new Promise((r) => setTimeout(r, 900));
       expect(screen.getByText('Checking MAM status…')).toBeInTheDocument();
 
-      // Wait for overlay to disappear after the 1 second minimum
+      // Overlay disappears shortly after the 1 second threshold
       await waitFor(() => {
         expect(screen.queryByText('Checking MAM status…')).not.toBeInTheDocument();
-      }, { timeout: 2000 });
+      }, { timeout: 500 });
       expect(screen.getByText('OverlayUser')).toBeInTheDocument();
     });
 
