@@ -39,6 +39,7 @@ export interface EmitBookImportingArgs {
 export function emitBookImporting(args: EmitBookImportingArgs): void {
   const { broadcaster, bookId, bookStatus, log } = args;
   if (!broadcaster) return;
+  if (bookStatus === 'importing') return;
   try {
     broadcaster.emit('book_status_change', { book_id: bookId, old_status: bookStatus as BookStatus, new_status: 'importing' as BookStatus });
   } catch (error: unknown) { log.debug(error, 'SSE emit failed'); }
