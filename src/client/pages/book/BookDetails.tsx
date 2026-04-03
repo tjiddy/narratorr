@@ -12,6 +12,7 @@ import { BookEventHistory } from './BookEventHistory.js';
 import { mergeBookData, type MetadataBook } from './helpers.js';
 import { useBookActions } from './useBookActions.js';
 import { useMergeProgress } from '@/hooks/useMergeProgress.js';
+import { AudioPreview } from './AudioPreview.js';
 
 function getArrowTabIndex(key: string, currentIndex: number, length: number): number | null {
   if (key === 'ArrowRight') return (currentIndex + 1) % length;
@@ -23,7 +24,7 @@ function canShowWrongRelease(book: BookWithAuthor): boolean {
   return book.status === 'imported' && !!(book.lastGrabGuid || book.lastGrabInfoHash);
 }
 
-// eslint-disable-next-line max-lines-per-function -- page orchestrator with multiple confirm modals
+// eslint-disable-next-line max-lines-per-function, complexity -- page orchestrator with multiple confirm modals
 export function BookDetails({ libraryBook, metadataBook }: {
   libraryBook: BookWithAuthor;
   metadataBook?: MetadataBook | null;
@@ -97,6 +98,8 @@ export function BookDetails({ libraryBook, metadataBook }: {
         onMonitorToggle={() => monitorMutation.mutate()}
         isMonitorToggling={monitorMutation.isPending}
       />
+
+      <AudioPreview bookId={libraryBook.id} status={libraryBook.status} path={libraryBook.path ?? null} />
 
       {mergeProgress && <MergeProgressIndicator progress={mergeProgress} />}
 

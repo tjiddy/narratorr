@@ -363,4 +363,5 @@ export async function bookFilesRoute(app: FastifyInstance, bookService: BookServ
       return files;
     },
   );
+
 }

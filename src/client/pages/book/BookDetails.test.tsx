@@ -122,6 +122,19 @@ describe('BookDetails', () => {
 
       expect(screen.getByText('Book One of the Stormlight Archive')).toBeInTheDocument();
     });
+
+    it('renders audio preview for imported book with path', () => {
+      renderBookDetails({ status: 'imported', path: '/library/book1' }, fullMetadata);
+
+      expect(document.querySelector('audio')).not.toBeNull();
+      expect(document.querySelector('audio')!.hasAttribute('controls')).toBe(true);
+    });
+
+    it('does not render audio preview for non-imported book', () => {
+      renderBookDetails({ status: 'wanted', path: null }, fullMetadata);
+
+      expect(document.querySelector('audio')).toBeNull();
+    });
   });
 
   describe('missing description', () => {
