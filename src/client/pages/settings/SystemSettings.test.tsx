@@ -287,6 +287,16 @@ describe('SystemSettings', () => {
     });
   });
 
+  describe('direct server restore flow', () => {
+    it.todo('clicking restore button calls restoreBackupDirect API with filename and opens confirmation modal on success');
+
+    it.todo('shows error toast when restoreBackupDirect API returns error (invalid backup)');
+
+    it.todo('confirm in modal after server restore calls confirmRestore (shared path)');
+
+    it.todo('all restore buttons are disabled while server restore mutation is pending');
+  });
+
   describe('page-level section wiring', () => {
     it('renders Health Checks, Backup & Restore, System Information, and Scheduled Tasks sections together', async () => {
       mockApi.getBackups.mockResolvedValue([]);

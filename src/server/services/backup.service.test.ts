@@ -642,6 +642,55 @@ describe('processRestoreUpload', () => {
   });
 });
 
+describe('restoreServerBackup', () => {
+  let tempDir: string;
+  let configPath: string;
+  let dbPath: string;
+
+  // Get the real archiver (unmocked) for creating test zip data
+  async function createZipBuffer(entries: { name: string; content: Buffer }[]): Promise<Buffer> {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const archiverModule = await vi.importActual<any>('archiver');
+    const archiver = archiverModule.default;
+    return new Promise((resolve, reject) => {
+      const archive = archiver('zip', { zlib: { level: 0 } });
+      const chunks: Buffer[] = [];
+      archive.on('data', (chunk: Buffer) => chunks.push(chunk));
+      archive.on('end', () => resolve(Buffer.concat(chunks)));
+      archive.on('error', reject);
+      for (const entry of entries) {
+        archive.append(entry.content, { name: entry.name });
+      }
+      archive.finalize();
+    });
+  }
+
+  beforeEach(async () => {
+    tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'narratorr-server-restore-test-'));
+    configPath = tempDir;
+    dbPath = path.join(tempDir, 'narratorr.db');
+    await fs.writeFile(dbPath, 'test-db-content');
+    mockExecute.mockReset();
+    mockClose.mockReset();
+  });
+
+  afterEach(async () => {
+    await fs.rm(tempDir, { recursive: true, force: true }).catch(() => {});
+  });
+
+  it.todo('returns valid result and stages pending restore for valid server backup zip');
+
+  it.todo('throws MISSING_DB when server backup zip does not contain narratorr.db');
+
+  it.todo('throws INVALID_DB when backup has more migrations than app (newer version)');
+
+  it.todo('cleans up temp directory when extraction or validation fails');
+
+  it.todo('rethrows system-level I/O errors unchanged instead of wrapping as INVALID_ZIP');
+
+  it.todo('replaces existing pending restore when called with a new backup');
+});
+
 describe('applyPendingRestore (startup swap)', () => {
   let tempDir: string;
   let configPath: string;

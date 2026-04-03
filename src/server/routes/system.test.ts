@@ -498,7 +498,25 @@ function createMultipartPayload(filename: string, content: Buffer, boundary = 'b
   return { payload, contentType: `multipart/form-data; boundary=${boundary}` };
 }
 
-describe('POST /api/system/restore', () => {
+describe('POST /api/system/backups/:filename/restore', () => {
+    it.todo('returns 200 with RestoreValidation for valid backup filename');
+
+    it.todo('rejects path-traversal attempts with 400 (encoded separators via getBackupPath)');
+
+    it.todo('rejects malformed filename with wrong extension (backup.tar.gz) with 400');
+
+    it.todo('rejects malformed filename with encoded separator (path%5Cfile.zip) with 400');
+
+    it.todo('returns 404 when backup file does not exist on disk');
+
+    it.todo('returns 400 when restoreServerBackup throws RestoreUploadError (MISSING_DB)');
+
+    it.todo('returns 400 when restoreServerBackup throws RestoreUploadError (INVALID_DB — newer version)');
+
+    it.todo('returns 500 for unexpected errors from restoreServerBackup');
+  });
+
+  describe('POST /api/system/restore', () => {
   let app: Awaited<ReturnType<typeof createTestApp>>;
   let services: Services;
 

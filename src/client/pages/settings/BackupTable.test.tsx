@@ -59,4 +59,10 @@ describe('BackupTable', () => {
 
     expect(onDownload).toHaveBeenCalledWith(mockBackups[0]);
   });
+
+  it.todo('renders restore icon button per backup row alongside download');
+
+  it.todo('calls onRestore with backup metadata when restore button is clicked');
+
+  it.todo('disables restore buttons when isRestoring is true');
 });
