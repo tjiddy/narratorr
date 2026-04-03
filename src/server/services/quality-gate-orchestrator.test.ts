@@ -1425,4 +1425,18 @@ describe('QualityGateOrchestrator', () => {
       }));
     });
   });
+
+  // #318 — minSeedRatio in quality-gate rejection cleanup
+  describe('seed ratio gating (rejection cleanup)', () => {
+    it.todo('auto-reject + minSeedRatio > 0 + ratio below threshold → pendingCleanup set (deferred)');
+    it.todo('auto-reject + minSeedRatio > 0 + ratio at/above threshold + seed time met → immediate cleanup');
+    it.todo('usenet rejection → ratio check skipped, immediate cleanup regardless of minSeedRatio');
+  });
+
+  // #318 — minSeedRatio in cleanupDeferredRejections
+  describe('seed ratio gating (deferred rejection cleanup)', () => {
+    it.todo('deferred download with ratio now met + seed time met → cleanup proceeds');
+    it.todo('deferred download with ratio still below threshold → skipped, pendingCleanup untouched');
+    it.todo('deferred download with seed time met but ratio not met → skipped');
+  });
 });

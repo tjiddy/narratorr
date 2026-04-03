@@ -405,4 +405,21 @@ describe('ImportSettingsSection', () => {
       expect(mockToast.error).toHaveBeenCalledWith('Save failed');
     });
   });
+
+  // #318 — Minimum Seed Ratio field
+  describe('seed ratio field rendering', () => {
+    it.todo('renders Minimum Seed Ratio field below Minimum Seed Time');
+    it.todo('renders label, placeholder, and helper text correctly');
+    it.todo('accepts fractional input (step="0.1")');
+    it.todo('rejects negative value');
+    it.todo('sends minSeedRatio in save payload with correct numeric value');
+  });
+
+  describe('seed ratio disabled state', () => {
+    it.todo('seed ratio input is disabled when deleteAfterImport is off (default)');
+    it.todo('seed ratio input is enabled when deleteAfterImport is on');
+    it.todo('toggling delete off disables both seed time and seed ratio fields');
+    it.todo('toggling delete on enables both seed time and seed ratio fields');
+    it.todo('edited minSeedRatio value preserved in save payload when field is disabled');
+  });
 });

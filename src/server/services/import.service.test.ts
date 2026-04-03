@@ -1974,4 +1974,30 @@ describe('ImportService consolidation (issue #79)', () => {
       );
     });
   });
+
+  // #318 — minSeedRatio gating in handleTorrentRemoval
+  describe('seed ratio gating (handleTorrentRemoval)', () => {
+    it.todo('skips torrent removal when ratio below configured minSeedRatio');
+    it.todo('removes torrent when ratio at threshold (strictly-less-than: at boundary = remove)');
+    it.todo('removes torrent when ratio above threshold');
+    it.todo('skips removal when minSeedTime met but minSeedRatio not met');
+    it.todo('skips removal when minSeedRatio met but minSeedTime not met');
+    it.todo('removes torrent when both minSeedTime and minSeedRatio met');
+    it.todo('ratio check disabled when minSeedRatio is 0');
+    it.todo('sets pendingCleanup when removal skipped due to ratio');
+    it.todo('sets pendingCleanup when removal skipped due to seed time');
+    it.todo('logs message when removal skipped due to ratio');
+    it.todo('handles getDownload returning null gracefully');
+    it.todo('handles getDownload throwing — error logged, import succeeds');
+  });
+
+  // #318 — cleanupDeferredImports
+  describe('cleanupDeferredImports', () => {
+    it.todo('removes torrent from client when seed time + ratio now met, clears pendingCleanup');
+    it.todo('skips removal when ratio still below threshold, pendingCleanup left for next cycle');
+    it.todo('skips removal when seed time still not elapsed, pendingCleanup left for next cycle');
+    it.todo('logs and preserves pendingCleanup on adapter error (retry next cycle)');
+    it.todo('no-op when no imported downloads have pendingCleanup set');
+    it.todo('only queries status=imported downloads (no interference with rejected downloads)');
+  });
 });
