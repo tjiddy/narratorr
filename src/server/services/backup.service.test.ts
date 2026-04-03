@@ -588,7 +588,7 @@ describe('processRestoreUpload', () => {
       .rejects.toThrow('Zip does not contain narratorr.db');
   });
 
-  it('throws INVALID_DB when validateRestore rejects', async () => {
+  it('returns { valid: false } when validateRestore rejects (no longer throws)', async () => {
     // Make validateRestore fail by making the "DB" fail migration query
     mockExecute.mockRejectedValue(new Error('no such table: __drizzle_migrations'));
 
@@ -597,8 +597,9 @@ describe('processRestoreUpload', () => {
     ]);
 
     const service = new BackupService(configPath, dbPath, createMockSettingsService(), createMockLog());
-    await expect(service.processRestoreUpload(Readable.from(zipBuffer)))
-      .rejects.toThrow(RestoreUploadError);
+    const result = await service.processRestoreUpload(Readable.from(zipBuffer));
+    expect(result.valid).toBe(false);
+    expect(result.error).toBeDefined();
   });
 
   it('throws INVALID_ZIP for non-zip input', async () => {
@@ -718,7 +719,7 @@ describe('restoreServerBackup', () => {
       .rejects.toThrow(RestoreUploadError);
   });
 
-  it('throws INVALID_DB when backup has more migrations than app (newer version)', async () => {
+  it('returns { valid: false } when backup has more migrations than app (newer version)', async () => {
     const backupsDir = path.join(configPath, 'backups');
     await fs.mkdir(backupsDir, { recursive: true });
     const zipBuffer = await createZipBuffer([
@@ -733,15 +734,9 @@ describe('restoreServerBackup', () => {
     mockExecute.mockResolvedValueOnce({ rows: [{ count: 5 }] }); // backup migration count
 
     const service = new BackupService(configPath, dbPath, createMockSettingsService(), createMockLog());
-    await expect(service.restoreServerBackup(backupFilename))
-      .rejects.toThrow(RestoreUploadError);
-    // Reset mocks for second call
-    mockExecute.mockResolvedValueOnce({ rows: [{ count: 2 }] });
-    mockExecute.mockResolvedValueOnce({ rows: [{ count: 1 }] });
-    mockExecute.mockResolvedValueOnce({ rows: [{ count: 5 }] });
-    const err = await service.restoreServerBackup(backupFilename).catch((e: unknown) => e) as RestoreUploadError;
-    expect(err.code).toBe('INVALID_DB');
-    expect(err.message).toContain('newer version');
+    const result = await service.restoreServerBackup(backupFilename);
+    expect(result.valid).toBe(false);
+    expect(result.error).toContain('newer version');
   });
 
   it('cleans up temp directory when extraction or validation fails', async () => {
@@ -931,8 +926,84 @@ describe('applyPendingRestore (startup swap)', () => {
 });
 
 describe('#324 — restore contract change', () => {
-  it.todo('processRestoreUpload returns { valid: false, error } for newer-version backup (does not throw)');
-  it.todo('processRestoreUpload returns { valid: false, error } for missing migrations table (does not throw)');
-  it.todo('processRestoreUpload still throws RestoreUploadError for corrupt zip / system errors');
-  it.todo('restoreServerBackup returns { valid: false, error } for newer-version backup (does not throw)');
+  let tempDir: string;
+  let configPath: string;
+  let dbPath: string;
+
+  async function createZipBuffer(entries: { name: string; content: Buffer }[]): Promise<Buffer> {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const archiverModule = await vi.importActual<any>('archiver');
+    const archiver = archiverModule.default;
+    return new Promise((resolve, reject) => {
+      const archive = archiver('zip', { zlib: { level: 0 } });
+      const chunks: Buffer[] = [];
+      archive.on('data', (chunk: Buffer) => chunks.push(chunk));
+      archive.on('end', () => resolve(Buffer.concat(chunks)));
+      archive.on('error', reject);
+      for (const entry of entries) {
+        archive.append(entry.content, { name: entry.name });
+      }
+      archive.finalize();
+    });
+  }
+
+  beforeEach(async () => {
+    tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'narratorr-324-'));
+    configPath = tempDir;
+    dbPath = path.join(tempDir, 'narratorr.db');
+    await fs.writeFile(dbPath, 'test-db-content');
+    mockExecute.mockReset();
+    mockClose.mockReset();
+  });
+
+  afterEach(async () => {
+    await fs.rm(tempDir, { recursive: true, force: true }).catch(() => {});
+  });
+
+  it('processRestoreUpload returns { valid: false, error } for newer-version backup', async () => {
+    // Simulate: migrations table exists, backup has more migrations than app
+    mockExecute
+      .mockResolvedValueOnce({ rows: [{ count: 5 }] }) // app migration count = 5
+      .mockResolvedValueOnce({ rows: [{ count: 1 }] }) // sqlite_master check — table exists
+      .mockResolvedValueOnce({ rows: [{ count: 99 }] }); // backup migration count = 99
+
+    const service = new BackupService(configPath, dbPath, createMockSettingsService(), createMockLog());
+    const result = await service.processRestoreUpload(Readable.from(await createZipBuffer([
+      { name: 'narratorr.db', content: Buffer.from('fake-db') },
+    ])));
+
+    expect(result.valid).toBe(false);
+    expect(result.error).toContain('newer version');
+    expect(result.backupMigrationCount).toBe(99);
+    expect(result.appMigrationCount).toBe(5);
+  });
+
+  it('processRestoreUpload still throws RestoreUploadError for corrupt zip', async () => {
+    const service = new BackupService(configPath, dbPath, createMockSettingsService(), createMockLog());
+    await expect(service.processRestoreUpload(Readable.from(Buffer.from('not a zip'))))
+      .rejects.toThrow(RestoreUploadError);
+  });
+
+  it('restoreServerBackup returns { valid: false, error } for newer-version backup', async () => {
+    // Create a fake backup zip on disk
+    const backupsDir = path.join(configPath, 'backups');
+    await fs.mkdir(backupsDir, { recursive: true });
+    const zipBuffer = await createZipBuffer([
+      { name: 'narratorr.db', content: Buffer.from('fake-db') },
+    ]);
+    const backupFilename = 'narratorr-backup-20260101T000000000Z.zip';
+    await fs.writeFile(path.join(backupsDir, backupFilename), zipBuffer);
+
+    // Simulate newer-version
+    mockExecute
+      .mockResolvedValueOnce({ rows: [{ count: 1 }] }) // table exists
+      .mockResolvedValueOnce({ rows: [{ count: 99 }] }) // backup count
+      .mockResolvedValueOnce({ rows: [{ count: 5 }] }); // app count
+
+    const service = new BackupService(configPath, dbPath, createMockSettingsService(), createMockLog());
+    const result = await service.restoreServerBackup(backupFilename);
+
+    expect(result.valid).toBe(false);
+    expect(result.error).toContain('newer version');
+  });
 });
