@@ -1,12 +1,15 @@
 import { useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { useQueryClient } from '@tanstack/react-query';
 import { useMetadataSearch } from '@/hooks/useMetadata';
 import { SearchIcon, LoadingSpinner } from '@/components/icons';
 import { SearchResults } from './SearchResults.js';
 
 export function SearchPage() {
-  const [query, setQuery] = useState('');
-  const [searchTerm, setSearchTerm] = useState('');
+  const [searchParams] = useSearchParams();
+  const initialQuery = searchParams.get('q') ?? '';
+  const [query, setQuery] = useState(initialQuery);
+  const [searchTerm, setSearchTerm] = useState(initialQuery.length >= 2 ? initialQuery : '');
   const queryClient = useQueryClient();
 
   const { data: metadataResults, isLoading, error } = useMetadataSearch(searchTerm);
