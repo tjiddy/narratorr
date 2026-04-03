@@ -10,6 +10,7 @@ import type { Mock } from 'vitest';
 vi.mock('@/lib/api', () => ({
   api: {
     getSettings: vi.fn(),
+    testIndexerConfig: vi.fn(),
   },
 }));
 
@@ -298,6 +299,116 @@ describe('IndexerFields', () => {
       renderWithProviders(<MamFieldWrapper />);
       expect(screen.getByText('Languages')).toBeInTheDocument();
       expect(screen.getByLabelText('English')).toBeInTheDocument();
+    });
+  });
+
+  describe('#317 — MAM VIP detection on blur', () => {
+    function MamDetectionWrapper() {
+      const { register, watch, setValue, formState: { errors } } = useForm<CreateIndexerFormData>({
+        defaultValues: {
+          name: '', type: 'myanonamouse',
+          settings: { mamId: '', searchLanguages: [1], searchType: 1 },
+        },
+      });
+      return <IndexerFields selectedType="myanonamouse" register={register} errors={errors} watch={watch} setValue={setValue} />;
+    }
+
+    it('does not call API when MAM ID is blurred empty', async () => {
+      const user = userEvent.setup();
+      renderWithProviders(<MamDetectionWrapper />);
+
+      const mamIdInput = screen.getByLabelText('MAM ID');
+      await user.click(mamIdInput);
+      await user.tab(); // blur with empty value
+
+      expect((api.testIndexerConfig as Mock)).not.toHaveBeenCalled();
+    });
+
+    it('calls testIndexerConfig with correct payload on MAM ID blur', async () => {
+      (api.testIndexerConfig as Mock).mockResolvedValue({
+        success: true,
+        metadata: { username: 'TestUser', classname: 'VIP', isVip: true },
+      });
+      const user = userEvent.setup();
+      renderWithProviders(<MamDetectionWrapper />);
+
+      const mamIdInput = screen.getByLabelText('MAM ID');
+      await user.type(mamIdInput, 'my-mam-id');
+      await user.tab(); // blur triggers detection
+
+      await waitFor(() => {
+        expect((api.testIndexerConfig as Mock)).toHaveBeenCalledWith(
+          expect.objectContaining({
+            type: 'myanonamouse',
+            settings: expect.objectContaining({ mamId: 'my-mam-id' }),
+          }),
+        );
+      });
+    });
+
+    it('renders status badge with username and classname on success', async () => {
+      (api.testIndexerConfig as Mock).mockResolvedValue({
+        success: true,
+        metadata: { username: 'GotaBe1', classname: 'VIP', isVip: true },
+      });
+      const user = userEvent.setup();
+      renderWithProviders(<MamDetectionWrapper />);
+
+      const mamIdInput = screen.getByLabelText('MAM ID');
+      await user.type(mamIdInput, 'valid-id');
+      await user.tab();
+
+      await waitFor(() => {
+        expect(screen.getByText('GotaBe1')).toBeInTheDocument();
+      });
+      expect(screen.getByText('VIP')).toBeInTheDocument();
+    });
+
+    it('renders error message on detection failure', async () => {
+      (api.testIndexerConfig as Mock).mockResolvedValue({
+        success: false,
+        message: 'Authentication failed',
+      });
+      const user = userEvent.setup();
+      renderWithProviders(<MamDetectionWrapper />);
+
+      const mamIdInput = screen.getByLabelText('MAM ID');
+      await user.type(mamIdInput, 'bad-id');
+      await user.tab();
+
+      await waitFor(() => {
+        expect(screen.getByText('Authentication failed')).toBeInTheDocument();
+      });
+    });
+
+    it('refresh button triggers a second detection request', async () => {
+      (api.testIndexerConfig as Mock).mockResolvedValue({
+        success: true,
+        metadata: { username: 'User1', classname: 'User', isVip: false },
+      });
+      const user = userEvent.setup();
+      renderWithProviders(<MamDetectionWrapper />);
+
+      const mamIdInput = screen.getByLabelText('MAM ID');
+      await user.type(mamIdInput, 'my-id');
+      await user.tab();
+
+      await waitFor(() => {
+        expect(screen.getByText('User1')).toBeInTheDocument();
+      });
+
+      // Clear mock and click refresh
+      (api.testIndexerConfig as Mock).mockClear();
+      (api.testIndexerConfig as Mock).mockResolvedValue({
+        success: true,
+        metadata: { username: 'User1', classname: 'VIP', isVip: true },
+      });
+
+      await user.click(screen.getByTitle('Refresh VIP status'));
+
+      await waitFor(() => {
+        expect((api.testIndexerConfig as Mock)).toHaveBeenCalledTimes(1);
+      });
     });
   });
 });
