@@ -47,11 +47,17 @@ export function isSSEConnected(): boolean {
   return sseConnected;
 }
 
-/** Patch download progress in-place across cached activity pages; returns true if found. */
-function patchActivityProgress(queryClient: ReturnType<typeof useQueryClient>, progressData: SSEEventPayloads['download_progress']): boolean {
+/** Patch download progress in-place across cached activity pages; returns true if found.
+ *  Skips non-page queries (e.g. activityCounts) that share the ['activity'] prefix
+ *  but have a different data shape ({ active, completed } instead of { data[], total }). */
+function patchActivityProgress(queryClient: ReturnType<typeof useQueryClient>, progressData: SSEEventPayloads['download_progress']): { found: boolean; hasPageQueries: boolean } {
   const cachedQueries = queryClient.getQueryCache().findAll({ queryKey: ['activity'] });
   let found = false;
+  let hasPageQueries = false;
   for (const query of cachedQueries) {
+    const cached = query.state.data as { data?: unknown } | undefined;
+    if (!cached || !Array.isArray(cached.data)) continue;
+    hasPageQueries = true;
     queryClient.setQueryData<{ data: Download[]; total: number }>(query.queryKey, (old) => {
       if (!old?.data) return old;
       const patched = old.data.map((d) => {
@@ -64,7 +70,7 @@ function patchActivityProgress(queryClient: ReturnType<typeof useQueryClient>, p
       return { ...old, data: patched };
     });
   }
-  return found;
+  return { found, hasPageQueries };
 }
 
 /**
@@ -82,10 +88,11 @@ export function useEventSource(apiKey: string | null) {
       // Invalidate ALL activity queries (all pages of queue and history)
       queryClient.invalidateQueries({ queryKey: ['activity'] });
     } else if (rule.activity === 'patch') {
-      const found = patchActivityProgress(queryClient, data as SSEEventPayloads['download_progress']);
+      const { found, hasPageQueries } = patchActivityProgress(queryClient, data as SSEEventPayloads['download_progress']);
       // Cache miss — download not in any cached page. Fall back to full invalidation
       // so the Activity page refetches and picks up the new download.
-      if (!found) {
+      // Skip when no page queries are cached (only activityCounts) — can't miss from a page that isn't loaded.
+      if (!found && hasPageQueries) {
         queryClient.invalidateQueries({ queryKey: ['activity'] });
         queryClient.invalidateQueries({ queryKey: queryKeys.activityCounts() });
       }
