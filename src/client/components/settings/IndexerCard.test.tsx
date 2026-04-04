@@ -851,6 +851,33 @@ describe('IndexerCard — Prowlarr-managed indicators (AC8)', () => {
       expect(screen.getByText('VIP')).toBeInTheDocument();
     });
 
+    it('#339 edit-mode Test button includes indexer id in onFormTest payload', async () => {
+      const onFormTest = vi.fn();
+      const user = userEvent.setup();
+      const mamIndexer: Indexer = createMockIndexer({
+        id: 21,
+        name: 'MAM Id Transport',
+        type: 'myanonamouse',
+        settings: { mamId: '********', baseUrl: '', searchLanguages: [1], searchType: 1 },
+      });
+
+      renderWithProviders(
+        <IndexerCard
+          indexer={mamIndexer}
+          mode="edit"
+          onSubmit={vi.fn()}
+          onFormTest={onFormTest}
+        />,
+      );
+
+      await user.click(screen.getByText('Test'));
+
+      await waitFor(() => {
+        expect(onFormTest).toHaveBeenCalled();
+      });
+      expect(onFormTest.mock.calls[0][0]).toHaveProperty('id', 21);
+    });
+
     it('preserves searchLanguages: [] via ?? (not ||) in settingsFromIndexer', () => {
       const mamIndexer: Indexer = createMockIndexer({
         id: 13,
