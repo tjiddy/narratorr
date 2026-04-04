@@ -1,22 +1,87 @@
 import { useState, useMemo, useCallback, useEffect, useRef } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import type { BookListParams, BookWithAuthor } from '@/lib/api';
 import { type StatusFilter, type SortField, type SortDirection, type DisplayBook, filterTabs, collapseSeries } from './helpers.js';
 import { DEFAULT_LIMITS } from '../../../shared/schemas/common.js';
 import { usePagination } from '@/hooks/usePagination';
 
-export function useLibraryFilters() {
-  const [statusFilter, setStatusFilterState] = useState<StatusFilter>('all');
-  const [authorFilter, setAuthorFilter] = useState('');
-  const [seriesFilter, setSeriesFilter] = useState('');
-  const [narratorFilter, setNarratorFilter] = useState('');
-  const [sortField, setSortFieldState] = useState<SortField>('createdAt');
-  const [sortDirection, setSortDirectionState] = useState<SortDirection>('desc');
-  const [filtersOpen, setFiltersOpen] = useState(false);
-  const [collapseSeriesEnabled, setCollapseSeriesEnabled] = useState(false);
-  const [searchQuery, setSearchQueryState] = useState('');
-  const [debouncedSearch, setDebouncedSearch] = useState('');
+const VALID_STATUS_FILTERS = new Set<string>(['all', 'wanted', 'downloading', 'imported', 'failed', 'missing']);
+const VALID_SORT_FIELDS = new Set<string>(['createdAt', 'title', 'author', 'narrator', 'series', 'quality', 'size', 'format']);
+const VALID_SORT_DIRECTIONS = new Set<string>(['asc', 'desc']);
 
+const DEFAULTS = {
+  status: 'all' as StatusFilter,
+  sortField: 'createdAt' as SortField,
+  sortDirection: 'desc' as SortDirection,
+  search: '',
+  author: '',
+  series: '',
+  narrator: '',
+  collapse: false,
+  page: 1,
+} as const;
+
+function parseStatus(value: string | null): StatusFilter {
+  return value && VALID_STATUS_FILTERS.has(value) ? value as StatusFilter : DEFAULTS.status;
+}
+
+function parseSortField(value: string | null): SortField {
+  return value && VALID_SORT_FIELDS.has(value) ? value as SortField : DEFAULTS.sortField;
+}
+
+function parseSortDirection(value: string | null): SortDirection {
+  return value && VALID_SORT_DIRECTIONS.has(value) ? value as SortDirection : DEFAULTS.sortDirection;
+}
+
+function parsePage(value: string | null): number {
+  if (!value) return DEFAULTS.page;
+  const num = parseInt(value, 10);
+  return Number.isFinite(num) && num >= 1 ? num : DEFAULTS.page;
+}
+
+export function useLibraryFilters() {
+  const [searchParams, setSearchParams] = useSearchParams();
+
+  // Initialize state from URL params (synchronous, first render only)
+  const [statusFilter, setStatusFilterState] = useState<StatusFilter>(() => parseStatus(searchParams.get('status')));
+  const [authorFilter, setAuthorFilter] = useState(() => searchParams.get('author') ?? DEFAULTS.author);
+  const [seriesFilter, setSeriesFilter] = useState(() => searchParams.get('series') ?? DEFAULTS.series);
+  const [narratorFilter, setNarratorFilter] = useState(() => searchParams.get('narrator') ?? DEFAULTS.narrator);
+  const [sortField, setSortFieldState] = useState<SortField>(() => parseSortField(searchParams.get('sortField')));
+  const [sortDirection, setSortDirectionState] = useState<SortDirection>(() => parseSortDirection(searchParams.get('sortDirection')));
+  const [filtersOpen, setFiltersOpen] = useState(false);
+  const [collapseSeriesEnabled, setCollapseSeriesEnabled] = useState(() => searchParams.get('collapse') === 'true');
+  const [searchQuery, setSearchQueryState] = useState(() => searchParams.get('search') ?? DEFAULTS.search);
+  const [debouncedSearch, setDebouncedSearch] = useState(() => searchParams.get('search') ?? DEFAULTS.search);
+
+  const initialPage = parsePage(searchParams.get('page'));
   const pagination = usePagination(DEFAULT_LIMITS.books);
+
+  // Set initial page from URL (only on mount)
+  const initializedRef = useRef(false);
+  useEffect(() => {
+    if (!initializedRef.current && initialPage > 1) {
+      pagination.setPage(initialPage);
+      initializedRef.current = true;
+    }
+  }, [initialPage, pagination]);
+
+  // Sync state → URL params (replaceState to avoid back-button noise)
+  useEffect(() => {
+    const params = new URLSearchParams();
+
+    if (statusFilter !== DEFAULTS.status) params.set('status', statusFilter);
+    if (sortField !== DEFAULTS.sortField) params.set('sortField', sortField);
+    if (sortDirection !== DEFAULTS.sortDirection) params.set('sortDirection', sortDirection);
+    if (debouncedSearch) params.set('search', debouncedSearch);
+    if (authorFilter) params.set('author', authorFilter);
+    if (seriesFilter) params.set('series', seriesFilter);
+    if (narratorFilter) params.set('narrator', narratorFilter);
+    if (collapseSeriesEnabled) params.set('collapse', 'true');
+    if (pagination.page > 1) params.set('page', String(pagination.page));
+
+    setSearchParams(params, { replace: true });
+  }, [statusFilter, sortField, sortDirection, debouncedSearch, authorFilter, seriesFilter, narratorFilter, collapseSeriesEnabled, pagination.page, setSearchParams]);
 
   // Debounce search to avoid rapid API calls per keystroke
   const debounceRef = useRef<ReturnType<typeof setTimeout>>(undefined);
@@ -67,11 +132,15 @@ export function useLibraryFilters() {
   const activeFilterCount = (authorFilter ? 1 : 0) + (seriesFilter ? 1 : 0) + (narratorFilter ? 1 : 0);
 
   const clearAllFilters = () => {
-    setStatusFilterState('all');
-    setAuthorFilter('');
-    setSeriesFilter('');
-    setNarratorFilter('');
-    setSearchQueryState('');
+    setStatusFilterState(DEFAULTS.status);
+    setAuthorFilter(DEFAULTS.author);
+    setSeriesFilter(DEFAULTS.series);
+    setNarratorFilter(DEFAULTS.narrator);
+    setSearchQueryState(DEFAULTS.search);
+    setDebouncedSearch(DEFAULTS.search);
+    setSortFieldState(DEFAULTS.sortField);
+    setSortDirectionState(DEFAULTS.sortDirection);
+    setCollapseSeriesEnabled(DEFAULTS.collapse);
     pagination.reset();
   };
 
