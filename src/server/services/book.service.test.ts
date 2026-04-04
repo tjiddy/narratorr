@@ -1246,8 +1246,47 @@ describe('BookService — transaction atomicity (#214)', () => {
   });
 
   describe('update() genre telemetry', () => {
-    it.todo('calls trackUnmatchedGenres fire-and-forget when genres are provided in update payload');
-    it.todo('does NOT call trackUnmatchedGenres when genres are absent from update payload');
-    it.todo('trackUnmatchedGenres failure during update does not reject the update promise');
+    it('calls trackUnmatchedGenres fire-and-forget when genres are provided in update payload', async () => {
+      // update succeeds
+      db.update.mockReturnValue(mockDbChain([mockBook]));
+      setupGetById(db);
+
+      // trackUnmatchedGenres will call db.insert for unmatched genres
+      const insertChain = mockDbChain([{ id: 1 }]);
+      db.insert.mockReturnValue(insertChain);
+
+      await service.update(1, { genres: ['Weird Western'] });
+
+      // Wait for fire-and-forget to settle
+      await new Promise((r) => setTimeout(r, 50));
+
+      expect(insertChain.onConflictDoUpdate).toHaveBeenCalled();
+    });
+
+    it('does NOT call trackUnmatchedGenres when genres are absent from update payload', async () => {
+      db.update.mockReturnValue(mockDbChain([mockBook]));
+      setupGetById(db);
+
+      await service.update(1, { title: 'New Title' });
+
+      await new Promise((r) => setTimeout(r, 50));
+
+      // db.insert should not be called (no unmatched genre tracking)
+      expect(db.insert).not.toHaveBeenCalled();
+    });
+
+    it('trackUnmatchedGenres failure during update does not reject the update promise', async () => {
+      db.update.mockReturnValue(mockDbChain([mockBook]));
+      setupGetById(db);
+
+      // Make insert (used by trackUnmatchedGenres) throw
+      db.insert.mockReturnValue(mockDbChain(undefined, { error: new Error('DB write failed') }));
+
+      // Should NOT throw — fire-and-forget catches the error
+      const result = await service.update(1, { genres: ['Weird Western'] });
+      expect(result).not.toBeNull();
+
+      await new Promise((r) => setTimeout(r, 50));
+    });
   });
 });
