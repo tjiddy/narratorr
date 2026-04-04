@@ -443,6 +443,10 @@ describe('handleEdit — auto-check, confidence upgrade, slug-duplicate recheck 
     expect(result.current.rows[nonDupIdx].matchResult?.confidence).toBe('medium');
   });
 
+  // ── #335 Manual match override: medium → high ──────────────────────────
+  it.todo('confidence upgrade from medium to high when provider metadata provided');
+  it.todo('confidence stays high when provider metadata provided on high-confidence row');
+
   it('slug-duplicate row: title+author still collides → stays duplicate', async () => {
     mockGetBookIdentifiers.mockResolvedValue([
       { asin: null, title: 'Book Three', authorName: 'Author C', authorSlug: 'author-c' },

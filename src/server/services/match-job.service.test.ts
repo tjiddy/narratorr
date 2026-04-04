@@ -867,6 +867,19 @@ describe('MatchJobService', () => {
     });
   });
 
+  // ── #335 Tiered duration threshold based on combined score ──────────────
+  describe('tiered duration threshold (#335)', () => {
+    it.todo('high combined score (1.0) + duration within 15% → confidence high');
+    it.todo('high combined score (1.0) + duration at exactly 15% boundary → confidence high (inclusive)');
+    it.todo('high combined score (1.0) + duration at 16% → confidence medium');
+    it.todo('combined score at 0.95 boundary + duration within 15% → confidence high');
+    it.todo('combined score at 0.94 + duration within 5% → confidence high (strict threshold)');
+    it.todo('combined score at 0.94 + duration at 6% → confidence medium (strict threshold)');
+    it.todo('low combined score (0.8) + duration within 5% → confidence high (existing behavior)');
+    it.todo('low combined score (0.8) + duration at 6% → confidence medium (existing behavior)');
+    it.todo('perfect title + mismatched author (combined ≈ 0.6) + 10% duration → medium');
+  });
+
   // ── #229 Observability — elapsed time ───────────────────────────────────
   describe('elapsed time (#229)', () => {
     it('match job completion log includes elapsedMs field', async () => {

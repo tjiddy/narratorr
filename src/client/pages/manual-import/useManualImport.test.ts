@@ -1101,6 +1101,10 @@ describe('handleEdit — auto-check and confidence upgrade (#185)', () => {
     }
   });
 
+  // ── #335 Manual match override: medium → high ──────────────────────────
+  it.todo('row with matchResult confidence=medium and provider metadata → confidence upgrades to high');
+  it.todo('row with matchResult confidence=high and new metadata → confidence stays high');
+
   it('row with no matchResult and new metadata — no upgrade attempted, no crash', async () => {
     vi.mocked(api.scanDirectory).mockResolvedValue(SCAN_RESULT);
 
