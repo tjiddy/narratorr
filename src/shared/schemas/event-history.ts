@@ -11,6 +11,7 @@ export const eventTypeSchema = z.enum([
   'file_tagged', 'held_for_review',
   'merge_started', 'merge_failed',
   'wrong_release',
+  'book_added',
 ]);
 
 export type EventType = z.infer<typeof eventTypeSchema>;
