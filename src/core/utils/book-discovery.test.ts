@@ -766,4 +766,32 @@ describe('discoverBooks', () => {
     // path.relative('/ab', '/ab/ab/book') = 'ab/book' — correct
     expect(result[0].folderParts).toEqual(['ab', 'book']);
   });
+
+  // ---- Mixed-content folders (loose audio + audio subfolders) ----
+
+  describe('mixed-content folders', () => {
+    it.todo('root with loose audio files + audio subfolders discovers subfolders and skips loose files');
+    it.todo('nested folder with loose audio + book subfolders discovers books and skips loose file');
+    it.todo('deep nesting: intermediate folder at depth 3+ with loose audio + audio children applies same skip');
+    it.todo('single loose audio file + audio subfolders still skips the single file');
+    it.todo('loose audio files + exactly one audio subfolder discovers subfolder and skips loose files');
+    it.todo('loose audio files + non-audio-only subfolders treated as single book (leaf)');
+    it.todo('no audio files and no audio children returns empty');
+  });
+
+  describe('mixed-content + disc merge interaction', () => {
+    it.todo('loose audio + disc subfolders (CD1, CD2) merges discs and excludes loose files');
+    it.todo('loose audio + disc subfolders + non-disc immediateAudioChild prevents disc merge, recurses all');
+    it.todo('loose audio + disc subfolders + deeper non-disc descendant merges discs and recurses deeper child');
+  });
+
+  describe('mixed-content logging', () => {
+    it.todo('logs skipped files with path and skippedFiles array when mixed-content detected');
+    it.todo('does not emit skip log for pure leaf folder');
+    it.todo('does not emit skip log for pure recurse folder (no loose audio)');
+  });
+
+  describe('mixed-content end-to-end', () => {
+    it.todo('tree with mixed loose files at multiple levels returns only legitimate books');
+  });
 });
