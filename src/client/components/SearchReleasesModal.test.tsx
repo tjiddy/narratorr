@@ -513,6 +513,123 @@ describe('SearchReleasesModal', () => {
     });
   });
 
+  describe('guid forwarding in grab calls', () => {
+    it('handleGrab sends guid from search result in api.searchGrab call', async () => {
+      const resultsWithGuid: SearchResult[] = [
+        {
+          title: 'Project Hail Mary',
+          author: 'Andy Weir',
+          protocol: 'torrent',
+          guid: '720129',
+          downloadUrl: 'magnet:?xt=urn:btih:xyz789',
+          size: 3 * 1024 * 1024 * 1024,
+          seeders: 15,
+          indexer: 'MyAnonamouse',
+          indexerId: 5,
+        },
+      ];
+      setStreamResults(resultsWithGuid);
+      vi.mocked(api.searchGrab).mockResolvedValue({
+        id: 1,
+        title: 'Project Hail Mary',
+        protocol: 'torrent',
+        status: 'queued' as const,
+        progress: 0,
+        addedAt: '2024-01-01T00:00:00Z',
+        indexerName: null,
+      });
+      const user = userEvent.setup();
+
+      renderWithProviders(
+        <SearchReleasesModal isOpen={true} book={mockBook} onClose={vi.fn()} />,
+      );
+
+      await screen.findByText('Project Hail Mary');
+      await user.click(screen.getAllByText('Grab')[0]);
+
+      await waitFor(() => {
+        const callArgs = vi.mocked(api.searchGrab).mock.calls[0][0];
+        expect(callArgs).toEqual(expect.objectContaining({ guid: '720129' }));
+      });
+    });
+
+    it('handleGrab sends guid undefined when search result has no guid', async () => {
+      setStreamResults(mockResults); // mockResults have no guid
+      vi.mocked(api.searchGrab).mockResolvedValue({
+        id: 1,
+        title: 'The Way of Kings [Unabridged]',
+        protocol: 'torrent',
+        status: 'queued' as const,
+        progress: 0,
+        addedAt: '2024-01-01T00:00:00Z',
+        indexerName: null,
+      });
+      const user = userEvent.setup();
+
+      renderWithProviders(
+        <SearchReleasesModal isOpen={true} book={mockBook} onClose={vi.fn()} />,
+      );
+
+      await screen.findByText('The Way of Kings [Unabridged]');
+      await user.click(screen.getAllByText('Grab')[0]);
+
+      await waitFor(() => {
+        const callArgs = vi.mocked(api.searchGrab).mock.calls[0][0];
+        expect(callArgs).toEqual(expect.objectContaining({ guid: undefined }));
+      });
+    });
+
+    it('on 409 replace confirmation, the retry api.searchGrab call includes the original guid', async () => {
+      const resultsWithGuid: SearchResult[] = [
+        {
+          title: 'Project Hail Mary',
+          author: 'Andy Weir',
+          protocol: 'torrent',
+          guid: '720129',
+          downloadUrl: 'magnet:?xt=urn:btih:xyz789',
+          size: 3 * 1024 * 1024 * 1024,
+          seeders: 15,
+          indexer: 'MyAnonamouse',
+          indexerId: 5,
+        },
+      ];
+      setStreamResults(resultsWithGuid);
+      vi.mocked(api.searchGrab)
+        .mockRejectedValueOnce(new MockApiError(409, { code: 'ACTIVE_DOWNLOAD_EXISTS' }))
+        .mockResolvedValueOnce({
+          id: 2,
+          title: 'Project Hail Mary',
+          protocol: 'torrent',
+          status: 'queued' as const,
+          progress: 0,
+          addedAt: '2024-01-01T00:00:00Z',
+          indexerName: null,
+        });
+      const user = userEvent.setup();
+
+      renderWithProviders(
+        <SearchReleasesModal isOpen={true} book={mockBook} onClose={vi.fn()} />,
+      );
+
+      await screen.findByText('Project Hail Mary');
+      await user.click(screen.getAllByText('Grab')[0]);
+
+      await waitFor(() => {
+        expect(screen.getByRole('dialog', { name: /replace/i })).toBeInTheDocument();
+      });
+
+      await user.click(screen.getByRole('button', { name: /replace/i }));
+
+      await waitFor(() => {
+        const lastCallArgs = vi.mocked(api.searchGrab).mock.calls.at(-1)![0];
+        expect(lastCallArgs).toEqual(expect.objectContaining({
+          guid: '720129',
+          replaceExisting: true,
+        }));
+      });
+    });
+  });
+
   it('shows error toast when grab fails', async () => {
     setStreamResults(mockResults);
     vi.mocked(api.searchGrab).mockRejectedValue(new Error('Download client unavailable'));

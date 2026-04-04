@@ -98,6 +98,7 @@ interface PendingGrabParams {
   indexerId?: number;
   size?: number;
   seeders?: number;
+  guid?: string;
 }
 
 // eslint-disable-next-line max-lines-per-function, complexity -- modal orchestrates streaming + mutations + 7 conditional states
@@ -174,6 +175,7 @@ export function SearchReleasesModal({ isOpen, book, onClose }: SearchReleasesMod
           indexerId: variables.indexerId,
           size: variables.size,
           seeders: variables.seeders,
+          guid: variables.guid,
         });
         return;
       }
@@ -195,6 +197,7 @@ export function SearchReleasesModal({ isOpen, book, onClose }: SearchReleasesMod
       indexerId: result.indexerId,
       size: result.size,
       seeders: result.seeders,
+      guid: result.guid,
     });
   };
 
