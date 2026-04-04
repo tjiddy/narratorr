@@ -1,5 +1,34 @@
 # Workflow Log
 
+## #342 Within-scan duplicate detection for import discoveries — 2026-04-04
+**Skill path:** /implement → /claim → /plan → /handoff
+**Outcome:** success — PR #346
+
+### Metrics
+- Files changed: 12 | Tests added/modified: 45 new assertions across 6 test files
+- Quality gate runs: 2 (pass on attempt 1 both times)
+- Fix iterations: 1 (ImportCard test used `getByRole('checkbox')` but the component renders a styled button with aria-label, not an input[type=checkbox])
+- Context compactions: 0
+
+### Workflow experience
+- What went smoothly: Red/green TDD worked well across all 7 modules. The spec was thorough after 3 rounds of spec review, making implementation straightforward with no ambiguity.
+- Friction / issues encountered: Hook test mock ordering — `useLibraryImport` auto-scans on mount, so test overrides must use `mockReset()` before `renderHook()`, not just `mockResolvedValue()` after `beforeEach`.
+
+### Token efficiency
+- Highest-token actions: Spec review rounds (3 rounds with explore subagents) consumed significant context before implementation started
+- Avoidable waste: None significant — the elaborate/review cycle was necessary given initial spec gaps
+- Suggestions: For future enum-extension features, a checklist of "all call sites that branch on the enum" would save exploration time
+
+### Infrastructure gaps
+- Repeated workarounds: None
+- Missing tooling / config: None
+- Unresolved debt: DiscoveredBook type defined in 3 places (DRY-1) — logged in debt.md
+
+### Wish I'd Known
+1. **`isDbDuplicate` helper pattern**: When splitting boolean behavior (isDuplicate) into sub-categories, a centralized predicate prevents drift across 10+ call sites — see `isdbduplicate-helper-pattern.md`
+2. **Hook test mock ordering**: `useLibraryImport` auto-scans on mount, so mock overrides must happen before `renderHook()` via `mockReset()` — see `hook-test-mock-ordering.md`
+3. **ImportCard uses styled buttons, not checkbox inputs**: The select/deselect control is a `<button>` with `aria-label`, not `<input type="checkbox">` — tests must query by role+name, not role alone
+
 ## #339 MAM auto-detect — proxy leak, sentinel handling, and badge persistence — 2026-04-04
 **Skill path:** /implement → /claim → /plan → /handoff
 **Outcome:** success — PR #344

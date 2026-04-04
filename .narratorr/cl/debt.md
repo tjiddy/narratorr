@@ -11,6 +11,7 @@
 - **`src/server/services/quality-gate.helpers.ts`**: `resolveBookQualityInputs(book)` is called twice in `buildQualityAssessment()` — once at line 40 for MB/hr + existing metadata, again at line 79 for duration delta. Could reuse the first result. Pure function so no side effects, just minor waste. (discovered in #300)
 - **`src/client/pages/activity/DownloadActions.tsx`**: `PendingActionButtons` component inside DownloadActions still renders for `pending_review` status (line 78), but the parent `DownloadCard` hides `DownloadActions` entirely for pending_review cards (line 253). Dead code branch that can never execute. (discovered in #306)
 - **`src/core/indexers/types.ts` / `src/client/lib/api/search.ts`**: `SearchResult` is duplicated across core and client — DRY-1 parallel types that must be kept in sync manually. A shared types package or generated types would prevent drift. (discovered in #317)
+- **`src/server/services/library-scan.service.ts` / `src/shared/schemas/library-scan.ts` / `src/client/lib/api/library-scan.ts`**: `DiscoveredBook` type and `duplicateReason` union defined in 3 places that must be kept in sync manually. DRY-1 — the shared schema should be the single source of truth with types derived via `z.infer`. (discovered in #342)
 
 ## Accepted Debt
 
