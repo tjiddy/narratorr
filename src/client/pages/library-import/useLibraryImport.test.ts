@@ -715,4 +715,179 @@ describe('empty result edge case', () => {
     });
     expect(result.current.scanError).toBeNull();
   });
+
+  describe('within-scan duplicates — visibility and selection (#342)', () => {
+    const scanResultWithWithinScan: ScanResult = {
+      discoveries: [
+        { path: '/audiobooks/Author/Book', parsedTitle: 'Book', parsedAuthor: 'Author', parsedSeries: null, fileCount: 3, totalSize: 100000, isDuplicate: false },
+        { path: '/audiobooks/Copy/Author/Book', parsedTitle: 'Book', parsedAuthor: 'Author', parsedSeries: null, fileCount: 3, totalSize: 100000, isDuplicate: true, duplicateReason: 'within-scan', duplicateFirstPath: '/audiobooks/Author/Book' },
+        { path: '/audiobooks/DbDup/Book', parsedTitle: 'DbBook', parsedAuthor: 'DbAuthor', parsedSeries: null, fileCount: 1, totalSize: 50000, isDuplicate: true, duplicateReason: 'slug' },
+      ],
+      totalFolders: 3,
+    };
+
+    it('within-scan duplicates are auto-deselected on initial load', async () => {
+      mockScanDirectory.mockResolvedValue(scanResultWithWithinScan);
+      const { result } = renderHook(() => useLibraryImport(), { wrapper: createWrapper() });
+
+      await waitFor(() => { expect(result.current.step).toBe('review'); });
+
+      const withinScanRow = result.current.rows.find(r => r.book.duplicateReason === 'within-scan');
+      expect(withinScanRow?.selected).toBe(false);
+    });
+
+    it('within-scan duplicates are included in select-all toggling', async () => {
+      mockScanDirectory.mockResolvedValue(scanResultWithWithinScan);
+      const { result } = renderHook(() => useLibraryImport(), { wrapper: createWrapper() });
+
+      await waitFor(() => { expect(result.current.step).toBe('review'); });
+
+      act(() => { result.current.handleSelectAll(); });
+
+      const withinScanRow = result.current.rows.find(r => r.book.duplicateReason === 'within-scan');
+      expect(withinScanRow?.selected).toBe(true);
+    });
+
+    it('DB duplicates (path/slug) are excluded from select-all toggling', async () => {
+      mockScanDirectory.mockResolvedValue(scanResultWithWithinScan);
+      const { result } = renderHook(() => useLibraryImport(), { wrapper: createWrapper() });
+
+      await waitFor(() => { expect(result.current.step).toBe('review'); });
+
+      act(() => { result.current.handleSelectAll(); });
+
+      const dbDupRow = result.current.rows.find(r => r.book.duplicateReason === 'slug');
+      expect(dbDupRow?.selected).toBe(false);
+    });
+  });
+
+  describe('within-scan duplicates — match flow (#342)', () => {
+    it('initial matcher candidates include within-scan duplicates but exclude DB duplicates', async () => {
+      const scanResult: ScanResult = {
+        discoveries: [
+          { path: '/audiobooks/Author/Book', parsedTitle: 'Book', parsedAuthor: 'Author', parsedSeries: null, fileCount: 3, totalSize: 100000, isDuplicate: false },
+          { path: '/audiobooks/Copy/Author/Book', parsedTitle: 'Book', parsedAuthor: 'Author', parsedSeries: null, fileCount: 3, totalSize: 100000, isDuplicate: true, duplicateReason: 'within-scan', duplicateFirstPath: '/audiobooks/Author/Book' },
+          { path: '/audiobooks/DbDup/Book', parsedTitle: 'DbBook', parsedAuthor: 'DbAuthor', parsedSeries: null, fileCount: 1, totalSize: 50000, isDuplicate: true, duplicateReason: 'path' },
+        ],
+        totalFolders: 3,
+      };
+      // Must set before hook mounts (auto-scan fires on mount)
+      mockScanDirectory.mockReset().mockResolvedValue(scanResult);
+      mockStartMatchJob.mockClear().mockResolvedValue({ jobId: 'job-1' });
+      renderHook(() => useLibraryImport(), { wrapper: createWrapper() });
+
+      await waitFor(() => { expect(mockStartMatchJob).toHaveBeenCalled(); });
+
+      const candidates = mockStartMatchJob.mock.calls[0][0] as Array<{ path: string }>;
+      const paths = candidates.map((c: { path: string }) => c.path);
+      expect(paths).toContain('/audiobooks/Author/Book');
+      expect(paths).toContain('/audiobooks/Copy/Author/Book');
+      expect(paths).not.toContain('/audiobooks/DbDup/Book');
+    });
+  });
+
+  describe('within-scan duplicates — derived state (#342)', () => {
+    const scanResultMixed: ScanResult = {
+      discoveries: [
+        { path: '/audiobooks/Author/Book', parsedTitle: 'Book', parsedAuthor: 'Author', parsedSeries: null, fileCount: 3, totalSize: 100000, isDuplicate: false },
+        { path: '/audiobooks/Copy/Author/Book', parsedTitle: 'Book', parsedAuthor: 'Author', parsedSeries: null, fileCount: 3, totalSize: 100000, isDuplicate: true, duplicateReason: 'within-scan', duplicateFirstPath: '/audiobooks/Author/Book' },
+        { path: '/audiobooks/DbDup/Book', parsedTitle: 'DbBook', parsedAuthor: 'DbAuthor', parsedSeries: null, fileCount: 1, totalSize: 50000, isDuplicate: true, duplicateReason: 'slug' },
+      ],
+      totalFolders: 3,
+    };
+
+    it('pendingCount includes within-scan duplicates awaiting match results', async () => {
+      mockScanDirectory.mockResolvedValue(scanResultMixed);
+      const { result } = renderHook(() => useLibraryImport(), { wrapper: createWrapper() });
+
+      await waitFor(() => { expect(result.current.step).toBe('review'); });
+
+      // Within-scan dup has no matchResult yet → should count as pending
+      // DB dup should NOT count as pending
+      // Non-dup has no matchResult yet → should count as pending
+      expect(result.current.pendingCount).toBe(2); // non-dup + within-scan dup
+    });
+
+    it('duplicateCount counts only DB duplicates', async () => {
+      mockScanDirectory.mockResolvedValue(scanResultMixed);
+      const { result } = renderHook(() => useLibraryImport(), { wrapper: createWrapper() });
+
+      await waitFor(() => { expect(result.current.step).toBe('review'); });
+
+      expect(result.current.duplicateCount).toBe(1); // only DB slug dup
+    });
+
+    it('allSelected treats within-scan duplicates as actionable', async () => {
+      mockScanDirectory.mockResolvedValue(scanResultMixed);
+      const { result } = renderHook(() => useLibraryImport(), { wrapper: createWrapper() });
+
+      await waitFor(() => { expect(result.current.step).toBe('review'); });
+
+      // Not all selected yet (within-scan dup is auto-deselected)
+      expect(result.current.allSelected).toBe(false);
+
+      // Select all actionable rows
+      act(() => { result.current.handleSelectAll(); });
+
+      expect(result.current.allSelected).toBe(true);
+    });
+  });
+
+  describe('within-scan duplicates — registration (#342)', () => {
+    it('handleRegister sends forceImport: true for selected duplicate rows', async () => {
+      const scanResult: ScanResult = {
+        discoveries: [
+          { path: '/audiobooks/Author/Book', parsedTitle: 'Book', parsedAuthor: 'Author', parsedSeries: null, fileCount: 3, totalSize: 100000, isDuplicate: false },
+          { path: '/audiobooks/Copy/Author/Book', parsedTitle: 'Book', parsedAuthor: 'Author', parsedSeries: null, fileCount: 3, totalSize: 100000, isDuplicate: true, duplicateReason: 'within-scan', duplicateFirstPath: '/audiobooks/Author/Book' },
+        ],
+        totalFolders: 2,
+      };
+      mockScanDirectory.mockResolvedValue(scanResult);
+      mockConfirmImport.mockResolvedValue({ accepted: 2 });
+      const { result } = renderHook(() => useLibraryImport(), { wrapper: createWrapper() });
+
+      await waitFor(() => { expect(result.current.step).toBe('review'); });
+
+      // Select all (including within-scan dup)
+      act(() => { result.current.handleSelectAll(); });
+      act(() => { result.current.handleRegister(); });
+
+      await waitFor(() => { expect(mockConfirmImport).toHaveBeenCalled(); });
+
+      const items = mockConfirmImport.mock.calls[0][0] as Array<{ path: string; forceImport?: boolean }>;
+      const nonDup = items.find(i => i.path === '/audiobooks/Author/Book');
+      const withinScanDup = items.find(i => i.path === '/audiobooks/Copy/Author/Book');
+      expect(nonDup?.forceImport).toBeUndefined();
+      expect(withinScanDup?.forceImport).toBe(true);
+    });
+
+    it('scan with only DB duplicates still shows All caught up', async () => {
+      const allDbDups: ScanResult = {
+        discoveries: [
+          { path: '/audiobooks/A', parsedTitle: 'A', parsedAuthor: 'X', parsedSeries: null, fileCount: 1, totalSize: 100, isDuplicate: true, duplicateReason: 'path' },
+          { path: '/audiobooks/B', parsedTitle: 'B', parsedAuthor: 'Y', parsedSeries: null, fileCount: 1, totalSize: 100, isDuplicate: true, duplicateReason: 'slug' },
+        ],
+        totalFolders: 2,
+      };
+      mockScanDirectory.mockResolvedValue(allDbDups);
+      const { result } = renderHook(() => useLibraryImport(), { wrapper: createWrapper() });
+
+      await waitFor(() => { expect(result.current.emptyResult).toBe(true); });
+    });
+
+    it('scan with mix of new + within-scan duplicates does NOT show All caught up', async () => {
+      const mixedResult: ScanResult = {
+        discoveries: [
+          { path: '/audiobooks/Author/Book', parsedTitle: 'Book', parsedAuthor: 'Author', parsedSeries: null, fileCount: 3, totalSize: 100000, isDuplicate: false },
+          { path: '/audiobooks/Copy/Author/Book', parsedTitle: 'Book', parsedAuthor: 'Author', parsedSeries: null, fileCount: 3, totalSize: 100000, isDuplicate: true, duplicateReason: 'within-scan', duplicateFirstPath: '/audiobooks/Author/Book' },
+        ],
+        totalFolders: 2,
+      };
+      mockScanDirectory.mockResolvedValue(mixedResult);
+      const { result } = renderHook(() => useLibraryImport(), { wrapper: createWrapper() });
+
+      await waitFor(() => { expect(result.current.step).toBe('review'); });
+      expect(result.current.emptyResult).toBe(false);
+    });
+  });
 });

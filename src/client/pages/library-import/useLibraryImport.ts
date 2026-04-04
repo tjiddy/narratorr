@@ -7,8 +7,14 @@ import { queryKeys } from '@/lib/queryKeys';
 import { useMatchJob } from '@/hooks/useMatchJob';
 import { slugify } from '../../../shared/utils.js';
 import type { ImportRow, BookEditState } from '@/components/manual-import';
+import type { DiscoveredBook } from '@/lib/api';
 
 export type Step = 'scanning' | 'review' | 'error';
+
+/** Returns true for DB-backed duplicates (path/slug), false for within-scan duplicates and non-duplicates. */
+function isDbDuplicate(book: DiscoveredBook): boolean {
+  return book.isDuplicate && book.duplicateReason !== 'within-scan';
+}
 
 // eslint-disable-next-line max-lines-per-function -- orchestrates scan, match job, and slug-duplicate recheck
 export function useLibraryImport() {
@@ -46,7 +52,7 @@ export function useLibraryImport() {
     setRows(prev => prev.map(row => {
       const match = resultMap.get(row.book.path);
       if (!match) return row;
-      if (row.book.isDuplicate) return row;
+      if (isDbDuplicate(row.book)) return row;
 
       const selected = match.confidence === 'none' ? false : row.selected;
       const wasEdited = row.edited.metadata !== undefined;
@@ -79,7 +85,7 @@ export function useLibraryImport() {
   const scanMutation = useMutation({
     mutationFn: (path: string) => api.scanDirectory(path),
     onSuccess: (result) => {
-      if (result.discoveries.length === 0 || result.discoveries.every(d => d.isDuplicate)) {
+      if (result.discoveries.length === 0 || result.discoveries.every(d => isDbDuplicate(d))) {
         setEmptyResult(true);
         setStep('review');
         return;
@@ -100,7 +106,7 @@ export function useLibraryImport() {
       setStep('review');
 
       const candidates = result.discoveries
-        .filter(d => !d.isDuplicate)
+        .filter(d => !isDbDuplicate(d))
         .map(d => ({
           path: d.path,
           title: d.parsedTitle,
@@ -153,9 +159,9 @@ export function useLibraryImport() {
 
   const handleSelectAll = useCallback(() => {
     setRows(prev => {
-      const selectableRows = prev.filter(r => !r.book.isDuplicate);
+      const selectableRows = prev.filter(r => !isDbDuplicate(r.book));
       const allSelected = selectableRows.length > 0 && selectableRows.every(r => r.selected);
-      return prev.map(r => r.book.isDuplicate ? r : { ...r, selected: !allSelected });
+      return prev.map(r => isDbDuplicate(r.book) ? r : { ...r, selected: !allSelected });
     });
   }, []);
 
@@ -206,6 +212,7 @@ export function useLibraryImport() {
       coverUrl: r.edited.coverUrl,
       asin: r.edited.asin,
       metadata: r.edited.metadata,
+      ...(r.book.isDuplicate ? { forceImport: true } : {}),
     }));
     registerMutation.mutate(items);
   }, [rows, registerMutation]);
@@ -221,7 +228,7 @@ export function useLibraryImport() {
 
   const handleRetryMatch = useCallback(() => {
     const candidates = rows
-      .filter(r => !r.book.isDuplicate)
+      .filter(r => !isDbDuplicate(r.book))
       .map(r => ({
         path: r.book.path,
         title: r.edited.title,
@@ -236,12 +243,12 @@ export function useLibraryImport() {
   // Computed counts
   const selectedCount = rows.filter(r => r.selected).length;
   const selectedUnmatchedCount = rows.filter(r => r.selected && r.matchResult?.confidence === 'none').length;
-  const readyCount = rows.filter(r => r.selected && !r.book.isDuplicate && r.matchResult?.confidence === 'high').length;
+  const readyCount = rows.filter(r => r.selected && !isDbDuplicate(r.book) && r.matchResult?.confidence === 'high').length;
   const reviewCount = rows.filter(r => r.matchResult?.confidence === 'medium').length;
   const noMatchCount = rows.filter(r => r.matchResult?.confidence === 'none').length;
-  const pendingCount = rows.filter(r => !r.matchResult && !r.book.isDuplicate).length;
-  const duplicateCount = rows.filter(r => r.book.isDuplicate).length;
-  const allSelected = rows.length > 0 && rows.filter(r => !r.book.isDuplicate).every(r => r.selected);
+  const pendingCount = rows.filter(r => !r.matchResult && !isDbDuplicate(r.book)).length;
+  const duplicateCount = rows.filter(r => isDbDuplicate(r.book)).length;
+  const allSelected = rows.length > 0 && rows.filter(r => !isDbDuplicate(r.book)).every(r => r.selected);
 
   // Library root path for relative-path computation
   const libraryRoot = settings?.library.path ?? '';
