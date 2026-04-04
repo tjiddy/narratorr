@@ -154,6 +154,7 @@ export class MyAnonamouseIndexer implements IndexerAdapter {
         author: parseDoubleEncodedNames(item.author_info),
         narrator: parseDoubleEncodedNames(item.narrator_info),
         protocol: 'torrent',
+        guid: item.id != null ? String(item.id) : undefined,
         downloadUrl,
         size: this.parseSize(item.size),
         seeders: item.seeders ?? undefined,

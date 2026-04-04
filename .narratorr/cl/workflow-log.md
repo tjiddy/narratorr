@@ -1,5 +1,34 @@
 # Workflow Log
 
+## #348 MAM adapter — populate guid from torrent ID for blacklist support — 2026-04-04
+**Skill path:** /implement → /claim → /plan → /handoff
+**Outcome:** success — PR #349
+
+### Metrics
+- Files changed: 4 | Tests added/modified: 10
+- Quality gate runs: 2 (pass on attempt 1 both times)
+- Fix iterations: 1 (toHaveBeenCalledWith assertion pattern needed adjustment for TanStack mutation context)
+- Context compactions: 0
+
+### Workflow experience
+- What went smoothly: Minimal production code change (1 line adapter, 3 lines client). Spec review caught the client forwarding gap early — saved a full review round-trip.
+- Friction / issues encountered: `toHaveBeenCalledWith` doesn't work with TanStack Query mutation mocks because the mutationFn receives 2 args (variables + context). Had to switch to `mock.calls[0][0]` pattern.
+
+### Token efficiency
+- Highest-token actions: Spec review response rounds (3 rounds before approval)
+- Avoidable waste: None — the spec review rounds caught real bugs (client forwarding gap, ABB scope claim)
+- Suggestions: For future adapter field additions, always trace the full data path in the spec: adapter → client → API → DB
+
+### Infrastructure gaps
+- Repeated workarounds: None
+- Missing tooling / config: None
+- Unresolved debt: ABB adapter also lacks guid (separate issue); handleGrab cherry-picks fields instead of spreading (fragile pattern)
+
+### Wish I'd Known
+1. SearchReleasesModal.handleGrab() cherry-picks fields — adding a field to SearchResult requires explicit forwarding in 3 places in the component (see learning: mam-guid-client-forwarding-gap.md)
+2. TanStack Query mutationFn gets 2 args — toHaveBeenCalledWith won't work, use mock.calls[0][0] (see learning: toHaveBeenCalledWith-mutation-context.md)
+3. ABB adapter has the same guid gap as MAM — scope boundary claims about "other adapters" need mechanical verification
+
 ## #340 Test cleanup — MAM search type, blacklist cancel, lint — 2026-04-04
 **Skill path:** /implement → /claim → /plan → /handoff
 **Outcome:** success — PR #347
