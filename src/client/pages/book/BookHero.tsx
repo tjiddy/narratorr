@@ -38,6 +38,7 @@ interface BookHeroProps {
   monitorForUpgrades: boolean;
   onMonitorToggle: () => void;
   isMonitorToggling: boolean;
+  children?: React.ReactNode;
 }
 
 // eslint-disable-next-line complexity, max-lines-per-function -- flat JSX conditionals for optional props, no branching logic; overflow menu adds state hooks
@@ -50,6 +51,7 @@ export function BookHero({
   onRemoveClick, isRemoving,
   showWrongRelease, onWrongReleaseClick, isWrongReleasing,
   importListName, monitorForUpgrades, onMonitorToggle, isMonitorToggling,
+  children,
 }: BookHeroProps) {
   const [menuOpen, setMenuOpen] = useState(false);
   const [focusIndex, setFocusIndex] = useState(0);
@@ -143,6 +145,8 @@ export function BookHero({
           {metaDots.length > 0 && (
             <p className="text-muted-foreground text-sm mt-2 animate-fade-in-up stagger-3">{metaDots.join(' \u00B7 ')}</p>
           )}
+
+          {children && <div className="mt-4">{children}</div>}
 
           <div className="flex flex-wrap items-center gap-3 mt-6 justify-center sm:justify-start animate-fade-in-up stagger-4">
             <span className="inline-flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-medium glass-card">

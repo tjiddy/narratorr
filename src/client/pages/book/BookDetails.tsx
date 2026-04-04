@@ -97,9 +97,9 @@ export function BookDetails({ libraryBook, metadataBook }: {
         monitorForUpgrades={libraryBook.monitorForUpgrades}
         onMonitorToggle={() => monitorMutation.mutate()}
         isMonitorToggling={monitorMutation.isPending}
-      />
-
-      <AudioPreview bookId={libraryBook.id} status={libraryBook.status} path={libraryBook.path ?? null} />
+      >
+        <AudioPreview bookId={libraryBook.id} status={libraryBook.status} path={libraryBook.path ?? null} />
+      </BookHero>
 
       {mergeProgress && <MergeProgressIndicator progress={mergeProgress} />}
 

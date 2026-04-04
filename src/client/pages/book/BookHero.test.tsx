@@ -31,10 +31,10 @@ const defaultProps = {
   isRemoving: false,
 };
 
-function renderHero(overrides = {}) {
+function renderHero(overrides = {}, children?: React.ReactNode) {
   return render(
     <MemoryRouter>
-      <BookHero {...defaultProps} {...overrides} />
+      <BookHero {...defaultProps} {...overrides}>{children}</BookHero>
     </MemoryRouter>,
   );
 }
@@ -62,6 +62,20 @@ describe('BookHero', () => {
   it('renders meta dots', () => {
     renderHero();
     expect(screen.getByText('45h 0m · Fantasy · The Stormlight Archive #1')).toBeInTheDocument();
+  });
+
+  it('renders children between metadata and action buttons', () => {
+    renderHero({}, <span data-testid="preview-slot">Preview</span>);
+    const preview = screen.getByTestId('preview-slot');
+    expect(preview).toBeInTheDocument();
+    // Verify it appears before the action buttons (Wanted badge)
+    const statusBadge = screen.getByText('Wanted');
+    expect(preview.compareDocumentPosition(statusBadge) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+
+  it('does not render children wrapper when no children provided', () => {
+    renderHero();
+    expect(screen.queryByTestId('preview-slot')).not.toBeInTheDocument();
   });
 
   it('renders status badge', () => {

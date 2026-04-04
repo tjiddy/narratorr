@@ -123,12 +123,13 @@ describe('BookDetails', () => {
       expect(screen.getByText('Book One of the Stormlight Archive')).toBeInTheDocument();
     });
 
-    it('renders audio preview for imported book with path', () => {
+    it('renders audio preview inside hero section for imported book with path', () => {
       renderBookDetails({ status: 'imported', path: '/library/book1' }, fullMetadata);
 
       expect(document.querySelector('audio')).not.toBeNull();
       expect(document.querySelector('audio')!.hasAttribute('controls')).toBe(false);
       expect(document.querySelector('audio')!.hidden).toBe(true);
+      expect(screen.getByText('Preview')).toBeInTheDocument();
     });
 
     it('does not render audio preview for non-imported book', () => {
