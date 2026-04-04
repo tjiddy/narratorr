@@ -155,7 +155,7 @@ describe('LibraryPage — route-level URL param restoration (#352)', () => {
     // Navigate back using router's history (MemoryRouter doesn't use window.history)
     await user.click(screen.getByText('Back to Library'));
 
-    // Library page should be restored with the filtered view.
+    // Library page should be restored with the filtered view (status=wanted).
     // TanStack Query may serve cached data (no re-fetch), but the hook
     // re-initializes from URL params and the UI reflects the filtered state.
     await waitFor(() => {
@@ -165,10 +165,10 @@ describe('LibraryPage — route-level URL param restoration (#352)', () => {
     // Verify we're back on the library page (not book detail)
     expect(screen.queryByTestId('book-detail')).not.toBeInTheDocument();
 
-    // Verify the API was called with URL-derived params at some point.
-    // The first call (before navigation) should have the correct params.
-    // After back-navigation, Query may use cache or re-fetch — either is correct
-    // as long as the initial call used the right params (proven above).
-    // The key assertion: the library renders with filtered data after back-nav.
+    // The restored view must differ from the default unfiltered view.
+    // 'Project Hail Mary' has status='imported' — it should NOT appear
+    // when status=wanted filter is active. This distinguishes restored
+    // filtered state from default (which would show all books).
+    expect(screen.queryByText('Project Hail Mary')).not.toBeInTheDocument();
   });
 });
