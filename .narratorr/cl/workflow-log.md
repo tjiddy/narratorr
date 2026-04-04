@@ -1,5 +1,34 @@
 # Workflow Log
 
+## #351 Series badge — show total book count with prominent styling — 2026-04-04
+**Skill path:** /implement → /claim → /plan → /handoff
+**Outcome:** success — PR #355
+
+### Metrics
+- Files changed: 4 | Tests added/modified: 6
+- Quality gate runs: 2 (pass on attempt 2 — first had TS error from `collapsedCount` on `BookWithAuthor`)
+- Fix iterations: 1 (added `DisplayBook` type import to table test for type safety)
+- Context compactions: 0
+
+### Workflow experience
+- What went smoothly: Straightforward text+CSS change, spec was well-defined with exact file paths and line numbers
+- Friction / issues encountered: `createMockBook()` factory returns `BookWithAuthor` which doesn't include `collapsedCount` — needed explicit `DisplayBook` type annotation in table tests
+
+### Token efficiency
+- Highest-token actions: Explore subagent for self-review (overkill for a 33-line diff)
+- Avoidable waste: Self-review subagent could have been skipped for trivial diffs
+- Suggestions: Consider a diff-size threshold to skip self-review for very small changes
+
+### Infrastructure gaps
+- Repeated workarounds: none
+- Missing tooling / config: `frontend-design` skill not available (noted in handoff)
+- Unresolved debt: none introduced
+
+### Wish I'd Known
+1. Trivial issue with no surprises — no learnings to capture
+2. The `createMockBook()` factory doesn't include `DisplayBook` fields — need explicit typing when testing table view with `collapsedCount`
+3. There was a second test referencing "+N more" text in the "collapsed series card display" describe block (line 349-354) beyond the main badge tests
+
 ## #350 Persist Audnexus genres during enrichment — 2026-04-04
 **Skill path:** /implement → /claim → /plan → /handoff
 **Outcome:** success — PR #354
