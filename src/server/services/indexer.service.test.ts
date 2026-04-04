@@ -257,6 +257,84 @@ describe('IndexerService', () => {
       expect(result.message).toBe('OK');
     });
 
+    it('#339 resolves sentinel mamId against saved indexer when id is provided', async () => {
+      const savedIndexer = createMockDbIndexer({
+        id: 5,
+        type: 'myanonamouse',
+        settings: { mamId: 'real-mam-id', baseUrl: '' },
+      });
+      db.select.mockReturnValue(mockDbChain([savedIndexer]));
+
+      const mockAdapter = { test: vi.fn().mockResolvedValue({ success: true, message: 'OK' }), search: vi.fn() };
+      const createSpy = // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      vi.spyOn(service as any, 'createAdapter').mockReturnValue(mockAdapter as never);
+
+      const result = await service.testConfig({
+        type: 'myanonamouse',
+        settings: { mamId: '********', baseUrl: '' },
+        id: 5,
+      });
+
+      expect(result.success).toBe(true);
+      // Verify the adapter received the resolved (real) mamId, not the sentinel
+      const fakeRow = createSpy.mock.calls[0][0] as { settings: Record<string, unknown> };
+      expect(fakeRow.settings.mamId).toBe('real-mam-id');
+    });
+
+    it('#339 uses provided mamId directly when id is present but mamId is not sentinel', async () => {
+      const savedIndexer = createMockDbIndexer({
+        id: 5,
+        type: 'myanonamouse',
+        settings: { mamId: 'old-mam-id', baseUrl: '' },
+      });
+      db.select.mockReturnValue(mockDbChain([savedIndexer]));
+
+      const mockAdapter = { test: vi.fn().mockResolvedValue({ success: true, message: 'OK' }), search: vi.fn() };
+      const createSpy = // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      vi.spyOn(service as any, 'createAdapter').mockReturnValue(mockAdapter as never);
+
+      const result = await service.testConfig({
+        type: 'myanonamouse',
+        settings: { mamId: 'new-mam-id', baseUrl: '' },
+        id: 5,
+      });
+
+      expect(result.success).toBe(true);
+      const fakeRow = createSpy.mock.calls[0][0] as { settings: Record<string, unknown> };
+      expect(fakeRow.settings.mamId).toBe('new-mam-id');
+    });
+
+    it('#339 skips sentinel resolution when id is absent (create mode)', async () => {
+      const mockAdapter = { test: vi.fn().mockResolvedValue({ success: true, message: 'OK' }), search: vi.fn() };
+      const createSpy = // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      vi.spyOn(service as any, 'createAdapter').mockReturnValue(mockAdapter as never);
+
+      const result = await service.testConfig({
+        type: 'myanonamouse',
+        settings: { mamId: '********', baseUrl: '' },
+      });
+
+      expect(result.success).toBe(true);
+      // Without id, sentinel passes through as-is (no resolution)
+      const fakeRow = createSpy.mock.calls[0][0] as { settings: Record<string, unknown> };
+      expect(fakeRow.settings.mamId).toBe('********');
+      // getById should not have been called
+      expect(db.select).not.toHaveBeenCalled();
+    });
+
+    it('#339 returns error when id is provided but indexer does not exist', async () => {
+      db.select.mockReturnValue(mockDbChain([]));
+
+      const result = await service.testConfig({
+        type: 'myanonamouse',
+        settings: { mamId: '********', baseUrl: '' },
+        id: 999,
+      });
+
+      expect(result.success).toBe(false);
+      expect(result.message).toContain('not found');
+    });
+
     it('returns failure for unknown type', async () => {
       const result = await service.testConfig({
         type: 'unknown',
