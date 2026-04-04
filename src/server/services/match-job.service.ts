@@ -181,13 +181,27 @@ class MatchJob {
         return { path: book.path, confidence: 'none', bestMatch: null, alternatives: [] };
       }
 
-      this.log.debug({ path: book.path, resultCount: searchResults.length }, 'Search returned results');
+      this.log.debug({
+        path: book.path,
+        resultCount: searchResults.length,
+        rawResults: searchResults.slice(0, 5).map(r => ({ title: r.title, author: r.author, asin: r.asin })),
+      }, 'Search returned results');
 
       // Fetch full detail for top results to get ASIN/duration
       const detailed = await this.fetchDetails(searchResults.slice(0, 5));
 
       // Score, re-rank, and apply year tiebreaker
       const scored = rankResults(detailed, book);
+
+      this.log.debug({
+        path: book.path,
+        rankedResults: scored.slice(0, 5).map(s => ({
+          title: s.meta.title,
+          author: s.meta.author,
+          score: s.score.toFixed(3),
+          duration: s.meta.duration,
+        })),
+      }, 'Ranked results after scoring');
       const topScored = scored[0];
 
       // Title similarity floor: below 50% → confidence 'none'
