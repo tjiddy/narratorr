@@ -183,8 +183,8 @@ class MatchJob {
 
       this.log.debug({ path: book.path, resultCount: searchResults.length }, 'Search returned results');
 
-      // Fetch full detail for top results to get ASIN/duration
-      const detailed = await this.fetchDetails(searchResults.slice(0, 5));
+      // Fetch full detail for all results to get ASIN/duration
+      const detailed = await this.fetchDetails(searchResults);
 
       // Score, re-rank, and apply year tiebreaker
       const scored = rankResults(detailed, book);

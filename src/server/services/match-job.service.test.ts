@@ -325,6 +325,40 @@ describe('MatchJobService', () => {
       const result = service.getJob(id)!.results[0];
       expect(result.confidence).toBe('medium');
     });
+
+    it('considers all search results, not just the first few (DCC regression)', async () => {
+      // Simulates Audible returning the correct match at position 8 of 10
+      const candidate: MatchCandidate = {
+        path: '/audiobooks/Matt Dinniman/Dungeon Crawler Carl/01 - Dungeon Crawler Carl',
+        title: 'Dungeon Crawler Carl',
+        author: 'Matt Dinniman',
+      };
+
+      // 7 wrong results followed by the correct one
+      const wrongResults = Array.from({ length: 7 }, (_, i) =>
+        makeBookMetadata({
+          title: `Wrong Book ${i + 1}`,
+          authors: [{ name: 'Matt Dinniman' }],
+          providerId: `wrong-${i}`,
+        }),
+      );
+      const correctResult = makeBookMetadata({
+        title: 'Dungeon Crawler Carl',
+        authors: [{ name: 'Matt Dinniman' }],
+        providerId: 'correct-asin',
+      });
+      const allResults = [...wrongResults, correctResult];
+
+      (metadataService.searchBooks as ReturnType<typeof vi.fn>).mockResolvedValue(allResults);
+      (metadataService.getBook as ReturnType<typeof vi.fn>).mockResolvedValue(null);
+
+      const id = service.createJob([candidate]);
+      await waitForJob(service, id);
+
+      const result = service.getJob(id)!.results[0];
+      expect(result.bestMatch!.title).toBe('Dungeon Crawler Carl');
+      expect(result.confidence).not.toBe('none');
+    });
   });
 
   describe('runtime disambiguation', () => {
@@ -589,7 +623,7 @@ describe('MatchJobService', () => {
       expect(result.bestMatch!.title).toBe('Null Detail');
     });
 
-    it('only fetches details for top 5 results', async () => {
+    it('fetches details for all search results', async () => {
       const results = Array.from({ length: 8 }, (_, i) =>
         makeBookMetadata({ title: `Book ${i}`, providerId: `prov-${i}` }),
       );
@@ -602,7 +636,7 @@ describe('MatchJobService', () => {
       const id = service.createJob([sampleCandidate]);
       await waitForJob(service, id);
 
-      expect(metadataService.getBook).toHaveBeenCalledTimes(5);
+      expect(metadataService.getBook).toHaveBeenCalledTimes(8);
     });
 
     it('merges detail into search result preserving original title', async () => {
