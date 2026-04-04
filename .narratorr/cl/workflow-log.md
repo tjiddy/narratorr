@@ -1,5 +1,34 @@
 # Workflow Log
 
+## #335 Match confidence — duration threshold too strict + manual match doesn't clear Review — 2026-04-04
+**Skill path:** /implement → /claim → /plan → /handoff
+**Outcome:** success — PR #337
+
+### Metrics
+- Files changed: 6 | Tests added/modified: 13 new + 1 updated
+- Quality gate runs: 2 (pass on attempt 1 both times)
+- Fix iterations: 1 (existing test broke due to threshold change — updated test to use low-score candidate)
+- Context compactions: 0
+
+### Workflow experience
+- What went smoothly: Clean separation of backend and client modules; red/green TDD cycle was straightforward; `scored[]` array already had `.score` field so no refactoring needed
+- Friction / issues encountered: Existing duration test at line 355 used `sampleCandidate` (score 1.0) with 8.3% duration diff — under new tiered logic this became `high` instead of `medium`. Had to update the test to use a low-score candidate to preserve its intent of testing the strict threshold.
+
+### Token efficiency
+- Highest-token actions: Explore subagent for plan exploration (comprehensive but needed for test pattern discovery)
+- Avoidable waste: None — small, focused change
+- Suggestions: For threshold changes, pre-identify all tests that implicitly depend on the threshold value before starting implementation
+
+### Infrastructure gaps
+- Repeated workarounds: None
+- Missing tooling / config: None
+- Unresolved debt: DRY-2 duplication of confidence upgrade logic in useManualImport/useLibraryImport (logged to debt.md)
+
+### Wish I'd Known
+1. The `scored[]` array already contains `.score` — no signature change needed for `resolveConfidenceFromDuration` (saved investigation time)
+2. Existing tests that use `sampleCandidate` (perfect match, score 1.0) implicitly test the relaxed threshold after the change — they need updating to use low-score candidates for strict threshold coverage
+3. Both import hooks have identical confidence upgrade logic — the DRY violation is minor (3 lines) but worth tracking as debt
+
 ## #333 Folder parsing — Series–Number–Title pattern in 2-part paths — 2026-04-04
 **Skill path:** /implement → /claim → /plan → /handoff
 **Outcome:** success — PR #336
