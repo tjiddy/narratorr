@@ -95,11 +95,20 @@ function collectBooks(info: DirInfo, rootPath: string, results: DiscoveredFolder
   const hasOwnAudio = info.audioFiles.length > 0;
   const audioChildren = info.children.filter(c => countAudioFilesDeep(c) > 0);
 
-  if (hasOwnAudio) {
-    // This folder itself contains audio — it's a leaf book folder
+  if (hasOwnAudio && audioChildren.length > 0) {
+    // Mixed-content folder: has loose audio files AND subfolders with audio.
+    // Skip the loose files and fall through to disc-merge / recursion below.
+    log?.debug(
+      {
+        path: info.path,
+        skippedFiles: info.audioFiles.map(f => f.path),
+      },
+      'Skipping loose audio files in mixed-content folder',
+    );
+  } else if (hasOwnAudio) {
+    // Pure leaf book folder — no audio-containing children
     log?.debug({ path: info.path, audioFiles: info.audioFiles.length }, 'Leaf book folder');
     results.push(makeFolderEntry(info, rootPath, info.audioFiles));
-    // Don't recurse into children — they're part of this book
     return;
   }
 
