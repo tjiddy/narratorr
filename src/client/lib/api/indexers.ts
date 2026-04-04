@@ -31,7 +31,7 @@ export const indexersApi = {
     fetchApi<{ success: boolean }>(`/indexers/${id}`, { method: 'DELETE' }),
   testIndexer: (id: number) =>
     fetchApi<TestResult>(`/indexers/${id}/test`, { method: 'POST' }),
-  testIndexerConfig: (data: IndexerInput) =>
+  testIndexerConfig: (data: IndexerInput & { id?: number }) =>
     fetchApi<TestResult>('/indexers/test', {
       method: 'POST',
       body: JSON.stringify(data),

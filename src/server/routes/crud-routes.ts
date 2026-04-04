@@ -1,5 +1,5 @@
 import { type FastifyInstance } from 'fastify';
-import { type z, type ZodTypeAny } from 'zod';
+import { z, type ZodTypeAny } from 'zod';
 import { idParamSchema } from '../../shared/schemas.js';
 import { maskFields, type SecretEntity } from '../utils/secret-codec.js';
 import { getErrorMessage } from '../utils/error-message.js';
@@ -13,7 +13,7 @@ interface CrudService {
   update(id: number, data: unknown): Promise<unknown | null>;
   delete(id: number): Promise<boolean>;
   test(id: number): Promise<{ success: boolean; message?: string; ip?: string; metadata?: Record<string, unknown> }>;
-  testConfig(data: { type: string; settings: Record<string, unknown> }): Promise<{ success: boolean; message?: string; ip?: string; metadata?: Record<string, unknown> }>;
+  testConfig(data: { type: string; settings: Record<string, unknown>; id?: number }): Promise<{ success: boolean; message?: string; ip?: string; metadata?: Record<string, unknown> }>;
 }
 
 interface CrudRouteOptions {
@@ -111,16 +111,21 @@ export async function registerCrudRoutes(
     },
   );
 
-  // POST /api/<resource>/test
-  app.post<{ Body: { type: string; settings: Record<string, unknown> } }>(
+  // POST /api/<resource>/test — extend body schema with optional id for sentinel resolution
+  const testSchema = (createSchema instanceof z.ZodObject)
+    ? createSchema.extend({ id: z.number().int().positive().optional() })
+    : createSchema;
+  app.post<{ Body: { type: string; settings: Record<string, unknown>; id?: number } }>(
     `${basePath}/test`,
-    { schema: { body: createSchema } },
+    { schema: { body: testSchema } },
     async (request) => {
       const data = request.body;
-      const result = await service.testConfig({
+      const testData: { type: string; settings: Record<string, unknown>; id?: number } = {
         type: data.type,
         settings: data.settings,
-      });
+      };
+      if (data.id != null) testData.id = data.id;
+      const result = await service.testConfig(testData);
       if (result.success) {
         request.log.info({ type: data.type }, `${entityName} config test passed`);
       } else {
