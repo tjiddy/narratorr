@@ -48,6 +48,7 @@ function settingsFromIndexer(indexer: Indexer): CreateIndexerFormData['settings'
     searchLanguages: (s.searchLanguages as number[]) ?? [1],
     searchType: (s.searchType as number) ?? 1,
     isVip: s.isVip as boolean | undefined,
+    mamUsername: (s.mamUsername as string) || undefined,
   };
 }
 
@@ -208,7 +209,7 @@ export function IndexerCard(props: IndexerCardProps) {
           </>
         )}
 
-        <IndexerFields selectedType={selectedType} register={register} errors={errors} watch={watch} setValue={setValue} prowlarrManaged={isProwlarrManaged} />
+        <IndexerFields selectedType={selectedType} register={register} errors={errors} watch={watch} setValue={setValue} prowlarrManaged={isProwlarrManaged} formTestResult={formTestResult} />
       </div>
 
       {!isImplemented && (
@@ -227,7 +228,14 @@ export function IndexerCard(props: IndexerCardProps) {
         isEdit={isEdit}
         isPending={isPending}
         testingForm={testingForm}
-        onFormTest={handleSubmit(onFormTest)}
+        onFormTest={handleSubmit((data) => {
+          // In edit mode, include the indexer id for sentinel resolution
+          if (indexer?.id) {
+            onFormTest({ ...data, id: indexer.id } as CreateIndexerFormData);
+          } else {
+            onFormTest(data);
+          }
+        })}
         onCancel={onCancel}
         entityLabel="Indexer"
         testDisabled={!isImplemented}

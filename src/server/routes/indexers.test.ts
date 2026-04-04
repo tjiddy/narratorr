@@ -209,6 +209,88 @@ describe('indexers routes', () => {
       expect(body.metadata).toEqual({ username: 'VipUser', classname: 'VIP', isVip: true });
     });
 
+    it('#339 forwards optional id to service.testConfig when present in body', async () => {
+      (services.indexer.testConfig as Mock).mockResolvedValue({ success: true, message: 'OK' });
+
+      const res = await app.inject({
+        method: 'POST',
+        url: '/api/indexers/test',
+        payload: {
+          name: 'MAM',
+          type: 'myanonamouse',
+          enabled: true,
+          priority: 50,
+          settings: { mamId: '********' },
+          id: 5,
+        },
+      });
+
+      expect(res.statusCode).toBe(200);
+      expect(services.indexer.testConfig).toHaveBeenCalledWith({
+        type: 'myanonamouse',
+        settings: { mamId: '********' },
+        id: 5,
+      });
+    });
+
+    it('#339 omits id from service.testConfig call when not present in body', async () => {
+      (services.indexer.testConfig as Mock).mockResolvedValue({ success: true, message: 'OK' });
+
+      const res = await app.inject({
+        method: 'POST',
+        url: '/api/indexers/test',
+        payload: {
+          name: 'MAM',
+          type: 'myanonamouse',
+          enabled: true,
+          priority: 50,
+          settings: { mamId: 'real-id' },
+        },
+      });
+
+      expect(res.statusCode).toBe(200);
+      expect(services.indexer.testConfig).toHaveBeenCalledWith({
+        type: 'myanonamouse',
+        settings: { mamId: 'real-id' },
+      });
+    });
+
+    it('#339 rejects negative id values in test body with 400', async () => {
+      const res = await app.inject({
+        method: 'POST',
+        url: '/api/indexers/test',
+        payload: {
+          name: 'MAM',
+          type: 'myanonamouse',
+          enabled: true,
+          priority: 50,
+          settings: { mamId: 'test-id' },
+          id: -1,
+        },
+      });
+
+      expect(res.statusCode).toBe(400);
+      expect(services.indexer.testConfig).not.toHaveBeenCalled();
+    });
+
+    it('#339 rejects non-integer id values in test body with 400', async () => {
+      const res = await app.inject({
+        method: 'POST',
+        url: '/api/indexers/test',
+        payload: {
+          name: 'MAM',
+          type: 'myanonamouse',
+          enabled: true,
+          priority: 50,
+          settings: { mamId: 'test-id' },
+          id: 1.5,
+        },
+      });
+
+      expect(res.statusCode).toBe(400);
+      expect(services.indexer.testConfig).not.toHaveBeenCalled();
+    });
+
     it('returns 400 for invalid body', async () => {
       const res = await app.inject({
         method: 'POST',

@@ -318,6 +318,47 @@ describe('createIndexerFormSchema — baseUrl trim (#284)', () => {
   });
 });
 
+describe('createIndexerFormSchema — mamUsername (#339)', () => {
+  const mamBase = {
+    name: 'MAM',
+    type: 'myanonamouse' as const,
+    enabled: true,
+    priority: 50,
+    settings: { mamId: 'test-id' },
+  };
+
+  it('#339 accepts mamUsername as optional string in MAM settings', () => {
+    const result = createIndexerFormSchema.safeParse({
+      ...mamBase,
+      settings: { ...mamBase.settings, mamUsername: 'TestUser' },
+    });
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.settings.mamUsername).toBe('TestUser');
+    }
+  });
+
+  it('#339 accepts omitted mamUsername (optional field)', () => {
+    const result = createIndexerFormSchema.safeParse(mamBase);
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.settings.mamUsername).toBeUndefined();
+    }
+  });
+
+  it('#339 mamUsername roundtrips through schema parse', () => {
+    const result = createIndexerFormSchema.safeParse({
+      ...mamBase,
+      settings: { ...mamBase.settings, mamUsername: 'RoundtripUser', isVip: true },
+    });
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.settings.mamUsername).toBe('RoundtripUser');
+      expect(result.data.settings.isVip).toBe(true);
+    }
+  });
+});
+
 describe('createIndexerFormSchema — searchLanguages and searchType (#291)', () => {
   const mamBase = {
     name: 'MAM',

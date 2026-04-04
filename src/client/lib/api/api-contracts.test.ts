@@ -388,6 +388,15 @@ describe('indexersApi', () => {
       body: JSON.stringify(data),
     }));
   });
+
+  it('#339 testIndexerConfig → POST /indexers/test preserves optional id in body', async () => {
+    const data = { name: 'MAM', type: 'myanonamouse' as const, enabled: true, priority: 50, settings: { mamId: '********' }, id: 5 };
+    await indexersApi.testIndexerConfig(data);
+    expect(mockFetchApi).toHaveBeenCalledWith('/indexers/test', expect.objectContaining({
+      method: 'POST',
+      body: JSON.stringify(data),
+    }));
+  });
 });
 
 describe('libraryScanApi', () => {

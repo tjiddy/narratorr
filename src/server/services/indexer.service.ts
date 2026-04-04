@@ -180,11 +180,23 @@ export class IndexerService {
     this.adapters.clear();
   }
 
-  async testConfig(data: { type: string; settings: Record<string, unknown> }): Promise<{ success: boolean; message?: string; ip?: string; metadata?: Record<string, unknown> }> {
+  async testConfig(data: { type: string; settings: Record<string, unknown>; id?: number }): Promise<{ success: boolean; message?: string; ip?: string; metadata?: Record<string, unknown> }> {
     try {
       this.log.debug({ type: data.type, hostname: data.settings.hostname, pageLimit: data.settings.pageLimit }, 'Testing indexer config');
+
+      // When editing an existing indexer, resolve sentinel values against saved settings
+      let resolvedSettings = data.settings;
+      if (data.id != null) {
+        const existing = await this.getById(data.id);
+        if (!existing) {
+          return { success: false, message: 'Indexer not found' };
+        }
+        resolvedSettings = { ...data.settings };
+        resolveSentinelFields(resolvedSettings, (existing.settings ?? {}) as Record<string, unknown>);
+      }
+
       const proxyUrl = await this.getProxyUrl();
-      const fakeRow = { id: 0, name: '', type: data.type, enabled: true, priority: 0, settings: data.settings, createdAt: new Date() } as IndexerRow;
+      const fakeRow = { id: 0, name: '', type: data.type, enabled: true, priority: 0, settings: resolvedSettings, createdAt: new Date() } as IndexerRow;
       const adapter = this.createAdapter(fakeRow, proxyUrl);
       const result = await adapter.test();
       this.log.debug({ type: data.type, success: result.success, message: result.message }, 'Indexer config test result');
