@@ -54,17 +54,7 @@ export function useLibraryFilters() {
   const [searchQuery, setSearchQueryState] = useState(() => searchParams.get('search') ?? DEFAULTS.search);
   const [debouncedSearch, setDebouncedSearch] = useState(() => searchParams.get('search') ?? DEFAULTS.search);
 
-  const initialPage = parsePage(searchParams.get('page'));
-  const pagination = usePagination(DEFAULT_LIMITS.books);
-
-  // Set initial page from URL (only on mount)
-  const initializedRef = useRef(false);
-  useEffect(() => {
-    if (!initializedRef.current && initialPage > 1) {
-      pagination.setPage(initialPage);
-      initializedRef.current = true;
-    }
-  }, [initialPage, pagination]);
+  const pagination = usePagination(DEFAULT_LIMITS.books, parsePage(searchParams.get('page')));
 
   // Sync state → URL params (replaceState to avoid back-button noise)
   useEffect(() => {

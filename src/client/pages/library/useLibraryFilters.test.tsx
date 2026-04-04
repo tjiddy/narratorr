@@ -396,11 +396,12 @@ describe('useLibraryFilters — URL param initialization', () => {
     expect(result.current.state.sortDirection).toBe('desc');
   });
 
-  it('initializes page from ?page=3 with correct offset', () => {
+  it('initializes page from ?page=3 with correct offset on first render', () => {
     const { result } = renderHook(() => useLibraryFilters(), { wrapper: createWrapper('/library?page=3') });
-    act(() => { vi.advanceTimersByTime(0); });
+    // Page must be synchronous (no effect flush) so the first API fetch uses the right offset
     expect(result.current.params.pagination.page).toBe(3);
     expect(result.current.params.pagination.offset).toBe(200);
+    expect(result.current.params.apiParams.offset).toBe(200);
   });
 
   it('falls back to page 1 for ?page=abc', () => {
@@ -531,7 +532,6 @@ describe('useLibraryFilters — URL param sync on state change', () => {
 
   it('removes page from URL when reset to 1', () => {
     const { result } = renderHook(() => useLibraryFilters(), { wrapper: createCapturingWrapper('/library?page=3') });
-    act(() => { vi.advanceTimersByTime(0); });
     act(() => { result.current.params.pagination.reset(); });
     expect(urlRef.current).not.toContain('page=');
   });
@@ -635,7 +635,6 @@ describe('useLibraryFilters — clearAllFilters updated behavior', () => {
     const { result } = renderHook(() => useLibraryFilters(), {
       wrapper: createWrapper('/library?status=wanted&author=Sanderson&series=Stormlight&narrator=Kramer&search=test&page=3'),
     });
-    act(() => { vi.advanceTimersByTime(0); });
     act(() => { result.current.actions.clearAllFilters(); });
     expect(result.current.state.statusFilter).toBe('all');
     expect(result.current.state.authorFilter).toBe('');
@@ -664,7 +663,6 @@ describe('useLibraryFilters — filter interactions with URL', () => {
 
   it('setting status filter resets page to 1 in URL', () => {
     const { result } = renderHook(() => useLibraryFilters(), { wrapper: createCapturingWrapper('/library?page=3') });
-    act(() => { vi.advanceTimersByTime(0); });
     act(() => { result.current.actions.setStatusFilter('wanted'); });
     expect(urlRef.current).toContain('status=wanted');
     expect(urlRef.current).not.toContain('page=');
