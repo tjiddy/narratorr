@@ -69,7 +69,32 @@ if (commentsRaw.includes("## Status: needs-human-input")) {
   }
 }
 
-// 4. Check CI status (GitHub Actions uses check-runs API, not legacy statuses)
+// 4. Check mergeability — conflicts prevent CI from running, so check before CI gate
+const mergeStateStatus = gh("pr", "view", prNum, "--json", "mergeStateStatus", "--jq", ".mergeStateStatus").trim();
+
+function routeConflict(): never {
+  const prOut = gh("pr", "view", prNum, "--json", GH_FIELDS.PR, "--jq", JQ.PR);
+  const prLabels = replaceLabel(parseLabels(prOut), "stage/", "stage/fixes-pr");
+  ghSetLabels(prNum, prLabels);
+
+  if (linkedIssueId) {
+    const issueOut = gh("issue", "view", linkedIssueId, "--json", GH_FIELDS.ISSUE, "--jq", JQ.ISSUE);
+    const newLabels = replaceLabel(parseLabels(issueOut), "status/", "status/in-progress");
+    ghSetLabels(linkedIssueId, newLabels);
+    withTempFile(
+      `**Rebase needed** — PR #${prNum} has merge conflicts with main. Rebase onto main, resolve conflicts, push, and set \`stage/review-pr\` for a lightweight re-review.`,
+      (p) => { gh("issue", "comment", linkedIssueId, "--body-file", p); }
+    );
+  }
+  die(`REBASE_CONFLICT: PR #${prNum} has merge conflicts with main — sent back to implementer`);
+}
+
+if (mergeStateStatus === "DIRTY") routeConflict();
+if (mergeStateStatus === "BEHIND") {
+  die(`REBASE: PR #${prNum} branch is behind main. Run: git fetch origin main && git rebase origin/main && git push --force-with-lease, then re-run node scripts/merge.ts ${prNum}`);
+}
+
+// 5. Check CI status (GitHub Actions uses check-runs API, not legacy statuses)
 if (sha) {
   let ciResolved = false;
 
@@ -119,37 +144,15 @@ if (sha) {
   }
 }
 
-// 5. Merge
+// 6. Merge
 const { ok: mergeOk, output: mergeOut } = ghSafe("pr", "merge", prNum, "--squash", "--delete-branch");
 if (!mergeOk) {
-  // Route merge failures
+  // Route merge failures — mergeability was already checked in step 4,
+  // but race conditions or GitHub API quirks can still surface conflicts here
   const err = mergeOut.toLowerCase();
-  const errorType = err.includes("conflict") ? "merge conflict"
-    : err.includes("status check") ? "CI failure"
-    : (err.includes("not mergeable") || err.includes("try again")) ? "branch behind base"
-    : "unknown error";
-
-  // Branch behind base: recoverable — caller should try a clean rebase
-  if (errorType === "branch behind base") {
+  if (err.includes("conflict") || err.includes("dirty")) routeConflict();
+  if (err.includes("not mergeable") || err.includes("try again")) {
     die(`REBASE: PR #${prNum} branch is behind main. Run: git fetch origin main && git rebase origin/main && git push --force-with-lease, then re-run node scripts/merge.ts ${prNum}`);
-  }
-
-  // Merge conflict or branch behind with conflicts: send back to implementer
-  if (errorType === "merge conflict") {
-    const prOut = gh("pr", "view", prNum, "--json", GH_FIELDS.PR, "--jq", JQ.PR);
-    const prLabels = replaceLabel(parseLabels(prOut), "stage/", "stage/fixes-pr");
-    ghSetLabels(prNum, prLabels);
-
-    if (linkedIssueId) {
-      const issueOut = gh("issue", "view", linkedIssueId, "--json", GH_FIELDS.ISSUE, "--jq", JQ.ISSUE);
-      const newLabels = replaceLabel(parseLabels(issueOut), "status/", "status/in-progress");
-      ghSetLabels(linkedIssueId, newLabels);
-      withTempFile(
-        `**Rebase needed** — PR #${prNum} has merge conflicts with main. Rebase onto main, resolve conflicts, push, and set \`stage/review-pr\` for a lightweight re-review.`,
-        (p) => { gh("issue", "comment", linkedIssueId, "--body-file", p); }
-      );
-    }
-    die(`REBASE_CONFLICT: PR #${prNum} has merge conflicts with main — sent back to implementer`);
   }
 
   // Other failures: block the issue
@@ -158,14 +161,14 @@ if (!mergeOk) {
     const labels = parseLabels(issueOut);
     const newLabels = labels.includes("blocked") ? labels : [...labels, "blocked"];
     ghSetLabels(linkedIssueId, newLabels);
-    withTempFile(`Merge failed on PR #${prNum} — ${errorType}. ${mergeOut}`, (p) => {
+    withTempFile(`Merge failed on PR #${prNum}. ${mergeOut}`, (p) => {
       gh("issue", "comment", linkedIssueId, "--body-file", p);
     });
   }
-  die(`ERROR: merge failed (${errorType}): ${mergeOut}`);
+  die(`ERROR: merge failed: ${mergeOut}`);
 }
 
-// 6. Update closing issues to status/done (before local cleanup — this is the critical side effect)
+// 7. Update closing issues to status/done (before local cleanup — this is the critical side effect)
 for (const issueId of closingIssueIds) {
   const issueOut = gh("issue", "view", issueId, "--json", GH_FIELDS.ISSUE, "--jq", JQ.ISSUE);
   let labels = parseLabels(issueOut);
@@ -175,7 +178,7 @@ for (const issueId of closingIssueIds) {
   ghSafe("issue", "close", issueId);
 }
 
-// 7. Update local repo
+// 8. Update local repo
 try {
   git("checkout", "main");
   git("pull", "origin", "main");
