@@ -255,6 +255,24 @@ describe('indexers routes', () => {
       });
     });
 
+    it('#339 rejects invalid id values in test body with 400', async () => {
+      const res = await app.inject({
+        method: 'POST',
+        url: '/api/indexers/test',
+        payload: {
+          name: 'MAM',
+          type: 'myanonamouse',
+          enabled: true,
+          priority: 50,
+          settings: { mamId: 'test-id' },
+          id: -1,
+        },
+      });
+
+      expect(res.statusCode).toBe(400);
+      expect(services.indexer.testConfig).not.toHaveBeenCalled();
+    });
+
     it('returns 400 for invalid body', async () => {
       const res = await app.inject({
         method: 'POST',

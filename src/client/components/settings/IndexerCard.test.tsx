@@ -238,6 +238,28 @@ describe('IndexerCard — create mode', () => {
     expect(onFormTest).toHaveBeenCalled();
   });
 
+  it('#339 create-mode Test button does not include id in onFormTest payload', async () => {
+    const onFormTest = vi.fn();
+    const user = userEvent.setup();
+
+    renderWithProviders(
+      <IndexerCard
+        mode="create"
+        onSubmit={vi.fn()}
+        onFormTest={onFormTest}
+      />,
+    );
+
+    await user.type(screen.getByPlaceholderText('AudioBookBay'), 'Test');
+    await user.type(screen.getByPlaceholderText('audiobookbay.lu'), 'example.com');
+    await user.click(screen.getByText('Test'));
+
+    await waitFor(() => {
+      expect(onFormTest).toHaveBeenCalled();
+    });
+    expect(onFormTest.mock.calls[0][0]).not.toHaveProperty('id');
+  });
+
   it('shows form test result', () => {
     const formTestResult: TestResult = { success: false, message: 'Connection refused' };
 
