@@ -262,7 +262,7 @@ export class BookService {
     this.log.info({ id, changedFields }, 'Book updated');
 
     if ('genres' in data && data.genres !== undefined) {
-      this.trackUnmatchedGenres(data.genres).catch((error: unknown) => {
+      this.trackUnmatchedGenres(data.genres ?? undefined).catch((error: unknown) => {
         this.log.debug({ error }, 'Failed to track unmatched genres');
       });
     }

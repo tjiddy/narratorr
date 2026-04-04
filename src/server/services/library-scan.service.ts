@@ -358,7 +358,7 @@ export class LibraryScanService {
   // eslint-disable-next-line complexity -- copy/move + enrich + audnexus + event pipeline, same as processOneImport
   private async enrichImportedBook(
     item: ImportConfirmItem,
-    book: { id: number; narrators?: Array<{ name: string }> | null; duration?: number | null; coverUrl?: string | null },
+    book: { id: number; narrators?: Array<{ name: string }> | null; duration?: number | null; coverUrl?: string | null; genres?: string[] | null },
     meta: BookMetadata | null,
     mode?: ImportMode,
   ): Promise<boolean> {
