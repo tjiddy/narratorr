@@ -1,5 +1,34 @@
 # Workflow Log
 
+## #339 MAM auto-detect — proxy leak, sentinel handling, and badge persistence — 2026-04-04
+**Skill path:** /implement → /claim → /plan → /handoff
+**Outcome:** success — PR #344
+
+### Metrics
+- Files changed: 11 | Tests added/modified: 21
+- Quality gate runs: 2 (pass on attempt 2 — first failed on ESLint complexity)
+- Fix iterations: 1 (MamFields complexity 21 > 15, extracted helpers)
+- Context compactions: 0
+
+### Workflow experience
+- What went smoothly: TDD cycle worked well — red/green per module caught assertion issues early (service test needed fakeRow assertion fix vs objectContaining)
+- Friction / issues encountered: ESLint complexity limit hit on MamFields after adding badge hydration + formTestResult bridge + useProxy passthrough. Prior learning from #317 warned about this but extraction wasn't done upfront.
+
+### Token efficiency
+- Highest-token actions: Explore subagent for plan (comprehensive codebase read), coverage review subagent
+- Avoidable waste: Could have extracted MamFields helpers preemptively instead of post-verify
+- Suggestions: When adding 3+ new conditionals to a MAM component, extract pure helpers first
+
+### Infrastructure gaps
+- Repeated workarounds: None
+- Missing tooling / config: frontend-design skill not available for UI polish pass
+- Unresolved debt: None introduced
+
+### Wish I'd Known
+1. The ESLint complexity limit (15) is easily hit when adding conditional hydration + bridge patterns to form components — extract pure helpers (`deriveInitialMamStatus`, `metadataToMamStatus`) before writing the component body (see `eslint-complexity-mam-fields-extraction.md`)
+2. The generic `registerCrudRoutes` test route shares the `createSchema` for body validation — adding optional fields requires `z.ZodObject.extend()` with a runtime Zod import, not a type-only import (see `crud-routes-zod-extend-for-test-schema.md`)
+3. For badge hydration from persisted values, pass initial state to `useState()` in the hook constructor rather than using `useEffect` — avoids flash-of-empty on edit form open (see `mam-badge-hydration-derive-vs-useeffect.md`)
+
 ## #334 Loose audio files at scan root bundled as phantom book — 2026-04-04
 **Skill path:** /implement → /claim → /plan → /handoff
 **Outcome:** success — PR #338
