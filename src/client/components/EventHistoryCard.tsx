@@ -10,6 +10,7 @@ import {
   RefreshIcon,
   ClockIcon,
   AlertTriangleIcon,
+  BookOpenIcon,
 } from '@/components/icons';
 
 const ACTIONABLE_TYPES = ['grabbed', 'download_completed', 'download_failed', 'imported', 'import_failed'];
@@ -36,6 +37,7 @@ const EVENT_CONFIG: Record<string, EventTypeConfig> = {
   merge_started: { icon: RefreshIcon, label: 'Merge Started', color: 'text-blue-400', bgColor: 'bg-blue-500/10' },
   merge_failed: { icon: XCircleIcon, label: 'Merge Failed', color: 'text-destructive', bgColor: 'bg-destructive/10' },
   wrong_release: { icon: XCircleIcon, label: 'Wrong Release', color: 'text-destructive', bgColor: 'bg-destructive/10' },
+  book_added: { icon: BookOpenIcon, label: 'Book Added', color: 'text-emerald-400', bgColor: 'bg-emerald-500/10' },
 };
 
 const DEFAULT_CONFIG: EventTypeConfig = { icon: ClockIcon, label: 'Unknown', color: 'text-muted-foreground', bgColor: 'bg-muted' };

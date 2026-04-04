@@ -173,4 +173,12 @@ describe('#257 merge observability — EventHistoryCard', () => {
     expect(screen.getByText('Wrong Release')).toBeInTheDocument();
     expect(screen.queryByText('wrong_release')).not.toBeInTheDocument();
   });
+
+  // #341 — book_added event display
+  it('book_added renders with label "Book Added" (not fallback)', () => {
+    render(<EventHistoryCard event={createMockEvent({ eventType: 'book_added' })} />);
+    expect(screen.getByText('Book Added')).toBeInTheDocument();
+    expect(screen.queryByText('book_added')).not.toBeInTheDocument();
+    expect(screen.queryByText('Unknown')).not.toBeInTheDocument();
+  });
 });

@@ -29,6 +29,11 @@ describe('eventHistoryQuerySchema — comma-separated eventType', () => {
     expect(result.eventType).toBeUndefined();
   });
 
+  it('accepts book_added in comma-separated list (#341)', () => {
+    const result = eventHistoryQuerySchema.parse({ eventType: 'book_added,imported' });
+    expect(result.eventType).toEqual(['book_added', 'imported']);
+  });
+
   it('deduplicates repeated types (grabbed,grabbed) to single-element array', () => {
     const result = eventHistoryQuerySchema.parse({ eventType: 'grabbed,grabbed' });
     expect(result.eventType).toEqual(['grabbed']);
@@ -61,5 +66,13 @@ describe('eventTypeSchema', () => {
 
   it('rejects unknown event type strings', () => {
     expect(() => eventTypeSchema.parse('nonexistent_type')).toThrow();
+  });
+
+  it('accepts book_added event type (#341)', () => {
+    expect(eventTypeSchema.parse('book_added')).toBe('book_added');
+  });
+
+  it('rejects typo book_addedd', () => {
+    expect(() => eventTypeSchema.parse('book_addedd')).toThrow();
   });
 });

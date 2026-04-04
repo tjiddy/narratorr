@@ -210,6 +210,17 @@ export async function booksRoutes(app: FastifyInstance, deps: BookRouteDeps) {
 
       const book = await bookService.create(body);
 
+      // Record book_added event (fire-and-forget)
+      if (deps.eventHistory) {
+        deps.eventHistory.create({
+          bookId: book.id,
+          bookTitle: book.title,
+          authorName: book.authors?.map(a => a.name).join(', ') || undefined,
+          eventType: 'book_added',
+          source: 'manual',
+        }).catch((err: unknown) => request.log.warn(err, 'Failed to record book_added event'));
+      }
+
       request.log.info({ title: body.title }, 'Book added');
 
       // Fire-and-forget: trigger search if searchImmediately is set

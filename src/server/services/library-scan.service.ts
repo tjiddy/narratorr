@@ -297,6 +297,7 @@ export class LibraryScanService {
    * Import a single book — creates the DB record, sets path/size, and enriches.
    * Shared pipeline used by both Quick Add and bulk Library Import.
    */
+  // eslint-disable-next-line complexity -- create + duplicate check + metadata lookup + event recording + enrichment pipeline
   async importSingleBook(item: ImportConfirmItem, metadata?: BookMetadata | null, mode?: ImportMode): Promise<ImportSingleResult> {
     // Duplicate check
     const existing = await this.bookService.findDuplicate(item.title, item.authorName ? [{ name: item.authorName }] : undefined);
@@ -325,6 +326,15 @@ export class LibraryScanService {
       }).catch(err => this.log.warn({ err }, 'Failed to record manual import failed event'));
       throw error;
     }
+
+    // Record book_added event (fire-and-forget)
+    this.eventHistory.create({
+      bookId: book.id,
+      bookTitle: book.title,
+      authorName: book.authors?.map(a => a.name).join(', ') || null,
+      eventType: 'book_added',
+      source: 'manual',
+    }).catch(err => this.log.warn({ err }, 'Failed to record book_added event'));
 
     try {
       const enriched = await this.enrichImportedBook(item, book, meta, mode);
@@ -494,6 +504,15 @@ export class LibraryScanService {
         );
 
         const book = await this.bookService.create(buildBookCreatePayload(item, item.metadata ?? null, 'importing'));
+
+        // Record book_added event (fire-and-forget)
+        this.eventHistory.create({
+          bookId: book.id,
+          bookTitle: book.title,
+          authorName: book.authors?.map(a => a.name).join(', ') || null,
+          eventType: 'book_added',
+          source: 'manual',
+        }).catch(err => this.log.warn({ err }, 'Failed to record book_added event'));
 
         accepted.push({ bookId: book.id, item });
       } catch (error: unknown) {

@@ -48,6 +48,25 @@
 - Avoidable waste: None significant — the elaborate/review cycle was necessary given initial spec gaps
 - Suggestions: For future enum-extension features, a checklist of "all call sites that branch on the enum" would save exploration time
 
+## #341 Emit book_added event when a book is created — 2026-04-04
+**Skill path:** /elaborate → /respond-to-spec-review (×2) → /implement → /claim → /plan → /handoff
+**Outcome:** success — PR #345
+
+### Metrics
+- Files changed: 11 | Tests added/modified: 15 new + 2 fixed
+- Quality gate runs: 2 (pass on attempt 1 both times)
+- Fix iterations: 1 (test stubs placed in wrong describe scope, fixed before commit)
+- Context compactions: 0
+
+### Workflow experience
+- What went smoothly: Clean TDD cycle — red/green per module, all tests passed on first verify run. The fire-and-forget event pattern is well-established in the codebase, making implementation straightforward.
+- Friction / issues encountered: Spec review took 2 rounds (10 findings total) — initial spec had wrong method names, contradictory architecture, missing call sites, wrong endpoint, and wrong source values. Thorough elaboration before claim prevented implementation rework.
+
+### Token efficiency
+- Highest-token actions: Two spec review response rounds consumed significant context reading comments and composing fixes. The Explore subagent for plan was also heavy.
+- Avoidable waste: The elaborate → respond-to-spec-review cycle could have been shorter if the initial spec was more accurate. The second review round caught mechanical mismatches (wrong endpoint, wrong source values) that could have been caught in the first elaboration.
+- Suggestions: When elaborating, verify ALL literal values (endpoint paths, source enum values) against the codebase, not just structural claims.
+
 ### Infrastructure gaps
 - Repeated workarounds: None
 - Missing tooling / config: None
@@ -57,6 +76,16 @@
 1. **`isDbDuplicate` helper pattern**: When splitting boolean behavior (isDuplicate) into sub-categories, a centralized predicate prevents drift across 10+ call sites — see `isdbduplicate-helper-pattern.md`
 2. **Hook test mock ordering**: `useLibraryImport` auto-scans on mount, so mock overrides must happen before `renderHook()` via `mockReset()` — see `hook-test-mock-ordering.md`
 3. **ImportCard uses styled buttons, not checkbox inputs**: The select/deselect control is a `<button>` with `aria-label`, not `<input type="checkbox">` — tests must query by role+name, not role alone
+
+### Infrastructure gaps (#341)
+- Repeated workarounds: None
+- Missing tooling / config: None
+- Unresolved debt: None introduced
+
+### Wish I'd Known (#341)
+1. Adding a fire-and-forget event before an existing one shifts `mock.calls` indices — tests that use `[0]` index will break. Always filter by event type. (See `event-history-call-order-test-fragility.md`)
+2. DiscoveryService was the only BookService.create() caller missing EventHistoryService injection — checking constructor signatures against the service graph would have flagged this earlier. (See `discovery-service-missing-event-history.md`)
+3. Library-scan uses `source: 'manual'` for all events (not 'auto') despite being triggered by a scan — the source taxonomy reflects user initiation, not automation.
 
 ## #339 MAM auto-detect — proxy leak, sentinel handling, and badge persistence — 2026-04-04
 **Skill path:** /implement → /claim → /plan → /handoff
