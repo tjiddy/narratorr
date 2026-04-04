@@ -2310,6 +2310,31 @@ describe('LibraryScanService', () => {
         );
       });
 
+      it('uses comma-joined authorName from created book for multi-author imports', async () => {
+        mockBookService.create.mockResolvedValueOnce({
+          id: 1,
+          title: 'Title',
+          status: 'importing',
+          authors: [{ id: 1, name: 'Author A' }, { id: 2, name: 'Author B' }],
+        });
+
+        await service.confirmImport([
+          {
+            path: '/audiobooks/Author/Title',
+            title: 'Title',
+            authorName: 'Author A',
+            metadata: { title: 'Title', authors: [{ name: 'Author A' }, { name: 'Author B' }], narrators: [] },
+          },
+        ]);
+
+        expect(mockEventHistoryService.create).toHaveBeenCalledWith(
+          expect.objectContaining({
+            eventType: 'book_added',
+            authorName: 'Author A, Author B',
+          }),
+        );
+      });
+
       it('does NOT record book_added event for duplicate-skipped items', async () => {
         mockBookService.findDuplicate.mockResolvedValueOnce({ id: 1, title: 'Existing' });
 
