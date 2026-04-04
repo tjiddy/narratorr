@@ -1,5 +1,34 @@
 # Workflow Log
 
+## #334 Loose audio files at scan root bundled as phantom book — 2026-04-04
+**Skill path:** /implement → /claim → /plan → /handoff
+**Outcome:** success — PR #338
+
+### Metrics
+- Files changed: 2 | Tests added/modified: 15 (14 new, 1 updated)
+- Quality gate runs: 2 (pass on attempt 1 both times)
+- Fix iterations: 0
+- Context compactions: 0
+
+### Workflow experience
+- What went smoothly: Single-file bug fix with clear spec. TDD cycle was clean — 10 tests failed red, all passed green after a 9-line production change. One existing test needed updating (it tested the buggy behavior).
+- Friction / issues encountered: Spec review took 3 rounds due to `audioChildren` vs `immediateAudioChildren` conflation — the distinction is subtle but critical for disc-merge correctness.
+
+### Token efficiency
+- Highest-token actions: Spec review response rounds (3 rounds of elaborate + respond-to-spec-review)
+- Avoidable waste: None — the spec review rounds caught a real disc-merge interaction bug that would have failed in PR review
+- Suggestions: For book-discovery changes, always note the audioChildren/immediateAudioChildren distinction upfront
+
+### Infrastructure gaps
+- Repeated workarounds: None
+- Missing tooling / config: None
+- Unresolved debt: None discovered
+
+### Wish I'd Known
+1. `audioChildren` (deep recursive) vs `immediateAudioChildren` (direct audio) is the critical variable distinction in collectBooks() — confusing them in specs breaks disc-merge
+2. The existing "parent as leaf" test at line 486 was testing the exact buggy behavior — updating it (not deleting) was the right call
+3. The fix is structurally a guard reorder: the new mixed-content check becomes the `if`, the old leaf check becomes `else if`, and the fall-through to disc-merge/recursion handles both mixed-content and no-audio cases
+
 ## #335 Match confidence — duration threshold too strict + manual match doesn't clear Review — 2026-04-04
 **Skill path:** /implement → /claim → /plan → /handoff
 **Outcome:** success — PR #337
