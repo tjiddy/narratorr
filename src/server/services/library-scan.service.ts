@@ -297,6 +297,7 @@ export class LibraryScanService {
    * Import a single book — creates the DB record, sets path/size, and enriches.
    * Shared pipeline used by both Quick Add and bulk Library Import.
    */
+  // eslint-disable-next-line complexity -- create + duplicate check + metadata lookup + event recording + enrichment pipeline
   async importSingleBook(item: ImportConfirmItem, metadata?: BookMetadata | null, mode?: ImportMode): Promise<ImportSingleResult> {
     // Duplicate check
     const existing = await this.bookService.findDuplicate(item.title, item.authorName ? [{ name: item.authorName }] : undefined);
