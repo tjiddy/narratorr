@@ -1675,6 +1675,63 @@ describe('LibraryScanService', () => {
       });
     });
 
+    it('persists genres in background when book has no existing genres', async () => {
+      // DB select for current genres returns null (no genres yet)
+      (mockDb as Record<string, ReturnType<typeof vi.fn>>).limit
+        .mockResolvedValueOnce([])  // bookRecord lookup (no mode)
+        .mockResolvedValueOnce([{ genres: null }]);  // current genres query
+
+      mockMetadataService.enrichBook.mockResolvedValueOnce({
+        genres: ['Fantasy', 'Adventure'],
+      });
+
+      await service.confirmImport([
+        {
+          path: '/audiobooks/HP',
+          title: 'Harry Potter',
+          asin: 'B017V4IM1G',
+          metadata: { title: 'HP', authors: [{ name: 'JKR' }], asin: 'B017V4IM1G' },
+        },
+      ]);
+
+      await vi.waitFor(() => {
+        expect(mockBookService.update).toHaveBeenCalledWith(1, { genres: ['Fantasy', 'Adventure'] });
+      });
+    });
+
+    it('does not overwrite genres in background when book already has genres', async () => {
+      // Override create to return a book WITH existing genres
+      mockBookService.create.mockResolvedValueOnce({
+        id: 1, title: 'Harry Potter', status: 'importing', authors: [], narrators: [], genres: ['Existing Genre'],
+      });
+
+      // DB select for current genres returns existing genres
+      (mockDb as Record<string, ReturnType<typeof vi.fn>>).limit.mockResolvedValue([{ genres: ['Existing Genre'] }]);
+
+      mockMetadataService.enrichBook.mockResolvedValueOnce({
+        genres: ['New Genre'],
+      });
+
+      await service.confirmImport([
+        {
+          path: '/audiobooks/HP',
+          title: 'Harry Potter',
+          asin: 'B017V4IM1G',
+          metadata: { title: 'HP', authors: [{ name: 'JKR' }], asin: 'B017V4IM1G' },
+        },
+      ]);
+
+      await vi.waitFor(() => {
+        expect(mockMetadataService.enrichBook).toHaveBeenCalledWith('B017V4IM1G');
+      });
+
+      // bookService.update should NOT have been called with genres
+      const genreUpdateCalls = mockBookService.update.mock.calls.filter(
+        (call: unknown[]) => call[1] && typeof call[1] === 'object' && 'genres' in (call[1] as Record<string, unknown>),
+      );
+      expect(genreUpdateCalls).toHaveLength(0);
+    });
+
     it('copies to library in background when mode is set', async () => {
       // Mock db.select for the book record lookup in processImportsInBackground
       (mockDb as Record<string, ReturnType<typeof vi.fn>>).limit.mockResolvedValue([{
