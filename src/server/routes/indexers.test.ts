@@ -255,7 +255,7 @@ describe('indexers routes', () => {
       });
     });
 
-    it('#339 rejects invalid id values in test body with 400', async () => {
+    it('#339 rejects negative id values in test body with 400', async () => {
       const res = await app.inject({
         method: 'POST',
         url: '/api/indexers/test',
@@ -266,6 +266,24 @@ describe('indexers routes', () => {
           priority: 50,
           settings: { mamId: 'test-id' },
           id: -1,
+        },
+      });
+
+      expect(res.statusCode).toBe(400);
+      expect(services.indexer.testConfig).not.toHaveBeenCalled();
+    });
+
+    it('#339 rejects non-integer id values in test body with 400', async () => {
+      const res = await app.inject({
+        method: 'POST',
+        url: '/api/indexers/test',
+        payload: {
+          name: 'MAM',
+          type: 'myanonamouse',
+          enabled: true,
+          priority: 50,
+          settings: { mamId: 'test-id' },
+          id: 1.5,
         },
       });
 
