@@ -212,10 +212,11 @@ describe('LibraryScanService', () => {
     mockDb = Object.assign(db, chainMethods);
     mockBookService = {
       findDuplicate: vi.fn().mockResolvedValue(null),
-      create: vi.fn().mockImplementation(async (data: { title: string }) => ({
+      create: vi.fn().mockImplementation(async (data: { title: string; authors?: { name: string }[] }) => ({
         id: 1,
         title: data.title,
         status: 'imported',
+        authors: (data.authors ?? []).map((a, i) => ({ id: i + 1, name: a.name })),
       })),
       update: vi.fn().mockResolvedValue({ id: 1, title: 'Test', authors: [], narrators: [] }),
     };
@@ -2241,6 +2242,27 @@ describe('LibraryScanService', () => {
             source: 'manual',
             bookTitle: 'Book',
             authorName: 'Author',
+          }),
+        );
+      });
+
+      it('uses comma-joined authorName from created book for multi-author imports', async () => {
+        mockBookService.create.mockResolvedValueOnce({
+          id: 1,
+          title: 'Book',
+          status: 'imported',
+          authors: [{ id: 1, name: 'Author A' }, { id: 2, name: 'Author B' }],
+        });
+
+        await service.importSingleBook(
+          { path: '/audiobooks/Author/Book', title: 'Book', authorName: 'Author A' },
+          { title: 'Book', authors: [{ name: 'Author A' }, { name: 'Author B' }], narrators: [] },
+        );
+
+        expect(mockEventHistoryService.create).toHaveBeenCalledWith(
+          expect.objectContaining({
+            eventType: 'book_added',
+            authorName: 'Author A, Author B',
           }),
         );
       });

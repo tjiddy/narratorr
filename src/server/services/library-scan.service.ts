@@ -330,7 +330,7 @@ export class LibraryScanService {
     this.eventHistory.create({
       bookId: book.id,
       bookTitle: book.title,
-      authorName: item.authorName ?? null,
+      authorName: book.authors?.map(a => a.name).join(', ') || null,
       eventType: 'book_added',
       source: 'manual',
     }).catch(err => this.log.warn({ err }, 'Failed to record book_added event'));
@@ -508,7 +508,7 @@ export class LibraryScanService {
         this.eventHistory.create({
           bookId: book.id,
           bookTitle: book.title,
-          authorName: item.authorName ?? null,
+          authorName: book.authors?.map(a => a.name).join(', ') || null,
           eventType: 'book_added',
           source: 'manual',
         }).catch(err => this.log.warn({ err }, 'Failed to record book_added event'));
