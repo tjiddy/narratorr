@@ -1,4 +1,4 @@
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useEffect } from 'react';
 import type { UseFormRegister, FieldErrors, UseFormWatch, UseFormSetValue } from 'react-hook-form';
 import type { CreateIndexerFormData } from '../../../shared/schemas.js';
 import { useQuery } from '@tanstack/react-query';
@@ -14,9 +14,10 @@ interface IndexerFieldsProps {
   watch?: UseFormWatch<CreateIndexerFormData>;
   setValue?: UseFormSetValue<CreateIndexerFormData>;
   prowlarrManaged?: boolean;
+  formTestResult?: { success: boolean; metadata?: Record<string, unknown> } | null;
 }
 
-type FieldComponent = (props: Pick<IndexerFieldsProps, 'register' | 'errors' | 'watch' | 'setValue'> & { selectedType: string; prowlarrManaged?: boolean }) => React.JSX.Element;
+type FieldComponent = (props: Pick<IndexerFieldsProps, 'register' | 'errors' | 'watch' | 'setValue' | 'formTestResult'> & { selectedType: string; prowlarrManaged?: boolean }) => React.JSX.Element;
 
 function FlareSolverrField({ register, errors }: Pick<IndexerFieldsProps, 'register' | 'errors'>) {
   return (
@@ -132,13 +133,13 @@ interface MamStatus {
   isVip: boolean;
 }
 
-function useMamDetection(watch?: UseFormWatch<CreateIndexerFormData>, setValue?: UseFormSetValue<CreateIndexerFormData>) {
-  const [mamStatus, setMamStatus] = useState<MamStatus | null>(null);
+function useMamDetection(watch?: UseFormWatch<CreateIndexerFormData>, setValue?: UseFormSetValue<CreateIndexerFormData>, initialStatus?: MamStatus | null) {
+  const [mamStatus, setMamStatus] = useState<MamStatus | null>(initialStatus ?? null);
   const [detectError, setDetectError] = useState<string | null>(null);
   const [isDetecting, setIsDetecting] = useState(false);
 
   const detect = useCallback(async (mamId: string) => {
-    if (!mamId.trim()) return;
+    if (!mamId.trim() || mamId === '********') return;
     setIsDetecting(true);
     setDetectError(null);
     const startTime = Date.now();
@@ -150,9 +151,10 @@ function useMamDetection(watch?: UseFormWatch<CreateIndexerFormData>, setValue?:
 
     try {
       const baseUrl = watch ? (watch('settings.baseUrl') || '') : '';
+      const useProxy = watch ? (watch('settings.useProxy') || false) : false;
       const result = await api.testIndexerConfig({
         name: 'Detection', type: 'myanonamouse', enabled: true, priority: 0,
-        settings: { mamId, baseUrl },
+        settings: { mamId, baseUrl, useProxy },
       });
       await ensureMinDuration();
 
@@ -163,7 +165,10 @@ function useMamDetection(watch?: UseFormWatch<CreateIndexerFormData>, setValue?:
           isVip: result.metadata.isVip as boolean,
         };
         setMamStatus(status);
-        if (setValue) setValue('settings.isVip', status.isVip);
+        if (setValue) {
+          setValue('settings.isVip', status.isVip);
+          setValue('settings.mamUsername', status.username);
+        }
       } else {
         setDetectError(result.message || 'Detection failed');
         setMamStatus(null);
@@ -176,7 +181,7 @@ function useMamDetection(watch?: UseFormWatch<CreateIndexerFormData>, setValue?:
     setIsDetecting(false);
   }, [watch, setValue]);
 
-  return { mamStatus, detectError, isDetecting, detect };
+  return { mamStatus, detectError, isDetecting, detect, setMamStatus };
 }
 
 function MamStatusBadge({ status, onRefresh }: { status: MamStatus; onRefresh: () => void }) {
@@ -217,9 +222,31 @@ function DetectionOverlay() {
   );
 }
 
-function MamFields({ register, errors, watch, setValue }: Pick<IndexerFieldsProps, 'register' | 'errors' | 'watch' | 'setValue'>) {
+function MamFields({ register, errors, watch, setValue, formTestResult }: Pick<IndexerFieldsProps, 'register' | 'errors' | 'watch' | 'setValue' | 'formTestResult'>) {
   const searchLanguages = watch ? (watch('settings.searchLanguages') ?? [1]) : [1];
-  const { mamStatus, detectError, isDetecting, detect } = useMamDetection(watch, setValue);
+
+  // Derive initial badge state from persisted settings (edit mode)
+  const persistedIsVip = watch ? watch('settings.isVip') : undefined;
+  const persistedUsername = watch ? watch('settings.mamUsername') : undefined;
+  const initialStatus: MamStatus | null = (persistedIsVip != null && persistedUsername)
+    ? { username: persistedUsername, isVip: persistedIsVip, classname: persistedIsVip ? 'VIP' : 'User' }
+    : persistedIsVip != null
+      ? { username: '', isVip: persistedIsVip, classname: persistedIsVip ? 'VIP' : 'User' }
+      : null;
+
+  const { mamStatus, detectError, isDetecting, detect, setMamStatus } = useMamDetection(watch, setValue, initialStatus);
+
+  // Bridge: update badge from explicit Test button result
+  useEffect(() => {
+    if (formTestResult?.success && formTestResult.metadata && 'isVip' in formTestResult.metadata) {
+      const status: MamStatus = {
+        username: formTestResult.metadata.username as string || '',
+        classname: formTestResult.metadata.classname as string | undefined,
+        isVip: formTestResult.metadata.isVip as boolean,
+      };
+      setMamStatus(status);
+    }
+  }, [formTestResult, setMamStatus]);
 
   function toggleLanguage(langId: number) {
     if (!setValue) return;
@@ -342,12 +369,12 @@ function UseProxyField({ register, watch }: { register: UseFormRegister<CreateIn
   );
 }
 
-export function IndexerFields({ selectedType, register, errors, watch, setValue, prowlarrManaged }: IndexerFieldsProps) {
+export function IndexerFields({ selectedType, register, errors, watch, setValue, prowlarrManaged, formTestResult }: IndexerFieldsProps) {
   const Component = FIELD_COMPONENTS[selectedType];
   if (!Component) return null;
   return (
     <>
-      <Component register={register} errors={errors} watch={watch} setValue={setValue} selectedType={selectedType} prowlarrManaged={prowlarrManaged} />
+      <Component register={register} errors={errors} watch={watch} setValue={setValue} selectedType={selectedType} prowlarrManaged={prowlarrManaged} formTestResult={formTestResult} />
       <UseProxyField register={register} watch={watch} />
     </>
   );

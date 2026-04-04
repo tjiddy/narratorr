@@ -691,6 +691,166 @@ describe('IndexerCard — Prowlarr-managed indicators (AC8)', () => {
       expect(onSubmit.mock.calls[0][0].settings).toHaveProperty('isVip', true);
     });
 
+    it('#339 hydrates mamStatus badge from persisted isVip and mamUsername on edit form open', () => {
+      const mamIndexer: Indexer = createMockIndexer({
+        id: 15,
+        name: 'MAM Persisted',
+        type: 'myanonamouse',
+        settings: { mamId: '********', baseUrl: '', searchLanguages: [1], searchType: 1, isVip: true, mamUsername: 'PersistedUser' },
+      });
+
+      renderWithProviders(
+        <IndexerCard
+          indexer={mamIndexer}
+          mode="edit"
+          onSubmit={vi.fn()}
+          onFormTest={vi.fn()}
+        />,
+      );
+
+      // Badge should render from persisted values without API call
+      expect(screen.getByText('PersistedUser')).toBeInTheDocument();
+      expect(screen.getByText('VIP')).toBeInTheDocument();
+    });
+
+    it('#339 edit form with isVip: false and mamUsername shows User badge without API call', () => {
+      const mamIndexer: Indexer = createMockIndexer({
+        id: 16,
+        name: 'MAM User',
+        type: 'myanonamouse',
+        settings: { mamId: '********', baseUrl: '', searchLanguages: [1], searchType: 1, isVip: false, mamUsername: 'RegularUser' },
+      });
+
+      renderWithProviders(
+        <IndexerCard
+          indexer={mamIndexer}
+          mode="edit"
+          onSubmit={vi.fn()}
+          onFormTest={vi.fn()}
+        />,
+      );
+
+      expect(screen.getByText('RegularUser')).toBeInTheDocument();
+      expect(screen.getByText('User')).toBeInTheDocument();
+    });
+
+    it('#339 edit form with isVip: true but no mamUsername shows VIP badge without username text', () => {
+      const mamIndexer: Indexer = createMockIndexer({
+        id: 17,
+        name: 'MAM VIP No Username',
+        type: 'myanonamouse',
+        settings: { mamId: '********', baseUrl: '', searchLanguages: [1], searchType: 1, isVip: true },
+      });
+
+      renderWithProviders(
+        <IndexerCard
+          indexer={mamIndexer}
+          mode="edit"
+          onSubmit={vi.fn()}
+          onFormTest={vi.fn()}
+        />,
+      );
+
+      expect(screen.getByText('VIP')).toBeInTheDocument();
+    });
+
+    it('#339 non-MAM indexer edit form does not render mamStatus badge', () => {
+      renderWithProviders(
+        <IndexerCard
+          indexer={mockIndexer}
+          mode="edit"
+          onSubmit={vi.fn()}
+          onFormTest={vi.fn()}
+        />,
+      );
+
+      expect(screen.queryByText('VIP')).not.toBeInTheDocument();
+      expect(screen.queryByText('User')).not.toBeInTheDocument();
+    });
+
+    it('#339 preserves mamUsername through edit-mode hydration and save', async () => {
+      const onSubmit = vi.fn();
+      const user = userEvent.setup();
+      const mamIndexer: Indexer = createMockIndexer({
+        id: 18,
+        name: 'MAM Username',
+        type: 'myanonamouse',
+        settings: { mamId: '********', baseUrl: '', searchLanguages: [1], searchType: 1, isVip: true, mamUsername: 'SavedUser' },
+      });
+
+      renderWithProviders(
+        <IndexerCard
+          indexer={mamIndexer}
+          mode="edit"
+          onSubmit={onSubmit}
+          onFormTest={vi.fn()}
+        />,
+      );
+
+      await user.click(screen.getByText('Save Changes'));
+      await waitFor(() => {
+        expect(onSubmit).toHaveBeenCalled();
+      });
+      expect(onSubmit.mock.calls[0][0].settings).toHaveProperty('mamUsername', 'SavedUser');
+    });
+
+    it('#339 explicit Test button success updates mamStatus badge from formTestResult.metadata', () => {
+      const mamIndexer: Indexer = createMockIndexer({
+        id: 19,
+        name: 'MAM Test Badge',
+        type: 'myanonamouse',
+        settings: { mamId: '********', baseUrl: '', searchLanguages: [1], searchType: 1, isVip: false, mamUsername: 'OldUser' },
+      });
+
+      const formTestResult: TestResult = {
+        success: true,
+        message: 'Connected',
+        metadata: { username: 'FreshUser', classname: 'VIP', isVip: true },
+      };
+
+      renderWithProviders(
+        <IndexerCard
+          indexer={mamIndexer}
+          mode="edit"
+          formTestResult={formTestResult}
+          onSubmit={vi.fn()}
+          onFormTest={vi.fn()}
+        />,
+      );
+
+      // Badge should show fresh metadata from Test button, not persisted data
+      expect(screen.getByText('FreshUser')).toBeInTheDocument();
+      expect(screen.getByText('VIP')).toBeInTheDocument();
+    });
+
+    it('#339 Test button failure does not clear persisted badge data', () => {
+      const mamIndexer: Indexer = createMockIndexer({
+        id: 20,
+        name: 'MAM Fail Badge',
+        type: 'myanonamouse',
+        settings: { mamId: '********', baseUrl: '', searchLanguages: [1], searchType: 1, isVip: true, mamUsername: 'PersistedUser' },
+      });
+
+      const formTestResult: TestResult = {
+        success: false,
+        message: 'Connection failed',
+      };
+
+      renderWithProviders(
+        <IndexerCard
+          indexer={mamIndexer}
+          mode="edit"
+          formTestResult={formTestResult}
+          onSubmit={vi.fn()}
+          onFormTest={vi.fn()}
+        />,
+      );
+
+      // Persisted badge should still render despite test failure
+      expect(screen.getByText('PersistedUser')).toBeInTheDocument();
+      expect(screen.getByText('VIP')).toBeInTheDocument();
+    });
+
     it('preserves searchLanguages: [] via ?? (not ||) in settingsFromIndexer', () => {
       const mamIndexer: Indexer = createMockIndexer({
         id: 13,

@@ -481,6 +481,119 @@ describe('IndexerFields', () => {
       expect(onSubmit.mock.calls[0][0].settings.isVip).toBe(true);
     });
 
+    it('#339 skips detection when MAM ID is sentinel value (********)', async () => {
+      const user = userEvent.setup();
+
+      function SentinelWrapper() {
+        const { register, watch, setValue, formState: { errors } } = useForm<CreateIndexerFormData>({
+          defaultValues: {
+            name: '', type: 'myanonamouse',
+            settings: { mamId: '********', searchLanguages: [1], searchType: 1 },
+          },
+        });
+        return <IndexerFields selectedType="myanonamouse" register={register} errors={errors} watch={watch} setValue={setValue} />;
+      }
+
+      renderWithProviders(<SentinelWrapper />);
+
+      const mamIdInput = screen.getByLabelText('MAM ID');
+      await user.click(mamIdInput);
+      await user.tab(); // blur with sentinel value
+
+      expect((api.testIndexerConfig as Mock)).not.toHaveBeenCalled();
+    });
+
+    it('#339 onBlur detect includes useProxy: true from form state in payload', async () => {
+      (api.testIndexerConfig as Mock).mockResolvedValue({
+        success: true,
+        metadata: { username: 'ProxyUser', classname: 'User', isVip: false },
+      });
+      const user = userEvent.setup();
+
+      function ProxyWrapper() {
+        const { register, watch, setValue, formState: { errors } } = useForm<CreateIndexerFormData>({
+          defaultValues: {
+            name: '', type: 'myanonamouse',
+            settings: { mamId: '', searchLanguages: [1], searchType: 1, useProxy: true },
+          },
+        });
+        return <IndexerFields selectedType="myanonamouse" register={register} errors={errors} watch={watch} setValue={setValue} />;
+      }
+
+      (api.getSettings as Mock).mockResolvedValue({ network: { proxyUrl: 'http://proxy:8888' } });
+      renderWithProviders(<ProxyWrapper />);
+
+      const mamIdInput = screen.getByLabelText('MAM ID');
+      await user.type(mamIdInput, 'proxy-test-id');
+      await user.tab();
+
+      await waitFor(() => {
+        expect((api.testIndexerConfig as Mock)).toHaveBeenCalledWith(
+          expect.objectContaining({
+            settings: expect.objectContaining({ mamId: 'proxy-test-id', useProxy: true }),
+          }),
+        );
+      });
+    });
+
+    it('#339 onBlur detect omits useProxy when form has useProxy: false', async () => {
+      (api.testIndexerConfig as Mock).mockResolvedValue({
+        success: true,
+        metadata: { username: 'NoProxyUser', classname: 'User', isVip: false },
+      });
+      const user = userEvent.setup();
+      renderWithProviders(<MamDetectionWrapper />);
+
+      const mamIdInput = screen.getByLabelText('MAM ID');
+      await user.type(mamIdInput, 'no-proxy-id');
+      await user.tab();
+
+      await waitFor(() => {
+        const call = (api.testIndexerConfig as Mock).mock.calls[0][0];
+        expect(call.settings.useProxy).toBeFalsy();
+      });
+    });
+
+    it('#339 detection success writes mamUsername into form state via setValue', async () => {
+      (api.testIndexerConfig as Mock).mockResolvedValue({
+        success: true,
+        metadata: { username: 'DetectedUser', classname: 'VIP', isVip: true },
+      });
+
+      const onSubmit = vi.fn();
+      function MamUsernameFormWrapper() {
+        const { register, handleSubmit, watch, setValue, formState: { errors } } = useForm<CreateIndexerFormData>({
+          defaultValues: {
+            name: 'Test', type: 'myanonamouse', enabled: true, priority: 0,
+            settings: { mamId: '', searchLanguages: [1], searchType: 1 },
+          },
+        });
+        return (
+          <form onSubmit={handleSubmit(onSubmit)}>
+            <IndexerFields selectedType="myanonamouse" register={register} errors={errors} watch={watch} setValue={setValue} />
+            <button type="submit">Submit</button>
+          </form>
+        );
+      }
+
+      const user = userEvent.setup();
+      renderWithProviders(<MamUsernameFormWrapper />);
+
+      const mamIdInput = screen.getByLabelText('MAM ID');
+      await user.type(mamIdInput, 'detect-id');
+      await user.tab();
+
+      await waitFor(() => {
+        expect(screen.getByText('DetectedUser')).toBeInTheDocument();
+      }, { timeout: 3000 });
+
+      await user.click(screen.getByText('Submit'));
+      await waitFor(() => {
+        expect(onSubmit).toHaveBeenCalled();
+      });
+      expect(onSubmit.mock.calls[0][0].settings.mamUsername).toBe('DetectedUser');
+    });
+
     it('refresh button triggers a second detection request', async () => {
       (api.testIndexerConfig as Mock).mockResolvedValue({
         success: true,
