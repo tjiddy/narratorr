@@ -1,7 +1,9 @@
 #!/usr/bin/env node
-// Post a review comment to a PR from the pre-written review.md file.
+// Post a review comment from the pre-written review.md file.
+// Supports both PR reviews (--kind pr) and spec reviews (--kind spec).
 // Guards against double-posting and premature posting (before analysis is complete).
-// Usage: node scripts/post-review.ts <pr-number> [--force]
+// Usage: node scripts/post-review.ts <number> [--kind spec|pr] [--force]
+//   --kind: "pr" (default) posts to a PR, "spec" posts to an issue
 //   --force: bypass the posted-marker guard (used by the rebase-conflict path
 //            to post a second needs-work verdict after an approve was already posted)
 // Output: "POSTED: <comment-url>" on success, "ERROR: ..." on failure.
@@ -14,11 +16,14 @@ import { gh, withTempFile, die } from "./lib.ts";
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const root = resolve(__dirname, "..");
 
-const prNum = process.argv[2];
-if (!prNum) die("ERROR: usage: node scripts/post-review.ts <pr-number> [--force]");
+const num = process.argv[2];
+if (!num) die("ERROR: usage: node scripts/post-review.ts <number> [--kind spec|pr] [--force]");
 const force = process.argv.includes("--force");
+const kindIdx = process.argv.indexOf("--kind");
+const kind = kindIdx !== -1 ? process.argv[kindIdx + 1] : "pr";
+if (kind !== "pr" && kind !== "spec") die("ERROR: --kind must be 'pr' or 'spec'");
 
-const stateDir = join(root, ".narratorr", "state", `review-pr-${prNum}`);
+const stateDir = join(root, ".narratorr", "state", `review-${kind}-${num}`);
 const reviewPath = join(stateDir, "review.md");
 const reviewCompleteMarker = join(stateDir, "review-complete");
 const postedMarker = join(stateDir, "posted");
@@ -38,7 +43,9 @@ if (!force && existsSync(postedMarker)) die("ERROR: already posted — posted ma
 // Post the review comment
 const body = readFileSync(reviewPath, "utf-8");
 const commentUrl = withTempFile(body, (tmpPath) =>
-  gh("pr", "comment", prNum, "--body-file", tmpPath),
+  kind === "pr"
+    ? gh("pr", "comment", num, "--body-file", tmpPath)
+    : gh("issue", "comment", num, "--body-file", tmpPath),
 );
 
 // Write posted marker

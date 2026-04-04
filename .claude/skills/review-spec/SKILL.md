@@ -70,6 +70,8 @@ All GitHub commands use: `node scripts/gh.ts` (referred to as `gh` below).
 
    Launch an **Explore subagent** (Agent tool, `subagent_type: "Explore"`, thoroughness: "very thorough") with this prompt:
 
+   > **You are a READ-ONLY research agent.** Your job is to explore the codebase and return findings. You must NEVER post GitHub comments, change labels, run `node scripts/gh.ts issue comment`, run `node scripts/update-labels.ts`, or perform ANY write operation against GitHub. Return your findings as text — the main agent handles all posting.
+   >
    > Exhaustively explore the codebase relevant to issue #<id>: "<issue title>".
    > Scope labels: <labels>. Key areas from spec: <summarize AC and implementation hints>.
    >
@@ -182,12 +184,11 @@ All GitHub commands use: `node scripts/gh.ts` (referred to as `gh` below).
 
 8. **Post review comment AND set labels (both are MANDATORY GitHub API calls — do not skip either):**
 
-   **8a. Post the review comment (with double-post guard):**
-   - Write the review to state dir: `mkdir -p .narratorr/state/review-spec-<id> && echo '<review body>' > .narratorr/state/review-spec-<id>/review.md`
-   - **Check for posted marker BEFORE posting:** If `.narratorr/state/review-spec-<id>/posted` exists, STOP — a review was already posted in this dispatch. This prevents subagent/main-thread race conditions from posting duplicate reviews.
-   - Post: write review body to temp file, then `node scripts/gh.ts issue comment <id> --body-file <temp-file-path>`
-   - **Verify the comment was posted** — the command should return the comment URL. If it fails, retry once.
-   - **Write posted marker immediately after successful post:** `echo done > .narratorr/state/review-spec-<id>/posted`
+   **8a. Post the review comment (via guarded script — NEVER post directly with `gh issue comment`):**
+   - Write the review to state dir: `mkdir -p .narratorr/state/review-spec-<id>` then write the review body to `.narratorr/state/review-spec-<id>/review.md`
+   - Post using the guarded script: `node scripts/post-review.ts <id> --kind spec`
+   - The script checks the posted marker, posts the comment, and writes the marker atomically. If it returns `ERROR: already posted`, STOP — do not attempt to post again.
+   - **NEVER call `node scripts/gh.ts issue comment` directly for review comments.** The guard script is the only allowed posting path.
    - Template:
      ```
      ## Spec Review
