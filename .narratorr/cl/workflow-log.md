@@ -1,5 +1,34 @@
 # Workflow Log
 
+## #340 Test cleanup — MAM search type, blacklist cancel, lint — 2026-04-04
+**Skill path:** /implement → /claim → /plan → /handoff
+**Outcome:** success — PR #347
+
+### Metrics
+- Files changed: 1 | Tests added/modified: 0
+- Quality gate runs: 2 (pass on attempt 1 both times)
+- Fix iterations: 0
+- Context compactions: 0
+
+### Workflow experience
+- What went smoothly: Trivial 2-line change, existing 79 tests confirmed no behavioral regression
+- Friction / issues encountered: Spec review bot used stale codebase data, requiring a full dispute round before approval. All 4 blocking findings were factually wrong — artifacts existed on main.
+
+### Token efficiency
+- Highest-token actions: Spec review dispute round (elaborate → respond-to-spec-review cycle)
+- Avoidable waste: The spec review bot's stale data caused an entire wasted review round
+- Suggestions: None for implementation — the issue itself was minimal
+
+### Infrastructure gaps
+- Repeated workarounds: None
+- Missing tooling / config: Spec review bot should verify against origin/main, not a cached snapshot
+- Unresolved debt: None introduced
+
+### Wish I'd Known
+1. AC 2 and AC 3 were already done on main — the issue could have been scoped to just AC 1 from the start
+2. The `|| undefined` on lines 163-164 is NOT redundant after removing it from 149-150 (converts `false` → `undefined`) — worth keeping
+3. Trivial issue, no other surprises
+
 ## #342 Within-scan duplicate detection for import discoveries — 2026-04-04
 **Skill path:** /implement → /claim → /plan → /handoff
 **Outcome:** success — PR #346
