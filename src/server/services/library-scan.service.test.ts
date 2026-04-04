@@ -2900,3 +2900,269 @@ describe('scanDirectory() — duplicateReason field (#133)', () => {
     });
   });
 });
+
+// ============================================================================
+// Within-scan duplicate detection (#342)
+// ============================================================================
+
+describe('scanDirectory() — within-scan duplicate detection (#342)', () => {
+  let service: LibraryScanService;
+  let mockDb: ReturnType<typeof createMockDb> & Record<string, ReturnType<typeof vi.fn>>;
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.mocked(enrichBookFromAudio).mockResolvedValue({ enriched: true });
+    const db = createMockDb();
+    const chainMethods = {
+      from: vi.fn().mockReturnThis(),
+      where: vi.fn().mockReturnThis(),
+      limit: vi.fn().mockResolvedValue([]),
+      set: vi.fn().mockReturnThis(),
+    };
+    db.select.mockReturnValue(chainMethods as never);
+    db.update.mockReturnValue(chainMethods as never);
+    mockDb = Object.assign(db, chainMethods);
+    const mockSettingsService = createMockSettingsService({ library: { path: '/audiobooks' } });
+    service = new LibraryScanService(
+      inject<Db>(mockDb),
+      inject<BookService>({ findDuplicate: vi.fn().mockResolvedValue(null), create: vi.fn().mockResolvedValue({ id: 1 }), update: vi.fn().mockResolvedValue({ id: 1 }) }),
+      inject<MetadataService>({ searchBooks: vi.fn(), getBook: vi.fn(), enrichBook: vi.fn() }),
+      inject<SettingsService>(mockSettingsService),
+      inject<FastifyBaseLogger>({ info: vi.fn(), debug: vi.fn(), warn: vi.fn(), error: vi.fn(), child: vi.fn(), silent: vi.fn() }),
+      inject<EventHistoryService>({ create: vi.fn().mockResolvedValue({}) }),
+    );
+  });
+
+  function mockPreFetch(paths: string[], titleAuthors: Array<{ title: string; slug: string }>) {
+    mockDb.select
+      .mockReturnValueOnce(mockDbChain(paths.map((p) => ({ path: p }))))
+      .mockReturnValueOnce(mockDbChain(titleAuthors));
+  }
+
+  describe('happy path', () => {
+    it('two folders with same title+author slug → second flagged isDuplicate with duplicateReason=within-scan', async () => {
+      vi.mocked(discoverBooks).mockResolvedValue([
+        { path: '/audiobooks/Author/Title', folderParts: ['Author', 'Title'], audioFileCount: 3, totalSize: 100 },
+        { path: '/audiobooks/Copy/Author/Title', folderParts: ['Author', 'Title'], audioFileCount: 3, totalSize: 100 },
+      ]);
+      mockPreFetch([], []);
+
+      const result = await service.scanDirectory('/audiobooks');
+
+      expect(result.discoveries).toHaveLength(2);
+      expect(result.discoveries[1].isDuplicate).toBe(true);
+      expect(result.discoveries[1].duplicateReason).toBe('within-scan');
+    });
+
+    it('first folder of a within-scan duplicate pair remains isDuplicate=false', async () => {
+      vi.mocked(discoverBooks).mockResolvedValue([
+        { path: '/audiobooks/Author/Title', folderParts: ['Author', 'Title'], audioFileCount: 3, totalSize: 100 },
+        { path: '/audiobooks/Copy/Author/Title', folderParts: ['Author', 'Title'], audioFileCount: 3, totalSize: 100 },
+      ]);
+      mockPreFetch([], []);
+
+      const result = await service.scanDirectory('/audiobooks');
+
+      expect(result.discoveries[0].isDuplicate).toBe(false);
+      expect(result.discoveries[0]).not.toHaveProperty('duplicateReason');
+    });
+
+    it('within-scan duplicate has duplicateFirstPath set to first discovery path', async () => {
+      vi.mocked(discoverBooks).mockResolvedValue([
+        { path: '/audiobooks/Author/Title', folderParts: ['Author', 'Title'], audioFileCount: 3, totalSize: 100 },
+        { path: '/audiobooks/Copy/Author/Title', folderParts: ['Author', 'Title'], audioFileCount: 3, totalSize: 100 },
+      ]);
+      mockPreFetch([], []);
+
+      const result = await service.scanDirectory('/audiobooks');
+
+      expect(result.discoveries[1].duplicateFirstPath).toBe('/audiobooks/Author/Title');
+    });
+
+    it('within-scan duplicate has no existingBookId', async () => {
+      vi.mocked(discoverBooks).mockResolvedValue([
+        { path: '/audiobooks/Author/Title', folderParts: ['Author', 'Title'], audioFileCount: 3, totalSize: 100 },
+        { path: '/audiobooks/Copy/Author/Title', folderParts: ['Author', 'Title'], audioFileCount: 3, totalSize: 100 },
+      ]);
+      mockPreFetch([], []);
+
+      const result = await service.scanDirectory('/audiobooks');
+
+      expect(result.discoveries[1]).not.toHaveProperty('existingBookId');
+    });
+  });
+
+  describe('boundary values', () => {
+    it('three+ folders with same title+author → second and third both flagged as within-scan duplicates referencing first path', async () => {
+      vi.mocked(discoverBooks).mockResolvedValue([
+        { path: '/audiobooks/a/Author/Title', folderParts: ['Author', 'Title'], audioFileCount: 3, totalSize: 100 },
+        { path: '/audiobooks/b/Author/Title', folderParts: ['Author', 'Title'], audioFileCount: 3, totalSize: 100 },
+        { path: '/audiobooks/c/Author/Title', folderParts: ['Author', 'Title'], audioFileCount: 3, totalSize: 100 },
+      ]);
+      mockPreFetch([], []);
+
+      const result = await service.scanDirectory('/audiobooks');
+
+      expect(result.discoveries[0].isDuplicate).toBe(false);
+      expect(result.discoveries[1].isDuplicate).toBe(true);
+      expect(result.discoveries[1].duplicateReason).toBe('within-scan');
+      expect(result.discoveries[1].duplicateFirstPath).toBe('/audiobooks/a/Author/Title');
+      expect(result.discoveries[2].isDuplicate).toBe(true);
+      expect(result.discoveries[2].duplicateReason).toBe('within-scan');
+      expect(result.discoveries[2].duplicateFirstPath).toBe('/audiobooks/a/Author/Title');
+    });
+
+    it('single folder with no duplicate → isDuplicate=false, no duplicateReason, no duplicateFirstPath', async () => {
+      vi.mocked(discoverBooks).mockResolvedValue([
+        { path: '/audiobooks/Author/Title', folderParts: ['Author', 'Title'], audioFileCount: 3, totalSize: 100 },
+      ]);
+      mockPreFetch([], []);
+
+      const result = await service.scanDirectory('/audiobooks');
+
+      expect(result.discoveries).toHaveLength(1);
+      expect(result.discoveries[0].isDuplicate).toBe(false);
+      expect(result.discoveries[0]).not.toHaveProperty('duplicateReason');
+      expect(result.discoveries[0]).not.toHaveProperty('duplicateFirstPath');
+    });
+
+    it('slug case normalization — different casing of same author produces same slug and triggers within-scan dedup', async () => {
+      vi.mocked(discoverBooks).mockResolvedValue([
+        { path: '/audiobooks/Brandon Sanderson/Title', folderParts: ['Brandon Sanderson', 'Title'], audioFileCount: 3, totalSize: 100 },
+        { path: '/audiobooks/brandon sanderson/Title', folderParts: ['brandon sanderson', 'Title'], audioFileCount: 3, totalSize: 100 },
+      ]);
+      mockPreFetch([], []);
+
+      const result = await service.scanDirectory('/audiobooks');
+
+      expect(result.discoveries[1].isDuplicate).toBe(true);
+      expect(result.discoveries[1].duplicateReason).toBe('within-scan');
+    });
+  });
+
+  describe('null/missing data paths', () => {
+    it('two folders with same title but null author → not deduplicated within scan', async () => {
+      vi.mocked(discoverBooks).mockResolvedValue([
+        { path: '/audiobooks/Title', folderParts: ['Title'], audioFileCount: 3, totalSize: 100 },
+        { path: '/audiobooks/Copy/Title', folderParts: ['Title'], audioFileCount: 3, totalSize: 100 },
+      ]);
+      mockPreFetch([], []);
+
+      const result = await service.scanDirectory('/audiobooks');
+
+      expect(result.discoveries[0].isDuplicate).toBe(false);
+      expect(result.discoveries[1].isDuplicate).toBe(false);
+    });
+
+    it('two folders with empty/falsy title → not deduplicated within scan', async () => {
+      vi.mocked(discoverBooks).mockResolvedValue([
+        { path: '/audiobooks/a', folderParts: [], audioFileCount: 3, totalSize: 100 },
+        { path: '/audiobooks/b', folderParts: [], audioFileCount: 3, totalSize: 100 },
+      ]);
+      mockPreFetch([], []);
+
+      const result = await service.scanDirectory('/audiobooks');
+
+      expect(result.discoveries[0].isDuplicate).toBe(false);
+      expect(result.discoveries[1].isDuplicate).toBe(false);
+    });
+  });
+
+  describe('interaction with existing DB-based dedup', () => {
+    it('folder matching DB by path → duplicateReason=path, not checked for within-scan', async () => {
+      vi.mocked(discoverBooks).mockResolvedValue([
+        { path: '/audiobooks/Author/Title', folderParts: ['Author', 'Title'], audioFileCount: 3, totalSize: 100 },
+      ]);
+      mockPreFetch(['/audiobooks/Author/Title'], []);
+
+      const result = await service.scanDirectory('/audiobooks');
+
+      expect(result.discoveries[0].isDuplicate).toBe(true);
+      expect(result.discoveries[0].duplicateReason).toBe('path');
+      expect(result.discoveries[0]).not.toHaveProperty('duplicateFirstPath');
+    });
+
+    it('folder matching DB by slug → duplicateReason=slug, not checked for within-scan', async () => {
+      vi.mocked(discoverBooks).mockResolvedValue([
+        { path: '/audiobooks/Author/Title', folderParts: ['Author', 'Title'], audioFileCount: 3, totalSize: 100 },
+      ]);
+      mockDb.select
+        .mockReturnValueOnce(mockDbChain([]))
+        .mockReturnValueOnce(mockDbChain([{ id: 99, title: 'Title', slug: 'author' }]));
+
+      const result = await service.scanDirectory('/audiobooks');
+
+      expect(result.discoveries[0].isDuplicate).toBe(true);
+      expect(result.discoveries[0].duplicateReason).toBe('slug');
+      expect(result.discoveries[0]).not.toHaveProperty('duplicateFirstPath');
+    });
+
+    it('mixed scan: DB path dup + DB slug dup + within-scan dup + new folder → each has correct flag and reason', async () => {
+      vi.mocked(discoverBooks).mockResolvedValue([
+        { path: '/audiobooks/Author/BookA', folderParts: ['Author', 'BookA'], audioFileCount: 3, totalSize: 100 },
+        { path: '/audiobooks/Author/BookB', folderParts: ['Author', 'BookB'], audioFileCount: 3, totalSize: 100 },
+        { path: '/audiobooks/Copy/Author/BookB', folderParts: ['Author', 'BookB'], audioFileCount: 3, totalSize: 100 },
+        { path: '/audiobooks/NewAuthor/NewBook', folderParts: ['NewAuthor', 'NewBook'], audioFileCount: 3, totalSize: 100 },
+      ]);
+      mockDb.select
+        .mockReturnValueOnce(mockDbChain([{ path: '/audiobooks/Author/BookA' }]))
+        .mockReturnValueOnce(mockDbChain([{ id: 42, title: 'BookB', slug: 'author' }]));
+
+      const result = await service.scanDirectory('/audiobooks');
+
+      // First: DB path dup
+      expect(result.discoveries[0].duplicateReason).toBe('path');
+      // Second: DB slug dup
+      expect(result.discoveries[1].duplicateReason).toBe('slug');
+      expect(result.discoveries[1].existingBookId).toBe(42);
+      // Third: within-scan dup (same title+author as second, but second was DB-dup so not in within-scan map)
+      // Actually: second was a DB slug dup and got `continue`, so it was never added to the within-scan map.
+      // Third has same title+author as second, but since second never reached the within-scan check, third is a new discovery.
+      // Wait — third has same folder parts as second: ['Author', 'BookB']. Second matched DB slug, so third:
+      // - path check: not in DB path map → no
+      // - DB slug check: 'BookB|author' IS in existingTitleAuthorMap → yes, DB slug dup
+      expect(result.discoveries[2].duplicateReason).toBe('slug');
+      // Fourth: new discovery
+      expect(result.discoveries[3].isDuplicate).toBe(false);
+    });
+
+    it('first occurrence is DB path duplicate → second occurrence becomes new discovery (not within-scan dup)', async () => {
+      vi.mocked(discoverBooks).mockResolvedValue([
+        { path: '/audiobooks/Author/Title', folderParts: ['Author', 'Title'], audioFileCount: 3, totalSize: 100 },
+        { path: '/audiobooks/Copy/Author/Title', folderParts: ['Author', 'Title'], audioFileCount: 3, totalSize: 100 },
+      ]);
+      // First folder matches DB by path; DB has no slug match for title+author
+      mockDb.select
+        .mockReturnValueOnce(mockDbChain([{ path: '/audiobooks/Author/Title' }]))
+        .mockReturnValueOnce(mockDbChain([]));
+
+      const result = await service.scanDirectory('/audiobooks');
+
+      // First: DB path dup (short-circuited, never added to within-scan map)
+      expect(result.discoveries[0].duplicateReason).toBe('path');
+      // Second: not in DB, first was never added to within-scan map → new discovery
+      expect(result.discoveries[1].isDuplicate).toBe(false);
+    });
+  });
+
+  describe('error isolation', () => {
+    it('within-scan Map is local to the scan call — not shared across invocations', async () => {
+      vi.mocked(discoverBooks).mockResolvedValue([
+        { path: '/audiobooks/Author/Title', folderParts: ['Author', 'Title'], audioFileCount: 3, totalSize: 100 },
+      ]);
+      mockPreFetch([], []);
+
+      const result1 = await service.scanDirectory('/audiobooks');
+      expect(result1.discoveries[0].isDuplicate).toBe(false);
+
+      // Second scan with same folder — should also be non-duplicate (not carried over from first scan)
+      mockPreFetch([], []);
+      vi.mocked(discoverBooks).mockResolvedValue([
+        { path: '/audiobooks/Author/Title', folderParts: ['Author', 'Title'], audioFileCount: 3, totalSize: 100 },
+      ]);
+
+      const result2 = await service.scanDirectory('/audiobooks');
+      expect(result2.discoveries[0].isDuplicate).toBe(false);
+    });
+  });
+});

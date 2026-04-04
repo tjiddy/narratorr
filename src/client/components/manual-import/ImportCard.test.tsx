@@ -368,4 +368,49 @@ describe('ImportCard — relativePath prop (#133)', () => {
     // Should show last 3 path segments (short path fallback)
     expect(screen.getByText('audiobooks/Author/Book')).toBeInTheDocument();
   });
+
+  describe('within-scan duplicates (#342)', () => {
+    it('within-scan duplicate shows Duplicate in scan badge instead of Already in library', () => {
+      const row = makeRow({
+        book: makeBook({ isDuplicate: true, duplicateReason: 'within-scan' as 'path' | 'slug' }),
+      });
+      render(<ImportCard row={row} onToggle={vi.fn()} onEdit={vi.fn()} lockDuplicates />);
+      expect(screen.getByText('Duplicate in scan')).toBeInTheDocument();
+      expect(screen.queryByText('Already in library')).not.toBeInTheDocument();
+    });
+
+    it('within-scan duplicate has checkbox shown (selectable) when lockDuplicates is true', () => {
+      const onToggle = vi.fn();
+      const row = makeRow({
+        book: makeBook({ isDuplicate: true, duplicateReason: 'within-scan' as 'path' | 'slug' }),
+      });
+      render(<ImportCard row={row} onToggle={onToggle} onEdit={vi.fn()} lockDuplicates />);
+      const selectBtn = screen.getByRole('button', { name: /select|deselect/i });
+      expect(selectBtn).toBeInTheDocument();
+    });
+
+    it('within-scan duplicate has edit button shown when lockDuplicates is true', () => {
+      const row = makeRow({
+        book: makeBook({ isDuplicate: true, duplicateReason: 'within-scan' as 'path' | 'slug' }),
+      });
+      render(<ImportCard row={row} onToggle={vi.fn()} onEdit={vi.fn()} lockDuplicates />);
+      expect(screen.getByRole('button', { name: /edit/i })).toBeInTheDocument();
+    });
+
+    it('DB path duplicate still has no checkbox when lockDuplicates is true', () => {
+      const row = makeRow({
+        book: makeBook({ isDuplicate: true, duplicateReason: 'path' }),
+      });
+      render(<ImportCard row={row} onToggle={vi.fn()} onEdit={vi.fn()} lockDuplicates />);
+      expect(screen.queryByRole('button', { name: /select|deselect/i })).not.toBeInTheDocument();
+    });
+
+    it('DB slug duplicate still has no checkbox when lockDuplicates is true', () => {
+      const row = makeRow({
+        book: makeBook({ isDuplicate: true, duplicateReason: 'slug' }),
+      });
+      render(<ImportCard row={row} onToggle={vi.fn()} onEdit={vi.fn()} lockDuplicates />);
+      expect(screen.queryByRole('button', { name: /select|deselect/i })).not.toBeInTheDocument();
+    });
+  });
 });

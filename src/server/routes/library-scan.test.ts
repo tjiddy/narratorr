@@ -686,6 +686,28 @@ describe('library-scan routes', () => {
     });
   });
 
+  describe('POST /api/library/import/scan — within-scan duplicates (#342)', () => {
+    it('response includes duplicateReason=within-scan and duplicateFirstPath for within-scan duplicates', async () => {
+      (services.libraryScan.scanDirectory as ReturnType<typeof vi.fn>)
+        .mockResolvedValue({
+          discoveries: [
+            { path: '/a/Author/Title', parsedTitle: 'Title', parsedAuthor: 'Author', parsedSeries: null, fileCount: 1, totalSize: 100, isDuplicate: false },
+            { path: '/a/Copy/Author/Title', parsedTitle: 'Title', parsedAuthor: 'Author', parsedSeries: null, fileCount: 1, totalSize: 100, isDuplicate: true, duplicateReason: 'within-scan', duplicateFirstPath: '/a/Author/Title' },
+          ],
+          totalFolders: 2,
+        });
+
+      const res = await app.inject({ method: 'POST', url: '/api/library/import/scan', payload: { path: '/a' } });
+      expect(res.statusCode).toBe(200);
+      const body = JSON.parse(res.payload);
+      expect(body.discoveries[0].isDuplicate).toBe(false);
+      expect(body.discoveries[0]).not.toHaveProperty('duplicateFirstPath');
+      expect(body.discoveries[1].isDuplicate).toBe(true);
+      expect(body.discoveries[1].duplicateReason).toBe('within-scan');
+      expect(body.discoveries[1].duplicateFirstPath).toBe('/a/Author/Title');
+    });
+  });
+
   describe('POST /api/library/import/confirm — forceImport field', () => {
     it('accepts items with forceImport: true and passes them to confirmImport', async () => {
       (services.libraryScan.confirmImport as ReturnType<typeof vi.fn>)

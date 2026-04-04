@@ -30,8 +30,10 @@ export interface DiscoveredBook {
   totalSize: number;
   isDuplicate: boolean;
   existingBookId?: number;
-  /** 'path' = exact folder path matched; 'slug' = title+author slug matched. Only set when isDuplicate=true. */
-  duplicateReason?: 'path' | 'slug';
+  /** 'path' = exact folder path matched; 'slug' = title+author slug matched; 'within-scan' = same title+author seen earlier in the same scan. Only set when isDuplicate=true. */
+  duplicateReason?: 'path' | 'slug' | 'within-scan';
+  /** Path of the first discovery with the same title+author slug. Only set when duplicateReason='within-scan'. */
+  duplicateFirstPath?: string;
 }
 
 export type ImportMode = 'copy' | 'move';
@@ -185,6 +187,7 @@ export class LibraryScanService {
     );
 
     const discoveries: DiscoveredBook[] = [];
+    const withinScanSlugMap = new Map<string, string>();
 
     for (const folder of folders) {
       const parsed = parseFolderStructure(folder.folderParts);
@@ -211,6 +214,18 @@ export class LibraryScanService {
           ));
           continue;
         }
+
+        // Check for within-scan duplicates (same title+author seen earlier in this scan)
+        if (withinScanSlugMap.has(key)) {
+          this.log.debug({ path: folder.path, title: parsed.title, author: parsed.author }, 'Duplicate detected (within-scan title+author match)');
+          discoveries.push(this.buildDiscoveredBook(
+            folder.path, parsed, folder.audioFileCount, folder.totalSize,
+            true, undefined, 'within-scan', withinScanSlugMap.get(key),
+          ));
+          continue;
+        }
+
+        withinScanSlugMap.set(key, folder.path);
       }
 
       this.log.debug(
@@ -696,7 +711,8 @@ export class LibraryScanService {
     totalSize: number,
     isDuplicate: boolean,
     existingBookId?: number,
-    duplicateReason?: 'path' | 'slug',
+    duplicateReason?: 'path' | 'slug' | 'within-scan',
+    duplicateFirstPath?: string,
   ): DiscoveredBook {
     return {
       path,
@@ -708,6 +724,7 @@ export class LibraryScanService {
       isDuplicate,
       ...(existingBookId !== undefined && { existingBookId }),
       ...(duplicateReason !== undefined && { duplicateReason }),
+      ...(duplicateFirstPath !== undefined && { duplicateFirstPath }),
     };
   }
 

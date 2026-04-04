@@ -715,4 +715,299 @@ describe('empty result edge case', () => {
     });
     expect(result.current.scanError).toBeNull();
   });
+
+  describe('within-scan duplicates — visibility and selection (#342)', () => {
+    const scanResultWithWithinScan: ScanResult = {
+      discoveries: [
+        { path: '/audiobooks/Author/Book', parsedTitle: 'Book', parsedAuthor: 'Author', parsedSeries: null, fileCount: 3, totalSize: 100000, isDuplicate: false },
+        { path: '/audiobooks/Copy/Author/Book', parsedTitle: 'Book', parsedAuthor: 'Author', parsedSeries: null, fileCount: 3, totalSize: 100000, isDuplicate: true, duplicateReason: 'within-scan', duplicateFirstPath: '/audiobooks/Author/Book' },
+        { path: '/audiobooks/DbDup/Book', parsedTitle: 'DbBook', parsedAuthor: 'DbAuthor', parsedSeries: null, fileCount: 1, totalSize: 50000, isDuplicate: true, duplicateReason: 'slug' },
+      ],
+      totalFolders: 3,
+    };
+
+    it('within-scan duplicates are auto-deselected on initial load', async () => {
+      mockScanDirectory.mockResolvedValue(scanResultWithWithinScan);
+      const { result } = renderHook(() => useLibraryImport(), { wrapper: createWrapper() });
+
+      await waitFor(() => { expect(result.current.step).toBe('review'); });
+
+      const withinScanRow = result.current.rows.find(r => r.book.duplicateReason === 'within-scan');
+      expect(withinScanRow?.selected).toBe(false);
+    });
+
+    it('within-scan duplicates are included in select-all toggling', async () => {
+      mockScanDirectory.mockResolvedValue(scanResultWithWithinScan);
+      const { result } = renderHook(() => useLibraryImport(), { wrapper: createWrapper() });
+
+      await waitFor(() => { expect(result.current.step).toBe('review'); });
+
+      act(() => { result.current.handleSelectAll(); });
+
+      const withinScanRow = result.current.rows.find(r => r.book.duplicateReason === 'within-scan');
+      expect(withinScanRow?.selected).toBe(true);
+    });
+
+    it('DB duplicates (path/slug) are excluded from select-all toggling', async () => {
+      mockScanDirectory.mockResolvedValue(scanResultWithWithinScan);
+      const { result } = renderHook(() => useLibraryImport(), { wrapper: createWrapper() });
+
+      await waitFor(() => { expect(result.current.step).toBe('review'); });
+
+      act(() => { result.current.handleSelectAll(); });
+
+      const dbDupRow = result.current.rows.find(r => r.book.duplicateReason === 'slug');
+      expect(dbDupRow?.selected).toBe(false);
+    });
+  });
+
+  describe('within-scan duplicates — match flow (#342)', () => {
+    const scanResultMatchFlow: ScanResult = {
+      discoveries: [
+        { path: '/audiobooks/Author/Book', parsedTitle: 'Book', parsedAuthor: 'Author', parsedSeries: null, fileCount: 3, totalSize: 100000, isDuplicate: false },
+        { path: '/audiobooks/Copy/Author/Book', parsedTitle: 'Book', parsedAuthor: 'Author', parsedSeries: null, fileCount: 3, totalSize: 100000, isDuplicate: true, duplicateReason: 'within-scan', duplicateFirstPath: '/audiobooks/Author/Book' },
+        { path: '/audiobooks/DbDup/Book', parsedTitle: 'DbBook', parsedAuthor: 'DbAuthor', parsedSeries: null, fileCount: 1, totalSize: 50000, isDuplicate: true, duplicateReason: 'path' },
+      ],
+      totalFolders: 3,
+    };
+
+    it('initial matcher candidates include within-scan duplicates but exclude DB duplicates', async () => {
+      // Must set before hook mounts (auto-scan fires on mount)
+      mockScanDirectory.mockReset().mockResolvedValue(scanResultMatchFlow);
+      mockStartMatchJob.mockClear().mockResolvedValue({ jobId: 'job-1' });
+      renderHook(() => useLibraryImport(), { wrapper: createWrapper() });
+
+      await waitFor(() => { expect(mockStartMatchJob).toHaveBeenCalled(); });
+
+      const candidates = mockStartMatchJob.mock.calls[0][0] as Array<{ path: string }>;
+      const paths = candidates.map((c: { path: string }) => c.path);
+      expect(paths).toContain('/audiobooks/Author/Book');
+      expect(paths).toContain('/audiobooks/Copy/Author/Book');
+      expect(paths).not.toContain('/audiobooks/DbDup/Book');
+    });
+
+    it('mergeMatchResults applies match data to within-scan row and seeds edited metadata', async () => {
+      mockScanDirectory.mockReset().mockResolvedValue(scanResultMatchFlow);
+      mockStartMatchJob.mockClear().mockResolvedValue({ jobId: 'job-1' });
+      // Poll returns a high-confidence match for the within-scan duplicate row
+      mockGetMatchJob.mockResolvedValue({
+        id: 'job-1',
+        status: 'completed',
+        total: 2,
+        matched: 2,
+        results: [
+          {
+            path: '/audiobooks/Copy/Author/Book',
+            confidence: 'high',
+            bestMatch: { title: 'Matched Title', authors: [{ name: 'Matched Author' }], narrators: ['Jim Dale'], asin: 'B999' },
+            alternatives: [],
+          },
+        ],
+      });
+
+      const { result } = renderHook(() => useLibraryImport(), { wrapper: createWrapper() });
+
+      await waitFor(() => { expect(result.current.step).toBe('review'); });
+
+      // After poll merges match results, within-scan row should have matchResult and edited metadata
+      await waitFor(() => {
+        const withinScanRow = result.current.rows.find(r => r.book.duplicateReason === 'within-scan');
+        expect(withinScanRow?.matchResult?.confidence).toBe('high');
+      }, { timeout: 5000 });
+
+      const withinScanRow = result.current.rows.find(r => r.book.duplicateReason === 'within-scan');
+      expect(withinScanRow?.edited.title).toBe('Matched Title');
+      expect(withinScanRow?.edited.author).toBe('Matched Author');
+      expect(withinScanRow?.edited.asin).toBe('B999');
+    });
+
+    it('mergeMatchResults with confidence=none deselects within-scan row', async () => {
+      mockScanDirectory.mockReset().mockResolvedValue(scanResultMatchFlow);
+      mockStartMatchJob.mockClear().mockResolvedValue({ jobId: 'job-1' });
+      mockGetMatchJob.mockResolvedValue({
+        id: 'job-1',
+        status: 'completed',
+        total: 2,
+        matched: 2,
+        results: [
+          { path: '/audiobooks/Copy/Author/Book', confidence: 'none', bestMatch: null, alternatives: [] },
+        ],
+      });
+
+      const { result } = renderHook(() => useLibraryImport(), { wrapper: createWrapper() });
+
+      await waitFor(() => { expect(result.current.step).toBe('review'); });
+
+      // Select the within-scan row first
+      const withinScanIdx = result.current.rows.findIndex(r => r.book.duplicateReason === 'within-scan');
+      act(() => { result.current.handleToggle(withinScanIdx); });
+
+      // After poll merges confidence=none, the row should be deselected
+      await waitFor(() => {
+        const row = result.current.rows.find(r => r.book.duplicateReason === 'within-scan');
+        expect(row?.matchResult?.confidence).toBe('none');
+        expect(row?.selected).toBe(false);
+      }, { timeout: 5000 });
+    });
+
+    it('handleRetryMatch includes within-scan rows and excludes DB duplicates', async () => {
+      // Initial match attempt fails so we can trigger retry
+      mockScanDirectory.mockReset().mockResolvedValue(scanResultMatchFlow);
+      mockStartMatchJob
+        .mockRejectedValueOnce(new Error('first failure'))
+        .mockResolvedValue({ jobId: 'job-2' });
+      mockGetMatchJob.mockResolvedValue({ id: 'job-2', status: 'completed', total: 2, matched: 2, results: [] });
+
+      const { result } = renderHook(() => useLibraryImport(), { wrapper: createWrapper() });
+
+      await waitFor(() => expect(result.current.matchJobError).toBe('first failure'));
+
+      // Clear call history so we can assert only the retry call
+      mockStartMatchJob.mockClear().mockResolvedValue({ jobId: 'job-2' });
+
+      // Trigger retry
+      act(() => result.current.handleRetryMatch());
+
+      await waitFor(() => expect(mockStartMatchJob).toHaveBeenCalledTimes(1));
+
+      const retryCandidates = mockStartMatchJob.mock.calls[0][0] as Array<{ path: string }>;
+      const retryPaths = retryCandidates.map((c: { path: string }) => c.path);
+      expect(retryPaths).toContain('/audiobooks/Author/Book');
+      expect(retryPaths).toContain('/audiobooks/Copy/Author/Book');
+      expect(retryPaths).not.toContain('/audiobooks/DbDup/Book');
+    });
+  });
+
+  describe('within-scan duplicates — derived state (#342)', () => {
+    const scanResultMixed: ScanResult = {
+      discoveries: [
+        { path: '/audiobooks/Author/Book', parsedTitle: 'Book', parsedAuthor: 'Author', parsedSeries: null, fileCount: 3, totalSize: 100000, isDuplicate: false },
+        { path: '/audiobooks/Copy/Author/Book', parsedTitle: 'Book', parsedAuthor: 'Author', parsedSeries: null, fileCount: 3, totalSize: 100000, isDuplicate: true, duplicateReason: 'within-scan', duplicateFirstPath: '/audiobooks/Author/Book' },
+        { path: '/audiobooks/DbDup/Book', parsedTitle: 'DbBook', parsedAuthor: 'DbAuthor', parsedSeries: null, fileCount: 1, totalSize: 50000, isDuplicate: true, duplicateReason: 'slug' },
+      ],
+      totalFolders: 3,
+    };
+
+    it('readyCount includes selected within-scan duplicates with high-confidence matches', async () => {
+      mockScanDirectory.mockReset().mockResolvedValue(scanResultMixed);
+      mockStartMatchJob.mockClear().mockResolvedValue({ jobId: 'job-1' });
+      // Poll returns high-confidence match for both the non-dup and within-scan dup
+      mockGetMatchJob.mockResolvedValue({
+        id: 'job-1',
+        status: 'completed',
+        total: 2,
+        matched: 2,
+        results: [
+          { path: '/audiobooks/Author/Book', confidence: 'high', bestMatch: { title: 'Book', authors: [{ name: 'Author' }], narrators: [], asin: 'A1' }, alternatives: [] },
+          { path: '/audiobooks/Copy/Author/Book', confidence: 'high', bestMatch: { title: 'Book', authors: [{ name: 'Author' }], narrators: [], asin: 'A2' }, alternatives: [] },
+        ],
+      });
+
+      const { result } = renderHook(() => useLibraryImport(), { wrapper: createWrapper() });
+
+      await waitFor(() => { expect(result.current.step).toBe('review'); });
+
+      // Select all actionable rows (including within-scan dup)
+      act(() => { result.current.handleSelectAll(); });
+
+      // Wait for match results to merge
+      await waitFor(() => {
+        expect(result.current.readyCount).toBe(2); // non-dup + within-scan dup, both selected + high confidence
+      }, { timeout: 5000 });
+    });
+
+    it('pendingCount includes within-scan duplicates awaiting match results', async () => {
+      mockScanDirectory.mockResolvedValue(scanResultMixed);
+      const { result } = renderHook(() => useLibraryImport(), { wrapper: createWrapper() });
+
+      await waitFor(() => { expect(result.current.step).toBe('review'); });
+
+      // Within-scan dup has no matchResult yet → should count as pending
+      // DB dup should NOT count as pending
+      // Non-dup has no matchResult yet → should count as pending
+      expect(result.current.pendingCount).toBe(2); // non-dup + within-scan dup
+    });
+
+    it('duplicateCount counts only DB duplicates', async () => {
+      mockScanDirectory.mockResolvedValue(scanResultMixed);
+      const { result } = renderHook(() => useLibraryImport(), { wrapper: createWrapper() });
+
+      await waitFor(() => { expect(result.current.step).toBe('review'); });
+
+      expect(result.current.duplicateCount).toBe(1); // only DB slug dup
+    });
+
+    it('allSelected treats within-scan duplicates as actionable', async () => {
+      mockScanDirectory.mockResolvedValue(scanResultMixed);
+      const { result } = renderHook(() => useLibraryImport(), { wrapper: createWrapper() });
+
+      await waitFor(() => { expect(result.current.step).toBe('review'); });
+
+      // Not all selected yet (within-scan dup is auto-deselected)
+      expect(result.current.allSelected).toBe(false);
+
+      // Select all actionable rows
+      act(() => { result.current.handleSelectAll(); });
+
+      expect(result.current.allSelected).toBe(true);
+    });
+  });
+
+  describe('within-scan duplicates — registration (#342)', () => {
+    it('handleRegister sends forceImport: true for selected duplicate rows', async () => {
+      const scanResult: ScanResult = {
+        discoveries: [
+          { path: '/audiobooks/Author/Book', parsedTitle: 'Book', parsedAuthor: 'Author', parsedSeries: null, fileCount: 3, totalSize: 100000, isDuplicate: false },
+          { path: '/audiobooks/Copy/Author/Book', parsedTitle: 'Book', parsedAuthor: 'Author', parsedSeries: null, fileCount: 3, totalSize: 100000, isDuplicate: true, duplicateReason: 'within-scan', duplicateFirstPath: '/audiobooks/Author/Book' },
+        ],
+        totalFolders: 2,
+      };
+      mockScanDirectory.mockResolvedValue(scanResult);
+      mockConfirmImport.mockResolvedValue({ accepted: 2 });
+      const { result } = renderHook(() => useLibraryImport(), { wrapper: createWrapper() });
+
+      await waitFor(() => { expect(result.current.step).toBe('review'); });
+
+      // Select all (including within-scan dup)
+      act(() => { result.current.handleSelectAll(); });
+      act(() => { result.current.handleRegister(); });
+
+      await waitFor(() => { expect(mockConfirmImport).toHaveBeenCalled(); });
+
+      const items = mockConfirmImport.mock.calls[0][0] as Array<{ path: string; forceImport?: boolean }>;
+      const nonDup = items.find(i => i.path === '/audiobooks/Author/Book');
+      const withinScanDup = items.find(i => i.path === '/audiobooks/Copy/Author/Book');
+      expect(nonDup?.forceImport).toBeUndefined();
+      expect(withinScanDup?.forceImport).toBe(true);
+    });
+
+    it('scan with only DB duplicates still shows All caught up', async () => {
+      const allDbDups: ScanResult = {
+        discoveries: [
+          { path: '/audiobooks/A', parsedTitle: 'A', parsedAuthor: 'X', parsedSeries: null, fileCount: 1, totalSize: 100, isDuplicate: true, duplicateReason: 'path' },
+          { path: '/audiobooks/B', parsedTitle: 'B', parsedAuthor: 'Y', parsedSeries: null, fileCount: 1, totalSize: 100, isDuplicate: true, duplicateReason: 'slug' },
+        ],
+        totalFolders: 2,
+      };
+      mockScanDirectory.mockResolvedValue(allDbDups);
+      const { result } = renderHook(() => useLibraryImport(), { wrapper: createWrapper() });
+
+      await waitFor(() => { expect(result.current.emptyResult).toBe(true); });
+    });
+
+    it('scan with mix of new + within-scan duplicates does NOT show All caught up', async () => {
+      const mixedResult: ScanResult = {
+        discoveries: [
+          { path: '/audiobooks/Author/Book', parsedTitle: 'Book', parsedAuthor: 'Author', parsedSeries: null, fileCount: 3, totalSize: 100000, isDuplicate: false },
+          { path: '/audiobooks/Copy/Author/Book', parsedTitle: 'Book', parsedAuthor: 'Author', parsedSeries: null, fileCount: 3, totalSize: 100000, isDuplicate: true, duplicateReason: 'within-scan', duplicateFirstPath: '/audiobooks/Author/Book' },
+        ],
+        totalFolders: 2,
+      };
+      mockScanDirectory.mockResolvedValue(mixedResult);
+      const { result } = renderHook(() => useLibraryImport(), { wrapper: createWrapper() });
+
+      await waitFor(() => { expect(result.current.step).toBe('review'); });
+      expect(result.current.emptyResult).toBe(false);
+    });
+  });
 });

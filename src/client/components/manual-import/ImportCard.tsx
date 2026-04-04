@@ -68,11 +68,13 @@ export function ImportCard({ row, onToggle, onEdit, lockDuplicates, relativePath
   const pathParts = row.book.path.split(/[\\/]/).filter(Boolean);
   const shortPath = relativePath ?? pathParts.slice(-3).join('/') ?? row.book.path;
 
-  // When lockDuplicates=true: path-duplicates are fully locked; slug-duplicates show edit but no checkbox
+  // When lockDuplicates=true: path-duplicates are fully locked; slug-duplicates show edit but no checkbox.
+  // Within-scan duplicates are always selectable/editable (they're not in the DB yet).
+  const isWithinScanDuplicate = isDuplicate && row.book.duplicateReason === 'within-scan';
   const isPathDuplicate = lockDuplicates && isDuplicate && row.book.duplicateReason === 'path';
   const isSlugDuplicate = lockDuplicates && isDuplicate && row.book.duplicateReason === 'slug';
   const showCheckbox = !isPathDuplicate && !isSlugDuplicate;
-  const showEditButton = !isDuplicate || isSlugDuplicate;
+  const showEditButton = !isDuplicate || isSlugDuplicate || isWithinScanDuplicate;
 
   // Left border: amber for no-match, matches LibraryPage's status border pattern
   const borderClass = confidence === 'none'
@@ -130,9 +132,11 @@ export function ImportCard({ row, onToggle, onEdit, lockDuplicates, relativePath
         </p>
       </div>
 
-      {/* Badge: "Already in library" for duplicates, confidence badge otherwise */}
+      {/* Badge: "Already in library" for DB duplicates, "Duplicate in scan" for within-scan, confidence badge otherwise */}
       <div className="w-24 shrink-0 flex justify-center">
-        {isDuplicate ? (
+        {isWithinScanDuplicate ? (
+          <Badge variant="muted">Duplicate in scan</Badge>
+        ) : isDuplicate ? (
           <Badge variant="muted">Already in library</Badge>
         ) : (
           <ConfidenceBadge confidence={confidence} />

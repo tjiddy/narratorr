@@ -833,4 +833,69 @@ describe('LibraryImportPage (#133)', () => {
       });
     });
   });
+
+  describe('within-scan duplicates — visibility and toggle (#342)', () => {
+    const scanResultWithWithinScan = {
+      discoveries: [
+        { path: '/audiobooks/Author/Book', parsedTitle: 'Book', parsedAuthor: 'Author', parsedSeries: null, fileCount: 3, totalSize: 100000, isDuplicate: false },
+        { path: '/audiobooks/Copy/Author/Book', parsedTitle: 'Book', parsedAuthor: 'Author', parsedSeries: null, fileCount: 3, totalSize: 100000, isDuplicate: true, duplicateReason: 'within-scan', duplicateFirstPath: '/audiobooks/Author/Book' },
+        { path: '/audiobooks/DbDup/DbBook', parsedTitle: 'DbBook', parsedAuthor: 'DbAuthor', parsedSeries: null, fileCount: 1, totalSize: 50000, isDuplicate: true, duplicateReason: 'slug' },
+      ],
+      totalFolders: 3,
+    };
+
+    it('within-scan duplicates are visible by default (not hidden by showExisting toggle)', async () => {
+      mockApi.scanDirectory.mockResolvedValue(scanResultWithWithinScan);
+      mockApi.startMatchJob.mockResolvedValue({ jobId: 'job-1' });
+      mockApi.getMatchJob.mockResolvedValue({ id: 'job-1', status: 'complete', total: 2, matched: 2, results: [] });
+
+      renderWithProviders(<LibraryImportPage />);
+
+      // Within-scan duplicate should be visible by default
+      await waitFor(() => {
+        expect(screen.getByText(/Copy\/Author\/Book/)).toBeInTheDocument();
+      });
+    });
+
+    it('DB duplicates (path/slug) are hidden by default behind toggle', async () => {
+      mockApi.scanDirectory.mockResolvedValue(scanResultWithWithinScan);
+      mockApi.startMatchJob.mockResolvedValue({ jobId: 'job-1' });
+      mockApi.getMatchJob.mockResolvedValue({ id: 'job-1', status: 'complete', total: 2, matched: 2, results: [] });
+
+      renderWithProviders(<LibraryImportPage />);
+
+      await waitFor(() => {
+        expect(screen.getByText(/Copy\/Author\/Book/)).toBeInTheDocument();
+      });
+
+      // DB slug duplicate should be hidden by default
+      expect(screen.queryByText(/DbDup\/DbBook/)).not.toBeInTheDocument();
+    });
+
+    it('show existing toggle count reflects only DB duplicates, not within-scan', async () => {
+      mockApi.scanDirectory.mockResolvedValue(scanResultWithWithinScan);
+      mockApi.startMatchJob.mockResolvedValue({ jobId: 'job-1' });
+      mockApi.getMatchJob.mockResolvedValue({ id: 'job-1', status: 'complete', total: 2, matched: 2, results: [] });
+
+      renderWithProviders(<LibraryImportPage />);
+
+      await waitFor(() => {
+        // Only 1 DB duplicate (slug), so toggle should say "1 existing"
+        expect(screen.getByText(/1 existing/)).toBeInTheDocument();
+      });
+    });
+
+    it('N of M new selected denominator includes within-scan duplicates', async () => {
+      mockApi.scanDirectory.mockResolvedValue(scanResultWithWithinScan);
+      mockApi.startMatchJob.mockResolvedValue({ jobId: 'job-1' });
+      mockApi.getMatchJob.mockResolvedValue({ id: 'job-1', status: 'complete', total: 2, matched: 2, results: [] });
+
+      renderWithProviders(<LibraryImportPage />);
+
+      await waitFor(() => {
+        // 1 non-dup selected out of 2 actionable (non-dup + within-scan dup)
+        expect(screen.getByText(/1 of 2 new selected/)).toBeInTheDocument();
+      });
+    });
+  });
 });
