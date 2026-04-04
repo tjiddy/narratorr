@@ -37,7 +37,8 @@ export function LibraryImportPage() {
   } = useLibraryImport();
 
   const [showExisting, setShowExisting] = useState(false);
-  const displayedRows = rows.filter(r => showExisting || !r.book.isDuplicate);
+  const isDbDup = (r: typeof rows[number]) => r.book.isDuplicate && r.book.duplicateReason !== 'within-scan';
+  const displayedRows = rows.filter(r => showExisting || !isDbDup(r));
   const rowIndexMap = new Map(rows.map((r, i) => [r, i]));
 
   return (
@@ -156,7 +157,7 @@ export function LibraryImportPage() {
                 {allSelected && <CheckIcon className="w-3 h-3" />}
               </button>
               <span className="text-xs font-medium text-muted-foreground">
-                {selectedCount} of {rows.filter(r => !r.book.isDuplicate).length} new selected
+                {selectedCount} of {rows.filter(r => !isDbDup(r)).length} new selected
               </span>
               {duplicateCount > 0 && (
                 <button
