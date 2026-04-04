@@ -1,8 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { renderHook, act } from '@testing-library/react';
 import { useEffect } from 'react';
-import { readFileSync } from 'node:fs';
-import { resolve } from 'node:path';
 import { MemoryRouter, useSearchParams } from 'react-router-dom';
 import { useLibraryFilters, applyClientFilters } from './useLibraryFilters';
 import type { BookWithAuthor } from '@/lib/api';
@@ -583,48 +581,8 @@ describe('useLibraryFilters — URL param sync on state change', () => {
     expect(urlRef.current).toContain('sortField=title');
   });
 
-  it('uses replace semantics — setSearchParams always called with replace: true', () => {
-    // Intercept setSearchParams calls via a wrapper that captures options
-    const capturedOptions: unknown[] = [];
-
-    function SpyWrapper({ children }: { children: React.ReactNode }) {
-      return (
-        <MemoryRouter initialEntries={['/library']}>
-          <SetSearchParamsInterceptor onCall={(opts) => capturedOptions.push(opts)} />
-          <UrlCapture />
-          {children}
-        </MemoryRouter>
-      );
-    }
-
-    // This component wraps the real setSearchParams and captures calls.
-    // The hook uses the SAME router context, so its setSearchParams calls
-    // go through the same MemoryRouter. We can't intercept them directly,
-    // but we CAN verify the source code contains { replace: true }.
-    // More importantly, we verify the behavior: multiple filter changes
-    // result in a single URL state (not accumulated history entries).
-    function SetSearchParamsInterceptor({ onCall: _onCall }: { onCall: (opts: unknown) => void }) {
-      return null;
-    }
-
-    const { result } = renderHook(() => useLibraryFilters(), { wrapper: SpyWrapper });
-
-    // Make 3 filter changes rapidly
-    act(() => { result.current.actions.setStatusFilter('wanted'); });
-    act(() => { result.current.actions.setSortField('title'); });
-    act(() => { result.current.actions.setAuthorFilter('Sanderson'); });
-
-    // The URL should reflect ALL current filter state (not just the last change).
-    // This proves the sync effect runs with the complete state, not incrementally.
-    expect(urlRef.current).toContain('status=wanted');
-    expect(urlRef.current).toContain('sortField=title');
-    expect(urlRef.current).toContain('author=Sanderson');
-
-    // Verify the source code uses replace semantics by checking the production file.
-    // MemoryRouter doesn't expose history length, so we verify the code-level guarantee.
-    const source = readFileSync(resolve(__dirname, 'useLibraryFilters.ts'), 'utf8');
-    expect(source).toContain('{ replace: true }');
-  });
+  // Replace semantics are tested via mock in useLibraryFilters.replace.test.tsx
+  // which mocks useSearchParams to assert { replace: true } is passed at runtime.
 });
 
 describe('useLibraryFilters — URL debounce sync', () => {
