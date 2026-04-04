@@ -2361,3 +2361,69 @@ describe('LibraryPage — status counts and subtitle (#183)', () => {
     });
   });
 });
+
+describe('LibraryPage — URL param restoration (#352)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.mocked(api.getSettings).mockResolvedValue(createMockSettings());
+  });
+
+  it('initializes filters from URL and passes matching params to first API fetch', async () => {
+    mockLibraryData(mockBooks);
+
+    renderWithProviders(<LibraryPage />, {
+      route: '/library?status=wanted&sortField=title&sortDirection=asc',
+    });
+
+    await waitFor(() => {
+      expect(api.getBooks).toHaveBeenCalled();
+    });
+
+    // The first getBooks call should use the URL-derived params
+    const firstCallArgs = vi.mocked(api.getBooks).mock.calls[0]?.[0];
+    expect(firstCallArgs).toMatchObject({
+      status: 'wanted',
+      sortField: 'title',
+      sortDirection: 'asc',
+    });
+  });
+
+  it('initializes page from URL and uses correct offset in first API fetch', async () => {
+    mockPagedLibraryData(mockBooks, { total: 500 });
+
+    renderWithProviders(<LibraryPage />, {
+      route: '/library?page=3',
+    });
+
+    await waitFor(() => {
+      expect(api.getBooks).toHaveBeenCalled();
+    });
+
+    // Page 3 with default limit of 100 → offset 200
+    const firstCallArgs = vi.mocked(api.getBooks).mock.calls[0]?.[0];
+    expect(firstCallArgs).toMatchObject({
+      offset: 200,
+      limit: 100,
+    });
+  });
+
+  it('renders with default params when no URL search params are present', async () => {
+    mockLibraryData(mockBooks);
+
+    renderWithProviders(<LibraryPage />, {
+      route: '/library',
+    });
+
+    await waitFor(() => {
+      expect(api.getBooks).toHaveBeenCalled();
+    });
+
+    const firstCallArgs = vi.mocked(api.getBooks).mock.calls[0]?.[0];
+    expect(firstCallArgs).toMatchObject({
+      status: undefined,
+      sortField: 'createdAt',
+      sortDirection: 'desc',
+      offset: 0,
+    });
+  });
+});
