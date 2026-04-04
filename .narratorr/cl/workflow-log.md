@@ -1,5 +1,34 @@
 # Workflow Log
 
+## #333 Folder parsing — Series–Number–Title pattern in 2-part paths — 2026-04-04
+**Skill path:** /implement → /claim → /plan → /handoff
+**Outcome:** success — PR #336
+
+### Metrics
+- Files changed: 2 | Tests added/modified: 15
+- Quality gate runs: 2 (pass on attempt 1 both times)
+- Fix iterations: 0
+- Context compactions: 0
+
+### Workflow experience
+- What went smoothly: Clean additive change to pure functions — no DB, no FS, no wiring. Red/green TDD was straightforward since all tests are self-contained unit tests on exported/private functions.
+- Friction / issues encountered: The spec review correctly identified that the original spec pointed at the wrong control flow branch (parseSingleFolder vs parseFolderStructure 2-part branch). Two spec review rounds were needed to fix alignment issues before implementation could start.
+
+### Token efficiency
+- Highest-token actions: Spec review rounds (elaborate + respond-to-spec-review) consumed significant context before implementation started
+- Avoidable waste: None — the spec review rounds were necessary to catch the control flow misalignment
+- Suggestions: For parser bugs, always verify which branch handles the failing input before writing the spec
+
+### Infrastructure gaps
+- Repeated workarounds: None
+- Missing tooling / config: None
+- Unresolved debt: None introduced
+
+### Wish I'd Known
+1. `parseFolderStructure` has separate branches for 1-part, 2-part, and 3+ part paths — the 2-part branch never calls `parseSingleFolder`, so fixing only `parseSingleFolder` wouldn't fix the reported 2-part-path bug
+2. The variable-length parsing gotcha (check more specific patterns first) was already documented in CLAUDE.md — checking there first would have saved investigation time
+3. The regex `[–-]` character class handles both en-dash and hyphen in a single pattern — no need for separate regex branches
+
 ## #331 Audio preview — replace native player with simple play button — 2026-04-03
 **Skill path:** /implement → /claim → /plan → /handoff
 **Outcome:** success — PR #332
