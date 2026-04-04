@@ -8,7 +8,7 @@ import { RetagError } from '../services/tagging.service.js';
 import { MergeError } from '../services/merge.service.js';
 import { DuplicateDownloadError } from '../services/download.service.js';
 import { BookRejectionError } from '../services/book-rejection.service.js';
-import { readdir, readFile, stat, open } from 'node:fs/promises';
+import { readdir, readFile, stat } from 'node:fs/promises';
 import { createReadStream } from 'node:fs';
 import { Readable } from 'node:stream';
 
@@ -19,7 +19,6 @@ vi.mock('node:fs/promises', async (importOriginal) => {
     readdir: vi.fn(),
     readFile: vi.fn(),
     stat: vi.fn(),
-    open: vi.fn(),
   };
 });
 
@@ -909,8 +908,6 @@ describe('books routes', () => {
     const fileSize = 10000;
     let logWarnSpy: ReturnType<typeof vi.spyOn>;
 
-    const mockFileHandle = { fd: 3, close: vi.fn().mockResolvedValue(undefined) };
-
     beforeEach(() => {
       logWarnSpy = vi.spyOn(app.log, 'warn');
     });
@@ -919,7 +916,6 @@ describe('books routes', () => {
       (services.book.getById as Mock).mockResolvedValue(bookWithPath);
       (readdir as Mock).mockResolvedValue(files);
       (stat as Mock).mockResolvedValue({ size: fileSize });
-      (open as Mock).mockResolvedValue(mockFileHandle);
       (createReadStream as Mock).mockReturnValue(Readable.from(Buffer.alloc(0)));
     }
 
@@ -955,12 +951,10 @@ describe('books routes', () => {
 
       await app.inject({ method: 'GET', url: '/api/books/1/preview' });
 
+      // Verify the correct file was streamed (02 before 10 with numeric sort)
       expect(createReadStream).toHaveBeenCalledWith(
-        '',
-        expect.objectContaining({ fd: mockFileHandle.fd }),
+        expect.stringContaining('02-chapter.mp3'),
       );
-      // Verify the correct file was opened (02 before 10 with numeric sort)
-      expect(open).toHaveBeenCalledWith('/library/book1/02-chapter.mp3', 'r');
     });
 
     it('responds with correct MIME type per extension', async () => {
@@ -1119,22 +1113,6 @@ describe('books routes', () => {
 
       expect(res.statusCode).toBe(416);
       expect(res.headers['content-range']).toBe(`bytes */${fileSize}`);
-    });
-
-    it('returns 404 when file disappears between stat and open (race)', async () => {
-      (services.book.getById as Mock).mockResolvedValue(bookWithPath);
-      (readdir as Mock).mockResolvedValue(['chapter.mp3']);
-      (stat as Mock).mockResolvedValue({ size: fileSize });
-      (open as Mock).mockRejectedValue(new Error('ENOENT: no such file or directory'));
-
-      const res = await app.inject({ method: 'GET', url: '/api/books/1/preview' });
-
-      expect(res.statusCode).toBe(404);
-      expect(JSON.parse(res.payload)).toEqual({ error: 'Audio file not found' });
-      expect(logWarnSpy).toHaveBeenCalledWith(
-        expect.objectContaining({ bookId: 1, path: expect.stringContaining('chapter.mp3') }),
-        expect.any(String),
-      );
     });
 
     it('returns application/octet-stream for unknown audio extension', async () => {

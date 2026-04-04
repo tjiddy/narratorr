@@ -1,5 +1,5 @@
 import { createReadStream } from 'node:fs';
-import { open, readdir, stat } from 'node:fs/promises';
+import { readdir, stat } from 'node:fs/promises';
 import { join, extname } from 'node:path';
 import type { FastifyInstance } from 'fastify';
 import { AUDIO_EXTENSIONS } from '../../core/utils/audio-constants.js';
@@ -97,21 +97,9 @@ export async function bookPreviewRoute(app: FastifyInstance, bookService: BookSe
 
       const mime = getAudioMimeType(extname(filename).toLowerCase());
 
-      // Open file handle before streaming — catches the race where the file
-      // disappears between stat() and createReadStream().
-      let fileHandle: Awaited<ReturnType<typeof open>>;
-      try {
-        fileHandle = await open(filePath, 'r');
-      } catch {
-        request.log.warn({ bookId: id, path: filePath }, 'Audio file disappeared before streaming');
-        return reply.status(404).send({ error: 'Audio file not found' });
-      }
-
-      const fd = fileHandle.fd;
-
       const rangeHeader = request.headers.range;
       if (!rangeHeader) {
-        const stream = createReadStream('', { fd, start: 0, end: fileSize - 1 });
+        const stream = createReadStream(filePath);
         return reply
           .status(200)
           .header('Content-Type', mime)
@@ -122,7 +110,7 @@ export async function bookPreviewRoute(app: FastifyInstance, bookService: BookSe
 
       // Multi-range not supported — fall back to full file
       if (rangeHeader.includes(',')) {
-        const stream = createReadStream('', { fd, start: 0, end: fileSize - 1 });
+        const stream = createReadStream(filePath);
         return reply
           .status(200)
           .header('Content-Type', mime)
@@ -133,7 +121,6 @@ export async function bookPreviewRoute(app: FastifyInstance, bookService: BookSe
 
       const { start, end } = parseRangeHeader(rangeHeader, fileSize);
       if (start === -1) {
-        await fileHandle.close();
         return reply
           .status(416)
           .header('Content-Range', `bytes */${fileSize}`)
@@ -141,7 +128,7 @@ export async function bookPreviewRoute(app: FastifyInstance, bookService: BookSe
       }
 
       const contentLength = end - start + 1;
-      const stream = createReadStream('', { fd, start, end });
+      const stream = createReadStream(filePath, { start, end });
       return reply
         .status(206)
         .header('Content-Type', mime)
