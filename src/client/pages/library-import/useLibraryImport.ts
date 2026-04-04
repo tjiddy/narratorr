@@ -164,8 +164,12 @@ export function useLibraryImport() {
       if (i !== index) return r;
 
       const autoCheck = !r.selected && state.metadata ? true : r.selected;
-      const matchResult = r.matchResult && r.matchResult.confidence === 'none' && state.metadata
-        ? { ...r.matchResult, confidence: 'medium' as const }
+      const matchResult = r.matchResult && state.metadata
+        ? r.matchResult.confidence === 'none'
+          ? { ...r.matchResult, confidence: 'medium' as const }
+          : r.matchResult.confidence === 'medium'
+            ? { ...r.matchResult, confidence: 'high' as const }
+            : r.matchResult
         : r.matchResult;
 
       let updatedBook = r.book;
