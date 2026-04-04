@@ -30,8 +30,10 @@ export interface DiscoveredBook {
   totalSize: number;
   isDuplicate: boolean;
   existingBookId?: number;
-  /** 'path' = exact folder path matched; 'slug' = title+author slug matched. Only set when isDuplicate=true. */
-  duplicateReason?: 'path' | 'slug';
+  /** 'path' = exact folder path matched; 'slug' = title+author slug matched; 'within-scan' = same title+author seen earlier in the same scan. Only set when isDuplicate=true. */
+  duplicateReason?: 'path' | 'slug' | 'within-scan';
+  /** Path of the first discovery with the same title+author slug. Only set when duplicateReason='within-scan'. */
+  duplicateFirstPath?: string;
 }
 
 export type ImportMode = 'copy' | 'move';
@@ -696,7 +698,8 @@ export class LibraryScanService {
     totalSize: number,
     isDuplicate: boolean,
     existingBookId?: number,
-    duplicateReason?: 'path' | 'slug',
+    duplicateReason?: 'path' | 'slug' | 'within-scan',
+    duplicateFirstPath?: string,
   ): DiscoveredBook {
     return {
       path,
@@ -708,6 +711,7 @@ export class LibraryScanService {
       isDuplicate,
       ...(existingBookId !== undefined && { existingBookId }),
       ...(duplicateReason !== undefined && { duplicateReason }),
+      ...(duplicateFirstPath !== undefined && { duplicateFirstPath }),
     };
   }
 
