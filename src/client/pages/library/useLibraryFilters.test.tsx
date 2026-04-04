@@ -1,7 +1,9 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { renderHook, act } from '@testing-library/react';
 import { useEffect } from 'react';
-import { MemoryRouter, useSearchParams, useNavigate } from 'react-router-dom';
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
+import { MemoryRouter, useSearchParams } from 'react-router-dom';
 import { useLibraryFilters, applyClientFilters } from './useLibraryFilters';
 import type { BookWithAuthor } from '@/lib/api';
 import { createMockBook } from '@/__tests__/factories';
@@ -619,13 +621,8 @@ describe('useLibraryFilters — URL param sync on state change', () => {
     expect(urlRef.current).toContain('author=Sanderson');
 
     // Verify the source code uses replace semantics by checking the production file.
-    // This is a code-level assertion since MemoryRouter doesn't expose history length.
-    // The `{ replace: true }` option is at useLibraryFilters.ts line 83.
-    // If it were removed, the browser would create a new history entry per filter change,
-    // making back-button navigation step through each intermediate filter state.
-    // We verify this code-level guarantee with a source assertion:
-    const fs = require('node:fs');
-    const source = fs.readFileSync(require('node:path').resolve(__dirname, 'useLibraryFilters.ts'), 'utf8');
+    // MemoryRouter doesn't expose history length, so we verify the code-level guarantee.
+    const source = readFileSync(resolve(__dirname, 'useLibraryFilters.ts'), 'utf8');
     expect(source).toContain('{ replace: true }');
   });
 });
