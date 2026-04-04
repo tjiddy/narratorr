@@ -2668,4 +2668,203 @@ describe('scanDirectory() — duplicateReason field (#133)', () => {
       });
     });
   });
+
+  describe('Series – Number – Title pattern', () => {
+    describe('2-part paths through parseFolderStructure', () => {
+      it('extracts series and title from en-dash pattern, preserving author from parts[0]', () => {
+        const result = parseFolderStructure(['Joe Abercrombie', 'First Law World – 02 – The Heroes']);
+        expect(result).toEqual({
+          title: 'The Heroes',
+          author: 'Joe Abercrombie',
+          series: 'First Law World',
+        });
+      });
+
+      it('extracts series and title from hyphen pattern in 2-part path', () => {
+        const result = parseFolderStructure(['Author', 'Series - 02 - Title']);
+        expect(result).toEqual({
+          title: 'Title',
+          author: 'Author',
+          series: 'Series',
+        });
+      });
+
+      it('preserves existing Author/Title behavior when parts[1] has no series-number pattern', () => {
+        const result = parseFolderStructure(['Author', 'Plain Title']);
+        expect(result).toEqual({
+          title: 'Plain Title',
+          author: 'Author',
+          series: null,
+        });
+      });
+    });
+
+    describe('1-part paths through parseSingleFolder', () => {
+      it('extracts series and title with en-dash separators', () => {
+        const result = parseFolderStructure(['First Law World – 02 – The Heroes']);
+        expect(result).toEqual({
+          title: 'The Heroes',
+          author: null,
+          series: 'First Law World',
+        });
+      });
+
+      it('extracts series and title for Harry Potter naming convention', () => {
+        const result = parseFolderStructure(['Harry Potter – 01 – Harry Potter and the Philosopher\'s Stone']);
+        expect(result).toEqual({
+          title: 'Harry Potter and the Philosopher\'s Stone',
+          author: null,
+          series: 'Harry Potter',
+        });
+      });
+
+      it('extracts series and title for multi-word series name', () => {
+        const result = parseFolderStructure(['The First Law Trilogy – 02 – Before They Are Hanged']);
+        expect(result).toEqual({
+          title: 'Before They Are Hanged',
+          author: null,
+          series: 'The First Law Trilogy',
+        });
+      });
+    });
+
+    describe('separator variants', () => {
+      it('matches hyphen separators identically to en-dash', () => {
+        const result = parseFolderStructure(['Series - 02 - Title']);
+        expect(result).toEqual({
+          title: 'Title',
+          author: null,
+          series: 'Series',
+        });
+      });
+
+      it('matches mixed en-dash and hyphen separators', () => {
+        const result = parseFolderStructure(['Series – 02 - Title']);
+        expect(result).toEqual({
+          title: 'Title',
+          author: null,
+          series: 'Series',
+        });
+      });
+
+      it('trims extra whitespace around separators', () => {
+        const result = parseFolderStructure(['Series  –  02  –  Title']);
+        expect(result).toEqual({
+          title: 'Title',
+          author: null,
+          series: 'Series',
+        });
+      });
+    });
+
+    describe('non-match cases (pattern must NOT fire)', () => {
+      it('does not extract series when no middle number exists (e.g., Special Edition)', () => {
+        const result = parseFolderStructure(['The Hitchhiker\'s Guide – Special Edition']);
+        expect(result).toEqual({
+          title: 'The Hitchhiker\'s Guide – Special Edition',
+          author: null,
+          series: null,
+        });
+      });
+
+      it('preserves Author - Title parsing for plain dash pattern', () => {
+        const result = parseFolderStructure(['Andy Weir - Project Hail Mary']);
+        expect(result).toEqual({
+          title: 'Project Hail Mary',
+          author: 'Andy Weir',
+          series: null,
+        });
+      });
+
+      it('preserves Title by Author parsing', () => {
+        const result = parseFolderStructure(['Project Hail Mary by Andy Weir']);
+        expect(result).toEqual({
+          title: 'Project Hail Mary',
+          author: 'Andy Weir',
+          series: null,
+        });
+      });
+
+      it('preserves Title (Author) parsing', () => {
+        const result = parseFolderStructure(['Dune (Frank Herbert)']);
+        expect(result).toEqual({
+          title: 'Dune',
+          author: 'Frank Herbert',
+          series: null,
+        });
+      });
+    });
+
+    describe('boundary values', () => {
+      it('extracts with single-digit number', () => {
+        const result = parseFolderStructure(['Series – 1 – Title']);
+        expect(result).toEqual({
+          title: 'Title',
+          author: null,
+          series: 'Series',
+        });
+      });
+
+      it('extracts with large number (999)', () => {
+        const result = parseFolderStructure(['Series – 999 – Title']);
+        expect(result).toEqual({
+          title: 'Title',
+          author: null,
+          series: 'Series',
+        });
+      });
+
+      it('extracts with leading-zero number (001)', () => {
+        const result = parseFolderStructure(['Series – 001 – Title']);
+        expect(result).toEqual({
+          title: 'Title',
+          author: null,
+          series: 'Series',
+        });
+      });
+    });
+
+    describe('cleanName integration', () => {
+      it('strips codec tags from extracted title', () => {
+        const result = parseFolderStructure(['Series – 01 – Title M4B']);
+        expect(result).toEqual({
+          title: 'Title',
+          author: null,
+          series: 'Series',
+        });
+      });
+
+      it('strips year suffixes from extracted title', () => {
+        const result = parseFolderStructure(['Series – 01 – Title (2020)']);
+        expect(result).toEqual({
+          title: 'Title',
+          author: null,
+          series: 'Series',
+        });
+      });
+
+      it('strips numbering prefixes from extracted title but preserves legitimate numeric titles', () => {
+        // Numbering prefix stripped
+        const withPrefix = parseFolderStructure(['Series – 01 – 02. The Second Book']);
+        expect(withPrefix).toEqual({
+          title: 'The Second Book',
+          author: null,
+          series: 'Series',
+        });
+
+        // Legitimate numeric title preserved
+        const withNumeric = parseFolderStructure(['Sci-Fi Classics – 01 – 2001 A Space Odyssey']);
+        expect(withNumeric.title).toBe('2001 A Space Odyssey');
+      });
+    });
+
+    describe('duplicate detection regression', () => {
+      it('2-part series-number path produces same title+author as equivalent 3-part path', () => {
+        const twoPart = parseFolderStructure(['Author', 'Series – 02 – Title']);
+        const threePart = parseFolderStructure(['Author', 'Series', 'Title']);
+        expect(twoPart.title).toBe(threePart.title);
+        expect(twoPart.author).toBe(threePart.author);
+      });
+    });
+  });
 });
