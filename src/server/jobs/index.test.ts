@@ -98,6 +98,16 @@ describe('startJobs', () => {
     expect(dcOrder).toBeLessThan(diOrder);
   });
 
+  it('enrichment task callback passes db, metadataService, bookService, and log to runEnrichment', async () => {
+    const { runEnrichment } = await import('./enrichment.js');
+    const { startJobs } = await import('./index.js');
+    startJobs(db, services, log);
+
+    await services.taskRegistry.executeTracked('enrichment');
+
+    expect(runEnrichment).toHaveBeenCalledWith(db, services.metadata, services.book, log);
+  });
+
   it('schedules discovery timeout loop using intervalHours * 60 from discovery settings', async () => {
     // Mock settings.get to return specific values per category
     (services.settings.get as ReturnType<typeof vi.fn>).mockImplementation(async (category: string) => {
