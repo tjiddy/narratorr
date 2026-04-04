@@ -805,8 +805,16 @@ export function parseFolderStructure(parts: string[]): {
     return parseSingleFolder(folder);
   }
 
-  // Two folders: Author/Title
+  // Two folders: Author/Title (or Author/Series – NN – Title)
   if (parts.length === 2) {
+    const seriesMatch = parts[1].match(SERIES_NUMBER_TITLE_REGEX);
+    if (seriesMatch) {
+      return {
+        title: cleanName(seriesMatch[2]),
+        author: cleanName(parts[0]),
+        series: cleanName(seriesMatch[1]),
+      };
+    }
     return {
       title: cleanName(parts[1]),
       author: cleanName(parts[0]),
@@ -827,6 +835,16 @@ function parseSingleFolder(folder: string): {
   author: string | null;
   series: string | null;
 } {
+  // Pattern: "Series – NN – Title" or "Series - NN - Title"
+  const seriesNumberMatch = folder.match(SERIES_NUMBER_TITLE_REGEX);
+  if (seriesNumberMatch) {
+    return {
+      title: cleanName(seriesNumberMatch[2]),
+      author: null,
+      series: cleanName(seriesNumberMatch[1]),
+    };
+  }
+
   // Pattern: "Author - Title" (skip if left side is just a number like "01 - Title")
   const dashMatch = folder.match(/^(.+?)\s*-\s*(.+)$/);
   if (dashMatch && !/^\d+$/.test(dashMatch[1].trim())) {
@@ -876,6 +894,9 @@ const CODEC_REGEX = new RegExp(`\\b(${CODEC_TAGS.join('|')})\\b`, 'gi');
 
 /** Matches a bare 4-digit year (1900–2099) at end of string. */
 const BARE_YEAR_REGEX = /\b((?:19|20)\d{2})\s*$/;
+
+/** Matches "Series – NN – Title" or "Series - NN - Title" (dash or en-dash separators). */
+const SERIES_NUMBER_TITLE_REGEX = /^(.+?)\s*[–-]\s*\d+\s*[–-]\s*(.+)$/;
 
 /** Shared normalization: underscore/dot→space, codec strip, collapse whitespace, trim. */
 function normalizeFolderName(name: string): string {
