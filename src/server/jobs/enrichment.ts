@@ -6,14 +6,15 @@ import { books, narrators, bookNarrators } from '../../db/schema.js';
 import { slugify } from '../../core/index.js';
 import { RateLimitError } from '../../core/index.js';
 import type { MetadataService } from '../services/metadata.service.js';
+import type { BookService } from '../services/book.service.js';
 
 const BATCH_LIMIT = 5;
 const RETRY_AFTER_MS = 60 * 60 * 1000; // 1 hour
 
-export function startEnrichmentJob(db: Db, metadataService: MetadataService, log: FastifyBaseLogger) {
+export function startEnrichmentJob(db: Db, metadataService: MetadataService, bookService: BookService, log: FastifyBaseLogger) {
   cron.schedule('*/5 * * * *', async () => {
     try {
-      await runEnrichment(db, metadataService, log);
+      await runEnrichment(db, metadataService, bookService, log);
     } catch (error: unknown) {
       log.error(error, 'Enrichment job error');
     }
@@ -23,11 +24,12 @@ export function startEnrichmentJob(db: Db, metadataService: MetadataService, log
 }
 
 // eslint-disable-next-line complexity -- linear enrichment pipeline with null guards per category
-export async function runEnrichment(db: Db, metadataService: MetadataService, log: FastifyBaseLogger) {
+export async function runEnrichment(db: Db, metadataService: MetadataService, bookService: BookService, log: FastifyBaseLogger) {
   const startMs = Date.now();
   let enrichedCount = 0;
   let filledDuration = 0;
   let filledNarrators = 0;
+  let filledGenres = 0;
   // Skip books without ASIN → set to 'skipped'
   const noAsinBooks = await db
     .select({ id: books.id })
@@ -95,7 +97,7 @@ export async function runEnrichment(db: Db, metadataService: MetadataService, lo
 
       // Only fill in fields that are currently empty
       const existing = await db
-        .select({ duration: books.duration })
+        .select({ duration: books.duration, genres: books.genres })
         .from(books)
         .where(eq(books.id, candidate.id))
         .limit(1);
@@ -105,6 +107,12 @@ export async function runEnrichment(db: Db, metadataService: MetadataService, lo
         if (!book.duration && result.duration) {
           updates.duration = result.duration;
           filledDuration++;
+        }
+
+        // Fill genres via bookService.update() when existing genres are null or empty
+        if (result.genres?.length && (!book.genres || book.genres.length === 0)) {
+          await bookService.update(candidate.id, { genres: result.genres });
+          filledGenres++;
         }
       }
 
@@ -155,6 +163,6 @@ export async function runEnrichment(db: Db, metadataService: MetadataService, lo
   }
 
   if (candidates.length > 0) {
-    log.info({ enrichedCount, filledDuration, filledNarrators, elapsedMs: Date.now() - startMs }, 'Enrichment batch completed');
+    log.info({ enrichedCount, filledDuration, filledNarrators, filledGenres, elapsedMs: Date.now() - startMs }, 'Enrichment batch completed');
   }
 }

@@ -1,5 +1,34 @@
 # Workflow Log
 
+## #350 Persist Audnexus genres during enrichment — 2026-04-04
+**Skill path:** /implement → /claim → /plan → /handoff
+**Outcome:** success — PR #354
+
+### Metrics
+- Files changed: 8 | Tests added/modified: 16 new tests + 23 updated call sites
+- Quality gate runs: 2 (pass on attempt 2 — first failed on lint complexity + typecheck)
+- Fix iterations: 2 (cyclomatic complexity extraction, null-to-undefined type coercion)
+- Context compactions: 0
+
+### Workflow experience
+- What went smoothly: Spec was well-groomed through 3 review rounds — all ambiguities resolved before implementation. Existing patterns (fill-if-empty, fire-and-forget telemetry) made the implementation straightforward.
+- Friction / issues encountered: Cyclomatic complexity limit hit at 16 when adding genre logic to `applyAudnexusEnrichment` — required extracting `applyEnrichmentData()`. TypeScript mismatch between Drizzle's `string[] | null` and utility `string[] | undefined` parameter.
+
+### Token efficiency
+- Highest-token actions: Spec review response rounds (3 rounds before approval), codebase exploration subagent
+- Avoidable waste: None significant — spec grooming prevented implementation rework
+- Suggestions: Pre-check complexity budget of target methods during /plan
+
+### Infrastructure gaps
+- Repeated workarounds: null-vs-undefined coercion at Drizzle/utility boundaries
+- Missing tooling / config: None
+- Unresolved debt: None introduced
+
+### Wish I'd Known
+1. `applyAudnexusEnrichment` was already at complexity 15 — one more branch would bust the limit. Should have planned the extraction from the start (see `cyclomatic-complexity-genre-addition.md`).
+2. Drizzle nullable JSON columns produce `string[] | null` while many utility functions accept `string[] | undefined` — always budget for a coercion at the boundary (see `null-vs-undefined-genre-types.md`).
+3. Widening a job function signature propagates to 20+ test call sites — enumerate all callers during planning, not discovery (see `enrichment-job-signature-propagation.md`).
+
 ## #348 MAM adapter — populate guid from torrent ID for blacklist support — 2026-04-04
 **Skill path:** /implement → /claim → /plan → /handoff
 **Outcome:** success — PR #349

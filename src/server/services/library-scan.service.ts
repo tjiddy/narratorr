@@ -358,7 +358,7 @@ export class LibraryScanService {
   // eslint-disable-next-line complexity -- copy/move + enrich + audnexus + event pipeline, same as processOneImport
   private async enrichImportedBook(
     item: ImportConfirmItem,
-    book: { id: number; narrators?: Array<{ name: string }> | null; duration?: number | null; coverUrl?: string | null },
+    book: { id: number; narrators?: Array<{ name: string }> | null; duration?: number | null; coverUrl?: string | null; genres?: string[] | null },
     meta: BookMetadata | null,
     mode?: ImportMode,
   ): Promise<boolean> {
@@ -392,6 +392,7 @@ export class LibraryScanService {
       alternateAsins: meta?.alternateAsins,
       existingNarrator: book.narrators?.[0]?.name ?? null,
       existingDuration: book.duration,
+      existingGenres: book.genres ?? null,
     });
 
     // Record success event (fire-and-forget)
@@ -594,12 +595,16 @@ export class LibraryScanService {
     this.log.debug({ bookId }, 'Starting audio enrichment');
     await enrichBookFromAudio(bookId, finalPath, { narrators: narratorName ? [{ name: narratorName }] : null, duration, coverUrl }, this.db, this.log, this.bookService);
 
+    // Read current genres from DB (may have been filled since placeholder creation)
+    const [currentBook] = await this.db.select({ genres: books.genres }).from(books).where(eq(books.id, bookId)).limit(1);
+
     // Audnexus enrichment
     await this.applyAudnexusEnrichment(bookId, {
       primaryAsin,
       alternateAsins: meta?.alternateAsins,
       existingNarrator: narratorName,
       existingDuration: duration,
+      existingGenres: currentBook?.genres ?? null,
     });
 
     // Success — mark as imported
@@ -758,6 +763,7 @@ export class LibraryScanService {
       alternateAsins?: string[];
       existingNarrator?: string | null;
       existingDuration?: number | null;
+      existingGenres?: string[] | null;
     },
   ): Promise<void> {
     const asinsToTry = [opts.primaryAsin, ...(opts.alternateAsins ?? [])].filter((a): a is string => !!a);
@@ -767,25 +773,37 @@ export class LibraryScanService {
       try {
         const data = await this.metadataService.enrichBook(asin);
         if (data) {
-          const updates: Partial<{ enrichmentStatus: string; asin: string; duration: number; updatedAt: Date }> = {
-            enrichmentStatus: 'enriched',
-            updatedAt: new Date(),
-          };
-          if (asin !== opts.primaryAsin) updates.asin = asin;
-          if (!opts.existingDuration && data.duration) {
-            updates.duration = data.duration;
-          }
-          await this.db.update(books).set(updates).where(eq(books.id, bookId));
-          if (!opts.existingNarrator && data.narrators?.length) {
-            await this.bookService.update(bookId, { narrators: data.narrators });
-          }
-          this.log.info({ bookId, asin, wasAlternate: asin !== opts.primaryAsin }, 'Audnexus enrichment applied');
+          await this.applyEnrichmentData(bookId, asin, data, opts);
           break;
         }
       } catch (error: unknown) {
         this.log.warn({ error, bookId, asin }, 'Audnexus enrichment failed');
       }
     }
+  }
+
+  private async applyEnrichmentData(
+    bookId: number,
+    asin: string,
+    data: { duration?: number; narrators?: string[]; genres?: string[] },
+    opts: { primaryAsin?: string | null; existingNarrator?: string | null; existingDuration?: number | null; existingGenres?: string[] | null },
+  ): Promise<void> {
+    const updates: Partial<{ enrichmentStatus: string; asin: string; duration: number; updatedAt: Date }> = {
+      enrichmentStatus: 'enriched',
+      updatedAt: new Date(),
+    };
+    if (asin !== opts.primaryAsin) updates.asin = asin;
+    if (!opts.existingDuration && data.duration) {
+      updates.duration = data.duration;
+    }
+    await this.db.update(books).set(updates).where(eq(books.id, bookId));
+    if (!opts.existingNarrator && data.narrators?.length) {
+      await this.bookService.update(bookId, { narrators: data.narrators });
+    }
+    if (data.genres?.length && !opts.existingGenres?.length) {
+      await this.bookService.update(bookId, { genres: data.genres });
+    }
+    this.log.info({ bookId, asin, wasAlternate: asin !== opts.primaryAsin }, 'Audnexus enrichment applied');
   }
 }
 

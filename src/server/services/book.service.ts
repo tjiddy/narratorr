@@ -260,6 +260,13 @@ export class BookService {
 
     const changedFields = Object.keys(data).filter(k => data[k as keyof typeof data] !== undefined);
     this.log.info({ id, changedFields }, 'Book updated');
+
+    if ('genres' in data && data.genres !== undefined) {
+      this.trackUnmatchedGenres(data.genres ?? undefined).catch((error: unknown) => {
+        this.log.debug({ error }, 'Failed to track unmatched genres');
+      });
+    }
+
     return this.getById(id);
   }
 
