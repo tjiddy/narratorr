@@ -434,12 +434,101 @@ describe('LibraryScanService', () => {
     });
 
     // Genre persistence via applyAudnexusEnrichment
-    it.todo('persists genres via bookService.update() when enrichBook returns genres and book has null genres');
-    it.todo('persists genres via bookService.update() when enrichBook returns genres and book has empty array genres');
-    it.todo('does not overwrite existing non-empty genres when enrichBook returns genres');
-    it.todo('does not attempt genre update when enrichBook returns genres=undefined');
-    it.todo('does not attempt genre update when enrichBook returns genres=[] (empty array)');
-    it.todo('persists genres via ASIN fallback path when alternate ASIN succeeds with genres');
+    it('persists genres via bookService.update() when enrichBook returns genres and book has null genres', async () => {
+      mockMetadataService.enrichBook.mockResolvedValueOnce({
+        narrators: ['Jim Dale'],
+        duration: 480,
+        genres: ['Fantasy', 'Science Fiction'],
+      });
+
+      await service.importSingleBook(
+        { path: '/audiobooks/Title', title: 'HP', asin: 'B017V4IM1G' },
+      );
+
+      expect(mockBookService.update).toHaveBeenCalledWith(1, { genres: ['Fantasy', 'Science Fiction'] });
+    });
+
+    it('persists genres via bookService.update() when enrichBook returns genres and book has empty array genres', async () => {
+      // Override create mock to return book with empty genres array
+      mockBookService.create.mockResolvedValueOnce({
+        id: 1, title: 'HP', status: 'imported', authors: [], narrators: [], genres: [],
+      });
+      mockMetadataService.enrichBook.mockResolvedValueOnce({
+        genres: ['Mystery'],
+      });
+
+      await service.importSingleBook(
+        { path: '/audiobooks/Title', title: 'HP', asin: 'B017V4IM1G' },
+      );
+
+      expect(mockBookService.update).toHaveBeenCalledWith(1, { genres: ['Mystery'] });
+    });
+
+    it('does not overwrite existing non-empty genres when enrichBook returns genres', async () => {
+      // Override create mock to return book with existing genres
+      mockBookService.create.mockResolvedValueOnce({
+        id: 1, title: 'HP', status: 'imported', authors: [], narrators: [], genres: ['Existing Genre'],
+      });
+      mockMetadataService.enrichBook.mockResolvedValueOnce({
+        genres: ['New Genre'],
+      });
+
+      await service.importSingleBook(
+        { path: '/audiobooks/Title', title: 'HP', asin: 'B017V4IM1G' },
+      );
+
+      // bookService.update should NOT be called with genres
+      const genreUpdateCalls = mockBookService.update.mock.calls.filter(
+        (call: unknown[]) => call[1] && typeof call[1] === 'object' && 'genres' in (call[1] as Record<string, unknown>),
+      );
+      expect(genreUpdateCalls).toHaveLength(0);
+    });
+
+    it('does not attempt genre update when enrichBook returns genres=undefined', async () => {
+      mockMetadataService.enrichBook.mockResolvedValueOnce({
+        narrators: ['Jim Dale'],
+        duration: 480,
+        // genres undefined
+      });
+
+      await service.importSingleBook(
+        { path: '/audiobooks/Title', title: 'HP', asin: 'B017V4IM1G' },
+      );
+
+      const genreUpdateCalls = mockBookService.update.mock.calls.filter(
+        (call: unknown[]) => call[1] && typeof call[1] === 'object' && 'genres' in (call[1] as Record<string, unknown>),
+      );
+      expect(genreUpdateCalls).toHaveLength(0);
+    });
+
+    it('does not attempt genre update when enrichBook returns genres=[] (empty array)', async () => {
+      mockMetadataService.enrichBook.mockResolvedValueOnce({
+        narrators: ['Jim Dale'],
+        genres: [],
+      });
+
+      await service.importSingleBook(
+        { path: '/audiobooks/Title', title: 'HP', asin: 'B017V4IM1G' },
+      );
+
+      const genreUpdateCalls = mockBookService.update.mock.calls.filter(
+        (call: unknown[]) => call[1] && typeof call[1] === 'object' && 'genres' in (call[1] as Record<string, unknown>),
+      );
+      expect(genreUpdateCalls).toHaveLength(0);
+    });
+
+    it('persists genres via ASIN fallback path when alternate ASIN succeeds with genres', async () => {
+      mockMetadataService.enrichBook
+        .mockResolvedValueOnce(null)  // primary fails
+        .mockResolvedValueOnce({ narrators: ['Jim Dale'], genres: ['Fantasy'] });  // alternate works
+
+      await service.importSingleBook(
+        { path: '/audiobooks/Title', title: 'HP', asin: 'B0NEW' },
+        { title: 'HP', authors: [{ name: 'JKR' }], asin: 'B0NEW', alternateAsins: ['B0OLD'] },
+      );
+
+      expect(mockBookService.update).toHaveBeenCalledWith(1, { genres: ['Fantasy'] });
+    });
 
     it('stores alternate ASIN when primary fails but alternate succeeds', async () => {
       mockMetadataService.enrichBook

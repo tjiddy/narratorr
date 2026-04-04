@@ -392,6 +392,7 @@ export class LibraryScanService {
       alternateAsins: meta?.alternateAsins,
       existingNarrator: book.narrators?.[0]?.name ?? null,
       existingDuration: book.duration,
+      existingGenres: book.genres ?? null,
     });
 
     // Record success event (fire-and-forget)
@@ -600,6 +601,7 @@ export class LibraryScanService {
       alternateAsins: meta?.alternateAsins,
       existingNarrator: narratorName,
       existingDuration: duration,
+      existingGenres: meta?.genres ?? null,
     });
 
     // Success — mark as imported
@@ -758,6 +760,7 @@ export class LibraryScanService {
       alternateAsins?: string[];
       existingNarrator?: string | null;
       existingDuration?: number | null;
+      existingGenres?: string[] | null;
     },
   ): Promise<void> {
     const asinsToTry = [opts.primaryAsin, ...(opts.alternateAsins ?? [])].filter((a): a is string => !!a);
@@ -778,6 +781,9 @@ export class LibraryScanService {
           await this.db.update(books).set(updates).where(eq(books.id, bookId));
           if (!opts.existingNarrator && data.narrators?.length) {
             await this.bookService.update(bookId, { narrators: data.narrators });
+          }
+          if (data.genres?.length && (!opts.existingGenres || opts.existingGenres.length === 0)) {
+            await this.bookService.update(bookId, { genres: data.genres });
           }
           this.log.info({ bookId, asin, wasAlternate: asin !== opts.primaryAsin }, 'Audnexus enrichment applied');
           break;
