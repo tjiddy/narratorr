@@ -517,6 +517,12 @@ describe('useLibraryFilters — URL param sync on state change', () => {
     expect(urlRef.current).toContain('sortDirection=asc');
   });
 
+  it('removes sortDirection from URL when set back to desc (default)', () => {
+    const { result } = renderHook(() => useLibraryFilters(), { wrapper: createCapturingWrapper('/library?sortDirection=asc') });
+    act(() => { result.current.actions.setSortDirection('desc'); });
+    expect(urlRef.current).not.toContain('sortDirection=');
+  });
+
   it('writes page to URL when pagination changes', () => {
     const { result } = renderHook(() => useLibraryFilters(), { wrapper: createCapturingWrapper() });
     act(() => { result.current.params.pagination.setPage(3); });
