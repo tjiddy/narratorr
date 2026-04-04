@@ -349,4 +349,14 @@ describe('enrichment job', () => {
       );
     });
   });
+
+  describe('genre persistence', () => {
+    it.todo('persists genres via bookService.update() when book has null genres in DB');
+    it.todo('persists genres via bookService.update() when book has empty array genres in DB');
+    it.todo('does NOT update genres when book already has non-empty genres');
+    it.todo('does NOT update genres when enrichBook returns no genres (undefined)');
+    it.todo('does NOT update genres when enrichBook returns empty genres array');
+    it.todo('increments filledGenres counter only when genres are actually filled');
+    it.todo('includes filledGenres in batch completion log message');
+  });
 });

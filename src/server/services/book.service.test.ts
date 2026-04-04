@@ -1244,4 +1244,10 @@ describe('BookService — transaction atomicity (#214)', () => {
       );
     });
   });
+
+  describe('update() genre telemetry', () => {
+    it.todo('calls trackUnmatchedGenres fire-and-forget when genres are provided in update payload');
+    it.todo('does NOT call trackUnmatchedGenres when genres are absent from update payload');
+    it.todo('trackUnmatchedGenres failure during update does not reject the update promise');
+  });
 });

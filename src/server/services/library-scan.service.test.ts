@@ -433,6 +433,14 @@ describe('LibraryScanService', () => {
       expect(result.imported).toBe(true);
     });
 
+    // Genre persistence via applyAudnexusEnrichment
+    it.todo('persists genres via bookService.update() when enrichBook returns genres and book has null genres');
+    it.todo('persists genres via bookService.update() when enrichBook returns genres and book has empty array genres');
+    it.todo('does not overwrite existing non-empty genres when enrichBook returns genres');
+    it.todo('does not attempt genre update when enrichBook returns genres=undefined');
+    it.todo('does not attempt genre update when enrichBook returns genres=[] (empty array)');
+    it.todo('persists genres via ASIN fallback path when alternate ASIN succeeds with genres');
+
     it('stores alternate ASIN when primary fails but alternate succeeds', async () => {
       mockMetadataService.enrichBook
         .mockResolvedValueOnce(null)  // B0NEW fails
