@@ -483,20 +483,20 @@ describe('discoverBooks', () => {
 
   // ---- Parent has audio files (leaf folder behavior) ----
 
-  it('treats parent as leaf when it has its own audio, does not recurse into children', async () => {
+  it('treats parent as leaf when it has its own audio and NO audio-containing children', async () => {
     setupFs({
       '/audiobooks': [{ name: 'Book', isFile: false }],
       '/audiobooks/Book': [
         { name: 'main.mp3', isFile: true, size: 5000 },
-        { name: 'subfolder', isFile: false },
+        { name: 'extras', isFile: false },
       ],
-      '/audiobooks/Book/subfolder': [
-        { name: 'extra.mp3', isFile: true, size: 1000 },
+      '/audiobooks/Book/extras': [
+        { name: 'cover.jpg', isFile: true, size: 1000 },
       ],
     });
 
     const result = await discoverBooks('/audiobooks');
-    // Parent has audio -> it's a leaf. Subfolder is ignored.
+    // Parent has audio, subfolder has no audio -> leaf
     expect(result).toHaveLength(1);
     expect(result[0].path).toBe('/audiobooks/Book');
     expect(result[0].audioFileCount).toBe(1);
@@ -770,28 +770,273 @@ describe('discoverBooks', () => {
   // ---- Mixed-content folders (loose audio + audio subfolders) ----
 
   describe('mixed-content folders', () => {
-    it.todo('root with loose audio files + audio subfolders discovers subfolders and skips loose files');
-    it.todo('nested folder with loose audio + book subfolders discovers books and skips loose file');
-    it.todo('deep nesting: intermediate folder at depth 3+ with loose audio + audio children applies same skip');
-    it.todo('single loose audio file + audio subfolders still skips the single file');
-    it.todo('loose audio files + exactly one audio subfolder discovers subfolder and skips loose files');
-    it.todo('loose audio files + non-audio-only subfolders treated as single book (leaf)');
-    it.todo('no audio files and no audio children returns empty');
+    it('root with loose audio files + audio subfolders discovers subfolders and skips loose files', async () => {
+      setupFs({
+        '/audiobooks': [
+          { name: 'loose1.m4b', isFile: true, size: 1000 },
+          { name: 'loose2.m4b', isFile: true, size: 2000 },
+          { name: 'Author', isFile: false },
+        ],
+        '/audiobooks/Author': [{ name: 'Book1', isFile: false }],
+        '/audiobooks/Author/Book1': [{ name: 'chapter.mp3', isFile: true, size: 5000 }],
+      });
+
+      const result = await discoverBooks('/audiobooks');
+      expect(result).toHaveLength(1);
+      expect(result[0].path).toBe('/audiobooks/Author/Book1');
+      expect(result[0].audioFileCount).toBe(1);
+      expect(result[0].totalSize).toBe(5000);
+    });
+
+    it('nested folder with loose audio + book subfolders discovers books and skips loose file', async () => {
+      setupFs({
+        '/audiobooks': [{ name: 'Author', isFile: false }],
+        '/audiobooks/Author': [
+          { name: 'bonus.mp3', isFile: true, size: 500 },
+          { name: 'Book1', isFile: false },
+          { name: 'Book2', isFile: false },
+        ],
+        '/audiobooks/Author/Book1': [{ name: 'ch.mp3', isFile: true, size: 1000 }],
+        '/audiobooks/Author/Book2': [{ name: 'ch.mp3', isFile: true, size: 2000 }],
+      });
+
+      const result = await discoverBooks('/audiobooks');
+      expect(result).toHaveLength(2);
+      const paths = result.map(r => r.path).sort();
+      expect(paths).toEqual(['/audiobooks/Author/Book1', '/audiobooks/Author/Book2']);
+    });
+
+    it('deep nesting: intermediate folder at depth 3+ with loose audio + audio children applies same skip', async () => {
+      setupFs({
+        '/audiobooks': [{ name: 'Author', isFile: false }],
+        '/audiobooks/Author': [{ name: 'Series', isFile: false }],
+        '/audiobooks/Author/Series': [
+          { name: 'extra.flac', isFile: true, size: 300 },
+          { name: 'Book1', isFile: false },
+        ],
+        '/audiobooks/Author/Series/Book1': [{ name: 'ch.mp3', isFile: true, size: 1000 }],
+      });
+
+      const result = await discoverBooks('/audiobooks');
+      expect(result).toHaveLength(1);
+      expect(result[0].path).toBe('/audiobooks/Author/Series/Book1');
+    });
+
+    it('single loose audio file + audio subfolders still skips the single file', async () => {
+      setupFs({
+        '/audiobooks': [
+          { name: 'stray.mp3', isFile: true, size: 100 },
+          { name: 'Book', isFile: false },
+        ],
+        '/audiobooks/Book': [{ name: 'ch.mp3', isFile: true, size: 5000 }],
+      });
+
+      const result = await discoverBooks('/audiobooks');
+      expect(result).toHaveLength(1);
+      expect(result[0].path).toBe('/audiobooks/Book');
+      expect(result[0].totalSize).toBe(5000);
+    });
+
+    it('loose audio files + exactly one audio subfolder discovers subfolder and skips loose files', async () => {
+      setupFs({
+        '/audiobooks': [
+          { name: 'loose.m4b', isFile: true, size: 100 },
+          { name: 'OnlyBook', isFile: false },
+        ],
+        '/audiobooks/OnlyBook': [{ name: 'ch.mp3', isFile: true, size: 2000 }],
+      });
+
+      const result = await discoverBooks('/audiobooks');
+      expect(result).toHaveLength(1);
+      expect(result[0].path).toBe('/audiobooks/OnlyBook');
+    });
+
+    it('loose audio files + non-audio-only subfolders treated as single book (leaf)', async () => {
+      setupFs({
+        '/audiobooks': [
+          { name: 'track.mp3', isFile: true, size: 1000 },
+          { name: 'images', isFile: false },
+        ],
+        '/audiobooks/images': [{ name: 'cover.jpg', isFile: true, size: 500 }],
+      });
+
+      const result = await discoverBooks('/audiobooks');
+      // No audio children, so hasOwnAudio + no audioChildren = leaf
+      expect(result).toHaveLength(1);
+      expect(result[0].path).toBe('/audiobooks');
+      expect(result[0].audioFileCount).toBe(1);
+    });
+
+    it('no audio files and no audio children returns empty', async () => {
+      setupFs({
+        '/audiobooks': [{ name: 'empty', isFile: false }],
+        '/audiobooks/empty': [],
+      });
+
+      const result = await discoverBooks('/audiobooks');
+      expect(result).toEqual([]);
+    });
   });
 
   describe('mixed-content + disc merge interaction', () => {
-    it.todo('loose audio + disc subfolders (CD1, CD2) merges discs and excludes loose files');
-    it.todo('loose audio + disc subfolders + non-disc immediateAudioChild prevents disc merge, recurses all');
-    it.todo('loose audio + disc subfolders + deeper non-disc descendant merges discs and recurses deeper child');
+    it('loose audio + disc subfolders (CD1, CD2) merges discs and excludes loose files', async () => {
+      setupFs({
+        '/audiobooks': [{ name: 'Book', isFile: false }],
+        '/audiobooks/Book': [
+          { name: 'loose.mp3', isFile: true, size: 100 },
+          { name: 'CD1', isFile: false },
+          { name: 'CD2', isFile: false },
+        ],
+        '/audiobooks/Book/CD1': [{ name: 'a.mp3', isFile: true, size: 200 }],
+        '/audiobooks/Book/CD2': [{ name: 'b.mp3', isFile: true, size: 300 }],
+      });
+
+      const result = await discoverBooks('/audiobooks');
+      expect(result).toHaveLength(1);
+      expect(result[0].path).toBe('/audiobooks/Book');
+      expect(result[0].audioFileCount).toBe(2); // Only disc tracks, not loose
+      expect(result[0].totalSize).toBe(500); // 200 + 300, not 100
+    });
+
+    it('loose audio + disc subfolders + non-disc immediateAudioChild prevents disc merge, recurses all', async () => {
+      setupFs({
+        '/audiobooks': [{ name: 'Book', isFile: false }],
+        '/audiobooks/Book': [
+          { name: 'loose.mp3', isFile: true, size: 100 },
+          { name: 'CD1', isFile: false },
+          { name: 'CD2', isFile: false },
+          { name: 'Bonus', isFile: false },
+        ],
+        '/audiobooks/Book/CD1': [{ name: 'a.mp3', isFile: true, size: 200 }],
+        '/audiobooks/Book/CD2': [{ name: 'b.mp3', isFile: true, size: 300 }],
+        '/audiobooks/Book/Bonus': [{ name: 'c.mp3', isFile: true, size: 400 }],
+      });
+
+      const result = await discoverBooks('/audiobooks');
+      // Disc merge doesn't trigger (Bonus is non-disc immediateAudioChild)
+      // All three subfolders recursed individually, loose files skipped
+      expect(result).toHaveLength(3);
+      const paths = result.map(r => r.path).sort();
+      expect(paths).toEqual([
+        '/audiobooks/Book/Bonus',
+        '/audiobooks/Book/CD1',
+        '/audiobooks/Book/CD2',
+      ]);
+    });
+
+    it('loose audio + disc subfolders + deeper non-disc descendant merges discs and recurses deeper child', async () => {
+      setupFs({
+        '/audiobooks': [{ name: 'Collection', isFile: false }],
+        '/audiobooks/Collection': [
+          { name: 'loose.mp3', isFile: true, size: 50 },
+          { name: 'CD1', isFile: false },
+          { name: 'CD2', isFile: false },
+          { name: 'Extra', isFile: false }, // no direct audio, deeper descendant has audio
+        ],
+        '/audiobooks/Collection/CD1': [{ name: 'a.mp3', isFile: true, size: 100 }],
+        '/audiobooks/Collection/CD2': [{ name: 'b.mp3', isFile: true, size: 100 }],
+        '/audiobooks/Collection/Extra': [{ name: 'Bonus Book', isFile: false }],
+        '/audiobooks/Collection/Extra/Bonus Book': [{ name: 'c.mp3', isFile: true, size: 100 }],
+      });
+
+      const result = await discoverBooks('/audiobooks');
+      // CD1 and CD2 are the only immediateAudioChildren → disc merge triggers
+      // Extra recurses independently, loose files skipped
+      expect(result).toHaveLength(2);
+      const paths = result.map(r => r.path).sort();
+      expect(paths).toEqual(['/audiobooks/Collection', '/audiobooks/Collection/Extra/Bonus Book']);
+      // Merged book should have 2 tracks from discs, not the loose file
+      const merged = result.find(r => r.path === '/audiobooks/Collection')!;
+      expect(merged.audioFileCount).toBe(2);
+      expect(merged.totalSize).toBe(200);
+    });
   });
 
   describe('mixed-content logging', () => {
-    it.todo('logs skipped files with path and skippedFiles array when mixed-content detected');
-    it.todo('does not emit skip log for pure leaf folder');
-    it.todo('does not emit skip log for pure recurse folder (no loose audio)');
+    it('logs skipped files with path and skippedFiles array when mixed-content detected', async () => {
+      setupFs({
+        '/audiobooks': [
+          { name: 'loose1.m4b', isFile: true, size: 100 },
+          { name: 'loose2.mp3', isFile: true, size: 200 },
+          { name: 'Book', isFile: false },
+        ],
+        '/audiobooks/Book': [{ name: 'ch.mp3', isFile: true, size: 1000 }],
+      });
+
+      const log: DiscoveryLogger = { debug: vi.fn() };
+      await discoverBooks('/audiobooks', { log });
+
+      expect(log.debug).toHaveBeenCalledWith(
+        {
+          path: '/audiobooks',
+          skippedFiles: ['/audiobooks/loose1.m4b', '/audiobooks/loose2.mp3'],
+        },
+        'Skipping loose audio files in mixed-content folder',
+      );
+    });
+
+    it('does not emit skip log for pure leaf folder', async () => {
+      setupFs({
+        '/audiobooks': [{ name: 'Book', isFile: false }],
+        '/audiobooks/Book': [{ name: 'ch.mp3', isFile: true, size: 1000 }],
+      });
+
+      const log: DiscoveryLogger = { debug: vi.fn() };
+      await discoverBooks('/audiobooks', { log });
+
+      const calls = (log.debug as ReturnType<typeof vi.fn>).mock.calls;
+      const skipCalls = calls.filter(
+        (c: unknown[]) => c[1] === 'Skipping loose audio files in mixed-content folder',
+      );
+      expect(skipCalls).toHaveLength(0);
+    });
+
+    it('does not emit skip log for pure recurse folder (no loose audio)', async () => {
+      setupFs({
+        '/audiobooks': [
+          { name: 'Book1', isFile: false },
+          { name: 'Book2', isFile: false },
+        ],
+        '/audiobooks/Book1': [{ name: 'ch.mp3', isFile: true, size: 1000 }],
+        '/audiobooks/Book2': [{ name: 'ch.mp3', isFile: true, size: 2000 }],
+      });
+
+      const log: DiscoveryLogger = { debug: vi.fn() };
+      await discoverBooks('/audiobooks', { log });
+
+      const calls = (log.debug as ReturnType<typeof vi.fn>).mock.calls;
+      const skipCalls = calls.filter(
+        (c: unknown[]) => c[1] === 'Skipping loose audio files in mixed-content folder',
+      );
+      expect(skipCalls).toHaveLength(0);
+    });
   });
 
   describe('mixed-content end-to-end', () => {
-    it.todo('tree with mixed loose files at multiple levels returns only legitimate books');
+    it('tree with mixed loose files at multiple levels returns only legitimate books', async () => {
+      setupFs({
+        '/audiobooks': [
+          { name: 'root-loose.m4b', isFile: true, size: 100 },
+          { name: 'Author1', isFile: false },
+          { name: 'Author2', isFile: false },
+        ],
+        '/audiobooks/Author1': [
+          { name: 'author-loose.mp3', isFile: true, size: 200 },
+          { name: 'Book A', isFile: false },
+        ],
+        '/audiobooks/Author1/Book A': [{ name: 'ch.mp3', isFile: true, size: 1000 }],
+        '/audiobooks/Author2': [{ name: 'Book B', isFile: false }],
+        '/audiobooks/Author2/Book B': [{ name: 'ch.flac', isFile: true, size: 2000 }],
+      });
+
+      const result = await discoverBooks('/audiobooks');
+      expect(result).toHaveLength(2);
+      const paths = result.map(r => r.path).sort();
+      expect(paths).toEqual(['/audiobooks/Author1/Book A', '/audiobooks/Author2/Book B']);
+      // Verify no loose files leaked into results
+      for (const book of result) {
+        expect(book.totalSize).toBeGreaterThanOrEqual(1000);
+      }
+    });
   });
 });
