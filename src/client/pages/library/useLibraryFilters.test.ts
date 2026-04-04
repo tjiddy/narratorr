@@ -334,3 +334,67 @@ describe('grouped return shape (REACT-1 refactor)', () => {
     });
   });
 });
+
+describe('useLibraryFilters — URL param initialization', () => {
+  it.todo('initializes statusFilter from ?status=wanted');
+  it.todo('falls back to default for invalid ?status=bogus');
+  it.todo('initializes sortField from ?sortField=title');
+  it.todo('falls back to default for invalid ?sortField=bogus');
+  it.todo('initializes sortDirection from ?sortDirection=asc');
+  it.todo('falls back to default for invalid ?sortDirection=bogus');
+  it.todo('initializes page from ?page=3 with correct offset');
+  it.todo('falls back to page 1 for ?page=abc');
+  it.todo('falls back to page 1 for ?page=0');
+  it.todo('falls back to page 1 for ?page=-1');
+  it.todo('initializes search from ?search=tolkien');
+  it.todo('decodes special characters in ?search param');
+  it.todo('initializes authorFilter from ?author=Sanderson');
+  it.todo('initializes seriesFilter from ?series=Stormlight');
+  it.todo('initializes narratorFilter from ?narrator=Kramer');
+  it.todo('initializes collapseSeriesEnabled from ?collapse=true');
+  it.todo('initializes all defaults when no URL params present');
+  it.todo('initializes multiple params simultaneously');
+  it.todo('ignores empty ?search= param (treats as default)');
+});
+
+describe('useLibraryFilters — URL param sync on state change', () => {
+  it.todo('writes status to URL when setStatusFilter called with non-default');
+  it.todo('removes status from URL when set back to all (default)');
+  it.todo('writes sortField to URL when changed from default');
+  it.todo('removes sortField from URL when set back to createdAt (default)');
+  it.todo('writes sortDirection to URL when changed from default');
+  it.todo('writes page to URL when pagination changes');
+  it.todo('removes page from URL when reset to 1');
+  it.todo('writes author to URL when setAuthorFilter called');
+  it.todo('writes series to URL when setSeriesFilter called');
+  it.todo('writes narrator to URL when setNarratorFilter called');
+  it.todo('writes collapse=true to URL when enabled');
+  it.todo('removes collapse from URL when disabled (default)');
+  it.todo('writes only non-default values (clean URL for defaults)');
+  it.todo('preserves other params when changing one filter');
+  it.todo('uses replaceState not pushState (replace: true)');
+});
+
+describe('useLibraryFilters — URL debounce sync', () => {
+  it.todo('does not write search to URL on every keystroke');
+  it.todo('writes debounced search value to URL after 300ms');
+  it.todo('removes search from URL when cleared');
+});
+
+describe('useLibraryFilters — clearAllFilters updated behavior', () => {
+  it.todo('resets sortField to createdAt');
+  it.todo('resets sortDirection to desc');
+  it.todo('resets collapseSeriesEnabled to false');
+  it.todo('resets status, author, series, narrator, search, and page (existing behavior)');
+  it.todo('produces clean URL with no params after clearAllFilters');
+});
+
+describe('useLibraryFilters — filter interactions with URL', () => {
+  it.todo('setting status filter resets page to 1 in URL');
+  it.todo('changing sort field preserves other active filters in URL');
+  it.todo('clearing search preserves other active filters in URL');
+});
+
+describe('useLibraryFilters — error isolation', () => {
+  it.todo('handles malformed URL params without crashing (all fall back to defaults)');
+});
