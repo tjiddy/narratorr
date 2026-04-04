@@ -146,8 +146,8 @@ export class MyAnonamouseIndexer implements IndexerAdapter {
         downloadUrl = await this.fetchTorrentAsDataUri(item.id, signal);
       }
 
-      const isFreeleech = item.free || item.personal_freeleech || (item.fl_vip && this.isVip) || undefined;
-      const isVipOnly = item.vip || undefined;
+      const isFreeleech = item.free || item.personal_freeleech || (item.fl_vip && this.isVip);
+      const isVipOnly = item.vip;
 
       results.push({
         title: item.title,
