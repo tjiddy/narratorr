@@ -1177,6 +1177,42 @@ describe('handleEdit — auto-check and confidence upgrade (#185)', () => {
     }
   });
 
+  it('row with matchResult confidence=medium and explicit click on SAME current match → upgrades to high', async () => {
+    vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] });
+    try {
+      vi.mocked(api.scanDirectory).mockResolvedValue(SCAN_RESULT);
+      vi.mocked(api.getMatchJob).mockResolvedValue({
+        id: 'job-123', status: 'completed', matched: 1, total: 1,
+        results: [{
+          path: '/audiobooks/Book A',
+          confidence: 'medium',
+          bestMatch: MATCH_METADATA,
+          alternatives: [],
+        }],
+      });
+
+      const { result } = renderHook(() => useManualImport(), { wrapper: createWrapper() });
+      act(() => { result.current.state.setScanPath('/audiobooks'); });
+      await act(async () => { result.current.actions.handleScan(); });
+      await waitFor(() => { expect(result.current.state.rows).toHaveLength(2); });
+
+      await act(async () => { await vi.advanceTimersByTimeAsync(2100); });
+      expect(result.current.state.rows[0].matchResult?.confidence).toBe('medium');
+
+      // Simulate explicit click on the current match — applyMetadata spreads to new reference
+      act(() => {
+        result.current.actions.handleEdit(0, {
+          title: 'Book A', author: 'Author A', series: '',
+          metadata: { ...MATCH_METADATA },
+        });
+      });
+
+      expect(result.current.state.rows[0].matchResult?.confidence).toBe('high');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('row with matchResult confidence=high and new metadata → confidence stays high', async () => {
     vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] });
     try {

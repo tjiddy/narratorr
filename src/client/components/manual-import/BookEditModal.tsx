@@ -52,7 +52,7 @@ export function BookEditModal({ book, initial, confidence, alternatives, onSave,
   useEscapeKey(true, onClose, modalRef);
 
   const applyMetadata = (meta: BookMetadata) => {
-    setSelectedMetadata(meta);
+    setSelectedMetadata({ ...meta });
     setTitle(meta.title);
     if (meta.authors?.[0]?.name) {
       setAuthor(meta.authors[0].name);

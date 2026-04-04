@@ -540,6 +540,38 @@ describe('handleEdit — auto-check, confidence upgrade, slug-duplicate recheck 
     expect(result.current.rows[nonDupIdx].matchResult?.confidence).toBe('medium');
   });
 
+  it('confidence upgrade from medium to high when explicit click on SAME current match', async () => {
+    const bestMatch = { title: 'Book One', authors: [{ name: 'Author A' }] };
+    mockGetMatchJob.mockResolvedValue({
+      id: 'job-1', status: 'completed', total: 1, matched: 1,
+      results: [{
+        path: '/audiobooks/AuthorA/Book1',
+        confidence: 'medium',
+        bestMatch,
+        alternatives: [],
+      }],
+    });
+
+    const { result } = renderHook(() => useLibraryImport(), { wrapper: createWrapper() });
+    await waitFor(() => expect(result.current.step).toBe('review'));
+
+    const nonDupIdx = result.current.rows.findIndex(r => !r.book.isDuplicate);
+
+    await waitFor(() => {
+      expect(result.current.rows[nonDupIdx].matchResult?.confidence).toBe('medium');
+    }, { timeout: 5000 });
+
+    // Simulate explicit click on the current match — applyMetadata spreads to new reference
+    act(() => {
+      result.current.handleEdit(nonDupIdx, {
+        title: 'Book One', author: 'Author A', series: '',
+        metadata: { ...bestMatch },
+      });
+    });
+
+    expect(result.current.rows[nonDupIdx].matchResult?.confidence).toBe('high');
+  });
+
   it('slug-duplicate row: title+author still collides → stays duplicate', async () => {
     mockGetBookIdentifiers.mockResolvedValue([
       { asin: null, title: 'Book Three', authorName: 'Author C', authorSlug: 'author-c' },
