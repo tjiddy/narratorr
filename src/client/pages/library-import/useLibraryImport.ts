@@ -164,10 +164,16 @@ export function useLibraryImport() {
       if (i !== index) return r;
 
       const autoCheck = !r.selected && state.metadata ? true : r.selected;
+      // Upgrade confidence when user explicitly selects provider metadata:
+      // none → medium (user provided metadata on an unmatched row)
+      // medium → high (user confirmed/re-selected on a review row)
+      // The medium→high upgrade requires a NEW metadata selection (different reference),
+      // not just the pre-populated bestMatch passed back unchanged on save.
+      const metadataChanged = state.metadata && state.metadata !== r.edited.metadata;
       const matchResult = r.matchResult && state.metadata
         ? r.matchResult.confidence === 'none'
           ? { ...r.matchResult, confidence: 'medium' as const }
-          : r.matchResult.confidence === 'medium'
+          : r.matchResult.confidence === 'medium' && metadataChanged
             ? { ...r.matchResult, confidence: 'high' as const }
             : r.matchResult
         : r.matchResult;
