@@ -26,6 +26,10 @@ const mockBookService = {
   create: vi.fn().mockResolvedValue({ id: 1, title: 'Test', status: 'wanted' }),
 };
 
+const mockEventHistoryService = {
+  create: vi.fn().mockResolvedValue({}),
+};
+
 function createService(dbOverrides?: ReturnType<typeof createMockDb>) {
   const db = dbOverrides ?? createMockDb();
   const log = createMockLogger();
@@ -40,6 +44,7 @@ function createService(dbOverrides?: ReturnType<typeof createMockDb>) {
       inject(mockMetadataService),
       inject(mockBookService),
       inject(settingsService),
+      inject(mockEventHistoryService),
     ),
     db,
     log,
@@ -2347,6 +2352,67 @@ describe('DiscoveryService', () => {
         expect(Array.isArray(candidates)).toBe(true);
         expect(log.warn).toHaveBeenCalled();
       });
+    });
+  });
+
+  // #341 — book_added event on addSuggestion
+  describe('book_added event on addSuggestion', () => {
+    it('records book_added event with source=auto after successful bookService.create()', async () => {
+      const existing = { id: 1, asin: 'B001', title: 'Test', authorName: 'Author', status: 'pending' };
+      const db = createMockDb();
+      db.select.mockReturnValue(mockDbChain([existing]));
+      db.update.mockReturnValue(mockDbChain());
+      const { service } = createService(db);
+
+      await service.addSuggestion(1);
+
+      expect(mockEventHistoryService.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          eventType: 'book_added',
+          source: 'auto',
+          bookId: 1,
+          bookTitle: 'Test',
+          authorName: 'Author',
+        }),
+      );
+    });
+
+    it('does NOT record book_added event for already-added suggestions', async () => {
+      const existing = { id: 1, asin: 'B001', status: 'added' };
+      const db = createMockDb();
+      db.select.mockReturnValue(mockDbChain([existing]));
+      const { service } = createService(db);
+
+      await service.addSuggestion(1);
+
+      expect(mockEventHistoryService.create).not.toHaveBeenCalled();
+    });
+
+    it('does NOT record book_added event for duplicate-matched suggestions', async () => {
+      const existing = { id: 1, asin: 'B001', title: 'Test', authorName: 'Author', status: 'pending' };
+      const db = createMockDb();
+      db.select.mockReturnValue(mockDbChain([existing]));
+      db.update.mockReturnValue(mockDbChain());
+      mockBookService.findDuplicate.mockResolvedValueOnce({ id: 99, title: 'Test' });
+      const { service } = createService(db);
+
+      await service.addSuggestion(1);
+
+      expect(mockEventHistoryService.create).not.toHaveBeenCalled();
+    });
+
+    it('book creation succeeds even if eventHistory.create() rejects', async () => {
+      const existing = { id: 1, asin: 'B001', title: 'Test', authorName: 'Author', status: 'pending' };
+      const db = createMockDb();
+      db.select.mockReturnValue(mockDbChain([existing]));
+      db.update.mockReturnValue(mockDbChain());
+      mockEventHistoryService.create.mockRejectedValueOnce(new Error('DB write failed'));
+      const { service } = createService(db);
+
+      const result = await service.addSuggestion(1);
+
+      expect(result).not.toBeNull();
+      expect(result!.book).toBeDefined();
     });
   });
 });

@@ -6,6 +6,7 @@ import { REGION_LANGUAGES, type BookMetadata } from '../../core/index.js';
 import type { MetadataService } from './metadata.service.js';
 import type { BookService } from './book.service.js';
 import type { SettingsService } from './settings.service.js';
+import type { EventHistoryService } from './event-history.service.js';
 import type { SuggestionReason } from '../../shared/schemas/discovery.js';
 import { extractSignals } from './discovery-signals.js';
 import { computeWeightMultipliers, DEFAULT_MULTIPLIERS, type DismissalStats, type WeightMultipliers } from './discovery-weights.js';
@@ -45,6 +46,7 @@ export class DiscoveryService {
     private metadataService: MetadataService,
     private bookService: BookService,
     private settingsService: SettingsService,
+    private eventHistory?: EventHistoryService,
   ) {}
 
   async analyzeLibrary(): Promise<LibrarySignals> {
@@ -270,6 +272,18 @@ export class DiscoveryService {
     }
 
     const book = await this.bookService.create({ title: row.title, authors: row.authorName ? [{ name: row.authorName }] : [], asin: row.asin });
+
+    // Record book_added event (fire-and-forget)
+    if (this.eventHistory) {
+      this.eventHistory.create({
+        bookId: book.id,
+        bookTitle: book.title,
+        authorName: row.authorName ?? null,
+        eventType: 'book_added',
+        source: 'auto',
+      }).catch((err: unknown) => this.log.warn({ err }, 'Failed to record book_added event'));
+    }
+
     await this.db.update(suggestions).set({ status: 'added' }).where(eq(suggestions.id, id));
     return { suggestion: { ...row, status: 'added' }, book };
   }
