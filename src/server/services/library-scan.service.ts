@@ -326,6 +326,15 @@ export class LibraryScanService {
       throw error;
     }
 
+    // Record book_added event (fire-and-forget)
+    this.eventHistory.create({
+      bookId: book.id,
+      bookTitle: book.title,
+      authorName: item.authorName ?? null,
+      eventType: 'book_added',
+      source: 'manual',
+    }).catch(err => this.log.warn({ err }, 'Failed to record book_added event'));
+
     try {
       const enriched = await this.enrichImportedBook(item, book, meta, mode);
       return { imported: true, bookId: book.id, enriched };
@@ -494,6 +503,15 @@ export class LibraryScanService {
         );
 
         const book = await this.bookService.create(buildBookCreatePayload(item, item.metadata ?? null, 'importing'));
+
+        // Record book_added event (fire-and-forget)
+        this.eventHistory.create({
+          bookId: book.id,
+          bookTitle: book.title,
+          authorName: item.authorName ?? null,
+          eventType: 'book_added',
+          source: 'manual',
+        }).catch(err => this.log.warn({ err }, 'Failed to record book_added event'));
 
         accepted.push({ bookId: book.id, item });
       } catch (error: unknown) {

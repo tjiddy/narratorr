@@ -1825,9 +1825,12 @@ describe('LibraryScanService', () => {
       );
 
       // buildTargetPath mock returns '/library/Author/Title'; path.resolve() may prepend drive letter on Windows
-      const call = mockEventHistoryService.create.mock.calls[0][0] as { reason: { targetPath: string; mode: string } };
-      expect(call.reason.targetPath).toMatch(/[/\\]library[/\\]Author[/\\]Title$/);
-      expect(call.reason.mode).toBe('copy');
+      const importedCall = mockEventHistoryService.create.mock.calls
+        .map((c: unknown[]) => c[0] as { eventType: string; reason: { targetPath: string; mode: string } })
+        .find(c => c.eventType === 'imported');
+      expect(importedCall).toBeDefined();
+      expect(importedCall!.reason.targetPath).toMatch(/[/\\]library[/\\]Author[/\\]Title$/);
+      expect(importedCall!.reason.mode).toBe('copy');
     });
 
     it('records import_failed event when bookService.create() throws (bookId is null)', async () => {
@@ -1980,9 +1983,12 @@ describe('LibraryScanService', () => {
       // The mock DB returns no book record for the select, so copyToLibrary is skipped
       // and finalPath stays as item.path. path.resolve() may prepend drive letter on Windows.
       await vi.waitFor(() => {
-        const call = mockEventHistoryService.create.mock.calls[0][0] as { reason: { targetPath: string; mode: string } };
-        expect(call.reason.targetPath).toMatch(/[/\\]audiobooks[/\\]Book$/);
-        expect(call.reason.mode).toBe('copy');
+        const importedCall = mockEventHistoryService.create.mock.calls
+          .map((c: unknown[]) => c[0] as { eventType: string; reason: { targetPath: string; mode: string } })
+          .find(c => c.eventType === 'imported');
+        expect(importedCall).toBeDefined();
+        expect(importedCall!.reason.targetPath).toMatch(/[/\\]audiobooks[/\\]Book$/);
+        expect(importedCall!.reason.mode).toBe('copy');
       });
     });
 
@@ -2217,6 +2223,94 @@ describe('LibraryScanService', () => {
       const result = await service.rescanLibrary();
 
       expect(result).toEqual({ scanned: 3, missing: 1, restored: 1 });
+    });
+  });
+
+  // #341 — book_added event on book creation
+  describe('book_added event', () => {
+    describe('importSingleBook', () => {
+      it('records book_added event with source=manual after successful bookService.create()', async () => {
+        await service.importSingleBook(
+          { path: '/audiobooks/Author/Book', title: 'Book', authorName: 'Author' },
+          null,
+        );
+
+        expect(mockEventHistoryService.create).toHaveBeenCalledWith(
+          expect.objectContaining({
+            eventType: 'book_added',
+            source: 'manual',
+            bookTitle: 'Book',
+            authorName: 'Author',
+          }),
+        );
+      });
+
+      it('records book_added event in addition to imported event', async () => {
+        await service.importSingleBook(
+          { path: '/audiobooks/Author/Book', title: 'Book', authorName: 'Author' },
+          null,
+        );
+
+        const calls = mockEventHistoryService.create.mock.calls;
+        const eventTypes = calls.map((c: unknown[]) => (c[0] as { eventType: string }).eventType);
+        expect(eventTypes).toContain('book_added');
+        expect(eventTypes).toContain('imported');
+      });
+
+      it('does NOT record book_added event when bookService.create() throws', async () => {
+        mockBookService.create.mockRejectedValueOnce(new Error('DB error'));
+
+        await expect(service.importSingleBook(
+          { path: '/audiobooks/Author/Book', title: 'Book', authorName: 'Author' },
+          null,
+        )).rejects.toThrow('DB error');
+
+        await new Promise(resolve => setTimeout(resolve, 0));
+        const calls = mockEventHistoryService.create.mock.calls;
+        const eventTypes = calls.map((c: unknown[]) => (c[0] as { eventType: string }).eventType);
+        expect(eventTypes).not.toContain('book_added');
+      });
+    });
+
+    describe('confirmImport', () => {
+      it('records book_added event with source=manual for each placeholder created', async () => {
+        await service.confirmImport([
+          { path: '/audiobooks/Author/Title', title: 'Title', authorName: 'Author' },
+        ]);
+
+        expect(mockEventHistoryService.create).toHaveBeenCalledWith(
+          expect.objectContaining({
+            eventType: 'book_added',
+            source: 'manual',
+            bookTitle: 'Title',
+            authorName: 'Author',
+          }),
+        );
+      });
+
+      it('does NOT record book_added event for duplicate-skipped items', async () => {
+        mockBookService.findDuplicate.mockResolvedValueOnce({ id: 1, title: 'Existing' });
+
+        await service.confirmImport([
+          { path: '/audiobooks/Author/Title', title: 'Existing', authorName: 'Author' },
+        ]);
+
+        const calls = mockEventHistoryService.create.mock.calls;
+        const eventTypes = calls.map((c: unknown[]) => (c[0] as { eventType: string }).eventType);
+        expect(eventTypes).not.toContain('book_added');
+      });
+
+      it('does NOT record book_added event for failed placeholder creations', async () => {
+        mockBookService.create.mockRejectedValueOnce(new Error('Create failed'));
+
+        await service.confirmImport([
+          { path: '/audiobooks/Author/Title', title: 'Title', authorName: 'Author' },
+        ]);
+
+        const calls = mockEventHistoryService.create.mock.calls;
+        const eventTypes = calls.map((c: unknown[]) => (c[0] as { eventType: string }).eventType);
+        expect(eventTypes).not.toContain('book_added');
+      });
     });
   });
 });
@@ -2899,6 +2993,7 @@ describe('scanDirectory() — duplicateReason field (#133)', () => {
       });
     });
   });
+
 });
 
 // ============================================================================
