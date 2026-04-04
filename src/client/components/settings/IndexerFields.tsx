@@ -222,38 +222,41 @@ function DetectionOverlay() {
   );
 }
 
-function MamFields({ register, errors, watch, setValue, formTestResult }: Pick<IndexerFieldsProps, 'register' | 'errors' | 'watch' | 'setValue' | 'formTestResult'>) {
-  const searchLanguages = watch ? (watch('settings.searchLanguages') ?? [1]) : [1];
-
-  // Derive initial badge state from persisted settings (edit mode)
+function deriveInitialMamStatus(watch?: UseFormWatch<CreateIndexerFormData>): MamStatus | null {
   const persistedIsVip = watch ? watch('settings.isVip') : undefined;
   const persistedUsername = watch ? watch('settings.mamUsername') : undefined;
-  const initialStatus: MamStatus | null = (persistedIsVip != null && persistedUsername)
-    ? { username: persistedUsername, isVip: persistedIsVip, classname: persistedIsVip ? 'VIP' : 'User' }
-    : persistedIsVip != null
-      ? { username: '', isVip: persistedIsVip, classname: persistedIsVip ? 'VIP' : 'User' }
-      : null;
+  if (persistedIsVip == null) return null;
+  return {
+    username: persistedUsername || '',
+    isVip: persistedIsVip,
+    classname: persistedIsVip ? 'VIP' : 'User',
+  };
+}
 
-  const { mamStatus, detectError, isDetecting, detect, setMamStatus } = useMamDetection(watch, setValue, initialStatus);
+function metadataToMamStatus(metadata: Record<string, unknown>): MamStatus {
+  return {
+    username: metadata.username as string || '',
+    classname: metadata.classname as string | undefined,
+    isVip: metadata.isVip as boolean,
+  };
+}
+
+function MamFields({ register, errors, watch, setValue, formTestResult }: Pick<IndexerFieldsProps, 'register' | 'errors' | 'watch' | 'setValue' | 'formTestResult'>) {
+  const searchLanguages = watch ? (watch('settings.searchLanguages') ?? [1]) : [1];
+  const { mamStatus, detectError, isDetecting, detect, setMamStatus } = useMamDetection(watch, setValue, deriveInitialMamStatus(watch));
 
   // Bridge: update badge from explicit Test button result
   useEffect(() => {
     if (formTestResult?.success && formTestResult.metadata && 'isVip' in formTestResult.metadata) {
-      const status: MamStatus = {
-        username: formTestResult.metadata.username as string || '',
-        classname: formTestResult.metadata.classname as string | undefined,
-        isVip: formTestResult.metadata.isVip as boolean,
-      };
-      setMamStatus(status);
+      setMamStatus(metadataToMamStatus(formTestResult.metadata));
     }
   }, [formTestResult, setMamStatus]);
 
   function toggleLanguage(langId: number) {
     if (!setValue) return;
-    const current = searchLanguages;
-    const updated = current.includes(langId)
-      ? current.filter((id) => id !== langId)
-      : [...current, langId];
+    const updated = searchLanguages.includes(langId)
+      ? searchLanguages.filter((id) => id !== langId)
+      : [...searchLanguages, langId];
     setValue('settings.searchLanguages', updated, { shouldValidate: true });
   }
 
