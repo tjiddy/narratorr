@@ -1101,6 +1101,154 @@ describe('handleEdit — auto-check and confidence upgrade (#185)', () => {
     }
   });
 
+  // ── #335 Manual match override: medium → high ──────────────────────────
+  it('row with matchResult confidence=medium and NEW provider metadata → confidence upgrades to high', async () => {
+    vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] });
+    try {
+      vi.mocked(api.scanDirectory).mockResolvedValue(SCAN_RESULT);
+      vi.mocked(api.getMatchJob).mockResolvedValue({
+        id: 'job-123', status: 'completed', matched: 1, total: 1,
+        results: [{
+          path: '/audiobooks/Book A',
+          confidence: 'medium',
+          bestMatch: MATCH_METADATA,
+          alternatives: [],
+        }],
+      });
+
+      const { result } = renderHook(() => useManualImport(), { wrapper: createWrapper() });
+      act(() => { result.current.state.setScanPath('/audiobooks'); });
+      await act(async () => { result.current.actions.handleScan(); });
+      await waitFor(() => { expect(result.current.state.rows).toHaveLength(2); });
+
+      await act(async () => { await vi.advanceTimersByTimeAsync(2100); });
+      expect(result.current.state.rows[0].matchResult?.confidence).toBe('medium');
+
+      // Edit with a DIFFERENT metadata object (user explicitly re-selected) → upgrades to high
+      const newMetadata = { ...MATCH_METADATA, asin: 'B002NEWPICK' };
+      act(() => {
+        result.current.actions.handleEdit(0, {
+          title: 'Book A', author: 'Author A', series: '',
+          metadata: newMetadata,
+        });
+      });
+
+      expect(result.current.state.rows[0].matchResult?.confidence).toBe('high');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('row with matchResult confidence=medium saved with preloaded metadata (no re-selection) → stays medium', async () => {
+    vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] });
+    try {
+      vi.mocked(api.scanDirectory).mockResolvedValue(SCAN_RESULT);
+      vi.mocked(api.getMatchJob).mockResolvedValue({
+        id: 'job-123', status: 'completed', matched: 1, total: 1,
+        results: [{
+          path: '/audiobooks/Book A',
+          confidence: 'medium',
+          bestMatch: MATCH_METADATA,
+          alternatives: [],
+        }],
+      });
+
+      const { result } = renderHook(() => useManualImport(), { wrapper: createWrapper() });
+      act(() => { result.current.state.setScanPath('/audiobooks'); });
+      await act(async () => { result.current.actions.handleScan(); });
+      await waitFor(() => { expect(result.current.state.rows).toHaveLength(2); });
+
+      await act(async () => { await vi.advanceTimersByTimeAsync(2100); });
+      expect(result.current.state.rows[0].matchResult?.confidence).toBe('medium');
+
+      // Save with the SAME metadata reference (user opened modal and clicked Save without re-selecting)
+      const preloadedMetadata = result.current.state.rows[0].edited.metadata;
+      act(() => {
+        result.current.actions.handleEdit(0, {
+          title: 'Book A', author: 'Author A', series: '',
+          metadata: preloadedMetadata,
+        });
+      });
+
+      // Should NOT upgrade — no explicit provider re-selection
+      expect(result.current.state.rows[0].matchResult?.confidence).toBe('medium');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('row with matchResult confidence=medium and explicit click on SAME current match → upgrades to high', async () => {
+    vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] });
+    try {
+      vi.mocked(api.scanDirectory).mockResolvedValue(SCAN_RESULT);
+      vi.mocked(api.getMatchJob).mockResolvedValue({
+        id: 'job-123', status: 'completed', matched: 1, total: 1,
+        results: [{
+          path: '/audiobooks/Book A',
+          confidence: 'medium',
+          bestMatch: MATCH_METADATA,
+          alternatives: [],
+        }],
+      });
+
+      const { result } = renderHook(() => useManualImport(), { wrapper: createWrapper() });
+      act(() => { result.current.state.setScanPath('/audiobooks'); });
+      await act(async () => { result.current.actions.handleScan(); });
+      await waitFor(() => { expect(result.current.state.rows).toHaveLength(2); });
+
+      await act(async () => { await vi.advanceTimersByTimeAsync(2100); });
+      expect(result.current.state.rows[0].matchResult?.confidence).toBe('medium');
+
+      // Simulate explicit click on the current match — applyMetadata spreads to new reference
+      act(() => {
+        result.current.actions.handleEdit(0, {
+          title: 'Book A', author: 'Author A', series: '',
+          metadata: { ...MATCH_METADATA },
+        });
+      });
+
+      expect(result.current.state.rows[0].matchResult?.confidence).toBe('high');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('row with matchResult confidence=high and new metadata → confidence stays high', async () => {
+    vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] });
+    try {
+      vi.mocked(api.scanDirectory).mockResolvedValue(SCAN_RESULT);
+      vi.mocked(api.getMatchJob).mockResolvedValue({
+        id: 'job-123', status: 'completed', matched: 1, total: 1,
+        results: [{
+          path: '/audiobooks/Book A',
+          confidence: 'high',
+          bestMatch: MATCH_METADATA,
+          alternatives: [],
+        }],
+      });
+
+      const { result } = renderHook(() => useManualImport(), { wrapper: createWrapper() });
+      act(() => { result.current.state.setScanPath('/audiobooks'); });
+      await act(async () => { result.current.actions.handleScan(); });
+      await waitFor(() => { expect(result.current.state.rows).toHaveLength(2); });
+
+      await act(async () => { await vi.advanceTimersByTimeAsync(2100); });
+      expect(result.current.state.rows[0].matchResult?.confidence).toBe('high');
+
+      // Edit with provider metadata → confidence stays 'high'
+      act(() => {
+        result.current.actions.handleEdit(0, {
+          title: 'Book A', author: 'Author A', series: '',
+          metadata: MATCH_METADATA,
+        });
+      });
+
+      expect(result.current.state.rows[0].matchResult?.confidence).toBe('high');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('row with no matchResult and new metadata — no upgrade attempted, no crash', async () => {
     vi.mocked(api.scanDirectory).mockResolvedValue(SCAN_RESULT);
 

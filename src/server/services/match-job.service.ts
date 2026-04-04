@@ -38,7 +38,9 @@ export interface MatchJobStatus {
 
 const MAX_CONCURRENCY = 5;
 const TTL_MS = 10 * 60 * 1000; // 10 minutes after completion
-const DURATION_THRESHOLD = 0.05; // 5% tolerance for duration matching
+const DURATION_THRESHOLD_STRICT = 0.05; // 5% tolerance for weaker matches
+const DURATION_THRESHOLD_RELAXED = 0.15; // 15% tolerance for high-confidence matches
+const COMBINED_SCORE_GATE = 0.95; // Score threshold for relaxed duration matching
 const TITLE_SIMILARITY_FLOOR = 0.5; // Below this, confidence is 'none'
 
 export class MatchJobService {
@@ -285,7 +287,10 @@ function resolveConfidenceFromDuration(
   // If the top-ranked result has duration data, use it for confidence
   if (topResult.meta.duration && topResult.meta.duration > 0) {
     const distance = Math.abs(topResult.meta.duration - duration) / duration;
-    return distance <= DURATION_THRESHOLD ? 'high' : 'medium';
+    const threshold = topResult.score >= COMBINED_SCORE_GATE
+      ? DURATION_THRESHOLD_RELAXED
+      : DURATION_THRESHOLD_STRICT;
+    return distance <= threshold ? 'high' : 'medium';
   }
 
   // Top result has no duration — check if any candidate has close duration

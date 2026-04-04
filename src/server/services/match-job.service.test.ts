@@ -352,27 +352,34 @@ describe('MatchJobService', () => {
       expect(result.alternatives).toHaveLength(1);
     });
 
-    it('stays medium confidence when best match duration exceeds 5% threshold', async () => {
+    it('stays medium confidence when best match duration exceeds strict 5% threshold (low score)', async () => {
+      // Use a candidate with slightly different title to get a combined score < 0.95
+      const weakCandidate: MatchCandidate = {
+        path: '/audiobooks/Doctor Sleep',
+        title: 'Doctor Sleep',
+        author: 'Stephen King',
+      };
+
       (scanAudioDirectory as ReturnType<typeof vi.fn>).mockResolvedValue({
         totalDuration: 36000,
         files: [],
       });
 
       const results = [
-        makeBookMetadata({ title: 'The Way of Kings', providerId: 'p1' }),
-        makeBookMetadata({ title: 'The Way of Kings (Extended)', providerId: 'p2' }),
+        makeBookMetadata({ title: 'Doctor Sleep: A Novel', authors: [{ name: 'Stephen King' }], providerId: 'p1' }),
+        makeBookMetadata({ title: 'Doctor Sleep (Unabridged)', authors: [{ name: 'Stephen King' }], providerId: 'p2' }),
       ];
       (metadataService.searchBooks as ReturnType<typeof vi.fn>).mockResolvedValue(results);
       (metadataService.getBook as ReturnType<typeof vi.fn>)
-        .mockResolvedValueOnce({ asin: 'A1', duration: 650 }) // 8.3% off
-        .mockResolvedValueOnce({ asin: 'A2', duration: 700 }); // 16.7% off
+        .mockResolvedValueOnce({ asin: 'A1', duration: 650 }) // 8.3% off — exceeds strict 5%
+        .mockResolvedValueOnce({ asin: 'A2', duration: 700 });
 
-      const id = service.createJob([sampleCandidate]);
+      const id = service.createJob([weakCandidate]);
       await waitForJob(service, id);
 
       const result = service.getJob(id)!.results[0];
       expect(result.confidence).toBe('medium');
-      expect(result.bestMatch!.title).toBe('The Way of Kings');
+      expect(result.bestMatch!.title).toBe('Doctor Sleep: A Novel');
     });
 
     it('preserves similarity-ranked order — duration does not override winner', async () => {
@@ -864,6 +871,164 @@ describe('MatchJobService', () => {
       await waitForJob(service, id);
       expect(service.getJob(id)!.matched).toBe(2);
       expect(service.getJob(id)!.status).toBe('completed');
+    });
+  });
+
+  // ── #335 Tiered duration threshold based on combined score ──────────────
+  describe('tiered duration threshold (#335)', () => {
+    it('high combined score (1.0) + duration within 15% → confidence high', async () => {
+      // sampleCandidate: "The Way of Kings" by "Brandon Sanderson" → score 1.0
+      (scanAudioDirectory as ReturnType<typeof vi.fn>).mockResolvedValue({
+        totalDuration: 36000, // 600 min
+        files: [],
+      });
+
+      const results = [
+        makeBookMetadata({ title: 'The Way of Kings', providerId: 'p1' }),
+        makeBookMetadata({ title: 'The Way of Kings (Extended)', providerId: 'p2' }),
+      ];
+      (metadataService.searchBooks as ReturnType<typeof vi.fn>).mockResolvedValue(results);
+      (metadataService.getBook as ReturnType<typeof vi.fn>)
+        .mockResolvedValueOnce({ asin: 'A1', duration: 660 }) // 10% off — within 15% relaxed
+        .mockResolvedValueOnce({ asin: 'A2', duration: 900 });
+
+      const id = service.createJob([sampleCandidate]);
+      await waitForJob(service, id);
+
+      const result = service.getJob(id)!.results[0];
+      expect(result.confidence).toBe('high');
+    });
+
+    it('high combined score (1.0) + duration at exactly 15% boundary → confidence high (inclusive)', async () => {
+      (scanAudioDirectory as ReturnType<typeof vi.fn>).mockResolvedValue({
+        totalDuration: 36000, // 600 min
+        files: [],
+      });
+
+      const results = [
+        makeBookMetadata({ title: 'The Way of Kings', providerId: 'p1' }),
+        makeBookMetadata({ title: 'The Way of Kings (Extended)', providerId: 'p2' }),
+      ];
+      (metadataService.searchBooks as ReturnType<typeof vi.fn>).mockResolvedValue(results);
+      (metadataService.getBook as ReturnType<typeof vi.fn>)
+        .mockResolvedValueOnce({ asin: 'A1', duration: 690 }) // exactly 15%
+        .mockResolvedValueOnce({ asin: 'A2', duration: 900 });
+
+      const id = service.createJob([sampleCandidate]);
+      await waitForJob(service, id);
+
+      const result = service.getJob(id)!.results[0];
+      expect(result.confidence).toBe('high');
+    });
+
+    it('high combined score (1.0) + duration at 16% → confidence medium', async () => {
+      (scanAudioDirectory as ReturnType<typeof vi.fn>).mockResolvedValue({
+        totalDuration: 36000, // 600 min
+        files: [],
+      });
+
+      const results = [
+        makeBookMetadata({ title: 'The Way of Kings', providerId: 'p1' }),
+        makeBookMetadata({ title: 'The Way of Kings (Extended)', providerId: 'p2' }),
+      ];
+      (metadataService.searchBooks as ReturnType<typeof vi.fn>).mockResolvedValue(results);
+      (metadataService.getBook as ReturnType<typeof vi.fn>)
+        .mockResolvedValueOnce({ asin: 'A1', duration: 696 }) // 16% off
+        .mockResolvedValueOnce({ asin: 'A2', duration: 900 });
+
+      const id = service.createJob([sampleCandidate]);
+      await waitForJob(service, id);
+
+      const result = service.getJob(id)!.results[0];
+      expect(result.confidence).toBe('medium');
+    });
+
+    it('low combined score (0.8) + duration within 5% → confidence high (existing behavior)', async () => {
+      // Use a candidate with slightly different title to lower score below 0.95
+      const weakCandidate: MatchCandidate = {
+        path: '/audiobooks/Doctor Sleep',
+        title: 'Doctor Sleep',
+        author: 'Stephen King',
+      };
+
+      (scanAudioDirectory as ReturnType<typeof vi.fn>).mockResolvedValue({
+        totalDuration: 36000, // 600 min
+        files: [],
+      });
+
+      // "Doctor Sleep" search returns results with somewhat different title
+      const results = [
+        makeBookMetadata({ title: 'Doctor Sleep: A Novel', authors: [{ name: 'Stephen King' }], providerId: 'p1' }),
+        makeBookMetadata({ title: 'Doctor Sleep (Unabridged)', authors: [{ name: 'Stephen King' }], providerId: 'p2' }),
+      ];
+      (metadataService.searchBooks as ReturnType<typeof vi.fn>).mockResolvedValue(results);
+      (metadataService.getBook as ReturnType<typeof vi.fn>)
+        .mockResolvedValueOnce({ asin: 'A1', duration: 620 }) // 3.3% off — within strict 5%
+        .mockResolvedValueOnce({ asin: 'A2', duration: 900 });
+
+      const id = service.createJob([weakCandidate]);
+      await waitForJob(service, id);
+
+      const result = service.getJob(id)!.results[0];
+      expect(result.confidence).toBe('high');
+    });
+
+    it('low combined score + duration at 6% → confidence medium (strict threshold applies)', async () => {
+      const weakCandidate: MatchCandidate = {
+        path: '/audiobooks/Doctor Sleep',
+        title: 'Doctor Sleep',
+        author: 'Stephen King',
+      };
+
+      (scanAudioDirectory as ReturnType<typeof vi.fn>).mockResolvedValue({
+        totalDuration: 36000, // 600 min
+        files: [],
+      });
+
+      const results = [
+        makeBookMetadata({ title: 'Doctor Sleep: A Novel', authors: [{ name: 'Stephen King' }], providerId: 'p1' }),
+        makeBookMetadata({ title: 'Doctor Sleep (Unabridged)', authors: [{ name: 'Stephen King' }], providerId: 'p2' }),
+      ];
+      (metadataService.searchBooks as ReturnType<typeof vi.fn>).mockResolvedValue(results);
+      (metadataService.getBook as ReturnType<typeof vi.fn>)
+        .mockResolvedValueOnce({ asin: 'A1', duration: 640 }) // 6.7% off — exceeds strict 5%
+        .mockResolvedValueOnce({ asin: 'A2', duration: 900 });
+
+      const id = service.createJob([weakCandidate]);
+      await waitForJob(service, id);
+
+      const result = service.getJob(id)!.results[0];
+      expect(result.confidence).toBe('medium');
+    });
+
+    it('perfect title + mismatched author (combined ≈ 0.6) + 10% duration → medium', async () => {
+      // Perfect title match but wrong author → combined score well below 0.95
+      const candidate: MatchCandidate = {
+        path: '/audiobooks/The Way of Kings',
+        title: 'The Way of Kings',
+        author: 'Brandon Sanderson',
+      };
+
+      (scanAudioDirectory as ReturnType<typeof vi.fn>).mockResolvedValue({
+        totalDuration: 36000, // 600 min
+        files: [],
+      });
+
+      const results = [
+        makeBookMetadata({ title: 'The Way of Kings', authors: [{ name: 'Completely Different Person' }], providerId: 'p1' }),
+        makeBookMetadata({ title: 'The Way of Kings Guide', authors: [{ name: 'Completely Different Person' }], providerId: 'p2' }),
+      ];
+      (metadataService.searchBooks as ReturnType<typeof vi.fn>).mockResolvedValue(results);
+      (metadataService.getBook as ReturnType<typeof vi.fn>)
+        .mockResolvedValueOnce({ asin: 'A1', duration: 660 }) // 10% off — within relaxed 15% but score < 0.95
+        .mockResolvedValueOnce({ asin: 'A2', duration: 900 });
+
+      const id = service.createJob([candidate]);
+      await waitForJob(service, id);
+
+      const result = service.getJob(id)!.results[0];
+      // Score ≈ 0.6 (title 1.0 * 0.6 + author ~0.0 * 0.4), strict 5% applies → 10% exceeds → medium
+      expect(result.confidence).toBe('medium');
     });
   });
 
