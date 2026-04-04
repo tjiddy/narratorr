@@ -249,10 +249,16 @@ describe('LibraryBookCard', () => {
   });
 
   describe('collapsed series badge', () => {
-    it('renders +N more badge when collapsedCount is provided and > 0', () => {
+    it('renders total book count when collapsedCount > 0', () => {
       render(<LibraryBookCard {...defaultProps({ collapsedCount: 4 })} />);
       expect(screen.getByTestId('collapsed-badge')).toBeInTheDocument();
-      expect(screen.getByText('+4 more')).toBeInTheDocument();
+      expect(screen.getByText('5 books')).toBeInTheDocument();
+    });
+
+    it('renders correct total for collapsedCount of 1', () => {
+      render(<LibraryBookCard {...defaultProps({ collapsedCount: 1 })} />);
+      expect(screen.getByTestId('collapsed-badge')).toBeInTheDocument();
+      expect(screen.getByText('2 books')).toBeInTheDocument();
     });
 
     it('does not render badge when collapsedCount is 0', () => {
@@ -340,11 +346,11 @@ describe('LibraryBookCard', () => {
       expect(screen.queryByText('The Stormlight Archive #1')).not.toBeInTheDocument();
     });
 
-    it('still renders cover image and +N more badge when collapsedCount > 0', () => {
+    it('still renders cover image and total book count badge when collapsedCount > 0', () => {
       render(<LibraryBookCard {...defaultProps({ collapsedCount: 3 })} />);
       expect(screen.getByRole('img')).toBeInTheDocument();
       expect(screen.getByTestId('collapsed-badge')).toBeInTheDocument();
-      expect(screen.getByText('+3 more')).toBeInTheDocument();
+      expect(screen.getByText('4 books')).toBeInTheDocument();
     });
 
     it('calls onClick when collapsed card is clicked', () => {

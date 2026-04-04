@@ -4,7 +4,7 @@ import userEvent from '@testing-library/user-event';
 import { renderWithProviders } from '../../__tests__/helpers.js';
 import { createMockBook } from '../../__tests__/factories.js';
 import { LibraryTableView } from './LibraryTableView.js';
-import type { SortField, SortDirection } from './helpers.js';
+import type { SortField, SortDirection, DisplayBook } from './helpers.js';
 
 vi.mock('@/lib/api', async (importOriginal) => {
   const actual = await importOriginal();
@@ -334,6 +334,25 @@ describe('LibraryTableView', () => {
       const { container } = renderTable({ books: [] });
       // Component returns null for empty books array
       expect(container.querySelector('table')).toBeNull();
+    });
+  });
+
+  describe('collapsed series badge', () => {
+    it('shows total book count when collapsedCount > 0', () => {
+      const book: DisplayBook = { ...createMockBook(), collapsedCount: 4 };
+      renderTable({ books: [book] });
+      expect(screen.getByText('5 books')).toBeInTheDocument();
+    });
+
+    it('does not render badge when collapsedCount is 0', () => {
+      const book: DisplayBook = { ...createMockBook(), collapsedCount: 0 };
+      renderTable({ books: [book] });
+      expect(screen.queryByText(/books$/)).not.toBeInTheDocument();
+    });
+
+    it('does not render badge when collapsedCount is undefined', () => {
+      renderTable({ books: [createMockBook()] });
+      expect(screen.queryByText(/books$/)).not.toBeInTheDocument();
     });
   });
 });

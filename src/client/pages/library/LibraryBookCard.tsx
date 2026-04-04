@@ -70,10 +70,10 @@ export const LibraryBookCard = memo(function LibraryBookCard({
             )}
             {collapsedCount != null && collapsedCount > 0 && (
               <div
-                className="px-1.5 py-0.5 rounded-md backdrop-blur-md bg-black/40 ring-1 ring-amber-500/20 shadow-[0_0_8px_-2px_rgba(245,158,11,0.3)] text-[10px] font-bold text-amber-400/90"
+                className="bg-amber-500 text-black rounded-full font-bold text-[11px] px-2.5 py-0.5 shadow-lg shadow-amber-500/30 tracking-wide"
                 data-testid="collapsed-badge"
               >
-                +{collapsedCount} more
+                {collapsedCount + 1} books
               </div>
             )}
           </div>
