@@ -595,13 +595,16 @@ export class LibraryScanService {
     this.log.debug({ bookId }, 'Starting audio enrichment');
     await enrichBookFromAudio(bookId, finalPath, { narrators: narratorName ? [{ name: narratorName }] : null, duration, coverUrl }, this.db, this.log, this.bookService);
 
+    // Read current genres from DB (may have been filled since placeholder creation)
+    const [currentBook] = await this.db.select({ genres: books.genres }).from(books).where(eq(books.id, bookId)).limit(1);
+
     // Audnexus enrichment
     await this.applyAudnexusEnrichment(bookId, {
       primaryAsin,
       alternateAsins: meta?.alternateAsins,
       existingNarrator: narratorName,
       existingDuration: duration,
-      existingGenres: meta?.genres ?? null,
+      existingGenres: currentBook?.genres ?? null,
     });
 
     // Success — mark as imported
