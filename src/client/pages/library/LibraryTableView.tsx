@@ -161,7 +161,7 @@ export function LibraryTableView({
                     </span>
                     {book.collapsedCount !== undefined && book.collapsedCount > 0 && (
                       <span className="ml-1.5 inline-flex items-center justify-center px-1.5 py-0.5 rounded-full bg-primary/10 text-primary text-[10px] font-bold">
-                        +{book.collapsedCount}
+                        {book.collapsedCount + 1} books
                       </span>
                     )}
                   </td>

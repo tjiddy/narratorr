@@ -336,4 +336,21 @@ describe('LibraryTableView', () => {
       expect(container.querySelector('table')).toBeNull();
     });
   });
+
+  describe('collapsed series badge', () => {
+    it('shows total book count when collapsedCount > 0', () => {
+      renderTable({ books: [{ ...createMockBook(), collapsedCount: 4 }] });
+      expect(screen.getByText('5 books')).toBeInTheDocument();
+    });
+
+    it('does not render badge when collapsedCount is 0', () => {
+      renderTable({ books: [{ ...createMockBook(), collapsedCount: 0 }] });
+      expect(screen.queryByText(/books$/)).not.toBeInTheDocument();
+    });
+
+    it('does not render badge when collapsedCount is undefined', () => {
+      renderTable({ books: [createMockBook()] });
+      expect(screen.queryByText(/books$/)).not.toBeInTheDocument();
+    });
+  });
 });
