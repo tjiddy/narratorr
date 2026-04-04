@@ -260,7 +260,7 @@ describe('Error recovery E2E', () => {
 
     // Import the enrichment job runner
     const { runEnrichment } = await import('../jobs/enrichment.js');
-    await runEnrichment(e2e.db, e2e.services.metadata, e2e.app.log);
+    await runEnrichment(e2e.db, e2e.services.metadata, e2e.services.book, e2e.app.log);
 
     // Book should be marked failed but existing data preserved
     const [bookAfterFail] = await e2e.db.select().from(books).where(eq(books.id, bookId));
@@ -280,7 +280,7 @@ describe('Error recovery E2E', () => {
         });
       }),
     );
-    await runEnrichment(e2e.db, e2e.services.metadata, e2e.app.log);
+    await runEnrichment(e2e.db, e2e.services.metadata, e2e.services.book, e2e.app.log);
 
     const [bookAfterImmediate] = await e2e.db.select().from(books).where(eq(books.id, bookId));
     // Still failed — not retried because updatedAt is recent
@@ -292,7 +292,7 @@ describe('Error recovery E2E', () => {
     await e2e.db.update(books).set({ updatedAt: twoHoursAgo }).where(eq(books.id, bookId));
 
     // Now enrichment should retry — Audnexus returns valid data (handler set above)
-    await runEnrichment(e2e.db, e2e.services.metadata, e2e.app.log);
+    await runEnrichment(e2e.db, e2e.services.metadata, e2e.services.book, e2e.app.log);
 
     const [bookAfterRetry] = await e2e.db.select().from(books).where(eq(books.id, bookId));
     expect(bookAfterRetry.enrichmentStatus).toBe('enriched');
