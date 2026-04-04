@@ -102,3 +102,53 @@ describe('jobIdParamSchema — trim behavior', () => {
     if (result.success) expect(result.data.jobId).toBe('job-123');
   });
 });
+
+// ============================================================================
+// Within-scan duplicate detection schema (#342)
+// ============================================================================
+
+import {
+  duplicateReasonSchema,
+  discoveredBookSchema,
+} from './library-scan.js';
+
+describe('duplicateReasonSchema — within-scan variant (#342)', () => {
+  it('accepts within-scan value', () => {
+    const result = duplicateReasonSchema.safeParse('within-scan');
+    expect(result.success).toBe(true);
+    if (result.success) expect(result.data).toBe('within-scan');
+  });
+
+  it('rejects invalid values like foo', () => {
+    const result = duplicateReasonSchema.safeParse('foo');
+    expect(result.success).toBe(false);
+  });
+});
+
+describe('discoveredBookSchema — duplicateFirstPath field (#342)', () => {
+  const validDiscovery = {
+    path: '/audiobooks/Author/Title',
+    parsedTitle: 'Title',
+    parsedAuthor: 'Author',
+    parsedSeries: null,
+    fileCount: 3,
+    totalSize: 100,
+    isDuplicate: true,
+    duplicateReason: 'within-scan',
+  };
+
+  it('validates discovery with duplicateFirstPath present', () => {
+    const result = discoveredBookSchema.safeParse({
+      ...validDiscovery,
+      duplicateFirstPath: '/audiobooks/Other/Title',
+    });
+    expect(result.success).toBe(true);
+    if (result.success) expect(result.data.duplicateFirstPath).toBe('/audiobooks/Other/Title');
+  });
+
+  it('validates discovery with duplicateFirstPath absent', () => {
+    const result = discoveredBookSchema.safeParse(validDiscovery);
+    expect(result.success).toBe(true);
+    if (result.success) expect(result.data.duplicateFirstPath).toBeUndefined();
+  });
+});

@@ -15,7 +15,7 @@ export const scanDirectoryBodySchema = z.object({
   path: z.string().trim().min(1, 'path is required'),
 });
 
-export const duplicateReasonSchema = z.enum(['path', 'slug']);
+export const duplicateReasonSchema = z.enum(['path', 'slug', 'within-scan']);
 export type DuplicateReason = z.infer<typeof duplicateReasonSchema>;
 
 export const discoveredBookSchema = z.object({
@@ -28,6 +28,7 @@ export const discoveredBookSchema = z.object({
   isDuplicate: z.boolean(),
   existingBookId: z.number().optional(),
   duplicateReason: duplicateReasonSchema.optional(),
+  duplicateFirstPath: z.string().optional(),
 });
 
 export const scanResultSchema = z.object({
