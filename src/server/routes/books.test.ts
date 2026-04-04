@@ -1830,4 +1830,82 @@ describe('PUT /api/books/:id — array update contract (#71)', () => {
       expect(JSON.parse(res.payload)).toEqual({ error: 'Book not found' });
     });
   });
+
+  // #341 — book_added event on POST /api/books
+  describe('book_added event on create', () => {
+    it('records book_added event with source=manual after successful create', async () => {
+      (services.book.findDuplicate as Mock).mockResolvedValue(null);
+      const createdBook = { ...mockBook, id: 42, title: 'Test Book' };
+      (services.book.create as Mock).mockResolvedValue(createdBook);
+
+      const res = await app.inject({
+        method: 'POST',
+        url: '/api/books',
+        payload: { title: 'Test Book', authors: [{ name: 'Author One' }] },
+      });
+
+      expect(res.statusCode).toBe(201);
+      expect(services.eventHistory.create).toHaveBeenCalledWith({
+        bookId: 42,
+        bookTitle: 'Test Book',
+        authorName: createdBook.authors.map(a => a.name).join(', '),
+        eventType: 'book_added',
+        source: 'manual',
+      });
+    });
+
+    it('includes comma-joined authorName for multi-author books', async () => {
+      (services.book.findDuplicate as Mock).mockResolvedValue(null);
+      const multiAuthorBook = {
+        ...mockBook,
+        id: 43,
+        title: 'Multi Author Book',
+        authors: [
+          { id: 1, name: 'Author A', slug: 'author-a', createdAt: new Date(), updatedAt: new Date() },
+          { id: 2, name: 'Author B', slug: 'author-b', createdAt: new Date(), updatedAt: new Date() },
+        ],
+      };
+      (services.book.create as Mock).mockResolvedValue(multiAuthorBook);
+
+      await app.inject({
+        method: 'POST',
+        url: '/api/books',
+        payload: { title: 'Multi Author Book', authors: [{ name: 'Author A' }, { name: 'Author B' }] },
+      });
+
+      expect(services.eventHistory.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          authorName: 'Author A, Author B',
+          eventType: 'book_added',
+        }),
+      );
+    });
+
+    it('does NOT record book_added event when 409 duplicate is returned', async () => {
+      (services.book.findDuplicate as Mock).mockResolvedValue(mockBook);
+
+      const res = await app.inject({
+        method: 'POST',
+        url: '/api/books',
+        payload: { title: 'Duplicate Book', authors: [{ name: 'Author' }] },
+      });
+
+      expect(res.statusCode).toBe(409);
+      expect(services.eventHistory.create).not.toHaveBeenCalled();
+    });
+
+    it('book creation succeeds even if eventHistory.create() rejects (fire-and-forget)', async () => {
+      (services.book.findDuplicate as Mock).mockResolvedValue(null);
+      (services.book.create as Mock).mockResolvedValue({ ...mockBook, id: 44 });
+      (services.eventHistory.create as Mock).mockRejectedValue(new Error('DB write failed'));
+
+      const res = await app.inject({
+        method: 'POST',
+        url: '/api/books',
+        payload: { title: 'Test Book' },
+      });
+
+      expect(res.statusCode).toBe(201);
+    });
+  });
 });
