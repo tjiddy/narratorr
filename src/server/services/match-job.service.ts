@@ -184,7 +184,7 @@ class MatchJob {
       this.log.debug({
         path: book.path,
         resultCount: searchResults.length,
-        rawResults: searchResults.slice(0, 5).map(r => ({ title: r.title, author: r.author, asin: r.asin })),
+        rawResults: searchResults.slice(0, 5).map(r => ({ title: r.title, authors: r.authors?.map(a => a.name), asin: r.asin })),
       }, 'Search returned results');
 
       // Fetch full detail for top results to get ASIN/duration
@@ -197,7 +197,7 @@ class MatchJob {
         path: book.path,
         rankedResults: scored.slice(0, 5).map(s => ({
           title: s.meta.title,
-          author: s.meta.author,
+          authors: s.meta.authors?.map(a => a.name),
           score: s.score.toFixed(3),
           duration: s.meta.duration,
         })),
