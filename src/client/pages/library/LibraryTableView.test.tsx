@@ -4,7 +4,7 @@ import userEvent from '@testing-library/user-event';
 import { renderWithProviders } from '../../__tests__/helpers.js';
 import { createMockBook } from '../../__tests__/factories.js';
 import { LibraryTableView } from './LibraryTableView.js';
-import type { SortField, SortDirection } from './helpers.js';
+import type { SortField, SortDirection, DisplayBook } from './helpers.js';
 
 vi.mock('@/lib/api', async (importOriginal) => {
   const actual = await importOriginal();
@@ -339,12 +339,14 @@ describe('LibraryTableView', () => {
 
   describe('collapsed series badge', () => {
     it('shows total book count when collapsedCount > 0', () => {
-      renderTable({ books: [{ ...createMockBook(), collapsedCount: 4 }] });
+      const book: DisplayBook = { ...createMockBook(), collapsedCount: 4 };
+      renderTable({ books: [book] });
       expect(screen.getByText('5 books')).toBeInTheDocument();
     });
 
     it('does not render badge when collapsedCount is 0', () => {
-      renderTable({ books: [{ ...createMockBook(), collapsedCount: 0 }] });
+      const book: DisplayBook = { ...createMockBook(), collapsedCount: 0 };
+      renderTable({ books: [book] });
       expect(screen.queryByText(/books$/)).not.toBeInTheDocument();
     });
 
