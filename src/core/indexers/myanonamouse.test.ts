@@ -329,6 +329,95 @@ describe('MyAnonamouseIndexer', () => {
       const results = await indexer.search('test');
       expect(results[0].downloadUrl).toBeUndefined();
     });
+
+    it('populates guid from torrent id', async () => {
+      server.use(
+        http.get(`${MAM_BASE}/tor/js/loadSearchJSONbasic.php`, () => {
+          return HttpResponse.json({ data: [makeResult({ id: 720129 })] });
+        }),
+      );
+      stubTorrentDownload(server);
+
+      const results = await indexer.search('test');
+      expect(results[0].guid).toBe('720129');
+    });
+
+    it('populates guid as "0" when torrent id is 0', async () => {
+      server.use(
+        http.get(`${MAM_BASE}/tor/js/loadSearchJSONbasic.php`, () => {
+          return HttpResponse.json({ data: [makeResult({ id: 0 })] });
+        }),
+      );
+
+      const results = await indexer.search('test');
+      expect(results[0].guid).toBe('0');
+    });
+
+    it('sets guid undefined when torrent id is null', async () => {
+      server.use(
+        http.get(`${MAM_BASE}/tor/js/loadSearchJSONbasic.php`, () => {
+          return HttpResponse.json({ data: [makeResult({ id: null })] });
+        }),
+      );
+
+      const results = await indexer.search('test');
+      expect(results[0].guid).toBeUndefined();
+    });
+
+    it('sets guid undefined when torrent id is undefined', async () => {
+      server.use(
+        http.get(`${MAM_BASE}/tor/js/loadSearchJSONbasic.php`, () => {
+          return HttpResponse.json({ data: [makeResult({ id: undefined })] });
+        }),
+      );
+
+      const results = await indexer.search('test');
+      expect(results[0].guid).toBeUndefined();
+    });
+
+    it('populates guid for large torrent id without truncation', async () => {
+      server.use(
+        http.get(`${MAM_BASE}/tor/js/loadSearchJSONbasic.php`, () => {
+          return HttpResponse.json({ data: [makeResult({ id: 9999999 })] });
+        }),
+      );
+      stubTorrentDownload(server);
+
+      const results = await indexer.search('test');
+      expect(results[0].guid).toBe('9999999');
+    });
+
+    it('populates distinct guids for multiple results', async () => {
+      server.use(
+        http.get(`${MAM_BASE}/tor/js/loadSearchJSONbasic.php`, () => {
+          return HttpResponse.json({
+            data: [
+              makeResult({ id: 111, title: 'Book A' }),
+              makeResult({ id: 222, title: 'Book B' }),
+            ],
+          });
+        }),
+      );
+      stubTorrentDownload(server);
+
+      const results = await indexer.search('test');
+      expect(results).toHaveLength(2);
+      expect(results[0].guid).toBe('111');
+      expect(results[1].guid).toBe('222');
+    });
+
+    it('produces valid search result without guid when id is missing', async () => {
+      server.use(
+        http.get(`${MAM_BASE}/tor/js/loadSearchJSONbasic.php`, () => {
+          return HttpResponse.json({ data: [makeResult({ id: undefined })] });
+        }),
+      );
+
+      const results = await indexer.search('test');
+      expect(results).toHaveLength(1);
+      expect(results[0].title).toBe('The Way of Kings');
+      expect(results[0].guid).toBeUndefined();
+    });
   });
 
   describe('search — empty results', () => {
