@@ -1220,6 +1220,20 @@ describe('LibraryScanService', () => {
       expect(result.metadata).toBeNull();
     });
 
+    it('parses Series–Number–Title direct folder name correctly (#333)', async () => {
+      vi.mocked(readdir).mockResolvedValue([
+        { name: 'chapter1.mp3', isFile: () => true, isDirectory: () => false },
+      ] as never);
+      vi.mocked(stat).mockResolvedValue({ size: 50_000_000 } as never);
+      mockMetadataService.searchBooks.mockResolvedValue([]);
+
+      const result = await service.scanSingleBook('/audiobooks/First Law World – 02 – The Heroes');
+
+      expect(result.book.parsedTitle).toBe('The Heroes');
+      expect(result.book.parsedSeries).toBe('First Law World');
+      expect(result.book.parsedAuthor).toBeNull();
+    });
+
     it('returns metadata from lookup when available', async () => {
       vi.mocked(readdir).mockResolvedValue([
         { name: 'book.m4b', isFile: () => true, isDirectory: () => false },
@@ -2398,6 +2412,24 @@ describe('scanDirectory() — duplicateReason field (#133)', () => {
 
     expect(result.discoveries[0].isDuplicate).toBe(false);
     expect(result.discoveries[0]).not.toHaveProperty('duplicateReason');
+  });
+
+  it('2-part Series–Number–Title path deduplicates against existing book by slug (#333)', async () => {
+    vi.mocked(discoverBooks).mockResolvedValue([{
+      path: '/audiobooks/Joe Abercrombie/First Law World – 02 – The Heroes',
+      folderParts: ['Joe Abercrombie', 'First Law World – 02 – The Heroes'],
+      audioFileCount: 5,
+      totalSize: 200,
+    }]);
+    mockDb.select
+      .mockReturnValueOnce(mockDbChain([]))  // no path matches
+      .mockReturnValueOnce(mockDbChain([{ id: 42, title: 'The Heroes', slug: 'joe-abercrombie' }]));
+
+    const result = await service.scanDirectory('/audiobooks');
+
+    expect(result.discoveries[0].isDuplicate).toBe(true);
+    expect(result.discoveries[0].duplicateReason).toBe('slug');
+    expect(result.discoveries[0].existingBookId).toBe(42);
   });
 
   it('empty library root → returns discoveries=[], totalFolders=0', async () => {
