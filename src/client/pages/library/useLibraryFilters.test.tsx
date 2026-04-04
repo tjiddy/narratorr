@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { renderHook, act } from '@testing-library/react';
+import { useEffect } from 'react';
 import { MemoryRouter, useSearchParams } from 'react-router-dom';
 import { useLibraryFilters, applyClientFilters } from './useLibraryFilters';
 import type { BookWithAuthor } from '@/lib/api';
@@ -12,11 +13,14 @@ function createWrapper(route = '/library') {
   };
 }
 
-/** Wrapper that captures URL changes via a UrlCapture component */
-let capturedUrl = '';
+/** Mutable ref object for capturing URL state from inside components */
+const urlRef = { current: '' };
 function UrlCapture() {
   const [params] = useSearchParams();
-  capturedUrl = '?' + params.toString();
+  const serialized = '?' + params.toString();
+  useEffect(() => {
+    urlRef.current = serialized;
+  });
   return null;
 }
 
@@ -479,86 +483,86 @@ describe('useLibraryFilters — URL param initialization', () => {
 describe('useLibraryFilters — URL param sync on state change', () => {
   beforeEach(() => {
     vi.useFakeTimers({ shouldAdvanceTime: true });
-    capturedUrl = '';
+    urlRef.current = '';
   });
   afterEach(() => { vi.useRealTimers(); });
 
   it('writes status to URL when setStatusFilter called with non-default', () => {
     const { result } = renderHook(() => useLibraryFilters(), { wrapper: createCapturingWrapper() });
     act(() => { result.current.actions.setStatusFilter('wanted'); });
-    expect(capturedUrl).toContain('status=wanted');
+    expect(urlRef.current).toContain('status=wanted');
   });
 
   it('removes status from URL when set back to all (default)', () => {
     const { result } = renderHook(() => useLibraryFilters(), { wrapper: createCapturingWrapper('/library?status=wanted') });
     act(() => { result.current.actions.setStatusFilter('all'); });
-    expect(capturedUrl).not.toContain('status=');
+    expect(urlRef.current).not.toContain('status=');
   });
 
   it('writes sortField to URL when changed from default', () => {
     const { result } = renderHook(() => useLibraryFilters(), { wrapper: createCapturingWrapper() });
     act(() => { result.current.actions.setSortField('title'); });
-    expect(capturedUrl).toContain('sortField=title');
+    expect(urlRef.current).toContain('sortField=title');
   });
 
   it('removes sortField from URL when set back to createdAt (default)', () => {
     const { result } = renderHook(() => useLibraryFilters(), { wrapper: createCapturingWrapper('/library?sortField=title') });
     act(() => { result.current.actions.setSortField('createdAt'); });
-    expect(capturedUrl).not.toContain('sortField=');
+    expect(urlRef.current).not.toContain('sortField=');
   });
 
   it('writes sortDirection to URL when changed from default', () => {
     const { result } = renderHook(() => useLibraryFilters(), { wrapper: createCapturingWrapper() });
     act(() => { result.current.actions.setSortDirection('asc'); });
-    expect(capturedUrl).toContain('sortDirection=asc');
+    expect(urlRef.current).toContain('sortDirection=asc');
   });
 
   it('writes page to URL when pagination changes', () => {
     const { result } = renderHook(() => useLibraryFilters(), { wrapper: createCapturingWrapper() });
     act(() => { result.current.params.pagination.setPage(3); });
-    expect(capturedUrl).toContain('page=3');
+    expect(urlRef.current).toContain('page=3');
   });
 
   it('removes page from URL when reset to 1', () => {
     const { result } = renderHook(() => useLibraryFilters(), { wrapper: createCapturingWrapper('/library?page=3') });
     act(() => { vi.advanceTimersByTime(0); });
     act(() => { result.current.params.pagination.reset(); });
-    expect(capturedUrl).not.toContain('page=');
+    expect(urlRef.current).not.toContain('page=');
   });
 
   it('writes author to URL when setAuthorFilter called', () => {
     const { result } = renderHook(() => useLibraryFilters(), { wrapper: createCapturingWrapper() });
     act(() => { result.current.actions.setAuthorFilter('Sanderson'); });
-    expect(capturedUrl).toContain('author=Sanderson');
+    expect(urlRef.current).toContain('author=Sanderson');
   });
 
   it('writes series to URL when setSeriesFilter called', () => {
     const { result } = renderHook(() => useLibraryFilters(), { wrapper: createCapturingWrapper() });
     act(() => { result.current.actions.setSeriesFilter('Stormlight'); });
-    expect(capturedUrl).toContain('series=Stormlight');
+    expect(urlRef.current).toContain('series=Stormlight');
   });
 
   it('writes narrator to URL when setNarratorFilter called', () => {
     const { result } = renderHook(() => useLibraryFilters(), { wrapper: createCapturingWrapper() });
     act(() => { result.current.actions.setNarratorFilter('Kramer'); });
-    expect(capturedUrl).toContain('narrator=Kramer');
+    expect(urlRef.current).toContain('narrator=Kramer');
   });
 
   it('writes collapse=true to URL when enabled', () => {
     const { result } = renderHook(() => useLibraryFilters(), { wrapper: createCapturingWrapper() });
     act(() => { result.current.actions.setCollapseSeriesEnabled(true); });
-    expect(capturedUrl).toContain('collapse=true');
+    expect(urlRef.current).toContain('collapse=true');
   });
 
   it('removes collapse from URL when disabled (default)', () => {
     const { result } = renderHook(() => useLibraryFilters(), { wrapper: createCapturingWrapper('/library?collapse=true') });
     act(() => { result.current.actions.setCollapseSeriesEnabled(false); });
-    expect(capturedUrl).not.toContain('collapse=');
+    expect(urlRef.current).not.toContain('collapse=');
   });
 
   it('writes only non-default values (clean URL for defaults)', () => {
     renderHook(() => useLibraryFilters(), { wrapper: createCapturingWrapper() });
-    expect(capturedUrl).toBe('?');
+    expect(urlRef.current).toBe('?');
   });
 
   it('preserves other params when changing one filter', () => {
@@ -566,36 +570,36 @@ describe('useLibraryFilters — URL param sync on state change', () => {
       wrapper: createCapturingWrapper('/library?status=wanted&author=Sanderson'),
     });
     act(() => { result.current.actions.setSortField('title'); });
-    expect(capturedUrl).toContain('status=wanted');
-    expect(capturedUrl).toContain('author=Sanderson');
-    expect(capturedUrl).toContain('sortField=title');
+    expect(urlRef.current).toContain('status=wanted');
+    expect(urlRef.current).toContain('author=Sanderson');
+    expect(urlRef.current).toContain('sortField=title');
   });
 });
 
 describe('useLibraryFilters — URL debounce sync', () => {
   beforeEach(() => {
     vi.useFakeTimers({ shouldAdvanceTime: true });
-    capturedUrl = '';
+    urlRef.current = '';
   });
   afterEach(() => { vi.useRealTimers(); });
 
   it('does not write search to URL on every keystroke', () => {
     const { result } = renderHook(() => useLibraryFilters(), { wrapper: createCapturingWrapper() });
     act(() => { result.current.actions.setSearchQuery('tol'); });
-    expect(capturedUrl).not.toContain('search=');
+    expect(urlRef.current).not.toContain('search=');
   });
 
   it('writes debounced search value to URL after 300ms', () => {
     const { result } = renderHook(() => useLibraryFilters(), { wrapper: createCapturingWrapper() });
     act(() => { result.current.actions.setSearchQuery('tolkien'); });
     act(() => { vi.advanceTimersByTime(350); });
-    expect(capturedUrl).toContain('search=tolkien');
+    expect(urlRef.current).toContain('search=tolkien');
   });
 
   it('removes search from URL when cleared', () => {
     const { result } = renderHook(() => useLibraryFilters(), { wrapper: createCapturingWrapper('/library?search=tolkien') });
     act(() => { result.current.actions.clearSearch(); });
-    expect(capturedUrl).not.toContain('search=');
+    expect(urlRef.current).not.toContain('search=');
   });
 });
 
@@ -636,19 +640,19 @@ describe('useLibraryFilters — clearAllFilters updated behavior', () => {
   });
 
   it('produces clean URL with no params after clearAllFilters', () => {
-    capturedUrl = '';
+    urlRef.current = '';
     const { result } = renderHook(() => useLibraryFilters(), {
       wrapper: createCapturingWrapper('/library?status=wanted&sortField=title&sortDirection=asc&collapse=true&author=X'),
     });
     act(() => { result.current.actions.clearAllFilters(); });
-    expect(capturedUrl).toBe('?');
+    expect(urlRef.current).toBe('?');
   });
 });
 
 describe('useLibraryFilters — filter interactions with URL', () => {
   beforeEach(() => {
     vi.useFakeTimers({ shouldAdvanceTime: true });
-    capturedUrl = '';
+    urlRef.current = '';
   });
   afterEach(() => { vi.useRealTimers(); });
 
@@ -656,8 +660,8 @@ describe('useLibraryFilters — filter interactions with URL', () => {
     const { result } = renderHook(() => useLibraryFilters(), { wrapper: createCapturingWrapper('/library?page=3') });
     act(() => { vi.advanceTimersByTime(0); });
     act(() => { result.current.actions.setStatusFilter('wanted'); });
-    expect(capturedUrl).toContain('status=wanted');
-    expect(capturedUrl).not.toContain('page=');
+    expect(urlRef.current).toContain('status=wanted');
+    expect(urlRef.current).not.toContain('page=');
   });
 
   it('changing sort field preserves other active filters in URL', () => {
@@ -665,9 +669,9 @@ describe('useLibraryFilters — filter interactions with URL', () => {
       wrapper: createCapturingWrapper('/library?status=wanted&author=Sanderson'),
     });
     act(() => { result.current.actions.setSortField('title'); });
-    expect(capturedUrl).toContain('status=wanted');
-    expect(capturedUrl).toContain('author=Sanderson');
-    expect(capturedUrl).toContain('sortField=title');
+    expect(urlRef.current).toContain('status=wanted');
+    expect(urlRef.current).toContain('author=Sanderson');
+    expect(urlRef.current).toContain('sortField=title');
   });
 
   it('clearing search preserves other active filters in URL', () => {
@@ -675,8 +679,8 @@ describe('useLibraryFilters — filter interactions with URL', () => {
       wrapper: createCapturingWrapper('/library?status=wanted&search=tolkien'),
     });
     act(() => { result.current.actions.clearSearch(); });
-    expect(capturedUrl).toContain('status=wanted');
-    expect(capturedUrl).not.toContain('search=');
+    expect(urlRef.current).toContain('status=wanted');
+    expect(urlRef.current).not.toContain('search=');
   });
 });
 
