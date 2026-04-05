@@ -65,8 +65,8 @@ export function ToolbarDropdown({
         onClose();
       }
     }
-    if (open) document.addEventListener('keydown', handleKeyDown);
-    return () => document.removeEventListener('keydown', handleKeyDown);
+    if (open) document.addEventListener('keydown', handleKeyDown, true);
+    return () => document.removeEventListener('keydown', handleKeyDown, true);
   }, [open, onClose]);
 
   if (!open) return null;

@@ -171,20 +171,22 @@ describe('ToolbarDropdown', () => {
       expect(onClose).toHaveBeenCalledTimes(1);
     });
 
-    it('pressing Escape while dropdown is open calls stopImmediatePropagation to suppress same-target listeners', () => {
+    it('pressing Escape while dropdown is open suppresses a bubble-phase modal listener registered before the dropdown', () => {
+      // Simulate the real registration order: modal registers first (bubble), dropdown registers after (capture)
+      const modalEscapeHandler = vi.fn();
+      document.addEventListener('keydown', modalEscapeHandler);
+
       const onClose = vi.fn();
       render(<Wrapper open={true} onClose={onClose} />);
 
-      // Register a second listener that should NOT fire
-      const secondListener = vi.fn();
-      document.addEventListener('keydown', secondListener);
-
       document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', cancelable: true, bubbles: true }));
 
+      // Dropdown closes (capture phase fires first)
       expect(onClose).toHaveBeenCalledTimes(1);
-      expect(secondListener).not.toHaveBeenCalled();
+      // Modal listener never fires (stopImmediatePropagation suppressed it)
+      expect(modalEscapeHandler).not.toHaveBeenCalled();
 
-      document.removeEventListener('keydown', secondListener);
+      document.removeEventListener('keydown', modalEscapeHandler);
     });
 
     it('pressing Escape while dropdown is closed does not interfere with other keydown listeners', () => {
