@@ -90,3 +90,43 @@ describe('createBlacklistSchema — trim behavior', () => {
     expect(result.success).toBe(false);
   });
 });
+
+// ===== #321 — Centralized blacklist reason enum =====
+
+import { BLACKLIST_REASONS, REASON_LABELS, type BlacklistReason } from './blacklist.js';
+
+describe('BLACKLIST_REASONS canonical tuple', () => {
+  it('exports BLACKLIST_REASONS as a readonly tuple with all 8 reason values', () => {
+    expect(BLACKLIST_REASONS).toEqual([
+      'wrong_content', 'bad_quality', 'wrong_narrator', 'spam',
+      'other', 'download_failed', 'infrastructure_error', 'user_cancelled',
+    ]);
+    expect(BLACKLIST_REASONS).toHaveLength(8);
+  });
+
+  it('blacklistReasonSchema accepts all 8 canonical reason values', () => {
+    for (const reason of BLACKLIST_REASONS) {
+      const result = createBlacklistSchema.safeParse({ ...validBase, reason });
+      expect(result.success).toBe(true);
+    }
+  });
+
+  it('blacklistReasonSchema rejects an invalid reason string', () => {
+    const result = createBlacklistSchema.safeParse({ ...validBase, reason: 'fake_reason' });
+    expect(result.success).toBe(false);
+  });
+
+  it('REASON_LABELS has an entry for every BlacklistReason value', () => {
+    const labelKeys = Object.keys(REASON_LABELS);
+    for (const reason of BLACKLIST_REASONS) {
+      expect(labelKeys).toContain(reason);
+      expect(typeof REASON_LABELS[reason]).toBe('string');
+      expect(REASON_LABELS[reason].length).toBeGreaterThan(0);
+    }
+  });
+
+  it('REASON_LABELS has no extra keys beyond BLACKLIST_REASONS', () => {
+    const labelKeys = Object.keys(REASON_LABELS);
+    expect(labelKeys).toHaveLength(BLACKLIST_REASONS.length);
+  });
+});
