@@ -411,6 +411,39 @@ describe('CrudSettingsPage', () => {
       expect(handleCancelEdit).not.toHaveBeenCalled();
     });
 
+    it('edit modal closes on backdrop click when update mutation is not pending', async () => {
+      const items = [{ id: 1, name: 'Widget A' }];
+      const handleCancelEdit = vi.fn();
+      const handleToggleForm = vi.fn();
+      mockUseCrudSettings.mockReturnValue(createMockHookReturn({
+        state: { items, editingId: 1 },
+        actions: { handleCancelEdit, handleToggleForm },
+        mutations: { updateMutation: { mutate: vi.fn(), isPending: false } },
+      }));
+      const user = userEvent.setup();
+      render(<CrudSettingsPage {...modalProps} renderCard={vi.fn(() => <div>edit</div>)} />);
+
+      await user.click(screen.getByTestId('modal-backdrop'));
+      expect(handleCancelEdit).toHaveBeenCalledOnce();
+      expect(handleToggleForm).not.toHaveBeenCalled();
+    });
+
+    it('edit modal closes on Escape when update mutation is not pending', () => {
+      const items = [{ id: 1, name: 'Widget A' }];
+      const handleCancelEdit = vi.fn();
+      const handleToggleForm = vi.fn();
+      mockUseCrudSettings.mockReturnValue(createMockHookReturn({
+        state: { items, editingId: 1 },
+        actions: { handleCancelEdit, handleToggleForm },
+        mutations: { updateMutation: { mutate: vi.fn(), isPending: false } },
+      }));
+      render(<CrudSettingsPage {...modalProps} renderCard={vi.fn(() => <div>edit</div>)} />);
+
+      document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', cancelable: true }));
+      expect(handleCancelEdit).toHaveBeenCalledOnce();
+      expect(handleToggleForm).not.toHaveBeenCalled();
+    });
+
     it('cards in list render in view mode even when editingId is set in modal mode', () => {
       const items = [{ id: 1, name: 'Widget A' }, { id: 2, name: 'Widget B' }];
       mockUseCrudSettings.mockReturnValue(createMockHookReturn({ state: { items, editingId: 1 } }));
