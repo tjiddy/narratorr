@@ -14,7 +14,7 @@ vi.mock('@/lib/api/download-clients', () => ({
 
 import { downloadClientsApi } from '@/lib/api/download-clients';
 
-function FieldWrapper({ type, clientId, dirty, isEdit }: { type: string; clientId?: number; dirty?: boolean; isEdit?: boolean }) {
+function FieldWrapper({ type, clientId, dirty, isEdit, inModal }: { type: string; clientId?: number; dirty?: boolean; isEdit?: boolean; inModal?: boolean }) {
   const { register, formState: { errors }, setValue, getValues } = useForm<CreateDownloadClientFormData>({
     defaultValues: { name: 'Test', type: 'qbittorrent', enabled: true, priority: 50, settings: { host: '', port: 8080 } },
   });
@@ -28,6 +28,7 @@ function FieldWrapper({ type, clientId, dirty, isEdit }: { type: string; clientI
       getValues={getValues}
       isDirty={dirty}
       isEdit={isEdit}
+      inModal={inModal}
     />
   );
 }
@@ -449,6 +450,67 @@ describe('DownloadClientFields', () => {
       await waitFor(() => {
         expect(screen.queryByText('cat1')).not.toBeInTheDocument();
       });
+    });
+  });
+
+  describe('modal-aware dropdown wiring', () => {
+    it('category dropdown uses modal z-index when inModal is true', async () => {
+      const user = userEvent.setup();
+      (downloadClientsApi.getClientCategoriesFromConfig as ReturnType<typeof vi.fn>).mockResolvedValue({
+        categories: ['movies', 'tv'],
+      });
+      render(<FieldWrapper type="qbittorrent" inModal />);
+      await user.click(screen.getByRole('button', { name: /fetch/i }));
+      await waitFor(() => {
+        expect(screen.getByText('movies')).toBeInTheDocument();
+      });
+
+      const portalContainer = screen.getByText('movies').closest('div.fixed');
+      expect(portalContainer).toHaveClass('z-50');
+      expect(portalContainer).not.toHaveClass('z-30');
+    });
+
+    it('category dropdown uses default z-index when inModal is not set', async () => {
+      const user = userEvent.setup();
+      (downloadClientsApi.getClientCategoriesFromConfig as ReturnType<typeof vi.fn>).mockResolvedValue({
+        categories: ['movies'],
+      });
+      render(<FieldWrapper type="qbittorrent" />);
+      await user.click(screen.getByRole('button', { name: /fetch/i }));
+      await waitFor(() => {
+        expect(screen.getByText('movies')).toBeInTheDocument();
+      });
+
+      const portalContainer = screen.getByText('movies').closest('div.fixed');
+      expect(portalContainer).toHaveClass('z-30');
+    });
+
+    it('pressing Escape while category dropdown is open inside modal closes only the dropdown', async () => {
+      const user = userEvent.setup();
+      (downloadClientsApi.getClientCategoriesFromConfig as ReturnType<typeof vi.fn>).mockResolvedValue({
+        categories: ['audiobooks'],
+      });
+
+      // Simulate a modal Escape listener (registered before dropdown)
+      const modalEscapeHandler = vi.fn();
+      document.addEventListener('keydown', modalEscapeHandler);
+
+      render(<FieldWrapper type="qbittorrent" inModal />);
+      await user.click(screen.getByRole('button', { name: /fetch/i }));
+      await waitFor(() => {
+        expect(screen.getByText('audiobooks')).toBeInTheDocument();
+      });
+
+      await user.keyboard('{Escape}');
+
+      // Dropdown closes
+      await waitFor(() => {
+        expect(screen.queryByText('audiobooks')).not.toBeInTheDocument();
+      });
+      // Modal Escape handler was suppressed by stopImmediatePropagation
+      expect(modalEscapeHandler).not.toHaveBeenCalled();
+
+      document.removeEventListener('keydown', modalEscapeHandler);
     });
   });
 });
