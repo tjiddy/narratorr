@@ -159,6 +159,76 @@ describe('ToolbarDropdown', () => {
     });
   });
 
+  describe('Escape isolation with modal', () => {
+    it('pressing Escape while dropdown is open calls preventDefault so modal can check defaultPrevented', () => {
+      const onClose = vi.fn();
+      render(<Wrapper open={true} onClose={onClose} />);
+
+      const event = new KeyboardEvent('keydown', { key: 'Escape', cancelable: true, bubbles: true });
+      document.dispatchEvent(event);
+
+      expect(event.defaultPrevented).toBe(true);
+      expect(onClose).toHaveBeenCalledTimes(1);
+    });
+
+    it('pressing Escape while dropdown is open calls stopImmediatePropagation to suppress same-target listeners', () => {
+      const onClose = vi.fn();
+      render(<Wrapper open={true} onClose={onClose} />);
+
+      // Register a second listener that should NOT fire
+      const secondListener = vi.fn();
+      document.addEventListener('keydown', secondListener);
+
+      document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', cancelable: true, bubbles: true }));
+
+      expect(onClose).toHaveBeenCalledTimes(1);
+      expect(secondListener).not.toHaveBeenCalled();
+
+      document.removeEventListener('keydown', secondListener);
+    });
+
+    it('pressing Escape while dropdown is closed does not interfere with other keydown listeners', () => {
+      render(<Wrapper open={false} onClose={vi.fn()} />);
+
+      const otherListener = vi.fn();
+      document.addEventListener('keydown', otherListener);
+
+      document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', cancelable: true, bubbles: true }));
+
+      expect(otherListener).toHaveBeenCalledTimes(1);
+
+      document.removeEventListener('keydown', otherListener);
+    });
+  });
+
+  describe('modal-aware z-index', () => {
+    it('portal container uses elevated z-index when inModal prop is true', () => {
+      function ModalWrapper() {
+        const ref = useRef<HTMLButtonElement>(null);
+        return (
+          <>
+            <button ref={ref} data-testid="trigger">trigger</button>
+            <ToolbarDropdown triggerRef={ref} open={true} onClose={vi.fn()} inModal>
+              <div data-testid="panel">panel content</div>
+            </ToolbarDropdown>
+          </>
+        );
+      }
+      render(<ModalWrapper />);
+      const panel = document.body.querySelector('[data-testid="panel"]') as HTMLElement;
+      const portalContainer = panel.parentElement!;
+      expect(portalContainer).toHaveClass('z-[60]');
+      expect(portalContainer).not.toHaveClass('z-30');
+    });
+
+    it('portal container keeps z-30 when inModal prop is not set', () => {
+      render(<Wrapper open={true} onClose={vi.fn()} />);
+      const panel = document.body.querySelector('[data-testid="panel"]') as HTMLElement;
+      const portalContainer = panel.parentElement!;
+      expect(portalContainer).toHaveClass('z-30');
+    });
+  });
+
   describe('z-index scale', () => {
     it('portal container has z-30 class (dropdown scale)', () => {
       render(<Wrapper open={true} onClose={vi.fn()} />);
