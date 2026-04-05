@@ -75,6 +75,51 @@ describe('useEscapeKey', () => {
     expect(focusEl.focus).toHaveBeenCalledTimes(1);
   });
 
+  describe('defaultPrevented gating', () => {
+    it('does not call onEscape when event.defaultPrevented is true', () => {
+      const onEscape = vi.fn();
+      renderHook(() => useEscapeKey(true, onEscape));
+
+      // Simulate an Escape event where another handler already called preventDefault
+      const event = new KeyboardEvent('keydown', { key: 'Escape', cancelable: true });
+      event.preventDefault();
+      document.dispatchEvent(event);
+
+      expect(onEscape).not.toHaveBeenCalled();
+    });
+
+    it('calls onEscape when event.defaultPrevented is false', () => {
+      const onEscape = vi.fn();
+      renderHook(() => useEscapeKey(true, onEscape));
+
+      const event = new KeyboardEvent('keydown', { key: 'Escape', cancelable: true });
+      document.dispatchEvent(event);
+
+      expect(onEscape).toHaveBeenCalledTimes(1);
+    });
+
+    it('does not call onEscape when Escape has stopImmediatePropagation called by earlier listener', () => {
+      const onEscape = vi.fn();
+      renderHook(() => useEscapeKey(true, onEscape));
+
+      // Register a higher-priority listener that stops immediate propagation
+      const earlyHandler = (e: KeyboardEvent) => {
+        if (e.key === 'Escape') {
+          e.preventDefault();
+          e.stopImmediatePropagation();
+        }
+      };
+      document.addEventListener('keydown', earlyHandler, { capture: true });
+
+      document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', cancelable: true }));
+
+      // The hook listener never fires because stopImmediatePropagation was called
+      expect(onEscape).not.toHaveBeenCalled();
+
+      document.removeEventListener('keydown', earlyHandler, { capture: true });
+    });
+  });
+
   it('does not throw when focusRef is undefined', () => {
     const onEscape = vi.fn();
 

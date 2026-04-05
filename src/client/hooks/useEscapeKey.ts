@@ -8,7 +8,7 @@ export function useEscapeKey(
   useEffect(() => {
     if (!isOpen) return;
     const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') onEscape();
+      if (e.key === 'Escape' && !e.defaultPrevented) onEscape();
     };
     document.addEventListener('keydown', handleKeyDown);
     focusRef?.current?.focus();
