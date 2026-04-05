@@ -255,4 +255,29 @@ describe('DownloadClientsSettings', () => {
       expect((api.testClient as Mock).mock.calls[0][0]).toBe(1);
     });
   });
+
+  describe('modal mode', () => {
+    it('clicking Add Client opens the create form inside a modal', async () => {
+      const user = userEvent.setup();
+      renderWithProviders(<DownloadClientsSettings />);
+      await waitForListLoad('My qBittorrent');
+
+      await user.click(screen.getByRole('button', { name: 'Add Client' }));
+
+      expect(screen.getByTestId('modal-backdrop')).toBeInTheDocument();
+      expect(screen.getByText('Add Download Client')).toBeInTheDocument();
+    });
+
+    it('clicking Edit on a client card opens the edit form inside a modal', async () => {
+      const user = userEvent.setup();
+      renderWithProviders(<DownloadClientsSettings />);
+      await waitForListLoad('My qBittorrent');
+
+      const editButtons = screen.getAllByText('Edit').map((el) => el.closest('button')!);
+      await user.click(editButtons[0]);
+
+      expect(screen.getByTestId('modal-backdrop')).toBeInTheDocument();
+      expect(screen.getByText('Edit Download Client')).toBeInTheDocument();
+    });
+  });
 });
