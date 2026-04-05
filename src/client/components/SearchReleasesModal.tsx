@@ -144,12 +144,13 @@ export function SearchReleasesModal({ isOpen, book, onClose }: SearchReleasesMod
   });
 
   const handleBlacklist = (result: SearchResult) => {
-    if (!result.infoHash) {
-      toast.error('Cannot blacklist: no info hash available');
+    if (!result.infoHash && !result.guid) {
+      toast.error('Cannot blacklist: no identifier available');
       return;
     }
     blacklistMutation.mutate({
-      infoHash: result.infoHash,
+      infoHash: result.infoHash || undefined,
+      guid: result.guid || undefined,
       title: result.title,
       bookId: book.id,
       reason: 'other',

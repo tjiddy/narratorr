@@ -124,9 +124,9 @@ export function ReleaseCard({
           <button
             type="button"
             onClick={onBlacklist}
-            disabled={!result.infoHash || isBlacklisting}
+            disabled={(!result.infoHash && !result.guid) || isBlacklisting}
             className="flex items-center gap-1 text-xs text-muted-foreground hover:text-destructive disabled:opacity-50 disabled:cursor-not-allowed transition-colors focus-ring rounded px-1.5 py-1"
-            title={result.infoHash ? 'Blacklist this release' : 'No info hash available'}
+            title={(result.infoHash || result.guid) ? 'Blacklist this release' : 'No identifier available'}
           >
             {isBlacklisting ? (
               <LoadingSpinner className="w-3 h-3" />

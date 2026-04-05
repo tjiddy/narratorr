@@ -846,10 +846,10 @@ describe('SearchReleasesModal', () => {
     });
   });
 
-  it('disables blacklist button when infoHash is falsy', async () => {
-    const resultsWithoutHash: SearchResult[] = [
+  it('disables blacklist button when both infoHash and guid are falsy', async () => {
+    const resultsWithoutIdentifiers: SearchResult[] = [
       {
-        title: 'No Hash Release',
+        title: 'No Identifier Release',
         author: 'Author',
         protocol: 'usenet',
         infoHash: '',
@@ -859,17 +859,45 @@ describe('SearchReleasesModal', () => {
         indexer: 'TestIndexer',
       },
     ];
-    setStreamResults(resultsWithoutHash);
+    setStreamResults(resultsWithoutIdentifiers);
 
     renderWithProviders(
       <SearchReleasesModal isOpen={true} book={mockBook} onClose={vi.fn()} />,
     );
 
-    await screen.findByText('No Hash Release');
+    await screen.findByText('No Identifier Release');
 
     await waitFor(() => {
       const blacklistButton = screen.getByText('Blacklist').closest('button');
       expect(blacklistButton).toBeDisabled();
+    });
+  });
+
+  it('enables blacklist button when guid is present but infoHash is missing', async () => {
+    const resultsWithGuidOnly: SearchResult[] = [
+      {
+        title: 'GUID Only Release',
+        author: 'Author',
+        protocol: 'usenet',
+        infoHash: '',
+        guid: 'https://indexer.example/details/abc123',
+        downloadUrl: 'https://indexer.example/nzb/123',
+        size: 1024,
+        seeders: 0,
+        indexer: 'TestIndexer',
+      },
+    ];
+    setStreamResults(resultsWithGuidOnly);
+
+    renderWithProviders(
+      <SearchReleasesModal isOpen={true} book={mockBook} onClose={vi.fn()} />,
+    );
+
+    await screen.findByText('GUID Only Release');
+
+    await waitFor(() => {
+      const blacklistButton = screen.getByText('Blacklist').closest('button');
+      expect(blacklistButton).not.toBeDisabled();
     });
   });
 
@@ -898,6 +926,7 @@ describe('SearchReleasesModal', () => {
       expect(api.addToBlacklist).toHaveBeenCalledWith(
         {
           infoHash: 'abc123',
+          guid: undefined,
           title: 'The Way of Kings [Unabridged]',
           bookId: mockBook.id,
           reason: 'other',
@@ -905,6 +934,53 @@ describe('SearchReleasesModal', () => {
         expect.anything(), // TanStack Query mutation context
       );
       expect(toast.success).toHaveBeenCalledWith('Release blacklisted');
+    });
+  });
+
+  it('blacklists by guid when infoHash is missing', async () => {
+    const guidResult: SearchResult[] = [
+      {
+        title: 'GUID Blacklist Test',
+        author: 'Author',
+        protocol: 'usenet',
+        infoHash: '',
+        guid: 'https://indexer.example/details/guid789',
+        downloadUrl: 'https://indexer.example/nzb/456',
+        size: 1024,
+        seeders: 0,
+        indexer: 'TestIndexer',
+      },
+    ];
+    setStreamResults(guidResult);
+    vi.mocked(api.addToBlacklist).mockResolvedValue({
+      id: 2,
+      guid: 'https://indexer.example/details/guid789',
+      title: 'GUID Blacklist Test',
+      reason: 'other',
+      blacklistType: 'permanent',
+      blacklistedAt: '2026-03-15T00:00:00Z',
+    });
+    const user = userEvent.setup();
+
+    renderWithProviders(
+      <SearchReleasesModal isOpen={true} book={mockBook} onClose={vi.fn()} />,
+    );
+
+    await screen.findByText('GUID Blacklist Test');
+
+    await user.click(screen.getByText('Blacklist'));
+
+    await waitFor(() => {
+      expect(api.addToBlacklist).toHaveBeenCalledWith(
+        {
+          infoHash: undefined,
+          guid: 'https://indexer.example/details/guid789',
+          title: 'GUID Blacklist Test',
+          bookId: mockBook.id,
+          reason: 'other',
+        },
+        expect.anything(),
+      );
     });
   });
 
