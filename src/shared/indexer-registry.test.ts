@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { INDEXER_REGISTRY, MAM_LANGUAGES, MAM_SEARCH_TYPES } from './indexer-registry.js';
+import { INDEXER_REGISTRY, MAM_LANGUAGES, MAM_SEARCH_TYPES, coerceSearchType } from './indexer-registry.js';
 import { indexerTypeSchema } from './schemas/indexer.js';
 
 describe('INDEXER_REGISTRY', () => {
@@ -99,10 +99,10 @@ describe('INDEXER_REGISTRY', () => {
       expect(defaults).toHaveProperty('baseUrl');
     });
 
-    it('myanonamouse defaults include searchLanguages: [1] and searchType: 1', () => {
+    it('myanonamouse defaults include searchLanguages: [1] and searchType: "active"', () => {
       const defaults = INDEXER_REGISTRY.myanonamouse.defaultSettings;
       expect(defaults).toHaveProperty('searchLanguages', [1]);
-      expect(defaults).toHaveProperty('searchType', 1);
+      expect(defaults).toHaveProperty('searchType', 'active');
     });
   });
 
@@ -119,16 +119,71 @@ describe('INDEXER_REGISTRY', () => {
       expect(MAM_LANGUAGES.find(l => l.id === 1)?.label).toBe('English');
     });
 
-    it('MAM_SEARCH_TYPES contains 4 options with value and label', () => {
-      expect(MAM_SEARCH_TYPES).toHaveLength(4);
+    it('MAM_SEARCH_TYPES contains 6 options with value and label', () => {
+      expect(MAM_SEARCH_TYPES).toHaveLength(6);
       for (const st of MAM_SEARCH_TYPES) {
         expect(st).toHaveProperty('value');
         expect(st).toHaveProperty('label');
-        expect(typeof st.value).toBe('number');
+        expect(typeof st.value).toBe('string');
         expect(typeof st.label).toBe('string');
       }
       // Verify specific values
-      expect(MAM_SEARCH_TYPES.map(s => s.value)).toEqual([0, 1, 2, 3]);
+      expect(MAM_SEARCH_TYPES.map(s => s.value)).toEqual(['all', 'active', 'fl', 'fl-VIP', 'VIP', 'nVIP']);
+    });
+  });
+
+  describe('#363 — MAM_SEARCH_TYPES string values', () => {
+    it('MAM_SEARCH_TYPES has exactly 6 entries with string values', () => {
+      expect(MAM_SEARCH_TYPES).toHaveLength(6);
+      expect(MAM_SEARCH_TYPES.map(s => s.value)).toEqual(['all', 'active', 'fl', 'fl-VIP', 'VIP', 'nVIP']);
+    });
+
+    it('MAM_SEARCH_TYPES values are all strings, not numbers', () => {
+      for (const st of MAM_SEARCH_TYPES) {
+        expect(typeof st.value).toBe('string');
+        expect(typeof st.label).toBe('string');
+      }
+    });
+
+    it('MAM_SEARCH_TYPES includes VIP and nVIP options', () => {
+      const values = MAM_SEARCH_TYPES.map(s => s.value);
+      expect(values).toContain('VIP');
+      expect(values).toContain('nVIP');
+    });
+
+    it('default searchType in myanonamouse registry is "active" (string)', () => {
+      expect(INDEXER_REGISTRY.myanonamouse.defaultSettings).toHaveProperty('searchType', 'active');
+    });
+  });
+
+  describe('#363 — coerceSearchType', () => {
+    it('returns valid string values as-is', () => {
+      for (const value of ['all', 'active', 'fl', 'fl-VIP', 'VIP', 'nVIP']) {
+        expect(coerceSearchType(value)).toBe(value);
+      }
+    });
+
+    it('coerces legacy integers to correct strings', () => {
+      expect(coerceSearchType(0)).toBe('all');
+      expect(coerceSearchType(1)).toBe('active');
+      expect(coerceSearchType(2)).toBe('fl');
+      expect(coerceSearchType(3)).toBe('fl-VIP');
+    });
+
+    it('falls back to "active" for unknown integers', () => {
+      expect(coerceSearchType(4)).toBe('active');
+      expect(coerceSearchType(-1)).toBe('active');
+    });
+
+    it('falls back to "active" for invalid string values', () => {
+      expect(coerceSearchType('invalid')).toBe('active');
+      expect(coerceSearchType('1')).toBe('active');
+    });
+
+    it('falls back to "active" for null/undefined/other types', () => {
+      expect(coerceSearchType(undefined)).toBe('active');
+      expect(coerceSearchType(null)).toBe('active');
+      expect(coerceSearchType(true)).toBe('active');
     });
   });
 });

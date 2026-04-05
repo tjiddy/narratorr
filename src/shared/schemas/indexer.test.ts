@@ -371,7 +371,7 @@ describe('createIndexerFormSchema — searchLanguages and searchType (#291)', ()
   it('accepts searchLanguages as a number array', () => {
     const result = createIndexerFormSchema.safeParse({
       ...mamBase,
-      settings: { ...mamBase.settings, searchLanguages: [1, 36], searchType: 1 },
+      settings: { ...mamBase.settings, searchLanguages: [1, 36], searchType: 'active' },
     });
     expect(result.success).toBe(true);
     if (result.success) expect(result.data.settings.searchLanguages).toEqual([1, 36]);
@@ -380,19 +380,19 @@ describe('createIndexerFormSchema — searchLanguages and searchType (#291)', ()
   it('accepts empty searchLanguages array (unrestricted search)', () => {
     const result = createIndexerFormSchema.safeParse({
       ...mamBase,
-      settings: { ...mamBase.settings, searchLanguages: [], searchType: 1 },
+      settings: { ...mamBase.settings, searchLanguages: [], searchType: 'active' },
     });
     expect(result.success).toBe(true);
     if (result.success) expect(result.data.settings.searchLanguages).toEqual([]);
   });
 
-  it('accepts searchType: 0 (falsy but valid — all torrents)', () => {
+  it('accepts searchType: "all" (string value)', () => {
     const result = createIndexerFormSchema.safeParse({
       ...mamBase,
-      settings: { ...mamBase.settings, searchLanguages: [1], searchType: 0 },
+      settings: { ...mamBase.settings, searchLanguages: [1], searchType: 'all' },
     });
     expect(result.success).toBe(true);
-    if (result.success) expect(result.data.settings.searchType).toBe(0);
+    if (result.success) expect(result.data.settings.searchType).toBe('all');
   });
 
   it('accepts omitted searchLanguages and searchType (both optional)', () => {
@@ -402,5 +402,48 @@ describe('createIndexerFormSchema — searchLanguages and searchType (#291)', ()
       expect(result.data.settings.searchLanguages).toBeUndefined();
       expect(result.data.settings.searchType).toBeUndefined();
     }
+  });
+});
+
+describe('#363 — searchType string values', () => {
+  const mamBase = {
+    name: 'MAM',
+    type: 'myanonamouse' as const,
+    enabled: true,
+    priority: 50,
+    settings: { mamId: 'test-id' },
+  };
+
+  it('accepts valid string searchType values (all, active, fl, fl-VIP, VIP, nVIP)', () => {
+    for (const value of ['all', 'active', 'fl', 'fl-VIP', 'VIP', 'nVIP']) {
+      const result = createIndexerFormSchema.safeParse({
+        ...mamBase,
+        settings: { ...mamBase.settings, searchLanguages: [1], searchType: value },
+      });
+      expect(result.success).toBe(true);
+      if (result.success) expect(result.data.settings.searchType).toBe(value);
+    }
+  });
+
+  it('rejects invalid string searchType values', () => {
+    const result = createIndexerFormSchema.safeParse({
+      ...mamBase,
+      settings: { ...mamBase.settings, searchType: 'invalid' },
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it('rejects numeric searchType values (type mismatch)', () => {
+    const result = createIndexerFormSchema.safeParse({
+      ...mamBase,
+      settings: { ...mamBase.settings, searchType: 1 },
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it('accepts omitted searchType (field is optional)', () => {
+    const result = createIndexerFormSchema.safeParse(mamBase);
+    expect(result.success).toBe(true);
+    if (result.success) expect(result.data.settings.searchType).toBeUndefined();
   });
 });
