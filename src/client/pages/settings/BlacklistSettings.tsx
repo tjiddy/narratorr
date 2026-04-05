@@ -7,22 +7,12 @@ import { ConfirmModal } from '@/components/ConfirmModal';
 import { Pagination } from '@/components/Pagination';
 import { usePagination } from '@/hooks/usePagination';
 import { DEFAULT_LIMITS } from '../../../shared/schemas/common.js';
+import { REASON_LABELS } from '../../../shared/schemas/blacklist.js';
 import {
   LoadingSpinner,
   ShieldBanIcon,
   TrashIcon,
 } from '@/components/icons';
-
-const REASON_LABELS: Record<string, string> = {
-  wrong_content: 'Wrong Content',
-  bad_quality: 'Bad Quality',
-  wrong_narrator: 'Wrong Narrator',
-  spam: 'Spam',
-  other: 'Other',
-  download_failed: 'Download Failed',
-  infrastructure_error: 'Infrastructure Error',
-  user_cancelled: 'User Cancelled',
-};
 
 function formatExpiry(entry: BlacklistEntry): string {
   if (entry.blacklistType === 'permanent' || !entry.expiresAt) {

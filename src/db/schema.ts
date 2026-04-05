@@ -3,6 +3,7 @@ import { sql } from 'drizzle-orm';
 import { downloadStatusSchema } from '../shared/schemas/activity';
 import { SUGGESTION_REASONS } from '../shared/schemas/discovery';
 import { bookStatusSchema } from '../shared/schemas/book';
+import { BLACKLIST_REASONS } from '../shared/schemas/blacklist';
 import { enrichmentStatusSchema } from '../shared/schemas/enrichment';
 import { indexerTypeSchema } from '../shared/schemas/indexer';
 import { downloadClientTypeSchema } from '../shared/schemas/download-client';
@@ -281,7 +282,7 @@ export const blacklist = sqliteTable('blacklist', {
   infoHash: text('info_hash'),
   guid: text('guid'),
   title: text('title').notNull(),
-  reason: text('reason', { enum: ['wrong_content', 'bad_quality', 'wrong_narrator', 'spam', 'other', 'download_failed', 'infrastructure_error', 'user_cancelled'] }).notNull().default('other'),
+  reason: text('reason', { enum: [...BLACKLIST_REASONS] }).notNull().default('other'),
   note: text('note'),
   blacklistType: text('blacklist_type', { enum: ['temporary', 'permanent'] }).notNull().default('permanent'),
   expiresAt: integer('expires_at', { mode: 'timestamp' }),
