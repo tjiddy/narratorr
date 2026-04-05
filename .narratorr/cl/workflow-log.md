@@ -1,5 +1,34 @@
 # Workflow Log
 
+## #361 MAM status refresh button silently fails for saved indexers — 2026-04-05
+**Skill path:** /implement → /claim → /plan → /handoff
+**Outcome:** success — PR #366
+
+### Metrics
+- Files changed: 4 | Tests added/modified: 13
+- Quality gate runs: 3 (pass on attempt 3 — lint unused var, then typecheck literal widening, then pass)
+- Fix iterations: 2 (blur-with-sentinel regression caught by test, TS literal widening in extracted payload)
+- Context compactions: 0
+
+### Workflow experience
+- What went smoothly: Spec was well-refined after spec review round-trip. Backend already supported sentinel resolution via `testIndexerConfig` with `id` — pure frontend fix. Explore subagent identified all touch points accurately.
+- Friction / issues encountered: Blur handler regression — initial implementation allowed sentinel through when indexerId present, but blur fires with pre-populated sentinel value. Test caught it immediately. TypeScript literal widening when extracting payload to a variable — had to inline it.
+
+### Token efficiency
+- Highest-token actions: Explore subagent for codebase validation (thorough but necessary — identified the two-path asymmetry)
+- Avoidable waste: None significant — clean implementation path
+- Suggestions: For similar masked-credential bugs, check both blur and refresh paths upfront
+
+### Infrastructure gaps
+- Repeated workarounds: None
+- Missing tooling / config: `frontend-design` skill not available (noted in handoff)
+- Unresolved debt: None introduced
+
+### Wish I'd Known
+1. Blur and refresh paths must be treated asymmetrically for sentinel handling — blur fires with pre-populated values, refresh is intentional user action. See `sentinel-blur-vs-refresh-asymmetry.md`.
+2. Extracting inline API payloads to local variables widens TypeScript string literals — keep payloads inline or use `as const`. See `ts-literal-widening-in-spread-payload.md`.
+3. The `testIndexerConfig` API already accepts `{ id?: number }` and resolves sentinels server-side — no backend changes needed at all.
+
 ## #363 MAM searchType sends integer instead of string — VIP filter broken — 2026-04-05
 **Skill path:** /implement → /claim → /plan → /handoff
 **Outcome:** success — PR #364
