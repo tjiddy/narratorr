@@ -1642,7 +1642,7 @@ describe('QualityGateOrchestrator', () => {
     it('queues to processing_queued when no slot available', async () => {
       const { orchestrator, qualityGateService, importOrchestrator, importService } = createOrchestrator();
       qualityGateService.getCompletedDownloads.mockResolvedValue([{ download: completedDownload, book: { ...downloadingBook } }]);
-      importService.tryAcquireSlot.mockReturnValue(false);
+      (importService.tryAcquireSlot as ReturnType<typeof vi.fn>).mockReturnValue(false);
 
       await orchestrator.processOneDownload(1);
 
