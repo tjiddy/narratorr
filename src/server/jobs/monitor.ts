@@ -14,6 +14,7 @@ import type { DownloadStatus } from '../../shared/schemas/activity.js';
 import { revertBookStatus } from '../utils/book-status.js';
 import { fireAndForget } from '../utils/fire-and-forget.js';
 import type { RemotePathMappingService } from '../services/remote-path-mapping.service.js';
+import type { QualityGateOrchestrator } from '../services/quality-gate-orchestrator.js';
 import { applyPathMapping } from '../../core/utils/path-mapping.js';
 import { join } from 'node:path';
 
@@ -51,6 +52,7 @@ export async function monitorDownloads(
   retryDeps?: MonitorRetryDeps,
   broadcaster?: EventBroadcasterService,
   remotePathMappingService?: RemotePathMappingService,
+  qualityGateOrchestrator?: QualityGateOrchestrator,
 ) {
   const activeDownloads = await db
     .select()
@@ -83,7 +85,7 @@ export async function monitorDownloads(
         continue;
       }
 
-      await processDownloadUpdate(db, download, item, notifierService, log, retryDeps, broadcaster, remotePathMappingService);
+      await processDownloadUpdate(db, download, item, notifierService, log, retryDeps, broadcaster, remotePathMappingService, qualityGateOrchestrator);
     } catch (error: unknown) {
       log.error({ error, id: download.id }, 'Error monitoring download');
       await blacklistOnInfraError(download, retryDeps, log);
@@ -139,6 +141,7 @@ async function processDownloadUpdate(
   retryDeps?: MonitorRetryDeps,
   broadcaster?: EventBroadcasterService,
   remotePathMappingService?: RemotePathMappingService,
+  qualityGateOrchestrator?: QualityGateOrchestrator,
 ): Promise<void> {
   const progress = item.progress / 100;
   const isError = item.status === 'error';
@@ -169,7 +172,15 @@ async function processDownloadUpdate(
   emitProgressEvents(download, progress, newStatus, broadcaster, log);
   await handleFailureTransition(db, download, newStatus, retryDeps, log);
   handleCompletionNotification(download, item, isCompleted, notifierService, log);
-  await handleBookStatusOnCompletion(db, download, isCompleted, broadcaster, log);
+
+  // Fire-and-forget quality gate + import for completed downloads (replaces handleBookStatusOnCompletion)
+  if (isCompleted && download.status !== 'completed' && qualityGateOrchestrator) {
+    fireAndForget(
+      qualityGateOrchestrator.processOneDownload(download.id),
+      log,
+      'Inline import after completion failed',
+    );
+  }
 }
 
 /** Resolve outputPath on first poll — join savePath+name and apply remote path mapping. */
@@ -258,31 +269,6 @@ function handleCompletionNotification(
     log,
     'Failed to send download complete notification',
   );
-}
-
-/** Promote book status to 'importing' immediately when download completes. */
-async function handleBookStatusOnCompletion(
-  db: Db,
-  download: DownloadRow,
-  isCompleted: boolean,
-  broadcaster: EventBroadcasterService | undefined,
-  log: FastifyBaseLogger,
-): Promise<void> {
-  if (!isCompleted || download.status === 'completed') return;
-  if (!download.bookId) return;
-  try {
-    await db
-      .update(books)
-      .set({ status: 'importing' })
-      .where(eq(books.id, download.bookId));
-    broadcaster?.emit('book_status_change', {
-      book_id: download.bookId,
-      old_status: 'downloading' as const,
-      new_status: 'importing' as const,
-    });
-  } catch (error: unknown) {
-    log.debug(error, 'Failed to promote book status on download completion');
-  }
 }
 
 /** Blacklist a release on infrastructure error if retry deps are available. */
