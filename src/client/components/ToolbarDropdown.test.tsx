@@ -219,7 +219,7 @@ describe('ToolbarDropdown', () => {
       render(<ModalWrapper />);
       const panel = document.body.querySelector('[data-testid="panel"]') as HTMLElement;
       const portalContainer = panel.parentElement!;
-      expect(portalContainer).toHaveClass('z-[60]');
+      expect(portalContainer).toHaveClass('z-50');
       expect(portalContainer).not.toHaveClass('z-30');
     });
 
