@@ -266,28 +266,6 @@ describe('useFolderHistory — removeRecent / removeFavorite', () => {
   });
 });
 
-describe('useFolderHistory — seedLibraryRoot', () => {
-  it('pre-seeds library root as a favorite when favorites are empty', () => {
-    const { result } = renderHook(() => useFolderHistory());
-    act(() => { result.current.seedLibraryRoot('/audiobooks'); });
-    expect(result.current.favorites).toHaveLength(1);
-    expect(result.current.favorites[0].path).toBe('/audiobooks');
-  });
-
-  it('does not re-seed when favorites already exist (idempotent guard)', () => {
-    localStorage.setItem(FAV_KEY, JSON.stringify([makeEntry('/podcasts', '2026-01-01T00:00:00.000Z')]));
-    const { result } = renderHook(() => useFolderHistory());
-    act(() => { result.current.seedLibraryRoot('/audiobooks'); });
-    expect(result.current.favorites).toHaveLength(1);
-    expect(result.current.favorites[0].path).toBe('/podcasts'); // not overwritten
-  });
-
-  it('does not seed when libraryPath is empty', () => {
-    const { result } = renderHook(() => useFolderHistory());
-    act(() => { result.current.seedLibraryRoot(''); });
-    expect(result.current.favorites).toHaveLength(0);
-  });
-});
 
 describe('useFolderHistory — persistence', () => {
   it('recents persist across hook remounts (reads from localStorage on init)', () => {

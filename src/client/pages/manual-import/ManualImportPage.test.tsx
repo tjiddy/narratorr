@@ -75,8 +75,6 @@ const mockPromoteToFavorite = vi.fn();
 const mockDemoteToRecent = vi.fn();
 const mockRemoveFavorite = vi.fn();
 const mockRemoveRecent = vi.fn();
-const mockSeedLibraryRoot = vi.fn();
-
 vi.mock('./useFolderHistory.js', () => ({
   useFolderHistory: () => ({
     favorites: mockFavorites,
@@ -86,7 +84,6 @@ vi.mock('./useFolderHistory.js', () => ({
     demoteToRecent: mockDemoteToRecent,
     removeFavorite: mockRemoveFavorite,
     removeRecent: mockRemoveRecent,
-    seedLibraryRoot: mockSeedLibraryRoot,
   }),
 }));
 
@@ -795,28 +792,6 @@ describe('ManualImportPage', () => {
       await userEvent.click(screen.getByRole('button', { name: 'Scan' }));
       await screen.findByText(/selected/);
       expect(mockAddRecent).toHaveBeenCalledWith('/media/audiobooks');
-    });
-
-    it('settings loading state renders sections without crashing, does not seed library root', () => {
-      mockGetSettings.mockReturnValue(new Promise(() => {})); // never resolves
-      renderPage();
-      expect(screen.getByPlaceholderText('/path/to/audiobooks')).toBeInTheDocument();
-      expect(mockSeedLibraryRoot).not.toHaveBeenCalled();
-    });
-
-    it('settings error state renders sections without crashing, does not seed library root', async () => {
-      mockGetSettings.mockRejectedValue(new Error('network error'));
-      renderPage();
-      expect(screen.getByPlaceholderText('/path/to/audiobooks')).toBeInTheDocument();
-      expect(mockSeedLibraryRoot).not.toHaveBeenCalled();
-    });
-
-    it('seeds library root when settings resolve with a library path', async () => {
-      mockGetSettings.mockResolvedValue({ library: { path: '/audiobooks', folderFormat: '{author}/{title}' } });
-      renderPage();
-      await waitFor(() => {
-        expect(mockSeedLibraryRoot).toHaveBeenCalledWith('/audiobooks');
-      });
     });
 
     it('renders formatted lastUsedAt date for recent folder entries', () => {

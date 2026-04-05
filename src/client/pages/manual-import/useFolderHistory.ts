@@ -116,16 +116,6 @@ export function useFolderHistory() {
     });
   }, []);
 
-  const seedLibraryRoot = useCallback((libraryPath: string) => {
-    if (!libraryPath) return;
-    setFavorites(prev => {
-      if (prev.length > 0) return prev; // idempotent — don't re-seed
-      const entry: FolderEntry = { path: libraryPath, lastUsedAt: new Date().toISOString() };
-      writeStorage(FAV_KEY, [entry]);
-      return [entry];
-    });
-  }, []);
-
   return {
     recents,
     favorites,
@@ -134,6 +124,5 @@ export function useFolderHistory() {
     demoteToRecent,
     removeRecent,
     removeFavorite,
-    seedLibraryRoot,
   };
 }

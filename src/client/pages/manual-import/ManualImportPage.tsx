@@ -1,4 +1,3 @@
-import { useEffect } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { ImportCard, ImportSummaryBar, BookEditModal } from '@/components/manual-import';
 import {
@@ -27,14 +26,6 @@ export function ManualImportPage() {
   const { selectedCount, selectedUnmatchedCount, readyCount, reviewCount, noMatchCount, pendingCount, duplicateCount, allSelected } = counts;
 
   const isInsideLibraryRoot = libraryPath ? isPathInsideLibrary(scanPath, libraryPath) : false;
-
-  // Seed library root as default favorite on first use
-  useEffect(() => {
-    if (settings?.library?.path) {
-      folderHistory.seedLibraryRoot(settings.library.path);
-    }
-  // eslint-disable-next-line react-hooks/exhaustive-deps -- seedLibraryRoot is stable; only re-run when library path changes
-  }, [settings?.library?.path]);
 
   return (
     <div className="space-y-6">
