@@ -1773,6 +1773,22 @@ describe('QualityGateOrchestrator', () => {
       expect(qualityGateService.atomicClaim).not.toHaveBeenCalled();
     });
 
+    it('reverts book to downloading on unhandled error after promotion', async () => {
+      const { orchestrator, qualityGateService, broadcaster, db } = createOrchestrator();
+      qualityGateService.getCompletedDownloads.mockResolvedValue([{ download: completedDownload, book: { ...downloadingBook } }]);
+      qualityGateService.processDownload.mockRejectedValue(new Error('Unexpected QG failure'));
+      db.update.mockReturnValue(mockDbChain());
+
+      await orchestrator.processOneDownload(1);
+
+      // Download set to pending_review
+      expect(qualityGateService.setStatus).toHaveBeenCalledWith(1, 'pending_review');
+      // Book reverted from importing → downloading
+      expect(broadcaster.emit).toHaveBeenCalledWith('book_status_change', expect.objectContaining({
+        book_id: 1, old_status: 'importing', new_status: 'downloading',
+      }));
+    });
+
     it('releases slot in finally even when import fails and logs error', async () => {
       const { orchestrator, qualityGateService, importOrchestrator, importService, log } = createOrchestrator();
       qualityGateService.getCompletedDownloads.mockResolvedValue([{ download: completedDownload, book: { ...downloadingBook } }]);

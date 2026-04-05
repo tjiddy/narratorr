@@ -155,6 +155,11 @@ export class QualityGateOrchestrator {
     } catch (error: unknown) {
       this.log.error({ error, downloadId: row.download.id }, 'Quality gate error');
       await this.qualityGateService.setStatus(row.download.id, 'pending_review');
+      // Revert book from importing → downloading if it was promoted before the error
+      if (row.book && row.book.status === 'importing') {
+        await this.db.update(books).set({ status: 'downloading' }).where(eq(books.id, row.book.id));
+        this.emitSSE('book_status_change', { book_id: row.book.id, old_status: 'importing' as BookStatus, new_status: 'downloading' as BookStatus });
+      }
       const probeError = error instanceof Error ? error.message : String(error);
       this.recordDecision(row.download, row.book, { ...NULL_REASON, probeFailure: true, probeError, holdReasons: ['unhandled_error'] });
     }
