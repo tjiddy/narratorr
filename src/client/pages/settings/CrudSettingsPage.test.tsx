@@ -291,6 +291,161 @@ describe('CrudSettingsPage', () => {
     });
   });
 
+  describe('modal mode', () => {
+    const modalProps = { ...baseProps, modal: true as const };
+
+    it('clicking add button opens modal with create form when modal prop is true', async () => {
+      const handleToggleForm = vi.fn();
+      mockUseCrudSettings.mockReturnValue(createMockHookReturn({
+        actions: { handleToggleForm },
+      }));
+      const user = userEvent.setup();
+      render(<CrudSettingsPage {...modalProps} />);
+
+      await user.click(screen.getByRole('button', { name: 'Add Widget' }));
+      expect(handleToggleForm).toHaveBeenCalledOnce();
+    });
+
+    it('renders form inside modal portal when showForm is true and modal is enabled', () => {
+      mockUseCrudSettings.mockReturnValue(createMockHookReturn({ state: { showForm: true } }));
+      render(<CrudSettingsPage {...modalProps} />);
+
+      // Modal portals to body — look for the modal backdrop
+      expect(screen.getByTestId('modal-backdrop')).toBeDefined();
+      expect(screen.getByTestId('add-form')).toBeDefined();
+    });
+
+    it('does not render form inline when showForm is true and modal is enabled', () => {
+      mockUseCrudSettings.mockReturnValue(createMockHookReturn({ state: { showForm: true } }));
+      const { container } = render(<CrudSettingsPage {...modalProps} />);
+
+      // Form should NOT be inside the main container (it's in a portal)
+      const mainDiv = container.firstElementChild!;
+      expect(mainDiv.querySelector('[data-testid="add-form"]')).toBeNull();
+    });
+
+    it('renders edit form inside modal when editingId is set and modal is enabled', () => {
+      const items = [{ id: 1, name: 'Widget A' }];
+      mockUseCrudSettings.mockReturnValue(createMockHookReturn({ state: { items, editingId: 1 } }));
+      const renderCard = vi.fn((item: unknown, handlers: { mode: string }) => {
+        if (handlers.mode === 'edit') return <div data-testid="edit-form">Edit Form</div>;
+        return <div data-testid="view-card">View Card</div>;
+      });
+      render(<CrudSettingsPage {...modalProps} renderCard={renderCard} />);
+
+      expect(screen.getByTestId('modal-backdrop')).toBeDefined();
+      expect(screen.getByTestId('edit-form')).toBeDefined();
+    });
+
+    it('header add button stays enabled in modal mode even when form is showing', () => {
+      mockUseCrudSettings.mockReturnValue(createMockHookReturn({ state: { showForm: true } }));
+      render(<CrudSettingsPage {...modalProps} />);
+
+      const addButton = screen.getByRole('button', { name: 'Add Widget' });
+      expect(addButton).not.toBeDisabled();
+    });
+
+    it('modal closes when backdrop clicked and no mutation is pending', async () => {
+      const handleToggleForm = vi.fn();
+      mockUseCrudSettings.mockReturnValue(createMockHookReturn({
+        state: { showForm: true },
+        actions: { handleToggleForm },
+      }));
+      const user = userEvent.setup();
+      render(<CrudSettingsPage {...modalProps} />);
+
+      await user.click(screen.getByTestId('modal-backdrop'));
+      expect(handleToggleForm).toHaveBeenCalledOnce();
+    });
+
+    it('modal does NOT close when backdrop clicked and create mutation is pending', async () => {
+      const handleToggleForm = vi.fn();
+      mockUseCrudSettings.mockReturnValue(createMockHookReturn({
+        state: { showForm: true },
+        actions: { handleToggleForm },
+        mutations: { createMutation: { mutate: vi.fn(), isPending: true } },
+      }));
+      const user = userEvent.setup();
+      render(<CrudSettingsPage {...modalProps} />);
+
+      await user.click(screen.getByTestId('modal-backdrop'));
+      expect(handleToggleForm).not.toHaveBeenCalled();
+    });
+
+    it('modal closes when Escape pressed and no mutation is pending', () => {
+      const handleToggleForm = vi.fn();
+      mockUseCrudSettings.mockReturnValue(createMockHookReturn({
+        state: { showForm: true },
+        actions: { handleToggleForm },
+      }));
+      render(<CrudSettingsPage {...modalProps} />);
+
+      document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', cancelable: true }));
+      expect(handleToggleForm).toHaveBeenCalledOnce();
+    });
+
+    it('modal does NOT close when Escape pressed and create mutation is pending', () => {
+      const handleToggleForm = vi.fn();
+      mockUseCrudSettings.mockReturnValue(createMockHookReturn({
+        state: { showForm: true },
+        actions: { handleToggleForm },
+        mutations: { createMutation: { mutate: vi.fn(), isPending: true } },
+      }));
+      render(<CrudSettingsPage {...modalProps} />);
+
+      document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', cancelable: true }));
+      expect(handleToggleForm).not.toHaveBeenCalled();
+    });
+
+    it('modal does NOT close when Escape pressed and update mutation is pending', () => {
+      const items = [{ id: 1, name: 'Widget A' }];
+      const handleCancelEdit = vi.fn();
+      mockUseCrudSettings.mockReturnValue(createMockHookReturn({
+        state: { items, editingId: 1 },
+        actions: { handleCancelEdit },
+        mutations: { updateMutation: { mutate: vi.fn(), isPending: true } },
+      }));
+      render(<CrudSettingsPage {...modalProps} renderCard={vi.fn(() => <div>edit</div>)} />);
+
+      document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', cancelable: true }));
+      expect(handleCancelEdit).not.toHaveBeenCalled();
+    });
+
+    it('does not render modal when modal prop is false (inline behavior preserved)', () => {
+      mockUseCrudSettings.mockReturnValue(createMockHookReturn({ state: { showForm: true } }));
+      render(<CrudSettingsPage {...baseProps} />);
+
+      expect(screen.queryByTestId('modal-backdrop')).toBeNull();
+      expect(screen.getByTestId('add-form')).toBeDefined();
+    });
+  });
+
+  describe('modal mode — NotificationsSettings regression', () => {
+    it('CrudSettingsPage without modal prop still renders inline form', () => {
+      mockUseCrudSettings.mockReturnValue(createMockHookReturn({ state: { showForm: true } }));
+      const { container } = render(<CrudSettingsPage {...baseProps} />);
+
+      // Form should be inside the main container (inline, not portaled)
+      const mainDiv = container.firstElementChild!;
+      expect(mainDiv.querySelector('[data-testid="add-form"]')).not.toBeNull();
+    });
+
+    it('CrudSettingsPage without modal prop still supports inline edit mode', () => {
+      const items = [{ id: 1, name: 'Widget A' }];
+      mockUseCrudSettings.mockReturnValue(createMockHookReturn({ state: { items, editingId: 1 } }));
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any -- capture render callback args
+      let capturedMode: any;
+      const renderCard = vi.fn((_item: unknown, handlers: { mode: string }) => {
+        capturedMode = handlers.mode;
+        return <div data-testid="card">Card</div>;
+      });
+      render(<CrudSettingsPage {...baseProps} renderCard={renderCard} />);
+
+      expect(capturedMode).toBe('edit');
+      expect(screen.queryByTestId('modal-backdrop')).toBeNull();
+    });
+  });
+
   describe('delete modal', () => {
     it('opens confirmation modal when deleteTarget is set', () => {
       mockUseCrudSettings.mockReturnValue(createMockHookReturn({

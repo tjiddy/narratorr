@@ -1,10 +1,12 @@
-import type { ReactNode } from 'react';
+import { useCallback, useRef, type ReactNode } from 'react';
 import type { TestResult } from '@/lib/api';
+import { Modal } from '@/components/Modal';
 import { ConfirmModal } from '@/components/ConfirmModal';
 import {
   LoadingSpinner,
   PlusIcon,
 } from '@/components/icons';
+import { useEscapeKey } from '@/hooks/useEscapeKey';
 import { useCrudSettings, type CrudSettingsConfig } from '@/hooks/useCrudSettings';
 import type { IdTestResult } from '@/hooks/useConnectionTest';
 
@@ -18,6 +20,7 @@ interface CrudSettingsPageProps<TItem extends { id: number; name: string }, TFor
   emptyTitle: string;
   emptySubtitle: string;
   deleteTitle: string;
+  modal?: boolean;
   headerExtra?: ReactNode;
   renderCard: (item: TItem, handlers: {
     mode: 'view' | 'edit';
@@ -54,6 +57,7 @@ export function CrudSettingsPage<TItem extends { id: number; name: string }, TFo
   emptyTitle,
   emptySubtitle,
   deleteTitle,
+  modal,
   headerExtra,
   renderCard,
   renderForm,
@@ -63,6 +67,18 @@ export function CrudSettingsPage<TItem extends { id: number; name: string }, TFo
   const { setDeleteTarget, handleToggleForm, handleEdit, handleCancelEdit } = actions;
   const { createMutation, updateMutation, deleteMutation } = mutations;
   const { testingId, testResult, testingForm, formTestResult, handleTest, handleFormTest } = tests;
+
+  const modalRef = useRef<HTMLDivElement>(null);
+  const isModalOpen = modal === true && (showForm || editingId !== null);
+  const isMutationPending = createMutation.isPending || updateMutation.isPending;
+
+  const handleModalClose = useCallback(() => {
+    if (isMutationPending) return;
+    if (showForm) handleToggleForm();
+    else if (editingId !== null) handleCancelEdit();
+  }, [isMutationPending, showForm, editingId, handleToggleForm, handleCancelEdit]);
+
+  useEscapeKey(isModalOpen, handleModalClose, modalRef);
 
   return (
     <div className="space-y-6">
@@ -81,9 +97,9 @@ export function CrudSettingsPage<TItem extends { id: number; name: string }, TFo
           {headerExtra}
           <button
             onClick={handleToggleForm}
-            disabled={showForm}
+            disabled={!modal && showForm}
             className={`flex items-center gap-2 px-4 py-2.5 font-medium rounded-xl transition-all focus-ring ${
-              showForm
+              !modal && showForm
                 ? 'bg-muted text-muted-foreground opacity-50 cursor-not-allowed'
                 : 'bg-primary text-primary-foreground hover:opacity-90'
             }`}
@@ -94,8 +110,8 @@ export function CrudSettingsPage<TItem extends { id: number; name: string }, TFo
         </div>
       </div>
 
-      {/* Add Form */}
-      {showForm && renderForm({
+      {/* Add Form — inline mode */}
+      {!modal && showForm && renderForm({
         onSubmit: (data) => createMutation.mutate(data),
         onFormTest: handleFormTest,
         onCancel: handleToggleForm,
@@ -119,7 +135,7 @@ export function CrudSettingsPage<TItem extends { id: number; name: string }, TFo
         <div className="space-y-3">
           {items.map((item, index) =>
             renderCard(item, {
-              mode: editingId === item.id ? 'edit' : 'view',
+              mode: modal ? 'view' : (editingId === item.id ? 'edit' : 'view'),
               onEdit: () => handleEdit(item.id),
               onCancel: handleCancelEdit,
               onDelete: () => setDeleteTarget(item),
@@ -144,6 +160,44 @@ export function CrudSettingsPage<TItem extends { id: number; name: string }, TFo
         onConfirm={() => { if (deleteTarget) { deleteMutation.mutate(deleteTarget.id); setDeleteTarget(null); } }}
         onCancel={() => setDeleteTarget(null)}
       />
+
+      {/* Modal mode — create/edit form in modal */}
+      {isModalOpen && (() => {
+        const editingItem = editingId !== null ? items.find((i) => i.id === editingId) : null;
+        return (
+          <Modal
+            onClose={handleModalClose}
+            closeOnBackdropClick={!isMutationPending}
+            className="w-full max-w-xl"
+          >
+            <div ref={modalRef} tabIndex={-1} className="p-6">
+              {showForm && renderForm({
+                onSubmit: (data) => createMutation.mutate(data),
+                onFormTest: handleFormTest,
+                onCancel: handleModalClose,
+                isPending: createMutation.isPending,
+                testingForm,
+                formTestResult,
+              })}
+              {editingItem && renderCard(editingItem, {
+                mode: 'edit',
+                onEdit: () => {},
+                onCancel: handleModalClose,
+                onDelete: () => setDeleteTarget(editingItem),
+                onSubmit: (data) => updateMutation.mutate({ id: editingItem.id, data }),
+                onFormTest: handleFormTest,
+                onTest: handleTest,
+                isPending: updateMutation.isPending,
+                testingId,
+                testResult,
+                testingForm,
+                formTestResult,
+                animationDelay: '0ms',
+              })}
+            </div>
+          </Modal>
+        );
+      })()}
     </div>
   );
 }
