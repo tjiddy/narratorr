@@ -13,8 +13,8 @@ export interface UsePaginationReturn {
   clampToTotal: (total: number) => void;
 }
 
-export function usePagination(limit: number): UsePaginationReturn {
-  const [page, setPageState] = useState(1);
+export function usePagination(limit: number, initialPage = 1): UsePaginationReturn {
+  const [page, setPageState] = useState(Math.max(1, initialPage));
 
   const offset = (page - 1) * limit;
 

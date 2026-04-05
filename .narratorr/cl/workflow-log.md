@@ -1,5 +1,34 @@
 # Workflow Log
 
+## #352 Persist library filters in URL search params across navigation — 2026-04-04
+**Skill path:** /implement → /claim → /plan → /handoff
+**Outcome:** success — PR #356
+
+### Metrics
+- Files changed: 2 | Tests added/modified: 74
+- Quality gate runs: 2 (pass on attempt 2 — first failed on lint)
+- Fix iterations: 1 (lint error: module-level variable mutation in render → moved to useEffect)
+- Context compactions: 0
+
+### Workflow experience
+- What went smoothly: Single-file hook change with comprehensive test coverage. Existing LibraryPage tests passed without modification — good sign the interface contract was preserved.
+- Friction / issues encountered: Test file needed .tsx extension for JSX (MemoryRouter wrapper). React lint rule caught module-level variable mutation in the UrlCapture test helper — had to restructure to use useEffect. usePagination doesn't support initial page from constructor, requiring a one-shot useEffect with ref guard.
+
+### Token efficiency
+- Highest-token actions: Writing the full test file (74 tests, ~700 lines)
+- Avoidable waste: Could have planned the .tsx extension from the start instead of renaming after first failure
+- Suggestions: When adding useSearchParams to a hook, immediately plan for Router wrapper in all tests
+
+### Infrastructure gaps
+- Repeated workarounds: None
+- Missing tooling / config: usePagination could accept an optional `initialPage` parameter to avoid the ref-guarded useEffect pattern
+- Unresolved debt: None introduced
+
+### Wish I'd Known
+1. Adding `useSearchParams` to a hook breaks ALL existing `renderHook()` calls — plan the wrapper migration upfront
+2. React's `react-hooks/globals` lint rule catches even `.current` mutations on plain objects during render — must use `useEffect` for test side-channels
+3. `usePagination` doesn't accept initial page, requiring a one-shot effect with ref guard to set page from URL
+
 ## #351 Series badge — show total book count with prominent styling — 2026-04-04
 **Skill path:** /implement → /claim → /plan → /handoff
 **Outcome:** success — PR #355
