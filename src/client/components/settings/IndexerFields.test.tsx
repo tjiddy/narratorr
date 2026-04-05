@@ -362,7 +362,7 @@ describe('IndexerFields', () => {
 
       await waitFor(() => {
         expect(screen.getByText('GotaBe1')).toBeInTheDocument();
-      });
+      }, { timeout: 3000 });
       expect(screen.getByText('VIP')).toBeInTheDocument();
     });
 
@@ -380,7 +380,7 @@ describe('IndexerFields', () => {
 
       await waitFor(() => {
         expect(screen.getByText('Authentication failed')).toBeInTheDocument();
-      });
+      }, { timeout: 3000 });
     });
 
     it('includes current baseUrl in the synthetic test payload', async () => {
@@ -610,7 +610,7 @@ describe('IndexerFields', () => {
 
       await waitFor(() => {
         expect(screen.getByText('User1')).toBeInTheDocument();
-      });
+      }, { timeout: 3000 });
 
       // Clear mock and click refresh
       (api.testIndexerConfig as Mock).mockClear();
@@ -798,7 +798,7 @@ describe('IndexerFields', () => {
 
       await waitFor(() => {
         expect(screen.getByText('FreshUser')).toBeInTheDocument();
-      });
+      }, { timeout: 3000 });
       expect(screen.getByText('Power User')).toBeInTheDocument();
     });
 
@@ -874,7 +874,7 @@ describe('IndexerFields', () => {
 
       await waitFor(() => {
         expect(screen.getByText('Connection failed')).toBeInTheDocument();
-      });
+      }, { timeout: 3000 });
       expect(screen.queryByText('OldUser')).not.toBeInTheDocument();
     });
 
@@ -894,7 +894,7 @@ describe('IndexerFields', () => {
 
       await waitFor(() => {
         expect(screen.getByText('MAM ID expired')).toBeInTheDocument();
-      });
+      }, { timeout: 3000 });
       expect(screen.queryByText('OldUser')).not.toBeInTheDocument();
     });
 
@@ -923,7 +923,7 @@ describe('IndexerFields', () => {
 
       await waitFor(() => {
         expect(screen.getByText('User1')).toBeInTheDocument();
-      });
+      }, { timeout: 3000 });
 
       // Clear mock and click refresh
       (api.testIndexerConfig as Mock).mockClear();

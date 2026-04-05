@@ -13,7 +13,7 @@ import {
   indexerTypeSchema,
   type CreateIndexerFormData,
 } from '../../../shared/schemas.js';
-import { INDEXER_REGISTRY, coerceSearchType } from '../../../shared/indexer-registry.js';
+import {INDEXER_REGISTRY, coerceSearchType, INDEXER_TYPES} from '../../../shared/indexer-registry.js';
 
 const IMPLEMENTED_TYPES = Object.keys(INDEXER_REGISTRY);
 
@@ -54,10 +54,10 @@ function settingsFromIndexer(indexer: Indexer): CreateIndexerFormData['settings'
 
 const defaultValues: CreateIndexerFormData = {
   name: '',
-  type: 'abb',
+  type: INDEXER_TYPES[0],
   enabled: true,
   priority: 50,
-  settings: INDEXER_REGISTRY.abb.defaultSettings,
+  settings: INDEXER_REGISTRY[INDEXER_TYPES[0]].defaultSettings,
 };
 
 function ProwlarrBadge() {
@@ -137,7 +137,7 @@ export function IndexerCard(props: IndexerCardProps) {
 
   useEffect(() => {
     if (mode === 'create') {
-      setValue('settings', INDEXER_REGISTRY[selectedType]?.defaultSettings || INDEXER_REGISTRY.abb.defaultSettings);
+      setValue('settings', INDEXER_REGISTRY[selectedType]?.defaultSettings || INDEXER_REGISTRY[INDEXER_TYPES[0]].defaultSettings);
     }
   }, [selectedType, mode, setValue]);
 

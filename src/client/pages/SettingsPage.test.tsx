@@ -153,8 +153,9 @@ describe('SettingsPage - Indexer form test button', () => {
     });
 
     // Fill in form
-    await user.type(screen.getByPlaceholderText('AudioBookBay'), 'My Indexer');
-    await user.type(screen.getByPlaceholderText('audiobookbay.lu'), 'abb.example.com');
+    await user.type(screen.getByPlaceholderText('Newznab'), 'My Indexer');
+    await user.type(screen.getByPlaceholderText('https://indexer.example.com/api'), 'newznab.example.com');
+    await user.type(screen.getByLabelText('API Key'), 'test-key');
 
     // Click Test
     await user.click(screen.getByText('Test'));
@@ -163,8 +164,8 @@ describe('SettingsPage - Indexer form test button', () => {
       expect(api.testIndexerConfig).toHaveBeenCalledWith(
         expect.objectContaining({
           name: 'My Indexer',
-          type: 'abb',
-          settings: expect.objectContaining({ hostname: 'abb.example.com' }),
+          type: 'newznab',
+          settings: expect.objectContaining({ apiUrl: 'newznab.example.com' }),
         }),
       );
       expect(toast.success).toHaveBeenCalledWith('Connection successful');
@@ -190,8 +191,9 @@ describe('SettingsPage - Indexer form test button', () => {
       expect(screen.getByText('Add New Indexer')).toBeInTheDocument();
     });
 
-    await user.type(screen.getByPlaceholderText('AudioBookBay'), 'My Indexer');
-    await user.type(screen.getByPlaceholderText('audiobookbay.lu'), 'bad-host');
+    await user.type(screen.getByPlaceholderText('Newznab'), 'My Indexer');
+    await user.type(screen.getByPlaceholderText('https://indexer.example.com/api'), 'bad-host');
+    await user.type(screen.getByLabelText('API Key'), 'test-key');
 
     await user.click(screen.getByText('Test'));
 
@@ -199,8 +201,8 @@ describe('SettingsPage - Indexer form test button', () => {
       expect(api.testIndexerConfig).toHaveBeenCalledWith(
         expect.objectContaining({
           name: 'My Indexer',
-          type: 'abb',
-          settings: expect.objectContaining({ hostname: 'bad-host' }),
+          type: 'newznab',
+          settings: expect.objectContaining({ apiUrl: 'bad-host' }),
         }),
       );
       expect(toast.error).toHaveBeenCalledWith('Connection refused');

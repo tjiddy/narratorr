@@ -172,7 +172,7 @@ export function CrudSettingsPage<TItem extends { id: number; name: string }, TFo
           <Modal
             onClose={handleModalClose}
             closeOnBackdropClick={!isMutationPending}
-            className="w-full max-w-xl"
+            className="w-full max-w-3xl"
           >
             <div ref={modalRef} tabIndex={-1} className="p-6">
               {showForm && renderForm({

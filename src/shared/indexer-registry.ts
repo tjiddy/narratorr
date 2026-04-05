@@ -1,7 +1,7 @@
 import type { CreateIndexerFormData } from './schemas.js';
 import type { RegistryEntry } from './registry-types.js';
 
-export const INDEXER_TYPES = ['abb', 'torznab', 'newznab', 'myanonamouse'] as const;
+export const INDEXER_TYPES = ['newznab', 'torznab', 'myanonamouse', 'abb'] as const;
 
 /** MAM language codes — numeric IDs used by the MAM API's `tor[browse_lang]` parameter. */
 export const MAM_LANGUAGES: ReadonlyArray<{ id: number; label: string }> = [
@@ -55,21 +55,6 @@ export type IndexerType = typeof INDEXER_TYPES[number];
 type IndexerTypeMetadata = RegistryEntry<CreateIndexerFormData['settings']>;
 
 export const INDEXER_REGISTRY: Record<string, IndexerTypeMetadata> = {
-  abb: {
-    label: 'AudioBookBay',
-    defaultSettings: { hostname: '', pageLimit: 2, flareSolverrUrl: '', useProxy: false },
-    requiredFields: [{ path: 'hostname', message: 'Hostname is required' }],
-    viewSubtitle: (s) => (s.hostname as string) || 'abb',
-  },
-  torznab: {
-    label: 'Torznab',
-    defaultSettings: { apiUrl: '', apiKey: '', flareSolverrUrl: '', useProxy: false },
-    requiredFields: [
-      { path: 'apiUrl', message: 'API URL is required' },
-      { path: 'apiKey', message: 'API key is required' },
-    ],
-    viewSubtitle: (s) => (s.apiUrl as string) || 'torznab',
-  },
   newznab: {
     label: 'Newznab',
     defaultSettings: { apiUrl: '', apiKey: '', flareSolverrUrl: '', useProxy: false },
@@ -78,6 +63,15 @@ export const INDEXER_REGISTRY: Record<string, IndexerTypeMetadata> = {
       { path: 'apiKey', message: 'API key is required' },
     ],
     viewSubtitle: (s) => (s.apiUrl as string) || 'newznab',
+  },
+  torznab: {
+    label: 'Torznab',
+    defaultSettings: { apiUrl: '', apiKey: '', flareSolverrUrl: '', useProxy: false },
+    requiredFields: [
+        { path: 'apiUrl', message: 'API URL is required' },
+        { path: 'apiKey', message: 'API key is required' },
+    ],
+    viewSubtitle: (s) => (s.apiUrl as string) || 'torznab',
   },
   myanonamouse: {
     label: 'MyAnonamouse',
@@ -91,5 +85,11 @@ export const INDEXER_REGISTRY: Record<string, IndexerTypeMetadata> = {
       if (s.isVip === false) return `${base} — User`;
       return base;
     },
+  },
+  abb: {
+    label: 'AudioBookBay',
+    defaultSettings: { hostname: '', pageLimit: 2, flareSolverrUrl: '', useProxy: false },
+    requiredFields: [{ path: 'hostname', message: 'Hostname is required' }],
+    viewSubtitle: (s) => (s.hostname as string) || 'abb',
   },
 } satisfies Record<IndexerType, IndexerTypeMetadata>;

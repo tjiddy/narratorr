@@ -88,14 +88,15 @@ describe('IndexersSettings', () => {
 
   it('creates a new indexer via the add form', async () => {
     const user = userEvent.setup();
-    const newIndexer = { id: 3, name: 'New Indexer', type: 'abb', enabled: true, priority: 50, settings: { hostname: 'example.com', pageLimit: 2 }, createdAt: '2024-01-01T00:00:00Z' };
+    const newIndexer = { id: 3, name: 'New Indexer', type: 'newznab', enabled: true, priority: 50, settings: { apiUrl: 'https://example.com/api', apiKey: 'key123' }, createdAt: '2024-01-01T00:00:00Z' };
     (api.createIndexer as Mock).mockResolvedValue(newIndexer);
     renderWithProviders(<IndexersSettings />);
     await waitForListLoad('My ABB');
 
     await user.click(screen.getByText('Add Indexer').closest('button')!);
-    await user.type(screen.getByPlaceholderText('AudioBookBay'), 'New Indexer');
-    await user.type(screen.getByPlaceholderText('audiobookbay.lu'), 'example.com');
+    await user.type(screen.getByPlaceholderText('Newznab'), 'New Indexer');
+    await user.type(screen.getByPlaceholderText('https://indexer.example.com/api'), 'https://example.com/api');
+    await user.type(screen.getByLabelText('API Key'), 'key123');
     await user.click(screen.getByText('Add Indexer', { selector: 'button[type="submit"]' }));
 
     await waitFor(() => {
@@ -104,8 +105,8 @@ describe('IndexersSettings', () => {
     await waitFor(() => {
       expect((api.createIndexer as Mock).mock.calls[0][0]).toMatchObject({
         name: 'New Indexer',
-        type: 'abb',
-        settings: expect.objectContaining({ hostname: 'example.com' }),
+        type: 'newznab',
+        settings: expect.objectContaining({ apiUrl: 'https://example.com/api' }),
       });
     });
 
@@ -119,8 +120,9 @@ describe('IndexersSettings', () => {
     await waitForListLoad('My ABB');
 
     await user.click(screen.getByText('Add Indexer').closest('button')!);
-    await user.type(screen.getByPlaceholderText('AudioBookBay'), 'Fail');
-    await user.type(screen.getByPlaceholderText('audiobookbay.lu'), 'example.com');
+    await user.type(screen.getByPlaceholderText('Newznab'), 'Fail');
+    await user.type(screen.getByPlaceholderText('https://indexer.example.com/api'), 'https://example.com/api');
+    await user.type(screen.getByLabelText('API Key'), 'key123');
     await user.click(screen.getByText('Add Indexer', { selector: 'button[type="submit"]' }));
 
     await assertErrorToast('Failed to add indexer');
@@ -206,7 +208,7 @@ describe('IndexersSettings', () => {
     await waitForListLoad('My ABB');
 
     await user.click(screen.getByText('Add Indexer').closest('button')!);
-    await user.type(screen.getByPlaceholderText('audiobookbay.lu'), 'example.com');
+    await user.type(screen.getByPlaceholderText('https://indexer.example.com/api'), 'https://example.com/api');
     await user.click(screen.getByText('Add Indexer', { selector: 'button[type="submit"]' }));
 
     await waitFor(() => {
@@ -221,11 +223,11 @@ describe('IndexersSettings', () => {
     await waitForListLoad('My ABB');
 
     await user.click(screen.getByText('Add Indexer').closest('button')!);
-    await user.type(screen.getByPlaceholderText('AudioBookBay'), 'Test');
+    await user.type(screen.getByPlaceholderText('Newznab'), 'Test');
     await user.click(screen.getByText('Add Indexer', { selector: 'button[type="submit"]' }));
 
     await waitFor(() => {
-      expect(screen.getByText('Hostname is required')).toBeInTheDocument();
+      expect(screen.getByText('API URL is required')).toBeInTheDocument();
       expect(api.createIndexer).not.toHaveBeenCalled();
     });
   });

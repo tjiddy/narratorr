@@ -158,10 +158,10 @@ describe('IndexerCard — create mode', () => {
     );
 
     expect(screen.getByText('Add New Indexer')).toBeInTheDocument();
-    expect(screen.getByPlaceholderText('AudioBookBay')).toBeInTheDocument();
+    expect(screen.getByPlaceholderText('Newznab')).toBeInTheDocument();
   });
 
-  it('shows ABB fields by default', () => {
+  it('shows Newznab fields by default', () => {
     renderWithProviders(
       <IndexerCard
         mode="create"
@@ -170,8 +170,8 @@ describe('IndexerCard — create mode', () => {
       />,
     );
 
-    expect(screen.getByPlaceholderText('audiobookbay.lu')).toBeInTheDocument();
-    expect(screen.getByText('Page Limit')).toBeInTheDocument();
+    expect(screen.getByPlaceholderText('https://indexer.example.com/api')).toBeInTheDocument();
+    expect(screen.getByText('API Key')).toBeInTheDocument();
   });
 
   it('shows torznab fields when type is changed', async () => {
@@ -217,15 +217,16 @@ describe('IndexerCard — create mode', () => {
       />,
     );
 
-    await user.type(screen.getByPlaceholderText('AudioBookBay'), 'Test Indexer');
-    await user.type(screen.getByPlaceholderText('audiobookbay.lu'), 'example.com');
+    await user.type(screen.getByPlaceholderText('Newznab'), 'Test Indexer');
+    await user.type(screen.getByPlaceholderText('https://indexer.example.com/api'), 'example.com');
+    await user.type(screen.getByLabelText('API Key'), 'test-key');
     await user.click(screen.getByText('Add Indexer'));
 
     expect(onSubmit).toHaveBeenCalled();
     expect(onSubmit.mock.calls[0][0]).toMatchObject({
       name: 'Test Indexer',
-      type: 'abb',
-      settings: expect.objectContaining({ hostname: 'example.com' }),
+      type: 'newznab',
+      settings: expect.objectContaining({ apiUrl: 'example.com', apiKey: 'test-key' }),
     });
   });
 
@@ -241,8 +242,9 @@ describe('IndexerCard — create mode', () => {
       />,
     );
 
-    await user.type(screen.getByPlaceholderText('AudioBookBay'), 'Test');
-    await user.type(screen.getByPlaceholderText('audiobookbay.lu'), 'example.com');
+    await user.type(screen.getByPlaceholderText('Newznab'), 'Test');
+    await user.type(screen.getByPlaceholderText('https://indexer.example.com/api'), 'example.com');
+    await user.type(screen.getByLabelText('API Key'), 'test-key');
     await user.click(screen.getByText('Test'));
 
     expect(onFormTest).toHaveBeenCalled();
@@ -260,8 +262,9 @@ describe('IndexerCard — create mode', () => {
       />,
     );
 
-    await user.type(screen.getByPlaceholderText('AudioBookBay'), 'Test');
-    await user.type(screen.getByPlaceholderText('audiobookbay.lu'), 'example.com');
+    await user.type(screen.getByPlaceholderText('Newznab'), 'Test');
+    await user.type(screen.getByPlaceholderText('https://indexer.example.com/api'), 'example.com');
+    await user.type(screen.getByLabelText('API Key'), 'test-key');
     await user.click(screen.getByText('Test'));
 
     await waitFor(() => {
@@ -309,7 +312,7 @@ describe('IndexerCard — create mode', () => {
       />,
     );
 
-    expect(screen.getByPlaceholderText('AudioBookBay')).toBeInTheDocument();
+    expect(screen.getByPlaceholderText('Newznab')).toBeInTheDocument();
 
     await user.selectOptions(screen.getByRole('combobox'), 'torznab');
 
@@ -317,7 +320,9 @@ describe('IndexerCard — create mode', () => {
     expect(screen.queryByPlaceholderText('AudioBookBay')).not.toBeInTheDocument();
   });
 
-  it('shows performance hint when ABB type is selected', () => {
+  it('shows performance hint when ABB type is selected', async () => {
+    const user = userEvent.setup();
+
     renderWithProviders(
       <IndexerCard
         mode="create"
@@ -326,6 +331,7 @@ describe('IndexerCard — create mode', () => {
       />,
     );
 
+    await user.selectOptions(screen.getByRole('combobox'), 'abb');
     expect(screen.getByText(/Large library, but slower and less reliable/)).toBeInTheDocument();
   });
 
