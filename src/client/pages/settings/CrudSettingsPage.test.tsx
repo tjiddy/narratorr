@@ -414,7 +414,6 @@ describe('CrudSettingsPage', () => {
     it('cards in list render in view mode even when editingId is set in modal mode', () => {
       const items = [{ id: 1, name: 'Widget A' }, { id: 2, name: 'Widget B' }];
       mockUseCrudSettings.mockReturnValue(createMockHookReturn({ state: { items, editingId: 1 } }));
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any -- capture render callback args
       const capturedModes: string[] = [];
       const renderCard = vi.fn((_: unknown, handlers: { mode: string }) => {
         capturedModes.push(handlers.mode);
