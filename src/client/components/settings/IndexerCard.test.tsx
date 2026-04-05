@@ -635,10 +635,10 @@ describe('IndexerCard — Prowlarr-managed indicators (AC8)', () => {
       // Fill name
       await user.type(screen.getByPlaceholderText('MyAnonamouse'), 'My MAM');
 
-      // Verify defaults: English checked, no search type dropdown (#317 removed it)
+      // Verify defaults: English checked, search type dropdown present (#363)
       expect(screen.getByLabelText('English')).toBeChecked();
       expect(screen.getByLabelText('French')).not.toBeChecked();
-      expect(screen.queryByLabelText('Search Type')).not.toBeInTheDocument();
+      expect(screen.getByLabelText('Search Type')).toBeInTheDocument();
 
       // Toggle French on
       await user.click(screen.getByLabelText('French'));
@@ -667,7 +667,7 @@ describe('IndexerCard — Prowlarr-managed indicators (AC8)', () => {
         id: 10,
         name: 'MAM Custom',
         type: 'myanonamouse',
-        settings: { mamId: 'my-mam-id', baseUrl: '', searchLanguages: [1, 36], searchType: 2 },
+        settings: { mamId: 'my-mam-id', baseUrl: '', searchLanguages: [1, 36], searchType: 'fl' },
       });
 
       renderWithProviders(
@@ -682,8 +682,8 @@ describe('IndexerCard — Prowlarr-managed indicators (AC8)', () => {
       // Languages should be pre-filled
       expect(screen.getByLabelText('English')).toBeChecked();
       expect(screen.getByLabelText('French')).toBeChecked();
-      // Search type dropdown removed (#317)
-      expect(screen.queryByLabelText('Search Type')).not.toBeInTheDocument();
+      // Search type dropdown present (#363)
+      expect(screen.getByLabelText('Search Type')).toBeInTheDocument();
     });
 
     it('#317 preserves isVip through edit-mode hydration and save', async () => {
@@ -693,7 +693,7 @@ describe('IndexerCard — Prowlarr-managed indicators (AC8)', () => {
         id: 14,
         name: 'MAM VIP',
         type: 'myanonamouse',
-        settings: { mamId: 'vip-id', baseUrl: '', searchLanguages: [1], searchType: 1, isVip: true },
+        settings: { mamId: 'vip-id', baseUrl: '', searchLanguages: [1], searchType: 'active', isVip: true },
       });
 
       renderWithProviders(
@@ -718,7 +718,7 @@ describe('IndexerCard — Prowlarr-managed indicators (AC8)', () => {
         id: 15,
         name: 'MAM Persisted',
         type: 'myanonamouse',
-        settings: { mamId: '********', baseUrl: '', searchLanguages: [1], searchType: 1, isVip: true, mamUsername: 'PersistedUser' },
+        settings: { mamId: '********', baseUrl: '', searchLanguages: [1], searchType: 'active', isVip: true, mamUsername: 'PersistedUser' },
       });
 
       renderWithProviders(
@@ -740,7 +740,7 @@ describe('IndexerCard — Prowlarr-managed indicators (AC8)', () => {
         id: 16,
         name: 'MAM User',
         type: 'myanonamouse',
-        settings: { mamId: '********', baseUrl: '', searchLanguages: [1], searchType: 1, isVip: false, mamUsername: 'RegularUser' },
+        settings: { mamId: '********', baseUrl: '', searchLanguages: [1], searchType: 'active', isVip: false, mamUsername: 'RegularUser' },
       });
 
       renderWithProviders(
@@ -761,7 +761,7 @@ describe('IndexerCard — Prowlarr-managed indicators (AC8)', () => {
         id: 17,
         name: 'MAM VIP No Username',
         type: 'myanonamouse',
-        settings: { mamId: '********', baseUrl: '', searchLanguages: [1], searchType: 1, isVip: true },
+        settings: { mamId: '********', baseUrl: '', searchLanguages: [1], searchType: 'active', isVip: true },
       });
 
       renderWithProviders(
@@ -797,7 +797,7 @@ describe('IndexerCard — Prowlarr-managed indicators (AC8)', () => {
         id: 18,
         name: 'MAM Username',
         type: 'myanonamouse',
-        settings: { mamId: '********', baseUrl: '', searchLanguages: [1], searchType: 1, isVip: true, mamUsername: 'SavedUser' },
+        settings: { mamId: '********', baseUrl: '', searchLanguages: [1], searchType: 'active', isVip: true, mamUsername: 'SavedUser' },
       });
 
       renderWithProviders(
@@ -821,7 +821,7 @@ describe('IndexerCard — Prowlarr-managed indicators (AC8)', () => {
         id: 19,
         name: 'MAM Test Badge',
         type: 'myanonamouse',
-        settings: { mamId: '********', baseUrl: '', searchLanguages: [1], searchType: 1, isVip: false, mamUsername: 'OldUser' },
+        settings: { mamId: '********', baseUrl: '', searchLanguages: [1], searchType: 'active', isVip: false, mamUsername: 'OldUser' },
       });
 
       const formTestResult: TestResult = {
@@ -850,7 +850,7 @@ describe('IndexerCard — Prowlarr-managed indicators (AC8)', () => {
         id: 20,
         name: 'MAM Fail Badge',
         type: 'myanonamouse',
-        settings: { mamId: '********', baseUrl: '', searchLanguages: [1], searchType: 1, isVip: true, mamUsername: 'PersistedUser' },
+        settings: { mamId: '********', baseUrl: '', searchLanguages: [1], searchType: 'active', isVip: true, mamUsername: 'PersistedUser' },
       });
 
       const formTestResult: TestResult = {
@@ -880,7 +880,7 @@ describe('IndexerCard — Prowlarr-managed indicators (AC8)', () => {
         id: 21,
         name: 'MAM Id Transport',
         type: 'myanonamouse',
-        settings: { mamId: '********', baseUrl: '', searchLanguages: [1], searchType: 1 },
+        settings: { mamId: '********', baseUrl: '', searchLanguages: [1], searchType: 'active' },
       });
 
       renderWithProviders(
@@ -905,7 +905,7 @@ describe('IndexerCard — Prowlarr-managed indicators (AC8)', () => {
         id: 13,
         name: 'MAM All Languages',
         type: 'myanonamouse',
-        settings: { mamId: 'mam-id', baseUrl: '', searchLanguages: [], searchType: 1 },
+        settings: { mamId: 'mam-id', baseUrl: '', searchLanguages: [], searchType: 'active' },
       });
 
       renderWithProviders(
@@ -921,6 +921,92 @@ describe('IndexerCard — Prowlarr-managed indicators (AC8)', () => {
       // We verify this by checking that the English checkbox is NOT checked
       const englishCheckbox = screen.getByLabelText('English');
       expect(englishCheckbox).not.toBeChecked();
+    });
+  });
+
+  describe('#363 — edit-form hydration searchType coercion', () => {
+    it('hydrates persisted numeric searchType: 1 as "active" string and renders in dropdown', async () => {
+      const mamIndexer: Indexer = createMockIndexer({
+        id: 20,
+        name: 'MAM Legacy',
+        type: 'myanonamouse',
+        settings: { mamId: 'test-id', baseUrl: '', searchLanguages: [1], searchType: 1 },
+      });
+
+      renderWithProviders(
+        <IndexerCard
+          indexer={mamIndexer}
+          mode="edit"
+          onSubmit={vi.fn()}
+          onFormTest={vi.fn()}
+        />,
+      );
+
+      const dropdown = screen.getByLabelText('Search Type') as HTMLSelectElement;
+      expect(dropdown.value).toBe('active');
+    });
+
+    it('hydrates persisted string searchType: "fl" as-is (no coercion)', () => {
+      const mamIndexer: Indexer = createMockIndexer({
+        id: 21,
+        name: 'MAM FL',
+        type: 'myanonamouse',
+        settings: { mamId: 'test-id', baseUrl: '', searchLanguages: [1], searchType: 'fl' },
+      });
+
+      renderWithProviders(
+        <IndexerCard
+          indexer={mamIndexer}
+          mode="edit"
+          onSubmit={vi.fn()}
+          onFormTest={vi.fn()}
+        />,
+      );
+
+      const dropdown = screen.getByLabelText('Search Type') as HTMLSelectElement;
+      expect(dropdown.value).toBe('fl');
+    });
+
+    it('hydrates unknown numeric searchType: 4 as "active" fallback', () => {
+      const mamIndexer: Indexer = createMockIndexer({
+        id: 22,
+        name: 'MAM Unknown',
+        type: 'myanonamouse',
+        settings: { mamId: 'test-id', baseUrl: '', searchLanguages: [1], searchType: 4 },
+      });
+
+      renderWithProviders(
+        <IndexerCard
+          indexer={mamIndexer}
+          mode="edit"
+          onSubmit={vi.fn()}
+          onFormTest={vi.fn()}
+        />,
+      );
+
+      const dropdown = screen.getByLabelText('Search Type') as HTMLSelectElement;
+      expect(dropdown.value).toBe('active');
+    });
+
+    it('renders searchType dropdown in edit mode with 6 options', () => {
+      const mamIndexer: Indexer = createMockIndexer({
+        id: 23,
+        name: 'MAM Options',
+        type: 'myanonamouse',
+        settings: { mamId: 'test-id', baseUrl: '', searchLanguages: [1], searchType: 'active' },
+      });
+
+      renderWithProviders(
+        <IndexerCard
+          indexer={mamIndexer}
+          mode="edit"
+          onSubmit={vi.fn()}
+          onFormTest={vi.fn()}
+        />,
+      );
+
+      const dropdown = screen.getByLabelText('Search Type') as HTMLSelectElement;
+      expect(dropdown.options).toHaveLength(6);
     });
   });
 });
