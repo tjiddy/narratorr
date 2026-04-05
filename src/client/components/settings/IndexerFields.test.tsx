@@ -715,11 +715,12 @@ describe('IndexerFields', () => {
       return <IndexerFields selectedType="myanonamouse" register={register} errors={errors} watch={watch} setValue={setValue} />;
     }
 
-    it('renders searchType dropdown with 6 options', () => {
+    it('renders searchType dropdown with 6 options and helper text', () => {
       renderWithProviders(<MamFieldWrapper363 />);
       const dropdown = screen.getByLabelText('Search Type') as HTMLSelectElement;
       expect(dropdown).toBeInTheDocument();
       expect(dropdown.options).toHaveLength(6);
+      expect(screen.getByText(/auto-overridden by vip status/i)).toBeInTheDocument();
     });
 
     it('dropdown labels match expected values', () => {
