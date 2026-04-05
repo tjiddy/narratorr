@@ -743,11 +743,30 @@ describe('IndexerFields', () => {
         metadata: { username: 'User1', classname: 'User', isVip: false },
       });
       const user = userEvent.setup();
-      renderWithProviders(<SentinelEditWrapper indexerId={42} />);
+
+      // Start with different defaults so we can prove the test reads live form state
+      function EditableFormWrapper() {
+        const { register, watch, setValue, formState: { errors } } = useForm<CreateIndexerFormData>({
+          defaultValues: {
+            name: '', type: 'myanonamouse',
+            settings: { mamId: '********', baseUrl: '', useProxy: false, searchLanguages: [1], searchType: 'active', isVip: true, mamUsername: 'OldUser' },
+          },
+        });
+        return <IndexerFields selectedType="myanonamouse" register={register} errors={errors} watch={watch} setValue={setValue} indexerId={42} />;
+      }
+
+      renderWithProviders(<EditableFormWrapper />);
 
       await waitFor(() => {
         expect(screen.getByText('OldUser')).toBeInTheDocument();
       });
+
+      // Edit baseUrl and toggle useProxy before clicking refresh
+      const baseUrlInput = screen.getByLabelText(/Base URL/);
+      await user.type(baseUrlInput, 'https://edited.mam.net');
+
+      const proxyToggle = screen.getByLabelText('Route through proxy');
+      await user.click(proxyToggle);
 
       await user.click(screen.getByTitle('Refresh VIP status'));
 
@@ -755,7 +774,7 @@ describe('IndexerFields', () => {
         expect((api.testIndexerConfig as Mock)).toHaveBeenCalledWith(
           expect.objectContaining({
             settings: expect.objectContaining({
-              baseUrl: 'https://mam.example.com',
+              baseUrl: 'https://edited.mam.net',
               useProxy: true,
             }),
           }),
@@ -916,6 +935,11 @@ describe('IndexerFields', () => {
       await user.click(screen.getByTitle('Refresh VIP status'));
 
       await waitFor(() => {
+        expect((api.testIndexerConfig as Mock)).toHaveBeenCalledWith(
+          expect.objectContaining({
+            settings: expect.objectContaining({ mamId: 'real-mam-id' }),
+          }),
+        );
         expect((api.testIndexerConfig as Mock)).toHaveBeenCalledWith(
           expect.not.objectContaining({ id: expect.anything() }),
         );
