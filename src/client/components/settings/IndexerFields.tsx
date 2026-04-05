@@ -157,12 +157,11 @@ function useMamDetection(watch?: UseFormWatch<CreateIndexerFormData>, setValue?:
     try {
       const baseUrl = watch ? (watch('settings.baseUrl') || '') : '';
       const useProxy = watch ? (watch('settings.useProxy') || false) : false;
-      const payload = {
+      const result = await api.testIndexerConfig({
         name: 'Detection', type: 'myanonamouse', enabled: true, priority: 0,
         settings: { mamId, baseUrl, useProxy },
         ...(isSentinel && indexerId != null ? { id: indexerId } : {}),
-      };
-      const result = await api.testIndexerConfig(payload);
+      });
       await ensureMinDuration();
 
       if (result.success && result.metadata) {

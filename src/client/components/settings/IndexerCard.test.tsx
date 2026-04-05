@@ -975,12 +975,7 @@ describe('IndexerCard — Prowlarr-managed indicators (AC8)', () => {
       });
     });
 
-    it('#361 create-mode refresh with non-sentinel does not include id', async () => {
-      (api.testIndexerConfig as Mock)
-        .mockResolvedValueOnce({ success: true, metadata: { username: 'User1', classname: 'User', isVip: false } })
-        .mockResolvedValueOnce({ success: true, metadata: { username: 'User1', classname: 'VIP', isVip: true } });
-      const user = userEvent.setup();
-
+    it('#361 create-mode refresh with non-sentinel does not include id', () => {
       renderWithProviders(
         <IndexerCard
           mode="edit"
