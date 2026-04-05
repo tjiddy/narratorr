@@ -38,7 +38,7 @@ All GitHub commands use: `node scripts/gh.ts` (referred to as `gh` below).
 
 0. **Initialize stop-gate state:** `mkdir -p .narratorr/state/review-pr-<pr-number>/`
 
-0b. **Ensure latest branch state:** Run `git fetch origin` to get the latest commits on all branches. If this is a re-review (you have reviewed this PR before in this session), the author has pushed fixes since your last review — you MUST re-run ALL steps from scratch against the updated branch. Do not reuse prior results from your session context.
+0b. **Ensure latest branch state:** Run `git checkout . && git fetch origin` to discard any modified tracked files from prior dispatches and get the latest commits (do NOT use `git clean` — untracked files like `.env` and symlinks are injected by the automation host). If this is a re-review (you have reviewed this PR before in this session), the author has pushed fixes since your last review — you MUST re-run ALL steps from scratch against the updated branch. Do not reuse prior results from your session context.
 
 1. **Fetch PR details:** Run `node scripts/gh.tspr view <pr-number> --json number,state,title,headRefName,baseRefName,author,headRefOid,url,labels,body --jq '"#\(.number) [\(.state | ascii_downcase)] \(.title)\n\(.headRefName) → \(.baseRefName) | author: \(.author.login) | sha: \(.headRefOid) | \(.url)\nlabels: \([.labels[].name] | join(", "))\n\n\(.body // "")"'`. Extract:
    - Title, body, state, head branch, base branch, **author** (`author: <login>` in output), labels

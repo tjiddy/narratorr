@@ -40,7 +40,7 @@ All GitHub commands use: `node scripts/gh.ts` (referred to as `gh` below).
 
 0. **Initialize stop-gate state:** `mkdir -p .narratorr/state/review-spec-<id>/`
 
-0b. **Ensure latest codebase:** Run `git checkout main && git pull` before starting. Spec reviews validate assumptions against the codebase — a stale checkout produces false findings.
+0b. **Ensure latest codebase:** Run `git checkout . && git checkout main && git pull` before starting. The `git checkout .` discards any modified tracked files from prior dispatches (do NOT use `git clean` — untracked files like `.env` and symlinks are injected by the automation host). Spec reviews validate assumptions against the codebase — a stale or dirty checkout produces false findings.
 
 1. **Read the issue:** Run `node scripts/gh.tsissue view <id> --json number,state,title,labels,milestone,body --jq '"#\(.number) [\(.state | ascii_downcase)] \(.title)\nlabels: \([.labels[].name] | join(", "))\(.milestone.title // "" | if . != "" then " | milestone: \(.)" else "" end)\n\n\(.body // "")"'`. Extract:
    - Title, labels
