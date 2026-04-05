@@ -223,4 +223,18 @@ describe('startJobs', () => {
       setTimeoutSpy.mockRestore();
     });
   });
+
+  describe('import-maintenance cron (#358)', () => {
+    it.todo('registers import-maintenance instead of import in job registry');
+    it.todo('calls QG processCompletedDownloads before import processCompletedDownloads');
+    it.todo('calls deferred cleanup methods after import batch');
+    it.todo('does not register an import job');
+  });
+
+  describe('startup recovery (#358)', () => {
+    it.todo('resets checking downloads to completed on boot');
+    it.todo('resets importing downloads to completed on boot');
+    it.todo('calls batch methods after status reset');
+    it.todo('does not block job startup when recovery throws');
+  });
 });

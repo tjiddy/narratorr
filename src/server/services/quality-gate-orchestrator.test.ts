@@ -1605,4 +1605,31 @@ describe('QualityGateOrchestrator', () => {
       }));
     });
   });
+
+  describe('processOneDownload', () => {
+    // Happy paths
+    it.todo('approves and imports when slot is available');
+    it.todo('queues to processing_queued when no slot available');
+
+    // Hold/reject paths
+    it.todo('holds for review and reverts book status to downloading');
+    it.todo('rejects and reverts book status to downloading');
+
+    // Atomic claim
+    it.todo('returns early when atomic claim fails (double-process guard)');
+
+    // Book status promotion
+    it.todo('promotes book status to importing in DB after atomic claim');
+    it.todo('emits book_status_change SSE after promoting book');
+    it.todo('updates in-memory book status so revert guards fire correctly');
+
+    // Error/edge cases
+    it.todo('returns early for non-existent download');
+    it.todo('holds for probe failure and reverts book to downloading');
+    it.todo('skips early when download has no bookId');
+    it.todo('skips early when download has no externalId');
+
+    // Slot admission contract
+    it.todo('releases slot in finally even when import fails');
+  });
 });

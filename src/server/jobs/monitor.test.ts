@@ -1490,4 +1490,13 @@ describe('monitor job', () => {
       expect(broadcaster.emit).not.toHaveBeenCalledWith('book_status_change', expect.anything());
     });
   });
+
+  describe('inline import on completion (#358)', () => {
+    it.todo('calls processOneDownload via fireAndForget when download completes');
+    it.todo('does not call processOneDownload when progress < 1');
+    it.todo('does not call processOneDownload when download is error');
+    it.todo('does not call processOneDownload when download already completed');
+    it.todo('continues processing other downloads when processOneDownload throws');
+    it.todo('does not write book status directly on completion (handleBookStatusOnCompletion removed)');
+  });
 });
