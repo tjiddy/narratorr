@@ -327,7 +327,7 @@ describe('CrudSettingsPage', () => {
     it('renders edit form inside modal when editingId is set and modal is enabled', () => {
       const items = [{ id: 1, name: 'Widget A' }];
       mockUseCrudSettings.mockReturnValue(createMockHookReturn({ state: { items, editingId: 1 } }));
-      const renderCard = vi.fn((item: unknown, handlers: { mode: string }) => {
+      const renderCard = vi.fn((_: unknown, handlers: { mode: string }) => {
         if (handlers.mode === 'edit') return <div data-testid="edit-form">Edit Form</div>;
         return <div data-testid="view-card">View Card</div>;
       });
@@ -435,7 +435,7 @@ describe('CrudSettingsPage', () => {
       mockUseCrudSettings.mockReturnValue(createMockHookReturn({ state: { items, editingId: 1 } }));
       // eslint-disable-next-line @typescript-eslint/no-explicit-any -- capture render callback args
       let capturedMode: any;
-      const renderCard = vi.fn((_item: unknown, handlers: { mode: string }) => {
+      const renderCard = vi.fn((_: unknown, handlers: { mode: string }) => {
         capturedMode = handlers.mode;
         return <div data-testid="card">Card</div>;
       });

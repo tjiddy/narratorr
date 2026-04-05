@@ -16,10 +16,11 @@ interface DownloadClientFieldsProps {
   getValues: UseFormGetValues<CreateDownloadClientFormData>;
   isDirty?: boolean;
   isEdit?: boolean;
+  inModal?: boolean;
 }
 
 // eslint-disable-next-line complexity -- conditional fields per client type are inherently branchy
-export function DownloadClientFields({ selectedType, register, errors, clientId, setValue, getValues, isDirty, isEdit }: DownloadClientFieldsProps) {
+export function DownloadClientFields({ selectedType, register, errors, clientId, setValue, getValues, isDirty, isEdit, inModal }: DownloadClientFieldsProps) {
   const meta = DOWNLOAD_CLIENT_REGISTRY[selectedType] || DOWNLOAD_CLIENT_REGISTRY.qbittorrent;
   const fields = meta.fieldConfig;
   const supportsCategories = meta.supportsCategories;
@@ -111,7 +112,7 @@ export function DownloadClientFields({ selectedType, register, errors, clientId,
           <div ref={categoryInputRef}>
             <input id="clientCategory" type="text" {...register('settings.category')} className={inputClass} placeholder="audiobooks" />
           </div>
-          <ToolbarDropdown triggerRef={categoryInputRef} open={showDropdown} onClose={() => setShowDropdown(false)}>
+          <ToolbarDropdown triggerRef={categoryInputRef} open={showDropdown} onClose={() => setShowDropdown(false)} inModal={inModal}>
             <div className="w-64 bg-background border border-border rounded-xl shadow-lg max-h-48 overflow-y-auto">
               {categories.length > 0 ? (
                 categories.map((cat) => (

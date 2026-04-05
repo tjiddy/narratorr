@@ -8,6 +8,7 @@ import { type CreateDownloadClientFormData } from '../../../shared/schemas.js';
 export function DownloadClientsSettings() {
   return (
     <CrudSettingsPage<DownloadClient, CreateDownloadClientFormData>
+      modal
       config={{
         queryKey: queryKeys.downloadClients(),
         queryFn: api.getClients,
@@ -43,6 +44,7 @@ export function DownloadClientsSettings() {
           testingForm={handlers.testingForm}
           formTestResult={handlers.formTestResult}
           animationDelay={handlers.animationDelay}
+          inModal={handlers.inModal}
         />
       )}
       renderForm={(handlers) => (
@@ -54,6 +56,7 @@ export function DownloadClientsSettings() {
           isPending={handlers.isPending}
           testingForm={handlers.testingForm}
           formTestResult={handlers.formTestResult}
+          inModal={handlers.inModal}
         />
       )}
     />

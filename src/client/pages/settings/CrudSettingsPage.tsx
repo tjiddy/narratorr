@@ -36,6 +36,7 @@ interface CrudSettingsPageProps<TItem extends { id: number; name: string }, TFor
     testingForm: boolean;
     formTestResult: TestResult | null;
     animationDelay: string;
+    inModal: boolean;
   }) => ReactNode;
   renderForm: (handlers: {
     onSubmit: (data: TFormData) => void;
@@ -44,6 +45,7 @@ interface CrudSettingsPageProps<TItem extends { id: number; name: string }, TFor
     isPending: boolean;
     testingForm: boolean;
     formTestResult: TestResult | null;
+    inModal: boolean;
   }) => ReactNode;
 }
 
@@ -118,6 +120,7 @@ export function CrudSettingsPage<TItem extends { id: number; name: string }, TFo
         isPending: createMutation.isPending,
         testingForm,
         formTestResult,
+        inModal: false,
       })}
 
       {/* List */}
@@ -148,6 +151,7 @@ export function CrudSettingsPage<TItem extends { id: number; name: string }, TFo
               testingForm,
               formTestResult: editingId === item.id ? formTestResult : null,
               animationDelay: `${index * 50}ms`,
+              inModal: false,
             }),
           )}
         </div>
@@ -178,6 +182,7 @@ export function CrudSettingsPage<TItem extends { id: number; name: string }, TFo
                 isPending: createMutation.isPending,
                 testingForm,
                 formTestResult,
+                inModal: true,
               })}
               {editingItem && renderCard(editingItem, {
                 mode: 'edit',
@@ -193,6 +198,7 @@ export function CrudSettingsPage<TItem extends { id: number; name: string }, TFo
                 testingForm,
                 formTestResult,
                 animationDelay: '0ms',
+                inModal: true,
               })}
             </div>
           </Modal>
