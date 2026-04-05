@@ -411,6 +411,43 @@ describe('CrudSettingsPage', () => {
       expect(handleCancelEdit).not.toHaveBeenCalled();
     });
 
+    it('cards in list render in view mode even when editingId is set in modal mode', () => {
+      const items = [{ id: 1, name: 'Widget A' }, { id: 2, name: 'Widget B' }];
+      mockUseCrudSettings.mockReturnValue(createMockHookReturn({ state: { items, editingId: 1 } }));
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any -- capture render callback args
+      const capturedModes: string[] = [];
+      const renderCard = vi.fn((_: unknown, handlers: { mode: string }) => {
+        capturedModes.push(handlers.mode);
+        return <div>Card</div>;
+      });
+      render(<CrudSettingsPage {...modalProps} renderCard={renderCard} />);
+
+      // In modal mode, cards in the list should always be 'view' — edit renders in the modal
+      // renderCard is called 3 times: 2 for list (view) + 1 for modal edit
+      const listModes = capturedModes.slice(0, 2);
+      expect(listModes).toEqual(['view', 'view']);
+    });
+
+    it('passes inModal=true to renderForm handlers in modal mode', () => {
+      mockUseCrudSettings.mockReturnValue(createMockHookReturn({ state: { showForm: true } }));
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any -- capture handlers
+      let capturedHandlers: any;
+      const renderForm = vi.fn((handlers: unknown) => { capturedHandlers = handlers; return <div data-testid="add-form">Form</div>; });
+      render(<CrudSettingsPage {...modalProps} renderForm={renderForm} />);
+
+      expect(capturedHandlers.inModal).toBe(true);
+    });
+
+    it('passes inModal=false to renderForm handlers in inline mode', () => {
+      mockUseCrudSettings.mockReturnValue(createMockHookReturn({ state: { showForm: true } }));
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any -- capture handlers
+      let capturedHandlers: any;
+      const renderForm = vi.fn((handlers: unknown) => { capturedHandlers = handlers; return <div data-testid="add-form">Form</div>; });
+      render(<CrudSettingsPage {...baseProps} renderForm={renderForm} />);
+
+      expect(capturedHandlers.inModal).toBe(false);
+    });
+
     it('does not render modal when modal prop is false (inline behavior preserved)', () => {
       mockUseCrudSettings.mockReturnValue(createMockHookReturn({ state: { showForm: true } }));
       render(<CrudSettingsPage {...baseProps} />);
