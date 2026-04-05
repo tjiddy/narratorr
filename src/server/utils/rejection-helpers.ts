@@ -2,9 +2,7 @@ import type { FastifyBaseLogger } from 'fastify';
 import type { BlacklistService } from '../services/blacklist.service.js';
 import type { SettingsService } from '../services/settings.service.js';
 import { retrySearch, type RetrySearchDeps } from '../services/retry-search.js';
-import type { blacklist } from '../../db/schema.js';
-
-type BlacklistReason = NonNullable<typeof blacklist.$inferInsert['reason']>;
+import type { BlacklistReason } from '../../shared/schemas/blacklist.js';
 
 export interface BlacklistIdentifiers {
   infoHash?: string;

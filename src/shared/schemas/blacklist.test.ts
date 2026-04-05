@@ -93,7 +93,7 @@ describe('createBlacklistSchema — trim behavior', () => {
 
 // ===== #321 — Centralized blacklist reason enum =====
 
-import { BLACKLIST_REASONS, REASON_LABELS, type BlacklistReason } from './blacklist.js';
+import { BLACKLIST_REASONS, REASON_LABELS } from './blacklist.js';
 
 describe('BLACKLIST_REASONS canonical tuple', () => {
   it('exports BLACKLIST_REASONS as a readonly tuple with all 8 reason values', () => {
