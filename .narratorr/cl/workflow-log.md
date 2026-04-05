@@ -1,5 +1,34 @@
 # Workflow Log
 
+## #358 Inline import after download completion — eliminate import polling — 2026-04-05
+**Skill path:** /implement → /claim → /plan → /handoff
+**Outcome:** success — PR #360
+
+### Metrics
+- Files changed: 10 | Tests added/modified: 27 new + updated existing
+- Quality gate runs: 3 (pass on attempt 2 — first failed on complexity/line-count, third had unrelated flaky test)
+- Fix iterations: 2 (complexity 16→15 via method extraction, max-lines 406→396 via comment consolidation)
+- Context compactions: 0
+
+### Workflow experience
+- What went smoothly: Spec was extremely well-specified after 4 rounds of spec review — implementation was straightforward with no ambiguity
+- Friction / issues encountered: Shared test fixture mutation across tests (const object passed by reference, mutated by production code via `book.status = 'importing'`); e2e test in multi-entity relied on removed `handleBookStatusOnCompletion` behavior
+
+### Token efficiency
+- Highest-token actions: Spec review responses (4 rounds) consumed significant context before implementation began
+- Avoidable waste: None — the spec review rounds prevented implementation rework
+- Suggestions: The processOneDownload method's use of getCompletedDownloads() + .find() is O(N) — a dedicated query would be cleaner but wasn't worth the scope creep
+
+### Infrastructure gaps
+- Repeated workarounds: None
+- Missing tooling / config: No integration test for service factory wiring (routes/index.ts createServices) — all service tests use createMockServices
+- Unresolved debt: processOneDownload queries all completed downloads to find one by ID (logged in debt.md)
+
+### Wish I'd Known
+1. The in-memory book status mutation after DB write is critical for revert guards — without it, held/rejected downloads leave the book stuck in 'importing'. This was specified in the spec but the interaction with the existing revert guards was subtle.
+2. Test fixtures at describe scope are shared by reference — spreading `{ ...fixture }` is mandatory when production code mutates the object. Cost me one test debug cycle.
+3. The maintenance cron ordering contract (QG before import) is load-bearing because `getEligibleDownloads()` queries both `completed` and `processing_queued` — without QG running first, raw completed downloads bypass quality gate entirely.
+
 ## #353 Move indexer and download client forms into modals — 2026-04-05
 **Skill path:** /implement → /claim → /plan → /handoff
 **Outcome:** success — PR #359
