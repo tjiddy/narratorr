@@ -108,6 +108,38 @@ describe('BooksTabContent', () => {
     expect(screen.getByText('Book One')).toBeInTheDocument();
     expect(screen.getByText('Book Two')).toBeInTheDocument();
   });
+
+  it('exact title match is promoted to first position', () => {
+    const books = [
+      createMockBookMetadata({ title: 'A Court of Thorns and Roses 7', asin: 'B007' }),
+      createMockBookMetadata({ title: 'A Court of Thorns and Roses 6', asin: 'B006' }),
+      createMockBookMetadata({ title: 'A Court of Thorns and Roses', asin: 'B001' }),
+    ];
+    renderBooksTab(books, 'A Court of Thorns and Roses');
+    const cards = screen.getAllByText(/A Court of Thorns and Roses/);
+    expect(cards[0].textContent).toBe('A Court of Thorns and Roses');
+  });
+
+  it('exact title match is case-insensitive', () => {
+    const books = [
+      createMockBookMetadata({ title: 'Other Book', asin: 'B002' }),
+      createMockBookMetadata({ title: 'The Shining', asin: 'B001' }),
+    ];
+    renderBooksTab(books, 'the shining');
+    const cards = screen.getAllByText(/The Shining|Other Book/);
+    expect(cards[0].textContent).toBe('The Shining');
+  });
+
+  it('preserves API order when no exact match exists', () => {
+    const books = [
+      createMockBookMetadata({ title: 'Book B', asin: 'B002' }),
+      createMockBookMetadata({ title: 'Book A', asin: 'B001' }),
+    ];
+    renderBooksTab(books, 'something else');
+    const cards = screen.getAllByText(/Book [AB]/);
+    expect(cards[0].textContent).toBe('Book B');
+    expect(cards[1].textContent).toBe('Book A');
+  });
 });
 
 describe('AuthorsTabContent', () => {

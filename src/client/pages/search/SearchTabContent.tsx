@@ -17,7 +17,16 @@ export function BooksTabContent({
   queryClient: ReturnType<typeof useQueryClient>;
   searchTerm?: string;
 }) {
-  const keys = useMemo(() => deduplicateKeys(books.map(bookMetadataKey)), [books]);
+  const sorted = useMemo(() => {
+    if (!searchTerm) return books;
+    const q = searchTerm.toLowerCase();
+    return [...books].sort((a, b) => {
+      const aExact = a.title.toLowerCase() === q ? 0 : 1;
+      const bExact = b.title.toLowerCase() === q ? 0 : 1;
+      return aExact - bExact;
+    });
+  }, [books, searchTerm]);
+  const keys = useMemo(() => deduplicateKeys(sorted.map(bookMetadataKey)), [sorted]);
   const [showModal, setShowModal] = useState(false);
   const [modalDefaultTitle, setModalDefaultTitle] = useState<string | undefined>();
 
@@ -51,7 +60,7 @@ export function BooksTabContent({
   return (
     <div className="space-y-4">
       <div className="grid gap-4">
-        {books.map((book, index) => (
+        {sorted.map((book, index) => (
           <SearchBookCard
             key={keys[index]}
             book={book}
