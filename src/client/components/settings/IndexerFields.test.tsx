@@ -700,6 +700,287 @@ describe('IndexerFields', () => {
     });
   });
 
+  describe('#361 — refresh button with sentinel + indexerId', () => {
+    function SentinelEditWrapper({ indexerId }: { indexerId?: number } = {}) {
+      const { register, watch, setValue, formState: { errors } } = useForm<CreateIndexerFormData>({
+        defaultValues: {
+          name: '', type: 'myanonamouse',
+          settings: { mamId: '********', baseUrl: 'https://mam.example.com', useProxy: true, searchLanguages: [1], searchType: 'active', isVip: true, mamUsername: 'OldUser' },
+        },
+      });
+      return <IndexerFields selectedType="myanonamouse" register={register} errors={errors} watch={watch} setValue={setValue} indexerId={indexerId} />;
+    }
+
+    it('#361 refresh with sentinel mamId and indexerId calls testIndexerConfig with id in payload', async () => {
+      (api.testIndexerConfig as Mock).mockResolvedValue({
+        success: true,
+        metadata: { username: 'FreshUser', classname: 'VIP', isVip: true },
+      });
+      const user = userEvent.setup();
+      renderWithProviders(<SentinelEditWrapper indexerId={42} />);
+
+      // Badge should be hydrated from persisted values
+      await waitFor(() => {
+        expect(screen.getByText('OldUser')).toBeInTheDocument();
+      });
+
+      await user.click(screen.getByTitle('Refresh VIP status'));
+
+      await waitFor(() => {
+        expect((api.testIndexerConfig as Mock)).toHaveBeenCalledWith(
+          expect.objectContaining({
+            type: 'myanonamouse',
+            id: 42,
+            settings: expect.objectContaining({ mamId: '********' }),
+          }),
+        );
+      });
+    });
+
+    it('#361 refresh with sentinel mamId and indexerId includes current baseUrl and useProxy from form', async () => {
+      (api.testIndexerConfig as Mock).mockResolvedValue({
+        success: true,
+        metadata: { username: 'User1', classname: 'User', isVip: false },
+      });
+      const user = userEvent.setup();
+      renderWithProviders(<SentinelEditWrapper indexerId={42} />);
+
+      await waitFor(() => {
+        expect(screen.getByText('OldUser')).toBeInTheDocument();
+      });
+
+      await user.click(screen.getByTitle('Refresh VIP status'));
+
+      await waitFor(() => {
+        expect((api.testIndexerConfig as Mock)).toHaveBeenCalledWith(
+          expect.objectContaining({
+            settings: expect.objectContaining({
+              baseUrl: 'https://mam.example.com',
+              useProxy: true,
+            }),
+          }),
+        );
+      });
+    });
+
+    it('#361 refresh with sentinel + indexerId success updates badge with fresh metadata', async () => {
+      (api.testIndexerConfig as Mock).mockResolvedValue({
+        success: true,
+        metadata: { username: 'FreshUser', classname: 'Power User', isVip: true },
+      });
+      const user = userEvent.setup();
+      renderWithProviders(<SentinelEditWrapper indexerId={42} />);
+
+      await waitFor(() => {
+        expect(screen.getByText('OldUser')).toBeInTheDocument();
+      });
+
+      await user.click(screen.getByTitle('Refresh VIP status'));
+
+      await waitFor(() => {
+        expect(screen.getByText('FreshUser')).toBeInTheDocument();
+      });
+      expect(screen.getByText('Power User')).toBeInTheDocument();
+    });
+
+    it('#361 refresh with sentinel + indexerId success writes isVip and mamUsername via setValue', async () => {
+      (api.testIndexerConfig as Mock).mockResolvedValue({
+        success: true,
+        metadata: { username: 'NewVipUser', classname: 'VIP', isVip: true },
+      });
+
+      const onSubmit = vi.fn();
+      function SentinelEditFormWrapper() {
+        const { register, handleSubmit, watch, setValue, formState: { errors } } = useForm<CreateIndexerFormData>({
+          defaultValues: {
+            name: 'Test', type: 'myanonamouse', enabled: true, priority: 0,
+            settings: { mamId: '********', baseUrl: '', searchLanguages: [1], searchType: 'active', isVip: false, mamUsername: 'OldUser' },
+          },
+        });
+        return (
+          <form onSubmit={handleSubmit(onSubmit)}>
+            <IndexerFields selectedType="myanonamouse" register={register} errors={errors} watch={watch} setValue={setValue} indexerId={7} />
+            <button type="submit">Submit</button>
+          </form>
+        );
+      }
+
+      const user = userEvent.setup();
+      renderWithProviders(<SentinelEditFormWrapper />);
+
+      await waitFor(() => {
+        expect(screen.getByText('OldUser')).toBeInTheDocument();
+      });
+
+      await user.click(screen.getByTitle('Refresh VIP status'));
+
+      await waitFor(() => {
+        expect(screen.getByText('NewVipUser')).toBeInTheDocument();
+      }, { timeout: 3000 });
+
+      await user.click(screen.getByText('Submit'));
+      await waitFor(() => {
+        expect(onSubmit).toHaveBeenCalled();
+      });
+      expect(onSubmit.mock.calls[0][0].settings.isVip).toBe(true);
+      expect(onSubmit.mock.calls[0][0].settings.mamUsername).toBe('NewVipUser');
+    });
+
+    it('#361 refresh with sentinel + indexerId shows DetectionOverlay spinner during API call', async () => {
+      (api.testIndexerConfig as Mock).mockReturnValue(new Promise(() => {})); // never resolves
+      const user = userEvent.setup();
+      renderWithProviders(<SentinelEditWrapper indexerId={42} />);
+
+      await waitFor(() => {
+        expect(screen.getByText('OldUser')).toBeInTheDocument();
+      });
+
+      await user.click(screen.getByTitle('Refresh VIP status'));
+
+      await waitFor(() => {
+        expect(screen.getByText('Checking MAM status…')).toBeInTheDocument();
+      });
+    });
+
+    it('#361 refresh with sentinel + indexerId API failure shows error message, clears badge', async () => {
+      (api.testIndexerConfig as Mock).mockRejectedValue(new Error('Network error'));
+      const user = userEvent.setup();
+      renderWithProviders(<SentinelEditWrapper indexerId={42} />);
+
+      await waitFor(() => {
+        expect(screen.getByText('OldUser')).toBeInTheDocument();
+      });
+
+      await user.click(screen.getByTitle('Refresh VIP status'));
+
+      await waitFor(() => {
+        expect(screen.getByText('Connection failed')).toBeInTheDocument();
+      });
+      expect(screen.queryByText('OldUser')).not.toBeInTheDocument();
+    });
+
+    it('#361 refresh with sentinel + indexerId API returns success:false shows error message', async () => {
+      (api.testIndexerConfig as Mock).mockResolvedValue({
+        success: false,
+        message: 'MAM ID expired',
+      });
+      const user = userEvent.setup();
+      renderWithProviders(<SentinelEditWrapper indexerId={42} />);
+
+      await waitFor(() => {
+        expect(screen.getByText('OldUser')).toBeInTheDocument();
+      });
+
+      await user.click(screen.getByTitle('Refresh VIP status'));
+
+      await waitFor(() => {
+        expect(screen.getByText('MAM ID expired')).toBeInTheDocument();
+      });
+      expect(screen.queryByText('OldUser')).not.toBeInTheDocument();
+    });
+
+    it('#361 refresh with non-sentinel mamId calls testIndexerConfig without id (existing path)', async () => {
+      (api.testIndexerConfig as Mock)
+        .mockResolvedValueOnce({ success: true, metadata: { username: 'User1', classname: 'User', isVip: false } })
+        .mockResolvedValueOnce({ success: true, metadata: { username: 'User1', classname: 'VIP', isVip: true } });
+      const user = userEvent.setup();
+
+      function NonSentinelWrapper() {
+        const { register, watch, setValue, formState: { errors } } = useForm<CreateIndexerFormData>({
+          defaultValues: {
+            name: '', type: 'myanonamouse',
+            settings: { mamId: '', searchLanguages: [1], searchType: 'active' },
+          },
+        });
+        return <IndexerFields selectedType="myanonamouse" register={register} errors={errors} watch={watch} setValue={setValue} indexerId={42} />;
+      }
+
+      renderWithProviders(<NonSentinelWrapper />);
+
+      // Type a real mamId and blur to get initial badge
+      const mamIdInput = screen.getByLabelText('MAM ID');
+      await user.type(mamIdInput, 'real-mam-id');
+      await user.tab();
+
+      await waitFor(() => {
+        expect(screen.getByText('User1')).toBeInTheDocument();
+      });
+
+      // Clear mock and click refresh
+      (api.testIndexerConfig as Mock).mockClear();
+      (api.testIndexerConfig as Mock).mockResolvedValue({
+        success: true,
+        metadata: { username: 'User1', classname: 'VIP', isVip: true },
+      });
+
+      await user.click(screen.getByTitle('Refresh VIP status'));
+
+      await waitFor(() => {
+        expect((api.testIndexerConfig as Mock)).toHaveBeenCalledWith(
+          expect.not.objectContaining({ id: expect.anything() }),
+        );
+      });
+    });
+
+    it('#361 refresh with sentinel mamId but no indexerId (create mode) does not call API', async () => {
+      const user = userEvent.setup();
+
+      // SentinelEditWrapper without indexerId simulates create mode with sentinel somehow in field
+      renderWithProviders(<SentinelEditWrapper />);
+
+      // Badge is hydrated from persisted isVip/mamUsername defaults
+      await waitFor(() => {
+        expect(screen.getByText('OldUser')).toBeInTheDocument();
+      });
+
+      await user.click(screen.getByTitle('Refresh VIP status'));
+
+      // Should not call API — sentinel without indexerId means no saved credentials to resolve
+      expect((api.testIndexerConfig as Mock)).not.toHaveBeenCalled();
+    });
+
+    it('#361 blur with sentinel mamId still skips detection (unchanged behavior)', async () => {
+      const user = userEvent.setup();
+      renderWithProviders(<SentinelEditWrapper indexerId={42} />);
+
+      const mamIdInput = screen.getByLabelText('MAM ID');
+      await user.click(mamIdInput);
+      await user.tab(); // blur with sentinel value
+
+      expect((api.testIndexerConfig as Mock)).not.toHaveBeenCalled();
+    });
+
+    it('#361 blur with real mamId still calls testIndexerConfig without id (unchanged behavior)', async () => {
+      (api.testIndexerConfig as Mock).mockResolvedValue({
+        success: true,
+        metadata: { username: 'BlurUser', classname: 'User', isVip: false },
+      });
+      const user = userEvent.setup();
+
+      function BlurTestWrapper() {
+        const { register, watch, setValue, formState: { errors } } = useForm<CreateIndexerFormData>({
+          defaultValues: {
+            name: '', type: 'myanonamouse',
+            settings: { mamId: '', searchLanguages: [1], searchType: 'active' },
+          },
+        });
+        return <IndexerFields selectedType="myanonamouse" register={register} errors={errors} watch={watch} setValue={setValue} indexerId={42} />;
+      }
+
+      renderWithProviders(<BlurTestWrapper />);
+
+      const mamIdInput = screen.getByLabelText('MAM ID');
+      await user.type(mamIdInput, 'new-real-id');
+      await user.tab();
+
+      await waitFor(() => {
+        expect((api.testIndexerConfig as Mock)).toHaveBeenCalledWith(
+          expect.not.objectContaining({ id: expect.anything() }),
+        );
+      });
+    });
+  });
+
   describe('#363 — searchType dropdown', () => {
     function MamFieldWrapper363({ defaultSearchType }: { defaultSearchType?: 'all' | 'active' | 'fl' | 'fl-VIP' | 'VIP' | 'nVIP' } = {}) {
       const { register, watch, setValue, formState: { errors } } = useForm<CreateIndexerFormData>({

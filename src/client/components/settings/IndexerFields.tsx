@@ -16,9 +16,10 @@ interface IndexerFieldsProps {
   setValue?: UseFormSetValue<CreateIndexerFormData>;
   prowlarrManaged?: boolean;
   formTestResult?: { success: boolean; metadata?: Record<string, unknown> } | null;
+  indexerId?: number;
 }
 
-type FieldComponent = (props: Pick<IndexerFieldsProps, 'register' | 'errors' | 'watch' | 'setValue' | 'formTestResult'> & { selectedType: string; prowlarrManaged?: boolean }) => React.JSX.Element;
+type FieldComponent = (props: Pick<IndexerFieldsProps, 'register' | 'errors' | 'watch' | 'setValue' | 'formTestResult' | 'indexerId'> & { selectedType: string; prowlarrManaged?: boolean }) => React.JSX.Element;
 
 function FlareSolverrField({ register, errors }: Pick<IndexerFieldsProps, 'register' | 'errors'>) {
   return (
@@ -134,13 +135,16 @@ interface MamStatus {
   isVip: boolean;
 }
 
-function useMamDetection(watch?: UseFormWatch<CreateIndexerFormData>, setValue?: UseFormSetValue<CreateIndexerFormData>, initialStatus?: MamStatus | null) {
+function useMamDetection(watch?: UseFormWatch<CreateIndexerFormData>, setValue?: UseFormSetValue<CreateIndexerFormData>, initialStatus?: MamStatus | null, indexerId?: number) {
   const [mamStatus, setMamStatus] = useState<MamStatus | null>(initialStatus ?? null);
   const [detectError, setDetectError] = useState<string | null>(null);
   const [isDetecting, setIsDetecting] = useState(false);
 
   const detect = useCallback(async (mamId: string) => {
-    if (!mamId.trim() || mamId === '********') return;
+    if (!mamId.trim()) return;
+    const isSentinel = mamId === '********';
+    if (isSentinel && indexerId == null) return;
+
     setIsDetecting(true);
     setDetectError(null);
     const startTime = Date.now();
@@ -153,10 +157,12 @@ function useMamDetection(watch?: UseFormWatch<CreateIndexerFormData>, setValue?:
     try {
       const baseUrl = watch ? (watch('settings.baseUrl') || '') : '';
       const useProxy = watch ? (watch('settings.useProxy') || false) : false;
-      const result = await api.testIndexerConfig({
+      const payload = {
         name: 'Detection', type: 'myanonamouse', enabled: true, priority: 0,
         settings: { mamId, baseUrl, useProxy },
-      });
+        ...(isSentinel && indexerId != null ? { id: indexerId } : {}),
+      };
+      const result = await api.testIndexerConfig(payload);
       await ensureMinDuration();
 
       if (result.success && result.metadata) {
@@ -180,7 +186,7 @@ function useMamDetection(watch?: UseFormWatch<CreateIndexerFormData>, setValue?:
       setMamStatus(null);
     }
     setIsDetecting(false);
-  }, [watch, setValue]);
+  }, [watch, setValue, indexerId]);
 
   return { mamStatus, detectError, isDetecting, detect, setMamStatus };
 }
@@ -242,9 +248,9 @@ function metadataToMamStatus(metadata: Record<string, unknown>): MamStatus {
   };
 }
 
-function MamFields({ register, errors, watch, setValue, formTestResult }: Pick<IndexerFieldsProps, 'register' | 'errors' | 'watch' | 'setValue' | 'formTestResult'>) {
+function MamFields({ register, errors, watch, setValue, formTestResult, indexerId }: Pick<IndexerFieldsProps, 'register' | 'errors' | 'watch' | 'setValue' | 'formTestResult' | 'indexerId'>) {
   const searchLanguages = watch ? (watch('settings.searchLanguages') ?? [1]) : [1];
-  const { mamStatus, detectError, isDetecting, detect, setMamStatus } = useMamDetection(watch, setValue, deriveInitialMamStatus(watch));
+  const { mamStatus, detectError, isDetecting, detect, setMamStatus } = useMamDetection(watch, setValue, deriveInitialMamStatus(watch), indexerId);
 
   // Bridge: update badge from explicit Test button result
   useEffect(() => {
@@ -273,7 +279,8 @@ function MamFields({ register, errors, watch, setValue, formTestResult }: Pick<I
           {...mamIdRegistration}
           onBlur={(e) => {
             mamIdRegistration.onBlur(e);
-            if (e.target.value.trim()) detect(e.target.value);
+            const val = e.target.value.trim();
+            if (val && val !== '********') detect(val);
           }}
           className={`w-full px-4 py-3 bg-background border rounded-xl focus-ring focus:border-transparent transition-all ${
             errors.settings?.mamId ? 'border-destructive' : 'border-border'
@@ -385,12 +392,12 @@ function UseProxyField({ register, watch }: { register: UseFormRegister<CreateIn
   );
 }
 
-export function IndexerFields({ selectedType, register, errors, watch, setValue, prowlarrManaged, formTestResult }: IndexerFieldsProps) {
+export function IndexerFields({ selectedType, register, errors, watch, setValue, prowlarrManaged, formTestResult, indexerId }: IndexerFieldsProps) {
   const Component = FIELD_COMPONENTS[selectedType];
   if (!Component) return null;
   return (
     <>
-      <Component register={register} errors={errors} watch={watch} setValue={setValue} selectedType={selectedType} prowlarrManaged={prowlarrManaged} formTestResult={formTestResult} />
+      <Component register={register} errors={errors} watch={watch} setValue={setValue} selectedType={selectedType} prowlarrManaged={prowlarrManaged} formTestResult={formTestResult} indexerId={indexerId} />
       <UseProxyField register={register} watch={watch} />
     </>
   );
