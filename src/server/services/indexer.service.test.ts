@@ -176,7 +176,7 @@ describe('IndexerService', () => {
     it('#317 persists isVip metadata on successful MAM test', async () => {
       const mamIndexer = createMockDbIndexer({
         id: 5, type: 'myanonamouse',
-        settings: { mamId: 'test-id', searchLanguages: [1], searchType: 1 },
+        settings: { mamId: 'test-id', searchLanguages: [1], searchType: 'active' },
       });
       db.select.mockReturnValue(mockDbChain([mamIndexer]));
 
@@ -194,14 +194,14 @@ describe('IndexerService', () => {
       expect(result.success).toBe(true);
       expect(result.metadata).toEqual({ username: 'VipUser', classname: 'VIP', isVip: true });
       expect(updateSpy).toHaveBeenCalledWith(5, {
-        settings: { mamId: 'test-id', searchLanguages: [1], searchType: 1, isVip: true },
+        settings: { mamId: 'test-id', searchLanguages: [1], searchType: 'active', isVip: true },
       });
     });
 
     it('#317 does not persist metadata on failed test', async () => {
       const mamIndexer = createMockDbIndexer({
         id: 5, type: 'myanonamouse',
-        settings: { mamId: 'bad-id', searchLanguages: [1], searchType: 1 },
+        settings: { mamId: 'bad-id', searchLanguages: [1], searchType: 'active' },
       });
       db.select.mockReturnValue(mockDbChain([mamIndexer]));
 
@@ -223,7 +223,7 @@ describe('IndexerService', () => {
     it('#317 returns test result even if metadata persistence fails', async () => {
       const mamIndexer = createMockDbIndexer({
         id: 5, type: 'myanonamouse',
-        settings: { mamId: 'test-id', searchLanguages: [1], searchType: 1 },
+        settings: { mamId: 'test-id', searchLanguages: [1], searchType: 'active' },
       });
       db.select.mockReturnValue(mockDbChain([mamIndexer]));
 
