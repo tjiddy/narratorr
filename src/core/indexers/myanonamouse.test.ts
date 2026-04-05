@@ -34,7 +34,7 @@ describe('MyAnonamouseIndexer', () => {
   let indexer: MyAnonamouseIndexer;
 
   beforeEach(() => {
-    indexer = new MyAnonamouseIndexer({ mamId: 'test-mam-id', baseUrl: MAM_BASE, searchLanguages: [1], searchType: 1 });
+    indexer = new MyAnonamouseIndexer({ mamId: 'test-mam-id', baseUrl: MAM_BASE, searchLanguages: [1], searchType: 'active' });
   });
 
   describe('properties', () => {
@@ -44,7 +44,7 @@ describe('MyAnonamouseIndexer', () => {
     });
 
     it('uses default base URL when not provided', async () => {
-      const defaultIndexer = new MyAnonamouseIndexer({ mamId: 'test', searchLanguages: [1], searchType: 1 });
+      const defaultIndexer = new MyAnonamouseIndexer({ mamId: 'test', searchLanguages: [1], searchType: 'active' });
       expect(defaultIndexer.type).toBe('myanonamouse');
 
       let capturedUrl: string | undefined;
@@ -60,7 +60,7 @@ describe('MyAnonamouseIndexer', () => {
     });
 
     it('uses custom name when provided', () => {
-      const named = new MyAnonamouseIndexer({ mamId: 'test', baseUrl: MAM_BASE, searchLanguages: [1], searchType: 1 }, 'Custom MAM');
+      const named = new MyAnonamouseIndexer({ mamId: 'test', baseUrl: MAM_BASE, searchLanguages: [1], searchType: 'active' }, 'Custom MAM');
       expect(named.name).toBe('Custom MAM');
     });
   });
@@ -709,7 +709,7 @@ describe('MyAnonamouseIndexer', () => {
         baseUrl: MAM_BASE,
         proxyUrl: PROXY_URL,
         searchLanguages: [1],
-        searchType: 1,
+        searchType: 'active',
       });
     });
 
@@ -816,7 +816,7 @@ describe('MyAnonamouseIndexer', () => {
         mamId: 'test-mam-id',
         baseUrl: MAM_BASE,
         searchLanguages: [1],
-        searchType: 1,
+        searchType: 'active',
       });
 
       const searchResponse = JSON.stringify({ data: [makeResult()] });
@@ -905,7 +905,7 @@ describe('MyAnonamouseIndexer', () => {
     it('sends tor[browse_lang][0]=1 when searchLanguages is [1]', async () => {
       const langIndexer = new MyAnonamouseIndexer({
         mamId: 'test-mam-id', baseUrl: MAM_BASE,
-        searchLanguages: [1], searchType: 1,
+        searchLanguages: [1], searchType: 'active',
       });
       let capturedUrl = '';
       server.use(
@@ -922,7 +922,7 @@ describe('MyAnonamouseIndexer', () => {
     it('sends indexed browse_lang params for multiple languages', async () => {
       const langIndexer = new MyAnonamouseIndexer({
         mamId: 'test-mam-id', baseUrl: MAM_BASE,
-        searchLanguages: [1, 36], searchType: 1,
+        searchLanguages: [1, 36], searchType: 'active',
       });
       let capturedUrl = '';
       server.use(
@@ -937,10 +937,10 @@ describe('MyAnonamouseIndexer', () => {
       expect(url.searchParams.get('tor[browse_lang][1]')).toBe('36');
     });
 
-    it('sends tor[searchType]=1 when searchType is 1 (active)', async () => {
+    it('sends tor[searchType]=active when searchType is "active"', async () => {
       const stIndexer = new MyAnonamouseIndexer({
         mamId: 'test-mam-id', baseUrl: MAM_BASE,
-        searchLanguages: [1], searchType: 1,
+        searchLanguages: [1], searchType: 'active',
       });
       let capturedUrl = '';
       server.use(
@@ -951,13 +951,13 @@ describe('MyAnonamouseIndexer', () => {
       );
       await stIndexer.search('test');
       const url = new URL(capturedUrl);
-      expect(url.searchParams.get('tor[searchType]')).toBe('1');
+      expect(url.searchParams.get('tor[searchType]')).toBe('active');
     });
 
-    it('sends tor[searchType]=0 when searchType is 0 (all) — falsy but valid', async () => {
+    it('sends tor[searchType]=all when searchType is "all"', async () => {
       const stIndexer = new MyAnonamouseIndexer({
         mamId: 'test-mam-id', baseUrl: MAM_BASE,
-        searchLanguages: [1], searchType: 0,
+        searchLanguages: [1], searchType: 'all',
       });
       let capturedUrl = '';
       server.use(
@@ -968,13 +968,13 @@ describe('MyAnonamouseIndexer', () => {
       );
       await stIndexer.search('test');
       const url = new URL(capturedUrl);
-      expect(url.searchParams.get('tor[searchType]')).toBe('0');
+      expect(url.searchParams.get('tor[searchType]')).toBe('all');
     });
 
     it('sends no browse_lang params when searchLanguages is empty array', async () => {
       const noLangIndexer = new MyAnonamouseIndexer({
         mamId: 'test-mam-id', baseUrl: MAM_BASE,
-        searchLanguages: [], searchType: 1,
+        searchLanguages: [], searchType: 'active',
       });
       let capturedUrl = '';
       server.use(
@@ -995,7 +995,7 @@ describe('MyAnonamouseIndexer', () => {
       const allLangs = [1, 2, 4, 33, 35, 36, 37, 38, 40, 43, 44, 45, 46, 49, 51];
       const allLangIndexer = new MyAnonamouseIndexer({
         mamId: 'test-mam-id', baseUrl: MAM_BASE,
-        searchLanguages: allLangs, searchType: 1,
+        searchLanguages: allLangs, searchType: 'active',
       });
       let capturedUrl = '';
       server.use(
@@ -1016,7 +1016,7 @@ describe('MyAnonamouseIndexer', () => {
     it('adapter.test() succeeds when searchLanguages and searchType are in config', async () => {
       const configIndexer = new MyAnonamouseIndexer({
         mamId: 'test-mam-id', baseUrl: MAM_BASE,
-        searchLanguages: [1, 36], searchType: 2,
+        searchLanguages: [1, 36], searchType: 'fl',
       });
       server.use(
         http.get(`${MAM_BASE}/jsonLoad.php`, () => {
@@ -1129,8 +1129,8 @@ describe('MyAnonamouseIndexer', () => {
   });
 
   describe('#317 — automatic search type selection', () => {
-    it('sends tor[searchType]=0 when isVip is true', async () => {
-      const vipIndexer = new MyAnonamouseIndexer({ mamId: 'test', baseUrl: MAM_BASE, searchLanguages: [1], searchType: 1, isVip: true });
+    it('sends tor[searchType]=all when isVip is true', async () => {
+      const vipIndexer = new MyAnonamouseIndexer({ mamId: 'test', baseUrl: MAM_BASE, searchLanguages: [1], searchType: 'active', isVip: true });
       let capturedUrl = '';
       server.use(
         http.get(`${MAM_BASE}/tor/js/loadSearchJSONbasic.php`, ({ request }) => {
@@ -1139,11 +1139,11 @@ describe('MyAnonamouseIndexer', () => {
         }),
       );
       await vipIndexer.search('test');
-      expect(new URL(capturedUrl).searchParams.get('tor[searchType]')).toBe('0');
+      expect(new URL(capturedUrl).searchParams.get('tor[searchType]')).toBe('all');
     });
 
-    it('sends tor[searchType]=1 when isVip is false', async () => {
-      const nonVipIndexer = new MyAnonamouseIndexer({ mamId: 'test', baseUrl: MAM_BASE, searchLanguages: [1], searchType: 3, isVip: false });
+    it('sends tor[searchType]=nVIP when isVip is false', async () => {
+      const nonVipIndexer = new MyAnonamouseIndexer({ mamId: 'test', baseUrl: MAM_BASE, searchLanguages: [1], searchType: 'fl-VIP', isVip: false });
       let capturedUrl = '';
       server.use(
         http.get(`${MAM_BASE}/tor/js/loadSearchJSONbasic.php`, ({ request }) => {
@@ -1152,11 +1152,11 @@ describe('MyAnonamouseIndexer', () => {
         }),
       );
       await nonVipIndexer.search('test');
-      expect(new URL(capturedUrl).searchParams.get('tor[searchType]')).toBe('1');
+      expect(new URL(capturedUrl).searchParams.get('tor[searchType]')).toBe('nVIP');
     });
 
     it('sends saved searchType when isVip is undefined (legacy)', async () => {
-      const legacyIndexer = new MyAnonamouseIndexer({ mamId: 'test', baseUrl: MAM_BASE, searchLanguages: [1], searchType: 3 });
+      const legacyIndexer = new MyAnonamouseIndexer({ mamId: 'test', baseUrl: MAM_BASE, searchLanguages: [1], searchType: 'fl-VIP' });
       let capturedUrl = '';
       server.use(
         http.get(`${MAM_BASE}/tor/js/loadSearchJSONbasic.php`, ({ request }) => {
@@ -1165,7 +1165,7 @@ describe('MyAnonamouseIndexer', () => {
         }),
       );
       await legacyIndexer.search('test');
-      expect(new URL(capturedUrl).searchParams.get('tor[searchType]')).toBe('3');
+      expect(new URL(capturedUrl).searchParams.get('tor[searchType]')).toBe('fl-VIP');
     });
   });
 
@@ -1193,7 +1193,7 @@ describe('MyAnonamouseIndexer', () => {
     });
 
     it('sets isFreeleech: true when result has fl_vip: true and adapter isVip is true', async () => {
-      const vipIndexer = new MyAnonamouseIndexer({ mamId: 'test', baseUrl: MAM_BASE, searchLanguages: [1], searchType: 0, isVip: true });
+      const vipIndexer = new MyAnonamouseIndexer({ mamId: 'test', baseUrl: MAM_BASE, searchLanguages: [1], searchType: 'all', isVip: true });
       server.use(
         http.get(`${MAM_BASE}/tor/js/loadSearchJSONbasic.php`, () => {
           return HttpResponse.json({ data: [makeResult({ fl_vip: true })] });
@@ -1205,7 +1205,7 @@ describe('MyAnonamouseIndexer', () => {
     });
 
     it('does not set isFreeleech when fl_vip: true but adapter isVip is false', async () => {
-      const nonVipIndexer = new MyAnonamouseIndexer({ mamId: 'test', baseUrl: MAM_BASE, searchLanguages: [1], searchType: 1, isVip: false });
+      const nonVipIndexer = new MyAnonamouseIndexer({ mamId: 'test', baseUrl: MAM_BASE, searchLanguages: [1], searchType: 'active', isVip: false });
       server.use(
         http.get(`${MAM_BASE}/tor/js/loadSearchJSONbasic.php`, () => {
           return HttpResponse.json({ data: [makeResult({ fl_vip: true })] });
@@ -1262,6 +1262,62 @@ describe('MyAnonamouseIndexer', () => {
       expect(results).toHaveLength(1);
       expect(results[0].isFreeleech).toBeUndefined();
       expect(results[0].isVipOnly).toBeUndefined();
+    });
+  });
+
+  describe('#363 — searchType string values and auto-select', () => {
+    it('sends tor[searchType]=nVIP when isVip is false', async () => {
+      const nonVipIndexer = new MyAnonamouseIndexer({ mamId: 'test', baseUrl: MAM_BASE, searchLanguages: [1], searchType: 'fl', isVip: false });
+      let capturedUrl = '';
+      server.use(
+        http.get(`${MAM_BASE}/tor/js/loadSearchJSONbasic.php`, ({ request }) => {
+          capturedUrl = request.url;
+          return HttpResponse.json({ data: [] });
+        }),
+      );
+      await nonVipIndexer.search('test');
+      expect(new URL(capturedUrl).searchParams.get('tor[searchType]')).toBe('nVIP');
+    });
+
+    it('sends tor[searchType]=all when isVip is true', async () => {
+      const vipIndexer = new MyAnonamouseIndexer({ mamId: 'test', baseUrl: MAM_BASE, searchLanguages: [1], searchType: 'active', isVip: true });
+      let capturedUrl = '';
+      server.use(
+        http.get(`${MAM_BASE}/tor/js/loadSearchJSONbasic.php`, ({ request }) => {
+          capturedUrl = request.url;
+          return HttpResponse.json({ data: [] });
+        }),
+      );
+      await vipIndexer.search('test');
+      expect(new URL(capturedUrl).searchParams.get('tor[searchType]')).toBe('all');
+    });
+
+    it('sends saved string searchType when isVip is undefined (legacy)', async () => {
+      const legacyIndexer = new MyAnonamouseIndexer({ mamId: 'test', baseUrl: MAM_BASE, searchLanguages: [1], searchType: 'fl-VIP' });
+      let capturedUrl = '';
+      server.use(
+        http.get(`${MAM_BASE}/tor/js/loadSearchJSONbasic.php`, ({ request }) => {
+          capturedUrl = request.url;
+          return HttpResponse.json({ data: [] });
+        }),
+      );
+      await legacyIndexer.search('test');
+      expect(new URL(capturedUrl).searchParams.get('tor[searchType]')).toBe('fl-VIP');
+    });
+
+    it('sends each of the 6 string values as correct URL parameter', async () => {
+      for (const value of ['all', 'active', 'fl', 'fl-VIP', 'VIP', 'nVIP']) {
+        const idx = new MyAnonamouseIndexer({ mamId: 'test', baseUrl: MAM_BASE, searchLanguages: [1], searchType: value });
+        let capturedUrl = '';
+        server.use(
+          http.get(`${MAM_BASE}/tor/js/loadSearchJSONbasic.php`, ({ request }) => {
+            capturedUrl = request.url;
+            return HttpResponse.json({ data: [] });
+          }),
+        );
+        await idx.search('test');
+        expect(new URL(capturedUrl).searchParams.get('tor[searchType]')).toBe(value);
+      }
     });
   });
 

@@ -3,6 +3,7 @@ import { AudioBookBayIndexer } from './abb.js';
 import { NewznabIndexer } from './newznab.js';
 import { TorznabIndexer } from './torznab.js';
 import { MyAnonamouseIndexer } from './myanonamouse.js';
+import { coerceSearchType } from '../../shared/indexer-registry.js';
 
 type AdapterFactory = (settings: Record<string, unknown>, name: string, proxyUrl?: string) => IndexerAdapter;
 
@@ -29,7 +30,8 @@ export const ADAPTER_FACTORIES: Record<string, AdapterFactory> = {
     mamId: s.mamId as string,
     baseUrl: (s.baseUrl as string) || undefined,
     searchLanguages: (s.searchLanguages as number[]) ?? [1],
-    searchType: (s.searchType as number) ?? 1,
+    searchType: coerceSearchType(s.searchType),
+    isVip: s.isVip as boolean | undefined,
     proxyUrl,
   }, name),
 };

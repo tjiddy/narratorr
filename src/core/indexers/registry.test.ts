@@ -79,14 +79,14 @@ describe('Indexer ADAPTER_FACTORIES', () => {
       captureSearchUrl(captured);
 
       const adapter = ADAPTER_FACTORIES.myanonamouse(
-        { mamId: 'test-id', searchLanguages: [1, 36], searchType: 2 }, 'MAM',
+        { mamId: 'test-id', searchLanguages: [1, 36], searchType: 'fl' }, 'MAM',
       );
       await adapter.search('test');
 
       const url = new URL(captured.value);
       expect(url.searchParams.get('tor[browse_lang][0]')).toBe('1');
       expect(url.searchParams.get('tor[browse_lang][1]')).toBe('36');
-      expect(url.searchParams.get('tor[searchType]')).toBe('2');
+      expect(url.searchParams.get('tor[searchType]')).toBe('fl');
     });
 
     it('defaults missing searchLanguages to [1] (English) in search params', async () => {
@@ -101,7 +101,7 @@ describe('Indexer ADAPTER_FACTORIES', () => {
       expect(url.searchParams.getAll('tor[browse_lang][1]')).toHaveLength(0);
     });
 
-    it('defaults missing searchType to 1 (active) in search params', async () => {
+    it('defaults missing searchType to "active" in search params', async () => {
       const captured = { value: '' };
       captureSearchUrl(captured);
 
@@ -109,20 +109,20 @@ describe('Indexer ADAPTER_FACTORIES', () => {
       await adapter.search('test');
 
       const url = new URL(captured.value);
-      expect(url.searchParams.get('tor[searchType]')).toBe('1');
+      expect(url.searchParams.get('tor[searchType]')).toBe('active');
     });
 
-    it('preserves searchType: 0 (falsy but valid) — sends 0 not default 1', async () => {
+    it('preserves searchType: "all" — sends "all" not default "active"', async () => {
       const captured = { value: '' };
       captureSearchUrl(captured);
 
       const adapter = ADAPTER_FACTORIES.myanonamouse(
-        { mamId: 'test-id', searchType: 0, searchLanguages: [1] }, 'MAM',
+        { mamId: 'test-id', searchType: 'all', searchLanguages: [1] }, 'MAM',
       );
       await adapter.search('test');
 
       const url = new URL(captured.value);
-      expect(url.searchParams.get('tor[searchType]')).toBe('0');
+      expect(url.searchParams.get('tor[searchType]')).toBe('all');
     });
 
     it('preserves searchLanguages: [] (empty) — sends no browse_lang params', async () => {
@@ -130,7 +130,7 @@ describe('Indexer ADAPTER_FACTORIES', () => {
       captureSearchUrl(captured);
 
       const adapter = ADAPTER_FACTORIES.myanonamouse(
-        { mamId: 'test-id', searchLanguages: [], searchType: 1 }, 'MAM',
+        { mamId: 'test-id', searchLanguages: [], searchType: 'active' }, 'MAM',
       );
       await adapter.search('test');
 
@@ -144,6 +144,115 @@ describe('Indexer ADAPTER_FACTORIES', () => {
   describe('error handling', () => {
     it('returns undefined for unknown indexer type (no factory)', () => {
       expect(ADAPTER_FACTORIES['unknown']).toBeUndefined();
+    });
+  });
+
+  describe('#363 — searchType string coercion and isVip forwarding', () => {
+    function captureSearchUrl(capturedUrl: { value: string }) {
+      server.use(
+        http.get(`${MAM_BASE}/tor/js/loadSearchJSONbasic.php`, ({ request }) => {
+          capturedUrl.value = request.url;
+          return HttpResponse.json({ data: [] });
+        }),
+      );
+    }
+
+    it('forwards string searchType to adapter (no coercion needed)', async () => {
+      const captured = { value: '' };
+      captureSearchUrl(captured);
+      const adapter = ADAPTER_FACTORIES.myanonamouse(
+        { mamId: 'test-id', searchLanguages: [1], searchType: 'fl' }, 'MAM',
+      );
+      await adapter.search('test');
+      expect(new URL(captured.value).searchParams.get('tor[searchType]')).toBe('fl');
+    });
+
+    it('coerces legacy integer searchType 0 to "all"', async () => {
+      const captured = { value: '' };
+      captureSearchUrl(captured);
+      const adapter = ADAPTER_FACTORIES.myanonamouse(
+        { mamId: 'test-id', searchLanguages: [1], searchType: 0 }, 'MAM',
+      );
+      await adapter.search('test');
+      expect(new URL(captured.value).searchParams.get('tor[searchType]')).toBe('all');
+    });
+
+    it('coerces legacy integer searchType 1 to "active"', async () => {
+      const captured = { value: '' };
+      captureSearchUrl(captured);
+      const adapter = ADAPTER_FACTORIES.myanonamouse(
+        { mamId: 'test-id', searchLanguages: [1], searchType: 1 }, 'MAM',
+      );
+      await adapter.search('test');
+      expect(new URL(captured.value).searchParams.get('tor[searchType]')).toBe('active');
+    });
+
+    it('coerces legacy integer searchType 2 to "fl"', async () => {
+      const captured = { value: '' };
+      captureSearchUrl(captured);
+      const adapter = ADAPTER_FACTORIES.myanonamouse(
+        { mamId: 'test-id', searchLanguages: [1], searchType: 2 }, 'MAM',
+      );
+      await adapter.search('test');
+      expect(new URL(captured.value).searchParams.get('tor[searchType]')).toBe('fl');
+    });
+
+    it('coerces legacy integer searchType 3 to "fl-VIP"', async () => {
+      const captured = { value: '' };
+      captureSearchUrl(captured);
+      const adapter = ADAPTER_FACTORIES.myanonamouse(
+        { mamId: 'test-id', searchLanguages: [1], searchType: 3 }, 'MAM',
+      );
+      await adapter.search('test');
+      expect(new URL(captured.value).searchParams.get('tor[searchType]')).toBe('fl-VIP');
+    });
+
+    it('coerces unknown legacy integer (4) to "active" (fallback)', async () => {
+      const captured = { value: '' };
+      captureSearchUrl(captured);
+      const adapter = ADAPTER_FACTORIES.myanonamouse(
+        { mamId: 'test-id', searchLanguages: [1], searchType: 4 }, 'MAM',
+      );
+      await adapter.search('test');
+      expect(new URL(captured.value).searchParams.get('tor[searchType]')).toBe('active');
+    });
+
+    it('defaults missing searchType to "active"', async () => {
+      const captured = { value: '' };
+      captureSearchUrl(captured);
+      const adapter = ADAPTER_FACTORIES.myanonamouse({ mamId: 'test-id' }, 'MAM');
+      await adapter.search('test');
+      expect(new URL(captured.value).searchParams.get('tor[searchType]')).toBe('active');
+    });
+
+    it('forwards isVip: false from settings — adapter emits tor[searchType]=nVIP', async () => {
+      const captured = { value: '' };
+      captureSearchUrl(captured);
+      const adapter = ADAPTER_FACTORIES.myanonamouse(
+        { mamId: 'test-id', searchLanguages: [1], searchType: 'active', isVip: false }, 'MAM',
+      );
+      await adapter.search('test');
+      expect(new URL(captured.value).searchParams.get('tor[searchType]')).toBe('nVIP');
+    });
+
+    it('forwards isVip: true from settings — adapter emits tor[searchType]=all', async () => {
+      const captured = { value: '' };
+      captureSearchUrl(captured);
+      const adapter = ADAPTER_FACTORIES.myanonamouse(
+        { mamId: 'test-id', searchLanguages: [1], searchType: 'fl', isVip: true }, 'MAM',
+      );
+      await adapter.search('test');
+      expect(new URL(captured.value).searchParams.get('tor[searchType]')).toBe('all');
+    });
+
+    it('forwards isVip: undefined from settings — adapter uses saved searchType', async () => {
+      const captured = { value: '' };
+      captureSearchUrl(captured);
+      const adapter = ADAPTER_FACTORIES.myanonamouse(
+        { mamId: 'test-id', searchLanguages: [1], searchType: 'VIP' }, 'MAM',
+      );
+      await adapter.search('test');
+      expect(new URL(captured.value).searchParams.get('tor[searchType]')).toBe('VIP');
     });
   });
 });

@@ -8,7 +8,7 @@ export interface MAMConfig {
   baseUrl?: string;
   proxyUrl?: string;
   searchLanguages: number[];
-  searchType: number;
+  searchType: string;
   isVip?: boolean;
 }
 
@@ -75,7 +75,7 @@ export class MyAnonamouseIndexer implements IndexerAdapter {
   private mamId: string;
   private proxyUrl?: string;
   private searchLanguages: number[];
-  private searchType: number;
+  private searchType: string;
   private isVip?: boolean;
 
   constructor(config: MAMConfig, name?: string) {
@@ -97,8 +97,8 @@ export class MyAnonamouseIndexer implements IndexerAdapter {
     });
 
     // Auto-select search type based on VIP status, fall back to saved value for legacy rows
-    const effectiveSearchType = this.isVip === true ? 0 : this.isVip === false ? 1 : this.searchType;
-    params.set('tor[searchType]', String(effectiveSearchType));
+    const effectiveSearchType = this.isVip === true ? 'all' : this.isVip === false ? 'nVIP' : this.searchType;
+    params.set('tor[searchType]', effectiveSearchType);
 
     // Append language filter parameters (indexed array format)
     for (let i = 0; i < this.searchLanguages.length; i++) {
