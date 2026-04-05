@@ -1773,8 +1773,8 @@ describe('QualityGateOrchestrator', () => {
       expect(qualityGateService.atomicClaim).not.toHaveBeenCalled();
     });
 
-    it('releases slot in finally even when import fails', async () => {
-      const { orchestrator, qualityGateService, importOrchestrator, importService } = createOrchestrator();
+    it('releases slot in finally even when import fails and logs error', async () => {
+      const { orchestrator, qualityGateService, importOrchestrator, importService, log } = createOrchestrator();
       qualityGateService.getCompletedDownloads.mockResolvedValue([{ download: completedDownload, book: { ...downloadingBook } }]);
       (importOrchestrator.importDownload as ReturnType<typeof vi.fn>).mockRejectedValue(new Error('Import failed'));
 
@@ -1784,6 +1784,10 @@ describe('QualityGateOrchestrator', () => {
       await new Promise((resolve) => setTimeout(resolve, 10));
 
       expect(importService.releaseSlot).toHaveBeenCalled();
+      expect(log.error).toHaveBeenCalledWith(
+        expect.objectContaining({ downloadId: 1, error: expect.any(Error) }),
+        'Quality gate: inline import failed',
+      );
     });
   });
 });
