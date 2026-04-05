@@ -404,7 +404,7 @@ describe('Job lifecycle E2E', () => {
       }),
     );
 
-    // Run the real monitor logic (exported from monitor job)
+    // Run the real monitor logic (exported from monitor job) — no QG orchestrator = no inline import trigger
     const { monitorDownloads } = await import('../jobs/monitor.js');
     await monitorDownloads(e2e.db, e2e.services.downloadClient, e2e.services.notifier, e2e.app.log);
 
@@ -413,9 +413,11 @@ describe('Job lifecycle E2E', () => {
     expect(updated.status).toBe('completed');
     expect(updated.completedAt).toBeTruthy();
 
-    // Book is promoted to 'importing' immediately (monitor pre-promotion for instant UI feedback)
+    // Book stays 'downloading' — promotion to 'importing' now happens in processOneDownload
+    // (fire-and-forget from monitor), not directly in the monitor. Without a QG orchestrator
+    // passed, the inline import path is not triggered.
     const bookCheck = await e2e.app.inject({ method: 'GET', url: `/api/books/${bookId}` });
-    expect(bookCheck.json().status).toBe('importing');
+    expect(bookCheck.json().status).toBe('downloading');
   });
 
   // ── Import job: picks up completed downloads ──────────────────────

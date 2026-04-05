@@ -3,12 +3,14 @@ import type { FastifyBaseLogger } from 'fastify';
 import { QualityGateOrchestrator } from './quality-gate-orchestrator.js';
 import type { QualityGateService, QualityDecision } from './quality-gate.service.js';
 import { QualityGateServiceError, NULL_REASON } from './quality-gate.types.js';
-import { inject, createMockDb, createMockLogger } from '../__tests__/helpers.js';
+import { inject, createMockDb, createMockLogger, mockDbChain } from '../__tests__/helpers.js';
 import type { Db } from '../../db/index.js';
 import type { EventHistoryService } from './event-history.service.js';
 import type { EventBroadcasterService } from './event-broadcaster.service.js';
 import type { BlacklistService } from './blacklist.service.js';
 import type { DownloadClientService } from './download-client.service.js';
+import type { ImportOrchestrator } from './import-orchestrator.js';
+import type { ImportService } from './import.service.js';
 
 vi.mock('../../core/utils/audio-scanner.js', () => ({
   scanAudioDirectory: vi.fn(),
@@ -47,6 +49,8 @@ const mockAdapter = {
 function createOrchestrator(opts?: {
   retrySearchDeps?: RetrySearchDeps;
   settingsService?: SettingsService;
+  importOrchestrator?: Partial<ImportOrchestrator>;
+  importService?: Partial<ImportService>;
 }) {
   const db = createMockDb();
   const log = createMockLogger();
@@ -68,6 +72,18 @@ function createOrchestrator(opts?: {
     getDeferredCleanupCandidates: vi.fn().mockResolvedValue([]),
   };
 
+  const importOrchestrator = {
+    importDownload: vi.fn().mockResolvedValue(null),
+    ...opts?.importOrchestrator,
+  };
+
+  const importService = {
+    tryAcquireSlot: vi.fn().mockReturnValue(true),
+    releaseSlot: vi.fn(),
+    setProcessingQueued: vi.fn().mockResolvedValue(undefined),
+    ...opts?.importService,
+  };
+
   const orchestrator = new QualityGateOrchestrator(
     inject<QualityGateService>(qualityGateService),
     inject<Db>(db),
@@ -79,9 +95,11 @@ function createOrchestrator(opts?: {
     undefined, // remotePathMappingService
     opts?.retrySearchDeps ? inject<RetrySearchDeps>(opts.retrySearchDeps) : undefined,
     opts?.settingsService ? inject<SettingsService>(opts.settingsService) : undefined,
+    inject<ImportOrchestrator>(importOrchestrator),
+    inject<ImportService>(importService),
   );
 
-  return { orchestrator, qualityGateService, db, log, eventHistory, broadcaster, blacklistService, downloadClientService };
+  return { orchestrator, qualityGateService, db, log, eventHistory, broadcaster, blacklistService, downloadClientService, importOrchestrator, importService };
 }
 
 const baseDownload = {
@@ -1603,6 +1621,189 @@ describe('QualityGateOrchestrator', () => {
       expect(broadcaster.emit).not.toHaveBeenCalledWith('book_status_change', expect.objectContaining({
         old_status: 'downloading', new_status: 'downloading',
       }));
+    });
+  });
+
+  describe('processOneDownload', () => {
+    const completedDownload = { ...baseDownload, status: 'completed' as const, bookId: 1 };
+    const downloadingBook = { ...baseBook, status: 'downloading' as const };
+
+    it('approves and imports when slot is available', async () => {
+      const { orchestrator, qualityGateService, importOrchestrator, importService } = createOrchestrator();
+      qualityGateService.getCompletedDownloads.mockResolvedValue([{ download: completedDownload, book: { ...downloadingBook } }]);
+
+      await orchestrator.processOneDownload(1);
+
+      expect(qualityGateService.atomicClaim).toHaveBeenCalledWith(1);
+      expect(importService.tryAcquireSlot).toHaveBeenCalled();
+      expect(importOrchestrator.importDownload).toHaveBeenCalledWith(1);
+    });
+
+    it('queues to processing_queued when no slot available', async () => {
+      const { orchestrator, qualityGateService, importOrchestrator, importService } = createOrchestrator();
+      qualityGateService.getCompletedDownloads.mockResolvedValue([{ download: completedDownload, book: { ...downloadingBook } }]);
+      (importService.tryAcquireSlot as ReturnType<typeof vi.fn>).mockReturnValue(false);
+
+      await orchestrator.processOneDownload(1);
+
+      expect(importService.setProcessingQueued).toHaveBeenCalledWith(1);
+      expect(importOrchestrator.importDownload).not.toHaveBeenCalled();
+    });
+
+    it('holds for review and reverts book status to downloading', async () => {
+      const { orchestrator, qualityGateService, db, broadcaster } = createOrchestrator();
+      qualityGateService.getCompletedDownloads.mockResolvedValue([{ download: completedDownload, book: { ...downloadingBook } }]);
+      qualityGateService.processDownload.mockResolvedValue({
+        action: 'held', reason: { action: 'held', holdReasons: ['low_bitrate'] }, statusTransition: { from: 'checking', to: 'pending_review' },
+      });
+
+      await orchestrator.processOneDownload(1);
+
+      // Book was promoted to importing then reverted to downloading on hold
+      expect(db.update).toHaveBeenCalled();
+      expect(broadcaster.emit).toHaveBeenCalledWith('book_status_change', expect.objectContaining({
+        book_id: 1, old_status: 'importing', new_status: 'downloading',
+      }));
+    });
+
+    it('rejects and reverts book status to downloading', async () => {
+      const { orchestrator, qualityGateService, broadcaster } = createOrchestrator();
+      qualityGateService.getCompletedDownloads.mockResolvedValue([{ download: completedDownload, book: { ...downloadingBook } }]);
+      qualityGateService.processDownload.mockResolvedValue({
+        action: 'rejected', reason: { action: 'rejected', holdReasons: [] }, statusTransition: { from: 'checking', to: 'failed' },
+      });
+
+      await orchestrator.processOneDownload(1);
+
+      expect(broadcaster.emit).toHaveBeenCalledWith('book_status_change', expect.objectContaining({
+        old_status: 'importing',
+      }));
+    });
+
+    it('returns early when atomic claim fails (double-process guard)', async () => {
+      const { orchestrator, qualityGateService, importOrchestrator } = createOrchestrator();
+      qualityGateService.getCompletedDownloads.mockResolvedValue([{ download: completedDownload, book: { ...downloadingBook } }]);
+      qualityGateService.atomicClaim.mockResolvedValue(false);
+
+      await orchestrator.processOneDownload(1);
+
+      expect(qualityGateService.processDownload).not.toHaveBeenCalled();
+      expect(importOrchestrator.importDownload).not.toHaveBeenCalled();
+    });
+
+    it('promotes book status to importing in DB after atomic claim', async () => {
+      const { orchestrator, qualityGateService, db } = createOrchestrator();
+      const chain = mockDbChain();
+      db.update.mockReturnValue(chain);
+      qualityGateService.getCompletedDownloads.mockResolvedValue([{ download: completedDownload, book: { ...downloadingBook } }]);
+
+      await orchestrator.processOneDownload(1);
+
+      // The first set call should be the book promotion to 'importing'
+      const setCalls = (chain.set as ReturnType<typeof vi.fn>).mock.calls.map((c: unknown[]) => c[0] as Record<string, unknown>);
+      expect(setCalls[0]).toEqual(expect.objectContaining({ status: 'importing' }));
+    });
+
+    it('emits book_status_change SSE after promoting book', async () => {
+      const { orchestrator, qualityGateService, broadcaster } = createOrchestrator();
+      qualityGateService.getCompletedDownloads.mockResolvedValue([{ download: completedDownload, book: { ...downloadingBook } }]);
+
+      await orchestrator.processOneDownload(1);
+
+      expect(broadcaster.emit).toHaveBeenCalledWith('book_status_change', expect.objectContaining({
+        book_id: 1, old_status: 'downloading', new_status: 'importing',
+      }));
+    });
+
+    it('updates in-memory book status so revert guards fire correctly', async () => {
+      const { orchestrator, qualityGateService, broadcaster } = createOrchestrator();
+      const bookCopy = { ...downloadingBook };
+      qualityGateService.getCompletedDownloads.mockResolvedValue([{ download: completedDownload, book: bookCopy }]);
+      qualityGateService.processDownload.mockResolvedValue({
+        action: 'held', reason: { action: 'held', holdReasons: ['low_bitrate'] }, statusTransition: { from: 'checking', to: 'pending_review' },
+      });
+
+      await orchestrator.processOneDownload(1);
+
+      // The revert guard at dispatchSideEffects checks book.status === 'importing'
+      // which should fire because processOneDownload updated the in-memory book
+      expect(broadcaster.emit).toHaveBeenCalledWith('book_status_change', expect.objectContaining({
+        old_status: 'importing', new_status: 'downloading',
+      }));
+    });
+
+    it('returns early for non-existent download', async () => {
+      const { orchestrator, qualityGateService, log } = createOrchestrator();
+      qualityGateService.getCompletedDownloads.mockResolvedValue([]);
+
+      await orchestrator.processOneDownload(999);
+
+      expect(log.warn).toHaveBeenCalledWith({ downloadId: 999 }, expect.stringContaining('not found'));
+      expect(qualityGateService.atomicClaim).not.toHaveBeenCalled();
+    });
+
+    it('holds for probe failure and reverts book to downloading', async () => {
+      const { orchestrator, qualityGateService, broadcaster } = createOrchestrator();
+      qualityGateService.getCompletedDownloads.mockResolvedValue([{ download: completedDownload, book: { ...downloadingBook } }]);
+      (scanAudioDirectory as ReturnType<typeof vi.fn>).mockRejectedValue(new Error('Scan failed'));
+
+      await orchestrator.processOneDownload(1);
+
+      expect(qualityGateService.setStatus).toHaveBeenCalledWith(1, 'pending_review');
+      expect(broadcaster.emit).toHaveBeenCalledWith('book_status_change', expect.objectContaining({
+        old_status: 'importing', new_status: 'downloading',
+      }));
+    });
+
+    it('skips early when download has no bookId', async () => {
+      const { orchestrator, qualityGateService } = createOrchestrator();
+      qualityGateService.getCompletedDownloads.mockResolvedValue([{ download: { ...completedDownload, bookId: null }, book: null }]);
+
+      await orchestrator.processOneDownload(1);
+
+      expect(qualityGateService.atomicClaim).not.toHaveBeenCalled();
+    });
+
+    it('skips early when download has no externalId', async () => {
+      const { orchestrator, qualityGateService } = createOrchestrator();
+      qualityGateService.getCompletedDownloads.mockResolvedValue([{ download: { ...completedDownload, externalId: null }, book: { ...downloadingBook } }]);
+
+      await orchestrator.processOneDownload(1);
+
+      expect(qualityGateService.atomicClaim).not.toHaveBeenCalled();
+    });
+
+    it('reverts book to downloading on unhandled error after promotion', async () => {
+      const { orchestrator, qualityGateService, broadcaster, db } = createOrchestrator();
+      qualityGateService.getCompletedDownloads.mockResolvedValue([{ download: completedDownload, book: { ...downloadingBook } }]);
+      qualityGateService.processDownload.mockRejectedValue(new Error('Unexpected QG failure'));
+      db.update.mockReturnValue(mockDbChain());
+
+      await orchestrator.processOneDownload(1);
+
+      // Download set to pending_review
+      expect(qualityGateService.setStatus).toHaveBeenCalledWith(1, 'pending_review');
+      // Book reverted from importing → downloading
+      expect(broadcaster.emit).toHaveBeenCalledWith('book_status_change', expect.objectContaining({
+        book_id: 1, old_status: 'importing', new_status: 'downloading',
+      }));
+    });
+
+    it('releases slot in finally even when import fails and logs error', async () => {
+      const { orchestrator, qualityGateService, importOrchestrator, importService, log } = createOrchestrator();
+      qualityGateService.getCompletedDownloads.mockResolvedValue([{ download: completedDownload, book: { ...downloadingBook } }]);
+      (importOrchestrator.importDownload as ReturnType<typeof vi.fn>).mockRejectedValue(new Error('Import failed'));
+
+      await orchestrator.processOneDownload(1);
+
+      // Wait for the fire-and-forget promise to settle
+      await new Promise((resolve) => setTimeout(resolve, 10));
+
+      expect(importService.releaseSlot).toHaveBeenCalled();
+      expect(log.error).toHaveBeenCalledWith(
+        expect.objectContaining({ downloadId: 1, error: expect.any(Error) }),
+        'Quality gate: inline import failed',
+      );
     });
   });
 });

@@ -23,6 +23,8 @@ import { rm, stat } from 'node:fs/promises';
 import { eq } from 'drizzle-orm';
 import { downloads } from '../../db/schema.js';
 import { isTorrentRemovalDeferred } from '../utils/seed-helpers.js';
+import type { ImportOrchestrator } from './import-orchestrator.js';
+import type { ImportService } from './import.service.js';
 type BookRow = typeof books.$inferSelect;
 
 export class QualityGateOrchestrator {
@@ -37,6 +39,8 @@ export class QualityGateOrchestrator {
     private remotePathMappingService?: RemotePathMappingService,
     private retrySearchDeps?: RetrySearchDeps,
     private settingsService?: SettingsService,
+    private importOrchestrator?: ImportOrchestrator,
+    private importService?: ImportService,
   ) {}
 
   /**
@@ -103,6 +107,79 @@ export class QualityGateOrchestrator {
         const probeError = error instanceof Error ? error.message : String(error);
         this.recordDecision(row.download, row.book, { ...NULL_REASON, probeFailure: true, probeError, holdReasons: ['unhandled_error'] });
       }
+    }
+  }
+
+  /** Process a single completed download through the quality gate, with inline import on approval. */
+  async processOneDownload(downloadId: number): Promise<void> {
+    const rows = await this.qualityGateService.getCompletedDownloads();
+    const row = rows.find((r) => r.download.id === downloadId);
+    if (!row) { this.log.warn({ downloadId }, 'Quality gate: processOneDownload — download not found or not completed'); return; }
+    if (!row.download.externalId || !row.download.bookId) { this.log.debug({ id: row.download.id }, 'Quality gate: skipping download without externalId or bookId'); return; }
+
+    const claimed = await this.qualityGateService.atomicClaim(row.download.id);
+    if (!claimed) { this.log.debug({ id: row.download.id }, 'Quality gate: already claimed by another cycle'); return; }
+
+    // Promote book status to 'importing' (taking over from removed handleBookStatusOnCompletion)
+    if (row.book) {
+      await this.db.update(books).set({ status: 'importing' }).where(eq(books.id, row.book.id));
+      this.emitSSE('book_status_change', { book_id: row.book.id, old_status: row.book.status as BookStatus, new_status: 'importing' as BookStatus });
+      (row.book as { status: string }).status = 'importing'; // Update in-memory so revert guards work
+    }
+    if (row.book) {
+      this.emitSSE('download_status_change', { download_id: row.download.id, book_id: row.book.id, old_status: 'completed', new_status: 'checking' });
+    }
+
+    try {
+      let savePath: string;
+      try {
+        ({ resolvedPath: savePath } = await resolveSavePath(row.download, this.downloadClientService, this.remotePathMappingService));
+      } catch (error: unknown) {
+        this.log.error({ error, downloadId: row.download.id }, 'Quality gate: failed to resolve save path');
+        await this.holdForProbeFailure(row.download, row.book, 'probe_failed', error);
+        return;
+      }
+      let scanResult;
+      try {
+        scanResult = await scanAudioDirectory(savePath, { skipCover: true });
+      } catch (error: unknown) {
+        this.log.error({ error, downloadId: row.download.id }, 'Quality gate: scan failed');
+        await this.holdForProbeFailure(row.download, row.book, 'probe_failed', error);
+        return;
+      }
+      if (!scanResult) { this.log.warn({ downloadId: row.download.id }, 'Quality gate: no audio files found'); await this.holdForProbeFailure(row.download, row.book, 'probe_failed', 'No audio files found'); return; }
+
+      const decision = await this.qualityGateService.processDownload(row.download, row.book, scanResult);
+      await this.dispatchSideEffects(decision.action, row.download, row.book, decision.reason, decision.statusTransition);
+      if (decision.action === 'imported') { await this.triggerImportWithSlotAdmission(downloadId); }
+    } catch (error: unknown) {
+      this.log.error({ error, downloadId: row.download.id }, 'Quality gate error');
+      await this.qualityGateService.setStatus(row.download.id, 'pending_review');
+      // Revert book from importing → downloading if it was promoted before the error
+      if (row.book && row.book.status === 'importing') {
+        await this.db.update(books).set({ status: 'downloading' }).where(eq(books.id, row.book.id));
+        this.emitSSE('book_status_change', { book_id: row.book.id, old_status: 'importing' as BookStatus, new_status: 'downloading' as BookStatus });
+      }
+      const probeError = error instanceof Error ? error.message : String(error);
+      this.recordDecision(row.download, row.book, { ...NULL_REASON, probeFailure: true, probeError, holdReasons: ['unhandled_error'] });
+    }
+  }
+
+  /** Slot admission for inline import: acquire slot → fire-and-forget import, or queue for next sweep. */
+  private async triggerImportWithSlotAdmission(downloadId: number): Promise<void> {
+    if (!this.importService || !this.importOrchestrator) return;
+
+    if (this.importService.tryAcquireSlot()) {
+      this.importOrchestrator.importDownload(downloadId)
+        .catch((err: unknown) => {
+          this.log.error({ downloadId, error: err }, 'Quality gate: inline import failed');
+        })
+        .finally(() => {
+          this.importService!.releaseSlot();
+        });
+    } else {
+      await this.importService.setProcessingQueued(downloadId);
+      this.log.info({ downloadId }, 'Quality gate: concurrency limit reached, queued for next maintenance sweep');
     }
   }
 
