@@ -22,13 +22,34 @@ export const MAM_LANGUAGES: ReadonlyArray<{ id: number; label: string }> = [
   { id: 51, label: 'Turkish' },
 ];
 
-/** MAM search type options — maps to the `tor[searchType]` API parameter. */
-export const MAM_SEARCH_TYPES: ReadonlyArray<{ value: number; label: string }> = [
-  { value: 0, label: 'All torrents' },
-  { value: 1, label: 'Only active (1+ seeders)' },
-  { value: 2, label: 'Freeleech' },
-  { value: 3, label: 'Freeleech or VIP' },
+export type MamSearchType = 'all' | 'active' | 'fl' | 'fl-VIP' | 'VIP' | 'nVIP';
+
+/** MAM search type options — string values expected by the MAM API's `tor[searchType]` parameter. */
+export const MAM_SEARCH_TYPES: ReadonlyArray<{ value: MamSearchType; label: string }> = [
+  { value: 'all', label: 'All' },
+  { value: 'active', label: 'Active' },
+  { value: 'fl', label: 'Freeleech' },
+  { value: 'fl-VIP', label: 'Freeleech or VIP' },
+  { value: 'VIP', label: 'VIP Only' },
+  { value: 'nVIP', label: 'Not VIP' },
 ];
+
+const MAM_SEARCH_TYPE_VALUES = new Set<string>(MAM_SEARCH_TYPES.map(st => st.value));
+
+/** Legacy integer → string mapping for persisted numeric searchType values. */
+const LEGACY_SEARCH_TYPE_MAP: Record<number, MamSearchType> = {
+  0: 'all',
+  1: 'active',
+  2: 'fl',
+  3: 'fl-VIP',
+};
+
+/** Coerce a persisted searchType value (possibly legacy integer) to a valid MamSearchType. */
+export function coerceSearchType(value: unknown): MamSearchType {
+  if (typeof value === 'string' && MAM_SEARCH_TYPE_VALUES.has(value)) return value as MamSearchType;
+  if (typeof value === 'number') return LEGACY_SEARCH_TYPE_MAP[value] ?? 'active';
+  return 'active';
+}
 export type IndexerType = typeof INDEXER_TYPES[number];
 
 type IndexerTypeMetadata = RegistryEntry<CreateIndexerFormData['settings']>;
@@ -60,7 +81,7 @@ export const INDEXER_REGISTRY: Record<string, IndexerTypeMetadata> = {
   },
   myanonamouse: {
     label: 'MyAnonamouse',
-    defaultSettings: { mamId: '', baseUrl: '', useProxy: false, searchLanguages: [1], searchType: 1 },
+    defaultSettings: { mamId: '', baseUrl: '', useProxy: false, searchLanguages: [1], searchType: 'active' },
     requiredFields: [
       { path: 'mamId', message: 'MAM ID is required' },
     ],

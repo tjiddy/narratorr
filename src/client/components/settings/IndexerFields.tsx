@@ -5,7 +5,8 @@ import { useQuery } from '@tanstack/react-query';
 import { queryKeys } from '@/lib/queryKeys';
 import { api } from '@/lib/api';
 import { ToggleSwitch } from './ToggleSwitch';
-import { MAM_LANGUAGES } from '../../../shared/indexer-registry.js';
+import { MAM_LANGUAGES, MAM_SEARCH_TYPES } from '../../../shared/indexer-registry.js';
+import { SelectWithChevron } from './SelectWithChevron';
 
 interface IndexerFieldsProps {
   selectedType: string;
@@ -329,6 +330,18 @@ function MamFields({ register, errors, watch, setValue, formTestResult }: Pick<I
           ))}
         </div>
         <p className="text-sm text-muted-foreground mt-1">Deselect all for unrestricted language search</p>
+      </div>
+      <div className="sm:col-span-2">
+        <label htmlFor="indexerSearchType" className="block text-sm font-medium mb-2">Search Type</label>
+        <SelectWithChevron
+          id="indexerSearchType"
+          {...register('settings.searchType')}
+        >
+          {MAM_SEARCH_TYPES.map((st) => (
+            <option key={st.value} value={st.value}>{st.label}</option>
+          ))}
+        </SelectWithChevron>
+        <p className="text-sm text-muted-foreground mt-1">Auto-overridden by VIP status when detected</p>
       </div>
     </>
   );

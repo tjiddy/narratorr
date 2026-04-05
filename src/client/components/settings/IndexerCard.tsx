@@ -13,7 +13,7 @@ import {
   indexerTypeSchema,
   type CreateIndexerFormData,
 } from '../../../shared/schemas.js';
-import { INDEXER_REGISTRY } from '../../../shared/indexer-registry.js';
+import { INDEXER_REGISTRY, coerceSearchType } from '../../../shared/indexer-registry.js';
 
 const IMPLEMENTED_TYPES = Object.keys(INDEXER_REGISTRY);
 
@@ -46,7 +46,7 @@ function settingsFromIndexer(indexer: Indexer): CreateIndexerFormData['settings'
     baseUrl: (s.baseUrl as string) || '',
     useProxy: (s.useProxy as boolean) || false,
     searchLanguages: (s.searchLanguages as number[]) ?? [1],
-    searchType: (s.searchType as number) ?? 1,
+    searchType: coerceSearchType(s.searchType),
     isVip: s.isVip as boolean | undefined,
     mamUsername: (s.mamUsername as string) || undefined,
   };

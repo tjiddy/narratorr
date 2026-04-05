@@ -224,14 +224,14 @@ describe('IndexerFields', () => {
   });
 
   describe('MAM language and search type fields (#291)', () => {
-    function MamFieldWrapper({ defaultSearchLanguages, defaultSearchType }: { defaultSearchLanguages?: number[]; defaultSearchType?: number } = {}) {
+    function MamFieldWrapper({ defaultSearchLanguages, defaultSearchType }: { defaultSearchLanguages?: number[]; defaultSearchType?: 'all' | 'active' | 'fl' | 'fl-VIP' | 'VIP' | 'nVIP' } = {}) {
       const { register, watch, setValue, formState: { errors } } = useForm<CreateIndexerFormData>({
         defaultValues: {
           name: '', type: 'myanonamouse',
           settings: {
             mamId: 'test-id',
             searchLanguages: defaultSearchLanguages ?? [1],
-            searchType: defaultSearchType ?? 1,
+            searchType: defaultSearchType ?? 'active',
           },
         },
       });
@@ -258,9 +258,11 @@ describe('IndexerFields', () => {
       expect(screen.getByLabelText('Dutch')).toBeInTheDocument();
     });
 
-    it('does not render search type dropdown (auto-selected by VIP status per #317)', () => {
+    it('renders search type dropdown with 6 options (#363)', () => {
       renderWithProviders(<MamFieldWrapper />);
-      expect(screen.queryByLabelText('Search Type')).not.toBeInTheDocument();
+      const dropdown = screen.getByLabelText('Search Type') as HTMLSelectElement;
+      expect(dropdown).toBeInTheDocument();
+      expect(dropdown.options).toHaveLength(6);
     });
 
     it('checking a language checkbox updates form value via setValue', async () => {
@@ -290,9 +292,9 @@ describe('IndexerFields', () => {
       expect(screen.getByLabelText('French')).not.toBeChecked();
     });
 
-    it('#317 — MAM settings form does not show search type dropdown', () => {
+    it('#363 — MAM settings form shows search type dropdown', () => {
       renderWithProviders(<MamFieldWrapper />);
-      expect(screen.queryByLabelText('Search Type')).not.toBeInTheDocument();
+      expect(screen.getByLabelText('Search Type')).toBeInTheDocument();
     });
 
     it('#317 — language checkboxes still render after dropdown removal', () => {
@@ -307,7 +309,7 @@ describe('IndexerFields', () => {
       const { register, watch, setValue, formState: { errors } } = useForm<CreateIndexerFormData>({
         defaultValues: {
           name: '', type: 'myanonamouse',
-          settings: { mamId: '', searchLanguages: [1], searchType: 1 },
+          settings: { mamId: '', searchLanguages: [1], searchType: 'active' },
         },
       });
       return <IndexerFields selectedType="myanonamouse" register={register} errors={errors} watch={watch} setValue={setValue} />;
@@ -449,7 +451,7 @@ describe('IndexerFields', () => {
         const { register, handleSubmit, watch, setValue, formState: { errors } } = useForm<CreateIndexerFormData>({
           defaultValues: {
             name: 'Test', type: 'myanonamouse', enabled: true, priority: 0,
-            settings: { mamId: '', searchLanguages: [1], searchType: 1 },
+            settings: { mamId: '', searchLanguages: [1], searchType: 'active' },
           },
         });
         return (
@@ -488,7 +490,7 @@ describe('IndexerFields', () => {
         const { register, watch, setValue, formState: { errors } } = useForm<CreateIndexerFormData>({
           defaultValues: {
             name: '', type: 'myanonamouse',
-            settings: { mamId: '********', searchLanguages: [1], searchType: 1 },
+            settings: { mamId: '********', searchLanguages: [1], searchType: 'active' },
           },
         });
         return <IndexerFields selectedType="myanonamouse" register={register} errors={errors} watch={watch} setValue={setValue} />;
@@ -514,7 +516,7 @@ describe('IndexerFields', () => {
         const { register, watch, setValue, formState: { errors } } = useForm<CreateIndexerFormData>({
           defaultValues: {
             name: '', type: 'myanonamouse',
-            settings: { mamId: '', searchLanguages: [1], searchType: 1, useProxy: true },
+            settings: { mamId: '', searchLanguages: [1], searchType: 'active', useProxy: true },
           },
         });
         return <IndexerFields selectedType="myanonamouse" register={register} errors={errors} watch={watch} setValue={setValue} />;
@@ -565,7 +567,7 @@ describe('IndexerFields', () => {
         const { register, handleSubmit, watch, setValue, formState: { errors } } = useForm<CreateIndexerFormData>({
           defaultValues: {
             name: 'Test', type: 'myanonamouse', enabled: true, priority: 0,
-            settings: { mamId: '', searchLanguages: [1], searchType: 1 },
+            settings: { mamId: '', searchLanguages: [1], searchType: 'active' },
           },
         });
         return (
@@ -630,7 +632,7 @@ describe('IndexerFields', () => {
       const { register, watch, setValue, formState: { errors } } = useForm<CreateIndexerFormData>({
         defaultValues: {
           name: '', type: 'myanonamouse',
-          settings: { mamId: '', searchLanguages: [1], searchType: 1 },
+          settings: { mamId: '', searchLanguages: [1], searchType: 'active' },
         },
       });
       return <IndexerFields selectedType="myanonamouse" register={register} errors={errors} watch={watch} setValue={setValue} />;
@@ -695,6 +697,52 @@ describe('IndexerFields', () => {
       await waitFor(() => {
         expect(screen.getByText('Invalid MAM ID')).toBeInTheDocument();
       });
+    });
+  });
+
+  describe('#363 — searchType dropdown', () => {
+    function MamFieldWrapper363({ defaultSearchType }: { defaultSearchType?: 'all' | 'active' | 'fl' | 'fl-VIP' | 'VIP' | 'nVIP' } = {}) {
+      const { register, watch, setValue, formState: { errors } } = useForm<CreateIndexerFormData>({
+        defaultValues: {
+          name: '', type: 'myanonamouse',
+          settings: {
+            mamId: 'test-id',
+            searchLanguages: [1],
+            searchType: defaultSearchType ?? 'active',
+          },
+        },
+      });
+      return <IndexerFields selectedType="myanonamouse" register={register} errors={errors} watch={watch} setValue={setValue} />;
+    }
+
+    it('renders searchType dropdown with 6 options and helper text', () => {
+      renderWithProviders(<MamFieldWrapper363 />);
+      const dropdown = screen.getByLabelText('Search Type') as HTMLSelectElement;
+      expect(dropdown).toBeInTheDocument();
+      expect(dropdown.options).toHaveLength(6);
+      expect(screen.getByText(/auto-overridden by vip status/i)).toBeInTheDocument();
+    });
+
+    it('dropdown labels match expected values', () => {
+      renderWithProviders(<MamFieldWrapper363 />);
+      const dropdown = screen.getByLabelText('Search Type') as HTMLSelectElement;
+      const labels = Array.from(dropdown.options).map(o => o.text);
+      expect(labels).toEqual([
+        'All',
+        'Active',
+        'Freeleech',
+        'Freeleech or VIP',
+        'VIP Only',
+        'Not VIP',
+      ]);
+    });
+
+    it('selecting a search type updates form state with string value', async () => {
+      const user = userEvent.setup();
+      renderWithProviders(<MamFieldWrapper363 />);
+      const dropdown = screen.getByLabelText('Search Type') as HTMLSelectElement;
+      await user.selectOptions(dropdown, 'nVIP');
+      expect(dropdown.value).toBe('nVIP');
     });
   });
 });

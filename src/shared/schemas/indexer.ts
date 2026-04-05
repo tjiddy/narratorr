@@ -54,7 +54,7 @@ export const createIndexerFormSchema = z.object({
     baseUrl: z.string().trim().optional(),
     useProxy: z.boolean().optional(),
     searchLanguages: z.array(z.number()).optional(),
-    searchType: z.number().optional(),
+    searchType: z.enum(['all', 'active', 'fl', 'fl-VIP', 'VIP', 'nVIP']).optional(),
     isVip: z.boolean().optional(),
     mamUsername: z.string().optional(),
   }),
