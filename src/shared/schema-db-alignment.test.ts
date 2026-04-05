@@ -10,6 +10,8 @@ import { INDEXER_REGISTRY, INDEXER_TYPES } from './indexer-registry.js';
 import { DOWNLOAD_CLIENT_REGISTRY, DOWNLOAD_CLIENT_TYPES } from './download-client-registry.js';
 import { NOTIFIER_REGISTRY, NOTIFIER_TYPES } from './notifier-registry.js';
 import { IMPORT_LIST_REGISTRY, IMPORT_LIST_TYPES } from './import-list-registry.js';
+import { blacklistReasonSchema, BLACKLIST_REASONS } from './schemas/blacklist.js';
+import { blacklist } from '../db/schema.js';
 
 describe('schema-DB alignment', () => {
   describe('adapter type enums derive from registries', () => {
@@ -43,6 +45,14 @@ describe('schema-DB alignment', () => {
 
     it('importListTypeSchema.options matches IMPORT_LIST_REGISTRY keys', () => {
       expect([...importListTypeSchema.options].sort()).toEqual(Object.keys(IMPORT_LIST_REGISTRY).sort());
+    });
+
+    it('blacklistReasonSchema.options matches BLACKLIST_REASONS tuple', () => {
+      expect([...blacklistReasonSchema.options].sort()).toEqual([...BLACKLIST_REASONS].sort());
+    });
+
+    it('blacklist.reason DB column enum matches BLACKLIST_REASONS tuple', () => {
+      expect([...blacklist.reason.enumValues].sort()).toEqual([...BLACKLIST_REASONS].sort());
     });
   });
 
