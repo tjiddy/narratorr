@@ -1776,7 +1776,7 @@ describe('QualityGateOrchestrator', () => {
     it('releases slot in finally even when import fails', async () => {
       const { orchestrator, qualityGateService, importOrchestrator, importService } = createOrchestrator();
       qualityGateService.getCompletedDownloads.mockResolvedValue([{ download: completedDownload, book: { ...downloadingBook } }]);
-      importOrchestrator.importDownload.mockRejectedValue(new Error('Import failed'));
+      (importOrchestrator.importDownload as ReturnType<typeof vi.fn>).mockRejectedValue(new Error('Import failed'));
 
       await orchestrator.processOneDownload(1);
 
