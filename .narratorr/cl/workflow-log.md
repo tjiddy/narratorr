@@ -1,5 +1,34 @@
 # Workflow Log
 
+## #363 MAM searchType sends integer instead of string — VIP filter broken — 2026-04-05
+**Skill path:** /implement → /claim → /plan → /handoff
+**Outcome:** success — PR #364
+
+### Metrics
+- Files changed: 13 | Tests added/modified: ~60 across 7 test files
+- Quality gate runs: 2 (pass on attempt 2 — first failed due to MamSearchType literal return type)
+- Fix iterations: 1 (TypeScript narrowing for Zod enum return type)
+- Context compactions: 0
+
+### Workflow experience
+- What went smoothly: Spec was well-elaborated after 3 review rounds — all files and line numbers accurate, coercion helper suggested upfront
+- Friction / issues encountered: Test helper functions scoped inside `describe()` blocks caused `ReferenceError` when new sibling blocks tried to use them — had to duplicate helpers
+
+### Token efficiency
+- Highest-token actions: Reading 7 test files for blast radius sweep, multiple replace_all cycles for numeric→string fixture updates
+- Avoidable waste: Could have done a single bulk replace pass across all test files instead of file-by-file
+- Suggestions: For type-system-wide changes, scan ALL files with the old type first, then batch replacements
+
+### Infrastructure gaps
+- Repeated workarounds: None
+- Missing tooling / config: frontend-design skill not available for dropdown polish
+- Unresolved debt: None introduced
+
+### Wish I'd Known
+1. `coerceSearchType` return type must be `MamSearchType` (literal union), not `string` — Zod enum schemas propagate narrow types through form `defaultValues` (see `zod-enum-narrows-form-types.md`)
+2. Test helper functions in `describe()` blocks are scoped — can't be shared across sibling `describe()` blocks without duplication (see `test-helper-scope-in-describe-blocks.md`)
+3. The factory at `registry.ts` was already missing `isVip` forwarding before this issue — auto-select logic was dead code on the production path for saved indexers
+
 ## #321 Centralize blacklist reason enum to single source of truth — 2026-04-05
 **Skill path:** /implement → /claim → /plan → /handoff
 **Outcome:** success — PR #362
