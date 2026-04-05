@@ -728,11 +728,11 @@ describe('IndexerFields', () => {
       const dropdown = screen.getByLabelText('Search Type') as HTMLSelectElement;
       const labels = Array.from(dropdown.options).map(o => o.text);
       expect(labels).toEqual([
-        'All torrents',
-        'Only active (1+ seeders)',
+        'All',
+        'Active',
         'Freeleech',
         'Freeleech or VIP',
-        'VIP only',
+        'VIP Only',
         'Not VIP',
       ]);
     });

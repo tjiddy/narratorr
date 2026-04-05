@@ -26,11 +26,11 @@ export type MamSearchType = 'all' | 'active' | 'fl' | 'fl-VIP' | 'VIP' | 'nVIP';
 
 /** MAM search type options — string values expected by the MAM API's `tor[searchType]` parameter. */
 export const MAM_SEARCH_TYPES: ReadonlyArray<{ value: MamSearchType; label: string }> = [
-  { value: 'all', label: 'All torrents' },
-  { value: 'active', label: 'Only active (1+ seeders)' },
+  { value: 'all', label: 'All' },
+  { value: 'active', label: 'Active' },
   { value: 'fl', label: 'Freeleech' },
   { value: 'fl-VIP', label: 'Freeleech or VIP' },
-  { value: 'VIP', label: 'VIP only' },
+  { value: 'VIP', label: 'VIP Only' },
   { value: 'nVIP', label: 'Not VIP' },
 ];
 
