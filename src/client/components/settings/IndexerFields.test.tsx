@@ -624,4 +624,77 @@ describe('IndexerFields', () => {
       });
     });
   });
+
+  describe('DetectionOverlay modal compatibility', () => {
+    function MamWrapper() {
+      const { register, watch, setValue, formState: { errors } } = useForm<CreateIndexerFormData>({
+        defaultValues: {
+          name: '', type: 'myanonamouse',
+          settings: { mamId: '', searchLanguages: [1], searchType: 1 },
+        },
+      });
+      return <IndexerFields selectedType="myanonamouse" register={register} errors={errors} watch={watch} setValue={setValue} />;
+    }
+
+    it('DetectionOverlay uses relative positioning instead of fixed inset-0 z-50', async () => {
+      (api.testIndexerConfig as Mock).mockReturnValue(new Promise(() => {})); // never resolves — keeps overlay visible
+
+      const user = userEvent.setup();
+      renderWithProviders(<MamWrapper />);
+
+      const mamIdInput = screen.getByLabelText('MAM ID');
+      await user.type(mamIdInput, 'test-id');
+      await user.tab();
+
+      await waitFor(() => {
+        expect(screen.getByText('Checking MAM status…')).toBeInTheDocument();
+      });
+
+      // Walk up from the text to find the outermost overlay wrapper (the sm:col-span-2 div)
+      const overlayText = screen.getByText('Checking MAM status…');
+      // The card div is the direct parent, the overlay wrapper is its parent
+      const overlayWrapper = overlayText.closest('.sm\\:col-span-2') ?? overlayText.parentElement!.parentElement!;
+      // Must NOT use fixed positioning or z-50 (conflicts with Modal)
+      expect(overlayWrapper.className).toContain('relative');
+      expect(overlayWrapper.className).not.toContain('fixed');
+      expect(overlayWrapper.className).not.toContain('z-50');
+    });
+
+    it('MamStatusBadge renders correctly after successful detection', async () => {
+      (api.testIndexerConfig as Mock).mockResolvedValue({
+        success: true,
+        metadata: { username: 'TestUser', classname: 'Power User', isVip: true },
+      });
+
+      const user = userEvent.setup();
+      renderWithProviders(<MamWrapper />);
+
+      const mamIdInput = screen.getByLabelText('MAM ID');
+      await user.type(mamIdInput, 'test-id');
+      await user.tab();
+
+      await waitFor(() => {
+        expect(screen.getByText('TestUser')).toBeInTheDocument();
+      });
+      expect(screen.getByText('Power User')).toBeInTheDocument();
+    });
+
+    it('detection error message renders inline in form', async () => {
+      (api.testIndexerConfig as Mock).mockResolvedValue({
+        success: false,
+        message: 'Invalid MAM ID',
+      });
+
+      const user = userEvent.setup();
+      renderWithProviders(<MamWrapper />);
+
+      const mamIdInput = screen.getByLabelText('MAM ID');
+      await user.type(mamIdInput, 'bad-id');
+      await user.tab();
+
+      await waitFor(() => {
+        expect(screen.getByText('Invalid MAM ID')).toBeInTheDocument();
+      });
+    });
+  });
 });
