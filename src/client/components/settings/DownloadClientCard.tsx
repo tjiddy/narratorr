@@ -21,6 +21,7 @@ interface DownloadClientCardProps {
   testingForm?: boolean;
   formTestResult?: TestResult | null;
   animationDelay?: string;
+  inModal?: boolean;
 }
 
 function viewSubtitle(client: DownloadClient): string {
@@ -30,7 +31,7 @@ function viewSubtitle(client: DownloadClient): string {
 }
 
 export function DownloadClientCard(props: DownloadClientCardProps) {
-  const { client, mode, onEdit, onCancel, onDelete, onSubmit, onFormTest, onTest, isPending, testingId, testResult, testingForm, formTestResult, animationDelay } = props;
+  const { client, mode, onEdit, onCancel, onDelete, onSubmit, onFormTest, onTest, isPending, testingId, testResult, testingForm, formTestResult, animationDelay, inModal } = props;
 
   if (mode === 'view' && client) {
     const notImpl = !IMPLEMENTED_TYPES.includes(client.type);
@@ -49,6 +50,7 @@ export function DownloadClientCard(props: DownloadClientCardProps) {
       client={client} mode={mode === 'edit' ? 'edit' : 'create'}
       onCancel={onCancel} onSubmit={onSubmit} onFormTest={onFormTest}
       isPending={isPending} testingForm={testingForm} formTestResult={formTestResult}
+      inModal={inModal}
     />
   );
 }

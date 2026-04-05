@@ -36,9 +36,10 @@ interface DownloadClientFormProps {
   isPending?: boolean;
   testingForm?: boolean;
   formTestResult?: TestResult | null;
+  inModal?: boolean;
 }
 
-export function DownloadClientForm({ client, mode, onCancel, onSubmit, onFormTest, isPending, testingForm, formTestResult }: DownloadClientFormProps) {
+export function DownloadClientForm({ client, mode, onCancel, onSubmit, onFormTest, isPending, testingForm, formTestResult, inModal }: DownloadClientFormProps) {
   const isEdit = mode === 'edit';
   const [pathMappings, setPathMappings] = useState<PathMappingEntry[]>([]);
   const {
@@ -86,7 +87,7 @@ export function DownloadClientForm({ client, mode, onCancel, onSubmit, onFormTes
         </SelectWithChevron>
         {selectedType === 'blackhole'
           ? <BlackholeFields register={register} errors={errors} isEdit={isEdit} />
-          : <DownloadClientFields selectedType={selectedType} register={register} errors={errors} clientId={client?.id} setValue={setValue} getValues={getValues} isDirty={isDirty} isEdit={isEdit} />
+          : <DownloadClientFields selectedType={selectedType} register={register} errors={errors} clientId={client?.id} setValue={setValue} getValues={getValues} isDirty={isDirty} isEdit={isEdit} inModal={inModal} />
         }
       </div>
       {!isImplemented && <p className="text-sm text-amber-500">Adapter not yet implemented. Config will be saved for when the adapter is available.</p>}

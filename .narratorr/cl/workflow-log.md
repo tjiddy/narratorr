@@ -1,5 +1,34 @@
 # Workflow Log
 
+## #353 Move indexer and download client forms into modals — 2026-04-05
+**Skill path:** /implement → /claim → /plan → /handoff
+**Outcome:** success — PR #359
+
+### Metrics
+- Files changed: 13 | Tests added/modified: 27
+- Quality gate runs: 2 (pass on attempt 2 — lint fix for unused eslint-disable)
+- Fix iterations: 1 (unused eslint-disable directive)
+- Context compactions: 0
+
+### Workflow experience
+- What went smoothly: Red/green TDD cycle was clean — each module's tests failed predictably, then passed after implementation. The `CrudSettingsPage` modal prop approach kept changes minimal and backwards-compatible.
+- Friction / issues encountered: Spec review took 5 rounds due to reviewer's stale checkout missing existing artifacts (`DetectionOverlay`, `ManualAddFormModal`). The `stopPropagation()` vs `stopImmediatePropagation()` distinction for same-target document listeners was the key technical insight.
+
+### Token efficiency
+- Highest-token actions: Spec review cycle (5 rounds of /respond-to-spec-review before approval)
+- Avoidable waste: The first 2 dispute rounds could have been avoided if the spec had included exact line-number references from the start
+- Suggestions: Include verifiable `grep` commands in spec artifacts to short-circuit reviewer disputes
+
+### Infrastructure gaps
+- Repeated workarounds: None
+- Missing tooling / config: `frontend-design` skill was unavailable — UI polish pass skipped
+- Unresolved debt: `DetectionOverlay` no longer dims full viewport (see debt.md)
+
+### Wish I'd Known
+1. `stopPropagation()` does NOT work between handlers on the same DOM target — use `stopImmediatePropagation()` for same-target isolation (ref: `document-listener-escape-isolation.md`)
+2. Adding an opt-in `modal` prop to a shared container is cleaner than refactoring the container — preserves existing consumer behavior by default (ref: `crud-settings-modal-opt-in.md`)
+3. `useEscapeKey` + `ToolbarDropdown` both use document-level keydown — the isolation pattern needs both sides (producer prevents, consumer checks `defaultPrevented`)
+
 ## #352 Persist library filters in URL search params across navigation — 2026-04-04
 **Skill path:** /implement → /claim → /plan → /handoff
 **Outcome:** success — PR #356

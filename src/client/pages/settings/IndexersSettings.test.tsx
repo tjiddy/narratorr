@@ -243,4 +243,29 @@ describe('IndexersSettings', () => {
       expect(api.testIndexer).toHaveBeenCalledWith(1);
     });
   });
+
+  describe('modal mode', () => {
+    it('clicking Add Indexer opens the create form inside a modal', async () => {
+      const user = userEvent.setup();
+      renderWithProviders(<IndexersSettings />);
+      await waitForListLoad('My ABB');
+
+      await user.click(screen.getByRole('button', { name: 'Add Indexer' }));
+
+      expect(screen.getByTestId('modal-backdrop')).toBeInTheDocument();
+      expect(screen.getByText('Add New Indexer')).toBeInTheDocument();
+    });
+
+    it('clicking Edit on an indexer card opens the edit form inside a modal', async () => {
+      const user = userEvent.setup();
+      renderWithProviders(<IndexersSettings />);
+      await waitForListLoad('My ABB');
+
+      const editButtons = screen.getAllByText('Edit').map((el) => el.closest('button')!);
+      await user.click(editButtons[0]);
+
+      expect(screen.getByTestId('modal-backdrop')).toBeInTheDocument();
+      expect(screen.getByText('Edit Indexer')).toBeInTheDocument();
+    });
+  });
 });

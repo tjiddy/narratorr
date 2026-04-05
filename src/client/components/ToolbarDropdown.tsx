@@ -14,11 +14,13 @@ export function ToolbarDropdown({
   triggerRef,
   open,
   onClose,
+  inModal,
   children,
 }: {
   triggerRef: RefObject<HTMLElement | null>;
   open: boolean;
   onClose: () => void;
+  inModal?: boolean;
   children: ReactNode;
 }) {
   const panelRef = useRef<HTMLDivElement>(null);
@@ -59,11 +61,12 @@ export function ToolbarDropdown({
     function handleKeyDown(e: KeyboardEvent) {
       if (e.key === 'Escape') {
         e.preventDefault();
+        e.stopImmediatePropagation();
         onClose();
       }
     }
-    if (open) document.addEventListener('keydown', handleKeyDown);
-    return () => document.removeEventListener('keydown', handleKeyDown);
+    if (open) document.addEventListener('keydown', handleKeyDown, true);
+    return () => document.removeEventListener('keydown', handleKeyDown, true);
   }, [open, onClose]);
 
   if (!open) return null;
@@ -71,7 +74,7 @@ export function ToolbarDropdown({
   return createPortal(
     <div
       ref={panelRef}
-      className="fixed z-30"
+      className={`fixed ${inModal ? 'z-50' : 'z-30'}`}
       style={{ top: `${position.top}px`, left: `${position.left}px` }}
     >
       {children}

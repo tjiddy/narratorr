@@ -8,6 +8,7 @@ import { type CreateIndexerFormData } from '../../../shared/schemas.js';
 export function IndexersSettings() {
   return (
     <CrudSettingsPage<Indexer, CreateIndexerFormData>
+      modal
       config={{
         queryKey: queryKeys.indexers(),
         queryFn: api.getIndexers,
