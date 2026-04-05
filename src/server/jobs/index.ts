@@ -1,6 +1,7 @@
 import cron from 'node-cron';
-import { sql } from 'drizzle-orm';
+import { sql, inArray } from 'drizzle-orm';
 import type { Db } from '../../db/index.js';
+import { downloads } from '../../db/schema.js';
 import type { FastifyBaseLogger } from 'fastify';
 import type { Services } from '../routes/index.js';
 import type { TaskRegistry } from '../services/task-registry.js';
@@ -43,9 +44,9 @@ export function startJobs(db: Db, services: Services, log: FastifyBaseLogger) {
 
   /** Job registry — adding a new job requires one entry here. */
   const jobRegistry: JobEntry[] = [
-    { name: 'monitor', type: 'cron', schedule: MONITOR_CRON_INTERVAL, callback: () => monitorDownloads(db, services.downloadClient, services.notifier, log, retryDeps, services.eventBroadcaster, services.remotePathMapping) },
+    { name: 'monitor', type: 'cron', schedule: MONITOR_CRON_INTERVAL, callback: () => monitorDownloads(db, services.downloadClient, services.notifier, log, retryDeps, services.eventBroadcaster, services.remotePathMapping, services.qualityGateOrchestrator) },
     { name: 'enrichment', type: 'cron', schedule: '*/5 * * * *', callback: () => runEnrichment(db, services.metadata, services.book, log) },
-    { name: 'import', type: 'cron', schedule: '*/60 * * * * *', callback: async () => { await services.qualityGateOrchestrator.processCompletedDownloads(); await services.importOrchestrator.processCompletedDownloads(); await services.qualityGateOrchestrator.cleanupDeferredRejections(); await services.import.cleanupDeferredImports(); } },
+    { name: 'import-maintenance', type: 'cron', schedule: '*/5 * * * *', callback: async () => { await services.qualityGateOrchestrator.processCompletedDownloads(); await services.importOrchestrator.processCompletedDownloads(); await services.qualityGateOrchestrator.cleanupDeferredRejections(); await services.import.cleanupDeferredImports(); } },
     { name: 'search', type: 'timeout', getIntervalMinutes: () => services.settings.get('search').then((s) => s.intervalMinutes), callback: () => runSearchJob(services.settings, services.bookList, services.indexer, services.downloadOrchestrator, log, services.retryBudget) },
     { name: 'rss', type: 'timeout', getIntervalMinutes: () => services.settings.get('rss').then((s) => s.intervalMinutes), callback: () => runRssJob(services.settings, services.bookList, services.book, services.indexer, services.downloadOrchestrator, services.blacklist, log) },
     { name: 'backup', type: 'timeout', getIntervalMinutes: () => services.settings.get('system').then((s) => s.backupIntervalMinutes), callback: () => runBackupJob(services.backup, log) },
@@ -70,6 +71,28 @@ export function startJobs(db: Db, services: Services, log: FastifyBaseLogger) {
   }
 
   log.info('Background jobs started');
+
+  // Startup recovery: reset stuck downloads and reprocess (#358)
+  runStartupRecovery(db, services, log).catch((error: unknown) => {
+    log.error(error, 'Startup recovery failed — jobs continue normally');
+  });
+}
+
+async function runStartupRecovery(db: Db, services: Services, log: FastifyBaseLogger): Promise<void> {
+  // Reset downloads stuck in checking/importing back to completed
+  const resetResult = await db
+    .update(downloads)
+    .set({ status: 'completed' })
+    .where(inArray(downloads.status, ['checking', 'importing']))
+    .returning({ id: downloads.id });
+
+  if (resetResult.length > 0) {
+    log.info({ count: resetResult.length }, 'Startup recovery: reset stuck downloads to completed');
+  }
+
+  // Reprocess via existing batch methods
+  await services.qualityGateOrchestrator.processCompletedDownloads();
+  await services.importOrchestrator.processCompletedDownloads();
 }
 
 function scheduleCron(reg: TaskRegistry, name: string, expression: string, log: FastifyBaseLogger): void {

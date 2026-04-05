@@ -17,11 +17,12 @@ vi.mock('./backup.js', () => ({ runBackupJob: vi.fn() }));
 vi.mock('./version-check.js', () => ({ checkForUpdate: vi.fn() }));
 
 import cron from 'node-cron';
+import { createMockDb, mockDbChain, inject as injectHelper } from '../__tests__/helpers.js';
 
 describe('startJobs', () => {
   let services: Services;
   let log: FastifyBaseLogger;
-  const db = {} as Db;
+  let db: ReturnType<typeof createMockDb>;
 
   beforeEach(() => {
     vi.clearAllMocks();
@@ -29,22 +30,32 @@ describe('startJobs', () => {
     // Use a real TaskRegistry so register/getAll work properly
     services.taskRegistry = new TaskRegistry() as unknown as Services['taskRegistry'];
     log = createMockLogger() as unknown as FastifyBaseLogger;
-    // Mock settings.get for timeout-loop jobs
-    (services.settings.get as ReturnType<typeof vi.fn>).mockResolvedValue({
-      intervalMinutes: 30,
-      backupIntervalMinutes: 60,
+    db = createMockDb();
+    // Mock settings.get for timeout-loop jobs — must include all category shapes
+    (services.settings.get as ReturnType<typeof vi.fn>).mockImplementation(async (category: string) => {
+      if (category === 'search') return { intervalMinutes: 30 };
+      if (category === 'rss') return { intervalMinutes: 30 };
+      if (category === 'system') return { backupIntervalMinutes: 60 };
+      if (category === 'discovery') return { intervalHours: 24 };
+      if (category === 'general') return { housekeepingRetentionDays: 90 };
+      return {};
     });
+    // Default: startup recovery finds no stuck downloads
+    db.update.mockReturnValue(mockDbChain([]));
   });
 
   it('registers all jobs with the task registry', async () => {
     const { startJobs } = await import('./index.js');
-    startJobs(db, services, log);
+    startJobs(injectHelper<Db>(db), services, log);
+
+    // Wait for startup recovery to complete
+    await new Promise((resolve) => setTimeout(resolve, 10));
 
     const tasks = services.taskRegistry.getAll();
     const names = tasks.map((t) => t.name);
     expect(names).toContain('monitor');
     expect(names).toContain('enrichment');
-    expect(names).toContain('import');
+    expect(names).toContain('import-maintenance');
     expect(names).toContain('search');
     expect(names).toContain('rss');
     expect(names).toContain('backup');
@@ -53,17 +64,19 @@ describe('startJobs', () => {
     expect(names).toContain('version-check');
     expect(names).toContain('import-list-sync');
     expect(names).toContain('discovery');
+    expect(names).not.toContain('import');
   });
 
   it('schedules cron jobs via cron.schedule', async () => {
     const { startJobs } = await import('./index.js');
-    startJobs(db, services, log);
+    startJobs(injectHelper<Db>(db), services, log);
+    await new Promise((resolve) => setTimeout(resolve, 10));
 
     const cronCalls = vi.mocked(cron.schedule).mock.calls;
     const expressions = cronCalls.map(([expr]) => expr);
     expect(expressions).toContain('*/30 * * * * *'); // monitor
     expect(expressions).toContain('*/5 * * * *');    // enrichment, health-check
-    expect(expressions).toContain('*/60 * * * * *'); // import
+    expect(expressions).toContain('*/5 * * * *');    // import-maintenance (shares schedule with enrichment, health-check)
     expect(expressions).toContain('0 0 * * 0');      // housekeeping
     expect(expressions).toContain('0 2 * * *');      // version-check
     expect(expressions).toContain('* * * * *');      // import-list-sync
@@ -71,37 +84,42 @@ describe('startJobs', () => {
 
   it('logs startup message', async () => {
     const { startJobs } = await import('./index.js');
-    startJobs(db, services, log);
+    startJobs(injectHelper<Db>(db), services, log);
 
     expect(log.info).toHaveBeenCalledWith('Background jobs started');
   });
 
-  it('import task callback calls qualityGate then importOrchestrator processCompletedDownloads then deferred cleanups', async () => {
+  it('import-maintenance task callback calls qualityGate then importOrchestrator processCompletedDownloads then deferred cleanups', async () => {
     const { startJobs } = await import('./index.js');
-    startJobs(db, services, log);
+    startJobs(injectHelper<Db>(db), services, log);
 
-    // Execute the registered import task
-    await services.taskRegistry.executeTracked('import');
+    // Wait for startup recovery to complete
+    await new Promise((resolve) => setTimeout(resolve, 10));
 
-    expect(services.qualityGateOrchestrator.processCompletedDownloads).toHaveBeenCalledTimes(1);
-    expect(services.importOrchestrator.processCompletedDownloads).toHaveBeenCalledTimes(1);
+    // Execute the registered import-maintenance task
+    await services.taskRegistry.executeTracked('import-maintenance');
+
+    // Startup recovery adds 1 call each to QG + import processCompletedDownloads, so total is 2
+    expect(services.qualityGateOrchestrator.processCompletedDownloads).toHaveBeenCalledTimes(2);
+    expect(services.importOrchestrator.processCompletedDownloads).toHaveBeenCalledTimes(2);
     expect(services.qualityGateOrchestrator.cleanupDeferredRejections).toHaveBeenCalledTimes(1);
     expect(services.import.cleanupDeferredImports).toHaveBeenCalledTimes(1);
 
-    // Verify call order: QG process → import process → QG deferred → import deferred
-    const qgOrder = (services.qualityGateOrchestrator.processCompletedDownloads as ReturnType<typeof vi.fn>).mock.invocationCallOrder[0];
-    const ioOrder = (services.importOrchestrator.processCompletedDownloads as ReturnType<typeof vi.fn>).mock.invocationCallOrder[0];
+    // Verify the import-maintenance call ordering (last 4 invocations): QG → import → QG cleanup → import cleanup
+    const qgCalls = (services.qualityGateOrchestrator.processCompletedDownloads as ReturnType<typeof vi.fn>).mock.invocationCallOrder;
+    const ioCalls = (services.importOrchestrator.processCompletedDownloads as ReturnType<typeof vi.fn>).mock.invocationCallOrder;
     const dcOrder = (services.qualityGateOrchestrator.cleanupDeferredRejections as ReturnType<typeof vi.fn>).mock.invocationCallOrder[0];
     const diOrder = (services.import.cleanupDeferredImports as ReturnType<typeof vi.fn>).mock.invocationCallOrder[0];
-    expect(qgOrder).toBeLessThan(ioOrder);
-    expect(ioOrder).toBeLessThan(dcOrder);
+    // The 2nd call of each is from import-maintenance (1st is from startup recovery)
+    expect(qgCalls[1]).toBeLessThan(ioCalls[1]);
+    expect(ioCalls[1]).toBeLessThan(dcOrder);
     expect(dcOrder).toBeLessThan(diOrder);
   });
 
   it('enrichment task callback passes db, metadataService, bookService, and log to runEnrichment', async () => {
     const { runEnrichment } = await import('./enrichment.js');
     const { startJobs } = await import('./index.js');
-    startJobs(db, services, log);
+    startJobs(injectHelper<Db>(db), services, log);
 
     await services.taskRegistry.executeTracked('enrichment');
 
@@ -122,7 +140,7 @@ describe('startJobs', () => {
     const setTimeoutSpy = vi.spyOn(globalThis, 'setTimeout');
 
     const { startJobs } = await import('./index.js');
-    startJobs(db, services, log);
+    startJobs(injectHelper<Db>(db), services, log);
 
     // Wait for all async scheduleNext() calls to resolve and call setTimeout
     const expectedMs = 12 * 60 * 60 * 1000; // 12 hours in ms
@@ -142,7 +160,7 @@ describe('startJobs', () => {
       vi.mocked(monitorDownloads).mockRejectedValueOnce(error);
 
       const { startJobs } = await import('./index.js');
-      startJobs(db, services, log);
+      startJobs(injectHelper<Db>(db), services, log);
 
       // Find the cron callback for monitor (first cron.schedule call)
       const cronCalls = vi.mocked(cron.schedule).mock.calls;
@@ -166,7 +184,7 @@ describe('startJobs', () => {
       const setTimeoutSpy = vi.spyOn(globalThis, 'setTimeout');
 
       const { startJobs } = await import('./index.js');
-      startJobs(db, services, log);
+      startJobs(injectHelper<Db>(db), services, log);
 
       // Wait for the error to be logged (async scheduleNext runs immediately)
       const fiveMinMs = 5 * 60 * 1000;
@@ -199,7 +217,7 @@ describe('startJobs', () => {
       const setTimeoutSpy = vi.spyOn(globalThis, 'setTimeout');
 
       const { startJobs } = await import('./index.js');
-      startJobs(db, services, log);
+      startJobs(injectHelper<Db>(db), services, log);
 
       // Wait for initial setTimeout to be called
       const oneMinMs = 1 * 60 * 1000;
@@ -225,16 +243,98 @@ describe('startJobs', () => {
   });
 
   describe('import-maintenance cron (#358)', () => {
-    it.todo('registers import-maintenance instead of import in job registry');
-    it.todo('calls QG processCompletedDownloads before import processCompletedDownloads');
-    it.todo('calls deferred cleanup methods after import batch');
-    it.todo('does not register an import job');
+    it('registers import-maintenance instead of import in job registry', async () => {
+      const { startJobs } = await import('./index.js');
+      startJobs(injectHelper<Db>(db), services, log);
+
+      await new Promise((resolve) => setTimeout(resolve, 10));
+
+      const tasks = services.taskRegistry.getAll();
+      const names = tasks.map((t) => t.name);
+      expect(names).toContain('import-maintenance');
+      expect(names).not.toContain('import');
+    });
+
+    it('calls QG processCompletedDownloads before import processCompletedDownloads', async () => {
+      const { startJobs } = await import('./index.js');
+      startJobs(injectHelper<Db>(db), services, log);
+      await new Promise((resolve) => setTimeout(resolve, 10));
+
+      // Clear startup recovery calls
+      vi.clearAllMocks();
+      db.update.mockReturnValue(mockDbChain([]));
+
+      await services.taskRegistry.executeTracked('import-maintenance');
+
+      const qgOrder = (services.qualityGateOrchestrator.processCompletedDownloads as ReturnType<typeof vi.fn>).mock.invocationCallOrder[0];
+      const ioOrder = (services.importOrchestrator.processCompletedDownloads as ReturnType<typeof vi.fn>).mock.invocationCallOrder[0];
+      expect(qgOrder).toBeLessThan(ioOrder);
+    });
+
+    it('calls deferred cleanup methods after import batch', async () => {
+      const { startJobs } = await import('./index.js');
+      startJobs(injectHelper<Db>(db), services, log);
+      await new Promise((resolve) => setTimeout(resolve, 10));
+
+      vi.clearAllMocks();
+      db.update.mockReturnValue(mockDbChain([]));
+
+      await services.taskRegistry.executeTracked('import-maintenance');
+
+      expect(services.qualityGateOrchestrator.cleanupDeferredRejections).toHaveBeenCalledTimes(1);
+      expect(services.import.cleanupDeferredImports).toHaveBeenCalledTimes(1);
+    });
+
+    it('does not register an import job', async () => {
+      const { startJobs } = await import('./index.js');
+      startJobs(injectHelper<Db>(db), services, log);
+      await new Promise((resolve) => setTimeout(resolve, 10));
+
+      const tasks = services.taskRegistry.getAll();
+      const names = tasks.map((t) => t.name);
+      expect(names).not.toContain('import');
+    });
   });
 
   describe('startup recovery (#358)', () => {
-    it.todo('resets checking downloads to completed on boot');
-    it.todo('resets importing downloads to completed on boot');
-    it.todo('calls batch methods after status reset');
-    it.todo('does not block job startup when recovery throws');
+    it('resets stuck downloads to completed on boot', async () => {
+      const chain = mockDbChain([{ id: 1 }, { id: 2 }]);
+      db.update.mockReturnValue(chain);
+
+      const { startJobs } = await import('./index.js');
+      startJobs(injectHelper<Db>(db), services, log);
+
+      await new Promise((resolve) => setTimeout(resolve, 10));
+
+      // Verify the reset update was called
+      expect(db.update).toHaveBeenCalled();
+      const setCalls = (chain.set as ReturnType<typeof vi.fn>).mock.calls.map((c: unknown[]) => c[0] as Record<string, unknown>);
+      expect(setCalls).toContainEqual(expect.objectContaining({ status: 'completed' }));
+    });
+
+    it('calls batch methods after status reset', async () => {
+      db.update.mockReturnValue(mockDbChain([]));
+
+      const { startJobs } = await import('./index.js');
+      startJobs(injectHelper<Db>(db), services, log);
+
+      await new Promise((resolve) => setTimeout(resolve, 10));
+
+      expect(services.qualityGateOrchestrator.processCompletedDownloads).toHaveBeenCalled();
+      expect(services.importOrchestrator.processCompletedDownloads).toHaveBeenCalled();
+    });
+
+    it('does not block job startup when recovery throws', async () => {
+      db.update.mockReturnValue(mockDbChain([], { error: new Error('DB unavailable') }));
+
+      const { startJobs } = await import('./index.js');
+      startJobs(injectHelper<Db>(db), services, log);
+
+      await new Promise((resolve) => setTimeout(resolve, 10));
+
+      // Jobs should still be registered despite recovery failure
+      const tasks = services.taskRegistry.getAll();
+      expect(tasks.length).toBeGreaterThan(0);
+    });
   });
 });
