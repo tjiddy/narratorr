@@ -224,7 +224,7 @@ describe('IndexerFields', () => {
   });
 
   describe('MAM language and search type fields (#291)', () => {
-    function MamFieldWrapper({ defaultSearchLanguages, defaultSearchType }: { defaultSearchLanguages?: number[]; defaultSearchType?: string } = {}) {
+    function MamFieldWrapper({ defaultSearchLanguages, defaultSearchType }: { defaultSearchLanguages?: number[]; defaultSearchType?: 'all' | 'active' | 'fl' | 'fl-VIP' | 'VIP' | 'nVIP' } = {}) {
       const { register, watch, setValue, formState: { errors } } = useForm<CreateIndexerFormData>({
         defaultValues: {
           name: '', type: 'myanonamouse',
@@ -701,7 +701,7 @@ describe('IndexerFields', () => {
   });
 
   describe('#363 — searchType dropdown', () => {
-    function MamFieldWrapper363({ defaultSearchType }: { defaultSearchType?: string } = {}) {
+    function MamFieldWrapper363({ defaultSearchType }: { defaultSearchType?: 'all' | 'active' | 'fl' | 'fl-VIP' | 'VIP' | 'nVIP' } = {}) {
       const { register, watch, setValue, formState: { errors } } = useForm<CreateIndexerFormData>({
         defaultValues: {
           name: '', type: 'myanonamouse',
