@@ -309,9 +309,7 @@ export class SABnzbdClient implements DownloadClientAdapter {
     const lower = status.toLowerCase();
     if (lower === 'completed') return 'completed';
     if (lower === 'failed') return 'error';
-    if (lower === 'extracting' || lower === 'verifying' || lower === 'repairing')
-      return 'downloading';
-    return 'completed';
+    return 'downloading';
   }
 
   private parseTimeleft(timeleft: string): number | undefined {

@@ -825,7 +825,7 @@ describe('SABnzbdClient', () => {
       expect(item!.status).toBe('downloading');
     });
 
-    it('maps unknown history status to completed (fallback)', async () => {
+    it('maps unknown history status to downloading (post-processing fallback)', async () => {
       server.use(
         http.get(`${API_BASE}/api`, ({ request }) => {
           const url = new URL(request.url);
@@ -841,8 +841,30 @@ describe('SABnzbdClient', () => {
       );
 
       const item = await client.getDownload('SABnzbd_nzo_def456');
-      expect(item!.status).toBe('completed');
+      expect(item!.status).toBe('downloading');
     });
+
+    it.each(['Queued', 'QuickCheck', 'Fetching', 'Moving', 'Running', 'Verifying', 'Repairing'])(
+      'maps SABnzbd post-processing status "%s" to downloading',
+      async (sabStatus) => {
+        server.use(
+          http.get(`${API_BASE}/api`, ({ request }) => {
+            const url = new URL(request.url);
+            if (url.searchParams.get('mode') === 'queue') {
+              return HttpResponse.json({ queue: { slots: [] } });
+            }
+            return HttpResponse.json({
+              history: {
+                slots: [{ ...historySlot, status: sabStatus }],
+              },
+            });
+          }),
+        );
+
+        const item = await client.getDownload('SABnzbd_nzo_def456');
+        expect(item!.status).toBe('downloading');
+      },
+    );
 
     it('handles empty storage in queue slot', async () => {
       server.use(
