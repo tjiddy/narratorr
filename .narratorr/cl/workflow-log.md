@@ -1,5 +1,34 @@
 # Workflow Log
 
+## #321 Centralize blacklist reason enum to single source of truth — 2026-04-05
+**Skill path:** /implement → /claim → /plan → /handoff
+**Outcome:** success — PR #362
+
+### Metrics
+- Files changed: 6 | Tests added/modified: 1 (5 new test cases)
+- Quality gate runs: 2 (pass on attempt 2 — first attempt hit unrelated flaky test in IndexerFields.test.tsx)
+- Fix iterations: 1 (unused import in test file caught by typecheck)
+- Context compactions: 0
+
+### Workflow experience
+- What went smoothly: Clean DRY-1 fix following established `as const` tuple pattern from notification-events.ts and registry modules. All 12 test files with blacklist reason fixtures passed without modification since values were unchanged.
+- Friction / issues encountered: Spec review round had a false-positive F1 (reviewer's grep missed `user_cancelled` in codebase) — required dispute with evidence. Minor ordering issue: `satisfies Record<BlacklistReason, string>` required `BlacklistReason` type to be declared before `REASON_LABELS`, so type derivation moved from Zod `z.infer` to direct tuple derivation.
+
+### Token efficiency
+- Highest-token actions: Explore subagent for codebase exploration (comprehensive but necessary for blast radius verification)
+- Avoidable waste: None — the elaborate + spec-review cycle was front-loaded before /implement
+- Suggestions: For pure type-level refactors, the coverage review subagent could be skipped (all changes are compile-time)
+
+### Infrastructure gaps
+- Repeated workarounds: None
+- Missing tooling / config: None
+- Unresolved debt: `DiscoveredBook` type in library-scan has the same DRY-1 pattern (3 parallel definitions) — logged in debt.md line 16
+
+### Wish I'd Known
+1. The `satisfies` keyword preserves the declared type while enforcing the constraint — this is why `notification-events.ts` uses `Record<string, string>` as the declared type with `satisfies Record<NotificationEvent, string>`, not a direct type annotation
+2. Drizzle `text('col', { enum: [...] })` needs a mutable array — `as const` tuples require spread `[...TUPLE]` to work
+3. The `BlacklistReason` type needed to be derived directly from the tuple (`typeof BLACKLIST_REASONS[number]`) rather than from `z.infer` to allow use in `satisfies` before the Zod schema was declared — ordering matters in single-file modules
+
 ## #358 Inline import after download completion — eliminate import polling — 2026-04-05
 **Skill path:** /implement → /claim → /plan → /handoff
 **Outcome:** success — PR #360
