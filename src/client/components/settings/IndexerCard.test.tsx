@@ -640,6 +640,9 @@ describe('IndexerCard — Prowlarr-managed indicators (AC8)', () => {
       expect(screen.getByLabelText('French')).not.toBeChecked();
       expect(screen.getByLabelText('Search Type')).toBeInTheDocument();
 
+      // Change search type to nVIP (#363)
+      await user.selectOptions(screen.getByLabelText('Search Type'), 'nVIP');
+
       // Toggle French on
       await user.click(screen.getByLabelText('French'));
       expect(screen.getByLabelText('French')).toBeChecked();
@@ -656,6 +659,7 @@ describe('IndexerCard — Prowlarr-managed indicators (AC8)', () => {
         settings: expect.objectContaining({
           mamId: 'test-mam-id',
           searchLanguages: expect.arrayContaining([1, 36]),
+          searchType: 'nVIP',
         }),
       });
     });
@@ -1007,6 +1011,36 @@ describe('IndexerCard — Prowlarr-managed indicators (AC8)', () => {
 
       const dropdown = screen.getByLabelText('Search Type') as HTMLSelectElement;
       expect(dropdown.options).toHaveLength(6);
+    });
+
+    it('changed searchType survives edit-mode submit as string in payload', async () => {
+      const onSubmit = vi.fn();
+      const user = userEvent.setup();
+      const mamIndexer: Indexer = createMockIndexer({
+        id: 24,
+        name: 'MAM Save Test',
+        type: 'myanonamouse',
+        settings: { mamId: 'save-test-id', baseUrl: '', searchLanguages: [1], searchType: 'active' },
+      });
+
+      renderWithProviders(
+        <IndexerCard
+          indexer={mamIndexer}
+          mode="edit"
+          onSubmit={onSubmit}
+          onFormTest={vi.fn()}
+        />,
+      );
+
+      // Change search type from "active" to "fl-VIP"
+      await user.selectOptions(screen.getByLabelText('Search Type'), 'fl-VIP');
+
+      // Submit
+      await user.click(screen.getByText('Save Changes'));
+      await waitFor(() => {
+        expect(onSubmit).toHaveBeenCalled();
+      });
+      expect(onSubmit.mock.calls[0][0].settings).toHaveProperty('searchType', 'fl-VIP');
     });
   });
 });
