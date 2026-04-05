@@ -74,7 +74,7 @@ export function BookDetails({ libraryBook, metadataBook }: {
         statusLabel={merged.statusLabel}
         statusDotClass={merged.statusDotClass}
         hasPath={!!libraryBook.path}
-        onBackClick={() => navigate('/library')}
+        onBackClick={() => navigate(-1)}
         onSearchClick={() => setSearchModalOpen(true)}
         onEditClick={() => setEditModalOpen(true)}
         onRenameClick={() => setConfirmRenameOpen(true)}

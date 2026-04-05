@@ -53,7 +53,7 @@ function renderBookPage(id = '1') {
 
   return render(
     <QueryClientProvider client={queryClient}>
-      <MemoryRouter initialEntries={[`/books/${id}`]}>
+      <MemoryRouter initialEntries={['/library', `/books/${id}`]}>
         <Routes>
           <Route path="books/:id" element={<BookPage />} />
           <Route path="library" element={<div>Library Page</div>} />
