@@ -110,47 +110,27 @@ export class QualityGateOrchestrator {
     }
   }
 
-  /**
-   * Process a single completed download through the quality gate and, if approved,
-   * trigger import with slot admission. Called inline from the monitor on completion.
-   */
+  /** Process a single completed download through the quality gate, with inline import on approval. */
   async processOneDownload(downloadId: number): Promise<void> {
-    // Query download + book
     const rows = await this.qualityGateService.getCompletedDownloads();
     const row = rows.find((r) => r.download.id === downloadId);
-    if (!row) {
-      this.log.warn({ downloadId }, 'Quality gate: processOneDownload — download not found or not completed');
-      return;
-    }
+    if (!row) { this.log.warn({ downloadId }, 'Quality gate: processOneDownload — download not found or not completed'); return; }
+    if (!row.download.externalId || !row.download.bookId) { this.log.debug({ id: row.download.id }, 'Quality gate: skipping download without externalId or bookId'); return; }
 
-    // Skip if no externalId or bookId (matches batch skip at processCompletedDownloads)
-    if (!row.download.externalId || !row.download.bookId) {
-      this.log.debug({ id: row.download.id }, 'Quality gate: skipping download without externalId or bookId');
-      return;
-    }
-
-    // Atomic claim: completed → checking
     const claimed = await this.qualityGateService.atomicClaim(row.download.id);
-    if (!claimed) {
-      this.log.debug({ id: row.download.id }, 'Quality gate: already claimed by another cycle');
-      return;
-    }
+    if (!claimed) { this.log.debug({ id: row.download.id }, 'Quality gate: already claimed by another cycle'); return; }
 
-    // Promote book status to 'importing' in DB (taking over from removed handleBookStatusOnCompletion)
+    // Promote book status to 'importing' (taking over from removed handleBookStatusOnCompletion)
     if (row.book) {
       await this.db.update(books).set({ status: 'importing' }).where(eq(books.id, row.book.id));
       this.emitSSE('book_status_change', { book_id: row.book.id, old_status: row.book.status as BookStatus, new_status: 'importing' as BookStatus });
-      // Update in-memory book so revert guards fire correctly on hold/reject
-      (row.book as { status: string }).status = 'importing';
+      (row.book as { status: string }).status = 'importing'; // Update in-memory so revert guards work
     }
-
-    // SSE: download_status_change (completed → checking)
     if (row.book) {
       this.emitSSE('download_status_change', { download_id: row.download.id, book_id: row.book.id, old_status: 'completed', new_status: 'checking' });
     }
 
     try {
-      // Resolve save path
       let savePath: string;
       try {
         ({ resolvedPath: savePath } = await resolveSavePath(row.download, this.downloadClientService, this.remotePathMappingService));
@@ -159,8 +139,6 @@ export class QualityGateOrchestrator {
         await this.holdForProbeFailure(row.download, row.book, 'probe_failed', error);
         return;
       }
-
-      // Probe audio files
       let scanResult;
       try {
         scanResult = await scanAudioDirectory(savePath, { skipCover: true });
@@ -169,39 +147,34 @@ export class QualityGateOrchestrator {
         await this.holdForProbeFailure(row.download, row.book, 'probe_failed', error);
         return;
       }
+      if (!scanResult) { this.log.warn({ downloadId: row.download.id }, 'Quality gate: no audio files found'); await this.holdForProbeFailure(row.download, row.book, 'probe_failed', 'No audio files found'); return; }
 
-      if (!scanResult) {
-        this.log.warn({ downloadId: row.download.id }, 'Quality gate: no audio files found');
-        await this.holdForProbeFailure(row.download, row.book, 'probe_failed', 'No audio files found');
-        return;
-      }
-
-      // Get decision from service
       const decision = await this.qualityGateService.processDownload(row.download, row.book, scanResult);
-
-      // Dispatch side effects based on decision
       await this.dispatchSideEffects(decision.action, row.download, row.book, decision.reason, decision.statusTransition);
-
-      // If approved, use slot admission to trigger import
-      if (decision.action === 'imported' && this.importService && this.importOrchestrator) {
-        if (this.importService.tryAcquireSlot()) {
-          this.importOrchestrator.importDownload(downloadId)
-            .catch((err: unknown) => {
-              this.log.error({ downloadId, error: err }, 'Quality gate: inline import failed');
-            })
-            .finally(() => {
-              this.importService!.releaseSlot();
-            });
-        } else {
-          await this.importService.setProcessingQueued(downloadId);
-          this.log.info({ downloadId }, 'Quality gate: concurrency limit reached, queued for next maintenance sweep');
-        }
-      }
+      if (decision.action === 'imported') { await this.triggerImportWithSlotAdmission(downloadId); }
     } catch (error: unknown) {
       this.log.error({ error, downloadId: row.download.id }, 'Quality gate error');
       await this.qualityGateService.setStatus(row.download.id, 'pending_review');
       const probeError = error instanceof Error ? error.message : String(error);
       this.recordDecision(row.download, row.book, { ...NULL_REASON, probeFailure: true, probeError, holdReasons: ['unhandled_error'] });
+    }
+  }
+
+  /** Slot admission for inline import: acquire slot → fire-and-forget import, or queue for next sweep. */
+  private async triggerImportWithSlotAdmission(downloadId: number): Promise<void> {
+    if (!this.importService || !this.importOrchestrator) return;
+
+    if (this.importService.tryAcquireSlot()) {
+      this.importOrchestrator.importDownload(downloadId)
+        .catch((err: unknown) => {
+          this.log.error({ downloadId, error: err }, 'Quality gate: inline import failed');
+        })
+        .finally(() => {
+          this.importService!.releaseSlot();
+        });
+    } else {
+      await this.importService.setProcessingQueued(downloadId);
+      this.log.info({ downloadId }, 'Quality gate: concurrency limit reached, queued for next maintenance sweep');
     }
   }
 
