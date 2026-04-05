@@ -195,7 +195,7 @@ export async function createServices(db: Db, log: FastifyBaseLogger): Promise<Se
   download.setRetrySearchDeps(retrySearchDeps);
   eventHistory.setRetrySearchDeps(retrySearchDeps);
 
-  const qualityGateOrchestrator = new QualityGateOrchestrator(qualityGateService, db, log, downloadClient, eventHistory, eventBroadcaster, blacklistService, remotePathMapping, retrySearchDeps, settings);
+  const qualityGateOrchestrator = new QualityGateOrchestrator(qualityGateService, db, log, downloadClient, eventHistory, eventBroadcaster, blacklistService, remotePathMapping, retrySearchDeps, settings, importOrchestrator, importService);
   const bookRejection = new BookRejectionService(db, log, book, blacklistService, settings, eventHistory, retrySearchDeps);
 
   return { settings, auth, indexer, downloadClient, book, bookList, download, downloadOrchestrator, metadata, import: importService, importOrchestrator, libraryScan, matchJob, notifier, blacklist: blacklistService, remotePathMapping, rename: renameService, merge: mergeService, eventHistory, tagging: taggingService, qualityGate: qualityGateService, qualityGateOrchestrator, retryBudget, eventBroadcaster, backup, healthCheck, taskRegistry, importList, discovery, bulkOperation, bookRejection };
