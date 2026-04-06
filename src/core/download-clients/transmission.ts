@@ -27,6 +27,7 @@ const TORRENT_FIELDS = [
   'addedDate',
   'doneDate',
   'errorString',
+  'leftUntilDone',
 ] as const;
 
 interface TransmissionTorrent {
@@ -45,6 +46,7 @@ interface TransmissionTorrent {
   addedDate: number;
   doneDate: number;
   errorString: string;
+  leftUntilDone: number;
 }
 
 interface RpcResponse {
@@ -216,7 +218,7 @@ export class TransmissionClient implements DownloadClientAdapter {
       id: t.hashString,
       name: t.name,
       progress: Math.round(t.percentDone * 100),
-      status: this.mapStatus(t.status),
+      status: this.mapStatus(t),
       savePath: t.downloadDir,
       size: t.totalSize,
       downloaded: t.downloadedEver,
@@ -230,24 +232,18 @@ export class TransmissionClient implements DownloadClientAdapter {
     };
   }
 
-  private mapStatus(status: number): DownloadItemInfo['status'] {
-    // Transmission status codes:
-    // 0 = stopped, 1 = check-wait, 2 = checking
-    // 3 = download-wait, 4 = downloading
-    // 5 = seed-wait, 6 = seeding
-    switch (status) {
-      case 0:
-        return 'paused';
-      case 1:
-      case 2:
-      case 3:
-      case 4:
-        return 'downloading';
-      case 5:
-      case 6:
-        return 'seeding';
-      default:
-        return 'downloading';
+  private mapStatus(t: TransmissionTorrent): DownloadItemInfo['status'] {
+    // errorString takes precedence over all other fields
+    if (t.errorString) return 'error';
+    // No metadata yet — still resolving
+    if (t.totalSize === 0) return 'downloading';
+    // leftUntilDone is the authoritative completion signal
+    if (t.leftUntilDone === 0) {
+      // Transmission status codes: 0 = stopped, 5 = seed-wait, 6 = seeding
+      if (t.status === 0) return 'completed';
+      if (t.status === 5 || t.status === 6) return 'seeding';
     }
+    // Active download or other states
+    return 'downloading';
   }
 }
