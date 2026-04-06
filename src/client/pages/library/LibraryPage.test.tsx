@@ -108,7 +108,8 @@ function mockLibraryData(books: BookWithAuthor[]) {
       filtered = filtered.filter(b =>
         b.title.toLowerCase().includes(q) ||
         (b.authors[0]?.name ?? '').toLowerCase().includes(q) ||
-        (b.narrators[0]?.name ?? '').toLowerCase().includes(q),
+        (b.seriesName ?? '').toLowerCase().includes(q) ||
+        (b.genres ?? '').toLowerCase().includes(q),
       );
     }
     if (params?.sortField) {
@@ -629,6 +630,26 @@ describe('LibraryPage', () => {
     // Should show "X results" format when searching
     await waitFor(() => {
       expect(screen.getByText(/result/)).toBeInTheDocument();
+    }, { timeout: 2000 });
+  });
+
+  // #365 — narrator-only search term returns no results
+  it('searching for a narrator-only name shows no matching books', async () => {
+    mockLibraryData(mockBooks);
+    const user = userEvent.setup();
+
+    renderWithProviders(<LibraryPage />);
+
+    await waitFor(() => {
+      expect(screen.getByText('The Way of Kings')).toBeInTheDocument();
+    });
+
+    const searchInput = screen.getByPlaceholderText('Search library...');
+    await user.type(searchInput, 'Ray Porter');
+
+    // Ray Porter is a narrator on "Project Hail Mary" but not a title/author/series/genre match
+    await waitFor(() => {
+      expect(screen.queryByText('Project Hail Mary')).not.toBeInTheDocument();
     }, { timeout: 2000 });
   });
 
