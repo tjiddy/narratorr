@@ -1,5 +1,34 @@
 # Workflow Log
 
+## #365 Library page: sort/search/dropdown cleanup — 2026-04-06
+**Skill path:** /implement → /claim → /plan → /handoff
+**Outcome:** success — PR #374
+
+### Metrics
+- Files changed: 8 | Tests added/modified: 14
+- Quality gate runs: 2 (pass on attempt 1 both times)
+- Fix iterations: 1 (sort dropdown direction order was desc-first for all fields, needed per-field ordering)
+- Context compactions: 0
+
+### Workflow experience
+- What went smoothly: Clean 4-module TDD cycle, each module isolated with clear boundaries. Self-review and coverage review passed quickly.
+- Friction / issues encountered: Sort dropdown direction order required field-specific mapping — the original `['desc', 'asc']` put Title Z→A before A→Z. Caught in red phase by exact-order assertions.
+
+### Token efficiency
+- Highest-token actions: Explore subagent for plan codebase exploration (read many test files to understand patterns)
+- Avoidable waste: None significant — the issue was well-scoped and the spec review had already clarified all contracts
+- Suggestions: For UI-only changes, targeted file reads are more efficient than full Explore subagents
+
+### Infrastructure gaps
+- Repeated workarounds: None
+- Missing tooling / config: `frontend-design` skill not available for design pass
+- Unresolved debt: None introduced
+
+### Wish I'd Known
+1. Sort dropdown direction order is field-dependent — `['desc', 'asc']` is correct for Date Added but wrong for alphabetical fields. See `sort-dropdown-direction-order.md`.
+2. `collapseSeries` returned items in Map insertion order, not re-sorted — this was the root cause of the series grouping sort bug. See `collapse-series-sort-key-mismatch.md`.
+3. The regex `/a.*z/i` matches both "A→Z" and "Z→A" — use exact string matching for sort option assertions.
+
 ## #361 MAM status refresh button silently fails for saved indexers — 2026-04-05
 **Skill path:** /implement → /claim → /plan → /handoff
 **Outcome:** success — PR #366
