@@ -640,6 +640,29 @@ describe('collapseSeries — title-sort uses seriesName key (#365)', () => {
   });
 });
 
+// #365 — collapseSeries equal-key tiebreaker preserves id-based order
+describe('collapseSeries — equal-key tiebreaker (#365)', () => {
+  it('with createdAt asc and equal dates: standalones sort by id ascending', () => {
+    const books = [
+      makeBook({ id: 5, title: 'Book E', seriesName: null, createdAt: '2024-01-01T00:00:00Z' }),
+      makeBook({ id: 2, title: 'Book B', seriesName: null, createdAt: '2024-01-01T00:00:00Z' }),
+    ];
+
+    const collapsed = collapseSeries(books, 'createdAt', 'asc');
+    expect(collapsed.map((b) => b.id)).toEqual([2, 5]);
+  });
+
+  it('with createdAt desc and equal dates: standalones sort by id descending', () => {
+    const books = [
+      makeBook({ id: 2, title: 'Book B', seriesName: null, createdAt: '2024-01-01T00:00:00Z' }),
+      makeBook({ id: 5, title: 'Book E', seriesName: null, createdAt: '2024-01-01T00:00:00Z' }),
+    ];
+
+    const collapsed = collapseSeries(books, 'createdAt', 'desc');
+    expect(collapsed.map((b) => b.id)).toEqual([5, 2]);
+  });
+});
+
 // #365 — collapseSeries re-sort handles nullable fields correctly
 describe('collapseSeries — nullable field re-sort (#365)', () => {
   it('with narrator asc: null-narrator standalones sort after non-null collapsed groups', () => {
