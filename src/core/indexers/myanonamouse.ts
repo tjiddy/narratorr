@@ -10,6 +10,7 @@ export interface MAMConfig {
   searchLanguages: number[];
   searchType: string;
   isVip?: boolean;
+  classname?: string;
 }
 
 const DEFAULT_BASE_URL = 'https://www.myanonamouse.net';
@@ -77,6 +78,7 @@ export class MyAnonamouseIndexer implements IndexerAdapter {
   private searchLanguages: number[];
   private searchType: string;
   private isVip?: boolean;
+  private classname?: string;
 
   constructor(config: MAMConfig, name?: string) {
     this.mamId = config.mamId;
@@ -85,6 +87,7 @@ export class MyAnonamouseIndexer implements IndexerAdapter {
     this.searchLanguages = config.searchLanguages;
     this.searchType = config.searchType;
     this.isVip = config.isVip;
+    this.classname = config.classname;
     this.name = name || 'MyAnonamouse';
   }
 
@@ -169,7 +172,7 @@ export class MyAnonamouseIndexer implements IndexerAdapter {
     return results;
   }
 
-  async test(): Promise<{ success: boolean; message?: string; ip?: string; metadata?: Record<string, unknown> }> {
+  async test(): Promise<{ success: boolean; message?: string; ip?: string; warning?: string; metadata?: Record<string, unknown> }> {
     try {
       const body = await this.fetchWithCookie(`${this.baseUrl}/jsonLoad.php`);
 
@@ -186,11 +189,15 @@ export class MyAnonamouseIndexer implements IndexerAdapter {
 
       if (data.username) {
         const isVip = data.classname === 'VIP' || data.classname === 'Elite VIP';
-        const result: { success: boolean; message: string; ip?: string; metadata: Record<string, unknown> } = {
+        const result: { success: boolean; message: string; ip?: string; warning?: string; metadata: Record<string, unknown> } = {
           success: true,
           message: `Connected as ${data.username}`,
           metadata: { username: data.username, classname: data.classname, isVip },
         };
+
+        if (data.classname === 'Mouse') {
+          result.warning = 'Account is ratio-locked (Mouse class) — cannot download';
+        }
 
         if (this.proxyUrl) {
           result.ip = await resolveProxyIp(this.proxyUrl);
@@ -209,6 +216,27 @@ export class MyAnonamouseIndexer implements IndexerAdapter {
         message: error instanceof Error ? error.message : 'Connection failed',
       };
     }
+  }
+
+  async refreshStatus(): Promise<{ isVip: boolean; classname: string } | null> {
+    const body = await this.fetchWithCookie(`${this.baseUrl}/jsonLoad.php`);
+
+    let data: { username?: string; classname?: string };
+    try {
+      data = JSON.parse(body) as { username?: string; classname?: string };
+    } catch {
+      return null;
+    }
+
+    if (!data.classname) {
+      return null;
+    }
+
+    const isVip = data.classname === 'VIP' || data.classname === 'Elite VIP';
+    this.isVip = isVip;
+    this.classname = data.classname;
+
+    return { isVip, classname: data.classname };
   }
 
   /**

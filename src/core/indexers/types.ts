@@ -36,5 +36,6 @@ export interface IndexerAdapter {
   readonly name: string;
 
   search(query: string, options?: SearchOptions): Promise<SearchResult[]>;
-  test(): Promise<{ success: boolean; message?: string; ip?: string; metadata?: Record<string, unknown> }>;
+  test(): Promise<{ success: boolean; message?: string; ip?: string; warning?: string; metadata?: Record<string, unknown> }>;
+  refreshStatus?(): Promise<{ isVip: boolean; classname: string } | null>;
 }
