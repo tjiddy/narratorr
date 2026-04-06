@@ -431,6 +431,50 @@ describe('QBittorrentClient', () => {
       expect(result!.status).toBe('error');
     });
 
+    it('maps stoppedDL to paused', async () => {
+      server.use(
+        http.get(`${BASE_URL}/api/v2/torrents/info`, () => {
+          return HttpResponse.json([{ ...mockTorrent, state: 'stoppedDL' }]);
+        }),
+      );
+
+      const result = await client.getDownload('abc123');
+      expect(result!.status).toBe('paused');
+    });
+
+    it('maps stoppedUP to seeding', async () => {
+      server.use(
+        http.get(`${BASE_URL}/api/v2/torrents/info`, () => {
+          return HttpResponse.json([{ ...mockTorrent, state: 'stoppedUP' }]);
+        }),
+      );
+
+      const result = await client.getDownload('abc123');
+      expect(result!.status).toBe('seeding');
+    });
+
+    it('maps forcedMetaDL to downloading', async () => {
+      server.use(
+        http.get(`${BASE_URL}/api/v2/torrents/info`, () => {
+          return HttpResponse.json([{ ...mockTorrent, state: 'forcedMetaDL' }]);
+        }),
+      );
+
+      const result = await client.getDownload('abc123');
+      expect(result!.status).toBe('downloading');
+    });
+
+    it('maps checkingUP to downloading (not seeding — integrity unconfirmed)', async () => {
+      server.use(
+        http.get(`${BASE_URL}/api/v2/torrents/info`, () => {
+          return HttpResponse.json([{ ...mockTorrent, state: 'checkingUP' }]);
+        }),
+      );
+
+      const result = await client.getDownload('abc123');
+      expect(result!.status).toBe('downloading');
+    });
+
     it('maps unknown state to downloading (fallback)', async () => {
       server.use(
         http.get(`${BASE_URL}/api/v2/torrents/info`, () => {
@@ -860,6 +904,85 @@ describe('QBittorrentClient', () => {
 
       const result = await client.getDownload('abc123');
       expect(result!.completedAt).toEqual(new Date(1700003600 * 1000));
+    });
+  });
+
+  describe('content_path containment validation', () => {
+    it('returns seeding when content_path is descendant of save_path', async () => {
+      server.use(
+        http.get(`${BASE_URL}/api/v2/torrents/info`, () => {
+          return HttpResponse.json([{
+            ...mockTorrent,
+            state: 'uploading',
+            save_path: '/downloads/complete',
+            content_path: '/downloads/complete/My Audiobook',
+          }]);
+        }),
+      );
+
+      const result = await client.getDownload('abc123');
+      expect(result!.status).toBe('seeding');
+    });
+
+    it('returns downloading when content_path is NOT within save_path (incomplete dir)', async () => {
+      server.use(
+        http.get(`${BASE_URL}/api/v2/torrents/info`, () => {
+          return HttpResponse.json([{
+            ...mockTorrent,
+            state: 'uploading',
+            save_path: '/downloads/complete',
+            content_path: '/downloads/incomplete/My Audiobook',
+          }]);
+        }),
+      );
+
+      const result = await client.getDownload('abc123');
+      expect(result!.status).toBe('downloading');
+    });
+
+    it('returns seeding when content_path is missing/undefined', async () => {
+      server.use(
+        http.get(`${BASE_URL}/api/v2/torrents/info`, () => {
+          const torrent = { ...mockTorrent, state: 'uploading' };
+          // No content_path field
+          return HttpResponse.json([torrent]);
+        }),
+      );
+
+      const result = await client.getDownload('abc123');
+      expect(result!.status).toBe('seeding');
+    });
+
+    it('returns downloading for near-miss path prefix (save_path=/downloads, content_path=/downloads2/file)', async () => {
+      server.use(
+        http.get(`${BASE_URL}/api/v2/torrents/info`, () => {
+          return HttpResponse.json([{
+            ...mockTorrent,
+            state: 'uploading',
+            save_path: '/downloads',
+            content_path: '/downloads2/My Audiobook',
+          }]);
+        }),
+      );
+
+      const result = await client.getDownload('abc123');
+      expect(result!.status).toBe('downloading');
+    });
+
+    it('normalizes content_path trailing slash before comparison', async () => {
+      server.use(
+        http.get(`${BASE_URL}/api/v2/torrents/info`, () => {
+          return HttpResponse.json([{
+            ...mockTorrent,
+            state: 'uploading',
+            save_path: '/downloads/complete',
+            content_path: '/downloads/complete/My Audiobook/',
+          }]);
+        }),
+      );
+
+      const result = await client.getDownload('abc123');
+      expect(result!.status).toBe('seeding');
     });
   });
 });

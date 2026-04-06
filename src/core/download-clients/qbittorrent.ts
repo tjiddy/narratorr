@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { basename, dirname } from 'node:path';
+import { basename, dirname, relative } from 'node:path';
 import { type DownloadClientAdapter, type DownloadItemInfo, type AddDownloadOptions, type DownloadProtocol, ETA_UPPER_BOUND_SEC } from './types.js';
 import { qbTorrentsResponseSchema } from './schemas.js';
 import { fetchWithTimeout } from '../utils/fetch-with-timeout.js';
@@ -320,7 +320,7 @@ export class QBittorrentClient implements DownloadClientAdapter {
       id: qbt.hash,
       name: useFallback ? qbt.name : basename(contentPath),
       progress: Math.round(qbt.progress * 100),
-      status: this.mapState(qbt.state),
+      status: this.mapState(qbt.state, qbt.save_path, contentPath),
       savePath: useFallback ? qbt.save_path : dirname(contentPath),
       size: qbt.total_size,
       downloaded: qbt.downloaded,
@@ -334,22 +334,25 @@ export class QBittorrentClient implements DownloadClientAdapter {
     };
   }
 
-  private mapState(state: string): DownloadItemInfo['status'] {
+  private mapState(state: string, savePath: string, contentPath: string | undefined): DownloadItemInfo['status'] {
     const stateMap: Record<string, DownloadItemInfo['status']> = {
       downloading: 'downloading',
       stalledDL: 'downloading',
       metaDL: 'downloading',
+      forcedMetaDL: 'downloading',
       forcedDL: 'downloading',
       allocating: 'downloading',
       uploading: 'seeding',
       stalledUP: 'seeding',
       forcedUP: 'seeding',
       pausedDL: 'paused',
-      pausedUP: 'paused',
+      stoppedDL: 'paused',
+      pausedUP: 'seeding',
+      stoppedUP: 'seeding',
       queuedDL: 'downloading',
       queuedUP: 'seeding',
       checkingDL: 'downloading',
-      checkingUP: 'seeding',
+      checkingUP: 'downloading',
       checkingResumeData: 'downloading',
       moving: 'downloading',
       error: 'error',
@@ -357,12 +360,18 @@ export class QBittorrentClient implements DownloadClientAdapter {
       unknown: 'error',
     };
 
-    // Handle completed state based on progress
-    if (state === 'pausedUP' || state === 'stalledUP' || state === 'uploading') {
-      return 'seeding';
+    const mapped = stateMap[state] || 'downloading';
+
+    // For seeding states, validate content_path is within save_path
+    // to catch the incomplete→complete directory move race condition
+    if (mapped === 'seeding' && contentPath) {
+      const rel = relative(savePath, contentPath);
+      if (rel.startsWith('..') || relative(savePath, contentPath) === contentPath) {
+        return 'downloading';
+      }
     }
 
-    return stateMap[state] || 'downloading';
+    return mapped;
   }
 }
 
