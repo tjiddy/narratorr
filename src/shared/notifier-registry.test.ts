@@ -33,6 +33,23 @@ describe('NOTIFIER_REGISTRY', () => {
       }
     });
 
+    it('webhook defaultSettings includes headers and bodyTemplate', () => {
+      const defaults = NOTIFIER_REGISTRY.webhook.defaultSettings as Record<string, unknown>;
+      expect(defaults).toHaveProperty('headers', '');
+      expect(defaults).toHaveProperty('bodyTemplate', '');
+    });
+
+    it('email defaultSettings includes smtpUser and smtpPass', () => {
+      const defaults = NOTIFIER_REGISTRY.email.defaultSettings as Record<string, unknown>;
+      expect(defaults).toHaveProperty('smtpUser', '');
+      expect(defaults).toHaveProperty('smtpPass', '');
+    });
+
+    it('ntfy defaultSettings includes ntfyServer', () => {
+      const defaults = NOTIFIER_REGISTRY.ntfy.defaultSettings as Record<string, unknown>;
+      expect(defaults).toHaveProperty('ntfyServer', '');
+    });
+
     it('requiredFields paths are valid setting field names', () => {
       for (const type of types) {
         const meta = NOTIFIER_REGISTRY[type];

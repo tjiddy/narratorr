@@ -1,0 +1,236 @@
+import { useState, useCallback, useEffect } from 'react';
+import type { UseFormWatch, UseFormSetValue } from 'react-hook-form';
+import type { CreateIndexerFormData } from '../../../../shared/schemas.js';
+import { api } from '@/lib/api';
+import { MAM_LANGUAGES } from '../../../../shared/indexer-registry.js';
+import type { IndexerFieldsProps } from './types.js';
+
+interface MamStatus {
+  username: string;
+  classname?: string;
+  isVip: boolean;
+}
+
+function persistMamFields(setValue: UseFormSetValue<CreateIndexerFormData> | undefined, status: MamStatus) {
+  if (!setValue) return;
+  setValue('settings.isVip', status.isVip);
+  setValue('settings.mamUsername', status.username);
+  if (status.classname) {
+    (setValue as (name: string, value: unknown) => void)('settings.classname', status.classname);
+  }
+}
+
+function useMamDetection(watch?: UseFormWatch<CreateIndexerFormData>, setValue?: UseFormSetValue<CreateIndexerFormData>, initialStatus?: MamStatus | null, indexerId?: number) {
+  const [mamStatus, setMamStatus] = useState<MamStatus | null>(initialStatus ?? null);
+  const [detectError, setDetectError] = useState<string | null>(null);
+  const [isDetecting, setIsDetecting] = useState(false);
+
+  const detect = useCallback(async (mamId: string) => {
+    if (!mamId.trim()) return;
+    const isSentinel = mamId === '********';
+    if (isSentinel && indexerId == null) return;
+
+    setIsDetecting(true);
+    setDetectError(null);
+    const startTime = Date.now();
+
+    async function ensureMinDuration() {
+      const elapsed = Date.now() - startTime;
+      if (elapsed < 1000) await new Promise((r) => setTimeout(r, 1000 - elapsed));
+    }
+
+    try {
+      const baseUrl = watch ? (watch('settings.baseUrl') || '') : '';
+      const useProxy = watch ? (watch('settings.useProxy') || false) : false;
+      const result = await api.testIndexerConfig({
+        name: 'Detection', type: 'myanonamouse', enabled: true, priority: 0,
+        settings: { mamId, baseUrl, useProxy },
+        ...(isSentinel && indexerId != null ? { id: indexerId } : {}),
+      });
+      await ensureMinDuration();
+
+      if (result.success && result.metadata) {
+        const status: MamStatus = {
+          username: result.metadata.username as string,
+          classname: result.metadata.classname as string | undefined,
+          isVip: result.metadata.isVip as boolean,
+        };
+        setMamStatus(status);
+        persistMamFields(setValue, status);
+      } else {
+        setDetectError(result.message || 'Detection failed');
+        setMamStatus(null);
+      }
+    } catch {
+      await ensureMinDuration();
+      setDetectError('Connection failed');
+      setMamStatus(null);
+    }
+    setIsDetecting(false);
+  }, [watch, setValue, indexerId]);
+
+  return { mamStatus, detectError, isDetecting, detect, setMamStatus };
+}
+
+function MamStatusBadge({ status, onRefresh }: { status: MamStatus; onRefresh: () => void }) {
+  return (
+    <div className="flex items-center gap-2 mt-1">
+      <span className="text-sm text-muted-foreground">
+        Connected as <span className="font-medium text-foreground">{status.username}</span>
+        {status.classname && <> — <span className={status.isVip ? 'text-amber-400 font-medium' : ''}>{status.classname}</span></>}
+      </span>
+      <button
+        type="button"
+        onClick={onRefresh}
+        className="text-muted-foreground hover:text-foreground transition-colors"
+        title="Refresh VIP status"
+      >
+        <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+          <path d="M21 12a9 9 0 0 0-9-9 9.75 9.75 0 0 0-6.74 2.74L3 8" />
+          <path d="M3 3v5h5" />
+          <path d="M3 12a9 9 0 0 0 9 9 9.75 9.75 0 0 0 6.74-2.74L21 16" />
+          <path d="M16 21h5v-5" />
+        </svg>
+      </button>
+    </div>
+  );
+}
+
+function DetectionOverlay() {
+  return (
+    <div className="sm:col-span-2 relative flex items-center justify-center py-4">
+      <div className="bg-card border border-border rounded-2xl px-6 py-4 shadow-xl flex items-center gap-3">
+        <svg className="w-5 h-5 animate-spin text-primary" viewBox="0 0 24 24" fill="none">
+          <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+          <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
+        </svg>
+        <span className="text-sm font-medium">Checking MAM status…</span>
+      </div>
+    </div>
+  );
+}
+
+function deriveInitialMamStatus(watch?: UseFormWatch<CreateIndexerFormData>): MamStatus | null {
+  const persistedIsVip = watch ? watch('settings.isVip') : undefined;
+  const persistedUsername = watch ? watch('settings.mamUsername') : undefined;
+  const persistedClassname = watch ? (watch as (name: string) => unknown)('settings.classname') as string | undefined : undefined;
+  if (persistedIsVip == null) return null;
+  return {
+    username: persistedUsername || '',
+    isVip: persistedIsVip,
+    classname: persistedClassname || (persistedIsVip ? 'VIP' : 'User'),
+  };
+}
+
+function metadataToMamStatus(metadata: Record<string, unknown>): MamStatus {
+  return {
+    username: metadata.username as string || '',
+    classname: metadata.classname as string | undefined,
+    isVip: metadata.isVip as boolean,
+  };
+}
+
+function MamSearchStatusMessage({ status }: { status: MamStatus }) {
+  if (status.classname === 'Mouse') {
+    return <div className="sm:col-span-2"><p className="text-sm text-amber-500 font-medium">Mouse class — searches disabled until ratio improves</p></div>;
+  }
+  if (status.isVip) {
+    return <div className="sm:col-span-2"><p className="text-sm text-muted-foreground">Searching all torrents including VIP</p></div>;
+  }
+  return <div className="sm:col-span-2"><p className="text-sm text-muted-foreground">Searching non-VIP and freeleech torrents</p></div>;
+}
+
+export function MamFields({ register, errors, watch, setValue, formTestResult, indexerId }: Pick<IndexerFieldsProps, 'register' | 'errors' | 'watch' | 'setValue' | 'formTestResult' | 'indexerId'>) {
+  const searchLanguages = watch ? (watch('settings.searchLanguages') ?? [1]) : [1];
+  const { mamStatus, detectError, isDetecting, detect, setMamStatus } = useMamDetection(watch, setValue, deriveInitialMamStatus(watch), indexerId);
+
+  // Bridge: update badge from explicit Test button result
+  useEffect(() => {
+    if (formTestResult?.success && formTestResult.metadata && 'isVip' in formTestResult.metadata) {
+      setMamStatus(metadataToMamStatus(formTestResult.metadata));
+    }
+  }, [formTestResult, setMamStatus]);
+
+  function toggleLanguage(langId: number) {
+    if (!setValue) return;
+    const updated = searchLanguages.includes(langId)
+      ? searchLanguages.filter((id) => id !== langId)
+      : [...searchLanguages, langId];
+    setValue('settings.searchLanguages', updated, { shouldValidate: true });
+  }
+
+  const mamIdRegistration = register('settings.mamId');
+
+  return (
+    <>
+      <div className="sm:col-span-2">
+        <label htmlFor="indexerMamId" className="block text-sm font-medium mb-2">MAM ID</label>
+        <input
+          id="indexerMamId"
+          type="password"
+          {...mamIdRegistration}
+          onBlur={(e) => {
+            mamIdRegistration.onBlur(e);
+            const val = e.target.value.trim();
+            if (val && val !== '********') detect(val);
+          }}
+          className={`w-full px-4 py-3 bg-background border rounded-xl focus-ring focus:border-transparent transition-all ${
+            errors.settings?.mamId ? 'border-destructive' : 'border-border'
+          }`}
+        />
+        {errors.settings?.mamId ? (
+          <p className="text-sm text-destructive mt-1">{errors.settings.mamId.message}</p>
+        ) : mamStatus ? (
+          <MamStatusBadge status={mamStatus} onRefresh={() => {
+            const mamId = watch ? watch('settings.mamId') : '';
+            if (mamId) detect(mamId);
+          }} />
+        ) : detectError ? (
+          <p className="text-sm text-destructive mt-1">{detectError}</p>
+        ) : (
+          <p className="text-sm text-muted-foreground mt-1">Generate from MAM &gt; Preferences &gt; Security &gt; Create Session</p>
+        )}
+      </div>
+
+      {isDetecting && <DetectionOverlay />}
+      <div className="sm:col-span-2">
+        <label htmlFor="indexerBaseUrl" className="block text-sm font-medium mb-2">
+          Base URL
+          <span className="text-muted-foreground font-normal ml-1">(optional)</span>
+        </label>
+        <input
+          id="indexerBaseUrl"
+          type="text"
+          {...register('settings.baseUrl')}
+          className={`w-full px-4 py-3 bg-background border rounded-xl focus-ring focus:border-transparent transition-all ${
+            errors.settings?.baseUrl ? 'border-destructive' : 'border-border'
+          }`}
+          placeholder="https://www.myanonamouse.net"
+        />
+        {errors.settings?.baseUrl ? (
+          <p className="text-sm text-destructive mt-1">{errors.settings.baseUrl.message}</p>
+        ) : (
+          <p className="text-sm text-muted-foreground mt-1">Only change if using a custom MAM mirror</p>
+        )}
+      </div>
+      <div className="sm:col-span-2">
+        <span className="block text-sm font-medium mb-2">Languages</span>
+        <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+          {MAM_LANGUAGES.map((lang) => (
+            <label key={lang.id} className="flex items-center gap-2 text-sm cursor-pointer">
+              <input
+                type="checkbox"
+                checked={searchLanguages.includes(lang.id)}
+                onChange={() => toggleLanguage(lang.id)}
+                className="rounded border-border text-primary focus-ring"
+              />
+              {lang.label}
+            </label>
+          ))}
+        </div>
+        <p className="text-sm text-muted-foreground mt-1">Deselect all for unrestricted language search</p>
+      </div>
+      {mamStatus && <MamSearchStatusMessage status={mamStatus} />}
+    </>
+  );
+}

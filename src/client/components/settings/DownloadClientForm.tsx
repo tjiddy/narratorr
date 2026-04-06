@@ -15,16 +15,16 @@ import {
   downloadClientTypeSchema,
   type CreateDownloadClientFormData,
 } from '../../../shared/schemas.js';
-import { DOWNLOAD_CLIENT_REGISTRY, settingsFromClient } from '../../../shared/download-client-registry.js';
+import { DOWNLOAD_CLIENT_REGISTRY, DOWNLOAD_CLIENT_TYPES, settingsFromClient } from '../../../shared/download-client-registry.js';
 
 const IMPLEMENTED_TYPES = Object.keys(DOWNLOAD_CLIENT_REGISTRY);
 
 const defaultValues: CreateDownloadClientFormData = {
   name: '',
-  type: 'qbittorrent',
+  type: DOWNLOAD_CLIENT_TYPES[0],
   enabled: true,
   priority: 50,
-  settings: DOWNLOAD_CLIENT_REGISTRY.qbittorrent.defaultSettings,
+  settings: DOWNLOAD_CLIENT_REGISTRY[DOWNLOAD_CLIENT_TYPES[0]].defaultSettings,
 };
 
 interface DownloadClientFormProps {
@@ -64,7 +64,7 @@ export function DownloadClientForm({ client, mode, onCancel, onSubmit, onFormTes
   }, [isEdit, client, reset]);
 
   useEffect(() => {
-    if (!isEdit) setValue('settings', DOWNLOAD_CLIENT_REGISTRY[selectedType]?.defaultSettings || DOWNLOAD_CLIENT_REGISTRY.qbittorrent.defaultSettings);
+    if (!isEdit) setValue('settings', DOWNLOAD_CLIENT_REGISTRY[selectedType]?.defaultSettings || DOWNLOAD_CLIENT_REGISTRY[DOWNLOAD_CLIENT_TYPES[0]].defaultSettings);
   }, [selectedType, isEdit, setValue]);
 
   const isImplemented = IMPLEMENTED_TYPES.includes(selectedType);

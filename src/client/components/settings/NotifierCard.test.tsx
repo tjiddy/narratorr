@@ -393,4 +393,38 @@ describe('NotifierCard — edit mode', () => {
     expect(downloadCb).not.toBeChecked();
     expect(failureCb).not.toBeChecked();
   });
+
+  it('hydrates edit form with registry defaults for missing settings fields', () => {
+    const notifierWithSparseSettings = createMockNotifier({
+      id: 10,
+      name: 'Sparse Webhook',
+      type: 'webhook',
+      settings: { url: 'https://saved.com/hook' },
+    });
+
+    renderWithProviders(
+      <NotifierCard
+        notifier={notifierWithSparseSettings}
+        mode="edit"
+        onSubmit={vi.fn()}
+        onFormTest={vi.fn()}
+      />,
+    );
+
+    const urlInput = screen.getByPlaceholderText('https://example.com/webhook');
+    expect(urlInput).toHaveValue('https://saved.com/hook');
+    expect(screen.getByText('Body Template')).toBeInTheDocument();
+    expect(screen.getByText('Headers (JSON)')).toBeInTheDocument();
+  });
+
+  it('create-mode defaults derive from NOTIFIER_TYPES[0] registry entry', () => {
+    renderWithProviders(
+      <NotifierCard mode="create" onSubmit={vi.fn()} onFormTest={vi.fn()} />,
+    );
+
+    expect(screen.getByPlaceholderText('https://example.com/webhook')).toBeInTheDocument();
+    expect(screen.getByText('Method')).toBeInTheDocument();
+    expect(screen.getByText('Headers (JSON)')).toBeInTheDocument();
+    expect(screen.getByText('Body Template')).toBeInTheDocument();
+  });
 });

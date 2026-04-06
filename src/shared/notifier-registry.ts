@@ -9,7 +9,7 @@ type NotifierTypeMetadata = RegistryEntry<CreateNotifierFormData['settings']>;
 export const NOTIFIER_REGISTRY: Record<string, NotifierTypeMetadata> = {
   webhook: {
     label: 'Webhook',
-    defaultSettings: { url: '', method: 'POST' as const },
+    defaultSettings: { url: '', method: 'POST' as const, headers: '', bodyTemplate: '' },
     requiredFields: [{ path: 'url', message: 'URL is required' }],
     viewSubtitle: (s) => (s.url as string) || 'webhook',
   },
@@ -27,7 +27,7 @@ export const NOTIFIER_REGISTRY: Record<string, NotifierTypeMetadata> = {
   },
   email: {
     label: 'Email',
-    defaultSettings: { smtpHost: '', smtpPort: 587, smtpTls: false, fromAddress: '', toAddress: '' },
+    defaultSettings: { smtpHost: '', smtpPort: 587, smtpUser: '', smtpPass: '', smtpTls: false, fromAddress: '', toAddress: '' },
     requiredFields: [
       { path: 'smtpHost', message: 'SMTP host is required' },
       { path: 'fromAddress', message: 'From address is required' },
@@ -61,7 +61,7 @@ export const NOTIFIER_REGISTRY: Record<string, NotifierTypeMetadata> = {
   },
   ntfy: {
     label: 'ntfy',
-    defaultSettings: { ntfyTopic: '' },
+    defaultSettings: { ntfyTopic: '', ntfyServer: '' },
     requiredFields: [{ path: 'ntfyTopic', message: 'Topic is required' }],
     viewSubtitle: (s) => (s.ntfyTopic as string) || 'ntfy',
   },
