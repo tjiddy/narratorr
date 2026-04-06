@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { http, HttpResponse, delay } from 'msw';
 import { useMswServer } from '../__tests__/msw/server.js';
 import { QBittorrentClient } from './qbittorrent.js';
@@ -312,20 +312,24 @@ describe('QBittorrentClient', () => {
       });
 
       it('surfaces sanitized DNS/connection-refused error preserving mapped message without URL or HTTP status', async () => {
-        server.use(
-          http.get('https://example.com/file.torrent', () => {
-            return HttpResponse.error();
-          }),
+        // Inject the exact TypeError('fetch failed') + cause.code shape that fetchWithTimeout maps
+        const cause = Object.assign(new Error('getaddrinfo ENOTFOUND torrent-host.example'), { code: 'ENOTFOUND' });
+        const fetchSpy = vi.spyOn(globalThis, 'fetch').mockRejectedValueOnce(
+          Object.assign(new TypeError('fetch failed'), { cause }),
         );
 
-        const error = await client.addDownload(TORRENT_URL).catch((e: unknown) => e) as Error;
-        expect(error).toBeInstanceOf(Error);
-        // Mapped network error should not contain the original URL or any HTTP status text
-        expect(error.message).not.toContain('SECRET123');
-        expect(error.message).not.toContain('example.com/file.torrent');
-        expect(error.message).not.toContain('HTTP');
-        // Should be a network-level error message (from mapNetworkError), not a rewritten adapter message
-        expect(error.message.length).toBeGreaterThan(0);
+        try {
+          const error = await client.addDownload(TORRENT_URL).catch((e: unknown) => e) as Error;
+          expect(error).toBeInstanceOf(Error);
+          // Should preserve the mapped DNS error message from mapNetworkError
+          expect(error.message).toMatch(/dns/i);
+          expect(error.message).toContain('torrent-host.example');
+          // Must not leak the original download URL or inject HTTP status text
+          expect(error.message).not.toContain('SECRET123');
+          expect(error.message).not.toContain('HTTP');
+        } finally {
+          fetchSpy.mockRestore();
+        }
       });
 
       it('catches fetchWithTimeout redirect error and throws sanitized message without source URL or Location header', async () => {
