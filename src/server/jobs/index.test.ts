@@ -15,8 +15,10 @@ vi.mock('./search.js', () => ({ runSearchJob: vi.fn() }));
 vi.mock('./rss.js', () => ({ runRssJob: vi.fn() }));
 vi.mock('./backup.js', () => ({ runBackupJob: vi.fn() }));
 vi.mock('./version-check.js', () => ({ checkForUpdate: vi.fn() }));
+vi.mock('./cover-backfill.js', () => ({ runCoverBackfill: vi.fn().mockResolvedValue(undefined) }));
 
 import cron from 'node-cron';
+import { runCoverBackfill } from './cover-backfill.js';
 import { createMockDb, mockDbChain, inject as injectHelper } from '../__tests__/helpers.js';
 
 describe('startJobs', () => {
@@ -322,6 +324,20 @@ describe('startJobs', () => {
 
       expect(services.qualityGateOrchestrator.processCompletedDownloads).toHaveBeenCalled();
       expect(services.importOrchestrator.processCompletedDownloads).toHaveBeenCalled();
+    });
+
+    it('calls runCoverBackfill after batch methods (#369)', async () => {
+      db.update.mockReturnValue(mockDbChain([]));
+
+      const { startJobs } = await import('./index.js');
+      startJobs(injectHelper<Db>(db), services, log);
+
+      await new Promise((resolve) => setTimeout(resolve, 10));
+
+      expect(runCoverBackfill).toHaveBeenCalledWith(
+        expect.anything(), // db
+        log,
+      );
     });
 
     it('does not block job startup when recovery throws', async () => {

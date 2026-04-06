@@ -1,5 +1,34 @@
 # Workflow Log
 
+## #369 Download and serve cover images locally — 2026-04-06
+**Skill path:** /elaborate → /respond-to-spec-review (x2) → /implement → /claim → /plan → /handoff
+**Outcome:** success — PR #380
+
+### Metrics
+- Files changed: 7 | Tests added/modified: 34
+- Quality gate runs: 2 (pass on attempt 1 both times)
+- Fix iterations: 1 (coverage review found 3 gaps — updatedAt assertion, fire-and-forget log assertion, startup wiring test)
+- Context compactions: 0
+
+### Workflow experience
+- What went smoothly: Spec simplification to reuse existing `coverUrl` + `/api/books/:id/cover` contract eliminated all schema/route/frontend changes. Clean 4-module TDD cycle with no surprises.
+- Friction / issues encountered: Initial spec had 2 rounds of spec review before approval (author images had no infrastructure, fetchWithTimeout throws on redirects, backup claim was wrong). Elaboration could have caught these upfront.
+
+### Token efficiency
+- Highest-token actions: Elaborate + 2 respond-to-spec-review cycles (3 full issue reads + codebase exploration each)
+- Avoidable waste: First elaboration produced a spec with author images and new DB columns — the spec reviewer correctly caught these misalignments. Checking existing contracts during elaboration would have saved 2 review rounds.
+- Suggestions: During elaboration, always grep for existing field/route contracts before proposing new ones.
+
+### Infrastructure gaps
+- Repeated workarounds: None
+- Missing tooling / config: None
+- Unresolved debt: None introduced
+
+### Wish I'd Known
+1. `fetchWithTimeout` uses `redirect: 'manual'` and throws on 3xx — CDN image downloads need native `fetch` with `redirect: 'follow'` (see `fetch-with-timeout-redirect-manual.md`)
+2. The existing `coverUrl` field already carries both local (`/api/books/:id/cover`) and remote (http) URLs — no new DB columns were needed. Checking this during elaboration would have saved 2 spec review rounds (see `spec-simplification-reuse-contract.md`)
+3. The embedded cover branch in enrichment-utils has a `!book.coverUrl` guard that skips extraction when a remote URL exists — the fire-and-forget hook must check `!update.coverUrl` (not `!book.coverUrl`) to avoid false triggers (see `enrichment-utils-cover-precedence.md`)
+
 ## #368 Limit concurrent M4B merge jobs with queue — 2026-04-06
 **Skill path:** /elaborate → /respond-to-spec-review (x2) → /implement → /claim → /plan → /handoff
 **Outcome:** success — PR #379

@@ -7,6 +7,7 @@ import { books } from '../../db/schema.js';
 import { scanAudioDirectory } from '../../core/utils/audio-scanner.js';
 import { AUDIO_EXTENSIONS } from '../../core/utils/audio-constants.js';
 import type { BookService } from './book.service.js';
+import { downloadRemoteCover, isRemoteCoverUrl } from './cover-download.js';
 
 export interface EnrichmentResult {
   enriched: boolean;
@@ -83,6 +84,12 @@ export async function enrichBookFromAudio(
       } catch (coverError: unknown) {
         log.warn({ error: coverError, bookId }, 'Failed to save embedded cover art');
       }
+    }
+
+    // Download remote cover if book has a remote coverUrl and no embedded cover was saved
+    if (isRemoteCoverUrl(book.coverUrl) && !update.coverUrl) {
+      downloadRemoteCover(bookId, targetPath, book.coverUrl!, db, log)
+        .catch((err: unknown) => log.warn({ error: err, bookId }, 'Fire-and-forget remote cover download failed'));
     }
 
     await db.update(books).set(update).where(eq(books.id, bookId));
