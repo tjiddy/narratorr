@@ -260,8 +260,8 @@ describe('BookListService', () => {
       expect(args).toHaveLength(2);
     });
 
-    // #365 — search excludes narrator names
-    it('search filter does not include narrator EXISTS subquery in conditions', async () => {
+    // #365 — search excludes narrator names but retains title/series/genres/author
+    it('search filter excludes narrator subquery but retains series_name, genres, and author subquery', async () => {
       const countChain = mockDbChain([{ value: 1 }]);
       const dataChain = mockDbChain([{ book: mockBook, importListName: null, primaryAuthorName: null }]);
       db.select
@@ -272,18 +272,23 @@ describe('BookListService', () => {
 
       await service.getAll(undefined, undefined, { search: 'test' });
 
-      // Inspect the where clause passed to the count query for narrator references
       const whereArg = (countChain.where as Mock).mock.calls[0]?.[0];
-      function containsNarrator(val: unknown): boolean {
-        if (typeof val === 'string') return val.includes('book_narrators') || val.includes('narrator');
-        if (Array.isArray(val)) return val.some(containsNarrator);
+      function containsSubstring(val: unknown, substring: string): boolean {
+        if (typeof val === 'string') return val.includes(substring);
+        if (Array.isArray(val)) return val.some((v) => containsSubstring(v, substring));
         if (val && typeof val === 'object') {
-          if ('queryChunks' in val) return containsNarrator((val as { queryChunks: unknown[] }).queryChunks);
-          if ('value' in val) return containsNarrator((val as { value: unknown }).value);
+          if ('queryChunks' in val) return containsSubstring((val as { queryChunks: unknown[] }).queryChunks, substring);
+          if ('value' in val) return containsSubstring((val as { value: unknown }).value, substring);
+          if ('name' in val) return containsSubstring((val as { name: unknown }).name, substring);
         }
         return false;
       }
-      expect(containsNarrator(whereArg)).toBe(false);
+      // Narrator subquery removed
+      expect(containsSubstring(whereArg, 'book_narrators')).toBe(false);
+      // Retained clauses still present
+      expect(containsSubstring(whereArg, 'series_name')).toBe(true);
+      expect(containsSubstring(whereArg, 'genres')).toBe(true);
+      expect(containsSubstring(whereArg, 'book_authors')).toBe(true);
     });
 
     it('all sort fields include secondary sort by id for stable pagination', async () => {
