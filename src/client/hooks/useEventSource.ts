@@ -208,7 +208,7 @@ export function useEventSource(apiKey: string | null) {
 
 function updateMergeProgressFromEvent(type: SSEEventType, data: SSEEventPayloads[typeof type]): void {
   if ((type === 'merge_queued' || type === 'merge_queue_updated') && 'book_id' in data) {
-    const queueData = data as SSEEventPayloads['merge_queued'];
+    const queueData = data as { book_id: number; book_title: string; position: number };
     setMergeProgress(queueData.book_id, { phase: 'queued', position: queueData.position });
   } else if (type === 'merge_started' && 'book_id' in data) {
     setMergeProgress((data as SSEEventPayloads['merge_started']).book_id, { phase: 'starting' });
