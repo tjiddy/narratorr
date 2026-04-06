@@ -1,9 +1,12 @@
-import { writeFile, rename } from 'node:fs/promises';
+import { writeFile, rename, readdir, unlink } from 'node:fs/promises';
 import { join } from 'node:path';
+import { randomUUID } from 'node:crypto';
 import { eq } from 'drizzle-orm';
 import type { Db } from '../../db/index.js';
 import type { FastifyBaseLogger } from 'fastify';
 import { books } from '../../db/schema.js';
+
+const COVER_PATTERN = /^cover\.(jpg|jpeg|png|webp)$/i;
 
 const DOWNLOAD_TIMEOUT_MS = 30_000;
 
@@ -63,11 +66,20 @@ export async function downloadRemoteCover(
     const buffer = Buffer.from(await response.arrayBuffer());
     const ext = contentTypeToExt(contentType);
     const finalPath = join(bookPath, `cover.${ext}`);
-    const tempPath = join(bookPath, `.cover-download-${bookId}.tmp`);
+    const tempPath = join(bookPath, `.cover-download-${randomUUID()}.tmp`);
 
     // Atomic write: temp file → rename (rename() overwrites target)
     await writeFile(tempPath, buffer);
     await rename(tempPath, finalPath);
+
+    // Clean up stale cover siblings with different extensions (e.g., old cover.png when new is cover.jpg)
+    const targetFilename = `cover.${ext}`;
+    const entries = await readdir(bookPath).catch(() => [] as string[]);
+    for (const entry of entries) {
+      if (COVER_PATTERN.test(entry) && entry.toLowerCase() !== targetFilename.toLowerCase()) {
+        await unlink(join(bookPath, entry)).catch(() => { /* best-effort cleanup */ });
+      }
+    }
 
     // Update DB immediately after irreversible filesystem step
     await db.update(books).set({

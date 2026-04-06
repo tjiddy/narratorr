@@ -61,22 +61,22 @@ describe('runCoverBackfill', () => {
     );
   });
 
-  it('skips books already using local /api/books/:id/cover URL', async () => {
-    // Query only returns books with remote URLs — local ones are filtered by SQL
-    const mockDb = createMockDb([]);
+  it('queries only books with remote coverUrl and non-null path via SQL predicate', async () => {
+    const whereFn = vi.fn().mockResolvedValue([]);
+    const mockDb = {
+      select: vi.fn().mockReturnValue({
+        from: vi.fn().mockReturnValue({
+          where: whereFn,
+        }),
+      }),
+    };
 
     await runCoverBackfill(inject<Db>(mockDb), log);
 
-    expect(downloadRemoteCover).not.toHaveBeenCalled();
-  });
-
-  it('skips books without path (wanted, not imported)', async () => {
-    // Query only returns books with non-null path — filtered by SQL
-    const mockDb = createMockDb([]);
-
-    await runCoverBackfill(inject<Db>(mockDb), log);
-
-    expect(downloadRemoteCover).not.toHaveBeenCalled();
+    // Verify the where() was called with a predicate (SQL filter is applied)
+    expect(whereFn).toHaveBeenCalledTimes(1);
+    // The predicate argument should be a Drizzle expression, not undefined/empty
+    expect(whereFn.mock.calls[0][0]).toBeDefined();
   });
 
   it('continues processing remaining books when one download fails', async () => {
@@ -126,12 +126,17 @@ describe('runCoverBackfill', () => {
     );
   });
 
-  it('is idempotent — second run downloads nothing when all covers are local', async () => {
+  it('is idempotent — returns empty when SQL query finds no remote-URL books', async () => {
+    // After first backfill, all coverUrl values are local (/api/books/:id/cover)
+    // The SQL LIKE 'http%' filter excludes them, returning empty set
     const mockDb = createMockDb([]);
 
     await runCoverBackfill(inject<Db>(mockDb), log);
 
     expect(downloadRemoteCover).not.toHaveBeenCalled();
+    expect((log.debug as ReturnType<typeof vi.fn>)).toHaveBeenCalledWith(
+      expect.stringContaining('no books'),
+    );
   });
 
   it('does not throw — errors are caught and logged', async () => {

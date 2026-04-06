@@ -6,12 +6,14 @@ import type { Db } from '../../db/index.js';
 vi.mock('node:fs/promises', () => ({
   writeFile: vi.fn().mockResolvedValue(undefined),
   rename: vi.fn().mockResolvedValue(undefined),
+  readdir: vi.fn().mockResolvedValue([]),
+  unlink: vi.fn().mockResolvedValue(undefined),
 }));
 
 const mockFetch = vi.fn();
 vi.stubGlobal('fetch', mockFetch);
 
-import { writeFile, rename } from 'node:fs/promises';
+import { writeFile, rename, readdir, unlink } from 'node:fs/promises';
 import { downloadRemoteCover, isRemoteCoverUrl } from './cover-download.js';
 
 function createMockLogger() {
@@ -244,6 +246,54 @@ describe('downloadRemoteCover', () => {
     // rename() overwrites target atomically — no unlink() before rename()
     expect(rename).toHaveBeenCalled();
     expect(vi.mocked(writeFile)).toHaveBeenCalledTimes(1);
+  });
+
+  it('returns false and warns on non-OK HTTP status without writing files', async () => {
+    mockFetch.mockResolvedValue(new Response('Not Found', {
+      status: 404,
+      headers: { 'content-type': 'text/plain' },
+    }));
+
+    const result = await downloadRemoteCover(
+      1, '/books/test', 'https://cdn.example.com/cover.jpg',
+      inject<Db>(mockDb), log,
+    );
+
+    expect(result).toBe(false);
+    expect(writeFile).not.toHaveBeenCalled();
+    expect(mockDb.update).not.toHaveBeenCalled();
+    expect((log.warn as ReturnType<typeof vi.fn>)).toHaveBeenCalledWith(
+      expect.objectContaining({ bookId: 1, status: 404 }),
+      expect.stringContaining('non-OK'),
+    );
+  });
+
+  it('cleans up stale cover siblings when re-downloading with different extension', async () => {
+    mockFetch.mockResolvedValue(createImageResponse('image/jpeg'));
+    vi.mocked(readdir).mockResolvedValueOnce(['cover.png', 'cover.jpg', 'audiofile.mp3'] as never);
+
+    await downloadRemoteCover(
+      42, '/books/test', 'https://cdn.example.com/cover.jpg',
+      inject<Db>(mockDb), log,
+    );
+
+    // Should remove stale cover.png (different extension) but not cover.jpg (target) or non-cover files
+    expect(unlink).toHaveBeenCalledWith('/books/test/cover.png');
+    expect(unlink).toHaveBeenCalledTimes(1);
+  });
+
+  it('uses unique temp filenames to prevent concurrent download collision', async () => {
+    mockFetch.mockResolvedValue(createImageResponse());
+
+    await downloadRemoteCover(
+      42, '/books/test', 'https://cdn.example.com/cover.jpg',
+      inject<Db>(mockDb), log,
+    );
+
+    const tempPath = vi.mocked(writeFile).mock.calls[0][0] as string;
+    // Temp filename should contain a UUID, not just the bookId
+    expect(tempPath).toMatch(/\.cover-download-[0-9a-f-]+\.tmp$/);
+    expect(tempPath).not.toContain(`-${42}.tmp`);
   });
 
   it('uses AbortSignal.timeout for download timeout', async () => {
