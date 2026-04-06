@@ -260,7 +260,7 @@ describe('QBittorrentClient', () => {
       it('throws error mentioning HTTP 404 when .torrent URL returns 404, without leaking URL', async () => {
         server.use(torrentDownloadHandler(undefined, 404));
 
-        const error = await client.addDownload(TORRENT_URL).catch((e: Error) => e);
+        const error = await client.addDownload(TORRENT_URL).catch((e: unknown) => e) as Error;
         expect(error).toBeInstanceOf(Error);
         expect(error.message).toContain('404');
         expect(error.message).not.toContain('SECRET123');
@@ -270,7 +270,7 @@ describe('QBittorrentClient', () => {
       it('throws error mentioning HTTP 500 when .torrent URL returns 500, without leaking URL', async () => {
         server.use(torrentDownloadHandler(undefined, 500));
 
-        const error = await client.addDownload(TORRENT_URL).catch((e: Error) => e);
+        const error = await client.addDownload(TORRENT_URL).catch((e: unknown) => e) as Error;
         expect(error).toBeInstanceOf(Error);
         expect(error.message).toContain('500');
         expect(error.message).not.toContain('SECRET123');
@@ -289,7 +289,7 @@ describe('QBittorrentClient', () => {
         AbortSignal.timeout = () => AbortSignal.abort(new DOMException('The operation was aborted', 'TimeoutError'));
 
         try {
-          const error = await client.addDownload(TORRENT_URL).catch((e: Error) => e);
+          const error = await client.addDownload(TORRENT_URL).catch((e: unknown) => e) as Error;
           expect(error).toBeInstanceOf(Error);
           expect(error.message).toContain('timed out');
           expect(error.message).not.toContain('HTTP');
@@ -309,7 +309,7 @@ describe('QBittorrentClient', () => {
           }),
         );
 
-        const error = await client.addDownload(TORRENT_URL).catch((e: Error) => e);
+        const error = await client.addDownload(TORRENT_URL).catch((e: unknown) => e) as Error;
         expect(error).toBeInstanceOf(Error);
         expect(error.message).not.toContain('SECRET123');
         expect(error.message).not.toContain('SENSITIVE_TOKEN');
@@ -339,7 +339,7 @@ describe('QBittorrentClient', () => {
       it('error from failed HTTP fetch does not contain the original URL with passkey', async () => {
         server.use(torrentDownloadHandler(undefined, 403));
 
-        const error = await client.addDownload(TORRENT_URL).catch((e: Error) => e);
+        const error = await client.addDownload(TORRENT_URL).catch((e: unknown) => e) as Error;
         expect(error).toBeInstanceOf(Error);
         expect(error.message).not.toContain('SECRET123');
         expect(error.message).not.toContain('example.com/file.torrent');
@@ -355,7 +355,7 @@ describe('QBittorrentClient', () => {
           }),
         );
 
-        const error = await client.addDownload(TORRENT_URL).catch((e: Error) => e);
+        const error = await client.addDownload(TORRENT_URL).catch((e: unknown) => e) as Error;
         expect(error).toBeInstanceOf(Error);
         expect(error.message).not.toContain('redirect.example.com');
         expect(error.message).not.toContain('secret-path');
@@ -367,7 +367,7 @@ describe('QBittorrentClient', () => {
           http.post(`${BASE_URL}/api/v2/torrents/add`, () => new HttpResponse('')),
         );
 
-        const error = await client.addDownload(TORRENT_URL).catch((e: Error) => e);
+        const error = await client.addDownload(TORRENT_URL).catch((e: unknown) => e) as Error;
         expect(error).toBeInstanceOf(Error);
         expect(error.message).not.toContain('SECRET123');
         expect(error.message).not.toContain('example.com');
@@ -378,7 +378,7 @@ describe('QBittorrentClient', () => {
       it('throws immediately for ftp:// URL with descriptive error', async () => {
         await expect(client.addDownload('ftp://example.com/file.torrent')).rejects.toThrow();
         // Should not make any HTTP requests
-        const error = await client.addDownload('ftp://example.com/file.torrent').catch((e: Error) => e);
+        const error = await client.addDownload('ftp://example.com/file.torrent').catch((e: unknown) => e) as Error;
         expect(error).toBeInstanceOf(Error);
       });
     });
