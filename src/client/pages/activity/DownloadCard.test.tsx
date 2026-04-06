@@ -1,6 +1,8 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { screen } from '@testing-library/react';
+import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
+import { MemoryRouter, Routes, Route } from 'react-router-dom';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { DownloadCard } from './DownloadCard';
 import { renderWithProviders } from '@/__tests__/helpers';
 import { createMockDownload } from '@/__tests__/factories';
@@ -589,11 +591,19 @@ describe('DownloadCard', () => {
 
     it('clicking title link navigates to book detail page', async () => {
       const user = userEvent.setup();
-      renderWithProviders(<DownloadCard download={createMockDownload({ bookId: 7, title: 'Clickable Book' })} />);
-      const link = screen.getByRole('link', { name: 'Clickable Book' });
-      await user.click(link);
-      // Link has correct href — router handles navigation
-      expect(link).toHaveAttribute('href', '/books/7');
+      const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+      render(
+        <QueryClientProvider client={client}>
+          <MemoryRouter initialEntries={['/activity']}>
+            <Routes>
+              <Route path="/activity" element={<DownloadCard download={createMockDownload({ bookId: 7, title: 'Clickable Book' })} />} />
+              <Route path="/books/:id" element={<div>Book Detail Page</div>} />
+            </Routes>
+          </MemoryRouter>
+        </QueryClientProvider>,
+      );
+      await user.click(screen.getByRole('link', { name: 'Clickable Book' }));
+      expect(screen.getByText('Book Detail Page')).toBeInTheDocument();
     });
   });
 
