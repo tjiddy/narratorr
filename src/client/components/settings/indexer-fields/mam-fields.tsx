@@ -9,6 +9,7 @@ interface MamStatus {
   username: string;
   classname?: string;
   isVip: boolean;
+  ip?: string;
 }
 
 function persistMamFields(setValue: UseFormSetValue<CreateIndexerFormData> | undefined, status: MamStatus) {
@@ -54,6 +55,7 @@ function useMamDetection(watch?: UseFormWatch<CreateIndexerFormData>, setValue?:
           username: result.metadata.username as string,
           classname: result.metadata.classname as string | undefined,
           isVip: result.metadata.isVip as boolean,
+          ip: result.ip,
         };
         setMamStatus(status);
         persistMamFields(setValue, status);
@@ -107,6 +109,12 @@ function MamAccountCard({ status, onRefresh }: { status: MamStatus; onRefresh: (
         <span className="text-muted-foreground/50 min-w-[90px]">Search</span>
         <span className={`text-foreground/90 ${isMouse ? 'text-amber-500' : ''}`}>{searchDesc}</span>
       </div>
+      {status.ip && (
+        <div className="flex items-center gap-2 text-[13px]">
+          <span className="text-muted-foreground/50 min-w-[90px]">Exit IP</span>
+          <span className="text-foreground/90 font-mono text-xs">{status.ip}</span>
+        </div>
+      )}
     </div>
   );
 }
@@ -137,11 +145,12 @@ function deriveInitialMamStatus(watch?: UseFormWatch<CreateIndexerFormData>): Ma
   };
 }
 
-function metadataToMamStatus(metadata: Record<string, unknown>): MamStatus {
+function metadataToMamStatus(metadata: Record<string, unknown>, ip?: string): MamStatus {
   return {
     username: metadata.username as string || '',
     classname: metadata.classname as string | undefined,
     isVip: metadata.isVip as boolean,
+    ip,
   };
 }
 
@@ -152,7 +161,7 @@ export function MamFields({ register, errors, watch, setValue, formTestResult, i
   // Bridge: update card from explicit Test button result
   useEffect(() => {
     if (formTestResult?.success && formTestResult.metadata && 'isVip' in formTestResult.metadata) {
-      setMamStatus(metadataToMamStatus(formTestResult.metadata));
+      setMamStatus(metadataToMamStatus(formTestResult.metadata, formTestResult.ip));
     }
   }, [formTestResult, setMamStatus]);
 

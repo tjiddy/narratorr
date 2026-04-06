@@ -1158,5 +1158,98 @@ describe('IndexerFields', () => {
         expect(screen.getByText('Unknown')).toBeInTheDocument();
       });
     });
+
+    it('shows Exit IP row when detection returns ip (proxy enabled)', async () => {
+      (api.testIndexerConfig as Mock).mockResolvedValue({
+        success: true,
+        ip: '203.0.113.42',
+        metadata: { username: 'ProxyUser', classname: 'User', isVip: false },
+      });
+
+      const user = userEvent.setup();
+      renderWithProviders(<MamFieldWithStatus isVip={false} classname="User" />);
+
+      const mamIdInput = screen.getByLabelText('MAM ID');
+      await user.clear(mamIdInput);
+      await user.type(mamIdInput, 'new-id');
+      await user.tab();
+
+      await waitFor(() => {
+        expect(screen.getByText('Exit IP')).toBeInTheDocument();
+        expect(screen.getByText('203.0.113.42')).toBeInTheDocument();
+      });
+    });
+
+    it('does not show Exit IP row when detection returns no ip (no proxy)', async () => {
+      (api.testIndexerConfig as Mock).mockResolvedValue({
+        success: true,
+        metadata: { username: 'DirectUser', classname: 'Power User', isVip: false },
+      });
+
+      const user = userEvent.setup();
+      renderWithProviders(<MamFieldWithStatus isVip={false} classname="User" />);
+
+      const mamIdInput = screen.getByLabelText('MAM ID');
+      await user.clear(mamIdInput);
+      await user.type(mamIdInput, 'new-id');
+      await user.tab();
+
+      await waitFor(() => {
+        expect(screen.getByText('DirectUser')).toBeInTheDocument();
+      });
+      expect(screen.queryByText('Exit IP')).not.toBeInTheDocument();
+    });
+
+    it('shows Exit IP row when Test button result includes ip', async () => {
+      function MamFieldWithTestResult() {
+        const { register, watch, setValue, formState: { errors } } = useForm<CreateIndexerFormData>({
+          defaultValues: {
+            name: '', type: 'myanonamouse',
+            settings: { mamId: 'test-id', searchLanguages: [1], isVip: false, mamUsername: 'testuser', classname: 'User' } as Record<string, unknown>,
+          },
+        });
+        return (
+          <IndexerFields
+            selectedType="myanonamouse"
+            register={register}
+            errors={errors}
+            watch={watch}
+            setValue={setValue}
+            formTestResult={{ success: true, ip: '10.0.0.1', metadata: { username: 'TestBtn', classname: 'VIP', isVip: true } }}
+          />
+        );
+      }
+      renderWithProviders(<MamFieldWithTestResult />);
+      await waitFor(() => {
+        expect(screen.getByText('Exit IP')).toBeInTheDocument();
+        expect(screen.getByText('10.0.0.1')).toBeInTheDocument();
+      });
+    });
+
+    it('Exit IP row not shown when Test button result has no ip', async () => {
+      function MamFieldWithTestResultNoIp() {
+        const { register, watch, setValue, formState: { errors } } = useForm<CreateIndexerFormData>({
+          defaultValues: {
+            name: '', type: 'myanonamouse',
+            settings: { mamId: 'test-id', searchLanguages: [1], isVip: false, mamUsername: 'testuser', classname: 'User' } as Record<string, unknown>,
+          },
+        });
+        return (
+          <IndexerFields
+            selectedType="myanonamouse"
+            register={register}
+            errors={errors}
+            watch={watch}
+            setValue={setValue}
+            formTestResult={{ success: true, metadata: { username: 'TestBtn', classname: 'VIP', isVip: true } }}
+          />
+        );
+      }
+      renderWithProviders(<MamFieldWithTestResultNoIp />);
+      await waitFor(() => {
+        expect(screen.getByText('TestBtn')).toBeInTheDocument();
+      });
+      expect(screen.queryByText('Exit IP')).not.toBeInTheDocument();
+    });
   });
 });

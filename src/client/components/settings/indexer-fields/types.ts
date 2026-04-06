@@ -8,7 +8,7 @@ export interface IndexerFieldsProps {
   watch?: UseFormWatch<CreateIndexerFormData>;
   setValue?: UseFormSetValue<CreateIndexerFormData>;
   prowlarrManaged?: boolean;
-  formTestResult?: { success: boolean; metadata?: Record<string, unknown> } | null;
+  formTestResult?: { success: boolean; metadata?: Record<string, unknown>; ip?: string } | null;
   indexerId?: number;
 }
 
