@@ -569,6 +569,15 @@ describe('sortBooks — descending nulls-last (#287)', () => {
   });
 });
 
+// #365 — collapseSeries sorts collapsed result by active sort field
+describe('collapseSeries — title-sort uses seriesName key (#365)', () => {
+  it.todo('with title asc: collapsed series groups sort by toSortTitle(seriesName) interleaved with standalones');
+  it.todo('with title desc: collapsed series groups sort in reverse order by toSortTitle(seriesName)');
+  it.todo('with author asc: collapsed series groups sort by representative author interleaved with standalones');
+  it.todo('with createdAt desc: collapsed series groups sort by representative date interleaved with standalones');
+  it.todo('single-book series appears as standalone with collapsedCount 0 and sorts normally');
+});
+
 // #287 — collapseSeries fallback with descending nullable sort
 describe('collapseSeries — descending nullable fallback (#287)', () => {
   it('fallback representative with descending nullable sort does not pick null-field book', () => {

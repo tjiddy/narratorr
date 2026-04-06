@@ -260,6 +260,9 @@ describe('BookListService', () => {
       expect(args).toHaveLength(2);
     });
 
+    // #365 — search excludes narrator names
+    it.todo('search filter does not include narrator EXISTS subquery in conditions');
+
     it('all sort fields include secondary sort by id for stable pagination', async () => {
       const sortFields = ['createdAt', 'title', 'author', 'narrator', 'series', 'quality', 'size', 'format'] as const;
       for (const sortField of sortFields) {

@@ -297,6 +297,14 @@ describe('SortDropdown', () => {
     });
   });
 
+  // #365 — narrator/series removed from dropdown
+  describe('dropdown cleanup (#365)', () => {
+    it.todo('renders exactly 6 options in order: Date Added Newest/Oldest, Title A-Z/Z-A, Author A-Z/Z-A');
+    it.todo('does not render Narrator or Series options');
+    it.todo('keyboard ArrowDown wraps from 6th option back to first');
+    it.todo('keyboard ArrowUp wraps from first option to 6th');
+  });
+
   describe('accessibility', () => {
     it('menu option buttons have the focus-ring utility class applied', () => {
       render(<SortDropdown {...defaultProps()} />);

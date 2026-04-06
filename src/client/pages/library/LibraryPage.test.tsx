@@ -1212,6 +1212,10 @@ describe('LibraryPage', () => {
       expect(screen.getByRole('option', { name: /date added.*newest/i })).toBeInTheDocument();
     });
 
+    // #365 — grid-view coercion for narrator/series sorts
+    it.todo('coerces sort to Date Added (desc) when switching from table to grid with narrator sort active');
+    it.todo('coerces sort to Date Added (desc) when switching from table to grid with series sort active');
+
     it('selection state clears when switching to grid view', async () => {
       mockLibraryData(mockBooks);
       const user = userEvent.setup();
