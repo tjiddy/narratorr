@@ -86,7 +86,10 @@ describe('downloadRemoteCover', () => {
 
     const setCall = mockDb.update.mock.results[0].value.set;
     expect(setCall).toHaveBeenCalledWith(
-      expect.objectContaining({ coverUrl: '/api/books/42/cover' }),
+      expect.objectContaining({
+        coverUrl: '/api/books/42/cover',
+        updatedAt: expect.any(Date),
+      }),
     );
   });
 

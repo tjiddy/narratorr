@@ -528,5 +528,12 @@ describe('enrichBookFromAudio — remote cover download integration (#369)', () 
     );
 
     expect(result.enriched).toBe(true);
+
+    // Wait for fire-and-forget .catch() to execute
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    expect((log.warn as ReturnType<typeof vi.fn>)).toHaveBeenCalledWith(
+      expect.objectContaining({ bookId: 42 }),
+      expect.stringContaining('cover'),
+    );
   });
 });
