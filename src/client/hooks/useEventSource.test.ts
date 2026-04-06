@@ -812,4 +812,10 @@ describe('#312 cache-miss scoping — patchActivityProgress', () => {
     expect(invalidateSpy).not.toHaveBeenCalledWith({ queryKey: ['activity'] });
     expect(invalidateSpy).not.toHaveBeenCalledWith({ queryKey: queryKeys.activityCounts() });
   });
+
+  describe('#368 merge queue — SSE event handling', () => {
+    it.todo('handles merge_queued event by calling setMergeProgress with queued phase and position');
+    it.todo('handles merge_queue_updated event by updating position');
+    it.todo('handles merge_complete with enrichmentWarning by showing warning toast');
+  });
 });

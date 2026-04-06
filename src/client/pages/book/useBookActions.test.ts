@@ -345,6 +345,14 @@ describe('useBookActions', () => {
       await waitFor(() => expect(toast.error).toHaveBeenCalled());
       expect(invalidateSpy).not.toHaveBeenCalled();
     });
+
+    describe('#368 merge queue — caller migration', () => {
+      it.todo('onSuccess with { status: queued, bookId, position: 2 } shows info toast');
+      it.todo('onSuccess with { status: started, bookId } does not show success toast');
+      it.todo('onSuccess no longer calls invalidateBookQueries (SSE-driven)');
+      it.todo('onError still shows error toast with error.message');
+      it.todo('enrichmentWarning toast no longer triggered in onSuccess');
+    });
   });
 
   describe('ffmpegConfigured', () => {

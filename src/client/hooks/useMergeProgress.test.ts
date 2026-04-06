@@ -63,4 +63,9 @@ describe('useMergeProgress', () => {
     });
     expect(result.current?.percentage).toBe(0.75);
   });
+
+  describe('#368 merge queue — queued phase', () => {
+    it.todo('returns { phase: queued, position: 2 } after setMergeProgress with queued state');
+    it.todo('transitions from { phase: queued } to { phase: starting } on merge_started');
+  });
 });

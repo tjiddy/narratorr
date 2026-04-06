@@ -269,6 +269,10 @@ describe('BookHero', () => {
       await openMenu(user);
       expect(screen.queryByRole('menuitem', { name: /Merge/ })).not.toBeInTheDocument();
     });
+
+    describe('#368 merge queue — queued menu state', () => {
+      it.todo('shows "Queued..." when merge is in queued state (distinct from "Merging...")');
+    });
   });
 
   describe('remove button', () => {

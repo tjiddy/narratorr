@@ -1290,6 +1290,11 @@ describe('#257 merge observability — BookDetails progress', () => {
     });
   });
 
+  describe('#368 merge queue — queued progress indicator', () => {
+    it.todo('MergeProgressIndicator renders "Queued (position 2)" when phase is queued');
+    it.todo('MergeProgressIndicator transitions to progress bar when phase changes from queued to processing');
+  });
+
   describe('Wrong Release action', () => {
     it('shows Wrong Release button when book is imported with lastGrabGuid', async () => {
       const user = userEvent.setup();

@@ -925,4 +925,44 @@ describe('#257 merge observability — merge service', () => {
       expect(stderrCalls[0][1]).toBe('ffmpeg stderr');
     });
   });
+
+  describe('#368 merge queue — queue mechanics', () => {
+    it.todo('single merge with no queue contention starts immediately (existing behavior preserved)');
+    it.todo('second merge request while first is active is queued (not rejected, not started)');
+    it.todo('queued merge starts automatically when active merge completes');
+    it.todo('queued merge starts automatically when active merge fails');
+    it.todo('multiple queued merges process in FIFO order');
+    it.todo('duplicate merge request for same bookId while already queued is rejected with ALREADY_QUEUED');
+    it.todo('duplicate merge request for same bookId while already in-progress is rejected (existing ALREADY_IN_PROGRESS)');
+    it.todo('queue is drained completely — 5 queued merges all eventually execute');
+  });
+
+  describe('#368 merge queue — dequeue-time validation', () => {
+    it.todo('queued merge for a book that was deleted before dequeue emits merge_failed and drains next');
+    it.todo('queued merge for a book whose path was removed before dequeue emits merge_failed and drains next');
+    it.todo('queued merge for a book with no top-level files at dequeue time emits merge_failed and drains next');
+    it.todo('dequeue validation failure does not prevent subsequent queued merges from processing');
+  });
+
+  describe('#368 merge queue — SSE events', () => {
+    it.todo('queued merge emits merge_queued with { book_id, book_title, position: 1 }');
+    it.todo('second queued merge emits merge_queued with position: 2');
+    it.todo('when active merge completes, remaining queued merges receive merge_queue_updated with decremented positions');
+    it.todo('when queued merge starts, emits merge_started event');
+    it.todo('dequeue-time validation failure emits merge_failed with error message');
+    it.todo('merge_complete includes enrichmentWarning when enrichment fails');
+  });
+
+  describe('#368 merge queue — error isolation', () => {
+    it.todo('failed merge does not prevent queued merges from processing (queue drain continues)');
+    it.todo('error in one merge does not corrupt shared queue state');
+  });
+
+  describe('#368 merge queue — race conditions', () => {
+    it.todo('two simultaneous merge requests (Promise.all) — one starts, one queues (no double-start)');
+  });
+
+  describe('#368 merge queue — boundary values', () => {
+    it.todo('queue with 0 items — processNext is a no-op');
+  });
 });

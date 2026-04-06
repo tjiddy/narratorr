@@ -1790,6 +1790,14 @@ describe('PUT /api/books/:id — array update contract (#71)', () => {
 
       expect(res.statusCode).toBe(503);
     });
+
+    describe('#368 merge queue — route contract', () => {
+      it.todo('returns 202 with { status: started, bookId } when slot available');
+      it.todo('returns 202 with { status: queued, bookId, position } when no slot');
+      it.todo('returns 409 for duplicate in-progress merge');
+      it.todo('returns 409 for duplicate queued merge');
+      it.todo('pre-enqueue validation failures return existing 4xx/503 responses');
+    });
   });
 
   describe('POST /api/books/:id/wrong-release', () => {
