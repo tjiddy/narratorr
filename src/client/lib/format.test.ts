@@ -57,11 +57,10 @@ describe('formatRelativeDate', () => {
     expect(formatRelativeDate('2026-03-28T12:00:00Z')).toBe('2d ago');
   });
 
-  it('falls back to absolute date for timestamps 8+ days ago', () => {
+  it('falls back to month-day format for timestamps 8+ days ago', () => {
     setNow(NOW);
-    const input = '2026-03-20T12:00:00Z';
-    const result = formatRelativeDate(input);
-    expect(result).toBe(new Date(input).toLocaleDateString());
+    const result = formatRelativeDate('2026-03-20T12:00:00Z');
+    expect(result).toBe('Mar 20');
   });
 
   it('boundary: exactly 60 minutes returns "1h ago" not "60m ago"', () => {
@@ -74,10 +73,9 @@ describe('formatRelativeDate', () => {
     expect(formatRelativeDate('2026-03-29T12:00:00Z')).toBe('1d ago');
   });
 
-  it('boundary: exactly 7 days falls back to absolute date not "7d ago"', () => {
+  it('boundary: exactly 7 days falls back to month-day format not "7d ago"', () => {
     setNow(NOW);
-    const input = '2026-03-23T12:00:00Z';
-    const result = formatRelativeDate(input);
-    expect(result).toBe(new Date(input).toLocaleDateString());
+    const result = formatRelativeDate('2026-03-23T12:00:00Z');
+    expect(result).toBe('Mar 23');
   });
 });
