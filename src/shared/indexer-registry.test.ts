@@ -69,6 +69,12 @@ describe('INDEXER_REGISTRY', () => {
     it('#317 returns baseUrl without suffix when isVip is undefined (legacy)', () => {
       expect(INDEXER_REGISTRY.myanonamouse.viewSubtitle({})).toBe('myanonamouse.net');
     });
+
+    it('#372 prefers persisted classname over generic VIP/User suffixes', () => {
+      expect(INDEXER_REGISTRY.myanonamouse.viewSubtitle({ baseUrl: 'https://custom.mam.net', classname: 'Power User', isVip: false })).toBe('https://custom.mam.net — Power User');
+      expect(INDEXER_REGISTRY.myanonamouse.viewSubtitle({ classname: 'Mouse', isVip: false })).toBe('myanonamouse.net — Mouse');
+      expect(INDEXER_REGISTRY.myanonamouse.viewSubtitle({ classname: 'VIP', isVip: true })).toBe('myanonamouse.net — VIP');
+    });
   });
 
   describe('defaultSettings', () => {
@@ -99,10 +105,10 @@ describe('INDEXER_REGISTRY', () => {
       expect(defaults).toHaveProperty('baseUrl');
     });
 
-    it('myanonamouse defaults include searchLanguages: [1] and searchType: "active"', () => {
+    it('myanonamouse defaults include searchLanguages: [1] and no searchType', () => {
       const defaults = INDEXER_REGISTRY.myanonamouse.defaultSettings;
       expect(defaults).toHaveProperty('searchLanguages', [1]);
-      expect(defaults).toHaveProperty('searchType', 'active');
+      expect(defaults).not.toHaveProperty('searchType');
     });
   });
 
@@ -151,8 +157,8 @@ describe('INDEXER_REGISTRY', () => {
       expect(values).toContain('nVIP');
     });
 
-    it('default searchType in myanonamouse registry is "active" (string)', () => {
-      expect(INDEXER_REGISTRY.myanonamouse.defaultSettings).toHaveProperty('searchType', 'active');
+    it('myanonamouse registry no longer includes searchType in defaults', () => {
+      expect(INDEXER_REGISTRY.myanonamouse.defaultSettings).not.toHaveProperty('searchType');
     });
   });
 

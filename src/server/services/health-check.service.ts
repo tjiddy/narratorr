@@ -130,10 +130,13 @@ export class HealthCheckService {
       if (!indexer.enabled) continue;
       try {
         const result = await this.indexerService.test(indexer.id);
+        const state = result.success
+          ? (result.warning ? 'warning' : 'healthy')
+          : 'error';
         results.push({
           checkName: `indexer:${indexer.name}`,
-          state: result.success ? 'healthy' : 'error',
-          message: result.success ? undefined : result.message,
+          state,
+          message: result.success ? result.warning : result.message,
         });
       } catch (error: unknown) {
         results.push({

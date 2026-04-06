@@ -16,6 +16,7 @@
 - **`src/server/services/library-scan.service.ts` / `src/shared/schemas/library-scan.ts` / `src/client/lib/api/library-scan.ts`**: `DiscoveredBook` type and `duplicateReason` union defined in 3 places that must be kept in sync manually. DRY-1 — the shared schema should be the single source of truth with types derived via `z.infer`. (discovered in #342)
 
 - **`src/server/services/quality-gate-orchestrator.ts`**: `processOneDownload()` calls `getCompletedDownloads()` (loads ALL completed downloads) and then `.find()` by ID. Should have a dedicated `getCompletedDownloadById(id)` query in `QualityGateService` for O(1) lookup instead of O(N) scan. Low priority — completed download count is typically small. (discovered in #358)
+- **`src/core/indexers/types.ts` / `src/server/services/indexer.service.ts` / `src/client/lib/api/settings.ts`**: `test()` return type (including `warning`) is defined as inline types in 3 places — adapter interface, service methods, and client TestResult. Adding a new field requires updating all 3. Extract a shared `TestResult` type from the adapter interface and reuse it in service and client. DRY-1 parallel types. (discovered in #372)
 
 ## Accepted Debt
 

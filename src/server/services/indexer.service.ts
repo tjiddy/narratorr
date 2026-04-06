@@ -180,7 +180,7 @@ export class IndexerService {
     this.adapters.clear();
   }
 
-  async testConfig(data: { type: string; settings: Record<string, unknown>; id?: number }): Promise<{ success: boolean; message?: string; ip?: string; metadata?: Record<string, unknown> }> {
+  async testConfig(data: { type: string; settings: Record<string, unknown>; id?: number }): Promise<{ success: boolean; message?: string; ip?: string; warning?: string; metadata?: Record<string, unknown> }> {
     try {
       this.log.debug({ type: data.type, hostname: data.settings.hostname, pageLimit: data.settings.pageLimit }, 'Testing indexer config');
 
@@ -209,7 +209,7 @@ export class IndexerService {
     }
   }
 
-  async test(id: number): Promise<{ success: boolean; message?: string; ip?: string; metadata?: Record<string, unknown> }> {
+  async test(id: number): Promise<{ success: boolean; message?: string; ip?: string; warning?: string; metadata?: Record<string, unknown> }> {
     const indexer = await this.getById(id);
     if (!indexer) {
       return { success: false, message: 'Indexer not found' };
@@ -220,12 +220,16 @@ export class IndexerService {
       const result = await adapter.test();
       this.log.debug({ id, success: result.success }, 'Indexer test result');
 
-      // Persist VIP metadata from MAM adapter on successful test
+      // Persist VIP/class metadata from MAM adapter on successful test
       if (result.success && result.metadata && 'isVip' in result.metadata) {
         try {
           const existingSettings = (indexer.settings ?? {}) as Record<string, unknown>;
-          await this.update(id, { settings: { ...existingSettings, isVip: result.metadata.isVip } });
-          this.log.info({ id, isVip: result.metadata.isVip }, 'Persisted VIP status from test');
+          const updates: Record<string, unknown> = { isVip: result.metadata.isVip };
+          if ('classname' in result.metadata) {
+            updates.classname = result.metadata.classname;
+          }
+          await this.update(id, { settings: { ...existingSettings, ...updates } });
+          this.log.info({ id, isVip: result.metadata.isVip, classname: result.metadata.classname }, 'Persisted VIP/class status from test');
         } catch (error: unknown) {
           this.log.warn({ id, error }, 'Failed to persist VIP metadata after test');
         }
@@ -238,6 +242,56 @@ export class IndexerService {
         message: error instanceof Error ? error.message : 'Unknown error',
       };
     }
+  }
+
+  /**
+   * Pre-search status refresh for adapters that support it (e.g., MAM).
+   * Returns { skip: true, error } if the indexer should be skipped (Mouse class).
+   */
+  private async preSearchRefresh(
+    adapter: IndexerAdapter,
+    indexer: IndexerRow,
+  ): Promise<{ skip: boolean; error?: string }> {
+    if (!adapter.refreshStatus) {
+      return { skip: false };
+    }
+
+    let status: { isVip: boolean; classname: string } | null;
+    try {
+      status = await adapter.refreshStatus();
+    } catch (error: unknown) {
+      this.log.debug({ indexer: indexer.name, err: error }, 'Pre-search status refresh failed, proceeding with stored status');
+      return { skip: false };
+    }
+
+    if (!status) {
+      return { skip: false };
+    }
+
+    // Mouse class — block search
+    if (status.classname === 'Mouse') {
+      try {
+        const existingSettings = (indexer.settings ?? {}) as Record<string, unknown>;
+        await this.update(indexer.id, { settings: { ...existingSettings, isVip: status.isVip, classname: status.classname } });
+        this.log.info({ id: indexer.id, classname: status.classname }, 'Persisted Mouse status from pre-search refresh');
+      } catch (error: unknown) {
+        this.log.warn({ id: indexer.id, error }, 'Failed to persist status from pre-search refresh');
+      }
+      return { skip: true, error: 'Searches disabled — Mouse class' };
+    }
+
+    // Class changed — persist updated status
+    const existingSettings = (indexer.settings ?? {}) as Record<string, unknown>;
+    if (existingSettings.isVip !== status.isVip || existingSettings.classname !== status.classname) {
+      try {
+        await this.update(indexer.id, { settings: { ...existingSettings, isVip: status.isVip, classname: status.classname } });
+        this.log.info({ id: indexer.id, isVip: status.isVip, classname: status.classname }, 'Persisted class change from pre-search refresh');
+      } catch (error: unknown) {
+        this.log.warn({ id: indexer.id, error }, 'Failed to persist class change from pre-search refresh');
+      }
+    }
+
+    return { skip: false };
   }
 
   /** Parse release names to extract author/title for results that don't already have them */
@@ -300,6 +354,13 @@ export class IndexerService {
       enabledIndexers.map(async (indexer) => {
         const indexerStartMs = Date.now();
         const adapter = await this.getAdapter(indexer);
+
+        const refresh = await this.preSearchRefresh(adapter, indexer);
+        if (refresh.skip) {
+          this.log.warn({ indexer: indexer.name, error: refresh.error }, 'Indexer skipped by pre-search refresh');
+          throw new Error(refresh.error ?? 'Indexer skipped');
+        }
+
         const indexerResults = await adapter.search(query, options);
         this.log.debug({ indexer: indexer.name, resultCount: indexerResults.length, elapsedMs: Date.now() - indexerStartMs }, 'Indexer search completed');
         const mapped = indexerResults.map(r => ({ ...r, indexerId: indexer.id }));
@@ -368,6 +429,14 @@ export class IndexerService {
 
         try {
           const adapter = await this.getAdapter(indexer);
+
+          const refresh = await this.preSearchRefresh(adapter, indexer);
+          if (refresh.skip) {
+            const elapsedMs = Date.now() - indexerStartMs;
+            callbacks.onError(indexer.id, indexer.name, refresh.error ?? 'Indexer skipped', elapsedMs);
+            return;
+          }
+
           const indexerResults = await adapter.search(query, { ...options, signal });
           const elapsedMs = Date.now() - indexerStartMs;
           const mapped = indexerResults.map(r => ({ ...r, indexerId: indexer.id }));

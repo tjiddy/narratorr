@@ -8,6 +8,7 @@ vi.mock('sonner', () => ({
   toast: {
     success: vi.fn(),
     error: vi.fn(),
+    warning: vi.fn(),
   },
 }));
 
@@ -352,6 +353,41 @@ describe('useConnectionTest', () => {
         message: 'OK',
         metadata: { isVip: false, username: 'RegularUser', classname: 'User' },
       });
+    });
+  });
+
+  describe('#372 — warning toast on success-with-warning', () => {
+    it('shows success toast AND warning toast when result has success: true + warning', async () => {
+      testById.mockResolvedValue({ success: true, warning: 'Account is ratio-locked' });
+      const { result } = renderTestHook();
+      await act(async () => { await result.current.handleTest(1); });
+      expect(toast.success).toHaveBeenCalledWith('Connection successful');
+      expect((toast as unknown as Record<string, ReturnType<typeof vi.fn>>).warning).toHaveBeenCalledWith('Account is ratio-locked');
+    });
+
+    it('shows success toast only when result has success: true + no warning', async () => {
+      testById.mockResolvedValue({ success: true });
+      const { result } = renderTestHook();
+      await act(async () => { await result.current.handleTest(1); });
+      expect(toast.success).toHaveBeenCalledWith('Connection successful');
+      expect((toast as unknown as Record<string, ReturnType<typeof vi.fn>>).warning).not.toHaveBeenCalled();
+    });
+
+    it('shows error toast only when result has success: false (existing behavior unchanged)', async () => {
+      testById.mockResolvedValue({ success: false, message: 'Auth failed' });
+      const { result } = renderTestHook();
+      await act(async () => { await result.current.handleTest(1); });
+      expect(toast.error).toHaveBeenCalledWith('Auth failed');
+      expect(toast.success).not.toHaveBeenCalled();
+      expect((toast as unknown as Record<string, ReturnType<typeof vi.fn>>).warning).not.toHaveBeenCalled();
+    });
+
+    it('handleFormTest shows warning toast on success-with-warning', async () => {
+      testByConfig.mockResolvedValue({ success: true, warning: 'Account is ratio-locked' });
+      const { result } = renderTestHook();
+      await act(async () => { await result.current.handleFormTest({ name: 'test' }); });
+      expect(toast.success).toHaveBeenCalledWith('Connection successful');
+      expect((toast as unknown as Record<string, ReturnType<typeof vi.fn>>).warning).toHaveBeenCalledWith('Account is ratio-locked');
     });
   });
 });

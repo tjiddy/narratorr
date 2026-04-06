@@ -32,6 +32,9 @@ export function useConnectionTest<TFormData>({
       setTestResult({ id, ...result });
       if (result.success) {
         toast.success('Connection successful');
+        if (result.warning) {
+          toast.warning(result.warning);
+        }
         if (invalidateOnSuccess) {
           await queryClient.invalidateQueries({ queryKey: invalidateOnSuccess });
         }
@@ -52,6 +55,9 @@ export function useConnectionTest<TFormData>({
       setFormTestResult(result);
       if (result.success) {
         toast.success('Connection successful');
+        if (result.warning) {
+          toast.warning(result.warning);
+        }
       } else {
         toast.error(result.message || 'Connection failed');
       }

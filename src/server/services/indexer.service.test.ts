@@ -194,7 +194,7 @@ describe('IndexerService', () => {
       expect(result.success).toBe(true);
       expect(result.metadata).toEqual({ username: 'VipUser', classname: 'VIP', isVip: true });
       expect(updateSpy).toHaveBeenCalledWith(5, {
-        settings: { mamId: 'test-id', searchLanguages: [1], searchType: 'active', isVip: true },
+        settings: { mamId: 'test-id', searchLanguages: [1], searchType: 'active', isVip: true, classname: 'VIP' },
       });
     });
 
@@ -1469,6 +1469,250 @@ describe('IndexerService', () => {
 
       expect(results[0].matchScore).toBeDefined();
       expect(results[0].matchScore).toBeGreaterThan(0);
+    });
+  });
+
+  describe('#372 — pre-search refresh (searchAll)', () => {
+    const mamIndexer = createMockDbIndexer({
+      id: 10, name: 'MAM', type: 'myanonamouse',
+      settings: { mamId: 'test', searchLanguages: [1], searchType: 'active', isVip: true, classname: 'VIP' },
+    });
+
+    it('calls refreshStatus() before search() for MAM adapter', async () => {
+      db.select.mockReturnValue(mockDbChain([mamIndexer]));
+      const callOrder: string[] = [];
+      const mockAdapter = {
+        type: 'myanonamouse',
+        name: 'MAM',
+        refreshStatus: vi.fn().mockImplementation(() => { callOrder.push('refresh'); return Promise.resolve({ isVip: true, classname: 'VIP' }); }),
+        search: vi.fn().mockImplementation(() => { callOrder.push('search'); return Promise.resolve([]); }),
+        test: vi.fn(),
+      };
+      vi.spyOn(service, 'getAdapter').mockResolvedValue(mockAdapter as never);
+      await service.searchAll('test');
+      expect(callOrder).toEqual(['refresh', 'search']);
+    });
+
+    it('skips search when refreshStatus() returns Mouse class', async () => {
+      db.select.mockReturnValue(mockDbChain([mamIndexer]));
+      const mockAdapter = {
+        type: 'myanonamouse', name: 'MAM',
+        refreshStatus: vi.fn().mockResolvedValue({ isVip: false, classname: 'Mouse' }),
+        search: vi.fn().mockResolvedValue([]),
+        test: vi.fn(),
+      };
+      vi.spyOn(service, 'getAdapter').mockResolvedValue(mockAdapter as never);
+      db.update.mockReturnValue(mockDbChain([mamIndexer]));
+      db.select.mockReturnValue(mockDbChain([mamIndexer]));
+      const results = await service.searchAll('test');
+      expect(mockAdapter.search).not.toHaveBeenCalled();
+      expect(results).toEqual([]);
+    });
+
+    it('proceeds with search when refreshStatus() throws (network error)', async () => {
+      db.select.mockReturnValue(mockDbChain([mamIndexer]));
+      const mockAdapter = {
+        type: 'myanonamouse', name: 'MAM',
+        refreshStatus: vi.fn().mockRejectedValue(new Error('Network error')),
+        search: vi.fn().mockResolvedValue([{ title: 'Book', indexer: 'MAM', protocol: 'torrent' as const }]),
+        test: vi.fn(),
+      };
+      vi.spyOn(service, 'getAdapter').mockResolvedValue(mockAdapter as never);
+      const results = await service.searchAll('test');
+      expect(mockAdapter.search).toHaveBeenCalled();
+      expect(results).toHaveLength(1);
+    });
+
+    it('proceeds with search when refreshStatus() returns null', async () => {
+      db.select.mockReturnValue(mockDbChain([mamIndexer]));
+      const mockAdapter = {
+        type: 'myanonamouse', name: 'MAM',
+        refreshStatus: vi.fn().mockResolvedValue(null),
+        search: vi.fn().mockResolvedValue([{ title: 'Book', indexer: 'MAM', protocol: 'torrent' as const }]),
+        test: vi.fn(),
+      };
+      vi.spyOn(service, 'getAdapter').mockResolvedValue(mockAdapter as never);
+      const results = await service.searchAll('test');
+      expect(mockAdapter.search).toHaveBeenCalled();
+      expect(results).toHaveLength(1);
+    });
+
+    it('calls search() directly for non-MAM adapter (no refreshStatus method)', async () => {
+      db.select.mockReturnValue(mockDbChain([mockIndexer]));
+      const mockAdapter = {
+        type: 'abb', name: 'ABB',
+        search: vi.fn().mockResolvedValue([{ title: 'Book', indexer: 'ABB', protocol: 'torrent' as const }]),
+        test: vi.fn(),
+      };
+      vi.spyOn(service, 'getAdapter').mockResolvedValue(mockAdapter as never);
+      const results = await service.searchAll('test');
+      expect(mockAdapter.search).toHaveBeenCalled();
+      expect(results).toHaveLength(1);
+    });
+
+    it('persists updated isVip/classname when class changes (VIP → Power User)', async () => {
+      db.select.mockReturnValue(mockDbChain([mamIndexer]));
+      const mockAdapter = {
+        type: 'myanonamouse', name: 'MAM',
+        refreshStatus: vi.fn().mockResolvedValue({ isVip: false, classname: 'Power User' }),
+        search: vi.fn().mockResolvedValue([{ title: 'Book', indexer: 'MAM', protocol: 'torrent' as const }]),
+        test: vi.fn(),
+      };
+      vi.spyOn(service, 'getAdapter').mockResolvedValue(mockAdapter as never);
+      const updateSpy = vi.spyOn(service, 'update').mockResolvedValue(mamIndexer as never);
+      const results = await service.searchAll('test');
+      expect(updateSpy).toHaveBeenCalledWith(10, {
+        settings: expect.objectContaining({ isVip: false, classname: 'Power User' }),
+      });
+      expect(mockAdapter.search).toHaveBeenCalled();
+      expect(results).toHaveLength(1);
+    });
+
+    it('does not write to DB when refreshStatus() returns same class as stored', async () => {
+      db.select.mockReturnValue(mockDbChain([mamIndexer]));
+      const mockAdapter = {
+        type: 'myanonamouse', name: 'MAM',
+        refreshStatus: vi.fn().mockResolvedValue({ isVip: true, classname: 'VIP' }),
+        search: vi.fn().mockResolvedValue([{ title: 'Book', indexer: 'MAM', protocol: 'torrent' as const }]),
+        test: vi.fn(),
+      };
+      vi.spyOn(service, 'getAdapter').mockResolvedValue(mockAdapter as never);
+      const updateSpy = vi.spyOn(service, 'update').mockResolvedValue(mamIndexer as never);
+      const results = await service.searchAll('test');
+      expect(updateSpy).not.toHaveBeenCalled();
+      expect(mockAdapter.search).toHaveBeenCalled();
+      expect(results).toHaveLength(1);
+    });
+
+    it('other indexers still return results when Mouse indexer is skipped', async () => {
+      const abbIndexer = createMockDbIndexer({ id: 2, name: 'ABB', type: 'abb' });
+      db.select.mockReturnValue(mockDbChain([mamIndexer, abbIndexer]));
+      const mouseAdapter = {
+        type: 'myanonamouse', name: 'MAM',
+        refreshStatus: vi.fn().mockResolvedValue({ isVip: false, classname: 'Mouse' }),
+        search: vi.fn(),
+        test: vi.fn(),
+      };
+      const abbAdapter = {
+        type: 'abb', name: 'ABB',
+        search: vi.fn().mockResolvedValue([{ title: 'Book', indexer: 'ABB', protocol: 'torrent' as const }]),
+        test: vi.fn(),
+      };
+      vi.spyOn(service, 'getAdapter')
+        .mockResolvedValueOnce(mouseAdapter as never)
+        .mockResolvedValueOnce(abbAdapter as never);
+      db.update.mockReturnValue(mockDbChain([mamIndexer]));
+      const results = await service.searchAll('test');
+      expect(mouseAdapter.search).not.toHaveBeenCalled();
+      expect(abbAdapter.search).toHaveBeenCalled();
+      expect(results).toHaveLength(1);
+    });
+  });
+
+  describe('#372 — searchAllStreaming Mouse error', () => {
+    const mamIndexer = createMockDbIndexer({
+      id: 10, name: 'MAM', type: 'myanonamouse',
+      settings: { mamId: 'test', searchLanguages: [1], searchType: 'active', isVip: true, classname: 'VIP' },
+    });
+
+    it('fires onError callback with "Searches disabled — Mouse class" message', async () => {
+      db.select.mockReturnValue(mockDbChain([mamIndexer]));
+      const mouseAdapter = {
+        type: 'myanonamouse', name: 'MAM',
+        refreshStatus: vi.fn().mockResolvedValue({ isVip: false, classname: 'Mouse' }),
+        search: vi.fn(),
+        test: vi.fn(),
+      };
+      vi.spyOn(service, 'getAdapter').mockResolvedValue(mouseAdapter as never);
+      db.update.mockReturnValue(mockDbChain([mamIndexer]));
+
+      const onError = vi.fn();
+      const onComplete = vi.fn();
+      const controllers = new Map([[10, new AbortController()]]);
+      await service.searchAllStreaming('test', undefined, controllers, { onComplete, onError });
+      expect(onError).toHaveBeenCalledWith(10, 'MAM', 'Searches disabled — Mouse class', expect.any(Number));
+      expect(mouseAdapter.search).not.toHaveBeenCalled();
+    });
+
+    it('other indexers in same streaming search still complete normally', async () => {
+      const abbIndexer = createMockDbIndexer({ id: 2, name: 'ABB', type: 'abb' });
+      db.select.mockReturnValue(mockDbChain([mamIndexer, abbIndexer]));
+      const mouseAdapter = {
+        type: 'myanonamouse', name: 'MAM',
+        refreshStatus: vi.fn().mockResolvedValue({ isVip: false, classname: 'Mouse' }),
+        search: vi.fn(),
+        test: vi.fn(),
+      };
+      const abbAdapter = {
+        type: 'abb', name: 'ABB',
+        search: vi.fn().mockResolvedValue([{ title: 'Book', indexer: 'ABB', protocol: 'torrent' as const }]),
+        test: vi.fn(),
+      };
+      vi.spyOn(service, 'getAdapter')
+        .mockResolvedValueOnce(mouseAdapter as never)
+        .mockResolvedValueOnce(abbAdapter as never);
+      db.update.mockReturnValue(mockDbChain([mamIndexer]));
+
+      const onError = vi.fn();
+      const onComplete = vi.fn();
+      const controllers = new Map([[10, new AbortController()], [2, new AbortController()]]);
+      const results = await service.searchAllStreaming('test', undefined, controllers, { onComplete, onError });
+      expect(onError).toHaveBeenCalledTimes(1);
+      expect(onComplete).toHaveBeenCalledTimes(1);
+      expect(results).toHaveLength(1);
+    });
+  });
+
+  describe('#372 — warning propagation through service test methods', () => {
+    it('test() passes through warning field from adapter result', async () => {
+      db.select.mockReturnValue(mockDbChain([mockIndexer]));
+      const mockAdapter = {
+        test: vi.fn().mockResolvedValue({
+          success: true, message: 'OK', warning: 'Account is ratio-locked',
+          metadata: { isVip: false, classname: 'Mouse' },
+        }),
+      };
+      vi.spyOn(service, 'getAdapter').mockResolvedValue(mockAdapter as never);
+      db.update.mockReturnValue(mockDbChain([mockIndexer]));
+      const result = await service.test(1);
+      expect(result.warning).toBe('Account is ratio-locked');
+    });
+
+    it('testConfig() passes through warning field from adapter result', async () => {
+      const mockAdapter = {
+        test: vi.fn().mockResolvedValue({
+          success: true, message: 'Connected', warning: 'Account is ratio-locked',
+          metadata: { isVip: false, classname: 'Mouse' },
+        }),
+      };
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      vi.spyOn(service as any, 'createAdapter').mockReturnValue(mockAdapter as never);
+      const result = await service.testConfig({ type: 'myanonamouse', settings: { mamId: 'test-id' } });
+      expect(result.warning).toBe('Account is ratio-locked');
+      expect(result.success).toBe(true);
+    });
+  });
+
+  describe('#372 — test() persists classname alongside isVip', () => {
+    it('persists classname alongside isVip on successful test', async () => {
+      const mamRow = createMockDbIndexer({
+        id: 10, name: 'MAM', type: 'myanonamouse',
+        settings: { mamId: 'test', searchLanguages: [1], searchType: 'active' },
+      });
+      db.select.mockReturnValue(mockDbChain([mamRow]));
+      const mockAdapter = {
+        test: vi.fn().mockResolvedValue({
+          success: true, message: 'Connected as user',
+          metadata: { username: 'user', classname: 'VIP', isVip: true },
+        }),
+      };
+      vi.spyOn(service, 'getAdapter').mockResolvedValue(mockAdapter as never);
+      const updateSpy = vi.spyOn(service, 'update').mockResolvedValue(mamRow as never);
+
+      await service.test(10);
+      expect(updateSpy).toHaveBeenCalledWith(10, {
+        settings: expect.objectContaining({ isVip: true, classname: 'VIP' }),
+      });
     });
   });
 });

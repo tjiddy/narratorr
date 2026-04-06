@@ -58,6 +58,7 @@ export function SettingsCardShell({
                 <TestResultMessage
                   success={testResult.success}
                   message={testResult.message}
+                  warning={testResult.warning}
                   successText={testResultTexts.success}
                   failureText={testResultTexts.failure}
                 />

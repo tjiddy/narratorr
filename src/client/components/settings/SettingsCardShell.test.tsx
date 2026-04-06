@@ -74,4 +74,17 @@ describe('SettingsCardShell', () => {
 
     expect(screen.getByText('Extra info')).toBeInTheDocument();
   });
+
+  it('#372 — shows amber warning indicator when testResult has success + warning', () => {
+    const testResult: IdTestResult = {
+      id: 1,
+      success: true,
+      message: 'Connected',
+      warning: 'Account is ratio-locked (Mouse class) — cannot download',
+    };
+    renderWithProviders(
+      <SettingsCardShell {...baseProps} testResult={testResult} />,
+    );
+    expect(screen.getByText('Account is ratio-locked (Mouse class) — cannot download')).toBeInTheDocument();
+  });
 });

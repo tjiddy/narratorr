@@ -75,12 +75,13 @@ export const INDEXER_REGISTRY: Record<string, IndexerTypeMetadata> = {
   },
   myanonamouse: {
     label: 'MyAnonamouse',
-    defaultSettings: { mamId: '', baseUrl: '', useProxy: false, searchLanguages: [1], searchType: 'active' },
+    defaultSettings: { mamId: '', baseUrl: '', useProxy: false, searchLanguages: [1] },
     requiredFields: [
       { path: 'mamId', message: 'MAM ID is required' },
     ],
     viewSubtitle: (s) => {
       const base = (s.baseUrl as string) || 'myanonamouse.net';
+      if (s.classname) return `${base} — ${s.classname as string}`;
       if (s.isVip === true) return `${base} — VIP`;
       if (s.isVip === false) return `${base} — User`;
       return base;

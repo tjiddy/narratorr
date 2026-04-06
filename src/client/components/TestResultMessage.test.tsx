@@ -52,4 +52,32 @@ describe('TestResultMessage', () => {
     expect(screen.getByText('Override')).toBeInTheDocument();
     expect(screen.queryByText('Custom fail')).not.toBeInTheDocument();
   });
+
+  it('#372 — shows warning text with amber styling when success + warning', () => {
+    const { container } = renderWithProviders(
+      <TestResultMessage success={true} warning="Account is ratio-locked" />,
+    );
+    expect(screen.getByText('Account is ratio-locked')).toBeInTheDocument();
+    expect(screen.queryByText('Connection successful!')).not.toBeInTheDocument();
+    const p = container.querySelector('p');
+    expect(p?.className).toContain('text-amber-500');
+  });
+
+  it('#372 — shows green success when success without warning', () => {
+    const { container } = renderWithProviders(
+      <TestResultMessage success={true} />,
+    );
+    expect(screen.getByText('Connection successful!')).toBeInTheDocument();
+    const p = container.querySelector('p');
+    expect(p?.className).toContain('text-success');
+  });
+
+  it('#372 — shows red error when failure (unchanged)', () => {
+    const { container } = renderWithProviders(
+      <TestResultMessage success={false} />,
+    );
+    expect(screen.getByText('Connection failed')).toBeInTheDocument();
+    const p = container.querySelector('p');
+    expect(p?.className).toContain('text-destructive');
+  });
 });

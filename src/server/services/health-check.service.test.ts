@@ -568,4 +568,51 @@ describe('HealthCheckService', () => {
       await expect(service.probeProxy('http://bad-proxy:1234')).rejects.toThrow('ECONNREFUSED');
     });
   });
+
+  describe('#372 — health check maps Mouse warning to warning state', () => {
+    it('MAM test success with warning → health state is "warning" with warning message', async () => {
+      const mamIndexer = { id: 1, name: 'MAM', type: 'myanonamouse', enabled: true };
+      const { service } = createService({
+        indexer: {
+          getAll: vi.fn().mockResolvedValue([mamIndexer]),
+          test: vi.fn().mockResolvedValue({ success: true, warning: 'Account is ratio-locked (Mouse class) — cannot download' }),
+        },
+      });
+      const results = await service.runAllChecks();
+      const indexerResult = results.find(r => r.checkName === 'indexer:MAM');
+      expect(indexerResult).toBeDefined();
+      expect(indexerResult!.state).toBe('warning');
+      expect(indexerResult!.message).toBe('Account is ratio-locked (Mouse class) — cannot download');
+    });
+
+    it('MAM test success without warning → health state is "healthy"', async () => {
+      const mamIndexer = { id: 1, name: 'MAM', type: 'myanonamouse', enabled: true };
+      const { service } = createService({
+        indexer: {
+          getAll: vi.fn().mockResolvedValue([mamIndexer]),
+          test: vi.fn().mockResolvedValue({ success: true }),
+        },
+      });
+      const results = await service.runAllChecks();
+      const indexerResult = results.find(r => r.checkName === 'indexer:MAM');
+      expect(indexerResult).toBeDefined();
+      expect(indexerResult!.state).toBe('healthy');
+      expect(indexerResult!.message).toBeUndefined();
+    });
+
+    it('MAM test failure → health state is "error" (unchanged behavior)', async () => {
+      const mamIndexer = { id: 1, name: 'MAM', type: 'myanonamouse', enabled: true };
+      const { service } = createService({
+        indexer: {
+          getAll: vi.fn().mockResolvedValue([mamIndexer]),
+          test: vi.fn().mockResolvedValue({ success: false, message: 'Auth failed' }),
+        },
+      });
+      const results = await service.runAllChecks();
+      const indexerResult = results.find(r => r.checkName === 'indexer:MAM');
+      expect(indexerResult).toBeDefined();
+      expect(indexerResult!.state).toBe('error');
+      expect(indexerResult!.message).toBe('Auth failed');
+    });
+  });
 });

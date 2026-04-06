@@ -651,13 +651,10 @@ describe('IndexerCard — Prowlarr-managed indicators (AC8)', () => {
       // Fill name
       await user.type(screen.getByPlaceholderText('MyAnonamouse'), 'My MAM');
 
-      // Verify defaults: English checked, search type dropdown present (#363)
+      // Verify defaults: English checked, search type dropdown removed (#372)
       expect(screen.getByLabelText('English')).toBeChecked();
       expect(screen.getByLabelText('French')).not.toBeChecked();
-      expect(screen.getByLabelText('Search Type')).toBeInTheDocument();
-
-      // Change search type to nVIP (#363)
-      await user.selectOptions(screen.getByLabelText('Search Type'), 'nVIP');
+      expect(screen.queryByLabelText('Search Type')).not.toBeInTheDocument();
 
       // Toggle French on
       await user.click(screen.getByLabelText('French'));
@@ -675,7 +672,6 @@ describe('IndexerCard — Prowlarr-managed indicators (AC8)', () => {
         settings: expect.objectContaining({
           mamId: 'test-mam-id',
           searchLanguages: expect.arrayContaining([1, 36]),
-          searchType: 'nVIP',
         }),
       });
     });
@@ -702,8 +698,8 @@ describe('IndexerCard — Prowlarr-managed indicators (AC8)', () => {
       // Languages should be pre-filled
       expect(screen.getByLabelText('English')).toBeChecked();
       expect(screen.getByLabelText('French')).toBeChecked();
-      // Search type dropdown present (#363)
-      expect(screen.getByLabelText('Search Type')).toBeInTheDocument();
+      // Search type dropdown removed (#372)
+      expect(screen.queryByLabelText('Search Type')).not.toBeInTheDocument();
     });
 
     it('#317 preserves isVip through edit-mode hydration and save', async () => {
@@ -998,119 +994,47 @@ describe('IndexerCard — Prowlarr-managed indicators (AC8)', () => {
     });
   });
 
-  describe('#363 — edit-form hydration searchType coercion', () => {
-    it('hydrates persisted numeric searchType: 1 as "active" string and renders in dropdown', async () => {
+  describe('#372 — searchType dropdown removed', () => {
+    it('edit mode does NOT render search type dropdown', () => {
       const mamIndexer: Indexer = createMockIndexer({
         id: 20,
-        name: 'MAM Legacy',
+        name: 'MAM',
         type: 'myanonamouse',
-        settings: { mamId: 'test-id', baseUrl: '', searchLanguages: [1], searchType: 1 },
+        settings: { mamId: 'test-id', baseUrl: '', searchLanguages: [1] },
       });
-
       renderWithProviders(
-        <IndexerCard
-          indexer={mamIndexer}
-          mode="edit"
-          onSubmit={vi.fn()}
-          onFormTest={vi.fn()}
-        />,
+        <IndexerCard indexer={mamIndexer} mode="edit" onSubmit={vi.fn()} onFormTest={vi.fn()} />,
       );
+      expect(screen.queryByLabelText('Search Type')).not.toBeInTheDocument();
+    });
+  });
 
-      const dropdown = screen.getByLabelText('Search Type') as HTMLSelectElement;
-      expect(dropdown.value).toBe('active');
+  describe('#372 — edit-mode classname hydration', () => {
+    it('shows persisted classname in badge and status messaging instead of generic User fallback', () => {
+      const mamIndexer: Indexer = createMockIndexer({
+        id: 30,
+        name: 'MAM',
+        type: 'myanonamouse',
+        settings: { mamId: 'test-id', baseUrl: '', searchLanguages: [1], isVip: false, mamUsername: 'poweruser', classname: 'Power User' },
+      });
+      renderWithProviders(
+        <IndexerCard indexer={mamIndexer} mode="edit" onSubmit={vi.fn()} onFormTest={vi.fn()} />,
+      );
+      expect(screen.getByText('Power User')).toBeInTheDocument();
+      expect(screen.getByText('Searching non-VIP and freeleech torrents')).toBeInTheDocument();
     });
 
-    it('hydrates persisted string searchType: "fl" as-is (no coercion)', () => {
+    it('shows Mouse warning when persisted classname is Mouse', () => {
       const mamIndexer: Indexer = createMockIndexer({
-        id: 21,
-        name: 'MAM FL',
+        id: 31,
+        name: 'MAM',
         type: 'myanonamouse',
-        settings: { mamId: 'test-id', baseUrl: '', searchLanguages: [1], searchType: 'fl' },
+        settings: { mamId: 'test-id', baseUrl: '', searchLanguages: [1], isVip: false, mamUsername: 'mouseuser', classname: 'Mouse' },
       });
-
       renderWithProviders(
-        <IndexerCard
-          indexer={mamIndexer}
-          mode="edit"
-          onSubmit={vi.fn()}
-          onFormTest={vi.fn()}
-        />,
+        <IndexerCard indexer={mamIndexer} mode="edit" onSubmit={vi.fn()} onFormTest={vi.fn()} />,
       );
-
-      const dropdown = screen.getByLabelText('Search Type') as HTMLSelectElement;
-      expect(dropdown.value).toBe('fl');
-    });
-
-    it('hydrates unknown numeric searchType: 4 as "active" fallback', () => {
-      const mamIndexer: Indexer = createMockIndexer({
-        id: 22,
-        name: 'MAM Unknown',
-        type: 'myanonamouse',
-        settings: { mamId: 'test-id', baseUrl: '', searchLanguages: [1], searchType: 4 },
-      });
-
-      renderWithProviders(
-        <IndexerCard
-          indexer={mamIndexer}
-          mode="edit"
-          onSubmit={vi.fn()}
-          onFormTest={vi.fn()}
-        />,
-      );
-
-      const dropdown = screen.getByLabelText('Search Type') as HTMLSelectElement;
-      expect(dropdown.value).toBe('active');
-    });
-
-    it('renders searchType dropdown in edit mode with 6 options', () => {
-      const mamIndexer: Indexer = createMockIndexer({
-        id: 23,
-        name: 'MAM Options',
-        type: 'myanonamouse',
-        settings: { mamId: 'test-id', baseUrl: '', searchLanguages: [1], searchType: 'active' },
-      });
-
-      renderWithProviders(
-        <IndexerCard
-          indexer={mamIndexer}
-          mode="edit"
-          onSubmit={vi.fn()}
-          onFormTest={vi.fn()}
-        />,
-      );
-
-      const dropdown = screen.getByLabelText('Search Type') as HTMLSelectElement;
-      expect(dropdown.options).toHaveLength(6);
-    });
-
-    it('changed searchType survives edit-mode submit as string in payload', async () => {
-      const onSubmit = vi.fn();
-      const user = userEvent.setup();
-      const mamIndexer: Indexer = createMockIndexer({
-        id: 24,
-        name: 'MAM Save Test',
-        type: 'myanonamouse',
-        settings: { mamId: 'save-test-id', baseUrl: '', searchLanguages: [1], searchType: 'active' },
-      });
-
-      renderWithProviders(
-        <IndexerCard
-          indexer={mamIndexer}
-          mode="edit"
-          onSubmit={onSubmit}
-          onFormTest={vi.fn()}
-        />,
-      );
-
-      // Change search type from "active" to "fl-VIP"
-      await user.selectOptions(screen.getByLabelText('Search Type'), 'fl-VIP');
-
-      // Submit
-      await user.click(screen.getByText('Save Changes'));
-      await waitFor(() => {
-        expect(onSubmit).toHaveBeenCalled();
-      });
-      expect(onSubmit.mock.calls[0][0].settings).toHaveProperty('searchType', 'fl-VIP');
+      expect(screen.getByText(/searches disabled until ratio improves/)).toBeInTheDocument();
     });
   });
 });

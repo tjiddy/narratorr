@@ -258,13 +258,6 @@ describe('IndexerFields', () => {
       expect(screen.getByLabelText('Dutch')).toBeInTheDocument();
     });
 
-    it('renders search type dropdown with 6 options (#363)', () => {
-      renderWithProviders(<MamFieldWrapper />);
-      const dropdown = screen.getByLabelText('Search Type') as HTMLSelectElement;
-      expect(dropdown).toBeInTheDocument();
-      expect(dropdown.options).toHaveLength(6);
-    });
-
     it('checking a language checkbox updates form value via setValue', async () => {
       const user = userEvent.setup();
       renderWithProviders(<MamFieldWrapper defaultSearchLanguages={[1]} />);
@@ -290,11 +283,6 @@ describe('IndexerFields', () => {
 
       expect(screen.getByLabelText('English')).toBeChecked();
       expect(screen.getByLabelText('French')).not.toBeChecked();
-    });
-
-    it('#363 — MAM settings form shows search type dropdown', () => {
-      renderWithProviders(<MamFieldWrapper />);
-      expect(screen.getByLabelText('Search Type')).toBeInTheDocument();
     });
 
     it('#317 — language checkboxes still render after dropdown removal', () => {
@@ -1005,49 +993,87 @@ describe('IndexerFields', () => {
     });
   });
 
-  describe('#363 — searchType dropdown', () => {
-    function MamFieldWrapper363({ defaultSearchType }: { defaultSearchType?: 'all' | 'active' | 'fl' | 'fl-VIP' | 'VIP' | 'nVIP' } = {}) {
+  describe('#372 — Search Type dropdown removal', () => {
+    function MamFieldWrapperSimple() {
       const { register, watch, setValue, formState: { errors } } = useForm<CreateIndexerFormData>({
         defaultValues: {
           name: '', type: 'myanonamouse',
-          settings: {
-            mamId: 'test-id',
-            searchLanguages: [1],
-            searchType: defaultSearchType ?? 'active',
-          },
+          settings: { mamId: 'test-id', searchLanguages: [1] },
         },
       });
       return <IndexerFields selectedType="myanonamouse" register={register} errors={errors} watch={watch} setValue={setValue} />;
     }
 
-    it('renders searchType dropdown with 6 options and helper text', () => {
-      renderWithProviders(<MamFieldWrapper363 />);
-      const dropdown = screen.getByLabelText('Search Type') as HTMLSelectElement;
-      expect(dropdown).toBeInTheDocument();
-      expect(dropdown.options).toHaveLength(6);
-      expect(screen.getByText(/auto-overridden by vip status/i)).toBeInTheDocument();
+    it('MAM settings form does NOT render a "Search Type" label or select element', () => {
+      renderWithProviders(<MamFieldWrapperSimple />);
+      expect(screen.queryByLabelText('Search Type')).not.toBeInTheDocument();
+    });
+  });
+
+  describe('#372 — status-aware messaging', () => {
+    function MamFieldWithStatus({ isVip, classname }: { isVip: boolean; classname: string }) {
+      const { register, watch, setValue, formState: { errors } } = useForm<CreateIndexerFormData>({
+        defaultValues: {
+          name: '', type: 'myanonamouse',
+          settings: { mamId: 'test-id', searchLanguages: [1], isVip, mamUsername: 'testuser', classname } as Record<string, unknown>,
+        },
+      });
+      return <IndexerFields selectedType="myanonamouse" register={register} errors={errors} watch={watch} setValue={setValue} />;
+    }
+
+    it('renders "Searching all torrents including VIP" when classname is VIP and isVip is true', () => {
+      renderWithProviders(<MamFieldWithStatus isVip={true} classname="VIP" />);
+      expect(screen.getByText('Searching all torrents including VIP')).toBeInTheDocument();
     });
 
-    it('dropdown labels match expected values', () => {
-      renderWithProviders(<MamFieldWrapper363 />);
-      const dropdown = screen.getByLabelText('Search Type') as HTMLSelectElement;
-      const labels = Array.from(dropdown.options).map(o => o.text);
-      expect(labels).toEqual([
-        'All',
-        'Active',
-        'Freeleech',
-        'Freeleech or VIP',
-        'VIP Only',
-        'Not VIP',
-      ]);
+    it('renders "Searching non-VIP and freeleech torrents" when classname is Power User and isVip is false', () => {
+      renderWithProviders(<MamFieldWithStatus isVip={false} classname="Power User" />);
+      expect(screen.getByText('Searching non-VIP and freeleech torrents')).toBeInTheDocument();
     });
 
-    it('selecting a search type updates form state with string value', async () => {
-      const user = userEvent.setup();
-      renderWithProviders(<MamFieldWrapper363 />);
-      const dropdown = screen.getByLabelText('Search Type') as HTMLSelectElement;
-      await user.selectOptions(dropdown, 'nVIP');
-      expect(dropdown.value).toBe('nVIP');
+    it('renders amber warning when classname is Mouse', () => {
+      renderWithProviders(<MamFieldWithStatus isVip={false} classname="Mouse" />);
+      expect(screen.getByText(/Mouse class — searches disabled/)).toBeInTheDocument();
+    });
+
+    it('renders no status messaging when no isVip in settings', () => {
+      function MamFieldNoStatus() {
+        const { register, watch, setValue, formState: { errors } } = useForm<CreateIndexerFormData>({
+          defaultValues: {
+            name: '', type: 'myanonamouse',
+            settings: { mamId: 'test-id', searchLanguages: [1] },
+          },
+        });
+        return <IndexerFields selectedType="myanonamouse" register={register} errors={errors} watch={watch} setValue={setValue} />;
+      }
+      renderWithProviders(<MamFieldNoStatus />);
+      expect(screen.queryByText(/Searching/)).not.toBeInTheDocument();
+      expect(screen.queryByText(/Mouse class/)).not.toBeInTheDocument();
+    });
+  });
+
+  describe('#372 — deriveInitialMamStatus hydration from classname', () => {
+    function MamFieldWithPersistedClass({ classname }: { classname: string }) {
+      const { register, watch, setValue, formState: { errors } } = useForm<CreateIndexerFormData>({
+        defaultValues: {
+          name: '', type: 'myanonamouse',
+          settings: { mamId: 'test-id', searchLanguages: [1], isVip: false, mamUsername: 'user', classname } as Record<string, unknown>,
+        },
+      });
+      return <IndexerFields selectedType="myanonamouse" register={register} errors={errors} watch={watch} setValue={setValue} />;
+    }
+
+    it('badge shows "Power User" when classname is "Power User"', () => {
+      renderWithProviders(<MamFieldWithPersistedClass classname="Power User" />);
+      expect(screen.getByText('Power User')).toBeInTheDocument();
+    });
+
+    it('badge shows "Mouse" when classname is "Mouse"', () => {
+      renderWithProviders(<MamFieldWithPersistedClass classname="Mouse" />);
+      // Badge shows classname "Mouse" and warning shows "Mouse class — ..."
+      expect(screen.getAllByText(/Mouse/).length).toBeGreaterThanOrEqual(1);
+      // Verify warning is also shown
+      expect(screen.getByText(/searches disabled until ratio improves/)).toBeInTheDocument();
     });
   });
 });

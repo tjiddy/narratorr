@@ -1321,4 +1321,196 @@ describe('MyAnonamouseIndexer', () => {
     });
   });
 
+  describe('#372 — refreshStatus()', () => {
+    it('returns { isVip: true, classname: "VIP" } for VIP class', async () => {
+      server.use(
+        http.get(`${MAM_BASE}/jsonLoad.php`, () => {
+          return HttpResponse.json({ username: 'testuser', classname: 'VIP' });
+        }),
+      );
+      const result = await indexer.refreshStatus!();
+      expect(result).toEqual({ isVip: true, classname: 'VIP' });
+    });
+
+    it('returns { isVip: true, classname: "Elite VIP" } for Elite VIP class', async () => {
+      server.use(
+        http.get(`${MAM_BASE}/jsonLoad.php`, () => {
+          return HttpResponse.json({ username: 'testuser', classname: 'Elite VIP' });
+        }),
+      );
+      const result = await indexer.refreshStatus!();
+      expect(result).toEqual({ isVip: true, classname: 'Elite VIP' });
+    });
+
+    it('returns { isVip: false, classname: "Power User" } for non-VIP non-Mouse class', async () => {
+      server.use(
+        http.get(`${MAM_BASE}/jsonLoad.php`, () => {
+          return HttpResponse.json({ username: 'testuser', classname: 'Power User' });
+        }),
+      );
+      const result = await indexer.refreshStatus!();
+      expect(result).toEqual({ isVip: false, classname: 'Power User' });
+    });
+
+    it('returns { isVip: false, classname: "Mouse" } for Mouse class', async () => {
+      server.use(
+        http.get(`${MAM_BASE}/jsonLoad.php`, () => {
+          return HttpResponse.json({ username: 'testuser', classname: 'Mouse' });
+        }),
+      );
+      const result = await indexer.refreshStatus!();
+      expect(result).toEqual({ isVip: false, classname: 'Mouse' });
+    });
+
+    it('returns null when user info endpoint returns empty/malformed response', async () => {
+      server.use(
+        http.get(`${MAM_BASE}/jsonLoad.php`, () => {
+          return HttpResponse.text('not json at all');
+        }),
+      );
+      const result = await indexer.refreshStatus!();
+      expect(result).toBeNull();
+    });
+
+    it('throws on network error', async () => {
+      server.use(
+        http.get(`${MAM_BASE}/jsonLoad.php`, () => {
+          return HttpResponse.error();
+        }),
+      );
+      await expect(indexer.refreshStatus!()).rejects.toThrow();
+    });
+
+    it('throws on auth failure (401/non-200 response)', async () => {
+      server.use(
+        http.get(`${MAM_BASE}/jsonLoad.php`, () => {
+          return new HttpResponse('Forbidden', { status: 403 });
+        }),
+      );
+      await expect(indexer.refreshStatus!()).rejects.toThrow();
+    });
+
+    it('mutates adapter isVip — subsequent search() uses effectiveSearchType "all" after VIP refresh', async () => {
+      // Start with isVip undefined (legacy), so effectiveSearchType would be the saved searchType
+      const legacyIdx = new MyAnonamouseIndexer({ mamId: 'test-mam-id', baseUrl: MAM_BASE, searchLanguages: [1], searchType: 'active' });
+      // refreshStatus returns VIP
+      server.use(
+        http.get(`${MAM_BASE}/jsonLoad.php`, () => {
+          return HttpResponse.json({ username: 'testuser', classname: 'VIP' });
+        }),
+      );
+      await legacyIdx.refreshStatus!();
+      // Now search should use 'all' (VIP) not 'active' (legacy)
+      let capturedUrl = '';
+      server.use(
+        http.get(`${MAM_BASE}/tor/js/loadSearchJSONbasic.php`, ({ request }) => {
+          capturedUrl = request.url;
+          return HttpResponse.json({ data: [] });
+        }),
+      );
+      await legacyIdx.search('test');
+      expect(new URL(capturedUrl).searchParams.get('tor[searchType]')).toBe('all');
+    });
+
+    it('mutates adapter isVip (downgrade) — subsequent search() uses "nVIP" after downgrade from VIP', async () => {
+      const vipIdx = new MyAnonamouseIndexer({ mamId: 'test-mam-id', baseUrl: MAM_BASE, searchLanguages: [1], searchType: 'active', isVip: true });
+      // refreshStatus returns Power User (downgrade from VIP)
+      server.use(
+        http.get(`${MAM_BASE}/jsonLoad.php`, () => {
+          return HttpResponse.json({ username: 'testuser', classname: 'Power User' });
+        }),
+      );
+      await vipIdx.refreshStatus!();
+      // Now search should use 'nVIP' not 'all'
+      let capturedUrl = '';
+      server.use(
+        http.get(`${MAM_BASE}/tor/js/loadSearchJSONbasic.php`, ({ request }) => {
+          capturedUrl = request.url;
+          return HttpResponse.json({ data: [] });
+        }),
+      );
+      await vipIdx.search('test');
+      expect(new URL(capturedUrl).searchParams.get('tor[searchType]')).toBe('nVIP');
+    });
+
+    it('does NOT mutate adapter state when response classname is undefined', async () => {
+      const vipIdx = new MyAnonamouseIndexer({ mamId: 'test-mam-id', baseUrl: MAM_BASE, searchLanguages: [1], searchType: 'active', isVip: true });
+      server.use(
+        http.get(`${MAM_BASE}/jsonLoad.php`, () => {
+          return HttpResponse.json({ username: 'testuser' }); // no classname
+        }),
+      );
+      const result = await vipIdx.refreshStatus!();
+      expect(result).toBeNull();
+      // isVip should still be true (not mutated)
+      let capturedUrl = '';
+      server.use(
+        http.get(`${MAM_BASE}/tor/js/loadSearchJSONbasic.php`, ({ request }) => {
+          capturedUrl = request.url;
+          return HttpResponse.json({ data: [] });
+        }),
+      );
+      await vipIdx.search('test');
+      expect(new URL(capturedUrl).searchParams.get('tor[searchType]')).toBe('all');
+    });
+
+    it('does NOT mutate adapter state when response body is empty', async () => {
+      const vipIdx = new MyAnonamouseIndexer({ mamId: 'test-mam-id', baseUrl: MAM_BASE, searchLanguages: [1], searchType: 'active', isVip: true });
+      server.use(
+        http.get(`${MAM_BASE}/jsonLoad.php`, () => {
+          return HttpResponse.text('');
+        }),
+      );
+      const result = await vipIdx.refreshStatus!();
+      expect(result).toBeNull();
+      // isVip should still be true
+      let capturedUrl = '';
+      server.use(
+        http.get(`${MAM_BASE}/tor/js/loadSearchJSONbasic.php`, ({ request }) => {
+          capturedUrl = request.url;
+          return HttpResponse.json({ data: [] });
+        }),
+      );
+      await vipIdx.search('test');
+      expect(new URL(capturedUrl).searchParams.get('tor[searchType]')).toBe('all');
+    });
+  });
+
+  describe('#372 — test() Mouse warning', () => {
+    it('returns success with warning when classname is Mouse', async () => {
+      server.use(
+        http.get(`${MAM_BASE}/jsonLoad.php`, () => {
+          return HttpResponse.json({ username: 'mouseuser', classname: 'Mouse' });
+        }),
+      );
+      const result = await indexer.test();
+      expect(result.success).toBe(true);
+      expect(result.warning).toBe('Account is ratio-locked (Mouse class) — cannot download');
+      expect(result.metadata).toMatchObject({ classname: 'Mouse', isVip: false });
+    });
+
+    it('returns normal success without warning for non-Mouse non-VIP classes', async () => {
+      server.use(
+        http.get(`${MAM_BASE}/jsonLoad.php`, () => {
+          return HttpResponse.json({ username: 'poweruser', classname: 'Power User' });
+        }),
+      );
+      const result = await indexer.test();
+      expect(result.success).toBe(true);
+      expect(result.warning).toBeUndefined();
+      expect(result.metadata).toMatchObject({ classname: 'Power User', isVip: false });
+    });
+
+    it('returns normal success without warning for VIP classes', async () => {
+      server.use(
+        http.get(`${MAM_BASE}/jsonLoad.php`, () => {
+          return HttpResponse.json({ username: 'vipuser', classname: 'VIP' });
+        }),
+      );
+      const result = await indexer.test();
+      expect(result.success).toBe(true);
+      expect(result.warning).toBeUndefined();
+      expect(result.metadata).toMatchObject({ classname: 'VIP', isVip: true });
+    });
+  });
 });

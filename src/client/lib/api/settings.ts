@@ -11,6 +11,7 @@ export interface TestResult {
   success: boolean;
   message?: string;
   ip?: string;
+  warning?: string;
   metadata?: Record<string, unknown>;
 }
 
