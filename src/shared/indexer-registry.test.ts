@@ -99,10 +99,10 @@ describe('INDEXER_REGISTRY', () => {
       expect(defaults).toHaveProperty('baseUrl');
     });
 
-    it('myanonamouse defaults include searchLanguages: [1] and searchType: "active"', () => {
+    it('myanonamouse defaults include searchLanguages: [1] and no searchType', () => {
       const defaults = INDEXER_REGISTRY.myanonamouse.defaultSettings;
       expect(defaults).toHaveProperty('searchLanguages', [1]);
-      expect(defaults).toHaveProperty('searchType', 'active');
+      expect(defaults).not.toHaveProperty('searchType');
     });
   });
 
@@ -151,8 +151,8 @@ describe('INDEXER_REGISTRY', () => {
       expect(values).toContain('nVIP');
     });
 
-    it('default searchType in myanonamouse registry is "active" (string)', () => {
-      expect(INDEXER_REGISTRY.myanonamouse.defaultSettings).toHaveProperty('searchType', 'active');
+    it('myanonamouse registry no longer includes searchType in defaults', () => {
+      expect(INDEXER_REGISTRY.myanonamouse.defaultSettings).not.toHaveProperty('searchType');
     });
   });
 
