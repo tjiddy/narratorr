@@ -1,5 +1,34 @@
 # Workflow Log
 
+## #373 Fix download completion race condition — monitor overrides adapter status — 2026-04-06
+**Skill path:** /implement → /claim → /plan → /handoff
+**Outcome:** success — PR #375
+
+### Metrics
+- Files changed: 11 | Tests added/modified: 45+
+- Quality gate runs: 2 (pass on attempt 2 — first failed on ESLint complexity)
+- Fix iterations: 1 (extracted postProcFailed helper to reduce NZBGet mapHistoryStatus complexity)
+- Context compactions: 0
+
+### Workflow experience
+- What went smoothly: Red/green TDD per module worked cleanly — 5 modules, each with clear test→implement→commit cycle. Existing test patterns in each adapter were consistent enough to follow.
+- Friction / issues encountered: Deluge mock fixture needed `is_finished: false` default added, which cascaded to an existing "maps Seeding state correctly" test that expected `seeding` but now correctly returns `downloading`. Transmission status mapping tests needed `leftUntilDone` in the fixture, which changed the parameterized test expectations.
+
+### Token efficiency
+- Highest-token actions: Explore subagents for plan and self-review
+- Avoidable waste: None significant — the elaboration phase was thorough and prevented spec review round-trips during implementation
+- Suggestions: Multi-adapter changes benefit from the per-module TDD approach — each adapter is independent so can be committed atomically
+
+### Infrastructure gaps
+- Repeated workarounds: None
+- Missing tooling / config: None
+- Unresolved debt: QG orchestrator O(N) scan already logged from #358
+
+### Wish I'd Known
+1. **NZBGet's unknown status default was `completed`** — the most dangerous possible default. The existing test was asserting the bug. Always check what the default/fallback case returns in status mapping functions. (See: `nzbget-unknown-default-completed-bug.md`)
+2. **Deluge's `Seeding` state ≠ finished** — `is_finished` is the authoritative flag. Adding `is_finished` to the fixture cascaded to existing tests that assumed Seeding=seeding. (See: `deluge-is-finished-vs-seeding-state.md`)
+3. **Transmission's `isFinished` means ratio-limit-reached, not download-complete** — `leftUntilDone === 0` is the correct completion check. Field naming is actively misleading. (See: `transmission-leftuntildone-vs-isfinished.md`)
+
 ## #365 Library page: sort/search/dropdown cleanup — 2026-04-06
 **Skill path:** /implement → /claim → /plan → /handoff
 **Outcome:** success — PR #374
