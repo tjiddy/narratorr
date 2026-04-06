@@ -1697,6 +1697,39 @@ describe('monitor job', () => {
       expect(setCalls[0]?.outputPath).toBe('/downloads/incomplete/My Audiobook');
     });
 
+    it('preserves previous outputPath when remote path mapping lookup fails during completion transition', async () => {
+      db.select.mockReturnValueOnce(mockDbChain([
+        { id: 1, externalId: 'ext-1', downloadClientId: 10, status: 'downloading', completedAt: null, bookId: 42, outputPath: '/old/stale/path' },
+      ]));
+      adapter.getDownload.mockResolvedValueOnce({
+        progress: 100,
+        status: 'completed',
+        savePath: '/downloads/complete',
+        name: 'My Audiobook',
+      });
+      const chain = mockDbChain();
+      db.update.mockReturnValue(chain);
+
+      const remotePathMappingService = {
+        getByClientId: vi.fn().mockRejectedValue(new Error('DB unavailable')),
+      };
+
+      await monitorDownloads(
+        inject<Db>(db),
+        inject<DownloadClientService>(downloadClientService),
+        inject<NotifierService>(notifierService),
+        inject<FastifyBaseLogger>(log),
+        undefined,
+        undefined,
+        remotePathMappingService as never,
+      );
+
+      const setCalls = (chain.set as ReturnType<typeof vi.fn>).mock.calls.map((c: unknown[]) => c[0] as Record<string, unknown>);
+      // outputPath should NOT be overwritten — mapping failure means undefined from resolveOutputPath,
+      // which means the spread does not include outputPath, preserving the existing DB value
+      expect(setCalls[0]).not.toHaveProperty('outputPath');
+    });
+
     it('preserves previous outputPath when adapter returns empty savePath on completion', async () => {
       db.select.mockReturnValueOnce(mockDbChain([
         { id: 1, externalId: 'ext-1', downloadClientId: 10, status: 'downloading', completedAt: null, bookId: 42, outputPath: '/existing/path' },
