@@ -198,6 +198,7 @@ export async function runRssJob(
         title: best.title,
         protocol: best.protocol,
         bookId,
+        indexerId: best.indexerId,
         size: best.size,
         seeders: best.seeders,
         source: 'rss',

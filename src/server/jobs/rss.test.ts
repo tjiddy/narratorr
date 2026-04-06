@@ -671,4 +671,36 @@ describe('startRssJob', () => {
       expect(result.grabbed).toBe(1);
     });
   });
+
+  it('forwards indexerId from best RSS result to downloadOrchestrator.grab', async () => {
+    const wantedBooks = [makeWantedBook(1, 'The Way of Kings', 'Brandon Sanderson')];
+    const rssResults = [makeResult('The Way of Kings', 'Brandon Sanderson', { indexerId: 55 })];
+    const settings = createMockSettingsService({ rss: { enabled: true } });
+    const { bookList, book } = createMockBookServices(wantedBooks);
+    const indexer = createMockIndexerService(rssResults);
+    const download = createMockDownloadOrchestrator();
+    const blacklist = createMockBlacklistService();
+
+    await runRssJob(settings, bookList, book, indexer, download, blacklist, inject<FastifyBaseLogger>(log));
+
+    expect(download.grab).toHaveBeenCalledWith(
+      expect.objectContaining({ indexerId: 55 }),
+    );
+  });
+
+  it('forwards undefined indexerId when RSS result has no indexerId', async () => {
+    const wantedBooks = [makeWantedBook(1, 'The Way of Kings', 'Brandon Sanderson')];
+    const rssResults = [makeResult('The Way of Kings', 'Brandon Sanderson')];
+    const settings = createMockSettingsService({ rss: { enabled: true } });
+    const { bookList, book } = createMockBookServices(wantedBooks);
+    const indexer = createMockIndexerService(rssResults);
+    const download = createMockDownloadOrchestrator();
+    const blacklist = createMockBlacklistService();
+
+    await runRssJob(settings, bookList, book, indexer, download, blacklist, inject<FastifyBaseLogger>(log));
+
+    expect(download.grab).toHaveBeenCalledWith(
+      expect.objectContaining({ indexerId: undefined }),
+    );
+  });
 });
