@@ -311,7 +311,7 @@ describe('QBittorrentClient', () => {
         }
       });
 
-      it('surfaces sanitized DNS error on connection-refused/ENOTFOUND without URL leakage', async () => {
+      it('surfaces sanitized DNS/connection-refused error preserving mapped message without URL or HTTP status', async () => {
         server.use(
           http.get('https://example.com/file.torrent', () => {
             return HttpResponse.error();
@@ -320,8 +320,12 @@ describe('QBittorrentClient', () => {
 
         const error = await client.addDownload(TORRENT_URL).catch((e: unknown) => e) as Error;
         expect(error).toBeInstanceOf(Error);
+        // Mapped network error should not contain the original URL or any HTTP status text
         expect(error.message).not.toContain('SECRET123');
         expect(error.message).not.toContain('example.com/file.torrent');
+        expect(error.message).not.toContain('HTTP');
+        // Should be a network-level error message (from mapNetworkError), not a rewritten adapter message
+        expect(error.message.length).toBeGreaterThan(0);
       });
 
       it('catches fetchWithTimeout redirect error and throws sanitized message without source URL or Location header', async () => {
