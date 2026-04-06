@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { DownloadCard } from './DownloadCard';
+import { renderWithProviders } from '@/__tests__/helpers';
 import { createMockDownload } from '@/__tests__/factories';
 import type { Download } from '@/lib/api';
 import type { QualityGateData } from '@/lib/api/activity';
@@ -537,5 +538,36 @@ describe('DownloadCard', () => {
       expect(screen.getByText('Rejecting...').closest('button')).toBeDisabled();
       expect(screen.getByText('Reject & Search').closest('button')).toBeDisabled();
     });
+  });
+
+  // #357 — Indexer name pill
+  describe('indexer name pill (#357)', () => {
+    it.todo('renders indexer name in a pill element alongside protocol badge when indexerName is present');
+    it.todo('does not render indexer pill when indexerName is null');
+    it.todo('renders indexer pill on compact (history) cards');
+    it.todo('does not render empty indexer pill when indexerName is null on compact cards');
+  });
+
+  // #357 — Book title link
+  describe('book title link (#357)', () => {
+    it.todo('renders title as a link to /books/:id when bookId is present');
+    it.todo('renders title as plain text when bookId is null');
+    it.todo('renders title as plain text when bookId is undefined');
+    it.todo('clicking title link navigates to book detail page');
+  });
+
+  // #357 — Relative timestamp (history cards)
+  describe('relative timestamp (#357)', () => {
+    it.todo('renders relative timestamp with dot separator on compact cards when completedAt is present');
+    it.todo('does not render timestamp when completedAt is null');
+    it.todo('does not render timestamp when completedAt is undefined');
+    it.todo('does not render timestamp on non-compact (active) cards');
+    it.todo('renders native title attribute with full date/time on timestamp');
+  });
+
+  // #357 — Seeders label visibility (null/zero)
+  describe('seeders null/zero hiding (#357)', () => {
+    it.todo('hides seeders when seeders is 0');
+    it.todo('hides seeders when seeders is null');
   });
 });

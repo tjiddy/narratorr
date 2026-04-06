@@ -12,7 +12,7 @@ export interface Download {
   infoHash?: string;
   downloadUrl?: string;
   size?: number;
-  seeders?: number;
+  seeders: number | null;
   status: DownloadStatus;
   /** Quality gate comparison data, present when status is pending_review */
   qualityGate?: QualityGateData;
@@ -20,7 +20,7 @@ export interface Download {
   externalId?: string;
   errorMessage?: string;
   addedAt: string;
-  completedAt?: string;
+  completedAt: string | null;
 }
 
 export interface QualityGateData {

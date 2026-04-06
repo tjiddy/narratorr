@@ -220,6 +220,8 @@ describe('SearchReleasesModal', () => {
       progress: 0,
       addedAt: '2024-01-01T00:00:00Z',
       indexerName: null,
+      seeders: null,
+      completedAt: null,
     });
     const onClose = vi.fn();
     const user = userEvent.setup();
@@ -374,6 +376,8 @@ describe('SearchReleasesModal', () => {
           progress: 0,
           addedAt: '2024-01-01T00:00:00Z',
           indexerName: null,
+          seeders: null,
+          completedAt: null,
         });
       const user = userEvent.setup();
 
@@ -415,6 +419,8 @@ describe('SearchReleasesModal', () => {
           progress: 0,
           addedAt: '2024-01-01T00:00:00Z',
           indexerName: null,
+          seeders: null,
+          completedAt: null,
         });
       const onClose = vi.fn();
       const user = userEvent.setup();
@@ -537,6 +543,8 @@ describe('SearchReleasesModal', () => {
         progress: 0,
         addedAt: '2024-01-01T00:00:00Z',
         indexerName: null,
+        seeders: null,
+        completedAt: null,
       });
       const user = userEvent.setup();
 
@@ -563,6 +571,8 @@ describe('SearchReleasesModal', () => {
         progress: 0,
         addedAt: '2024-01-01T00:00:00Z',
         indexerName: null,
+        seeders: null,
+        completedAt: null,
       });
       const user = userEvent.setup();
 
@@ -604,6 +614,8 @@ describe('SearchReleasesModal', () => {
           progress: 0,
           addedAt: '2024-01-01T00:00:00Z',
           indexerName: null,
+          seeders: null,
+          completedAt: null,
         });
       const user = userEvent.setup();
 
@@ -1082,6 +1094,8 @@ describe('SearchReleasesModal', () => {
       progress: 0,
       addedAt: '2024-01-01T00:00:00Z',
       indexerName: null,
+      seeders: null,
+      completedAt: null,
     });
     const user = userEvent.setup();
 
