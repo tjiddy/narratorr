@@ -230,6 +230,18 @@ describe('QBittorrentClient', () => {
         expect(hash).toBe('e4c4ed54fbde46fb891a9ef51a368f7cde76eb74');
       });
 
+      it('fetches plain http:// .torrent URL (not just https)', async () => {
+        server.use(
+          http.get('http://tracker.example.com/file.torrent', () => {
+            return new HttpResponse(fakeTorrentFile);
+          }),
+          http.post(`${BASE_URL}/api/v2/torrents/add`, () => new HttpResponse('')),
+        );
+
+        const hash = await client.addDownload('http://tracker.example.com/file.torrent');
+        expect(hash).toBe('e4c4ed54fbde46fb891a9ef51a368f7cde76eb74');
+      });
+
       it('forwards savePath, category, and paused options through fetch path to addDownloadFromFile', async () => {
         let capturedBody = '';
 
