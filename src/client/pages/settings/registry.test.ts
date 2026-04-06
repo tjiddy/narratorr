@@ -2,8 +2,8 @@ import { describe, it, expect } from 'vitest';
 import { settingsPageRegistry } from './registry';
 
 describe('settingsPageRegistry', () => {
-  it('exports an array with all 9 settings page entries', () => {
-    expect(settingsPageRegistry).toHaveLength(9);
+  it('exports an array with all 10 settings page entries', () => {
+    expect(settingsPageRegistry).toHaveLength(10);
   });
 
   it('each entry has path, label, icon, and component', () => {
@@ -23,7 +23,7 @@ describe('settingsPageRegistry', () => {
 
   it('non-General entries do not have end: true', () => {
     const nonGeneral = settingsPageRegistry.filter((e) => e.label !== 'General');
-    expect(nonGeneral.length).toBe(8);
+    expect(nonGeneral.length).toBe(9);
     for (const entry of nonGeneral) {
       expect(entry.end).toBeUndefined();
     }
@@ -42,6 +42,7 @@ describe('settingsPageRegistry', () => {
       'post-processing',
       'indexers',
       'download-clients',
+      'search',
       'notifications',
       'blacklist',
       'security',

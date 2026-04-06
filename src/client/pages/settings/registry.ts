@@ -2,6 +2,7 @@ import type { ComponentType } from 'react';
 import {
   SettingsIcon,
   SearchIcon,
+  CompassIcon,
   ServerIcon,
   BellIcon,
   ShieldBanIcon,
@@ -14,6 +15,7 @@ import { GeneralSettings } from './GeneralSettings.js';
 import { PostProcessingSettings } from './PostProcessingSettings.js';
 import { IndexersSettings } from './IndexersSettings.js';
 import { DownloadClientsSettings } from './DownloadClientsSettings.js';
+import { SearchSettingsPage } from './SearchSettingsPage.js';
 import { NotificationsSettings } from './NotificationsSettings.js';
 import { BlacklistSettings } from './BlacklistSettings.js';
 import { SecuritySettings } from './SecuritySettings.js';
@@ -35,6 +37,7 @@ export const settingsPageRegistry: readonly SettingsPageEntry[] = [
   { path: 'post-processing', label: 'Post Processing', icon: ZapIcon, component: PostProcessingSettings },
   { path: 'indexers', label: 'Indexers', icon: SearchIcon, component: IndexersSettings },
   { path: 'download-clients', label: 'Download Clients', icon: ServerIcon, component: DownloadClientsSettings },
+  { path: 'search', label: 'Search', icon: CompassIcon, component: SearchSettingsPage },
   { path: 'notifications', label: 'Notifications', icon: BellIcon, component: NotificationsSettings },
   { path: 'blacklist', label: 'Blacklist', icon: ShieldBanIcon, component: BlacklistSettings },
   { path: 'security', label: 'Security', icon: ShieldIcon, component: SecuritySettings },
