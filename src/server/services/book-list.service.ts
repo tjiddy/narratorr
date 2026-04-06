@@ -64,7 +64,7 @@ export class BookListService {
       }
     }
 
-    // Search filter — SQL LIKE across title/series/genres + subqueries for author/narrator names
+    // Search filter — SQL LIKE across title/series/genres + author name subquery
     if (options?.search) {
       const pattern = `%${options.search}%`;
       conditions.push(or(
@@ -72,7 +72,6 @@ export class BookListService {
         like(books.seriesName, pattern),
         like(books.genres, pattern),
         sql`EXISTS (SELECT 1 FROM book_authors ba JOIN authors a ON a.id = ba.author_id WHERE ba.book_id = ${books.id} AND a.name LIKE ${pattern})`,
-        sql`EXISTS (SELECT 1 FROM book_narrators bn JOIN narrators n ON n.id = bn.narrator_id WHERE bn.book_id = ${books.id} AND n.name LIKE ${pattern})`,
       )!);
     }
 

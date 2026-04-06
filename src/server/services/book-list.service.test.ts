@@ -261,7 +261,30 @@ describe('BookListService', () => {
     });
 
     // #365 — search excludes narrator names
-    it.todo('search filter does not include narrator EXISTS subquery in conditions');
+    it('search filter does not include narrator EXISTS subquery in conditions', async () => {
+      const countChain = mockDbChain([{ value: 1 }]);
+      const dataChain = mockDbChain([{ book: mockBook, importListName: null, primaryAuthorName: null }]);
+      db.select
+        .mockReturnValueOnce(countChain)
+        .mockReturnValueOnce(dataChain)
+        .mockReturnValueOnce(mockDbChain([{ bookId: 1, author: mockAuthor, position: 0 }]))
+        .mockReturnValueOnce(mockDbChain([]));
+
+      await service.getAll(undefined, undefined, { search: 'test' });
+
+      // Inspect the where clause passed to the count query for narrator references
+      const whereArg = (countChain.where as Mock).mock.calls[0]?.[0];
+      function containsNarrator(val: unknown): boolean {
+        if (typeof val === 'string') return val.includes('book_narrators') || val.includes('narrator');
+        if (Array.isArray(val)) return val.some(containsNarrator);
+        if (val && typeof val === 'object') {
+          if ('queryChunks' in val) return containsNarrator((val as { queryChunks: unknown[] }).queryChunks);
+          if ('value' in val) return containsNarrator((val as { value: unknown }).value);
+        }
+        return false;
+      }
+      expect(containsNarrator(whereArg)).toBe(false);
+    });
 
     it('all sort fields include secondary sort by id for stable pagination', async () => {
       const sortFields = ['createdAt', 'title', 'author', 'narrator', 'series', 'quality', 'size', 'format'] as const;
