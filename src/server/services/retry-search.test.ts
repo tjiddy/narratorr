@@ -396,4 +396,28 @@ describe('retrySearch — GUID blacklist filtering', () => {
       }),
     );
   });
+
+  it('forwards indexerId from best search result to downloadOrchestrator.grab', async () => {
+    const deps = createDeps({
+      indexerService: inject<IndexerService>({
+        searchAll: vi.fn().mockResolvedValue([{ ...mockSearchResult, indexerId: 42 }]),
+      }),
+    });
+
+    await retrySearch(1, deps);
+
+    expect(deps.downloadOrchestrator.grab).toHaveBeenCalledWith(
+      expect.objectContaining({ indexerId: 42 }),
+    );
+  });
+
+  it('forwards undefined indexerId when search result has no indexerId', async () => {
+    const deps = createDeps();
+
+    await retrySearch(1, deps);
+
+    expect(deps.downloadOrchestrator.grab).toHaveBeenCalledWith(
+      expect.objectContaining({ indexerId: undefined }),
+    );
+  });
 });

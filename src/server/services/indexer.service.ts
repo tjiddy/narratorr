@@ -327,7 +327,8 @@ export class IndexerService {
   /** Poll a single indexer with empty query (RSS feed). Returns results with parsed release names. */
   async pollRss(indexer: IndexerRow): Promise<SearchResult[]> {
     const adapter = await this.getAdapter(indexer);
-    const results = await adapter.search('');
+    const raw = await adapter.search('');
+    const results = raw.map(r => ({ ...r, indexerId: indexer.id }));
     this.parseReleaseNames(results, indexer.name);
     return results;
   }

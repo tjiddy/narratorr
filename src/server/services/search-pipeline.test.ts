@@ -95,6 +95,26 @@ describe('searchAndGrabForBook', () => {
     expect(downloadService.grab).toHaveBeenCalledWith(expect.objectContaining({ bookId: 1 }));
   });
 
+  it('forwards indexerId from best search result to downloadOrchestrator.grab', async () => {
+    indexerService = {
+      searchAll: vi.fn().mockResolvedValue([makeResult({ indexerId: 42 })]),
+    } as unknown as IndexerService;
+
+    const result = await searchAndGrabForBook(book, indexerService, downloadService, defaultQualitySettings, log);
+    expect(result).toEqual({ result: 'grabbed', title: 'Test Book' });
+    expect(downloadService.grab).toHaveBeenCalledWith(
+      expect.objectContaining({ indexerId: 42 }),
+    );
+  });
+
+  it('forwards undefined indexerId when search result has no indexerId', async () => {
+    const result = await searchAndGrabForBook(book, indexerService, downloadService, defaultQualitySettings, log);
+    expect(result).toEqual({ result: 'grabbed', title: 'Test Book' });
+    expect(downloadService.grab).toHaveBeenCalledWith(
+      expect.objectContaining({ indexerId: undefined }),
+    );
+  });
+
   it('returns no_results when indexers return empty array', async () => {
     vi.mocked(indexerService.searchAll).mockResolvedValue([]);
     const result = await searchAndGrabForBook(book, indexerService, downloadService, defaultQualitySettings, log);

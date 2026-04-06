@@ -198,6 +198,7 @@ export async function runUpgradeSearchJob(
           title: best.title,
           protocol: best.protocol,
           bookId: book.id,
+          indexerId: best.indexerId,
           size: best.size!,
           seeders: best.seeders,
         });

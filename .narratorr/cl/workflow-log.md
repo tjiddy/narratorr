@@ -1,5 +1,34 @@
 # Workflow Log
 
+## #385 Auto-grab paths missing indexerId — 2026-04-06
+**Skill path:** /implement → /claim → /plan → /handoff
+**Outcome:** success — PR #388
+
+### Metrics
+- Files changed: 11 | Tests added/modified: 11 new tests across 6 test files
+- Quality gate runs: 2 (pass on attempt 1 both times)
+- Fix iterations: 0
+- Context compactions: 0
+
+### Workflow experience
+- What went smoothly: Clean field-forwarding bug — each module was a simple 1-line production fix + focused tests. Red/green TDD cycle was fast.
+- Friction / issues encountered: Spec went through 3 rounds of review (autoGrabBestResult naming error, test boundary over-specification, RSS pollRss gap). The RSS gap was a legitimate miss — pollRss doesn't map indexerId unlike searchAll.
+
+### Token efficiency
+- Highest-token actions: Elaborate and respond-to-spec-review cycles (3 rounds)
+- Avoidable waste: The initial spec could have caught the pollRss gap with deeper source reading
+- Suggestions: When elaborating, always trace data flow from source to sink for ALL code paths, not just the obvious ones
+
+### Infrastructure gaps
+- Repeated workarounds: None
+- Missing tooling / config: None
+- Unresolved debt: Backend grab sites cherry-pick fields (same pattern as frontend SearchReleasesModal). A shared buildGrabPayload helper would prevent this class of bug.
+
+### Wish I'd Known
+1. `pollRss()` has a separate code path from `searchAll()` and doesn't inherit its field mapping — check ALL `SearchResult[]` producers when adding fields
+2. The four grab call sites all cherry-pick fields manually — any new optional field on the grab schema will be silently dropped at these sites
+3. Existing test assertions were too loose (`objectContaining` with 1-2 fields) — tightening them is cheap insurance
+
 ## #383 MAM account info card — consolidate status — 2026-04-06
 **Skill path:** /elaborate → /respond-to-spec-review (x2) → /implement → /claim → /plan → /handoff
 **Outcome:** success — PR #384

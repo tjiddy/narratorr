@@ -383,6 +383,34 @@ describe('DownloadService', () => {
       expect(insertCall).toBeDefined();
     });
 
+    it('includes indexerId in insert payload when provided in grab params', async () => {
+      const mockAdapter = {
+        addDownload: vi.fn().mockResolvedValue('ext-123'),
+        removeDownload: vi.fn(),
+      };
+
+      const enabledClient = { id: 1, name: 'qBit', enabled: true };
+      (clientService.getFirstEnabledForProtocol as Mock).mockResolvedValue(enabledClient);
+      (clientService.getAdapter as Mock).mockResolvedValue(mockAdapter);
+
+      db.insert.mockReturnValue(mockDbChain([{ id: 1 }]));
+      db.update.mockReturnValue(mockDbChain());
+      db.select.mockReturnValueOnce(mockDbChain([]));
+      db.select.mockReturnValueOnce(
+        mockDbChain([{ download: mockDownload, book: mockBook }]),
+      );
+
+      await service.grab({
+        downloadUrl: 'magnet:?xt=urn:btih:abc',
+        title: 'Test',
+        bookId: 1,
+        indexerId: 42,
+      });
+
+      const insertValues = db.insert.mock.results[0].value.values.mock.calls[0][0];
+      expect(insertValues.indexerId).toBe(42);
+    });
+
   });
 
   describe('updateProgress', () => {
