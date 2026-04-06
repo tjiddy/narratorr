@@ -1685,7 +1685,8 @@ describe('IndexerService', () => {
           metadata: { isVip: false, classname: 'Mouse' },
         }),
       };
-      vi.spyOn(service as never, 'createAdapter').mockReturnValue(mockAdapter as never);
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      vi.spyOn(service as any, 'createAdapter').mockReturnValue(mockAdapter as never);
       const result = await service.testConfig({ type: 'myanonamouse', settings: { mamId: 'test-id' } });
       expect(result.warning).toBe('Account is ratio-locked');
       expect(result.success).toBe(true);
