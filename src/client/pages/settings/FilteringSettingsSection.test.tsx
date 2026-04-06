@@ -119,6 +119,27 @@ describe('FilteringSettingsSection', () => {
     });
   });
 
+  it('submits changed region through the metadata half of split payload', async () => {
+    mockApi.updateSettings.mockResolvedValue(mockSettings);
+    const user = userEvent.setup();
+    renderWithProviders(<FilteringSettingsSection />);
+
+    await waitFor(() => {
+      expect(screen.getByLabelText('Region')).toHaveValue('us');
+    });
+
+    // Change region to Germany
+    await user.selectOptions(screen.getByLabelText('Region'), 'de');
+    await user.click(screen.getByRole('button', { name: /save/i }));
+
+    await waitFor(() => {
+      expect(mockApi.updateSettings).toHaveBeenCalledWith({
+        metadata: { audibleRegion: 'de' },
+        quality: { rejectWords: 'German', requiredWords: 'M4B', preferredLanguage: 'english' },
+      });
+    });
+  });
+
   it('hides save button when form is not dirty', async () => {
     renderWithProviders(<FilteringSettingsSection />);
 
