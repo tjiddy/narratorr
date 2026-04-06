@@ -34,13 +34,18 @@ const sortDirectionLabels: Record<SortField, DirectionLabel> = {
   format: { asc: 'A→Z', desc: 'Z→A' },
 };
 
-const sortFields: SortField[] = ['createdAt', 'title', 'author', 'narrator', 'series'];
-const directions: SortDirection[] = ['desc', 'asc'];
+const sortFields: SortField[] = ['createdAt', 'title', 'author'];
+
+/** Direction order per field: Date Added shows desc (Newest) first; alphabetical fields show asc (A→Z) first. */
+const fieldDirections: Record<string, SortDirection[]> = {
+  createdAt: ['desc', 'asc'],
+};
+const defaultDirections: SortDirection[] = ['asc', 'desc'];
 
 type SortOption = { field: SortField; direction: SortDirection; label: string };
 
 const sortOptions: SortOption[] = sortFields.flatMap((field) =>
-  directions.map((direction) => ({
+  (fieldDirections[field] ?? defaultDirections).map((direction) => ({
     field,
     direction,
     label: `${sortFieldLabels[field]} (${sortDirectionLabels[field][direction]})`,

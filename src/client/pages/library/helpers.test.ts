@@ -569,6 +569,116 @@ describe('sortBooks — descending nulls-last (#287)', () => {
   });
 });
 
+// #365 — collapseSeries sorts collapsed result by active sort field
+describe('collapseSeries — title-sort uses seriesName key (#365)', () => {
+  it('with title asc: collapsed series groups sort by toSortTitle(seriesName) interleaved with standalones', () => {
+    // "The Expanse" → sort key "Expanse" (article stripped), representative "Leviathan Wakes"
+    // Standalone "Dune" → sort key "Dune"
+    // Standalone "Foundation" → sort key "Foundation"
+    // Expected order: Dune, The Expanse (E), Foundation
+    const books = [
+      makeBook({ id: 1, title: 'Leviathan Wakes', seriesName: 'The Expanse', seriesPosition: 1 }),
+      makeBook({ id: 2, title: 'Caliban\'s War', seriesName: 'The Expanse', seriesPosition: 2 }),
+      makeBook({ id: 3, title: 'Dune', seriesName: null }),
+      makeBook({ id: 4, title: 'Foundation', seriesName: null }),
+    ];
+
+    const collapsed = collapseSeries(books, 'title', 'asc');
+    expect(collapsed.map((b) => b.title)).toEqual(['Dune', 'Leviathan Wakes', 'Foundation']);
+  });
+
+  it('with title desc: collapsed series groups sort in reverse order by toSortTitle(seriesName)', () => {
+    const books = [
+      makeBook({ id: 1, title: 'Leviathan Wakes', seriesName: 'The Expanse', seriesPosition: 1 }),
+      makeBook({ id: 2, title: 'Caliban\'s War', seriesName: 'The Expanse', seriesPosition: 2 }),
+      makeBook({ id: 3, title: 'Dune', seriesName: null }),
+      makeBook({ id: 4, title: 'Foundation', seriesName: null }),
+    ];
+
+    // Reverse order: Foundation, The Expanse (E), Dune
+    const collapsed = collapseSeries(books, 'title', 'desc');
+    expect(collapsed.map((b) => b.title)).toEqual(['Foundation', 'Leviathan Wakes', 'Dune']);
+  });
+
+  it('with author asc: collapsed series groups sort by representative author interleaved with standalones', () => {
+    const books = [
+      makeBook({ id: 1, title: 'Book A', seriesName: 'SeriesX', seriesPosition: 1, authors: [{ id: 1, name: 'Zelazny', slug: 'zelazny' }] }),
+      makeBook({ id: 2, title: 'Book B', seriesName: 'SeriesX', seriesPosition: 2, authors: [{ id: 1, name: 'Zelazny', slug: 'zelazny' }] }),
+      makeBook({ id: 3, title: 'Book C', seriesName: null, authors: [{ id: 2, name: 'Asimov', slug: 'asimov' }] }),
+      makeBook({ id: 4, title: 'Book D', seriesName: null, authors: [{ id: 3, name: 'Martin', slug: 'martin' }] }),
+    ];
+
+    // Author order asc: Asimov (Book C), Martin (Book D), Zelazny (SeriesX rep: Book A)
+    const collapsed = collapseSeries(books, 'author', 'asc');
+    expect(collapsed.map((b) => b.title)).toEqual(['Book C', 'Book D', 'Book A']);
+  });
+
+  it('with createdAt desc: collapsed series groups sort by representative date interleaved with standalones', () => {
+    const books = [
+      makeBook({ id: 1, title: 'Old Series Book', seriesName: 'OldSeries', seriesPosition: 1, createdAt: '2020-01-01T00:00:00Z' }),
+      makeBook({ id: 2, title: 'Old Series Book 2', seriesName: 'OldSeries', seriesPosition: 2, createdAt: '2020-02-01T00:00:00Z' }),
+      makeBook({ id: 3, title: 'Recent Standalone', seriesName: null, createdAt: '2024-06-01T00:00:00Z' }),
+      makeBook({ id: 4, title: 'Ancient Standalone', seriesName: null, createdAt: '2019-01-01T00:00:00Z' }),
+    ];
+
+    // createdAt desc: Recent Standalone (2024), Old Series (rep=2020-01), Ancient Standalone (2019)
+    const collapsed = collapseSeries(books, 'createdAt', 'desc');
+    expect(collapsed.map((b) => b.title)).toEqual(['Recent Standalone', 'Old Series Book', 'Ancient Standalone']);
+  });
+
+  it('single-book series appears with collapsedCount 0 and sorts normally', () => {
+    const books = [
+      makeBook({ id: 1, title: 'Leviathan Wakes', seriesName: 'The Expanse', seriesPosition: 1 }),
+      makeBook({ id: 2, title: 'Dune', seriesName: null }),
+    ];
+
+    const collapsed = collapseSeries(books, 'title', 'asc');
+    const expanse = collapsed.find((b) => b.seriesName === 'The Expanse');
+    expect(expanse?.collapsedCount).toBe(0);
+    // Dune before Expanse alphabetically
+    expect(collapsed.map((b) => b.title)).toEqual(['Dune', 'Leviathan Wakes']);
+  });
+});
+
+// #365 — collapseSeries equal-key tiebreaker preserves id-based order
+describe('collapseSeries — equal-key tiebreaker (#365)', () => {
+  it('with createdAt asc and equal dates: standalones sort by id ascending', () => {
+    const books = [
+      makeBook({ id: 5, title: 'Book E', seriesName: null, createdAt: '2024-01-01T00:00:00Z' }),
+      makeBook({ id: 2, title: 'Book B', seriesName: null, createdAt: '2024-01-01T00:00:00Z' }),
+    ];
+
+    const collapsed = collapseSeries(books, 'createdAt', 'asc');
+    expect(collapsed.map((b) => b.id)).toEqual([2, 5]);
+  });
+
+  it('with createdAt desc and equal dates: standalones sort by id descending', () => {
+    const books = [
+      makeBook({ id: 2, title: 'Book B', seriesName: null, createdAt: '2024-01-01T00:00:00Z' }),
+      makeBook({ id: 5, title: 'Book E', seriesName: null, createdAt: '2024-01-01T00:00:00Z' }),
+    ];
+
+    const collapsed = collapseSeries(books, 'createdAt', 'desc');
+    expect(collapsed.map((b) => b.id)).toEqual([5, 2]);
+  });
+});
+
+// #365 — collapseSeries re-sort handles nullable fields correctly
+describe('collapseSeries — nullable field re-sort (#365)', () => {
+  it('with narrator asc: null-narrator standalones sort after non-null collapsed groups', () => {
+    const books = [
+      makeBook({ id: 1, title: 'Book A', seriesName: 'SeriesX', seriesPosition: 1, narrators: [{ id: 1, name: 'Alice', slug: 'alice' }] }),
+      makeBook({ id: 2, title: 'Book B', seriesName: 'SeriesX', seriesPosition: 2, narrators: [{ id: 1, name: 'Alice', slug: 'alice' }] }),
+      makeBook({ id: 3, title: 'Book C', seriesName: null, narrators: [] }),
+    ];
+
+    const collapsed = collapseSeries(books, 'narrator', 'asc');
+    // Alice (non-null) sorts before null-narrator standalone
+    expect(collapsed[0].title).toBe('Book A');
+    expect(collapsed[1].title).toBe('Book C');
+  });
+});
+
 // #287 — collapseSeries fallback with descending nullable sort
 describe('collapseSeries — descending nullable fallback (#287)', () => {
   it('fallback representative with descending nullable sort does not pick null-field book', () => {

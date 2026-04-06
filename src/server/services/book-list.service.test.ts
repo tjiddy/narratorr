@@ -260,6 +260,37 @@ describe('BookListService', () => {
       expect(args).toHaveLength(2);
     });
 
+    // #365 — search excludes narrator names but retains title/series/genres/author
+    it('search filter excludes narrator subquery but retains series_name, genres, and author subquery', async () => {
+      const countChain = mockDbChain([{ value: 1 }]);
+      const dataChain = mockDbChain([{ book: mockBook, importListName: null, primaryAuthorName: null }]);
+      db.select
+        .mockReturnValueOnce(countChain)
+        .mockReturnValueOnce(dataChain)
+        .mockReturnValueOnce(mockDbChain([{ bookId: 1, author: mockAuthor, position: 0 }]))
+        .mockReturnValueOnce(mockDbChain([]));
+
+      await service.getAll(undefined, undefined, { search: 'test' });
+
+      const whereArg = (countChain.where as Mock).mock.calls[0]?.[0];
+      function containsSubstring(val: unknown, substring: string): boolean {
+        if (typeof val === 'string') return val.includes(substring);
+        if (Array.isArray(val)) return val.some((v) => containsSubstring(v, substring));
+        if (val && typeof val === 'object') {
+          if ('queryChunks' in val) return containsSubstring((val as { queryChunks: unknown[] }).queryChunks, substring);
+          if ('value' in val) return containsSubstring((val as { value: unknown }).value, substring);
+          if ('name' in val) return containsSubstring((val as { name: unknown }).name, substring);
+        }
+        return false;
+      }
+      // Narrator subquery removed
+      expect(containsSubstring(whereArg, 'book_narrators')).toBe(false);
+      // Retained clauses still present
+      expect(containsSubstring(whereArg, 'series_name')).toBe(true);
+      expect(containsSubstring(whereArg, 'genres')).toBe(true);
+      expect(containsSubstring(whereArg, 'book_authors')).toBe(true);
+    });
+
     it('all sort fields include secondary sort by id for stable pagination', async () => {
       const sortFields = ['createdAt', 'title', 'author', 'narrator', 'series', 'quality', 'size', 'format'] as const;
       for (const sortField of sortFields) {

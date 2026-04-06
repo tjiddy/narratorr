@@ -155,6 +155,28 @@ export function collapseSeries(
     });
   }
 
-  return collapsed;
+  // Re-sort collapsed result so series groups interleave correctly with standalones.
+  // For title sorts, collapsed items use seriesName (the visible label) as the sort key.
+  return sortCollapsed(collapsed, sortField, sortDirection);
+}
+
+/** Sort collapsed display books, using seriesName for title-sorted collapsed groups. */
+function sortCollapsed(books: DisplayBook[], field: SortField, direction: SortDirection): DisplayBook[] {
+  const extract = (b: DisplayBook): string | number | null => {
+    if (field === 'title' && b.collapsedCount != null && b.seriesName) {
+      return toSortTitle(b.seriesName);
+    }
+    return (fieldExtractors[field] ?? fieldExtractors.createdAt)(b);
+  };
+
+  return [...books].sort((a, b) => {
+    const result = compareNullable(extract(a), extract(b));
+    if ('nullResult' in result) return result.nullResult;
+    const cmp = direction === 'asc' ? result.valueResult : -result.valueResult;
+    if (cmp !== 0) return cmp;
+    // Stable tiebreaker by id
+    const idCmp = a.id - b.id;
+    return direction === 'asc' ? idCmp : -idCmp;
+  });
 }
 

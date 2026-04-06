@@ -55,30 +55,32 @@ describe('SortDropdown', () => {
       expect(screen.getByRole('listbox')).toBeInTheDocument();
     });
 
-    it('panel covers all 5 sort fields in both directions (10 total options)', async () => {
+    it('panel covers 3 sort fields in both directions (6 total options)', async () => {
       const user = userEvent.setup();
       render(<SortDropdown {...defaultProps()} />);
 
       await user.click(screen.getByRole('button', { name: /date added/i }));
 
       const options = screen.getAllByRole('option');
-      expect(options).toHaveLength(10);
+      expect(options).toHaveLength(6);
     });
 
-    it('includes Date Added, Title, Author, Narrator, Series options', async () => {
+    it('includes Date Added, Title, Author options in correct order', async () => {
       const user = userEvent.setup();
       render(<SortDropdown {...defaultProps()} />);
 
       await user.click(screen.getByRole('button', { name: /date added/i }));
 
-      expect(screen.getByRole('option', { name: /date added.*newest/i })).toBeInTheDocument();
-      expect(screen.getByRole('option', { name: /title.*a.*z/i })).toBeInTheDocument();
-      expect(screen.getByRole('option', { name: /author.*a.*z/i })).toBeInTheDocument();
-      expect(screen.getByRole('option', { name: /narrator.*a.*z/i })).toBeInTheDocument();
-      expect(screen.getByRole('option', { name: /series.*a.*z/i })).toBeInTheDocument();
+      const options = screen.getAllByRole('option');
+      expect(options[0]).toHaveAccessibleName('Date Added (Newest)');
+      expect(options[1]).toHaveAccessibleName('Date Added (Oldest)');
+      expect(options[2]).toHaveAccessibleName('Title (A→Z)');
+      expect(options[3]).toHaveAccessibleName('Title (Z→A)');
+      expect(options[4]).toHaveAccessibleName('Author (A→Z)');
+      expect(options[5]).toHaveAccessibleName('Author (Z→A)');
     });
 
-    it('does not render Quality, Size, or Format options', async () => {
+    it('does not render Quality, Size, Format, Narrator, or Series options', async () => {
       const user = userEvent.setup();
       render(<SortDropdown {...defaultProps()} />);
 
@@ -87,6 +89,8 @@ describe('SortDropdown', () => {
       expect(screen.queryByRole('option', { name: /quality/i })).not.toBeInTheDocument();
       expect(screen.queryByRole('option', { name: /size/i })).not.toBeInTheDocument();
       expect(screen.queryByRole('option', { name: /format/i })).not.toBeInTheDocument();
+      expect(screen.queryByRole('option', { name: /narrator/i })).not.toBeInTheDocument();
+      expect(screen.queryByRole('option', { name: /series/i })).not.toBeInTheDocument();
     });
 
     it('closes panel when Escape is pressed', async () => {
@@ -197,12 +201,12 @@ describe('SortDropdown', () => {
       expect(options[1]).toHaveFocus();
     });
 
-    it('ArrowDown wraps from the 10th option (index 9) back to the first', async () => {
+    it('ArrowDown wraps from the 6th option (index 5) back to the first', async () => {
       const user = userEvent.setup();
       render(<SortDropdown {...defaultProps()} />);
       await user.click(screen.getByRole('button', { name: /date added/i }));
-      // 9 ArrowDowns from index 0 reaches index 9 (last)
-      for (let i = 0; i < 9; i++) await user.keyboard('{ArrowDown}');
+      // 5 ArrowDowns from index 0 reaches index 5 (last)
+      for (let i = 0; i < 5; i++) await user.keyboard('{ArrowDown}');
       await user.keyboard('{ArrowDown}'); // wraps to index 0
       const options = screen.getAllByRole('option');
       expect(options[0]).toHaveFocus();
@@ -218,13 +222,13 @@ describe('SortDropdown', () => {
       expect(options[0]).toHaveFocus();
     });
 
-    it('ArrowUp wraps from the first option to the 10th (index 9)', async () => {
+    it('ArrowUp wraps from the first option to the 6th (index 5)', async () => {
       const user = userEvent.setup();
       render(<SortDropdown {...defaultProps()} />);
       await user.click(screen.getByRole('button', { name: /date added/i }));
-      await user.keyboard('{ArrowUp}'); // wraps to index 9
+      await user.keyboard('{ArrowUp}'); // wraps to index 5
       const options = screen.getAllByRole('option');
-      expect(options[9]).toHaveFocus();
+      expect(options[5]).toHaveFocus();
     });
 
     it('Enter on a focused option calls onSortFieldChange and onSortDirectionChange with correct values', async () => {

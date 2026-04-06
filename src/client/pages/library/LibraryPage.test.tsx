@@ -108,7 +108,8 @@ function mockLibraryData(books: BookWithAuthor[]) {
       filtered = filtered.filter(b =>
         b.title.toLowerCase().includes(q) ||
         (b.authors[0]?.name ?? '').toLowerCase().includes(q) ||
-        (b.narrators[0]?.name ?? '').toLowerCase().includes(q),
+        (b.seriesName ?? '').toLowerCase().includes(q) ||
+        (Array.isArray(b.genres) ? b.genres.join(' ') : (b.genres ?? '')).toLowerCase().includes(q),
       );
     }
     if (params?.sortField) {
@@ -629,6 +630,26 @@ describe('LibraryPage', () => {
     // Should show "X results" format when searching
     await waitFor(() => {
       expect(screen.getByText(/result/)).toBeInTheDocument();
+    }, { timeout: 2000 });
+  });
+
+  // #365 — narrator-only search term returns no results
+  it('searching for a narrator-only name shows no matching books', async () => {
+    mockLibraryData(mockBooks);
+    const user = userEvent.setup();
+
+    renderWithProviders(<LibraryPage />);
+
+    await waitFor(() => {
+      expect(screen.getByText('The Way of Kings')).toBeInTheDocument();
+    });
+
+    const searchInput = screen.getByPlaceholderText('Search library...');
+    await user.type(searchInput, 'Ray Porter');
+
+    // Ray Porter is a narrator on "Project Hail Mary" but not a title/author/series/genre match
+    await waitFor(() => {
+      expect(screen.queryByText('Project Hail Mary')).not.toBeInTheDocument();
     }, { timeout: 2000 });
   });
 
@@ -1210,6 +1231,41 @@ describe('LibraryPage', () => {
       expect(screen.queryByRole('option', { name: /size/i })).not.toBeInTheDocument();
       expect(screen.queryByRole('option', { name: /format/i })).not.toBeInTheDocument();
       expect(screen.getByRole('option', { name: /date added.*newest/i })).toBeInTheDocument();
+    });
+
+    // #365 — grid-view coercion for narrator/series sorts
+    it('coerces sort to Date Added (desc) when switching from table to grid with narrator sort active', async () => {
+      mockLibraryData(mockBooks);
+      const user = userEvent.setup();
+      renderWithProviders(<LibraryPage />);
+      await waitFor(() => { expect(screen.getByText('The Way of Kings')).toBeInTheDocument(); });
+
+      await user.click(screen.getByLabelText('Table view'));
+      await waitFor(() => { expect(screen.getByRole('button', { name: 'Sort by Narrator' })).toBeInTheDocument(); });
+      await user.click(screen.getByRole('button', { name: 'Sort by Narrator' }));
+
+      await user.click(screen.getByLabelText('Grid view'));
+
+      await waitFor(() => {
+        expect(screen.getByRole('button', { name: /date added.*newest/i })).toBeInTheDocument();
+      });
+    });
+
+    it('coerces sort to Date Added (desc) when switching from table to grid with series sort active', async () => {
+      mockLibraryData(mockBooks);
+      const user = userEvent.setup();
+      renderWithProviders(<LibraryPage />);
+      await waitFor(() => { expect(screen.getByText('The Way of Kings')).toBeInTheDocument(); });
+
+      await user.click(screen.getByLabelText('Table view'));
+      await waitFor(() => { expect(screen.getByRole('button', { name: 'Sort by Series' })).toBeInTheDocument(); });
+      await user.click(screen.getByRole('button', { name: 'Sort by Series' }));
+
+      await user.click(screen.getByLabelText('Grid view'));
+
+      await waitFor(() => {
+        expect(screen.getByRole('button', { name: /date added.*newest/i })).toBeInTheDocument();
+      });
     });
 
     it('selection state clears when switching to grid view', async () => {
