@@ -8,12 +8,20 @@ import { api } from '@/lib/api';
 import { queryKeys } from '@/lib/queryKeys';
 import { SearchIcon } from '@/components/icons';
 import { ToggleSwitch } from '@/components/settings/ToggleSwitch';
-import { DEFAULT_SETTINGS, type AppSettings } from '../../../shared/schemas.js';
+import { SelectWithChevron } from '@/components/settings/SelectWithChevron';
+import { protocolPreferenceSchema, DEFAULT_SETTINGS, type AppSettings } from '../../../shared/schemas.js';
 import { SettingsSection } from './SettingsSection';
+
+const PROTOCOL_LABELS: Record<string, string> = {
+  none: 'No Preference',
+  usenet: 'Prefer Usenet',
+  torrent: 'Prefer Torrent',
+};
 
 const searchFormSchema = z.object({
   searchEnabled: z.boolean(),
   searchIntervalMinutes: z.number().int().min(5).max(1440),
+  protocolPreference: protocolPreferenceSchema,
   blacklistTtlDays: z.number().int().min(1).max(365),
   rssEnabled: z.boolean(),
   rssIntervalMinutes: z.number().int().min(5).max(1440),
@@ -25,6 +33,7 @@ function toFormData(settings: AppSettings): SearchFormData {
   return {
     searchEnabled: settings.search.enabled,
     searchIntervalMinutes: settings.search.intervalMinutes,
+    protocolPreference: settings.quality.protocolPreference,
     blacklistTtlDays: settings.search.blacklistTtlDays,
     rssEnabled: settings.rss.enabled,
     rssIntervalMinutes: settings.rss.intervalMinutes,
@@ -41,6 +50,9 @@ function toPayload(data: SearchFormData) {
     rss: {
       enabled: data.rssEnabled,
       intervalMinutes: data.rssIntervalMinutes,
+    },
+    quality: {
+      protocolPreference: data.protocolPreference,
     },
   };
 }
@@ -134,6 +146,20 @@ export function SearchSettingsSection() {
           )}
           <p className="text-sm text-muted-foreground mt-2">
             How long temporary blacklist entries last before expiring (1-365 days)
+          </p>
+        </div>
+
+        <div>
+          <label htmlFor="protocolPreference" className="block text-sm font-medium mb-2">Protocol Preference</label>
+          <SelectWithChevron id="protocolPreference" {...register('protocolPreference')}>
+            {protocolPreferenceSchema.options.map((pref) => (
+              <option key={pref} value={pref}>
+                {PROTOCOL_LABELS[pref] ?? pref}
+              </option>
+            ))}
+          </SelectWithChevron>
+          <p className="text-sm text-muted-foreground mt-2">
+            Preferred download protocol. Affects result ordering but does not exclude results.
           </p>
         </div>
 
