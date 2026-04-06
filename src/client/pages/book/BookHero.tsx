@@ -26,6 +26,7 @@ interface BookHeroProps {
   retagTooltip?: string;
   onMergeClick: () => void;
   isMerging: boolean;
+  mergePhase?: string;
   canMerge: boolean;
   mergeDisabled: boolean;
   mergeTooltip?: string;
@@ -47,7 +48,7 @@ export function BookHero({
   coverUrl, metaDots, statusLabel, statusDotClass,
   hasPath, onBackClick, onSearchClick, onEditClick, onRenameClick, isRenaming,
   onRetagClick, isRetagging, retagDisabled, retagTooltip,
-  onMergeClick, isMerging, canMerge, mergeDisabled, mergeTooltip,
+  onMergeClick, isMerging, mergePhase, canMerge, mergeDisabled, mergeTooltip,
   onRemoveClick, isRemoving,
   showWrongRelease, onWrongReleaseClick, isWrongReleasing,
   importListName, monitorForUpgrades, onMonitorToggle, isMonitorToggling,
@@ -208,8 +209,8 @@ export function BookHero({
                   )}
                   {hasPath && canMerge && (
                     <button role="menuitem" type="button" onClick={() => handleMenuAction(onMergeClick)} disabled={isMerging || mergeDisabled} title={mergeDisabled ? mergeTooltip : undefined} className="flex items-center gap-2.5 w-full px-3 py-2.5 text-xs text-left text-muted-foreground hover:bg-muted/50 hover:text-foreground transition-colors disabled:opacity-50 disabled:pointer-events-none focus:bg-muted/50 focus-ring">
-                      <PackageIcon className={`w-3.5 h-3.5 ${isMerging ? 'animate-spin' : ''}`} />
-                      {isMerging ? 'Merging...' : 'Merge to M4B'}
+                      <PackageIcon className={`w-3.5 h-3.5 ${isMerging && mergePhase !== 'queued' ? 'animate-spin' : ''}`} />
+                      {isMerging ? (mergePhase === 'queued' ? 'Queued...' : 'Merging...') : 'Merge to M4B'}
                     </button>
                   )}
                   {showWrongRelease && onWrongReleaseClick && (

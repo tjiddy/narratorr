@@ -85,6 +85,7 @@ export function BookDetails({ libraryBook, metadataBook }: {
         retagTooltip={!ffmpegConfigured ? 'Requires ffmpeg — configure in Settings > Post Processing' : undefined}
         onMergeClick={() => setConfirmMergeOpen(true)}
         isMerging={mergeMutation.isPending || !!mergeProgress}
+        mergePhase={mergeProgress?.phase}
         canMerge={canMerge}
         mergeDisabled={!ffmpegConfigured || !!mergeProgress}
         mergeTooltip={!ffmpegConfigured ? 'Requires ffmpeg — configure in Settings > Post Processing' : undefined}
@@ -227,16 +228,17 @@ export function BookDetails({ libraryBook, metadataBook }: {
   );
 }
 
-function MergeProgressIndicator({ progress }: { progress: { phase: string; percentage?: number } }) {
+function MergeProgressIndicator({ progress }: { progress: { phase: string; percentage?: number; position?: number } }) {
+  const isQueued = progress.phase === 'queued';
   return (
     <div className="glass-card rounded-2xl p-4 animate-fade-in-up" role="status" aria-label="Merge progress">
       <div className="flex items-center gap-3">
         <div className="shrink-0 p-2 rounded-xl bg-primary/10">
-          <RefreshIcon className="w-4 h-4 text-primary animate-spin" />
+          <RefreshIcon className={`w-4 h-4 text-primary ${isQueued ? '' : 'animate-spin'}`} />
         </div>
         <div className="flex-1 min-w-0">
           <p className="text-sm font-medium">
-            {formatMergePhase(progress.phase, progress.percentage)}
+            {formatMergePhase(progress.phase, progress.percentage, progress.position)}
           </p>
           {progress.phase === 'processing' && progress.percentage !== undefined && (
             <div className="mt-2 h-1.5 rounded-full bg-muted overflow-hidden">
@@ -252,8 +254,10 @@ function MergeProgressIndicator({ progress }: { progress: { phase: string; perce
   );
 }
 
-function formatMergePhase(phase: string, percentage?: number): string {
+function formatMergePhase(phase: string, percentage?: number, position?: number): string {
   switch (phase) {
+    case 'queued':
+      return position !== undefined ? `Queued (position ${position})` : 'Queued';
     case 'starting': return 'Merge started...';
     case 'staging': return 'Staging files...';
     case 'processing':
