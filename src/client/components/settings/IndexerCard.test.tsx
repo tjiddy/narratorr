@@ -968,7 +968,7 @@ describe('IndexerCard — Prowlarr-managed indicators (AC8)', () => {
         expect(screen.getByText('OldUser')).toBeInTheDocument();
       });
 
-      await user.click(screen.getByTitle('Refresh VIP status'));
+      await user.click(screen.getByTitle('Refresh MAM status'));
 
       await waitFor(() => {
         expect((api.testIndexerConfig as Mock)).toHaveBeenCalledWith(
@@ -990,7 +990,7 @@ describe('IndexerCard — Prowlarr-managed indicators (AC8)', () => {
       // In create mode there's no indexer prop, so no indexerId
       // We'll test via IndexerFields directly (already covered in IndexerFields.test.tsx)
       // This test verifies that create-mode (no indexer prop) doesn't crash
-      expect(screen.queryByTitle('Refresh VIP status')).not.toBeInTheDocument();
+      expect(screen.queryByTitle('Refresh MAM status')).not.toBeInTheDocument();
     });
   });
 
@@ -1010,7 +1010,7 @@ describe('IndexerCard — Prowlarr-managed indicators (AC8)', () => {
   });
 
   describe('#372 — edit-mode classname hydration', () => {
-    it('shows persisted classname in badge and status messaging instead of generic User fallback', () => {
+    it('shows persisted classname in card with search description instead of generic User fallback', () => {
       const mamIndexer: Indexer = createMockIndexer({
         id: 30,
         name: 'MAM',
@@ -1021,7 +1021,7 @@ describe('IndexerCard — Prowlarr-managed indicators (AC8)', () => {
         <IndexerCard indexer={mamIndexer} mode="edit" onSubmit={vi.fn()} onFormTest={vi.fn()} />,
       );
       expect(screen.getByText('Power User')).toBeInTheDocument();
-      expect(screen.getByText('Searching non-VIP and freeleech torrents')).toBeInTheDocument();
+      expect(screen.getByText('Non-VIP and freeleech torrents')).toBeInTheDocument();
     });
 
     it('shows Mouse warning when persisted classname is Mouse', () => {
@@ -1034,7 +1034,7 @@ describe('IndexerCard — Prowlarr-managed indicators (AC8)', () => {
       renderWithProviders(
         <IndexerCard indexer={mamIndexer} mode="edit" onSubmit={vi.fn()} onFormTest={vi.fn()} />,
       );
-      expect(screen.getByText(/searches disabled until ratio improves/)).toBeInTheDocument();
+      expect(screen.getByText(/Search disabled — Mouse class cannot download/)).toBeInTheDocument();
     });
   });
 });

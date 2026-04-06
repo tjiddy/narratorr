@@ -72,18 +72,21 @@ function useMamDetection(watch?: UseFormWatch<CreateIndexerFormData>, setValue?:
   return { mamStatus, detectError, isDetecting, detect, setMamStatus };
 }
 
-function MamStatusBadge({ status, onRefresh }: { status: MamStatus; onRefresh: () => void }) {
+function MamAccountCard({ status, onRefresh }: { status: MamStatus; onRefresh: () => void }) {
+  const isMouse = status.classname === 'Mouse';
+  const searchDesc = status.isVip
+    ? 'All torrents including VIP'
+    : isMouse
+      ? 'Search disabled — Mouse class cannot download'
+      : 'Non-VIP and freeleech torrents';
+
   return (
-    <div className="flex items-center gap-2 mt-1">
-      <span className="text-sm text-muted-foreground">
-        Connected as <span className="font-medium text-foreground">{status.username}</span>
-        {status.classname && <> — <span className={status.isVip ? 'text-amber-400 font-medium' : ''}>{status.classname}</span></>}
-      </span>
+    <div className="relative mt-2 w-full sm:w-1/2 bg-white/5 border border-white/10 rounded-xl px-4 py-3 space-y-1.5">
       <button
         type="button"
         onClick={onRefresh}
-        className="text-muted-foreground hover:text-foreground transition-colors"
-        title="Refresh VIP status"
+        className="absolute top-3 right-3 text-muted-foreground/50 hover:text-muted-foreground transition-colors"
+        title="Refresh MAM status"
       >
         <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
           <path d="M21 12a9 9 0 0 0-9-9 9.75 9.75 0 0 0-6.74 2.74L3 8" />
@@ -92,6 +95,18 @@ function MamStatusBadge({ status, onRefresh }: { status: MamStatus; onRefresh: (
           <path d="M16 21h5v-5" />
         </svg>
       </button>
+      <div className="flex items-center gap-2 text-[13px]">
+        <span className="text-muted-foreground/50 min-w-[90px]">Username</span>
+        <span className="text-foreground/90 font-medium">{status.username}</span>
+      </div>
+      <div className="flex items-center gap-2 text-[13px]">
+        <span className="text-muted-foreground/50 min-w-[90px]">Class</span>
+        <span className={`text-foreground/90 ${status.isVip ? 'text-amber-400 font-medium' : ''}`}>{status.classname ?? 'Unknown'}</span>
+      </div>
+      <div className="flex items-center gap-2 text-[13px]">
+        <span className="text-muted-foreground/50 min-w-[90px]">Search</span>
+        <span className={`text-foreground/90 ${isMouse ? 'text-amber-500' : ''}`}>{searchDesc}</span>
+      </div>
     </div>
   );
 }
@@ -130,21 +145,11 @@ function metadataToMamStatus(metadata: Record<string, unknown>): MamStatus {
   };
 }
 
-function MamSearchStatusMessage({ status }: { status: MamStatus }) {
-  if (status.classname === 'Mouse') {
-    return <div className="sm:col-span-2"><p className="text-sm text-amber-500 font-medium">Mouse class — searches disabled until ratio improves</p></div>;
-  }
-  if (status.isVip) {
-    return <div className="sm:col-span-2"><p className="text-sm text-muted-foreground">Searching all torrents including VIP</p></div>;
-  }
-  return <div className="sm:col-span-2"><p className="text-sm text-muted-foreground">Searching non-VIP and freeleech torrents</p></div>;
-}
-
 export function MamFields({ register, errors, watch, setValue, formTestResult, indexerId }: Pick<IndexerFieldsProps, 'register' | 'errors' | 'watch' | 'setValue' | 'formTestResult' | 'indexerId'>) {
   const searchLanguages = watch ? (watch('settings.searchLanguages') ?? [1]) : [1];
   const { mamStatus, detectError, isDetecting, detect, setMamStatus } = useMamDetection(watch, setValue, deriveInitialMamStatus(watch), indexerId);
 
-  // Bridge: update badge from explicit Test button result
+  // Bridge: update card from explicit Test button result
   useEffect(() => {
     if (formTestResult?.success && formTestResult.metadata && 'isVip' in formTestResult.metadata) {
       setMamStatus(metadataToMamStatus(formTestResult.metadata));
@@ -181,7 +186,7 @@ export function MamFields({ register, errors, watch, setValue, formTestResult, i
         {errors.settings?.mamId ? (
           <p className="text-sm text-destructive mt-1">{errors.settings.mamId.message}</p>
         ) : mamStatus ? (
-          <MamStatusBadge status={mamStatus} onRefresh={() => {
+          <MamAccountCard status={mamStatus} onRefresh={() => {
             const mamId = watch ? watch('settings.mamId') : '';
             if (mamId) detect(mamId);
           }} />
@@ -230,7 +235,6 @@ export function MamFields({ register, errors, watch, setValue, formTestResult, i
         </div>
         <p className="text-sm text-muted-foreground mt-1">Deselect all for unrestricted language search</p>
       </div>
-      {mamStatus && <MamSearchStatusMessage status={mamStatus} />}
     </>
   );
 }
