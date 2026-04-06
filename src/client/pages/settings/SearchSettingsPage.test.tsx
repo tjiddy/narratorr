@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { screen, waitFor } from '@testing-library/react';
+import { screen, waitFor, fireEvent } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { renderWithProviders } from '@/__tests__/helpers';
 import { createMockSettings } from '@/__tests__/factories';
 import { SearchSettingsPage } from './SearchSettingsPage';
@@ -99,5 +100,45 @@ describe('SearchSettingsPage', () => {
     const labels = Array.from(options).map((o) => o.textContent);
     expect(labels).toContain('United States');
     expect(labels).not.toContain('Audible.com (US)');
+  });
+
+  it('saving one card preserves dirty state in another card after shared query refetch', async () => {
+    mockApi.updateSettings.mockResolvedValue(mockSettings);
+    const user = userEvent.setup();
+    renderWithProviders(<SearchSettingsPage />);
+
+    // Wait for all cards to load
+    await waitFor(() => {
+      expect(screen.getByLabelText('MB/hr Grab Minimum')).toHaveValue(50);
+    });
+
+    // Dirty the Quality card by changing grabFloor
+    const grabFloorInput = screen.getByLabelText('MB/hr Grab Minimum');
+    await user.tripleClick(grabFloorInput);
+    await user.keyboard('100');
+
+    // The Quality card's Save button should be visible
+    const qualityForm = grabFloorInput.closest('form')!;
+    expect(qualityForm.querySelector('button[type="submit"]')).toBeInTheDocument();
+
+    // Now dirty the Filtering card by changing reject words
+    const rejectInput = screen.getByLabelText('Reject Words');
+    await user.tripleClick(rejectInput);
+    await user.keyboard('Abridged');
+
+    // Save the Filtering card (not the Quality card)
+    const filteringForm = rejectInput.closest('form')!;
+    fireEvent.submit(filteringForm);
+
+    // Wait for Filtering save to complete (triggers queryClient.invalidateQueries)
+    await waitFor(() => {
+      expect(mockApi.updateSettings).toHaveBeenCalled();
+    });
+
+    // Quality card should still have the dirty edited value (not reset to server value)
+    expect(grabFloorInput).toHaveValue(100);
+
+    // Quality card's Save button should still be visible (still dirty)
+    expect(qualityForm.querySelector('button[type="submit"]')).toBeInTheDocument();
   });
 });
