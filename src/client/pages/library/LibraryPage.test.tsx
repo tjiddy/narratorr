@@ -109,7 +109,7 @@ function mockLibraryData(books: BookWithAuthor[]) {
         b.title.toLowerCase().includes(q) ||
         (b.authors[0]?.name ?? '').toLowerCase().includes(q) ||
         (b.seriesName ?? '').toLowerCase().includes(q) ||
-        (b.genres ?? '').toLowerCase().includes(q),
+        (Array.isArray(b.genres) ? b.genres.join(' ') : (b.genres ?? '')).toLowerCase().includes(q),
       );
     }
     if (params?.sortField) {
