@@ -1,5 +1,5 @@
 import { readdir, stat } from 'node:fs/promises';
-import { join, extname, relative } from 'node:path';
+import { join, extname, relative, basename } from 'node:path';
 import { AUDIO_EXTENSIONS } from './audio-constants.js';
 
 /** Minimal logger interface — matches Pino/Fastify logger shape */
@@ -176,7 +176,7 @@ function makeFolderEntry(
   audioFiles: { path: string; size: number }[],
 ): DiscoveredFolder {
   const relativePath = relative(rootPath, info.path);
-  const folderParts = relativePath ? relativePath.split(/[\\/]/) : [];
+  const folderParts = relativePath ? relativePath.split(/[\\/]/) : [basename(rootPath)];
 
   return {
     path: info.path,

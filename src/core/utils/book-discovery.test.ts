@@ -17,6 +17,7 @@ vi.mock('node:path', async () => {
     ...actual,
     join: actual.posix.join,
     extname: actual.posix.extname,
+    basename: actual.posix.basename,
   };
 });
 
@@ -214,7 +215,7 @@ describe('discoverBooks', () => {
     expect(result[0].folderParts).toEqual(['Joe Abercrombie', 'First Law', 'The Blade Itself']);
   });
 
-  it('returns empty folderParts when audio is in root directory itself', async () => {
+  it('uses root basename as folderParts when audio is in root directory itself', async () => {
     setupFs({
       '/audiobooks': [
         { name: 'track.mp3', isFile: true, size: 1000 },
@@ -223,7 +224,7 @@ describe('discoverBooks', () => {
 
     const result = await discoverBooks('/audiobooks');
     expect(result).toHaveLength(1);
-    expect(result[0].folderParts).toEqual([]);
+    expect(result[0].folderParts).toEqual(['audiobooks']);
   });
 
   // ---- Disc folder merging ----
@@ -1009,6 +1010,53 @@ describe('discoverBooks', () => {
         (c: unknown[]) => c[1] === 'Skipping loose audio files in mixed-content folder',
       );
       expect(skipCalls).toHaveLength(0);
+    });
+  });
+
+  // ---- Root folder IS the book (folderParts from basename) ----
+
+  describe('root folder is the book', () => {
+    it('uses root folder basename when audio files are directly in the root', async () => {
+      setupFs({
+        '/downloads/The Name of the Wind by Patrick Rothfuss': [
+          { name: 'chapter01.mp3', isFile: true, size: 5000 },
+          { name: 'chapter02.mp3', isFile: true, size: 6000 },
+        ],
+      });
+
+      const result = await discoverBooks('/downloads/The Name of the Wind by Patrick Rothfuss');
+      expect(result).toHaveLength(1);
+      expect(result[0].folderParts).toEqual(['The Name of the Wind by Patrick Rothfuss']);
+      expect(result[0].audioFileCount).toBe(2);
+      expect(result[0].totalSize).toBe(11000);
+    });
+
+    it('uses root folder basename for single m4b file at root', async () => {
+      setupFs({
+        '/downloads/My Audiobook': [
+          { name: 'book.m4b', isFile: true, size: 500_000 },
+        ],
+      });
+
+      const result = await discoverBooks('/downloads/My Audiobook');
+      expect(result).toHaveLength(1);
+      expect(result[0].folderParts).toEqual(['My Audiobook']);
+    });
+
+    it('still discovers child folders when root has subfolders with audio', async () => {
+      setupFs({
+        '/downloads/collection': [
+          { name: 'Book One', isFile: false },
+          { name: 'Book Two', isFile: false },
+        ],
+        '/downloads/collection/Book One': [{ name: 'a.mp3', isFile: true, size: 100 }],
+        '/downloads/collection/Book Two': [{ name: 'b.mp3', isFile: true, size: 200 }],
+      });
+
+      const result = await discoverBooks('/downloads/collection');
+      expect(result).toHaveLength(2);
+      expect(result[0].folderParts).toEqual(['Book One']);
+      expect(result[1].folderParts).toEqual(['Book Two']);
     });
   });
 
