@@ -1471,4 +1471,35 @@ describe('IndexerService', () => {
       expect(results[0].matchScore).toBeGreaterThan(0);
     });
   });
+
+  describe('#372 — pre-search refresh (shared by searchAll and searchAllStreaming)', () => {
+    it.todo('calls refreshStatus() before search() for MAM adapter');
+    it.todo('skips search and reports error when refreshStatus() returns Mouse class');
+    it.todo('persists { isVip: false, classname: "Mouse" } to DB when Mouse detected');
+    it.todo('persists updated isVip/classname when class changes (VIP → Power User)');
+    it.todo('does not write to DB when refreshStatus() returns same class as stored');
+    it.todo('proceeds with search when refreshStatus() throws (network error)');
+    it.todo('proceeds with search when refreshStatus() returns null');
+    it.todo('calls search() directly for non-MAM adapter (no refreshStatus method)');
+  });
+
+  describe('#372 — searchAllStreaming Mouse error', () => {
+    it.todo('fires onError callback with "Searches disabled — Mouse class" message');
+    it.todo('other indexers in same streaming search still complete normally');
+  });
+
+  describe('#372 — searchAll Mouse error', () => {
+    it.todo('skips Mouse indexer, other indexers results still returned');
+    it.todo('persists Mouse status even though search was skipped');
+  });
+
+  describe('#372 — warning propagation through service test methods', () => {
+    it.todo('test() passes through warning field from adapter result');
+    it.todo('testConfig() passes through warning field from adapter result');
+  });
+
+  describe('#372 — test() persists classname alongside isVip', () => {
+    it.todo('persists { isVip: false, classname: "Mouse" } on Mouse warning');
+    it.todo('persists { isVip: true, classname: "VIP" } on VIP success');
+  });
 });

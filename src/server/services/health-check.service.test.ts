@@ -568,4 +568,10 @@ describe('HealthCheckService', () => {
       await expect(service.probeProxy('http://bad-proxy:1234')).rejects.toThrow('ECONNREFUSED');
     });
   });
+
+  describe('#372 — health check maps Mouse warning to warning state', () => {
+    it.todo('MAM test success with warning → health state is "warning" with warning message');
+    it.todo('MAM test success without warning → health state is "healthy"');
+    it.todo('MAM test failure → health state is "error" (unchanged behavior)');
+  });
 });

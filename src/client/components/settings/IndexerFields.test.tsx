@@ -1050,4 +1050,26 @@ describe('IndexerFields', () => {
       expect(dropdown.value).toBe('nVIP');
     });
   });
+
+  describe('#372 — Search Type dropdown removal', () => {
+    it.todo('MAM settings form does NOT render a "Search Type" label or select element');
+    it.todo('form submission does not include searchType in submitted settings');
+  });
+
+  describe('#372 — status-aware messaging', () => {
+    it.todo('renders "Searching all torrents including VIP" when classname is VIP and isVip is true');
+    it.todo('renders "Searching non-VIP and freeleech torrents" when classname is Power User and isVip is false');
+    it.todo('renders amber warning "Mouse class — searches disabled until ratio improves" when classname is Mouse');
+    it.todo('renders no status messaging when no classname/isVip in settings');
+  });
+
+  describe('#372 — deriveInitialMamStatus hydration from classname', () => {
+    it.todo('badge shows "Power User" when classname is "Power User" (not hardcoded "User")');
+    it.todo('badge shows "Mouse" when classname is "Mouse"');
+  });
+
+  describe('#372 — status transitions on detection refresh', () => {
+    it.todo('warning replaces VIP message after refresh detects Mouse');
+    it.todo('warning removed and non-VIP message shown after refresh detects Power User');
+  });
 });

@@ -1321,4 +1321,23 @@ describe('MyAnonamouseIndexer', () => {
     });
   });
 
+  describe('#372 — refreshStatus()', () => {
+    it.todo('calls user info endpoint and returns { isVip: true, classname: "VIP" } for VIP class');
+    it.todo('returns { isVip: true, classname: "Elite VIP" } for Elite VIP class');
+    it.todo('returns { isVip: false, classname: "Power User" } for non-VIP non-Mouse class');
+    it.todo('returns { isVip: false, classname: "Mouse" } for Mouse class');
+    it.todo('returns null when user info endpoint returns empty/malformed response');
+    it.todo('throws on network error');
+    it.todo('throws on auth failure (401/non-200 response)');
+    it.todo('mutates adapter isVip — subsequent search() uses effectiveSearchType "all" after VIP refresh');
+    it.todo('mutates adapter isVip (downgrade) — subsequent search() uses "nVIP" after downgrade from VIP');
+    it.todo('does NOT mutate adapter state when response classname is undefined');
+    it.todo('does NOT mutate adapter state when response body is empty');
+  });
+
+  describe('#372 — test() Mouse warning', () => {
+    it.todo('returns success with warning when classname is Mouse');
+    it.todo('returns normal success without warning for non-Mouse non-VIP classes');
+    it.todo('returns normal success without warning for VIP classes');
+  });
 });

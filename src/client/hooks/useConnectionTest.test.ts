@@ -354,4 +354,10 @@ describe('useConnectionTest', () => {
       });
     });
   });
+
+  describe('#372 — warning toast on success-with-warning', () => {
+    it.todo('shows success toast AND amber warning toast when result has success: true + warning');
+    it.todo('shows success toast only when result has success: true + no warning (existing behavior)');
+    it.todo('shows error toast only when result has success: false (existing behavior unchanged)');
+  });
 });
