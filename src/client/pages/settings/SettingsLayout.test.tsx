@@ -14,6 +14,7 @@ describe('SettingsLayout', () => {
     expect(screen.getByText('Post Processing').closest('a')).toHaveAttribute('href', '/settings/post-processing');
     expect(screen.getByText('Indexers').closest('a')).toHaveAttribute('href', '/settings/indexers');
     expect(screen.getByText('Download Clients').closest('a')).toHaveAttribute('href', '/settings/download-clients');
+    expect(screen.getByText('Search').closest('a')).toHaveAttribute('href', '/settings/search');
     expect(screen.getByText('Notifications').closest('a')).toHaveAttribute('href', '/settings/notifications');
     expect(screen.getByText('Blacklist').closest('a')).toHaveAttribute('href', '/settings/blacklist');
     expect(screen.getByText('Security').closest('a')).toHaveAttribute('href', '/settings/security');
