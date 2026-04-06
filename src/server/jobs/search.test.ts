@@ -339,6 +339,21 @@ describe('runSearchJob', () => {
     expect(result.grabbed).toBe(0);
     expect(download.grab).not.toHaveBeenCalled();
   });
+
+  it('forwards indexerId from best search result to downloadOrchestrator.grab', async () => {
+    const wantedBooks = [{ id: 1, title: 'Book One', authors: [{ name: 'Author A' }] }];
+    const searchResults: SearchResult[] = [{ ...mockResult(10, 'magnet:?xt=urn:btih:aaa'), indexerId: 42 }];
+    const settings = createMockSettingsService({ search: { enabled: true, intervalMinutes: 60 } });
+    const bookList = createMockBookListService(wantedBooks);
+    const indexer = createMockIndexerService(searchResults);
+    const download = createMockDownloadOrchestrator();
+
+    await runSearchJob(settings, bookList, indexer, download, inject<FastifyBaseLogger>(log));
+
+    expect(download.grab).toHaveBeenCalledWith(
+      expect.objectContaining({ indexerId: 42 }),
+    );
+  });
 });
 
 describe('runUpgradeSearchJob', () => {
@@ -605,6 +620,29 @@ describe('runUpgradeSearchJob', () => {
     );
     // Should NOT have logged a warning (it was handled silently)
     expect(log.warn).not.toHaveBeenCalled();
+  });
+
+  it('forwards indexerId from best search result to downloadOrchestrator.grab', async () => {
+    const book = makeMonitoredBook();
+    const settings = createMockSettingsService();
+    const books = createMockBookService([book]);
+    const higherResult: SearchResult = {
+      title: 'Better Quality',
+      protocol: 'torrent',
+      indexer: 'abb',
+      seeders: 10,
+      size: 500 * 1024 * 1024,
+      downloadUrl: 'magnet:?xt=urn:btih:upgrade',
+      indexerId: 99,
+    };
+    const indexer = createMockIndexerService([higherResult]);
+    const download = createMockDownloadOrchestrator();
+
+    await runUpgradeSearchJob(settings, books, indexer, download, inject<FastifyBaseLogger>(log));
+
+    expect(download.grab).toHaveBeenCalledWith(
+      expect.objectContaining({ indexerId: 99 }),
+    );
   });
 });
 
