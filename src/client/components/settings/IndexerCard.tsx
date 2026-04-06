@@ -49,6 +49,7 @@ function settingsFromIndexer(indexer: Indexer): CreateIndexerFormData['settings'
     searchType: coerceSearchType(s.searchType),
     isVip: s.isVip as boolean | undefined,
     mamUsername: (s.mamUsername as string) || undefined,
+    classname: (s.classname as string) || undefined,
   };
 }
 

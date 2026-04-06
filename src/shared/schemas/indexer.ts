@@ -57,6 +57,7 @@ export const createIndexerFormSchema = z.object({
     searchType: z.enum(['all', 'active', 'fl', 'fl-VIP', 'VIP', 'nVIP']).optional(),
     isVip: z.boolean().optional(),
     mamUsername: z.string().optional(),
+    classname: z.string().optional(),
   }),
 }).superRefine((data, ctx) => {
   const meta = INDEXER_REGISTRY[data.type];
