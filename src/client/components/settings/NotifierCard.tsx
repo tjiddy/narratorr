@@ -4,7 +4,7 @@ import { zodResolver } from '@hookform/resolvers/zod';
 import type { Notifier, TestResult } from '@/lib/api';
 import { SettingsCardShell, type IdTestResult } from './SettingsCardShell';
 import { NotifierCardForm } from './NotifierCardForm';
-import { NOTIFIER_REGISTRY } from '../../../shared/notifier-registry.js';
+import { NOTIFIER_REGISTRY, NOTIFIER_TYPES } from '../../../shared/notifier-registry.js';
 import { EVENT_LABELS } from '../../../shared/notification-events.js';
 import {
   createNotifierFormSchema,
@@ -28,21 +28,13 @@ interface NotifierCardProps {
   animationDelay?: string;
 }
 
-const SETTINGS_DEFAULTS: Record<string, string | number | boolean> = {
-  url: '', method: 'POST', headers: '', bodyTemplate: '',
-  webhookUrl: '', includeCover: true, path: '', timeout: 30,
-  smtpHost: '', smtpPort: 587, smtpUser: '', smtpPass: '',
-  smtpTls: false, fromAddress: '', toAddress: '', botToken: '',
-  chatId: '', pushoverToken: '', pushoverUser: '', ntfyTopic: '',
-  ntfyServer: '', gotifyUrl: '', gotifyToken: '',
-};
-
 function settingsFromNotifier(notifier: Notifier): CreateNotifierFormData['settings'] {
-  const s = notifier.settings as Record<string, unknown>;
-  const result: Record<string, unknown> = {};
-  for (const [key, fallback] of Object.entries(SETTINGS_DEFAULTS)) {
-    const val = s[key];
-    result[key] = val != null ? val : fallback;
+  const meta = NOTIFIER_REGISTRY[notifier.type];
+  const defaults = meta?.defaultSettings ?? {};
+  const saved = notifier.settings as Record<string, unknown>;
+  const result: Record<string, unknown> = { ...defaults };
+  for (const [key, val] of Object.entries(saved)) {
+    if (val != null) result[key] = val;
   }
   return result as CreateNotifierFormData['settings'];
 }
@@ -55,10 +47,10 @@ function viewSubtitle(notifier: Notifier): string {
 
 const defaultValues: CreateNotifierFormData = {
   name: '',
-  type: 'webhook',
+  type: NOTIFIER_TYPES[0],
   enabled: true,
   events: ['on_grab', 'on_download_complete', 'on_import', 'on_failure', 'on_upgrade', 'on_health_issue'],
-  settings: { url: '', method: 'POST' as const },
+  settings: NOTIFIER_REGISTRY[NOTIFIER_TYPES[0]].defaultSettings,
 };
 
 export function NotifierCard(props: NotifierCardProps) {
@@ -100,7 +92,7 @@ export function NotifierCard(props: NotifierCardProps) {
   useEffect(() => {
     if (mode === 'create') {
       const meta = NOTIFIER_REGISTRY[selectedType];
-      setValue('settings', meta?.defaultSettings || NOTIFIER_REGISTRY.webhook.defaultSettings);
+      setValue('settings', meta?.defaultSettings || NOTIFIER_REGISTRY[NOTIFIER_TYPES[0]].defaultSettings);
     }
   }, [selectedType, mode, setValue]);
 
