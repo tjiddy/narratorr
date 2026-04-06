@@ -30,6 +30,7 @@ const mockToast = toast as unknown as {
 const mockSettings = createMockSettings({
   search: { enabled: false, intervalMinutes: 360, blacklistTtlDays: 7 },
   rss: { enabled: false, intervalMinutes: 30 },
+  quality: { protocolPreference: 'none' },
 });
 
 describe('SearchSettingsSection', () => {
@@ -142,8 +143,23 @@ describe('SearchSettingsSection', () => {
       expect(mockApi.updateSettings).toHaveBeenCalledWith({
         search: { enabled: true, intervalMinutes: 360, blacklistTtlDays: 7 },
         rss: { enabled: false, intervalMinutes: 30 },
+        quality: { protocolPreference: 'none' },
       });
     });
+  });
+
+  it('renders protocol preference dropdown with correct options', async () => {
+    renderWithProviders(<SearchSettingsSection />);
+
+    await waitFor(() => {
+      expect(screen.getByLabelText('Protocol Preference')).toBeInTheDocument();
+    });
+
+    const options = screen.getByLabelText('Protocol Preference').querySelectorAll('option');
+    expect(options).toHaveLength(3);
+    expect(options[0]).toHaveTextContent('Prefer Usenet');
+    expect(options[1]).toHaveTextContent('Prefer Torrent');
+    expect(options[2]).toHaveTextContent('No Preference');
   });
 
   it('shows success toast on save', async () => {
@@ -248,6 +264,36 @@ describe('SearchSettingsSection', () => {
       expect(mockApi.updateSettings).toHaveBeenCalledWith({
         search: { enabled: false, intervalMinutes: 360, blacklistTtlDays: 14 },
         rss: { enabled: false, intervalMinutes: 60 },
+        quality: { protocolPreference: 'none' },
+      });
+    });
+  });
+
+  it('loads non-default protocol preference and saves changed value', async () => {
+    const torrentSettings = createMockSettings({
+      search: { enabled: false, intervalMinutes: 360, blacklistTtlDays: 7 },
+      rss: { enabled: false, intervalMinutes: 30 },
+      quality: { protocolPreference: 'torrent' },
+    });
+    mockApi.getSettings.mockResolvedValue(torrentSettings);
+    mockApi.updateSettings.mockResolvedValue(torrentSettings);
+    const user = userEvent.setup();
+    renderWithProviders(<SearchSettingsSection />);
+
+    // Wait for server value to load
+    await waitFor(() => {
+      expect(screen.getByLabelText('Protocol Preference')).toHaveValue('torrent');
+    });
+
+    // Change to usenet
+    await user.selectOptions(screen.getByLabelText('Protocol Preference'), 'usenet');
+    await user.click(screen.getByRole('button', { name: /save/i }));
+
+    await waitFor(() => {
+      expect(mockApi.updateSettings).toHaveBeenCalledWith({
+        search: { enabled: false, intervalMinutes: 360, blacklistTtlDays: 7 },
+        rss: { enabled: false, intervalMinutes: 30 },
+        quality: { protocolPreference: 'usenet' },
       });
     });
   });

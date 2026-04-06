@@ -63,6 +63,7 @@ vi.mock('@/pages/settings/registry', () => {
       { path: '', label: 'General', icon, component: () => <div>General</div>, end: true },
       { path: 'indexers', label: 'Indexers', icon, component: () => <div>Indexers</div> },
       { path: 'download-clients', label: 'Download Clients', icon, component: () => <div>Download Clients</div> },
+      { path: 'search', label: 'Search', icon, component: () => <div>Search Settings</div> },
       { path: 'notifications', label: 'Notifications', icon, component: () => <div>Notifications</div> },
       { path: 'blacklist', label: 'Blacklist', icon, component: () => <div>Blacklist</div> },
       { path: 'security', label: 'Security', icon, component: () => <div>Security</div> },

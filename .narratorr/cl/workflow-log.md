@@ -1,5 +1,34 @@
 # Workflow Log
 
+## #389 Settings page restructure — new Search page — 2026-04-06
+**Skill path:** /implement → /claim → /plan → /handoff
+**Outcome:** success — PR #390
+
+### Metrics
+- Files changed: 18 | Tests added/modified: 9 test files (~50 tests)
+- Quality gate runs: 2 (pass on attempt 1 both times)
+- Fix iterations: 1 (protocol preference dropdown option order in test)
+- Context compactions: 0
+
+### Workflow experience
+- What went smoothly: Registry-driven architecture made wiring trivial (1 file change for route + sidebar). Red/green TDD cycle per module was efficient — each card component built and tested independently.
+- Friction / issues encountered: Spec had wrong file names (MetadataSettingsSection.tsx vs MetadataSettingsForm.tsx) and wrong wiring targets (Layout.tsx vs registry.ts). Two rounds of spec review were needed to fix these. The elaborate/respond-to-spec-review cycle added overhead but caught real issues before implementation.
+
+### Token efficiency
+- Highest-token actions: Explore subagent for plan codebase exploration (read many settings files)
+- Avoidable waste: Spec corrections could have been caught during initial `/elaborate` if the file verification had been more thorough
+- Suggestions: Always grep for actual file names before writing spec AC items
+
+### Infrastructure gaps
+- Repeated workarounds: None
+- Missing tooling / config: `frontend-design` skill not available — design pass skipped
+- Unresolved debt: None introduced
+
+### Wish I'd Known
+1. Settings routes and sidebar are entirely registry-driven via `settingsPageRegistry` — no need to touch App.tsx or Layout.tsx (see `settings-registry-driven-wiring.md`)
+2. `protocolPreferenceSchema.options` returns values in declaration order `['usenet', 'torrent', 'none']`, not alphabetical — affects dropdown option assertions (see `protocol-preference-schema-enum-order.md`)
+3. Multi-category save payloads work naturally because `settings.service.ts` deep-merges partial updates per category — no special handling needed (see `multi-category-settings-save.md`)
+
 ## #385 Auto-grab paths missing indexerId — 2026-04-06
 **Skill path:** /implement → /claim → /plan → /handoff
 **Outcome:** success — PR #388

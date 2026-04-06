@@ -2,11 +2,8 @@ import { useState } from 'react';
 import { LibrarySettingsSection } from './LibrarySettingsSection';
 import { NewBookDefaultsSection } from './NewBookDefaultsSection';
 import { NamingSettingsSection } from './NamingSettingsSection';
-import { SearchSettingsSection } from './SearchSettingsSection';
 import { ImportSettingsSection } from './ImportSettingsSection';
-import { QualitySettingsSection } from './QualitySettingsSection';
 import { NetworkSettingsSection } from './NetworkSettingsSection';
-import { MetadataSettingsForm } from './MetadataSettingsForm';
 import { AppearanceSettingsSection } from './AppearanceSettingsSection';
 import { DiscoverySettingsSection } from '../discover/DiscoverySettingsSection';
 import { SettingsSection } from './SettingsSection';
@@ -38,12 +35,9 @@ export function GeneralSettings() {
       <LibrarySettingsSection />
       <NewBookDefaultsSection />
       <NamingSettingsSection />
-      <SearchSettingsSection />
       <ImportSettingsSection />
-      <QualitySettingsSection />
       <NetworkSettingsSection />
       <DiscoverySettingsSection />
-      <MetadataSettingsForm />
       <AppearanceSettingsSection />
       <SettingsSection
         icon={<EyeIcon className="w-5 h-5 text-primary" />}
