@@ -65,7 +65,28 @@ describe('useMergeProgress', () => {
   });
 
   describe('#368 merge queue — queued phase', () => {
-    it.todo('returns { phase: queued, position: 2 } after setMergeProgress with queued state');
-    it.todo('transitions from { phase: queued } to { phase: starting } on merge_started');
+    it('returns { phase: queued, position: 2 } after setMergeProgress with queued state', () => {
+      const { result } = renderHook(() => useMergeProgress(42));
+
+      act(() => {
+        setMergeProgress(42, { phase: 'queued', position: 2 });
+      });
+
+      expect(result.current).toEqual({ phase: 'queued', position: 2 });
+    });
+
+    it('transitions from { phase: queued } to { phase: starting } on merge_started', () => {
+      const { result } = renderHook(() => useMergeProgress(42));
+
+      act(() => {
+        setMergeProgress(42, { phase: 'queued', position: 1 });
+      });
+      expect(result.current).toEqual({ phase: 'queued', position: 1 });
+
+      act(() => {
+        setMergeProgress(42, { phase: 'starting' });
+      });
+      expect(result.current).toEqual({ phase: 'starting' });
+    });
   });
 });

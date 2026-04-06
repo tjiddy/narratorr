@@ -3,6 +3,7 @@ import { useSyncExternalStore } from 'react';
 export interface MergeProgress {
   phase: string;
   percentage?: number;
+  position?: number;
 }
 
 const mergeProgressMap = new Map<number, MergeProgress | null>();

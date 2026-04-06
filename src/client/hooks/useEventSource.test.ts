@@ -814,8 +814,75 @@ describe('#312 cache-miss scoping — patchActivityProgress', () => {
   });
 
   describe('#368 merge queue — SSE event handling', () => {
-    it.todo('handles merge_queued event by calling setMergeProgress with queued phase and position');
-    it.todo('handles merge_queue_updated event by updating position');
-    it.todo('handles merge_complete with enrichmentWarning by showing warning toast');
+    it('handles merge_queued event by calling setMergeProgress with queued phase and position', () => {
+      const queryClient = new QueryClient();
+      queryClient.setQueryData(['auth', 'config'], { apiKey: 'test-key' });
+      const wrapper = ({ children }: { children: ReactNode }) =>
+        createElement(QueryClientProvider, { client: queryClient }, children);
+
+      renderHook(() => useEventSource('test-key'), { wrapper });
+
+      const es = MockEventSource.instances[MockEventSource.instances.length - 1];
+      es.simulateOpen();
+
+      act(() => {
+        es.simulateEvent('merge_queued', { book_id: 42, book_title: 'Test Book', position: 2 });
+      });
+
+      const { result } = renderHook(() => useMergeProgress(42));
+      expect(result.current).toEqual({ phase: 'queued', position: 2 });
+
+      // Clean up
+      setMergeProgress(42, null);
+    });
+
+    it('handles merge_queue_updated event by updating position', () => {
+      const queryClient = new QueryClient();
+      queryClient.setQueryData(['auth', 'config'], { apiKey: 'test-key' });
+      const wrapper = ({ children }: { children: ReactNode }) =>
+        createElement(QueryClientProvider, { client: queryClient }, children);
+
+      renderHook(() => useEventSource('test-key'), { wrapper });
+
+      const es = MockEventSource.instances[MockEventSource.instances.length - 1];
+      es.simulateOpen();
+
+      act(() => {
+        es.simulateEvent('merge_queued', { book_id: 42, book_title: 'Test Book', position: 3 });
+      });
+
+      act(() => {
+        es.simulateEvent('merge_queue_updated', { book_id: 42, book_title: 'Test Book', position: 1 });
+      });
+
+      const { result } = renderHook(() => useMergeProgress(42));
+      expect(result.current).toEqual({ phase: 'queued', position: 1 });
+
+      setMergeProgress(42, null);
+    });
+
+    it('handles merge_complete with enrichmentWarning by showing warning toast', () => {
+      const queryClient = new QueryClient();
+      queryClient.setQueryData(['auth', 'config'], { apiKey: 'test-key' });
+      const wrapper = ({ children }: { children: ReactNode }) =>
+        createElement(QueryClientProvider, { client: queryClient }, children);
+
+      renderHook(() => useEventSource('test-key'), { wrapper });
+
+      const es = MockEventSource.instances[MockEventSource.instances.length - 1];
+      es.simulateOpen();
+
+      act(() => {
+        es.simulateEvent('merge_complete', {
+          book_id: 42,
+          book_title: 'Test Book',
+          success: true,
+          message: 'Merged 3 files into Test.m4b',
+          enrichmentWarning: 'Merge succeeded but metadata update failed',
+        });
+      });
+
+      expect(toast.warning).toHaveBeenCalledWith('Merge succeeded but metadata update failed');
+    });
   });
 });

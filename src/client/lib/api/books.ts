@@ -150,6 +150,12 @@ export interface MergeResult {
   enrichmentWarning?: string;
 }
 
+export interface MergeAcknowledgement {
+  status: 'started' | 'queued';
+  bookId: number;
+  position?: number;
+}
+
 export type SingleBookSearchResult =
   | { result: 'grabbed'; title: string }
   | { result: 'no_results' }
@@ -227,7 +233,7 @@ export const booksApi = {
   searchBook: (id: number) =>
     fetchApi<SingleBookSearchResult>(`/books/${id}/search`, { method: 'POST' }),
   mergeBookToM4b: (id: number) =>
-    fetchApi<MergeResult>(`/books/${id}/merge-to-m4b`, { method: 'POST' }),
+    fetchApi<MergeAcknowledgement>(`/books/${id}/merge-to-m4b`, { method: 'POST' }),
   markBookAsWrongRelease: (id: number) =>
     fetchApi<{ success: boolean }>(`/books/${id}/wrong-release`, { method: 'POST' }),
 };
