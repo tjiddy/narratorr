@@ -1542,4 +1542,179 @@ describe('monitor job', () => {
       expect(setCalls.every((c) => c.status !== 'importing')).toBe(true);
     });
   });
+
+  describe('adapter status authority — completion detection', () => {
+    let qualityGateOrchestrator: { processOneDownload: ReturnType<typeof vi.fn> };
+
+    beforeEach(() => {
+      qualityGateOrchestrator = { processOneDownload: vi.fn().mockResolvedValue(undefined) };
+    });
+
+    async function runMonitorWithQG() {
+      await monitorDownloads(
+        inject<Db>(db),
+        inject<DownloadClientService>(downloadClientService),
+        inject<NotifierService>(notifierService),
+        inject<FastifyBaseLogger>(log),
+        undefined, // retryDeps
+        undefined, // broadcaster
+        undefined, // remotePathMappingService
+        inject(qualityGateOrchestrator),
+      );
+    }
+
+    it('does NOT transition to completed when adapter returns downloading + progress 100%', async () => {
+      db.select.mockReturnValueOnce(mockDbChain([
+        { id: 1, externalId: 'ext-1', downloadClientId: 10, status: 'downloading', completedAt: null, bookId: 42 },
+      ]));
+      adapter.getDownload.mockResolvedValueOnce({ progress: 100, status: 'downloading' });
+      const chain = mockDbChain();
+      db.update.mockReturnValue(chain);
+
+      await runMonitorWithQG();
+
+      const setCalls = (chain.set as ReturnType<typeof vi.fn>).mock.calls.map((c: unknown[]) => c[0] as Record<string, unknown>);
+      expect(setCalls[0]?.status).toBe('downloading');
+    });
+
+    it('transitions to completed when adapter returns completed + progress 100%', async () => {
+      db.select.mockReturnValueOnce(mockDbChain([
+        { id: 1, externalId: 'ext-1', downloadClientId: 10, status: 'downloading', completedAt: null, bookId: 42 },
+      ]));
+      adapter.getDownload.mockResolvedValueOnce({ progress: 100, status: 'completed' });
+      const chain = mockDbChain();
+      db.update.mockReturnValue(chain);
+
+      await runMonitorWithQG();
+
+      const setCalls = (chain.set as ReturnType<typeof vi.fn>).mock.calls.map((c: unknown[]) => c[0] as Record<string, unknown>);
+      expect(setCalls[0]?.status).toBe('completed');
+    });
+
+    it('transitions to completed when adapter returns seeding + progress 100%', async () => {
+      db.select.mockReturnValueOnce(mockDbChain([
+        { id: 1, externalId: 'ext-1', downloadClientId: 10, status: 'downloading', completedAt: null, bookId: 42 },
+      ]));
+      adapter.getDownload.mockResolvedValueOnce({ progress: 100, status: 'seeding' });
+      const chain = mockDbChain();
+      db.update.mockReturnValue(chain);
+
+      await runMonitorWithQG();
+
+      const setCalls = (chain.set as ReturnType<typeof vi.fn>).mock.calls.map((c: unknown[]) => c[0] as Record<string, unknown>);
+      expect(setCalls[0]?.status).toBe('completed');
+    });
+
+    it('transitions to completed when adapter returns completed + progress 99% (adapter is sole authority)', async () => {
+      db.select.mockReturnValueOnce(mockDbChain([
+        { id: 1, externalId: 'ext-1', downloadClientId: 10, status: 'downloading', completedAt: null, bookId: 42 },
+      ]));
+      adapter.getDownload.mockResolvedValueOnce({ progress: 99, status: 'completed' });
+      const chain = mockDbChain();
+      db.update.mockReturnValue(chain);
+
+      await runMonitorWithQG();
+
+      const setCalls = (chain.set as ReturnType<typeof vi.fn>).mock.calls.map((c: unknown[]) => c[0] as Record<string, unknown>);
+      expect(setCalls[0]?.status).toBe('completed');
+    });
+
+    it('does NOT transition to completed when adapter returns paused + progress 100%', async () => {
+      db.select.mockReturnValueOnce(mockDbChain([
+        { id: 1, externalId: 'ext-1', downloadClientId: 10, status: 'downloading', completedAt: null, bookId: 42 },
+      ]));
+      adapter.getDownload.mockResolvedValueOnce({ progress: 100, status: 'paused' });
+      const chain = mockDbChain();
+      db.update.mockReturnValue(chain);
+
+      await runMonitorWithQG();
+
+      const setCalls = (chain.set as ReturnType<typeof vi.fn>).mock.calls.map((c: unknown[]) => c[0] as Record<string, unknown>);
+      expect(setCalls[0]?.status).toBe('paused');
+    });
+
+    it('does NOT fire quality gate when adapter returns downloading + progress 100%', async () => {
+      db.select.mockReturnValueOnce(mockDbChain([
+        { id: 1, externalId: 'ext-1', downloadClientId: 10, status: 'downloading', completedAt: null, bookId: 42 },
+      ]));
+      adapter.getDownload.mockResolvedValueOnce({ progress: 100, status: 'downloading' });
+      db.update.mockReturnValue(mockDbChain());
+
+      await runMonitorWithQG();
+
+      expect(qualityGateOrchestrator.processOneDownload).not.toHaveBeenCalled();
+    });
+
+    it('fires quality gate when adapter returns completed status', async () => {
+      db.select.mockReturnValueOnce(mockDbChain([
+        { id: 1, externalId: 'ext-1', downloadClientId: 10, status: 'downloading', completedAt: null, bookId: 42 },
+      ]));
+      adapter.getDownload.mockResolvedValueOnce({ progress: 100, status: 'completed' });
+      db.update.mockReturnValue(mockDbChain());
+
+      await runMonitorWithQG();
+
+      expect(qualityGateOrchestrator.processOneDownload).toHaveBeenCalledWith(1);
+    });
+  });
+
+  describe('outputPath re-resolution on completion', () => {
+    it('re-resolves outputPath on completion transition even if previously set', async () => {
+      db.select.mockReturnValueOnce(mockDbChain([
+        { id: 1, externalId: 'ext-1', downloadClientId: 10, status: 'downloading', completedAt: null, bookId: 42, outputPath: '/old/stale/path' },
+      ]));
+      adapter.getDownload.mockResolvedValueOnce({
+        progress: 100,
+        status: 'completed',
+        savePath: '/downloads/complete',
+        name: 'My Audiobook',
+      });
+      const chain = mockDbChain();
+      db.update.mockReturnValue(chain);
+
+      await runMonitor();
+
+      const setCalls = (chain.set as ReturnType<typeof vi.fn>).mock.calls.map((c: unknown[]) => c[0] as Record<string, unknown>);
+      expect(setCalls[0]?.outputPath).toBe('/downloads/complete/My Audiobook');
+    });
+
+    it('resolves outputPath normally when no previous value exists', async () => {
+      db.select.mockReturnValueOnce(mockDbChain([
+        { id: 1, externalId: 'ext-1', downloadClientId: 10, status: 'downloading', completedAt: null, bookId: 42 },
+      ]));
+      adapter.getDownload.mockResolvedValueOnce({
+        progress: 50,
+        status: 'downloading',
+        savePath: '/downloads/incomplete',
+        name: 'My Audiobook',
+      });
+      const chain = mockDbChain();
+      db.update.mockReturnValue(chain);
+
+      await runMonitor();
+
+      const setCalls = (chain.set as ReturnType<typeof vi.fn>).mock.calls.map((c: unknown[]) => c[0] as Record<string, unknown>);
+      expect(setCalls[0]?.outputPath).toBe('/downloads/incomplete/My Audiobook');
+    });
+
+    it('preserves previous outputPath when adapter returns empty savePath on completion', async () => {
+      db.select.mockReturnValueOnce(mockDbChain([
+        { id: 1, externalId: 'ext-1', downloadClientId: 10, status: 'downloading', completedAt: null, bookId: 42, outputPath: '/existing/path' },
+      ]));
+      adapter.getDownload.mockResolvedValueOnce({
+        progress: 100,
+        status: 'completed',
+        savePath: '',
+        name: 'My Audiobook',
+      });
+      const chain = mockDbChain();
+      db.update.mockReturnValue(chain);
+
+      await runMonitor();
+
+      const setCalls = (chain.set as ReturnType<typeof vi.fn>).mock.calls.map((c: unknown[]) => c[0] as Record<string, unknown>);
+      // outputPath should not be in the set payload (undefined skipped by spread)
+      expect(setCalls[0]?.outputPath).toBeUndefined();
+    });
+  });
 });

@@ -144,9 +144,8 @@ async function processDownloadUpdate(
   qualityGateOrchestrator?: QualityGateOrchestrator,
 ): Promise<void> {
   const progress = item.progress / 100;
-  const isError = item.status === 'error';
-  const isCompleted = !isError && progress >= 1;
-  const newStatus = isCompleted ? 'completed' : mapDownloadStatus(item.status);
+  const newStatus = mapDownloadStatus(item.status);
+  const isCompleted = newStatus === 'completed';
 
   if (download.status !== newStatus) {
     log.info({ id: download.id, status: newStatus }, 'Download state changed');
@@ -154,7 +153,8 @@ async function processDownloadUpdate(
     log.debug({ id: download.id, progress }, 'Download progress');
   }
 
-  const resolvedOutputPath = await resolveOutputPath(download, item, remotePathMappingService, log);
+  const isCompletionTransition = isCompleted && download.status !== 'completed';
+  const resolvedOutputPath = await resolveOutputPath(download, item, remotePathMappingService, log, isCompletionTransition);
 
   const progressChanged = progress !== download.progress;
   await db
@@ -174,7 +174,7 @@ async function processDownloadUpdate(
   handleCompletionNotification(download, item, isCompleted, notifierService, log);
 
   // Fire-and-forget quality gate + import for completed downloads (replaces handleBookStatusOnCompletion)
-  if (isCompleted && download.status !== 'completed' && qualityGateOrchestrator) {
+  if (isCompletionTransition && qualityGateOrchestrator) {
     fireAndForget(
       qualityGateOrchestrator.processOneDownload(download.id),
       log,
@@ -183,14 +183,16 @@ async function processDownloadUpdate(
   }
 }
 
-/** Resolve outputPath on first poll — join savePath+name and apply remote path mapping. */
+/** Resolve outputPath — on first poll or on completion transition (to overwrite stale incomplete paths). */
 async function resolveOutputPath(
   download: DownloadRow,
   item: DownloadItem,
   remotePathMappingService: RemotePathMappingService | undefined,
   log: FastifyBaseLogger,
+  isCompletionTransition = false,
 ): Promise<string | undefined> {
-  if (download.outputPath || !item.savePath || !item.name) return undefined;
+  if (!item.savePath || !item.name) return undefined;
+  if (download.outputPath && !isCompletionTransition) return undefined;
 
   const fullPath = join(item.savePath, item.name);
   if (remotePathMappingService && download.downloadClientId) {
