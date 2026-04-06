@@ -83,15 +83,16 @@ describe('GeneralSettings', () => {
       expect(screen.getByText('Library')).toBeInTheDocument();
     });
     expect(screen.getByText('File Naming')).toBeInTheDocument();
-    expect(screen.getByText('Search')).toBeInTheDocument();
     expect(screen.getByText('Discovery')).toBeInTheDocument();
     expect(screen.getByText('Import')).toBeInTheDocument();
-    expect(screen.getByText('Quality')).toBeInTheDocument();
-    expect(screen.queryByText('Post Processing')).not.toBeInTheDocument();
     expect(screen.getByText('Network')).toBeInTheDocument();
+    // Sections moved to Search settings page (#389)
+    expect(screen.queryByText('Search')).not.toBeInTheDocument();
+    expect(screen.queryByText('Quality')).not.toBeInTheDocument();
+    expect(screen.queryByText('Metadata')).not.toBeInTheDocument();
+    expect(screen.queryByText('Post Processing')).not.toBeInTheDocument();
     expect(screen.queryByText('Housekeeping')).not.toBeInTheDocument();
     expect(screen.queryByText('Logging')).not.toBeInTheDocument();
-    expect(screen.getByText('Metadata')).toBeInTheDocument();
   });
 
   it('renders Appearance section in the settings page', async () => {
@@ -134,23 +135,18 @@ describe('GeneralSettings', () => {
 
     // Wait for sections to load
     await waitFor(() => {
-      expect(screen.getByLabelText('Blacklist TTL (days)')).toBeInTheDocument();
+      expect(screen.getByLabelText('Proxy URL')).toBeInTheDocument();
     });
 
-    // Make Search section dirty by changing blacklist TTL
-    const blacklistInput = screen.getByLabelText('Blacklist TTL (days)');
-    await user.clear(blacklistInput);
-    await user.type(blacklistInput, '14');
-
-    // Also make Network section dirty with a valid proxy URL
+    // Make Network section dirty with a valid proxy URL
     const proxyInput = screen.getByLabelText('Proxy URL');
     await user.type(proxyInput, 'http://proxy:8080');
 
-    // Both sections should show their save buttons
+    // Save button should appear when a section is dirty
     const saveButtons = screen.getAllByRole('button', { name: /^save$/i });
-    expect(saveButtons.length).toBeGreaterThanOrEqual(2);
+    expect(saveButtons.length).toBeGreaterThanOrEqual(1);
 
-    // Save the Network section — click its save button and submit
+    // Save the Network section
     const networkForm = proxyInput.closest('form')!;
     fireEvent.submit(networkForm);
 
@@ -158,14 +154,6 @@ describe('GeneralSettings', () => {
     await waitFor(() => {
       expect(mockApi.updateSettings).toHaveBeenCalled();
     });
-
-    // After Network save + cache invalidation refetch, Search section should
-    // still have its dirty value preserved (the !isDirty guard prevents reset)
-    expect(blacklistInput).toHaveValue(14);
-
-    // General section save button should still be visible (still dirty)
-    const remainingSaveButtons = screen.getAllByRole('button', { name: /^save$/i });
-    expect(remainingSaveButtons.length).toBeGreaterThanOrEqual(1);
   });
 });
 
