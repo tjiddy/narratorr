@@ -5,8 +5,7 @@ import { useQuery } from '@tanstack/react-query';
 import { queryKeys } from '@/lib/queryKeys';
 import { api } from '@/lib/api';
 import { ToggleSwitch } from './ToggleSwitch';
-import { MAM_LANGUAGES, MAM_SEARCH_TYPES } from '../../../shared/indexer-registry.js';
-import { SelectWithChevron } from './SelectWithChevron';
+import { MAM_LANGUAGES } from '../../../shared/indexer-registry.js';
 
 interface IndexerFieldsProps {
   selectedType: string;
@@ -174,6 +173,9 @@ function useMamDetection(watch?: UseFormWatch<CreateIndexerFormData>, setValue?:
         if (setValue) {
           setValue('settings.isVip', status.isVip);
           setValue('settings.mamUsername', status.username);
+          if (status.classname) {
+            (setValue as (name: string, value: unknown) => void)('settings.classname', status.classname);
+          }
         }
       } else {
         setDetectError(result.message || 'Detection failed');
@@ -231,11 +233,12 @@ function DetectionOverlay() {
 function deriveInitialMamStatus(watch?: UseFormWatch<CreateIndexerFormData>): MamStatus | null {
   const persistedIsVip = watch ? watch('settings.isVip') : undefined;
   const persistedUsername = watch ? watch('settings.mamUsername') : undefined;
+  const persistedClassname = watch ? (watch as (name: string) => unknown)('settings.classname') as string | undefined : undefined;
   if (persistedIsVip == null) return null;
   return {
     username: persistedUsername || '',
     isVip: persistedIsVip,
-    classname: persistedIsVip ? 'VIP' : 'User',
+    classname: persistedClassname || (persistedIsVip ? 'VIP' : 'User'),
   };
 }
 
@@ -337,18 +340,17 @@ function MamFields({ register, errors, watch, setValue, formTestResult, indexerI
         </div>
         <p className="text-sm text-muted-foreground mt-1">Deselect all for unrestricted language search</p>
       </div>
-      <div className="sm:col-span-2">
-        <label htmlFor="indexerSearchType" className="block text-sm font-medium mb-2">Search Type</label>
-        <SelectWithChevron
-          id="indexerSearchType"
-          {...register('settings.searchType')}
-        >
-          {MAM_SEARCH_TYPES.map((st) => (
-            <option key={st.value} value={st.value}>{st.label}</option>
-          ))}
-        </SelectWithChevron>
-        <p className="text-sm text-muted-foreground mt-1">Auto-overridden by VIP status when detected</p>
-      </div>
+      {mamStatus && (
+        <div className="sm:col-span-2">
+          {mamStatus.classname === 'Mouse' ? (
+            <p className="text-sm text-amber-500 font-medium">Mouse class — searches disabled until ratio improves</p>
+          ) : mamStatus.isVip ? (
+            <p className="text-sm text-muted-foreground">Searching all torrents including VIP</p>
+          ) : (
+            <p className="text-sm text-muted-foreground">Searching non-VIP and freeleech torrents</p>
+          )}
+        </div>
+      )}
     </>
   );
 }
