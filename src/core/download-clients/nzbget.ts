@@ -219,7 +219,7 @@ export class NZBGetClient implements DownloadClientAdapter {
 
   private mapHistoryItem(item: NZBGetHistoryItem): DownloadItemInfo {
     const size = Math.round((item.FileSizeMB || 0) * 1024 * 1024);
-    const status = this.mapHistoryStatus(item.Status);
+    const status = this.mapHistoryStatus(item);
 
     return {
       id: String(item.NZBID),
@@ -251,11 +251,22 @@ export class NZBGetClient implements DownloadClientAdapter {
     return 'downloading';
   }
 
-  private mapHistoryStatus(status: string): DownloadItemInfo['status'] {
+  private mapHistoryStatus(item: NZBGetHistoryItem): DownloadItemInfo['status'] {
     // NZBGet history statuses: SUCCESS/*, FAILURE/*, DELETED/*
-    const upper = status.toUpperCase();
-    if (upper.startsWith('SUCCESS')) return 'completed';
+    const upper = item.Status.toUpperCase();
     if (upper.startsWith('FAILURE') || upper.startsWith('DELETED')) return 'error';
+    if (!upper.startsWith('SUCCESS')) return 'downloading';
+
+    // Degradation model: SUCCESS can be downgraded by post-processing failures
+    const par = item.ParStatus?.toUpperCase();
+    if (par && par !== 'SUCCESS' && par !== 'NONE') return 'error';
+
+    const unpack = item.UnpackStatus?.toUpperCase();
+    if (unpack && unpack !== 'SUCCESS' && unpack !== 'NONE') return 'error';
+
+    const move = item.MoveStatus?.toUpperCase();
+    if (move && move !== 'SUCCESS' && move !== 'NONE') return 'downloading';
+
     return 'completed';
   }
 }

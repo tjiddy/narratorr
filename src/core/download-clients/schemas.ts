@@ -64,4 +64,7 @@ export const nzbgetHistorySchema = z.object({
   DestDir: z.string().default(''),
   HistoryTime: z.number().default(0),
   MinPostTime: z.number().default(0),
+  ParStatus: z.string().optional(),
+  UnpackStatus: z.string().optional(),
+  MoveStatus: z.string().optional(),
 }).passthrough();
