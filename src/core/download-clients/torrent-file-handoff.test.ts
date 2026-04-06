@@ -93,12 +93,54 @@ describe('Torrent file handoff — data: URI pipeline', () => {
       expect(hash).toBe('a94a8fe5ccb19ba61c4c0873d391e987982fbbd3');
     });
 
-    it('rejects non-magnet URL when torrentFile not provided', async () => {
-      server.use(qbLoginHandler());
+    it('fetches HTTP .torrent URL and uploads via multipart when torrentFile not provided (end-to-end)', async () => {
+      let capturedContentType = '';
+      let bodyContainsTorrent = false;
+
+      server.use(
+        qbLoginHandler(),
+        http.get('https://indexer.example.com/download/12345', () => {
+          return new HttpResponse(fakeTorrentFile, {
+            headers: { 'Content-Type': 'application/x-bittorrent' },
+          });
+        }),
+        http.post(`${QB_BASE}/api/v2/torrents/add`, async ({ request }) => {
+          capturedContentType = request.headers.get('content-type') || '';
+          const text = await request.text();
+          bodyContainsTorrent = text.includes('application/x-bittorrent');
+          return new HttpResponse('');
+        }),
+      );
 
       const client = new QBittorrentClient(qbConfig);
-      await expect(client.addDownload('https://example.com/file.torrent'))
-        .rejects.toThrow('only supports magnet URIs');
+      const hash = await client.addDownload('https://indexer.example.com/download/12345');
+
+      expect(capturedContentType).toContain('multipart/form-data');
+      expect(bodyContainsTorrent).toBe(true);
+      expect(hash).toBe('e4c4ed54fbde46fb891a9ef51a368f7cde76eb74');
+    });
+
+    it('torrentFile option still bypasses URL fetch when both URL and file provided', async () => {
+      let fetchCalled = false;
+
+      server.use(
+        qbLoginHandler(),
+        http.get('https://indexer.example.com/download/12345', () => {
+          fetchCalled = true;
+          return new HttpResponse(fakeTorrentFile);
+        }),
+        http.post(`${QB_BASE}/api/v2/torrents/add`, () => {
+          return new HttpResponse('');
+        }),
+      );
+
+      const client = new QBittorrentClient(qbConfig);
+      const hash = await client.addDownload('https://indexer.example.com/download/12345', {
+        torrentFile: fakeTorrentFile,
+      });
+
+      expect(fetchCalled).toBe(false);
+      expect(hash).toBe('e4c4ed54fbde46fb891a9ef51a368f7cde76eb74');
     });
   });
 
