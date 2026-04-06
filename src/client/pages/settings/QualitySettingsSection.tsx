@@ -7,17 +7,12 @@ import { toast } from 'sonner';
 import { api } from '@/lib/api';
 import { queryKeys } from '@/lib/queryKeys';
 import { ZapIcon } from '@/components/icons';
-import { SelectWithChevron } from '@/components/settings/SelectWithChevron';
-import { protocolPreferenceSchema, DEFAULT_SETTINGS, qualityFilteringFormSchema } from '../../../shared/schemas.js';
+import { DEFAULT_SETTINGS, qualityFormSchema } from '../../../shared/schemas.js';
 import { SettingsSection } from './SettingsSection';
 
-const PROTOCOL_LABELS: Record<string, string> = {
-  none: 'No Preference',
-  usenet: 'Prefer Usenet',
-  torrent: 'Prefer Torrent',
-};
+const qualityGateFormSchema = qualityFormSchema.pick({ grabFloor: true, minSeeders: true });
 
-type QualityFormData = z.infer<typeof qualityFilteringFormSchema>;
+type QualityGateFormData = z.infer<typeof qualityGateFormSchema>;
 
 export function QualitySettingsSection() {
   const queryClient = useQueryClient();
@@ -27,19 +22,25 @@ export function QualitySettingsSection() {
     queryFn: api.getSettings,
   });
 
-  const { register, handleSubmit, reset, formState: { errors, isDirty } } = useForm<QualityFormData>({
-    defaultValues: DEFAULT_SETTINGS.quality,
-    resolver: zodResolver(qualityFilteringFormSchema),
+  const { register, handleSubmit, reset, formState: { errors, isDirty } } = useForm<QualityGateFormData>({
+    defaultValues: {
+      grabFloor: DEFAULT_SETTINGS.quality.grabFloor,
+      minSeeders: DEFAULT_SETTINGS.quality.minSeeders,
+    },
+    resolver: zodResolver(qualityGateFormSchema),
   });
 
   useEffect(() => {
     if (settings?.quality && !isDirty) {
-      reset(settings.quality);
+      reset({
+        grabFloor: settings.quality.grabFloor,
+        minSeeders: settings.quality.minSeeders,
+      });
     }
   }, [settings, reset, isDirty]);
 
   const mutation = useMutation({
-    mutationFn: (data: QualityFormData) => api.updateSettings({ quality: data }),
+    mutationFn: (data: QualityGateFormData) => api.updateSettings({ quality: data }),
     onSuccess: (_result, submittedData) => {
       reset(submittedData);
       queryClient.invalidateQueries({ queryKey: queryKeys.settings() });
@@ -54,7 +55,7 @@ export function QualitySettingsSection() {
     <SettingsSection
       icon={<ZapIcon className="w-5 h-5 text-primary" />}
       title="Quality"
-      description="Quality filtering and protocol preferences"
+      description="Minimum bar to grab"
     >
       <form onSubmit={handleSubmit((data) => mutation.mutate(data))} className="space-y-5">
         <div>
@@ -79,20 +80,6 @@ export function QualitySettingsSection() {
         </div>
 
         <div>
-          <label htmlFor="protocolPreference" className="block text-sm font-medium mb-2">Protocol Preference</label>
-          <SelectWithChevron id="protocolPreference" {...register('protocolPreference')}>
-            {protocolPreferenceSchema.options.map((pref) => (
-              <option key={pref} value={pref}>
-                {PROTOCOL_LABELS[pref] ?? pref}
-              </option>
-            ))}
-          </SelectWithChevron>
-          <p className="text-sm text-muted-foreground mt-2">
-            Preferred download protocol. Affects result ordering but does not exclude results.
-          </p>
-        </div>
-
-        <div>
           <label htmlFor="minSeeders" className="block text-sm font-medium mb-2">Minimum Seeders</label>
           <input
             id="minSeeders"
@@ -110,48 +97,6 @@ export function QualitySettingsSection() {
           )}
           <p className="text-sm text-muted-foreground mt-2">
             Torrent results with fewer seeders are hidden. Does not affect Usenet results. Set to 0 to disable.
-          </p>
-        </div>
-
-        <div>
-          <label htmlFor="rejectWords" className="block text-sm font-medium mb-2">Reject Words</label>
-          <input
-            id="rejectWords"
-            type="text"
-            {...register('rejectWords')}
-            className="w-full px-4 py-3 bg-background border border-border rounded-xl focus-ring focus:border-transparent transition-all"
-            placeholder="German, Abridged, Full Cast, Dramatized"
-          />
-          <p className="text-sm text-muted-foreground mt-2">
-            Comma-separated words. Releases with titles matching any word are excluded from search results.
-          </p>
-        </div>
-
-        <div>
-          <label htmlFor="requiredWords" className="block text-sm font-medium mb-2">Required Words</label>
-          <input
-            id="requiredWords"
-            type="text"
-            {...register('requiredWords')}
-            className="w-full px-4 py-3 bg-background border border-border rounded-xl focus-ring focus:border-transparent transition-all"
-            placeholder="M4B, Unabridged"
-          />
-          <p className="text-sm text-muted-foreground mt-2">
-            Comma-separated words. When set, only releases with titles matching at least one word are shown.
-          </p>
-        </div>
-
-        <div>
-          <label htmlFor="preferredLanguage" className="block text-sm font-medium mb-2">Preferred Language</label>
-          <input
-            id="preferredLanguage"
-            type="text"
-            {...register('preferredLanguage')}
-            className="w-full px-4 py-3 bg-background border border-border rounded-xl focus-ring focus:border-transparent transition-all"
-            placeholder="english"
-          />
-          <p className="text-sm text-muted-foreground mt-2">
-            Preferred language for search results (e.g. english, german, french). Results in other languages are ranked lower but not excluded. Leave empty to disable.
           </p>
         </div>
 
