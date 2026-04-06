@@ -178,6 +178,57 @@ function DownloadStatusDetails({
   );
 }
 
+function DownloadTitle({ download, compact }: { download: Download; compact: boolean }) {
+  return (
+    <h3 className={`font-display font-semibold line-clamp-2 ${compact ? 'text-base' : 'text-lg'}`}>
+      {download.bookId != null ? (
+        <Link to={`/books/${download.bookId}`} className="hover:text-primary transition-colors">
+          {download.title}
+        </Link>
+      ) : (
+        download.title
+      )}
+    </h3>
+  );
+}
+
+function DownloadMetadata({ download, compact, config, StatusIcon }: {
+  download: Download;
+  compact: boolean;
+  config: { bgColor: string; textColor: string; label: string };
+  StatusIcon: React.ElementType;
+}) {
+  return (
+    <div className="flex flex-wrap items-center gap-3 mt-1.5 text-sm text-muted-foreground">
+      {download.size && <span>{formatBytes(download.size)}</span>}
+      {download.seeders != null && download.seeders > 0 && download.protocol !== 'usenet' && (
+        <span>{download.seeders} seeders</span>
+      )}
+      <ProtocolBadge protocol={download.protocol} />
+      {download.indexerName && (
+        <span
+          data-testid="indexer-badge"
+          className="text-xs px-1.5 py-0.5 rounded-md font-medium bg-muted/50 text-muted-foreground"
+        >
+          {download.indexerName}
+        </span>
+      )}
+      <span className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded-lg text-xs font-medium ${config.bgColor} ${config.textColor}`}>
+        <StatusIcon className="w-3 h-3" />
+        {config.label}
+      </span>
+      {compact && download.completedAt != null && (
+        <span
+          className="text-xs text-muted-foreground/50 tabular-nums"
+          title={new Date(download.completedAt).toLocaleString()}
+        >
+          · {formatRelativeDate(download.completedAt)}
+        </span>
+      )}
+    </div>
+  );
+}
+
 export function DownloadCard({
   download,
   onCancel,
@@ -235,42 +286,8 @@ export function DownloadCard({
         <div className="flex-1 min-w-0">
           <div className="flex items-start justify-between gap-4">
             <div className="min-w-0">
-              <h3 className={`font-display font-semibold line-clamp-2 ${compact ? 'text-base' : 'text-lg'}`}>
-                {download.bookId != null ? (
-                  <Link to={`/books/${download.bookId}`} className="hover:text-primary transition-colors">
-                    {download.title}
-                  </Link>
-                ) : (
-                  download.title
-                )}
-              </h3>
-              <div className="flex flex-wrap items-center gap-3 mt-1.5 text-sm text-muted-foreground">
-                {download.size && <span>{formatBytes(download.size)}</span>}
-                {download.seeders != null && download.seeders > 0 && download.protocol !== 'usenet' && (
-                  <span>{download.seeders} seeders</span>
-                )}
-                <ProtocolBadge protocol={download.protocol} />
-                {download.indexerName && (
-                  <span
-                    data-testid="indexer-badge"
-                    className="text-xs px-1.5 py-0.5 rounded-md font-medium bg-muted/50 text-muted-foreground"
-                  >
-                    {download.indexerName}
-                  </span>
-                )}
-                <span className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded-lg text-xs font-medium ${config.bgColor} ${config.textColor}`}>
-                  <StatusIcon className="w-3 h-3" />
-                  {config.label}
-                </span>
-                {compact && download.completedAt != null && (
-                  <span
-                    className="text-xs text-muted-foreground/50 tabular-nums"
-                    title={new Date(download.completedAt).toLocaleString()}
-                  >
-                    · {formatRelativeDate(download.completedAt)}
-                  </span>
-                )}
-              </div>
+              <DownloadTitle download={download} compact={compact} />
+              <DownloadMetadata download={download} compact={compact} config={config} StatusIcon={StatusIcon} />
             </div>
 
             {/* Hide top-level actions for pending_review — they move into the expand panel */}
