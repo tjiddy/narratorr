@@ -1,5 +1,34 @@
 # Workflow Log
 
+## #357 Activity page download card polish — 2026-04-06
+**Skill path:** /elaborate → /respond-to-spec-review → /implement → /claim → /plan → /handoff
+**Outcome:** success — PR #382
+
+### Metrics
+- Files changed: 9 | Tests added/modified: 17 (15 new + 2 updated)
+- Quality gate runs: 2 (fail on attempt 1 — complexity, pass on attempt 2)
+- Fix iterations: 1 (extracted DownloadTitle/DownloadMetadata to fix ESLint complexity)
+- Context compactions: 0
+
+### Workflow experience
+- What went smoothly: TDD cycle was clean — all 58 existing tests survived the `renderWithProviders` migration unchanged. Type change blast radius was caught immediately by typecheck.
+- Friction / issues encountered: ESLint complexity limit (15) hit after adding 4 new conditional branches to DownloadCard. Required extracting 2 helper components. The optional-to-nullable type change (`seeders?: number` → `seeders: number | null`) broke 7 inline fixtures in SearchReleasesModal.test.tsx that weren't using the shared factory.
+
+### Token efficiency
+- Highest-token actions: Explore subagent for plan codebase exploration (read full test file at 541 lines)
+- Avoidable waste: Could have predicted the complexity violation from the plan (4 new conditionals added to a component already near the limit)
+- Suggestions: Check current complexity before adding branches — `npx eslint --rule 'complexity: [warn, 15]' <file>` as a pre-flight
+
+### Infrastructure gaps
+- Repeated workarounds: Inline Download fixtures in SearchReleasesModal.test.tsx don't use `createMockDownload()` — they'll break again on any Download type change
+- Missing tooling / config: No automated blast radius check for type changes — could be a pre-commit script
+- Unresolved debt: DownloadActions dead code (#306 — already logged in debt.md)
+
+### Wish I'd Known
+1. Changing optional to nullable in TypeScript breaks inline fixtures that omit the field, not just those that set it to undefined — grep `**/*.test.*` for the type name before committing (see `optional-to-nullable-blast-radius.md`)
+2. Adding a `<Link>` to any component requires migrating ALL existing tests to `renderWithProviders` — plan it as step 0, not as a reaction to test failures (see `render-to-renderWithProviders-migration.md`)
+3. ESLint complexity of 15 is tight — count existing branches before adding new ones, and pre-plan extraction if approaching the limit
+
 ## #371 Unify settings registries — co-locate UI field components with entity registries — 2026-04-06
 **Skill path:** /elaborate → /respond-to-spec-review (x3) → /implement → /claim → /plan → /handoff
 **Outcome:** success — PR #381
