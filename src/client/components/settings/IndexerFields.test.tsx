@@ -607,7 +607,7 @@ describe('IndexerFields', () => {
         metadata: { username: 'User1', classname: 'VIP', isVip: true },
       });
 
-      await user.click(screen.getByTitle('Refresh VIP status'));
+      await user.click(screen.getByTitle('Refresh MAM status'));
 
       await waitFor(() => {
         expect((api.testIndexerConfig as Mock)).toHaveBeenCalledTimes(1);
@@ -650,7 +650,7 @@ describe('IndexerFields', () => {
       expect(overlayWrapper.className).not.toContain('z-50');
     });
 
-    it('MamStatusBadge renders correctly after successful detection', async () => {
+    it('MamAccountCard renders correctly after successful detection', async () => {
       (api.testIndexerConfig as Mock).mockResolvedValue({
         success: true,
         metadata: { username: 'TestUser', classname: 'Power User', isVip: true },
@@ -712,7 +712,7 @@ describe('IndexerFields', () => {
         expect(screen.getByText('OldUser')).toBeInTheDocument();
       });
 
-      await user.click(screen.getByTitle('Refresh VIP status'));
+      await user.click(screen.getByTitle('Refresh MAM status'));
 
       await waitFor(() => {
         expect((api.testIndexerConfig as Mock)).toHaveBeenCalledWith(
@@ -756,7 +756,7 @@ describe('IndexerFields', () => {
       const proxyToggle = screen.getByLabelText('Route through proxy');
       await user.click(proxyToggle);
 
-      await user.click(screen.getByTitle('Refresh VIP status'));
+      await user.click(screen.getByTitle('Refresh MAM status'));
 
       await waitFor(() => {
         expect((api.testIndexerConfig as Mock)).toHaveBeenCalledWith(
@@ -782,7 +782,7 @@ describe('IndexerFields', () => {
         expect(screen.getByText('OldUser')).toBeInTheDocument();
       });
 
-      await user.click(screen.getByTitle('Refresh VIP status'));
+      await user.click(screen.getByTitle('Refresh MAM status'));
 
       await waitFor(() => {
         expect(screen.getByText('FreshUser')).toBeInTheDocument();
@@ -819,7 +819,7 @@ describe('IndexerFields', () => {
         expect(screen.getByText('OldUser')).toBeInTheDocument();
       });
 
-      await user.click(screen.getByTitle('Refresh VIP status'));
+      await user.click(screen.getByTitle('Refresh MAM status'));
 
       await waitFor(() => {
         expect(screen.getByText('NewVipUser')).toBeInTheDocument();
@@ -842,7 +842,7 @@ describe('IndexerFields', () => {
         expect(screen.getByText('OldUser')).toBeInTheDocument();
       });
 
-      await user.click(screen.getByTitle('Refresh VIP status'));
+      await user.click(screen.getByTitle('Refresh MAM status'));
 
       await waitFor(() => {
         expect(screen.getByText('Checking MAM status…')).toBeInTheDocument();
@@ -858,7 +858,7 @@ describe('IndexerFields', () => {
         expect(screen.getByText('OldUser')).toBeInTheDocument();
       });
 
-      await user.click(screen.getByTitle('Refresh VIP status'));
+      await user.click(screen.getByTitle('Refresh MAM status'));
 
       await waitFor(() => {
         expect(screen.getByText('Connection failed')).toBeInTheDocument();
@@ -878,7 +878,7 @@ describe('IndexerFields', () => {
         expect(screen.getByText('OldUser')).toBeInTheDocument();
       });
 
-      await user.click(screen.getByTitle('Refresh VIP status'));
+      await user.click(screen.getByTitle('Refresh MAM status'));
 
       await waitFor(() => {
         expect(screen.getByText('MAM ID expired')).toBeInTheDocument();
@@ -920,7 +920,7 @@ describe('IndexerFields', () => {
         metadata: { username: 'User1', classname: 'VIP', isVip: true },
       });
 
-      await user.click(screen.getByTitle('Refresh VIP status'));
+      await user.click(screen.getByTitle('Refresh MAM status'));
 
       await waitFor(() => {
         expect((api.testIndexerConfig as Mock)).toHaveBeenCalledWith(
@@ -945,7 +945,7 @@ describe('IndexerFields', () => {
         expect(screen.getByText('OldUser')).toBeInTheDocument();
       });
 
-      await user.click(screen.getByTitle('Refresh VIP status'));
+      await user.click(screen.getByTitle('Refresh MAM status'));
 
       // Should not call API — sentinel without indexerId means no saved credentials to resolve
       expect((api.testIndexerConfig as Mock)).not.toHaveBeenCalled();
@@ -1021,22 +1021,22 @@ describe('IndexerFields', () => {
       return <IndexerFields selectedType="myanonamouse" register={register} errors={errors} watch={watch} setValue={setValue} />;
     }
 
-    it('renders "Searching all torrents including VIP" when classname is VIP and isVip is true', () => {
+    it('renders "All torrents including VIP" in card when classname is VIP and isVip is true', () => {
       renderWithProviders(<MamFieldWithStatus isVip={true} classname="VIP" />);
-      expect(screen.getByText('Searching all torrents including VIP')).toBeInTheDocument();
+      expect(screen.getByText('All torrents including VIP')).toBeInTheDocument();
     });
 
-    it('renders "Searching non-VIP and freeleech torrents" when classname is Power User and isVip is false', () => {
+    it('renders "Non-VIP and freeleech torrents" in card when classname is Power User and isVip is false', () => {
       renderWithProviders(<MamFieldWithStatus isVip={false} classname="Power User" />);
-      expect(screen.getByText('Searching non-VIP and freeleech torrents')).toBeInTheDocument();
+      expect(screen.getByText('Non-VIP and freeleech torrents')).toBeInTheDocument();
     });
 
-    it('renders amber warning when classname is Mouse', () => {
+    it('renders warning in card when classname is Mouse', () => {
       renderWithProviders(<MamFieldWithStatus isVip={false} classname="Mouse" />);
-      expect(screen.getByText(/Mouse class — searches disabled/)).toBeInTheDocument();
+      expect(screen.getByText(/Search disabled — Mouse class cannot download/)).toBeInTheDocument();
     });
 
-    it('renders no status messaging when no isVip in settings', () => {
+    it('renders no card when no isVip in settings', () => {
       function MamFieldNoStatus() {
         const { register, watch, setValue, formState: { errors } } = useForm<CreateIndexerFormData>({
           defaultValues: {
@@ -1047,7 +1047,7 @@ describe('IndexerFields', () => {
         return <IndexerFields selectedType="myanonamouse" register={register} errors={errors} watch={watch} setValue={setValue} />;
       }
       renderWithProviders(<MamFieldNoStatus />);
-      expect(screen.queryByText(/Searching/)).not.toBeInTheDocument();
+      expect(screen.queryByText('Username')).not.toBeInTheDocument();
       expect(screen.queryByText(/Mouse class/)).not.toBeInTheDocument();
     });
   });
@@ -1063,17 +1063,100 @@ describe('IndexerFields', () => {
       return <IndexerFields selectedType="myanonamouse" register={register} errors={errors} watch={watch} setValue={setValue} />;
     }
 
-    it('badge shows "Power User" when classname is "Power User"', () => {
+    it('card shows "Power User" when classname is "Power User"', () => {
       renderWithProviders(<MamFieldWithPersistedClass classname="Power User" />);
       expect(screen.getByText('Power User')).toBeInTheDocument();
     });
 
-    it('badge shows "Mouse" when classname is "Mouse"', () => {
+    it('card shows "Mouse" when classname is "Mouse" with search disabled warning', () => {
       renderWithProviders(<MamFieldWithPersistedClass classname="Mouse" />);
-      // Badge shows classname "Mouse" and warning shows "Mouse class — ..."
-      expect(screen.getAllByText(/Mouse/).length).toBeGreaterThanOrEqual(1);
-      // Verify warning is also shown
-      expect(screen.getByText(/searches disabled until ratio improves/)).toBeInTheDocument();
+      expect(screen.getByText('Mouse')).toBeInTheDocument();
+      expect(screen.getByText(/Search disabled — Mouse class cannot download/)).toBeInTheDocument();
+    });
+  });
+
+  describe('#383 — MamAccountCard consolidation', () => {
+    function MamFieldWithStatus({ isVip, classname }: { isVip: boolean; classname?: string }) {
+      const { register, watch, setValue, formState: { errors } } = useForm<CreateIndexerFormData>({
+        defaultValues: {
+          name: '', type: 'myanonamouse',
+          settings: { mamId: 'test-id', searchLanguages: [1], isVip, mamUsername: 'testuser', ...(classname !== undefined ? { classname } : {}) } as Record<string, unknown>,
+        },
+      });
+      return <IndexerFields selectedType="myanonamouse" register={register} errors={errors} watch={watch} setValue={setValue} />;
+    }
+
+    it('card displays Username, Class, and Search rows for VIP user', () => {
+      renderWithProviders(<MamFieldWithStatus isVip={true} classname="VIP" />);
+      expect(screen.getByText('Username')).toBeInTheDocument();
+      expect(screen.getByText('testuser')).toBeInTheDocument();
+      expect(screen.getByText('Class')).toBeInTheDocument();
+      expect(screen.getByText('VIP')).toBeInTheDocument();
+      expect(screen.getByText('Search')).toBeInTheDocument();
+      expect(screen.getByText('All torrents including VIP')).toBeInTheDocument();
+    });
+
+    it('card displays "All torrents including VIP" search description for VIP', () => {
+      renderWithProviders(<MamFieldWithStatus isVip={true} classname="Elite VIP" />);
+      expect(screen.getByText('All torrents including VIP')).toBeInTheDocument();
+    });
+
+    it('card displays "Non-VIP and freeleech torrents" search description for regular class', () => {
+      renderWithProviders(<MamFieldWithStatus isVip={false} classname="Power User" />);
+      expect(screen.getByText('Non-VIP and freeleech torrents')).toBeInTheDocument();
+    });
+
+    it('card displays "Search disabled" warning for Mouse class', () => {
+      renderWithProviders(<MamFieldWithStatus isVip={false} classname="Mouse" />);
+      expect(screen.getByText(/Search disabled — Mouse class cannot download/)).toBeInTheDocument();
+    });
+
+    it('Mouse detection is case-sensitive — lowercase "mouse" does not trigger warning', () => {
+      renderWithProviders(<MamFieldWithStatus isVip={false} classname="mouse" />);
+      expect(screen.queryByText(/Search disabled/)).not.toBeInTheDocument();
+      expect(screen.getByText('Non-VIP and freeleech torrents')).toBeInTheDocument();
+    });
+
+    it('card does not render when mamStatus is null', () => {
+      function MamFieldNoStatus() {
+        const { register, watch, setValue, formState: { errors } } = useForm<CreateIndexerFormData>({
+          defaultValues: {
+            name: '', type: 'myanonamouse',
+            settings: { mamId: 'test-id', searchLanguages: [1] },
+          },
+        });
+        return <IndexerFields selectedType="myanonamouse" register={register} errors={errors} watch={watch} setValue={setValue} />;
+      }
+      renderWithProviders(<MamFieldNoStatus />);
+      expect(screen.queryByText('Username')).not.toBeInTheDocument();
+      expect(screen.queryByText('Class')).not.toBeInTheDocument();
+      expect(screen.queryByText('Search')).not.toBeInTheDocument();
+    });
+
+    it('missing classname falls back to "User" via deriveInitialMamStatus when isVip is false', () => {
+      renderWithProviders(<MamFieldWithStatus isVip={false} />);
+      // deriveInitialMamStatus fills classname as 'User' when not persisted and isVip is false
+      expect(screen.getByText('User')).toBeInTheDocument();
+      expect(screen.getByText('Non-VIP and freeleech torrents')).toBeInTheDocument();
+    });
+
+    it('renders "Unknown" when detection returns undefined classname', async () => {
+      (api.testIndexerConfig as Mock).mockResolvedValue({
+        success: true,
+        metadata: { username: 'TestUser', isVip: false },
+      });
+
+      const user = userEvent.setup();
+      renderWithProviders(<MamFieldWithStatus isVip={false} classname="Power User" />);
+
+      const mamIdInput = screen.getByLabelText('MAM ID');
+      await user.clear(mamIdInput);
+      await user.type(mamIdInput, 'new-id');
+      await user.tab();
+
+      await waitFor(() => {
+        expect(screen.getByText('Unknown')).toBeInTheDocument();
+      });
     });
   });
 });
