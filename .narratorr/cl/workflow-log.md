@@ -1,5 +1,34 @@
 # Workflow Log
 
+## #371 Unify settings registries — co-locate UI field components with entity registries — 2026-04-06
+**Skill path:** /elaborate → /respond-to-spec-review (x3) → /implement → /claim → /plan → /handoff
+**Outcome:** success — PR #381
+
+### Metrics
+- Files changed: 16 | Tests added/modified: 4 (2 new invariant test files, 2 updated test files)
+- Quality gate runs: 2 (pass on attempt 1 both times)
+- Fix iterations: 0
+- Context compactions: 0
+
+### Workflow experience
+- What went smoothly: Pure file extraction refactoring — existing tests caught any issues immediately. The barrel export pattern for client-side registries was clean and obvious.
+- Friction / issues encountered: Spec review took 3 rounds due to cascading precision issues (file reference → defaults gap → coverage matrix → narrative mismatch). Each round was one finding.
+
+### Token efficiency
+- Highest-token actions: Spec review rounds (3 rounds × full issue body read + comment parsing)
+- Avoidable waste: The 3 spec review rounds could have been 1 if the initial elaboration had done a full programmatic diff of SETTINGS_DEFAULTS vs registry entries
+- Suggestions: When elaborating issues that remove parallel maps, always run a programmatic diff to catch ALL gaps, not just the obvious ones
+
+### Infrastructure gaps
+- Repeated workarounds: None
+- Missing tooling / config: Frontend design skill not available — skipped design pass
+- Unresolved debt: Updated file path in debt.md for DetectionOverlay (moved from IndexerFields.tsx to indexer-fields/mam-fields.tsx)
+
+### Wish I'd Known
+1. The notifier registry had 5 missing fields, not 3 — a simple programmatic diff of SETTINGS_DEFAULTS keys vs all registry entries would have caught this upfront (see `notifier-settings-defaults-gap.md`)
+2. The existing IndexerCard.tsx already uses INDEXER_TYPES[0] — no change needed there, saving one module of work
+3. The barrel export pattern with `Record<string, Component>` type is the cleanest OCP pattern for client-side component registries that can't live in `shared/`
+
 ## #369 Download and serve cover images locally — 2026-04-06
 **Skill path:** /elaborate → /respond-to-spec-review (x2) → /implement → /claim → /plan → /handoff
 **Outcome:** success — PR #380
