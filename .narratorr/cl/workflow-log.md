@@ -1,5 +1,34 @@
 # Workflow Log
 
+## #368 Limit concurrent M4B merge jobs with queue — 2026-04-06
+**Skill path:** /elaborate → /respond-to-spec-review (x2) → /implement → /claim → /plan → /handoff
+**Outcome:** success — PR #379
+
+### Metrics
+- Files changed: 19 | Tests added/modified: ~87
+- Quality gate runs: 3 (pass on attempt 3 — lint max-lines, unused import, SSE event count)
+- Fix iterations: 3 (max-lines extraction, typecheck generic, SSE test count update)
+- Context compactions: 0
+
+### Workflow experience
+- What went smoothly: Spec review process caught real contract issues (merge_complete dual definition, missing pre-enqueue validation, useBookActions caller surface). The existing Semaphore utility + import service admission pattern made the queue implementation straightforward.
+- Friction / issues encountered: The deprecated `mergeBook()` method couldn't delegate to `executeMerge()` because mock `readdir` calls were consumed during validation then unavailable for execution. Had to keep duplicated validation+execution logic in `mergeBook` rather than DRY refactoring.
+
+### Token efficiency
+- Highest-token actions: Spec review rounds (3 comments x full body reads), Explore subagents for plan + self-review + coverage review
+- Avoidable waste: Could have anticipated max-lines violation earlier and planned extraction from the start
+- Suggestions: When adding >50 lines to a service file, check `wc -l` before writing tests
+
+### Infrastructure gaps
+- Repeated workarounds: None
+- Missing tooling / config: No linting pre-check for file size before implementation
+- Unresolved debt: Deprecated `mergeBook()` duplicates validation logic (logged in debt.md)
+
+### Wish I'd Known
+1. ESLint max-lines (400) is enforced — adding queue management + emit methods + deprecated compat method blew past the limit, requiring extraction mid-handoff
+2. `readdir` mock consumption ordering matters when a deprecated sync method delegates to an async method that re-reads the same path — keep validation and execution in the same call chain
+3. The `safeEmit` generic pattern needs `<T extends SSEEventType>` with explicit SSE types imported — `Parameters<...>` extraction doesn't resolve correctly through Fastify's EventBroadcaster interface
+
 ## #372 MAM: auto-refresh status before search, remove search type dropdown — 2026-04-06
 **Skill path:** /implement → /claim → /plan → /handoff
 **Outcome:** success — PR #378

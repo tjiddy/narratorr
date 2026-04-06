@@ -18,6 +18,8 @@
 - **`src/server/services/quality-gate-orchestrator.ts`**: `processOneDownload()` calls `getCompletedDownloads()` (loads ALL completed downloads) and then `.find()` by ID. Should have a dedicated `getCompletedDownloadById(id)` query in `QualityGateService` for O(1) lookup instead of O(N) scan. Low priority — completed download count is typically small. (discovered in #358)
 - **`src/core/indexers/types.ts` / `src/server/services/indexer.service.ts` / `src/client/lib/api/settings.ts`**: `test()` return type (including `warning`) is defined as inline types in 3 places — adapter interface, service methods, and client TestResult. Adding a new field requires updating all 3. Extract a shared `TestResult` type from the adapter interface and reuse it in service and client. DRY-1 parallel types. (discovered in #372)
 
+- **`src/server/services/merge.service.ts`**: Deprecated `mergeBook()` method (lines 222-270) duplicates validation and execution logic from `validatePreEnqueue()` + `executeMerge()`. Kept for backward compatibility with 40+ existing tests that test the synchronous merge path. Should be removed once existing tests are migrated to test via `enqueueMerge()`. (discovered in #368)
+
 ## Accepted Debt
 
 Items below are real but not worth fixing — the cost of change outweighs the benefit.
