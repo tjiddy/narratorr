@@ -366,7 +366,7 @@ export class QBittorrentClient implements DownloadClientAdapter {
     // to catch the incomplete→complete directory move race condition
     if (mapped === 'seeding' && contentPath) {
       const rel = relative(savePath, contentPath);
-      if (rel.startsWith('..') || relative(savePath, contentPath) === contentPath) {
+      if (rel.startsWith('..') || rel === contentPath) {
         return 'downloading';
       }
     }
