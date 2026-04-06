@@ -135,6 +135,14 @@ export function useEventSource(apiKey: string | null) {
         case 'error': toast.error(message, { duration: 5000 }); break;
       }
     }
+
+    // Enrichment warning on merge_complete
+    if (type === 'merge_complete' && 'enrichmentWarning' in data) {
+      const warning = (data as SSEEventPayloads['merge_complete']).enrichmentWarning;
+      if (warning) {
+        toast.warning(warning);
+      }
+    }
   }, [queryClient]);
 
   useEffect(() => {
@@ -158,6 +166,7 @@ export function useEventSource(apiKey: string | null) {
       'download_progress', 'download_status_change', 'book_status_change',
       'import_complete', 'grab_started', 'review_needed', 'merge_complete',
       'merge_started', 'merge_progress', 'merge_failed',
+      'merge_queued', 'merge_queue_updated',
     ];
 
     for (const type of eventTypes) {
@@ -198,7 +207,10 @@ export function useEventSource(apiKey: string | null) {
 }
 
 function updateMergeProgressFromEvent(type: SSEEventType, data: SSEEventPayloads[typeof type]): void {
-  if (type === 'merge_started' && 'book_id' in data) {
+  if ((type === 'merge_queued' || type === 'merge_queue_updated') && 'book_id' in data) {
+    const queueData = data as { book_id: number; book_title: string; position: number };
+    setMergeProgress(queueData.book_id, { phase: 'queued', position: queueData.position });
+  } else if (type === 'merge_started' && 'book_id' in data) {
     setMergeProgress((data as SSEEventPayloads['merge_started']).book_id, { phase: 'starting' });
   } else if (type === 'merge_progress' && 'book_id' in data) {
     const progressData = data as SSEEventPayloads['merge_progress'];

@@ -34,12 +34,13 @@ describe('bookStatusSchema widening', () => {
 });
 
 describe('SSE event schemas', () => {
-  it('defines all 10 event types', () => {
+  it('defines all 12 event types', () => {
     const types = sseEventTypeSchema.options;
     expect(types).toEqual([
       'download_progress', 'download_status_change', 'book_status_change',
       'import_complete', 'grab_started', 'review_needed', 'merge_complete',
       'merge_started', 'merge_progress', 'merge_failed',
+      'merge_queued', 'merge_queue_updated',
     ]);
   });
 

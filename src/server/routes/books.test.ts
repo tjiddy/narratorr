@@ -1725,25 +1725,27 @@ describe('PUT /api/books/:id — array update contract (#71)', () => {
   });
 
   describe('POST /api/books/:id/merge-to-m4b', () => {
-    const mergeResult = {
-      bookId: 1,
-      outputFile: '/library/Author/Title/Title.m4b',
-      filesReplaced: 12,
-      message: 'Merged 12 files into Title.m4b',
-    };
-
-    it('returns 200 with merge result on success', async () => {
-      (services.merge.mergeBook as Mock).mockResolvedValue(mergeResult);
+    it('returns 202 with { status: started, bookId } when slot available', async () => {
+      (services.merge.enqueueMerge as Mock).mockResolvedValue({ status: 'started', bookId: 1 });
 
       const res = await app.inject({ method: 'POST', url: '/api/books/1/merge-to-m4b' });
 
-      expect(res.statusCode).toBe(200);
-      expect(JSON.parse(res.payload)).toEqual(mergeResult);
-      expect(services.merge.mergeBook).toHaveBeenCalledWith(1);
+      expect(res.statusCode).toBe(202);
+      expect(JSON.parse(res.payload)).toEqual({ status: 'started', bookId: 1 });
+      expect(services.merge.enqueueMerge).toHaveBeenCalledWith(1);
+    });
+
+    it('returns 202 with { status: queued, bookId, position } when no slot', async () => {
+      (services.merge.enqueueMerge as Mock).mockResolvedValue({ status: 'queued', bookId: 1, position: 2 });
+
+      const res = await app.inject({ method: 'POST', url: '/api/books/1/merge-to-m4b' });
+
+      expect(res.statusCode).toBe(202);
+      expect(JSON.parse(res.payload)).toEqual({ status: 'queued', bookId: 1, position: 2 });
     });
 
     it('returns 404 when book not found', async () => {
-      (services.merge.mergeBook as Mock).mockRejectedValue(new MergeError('Book not found', 'NOT_FOUND'));
+      (services.merge.enqueueMerge as Mock).mockRejectedValue(new MergeError('Book not found', 'NOT_FOUND'));
 
       const res = await app.inject({ method: 'POST', url: '/api/books/1/merge-to-m4b' });
 
@@ -1751,7 +1753,7 @@ describe('PUT /api/books/:id — array update contract (#71)', () => {
     });
 
     it('returns 400 when book has no library path', async () => {
-      (services.merge.mergeBook as Mock).mockRejectedValue(new MergeError('Book has no path', 'NO_PATH'));
+      (services.merge.enqueueMerge as Mock).mockRejectedValue(new MergeError('Book has no path', 'NO_PATH'));
 
       const res = await app.inject({ method: 'POST', url: '/api/books/1/merge-to-m4b' });
 
@@ -1760,7 +1762,7 @@ describe('PUT /api/books/:id — array update contract (#71)', () => {
     });
 
     it('returns 400 when book is not in imported status', async () => {
-      (services.merge.mergeBook as Mock).mockRejectedValue(new MergeError('Book is not imported', 'NO_STATUS'));
+      (services.merge.enqueueMerge as Mock).mockRejectedValue(new MergeError('Book is not imported', 'NO_STATUS'));
 
       const res = await app.inject({ method: 'POST', url: '/api/books/1/merge-to-m4b' });
 
@@ -1768,7 +1770,7 @@ describe('PUT /api/books/:id — array update contract (#71)', () => {
     });
 
     it('returns 400 when no top-level audio files found at book path', async () => {
-      (services.merge.mergeBook as Mock).mockRejectedValue(new MergeError('No top-level audio files', 'NO_TOP_LEVEL_FILES'));
+      (services.merge.enqueueMerge as Mock).mockRejectedValue(new MergeError('No top-level audio files', 'NO_TOP_LEVEL_FILES'));
 
       const res = await app.inject({ method: 'POST', url: '/api/books/1/merge-to-m4b' });
 
@@ -1776,7 +1778,15 @@ describe('PUT /api/books/:id — array update contract (#71)', () => {
     });
 
     it('returns 409 when merge already in progress for this book', async () => {
-      (services.merge.mergeBook as Mock).mockRejectedValue(new MergeError('Merge already in progress', 'ALREADY_IN_PROGRESS'));
+      (services.merge.enqueueMerge as Mock).mockRejectedValue(new MergeError('Merge already in progress', 'ALREADY_IN_PROGRESS'));
+
+      const res = await app.inject({ method: 'POST', url: '/api/books/1/merge-to-m4b' });
+
+      expect(res.statusCode).toBe(409);
+    });
+
+    it('returns 409 when merge already queued for this book', async () => {
+      (services.merge.enqueueMerge as Mock).mockRejectedValue(new MergeError('Merge already queued for this book', 'ALREADY_QUEUED'));
 
       const res = await app.inject({ method: 'POST', url: '/api/books/1/merge-to-m4b' });
 
@@ -1784,7 +1794,7 @@ describe('PUT /api/books/:id — array update contract (#71)', () => {
     });
 
     it('returns 503 when ffmpeg is not configured', async () => {
-      (services.merge.mergeBook as Mock).mockRejectedValue(new MergeError('ffmpeg is not configured', 'FFMPEG_NOT_CONFIGURED'));
+      (services.merge.enqueueMerge as Mock).mockRejectedValue(new MergeError('ffmpeg is not configured', 'FFMPEG_NOT_CONFIGURED'));
 
       const res = await app.inject({ method: 'POST', url: '/api/books/1/merge-to-m4b' });
 

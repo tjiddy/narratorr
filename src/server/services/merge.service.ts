@@ -13,6 +13,9 @@ import { scanAudioDirectory } from '../../core/utils/audio-scanner.js';
 import { enrichBookFromAudio } from './enrichment-utils.js';
 import { AUDIO_EXTENSIONS } from '../../core/utils/audio-constants.js';
 import { toSourceBitrateKbps, logBitrateCapping } from '../utils/audio-bitrate.js';
+import { Semaphore } from '../utils/semaphore.js';
+import type { SSEEventType, SSEEventPayloads } from '../../shared/schemas/sse-events.js';
+import { createStderrDeduplicator } from '../utils/stderr-deduplicator.js';
 
 export interface MergeResult {
   bookId: number;
@@ -25,15 +28,23 @@ export interface MergeResult {
 export class MergeError extends Error {
   constructor(
     message: string,
-    public code: 'NOT_FOUND' | 'NO_PATH' | 'NO_STATUS' | 'NO_TOP_LEVEL_FILES' | 'FFMPEG_NOT_CONFIGURED' | 'ALREADY_IN_PROGRESS',
+    public code: 'NOT_FOUND' | 'NO_PATH' | 'NO_STATUS' | 'NO_TOP_LEVEL_FILES' | 'FFMPEG_NOT_CONFIGURED' | 'ALREADY_IN_PROGRESS' | 'ALREADY_QUEUED',
   ) {
     super(message);
     this.name = 'MergeError';
   }
 }
 
+export interface MergeAcknowledgement {
+  status: 'started' | 'queued';
+  bookId: number;
+  position?: number;
+}
+
 export class MergeService {
   private inProgress = new Set<number>();
+  private queue: number[] = [];
+  private readonly semaphore = new Semaphore(1);
 
   constructor(
     private db: Db,
@@ -44,167 +55,231 @@ export class MergeService {
     private eventBroadcaster?: EventBroadcasterService,
   ) {}
 
-  private emitMergeStarted(bookId: number, bookTitle: string): void {
-    this.eventHistory?.create({
-      bookId,
-      bookTitle,
-      eventType: 'merge_started',
-      source: 'manual',
-    }).catch((err) => this.log.warn(err, 'Failed to record merge_started event'));
+  private safeEmit<T extends SSEEventType>(event: T, payload: SSEEventPayloads[T]): void {
+    if (!this.eventBroadcaster) return;
+    try { this.eventBroadcaster.emit(event, payload); } catch (e: unknown) { this.log.debug(e, `SSE emit failed for ${event}`); }
+  }
 
-    if (this.eventBroadcaster) {
-      try {
-        this.eventBroadcaster.emit('merge_started', {
-          book_id: bookId,
-          book_title: bookTitle,
-        });
-      } catch (error: unknown) {
-        this.log.debug(error, 'SSE emit failed for merge_started');
-      }
-    }
+  private emitMergeStarted(bookId: number, bookTitle: string): void {
+    this.eventHistory?.create({ bookId, bookTitle, eventType: 'merge_started', source: 'manual' })
+      .catch((err) => this.log.warn(err, 'Failed to record merge_started event'));
+    this.safeEmit('merge_started', { book_id: bookId, book_title: bookTitle });
   }
 
   private emitMergeFailed(bookId: number, bookTitle: string, error: string): void {
-    this.eventHistory?.create({
-      bookId,
-      bookTitle,
-      eventType: 'merge_failed',
-      source: 'manual',
-      reason: { error },
-    }).catch((err) => this.log.warn(err, 'Failed to record merge_failed event'));
-
-    if (this.eventBroadcaster) {
-      try {
-        this.eventBroadcaster.emit('merge_failed', {
-          book_id: bookId,
-          book_title: bookTitle,
-          error,
-        });
-      } catch (emitError: unknown) {
-        this.log.debug(emitError, 'SSE emit failed for merge_failed');
-      }
-    }
+    this.eventHistory?.create({ bookId, bookTitle, eventType: 'merge_failed', source: 'manual', reason: { error } })
+      .catch((err) => this.log.warn(err, 'Failed to record merge_failed event'));
+    this.safeEmit('merge_failed', { book_id: bookId, book_title: bookTitle, error });
   }
 
   private emitMergeProgress(bookId: number, bookTitle: string, phase: 'staging' | 'processing' | 'verifying' | 'finalizing', percentage?: number): void {
-    if (!this.eventBroadcaster) return;
-    try {
-      this.eventBroadcaster.emit('merge_progress', {
-        book_id: bookId,
-        book_title: bookTitle,
-        phase,
-        ...(percentage !== undefined && { percentage }),
-      });
-    } catch (error: unknown) {
-      this.log.debug(error, 'SSE emit failed for merge_progress');
+    this.safeEmit('merge_progress', { book_id: bookId, book_title: bookTitle, phase, ...(percentage !== undefined && { percentage }) });
+  }
+
+  private emitMergeComplete(bookId: number, bookTitle: string, message: string, enrichmentWarning?: string): void {
+    this.eventHistory?.create({ bookId, bookTitle, eventType: 'merged', source: 'manual' })
+      .catch((err) => this.log.warn(err, 'Failed to record merged event'));
+    this.safeEmit('merge_complete', {
+      book_id: bookId, book_title: bookTitle, success: true, message,
+      ...(enrichmentWarning !== undefined && { enrichmentWarning }),
+    });
+  }
+
+  private emitQueueEvent(event: 'merge_queued' | 'merge_queue_updated', bookId: number, bookTitle: string, position: number): void {
+    this.safeEmit(event, { book_id: bookId, book_title: bookTitle, position });
+  }
+
+  private async emitQueuePositionUpdates(): Promise<void> {
+    for (let i = 0; i < this.queue.length; i++) {
+      const book = await this.bookService.getById(this.queue[i]);
+      if (book) this.emitQueueEvent('merge_queue_updated', this.queue[i], book.title, i + 1);
     }
   }
 
-  private emitMergeComplete(bookId: number, bookTitle: string, message: string): void {
-    this.eventHistory?.create({
-      bookId,
-      bookTitle,
-      eventType: 'merged',
-      source: 'manual',
-    }).catch((err) => this.log.warn(err, 'Failed to record merged event'));
+  /** Pre-enqueue validation: throws MergeError for invalid requests. Duplicate checks are in enqueueMerge (synchronous). */
+  private async validateBookForMerge(bookId: number): Promise<void> {
+    const book = await this.bookService.getById(bookId);
+    if (!book) throw new MergeError('Book not found', 'NOT_FOUND');
+    if (!book.path) throw new MergeError('Book has no path — not imported yet', 'NO_PATH');
+    if (book.status !== 'imported') throw new MergeError(`Book is not imported (status: ${book.status})`, 'NO_STATUS');
+    const processingSettings = await this.settingsService.get('processing');
+    if (!processingSettings?.ffmpegPath?.trim()) throw new MergeError('ffmpeg is not configured', 'FFMPEG_NOT_CONFIGURED');
+    const allEntries = await readdir(book.path);
+    const topLevelAudioFiles = allEntries.filter((f) => AUDIO_EXTENSIONS.has(extname(f).toLowerCase()));
+    if (topLevelAudioFiles.length < 2) throw new MergeError('No top-level audio files to merge (requires ≥2)', 'NO_TOP_LEVEL_FILES');
+  }
 
-    if (this.eventBroadcaster) {
-      try {
-        this.eventBroadcaster.emit('merge_complete', {
-          book_id: bookId,
-          book_title: bookTitle,
-          success: true,
-          message,
+  /** Public API: validate and enqueue a merge. Returns acknowledgement immediately. */
+  async enqueueMerge(bookId: number): Promise<MergeAcknowledgement> {
+    // Synchronous duplicate check — no await gap between check and mark prevents concurrent races
+    if (this.inProgress.has(bookId)) throw new MergeError('Merge already in progress for this book', 'ALREADY_IN_PROGRESS');
+    if (this.queue.includes(bookId)) throw new MergeError('Merge already queued for this book', 'ALREADY_QUEUED');
+
+    // Mark in-progress immediately to block concurrent same-book requests during async validation
+    this.inProgress.add(bookId);
+    try {
+      await this.validateBookForMerge(bookId);
+    } catch (error: unknown) {
+      this.inProgress.delete(bookId); // Clean up on validation failure
+      throw error;
+    }
+
+    if (this.semaphore.tryAcquire()) {
+      // Slot available — start immediately, fire-and-forget
+      this.executeMerge(bookId)
+        .catch((error: unknown) => {
+          this.log.error(error, 'Merge failed for book %d', bookId);
+        })
+        .finally(() => {
+          this.inProgress.delete(bookId);
+          this.processNext(); // Pass the slot or release if empty
         });
-      } catch (error: unknown) {
-        this.log.debug(error, 'SSE emit failed');
+      return { status: 'started', bookId };
+    }
+
+    // No slot — move from inProgress to queue
+    this.inProgress.delete(bookId);
+    this.queue.push(bookId);
+    const position = this.queue.length;
+    const book = await this.bookService.getById(bookId);
+    if (book) {
+      this.emitQueueEvent('merge_queued', bookId, book.title, position);
+    }
+    return { status: 'queued', bookId, position };
+  }
+
+  /** Drain the queue: pass the semaphore slot to the next queued merge, or release if empty. */
+  private processNext(): void {
+    if (this.queue.length === 0) {
+      this.semaphore.release(); // No more work — release the slot
+      return;
+    }
+
+    // Keep the semaphore slot — pass it directly to the next job (no release + re-acquire gap)
+    const nextBookId = this.queue.shift()!;
+    this.inProgress.add(nextBookId);
+
+    this.emitQueuePositionUpdates().catch((error: unknown) => {
+      this.log.debug(error, 'Failed to emit queue position updates');
+    });
+
+    this.executeWithRevalidation(nextBookId)
+      .catch((error: unknown) => {
+        this.log.error(error, 'Queued merge failed for book %d', nextBookId);
+      })
+      .finally(() => {
+        this.inProgress.delete(nextBookId);
+        this.processNext(); // Pass the slot or release if empty
+      });
+  }
+
+  /** Re-validate a queued merge before executing. On failure, emit merge_failed and skip. */
+  private async executeWithRevalidation(bookId: number): Promise<void> {
+    try {
+      await this.validateDequeueTime(bookId);
+      await this.executeMerge(bookId);
+    } catch (error: unknown) {
+      if (error instanceof MergeError) {
+        const book = await this.bookService.getById(bookId);
+        this.emitMergeFailed(bookId, book?.title ?? `Book ${bookId}`, error.message);
+      } else {
+        this.log.error(error, 'Dequeue-time merge execution failed for book %d', bookId);
       }
     }
   }
 
-  async mergeBook(bookId: number): Promise<MergeResult> {
+  /** Dequeue-time validation — same checks as pre-enqueue but throws MergeError on failure. */
+  private async validateDequeueTime(bookId: number): Promise<void> {
     const book = await this.bookService.getById(bookId);
-    if (!book) {
-      throw new MergeError('Book not found', 'NOT_FOUND');
-    }
-    if (!book.path) {
-      throw new MergeError('Book has no path — not imported yet', 'NO_PATH');
-    }
+    if (!book) throw new MergeError('Book not found', 'NOT_FOUND');
+    if (!book.path) throw new MergeError('Book has no path — not imported yet', 'NO_PATH');
+    if (book.status !== 'imported') throw new MergeError(`Book is not imported (status: ${book.status})`, 'NO_STATUS');
+    const processingSettings = await this.settingsService.get('processing');
+    if (!processingSettings?.ffmpegPath?.trim()) throw new MergeError('ffmpeg is not configured', 'FFMPEG_NOT_CONFIGURED');
+    const allEntries = await readdir(book.path);
+    const audioFiles = allEntries.filter((f) => AUDIO_EXTENSIONS.has(extname(f).toLowerCase()));
+    if (audioFiles.length < 2) throw new MergeError('No top-level audio files to merge (requires ≥2)', 'NO_TOP_LEVEL_FILES');
+  }
+
+  /** Execute a merge for a book that already has an acquired semaphore slot. Returns MergeResult. */
+  private async executeMerge(bookId: number): Promise<MergeResult> {
+    const book = await this.bookService.getById(bookId);
+    if (!book || !book.path) return { bookId, outputFile: '', filesReplaced: 0, message: 'Book not found' };
     const bookPath = book.path;
-    if (book.status !== 'imported') {
-      throw new MergeError(`Book is not imported (status: ${book.status})`, 'NO_STATUS');
-    }
 
     const processingSettings = await this.settingsService.get('processing');
-    if (!processingSettings?.ffmpegPath?.trim()) {
-      throw new MergeError('ffmpeg is not configured', 'FFMPEG_NOT_CONFIGURED');
-    }
+    if (!processingSettings?.ffmpegPath?.trim()) return { bookId, outputFile: '', filesReplaced: 0, message: 'ffmpeg not configured' };
 
-    // Identify top-level audio files (non-recursive)
     const allEntries = await readdir(bookPath);
-    const topLevelAudioFiles = allEntries.filter(
-      (f) => AUDIO_EXTENSIONS.has(extname(f).toLowerCase()),
-    );
-    if (topLevelAudioFiles.length < 2) {
-      throw new MergeError('No top-level audio files to merge (requires ≥2)', 'NO_TOP_LEVEL_FILES');
-    }
+    const topLevelAudioFiles = allEntries.filter((f) => AUDIO_EXTENSIONS.has(extname(f).toLowerCase()));
 
-    if (this.inProgress.has(bookId)) {
-      throw new MergeError('Merge already in progress for this book', 'ALREADY_IN_PROGRESS');
-    }
-
-    this.inProgress.add(bookId);
-
-    // Pre-flight passed — emit merge_started
     this.emitMergeStarted(bookId, book.title);
-
     const stagingDir = bookPath + '.merge-tmp';
 
     try {
       this.emitMergeProgress(bookId, book.title, 'staging');
-
       const stagedM4b = await this.runStaging(stagingDir, { ...book, path: bookPath }, topLevelAudioFiles, processingSettings, bookId, book.title);
-
       this.emitMergeProgress(bookId, book.title, 'verifying');
-
       const outputPath = await this.commitMerge(stagingDir, stagedM4b, bookPath, topLevelAudioFiles, bookId);
-
       this.emitMergeProgress(bookId, book.title, 'finalizing');
 
-      // Step 8: Post-commit enrichment
       const enrichResult = await enrichBookFromAudio(bookId, bookPath, book, this.db, this.log, this.bookService);
       let enrichmentWarning: string | undefined;
       if (!enrichResult.enriched) {
         enrichmentWarning = 'Merge succeeded but metadata update failed — audio fields may be stale';
-        this.log.warn(
-          { bookId },
-          'Post-merge enrichment did not enrich — merge succeeded on disk, but DB audio fields may be stale',
-        );
+        this.log.warn({ bookId }, 'Post-merge enrichment did not enrich — merge succeeded on disk, but DB audio fields may be stale');
       }
 
       this.log.info({ bookId, outputPath, filesReplaced: topLevelAudioFiles.length }, 'Book merged to M4B');
-
       const message = `Merged ${topLevelAudioFiles.length} files into ${basename(stagedM4b)}`;
-      this.emitMergeComplete(bookId, book.title, message);
-
-      return {
-        bookId,
-        outputFile: outputPath,
-        filesReplaced: topLevelAudioFiles.length,
-        message,
-        enrichmentWarning,
-      };
+      this.emitMergeComplete(bookId, book.title, message, enrichmentWarning);
+      return { bookId, outputFile: outputPath, filesReplaced: topLevelAudioFiles.length, message, enrichmentWarning };
     } catch (error: unknown) {
-      // Emit merge_failed for any failure after merge_started
       const errorMessage = error instanceof Error ? error.message : 'Unknown merge error';
       this.emitMergeFailed(bookId, book.title, errorMessage);
+      try { await rm(stagingDir, { recursive: true, force: true }); } catch { /* best-effort */ }
+      throw error;
+    }
+  }
 
-      // Clean up staging dir on any failure (before commit the originals are untouched)
-      try {
-        await rm(stagingDir, { recursive: true, force: true });
-      } catch {
-        // Best-effort cleanup
+  /** @deprecated Use enqueueMerge() instead. Synchronous merge for backward compatibility with existing tests. */
+  async mergeBook(bookId: number): Promise<MergeResult> {
+    const book = await this.bookService.getById(bookId);
+    if (!book) throw new MergeError('Book not found', 'NOT_FOUND');
+    if (!book.path) throw new MergeError('Book has no path — not imported yet', 'NO_PATH');
+    if (book.status !== 'imported') throw new MergeError(`Book is not imported (status: ${book.status})`, 'NO_STATUS');
+    const processingSettings = await this.settingsService.get('processing');
+    if (!processingSettings?.ffmpegPath?.trim()) throw new MergeError('ffmpeg is not configured', 'FFMPEG_NOT_CONFIGURED');
+    const allEntries = await readdir(book.path);
+    const topLevelAudioFiles = allEntries.filter((f) => AUDIO_EXTENSIONS.has(extname(f).toLowerCase()));
+    if (topLevelAudioFiles.length < 2) throw new MergeError('No top-level audio files to merge (requires ≥2)', 'NO_TOP_LEVEL_FILES');
+    if (this.inProgress.has(bookId)) throw new MergeError('Merge already in progress for this book', 'ALREADY_IN_PROGRESS');
+
+    this.inProgress.add(bookId);
+    this.emitMergeStarted(bookId, book.title);
+    const bookPath = book.path;
+    const stagingDir = bookPath + '.merge-tmp';
+
+    try {
+      this.emitMergeProgress(bookId, book.title, 'staging');
+      const stagedM4b = await this.runStaging(stagingDir, { ...book, path: bookPath }, topLevelAudioFiles, processingSettings, bookId, book.title);
+      this.emitMergeProgress(bookId, book.title, 'verifying');
+      const outputPath = await this.commitMerge(stagingDir, stagedM4b, bookPath, topLevelAudioFiles, bookId);
+      this.emitMergeProgress(bookId, book.title, 'finalizing');
+      const enrichResult = await enrichBookFromAudio(bookId, bookPath, book, this.db, this.log, this.bookService);
+      let enrichmentWarning: string | undefined;
+      if (!enrichResult.enriched) {
+        enrichmentWarning = 'Merge succeeded but metadata update failed — audio fields may be stale';
+        this.log.warn({ bookId }, 'Post-merge enrichment did not enrich — merge succeeded on disk, but DB audio fields may be stale');
       }
+      this.log.info({ bookId, outputPath, filesReplaced: topLevelAudioFiles.length }, 'Book merged to M4B');
+      const message = `Merged ${topLevelAudioFiles.length} files into ${basename(stagedM4b)}`;
+      this.emitMergeComplete(bookId, book.title, message, enrichmentWarning);
+      return { bookId, outputFile: outputPath, filesReplaced: topLevelAudioFiles.length, message, enrichmentWarning };
+    } catch (error: unknown) {
+      const errorMessage = error instanceof Error ? error.message : 'Unknown merge error';
+      this.emitMergeFailed(bookId, book.title, errorMessage);
+      try { await rm(stagingDir, { recursive: true, force: true }); } catch { /* best-effort */ }
       throw error;
     } finally {
       this.inProgress.delete(bookId);
@@ -301,36 +376,4 @@ export class MergeService {
 
     return outputPath;
   }
-}
-
-/** Deduplicates repeated stderr lines before logging. */
-function createStderrDeduplicator(log: FastifyBaseLogger) {
-  let lastLine = '';
-  let count = 0;
-
-  function flushPrevious() {
-    if (count === 0) return;
-    if (count === 1) {
-      log.debug({ stderr: lastLine }, 'ffmpeg stderr');
-    } else {
-      log.debug({ stderr: lastLine, count }, `ffmpeg stderr (× ${count})`);
-    }
-    count = 0;
-    lastLine = '';
-  }
-
-  return {
-    push(line: string) {
-      if (line === lastLine) {
-        count++;
-      } else {
-        flushPrevious();
-        lastLine = line;
-        count = 1;
-      }
-    },
-    flush() {
-      flushPrevious();
-    },
-  };
 }

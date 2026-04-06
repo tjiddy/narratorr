@@ -1290,6 +1290,26 @@ describe('#257 merge observability — BookDetails progress', () => {
     });
   });
 
+  describe('#368 merge queue — queued progress indicator', () => {
+    it('renders "Queued (position 2)" when merge phase is queued', async () => {
+      mockUseMergeProgress.mockReturnValue({ phase: 'queued', position: 2 });
+      renderBookDetails({ path: '/library/test', status: 'imported', topLevelAudioFileCount: 3 });
+
+      await waitFor(() => {
+        expect(screen.getByRole('status', { name: /Merge progress/ })).toHaveTextContent('Queued (position 2)');
+      });
+    });
+
+    it('renders "Queued" without position when position is undefined', async () => {
+      mockUseMergeProgress.mockReturnValue({ phase: 'queued' });
+      renderBookDetails({ path: '/library/test', status: 'imported', topLevelAudioFileCount: 3 });
+
+      await waitFor(() => {
+        expect(screen.getByRole('status', { name: /Merge progress/ })).toHaveTextContent('Queued');
+      });
+    });
+  });
+
   describe('Wrong Release action', () => {
     it('shows Wrong Release button when book is imported with lastGrabGuid', async () => {
       const user = userEvent.setup();

@@ -6,7 +6,7 @@ import { api } from '@/lib/api';
 import { useBookActions } from './useBookActions.js';
 
 vi.mock('sonner', () => ({
-  toast: { success: vi.fn(), error: vi.fn(), warning: vi.fn() },
+  toast: { success: vi.fn(), error: vi.fn(), warning: vi.fn(), info: vi.fn() },
 }));
 
 import { toast } from 'sonner';
@@ -276,7 +276,7 @@ describe('useBookActions', () => {
 
   describe('mergeMutation', () => {
     it('calls api.mergeBookToM4b with the bookId', async () => {
-      (api.mergeBookToM4b as Mock).mockResolvedValue({ bookId: 3, filesReplaced: 12, outputFile: '/lib/book.m4b', message: 'Merged 12 files into book.m4b' });
+      (api.mergeBookToM4b as Mock).mockResolvedValue({ status: 'started', bookId: 3 });
       const { result } = renderHook(() => useBookActions(3, false), { wrapper: createTestHarness().wrapper });
 
       act(() => { result.current.mergeMutation.mutate(); });
@@ -284,29 +284,36 @@ describe('useBookActions', () => {
       await waitFor(() => expect(api.mergeBookToM4b).toHaveBeenCalledWith(3));
     });
 
-    it('does not show success toast on merge success (toasts now driven by SSE)', async () => {
-      (api.mergeBookToM4b as Mock).mockResolvedValue({ bookId: 3, filesReplaced: 12, outputFile: '/lib/book.m4b', message: 'Merged 12 files into book.m4b' });
+    it('shows info toast when merge is queued with position', async () => {
+      (api.mergeBookToM4b as Mock).mockResolvedValue({ status: 'queued', bookId: 3, position: 2 });
+      const { result } = renderHook(() => useBookActions(3, false), { wrapper: createTestHarness().wrapper });
+
+      act(() => { result.current.mergeMutation.mutate(); });
+
+      await waitFor(() => expect(toast.info).toHaveBeenCalledWith('Merge queued (position 2)'));
+    });
+
+    it('does not show success or info toast when merge starts immediately', async () => {
+      (api.mergeBookToM4b as Mock).mockResolvedValue({ status: 'started', bookId: 3 });
       const { result } = renderHook(() => useBookActions(3, false), { wrapper: createTestHarness().wrapper });
 
       act(() => { result.current.mergeMutation.mutate(); });
 
       await waitFor(() => expect(api.mergeBookToM4b).toHaveBeenCalled());
       expect(toast.success).not.toHaveBeenCalled();
+      expect(toast.info).not.toHaveBeenCalled();
     });
 
-    it('invalidates book, bookFiles, and books queries on success', async () => {
-      (api.mergeBookToM4b as Mock).mockResolvedValue({ bookId: 3, filesReplaced: 12, outputFile: '/lib/book.m4b', message: 'Merged 12 files into book.m4b' });
+    it('does not invalidate book queries on success (SSE-driven)', async () => {
+      (api.mergeBookToM4b as Mock).mockResolvedValue({ status: 'started', bookId: 3 });
       const { queryClient, wrapper } = createTestHarness();
       const invalidateSpy = vi.spyOn(queryClient, 'invalidateQueries');
       const { result } = renderHook(() => useBookActions(3, false), { wrapper });
 
       act(() => { result.current.mergeMutation.mutate(); });
 
-      await waitFor(() => {
-        expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: ['books', 3] });
-        expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: ['books', 3, 'files'] });
-        expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: ['books'] });
-      });
+      await waitFor(() => expect(api.mergeBookToM4b).toHaveBeenCalled());
+      expect(invalidateSpy).not.toHaveBeenCalled();
     });
 
     it('shows error toast on API-level merge failure (pre-SSE errors like 409)', async () => {
@@ -318,20 +325,14 @@ describe('useBookActions', () => {
       await waitFor(() => expect(toast.error).toHaveBeenCalledWith('Merge failed: Merge already in progress'));
     });
 
-    it('shows warning toast when result includes enrichmentWarning (but no success toast)', async () => {
-      (api.mergeBookToM4b as Mock).mockResolvedValue({
-        bookId: 3, filesReplaced: 12, outputFile: '/lib/book.m4b', message: 'Merged 12 files into book.m4b',
-        enrichmentWarning: 'Merge succeeded but metadata update failed — audio fields may be stale',
-      });
+    it('does not handle enrichmentWarning in onSuccess (moved to SSE handler)', async () => {
+      (api.mergeBookToM4b as Mock).mockResolvedValue({ status: 'started', bookId: 3 });
       const { result } = renderHook(() => useBookActions(3, false), { wrapper: createTestHarness().wrapper });
 
       act(() => { result.current.mergeMutation.mutate(); });
 
-      await waitFor(() => {
-        expect(toast.warning).toHaveBeenCalledWith('Merge succeeded but metadata update failed — audio fields may be stale');
-      });
-      // Success toast moved to SSE path
-      expect(toast.success).not.toHaveBeenCalled();
+      await waitFor(() => expect(api.mergeBookToM4b).toHaveBeenCalled());
+      expect(toast.warning).not.toHaveBeenCalled();
     });
 
     it('does not invalidate queries when merge fails', async () => {

@@ -285,11 +285,11 @@ export async function booksRoutes(app: FastifyInstance, deps: BookRouteDeps) {
   app.post<{ Params: IdParam }>(
     '/api/books/:id/merge-to-m4b',
     { schema: { params: idParamSchema } },
-    async (request) => {
+    async (request, reply) => {
       const { id } = request.params;
-      const result = await mergeService.mergeBook(id);
-      request.log.info({ id, filesReplaced: result.filesReplaced, outputFile: result.outputFile }, 'Book merged to M4B');
-      return result;
+      const result = await mergeService.enqueueMerge(id);
+      request.log.info({ id, status: result.status }, 'Merge request acknowledged');
+      return reply.status(202).send(result);
     },
   );
 

@@ -17,6 +17,8 @@ export const sseEventTypeSchema = z.enum([
   'merge_started',
   'merge_progress',
   'merge_failed',
+  'merge_queued',
+  'merge_queue_updated',
 ]);
 
 export type SSEEventType = z.infer<typeof sseEventTypeSchema>;
@@ -70,6 +72,7 @@ export const mergeCompletePayload = z.object({
   book_title: z.string(),
   success: z.boolean(),
   message: z.string(),
+  enrichmentWarning: z.string().optional(),
 });
 
 export const mergeStartedPayload = z.object({
@@ -90,6 +93,18 @@ export const mergeFailedPayload = z.object({
   error: z.string(),
 });
 
+export const mergeQueuedPayload = z.object({
+  book_id: z.number(),
+  book_title: z.string(),
+  position: z.number(),
+});
+
+export const mergeQueueUpdatedPayload = z.object({
+  book_id: z.number(),
+  book_title: z.string(),
+  position: z.number(),
+});
+
 // ============================================================================
 // Typed event map — used by EventBroadcaster and frontend handler
 // ============================================================================
@@ -105,6 +120,8 @@ export type SSEEventPayloads = {
   merge_started: z.infer<typeof mergeStartedPayload>;
   merge_progress: z.infer<typeof mergeProgressPayload>;
   merge_failed: z.infer<typeof mergeFailedPayload>;
+  merge_queued: z.infer<typeof mergeQueuedPayload>;
+  merge_queue_updated: z.infer<typeof mergeQueueUpdatedPayload>;
 };
 
 // ============================================================================
@@ -131,6 +148,8 @@ export const CACHE_INVALIDATION_MATRIX: Record<SSEEventType, CacheInvalidationRu
   merge_started: { eventHistory: 'invalidate' },
   merge_progress: {},
   merge_failed: { eventHistory: 'invalidate', books: 'invalidate' },
+  merge_queued: {},
+  merge_queue_updated: {},
 };
 
 // Event types that should trigger toast notifications

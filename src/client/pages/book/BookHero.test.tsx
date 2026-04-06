@@ -269,6 +269,17 @@ describe('BookHero', () => {
       await openMenu(user);
       expect(screen.queryByRole('menuitem', { name: /Merge/ })).not.toBeInTheDocument();
     });
+
+    describe('#368 merge queue — queued menu state', () => {
+      it('shows "Queued..." when merge is in queued state (distinct from "Merging...")', async () => {
+        const user = userEvent.setup();
+        renderHero({ canMerge: true, isMerging: true, mergePhase: 'queued' });
+        await openMenu(user);
+        const item = screen.getByRole('menuitem', { name: /Queued/ });
+        expect(item).toBeDisabled();
+        expect(item).toHaveTextContent('Queued...');
+      });
+    });
   });
 
   describe('remove button', () => {

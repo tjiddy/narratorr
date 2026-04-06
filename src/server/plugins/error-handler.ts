@@ -23,7 +23,7 @@ type ErrorEntry =
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const ERROR_REGISTRY = new Map<new (...args: any[]) => Error, ErrorEntry>([
   [RenameError, { type: 'coded', codes: { NOT_FOUND: 404, NO_PATH: 400, CONFLICT: 409 } }],
-  [MergeError, { type: 'coded', codes: { NOT_FOUND: 404, NO_PATH: 400, NO_STATUS: 400, NO_TOP_LEVEL_FILES: 400, FFMPEG_NOT_CONFIGURED: 503, ALREADY_IN_PROGRESS: 409 } }],
+  [MergeError, { type: 'coded', codes: { NOT_FOUND: 404, NO_PATH: 400, NO_STATUS: 400, NO_TOP_LEVEL_FILES: 400, FFMPEG_NOT_CONFIGURED: 503, ALREADY_IN_PROGRESS: 409, ALREADY_QUEUED: 409 } }],
   [RetagError, { type: 'coded', codes: { NOT_FOUND: 404, NO_PATH: 400, PATH_MISSING: 400, FFMPEG_NOT_CONFIGURED: 400 } }],
   [RestoreUploadError, { type: 'flat', status: 400 }],
   [QualityGateServiceError, { type: 'coded', codes: { NOT_FOUND: 404, INVALID_STATUS: 409 } }],
