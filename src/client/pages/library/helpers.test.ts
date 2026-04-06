@@ -640,6 +640,22 @@ describe('collapseSeries — title-sort uses seriesName key (#365)', () => {
   });
 });
 
+// #365 — collapseSeries re-sort handles nullable fields correctly
+describe('collapseSeries — nullable field re-sort (#365)', () => {
+  it('with narrator asc: null-narrator standalones sort after non-null collapsed groups', () => {
+    const books = [
+      makeBook({ id: 1, title: 'Book A', seriesName: 'SeriesX', seriesPosition: 1, narrators: [{ id: 1, name: 'Alice', slug: 'alice' }] }),
+      makeBook({ id: 2, title: 'Book B', seriesName: 'SeriesX', seriesPosition: 2, narrators: [{ id: 1, name: 'Alice', slug: 'alice' }] }),
+      makeBook({ id: 3, title: 'Book C', seriesName: null, narrators: [] }),
+    ];
+
+    const collapsed = collapseSeries(books, 'narrator', 'asc');
+    // Alice (non-null) sorts before null-narrator standalone
+    expect(collapsed[0].title).toBe('Book A');
+    expect(collapsed[1].title).toBe('Book C');
+  });
+});
+
 // #287 — collapseSeries fallback with descending nullable sort
 describe('collapseSeries — descending nullable fallback (#287)', () => {
   it('fallback representative with descending nullable sort does not pick null-field book', () => {
