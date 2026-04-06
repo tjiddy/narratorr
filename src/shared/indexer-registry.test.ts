@@ -69,6 +69,12 @@ describe('INDEXER_REGISTRY', () => {
     it('#317 returns baseUrl without suffix when isVip is undefined (legacy)', () => {
       expect(INDEXER_REGISTRY.myanonamouse.viewSubtitle({})).toBe('myanonamouse.net');
     });
+
+    it('#372 prefers persisted classname over generic VIP/User suffixes', () => {
+      expect(INDEXER_REGISTRY.myanonamouse.viewSubtitle({ baseUrl: 'https://custom.mam.net', classname: 'Power User', isVip: false })).toBe('https://custom.mam.net — Power User');
+      expect(INDEXER_REGISTRY.myanonamouse.viewSubtitle({ classname: 'Mouse', isVip: false })).toBe('myanonamouse.net — Mouse');
+      expect(INDEXER_REGISTRY.myanonamouse.viewSubtitle({ classname: 'VIP', isVip: true })).toBe('myanonamouse.net — VIP');
+    });
   });
 
   describe('defaultSettings', () => {

@@ -1008,4 +1008,33 @@ describe('IndexerCard — Prowlarr-managed indicators (AC8)', () => {
       expect(screen.queryByLabelText('Search Type')).not.toBeInTheDocument();
     });
   });
+
+  describe('#372 — edit-mode classname hydration', () => {
+    it('shows persisted classname in badge and status messaging instead of generic User fallback', () => {
+      const mamIndexer: Indexer = createMockIndexer({
+        id: 30,
+        name: 'MAM',
+        type: 'myanonamouse',
+        settings: { mamId: 'test-id', baseUrl: '', searchLanguages: [1], isVip: false, mamUsername: 'poweruser', classname: 'Power User' },
+      });
+      renderWithProviders(
+        <IndexerCard indexer={mamIndexer} mode="edit" onSubmit={vi.fn()} onFormTest={vi.fn()} />,
+      );
+      expect(screen.getByText('Power User')).toBeInTheDocument();
+      expect(screen.getByText('Searching non-VIP and freeleech torrents')).toBeInTheDocument();
+    });
+
+    it('shows Mouse warning when persisted classname is Mouse', () => {
+      const mamIndexer: Indexer = createMockIndexer({
+        id: 31,
+        name: 'MAM',
+        type: 'myanonamouse',
+        settings: { mamId: 'test-id', baseUrl: '', searchLanguages: [1], isVip: false, mamUsername: 'mouseuser', classname: 'Mouse' },
+      });
+      renderWithProviders(
+        <IndexerCard indexer={mamIndexer} mode="edit" onSubmit={vi.fn()} onFormTest={vi.fn()} />,
+      );
+      expect(screen.getByText(/searches disabled until ratio improves/)).toBeInTheDocument();
+    });
+  });
 });

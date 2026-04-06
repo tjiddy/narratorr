@@ -1550,6 +1550,40 @@ describe('IndexerService', () => {
       expect(results).toHaveLength(1);
     });
 
+    it('persists updated isVip/classname when class changes (VIP → Power User)', async () => {
+      db.select.mockReturnValue(mockDbChain([mamIndexer]));
+      const mockAdapter = {
+        type: 'myanonamouse', name: 'MAM',
+        refreshStatus: vi.fn().mockResolvedValue({ isVip: false, classname: 'Power User' }),
+        search: vi.fn().mockResolvedValue([{ title: 'Book', indexer: 'MAM', protocol: 'torrent' as const }]),
+        test: vi.fn(),
+      };
+      vi.spyOn(service, 'getAdapter').mockResolvedValue(mockAdapter as never);
+      const updateSpy = vi.spyOn(service, 'update').mockResolvedValue(mamIndexer as never);
+      const results = await service.searchAll('test');
+      expect(updateSpy).toHaveBeenCalledWith(10, {
+        settings: expect.objectContaining({ isVip: false, classname: 'Power User' }),
+      });
+      expect(mockAdapter.search).toHaveBeenCalled();
+      expect(results).toHaveLength(1);
+    });
+
+    it('does not write to DB when refreshStatus() returns same class as stored', async () => {
+      db.select.mockReturnValue(mockDbChain([mamIndexer]));
+      const mockAdapter = {
+        type: 'myanonamouse', name: 'MAM',
+        refreshStatus: vi.fn().mockResolvedValue({ isVip: true, classname: 'VIP' }),
+        search: vi.fn().mockResolvedValue([{ title: 'Book', indexer: 'MAM', protocol: 'torrent' as const }]),
+        test: vi.fn(),
+      };
+      vi.spyOn(service, 'getAdapter').mockResolvedValue(mockAdapter as never);
+      const updateSpy = vi.spyOn(service, 'update').mockResolvedValue(mamIndexer as never);
+      const results = await service.searchAll('test');
+      expect(updateSpy).not.toHaveBeenCalled();
+      expect(mockAdapter.search).toHaveBeenCalled();
+      expect(results).toHaveLength(1);
+    });
+
     it('other indexers still return results when Mouse indexer is skipped', async () => {
       const abbIndexer = createMockDbIndexer({ id: 2, name: 'ABB', type: 'abb' });
       db.select.mockReturnValue(mockDbChain([mamIndexer, abbIndexer]));
@@ -1642,6 +1676,19 @@ describe('IndexerService', () => {
       db.update.mockReturnValue(mockDbChain([mockIndexer]));
       const result = await service.test(1);
       expect(result.warning).toBe('Account is ratio-locked');
+    });
+
+    it('testConfig() passes through warning field from adapter result', async () => {
+      const mockAdapter = {
+        test: vi.fn().mockResolvedValue({
+          success: true, message: 'Connected', warning: 'Account is ratio-locked',
+          metadata: { isVip: false, classname: 'Mouse' },
+        }),
+      };
+      vi.spyOn(service as never, 'createAdapter').mockReturnValue(mockAdapter as never);
+      const result = await service.testConfig({ type: 'myanonamouse', settings: { mamId: 'test-id' } });
+      expect(result.warning).toBe('Account is ratio-locked');
+      expect(result.success).toBe(true);
     });
   });
 
