@@ -43,7 +43,7 @@ describe('NewBookDefaultsSection (#284)', () => {
     await waitFor(() => {
       expect(screen.getByText('When a New Book Is Added')).toBeInTheDocument();
     });
-    expect(screen.getByText('Defaults applied to newly added books')).toBeInTheDocument();
+    expect(screen.getByText('Applied when books are added manually or via import lists, RSS sync, and discovery')).toBeInTheDocument();
   });
 
   it('contains Search Immediately and Monitor for Upgrades toggles', async () => {
