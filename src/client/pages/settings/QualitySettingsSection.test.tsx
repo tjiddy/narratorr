@@ -105,6 +105,26 @@ describe('QualitySettingsSection', () => {
     expect(mockApi.updateSettings).not.toHaveBeenCalled();
   });
 
+  it('blocks submit when minSeeders is negative', async () => {
+    const user = userEvent.setup();
+    renderWithProviders(<QualitySettingsSection />);
+
+    await waitFor(() => {
+      expect(screen.getByLabelText('Minimum Seeders')).toHaveValue(3);
+    });
+
+    const input = screen.getByLabelText('Minimum Seeders');
+    await user.clear(input);
+    await user.type(input, '-1');
+
+    await act(async () => {
+      fireEvent.submit(screen.getByRole('button', { name: /save/i }).closest('form')!);
+    });
+
+    expect(screen.getByText(/too small/i)).toBeInTheDocument();
+    expect(mockApi.updateSettings).not.toHaveBeenCalled();
+  });
+
   it('saves payload with only grabFloor and minSeeders', async () => {
     mockApi.updateSettings.mockResolvedValue(mockSettings);
     const user = userEvent.setup();
