@@ -163,8 +163,11 @@ function extractYear(working: string, result: ParsedTitle): string {
   return working.replace(/\s+-\s+-\s+/g, ' - ').trim();
 }
 
-/** Normalize whitespace: dots to spaces, underscores, parens */
+/** Normalize whitespace: dots to spaces, underscores, dashes, parens */
 function normalizeWhitespace(working: string): string {
+  // Normalize en-dashes and em-dashes to regular hyphens
+  working = working.replace(/[–—]/g, '-');
+
   // Dot-separated scene format (3+ dots, few/no spaces)
   const dotCount = (working.match(/\./g) || []).length;
   const spaceCount = (working.match(/ /g) || []).length;
@@ -198,8 +201,8 @@ function stripNoise(working: string): string {
 
 /** Try structured patterns against cleaned string */
 function matchPattern(working: string, result: ParsedTitle): ParsedTitle {
-  // Pattern A: "Author's 'Series', Bk N - Title"
-  const possessiveMatch = working.match(/^(.+?)(?:'s?|s)\s+'?([^',]+)'?,?\s*(?:Bk|Book|Vol)\s*(\d+)\s*-\s*(.+)$/i);
+  // Pattern A: "Author's 'Series', Bk N - Title" (also handles bare "Authors Series" without apostrophe)
+  const possessiveMatch = working.match(/^(.+?)(?:'s?|s(?= [^-]))\s+'?([^',]+)'?,?\s*(?:Bk|Book|Vol)\s*(\d+)\s*-\s*(.+)$/i);
   if (possessiveMatch) {
     result.author = cleanField(possessiveMatch[1]);
     result.series = cleanField(possessiveMatch[2]);

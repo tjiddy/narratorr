@@ -1675,7 +1675,7 @@ describe('monitor job', () => {
       await runMonitor();
 
       const setCalls = (chain.set as ReturnType<typeof vi.fn>).mock.calls.map((c: unknown[]) => c[0] as Record<string, unknown>);
-      expect(setCalls[0]?.outputPath).toBe('/downloads/complete/My Audiobook');
+      expect(String(setCalls[0]?.outputPath).split('\\').join('/')).toBe('/downloads/complete/My Audiobook');
     });
 
     it('resolves outputPath normally when no previous value exists', async () => {
@@ -1694,7 +1694,7 @@ describe('monitor job', () => {
       await runMonitor();
 
       const setCalls = (chain.set as ReturnType<typeof vi.fn>).mock.calls.map((c: unknown[]) => c[0] as Record<string, unknown>);
-      expect(setCalls[0]?.outputPath).toBe('/downloads/incomplete/My Audiobook');
+      expect(String(setCalls[0]?.outputPath).split('\\').join('/')).toBe('/downloads/incomplete/My Audiobook');
     });
 
     it('preserves previous outputPath when remote path mapping lookup fails during completion transition', async () => {

@@ -283,6 +283,43 @@ describe('parseAudiobookTitle', () => {
       expect(result.format).toBe('MP3');
     });
   });
+
+  describe('en-dash and em-dash normalization', () => {
+    it('parses Author \u2013 Title with en-dash', () => {
+      const result = parseAudiobookTitle('Brandon Sanderson \u2013 The Way of Kings');
+      expect(result.author).toBe('Brandon Sanderson');
+      expect(result.title).toBe('The Way of Kings');
+    });
+
+    it('parses Author \u2014 Title with em-dash', () => {
+      const result = parseAudiobookTitle('Brandon Sanderson \u2014 The Way of Kings');
+      expect(result.author).toBe('Brandon Sanderson');
+      expect(result.title).toBe('The Way of Kings');
+    });
+
+    it('parses Author \u2013 Series, Book N \u2013 Title with en-dashes', () => {
+      const result = parseAudiobookTitle('Suzanne Collins \u2013 The Hunger Games, Book 01 \u2013 The Hunger Games');
+      expect(result.author).toBe('Suzanne Collins');
+      expect(result.title).toBe('The Hunger Games');
+      expect(result.series).toBe('The Hunger Games');
+      expect(result.seriesPosition).toBe('01');
+    });
+  });
+
+  describe('possessive pattern edge cases', () => {
+    it('does not eat trailing s from author names like Collins', () => {
+      const result = parseAudiobookTitle('Suzanne Collins - The Hunger Games, Book 01 - The Hunger Games');
+      expect(result.author).toBe('Suzanne Collins');
+    });
+
+    it('still parses actual possessives with apostrophe', () => {
+      const result = parseAudiobookTitle("Tolkien's Lord of the Rings, Book 1 - Fellowship");
+      expect(result.author).toBe('Tolkien');
+      expect(result.series).toBe('Lord of the Rings');
+      expect(result.seriesPosition).toBe('1');
+      expect(result.title).toBe('Fellowship');
+    });
+  });
 });
 
 describe('slugify', () => {
