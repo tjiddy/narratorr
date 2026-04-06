@@ -21,6 +21,7 @@ const mockTorrentStatus = {
   eta: 3600,
   save_path: '/downloads',
   time_added: 1700000000,
+  is_finished: false,
 };
 
 function rpcHandler(methodHandlers: Record<string, (params: unknown[]) => unknown>) {
@@ -255,14 +256,24 @@ describe('DelugeClient', () => {
       expect(result).toBeNull();
     });
 
-    it('maps Seeding state correctly', async () => {
+    it('maps Seeding + is_finished=true to completed', async () => {
       server.use(rpcHandler({
         'auth.login': () => true,
-        'core.get_torrent_status': () => ({ ...mockTorrentStatus, state: 'Seeding' }),
+        'core.get_torrent_status': () => ({ ...mockTorrentStatus, state: 'Seeding', is_finished: true }),
       }));
 
       const result = await client.getDownload('abc123');
-      expect(result!.status).toBe('seeding');
+      expect(result!.status).toBe('completed');
+    });
+
+    it('maps Seeding + is_finished=false to downloading', async () => {
+      server.use(rpcHandler({
+        'auth.login': () => true,
+        'core.get_torrent_status': () => ({ ...mockTorrentStatus, state: 'Seeding', is_finished: false }),
+      }));
+
+      const result = await client.getDownload('abc123');
+      expect(result!.status).toBe('downloading');
     });
   });
 
@@ -419,6 +430,88 @@ describe('DelugeClient', () => {
       const result = await client.test();
       expect(result.success).toBe(false);
       expect(result.message).toBeDefined();
+    });
+  });
+
+  describe('state mapping — is_finished and Moving', () => {
+    it('returns completed when is_finished=true and state is not Checking or Moving', async () => {
+      server.use(rpcHandler({
+        'auth.login': () => true,
+        'core.get_torrent_status': () => ({ ...mockTorrentStatus, state: 'Seeding', is_finished: true }),
+      }));
+
+      const result = await client.getDownload('abc123def456');
+      expect(result!.status).toBe('completed');
+    });
+
+    it('returns downloading when is_finished=true and state is Checking', async () => {
+      server.use(rpcHandler({
+        'auth.login': () => true,
+        'core.get_torrent_status': () => ({ ...mockTorrentStatus, state: 'Checking', is_finished: true }),
+      }));
+
+      const result = await client.getDownload('abc123def456');
+      expect(result!.status).toBe('downloading');
+    });
+
+    it('returns downloading when is_finished=true and state is Moving', async () => {
+      server.use(rpcHandler({
+        'auth.login': () => true,
+        'core.get_torrent_status': () => ({ ...mockTorrentStatus, state: 'Moving', is_finished: true }),
+      }));
+
+      const result = await client.getDownload('abc123def456');
+      expect(result!.status).toBe('downloading');
+    });
+
+    it('returns downloading when is_finished=false and state is Seeding', async () => {
+      server.use(rpcHandler({
+        'auth.login': () => true,
+        'core.get_torrent_status': () => ({ ...mockTorrentStatus, state: 'Seeding', is_finished: false }),
+      }));
+
+      const result = await client.getDownload('abc123def456');
+      expect(result!.status).toBe('downloading');
+    });
+
+    it('returns downloading when state is Moving (files being relocated)', async () => {
+      server.use(rpcHandler({
+        'auth.login': () => true,
+        'core.get_torrent_status': () => ({ ...mockTorrentStatus, state: 'Moving', is_finished: false }),
+      }));
+
+      const result = await client.getDownload('abc123def456');
+      expect(result!.status).toBe('downloading');
+    });
+
+    it('returns error when state is Error', async () => {
+      server.use(rpcHandler({
+        'auth.login': () => true,
+        'core.get_torrent_status': () => ({ ...mockTorrentStatus, state: 'Error', is_finished: false }),
+      }));
+
+      const result = await client.getDownload('abc123def456');
+      expect(result!.status).toBe('error');
+    });
+
+    it('returns paused when state is Paused', async () => {
+      server.use(rpcHandler({
+        'auth.login': () => true,
+        'core.get_torrent_status': () => ({ ...mockTorrentStatus, state: 'Paused', is_finished: false }),
+      }));
+
+      const result = await client.getDownload('abc123def456');
+      expect(result!.status).toBe('paused');
+    });
+
+    it('returns downloading when state is Queued', async () => {
+      server.use(rpcHandler({
+        'auth.login': () => true,
+        'core.get_torrent_status': () => ({ ...mockTorrentStatus, state: 'Queued', is_finished: false }),
+      }));
+
+      const result = await client.getDownload('abc123def456');
+      expect(result!.status).toBe('downloading');
     });
   });
 });

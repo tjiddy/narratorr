@@ -31,12 +31,14 @@ interface DelugeTorrentStatus {
   save_path: string;
   time_added: number;
   label?: string;
+  is_finished: boolean;
 }
 
 const TORRENT_STATUS_KEYS = [
   'hash', 'name', 'state', 'progress', 'total_size',
   'total_done', 'total_uploaded', 'ratio', 'num_seeds',
   'num_peers', 'eta', 'save_path', 'time_added', 'label',
+  'is_finished',
 ];
 
 export class DelugeClient implements DownloadClientAdapter {
@@ -248,7 +250,7 @@ export class DelugeClient implements DownloadClientAdapter {
       id: hash,
       name: t.name,
       progress: Math.round(t.progress),
-      status: this.mapState(t.state),
+      status: this.mapState(t.state, t.is_finished),
       savePath: t.save_path,
       size: t.total_size,
       downloaded: t.total_done,
@@ -261,15 +263,11 @@ export class DelugeClient implements DownloadClientAdapter {
     };
   }
 
-  private mapState(state: string): DownloadItemInfo['status'] {
-    const stateMap: Record<string, DownloadItemInfo['status']> = {
-      Downloading: 'downloading',
-      Seeding: 'seeding',
-      Paused: 'paused',
-      Queued: 'downloading',
-      Checking: 'downloading',
-      Error: 'error',
-    };
-    return stateMap[state] || 'downloading';
+  private mapState(state: string, isFinished: boolean): DownloadItemInfo['status'] {
+    if (state === 'Error') return 'error';
+    if (state === 'Moving') return 'downloading';
+    if (isFinished && state !== 'Checking' && state !== 'Moving') return 'completed';
+    if (state === 'Paused') return 'paused';
+    return 'downloading';
   }
 }
