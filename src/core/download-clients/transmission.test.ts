@@ -25,6 +25,7 @@ const mockTorrent = {
   addedDate: 1700000000,
   doneDate: 0,
   errorString: '',
+  leftUntilDone: 500000,
 };
 
 function rpcHandler(expectedMethod?: string, responseArgs?: Record<string, unknown>) {
@@ -390,15 +391,15 @@ describe('TransmissionClient', () => {
 
   describe('status mapping', () => {
     it.each([
-      [0, 'paused'],
-      [1, 'downloading'],
-      [2, 'downloading'],
-      [3, 'downloading'],
-      [4, 'downloading'],
-      [5, 'seeding'],
-      [6, 'seeding'],
-    ] as const)('maps Transmission status %d to %s', async (statusCode, expectedStatus) => {
-      server.use(rpcHandler('torrent-get', { torrents: [{ ...mockTorrent, status: statusCode }] }));
+      [0, 0, 'completed'],
+      [1, 500000, 'downloading'],
+      [2, 500000, 'downloading'],
+      [3, 500000, 'downloading'],
+      [4, 500000, 'downloading'],
+      [5, 0, 'seeding'],
+      [6, 0, 'seeding'],
+    ] as const)('maps Transmission status %d (leftUntilDone=%d) to %s', async (statusCode, leftUntilDone, expectedStatus) => {
+      server.use(rpcHandler('torrent-get', { torrents: [{ ...mockTorrent, status: statusCode, leftUntilDone }] }));
 
       const result = await client.getDownload('abc123def456');
       expect(result!.status).toBe(expectedStatus);
@@ -486,6 +487,80 @@ describe('TransmissionClient', () => {
 
       const hash = await client.addDownload('magnet:?xt=urn:btih:ABC123');
       expect(hash).toBe('abc123def456');
+    });
+  });
+
+  describe('leftUntilDone completion and errorString', () => {
+    it('returns completed when leftUntilDone=0 and status=Stopped(0)', async () => {
+      server.use(rpcHandler('torrent-get', {
+        torrents: [{ ...mockTorrent, status: 0, leftUntilDone: 0, percentDone: 1.0 }],
+      }));
+
+      const result = await client.getDownload('abc123def456');
+      expect(result!.status).toBe('completed');
+    });
+
+    it('returns seeding when leftUntilDone=0 and status=Seeding(6)', async () => {
+      server.use(rpcHandler('torrent-get', {
+        torrents: [{ ...mockTorrent, status: 6, leftUntilDone: 0, percentDone: 1.0 }],
+      }));
+
+      const result = await client.getDownload('abc123def456');
+      expect(result!.status).toBe('seeding');
+    });
+
+    it('returns seeding when leftUntilDone=0 and status=SeedingWait(5)', async () => {
+      server.use(rpcHandler('torrent-get', {
+        torrents: [{ ...mockTorrent, status: 5, leftUntilDone: 0, percentDone: 1.0 }],
+      }));
+
+      const result = await client.getDownload('abc123def456');
+      expect(result!.status).toBe('seeding');
+    });
+
+    it('returns downloading when leftUntilDone > 0 and status=Downloading(4)', async () => {
+      server.use(rpcHandler('torrent-get', {
+        torrents: [{ ...mockTorrent, status: 4, leftUntilDone: 500000 }],
+      }));
+
+      const result = await client.getDownload('abc123def456');
+      expect(result!.status).toBe('downloading');
+    });
+
+    it('returns downloading when totalSize=0 (no metadata)', async () => {
+      server.use(rpcHandler('torrent-get', {
+        torrents: [{ ...mockTorrent, totalSize: 0, leftUntilDone: 0, status: 4 }],
+      }));
+
+      const result = await client.getDownload('abc123def456');
+      expect(result!.status).toBe('downloading');
+    });
+
+    it('returns error when errorString is non-empty (regardless of other fields)', async () => {
+      server.use(rpcHandler('torrent-get', {
+        torrents: [{ ...mockTorrent, errorString: 'Tracker error: not registered', status: 6, leftUntilDone: 0 }],
+      }));
+
+      const result = await client.getDownload('abc123def456');
+      expect(result!.status).toBe('error');
+    });
+
+    it('returns seeding when errorString is empty and leftUntilDone=0 and Seeding', async () => {
+      server.use(rpcHandler('torrent-get', {
+        torrents: [{ ...mockTorrent, errorString: '', status: 6, leftUntilDone: 0, percentDone: 1.0 }],
+      }));
+
+      const result = await client.getDownload('abc123def456');
+      expect(result!.status).toBe('seeding');
+    });
+
+    it('detects completion via leftUntilDone=0 even when percentDone < 1.0', async () => {
+      server.use(rpcHandler('torrent-get', {
+        torrents: [{ ...mockTorrent, percentDone: 0.9999, status: 0, leftUntilDone: 0 }],
+      }));
+
+      const result = await client.getDownload('abc123def456');
+      expect(result!.status).toBe('completed');
     });
   });
 });

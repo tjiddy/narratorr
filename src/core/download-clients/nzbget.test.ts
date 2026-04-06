@@ -606,7 +606,7 @@ describe('NZBGetClient', () => {
       expect(item!.progress).toBe(100);
     });
 
-    it('handles unknown history status (fallback to completed)', async () => {
+    it('handles unknown history status (fallback to downloading, not completed)', async () => {
       server.use(
         rpcHandler({
           listgroups: () => [],
@@ -615,7 +615,7 @@ describe('NZBGetClient', () => {
       );
 
       const item = await client.getDownload('456');
-      expect(item!.status).toBe('completed');
+      expect(item!.status).toBe('downloading');
     });
 
     it('maps DELETED/* history to error', async () => {
@@ -782,6 +782,104 @@ describe('NZBGetClient', () => {
 
       const items = await client.getAllDownloads();
       expect(items).toEqual([]);
+    });
+  });
+
+  describe('mapHistoryStatus — post-processing degradation', () => {
+    it('maps unknown history status to downloading (not completed)', async () => {
+      server.use(
+        rpcHandler({
+          listgroups: () => [],
+          history: () => [{ ...historyItem, Status: 'COPY' }],
+        }),
+      );
+
+      const item = await client.getDownload('456');
+      expect(item!.status).toBe('downloading');
+    });
+
+    it('degrades to error when ParStatus is FAILURE (even if main status is SUCCESS)', async () => {
+      server.use(
+        rpcHandler({
+          listgroups: () => [],
+          history: () => [{ ...historyItem, Status: 'SUCCESS/ALL', ParStatus: 'FAILURE', UnpackStatus: 'SUCCESS', MoveStatus: 'SUCCESS' }],
+        }),
+      );
+
+      const item = await client.getDownload('456');
+      expect(item!.status).toBe('error');
+    });
+
+    it('degrades to error when UnpackStatus is SPACE (disk full)', async () => {
+      server.use(
+        rpcHandler({
+          listgroups: () => [],
+          history: () => [{ ...historyItem, Status: 'SUCCESS/ALL', ParStatus: 'SUCCESS', UnpackStatus: 'SPACE', MoveStatus: 'SUCCESS' }],
+        }),
+      );
+
+      const item = await client.getDownload('456');
+      expect(item!.status).toBe('error');
+    });
+
+    it('degrades to error when UnpackStatus is FAILURE', async () => {
+      server.use(
+        rpcHandler({
+          listgroups: () => [],
+          history: () => [{ ...historyItem, Status: 'SUCCESS/ALL', ParStatus: 'SUCCESS', UnpackStatus: 'FAILURE', MoveStatus: 'SUCCESS' }],
+        }),
+      );
+
+      const item = await client.getDownload('456');
+      expect(item!.status).toBe('error');
+    });
+
+    it('degrades to downloading when MoveStatus is FAILURE (still moving)', async () => {
+      server.use(
+        rpcHandler({
+          listgroups: () => [],
+          history: () => [{ ...historyItem, Status: 'SUCCESS/ALL', ParStatus: 'SUCCESS', UnpackStatus: 'SUCCESS', MoveStatus: 'FAILURE' }],
+        }),
+      );
+
+      const item = await client.getDownload('456');
+      expect(item!.status).toBe('downloading');
+    });
+
+    it('does not degrade when ParStatus/UnpackStatus/MoveStatus are NONE', async () => {
+      server.use(
+        rpcHandler({
+          listgroups: () => [],
+          history: () => [{ ...historyItem, Status: 'SUCCESS/ALL', ParStatus: 'NONE', UnpackStatus: 'NONE', MoveStatus: 'NONE' }],
+        }),
+      );
+
+      const item = await client.getDownload('456');
+      expect(item!.status).toBe('completed');
+    });
+
+    it('does not degrade when ParStatus/UnpackStatus/MoveStatus are missing/undefined', async () => {
+      server.use(
+        rpcHandler({
+          listgroups: () => [],
+          history: () => [{ ...historyItem, Status: 'SUCCESS/ALL' }],
+        }),
+      );
+
+      const item = await client.getDownload('456');
+      expect(item!.status).toBe('completed');
+    });
+
+    it('returns completed when SUCCESS with all post-processing SUCCESS/NONE', async () => {
+      server.use(
+        rpcHandler({
+          listgroups: () => [],
+          history: () => [{ ...historyItem, Status: 'SUCCESS/ALL', ParStatus: 'SUCCESS', UnpackStatus: 'SUCCESS', MoveStatus: 'NONE' }],
+        }),
+      );
+
+      const item = await client.getDownload('456');
+      expect(item!.status).toBe('completed');
     });
   });
 });
