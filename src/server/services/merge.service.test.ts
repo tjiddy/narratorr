@@ -1242,6 +1242,60 @@ describe('#257 merge observability — merge service', () => {
       });
     });
 
+    it('emits merge_queue_updated with decremented positions when active merge completes', async () => {
+      const db = createMockDb();
+      const bookService = { getById: vi.fn(), update: vi.fn().mockResolvedValue(undefined) };
+      const settingsService = createMockSettingsService(processingOverrides);
+      const log = createMockLogger();
+      const eventBroadcaster = { emit: vi.fn() } as unknown as EventBroadcasterService;
+
+      const books = [42, 43, 44].map((id) => ({
+        ...createMockDbBook({ id, title: `Book ${id}`, path: `/lib/${id}`, status: 'imported' }),
+        authors: [mockAuthor], narrators: [],
+      }));
+      bookService.getById.mockImplementation(async (id: number) => books.find((b) => b.id === id) ?? null);
+
+      (readdir as Mock).mockImplementation(async (dir: string) => {
+        if (dir.endsWith('.merge-tmp')) return ['out.m4b'];
+        return ['01.mp3', '02.mp3'];
+      });
+      (mkdir as Mock).mockResolvedValue(undefined);
+      (cp as Mock).mockResolvedValue(undefined);
+      (scanAudioDirectory as Mock).mockResolvedValue(SCAN_RESULT);
+      (rename as Mock).mockResolvedValue(undefined);
+      (unlink as Mock).mockResolvedValue(undefined);
+      (rm as Mock).mockResolvedValue(undefined);
+      (stat as Mock).mockResolvedValue({ size: 100 });
+      (enrichBookFromAudio as Mock).mockResolvedValue({ enriched: true });
+
+      let resolveFirst!: () => void;
+      const firstPromise = new Promise<void>((resolve) => { resolveFirst = resolve; });
+      (processAudioFiles as Mock).mockImplementationOnce(async () => {
+        await firstPromise;
+        return { success: true, outputFiles: ['/staging/out.m4b'] };
+      }).mockResolvedValue({ success: true, outputFiles: ['/staging/out.m4b'] });
+
+      const service = new MergeService(
+        inject<Db>(db), inject<BookService>(bookService), settingsService,
+        inject<FastifyBaseLogger>(log), undefined, eventBroadcaster,
+      );
+
+      await service.enqueueMerge(42); // starts
+      await service.enqueueMerge(43); // queues position 1
+      await service.enqueueMerge(44); // queues position 2
+
+      resolveFirst();
+      await new Promise((resolve) => setTimeout(resolve, 100));
+
+      const emitCalls = (eventBroadcaster as unknown as { emit: Mock }).emit.mock.calls;
+      const queueUpdates = emitCalls.filter((c: unknown[]) => c[0] === 'merge_queue_updated');
+      // After book 43 dequeues, book 44 should get position update to 1
+      expect(queueUpdates.some((c: unknown[]) =>
+        (c[1] as { book_id: number; position: number }).book_id === 44 &&
+        (c[1] as { book_id: number; position: number }).position === 1,
+      )).toBe(true);
+    });
+
     it('merge_complete includes enrichmentWarning when enrichment fails', async () => {
       setupHappyPath();
       (enrichBookFromAudio as Mock).mockResolvedValue({ enriched: false });
