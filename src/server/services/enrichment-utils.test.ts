@@ -418,3 +418,115 @@ describe('enrichBookFromAudio narrator splitting (issue #79)', () => {
     expect(mockBookService.update).not.toHaveBeenCalled();
   });
 });
+
+vi.mock('./cover-download.js', () => ({
+  downloadRemoteCover: vi.fn().mockResolvedValue(true),
+  isRemoteCoverUrl: vi.fn((url: string | null | undefined) => {
+    if (!url) return false;
+    return url.startsWith('http://') || url.startsWith('https://');
+  }),
+}));
+
+import { downloadRemoteCover } from './cover-download.js';
+
+describe('enrichBookFromAudio — remote cover download integration (#369)', () => {
+  let mockDb: { update: ReturnType<typeof vi.fn> };
+  let log: FastifyBaseLogger;
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockDb = {
+      update: vi.fn().mockReturnValue({
+        set: vi.fn().mockReturnValue({
+          where: vi.fn().mockResolvedValue(undefined),
+        }),
+      }),
+    };
+    log = inject<FastifyBaseLogger>({
+      info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn(),
+      fatal: vi.fn(), trace: vi.fn(), child: vi.fn().mockReturnThis(), silent: vi.fn(), level: 'info',
+    });
+  });
+
+  function scanWithNoEmbeddedCover() {
+    vi.mocked(scanAudioDirectory).mockResolvedValue({
+      codec: 'mp3', bitrate: 128000, sampleRate: 44100, channels: 2,
+      bitrateMode: 'cbr' as const, fileFormat: 'MPEG', fileCount: 1,
+      totalSize: 1000, totalDuration: 100, hasCoverArt: false,
+    });
+  }
+
+  function scanWithEmbeddedCover() {
+    vi.mocked(scanAudioDirectory).mockResolvedValue({
+      codec: 'mp3', bitrate: 128000, sampleRate: 44100, channels: 2,
+      bitrateMode: 'cbr' as const, fileFormat: 'MPEG', fileCount: 1,
+      totalSize: 1000, totalDuration: 100, hasCoverArt: true,
+      coverImage: Buffer.from('fake-image'), coverMimeType: 'image/jpeg',
+    });
+  }
+
+  it('fires downloadRemoteCover when book has remote coverUrl and no embedded cover', async () => {
+    scanWithNoEmbeddedCover();
+
+    await enrichBookFromAudio(
+      42, '/books/test',
+      { narrators: null, duration: null, coverUrl: 'https://cdn.example.com/cover.jpg' },
+      inject<Db>(mockDb), log,
+    );
+
+    expect(downloadRemoteCover).toHaveBeenCalledWith(
+      42, '/books/test', 'https://cdn.example.com/cover.jpg',
+      expect.anything(), log,
+    );
+  });
+
+  it('does not fire downloadRemoteCover when coverUrl is already local', async () => {
+    scanWithNoEmbeddedCover();
+
+    await enrichBookFromAudio(
+      42, '/books/test',
+      { narrators: null, duration: null, coverUrl: '/api/books/42/cover' },
+      inject<Db>(mockDb), log,
+    );
+
+    expect(downloadRemoteCover).not.toHaveBeenCalled();
+  });
+
+  it('does not fire downloadRemoteCover when embedded cover was saved', async () => {
+    scanWithEmbeddedCover();
+
+    await enrichBookFromAudio(
+      42, '/books/test',
+      { narrators: null, duration: null, coverUrl: null },
+      inject<Db>(mockDb), log,
+    );
+
+    // Embedded cover was saved, update.coverUrl was set → no remote download
+    expect(downloadRemoteCover).not.toHaveBeenCalled();
+  });
+
+  it('does not fire downloadRemoteCover when coverUrl is null', async () => {
+    scanWithNoEmbeddedCover();
+
+    await enrichBookFromAudio(
+      42, '/books/test',
+      { narrators: null, duration: null, coverUrl: null },
+      inject<Db>(mockDb), log,
+    );
+
+    expect(downloadRemoteCover).not.toHaveBeenCalled();
+  });
+
+  it('download failure does not affect enrichment result (fire-and-forget)', async () => {
+    scanWithNoEmbeddedCover();
+    vi.mocked(downloadRemoteCover).mockRejectedValueOnce(new Error('Network failure'));
+
+    const result = await enrichBookFromAudio(
+      42, '/books/test',
+      { narrators: null, duration: null, coverUrl: 'https://cdn.example.com/cover.jpg' },
+      inject<Db>(mockDb), log,
+    );
+
+    expect(result.enriched).toBe(true);
+  });
+});
