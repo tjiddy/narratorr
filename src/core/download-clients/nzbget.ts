@@ -252,21 +252,21 @@ export class NZBGetClient implements DownloadClientAdapter {
   }
 
   private mapHistoryStatus(item: NZBGetHistoryItem): DownloadItemInfo['status'] {
-    // NZBGet history statuses: SUCCESS/*, FAILURE/*, DELETED/*
     const upper = item.Status.toUpperCase();
     if (upper.startsWith('FAILURE') || upper.startsWith('DELETED')) return 'error';
     if (!upper.startsWith('SUCCESS')) return 'downloading';
 
     // Degradation model: SUCCESS can be downgraded by post-processing failures
-    const par = item.ParStatus?.toUpperCase();
-    if (par && par !== 'SUCCESS' && par !== 'NONE') return 'error';
-
-    const unpack = item.UnpackStatus?.toUpperCase();
-    if (unpack && unpack !== 'SUCCESS' && unpack !== 'NONE') return 'error';
-
-    const move = item.MoveStatus?.toUpperCase();
-    if (move && move !== 'SUCCESS' && move !== 'NONE') return 'downloading';
+    if (postProcFailed(item.ParStatus) || postProcFailed(item.UnpackStatus)) return 'error';
+    if (postProcFailed(item.MoveStatus)) return 'downloading';
 
     return 'completed';
   }
+}
+
+/** Check if a post-processing field indicates failure (present and not SUCCESS/NONE). */
+function postProcFailed(value: string | undefined): boolean {
+  if (!value) return false;
+  const upper = value.toUpperCase();
+  return upper !== 'SUCCESS' && upper !== 'NONE';
 }
