@@ -1,5 +1,34 @@
 # Workflow Log
 
+## #367 qBittorrent adapter: fetch .torrent URLs instead of rejecting — 2026-04-06
+**Skill path:** /implement → /claim → /plan → /handoff
+**Outcome:** success — PR #377
+
+### Metrics
+- Files changed: 3 | Tests added/modified: 18
+- Quality gate runs: 2 (pass on attempt 2 — lint complexity + typecheck fix)
+- Fix iterations: 2 (cyclomatic complexity extraction, TS2339 catch type)
+- Context compactions: 0
+
+### Workflow experience
+- What went smoothly: Clean implementation — existing `addDownloadFromFile` and `fetchWithTimeout` infrastructure made the change straightforward. Spec was well-groomed after 2 review rounds.
+- Friction / issues encountered: Cyclomatic complexity hit 18 after inlining the fetch logic — had to extract to private method. Also hit TS2339 because `.catch((e: Error) => e)` on `Promise<string>` produces `string | Error` union type.
+
+### Token efficiency
+- Highest-token actions: Elaborate + 2 spec review rounds consumed significant context before implementation started
+- Avoidable waste: Could have extracted `fetchAndUploadTorrent` from the start instead of inlining and then refactoring
+- Suggestions: For methods near complexity limit, always extract new logic into separate methods upfront
+
+### Infrastructure gaps
+- Repeated workarounds: None
+- Missing tooling / config: None
+- Unresolved debt: None new
+
+### Wish I'd Known
+1. `fetchWithTimeout` redirect errors include `Location` header in message — any URL-redacting caller must sanitize (learning: `fetchwithtimeout-redirect-leaks-location.md`)
+2. Adding a try/catch + if/else branch to an already-complex method will exceed complexity 15 — extract from the start (learning: `eslint-complexity-extract-early.md`)
+3. `.catch((e: Error) => e)` on `Promise<string>` returns `string | Error` — use `as Error` cast in tests
+
 ## #373 Fix download completion race condition — monitor overrides adapter status — 2026-04-06
 **Skill path:** /implement → /claim → /plan → /handoff
 **Outcome:** success — PR #375

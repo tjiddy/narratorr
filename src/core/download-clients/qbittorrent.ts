@@ -145,10 +145,15 @@ export class QBittorrentClient implements DownloadClientAdapter {
       return this.addDownloadFromFile(options.torrentFile, options);
     }
 
-    // Validate magnet URI before sending to qBittorrent — .torrent URLs are not supported
+    // HTTP/HTTPS URL — fetch .torrent file and upload via multipart
+    if (url.startsWith('http://') || url.startsWith('https://')) {
+      return this.fetchAndUploadTorrent(url, options);
+    }
+
+    // Unsupported schemes (ftp:, etc.) — reject
     if (!url.startsWith('magnet:')) {
       throw new Error(
-        'qBittorrent adapter only supports magnet URIs. Received a non-magnet URL (possibly a .torrent link — URL omitted to avoid leaking passkeys/tokens in logs).',
+        'Unsupported URL scheme. Only magnet URIs and HTTP/HTTPS .torrent URLs are supported (URL omitted to avoid leaking passkeys/tokens in logs).',
       );
     }
 
@@ -223,6 +228,26 @@ export class QBittorrentClient implements DownloadClientAdapter {
     }
 
     throw new Error('Could not extract info hash from torrent file');
+  }
+
+  private async fetchAndUploadTorrent(url: string, options?: AddDownloadOptions): Promise<string> {
+    let response: Response;
+    try {
+      response = await fetchWithTimeout(url, {}, DEFAULT_REQUEST_TIMEOUT_MS);
+    } catch (error: unknown) {
+      // Redirect errors from fetchWithTimeout include Location header — sanitize
+      if (error instanceof Error && error.message.includes('redirected')) {
+        throw new Error('Server redirected the .torrent download — an auth proxy may be intercepting requests. Use the service\'s internal address or whitelist this endpoint in your proxy config.');
+      }
+      throw error; // Network errors from mapNetworkError are already sanitized
+    }
+
+    if (!response.ok) {
+      throw new Error(`Failed to fetch .torrent file: HTTP ${response.status} (URL omitted to avoid leaking passkeys/tokens in logs)`);
+    }
+
+    const torrentBuffer = Buffer.from(await response.arrayBuffer());
+    return this.addDownloadFromFile(torrentBuffer, options);
   }
 
   async getDownload(hash: string): Promise<DownloadItemInfo | null> {
