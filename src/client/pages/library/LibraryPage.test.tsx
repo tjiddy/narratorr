@@ -1213,8 +1213,39 @@ describe('LibraryPage', () => {
     });
 
     // #365 — grid-view coercion for narrator/series sorts
-    it.todo('coerces sort to Date Added (desc) when switching from table to grid with narrator sort active');
-    it.todo('coerces sort to Date Added (desc) when switching from table to grid with series sort active');
+    it('coerces sort to Date Added (desc) when switching from table to grid with narrator sort active', async () => {
+      mockLibraryData(mockBooks);
+      const user = userEvent.setup();
+      renderWithProviders(<LibraryPage />);
+      await waitFor(() => { expect(screen.getByText('The Way of Kings')).toBeInTheDocument(); });
+
+      await user.click(screen.getByLabelText('Table view'));
+      await waitFor(() => { expect(screen.getByRole('button', { name: 'Sort by Narrator' })).toBeInTheDocument(); });
+      await user.click(screen.getByRole('button', { name: 'Sort by Narrator' }));
+
+      await user.click(screen.getByLabelText('Grid view'));
+
+      await waitFor(() => {
+        expect(screen.getByRole('button', { name: /date added.*newest/i })).toBeInTheDocument();
+      });
+    });
+
+    it('coerces sort to Date Added (desc) when switching from table to grid with series sort active', async () => {
+      mockLibraryData(mockBooks);
+      const user = userEvent.setup();
+      renderWithProviders(<LibraryPage />);
+      await waitFor(() => { expect(screen.getByText('The Way of Kings')).toBeInTheDocument(); });
+
+      await user.click(screen.getByLabelText('Table view'));
+      await waitFor(() => { expect(screen.getByRole('button', { name: 'Sort by Series' })).toBeInTheDocument(); });
+      await user.click(screen.getByRole('button', { name: 'Sort by Series' }));
+
+      await user.click(screen.getByLabelText('Grid view'));
+
+      await waitFor(() => {
+        expect(screen.getByRole('button', { name: /date added.*newest/i })).toBeInTheDocument();
+      });
+    });
 
     it('selection state clears when switching to grid view', async () => {
       mockLibraryData(mockBooks);

@@ -22,7 +22,7 @@ import { LibraryHeader } from './LibraryHeader.js';
 import { Pagination } from '@/components/Pagination';
 
 const VIEW_STORAGE_KEY = 'narratorr:library-view';
-const TABLE_ONLY_SORTS: SortField[] = ['quality', 'size', 'format'];
+const TABLE_ONLY_SORTS: SortField[] = ['quality', 'size', 'format', 'narrator', 'series'];
 
 function getInitialViewMode(): ViewMode {
   try {
