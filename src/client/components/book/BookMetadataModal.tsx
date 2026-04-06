@@ -114,7 +114,7 @@ export function BookMetadataModal({ book, onSave, onClose, isSaving }: BookMetad
               </button>
             )}
             <h2 className="font-display text-lg font-semibold tracking-tight">
-              {view === 'search' ? 'Search Audnexus' : 'Edit Metadata'}
+              {view === 'search' ? 'Search Metadata' : 'Edit Metadata'}
             </h2>
           </div>
           <button
@@ -192,7 +192,7 @@ export function BookMetadataModal({ book, onSave, onClose, isSaving }: BookMetad
               />
             </div>
 
-            {/* Divider + Search Audnexus */}
+            {/* Divider + Search metadata */}
             <div className="pt-1">
               <div className="border-t border-white/5 mb-3" />
               <button
@@ -201,7 +201,7 @@ export function BookMetadataModal({ book, onSave, onClose, isSaving }: BookMetad
                 className="w-full flex items-center justify-center gap-2 px-3 py-2 text-xs font-medium glass-card rounded-xl hover:border-primary/30 hover:text-primary transition-all focus-ring"
               >
                 <SearchIcon className="w-3.5 h-3.5" />
-                Search Audnexus for metadata
+                Search for metadata
               </button>
             </div>
 

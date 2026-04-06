@@ -169,9 +169,9 @@ describe('BookMetadataModal', () => {
       });
     });
 
-    it('shows "Search Audnexus for metadata" button', () => {
+    it('shows "Search for metadata" button', () => {
       renderModal();
-      expect(screen.getByText('Search Audnexus for metadata')).toBeInTheDocument();
+      expect(screen.getByText('Search for metadata')).toBeInTheDocument();
     });
 
     it('excludes seriesPosition from payload when user types non-numeric value', async () => {
@@ -280,7 +280,7 @@ describe('BookMetadataModal', () => {
       const user = userEvent.setup();
       renderModal();
 
-      await user.click(screen.getByText('Search Audnexus for metadata'));
+      await user.click(screen.getByText('Search for metadata'));
 
       await waitFor(() => {
         const searchInput = screen.getByLabelText('Search query');
@@ -293,7 +293,7 @@ describe('BookMetadataModal', () => {
       const bookNoAuthor = { ...mockBook, authors: [] };
       renderModal({ book: bookNoAuthor });
 
-      await user.click(screen.getByText('Search Audnexus for metadata'));
+      await user.click(screen.getByText('Search for metadata'));
 
       await waitFor(() => {
         const searchInput = screen.getByLabelText('Search query');
@@ -309,7 +309,7 @@ describe('BookMetadataModal', () => {
       const user = userEvent.setup();
       renderModal();
 
-      await user.click(screen.getByText('Search Audnexus for metadata'));
+      await user.click(screen.getByText('Search for metadata'));
       await user.click(screen.getByRole('button', { name: 'Search' }));
 
       await waitFor(() => {
@@ -325,7 +325,7 @@ describe('BookMetadataModal', () => {
       const user = userEvent.setup();
       renderModal();
 
-      await user.click(screen.getByText('Search Audnexus for metadata'));
+      await user.click(screen.getByText('Search for metadata'));
       await user.keyboard('{Enter}');
 
       await waitFor(() => {
@@ -348,7 +348,7 @@ describe('BookMetadataModal', () => {
       const user = userEvent.setup();
       renderModal();
 
-      await user.click(screen.getByText('Search Audnexus for metadata'));
+      await user.click(screen.getByText('Search for metadata'));
       await user.click(screen.getByRole('button', { name: 'Search' }));
 
       await screen.findByText('Result One');
@@ -378,7 +378,7 @@ describe('BookMetadataModal', () => {
       const user = userEvent.setup();
       renderModal();
 
-      await user.click(screen.getByText('Search Audnexus for metadata'));
+      await user.click(screen.getByText('Search for metadata'));
       await user.click(screen.getByRole('button', { name: 'Search' }));
 
       await screen.findByText('Words of Radiance');
@@ -406,7 +406,7 @@ describe('BookMetadataModal', () => {
       const user = userEvent.setup();
       renderModal({ onSave });
 
-      await user.click(screen.getByText('Search Audnexus for metadata'));
+      await user.click(screen.getByText('Search for metadata'));
       await user.click(screen.getByRole('button', { name: 'Search' }));
       await screen.findByText('Auto Title');
       await user.click(screen.getByText('Auto Title'));
@@ -437,7 +437,7 @@ describe('BookMetadataModal', () => {
       const user = userEvent.setup();
       renderModal();
 
-      await user.click(screen.getByText('Search Audnexus for metadata'));
+      await user.click(screen.getByText('Search for metadata'));
       await user.click(screen.getByRole('button', { name: 'Search' }));
       await screen.findByText('Some Result');
 
@@ -459,7 +459,7 @@ describe('BookMetadataModal', () => {
       const user = userEvent.setup();
       renderModal();
 
-      await user.click(screen.getByText('Search Audnexus for metadata'));
+      await user.click(screen.getByText('Search for metadata'));
       await user.click(screen.getByRole('button', { name: 'Search' }));
 
       await screen.findByText(/No results found/);
@@ -474,7 +474,7 @@ describe('BookMetadataModal', () => {
       const user = userEvent.setup();
       renderModal();
 
-      await user.click(screen.getByText('Search Audnexus for metadata'));
+      await user.click(screen.getByText('Search for metadata'));
       await user.click(screen.getByRole('button', { name: 'Search' }));
 
       // Search button should be disabled while loading
@@ -491,7 +491,7 @@ describe('BookMetadataModal', () => {
       const user = userEvent.setup();
       renderModal();
 
-      await user.click(screen.getByText('Search Audnexus for metadata'));
+      await user.click(screen.getByText('Search for metadata'));
       await user.click(screen.getByRole('button', { name: 'Search' }));
 
       await screen.findByText('Search failed. Please try again.');
@@ -516,7 +516,7 @@ describe('BookMetadataModal', () => {
       const user = userEvent.setup();
       renderModal({ onSave });
 
-      await user.click(screen.getByText('Search Audnexus for metadata'));
+      await user.click(screen.getByText('Search for metadata'));
       await user.click(screen.getByRole('button', { name: 'Search' }));
       await screen.findByText('New Title');
       await user.click(screen.getByText('New Title'));
@@ -562,7 +562,7 @@ describe('BookMetadataModal', () => {
         const user = userEvent.setup();
         renderModal();
 
-        await user.click(screen.getByText('Search Audnexus for metadata'));
+        await user.click(screen.getByText('Search for metadata'));
         await user.click(screen.getByRole('button', { name: 'Search' }));
 
         await screen.findByText('Prefixed Cover');
@@ -585,7 +585,7 @@ describe('BookMetadataModal', () => {
       const user = userEvent.setup();
       renderModal();
 
-      await user.click(screen.getByText('Search Audnexus for metadata'));
+      await user.click(screen.getByText('Search for metadata'));
       await user.click(screen.getByRole('button', { name: 'Search' }));
       await screen.findByText('No Narrator Book');
       await user.click(screen.getByText('No Narrator Book'));
@@ -629,7 +629,7 @@ describe('BookMetadataModal', () => {
     const user = userEvent.setup();
     renderModal();
 
-    await user.click(screen.getByText('Search Audnexus for metadata'));
+    await user.click(screen.getByText('Search for metadata'));
     await user.click(screen.getByRole('button', { name: 'Search' }));
 
     await waitFor(() => {
