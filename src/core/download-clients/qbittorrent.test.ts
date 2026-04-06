@@ -311,6 +311,19 @@ describe('QBittorrentClient', () => {
         }
       });
 
+      it('surfaces sanitized DNS error on connection-refused/ENOTFOUND without URL leakage', async () => {
+        server.use(
+          http.get('https://example.com/file.torrent', () => {
+            return HttpResponse.error();
+          }),
+        );
+
+        const error = await client.addDownload(TORRENT_URL).catch((e: unknown) => e) as Error;
+        expect(error).toBeInstanceOf(Error);
+        expect(error.message).not.toContain('SECRET123');
+        expect(error.message).not.toContain('example.com/file.torrent');
+      });
+
       it('catches fetchWithTimeout redirect error and throws sanitized message without source URL or Location header', async () => {
         server.use(
           http.get('https://example.com/file.torrent', () => {
@@ -387,11 +400,28 @@ describe('QBittorrentClient', () => {
     });
 
     describe('unsupported schemes', () => {
-      it('throws immediately for ftp:// URL with descriptive error', async () => {
-        await expect(client.addDownload('ftp://example.com/file.torrent')).rejects.toThrow();
-        // Should not make any HTTP requests
+      it('throws immediately for ftp:// URL with descriptive error and no login/upload side effects', async () => {
+        let loginCalled = false;
+        let uploadCalled = false;
+
+        server.use(
+          http.post(`${BASE_URL}/api/v2/auth/login`, () => {
+            loginCalled = true;
+            return new HttpResponse('Ok.', {
+              headers: { 'Set-Cookie': 'SID=test-session-id; path=/' },
+            });
+          }),
+          http.post(`${BASE_URL}/api/v2/torrents/add`, () => {
+            uploadCalled = true;
+            return new HttpResponse('');
+          }),
+        );
+
         const error = await client.addDownload('ftp://example.com/file.torrent').catch((e: unknown) => e) as Error;
         expect(error).toBeInstanceOf(Error);
+        expect(error.message).toContain('Unsupported URL scheme');
+        expect(loginCalled).toBe(false);
+        expect(uploadCalled).toBe(false);
       });
     });
 
