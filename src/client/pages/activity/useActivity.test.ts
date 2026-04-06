@@ -51,6 +51,8 @@ function makeDownload(overrides: Partial<Download> = {}): Download {
     status: 'downloading',
     progress: 0.5,
     addedAt: '2024-01-01T00:00:00Z',
+    completedAt: null,
+    seeders: null,
     indexerName: null,
     ...overrides,
   };
