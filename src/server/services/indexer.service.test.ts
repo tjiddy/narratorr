@@ -398,6 +398,46 @@ describe('IndexerService', () => {
       const results = await service.pollRss(newznabIndexer);
       expect(results).toEqual([]);
     });
+
+    it('populates indexerId from indexer row on all returned results', async () => {
+      const torznabIndexer = createMockDbIndexer({ id: 7, name: 'Torznab', type: 'torznab', settings: { apiUrl: 'https://tracker.test', apiKey: 'key' } });
+      const mockAdapter = {
+        type: 'torznab',
+        name: 'Torznab',
+        search: vi.fn().mockResolvedValue([
+          { title: 'Brandon Sanderson - The Way of Kings', indexer: 'Torznab', protocol: 'torrent' },
+        ]),
+        test: vi.fn(),
+      };
+      vi.spyOn(service, 'getAdapter').mockResolvedValue(mockAdapter as never);
+
+      const results = await service.pollRss(torznabIndexer);
+
+      expect(results).toHaveLength(1);
+      expect(results[0].indexerId).toBe(7);
+    });
+
+    it('populates indexerId on multiple results (all stamped, not just first)', async () => {
+      const torznabIndexer = createMockDbIndexer({ id: 3, name: 'Torznab', type: 'torznab', settings: { apiUrl: 'https://tracker.test', apiKey: 'key' } });
+      const mockAdapter = {
+        type: 'torznab',
+        name: 'Torznab',
+        search: vi.fn().mockResolvedValue([
+          { title: 'Author A - Book One', indexer: 'Torznab', protocol: 'torrent' },
+          { title: 'Author B - Book Two', indexer: 'Torznab', protocol: 'torrent' },
+          { title: 'Author C - Book Three', indexer: 'Torznab', protocol: 'torrent' },
+        ]),
+        test: vi.fn(),
+      };
+      vi.spyOn(service, 'getAdapter').mockResolvedValue(mockAdapter as never);
+
+      const results = await service.pollRss(torznabIndexer);
+
+      expect(results).toHaveLength(3);
+      for (const result of results) {
+        expect(result.indexerId).toBe(3);
+      }
+    });
   });
 
   describe('searchAll', () => {
