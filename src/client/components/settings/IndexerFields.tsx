@@ -134,6 +134,15 @@ interface MamStatus {
   isVip: boolean;
 }
 
+function persistMamFields(setValue: UseFormSetValue<CreateIndexerFormData> | undefined, status: MamStatus) {
+  if (!setValue) return;
+  setValue('settings.isVip', status.isVip);
+  setValue('settings.mamUsername', status.username);
+  if (status.classname) {
+    (setValue as (name: string, value: unknown) => void)('settings.classname', status.classname);
+  }
+}
+
 function useMamDetection(watch?: UseFormWatch<CreateIndexerFormData>, setValue?: UseFormSetValue<CreateIndexerFormData>, initialStatus?: MamStatus | null, indexerId?: number) {
   const [mamStatus, setMamStatus] = useState<MamStatus | null>(initialStatus ?? null);
   const [detectError, setDetectError] = useState<string | null>(null);
@@ -170,13 +179,7 @@ function useMamDetection(watch?: UseFormWatch<CreateIndexerFormData>, setValue?:
           isVip: result.metadata.isVip as boolean,
         };
         setMamStatus(status);
-        if (setValue) {
-          setValue('settings.isVip', status.isVip);
-          setValue('settings.mamUsername', status.username);
-          if (status.classname) {
-            (setValue as (name: string, value: unknown) => void)('settings.classname', status.classname);
-          }
-        }
+        persistMamFields(setValue, status);
       } else {
         setDetectError(result.message || 'Detection failed');
         setMamStatus(null);
@@ -248,6 +251,16 @@ function metadataToMamStatus(metadata: Record<string, unknown>): MamStatus {
     classname: metadata.classname as string | undefined,
     isVip: metadata.isVip as boolean,
   };
+}
+
+function MamSearchStatusMessage({ status }: { status: MamStatus }) {
+  if (status.classname === 'Mouse') {
+    return <div className="sm:col-span-2"><p className="text-sm text-amber-500 font-medium">Mouse class — searches disabled until ratio improves</p></div>;
+  }
+  if (status.isVip) {
+    return <div className="sm:col-span-2"><p className="text-sm text-muted-foreground">Searching all torrents including VIP</p></div>;
+  }
+  return <div className="sm:col-span-2"><p className="text-sm text-muted-foreground">Searching non-VIP and freeleech torrents</p></div>;
 }
 
 function MamFields({ register, errors, watch, setValue, formTestResult, indexerId }: Pick<IndexerFieldsProps, 'register' | 'errors' | 'watch' | 'setValue' | 'formTestResult' | 'indexerId'>) {
@@ -340,17 +353,7 @@ function MamFields({ register, errors, watch, setValue, formTestResult, indexerI
         </div>
         <p className="text-sm text-muted-foreground mt-1">Deselect all for unrestricted language search</p>
       </div>
-      {mamStatus && (
-        <div className="sm:col-span-2">
-          {mamStatus.classname === 'Mouse' ? (
-            <p className="text-sm text-amber-500 font-medium">Mouse class — searches disabled until ratio improves</p>
-          ) : mamStatus.isVip ? (
-            <p className="text-sm text-muted-foreground">Searching all torrents including VIP</p>
-          ) : (
-            <p className="text-sm text-muted-foreground">Searching non-VIP and freeleech torrents</p>
-          )}
-        </div>
-      )}
+      {mamStatus && <MamSearchStatusMessage status={mamStatus} />}
     </>
   );
 }
