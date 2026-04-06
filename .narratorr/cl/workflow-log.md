@@ -1,5 +1,34 @@
 # Workflow Log
 
+## #383 MAM account info card — consolidate status — 2026-04-06
+**Skill path:** /elaborate → /respond-to-spec-review (x2) → /implement → /claim → /plan → /handoff
+**Outcome:** success — PR #384
+
+### Metrics
+- Files changed: 3 | Tests added/modified: 14 (8 new, 6 updated)
+- Quality gate runs: 2 (pass on attempt 1 both times)
+- Fix iterations: 1 (test for "Unknown" classname needed detection path, not form hydration)
+- Context compactions: 0
+
+### Workflow experience
+- What went smoothly: Spec was very thorough after 3 rounds of review — all AC items were precise with line references. Implementation was a clean component swap.
+- Friction / issues encountered: The "classname undefined → Unknown" test initially failed because `deriveInitialMamStatus` always fills classname. Had to restructure the test to use the detection path instead.
+
+### Token efficiency
+- Highest-token actions: Spec review response rounds (2 rounds before approval)
+- Avoidable waste: None — the spec review rounds caught real issues (case sensitivity, failure path scope)
+- Suggestions: None
+
+### Infrastructure gaps
+- Repeated workarounds: None
+- Missing tooling / config: `frontend-design` skill unavailable (external plugin)
+- Unresolved debt: None introduced
+
+### Wish I'd Known
+1. `deriveInitialMamStatus` always provides a classname fallback — the `?? 'Unknown'` card fallback only activates via detection, not form hydration (see `derive-initial-status-fills-classname-fallback.md`)
+2. Refresh button title string was used as a test selector 12 times across 2 files — `replace_all` is essential for this kind of rename (see `mam-account-card-test-blast-radius.md`)
+3. The spec had significant prerequisite overlap with #372 — 3 original ACs were already done. Elaboration caught this early, saving implementation time.
+
 ## #357 Activity page download card polish — 2026-04-06
 **Skill path:** /elaborate → /respond-to-spec-review → /implement → /claim → /plan → /handoff
 **Outcome:** success — PR #382
