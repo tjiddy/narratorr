@@ -125,6 +125,7 @@ export async function retrySearch(
       title: best.title,
       protocol: best.protocol,
       bookId: book.id,
+      indexerId: best.indexerId,
       size: best.size,
       seeders: best.seeders,
       guid: best.guid,
