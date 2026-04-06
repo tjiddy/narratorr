@@ -32,7 +32,6 @@ export const ADAPTER_FACTORIES: Record<string, AdapterFactory> = {
     searchLanguages: (s.searchLanguages as number[]) ?? [1],
     searchType: coerceSearchType(s.searchType),
     isVip: s.isVip as boolean | undefined,
-    classname: (s.classname as string) || undefined,
     proxyUrl,
   }, name),
 };

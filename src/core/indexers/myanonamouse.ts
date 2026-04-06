@@ -10,7 +10,6 @@ export interface MAMConfig {
   searchLanguages: number[];
   searchType: string;
   isVip?: boolean;
-  classname?: string;
 }
 
 const DEFAULT_BASE_URL = 'https://www.myanonamouse.net';
@@ -78,7 +77,6 @@ export class MyAnonamouseIndexer implements IndexerAdapter {
   private searchLanguages: number[];
   private searchType: string;
   private isVip?: boolean;
-  private classname?: string;
 
   constructor(config: MAMConfig, name?: string) {
     this.mamId = config.mamId;
@@ -87,7 +85,6 @@ export class MyAnonamouseIndexer implements IndexerAdapter {
     this.searchLanguages = config.searchLanguages;
     this.searchType = config.searchType;
     this.isVip = config.isVip;
-    this.classname = config.classname;
     this.name = name || 'MyAnonamouse';
   }
 
@@ -234,7 +231,6 @@ export class MyAnonamouseIndexer implements IndexerAdapter {
 
     const isVip = data.classname === 'VIP' || data.classname === 'Elite VIP';
     this.isVip = isVip;
-    this.classname = data.classname;
 
     return { isVip, classname: data.classname };
   }
