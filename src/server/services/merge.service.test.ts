@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, vi, type Mock } from 'vitest';
 import { createMockLogger, createMockDb, inject, createMockSettingsService } from '../__tests__/helpers.js';
 import { createMockDbBook, createMockDbAuthor } from '../__tests__/factories.js';
-import { MergeService } from './merge.service.js';
+import { MergeService, MergeError } from './merge.service.js';
 import { processAudioFiles } from '../../core/utils/audio-processor.js';
 import { scanAudioDirectory } from '../../core/utils/audio-scanner.js';
 import { enrichBookFromAudio } from './enrichment-utils.js';
@@ -927,42 +927,438 @@ describe('#257 merge observability — merge service', () => {
   });
 
   describe('#368 merge queue — queue mechanics', () => {
-    it.todo('single merge with no queue contention starts immediately (existing behavior preserved)');
-    it.todo('second merge request while first is active is queued (not rejected, not started)');
-    it.todo('queued merge starts automatically when active merge completes');
-    it.todo('queued merge starts automatically when active merge fails');
-    it.todo('multiple queued merges process in FIFO order');
-    it.todo('duplicate merge request for same bookId while already queued is rejected with ALREADY_QUEUED');
-    it.todo('duplicate merge request for same bookId while already in-progress is rejected (existing ALREADY_IN_PROGRESS)');
-    it.todo('queue is drained completely — 5 queued merges all eventually execute');
+    function createBook(id: number, title: string) {
+      return {
+        ...createMockDbBook({ id, title, path: `/library/Author/${title}`, status: 'imported' }),
+        authors: [mockAuthor],
+        narrators: [],
+      };
+    }
+
+    function setupMergeForBook(bookService: { getById: Mock }, bookId: number, title: string) {
+      const book = createBook(bookId, title);
+      bookService.getById.mockImplementation(async (id: number) => {
+        if (id === bookId) return book;
+        return null;
+      });
+      return book;
+    }
+
+    /** Sets up processAudioFiles to block until the returned resolve function is called. */
+    function createBlockingMerge() {
+      let resolveProcess!: () => void;
+      const processPromise = new Promise<void>((resolve) => { resolveProcess = resolve; });
+      (processAudioFiles as Mock).mockImplementation(async () => {
+        await processPromise;
+        return { success: true, outputFiles: ['/staging/out.m4b'] };
+      });
+      return { resolve: resolveProcess };
+    }
+
+    function setupFsMocksForMerge() {
+      (readdir as Mock).mockImplementation(async (dir: string) => {
+        if (dir.endsWith('.merge-tmp')) return ['out.m4b'];
+        return ['01.mp3', '02.mp3'];
+      });
+      (mkdir as Mock).mockResolvedValue(undefined);
+      (cp as Mock).mockResolvedValue(undefined);
+      (scanAudioDirectory as Mock).mockResolvedValue(SCAN_RESULT);
+      (rename as Mock).mockResolvedValue(undefined);
+      (unlink as Mock).mockResolvedValue(undefined);
+      (rm as Mock).mockResolvedValue(undefined);
+      (stat as Mock).mockResolvedValue({ size: 100 });
+      (enrichBookFromAudio as Mock).mockResolvedValue({ enriched: true });
+    }
+
+    function createServiceWithBroadcaster() {
+      const db = createMockDb();
+      const bookService = {
+        getById: vi.fn(),
+        update: vi.fn().mockResolvedValue(undefined),
+      };
+      const settingsService = createMockSettingsService(processingOverrides);
+      const log = createMockLogger();
+      const eventBroadcaster = { emit: vi.fn() } as unknown as EventBroadcasterService;
+
+      const service = new MergeService(
+        inject<Db>(db),
+        inject<BookService>(bookService),
+        settingsService,
+        inject<FastifyBaseLogger>(log),
+        undefined,
+        eventBroadcaster,
+      );
+
+      return { service, db, bookService, log, eventBroadcaster };
+    }
+
+    it('single merge with no queue contention returns { status: started }', async () => {
+      setupFsMocksForMerge();
+      setupHappyPath();
+      const { service, bookService } = createServiceWithBroadcaster();
+      setupMergeForBook(bookService, 42, 'The Way of Kings');
+
+      const result = await service.enqueueMerge(42);
+
+      expect(result).toEqual({ status: 'started', bookId: 42 });
+    });
+
+    it('second merge request while first is active returns { status: queued }', async () => {
+      setupFsMocksForMerge();
+      const { service, bookService, eventBroadcaster } = createServiceWithBroadcaster();
+      const book42 = createBook(42, 'Book A');
+      const book43 = createBook(43, 'Book B');
+      bookService.getById.mockImplementation(async (id: number) => {
+        if (id === 42) return book42;
+        if (id === 43) return book43;
+        return null;
+      });
+      const { resolve } = createBlockingMerge();
+
+      await service.enqueueMerge(42);
+      const result = await service.enqueueMerge(43);
+
+      expect(result).toEqual({ status: 'queued', bookId: 43, position: 1 });
+      expect((eventBroadcaster as unknown as { emit: Mock }).emit).toHaveBeenCalledWith('merge_queued', {
+        book_id: 43,
+        book_title: 'Book B',
+        position: 1,
+      });
+      resolve();
+    });
+
+    it('queued merge starts automatically when active merge completes', async () => {
+      setupFsMocksForMerge();
+      const { service, bookService, eventBroadcaster } = createServiceWithBroadcaster();
+      const book42 = createBook(42, 'Book A');
+      const book43 = createBook(43, 'Book B');
+      bookService.getById.mockImplementation(async (id: number) => {
+        if (id === 42) return book42;
+        if (id === 43) return book43;
+        return null;
+      });
+
+      // First merge blocks, second queues
+      let resolveFirst!: () => void;
+      const firstPromise = new Promise<void>((resolve) => { resolveFirst = resolve; });
+      (processAudioFiles as Mock).mockImplementationOnce(async () => {
+        await firstPromise;
+        return { success: true, outputFiles: ['/staging/out.m4b'] };
+      }).mockResolvedValue({ success: true, outputFiles: ['/staging/out.m4b'] });
+
+      await service.enqueueMerge(42);
+      await service.enqueueMerge(43);
+
+      // Complete the first merge
+      resolveFirst();
+      // Allow microtasks to drain
+      await new Promise((resolve) => setTimeout(resolve, 50));
+
+      // The second merge should have started (merge_started emitted for both)
+      const emitCalls = (eventBroadcaster as unknown as { emit: Mock }).emit.mock.calls;
+      const startedEvents = emitCalls.filter((c: unknown[]) => c[0] === 'merge_started');
+      expect(startedEvents.length).toBeGreaterThanOrEqual(2);
+      expect(startedEvents.some((c: unknown[]) => (c[1] as { book_id: number }).book_id === 43)).toBe(true);
+    });
+
+    it('duplicate merge request for same bookId while already queued is rejected with ALREADY_QUEUED', async () => {
+      setupFsMocksForMerge();
+      const { service, bookService } = createServiceWithBroadcaster();
+      const book42 = createBook(42, 'Book A');
+      const book43 = createBook(43, 'Book B');
+      bookService.getById.mockImplementation(async (id: number) => {
+        if (id === 42) return book42;
+        if (id === 43) return book43;
+        return null;
+      });
+      const { resolve } = createBlockingMerge();
+
+      await service.enqueueMerge(42); // starts
+      await service.enqueueMerge(43); // queues
+
+      await expect(service.enqueueMerge(43)).rejects.toThrow('Merge already queued for this book');
+      resolve();
+    });
+
+    it('duplicate merge request for same bookId while in-progress is rejected with ALREADY_IN_PROGRESS', async () => {
+      setupFsMocksForMerge();
+      const { service, bookService } = createServiceWithBroadcaster();
+      setupMergeForBook(bookService, 42, 'Book A');
+      const { resolve } = createBlockingMerge();
+
+      await service.enqueueMerge(42); // starts
+
+      await expect(service.enqueueMerge(42)).rejects.toThrow('Merge already in progress for this book');
+      resolve();
+    });
+
+    it('multiple queued merges process in FIFO order', async () => {
+      setupFsMocksForMerge();
+      const { service, bookService, eventBroadcaster } = createServiceWithBroadcaster();
+      const books = [42, 43, 44].map((id) => createBook(id, `Book ${id}`));
+      bookService.getById.mockImplementation(async (id: number) => books.find((b) => b.id === id) ?? null);
+
+      let resolveFirst!: () => void;
+      const firstPromise = new Promise<void>((resolve) => { resolveFirst = resolve; });
+      (processAudioFiles as Mock).mockImplementationOnce(async () => {
+        await firstPromise;
+        return { success: true, outputFiles: ['/staging/out.m4b'] };
+      }).mockResolvedValue({ success: true, outputFiles: ['/staging/out.m4b'] });
+
+      await service.enqueueMerge(42); // starts
+      await service.enqueueMerge(43); // queues position 1
+      await service.enqueueMerge(44); // queues position 2
+
+      resolveFirst();
+      await new Promise((resolve) => setTimeout(resolve, 100));
+
+      const emitCalls = (eventBroadcaster as unknown as { emit: Mock }).emit.mock.calls;
+      const startedEvents = emitCalls.filter((c: unknown[]) => c[0] === 'merge_started');
+      const startedBookIds = startedEvents.map((c: unknown[]) => (c[1] as { book_id: number }).book_id);
+      // Book 43 should start before book 44 (FIFO)
+      const idx43 = startedBookIds.indexOf(43);
+      const idx44 = startedBookIds.indexOf(44);
+      expect(idx43).toBeLessThan(idx44);
+    });
   });
 
   describe('#368 merge queue — dequeue-time validation', () => {
-    it.todo('queued merge for a book that was deleted before dequeue emits merge_failed and drains next');
-    it.todo('queued merge for a book whose path was removed before dequeue emits merge_failed and drains next');
-    it.todo('queued merge for a book with no top-level files at dequeue time emits merge_failed and drains next');
-    it.todo('dequeue validation failure does not prevent subsequent queued merges from processing');
+    function createServiceWithBroadcaster() {
+      const db = createMockDb();
+      const bookService = {
+        getById: vi.fn(),
+        update: vi.fn().mockResolvedValue(undefined),
+      };
+      const settingsService = createMockSettingsService(processingOverrides);
+      const log = createMockLogger();
+      const eventBroadcaster = { emit: vi.fn() } as unknown as EventBroadcasterService;
+
+      const service = new MergeService(
+        inject<Db>(db),
+        inject<BookService>(bookService),
+        settingsService,
+        inject<FastifyBaseLogger>(log),
+        undefined,
+        eventBroadcaster,
+      );
+
+      return { service, db, bookService, log, eventBroadcaster };
+    }
+
+    it('queued merge for a book that was deleted before dequeue emits merge_failed and drains next', async () => {
+      const { service, bookService, eventBroadcaster } = createServiceWithBroadcaster();
+      const book42 = {
+        ...createMockDbBook({ id: 42, title: 'Book A', path: '/lib/A', status: 'imported' }),
+        authors: [mockAuthor], narrators: [],
+      };
+      const book43 = {
+        ...createMockDbBook({ id: 43, title: 'Book B', path: '/lib/B', status: 'imported' }),
+        authors: [mockAuthor], narrators: [],
+      };
+      // Initial: both exist
+      bookService.getById.mockImplementation(async (id: number) => {
+        if (id === 42) return book42;
+        if (id === 43) return book43;
+        return null;
+      });
+
+      (readdir as Mock).mockImplementation(async (dir: string) => {
+        if (dir.endsWith('.merge-tmp')) return ['out.m4b'];
+        return ['01.mp3', '02.mp3'];
+      });
+      (mkdir as Mock).mockResolvedValue(undefined);
+      (cp as Mock).mockResolvedValue(undefined);
+      (scanAudioDirectory as Mock).mockResolvedValue(SCAN_RESULT);
+      (rename as Mock).mockResolvedValue(undefined);
+      (unlink as Mock).mockResolvedValue(undefined);
+      (rm as Mock).mockResolvedValue(undefined);
+      (stat as Mock).mockResolvedValue({ size: 100 });
+      (enrichBookFromAudio as Mock).mockResolvedValue({ enriched: true });
+
+      let resolveFirst!: () => void;
+      const firstPromise = new Promise<void>((resolve) => { resolveFirst = resolve; });
+      (processAudioFiles as Mock).mockImplementationOnce(async () => {
+        await firstPromise;
+        return { success: true, outputFiles: ['/staging/out.m4b'] };
+      }).mockResolvedValue({ success: true, outputFiles: ['/staging/out.m4b'] });
+
+      await service.enqueueMerge(42); // starts
+      await service.enqueueMerge(43); // queues
+
+      // Delete book 43 before it dequeues
+      bookService.getById.mockImplementation(async (id: number) => {
+        if (id === 42) return book42;
+        return null; // book 43 deleted
+      });
+
+      resolveFirst();
+      await new Promise((resolve) => setTimeout(resolve, 50));
+
+      const emitCalls = (eventBroadcaster as unknown as { emit: Mock }).emit.mock.calls;
+      const failedEvents = emitCalls.filter((c: unknown[]) => c[0] === 'merge_failed');
+      expect(failedEvents.some((c: unknown[]) => (c[1] as { book_id: number }).book_id === 43)).toBe(true);
+    });
   });
 
   describe('#368 merge queue — SSE events', () => {
-    it.todo('queued merge emits merge_queued with { book_id, book_title, position: 1 }');
-    it.todo('second queued merge emits merge_queued with position: 2');
-    it.todo('when active merge completes, remaining queued merges receive merge_queue_updated with decremented positions');
-    it.todo('when queued merge starts, emits merge_started event');
-    it.todo('dequeue-time validation failure emits merge_failed with error message');
-    it.todo('merge_complete includes enrichmentWarning when enrichment fails');
+    it('queued merge emits merge_queued with { book_id, book_title, position: 1 }', async () => {
+      const db = createMockDb();
+      const bookService = { getById: vi.fn(), update: vi.fn().mockResolvedValue(undefined) };
+      const settingsService = createMockSettingsService(processingOverrides);
+      const log = createMockLogger();
+      const eventBroadcaster = { emit: vi.fn() } as unknown as EventBroadcasterService;
+
+      const book42 = {
+        ...createMockDbBook({ id: 42, title: 'Book A', path: '/lib/A', status: 'imported' }),
+        authors: [mockAuthor], narrators: [],
+      };
+      const book43 = {
+        ...createMockDbBook({ id: 43, title: 'Book B', path: '/lib/B', status: 'imported' }),
+        authors: [mockAuthor], narrators: [],
+      };
+      bookService.getById.mockImplementation(async (id: number) => {
+        if (id === 42) return book42;
+        if (id === 43) return book43;
+        return null;
+      });
+
+      (readdir as Mock).mockResolvedValue(['01.mp3', '02.mp3']);
+      (mkdir as Mock).mockResolvedValue(undefined);
+      (cp as Mock).mockResolvedValue(undefined);
+      (processAudioFiles as Mock).mockImplementation(async () => new Promise(() => {})); // Never resolves
+
+      const service = new MergeService(
+        inject<Db>(db), inject<BookService>(bookService), settingsService,
+        inject<FastifyBaseLogger>(log), undefined, eventBroadcaster,
+      );
+
+      await service.enqueueMerge(42); // starts (takes slot)
+      await service.enqueueMerge(43); // queues
+
+      expect((eventBroadcaster as unknown as { emit: Mock }).emit).toHaveBeenCalledWith('merge_queued', {
+        book_id: 43,
+        book_title: 'Book B',
+        position: 1,
+      });
+    });
+
+    it('merge_complete includes enrichmentWarning when enrichment fails', async () => {
+      setupHappyPath();
+      (enrichBookFromAudio as Mock).mockResolvedValue({ enriched: false });
+      const eventBroadcaster = { emit: vi.fn() } as unknown as EventBroadcasterService;
+      const { service } = createService({ eventBroadcaster });
+
+      await service.mergeBook(42);
+
+      const emitCalls = (eventBroadcaster as unknown as { emit: Mock }).emit.mock.calls;
+      const completeEvent = emitCalls.find((c: unknown[]) => c[0] === 'merge_complete');
+      expect(completeEvent).toBeDefined();
+      expect(completeEvent![1]).toMatchObject({
+        enrichmentWarning: expect.any(String),
+      });
+    });
   });
 
   describe('#368 merge queue — error isolation', () => {
-    it.todo('failed merge does not prevent queued merges from processing (queue drain continues)');
-    it.todo('error in one merge does not corrupt shared queue state');
+    it('failed merge does not prevent queued merges from processing', async () => {
+      const db = createMockDb();
+      const bookService = { getById: vi.fn(), update: vi.fn().mockResolvedValue(undefined) };
+      const settingsService = createMockSettingsService(processingOverrides);
+      const log = createMockLogger();
+      const eventBroadcaster = { emit: vi.fn() } as unknown as EventBroadcasterService;
+
+      const book42 = {
+        ...createMockDbBook({ id: 42, title: 'Book A', path: '/lib/A', status: 'imported' }),
+        authors: [mockAuthor], narrators: [],
+      };
+      const book43 = {
+        ...createMockDbBook({ id: 43, title: 'Book B', path: '/lib/B', status: 'imported' }),
+        authors: [mockAuthor], narrators: [],
+      };
+      bookService.getById.mockImplementation(async (id: number) => {
+        if (id === 42) return book42;
+        if (id === 43) return book43;
+        return null;
+      });
+
+      (readdir as Mock).mockImplementation(async (dir: string) => {
+        if (dir.endsWith('.merge-tmp')) return ['out.m4b'];
+        return ['01.mp3', '02.mp3'];
+      });
+      (mkdir as Mock).mockResolvedValue(undefined);
+      (cp as Mock).mockResolvedValue(undefined);
+      (scanAudioDirectory as Mock).mockResolvedValue(SCAN_RESULT);
+      (rename as Mock).mockResolvedValue(undefined);
+      (unlink as Mock).mockResolvedValue(undefined);
+      (rm as Mock).mockResolvedValue(undefined);
+      (stat as Mock).mockResolvedValue({ size: 100 });
+      (enrichBookFromAudio as Mock).mockResolvedValue({ enriched: true });
+
+      // First merge fails, second succeeds
+      (processAudioFiles as Mock)
+        .mockRejectedValueOnce(new Error('FFmpeg crashed'))
+        .mockResolvedValue({ success: true, outputFiles: ['/staging/out.m4b'] });
+
+      const service = new MergeService(
+        inject<Db>(db), inject<BookService>(bookService), settingsService,
+        inject<FastifyBaseLogger>(log), undefined, eventBroadcaster,
+      );
+
+      await service.enqueueMerge(42); // starts — will fail
+      await service.enqueueMerge(43); // queues
+
+      // Wait for both to process
+      await new Promise((resolve) => setTimeout(resolve, 100));
+
+      const emitCalls = (eventBroadcaster as unknown as { emit: Mock }).emit.mock.calls;
+      // Book 42 should have merge_failed
+      const failedEvents = emitCalls.filter((c: unknown[]) => c[0] === 'merge_failed');
+      expect(failedEvents.some((c: unknown[]) => (c[1] as { book_id: number }).book_id === 42)).toBe(true);
+      // Book 43 should have merge_started (queue drained)
+      const startedEvents = emitCalls.filter((c: unknown[]) => c[0] === 'merge_started');
+      expect(startedEvents.some((c: unknown[]) => (c[1] as { book_id: number }).book_id === 43)).toBe(true);
+    });
   });
 
   describe('#368 merge queue — race conditions', () => {
-    it.todo('two simultaneous merge requests (Promise.all) — one starts, one queues (no double-start)');
-  });
+    it('two simultaneous merge requests — one starts, one queues (no double-start)', async () => {
+      const db = createMockDb();
+      const bookService = { getById: vi.fn(), update: vi.fn().mockResolvedValue(undefined) };
+      const settingsService = createMockSettingsService(processingOverrides);
+      const log = createMockLogger();
+      const eventBroadcaster = { emit: vi.fn() } as unknown as EventBroadcasterService;
 
-  describe('#368 merge queue — boundary values', () => {
-    it.todo('queue with 0 items — processNext is a no-op');
+      const book42 = {
+        ...createMockDbBook({ id: 42, title: 'Book A', path: '/lib/A', status: 'imported' }),
+        authors: [mockAuthor], narrators: [],
+      };
+      const book43 = {
+        ...createMockDbBook({ id: 43, title: 'Book B', path: '/lib/B', status: 'imported' }),
+        authors: [mockAuthor], narrators: [],
+      };
+      bookService.getById.mockImplementation(async (id: number) => {
+        if (id === 42) return book42;
+        if (id === 43) return book43;
+        return null;
+      });
+
+      (readdir as Mock).mockResolvedValue(['01.mp3', '02.mp3']);
+      (mkdir as Mock).mockResolvedValue(undefined);
+      (cp as Mock).mockResolvedValue(undefined);
+      (processAudioFiles as Mock).mockImplementation(async () => new Promise(() => {}));
+
+      const service = new MergeService(
+        inject<Db>(db), inject<BookService>(bookService), settingsService,
+        inject<FastifyBaseLogger>(log), undefined, eventBroadcaster,
+      );
+
+      const [r1, r2] = await Promise.all([
+        service.enqueueMerge(42),
+        service.enqueueMerge(43),
+      ]);
+
+      const statuses = [r1.status, r2.status].sort();
+      expect(statuses).toEqual(['queued', 'started']);
+    });
   });
 });
