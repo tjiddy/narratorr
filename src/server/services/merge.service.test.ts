@@ -1414,5 +1414,97 @@ describe('#257 merge observability — merge service', () => {
       const statuses = [r1.status, r2.status].sort();
       expect(statuses).toEqual(['queued', 'started']);
     });
+
+    it('concurrent same-book requests — one succeeds, the other rejects with duplicate error', async () => {
+      const db = createMockDb();
+      const bookService = { getById: vi.fn(), update: vi.fn().mockResolvedValue(undefined) };
+      const settingsService = createMockSettingsService(processingOverrides);
+      const log = createMockLogger();
+      const eventBroadcaster = { emit: vi.fn() } as unknown as EventBroadcasterService;
+
+      const book42 = {
+        ...createMockDbBook({ id: 42, title: 'Book A', path: '/lib/A', status: 'imported' }),
+        authors: [mockAuthor], narrators: [],
+      };
+      bookService.getById.mockResolvedValue(book42);
+
+      (readdir as Mock).mockResolvedValue(['01.mp3', '02.mp3']);
+      (mkdir as Mock).mockResolvedValue(undefined);
+      (cp as Mock).mockResolvedValue(undefined);
+      (processAudioFiles as Mock).mockImplementation(async () => new Promise(() => {}));
+
+      const service = new MergeService(
+        inject<Db>(db), inject<BookService>(bookService), settingsService,
+        inject<FastifyBaseLogger>(log), undefined, eventBroadcaster,
+      );
+
+      const results = await Promise.allSettled([
+        service.enqueueMerge(42),
+        service.enqueueMerge(42),
+      ]);
+
+      const fulfilled = results.filter((r) => r.status === 'fulfilled');
+      const rejected = results.filter((r) => r.status === 'rejected');
+      expect(fulfilled).toHaveLength(1);
+      expect(rejected).toHaveLength(1);
+      expect((rejected[0] as PromiseRejectedResult).reason).toMatchObject({
+        code: expect.stringMatching(/ALREADY_IN_PROGRESS|ALREADY_QUEUED/),
+      });
+    });
+
+    it('after first merge completes and promotes queued job, new enqueueMerge is rejected (single-worker invariant)', async () => {
+      const db = createMockDb();
+      const bookService = { getById: vi.fn(), update: vi.fn().mockResolvedValue(undefined) };
+      const settingsService = createMockSettingsService(processingOverrides);
+      const log = createMockLogger();
+      const eventBroadcaster = { emit: vi.fn() } as unknown as EventBroadcasterService;
+
+      const books = [42, 43, 44].map((id) => ({
+        ...createMockDbBook({ id, title: `Book ${id}`, path: `/lib/${id}`, status: 'imported' }),
+        authors: [mockAuthor], narrators: [],
+      }));
+      bookService.getById.mockImplementation(async (id: number) => books.find((b) => b.id === id) ?? null);
+
+      (readdir as Mock).mockImplementation(async (dir: string) => {
+        if (dir.endsWith('.merge-tmp')) return ['out.m4b'];
+        return ['01.mp3', '02.mp3'];
+      });
+      (mkdir as Mock).mockResolvedValue(undefined);
+      (cp as Mock).mockResolvedValue(undefined);
+      (scanAudioDirectory as Mock).mockResolvedValue(SCAN_RESULT);
+      (rename as Mock).mockResolvedValue(undefined);
+      (unlink as Mock).mockResolvedValue(undefined);
+      (rm as Mock).mockResolvedValue(undefined);
+      (stat as Mock).mockResolvedValue({ size: 100 });
+      (enrichBookFromAudio as Mock).mockResolvedValue({ enriched: true });
+
+      let resolveFirst!: () => void;
+      const firstPromise = new Promise<void>((resolve) => { resolveFirst = resolve; });
+      let resolveSecond!: () => void;
+      const secondPromise = new Promise<void>((resolve) => { resolveSecond = resolve; });
+      (processAudioFiles as Mock)
+        .mockImplementationOnce(async () => { await firstPromise; return { success: true, outputFiles: ['/staging/out.m4b'] }; })
+        .mockImplementationOnce(async () => { await secondPromise; return { success: true, outputFiles: ['/staging/out.m4b'] }; })
+        .mockResolvedValue({ success: true, outputFiles: ['/staging/out.m4b'] });
+
+      const service = new MergeService(
+        inject<Db>(db), inject<BookService>(bookService), settingsService,
+        inject<FastifyBaseLogger>(log), undefined, eventBroadcaster,
+      );
+
+      await service.enqueueMerge(42); // starts — takes the semaphore slot
+      await service.enqueueMerge(43); // queues
+
+      // Complete first merge — should promote book 43 (passing the slot, not releasing)
+      resolveFirst();
+      await new Promise((resolve) => setTimeout(resolve, 50));
+
+      // Book 43 is now the active merge (holding the slot). A new request should queue, not start.
+      const result = await service.enqueueMerge(44);
+      expect(result.status).toBe('queued');
+
+      resolveSecond();
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    });
   });
 });

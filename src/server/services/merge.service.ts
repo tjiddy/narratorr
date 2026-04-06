@@ -96,62 +96,49 @@ export class MergeService {
     }
   }
 
-  /** Pre-enqueue validation: throws MergeError synchronously for invalid requests. */
-  private async validatePreEnqueue(bookId: number): Promise<{ book: Awaited<ReturnType<BookService['getById']>>; bookPath: string }> {
+  /** Pre-enqueue validation: throws MergeError for invalid requests. Duplicate checks are in enqueueMerge (synchronous). */
+  private async validateBookForMerge(bookId: number): Promise<void> {
     const book = await this.bookService.getById(bookId);
-    if (!book) {
-      throw new MergeError('Book not found', 'NOT_FOUND');
-    }
-    if (!book.path) {
-      throw new MergeError('Book has no path — not imported yet', 'NO_PATH');
-    }
-    if (book.status !== 'imported') {
-      throw new MergeError(`Book is not imported (status: ${book.status})`, 'NO_STATUS');
-    }
-
+    if (!book) throw new MergeError('Book not found', 'NOT_FOUND');
+    if (!book.path) throw new MergeError('Book has no path — not imported yet', 'NO_PATH');
+    if (book.status !== 'imported') throw new MergeError(`Book is not imported (status: ${book.status})`, 'NO_STATUS');
     const processingSettings = await this.settingsService.get('processing');
-    if (!processingSettings?.ffmpegPath?.trim()) {
-      throw new MergeError('ffmpeg is not configured', 'FFMPEG_NOT_CONFIGURED');
-    }
-
+    if (!processingSettings?.ffmpegPath?.trim()) throw new MergeError('ffmpeg is not configured', 'FFMPEG_NOT_CONFIGURED');
     const allEntries = await readdir(book.path);
-    const topLevelAudioFiles = allEntries.filter(
-      (f) => AUDIO_EXTENSIONS.has(extname(f).toLowerCase()),
-    );
-    if (topLevelAudioFiles.length < 2) {
-      throw new MergeError('No top-level audio files to merge (requires ≥2)', 'NO_TOP_LEVEL_FILES');
-    }
-
-    if (this.inProgress.has(bookId)) {
-      throw new MergeError('Merge already in progress for this book', 'ALREADY_IN_PROGRESS');
-    }
-    if (this.queue.includes(bookId)) {
-      throw new MergeError('Merge already queued for this book', 'ALREADY_QUEUED');
-    }
-
-    return { book, bookPath: book.path };
+    const topLevelAudioFiles = allEntries.filter((f) => AUDIO_EXTENSIONS.has(extname(f).toLowerCase()));
+    if (topLevelAudioFiles.length < 2) throw new MergeError('No top-level audio files to merge (requires ≥2)', 'NO_TOP_LEVEL_FILES');
   }
 
   /** Public API: validate and enqueue a merge. Returns acknowledgement immediately. */
   async enqueueMerge(bookId: number): Promise<MergeAcknowledgement> {
-    await this.validatePreEnqueue(bookId);
+    // Synchronous duplicate check — no await gap between check and mark prevents concurrent races
+    if (this.inProgress.has(bookId)) throw new MergeError('Merge already in progress for this book', 'ALREADY_IN_PROGRESS');
+    if (this.queue.includes(bookId)) throw new MergeError('Merge already queued for this book', 'ALREADY_QUEUED');
+
+    // Mark in-progress immediately to block concurrent same-book requests during async validation
+    this.inProgress.add(bookId);
+    try {
+      await this.validateBookForMerge(bookId);
+    } catch (error: unknown) {
+      this.inProgress.delete(bookId); // Clean up on validation failure
+      throw error;
+    }
 
     if (this.semaphore.tryAcquire()) {
       // Slot available — start immediately, fire-and-forget
-      this.inProgress.add(bookId);
       this.executeMerge(bookId)
         .catch((error: unknown) => {
           this.log.error(error, 'Merge failed for book %d', bookId);
         })
         .finally(() => {
           this.inProgress.delete(bookId);
-          this.semaphore.release();
-          this.processNext();
+          this.processNext(); // Pass the slot or release if empty
         });
       return { status: 'started', bookId };
     }
 
-    // No slot — queue
+    // No slot — move from inProgress to queue
+    this.inProgress.delete(bookId);
     this.queue.push(bookId);
     const position = this.queue.length;
     const book = await this.bookService.getById(bookId);
@@ -161,27 +148,28 @@ export class MergeService {
     return { status: 'queued', bookId, position };
   }
 
-  /** Drain the queue: start the next queued merge if a slot is available. */
+  /** Drain the queue: pass the semaphore slot to the next queued merge, or release if empty. */
   private processNext(): void {
-    if (this.queue.length === 0) return;
+    if (this.queue.length === 0) {
+      this.semaphore.release(); // No more work — release the slot
+      return;
+    }
 
+    // Keep the semaphore slot — pass it directly to the next job (no release + re-acquire gap)
     const nextBookId = this.queue.shift()!;
     this.inProgress.add(nextBookId);
 
-    // Emit position updates for remaining queued items
     this.emitQueuePositionUpdates().catch((error: unknown) => {
       this.log.debug(error, 'Failed to emit queue position updates');
     });
 
-    // Dequeue-time revalidation + execution
     this.executeWithRevalidation(nextBookId)
       .catch((error: unknown) => {
         this.log.error(error, 'Queued merge failed for book %d', nextBookId);
       })
       .finally(() => {
         this.inProgress.delete(nextBookId);
-        this.semaphore.release();
-        this.processNext();
+        this.processNext(); // Pass the slot or release if empty
       });
   }
 
