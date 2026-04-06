@@ -14,6 +14,7 @@ import { runRssJob } from './rss.js';
 import { runBackupJob } from './backup.js';
 import { checkForUpdate } from './version-check.js';
 import { runDiscoveryJob } from './discovery.js';
+import { runCoverBackfill } from './cover-backfill.js';
 
 interface CronJob {
   name: string;
@@ -93,6 +94,9 @@ async function runStartupRecovery(db: Db, services: Services, log: FastifyBaseLo
   // Reprocess via existing batch methods
   await services.qualityGateOrchestrator.processCompletedDownloads();
   await services.importOrchestrator.processCompletedDownloads();
+
+  // Backfill: download remote covers for imported books (#369)
+  await runCoverBackfill(db, log);
 }
 
 function scheduleCron(reg: TaskRegistry, name: string, expression: string, log: FastifyBaseLogger): void {
