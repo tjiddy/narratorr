@@ -1,5 +1,34 @@
 # Workflow Log
 
+## #372 MAM: auto-refresh status before search, remove search type dropdown — 2026-04-06
+**Skill path:** /implement → /claim → /plan → /handoff
+**Outcome:** success — PR #378
+
+### Metrics
+- Files changed: 20 | Tests added/modified: ~50 new test cases across 8 test files
+- Quality gate runs: 2 (pass on attempt 2 — first failed on lint complexity + typecheck)
+- Fix iterations: 2 (cyclomatic complexity in MamFields extracted to helpers; unused classname property removed from adapter)
+- Context compactions: 0
+
+### Workflow experience
+- What went smoothly: Red/green TDD cycle worked well per module; spec was very well-defined after 3 rounds of spec review, making implementation straightforward
+- Friction / issues encountered: Cyclomatic complexity limit (15) was tight after adding status messaging — needed to extract `persistMamFields()` and `MamSearchStatusMessage` components. TypeScript strict mode caught unused `classname` property early.
+
+### Token efficiency
+- Highest-token actions: Explore subagents for plan and self-review; reading large test files
+- Avoidable waste: The spec review cycle (3 rounds) consumed significant context before implementation started; could have been more precise in the initial spec
+- Suggestions: For future issues with cross-cutting type changes (3+ layers), define all type contracts upfront in the spec
+
+### Infrastructure gaps
+- Repeated workarounds: Test fixture `MamFieldWrapper` scoped inside describe blocks — had to re-create wrappers in new test blocks
+- Missing tooling / config: No `frontend-design` skill available for UI polish pass
+- Unresolved debt: TestResult type defined in 3 parallel locations (DRY-1)
+
+### Wish I'd Known
+1. The adapter's `classname` property is metadata-only — not read by `search()`. Don't add adapter instance fields for data that's only needed by the service layer for DB persistence. Return it in the method result instead.
+2. Removing a UI element (search type dropdown) cascades to 9+ tests across 3 files — always grep test files for the label text before starting fixture cleanup.
+3. The `preSearchRefresh()` shared helper pattern keeps both search methods clean and under complexity limits — extract shared pre-flight logic early rather than duplicating inline.
+
 ## #367 qBittorrent adapter: fetch .torrent URLs instead of rejecting — 2026-04-06
 **Skill path:** /implement → /claim → /plan → /handoff
 **Outcome:** success — PR #377
