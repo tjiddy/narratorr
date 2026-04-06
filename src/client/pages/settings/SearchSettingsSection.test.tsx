@@ -269,6 +269,35 @@ describe('SearchSettingsSection', () => {
     });
   });
 
+  it('loads non-default protocol preference and saves changed value', async () => {
+    const torrentSettings = createMockSettings({
+      search: { enabled: false, intervalMinutes: 360, blacklistTtlDays: 7 },
+      rss: { enabled: false, intervalMinutes: 30 },
+      quality: { protocolPreference: 'torrent' },
+    });
+    mockApi.getSettings.mockResolvedValue(torrentSettings);
+    mockApi.updateSettings.mockResolvedValue(torrentSettings);
+    const user = userEvent.setup();
+    renderWithProviders(<SearchSettingsSection />);
+
+    // Wait for server value to load
+    await waitFor(() => {
+      expect(screen.getByLabelText('Protocol Preference')).toHaveValue('torrent');
+    });
+
+    // Change to usenet
+    await user.selectOptions(screen.getByLabelText('Protocol Preference'), 'usenet');
+    await user.click(screen.getByRole('button', { name: /save/i }));
+
+    await waitFor(() => {
+      expect(mockApi.updateSettings).toHaveBeenCalledWith({
+        search: { enabled: false, intervalMinutes: 360, blacklistTtlDays: 7 },
+        rss: { enabled: false, intervalMinutes: 30 },
+        quality: { protocolPreference: 'usenet' },
+      });
+    });
+  });
+
   it('shows error toast on save failure', async () => {
     mockApi.updateSettings.mockRejectedValue(new Error('Network error'));
     const user = userEvent.setup();
