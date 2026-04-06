@@ -61,7 +61,7 @@ describe('runCoverBackfill', () => {
     );
   });
 
-  it('queries only books with remote coverUrl and non-null path via SQL predicate', async () => {
+  it('queries with SQL predicate enforcing coverUrl LIKE http% AND path IS NOT NULL', async () => {
     const whereFn = vi.fn().mockResolvedValue([]);
     const mockDb = {
       select: vi.fn().mockReturnValue({
@@ -73,10 +73,25 @@ describe('runCoverBackfill', () => {
 
     await runCoverBackfill(inject<Db>(mockDb), log);
 
-    // Verify the where() was called with a predicate (SQL filter is applied)
     expect(whereFn).toHaveBeenCalledTimes(1);
-    // The predicate argument should be a Drizzle expression, not undefined/empty
-    expect(whereFn.mock.calls[0][0]).toBeDefined();
+    const predicate = whereFn.mock.calls[0][0];
+
+    // Recursive Drizzle expression inspector (established pattern from book-list.service.test.ts)
+    function containsSubstring(val: unknown, substring: string): boolean {
+      if (typeof val === 'string') return val.includes(substring);
+      if (Array.isArray(val)) return val.some((v) => containsSubstring(v, substring));
+      if (val && typeof val === 'object') {
+        if ('queryChunks' in val) return containsSubstring((val as { queryChunks: unknown[] }).queryChunks, substring);
+        if ('value' in val) return containsSubstring((val as { value: unknown }).value, substring);
+        if ('name' in val) return containsSubstring((val as { name: unknown }).name, substring);
+      }
+      return false;
+    }
+
+    // Both halves of the predicate must be present
+    expect(containsSubstring(predicate, 'cover_url')).toBe(true);
+    expect(containsSubstring(predicate, 'http%')).toBe(true);
+    expect(containsSubstring(predicate, 'path')).toBe(true);
   });
 
   it('continues processing remaining books when one download fails', async () => {
