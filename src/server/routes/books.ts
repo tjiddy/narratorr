@@ -289,7 +289,7 @@ export async function booksRoutes(app: FastifyInstance, deps: BookRouteDeps) {
       const { id } = request.params;
       const result = await mergeService.enqueueMerge(id);
       request.log.info({ id, status: result.status }, 'Merge request acknowledged');
-      return await reply.status(202).send(result);
+      return reply.status(202).send(result);
     },
   );
 
