@@ -111,9 +111,77 @@ async function collectAudioFiles(
   return results.sort((a, b) => a.name.localeCompare(b.name));
 }
 
+type AudioFile = { srcPath: string; name: string };
+
+/** Collect audio from disc subfolders with sequential renaming, plus non-disc entries. */
+async function collectMultiDiscFiles(
+  source: string,
+  discFolders: Array<{ name: string; path: string }>,
+  otherEntries: Array<{ name: string; isFile: () => boolean; isDirectory: () => boolean }>,
+): Promise<AudioFile[]> {
+  // Sort discs naturally (Disc 2 before Disc 10)
+  discFolders.sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true }));
+
+  // Collect audio files from each disc in order
+  const discFiles: AudioFile[] = [];
+  for (const disc of discFolders) {
+    discFiles.push(...await collectAudioFiles(disc.path));
+  }
+
+  // Assign sequential filenames to disc files
+  const padWidth = String(discFiles.length).length;
+  const sequentialFiles = discFiles.map((file, i) => ({
+    srcPath: file.srcPath,
+    name: `${String(i + 1).padStart(padWidth, '0')}${extname(file.name)}`,
+  }));
+
+  // Collect non-disc entries (loose files + non-disc subfolders)
+  const nonDiscFiles: AudioFile[] = [];
+  for (const entry of otherEntries) {
+    const fullPath = join(source, entry.name);
+    if (entry.isFile() && AUDIO_EXTENSIONS.has(extname(entry.name).toLowerCase())) {
+      nonDiscFiles.push({ srcPath: fullPath, name: entry.name });
+    } else if (entry.isDirectory()) {
+      nonDiscFiles.push(...await collectAudioFiles(fullPath));
+    }
+  }
+  nonDiscFiles.sort((a, b) => a.name.localeCompare(b.name));
+
+  return [...nonDiscFiles, ...sequentialFiles];
+}
+
+/** Collect audio from entries with collision check (standard non-disc path). */
+async function collectFlatFiles(
+  source: string,
+  entries: Array<{ name: string; isFile: () => boolean; isDirectory: () => boolean }>,
+): Promise<AudioFile[]> {
+  const results: AudioFile[] = [];
+  for (const entry of entries) {
+    const fullPath = join(source, entry.name);
+    if (entry.isDirectory()) {
+      results.push(...await collectAudioFiles(fullPath));
+    } else if (entry.isFile() && AUDIO_EXTENSIONS.has(extname(entry.name).toLowerCase())) {
+      results.push({ srcPath: fullPath, name: entry.name });
+    }
+  }
+  const files = results.sort((a, b) => a.name.localeCompare(b.name));
+
+  // Check for basename collisions before returning
+  const seen = new Map<string, string>();
+  for (const file of files) {
+    const existing = seen.get(file.name);
+    if (existing) {
+      throw new Error(
+        `Duplicate filename "${file.name}" found during import flattening: "${existing}" and "${file.srcPath}"`,
+      );
+    }
+    seen.set(file.name, file.srcPath);
+  }
+  return files;
+}
+
 /** Copy audio files from source to target, flattening all subdirectories. */
 export async function copyAudioFiles(source: string, target: string): Promise<void> {
-  // Read immediate children to detect disc subfolders
   const rootEntries = await readdir(source, { withFileTypes: true });
 
   const discFolders: Array<{ name: string; path: string }> = [];
@@ -127,69 +195,10 @@ export async function copyAudioFiles(source: string, target: string): Promise<vo
     }
   }
 
-  const isMultiDisc = discFolders.length >= 2;
+  const files = discFolders.length >= 2
+    ? await collectMultiDiscFiles(source, discFolders, otherEntries)
+    : await collectFlatFiles(source, rootEntries);
 
-  let files: Array<{ srcPath: string; name: string }>;
-
-  if (isMultiDisc) {
-    // Sort discs naturally (Disc 2 before Disc 10)
-    discFolders.sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true }));
-
-    // Collect audio files from each disc in order
-    const discFiles: Array<{ srcPath: string; name: string }> = [];
-    for (const disc of discFolders) {
-      const discAudio = await collectAudioFiles(disc.path);
-      discFiles.push(...discAudio);
-    }
-
-    // Assign sequential filenames to disc files
-    const totalTracks = discFiles.length;
-    const padWidth = String(totalTracks).length;
-    const sequentialFiles = discFiles.map((file, i) => ({
-      srcPath: file.srcPath,
-      name: `${String(i + 1).padStart(padWidth, '0')}${extname(file.name)}`,
-    }));
-
-    // Collect non-disc entries (loose files + non-disc subfolders)
-    const nonDiscFiles: Array<{ srcPath: string; name: string }> = [];
-    for (const entry of otherEntries) {
-      const fullPath = join(source, entry.name);
-      if (entry.isFile() && AUDIO_EXTENSIONS.has(extname(entry.name).toLowerCase())) {
-        nonDiscFiles.push({ srcPath: fullPath, name: entry.name });
-      } else if (entry.isDirectory()) {
-        nonDiscFiles.push(...await collectAudioFiles(fullPath));
-      }
-    }
-    nonDiscFiles.sort((a, b) => a.name.localeCompare(b.name));
-
-    files = [...nonDiscFiles, ...sequentialFiles];
-  } else {
-    // Standard recursive collect — reuse root entries to avoid double readdir
-    const results: Array<{ srcPath: string; name: string }> = [];
-    for (const entry of rootEntries) {
-      const fullPath = join(source, entry.name);
-      if (entry.isDirectory()) {
-        results.push(...await collectAudioFiles(fullPath));
-      } else if (entry.isFile() && AUDIO_EXTENSIONS.has(extname(entry.name).toLowerCase())) {
-        results.push({ srcPath: fullPath, name: entry.name });
-      }
-    }
-    files = results.sort((a, b) => a.name.localeCompare(b.name));
-
-    // Check for basename collisions before copying anything
-    const seen = new Map<string, string>();
-    for (const file of files) {
-      const existing = seen.get(file.name);
-      if (existing) {
-        throw new Error(
-          `Duplicate filename "${file.name}" found during import flattening: "${existing}" and "${file.srcPath}"`,
-        );
-      }
-      seen.set(file.name, file.srcPath);
-    }
-  }
-
-  // Copy all files flat into target
   await mkdir(target, { recursive: true });
   for (const file of files) {
     await cp(file.srcPath, join(target, file.name), { errorOnExist: false });
