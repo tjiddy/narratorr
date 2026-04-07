@@ -1,7 +1,8 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { buildSearchQuery, filterAndRankResults, searchAndGrabForBook } from './search-pipeline.js';
+import { buildSearchQuery, filterAndRankResults, filterBlacklistedResults, searchAndGrabForBook } from './search-pipeline.js';
 import type { IndexerService } from './indexer.service.js';
 import type { DownloadOrchestrator } from './download-orchestrator.js';
+import type { BlacklistService } from './blacklist.service.js';
 import { DuplicateDownloadError } from './download.service.js';
 import type { EventBroadcasterService } from './event-broadcaster.service.js';
 import type { FastifyBaseLogger } from 'fastify';
@@ -890,4 +891,115 @@ describe('filterAndRankResults — indexer priority integration (#394)', () => {
     expect(results[0].grabs).toBe(1000);
     expect(results[1].grabs).toBe(10);
   });
+});
+
+// #406 — Shared blacklist filter helper
+describe('filterBlacklistedResults', () => {
+  let blacklistService: BlacklistService;
+
+  beforeEach(() => {
+    blacklistService = {
+      getBlacklistedIdentifiers: vi.fn().mockResolvedValue({
+        blacklistedHashes: new Set<string>(),
+        blacklistedGuids: new Set<string>(),
+      }),
+    } as unknown as BlacklistService;
+  });
+
+  it('filters result with blacklisted infoHash', async () => {
+    vi.mocked(blacklistService.getBlacklistedIdentifiers).mockResolvedValue({
+      blacklistedHashes: new Set(['hash1']),
+      blacklistedGuids: new Set(),
+    });
+    const results = [makeResult({ infoHash: 'hash1' })];
+    const filtered = await filterBlacklistedResults(results, blacklistService);
+    expect(filtered).toHaveLength(0);
+    expect(blacklistService.getBlacklistedIdentifiers).toHaveBeenCalledWith(['hash1'], []);
+  });
+
+  it('filters result with blacklisted guid', async () => {
+    vi.mocked(blacklistService.getBlacklistedIdentifiers).mockResolvedValue({
+      blacklistedHashes: new Set(),
+      blacklistedGuids: new Set(['guid1']),
+    });
+    const results = [makeResult({ guid: 'guid1' })];
+    const filtered = await filterBlacklistedResults(results, blacklistService);
+    expect(filtered).toHaveLength(0);
+    expect(blacklistService.getBlacklistedIdentifiers).toHaveBeenCalledWith([], ['guid1']);
+  });
+
+  it('filters result with both identifiers when only hash is blacklisted', async () => {
+    vi.mocked(blacklistService.getBlacklistedIdentifiers).mockResolvedValue({
+      blacklistedHashes: new Set(['hash1']),
+      blacklistedGuids: new Set(),
+    });
+    const results = [makeResult({ infoHash: 'hash1', guid: 'guid1' })];
+    const filtered = await filterBlacklistedResults(results, blacklistService);
+    expect(filtered).toHaveLength(0);
+  });
+
+  it('filters result with both identifiers when only guid is blacklisted', async () => {
+    vi.mocked(blacklistService.getBlacklistedIdentifiers).mockResolvedValue({
+      blacklistedHashes: new Set(),
+      blacklistedGuids: new Set(['guid1']),
+    });
+    const results = [makeResult({ infoHash: 'hash1', guid: 'guid1' })];
+    const filtered = await filterBlacklistedResults(results, blacklistService);
+    expect(filtered).toHaveLength(0);
+  });
+
+  it('passes through result with neither infoHash nor guid', async () => {
+    const results = [makeResult({ infoHash: undefined, guid: undefined })];
+    const filtered = await filterBlacklistedResults(results, blacklistService);
+    expect(filtered).toHaveLength(1);
+    expect(blacklistService.getBlacklistedIdentifiers).not.toHaveBeenCalled();
+  });
+
+  it('returns only clean results from a mixed set', async () => {
+    vi.mocked(blacklistService.getBlacklistedIdentifiers).mockResolvedValue({
+      blacklistedHashes: new Set(['bad-hash']),
+      blacklistedGuids: new Set(),
+    });
+    const clean = makeResult({ infoHash: 'good-hash', title: 'Clean' });
+    const blacklisted = makeResult({ infoHash: 'bad-hash', title: 'Blacklisted' });
+    const filtered = await filterBlacklistedResults([blacklisted, clean], blacklistService);
+    expect(filtered).toHaveLength(1);
+    expect(filtered[0].title).toBe('Clean');
+  });
+
+  it('returns empty array when all results are blacklisted', async () => {
+    vi.mocked(blacklistService.getBlacklistedIdentifiers).mockResolvedValue({
+      blacklistedHashes: new Set(['h1', 'h2']),
+      blacklistedGuids: new Set(),
+    });
+    const results = [makeResult({ infoHash: 'h1' }), makeResult({ infoHash: 'h2' })];
+    const filtered = await filterBlacklistedResults(results, blacklistService);
+    expect(filtered).toHaveLength(0);
+  });
+
+  it('returns results unchanged when input array is empty', async () => {
+    const filtered = await filterBlacklistedResults([], blacklistService);
+    expect(filtered).toHaveLength(0);
+    expect(blacklistService.getBlacklistedIdentifiers).not.toHaveBeenCalled();
+  });
+
+  it('returns results unchanged when getBlacklistedIdentifiers returns empty sets', async () => {
+    const results = [makeResult({ infoHash: 'hash1', guid: 'guid1' })];
+    const filtered = await filterBlacklistedResults(results, blacklistService);
+    expect(filtered).toHaveLength(1);
+  });
+});
+
+// #406 — Blacklist filtering in searchAndGrabForBook (non-broadcaster)
+describe('#406 searchAndGrabForBook blacklist filtering', () => {
+  it.todo('filters blacklisted results before ranking — non-broadcaster path');
+  it.todo('returns no_results when all results are blacklisted — non-broadcaster path');
+  it.todo('grabs only clean results when mix of blacklisted and clean — non-broadcaster path');
+});
+
+// #406 — Blacklist filtering in searchAndGrabForBook (broadcaster)
+describe('#406 searchAndGrabForBook blacklist filtering with broadcaster', () => {
+  it.todo('filters blacklisted results before ranking — broadcaster path');
+  it.todo('returns no_results when all results are blacklisted — broadcaster path');
+  it.todo('grabs only clean results when mix of blacklisted and clean — broadcaster path');
 });

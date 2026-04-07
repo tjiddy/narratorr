@@ -168,6 +168,24 @@ export function filterAndRankResults(
 }
 
 /**
+ * Filter out blacklisted releases by infoHash and/or guid.
+ * Skips the blacklist lookup entirely when no identifiers are present.
+ */
+export async function filterBlacklistedResults(
+  results: SearchResult[],
+  blacklistService: BlacklistService,
+): Promise<SearchResult[]> {
+  const hashes = results.map(r => r.infoHash).filter((h): h is string => !!h);
+  const guids = results.map(r => r.guid).filter((g): g is string => !!g);
+  if (hashes.length === 0 && guids.length === 0) return results;
+  const { blacklistedHashes, blacklistedGuids } = await blacklistService.getBlacklistedIdentifiers(hashes, guids);
+  return results.filter(r =>
+    (!r.infoHash || !blacklistedHashes.has(r.infoHash)) &&
+    (!r.guid || !blacklistedGuids.has(r.guid)),
+  );
+}
+
+/**
  * Shared post-processing pipeline for search results.
  * Applies multi-part Usenet filtering, blacklist filtering, and quality ranking.
  * Used by both JSON and SSE search routes.
