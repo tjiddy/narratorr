@@ -1,6 +1,6 @@
 import type { FastifyBaseLogger } from 'fastify';
 import { calculateQuality, isMultiPartUsenetPost } from '../../core/utils/index.js';
-import { enrichUsenetLanguages } from '../../core/utils/detect-usenet-language.js';
+import { enrichUsenetLanguages } from '../utils/enrich-usenet-languages.js';
 import type { SearchResult } from '../../core/index.js';
 import type { IndexerService } from './indexer.service.js';
 import type { DownloadOrchestrator } from './download-orchestrator.js';
