@@ -126,4 +126,39 @@ export class SettingsService {
 
     await this.set('processing', { ...DEFAULT_SETTINGS.processing, enabled: false, ffmpegPath });
   }
+
+  /**
+   * Run once at startup: migrate quality.preferredLanguage to metadata.languages.
+   * Idempotent — skips if metadata.languages already exists in the raw blob.
+   */
+  async migrateLanguageSettings(): Promise<void> {
+    try {
+      // Check if metadata already has languages (idempotency)
+      const metadataRow = await this.db.select().from(settings).where(eq(settings.key, 'metadata')).limit(1);
+      const metadataBlob = (metadataRow[0]?.value ?? {}) as Record<string, unknown>;
+      if (Array.isArray(metadataBlob.languages)) return;
+
+      // Read raw quality blob (bypasses Zod to access legacy field)
+      const qualityRow = await this.db.select().from(settings).where(eq(settings.key, 'quality')).limit(1);
+      if (qualityRow.length === 0) return;
+
+      const qualityBlob = { ...(qualityRow[0].value as Record<string, unknown>) };
+      const preferredLanguage = qualityBlob.preferredLanguage;
+
+      // Migrate non-empty preferredLanguage to metadata.languages
+      if (typeof preferredLanguage === 'string' && preferredLanguage.trim()) {
+        await this.patch('metadata', { languages: [preferredLanguage.toLowerCase().trim()] } as Partial<AppSettings['metadata']>);
+        this.log.info({ from: preferredLanguage }, 'Migrated preferredLanguage to metadata.languages');
+      }
+
+      // Clean up: remove preferredLanguage from raw quality blob
+      delete qualityBlob.preferredLanguage;
+      await this.db
+        .insert(settings)
+        .values({ key: 'quality', value: qualityBlob })
+        .onConflictDoUpdate({ target: settings.key, set: { value: qualityBlob } });
+    } catch (error: unknown) {
+      this.log.warn({ error }, 'Language settings migration failed — fresh defaults will apply');
+    }
+  }
 }
