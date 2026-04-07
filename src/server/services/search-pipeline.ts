@@ -46,10 +46,20 @@ function canonicalCompare(
   }
 
   // Language tier: mismatch ranks below match/unknown (absence ≠ mismatch)
+  // Sub-tier: primary language (first entry) ranks above other matches
   if (languages.length > 0) {
-    const aMatch = !a.language || languages.includes(a.language.toLowerCase()) ? 1 : 0;
-    const bMatch = !b.language || languages.includes(b.language.toLowerCase()) ? 1 : 0;
+    const primary = languages[0];
+    const aLang = a.language?.toLowerCase();
+    const bLang = b.language?.toLowerCase();
+    const aMatch = !aLang || languages.includes(aLang) ? 1 : 0;
+    const bMatch = !bLang || languages.includes(bLang) ? 1 : 0;
     if (aMatch !== bMatch) return bMatch - aMatch;
+    // Among matches, prefer primary language
+    if (aMatch === 1 && bMatch === 1 && languages.length > 1) {
+      const aPrimary = aLang === primary ? 1 : 0;
+      const bPrimary = bLang === primary ? 1 : 0;
+      if (aPrimary !== bPrimary) return bPrimary - aPrimary;
+    }
   }
 
   // Grabs tier: log-scale normalization

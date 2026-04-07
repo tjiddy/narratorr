@@ -478,12 +478,14 @@ describe('filterAndRankResults — grabs tiebreaker (#272)', () => {
 });
 
 describe('canonicalCompare — language array', () => {
-  it('no penalty when result language matches any selected language', () => {
+  it('no penalty when result language matches any selected language — both kept', () => {
     const english = makeResult({ matchScore: 0.9, language: 'english', seeders: 5 });
     const spanish = makeResult({ matchScore: 0.9, language: 'spanish', seeders: 10 });
     const { results } = filterAndRankResults([english, spanish], undefined, 0, 0, 'none', undefined, undefined, ['english', 'spanish']);
-    // Both match → tiebreaker by seeders
-    expect(results[0].language).toBe('spanish');
+    // Both match → both kept, english first (primary), spanish second
+    expect(results).toHaveLength(2);
+    expect(results[0].language).toBe('english'); // primary language
+    expect(results[1].language).toBe('spanish');
   });
 
   it('penalty when result language does not match any selected language', () => {
@@ -510,11 +512,20 @@ describe('canonicalCompare — language array', () => {
     expect(results).toHaveLength(2); // all pass through
   });
 
-  it('first entry used as primary for sort ranking', () => {
-    const primary = makeResult({ matchScore: 0.9, language: 'english', seeders: 5, title: 'Primary' });
-    const secondary = makeResult({ matchScore: 0.9, language: 'spanish', seeders: 5, title: 'Secondary' });
-    const { results } = filterAndRankResults([secondary, primary], undefined, 0, 0, 'none', undefined, undefined, ['english', 'spanish']);
-    // Both match the language list so no penalty difference → falls to seeders (equal) → grabs (equal) → stable
+  it('first entry used as primary for sort ranking — primary language outranks secondary', () => {
+    const english = makeResult({ matchScore: 0.9, language: 'english', seeders: 5, grabs: 100, title: 'English' });
+    const spanish = makeResult({ matchScore: 0.9, language: 'spanish', seeders: 5, grabs: 100, title: 'Spanish' });
+    const { results } = filterAndRankResults([spanish, english], undefined, 0, 0, 'none', undefined, undefined, ['english', 'spanish']);
+    // English is primary (first entry) → ranks above Spanish
+    expect(results[0].language).toBe('english');
+    expect(results[1].language).toBe('spanish');
+  });
+
+  it('primary language tiebreaker does not apply with single language', () => {
+    const english = makeResult({ matchScore: 0.9, language: 'english', seeders: 5, grabs: 100 });
+    const noLang = makeResult({ matchScore: 0.9, seeders: 5, grabs: 100, title: 'No Lang' });
+    const { results } = filterAndRankResults([noLang, english], undefined, 0, 0, 'none', undefined, undefined, ['english']);
+    // Both match (english + unknown) — no sub-tier needed, stable order
     expect(results).toHaveLength(2);
   });
 });
