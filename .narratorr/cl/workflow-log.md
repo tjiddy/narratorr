@@ -1,5 +1,34 @@
 # Workflow Log
 
+## #397 Multi-disc imports fail with duplicate track number collision — 2026-04-07
+**Skill path:** /elaborate → /respond-to-spec-review (x3) → /implement → /claim → /plan → /handoff
+**Outcome:** success — PR #402
+
+### Metrics
+- Files changed: 5 | Tests added/modified: 18 new + 3 updated
+- Quality gate runs: 2 (pass on attempt 1 for final, 1 initial fail for complexity)
+- Fix iterations: 2 (complexity limit → extracted helpers; self-review caught collision bug)
+- Context compactions: 0
+
+### Workflow experience
+- What went smoothly: Spec was very well-defined after 3 rounds of spec review. The Implementation Contract section made coding straightforward — exact file:line references, exact changes needed.
+- Friction / issues encountered: Existing tests used `Disc 1`/`Disc 2` as generic subfolder names, which broke when disc detection was added. Had to update 3 existing tests. The readdir mock double-call trap was the trickiest part — pre-scanning root entries before recursive collection means the root readdir is consumed twice if not careful.
+
+### Token efficiency
+- Highest-token actions: Spec review rounds (3 rounds with elaborate + respond cycles consumed significant context before implementation started)
+- Avoidable waste: None significant — the spec review rounds were necessary to catch real contract gaps
+- Suggestions: None
+
+### Infrastructure gaps
+- Repeated workarounds: `collectAudioFiles()` is defined privately in 4+ modules — should be a shared utility
+- Missing tooling / config: None
+- Unresolved debt: `collectAudioFiles()` duplication logged in debt.md
+
+### Wish I'd Known
+1. Existing tests used disc-pattern folder names (`Disc 1`, `Disc 2`) as generic test fixtures — adding disc detection broke them. Always grep test files for folder names matching the new pattern before implementing.
+2. Adding a pre-scan step before a recursive function causes double-readdir in mocked tests — reuse the initial readdir result instead of calling the recursive function on the root.
+3. When mixing generated sequential filenames with original non-disc filenames, collision detection is essential — self-review caught a silent data-loss bug where `Extras/1.mp3` would collide with sequential `1.mp3`.
+
 ## #398 NYT import list stores titles in ALL CAPS — 2026-04-07
 **Skill path:** /elaborate → /respond-to-spec-review (x2) → /implement → /claim → /plan → /handoff
 **Outcome:** success — PR #401
