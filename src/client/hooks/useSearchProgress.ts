@@ -13,7 +13,7 @@ export interface SearchCardState {
   bookId: number;
   bookTitle: string;
   indexers: Map<number, IndexerState>;
-  outcome?: 'grabbed' | 'no_results';
+  outcome?: 'grabbed' | 'no_results' | 'skipped' | 'grab_error';
   grabbedFrom?: string;
 }
 

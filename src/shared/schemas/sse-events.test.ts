@@ -329,6 +329,16 @@ describe('#392 search progress — SSE event schemas', () => {
       expect(searchCompletePayload.parse(valid)).toEqual(valid);
     });
 
+    it('accepts valid payload with outcome skipped', () => {
+      const valid = { book_id: 1, total_results: 3, outcome: 'skipped' };
+      expect(searchCompletePayload.parse(valid)).toEqual(valid);
+    });
+
+    it('accepts valid payload with outcome grab_error', () => {
+      const valid = { book_id: 1, total_results: 3, outcome: 'grab_error' };
+      expect(searchCompletePayload.parse(valid)).toEqual(valid);
+    });
+
     it('rejects payload with invalid outcome string', () => {
       expect(() => searchCompletePayload.parse({ book_id: 1, total_results: 0, outcome: 'invalid' })).toThrow();
     });

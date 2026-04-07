@@ -726,21 +726,21 @@ describe('#392 searchAndGrabForBook with broadcaster', () => {
       expect(broadcaster.emit).not.toHaveBeenCalledWith('search_grabbed', expect.anything());
     });
 
-    it('emits search_complete with outcome no_results on DuplicateDownloadError (not search_grabbed)', async () => {
+    it('emits search_complete with outcome skipped on DuplicateDownloadError (not search_grabbed)', async () => {
       vi.mocked(downloadService.grab).mockRejectedValue(new DuplicateDownloadError('Active download exists', 'ACTIVE_DOWNLOAD_EXISTS'));
       await searchAndGrabForBook(book, indexerService, downloadService, defaultQualitySettings, log, broadcaster);
       expect(broadcaster.emit).not.toHaveBeenCalledWith('search_grabbed', expect.anything());
       expect(broadcaster.emit).toHaveBeenCalledWith('search_complete', expect.objectContaining({
-        outcome: 'no_results',
+        outcome: 'skipped',
       }));
     });
 
-    it('emits search_complete with outcome no_results on generic grab error', async () => {
+    it('emits search_complete with outcome grab_error on generic grab error', async () => {
       vi.mocked(downloadService.grab).mockRejectedValue(new Error('Connection refused'));
       await searchAndGrabForBook(book, indexerService, downloadService, defaultQualitySettings, log, broadcaster);
       expect(broadcaster.emit).not.toHaveBeenCalledWith('search_grabbed', expect.anything());
       expect(broadcaster.emit).toHaveBeenCalledWith('search_complete', expect.objectContaining({
-        outcome: 'no_results',
+        outcome: 'grab_error',
       }));
     });
 

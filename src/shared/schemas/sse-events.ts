@@ -141,7 +141,7 @@ export const searchGrabbedPayload = z.object({
 export const searchCompletePayload = z.object({
   book_id: z.number(),
   total_results: z.number(),
-  outcome: z.enum(['grabbed', 'no_results']),
+  outcome: z.enum(['grabbed', 'no_results', 'skipped', 'grab_error']),
 });
 
 // ============================================================================

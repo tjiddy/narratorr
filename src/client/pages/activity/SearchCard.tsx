@@ -40,10 +40,18 @@ function IndexerRow({ state }: { state: IndexerState }) {
   );
 }
 
+const STATUS_LABELS: Record<string, string> = {
+  grabbed: 'grabbed',
+  no_results: 'no results',
+  skipped: 'already downloading',
+  grab_error: 'grab failed',
+};
+
 export function SearchCard({ state }: { state: SearchCardState }) {
   const overallStatus = state.outcome
-    ? state.outcome === 'grabbed' ? 'grabbed' : 'no results'
+    ? STATUS_LABELS[state.outcome] ?? state.outcome
     : 'searching';
+  const isTerminalError = state.outcome === 'grab_error' || state.outcome === 'skipped';
 
   return (
     <div className="glass-card rounded-2xl p-4 sm:p-5 animate-fade-in-up border border-primary/20">
@@ -52,7 +60,7 @@ export function SearchCard({ state }: { state: SearchCardState }) {
         <div className="p-1.5 bg-primary/10 rounded-lg">
           <LoadingSpinner className={`w-4 h-4 text-primary ${overallStatus !== 'searching' ? 'hidden' : ''}`} />
           {overallStatus === 'grabbed' && <CheckCircleIcon className="w-4 h-4 text-success" />}
-          {overallStatus === 'no results' && <AlertCircleIcon className="w-4 h-4 text-muted-foreground" />}
+          {(overallStatus === 'no results' || isTerminalError) && <AlertCircleIcon className="w-4 h-4 text-muted-foreground" />}
         </div>
         <div className="min-w-0 flex-1">
           <h3 className="font-medium text-sm truncate">{state.bookTitle}</h3>
@@ -66,6 +74,12 @@ export function SearchCard({ state }: { state: SearchCardState }) {
       )}
       {state.outcome === 'no_results' && (
         <p className="text-sm text-muted-foreground mb-2">No results found</p>
+      )}
+      {state.outcome === 'skipped' && (
+        <p className="text-sm text-muted-foreground mb-2">Already has an active download</p>
+      )}
+      {state.outcome === 'grab_error' && (
+        <p className="text-sm text-destructive mb-2">Grab failed</p>
       )}
 
       {/* Per-indexer breakdown */}

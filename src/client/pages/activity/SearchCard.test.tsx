@@ -79,6 +79,22 @@ describe('SearchCard', () => {
     });
   });
 
+  describe('skipped outcome', () => {
+    it('shows "Already has an active download" when skipped', () => {
+      const state = makeState({ outcome: 'skipped' });
+      render(<SearchCard state={state} />);
+      expect(screen.getByText(/Already has an active download/)).toBeInTheDocument();
+    });
+  });
+
+  describe('grab_error outcome', () => {
+    it('shows "Grab failed" when grab errors', () => {
+      const state = makeState({ outcome: 'grab_error' });
+      render(<SearchCard state={state} />);
+      expect(screen.getByText(/Grab failed/)).toBeInTheDocument();
+    });
+  });
+
   describe('mixed states', () => {
     it('renders card with 2 complete, 1 error, 1 pending indexers correctly', () => {
       const state = makeState({
