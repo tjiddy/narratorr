@@ -26,12 +26,12 @@ export function buildGrabPayload(
   overrides?: Partial<GrabPayload>,
 ): GrabPayload {
   const payload: GrabPayload = {
+    downloadUrl: result.downloadUrl!,
     title: result.title,
     protocol: result.protocol,
     bookId,
   };
 
-  if (result.downloadUrl !== undefined) payload.downloadUrl = result.downloadUrl;
   if (result.indexerId !== undefined) payload.indexerId = result.indexerId;
   if (result.size !== undefined) payload.size = result.size;
   if (result.seeders !== undefined) payload.seeders = result.seeders;

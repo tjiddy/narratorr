@@ -499,7 +499,7 @@ describe('retrySearch — GUID blacklist filtering', () => {
 
     await retrySearch(1, deps);
 
-    const grabCall = deps.downloadOrchestrator.grab.mock.calls[0][0];
+    const grabCall = vi.mocked(deps.downloadOrchestrator.grab).mock.calls[0][0];
     expect(grabCall).not.toHaveProperty('indexerId');
   });
 });

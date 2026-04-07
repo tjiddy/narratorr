@@ -70,8 +70,8 @@ describe('buildGrabPayload', () => {
 
       const payload = buildGrabPayload(sparse, 10);
 
-      // Only defined fields should be present
-      expect(Object.keys(payload).sort()).toEqual(['bookId', 'protocol', 'title'].sort());
+      // Only defined fields should be present (downloadUrl is always included via non-null assertion)
+      expect(Object.keys(payload).sort()).toEqual(['bookId', 'downloadUrl', 'protocol', 'title'].sort());
     });
   });
 

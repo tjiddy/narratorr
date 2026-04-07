@@ -1,5 +1,6 @@
 export * from './audio-constants.js';
-export * from './collect-audio-files.js';
+// collect-audio-files.js is NOT re-exported here — it uses node:fs/promises which
+// breaks the Vite client build. Import directly from './collect-audio-files.js'.
 export * from './cover-regex.js';
 export * from './magnet.js';
 export * from './naming.js';

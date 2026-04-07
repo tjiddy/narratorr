@@ -7,7 +7,6 @@ vi.mock('node:fs/promises', () => ({
   readdir: vi.fn(),
 }));
 
-// eslint-disable-next-line @typescript-eslint/consistent-type-imports
 const { readdir } = await import('node:fs/promises');
 const mockReaddir = vi.mocked(readdir);
 

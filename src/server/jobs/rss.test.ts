@@ -770,7 +770,7 @@ describe('startRssJob', () => {
 
     await runRssJob(settings, bookList, book, indexer, download, blacklist, inject<FastifyBaseLogger>(log));
 
-    const grabCall = download.grab.mock.calls[0][0];
+    const grabCall = vi.mocked(download.grab).mock.calls[0][0];
     expect(grabCall).not.toHaveProperty('indexerId');
   });
 });

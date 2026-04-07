@@ -1,6 +1,7 @@
 import { stat, readdir, mkdir, cp } from 'node:fs/promises';
 import { join, extname } from 'node:path';
-import { renderTemplate, toLastFirst, toSortTitle, AUDIO_EXTENSIONS, collectAudioFilePaths } from '../../core/utils/index.js';
+import { renderTemplate, toLastFirst, toSortTitle, AUDIO_EXTENSIONS } from '../../core/utils/index.js';
+import { collectAudioFilePaths } from '../../core/utils/collect-audio-files.js';
 import { DISC_FOLDER_PATTERN } from '../../core/utils/book-discovery.js';
 import type { NamingOptions } from '../../core/utils/naming.js';
 
