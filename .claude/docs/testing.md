@@ -26,6 +26,7 @@ All new/changed code must include tests. Run `pnpm test` (Vitest) to execute all
 - **Every error path gets a test.** API rejection → user sees error message. Empty data → empty state renders. Network failure mid-flow → UI recovers gracefully. If a catch block exists, a test should trigger it.
 - **Interaction chains over snapshots.** The highest-value tests exercise a full flow: action → state change → UI update → API call → response → UI update. These catch the integration bugs that unit tests miss.
 - **Read source before writing assertions.** When testing components that format or transform values, read the formatter/helper source first to understand edge cases (zero values, boundary conditions, format skipping). Most test assertion mismatches come from assuming output format without checking.
+- **Path assertions must normalize separators.** `path.join()` produces backslashes on Windows but forward slashes on Linux. Never use `toBe()` or `toHaveBeenCalledWith()` with hardcoded forward-slash paths — normalize actual values with `.split('\\').join('/')` before comparing, or use `expect.stringContaining()`.
 
 **Test plan completeness standard:** Test plans in issue specs must cover these categories where applicable:
 - **Schema validation** — positive and negative cases (valid input accepted, invalid input rejected with correct error)
