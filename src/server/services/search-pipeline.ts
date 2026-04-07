@@ -301,6 +301,7 @@ async function searchWithBroadcaster(
   downloadOrchestrator: DownloadOrchestrator,
   qualitySettings: { grabFloor: number; minSeeders: number; protocolPreference: string; rejectWords?: string; requiredWords?: string; languages?: readonly string[] },
   log: FastifyBaseLogger,
+  blacklistService: BlacklistService,
   broadcaster: EventBroadcasterService,
 ): Promise<SingleBookSearchResult> {
   const query = buildSearchQuery(book);
@@ -345,8 +346,15 @@ async function searchWithBroadcaster(
 
   log.info({ bookId: book.id, title: book.title, resultCount: rawResults.length }, 'Search results found');
 
+  const afterBlacklist = await filterBlacklistedResults(rawResults, blacklistService);
+  if (afterBlacklist.length === 0) {
+    log.debug({ bookId: book.id, title: book.title }, 'All results blacklisted');
+    safeEmit(broadcaster, 'search_complete', { book_id: book.id, total_results: totalResults, outcome: 'no_results' }, log);
+    return { result: 'no_results' };
+  }
+
   const { results } = filterAndRankResults(
-    rawResults, book.duration ?? undefined,
+    afterBlacklist, book.duration ?? undefined,
     qualitySettings.grabFloor, qualitySettings.minSeeders, qualitySettings.protocolPreference,
     qualitySettings.rejectWords, qualitySettings.requiredWords, qualitySettings.languages,
   );
@@ -382,10 +390,11 @@ export async function searchAndGrabForBook(
   downloadOrchestrator: DownloadOrchestrator,
   qualitySettings: { grabFloor: number; minSeeders: number; protocolPreference: string; rejectWords?: string; requiredWords?: string; languages?: readonly string[] },
   log: FastifyBaseLogger,
+  blacklistService: BlacklistService,
   broadcaster?: EventBroadcasterService,
 ): Promise<SingleBookSearchResult> {
   if (broadcaster) {
-    return searchWithBroadcaster(book, indexerService, downloadOrchestrator, qualitySettings, log, broadcaster);
+    return searchWithBroadcaster(book, indexerService, downloadOrchestrator, qualitySettings, log, blacklistService, broadcaster);
   }
 
   const query = buildSearchQuery(book);
@@ -401,8 +410,14 @@ export async function searchAndGrabForBook(
 
   log.info({ bookId: book.id, title: book.title, resultCount: rawResults.length }, 'Search results found');
 
+  const afterBlacklist = await filterBlacklistedResults(rawResults, blacklistService);
+  if (afterBlacklist.length === 0) {
+    log.debug({ bookId: book.id, title: book.title }, 'All results blacklisted');
+    return { result: 'no_results' };
+  }
+
   const { results } = filterAndRankResults(
-    rawResults,
+    afterBlacklist,
     book.duration ?? undefined,
     qualitySettings.grabFloor,
     qualitySettings.minSeeders,

@@ -8,6 +8,7 @@ import type { DownloadOrchestrator } from '../services/download-orchestrator.js'
 import type { MergeService } from '../services/merge.service.js';
 import type { BookRejectionService } from '../services/book-rejection.service.js';
 import type { EventBroadcasterService } from '../services/event-broadcaster.service.js';
+import type { BlacklistService } from '../services/blacklist.service.js';
 export interface BookRouteDeps {
   bookService: BookService;
   bookListService: BookListService;
@@ -20,6 +21,7 @@ export interface BookRouteDeps {
   eventHistory?: EventHistoryService;
   indexerService?: IndexerService;
   bookRejectionService?: BookRejectionService;
+  blacklistService?: BlacklistService;
   eventBroadcaster?: EventBroadcasterService;
 }
 import { searchAndGrabForBook } from '../services/search-pipeline.js';
@@ -47,12 +49,12 @@ import { AUDIO_EXTENSIONS } from '../../core/utils/audio-constants.js';
 /** Fire-and-forget: search indexers and grab the best result for a newly added book. */
 function triggerImmediateSearch(
   book: { id: number; title: string; duration?: number | null; authors?: Array<{ name: string }> | null },
-  deps: Pick<BookRouteDeps, 'indexerService' | 'downloadOrchestrator' | 'settingsService' | 'eventBroadcaster'>,
+  deps: Pick<BookRouteDeps, 'indexerService' | 'downloadOrchestrator' | 'settingsService' | 'blacklistService' | 'eventBroadcaster'>,
   log: FastifyBaseLogger,
 ) {
   Promise.all([deps.settingsService.get('quality'), deps.settingsService.get('metadata')])
     .then(async ([qualitySettings, metadataSettings]) => {
-      await searchAndGrabForBook(book, deps.indexerService!, deps.downloadOrchestrator, { ...qualitySettings, languages: metadataSettings.languages }, log, deps.eventBroadcaster);
+      await searchAndGrabForBook(book, deps.indexerService!, deps.downloadOrchestrator, { ...qualitySettings, languages: metadataSettings.languages }, log, deps.blacklistService!, deps.eventBroadcaster);
     })
     .catch((err) => {
       log.warn({ error: err, bookId: book.id }, 'Search-immediately trigger failed');
@@ -136,7 +138,7 @@ async function registerDeleteMissingRoute(app: FastifyInstance, deps: Pick<BookR
   });
 }
 
-function registerBookSearchRoute(app: FastifyInstance, deps: Pick<BookRouteDeps, 'bookService' | 'downloadOrchestrator' | 'settingsService' | 'indexerService' | 'eventBroadcaster'>) {
+function registerBookSearchRoute(app: FastifyInstance, deps: Pick<BookRouteDeps, 'bookService' | 'downloadOrchestrator' | 'settingsService' | 'indexerService' | 'blacklistService' | 'eventBroadcaster'>) {
   app.post<{ Params: IdParam }>(
     '/api/books/:id/search',
     { schema: { params: idParamSchema } },
@@ -155,6 +157,7 @@ function registerBookSearchRoute(app: FastifyInstance, deps: Pick<BookRouteDeps,
         deps.downloadOrchestrator,
         { ...qualitySettings, languages: metadataSettings.languages },
         request.log,
+        deps.blacklistService!,
         deps.eventBroadcaster,
       );
       if (result.result === 'grab_error') {
