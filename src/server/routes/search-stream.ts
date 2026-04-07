@@ -86,7 +86,7 @@ export async function searchStreamRoutes(
           },
         );
 
-        const processed = await postProcessSearchResults(allResults, bookDuration, blacklistService, settingsService);
+        const processed = await postProcessSearchResults(allResults, bookDuration, blacklistService, settingsService, request.log);
         writeSSE(reply, 'search-complete', processed);
       } catch (error: unknown) {
         request.log.error(error, 'Search stream error');

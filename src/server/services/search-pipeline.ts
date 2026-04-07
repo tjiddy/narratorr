@@ -1,5 +1,6 @@
 import type { FastifyBaseLogger } from 'fastify';
 import { calculateQuality, isMultiPartUsenetPost } from '../../core/utils/index.js';
+import { enrichUsenetLanguages } from '../../core/utils/detect-usenet-language.js';
 import type { SearchResult } from '../../core/index.js';
 import type { IndexerService } from './indexer.service.js';
 import type { DownloadOrchestrator } from './download-orchestrator.js';
@@ -171,6 +172,7 @@ export async function postProcessSearchResults(
   bookDuration: number | undefined,
   blacklistService: BlacklistService,
   settingsService: SettingsService,
+  logger: FastifyBaseLogger,
 ): Promise<{
   results: SearchResult[];
   durationUnknown: boolean;
@@ -200,6 +202,9 @@ export async function postProcessSearchResults(
       (!r.guid || !blacklistedGuids.has(r.guid)),
     );
   }
+
+  // Enrich Usenet results with language from newsgroup metadata
+  await enrichUsenetLanguages(filteredResults, logger);
 
   // Quality filtering and ranking
   const qualitySettings = await settingsService.get('quality');
