@@ -23,7 +23,7 @@ export interface RssJobResult {
  * Run a single RSS sync cycle: poll RSS feeds from RSS-capable indexers,
  * match results to wanted/monitored books, and grab the best matches.
  */
-// eslint-disable-next-line complexity, max-lines-per-function -- feed-first matching with per-book dedup, upgrades, and error isolation
+// eslint-disable-next-line complexity -- feed-first matching with per-book dedup, upgrades, and error isolation
 export async function runRssJob(
   settingsService: SettingsService,
   bookListService: BookListService,
