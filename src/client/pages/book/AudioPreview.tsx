@@ -49,7 +49,7 @@ export function AudioPreview({ bookId, status, path }: AudioPreviewProps) {
     const audio = audioRef.current;
     if (!audio) return;
 
-    if (isPlaying) {
+    if (!audio.paused) {
       audio.pause();
     } else {
       try {

@@ -17,10 +17,12 @@ let mockPause: ReturnType<typeof vi.fn>;
 beforeEach(() => {
   vi.clearAllMocks();
   mockPlay = vi.fn().mockImplementation(function (this: HTMLAudioElement) {
+    Object.defineProperty(this, 'paused', { value: false, configurable: true });
     this.dispatchEvent(new Event('play'));
     return Promise.resolve();
   });
   mockPause = vi.fn().mockImplementation(function (this: HTMLAudioElement) {
+    Object.defineProperty(this, 'paused', { value: true, configurable: true });
     this.dispatchEvent(new Event('pause'));
   });
   Object.defineProperty(globalThis.HTMLMediaElement.prototype, 'play', {
@@ -89,6 +91,25 @@ describe('AudioPreview (#320)', () => {
 
     // Click pause
     const pauseButton = screen.getByRole('button', { name: /pause/i });
+    await user.click(pauseButton);
+    expect(mockPause).toHaveBeenCalled();
+  });
+
+  it('pauses audio when DOM says playing, even if React state is desynced (stale closure fix)', async () => {
+    const user = userEvent.setup();
+    renderWithProviders(<AudioPreview bookId={1} status="imported" path="/library/book1" />);
+
+    const audio = document.querySelector('audio')!;
+
+    // Simulate audio playing via DOM without going through React's play handler
+    // (e.g., native autoplay, or a re-render desync). DOM says playing, React may not know.
+    Object.defineProperty(audio, 'paused', { value: false, configurable: true });
+    act(() => { audio.dispatchEvent(new Event('play')); });
+
+    // Button should show Pause (React caught the event)
+    const pauseButton = screen.getByRole('button', { name: /pause/i });
+
+    // Click pause — should call audio.pause() because we check audio.paused (DOM), not React state
     await user.click(pauseButton);
     expect(mockPause).toHaveBeenCalled();
   });
