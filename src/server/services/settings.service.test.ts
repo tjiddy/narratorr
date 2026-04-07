@@ -573,15 +573,8 @@ describe('migrateLanguageSettings', () => {
 
     await service.migrateLanguageSettings();
 
-    // Find the quality cleanup write
-    const qualityWrite = db.insert.mock.calls.find((call: unknown[]) => {
-      const values = (call[0] as Record<string, unknown>);
-      return values === undefined; // insert takes table ref, not values directly
-    });
     // The quality blob write should preserve other fields
-    // We check via the onConflictDoUpdate set value
-    const insertCalls = db.insert.mock.calls;
-    expect(insertCalls.length).toBeGreaterThanOrEqual(1);
+    expect(db.insert.mock.calls.length).toBeGreaterThanOrEqual(1);
   });
 
   it('removes preferredLanguage from quality blob after migration', async () => {

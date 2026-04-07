@@ -1,6 +1,6 @@
 import { useEffect } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { useForm } from 'react-hook-form';
+import { useForm, useWatch } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
 import { toast } from 'sonner';
@@ -61,7 +61,7 @@ export function FilteringSettingsSection() {
     queryFn: api.getSettings,
   });
 
-  const { register, handleSubmit, reset, watch, setValue, formState: { isDirty } } = useForm<FilteringFormData>({
+  const { register, handleSubmit, reset, control, setValue, formState: { isDirty } } = useForm<FilteringFormData>({
     defaultValues: toFormData({ ...DEFAULT_SETTINGS } as AppSettings),
     resolver: zodResolver(filteringFormSchema),
   });
@@ -84,7 +84,7 @@ export function FilteringSettingsSection() {
     },
   });
 
-  const selectedLanguages = watch('languages') ?? [];
+  const selectedLanguages = useWatch({ control, name: 'languages' }) ?? [];
 
   function toggleLanguage(lang: string) {
     const updated = selectedLanguages.includes(lang)

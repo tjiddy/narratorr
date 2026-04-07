@@ -2,7 +2,6 @@ import { useState, useCallback, useEffect } from 'react';
 import type { UseFormWatch, UseFormSetValue } from 'react-hook-form';
 import type { CreateIndexerFormData } from '../../../../shared/schemas.js';
 import { api } from '@/lib/api';
-import { MAM_LANGUAGES } from '../../../../shared/indexer-registry.js';
 import type { IndexerFieldsProps } from './types.js';
 
 interface MamStatus {
@@ -155,7 +154,6 @@ function metadataToMamStatus(metadata: Record<string, unknown>, ip?: string): Ma
 }
 
 export function MamFields({ register, errors, watch, setValue, formTestResult, indexerId }: Pick<IndexerFieldsProps, 'register' | 'errors' | 'watch' | 'setValue' | 'formTestResult' | 'indexerId'>) {
-  const searchLanguages = watch ? (watch('settings.searchLanguages') ?? [1]) : [1];
   const { mamStatus, detectError, isDetecting, detect, setMamStatus } = useMamDetection(watch, setValue, deriveInitialMamStatus(watch), indexerId);
 
   // Bridge: update card from explicit Test button result
@@ -164,14 +162,6 @@ export function MamFields({ register, errors, watch, setValue, formTestResult, i
       setMamStatus(metadataToMamStatus(formTestResult.metadata, formTestResult.ip));
     }
   }, [formTestResult, setMamStatus]);
-
-  function toggleLanguage(langId: number) {
-    if (!setValue) return;
-    const updated = searchLanguages.includes(langId)
-      ? searchLanguages.filter((id) => id !== langId)
-      : [...searchLanguages, langId];
-    setValue('settings.searchLanguages', updated, { shouldValidate: true });
-  }
 
   const mamIdRegistration = register('settings.mamId');
 
