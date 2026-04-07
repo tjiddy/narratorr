@@ -1,6 +1,7 @@
 import { stat, readdir, mkdir, cp } from 'node:fs/promises';
 import { join, extname } from 'node:path';
 import { renderTemplate, toLastFirst, toSortTitle, AUDIO_EXTENSIONS } from '../../core/utils/index.js';
+import { DISC_FOLDER_PATTERN } from '../../core/utils/book-discovery.js';
 import type { NamingOptions } from '../../core/utils/naming.js';
 
 import type { books, authors } from '../../db/schema.js';
@@ -110,11 +111,85 @@ async function collectAudioFiles(
   return results.sort((a, b) => a.name.localeCompare(b.name));
 }
 
-/** Copy audio files from source to target, flattening all subdirectories. */
-export async function copyAudioFiles(source: string, target: string): Promise<void> {
-  const files = await collectAudioFiles(source);
+type AudioFile = { srcPath: string; name: string };
 
-  // Check for basename collisions before copying anything
+/** Collect audio from disc subfolders with sequential renaming, plus non-disc entries. */
+async function collectMultiDiscFiles(
+  source: string,
+  discFolders: Array<{ name: string; path: string }>,
+  otherEntries: Array<{ name: string; isFile: () => boolean; isDirectory: () => boolean }>,
+): Promise<AudioFile[]> {
+  // Sort discs by extracted disc number (handles mixed prefixes like CD 10 vs Disc 2)
+  const discNumber = (name: string) => parseInt(name.match(/\d+/)![0], 10);
+  discFolders.sort((a, b) => discNumber(a.name) - discNumber(b.name));
+
+  // Collect audio files from each disc in order
+  const discFiles: AudioFile[] = [];
+  for (const disc of discFolders) {
+    discFiles.push(...await collectAudioFiles(disc.path));
+  }
+
+  // Assign sequential filenames to disc files
+  const padWidth = String(discFiles.length).length;
+  const sequentialFiles = discFiles.map((file, i) => ({
+    srcPath: file.srcPath,
+    name: `${String(i + 1).padStart(padWidth, '0')}${extname(file.name)}`,
+  }));
+
+  // Collect non-disc entries (loose files + non-disc subfolders)
+  const nonDiscFiles: AudioFile[] = [];
+  for (const entry of otherEntries) {
+    const fullPath = join(source, entry.name);
+    if (entry.isFile() && AUDIO_EXTENSIONS.has(extname(entry.name).toLowerCase())) {
+      nonDiscFiles.push({ srcPath: fullPath, name: entry.name });
+    } else if (entry.isDirectory()) {
+      nonDiscFiles.push(...await collectAudioFiles(fullPath));
+    }
+  }
+  nonDiscFiles.sort((a, b) => a.name.localeCompare(b.name));
+
+  // Check for duplicate basenames within non-disc files
+  const seenNonDisc = new Map<string, string>();
+  for (const file of nonDiscFiles) {
+    const existing = seenNonDisc.get(file.name);
+    if (existing) {
+      throw new Error(
+        `Duplicate filename "${file.name}" found during import flattening: "${existing}" and "${file.srcPath}"`,
+      );
+    }
+    seenNonDisc.set(file.name, file.srcPath);
+  }
+
+  // Check for collisions between non-disc files and sequential disc files
+  const sequentialNames = new Set(sequentialFiles.map(f => f.name));
+  for (const file of nonDiscFiles) {
+    if (sequentialNames.has(file.name)) {
+      throw new Error(
+        `Duplicate filename "${file.name}" found during import flattening: non-disc file "${file.srcPath}" collides with sequential disc numbering`,
+      );
+    }
+  }
+
+  return [...nonDiscFiles, ...sequentialFiles];
+}
+
+/** Collect audio from entries with collision check (standard non-disc path). */
+async function collectFlatFiles(
+  source: string,
+  entries: Array<{ name: string; isFile: () => boolean; isDirectory: () => boolean }>,
+): Promise<AudioFile[]> {
+  const results: AudioFile[] = [];
+  for (const entry of entries) {
+    const fullPath = join(source, entry.name);
+    if (entry.isDirectory()) {
+      results.push(...await collectAudioFiles(fullPath));
+    } else if (entry.isFile() && AUDIO_EXTENSIONS.has(extname(entry.name).toLowerCase())) {
+      results.push({ srcPath: fullPath, name: entry.name });
+    }
+  }
+  const files = results.sort((a, b) => a.name.localeCompare(b.name));
+
+  // Check for basename collisions before returning
   const seen = new Map<string, string>();
   for (const file of files) {
     const existing = seen.get(file.name);
@@ -125,8 +200,28 @@ export async function copyAudioFiles(source: string, target: string): Promise<vo
     }
     seen.set(file.name, file.srcPath);
   }
+  return files;
+}
 
-  // Copy all files flat into target
+/** Copy audio files from source to target, flattening all subdirectories. */
+export async function copyAudioFiles(source: string, target: string): Promise<void> {
+  const rootEntries = await readdir(source, { withFileTypes: true });
+
+  const discFolders: Array<{ name: string; path: string }> = [];
+  const otherEntries: typeof rootEntries = [];
+
+  for (const entry of rootEntries) {
+    if (entry.isDirectory() && DISC_FOLDER_PATTERN.test(entry.name)) {
+      discFolders.push({ name: entry.name, path: join(source, entry.name) });
+    } else {
+      otherEntries.push(entry);
+    }
+  }
+
+  const files = discFolders.length >= 2
+    ? await collectMultiDiscFiles(source, discFolders, otherEntries)
+    : await collectFlatFiles(source, rootEntries);
+
   await mkdir(target, { recursive: true });
   for (const file of files) {
     await cp(file.srcPath, join(target, file.name), { errorOnExist: false });

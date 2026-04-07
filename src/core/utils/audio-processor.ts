@@ -298,7 +298,7 @@ async function convertFiles(
         author: context.author,
         title: context.title,
         ...context.bookTokens,
-        trackNumber: source?.trackNumber ?? (i + 1),
+        trackNumber: i + 1,
         trackTotal,
         partName: source ? resolveChapterTitle(source, i) : undefined,
       };

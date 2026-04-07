@@ -12,7 +12,7 @@ export interface DiscoveryLogger {
  * Matches: CD1, CD 1, Disc 1, Disc1, Disk 03, DISC 004, etc.
  * Does NOT match: "01 - Harry Potter", "Part 1", book titles, etc.
  */
-const DISC_FOLDER_PATTERN = /^(cd|dis[ck])\s*\d{1,3}$/i;
+export const DISC_FOLDER_PATTERN = /^(cd|dis[ck])\s*\d{1,3}$/i;
 
 export interface DiscoverBooksOptions {
   log?: DiscoveryLogger;

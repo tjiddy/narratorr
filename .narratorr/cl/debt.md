@@ -21,6 +21,8 @@
 
 - **`src/server/services/merge.service.ts`**: Deprecated `mergeBook()` method (lines 222-270) duplicates validation and execution logic from `validatePreEnqueue()` + `executeMerge()`. Kept for backward compatibility with 40+ existing tests that test the synchronous merge path. Should be removed once existing tests are migrated to test via `enqueueMerge()`. (discovered in #368)
 
+- **`collectAudioFiles()` defined in 4+ places**: `import-helpers.ts:97`, `tagging-service.ts:227`, `audio-scanner.ts:160`, `audio-processor.ts:409` — each is a private recursive audio file collector with slightly different signatures. Should extract to a shared utility in `src/core/utils/` to prevent further drift. DRY-2. (discovered in #397)
+
 ## Accepted Debt
 
 Items below are real but not worth fixing — the cost of change outweighs the benefit.
