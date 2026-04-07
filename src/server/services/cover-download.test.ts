@@ -67,15 +67,12 @@ describe('downloadRemoteCover', () => {
 
     expect(result).toBe(true);
     // Temp file written first (atomic write)
-    expect(writeFile).toHaveBeenCalledWith(
-      expect.stringContaining('/books/test/'),
-      expect.any(Buffer),
-    );
+    const writePath = String(vi.mocked(writeFile).mock.calls[0][0]).split('\\').join('/');
+    expect(writePath).toContain('/books/test/');
+    expect(vi.mocked(writeFile).mock.calls[0][1]).toBeInstanceOf(Buffer);
     // Renamed to final location
-    expect(rename).toHaveBeenCalledWith(
-      expect.stringContaining('/books/test/'),
-      '/books/test/cover.jpg',
-    );
+    const renameDest = String(vi.mocked(rename).mock.calls[0][1]).split('\\').join('/');
+    expect(renameDest).toBe('/books/test/cover.jpg');
   });
 
   it('updates coverUrl to /api/books/{id}/cover in DB after successful download', async () => {
@@ -212,10 +209,8 @@ describe('downloadRemoteCover', () => {
       inject<Db>(mockDb), log,
     );
 
-    expect(rename).toHaveBeenCalledWith(
-      expect.any(String),
-      '/books/test/cover.png',
-    );
+    const renameDest = String(vi.mocked(rename).mock.calls[0][1]).split('\\').join('/');
+    expect(renameDest).toBe('/books/test/cover.png');
   });
 
   it('defaults to jpg when content-type is a generic image type', async () => {
@@ -229,10 +224,8 @@ describe('downloadRemoteCover', () => {
       inject<Db>(mockDb), log,
     );
 
-    expect(rename).toHaveBeenCalledWith(
-      expect.any(String),
-      '/books/test/cover.jpg',
-    );
+    const renameDest = String(vi.mocked(rename).mock.calls[0][1]).split('\\').join('/');
+    expect(renameDest).toBe('/books/test/cover.jpg');
   });
 
   it('overwrites existing cover via atomic rename on re-enrichment', async () => {
@@ -278,7 +271,8 @@ describe('downloadRemoteCover', () => {
     );
 
     // Should remove stale cover.png (different extension) but not cover.jpg (target) or non-cover files
-    expect(unlink).toHaveBeenCalledWith('/books/test/cover.png');
+    const unlinkPath = String(vi.mocked(unlink).mock.calls[0][0]).split('\\').join('/');
+    expect(unlinkPath).toBe('/books/test/cover.png');
     expect(unlink).toHaveBeenCalledTimes(1);
   });
 
