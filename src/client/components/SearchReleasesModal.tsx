@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import { api, ApiError, type BookWithAuthor, type SearchResult } from '@/lib/api';
 import { searchResultKey, deduplicateKeys } from '@/lib/stableKeys.js';
@@ -106,12 +106,6 @@ export function SearchReleasesModal({ isOpen, book, onClose }: SearchReleasesMod
   const queryClient = useQueryClient();
   const searchQuery = `${book.title} ${book.authors[0]?.name ?? ''}`.trim();
   const { durationSeconds } = resolveBookQualityInputs(book);
-
-  const { data: allSettings } = useQuery({
-    queryKey: queryKeys.settings(),
-    queryFn: api.getSettings,
-  });
-  const selectedLanguages = allSettings?.metadata?.languages ?? [];
 
   const { state, actions } = useSearchStream(searchQuery, {
     title: book.title,
@@ -366,7 +360,6 @@ export function SearchReleasesModal({ isOpen, book, onClose }: SearchReleasesMod
                           onBlacklist={() => handleBlacklist(result)}
                           isGrabbing={grabMutation.isPending}
                           isBlacklisting={blacklistMutation.isPending}
-                          selectedLanguages={selectedLanguages}
                         />
                       );
                     })}

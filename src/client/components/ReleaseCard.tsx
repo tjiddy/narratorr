@@ -20,7 +20,6 @@ export function ReleaseCard({
   onBlacklist,
   isGrabbing,
   isBlacklisting,
-  selectedLanguages = [],
 }: {
   result: SearchResult;
   bookDurationSeconds?: number;
@@ -29,7 +28,6 @@ export function ReleaseCard({
   onBlacklist: () => void;
   isGrabbing: boolean;
   isBlacklisting: boolean;
-  selectedLanguages?: readonly string[];
 }) {
   const quality = result.size && bookDurationSeconds
     ? calculateQuality(result.size, bookDurationSeconds)
@@ -91,7 +89,7 @@ export function ReleaseCard({
             <span className="text-xs px-1.5 py-0.5 bg-muted rounded-md font-medium text-muted-foreground">
               {result.indexer}
             </span>
-            {selectedLanguages.length >= 2 && result.language && (
+            {result.language && (
               <span className="text-xs px-1.5 py-0.5 rounded-md font-medium bg-blue-500/10 text-blue-400 border border-blue-500/20 capitalize">
                 {result.language.toLowerCase()}
               </span>

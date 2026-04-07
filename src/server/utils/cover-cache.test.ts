@@ -46,11 +46,13 @@ describe('preserveBookCover', () => {
 
     await preserveBookCover('/library/Author/Book', 42, '/config', log);
 
-    expect(mkdir).toHaveBeenCalledWith('/config/covers/42', { recursive: true });
-    expect(copyFile).toHaveBeenCalledWith(
-      '/library/Author/Book/cover.jpg',
-      '/config/covers/42/cover.jpg',
-    );
+    const mkdirPath = String(vi.mocked(mkdir).mock.calls[0][0]).split('\\').join('/');
+    expect(mkdirPath).toBe('/config/covers/42');
+    expect(vi.mocked(mkdir).mock.calls[0][1]).toEqual({ recursive: true });
+    const copySrc = String(vi.mocked(copyFile).mock.calls[0][0]).split('\\').join('/');
+    const copyDst = String(vi.mocked(copyFile).mock.calls[0][1]).split('\\').join('/');
+    expect(copySrc).toBe('/library/Author/Book/cover.jpg');
+    expect(copyDst).toBe('/config/covers/42/cover.jpg');
   });
 
   it('copies cover.png to cache (verifies multiple extensions work)', async () => {
@@ -60,10 +62,10 @@ describe('preserveBookCover', () => {
 
     await preserveBookCover('/library/Author/Book', 42, '/config', log);
 
-    expect(copyFile).toHaveBeenCalledWith(
-      '/library/Author/Book/cover.png',
-      '/config/covers/42/cover.png',
-    );
+    const copySrc = String(vi.mocked(copyFile).mock.calls[0][0]).split('\\').join('/');
+    const copyDst = String(vi.mocked(copyFile).mock.calls[0][1]).split('\\').join('/');
+    expect(copySrc).toBe('/library/Author/Book/cover.png');
+    expect(copyDst).toBe('/config/covers/42/cover.png');
   });
 
   it('does nothing when no cover file exists in book directory', async () => {
@@ -82,7 +84,8 @@ describe('preserveBookCover', () => {
 
     await preserveBookCover('/library/Author/Book', 42, '/config', log);
 
-    expect(mkdir).toHaveBeenCalledWith('/config/covers/42', { recursive: true });
+    const mkdirPath = String(vi.mocked(mkdir).mock.calls[0][0]).split('\\').join('/');
+    expect(mkdirPath).toBe('/config/covers/42');
   });
 
   it('overwrites existing cache entry if one already exists (idempotent)', async () => {
@@ -109,11 +112,12 @@ describe('preserveBookCover', () => {
     await preserveBookCover('/library/Author/Book', 42, '/config', log);
 
     // Should remove the stale cover.jpg before copying cover.png
-    expect(unlink).toHaveBeenCalledWith('/config/covers/42/cover.jpg');
-    expect(copyFile).toHaveBeenCalledWith(
-      '/library/Author/Book/cover.png',
-      '/config/covers/42/cover.png',
-    );
+    const unlinkPath = String(vi.mocked(unlink).mock.calls[0][0]).split('\\').join('/');
+    expect(unlinkPath).toBe('/config/covers/42/cover.jpg');
+    const copySrc = String(vi.mocked(copyFile).mock.calls[0][0]).split('\\').join('/');
+    const copyDst = String(vi.mocked(copyFile).mock.calls[0][1]).split('\\').join('/');
+    expect(copySrc).toBe('/library/Author/Book/cover.png');
+    expect(copyDst).toBe('/config/covers/42/cover.png');
   });
 
   it('does not remove same-extension file when overwriting', async () => {
@@ -164,7 +168,9 @@ describe('cleanCoverCache', () => {
 
     await cleanCoverCache(42, '/config', log);
 
-    expect(rm).toHaveBeenCalledWith('/config/covers/42', { recursive: true, force: true });
+    const rmPath = String(vi.mocked(rm).mock.calls[0][0]).split('\\').join('/');
+    expect(rmPath).toBe('/config/covers/42');
+    expect(vi.mocked(rm).mock.calls[0][1]).toEqual({ recursive: true, force: true });
   });
 
   it('does nothing when no cache entry exists (idempotent, no error)', async () => {
@@ -173,7 +179,9 @@ describe('cleanCoverCache', () => {
     // force: true means rm won't throw for missing dirs
     await cleanCoverCache(999, '/config', log);
 
-    expect(rm).toHaveBeenCalledWith('/config/covers/999', { recursive: true, force: true });
+    const rmPath = String(vi.mocked(rm).mock.calls[0][0]).split('\\').join('/');
+    expect(rmPath).toBe('/config/covers/999');
+    expect(vi.mocked(rm).mock.calls[0][1]).toEqual({ recursive: true, force: true });
   });
 
   it('returns without error when rm fails (best-effort, logs warn)', async () => {
