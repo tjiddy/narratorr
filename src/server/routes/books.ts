@@ -1,6 +1,8 @@
 import { readdir, readFile, stat } from 'node:fs/promises';
 import { join, extname } from 'node:path';
 import type { FastifyInstance, FastifyBaseLogger } from 'fastify';
+import { serveCoverFromCache, cleanCoverCache, COVER_FILE_REGEX } from '../utils/cover-cache.js';
+import { config } from '../config.js';
 import type { BookService, BookListService, DownloadService, SettingsService, RenameService, EventHistoryService, TaggingService, IndexerService } from '../services/index.js';
 import type { DownloadOrchestrator } from '../services/download-orchestrator.js';
 import type { MergeService } from '../services/merge.service.js';
@@ -109,6 +111,11 @@ app.delete<{ Params: IdParam; Querystring: DeleteBookQuery }>(
         source: 'manual',
       }).catch((err) => request.log.warn(err, 'Failed to record deleted event'));
     }
+
+    // Clean up cached cover (best-effort)
+    cleanCoverCache(id, config.configPath, request.log).catch((error: unknown) => {
+      request.log.warn({ bookId: id, error }, 'Failed to clean cover cache during deletion');
+    });
 
     const deleted = await deps.bookService.delete(id);
 
@@ -322,26 +329,38 @@ export async function bookFilesRoute(app: FastifyInstance, bookService: BookServ
       const { id } = request.params;
 
       const book = await bookService.getById(id);
-      if (!book || !book.path) {
+      if (!book) {
         return reply.status(404).send({ error: 'Book not found' });
       }
 
-      // Find cover file in book directory
-      const entries = await readdir(book.path);
-      const coverFile = entries.find(f => /^cover\.(jpg|jpeg|png|webp)$/i.test(f));
-      if (!coverFile) {
-        return reply.status(404).send({ error: 'No cover image' });
+      // Try book directory first (primary source)
+      if (book.path) {
+        const entries = await readdir(book.path);
+        const coverFile = entries.find(f => COVER_FILE_REGEX.test(f));
+        if (coverFile) {
+          const mime = coverFile.endsWith('.png') ? 'image/png'
+            : coverFile.endsWith('.webp') ? 'image/webp'
+            : 'image/jpeg';
+          const data = await readFile(join(book.path, coverFile));
+          return reply
+            .header('Content-Type', mime)
+            .header('Cache-Control', 'public, max-age=86400')
+            .send(data);
+        }
       }
 
-      const mime = coverFile.endsWith('.png') ? 'image/png'
-        : coverFile.endsWith('.webp') ? 'image/webp'
-        : 'image/jpeg';
+      // Fall back to cover cache (e.g. after wrong-release preserved the cover)
+      if (book.coverUrl) {
+        const cached = await serveCoverFromCache(id, config.configPath);
+        if (cached) {
+          return reply
+            .header('Content-Type', cached.mime)
+            .header('Cache-Control', 'public, max-age=86400')
+            .send(cached.data);
+        }
+      }
 
-      const data = await readFile(join(book.path, coverFile));
-      return reply
-        .header('Content-Type', mime)
-        .header('Cache-Control', 'public, max-age=86400')
-        .send(data);
+      return reply.status(404).send({ error: 'No cover image' });
     },
   );
 

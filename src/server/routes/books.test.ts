@@ -30,6 +30,18 @@ vi.mock('node:fs', async (importOriginal) => {
   };
 });
 
+vi.mock('../utils/cover-cache.js', () => ({
+  serveCoverFromCache: vi.fn().mockResolvedValue(null),
+  cleanCoverCache: vi.fn().mockResolvedValue(undefined),
+  COVER_FILE_REGEX: /^cover\.(jpg|jpeg|png|webp)$/i,
+}));
+
+vi.mock('../config.js', () => ({
+  config: { configPath: '/test-config' },
+}));
+
+import { serveCoverFromCache, cleanCoverCache } from '../utils/cover-cache.js';
+
 const mockBook = {
   ...createMockDbBook(),
   authors: [createMockDbAuthor()],
@@ -870,6 +882,29 @@ describe('books routes', () => {
       expect(res.statusCode).toBe(404);
     });
 
+    // #396 — cover cache cleanup on full book deletion
+    it('DELETE /api/books/:id cleans up cover cache entry', async () => {
+      (services.book.getById as Mock).mockResolvedValue({ ...mockBook, id: 1, path: '/library/book1' });
+      (services.download.getActiveByBookId as Mock).mockResolvedValue([]);
+      (services.book.delete as Mock).mockResolvedValue(true);
+
+      await app.inject({ method: 'DELETE', url: '/api/books/1' });
+
+      expect(cleanCoverCache).toHaveBeenCalledWith(1, '/test-config', expect.anything());
+    });
+
+    it('DELETE /api/books/:id continues when cover cache cleanup fails (best-effort)', async () => {
+      (services.book.getById as Mock).mockResolvedValue({ ...mockBook, id: 1, path: '/library/book1' });
+      (services.download.getActiveByBookId as Mock).mockResolvedValue([]);
+      (services.book.delete as Mock).mockResolvedValue(true);
+      (cleanCoverCache as Mock).mockRejectedValue(new Error('EACCES'));
+
+      const res = await app.inject({ method: 'DELETE', url: '/api/books/1' });
+
+      // Should still succeed — cache cleanup is best-effort
+      expect(res.statusCode).toBe(200);
+    });
+
     it('delete event snapshot includes comma-joined authors and narratorName (#71)', async () => {
       const multiAuthorBook = {
         ...mockBook,
@@ -1468,6 +1503,39 @@ describe('books routes', () => {
 
       expect(res.statusCode).toBe(200);
       expect(res.headers['content-type']).toBe('image/jpeg');
+    });
+
+    // #396 — cover endpoint fallback to cover cache
+    it('GET /api/books/:id/cover falls back to cover cache when book.path is null and cache exists', async () => {
+      (services.book.getById as Mock).mockResolvedValue({ ...mockBook, path: null, coverUrl: '/api/books/1/cover' });
+      (serveCoverFromCache as Mock).mockResolvedValue({ data: Buffer.from('cached-jpg'), mime: 'image/jpeg' });
+
+      const res = await app.inject({ method: 'GET', url: '/api/books/1/cover' });
+
+      expect(res.statusCode).toBe(200);
+      expect(res.headers['content-type']).toBe('image/jpeg');
+      expect(serveCoverFromCache).toHaveBeenCalledWith(1, '/test-config');
+    });
+
+    it('GET /api/books/:id/cover returns 404 when book.path is null and no cache exists', async () => {
+      (services.book.getById as Mock).mockResolvedValue({ ...mockBook, path: null, coverUrl: '/api/books/1/cover' });
+      (serveCoverFromCache as Mock).mockResolvedValue(null);
+
+      const res = await app.inject({ method: 'GET', url: '/api/books/1/cover' });
+
+      expect(res.statusCode).toBe(404);
+    });
+
+    it('GET /api/books/:id/cover prefers book.path over cache when both exist', async () => {
+      (serveCoverFromCache as Mock).mockClear();
+      (services.book.getById as Mock).mockResolvedValue({ ...mockBook, path: '/library/book1', coverUrl: '/api/books/1/cover' });
+      (readdir as Mock).mockResolvedValue(['cover.jpg']);
+      (readFile as Mock).mockResolvedValue(Buffer.from('disk-jpg'));
+
+      const res = await app.inject({ method: 'GET', url: '/api/books/1/cover' });
+
+      expect(res.statusCode).toBe(200);
+      expect(serveCoverFromCache).not.toHaveBeenCalled();
     });
 
     it('GET /api/books/:id returns 500 when service throws', async () => {
