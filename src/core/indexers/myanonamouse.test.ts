@@ -1515,9 +1515,70 @@ describe('MyAnonamouseIndexer', () => {
   });
 
   describe('search — per-search language options', () => {
-    it.todo('maps language names to MAM IDs via browse_lang params');
-    it.todo('skips languages not in MAM_LANGUAGES mapping');
-    it.todo('sends no browse_lang params when languages array is empty');
-    it.todo('sends single browse_lang when one language provided');
+    it('maps language names to MAM IDs via browse_lang params', async () => {
+      let capturedUrl = '';
+      server.use(
+        http.get(`${MAM_BASE}/tor/js/loadSearchJSONbasic.php`, ({ request }) => {
+          capturedUrl = request.url;
+          return HttpResponse.json({ data: [] });
+        }),
+      );
+      stubTorrentDownload(server);
+
+      await indexer.search('test', { languages: ['english', 'french'] });
+      const params = new URL(capturedUrl).searchParams;
+      expect(params.get('tor[browse_lang][0]')).toBe('1'); // English = 1
+      expect(params.get('tor[browse_lang][1]')).toBe('36'); // French = 36
+    });
+
+    it('skips languages not in MAM_LANGUAGES mapping', async () => {
+      let capturedUrl = '';
+      server.use(
+        http.get(`${MAM_BASE}/tor/js/loadSearchJSONbasic.php`, ({ request }) => {
+          capturedUrl = request.url;
+          return HttpResponse.json({ data: [] });
+        }),
+      );
+      stubTorrentDownload(server);
+
+      await indexer.search('test', { languages: ['english', 'hindi'] });
+      const params = new URL(capturedUrl).searchParams;
+      expect(params.get('tor[browse_lang][0]')).toBe('1'); // English mapped
+      expect(params.get('tor[browse_lang][1]')).toBeNull(); // Hindi not in MAM_LANGUAGES
+    });
+
+    it('sends no browse_lang params when languages array is empty', async () => {
+      let capturedUrl = '';
+      server.use(
+        http.get(`${MAM_BASE}/tor/js/loadSearchJSONbasic.php`, ({ request }) => {
+          capturedUrl = request.url;
+          return HttpResponse.json({ data: [] });
+        }),
+      );
+      stubTorrentDownload(server);
+
+      await indexer.search('test', { languages: [] });
+      const params = new URL(capturedUrl).searchParams;
+      // No browse_lang params at all
+      const langKeys = [...params.keys()].filter(k => k.includes('browse_lang'));
+      expect(langKeys).toHaveLength(0);
+    });
+
+    it('sends single browse_lang when one language provided', async () => {
+      let capturedUrl = '';
+      server.use(
+        http.get(`${MAM_BASE}/tor/js/loadSearchJSONbasic.php`, ({ request }) => {
+          capturedUrl = request.url;
+          return HttpResponse.json({ data: [] });
+        }),
+      );
+      stubTorrentDownload(server);
+
+      await indexer.search('test', { languages: ['spanish'] });
+      const params = new URL(capturedUrl).searchParams;
+      expect(params.get('tor[browse_lang][0]')).toBe('4'); // Spanish = 4
+      const langKeys = [...params.keys()].filter(k => k.includes('browse_lang'));
+      expect(langKeys).toHaveLength(1);
+    });
   });
 });

@@ -349,6 +349,13 @@ export class IndexerService {
       .where(eq(indexers.enabled, true))
       .orderBy(indexers.priority);
 
+    // Inject metadata languages into search options for per-adapter filtering (e.g., MAM browse_lang)
+    let searchOptions = options;
+    if (this.settingsService && !options?.languages) {
+      const metadataSettings = await this.settingsService.get('metadata');
+      searchOptions = { ...options, languages: metadataSettings.languages };
+    }
+
     this.log.debug({ query, indexers: enabledIndexers.map(i => i.name), count: enabledIndexers.length }, 'Searching enabled indexers');
 
     const settlements = await Promise.allSettled(
@@ -362,7 +369,7 @@ export class IndexerService {
           throw new Error(refresh.error ?? 'Indexer skipped');
         }
 
-        const indexerResults = await adapter.search(query, options);
+        const indexerResults = await adapter.search(query, searchOptions);
         this.log.debug({ indexer: indexer.name, resultCount: indexerResults.length, elapsedMs: Date.now() - indexerStartMs }, 'Indexer search completed');
         const mapped = indexerResults.map(r => ({ ...r, indexerId: indexer.id }));
         this.parseReleaseNames(mapped, indexer.name);
@@ -418,6 +425,13 @@ export class IndexerService {
       .where(eq(indexers.enabled, true))
       .orderBy(indexers.priority);
 
+    // Inject metadata languages into search options for per-adapter filtering (e.g., MAM browse_lang)
+    let searchOptions = options;
+    if (this.settingsService && !options?.languages) {
+      const metadataSettings = await this.settingsService.get('metadata');
+      searchOptions = { ...options, languages: metadataSettings.languages };
+    }
+
     this.log.debug({ query, indexers: enabledIndexers.map(i => i.name), count: enabledIndexers.length }, 'Streaming search started');
 
     const perIndexerResults = new Map<number, SearchResult[]>();
@@ -438,7 +452,7 @@ export class IndexerService {
             return;
           }
 
-          const indexerResults = await adapter.search(query, { ...options, signal });
+          const indexerResults = await adapter.search(query, { ...searchOptions, signal });
           const elapsedMs = Date.now() - indexerStartMs;
           const mapped = indexerResults.map(r => ({ ...r, indexerId: indexer.id }));
           this.parseReleaseNames(mapped, indexer.name);

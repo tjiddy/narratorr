@@ -29,6 +29,7 @@ export interface SearchOptions {
   author?: string;
   title?: string;
   signal?: AbortSignal;
+  languages?: readonly string[];
 }
 
 export interface IndexerAdapter {
