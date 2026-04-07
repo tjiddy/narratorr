@@ -49,7 +49,7 @@ export const settingsRegistry = {
   }),
   metadata: defineCategory({
     schema: metadataSettingsSchema,
-    defaults: { audibleRegion: 'us' as const },
+    defaults: { audibleRegion: 'us' as const, languages: ['english'] as const },
   }),
   processing: defineCategory({
     schema: processingSettingsSchema,
@@ -80,7 +80,6 @@ export const settingsRegistry = {
       monitorForUpgrades: false,
       rejectWords: '',
       requiredWords: '',
-      preferredLanguage: '',
     },
   }),
   network: defineCategory({
