@@ -641,6 +641,20 @@ describe('copyAudioFiles — multi-disc detection and sequential renaming', () =
     expect(getCopiedDestNames()).toEqual(['1.mp3', '2.mp3']);
   });
 
+  it('sorts mixed-prefix disc folders by disc number — CD 10 after Disc 2', async () => {
+    setupDiscLayout([
+      ['CD 10', ['ten.mp3']],
+      ['Disc 2', ['two.mp3']],
+    ]);
+
+    await copyAudioFiles('/src', '/dest');
+
+    // Disc 2 (number=2) before CD 10 (number=10) regardless of prefix
+    const srcPaths = getCopiedSrcPaths();
+    expect(srcPaths[0]).toContain('Disc 2');
+    expect(srcPaths[1]).toContain('CD 10');
+  });
+
   it('loose audio files at root alongside disc subfolders — loose files ordered before disc files', async () => {
     vi.mocked(readdir)
       .mockResolvedValueOnce([

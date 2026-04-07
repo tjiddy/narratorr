@@ -119,8 +119,9 @@ async function collectMultiDiscFiles(
   discFolders: Array<{ name: string; path: string }>,
   otherEntries: Array<{ name: string; isFile: () => boolean; isDirectory: () => boolean }>,
 ): Promise<AudioFile[]> {
-  // Sort discs naturally (Disc 2 before Disc 10)
-  discFolders.sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true }));
+  // Sort discs by extracted disc number (handles mixed prefixes like CD 10 vs Disc 2)
+  const discNumber = (name: string) => parseInt(name.match(/\d+/)![0], 10);
+  discFolders.sort((a, b) => discNumber(a.name) - discNumber(b.name));
 
   // Collect audio files from each disc in order
   const discFiles: AudioFile[] = [];
