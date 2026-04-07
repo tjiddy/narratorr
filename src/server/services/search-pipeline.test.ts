@@ -367,7 +367,7 @@ describe('canonicalCompare — grabs tiebreaker (#272)', () => {
   it('higher grabs wins when matchScore, MB/hr, protocol, and language are equal', () => {
     const a = makeResult({ matchScore: 0.9, grabs: 1000, seeders: 5 });
     const b = makeResult({ matchScore: 0.9, grabs: 100, seeders: 5 });
-    const { results } = filterAndRankResults([b, a], undefined, 0, 0, 'none', undefined, undefined, '');
+    const { results } = filterAndRankResults([b, a], undefined, 0, 0, 'none', undefined, undefined, []);
     expect(results[0].grabs).toBe(1000);
     expect(results[1].grabs).toBe(100);
   });
@@ -375,7 +375,7 @@ describe('canonicalCompare — grabs tiebreaker (#272)', () => {
   it('title similarity (matchScore > 0.1 diff) beats grabs', () => {
     const a = makeResult({ matchScore: 0.9, grabs: 10 });
     const b = makeResult({ matchScore: 0.5, grabs: 10000 });
-    const { results } = filterAndRankResults([b, a], undefined, 0, 0, 'none', undefined, undefined, '');
+    const { results } = filterAndRankResults([b, a], undefined, 0, 0, 'none', undefined, undefined, []);
     expect(results[0].matchScore).toBe(0.9);
   });
 
