@@ -926,6 +926,69 @@ describe('searchAllWanted', () => {
     expect(settings.get).toHaveBeenCalledWith('quality');
   });
 
+  it('languages filter causes non-matching language results to be skipped', async () => {
+    const wantedBooks = [{ id: 1, title: 'Book One', authors: [{ name: 'Author A' }] }];
+    const settings = createMockSettingsService({
+      metadata: { audibleRegion: 'us', languages: ['english'] },
+    });
+    const bookList = createMockBookListService(wantedBooks);
+    // Only a French result — should be filtered out by language, so nothing is grabbed
+    const frenchResult: SearchResult = {
+      title: 'Book One',
+      protocol: 'torrent',
+      indexer: 'abb',
+      seeders: 10,
+      downloadUrl: 'magnet:?xt=urn:btih:french',
+      language: 'french',
+      size: 500000,
+    };
+    const indexer = createMockIndexerService([frenchResult]);
+    const download = createMockDownloadOrchestrator();
+
+    const result = await searchAllWanted(settings, bookList, indexer, download, inject<FastifyBaseLogger>(log));
+
+    // French result filtered out → no grab
+    expect(download.grab).not.toHaveBeenCalled();
+    expect(result.grabbed).toBe(0);
+  });
+
+  it('languages filter allows matching language results to be grabbed', async () => {
+    const wantedBooks = [{ id: 1, title: 'Book One', authors: [{ name: 'Author A' }] }];
+    const settings = createMockSettingsService({
+      metadata: { audibleRegion: 'us', languages: ['english'] },
+    });
+    const bookList = createMockBookListService(wantedBooks);
+    const englishResult: SearchResult = {
+      title: 'Book One',
+      protocol: 'torrent',
+      indexer: 'abb',
+      seeders: 10,
+      downloadUrl: 'magnet:?xt=urn:btih:english',
+      language: 'english',
+      size: 500000,
+    };
+    const frenchResult: SearchResult = {
+      title: 'Book One',
+      protocol: 'torrent',
+      indexer: 'abb',
+      seeders: 10,
+      downloadUrl: 'magnet:?xt=urn:btih:french',
+      language: 'french',
+      size: 500000,
+    };
+    const indexer = createMockIndexerService([frenchResult, englishResult]);
+    const download = createMockDownloadOrchestrator();
+
+    const result = await searchAllWanted(settings, bookList, indexer, download, inject<FastifyBaseLogger>(log));
+
+    // Only the English result should be grabbed
+    expect(download.grab).toHaveBeenCalledTimes(1);
+    expect(download.grab).toHaveBeenCalledWith(
+      expect.objectContaining({ downloadUrl: 'magnet:?xt=urn:btih:english' }),
+    );
+    expect(result.grabbed).toBe(1);
+  });
+
   it('counts searched and errors when grab fails with non-duplicate error', async () => {
     const wantedBooks = [{ id: 1, title: 'Book One', authors: [{ name: 'Author A' }] }];
     const settings = createMockSettingsService();
