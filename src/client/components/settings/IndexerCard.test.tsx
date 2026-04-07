@@ -651,8 +651,7 @@ describe('IndexerCard — Prowlarr-managed indicators (AC8)', () => {
       // Fill name
       await user.type(screen.getByPlaceholderText('MyAnonamouse'), 'My MAM');
 
-      // Verify language hint is shown instead of checkboxes, search type dropdown removed (#372)
-      expect(screen.getByText(/Languages are now configured globally/)).toBeInTheDocument();
+      // Verify language checkboxes and search type dropdown are not shown (#372)
       expect(screen.queryByLabelText('English')).not.toBeInTheDocument();
       expect(screen.queryByLabelText('Search Type')).not.toBeInTheDocument();
 
@@ -690,10 +689,8 @@ describe('IndexerCard — Prowlarr-managed indicators (AC8)', () => {
         />,
       );
 
-      // Language hint should be shown instead of checkboxes
-      expect(screen.getByText(/Languages are now configured globally/)).toBeInTheDocument();
+      // Language checkboxes and search type dropdown not shown (#372)
       expect(screen.queryByLabelText('English')).not.toBeInTheDocument();
-      // Search type dropdown removed (#372)
       expect(screen.queryByLabelText('Search Type')).not.toBeInTheDocument();
     });
 
@@ -928,8 +925,7 @@ describe('IndexerCard — Prowlarr-managed indicators (AC8)', () => {
         />,
       );
 
-      // Language hint should be shown instead of checkboxes
-      expect(screen.getByText(/Languages are now configured globally/)).toBeInTheDocument();
+      // Language checkboxes not shown
       expect(screen.queryByLabelText('English')).not.toBeInTheDocument();
     });
   });

@@ -4,7 +4,7 @@ import {
   DownloadIcon,
   LoadingSpinner,
   BookOpenIcon,
-  UsersIcon,
+  HeadphonesIcon,
   AlertTriangleIcon,
   ShieldBanIcon,
 } from '@/components/icons';
@@ -63,7 +63,7 @@ export function ReleaseCard({
           )}
           {result.narrator && (
             <p className="text-xs text-muted-foreground flex items-center gap-1 mt-1 truncate">
-              <UsersIcon className="w-3 h-3 shrink-0" />
+              <HeadphonesIcon className="w-3 h-3 shrink-0" />
               <span className="truncate">{result.narrator}</span>
             </p>
           )}

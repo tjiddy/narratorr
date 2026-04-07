@@ -217,12 +217,6 @@ export function MamFields({ register, errors, watch, setValue, formTestResult, i
           <p className="text-sm text-muted-foreground mt-1">Only change if using a custom MAM mirror</p>
         )}
       </div>
-      <div className="sm:col-span-2">
-        <span className="block text-sm font-medium mb-2">Languages</span>
-        <p className="text-sm text-muted-foreground">
-          Languages are now configured globally in <span className="font-medium text-foreground">Settings → Search → Filtering</span>.
-        </p>
-      </div>
     </>
   );
 }

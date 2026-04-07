@@ -238,23 +238,10 @@ describe('IndexerFields', () => {
       return <IndexerFields selectedType="myanonamouse" register={register} errors={errors} watch={watch} setValue={setValue} />;
     }
 
-    it('renders language hint instead of checkboxes for myanonamouse type', () => {
+    it('does not render language checkboxes for myanonamouse type', () => {
       renderWithProviders(<MamFieldWrapper />);
-      expect(screen.getByText('Languages')).toBeInTheDocument();
-      expect(screen.getByText(/Languages are now configured globally/)).toBeInTheDocument();
       expect(screen.queryByLabelText('English')).not.toBeInTheDocument();
       expect(screen.queryByLabelText('French')).not.toBeInTheDocument();
-    });
-
-    it('language hint references Settings → Search → Filtering', () => {
-      renderWithProviders(<MamFieldWrapper />);
-      expect(screen.getByText(/Settings → Search → Filtering/)).toBeInTheDocument();
-    });
-
-    it('#317 — language label still renders after dropdown removal', () => {
-      renderWithProviders(<MamFieldWrapper />);
-      expect(screen.getByText('Languages')).toBeInTheDocument();
-      expect(screen.getByText(/Languages are now configured globally/)).toBeInTheDocument();
     });
   });
 
@@ -1233,16 +1220,8 @@ describe('IndexerFields', () => {
 
     it('does not render language checkboxes for MAM indexer', () => {
       renderWithProviders(<MamFieldWrapperSimple />);
-      // The Languages label should exist but no checkboxes for individual languages
-      expect(screen.getByText('Languages')).toBeInTheDocument();
       expect(screen.queryByRole('checkbox', { name: /english/i })).not.toBeInTheDocument();
       expect(screen.queryByRole('checkbox', { name: /french/i })).not.toBeInTheDocument();
-    });
-
-    it('shows hint text pointing to Settings → Search for languages', () => {
-      renderWithProviders(<MamFieldWrapperSimple />);
-      expect(screen.getByText(/Languages are now configured globally/)).toBeInTheDocument();
-      expect(screen.getByText(/Settings → Search → Filtering/)).toBeInTheDocument();
     });
   });
 });
