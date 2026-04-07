@@ -31,9 +31,8 @@ const mockSettings = createMockSettings({
     minSeeders: 3,
     rejectWords: 'German',
     requiredWords: 'M4B',
-    preferredLanguage: 'english',
   },
-  metadata: { audibleRegion: 'us' },
+  metadata: { audibleRegion: 'us', languages: ['english'] },
 });
 
 describe('SearchSettingsPage', () => {
@@ -61,7 +60,7 @@ describe('SearchSettingsPage', () => {
     await waitFor(() => {
       expect(screen.getByLabelText('Region')).toBeInTheDocument();
     });
-    expect(screen.getByLabelText('Preferred Language')).toBeInTheDocument();
+    expect(screen.getByText('Languages')).toBeInTheDocument();
     expect(screen.getByLabelText('Reject Words')).toBeInTheDocument();
     expect(screen.getByLabelText('Required Words')).toBeInTheDocument();
   });

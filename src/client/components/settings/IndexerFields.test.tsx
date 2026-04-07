@@ -238,57 +238,23 @@ describe('IndexerFields', () => {
       return <IndexerFields selectedType="myanonamouse" register={register} errors={errors} watch={watch} setValue={setValue} />;
     }
 
-    it('renders language checkbox group with all 15 languages for myanonamouse type', () => {
+    it('renders language hint instead of checkboxes for myanonamouse type', () => {
       renderWithProviders(<MamFieldWrapper />);
       expect(screen.getByText('Languages')).toBeInTheDocument();
-      expect(screen.getByLabelText('English')).toBeInTheDocument();
-      expect(screen.getByLabelText('Chinese')).toBeInTheDocument();
-      expect(screen.getByLabelText('Spanish')).toBeInTheDocument();
-      expect(screen.getByLabelText('French')).toBeInTheDocument();
-      expect(screen.getByLabelText('German')).toBeInTheDocument();
-      expect(screen.getByLabelText('Italian')).toBeInTheDocument();
-      expect(screen.getByLabelText('Japanese')).toBeInTheDocument();
-      expect(screen.getByLabelText('Korean')).toBeInTheDocument();
-      expect(screen.getByLabelText('Norwegian')).toBeInTheDocument();
-      expect(screen.getByLabelText('Polish')).toBeInTheDocument();
-      expect(screen.getByLabelText('Portuguese')).toBeInTheDocument();
-      expect(screen.getByLabelText('Russian')).toBeInTheDocument();
-      expect(screen.getByLabelText('Swedish')).toBeInTheDocument();
-      expect(screen.getByLabelText('Turkish')).toBeInTheDocument();
-      expect(screen.getByLabelText('Dutch')).toBeInTheDocument();
+      expect(screen.getByText(/Languages are now configured globally/)).toBeInTheDocument();
+      expect(screen.queryByLabelText('English')).not.toBeInTheDocument();
+      expect(screen.queryByLabelText('French')).not.toBeInTheDocument();
     });
 
-    it('checking a language checkbox updates form value via setValue', async () => {
-      const user = userEvent.setup();
-      renderWithProviders(<MamFieldWrapper defaultSearchLanguages={[1]} />);
-
-      const frenchCheckbox = screen.getByLabelText('French');
-      expect(frenchCheckbox).not.toBeChecked();
-      await user.click(frenchCheckbox);
-      expect(frenchCheckbox).toBeChecked();
-    });
-
-    it('unchecking a language checkbox removes it from form value', async () => {
-      const user = userEvent.setup();
-      renderWithProviders(<MamFieldWrapper defaultSearchLanguages={[1]} />);
-
-      const englishCheckbox = screen.getByLabelText('English');
-      expect(englishCheckbox).toBeChecked();
-      await user.click(englishCheckbox);
-      expect(englishCheckbox).not.toBeChecked();
-    });
-
-    it('default values show English checked', () => {
+    it('language hint references Settings → Search → Filtering', () => {
       renderWithProviders(<MamFieldWrapper />);
-
-      expect(screen.getByLabelText('English')).toBeChecked();
-      expect(screen.getByLabelText('French')).not.toBeChecked();
+      expect(screen.getByText(/Settings → Search → Filtering/)).toBeInTheDocument();
     });
 
-    it('#317 — language checkboxes still render after dropdown removal', () => {
+    it('#317 — language label still renders after dropdown removal', () => {
       renderWithProviders(<MamFieldWrapper />);
       expect(screen.getByText('Languages')).toBeInTheDocument();
-      expect(screen.getByLabelText('English')).toBeInTheDocument();
+      expect(screen.getByText(/Languages are now configured globally/)).toBeInTheDocument();
     });
   });
 
@@ -1254,7 +1220,28 @@ describe('IndexerFields', () => {
   });
 
   describe('MAM language checkboxes removal', () => {
-    it.todo('does not render language checkboxes for MAM indexer');
-    it.todo('shows hint text pointing to Settings → Search for languages');
+    function MamFieldWrapperSimple() {
+      const { register, watch, setValue, formState: { errors } } = useForm<CreateIndexerFormData>({
+        defaultValues: {
+          name: '', type: 'myanonamouse',
+          settings: { mamId: 'test-id', searchLanguages: [1] },
+        },
+      });
+      return <IndexerFields selectedType="myanonamouse" register={register} errors={errors} watch={watch} setValue={setValue} />;
+    }
+
+    it('does not render language checkboxes for MAM indexer', () => {
+      renderWithProviders(<MamFieldWrapperSimple />);
+      // The Languages label should exist but no checkboxes for individual languages
+      expect(screen.getByText('Languages')).toBeInTheDocument();
+      expect(screen.queryByRole('checkbox', { name: /english/i })).not.toBeInTheDocument();
+      expect(screen.queryByRole('checkbox', { name: /french/i })).not.toBeInTheDocument();
+    });
+
+    it('shows hint text pointing to Settings → Search for languages', () => {
+      renderWithProviders(<MamFieldWrapperSimple />);
+      expect(screen.getByText(/Languages are now configured globally/)).toBeInTheDocument();
+      expect(screen.getByText(/Settings → Search → Filtering/)).toBeInTheDocument();
+    });
   });
 });

@@ -130,6 +130,7 @@ describe('createServices', () => {
     vi.mocked(SettingsService).mockImplementation(function(this: Record<string, unknown>) {
       this.get = vi.fn().mockResolvedValue({ audibleRegion: 'us' });
       this.bootstrapProcessingDefaults = vi.fn().mockResolvedValue(undefined);
+      this.migrateLanguageSettings = vi.fn().mockResolvedValue(undefined);
     } as never);
 
     const { createServices } = await import('./index.js');
@@ -158,6 +159,7 @@ describe('createServices', () => {
     vi.mocked(SettingsService).mockImplementation(function(this: Record<string, unknown>) {
       this.get = vi.fn().mockResolvedValue({ audibleRegion: 'us' });
       this.bootstrapProcessingDefaults = mockBootstrap;
+      this.migrateLanguageSettings = vi.fn().mockResolvedValue(undefined);
     } as never);
 
     const { createServices } = await import('./index.js');

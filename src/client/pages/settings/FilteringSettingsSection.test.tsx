@@ -28,8 +28,8 @@ const mockToast = toast as unknown as {
 };
 
 const mockSettings = createMockSettings({
-  metadata: { audibleRegion: 'us' },
-  quality: { rejectWords: 'German', requiredWords: 'M4B', preferredLanguage: 'english' },
+  metadata: { audibleRegion: 'us', languages: ['english'] },
+  quality: { rejectWords: 'German', requiredWords: 'M4B' },
 });
 
 describe('FilteringSettingsSection', () => {
@@ -72,12 +72,16 @@ describe('FilteringSettingsSection', () => {
     expect(labels).not.toContain('Audible.com (US)');
   });
 
-  it('renders preferred language input with server value', async () => {
+  it('renders languages checkbox grid with English checked', async () => {
     renderWithProviders(<FilteringSettingsSection />);
 
     await waitFor(() => {
-      expect(screen.getByLabelText('Preferred Language')).toHaveValue('english');
+      expect(screen.getByText('Languages')).toBeInTheDocument();
     });
+    // English should be checked based on metadata.languages: ['english']
+    const checkboxes = screen.getAllByRole('checkbox');
+    const englishCheckbox = checkboxes.find((cb) => cb.closest('label')?.textContent?.includes('english'));
+    expect(englishCheckbox).toBeChecked();
   });
 
   it('renders reject words input with server value', async () => {
@@ -113,8 +117,8 @@ describe('FilteringSettingsSection', () => {
 
     await waitFor(() => {
       expect(mockApi.updateSettings).toHaveBeenCalledWith({
-        metadata: { audibleRegion: 'us' },
-        quality: { rejectWords: 'Abridged', requiredWords: 'M4B', preferredLanguage: 'english' },
+        metadata: { audibleRegion: 'us', languages: ['english'] },
+        quality: { rejectWords: 'Abridged', requiredWords: 'M4B' },
       });
     });
   });
@@ -134,8 +138,8 @@ describe('FilteringSettingsSection', () => {
 
     await waitFor(() => {
       expect(mockApi.updateSettings).toHaveBeenCalledWith({
-        metadata: { audibleRegion: 'de' },
-        quality: { rejectWords: 'German', requiredWords: 'M4B', preferredLanguage: 'english' },
+        metadata: { audibleRegion: 'de', languages: ['english'] },
+        quality: { rejectWords: 'German', requiredWords: 'M4B' },
       });
     });
   });
@@ -189,11 +193,114 @@ describe('FilteringSettingsSection', () => {
   });
 
   describe('languages multi-select', () => {
-    it.todo('renders checkbox grid with all CANONICAL_LANGUAGES options');
-    it.todo('checks English by default on fresh install');
-    it.todo('selecting a language marks form dirty');
-    it.todo('deselecting a language marks form dirty');
-    it.todo('saves languages to metadata settings category');
-    it.todo('preferredLanguage text field is removed');
+    it('renders checkbox grid with all CANONICAL_LANGUAGES options', async () => {
+      renderWithProviders(<FilteringSettingsSection />);
+
+      await waitFor(() => {
+        expect(screen.getByText('Languages')).toBeInTheDocument();
+      });
+
+      const checkboxes = screen.getAllByRole('checkbox');
+      // 36 canonical languages (CANONICAL_LANGUAGES has 36 entries)
+      expect(checkboxes).toHaveLength(36);
+      // Spot-check a few labels
+      expect(screen.getByText('english')).toBeInTheDocument();
+      expect(screen.getByText('french')).toBeInTheDocument();
+      expect(screen.getByText('german')).toBeInTheDocument();
+      expect(screen.getByText('japanese')).toBeInTheDocument();
+      expect(screen.getByText('vietnamese')).toBeInTheDocument();
+    });
+
+    it('checks English by default on fresh install', async () => {
+      renderWithProviders(<FilteringSettingsSection />);
+
+      await waitFor(() => {
+        expect(screen.getByText('Languages')).toBeInTheDocument();
+      });
+
+      const checkboxes = screen.getAllByRole('checkbox');
+      const englishCheckbox = checkboxes.find((cb) => cb.closest('label')?.textContent?.includes('english'));
+      expect(englishCheckbox).toBeChecked();
+
+      // Other languages should not be checked
+      const frenchCheckbox = checkboxes.find((cb) => cb.closest('label')?.textContent?.includes('french'));
+      expect(frenchCheckbox).not.toBeChecked();
+    });
+
+    it('selecting a language marks form dirty', async () => {
+      const user = userEvent.setup();
+      renderWithProviders(<FilteringSettingsSection />);
+
+      await waitFor(() => {
+        expect(screen.getByText('Languages')).toBeInTheDocument();
+      });
+
+      // Save button should not be visible initially
+      expect(screen.queryByRole('button', { name: /save/i })).not.toBeInTheDocument();
+
+      // Click the french checkbox
+      const checkboxes = screen.getAllByRole('checkbox');
+      const frenchCheckbox = checkboxes.find((cb) => cb.closest('label')?.textContent?.includes('french'));
+      await user.click(frenchCheckbox!);
+
+      // Form should now be dirty — save button visible
+      expect(screen.getByRole('button', { name: /save/i })).toBeInTheDocument();
+    });
+
+    it('deselecting a language marks form dirty', async () => {
+      const user = userEvent.setup();
+      renderWithProviders(<FilteringSettingsSection />);
+
+      await waitFor(() => {
+        expect(screen.getByText('Languages')).toBeInTheDocument();
+      });
+
+      expect(screen.queryByRole('button', { name: /save/i })).not.toBeInTheDocument();
+
+      // Deselect english (which is currently checked)
+      const checkboxes = screen.getAllByRole('checkbox');
+      const englishCheckbox = checkboxes.find((cb) => cb.closest('label')?.textContent?.includes('english'));
+      await user.click(englishCheckbox!);
+
+      expect(screen.getByRole('button', { name: /save/i })).toBeInTheDocument();
+    });
+
+    it('saves languages to metadata settings category', async () => {
+      mockApi.updateSettings.mockResolvedValue(mockSettings);
+      const user = userEvent.setup();
+      renderWithProviders(<FilteringSettingsSection />);
+
+      await waitFor(() => {
+        expect(screen.getByText('Languages')).toBeInTheDocument();
+      });
+
+      // Select french in addition to english
+      const checkboxes = screen.getAllByRole('checkbox');
+      const frenchCheckbox = checkboxes.find((cb) => cb.closest('label')?.textContent?.includes('french'));
+      await user.click(frenchCheckbox!);
+
+      await user.click(screen.getByRole('button', { name: /save/i }));
+
+      await waitFor(() => {
+        expect(mockApi.updateSettings).toHaveBeenCalledWith(
+          expect.objectContaining({
+            metadata: expect.objectContaining({
+              languages: expect.arrayContaining(['english', 'french']),
+            }),
+          }),
+        );
+      });
+    });
+
+    it('preferredLanguage text field is removed', async () => {
+      renderWithProviders(<FilteringSettingsSection />);
+
+      await waitFor(() => {
+        expect(screen.getByText('Languages')).toBeInTheDocument();
+      });
+
+      expect(screen.queryByLabelText('Preferred Language')).not.toBeInTheDocument();
+      expect(screen.queryByLabelText(/preferredLanguage/i)).not.toBeInTheDocument();
+    });
   });
 });

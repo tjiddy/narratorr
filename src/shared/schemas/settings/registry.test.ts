@@ -97,7 +97,7 @@ describe('settingsRegistry', () => {
     });
 
     it('metadata defaults have audibleRegion us', () => {
-      expect(DEFAULT_SETTINGS.metadata).toEqual({ audibleRegion: 'us' });
+      expect(DEFAULT_SETTINGS.metadata).toEqual({ audibleRegion: 'us', languages: ['english'] });
     });
 
     it('processing defaults have all expected values', () => {
@@ -152,7 +152,6 @@ describe('settingsRegistry', () => {
         monitorForUpgrades: false,
         rejectWords: '',
         requiredWords: '',
-        preferredLanguage: '',
       });
     });
   });
@@ -699,7 +698,6 @@ describe('settingsRegistry', () => {
         monitorForUpgrades: false,
         rejectWords: '',
         requiredWords: '',
-        preferredLanguage: '',
       });
       expect(result.success).toBe(true);
     });
