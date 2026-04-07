@@ -612,6 +612,23 @@ describe('copyAudioFiles — multi-disc detection and sequential renaming', () =
     expect(cp).toHaveBeenCalledTimes(3);
   });
 
+  it('errors when non-disc subfolders produce duplicate basenames (Extras/cover.mp3 + Bonus/cover.mp3)', async () => {
+    vi.mocked(readdir)
+      .mockResolvedValueOnce([
+        makeDirent('Disc 01', false, true),
+        makeDirent('Disc 02', false, true),
+        makeDirent('Extras', false, true),
+        makeDirent('Bonus', false, true),
+      ] as never)
+      .mockResolvedValueOnce([makeDirent('01.mp3', true, false)] as never) // Disc 01
+      .mockResolvedValueOnce([makeDirent('02.mp3', true, false)] as never) // Disc 02
+      .mockResolvedValueOnce([makeDirent('cover.mp3', true, false)] as never) // Extras
+      .mockResolvedValueOnce([makeDirent('cover.mp3', true, false)] as never); // Bonus
+
+    await expect(copyAudioFiles('/src', '/dest')).rejects.toThrow('cover.mp3');
+    expect(cp).not.toHaveBeenCalled();
+  });
+
   it('disc subfolders with mixed naming patterns (CD 1, Disc 02) all detected', async () => {
     setupDiscLayout([
       ['CD 1', ['a.mp3']],

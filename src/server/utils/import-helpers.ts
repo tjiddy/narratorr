@@ -147,6 +147,18 @@ async function collectMultiDiscFiles(
   }
   nonDiscFiles.sort((a, b) => a.name.localeCompare(b.name));
 
+  // Check for duplicate basenames within non-disc files
+  const seenNonDisc = new Map<string, string>();
+  for (const file of nonDiscFiles) {
+    const existing = seenNonDisc.get(file.name);
+    if (existing) {
+      throw new Error(
+        `Duplicate filename "${file.name}" found during import flattening: "${existing}" and "${file.srcPath}"`,
+      );
+    }
+    seenNonDisc.set(file.name, file.srcPath);
+  }
+
   // Check for collisions between non-disc files and sequential disc files
   const sequentialNames = new Set(sequentialFiles.map(f => f.name));
   for (const file of nonDiscFiles) {
