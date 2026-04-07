@@ -1085,3 +1085,15 @@ describe('searchAllWanted', () => {
     );
   });
 });
+
+// ============================================================================
+// #392 — Caller wiring: broadcaster passed to searchAndGrabForBook
+// ============================================================================
+
+describe('#392 runSearchJob broadcaster wiring', () => {
+  it.todo('passes EventBroadcaster to searchAndGrabForBook for each book');
+});
+
+describe('#392 searchAllWanted broadcaster wiring', () => {
+  it.todo('passes EventBroadcaster to searchAndGrabForBook for each book');
+});

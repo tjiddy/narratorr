@@ -232,3 +232,44 @@ describe('#257 merge observability — SSE payload schemas', () => {
     });
   });
 });
+
+// ============================================================================
+// #392 — Search progress SSE event schemas
+// ============================================================================
+
+describe('#392 search progress — SSE event schemas', () => {
+  it.todo('defines all 17 event types (12 existing + 5 new search events)');
+
+  describe('search_started payload', () => {
+    it.todo('accepts valid payload with indexers array');
+    it.todo('rejects payload with missing indexers array');
+    it.todo('accepts payload with empty indexers array');
+  });
+
+  describe('search_indexer_complete payload', () => {
+    it.todo('accepts valid payload with results_found and elapsed_ms');
+    it.todo('rejects payload with missing indexer_id');
+    it.todo('accepts results_found: 0 (indexer returned no results)');
+    it.todo('accepts elapsed_ms: 0 (instant response)');
+  });
+
+  describe('search_indexer_error payload', () => {
+    it.todo('accepts valid payload with error string and elapsed_ms');
+    it.todo('rejects payload with missing error field');
+  });
+
+  describe('search_grabbed payload', () => {
+    it.todo('accepts valid payload with release_title and indexer_name');
+    it.todo('rejects payload with missing release_title');
+  });
+
+  describe('search_complete payload', () => {
+    it.todo('accepts valid payload with outcome grabbed');
+    it.todo('accepts valid payload with outcome no_results');
+    it.todo('rejects payload with invalid outcome string');
+  });
+
+  describe('cache invalidation matrix for search events', () => {
+    it.todo('all 5 search event types have empty {} entries (ephemeral, no cache impact)');
+  });
+});

@@ -885,4 +885,18 @@ describe('#312 cache-miss scoping — patchActivityProgress', () => {
       expect(toast.warning).toHaveBeenCalledWith('Merge succeeded but metadata update failed');
     });
   });
+
+  // ============================================================================
+  // #392 — Search progress event routing
+  // ============================================================================
+
+  describe('#392 search progress event routing', () => {
+    it.todo('subscribes to all 5 new search event types');
+    it.todo('routes search_started to search-progress store');
+    it.todo('routes search_indexer_complete to search-progress store');
+    it.todo('routes search_indexer_error to search-progress store');
+    it.todo('routes search_grabbed to search-progress store');
+    it.todo('routes search_complete to search-progress store');
+    it.todo('existing event handling (download progress, merge progress) is unaffected');
+  });
 });

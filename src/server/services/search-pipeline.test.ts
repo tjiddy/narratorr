@@ -570,3 +570,38 @@ describe('filterAndRankResults — language filtering', () => {
     expect(results).toHaveLength(1);
   });
 });
+
+// ============================================================================
+// #392 — Search progress SSE emission via broadcaster
+// ============================================================================
+
+describe('#392 searchAndGrabForBook with broadcaster', () => {
+  describe('search_started emission', () => {
+    it.todo('emits search_started with correct indexer list before querying');
+    it.todo('emits search_started even when no enabled indexers (empty list)');
+  });
+
+  describe('per-indexer events', () => {
+    it.todo('emits search_indexer_complete with results_found and elapsed_ms for each successful indexer');
+    it.todo('emits search_indexer_error with error message and elapsed_ms when indexer throws');
+    it.todo('emits search_indexer_complete with results_found: 0 for indexer returning empty results');
+  });
+
+  describe('outcome events', () => {
+    it.todo('emits search_grabbed then search_complete with outcome grabbed on successful grab');
+    it.todo('emits search_complete with outcome no_results when raw results are empty');
+    it.todo('emits search_complete with outcome no_results when all results filtered out');
+    it.todo('emits search_complete with outcome no_results on DuplicateDownloadError (not search_grabbed)');
+    it.todo('emits search_complete with outcome no_results on generic grab error');
+    it.todo('total_results in search_complete sums across all indexers');
+  });
+
+  describe('backwards compatibility', () => {
+    it.todo('no events emitted when broadcaster is not provided');
+  });
+
+  describe('fire-and-forget safety', () => {
+    it.todo('broadcaster.emit() throwing does not break search pipeline');
+    it.todo('search still returns correct result when broadcaster fails');
+  });
+});
