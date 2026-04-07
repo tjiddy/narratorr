@@ -12,6 +12,11 @@ import {
   mergeStartedPayload,
   mergeProgressPayload,
   mergeFailedPayload,
+  searchStartedPayload,
+  searchIndexerCompletePayload,
+  searchIndexerErrorPayload,
+  searchGrabbedPayload,
+  searchCompletePayload,
   CACHE_INVALIDATION_MATRIX,
   TOAST_EVENT_CONFIG,
 } from './sse-events.js';
@@ -34,13 +39,15 @@ describe('bookStatusSchema widening', () => {
 });
 
 describe('SSE event schemas', () => {
-  it('defines all 12 event types', () => {
+  it('defines all 17 event types', () => {
     const types = sseEventTypeSchema.options;
     expect(types).toEqual([
       'download_progress', 'download_status_change', 'book_status_change',
       'import_complete', 'grab_started', 'review_needed', 'merge_complete',
       'merge_started', 'merge_progress', 'merge_failed',
       'merge_queued', 'merge_queue_updated',
+      'search_started', 'search_indexer_complete', 'search_indexer_error',
+      'search_grabbed', 'search_complete',
     ]);
   });
 
@@ -238,38 +245,101 @@ describe('#257 merge observability — SSE payload schemas', () => {
 // ============================================================================
 
 describe('#392 search progress — SSE event schemas', () => {
-  it.todo('defines all 17 event types (12 existing + 5 new search events)');
+  it('defines all 17 event types (12 existing + 5 new search events)', () => {
+    const types = sseEventTypeSchema.options;
+    expect(types).toHaveLength(17);
+    expect(types).toContain('search_started');
+    expect(types).toContain('search_indexer_complete');
+    expect(types).toContain('search_indexer_error');
+    expect(types).toContain('search_grabbed');
+    expect(types).toContain('search_complete');
+  });
 
   describe('search_started payload', () => {
-    it.todo('accepts valid payload with indexers array');
-    it.todo('rejects payload with missing indexers array');
-    it.todo('accepts payload with empty indexers array');
+    it('accepts valid payload with indexers array', () => {
+      const valid = { book_id: 1, book_title: 'Test Book', indexers: [{ id: 10, name: 'MAM' }] };
+      expect(searchStartedPayload.parse(valid)).toEqual(valid);
+    });
+
+    it('rejects payload with missing indexers array', () => {
+      expect(() => searchStartedPayload.parse({ book_id: 1, book_title: 'Test' })).toThrow();
+    });
+
+    it('accepts payload with empty indexers array', () => {
+      const valid = { book_id: 1, book_title: 'Test', indexers: [] };
+      expect(searchStartedPayload.parse(valid)).toEqual(valid);
+    });
   });
 
   describe('search_indexer_complete payload', () => {
-    it.todo('accepts valid payload with results_found and elapsed_ms');
-    it.todo('rejects payload with missing indexer_id');
-    it.todo('accepts results_found: 0 (indexer returned no results)');
-    it.todo('accepts elapsed_ms: 0 (instant response)');
+    it('accepts valid payload with results_found and elapsed_ms', () => {
+      const valid = { book_id: 1, indexer_id: 10, indexer_name: 'MAM', results_found: 3, elapsed_ms: 1200 };
+      expect(searchIndexerCompletePayload.parse(valid)).toEqual(valid);
+    });
+
+    it('rejects payload with missing indexer_id', () => {
+      expect(() => searchIndexerCompletePayload.parse({
+        book_id: 1, indexer_name: 'MAM', results_found: 3, elapsed_ms: 1200,
+      })).toThrow();
+    });
+
+    it('accepts results_found: 0 (indexer returned no results)', () => {
+      const valid = { book_id: 1, indexer_id: 10, indexer_name: 'MAM', results_found: 0, elapsed_ms: 500 };
+      expect(searchIndexerCompletePayload.parse(valid)).toEqual(valid);
+    });
+
+    it('accepts elapsed_ms: 0 (instant response)', () => {
+      const valid = { book_id: 1, indexer_id: 10, indexer_name: 'MAM', results_found: 5, elapsed_ms: 0 };
+      expect(searchIndexerCompletePayload.parse(valid)).toEqual(valid);
+    });
   });
 
   describe('search_indexer_error payload', () => {
-    it.todo('accepts valid payload with error string and elapsed_ms');
-    it.todo('rejects payload with missing error field');
+    it('accepts valid payload with error string and elapsed_ms', () => {
+      const valid = { book_id: 1, indexer_id: 10, indexer_name: 'ABB', error: 'timeout', elapsed_ms: 30000 };
+      expect(searchIndexerErrorPayload.parse(valid)).toEqual(valid);
+    });
+
+    it('rejects payload with missing error field', () => {
+      expect(() => searchIndexerErrorPayload.parse({
+        book_id: 1, indexer_id: 10, indexer_name: 'ABB', elapsed_ms: 30000,
+      })).toThrow();
+    });
   });
 
   describe('search_grabbed payload', () => {
-    it.todo('accepts valid payload with release_title and indexer_name');
-    it.todo('rejects payload with missing release_title');
+    it('accepts valid payload with release_title and indexer_name', () => {
+      const valid = { book_id: 1, release_title: 'The Way of Kings [128kbps]', indexer_name: 'MAM' };
+      expect(searchGrabbedPayload.parse(valid)).toEqual(valid);
+    });
+
+    it('rejects payload with missing release_title', () => {
+      expect(() => searchGrabbedPayload.parse({ book_id: 1, indexer_name: 'MAM' })).toThrow();
+    });
   });
 
   describe('search_complete payload', () => {
-    it.todo('accepts valid payload with outcome grabbed');
-    it.todo('accepts valid payload with outcome no_results');
-    it.todo('rejects payload with invalid outcome string');
+    it('accepts valid payload with outcome grabbed', () => {
+      const valid = { book_id: 1, total_results: 5, outcome: 'grabbed' };
+      expect(searchCompletePayload.parse(valid)).toEqual(valid);
+    });
+
+    it('accepts valid payload with outcome no_results', () => {
+      const valid = { book_id: 1, total_results: 0, outcome: 'no_results' };
+      expect(searchCompletePayload.parse(valid)).toEqual(valid);
+    });
+
+    it('rejects payload with invalid outcome string', () => {
+      expect(() => searchCompletePayload.parse({ book_id: 1, total_results: 0, outcome: 'invalid' })).toThrow();
+    });
   });
 
   describe('cache invalidation matrix for search events', () => {
-    it.todo('all 5 search event types have empty {} entries (ephemeral, no cache impact)');
+    it('all 5 search event types have empty {} entries (ephemeral, no cache impact)', () => {
+      const searchEvents = ['search_started', 'search_indexer_complete', 'search_indexer_error', 'search_grabbed', 'search_complete'] as const;
+      for (const event of searchEvents) {
+        expect(CACHE_INVALIDATION_MATRIX[event]).toEqual({});
+      }
+    });
   });
 });
