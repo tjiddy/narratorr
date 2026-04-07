@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { createMockLogger, inject } from '../__tests__/helpers.js';
 import type { FastifyBaseLogger } from 'fastify';
-import { readdir, copyFile, mkdir, rm, readFile } from 'node:fs/promises';
+import { readdir, copyFile, mkdir, rm, readFile, unlink } from 'node:fs/promises';
 import { preserveBookCover, cleanCoverCache, serveCoverFromCache, COVER_FILE_REGEX } from './cover-cache.js';
 
 vi.mock('node:fs/promises', async (importOriginal) => {
@@ -13,6 +13,7 @@ vi.mock('node:fs/promises', async (importOriginal) => {
     mkdir: vi.fn(),
     rm: vi.fn(),
     readFile: vi.fn(),
+    unlink: vi.fn(),
   };
 });
 
@@ -94,6 +95,37 @@ describe('preserveBookCover', () => {
     await preserveBookCover('/library/Author/Book', 42, '/config', log);
 
     expect(copyFile).toHaveBeenCalledTimes(2);
+  });
+
+  it('removes stale cover siblings when extension changes (jpg → png)', async () => {
+    // Book directory has cover.png
+    (readdir as ReturnType<typeof vi.fn>)
+      .mockResolvedValueOnce(['cover.png'])        // readdir(bookPath) — find new cover
+      .mockResolvedValueOnce(['cover.jpg']);         // readdir(cacheDir) — stale sibling
+    (mkdir as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
+    (unlink as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
+    (copyFile as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
+
+    await preserveBookCover('/library/Author/Book', 42, '/config', log);
+
+    // Should remove the stale cover.jpg before copying cover.png
+    expect(unlink).toHaveBeenCalledWith('/config/covers/42/cover.jpg');
+    expect(copyFile).toHaveBeenCalledWith(
+      '/library/Author/Book/cover.png',
+      '/config/covers/42/cover.png',
+    );
+  });
+
+  it('does not remove same-extension file when overwriting', async () => {
+    (readdir as ReturnType<typeof vi.fn>)
+      .mockResolvedValueOnce(['cover.jpg'])        // readdir(bookPath)
+      .mockResolvedValueOnce(['cover.jpg']);         // readdir(cacheDir) — same extension
+    (mkdir as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
+    (copyFile as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
+
+    await preserveBookCover('/library/Author/Book', 42, '/config', log);
+
+    expect(unlink).not.toHaveBeenCalled();
   });
 
   it('returns without error when readdir fails (best-effort, logs warn)', async () => {

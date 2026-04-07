@@ -1,4 +1,4 @@
-import { readdir, copyFile, mkdir, rm, readFile } from 'node:fs/promises';
+import { readdir, copyFile, mkdir, rm, readFile, unlink } from 'node:fs/promises';
 import { join } from 'node:path';
 import type { FastifyBaseLogger } from 'fastify';
 
@@ -22,6 +22,15 @@ export async function preserveBookCover(
 
     const cacheDir = join(configPath, 'covers', String(bookId));
     await mkdir(cacheDir, { recursive: true });
+
+    // Remove stale siblings with different extensions to prevent nondeterministic serving
+    const existing = await readdir(cacheDir).catch(() => [] as string[]);
+    for (const file of existing) {
+      if (COVER_FILE_REGEX.test(file) && file !== coverFile) {
+        await unlink(join(cacheDir, file)).catch(() => {/* best-effort */});
+      }
+    }
+
     await copyFile(join(bookPath, coverFile), join(cacheDir, coverFile));
     log.debug({ bookId, coverFile }, 'Preserved cover in cache');
   } catch (error: unknown) {
