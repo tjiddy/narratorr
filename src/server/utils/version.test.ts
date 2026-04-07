@@ -10,45 +10,31 @@ describe('getVersion', () => {
     return mod.getVersion;
   }
 
-  it('returns "tag (commit)" when both GIT_TAG and GIT_COMMIT are set', async () => {
-    process.env.GIT_TAG = 'v124';
-    process.env.GIT_COMMIT = 'a78ef12';
+  it('returns git tag when GIT_TAG is set', async () => {
+    process.env.GIT_TAG = 'v394-driveby-02';
     const getVersion = await loadGetVersion();
-    expect(getVersion()).toBe('v124 (a78ef12)');
-    delete process.env.GIT_TAG;
-    delete process.env.GIT_COMMIT;
-  });
-
-  it('returns just commit hash when GIT_TAG is not set', async () => {
-    delete process.env.GIT_TAG;
-    process.env.GIT_COMMIT = 'abc1234';
-    const getVersion = await loadGetVersion();
-    expect(getVersion()).toBe('abc1234');
-    delete process.env.GIT_COMMIT;
-  });
-
-  it('returns just tag when GIT_TAG is set but GIT_COMMIT is not', async () => {
-    process.env.GIT_TAG = 'v124';
-    delete process.env.GIT_COMMIT;
-    const getVersion = await loadGetVersion();
-    expect(getVersion()).toBe('v124');
+    expect(getVersion()).toBe('v394-driveby-02');
     delete process.env.GIT_TAG;
   });
 
-  it('returns "dev" when neither GIT_TAG nor GIT_COMMIT is set', async () => {
+  it('returns "dev" when GIT_TAG is not set', async () => {
     delete process.env.GIT_TAG;
-    delete process.env.GIT_COMMIT;
     const getVersion = await loadGetVersion();
     expect(getVersion()).toBe('dev');
   });
 
-  it('returns "dev" when GIT_TAG is "unknown" and GIT_COMMIT is "unknown"', async () => {
+  it('returns "dev" when GIT_TAG is "unknown"', async () => {
     process.env.GIT_TAG = 'unknown';
-    process.env.GIT_COMMIT = '';
     const getVersion = await loadGetVersion();
     expect(getVersion()).toBe('dev');
     delete process.env.GIT_TAG;
-    delete process.env.GIT_COMMIT;
+  });
+
+  it('returns "dev" when GIT_TAG is empty string', async () => {
+    process.env.GIT_TAG = '';
+    const getVersion = await loadGetVersion();
+    expect(getVersion()).toBe('dev');
+    delete process.env.GIT_TAG;
   });
 });
 

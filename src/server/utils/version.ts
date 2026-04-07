@@ -2,23 +2,11 @@ let packageVersion: string | undefined;
 let packageCommit: string | undefined;
 let packageBuildTime: string | undefined;
 
-/** Returns the app version: "v124 (a78ef)" with tag, or just commit hash without. */
+/** Returns the app version from the build-injected git tag, or "dev" when not built from a tag. */
 export function getVersion(): string {
   if (!packageVersion) {
     const tag = process.env.GIT_TAG;
-    const commit = getCommit();
-    const hasTag = tag && tag !== 'unknown';
-    const hasCommit = commit !== 'unknown';
-
-    if (hasTag && hasCommit) {
-      packageVersion = `${tag} (${commit})`;
-    } else if (hasTag) {
-      packageVersion = tag;
-    } else if (hasCommit) {
-      packageVersion = commit;
-    } else {
-      packageVersion = 'dev';
-    }
+    packageVersion = (tag && tag !== 'unknown') ? tag : 'dev';
   }
   return packageVersion;
 }
