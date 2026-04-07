@@ -788,3 +788,106 @@ describe('#392 searchAndGrabForBook with broadcaster', () => {
     });
   });
 });
+
+describe('canonicalCompare — indexer priority tiebreaker (#394)', () => {
+  it('lower indexerPriority wins when all higher tiers are equal', () => {
+    const a = makeResult({ matchScore: 0.9, indexerPriority: 10, grabs: 50, seeders: 5 });
+    const b = makeResult({ matchScore: 0.9, indexerPriority: 50, grabs: 50, seeders: 5 });
+    const { results } = filterAndRankResults([b, a], undefined, 0, 0, 'none', undefined, undefined, []);
+    expect(results[0].indexerPriority).toBe(10);
+    expect(results[1].indexerPriority).toBe(50);
+  });
+
+  it('missing indexerPriority (undefined) treated as Infinity — loses to any defined priority', () => {
+    const a = makeResult({ matchScore: 0.9, indexerPriority: 50, grabs: 50, seeders: 5 });
+    const b = makeResult({ matchScore: 0.9, indexerPriority: undefined, grabs: 50, seeders: 5 });
+    const { results } = filterAndRankResults([b, a], undefined, 0, 0, 'none', undefined, undefined, []);
+    expect(results[0].indexerPriority).toBe(50);
+    expect(results[1].indexerPriority).toBeUndefined();
+  });
+
+  it('equal indexerPriority falls through to grabs tier', () => {
+    const a = makeResult({ matchScore: 0.9, indexerPriority: 50, grabs: 1000, seeders: 5 });
+    const b = makeResult({ matchScore: 0.9, indexerPriority: 50, grabs: 10, seeders: 5 });
+    const { results } = filterAndRankResults([b, a], undefined, 0, 0, 'none', undefined, undefined, []);
+    expect(results[0].grabs).toBe(1000);
+    expect(results[1].grabs).toBe(10);
+  });
+
+  it('priority tier does NOT override matchScore', () => {
+    const a = makeResult({ matchScore: 0.9, indexerPriority: 99 });
+    const b = makeResult({ matchScore: 0.5, indexerPriority: 1 });
+    const { results } = filterAndRankResults([b, a], undefined, 0, 0, 'none', undefined, undefined, []);
+    expect(results[0].matchScore).toBe(0.9);
+  });
+
+  it('priority tier does NOT override protocol preference', () => {
+    const a = makeResult({ matchScore: 0.9, protocol: 'torrent', indexerPriority: 99 });
+    const b = makeResult({ matchScore: 0.9, protocol: 'usenet', indexerPriority: 1 });
+    const { results } = filterAndRankResults([b, a], undefined, 0, 0, 'torrent', undefined, undefined, []);
+    expect(results[0].protocol).toBe('torrent');
+  });
+
+  it('priority tier does NOT override MB/hr when duration is known', () => {
+    // a has better MB/hr (larger size = higher bitrate), b has better priority
+    const a = makeResult({ matchScore: 0.9, size: 1000 * 1024 * 1024, indexerPriority: 99, grabs: 50, seeders: 5 });
+    const b = makeResult({ matchScore: 0.9, size: 100 * 1024 * 1024, indexerPriority: 1, grabs: 50, seeders: 5 });
+    const { results } = filterAndRankResults([b, a], 3600, 0, 0, 'none', undefined, undefined, []);
+    expect(results[0].indexerPriority).toBe(99); // higher MB/hr wins despite worse priority
+  });
+
+  it('priority tier does NOT override language tier', () => {
+    // a matches preferred language, b has better priority
+    const a = makeResult({ matchScore: 0.9, language: 'english', indexerPriority: 99, grabs: 50, seeders: 5 });
+    const b = makeResult({ matchScore: 0.9, language: 'german', indexerPriority: 1, grabs: 50, seeders: 5 });
+    const { results } = filterAndRankResults([b, a], undefined, 0, 0, 'none', undefined, undefined, ['english']);
+    expect(results[0].language).toBe('english'); // language match wins despite worse priority
+  });
+
+  it('priority 1 (best) vs priority 100 (worst) — 1 wins', () => {
+    const a = makeResult({ matchScore: 0.9, indexerPriority: 1, grabs: 50, seeders: 5 });
+    const b = makeResult({ matchScore: 0.9, indexerPriority: 100, grabs: 50, seeders: 5 });
+    const { results } = filterAndRankResults([b, a], undefined, 0, 0, 'none', undefined, undefined, []);
+    expect(results[0].indexerPriority).toBe(1);
+  });
+
+  it('priority 50 vs priority 50 — falls through to grabs', () => {
+    const a = makeResult({ matchScore: 0.9, indexerPriority: 50, grabs: 500, seeders: 5 });
+    const b = makeResult({ matchScore: 0.9, indexerPriority: 50, grabs: 5, seeders: 5 });
+    const { results } = filterAndRankResults([b, a], undefined, 0, 0, 'none', undefined, undefined, []);
+    expect(results[0].grabs).toBe(500);
+  });
+
+  it('both undefined — falls through to grabs (Infinity === Infinity)', () => {
+    const a = makeResult({ matchScore: 0.9, indexerPriority: undefined, grabs: 800, seeders: 5 });
+    const b = makeResult({ matchScore: 0.9, indexerPriority: undefined, grabs: 10, seeders: 5 });
+    const { results } = filterAndRankResults([b, a], undefined, 0, 0, 'none', undefined, undefined, []);
+    expect(results[0].grabs).toBe(800);
+  });
+
+  it('one undefined vs one defined — defined value wins', () => {
+    const a = makeResult({ matchScore: 0.9, indexerPriority: 100, grabs: 50, seeders: 5 });
+    const b = makeResult({ matchScore: 0.9, indexerPriority: undefined, grabs: 50, seeders: 5 });
+    const { results } = filterAndRankResults([b, a], undefined, 0, 0, 'none', undefined, undefined, []);
+    expect(results[0].indexerPriority).toBe(100);
+  });
+});
+
+describe('filterAndRankResults — indexer priority integration (#394)', () => {
+  it('results from indexer with priority 10 rank above priority 50 when all other factors equal', () => {
+    const a = makeResult({ matchScore: 0.9, indexerPriority: 10, grabs: 50, seeders: 5, indexer: 'MAM' });
+    const b = makeResult({ matchScore: 0.9, indexerPriority: 50, grabs: 50, seeders: 5, indexer: 'Torznab' });
+    const { results } = filterAndRankResults([b, a], undefined, 0, 0, 'none', undefined, undefined, []);
+    expect(results[0].indexer).toBe('MAM');
+    expect(results[1].indexer).toBe('Torznab');
+  });
+
+  it('all indexers sharing same priority produces identical ordering to current behavior', () => {
+    const a = makeResult({ matchScore: 0.9, indexerPriority: 50, grabs: 1000, seeders: 5 });
+    const b = makeResult({ matchScore: 0.9, indexerPriority: 50, grabs: 10, seeders: 5 });
+    const { results } = filterAndRankResults([b, a], undefined, 0, 0, 'none', undefined, undefined, []);
+    // With equal priority, falls through to grabs — higher grabs wins
+    expect(results[0].grabs).toBe(1000);
+    expect(results[1].grabs).toBe(10);
+  });
+});

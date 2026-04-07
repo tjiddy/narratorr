@@ -328,7 +328,7 @@ export class IndexerService {
   async pollRss(indexer: IndexerRow): Promise<SearchResult[]> {
     const adapter = await this.getAdapter(indexer);
     const raw = await adapter.search('');
-    const results = raw.map(r => ({ ...r, indexerId: indexer.id }));
+    const results = raw.map(r => ({ ...r, indexerId: indexer.id, indexerPriority: indexer.priority }));
     this.parseReleaseNames(results, indexer.name);
     return results;
   }
@@ -371,7 +371,7 @@ export class IndexerService {
 
         const indexerResults = await adapter.search(query, searchOptions);
         this.log.debug({ indexer: indexer.name, resultCount: indexerResults.length, elapsedMs: Date.now() - indexerStartMs }, 'Indexer search completed');
-        const mapped = indexerResults.map(r => ({ ...r, indexerId: indexer.id }));
+        const mapped = indexerResults.map(r => ({ ...r, indexerId: indexer.id, indexerPriority: indexer.priority }));
         this.parseReleaseNames(mapped, indexer.name);
         return mapped;
       }),
@@ -454,7 +454,7 @@ export class IndexerService {
 
           const indexerResults = await adapter.search(query, { ...searchOptions, signal });
           const elapsedMs = Date.now() - indexerStartMs;
-          const mapped = indexerResults.map(r => ({ ...r, indexerId: indexer.id }));
+          const mapped = indexerResults.map(r => ({ ...r, indexerId: indexer.id, indexerPriority: indexer.priority }));
           this.parseReleaseNames(mapped, indexer.name);
           perIndexerResults.set(indexer.id, mapped);
           callbacks.onComplete(indexer.id, indexer.name, mapped.length, elapsedMs);
