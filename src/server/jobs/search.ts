@@ -42,6 +42,7 @@ export async function runSearchJob(
   }
 
   const qualitySettings = await settingsService.get('quality');
+  const metadataSettings = await settingsService.get('metadata');
   const { data: wantedBooks } = await bookListService.getAll('wanted');
   if (wantedBooks.length === 0) {
     log.debug('No wanted books to search for');
@@ -55,7 +56,7 @@ export async function runSearchJob(
 
   for (const book of wantedBooks) {
     try {
-      const result = await searchAndGrabForBook(book, indexerService, downloadOrchestrator, qualitySettings, log);
+      const result = await searchAndGrabForBook(book, indexerService, downloadOrchestrator, { ...qualitySettings, languages: metadataSettings.languages }, log);
       searched++;
       if (result.result === 'grabbed') grabbed++;
       if (result.result === 'grab_error') {
@@ -82,6 +83,7 @@ export async function searchAllWanted(
   log: FastifyBaseLogger,
 ): Promise<SearchAllWantedResult> {
   const qualitySettings = await settingsService.get('quality');
+  const metadataSettings = await settingsService.get('metadata');
   const { data: wantedBooks } = await bookListService.getAll('wanted');
 
   if (wantedBooks.length === 0) {
@@ -98,7 +100,7 @@ export async function searchAllWanted(
 
   for (const book of wantedBooks) {
     try {
-      const result = await searchAndGrabForBook(book, indexerService, downloadOrchestrator, qualitySettings, log);
+      const result = await searchAndGrabForBook(book, indexerService, downloadOrchestrator, { ...qualitySettings, languages: metadataSettings.languages }, log);
       searched++;
       if (result.result === 'grabbed') grabbed++;
       else if (result.result === 'skipped') skipped++;
@@ -136,6 +138,7 @@ export async function runUpgradeSearchJob(
   }
 
   const qualitySettings = await settingsService.get('quality');
+  const metadataSettings = await settingsService.get('metadata');
   const monitoredBooks = await bookService.getMonitoredBooks();
   if (monitoredBooks.length === 0) {
     log.debug('No monitored books for upgrade search');
@@ -173,7 +176,7 @@ export async function runUpgradeSearchJob(
         qualitySettings.protocolPreference,
         qualitySettings.rejectWords,
         qualitySettings.requiredWords,
-        qualitySettings.preferredLanguage,
+        metadataSettings.languages,
       );
 
       if (results.length === 0) continue;

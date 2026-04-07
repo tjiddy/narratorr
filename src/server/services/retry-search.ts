@@ -101,6 +101,7 @@ export async function retrySearch(
 
     // Quality filtering and ranking
     const qualitySettings = await settingsService.get('quality');
+    const metadataSettings = await settingsService.get('metadata');
     const { results } = filterAndRankResults(
       filteredResults,
       book.duration ?? undefined,
@@ -109,7 +110,7 @@ export async function retrySearch(
       qualitySettings.protocolPreference,
       qualitySettings.rejectWords,
       qualitySettings.requiredWords,
-      qualitySettings.preferredLanguage,
+      metadataSettings.languages,
     );
 
     // Take best downloadable result
