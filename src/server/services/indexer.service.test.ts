@@ -1867,4 +1867,76 @@ describe('IndexerService', () => {
       });
     });
   });
+
+  describe('indexerPriority mapping (#394)', () => {
+    it('searchAll attaches indexerPriority from the indexer record to each mapped result', async () => {
+      const highPriorityIndexer = createMockDbIndexer({ id: 5, priority: 10 });
+      db.select.mockReturnValue(mockDbChain([highPriorityIndexer]));
+      const mockAdapter = {
+        type: 'abb',
+        name: 'AudioBookBay',
+        search: vi.fn().mockResolvedValue([
+          { title: 'Book One', indexer: 'AudioBookBay', protocol: 'torrent' },
+        ]),
+        test: vi.fn(),
+      };
+      vi.spyOn(service, 'getAdapter').mockResolvedValue(mockAdapter as never);
+
+      const results = await service.searchAll('test');
+      expect(results[0].indexerPriority).toBe(10);
+    });
+
+    it('searchAllStreaming attaches indexerPriority from the indexer record to each mapped result', async () => {
+      const streamIndexer = createMockDbIndexer({ id: 3, priority: 25 });
+      db.select.mockReturnValue(mockDbChain([streamIndexer]));
+      const mockAdapter = {
+        search: vi.fn().mockResolvedValue([
+          { title: 'Book One', indexer: 'ABB', protocol: 'torrent' },
+        ]),
+        test: vi.fn(),
+      };
+      vi.spyOn(service, 'getAdapter').mockResolvedValue(mockAdapter as never);
+
+      const controllers = new Map<number, AbortController>();
+      controllers.set(3, new AbortController());
+      const onComplete = vi.fn();
+      const onError = vi.fn();
+
+      const results = await service.searchAllStreaming('test', undefined, controllers, { onComplete, onError });
+      expect(results[0].indexerPriority).toBe(25);
+    });
+
+    it('pollRss attaches indexerPriority from the indexer record to each mapped result', async () => {
+      const rssIndexer = createMockDbIndexer({ id: 7, priority: 75, name: 'Torznab', type: 'torznab', settings: { apiUrl: 'https://tracker.test', apiKey: 'key' } });
+      const mockAdapter = {
+        type: 'torznab',
+        name: 'Torznab',
+        search: vi.fn().mockResolvedValue([
+          { title: 'Author A - Book One', indexer: 'Torznab', protocol: 'torrent' },
+        ]),
+        test: vi.fn(),
+      };
+      vi.spyOn(service, 'getAdapter').mockResolvedValue(mockAdapter as never);
+
+      const results = await service.pollRss(rssIndexer);
+      expect(results[0].indexerPriority).toBe(75);
+    });
+
+    it('indexer with default priority (50) produces results with indexerPriority: 50', async () => {
+      // mockIndexer uses createMockDbIndexer() which defaults to priority: 50
+      db.select.mockReturnValue(mockDbChain([mockIndexer]));
+      const mockAdapter = {
+        type: 'abb',
+        name: 'AudioBookBay',
+        search: vi.fn().mockResolvedValue([
+          { title: 'Book One', indexer: 'AudioBookBay', protocol: 'torrent' },
+        ]),
+        test: vi.fn(),
+      };
+      vi.spyOn(service, 'getAdapter').mockResolvedValue(mockAdapter as never);
+
+      const results = await service.searchAll('test');
+      expect(results[0].indexerPriority).toBe(50);
+    });
+  });
 });
