@@ -9,7 +9,7 @@ import { queryKeys } from '@/lib/queryKeys';
 import { GlobeIcon } from '@/components/icons';
 import { SelectWithChevron } from '@/components/settings/SelectWithChevron';
 import { audibleRegionSchema, DEFAULT_SETTINGS, type AppSettings } from '../../../shared/schemas.js';
-import { CANONICAL_LANGUAGES } from '../../../shared/language-constants.js';
+import { CANONICAL_LANGUAGES, type CanonicalLanguage } from '../../../shared/language-constants.js';
 import { SettingsSection } from './SettingsSection';
 
 const REGION_LABELS: Record<string, string> = {
@@ -45,7 +45,7 @@ function toFormData(settings: AppSettings): FilteringFormData {
 
 function toPayload(data: FilteringFormData) {
   return {
-    metadata: { audibleRegion: data.audibleRegion, languages: data.languages },
+    metadata: { audibleRegion: data.audibleRegion, languages: data.languages as CanonicalLanguage[] },
     quality: {
       rejectWords: data.rejectWords,
       requiredWords: data.requiredWords,
