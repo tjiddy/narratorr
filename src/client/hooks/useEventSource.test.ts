@@ -5,7 +5,7 @@ import { createElement, type ReactNode } from 'react';
 import { toast } from 'sonner';
 import { useEventSource, isSSEConnected, useSSEConnected } from './useEventSource';
 import { useMergeProgress, setMergeProgress } from './useMergeProgress';
-import { handleSearchEvent, _resetForTesting as resetSearchProgress } from './useSearchProgress';
+import { handleSearchEvent } from './useSearchProgress';
 import { queryKeys } from '@/lib/queryKeys';
 
 vi.mock('./useSearchProgress', () => ({
