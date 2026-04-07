@@ -1,5 +1,34 @@
 # Workflow Log
 
+## #406 Scheduled search can re-grab blacklisted releases — 2026-04-07
+**Skill path:** /implement → /claim → /plan → /handoff
+**Outcome:** success — PR #407
+
+### Metrics
+- Files changed: 11 | Tests added/modified: 15 new + ~50 signature updates
+- Quality gate runs: 2 (pass on attempt 2 — first failed on unused eslint-disable directive)
+- Fix iterations: 1 (eslint-disable `max-lines-per-function` became unused after extracting inline pattern from rss.ts)
+- Context compactions: 0
+
+### Workflow experience
+- What went smoothly: Spec was thoroughly reviewed (3 rounds) before implementation — caller wiring surface was fully enumerated, making implementation mechanical. Existing inline patterns were nearly identical, making extraction trivial.
+- Friction / issues encountered: None significant. The blast radius of changing `searchAndGrabForBook` signature was large (~50 test call sites) but predictable from the spec.
+
+### Token efficiency
+- Highest-token actions: Explore subagent for plan phase (read all wiring files); blast radius updates in test files
+- Avoidable waste: Could have combined Module 2 (wiring) and Module 3 (filtering) from the start since they're tightly coupled
+- Suggestions: For parameter-threading changes, estimate test file blast radius upfront and batch all signature updates in one pass
+
+### Infrastructure gaps
+- Repeated workarounds: None
+- Missing tooling / config: None
+- Unresolved debt: `startSearchJob()` is dead code (zero callers) — updated for compilation but should be removed
+
+### Wish I'd Known
+1. Inserting a required param before optional params in a shared function creates a blast radius across every test file in the call chain — grep early to estimate scope (see `blacklist-filter-parameter-ordering.md`)
+2. Extracting inline code from a function can make `eslint-disable` directives unused, causing lint failures — check after reducing function size (see `eslint-disable-line-count-sensitivity.md`)
+3. The 3 existing inline blacklist patterns were byte-for-byte identical (only variable names differed) — extraction was trivial with no behavioral edge cases
+
 ## #394 Indexer priority as search result scoring tiebreaker — 2026-04-07
 **Skill path:** /elaborate → /respond-to-spec-review → /implement → /claim → /plan → /handoff
 **Outcome:** success — PR #404
