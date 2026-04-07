@@ -1,5 +1,34 @@
 # Workflow Log
 
+## #394 Indexer priority as search result scoring tiebreaker — 2026-04-07
+**Skill path:** /elaborate → /respond-to-spec-review → /implement → /claim → /plan → /handoff
+**Outcome:** success — PR #404
+
+### Metrics
+- Files changed: 4 | Tests added/modified: 15
+- Quality gate runs: 2 (pass on attempt 1 both times)
+- Fix iterations: 0
+- Context compactions: 0
+
+### Workflow experience
+- What went smoothly: Clean 3-module TDD cycle. All tests red→green in one pass. Spec review caught the priority direction issue early, saving implementation rework.
+- Friction / issues encountered: The initial spec had inverted priority semantics (higher = better) vs existing product convention (lower = better). Caught during /elaborate spec review — required /respond-to-spec-review cycle before implementation.
+
+### Token efficiency
+- Highest-token actions: Explore subagents for codebase analysis and self-review
+- Avoidable waste: None — the issue was tightly scoped and the plan was accurate
+- Suggestions: For simple additive features like this, the explore subagent could be lighter-weight
+
+### Infrastructure gaps
+- Repeated workarounds: None
+- Missing tooling / config: None
+- Unresolved debt: SearchResult parallel type (core + client) — pre-existing DRY-1 debt, added one more field to keep in sync
+
+### Wish I'd Known
+1. Priority field semantics are "lower = more preferred" everywhere — the initial spec assumed the opposite, which would have caused split semantics (see `infinity-vs-zero-missing-tiebreaker.md`)
+2. canonicalCompare uses mixed sort directions — `b - a` for descending tiers, `a - b` for ascending — choose based on field semantics (see `canonicalcompare-ascending-vs-descending.md`)
+3. The three indexerService mapping sites (pollRss, searchAll, searchAllStreaming) use an identical spread pattern — adding a field is a simple mechanical change at all 3 sites
+
 ## #396 Wrong Release: preserve cover art + fix silent re-search failure — 2026-04-07
 **Skill path:** /elaborate → /respond-to-spec-review (x2) → /implement → /claim → /plan → /handoff
 **Outcome:** success — PR #403
