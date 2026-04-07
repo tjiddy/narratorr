@@ -1,5 +1,34 @@
 # Workflow Log
 
+## #405 DRY cleanup — extract shared cover regex, audio collector, grab payload builder — 2026-04-07
+**Skill path:** /implement → /claim → /plan → /handoff
+**Outcome:** success — PR #408
+
+### Metrics
+- Files changed: 21 | Tests added/modified: 6 (3 new test files, 3 existing test files updated)
+- Quality gate runs: 3 (pass on attempt 3 — lint fix, type fix, then build fix)
+- Fix iterations: 3 (unused import lint, type error on .mock property, barrel export breaking Vite client build)
+- Context compactions: 0
+
+### Workflow experience
+- What went smoothly: The three extractions were mechanical and straightforward. Red/green TDD caught interface mismatches early. Existing test suites provided confidence that caller behavior was preserved.
+- Friction / issues encountered: (1) Barrel-exporting `collect-audio-files.ts` broke the Vite client build because it imports `node:fs/promises` — `src/core/utils/` is shared between client and server, so Node.js imports in barrel exports are forbidden. (2) Tagging service test mocks returned plain string arrays from `readdir`, but the extracted helper calls `readdir(dir, { withFileTypes: true })` — required a smart mock that detects the call pattern. (3) Existing tests asserting `indexerId: undefined` broke because the extracted helper omits undefined fields entirely.
+
+### Token efficiency
+- Highest-token actions: The Explore subagent for plan phase read all 4 implementations fully; self-review and coverage review subagents re-read the diffs
+- Avoidable waste: Could have anticipated the barrel export issue by checking if `src/core/utils/index.ts` is imported by client code before adding to it
+- Suggestions: Before barrel-exporting any file in `src/core/`, check if the file imports Node.js built-ins — if so, use direct import path only
+
+### Infrastructure gaps
+- Repeated workarounds: None
+- Missing tooling / config: No Vite build check in typecheck — the barrel export issue only surfaced during `pnpm build`, not `pnpm typecheck`. A stricter import analysis tool could catch this earlier.
+- Unresolved debt: 3 resolved debt items (cover regex, collectAudioFiles, buildGrabPayload) marked as resolved in debt.md
+
+### Wish I'd Known
+1. Files in `src/core/utils/` that import `node:fs/promises` cannot be barrel-exported — Vite bundles the barrel for client and Node.js built-ins fail Rollup externalization (see learning: core-utils-barrel-node-fs.md)
+2. When extracting a shared helper that calls `readdir` with `{ withFileTypes: true }`, existing test mocks that return plain string arrays need updating to handle both call shapes (see learning: readdir-withfiletypes-mock-shape.md)
+3. When the extracted helper omits undefined fields instead of setting them to undefined, existing `objectContaining({ field: undefined })` assertions break — use `not.toHaveProperty()` instead (see learning: undefined-field-omission-in-extracted-helpers.md)
+
 ## #406 Scheduled search can re-grab blacklisted releases — 2026-04-07
 **Skill path:** /implement → /claim → /plan → /handoff
 **Outcome:** success — PR #407
