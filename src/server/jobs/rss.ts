@@ -10,6 +10,7 @@ import type { DownloadOrchestrator } from '../services/download-orchestrator.js'
 import type { BlacklistService } from '../services/blacklist.service.js';
 import { DuplicateDownloadError } from '../services/download.service.js';
 import { filterAndRankResults, filterBlacklistedResults } from '../services/search-pipeline.js';
+import { buildGrabPayload } from '../services/grab-payload.js';
 
 const MATCH_THRESHOLD = 0.7;
 
@@ -184,16 +185,9 @@ export async function runRssJob(
 
     // Attempt grab with mutex
     try {
-      await downloadOrchestrator.grab({
-        downloadUrl: best.downloadUrl!,
-        title: best.title,
-        protocol: best.protocol,
-        bookId,
-        indexerId: best.indexerId,
-        size: best.size,
-        seeders: best.seeders,
-        source: 'rss',
-      });
+      await downloadOrchestrator.grab(
+        buildGrabPayload(best, bookId, { source: 'rss' }),
+      );
       grabbed++;
       log.info({ bookId, title: best.title, isUpgrade: candidate.isUpgrade }, 'RSS grabbed');
     } catch (grabError: unknown) {
