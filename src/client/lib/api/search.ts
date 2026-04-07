@@ -17,6 +17,7 @@ export interface SearchResult {
   newsgroup?: string;
   indexer: string;
   indexerId?: number;
+  indexerPriority?: number;
   detailsUrl?: string;
   guid?: string;
   coverUrl?: string;
