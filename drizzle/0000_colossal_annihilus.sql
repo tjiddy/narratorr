@@ -141,6 +141,7 @@ CREATE TABLE `downloads` (
 	`added_at` integer DEFAULT (unixepoch()) NOT NULL,
 	`completed_at` integer,
 	`progress_updated_at` integer,
+	`pending_cleanup` integer,
 	FOREIGN KEY (`book_id`) REFERENCES `books`(`id`) ON UPDATE no action ON DELETE set null,
 	FOREIGN KEY (`indexer_id`) REFERENCES `indexers`(`id`) ON UPDATE no action ON DELETE set null,
 	FOREIGN KEY (`download_client_id`) REFERENCES `download_clients`(`id`) ON UPDATE no action ON DELETE set null
@@ -149,6 +150,7 @@ CREATE TABLE `downloads` (
 CREATE INDEX `idx_downloads_status` ON `downloads` (`status`);--> statement-breakpoint
 CREATE INDEX `idx_downloads_status_completed` ON `downloads` (`status`,`completed_at`);--> statement-breakpoint
 CREATE INDEX `idx_downloads_book_id` ON `downloads` (`book_id`);--> statement-breakpoint
+CREATE INDEX `idx_downloads_pending_cleanup` ON `downloads` (`pending_cleanup`);--> statement-breakpoint
 CREATE TABLE `import_lists` (
 	`id` integer PRIMARY KEY AUTOINCREMENT NOT NULL,
 	`name` text NOT NULL,
