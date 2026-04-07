@@ -6,8 +6,10 @@ import {
   ActivityIcon,
 } from '@/components/icons';
 import { DownloadCard } from './DownloadCard.js';
+import { SearchCard } from './SearchCard.js';
 import { EventHistorySection } from './EventHistorySection.js';
 import { useActivity } from './useActivity.js';
+import { useSearchProgress } from '@/hooks/useSearchProgress';
 import { usePagination } from '@/hooks/usePagination';
 import { Pagination } from '@/components/Pagination';
 import { ConfirmModal } from '@/components/ConfirmModal';
@@ -23,6 +25,7 @@ export function ActivityPage() {
     { limit: historyPagination.limit, offset: historyPagination.offset },
   );
   const { queue, queueTotal, history, historyTotal } = state;
+  const searchCards = useSearchProgress();
   const { isLoading } = status;
   const { cancelMutation, retryMutation, approveMutation, rejectMutation, deleteMutation, deleteHistoryMutation } = mutations;
 
@@ -107,7 +110,16 @@ export function ActivityPage() {
               </div>
             </div>
 
-            {queue.length === 0 ? (
+            {/* Search progress cards — ephemeral, above downloads */}
+            {searchCards.length > 0 && (
+              <div className="space-y-4">
+                {searchCards.map((card) => (
+                  <SearchCard key={card.bookId} state={card} />
+                ))}
+              </div>
+            )}
+
+            {queue.length === 0 && searchCards.length === 0 ? (
               <div className="glass-card rounded-2xl p-8 sm:p-12 text-center">
                 <DownloadCloudIcon className="w-12 h-12 text-muted-foreground/40 mx-auto mb-4" />
                 <p className="text-lg font-medium">No active downloads</p>
@@ -115,7 +127,7 @@ export function ActivityPage() {
                   Downloads will appear here when you grab audiobooks from search
                 </p>
               </div>
-            ) : (
+            ) : queue.length > 0 ? (
               <div className="space-y-4">
                 {queue.map((download, index) => (
                   <DownloadCard
@@ -135,7 +147,7 @@ export function ActivityPage() {
                   />
                 ))}
               </div>
-            )}
+            ) : null}
             <Pagination
               page={queuePagination.page}
               totalPages={queuePagination.totalPages(queueTotal)}

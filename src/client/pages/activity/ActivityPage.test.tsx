@@ -16,6 +16,12 @@ vi.mock('sonner', () => ({
   },
 }));
 
+vi.mock('@/hooks/useSearchProgress', () => ({
+  useSearchProgress: vi.fn().mockReturnValue([]),
+  handleSearchEvent: vi.fn(),
+  _resetForTesting: vi.fn(),
+}));
+
 vi.mock('@/lib/api', () => ({
   api: {
     getActivity: vi.fn(),
@@ -1221,5 +1227,53 @@ describe('#312 page-level SSE integration', () => {
 
     // No additional getActivity calls — patched in-place via setQueryData
     expect(vi.mocked(api.getActivity).mock.calls.length).toBe(getActivityCallCount);
+  });
+});
+
+// ============================================================================
+// #392 — Search progress cards on Activity page
+// ============================================================================
+
+describe('#392 search progress cards', () => {
+  it('renders search cards when useSearchProgress returns active entries', async () => {
+    const { useSearchProgress } = await import('@/hooks/useSearchProgress');
+    vi.mocked(useSearchProgress).mockReturnValue([
+      {
+        bookId: 99,
+        bookTitle: 'Searching Book',
+        indexers: new Map([[10, { name: 'MAM', status: 'pending' as const }]]),
+      },
+    ]);
+
+    vi.mocked(api.getActivity).mockResolvedValue({
+      data: [makeDownload()],
+      total: 1,
+    });
+
+    renderWithProviders(<ActivityPage />);
+    await waitFor(() => {
+      expect(screen.getAllByText('Test Audiobook').length).toBeGreaterThan(0);
+    });
+
+    expect(screen.getByText('Searching Book')).toBeInTheDocument();
+    expect(screen.getByText('MAM')).toBeInTheDocument();
+
+    // Restore default mock for other tests
+    vi.mocked(useSearchProgress).mockReturnValue([]);
+  });
+
+  it('does not render search section when no active searches', async () => {
+    const { useSearchProgress } = await import('@/hooks/useSearchProgress');
+    vi.mocked(useSearchProgress).mockReturnValue([]);
+
+    vi.mocked(api.getActivity).mockResolvedValue({
+      data: [],
+      total: 0,
+    });
+
+    renderWithProviders(<ActivityPage />);
+    await waitFor(() => {
+      expect(screen.getByText('No active downloads')).toBeInTheDocument();
+    });
   });
 });
