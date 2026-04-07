@@ -1,7 +1,8 @@
-import { readdir, stat } from 'node:fs/promises';
-import { join, extname } from 'node:path';
+import { stat } from 'node:fs/promises';
+import { extname } from 'node:path';
 import { parseFile, type ICommonTagsResult } from 'music-metadata';
 import { AUDIO_EXTENSIONS } from './audio-constants.js';
+import { collectAudioFilePaths } from './collect-audio-files.js';
 
 export interface AudioScanResult {
   // From tags (first file with tags wins)
@@ -158,28 +159,17 @@ function extractChapterCount(
 
 /** Recursively collect all audio files in a directory, sorted by name. */
 async function collectAudioFiles(dirPath: string): Promise<string[]> {
-  const files: string[] = [];
-
   try {
     const pathStat = await stat(dirPath);
     if (pathStat.isFile()) {
       return AUDIO_EXTENSIONS.has(extname(dirPath).toLowerCase()) ? [dirPath] : [];
     }
-    const entries = await readdir(dirPath, { withFileTypes: true });
-    for (const entry of entries) {
-      const fullPath = join(dirPath, entry.name);
-      if (entry.isFile() && AUDIO_EXTENSIONS.has(extname(entry.name).toLowerCase())) {
-        files.push(fullPath);
-      } else if (entry.isDirectory() && !entry.name.startsWith('.')) {
-        const subFiles = await collectAudioFiles(fullPath);
-        files.push(...subFiles);
-      }
-    }
+    const files = await collectAudioFilePaths(dirPath, { recursive: true, skipHidden: true });
+    return files.sort();
   } catch {
     // stat or readdir error — return whatever we have
+    return [];
   }
-
-  return files.sort();
 }
 
 /** Extract narrator from metadata tags with broad fallback chain. */

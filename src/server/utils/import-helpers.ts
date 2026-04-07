@@ -1,6 +1,6 @@
 import { stat, readdir, mkdir, cp } from 'node:fs/promises';
 import { join, extname } from 'node:path';
-import { renderTemplate, toLastFirst, toSortTitle, AUDIO_EXTENSIONS } from '../../core/utils/index.js';
+import { renderTemplate, toLastFirst, toSortTitle, AUDIO_EXTENSIONS, collectAudioFilePaths } from '../../core/utils/index.js';
 import { DISC_FOLDER_PATTERN } from '../../core/utils/book-discovery.js';
 import type { NamingOptions } from '../../core/utils/naming.js';
 
@@ -98,17 +98,10 @@ export async function containsAudioFiles(dirPath: string): Promise<boolean> {
 async function collectAudioFiles(
   dir: string,
 ): Promise<Array<{ srcPath: string; name: string }>> {
-  const results: Array<{ srcPath: string; name: string }> = [];
-  const entries = await readdir(dir, { withFileTypes: true });
-  for (const entry of entries) {
-    const fullPath = join(dir, entry.name);
-    if (entry.isDirectory()) {
-      results.push(...await collectAudioFiles(fullPath));
-    } else if (entry.isFile() && AUDIO_EXTENSIONS.has(extname(entry.name).toLowerCase())) {
-      results.push({ srcPath: fullPath, name: entry.name });
-    }
-  }
-  return results.sort((a, b) => a.name.localeCompare(b.name));
+  const paths = await collectAudioFilePaths(dir, { recursive: true });
+  return paths
+    .map(p => ({ srcPath: p, name: p.split('/').pop()! }))
+    .sort((a, b) => a.name.localeCompare(b.name));
 }
 
 type AudioFile = { srcPath: string; name: string };

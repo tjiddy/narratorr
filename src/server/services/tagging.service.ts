@@ -9,6 +9,7 @@ import type { TagMode } from '../../shared/schemas.js';
 import type { SettingsService } from './settings.service.js';
 import type { BookService } from './book.service.js';
 import { AUDIO_EXTENSIONS } from '../../core/utils/audio-constants.js';
+import { collectAudioFilePaths } from '../../core/utils/collect-audio-files.js';
 import { COVER_FILE_REGEX } from '../../core/utils/cover-regex.js';
 
 const execFileAsync = promisify(execFile);
@@ -226,11 +227,10 @@ async function findCoverFile(dirPath: string): Promise<string | undefined> {
  * Collect audio files in a directory and sort them with locale-aware numeric ordering.
  */
 async function collectAudioFiles(dirPath: string): Promise<string[]> {
-  const entries = await readdir(dirPath);
-  const audioFiles = entries
-    .filter(f => TAGGABLE_EXTENSIONS.has(extname(f).toLowerCase()))
-    .sort((a, b) => a.localeCompare(b, undefined, { numeric: true, sensitivity: 'base' }));
-  return audioFiles.map(f => join(dirPath, f));
+  const files = await collectAudioFilePaths(dirPath, { extensions: TAGGABLE_EXTENSIONS });
+  return files.sort((a, b) =>
+    basename(a).localeCompare(basename(b), undefined, { numeric: true, sensitivity: 'base' }),
+  );
 }
 
 /**

@@ -1,8 +1,9 @@
 import { execFile, spawn } from 'node:child_process';
-import { readdir, rename, unlink, writeFile, rm } from 'node:fs/promises';
+import { rename, unlink, writeFile, rm } from 'node:fs/promises';
 import { join, extname, basename } from 'node:path';
 import { promisify } from 'node:util';
 import { AUDIO_EXTENSIONS } from './audio-constants.js';
+import { collectAudioFilePaths } from './collect-audio-files.js';
 import { readChapterSources, resolveChapterTitle } from './chapter-resolver.js';
 import type { ChapterSource } from './chapter-resolver.js';
 import { renderFilename } from './naming.js';
@@ -407,11 +408,8 @@ async function getFileDurations(ffmpegPath: string, filePaths: string[]): Promis
 
 /** Collect audio files in a directory (non-recursive, sorted). */
 async function collectAudioFiles(dirPath: string): Promise<string[]> {
-  const entries = await readdir(dirPath, { withFileTypes: true });
-  return entries
-    .filter(e => e.isFile() && AUDIO_EXTENSIONS.has(extname(e.name).toLowerCase()))
-    .map(e => join(dirPath, e.name))
-    .sort();
+  const files = await collectAudioFilePaths(dirPath);
+  return files.sort();
 }
 
 async function cleanupTempFiles(...paths: (string | undefined)[]): Promise<void> {
