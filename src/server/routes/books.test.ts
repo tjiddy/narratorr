@@ -341,6 +341,33 @@ describe('books routes', () => {
       expect(services.downloadOrchestrator.grab).not.toHaveBeenCalled();
     });
 
+    // ===== #386 — fire-and-forget search reads metadata.languages =====
+    it('fire-and-forget search reads metadata settings for language filtering', async () => {
+      (services.book.findDuplicate as Mock).mockResolvedValue(null);
+      (services.book.create as Mock).mockResolvedValue(mockBook);
+      (services.settings.get as Mock).mockImplementation((cat: string) => {
+        if (cat === 'quality') return Promise.resolve(DEFAULT_SETTINGS.quality);
+        if (cat === 'metadata') return Promise.resolve({ audibleRegion: 'us', languages: ['english', 'french'] });
+        return Promise.resolve(undefined);
+      });
+      (services.indexer.searchAll as Mock).mockResolvedValue([
+        { title: 'The Way of Kings', downloadUrl: 'https://example.com/dl', protocol: 'torrent', size: 500000, seeders: 10 },
+      ]);
+
+      const res = await app.inject({
+        method: 'POST',
+        url: '/api/books',
+        payload: { title: 'The Way of Kings', authors: [{ name: 'Brandon Sanderson' }], searchImmediately: true },
+      });
+
+      expect(res.statusCode).toBe(201);
+
+      // Wait for fire-and-forget promise to resolve
+      await new Promise(r => setTimeout(r, 50));
+
+      expect(services.settings.get).toHaveBeenCalledWith('metadata');
+    });
+
     it('does not trigger search when searchImmediately is false', async () => {
       (services.book.findDuplicate as Mock).mockResolvedValue(null);
       (services.book.create as Mock).mockResolvedValue(mockBook);
@@ -1190,6 +1217,24 @@ describe('books routes', () => {
 
       expect(res.statusCode).toBe(500);
       expect(JSON.parse(res.payload).error).toBe('Internal server error');
+    });
+
+    // ===== #386 — manual search reads metadata.languages =====
+    it('reads metadata settings for language filtering', async () => {
+      (services.book.getById as Mock).mockResolvedValue(mockBook);
+      (services.settings.get as Mock).mockImplementation((cat: string) => {
+        if (cat === 'quality') return Promise.resolve(qualitySettings);
+        if (cat === 'metadata') return Promise.resolve({ audibleRegion: 'us', languages: ['english'] });
+        return Promise.resolve(undefined);
+      });
+      (services.indexer.searchAll as Mock).mockResolvedValue([
+        { title: 'The Way of Kings', downloadUrl: 'https://example.com/dl', protocol: 'torrent', size: 500000, seeders: 10 },
+      ]);
+
+      const res = await app.inject({ method: 'POST', url: '/api/books/1/search' });
+
+      expect(res.statusCode).toBe(200);
+      expect(services.settings.get).toHaveBeenCalledWith('metadata');
     });
 
     it('uses quality settings for filter/rank', async () => {

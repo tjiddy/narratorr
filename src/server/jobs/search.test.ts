@@ -906,6 +906,26 @@ describe('searchAllWanted', () => {
     expect(result.errors).toBe(1);
   });
 
+  // ===== #386 — metadata.languages wiring =====
+
+  it('reads metadata.languages and passes it to searchAndGrabForBook', async () => {
+    const wantedBooks = [{ id: 1, title: 'Book One', authors: [{ name: 'Author A' }] }];
+    const settings = createMockSettingsService({
+      search: { enabled: true, intervalMinutes: 60 },
+      metadata: { audibleRegion: 'us', languages: ['english'] },
+    });
+    const bookList = createMockBookListService(wantedBooks);
+    const searchResults = [mockResult(10, 'magnet:?xt=urn:btih:aaa')];
+    const indexer = createMockIndexerService(searchResults);
+    const download = createMockDownloadOrchestrator();
+
+    await searchAllWanted(settings, bookList, indexer, download, inject<FastifyBaseLogger>(log));
+
+    // settingsService.get('metadata') must be called to get languages
+    expect(settings.get).toHaveBeenCalledWith('metadata');
+    expect(settings.get).toHaveBeenCalledWith('quality');
+  });
+
   it('counts searched and errors when grab fails with non-duplicate error', async () => {
     const wantedBooks = [{ id: 1, title: 'Book One', authors: [{ name: 'Author A' }] }];
     const settings = createMockSettingsService();

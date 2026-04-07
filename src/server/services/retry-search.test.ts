@@ -223,6 +223,21 @@ describe('retrySearch', () => {
     expect(result.outcome).toBe('retried');
   });
 
+  // ===== #386 — metadata.languages wiring in retry search =====
+
+  it('reads metadata.languages and passes them to filterAndRankResults', async () => {
+    const settings = createMockSettingsService({
+      metadata: { audibleRegion: 'us', languages: ['english'] },
+    });
+    const deps = createDeps({ settingsService: settings });
+
+    await retrySearch(1, deps);
+
+    // settingsService.get('metadata') must be called to get languages
+    expect(settings.get).toHaveBeenCalledWith('metadata');
+    expect(settings.get).toHaveBeenCalledWith('quality');
+  });
+
   it('handles book with no active indexers (empty results)', async () => {
     const deps = createDeps({
       indexerService: inject<IndexerService>({

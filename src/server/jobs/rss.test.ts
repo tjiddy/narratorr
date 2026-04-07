@@ -672,6 +672,27 @@ describe('startRssJob', () => {
     });
   });
 
+  // ===== #386 — metadata.languages wiring in RSS job =====
+
+  it('reads metadata.languages and uses it for quality filtering', async () => {
+    const wantedBooks = [makeWantedBook(1, 'The Way of Kings', 'Brandon Sanderson')];
+    const rssResults = [makeResult('The Way of Kings', 'Brandon Sanderson')];
+    const settings = createMockSettingsService({
+      rss: { enabled: true },
+      metadata: { audibleRegion: 'us', languages: ['english', 'french'] },
+    });
+    const { bookList, book } = createMockBookServices(wantedBooks);
+    const indexer = createMockIndexerService(rssResults);
+    const download = createMockDownloadOrchestrator();
+    const blacklist = createMockBlacklistService();
+
+    await runRssJob(settings, bookList, book, indexer, download, blacklist, inject<FastifyBaseLogger>(log));
+
+    // settingsService.get('metadata') must be called to get languages for filterAndRankResults
+    expect(settings.get).toHaveBeenCalledWith('metadata');
+    expect(settings.get).toHaveBeenCalledWith('quality');
+  });
+
   it('forwards indexerId from best RSS result to downloadOrchestrator.grab', async () => {
     const wantedBooks = [makeWantedBook(1, 'The Way of Kings', 'Brandon Sanderson')];
     const rssResults = [makeResult('The Way of Kings', 'Brandon Sanderson', { indexerId: 55 })];
