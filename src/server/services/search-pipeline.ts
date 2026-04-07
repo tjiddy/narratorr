@@ -214,17 +214,7 @@ export async function postProcessSearchResults(
     return true;
   });
 
-  // Blacklist filtering by infoHash and/or guid
-  const hashes = results.map(r => r.infoHash).filter((h): h is string => !!h);
-  const guids = results.map(r => r.guid).filter((g): g is string => !!g);
-  let filteredResults = results;
-  if (hashes.length > 0 || guids.length > 0) {
-    const { blacklistedHashes, blacklistedGuids } = await blacklistService.getBlacklistedIdentifiers(hashes, guids);
-    filteredResults = results.filter(r =>
-      (!r.infoHash || !blacklistedHashes.has(r.infoHash)) &&
-      (!r.guid || !blacklistedGuids.has(r.guid)),
-    );
-  }
+  const filteredResults = await filterBlacklistedResults(results, blacklistService);
 
   // Enrich Usenet results with language from newsgroup metadata
   await enrichUsenetLanguages(filteredResults, logger);
