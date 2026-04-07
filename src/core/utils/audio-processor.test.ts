@@ -420,6 +420,91 @@ describe('processAudioFiles', () => {
     );
   });
 
+  it('convertFiles uses positional i+1 for trackNumber, ignoring metadata trackNumber', async () => {
+    mockReaddir.mockResolvedValue([
+      { name: 'ch01.mp3', isFile: () => true, isDirectory: () => false },
+      { name: 'ch02.mp3', isFile: () => true, isDirectory: () => false },
+    ] as never);
+
+    // Metadata has track numbers 5 and 10, but positional should be 1 and 2
+    mockReadChapterSources.mockResolvedValue([
+      { filePath: join('/lib/book', 'ch01.mp3'), trackNumber: 5, title: 'Ch A' },
+      { filePath: join('/lib/book', 'ch02.mp3'), trackNumber: 10, title: 'Ch B' },
+    ]);
+    mockResolveChapterTitle
+      .mockReturnValueOnce('Ch A')
+      .mockReturnValueOnce('Ch B');
+
+    mockSpawn.mockImplementation(() => {
+      const child = new MockChildProcess();
+      process.nextTick(() => child.emit('close', 0));
+      return child as never;
+    });
+
+    const ctx: ProcessingContext = {
+      author: 'Author',
+      title: 'Book',
+      fileFormat: '{trackNumber:00} - {partName}',
+    };
+    const config: ProcessingConfig = { ...defaultConfig, mergeBehavior: 'never' };
+    const result = await processAudioFiles('/lib/book', config, ctx);
+    expect(result.success).toBe(true);
+    if (result.success) {
+      // Should use positional 1,2 not metadata 5,10
+      expect(result.outputFiles).toEqual([
+        join('/lib/book', '01 - Ch A.m4b'),
+        join('/lib/book', '02 - Ch B.m4b'),
+      ]);
+    }
+  });
+
+  it('convertFiles with multi-disc metadata — positional produces 1,2,3,4 not 1,2,1,2', async () => {
+    // Simulates 4 files from 2 discs, already sorted by disc+track by readChapterSources
+    mockReaddir.mockResolvedValue([
+      { name: '001.mp3', isFile: () => true, isDirectory: () => false },
+      { name: '002.mp3', isFile: () => true, isDirectory: () => false },
+      { name: '003.mp3', isFile: () => true, isDirectory: () => false },
+      { name: '004.mp3', isFile: () => true, isDirectory: () => false },
+    ] as never);
+
+    // Metadata still has per-disc track numbers (1,2 for disc 1 and 1,2 for disc 2)
+    mockReadChapterSources.mockResolvedValue([
+      { filePath: join('/lib/book', '001.mp3'), trackNumber: 1, discNumber: 1, title: 'D1T1' },
+      { filePath: join('/lib/book', '002.mp3'), trackNumber: 2, discNumber: 1, title: 'D1T2' },
+      { filePath: join('/lib/book', '003.mp3'), trackNumber: 1, discNumber: 2, title: 'D2T1' },
+      { filePath: join('/lib/book', '004.mp3'), trackNumber: 2, discNumber: 2, title: 'D2T2' },
+    ]);
+    mockResolveChapterTitle
+      .mockReturnValueOnce('D1T1')
+      .mockReturnValueOnce('D1T2')
+      .mockReturnValueOnce('D2T1')
+      .mockReturnValueOnce('D2T2');
+
+    mockSpawn.mockImplementation(() => {
+      const child = new MockChildProcess();
+      process.nextTick(() => child.emit('close', 0));
+      return child as never;
+    });
+
+    const ctx: ProcessingContext = {
+      author: 'Author',
+      title: 'Book',
+      fileFormat: '{trackNumber:00} - {partName}',
+    };
+    const config: ProcessingConfig = { ...defaultConfig, mergeBehavior: 'never' };
+    const result = await processAudioFiles('/lib/book', config, ctx);
+    expect(result.success).toBe(true);
+    if (result.success) {
+      // Positional: 1,2,3,4 — NOT metadata's 1,2,1,2
+      expect(result.outputFiles).toEqual([
+        join('/lib/book', '01 - D1T1.m4b'),
+        join('/lib/book', '02 - D1T2.m4b'),
+        join('/lib/book', '03 - D2T1.m4b'),
+        join('/lib/book', '04 - D2T2.m4b'),
+      ]);
+    }
+  });
+
   it('output file named {Author} - {Title}.m4b for merged output', async () => {
     setupMergeFiles([120, 120]);
     mockSpawnSuccess();
