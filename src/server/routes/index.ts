@@ -220,6 +220,7 @@ const routeRegistry: RouteFactory[] = [
     eventHistory: s.eventHistory,
     indexerService: s.indexer,
     bookRejectionService: s.bookRejection,
+    eventBroadcaster: s.eventBroadcaster,
   }),
   (app, s) => bookFilesRoute(app, s.book),
   (app, s) => bookPreviewRoute(app, s.book),
