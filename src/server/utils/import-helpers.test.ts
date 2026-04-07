@@ -577,6 +577,21 @@ describe('copyAudioFiles — multi-disc detection and sequential renaming', () =
     expect(destNames).toContain('2.mp3');
   });
 
+  it('errors when non-disc file name collides with sequential disc numbering', async () => {
+    vi.mocked(readdir)
+      .mockResolvedValueOnce([
+        makeDirent('Disc 01', false, true),
+        makeDirent('Disc 02', false, true),
+        makeDirent('Extras', false, true),
+      ] as never)
+      .mockResolvedValueOnce([makeDirent('a.mp3', true, false)] as never) // Disc 01
+      .mockResolvedValueOnce([makeDirent('b.mp3', true, false)] as never) // Disc 02
+      .mockResolvedValueOnce([makeDirent('1.mp3', true, false)] as never); // Extras — collides with sequential "1.mp3"
+
+    await expect(copyAudioFiles('/src', '/dest')).rejects.toThrow('1.mp3');
+    expect(cp).not.toHaveBeenCalled();
+  });
+
   it('duplicate filenames within the SAME disc still error', async () => {
     // Single disc with duplicate files — this shouldn't happen in practice but should error
     vi.mocked(readdir)

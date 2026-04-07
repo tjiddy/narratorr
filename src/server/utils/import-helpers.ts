@@ -147,6 +147,16 @@ async function collectMultiDiscFiles(
   }
   nonDiscFiles.sort((a, b) => a.name.localeCompare(b.name));
 
+  // Check for collisions between non-disc files and sequential disc files
+  const sequentialNames = new Set(sequentialFiles.map(f => f.name));
+  for (const file of nonDiscFiles) {
+    if (sequentialNames.has(file.name)) {
+      throw new Error(
+        `Duplicate filename "${file.name}" found during import flattening: non-disc file "${file.srcPath}" collides with sequential disc numbering`,
+      );
+    }
+  }
+
   return [...nonDiscFiles, ...sequentialFiles];
 }
 
