@@ -198,7 +198,7 @@ describe('WelcomeModal', () => {
     );
   });
 
-  it('Region: US · Language: English card links to https://docs.narratorr.dev/configuration/metadata/', () => {
+  it('Region/Language card links to https://docs.narratorr.dev/configuration/metadata/', () => {
     render(<WelcomeModal isOpen onDismiss={onDismiss} />);
     expect(screen.getByRole('link', { name: /Region: US/i })).toHaveAttribute(
       'href',
@@ -316,9 +316,10 @@ describe('WelcomeModal', () => {
   });
 
   // Copy changes (AC7, AC9)
-  it('Audible region card title reads "Region: US · Language: English"', () => {
+  it('Audible region card title shows Region and Language on separate lines', () => {
     render(<WelcomeModal isOpen onDismiss={onDismiss} />);
-    expect(screen.getByText('Region: US · Language: English')).toBeInTheDocument();
+    expect(screen.getByText(/Region: US/)).toBeInTheDocument();
+    expect(screen.getByText(/Language: English/)).toBeInTheDocument();
     expect(screen.queryByText('Audible region: US')).not.toBeInTheDocument();
   });
 

@@ -46,7 +46,7 @@ function InfoCard({ icon, title, description, href, badge }: InfoCardProps) {
         <div className="shrink-0 w-9 h-9 flex items-center justify-center rounded-lg bg-primary/10">
           {icon}
         </div>
-        <h4 className="text-sm font-semibold leading-tight">{title}</h4>
+        <h4 className="text-sm font-semibold leading-tight whitespace-pre-line">{title}</h4>
       </div>
       <p className="text-xs text-muted-foreground leading-relaxed">{description}</p>
     </a>
@@ -151,7 +151,7 @@ export function WelcomeModal({ isOpen, isPending = false, onDismiss }: WelcomeMo
             <InfoCard
               href="https://docs.narratorr.dev/configuration/metadata/"
               icon={<GlobeIcon className="w-5 h-5 text-primary" />}
-              title="Region: US · Language: English"
+              title={"Region: US\nLanguage: English"}
               description={<>Metadata defaults to US region and English language. Change in <span className="whitespace-nowrap">Settings → Search → Filtering</span>.</>}
               badge={<WarningBadge />}
             />
