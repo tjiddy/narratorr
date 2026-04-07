@@ -11,6 +11,73 @@ import type { BookService } from '../services/book.service.js';
 const BATCH_LIMIT = 5;
 const RETRY_AFTER_MS = 60 * 60 * 1000; // 1 hour
 
+interface ExistingBookFields {
+  duration: number | null;
+  genres: string[] | null;
+  title: string;
+  description: string | null;
+  coverUrl: string | null;
+  publishedDate: string | null;
+  seriesName: string | null;
+  seriesPosition: number | null;
+}
+
+function isAllCaps(title: string): boolean {
+  return title === title.toUpperCase() && title !== title.toLowerCase();
+}
+
+/** Fill empty scalar fields from enrichment result. Returns only non-empty entries. */
+function fillEmptyFields(book: ExistingBookFields, result: Record<string, unknown>): Record<string, unknown> {
+  const fields: Array<keyof ExistingBookFields> = ['description', 'coverUrl', 'publishedDate'];
+  const updates: Record<string, unknown> = {};
+  for (const field of fields) {
+    if (!book[field] && result[field]) updates[field] = result[field];
+  }
+  return updates;
+}
+
+/** Fill series fields independently (matching library-scan.service.ts:432-433). */
+function fillSeriesFields(
+  book: ExistingBookFields,
+  series: Array<{ name?: string; position?: number }> | undefined,
+): Record<string, unknown> {
+  const updates: Record<string, unknown> = {};
+  const primary = series && series[0];
+  if (!primary) return updates;
+  if (primary.name && !book.seriesName) updates.seriesName = primary.name;
+  if (primary.position != null && book.seriesPosition == null) updates.seriesPosition = primary.position;
+  return updates;
+}
+
+/** Build the scalar updates and return fill counts for batch logging. */
+function buildMetadataUpdates(
+  book: ExistingBookFields,
+  result: { title?: string | null; description?: string | null; coverUrl?: string | null; publishedDate?: string | null; duration?: number | null; series?: Array<{ name?: string; position?: number }> },
+) {
+  const updates: Record<string, unknown> = {};
+  let filledDuration = 0;
+  let filledTitle = 0;
+  let filledDescription = 0;
+
+  if (!book.duration && result.duration) {
+    updates.duration = result.duration;
+    filledDuration++;
+  }
+
+  if (result.title && isAllCaps(book.title) && result.title !== book.title) {
+    updates.title = result.title;
+    filledTitle++;
+  }
+
+  const scalarFills = fillEmptyFields(book, result as Record<string, unknown>);
+  if (scalarFills.description) filledDescription++;
+  Object.assign(updates, scalarFills);
+
+  Object.assign(updates, fillSeriesFields(book, result.series));
+
+  return { updates, filledDuration, filledTitle, filledDescription };
+}
+
 export function startEnrichmentJob(db: Db, metadataService: MetadataService, bookService: BookService, log: FastifyBaseLogger) {
   cron.schedule('*/5 * * * *', async () => {
     try {
@@ -30,6 +97,8 @@ export async function runEnrichment(db: Db, metadataService: MetadataService, bo
   let filledDuration = 0;
   let filledNarrators = 0;
   let filledGenres = 0;
+  let filledTitle = 0;
+  let filledDescription = 0;
   // Skip books without ASIN → set to 'skipped'
   const noAsinBooks = await db
     .select({ id: books.id })
@@ -97,17 +166,27 @@ export async function runEnrichment(db: Db, metadataService: MetadataService, bo
 
       // Only fill in fields that are currently empty
       const existing = await db
-        .select({ duration: books.duration, genres: books.genres })
+        .select({
+          duration: books.duration,
+          genres: books.genres,
+          title: books.title,
+          description: books.description,
+          coverUrl: books.coverUrl,
+          publishedDate: books.publishedDate,
+          seriesName: books.seriesName,
+          seriesPosition: books.seriesPosition,
+        })
         .from(books)
         .where(eq(books.id, candidate.id))
         .limit(1);
 
       if (existing.length > 0) {
         const book = existing[0];
-        if (!book.duration && result.duration) {
-          updates.duration = result.duration;
-          filledDuration++;
-        }
+        const filled = buildMetadataUpdates(book, result);
+        Object.assign(updates, filled.updates);
+        filledDuration += filled.filledDuration;
+        filledTitle += filled.filledTitle;
+        filledDescription += filled.filledDescription;
 
         // Fill genres via bookService.update() when existing genres are null or empty
         if (result.genres?.length && (!book.genres || book.genres.length === 0)) {
@@ -163,6 +242,6 @@ export async function runEnrichment(db: Db, metadataService: MetadataService, bo
   }
 
   if (candidates.length > 0) {
-    log.info({ enrichedCount, filledDuration, filledNarrators, filledGenres, elapsedMs: Date.now() - startMs }, 'Enrichment batch completed');
+    log.info({ enrichedCount, filledDuration, filledNarrators, filledGenres, filledTitle, filledDescription, elapsedMs: Date.now() - startMs }, 'Enrichment batch completed');
   }
 }

@@ -1,5 +1,34 @@
 # Workflow Log
 
+## #398 NYT import list stores titles in ALL CAPS — 2026-04-07
+**Skill path:** /elaborate → /respond-to-spec-review (x2) → /implement → /claim → /plan → /handoff
+**Outcome:** success — PR #401
+
+### Metrics
+- Files changed: 2 | Tests added/modified: 25 new + 20 existing updated
+- Quality gate runs: 3 (pass on attempt 3 — first two failed on lint: max-lines-per-function, then complexity)
+- Fix iterations: 2 (extracted helpers to reduce function length and cyclomatic complexity)
+- Context compactions: 0
+
+### Workflow experience
+- What went smoothly: Spec was well-defined after 2 rounds of spec review. Single-file production change made TDD cycle fast. Existing test patterns were clear and easy to follow.
+- Friction / issues encountered: ESLint complexity limit (15) was tight for the expanded conditional fill logic. First extraction hit max-lines-per-function, second hit complexity because optional chaining (`?.`) counts as branches. Required 2 refactoring iterations.
+
+### Token efficiency
+- Highest-token actions: Spec review rounds (3 comments with full review JSON), Explore subagents for self-review and coverage check
+- Avoidable waste: The `replace_all` approach for updating existing test mocks was efficient — avoided reading/editing 20 individual mock sites
+- Suggestions: For enrichment-style changes that expand a select query, pre-identify all mock sites before making the production change
+
+### Infrastructure gaps
+- Repeated workarounds: None
+- Missing tooling / config: None
+- Unresolved debt: None introduced
+
+### Wish I'd Known
+1. ESLint counts optional chaining (`?.`) as complexity branches — a function with 7 conditionals and 3 `?.` usages already hits 18/15. Extract helpers proactively when adding conditional fill logic.
+2. Expanding a `db.select()` shape breaks ALL test mocks that return that shape — use `replace_all` early to batch-fix them rather than discovering failures one by one.
+3. The enrichment job already has a `complexity` eslint-disable comment on `runEnrichment()` — but extracted helpers don't inherit it, so they need to independently stay under the limit.
+
 ## #395 Detect Usenet release language from NZB newsgroup metadata — 2026-04-07
 **Skill path:** /elaborate → /respond-to-spec-review (x2) → /implement → /claim → /plan → /handoff
 **Outcome:** success — PR #400
