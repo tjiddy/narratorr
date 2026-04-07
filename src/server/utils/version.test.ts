@@ -1,16 +1,8 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
-// Mock fs so we can control package.json reads
-vi.mock('fs', () => ({
-  readFileSync: vi.fn(),
-}));
-
-import { readFileSync } from 'fs';
-
 describe('getVersion', () => {
   beforeEach(() => {
     vi.resetModules();
-    vi.mocked(readFileSync).mockReset();
   });
 
   async function loadGetVersion() {
@@ -18,32 +10,51 @@ describe('getVersion', () => {
     return mod.getVersion;
   }
 
-  it('returns version string from package.json', async () => {
-    vi.mocked(readFileSync).mockReturnValue(JSON.stringify({ version: '1.2.3' }));
+  it('returns "tag (commit)" when both GIT_TAG and GIT_COMMIT are set', async () => {
+    process.env.GIT_TAG = 'v124';
+    process.env.GIT_COMMIT = 'a78ef12';
     const getVersion = await loadGetVersion();
-    expect(getVersion()).toBe('1.2.3');
+    expect(getVersion()).toBe('v124 (a78ef12)');
+    delete process.env.GIT_TAG;
+    delete process.env.GIT_COMMIT;
   });
 
-  it('caches version after first call (no repeated fs reads)', async () => {
-    vi.mocked(readFileSync).mockReturnValue(JSON.stringify({ version: '1.2.3' }));
+  it('returns just commit hash when GIT_TAG is not set', async () => {
+    delete process.env.GIT_TAG;
+    process.env.GIT_COMMIT = 'abc1234';
     const getVersion = await loadGetVersion();
-    getVersion();
-    getVersion();
-    getVersion();
-    expect(readFileSync).toHaveBeenCalledTimes(1);
+    expect(getVersion()).toBe('abc1234');
+    delete process.env.GIT_COMMIT;
   });
 
-  it('returns fallback "0.0.0" when package.json is unreadable', async () => {
-    vi.mocked(readFileSync).mockImplementation(() => { throw new Error('ENOENT'); });
+  it('returns just tag when GIT_TAG is set but GIT_COMMIT is not', async () => {
+    process.env.GIT_TAG = 'v124';
+    delete process.env.GIT_COMMIT;
     const getVersion = await loadGetVersion();
-    expect(getVersion()).toBe('0.0.0');
+    expect(getVersion()).toBe('v124');
+    delete process.env.GIT_TAG;
+  });
+
+  it('returns "dev" when neither GIT_TAG nor GIT_COMMIT is set', async () => {
+    delete process.env.GIT_TAG;
+    delete process.env.GIT_COMMIT;
+    const getVersion = await loadGetVersion();
+    expect(getVersion()).toBe('dev');
+  });
+
+  it('returns "dev" when GIT_TAG is "unknown" and GIT_COMMIT is "unknown"', async () => {
+    process.env.GIT_TAG = 'unknown';
+    process.env.GIT_COMMIT = '';
+    const getVersion = await loadGetVersion();
+    expect(getVersion()).toBe('dev');
+    delete process.env.GIT_TAG;
+    delete process.env.GIT_COMMIT;
   });
 });
 
 describe('getCommit', () => {
   beforeEach(() => {
     vi.resetModules();
-    vi.mocked(readFileSync).mockReturnValue(JSON.stringify({ version: '0.0.0' }));
   });
 
   async function loadGetCommit() {
@@ -92,17 +103,11 @@ describe('getCommit', () => {
     delete process.env.GIT_COMMIT;
   });
 
-  it('getVersion() return value is unchanged after adding getCommit()', async () => {
-    vi.mocked(readFileSync).mockReturnValue(JSON.stringify({ version: '1.2.3' }));
-    const mod = await import('./version.js');
-    expect(mod.getVersion()).toBe('1.2.3');
-  });
 });
 
 describe('getBuildTime', () => {
   beforeEach(() => {
     vi.resetModules();
-    vi.mocked(readFileSync).mockReturnValue(JSON.stringify({ version: '0.0.0' }));
   });
 
   async function loadGetBuildTime() {
@@ -137,7 +142,6 @@ describe('isNewerVersion', () => {
 
   beforeEach(async () => {
     vi.resetModules();
-    vi.mocked(readFileSync).mockReturnValue(JSON.stringify({ version: '0.0.0' }));
     const mod = await import('./version.js');
     isNewerVersion = mod.isNewerVersion;
   });

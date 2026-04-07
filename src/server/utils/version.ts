@@ -1,22 +1,26 @@
-import { readFileSync } from 'fs';
-import { resolve } from 'path';
-
 let packageVersion: string | undefined;
 let packageCommit: string | undefined;
 let packageBuildTime: string | undefined;
 
-/** Returns the app version from package.json (cached after first call). */
+/** Returns the app version: "v124 (a78ef)" with tag, or just commit hash without. */
 export function getVersion(): string {
   if (!packageVersion) {
-    try {
-      const pkgPath = resolve(process.cwd(), 'package.json');
-      const pkg = JSON.parse(readFileSync(pkgPath, 'utf-8'));
-      packageVersion = pkg.version;
-    } catch {
-      packageVersion = '0.0.0';
+    const tag = process.env.GIT_TAG;
+    const commit = getCommit();
+    const hasTag = tag && tag !== 'unknown';
+    const hasCommit = commit !== 'unknown';
+
+    if (hasTag && hasCommit) {
+      packageVersion = `${tag} (${commit})`;
+    } else if (hasTag) {
+      packageVersion = tag;
+    } else if (hasCommit) {
+      packageVersion = commit;
+    } else {
+      packageVersion = 'dev';
     }
   }
-  return packageVersion!;
+  return packageVersion;
 }
 
 /** Returns the build-injected git commit SHA truncated to 7 characters, or "unknown" when not set. */

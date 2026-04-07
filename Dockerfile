@@ -19,10 +19,11 @@ COPY tsconfig.json tsup.config.ts vite.config.ts ./
 
 # Accept git commit SHA and build timestamp as build args
 ARG GIT_COMMIT=unknown
+ARG GIT_TAG=unknown
 ARG BUILD_TIME=unknown
 
-# Build application — GIT_COMMIT and BUILD_TIME are inlined into the server bundle by tsup esbuildOptions
-RUN GIT_COMMIT=$GIT_COMMIT BUILD_TIME=$BUILD_TIME pnpm build
+# Build application — GIT_COMMIT, GIT_TAG, and BUILD_TIME are inlined into the server bundle by tsup esbuildOptions
+RUN GIT_COMMIT=$GIT_COMMIT GIT_TAG=$GIT_TAG BUILD_TIME=$BUILD_TIME pnpm build
 
 # Production dependencies stage
 FROM node:24-alpine AS deps
