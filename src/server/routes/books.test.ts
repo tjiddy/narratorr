@@ -424,6 +424,36 @@ describe('books routes', () => {
       );
     });
 
+    // #406 — fire-and-forget search filters blacklisted releases via blacklistService
+    it('fire-and-forget search filters blacklisted releases by infoHash', async () => {
+      (services.book.findDuplicate as Mock).mockResolvedValue(null);
+      (services.book.create as Mock).mockResolvedValue(mockBook);
+      (services.settings.get as Mock).mockResolvedValue(DEFAULT_SETTINGS.quality);
+      (services.blacklist.getBlacklistedIdentifiers as Mock).mockResolvedValue({
+        blacklistedHashes: new Set(['bad-hash']),
+        blacklistedGuids: new Set(),
+      });
+      mockStreamingSearch([
+        { title: 'Blacklisted Book', downloadUrl: 'https://example.com/dl1', protocol: 'torrent', size: 500000, seeders: 100, infoHash: 'bad-hash', indexerId: 1 },
+        { title: 'Clean Book', downloadUrl: 'https://example.com/dl2', protocol: 'torrent', size: 500000, seeders: 5, infoHash: 'good-hash', indexerId: 1 },
+      ]);
+
+      const res = await app.inject({
+        method: 'POST',
+        url: '/api/books',
+        payload: { title: 'The Way of Kings', authors: [{ name: 'Brandon Sanderson' }], searchImmediately: true },
+      });
+
+      expect(res.statusCode).toBe(201);
+      await new Promise(r => setTimeout(r, 50));
+
+      expect(services.blacklist.getBlacklistedIdentifiers).toHaveBeenCalledWith(['bad-hash', 'good-hash'], []);
+      expect(services.downloadOrchestrator.grab).toHaveBeenCalledTimes(1);
+      expect(services.downloadOrchestrator.grab).toHaveBeenCalledWith(
+        expect.objectContaining({ title: 'Clean Book' }),
+      );
+    });
+
     it('does not trigger search when searchImmediately is false', async () => {
       (services.book.findDuplicate as Mock).mockResolvedValue(null);
       (services.book.create as Mock).mockResolvedValue(mockBook);
@@ -1408,6 +1438,51 @@ describe('books routes', () => {
 
       expect(res.statusCode).toBe(500);
       expect(JSON.parse(res.payload).error).toBe('Internal server error');
+    });
+
+    // #406 — manual search filters blacklisted releases via blacklistService
+    it('manual search filters blacklisted releases and returns no_results when all blacklisted', async () => {
+      (services.book.getById as Mock).mockResolvedValue(mockBook);
+      (services.settings.get as Mock).mockResolvedValue(qualitySettings);
+      (services.blacklist.getBlacklistedIdentifiers as Mock).mockResolvedValue({
+        blacklistedHashes: new Set(['h1', 'h2']),
+        blacklistedGuids: new Set(),
+      });
+      mockStreamingSearch([
+        { title: 'Result 1', downloadUrl: 'https://example.com/dl1', protocol: 'torrent', size: 500000, seeders: 10, infoHash: 'h1', indexerId: 1 },
+        { title: 'Result 2', downloadUrl: 'https://example.com/dl2', protocol: 'torrent', size: 500000, seeders: 5, infoHash: 'h2', indexerId: 1 },
+      ]);
+
+      const res = await app.inject({ method: 'POST', url: '/api/books/1/search' });
+
+      expect(res.statusCode).toBe(200);
+      const body = JSON.parse(res.payload);
+      expect(body.result).toBe('no_results');
+      expect(services.blacklist.getBlacklistedIdentifiers).toHaveBeenCalledWith(['h1', 'h2'], []);
+      expect(services.downloadOrchestrator.grab).not.toHaveBeenCalled();
+    });
+
+    it('manual search grabs clean result when mix of blacklisted and clean', async () => {
+      (services.book.getById as Mock).mockResolvedValue(mockBook);
+      (services.settings.get as Mock).mockResolvedValue(qualitySettings);
+      (services.blacklist.getBlacklistedIdentifiers as Mock).mockResolvedValue({
+        blacklistedHashes: new Set(),
+        blacklistedGuids: new Set(['bad-guid']),
+      });
+      mockStreamingSearch([
+        { title: 'Blacklisted', downloadUrl: 'https://example.com/dl1', protocol: 'torrent', size: 500000, seeders: 100, guid: 'bad-guid', indexerId: 1 },
+        { title: 'Clean', downloadUrl: 'https://example.com/dl2', protocol: 'torrent', size: 500000, seeders: 5, guid: 'good-guid', indexerId: 1 },
+      ]);
+
+      const res = await app.inject({ method: 'POST', url: '/api/books/1/search' });
+
+      expect(res.statusCode).toBe(200);
+      const body = JSON.parse(res.payload);
+      expect(body.result).toBe('grabbed');
+      expect(services.blacklist.getBlacklistedIdentifiers).toHaveBeenCalledWith([], ['bad-guid', 'good-guid']);
+      expect(services.downloadOrchestrator.grab).toHaveBeenCalledWith(
+        expect.objectContaining({ title: 'Clean' }),
+      );
     });
   });
 
