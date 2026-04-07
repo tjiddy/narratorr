@@ -1,4 +1,5 @@
 export * from './audio-constants.js';
+export * from './cover-regex.js';
 export * from './magnet.js';
 export * from './naming.js';
 export * from './naming-presets.js';

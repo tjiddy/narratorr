@@ -1,9 +1,9 @@
 import { readdir, copyFile, mkdir, rm, readFile, unlink } from 'node:fs/promises';
 import { join } from 'node:path';
 import type { FastifyBaseLogger } from 'fastify';
+import { COVER_FILE_REGEX } from '../../core/utils/cover-regex.js';
 
-/** Shared regex matching cover image files — used by cover endpoint and cache. */
-export const COVER_FILE_REGEX = /^cover\.(jpg|jpeg|png|webp)$/i;
+export { COVER_FILE_REGEX };
 
 /**
  * Copy a cover image from the book directory to a persistent cache.

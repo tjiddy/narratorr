@@ -5,8 +5,7 @@ import { eq } from 'drizzle-orm';
 import type { Db } from '../../db/index.js';
 import type { FastifyBaseLogger } from 'fastify';
 import { books } from '../../db/schema.js';
-
-const COVER_PATTERN = /^cover\.(jpg|jpeg|png|webp)$/i;
+import { COVER_FILE_REGEX } from '../../core/utils/cover-regex.js';
 
 const DOWNLOAD_TIMEOUT_MS = 30_000;
 
@@ -76,7 +75,7 @@ export async function downloadRemoteCover(
     const targetFilename = `cover.${ext}`;
     const entries = await readdir(bookPath).catch(() => [] as string[]);
     for (const entry of entries) {
-      if (COVER_PATTERN.test(entry) && entry.toLowerCase() !== targetFilename.toLowerCase()) {
+      if (COVER_FILE_REGEX.test(entry) && entry.toLowerCase() !== targetFilename.toLowerCase()) {
         await unlink(join(bookPath, entry)).catch(() => { /* best-effort cleanup */ });
       }
     }

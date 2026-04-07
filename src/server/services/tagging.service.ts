@@ -9,6 +9,7 @@ import type { TagMode } from '../../shared/schemas.js';
 import type { SettingsService } from './settings.service.js';
 import type { BookService } from './book.service.js';
 import { AUDIO_EXTENSIONS } from '../../core/utils/audio-constants.js';
+import { COVER_FILE_REGEX } from '../../core/utils/cover-regex.js';
 
 const execFileAsync = promisify(execFile);
 
@@ -214,7 +215,7 @@ async function fileHasCoverArt(filePath: string): Promise<boolean> {
 async function findCoverFile(dirPath: string): Promise<string | undefined> {
   try {
     const entries = await readdir(dirPath);
-    const coverFile = entries.find(f => /^cover\.(jpg|jpeg|png|webp)$/i.test(f));
+    const coverFile = entries.find(f => COVER_FILE_REGEX.test(f));
     return coverFile ? join(dirPath, coverFile) : undefined;
   } catch {
     return undefined;
