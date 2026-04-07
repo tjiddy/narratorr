@@ -12,6 +12,7 @@ import {
   TOAST_EVENT_CONFIG,
 } from '../../shared/schemas.js';
 import { setMergeProgress } from './useMergeProgress.js';
+import { handleSearchEvent } from './useSearchProgress.js';
 
 // ============================================================================
 // Reactive SSE connection state (F3)
@@ -121,6 +122,11 @@ export function useEventSource(apiKey: string | null) {
     // Merge progress tracking — update the reactive store
     updateMergeProgressFromEvent(type, data);
 
+    // Search progress tracking — update the reactive store
+    if (type.startsWith('search_')) {
+      handleSearchEvent(type as Extract<SSEEventType, `search_${string}`>, data as SSEEventPayloads[Extract<SSEEventType, `search_${string}`>]);
+    }
+
     // Toast notifications
     const toastConfig = TOAST_EVENT_CONFIG[type];
     if (toastConfig) {
@@ -167,6 +173,8 @@ export function useEventSource(apiKey: string | null) {
       'import_complete', 'grab_started', 'review_needed', 'merge_complete',
       'merge_started', 'merge_progress', 'merge_failed',
       'merge_queued', 'merge_queue_updated',
+      'search_started', 'search_indexer_complete', 'search_indexer_error',
+      'search_grabbed', 'search_complete',
     ];
 
     for (const type of eventTypes) {
