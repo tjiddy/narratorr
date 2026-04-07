@@ -266,7 +266,7 @@ function mapProduct(product: AudibleProduct): Record<string, unknown> {
     description: description || undefined,
     publisher: product.publisher_name || undefined,
     publishedDate,
-    language: product.language ? capitalize(product.language) : undefined,
+    language: product.language ? product.language.toLowerCase() : undefined,
     coverUrl,
     duration: product.runtime_length_min && !isNaN(product.runtime_length_min)
       ? product.runtime_length_min
@@ -311,8 +311,4 @@ function cleanTitle(title: string): string {
     .replace(/\s*\(Narrated by [^)]+\)/i, '')
     .replace(/,?\s*Book\s+\d+$/i, '')
     .trim();
-}
-
-function capitalize(s: string): string {
-  return s.charAt(0).toUpperCase() + s.slice(1).toLowerCase();
 }

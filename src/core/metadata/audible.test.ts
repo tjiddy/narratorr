@@ -88,10 +88,10 @@ describe('AudibleProvider', () => {
       expect(books[0].publisher).toBe('Pottermore Publishing');
     });
 
-    it('extracts language capitalized', async () => {
+    it('extracts language lowercase', async () => {
       const { books } = await provider.searchBooks('Harry Potter');
 
-      expect(books[0].language).toBe('English');
+      expect(books[0].language).toBe('english');
     });
 
     it('throws TransientError on API error (5xx)', async () => {
@@ -329,8 +329,8 @@ describe('AudibleProvider', () => {
 
       // Default provider uses 'us' region → preferred language is 'english'
       const { books } = await provider.searchBooks('test');
-      expect(books[0].language).toBe('English');
-      expect(books[1].language).toBe('French');
+      expect(books[0].language).toBe('english');
+      expect(books[1].language).toBe('french');
     });
   });
 
