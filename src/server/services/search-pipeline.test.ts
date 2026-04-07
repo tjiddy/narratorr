@@ -3,6 +3,7 @@ import { buildSearchQuery, filterAndRankResults, searchAndGrabForBook } from './
 import type { IndexerService } from './indexer.service.js';
 import type { DownloadOrchestrator } from './download-orchestrator.js';
 import { DuplicateDownloadError } from './download.service.js';
+import type { EventBroadcasterService } from './event-broadcaster.service.js';
 import type { FastifyBaseLogger } from 'fastify';
 import type { SearchResult } from '../../core/index.js';
 
@@ -576,32 +577,214 @@ describe('filterAndRankResults — language filtering', () => {
 // ============================================================================
 
 describe('#392 searchAndGrabForBook with broadcaster', () => {
+  let indexerService: IndexerService;
+  let downloadService: DownloadOrchestrator;
+  let broadcaster: EventBroadcasterService;
+  let log: FastifyBaseLogger;
+
+  const book = { id: 1, title: 'Test Book', duration: 3600, authors: [{ name: 'Author' }] };
+
+  beforeEach(() => {
+    broadcaster = {
+      emit: vi.fn(),
+    } as unknown as EventBroadcasterService;
+
+    log = createMockLogger();
+
+    downloadService = {
+      grab: vi.fn().mockResolvedValue({ id: 1, status: 'downloading' }),
+    } as unknown as DownloadOrchestrator;
+
+    // Default: searchAllStreaming returns results and invokes onComplete callback
+    indexerService = {
+      searchAllStreaming: vi.fn().mockImplementation(
+        async (_query: string, _options: unknown, _controllers: Map<number, AbortController>, callbacks: { onComplete: (id: number, name: string, count: number, ms: number) => void }) => {
+          callbacks.onComplete(10, 'MAM', 1, 500);
+          return [makeResult({ indexerId: 10 })];
+        },
+      ),
+      getEnabledIndexers: vi.fn().mockResolvedValue([{ id: 10, name: 'MAM' }]),
+    } as unknown as IndexerService;
+  });
+
   describe('search_started emission', () => {
-    it.todo('emits search_started with correct indexer list before querying');
-    it.todo('emits search_started even when no enabled indexers (empty list)');
+    it('emits search_started with correct indexer list before querying', async () => {
+      await searchAndGrabForBook(book, indexerService, downloadService, defaultQualitySettings, log, broadcaster);
+      expect(broadcaster.emit).toHaveBeenCalledWith('search_started', {
+        book_id: 1,
+        book_title: 'Test Book',
+        indexers: [{ id: 10, name: 'MAM' }],
+      });
+    });
+
+    it('emits search_started even when no enabled indexers (empty list)', async () => {
+      vi.mocked(indexerService.getEnabledIndexers).mockResolvedValue([]);
+      vi.mocked(indexerService.searchAllStreaming).mockResolvedValue([]);
+      await searchAndGrabForBook(book, indexerService, downloadService, defaultQualitySettings, log, broadcaster);
+      expect(broadcaster.emit).toHaveBeenCalledWith('search_started', {
+        book_id: 1,
+        book_title: 'Test Book',
+        indexers: [],
+      });
+    });
   });
 
   describe('per-indexer events', () => {
-    it.todo('emits search_indexer_complete with results_found and elapsed_ms for each successful indexer');
-    it.todo('emits search_indexer_error with error message and elapsed_ms when indexer throws');
-    it.todo('emits search_indexer_complete with results_found: 0 for indexer returning empty results');
+    it('emits search_indexer_complete with results_found and elapsed_ms for each successful indexer', async () => {
+      await searchAndGrabForBook(book, indexerService, downloadService, defaultQualitySettings, log, broadcaster);
+      expect(broadcaster.emit).toHaveBeenCalledWith('search_indexer_complete', {
+        book_id: 1,
+        indexer_id: 10,
+        indexer_name: 'MAM',
+        results_found: 1,
+        elapsed_ms: 500,
+      });
+    });
+
+    it('emits search_indexer_error with error message and elapsed_ms when indexer throws', async () => {
+      vi.mocked(indexerService.searchAllStreaming).mockImplementation(
+        async (_q, _o, _c, callbacks) => {
+          callbacks.onError(10, 'MAM', 'timeout', 30000);
+          return [];
+        },
+      );
+      await searchAndGrabForBook(book, indexerService, downloadService, defaultQualitySettings, log, broadcaster);
+      expect(broadcaster.emit).toHaveBeenCalledWith('search_indexer_error', {
+        book_id: 1,
+        indexer_id: 10,
+        indexer_name: 'MAM',
+        error: 'timeout',
+        elapsed_ms: 30000,
+      });
+    });
+
+    it('emits search_indexer_complete with results_found: 0 for indexer returning empty results', async () => {
+      vi.mocked(indexerService.searchAllStreaming).mockImplementation(
+        async (_q, _o, _c, callbacks) => {
+          callbacks.onComplete(10, 'MAM', 0, 200);
+          return [];
+        },
+      );
+      await searchAndGrabForBook(book, indexerService, downloadService, defaultQualitySettings, log, broadcaster);
+      expect(broadcaster.emit).toHaveBeenCalledWith('search_indexer_complete', {
+        book_id: 1,
+        indexer_id: 10,
+        indexer_name: 'MAM',
+        results_found: 0,
+        elapsed_ms: 200,
+      });
+    });
   });
 
   describe('outcome events', () => {
-    it.todo('emits search_grabbed then search_complete with outcome grabbed on successful grab');
-    it.todo('emits search_complete with outcome no_results when raw results are empty');
-    it.todo('emits search_complete with outcome no_results when all results filtered out');
-    it.todo('emits search_complete with outcome no_results on DuplicateDownloadError (not search_grabbed)');
-    it.todo('emits search_complete with outcome no_results on generic grab error');
-    it.todo('total_results in search_complete sums across all indexers');
+    it('emits search_grabbed then search_complete with outcome grabbed on successful grab', async () => {
+      await searchAndGrabForBook(book, indexerService, downloadService, defaultQualitySettings, log, broadcaster);
+      const emitCalls = vi.mocked(broadcaster.emit).mock.calls;
+      const grabbedCall = emitCalls.find(c => c[0] === 'search_grabbed');
+      const completeCall = emitCalls.find(c => c[0] === 'search_complete');
+      expect(grabbedCall).toBeDefined();
+      expect(grabbedCall![1]).toEqual({
+        book_id: 1,
+        release_title: 'Test Book',
+        indexer_name: 'MAM',
+      });
+      expect(completeCall).toBeDefined();
+      expect(completeCall![1]).toEqual({
+        book_id: 1,
+        total_results: 1,
+        outcome: 'grabbed',
+      });
+      // search_grabbed must come before search_complete
+      const grabbedIdx = emitCalls.indexOf(grabbedCall!);
+      const completeIdx = emitCalls.indexOf(completeCall!);
+      expect(grabbedIdx).toBeLessThan(completeIdx);
+    });
+
+    it('emits search_complete with outcome no_results when raw results are empty', async () => {
+      vi.mocked(indexerService.searchAllStreaming).mockResolvedValue([]);
+      vi.mocked(indexerService.getEnabledIndexers).mockResolvedValue([]);
+      await searchAndGrabForBook(book, indexerService, downloadService, defaultQualitySettings, log, broadcaster);
+      expect(broadcaster.emit).toHaveBeenCalledWith('search_complete', {
+        book_id: 1,
+        total_results: 0,
+        outcome: 'no_results',
+      });
+    });
+
+    it('emits search_complete with outcome no_results when all results filtered out', async () => {
+      vi.mocked(indexerService.searchAllStreaming).mockImplementation(
+        async (_q, _o, _c, callbacks) => {
+          callbacks.onComplete(10, 'MAM', 1, 300);
+          return [makeResult({ size: 100 })];
+        },
+      );
+      const settings = { ...defaultQualitySettings, grabFloor: 999 };
+      await searchAndGrabForBook(book, indexerService, downloadService, settings, log, broadcaster);
+      expect(broadcaster.emit).toHaveBeenCalledWith('search_complete', expect.objectContaining({
+        outcome: 'no_results',
+      }));
+      expect(broadcaster.emit).not.toHaveBeenCalledWith('search_grabbed', expect.anything());
+    });
+
+    it('emits search_complete with outcome no_results on DuplicateDownloadError (not search_grabbed)', async () => {
+      vi.mocked(downloadService.grab).mockRejectedValue(new DuplicateDownloadError('Active download exists', 'ACTIVE_DOWNLOAD_EXISTS'));
+      await searchAndGrabForBook(book, indexerService, downloadService, defaultQualitySettings, log, broadcaster);
+      expect(broadcaster.emit).not.toHaveBeenCalledWith('search_grabbed', expect.anything());
+      expect(broadcaster.emit).toHaveBeenCalledWith('search_complete', expect.objectContaining({
+        outcome: 'no_results',
+      }));
+    });
+
+    it('emits search_complete with outcome no_results on generic grab error', async () => {
+      vi.mocked(downloadService.grab).mockRejectedValue(new Error('Connection refused'));
+      await searchAndGrabForBook(book, indexerService, downloadService, defaultQualitySettings, log, broadcaster);
+      expect(broadcaster.emit).not.toHaveBeenCalledWith('search_grabbed', expect.anything());
+      expect(broadcaster.emit).toHaveBeenCalledWith('search_complete', expect.objectContaining({
+        outcome: 'no_results',
+      }));
+    });
+
+    it('total_results in search_complete sums across all indexers', async () => {
+      vi.mocked(indexerService.getEnabledIndexers).mockResolvedValue([{ id: 10, name: 'MAM' }, { id: 20, name: 'ABB' }]);
+      vi.mocked(indexerService.searchAllStreaming).mockImplementation(
+        async (_q, _o, _c, callbacks) => {
+          callbacks.onComplete(10, 'MAM', 3, 500);
+          callbacks.onComplete(20, 'ABB', 2, 800);
+          return [makeResult({ indexerId: 10 }), makeResult({ indexerId: 10 }), makeResult({ indexerId: 10 }), makeResult({ indexerId: 20 }), makeResult({ indexerId: 20 })];
+        },
+      );
+      await searchAndGrabForBook(book, indexerService, downloadService, defaultQualitySettings, log, broadcaster);
+      expect(broadcaster.emit).toHaveBeenCalledWith('search_complete', expect.objectContaining({
+        total_results: 5,
+      }));
+    });
   });
 
   describe('backwards compatibility', () => {
-    it.todo('no events emitted when broadcaster is not provided');
+    it('no events emitted when broadcaster is not provided', async () => {
+      // Use searchAll mock since without broadcaster, the function should still work
+      indexerService = {
+        searchAll: vi.fn().mockResolvedValue([makeResult()]),
+      } as unknown as IndexerService;
+      const result = await searchAndGrabForBook(book, indexerService, downloadService, defaultQualitySettings, log);
+      expect(result).toEqual({ result: 'grabbed', title: 'Test Book' });
+      // No broadcaster passed — should not throw
+    });
   });
 
   describe('fire-and-forget safety', () => {
-    it.todo('broadcaster.emit() throwing does not break search pipeline');
-    it.todo('search still returns correct result when broadcaster fails');
+    it('broadcaster.emit() throwing does not break search pipeline', async () => {
+      vi.mocked(broadcaster.emit).mockImplementation(() => { throw new Error('SSE write failed'); });
+      const result = await searchAndGrabForBook(book, indexerService, downloadService, defaultQualitySettings, log, broadcaster);
+      expect(result.result).toBe('grabbed');
+    });
+
+    it('search still returns correct result when broadcaster fails', async () => {
+      vi.mocked(broadcaster.emit).mockImplementation(() => { throw new Error('SSE write failed'); });
+      vi.mocked(indexerService.searchAllStreaming).mockResolvedValue([]);
+      vi.mocked(indexerService.getEnabledIndexers).mockResolvedValue([]);
+      const result = await searchAndGrabForBook(book, indexerService, downloadService, defaultQualitySettings, log, broadcaster);
+      expect(result).toEqual({ result: 'no_results' });
+    });
   });
 });
