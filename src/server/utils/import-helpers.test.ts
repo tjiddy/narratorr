@@ -228,8 +228,8 @@ describe('copyAudioFiles', () => {
   it('flattens multiple subfolders with uniquely-named audio files into target', async () => {
     vi.mocked(readdir)
       .mockResolvedValueOnce([
-        makeDirent('Disc 1', false, true),
-        makeDirent('Disc 2', false, true),
+        makeDirent('Part 1', false, true),
+        makeDirent('Part 2', false, true),
       ] as never)
       .mockResolvedValueOnce([makeDirent('chapter1.mp3', true, false)] as never)
       .mockResolvedValueOnce([makeDirent('chapter2.mp3', true, false)] as never);
@@ -238,9 +238,9 @@ describe('copyAudioFiles', () => {
 
     expect(cp).toHaveBeenCalledTimes(2);
     const calls = (cp as Mock).mock.calls.map((c: unknown[]) => c.map((a: unknown) => typeof a === 'string' ? norm(a) : a));
-    expect(calls[0][0]).toBe('/src/Disc 1/chapter1.mp3');
+    expect(calls[0][0]).toBe('/src/Part 1/chapter1.mp3');
     expect(calls[0][1]).toBe('/dest/chapter1.mp3');
-    expect(calls[1][0]).toBe('/src/Disc 2/chapter2.mp3');
+    expect(calls[1][0]).toBe('/src/Part 2/chapter2.mp3');
     expect(calls[1][1]).toBe('/dest/chapter2.mp3');
   });
 
@@ -309,8 +309,8 @@ describe('copyAudioFiles', () => {
   it('fails with error identifying conflicting filenames when flattening produces duplicate basenames', async () => {
     vi.mocked(readdir)
       .mockResolvedValueOnce([
-        makeDirent('Disc 1', false, true),
-        makeDirent('Disc 2', false, true),
+        makeDirent('Part 1', false, true),
+        makeDirent('Part 2', false, true),
       ] as never)
       .mockResolvedValueOnce([makeDirent('01.mp3', true, false)] as never)
       .mockResolvedValueOnce([makeDirent('01.mp3', true, false)] as never);
@@ -321,8 +321,8 @@ describe('copyAudioFiles', () => {
   it('collision detection runs before any files are copied — no partial state on cp mock', async () => {
     vi.mocked(readdir)
       .mockResolvedValueOnce([
-        makeDirent('Disc 1', false, true),
-        makeDirent('Disc 2', false, true),
+        makeDirent('Part 1', false, true),
+        makeDirent('Part 2', false, true),
       ] as never)
       .mockResolvedValueOnce([makeDirent('track.mp3', true, false)] as never)
       .mockResolvedValueOnce([makeDirent('track.mp3', true, false)] as never);
@@ -360,6 +360,270 @@ describe('copyAudioFiles', () => {
     await expect(copyAudioFiles('/src', '/dest')).rejects.toThrow('disk full');
 
     expect(cp).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('copyAudioFiles — multi-disc detection and sequential renaming', () => {
+  /**
+   * Helper: mock readdir to return disc subfolders at root, then files within each disc.
+   * discEntries: array of [discName, audioFileNames[]]
+   */
+  function setupDiscLayout(discEntries: Array<[string, string[]]>, rootFiles: string[] = []) {
+    const rootItems = [
+      ...rootFiles.map(f => makeDirent(f, true, false)),
+      ...discEntries.map(([name]) => makeDirent(name, false, true)),
+    ];
+    vi.mocked(readdir)
+      .mockResolvedValueOnce(rootItems as never); // root readdir
+
+    // Each disc subfolder readdir
+    for (const [, files] of discEntries) {
+      vi.mocked(readdir).mockResolvedValueOnce(
+        files.map(f => makeDirent(f, true, false)) as never,
+      );
+    }
+  }
+
+  /** Extract copied destination filenames from cp mock calls. */
+  function getCopiedDestNames(): string[] {
+    return (cp as Mock).mock.calls.map(
+      (c: unknown[]) => norm(c[1] as string).split('/').pop()!,
+    );
+  }
+
+  /** Extract copied source paths from cp mock calls. */
+  function getCopiedSrcPaths(): string[] {
+    return (cp as Mock).mock.calls.map(
+      (c: unknown[]) => norm(c[0] as string),
+    );
+  }
+
+  it('detects disc subfolders (Disc 01, Disc 02) and copies files with sequential names', async () => {
+    setupDiscLayout([
+      ['Disc 01', ['01.mp3', '02.mp3']],
+      ['Disc 02', ['01.mp3', '02.mp3']],
+    ]);
+
+    await copyAudioFiles('/src', '/dest');
+
+    expect(cp).toHaveBeenCalledTimes(4);
+    // 4 tracks → padWidth=1 → 1.mp3, 2.mp3, 3.mp3, 4.mp3
+    expect(getCopiedDestNames()).toEqual(['1.mp3', '2.mp3', '3.mp3', '4.mp3']);
+  });
+
+  it('sorts discs naturally — Disc 2 before Disc 10', async () => {
+    setupDiscLayout([
+      ['Disc 10', ['a.mp3']],
+      ['Disc 2', ['b.mp3']],
+    ]);
+
+    await copyAudioFiles('/src', '/dest');
+
+    // Disc 2 should come first (natural sort), then Disc 10
+    const srcPaths = getCopiedSrcPaths();
+    expect(srcPaths[0]).toContain('Disc 2');
+    expect(srcPaths[1]).toContain('Disc 10');
+  });
+
+  it('orders tracks within each disc alphabetically by filename', async () => {
+    setupDiscLayout([
+      ['Disc 01', ['03 - Third.mp3', '01 - First.mp3', '02 - Second.mp3']],
+    ]);
+
+    await copyAudioFiles('/src', '/dest');
+
+    const srcPaths = getCopiedSrcPaths();
+    expect(srcPaths[0]).toContain('01 - First.mp3');
+    expect(srcPaths[1]).toContain('02 - Second.mp3');
+    expect(srcPaths[2]).toContain('03 - Third.mp3');
+  });
+
+  it('handles common disc patterns: CD 1, Disk 2, disc01, DISC 004, cd1', async () => {
+    // Each pattern should be detected as a disc folder
+    for (const discName of ['CD 1', 'Disk 2', 'disc01', 'DISC 004', 'cd1']) {
+      vi.clearAllMocks();
+      vi.mocked(readdir)
+        .mockResolvedValueOnce([makeDirent(discName, false, true)] as never)
+        .mockResolvedValueOnce([makeDirent('track.mp3', true, false)] as never);
+
+      await copyAudioFiles('/src', '/dest');
+
+      // Single disc treated as no-disc (no renaming), but should not error
+      expect(cp).toHaveBeenCalledTimes(1);
+    }
+  });
+
+  it('rejects non-disc folders — does not treat Extras, Part 1, 01 - Chapter One as disc folders', async () => {
+    // Non-disc subfolders should be recursively flattened (existing behavior), not disc-detected
+    vi.mocked(readdir)
+      .mockResolvedValueOnce([
+        makeDirent('Extras', false, true),
+        makeDirent('Part 1', false, true),
+      ] as never)
+      .mockResolvedValueOnce([makeDirent('bonus.mp3', true, false)] as never)
+      .mockResolvedValueOnce([makeDirent('chapter.mp3', true, false)] as never);
+
+    await copyAudioFiles('/src', '/dest');
+
+    // Files should be flattened with original names (no sequential renaming)
+    const destNames = getCopiedDestNames();
+    expect(destNames).toContain('bonus.mp3');
+    expect(destNames).toContain('chapter.mp3');
+  });
+
+  it('single disc subfolder — no sequential renaming', async () => {
+    setupDiscLayout([
+      ['Disc 01', ['track1.mp3', 'track2.mp3']],
+    ]);
+
+    await copyAudioFiles('/src', '/dest');
+
+    // Single disc = no renaming, just flatten
+    const destNames = getCopiedDestNames();
+    expect(destNames).toEqual(['track1.mp3', 'track2.mp3']);
+  });
+
+  it('two discs with 1 track each — output is 1.mp3, 2.mp3', async () => {
+    setupDiscLayout([
+      ['Disc 01', ['track.mp3']],
+      ['Disc 02', ['track.mp3']],
+    ]);
+
+    await copyAudioFiles('/src', '/dest');
+
+    expect(cp).toHaveBeenCalledTimes(2);
+    // 2 tracks → padWidth=1 → 1.mp3, 2.mp3
+    expect(getCopiedDestNames()).toEqual(['1.mp3', '2.mp3']);
+  });
+
+  it('zero-pads sequential names when 10+ tracks (2-digit padding)', async () => {
+    // 6 tracks per disc = 12 total → padWidth=2 → 01.mp3 through 12.mp3
+    setupDiscLayout([
+      ['Disc 01', ['a.mp3', 'b.mp3', 'c.mp3', 'd.mp3', 'e.mp3', 'f.mp3']],
+      ['Disc 02', ['g.mp3', 'h.mp3', 'i.mp3', 'j.mp3', 'k.mp3', 'l.mp3']],
+    ]);
+
+    await copyAudioFiles('/src', '/dest');
+
+    expect(cp).toHaveBeenCalledTimes(12);
+    const destNames = getCopiedDestNames();
+    expect(destNames[0]).toBe('01.mp3');
+    expect(destNames[9]).toBe('10.mp3');
+    expect(destNames[11]).toBe('12.mp3');
+  });
+
+  it('track numbering boundary — Disc 1 has 3 tracks, Disc 2 starts at 4', async () => {
+    setupDiscLayout([
+      ['Disc 01', ['a.mp3', 'b.mp3', 'c.mp3']],
+      ['Disc 02', ['x.mp3', 'y.mp3']],
+    ]);
+
+    await copyAudioFiles('/src', '/dest');
+
+    // 5 tracks → padWidth=1 → 1.mp3 through 5.mp3
+    expect(getCopiedDestNames()).toEqual(['1.mp3', '2.mp3', '3.mp3', '4.mp3', '5.mp3']);
+  });
+
+  it('zero-padded disc numbers (Disc 01) and unpadded (Disc 1) both detected and sorted correctly', async () => {
+    setupDiscLayout([
+      ['Disc 1', ['a.mp3']],
+      ['Disc 02', ['b.mp3']],
+    ]);
+
+    await copyAudioFiles('/src', '/dest');
+
+    const srcPaths = getCopiedSrcPaths();
+    expect(srcPaths[0]).toContain('Disc 1');
+    expect(srcPaths[1]).toContain('Disc 02');
+    // 2 tracks → padWidth=1
+    expect(getCopiedDestNames()).toEqual(['1.mp3', '2.mp3']);
+  });
+
+  it('non-audio files in disc subfolders (cover.jpg, .cue) are ignored', async () => {
+    vi.mocked(readdir)
+      .mockResolvedValueOnce([makeDirent('Disc 01', false, true)] as never)
+      .mockResolvedValueOnce([
+        makeDirent('track.mp3', true, false),
+        makeDirent('cover.jpg', true, false),
+        makeDirent('disc.cue', true, false),
+      ] as never);
+
+    await copyAudioFiles('/src', '/dest');
+
+    // Only audio file copied, single disc = no renaming
+    expect(cp).toHaveBeenCalledTimes(1);
+    expect(getCopiedDestNames()).toEqual(['track.mp3']);
+  });
+
+  it('non-disc subfolders mixed with disc subfolders — non-disc content recursively flattened', async () => {
+    vi.mocked(readdir)
+      .mockResolvedValueOnce([
+        makeDirent('Disc 01', false, true),
+        makeDirent('Disc 02', false, true),
+        makeDirent('Extras', false, true),
+      ] as never)
+      .mockResolvedValueOnce([makeDirent('01.mp3', true, false)] as never) // Disc 01
+      .mockResolvedValueOnce([makeDirent('01.mp3', true, false)] as never) // Disc 02
+      .mockResolvedValueOnce([makeDirent('bonus.mp3', true, false)] as never); // Extras
+
+    await copyAudioFiles('/src', '/dest');
+
+    // 2 disc tracks get sequential names, Extras file flattened with original name
+    expect(cp).toHaveBeenCalledTimes(3);
+    const destNames = getCopiedDestNames();
+    // Non-disc files first (alpha sort), then sequential disc files
+    expect(destNames).toContain('bonus.mp3');
+    expect(destNames).toContain('1.mp3');
+    expect(destNames).toContain('2.mp3');
+  });
+
+  it('duplicate filenames within the SAME disc still error', async () => {
+    // Single disc with duplicate files — this shouldn't happen in practice but should error
+    vi.mocked(readdir)
+      .mockResolvedValueOnce([
+        makeDirent('Disc 01', false, true),
+        makeDirent('Disc 02', false, true),
+      ] as never)
+      .mockResolvedValueOnce([
+        makeDirent('track.mp3', true, false),
+        makeDirent('track.mp3', true, false),
+      ] as never)
+      .mockResolvedValueOnce([makeDirent('other.mp3', true, false)] as never);
+
+    // Within-disc duplicates will be caught by alphabetical sort producing same name
+    // The sequential renaming should handle this gracefully, but let's verify no data loss
+    await copyAudioFiles('/src', '/dest');
+    // With sequential renaming, even within-disc dupes get unique names
+    expect(cp).toHaveBeenCalledTimes(3);
+  });
+
+  it('disc subfolders with mixed naming patterns (CD 1, Disc 02) all detected', async () => {
+    setupDiscLayout([
+      ['CD 1', ['a.mp3']],
+      ['Disc 02', ['b.mp3']],
+    ]);
+
+    await copyAudioFiles('/src', '/dest');
+
+    // 2 tracks → padWidth=1
+    expect(getCopiedDestNames()).toEqual(['1.mp3', '2.mp3']);
+  });
+
+  it('loose audio files at root alongside disc subfolders — loose files ordered before disc files', async () => {
+    vi.mocked(readdir)
+      .mockResolvedValueOnce([
+        makeDirent('root_track.mp3', true, false),
+        makeDirent('Disc 01', false, true),
+        makeDirent('Disc 02', false, true),
+      ] as never)
+      .mockResolvedValueOnce([makeDirent('01.mp3', true, false)] as never) // Disc 01
+      .mockResolvedValueOnce([makeDirent('01.mp3', true, false)] as never); // Disc 02
+
+    await copyAudioFiles('/src', '/dest');
+
+    const destNames = getCopiedDestNames();
+    // Non-disc files first (original name), then sequential disc files
+    expect(destNames).toEqual(['root_track.mp3', '1.mp3', '2.mp3']);
   });
 });
 

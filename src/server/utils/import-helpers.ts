@@ -1,6 +1,7 @@
 import { stat, readdir, mkdir, cp } from 'node:fs/promises';
 import { join, extname } from 'node:path';
 import { renderTemplate, toLastFirst, toSortTitle, AUDIO_EXTENSIONS } from '../../core/utils/index.js';
+import { DISC_FOLDER_PATTERN } from '../../core/utils/book-discovery.js';
 import type { NamingOptions } from '../../core/utils/naming.js';
 
 import type { books, authors } from '../../db/schema.js';
@@ -112,18 +113,80 @@ async function collectAudioFiles(
 
 /** Copy audio files from source to target, flattening all subdirectories. */
 export async function copyAudioFiles(source: string, target: string): Promise<void> {
-  const files = await collectAudioFiles(source);
+  // Read immediate children to detect disc subfolders
+  const rootEntries = await readdir(source, { withFileTypes: true });
 
-  // Check for basename collisions before copying anything
-  const seen = new Map<string, string>();
-  for (const file of files) {
-    const existing = seen.get(file.name);
-    if (existing) {
-      throw new Error(
-        `Duplicate filename "${file.name}" found during import flattening: "${existing}" and "${file.srcPath}"`,
-      );
+  const discFolders: Array<{ name: string; path: string }> = [];
+  const otherEntries: typeof rootEntries = [];
+
+  for (const entry of rootEntries) {
+    if (entry.isDirectory() && DISC_FOLDER_PATTERN.test(entry.name)) {
+      discFolders.push({ name: entry.name, path: join(source, entry.name) });
+    } else {
+      otherEntries.push(entry);
     }
-    seen.set(file.name, file.srcPath);
+  }
+
+  const isMultiDisc = discFolders.length >= 2;
+
+  let files: Array<{ srcPath: string; name: string }>;
+
+  if (isMultiDisc) {
+    // Sort discs naturally (Disc 2 before Disc 10)
+    discFolders.sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true }));
+
+    // Collect audio files from each disc in order
+    const discFiles: Array<{ srcPath: string; name: string }> = [];
+    for (const disc of discFolders) {
+      const discAudio = await collectAudioFiles(disc.path);
+      discFiles.push(...discAudio);
+    }
+
+    // Assign sequential filenames to disc files
+    const totalTracks = discFiles.length;
+    const padWidth = String(totalTracks).length;
+    const sequentialFiles = discFiles.map((file, i) => ({
+      srcPath: file.srcPath,
+      name: `${String(i + 1).padStart(padWidth, '0')}${extname(file.name)}`,
+    }));
+
+    // Collect non-disc entries (loose files + non-disc subfolders)
+    const nonDiscFiles: Array<{ srcPath: string; name: string }> = [];
+    for (const entry of otherEntries) {
+      const fullPath = join(source, entry.name);
+      if (entry.isFile() && AUDIO_EXTENSIONS.has(extname(entry.name).toLowerCase())) {
+        nonDiscFiles.push({ srcPath: fullPath, name: entry.name });
+      } else if (entry.isDirectory()) {
+        nonDiscFiles.push(...await collectAudioFiles(fullPath));
+      }
+    }
+    nonDiscFiles.sort((a, b) => a.name.localeCompare(b.name));
+
+    files = [...nonDiscFiles, ...sequentialFiles];
+  } else {
+    // Standard recursive collect — reuse root entries to avoid double readdir
+    const results: Array<{ srcPath: string; name: string }> = [];
+    for (const entry of rootEntries) {
+      const fullPath = join(source, entry.name);
+      if (entry.isDirectory()) {
+        results.push(...await collectAudioFiles(fullPath));
+      } else if (entry.isFile() && AUDIO_EXTENSIONS.has(extname(entry.name).toLowerCase())) {
+        results.push({ srcPath: fullPath, name: entry.name });
+      }
+    }
+    files = results.sort((a, b) => a.name.localeCompare(b.name));
+
+    // Check for basename collisions before copying anything
+    const seen = new Map<string, string>();
+    for (const file of files) {
+      const existing = seen.get(file.name);
+      if (existing) {
+        throw new Error(
+          `Duplicate filename "${file.name}" found during import flattening: "${existing}" and "${file.srcPath}"`,
+        );
+      }
+      seen.set(file.name, file.srcPath);
+    }
   }
 
   // Copy all files flat into target
