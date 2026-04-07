@@ -17,9 +17,9 @@ export function buildSearchQuery(book: { title: string; authors?: Array<{ name: 
 
 /**
  * Canonical ranking comparator:
- * matchScore gate → MB/hr → protocol preference → language → grabs → seeders.
+ * matchScore gate → MB/hr → protocol preference → language → indexer priority → grabs → seeders.
  */
-// eslint-disable-next-line complexity -- 6-tier sort with null coalescing inflates counted branches
+// eslint-disable-next-line complexity -- 7-tier sort with null coalescing inflates counted branches
 function canonicalCompare(
   a: SearchResult,
   b: SearchResult,
@@ -64,6 +64,11 @@ function canonicalCompare(
       if (aPrimary !== bPrimary) return bPrimary - aPrimary;
     }
   }
+
+  // Indexer priority tier: lower value = more preferred (ascending)
+  const prioA = a.indexerPriority ?? Infinity;
+  const prioB = b.indexerPriority ?? Infinity;
+  if (prioA !== prioB) return prioA - prioB;
 
   // Grabs tier: log-scale normalization
   const grabsA = Math.log10((a.grabs ?? 0) + 1);
