@@ -383,21 +383,21 @@ describe('canonicalCompare — grabs tiebreaker (#272)', () => {
     // a has better MB/hr, b has better grabs
     const a = makeResult({ matchScore: 0.9, size: 1000 * 1024 * 1024, grabs: 10, seeders: 5 });
     const b = makeResult({ matchScore: 0.9, size: 100 * 1024 * 1024, grabs: 10000, seeders: 5 });
-    const { results } = filterAndRankResults([b, a], 3600, 0, 0, 'none', undefined, undefined, '');
+    const { results } = filterAndRankResults([b, a], 3600, 0, 0, 'none', undefined, undefined, []);
     expect(results[0].grabs).toBe(10); // higher MB/hr wins
   });
 
   it('grabs=undefined on one result, grabs=1000 on other → result with grabs wins', () => {
     const a = makeResult({ matchScore: 0.9, grabs: 1000, seeders: 5 });
     const b = makeResult({ matchScore: 0.9, grabs: undefined, seeders: 5 });
-    const { results } = filterAndRankResults([b, a], undefined, 0, 0, 'none', undefined, undefined, '');
+    const { results } = filterAndRankResults([b, a], undefined, 0, 0, 'none', undefined, undefined, []);
     expect(results[0].grabs).toBe(1000);
   });
 
   it('both grabs=undefined → falls through to seeders tiebreaker', () => {
     const a = makeResult({ matchScore: 0.9, grabs: undefined, seeders: 20 });
     const b = makeResult({ matchScore: 0.9, grabs: undefined, seeders: 5 });
-    const { results } = filterAndRankResults([b, a], undefined, 0, 0, 'none', undefined, undefined, '');
+    const { results } = filterAndRankResults([b, a], undefined, 0, 0, 'none', undefined, undefined, []);
     expect(results[0].seeders).toBe(20);
   });
 
@@ -405,7 +405,7 @@ describe('canonicalCompare — grabs tiebreaker (#272)', () => {
     // log10(11) ≈ 1.04, log10(101) ≈ 2.00 → clear separation
     const a = makeResult({ matchScore: 0.9, grabs: 100, seeders: 5 });
     const b = makeResult({ matchScore: 0.9, grabs: 10, seeders: 5 });
-    const { results } = filterAndRankResults([b, a], undefined, 0, 0, 'none', undefined, undefined, '');
+    const { results } = filterAndRankResults([b, a], undefined, 0, 0, 'none', undefined, undefined, []);
     expect(results[0].grabs).toBe(100);
     expect(results[1].grabs).toBe(10);
   });
@@ -413,7 +413,7 @@ describe('canonicalCompare — grabs tiebreaker (#272)', () => {
   it('grabs=0 → Math.log10(1)=0, lowest-popularity, not treated as missing', () => {
     const a = makeResult({ matchScore: 0.9, grabs: 100, seeders: 5 });
     const b = makeResult({ matchScore: 0.9, grabs: 0, seeders: 5 });
-    const { results } = filterAndRankResults([b, a], undefined, 0, 0, 'none', undefined, undefined, '');
+    const { results } = filterAndRankResults([b, a], undefined, 0, 0, 'none', undefined, undefined, []);
     expect(results[0].grabs).toBe(100);
     expect(results[1].grabs).toBe(0);
   });
