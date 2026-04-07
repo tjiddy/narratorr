@@ -198,9 +198,9 @@ describe('WelcomeModal', () => {
     );
   });
 
-  it('Metadata region: US card links to https://docs.narratorr.dev/configuration/metadata/', () => {
+  it('Region: US · Language: English card links to https://docs.narratorr.dev/configuration/metadata/', () => {
     render(<WelcomeModal isOpen onDismiss={onDismiss} />);
-    expect(screen.getByRole('link', { name: /metadata region/i })).toHaveAttribute(
+    expect(screen.getByRole('link', { name: /Region: US/i })).toHaveAttribute(
       'href',
       'https://docs.narratorr.dev/configuration/metadata/',
     );
@@ -301,11 +301,11 @@ describe('WelcomeModal', () => {
     expect(texts.some((t) => t?.includes('Settings → Security'))).toBe(true);
   });
 
-  it('"Settings → Metadata" in Metadata region card description is wrapped in whitespace-nowrap span', () => {
+  it('"Settings → Search → Filtering" in Metadata region card description is wrapped in whitespace-nowrap span', () => {
     render(<WelcomeModal isOpen onDismiss={onDismiss} />);
     const nowrapSpans = document.querySelectorAll('.whitespace-nowrap');
     const texts = Array.from(nowrapSpans).map((el) => el.textContent);
-    expect(texts.some((t) => t?.includes('Settings → Metadata'))).toBe(true);
+    expect(texts.some((t) => t?.includes('Settings → Search → Filtering'))).toBe(true);
   });
 
   it('"Settings → Library" in Library path card description is wrapped in whitespace-nowrap span', () => {
@@ -316,16 +316,16 @@ describe('WelcomeModal', () => {
   });
 
   // Copy changes (AC7, AC9)
-  it('Audible region card title reads "Metadata region: US"', () => {
+  it('Audible region card title reads "Region: US · Language: English"', () => {
     render(<WelcomeModal isOpen onDismiss={onDismiss} />);
-    expect(screen.getByText('Metadata region: US')).toBeInTheDocument();
+    expect(screen.getByText('Region: US · Language: English')).toBeInTheDocument();
     expect(screen.queryByText('Audible region: US')).not.toBeInTheDocument();
   });
 
-  it('Audible region card description reads "Metadata searches default to the US region. Change it in Settings → Metadata."', () => {
+  it('Audible region card description reads "Metadata defaults to US region and English language. Change in Settings → Search → Filtering."', () => {
     render(<WelcomeModal isOpen onDismiss={onDismiss} />);
     expect(
-      screen.getByText(/Metadata searches default to the US region\. Change it in/),
+      screen.getByText(/Metadata defaults to US region and English language\. Change in/),
     ).toBeInTheDocument();
     expect(screen.queryByText(/US Audible store/)).not.toBeInTheDocument();
   });

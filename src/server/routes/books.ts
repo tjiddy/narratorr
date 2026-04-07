@@ -46,9 +46,9 @@ function triggerImmediateSearch(
   deps: Pick<BookRouteDeps, 'indexerService' | 'downloadOrchestrator' | 'settingsService'>,
   log: FastifyBaseLogger,
 ) {
-  deps.settingsService.get('quality')
-    .then(async (qualitySettings) => {
-      await searchAndGrabForBook(book, deps.indexerService!, deps.downloadOrchestrator, qualitySettings, log);
+  Promise.all([deps.settingsService.get('quality'), deps.settingsService.get('metadata')])
+    .then(async ([qualitySettings, metadataSettings]) => {
+      await searchAndGrabForBook(book, deps.indexerService!, deps.downloadOrchestrator, { ...qualitySettings, languages: metadataSettings.languages }, log);
     })
     .catch((err) => {
       log.warn({ error: err, bookId: book.id }, 'Search-immediately trigger failed');
@@ -139,11 +139,12 @@ function registerBookSearchRoute(app: FastifyInstance, deps: Pick<BookRouteDeps,
       }
 
       const qualitySettings = await deps.settingsService.get('quality');
+      const metadataSettings = await deps.settingsService.get('metadata');
       const result = await searchAndGrabForBook(
         book,
         deps.indexerService!,
         deps.downloadOrchestrator,
-        qualitySettings,
+        { ...qualitySettings, languages: metadataSettings.languages },
         request.log,
       );
       if (result.result === 'grab_error') {

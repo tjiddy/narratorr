@@ -2,6 +2,7 @@ import type { IndexerAdapter, SearchOptions, SearchResult } from './types.js';
 import { IndexerAuthError, ProxyError } from './errors.js';
 import { createProxyAgent, resolveProxyIp } from './proxy.js';
 import { normalizeLanguage } from '../utils/language-codes.js';
+import { MAM_LANGUAGES } from '../../shared/indexer-registry.js';
 
 export interface MAMConfig {
   mamId: string;
@@ -100,9 +101,10 @@ export class MyAnonamouseIndexer implements IndexerAdapter {
     const effectiveSearchType = this.isVip === true ? 'all' : this.isVip === false ? 'nVIP' : this.searchType;
     params.set('tor[searchType]', effectiveSearchType);
 
-    // Append language filter parameters (indexed array format)
-    for (let i = 0; i < this.searchLanguages.length; i++) {
-      params.set(`tor[browse_lang][${i}]`, String(this.searchLanguages[i]));
+    // Append language filter parameters from per-search options
+    const langIds = this.mapLanguagesToMamIds(options?.languages);
+    for (let i = 0; i < langIds.length; i++) {
+      params.set(`tor[browse_lang][${i}]`, String(langIds[i]));
     }
 
     const url = `${this.baseUrl}/tor/js/loadSearchJSONbasic.php?${params.toString()}`;
@@ -285,6 +287,24 @@ export class MyAnonamouseIndexer implements IndexerAdapter {
     } finally {
       clearTimeout(timeoutId);
     }
+  }
+
+  /**
+   * Map canonical language names to MAM numeric IDs.
+   * Falls back to cached per-indexer searchLanguages if no per-search languages provided.
+   * Names without a MAM ID mapping are silently skipped.
+   */
+  private mapLanguagesToMamIds(languages?: readonly string[]): number[] {
+    if (languages === undefined) {
+      return this.searchLanguages;
+    }
+    if (languages.length === 0) {
+      return [];
+    }
+    const nameToId = new Map(MAM_LANGUAGES.map((l) => [l.label.toLowerCase(), l.id]));
+    return languages
+      .map((name) => nameToId.get(name.toLowerCase()))
+      .filter((id): id is number => id !== undefined);
   }
 
   /**

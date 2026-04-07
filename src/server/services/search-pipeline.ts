@@ -23,7 +23,7 @@ function canonicalCompare(
   bookDuration: number | undefined,
   durationUnknown: boolean,
   protocolPreference: string,
-  preferredLanguage: string,
+  languages: readonly string[],
 ): number {
   const scoreA = a.matchScore ?? 0;
   const scoreB = b.matchScore ?? 0;
@@ -46,10 +46,20 @@ function canonicalCompare(
   }
 
   // Language tier: mismatch ranks below match/unknown (absence ≠ mismatch)
-  if (preferredLanguage) {
-    const aMatch = !a.language || a.language === preferredLanguage ? 1 : 0;
-    const bMatch = !b.language || b.language === preferredLanguage ? 1 : 0;
+  // Sub-tier: primary language (first entry) ranks above other matches
+  if (languages.length > 0) {
+    const primary = languages[0];
+    const aLang = a.language?.toLowerCase();
+    const bLang = b.language?.toLowerCase();
+    const aMatch = !aLang || languages.includes(aLang) ? 1 : 0;
+    const bMatch = !bLang || languages.includes(bLang) ? 1 : 0;
     if (aMatch !== bMatch) return bMatch - aMatch;
+    // Among matches, prefer primary language
+    if (aMatch === 1 && bMatch === 1 && languages.length > 1) {
+      const aPrimary = aLang === primary ? 1 : 0;
+      const bPrimary = bLang === primary ? 1 : 0;
+      if (aPrimary !== bPrimary) return bPrimary - aPrimary;
+    }
   }
 
   // Grabs tier: log-scale normalization
@@ -79,7 +89,7 @@ export function filterAndRankResults(
   protocolPreference: string,
   rejectWords?: string,
   requiredWords?: string,
-  preferredLanguage?: string,
+  languages?: readonly string[],
 ): { results: SearchResult[]; durationUnknown: boolean } {
   const durationUnknown = !bookDuration || bookDuration <= 0;
 
@@ -134,8 +144,17 @@ export function filterAndRankResults(
     });
   }
 
+  // Language filtering: exclude results with explicit non-matching language
+  const langs = languages ?? [];
+  if (langs.length > 0) {
+    filtered = filtered.filter((r) => {
+      if (!r.language) return true; // unknown → pass through
+      return langs.includes(r.language.toLowerCase());
+    });
+  }
+
   // Canonical ranking
-  filtered.sort((a, b) => canonicalCompare(a, b, bookDuration, durationUnknown, protocolPreference, preferredLanguage ?? ''));
+  filtered.sort((a, b) => canonicalCompare(a, b, bookDuration, durationUnknown, protocolPreference, langs));
 
   return { results: filtered, durationUnknown };
 }
@@ -182,6 +201,7 @@ export async function postProcessSearchResults(
 
   // Quality filtering and ranking
   const qualitySettings = await settingsService.get('quality');
+  const metadataSettings = await settingsService.get('metadata');
   const ranked = filterAndRankResults(
     filteredResults,
     bookDuration,
@@ -190,7 +210,7 @@ export async function postProcessSearchResults(
     qualitySettings.protocolPreference,
     qualitySettings.rejectWords,
     qualitySettings.requiredWords,
-    qualitySettings.preferredLanguage,
+    metadataSettings.languages,
   );
 
   return {
@@ -214,7 +234,7 @@ export async function searchAndGrabForBook(
   book: { id: number; title: string; duration?: number | null; authors?: Array<{ name: string }> | null },
   indexerService: IndexerService,
   downloadOrchestrator: DownloadOrchestrator,
-  qualitySettings: { grabFloor: number; minSeeders: number; protocolPreference: string; rejectWords?: string; requiredWords?: string; preferredLanguage?: string },
+  qualitySettings: { grabFloor: number; minSeeders: number; protocolPreference: string; rejectWords?: string; requiredWords?: string; languages?: readonly string[] },
   log: FastifyBaseLogger,
 ): Promise<SingleBookSearchResult> {
   const query = buildSearchQuery(book);
@@ -238,7 +258,7 @@ export async function searchAndGrabForBook(
     qualitySettings.protocolPreference,
     qualitySettings.rejectWords,
     qualitySettings.requiredWords,
-    qualitySettings.preferredLanguage,
+    qualitySettings.languages,
   );
 
   const best = results.find((r) => r.downloadUrl);

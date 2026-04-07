@@ -223,6 +223,89 @@ describe('retrySearch', () => {
     expect(result.outcome).toBe('retried');
   });
 
+  // ===== #386 — metadata.languages wiring in retry search =====
+
+  it('reads metadata.languages and passes them to filterAndRankResults', async () => {
+    const settings = createMockSettingsService({
+      metadata: { audibleRegion: 'us', languages: ['english'] },
+    });
+    const deps = createDeps({ settingsService: settings });
+
+    await retrySearch(1, deps);
+
+    // settingsService.get('metadata') must be called to get languages
+    expect(settings.get).toHaveBeenCalledWith('metadata');
+    expect(settings.get).toHaveBeenCalledWith('quality');
+  });
+
+  it('languages filter causes non-matching language candidates to be skipped', async () => {
+    const frenchResult = {
+      title: 'The Way of Kings [MP3 64kbps]',
+      protocol: 'torrent' as const,
+      downloadUrl: 'magnet:?xt=urn:btih:french',
+      infoHash: 'french123',
+      size: 500000000,
+      seeders: 10,
+      indexer: 'TestIndexer',
+      language: 'french',
+    };
+    const settings = createMockSettingsService({
+      metadata: { audibleRegion: 'us', languages: ['english'] },
+    });
+    const deps = createDeps({
+      settingsService: settings,
+      indexerService: inject<IndexerService>({
+        searchAll: vi.fn().mockResolvedValue([frenchResult]),
+      }),
+    });
+
+    const result = await retrySearch(1, deps);
+
+    // French result filtered out by language → no candidates
+    expect(result.outcome).toBe('no_candidates');
+    expect(deps.downloadOrchestrator.grab).not.toHaveBeenCalled();
+  });
+
+  it('languages filter allows matching language candidate to be grabbed', async () => {
+    const englishResult = {
+      title: 'The Way of Kings [MP3 64kbps]',
+      protocol: 'torrent' as const,
+      downloadUrl: 'magnet:?xt=urn:btih:english',
+      infoHash: 'english123',
+      size: 500000000,
+      seeders: 10,
+      indexer: 'TestIndexer',
+      language: 'english',
+    };
+    const frenchResult = {
+      title: 'The Way of Kings [MP3 64kbps]',
+      protocol: 'torrent' as const,
+      downloadUrl: 'magnet:?xt=urn:btih:french',
+      infoHash: 'french123',
+      size: 500000000,
+      seeders: 10,
+      indexer: 'TestIndexer',
+      language: 'french',
+    };
+    const settings = createMockSettingsService({
+      metadata: { audibleRegion: 'us', languages: ['english'] },
+    });
+    const deps = createDeps({
+      settingsService: settings,
+      indexerService: inject<IndexerService>({
+        searchAll: vi.fn().mockResolvedValue([frenchResult, englishResult]),
+      }),
+    });
+
+    const result = await retrySearch(1, deps);
+
+    // Only the English result should be grabbed
+    expect(result.outcome).toBe('retried');
+    expect(deps.downloadOrchestrator.grab).toHaveBeenCalledWith(
+      expect.objectContaining({ downloadUrl: 'magnet:?xt=urn:btih:english' }),
+    );
+  });
+
   it('handles book with no active indexers (empty results)', async () => {
     const deps = createDeps({
       indexerService: inject<IndexerService>({

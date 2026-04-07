@@ -672,6 +672,77 @@ describe('startRssJob', () => {
     });
   });
 
+  // ===== #386 — metadata.languages wiring in RSS job =====
+
+  it('reads metadata.languages and uses it for quality filtering', async () => {
+    const wantedBooks = [makeWantedBook(1, 'The Way of Kings', 'Brandon Sanderson')];
+    const rssResults = [makeResult('The Way of Kings', 'Brandon Sanderson')];
+    const settings = createMockSettingsService({
+      rss: { enabled: true },
+      metadata: { audibleRegion: 'us', languages: ['english', 'french'] },
+    });
+    const { bookList, book } = createMockBookServices(wantedBooks);
+    const indexer = createMockIndexerService(rssResults);
+    const download = createMockDownloadOrchestrator();
+    const blacklist = createMockBlacklistService();
+
+    await runRssJob(settings, bookList, book, indexer, download, blacklist, inject<FastifyBaseLogger>(log));
+
+    // settingsService.get('metadata') must be called to get languages for filterAndRankResults
+    expect(settings.get).toHaveBeenCalledWith('metadata');
+    expect(settings.get).toHaveBeenCalledWith('quality');
+  });
+
+  it('languages filter excludes non-matching language RSS results from grab', async () => {
+    const wantedBooks = [makeWantedBook(1, 'The Way of Kings', 'Brandon Sanderson')];
+    const englishResult = makeResult('The Way of Kings', 'Brandon Sanderson', {
+      language: 'english',
+      downloadUrl: 'magnet:?xt=urn:btih:english',
+    });
+    const frenchResult = makeResult('The Way of Kings', 'Brandon Sanderson', {
+      language: 'french',
+      downloadUrl: 'magnet:?xt=urn:btih:french',
+    });
+    const settings = createMockSettingsService({
+      rss: { enabled: true },
+      metadata: { audibleRegion: 'us', languages: ['english'] },
+    });
+    const { bookList, book } = createMockBookServices(wantedBooks);
+    const indexer = createMockIndexerService([frenchResult, englishResult]);
+    const download = createMockDownloadOrchestrator();
+    const blacklist = createMockBlacklistService();
+
+    await runRssJob(settings, bookList, book, indexer, download, blacklist, inject<FastifyBaseLogger>(log));
+
+    // Only the English result should be grabbed; the French one is filtered out
+    expect(download.grab).toHaveBeenCalledTimes(1);
+    expect(download.grab).toHaveBeenCalledWith(
+      expect.objectContaining({ downloadUrl: 'magnet:?xt=urn:btih:english' }),
+    );
+  });
+
+  it('languages filter blocks all results when none match configured languages', async () => {
+    const wantedBooks = [makeWantedBook(1, 'The Way of Kings', 'Brandon Sanderson')];
+    const frenchResult = makeResult('The Way of Kings', 'Brandon Sanderson', {
+      language: 'french',
+      downloadUrl: 'magnet:?xt=urn:btih:french',
+    });
+    const settings = createMockSettingsService({
+      rss: { enabled: true },
+      metadata: { audibleRegion: 'us', languages: ['english'] },
+    });
+    const { bookList, book } = createMockBookServices(wantedBooks);
+    const indexer = createMockIndexerService([frenchResult]);
+    const download = createMockDownloadOrchestrator();
+    const blacklist = createMockBlacklistService();
+
+    const result = await runRssJob(settings, bookList, book, indexer, download, blacklist, inject<FastifyBaseLogger>(log));
+
+    // French-only result filtered out → no grab
+    expect(download.grab).not.toHaveBeenCalled();
+    expect(result.grabbed).toBe(0);
+  });
+
   it('forwards indexerId from best RSS result to downloadOrchestrator.grab', async () => {
     const wantedBooks = [makeWantedBook(1, 'The Way of Kings', 'Brandon Sanderson')];
     const rssResults = [makeResult('The Way of Kings', 'Brandon Sanderson', { indexerId: 55 })];

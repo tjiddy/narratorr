@@ -40,6 +40,7 @@ export async function runRssJob(
   }
 
   const qualitySettings = await settingsService.get('quality');
+  const metadataSettings = await settingsService.get('metadata');
 
   // Load candidate books: wanted + monitored-for-upgrade
   const { data: wantedBooks } = await bookListService.getAll('wanted');
@@ -163,7 +164,7 @@ export async function runRssJob(
       qualitySettings.protocolPreference,
       qualitySettings.rejectWords,
       qualitySettings.requiredWords,
-      qualitySettings.preferredLanguage,
+      metadataSettings.languages,
     );
 
     if (ranked.length === 0) {

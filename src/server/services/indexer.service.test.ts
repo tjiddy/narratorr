@@ -1733,6 +1733,118 @@ describe('IndexerService', () => {
     });
   });
 
+  // ===== #386 — Language injection into searchAll / searchAllStreaming =====
+
+  describe('searchAll() language injection', () => {
+    let settingsService: ReturnType<typeof createMockSettingsService>;
+    let langService: IndexerService;
+
+    beforeEach(() => {
+      settingsService = createMockSettingsService({ metadata: { audibleRegion: 'us', languages: ['english', 'french'] } });
+      langService = new IndexerService(
+        inject<Db>(db),
+        inject<FastifyBaseLogger>(createMockLogger()),
+        inject<SettingsService>(settingsService),
+      );
+    });
+
+    it('reads metadata.languages from settingsService when options.languages absent', async () => {
+      db.select.mockReturnValue(mockDbChain([mockIndexer]));
+      const mockAdapter = {
+        type: 'abb',
+        name: 'AudioBookBay',
+        search: vi.fn().mockResolvedValue([]),
+        test: vi.fn(),
+      };
+      vi.spyOn(langService, 'getAdapter').mockResolvedValue(mockAdapter as never);
+
+      await langService.searchAll('sanderson');
+
+      expect(settingsService.get).toHaveBeenCalledWith('metadata');
+      expect(mockAdapter.search).toHaveBeenCalledWith(
+        'sanderson',
+        expect.objectContaining({ languages: ['english', 'french'] }),
+      );
+    });
+
+    it('preserves explicit caller-supplied options.languages', async () => {
+      db.select.mockReturnValue(mockDbChain([mockIndexer]));
+      const mockAdapter = {
+        type: 'abb',
+        name: 'AudioBookBay',
+        search: vi.fn().mockResolvedValue([]),
+        test: vi.fn(),
+      };
+      vi.spyOn(langService, 'getAdapter').mockResolvedValue(mockAdapter as never);
+
+      await langService.searchAll('sanderson', { languages: ['german'] });
+
+      expect(mockAdapter.search).toHaveBeenCalledWith(
+        'sanderson',
+        expect.objectContaining({ languages: ['german'] }),
+      );
+    });
+  });
+
+  describe('searchAllStreaming() language injection', () => {
+    let settingsService: ReturnType<typeof createMockSettingsService>;
+    let langService: IndexerService;
+
+    beforeEach(() => {
+      settingsService = createMockSettingsService({ metadata: { audibleRegion: 'us', languages: ['english', 'french'] } });
+      langService = new IndexerService(
+        inject<Db>(db),
+        inject<FastifyBaseLogger>(createMockLogger()),
+        inject<SettingsService>(settingsService),
+      );
+    });
+
+    it('injects metadata.languages into adapter options', async () => {
+      db.select.mockReturnValue(mockDbChain([mockIndexer]));
+      const mockAdapter = {
+        type: 'abb',
+        name: 'AudioBookBay',
+        search: vi.fn().mockResolvedValue([]),
+        test: vi.fn(),
+      };
+      vi.spyOn(langService, 'getAdapter').mockResolvedValue(mockAdapter as never);
+
+      const controllers = new Map([[mockIndexer.id, new AbortController()]]);
+      const onComplete = vi.fn();
+      const onError = vi.fn();
+
+      await langService.searchAllStreaming('sanderson', undefined, controllers, { onComplete, onError });
+
+      expect(settingsService.get).toHaveBeenCalledWith('metadata');
+      expect(mockAdapter.search).toHaveBeenCalledWith(
+        'sanderson',
+        expect.objectContaining({ languages: ['english', 'french'] }),
+      );
+    });
+
+    it('preserves per-indexer abort signal alongside injected languages', async () => {
+      db.select.mockReturnValue(mockDbChain([mockIndexer]));
+      const mockAdapter = {
+        type: 'abb',
+        name: 'AudioBookBay',
+        search: vi.fn().mockResolvedValue([]),
+        test: vi.fn(),
+      };
+      vi.spyOn(langService, 'getAdapter').mockResolvedValue(mockAdapter as never);
+
+      const controller = new AbortController();
+      const controllers = new Map([[mockIndexer.id, controller]]);
+      const onComplete = vi.fn();
+      const onError = vi.fn();
+
+      await langService.searchAllStreaming('sanderson', undefined, controllers, { onComplete, onError });
+
+      const searchCall = mockAdapter.search.mock.calls[0][1];
+      expect(searchCall.languages).toEqual(['english', 'french']);
+      expect(searchCall.signal).toBe(controller.signal);
+    });
+  });
+
   describe('#372 — test() persists classname alongside isVip', () => {
     it('persists classname alongside isVip on successful test', async () => {
       const mamRow = createMockDbIndexer({

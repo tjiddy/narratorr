@@ -2,7 +2,6 @@ import { useState, useCallback, useEffect } from 'react';
 import type { UseFormWatch, UseFormSetValue } from 'react-hook-form';
 import type { CreateIndexerFormData } from '../../../../shared/schemas.js';
 import { api } from '@/lib/api';
-import { MAM_LANGUAGES } from '../../../../shared/indexer-registry.js';
 import type { IndexerFieldsProps } from './types.js';
 
 interface MamStatus {
@@ -155,7 +154,6 @@ function metadataToMamStatus(metadata: Record<string, unknown>, ip?: string): Ma
 }
 
 export function MamFields({ register, errors, watch, setValue, formTestResult, indexerId }: Pick<IndexerFieldsProps, 'register' | 'errors' | 'watch' | 'setValue' | 'formTestResult' | 'indexerId'>) {
-  const searchLanguages = watch ? (watch('settings.searchLanguages') ?? [1]) : [1];
   const { mamStatus, detectError, isDetecting, detect, setMamStatus } = useMamDetection(watch, setValue, deriveInitialMamStatus(watch), indexerId);
 
   // Bridge: update card from explicit Test button result
@@ -164,14 +162,6 @@ export function MamFields({ register, errors, watch, setValue, formTestResult, i
       setMamStatus(metadataToMamStatus(formTestResult.metadata, formTestResult.ip));
     }
   }, [formTestResult, setMamStatus]);
-
-  function toggleLanguage(langId: number) {
-    if (!setValue) return;
-    const updated = searchLanguages.includes(langId)
-      ? searchLanguages.filter((id) => id !== langId)
-      : [...searchLanguages, langId];
-    setValue('settings.searchLanguages', updated, { shouldValidate: true });
-  }
 
   const mamIdRegistration = register('settings.mamId');
 
@@ -229,20 +219,9 @@ export function MamFields({ register, errors, watch, setValue, formTestResult, i
       </div>
       <div className="sm:col-span-2">
         <span className="block text-sm font-medium mb-2">Languages</span>
-        <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
-          {MAM_LANGUAGES.map((lang) => (
-            <label key={lang.id} className="flex items-center gap-2 text-sm cursor-pointer">
-              <input
-                type="checkbox"
-                checked={searchLanguages.includes(lang.id)}
-                onChange={() => toggleLanguage(lang.id)}
-                className="rounded border-border text-primary focus-ring"
-              />
-              {lang.label}
-            </label>
-          ))}
-        </div>
-        <p className="text-sm text-muted-foreground mt-1">Deselect all for unrestricted language search</p>
+        <p className="text-sm text-muted-foreground">
+          Languages are now configured globally in <span className="font-medium text-foreground">Settings → Search → Filtering</span>.
+        </p>
       </div>
     </>
   );

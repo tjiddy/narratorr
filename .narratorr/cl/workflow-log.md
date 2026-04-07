@@ -1,5 +1,34 @@
 # Workflow Log
 
+## #386 Unified language settings + Search settings page reorganization — 2026-04-07
+**Skill path:** /elaborate → /respond-to-spec-review (x3) → /implement → /claim → /plan → /handoff
+**Outcome:** success — PR #391
+
+### Metrics
+- Files changed: 33 | Tests added/modified: ~46 new + ~20 updated
+- Quality gate runs: 3 (pass on attempt 3 — first had lint, second had type errors)
+- Fix iterations: 3 (lint violations from unused MAM imports, TypeScript type mismatch form→API, residual empty-string test args)
+- Context compactions: 0
+
+### Workflow experience
+- What went smoothly: Schema changes propagated cleanly via registry pattern. Migration followed existing `bootstrapProcessingDefaults` pattern. Per-search options approach avoided adapter cache invalidation complexity entirely.
+- Friction / issues encountered: Spec review took 4 rounds (initial + 3 respond cycles) before approve. Main issues: Audible/Audnexus scope confusion, canonical language artifact underspecification, quality field migration scope. Implementation itself was straightforward once spec was approved.
+
+### Token efficiency
+- Highest-token actions: Explore subagents for spec review and planning (3 rounds of elaboration + plan exploration)
+- Avoidable waste: Could have gotten spec right in fewer rounds by checking metadata vs indexer pipeline distinction earlier
+- Suggestions: When spec mentions "client-side filtering" for both indexers and metadata providers, verify they share a pipeline before assuming
+
+### Infrastructure gaps
+- Repeated workarounds: None
+- Missing tooling / config: `frontend-design` skill not available as external plugin
+- Unresolved debt: searchAll/searchAllStreaming duplicate language injection logic (DRY-2, minor)
+
+### Wish I'd Known
+1. `z.enum()` requires `as const` tuple — `readonly string[]` is not compatible. This caused a spec review round and a TypeScript fix iteration.
+2. Metadata search (`MetadataService.search()` → `BookMetadata[]`) is a completely separate pipeline from indexer search (`filterAndRankResults` → `SearchResult[]`). The original spec conflated them — catching this early would have saved 2 spec review rounds.
+3. `useWatch()` should be used instead of `watch()` from `useForm()` for React Compiler compatibility — the compiler lint rule catches it but only at lint time, not during development.
+
 ## #389 Settings page restructure — new Search page — 2026-04-06
 **Skill path:** /implement → /claim → /plan → /handoff
 **Outcome:** success — PR #390

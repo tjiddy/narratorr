@@ -97,7 +97,7 @@ describe('settingsRegistry', () => {
     });
 
     it('metadata defaults have audibleRegion us', () => {
-      expect(DEFAULT_SETTINGS.metadata).toEqual({ audibleRegion: 'us' });
+      expect(DEFAULT_SETTINGS.metadata).toEqual({ audibleRegion: 'us', languages: ['english'] });
     });
 
     it('processing defaults have all expected values', () => {
@@ -152,7 +152,6 @@ describe('settingsRegistry', () => {
         monitorForUpgrades: false,
         rejectWords: '',
         requiredWords: '',
-        preferredLanguage: '',
       });
     });
   });
@@ -699,9 +698,27 @@ describe('settingsRegistry', () => {
         monitorForUpgrades: false,
         rejectWords: '',
         requiredWords: '',
-        preferredLanguage: '',
       });
       expect(result.success).toBe(true);
+    });
+
+    // ===== #386 — preferredLanguage removed from quality schema =====
+    it('qualitySettingsSchema strips unknown preferredLanguage field from output', () => {
+      const input = {
+        grabFloor: 0,
+        protocolPreference: 'none',
+        minSeeders: 1,
+        searchImmediately: false,
+        monitorForUpgrades: false,
+        rejectWords: '',
+        requiredWords: '',
+        preferredLanguage: 'english',
+      };
+      const result = settingsRegistry.quality.schema.safeParse(input);
+      expect(result.success).toBe(true);
+      if (result.success) {
+        expect(result.data).not.toHaveProperty('preferredLanguage');
+      }
     });
 
     it('qualityFormSchema rejects out-of-range values', () => {

@@ -629,7 +629,7 @@ describe('IndexerCard — Prowlarr-managed indicators (AC8)', () => {
   });
 
   describe('create-mode MAM flow — searchLanguages (#291, #317)', () => {
-    it('switches to MAM type, shows default English, toggles French, and submits with correct payload', async () => {
+    it('switches to MAM type, shows language hint instead of checkboxes, and submits with correct payload', async () => {
       const onSubmit = vi.fn();
       const user = userEvent.setup();
 
@@ -651,14 +651,10 @@ describe('IndexerCard — Prowlarr-managed indicators (AC8)', () => {
       // Fill name
       await user.type(screen.getByPlaceholderText('MyAnonamouse'), 'My MAM');
 
-      // Verify defaults: English checked, search type dropdown removed (#372)
-      expect(screen.getByLabelText('English')).toBeChecked();
-      expect(screen.getByLabelText('French')).not.toBeChecked();
+      // Verify language hint is shown instead of checkboxes, search type dropdown removed (#372)
+      expect(screen.getByText(/Languages are now configured globally/)).toBeInTheDocument();
+      expect(screen.queryByLabelText('English')).not.toBeInTheDocument();
       expect(screen.queryByLabelText('Search Type')).not.toBeInTheDocument();
-
-      // Toggle French on
-      await user.click(screen.getByLabelText('French'));
-      expect(screen.getByLabelText('French')).toBeChecked();
 
       // Submit
       await user.click(screen.getByText('Add Indexer'));
@@ -671,14 +667,13 @@ describe('IndexerCard — Prowlarr-managed indicators (AC8)', () => {
         type: 'myanonamouse',
         settings: expect.objectContaining({
           mamId: 'test-mam-id',
-          searchLanguages: expect.arrayContaining([1, 36]),
         }),
       });
     });
   });
 
   describe('edit-mode hydration — searchLanguages (#291, #317)', () => {
-    it('pre-fills saved searchLanguages when editing MAM indexer', () => {
+    it('shows language hint instead of checkboxes when editing MAM indexer', () => {
       const mamIndexer: Indexer = createMockIndexer({
         id: 10,
         name: 'MAM Custom',
@@ -695,9 +690,9 @@ describe('IndexerCard — Prowlarr-managed indicators (AC8)', () => {
         />,
       );
 
-      // Languages should be pre-filled
-      expect(screen.getByLabelText('English')).toBeChecked();
-      expect(screen.getByLabelText('French')).toBeChecked();
+      // Language hint should be shown instead of checkboxes
+      expect(screen.getByText(/Languages are now configured globally/)).toBeInTheDocument();
+      expect(screen.queryByLabelText('English')).not.toBeInTheDocument();
       // Search type dropdown removed (#372)
       expect(screen.queryByLabelText('Search Type')).not.toBeInTheDocument();
     });
@@ -916,7 +911,7 @@ describe('IndexerCard — Prowlarr-managed indicators (AC8)', () => {
       expect(onFormTest.mock.calls[0][0]).toHaveProperty('id', 21);
     });
 
-    it('preserves searchLanguages: [] via ?? (not ||) in settingsFromIndexer', () => {
+    it('renders language hint for MAM indexer with empty searchLanguages', () => {
       const mamIndexer: Indexer = createMockIndexer({
         id: 13,
         name: 'MAM All Languages',
@@ -933,10 +928,9 @@ describe('IndexerCard — Prowlarr-managed indicators (AC8)', () => {
         />,
       );
 
-      // With empty searchLanguages, no checkboxes should be checked
-      // We verify this by checking that the English checkbox is NOT checked
-      const englishCheckbox = screen.getByLabelText('English');
-      expect(englishCheckbox).not.toBeChecked();
+      // Language hint should be shown instead of checkboxes
+      expect(screen.getByText(/Languages are now configured globally/)).toBeInTheDocument();
+      expect(screen.queryByLabelText('English')).not.toBeInTheDocument();
     });
   });
 

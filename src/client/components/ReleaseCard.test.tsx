@@ -83,4 +83,73 @@ describe('ReleaseCard', () => {
       expect(screen.queryByText('VIP')).not.toBeInTheDocument();
     });
   });
+
+  describe('language pill', () => {
+    it('shows language pill when selectedLanguages has 2+ entries and result has language', () => {
+      mockCalculateQuality.mockReturnValue(null);
+      renderWithProviders(
+        <ReleaseCard
+          {...defaultProps}
+          result={{ ...baseResult, language: 'English' }}
+          selectedLanguages={['english', 'french']}
+        />,
+      );
+      expect(screen.getByText('english')).toBeInTheDocument();
+    });
+
+    it('hides pill when selectedLanguages has 1 entry', () => {
+      mockCalculateQuality.mockReturnValue(null);
+      renderWithProviders(
+        <ReleaseCard
+          {...defaultProps}
+          result={{ ...baseResult, language: 'English' }}
+          selectedLanguages={['english']}
+        />,
+      );
+      // The language pill should not be rendered with only 1 selected language
+      // "english" as a standalone badge should not appear
+      const badges = screen.queryAllByText('english');
+      expect(badges).toHaveLength(0);
+    });
+
+    it('hides pill when selectedLanguages is empty', () => {
+      mockCalculateQuality.mockReturnValue(null);
+      renderWithProviders(
+        <ReleaseCard
+          {...defaultProps}
+          result={{ ...baseResult, language: 'English' }}
+          selectedLanguages={[]}
+        />,
+      );
+      const badges = screen.queryAllByText('english');
+      expect(badges).toHaveLength(0);
+    });
+
+    it('hides pill when result has no language metadata', () => {
+      mockCalculateQuality.mockReturnValue(null);
+      renderWithProviders(
+        <ReleaseCard
+          {...defaultProps}
+          result={{ ...baseResult }}
+          selectedLanguages={['english', 'french']}
+        />,
+      );
+      // No language pill should be present since result.language is undefined
+      expect(screen.queryByText('english')).not.toBeInTheDocument();
+      expect(screen.queryByText('french')).not.toBeInTheDocument();
+    });
+
+    it('pill text matches normalized language name', () => {
+      mockCalculateQuality.mockReturnValue(null);
+      renderWithProviders(
+        <ReleaseCard
+          {...defaultProps}
+          result={{ ...baseResult, language: 'FRENCH' }}
+          selectedLanguages={['english', 'french']}
+        />,
+      );
+      // result.language.toLowerCase() = 'french', rendered with capitalize CSS
+      expect(screen.getByText('french')).toBeInTheDocument();
+    });
+  });
 });

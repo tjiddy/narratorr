@@ -130,6 +130,7 @@ describe('createServices', () => {
     vi.mocked(SettingsService).mockImplementation(function(this: Record<string, unknown>) {
       this.get = vi.fn().mockResolvedValue({ audibleRegion: 'us' });
       this.bootstrapProcessingDefaults = vi.fn().mockResolvedValue(undefined);
+      this.migrateLanguageSettings = vi.fn().mockResolvedValue(undefined);
     } as never);
 
     const { createServices } = await import('./index.js');
@@ -148,6 +149,30 @@ describe('createServices', () => {
     expect(blacklistArg).toBeInstanceOf(BlacklistService);
   });
 
+  // ===== #386 — migrateLanguageSettings called on startup =====
+  it('invokes migrateLanguageSettings on startup', async () => {
+    const { SettingsService } = await import('../services/index.js');
+
+    const mockMigrate = vi.fn().mockResolvedValue(undefined);
+
+    vi.mocked(SettingsService).mockImplementation(function(this: Record<string, unknown>) {
+      this.get = vi.fn().mockResolvedValue({ audibleRegion: 'us' });
+      this.bootstrapProcessingDefaults = vi.fn().mockResolvedValue(undefined);
+      this.migrateLanguageSettings = mockMigrate;
+    } as never);
+
+    const { createServices } = await import('./index.js');
+    const db = {} as unknown as Db;
+    const log = {
+      info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn(),
+      child: vi.fn().mockReturnThis(), trace: vi.fn(), fatal: vi.fn(),
+    } as unknown as FastifyBaseLogger;
+
+    await createServices(db, log);
+
+    expect(mockMigrate).toHaveBeenCalledOnce();
+  });
+
   it('invokes bootstrapProcessingDefaults with detectFfmpegPath on startup', async () => {
     const { SettingsService } = await import('../services/index.js');
     const { detectFfmpegPath } = await import('../../core/utils/audio-processor.js');
@@ -158,6 +183,7 @@ describe('createServices', () => {
     vi.mocked(SettingsService).mockImplementation(function(this: Record<string, unknown>) {
       this.get = vi.fn().mockResolvedValue({ audibleRegion: 'us' });
       this.bootstrapProcessingDefaults = mockBootstrap;
+      this.migrateLanguageSettings = vi.fn().mockResolvedValue(undefined);
     } as never);
 
     const { createServices } = await import('./index.js');

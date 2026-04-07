@@ -180,6 +180,9 @@ export async function createServices(db: Db, log: FastifyBaseLogger): Promise<Se
   const { probeFfmpeg, detectFfmpegPath } = await import('../../core/utils/audio-processor.js');
   await settings.bootstrapProcessingDefaults(detectFfmpegPath);
 
+  // Migrate quality.preferredLanguage → metadata.languages (one-time, idempotent)
+  await settings.migrateLanguageSettings();
+
   // Health check service with system deps
   const { resolveProxyIp } = await import('../../core/indexers/proxy.js');
   const healthCheck = new HealthCheckService(

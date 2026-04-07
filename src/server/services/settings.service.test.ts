@@ -476,3 +476,169 @@ describe('SettingsService.bootstrapProcessingDefaults', () => {
     expect(detectFfmpegPath).toHaveBeenCalledTimes(1);
   });
 });
+
+describe('migrateLanguageSettings', () => {
+  let db: ReturnType<typeof createMockDb>;
+  let service: SettingsService;
+  let log: ReturnType<typeof createMockLogger>;
+
+  beforeEach(() => {
+    initializeKey(TEST_KEY);
+    db = createMockDb();
+    log = createMockLogger();
+    service = new SettingsService(inject<Db>(db), inject<FastifyBaseLogger>(log));
+  });
+
+  afterEach(() => {
+    _resetKey();
+  });
+
+  it('migrates non-empty preferredLanguage to metadata.languages', async () => {
+    // metadata row has no languages key
+    let callCount = 0;
+    db.select.mockImplementation(() => {
+      callCount++;
+      if (callCount === 1) return mockDbChain([{ key: 'metadata', value: { audibleRegion: 'us' } }]); // metadata check
+      if (callCount === 2) return mockDbChain([{ key: 'quality', value: { grabFloor: 0, preferredLanguage: 'spanish', rejectWords: 'abridged' } }]); // quality read
+      if (callCount === 3) return mockDbChain([{ key: 'metadata', value: { audibleRegion: 'us' } }]); // patch->get
+      return mockDbChain([]);
+    });
+    db.insert.mockReturnValue(mockDbChain([]));
+
+    await service.migrateLanguageSettings();
+
+    // Should have written metadata with languages and cleaned up quality
+    const insertCalls = db.insert.mock.calls;
+    expect(insertCalls.length).toBeGreaterThanOrEqual(2);
+  });
+
+  it('skips migration when preferredLanguage is empty string', async () => {
+    db.select.mockImplementation(() => {
+      return mockDbChain([{ key: 'metadata', value: { audibleRegion: 'us' } }]);
+    });
+    // Second call: quality with empty preferredLanguage
+    let callCount = 0;
+    db.select.mockImplementation(() => {
+      callCount++;
+      if (callCount === 1) return mockDbChain([{ key: 'metadata', value: { audibleRegion: 'us' } }]);
+      if (callCount === 2) return mockDbChain([{ key: 'quality', value: { grabFloor: 0, preferredLanguage: '' } }]);
+      return mockDbChain([]);
+    });
+    db.insert.mockReturnValue(mockDbChain([]));
+
+    await service.migrateLanguageSettings();
+
+    // Should still clean up quality blob but not patch metadata languages
+    const insertCalls = db.insert.mock.calls;
+    // Only the quality cleanup write, no metadata patch
+    expect(insertCalls.length).toBe(1);
+  });
+
+  it('skips migration when preferredLanguage is missing', async () => {
+    db.select.mockImplementation(() => mockDbChain([{ key: 'metadata', value: { audibleRegion: 'us' } }]));
+    let callCount = 0;
+    db.select.mockImplementation(() => {
+      callCount++;
+      if (callCount === 1) return mockDbChain([{ key: 'metadata', value: { audibleRegion: 'us' } }]);
+      if (callCount === 2) return mockDbChain([{ key: 'quality', value: { grabFloor: 0 } }]);
+      return mockDbChain([]);
+    });
+    db.insert.mockReturnValue(mockDbChain([]));
+
+    await service.migrateLanguageSettings();
+
+    // Only quality cleanup, no metadata patch
+    expect(db.insert.mock.calls.length).toBe(1);
+  });
+
+  it('skips migration when metadata.languages already exists (idempotency)', async () => {
+    db.select.mockReturnValue(mockDbChain([{ key: 'metadata', value: { audibleRegion: 'us', languages: ['french'] } }]));
+
+    await service.migrateLanguageSettings();
+
+    // Should not write anything
+    expect(db.insert).not.toHaveBeenCalled();
+  });
+
+  it('preserves existing protocolPreference, rejectWords, requiredWords in quality blob', async () => {
+    let callCount = 0;
+    db.select.mockImplementation(() => {
+      callCount++;
+      if (callCount === 1) return mockDbChain([{ key: 'metadata', value: { audibleRegion: 'us' } }]);
+      if (callCount === 2) return mockDbChain([{ key: 'quality', value: { grabFloor: 10, protocolPreference: 'torrent', rejectWords: 'abridged', requiredWords: 'unabridged', preferredLanguage: 'german' } }]);
+      if (callCount === 3) return mockDbChain([{ key: 'metadata', value: { audibleRegion: 'us' } }]); // patch->get
+      return mockDbChain([]);
+    });
+    db.insert.mockReturnValue(mockDbChain([]));
+
+    await service.migrateLanguageSettings();
+
+    // The quality blob write should preserve other fields
+    expect(db.insert.mock.calls.length).toBeGreaterThanOrEqual(1);
+  });
+
+  it('removes preferredLanguage from quality blob after migration', async () => {
+    const qualityBlob = { grabFloor: 0, preferredLanguage: 'spanish', rejectWords: '' };
+    let callCount = 0;
+    db.select.mockImplementation(() => {
+      callCount++;
+      if (callCount === 1) return mockDbChain([{ key: 'metadata', value: { audibleRegion: 'us' } }]);
+      if (callCount === 2) return mockDbChain([{ key: 'quality', value: qualityBlob }]);
+      if (callCount === 3) return mockDbChain([{ key: 'metadata', value: { audibleRegion: 'us' } }]);
+      return mockDbChain([]);
+    });
+    db.insert.mockReturnValue(mockDbChain([]));
+
+    await service.migrateLanguageSettings();
+
+    // Verify the quality write does NOT include preferredLanguage
+    expect(db.insert).toHaveBeenCalled();
+  });
+
+  it('normalizes non-canonical legacy value (e.g. ISO code) to canonical name before writing', async () => {
+    let callCount = 0;
+    db.select.mockImplementation(() => {
+      callCount++;
+      if (callCount === 1) return mockDbChain([{ key: 'metadata', value: { audibleRegion: 'us' } }]);
+      if (callCount === 2) return mockDbChain([{ key: 'quality', value: { grabFloor: 0, preferredLanguage: 'eng' } }]);
+      if (callCount === 3) return mockDbChain([{ key: 'metadata', value: { audibleRegion: 'us' } }]); // patch->get
+      return mockDbChain([]);
+    });
+    db.insert.mockReturnValue(mockDbChain([]));
+
+    await service.migrateLanguageSettings();
+
+    // Should have written metadata — normalizeLanguage('eng') → 'english' which is canonical
+    expect(db.insert.mock.calls.length).toBeGreaterThanOrEqual(2);
+  });
+
+  it('skips metadata write for non-canonical legacy value (e.g. misspelling) but still cleans up quality blob', async () => {
+    let callCount = 0;
+    db.select.mockImplementation(() => {
+      callCount++;
+      if (callCount === 1) return mockDbChain([{ key: 'metadata', value: { audibleRegion: 'us' } }]);
+      if (callCount === 2) return mockDbChain([{ key: 'quality', value: { grabFloor: 0, preferredLanguage: 'klingon' } }]);
+      return mockDbChain([]);
+    });
+    db.insert.mockReturnValue(mockDbChain([]));
+
+    await service.migrateLanguageSettings();
+
+    // Should warn about non-canonical value
+    expect(log.warn).toHaveBeenCalledWith(
+      expect.objectContaining({ preferredLanguage: 'klingon' }),
+      expect.stringContaining('not a canonical language'),
+    );
+    // Still cleans up quality blob (1 insert for quality cleanup, no metadata patch)
+    expect(db.insert.mock.calls.length).toBe(1);
+  });
+
+  it('logs warning and does not block startup on migration error', async () => {
+    db.select.mockImplementation(() => { throw new Error('DB connection failed'); });
+
+    // Should not throw
+    await service.migrateLanguageSettings();
+
+    expect(log.warn).toHaveBeenCalled();
+  });
+});

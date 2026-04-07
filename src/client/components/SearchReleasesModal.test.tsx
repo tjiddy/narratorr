@@ -30,6 +30,7 @@ vi.mock('@/lib/api', () => ({
     addToBlacklist: vi.fn(),
     cancelSearchIndexer: vi.fn().mockResolvedValue({ cancelled: true }),
     getAuthConfig: vi.fn().mockResolvedValue({ apiKey: 'test-key' }),
+    getSettings: vi.fn().mockResolvedValue({ metadata: { languages: [] } }),
   },
   formatBytes: (bytes?: number) => {
     if (!bytes) return '0 B';
@@ -1731,6 +1732,48 @@ describe('SearchReleasesModal — streaming search (Phase 1/Phase 2)', () => {
 
       expect(screen.getByText('The Way of Kings [Unabridged]')).toBeInTheDocument();
       expect(screen.queryByText(/timed out/)).not.toBeInTheDocument();
+    });
+  });
+
+  describe('language pill data flow', () => {
+    it('queries metadata settings to get selected languages', async () => {
+      (api.getSettings as ReturnType<typeof vi.fn>).mockResolvedValue({
+        metadata: { languages: ['english', 'french'] },
+      });
+
+      setStreamResults(mockResults);
+
+      renderWithProviders(
+        <SearchReleasesModal isOpen={true} book={mockBook} onClose={vi.fn()} />,
+      );
+
+      await waitFor(() => {
+        expect(api.getSettings).toHaveBeenCalled();
+      });
+    });
+
+    it('passes selectedLanguages to ReleaseCard components', async () => {
+      (api.getSettings as ReturnType<typeof vi.fn>).mockResolvedValue({
+        metadata: { languages: ['english', 'french'] },
+      });
+
+      // Use results that have language metadata so the pill renders
+      setStreamResults([
+        {
+          ...mockResults[0],
+          language: 'English',
+        },
+      ]);
+
+      renderWithProviders(
+        <SearchReleasesModal isOpen={true} book={mockBook} onClose={vi.fn()} />,
+      );
+
+      // When selectedLanguages has 2+ entries and result has language,
+      // ReleaseCard renders a language pill
+      await waitFor(() => {
+        expect(screen.getByText('english')).toBeInTheDocument();
+      });
     });
   });
 });

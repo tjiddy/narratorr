@@ -10,6 +10,8 @@ import {
   DEFAULT_SETTINGS,
   CATEGORY_SCHEMAS,
 } from '../../shared/schemas.js';
+import { normalizeLanguage } from '../../core/utils/language-codes.js';
+import { CANONICAL_LANGUAGES } from '../../shared/language-constants.js';
 import { encryptFields, decryptFields, resolveSentinelFields, getKey, type SecretEntity } from '../utils/secret-codec.js';
 
 export type { AppSettings };
@@ -125,5 +127,46 @@ export class SettingsService {
     if (!ffmpegPath) return;
 
     await this.set('processing', { ...DEFAULT_SETTINGS.processing, enabled: false, ffmpegPath });
+  }
+
+  /**
+   * Run once at startup: migrate quality.preferredLanguage to metadata.languages.
+   * Idempotent — skips if metadata.languages already exists in the raw blob.
+   */
+  async migrateLanguageSettings(): Promise<void> {
+    try {
+      // Check if metadata already has languages (idempotency)
+      const metadataRow = await this.db.select().from(settings).where(eq(settings.key, 'metadata')).limit(1);
+      const metadataBlob = (metadataRow[0]?.value ?? {}) as Record<string, unknown>;
+      if (Array.isArray(metadataBlob.languages)) return;
+
+      // Read raw quality blob (bypasses Zod to access legacy field)
+      const qualityRow = await this.db.select().from(settings).where(eq(settings.key, 'quality')).limit(1);
+      if (qualityRow.length === 0) return;
+
+      const qualityBlob = { ...(qualityRow[0].value as Record<string, unknown>) };
+      const preferredLanguage = qualityBlob.preferredLanguage;
+
+      // Migrate non-empty preferredLanguage to metadata.languages
+      if (typeof preferredLanguage === 'string' && preferredLanguage.trim()) {
+        const normalized = normalizeLanguage(preferredLanguage);
+        const canonicalSet = new Set<string>(CANONICAL_LANGUAGES);
+        if (normalized && canonicalSet.has(normalized)) {
+          await this.patch('metadata', { languages: [normalized] } as Partial<AppSettings['metadata']>);
+          this.log.info({ from: preferredLanguage, to: normalized }, 'Migrated preferredLanguage to metadata.languages');
+        } else {
+          this.log.warn({ preferredLanguage }, 'Legacy preferredLanguage is not a canonical language — skipping migration, defaults will apply');
+        }
+      }
+
+      // Clean up: remove preferredLanguage from raw quality blob
+      delete qualityBlob.preferredLanguage;
+      await this.db
+        .insert(settings)
+        .values({ key: 'quality', value: qualityBlob })
+        .onConflictDoUpdate({ target: settings.key, set: { value: qualityBlob } });
+    } catch (error: unknown) {
+      this.log.warn({ error }, 'Language settings migration failed — fresh defaults will apply');
+    }
   }
 }
