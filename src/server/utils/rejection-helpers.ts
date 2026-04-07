@@ -51,15 +51,28 @@ export async function blacklistAndRetrySearch(request: BlacklistAndRetryRequest)
     log.info('Blacklist skipped — no infoHash or guid');
   }
 
-  // Fire-and-forget re-search gated by redownloadFailed setting
-  if (!book || !retrySearchDeps || !settingsService) {
+  // Fire-and-forget re-search
+  if (!book || !retrySearchDeps) {
     return;
   }
 
   const deps = retrySearchDeps;
   const bookId = book.id;
+
+  // #396 — overrideRetry bypasses the settings lookup entirely so a settings
+  // failure cannot suppress a user-requested retry (e.g. wrong-release).
+  if (overrideRetry) {
+    log.info({ bookId }, 'Triggering re-search after reject');
+    retrySearch(bookId, deps).catch((error: unknown) => {
+      log.warn({ bookId, error }, 'Re-search after reject failed');
+    });
+    return;
+  }
+
+  // Non-override path: gate on redownloadFailed setting
+  if (!settingsService) return;
   settingsService.get('import').then((importSettings) => {
-    if (overrideRetry || importSettings.redownloadFailed) {
+    if (importSettings.redownloadFailed) {
       log.info({ bookId }, 'Triggering re-search after reject');
       retrySearch(bookId, deps).catch((error: unknown) => {
         log.warn({ bookId, error }, 'Re-search after reject failed');
