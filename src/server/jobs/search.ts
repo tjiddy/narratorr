@@ -7,6 +7,7 @@ import type { IndexerService } from '../services/indexer.service.js';
 import type { DownloadOrchestrator } from '../services/download-orchestrator.js';
 import type { RetryBudget } from '../services/retry-budget.js';
 import type { EventBroadcasterService } from '../services/event-broadcaster.service.js';
+import type { BlacklistService } from '../services/blacklist.service.js';
 import { buildSearchQuery, filterAndRankResults, searchAndGrabForBook } from '../services/search-pipeline.js';
 import { DuplicateDownloadError } from '../services/download.service.js';
 
@@ -31,6 +32,7 @@ export async function runSearchJob(
   indexerService: IndexerService,
   downloadOrchestrator: DownloadOrchestrator,
   log: FastifyBaseLogger,
+  blacklistService: BlacklistService,
   retryBudget?: RetryBudget,
   broadcaster?: EventBroadcasterService,
 ): Promise<SearchJobResult> {
@@ -58,7 +60,7 @@ export async function runSearchJob(
 
   for (const book of wantedBooks) {
     try {
-      const result = await searchAndGrabForBook(book, indexerService, downloadOrchestrator, { ...qualitySettings, languages: metadataSettings.languages }, log, broadcaster);
+      const result = await searchAndGrabForBook(book, indexerService, downloadOrchestrator, { ...qualitySettings, languages: metadataSettings.languages }, log, blacklistService, broadcaster);
       searched++;
       if (result.result === 'grabbed') grabbed++;
       if (result.result === 'grab_error') {
@@ -83,6 +85,7 @@ export async function searchAllWanted(
   indexerService: IndexerService,
   downloadOrchestrator: DownloadOrchestrator,
   log: FastifyBaseLogger,
+  blacklistService: BlacklistService,
   broadcaster?: EventBroadcasterService,
 ): Promise<SearchAllWantedResult> {
   const qualitySettings = await settingsService.get('quality');
@@ -103,7 +106,7 @@ export async function searchAllWanted(
 
   for (const book of wantedBooks) {
     try {
-      const result = await searchAndGrabForBook(book, indexerService, downloadOrchestrator, { ...qualitySettings, languages: metadataSettings.languages }, log, broadcaster);
+      const result = await searchAndGrabForBook(book, indexerService, downloadOrchestrator, { ...qualitySettings, languages: metadataSettings.languages }, log, blacklistService, broadcaster);
       searched++;
       if (result.result === 'grabbed') grabbed++;
       else if (result.result === 'skipped') skipped++;
@@ -237,6 +240,7 @@ export function startSearchJob(
   indexerService: IndexerService,
   downloadOrchestrator: DownloadOrchestrator,
   log: FastifyBaseLogger,
+  blacklistService: BlacklistService,
   retryBudget?: RetryBudget,
 ): void {
   async function scheduleNext() {
@@ -246,7 +250,7 @@ export function startSearchJob(
 
       setTimeout(async () => {
         try {
-          await runSearchJob(settingsService, bookListService, indexerService, downloadOrchestrator, log, retryBudget);
+          await runSearchJob(settingsService, bookListService, indexerService, downloadOrchestrator, log, blacklistService, retryBudget);
         } catch (error: unknown) {
           log.error(error, 'Search job error');
         }

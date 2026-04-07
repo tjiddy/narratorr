@@ -1,5 +1,4 @@
 import type { FastifyBaseLogger } from 'fastify';
-import type { SearchResult } from '../../core/index.js';
 import type { IndexerService } from './indexer.service.js';
 import type { DownloadWithBook } from './download.service.js';
 import type { DownloadOrchestrator } from './download-orchestrator.js';
@@ -7,7 +6,7 @@ import type { BlacklistService } from './blacklist.service.js';
 import type { BookService } from './book.service.js';
 import type { SettingsService } from './settings.service.js';
 import type { RetryBudget } from './retry-budget.js';
-import { buildSearchQuery, filterAndRankResults } from './search-pipeline.js';
+import { buildSearchQuery, filterAndRankResults, filterBlacklistedResults } from './search-pipeline.js';
 
 export type RetryOutcome =
   | { outcome: 'retried'; download: DownloadWithBook }
@@ -86,18 +85,7 @@ export async function retrySearch(
       return { outcome: 'no_candidates' };
     }
 
-    // Filter blacklisted releases by infoHash and/or guid
-    const hashes = rawResults.map((r: SearchResult) => r.infoHash).filter((h): h is string => !!h);
-    const guids = rawResults.map((r: SearchResult) => r.guid).filter((g): g is string => !!g);
-    let filteredResults = rawResults;
-    if (hashes.length > 0 || guids.length > 0) {
-      const { blacklistedHashes, blacklistedGuids } = await blacklistService.getBlacklistedIdentifiers(hashes, guids);
-      filteredResults = rawResults.filter(
-        (r: SearchResult) =>
-          (!r.infoHash || !blacklistedHashes.has(r.infoHash)) &&
-          (!r.guid || !blacklistedGuids.has(r.guid)),
-      );
-    }
+    const filteredResults = await filterBlacklistedResults(rawResults, blacklistService);
 
     // Quality filtering and ranking
     const qualitySettings = await settingsService.get('quality');

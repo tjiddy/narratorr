@@ -9,7 +9,7 @@ import type { IndexerService } from '../services/indexer.service.js';
 import type { DownloadOrchestrator } from '../services/download-orchestrator.js';
 import type { BlacklistService } from '../services/blacklist.service.js';
 import { DuplicateDownloadError } from '../services/download.service.js';
-import { filterAndRankResults } from '../services/search-pipeline.js';
+import { filterAndRankResults, filterBlacklistedResults } from '../services/search-pipeline.js';
 
 const MATCH_THRESHOLD = 0.7;
 
@@ -23,7 +23,7 @@ export interface RssJobResult {
  * Run a single RSS sync cycle: poll RSS feeds from RSS-capable indexers,
  * match results to wanted/monitored books, and grab the best matches.
  */
-// eslint-disable-next-line complexity, max-lines-per-function -- feed-first matching with per-book dedup, upgrades, and error isolation
+// eslint-disable-next-line complexity -- feed-first matching with per-book dedup, upgrades, and error isolation
 export async function runRssJob(
   settingsService: SettingsService,
   bookListService: BookListService,
@@ -96,17 +96,7 @@ export async function runRssJob(
     return !(multiPart.match && multiPart.total! > 1);
   });
 
-  // Blacklist filtering by infoHash and/or guid
-  const hashes = afterMultipart.map((r) => r.infoHash).filter((h): h is string => !!h);
-  const guids = afterMultipart.map((r) => r.guid).filter((g): g is string => !!g);
-  let filtered = afterMultipart;
-  if (hashes.length > 0 || guids.length > 0) {
-    const { blacklistedHashes, blacklistedGuids } = await blacklistService.getBlacklistedIdentifiers(hashes, guids);
-    filtered = afterMultipart.filter((r) =>
-      (!r.infoHash || !blacklistedHashes.has(r.infoHash)) &&
-      (!r.guid || !blacklistedGuids.has(r.guid)),
-    );
-  }
+  const filtered = await filterBlacklistedResults(afterMultipart, blacklistService);
 
   // Match each feed item to the best candidate book
   // Collect all matching items per book so we can rank the full set after filtering

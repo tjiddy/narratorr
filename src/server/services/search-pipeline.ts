@@ -168,6 +168,24 @@ export function filterAndRankResults(
 }
 
 /**
+ * Filter out blacklisted releases by infoHash and/or guid.
+ * Skips the blacklist lookup entirely when no identifiers are present.
+ */
+export async function filterBlacklistedResults(
+  results: SearchResult[],
+  blacklistService: BlacklistService,
+): Promise<SearchResult[]> {
+  const hashes = results.map(r => r.infoHash).filter((h): h is string => !!h);
+  const guids = results.map(r => r.guid).filter((g): g is string => !!g);
+  if (hashes.length === 0 && guids.length === 0) return results;
+  const { blacklistedHashes, blacklistedGuids } = await blacklistService.getBlacklistedIdentifiers(hashes, guids);
+  return results.filter(r =>
+    (!r.infoHash || !blacklistedHashes.has(r.infoHash)) &&
+    (!r.guid || !blacklistedGuids.has(r.guid)),
+  );
+}
+
+/**
  * Shared post-processing pipeline for search results.
  * Applies multi-part Usenet filtering, blacklist filtering, and quality ranking.
  * Used by both JSON and SSE search routes.
@@ -196,17 +214,7 @@ export async function postProcessSearchResults(
     return true;
   });
 
-  // Blacklist filtering by infoHash and/or guid
-  const hashes = results.map(r => r.infoHash).filter((h): h is string => !!h);
-  const guids = results.map(r => r.guid).filter((g): g is string => !!g);
-  let filteredResults = results;
-  if (hashes.length > 0 || guids.length > 0) {
-    const { blacklistedHashes, blacklistedGuids } = await blacklistService.getBlacklistedIdentifiers(hashes, guids);
-    filteredResults = results.filter(r =>
-      (!r.infoHash || !blacklistedHashes.has(r.infoHash)) &&
-      (!r.guid || !blacklistedGuids.has(r.guid)),
-    );
-  }
+  const filteredResults = await filterBlacklistedResults(results, blacklistService);
 
   // Enrich Usenet results with language from newsgroup metadata
   await enrichUsenetLanguages(filteredResults, logger);
@@ -283,6 +291,7 @@ async function searchWithBroadcaster(
   downloadOrchestrator: DownloadOrchestrator,
   qualitySettings: { grabFloor: number; minSeeders: number; protocolPreference: string; rejectWords?: string; requiredWords?: string; languages?: readonly string[] },
   log: FastifyBaseLogger,
+  blacklistService: BlacklistService,
   broadcaster: EventBroadcasterService,
 ): Promise<SingleBookSearchResult> {
   const query = buildSearchQuery(book);
@@ -327,8 +336,15 @@ async function searchWithBroadcaster(
 
   log.info({ bookId: book.id, title: book.title, resultCount: rawResults.length }, 'Search results found');
 
+  const afterBlacklist = await filterBlacklistedResults(rawResults, blacklistService);
+  if (afterBlacklist.length === 0) {
+    log.debug({ bookId: book.id, title: book.title }, 'All results blacklisted');
+    safeEmit(broadcaster, 'search_complete', { book_id: book.id, total_results: totalResults, outcome: 'no_results' }, log);
+    return { result: 'no_results' };
+  }
+
   const { results } = filterAndRankResults(
-    rawResults, book.duration ?? undefined,
+    afterBlacklist, book.duration ?? undefined,
     qualitySettings.grabFloor, qualitySettings.minSeeders, qualitySettings.protocolPreference,
     qualitySettings.rejectWords, qualitySettings.requiredWords, qualitySettings.languages,
   );
@@ -364,10 +380,11 @@ export async function searchAndGrabForBook(
   downloadOrchestrator: DownloadOrchestrator,
   qualitySettings: { grabFloor: number; minSeeders: number; protocolPreference: string; rejectWords?: string; requiredWords?: string; languages?: readonly string[] },
   log: FastifyBaseLogger,
+  blacklistService: BlacklistService,
   broadcaster?: EventBroadcasterService,
 ): Promise<SingleBookSearchResult> {
   if (broadcaster) {
-    return searchWithBroadcaster(book, indexerService, downloadOrchestrator, qualitySettings, log, broadcaster);
+    return searchWithBroadcaster(book, indexerService, downloadOrchestrator, qualitySettings, log, blacklistService, broadcaster);
   }
 
   const query = buildSearchQuery(book);
@@ -383,8 +400,14 @@ export async function searchAndGrabForBook(
 
   log.info({ bookId: book.id, title: book.title, resultCount: rawResults.length }, 'Search results found');
 
+  const afterBlacklist = await filterBlacklistedResults(rawResults, blacklistService);
+  if (afterBlacklist.length === 0) {
+    log.debug({ bookId: book.id, title: book.title }, 'All results blacklisted');
+    return { result: 'no_results' };
+  }
+
   const { results } = filterAndRankResults(
-    rawResults,
+    afterBlacklist,
     book.duration ?? undefined,
     qualitySettings.grabFloor,
     qualitySettings.minSeeders,
