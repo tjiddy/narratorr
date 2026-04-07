@@ -828,6 +828,22 @@ describe('canonicalCompare — indexer priority tiebreaker (#394)', () => {
     expect(results[0].protocol).toBe('torrent');
   });
 
+  it('priority tier does NOT override MB/hr when duration is known', () => {
+    // a has better MB/hr (larger size = higher bitrate), b has better priority
+    const a = makeResult({ matchScore: 0.9, size: 1000 * 1024 * 1024, indexerPriority: 99, grabs: 50, seeders: 5 });
+    const b = makeResult({ matchScore: 0.9, size: 100 * 1024 * 1024, indexerPriority: 1, grabs: 50, seeders: 5 });
+    const { results } = filterAndRankResults([b, a], 3600, 0, 0, 'none', undefined, undefined, []);
+    expect(results[0].indexerPriority).toBe(99); // higher MB/hr wins despite worse priority
+  });
+
+  it('priority tier does NOT override language tier', () => {
+    // a matches preferred language, b has better priority
+    const a = makeResult({ matchScore: 0.9, language: 'english', indexerPriority: 99, grabs: 50, seeders: 5 });
+    const b = makeResult({ matchScore: 0.9, language: 'german', indexerPriority: 1, grabs: 50, seeders: 5 });
+    const { results } = filterAndRankResults([b, a], undefined, 0, 0, 'none', undefined, undefined, ['english']);
+    expect(results[0].language).toBe('english'); // language match wins despite worse priority
+  });
+
   it('priority 1 (best) vs priority 100 (worst) — 1 wins', () => {
     const a = makeResult({ matchScore: 0.9, indexerPriority: 1, grabs: 50, seeders: 5 });
     const b = makeResult({ matchScore: 0.9, indexerPriority: 100, grabs: 50, seeders: 5 });
