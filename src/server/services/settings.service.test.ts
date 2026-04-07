@@ -595,6 +595,44 @@ describe('migrateLanguageSettings', () => {
     expect(db.insert).toHaveBeenCalled();
   });
 
+  it('normalizes non-canonical legacy value (e.g. ISO code) to canonical name before writing', async () => {
+    let callCount = 0;
+    db.select.mockImplementation(() => {
+      callCount++;
+      if (callCount === 1) return mockDbChain([{ key: 'metadata', value: { audibleRegion: 'us' } }]);
+      if (callCount === 2) return mockDbChain([{ key: 'quality', value: { grabFloor: 0, preferredLanguage: 'eng' } }]);
+      if (callCount === 3) return mockDbChain([{ key: 'metadata', value: { audibleRegion: 'us' } }]); // patch->get
+      return mockDbChain([]);
+    });
+    db.insert.mockReturnValue(mockDbChain([]));
+
+    await service.migrateLanguageSettings();
+
+    // Should have written metadata — normalizeLanguage('eng') → 'english' which is canonical
+    expect(db.insert.mock.calls.length).toBeGreaterThanOrEqual(2);
+  });
+
+  it('skips metadata write for non-canonical legacy value (e.g. misspelling) but still cleans up quality blob', async () => {
+    let callCount = 0;
+    db.select.mockImplementation(() => {
+      callCount++;
+      if (callCount === 1) return mockDbChain([{ key: 'metadata', value: { audibleRegion: 'us' } }]);
+      if (callCount === 2) return mockDbChain([{ key: 'quality', value: { grabFloor: 0, preferredLanguage: 'klingon' } }]);
+      return mockDbChain([]);
+    });
+    db.insert.mockReturnValue(mockDbChain([]));
+
+    await service.migrateLanguageSettings();
+
+    // Should warn about non-canonical value
+    expect(log.warn).toHaveBeenCalledWith(
+      expect.objectContaining({ preferredLanguage: 'klingon' }),
+      expect.stringContaining('not a canonical language'),
+    );
+    // Still cleans up quality blob (1 insert for quality cleanup, no metadata patch)
+    expect(db.insert.mock.calls.length).toBe(1);
+  });
+
   it('logs warning and does not block startup on migration error', async () => {
     db.select.mockImplementation(() => { throw new Error('DB connection failed'); });
 

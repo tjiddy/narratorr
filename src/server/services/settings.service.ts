@@ -10,6 +10,8 @@ import {
   DEFAULT_SETTINGS,
   CATEGORY_SCHEMAS,
 } from '../../shared/schemas.js';
+import { normalizeLanguage } from '../../core/utils/language-codes.js';
+import { CANONICAL_LANGUAGES } from '../../shared/language-constants.js';
 import { encryptFields, decryptFields, resolveSentinelFields, getKey, type SecretEntity } from '../utils/secret-codec.js';
 
 export type { AppSettings };
@@ -147,8 +149,14 @@ export class SettingsService {
 
       // Migrate non-empty preferredLanguage to metadata.languages
       if (typeof preferredLanguage === 'string' && preferredLanguage.trim()) {
-        await this.patch('metadata', { languages: [preferredLanguage.toLowerCase().trim()] } as Partial<AppSettings['metadata']>);
-        this.log.info({ from: preferredLanguage }, 'Migrated preferredLanguage to metadata.languages');
+        const normalized = normalizeLanguage(preferredLanguage);
+        const canonicalSet = new Set<string>(CANONICAL_LANGUAGES);
+        if (normalized && canonicalSet.has(normalized)) {
+          await this.patch('metadata', { languages: [normalized] } as Partial<AppSettings['metadata']>);
+          this.log.info({ from: preferredLanguage, to: normalized }, 'Migrated preferredLanguage to metadata.languages');
+        } else {
+          this.log.warn({ preferredLanguage }, 'Legacy preferredLanguage is not a canonical language — skipping migration, defaults will apply');
+        }
       }
 
       // Clean up: remove preferredLanguage from raw quality blob
