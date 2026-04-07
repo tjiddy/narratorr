@@ -476,3 +476,13 @@ describe('SettingsService.bootstrapProcessingDefaults', () => {
     expect(detectFfmpegPath).toHaveBeenCalledTimes(1);
   });
 });
+
+describe('migrateLanguageSettings', () => {
+  it.todo('migrates non-empty preferredLanguage to metadata.languages');
+  it.todo('skips migration when preferredLanguage is empty string');
+  it.todo('skips migration when preferredLanguage is missing');
+  it.todo('skips migration when metadata.languages already exists (idempotency)');
+  it.todo('preserves existing protocolPreference, rejectWords, requiredWords in quality blob');
+  it.todo('removes preferredLanguage from quality blob after migration');
+  it.todo('logs warning and does not block startup on migration error');
+});

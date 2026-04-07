@@ -476,3 +476,20 @@ describe('filterAndRankResults — preferredLanguage param (#272)', () => {
     expect(results[0].title).toBe('Popular');
   });
 });
+
+describe('canonicalCompare — language array', () => {
+  it.todo('no penalty when result language matches any selected language');
+  it.todo('penalty when result language does not match any selected language');
+  it.todo('no penalty when result has no language (pass through)');
+  it.todo('no penalty when languages array is empty (filtering disabled)');
+  it.todo('first entry used as primary for sort ranking');
+});
+
+describe('filterAndRankResults — language filtering', () => {
+  it.todo('excludes results with explicit non-matching language');
+  it.todo('includes results matching any selected language');
+  it.todo('passes through results with undefined language');
+  it.todo('passes through results with empty string language');
+  it.todo('no filtering when languages array is empty');
+  it.todo('normalizes language comparison to lowercase');
+});

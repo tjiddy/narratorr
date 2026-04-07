@@ -187,4 +187,13 @@ describe('FilteringSettingsSection', () => {
       expect(mockToast.error).toHaveBeenCalledWith('Server error');
     });
   });
+
+  describe('languages multi-select', () => {
+    it.todo('renders checkbox grid with all CANONICAL_LANGUAGES options');
+    it.todo('checks English by default on fresh install');
+    it.todo('selecting a language marks form dirty');
+    it.todo('deselecting a language marks form dirty');
+    it.todo('saves languages to metadata settings category');
+    it.todo('preferredLanguage text field is removed');
+  });
 });

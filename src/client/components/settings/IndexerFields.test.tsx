@@ -1252,4 +1252,9 @@ describe('IndexerFields', () => {
       expect(screen.queryByText('Exit IP')).not.toBeInTheDocument();
     });
   });
+
+  describe('MAM language checkboxes removal', () => {
+    it.todo('does not render language checkboxes for MAM indexer');
+    it.todo('shows hint text pointing to Settings → Search for languages');
+  });
 });

@@ -1733,4 +1733,9 @@ describe('SearchReleasesModal — streaming search (Phase 1/Phase 2)', () => {
       expect(screen.queryByText(/timed out/)).not.toBeInTheDocument();
     });
   });
+
+  describe('language pill data flow', () => {
+    it.todo('queries metadata settings to get selected languages');
+    it.todo('passes selectedLanguages to ReleaseCard components');
+  });
 });

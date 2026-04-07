@@ -83,4 +83,12 @@ describe('ReleaseCard', () => {
       expect(screen.queryByText('VIP')).not.toBeInTheDocument();
     });
   });
+
+  describe('language pill', () => {
+    it.todo('shows language pill when selectedLanguages has 2+ entries and result has language');
+    it.todo('hides pill when selectedLanguages has 1 entry');
+    it.todo('hides pill when selectedLanguages is empty');
+    it.todo('hides pill when result has no language metadata');
+    it.todo('pill text matches normalized language name');
+  });
 });

@@ -1513,4 +1513,11 @@ describe('MyAnonamouseIndexer', () => {
       expect(result.metadata).toMatchObject({ classname: 'VIP', isVip: true });
     });
   });
+
+  describe('search — per-search language options', () => {
+    it.todo('maps language names to MAM IDs via browse_lang params');
+    it.todo('skips languages not in MAM_LANGUAGES mapping');
+    it.todo('sends no browse_lang params when languages array is empty');
+    it.todo('sends single browse_lang when one language provided');
+  });
 });
