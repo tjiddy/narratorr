@@ -53,6 +53,21 @@ describe('books routes', () => {
     resetMockServices(services);
   });
 
+  /** Mock the streaming search path used when EventBroadcaster is available. */
+  function mockStreamingSearch(results: Array<Record<string, unknown>>) {
+    (services.indexer.getEnabledIndexers as Mock).mockResolvedValue(
+      results.map((_, i) => ({ id: i + 1, name: `indexer-${i + 1}` })),
+    );
+    (services.indexer.searchAllStreaming as Mock).mockImplementation(
+      async (_q: string, _o: unknown, _c: unknown, callbacks: { onComplete: (id: number, name: string, count: number, ms: number) => void }) => {
+        for (let i = 0; i < results.length; i++) {
+          callbacks.onComplete(i + 1, `indexer-${i + 1}`, results.length, 100);
+        }
+        return results;
+      },
+    );
+  }
+
   describe('GET /api/books', () => {
     it('returns books in { data, total } envelope', async () => {
       (services.bookList.getAll as Mock).mockResolvedValue({ data: [mockBook], total: 1 });
@@ -269,8 +284,8 @@ describe('books routes', () => {
       (services.book.findDuplicate as Mock).mockResolvedValue(null);
       (services.book.create as Mock).mockResolvedValue(mockBook);
       (services.settings.get as Mock).mockResolvedValue(DEFAULT_SETTINGS.quality);
-      (services.indexer.searchAll as Mock).mockResolvedValue([
-        { title: 'The Way of Kings', downloadUrl: 'https://example.com/dl', protocol: 'torrent', size: 500000, seeders: 10 },
+      mockStreamingSearch([
+        { title: 'The Way of Kings', downloadUrl: 'https://example.com/dl', protocol: 'torrent', size: 500000, seeders: 10, indexerId: 1 },
       ]);
 
       const res = await app.inject({
@@ -285,7 +300,7 @@ describe('books routes', () => {
       await new Promise(r => setTimeout(r, 50));
 
       expect(services.settings.get).toHaveBeenCalledWith('quality');
-      expect(services.indexer.searchAll).toHaveBeenCalled();
+      expect(services.indexer.searchAllStreaming).toHaveBeenCalled();
       expect(services.downloadOrchestrator.grab).toHaveBeenCalled();
     });
 
@@ -297,7 +312,7 @@ describe('books routes', () => {
         rejectWords: 'abridged',
         requiredWords: '',
       });
-      (services.indexer.searchAll as Mock).mockResolvedValue([
+      mockStreamingSearch([
         { title: 'The Way of Kings Abridged', rawTitle: 'The Way of Kings Abridged', downloadUrl: 'https://example.com/dl1', protocol: 'torrent', size: 500000, seeders: 10 },
         { title: 'The Way of Kings', rawTitle: 'The Way of Kings Full', downloadUrl: 'https://example.com/dl2', protocol: 'torrent', size: 500000, seeders: 5 },
       ]);
@@ -325,7 +340,7 @@ describe('books routes', () => {
         rejectWords: '',
         requiredWords: 'unabridged',
       });
-      (services.indexer.searchAll as Mock).mockResolvedValue([
+      mockStreamingSearch([
         { title: 'The Way of Kings', rawTitle: 'The Way of Kings MP3', downloadUrl: 'https://example.com/dl1', protocol: 'torrent', size: 500000, seeders: 10 },
       ]);
 
@@ -350,8 +365,8 @@ describe('books routes', () => {
         if (cat === 'metadata') return Promise.resolve({ audibleRegion: 'us', languages: ['english', 'french'] });
         return Promise.resolve(undefined);
       });
-      (services.indexer.searchAll as Mock).mockResolvedValue([
-        { title: 'The Way of Kings', downloadUrl: 'https://example.com/dl', protocol: 'torrent', size: 500000, seeders: 10 },
+      mockStreamingSearch([
+        { title: 'The Way of Kings', downloadUrl: 'https://example.com/dl', protocol: 'torrent', size: 500000, seeders: 10, indexerId: 1 },
       ]);
 
       const res = await app.inject({
@@ -376,7 +391,7 @@ describe('books routes', () => {
         if (cat === 'metadata') return Promise.resolve({ audibleRegion: 'us', languages: ['english'] });
         return Promise.resolve(undefined);
       });
-      (services.indexer.searchAll as Mock).mockResolvedValue([
+      mockStreamingSearch([
         { title: 'The Way of Kings', downloadUrl: 'https://example.com/dl-fr', protocol: 'torrent', size: 500000, seeders: 10, language: 'french' },
         { title: 'The Way of Kings', downloadUrl: 'https://example.com/dl-en', protocol: 'torrent', size: 500000, seeders: 10, language: 'english' },
       ]);
@@ -408,7 +423,7 @@ describe('books routes', () => {
       });
 
       expect(res.statusCode).toBe(201);
-      expect(services.indexer.searchAll).not.toHaveBeenCalled();
+      expect(services.indexer.searchAllStreaming).not.toHaveBeenCalled();
     });
 
     it('does not trigger search when searchImmediately is not provided', async () => {
@@ -422,14 +437,14 @@ describe('books routes', () => {
       });
 
       expect(res.statusCode).toBe(201);
-      expect(services.indexer.searchAll).not.toHaveBeenCalled();
+      expect(services.indexer.searchAllStreaming).not.toHaveBeenCalled();
     });
 
     it('search trigger failure does not fail book creation', async () => {
       (services.book.findDuplicate as Mock).mockResolvedValue(null);
       (services.book.create as Mock).mockResolvedValue(mockBook);
       (services.settings.get as Mock).mockResolvedValue(DEFAULT_SETTINGS.quality);
-      (services.indexer.searchAll as Mock).mockRejectedValue(new Error('Indexer down'));
+      (services.indexer.getEnabledIndexers as Mock).mockRejectedValue(new Error('Indexer down'));
 
       const res = await app.inject({
         method: 'POST',
@@ -455,7 +470,7 @@ describe('books routes', () => {
       });
 
       expect(res.statusCode).toBe(201);
-      expect(services.indexer.searchAll).not.toHaveBeenCalled();
+      expect(services.indexer.searchAllStreaming).not.toHaveBeenCalled();
     });
 
     it('passes monitorForUpgrades to create service', async () => {
@@ -1188,8 +1203,8 @@ describe('books routes', () => {
     it('returns result: grabbed with title when best result found and grabbed', async () => {
       (services.book.getById as Mock).mockResolvedValue(mockBook);
       (services.settings.get as Mock).mockResolvedValue(qualitySettings);
-      (services.indexer.searchAll as Mock).mockResolvedValue([
-        { title: 'The Way of Kings', downloadUrl: 'https://example.com/dl', protocol: 'torrent', size: 500000, seeders: 10 },
+      mockStreamingSearch([
+        { title: 'The Way of Kings', downloadUrl: 'https://example.com/dl', protocol: 'torrent', size: 500000, seeders: 10, indexerId: 1 },
       ]);
 
       const res = await app.inject({ method: 'POST', url: '/api/books/1/search' });
@@ -1203,7 +1218,7 @@ describe('books routes', () => {
     it('returns result: no_results when search succeeds but no qualifying results', async () => {
       (services.book.getById as Mock).mockResolvedValue(mockBook);
       (services.settings.get as Mock).mockResolvedValue(qualitySettings);
-      (services.indexer.searchAll as Mock).mockResolvedValue([]);
+      mockStreamingSearch([]);
 
       const res = await app.inject({ method: 'POST', url: '/api/books/1/search' });
 
@@ -1215,8 +1230,8 @@ describe('books routes', () => {
     it('returns result: skipped with reason when book has active download', async () => {
       (services.book.getById as Mock).mockResolvedValue(mockBook);
       (services.settings.get as Mock).mockResolvedValue(qualitySettings);
-      (services.indexer.searchAll as Mock).mockResolvedValue([
-        { title: 'The Way of Kings', downloadUrl: 'https://example.com/dl', protocol: 'torrent', size: 500000, seeders: 10 },
+      mockStreamingSearch([
+        { title: 'The Way of Kings', downloadUrl: 'https://example.com/dl', protocol: 'torrent', size: 500000, seeders: 10, indexerId: 1 },
       ]);
       (services.downloadOrchestrator.grab as Mock).mockRejectedValue(new DuplicateDownloadError('Book 1 already has an active download', 'ACTIVE_DOWNLOAD_EXISTS'));
 
@@ -1240,7 +1255,7 @@ describe('books routes', () => {
     it('returns 500 when indexer search fails', async () => {
       (services.book.getById as Mock).mockResolvedValue(mockBook);
       (services.settings.get as Mock).mockResolvedValue(qualitySettings);
-      (services.indexer.searchAll as Mock).mockRejectedValue(new Error('Indexer down'));
+      (services.indexer.getEnabledIndexers as Mock).mockRejectedValue(new Error('Indexer down'));
 
       const res = await app.inject({ method: 'POST', url: '/api/books/1/search' });
 
@@ -1256,8 +1271,8 @@ describe('books routes', () => {
         if (cat === 'metadata') return Promise.resolve({ audibleRegion: 'us', languages: ['english'] });
         return Promise.resolve(undefined);
       });
-      (services.indexer.searchAll as Mock).mockResolvedValue([
-        { title: 'The Way of Kings', downloadUrl: 'https://example.com/dl', protocol: 'torrent', size: 500000, seeders: 10 },
+      mockStreamingSearch([
+        { title: 'The Way of Kings', downloadUrl: 'https://example.com/dl', protocol: 'torrent', size: 500000, seeders: 10, indexerId: 1 },
       ]);
 
       const res = await app.inject({ method: 'POST', url: '/api/books/1/search' });
@@ -1273,7 +1288,7 @@ describe('books routes', () => {
         if (cat === 'metadata') return Promise.resolve({ audibleRegion: 'us', languages: ['english'] });
         return Promise.resolve(undefined);
       });
-      (services.indexer.searchAll as Mock).mockResolvedValue([
+      mockStreamingSearch([
         { title: 'The Way of Kings', downloadUrl: 'https://example.com/dl-fr', protocol: 'torrent', size: 500000, seeders: 10, language: 'french' },
         { title: 'The Way of Kings', downloadUrl: 'https://example.com/dl-en', protocol: 'torrent', size: 500000, seeders: 10, language: 'english' },
       ]);
@@ -1294,7 +1309,7 @@ describe('books routes', () => {
       const strictQuality = { grabFloor: 100, minSeeders: 5, protocolPreference: 'torrent', rejectWords: 'abridged', requiredWords: '' };
       (services.book.getById as Mock).mockResolvedValue(mockBook);
       (services.settings.get as Mock).mockResolvedValue(strictQuality);
-      (services.indexer.searchAll as Mock).mockResolvedValue([
+      mockStreamingSearch([
         { title: 'The Way of Kings Abridged', rawTitle: 'The Way of Kings Abridged', downloadUrl: 'https://example.com/dl1', protocol: 'torrent', size: 500000, seeders: 10 },
         { title: 'The Way of Kings', rawTitle: 'The Way of Kings Full', downloadUrl: 'https://example.com/dl2', protocol: 'torrent', size: 500000, seeders: 10 },
       ]);
@@ -1314,29 +1329,31 @@ describe('books routes', () => {
     it('sends grabbed result to download client via downloadService.grab', async () => {
       (services.book.getById as Mock).mockResolvedValue(mockBook);
       (services.settings.get as Mock).mockResolvedValue(qualitySettings);
-      (services.indexer.searchAll as Mock).mockResolvedValue([
-        { title: 'The Way of Kings', downloadUrl: 'https://example.com/dl', protocol: 'torrent', size: 500000, seeders: 10 },
+      mockStreamingSearch([
+        { title: 'The Way of Kings', downloadUrl: 'https://example.com/dl', protocol: 'torrent', size: 500000, seeders: 10, indexerId: 1 },
       ]);
 
       const res = await app.inject({ method: 'POST', url: '/api/books/1/search' });
 
       expect(res.statusCode).toBe(200);
       expect(services.downloadOrchestrator.grab).toHaveBeenCalledTimes(1);
-      expect(services.downloadOrchestrator.grab).toHaveBeenCalledWith({
-        downloadUrl: 'https://example.com/dl',
-        title: 'The Way of Kings',
-        protocol: 'torrent',
-        bookId: mockBook.id,
-        size: 500000,
-        seeders: 10,
-      });
+      expect(services.downloadOrchestrator.grab).toHaveBeenCalledWith(
+        expect.objectContaining({
+          downloadUrl: 'https://example.com/dl',
+          title: 'The Way of Kings',
+          protocol: 'torrent',
+          bookId: mockBook.id,
+          size: 500000,
+          seeders: 10,
+        }),
+      );
     });
 
     it('returns 500 when downloadService.grab fails with a non-active-download error', async () => {
       (services.book.getById as Mock).mockResolvedValue(mockBook);
       (services.settings.get as Mock).mockResolvedValue(qualitySettings);
-      (services.indexer.searchAll as Mock).mockResolvedValue([
-        { title: 'The Way of Kings', downloadUrl: 'https://example.com/dl', protocol: 'torrent', size: 500000, seeders: 10 },
+      mockStreamingSearch([
+        { title: 'The Way of Kings', downloadUrl: 'https://example.com/dl', protocol: 'torrent', size: 500000, seeders: 10, indexerId: 1 },
       ]);
       (services.downloadOrchestrator.grab as Mock).mockRejectedValue(new Error('Download client connection refused'));
 

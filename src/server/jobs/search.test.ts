@@ -1085,3 +1085,63 @@ describe('searchAllWanted', () => {
     );
   });
 });
+
+// ============================================================================
+// #392 — Caller wiring: broadcaster passed to searchAndGrabForBook
+// ============================================================================
+
+function createStreamingIndexerService(results: SearchResult[] = []): IndexerService {
+  return inject<IndexerService>({
+    searchAll: vi.fn().mockResolvedValue(results),
+    searchAllStreaming: vi.fn().mockImplementation(async (_q: string, _o: unknown, _c: Map<number, AbortController>, callbacks: { onComplete: (id: number, name: string, count: number, ms: number) => void }) => {
+      callbacks.onComplete(10, 'MAM', results.length, 500);
+      return results;
+    }),
+    getEnabledIndexers: vi.fn().mockResolvedValue([{ id: 10, name: 'MAM' }]),
+    getAll: vi.fn(),
+    getById: vi.fn(),
+    create: vi.fn(),
+    update: vi.fn(),
+    delete: vi.fn(),
+    getAdapter: vi.fn(),
+    test: vi.fn(),
+    testConfig: vi.fn(),
+  });
+}
+
+describe('#392 runSearchJob broadcaster wiring', () => {
+  it('passes EventBroadcaster to searchAndGrabForBook — triggers streaming path', async () => {
+    const settings = createMockSettingsService();
+    const bookList = createMockBookListService([{ id: 1, title: 'Test Book', authors: [{ name: 'Author' }] }]);
+    const results: SearchResult[] = [{ title: 'Test Book', protocol: 'torrent' as const, indexer: 'test', seeders: 10, size: 500_000_000, downloadUrl: 'magnet:?xt=urn:btih:aaa', indexerId: 10 }];
+    const indexer = createStreamingIndexerService(results);
+    const download = createMockDownloadOrchestrator();
+    const log = createMockLogger();
+    const broadcaster = { emit: vi.fn() };
+
+    await runSearchJob(settings, bookList, indexer, download, inject<FastifyBaseLogger>(log), undefined, broadcaster as never);
+
+    // When broadcaster is passed, searchAndGrabForBook uses streaming path
+    expect(indexer.getEnabledIndexers).toHaveBeenCalled();
+    expect(indexer.searchAllStreaming).toHaveBeenCalled();
+    expect(broadcaster.emit).toHaveBeenCalledWith('search_started', expect.objectContaining({ book_id: 1 }));
+  });
+});
+
+describe('#392 searchAllWanted broadcaster wiring', () => {
+  it('passes EventBroadcaster to searchAndGrabForBook — triggers streaming path', async () => {
+    const settings = createMockSettingsService();
+    const bookList = createMockBookListService([{ id: 1, title: 'Test Book', authors: [{ name: 'Author' }] }]);
+    const results: SearchResult[] = [{ title: 'Test Book', protocol: 'torrent' as const, indexer: 'test', seeders: 10, size: 500_000_000, downloadUrl: 'magnet:?xt=urn:btih:aaa', indexerId: 10 }];
+    const indexer = createStreamingIndexerService(results);
+    const download = createMockDownloadOrchestrator();
+    const log = createMockLogger();
+    const broadcaster = { emit: vi.fn() };
+
+    await searchAllWanted(settings, bookList, indexer, download, inject<FastifyBaseLogger>(log), broadcaster as never);
+
+    expect(indexer.getEnabledIndexers).toHaveBeenCalled();
+    expect(indexer.searchAllStreaming).toHaveBeenCalled();
+    expect(broadcaster.emit).toHaveBeenCalledWith('search_started', expect.objectContaining({ book_id: 1 }));
+  });
+});

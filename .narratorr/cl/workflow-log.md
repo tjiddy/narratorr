@@ -1,5 +1,34 @@
 # Workflow Log
 
+## #392 Activity page search progress cards with per-indexer breakdown — 2026-04-07
+**Skill path:** /elaborate → /respond-to-spec-review (x2) → /implement → /claim → /plan → /handoff
+**Outcome:** success — PR #393
+
+### Metrics
+- Files changed: 17 | Tests added/modified: ~100 new test assertions across 8 files
+- Quality gate runs: 3 (pass on attempt 3 — lint fixes for complexity/unused vars/import paths)
+- Fix iterations: 2 (1. lint complexity in handleSearchEvent + search-pipeline, 2. missing eventBroadcaster wiring in routes/index.ts)
+- Context compactions: 0
+
+### Workflow experience
+- What went smoothly: Backend schema → emission → wiring → client store → component pipeline was clean. useMergeProgress.ts provided an excellent template for the store.
+- Friction / issues encountered: (1) useSyncExternalStore infinite loop when getSnapshot returns new array reference on every call. (2) routes/index.ts didn't pass eventBroadcaster to BookRouteDeps — proxy-based test mocks masked this by auto-creating the property. Coverage review subagent caught it. (3) Switching from searchAll to searchAllStreaming required updating ~10 existing tests in books.test.ts that mocked searchAll.
+
+### Token efficiency
+- Highest-token actions: Coverage review subagent, exploring codebase for wiring points
+- Avoidable waste: Could have caught the routes/index.ts wiring gap during Module 3 (caller wiring) by grepping for the actual wiring site
+- Suggestions: When adding optional deps to route interfaces, immediately grep for the wiring call in routes/index.ts
+
+### Infrastructure gaps
+- Repeated workarounds: None
+- Missing tooling / config: Proxy-based createMockServices auto-creates all properties, masking missing wiring. Consider a type-safe mock factory that requires explicit property setup.
+- Unresolved debt: None new — existing debt items in search-pipeline (blacklist filtering) acknowledged but out of scope
+
+### Wish I'd Known
+1. **useSyncExternalStore requires cached snapshots** — `[...map.values()]` in getSnapshot creates infinite loops. Cache at module level and update in notify(). See `usesyncexternalstore-snapshot-caching.md`.
+2. **routes/index.ts wiring is the real deployment surface** — Adding a dep to a route interface means nothing if the wiring in routes/index.ts doesn't pass it. Proxy mocks hide this. See `route-deps-wiring-gap.md`.
+3. **searchAll vs searchAllStreaming path split** — When broadcaster is present, the entire code path changes. Every test that mocked searchAll needs updating when a caller gets broadcaster wired. See `streaming-search-path-split.md`.
+
 ## #386 Unified language settings + Search settings page reorganization — 2026-04-07
 **Skill path:** /elaborate → /respond-to-spec-review (x3) → /implement → /claim → /plan → /handoff
 **Outcome:** success — PR #391

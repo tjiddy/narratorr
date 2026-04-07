@@ -59,6 +59,7 @@ export async function systemRoutes(app: FastifyInstance, services: Services, db:
       services.downloadOrchestrator,
       request.log,
       services.retryBudget,
+      services.eventBroadcaster,
     );
     return result;
   });
@@ -71,6 +72,7 @@ export async function systemRoutes(app: FastifyInstance, services: Services, db:
       services.indexer,
       services.downloadOrchestrator,
       request.log,
+      services.eventBroadcaster,
     );
     return result;
   });

@@ -19,6 +19,11 @@ export const sseEventTypeSchema = z.enum([
   'merge_failed',
   'merge_queued',
   'merge_queue_updated',
+  'search_started',
+  'search_indexer_complete',
+  'search_indexer_error',
+  'search_grabbed',
+  'search_complete',
 ]);
 
 export type SSEEventType = z.infer<typeof sseEventTypeSchema>;
@@ -105,6 +110,40 @@ export const mergeQueueUpdatedPayload = z.object({
   position: z.number(),
 });
 
+export const searchStartedPayload = z.object({
+  book_id: z.number(),
+  book_title: z.string(),
+  indexers: z.array(z.object({ id: z.number(), name: z.string() })),
+});
+
+export const searchIndexerCompletePayload = z.object({
+  book_id: z.number(),
+  indexer_id: z.number(),
+  indexer_name: z.string(),
+  results_found: z.number(),
+  elapsed_ms: z.number(),
+});
+
+export const searchIndexerErrorPayload = z.object({
+  book_id: z.number(),
+  indexer_id: z.number(),
+  indexer_name: z.string(),
+  error: z.string(),
+  elapsed_ms: z.number(),
+});
+
+export const searchGrabbedPayload = z.object({
+  book_id: z.number(),
+  release_title: z.string(),
+  indexer_name: z.string(),
+});
+
+export const searchCompletePayload = z.object({
+  book_id: z.number(),
+  total_results: z.number(),
+  outcome: z.enum(['grabbed', 'no_results', 'skipped', 'grab_error']),
+});
+
 // ============================================================================
 // Typed event map — used by EventBroadcaster and frontend handler
 // ============================================================================
@@ -122,6 +161,11 @@ export type SSEEventPayloads = {
   merge_failed: z.infer<typeof mergeFailedPayload>;
   merge_queued: z.infer<typeof mergeQueuedPayload>;
   merge_queue_updated: z.infer<typeof mergeQueueUpdatedPayload>;
+  search_started: z.infer<typeof searchStartedPayload>;
+  search_indexer_complete: z.infer<typeof searchIndexerCompletePayload>;
+  search_indexer_error: z.infer<typeof searchIndexerErrorPayload>;
+  search_grabbed: z.infer<typeof searchGrabbedPayload>;
+  search_complete: z.infer<typeof searchCompletePayload>;
 };
 
 // ============================================================================
@@ -150,6 +194,11 @@ export const CACHE_INVALIDATION_MATRIX: Record<SSEEventType, CacheInvalidationRu
   merge_failed: { eventHistory: 'invalidate', books: 'invalidate' },
   merge_queued: {},
   merge_queue_updated: {},
+  search_started: {},
+  search_indexer_complete: {},
+  search_indexer_error: {},
+  search_grabbed: {},
+  search_complete: {},
 };
 
 // Event types that should trigger toast notifications

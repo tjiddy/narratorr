@@ -6,6 +6,8 @@ import type { DownloadOrchestrator } from './download-orchestrator.js';
 import { DuplicateDownloadError } from './download.service.js';
 import type { BlacklistService } from './blacklist.service.js';
 import type { SettingsService } from './settings.service.js';
+import type { EventBroadcasterService } from './event-broadcaster.service.js';
+import type { SSEEventType, SSEEventPayloads } from '../../shared/schemas/sse-events.js';
 
 /** Build a search query string from a book's title and primary author. */
 export function buildSearchQuery(book: { title: string; authors?: Array<{ name: string }> | null }): string {
@@ -226,6 +228,122 @@ export type SingleBookSearchResult =
   | { result: 'skipped'; reason: string }
   | { result: 'grab_error'; error: unknown };
 
+function safeEmit<T extends SSEEventType>(
+  broadcaster: EventBroadcasterService | undefined,
+  event: T,
+  payload: SSEEventPayloads[T],
+  log: FastifyBaseLogger,
+): void {
+  if (!broadcaster) return;
+  try { broadcaster.emit(event, payload); } catch (e: unknown) { log.debug(e, `SSE emit failed for ${event}`); }
+}
+
+/** Attempt to grab the best result and return the search outcome. */
+async function tryGrab(
+  best: SearchResult,
+  book: { id: number; title: string },
+  downloadOrchestrator: DownloadOrchestrator,
+  log: FastifyBaseLogger,
+): Promise<SingleBookSearchResult> {
+  try {
+    await downloadOrchestrator.grab({
+      downloadUrl: best.downloadUrl!,
+      title: best.title,
+      protocol: best.protocol,
+      bookId: book.id,
+      indexerId: best.indexerId,
+      size: best.size,
+      seeders: best.seeders,
+      guid: best.guid,
+    });
+    log.info({ bookId: book.id, title: best.title, seeders: best.seeders }, 'Auto-grabbed best result');
+    return { result: 'grabbed', title: best.title };
+  } catch (grabError: unknown) {
+    if (grabError instanceof DuplicateDownloadError) {
+      log.debug({ bookId: book.id, title: book.title }, 'Skipping grab — book already has active download');
+      return { result: 'skipped', reason: 'already_has_active_download' };
+    }
+    return { result: 'grab_error', error: grabError };
+  }
+}
+
+async function searchWithBroadcaster(
+  book: { id: number; title: string; duration?: number | null; authors?: Array<{ name: string }> | null },
+  indexerService: IndexerService,
+  downloadOrchestrator: DownloadOrchestrator,
+  qualitySettings: { grabFloor: number; minSeeders: number; protocolPreference: string; rejectWords?: string; requiredWords?: string; languages?: readonly string[] },
+  log: FastifyBaseLogger,
+  broadcaster: EventBroadcasterService,
+): Promise<SingleBookSearchResult> {
+  const query = buildSearchQuery(book);
+  const enabledIndexers = await indexerService.getEnabledIndexers();
+  safeEmit(broadcaster, 'search_started', {
+    book_id: book.id, book_title: book.title,
+    indexers: enabledIndexers.map(i => ({ id: i.id, name: i.name })),
+  }, log);
+
+  const controllers = new Map<number, AbortController>();
+  for (const indexer of enabledIndexers) {
+    controllers.set(indexer.id, new AbortController());
+  }
+
+  let totalResults = 0;
+  const rawResults = await indexerService.searchAllStreaming(
+    query,
+    { title: book.title, author: book.authors?.[0]?.name },
+    controllers,
+    {
+      onComplete: (indexerId, name, resultCount, elapsedMs) => {
+        totalResults += resultCount;
+        safeEmit(broadcaster, 'search_indexer_complete', {
+          book_id: book.id, indexer_id: indexerId, indexer_name: name,
+          results_found: resultCount, elapsed_ms: elapsedMs,
+        }, log);
+      },
+      onError: (indexerId, name, error, elapsedMs) => {
+        safeEmit(broadcaster, 'search_indexer_error', {
+          book_id: book.id, indexer_id: indexerId, indexer_name: name,
+          error, elapsed_ms: elapsedMs,
+        }, log);
+      },
+    },
+  );
+
+  if (rawResults.length === 0) {
+    log.debug({ bookId: book.id, title: book.title }, 'No results found');
+    safeEmit(broadcaster, 'search_complete', { book_id: book.id, total_results: totalResults, outcome: 'no_results' }, log);
+    return { result: 'no_results' };
+  }
+
+  log.info({ bookId: book.id, title: book.title, resultCount: rawResults.length }, 'Search results found');
+
+  const { results } = filterAndRankResults(
+    rawResults, book.duration ?? undefined,
+    qualitySettings.grabFloor, qualitySettings.minSeeders, qualitySettings.protocolPreference,
+    qualitySettings.rejectWords, qualitySettings.requiredWords, qualitySettings.languages,
+  );
+
+  const best = results.find((r) => r.downloadUrl);
+  if (!best) {
+    safeEmit(broadcaster, 'search_complete', { book_id: book.id, total_results: totalResults, outcome: 'no_results' }, log);
+    return { result: 'no_results' };
+  }
+
+  const grabResult = await tryGrab(best, book, downloadOrchestrator, log);
+  if (grabResult.result === 'grabbed') {
+    const indexerName = enabledIndexers.find(i => i.id === best.indexerId)?.name ?? best.indexer ?? 'unknown';
+    safeEmit(broadcaster, 'search_grabbed', { book_id: book.id, release_title: best.title, indexer_name: indexerName }, log);
+    safeEmit(broadcaster, 'search_complete', { book_id: book.id, total_results: totalResults, outcome: 'grabbed' }, log);
+  } else if (grabResult.result === 'skipped') {
+    safeEmit(broadcaster, 'search_complete', { book_id: book.id, total_results: totalResults, outcome: 'skipped' }, log);
+  } else if (grabResult.result === 'grab_error') {
+    safeEmit(broadcaster, 'search_complete', { book_id: book.id, total_results: totalResults, outcome: 'grab_error' }, log);
+  } else {
+    safeEmit(broadcaster, 'search_complete', { book_id: book.id, total_results: totalResults, outcome: 'no_results' }, log);
+  }
+  return grabResult;
+}
+
 /**
  * Search indexers for a single book and auto-grab the best result.
  * Core search-and-grab logic shared by all callers (jobs, routes).
@@ -236,7 +354,12 @@ export async function searchAndGrabForBook(
   downloadOrchestrator: DownloadOrchestrator,
   qualitySettings: { grabFloor: number; minSeeders: number; protocolPreference: string; rejectWords?: string; requiredWords?: string; languages?: readonly string[] },
   log: FastifyBaseLogger,
+  broadcaster?: EventBroadcasterService,
 ): Promise<SingleBookSearchResult> {
+  if (broadcaster) {
+    return searchWithBroadcaster(book, indexerService, downloadOrchestrator, qualitySettings, log, broadcaster);
+  }
+
   const query = buildSearchQuery(book);
   const rawResults = await indexerService.searchAll(query, {
     title: book.title,
@@ -266,24 +389,5 @@ export async function searchAndGrabForBook(
     return { result: 'no_results' };
   }
 
-  try {
-    await downloadOrchestrator.grab({
-      downloadUrl: best.downloadUrl!,
-      title: best.title,
-      protocol: best.protocol,
-      bookId: book.id,
-      indexerId: best.indexerId,
-      size: best.size,
-      seeders: best.seeders,
-      guid: best.guid,
-    });
-    log.info({ bookId: book.id, title: best.title, seeders: best.seeders }, 'Auto-grabbed best result');
-    return { result: 'grabbed', title: best.title };
-  } catch (grabError: unknown) {
-    if (grabError instanceof DuplicateDownloadError) {
-      log.debug({ bookId: book.id, title: book.title }, 'Skipping grab — book already has active download');
-      return { result: 'skipped', reason: 'already_has_active_download' };
-    }
-    return { result: 'grab_error', error: grabError };
-  }
+  return tryGrab(best, book, downloadOrchestrator, log);
 }

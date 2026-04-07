@@ -5,7 +5,13 @@ import { createElement, type ReactNode } from 'react';
 import { toast } from 'sonner';
 import { useEventSource, isSSEConnected, useSSEConnected } from './useEventSource';
 import { useMergeProgress, setMergeProgress } from './useMergeProgress';
+import { handleSearchEvent } from './useSearchProgress';
 import { queryKeys } from '@/lib/queryKeys';
+
+vi.mock('./useSearchProgress', () => ({
+  handleSearchEvent: vi.fn(),
+  _resetForTesting: vi.fn(),
+}));
 
 vi.mock('sonner', () => ({
   toast: {
@@ -883,6 +889,71 @@ describe('#312 cache-miss scoping — patchActivityProgress', () => {
       });
 
       expect(toast.warning).toHaveBeenCalledWith('Merge succeeded but metadata update failed');
+    });
+  });
+
+  // ============================================================================
+  // #392 — Search progress event routing
+  // ============================================================================
+
+  describe('#392 search progress event routing', () => {
+    it('subscribes to all 5 new search event types', () => {
+      const { wrapper } = createWrapper();
+      renderHook(() => useEventSource('test-api-key'), { wrapper });
+      const es = MockEventSource.instances[0];
+      es.simulateOpen();
+
+      for (const type of ['search_started', 'search_indexer_complete', 'search_indexer_error', 'search_grabbed', 'search_complete']) {
+        expect(es['listeners'].has(type)).toBe(true);
+      }
+    });
+
+    it('routes search_started to search-progress store', () => {
+      const { wrapper } = createWrapper();
+      renderHook(() => useEventSource('test-api-key'), { wrapper });
+      const es = MockEventSource.instances[0];
+      es.simulateOpen();
+
+      const payload = { book_id: 1, book_title: 'Test', indexers: [{ id: 10, name: 'MAM' }] };
+      es.simulateEvent('search_started', payload);
+
+      expect(handleSearchEvent).toHaveBeenCalledWith('search_started', payload);
+    });
+
+    it('routes search_indexer_complete to search-progress store', () => {
+      const { wrapper } = createWrapper();
+      renderHook(() => useEventSource('test-api-key'), { wrapper });
+      const es = MockEventSource.instances[0];
+      es.simulateOpen();
+
+      const payload = { book_id: 1, indexer_id: 10, indexer_name: 'MAM', results_found: 3, elapsed_ms: 1200 };
+      es.simulateEvent('search_indexer_complete', payload);
+
+      expect(handleSearchEvent).toHaveBeenCalledWith('search_indexer_complete', payload);
+    });
+
+    it('routes search_grabbed to search-progress store', () => {
+      const { wrapper } = createWrapper();
+      renderHook(() => useEventSource('test-api-key'), { wrapper });
+      const es = MockEventSource.instances[0];
+      es.simulateOpen();
+
+      const payload = { book_id: 1, release_title: 'Best Result', indexer_name: 'MAM' };
+      es.simulateEvent('search_grabbed', payload);
+
+      expect(handleSearchEvent).toHaveBeenCalledWith('search_grabbed', payload);
+    });
+
+    it('routes search_complete to search-progress store', () => {
+      const { wrapper } = createWrapper();
+      renderHook(() => useEventSource('test-api-key'), { wrapper });
+      const es = MockEventSource.instances[0];
+      es.simulateOpen();
+
+      const payload = { book_id: 1, total_results: 0, outcome: 'no_results' };
+      es.simulateEvent('search_complete', payload);
+
+      expect(handleSearchEvent).toHaveBeenCalledWith('search_complete', payload);
     });
   });
 });

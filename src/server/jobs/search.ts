@@ -6,6 +6,7 @@ import type { BookListService } from '../services/book-list.service.js';
 import type { IndexerService } from '../services/indexer.service.js';
 import type { DownloadOrchestrator } from '../services/download-orchestrator.js';
 import type { RetryBudget } from '../services/retry-budget.js';
+import type { EventBroadcasterService } from '../services/event-broadcaster.service.js';
 import { buildSearchQuery, filterAndRankResults, searchAndGrabForBook } from '../services/search-pipeline.js';
 import { DuplicateDownloadError } from '../services/download.service.js';
 
@@ -31,6 +32,7 @@ export async function runSearchJob(
   downloadOrchestrator: DownloadOrchestrator,
   log: FastifyBaseLogger,
   retryBudget?: RetryBudget,
+  broadcaster?: EventBroadcasterService,
 ): Promise<SearchJobResult> {
   // Reset retry budget at the start of every search cycle (any caller)
   retryBudget?.resetAll();
@@ -56,7 +58,7 @@ export async function runSearchJob(
 
   for (const book of wantedBooks) {
     try {
-      const result = await searchAndGrabForBook(book, indexerService, downloadOrchestrator, { ...qualitySettings, languages: metadataSettings.languages }, log);
+      const result = await searchAndGrabForBook(book, indexerService, downloadOrchestrator, { ...qualitySettings, languages: metadataSettings.languages }, log, broadcaster);
       searched++;
       if (result.result === 'grabbed') grabbed++;
       if (result.result === 'grab_error') {
@@ -81,6 +83,7 @@ export async function searchAllWanted(
   indexerService: IndexerService,
   downloadOrchestrator: DownloadOrchestrator,
   log: FastifyBaseLogger,
+  broadcaster?: EventBroadcasterService,
 ): Promise<SearchAllWantedResult> {
   const qualitySettings = await settingsService.get('quality');
   const metadataSettings = await settingsService.get('metadata');
@@ -100,7 +103,7 @@ export async function searchAllWanted(
 
   for (const book of wantedBooks) {
     try {
-      const result = await searchAndGrabForBook(book, indexerService, downloadOrchestrator, { ...qualitySettings, languages: metadataSettings.languages }, log);
+      const result = await searchAndGrabForBook(book, indexerService, downloadOrchestrator, { ...qualitySettings, languages: metadataSettings.languages }, log, broadcaster);
       searched++;
       if (result.result === 'grabbed') grabbed++;
       else if (result.result === 'skipped') skipped++;
