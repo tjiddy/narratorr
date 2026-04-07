@@ -229,20 +229,9 @@ export function MamFields({ register, errors, watch, setValue, formTestResult, i
       </div>
       <div className="sm:col-span-2">
         <span className="block text-sm font-medium mb-2">Languages</span>
-        <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
-          {MAM_LANGUAGES.map((lang) => (
-            <label key={lang.id} className="flex items-center gap-2 text-sm cursor-pointer">
-              <input
-                type="checkbox"
-                checked={searchLanguages.includes(lang.id)}
-                onChange={() => toggleLanguage(lang.id)}
-                className="rounded border-border text-primary focus-ring"
-              />
-              {lang.label}
-            </label>
-          ))}
-        </div>
-        <p className="text-sm text-muted-foreground mt-1">Deselect all for unrestricted language search</p>
+        <p className="text-sm text-muted-foreground">
+          Languages are now configured globally in <span className="font-medium text-foreground">Settings → Search → Filtering</span>.
+        </p>
       </div>
     </>
   );

@@ -151,8 +151,8 @@ export function WelcomeModal({ isOpen, isPending = false, onDismiss }: WelcomeMo
             <InfoCard
               href="https://docs.narratorr.dev/configuration/metadata/"
               icon={<GlobeIcon className="w-5 h-5 text-primary" />}
-              title="Metadata region: US"
-              description={<>Metadata searches default to the US region. Change it in <span className="whitespace-nowrap">Settings → Metadata</span>.</>}
+              title="Region: US · Language: English"
+              description={<>Metadata defaults to US region and English language. Change in <span className="whitespace-nowrap">Settings → Search → Filtering</span>.</>}
               badge={<WarningBadge />}
             />
             <InfoCard

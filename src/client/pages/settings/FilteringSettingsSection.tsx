@@ -9,6 +9,7 @@ import { queryKeys } from '@/lib/queryKeys';
 import { GlobeIcon } from '@/components/icons';
 import { SelectWithChevron } from '@/components/settings/SelectWithChevron';
 import { audibleRegionSchema, DEFAULT_SETTINGS, type AppSettings } from '../../../shared/schemas.js';
+import { CANONICAL_LANGUAGES } from '../../../shared/language-constants.js';
 import { SettingsSection } from './SettingsSection';
 
 const REGION_LABELS: Record<string, string> = {
@@ -26,9 +27,9 @@ const REGION_LABELS: Record<string, string> = {
 
 const filteringFormSchema = z.object({
   audibleRegion: audibleRegionSchema,
+  languages: z.array(z.string()),
   rejectWords: z.string(),
   requiredWords: z.string(),
-  preferredLanguage: z.string(),
 });
 
 type FilteringFormData = z.infer<typeof filteringFormSchema>;
@@ -36,19 +37,18 @@ type FilteringFormData = z.infer<typeof filteringFormSchema>;
 function toFormData(settings: AppSettings): FilteringFormData {
   return {
     audibleRegion: settings.metadata.audibleRegion,
+    languages: [...settings.metadata.languages],
     rejectWords: settings.quality.rejectWords,
     requiredWords: settings.quality.requiredWords,
-    preferredLanguage: settings.quality.preferredLanguage,
   };
 }
 
 function toPayload(data: FilteringFormData) {
   return {
-    metadata: { audibleRegion: data.audibleRegion },
+    metadata: { audibleRegion: data.audibleRegion, languages: data.languages },
     quality: {
       rejectWords: data.rejectWords,
       requiredWords: data.requiredWords,
-      preferredLanguage: data.preferredLanguage,
     },
   };
 }
@@ -61,7 +61,7 @@ export function FilteringSettingsSection() {
     queryFn: api.getSettings,
   });
 
-  const { register, handleSubmit, reset, formState: { isDirty } } = useForm<FilteringFormData>({
+  const { register, handleSubmit, reset, watch, setValue, formState: { isDirty } } = useForm<FilteringFormData>({
     defaultValues: toFormData({ ...DEFAULT_SETTINGS } as AppSettings),
     resolver: zodResolver(filteringFormSchema),
   });
@@ -83,6 +83,15 @@ export function FilteringSettingsSection() {
       toast.error(err instanceof Error ? err.message : 'Failed to save settings');
     },
   });
+
+  const selectedLanguages = watch('languages') ?? [];
+
+  function toggleLanguage(lang: string) {
+    const updated = selectedLanguages.includes(lang)
+      ? selectedLanguages.filter((l) => l !== lang)
+      : [...selectedLanguages, lang];
+    setValue('languages', updated, { shouldDirty: true });
+  }
 
   return (
     <SettingsSection
@@ -106,16 +115,22 @@ export function FilteringSettingsSection() {
         </div>
 
         <div>
-          <label htmlFor="preferredLanguage" className="block text-sm font-medium mb-2">Preferred Language</label>
-          <input
-            id="preferredLanguage"
-            type="text"
-            {...register('preferredLanguage')}
-            className="w-full px-4 py-3 bg-background border border-border rounded-xl focus-ring focus:border-transparent transition-all"
-            placeholder="english"
-          />
+          <span className="block text-sm font-medium mb-2">Languages</span>
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+            {CANONICAL_LANGUAGES.map((lang) => (
+              <label key={lang} className="flex items-center gap-2 text-sm cursor-pointer capitalize">
+                <input
+                  type="checkbox"
+                  checked={selectedLanguages.includes(lang)}
+                  onChange={() => toggleLanguage(lang)}
+                  className="rounded border-border text-primary focus-ring"
+                />
+                {lang}
+              </label>
+            ))}
+          </div>
           <p className="text-sm text-muted-foreground mt-2">
-            Preferred language for search results (e.g. english, german, french). Results in other languages are ranked lower but not excluded. Leave empty to disable.
+            Search results in unselected languages are excluded. Results with no language metadata always pass through. Deselect all for unrestricted search.
           </p>
         </div>
 
