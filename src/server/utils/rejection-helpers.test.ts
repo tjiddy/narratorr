@@ -110,6 +110,33 @@ describe('blacklistAndRetrySearch', () => {
     });
   });
 
+  // #396 — overrideRetry: true must bypass settings lookup entirely
+  it('triggers re-search when overrideRetry is true even if settingsService.get rejects', async () => {
+    const req = makeRequest({
+      settingsService: inject<SettingsService>({ get: vi.fn().mockRejectedValue(new Error('no settings')) }),
+      overrideRetry: true,
+    });
+    await blacklistAndRetrySearch(req);
+
+    await vi.waitFor(() => {
+      expect(retrySearch).toHaveBeenCalledWith(1, req.retrySearchDeps);
+    });
+  });
+
+  it('does not call settingsService.get when overrideRetry is true', async () => {
+    const settingsGet = vi.fn().mockResolvedValue({ redownloadFailed: true });
+    const req = makeRequest({
+      settingsService: inject<SettingsService>({ get: settingsGet }),
+      overrideRetry: true,
+    });
+    await blacklistAndRetrySearch(req);
+
+    await vi.waitFor(() => {
+      expect(retrySearch).toHaveBeenCalledWith(1, req.retrySearchDeps);
+    });
+    expect(settingsGet).not.toHaveBeenCalled();
+  });
+
   it('overrideRetry=false still respects redownloadFailed setting', async () => {
     const req = makeRequest({
       settingsService: inject<SettingsService>({ get: vi.fn().mockResolvedValue({ redownloadFailed: false }) }),

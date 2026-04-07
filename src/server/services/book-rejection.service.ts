@@ -8,6 +8,8 @@ import type { SettingsService } from './settings.service.js';
 import type { EventHistoryService } from './event-history.service.js';
 import type { RetrySearchDeps } from './retry-search.js';
 import { blacklistAndRetrySearch } from '../utils/rejection-helpers.js';
+import { preserveBookCover } from '../utils/cover-cache.js';
+import { config } from '../config.js';
 
 type BookRow = typeof books.$inferSelect;
 
@@ -36,7 +38,7 @@ export class BookRejectionService {
     if (book.status !== 'imported') throw new BookRejectionError('Book is not imported', 'NOT_IMPORTED');
     if (!book.lastGrabGuid && !book.lastGrabInfoHash) throw new BookRejectionError('Book has no release identifiers', 'NO_IDENTIFIERS');
 
-    // 1. Blacklist + 5. Re-search (fire-and-forget)
+    // 1. Blacklist + 5. Re-search (fire-and-forget, overrideRetry since user explicitly requested)
     await blacklistAndRetrySearch({
       identifiers: {
         infoHash: book.lastGrabInfoHash ?? undefined,
@@ -50,6 +52,7 @@ export class BookRejectionService {
       retrySearchDeps: this.retrySearchDeps,
       settingsService: this.settingsService,
       log: this.log,
+      overrideRetry: true,
     });
 
     // 2. Reset book fields — immediately after blacklist, before irreversible FS deletion (DB-1)
@@ -72,9 +75,10 @@ export class BookRejectionService {
       updatedAt: new Date(),
     }).where(eq(books.id, bookId));
 
-    // 3. Delete book files (best-effort — after DB reset so crash won't leave stale state)
+    // 3. Preserve cover + delete book files (best-effort — after DB reset so crash won't leave stale state)
     if (book.path) {
       try {
+        await preserveBookCover(book.path, bookId, config.configPath, this.log);
         const librarySettings = await this.settingsService.get('library');
         await this.bookService.deleteBookFiles(book.path, librarySettings.path);
       } catch (error: unknown) {
