@@ -1,5 +1,34 @@
 # Workflow Log
 
+## #396 Wrong Release: preserve cover art + fix silent re-search failure — 2026-04-07
+**Skill path:** /elaborate → /respond-to-spec-review (x2) → /implement → /claim → /plan → /handoff
+**Outcome:** success — PR #403
+
+### Metrics
+- Files changed: 8 | Tests added/modified: 29
+- Quality gate runs: 2 (pass on attempt 2 — first had pre-existing flaky IndexerFields test)
+- Fix iterations: 0 (clean implementation)
+- Context compactions: 0
+
+### Workflow experience
+- What went smoothly: Clean 4-module TDD cycle. Cover cache approach was simple and avoided all path-consumer conflicts. Override retry restructure was a targeted 10-line change.
+- Friction / issues encountered: Spec review required 3 rounds — initial approach (targeted audio deletion) conflicted with path-based consumers, second approach (path preservation) had even wider blast radius. Final cover-cache approach was identified in round 3.
+
+### Token efficiency
+- Highest-token actions: Elaborate + 2 respond-to-spec-review rounds consumed significant context exploring codebase for path-based consumer conflicts
+- Avoidable waste: Could have identified the path-consumer conflict during elaboration by checking quality-gate and revertBookStatus callers upfront
+- Suggestions: When a spec proposes changing field nulling behavior, always grep for all consumers of that field before committing to the approach
+
+### Infrastructure gaps
+- Repeated workarounds: None
+- Missing tooling / config: None
+- Unresolved debt: COVER_FILE_REGEX duplicated in 3 files (cover-cache.ts, cover-download.ts, tagging.service.ts)
+
+### Wish I'd Known
+1. `book.path !== null` is used as an "has imported audio" proxy by 5+ consumers (quality gate, revertBookStatus, monitor, download orchestrator, quality helpers) — preserving path for cover serving was a non-starter
+2. `overrideRetry: true` in `blacklistAndRetrySearch` didn't actually bypass the settings lookup — it only bypassed the boolean check AFTER the lookup succeeded. The settings `.catch()` swallowed the override
+3. A cover cache at `{configPath}/covers/{bookId}/` is the simplest approach that avoids all path-consumer conflicts — no schema changes, no consumer changes, just copy-out + endpoint fallback
+
 ## #397 Multi-disc imports fail with duplicate track number collision — 2026-04-07
 **Skill path:** /elaborate → /respond-to-spec-review (x3) → /implement → /claim → /plan → /handoff
 **Outcome:** success — PR #402
