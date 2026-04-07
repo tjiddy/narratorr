@@ -905,6 +905,18 @@ describe('books routes', () => {
       expect(res.statusCode).toBe(200);
     });
 
+    it('DELETE /api/books/:id does not clean cover cache when book not found', async () => {
+      (cleanCoverCache as Mock).mockClear();
+      (services.book.getById as Mock).mockResolvedValue({ ...mockBook, id: 999 });
+      (services.download.getActiveByBookId as Mock).mockResolvedValue([]);
+      (services.book.delete as Mock).mockResolvedValue(false);
+
+      const res = await app.inject({ method: 'DELETE', url: '/api/books/999' });
+
+      expect(res.statusCode).toBe(404);
+      expect(cleanCoverCache).not.toHaveBeenCalled();
+    });
+
     it('delete event snapshot includes comma-joined authors and narratorName (#71)', async () => {
       const multiAuthorBook = {
         ...mockBook,

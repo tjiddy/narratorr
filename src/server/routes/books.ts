@@ -112,16 +112,16 @@ app.delete<{ Params: IdParam; Querystring: DeleteBookQuery }>(
       }).catch((err) => request.log.warn(err, 'Failed to record deleted event'));
     }
 
-    // Clean up cached cover (best-effort)
-    cleanCoverCache(id, config.configPath, request.log).catch((error: unknown) => {
-      request.log.warn({ bookId: id, error }, 'Failed to clean cover cache during deletion');
-    });
-
     const deleted = await deps.bookService.delete(id);
 
     if (!deleted) {
       return reply.status(404).send({ error: 'Book not found' });
     }
+
+    // Clean up cached cover after successful DB delete (best-effort)
+    cleanCoverCache(id, config.configPath, request.log).catch((error: unknown) => {
+      request.log.warn({ bookId: id, error }, 'Failed to clean cover cache during deletion');
+    });
 
     request.log.info({ id, deleteFiles }, 'Book deleted');
     return { success: true };
