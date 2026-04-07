@@ -64,7 +64,7 @@ function buildMetadataUpdates(
     filledDuration++;
   }
 
-  if (result.title && isAllCaps(book.title)) {
+  if (result.title && isAllCaps(book.title) && result.title !== book.title) {
     updates.title = result.title;
     filledTitle++;
   }

@@ -537,6 +537,17 @@ describe('enrichment job', () => {
       const setCall = db.update.mock.results[0].value.set.mock.calls[0][0];
       expect(setCall).not.toHaveProperty('title');
     });
+
+    it('does NOT overwrite ALL CAPS title when enrichment returns same value', async () => {
+      setupEnrichment({ title: 'PROJECT HAIL MARY' }, { title: 'PROJECT HAIL MARY' });
+      await runEnrichment(inject<Db>(db), inject<MetadataService>(metadataService), inject<BookService>(bookService), inject<FastifyBaseLogger>(log));
+      const setCall = db.update.mock.results[0].value.set.mock.calls[0][0];
+      expect(setCall).not.toHaveProperty('title');
+      expect(log.info).toHaveBeenCalledWith(
+        expect.objectContaining({ filledTitle: 0 }),
+        'Enrichment batch completed',
+      );
+    });
   });
 
   // ── #398 Description fill ─────────────────────────────────────────────
@@ -801,6 +812,31 @@ describe('enrichment job', () => {
       expect(setCall).toHaveProperty('seriesName', 'Standalone');
       expect(setCall).toHaveProperty('seriesPosition', 1);
       expect(setCall).toHaveProperty('duration', 970);
+    });
+
+    it('select query requests all required fields for field-fill logic', async () => {
+      db.select
+        .mockReturnValueOnce(mockDbChain([]))
+        .mockReturnValueOnce(mockDbChain([{ id: 1, asin: 'B_PROJ' }]))
+        .mockReturnValueOnce(mockDbChain([emptyFields]));
+
+      metadataService.enrichBook.mockResolvedValueOnce({
+        title: 'Project Hail Mary', authors: [{ name: 'Author' }],
+      });
+      db.update.mockReturnValue(mockDbChain());
+
+      await runEnrichment(inject<Db>(db), inject<MetadataService>(metadataService), inject<BookService>(bookService), inject<FastifyBaseLogger>(log));
+
+      // The third db.select() call is the existing-fields lookup — assert its projection
+      const projectionArg = db.select.mock.calls[2][0];
+      expect(projectionArg).toHaveProperty('duration');
+      expect(projectionArg).toHaveProperty('genres');
+      expect(projectionArg).toHaveProperty('title');
+      expect(projectionArg).toHaveProperty('description');
+      expect(projectionArg).toHaveProperty('coverUrl');
+      expect(projectionArg).toHaveProperty('publishedDate');
+      expect(projectionArg).toHaveProperty('seriesName');
+      expect(projectionArg).toHaveProperty('seriesPosition');
     });
 
     it('does not overwrite any fields when all already populated', async () => {
