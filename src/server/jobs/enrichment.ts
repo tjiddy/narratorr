@@ -30,6 +30,8 @@ export async function runEnrichment(db: Db, metadataService: MetadataService, bo
   let filledDuration = 0;
   let filledNarrators = 0;
   let filledGenres = 0;
+  let filledTitle = 0;
+  let filledDescription = 0;
   // Skip books without ASIN → set to 'skipped'
   const noAsinBooks = await db
     .select({ id: books.id })
@@ -97,7 +99,16 @@ export async function runEnrichment(db: Db, metadataService: MetadataService, bo
 
       // Only fill in fields that are currently empty
       const existing = await db
-        .select({ duration: books.duration, genres: books.genres })
+        .select({
+          duration: books.duration,
+          genres: books.genres,
+          title: books.title,
+          description: books.description,
+          coverUrl: books.coverUrl,
+          publishedDate: books.publishedDate,
+          seriesName: books.seriesName,
+          seriesPosition: books.seriesPosition,
+        })
         .from(books)
         .where(eq(books.id, candidate.id))
         .limit(1);
@@ -107,6 +118,39 @@ export async function runEnrichment(db: Db, metadataService: MetadataService, bo
         if (!book.duration && result.duration) {
           updates.duration = result.duration;
           filledDuration++;
+        }
+
+        // Overwrite ALL CAPS titles with enrichment's properly-cased title
+        if (result.title && book.title === book.title.toUpperCase() && book.title !== book.title.toLowerCase()) {
+          updates.title = result.title;
+          filledTitle++;
+        }
+
+        // Fill description when currently null/empty
+        if (!book.description && result.description) {
+          updates.description = result.description;
+          filledDescription++;
+        }
+
+        // Fill coverUrl when currently null
+        if (!book.coverUrl && result.coverUrl) {
+          updates.coverUrl = result.coverUrl;
+        }
+
+        // Fill publishedDate when currently null/empty
+        if (!book.publishedDate && result.publishedDate) {
+          updates.publishedDate = result.publishedDate;
+        }
+
+        // Fill series fields independently (matching library-scan.service.ts:432-433)
+        const primarySeries = result.series?.[0];
+        if (primarySeries) {
+          if (!book.seriesName && primarySeries.name) {
+            updates.seriesName = primarySeries.name;
+          }
+          if (book.seriesPosition == null && primarySeries.position != null) {
+            updates.seriesPosition = primarySeries.position;
+          }
         }
 
         // Fill genres via bookService.update() when existing genres are null or empty
@@ -163,6 +207,6 @@ export async function runEnrichment(db: Db, metadataService: MetadataService, bo
   }
 
   if (candidates.length > 0) {
-    log.info({ enrichedCount, filledDuration, filledNarrators, filledGenres, elapsedMs: Date.now() - startMs }, 'Enrichment batch completed');
+    log.info({ enrichedCount, filledDuration, filledNarrators, filledGenres, filledTitle, filledDescription, elapsedMs: Date.now() - startMs }, 'Enrichment batch completed');
   }
 }
