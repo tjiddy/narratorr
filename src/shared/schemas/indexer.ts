@@ -72,7 +72,9 @@ export const createIndexerFormSchema = z.object({
 
   // Validate FlareSolverr URL if provided (applies to all types)
   const proxyUrl = data.settings.flareSolverrUrl?.replace(/\/+$/, '').trim();
-  if (proxyUrl) {
+  if (proxyUrl === '********') {
+    // Sentinel passthrough — persisted secret, skip validation
+  } else if (proxyUrl) {
     try {
       new URL(proxyUrl);
     } catch {

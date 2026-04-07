@@ -99,6 +99,37 @@ describe('createIndexerFormSchema — flareSolverrUrl validation', () => {
       expect(result.data.settings.flareSolverrUrl).toBeUndefined();
     }
   });
+
+  it('accepts sentinel FlareSolverr URL (********) without validation error', () => {
+    const result = createIndexerFormSchema.safeParse({
+      ...baseData,
+      settings: { ...baseData.settings, flareSolverrUrl: '********' },
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it('preserves sentinel FlareSolverr URL value through validation', () => {
+    const result = createIndexerFormSchema.safeParse({
+      ...baseData,
+      settings: { ...baseData.settings, flareSolverrUrl: '********' },
+    });
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.settings.flareSolverrUrl).toBe('********');
+    }
+  });
+
+  it('still rejects non-URL non-sentinel FlareSolverr values', () => {
+    const result = createIndexerFormSchema.safeParse({
+      ...baseData,
+      settings: { ...baseData.settings, flareSolverrUrl: 'random-garbage' },
+    });
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      const urlError = result.error.issues.find(i => i.path.includes('flareSolverrUrl'));
+      expect(urlError?.message).toBe('Must be a valid URL');
+    }
+  });
 });
 
 describe('createIndexerFormSchema — MAM required-field validation', () => {

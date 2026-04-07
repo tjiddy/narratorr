@@ -629,9 +629,10 @@ describe('IndexerFields', () => {
       await user.type(mamIdInput, 'test-id');
       await user.tab();
 
+      // Detection enforces a 1s minimum duration — extend waitFor timeout to avoid flakiness under load
       await waitFor(() => {
         expect(screen.getByText('TestUser')).toBeInTheDocument();
-      });
+      }, { timeout: 3000 });
       expect(screen.getByText('Power User')).toBeInTheDocument();
     });
 
