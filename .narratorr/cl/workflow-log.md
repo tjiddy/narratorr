@@ -1,5 +1,29 @@
 # Workflow Log
 
+## #395 Detect Usenet release language from NZB newsgroup metadata — 2026-04-07
+**Skill path:** /elaborate → /respond-to-spec-review (x2) → /implement → /claim → /plan → /handoff
+**Outcome:** success — PR #400
+
+### Metrics
+- Files changed: 4 source + 1 test | Tests added/modified: 52
+- Quality gate runs: 2 (pass on attempt 1 both times — once during implement, once during handoff)
+- Fix iterations: 0
+- Context compactions: 0
+
+### Workflow experience
+- What went smoothly: Clean implementation — the spec was thorough after 3 rounds of review, all utilities existed (Semaphore, fetchWithTimeout, normalizeLanguage), single insertion point in postProcessSearchResults made wiring trivial
+- Friction / issues encountered: None significant — the spec review process caught all alignment issues upfront (scandinavian mapping, caller surface ambiguity, language pill claim)
+
+### Token efficiency
+- Highest-token actions: Spec review rounds (3 rounds with elaborate + 2 respond-to-spec-review)
+- Avoidable waste: The elaborate→review→respond cycle was thorough but the initial spec was missing scope boundaries and test plan, which required 3 review rounds
+- Suggestions: Future specs for cross-cutting features should define scope boundaries upfront (which callers are in/out of scope)
+
+### Wish I'd Known
+1. `postProcessSearchResults()` had no logger parameter — needed to thread `request.log` from both search routes (see `postprocess-logger-threading.md`)
+2. NZB `<group>` tags are simple enough for regex — no need to import cheerio for this (see `nzb-regex-parsing-over-cheerio.md`)
+3. The spec review process was highly effective at catching the `scandinavian` non-canonical language and the caller surface ambiguity before any code was written — trust the process
+
 ## #392 Activity page search progress cards with per-indexer breakdown — 2026-04-07
 **Skill path:** /elaborate → /respond-to-spec-review (x2) → /implement → /claim → /plan → /handoff
 **Outcome:** success — PR #393
