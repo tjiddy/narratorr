@@ -1008,14 +1008,145 @@ describe('filterBlacklistedResults', () => {
 
 // #406 — Blacklist filtering in searchAndGrabForBook (non-broadcaster)
 describe('#406 searchAndGrabForBook blacklist filtering', () => {
-  it.todo('filters blacklisted results before ranking — non-broadcaster path');
-  it.todo('returns no_results when all results are blacklisted — non-broadcaster path');
-  it.todo('grabs only clean results when mix of blacklisted and clean — non-broadcaster path');
+  const book = { id: 1, title: 'Test Book', duration: 3600, authors: [{ name: 'Author' }] };
+  let indexerService: IndexerService;
+  let downloadService: DownloadOrchestrator;
+  let blacklistService: BlacklistService;
+  let log: FastifyBaseLogger;
+
+  beforeEach(() => {
+    downloadService = {
+      grab: vi.fn().mockResolvedValue({ id: 1, status: 'downloading' }),
+    } as unknown as DownloadOrchestrator;
+    blacklistService = {
+      getBlacklistedIdentifiers: vi.fn().mockResolvedValue({
+        blacklistedHashes: new Set<string>(),
+        blacklistedGuids: new Set<string>(),
+      }),
+    } as unknown as BlacklistService;
+    log = createMockLogger();
+  });
+
+  it('filters blacklisted results before ranking — non-broadcaster path', async () => {
+    const clean = makeResult({ infoHash: 'good', title: 'Clean', seeders: 5 });
+    const blacklisted = makeResult({ infoHash: 'bad', title: 'Blacklisted', seeders: 100 });
+    indexerService = { searchAll: vi.fn().mockResolvedValue([blacklisted, clean]) } as unknown as IndexerService;
+    vi.mocked(blacklistService.getBlacklistedIdentifiers).mockResolvedValue({
+      blacklistedHashes: new Set(['bad']),
+      blacklistedGuids: new Set(),
+    });
+
+    const result = await searchAndGrabForBook(book, indexerService, downloadService, defaultQualitySettings, log, blacklistService);
+    expect(result.result).toBe('grabbed');
+    // Grabbed the clean result, not the blacklisted one with higher seeders
+    expect(downloadService.grab).toHaveBeenCalledWith(expect.objectContaining({ title: 'Clean' }));
+  });
+
+  it('returns no_results when all results are blacklisted — non-broadcaster path', async () => {
+    indexerService = { searchAll: vi.fn().mockResolvedValue([makeResult({ infoHash: 'h1' }), makeResult({ infoHash: 'h2' })]) } as unknown as IndexerService;
+    vi.mocked(blacklistService.getBlacklistedIdentifiers).mockResolvedValue({
+      blacklistedHashes: new Set(['h1', 'h2']),
+      blacklistedGuids: new Set(),
+    });
+
+    const result = await searchAndGrabForBook(book, indexerService, downloadService, defaultQualitySettings, log, blacklistService);
+    expect(result).toEqual({ result: 'no_results' });
+    expect(downloadService.grab).not.toHaveBeenCalled();
+  });
+
+  it('grabs only clean results when mix of blacklisted and clean — non-broadcaster path', async () => {
+    const clean = makeResult({ guid: 'good-guid', title: 'Clean' });
+    const blacklisted = makeResult({ guid: 'bad-guid', title: 'Blacklisted' });
+    indexerService = { searchAll: vi.fn().mockResolvedValue([blacklisted, clean]) } as unknown as IndexerService;
+    vi.mocked(blacklistService.getBlacklistedIdentifiers).mockResolvedValue({
+      blacklistedHashes: new Set(),
+      blacklistedGuids: new Set(['bad-guid']),
+    });
+
+    await searchAndGrabForBook(book, indexerService, downloadService, defaultQualitySettings, log, blacklistService);
+    expect(downloadService.grab).toHaveBeenCalledWith(expect.objectContaining({ title: 'Clean' }));
+    expect(downloadService.grab).not.toHaveBeenCalledWith(expect.objectContaining({ title: 'Blacklisted' }));
+  });
 });
 
 // #406 — Blacklist filtering in searchAndGrabForBook (broadcaster)
 describe('#406 searchAndGrabForBook blacklist filtering with broadcaster', () => {
-  it.todo('filters blacklisted results before ranking — broadcaster path');
-  it.todo('returns no_results when all results are blacklisted — broadcaster path');
-  it.todo('grabs only clean results when mix of blacklisted and clean — broadcaster path');
+  const book = { id: 1, title: 'Test Book', duration: 3600, authors: [{ name: 'Author' }] };
+  let indexerService: IndexerService;
+  let downloadService: DownloadOrchestrator;
+  let blacklistService: BlacklistService;
+  let broadcaster: EventBroadcasterService;
+  let log: FastifyBaseLogger;
+
+  beforeEach(() => {
+    downloadService = {
+      grab: vi.fn().mockResolvedValue({ id: 1, status: 'downloading' }),
+    } as unknown as DownloadOrchestrator;
+    blacklistService = {
+      getBlacklistedIdentifiers: vi.fn().mockResolvedValue({
+        blacklistedHashes: new Set<string>(),
+        blacklistedGuids: new Set<string>(),
+      }),
+    } as unknown as BlacklistService;
+    broadcaster = { emit: vi.fn() } as unknown as EventBroadcasterService;
+    log = createMockLogger();
+  });
+
+  it('filters blacklisted results before ranking — broadcaster path', async () => {
+    const clean = makeResult({ infoHash: 'good', title: 'Clean', seeders: 5, indexerId: 10 });
+    const blacklisted = makeResult({ infoHash: 'bad', title: 'Blacklisted', seeders: 100, indexerId: 10 });
+    indexerService = {
+      searchAllStreaming: vi.fn().mockImplementation(async (_q: string, _o: unknown, _c: Map<number, AbortController>, callbacks: { onComplete: (id: number, name: string, count: number, ms: number) => void }) => {
+        callbacks.onComplete(10, 'MAM', 2, 500);
+        return [blacklisted, clean];
+      }),
+      getEnabledIndexers: vi.fn().mockResolvedValue([{ id: 10, name: 'MAM' }]),
+    } as unknown as IndexerService;
+    vi.mocked(blacklistService.getBlacklistedIdentifiers).mockResolvedValue({
+      blacklistedHashes: new Set(['bad']),
+      blacklistedGuids: new Set(),
+    });
+
+    const result = await searchAndGrabForBook(book, indexerService, downloadService, defaultQualitySettings, log, blacklistService, broadcaster);
+    expect(result.result).toBe('grabbed');
+    expect(downloadService.grab).toHaveBeenCalledWith(expect.objectContaining({ title: 'Clean' }));
+  });
+
+  it('returns no_results when all results are blacklisted — broadcaster path', async () => {
+    indexerService = {
+      searchAllStreaming: vi.fn().mockImplementation(async (_q: string, _o: unknown, _c: Map<number, AbortController>, callbacks: { onComplete: (id: number, name: string, count: number, ms: number) => void }) => {
+        callbacks.onComplete(10, 'MAM', 2, 500);
+        return [makeResult({ infoHash: 'h1', indexerId: 10 }), makeResult({ infoHash: 'h2', indexerId: 10 })];
+      }),
+      getEnabledIndexers: vi.fn().mockResolvedValue([{ id: 10, name: 'MAM' }]),
+    } as unknown as IndexerService;
+    vi.mocked(blacklistService.getBlacklistedIdentifiers).mockResolvedValue({
+      blacklistedHashes: new Set(['h1', 'h2']),
+      blacklistedGuids: new Set(),
+    });
+
+    const result = await searchAndGrabForBook(book, indexerService, downloadService, defaultQualitySettings, log, blacklistService, broadcaster);
+    expect(result).toEqual({ result: 'no_results' });
+    expect(downloadService.grab).not.toHaveBeenCalled();
+    expect(broadcaster.emit).toHaveBeenCalledWith('search_complete', expect.objectContaining({ outcome: 'no_results' }));
+  });
+
+  it('grabs only clean results when mix of blacklisted and clean — broadcaster path', async () => {
+    const clean = makeResult({ guid: 'good-guid', title: 'Clean', indexerId: 10 });
+    const blacklisted = makeResult({ guid: 'bad-guid', title: 'Blacklisted', indexerId: 10 });
+    indexerService = {
+      searchAllStreaming: vi.fn().mockImplementation(async (_q: string, _o: unknown, _c: Map<number, AbortController>, callbacks: { onComplete: (id: number, name: string, count: number, ms: number) => void }) => {
+        callbacks.onComplete(10, 'MAM', 2, 500);
+        return [blacklisted, clean];
+      }),
+      getEnabledIndexers: vi.fn().mockResolvedValue([{ id: 10, name: 'MAM' }]),
+    } as unknown as IndexerService;
+    vi.mocked(blacklistService.getBlacklistedIdentifiers).mockResolvedValue({
+      blacklistedHashes: new Set(),
+      blacklistedGuids: new Set(['bad-guid']),
+    });
+
+    await searchAndGrabForBook(book, indexerService, downloadService, defaultQualitySettings, log, blacklistService, broadcaster);
+    expect(downloadService.grab).toHaveBeenCalledWith(expect.objectContaining({ title: 'Clean' }));
+  });
 });
