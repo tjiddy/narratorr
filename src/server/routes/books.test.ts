@@ -1464,8 +1464,16 @@ describe('books routes', () => {
       expect(res.statusCode).toBe(400);
     });
 
-    it('GET /api/books/:id/cover returns 404 when book has no path', async () => {
-      (services.book.getById as Mock).mockResolvedValue({ ...mockBook, path: null });
+    it('GET /api/books/:id/cover returns 404 when book not found', async () => {
+      (services.book.getById as Mock).mockResolvedValue(null);
+
+      const res = await app.inject({ method: 'GET', url: '/api/books/999/cover' });
+
+      expect(res.statusCode).toBe(404);
+    });
+
+    it('GET /api/books/:id/cover returns 404 when book has no path and no cache', async () => {
+      (services.book.getById as Mock).mockResolvedValue({ ...mockBook, path: null, coverUrl: null });
 
       const res = await app.inject({ method: 'GET', url: '/api/books/1/cover' });
 
