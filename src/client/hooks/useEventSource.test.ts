@@ -1058,4 +1058,91 @@ describe('#312 cache-miss scoping — patchActivityProgress', () => {
       expect(handleSearchEvent).toHaveBeenCalledWith('search_complete', payload);
     });
   });
+
+  describe('merge cancellation SSE handling', () => {
+    it('merge_failed with reason cancelled sets outcome to cancelled, not error', () => {
+      const { wrapper } = createWrapper();
+      renderHook(() => useEventSource('key'), { wrapper });
+      const { result } = renderHook(() => useMergeActivityCards());
+      const es = MockEventSource.instances[0];
+      act(() => es.simulateOpen());
+
+      act(() => es.simulateEvent('merge_started', { book_id: 42, book_title: 'My Book' }));
+      act(() => es.simulateEvent('merge_failed', {
+        book_id: 42, book_title: 'My Book', error: 'Cancelled by user', reason: 'cancelled',
+      }));
+
+      expect(result.current).toHaveLength(1);
+      expect(result.current[0]).toMatchObject({
+        bookTitle: 'My Book',
+        phase: 'cancelled',
+        outcome: 'cancelled',
+      });
+    });
+
+    it('merge_failed with reason error continues to set outcome to error', () => {
+      const { wrapper } = createWrapper();
+      renderHook(() => useEventSource('key'), { wrapper });
+      const { result } = renderHook(() => useMergeActivityCards());
+      const es = MockEventSource.instances[0];
+      act(() => es.simulateOpen());
+
+      act(() => es.simulateEvent('merge_started', { book_id: 42, book_title: 'My Book' }));
+      act(() => es.simulateEvent('merge_failed', {
+        book_id: 42, book_title: 'My Book', error: 'ffmpeg crashed', reason: 'error',
+      }));
+
+      expect(result.current).toHaveLength(1);
+      expect(result.current[0]).toMatchObject({
+        phase: 'failed',
+        outcome: 'error',
+        error: 'ffmpeg crashed',
+      });
+    });
+
+    it('cancelled merge does not show error toast', () => {
+      const { wrapper } = createWrapper();
+      renderHook(() => useEventSource('key'), { wrapper });
+      const es = MockEventSource.instances[0];
+      act(() => es.simulateOpen());
+
+      act(() => es.simulateEvent('merge_failed', {
+        book_id: 42, book_title: 'My Book', error: 'Cancelled by user', reason: 'cancelled',
+      }));
+
+      expect(toast.error).not.toHaveBeenCalled();
+    });
+
+    it('real merge failure still shows error toast', () => {
+      const { wrapper } = createWrapper();
+      renderHook(() => useEventSource('key'), { wrapper });
+      const es = MockEventSource.instances[0];
+      act(() => es.simulateOpen());
+
+      act(() => es.simulateEvent('merge_failed', {
+        book_id: 42, book_title: 'My Book', error: 'ffmpeg crashed', reason: 'error',
+      }));
+
+      expect(toast.error).toHaveBeenCalledWith('"My Book" merge failed', { duration: 5000 });
+    });
+
+    it('merge_failed without reason field defaults to error outcome', () => {
+      const { wrapper } = createWrapper();
+      renderHook(() => useEventSource('key'), { wrapper });
+      const { result } = renderHook(() => useMergeActivityCards());
+      const es = MockEventSource.instances[0];
+      act(() => es.simulateOpen());
+
+      act(() => es.simulateEvent('merge_started', { book_id: 42, book_title: 'My Book' }));
+      act(() => es.simulateEvent('merge_failed', {
+        book_id: 42, book_title: 'My Book', error: 'ffmpeg crashed',
+      }));
+
+      expect(result.current).toHaveLength(1);
+      expect(result.current[0]).toMatchObject({
+        phase: 'failed',
+        outcome: 'error',
+      });
+    });
+  });
 });

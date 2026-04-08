@@ -45,6 +45,7 @@ vi.mock('@/lib/api', async (importOriginal) => {
       renameBook: vi.fn(),
       retagBook: vi.fn(),
       mergeBookToM4b: vi.fn(),
+      cancelMergeBook: vi.fn(),
       markBookAsWrongRelease: vi.fn(),
       deleteBook: vi.fn(),
       getSettings: vi.fn(),
@@ -1283,10 +1284,10 @@ describe('#257 merge observability — BookDetails progress', () => {
     expect(screen.getByText(/Verifying output/)).toBeInTheDocument();
   });
 
-  it('progress indicator shows finalizing phase', () => {
-    mockUseMergeProgress.mockReturnValue({ phase: 'finalizing' });
+  it('progress indicator shows committing phase', () => {
+    mockUseMergeProgress.mockReturnValue({ phase: 'committing' });
     renderBookDetails({ status: 'imported', topLevelAudioFileCount: 3 });
-    expect(screen.getByText(/Finalizing/)).toBeInTheDocument();
+    expect(screen.getByText(/Committing/)).toBeInTheDocument();
   });
 
   it('merge button disabled while progress indicator is visible', async () => {
@@ -1423,10 +1424,44 @@ describe('#257 merge observability — BookDetails progress', () => {
         expect(screen.getByText(/blacklist this release/)).toBeInTheDocument();
       });
 
-      // Click cancel
-      await user.click(screen.getByRole('button', { name: /Cancel/i }));
+      // Click cancel within the dialog (not the merge cancel button)
+      const dialog = screen.getByRole('dialog');
+      await user.click(within(dialog).getByRole('button', { name: /Cancel/i }));
 
       expect(api.markBookAsWrongRelease).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('merge cancel affordance', () => {
+    it('shows cancel option during active merge in non-committing phase', () => {
+      mockUseMergeProgress.mockReturnValue({ phase: 'processing', percentage: 0.5 });
+      renderBookDetails({ status: 'imported', topLevelAudioFileCount: 3 });
+      expect(screen.getByRole('button', { name: /cancel merge/i })).toBeInTheDocument();
+    });
+
+    it('hides cancel option during committing phase', () => {
+      mockUseMergeProgress.mockReturnValue({ phase: 'committing' });
+      renderBookDetails({ status: 'imported', topLevelAudioFileCount: 3 });
+      expect(screen.queryByRole('button', { name: /cancel merge/i })).not.toBeInTheDocument();
+    });
+
+    it('hides cancel option when no merge is active', () => {
+      mockUseMergeProgress.mockReturnValue(null);
+      renderBookDetails({ status: 'imported', topLevelAudioFileCount: 3 });
+      expect(screen.queryByRole('button', { name: /cancel merge/i })).not.toBeInTheDocument();
+    });
+
+    it('clicking cancel triggers cancel mutation with the rendered book ID', async () => {
+      vi.mocked(api.cancelMergeBook).mockResolvedValue({ success: true });
+      mockUseMergeProgress.mockReturnValue({ phase: 'processing', percentage: 0.5 });
+      const user = userEvent.setup();
+      renderBookDetails({ id: 999, status: 'imported', topLevelAudioFileCount: 3 });
+
+      await user.click(screen.getByRole('button', { name: /cancel merge/i }));
+
+      await waitFor(() => {
+        expect(api.cancelMergeBook).toHaveBeenCalledWith(999);
+      });
     });
   });
 });

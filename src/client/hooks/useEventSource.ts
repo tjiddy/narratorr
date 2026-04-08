@@ -127,9 +127,10 @@ export function useEventSource(apiKey: string | null) {
       handleSearchEvent(type as Extract<SSEEventType, `search_${string}`>, data as SSEEventPayloads[Extract<SSEEventType, `search_${string}`>]);
     }
 
-    // Toast notifications
+    // Toast notifications — suppress for cancelled merges (user-initiated, not an error)
+    const isCancelledMerge = type === 'merge_failed' && 'reason' in data && (data as Record<string, unknown>).reason === 'cancelled';
     const toastConfig = TOAST_EVENT_CONFIG[type];
-    if (toastConfig) {
+    if (toastConfig && !isCancelledMerge) {
       const title = toastConfig.titleKey in data
         ? String((data as Record<string, unknown>)[toastConfig.titleKey])
         : type;
@@ -243,10 +244,11 @@ function updateMergeProgressFromEvent(type: SSEEventType, data: SSEEventPayloads
     });
   } else if (type === 'merge_failed' && 'book_id' in data) {
     const d = data as SSEEventPayloads['merge_failed'];
+    const isCancelled = d.reason === 'cancelled';
     setMergeProgress(d.book_id, {
       bookTitle: d.book_title,
-      phase: 'failed',
-      outcome: 'error',
+      phase: isCancelled ? 'cancelled' : 'failed',
+      outcome: isCancelled ? 'cancelled' : 'error',
       error: d.error,
     });
   }

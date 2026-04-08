@@ -143,6 +143,7 @@ describe('MergeService', () => {
         expect.objectContaining({ ffmpegPath: '/usr/bin/ffmpeg', mergeBehavior: 'always', outputFormat: 'm4b' }),
         expect.objectContaining({ title: 'The Way of Kings' }),
         expect.objectContaining({ onProgress: expect.any(Function), onStderr: expect.any(Function) }),
+        undefined, // signal (not passed by deprecated mergeBook)
       );
 
       // scanAudioDirectory called on staging for verification
@@ -186,6 +187,7 @@ describe('MergeService', () => {
         expect.objectContaining({ sourceBitrateKbps: 64 }),
         expect.any(Object),
         expect.any(Object),
+        undefined,
       );
     });
 
@@ -201,6 +203,7 @@ describe('MergeService', () => {
         expect.objectContaining({ sourceBitrateKbps: undefined }),
         expect.any(Object),
         expect.any(Object),
+        undefined,
       );
     });
 
@@ -735,6 +738,7 @@ describe('#257 merge observability — merge service', () => {
         book_id: 42,
         book_title: 'The Way of Kings',
         error: 'Audio processing failed: ffmpeg error',
+        reason: 'error',
       });
     });
 
@@ -754,7 +758,7 @@ describe('#257 merge observability — merge service', () => {
   });
 
   describe('merge_progress SSE', () => {
-    it('emitted on phase transitions (staging → processing → verifying → finalizing)', async () => {
+    it('emitted on phase transitions (staging → processing → verifying → committing)', async () => {
       setupHappyPath();
       const eventBroadcaster = { emit: vi.fn() } as unknown as EventBroadcasterService;
       const { service } = createService({ eventBroadcaster });
@@ -768,7 +772,7 @@ describe('#257 merge observability — merge service', () => {
       expect(phases).toContain('staging');
       expect(phases).toContain('processing');
       expect(phases).toContain('verifying');
-      expect(phases).toContain('finalizing');
+      expect(phases).toContain('committing');
     });
   });
 
@@ -1505,6 +1509,201 @@ describe('#257 merge observability — merge service', () => {
 
       resolveSecond();
       await new Promise((resolve) => setTimeout(resolve, 50));
+    });
+  });
+
+  describe('cancelMerge', () => {
+    function createServiceWithBroadcasterForCancel() {
+      const emitted: Array<{ event: string; payload: unknown }> = [];
+      const broadcaster = { emit: vi.fn((event: string, payload: unknown) => { emitted.push({ event, payload }); }) };
+      const { service, bookService } = createService({
+        eventBroadcaster: inject<EventBroadcasterService>(broadcaster),
+      });
+      return { service, bookService, emitted, broadcaster };
+    }
+
+    function createBlockingMergeForCancel() {
+      let resolveProcess!: () => void;
+      const processPromise = new Promise<void>((resolve) => { resolveProcess = resolve; });
+      (processAudioFiles as Mock).mockImplementation(async () => {
+        await processPromise;
+        return { success: true, outputFiles: ['/staging/out.m4b'] };
+      });
+      return { resolve: resolveProcess };
+    }
+
+    function setupFsMocksForCancel() {
+      (readdir as Mock).mockImplementation(async (dir: string) => {
+        if (dir.endsWith('.merge-tmp')) return ['out.m4b'];
+        return ['01.mp3', '02.mp3'];
+      });
+      (mkdir as Mock).mockResolvedValue(undefined);
+      (cp as Mock).mockResolvedValue(undefined);
+      (scanAudioDirectory as Mock).mockResolvedValue(SCAN_RESULT);
+      (rename as Mock).mockResolvedValue(undefined);
+      (unlink as Mock).mockResolvedValue(undefined);
+      (rm as Mock).mockResolvedValue(undefined);
+      (stat as Mock).mockResolvedValue({ size: 100 });
+      (enrichBookFromAudio as Mock).mockResolvedValue({ enriched: true });
+    }
+
+    describe('cancel from queue', () => {
+      it('returns cancelled for a queued bookId', async () => {
+        setupFsMocksForCancel();
+        const { service, emitted } = createServiceWithBroadcasterForCancel();
+        const blocking = createBlockingMergeForCancel();
+
+        // Start merge for book 42 (takes slot)
+        await service.enqueueMerge(42);
+        await new Promise((r) => setTimeout(r, 50));
+
+        // Queue book 43
+        const bookService43 = createService().bookService;
+        (bookService43.getById as Mock).mockResolvedValue({ ...mockBook, id: 43, title: 'Book 43' });
+        // Directly manipulate — push 43 to queue
+        (service as unknown as { queue: number[] }).queue.push(43);
+
+        const result = await service.cancelMerge(43);
+        expect(result.status).toBe('cancelled');
+        expect((service as unknown as { queue: number[] }).queue).not.toContain(43);
+
+        // Check merge_failed emitted with reason cancelled
+        const failedEvents = emitted.filter(e => e.event === 'merge_failed');
+        expect(failedEvents.length).toBeGreaterThanOrEqual(1);
+        const lastFailed = failedEvents[failedEvents.length - 1].payload as { reason: string };
+        expect(lastFailed.reason).toBe('cancelled');
+
+        blocking.resolve();
+        await new Promise((r) => setTimeout(r, 50));
+      });
+
+      it('returns not-found for a bookId that is neither queued nor in-progress', async () => {
+        const { service } = createServiceWithBroadcasterForCancel();
+        const result = await service.cancelMerge(999);
+        expect(result.status).toBe('not-found');
+      });
+    });
+
+    describe('cancel from in-progress (processing phase)', () => {
+      it('aborts the controller and emits merge_failed with reason cancelled', async () => {
+        setupFsMocksForCancel();
+        const { service, emitted } = createServiceWithBroadcasterForCancel();
+
+        // Block at processAudioFiles so we can cancel during processing
+        (processAudioFiles as Mock).mockImplementation(async (_dir: string, _config: unknown, _ctx: unknown, _cb: unknown, signal?: AbortSignal) => {
+          // Wait for abort or resolution
+          await new Promise<void>((resolve) => {
+            if (signal) {
+              signal.addEventListener('abort', () => resolve(), { once: true });
+            }
+          });
+          if (signal?.aborted) {
+            return { success: false, error: 'Processing aborted' };
+          }
+          return { success: true, outputFiles: ['/staging/out.m4b'] };
+        });
+
+        // Start merge
+        await service.enqueueMerge(42);
+        await new Promise((r) => setTimeout(r, 50));
+
+        // Cancel
+        const result = await service.cancelMerge(42);
+        expect(result.status).toBe('cancelled');
+
+        // Let the catch/finally handlers run
+        await new Promise((r) => setTimeout(r, 100));
+
+        // Check that merge_failed was emitted with reason 'cancelled'
+        const failedEvents = emitted.filter(e => e.event === 'merge_failed');
+        expect(failedEvents.length).toBeGreaterThanOrEqual(1);
+        const payload = failedEvents[failedEvents.length - 1].payload as { reason: string; error: string };
+        expect(payload.reason).toBe('cancelled');
+      });
+    });
+
+    describe('cancel rejected (committing phase)', () => {
+      it('returns committing status when phase is committing', async () => {
+        const { service } = createServiceWithBroadcasterForCancel();
+        // Directly set state to simulate committing phase
+        (service as unknown as { currentPhase: Map<number, string> }).currentPhase.set(42, 'committing');
+        (service as unknown as { abortControllers: Map<number, AbortController> }).abortControllers.set(42, new AbortController());
+
+        const result = await service.cancelMerge(42);
+        expect(result.status).toBe('committing');
+      });
+    });
+
+    describe('cancel on terminal states', () => {
+      it('returns not-found for a completed merge', async () => {
+        setupHappyPath();
+        const { service } = createServiceWithBroadcasterForCancel();
+        await service.mergeBook(42);
+
+        const result = await service.cancelMerge(42);
+        expect(result.status).toBe('not-found');
+      });
+    });
+  });
+
+  describe('phase rename (finalizing → committing)', () => {
+    it('committing phase is emitted before commitMerge is called', async () => {
+      setupHappyPath();
+      const emitted: Array<{ event: string; payload: unknown }> = [];
+      const broadcaster = { emit: vi.fn((event: string, payload: unknown) => { emitted.push({ event, payload }); }) };
+      const { service } = createService({
+        eventBroadcaster: inject<EventBroadcasterService>(broadcaster),
+      });
+
+      await service.mergeBook(42);
+
+      const progressEvents = emitted
+        .filter(e => e.event === 'merge_progress')
+        .map(e => (e.payload as { phase: string }).phase);
+      expect(progressEvents).toContain('committing');
+      expect(progressEvents).not.toContain('finalizing');
+
+      // committing must be the last emitted progress phase (before merge_complete)
+      const lastProgress = emitted.filter(e => e.event === 'merge_progress').pop();
+      expect((lastProgress?.payload as { phase: string }).phase).toBe('committing');
+    });
+
+    it('finalizing phase no longer exists in emitted events', async () => {
+      setupHappyPath();
+      const emitted: Array<{ event: string; payload: unknown }> = [];
+      const broadcaster = { emit: vi.fn((event: string, payload: unknown) => { emitted.push({ event, payload }); }) };
+      const { service } = createService({
+        eventBroadcaster: inject<EventBroadcasterService>(broadcaster),
+      });
+
+      await service.mergeBook(42);
+
+      const phases = emitted
+        .filter(e => e.event === 'merge_progress')
+        .map(e => (e.payload as { phase: string }).phase);
+      expect(phases).not.toContain('finalizing');
+    });
+  });
+
+  describe('typed cancellation signal', () => {
+    it('merge_failed event includes reason error on real failures', async () => {
+      (readdir as Mock).mockResolvedValueOnce(['01.mp3', '02.mp3']);
+      (mkdir as Mock).mockResolvedValue(undefined);
+      (cp as Mock).mockResolvedValue(undefined);
+      (processAudioFiles as Mock).mockResolvedValue({ success: false, error: 'ffmpeg crashed' });
+      (rm as Mock).mockResolvedValue(undefined);
+
+      const emitted: Array<{ event: string; payload: unknown }> = [];
+      const broadcaster = { emit: vi.fn((event: string, payload: unknown) => { emitted.push({ event, payload }); }) };
+      const { service } = createService({
+        eventBroadcaster: inject<EventBroadcasterService>(broadcaster),
+      });
+
+      await expect(service.mergeBook(42)).rejects.toThrow();
+
+      const failedEvents = emitted.filter(e => e.event === 'merge_failed');
+      expect(failedEvents).toHaveLength(1);
+      expect((failedEvents[0].payload as { reason: string }).reason).toBe('error');
     });
   });
 });

@@ -14,7 +14,7 @@ import { enrichBookFromAudio } from './enrichment-utils.js';
 import { AUDIO_EXTENSIONS } from '../../core/utils/audio-constants.js';
 import { toSourceBitrateKbps, logBitrateCapping } from '../utils/audio-bitrate.js';
 import { Semaphore } from '../utils/semaphore.js';
-import type { SSEEventType, SSEEventPayloads } from '../../shared/schemas/sse-events.js';
+import type { SSEEventType, SSEEventPayloads, MergePhase, MergeFailedReason } from '../../shared/schemas/sse-events.js';
 import { createStderrDeduplicator } from '../utils/stderr-deduplicator.js';
 
 export interface MergeResult {
@@ -41,10 +41,14 @@ export interface MergeAcknowledgement {
   position?: number;
 }
 
+export type CancelResult = { status: 'cancelled' } | { status: 'committing' } | { status: 'not-found' };
+
 export class MergeService {
   private inProgress = new Set<number>();
   private queue: number[] = [];
   private readonly semaphore = new Semaphore(1);
+  private abortControllers = new Map<number, AbortController>();
+  private currentPhase = new Map<number, MergePhase>();
 
   constructor(
     private db: Db,
@@ -66,13 +70,14 @@ export class MergeService {
     this.safeEmit('merge_started', { book_id: bookId, book_title: bookTitle });
   }
 
-  private emitMergeFailed(bookId: number, bookTitle: string, error: string): void {
+  private emitMergeFailed(bookId: number, bookTitle: string, error: string, reason: MergeFailedReason = 'error'): void {
     this.eventHistory?.create({ bookId, bookTitle, eventType: 'merge_failed', source: 'manual', reason: { error } })
       .catch((err) => this.log.warn(err, 'Failed to record merge_failed event'));
-    this.safeEmit('merge_failed', { book_id: bookId, book_title: bookTitle, error });
+    this.safeEmit('merge_failed', { book_id: bookId, book_title: bookTitle, error, reason });
   }
 
-  private emitMergeProgress(bookId: number, bookTitle: string, phase: 'staging' | 'processing' | 'verifying' | 'finalizing', percentage?: number): void {
+  private emitMergeProgress(bookId: number, bookTitle: string, phase: MergePhase, percentage?: number): void {
+    this.currentPhase.set(bookId, phase);
     this.safeEmit('merge_progress', { book_id: bookId, book_title: bookTitle, phase, ...(percentage !== undefined && { percentage }) });
   }
 
@@ -213,15 +218,23 @@ export class MergeService {
     const allEntries = await readdir(bookPath);
     const topLevelAudioFiles = allEntries.filter((f) => AUDIO_EXTENSIONS.has(extname(f).toLowerCase()));
 
+    const controller = new AbortController();
+    this.abortControllers.set(bookId, controller);
+
     this.emitMergeStarted(bookId, book.title);
     const stagingDir = bookPath + '.merge-tmp';
 
     try {
       this.emitMergeProgress(bookId, book.title, 'staging');
-      const stagedM4b = await this.runStaging(stagingDir, { ...book, path: bookPath }, topLevelAudioFiles, processingSettings, bookId, book.title);
-      this.emitMergeProgress(bookId, book.title, 'verifying');
+      const stagedM4b = await this.runStaging(stagingDir, { ...book, path: bookPath }, topLevelAudioFiles, processingSettings, bookId, book.title, controller.signal);
+
+      // Check abort signal before committing (cooperative cancel during verifying)
+      if (controller.signal.aborted) {
+        throw new Error('Cancelled by user');
+      }
+
+      this.emitMergeProgress(bookId, book.title, 'committing');
       const outputPath = await this.commitMerge(stagingDir, stagedM4b, bookPath, topLevelAudioFiles, bookId);
-      this.emitMergeProgress(bookId, book.title, 'finalizing');
 
       const enrichResult = await enrichBookFromAudio(bookId, bookPath, book, this.db, this.log, this.bookService);
       let enrichmentWarning: string | undefined;
@@ -236,9 +249,13 @@ export class MergeService {
       return { bookId, outputFile: outputPath, filesReplaced: topLevelAudioFiles.length, message, enrichmentWarning };
     } catch (error: unknown) {
       const errorMessage = error instanceof Error ? error.message : 'Unknown merge error';
-      this.emitMergeFailed(bookId, book.title, errorMessage);
+      const reason: MergeFailedReason = controller.signal.aborted ? 'cancelled' : 'error';
+      this.emitMergeFailed(bookId, book.title, errorMessage, reason);
       try { await rm(stagingDir, { recursive: true, force: true }); } catch { /* best-effort */ }
       throw error;
+    } finally {
+      this.abortControllers.delete(bookId);
+      this.currentPhase.delete(bookId);
     }
   }
 
@@ -263,9 +280,8 @@ export class MergeService {
     try {
       this.emitMergeProgress(bookId, book.title, 'staging');
       const stagedM4b = await this.runStaging(stagingDir, { ...book, path: bookPath }, topLevelAudioFiles, processingSettings, bookId, book.title);
-      this.emitMergeProgress(bookId, book.title, 'verifying');
+      this.emitMergeProgress(bookId, book.title, 'committing');
       const outputPath = await this.commitMerge(stagingDir, stagedM4b, bookPath, topLevelAudioFiles, bookId);
-      this.emitMergeProgress(bookId, book.title, 'finalizing');
       const enrichResult = await enrichBookFromAudio(bookId, bookPath, book, this.db, this.log, this.bookService);
       let enrichmentWarning: string | undefined;
       if (!enrichResult.enriched) {
@@ -283,6 +299,7 @@ export class MergeService {
       throw error;
     } finally {
       this.inProgress.delete(bookId);
+      this.currentPhase.delete(bookId);
     }
   }
 
@@ -294,6 +311,7 @@ export class MergeService {
     processingSettings: { ffmpegPath: string; keepOriginalBitrate?: boolean; bitrate?: number },
     bookId: number,
     bookTitle: string,
+    signal?: AbortSignal,
   ): Promise<string> {
     await mkdir(stagingDir, { recursive: true });
 
@@ -325,13 +343,15 @@ export class MergeService {
         this.emitMergeProgress(bookId, bookTitle, 'processing', percentage);
       },
       onStderr: (line) => stderrDedup.push(line),
-    });
+    }, signal);
 
     stderrDedup.flush();
 
     if (!processingResult.success) {
       throw new Error(`Audio processing failed: ${processingResult.error}`);
     }
+
+    this.emitMergeProgress(bookId, bookTitle, 'verifying');
 
     const scanResult = await scanAudioDirectory(stagingDir);
     if (!scanResult) {
@@ -375,5 +395,46 @@ export class MergeService {
     await rm(stagingDir, { recursive: true, force: true });
 
     return outputPath;
+  }
+
+  /** Cancel a queued or in-progress merge. Returns status for the route to map to HTTP codes. */
+  async cancelMerge(bookId: number): Promise<CancelResult> {
+    // Check queue first
+    const queueIdx = this.queue.indexOf(bookId);
+    if (queueIdx !== -1) {
+      this.queue.splice(queueIdx, 1);
+      const book = await this.bookService.getById(bookId);
+      const bookTitle = book?.title ?? `Book ${bookId}`;
+      this.emitMergeFailed(bookId, bookTitle, 'Cancelled by user', 'cancelled');
+      this.emitQueuePositionUpdates().catch((error: unknown) => {
+        this.log.debug(error, 'Failed to emit queue position updates after cancellation');
+      });
+      return { status: 'cancelled' };
+    }
+
+    // Check in-progress
+    const phase = this.currentPhase.get(bookId);
+    if (!phase) {
+      // Also check if the controller exists (merge may be between inProgress.add and first emitMergeProgress)
+      const controller = this.abortControllers.get(bookId);
+      if (controller) {
+        controller.abort();
+        return { status: 'cancelled' };
+      }
+      return { status: 'not-found' };
+    }
+
+    if (phase === 'committing') {
+      return { status: 'committing' };
+    }
+
+    // Cancel the in-progress merge by aborting its controller
+    const controller = this.abortControllers.get(bookId);
+    if (!controller) {
+      return { status: 'not-found' };
+    }
+
+    controller.abort();
+    return { status: 'cancelled' };
   }
 }

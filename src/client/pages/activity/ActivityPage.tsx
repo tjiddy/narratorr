@@ -1,4 +1,6 @@
 import { useState, useEffect } from 'react';
+import { useMutation } from '@tanstack/react-query';
+import { toast } from 'sonner';
 import {
   LoadingSpinner,
   DownloadCloudIcon,
@@ -15,6 +17,7 @@ import { useSearchProgress } from '@/hooks/useSearchProgress';
 import { usePagination } from '@/hooks/usePagination';
 import { Pagination } from '@/components/Pagination';
 import { ConfirmModal } from '@/components/ConfirmModal';
+import { api } from '@/lib/api';
 import { DEFAULT_LIMITS } from '../../../shared/schemas/common.js';
 
 // eslint-disable-next-line max-lines-per-function, complexity -- page with independent queue/history/merge/search sections
@@ -31,6 +34,17 @@ export function ActivityPage() {
   const searchCards = useSearchProgress();
   const { isLoading } = status;
   const { cancelMutation, retryMutation, approveMutation, rejectMutation, deleteMutation, deleteHistoryMutation } = mutations;
+
+  const [cancellingMergeBookId, setCancellingMergeBookId] = useState<number | null>(null);
+  const cancelMergeMutation = useMutation({
+    mutationFn: (bookId: number) => api.cancelMergeBook(bookId),
+    onMutate: (bookId) => setCancellingMergeBookId(bookId),
+    onSuccess: () => setCancellingMergeBookId(null),
+    onError: (error: Error) => {
+      setCancellingMergeBookId(null);
+      toast.error(`Cancel failed: ${error.message}`);
+    },
+  });
 
   // Clamp pages when totals shrink
   useEffect(() => { queuePagination.clampToTotal(queueTotal); }, [queueTotal, queuePagination]);
@@ -117,7 +131,12 @@ export function ActivityPage() {
             {mergeCards.length > 0 && (
               <div className="space-y-4">
                 {mergeCards.map((card) => (
-                  <MergeCard key={card.bookId} state={card} />
+                  <MergeCard
+                    key={card.bookId}
+                    state={card}
+                    onCancel={(bookId) => cancelMergeMutation.mutate(bookId)}
+                    isCancelling={cancellingMergeBookId === card.bookId}
+                  />
                 ))}
               </div>
             )}

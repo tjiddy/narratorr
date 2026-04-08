@@ -44,7 +44,7 @@ export function BookDetails({ libraryBook, metadataBook }: {
   const tabs = ['details', 'history'] as const;
 
   const merged = mergeBookData(libraryBook, metadataBook);
-  const { renameMutation, mergeMutation, retagMutation, deleteMutation, monitorMutation, wrongReleaseMutation, ffmpegConfigured, isSaving, handleSave } =
+  const { renameMutation, mergeMutation, cancelMergeMutation, retagMutation, deleteMutation, monitorMutation, wrongReleaseMutation, ffmpegConfigured, isSaving, handleSave } =
     useBookActions(libraryBook.id, libraryBook.monitorForUpgrades);
 
   const showWrongRelease = canShowWrongRelease(libraryBook);
@@ -104,7 +104,13 @@ export function BookDetails({ libraryBook, metadataBook }: {
         <AudioPreview bookId={libraryBook.id} status={libraryBook.status} path={libraryBook.path ?? null} />
       </BookHero>
 
-      {mergeProgress && <MergeProgressIndicator progress={mergeProgress} />}
+      {mergeProgress && (
+        <MergeProgressIndicator
+          progress={mergeProgress}
+          onCancel={() => cancelMergeMutation.mutate()}
+          isCancelling={cancelMergeMutation.isPending}
+        />
+      )}
 
       {/* Tab buttons */}
       <div className="flex justify-center animate-fade-in-up stagger-4">
@@ -230,8 +236,15 @@ export function BookDetails({ libraryBook, metadataBook }: {
   );
 }
 
-function MergeProgressIndicator({ progress }: { progress: { phase: string; percentage?: number; position?: number } }) {
+const CANCELLABLE_MERGE_PHASES = new Set(['queued', 'starting', 'staging', 'processing', 'verifying']);
+
+function MergeProgressIndicator({ progress, onCancel, isCancelling }: {
+  progress: { phase: string; percentage?: number; position?: number };
+  onCancel?: () => void;
+  isCancelling?: boolean;
+}) {
   const isQueued = progress.phase === 'queued';
+  const canCancel = onCancel && CANCELLABLE_MERGE_PHASES.has(progress.phase);
   return (
     <div className="glass-card rounded-2xl p-4 animate-fade-in-up" role="status" aria-label="Merge progress">
       <div className="flex items-center gap-3">
@@ -251,6 +264,17 @@ function MergeProgressIndicator({ progress }: { progress: { phase: string; perce
             </div>
           )}
         </div>
+        {canCancel && (
+          <button
+            type="button"
+            className="text-xs text-muted-foreground hover:text-destructive transition-colors disabled:opacity-50"
+            onClick={onCancel}
+            disabled={isCancelling}
+            aria-label="Cancel merge"
+          >
+            Cancel
+          </button>
+        )}
       </div>
     </div>
   );

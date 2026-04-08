@@ -1,5 +1,34 @@
 # Workflow Log
 
+## #431 Cancel in-progress M4B merge jobs — 2026-04-08
+**Skill path:** /elaborate → /respond-to-spec-review (x2) → /implement → /claim → /plan → /handoff
+**Outcome:** success — PR #433
+
+### Metrics
+- Files changed: 20 | Tests added/modified: 11
+- Quality gate runs: 3 (pass on attempt 3 — lint violations then TS error then flaky test)
+- Fix iterations: 2 (lint: unused vars in test; typecheck: ProcessingResult discriminated union access)
+- Context compactions: 0
+
+### Workflow experience
+- What went smoothly: Spec review cycle caught real issues (phase emission timing, typed reason field, runtime phase tracking) that would have caused implementation drift. TDD cycle worked well — schema changes first, then service, then route, then frontend.
+- Friction / issues encountered: Self-review caught a real bug — `verifying` phase was emitted in deprecated `mergeBook` path but not in `executeMerge` (enqueue path). Blast radius was manageable (6 test files) since the spec called it out. The `toHaveBeenCalledWith` strict arg count caught the new `undefined` signal parameter.
+
+### Token efficiency
+- Highest-token actions: Explore subagent for plan (full merge service + audio processor + MergeCard + BookDetails reads), self-review subagent
+- Avoidable waste: The first cancel-from-queue test was overengineered and had to be removed (unused variables). Should have started simpler.
+- Suggestions: For cancel/abort patterns, start with the simplest cancel case (not-found) and build up
+
+### Infrastructure gaps
+- Repeated workarounds: None
+- Missing tooling / config: None
+- Unresolved debt: Merge phase enum in 4 locations (DRY-1), now logged in debt.md
+
+### Wish I'd Known
+1. The `verifying` phase was only emitted in the deprecated `mergeBook` path, not in `executeMerge`. Self-review caught this — always check ALL code paths when adding phase-dependent logic. (See learnings/verifying-phase-emission-gap.md)
+2. Vitest `toHaveBeenCalledWith` is strict about arg count — adding an optional trailing `undefined` parameter breaks existing assertions. (See learnings/abort-signal-threading-depth.md)
+3. The `MergeCardState.phase` is `string` (not `MergePhase`) — client-side phases like `'starting'`, `'cancelled'` don't exist in the schema but are valid UI states. CANCELLABLE_PHASES must include both schema and UI phases.
+
 ## #418 Browser caches stale cover images after book re-import — 2026-04-08
 **Skill path:** /implement → /claim → /plan → /handoff
 **Outcome:** success — PR #432

@@ -88,6 +88,7 @@ export async function processAudioFiles(
   config: ProcessingConfig,
   context: ProcessingContext,
   callbacks?: ProcessingCallbacks,
+  signal?: AbortSignal,
 ): Promise<ProcessingResult> {
   const audioFiles = await collectAudioFiles(targetDir);
 
@@ -108,9 +109,9 @@ export async function processAudioFiles(
     const chapterSources = await readChapterSources(audioFiles);
 
     if (shouldMerge && audioFiles.length > 1) {
-      return await mergeFiles(targetDir, chapterSources, config, context, callbacks);
+      return await mergeFiles(targetDir, chapterSources, config, context, callbacks, signal);
     } else {
-      return await convertFiles(targetDir, audioFiles, config, context, chapterSources, callbacks);
+      return await convertFiles(targetDir, audioFiles, config, context, chapterSources, callbacks, signal);
     }
   } catch (error: unknown) {
     const message = error instanceof Error ? error.message : 'Audio processing failed';
@@ -132,10 +133,26 @@ function spawnFfmpeg(
     totalDuration?: number;
     onProgress?: (phase: string, percentage?: number) => void;
     onStderr?: (line: string) => void;
+    signal?: AbortSignal;
   },
 ): Promise<void> {
   return new Promise((resolve, reject) => {
+    if (options?.signal?.aborted) {
+      reject(new Error('Processing aborted'));
+      return;
+    }
+
     const child = spawn(ffmpegPath, args);
+
+    // AbortSignal listener — kill ffmpeg on external cancel
+    if (options?.signal) {
+      const onAbort = () => {
+        if (!settled) {
+          child.kill('SIGTERM');
+        }
+      };
+      options.signal.addEventListener('abort', onAbort, { once: true });
+    }
     let lastProgressTime = 0;
     let settled = false;
 
@@ -219,6 +236,7 @@ async function mergeFiles(
   config: ProcessingConfig,
   context: ProcessingContext,
   callbacks?: ProcessingCallbacks,
+  signal?: AbortSignal,
 ): Promise<ProcessingResult> {
   const outputExt = config.outputFormat;
   const audioFiles = chapterSources.map(s => s.filePath);
@@ -289,6 +307,7 @@ async function mergeFiles(
       totalDuration,
       onProgress: callbacks?.onProgress,
       onStderr: callbacks?.onStderr,
+      signal,
     });
 
     return [outputPath];
@@ -325,6 +344,7 @@ async function convertFiles(
   context: ProcessingContext,
   chapterSources: ChapterSource[],
   callbacks?: ProcessingCallbacks,
+  signal?: AbortSignal,
 ): Promise<ProcessingResult> {
   const trackTotal = audioFiles.length;
 
@@ -363,7 +383,7 @@ async function convertFiles(
       if (config.outputFormat === 'm4b') args.push('-f', 'mp4');
       args.push('-progress', 'pipe:1', writePath);
 
-      await spawnFfmpeg(config.ffmpegPath, args, { onStderr: callbacks?.onStderr });
+      await spawnFfmpeg(config.ffmpegPath, args, { onStderr: callbacks?.onStderr, signal });
 
       if (sameFile) { await unlink(filePath); await rename(writePath, outputPath); }
       else { await unlink(filePath); }
