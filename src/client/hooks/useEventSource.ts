@@ -217,17 +217,38 @@ export function useEventSource(apiKey: string | null) {
 function updateMergeProgressFromEvent(type: SSEEventType, data: SSEEventPayloads[typeof type]): void {
   if ((type === 'merge_queued' || type === 'merge_queue_updated') && 'book_id' in data) {
     const queueData = data as { book_id: number; book_title: string; position: number };
-    setMergeProgress(queueData.book_id, { phase: 'queued', position: queueData.position });
-  } else if (type === 'merge_started' && 'book_id' in data) {
-    setMergeProgress((data as SSEEventPayloads['merge_started']).book_id, { phase: 'starting' });
-  } else if (type === 'merge_progress' && 'book_id' in data) {
-    const progressData = data as SSEEventPayloads['merge_progress'];
-    setMergeProgress(progressData.book_id, {
-      phase: progressData.phase,
-      percentage: progressData.percentage,
+    setMergeProgress(queueData.book_id, {
+      bookTitle: queueData.book_title,
+      phase: 'queued',
+      position: queueData.position,
     });
-  } else if ((type === 'merge_complete' || type === 'merge_failed') && 'book_id' in data) {
-    setMergeProgress((data as { book_id: number }).book_id, null);
+  } else if (type === 'merge_started' && 'book_id' in data) {
+    const d = data as SSEEventPayloads['merge_started'];
+    setMergeProgress(d.book_id, { bookTitle: d.book_title, phase: 'starting' });
+  } else if (type === 'merge_progress' && 'book_id' in data) {
+    const d = data as SSEEventPayloads['merge_progress'];
+    setMergeProgress(d.book_id, {
+      bookTitle: d.book_title,
+      phase: d.phase,
+      percentage: d.percentage,
+    });
+  } else if (type === 'merge_complete' && 'book_id' in data) {
+    const d = data as SSEEventPayloads['merge_complete'];
+    setMergeProgress(d.book_id, {
+      bookTitle: d.book_title,
+      phase: 'complete',
+      outcome: 'success',
+      message: d.message,
+      enrichmentWarning: d.enrichmentWarning,
+    });
+  } else if (type === 'merge_failed' && 'book_id' in data) {
+    const d = data as SSEEventPayloads['merge_failed'];
+    setMergeProgress(d.book_id, {
+      bookTitle: d.book_title,
+      phase: 'failed',
+      outcome: 'error',
+      error: d.error,
+    });
   }
 }
 

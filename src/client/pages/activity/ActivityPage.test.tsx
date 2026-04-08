@@ -22,6 +22,13 @@ vi.mock('@/hooks/useSearchProgress', () => ({
   _resetForTesting: vi.fn(),
 }));
 
+vi.mock('@/hooks/useMergeProgress', () => ({
+  useMergeActivityCards: vi.fn().mockReturnValue([]),
+  useMergeProgress: vi.fn().mockReturnValue(null),
+  setMergeProgress: vi.fn(),
+  _resetForTesting: vi.fn(),
+}));
+
 vi.mock('@/lib/api', () => ({
   api: {
     getActivity: vi.fn(),
@@ -1275,5 +1282,107 @@ describe('#392 search progress cards', () => {
     await waitFor(() => {
       expect(screen.getByText('No active downloads')).toBeInTheDocument();
     });
+  });
+});
+
+// ============================================================================
+// #422 — Merge activity cards in activity queue
+// ============================================================================
+
+describe('#422 merge activity cards', () => {
+  it('renders merge cards when useMergeActivityCards returns active entries', async () => {
+    const { useMergeActivityCards } = await import('@/hooks/useMergeProgress');
+    vi.mocked(useMergeActivityCards).mockReturnValue([
+      { bookId: 42, bookTitle: 'Merging Book', phase: 'processing', percentage: 0.5 },
+    ]);
+
+    vi.mocked(api.getActivity).mockResolvedValue({
+      data: [makeDownload()],
+      total: 1,
+    });
+
+    renderWithProviders(<ActivityPage />);
+    await waitFor(() => {
+      expect(screen.getAllByText('Test Audiobook').length).toBeGreaterThan(0);
+    });
+
+    expect(screen.getByText('Merging Book')).toBeInTheDocument();
+    expect(screen.getByText(/Encoding to M4B — 50%/)).toBeInTheDocument();
+
+    vi.mocked(useMergeActivityCards).mockReturnValue([]);
+  });
+
+  it('renders multiple merge cards (1 active + N queued)', async () => {
+    const { useMergeActivityCards } = await import('@/hooks/useMergeProgress');
+    vi.mocked(useMergeActivityCards).mockReturnValue([
+      { bookId: 1, bookTitle: 'Active Book', phase: 'processing', percentage: 0.3 },
+      { bookId: 2, bookTitle: 'Queued Book', phase: 'queued', position: 1 },
+    ]);
+
+    vi.mocked(api.getActivity).mockResolvedValue({
+      data: [],
+      total: 0,
+    });
+
+    renderWithProviders(<ActivityPage />);
+    await waitFor(() => {
+      expect(screen.getByText('Active Book')).toBeInTheDocument();
+    });
+
+    expect(screen.getByText('Queued Book')).toBeInTheDocument();
+    expect(screen.getByText('Queued (position 1)')).toBeInTheDocument();
+
+    vi.mocked(useMergeActivityCards).mockReturnValue([]);
+  });
+
+  it('does not render merge section when no active merges', async () => {
+    const { useMergeActivityCards } = await import('@/hooks/useMergeProgress');
+    vi.mocked(useMergeActivityCards).mockReturnValue([]);
+
+    vi.mocked(api.getActivity).mockResolvedValue({
+      data: [],
+      total: 0,
+    });
+
+    renderWithProviders(<ActivityPage />);
+    await waitFor(() => {
+      expect(screen.getByText('No active downloads')).toBeInTheDocument();
+    });
+
+    // No merge-specific content should appear
+    expect(screen.queryByText(/Encoding to M4B/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/Merge started/)).not.toBeInTheDocument();
+  });
+
+  it('merge cards and search cards coexist', async () => {
+    const { useSearchProgress } = await import('@/hooks/useSearchProgress');
+    const { useMergeActivityCards } = await import('@/hooks/useMergeProgress');
+
+    vi.mocked(useSearchProgress).mockReturnValue([
+      {
+        bookId: 99,
+        bookTitle: 'Searching Book',
+        indexers: new Map([[10, { name: 'MAM', status: 'pending' as const }]]),
+      },
+    ]);
+    vi.mocked(useMergeActivityCards).mockReturnValue([
+      { bookId: 42, bookTitle: 'Merging Book', phase: 'staging' },
+    ]);
+
+    vi.mocked(api.getActivity).mockResolvedValue({
+      data: [],
+      total: 0,
+    });
+
+    renderWithProviders(<ActivityPage />);
+    await waitFor(() => {
+      expect(screen.getByText('Searching Book')).toBeInTheDocument();
+    });
+
+    expect(screen.getByText('Merging Book')).toBeInTheDocument();
+    expect(screen.getByText('Staging files...')).toBeInTheDocument();
+
+    vi.mocked(useSearchProgress).mockReturnValue([]);
+    vi.mocked(useMergeActivityCards).mockReturnValue([]);
   });
 });
