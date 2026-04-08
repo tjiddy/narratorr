@@ -2,7 +2,7 @@ import { stat, readdir, mkdir, cp } from 'node:fs/promises';
 import { join, extname, basename } from 'node:path';
 import { renderTemplate, toLastFirst, toSortTitle, AUDIO_EXTENSIONS } from '../../core/utils/index.js';
 import { collectAudioFilePaths } from '../../core/utils/collect-audio-files.js';
-import { DISC_FOLDER_PATTERN } from '../../core/utils/book-discovery.js';
+import { DISC_FOLDER_PATTERN, parseTitledDiscFolder } from '../../core/utils/book-discovery.js';
 import type { NamingOptions } from '../../core/utils/naming.js';
 
 import type { books, authors } from '../../db/schema.js';
@@ -107,15 +107,22 @@ async function collectAudioFiles(
 
 type AudioFile = { srcPath: string; name: string };
 
+/** Extract disc number from a folder name — works for both bare and titled patterns. */
+function extractDiscNumber(name: string): number {
+  const titled = parseTitledDiscFolder(name);
+  if (titled) return titled.discNumber;
+  // Bare disc pattern (CD1, Disc 2, etc.) — first digits in name
+  return parseInt(name.match(/\d+/)![0], 10);
+}
+
 /** Collect audio from disc subfolders with sequential renaming, plus non-disc entries. */
 async function collectMultiDiscFiles(
   source: string,
   discFolders: Array<{ name: string; path: string }>,
   otherEntries: Array<{ name: string; isFile: () => boolean; isDirectory: () => boolean }>,
 ): Promise<AudioFile[]> {
-  // Sort discs by extracted disc number (handles mixed prefixes like CD 10 vs Disc 2)
-  const discNumber = (name: string) => parseInt(name.match(/\d+/)![0], 10);
-  discFolders.sort((a, b) => discNumber(a.name) - discNumber(b.name));
+  // Sort discs by extracted disc number (handles bare, titled, and mixed patterns)
+  discFolders.sort((a, b) => extractDiscNumber(a.name) - extractDiscNumber(b.name));
 
   // Collect audio files from each disc in order
   const discFiles: AudioFile[] = [];
@@ -205,7 +212,7 @@ export async function copyAudioFiles(source: string, target: string): Promise<vo
   const otherEntries: typeof rootEntries = [];
 
   for (const entry of rootEntries) {
-    if (entry.isDirectory() && DISC_FOLDER_PATTERN.test(entry.name)) {
+    if (entry.isDirectory() && (DISC_FOLDER_PATTERN.test(entry.name) || parseTitledDiscFolder(entry.name) !== null)) {
       discFolders.push({ name: entry.name, path: join(source, entry.name) });
     } else {
       otherEntries.push(entry);

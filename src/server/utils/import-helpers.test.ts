@@ -745,16 +745,115 @@ describe('buildTargetPath — first-by-position author/narrator tokens (#71)', (
 });
 
 describe('titled-disc import flattening (issue #426)', () => {
+  /** Helper: mock readdir for disc layout, same pattern as multi-disc test suite */
+  function setupDiscLayout(discEntries: Array<[string, string[]]>, rootFiles: string[] = []) {
+    const rootItems = [
+      ...rootFiles.map(f => makeDirent(f, true, false)),
+      ...discEntries.map(([name]) => makeDirent(name, false, true)),
+    ];
+    vi.mocked(readdir).mockResolvedValueOnce(rootItems as never);
+    for (const [, files] of discEntries) {
+      vi.mocked(readdir).mockResolvedValueOnce(
+        files.map(f => makeDirent(f, true, false)) as never,
+      );
+    }
+  }
+
+  function getCopiedDestNames(): string[] {
+    return (cp as Mock).mock.calls.map(
+      (c: unknown[]) => norm(c[1] as string).split('/').pop()!,
+    );
+  }
+
+  function getCopiedSrcPaths(): string[] {
+    return (cp as Mock).mock.calls.map(
+      (c: unknown[]) => norm(c[0] as string),
+    );
+  }
+
   describe('copyAudioFiles with titled-disc folders', () => {
-    it.todo('sequentially flattens titled-disc folders with duplicate basenames');
-    it.todo('extracts disc number from parenthetical suffix, not title digits');
-    it.todo('flattens N-of-M titled folders in correct order');
-    it.todo('handles mixed bare + titled disc folders in same directory');
-    it.todo('handles titled-disc folders with non-disc sibling');
+    it('sequentially flattens titled-disc folders with duplicate basenames', async () => {
+      setupDiscLayout([
+        ['BookTitle (Disc 01)', ['01.mp3', '02.mp3']],
+        ['BookTitle (Disc 02)', ['01.mp3', '02.mp3']],
+      ]);
+
+      await copyAudioFiles('/src', '/dest');
+
+      expect(cp).toHaveBeenCalledTimes(4);
+      expect(getCopiedDestNames()).toEqual(['1.mp3', '2.mp3', '3.mp3', '4.mp3']);
+    });
+
+    it('extracts disc number from parenthetical suffix, not title digits', async () => {
+      setupDiscLayout([
+        ['Book 99 (Disc 02)', ['track.mp3']],
+        ['Book 99 (Disc 01)', ['track.mp3']],
+      ]);
+
+      await copyAudioFiles('/src', '/dest');
+
+      // Disc 01 should sort before Disc 02 (not by "99" in title)
+      const srcPaths = getCopiedSrcPaths();
+      expect(srcPaths[0]).toContain('Disc 01');
+      expect(srcPaths[1]).toContain('Disc 02');
+    });
+
+    it('flattens N-of-M titled folders in correct order', async () => {
+      setupDiscLayout([
+        ['BookTitle (3 of 3)', ['01.mp3']],
+        ['BookTitle (1 of 3)', ['01.mp3']],
+        ['BookTitle (2 of 3)', ['01.mp3']],
+      ]);
+
+      await copyAudioFiles('/src', '/dest');
+
+      const srcPaths = getCopiedSrcPaths();
+      expect(srcPaths[0]).toContain('1 of 3');
+      expect(srcPaths[1]).toContain('2 of 3');
+      expect(srcPaths[2]).toContain('3 of 3');
+    });
+
+    it('handles mixed bare + titled disc folders in same directory', async () => {
+      setupDiscLayout([
+        ['CD1', ['track.mp3']],
+        ['BookTitle (Disc 02)', ['track.mp3']],
+      ]);
+
+      await copyAudioFiles('/src', '/dest');
+
+      expect(cp).toHaveBeenCalledTimes(2);
+      expect(getCopiedDestNames()).toEqual(['1.mp3', '2.mp3']);
+    });
+
+    it('handles titled-disc folders with non-disc sibling', async () => {
+      // 2 titled-disc + 1 non-disc = still treated as disc (disc count ≥2)
+      setupDiscLayout([
+        ['BookTitle (Disc 01)', ['01.mp3']],
+        ['BookTitle (Disc 02)', ['01.mp3']],
+        ['Bonus', ['bonus.mp3']],
+      ]);
+
+      await copyAudioFiles('/src', '/dest');
+
+      expect(cp).toHaveBeenCalledTimes(3);
+      // Sequential disc files + non-disc file with original name
+      const destNames = getCopiedDestNames();
+      expect(destNames).toContain('bonus.mp3');
+    });
   });
 
   describe('copyAudioFiles regression — bare disc folders', () => {
-    it.todo('still sequentially renames bare disc folders (CD1, Disc 2)');
+    it('still sequentially renames bare disc folders (CD1, Disc 2)', async () => {
+      setupDiscLayout([
+        ['CD1', ['01.mp3', '02.mp3']],
+        ['Disc 2', ['01.mp3']],
+      ]);
+
+      await copyAudioFiles('/src', '/dest');
+
+      expect(cp).toHaveBeenCalledTimes(3);
+      expect(getCopiedDestNames()).toEqual(['1.mp3', '2.mp3', '3.mp3']);
+    });
   });
 });
 
