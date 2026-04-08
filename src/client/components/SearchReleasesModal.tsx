@@ -3,7 +3,7 @@ import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import { api, ApiError, type BookWithAuthor, type SearchResult } from '@/lib/api';
 import { searchResultKey, deduplicateKeys } from '@/lib/stableKeys.js';
-import { resolveBookQualityInputs } from '@core/utils/index.js';
+import { resolveBookQualityInputs, calculateQuality } from '@core/utils/index.js';
 import { queryKeys } from '@/lib/queryKeys';
 import {
   SearchIcon,
@@ -231,6 +231,10 @@ export function SearchReleasesModal({ isOpen, book, onClose }: SearchReleasesMod
             {book.authors[0]?.name && (
               <p className="text-sm text-muted-foreground truncate">by {book.authors[0].name}</p>
             )}
+            {book.narrators?.length > 0 && (
+              <p className="text-sm text-muted-foreground truncate">Narrated by {book.narrators.map(n => n.name).join(', ')}</p>
+            )}
+            {(() => { const q = calculateQuality(book.audioTotalSize ?? 0, book.audioDuration ?? 0); return q ? <p className="text-sm text-muted-foreground truncate">Current quality · {q.mbPerHour} MB/hr · {q.tier}</p> : null; })()}
           </div>
           <div className="flex items-center gap-2 shrink-0 ml-4">
             <button
