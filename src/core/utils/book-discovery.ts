@@ -14,6 +14,37 @@ export interface DiscoveryLogger {
  */
 export const DISC_FOLDER_PATTERN = /^(cd|dis[ck])\s*\d{1,3}$/i;
 
+/**
+ * Titled-disc pattern — matches torrent naming conventions where the book title
+ * precedes a parenthetical disc indicator:
+ *   "BookTitle (Disc 01)", "BookTitle (Disk 3)", "BookTitle (1 of 5)"
+ *
+ * Returns the extracted title and disc number, or null if no match.
+ * Bare disc folders ("Disc 01", "CD1") return null — use DISC_FOLDER_PATTERN for those.
+ */
+export function parseTitledDiscFolder(name: string): { title: string; discNumber: number } | null {
+  if (!name) return null;
+
+  // Pattern 1: "Title (Disc NN)" or "Title (Disk NN)"
+  const discMatch = name.match(/^(.+?)\s*\((dis[ck])\s*(\d{1,3})\)$/i);
+  if (discMatch) {
+    const title = discMatch[1].trim();
+    // Bare disc folders like "Disc 01" would have empty title — reject
+    if (!title) return null;
+    return { title, discNumber: parseInt(discMatch[3], 10) };
+  }
+
+  // Pattern 2: "Title (N of M)"
+  const nOfMMatch = name.match(/^(.+?)\s*\((\d{1,3})\s+of\s+\d{1,3}\)$/i);
+  if (nOfMMatch) {
+    const title = nOfMMatch[1].trim();
+    if (!title) return null;
+    return { title, discNumber: parseInt(nOfMMatch[2], 10) };
+  }
+
+  return null;
+}
+
 export interface DiscoverBooksOptions {
   log?: DiscoveryLogger;
 }
@@ -91,6 +122,30 @@ async function walkDirectory(
   collectBooks(info, rootPath, results, log);
 }
 
+/** Identify disc-pattern children and verify titled-disc folders share the same title. */
+function findMergeableDiscChildren(audioChildren: DirInfo[]): { discChildren: DirInfo[]; allSameTitle: boolean } {
+  const discChildren = audioChildren.filter(c => {
+    const folderName = c.path.split(/[\\/]/).pop() ?? '';
+    return DISC_FOLDER_PATTERN.test(folderName) || parseTitledDiscFolder(folderName) !== null;
+  });
+
+  if (discChildren.length < 2) {
+    return { discChildren, allSameTitle: true };
+  }
+
+  // For titled-disc folders, verify all share the same title prefix before merging
+  const titles = new Set<string>();
+  for (const c of discChildren) {
+    const folderName = c.path.split(/[\\/]/).pop() ?? '';
+    const parsed = parseTitledDiscFolder(folderName);
+    if (parsed) {
+      titles.add(parsed.title.toLowerCase());
+    }
+    // Bare disc folders (no title) are compatible with any single title group
+  }
+  return { discChildren, allSameTitle: titles.size <= 1 };
+}
+
 function collectBooks(info: DirInfo, rootPath: string, results: DiscoveredFolder[], log?: DiscoveryLogger): void {
   const hasOwnAudio = info.audioFiles.length > 0;
   const audioChildren = info.children.filter(c => countAudioFilesDeep(c) > 0);
@@ -113,14 +168,12 @@ function collectBooks(info: DirInfo, rootPath: string, results: DiscoveredFolder
   }
 
   // Check for disc folder pattern: 2+ immediate children with audio whose names
-  // match disc/CD naming conventions (e.g. "CD1", "Disc 2", "Disk 03")
+  // match disc/CD naming conventions (bare: "CD1", "Disc 2"; titled: "BookTitle (Disc 01)")
   const immediateAudioChildren = info.children.filter(c => c.audioFiles.length > 0);
-  const discChildren = immediateAudioChildren.filter(c => {
-    const folderName = c.path.split(/[\\/]/).pop() ?? '';
-    return DISC_FOLDER_PATTERN.test(folderName);
-  });
-  if (discChildren.length >= 2 && discChildren.length === immediateAudioChildren.length) {
-    // All audio children are disc folders — merge into parent
+  const { discChildren, allSameTitle } = findMergeableDiscChildren(immediateAudioChildren);
+
+  if (discChildren.length >= 2 && discChildren.length === immediateAudioChildren.length && allSameTitle) {
+    // All audio children are disc folders with compatible titles — merge into parent
     const allAudioFiles = discChildren.flatMap(c => collectAllAudioFiles(c));
     log?.debug(
       {

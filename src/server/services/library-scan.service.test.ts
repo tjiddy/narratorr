@@ -801,6 +801,70 @@ describe('LibraryScanService', () => {
     });
   });
 
+  describe('lookupMetadata swap retry (issue #426)', () => {
+    it('returns match when first search succeeds — no swap', async () => {
+      mockMetadataService.searchBooks.mockResolvedValue([{ title: 'Found' }]);
+
+      const result = await service.lookupMetadata('Title', 'Author');
+
+      expect(mockMetadataService.searchBooks).toHaveBeenCalledTimes(1);
+      expect(mockMetadataService.searchBooks).toHaveBeenCalledWith('Title Author');
+      expect(result).toEqual({ title: 'Found' });
+    });
+
+    it('retries with swapped author/title on zero results', async () => {
+      mockMetadataService.searchBooks
+        .mockResolvedValueOnce([])  // first search: empty
+        .mockResolvedValueOnce([{ title: 'Found via swap' }]);  // swap search: found
+
+      const result = await service.lookupMetadata('The Correspondent', 'Virginia Evans');
+
+      expect(mockMetadataService.searchBooks).toHaveBeenCalledTimes(2);
+      expect(mockMetadataService.searchBooks).toHaveBeenNthCalledWith(1, 'The Correspondent Virginia Evans');
+      expect(mockMetadataService.searchBooks).toHaveBeenNthCalledWith(2, 'Virginia Evans The Correspondent');
+      expect(result).toEqual({ title: 'Found via swap' });
+    });
+
+    it('does not swap when author is null', async () => {
+      mockMetadataService.searchBooks.mockResolvedValue([]);
+
+      const result = await service.lookupMetadata('Title');
+
+      expect(mockMetadataService.searchBooks).toHaveBeenCalledTimes(1);
+      expect(result).toBeNull();
+    });
+
+    it('does not swap when author is empty string', async () => {
+      mockMetadataService.searchBooks.mockResolvedValue([]);
+
+      const result = await service.lookupMetadata('Title', '');
+
+      expect(mockMetadataService.searchBooks).toHaveBeenCalledTimes(1);
+      expect(result).toBeNull();
+    });
+
+    it('returns null when both searches return empty', async () => {
+      mockMetadataService.searchBooks
+        .mockResolvedValueOnce([])
+        .mockResolvedValueOnce([]);
+
+      const result = await service.lookupMetadata('Unknown', 'Nobody');
+
+      expect(mockMetadataService.searchBooks).toHaveBeenCalledTimes(2);
+      expect(result).toBeNull();
+    });
+
+    it('swap retry error does not crash scan', async () => {
+      mockMetadataService.searchBooks
+        .mockResolvedValueOnce([])
+        .mockRejectedValueOnce(new Error('API error on retry'));
+
+      const result = await service.lookupMetadata('Title', 'Author');
+
+      expect(result).toBeNull();
+    });
+  });
+
   describe('confirmImport', () => {
     it('creates book records for each item', async () => {
       const result = await service.confirmImport([
@@ -3544,4 +3608,165 @@ describe('scanDirectory() — within-scan duplicate detection (#342)', () => {
       expect(result2.discoveries[0].isDuplicate).toBe(false);
     });
   });
+
+  describe('cleanName enhancements (issue #426)', () => {
+    // cleanName() is private — test via parseFolderStructure with 2-part paths
+    // where parts[1] (title) goes through cleanName() directly
+
+    describe('narrator parenthetical stripping', () => {
+      it('strips trailing "(Jeff Hays)" from title', () => {
+        const result = parseFolderStructure(['Author', 'Dungeon Crawler Carl (Jeff Hays)']);
+        expect(result.title).toBe('Dungeon Crawler Carl');
+      });
+
+      it('strips trailing "(Stephen Fry)" from title', () => {
+        const result = parseFolderStructure(['Author', 'Bloody Rose (Stephen Fry)']);
+        expect(result.title).toBe('Bloody Rose');
+      });
+
+      it('does not strip "(Unabridged)" — handled as codec tag', () => {
+        const result = parseFolderStructure(['Author', 'Bloody Rose (Unabridged)']);
+        expect(result.title).toBe('Bloody Rose');
+      });
+
+      it('does not strip "(2020)" — handled as year', () => {
+        const result = parseFolderStructure(['Author', 'BookTitle (2020)']);
+        expect(result.title).toBe('BookTitle');
+      });
+
+      it('does not strip long parentheticals (>3 words)', () => {
+        const result = parseFolderStructure(['Author', 'BookTitle (A Very Long Subtitle Here)']);
+        expect(result.title).toBe('BookTitle (A Very Long Subtitle Here)');
+      });
+
+      it('does not strip 4-word narrator name — cap is intentionally 3 words', () => {
+        const result = parseFolderStructure(['Author', 'BookTitle (Dr Stephen King Jr)']);
+        expect(result.title).toBe('BookTitle (Dr Stephen King Jr)');
+      });
+
+      it('strips exactly 3-word narrator name', () => {
+        const result = parseFolderStructure(['Author', 'BookTitle (Mary Jane Watson)']);
+        expect(result.title).toBe('BookTitle');
+      });
+    });
+
+    describe('series marker stripping', () => {
+      it('strips ", Book 01" from title', () => {
+        const result = parseFolderStructure(['Author', 'The Hunger Games, Book 01']);
+        expect(result.title).toBe('The Hunger Games');
+      });
+
+      it('strips ", Vol 3" from title', () => {
+        const result = parseFolderStructure(['Author', 'Title, Vol 3']);
+        expect(result.title).toBe('Title');
+      });
+
+      it('strips ", Volume 12" from title', () => {
+        const result = parseFolderStructure(['Author', 'Title, Volume 12']);
+        expect(result.title).toBe('Title');
+      });
+
+      it('does not strip when title would be empty', () => {
+        const result = parseFolderStructure(['Author', ', Book 01']);
+        // Should fall back or preserve — not produce empty title
+        expect(result.title.length).toBeGreaterThan(0);
+      });
+    });
+
+    describe('empty bracket removal', () => {
+      it('removes empty () after codec stripping', () => {
+        const result = parseFolderStructure(['Author', 'BookTitle (MP3)']);
+        expect(result.title).toBe('BookTitle');
+        expect(result.title).not.toContain('()');
+      });
+
+      it('removes empty [] after codec stripping', () => {
+        const result = parseFolderStructure(['Author', 'BookTitle [FLAC]']);
+        expect(result.title).toBe('BookTitle');
+        expect(result.title).not.toContain('[]');
+      });
+
+      it('preserves non-empty parentheticals with >3 words', () => {
+        const result = parseFolderStructure(['Author', 'BookTitle (The Extended Cut Edition)']);
+        expect(result.title).toBe('BookTitle (The Extended Cut Edition)');
+      });
+    });
+
+    describe('duplicate segment deduplication', () => {
+      it('deduplicates "Dungeon Crawler Carl 01 – Dungeon Crawler Carl"', () => {
+        const result = parseFolderStructure(['Matt Dinniman', 'Dungeon Crawler Carl 01 – Dungeon Crawler Carl']);
+        expect(result.title).toBe('Dungeon Crawler Carl');
+      });
+
+      it('deduplicates "The Hunger Games, Book 01 – The Hunger Games"', () => {
+        const result = parseFolderStructure(['Suzanne Collins', 'The Hunger Games, Book 01 – The Hunger Games']);
+        expect(result.title).toBe('The Hunger Games');
+      });
+
+      it('does not deduplicate non-duplicate segments', () => {
+        // In 2-part paths, parts[1] is title — dash is NOT parsed as author separator
+        const result = parseFolderStructure(['Author', 'The Way of Kings – Brandon Sanderson']);
+        expect(result.title).toBe('The Way of Kings – Brandon Sanderson');
+        expect(result.author).toBe('Author');
+      });
+    });
+
+    describe('combined parenthetical edge cases', () => {
+      it('"BookTitle (Disc 01) (Jeff Hays)" — disc paren survives, narrator stripped', () => {
+        // When disc detection doesn't match (disc not at end), cleanName gets the full string
+        // Narrator paren is at end so it gets stripped; (Disc 01) survives as non-narrator content
+        const result = parseFolderStructure(['Author', 'BookTitle (Disc 01) (Jeff Hays)']);
+        expect(result.title).toBe('BookTitle (Disc 01)');
+      });
+    });
+
+    describe('regression — existing cleanName behaviors', () => {
+      it('still strips decimal series positions', () => {
+        const result = parseFolderStructure(['Author', '6.5 – The Title']);
+        expect(result.title).toBe('The Title');
+      });
+
+      it('still strips codec tags', () => {
+        const result = parseFolderStructure(['Author', 'BookTitle MP3']);
+        expect(result.title).toBe('BookTitle');
+      });
+
+      it('still removes years', () => {
+        const result = parseFolderStructure(['Author', 'BookTitle (2020)']);
+        expect(result.title).toBe('BookTitle');
+      });
+
+      it('returns original on empty result', () => {
+        const result = parseFolderStructure(['Author', '01.']);
+        expect(result.title.length).toBeGreaterThan(0);
+      });
+    });
+  });
+
+  describe('parseSingleFolder regression (issue #426)', () => {
+    it('"BookTitle (Author Name)" still parses as title + author', () => {
+      const result = parseFolderStructure(['Dune (Frank Herbert)']);
+      expect(result.title).toBe('Dune');
+      expect(result.author).toBe('Frank Herbert');
+    });
+
+    it('"BookTitle [Author Name]" still parses as title + author', () => {
+      const result = parseFolderStructure(['Dune [Frank Herbert]']);
+      expect(result.title).toBe('Dune');
+      expect(result.author).toBe('Frank Herbert');
+    });
+
+    it('"Author - BookTitle (Narrator)" strips narrator from title via cleanName', () => {
+      const result = parseFolderStructure(['Author - BookTitle (Jeff Hays)']);
+      expect(result.title).toBe('BookTitle');
+      expect(result.author).toBe('Author');
+    });
+
+    it('multi-part "Author/BookTitle (Jeff Hays)" strips narrator from title', () => {
+      const result = parseFolderStructure(['Author', 'BookTitle (Jeff Hays)']);
+      expect(result.title).toBe('BookTitle');
+      expect(result.author).toBe('Author');
+    });
+  });
+
 });

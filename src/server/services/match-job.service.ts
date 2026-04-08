@@ -7,6 +7,7 @@ import { scanAudioDirectory } from '../../core/utils/audio-scanner.js';
 import { Semaphore } from '../utils/semaphore.js';
 import { scoreResult, diceCoefficient } from '../../core/utils/similarity.js';
 import { extractYear } from './library-scan.service.js';
+import { searchWithSwapRetry } from '../utils/search-helpers.js';
 
 // ============ Types ============
 
@@ -169,16 +170,18 @@ class MatchJob {
         this.log.debug({ error, path: book.path }, 'Audio scan failed — proceeding without duration');
       }
 
-      // Send structured search params when title/author available
-      const query = book.author ? `${book.title} ${book.author}` : book.title;
-      this.log.debug({ path: book.path, query, duration }, 'Searching metadata for book');
-      const searchResults = await this.metadataService.searchBooks(query, {
+      // Send structured search params when title/author available, with swap retry
+      this.log.debug({ path: book.path, title: book.title, author: book.author, duration }, 'Searching metadata for book');
+      const searchResults = await searchWithSwapRetry({
+        searchFn: (q, opts) => this.metadataService.searchBooks(q, opts),
         title: book.title,
         author: book.author,
+        log: this.log,
+        options: { title: book.title, author: book.author },
       });
 
       if (searchResults.length === 0) {
-        this.log.debug({ path: book.path, query }, 'No search results returned');
+        this.log.debug({ path: book.path }, 'No search results returned');
         return { path: book.path, confidence: 'none', bestMatch: null, alternatives: [] };
       }
 

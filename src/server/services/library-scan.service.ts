@@ -17,6 +17,7 @@ import { toNamingOptions } from '../../core/utils/naming.js';
 import { enrichBookFromAudio } from './enrichment-utils.js';
 import type { EventHistoryService } from './event-history.service.js';
 import { getErrorMessage } from '../utils/error-message.js';
+import { searchWithSwapRetry } from '../utils/search-helpers.js';
 
 /** Minimum ratio of target/source file size for copy verification to pass. */
 const COPY_VERIFICATION_THRESHOLD = 0.99;
@@ -632,9 +633,13 @@ export class LibraryScanService {
    */
   async lookupMetadata(title: string, authorName?: string): Promise<BookMetadata | null> {
     try {
-      const query = authorName ? `${title} ${authorName}` : title;
-      const results = await this.metadataService.searchBooks(query);
-      this.log.debug({ title, authorName, query, resultCount: results.length }, 'Metadata search completed');
+      const results = await searchWithSwapRetry({
+        searchFn: (q) => this.metadataService.searchBooks(q),
+        title,
+        author: authorName || undefined,
+        log: this.log,
+      });
+      this.log.debug({ title, authorName, resultCount: results.length }, 'Metadata search completed');
       if (results.length === 0) {
         return null;
       }
@@ -961,6 +966,18 @@ function normalizeFolderName(name: string): string {
     .trim();
 }
 
+/** Matches trailing ", Book NN", ", Vol NN", ", Volume NN" series markers. */
+const SERIES_MARKER_REGEX = /,\s*(?:book|vol(?:ume)?)\s+\d+\s*$/i;
+
+/**
+ * Matches trailing parenthetical containing a person's name (1-3 words).
+ * Does NOT match: years (2020), codec tags (handled by CODEC_REGEX), or long subtitles (>3 words).
+ */
+// Matches trailing parenthetical with 1-3 words (covers most narrator names like "Jeff Hays",
+// "Stephen Fry", "Scott Brick"). Intentionally caps at 3 words — 4+ words are more likely subtitles
+// than narrator names. Titles like "(Dr. Stephen King Jr.)" will survive, which is the safer default.
+const NARRATOR_PAREN_REGEX = /\s*\((?!(?:19|20)\d{2}\))(\S+(?:\s+\S+){0,2})\)\s*$/;
+
 function cleanName(name: string): string {
   // Strip leading number prefixes (track/series position):
   //   '01 - Title', '01. Title', '01.- Title', '6.5 - Title', '6.5 – Title'
@@ -969,11 +986,46 @@ function cleanName(name: string): string {
     .replace(/^\d+\.\d+\s*[–-]\s*/, '')          // decimal + dash: '6.5 - ', '6.5 – '
     .replace(/^\d+[.\s]*[–-]\s*/, '')             // integer + dash: '01 - ', '01.- '
     .replace(/^\d+\.(?!\d)\s*/, '');              // integer + dot (not decimal): '01. '
-  const result = normalizeFolderName(stripped)
+
+  // Strip series markers (", Book 01", ", Vol 3", ", Volume 12") before dedup
+  const withoutSeries = stripped.replace(SERIES_MARKER_REGEX, '');
+
+  let result = normalizeFolderName(withoutSeries)
     .replace(/\s*\(\d{4}\)$/, '') // Remove trailing year like "(2020)"
     .replace(/\s*\[\d{4}\]$/, '') // Remove trailing year like "[2020]"
     .replace(BARE_YEAR_REGEX, '') // Remove bare trailing year like "2017"
+    .replace(/\s*\(\s*\)/g, '')   // Remove empty parentheses (e.g. after codec strip)
+    .replace(/\s*\[\s*\]/g, '')   // Remove empty brackets (e.g. after codec strip)
     .trim();
+
+  // Strip trailing narrator-style parenthetical (1-3 word name, not codec/year)
+  const narratorMatch = result.match(NARRATOR_PAREN_REGEX);
+  if (narratorMatch) {
+    const content = narratorMatch[1];
+    // Don't strip if content is a known codec tag (already handled, but guard against edge cases)
+    if (!CODEC_REGEX.test(content)) {
+      const beforeParen = result.replace(NARRATOR_PAREN_REGEX, '').trim();
+      if (beforeParen) result = beforeParen;
+    }
+    // Reset CODEC_REGEX lastIndex (global flag)
+    CODEC_REGEX.lastIndex = 0;
+  }
+
+  // Deduplicate repeated title segments: "Title 01 – Title" → "Title"
+  // Handles patterns like "Dungeon Crawler Carl 01 – Dungeon Crawler Carl"
+  // and "The Hunger Games, Book 01 – The Hunger Games"
+  const dashParts = result.split(/\s*[–-]\s*/);
+  if (dashParts.length === 2) {
+    const left = dashParts[0]
+      .replace(SERIES_MARKER_REGEX, '')   // strip ", Book 01" etc. from left
+      .replace(/\s*\d+\s*$/, '')          // strip trailing number like "01"
+      .trim();
+    const right = dashParts[1].trim();
+    if (left.toLowerCase() === right.toLowerCase() && right) {
+      result = right;
+    }
+  }
+
   // Fall back to original name when normalization strips everything
   return result || name.trim();
 }
