@@ -34,9 +34,11 @@ vi.mock('@/hooks/useMergeProgress', () => ({
 // already a stable useCallback ref, so the WeakMap lookup returns the same
 // wrapper across renders, preserving referential identity for useEffect deps.
 let clampToTotalCallCount = 0;
-const clampWrapperCache = new WeakMap<Function, Function>();
-vi.mock('@/hooks/usePagination', async (importOriginal) => {
-  const mod = await importOriginal<typeof import('@/hooks/usePagination')>();
+type ClampFn = (total: number) => void;
+const clampWrapperCache = new WeakMap<ClampFn, ClampFn>();
+vi.mock('@/hooks/usePagination', async () => {
+  // eslint-disable-next-line @typescript-eslint/consistent-type-imports
+  const mod: typeof import('@/hooks/usePagination') = await vi.importActual('@/hooks/usePagination');
   return {
     ...mod,
     usePagination: (...args: Parameters<typeof mod.usePagination>) => {
@@ -48,7 +50,7 @@ vi.mock('@/hooks/usePagination', async (importOriginal) => {
           return original(total);
         });
       }
-      return { ...result, clampToTotal: clampWrapperCache.get(original)! as typeof original };
+      return { ...result, clampToTotal: clampWrapperCache.get(original)! };
     },
   };
 });
