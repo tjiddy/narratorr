@@ -75,6 +75,12 @@ export function setMergeProgress(bookId: number, progress: Omit<MergeCardState, 
     dismissTimers.delete(bookId);
     mergeProgressMap.delete(bookId);
   } else {
+    // Clear any pending dismiss timer from a prior terminal state for this book
+    const existingTimer = dismissTimers.get(bookId);
+    if (existingTimer) {
+      clearTimeout(existingTimer);
+      dismissTimers.delete(bookId);
+    }
     mergeProgressMap.set(bookId, { bookId, ...progress });
     if (isTerminal(progress)) {
       scheduleDismiss(bookId);
@@ -112,4 +118,5 @@ export function _resetForTesting(): void {
   dismissTimers.clear();
   listeners.clear();
   cachedSnapshot = [];
+  perBookCache.clear();
 }

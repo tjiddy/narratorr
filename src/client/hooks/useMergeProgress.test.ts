@@ -308,6 +308,35 @@ describe('useMergeActivityCards (list-returning hook)', () => {
     expect(result.current).toHaveLength(0);
   });
 
+  it('clears stale dismiss timer when same book re-enters non-terminal state', () => {
+    const { result } = renderHook(() => useMergeActivityCards());
+
+    // Book 42 completes → dismiss timer starts
+    act(() => {
+      setMergeProgress(42, {
+        bookTitle: 'My Book',
+        phase: 'complete',
+        outcome: 'success',
+        message: 'done',
+      });
+    });
+    expect(result.current).toHaveLength(1);
+
+    // Same book immediately re-enters merge (new merge started within 3s)
+    act(() => {
+      setMergeProgress(42, { bookTitle: 'My Book', phase: 'starting' });
+    });
+    expect(result.current).toHaveLength(1);
+    expect(result.current[0].phase).toBe('starting');
+
+    // After 3s, the stale timer should NOT have fired — card still exists
+    act(() => {
+      vi.advanceTimersByTime(3000);
+    });
+    expect(result.current).toHaveLength(1);
+    expect(result.current[0].phase).toBe('starting');
+  });
+
   it('includes enrichmentWarning in terminal success state', () => {
     const { result } = renderHook(() => useMergeActivityCards());
 
