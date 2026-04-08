@@ -10,6 +10,8 @@ export function formatMergePhase(phase: string, percentage?: number, position?: 
         : 'Encoding to M4B...';
     case 'verifying': return 'Verifying output...';
     case 'finalizing': return 'Finalizing...';
+    case 'complete': return 'Merge complete';
+    case 'failed': return 'Merge failed';
     default: return 'Merging...';
   }
 }

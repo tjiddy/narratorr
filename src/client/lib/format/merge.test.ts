@@ -42,6 +42,14 @@ describe('formatMergePhase', () => {
     expect(formatMergePhase('finalizing')).toBe('Finalizing...');
   });
 
+  it('returns "Merge complete" for complete phase', () => {
+    expect(formatMergePhase('complete')).toBe('Merge complete');
+  });
+
+  it('returns "Merge failed" for failed phase', () => {
+    expect(formatMergePhase('failed')).toBe('Merge failed');
+  });
+
   it('returns "Merging..." for unknown phase', () => {
     expect(formatMergePhase('something_unknown')).toBe('Merging...');
   });
