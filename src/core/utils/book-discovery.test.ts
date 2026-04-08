@@ -951,6 +951,25 @@ describe('discoverBooks', () => {
       expect(merged.audioFileCount).toBe(2);
       expect(merged.totalSize).toBe(200);
     });
+
+    it('loose audio + titled-disc subfolders merges discs and excludes loose files', async () => {
+      setupFs({
+        '/audiobooks': [{ name: 'Book', isFile: false }],
+        '/audiobooks/Book': [
+          { name: 'loose.mp3', isFile: true, size: 100 },
+          { name: 'BookTitle (Disc 01)', isFile: false },
+          { name: 'BookTitle (Disc 02)', isFile: false },
+        ],
+        '/audiobooks/Book/BookTitle (Disc 01)': [{ name: '01.mp3', isFile: true, size: 200 }],
+        '/audiobooks/Book/BookTitle (Disc 02)': [{ name: '01.mp3', isFile: true, size: 300 }],
+      });
+
+      const result = await discoverBooks('/audiobooks');
+      expect(result).toHaveLength(1);
+      expect(result[0].path).toBe('/audiobooks/Book');
+      expect(result[0].audioFileCount).toBe(2); // Only disc tracks, not loose
+      expect(result[0].totalSize).toBe(500); // 200 + 300, not 100
+    });
   });
 
   describe('mixed-content logging', () => {
