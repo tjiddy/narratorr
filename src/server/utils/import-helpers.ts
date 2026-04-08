@@ -1,5 +1,5 @@
 import { stat, readdir, mkdir, cp } from 'node:fs/promises';
-import { join, extname } from 'node:path';
+import { join, extname, basename } from 'node:path';
 import { renderTemplate, toLastFirst, toSortTitle, AUDIO_EXTENSIONS } from '../../core/utils/index.js';
 import { collectAudioFilePaths } from '../../core/utils/collect-audio-files.js';
 import { DISC_FOLDER_PATTERN } from '../../core/utils/book-discovery.js';
@@ -101,7 +101,7 @@ async function collectAudioFiles(
 ): Promise<Array<{ srcPath: string; name: string }>> {
   const paths = await collectAudioFilePaths(dir, { recursive: true });
   return paths
-    .map(p => ({ srcPath: p, name: p.split('/').pop()! }))
+    .map(p => ({ srcPath: p, name: basename(p) }))
     .sort((a, b) => a.name.localeCompare(b.name));
 }
 
