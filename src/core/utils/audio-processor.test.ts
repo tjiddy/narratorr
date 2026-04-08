@@ -852,14 +852,73 @@ describe('#257 merge observability — audio-processor', () => {
 // ============================================================================
 
 describe('#424 stream mapping — unconditional -vn flag', () => {
-  it.todo('mergeFiles includes -vn flag in ffmpeg args');
-  it.todo('convertFiles includes -vn flag in ffmpeg args');
-  it.todo('-vn is present even when source files have no embedded cover art');
+  it('mergeFiles includes -vn flag in ffmpeg args', async () => {
+    setupMergeFiles([120, 120]);
+    mockSpawnSuccess();
+
+    await processAudioFiles('/lib/book', { ...defaultConfig, mergeBehavior: 'always' }, defaultContext);
+
+    const spawnArgs = mockSpawn.mock.calls[0][1] as string[];
+    expect(spawnArgs).toContain('-vn');
+  });
+
+  it('convertFiles includes -vn flag in ffmpeg args', async () => {
+    setupConvertFile();
+    mockSpawnSuccess();
+
+    await processAudioFiles('/lib/book', defaultConfig, defaultContext);
+
+    const spawnArgs = mockSpawn.mock.calls[0][1] as string[];
+    expect(spawnArgs).toContain('-vn');
+  });
+
+  it('-vn is present even when source files have no embedded cover art', async () => {
+    // Default setup has no cover art detection — -vn should still be there
+    setupConvertFile();
+    mockSpawnSuccess();
+
+    await processAudioFiles('/lib/book', defaultConfig, defaultContext);
+
+    const spawnArgs = mockSpawn.mock.calls[0][1] as string[];
+    expect(spawnArgs).toContain('-vn');
+  });
 });
 
 describe('#424 convertFiles — progress output', () => {
-  it.todo('convertFiles includes -progress pipe:1 in ffmpeg args');
-  it.todo('convert-path stall timeout kills process after 60s with no progress');
+  it('convertFiles includes -progress pipe:1 in ffmpeg args', async () => {
+    setupConvertFile();
+    mockSpawnSuccess();
+
+    await processAudioFiles('/lib/book', defaultConfig, defaultContext);
+
+    const spawnArgs = mockSpawn.mock.calls[0][1] as string[];
+    const idx = spawnArgs.indexOf('-progress');
+    expect(idx).toBeGreaterThan(-1);
+    expect(spawnArgs[idx + 1]).toBe('pipe:1');
+  });
+
+  it('convert-path stall timeout kills process after 60s with no progress', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    setupConvertFile();
+    const child = new MockChildProcess();
+    child.kill = vi.fn().mockImplementation(() => {
+      process.nextTick(() => child.emit('close', null));
+    });
+    mockSpawn.mockReturnValue(child as never);
+
+    const promise = processAudioFiles('/lib/book', defaultConfig, defaultContext);
+    await vi.waitFor(() => expect(mockSpawn).toHaveBeenCalled());
+
+    vi.advanceTimersByTime(61_000);
+
+    const result = await promise;
+    expect(child.kill).toHaveBeenCalledWith('SIGTERM');
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      expect(result.error).toContain('ffmpeg stalled');
+    }
+    vi.useRealTimers();
+  });
 });
 
 describe('#424 spawnFfmpeg — stall timeout', () => {

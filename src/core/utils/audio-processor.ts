@@ -277,6 +277,7 @@ async function mergeFiles(
       args.push('-c:a', outputExt === 'm4b' ? 'aac' : 'libmp3lame');
     }
 
+    args.push('-vn');
     args.push('-max_muxing_queue_size', '4096');
 
     if (outputExt === 'm4b') {
@@ -361,12 +362,14 @@ async function convertFiles(
       args.push('-b:a', `${effectiveBitrate}k`);
     }
 
+    args.push('-vn');
     args.push('-max_muxing_queue_size', '4096');
 
     if (config.outputFormat === 'm4b') {
       args.push('-f', 'mp4');
     }
 
+    args.push('-progress', 'pipe:1');
     args.push(writePath);
 
     await spawnFfmpeg(config.ffmpegPath, args, {
