@@ -3,6 +3,7 @@ import { createMockLogger, inject } from '../__tests__/helpers.js';
 import { MatchJobService, type MatchCandidate } from './match-job.service.js';
 import type { FastifyBaseLogger } from 'fastify';
 import type { MetadataService } from './metadata.service.js';
+import type { SettingsService } from './settings.service.js';
 import type { BookMetadata } from '../../core/metadata/index.js';
 
 // Mock audio scanner
@@ -70,12 +71,14 @@ describe('MatchJobService', () => {
   let service: MatchJobService;
   let metadataService: ReturnType<typeof createMockMetadataService>;
   let log: ReturnType<typeof createMockLogger>;
+  let settingsService: SettingsService;
 
   beforeEach(() => {
     vi.clearAllMocks();
     log = createMockLogger();
     metadataService = createMockMetadataService();
-    service = new MatchJobService(metadataService, inject<FastifyBaseLogger>(log));
+    settingsService = inject<SettingsService>({ get: vi.fn().mockResolvedValue({ ffmpegPath: '' }) });
+    service = new MatchJobService(metadataService, inject<FastifyBaseLogger>(log), settingsService);
     (randomUUID as ReturnType<typeof vi.fn>).mockReturnValue('test-job-id');
   });
 

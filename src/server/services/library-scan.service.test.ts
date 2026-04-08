@@ -1983,6 +1983,7 @@ describe('LibraryScanService', () => {
           mockDb,
           log,
           mockBookService,
+          undefined, // ffprobePath (no ffmpeg configured in mock settings)
         );
       });
     });
