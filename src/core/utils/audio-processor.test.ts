@@ -1589,7 +1589,7 @@ describe('#424 cover art temp file cleanup', () => {
       );
 
       expect(result.success).toBe(false);
-      expect(result.error).toContain('aborted');
+      expect(!result.success && result.error).toContain('aborted');
       expect(mockSpawn).not.toHaveBeenCalled();
     });
   });

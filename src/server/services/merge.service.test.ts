@@ -1548,34 +1548,6 @@ describe('#257 merge observability — merge service', () => {
     }
 
     describe('cancel from queue', () => {
-      it('removes a queued bookId from the queue and returns cancelled', async () => {
-        setupFsMocksForCancel();
-        const { service } = createServiceWithBroadcasterForCancel();
-        const blocking = createBlockingMergeForCancel();
-
-        // Start first merge (takes the slot)
-        await service.enqueueMerge(42);
-        await new Promise((r) => setTimeout(r, 50));
-
-        // Queue a second merge
-        const mockBook43 = { ...mockBook, id: 43, title: 'Book 43' };
-        const { bookService } = createService();
-        // Override bookService to resolve 43
-        const { service: svc2, emitted } = createServiceWithBroadcasterForCancel();
-        // Use the service with broadcaster
-        setupFsMocksForCancel();
-        const blocking2 = createBlockingMergeForCancel();
-        await svc2.enqueueMerge(42);
-        await new Promise((r) => setTimeout(r, 50));
-
-        // Queue book 43
-        (svc2 as unknown as { bookService: { getById: Mock } }).bookService = undefined as never;
-        // Better approach: use original service
-        blocking.resolve();
-        blocking2.resolve();
-        await new Promise((r) => setTimeout(r, 50));
-      });
-
       it('returns cancelled for a queued bookId', async () => {
         setupFsMocksForCancel();
         const { service, emitted } = createServiceWithBroadcasterForCancel();
@@ -1618,11 +1590,9 @@ describe('#257 merge observability — merge service', () => {
         const { service, emitted } = createServiceWithBroadcasterForCancel();
 
         // Block at processAudioFiles so we can cancel during processing
-        let resolveProcess!: () => void;
         (processAudioFiles as Mock).mockImplementation(async (_dir: string, _config: unknown, _ctx: unknown, _cb: unknown, signal?: AbortSignal) => {
           // Wait for abort or resolution
           await new Promise<void>((resolve) => {
-            resolveProcess = resolve;
             if (signal) {
               signal.addEventListener('abort', () => resolve(), { once: true });
             }
@@ -1693,9 +1663,7 @@ describe('#257 merge observability — merge service', () => {
       expect(progressEvents).toContain('committing');
       expect(progressEvents).not.toContain('finalizing');
 
-      // committing must come before merge_complete
-      const allEvents = emitted.map(e => e.event);
-      const committingIdx = allEvents.indexOf('merge_progress');
+      // committing must be the last emitted progress phase (before merge_complete)
       const lastProgress = emitted.filter(e => e.event === 'merge_progress').pop();
       expect((lastProgress?.payload as { phase: string }).phase).toBe('committing');
     });
