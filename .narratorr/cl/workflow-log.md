@@ -1,5 +1,29 @@
 # Workflow Log
 
+## #416 mam-fields.tsx ensureMinDuration flakes detection tests — extract testable constant — 2026-04-08
+**Skill path:** /implement → /claim → /plan → /handoff
+**Outcome:** success — PR #435
+
+### Metrics
+- Files changed: 4 | Tests added/modified: 4 (3 new unit tests, 1 updated overlay test)
+- Quality gate runs: 2 (pass on attempt 2 — first failed due to react-refresh lint and typecheck)
+- Fix iterations: 2 (react-refresh required separate file for constants; import.meta.env untyped, switched to process.env.NODE_ENV)
+- Context compactions: 0
+
+### Workflow experience
+- What went smoothly: small, focused scope — constant extraction + test cleanup was clean
+- Friction / issues encountered: two unexpected blockers: (1) react-refresh/only-export-components lint rule prevents non-component exports from .tsx files, (2) tsconfig lacks vite/client types so import.meta.env.MODE causes TS2339
+
+### Token efficiency
+- Highest-token actions: reading the full IndexerFields.test.tsx during plan exploration
+- Avoidable waste: could have checked lint and typecheck before first commit to catch both issues in one pass
+- Suggestions: for future constant extractions from component files, always use a separate .ts file from the start
+
+### Wish I'd Known
+1. The `react-refresh/only-export-components` rule means you can never export a constant from a `.tsx` file that also exports components — always plan for a separate file
+2. `import.meta.env` is untyped in this project (no `vite/client` in tsconfig types) — use `process.env.NODE_ENV` instead
+3. Both issues would have been caught by running `pnpm lint && pnpm typecheck` before the first commit — verify before committing saves a fix iteration
+
 ## #431 Cancel in-progress M4B merge jobs — 2026-04-08
 **Skill path:** /elaborate → /respond-to-spec-review (x2) → /implement → /claim → /plan → /handoff
 **Outcome:** success — PR #433
