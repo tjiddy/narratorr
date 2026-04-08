@@ -12,6 +12,7 @@ import { BookEventHistory } from './BookEventHistory.js';
 import { mergeBookData, type MetadataBook } from './helpers.js';
 import { useBookActions } from './useBookActions.js';
 import { useMergeProgress } from '@/hooks/useMergeProgress.js';
+import { formatMergePhase } from '@/lib/format/merge.js';
 import { AudioPreview } from './AudioPreview.js';
 
 function getArrowTabIndex(key: string, currentIndex: number, length: number): number | null {
@@ -254,18 +255,3 @@ function MergeProgressIndicator({ progress }: { progress: { phase: string; perce
   );
 }
 
-function formatMergePhase(phase: string, percentage?: number, position?: number): string {
-  switch (phase) {
-    case 'queued':
-      return position !== undefined ? `Queued (position ${position})` : 'Queued';
-    case 'starting': return 'Merge started...';
-    case 'staging': return 'Staging files...';
-    case 'processing':
-      return percentage !== undefined
-        ? `Encoding to M4B — ${Math.round(percentage * 100)}%...`
-        : 'Encoding to M4B...';
-    case 'verifying': return 'Verifying output...';
-    case 'finalizing': return 'Finalizing...';
-    default: return 'Merging...';
-  }
-}
