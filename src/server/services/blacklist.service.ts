@@ -94,13 +94,14 @@ export class BlacklistService {
     return result[0];
   }
 
-  async isBlacklisted(infoHash: string): Promise<boolean> {
-    const results = await this.db
-      .select()
-      .from(blacklist)
-      .where(eq(blacklist.infoHash, infoHash))
-      .limit(1);
-    return results.length > 0;
+  async isBlacklisted(infoHash?: string, guid?: string): Promise<boolean> {
+    if (!infoHash && !guid) return false;
+    const { blacklistedHashes, blacklistedGuids } = await this.getBlacklistedIdentifiers(
+      infoHash ? [infoHash] : undefined,
+      guid ? [guid] : undefined,
+    );
+    return (!!infoHash && blacklistedHashes.has(infoHash)) ||
+           (!!guid && blacklistedGuids.has(guid));
   }
 
   async getBlacklistedIdentifiers(

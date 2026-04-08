@@ -3,7 +3,6 @@
 ## Actionable
 
 - **`src/client/pages/settings/CredentialsSection.tsx` + `ImportListProviderSettings.tsx`**: Still define local `inputClass` constants identical to shared `formStyles.ts`. Could import from shared location for full dedup (discovered in #289)
-- **`src/server/services/blacklist.service.ts`**: `isBlacklisted(infoHash)` method still only checks `infoHash`, not `guid`. If usenet-only blacklisted entries exist (guid-only, no infoHash), `isBlacklisted()` won't find them. Low priority — only called from quality gate pre-check, not from reject flow (discovered in #248)
 - **`src/server/jobs/search.ts`**: `startSearchJob()` is exported dead code (zero callers) — the job registry uses a timeout pattern instead. Should be removed in a chore. (discovered in #406)
 
 - **`src/server/services/indexer.service.ts`**: `searchAllStreaming()` and `searchAll()` both query enabled indexers from the DB independently. Could share a common `getEnabledIndexerRows()` that returns full rows, with `getEnabledIndexers()` projecting just id+name. Minor DRY issue. (discovered in #298)
