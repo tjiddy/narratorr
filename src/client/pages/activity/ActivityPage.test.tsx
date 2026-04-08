@@ -29,6 +29,30 @@ vi.mock('@/hooks/useMergeProgress', () => ({
   _resetForTesting: vi.fn(),
 }));
 
+// Spy on clampToTotal calls to verify effect dependency stability (F1).
+// The spy wraps the real hook — all behavior is preserved. clampToTotal is
+// already a stable useCallback ref, so the WeakMap lookup returns the same
+// wrapper across renders, preserving referential identity for useEffect deps.
+let clampToTotalCallCount = 0;
+const clampWrapperCache = new WeakMap<Function, Function>();
+vi.mock('@/hooks/usePagination', async (importOriginal) => {
+  const mod = await importOriginal<typeof import('@/hooks/usePagination')>();
+  return {
+    ...mod,
+    usePagination: (...args: Parameters<typeof mod.usePagination>) => {
+      const result = mod.usePagination(...args);
+      const original = result.clampToTotal;
+      if (!clampWrapperCache.has(original)) {
+        clampWrapperCache.set(original, (total: number) => {
+          clampToTotalCallCount++;
+          return original(total);
+        });
+      }
+      return { ...result, clampToTotal: clampWrapperCache.get(original)! as typeof original };
+    },
+  };
+});
+
 vi.mock('@/lib/api', () => ({
   api: {
     getActivity: vi.fn(),
@@ -79,6 +103,7 @@ function mockActivitySections(queue: Download[], history: Download[]) {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  clampToTotalCallCount = 0;
 });
 
 describe('ActivityPage pagination clamp (#93)', () => {
@@ -227,7 +252,7 @@ describe('ActivityPage pagination clamp (#93)', () => {
     expect(pageLabels()[0]).toHaveTextContent('Page 1 of 3');
   }, 15000);
 
-  it('page label stays stable after unrelated tab switch (no spurious clamp effect)', async () => {
+  it('clamp effects do not re-fire on re-render when totals are unchanged (stable deps)', async () => {
     const user = userEvent.setup();
     const queryClient = makeClampTestClient();
 
@@ -239,7 +264,6 @@ describe('ActivityPage pagination clamp (#93)', () => {
         total: 150,
       };
     });
-    vi.mocked(api.getEventHistory).mockResolvedValue({ data: [], total: 0 });
 
     renderWithCustomClient(queryClient);
 
@@ -249,21 +273,36 @@ describe('ActivityPage pagination clamp (#93)', () => {
       expect(labels[0]).toHaveTextContent('Page 1 of 3');
     });
 
-    // Navigate queue to page 2
+    // Navigate queue to page 2 (history stays on page 1)
     await user.click(screen.getAllByRole('button', { name: /next page/i })[0]);
     await waitFor(() => expect(screen.getAllByText(/Page \d+ of \d+/)[0]).toHaveTextContent('Page 2 of 3'));
 
-    // Switch to Event History tab — unrelated re-render
-    await user.click(screen.getAllByRole('button', { name: /event history/i })[0]);
+    // Snapshot clampToTotal call count after navigation settles.
+    // Both queue and history effects have fired during initial render and navigation.
+    const countBeforeRerender = clampToTotalCallCount;
 
-    // Switch back to Downloads tab (first match is the tab button, second may be a filter chip)
-    await user.click(screen.getAllByRole('button', { name: /downloads/i })[0]);
+    // Trigger a re-render by updating query cache data WITHOUT changing totals.
+    // This causes usePagination to return a new object (unstable ref) but the
+    // destructured clampToTotal callbacks remain stable.
+    act(() => {
+      queryClient.setQueryData(
+        activityKey({ section: 'queue', limit: LIMIT, offset: 50 }),
+        { data: makeCompletedDownloads(LIMIT, 8000), total: 150 },
+      );
+    });
 
-    // Page label should still be page 2 of 3 — clamp effect should NOT have reset it
+    // Page labels are unchanged — both paginators still show their pre-rerender state
     await waitFor(() => {
       const labels = screen.getAllByText(/Page \d+ of \d+/);
       expect(labels[0]).toHaveTextContent('Page 2 of 3');
+      expect(labels[1]).toHaveTextContent('Page 1 of 3');
     });
+
+    // With stable deps (clampQueuePage/clampHistoryPage), neither clamp effect re-fires
+    // because queueTotal/historyTotal didn't change and the callbacks are stable refs.
+    // With the old full-object deps [queueTotal, queuePagination], both effects would
+    // re-fire on every render because usePagination returns a new object each time.
+    expect(clampToTotalCallCount).toBe(countBeforeRerender);
   }, 15000);
 
   it('clamps to page 1 when total shrinks to exactly 1 page', async () => {
@@ -313,6 +352,21 @@ describe('ActivityPage pagination clamp (#93)', () => {
       expect(labels).toHaveLength(1); // only history
       expect(labels[0]).toHaveTextContent('Page 1 of 3'); // history unchanged
     });
+
+    // Restore queue total above limit to prove page state actually clamped to 1.
+    // If clamp failed (page stuck at 3), this would show "Page 3 of 3" instead.
+    act(() => {
+      queryClient.setQueryData(
+        activityKey({ section: 'queue', limit: LIMIT, offset: 0 }),
+        { data: makeCompletedDownloads(LIMIT, 7000), total: 150 },
+      );
+    });
+
+    await waitFor(() => {
+      const labels = screen.getAllByText(/Page \d+ of \d+/);
+      expect(labels).toHaveLength(2);
+      expect(labels[0]).toHaveTextContent('Page 1 of 3'); // confirms page clamped to 1
+    });
   }, 15000);
 
   it('clamps to page 1 when total shrinks to 0', async () => {
@@ -359,6 +413,21 @@ describe('ActivityPage pagination clamp (#93)', () => {
       const labels = screen.getAllByText(/Page \d+ of \d+/);
       expect(labels).toHaveLength(1); // only history
       expect(labels[0]).toHaveTextContent('Page 1 of 3'); // history unchanged
+    });
+
+    // Restore queue total above limit to prove page state actually clamped to 1.
+    // If clamp failed (page stuck at 2), this would show "Page 2 of 3" instead.
+    act(() => {
+      queryClient.setQueryData(
+        activityKey({ section: 'queue', limit: LIMIT, offset: 0 }),
+        { data: makeCompletedDownloads(LIMIT, 7000), total: 150 },
+      );
+    });
+
+    await waitFor(() => {
+      const labels = screen.getAllByText(/Page \d+ of \d+/);
+      expect(labels).toHaveLength(2);
+      expect(labels[0]).toHaveTextContent('Page 1 of 3'); // confirms page clamped to 1
     });
   }, 15000);
 });
