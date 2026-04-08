@@ -94,4 +94,26 @@ describe('searchWithSwapRetry', () => {
     expect(results).toEqual([]);
     expect(searchFn).toHaveBeenCalledTimes(2);
   });
+
+  it('propagates error from first search — does not attempt swap', async () => {
+    const searchFn = vi.fn().mockRejectedValue(new Error('API down'));
+    const log = createMockLog();
+
+    await expect(
+      searchWithSwapRetry({ searchFn, title: 'Title', author: 'Author', log }),
+    ).rejects.toThrow('API down');
+
+    expect(searchFn).toHaveBeenCalledTimes(1);
+  });
+
+  it('handles empty string title without crashing', async () => {
+    const searchFn = vi.fn().mockResolvedValue([]);
+    const log = createMockLog();
+
+    const results = await searchWithSwapRetry({ searchFn, title: '', author: 'Author', log });
+
+    expect(results).toEqual([]);
+    // Empty title + author → query is " Author", swap would be "Author "
+    expect(searchFn).toHaveBeenCalledTimes(2);
+  });
 });

@@ -3638,6 +3638,16 @@ describe('scanDirectory() — within-scan duplicate detection (#342)', () => {
         const result = parseFolderStructure(['Author', 'BookTitle (A Very Long Subtitle Here)']);
         expect(result.title).toBe('BookTitle (A Very Long Subtitle Here)');
       });
+
+      it('does not strip 4-word narrator name — cap is intentionally 3 words', () => {
+        const result = parseFolderStructure(['Author', 'BookTitle (Dr Stephen King Jr)']);
+        expect(result.title).toBe('BookTitle (Dr Stephen King Jr)');
+      });
+
+      it('strips exactly 3-word narrator name', () => {
+        const result = parseFolderStructure(['Author', 'BookTitle (Mary Jane Watson)']);
+        expect(result.title).toBe('BookTitle');
+      });
     });
 
     describe('series marker stripping', () => {
@@ -3698,6 +3708,15 @@ describe('scanDirectory() — within-scan duplicate detection (#342)', () => {
         const result = parseFolderStructure(['Author', 'The Way of Kings – Brandon Sanderson']);
         expect(result.title).toBe('The Way of Kings – Brandon Sanderson');
         expect(result.author).toBe('Author');
+      });
+    });
+
+    describe('combined parenthetical edge cases', () => {
+      it('"BookTitle (Disc 01) (Jeff Hays)" — disc paren survives, narrator stripped', () => {
+        // When disc detection doesn't match (disc not at end), cleanName gets the full string
+        // Narrator paren is at end so it gets stripped; (Disc 01) survives as non-narrator content
+        const result = parseFolderStructure(['Author', 'BookTitle (Disc 01) (Jeff Hays)']);
+        expect(result.title).toBe('BookTitle (Disc 01)');
       });
     });
 

@@ -1161,6 +1161,15 @@ describe('discoverBooks', () => {
       it('handles (Disc 0) with title', () => {
         expect(parseTitledDiscFolder('BookTitle (Disc 0)')).toEqual({ title: 'BookTitle', discNumber: 0 });
       });
+
+      it('handles "Disk" spelling variant', () => {
+        expect(parseTitledDiscFolder('BookTitle (Disk 05)')).toEqual({ title: 'BookTitle', discNumber: 5 });
+      });
+
+      it('returns null for combined parentheticals — disc + narrator', () => {
+        // Disc paren is not at end of string, so regex $ anchor rejects
+        expect(parseTitledDiscFolder('BookTitle (Disc 01) (Jeff Hays)')).toBeNull();
+      });
     });
 
     describe('parenthetical disc merge in discoverBooks', () => {

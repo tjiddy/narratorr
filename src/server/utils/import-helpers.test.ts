@@ -840,6 +840,45 @@ describe('titled-disc import flattening (issue #426)', () => {
       const destNames = getCopiedDestNames();
       expect(destNames).toContain('bonus.mp3');
     });
+
+    it('sorts scrambled disc numbers correctly', async () => {
+      setupDiscLayout([
+        ['BookTitle (Disc 03)', ['01.mp3']],
+        ['BookTitle (Disc 01)', ['01.mp3']],
+        ['BookTitle (Disc 02)', ['01.mp3']],
+      ]);
+
+      await copyAudioFiles('/src', '/dest');
+
+      const srcPaths = getCopiedSrcPaths();
+      expect(srcPaths[0]).toContain('Disc 01');
+      expect(srcPaths[1]).toContain('Disc 02');
+      expect(srcPaths[2]).toContain('Disc 03');
+    });
+
+    it('handles duplicate disc numbers — both copied without crash', async () => {
+      setupDiscLayout([
+        ['BookTitle (Disc 01)', ['track.mp3']],
+        ['BookTitle (Disc 01)', ['track.mp3']],
+      ]);
+
+      await copyAudioFiles('/src', '/dest');
+
+      expect(cp).toHaveBeenCalledTimes(2);
+      expect(getCopiedDestNames()).toEqual(['1.mp3', '2.mp3']);
+    });
+
+    it('handles "Disk" spelling variant in import flattening', async () => {
+      setupDiscLayout([
+        ['BookTitle (Disk 01)', ['track.mp3']],
+        ['BookTitle (Disk 02)', ['track.mp3']],
+      ]);
+
+      await copyAudioFiles('/src', '/dest');
+
+      expect(cp).toHaveBeenCalledTimes(2);
+      expect(getCopiedDestNames()).toEqual(['1.mp3', '2.mp3']);
+    });
   });
 
   describe('copyAudioFiles regression — bare disc folders', () => {

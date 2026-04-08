@@ -973,6 +973,9 @@ const SERIES_MARKER_REGEX = /,\s*(?:book|vol(?:ume)?)\s+\d+\s*$/i;
  * Matches trailing parenthetical containing a person's name (1-3 words).
  * Does NOT match: years (2020), codec tags (handled by CODEC_REGEX), or long subtitles (>3 words).
  */
+// Matches trailing parenthetical with 1-3 words (covers most narrator names like "Jeff Hays",
+// "Stephen Fry", "Scott Brick"). Intentionally caps at 3 words — 4+ words are more likely subtitles
+// than narrator names. Titles like "(Dr. Stephen King Jr.)" will survive, which is the safer default.
 const NARRATOR_PAREN_REGEX = /\s*\((?!(?:19|20)\d{2}\))(\S+(?:\s+\S+){0,2})\)\s*$/;
 
 function cleanName(name: string): string {
