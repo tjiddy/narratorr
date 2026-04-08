@@ -2198,9 +2198,50 @@ describe('PUT /api/books/:id — array update contract (#71)', () => {
   });
 
   describe('DELETE /api/books/:id/merge-to-m4b (cancel merge)', () => {
-    it.todo('returns 200 with { success: true } when merge is cancellable');
-    it.todo('returns 404 when no merge is active for bookId');
-    it.todo('returns 409 when merge is in committing phase');
-    it.todo('returns 400 for invalid bookId param');
+    it('returns 200 with { success: true } when merge is cancellable', async () => {
+      (services.merge.cancelMerge as Mock).mockResolvedValue({ status: 'cancelled' });
+
+      const res = await app.inject({
+        method: 'DELETE',
+        url: '/api/books/1/merge-to-m4b',
+      });
+
+      expect(res.statusCode).toBe(200);
+      expect(res.json()).toEqual({ success: true });
+      expect(services.merge.cancelMerge).toHaveBeenCalledWith(1);
+    });
+
+    it('returns 404 when no merge is active for bookId', async () => {
+      (services.merge.cancelMerge as Mock).mockResolvedValue({ status: 'not-found' });
+
+      const res = await app.inject({
+        method: 'DELETE',
+        url: '/api/books/1/merge-to-m4b',
+      });
+
+      expect(res.statusCode).toBe(404);
+      expect(res.json()).toEqual({ error: 'No active merge for this book' });
+    });
+
+    it('returns 409 when merge is in committing phase', async () => {
+      (services.merge.cancelMerge as Mock).mockResolvedValue({ status: 'committing' });
+
+      const res = await app.inject({
+        method: 'DELETE',
+        url: '/api/books/1/merge-to-m4b',
+      });
+
+      expect(res.statusCode).toBe(409);
+      expect(res.json()).toEqual({ error: 'Merge is past the point of no return' });
+    });
+
+    it('returns 400 for invalid bookId param', async () => {
+      const res = await app.inject({
+        method: 'DELETE',
+        url: '/api/books/abc/merge-to-m4b',
+      });
+
+      expect(res.statusCode).toBe(400);
+    });
   });
 });

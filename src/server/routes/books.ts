@@ -307,6 +307,24 @@ export async function booksRoutes(app: FastifyInstance, deps: BookRouteDeps) {
     },
   );
 
+  // DELETE /api/books/:id/merge-to-m4b (cancel merge)
+  app.delete<{ Params: IdParam }>(
+    '/api/books/:id/merge-to-m4b',
+    { schema: { params: idParamSchema } },
+    async (request, reply) => {
+      const { id } = request.params;
+      const result = await mergeService.cancelMerge(id);
+      if (result.status === 'cancelled') {
+        request.log.info({ id }, 'Merge cancelled');
+        return reply.status(200).send({ success: true });
+      }
+      if (result.status === 'committing') {
+        return reply.status(409).send({ error: 'Merge is past the point of no return' });
+      }
+      return reply.status(404).send({ error: 'No active merge for this book' });
+    },
+  );
+
   // POST /api/books/:id/wrong-release
   if (deps.bookRejectionService) {
     const bookRejectionService = deps.bookRejectionService;
