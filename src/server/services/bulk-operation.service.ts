@@ -348,6 +348,7 @@ export class BulkOperationService {
       if (!result.success) {
         throw new Error(result.error);
       }
+      result.warnings?.forEach(w => this.log.warn({ bookId }, w));
 
       await this.swapConvertedFiles(result.outputFiles, audioFiles, bookPath);
 

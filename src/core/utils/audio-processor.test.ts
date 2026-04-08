@@ -1,6 +1,6 @@
 import { join } from 'node:path';
 import { EventEmitter } from 'node:events';
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import {
   probeFfmpeg,
   detectFfmpegPath,
@@ -21,6 +21,7 @@ vi.mock('node:fs/promises', () => ({
   unlink: vi.fn(),
   writeFile: vi.fn(),
   rm: vi.fn(),
+  stat: vi.fn(),
 }));
 
 vi.mock('./chapter-resolver.js', () => ({
@@ -38,7 +39,7 @@ vi.mock('./naming.js', async (importOriginal) => {
 });
 
 import { execFile, spawn } from 'node:child_process';
-import { readdir, rename, unlink, writeFile, rm } from 'node:fs/promises';
+import { readdir, rename, unlink, writeFile, rm, stat } from 'node:fs/promises';
 import { readChapterSources, resolveChapterTitle } from './chapter-resolver.js';
 import { renderFilename } from './naming.js';
 
@@ -72,6 +73,7 @@ function mockExecFileFailure(message: string, stderr = '') {
 class MockChildProcess extends EventEmitter {
   stdout = new EventEmitter();
   stderr = new EventEmitter();
+  kill = vi.fn();
 }
 
 /** Mock spawn to resolve successfully (exit code 0). Returns the mock child for further interaction. */
@@ -96,6 +98,7 @@ const mockUnlink = vi.mocked(unlink);
 const mockWriteFile = vi.mocked(writeFile);
 const mockRename = vi.mocked(rename);
 const mockRm = vi.mocked(rm);
+const mockStat = vi.mocked(stat);
 const mockReadChapterSources = vi.mocked(readChapterSources);
 const mockResolveChapterTitle = vi.mocked(resolveChapterTitle);
 
@@ -117,6 +120,7 @@ beforeEach(() => {
   mockRename.mockResolvedValue(undefined);
   mockWriteFile.mockResolvedValue(undefined);
   mockRm.mockResolvedValue(undefined);
+  mockStat.mockResolvedValue({ size: 1024 } as never);
 });
 
 describe('probeFfmpeg', () => {
@@ -844,5 +848,685 @@ describe('#257 merge observability — audio-processor', () => {
       const result = await processAudioFiles('/lib/book', defaultConfig, defaultContext);
       expect(result.success).toBe(true);
     });
+  });
+});
+
+// ============================================================================
+// #424 — M4B merge: embedded cover art muxer overflow fix
+// ============================================================================
+
+describe('#424 stream mapping — unconditional -vn flag', () => {
+  it('mergeFiles includes -vn flag in ffmpeg args', async () => {
+    setupMergeFiles([120, 120]);
+    mockSpawnSuccess();
+
+    await processAudioFiles('/lib/book', { ...defaultConfig, mergeBehavior: 'always' }, defaultContext);
+
+    const spawnArgs = mockSpawn.mock.calls[0][1] as string[];
+    expect(spawnArgs).toContain('-vn');
+  });
+
+  it('convertFiles includes -vn flag in ffmpeg args', async () => {
+    setupConvertFile();
+    mockSpawnSuccess();
+
+    await processAudioFiles('/lib/book', defaultConfig, defaultContext);
+
+    const spawnArgs = mockSpawn.mock.calls[0][1] as string[];
+    expect(spawnArgs).toContain('-vn');
+  });
+
+  it('-vn is present even when source files have no embedded cover art', async () => {
+    // Default setup has no cover art detection — -vn should still be there
+    setupConvertFile();
+    mockSpawnSuccess();
+
+    await processAudioFiles('/lib/book', defaultConfig, defaultContext);
+
+    const spawnArgs = mockSpawn.mock.calls[0][1] as string[];
+    expect(spawnArgs).toContain('-vn');
+  });
+});
+
+describe('#424 convertFiles — progress output', () => {
+  it('convertFiles includes -progress pipe:1 in ffmpeg args', async () => {
+    setupConvertFile();
+    mockSpawnSuccess();
+
+    await processAudioFiles('/lib/book', defaultConfig, defaultContext);
+
+    const spawnArgs = mockSpawn.mock.calls[0][1] as string[];
+    const idx = spawnArgs.indexOf('-progress');
+    expect(idx).toBeGreaterThan(-1);
+    expect(spawnArgs[idx + 1]).toBe('pipe:1');
+  });
+
+  it('convert-path stall timeout kills process after 60s with no progress', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    setupConvertFile();
+    const child = new MockChildProcess();
+    child.kill = vi.fn().mockImplementation(() => {
+      process.nextTick(() => child.emit('close', null));
+    });
+    mockSpawn.mockReturnValue(child as never);
+
+    const promise = processAudioFiles('/lib/book', defaultConfig, defaultContext);
+    await vi.waitFor(() => expect(mockSpawn).toHaveBeenCalled());
+
+    vi.advanceTimersByTime(61_000);
+
+    const result = await promise;
+    expect(child.kill).toHaveBeenCalledWith('SIGTERM');
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      expect(result.error).toContain('ffmpeg stalled');
+    }
+    vi.useRealTimers();
+  });
+});
+
+describe('#424 spawnFfmpeg — stall timeout', () => {
+  beforeEach(() => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it('kills ffmpeg process after 60s with no progress output', async () => {
+    setupConvertFile();
+    const child = new MockChildProcess();
+    child.kill = vi.fn();
+    mockSpawn.mockReturnValue(child as never);
+
+    const promise = processAudioFiles('/lib/book', defaultConfig, defaultContext);
+    await vi.waitFor(() => expect(mockSpawn).toHaveBeenCalled());
+
+    // Advance past 60s stall timeout
+    vi.advanceTimersByTime(61_000);
+
+    const result = await promise;
+    expect(child.kill).toHaveBeenCalledWith('SIGTERM');
+    expect(result.success).toBe(false);
+  });
+
+  it('rejects with descriptive error message including ffmpeg stalled', async () => {
+    setupConvertFile();
+    const child = new MockChildProcess();
+    child.kill = vi.fn().mockImplementation(() => {
+      process.nextTick(() => child.emit('close', null));
+    });
+    mockSpawn.mockReturnValue(child as never);
+
+    const promise = processAudioFiles('/lib/book', defaultConfig, defaultContext);
+    await vi.waitFor(() => expect(mockSpawn).toHaveBeenCalled());
+
+    vi.advanceTimersByTime(61_000);
+
+    const result = await promise;
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      expect(result.error).toContain('ffmpeg stalled');
+    }
+  });
+
+  it('progress output resets the 60s timeout clock', async () => {
+    setupMergeFiles([200, 200]);
+    const child = new MockChildProcess();
+    child.kill = vi.fn();
+    mockSpawn.mockReturnValue(child as never);
+
+    const promise = processAudioFiles(
+      '/lib/book', { ...defaultConfig, mergeBehavior: 'always' }, defaultContext,
+    );
+    await vi.waitFor(() => expect(mockSpawn).toHaveBeenCalled());
+
+    // Advance 50s — not yet timed out
+    vi.advanceTimersByTime(50_000);
+    // Emit progress to reset the clock
+    child.stdout.emit('data', Buffer.from('out_time_us=100000000\n'));
+    // Advance another 50s — would be 100s total without reset, but only 50s since last progress
+    vi.advanceTimersByTime(50_000);
+
+    expect(child.kill).not.toHaveBeenCalled();
+
+    // Complete normally
+    child.emit('close', 0);
+    const result = await promise;
+    expect(result.success).toBe(true);
+  });
+
+  it('normal completion within timeout resolves successfully', async () => {
+    setupConvertFile();
+    const child = new MockChildProcess();
+    child.kill = vi.fn();
+    mockSpawn.mockReturnValue(child as never);
+
+    const promise = processAudioFiles('/lib/book', defaultConfig, defaultContext);
+    await vi.waitFor(() => expect(mockSpawn).toHaveBeenCalled());
+
+    // Complete well before timeout
+    vi.advanceTimersByTime(5_000);
+    child.emit('close', 0);
+
+    const result = await promise;
+    expect(result.success).toBe(true);
+    expect(child.kill).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * Mock execFile to handle ffprobe calls with stream detection.
+ * For each file path, returns ffprobe output with the specified number of video streams.
+ */
+function mockExecFileWithStreams(fileStreamMap: Record<string, number>) {
+  mockExecFile.mockImplementation((...args: unknown[]) => {
+    const cb = args[args.length - 1] as (err: Error | null, result: { stdout: string; stderr: string }) => void;
+    if (typeof cb !== 'function') return {} as never;
+
+    const execArgs = args[1] as string[];
+    // Detect if this is a stream-detection ffprobe call (has -show_entries stream=codec_type)
+    if (execArgs?.includes('stream=codec_type')) {
+      const filePath = execArgs[execArgs.length - 1];
+      const videoCount = fileStreamMap[filePath] ?? 0;
+      const lines = ['audio'];
+      for (let i = 0; i < videoCount; i++) lines.push('video');
+      cb(null, { stdout: lines.join('\n') + '\n', stderr: '' });
+    } else if (execArgs?.includes('format=duration')) {
+      // Duration probe
+      cb(null, { stdout: '120\n', stderr: '' });
+    } else {
+      // Default (version probe etc.)
+      cb(null, { stdout: 'ffmpeg version 6.1.1\n', stderr: '' });
+    }
+    return {} as never;
+  });
+}
+
+describe('#424 cover art detection and extraction', () => {
+  it('detects video stream via ffprobe and extracts cover from first file with art', async () => {
+    setupMergeFiles([120, 120]);
+    mockExecFileWithStreams({
+      '/lib/book/01.mp3': 1,
+      '/lib/book/02.mp3': 0,
+    });
+
+    // spawn called: 1=extract, 2=encode, 3=reattach
+    let spawnCallCount = 0;
+    mockSpawn.mockImplementation(() => {
+      spawnCallCount++;
+      const child = new MockChildProcess();
+      process.nextTick(() => child.emit('close', 0));
+      return child as never;
+    });
+
+    const result = await processAudioFiles(
+      '/lib/book', { ...defaultConfig, mergeBehavior: 'always' }, defaultContext,
+    );
+    expect(result.success).toBe(true);
+    // 3 spawn calls: extract + encode + reattach
+    expect(spawnCallCount).toBe(3);
+
+    // First spawn call should be cover extraction
+    const extractArgs = mockSpawn.mock.calls[0][1] as string[];
+    expect(extractArgs).toContain('-an');
+    expect(extractArgs).toContain('-vcodec');
+    expect(extractArgs).toContain('copy');
+    expect(extractArgs).toContain('/lib/book/01.mp3');
+  });
+
+  it('extracts cover from second file when first file has no art', async () => {
+    setupMergeFiles([120, 120]);
+    mockExecFileWithStreams({
+      '/lib/book/01.mp3': 0,
+      '/lib/book/02.mp3': 1,
+    });
+
+    mockSpawn.mockImplementation(() => {
+      const child = new MockChildProcess();
+      process.nextTick(() => child.emit('close', 0));
+      return child as never;
+    });
+
+    const result = await processAudioFiles(
+      '/lib/book', { ...defaultConfig, mergeBehavior: 'always' }, defaultContext,
+    );
+    expect(result.success).toBe(true);
+
+    // First spawn call = extraction, should reference second file
+    const extractArgs = mockSpawn.mock.calls[0][1] as string[];
+    expect(extractArgs).toContain('/lib/book/02.mp3');
+    expect(extractArgs).toContain('-an');
+  });
+
+  it('skips extraction when no files have video streams', async () => {
+    setupMergeFiles([120, 120]);
+    mockExecFileWithStreams({
+      '/lib/book/01.mp3': 0,
+      '/lib/book/02.mp3': 0,
+    });
+
+    mockSpawn.mockImplementation(() => {
+      const child = new MockChildProcess();
+      process.nextTick(() => child.emit('close', 0));
+      return child as never;
+    });
+
+    const result = await processAudioFiles(
+      '/lib/book', { ...defaultConfig, mergeBehavior: 'always' }, defaultContext,
+    );
+    expect(result.success).toBe(true);
+    // Only 1 spawn call: encode (no extract, no reattach)
+    expect(mockSpawn).toHaveBeenCalledTimes(1);
+  });
+
+  it('cover extraction uses -an -vcodec copy ffmpeg args', async () => {
+    setupMergeFiles([120, 120]);
+    mockExecFileWithStreams({
+      '/lib/book/01.mp3': 1,
+      '/lib/book/02.mp3': 0,
+    });
+
+    mockSpawn.mockImplementation(() => {
+      const child = new MockChildProcess();
+      process.nextTick(() => child.emit('close', 0));
+      return child as never;
+    });
+
+    await processAudioFiles(
+      '/lib/book', { ...defaultConfig, mergeBehavior: 'always' }, defaultContext,
+    );
+
+    const extractArgs = mockSpawn.mock.calls[0][1] as string[];
+    expect(extractArgs).toEqual(expect.arrayContaining(['-y', '-i', '/lib/book/01.mp3', '-an', '-vcodec', 'copy']));
+  });
+
+  it('cover extraction failure does not fail the merge — graceful degradation', async () => {
+    setupMergeFiles([120, 120]);
+    mockExecFileWithStreams({
+      '/lib/book/01.mp3': 1,
+      '/lib/book/02.mp3': 0,
+    });
+
+    let callIdx = 0;
+    mockSpawn.mockImplementation(() => {
+      callIdx++;
+      const child = new MockChildProcess();
+      if (callIdx === 1) {
+        // Extraction fails
+        process.nextTick(() => child.emit('close', 1));
+      } else {
+        // Encode succeeds
+        process.nextTick(() => child.emit('close', 0));
+      }
+      return child as never;
+    });
+
+    const result = await processAudioFiles(
+      '/lib/book', { ...defaultConfig, mergeBehavior: 'always' }, defaultContext,
+    );
+    // Merge still succeeds despite extraction failure
+    expect(result.success).toBe(true);
+    // Only 2 calls: extract (failed) + encode (no reattach since no cover)
+    expect(mockSpawn).toHaveBeenCalledTimes(2);
+  });
+
+  it('emits warning via onStderr when cover extraction fails', async () => {
+    setupMergeFiles([120, 120]);
+    mockExecFileWithStreams({
+      '/lib/book/01.mp3': 1,
+      '/lib/book/02.mp3': 0,
+    });
+
+    let callIdx = 0;
+    mockSpawn.mockImplementation(() => {
+      callIdx++;
+      const child = new MockChildProcess();
+      if (callIdx === 1) {
+        process.nextTick(() => child.emit('close', 1));
+      } else {
+        process.nextTick(() => child.emit('close', 0));
+      }
+      return child as never;
+    });
+
+    const onStderr = vi.fn();
+    await processAudioFiles(
+      '/lib/book', { ...defaultConfig, mergeBehavior: 'always' }, defaultContext,
+      { onStderr },
+    );
+
+    expect(onStderr).toHaveBeenCalledWith(
+      expect.stringContaining('Cover art extraction failed'),
+    );
+  });
+
+  it('returns warnings in ProcessingResult when extraction fails (no callbacks needed)', async () => {
+    setupMergeFiles([120, 120]);
+    mockExecFileWithStreams({
+      '/lib/book/01.mp3': 1,
+      '/lib/book/02.mp3': 0,
+    });
+
+    let callIdx = 0;
+    mockSpawn.mockImplementation(() => {
+      callIdx++;
+      const child = new MockChildProcess();
+      if (callIdx === 1) {
+        process.nextTick(() => child.emit('close', 1));
+      } else {
+        process.nextTick(() => child.emit('close', 0));
+      }
+      return child as never;
+    });
+
+    // No callbacks — simulates import/bulk-convert callers
+    const result = await processAudioFiles(
+      '/lib/book', { ...defaultConfig, mergeBehavior: 'always' }, defaultContext,
+    );
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.warnings).toEqual(
+        expect.arrayContaining([expect.stringContaining('Cover art extraction failed')]),
+      );
+    }
+  });
+
+  it('zero-byte extracted cover skips reattach', async () => {
+    setupMergeFiles([120, 120]);
+    mockExecFileWithStreams({
+      '/lib/book/01.mp3': 1,
+      '/lib/book/02.mp3': 0,
+    });
+
+    mockSpawn.mockImplementation(() => {
+      const child = new MockChildProcess();
+      process.nextTick(() => child.emit('close', 0));
+      return child as never;
+    });
+
+    // Override stat to return 0 bytes for extracted cover
+    mockStat.mockResolvedValueOnce({ size: 0 } as never);
+
+    const result = await processAudioFiles(
+      '/lib/book', { ...defaultConfig, mergeBehavior: 'always' }, defaultContext,
+    );
+    expect(result.success).toBe(true);
+    // Only 2 calls: extract + encode (no reattach for zero-byte cover)
+    expect(mockSpawn).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe('#424 cover art reattach (M4B only)', () => {
+  it('reattach step runs after M4B encode with correct ffmpeg args', async () => {
+    setupMergeFiles([120, 120]);
+    mockExecFileWithStreams({
+      '/lib/book/01.mp3': 1,
+      '/lib/book/02.mp3': 0,
+    });
+
+    mockSpawn.mockImplementation(() => {
+      const child = new MockChildProcess();
+      process.nextTick(() => child.emit('close', 0));
+      return child as never;
+    });
+
+    await processAudioFiles(
+      '/lib/book', { ...defaultConfig, mergeBehavior: 'always' }, defaultContext,
+    );
+
+    // Third spawn call = reattach
+    expect(mockSpawn).toHaveBeenCalledTimes(3);
+    const reattachArgs = mockSpawn.mock.calls[2][1] as string[];
+    expect(reattachArgs).toContain('-disposition:v:0');
+    expect(reattachArgs).toContain('attached_pic');
+    expect(reattachArgs).toContain('-c');
+    expect(reattachArgs).toContain('copy');
+  });
+
+  it('reattach uses -c copy (no re-encode)', async () => {
+    setupMergeFiles([120, 120]);
+    mockExecFileWithStreams({
+      '/lib/book/01.mp3': 1,
+      '/lib/book/02.mp3': 0,
+    });
+
+    mockSpawn.mockImplementation(() => {
+      const child = new MockChildProcess();
+      process.nextTick(() => child.emit('close', 0));
+      return child as never;
+    });
+
+    await processAudioFiles(
+      '/lib/book', { ...defaultConfig, mergeBehavior: 'always' }, defaultContext,
+    );
+
+    const reattachArgs = mockSpawn.mock.calls[2][1] as string[];
+    const cIdx = reattachArgs.indexOf('-c');
+    expect(cIdx).toBeGreaterThan(-1);
+    expect(reattachArgs[cIdx + 1]).toBe('copy');
+  });
+
+  it('no cover reattach for MP3 output format', async () => {
+    setupConvertFile();
+    mockExecFileWithStreams({
+      [join('/lib/book', 'book.mp3')]: 1,
+    });
+
+    mockSpawn.mockImplementation(() => {
+      const child = new MockChildProcess();
+      process.nextTick(() => child.emit('close', 0));
+      return child as never;
+    });
+
+    await processAudioFiles(
+      '/lib/book', { ...defaultConfig, outputFormat: 'mp3' }, defaultContext,
+    );
+
+    // 2 calls: extract + encode. No reattach for MP3.
+    expect(mockSpawn).toHaveBeenCalledTimes(2);
+  });
+
+  it('reattach failure preserves audio-only M4B as final output', async () => {
+    setupMergeFiles([120, 120]);
+    mockExecFileWithStreams({
+      '/lib/book/01.mp3': 1,
+      '/lib/book/02.mp3': 0,
+    });
+
+    let callIdx = 0;
+    mockSpawn.mockImplementation(() => {
+      callIdx++;
+      const child = new MockChildProcess();
+      if (callIdx === 3) {
+        // Reattach fails
+        process.nextTick(() => child.emit('close', 1));
+      } else {
+        process.nextTick(() => child.emit('close', 0));
+      }
+      return child as never;
+    });
+
+    const result = await processAudioFiles(
+      '/lib/book', { ...defaultConfig, mergeBehavior: 'always' }, defaultContext,
+    );
+    // 3 spawn calls happened: extract + encode + reattach (failed)
+    expect(mockSpawn).toHaveBeenCalledTimes(3);
+    // Merge still succeeds — audio-only M4B is the output
+    expect(result.success).toBe(true);
+  });
+
+  it('emits warning via onStderr when cover reattach fails', async () => {
+    setupMergeFiles([120, 120]);
+    mockExecFileWithStreams({
+      '/lib/book/01.mp3': 1,
+      '/lib/book/02.mp3': 0,
+    });
+
+    let callIdx = 0;
+    mockSpawn.mockImplementation(() => {
+      callIdx++;
+      const child = new MockChildProcess();
+      if (callIdx === 3) {
+        process.nextTick(() => child.emit('close', 1));
+      } else {
+        process.nextTick(() => child.emit('close', 0));
+      }
+      return child as never;
+    });
+
+    const onStderr = vi.fn();
+    await processAudioFiles(
+      '/lib/book', { ...defaultConfig, mergeBehavior: 'always' }, defaultContext,
+      { onStderr },
+    );
+
+    expect(onStderr).toHaveBeenCalledWith(
+      expect.stringContaining('Cover art reattach failed'),
+    );
+  });
+
+  it('returns warnings in ProcessingResult when reattach fails (no callbacks needed)', async () => {
+    setupMergeFiles([120, 120]);
+    mockExecFileWithStreams({
+      '/lib/book/01.mp3': 1,
+      '/lib/book/02.mp3': 0,
+    });
+
+    let callIdx = 0;
+    mockSpawn.mockImplementation(() => {
+      callIdx++;
+      const child = new MockChildProcess();
+      if (callIdx === 3) {
+        process.nextTick(() => child.emit('close', 1));
+      } else {
+        process.nextTick(() => child.emit('close', 0));
+      }
+      return child as never;
+    });
+
+    // No callbacks — simulates import/bulk-convert callers
+    const result = await processAudioFiles(
+      '/lib/book', { ...defaultConfig, mergeBehavior: 'always' }, defaultContext,
+    );
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.warnings).toEqual(
+        expect.arrayContaining([expect.stringContaining('Cover art reattach failed')]),
+      );
+    }
+  });
+});
+
+describe('#424 cover art temp file cleanup', () => {
+  it('temp cover file removed after successful reattach', async () => {
+    setupMergeFiles([120, 120]);
+    mockExecFileWithStreams({
+      '/lib/book/01.mp3': 1,
+      '/lib/book/02.mp3': 0,
+    });
+
+    mockSpawn.mockImplementation(() => {
+      const child = new MockChildProcess();
+      process.nextTick(() => child.emit('close', 0));
+      return child as never;
+    });
+
+    await processAudioFiles(
+      '/lib/book', { ...defaultConfig, mergeBehavior: 'always' }, defaultContext,
+    );
+
+    // rm called for temp cover file
+    expect(mockRm).toHaveBeenCalledWith(
+      expect.stringContaining('_cover'),
+      expect.objectContaining({ force: true }),
+    );
+  });
+
+  it('temp cover file removed when reattach fails (finally block)', async () => {
+    setupMergeFiles([120, 120]);
+    mockExecFileWithStreams({
+      '/lib/book/01.mp3': 1,
+      '/lib/book/02.mp3': 0,
+    });
+
+    let callIdx = 0;
+    mockSpawn.mockImplementation(() => {
+      callIdx++;
+      const child = new MockChildProcess();
+      if (callIdx === 3) {
+        // Reattach fails
+        process.nextTick(() => child.emit('close', 1));
+      } else {
+        process.nextTick(() => child.emit('close', 0));
+      }
+      return child as never;
+    });
+
+    await processAudioFiles(
+      '/lib/book', { ...defaultConfig, mergeBehavior: 'always' }, defaultContext,
+    );
+
+    // rm still called for temp cover file despite reattach failure
+    expect(mockRm).toHaveBeenCalledWith(
+      expect.stringContaining('_cover'),
+      expect.objectContaining({ force: true }),
+    );
+  });
+
+  it('temp cover file cleaned up when encode fails (finally block)', async () => {
+    setupMergeFiles([120, 120]);
+    mockExecFileWithStreams({
+      '/lib/book/01.mp3': 1,
+      '/lib/book/02.mp3': 0,
+    });
+
+    let callIdx = 0;
+    mockSpawn.mockImplementation(() => {
+      callIdx++;
+      const child = new MockChildProcess();
+      if (callIdx === 2) {
+        // Encode step fails (after successful extraction)
+        process.nextTick(() => child.emit('close', 1));
+      } else {
+        process.nextTick(() => child.emit('close', 0));
+      }
+      return child as never;
+    });
+
+    const result = await processAudioFiles(
+      '/lib/book', { ...defaultConfig, mergeBehavior: 'always' }, defaultContext,
+    );
+    expect(result.success).toBe(false);
+
+    // Cover temp file still cleaned up despite encode failure
+    expect(mockRm).toHaveBeenCalledWith(
+      expect.stringContaining('_cover'),
+      expect.objectContaining({ force: true }),
+    );
+  });
+
+  it('no temp file created when no cover art detected', async () => {
+    setupMergeFiles([120, 120]);
+    mockExecFileWithStreams({
+      '/lib/book/01.mp3': 0,
+      '/lib/book/02.mp3': 0,
+    });
+
+    mockSpawn.mockImplementation(() => {
+      const child = new MockChildProcess();
+      process.nextTick(() => child.emit('close', 0));
+      return child as never;
+    });
+
+    await processAudioFiles(
+      '/lib/book', { ...defaultConfig, mergeBehavior: 'always' }, defaultContext,
+    );
+
+    // rm should only be called for concat/metadata temp files, not cover
+    for (const call of mockRm.mock.calls) {
+      const path = call[0] as string;
+      expect(path).not.toContain('_cover');
+    }
   });
 });

@@ -578,6 +578,25 @@ describe('BulkOperationService — convert batch', () => {
     );
   });
 
+  it('logs warnings from ProcessingResult when cover art degrades', async () => {
+    setupConvertMocks();
+    (processAudioFiles as Mock).mockResolvedValueOnce({
+      success: true,
+      outputFiles: [BOOK_PATH + '.convert-tmp/book.m4b'],
+      warnings: ['Cover art reattach failed — output will not contain embedded cover art'],
+    });
+    const { service, db, log } = createService();
+    db.select.mockReturnValueOnce(mockDbChain([
+      { id: 1, path: BOOK_PATH, title: 'Title' },
+    ]));
+    const id = await service.startConvertJob();
+    await waitForJob(service, id);
+    expect(log.warn).toHaveBeenCalledWith(
+      expect.objectContaining({ bookId: 1 }),
+      'Cover art reattach failed — output will not contain embedded cover art',
+    );
+  });
+
   it('counts processAudioFiles failure as failure, continues batch', async () => {
     setupConvertMocks();
     (processAudioFiles as Mock)

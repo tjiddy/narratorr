@@ -217,6 +217,7 @@ export async function runAudioProcessing(args: RunAudioProcessingArgs): Promise<
     await db.update(books).set({ status: 'failed', updatedAt: new Date() }).where(eq(books.id, book.id));
     throw new Error(`Audio processing failed: ${processingResult.error}`);
   }
+  processingResult.warnings?.forEach(w => log.warn(w));
   log.info({ outputFiles: processingResult.outputFiles.length }, 'Audio processing completed');
 }
 

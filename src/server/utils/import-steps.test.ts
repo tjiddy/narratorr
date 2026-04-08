@@ -757,6 +757,36 @@ describe('runAudioProcessing', () => {
     );
   });
 
+  it('logs warnings from ProcessingResult when cover art degrades', async () => {
+    const log = createMockLog();
+    const mockDb = {} as never;
+    vi.mocked(processAudioFiles).mockResolvedValueOnce({
+      success: true,
+      outputFiles: ['/library/Author/Book/output.m4b'],
+      warnings: ['Cover art extraction failed — output will not contain embedded cover art'],
+    });
+
+    await runAudioProcessing({
+      processingSettings: {
+        enabled: true,
+        ffmpegPath: '/usr/bin/ffmpeg',
+        outputFormat: 'm4b',
+        bitrate: 128,
+        keepOriginalBitrate: false,
+        mergeBehavior: 'always',
+      },
+      librarySettings: { fileFormat: '{author} - {title}' },
+      targetPath: '/library/Author/Book',
+      book: { id: 1, title: 'Book', seriesName: null, seriesPosition: null, narrators: null, publishedDate: null },
+      authorName: 'Author',
+      sourceBitrateBps: 128000,
+      db: mockDb,
+      log,
+    });
+
+    expect(log.warn).toHaveBeenCalledWith('Cover art extraction failed — output will not contain embedded cover art');
+  });
+
   // ── #229 Observability — checkDiskSpace return type ─────────────────────
   describe('checkDiskSpace return type (#229)', () => {
     it('returns { freeGB, requiredGB } on success', async () => {

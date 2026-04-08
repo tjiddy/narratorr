@@ -7,8 +7,12 @@ import { readChapterSources, resolveChapterTitle } from './chapter-resolver.js';
 import type { ChapterSource } from './chapter-resolver.js';
 import { renderFilename } from './naming.js';
 import type { NamingOptions } from './naming.js';
+import { withCoverArtPipeline } from './cover-art.js';
 
 const execFileAsync = promisify(execFile);
+
+/** Fixed stall timeout for ffmpeg processes — kills after this many ms with no stdout progress. */
+const FFMPEG_STALL_TIMEOUT_MS = 60_000;
 
 export interface ProcessingConfig {
   ffmpegPath: string;
@@ -34,7 +38,7 @@ export interface ProcessingContext {
 }
 
 export type ProcessingResult =
-  | { success: true; outputFiles: string[] }
+  | { success: true; outputFiles: string[]; warnings?: string[] }
   | { success: false; error: string };
 
 /** Callbacks for streaming progress and stderr from ffmpeg. Keeps src/core/ adapter-agnostic. */
@@ -133,10 +137,32 @@ function spawnFfmpeg(
   return new Promise((resolve, reject) => {
     const child = spawn(ffmpegPath, args);
     let lastProgressTime = 0;
+    let settled = false;
+
+    // Stall timeout — kill ffmpeg if no stdout activity for 60s
+    let stallTimer: ReturnType<typeof setTimeout> | undefined = setTimeout(() => {
+      if (!settled) {
+        settled = true;
+        child.kill('SIGTERM');
+        reject(new Error(`ffmpeg stalled: no progress for ${FFMPEG_STALL_TIMEOUT_MS / 1000}s`));
+      }
+    }, FFMPEG_STALL_TIMEOUT_MS);
+
+    const resetStallTimer = () => {
+      if (stallTimer != null) clearTimeout(stallTimer);
+      stallTimer = setTimeout(() => {
+        if (!settled) {
+          settled = true;
+          child.kill('SIGTERM');
+          reject(new Error(`ffmpeg stalled: no progress for ${FFMPEG_STALL_TIMEOUT_MS / 1000}s`));
+        }
+      }, FFMPEG_STALL_TIMEOUT_MS);
+    };
 
     // Parse stdout for -progress pipe:1 key=value lines
     let stdoutBuffer = '';
     child.stdout.on('data', (data: Buffer) => {
+      resetStallTimer();
       stdoutBuffer += data.toString();
       const lines = stdoutBuffer.split('\n');
       stdoutBuffer = lines.pop() || ''; // Keep incomplete line in buffer
@@ -166,13 +192,21 @@ function spawnFfmpeg(
     });
 
     child.on('close', (code) => {
+      if (stallTimer != null) clearTimeout(stallTimer);
+      if (settled) return; // Already rejected by stall timeout
+      settled = true;
       // Flush remaining stderr
       if (stderrBuffer.trim()) options?.onStderr?.(stderrBuffer.trim());
       if (code === 0) resolve();
       else reject(new Error(`ffmpeg exited with code ${code}`));
     });
 
-    child.on('error', reject);
+    child.on('error', (err) => {
+      if (stallTimer != null) clearTimeout(stallTimer);
+      if (settled) return;
+      settled = true;
+      reject(err);
+    });
   });
 }
 
@@ -212,7 +246,7 @@ async function mergeFiles(
     .join('\n');
   await writeFile(concatPath, concatContent, 'utf-8');
 
-  try {
+  const encodeFn = async (): Promise<string[]> => {
     const args = [
       '-y',
       '-f', 'concat',
@@ -227,8 +261,6 @@ async function mergeFiles(
       const metadataContent = buildChapterMetadata(chapterSources, durations);
       await writeFile(metadataPath, metadataContent, 'utf-8');
       args.push('-i', metadataPath, '-map_metadata', '1');
-    } else {
-      // mp3 doesn't support chapters — this is logged by the caller
     }
 
     if (config.bitrate != null) {
@@ -240,10 +272,10 @@ async function mergeFiles(
         '-b:a', `${effectiveBitrate}k`,
       );
     } else {
-      // Keep original bitrate — re-encode without specifying bitrate (ffmpeg uses default quality)
       args.push('-c:a', outputExt === 'm4b' ? 'aac' : 'libmp3lame');
     }
 
+    args.push('-vn');
     args.push('-max_muxing_queue_size', '4096');
 
     if (outputExt === 'm4b') {
@@ -259,13 +291,25 @@ async function mergeFiles(
       onStderr: callbacks?.onStderr,
     });
 
+    return [outputPath];
+  };
+
+  try {
+    const result = await withCoverArtPipeline(
+      config.ffmpegPath, audioFiles, targetDir, outputExt, encodeFn, spawnFfmpeg,
+    );
+    for (const w of result.warnings) callbacks?.onStderr?.(w);
+
     // Clean up: remove source files and temp files
-    await cleanupTempFiles(concatPath, metadataPath);
+    await cleanupTempFiles(concatPath, join(targetDir, '_metadata.txt'));
     await removeSourceFiles(audioFiles, outputPath);
 
-    return { success: true, outputFiles: [outputPath] };
+    return {
+      success: true,
+      outputFiles: result.outputFiles,
+      warnings: result.warnings.length > 0 ? result.warnings : undefined,
+    };
   } catch (error: unknown) {
-    // Clean up temp files but preserve source files on failure
     await cleanupTempFiles(concatPath, join(targetDir, '_metadata.txt')).catch(() => {});
     throw error;
   }
@@ -282,76 +326,62 @@ async function convertFiles(
   chapterSources: ChapterSource[],
   callbacks?: ProcessingCallbacks,
 ): Promise<ProcessingResult> {
-  const outputFiles: string[] = [];
   const trackTotal = audioFiles.length;
 
   // Build a map from filePath → ChapterSource for quick lookup
   const sourceMap = new Map(chapterSources.map(s => [s.filePath, s]));
 
-  for (let i = 0; i < audioFiles.length; i++) {
-    const filePath = audioFiles[i];
-    const source = sourceMap.get(filePath);
+  const encodeFn = async (): Promise<string[]> => {
+    const results: string[] = [];
+    for (let i = 0; i < audioFiles.length; i++) {
+      const filePath = audioFiles[i];
+      const source = sourceMap.get(filePath);
 
-    let stem: string;
-    if (context.fileFormat) {
-      const tokens: Record<string, string | number | undefined | null> = {
-        author: context.author,
-        title: context.title,
-        ...context.bookTokens,
-        trackNumber: i + 1,
-        trackTotal,
-        partName: source ? resolveChapterTitle(source, i) : undefined,
-      };
-      stem = renderFilename(context.fileFormat, tokens, context.namingOptions);
-    } else {
-      stem = basename(filePath, extname(filePath));
+      const stem = context.fileFormat
+        ? renderFilename(context.fileFormat, {
+            author: context.author, title: context.title, ...context.bookTokens,
+            trackNumber: i + 1, trackTotal,
+            partName: source ? resolveChapterTitle(source, i) : undefined,
+          }, context.namingOptions)
+        : basename(filePath, extname(filePath));
+
+      const outputPath = join(targetDir, `${stem}.${config.outputFormat}`);
+      const sameFile = filePath === outputPath;
+      const writePath = sameFile
+        ? join(targetDir, `${stem}_tmp.${config.outputFormat}`)
+        : outputPath;
+
+      const args = ['-y', '-i', filePath, '-c:a', config.outputFormat === 'm4b' ? 'aac' : 'libmp3lame'];
+
+      if (config.bitrate != null) {
+        const effectiveBitrate = config.sourceBitrateKbps != null
+          ? Math.min(config.sourceBitrateKbps, config.bitrate) : config.bitrate;
+        args.push('-b:a', `${effectiveBitrate}k`);
+      }
+
+      args.push('-vn', '-max_muxing_queue_size', '4096');
+      if (config.outputFormat === 'm4b') args.push('-f', 'mp4');
+      args.push('-progress', 'pipe:1', writePath);
+
+      await spawnFfmpeg(config.ffmpegPath, args, { onStderr: callbacks?.onStderr });
+
+      if (sameFile) { await unlink(filePath); await rename(writePath, outputPath); }
+      else { await unlink(filePath); }
+
+      results.push(outputPath);
     }
+    return results;
+  };
 
-    const outputPath = join(targetDir, `${stem}.${config.outputFormat}`);
-    const sameFile = filePath === outputPath;
-
-    // When input and output paths match, encode to a temp file then replace
-    const writePath = sameFile
-      ? join(targetDir, `${stem}_tmp.${config.outputFormat}`)
-      : outputPath;
-
-    const args = [
-      '-y',
-      '-i', filePath,
-      '-c:a', config.outputFormat === 'm4b' ? 'aac' : 'libmp3lame',
-    ];
-
-    if (config.bitrate != null) {
-      const effectiveBitrate = config.sourceBitrateKbps != null
-        ? Math.min(config.sourceBitrateKbps, config.bitrate)
-        : config.bitrate;
-      args.push('-b:a', `${effectiveBitrate}k`);
-    }
-
-    args.push('-max_muxing_queue_size', '4096');
-
-    if (config.outputFormat === 'm4b') {
-      args.push('-f', 'mp4');
-    }
-
-    args.push(writePath);
-
-    await spawnFfmpeg(config.ffmpegPath, args, {
-      onStderr: callbacks?.onStderr,
-    });
-
-    // Remove original and rename temp if needed
-    if (sameFile) {
-      await unlink(filePath);
-      await rename(writePath, outputPath);
-    } else {
-      await unlink(filePath);
-    }
-
-    outputFiles.push(outputPath);
-  }
-
-  return { success: true, outputFiles };
+  const result = await withCoverArtPipeline(
+    config.ffmpegPath, audioFiles, targetDir, config.outputFormat, encodeFn, spawnFfmpeg,
+  );
+  for (const w of result.warnings) callbacks?.onStderr?.(w);
+  return {
+    success: true,
+    outputFiles: result.outputFiles,
+    warnings: result.warnings.length > 0 ? result.warnings : undefined,
+  };
 }
 
 /**
