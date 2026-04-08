@@ -85,17 +85,26 @@ export const mergeStartedPayload = z.object({
   book_title: z.string(),
 });
 
+export const mergePhaseSchema = z.enum(['staging', 'processing', 'verifying', 'committing']);
+
+export type MergePhase = z.infer<typeof mergePhaseSchema>;
+
 export const mergeProgressPayload = z.object({
   book_id: z.number(),
   book_title: z.string(),
-  phase: z.enum(['staging', 'processing', 'verifying', 'finalizing']),
+  phase: mergePhaseSchema,
   percentage: z.number().optional(),
 });
+
+export const mergeFailedReasonSchema = z.enum(['cancelled', 'error']);
+
+export type MergeFailedReason = z.infer<typeof mergeFailedReasonSchema>;
 
 export const mergeFailedPayload = z.object({
   book_id: z.number(),
   book_title: z.string(),
   error: z.string(),
+  reason: mergeFailedReasonSchema.default('error'),
 });
 
 export const mergeQueuedPayload = z.object({

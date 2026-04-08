@@ -200,8 +200,8 @@ describe('#257 merge observability — SSE payload schemas', () => {
   });
 
   describe('merge_progress payload', () => {
-    it('accepts valid payload with all phases: staging, processing, verifying, finalizing', () => {
-      for (const phase of ['staging', 'processing', 'verifying', 'finalizing']) {
+    it('accepts valid payload with all phases: staging, processing, verifying, committing', () => {
+      for (const phase of ['staging', 'processing', 'verifying', 'committing']) {
         const valid = { book_id: 42, book_title: 'My Book', phase };
         expect(mergeProgressPayload.parse(valid)).toEqual(valid);
       }
@@ -223,9 +223,23 @@ describe('#257 merge observability — SSE payload schemas', () => {
   });
 
   describe('merge_failed payload', () => {
-    it('accepts valid { book_id, book_title, error } payload', () => {
-      const valid = { book_id: 42, book_title: 'My Book', error: 'ffmpeg exited with code 1' };
-      expect(mergeFailedPayload.parse(valid)).toEqual(valid);
+    it('accepts valid { book_id, book_title, error } payload and defaults reason to error', () => {
+      const input = { book_id: 42, book_title: 'My Book', error: 'ffmpeg exited with code 1' };
+      expect(mergeFailedPayload.parse(input)).toEqual({ ...input, reason: 'error' });
+    });
+
+    it('accepts explicit reason cancelled', () => {
+      const input = { book_id: 42, book_title: 'My Book', error: 'Cancelled by user', reason: 'cancelled' };
+      expect(mergeFailedPayload.parse(input)).toEqual(input);
+    });
+
+    it('accepts explicit reason error', () => {
+      const input = { book_id: 42, book_title: 'My Book', error: 'ffmpeg crashed', reason: 'error' };
+      expect(mergeFailedPayload.parse(input)).toEqual(input);
+    });
+
+    it('rejects invalid reason value', () => {
+      expect(() => mergeFailedPayload.parse({ book_id: 42, book_title: 'My Book', error: 'x', reason: 'invalid' })).toThrow();
     });
 
     it('rejects payload with missing error field', () => {
