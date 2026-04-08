@@ -17,6 +17,7 @@ import { toNamingOptions } from '../../core/utils/naming.js';
 import { enrichBookFromAudio } from './enrichment-utils.js';
 import type { EventHistoryService } from './event-history.service.js';
 import { getErrorMessage } from '../utils/error-message.js';
+import { searchWithSwapRetry } from '../utils/search-helpers.js';
 
 /** Minimum ratio of target/source file size for copy verification to pass. */
 const COPY_VERIFICATION_THRESHOLD = 0.99;
@@ -632,9 +633,13 @@ export class LibraryScanService {
    */
   async lookupMetadata(title: string, authorName?: string): Promise<BookMetadata | null> {
     try {
-      const query = authorName ? `${title} ${authorName}` : title;
-      const results = await this.metadataService.searchBooks(query);
-      this.log.debug({ title, authorName, query, resultCount: results.length }, 'Metadata search completed');
+      const results = await searchWithSwapRetry({
+        searchFn: (q) => this.metadataService.searchBooks(q),
+        title,
+        author: authorName || undefined,
+        log: this.log,
+      });
+      this.log.debug({ title, authorName, resultCount: results.length }, 'Metadata search completed');
       if (results.length === 0) {
         return null;
       }

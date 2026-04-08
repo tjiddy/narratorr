@@ -1647,11 +1647,89 @@ describe('MatchJobService', () => {
   });
 
   describe('matchSingleBook swap retry (issue #426)', () => {
-    it.todo('returns match when first search succeeds — no swap');
-    it.todo('retries with swapped author/title on zero results');
-    it.todo('does not swap when author is absent');
-    it.todo('returns none confidence when both searches return empty');
-    it.todo('applies title similarity threshold to swap-retry results');
-    it.todo('swap retry error does not crash job');
+    it('returns match when first search succeeds — no swap', async () => {
+      vi.mocked(metadataService.searchBooks).mockResolvedValue([
+        makeBookMetadata({ title: 'The Way of Kings', providerId: 'p1' }),
+      ]);
+      vi.mocked(metadataService.getBook).mockResolvedValue(
+        makeBookMetadata({ title: 'The Way of Kings', providerId: 'p1', asin: 'B1' }),
+      );
+
+      const id = service.createJob([sampleCandidate]);
+      await waitForJob(service, id);
+
+      const result = service.getJob(id)!.results[0];
+      expect(metadataService.searchBooks).toHaveBeenCalledTimes(1);
+      expect(result.confidence).not.toBe('none');
+    });
+
+    it('retries with swapped author/title on zero results', async () => {
+      vi.mocked(metadataService.searchBooks)
+        .mockResolvedValueOnce([])  // first search: empty
+        .mockResolvedValueOnce([    // swap search: found
+          makeBookMetadata({ title: 'The Way of Kings', providerId: 'p1' }),
+        ]);
+      vi.mocked(metadataService.getBook).mockResolvedValue(
+        makeBookMetadata({ title: 'The Way of Kings', providerId: 'p1', asin: 'B1' }),
+      );
+
+      const candidate: MatchCandidate = {
+        path: '/audiobooks/test',
+        title: 'The Correspondent',
+        author: 'Virginia Evans',
+      };
+
+      const id = service.createJob([candidate]);
+      await waitForJob(service, id);
+
+      expect(metadataService.searchBooks).toHaveBeenCalledTimes(2);
+      // Second call should have swapped title/author
+      expect(metadataService.searchBooks).toHaveBeenNthCalledWith(
+        2,
+        'Virginia Evans The Correspondent',
+        { title: 'Virginia Evans', author: 'The Correspondent' },
+      );
+    });
+
+    it('does not swap when author is absent', async () => {
+      vi.mocked(metadataService.searchBooks).mockResolvedValue([]);
+
+      const candidate: MatchCandidate = {
+        path: '/audiobooks/test',
+        title: 'Solo Title',
+      };
+
+      const id = service.createJob([candidate]);
+      await waitForJob(service, id);
+
+      expect(metadataService.searchBooks).toHaveBeenCalledTimes(1);
+      const result = service.getJob(id)!.results[0];
+      expect(result.confidence).toBe('none');
+    });
+
+    it('returns none confidence when both searches return empty', async () => {
+      vi.mocked(metadataService.searchBooks)
+        .mockResolvedValueOnce([])
+        .mockResolvedValueOnce([]);
+
+      const id = service.createJob([sampleCandidate]);
+      await waitForJob(service, id);
+
+      expect(metadataService.searchBooks).toHaveBeenCalledTimes(2);
+      const result = service.getJob(id)!.results[0];
+      expect(result.confidence).toBe('none');
+    });
+
+    it('swap retry error does not crash job', async () => {
+      vi.mocked(metadataService.searchBooks)
+        .mockResolvedValueOnce([])
+        .mockRejectedValueOnce(new Error('API error on retry'));
+
+      const id = service.createJob([sampleCandidate]);
+      await waitForJob(service, id);
+
+      const job = service.getJob(id)!;
+      expect(job.status).toBe('completed');
+    });
   });
 });

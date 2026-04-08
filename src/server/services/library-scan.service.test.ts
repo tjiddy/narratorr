@@ -801,6 +801,70 @@ describe('LibraryScanService', () => {
     });
   });
 
+  describe('lookupMetadata swap retry (issue #426)', () => {
+    it('returns match when first search succeeds — no swap', async () => {
+      mockMetadataService.searchBooks.mockResolvedValue([{ title: 'Found' }]);
+
+      const result = await service.lookupMetadata('Title', 'Author');
+
+      expect(mockMetadataService.searchBooks).toHaveBeenCalledTimes(1);
+      expect(mockMetadataService.searchBooks).toHaveBeenCalledWith('Title Author');
+      expect(result).toEqual({ title: 'Found' });
+    });
+
+    it('retries with swapped author/title on zero results', async () => {
+      mockMetadataService.searchBooks
+        .mockResolvedValueOnce([])  // first search: empty
+        .mockResolvedValueOnce([{ title: 'Found via swap' }]);  // swap search: found
+
+      const result = await service.lookupMetadata('The Correspondent', 'Virginia Evans');
+
+      expect(mockMetadataService.searchBooks).toHaveBeenCalledTimes(2);
+      expect(mockMetadataService.searchBooks).toHaveBeenNthCalledWith(1, 'The Correspondent Virginia Evans');
+      expect(mockMetadataService.searchBooks).toHaveBeenNthCalledWith(2, 'Virginia Evans The Correspondent');
+      expect(result).toEqual({ title: 'Found via swap' });
+    });
+
+    it('does not swap when author is null', async () => {
+      mockMetadataService.searchBooks.mockResolvedValue([]);
+
+      const result = await service.lookupMetadata('Title');
+
+      expect(mockMetadataService.searchBooks).toHaveBeenCalledTimes(1);
+      expect(result).toBeNull();
+    });
+
+    it('does not swap when author is empty string', async () => {
+      mockMetadataService.searchBooks.mockResolvedValue([]);
+
+      const result = await service.lookupMetadata('Title', '');
+
+      expect(mockMetadataService.searchBooks).toHaveBeenCalledTimes(1);
+      expect(result).toBeNull();
+    });
+
+    it('returns null when both searches return empty', async () => {
+      mockMetadataService.searchBooks
+        .mockResolvedValueOnce([])
+        .mockResolvedValueOnce([]);
+
+      const result = await service.lookupMetadata('Unknown', 'Nobody');
+
+      expect(mockMetadataService.searchBooks).toHaveBeenCalledTimes(2);
+      expect(result).toBeNull();
+    });
+
+    it('swap retry error does not crash scan', async () => {
+      mockMetadataService.searchBooks
+        .mockResolvedValueOnce([])
+        .mockRejectedValueOnce(new Error('API error on retry'));
+
+      const result = await service.lookupMetadata('Title', 'Author');
+
+      expect(result).toBeNull();
+    });
+  });
+
   describe('confirmImport', () => {
     it('creates book records for each item', async () => {
       const result = await service.confirmImport([
@@ -3690,12 +3754,4 @@ describe('scanDirectory() — within-scan duplicate detection (#342)', () => {
     });
   });
 
-  describe('lookupMetadata swap retry (issue #426)', () => {
-    it.todo('returns match when first search succeeds — no swap');
-    it.todo('retries with swapped author/title on zero results');
-    it.todo('does not swap when author is null');
-    it.todo('does not swap when author is empty string');
-    it.todo('returns null when both searches return empty');
-    it.todo('swap retry error does not crash scan');
-  });
 });
