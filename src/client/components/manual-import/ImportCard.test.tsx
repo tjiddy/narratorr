@@ -322,6 +322,54 @@ describe('ImportCard', () => {
       expect(screen.getByRole('button', { name: /Edit metadata/i })).toBeInTheDocument();
     });
   });
+
+  // ── #415 Match confidence reason on badge ───────────────────────────
+  describe('confidence reason display (#415)', () => {
+    it('medium confidence with reason string → reason text visible via title attribute', () => {
+      const row = makeRow({
+        matchResult: makeMatchResult({
+          confidence: 'medium',
+          reason: 'Duration mismatch — scanned 10.0hrs vs expected 11.6hrs',
+        }),
+      });
+      render(<ImportCard {...defaultProps} row={row} />);
+      const badge = screen.getByText('Review');
+      expect(badge.closest('[title]')).toBeTruthy();
+      expect(badge.closest('[title]')!.getAttribute('title')).toBe(
+        'Duration mismatch — scanned 10.0hrs vs expected 11.6hrs',
+      );
+    });
+
+    it('medium confidence without reason (undefined) → badge renders normally without title attribute', () => {
+      const row = makeRow({
+        matchResult: makeMatchResult({ confidence: 'medium' }),
+      });
+      render(<ImportCard {...defaultProps} row={row} />);
+      const badge = screen.getByText('Review');
+      const titleEl = badge.closest('[title]');
+      expect(titleEl === null || titleEl.getAttribute('title') === '').toBe(true);
+    });
+
+    it('high confidence → no title attribute on badge', () => {
+      const row = makeRow({
+        matchResult: makeMatchResult({ confidence: 'high' }),
+      });
+      render(<ImportCard {...defaultProps} row={row} />);
+      const badge = screen.getByText('Matched');
+      const titleEl = badge.closest('[title]');
+      expect(titleEl === null || titleEl.getAttribute('title') === '').toBe(true);
+    });
+
+    it('none confidence → no title attribute on badge', () => {
+      const row = makeRow({
+        matchResult: makeMatchResult({ confidence: 'none', bestMatch: null }),
+      });
+      render(<ImportCard {...defaultProps} row={row} />);
+      const badge = screen.getByText('No Match');
+      const titleEl = badge.closest('[title]');
+      expect(titleEl === null || titleEl.getAttribute('title') === '').toBe(true);
+    });
+  });
 });
 
 describe('ImportCard — lockDuplicates prop (#133)', () => {
@@ -412,13 +460,5 @@ describe('ImportCard — relativePath prop (#133)', () => {
       render(<ImportCard row={row} onToggle={vi.fn()} onEdit={vi.fn()} lockDuplicates />);
       expect(screen.queryByRole('button', { name: /select|deselect/i })).not.toBeInTheDocument();
     });
-  });
-
-  // ── #415 Match confidence reason on badge ───────────────────────────
-  describe('confidence reason display (#415)', () => {
-    it.todo('medium confidence with reason string → reason text visible via tooltip or subtitle');
-    it.todo('medium confidence without reason (null/undefined) → badge renders normally without empty tooltip');
-    it.todo('high confidence with reason left over → no reason text rendered');
-    it.todo('none confidence → no reason text rendered');
   });
 });

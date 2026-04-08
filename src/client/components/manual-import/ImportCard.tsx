@@ -40,7 +40,7 @@ const confidenceLabel = {
   none: 'No Match',
 } as const;
 
-function ConfidenceBadge({ confidence }: { confidence?: Confidence }) {
+function ConfidenceBadge({ confidence, reason }: { confidence?: Confidence; reason?: string }) {
   if (!confidence) {
     return (
       <Badge variant="muted" icon={LoadingSpinner}>
@@ -49,8 +49,10 @@ function ConfidenceBadge({ confidence }: { confidence?: Confidence }) {
     );
   }
 
+  const title = confidence === 'medium' && reason ? reason : undefined;
+
   return (
-    <Badge variant={confidenceVariant[confidence]} icon={confidenceIcon[confidence]}>
+    <Badge variant={confidenceVariant[confidence]} icon={confidenceIcon[confidence]} title={title}>
       {confidenceLabel[confidence]}
     </Badge>
   );
@@ -139,7 +141,7 @@ export function ImportCard({ row, onToggle, onEdit, lockDuplicates, relativePath
         ) : isDuplicate ? (
           <Badge variant="muted">Already in library</Badge>
         ) : (
-          <ConfidenceBadge confidence={confidence} />
+          <ConfidenceBadge confidence={confidence} reason={row.matchResult?.reason} />
         )}
       </div>
 
