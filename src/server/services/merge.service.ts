@@ -12,6 +12,7 @@ import { processAudioFiles } from '../../core/utils/audio-processor.js';
 import { scanAudioDirectory } from '../../core/utils/audio-scanner.js';
 import { enrichBookFromAudio } from './enrichment-utils.js';
 import { AUDIO_EXTENSIONS } from '../../core/utils/audio-constants.js';
+import { deriveFfprobePath } from '../../core/utils/ffprobe-path.js';
 import { toSourceBitrateKbps, logBitrateCapping } from '../utils/audio-bitrate.js';
 import { Semaphore } from '../utils/semaphore.js';
 import type { SSEEventType, SSEEventPayloads, MergePhase, MergeFailedReason } from '../../shared/schemas/sse-events.js';
@@ -236,7 +237,8 @@ export class MergeService {
       this.emitMergeProgress(bookId, book.title, 'committing');
       const outputPath = await this.commitMerge(stagingDir, stagedM4b, bookPath, topLevelAudioFiles, bookId);
 
-      const enrichResult = await enrichBookFromAudio(bookId, bookPath, book, this.db, this.log, this.bookService);
+      const ffprobePath = processingSettings.ffmpegPath ? deriveFfprobePath(processingSettings.ffmpegPath) : undefined;
+      const enrichResult = await enrichBookFromAudio(bookId, bookPath, book, this.db, this.log, this.bookService, ffprobePath);
       let enrichmentWarning: string | undefined;
       if (!enrichResult.enriched) {
         enrichmentWarning = 'Merge succeeded but metadata update failed — audio fields may be stale';
@@ -282,7 +284,8 @@ export class MergeService {
       const stagedM4b = await this.runStaging(stagingDir, { ...book, path: bookPath }, topLevelAudioFiles, processingSettings, bookId, book.title);
       this.emitMergeProgress(bookId, book.title, 'committing');
       const outputPath = await this.commitMerge(stagingDir, stagedM4b, bookPath, topLevelAudioFiles, bookId);
-      const enrichResult = await enrichBookFromAudio(bookId, bookPath, book, this.db, this.log, this.bookService);
+      const ffprobePath2 = processingSettings.ffmpegPath ? deriveFfprobePath(processingSettings.ffmpegPath) : undefined;
+      const enrichResult = await enrichBookFromAudio(bookId, bookPath, book, this.db, this.log, this.bookService, ffprobePath2);
       let enrichmentWarning: string | undefined;
       if (!enrichResult.enriched) {
         enrichmentWarning = 'Merge succeeded but metadata update failed — audio fields may be stale';

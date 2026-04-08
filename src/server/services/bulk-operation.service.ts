@@ -15,6 +15,7 @@ import { buildTargetPath } from '../utils/import-helpers.js';
 import { toNamingOptions } from '../../core/utils/naming.js';
 import { processAudioFiles } from '../../core/utils/audio-processor.js';
 import { enrichBookFromAudio } from './enrichment-utils.js';
+import { deriveFfprobePath } from '../../core/utils/ffprobe-path.js';
 import { AUDIO_EXTENSIONS } from '../../core/utils/audio-constants.js';
 import { extname } from 'node:path';
 import { toSourceBitrateKbps, logBitrateCapping } from '../utils/audio-bitrate.js';
@@ -353,6 +354,7 @@ export class BulkOperationService {
       await this.swapConvertedFiles(result.outputFiles, audioFiles, bookPath);
 
       // Refresh DB audio fields
+      const ffprobePath = deriveFfprobePath(processingSettings.ffmpegPath);
       const enrichResult = await enrichBookFromAudio(
         bookId,
         bookPath,
@@ -360,6 +362,7 @@ export class BulkOperationService {
         this.db,
         this.log,
         this.bookService,
+        ffprobePath,
       );
       if (!enrichResult.enriched) {
         this.log.warn({ bookId }, 'Post-convert enrichment did not enrich — audio fields may be stale');

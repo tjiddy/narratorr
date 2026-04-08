@@ -409,23 +409,17 @@ describe('scanAudioDirectory', () => {
 
   describe('ffprobe duration', () => {
     function mockExecFileSuccess(stdout: string) {
-      mockExecFile.mockImplementation((_cmd, _args, _opts, callback) => {
-        if (typeof _opts === 'function') {
-          _opts(null, stdout, '');
-          return {} as never;
-        }
-        (callback as Function)(null, stdout, '');
+      mockExecFile.mockImplementation((...args: unknown[]) => {
+        const callback = args[args.length - 1] as Function;
+        callback(null, stdout, '');
         return {} as never;
       });
     }
 
     function mockExecFileError(error: Error) {
-      mockExecFile.mockImplementation((_cmd, _args, _opts, callback) => {
-        if (typeof _opts === 'function') {
-          _opts(error, '', '');
-          return {} as never;
-        }
-        (callback as Function)(error, '', '');
+      mockExecFile.mockImplementation((...args: unknown[]) => {
+        const callback = args[args.length - 1] as Function;
+        callback(error, '', '');
         return {} as never;
       });
     }
