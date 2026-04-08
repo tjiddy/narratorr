@@ -71,6 +71,7 @@ export interface MatchResult {
   bestMatch: BookMetadata | null;
   alternatives: BookMetadata[];
   error?: string;
+  reason?: string;
 }
 
 export interface MatchJobStatus {
