@@ -1,5 +1,34 @@
 # Workflow Log
 
+## #410 ABB adapter missing guid — 2026-04-08
+**Skill path:** /implement → /claim → /plan → /handoff
+**Outcome:** success — PR #420
+
+### Metrics
+- Files changed: 3 | Tests added/modified: 3
+- Quality gate runs: 2 (pass on attempt 1 both times)
+- Fix iterations: 0
+- Context compactions: 0
+
+### Workflow experience
+- What went smoothly: Minimal change (1 line of production code), clear reference pattern from MAM (#348), spec review caught root-cause framing and test plan alignment issues early
+- Friction / issues encountered: Spec review required 2 rounds — initial framing said "cannot be blacklisted" when ABB already works via infoHash. Lesson: verify the claimed bug path before writing the spec.
+
+### Token efficiency
+- Highest-token actions: Spec review rounds (elaborate + respond-to-spec-review consumed most context before implementation)
+- Avoidable waste: The elaborate step could have caught the framing issue upfront if it had verified the blacklist flows more carefully
+- Suggestions: For adapter parity issues, always verify the existing flow works before claiming it's broken
+
+### Infrastructure gaps
+- Repeated workarounds: None
+- Missing tooling / config: None
+- Unresolved debt: None introduced
+
+### Wish I'd Known
+1. ABB already blacklists fine via infoHash — the spec's "cannot be blacklisted" claim was wrong. Always trace the full data path before writing the bug description.
+2. ABB drops results without downloadUrl, which requires infoHash — so guid:undefined is never observable on returned results. Test plans must match the adapter's actual contract.
+3. ABB has no native torrent ID unlike MAM — guid must be a copy of infoHash, not a separate identifier.
+
 ## #411 Blacklist isBlacklisted() misses guid-only entries (usenet re-grab) — 2026-04-08
 **Skill path:** /implement → /claim → /plan → /handoff
 **Outcome:** success — PR #417
