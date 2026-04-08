@@ -4,7 +4,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { createElement, type ReactNode } from 'react';
 import { toast } from 'sonner';
 import { useEventSource, isSSEConnected, useSSEConnected } from './useEventSource';
-import { useMergeProgress, setMergeProgress } from './useMergeProgress';
+import { useMergeProgress, useMergeActivityCards, setMergeProgress, _resetForTesting as resetMergeStore } from './useMergeProgress';
 import { handleSearchEvent } from './useSearchProgress';
 import { queryKeys } from '@/lib/queryKeys';
 
@@ -672,6 +672,108 @@ describe('#257 merge observability — useEventSource', () => {
       }));
 
       expect(progressResult.current).toBeNull();
+    });
+  });
+
+  describe('#422 merge activity cards — bookTitle preservation and terminal state', () => {
+    afterEach(() => {
+      resetMergeStore();
+    });
+
+    it('merge_started passes bookTitle into activity store', () => {
+      const { wrapper } = createWrapper();
+      renderHook(() => useEventSource('key'), { wrapper });
+      const { result } = renderHook(() => useMergeActivityCards());
+      const es = MockEventSource.instances[0];
+      act(() => es.simulateOpen());
+
+      act(() => es.simulateEvent('merge_started', { book_id: 42, book_title: 'My Book' }));
+
+      expect(result.current).toHaveLength(1);
+      expect(result.current[0]).toMatchObject({ bookId: 42, bookTitle: 'My Book', phase: 'starting' });
+    });
+
+    it('merge_progress preserves bookTitle in activity store', () => {
+      const { wrapper } = createWrapper();
+      renderHook(() => useEventSource('key'), { wrapper });
+      const { result } = renderHook(() => useMergeActivityCards());
+      const es = MockEventSource.instances[0];
+      act(() => es.simulateOpen());
+
+      act(() => es.simulateEvent('merge_progress', {
+        book_id: 42, book_title: 'My Book', phase: 'processing', percentage: 0.5,
+      }));
+
+      expect(result.current[0]).toMatchObject({ bookTitle: 'My Book', phase: 'processing', percentage: 0.5 });
+    });
+
+    it('merge_queued passes bookTitle and position into activity store', () => {
+      const { wrapper } = createWrapper();
+      renderHook(() => useEventSource('key'), { wrapper });
+      const { result } = renderHook(() => useMergeActivityCards());
+      const es = MockEventSource.instances[0];
+      act(() => es.simulateOpen());
+
+      act(() => es.simulateEvent('merge_queued', { book_id: 42, book_title: 'My Book', position: 2 }));
+
+      expect(result.current[0]).toMatchObject({ bookTitle: 'My Book', phase: 'queued', position: 2 });
+    });
+
+    it('merge_complete sets terminal success state instead of clearing', () => {
+      const { wrapper } = createWrapper();
+      renderHook(() => useEventSource('key'), { wrapper });
+      const { result } = renderHook(() => useMergeActivityCards());
+      const es = MockEventSource.instances[0];
+      act(() => es.simulateOpen());
+
+      act(() => es.simulateEvent('merge_started', { book_id: 42, book_title: 'My Book' }));
+      act(() => es.simulateEvent('merge_complete', {
+        book_id: 42, book_title: 'My Book', success: true, message: 'Merged 3 files',
+      }));
+
+      expect(result.current).toHaveLength(1);
+      expect(result.current[0]).toMatchObject({
+        bookTitle: 'My Book',
+        phase: 'complete',
+        outcome: 'success',
+        message: 'Merged 3 files',
+      });
+    });
+
+    it('merge_failed sets terminal error state instead of clearing', () => {
+      const { wrapper } = createWrapper();
+      renderHook(() => useEventSource('key'), { wrapper });
+      const { result } = renderHook(() => useMergeActivityCards());
+      const es = MockEventSource.instances[0];
+      act(() => es.simulateOpen());
+
+      act(() => es.simulateEvent('merge_started', { book_id: 42, book_title: 'My Book' }));
+      act(() => es.simulateEvent('merge_failed', {
+        book_id: 42, book_title: 'My Book', error: 'ffmpeg crashed',
+      }));
+
+      expect(result.current).toHaveLength(1);
+      expect(result.current[0]).toMatchObject({
+        bookTitle: 'My Book',
+        phase: 'failed',
+        outcome: 'error',
+        error: 'ffmpeg crashed',
+      });
+    });
+
+    it('merge_complete with enrichmentWarning preserves it in activity store', () => {
+      const { wrapper } = createWrapper();
+      renderHook(() => useEventSource('key'), { wrapper });
+      const { result } = renderHook(() => useMergeActivityCards());
+      const es = MockEventSource.instances[0];
+      act(() => es.simulateOpen());
+
+      act(() => es.simulateEvent('merge_complete', {
+        book_id: 42, book_title: 'My Book', success: true, message: 'done',
+        enrichmentWarning: 'Metadata update failed',
+      }));
+
+      expect(result.current[0].enrichmentWarning).toBe('Metadata update failed');
     });
   });
 });
