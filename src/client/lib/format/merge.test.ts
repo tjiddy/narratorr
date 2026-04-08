@@ -38,8 +38,8 @@ describe('formatMergePhase', () => {
     expect(formatMergePhase('verifying')).toBe('Verifying output...');
   });
 
-  it('returns "Finalizing..." for finalizing phase', () => {
-    expect(formatMergePhase('finalizing')).toBe('Finalizing...');
+  it('returns "Committing..." for committing phase', () => {
+    expect(formatMergePhase('committing')).toBe('Committing...');
   });
 
   it('returns "Merge complete" for complete phase', () => {

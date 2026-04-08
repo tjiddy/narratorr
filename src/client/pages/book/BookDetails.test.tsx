@@ -1283,10 +1283,10 @@ describe('#257 merge observability — BookDetails progress', () => {
     expect(screen.getByText(/Verifying output/)).toBeInTheDocument();
   });
 
-  it('progress indicator shows finalizing phase', () => {
-    mockUseMergeProgress.mockReturnValue({ phase: 'finalizing' });
+  it('progress indicator shows committing phase', () => {
+    mockUseMergeProgress.mockReturnValue({ phase: 'committing' });
     renderBookDetails({ status: 'imported', topLevelAudioFileCount: 3 });
-    expect(screen.getByText(/Finalizing/)).toBeInTheDocument();
+    expect(screen.getByText(/Committing/)).toBeInTheDocument();
   });
 
   it('merge button disabled while progress indicator is visible', async () => {
