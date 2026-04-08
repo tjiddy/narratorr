@@ -1,19 +1,5 @@
-import type { SearchResult, DownloadProtocol } from '../../core/indexers/types.js';
-import type { CreateEventInput } from './event-history.service.js';
-
-export interface GrabPayload {
-  downloadUrl: string;
-  title: string;
-  protocol?: DownloadProtocol;
-  bookId?: number;
-  indexerId?: number;
-  size?: number;
-  seeders?: number;
-  guid?: string;
-  skipDuplicateCheck?: boolean;
-  replaceExisting?: boolean;
-  source?: CreateEventInput['source'];
-}
+import type { SearchResult } from '../../core/indexers/types.js';
+import type { GrabParams } from './download-orchestrator.js';
 
 /**
  * Build a grab payload from a SearchResult and bookId.
@@ -23,9 +9,9 @@ export interface GrabPayload {
 export function buildGrabPayload(
   result: SearchResult,
   bookId: number,
-  overrides?: Partial<GrabPayload>,
-): GrabPayload {
-  const payload: GrabPayload = {
+  overrides?: Partial<GrabParams>,
+): GrabParams {
+  const payload: GrabParams = {
     downloadUrl: result.downloadUrl!,
     title: result.title,
     protocol: result.protocol,
