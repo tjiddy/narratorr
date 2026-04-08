@@ -94,7 +94,8 @@ describe('MergeCard', () => {
       render(<MergeCard state={makeState({
         phase: 'failed', outcome: 'error', error: '',
       })} />);
-      expect(screen.getByText('Merge failed')).toBeInTheDocument();
+      // "Merge failed" appears as both phase label (subtitle) and fallback error message
+      expect(screen.getAllByText('Merge failed')).toHaveLength(2);
     });
   });
 });
