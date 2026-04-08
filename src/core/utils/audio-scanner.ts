@@ -1,6 +1,8 @@
 import { stat } from 'node:fs/promises';
 import { extname } from 'node:path';
+import { execFile } from 'node:child_process';
 import { parseFile, type ICommonTagsResult } from 'music-metadata';
+import type { FastifyBaseLogger } from 'fastify';
 import { AUDIO_EXTENSIONS } from './audio-constants.js';
 import { collectAudioFilePaths } from './collect-audio-files.js';
 
@@ -36,6 +38,36 @@ export interface AudioScanResult {
 export interface AudioScanOptions {
   /** When true, detect cover art presence but skip buffer extraction */
   skipCover?: boolean;
+  /** Path to ffprobe binary — when provided, duration is sourced from ffprobe instead of music-metadata */
+  ffprobePath?: string;
+  /** Optional logger for diagnostics (ffprobe fallback debug, duration mismatch warnings) */
+  log?: FastifyBaseLogger;
+}
+
+/**
+ * Get duration of a single audio file using ffprobe.
+ * Returns the duration in seconds, or null if ffprobe fails or returns invalid data.
+ */
+export async function getFFprobeDuration(ffprobePath: string, filePath: string): Promise<number | null> {
+  try {
+    const { stdout } = await new Promise<{ stdout: string; stderr: string }>((resolve, reject) => {
+      execFile(
+        ffprobePath,
+        ['-v', 'quiet', '-show_entries', 'format=duration', '-of', 'json', filePath],
+        { timeout: 10_000 },
+        (error, stdout, stderr) => {
+          if (error) reject(error);
+          else resolve({ stdout: stdout as string, stderr: stderr as string });
+        },
+      );
+    });
+    const parsed = JSON.parse(stdout);
+    const duration = parseFloat(parsed?.format?.duration);
+    if (!Number.isFinite(duration) || duration <= 0) return null;
+    return duration;
+  } catch {
+    return null;
+  }
 }
 
 /** Scan a directory of audio files and extract metadata + technical info. */
@@ -47,6 +79,8 @@ export async function scanAudioDirectory(
   if (audioFiles.length === 0) return null;
 
   const skipCover = options?.skipCover ?? false;
+  const ffprobePath = options?.ffprobePath;
+  const log = options?.log;
 
   const result: AudioScanResult = {
     codec: '',
@@ -71,8 +105,31 @@ export async function scanAudioDirectory(
 
       const metadata = await parseFile(filePath);
 
-      if (metadata.format.duration) {
-        result.totalDuration += metadata.format.duration;
+      // Duration: prefer ffprobe when available, fall back to music-metadata
+      let fileDuration: number | undefined;
+      if (ffprobePath) {
+        const ffprobeDuration = await getFFprobeDuration(ffprobePath, filePath);
+        if (ffprobeDuration !== null) {
+          fileDuration = ffprobeDuration;
+          // Warn if ffprobe and music-metadata differ significantly
+          const metadataDuration = metadata.format.duration;
+          if (metadataDuration && metadataDuration > 0) {
+            const diff = Math.abs(ffprobeDuration - metadataDuration) / metadataDuration;
+            if (diff > 0.1) {
+              log?.warn({ filePath, ffprobeDuration, metadataDuration }, 'ffprobe/music-metadata duration mismatch (>10%)');
+            }
+          }
+        } else {
+          // ffprobe failed — fall back to music-metadata
+          log?.debug({ filePath }, 'ffprobe failed for file, falling back to music-metadata duration');
+          fileDuration = metadata.format.duration ?? undefined;
+        }
+      } else {
+        fileDuration = metadata.format.duration ?? undefined;
+      }
+
+      if (fileDuration) {
+        result.totalDuration += fileDuration;
       }
 
       if (!technicalExtracted && metadata.format.codec) {
