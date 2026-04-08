@@ -360,6 +360,8 @@ export function SearchReleasesModal({ isOpen, book, onClose }: SearchReleasesMod
                           result={result}
                           bookDurationSeconds={bookDur ?? undefined}
                           existingBookSizeBytes={book.status === 'imported' ? (bookSize ?? undefined) : undefined}
+                          lastGrabGuid={book.lastGrabGuid}
+                          lastGrabInfoHash={book.lastGrabInfoHash}
                           onGrab={() => handleGrab(result)}
                           onBlacklist={() => handleBlacklist(result)}
                           isGrabbing={grabMutation.isPending}

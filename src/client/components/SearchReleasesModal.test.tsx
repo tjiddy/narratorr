@@ -1753,4 +1753,53 @@ describe('SearchReleasesModal — streaming search (Phase 1/Phase 2)', () => {
       });
     });
   });
+
+  describe('#421 — "In library" badge wiring', () => {
+    it('renders "In library" badge on result card when book lastGrabGuid matches result guid', async () => {
+      setStreamResults([
+        { ...mockResults[0], guid: 'grabbed-guid' },
+      ]);
+      const bookWithGrab = createMockBook({ lastGrabGuid: 'grabbed-guid', lastGrabInfoHash: null });
+
+      renderWithProviders(
+        <SearchReleasesModal isOpen={true} book={bookWithGrab} onClose={vi.fn()} />,
+      );
+
+      await waitFor(() => {
+        expect(screen.getByText('In library')).toBeInTheDocument();
+      });
+    });
+
+    it('no "In library" badge on any result card when book has no grab identifiers (both null)', async () => {
+      setStreamResults(mockResults);
+      const bookNoGrab = createMockBook({ lastGrabGuid: null, lastGrabInfoHash: null });
+
+      renderWithProviders(
+        <SearchReleasesModal isOpen={true} book={bookNoGrab} onClose={vi.fn()} />,
+      );
+
+      await waitFor(() => {
+        expect(screen.getByText(mockResults[0].title)).toBeInTheDocument();
+      });
+      expect(screen.queryByText('In library')).not.toBeInTheDocument();
+    });
+
+    it('renders "In library" badge only on the matching result, not on others', async () => {
+      setStreamResults([
+        { ...mockResults[0], guid: 'match-guid' },
+        { ...mockResults[1], guid: 'other-guid' },
+      ]);
+      const bookWithGrab = createMockBook({ lastGrabGuid: 'match-guid', lastGrabInfoHash: null });
+
+      renderWithProviders(
+        <SearchReleasesModal isOpen={true} book={bookWithGrab} onClose={vi.fn()} />,
+      );
+
+      await waitFor(() => {
+        expect(screen.getByText(mockResults[0].title)).toBeInTheDocument();
+      });
+      const badges = screen.getAllByText('In library');
+      expect(badges).toHaveLength(1);
+    });
+  });
 });
