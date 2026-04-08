@@ -234,6 +234,8 @@ export const booksApi = {
     fetchApi<SingleBookSearchResult>(`/books/${id}/search`, { method: 'POST' }),
   mergeBookToM4b: (id: number) =>
     fetchApi<MergeAcknowledgement>(`/books/${id}/merge-to-m4b`, { method: 'POST' }),
+  cancelMergeBook: (id: number) =>
+    fetchApi<{ success: boolean }>(`/books/${id}/merge-to-m4b`, { method: 'DELETE' }),
   markBookAsWrongRelease: (id: number) =>
     fetchApi<{ success: boolean }>(`/books/${id}/wrong-release`, { method: 'POST' }),
 };

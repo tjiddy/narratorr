@@ -11,6 +11,7 @@ export function formatMergePhase(phase: string, percentage?: number, position?: 
     case 'verifying': return 'Verifying output...';
     case 'committing': return 'Committing...';
     case 'complete': return 'Merge complete';
+    case 'cancelled': return 'Merge cancelled';
     case 'failed': return 'Merge failed';
     default: return 'Merging...';
   }

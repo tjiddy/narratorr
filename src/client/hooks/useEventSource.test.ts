@@ -1060,8 +1060,63 @@ describe('#312 cache-miss scoping — patchActivityProgress', () => {
   });
 
   describe('merge cancellation SSE handling', () => {
-    it.todo('merge_failed with reason cancelled sets outcome to cancelled, not error');
-    it.todo('merge_failed with reason error continues to set outcome to error');
-    it.todo('merge_queue_updated events after cancellation update positions on all clients');
+    it('merge_failed with reason cancelled sets outcome to cancelled, not error', () => {
+      const { wrapper } = createWrapper();
+      renderHook(() => useEventSource('key'), { wrapper });
+      const { result } = renderHook(() => useMergeActivityCards());
+      const es = MockEventSource.instances[0];
+      act(() => es.simulateOpen());
+
+      act(() => es.simulateEvent('merge_started', { book_id: 42, book_title: 'My Book' }));
+      act(() => es.simulateEvent('merge_failed', {
+        book_id: 42, book_title: 'My Book', error: 'Cancelled by user', reason: 'cancelled',
+      }));
+
+      expect(result.current).toHaveLength(1);
+      expect(result.current[0]).toMatchObject({
+        bookTitle: 'My Book',
+        phase: 'cancelled',
+        outcome: 'cancelled',
+      });
+    });
+
+    it('merge_failed with reason error continues to set outcome to error', () => {
+      const { wrapper } = createWrapper();
+      renderHook(() => useEventSource('key'), { wrapper });
+      const { result } = renderHook(() => useMergeActivityCards());
+      const es = MockEventSource.instances[0];
+      act(() => es.simulateOpen());
+
+      act(() => es.simulateEvent('merge_started', { book_id: 42, book_title: 'My Book' }));
+      act(() => es.simulateEvent('merge_failed', {
+        book_id: 42, book_title: 'My Book', error: 'ffmpeg crashed', reason: 'error',
+      }));
+
+      expect(result.current).toHaveLength(1);
+      expect(result.current[0]).toMatchObject({
+        phase: 'failed',
+        outcome: 'error',
+        error: 'ffmpeg crashed',
+      });
+    });
+
+    it('merge_failed without reason field defaults to error outcome', () => {
+      const { wrapper } = createWrapper();
+      renderHook(() => useEventSource('key'), { wrapper });
+      const { result } = renderHook(() => useMergeActivityCards());
+      const es = MockEventSource.instances[0];
+      act(() => es.simulateOpen());
+
+      act(() => es.simulateEvent('merge_started', { book_id: 42, book_title: 'My Book' }));
+      act(() => es.simulateEvent('merge_failed', {
+        book_id: 42, book_title: 'My Book', error: 'ffmpeg crashed',
+      }));
+
+      expect(result.current).toHaveLength(1);
+      expect(result.current[0]).toMatchObject({
+        phase: 'failed',
+        outcome: 'error',
+      });
+    });
   });
 });

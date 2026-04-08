@@ -112,6 +112,13 @@ export function useBookActions(bookId: number, monitorForUpgrades: boolean) {
     }
   };
 
+  const cancelMergeMutation = useMutation({
+    mutationFn: () => api.cancelMergeBook(bookId),
+    onError: (error: Error) => {
+      toast.error(`Cancel merge failed: ${error.message}`);
+    },
+  });
+
   const wrongReleaseMutation = useMutation({
     mutationFn: () => api.markBookAsWrongRelease(bookId),
     onSuccess: () => {
@@ -126,6 +133,7 @@ export function useBookActions(bookId: number, monitorForUpgrades: boolean) {
   return {
     renameMutation,
     mergeMutation,
+    cancelMergeMutation,
     retagMutation,
     deleteMutation,
     monitorMutation,

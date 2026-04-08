@@ -1,5 +1,6 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { render, screen } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { MergeCard } from './MergeCard';
 import type { MergeCardState } from '@/hooks/useMergeProgress';
 
@@ -100,21 +101,74 @@ describe('MergeCard', () => {
   });
 
   describe('cancel button visibility', () => {
-    it.todo('shows cancel button during queued phase');
-    it.todo('shows cancel button during staging phase');
-    it.todo('shows cancel button during processing phase');
-    it.todo('shows cancel button during verifying phase');
-    it.todo('hides cancel button during committing phase');
-    it.todo('hides cancel button for complete outcome');
-    it.todo('hides cancel button for error outcome');
-    it.todo('hides cancel button for cancelled outcome');
+    const onCancel = vi.fn();
+
+    it('shows cancel button during queued phase', () => {
+      render(<MergeCard state={makeState({ phase: 'queued' })} onCancel={onCancel} />);
+      expect(screen.getByRole('button', { name: /cancel merge/i })).toBeInTheDocument();
+    });
+
+    it('shows cancel button during staging phase', () => {
+      render(<MergeCard state={makeState({ phase: 'staging' })} onCancel={onCancel} />);
+      expect(screen.getByRole('button', { name: /cancel merge/i })).toBeInTheDocument();
+    });
+
+    it('shows cancel button during processing phase', () => {
+      render(<MergeCard state={makeState({ phase: 'processing' })} onCancel={onCancel} />);
+      expect(screen.getByRole('button', { name: /cancel merge/i })).toBeInTheDocument();
+    });
+
+    it('shows cancel button during verifying phase', () => {
+      render(<MergeCard state={makeState({ phase: 'verifying' })} onCancel={onCancel} />);
+      expect(screen.getByRole('button', { name: /cancel merge/i })).toBeInTheDocument();
+    });
+
+    it('hides cancel button during committing phase', () => {
+      render(<MergeCard state={makeState({ phase: 'committing' })} onCancel={onCancel} />);
+      expect(screen.queryByRole('button', { name: /cancel merge/i })).not.toBeInTheDocument();
+    });
+
+    it('hides cancel button for complete outcome', () => {
+      render(<MergeCard state={makeState({ phase: 'complete', outcome: 'success' })} onCancel={onCancel} />);
+      expect(screen.queryByRole('button', { name: /cancel merge/i })).not.toBeInTheDocument();
+    });
+
+    it('hides cancel button for error outcome', () => {
+      render(<MergeCard state={makeState({ phase: 'failed', outcome: 'error' })} onCancel={onCancel} />);
+      expect(screen.queryByRole('button', { name: /cancel merge/i })).not.toBeInTheDocument();
+    });
+
+    it('hides cancel button for cancelled outcome', () => {
+      render(<MergeCard state={makeState({ phase: 'cancelled', outcome: 'cancelled' })} onCancel={onCancel} />);
+      expect(screen.queryByRole('button', { name: /cancel merge/i })).not.toBeInTheDocument();
+    });
+
+    it('hides cancel button when no onCancel prop is provided', () => {
+      render(<MergeCard state={makeState({ phase: 'staging' })} />);
+      expect(screen.queryByRole('button', { name: /cancel merge/i })).not.toBeInTheDocument();
+    });
   });
 
   describe('cancel interaction', () => {
-    it.todo('clicking cancel calls the cancel API with correct bookId');
-    it.todo('cancel button shows loading/disabled state while cancel request is in-flight');
-    it.todo('after successful cancel, card updates to show Cancelled state distinct from error');
-    it.todo('cancelled state uses reason field, not string matching on error message');
-    it.todo('cancel failure shows error toast');
+    it('clicking cancel calls onCancel with correct bookId', async () => {
+      const user = userEvent.setup();
+      const onCancel = vi.fn();
+      render(<MergeCard state={makeState({ phase: 'processing', bookId: 42 })} onCancel={onCancel} />);
+
+      await user.click(screen.getByRole('button', { name: /cancel merge/i }));
+      expect(onCancel).toHaveBeenCalledWith(42);
+    });
+
+    it('cancel button shows disabled state while cancel request is in-flight', () => {
+      const onCancel = vi.fn();
+      render(<MergeCard state={makeState({ phase: 'processing' })} onCancel={onCancel} isCancelling />);
+      expect(screen.getByRole('button', { name: /cancel merge/i })).toBeDisabled();
+    });
+
+    it('cancelled state shows "Merge cancelled" text distinct from error', () => {
+      render(<MergeCard state={makeState({ phase: 'cancelled', outcome: 'cancelled' })} />);
+      expect(screen.getByText('Merge cancelled')).toBeInTheDocument();
+      expect(screen.queryByText('Merge failed')).not.toBeInTheDocument();
+    });
   });
 });

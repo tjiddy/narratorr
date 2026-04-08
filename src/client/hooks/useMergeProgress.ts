@@ -12,7 +12,7 @@ export interface MergeCardState {
   phase: string;
   percentage?: number;
   position?: number;
-  outcome?: 'success' | 'error';
+  outcome?: 'success' | 'error' | 'cancelled';
   message?: string;
   error?: string;
   enrichmentWarning?: string;

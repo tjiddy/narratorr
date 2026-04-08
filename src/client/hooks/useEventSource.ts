@@ -243,10 +243,11 @@ function updateMergeProgressFromEvent(type: SSEEventType, data: SSEEventPayloads
     });
   } else if (type === 'merge_failed' && 'book_id' in data) {
     const d = data as SSEEventPayloads['merge_failed'];
+    const isCancelled = d.reason === 'cancelled';
     setMergeProgress(d.book_id, {
       bookTitle: d.book_title,
-      phase: 'failed',
-      outcome: 'error',
+      phase: isCancelled ? 'cancelled' : 'failed',
+      outcome: isCancelled ? 'cancelled' : 'error',
       error: d.error,
     });
   }
