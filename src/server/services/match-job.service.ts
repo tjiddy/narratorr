@@ -230,7 +230,7 @@ class MatchJob {
           hasDuration: !!duration,
           matchDuration: topScored.meta.duration,
         },
-        reason ? 'Duration-informed confidence' : 'Multiple results, no duration disambiguation — medium confidence',
+        confidence === 'high' ? 'Duration-verified high confidence' : reason ?? 'Multiple results — medium confidence',
       );
       return {
         path: book.path,
