@@ -1,5 +1,34 @@
 # Workflow Log
 
+## #415 Surface match confidence reason on Review badge — 2026-04-08
+**Skill path:** /implement → /claim → /plan → /handoff
+**Outcome:** success — PR #423
+
+### Metrics
+- Files changed: 11 | Tests added/modified: 26
+- Quality gate runs: 2 (pass on attempt 2 — first failed on complexity lint)
+- Fix iterations: 1 (ESLint complexity exceeded 15 in matchSingleBook; refactored resolveConfidenceFromDuration to always return result instead of null)
+- Context compactions: 0
+
+### Workflow experience
+- What went smoothly: Clean 4-module TDD flow (backend → client type → badge → hooks). All existing tests remained green throughout.
+- Friction / issues encountered: (1) Appended hook tests to wrong describe block in useLibraryImport.test.ts — caused 5s timeouts because mocks weren't initialized. (2) JS toFixed rounding gave "37.1" not "37.2" for the spec's example.
+
+### Token efficiency
+- Highest-token actions: Codebase exploration subagent (read many test files); coverage review subagent
+- Avoidable waste: Read too many test patterns before writing stubs — could have started earlier since patterns are consistent
+- Suggestions: For additive optional fields, test blast radius is minimal — skip exhaustive fixture audit when field is optional
+
+### Infrastructure gaps
+- Repeated workarounds: None
+- Missing tooling / config: frontend-design skill not available
+- Unresolved debt: DRY-2 confidence upgrade logic duplication (pre-existing, #335)
+
+### Wish I'd Known
+1. `toFixed(1)` rounds 37.15 to "37.1" not "37.2" in JavaScript — always verify decimal formatting in Node REPL (see learnings/js-tofixed-rounding-gotcha.md)
+2. useLibraryImport.test.ts has multiple top-level describe blocks with isolated beforeEach — appending to the wrong block causes silent timeout failures (see learnings/test-describe-nesting-scope.md)
+3. Returning null from helper functions inflates caller complexity — always return a structured result to keep ESLint happy (see learnings/resolve-confidence-return-type-refactor.md)
+
 ## #410 ABB adapter missing guid — 2026-04-08
 **Skill path:** /implement → /claim → /plan → /handoff
 **Outcome:** success — PR #420
