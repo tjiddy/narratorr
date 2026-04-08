@@ -14,6 +14,7 @@ import type { QualityDecisionReason } from './quality-gate.types.js';
 import { NULL_REASON } from './quality-gate.types.js';
 import { books } from '../../db/schema.js';
 import { scanAudioDirectory } from '../../core/utils/audio-scanner.js';
+import { deriveFfprobePath } from '../../core/utils/ffprobe-path.js';
 import { resolveSavePath } from '../utils/download-path.js';
 import { revertBookStatus } from '../utils/book-status.js';
 import type { RetrySearchDeps } from './retry-search.js';
@@ -49,6 +50,8 @@ export class QualityGateOrchestrator {
    */
   async processCompletedDownloads(): Promise<void> {
     const completedDownloads = await this.qualityGateService.getCompletedDownloads();
+    const processingSettings = await this.settingsService?.get('processing');
+    const ffprobePath = processingSettings?.ffmpegPath ? deriveFfprobePath(processingSettings.ffmpegPath) : undefined;
 
     for (const row of completedDownloads) {
       if (!row.download.externalId || !row.download.bookId) {
@@ -82,7 +85,7 @@ export class QualityGateOrchestrator {
         // Probe audio files
         let scanResult;
         try {
-          scanResult = await scanAudioDirectory(savePath, { skipCover: true });
+          scanResult = await scanAudioDirectory(savePath, { skipCover: true, ffprobePath, log: this.log });
         } catch (error: unknown) {
           this.log.error({ error, downloadId: row.download.id }, 'Quality gate: scan failed');
           await this.holdForProbeFailure(row.download, row.book, 'probe_failed', error);
@@ -112,6 +115,8 @@ export class QualityGateOrchestrator {
 
   /** Process a single completed download through the quality gate, with inline import on approval. */
   async processOneDownload(downloadId: number): Promise<void> {
+    const processingSettings2 = await this.settingsService?.get('processing');
+    const ffprobePath2 = processingSettings2?.ffmpegPath ? deriveFfprobePath(processingSettings2.ffmpegPath) : undefined;
     const rows = await this.qualityGateService.getCompletedDownloads();
     const row = rows.find((r) => r.download.id === downloadId);
     if (!row) { this.log.warn({ downloadId }, 'Quality gate: processOneDownload — download not found or not completed'); return; }
@@ -141,7 +146,7 @@ export class QualityGateOrchestrator {
       }
       let scanResult;
       try {
-        scanResult = await scanAudioDirectory(savePath, { skipCover: true });
+        scanResult = await scanAudioDirectory(savePath, { skipCover: true, ffprobePath: ffprobePath2, log: this.log });
       } catch (error: unknown) {
         this.log.error({ error, downloadId: row.download.id }, 'Quality gate: scan failed');
         await this.holdForProbeFailure(row.download, row.book, 'probe_failed', error);

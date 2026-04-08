@@ -356,7 +356,8 @@ export class MergeService {
 
     this.emitMergeProgress(bookId, bookTitle, 'verifying');
 
-    const scanResult = await scanAudioDirectory(stagingDir);
+    const ffprobePathVerify = deriveFfprobePath(processingSettings.ffmpegPath);
+    const scanResult = await scanAudioDirectory(stagingDir, { ffprobePath: ffprobePathVerify, log: this.log });
     if (!scanResult) {
       throw new Error('Staged M4B failed verification — audio scan returned null');
     }
