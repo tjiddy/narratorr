@@ -354,7 +354,7 @@ export class BulkOperationService {
       await this.swapConvertedFiles(result.outputFiles, audioFiles, bookPath);
 
       // Refresh DB audio fields
-      const ffprobePath = deriveFfprobePath(processingSettings.ffmpegPath);
+      const ffprobePath = processingSettings.ffmpegPath?.trim() ? deriveFfprobePath(processingSettings.ffmpegPath.trim()) : undefined;
       const enrichResult = await enrichBookFromAudio(
         bookId,
         bookPath,

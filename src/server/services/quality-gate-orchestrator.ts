@@ -316,7 +316,7 @@ export class QualityGateOrchestrator {
     return { id: result.id, status: result.status };
   }
 
-  private async resolveFfprobePath(): Promise<string | undefined> { const s = await this.settingsService?.get('processing'); return s?.ffmpegPath ? deriveFfprobePath(s.ffmpegPath) : undefined; }
+  private async resolveFfprobePath(): Promise<string | undefined> { const s = await this.settingsService?.get('processing'); return s?.ffmpegPath?.trim() ? deriveFfprobePath(s.ffmpegPath.trim()) : undefined; }
   /** Hold for probe failure: set pending_review + SSE + event recording. */
   private async holdForProbeFailure(
     download: DownloadRow,

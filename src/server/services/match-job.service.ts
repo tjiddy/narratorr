@@ -165,7 +165,7 @@ class MatchJob {
       let duration: number | undefined;
       try {
         const processingSettings = await this.settingsService.get('processing');
-        const ffprobePath = processingSettings?.ffmpegPath ? deriveFfprobePath(processingSettings.ffmpegPath) : undefined;
+        const ffprobePath = processingSettings?.ffmpegPath?.trim() ? deriveFfprobePath(processingSettings.ffmpegPath.trim()) : undefined;
         const audioResult = await scanAudioDirectory(book.path, { skipCover: true, ffprobePath, log: this.log });
         if (audioResult && audioResult.totalDuration > 0) {
           // Convert seconds → minutes to match Audible's runtime_length_min

@@ -237,7 +237,7 @@ export class MergeService {
       this.emitMergeProgress(bookId, book.title, 'committing');
       const outputPath = await this.commitMerge(stagingDir, stagedM4b, bookPath, topLevelAudioFiles, bookId);
 
-      const ffprobePath = processingSettings.ffmpegPath ? deriveFfprobePath(processingSettings.ffmpegPath) : undefined;
+      const ffprobePath = processingSettings.ffmpegPath?.trim() ? deriveFfprobePath(processingSettings.ffmpegPath.trim()) : undefined;
       const enrichResult = await enrichBookFromAudio(bookId, bookPath, book, this.db, this.log, this.bookService, ffprobePath);
       let enrichmentWarning: string | undefined;
       if (!enrichResult.enriched) {
@@ -284,7 +284,7 @@ export class MergeService {
       const stagedM4b = await this.runStaging(stagingDir, { ...book, path: bookPath }, topLevelAudioFiles, processingSettings, bookId, book.title);
       this.emitMergeProgress(bookId, book.title, 'committing');
       const outputPath = await this.commitMerge(stagingDir, stagedM4b, bookPath, topLevelAudioFiles, bookId);
-      const ffprobePath2 = processingSettings.ffmpegPath ? deriveFfprobePath(processingSettings.ffmpegPath) : undefined;
+      const ffprobePath2 = processingSettings.ffmpegPath?.trim() ? deriveFfprobePath(processingSettings.ffmpegPath.trim()) : undefined;
       const enrichResult = await enrichBookFromAudio(bookId, bookPath, book, this.db, this.log, this.bookService, ffprobePath2);
       let enrichmentWarning: string | undefined;
       if (!enrichResult.enriched) {
@@ -356,7 +356,7 @@ export class MergeService {
 
     this.emitMergeProgress(bookId, bookTitle, 'verifying');
 
-    const ffprobePathVerify = deriveFfprobePath(processingSettings.ffmpegPath);
+    const ffprobePathVerify = processingSettings.ffmpegPath?.trim() ? deriveFfprobePath(processingSettings.ffmpegPath.trim()) : undefined;
     const scanResult = await scanAudioDirectory(stagingDir, { ffprobePath: ffprobePathVerify, log: this.log });
     if (!scanResult) {
       throw new Error('Staged M4B failed verification — audio scan returned null');

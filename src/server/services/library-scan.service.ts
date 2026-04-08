@@ -380,7 +380,7 @@ export class LibraryScanService {
 
     // Enrich with audio file metadata
     const processingSettings = await this.settingsService.get('processing');
-    const ffprobePath = processingSettings?.ffmpegPath ? deriveFfprobePath(processingSettings.ffmpegPath) : undefined;
+    const ffprobePath = processingSettings?.ffmpegPath?.trim() ? deriveFfprobePath(processingSettings.ffmpegPath.trim()) : undefined;
     const audioResult = await enrichBookFromAudio(
       book.id,
       finalPath,
@@ -599,7 +599,7 @@ export class LibraryScanService {
     // Enrich with audio file metadata (WITH cover extraction)
     this.log.debug({ bookId }, 'Starting audio enrichment');
     const processingSettings2 = await this.settingsService.get('processing');
-    const ffprobePath2 = processingSettings2?.ffmpegPath ? deriveFfprobePath(processingSettings2.ffmpegPath) : undefined;
+    const ffprobePath2 = processingSettings2?.ffmpegPath?.trim() ? deriveFfprobePath(processingSettings2.ffmpegPath.trim()) : undefined;
     await enrichBookFromAudio(bookId, finalPath, { narrators: narratorName ? [{ name: narratorName }] : null, duration, coverUrl }, this.db, this.log, this.bookService, ffprobePath2);
 
     // Read current genres from DB (may have been filled since placeholder creation)
