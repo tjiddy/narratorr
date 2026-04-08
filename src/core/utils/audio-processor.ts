@@ -8,6 +8,7 @@ import type { ChapterSource } from './chapter-resolver.js';
 import { renderFilename } from './naming.js';
 import type { NamingOptions } from './naming.js';
 import { withCoverArtPipeline } from './cover-art.js';
+import { deriveFfprobePath } from './ffprobe-path.js';
 
 const execFileAsync = promisify(execFile);
 
@@ -435,8 +436,7 @@ export function buildChapterMetadata(
  * Get duration of each file using ffprobe (bundled with ffmpeg).
  */
 async function getFileDurations(ffmpegPath: string, filePaths: string[]): Promise<number[]> {
-  // ffprobe is typically alongside ffmpeg
-  const ffprobePath = ffmpegPath.replace(/ffmpeg(\.exe)?$/i, 'ffprobe$1');
+  const ffprobePath = deriveFfprobePath(ffmpegPath);
 
   const durations: number[] = [];
   for (const filePath of filePaths) {
