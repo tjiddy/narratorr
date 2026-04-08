@@ -24,6 +24,8 @@ import { DEFAULT_LIMITS } from '../../../shared/schemas/common.js';
 export function ActivityPage() {
   const queuePagination = usePagination(DEFAULT_LIMITS.activity);
   const historyPagination = usePagination(DEFAULT_LIMITS.activity);
+  const { clampToTotal: clampQueuePage } = queuePagination;
+  const { clampToTotal: clampHistoryPage } = historyPagination;
 
   const { state, status, mutations } = useActivity(
     { limit: queuePagination.limit, offset: queuePagination.offset },
@@ -46,10 +48,10 @@ export function ActivityPage() {
     },
   });
 
-  // Clamp pages when totals shrink — use stable clampToTotal callback (not full pagination object)
-  // to avoid re-running on every render.
-  useEffect(() => { queuePagination.clampToTotal(queueTotal); }, [queueTotal, queuePagination.clampToTotal]);
-  useEffect(() => { historyPagination.clampToTotal(historyTotal); }, [historyTotal, historyPagination.clampToTotal]);
+  // Clamp pages when totals shrink — use stable clampToTotal callbacks (destructured above)
+  // instead of the full pagination objects to avoid re-running on every render.
+  useEffect(() => { clampQueuePage(queueTotal); }, [queueTotal, clampQueuePage]);
+  useEffect(() => { clampHistoryPage(historyTotal); }, [historyTotal, clampHistoryPage]);
 
   const [tab, setTab] = useState<'downloads' | 'events'>('downloads');
   const [confirmClearHistory, setConfirmClearHistory] = useState(false);
