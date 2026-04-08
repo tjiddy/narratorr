@@ -1197,6 +1197,35 @@ describe('LibraryScanService', () => {
         expect(result.discoveries[0].existingBookId).toBe(7);
       });
 
+      it('title+author duplicate check is case-insensitive on title', async () => {
+        vi.mocked(discoverBooks).mockResolvedValue([
+          { path: '/audiobooks/Author/Harry Potter And The Chamber Of Secrets', folderParts: ['Author', 'Harry Potter And The Chamber Of Secrets'], audioFileCount: 2, totalSize: 200 },
+        ]);
+        // DB has lowercase title, folder has title-case — should still match
+        mockPreFetchWithIds([], [{ id: 9, title: 'Harry Potter and the Chamber of Secrets', slug: 'author' }]);
+
+        const result = await service.scanDirectory('/audiobooks');
+
+        expect(result.discoveries).toHaveLength(1);
+        expect(result.discoveries[0].isDuplicate).toBe(true);
+        expect(result.discoveries[0].existingBookId).toBe(9);
+        expect(result.discoveries[0].duplicateReason).toBe('slug');
+      });
+
+      it('within-scan duplicate check is case-insensitive on title', async () => {
+        vi.mocked(discoverBooks).mockResolvedValue([
+          { path: '/audiobooks/Author/the way of kings', folderParts: ['Author', 'the way of kings'], audioFileCount: 1, totalSize: 100 },
+          { path: '/audiobooks/Author/The Way Of Kings', folderParts: ['Author', 'The Way Of Kings'], audioFileCount: 2, totalSize: 200 },
+        ]);
+        mockPreFetch([], []);
+
+        const result = await service.scanDirectory('/audiobooks');
+
+        const dups = result.discoveries.filter(d => d.isDuplicate);
+        expect(dups).toHaveLength(1);
+        expect(dups[0].duplicateReason).toBe('within-scan');
+      });
+
       it('does not check title+author duplicate when parsed title is empty; folder is not marked isDuplicate', async () => {
         vi.mocked(discoverBooks).mockResolvedValue([
           { path: '/audiobooks/somefolder', folderParts: [''], audioFileCount: 1, totalSize: 50 },

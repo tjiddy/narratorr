@@ -183,7 +183,7 @@ export class LibraryScanService {
     const existingTitleAuthorMap = new Map<string, number>(
       titleAuthorRows
         .filter((r) => r.title && r.slug)
-        .map((r) => [`${r.title}|${r.slug}`, r.id] as [string, number]),
+        .map((r) => [`${r.title!.toLowerCase()}|${r.slug}`, r.id] as [string, number]),
     );
 
     const discoveries: DiscoveredBook[] = [];
@@ -205,7 +205,7 @@ export class LibraryScanService {
       // Check for duplicates by title + author slug (in-memory Map lookup)
       if (parsed.title && parsed.author) {
         const authorSlug = slugify(parsed.author);
-        const key = `${parsed.title}|${authorSlug}`;
+        const key = `${parsed.title.toLowerCase()}|${authorSlug}`;
         if (existingTitleAuthorMap.has(key)) {
           this.log.debug({ path: folder.path, title: parsed.title, author: parsed.author }, 'Duplicate detected (title+author match)');
           discoveries.push(this.buildDiscoveredBook(
