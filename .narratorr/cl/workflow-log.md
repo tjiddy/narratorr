@@ -1,5 +1,34 @@
 # Workflow Log
 
+## #411 Blacklist isBlacklisted() misses guid-only entries (usenet re-grab) — 2026-04-08
+**Skill path:** /implement → /claim → /plan → /handoff
+**Outcome:** success — PR #417
+
+### Metrics
+- Files changed: 2 (1 source, 1 test) | Tests added/modified: 15 (replaced 2)
+- Quality gate runs: 2 (pass on attempt 1 both times)
+- Fix iterations: 0 (clean first pass)
+- Context compactions: 0
+
+### Workflow experience
+- What went smoothly: Spec was well-elaborated through /elaborate and /respond-to-spec-review before /implement. The delegation pattern from getBlacklistedHashes() provided a clear template. Red/green TDD was straightforward — 8 tests failed, implementation made them pass.
+- Friction / issues encountered: None — small, well-scoped bug fix with clear spec.
+
+### Token efficiency
+- Highest-token actions: Explore subagent for codebase exploration (thorough but necessary for plan)
+- Avoidable waste: None significant
+- Suggestions: For trivial bug fixes with well-elaborated specs, the exploration phase could be lighter
+
+### Infrastructure gaps
+- Repeated workarounds: None
+- Missing tooling / config: None
+- Unresolved debt: isBlacklisted() has zero production callers — it exists for future use but is currently dead code
+
+### Wish I'd Known
+1. getBlacklistedHashes() already demonstrates the exact delegation pattern needed — could have gone straight to implementation with minimal exploration
+2. The debt.md entry from #248 was outdated (referenced "quality gate pre-check" callers that don't exist) — debt entries should be verified before trusting
+3. Mock in rss.test.ts is `vi.fn()` with no type constraints, so signature changes are automatically compatible — no blast radius update needed
+
 ## #405 DRY cleanup — extract shared cover regex, audio collector, grab payload builder — 2026-04-07
 **Skill path:** /implement → /claim → /plan → /handoff
 **Outcome:** success — PR #408
