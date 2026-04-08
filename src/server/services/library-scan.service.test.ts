@@ -3676,13 +3676,9 @@ describe('scanDirectory() — within-scan duplicate detection (#342)', () => {
         expect(result.title).not.toContain('[]');
       });
 
-      it('preserves non-empty parentheticals', () => {
-        const result = parseFolderStructure(['Author', 'BookTitle (Special Edition)']);
-        // "Special Edition" is >1 word and not a codec/year — preserved
-        // But it's only 2 words, so narrator strip heuristic could apply
-        // Actually 2 words is fine as a name. Let's test with something clearly not a name.
-        const result2 = parseFolderStructure(['Author', 'BookTitle (The Extended Cut Edition)']);
-        expect(result2.title).toBe('BookTitle (The Extended Cut Edition)');
+      it('preserves non-empty parentheticals with >3 words', () => {
+        const result = parseFolderStructure(['Author', 'BookTitle (The Extended Cut Edition)']);
+        expect(result.title).toBe('BookTitle (The Extended Cut Edition)');
       });
     });
 
