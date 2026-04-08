@@ -846,3 +846,48 @@ describe('#257 merge observability — audio-processor', () => {
     });
   });
 });
+
+// ============================================================================
+// #424 — M4B merge: embedded cover art muxer overflow fix
+// ============================================================================
+
+describe('#424 stream mapping — unconditional -vn flag', () => {
+  it.todo('mergeFiles includes -vn flag in ffmpeg args');
+  it.todo('convertFiles includes -vn flag in ffmpeg args');
+  it.todo('-vn is present even when source files have no embedded cover art');
+});
+
+describe('#424 convertFiles — progress output', () => {
+  it.todo('convertFiles includes -progress pipe:1 in ffmpeg args');
+  it.todo('convert-path stall timeout kills process after 60s with no progress');
+});
+
+describe('#424 spawnFfmpeg — stall timeout', () => {
+  it.todo('kills ffmpeg process after 60s with no progress output');
+  it.todo('rejects with descriptive error message including ffmpeg stalled');
+  it.todo('progress output resets the 60s timeout clock');
+  it.todo('normal completion within timeout resolves successfully');
+  it.todo('killed process rejects the promise');
+});
+
+describe('#424 cover art detection and extraction', () => {
+  it.todo('detects video stream via ffprobe and extracts cover from first file with art');
+  it.todo('extracts cover from second file when first file has no art');
+  it.todo('skips extraction when no files have video streams');
+  it.todo('cover extraction uses -an -vcodec copy ffmpeg args');
+  it.todo('cover extraction failure does not fail the merge — graceful degradation');
+  it.todo('zero-byte extracted cover skips reattach');
+});
+
+describe('#424 cover art reattach (M4B only)', () => {
+  it.todo('reattach step runs after M4B encode with correct ffmpeg args');
+  it.todo('reattach uses -c copy (no re-encode)');
+  it.todo('no cover reattach for MP3 output format');
+  it.todo('reattach failure preserves audio-only M4B as final output');
+});
+
+describe('#424 cover art temp file cleanup', () => {
+  it.todo('temp cover file removed after successful reattach');
+  it.todo('temp cover file removed when reattach fails (finally block)');
+  it.todo('no temp file created when no cover art detected');
+});
