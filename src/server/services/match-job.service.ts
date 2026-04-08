@@ -24,6 +24,7 @@ export interface MatchResult {
   bestMatch: BookMetadata | null;
   alternatives: BookMetadata[];
   error?: string;
+  reason?: string;
 }
 
 export interface MatchJobStatus {
@@ -218,8 +219,9 @@ class MatchJob {
       }
 
       // Multiple results — use duration to determine confidence (not to override winner)
-      const durationConfidence = resolveConfidenceFromDuration(scored, duration);
-      const confidence: Confidence = durationConfidence ?? 'medium';
+      const durationResult = resolveConfidenceFromDuration(scored, duration);
+      const confidence: Confidence = durationResult?.confidence ?? 'medium';
+      const reason = durationResult?.reason ?? (durationResult ? undefined : 'Multiple results — no duration data to disambiguate');
       this.log.debug(
         {
           path: book.path,
@@ -230,11 +232,12 @@ class MatchJob {
           hasDuration: !!duration,
           matchDuration: topScored.meta.duration,
         },
-        durationConfidence ? 'Duration-informed confidence' : 'Multiple results, no duration disambiguation — medium confidence',
+        durationResult ? 'Duration-informed confidence' : 'Multiple results, no duration disambiguation — medium confidence',
       );
       return {
         path: book.path,
         confidence,
+        reason,
         bestMatch: topScored.meta,
         alternatives: scored.slice(1).map(s => s.meta),
       };
@@ -273,6 +276,16 @@ class MatchJob {
   }
 }
 
+/** Format minutes as hours with 1 decimal place. */
+function formatHours(minutes: number): string {
+  return (minutes / 60).toFixed(1);
+}
+
+interface DurationConfidenceResult {
+  confidence: Confidence;
+  reason?: string;
+}
+
 /**
  * Determines confidence from duration data without overriding the similarity-ranked winner.
  * The bestMatch stays as the top similarity-ranked result; duration only affects confidence level.
@@ -280,7 +293,7 @@ class MatchJob {
 function resolveConfidenceFromDuration(
   scored: { meta: BookMetadata; score: number }[],
   duration: number | undefined,
-): Confidence | null {
+): DurationConfidenceResult | null {
   if (!duration || duration <= 0) return null;
 
   const topResult = scored[0];
@@ -290,12 +303,17 @@ function resolveConfidenceFromDuration(
     const threshold = topResult.score >= COMBINED_SCORE_GATE
       ? DURATION_THRESHOLD_RELAXED
       : DURATION_THRESHOLD_STRICT;
-    return distance <= threshold ? 'high' : 'medium';
+    if (distance <= threshold) {
+      return { confidence: 'high' };
+    }
+    return {
+      confidence: 'medium',
+      reason: `Duration mismatch — scanned ${formatHours(duration)}hrs vs expected ${formatHours(topResult.meta.duration)}hrs`,
+    };
   }
 
-  // Top result has no duration — check if any candidate has close duration
-  // (still medium confidence since the winner lacks duration verification)
-  return null;
+  // Top result has no duration — cannot verify
+  return { confidence: 'medium', reason: 'Best match missing duration — cannot verify' };
 }
 
 /** Scores and ranks results by title+author similarity with year tiebreaker. */

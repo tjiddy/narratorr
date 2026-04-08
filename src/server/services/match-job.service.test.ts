@@ -1348,26 +1348,301 @@ describe('MatchJobService', () => {
   // ── #415 Match confidence reason ──────────────────────────────────────
   describe('match confidence reason (#415)', () => {
     describe('reason populated for medium confidence', () => {
-      it.todo('duration exceeds strict threshold (>5%) with score < 0.95 → reason includes "Duration mismatch" with scanned and expected hours');
-      it.todo('duration exceeds relaxed threshold (>15%) with score ≥ 0.95 → reason includes "Duration mismatch" with both values');
-      it.todo('multiple results with no duration data (scanned duration null) → reason is "Multiple results — no duration data to disambiguate"');
-      it.todo('multiple results with zero scanned duration → reason uses no-duration-data path, not "0.0hrs"');
-      it.todo('multiple results, top result lacks duration but scanned duration exists → reason is "Best match missing duration — cannot verify"');
-      it.todo('duration just over strict threshold (5.1%) with score < 0.95 → medium confidence with duration-mismatch reason');
-      it.todo('duration just over relaxed threshold (15.1%) with score ≥ 0.95 → medium confidence with duration-mismatch reason');
+      it('duration exceeds strict threshold (>5%) with score < 0.95 → reason includes "Duration mismatch" with scanned and expected hours', async () => {
+        const weakCandidate: MatchCandidate = {
+          path: '/audiobooks/Doctor Sleep',
+          title: 'Doctor Sleep',
+          author: 'Stephen King',
+        };
+        (scanAudioDirectory as ReturnType<typeof vi.fn>).mockResolvedValue({
+          totalDuration: 36000, // 600 min
+          files: [],
+        });
+        const results = [
+          makeBookMetadata({ title: 'Doctor Sleep: A Novel', authors: [{ name: 'Stephen King' }], providerId: 'p1' }),
+          makeBookMetadata({ title: 'Doctor Sleep (Unabridged)', authors: [{ name: 'Stephen King' }], providerId: 'p2' }),
+        ];
+        (metadataService.searchBooks as ReturnType<typeof vi.fn>).mockResolvedValue(results);
+        (metadataService.getBook as ReturnType<typeof vi.fn>)
+          .mockResolvedValueOnce({ asin: 'A1', duration: 650 }) // 8.3% off — exceeds strict 5%
+          .mockResolvedValueOnce({ asin: 'A2', duration: 700 });
+
+        const id = service.createJob([weakCandidate]);
+        await waitForJob(service, id);
+
+        const result = service.getJob(id)!.results[0];
+        expect(result.confidence).toBe('medium');
+        expect(result.reason).toBeDefined();
+        expect(result.reason).toContain('Duration mismatch');
+        // 600 min = 10.0 hrs scanned; 650 min = 10.8 hrs expected
+        expect(result.reason).toContain('10.0');
+        expect(result.reason).toContain('10.8');
+      });
+
+      it('duration exceeds relaxed threshold (>15%) with score ≥ 0.95 → reason includes "Duration mismatch" with both values', async () => {
+        (scanAudioDirectory as ReturnType<typeof vi.fn>).mockResolvedValue({
+          totalDuration: 36000, // 600 min
+          files: [],
+        });
+        const results = [
+          makeBookMetadata({ title: 'The Way of Kings', providerId: 'p1' }),
+          makeBookMetadata({ title: 'The Way of Kings (Extended)', providerId: 'p2' }),
+        ];
+        (metadataService.searchBooks as ReturnType<typeof vi.fn>).mockResolvedValue(results);
+        (metadataService.getBook as ReturnType<typeof vi.fn>)
+          .mockResolvedValueOnce({ asin: 'A1', duration: 696 }) // 16% off
+          .mockResolvedValueOnce({ asin: 'A2', duration: 900 });
+
+        const id = service.createJob([sampleCandidate]);
+        await waitForJob(service, id);
+
+        const result = service.getJob(id)!.results[0];
+        expect(result.confidence).toBe('medium');
+        expect(result.reason).toBeDefined();
+        expect(result.reason).toContain('Duration mismatch');
+        // 600 min = 10.0 hrs scanned; 696 min = 11.6 hrs expected
+        expect(result.reason).toContain('10.0');
+        expect(result.reason).toContain('11.6');
+      });
+
+      it('multiple results with no duration data (scanned duration null) → reason is "Multiple results — no duration data to disambiguate"', async () => {
+        (scanAudioDirectory as ReturnType<typeof vi.fn>).mockResolvedValue(null);
+        const results = [
+          makeBookMetadata({ title: 'The Way of Kings', providerId: 'p1' }),
+          makeBookMetadata({ title: 'The Way of Kings (Extended)', providerId: 'p2' }),
+        ];
+        (metadataService.searchBooks as ReturnType<typeof vi.fn>).mockResolvedValue(results);
+        (metadataService.getBook as ReturnType<typeof vi.fn>)
+          .mockResolvedValueOnce({ asin: 'A1', duration: 600 })
+          .mockResolvedValueOnce({ asin: 'A2', duration: 800 });
+
+        const id = service.createJob([sampleCandidate]);
+        await waitForJob(service, id);
+
+        const result = service.getJob(id)!.results[0];
+        expect(result.confidence).toBe('medium');
+        expect(result.reason).toBe('Multiple results — no duration data to disambiguate');
+      });
+
+      it('multiple results with zero scanned duration → reason uses no-duration-data path, not "0.0hrs"', async () => {
+        (scanAudioDirectory as ReturnType<typeof vi.fn>).mockResolvedValue({
+          totalDuration: 0,
+          files: [],
+        });
+        const results = [
+          makeBookMetadata({ title: 'The Way of Kings', providerId: 'p1' }),
+          makeBookMetadata({ title: 'The Way of Kings (Extended)', providerId: 'p2' }),
+        ];
+        (metadataService.searchBooks as ReturnType<typeof vi.fn>).mockResolvedValue(results);
+        (metadataService.getBook as ReturnType<typeof vi.fn>)
+          .mockResolvedValueOnce({ asin: 'A1', duration: 600 })
+          .mockResolvedValueOnce({ asin: 'A2', duration: 800 });
+
+        const id = service.createJob([sampleCandidate]);
+        await waitForJob(service, id);
+
+        const result = service.getJob(id)!.results[0];
+        expect(result.confidence).toBe('medium');
+        expect(result.reason).toBe('Multiple results — no duration data to disambiguate');
+        expect(result.reason).not.toContain('0.0');
+      });
+
+      it('multiple results, top result lacks duration but scanned duration exists → reason is "Best match missing duration — cannot verify"', async () => {
+        (scanAudioDirectory as ReturnType<typeof vi.fn>).mockResolvedValue({
+          totalDuration: 36000, // 600 min
+          files: [],
+        });
+        const results = [
+          makeBookMetadata({ title: 'The Way of Kings', providerId: 'p1' }),
+          makeBookMetadata({ title: 'The Way of Kings (Extended)', providerId: 'p2' }),
+        ];
+        (metadataService.searchBooks as ReturnType<typeof vi.fn>).mockResolvedValue(results);
+        // Top result has NO duration, second result does
+        (metadataService.getBook as ReturnType<typeof vi.fn>)
+          .mockResolvedValueOnce({ asin: 'A1' }) // no duration
+          .mockResolvedValueOnce({ asin: 'A2', duration: 800 });
+
+        const id = service.createJob([sampleCandidate]);
+        await waitForJob(service, id);
+
+        const result = service.getJob(id)!.results[0];
+        expect(result.confidence).toBe('medium');
+        expect(result.reason).toBe('Best match missing duration — cannot verify');
+      });
+
+      it('duration just over strict threshold (5.1%) with score < 0.95 → medium confidence with duration-mismatch reason', async () => {
+        const weakCandidate: MatchCandidate = {
+          path: '/audiobooks/Doctor Sleep',
+          title: 'Doctor Sleep',
+          author: 'Stephen King',
+        };
+        (scanAudioDirectory as ReturnType<typeof vi.fn>).mockResolvedValue({
+          totalDuration: 60000, // 1000 min
+          files: [],
+        });
+        const results = [
+          makeBookMetadata({ title: 'Doctor Sleep: A Novel', authors: [{ name: 'Stephen King' }], providerId: 'p1' }),
+          makeBookMetadata({ title: 'Doctor Sleep (Unabridged)', authors: [{ name: 'Stephen King' }], providerId: 'p2' }),
+        ];
+        (metadataService.searchBooks as ReturnType<typeof vi.fn>).mockResolvedValue(results);
+        (metadataService.getBook as ReturnType<typeof vi.fn>)
+          .mockResolvedValueOnce({ asin: 'A1', duration: 1051 }) // 5.1% off
+          .mockResolvedValueOnce({ asin: 'A2', duration: 1200 });
+
+        const id = service.createJob([weakCandidate]);
+        await waitForJob(service, id);
+
+        const result = service.getJob(id)!.results[0];
+        expect(result.confidence).toBe('medium');
+        expect(result.reason).toContain('Duration mismatch');
+      });
+
+      it('duration just over relaxed threshold (15.1%) with score ≥ 0.95 → medium confidence with duration-mismatch reason', async () => {
+        (scanAudioDirectory as ReturnType<typeof vi.fn>).mockResolvedValue({
+          totalDuration: 60000, // 1000 min
+          files: [],
+        });
+        const results = [
+          makeBookMetadata({ title: 'The Way of Kings', providerId: 'p1' }),
+          makeBookMetadata({ title: 'The Way of Kings (Extended)', providerId: 'p2' }),
+        ];
+        (metadataService.searchBooks as ReturnType<typeof vi.fn>).mockResolvedValue(results);
+        (metadataService.getBook as ReturnType<typeof vi.fn>)
+          .mockResolvedValueOnce({ asin: 'A1', duration: 1151 }) // 15.1% off
+          .mockResolvedValueOnce({ asin: 'A2', duration: 1300 });
+
+        const id = service.createJob([sampleCandidate]);
+        await waitForJob(service, id);
+
+        const result = service.getJob(id)!.results[0];
+        expect(result.confidence).toBe('medium');
+        expect(result.reason).toContain('Duration mismatch');
+      });
     });
 
     describe('reason NOT populated for high/none confidence', () => {
-      it.todo('single result with high confidence → reason is undefined');
-      it.todo('no search results (none confidence) → reason is undefined');
-      it.todo('title similarity below 50% floor (none confidence) → reason is undefined');
-      it.todo('error during matching (none confidence with error field) → reason is undefined');
-      it.todo('duration at exactly 5.0% strict threshold (inclusive <=) → high confidence, no reason');
-      it.todo('duration at exactly 15.0% relaxed threshold with high score (inclusive <=) → high confidence, no reason');
+      it('single result with high confidence → reason is undefined', async () => {
+        const meta = makeBookMetadata({ providerId: 'asin-123' });
+        (metadataService.searchBooks as ReturnType<typeof vi.fn>).mockResolvedValue([meta]);
+        (metadataService.getBook as ReturnType<typeof vi.fn>).mockResolvedValue({ asin: 'B123', duration: 600 });
+
+        const id = service.createJob([sampleCandidate]);
+        await waitForJob(service, id);
+
+        const result = service.getJob(id)!.results[0];
+        expect(result.confidence).toBe('high');
+        expect(result.reason).toBeUndefined();
+      });
+
+      it('no search results (none confidence) → reason is undefined', async () => {
+        (metadataService.searchBooks as ReturnType<typeof vi.fn>).mockResolvedValue([]);
+
+        const id = service.createJob([sampleCandidate]);
+        await waitForJob(service, id);
+
+        const result = service.getJob(id)!.results[0];
+        expect(result.confidence).toBe('none');
+        expect(result.reason).toBeUndefined();
+      });
+
+      it('title similarity below 50% floor (none confidence) → reason is undefined', async () => {
+        const results = [
+          makeBookMetadata({ title: 'Completely Different Book', providerId: 'p1' }),
+          makeBookMetadata({ title: 'Another Unrelated Book', providerId: 'p2' }),
+        ];
+        (metadataService.searchBooks as ReturnType<typeof vi.fn>).mockResolvedValue(results);
+        (metadataService.getBook as ReturnType<typeof vi.fn>)
+          .mockResolvedValueOnce({ asin: 'A1' })
+          .mockResolvedValueOnce({ asin: 'A2' });
+
+        const id = service.createJob([sampleCandidate]);
+        await waitForJob(service, id);
+
+        const result = service.getJob(id)!.results[0];
+        expect(result.confidence).toBe('none');
+        expect(result.reason).toBeUndefined();
+      });
+
+      it('error during matching (none confidence with error field) → reason is undefined', async () => {
+        (metadataService.searchBooks as ReturnType<typeof vi.fn>).mockRejectedValue(new Error('API failure'));
+
+        const id = service.createJob([sampleCandidate]);
+        await waitForJob(service, id);
+
+        const result = service.getJob(id)!.results[0];
+        expect(result.confidence).toBe('none');
+        expect(result.error).toBe('API failure');
+        expect(result.reason).toBeUndefined();
+      });
+
+      it('duration at exactly 5.0% strict threshold (inclusive <=) → high confidence, no reason', async () => {
+        (scanAudioDirectory as ReturnType<typeof vi.fn>).mockResolvedValue({
+          totalDuration: 36000, // 600 min
+          files: [],
+        });
+        const results = [
+          makeBookMetadata({ title: 'The Way of Kings', providerId: 'p1' }),
+          makeBookMetadata({ title: 'The Way of Kings (Unabridged)', providerId: 'p2' }),
+        ];
+        (metadataService.searchBooks as ReturnType<typeof vi.fn>).mockResolvedValue(results);
+        (metadataService.getBook as ReturnType<typeof vi.fn>)
+          .mockResolvedValueOnce({ asin: 'A1', duration: 630 }) // exactly 5%
+          .mockResolvedValueOnce({ asin: 'A2', duration: 900 });
+
+        const id = service.createJob([sampleCandidate]);
+        await waitForJob(service, id);
+
+        const result = service.getJob(id)!.results[0];
+        expect(result.confidence).toBe('high');
+        expect(result.reason).toBeUndefined();
+      });
+
+      it('duration at exactly 15.0% relaxed threshold with high score (inclusive <=) → high confidence, no reason', async () => {
+        (scanAudioDirectory as ReturnType<typeof vi.fn>).mockResolvedValue({
+          totalDuration: 36000, // 600 min
+          files: [],
+        });
+        const results = [
+          makeBookMetadata({ title: 'The Way of Kings', providerId: 'p1' }),
+          makeBookMetadata({ title: 'The Way of Kings (Extended)', providerId: 'p2' }),
+        ];
+        (metadataService.searchBooks as ReturnType<typeof vi.fn>).mockResolvedValue(results);
+        (metadataService.getBook as ReturnType<typeof vi.fn>)
+          .mockResolvedValueOnce({ asin: 'A1', duration: 690 }) // exactly 15%
+          .mockResolvedValueOnce({ asin: 'A2', duration: 900 });
+
+        const id = service.createJob([sampleCandidate]);
+        await waitForJob(service, id);
+
+        const result = service.getJob(id)!.results[0];
+        expect(result.confidence).toBe('high');
+        expect(result.reason).toBeUndefined();
+      });
     });
 
     describe('duration conversion in reason string', () => {
-      it.todo('converts minutes to hours correctly in reason string (e.g., 2229 min → 37.2 hrs)');
+      it('converts minutes to hours correctly in reason string (e.g., 2229 min → 37.2 hrs)', async () => {
+        (scanAudioDirectory as ReturnType<typeof vi.fn>).mockResolvedValue({
+          totalDuration: 2229 * 60, // 2229 min in seconds
+          files: [],
+        });
+        const results = [
+          makeBookMetadata({ title: 'The Way of Kings', providerId: 'p1' }),
+          makeBookMetadata({ title: 'The Way of Kings (Extended)', providerId: 'p2' }),
+        ];
+        (metadataService.searchBooks as ReturnType<typeof vi.fn>).mockResolvedValue(results);
+        (metadataService.getBook as ReturnType<typeof vi.fn>)
+          .mockResolvedValueOnce({ asin: 'A1', duration: 2730 }) // ~22% off from 2229
+          .mockResolvedValueOnce({ asin: 'A2', duration: 3000 });
+
+        const id = service.createJob([sampleCandidate]);
+        await waitForJob(service, id);
+
+        const result = service.getJob(id)!.results[0];
+        expect(result.confidence).toBe('medium');
+        expect(result.reason).toContain('37.1');
+        expect(result.reason).toContain('45.5');
+      });
     });
   });
 });
