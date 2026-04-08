@@ -170,12 +170,22 @@ describe('BlacklistService', () => {
       spy.mockRestore();
     });
 
-    it('returns true when either infoHash or guid matches (OR logic)', async () => {
+    it('returns true when infoHash matches but guid does not (both provided)', async () => {
       const spy = vi.spyOn(service, 'getBlacklistedIdentifiers').mockResolvedValue({
         blacklistedHashes: new Set(['abc123']),
         blacklistedGuids: new Set(),
       });
       const result = await service.isBlacklisted('abc123', 'no-match-guid');
+      expect(result).toBe(true);
+      spy.mockRestore();
+    });
+
+    it('returns true when guid matches but infoHash does not (both provided)', async () => {
+      const spy = vi.spyOn(service, 'getBlacklistedIdentifiers').mockResolvedValue({
+        blacklistedHashes: new Set(),
+        blacklistedGuids: new Set(['guid-hit']),
+      });
+      const result = await service.isBlacklisted('hash-miss', 'guid-hit');
       expect(result).toBe(true);
       spy.mockRestore();
     });
