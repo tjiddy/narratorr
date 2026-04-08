@@ -1531,8 +1531,66 @@ describe('#424 cover art temp file cleanup', () => {
   });
 
   describe('AbortSignal support', () => {
-    it.todo('kills the child process when signal is aborted during processing');
-    it.todo('rejects the promise when signal is aborted even if ffmpeg exits 0');
-    it.todo('does not spawn process when signal is already aborted before spawn');
+    it('kills the child process when signal is aborted during processing', async () => {
+      // Setup: 2 files so merge path is taken
+      mockReaddir.mockResolvedValue([
+        { name: '01.mp3', isFile: () => true, isDirectory: () => false },
+        { name: '02.mp3', isFile: () => true, isDirectory: () => false },
+      ] as never);
+      vi.mocked(readChapterSources).mockResolvedValue([
+        { filePath: '/lib/book/01.mp3', title: 'Ch 1' },
+        { filePath: '/lib/book/02.mp3', title: 'Ch 2' },
+      ]);
+      mockExecFileSuccess('30.0');
+
+      const controller = new AbortController();
+      const child = new MockChildProcess();
+      mockSpawn.mockReturnValue(child as never);
+
+      // Start processAudioFiles — it will await spawnFfmpeg
+      const promise = processAudioFiles(
+        '/lib/book', { ...defaultConfig, mergeBehavior: 'always' }, defaultContext,
+        undefined, controller.signal,
+      );
+
+      // Let setup (readdir, readChapterSources, getFileDurations, writeFile) settle
+      await new Promise((r) => setTimeout(r, 50));
+
+      // Abort while ffmpeg is running
+      controller.abort();
+
+      // The child process should be killed
+      expect(child.kill).toHaveBeenCalledWith('SIGTERM');
+
+      // Simulate process exit after kill
+      child.emit('close', 1);
+
+      const result = await promise;
+      expect(result.success).toBe(false);
+    });
+
+    it('does not spawn process when signal is already aborted before spawn', async () => {
+      mockReaddir.mockResolvedValue([
+        { name: '01.mp3', isFile: () => true, isDirectory: () => false },
+        { name: '02.mp3', isFile: () => true, isDirectory: () => false },
+      ] as never);
+      vi.mocked(readChapterSources).mockResolvedValue([
+        { filePath: '/lib/book/01.mp3', title: 'Ch 1' },
+        { filePath: '/lib/book/02.mp3', title: 'Ch 2' },
+      ]);
+      mockExecFileSuccess('30.0');
+
+      const controller = new AbortController();
+      controller.abort(); // Abort before calling
+
+      const result = await processAudioFiles(
+        '/lib/book', { ...defaultConfig, mergeBehavior: 'always' }, defaultContext,
+        undefined, controller.signal,
+      );
+
+      expect(result.success).toBe(false);
+      expect(result.error).toContain('aborted');
+      expect(mockSpawn).not.toHaveBeenCalled();
+    });
   });
 });
