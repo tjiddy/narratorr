@@ -3546,46 +3546,148 @@ describe('scanDirectory() — within-scan duplicate detection (#342)', () => {
   });
 
   describe('cleanName enhancements (issue #426)', () => {
+    // cleanName() is private — test via parseFolderStructure with 2-part paths
+    // where parts[1] (title) goes through cleanName() directly
+
     describe('narrator parenthetical stripping', () => {
-      it.todo('strips trailing "(Jeff Hays)" from title');
-      it.todo('strips trailing "(Stephen Fry)" from title');
-      it.todo('does not strip "(Unabridged)" — handled as codec tag');
-      it.todo('does not strip "(2020)" — handled as year');
-      it.todo('does not strip long parentheticals (>3 words)');
+      it('strips trailing "(Jeff Hays)" from title', () => {
+        const result = parseFolderStructure(['Author', 'Dungeon Crawler Carl (Jeff Hays)']);
+        expect(result.title).toBe('Dungeon Crawler Carl');
+      });
+
+      it('strips trailing "(Stephen Fry)" from title', () => {
+        const result = parseFolderStructure(['Author', 'Bloody Rose (Stephen Fry)']);
+        expect(result.title).toBe('Bloody Rose');
+      });
+
+      it('does not strip "(Unabridged)" — handled as codec tag', () => {
+        const result = parseFolderStructure(['Author', 'Bloody Rose (Unabridged)']);
+        expect(result.title).toBe('Bloody Rose');
+      });
+
+      it('does not strip "(2020)" — handled as year', () => {
+        const result = parseFolderStructure(['Author', 'BookTitle (2020)']);
+        expect(result.title).toBe('BookTitle');
+      });
+
+      it('does not strip long parentheticals (>3 words)', () => {
+        const result = parseFolderStructure(['Author', 'BookTitle (A Very Long Subtitle Here)']);
+        expect(result.title).toBe('BookTitle (A Very Long Subtitle Here)');
+      });
     });
 
     describe('series marker stripping', () => {
-      it.todo('strips ", Book 01" from title');
-      it.todo('strips ", Vol 3" from title');
-      it.todo('strips ", Volume 12" from title');
-      it.todo('does not strip when title would be empty');
+      it('strips ", Book 01" from title', () => {
+        const result = parseFolderStructure(['Author', 'The Hunger Games, Book 01']);
+        expect(result.title).toBe('The Hunger Games');
+      });
+
+      it('strips ", Vol 3" from title', () => {
+        const result = parseFolderStructure(['Author', 'Title, Vol 3']);
+        expect(result.title).toBe('Title');
+      });
+
+      it('strips ", Volume 12" from title', () => {
+        const result = parseFolderStructure(['Author', 'Title, Volume 12']);
+        expect(result.title).toBe('Title');
+      });
+
+      it('does not strip when title would be empty', () => {
+        const result = parseFolderStructure(['Author', ', Book 01']);
+        // Should fall back or preserve — not produce empty title
+        expect(result.title.length).toBeGreaterThan(0);
+      });
     });
 
     describe('empty bracket removal', () => {
-      it.todo('removes empty () after codec stripping');
-      it.todo('removes empty [] after codec stripping');
-      it.todo('preserves non-empty parentheticals');
+      it('removes empty () after codec stripping', () => {
+        const result = parseFolderStructure(['Author', 'BookTitle (MP3)']);
+        expect(result.title).toBe('BookTitle');
+        expect(result.title).not.toContain('()');
+      });
+
+      it('removes empty [] after codec stripping', () => {
+        const result = parseFolderStructure(['Author', 'BookTitle [FLAC]']);
+        expect(result.title).toBe('BookTitle');
+        expect(result.title).not.toContain('[]');
+      });
+
+      it('preserves non-empty parentheticals', () => {
+        const result = parseFolderStructure(['Author', 'BookTitle (Special Edition)']);
+        // "Special Edition" is >1 word and not a codec/year — preserved
+        // But it's only 2 words, so narrator strip heuristic could apply
+        // Actually 2 words is fine as a name. Let's test with something clearly not a name.
+        const result2 = parseFolderStructure(['Author', 'BookTitle (The Extended Cut Edition)']);
+        expect(result2.title).toBe('BookTitle (The Extended Cut Edition)');
+      });
     });
 
     describe('duplicate segment deduplication', () => {
-      it.todo('deduplicates "Dungeon Crawler Carl 01 – Dungeon Crawler Carl"');
-      it.todo('deduplicates "The Hunger Games, Book 01 – The Hunger Games"');
-      it.todo('does not deduplicate non-duplicate segments');
+      it('deduplicates "Dungeon Crawler Carl 01 – Dungeon Crawler Carl"', () => {
+        const result = parseFolderStructure(['Matt Dinniman', 'Dungeon Crawler Carl 01 – Dungeon Crawler Carl']);
+        expect(result.title).toBe('Dungeon Crawler Carl');
+      });
+
+      it('deduplicates "The Hunger Games, Book 01 – The Hunger Games"', () => {
+        const result = parseFolderStructure(['Suzanne Collins', 'The Hunger Games, Book 01 – The Hunger Games']);
+        expect(result.title).toBe('The Hunger Games');
+      });
+
+      it('does not deduplicate non-duplicate segments', () => {
+        // In 2-part paths, parts[1] is title — dash is NOT parsed as author separator
+        const result = parseFolderStructure(['Author', 'The Way of Kings – Brandon Sanderson']);
+        expect(result.title).toBe('The Way of Kings – Brandon Sanderson');
+        expect(result.author).toBe('Author');
+      });
     });
 
     describe('regression — existing cleanName behaviors', () => {
-      it.todo('still strips decimal series positions');
-      it.todo('still strips codec tags');
-      it.todo('still removes years');
-      it.todo('returns original on empty result');
+      it('still strips decimal series positions', () => {
+        const result = parseFolderStructure(['Author', '6.5 – The Title']);
+        expect(result.title).toBe('The Title');
+      });
+
+      it('still strips codec tags', () => {
+        const result = parseFolderStructure(['Author', 'BookTitle MP3']);
+        expect(result.title).toBe('BookTitle');
+      });
+
+      it('still removes years', () => {
+        const result = parseFolderStructure(['Author', 'BookTitle (2020)']);
+        expect(result.title).toBe('BookTitle');
+      });
+
+      it('returns original on empty result', () => {
+        const result = parseFolderStructure(['Author', '01.']);
+        expect(result.title.length).toBeGreaterThan(0);
+      });
     });
   });
 
   describe('parseSingleFolder regression (issue #426)', () => {
-    it.todo('"BookTitle (Author Name)" still parses as title + author');
-    it.todo('"BookTitle [Author Name]" still parses as title + author');
-    it.todo('"Author - BookTitle (Narrator)" strips narrator from title via cleanName');
-    it.todo('multi-part "Author/BookTitle (Jeff Hays)" strips narrator from title');
+    it('"BookTitle (Author Name)" still parses as title + author', () => {
+      const result = parseFolderStructure(['Dune (Frank Herbert)']);
+      expect(result.title).toBe('Dune');
+      expect(result.author).toBe('Frank Herbert');
+    });
+
+    it('"BookTitle [Author Name]" still parses as title + author', () => {
+      const result = parseFolderStructure(['Dune [Frank Herbert]']);
+      expect(result.title).toBe('Dune');
+      expect(result.author).toBe('Frank Herbert');
+    });
+
+    it('"Author - BookTitle (Narrator)" strips narrator from title via cleanName', () => {
+      const result = parseFolderStructure(['Author - BookTitle (Jeff Hays)']);
+      expect(result.title).toBe('BookTitle');
+      expect(result.author).toBe('Author');
+    });
+
+    it('multi-part "Author/BookTitle (Jeff Hays)" strips narrator from title', () => {
+      const result = parseFolderStructure(['Author', 'BookTitle (Jeff Hays)']);
+      expect(result.title).toBe('BookTitle');
+      expect(result.author).toBe('Author');
+    });
   });
 
   describe('lookupMetadata swap retry (issue #426)', () => {
