@@ -180,7 +180,7 @@ export function useLibraryImport() {
         ? r.matchResult.confidence === 'none'
           ? { ...r.matchResult, confidence: 'medium' as const }
           : r.matchResult.confidence === 'medium' && metadataChanged
-            ? { ...r.matchResult, confidence: 'high' as const }
+            ? { ...r.matchResult, confidence: 'high' as const, reason: undefined }
             : r.matchResult
         : r.matchResult;
 

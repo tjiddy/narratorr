@@ -322,6 +322,69 @@ describe('ImportCard', () => {
       expect(screen.getByRole('button', { name: /Edit metadata/i })).toBeInTheDocument();
     });
   });
+
+  // ── #415 Match confidence reason on badge ───────────────────────────
+  describe('confidence reason display (#415)', () => {
+    it('medium confidence with reason string → reason text visible via title attribute', () => {
+      const row = makeRow({
+        matchResult: makeMatchResult({
+          confidence: 'medium',
+          reason: 'Duration mismatch — scanned 10.0hrs vs expected 11.6hrs',
+        }),
+      });
+      render(<ImportCard {...defaultProps} row={row} />);
+      const badge = screen.getByText('Review');
+      expect(badge.closest('[title]')).toBeTruthy();
+      expect(badge.closest('[title]')!.getAttribute('title')).toBe(
+        'Duration mismatch — scanned 10.0hrs vs expected 11.6hrs',
+      );
+    });
+
+    it('medium confidence without reason (undefined) → badge renders normally without title attribute', () => {
+      const row = makeRow({
+        matchResult: makeMatchResult({ confidence: 'medium' }),
+      });
+      render(<ImportCard {...defaultProps} row={row} />);
+      const badge = screen.getByText('Review');
+      const titleEl = badge.closest('[title]');
+      expect(titleEl === null || titleEl.getAttribute('title') === '').toBe(true);
+    });
+
+    it('high confidence → no title attribute on badge', () => {
+      const row = makeRow({
+        matchResult: makeMatchResult({ confidence: 'high' }),
+      });
+      render(<ImportCard {...defaultProps} row={row} />);
+      const badge = screen.getByText('Matched');
+      const titleEl = badge.closest('[title]');
+      expect(titleEl === null || titleEl.getAttribute('title') === '').toBe(true);
+    });
+
+    it('none confidence → no title attribute on badge', () => {
+      const row = makeRow({
+        matchResult: makeMatchResult({ confidence: 'none', bestMatch: null }),
+      });
+      render(<ImportCard {...defaultProps} row={row} />);
+      const badge = screen.getByText('No Match');
+      const titleEl = badge.closest('[title]');
+      expect(titleEl === null || titleEl.getAttribute('title') === '').toBe(true);
+    });
+
+    it('medium confidence with reason → badge is keyboard-focusable and exposes reason on focus', () => {
+      const row = makeRow({
+        matchResult: makeMatchResult({
+          confidence: 'medium',
+          reason: 'Duration mismatch — scanned 10.0hrs vs expected 11.6hrs',
+        }),
+      });
+      render(<ImportCard {...defaultProps} row={row} />);
+      const badge = screen.getByText('Review').closest('[title]') as HTMLElement;
+      expect(badge).toHaveAttribute('tabindex', '0');
+      badge.focus();
+      expect(badge).toHaveFocus();
+      expect(badge).toHaveAttribute('title', 'Duration mismatch — scanned 10.0hrs vs expected 11.6hrs');
+    });
+  });
 });
 
 describe('ImportCard — lockDuplicates prop (#133)', () => {

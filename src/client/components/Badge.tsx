@@ -14,14 +14,17 @@ interface BadgeProps {
   variant: BadgeVariant;
   icon?: ElementType;
   className?: string;
+  title?: string;
   children: ReactNode;
 }
 
-export function Badge({ variant, icon: Icon, className, children }: BadgeProps) {
+export function Badge({ variant, icon: Icon, className, title, children }: BadgeProps) {
   return (
     <span
       data-testid="badge"
-      className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-medium ${variantClasses[variant]}${className ? ` ${className}` : ''}`}
+      title={title}
+      tabIndex={title ? 0 : undefined}
+      className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-medium ${variantClasses[variant]}${className ? ` ${className}` : ''}${title ? ' cursor-help' : ''}`}
     >
       {Icon && <Icon className="w-3 h-3" />}
       {children}
