@@ -1344,4 +1344,30 @@ describe('MatchJobService', () => {
       });
     });
   });
+
+  // ── #415 Match confidence reason ──────────────────────────────────────
+  describe('match confidence reason (#415)', () => {
+    describe('reason populated for medium confidence', () => {
+      it.todo('duration exceeds strict threshold (>5%) with score < 0.95 → reason includes "Duration mismatch" with scanned and expected hours');
+      it.todo('duration exceeds relaxed threshold (>15%) with score ≥ 0.95 → reason includes "Duration mismatch" with both values');
+      it.todo('multiple results with no duration data (scanned duration null) → reason is "Multiple results — no duration data to disambiguate"');
+      it.todo('multiple results with zero scanned duration → reason uses no-duration-data path, not "0.0hrs"');
+      it.todo('multiple results, top result lacks duration but scanned duration exists → reason is "Best match missing duration — cannot verify"');
+      it.todo('duration just over strict threshold (5.1%) with score < 0.95 → medium confidence with duration-mismatch reason');
+      it.todo('duration just over relaxed threshold (15.1%) with score ≥ 0.95 → medium confidence with duration-mismatch reason');
+    });
+
+    describe('reason NOT populated for high/none confidence', () => {
+      it.todo('single result with high confidence → reason is undefined');
+      it.todo('no search results (none confidence) → reason is undefined');
+      it.todo('title similarity below 50% floor (none confidence) → reason is undefined');
+      it.todo('error during matching (none confidence with error field) → reason is undefined');
+      it.todo('duration at exactly 5.0% strict threshold (inclusive <=) → high confidence, no reason');
+      it.todo('duration at exactly 15.0% relaxed threshold with high score (inclusive <=) → high confidence, no reason');
+    });
+
+    describe('duration conversion in reason string', () => {
+      it.todo('converts minutes to hours correctly in reason string (e.g., 2229 min → 37.2 hrs)');
+    });
+  });
 });

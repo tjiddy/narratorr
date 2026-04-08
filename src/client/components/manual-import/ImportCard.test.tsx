@@ -413,4 +413,12 @@ describe('ImportCard — relativePath prop (#133)', () => {
       expect(screen.queryByRole('button', { name: /select|deselect/i })).not.toBeInTheDocument();
     });
   });
+
+  // ── #415 Match confidence reason on badge ───────────────────────────
+  describe('confidence reason display (#415)', () => {
+    it.todo('medium confidence with reason string → reason text visible via tooltip or subtitle');
+    it.todo('medium confidence without reason (null/undefined) → badge renders normally without empty tooltip');
+    it.todo('high confidence with reason left over → no reason text rendered');
+    it.todo('none confidence → no reason text rendered');
+  });
 });

@@ -1010,4 +1010,11 @@ describe('empty result edge case', () => {
       expect(result.current.emptyResult).toBe(false);
     });
   });
+
+  // ── #415 Match confidence reason passthrough ────────────────────────
+  describe('confidence reason lifecycle (#415)', () => {
+    it.todo('mergeMatchResults preserves reason field from MatchResult onto ImportRow');
+    it.todo('medium → high upgrade clears reason to undefined');
+    it.todo('none → medium upgrade does not set a reason (user-initiated)');
+  });
 });
