@@ -119,4 +119,156 @@ describe('ReleaseCard', () => {
       expect(screen.getByText('french')).toBeInTheDocument();
     });
   });
+
+  describe('#421 — "In library" badge', () => {
+    const IN_LIBRARY = 'In library';
+
+    // Positive matching
+    it('renders "In library" badge when result.guid matches lastGrabGuid (usenet path)', () => {
+      mockCalculateQuality.mockReturnValue(null);
+      renderWithProviders(
+        <ReleaseCard {...defaultProps} result={{ ...baseResult, guid: 'usenet-guid-1' }} lastGrabGuid="usenet-guid-1" />,
+      );
+      expect(screen.getByText(IN_LIBRARY)).toBeInTheDocument();
+    });
+
+    it('renders "In library" badge when result.infoHash matches lastGrabInfoHash (torrent path)', () => {
+      mockCalculateQuality.mockReturnValue(null);
+      renderWithProviders(
+        <ReleaseCard {...defaultProps} result={{ ...baseResult, infoHash: 'hash-abc' }} lastGrabInfoHash="hash-abc" />,
+      );
+      expect(screen.getByText(IN_LIBRARY)).toBeInTheDocument();
+    });
+
+    it('renders "In library" badge when both guid AND infoHash match simultaneously', () => {
+      mockCalculateQuality.mockReturnValue(null);
+      renderWithProviders(
+        <ReleaseCard
+          {...defaultProps}
+          result={{ ...baseResult, guid: 'g1', infoHash: 'h1' }}
+          lastGrabGuid="g1"
+          lastGrabInfoHash="h1"
+        />,
+      );
+      expect(screen.getByText(IN_LIBRARY)).toBeInTheDocument();
+    });
+
+    // Negative / no-match cases
+    it('no badge when lastGrabGuid and lastGrabInfoHash are both null', () => {
+      mockCalculateQuality.mockReturnValue(null);
+      renderWithProviders(
+        <ReleaseCard {...defaultProps} lastGrabGuid={null} lastGrabInfoHash={null} />,
+      );
+      expect(screen.queryByText(IN_LIBRARY)).not.toBeInTheDocument();
+    });
+
+    it('no badge when identifiers exist on book but do not match result', () => {
+      mockCalculateQuality.mockReturnValue(null);
+      renderWithProviders(
+        <ReleaseCard
+          {...defaultProps}
+          result={{ ...baseResult, guid: 'result-guid', infoHash: 'result-hash' }}
+          lastGrabGuid="different-guid"
+          lastGrabInfoHash="different-hash"
+        />,
+      );
+      expect(screen.queryByText(IN_LIBRARY)).not.toBeInTheDocument();
+    });
+
+    it('no badge when both identifiers on result are undefined', () => {
+      mockCalculateQuality.mockReturnValue(null);
+      renderWithProviders(
+        <ReleaseCard
+          {...defaultProps}
+          result={{ ...baseResult, guid: undefined, infoHash: undefined }}
+          lastGrabGuid="some-guid"
+          lastGrabInfoHash="some-hash"
+        />,
+      );
+      expect(screen.queryByText(IN_LIBRARY)).not.toBeInTheDocument();
+    });
+
+    // Null safety and falsy edge cases
+    it('null guid on result does NOT match null lastGrabGuid (null ≠ null)', () => {
+      mockCalculateQuality.mockReturnValue(null);
+      renderWithProviders(
+        <ReleaseCard
+          {...defaultProps}
+          result={{ ...baseResult, guid: undefined, infoHash: undefined }}
+          lastGrabGuid={null}
+          lastGrabInfoHash={null}
+        />,
+      );
+      expect(screen.queryByText(IN_LIBRARY)).not.toBeInTheDocument();
+    });
+
+    it('empty string guid does NOT match a populated lastGrabGuid', () => {
+      mockCalculateQuality.mockReturnValue(null);
+      renderWithProviders(
+        <ReleaseCard
+          {...defaultProps}
+          result={{ ...baseResult, guid: '' }}
+          lastGrabGuid="real-guid"
+        />,
+      );
+      expect(screen.queryByText(IN_LIBRARY)).not.toBeInTheDocument();
+    });
+
+    it('undefined infoHash on result does NOT match null lastGrabInfoHash', () => {
+      mockCalculateQuality.mockReturnValue(null);
+      renderWithProviders(
+        <ReleaseCard
+          {...defaultProps}
+          result={{ ...baseResult, infoHash: undefined }}
+          lastGrabInfoHash={null}
+        />,
+      );
+      expect(screen.queryByText(IN_LIBRARY)).not.toBeInTheDocument();
+    });
+
+    it('only one identifier populated on book, only the other on result → no match', () => {
+      mockCalculateQuality.mockReturnValue(null);
+      // Book has guid, result only has infoHash (no guid)
+      renderWithProviders(
+        <ReleaseCard
+          {...defaultProps}
+          result={{ ...baseResult, guid: undefined, infoHash: 'hash-xyz' }}
+          lastGrabGuid="some-guid"
+          lastGrabInfoHash={null}
+        />,
+      );
+      expect(screen.queryByText(IN_LIBRARY)).not.toBeInTheDocument();
+    });
+
+    // Conditional rendering
+    it('badge renders independently of quality comparison (no existingBookSizeBytes)', () => {
+      mockCalculateQuality.mockReturnValue(null);
+      renderWithProviders(
+        <ReleaseCard
+          {...defaultProps}
+          result={{ ...baseResult, guid: 'match-guid' }}
+          lastGrabGuid="match-guid"
+          existingBookSizeBytes={undefined}
+        />,
+      );
+      expect(screen.getByText(IN_LIBRARY)).toBeInTheDocument();
+    });
+
+    it('badge coexists with freeleech, VIP, language, and quality badges', () => {
+      mockCalculateQuality.mockReturnValue({ tier: 'Good', mbPerHour: 64 });
+      renderWithProviders(
+        <ReleaseCard
+          {...defaultProps}
+          result={{ ...baseResult, guid: 'match-guid', isFreeleech: true, isVipOnly: true, language: 'English' }}
+          lastGrabGuid="match-guid"
+          bookDurationSeconds={36000}
+        />,
+      );
+      expect(screen.getByText(IN_LIBRARY)).toBeInTheDocument();
+      expect(screen.getByText('Freeleech')).toBeInTheDocument();
+      expect(screen.getByText('VIP')).toBeInTheDocument();
+      expect(screen.getByText('english')).toBeInTheDocument();
+      expect(screen.getByText(/Good · 64 MB\/hr/)).toBeInTheDocument();
+    });
+  });
 });

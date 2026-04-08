@@ -16,6 +16,8 @@ export function ReleaseCard({
   result,
   bookDurationSeconds,
   existingBookSizeBytes,
+  lastGrabGuid,
+  lastGrabInfoHash,
   onGrab,
   onBlacklist,
   isGrabbing,
@@ -24,6 +26,8 @@ export function ReleaseCard({
   result: SearchResult;
   bookDurationSeconds?: number;
   existingBookSizeBytes?: number;
+  lastGrabGuid?: string | null;
+  lastGrabInfoHash?: string | null;
   onGrab: () => void;
   onBlacklist: () => void;
   isGrabbing: boolean;
@@ -35,6 +39,9 @@ export function ReleaseCard({
   const comparison = existingBookSizeBytes
     ? compareQuality(existingBookSizeBytes, result.size, bookDurationSeconds)
     : null;
+  const isInLibrary =
+    (!!result.guid && result.guid === lastGrabGuid) ||
+    (!!result.infoHash && result.infoHash === lastGrabInfoHash);
   return (
     <div className="glass-card rounded-xl p-4 hover:border-primary/30 transition-all duration-200 overflow-hidden">
       <div className="flex gap-4 overflow-hidden">
@@ -92,6 +99,11 @@ export function ReleaseCard({
             {result.language && (
               <span className="text-xs px-1.5 py-0.5 rounded-md font-medium bg-blue-500/10 text-blue-400 border border-blue-500/20 capitalize">
                 {result.language.toLowerCase()}
+              </span>
+            )}
+            {isInLibrary && (
+              <span className="text-xs px-1.5 py-0.5 rounded-md font-medium bg-green-500/10 text-green-400 border border-green-500/20">
+                In library
               </span>
             )}
             {quality && (
