@@ -98,4 +98,23 @@ describe('MergeCard', () => {
       expect(screen.getAllByText('Merge failed')).toHaveLength(2);
     });
   });
+
+  describe('cancel button visibility', () => {
+    it.todo('shows cancel button during queued phase');
+    it.todo('shows cancel button during staging phase');
+    it.todo('shows cancel button during processing phase');
+    it.todo('shows cancel button during verifying phase');
+    it.todo('hides cancel button during committing phase');
+    it.todo('hides cancel button for complete outcome');
+    it.todo('hides cancel button for error outcome');
+    it.todo('hides cancel button for cancelled outcome');
+  });
+
+  describe('cancel interaction', () => {
+    it.todo('clicking cancel calls the cancel API with correct bookId');
+    it.todo('cancel button shows loading/disabled state while cancel request is in-flight');
+    it.todo('after successful cancel, card updates to show Cancelled state distinct from error');
+    it.todo('cancelled state uses reason field, not string matching on error message');
+    it.todo('cancel failure shows error toast');
+  });
 });

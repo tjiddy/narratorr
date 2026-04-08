@@ -1529,4 +1529,10 @@ describe('#424 cover art temp file cleanup', () => {
       expect(path).not.toContain('_cover');
     }
   });
+
+  describe('AbortSignal support', () => {
+    it.todo('kills the child process when signal is aborted during processing');
+    it.todo('rejects the promise when signal is aborted even if ffmpeg exits 0');
+    it.todo('does not spawn process when signal is already aborted before spawn');
+  });
 });

@@ -1429,4 +1429,12 @@ describe('#257 merge observability — BookDetails progress', () => {
       expect(api.markBookAsWrongRelease).not.toHaveBeenCalled();
     });
   });
+
+  describe('merge cancel affordance', () => {
+    it.todo('shows cancel option during active merge in non-committing phase');
+    it.todo('hides cancel option during committing phase');
+    it.todo('hides cancel option when no merge is active');
+    it.todo('clicking cancel triggers mutation with correct bookId');
+    it.todo('cancel error shows error toast');
+  });
 });

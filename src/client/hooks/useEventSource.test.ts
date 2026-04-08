@@ -1058,4 +1058,10 @@ describe('#312 cache-miss scoping — patchActivityProgress', () => {
       expect(handleSearchEvent).toHaveBeenCalledWith('search_complete', payload);
     });
   });
+
+  describe('merge cancellation SSE handling', () => {
+    it.todo('merge_failed with reason cancelled sets outcome to cancelled, not error');
+    it.todo('merge_failed with reason error continues to set outcome to error');
+    it.todo('merge_queue_updated events after cancellation update positions on all clients');
+  });
 });

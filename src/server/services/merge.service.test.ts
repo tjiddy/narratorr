@@ -1507,4 +1507,78 @@ describe('#257 merge observability — merge service', () => {
       await new Promise((resolve) => setTimeout(resolve, 50));
     });
   });
+
+  describe('cancelMerge', () => {
+    describe('cancel from queue', () => {
+      it.todo('removes a queued bookId from the queue and emits merge_failed with reason cancelled');
+      it.todo('returns success (not 404) for a queued bookId');
+      it.todo('preserves remaining queue order after cancelling a middle item (A, B, C → cancel B → A then C)');
+      it.todo('emits merge_queue_updated events for remaining queued jobs with corrected positions');
+      it.todo('returns not-found for a bookId that is neither queued nor in-progress');
+    });
+
+    describe('cancel from in-progress (staging phase)', () => {
+      it.todo('removes staging directory via rm(stagingDir, { recursive: true, force: true })');
+      it.todo('leaves original book files untouched');
+      it.todo('emits merge_failed with reason cancelled');
+      it.todo('removes bookId from inProgress set after cancel');
+      it.todo('next queued job starts after cancel of in-progress job (semaphore slot returned)');
+    });
+
+    describe('cancel from in-progress (processing phase)', () => {
+      it.todo('aborts the AbortController, killing the ffmpeg child process');
+      it.todo('cleans up staging directory after cancellation');
+      it.todo('spawnFfmpeg promise rejection flows through existing catch/cleanup path');
+      it.todo('emits merge_failed with reason cancelled, not reason error');
+    });
+
+    describe('cancel from in-progress (verifying phase)', () => {
+      it.todo('sets abort flag; merge does not proceed to commitMerge after scanAudioDirectory returns');
+      it.todo('cleans up staging directory after scan completes');
+    });
+
+    describe('cancel rejected (committing phase)', () => {
+      it.todo('returns committing status (409) when phase is committing');
+      it.todo('does not interfere with the in-progress commit');
+      it.todo('cancel is allowed up to but not including commitMerge');
+    });
+
+    describe('cancel on terminal states', () => {
+      it.todo('returns not-found for a completed merge');
+      it.todo('returns not-found for a failed merge');
+    });
+
+    describe('race conditions', () => {
+      it.todo('cancel between inProgress.add and emitMergeStarted succeeds without orphaned state');
+      it.todo('cancel during phase transition (staging → processing) succeeds');
+      it.todo('two concurrent cancel calls — first succeeds, second returns not-found');
+      it.todo('cancel during validation failure path — no double-cleanup');
+    });
+
+    describe('semaphore and queue interactions', () => {
+      it.todo('cancelling in-progress merge correctly passes semaphore slot to next queued job');
+      it.todo('cancelling does NOT release semaphore directly — processNext handles slot passing');
+    });
+  });
+
+  describe('phase rename (finalizing → committing)', () => {
+    it.todo('committing phase is emitted before commitMerge is called');
+    it.todo('finalizing phase no longer exists in emitted events');
+  });
+
+  describe('runtime phase tracking', () => {
+    it.todo('currentPhase map is set to staging when staging begins');
+    it.todo('currentPhase map is updated to processing when ffmpeg starts');
+    it.todo('currentPhase map is updated to verifying when audio scan begins');
+    it.todo('currentPhase map is updated to committing before commitMerge is called');
+    it.todo('currentPhase map entry is deleted on merge completion');
+    it.todo('currentPhase map entry is deleted on merge failure');
+    it.todo('currentPhase map entry is deleted on merge cancellation');
+  });
+
+  describe('typed cancellation signal', () => {
+    it.todo('merge_failed event includes reason cancelled on cancellation');
+    it.todo('merge_failed event includes reason error on real failures');
+    it.todo('existing error paths continue to work with reason error');
+  });
 });

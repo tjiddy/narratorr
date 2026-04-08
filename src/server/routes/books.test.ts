@@ -2196,4 +2196,11 @@ describe('PUT /api/books/:id — array update contract (#71)', () => {
       expect(res.statusCode).toBe(201);
     });
   });
+
+  describe('DELETE /api/books/:id/merge-to-m4b (cancel merge)', () => {
+    it.todo('returns 200 with { success: true } when merge is cancellable');
+    it.todo('returns 404 when no merge is active for bookId');
+    it.todo('returns 409 when merge is in committing phase');
+    it.todo('returns 400 for invalid bookId param');
+  });
 });
