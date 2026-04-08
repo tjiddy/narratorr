@@ -43,7 +43,9 @@ export function ReleaseCard({
     (!!result.guid && result.guid === lastGrabGuid) ||
     (!!result.infoHash && result.infoHash === lastGrabInfoHash);
   return (
-    <div className="glass-card rounded-xl p-4 hover:border-primary/30 transition-all duration-200 overflow-hidden">
+    <div className={`glass-card rounded-xl p-4 hover:border-primary/30 transition-all duration-200 overflow-hidden ${
+      isInLibrary ? 'border-l-[3px] border-l-green-500 border-green-500/25 bg-gradient-to-r from-green-500/10 via-green-500/[0.03] to-transparent' : ''
+    }`}>
       <div className="flex gap-4 overflow-hidden">
         {/* Cover */}
         <div className="shrink-0">
