@@ -378,7 +378,7 @@ describe('ImportCard', () => {
         }),
       });
       render(<ImportCard {...defaultProps} row={row} />);
-      const badge = screen.getByText('Review').closest('[title]')!;
+      const badge = screen.getByText('Review').closest('[title]') as HTMLElement;
       expect(badge).toHaveAttribute('tabindex', '0');
       badge.focus();
       expect(badge).toHaveFocus();
