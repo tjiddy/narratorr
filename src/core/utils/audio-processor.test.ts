@@ -1,6 +1,6 @@
 import { join } from 'node:path';
 import { EventEmitter } from 'node:events';
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import {
   probeFfmpeg,
   detectFfmpegPath,
@@ -863,11 +863,93 @@ describe('#424 convertFiles — progress output', () => {
 });
 
 describe('#424 spawnFfmpeg — stall timeout', () => {
-  it.todo('kills ffmpeg process after 60s with no progress output');
-  it.todo('rejects with descriptive error message including ffmpeg stalled');
-  it.todo('progress output resets the 60s timeout clock');
-  it.todo('normal completion within timeout resolves successfully');
-  it.todo('killed process rejects the promise');
+  beforeEach(() => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it('kills ffmpeg process after 60s with no progress output', async () => {
+    setupConvertFile();
+    const child = new MockChildProcess();
+    child.kill = vi.fn();
+    mockSpawn.mockReturnValue(child as never);
+
+    const promise = processAudioFiles('/lib/book', defaultConfig, defaultContext);
+    await vi.waitFor(() => expect(mockSpawn).toHaveBeenCalled());
+
+    // Advance past 60s stall timeout
+    vi.advanceTimersByTime(61_000);
+
+    const result = await promise;
+    expect(child.kill).toHaveBeenCalledWith('SIGTERM');
+    expect(result.success).toBe(false);
+  });
+
+  it('rejects with descriptive error message including ffmpeg stalled', async () => {
+    setupConvertFile();
+    const child = new MockChildProcess();
+    child.kill = vi.fn().mockImplementation(() => {
+      process.nextTick(() => child.emit('close', null));
+    });
+    mockSpawn.mockReturnValue(child as never);
+
+    const promise = processAudioFiles('/lib/book', defaultConfig, defaultContext);
+    await vi.waitFor(() => expect(mockSpawn).toHaveBeenCalled());
+
+    vi.advanceTimersByTime(61_000);
+
+    const result = await promise;
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      expect(result.error).toContain('ffmpeg stalled');
+    }
+  });
+
+  it('progress output resets the 60s timeout clock', async () => {
+    setupMergeFiles([200, 200]);
+    const child = new MockChildProcess();
+    child.kill = vi.fn();
+    mockSpawn.mockReturnValue(child as never);
+
+    const promise = processAudioFiles(
+      '/lib/book', { ...defaultConfig, mergeBehavior: 'always' }, defaultContext,
+    );
+    await vi.waitFor(() => expect(mockSpawn).toHaveBeenCalled());
+
+    // Advance 50s — not yet timed out
+    vi.advanceTimersByTime(50_000);
+    // Emit progress to reset the clock
+    child.stdout.emit('data', Buffer.from('out_time_us=100000000\n'));
+    // Advance another 50s — would be 100s total without reset, but only 50s since last progress
+    vi.advanceTimersByTime(50_000);
+
+    expect(child.kill).not.toHaveBeenCalled();
+
+    // Complete normally
+    child.emit('close', 0);
+    const result = await promise;
+    expect(result.success).toBe(true);
+  });
+
+  it('normal completion within timeout resolves successfully', async () => {
+    setupConvertFile();
+    const child = new MockChildProcess();
+    child.kill = vi.fn();
+    mockSpawn.mockReturnValue(child as never);
+
+    const promise = processAudioFiles('/lib/book', defaultConfig, defaultContext);
+    await vi.waitFor(() => expect(mockSpawn).toHaveBeenCalled());
+
+    // Complete well before timeout
+    vi.advanceTimersByTime(5_000);
+    child.emit('close', 0);
+
+    const result = await promise;
+    expect(result.success).toBe(true);
+    expect(child.kill).not.toHaveBeenCalled();
+  });
 });
 
 describe('#424 cover art detection and extraction', () => {

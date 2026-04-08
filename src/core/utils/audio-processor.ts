@@ -10,6 +10,9 @@ import type { NamingOptions } from './naming.js';
 
 const execFileAsync = promisify(execFile);
 
+/** Fixed stall timeout for ffmpeg processes — kills after this many ms with no stdout progress. */
+const FFMPEG_STALL_TIMEOUT_MS = 60_000;
+
 export interface ProcessingConfig {
   ffmpegPath: string;
   outputFormat: 'm4b' | 'mp3';
@@ -133,10 +136,32 @@ function spawnFfmpeg(
   return new Promise((resolve, reject) => {
     const child = spawn(ffmpegPath, args);
     let lastProgressTime = 0;
+    let settled = false;
+
+    // Stall timeout — kill ffmpeg if no stdout activity for 60s
+    let stallTimer: ReturnType<typeof setTimeout> | undefined = setTimeout(() => {
+      if (!settled) {
+        settled = true;
+        child.kill('SIGTERM');
+        reject(new Error(`ffmpeg stalled: no progress for ${FFMPEG_STALL_TIMEOUT_MS / 1000}s`));
+      }
+    }, FFMPEG_STALL_TIMEOUT_MS);
+
+    const resetStallTimer = () => {
+      if (stallTimer != null) clearTimeout(stallTimer);
+      stallTimer = setTimeout(() => {
+        if (!settled) {
+          settled = true;
+          child.kill('SIGTERM');
+          reject(new Error(`ffmpeg stalled: no progress for ${FFMPEG_STALL_TIMEOUT_MS / 1000}s`));
+        }
+      }, FFMPEG_STALL_TIMEOUT_MS);
+    };
 
     // Parse stdout for -progress pipe:1 key=value lines
     let stdoutBuffer = '';
     child.stdout.on('data', (data: Buffer) => {
+      resetStallTimer();
       stdoutBuffer += data.toString();
       const lines = stdoutBuffer.split('\n');
       stdoutBuffer = lines.pop() || ''; // Keep incomplete line in buffer
@@ -166,13 +191,21 @@ function spawnFfmpeg(
     });
 
     child.on('close', (code) => {
+      if (stallTimer != null) clearTimeout(stallTimer);
+      if (settled) return; // Already rejected by stall timeout
+      settled = true;
       // Flush remaining stderr
       if (stderrBuffer.trim()) options?.onStderr?.(stderrBuffer.trim());
       if (code === 0) resolve();
       else reject(new Error(`ffmpeg exited with code ${code}`));
     });
 
-    child.on('error', reject);
+    child.on('error', (err) => {
+      if (stallTimer != null) clearTimeout(stallTimer);
+      if (settled) return;
+      settled = true;
+      reject(err);
+    });
   });
 }
 
