@@ -1801,5 +1801,23 @@ describe('SearchReleasesModal — streaming search (Phase 1/Phase 2)', () => {
       const badges = screen.getAllByText('In library');
       expect(badges).toHaveLength(1);
     });
+
+    it('renders "In library" badge on result card when book lastGrabInfoHash matches result infoHash (torrent path)', async () => {
+      setStreamResults([
+        { ...mockResults[0], infoHash: 'abc123', guid: undefined },
+        { ...mockResults[1], infoHash: 'other-hash', guid: undefined },
+      ]);
+      const bookWithHash = createMockBook({ lastGrabGuid: null, lastGrabInfoHash: 'abc123' });
+
+      renderWithProviders(
+        <SearchReleasesModal isOpen={true} book={bookWithHash} onClose={vi.fn()} />,
+      );
+
+      await waitFor(() => {
+        expect(screen.getByText(mockResults[0].title)).toBeInTheDocument();
+      });
+      const badges = screen.getAllByText('In library');
+      expect(badges).toHaveLength(1);
+    });
   });
 });
