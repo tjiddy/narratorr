@@ -744,3 +744,17 @@ describe('buildTargetPath — first-by-position author/narrator tokens (#71)', (
   });
 });
 
+describe('titled-disc import flattening (issue #426)', () => {
+  describe('copyAudioFiles with titled-disc folders', () => {
+    it.todo('sequentially flattens titled-disc folders with duplicate basenames');
+    it.todo('extracts disc number from parenthetical suffix, not title digits');
+    it.todo('flattens N-of-M titled folders in correct order');
+    it.todo('handles mixed bare + titled disc folders in same directory');
+    it.todo('handles titled-disc folders with non-disc sibling');
+  });
+
+  describe('copyAudioFiles regression — bare disc folders', () => {
+    it.todo('still sequentially renames bare disc folders (CD1, Disc 2)');
+  });
+});
+

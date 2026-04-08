@@ -1087,4 +1087,29 @@ describe('discoverBooks', () => {
       }
     });
   });
+
+  describe('titled-disc folder detection (issue #426)', () => {
+    describe('parseTitledDiscFolder', () => {
+      it.todo('returns title and discNumber for "BookTitle (Disc 01)"');
+      it.todo('returns title and discNumber for "BookTitle (Disc 12)"');
+      it.todo('returns title and discNumber for "BookTitle (1 of 5)"');
+      it.todo('returns title and discNumber for "BookTitle (3 of 10)" — double-digit M');
+      it.todo('returns null for bare disc folder "Disc 01" — handled by DISC_FOLDER_PATTERN');
+      it.todo('returns null for "BookTitle (2020)" — year not disc');
+      it.todo('returns null for "BookTitle (Unabridged)" — codec not disc');
+      it.todo('returns null for "BookTitle (A Subtitle)" — subtitle not disc');
+      it.todo('returns null for "BookTitle (Jeff Hays)" — narrator name not disc');
+      it.todo('returns null for empty string');
+    });
+
+    describe('parenthetical disc merge in discoverBooks', () => {
+      it.todo('merges 12 sibling "BookTitle (Disc NN)" folders into single book entry');
+      it.todo('merges N-of-M sibling folders into single book entry');
+      it.todo('does not merge siblings with different title prefixes');
+      it.todo('does not merge when non-disc sibling is present among titled-disc folders');
+      it.todo('still merges bare disc folders (Disc 01, CD1) — regression');
+      it.todo('does not merge single titled-disc folder (requires ≥2)');
+      it.todo('merges exactly 2 titled-disc siblings');
+    });
+  });
 });

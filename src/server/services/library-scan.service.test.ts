@@ -3544,4 +3544,56 @@ describe('scanDirectory() — within-scan duplicate detection (#342)', () => {
       expect(result2.discoveries[0].isDuplicate).toBe(false);
     });
   });
+
+  describe('cleanName enhancements (issue #426)', () => {
+    describe('narrator parenthetical stripping', () => {
+      it.todo('strips trailing "(Jeff Hays)" from title');
+      it.todo('strips trailing "(Stephen Fry)" from title');
+      it.todo('does not strip "(Unabridged)" — handled as codec tag');
+      it.todo('does not strip "(2020)" — handled as year');
+      it.todo('does not strip long parentheticals (>3 words)');
+    });
+
+    describe('series marker stripping', () => {
+      it.todo('strips ", Book 01" from title');
+      it.todo('strips ", Vol 3" from title');
+      it.todo('strips ", Volume 12" from title');
+      it.todo('does not strip when title would be empty');
+    });
+
+    describe('empty bracket removal', () => {
+      it.todo('removes empty () after codec stripping');
+      it.todo('removes empty [] after codec stripping');
+      it.todo('preserves non-empty parentheticals');
+    });
+
+    describe('duplicate segment deduplication', () => {
+      it.todo('deduplicates "Dungeon Crawler Carl 01 – Dungeon Crawler Carl"');
+      it.todo('deduplicates "The Hunger Games, Book 01 – The Hunger Games"');
+      it.todo('does not deduplicate non-duplicate segments');
+    });
+
+    describe('regression — existing cleanName behaviors', () => {
+      it.todo('still strips decimal series positions');
+      it.todo('still strips codec tags');
+      it.todo('still removes years');
+      it.todo('returns original on empty result');
+    });
+  });
+
+  describe('parseSingleFolder regression (issue #426)', () => {
+    it.todo('"BookTitle (Author Name)" still parses as title + author');
+    it.todo('"BookTitle [Author Name]" still parses as title + author');
+    it.todo('"Author - BookTitle (Narrator)" strips narrator from title via cleanName');
+    it.todo('multi-part "Author/BookTitle (Jeff Hays)" strips narrator from title');
+  });
+
+  describe('lookupMetadata swap retry (issue #426)', () => {
+    it.todo('returns match when first search succeeds — no swap');
+    it.todo('retries with swapped author/title on zero results');
+    it.todo('does not swap when author is null');
+    it.todo('does not swap when author is empty string');
+    it.todo('returns null when both searches return empty');
+    it.todo('swap retry error does not crash scan');
+  });
 });

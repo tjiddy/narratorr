@@ -1645,4 +1645,13 @@ describe('MatchJobService', () => {
       });
     });
   });
+
+  describe('matchSingleBook swap retry (issue #426)', () => {
+    it.todo('returns match when first search succeeds — no swap');
+    it.todo('retries with swapped author/title on zero results');
+    it.todo('does not swap when author is absent');
+    it.todo('returns none confidence when both searches return empty');
+    it.todo('applies title similarity threshold to swap-retry results');
+    it.todo('swap retry error does not crash job');
+  });
 });
