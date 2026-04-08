@@ -276,7 +276,13 @@ export class MyAnonamouseIndexer implements IndexerAdapter {
       }
 
       if (response.status === 403) {
-        throw new IndexerAuthError(this.name, 'Authentication failed — check your MAM ID');
+        const body = await response.text();
+        const match = body.match(/<br \/>\s*(.+)/);
+        const detail = match?.[1]?.trim();
+        throw new IndexerAuthError(
+          this.name,
+          detail ? `Authentication failed — ${detail}` : 'Authentication failed — check your MAM ID',
+        );
       }
 
       if (!response.ok) {

@@ -456,7 +456,29 @@ describe('MyAnonamouseIndexer', () => {
   });
 
   describe('search — error handling and auth failures', () => {
-    it('throws IndexerAuthError on HTTP 403 response', async () => {
+    it('throws IndexerAuthError with "Invalid/missing cookie" detail on 403 with bad cookie body', async () => {
+      server.use(
+        http.get(`${MAM_BASE}/tor/js/loadSearchJSONbasic.php`, () => {
+          return new HttpResponse('Error, you are not signed in <br />Invalid/missing cookie', { status: 403 });
+        }),
+      );
+
+      await expect(indexer.search('test')).rejects.toThrow(IndexerAuthError);
+      await expect(indexer.search('test')).rejects.toThrow('Authentication failed — Invalid/missing cookie');
+    });
+
+    it('throws IndexerAuthError with "Session IP address mismatch" detail on 403 with IP mismatch body', async () => {
+      server.use(
+        http.get(`${MAM_BASE}/tor/js/loadSearchJSONbasic.php`, () => {
+          return new HttpResponse('Error, you are not signed in <br />Session IP address mismatch', { status: 403 });
+        }),
+      );
+
+      await expect(indexer.search('test')).rejects.toThrow(IndexerAuthError);
+      await expect(indexer.search('test')).rejects.toThrow('Authentication failed — Session IP address mismatch');
+    });
+
+    it('throws IndexerAuthError with generic message on 403 with empty body', async () => {
       server.use(
         http.get(`${MAM_BASE}/tor/js/loadSearchJSONbasic.php`, () => {
           return new HttpResponse(null, { status: 403 });
@@ -464,7 +486,7 @@ describe('MyAnonamouseIndexer', () => {
       );
 
       await expect(indexer.search('test')).rejects.toThrow(IndexerAuthError);
-      await expect(indexer.search('test')).rejects.toThrow('Authentication failed');
+      await expect(indexer.search('test')).rejects.toThrow('Authentication failed — check your MAM ID');
     });
 
     it('throws IndexerAuthError when body contains "Error, you are not signed in"', async () => {
@@ -503,7 +525,31 @@ describe('MyAnonamouseIndexer', () => {
       expect(result.metadata).toEqual({ username: 'testuser', classname: undefined, isVip: false });
     });
 
-    it('returns failure message on invalid/expired mam_id (403)', async () => {
+    it('returns failure with "Invalid/missing cookie" detail on 403 with bad cookie body', async () => {
+      server.use(
+        http.get(`${MAM_BASE}/jsonLoad.php`, () => {
+          return new HttpResponse('Error, you are not signed in <br />Invalid/missing cookie', { status: 403 });
+        }),
+      );
+
+      const result = await indexer.test();
+      expect(result.success).toBe(false);
+      expect(result.message).toBe('Authentication failed — Invalid/missing cookie');
+    });
+
+    it('returns failure with "Session IP address mismatch" detail on 403 with IP block body', async () => {
+      server.use(
+        http.get(`${MAM_BASE}/jsonLoad.php`, () => {
+          return new HttpResponse('Error, you are not signed in <br />Session IP address mismatch', { status: 403 });
+        }),
+      );
+
+      const result = await indexer.test();
+      expect(result.success).toBe(false);
+      expect(result.message).toBe('Authentication failed — Session IP address mismatch');
+    });
+
+    it('returns generic failure on 403 with empty body', async () => {
       server.use(
         http.get(`${MAM_BASE}/jsonLoad.php`, () => {
           return new HttpResponse(null, { status: 403 });
@@ -512,7 +558,7 @@ describe('MyAnonamouseIndexer', () => {
 
       const result = await indexer.test();
       expect(result.success).toBe(false);
-      expect(result.message).toContain('Authentication failed');
+      expect(result.message).toBe('Authentication failed — check your MAM ID');
     });
 
     it('returns failure message on "not signed in" body', async () => {
@@ -1097,7 +1143,7 @@ describe('MyAnonamouseIndexer', () => {
     it('returns no metadata on auth failure (403)', async () => {
       server.use(
         http.get(`${MAM_BASE}/jsonLoad.php`, () => {
-          return new HttpResponse(null, { status: 403 });
+          return new HttpResponse('Error, you are not signed in <br />Invalid/missing cookie', { status: 403 });
         }),
       );
       const result = await indexer.test();
@@ -1381,13 +1427,13 @@ describe('MyAnonamouseIndexer', () => {
       await expect(indexer.refreshStatus!()).rejects.toThrow();
     });
 
-    it('throws on auth failure (401/non-200 response)', async () => {
+    it('throws on auth failure (403 response)', async () => {
       server.use(
         http.get(`${MAM_BASE}/jsonLoad.php`, () => {
-          return new HttpResponse('Forbidden', { status: 403 });
+          return new HttpResponse('Error, you are not signed in <br />Invalid/missing cookie', { status: 403 });
         }),
       );
-      await expect(indexer.refreshStatus!()).rejects.toThrow();
+      await expect(indexer.refreshStatus!()).rejects.toThrow(IndexerAuthError);
     });
 
     it('mutates adapter isVip — subsequent search() uses effectiveSearchType "all" after VIP refresh', async () => {
