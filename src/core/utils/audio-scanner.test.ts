@@ -410,7 +410,7 @@ describe('scanAudioDirectory', () => {
   describe('ffprobe duration', () => {
     function mockExecFileSuccess(stdout: string) {
       mockExecFile.mockImplementation((...args: unknown[]) => {
-        const callback = args[args.length - 1] as Function;
+        const callback = args[args.length - 1] as (...args: unknown[]) => void;
         callback(null, stdout, '');
         return {} as never;
       });
@@ -418,7 +418,7 @@ describe('scanAudioDirectory', () => {
 
     function mockExecFileError(error: Error) {
       mockExecFile.mockImplementation((...args: unknown[]) => {
-        const callback = args[args.length - 1] as Function;
+        const callback = args[args.length - 1] as (...args: unknown[]) => void;
         callback(error, '', '');
         return {} as never;
       });
@@ -561,7 +561,7 @@ describe('scanAudioDirectory', () => {
         mockExecFile.mockImplementation((_cmd, _args, _opts, callback) => {
           callCount++;
           const duration = callCount * 1000; // 1000, 2000, 3000
-          (callback as Function)(null, JSON.stringify({ format: { duration: String(duration) } }), '');
+          (callback as (...args: unknown[]) => void)(null, JSON.stringify({ format: { duration: String(duration) } }), '');
           return {} as never;
         });
 

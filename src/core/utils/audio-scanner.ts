@@ -70,6 +70,34 @@ export async function getFFprobeDuration(ffprobePath: string, filePath: string):
   }
 }
 
+/**
+ * Resolve the duration for a single file: ffprobe if available, music-metadata fallback.
+ * Logs diagnostics when the two sources disagree or ffprobe fails.
+ */
+async function resolveFileDuration(
+  filePath: string,
+  metadataDuration: number | undefined,
+  ffprobePath: string | undefined,
+  log: FastifyBaseLogger | undefined,
+): Promise<number | undefined> {
+  if (!ffprobePath) return metadataDuration ?? undefined;
+
+  const ffprobeDuration = await getFFprobeDuration(ffprobePath, filePath);
+  if (ffprobeDuration === null) {
+    log?.debug({ filePath }, 'ffprobe failed for file, falling back to music-metadata duration');
+    return metadataDuration ?? undefined;
+  }
+
+  // Warn if ffprobe and music-metadata differ significantly
+  if (metadataDuration && metadataDuration > 0) {
+    const diff = Math.abs(ffprobeDuration - metadataDuration) / metadataDuration;
+    if (diff > 0.1) {
+      log?.warn({ filePath, ffprobeDuration, metadataDuration }, 'ffprobe/music-metadata duration mismatch (>10%)');
+    }
+  }
+  return ffprobeDuration;
+}
+
 /** Scan a directory of audio files and extract metadata + technical info. */
 export async function scanAudioDirectory(
   dirPath: string,
@@ -78,9 +106,7 @@ export async function scanAudioDirectory(
   const audioFiles = await collectAudioFiles(dirPath);
   if (audioFiles.length === 0) return null;
 
-  const skipCover = options?.skipCover ?? false;
-  const ffprobePath = options?.ffprobePath;
-  const log = options?.log;
+  const { skipCover = false, ffprobePath, log } = options ?? {};
 
   const result: AudioScanResult = {
     codec: '',
@@ -105,29 +131,7 @@ export async function scanAudioDirectory(
 
       const metadata = await parseFile(filePath);
 
-      // Duration: prefer ffprobe when available, fall back to music-metadata
-      let fileDuration: number | undefined;
-      if (ffprobePath) {
-        const ffprobeDuration = await getFFprobeDuration(ffprobePath, filePath);
-        if (ffprobeDuration !== null) {
-          fileDuration = ffprobeDuration;
-          // Warn if ffprobe and music-metadata differ significantly
-          const metadataDuration = metadata.format.duration;
-          if (metadataDuration && metadataDuration > 0) {
-            const diff = Math.abs(ffprobeDuration - metadataDuration) / metadataDuration;
-            if (diff > 0.1) {
-              log?.warn({ filePath, ffprobeDuration, metadataDuration }, 'ffprobe/music-metadata duration mismatch (>10%)');
-            }
-          }
-        } else {
-          // ffprobe failed — fall back to music-metadata
-          log?.debug({ filePath }, 'ffprobe failed for file, falling back to music-metadata duration');
-          fileDuration = metadata.format.duration ?? undefined;
-        }
-      } else {
-        fileDuration = metadata.format.duration ?? undefined;
-      }
-
+      const fileDuration = await resolveFileDuration(filePath, metadata.format.duration, ffprobePath, log);
       if (fileDuration) {
         result.totalDuration += fileDuration;
       }

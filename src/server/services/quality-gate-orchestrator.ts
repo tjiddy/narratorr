@@ -49,10 +49,7 @@ export class QualityGateOrchestrator {
    * Owns the batch loop: query → iterate → claim → scan → decide → side effects.
    */
   async processCompletedDownloads(): Promise<void> {
-    const completedDownloads = await this.qualityGateService.getCompletedDownloads();
-    const processingSettings = await this.settingsService?.get('processing');
-    const ffprobePath = processingSettings?.ffmpegPath ? deriveFfprobePath(processingSettings.ffmpegPath) : undefined;
-
+    const [completedDownloads, ffprobePath] = await Promise.all([this.qualityGateService.getCompletedDownloads(), this.resolveFfprobePath()]);
     for (const row of completedDownloads) {
       if (!row.download.externalId || !row.download.bookId) {
         this.log.debug({ id: row.download.id }, 'Quality gate: skipping download without externalId or bookId');
@@ -115,13 +112,10 @@ export class QualityGateOrchestrator {
 
   /** Process a single completed download through the quality gate, with inline import on approval. */
   async processOneDownload(downloadId: number): Promise<void> {
-    const processingSettings2 = await this.settingsService?.get('processing');
-    const ffprobePath2 = processingSettings2?.ffmpegPath ? deriveFfprobePath(processingSettings2.ffmpegPath) : undefined;
-    const rows = await this.qualityGateService.getCompletedDownloads();
+    const [ffprobePath2, rows] = await Promise.all([this.resolveFfprobePath(), this.qualityGateService.getCompletedDownloads()]);
     const row = rows.find((r) => r.download.id === downloadId);
     if (!row) { this.log.warn({ downloadId }, 'Quality gate: processOneDownload — download not found or not completed'); return; }
     if (!row.download.externalId || !row.download.bookId) { this.log.debug({ id: row.download.id }, 'Quality gate: skipping download without externalId or bookId'); return; }
-
     const claimed = await this.qualityGateService.atomicClaim(row.download.id);
     if (!claimed) { this.log.debug({ id: row.download.id }, 'Quality gate: already claimed by another cycle'); return; }
 
@@ -322,6 +316,7 @@ export class QualityGateOrchestrator {
     return { id: result.id, status: result.status };
   }
 
+  private async resolveFfprobePath(): Promise<string | undefined> { const s = await this.settingsService?.get('processing'); return s?.ffmpegPath ? deriveFfprobePath(s.ffmpegPath) : undefined; }
   /** Hold for probe failure: set pending_review + SSE + event recording. */
   private async holdForProbeFailure(
     download: DownloadRow,
