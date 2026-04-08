@@ -46,9 +46,10 @@ export function ActivityPage() {
     },
   });
 
-  // Clamp pages when totals shrink
-  useEffect(() => { queuePagination.clampToTotal(queueTotal); }, [queueTotal, queuePagination]);
-  useEffect(() => { historyPagination.clampToTotal(historyTotal); }, [historyTotal, historyPagination]);
+  // Clamp pages when totals shrink — use stable clampToTotal callback (not full pagination object)
+  // to avoid re-running on every render.
+  useEffect(() => { queuePagination.clampToTotal(queueTotal); }, [queueTotal, queuePagination.clampToTotal]);
+  useEffect(() => { historyPagination.clampToTotal(historyTotal); }, [historyTotal, historyPagination.clampToTotal]);
 
   const [tab, setTab] = useState<'downloads' | 'events'>('downloads');
   const [confirmClearHistory, setConfirmClearHistory] = useState(false);

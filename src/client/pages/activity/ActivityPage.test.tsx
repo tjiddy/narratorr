@@ -92,6 +92,17 @@ describe('ActivityPage pagination clamp (#93)', () => {
   const makeCompletedDownloads = (n: number, startId = 1) =>
     Array.from({ length: n }, (_, i) => makeDownload({ id: startId + i, status: 'completed' }));
 
+  // Disable background refetches so setQueryData values are authoritative.
+  // staleTime: Infinity prevents TanStack Query from refetching when the query key
+  // changes after a clamp (e.g., offset changes from 100→50). Without this, TQ sees
+  // the cached data as stale and fires a background refetch using the mock, which may
+  // return a different total and overwrite the manually set value.
+  function makeClampTestClient() {
+    return new QueryClient({
+      defaultOptions: { queries: { retry: false, staleTime: Infinity } },
+    });
+  }
+
   function renderWithCustomClient(queryClient: QueryClient) {
     return render(
       <QueryClientProvider client={queryClient}>
@@ -105,7 +116,7 @@ describe('ActivityPage pagination clamp (#93)', () => {
   // timeout: 15s — test navigates 4 pages via userEvent, each needing a fetch + waitFor
   it('queue page clamps to last valid page when total shrinks (page 3 → page 2 of 2)', async () => {
     const user = userEvent.setup();
-    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const queryClient = makeClampTestClient();
 
     // Return 150 items for every getActivity call so both sections always show 3 pages
     vi.mocked(api.getActivity).mockImplementation(async (params) => {
@@ -142,6 +153,8 @@ describe('ActivityPage pagination clamp (#93)', () => {
 
     // Simulate queue total shrinking to 100 (2 pages). Update both the current page
     // (offset=100) and the clamped-to page (offset=50) so totalPages reflects the new total.
+    // staleTime: Infinity in makeClampTestClient prevents background refetches from
+    // overwriting these values with the mock's stale total=150.
     act(() => {
       queryClient.setQueryData(
         activityKey({ section: 'queue', limit: LIMIT, offset: 100 }),
@@ -161,7 +174,7 @@ describe('ActivityPage pagination clamp (#93)', () => {
 
   it('history page clamps to last valid page when historyTotal shrinks, leaving queue unchanged', async () => {
     const user = userEvent.setup();
-    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const queryClient = makeClampTestClient();
 
     vi.mocked(api.getActivity).mockImplementation(async (params) => {
       const offset = params?.offset ?? 0;
@@ -196,6 +209,7 @@ describe('ActivityPage pagination clamp (#93)', () => {
 
     // Simulate history total shrinking to 100 (2 pages). Update both the current page
     // (offset=100) and the clamped-to page (offset=50) so totalPages reflects the new total.
+    // staleTime: Infinity in makeClampTestClient prevents background refetches.
     act(() => {
       queryClient.setQueryData(
         activityKey({ section: 'history', limit: LIMIT, offset: 100 }),
@@ -211,6 +225,141 @@ describe('ActivityPage pagination clamp (#93)', () => {
     // Queue is completely unaffected — its independent clamp effect sees total=150, no change.
     await waitFor(() => expect(pageLabels()[1]).toHaveTextContent('Page 2 of 2'));
     expect(pageLabels()[0]).toHaveTextContent('Page 1 of 3');
+  }, 15000);
+
+  it('page label stays stable after unrelated tab switch (no spurious clamp effect)', async () => {
+    const user = userEvent.setup();
+    const queryClient = makeClampTestClient();
+
+    vi.mocked(api.getActivity).mockImplementation(async (params) => {
+      const offset = params?.offset ?? 0;
+      const section = params?.section;
+      return {
+        data: makeCompletedDownloads(LIMIT, (section === 'history' ? 1000 : 0) + offset),
+        total: 150,
+      };
+    });
+    vi.mocked(api.getEventHistory).mockResolvedValue({ data: [], total: 0 });
+
+    renderWithCustomClient(queryClient);
+
+    await waitFor(() => {
+      const labels = screen.getAllByText(/Page \d+ of \d+/);
+      expect(labels).toHaveLength(2);
+      expect(labels[0]).toHaveTextContent('Page 1 of 3');
+    });
+
+    // Navigate queue to page 2
+    await user.click(screen.getAllByRole('button', { name: /next page/i })[0]);
+    await waitFor(() => expect(screen.getAllByText(/Page \d+ of \d+/)[0]).toHaveTextContent('Page 2 of 3'));
+
+    // Switch to Event History tab — unrelated re-render
+    await user.click(screen.getAllByRole('button', { name: /event history/i })[0]);
+
+    // Switch back to Downloads tab (first match is the tab button, second may be a filter chip)
+    await user.click(screen.getAllByRole('button', { name: /downloads/i })[0]);
+
+    // Page label should still be page 2 of 3 — clamp effect should NOT have reset it
+    await waitFor(() => {
+      const labels = screen.getAllByText(/Page \d+ of \d+/);
+      expect(labels[0]).toHaveTextContent('Page 2 of 3');
+    });
+  }, 15000);
+
+  it('clamps to page 1 when total shrinks to exactly 1 page', async () => {
+    const user = userEvent.setup();
+    const queryClient = makeClampTestClient();
+
+    vi.mocked(api.getActivity).mockImplementation(async (params) => {
+      const offset = params?.offset ?? 0;
+      const section = params?.section;
+      return {
+        data: makeCompletedDownloads(LIMIT, (section === 'history' ? 1000 : 0) + offset),
+        total: 150,
+      };
+    });
+
+    renderWithCustomClient(queryClient);
+
+    await waitFor(() => {
+      const labels = screen.getAllByText(/Page \d+ of \d+/);
+      expect(labels).toHaveLength(2);
+      expect(labels[0]).toHaveTextContent('Page 1 of 3');
+    });
+
+    // Navigate queue to page 3
+    await user.click(screen.getAllByRole('button', { name: /next page/i })[0]);
+    await waitFor(() => expect(screen.getAllByText(/Page \d+ of \d+/)[0]).toHaveTextContent('Page 2 of 3'));
+    await user.click(screen.getAllByRole('button', { name: /next page/i })[0]);
+    await waitFor(() => expect(screen.getAllByText(/Page \d+ of \d+/)[0]).toHaveTextContent('Page 3 of 3'));
+
+    // Shrink total to 30 (≤ limit=50, so only 1 page).
+    // staleTime: Infinity in makeClampTestClient prevents background refetches.
+    act(() => {
+      queryClient.setQueryData(
+        activityKey({ section: 'queue', limit: LIMIT, offset: 100 }),
+        { data: makeCompletedDownloads(30, 9000), total: 30 },
+      );
+      queryClient.setQueryData(
+        activityKey({ section: 'queue', limit: LIMIT, offset: 0 }),
+        { data: makeCompletedDownloads(30, 8000), total: 30 },
+      );
+    });
+
+    // Queue total (30) ≤ limit (50), so queue Pagination returns null.
+    // Only history pagination remains visible.
+    await waitFor(() => {
+      const labels = screen.getAllByText(/Page \d+ of \d+/);
+      expect(labels).toHaveLength(1); // only history
+      expect(labels[0]).toHaveTextContent('Page 1 of 3'); // history unchanged
+    });
+  }, 15000);
+
+  it('clamps to page 1 when total shrinks to 0', async () => {
+    const user = userEvent.setup();
+    const queryClient = makeClampTestClient();
+
+    vi.mocked(api.getActivity).mockImplementation(async (params) => {
+      const offset = params?.offset ?? 0;
+      const section = params?.section;
+      return {
+        data: makeCompletedDownloads(LIMIT, (section === 'history' ? 1000 : 0) + offset),
+        total: 150,
+      };
+    });
+
+    renderWithCustomClient(queryClient);
+
+    await waitFor(() => {
+      const labels = screen.getAllByText(/Page \d+ of \d+/);
+      expect(labels).toHaveLength(2);
+      expect(labels[0]).toHaveTextContent('Page 1 of 3');
+    });
+
+    // Navigate queue to page 2
+    await user.click(screen.getAllByRole('button', { name: /next page/i })[0]);
+    await waitFor(() => expect(screen.getAllByText(/Page \d+ of \d+/)[0]).toHaveTextContent('Page 2 of 3'));
+
+    // Shrink total to 0.
+    // staleTime: Infinity in makeClampTestClient prevents background refetches.
+    act(() => {
+      queryClient.setQueryData(
+        activityKey({ section: 'queue', limit: LIMIT, offset: 50 }),
+        { data: [], total: 0 },
+      );
+      queryClient.setQueryData(
+        activityKey({ section: 'queue', limit: LIMIT, offset: 0 }),
+        { data: [], total: 0 },
+      );
+    });
+
+    // Queue total (0) ≤ limit (50), so queue Pagination returns null.
+    // Only history pagination remains visible.
+    await waitFor(() => {
+      const labels = screen.getAllByText(/Page \d+ of \d+/);
+      expect(labels).toHaveLength(1); // only history
+      expect(labels[0]).toHaveTextContent('Page 1 of 3'); // history unchanged
+    });
   }, 15000);
 });
 
