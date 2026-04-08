@@ -24,6 +24,8 @@
 
 - **`collectAudioFiles()` wrappers in 4 places**: Core logic extracted to `src/core/utils/collect-audio-files.ts` (#405), but 4 local wrappers remain in `import-helpers.ts`, `tagging.service.ts`, `audio-processor.ts`, `audio-scanner.ts` — each adds sorting/extensions/return-type variations. Wrappers are thin but still duplicated. (discovered in #405)
 
+- **`src/server/services/quality-gate-orchestrator.ts` at 501 lines (max 400)**: File exceeds ESLint max-lines rule and any net addition triggers a "new violation" in verify.ts diff-based linting. Needs to be split — e.g., extract deferred-cleanup logic or SSE emission into a separate module. (discovered in #434)
+
 ## Accepted Debt
 
 Items below are real but not worth fixing — the cost of change outweighs the benefit.
