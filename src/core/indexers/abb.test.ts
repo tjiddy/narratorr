@@ -603,4 +603,73 @@ describe('AudioBookBayIndexer', () => {
       fetchSpy.mockRestore();
     });
   });
+
+  describe('guid population (#410)', () => {
+    it('search results include guid matching infoHash from detail page', async () => {
+      server.use(
+        http.get(`${ABB_BASE}/`, () => {
+          return new HttpResponse(searchHtml, {
+            headers: { 'Content-Type': 'text/html' },
+          });
+        }),
+        http.get(`${ABB_BASE}/audio-books/:slug/`, () => {
+          return new HttpResponse(detailHtml, {
+            headers: { 'Content-Type': 'text/html' },
+          });
+        }),
+      );
+
+      const results = await indexer.search('Brandon Sanderson');
+
+      expect(results.length).toBeGreaterThan(0);
+      expect(results[0].guid).toBe(results[0].infoHash);
+      expect(results[0].guid).toBe('a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0');
+    });
+
+    it('guid is a lowercase 40-char hex string on returned results', async () => {
+      server.use(
+        http.get(`${ABB_BASE}/`, () => {
+          return new HttpResponse(searchHtml, {
+            headers: { 'Content-Type': 'text/html' },
+          });
+        }),
+        http.get(`${ABB_BASE}/audio-books/:slug/`, () => {
+          return new HttpResponse(detailHtml, {
+            headers: { 'Content-Type': 'text/html' },
+          });
+        }),
+      );
+
+      const results = await indexer.search('Brandon Sanderson');
+
+      expect(results[0].guid).toMatch(/^[a-f0-9]{40}$/);
+    });
+
+    it('detail page with hash in body text (fallback regex) populates guid', async () => {
+      const detailHashInBody = `
+        <html><body>
+          <h1>Rare Book</h1>
+          <p>Some random text a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0 more text</p>
+        </body></html>`;
+
+      server.use(
+        http.get(`${ABB_BASE}/`, () => {
+          return new HttpResponse(searchHtml, {
+            headers: { 'Content-Type': 'text/html' },
+          });
+        }),
+        http.get(`${ABB_BASE}/audio-books/:slug/`, () => {
+          return new HttpResponse(detailHashInBody, {
+            headers: { 'Content-Type': 'text/html' },
+          });
+        }),
+      );
+
+      const results = await indexer.search('test');
+
+      expect(results.length).toBeGreaterThan(0);
+      expect(results[0].guid).toBe('a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0');
+      expect(results[0].guid).toBe(results[0].infoHash);
+    });
+  });
 });

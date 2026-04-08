@@ -237,8 +237,9 @@ export class AudioBookBayIndexer implements IndexerAdapter {
       }
     }
 
-    // Build magnet URI (download URL) if we have an info hash
+    // Build magnet URI (download URL) and set guid if we have an info hash
     if (result.infoHash) {
+      result.guid = result.infoHash;
       const title = $('h1, .postTitle h2, article h2').first().text().trim();
       result.downloadUrl = buildMagnetUri(result.infoHash, title || undefined);
     }
