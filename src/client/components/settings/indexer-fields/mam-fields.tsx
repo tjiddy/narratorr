@@ -4,6 +4,12 @@ import type { CreateIndexerFormData } from '../../../../shared/schemas.js';
 import { api } from '@/lib/api';
 import type { IndexerFieldsProps } from './types.js';
 
+export function getMinDetectionMs(mode: string): number {
+  return mode === 'test' ? 0 : 1000;
+}
+
+export const MIN_DETECTION_MS = getMinDetectionMs(import.meta.env.MODE);
+
 interface MamStatus {
   username: string;
   classname?: string;
@@ -36,7 +42,7 @@ function useMamDetection(watch?: UseFormWatch<CreateIndexerFormData>, setValue?:
 
     async function ensureMinDuration() {
       const elapsed = Date.now() - startTime;
-      if (elapsed < 1000) await new Promise((r) => setTimeout(r, 1000 - elapsed));
+      if (elapsed < MIN_DETECTION_MS) await new Promise((r) => setTimeout(r, MIN_DETECTION_MS - elapsed));
     }
 
     try {

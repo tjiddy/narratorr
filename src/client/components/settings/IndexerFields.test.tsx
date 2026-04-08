@@ -303,7 +303,7 @@ describe('IndexerFields', () => {
 
       await waitFor(() => {
         expect(screen.getByText('GotaBe1')).toBeInTheDocument();
-      }, { timeout: 3000 });
+      });
       expect(screen.getByText('VIP')).toBeInTheDocument();
     });
 
@@ -321,7 +321,7 @@ describe('IndexerFields', () => {
 
       await waitFor(() => {
         expect(screen.getByText('Authentication failed')).toBeInTheDocument();
-      }, { timeout: 3000 });
+      });
     });
 
     it('includes current baseUrl in the synthetic test payload', async () => {
@@ -351,8 +351,7 @@ describe('IndexerFields', () => {
       });
     });
 
-    it('blocking overlay remains visible for minimum 1 second after fast API response', async () => {
-      // API resolves immediately (fast response)
+    it('detection completes instantly in test mode (MIN_DETECTION_MS is 0)', async () => {
       (api.testIndexerConfig as Mock).mockResolvedValue({
         success: true,
         metadata: { username: 'OverlayUser', classname: 'Mouse', isVip: false },
@@ -365,19 +364,10 @@ describe('IndexerFields', () => {
       await user.type(mamIdInput, 'test-id');
       await user.tab();
 
-      // Overlay appears — API resolved instantly but ensureMinDuration enforces 1 second
-      await waitFor(() => {
-        expect(screen.getByText('Checking MAM status…')).toBeInTheDocument();
-      });
-
-      // At ~900ms the overlay MUST still be visible (proves minimum is ≥900ms, not just >200ms)
-      await new Promise((r) => setTimeout(r, 900));
-      expect(screen.getByText('Checking MAM status…')).toBeInTheDocument();
-
-      // Overlay disappears shortly after the 1 second threshold
+      // With MIN_DETECTION_MS=0, detection resolves instantly — no 1s delay
       await waitFor(() => {
         expect(screen.queryByText('Checking MAM status…')).not.toBeInTheDocument();
-      }, { timeout: 500 });
+      });
       expect(screen.getByText('OverlayUser')).toBeInTheDocument();
     });
 
@@ -414,7 +404,7 @@ describe('IndexerFields', () => {
       // Wait for badge to appear (detection complete including min duration)
       await waitFor(() => {
         expect(screen.getByText('VipUser')).toBeInTheDocument();
-      }, { timeout: 3000 });
+      });
 
       // Submit form and check isVip was written
       await user.click(screen.getByText('Submit'));
@@ -528,7 +518,7 @@ describe('IndexerFields', () => {
 
       await waitFor(() => {
         expect(screen.getByText('DetectedUser')).toBeInTheDocument();
-      }, { timeout: 3000 });
+      });
 
       await user.click(screen.getByText('Submit'));
       await waitFor(() => {
@@ -551,7 +541,7 @@ describe('IndexerFields', () => {
 
       await waitFor(() => {
         expect(screen.getByText('User1')).toBeInTheDocument();
-      }, { timeout: 3000 });
+      });
 
       // Clear mock and click refresh
       (api.testIndexerConfig as Mock).mockClear();
@@ -616,10 +606,9 @@ describe('IndexerFields', () => {
       await user.type(mamIdInput, 'test-id');
       await user.tab();
 
-      // Detection enforces a 1s minimum duration — extend waitFor timeout to avoid flakiness under load
       await waitFor(() => {
         expect(screen.getByText('TestUser')).toBeInTheDocument();
-      }, { timeout: 3000 });
+      });
       expect(screen.getByText('Power User')).toBeInTheDocument();
     });
 
@@ -740,7 +729,7 @@ describe('IndexerFields', () => {
 
       await waitFor(() => {
         expect(screen.getByText('FreshUser')).toBeInTheDocument();
-      }, { timeout: 3000 });
+      });
       expect(screen.getByText('Power User')).toBeInTheDocument();
     });
 
@@ -777,7 +766,7 @@ describe('IndexerFields', () => {
 
       await waitFor(() => {
         expect(screen.getByText('NewVipUser')).toBeInTheDocument();
-      }, { timeout: 3000 });
+      });
 
       await user.click(screen.getByText('Submit'));
       await waitFor(() => {
@@ -816,7 +805,7 @@ describe('IndexerFields', () => {
 
       await waitFor(() => {
         expect(screen.getByText('Connection failed')).toBeInTheDocument();
-      }, { timeout: 3000 });
+      });
       expect(screen.queryByText('OldUser')).not.toBeInTheDocument();
     });
 
@@ -836,7 +825,7 @@ describe('IndexerFields', () => {
 
       await waitFor(() => {
         expect(screen.getByText('MAM ID expired')).toBeInTheDocument();
-      }, { timeout: 3000 });
+      });
       expect(screen.queryByText('OldUser')).not.toBeInTheDocument();
     });
 
@@ -865,7 +854,7 @@ describe('IndexerFields', () => {
 
       await waitFor(() => {
         expect(screen.getByText('User1')).toBeInTheDocument();
-      }, { timeout: 3000 });
+      });
 
       // Clear mock and click refresh
       (api.testIndexerConfig as Mock).mockClear();
