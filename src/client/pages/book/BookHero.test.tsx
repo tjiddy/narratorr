@@ -177,33 +177,85 @@ describe('BookHero', () => {
     });
   });
 
-  describe('URL_BASE resolveUrl integration', () => {
+  describe('cover cache-busting', () => {
     afterEach(() => {
       vi.restoreAllMocks();
     });
 
-    it('prefixes both foreground and background cover URLs with URL_BASE via resolveUrl', async () => {
-      vi.spyOn(await import('@/lib/url-utils'), 'resolveUrl').mockImplementation(
-        (url) => {
+    it('background blur image src includes ?v= cache-busting param from updatedAt', async () => {
+      vi.spyOn(await import('@/lib/url-utils'), 'resolveCoverUrl').mockImplementation(
+        (url, updatedAt) => {
           if (!url) return undefined;
           if (url.startsWith('http://') || url.startsWith('https://')) return url;
-          return `/narratorr${url}`;
+          const resolved = `/narratorr${url}`;
+          if (!updatedAt) return resolved;
+          return `${resolved}?v=${Math.floor(new Date(updatedAt).getTime() / 1000)}`;
         },
       );
 
       render(
         <MemoryRouter>
-          <BookHero {...defaultProps} coverUrl="/api/books/1/cover" />
+          <BookHero {...defaultProps} coverUrl="/api/books/1/cover" updatedAt="2024-04-08T12:00:00Z" />
         </MemoryRouter>,
       );
 
-      // Foreground cover image
-      const coverImg = screen.getByAltText('Cover of The Way of Kings');
-      expect(coverImg).toHaveAttribute('src', '/narratorr/api/books/1/cover');
-
-      // Background blur image
       const bgImg = screen.getByAltText('');
-      expect(bgImg).toHaveAttribute('src', '/narratorr/api/books/1/cover');
+      expect(bgImg).toHaveAttribute('src', '/narratorr/api/books/1/cover?v=1712577600');
+    });
+
+    it('foreground cover image src includes ?v= cache-busting param from updatedAt', async () => {
+      vi.spyOn(await import('@/lib/url-utils'), 'resolveCoverUrl').mockImplementation(
+        (url, updatedAt) => {
+          if (!url) return undefined;
+          if (url.startsWith('http://') || url.startsWith('https://')) return url;
+          const resolved = `/narratorr${url}`;
+          if (!updatedAt) return resolved;
+          return `${resolved}?v=${Math.floor(new Date(updatedAt).getTime() / 1000)}`;
+        },
+      );
+
+      render(
+        <MemoryRouter>
+          <BookHero {...defaultProps} coverUrl="/api/books/1/cover" updatedAt="2024-04-08T12:00:00Z" />
+        </MemoryRouter>,
+      );
+
+      const coverImg = screen.getByAltText('Cover of The Way of Kings');
+      expect(coverImg).toHaveAttribute('src', '/narratorr/api/books/1/cover?v=1712577600');
+    });
+
+    it('both images update src when updatedAt prop changes', async () => {
+      vi.spyOn(await import('@/lib/url-utils'), 'resolveCoverUrl').mockImplementation(
+        (url, updatedAt) => {
+          if (!url) return undefined;
+          if (url.startsWith('http://') || url.startsWith('https://')) return url;
+          const resolved = `/narratorr${url}`;
+          if (!updatedAt) return resolved;
+          return `${resolved}?v=${Math.floor(new Date(updatedAt).getTime() / 1000)}`;
+        },
+      );
+
+      const { rerender } = render(
+        <MemoryRouter>
+          <BookHero {...defaultProps} coverUrl="/api/books/1/cover" updatedAt="2024-01-01T00:00:00Z" />
+        </MemoryRouter>,
+      );
+
+      const coverImg = screen.getByAltText('Cover of The Way of Kings');
+      expect(coverImg).toHaveAttribute('src', '/narratorr/api/books/1/cover?v=1704067200');
+
+      rerender(
+        <MemoryRouter>
+          <BookHero {...defaultProps} coverUrl="/api/books/1/cover" updatedAt="2024-06-15T12:00:00Z" />
+        </MemoryRouter>,
+      );
+
+      expect(coverImg).toHaveAttribute('src', '/narratorr/api/books/1/cover?v=1718452800');
+    });
+
+    it('renders fallback placeholder when coverUrl is null (no cache-busting needed)', () => {
+      renderHero({ coverUrl: undefined, updatedAt: '2024-01-01T00:00:00Z' });
+      expect(screen.queryByAltText('Cover of The Way of Kings')).not.toBeInTheDocument();
     });
   });
 
