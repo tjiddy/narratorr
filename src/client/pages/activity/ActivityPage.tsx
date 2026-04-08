@@ -17,7 +17,7 @@ import { Pagination } from '@/components/Pagination';
 import { ConfirmModal } from '@/components/ConfirmModal';
 import { DEFAULT_LIMITS } from '../../../shared/schemas/common.js';
 
-// eslint-disable-next-line max-lines-per-function -- page with independent queue/history pagination sections
+// eslint-disable-next-line max-lines-per-function, complexity -- page with independent queue/history/merge/search sections
 export function ActivityPage() {
   const queuePagination = usePagination(DEFAULT_LIMITS.activity);
   const historyPagination = usePagination(DEFAULT_LIMITS.activity);

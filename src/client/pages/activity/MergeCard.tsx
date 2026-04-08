@@ -2,9 +2,14 @@ import { LoadingSpinner, CheckCircleIcon, AlertCircleIcon, RefreshIcon } from '@
 import { formatMergePhase } from '@/lib/format/merge.js';
 import type { MergeCardState } from '@/hooks/useMergeProgress';
 
+function MergeStatusIcon({ state }: { state: MergeCardState }) {
+  if (state.outcome === 'success') return <CheckCircleIcon className="w-4 h-4 text-success" />;
+  if (state.outcome === 'error') return <AlertCircleIcon className="w-4 h-4 text-destructive" />;
+  if (state.phase === 'queued') return <LoadingSpinner className="w-4 h-4 text-primary" />;
+  return <RefreshIcon className="w-4 h-4 text-primary animate-spin" />;
+}
+
 export function MergeCard({ state }: { state: MergeCardState }) {
-  const isQueued = state.phase === 'queued';
-  const isTerminal = state.outcome !== undefined;
   const isError = state.outcome === 'error';
   const isSuccess = state.outcome === 'success';
   const percentage = state.percentage !== undefined ? Math.round(state.percentage * 100) : undefined;
@@ -14,10 +19,7 @@ export function MergeCard({ state }: { state: MergeCardState }) {
       {/* Header */}
       <div className="flex items-center gap-3 mb-3">
         <div className="p-1.5 bg-primary/10 rounded-lg">
-          {isSuccess && <CheckCircleIcon className="w-4 h-4 text-success" />}
-          {isError && <AlertCircleIcon className="w-4 h-4 text-destructive" />}
-          {!isTerminal && !isQueued && <RefreshIcon className="w-4 h-4 text-primary animate-spin" />}
-          {!isTerminal && isQueued && <LoadingSpinner className="w-4 h-4 text-primary" />}
+          <MergeStatusIcon state={state} />
         </div>
         <div className="min-w-0 flex-1">
           <h3 className="font-medium text-sm truncate">{state.bookTitle}</h3>

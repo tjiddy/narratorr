@@ -5,7 +5,6 @@ import {
   useMergeProgress,
   useMergeActivityCards,
   _resetForTesting,
-  type MergeCardState,
 } from './useMergeProgress';
 
 beforeEach(() => {
