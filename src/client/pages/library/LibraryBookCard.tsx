@@ -2,7 +2,7 @@ import { memo } from 'react';
 import { useImageError } from '@/hooks/useImageError';
 import type { BookWithAuthor } from '@/lib/api';
 import { bookStatusConfig } from '@/lib/status';
-import { resolveUrl } from '@/lib/url-utils';
+import { resolveCoverUrl } from '@/lib/url-utils';
 import { BookOpenIcon, MoreVerticalIcon, BrokenLinkIcon } from '@/components/icons';
 import { BookContextMenu } from './BookContextMenu.js';
 
@@ -45,7 +45,7 @@ export const LibraryBookCard = memo(function LibraryBookCard({
       <div className="relative aspect-square bg-muted overflow-hidden">
         {book.coverUrl && !imageError ? (
           <img
-            src={resolveUrl(book.coverUrl)}
+            src={resolveCoverUrl(book.coverUrl, book.updatedAt)}
             alt={book.title}
             className="w-full h-full object-cover transition-transform duration-500 group-hover:scale-105 origin-bottom"
             loading="lazy"

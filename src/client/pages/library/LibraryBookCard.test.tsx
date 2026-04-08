@@ -272,25 +272,74 @@ describe('LibraryBookCard', () => {
     });
   });
 
-  describe('URL_BASE resolveUrl integration', () => {
+  describe('cover cache-busting', () => {
     afterEach(() => {
       vi.restoreAllMocks();
     });
 
-    it('prefixes app-relative cover URLs with URL_BASE via resolveUrl', async () => {
-      vi.spyOn(await import('@/lib/url-utils'), 'resolveUrl').mockImplementation(
-        (url) => {
+    it('cover image src includes ?v= cache-busting param derived from book.updatedAt', async () => {
+      vi.spyOn(await import('@/lib/url-utils'), 'resolveCoverUrl').mockImplementation(
+        (url, updatedAt) => {
           if (!url) return undefined;
           if (url.startsWith('http://') || url.startsWith('https://')) return url;
-          return `/narratorr${url}`;
+          const resolved = `/narratorr${url}`;
+          if (!updatedAt) return resolved;
+          return `${resolved}?v=${Math.floor(new Date(updatedAt).getTime() / 1000)}`;
         },
       );
 
-      const book = createMockBook({ coverUrl: '/api/books/1/cover' });
+      const book = createMockBook({ coverUrl: '/api/books/1/cover', updatedAt: '2024-04-08T12:00:00Z' });
       render(<LibraryBookCard {...defaultProps({ book })} />);
 
       const img = screen.getByAltText('The Way of Kings');
-      expect(img).toHaveAttribute('src', '/narratorr/api/books/1/cover');
+      expect(img).toHaveAttribute('src', '/narratorr/api/books/1/cover?v=1712577600');
+    });
+
+    it('src attribute changes when book.updatedAt changes', async () => {
+      vi.spyOn(await import('@/lib/url-utils'), 'resolveCoverUrl').mockImplementation(
+        (url, updatedAt) => {
+          if (!url) return undefined;
+          if (url.startsWith('http://') || url.startsWith('https://')) return url;
+          const resolved = `/narratorr${url}`;
+          if (!updatedAt) return resolved;
+          return `${resolved}?v=${Math.floor(new Date(updatedAt).getTime() / 1000)}`;
+        },
+      );
+
+      const book1 = createMockBook({ coverUrl: '/api/books/1/cover', updatedAt: '2024-01-01T00:00:00Z' });
+      const { rerender } = render(<LibraryBookCard {...defaultProps({ book: book1 })} />);
+
+      const img = screen.getByAltText('The Way of Kings');
+      expect(img).toHaveAttribute('src', '/narratorr/api/books/1/cover?v=1704067200');
+
+      const book2 = createMockBook({ coverUrl: '/api/books/1/cover', updatedAt: '2024-06-15T12:00:00Z' });
+      rerender(<LibraryBookCard {...defaultProps({ book: book2 })} />);
+
+      expect(img).toHaveAttribute('src', '/narratorr/api/books/1/cover?v=1718452800');
+    });
+
+    it('no cover image rendered when book.coverUrl is null', () => {
+      const book = createMockBook({ coverUrl: null });
+      render(<LibraryBookCard {...defaultProps({ book })} />);
+      expect(screen.queryByAltText('The Way of Kings')).not.toBeInTheDocument();
+    });
+
+    it('external cover URL does not get ?v= appended', async () => {
+      vi.spyOn(await import('@/lib/url-utils'), 'resolveCoverUrl').mockImplementation(
+        (url, updatedAt) => {
+          if (!url) return undefined;
+          if (url.startsWith('http://') || url.startsWith('https://')) return url;
+          const resolved = `/narratorr${url}`;
+          if (!updatedAt) return resolved;
+          return `${resolved}?v=${Math.floor(new Date(updatedAt).getTime() / 1000)}`;
+        },
+      );
+
+      const book = createMockBook({ coverUrl: 'https://example.com/cover.jpg', updatedAt: '2024-01-01T00:00:00Z' });
+      render(<LibraryBookCard {...defaultProps({ book })} />);
+
+      const img = screen.getByAltText('The Way of Kings');
+      expect(img).toHaveAttribute('src', 'https://example.com/cover.jpg');
     });
   });
 
