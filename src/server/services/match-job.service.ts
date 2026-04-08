@@ -219,9 +219,7 @@ class MatchJob {
       }
 
       // Multiple results — use duration to determine confidence (not to override winner)
-      const durationResult = resolveConfidenceFromDuration(scored, duration);
-      const confidence: Confidence = durationResult?.confidence ?? 'medium';
-      const reason = durationResult?.reason ?? (durationResult ? undefined : 'Multiple results — no duration data to disambiguate');
+      const { confidence, reason } = resolveConfidenceFromDuration(scored, duration);
       this.log.debug(
         {
           path: book.path,
@@ -232,7 +230,7 @@ class MatchJob {
           hasDuration: !!duration,
           matchDuration: topScored.meta.duration,
         },
-        durationResult ? 'Duration-informed confidence' : 'Multiple results, no duration disambiguation — medium confidence',
+        reason ? 'Duration-informed confidence' : 'Multiple results, no duration disambiguation — medium confidence',
       );
       return {
         path: book.path,
@@ -293,8 +291,10 @@ interface DurationConfidenceResult {
 function resolveConfidenceFromDuration(
   scored: { meta: BookMetadata; score: number }[],
   duration: number | undefined,
-): DurationConfidenceResult | null {
-  if (!duration || duration <= 0) return null;
+): DurationConfidenceResult {
+  if (!duration || duration <= 0) {
+    return { confidence: 'medium', reason: 'Multiple results — no duration data to disambiguate' };
+  }
 
   const topResult = scored[0];
   // If the top-ranked result has duration data, use it for confidence
