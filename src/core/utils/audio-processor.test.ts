@@ -73,6 +73,7 @@ function mockExecFileFailure(message: string, stderr = '') {
 class MockChildProcess extends EventEmitter {
   stdout = new EventEmitter();
   stderr = new EventEmitter();
+  kill = vi.fn();
 }
 
 /** Mock spawn to resolve successfully (exit code 0). Returns the mock child for further interaction. */
