@@ -1,5 +1,34 @@
 # Workflow Log
 
+## #424 M4B merge fails on MP3s with embedded cover art — muxer queue overflow — 2026-04-08
+**Skill path:** /implement → /claim → /plan → /handoff
+**Outcome:** success — PR #425
+
+### Metrics
+- Files changed: 3 | Tests added/modified: 21
+- Quality gate runs: 2 (pass on attempt 2 — first had complexity+line-count lint violations, fixed by extracting cover-art.ts; typecheck error on MockChildProcess.kill fixed)
+- Fix iterations: 1 (extracted cover art helpers to separate file to meet max-lines and complexity limits)
+- Context compactions: 0
+
+### Workflow experience
+- What went smoothly: Clean TDD cycle — 3 modules implemented sequentially with clear red/green phases. Self-contained changes in audio-processor.ts meant no caller modifications needed.
+- Friction / issues encountered: ESLint max-lines (400) and complexity (15) limits forced extraction of cover-art.ts mid-implementation. The extraction itself was straightforward but required passing `spawnFfmpeg` as a function parameter since it's private to audio-processor.ts.
+
+### Token efficiency
+- Highest-token actions: Spec review cycle (3 rounds of elaborate → review-spec → respond) consumed significant context before implementation began
+- Avoidable waste: None — the spec review rounds caught real design issues (missing hasCoverArt source, shared caller contract, configurable vs fixed timeout)
+- Suggestions: For future scope/core issues with ffmpeg, the spec should reference the exact ffmpeg arg arrays being modified to avoid ambiguity
+
+### Infrastructure gaps
+- Repeated workarounds: None
+- Missing tooling / config: None
+- Unresolved debt: None introduced
+
+### Wish I'd Known
+1. `vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })` works cleanly with EventEmitter-based spawn mocks — no need for complex timer workarounds (ref: `spawn-stall-timeout-fake-timers.md`)
+2. ESLint max-lines is 400 — should plan file splits upfront when adding 100+ lines of new logic to an already-large file
+3. The `withCoverArtPipeline` wrapper pattern (processFn callback + spawnFfmpeg injection) cleanly separates cover art lifecycle from encode logic without changing caller signatures (ref: `cover-art-pipeline-extraction.md`)
+
 ## #415 Surface match confidence reason on Review badge — 2026-04-08
 **Skill path:** /implement → /claim → /plan → /handoff
 **Outcome:** success — PR #423
