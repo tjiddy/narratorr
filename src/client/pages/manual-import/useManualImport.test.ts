@@ -1337,8 +1337,110 @@ describe('grouped return shape (REACT-1 refactor)', () => {
 
   // ── #415 Match confidence reason passthrough ────────────────────────
   describe('confidence reason lifecycle (#415)', () => {
-    it.todo('mergeMatchResults preserves reason field from MatchResult onto ImportRow');
-    it.todo('medium → high upgrade clears reason to undefined');
-    it.todo('none → medium upgrade does not set a reason (user-initiated)');
+    it('mergeMatchResults preserves reason field from MatchResult onto ImportRow', async () => {
+      vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] });
+      try {
+        vi.mocked(api.scanDirectory).mockResolvedValue(SCAN_RESULT);
+        vi.mocked(api.getMatchJob).mockResolvedValue({
+          id: 'job-123', status: 'completed', matched: 1, total: 1,
+          results: [{
+            path: '/audiobooks/Book A',
+            confidence: 'medium',
+            bestMatch: MATCH_METADATA,
+            alternatives: [],
+            reason: 'Duration mismatch — scanned 10.0hrs vs expected 11.6hrs',
+          }],
+        });
+
+        const { result } = renderHook(() => useManualImport(), { wrapper: createWrapper() });
+        act(() => { result.current.state.setScanPath('/audiobooks'); });
+        await act(async () => { result.current.actions.handleScan(); });
+        await waitFor(() => { expect(result.current.state.rows).toHaveLength(2); });
+
+        await act(async () => { await vi.advanceTimersByTimeAsync(2100); });
+        expect(result.current.state.rows[0].matchResult?.reason).toBe(
+          'Duration mismatch — scanned 10.0hrs vs expected 11.6hrs',
+        );
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it('medium → high upgrade clears reason to undefined', async () => {
+      vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] });
+      try {
+        vi.mocked(api.scanDirectory).mockResolvedValue(SCAN_RESULT);
+        vi.mocked(api.getMatchJob).mockResolvedValue({
+          id: 'job-123', status: 'completed', matched: 1, total: 1,
+          results: [{
+            path: '/audiobooks/Book A',
+            confidence: 'medium',
+            bestMatch: MATCH_METADATA,
+            alternatives: [],
+            reason: 'Duration mismatch — scanned 10.0hrs vs expected 11.6hrs',
+          }],
+        });
+
+        const { result } = renderHook(() => useManualImport(), { wrapper: createWrapper() });
+        act(() => { result.current.state.setScanPath('/audiobooks'); });
+        await act(async () => { result.current.actions.handleScan(); });
+        await waitFor(() => { expect(result.current.state.rows).toHaveLength(2); });
+
+        await act(async () => { await vi.advanceTimersByTimeAsync(2100); });
+        expect(result.current.state.rows[0].matchResult?.confidence).toBe('medium');
+        expect(result.current.state.rows[0].matchResult?.reason).toBeDefined();
+
+        // Edit with NEW metadata → upgrades to high, reason must be cleared
+        const newMetadata = { ...MATCH_METADATA, asin: 'B002NEWPICK' };
+        act(() => {
+          result.current.actions.handleEdit(0, {
+            title: 'Book A', author: 'Author A', series: '',
+            metadata: newMetadata,
+          });
+        });
+
+        expect(result.current.state.rows[0].matchResult?.confidence).toBe('high');
+        expect(result.current.state.rows[0].matchResult?.reason).toBeUndefined();
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it('none → medium upgrade does not set a reason (user-initiated)', async () => {
+      vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] });
+      try {
+        vi.mocked(api.scanDirectory).mockResolvedValue(SCAN_RESULT);
+        vi.mocked(api.getMatchJob).mockResolvedValue({
+          id: 'job-123', status: 'completed', matched: 1, total: 1,
+          results: [{
+            path: '/audiobooks/Book A',
+            confidence: 'none',
+            bestMatch: null,
+            alternatives: [],
+          }],
+        });
+
+        const { result } = renderHook(() => useManualImport(), { wrapper: createWrapper() });
+        act(() => { result.current.state.setScanPath('/audiobooks'); });
+        await act(async () => { result.current.actions.handleScan(); });
+        await waitFor(() => { expect(result.current.state.rows).toHaveLength(2); });
+
+        await act(async () => { await vi.advanceTimersByTimeAsync(2100); });
+        expect(result.current.state.rows[0].matchResult?.confidence).toBe('none');
+
+        // Edit with metadata → upgrades to medium, but no system reason
+        act(() => {
+          result.current.actions.handleEdit(0, {
+            title: 'Book A', author: 'Author A', series: '',
+            metadata: MATCH_METADATA,
+          });
+        });
+
+        expect(result.current.state.rows[0].matchResult?.confidence).toBe('medium');
+        expect(result.current.state.rows[0].matchResult?.reason).toBeUndefined();
+      } finally {
+        vi.useRealTimers();
+      }
+    });
   });
 });

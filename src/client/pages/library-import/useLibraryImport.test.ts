@@ -624,6 +624,98 @@ describe('handleEdit — auto-check, confidence upgrade, slug-duplicate recheck 
     // Row stays duplicate because the guard skipped the recheck
     expect(result.current.rows[slugDupIdx].book.isDuplicate).toBe(true);
   });
+
+  // ── #415 Match confidence reason passthrough ────────────────────────
+  describe('confidence reason lifecycle (#415)', () => {
+    it('mergeMatchResults preserves reason field from MatchResult onto ImportRow', async () => {
+      mockGetMatchJob.mockResolvedValue({
+        id: 'job-1', status: 'completed', total: 1, matched: 1,
+        results: [{
+          path: '/audiobooks/AuthorA/Book1',
+          confidence: 'medium',
+          bestMatch: { title: 'Book One', authors: [{ name: 'Author A' }] },
+          alternatives: [],
+          reason: 'Duration mismatch — scanned 10.0hrs vs expected 11.6hrs',
+        }],
+      });
+
+      const { result } = renderHook(() => useLibraryImport(), { wrapper: createWrapper() });
+      await waitFor(() => expect(result.current.step).toBe('review'));
+
+      const nonDupIdx = result.current.rows.findIndex(r => !r.book.isDuplicate);
+      await waitFor(() => {
+        expect(result.current.rows[nonDupIdx].matchResult?.confidence).toBe('medium');
+      }, { timeout: 5000 });
+
+      expect(result.current.rows[nonDupIdx].matchResult?.reason).toBe(
+        'Duration mismatch — scanned 10.0hrs vs expected 11.6hrs',
+      );
+    });
+
+    it('medium → high upgrade clears reason to undefined', async () => {
+      mockGetMatchJob.mockResolvedValue({
+        id: 'job-1', status: 'completed', total: 1, matched: 1,
+        results: [{
+          path: '/audiobooks/AuthorA/Book1',
+          confidence: 'medium',
+          bestMatch: { title: 'Book One', authors: [{ name: 'Author A' }] },
+          alternatives: [],
+          reason: 'Duration mismatch — scanned 10.0hrs vs expected 11.6hrs',
+        }],
+      });
+
+      const { result } = renderHook(() => useLibraryImport(), { wrapper: createWrapper() });
+      await waitFor(() => expect(result.current.step).toBe('review'));
+
+      const nonDupIdx = result.current.rows.findIndex(r => !r.book.isDuplicate);
+      await waitFor(() => {
+        expect(result.current.rows[nonDupIdx].matchResult?.confidence).toBe('medium');
+      }, { timeout: 5000 });
+      expect(result.current.rows[nonDupIdx].matchResult?.reason).toBeDefined();
+
+      // Edit with NEW metadata → upgrades to high, reason must be cleared
+      act(() => {
+        result.current.handleEdit(nonDupIdx, {
+          title: 'Book One', author: 'Author A', series: '',
+          metadata: { title: 'Book One', authors: [{ name: 'Author A' }] },
+        });
+      });
+
+      expect(result.current.rows[nonDupIdx].matchResult?.confidence).toBe('high');
+      expect(result.current.rows[nonDupIdx].matchResult?.reason).toBeUndefined();
+    });
+
+    it('none → medium upgrade does not set a reason (user-initiated)', async () => {
+      mockGetMatchJob.mockResolvedValue({
+        id: 'job-1', status: 'completed', total: 1, matched: 1,
+        results: [{
+          path: '/audiobooks/AuthorA/Book1',
+          confidence: 'none',
+          bestMatch: null,
+          alternatives: [],
+        }],
+      });
+
+      const { result } = renderHook(() => useLibraryImport(), { wrapper: createWrapper() });
+      await waitFor(() => expect(result.current.step).toBe('review'));
+
+      const nonDupIdx = result.current.rows.findIndex(r => !r.book.isDuplicate);
+      await waitFor(() => {
+        expect(result.current.rows[nonDupIdx].matchResult?.confidence).toBe('none');
+      }, { timeout: 5000 });
+
+      // Edit with metadata → upgrades to medium, but no system reason
+      act(() => {
+        result.current.handleEdit(nonDupIdx, {
+          title: 'Book One', author: 'Author A', series: '',
+          metadata: { title: 'Book One', authors: [{ name: 'Author A' }] },
+        });
+      });
+
+      expect(result.current.rows[nonDupIdx].matchResult?.confidence).toBe('medium');
+      expect(result.current.rows[nonDupIdx].matchResult?.reason).toBeUndefined();
+    });
+  });
 });
 
 describe('retry mechanics (#185)', () => {
@@ -1009,12 +1101,5 @@ describe('empty result edge case', () => {
       await waitFor(() => { expect(result.current.step).toBe('review'); });
       expect(result.current.emptyResult).toBe(false);
     });
-  });
-
-  // ── #415 Match confidence reason passthrough ────────────────────────
-  describe('confidence reason lifecycle (#415)', () => {
-    it.todo('mergeMatchResults preserves reason field from MatchResult onto ImportRow');
-    it.todo('medium → high upgrade clears reason to undefined');
-    it.todo('none → medium upgrade does not set a reason (user-initiated)');
   });
 });
