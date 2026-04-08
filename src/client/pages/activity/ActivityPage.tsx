@@ -6,9 +6,11 @@ import {
   ActivityIcon,
 } from '@/components/icons';
 import { DownloadCard } from './DownloadCard.js';
+import { MergeCard } from './MergeCard.js';
 import { SearchCard } from './SearchCard.js';
 import { EventHistorySection } from './EventHistorySection.js';
 import { useActivity } from './useActivity.js';
+import { useMergeActivityCards } from '@/hooks/useMergeProgress.js';
 import { useSearchProgress } from '@/hooks/useSearchProgress';
 import { usePagination } from '@/hooks/usePagination';
 import { Pagination } from '@/components/Pagination';
@@ -25,6 +27,7 @@ export function ActivityPage() {
     { limit: historyPagination.limit, offset: historyPagination.offset },
   );
   const { queue, queueTotal, history, historyTotal } = state;
+  const mergeCards = useMergeActivityCards();
   const searchCards = useSearchProgress();
   const { isLoading } = status;
   const { cancelMutation, retryMutation, approveMutation, rejectMutation, deleteMutation, deleteHistoryMutation } = mutations;
@@ -110,6 +113,15 @@ export function ActivityPage() {
               </div>
             </div>
 
+            {/* Merge progress cards — ephemeral, above search cards */}
+            {mergeCards.length > 0 && (
+              <div className="space-y-4">
+                {mergeCards.map((card) => (
+                  <MergeCard key={card.bookId} state={card} />
+                ))}
+              </div>
+            )}
+
             {/* Search progress cards — ephemeral, above downloads */}
             {searchCards.length > 0 && (
               <div className="space-y-4">
@@ -119,7 +131,7 @@ export function ActivityPage() {
               </div>
             )}
 
-            {queue.length === 0 && searchCards.length === 0 ? (
+            {queue.length === 0 && searchCards.length === 0 && mergeCards.length === 0 ? (
               <div className="glass-card rounded-2xl p-8 sm:p-12 text-center">
                 <DownloadCloudIcon className="w-12 h-12 text-muted-foreground/40 mx-auto mb-4" />
                 <p className="text-lg font-medium">No active downloads</p>
