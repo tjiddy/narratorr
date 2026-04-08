@@ -29,6 +29,32 @@ vi.mock('@/hooks/useMergeProgress', () => ({
   _resetForTesting: vi.fn(),
 }));
 
+// Spy on clampToTotal calls to verify effect dependency stability (F1).
+// The spy wraps the real hook — all behavior is preserved. clampToTotal is
+// already a stable useCallback ref, so the WeakMap lookup returns the same
+// wrapper across renders, preserving referential identity for useEffect deps.
+let clampToTotalCallCount = 0;
+type ClampFn = (total: number) => void;
+const clampWrapperCache = new WeakMap<ClampFn, ClampFn>();
+vi.mock('@/hooks/usePagination', async () => {
+  // eslint-disable-next-line @typescript-eslint/consistent-type-imports
+  const mod: typeof import('@/hooks/usePagination') = await vi.importActual('@/hooks/usePagination');
+  return {
+    ...mod,
+    usePagination: (...args: Parameters<typeof mod.usePagination>) => {
+      const result = mod.usePagination(...args);
+      const original = result.clampToTotal;
+      if (!clampWrapperCache.has(original)) {
+        clampWrapperCache.set(original, (total: number) => {
+          clampToTotalCallCount++;
+          return original(total);
+        });
+      }
+      return { ...result, clampToTotal: clampWrapperCache.get(original)! };
+    },
+  };
+});
+
 vi.mock('@/lib/api', () => ({
   api: {
     getActivity: vi.fn(),
@@ -79,6 +105,7 @@ function mockActivitySections(queue: Download[], history: Download[]) {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  clampToTotalCallCount = 0;
 });
 
 describe('ActivityPage pagination clamp (#93)', () => {
@@ -91,6 +118,17 @@ describe('ActivityPage pagination clamp (#93)', () => {
   // Use status:'completed' so refetchInterval returns false (no polling interference)
   const makeCompletedDownloads = (n: number, startId = 1) =>
     Array.from({ length: n }, (_, i) => makeDownload({ id: startId + i, status: 'completed' }));
+
+  // Disable background refetches so setQueryData values are authoritative.
+  // staleTime: Infinity prevents TanStack Query from refetching when the query key
+  // changes after a clamp (e.g., offset changes from 100→50). Without this, TQ sees
+  // the cached data as stale and fires a background refetch using the mock, which may
+  // return a different total and overwrite the manually set value.
+  function makeClampTestClient() {
+    return new QueryClient({
+      defaultOptions: { queries: { retry: false, staleTime: Infinity } },
+    });
+  }
 
   function renderWithCustomClient(queryClient: QueryClient) {
     return render(
@@ -105,7 +143,7 @@ describe('ActivityPage pagination clamp (#93)', () => {
   // timeout: 15s — test navigates 4 pages via userEvent, each needing a fetch + waitFor
   it('queue page clamps to last valid page when total shrinks (page 3 → page 2 of 2)', async () => {
     const user = userEvent.setup();
-    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const queryClient = makeClampTestClient();
 
     // Return 150 items for every getActivity call so both sections always show 3 pages
     vi.mocked(api.getActivity).mockImplementation(async (params) => {
@@ -142,6 +180,8 @@ describe('ActivityPage pagination clamp (#93)', () => {
 
     // Simulate queue total shrinking to 100 (2 pages). Update both the current page
     // (offset=100) and the clamped-to page (offset=50) so totalPages reflects the new total.
+    // staleTime: Infinity in makeClampTestClient prevents background refetches from
+    // overwriting these values with the mock's stale total=150.
     act(() => {
       queryClient.setQueryData(
         activityKey({ section: 'queue', limit: LIMIT, offset: 100 }),
@@ -161,7 +201,7 @@ describe('ActivityPage pagination clamp (#93)', () => {
 
   it('history page clamps to last valid page when historyTotal shrinks, leaving queue unchanged', async () => {
     const user = userEvent.setup();
-    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const queryClient = makeClampTestClient();
 
     vi.mocked(api.getActivity).mockImplementation(async (params) => {
       const offset = params?.offset ?? 0;
@@ -196,6 +236,7 @@ describe('ActivityPage pagination clamp (#93)', () => {
 
     // Simulate history total shrinking to 100 (2 pages). Update both the current page
     // (offset=100) and the clamped-to page (offset=50) so totalPages reflects the new total.
+    // staleTime: Infinity in makeClampTestClient prevents background refetches.
     act(() => {
       queryClient.setQueryData(
         activityKey({ section: 'history', limit: LIMIT, offset: 100 }),
@@ -211,6 +252,185 @@ describe('ActivityPage pagination clamp (#93)', () => {
     // Queue is completely unaffected — its independent clamp effect sees total=150, no change.
     await waitFor(() => expect(pageLabels()[1]).toHaveTextContent('Page 2 of 2'));
     expect(pageLabels()[0]).toHaveTextContent('Page 1 of 3');
+  }, 15000);
+
+  it('clamp effects do not re-fire on re-render when totals are unchanged (stable deps)', async () => {
+    const user = userEvent.setup();
+    const queryClient = makeClampTestClient();
+
+    vi.mocked(api.getActivity).mockImplementation(async (params) => {
+      const offset = params?.offset ?? 0;
+      const section = params?.section;
+      return {
+        data: makeCompletedDownloads(LIMIT, (section === 'history' ? 1000 : 0) + offset),
+        total: 150,
+      };
+    });
+
+    renderWithCustomClient(queryClient);
+
+    await waitFor(() => {
+      const labels = screen.getAllByText(/Page \d+ of \d+/);
+      expect(labels).toHaveLength(2);
+      expect(labels[0]).toHaveTextContent('Page 1 of 3');
+    });
+
+    // Navigate queue to page 2 (history stays on page 1)
+    await user.click(screen.getAllByRole('button', { name: /next page/i })[0]);
+    await waitFor(() => expect(screen.getAllByText(/Page \d+ of \d+/)[0]).toHaveTextContent('Page 2 of 3'));
+
+    // Snapshot clampToTotal call count after navigation settles.
+    // Both queue and history effects have fired during initial render and navigation.
+    const countBeforeRerender = clampToTotalCallCount;
+
+    // Trigger a re-render by updating query cache data WITHOUT changing totals.
+    // This causes usePagination to return a new object (unstable ref) but the
+    // destructured clampToTotal callbacks remain stable.
+    act(() => {
+      queryClient.setQueryData(
+        activityKey({ section: 'queue', limit: LIMIT, offset: 50 }),
+        { data: makeCompletedDownloads(LIMIT, 8000), total: 150 },
+      );
+    });
+
+    // Page labels are unchanged — both paginators still show their pre-rerender state
+    await waitFor(() => {
+      const labels = screen.getAllByText(/Page \d+ of \d+/);
+      expect(labels[0]).toHaveTextContent('Page 2 of 3');
+      expect(labels[1]).toHaveTextContent('Page 1 of 3');
+    });
+
+    // With stable deps (clampQueuePage/clampHistoryPage), neither clamp effect re-fires
+    // because queueTotal/historyTotal didn't change and the callbacks are stable refs.
+    // With the old full-object deps [queueTotal, queuePagination], both effects would
+    // re-fire on every render because usePagination returns a new object each time.
+    expect(clampToTotalCallCount).toBe(countBeforeRerender);
+  }, 15000);
+
+  it('clamps to page 1 when total shrinks to exactly 1 page', async () => {
+    const user = userEvent.setup();
+    const queryClient = makeClampTestClient();
+
+    vi.mocked(api.getActivity).mockImplementation(async (params) => {
+      const offset = params?.offset ?? 0;
+      const section = params?.section;
+      return {
+        data: makeCompletedDownloads(LIMIT, (section === 'history' ? 1000 : 0) + offset),
+        total: 150,
+      };
+    });
+
+    renderWithCustomClient(queryClient);
+
+    await waitFor(() => {
+      const labels = screen.getAllByText(/Page \d+ of \d+/);
+      expect(labels).toHaveLength(2);
+      expect(labels[0]).toHaveTextContent('Page 1 of 3');
+    });
+
+    // Navigate queue to page 3
+    await user.click(screen.getAllByRole('button', { name: /next page/i })[0]);
+    await waitFor(() => expect(screen.getAllByText(/Page \d+ of \d+/)[0]).toHaveTextContent('Page 2 of 3'));
+    await user.click(screen.getAllByRole('button', { name: /next page/i })[0]);
+    await waitFor(() => expect(screen.getAllByText(/Page \d+ of \d+/)[0]).toHaveTextContent('Page 3 of 3'));
+
+    // Shrink total to 30 (≤ limit=50, so only 1 page).
+    // staleTime: Infinity in makeClampTestClient prevents background refetches.
+    act(() => {
+      queryClient.setQueryData(
+        activityKey({ section: 'queue', limit: LIMIT, offset: 100 }),
+        { data: makeCompletedDownloads(30, 9000), total: 30 },
+      );
+      queryClient.setQueryData(
+        activityKey({ section: 'queue', limit: LIMIT, offset: 0 }),
+        { data: makeCompletedDownloads(30, 8000), total: 30 },
+      );
+    });
+
+    // Queue total (30) ≤ limit (50), so queue Pagination returns null.
+    // Only history pagination remains visible.
+    await waitFor(() => {
+      const labels = screen.getAllByText(/Page \d+ of \d+/);
+      expect(labels).toHaveLength(1); // only history
+      expect(labels[0]).toHaveTextContent('Page 1 of 3'); // history unchanged
+    });
+
+    // Restore queue total above limit to prove page state actually clamped to 1.
+    // If clamp failed (page stuck at 3), this would show "Page 3 of 3" instead.
+    act(() => {
+      queryClient.setQueryData(
+        activityKey({ section: 'queue', limit: LIMIT, offset: 0 }),
+        { data: makeCompletedDownloads(LIMIT, 7000), total: 150 },
+      );
+    });
+
+    await waitFor(() => {
+      const labels = screen.getAllByText(/Page \d+ of \d+/);
+      expect(labels).toHaveLength(2);
+      expect(labels[0]).toHaveTextContent('Page 1 of 3'); // confirms page clamped to 1
+    });
+  }, 15000);
+
+  it('clamps to page 1 when total shrinks to 0', async () => {
+    const user = userEvent.setup();
+    const queryClient = makeClampTestClient();
+
+    vi.mocked(api.getActivity).mockImplementation(async (params) => {
+      const offset = params?.offset ?? 0;
+      const section = params?.section;
+      return {
+        data: makeCompletedDownloads(LIMIT, (section === 'history' ? 1000 : 0) + offset),
+        total: 150,
+      };
+    });
+
+    renderWithCustomClient(queryClient);
+
+    await waitFor(() => {
+      const labels = screen.getAllByText(/Page \d+ of \d+/);
+      expect(labels).toHaveLength(2);
+      expect(labels[0]).toHaveTextContent('Page 1 of 3');
+    });
+
+    // Navigate queue to page 2
+    await user.click(screen.getAllByRole('button', { name: /next page/i })[0]);
+    await waitFor(() => expect(screen.getAllByText(/Page \d+ of \d+/)[0]).toHaveTextContent('Page 2 of 3'));
+
+    // Shrink total to 0.
+    // staleTime: Infinity in makeClampTestClient prevents background refetches.
+    act(() => {
+      queryClient.setQueryData(
+        activityKey({ section: 'queue', limit: LIMIT, offset: 50 }),
+        { data: [], total: 0 },
+      );
+      queryClient.setQueryData(
+        activityKey({ section: 'queue', limit: LIMIT, offset: 0 }),
+        { data: [], total: 0 },
+      );
+    });
+
+    // Queue total (0) ≤ limit (50), so queue Pagination returns null.
+    // Only history pagination remains visible.
+    await waitFor(() => {
+      const labels = screen.getAllByText(/Page \d+ of \d+/);
+      expect(labels).toHaveLength(1); // only history
+      expect(labels[0]).toHaveTextContent('Page 1 of 3'); // history unchanged
+    });
+
+    // Restore queue total above limit to prove page state actually clamped to 1.
+    // If clamp failed (page stuck at 2), this would show "Page 2 of 3" instead.
+    act(() => {
+      queryClient.setQueryData(
+        activityKey({ section: 'queue', limit: LIMIT, offset: 0 }),
+        { data: makeCompletedDownloads(LIMIT, 7000), total: 150 },
+      );
+    });
+
+    await waitFor(() => {
+      const labels = screen.getAllByText(/Page \d+ of \d+/);
+      expect(labels).toHaveLength(2);
+      expect(labels[0]).toHaveTextContent('Page 1 of 3'); // confirms page clamped to 1
+    });
   }, 15000);
 });
 

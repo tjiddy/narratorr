@@ -1,5 +1,34 @@
 # Workflow Log
 
+## #414 ActivityPage flaky test — queue pagination timing — 2026-04-08
+**Skill path:** /implement → /claim → /plan → /handoff
+**Outcome:** success — PR #436
+
+### Metrics
+- Files changed: 2 | Tests added/modified: 5 (3 new + 2 fixed)
+- Quality gate runs: 2 (pass on attempt 2 — first caught lint violation)
+- Fix iterations: 1 (ESLint exhaustive-deps rejected dotted property access in useEffect deps)
+- Context compactions: 0
+
+### Workflow experience
+- What went smoothly: Root cause diagnosis was accurate from /elaborate — the stale refetch race was confirmed
+- Friction / issues encountered: Understanding TanStack Query's `staleTime` vs `refetchOnMount` semantics took several iterations. `refetchOnMount: false` does NOT prevent fetches when query keys change within a mounted component — only `staleTime: Infinity` prevents all background refetches. Also, the `Pagination` component returning `null` when `total <= limit` meant boundary test assertions had to check pagination disappearance, not page label content.
+
+### Token efficiency
+- Highest-token actions: Debugging why boundary tests failed despite correct cache state — traced through TanStack Query's fetch/cache lifecycle multiple times
+- Avoidable waste: Could have read the Pagination component source BEFORE writing boundary test assertions, instead of discovering the `total <= limit → null` behavior after tests failed
+- Suggestions: Always read the render-condition logic of components under test before writing assertions about their visibility
+
+### Infrastructure gaps
+- Repeated workarounds: None
+- Missing tooling / config: Vitest `--repeat` flag doesn't exist in v4 — had to use a shell loop for reliability testing
+- Unresolved debt: 3 other `usePagination` consumers use the same unstable full-object dep pattern (logged in debt.md)
+
+### Wish I'd Known
+1. TanStack Query `staleTime: Infinity` is the correct test-isolation tool for `setQueryData` tests — `refetchOnMount: false` is insufficient because query key changes within mounted components still trigger fetches (see `tanstack-query-staletime-setquerydata.md`)
+2. The `Pagination` component returns `null` when `total <= limit`, making pagination labels disappear from the DOM entirely — test assertions must account for element count changes (see `pagination-component-hides-at-boundary.md`)
+3. `react-hooks/exhaustive-deps` does not support dotted property access — must destructure hook return values into local variables to use individual callbacks as effect dependencies (see `eslint-exhaustive-deps-dotted-access.md`)
+
 ## #416 mam-fields.tsx ensureMinDuration flakes detection tests — extract testable constant — 2026-04-08
 **Skill path:** /implement → /claim → /plan → /handoff
 **Outcome:** success — PR #435
