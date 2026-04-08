@@ -1,5 +1,6 @@
 # Workflow Log
 
+<<<<<<< HEAD
 ## #421 Highlight currently installed release in search results — 2026-04-08
 **Skill path:** /implement → /claim → /plan → /handoff
 **Outcome:** success — PR #429
@@ -57,6 +58,35 @@
 1. `useSyncExternalStore` snapshot functions must return cached values — new objects per call cause infinite loops. See `learnings/usesyncexternalstore-per-book-cache.md`.
 2. When adding terminal phase values to a formatter, add explicit cases immediately — the `default` case silently masks missing terminal labels. See `learnings/terminal-phase-labels-in-formatters.md`.
 3. The existing `useSearchProgress` pattern is a nearly 1:1 template for new ephemeral activity card types — module-level Map + cachedSnapshot + scheduleDismiss + useSyncExternalStore. Future similar features can copy this pattern directly.
+
+## #426 Improve folder parsing for torrent naming conventions — 2026-04-08
+**Skill path:** /implement → /claim → /plan → /handoff
+**Outcome:** success — PR #427
+
+### Metrics
+- Files changed: 10 | Tests added/modified: 60
+- Quality gate runs: 2 (pass on attempt 2 — first attempt had lint complexity violation and unused var)
+- Fix iterations: 1 (extracted `findMergeableDiscChildren()` to reduce cyclomatic complexity from 19 to under 15)
+- Context compactions: 0
+
+### Workflow experience
+- What went smoothly: Spec was well-groomed through 3 rounds of review, making implementation straightforward. Test stubs from /plan mapped cleanly to TDD cycles.
+- Friction / issues encountered: Test stubs appended to end of 3500-line test file landed in wrong describe scope (`scanDirectory` instead of `LibraryScanService`), causing `ReferenceError` for mock fixtures. Had to relocate them to the correct scope.
+
+### Token efficiency
+- Highest-token actions: Explore subagent for codebase exploration during /plan phase
+- Avoidable waste: Reading large test files to find correct insertion point — could have grepped for the describe block first
+- Suggestions: For large test files, grep for the target describe block before appending stubs
+
+### Infrastructure gaps
+- Repeated workarounds: None
+- Missing tooling / config: None
+- Unresolved debt: None introduced
+
+### Wish I'd Known
+1. `CODEC_REGEX` has the global flag — `.test()` advances `lastIndex` and must be reset manually to avoid cross-call state pollution
+2. In `cleanName()`, stripping order matters critically: series markers before dedup, empty brackets before narrator parens, years/codecs before narrator check
+3. When appending test stubs to large files, verify the nesting scope by checking which `describe()` block owns the closing `});` — wrong scope = missing fixtures
 
 ## #424 M4B merge fails on MP3s with embedded cover art — muxer queue overflow — 2026-04-08
 **Skill path:** /implement → /claim → /plan → /handoff
