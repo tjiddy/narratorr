@@ -1171,6 +1171,36 @@ describe('#424 cover art detection and extraction', () => {
     expect(mockSpawn).toHaveBeenCalledTimes(2);
   });
 
+  it('emits warning via onStderr when cover extraction fails', async () => {
+    setupMergeFiles([120, 120]);
+    mockExecFileWithStreams({
+      '/lib/book/01.mp3': 1,
+      '/lib/book/02.mp3': 0,
+    });
+
+    let callIdx = 0;
+    mockSpawn.mockImplementation(() => {
+      callIdx++;
+      const child = new MockChildProcess();
+      if (callIdx === 1) {
+        process.nextTick(() => child.emit('close', 1));
+      } else {
+        process.nextTick(() => child.emit('close', 0));
+      }
+      return child as never;
+    });
+
+    const onStderr = vi.fn();
+    await processAudioFiles(
+      '/lib/book', { ...defaultConfig, mergeBehavior: 'always' }, defaultContext,
+      { onStderr },
+    );
+
+    expect(onStderr).toHaveBeenCalledWith(
+      expect.stringContaining('Cover art extraction failed'),
+    );
+  });
+
   it('zero-byte extracted cover skips reattach', async () => {
     setupMergeFiles([120, 120]);
     mockExecFileWithStreams({
@@ -1293,6 +1323,36 @@ describe('#424 cover art reattach (M4B only)', () => {
     expect(mockSpawn).toHaveBeenCalledTimes(3);
     // Merge still succeeds — audio-only M4B is the output
     expect(result.success).toBe(true);
+  });
+
+  it('emits warning via onStderr when cover reattach fails', async () => {
+    setupMergeFiles([120, 120]);
+    mockExecFileWithStreams({
+      '/lib/book/01.mp3': 1,
+      '/lib/book/02.mp3': 0,
+    });
+
+    let callIdx = 0;
+    mockSpawn.mockImplementation(() => {
+      callIdx++;
+      const child = new MockChildProcess();
+      if (callIdx === 3) {
+        process.nextTick(() => child.emit('close', 1));
+      } else {
+        process.nextTick(() => child.emit('close', 0));
+      }
+      return child as never;
+    });
+
+    const onStderr = vi.fn();
+    await processAudioFiles(
+      '/lib/book', { ...defaultConfig, mergeBehavior: 'always' }, defaultContext,
+      { onStderr },
+    );
+
+    expect(onStderr).toHaveBeenCalledWith(
+      expect.stringContaining('Cover art reattach failed'),
+    );
   });
 });
 

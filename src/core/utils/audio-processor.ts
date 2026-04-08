@@ -297,6 +297,7 @@ async function mergeFiles(
   try {
     const outputFiles = await withCoverArtPipeline(
       config.ffmpegPath, audioFiles, targetDir, outputExt, encodeFn, spawnFfmpeg,
+      callbacks?.onStderr,
     );
 
     // Clean up: remove source files and temp files
@@ -370,6 +371,7 @@ async function convertFiles(
 
   const outputFiles = await withCoverArtPipeline(
     config.ffmpegPath, audioFiles, targetDir, config.outputFormat, encodeFn, spawnFfmpeg,
+    callbacks?.onStderr,
   );
   return { success: true, outputFiles };
 }

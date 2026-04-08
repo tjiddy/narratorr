@@ -19,11 +19,15 @@ export async function withCoverArtPipeline(
   outputFormat: 'm4b' | 'mp3',
   processFn: () => Promise<string[]>,
   spawnFfmpeg: SpawnFfmpegFn,
+  onWarning?: (message: string) => void,
 ): Promise<string[]> {
   const coverSource = await detectCoverArtSource(ffmpegPath, audioFiles);
   let coverPath: string | null = null;
   if (coverSource) {
     coverPath = await extractCoverArt(ffmpegPath, coverSource, targetDir, spawnFfmpeg);
+    if (!coverPath) {
+      onWarning?.('Cover art extraction failed — output will not contain embedded cover art');
+    }
   }
 
   try {
@@ -32,7 +36,10 @@ export async function withCoverArtPipeline(
     // Reattach cover art to M4B outputs (if extracted and output is M4B)
     if (coverPath && outputFormat === 'm4b') {
       for (const outputFile of outputFiles) {
-        await reattachCoverArt(ffmpegPath, outputFile, coverPath, targetDir, spawnFfmpeg);
+        const ok = await reattachCoverArt(ffmpegPath, outputFile, coverPath, targetDir, spawnFfmpeg);
+        if (!ok) {
+          onWarning?.('Cover art reattach failed — output will not contain embedded cover art');
+        }
       }
     }
 
@@ -101,7 +108,7 @@ async function reattachCoverArt(
   coverFile: string,
   targetDir: string,
   spawnFfmpeg: SpawnFfmpegFn,
-): Promise<void> {
+): Promise<boolean> {
   const tempOutput = join(targetDir, '_cover_merged.m4b');
   try {
     await spawnFfmpeg(ffmpegPath, [
@@ -116,8 +123,9 @@ async function reattachCoverArt(
       tempOutput,
     ]);
     await rename(tempOutput, audioFile);
+    return true;
   } catch {
     await rm(tempOutput, { force: true }).catch(() => {});
-    // Graceful degradation — audio-only file is still valid
+    return false;
   }
 }
