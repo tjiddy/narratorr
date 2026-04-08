@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { getMinDetectionMs } from './mam-fields.js';
+import { getMinDetectionMs } from './mam-detection-timing.js';
 
 describe('getMinDetectionMs', () => {
   it('returns 0 when mode is test', () => {

@@ -3,12 +3,7 @@ import type { UseFormWatch, UseFormSetValue } from 'react-hook-form';
 import type { CreateIndexerFormData } from '../../../../shared/schemas.js';
 import { api } from '@/lib/api';
 import type { IndexerFieldsProps } from './types.js';
-
-export function getMinDetectionMs(mode: string): number {
-  return mode === 'test' ? 0 : 1000;
-}
-
-export const MIN_DETECTION_MS = getMinDetectionMs(import.meta.env.MODE);
+import { MIN_DETECTION_MS } from './mam-detection-timing.js';
 
 interface MamStatus {
   username: string;
