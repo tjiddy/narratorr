@@ -494,13 +494,12 @@ describe('retrySearch — GUID blacklist filtering', () => {
     );
   });
 
-  it('forwards undefined indexerId when search result has no indexerId', async () => {
+  it('omits indexerId when search result has no indexerId', async () => {
     const deps = createDeps();
 
     await retrySearch(1, deps);
 
-    expect(deps.downloadOrchestrator.grab).toHaveBeenCalledWith(
-      expect.objectContaining({ indexerId: undefined }),
-    );
+    const grabCall = vi.mocked(deps.downloadOrchestrator.grab).mock.calls[0][0];
+    expect(grabCall).not.toHaveProperty('indexerId');
   });
 });

@@ -9,9 +9,22 @@ vi.mock('node:child_process', () => ({
   }),
 }));
 
-// Mock fs/promises
+// Mock fs/promises — readdir must handle both call shapes:
+// collectAudioFilePaths calls readdir(dir, { withFileTypes: true }) → returns Dirent[]
+// findCoverFile/warnUnsupportedFormats call readdir(dir) → returns string[]
+// _readdirFiles stores the filename list; the mock auto-converts to Dirent when withFileTypes is set.
+let _readdirFiles: string[] = [];
 vi.mock('node:fs/promises', () => ({
-  readdir: vi.fn().mockResolvedValue([]),
+  readdir: vi.fn((_dir: string, opts?: { withFileTypes?: boolean }) => {
+    if (opts?.withFileTypes) {
+      return Promise.resolve(_readdirFiles.map(name => ({
+        name,
+        isFile: () => true,
+        isDirectory: () => false,
+      })));
+    }
+    return Promise.resolve([..._readdirFiles]);
+  }),
   rename: vi.fn().mockResolvedValue(undefined),
   unlink: vi.fn().mockResolvedValue(undefined),
   stat: vi.fn().mockResolvedValue({ size: 1000 }),
@@ -47,7 +60,7 @@ vi.mock('../../db/schema.js', () => ({
   narrators: { id: 'narrators.id', name: 'narrators.name' },
 }));
 
-import { readdir, rename, unlink, stat } from 'node:fs/promises';
+import { rename, unlink, stat } from 'node:fs/promises';
 import { execFile } from 'node:child_process';
 import { parseFile } from 'music-metadata';
 
@@ -482,7 +495,7 @@ describe('TaggingService', () => {
         tagging: { enabled: true, mode: 'populate_missing', embedCover: true },
       });
       (stat as Mock).mockResolvedValue({ size: 1000 });
-      (readdir as Mock).mockResolvedValue(['ch01.mp3']);
+      _readdirFiles = ['ch01.mp3'];
 
       const log = createMockLog();
       const service = new TaggingService(db as never, settings as never, log as never, mockBookService as never);
@@ -501,7 +514,7 @@ describe('TaggingService', () => {
       mockBookService.getById.mockResolvedValue(makeBook({ authors: [], narrators: [] }));
       const settings = createMockSettingsService(taggingDefaults);
       (stat as Mock).mockResolvedValue({ size: 1000 });
-      (readdir as Mock).mockResolvedValue(['book.mp3']);
+      _readdirFiles = ['book.mp3'];
 
       const service = new TaggingService(db as never, settings as never, createMockLog() as never, mockBookService as never);
       const result = await service.retagBook(1);
@@ -514,11 +527,12 @@ describe('TaggingService', () => {
   describe('tagBook', () => {
     beforeEach(() => {
       vi.clearAllMocks();
+      _readdirFiles = [];
       (stat as Mock).mockResolvedValue({ size: 1000 });
     });
 
     it('returns empty result when no taggable audio files found', async () => {
-      (readdir as Mock).mockResolvedValue([]);
+      _readdirFiles = [];
       const db = createMockDb();
       const settings = createMockSettingsService(taggingDefaults);
       const service = new TaggingService(db as never, settings as never, createMockLog() as never, mockBookService as never);
@@ -533,7 +547,7 @@ describe('TaggingService', () => {
     });
 
     it('assigns track numbers in locale-aware sort order for multi-file books', async () => {
-      (readdir as Mock).mockResolvedValue(['02.mp3', '01.mp3', '10.mp3']);
+      _readdirFiles = ['02.mp3', '01.mp3', '10.mp3'];
       const db = createMockDb();
       const settings = createMockSettingsService(taggingDefaults);
       const log = createMockLog();
@@ -573,7 +587,7 @@ describe('TaggingService', () => {
     });
 
     it('omits track number for single-file books', async () => {
-      (readdir as Mock).mockResolvedValue(['book.mp3']);
+      _readdirFiles = ['book.mp3'];
       const db = createMockDb();
       const settings = createMockSettingsService(taggingDefaults);
       const service = new TaggingService(db as never, settings as never, createMockLog() as never, mockBookService as never);
@@ -593,7 +607,7 @@ describe('TaggingService', () => {
     });
 
     it('warns about unsupported audio formats in directory', async () => {
-      (readdir as Mock).mockResolvedValue(['book.ogg', 'book.flac', 'cover.jpg']);
+      _readdirFiles = ['book.ogg', 'book.flac', 'cover.jpg'];
       const db = createMockDb();
       const settings = createMockSettingsService(taggingDefaults);
       const log = createMockLog();
@@ -619,7 +633,7 @@ describe('TaggingService', () => {
 
     it('logs warnings for unsupported files alongside tagging taggable ones', async () => {
       // readdir is called twice: once by collectAudioFiles, once by tagBook for unsupported scan
-      (readdir as Mock).mockResolvedValue(['ch01.mp3', 'bonus.ogg', 'ch02.mp3']);
+      _readdirFiles = ['ch01.mp3', 'bonus.ogg', 'ch02.mp3'];
       const db = createMockDb();
       const settings = createMockSettingsService(taggingDefaults);
       const log = createMockLog();
@@ -636,7 +650,7 @@ describe('TaggingService', () => {
     });
 
     it('adds warning when cover embedding enabled but no cover file found', async () => {
-      (readdir as Mock).mockResolvedValue(['book.mp3']);
+      _readdirFiles = ['book.mp3'];
       const db = createMockDb();
       const settings = createMockSettingsService(taggingDefaults);
       const service = new TaggingService(db as never, settings as never, createMockLog() as never, mockBookService as never);
@@ -669,7 +683,7 @@ describe('TaggingService — multi-value serialization (#71, #79)', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     (stat as Mock).mockResolvedValue({ size: 1000 });
-    (readdir as Mock).mockResolvedValue(['book.mp3']);
+    _readdirFiles = ['book.mp3'];
     mockBookService = { getById: vi.fn() };
   });
 
@@ -731,7 +745,7 @@ describe('TaggingService.retagBook() via BookService.getById() (issue #79)', () 
   beforeEach(() => {
     vi.clearAllMocks();
     (stat as Mock).mockResolvedValue({ size: 1000 });
-    (readdir as Mock).mockResolvedValue(['book.mp3']);
+    _readdirFiles = ['book.mp3'];
     mockBookService = { getById: vi.fn().mockResolvedValue({
       id: 7, title: 'Dune', path: '/library/dune',
       authors: [{ name: 'Frank Herbert' }],

@@ -9,6 +9,7 @@ import type { BlacklistService } from './blacklist.service.js';
 import type { SettingsService } from './settings.service.js';
 import type { EventBroadcasterService } from './event-broadcaster.service.js';
 import type { SSEEventType, SSEEventPayloads } from '../../shared/schemas/sse-events.js';
+import { buildGrabPayload } from './grab-payload.js';
 
 /** Build a search query string from a book's title and primary author. */
 export function buildSearchQuery(book: { title: string; authors?: Array<{ name: string }> | null }): string {
@@ -264,16 +265,9 @@ async function tryGrab(
   log: FastifyBaseLogger,
 ): Promise<SingleBookSearchResult> {
   try {
-    await downloadOrchestrator.grab({
-      downloadUrl: best.downloadUrl!,
-      title: best.title,
-      protocol: best.protocol,
-      bookId: book.id,
-      indexerId: best.indexerId,
-      size: best.size,
-      seeders: best.seeders,
-      guid: best.guid,
-    });
+    await downloadOrchestrator.grab(
+      buildGrabPayload(best, book.id, { guid: best.guid }),
+    );
     log.info({ bookId: book.id, title: best.title, seeders: best.seeders }, 'Auto-grabbed best result');
     return { result: 'grabbed', title: best.title };
   } catch (grabError: unknown) {

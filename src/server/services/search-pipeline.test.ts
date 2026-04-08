@@ -117,12 +117,11 @@ describe('searchAndGrabForBook', () => {
     );
   });
 
-  it('forwards undefined indexerId when search result has no indexerId', async () => {
+  it('omits indexerId when search result has no indexerId', async () => {
     const result = await searchAndGrabForBook(book, indexerService, downloadService, defaultQualitySettings, log, blacklistService);
     expect(result).toEqual({ result: 'grabbed', title: 'Test Book' });
-    expect(downloadService.grab).toHaveBeenCalledWith(
-      expect.objectContaining({ indexerId: undefined }),
-    );
+    const grabCall = vi.mocked(downloadService.grab).mock.calls[0][0];
+    expect(grabCall).not.toHaveProperty('indexerId');
   });
 
   it('returns no_results when indexers return empty array', async () => {

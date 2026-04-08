@@ -13,7 +13,7 @@
 - **`src/core/indexers/types.ts` / `src/client/lib/api/search.ts`**: `SearchResult` is duplicated across core and client — DRY-1 parallel types that must be kept in sync manually. A shared types package or generated types would prevent drift. (discovered in #317)
 - **`src/core/indexers/abb.ts`**: ABB adapter does not populate `guid` in search results (lines 174-182), same bug as MAM had. ABB downloads are un-blacklistable. Separate fix from #348. (discovered in #348)
 - **`src/client/components/SearchReleasesModal.tsx`**: `handleGrab()` cherry-picks fields from SearchResult instead of spreading. Every new SearchResult field requires a manual addition to both the mutation call AND `PendingGrabParams`. Fragile — consider spreading `result` and letting the API schema filter. (discovered in #348)
-- **Backend grab call sites (retry-search, search-pipeline, search job, rss job)**: All four sites cherry-pick fields from SearchResult into the grab payload. Same fragility as the frontend — adding a new optional field to the grab schema requires updating 4 files. Consider extracting a `buildGrabPayload(result, bookId, overrides?)` helper. (discovered in #385)
+- ~~**Backend grab call sites**: Resolved in #405 — extracted `buildGrabPayload()` helper~~
 - **`src/server/services/library-scan.service.ts` / `src/shared/schemas/library-scan.ts` / `src/client/lib/api/library-scan.ts`**: `DiscoveredBook` type and `duplicateReason` union defined in 3 places that must be kept in sync manually. DRY-1 — the shared schema should be the single source of truth with types derived via `z.infer`. (discovered in #342)
 
 - **`src/server/services/quality-gate-orchestrator.ts`**: `processOneDownload()` calls `getCompletedDownloads()` (loads ALL completed downloads) and then `.find()` by ID. Should have a dedicated `getCompletedDownloadById(id)` query in `QualityGateService` for O(1) lookup instead of O(N) scan. Low priority — completed download count is typically small. (discovered in #358)
@@ -21,9 +21,9 @@
 
 - **`src/server/services/merge.service.ts`**: Deprecated `mergeBook()` method (lines 222-270) duplicates validation and execution logic from `validatePreEnqueue()` + `executeMerge()`. Kept for backward compatibility with 40+ existing tests that test the synchronous merge path. Should be removed once existing tests are migrated to test via `enqueueMerge()`. (discovered in #368)
 
-- **Cover file regex duplicated in 3 places**: `cover-cache.ts:6` (COVER_FILE_REGEX), `cover-download.ts:9` (COVER_PATTERN), `tagging.service.ts:217` (inline regex). All are `/^cover\.(jpg|jpeg|png|webp)$/i`. Should import from a single canonical location. DRY-2. (discovered in #396)
+- ~~**Cover file regex duplicated in 3 places**: Resolved in #405 — extracted `COVER_FILE_REGEX` to `src/core/utils/cover-regex.ts`~~
 
-- **`collectAudioFiles()` defined in 4+ places**: `import-helpers.ts:97`, `tagging-service.ts:227`, `audio-scanner.ts:160`, `audio-processor.ts:409` — each is a private recursive audio file collector with slightly different signatures. Should extract to a shared utility in `src/core/utils/` to prevent further drift. DRY-2. (discovered in #397)
+- ~~**`collectAudioFiles()` defined in 4+ places**: Resolved in #405 — extracted `collectAudioFilePaths()` to `src/core/utils/collect-audio-files.ts`~~
 
 ## Accepted Debt
 

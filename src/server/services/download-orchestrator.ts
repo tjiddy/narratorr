@@ -17,6 +17,20 @@ import {
   recordGrabbedEvent, recordDownloadCompletedEvent,
 } from '../utils/download-side-effects.js';
 
+export interface GrabParams {
+  downloadUrl: string;
+  title: string;
+  protocol?: DownloadProtocol;
+  bookId?: number;
+  indexerId?: number;
+  size?: number;
+  seeders?: number;
+  guid?: string;
+  skipDuplicateCheck?: boolean;
+  replaceExisting?: boolean;
+  source?: CreateEventInput['source'];
+}
+
 export class DownloadOrchestrator {
   constructor(
     private downloadService: DownloadService,
@@ -33,19 +47,7 @@ export class DownloadOrchestrator {
    * Wraps DownloadService.grab() with: book status update → grab_started SSE →
    * book_status_change SSE → notification → event recording.
    */
-  async grab(params: {
-    downloadUrl: string;
-    title: string;
-    protocol?: DownloadProtocol;
-    bookId?: number;
-    indexerId?: number;
-    size?: number;
-    seeders?: number;
-    guid?: string;
-    skipDuplicateCheck?: boolean;
-    replaceExisting?: boolean;
-    source?: CreateEventInput['source'];
-  }): Promise<DownloadWithBook> {
+  async grab(params: GrabParams): Promise<DownloadWithBook> {
     // Core grab — let errors (including duplicate detection) propagate
     const download = await this.downloadService.grab(params);
 

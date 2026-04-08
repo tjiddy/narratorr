@@ -10,6 +10,7 @@ import type { EventBroadcasterService } from '../services/event-broadcaster.serv
 import type { BlacklistService } from '../services/blacklist.service.js';
 import { buildSearchQuery, filterAndRankResults, searchAndGrabForBook } from '../services/search-pipeline.js';
 import { DuplicateDownloadError } from '../services/download.service.js';
+import { buildGrabPayload } from '../services/grab-payload.js';
 
 export interface SearchJobResult {
   searched: number;
@@ -202,15 +203,9 @@ export async function runUpgradeSearchJob(
       }
 
       try {
-        await downloadOrchestrator.grab({
-          downloadUrl: best.downloadUrl!,
-          title: best.title,
-          protocol: best.protocol,
-          bookId: book.id,
-          indexerId: best.indexerId,
-          size: best.size!,
-          seeders: best.seeders,
-        });
+        await downloadOrchestrator.grab(
+          buildGrabPayload(best, book.id),
+        );
         grabbed++;
         log.info({ bookId: book.id, title: best.title }, 'Upgrade grabbed');
       } catch (grabError: unknown) {

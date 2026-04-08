@@ -7,6 +7,7 @@ import type { BookService } from './book.service.js';
 import type { SettingsService } from './settings.service.js';
 import type { RetryBudget } from './retry-budget.js';
 import { buildSearchQuery, filterAndRankResults, filterBlacklistedResults } from './search-pipeline.js';
+import { buildGrabPayload } from './grab-payload.js';
 
 export type RetryOutcome =
   | { outcome: 'retried'; download: DownloadWithBook }
@@ -109,17 +110,9 @@ export async function retrySearch(
     }
 
     // Grab the best candidate
-    const newDownload = await downloadOrchestrator.grab({
-      downloadUrl: best.downloadUrl!,
-      title: best.title,
-      protocol: best.protocol,
-      bookId: book.id,
-      indexerId: best.indexerId,
-      size: best.size,
-      seeders: best.seeders,
-      guid: best.guid,
-      skipDuplicateCheck: true,
-    });
+    const newDownload = await downloadOrchestrator.grab(
+      buildGrabPayload(best, book.id, { guid: best.guid, skipDuplicateCheck: true }),
+    );
 
     log.info({ bookId, title: best.title, attempt }, 'Retry search grabbed candidate');
     return { outcome: 'retried', download: newDownload };

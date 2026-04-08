@@ -759,7 +759,7 @@ describe('startRssJob', () => {
     );
   });
 
-  it('forwards undefined indexerId when RSS result has no indexerId', async () => {
+  it('omits indexerId when RSS result has no indexerId', async () => {
     const wantedBooks = [makeWantedBook(1, 'The Way of Kings', 'Brandon Sanderson')];
     const rssResults = [makeResult('The Way of Kings', 'Brandon Sanderson')];
     const settings = createMockSettingsService({ rss: { enabled: true } });
@@ -770,8 +770,7 @@ describe('startRssJob', () => {
 
     await runRssJob(settings, bookList, book, indexer, download, blacklist, inject<FastifyBaseLogger>(log));
 
-    expect(download.grab).toHaveBeenCalledWith(
-      expect.objectContaining({ indexerId: undefined }),
-    );
+    const grabCall = vi.mocked(download.grab).mock.calls[0][0];
+    expect(grabCall).not.toHaveProperty('indexerId');
   });
 });
