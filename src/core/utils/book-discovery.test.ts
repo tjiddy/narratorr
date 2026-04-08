@@ -21,7 +21,7 @@ vi.mock('node:path', async () => {
   };
 });
 
-import { discoverBooks, type DiscoveryLogger } from './book-discovery.js';
+import { discoverBooks, parseTitledDiscFolder, type DiscoveryLogger } from './book-discovery.js';
 import { readdir, stat } from 'node:fs/promises';
 
 const mockReaddir = vi.mocked(readdir);
@@ -1090,26 +1090,173 @@ describe('discoverBooks', () => {
 
   describe('titled-disc folder detection (issue #426)', () => {
     describe('parseTitledDiscFolder', () => {
-      it.todo('returns title and discNumber for "BookTitle (Disc 01)"');
-      it.todo('returns title and discNumber for "BookTitle (Disc 12)"');
-      it.todo('returns title and discNumber for "BookTitle (1 of 5)"');
-      it.todo('returns title and discNumber for "BookTitle (3 of 10)" — double-digit M');
-      it.todo('returns null for bare disc folder "Disc 01" — handled by DISC_FOLDER_PATTERN');
-      it.todo('returns null for "BookTitle (2020)" — year not disc');
-      it.todo('returns null for "BookTitle (Unabridged)" — codec not disc');
-      it.todo('returns null for "BookTitle (A Subtitle)" — subtitle not disc');
-      it.todo('returns null for "BookTitle (Jeff Hays)" — narrator name not disc');
-      it.todo('returns null for empty string');
+      it('returns title and discNumber for "BookTitle (Disc 01)"', () => {
+        expect(parseTitledDiscFolder('Finders Keepers (Disc 01)')).toEqual({ title: 'Finders Keepers', discNumber: 1 });
+      });
+
+      it('returns title and discNumber for "BookTitle (Disc 12)"', () => {
+        expect(parseTitledDiscFolder('Finders Keepers (Disc 12)')).toEqual({ title: 'Finders Keepers', discNumber: 12 });
+      });
+
+      it('returns title and discNumber for "BookTitle (1 of 5)"', () => {
+        expect(parseTitledDiscFolder('The Way of Kings (1 of 5)')).toEqual({ title: 'The Way of Kings', discNumber: 1 });
+      });
+
+      it('returns title and discNumber for "BookTitle (3 of 10)" — double-digit M', () => {
+        expect(parseTitledDiscFolder('BookTitle (3 of 10)')).toEqual({ title: 'BookTitle', discNumber: 3 });
+      });
+
+      it('handles case-insensitive disc keyword', () => {
+        expect(parseTitledDiscFolder('BookTitle (disc 03)')).toEqual({ title: 'BookTitle', discNumber: 3 });
+        expect(parseTitledDiscFolder('BookTitle (DISC 03)')).toEqual({ title: 'BookTitle', discNumber: 3 });
+      });
+
+      it('returns null for bare disc folder "Disc 01" — handled by DISC_FOLDER_PATTERN', () => {
+        expect(parseTitledDiscFolder('Disc 01')).toBeNull();
+      });
+
+      it('returns null for "BookTitle (2020)" — year not disc', () => {
+        expect(parseTitledDiscFolder('BookTitle (2020)')).toBeNull();
+      });
+
+      it('returns null for "BookTitle (Unabridged)" — codec not disc', () => {
+        expect(parseTitledDiscFolder('BookTitle (Unabridged)')).toBeNull();
+      });
+
+      it('returns null for "BookTitle (A Subtitle)" — subtitle not disc', () => {
+        expect(parseTitledDiscFolder('BookTitle (A Subtitle)')).toBeNull();
+      });
+
+      it('returns null for "BookTitle (Jeff Hays)" — narrator name not disc', () => {
+        expect(parseTitledDiscFolder('BookTitle (Jeff Hays)')).toBeNull();
+      });
+
+      it('returns null for empty string', () => {
+        expect(parseTitledDiscFolder('')).toBeNull();
+      });
+
+      it('returns null for "Disc 0" (zero) — matches bare pattern, not titled', () => {
+        expect(parseTitledDiscFolder('Disc 0')).toBeNull();
+      });
+
+      it('handles (Disc 0) with title', () => {
+        expect(parseTitledDiscFolder('BookTitle (Disc 0)')).toEqual({ title: 'BookTitle', discNumber: 0 });
+      });
     });
 
     describe('parenthetical disc merge in discoverBooks', () => {
-      it.todo('merges 12 sibling "BookTitle (Disc NN)" folders into single book entry');
-      it.todo('merges N-of-M sibling folders into single book entry');
-      it.todo('does not merge siblings with different title prefixes');
-      it.todo('does not merge when non-disc sibling is present among titled-disc folders');
-      it.todo('still merges bare disc folders (Disc 01, CD1) — regression');
-      it.todo('does not merge single titled-disc folder (requires ≥2)');
-      it.todo('merges exactly 2 titled-disc siblings');
+      it('merges sibling "BookTitle (Disc NN)" folders into single book entry', async () => {
+        setupFs({
+          '/audiobooks': [
+            { name: 'Finders Keepers (Disc 01)', isFile: false },
+            { name: 'Finders Keepers (Disc 02)', isFile: false },
+            { name: 'Finders Keepers (Disc 03)', isFile: false },
+          ],
+          '/audiobooks/Finders Keepers (Disc 01)': [{ name: '01.mp3', isFile: true, size: 1000 }],
+          '/audiobooks/Finders Keepers (Disc 02)': [{ name: '01.mp3', isFile: true, size: 1000 }],
+          '/audiobooks/Finders Keepers (Disc 03)': [{ name: '01.mp3', isFile: true, size: 1000 }],
+        });
+
+        const result = await discoverBooks('/audiobooks');
+        expect(result).toHaveLength(1);
+        expect(result[0].path).toBe('/audiobooks');
+        expect(result[0].audioFileCount).toBe(3);
+      });
+
+      it('merges N-of-M sibling folders into single book entry', async () => {
+        setupFs({
+          '/audiobooks': [
+            { name: 'The Way of Kings (1 of 3)', isFile: false },
+            { name: 'The Way of Kings (2 of 3)', isFile: false },
+            { name: 'The Way of Kings (3 of 3)', isFile: false },
+          ],
+          '/audiobooks/The Way of Kings (1 of 3)': [{ name: '01.mp3', isFile: true, size: 1000 }],
+          '/audiobooks/The Way of Kings (2 of 3)': [{ name: '01.mp3', isFile: true, size: 1000 }],
+          '/audiobooks/The Way of Kings (3 of 3)': [{ name: '01.mp3', isFile: true, size: 1000 }],
+        });
+
+        const result = await discoverBooks('/audiobooks');
+        expect(result).toHaveLength(1);
+        expect(result[0].path).toBe('/audiobooks');
+        expect(result[0].audioFileCount).toBe(3);
+      });
+
+      it('does not merge siblings with different title prefixes', async () => {
+        setupFs({
+          '/audiobooks': [
+            { name: 'Book A (Disc 01)', isFile: false },
+            { name: 'Book B (Disc 01)', isFile: false },
+          ],
+          '/audiobooks/Book A (Disc 01)': [{ name: '01.mp3', isFile: true, size: 1000 }],
+          '/audiobooks/Book B (Disc 01)': [{ name: '01.mp3', isFile: true, size: 1000 }],
+        });
+
+        const result = await discoverBooks('/audiobooks');
+        expect(result).toHaveLength(2);
+      });
+
+      it('does not merge when non-disc sibling is present among titled-disc folders', async () => {
+        setupFs({
+          '/audiobooks': [
+            { name: 'BookTitle (Disc 01)', isFile: false },
+            { name: 'BookTitle (Disc 02)', isFile: false },
+            { name: 'Bonus Material', isFile: false },
+          ],
+          '/audiobooks/BookTitle (Disc 01)': [{ name: '01.mp3', isFile: true, size: 1000 }],
+          '/audiobooks/BookTitle (Disc 02)': [{ name: '01.mp3', isFile: true, size: 1000 }],
+          '/audiobooks/Bonus Material': [{ name: 'bonus.mp3', isFile: true, size: 1000 }],
+        });
+
+        const result = await discoverBooks('/audiobooks');
+        // Should NOT merge — 3 audio children but only 2 match disc pattern
+        expect(result).toHaveLength(3);
+      });
+
+      it('still merges bare disc folders (Disc 01, CD1) — regression', async () => {
+        setupFs({
+          '/audiobooks': [
+            { name: 'Disc 01', isFile: false },
+            { name: 'Disc 02', isFile: false },
+          ],
+          '/audiobooks/Disc 01': [{ name: '01.mp3', isFile: true, size: 1000 }],
+          '/audiobooks/Disc 02': [{ name: '01.mp3', isFile: true, size: 1000 }],
+        });
+
+        const result = await discoverBooks('/audiobooks');
+        expect(result).toHaveLength(1);
+        expect(result[0].path).toBe('/audiobooks');
+      });
+
+      it('does not merge single titled-disc folder (requires ≥2)', async () => {
+        setupFs({
+          '/audiobooks': [
+            { name: 'BookTitle (Disc 01)', isFile: false },
+          ],
+          '/audiobooks/BookTitle (Disc 01)': [{ name: '01.mp3', isFile: true, size: 1000 }],
+        });
+
+        const result = await discoverBooks('/audiobooks');
+        expect(result).toHaveLength(1);
+        // Should be the child folder, not the parent (no merge)
+        expect(result[0].path).toBe('/audiobooks/BookTitle (Disc 01)');
+      });
+
+      it('merges exactly 2 titled-disc siblings', async () => {
+        setupFs({
+          '/audiobooks': [
+            { name: 'Joyland (Disc 01)', isFile: false },
+            { name: 'Joyland (Disc 02)', isFile: false },
+          ],
+          '/audiobooks/Joyland (Disc 01)': [{ name: '01.mp3', isFile: true, size: 1500 }],
+          '/audiobooks/Joyland (Disc 02)': [{ name: '01.mp3', isFile: true, size: 2000 }],
+        });
+
+        const result = await discoverBooks('/audiobooks');
+        expect(result).toHaveLength(1);
+        expect(result[0].path).toBe('/audiobooks');
+        expect(result[0].audioFileCount).toBe(2);
+        expect(result[0].totalSize).toBe(3500);
+      });
     });
   });
 });
