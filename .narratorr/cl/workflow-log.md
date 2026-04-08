@@ -1,6 +1,34 @@
 # Workflow Log
 
-<<<<<<< HEAD
+## #418 Browser caches stale cover images after book re-import — 2026-04-08
+**Skill path:** /implement → /claim → /plan → /handoff
+**Outcome:** success — PR #432
+
+### Metrics
+- Files changed: 4 source + 4 test | Tests added/modified: 19 new tests
+- Quality gate runs: 2 (pass on attempt 1 both times)
+- Fix iterations: 0
+- Context compactions: 0
+
+### Workflow experience
+- What went smoothly: Spec was thorough from elaboration — all file paths, line numbers, and component names were verified. Red/green TDD cycle was clean with no surprises.
+- Friction / issues encountered: None — small, well-scoped bug fix with clear AC.
+
+### Token efficiency
+- Highest-token actions: Elaborate subagent (full codebase exploration for cover render sites)
+- Avoidable waste: None — 4-module implementation was appropriately sized
+- Suggestions: For pure frontend URL-manipulation fixes, the coverage subagent can be safely skipped (small diff threshold)
+
+### Infrastructure gaps
+- Repeated workarounds: None
+- Missing tooling / config: None
+- Unresolved debt: None discovered
+
+### Wish I'd Known
+1. Cover render sites split cleanly into two categories (local vs external) based on source type (`BookWithAuthor` vs `BookMetadata`) — knowing this upfront would have made the blast-radius check instant
+2. The `resolveCoverUrl` helper can delegate entirely to `resolveUrl` for URL_BASE handling — no need to duplicate any logic
+3. `afterEach` import was missing from BookDetails.test.tsx — always check existing vitest imports before adding spy-based tests
+
 ## #421 Highlight currently installed release in search results — 2026-04-08
 **Skill path:** /implement → /claim → /plan → /handoff
 **Outcome:** success — PR #429

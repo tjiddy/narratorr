@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach, type Mock } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach, type Mock } from 'vitest';
 import { screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { renderWithProviders } from '@/__tests__/helpers';
@@ -96,6 +96,21 @@ describe('BookDetails', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockNavigate.mockClear();
+  });
+
+  describe('cover cache-busting prop wiring', () => {
+    afterEach(() => {
+      vi.restoreAllMocks();
+    });
+
+    it('passes libraryBook.updatedAt to BookHero for cover cache-busting', async () => {
+      const resolveCoverUrlSpy = vi.spyOn(await import('@/lib/url-utils'), 'resolveCoverUrl');
+
+      const updatedAt = '2024-06-15T12:00:00Z';
+      renderBookDetails({ coverUrl: '/api/books/1/cover', updatedAt });
+
+      expect(resolveCoverUrlSpy).toHaveBeenCalledWith('/api/books/1/cover', updatedAt);
+    });
   });
 
   describe('full data layout', () => {
