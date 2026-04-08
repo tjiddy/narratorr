@@ -1,5 +1,34 @@
 # Workflow Log
 
+## #421 Highlight currently installed release in search results — 2026-04-08
+**Skill path:** /implement → /claim → /plan → /handoff
+**Outcome:** success — PR #429
+
+### Metrics
+- Files changed: 4 | Tests added/modified: 15 (12 ReleaseCard + 3 SearchReleasesModal)
+- Quality gate runs: 2 (pass on attempt 1 both times — once in implement, once in handoff)
+- Fix iterations: 0
+- Context compactions: 0
+
+### Workflow experience
+- What went smoothly: Spec was well-groomed (elaboration + spec review already done), types already existed on both sides, existing badge pattern made implementation straightforward
+- Friction / issues encountered: None — the elaborate/spec-review cycle front-loaded all the hard questions (infoHash pipeline analysis, indicator contract precision)
+
+### Token efficiency
+- Highest-token actions: Elaborate and respond-to-spec-review in prior conversation consumed the most context exploring the infoHash grab pipeline
+- Avoidable waste: None — the 14-line source diff was appropriately small for this feature
+- Suggestions: For pure-display features with no backend changes, the coverage subagent can be skipped (small diff exemption worked well here)
+
+### Infrastructure gaps
+- Repeated workarounds: None
+- Missing tooling / config: `frontend-design` skill not available — design polish skipped
+- Unresolved debt: ReleaseCard complexity suppression at limit (pre-existing, logged in learnings)
+
+### Wish I'd Known
+1. The elaborate/spec-review cycle already resolved the hardest question (infoHash pipeline gap) — implementation was straightforward because the spec was precise
+2. ReleaseCard's badge row pattern is highly uniform — new badges are ~6 lines of JSX following the exact same structure
+3. `createMockBook()` factory doesn't include `lastGrabGuid`/`lastGrabInfoHash` in defaults (they're `undefined`), which is fine since the props are optional — no factory update needed
+
 ## #422 Show M4B merge job progress in activity queue — 2026-04-08
 **Skill path:** /implement → /claim → /plan → /handoff
 **Outcome:** success — PR #428
