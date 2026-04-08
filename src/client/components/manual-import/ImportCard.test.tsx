@@ -369,6 +369,21 @@ describe('ImportCard', () => {
       const titleEl = badge.closest('[title]');
       expect(titleEl === null || titleEl.getAttribute('title') === '').toBe(true);
     });
+
+    it('medium confidence with reason → badge is keyboard-focusable and exposes reason on focus', () => {
+      const row = makeRow({
+        matchResult: makeMatchResult({
+          confidence: 'medium',
+          reason: 'Duration mismatch — scanned 10.0hrs vs expected 11.6hrs',
+        }),
+      });
+      render(<ImportCard {...defaultProps} row={row} />);
+      const badge = screen.getByText('Review').closest('[title]')!;
+      expect(badge).toHaveAttribute('tabindex', '0');
+      badge.focus();
+      expect(badge).toHaveFocus();
+      expect(badge).toHaveAttribute('title', 'Duration mismatch — scanned 10.0hrs vs expected 11.6hrs');
+    });
   });
 });
 

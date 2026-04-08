@@ -70,4 +70,19 @@ describe('Badge', () => {
     render(<Badge variant="warning">Review</Badge>);
     expect(screen.getByTestId('badge')).not.toHaveAttribute('title');
   });
+
+  it('badge with title is focusable via tabIndex', () => {
+    render(<Badge variant="warning" title="Duration mismatch">Review</Badge>);
+    const badge = screen.getByTestId('badge');
+    expect(badge).toHaveAttribute('tabindex', '0');
+    badge.focus();
+    expect(badge).toHaveFocus();
+    expect(badge).toHaveAttribute('title', 'Duration mismatch');
+  });
+
+  it('badge without title is not focusable', () => {
+    render(<Badge variant="warning">Review</Badge>);
+    const badge = screen.getByTestId('badge');
+    expect(badge).not.toHaveAttribute('tabindex');
+  });
 });
