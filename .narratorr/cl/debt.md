@@ -13,7 +13,6 @@
 - **`src/core/indexers/types.ts` / `src/client/lib/api/search.ts`**: `SearchResult` is duplicated across core and client — DRY-1 parallel types that must be kept in sync manually. A shared types package or generated types would prevent drift. (discovered in #317)
 - **`src/core/indexers/abb.ts`**: ABB adapter does not populate `guid` in search results (lines 174-182), same bug as MAM had. ABB downloads are un-blacklistable. Separate fix from #348. (discovered in #348)
 - **`src/client/components/SearchReleasesModal.tsx`**: `handleGrab()` cherry-picks fields from SearchResult instead of spreading. Every new SearchResult field requires a manual addition to both the mutation call AND `PendingGrabParams`. Fragile — consider spreading `result` and letting the API schema filter. (discovered in #348)
-- ~~**Backend grab call sites**: Resolved in #405 — extracted `buildGrabPayload()` helper~~
 - **`src/server/services/library-scan.service.ts` / `src/shared/schemas/library-scan.ts` / `src/client/lib/api/library-scan.ts`**: `DiscoveredBook` type and `duplicateReason` union defined in 3 places that must be kept in sync manually. DRY-1 — the shared schema should be the single source of truth with types derived via `z.infer`. (discovered in #342)
 
 - **`src/server/services/quality-gate-orchestrator.ts`**: `processOneDownload()` calls `getCompletedDownloads()` (loads ALL completed downloads) and then `.find()` by ID. Should have a dedicated `getCompletedDownloadById(id)` query in `QualityGateService` for O(1) lookup instead of O(N) scan. Low priority — completed download count is typically small. (discovered in #358)
@@ -21,9 +20,7 @@
 
 - **`src/server/services/merge.service.ts`**: Deprecated `mergeBook()` method (lines 222-270) duplicates validation and execution logic from `validatePreEnqueue()` + `executeMerge()`. Kept for backward compatibility with 40+ existing tests that test the synchronous merge path. Should be removed once existing tests are migrated to test via `enqueueMerge()`. (discovered in #368)
 
-- ~~**Cover file regex duplicated in 3 places**: Resolved in #405 — extracted `COVER_FILE_REGEX` to `src/core/utils/cover-regex.ts`~~
-
-- ~~**`collectAudioFiles()` defined in 4+ places**: Resolved in #405 — extracted `collectAudioFilePaths()` to `src/core/utils/collect-audio-files.ts`~~
+- **`collectAudioFiles()` wrappers in 4 places**: Core logic extracted to `src/core/utils/collect-audio-files.ts` (#405), but 4 local wrappers remain in `import-helpers.ts`, `tagging.service.ts`, `audio-processor.ts`, `audio-scanner.ts` — each adds sorting/extensions/return-type variations. Wrappers are thin but still duplicated. (discovered in #405)
 
 ## Accepted Debt
 

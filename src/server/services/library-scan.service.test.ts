@@ -112,6 +112,60 @@ describe('parseFolderStructure', () => {
     });
   });
 
+  it('strips leading integer with dash-dot combo (01.- Title)', () => {
+    const result = parseFolderStructure(['Author', '01.- Title']);
+    expect(result).toEqual({
+      title: 'Title',
+      author: 'Author',
+      series: null,
+    });
+  });
+
+  it('strips decimal series position prefix with hyphen (6.5 - Title)', () => {
+    const result = parseFolderStructure(['Tahereh Mafi', 'Shatter Me', '6.5 - Believe Me']);
+    expect(result).toEqual({
+      title: 'Believe Me',
+      author: 'Tahereh Mafi',
+      series: 'Shatter Me',
+    });
+  });
+
+  it('strips decimal series position prefix with en-dash (6.5 – Title)', () => {
+    const result = parseFolderStructure(['Tahereh Mafi', 'Shatter Me', '6.5 \u2013 Believe Me']);
+    expect(result).toEqual({
+      title: 'Believe Me',
+      author: 'Tahereh Mafi',
+      series: 'Shatter Me',
+    });
+  });
+
+  it('strips two-digit decimal position prefix (10.5 - Title)', () => {
+    const result = parseFolderStructure(['Author', 'Series', '10.5 - Bonus Chapter']);
+    expect(result).toEqual({
+      title: 'Bonus Chapter',
+      author: 'Author',
+      series: 'Series',
+    });
+  });
+
+  it('strips decimal position in two-part path (Author/6.5 - Title)', () => {
+    const result = parseFolderStructure(['Author', '6.5 - Novella']);
+    expect(result).toEqual({
+      title: 'Novella',
+      author: 'Author',
+      series: null,
+    });
+  });
+
+  it('strips leading en-dash prefixes (01 – Title)', () => {
+    const result = parseFolderStructure(['Author', '01 \u2013 Title']);
+    expect(result).toEqual({
+      title: 'Title',
+      author: 'Author',
+      series: null,
+    });
+  });
+
   it('handles deeply nested structures (4+ levels)', () => {
     const result = parseFolderStructure(['Brandon Sanderson', 'Cosmere', 'Stormlight Archive', 'The Way of Kings']);
     expect(result).toEqual({

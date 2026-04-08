@@ -962,9 +962,14 @@ function normalizeFolderName(name: string): string {
 }
 
 function cleanName(name: string): string {
-  const result = normalizeFolderName(
-    name.replace(/^\d+[.\s]*-\s*|^\d+\.\s*/, ''), // Remove leading numbers FIRST (before dot→space)
-  )
+  // Strip leading number prefixes (track/series position):
+  //   '01 - Title', '01. Title', '01.- Title', '6.5 - Title', '6.5 – Title'
+  // Decimal positions checked first so '6.5' isn't split into '6.' + '5'
+  const stripped = name
+    .replace(/^\d+\.\d+\s*[–-]\s*/, '')          // decimal + dash: '6.5 - ', '6.5 – '
+    .replace(/^\d+[.\s]*[–-]\s*/, '')             // integer + dash: '01 - ', '01.- '
+    .replace(/^\d+\.(?!\d)\s*/, '');              // integer + dot (not decimal): '01. '
+  const result = normalizeFolderName(stripped)
     .replace(/\s*\(\d{4}\)$/, '') // Remove trailing year like "(2020)"
     .replace(/\s*\[\d{4}\]$/, '') // Remove trailing year like "[2020]"
     .replace(BARE_YEAR_REGEX, '') // Remove bare trailing year like "2017"
