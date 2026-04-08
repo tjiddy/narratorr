@@ -60,4 +60,14 @@ describe('Badge', () => {
     );
     expect(screen.getByTestId('badge')).toHaveClass('shrink-0');
   });
+
+  it('renders title attribute when title prop is provided', () => {
+    render(<Badge variant="warning" title="Duration mismatch">Review</Badge>);
+    expect(screen.getByTestId('badge')).toHaveAttribute('title', 'Duration mismatch');
+  });
+
+  it('does not render title attribute when title prop is omitted', () => {
+    render(<Badge variant="warning">Review</Badge>);
+    expect(screen.getByTestId('badge')).not.toHaveAttribute('title');
+  });
 });
