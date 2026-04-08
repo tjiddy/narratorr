@@ -1352,6 +1352,38 @@ describe('#424 cover art temp file cleanup', () => {
     );
   });
 
+  it('temp cover file cleaned up when encode fails (finally block)', async () => {
+    setupMergeFiles([120, 120]);
+    mockExecFileWithStreams({
+      '/lib/book/01.mp3': 1,
+      '/lib/book/02.mp3': 0,
+    });
+
+    let callIdx = 0;
+    mockSpawn.mockImplementation(() => {
+      callIdx++;
+      const child = new MockChildProcess();
+      if (callIdx === 2) {
+        // Encode step fails (after successful extraction)
+        process.nextTick(() => child.emit('close', 1));
+      } else {
+        process.nextTick(() => child.emit('close', 0));
+      }
+      return child as never;
+    });
+
+    const result = await processAudioFiles(
+      '/lib/book', { ...defaultConfig, mergeBehavior: 'always' }, defaultContext,
+    );
+    expect(result.success).toBe(false);
+
+    // Cover temp file still cleaned up despite encode failure
+    expect(mockRm).toHaveBeenCalledWith(
+      expect.stringContaining('_cover'),
+      expect.objectContaining({ force: true }),
+    );
+  });
+
   it('no temp file created when no cover art detected', async () => {
     setupMergeFiles([120, 120]);
     mockExecFileWithStreams({
