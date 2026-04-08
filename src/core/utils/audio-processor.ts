@@ -1,5 +1,5 @@
 import { execFile, spawn } from 'node:child_process';
-import { rename, unlink, writeFile, rm } from 'node:fs/promises';
+import { rename, unlink, writeFile, rm, stat } from 'node:fs/promises';
 import { join, extname, basename } from 'node:path';
 import { promisify } from 'node:util';
 import { collectAudioFilePaths } from './collect-audio-files.js';
@@ -238,6 +238,13 @@ async function mergeFiles(
   const durations = await getFileDurations(config.ffmpegPath, chapterSources.map(s => s.filePath));
   const totalDuration = durations.reduce((sum, d) => sum + d, 0);
 
+  // Detect and extract cover art before encoding
+  const coverSource = await detectCoverArtSource(config.ffmpegPath, audioFiles);
+  let coverPath: string | null = null;
+  if (coverSource) {
+    coverPath = await extractCoverArt(config.ffmpegPath, coverSource, targetDir);
+  }
+
   // Build concat file
   const concatPath = join(targetDir, '_concat.txt');
   const concatContent = chapterSources
@@ -293,6 +300,15 @@ async function mergeFiles(
       onStderr: callbacks?.onStderr,
     });
 
+    // Reattach cover art to M4B output (if extracted and output is M4B)
+    if (coverPath && outputExt === 'm4b') {
+      try {
+        await reattachCoverArt(config.ffmpegPath, outputPath, coverPath, targetDir);
+      } catch {
+        // Graceful degradation — audio-only M4B is still a valid output
+      }
+    }
+
     // Clean up: remove source files and temp files
     await cleanupTempFiles(concatPath, metadataPath);
     await removeSourceFiles(audioFiles, outputPath);
@@ -302,6 +318,9 @@ async function mergeFiles(
     // Clean up temp files but preserve source files on failure
     await cleanupTempFiles(concatPath, join(targetDir, '_metadata.txt')).catch(() => {});
     throw error;
+  } finally {
+    // Always clean up extracted cover temp file
+    if (coverPath) await rm(coverPath, { force: true }).catch(() => {});
   }
 }
 
@@ -319,75 +338,96 @@ async function convertFiles(
   const outputFiles: string[] = [];
   const trackTotal = audioFiles.length;
 
-  // Build a map from filePath → ChapterSource for quick lookup
-  const sourceMap = new Map(chapterSources.map(s => [s.filePath, s]));
-
-  for (let i = 0; i < audioFiles.length; i++) {
-    const filePath = audioFiles[i];
-    const source = sourceMap.get(filePath);
-
-    let stem: string;
-    if (context.fileFormat) {
-      const tokens: Record<string, string | number | undefined | null> = {
-        author: context.author,
-        title: context.title,
-        ...context.bookTokens,
-        trackNumber: i + 1,
-        trackTotal,
-        partName: source ? resolveChapterTitle(source, i) : undefined,
-      };
-      stem = renderFilename(context.fileFormat, tokens, context.namingOptions);
-    } else {
-      stem = basename(filePath, extname(filePath));
-    }
-
-    const outputPath = join(targetDir, `${stem}.${config.outputFormat}`);
-    const sameFile = filePath === outputPath;
-
-    // When input and output paths match, encode to a temp file then replace
-    const writePath = sameFile
-      ? join(targetDir, `${stem}_tmp.${config.outputFormat}`)
-      : outputPath;
-
-    const args = [
-      '-y',
-      '-i', filePath,
-      '-c:a', config.outputFormat === 'm4b' ? 'aac' : 'libmp3lame',
-    ];
-
-    if (config.bitrate != null) {
-      const effectiveBitrate = config.sourceBitrateKbps != null
-        ? Math.min(config.sourceBitrateKbps, config.bitrate)
-        : config.bitrate;
-      args.push('-b:a', `${effectiveBitrate}k`);
-    }
-
-    args.push('-vn');
-    args.push('-max_muxing_queue_size', '4096');
-
-    if (config.outputFormat === 'm4b') {
-      args.push('-f', 'mp4');
-    }
-
-    args.push('-progress', 'pipe:1');
-    args.push(writePath);
-
-    await spawnFfmpeg(config.ffmpegPath, args, {
-      onStderr: callbacks?.onStderr,
-    });
-
-    // Remove original and rename temp if needed
-    if (sameFile) {
-      await unlink(filePath);
-      await rename(writePath, outputPath);
-    } else {
-      await unlink(filePath);
-    }
-
-    outputFiles.push(outputPath);
+  // Detect and extract cover art once for all files
+  const coverSource = await detectCoverArtSource(config.ffmpegPath, audioFiles);
+  let coverPath: string | null = null;
+  if (coverSource) {
+    coverPath = await extractCoverArt(config.ffmpegPath, coverSource, targetDir);
   }
 
-  return { success: true, outputFiles };
+  try {
+    // Build a map from filePath → ChapterSource for quick lookup
+    const sourceMap = new Map(chapterSources.map(s => [s.filePath, s]));
+
+    for (let i = 0; i < audioFiles.length; i++) {
+      const filePath = audioFiles[i];
+      const source = sourceMap.get(filePath);
+
+      let stem: string;
+      if (context.fileFormat) {
+        const tokens: Record<string, string | number | undefined | null> = {
+          author: context.author,
+          title: context.title,
+          ...context.bookTokens,
+          trackNumber: i + 1,
+          trackTotal,
+          partName: source ? resolveChapterTitle(source, i) : undefined,
+        };
+        stem = renderFilename(context.fileFormat, tokens, context.namingOptions);
+      } else {
+        stem = basename(filePath, extname(filePath));
+      }
+
+      const outputPath = join(targetDir, `${stem}.${config.outputFormat}`);
+      const sameFile = filePath === outputPath;
+
+      // When input and output paths match, encode to a temp file then replace
+      const writePath = sameFile
+        ? join(targetDir, `${stem}_tmp.${config.outputFormat}`)
+        : outputPath;
+
+      const args = [
+        '-y',
+        '-i', filePath,
+        '-c:a', config.outputFormat === 'm4b' ? 'aac' : 'libmp3lame',
+      ];
+
+      if (config.bitrate != null) {
+        const effectiveBitrate = config.sourceBitrateKbps != null
+          ? Math.min(config.sourceBitrateKbps, config.bitrate)
+          : config.bitrate;
+        args.push('-b:a', `${effectiveBitrate}k`);
+      }
+
+      args.push('-vn');
+      args.push('-max_muxing_queue_size', '4096');
+
+      if (config.outputFormat === 'm4b') {
+        args.push('-f', 'mp4');
+      }
+
+      args.push('-progress', 'pipe:1');
+      args.push(writePath);
+
+      await spawnFfmpeg(config.ffmpegPath, args, {
+        onStderr: callbacks?.onStderr,
+      });
+
+      // Remove original and rename temp if needed
+      if (sameFile) {
+        await unlink(filePath);
+        await rename(writePath, outputPath);
+      } else {
+        await unlink(filePath);
+      }
+
+      // Reattach cover art to M4B output (if extracted and output is M4B)
+      if (coverPath && config.outputFormat === 'm4b') {
+        try {
+          await reattachCoverArt(config.ffmpegPath, outputPath, coverPath, targetDir);
+        } catch {
+          // Graceful degradation — audio-only file is still valid
+        }
+      }
+
+      outputFiles.push(outputPath);
+    }
+
+    return { success: true, outputFiles };
+  } finally {
+    // Always clean up extracted cover temp file
+    if (coverPath) await rm(coverPath, { force: true }).catch(() => {});
+  }
 }
 
 /**
@@ -439,6 +479,87 @@ async function getFileDurations(ffmpegPath: string, filePaths: string[]): Promis
     }
   }
   return durations;
+}
+
+/**
+ * Detect which file (if any) has an embedded video/image stream using ffprobe.
+ * Returns the file path of the first file with a video stream, or null.
+ */
+async function detectCoverArtSource(ffmpegPath: string, filePaths: string[]): Promise<string | null> {
+  const ffprobePath = ffmpegPath.replace(/ffmpeg(\.exe)?$/i, 'ffprobe$1');
+
+  for (const filePath of filePaths) {
+    try {
+      const { stdout } = await execFileAsync(ffprobePath, [
+        '-v', 'quiet',
+        '-show_entries', 'stream=codec_type',
+        '-of', 'default=noprint_wrappers=1:nokey=1',
+        filePath,
+      ]);
+      const types = stdout.trim().split('\n').map(l => l.trim());
+      if (types.includes('video')) return filePath;
+    } catch {
+      // Skip files that can't be probed
+    }
+  }
+  return null;
+}
+
+/**
+ * Extract cover art from a source file to a temp file.
+ * Returns the cover path on success, null on failure.
+ */
+async function extractCoverArt(
+  ffmpegPath: string,
+  sourceFile: string,
+  targetDir: string,
+): Promise<string | null> {
+  const coverPath = join(targetDir, '_cover.jpg');
+  try {
+    await spawnFfmpeg(ffmpegPath, ['-y', '-i', sourceFile, '-an', '-vcodec', 'copy', coverPath]);
+    // Verify the file has content
+    const info = await stat(coverPath);
+    if (info.size === 0) {
+      await rm(coverPath, { force: true });
+      return null;
+    }
+    return coverPath;
+  } catch {
+    await rm(coverPath, { force: true }).catch(() => {});
+    return null;
+  }
+}
+
+/**
+ * Re-attach cover art to an M4B output file.
+ * Returns true on success, false on failure. The original audio file is preserved on failure.
+ */
+async function reattachCoverArt(
+  ffmpegPath: string,
+  audioFile: string,
+  coverFile: string,
+  targetDir: string,
+): Promise<boolean> {
+  const tempOutput = join(targetDir, '_cover_merged.m4b');
+  try {
+    await spawnFfmpeg(ffmpegPath, [
+      '-y',
+      '-i', audioFile,
+      '-i', coverFile,
+      '-map', '0:a',
+      '-map', '1:v',
+      '-c', 'copy',
+      '-disposition:v:0', 'attached_pic',
+      '-f', 'mp4',
+      tempOutput,
+    ]);
+    // Replace original with cover-attached version
+    await rename(tempOutput, audioFile);
+    return true;
+  } catch {
+    await rm(tempOutput, { force: true }).catch(() => {});
+    return false;
+  }
 }
 
 /** Collect audio files in a directory (non-recursive, sorted). */
