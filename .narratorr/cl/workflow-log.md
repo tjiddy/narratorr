@@ -1,5 +1,34 @@
 # Workflow Log
 
+## #422 Show M4B merge job progress in activity queue — 2026-04-08
+**Skill path:** /implement → /claim → /plan → /handoff
+**Outcome:** success — PR #428
+
+### Metrics
+- Files changed: 11 | Tests added/modified: 97
+- Quality gate runs: 2 (pass on attempt 2 — first run caught test asserting duplicate text after adding phase labels)
+- Fix iterations: 2 (lint complexity + self-review caught missing complete/failed phase labels)
+- Context compactions: 0
+
+### Workflow experience
+- What went smoothly: The SearchCard/useSearchProgress pattern was directly reusable — store shape, dismiss timers, ActivityPage integration, and test patterns all transferred cleanly. The spec review rounds identified every real gap (per-book vs list store, bookTitle preservation, terminal state retention, BookDetails backward compat).
+- Friction / issues encountered: useSyncExternalStore requires cached snapshots — building per-book derived objects inline in getSnapshot caused infinite re-render loops. Fixed by adding a perBookCache Map rebuilt on notify().
+
+### Token efficiency
+- Highest-token actions: Explore subagent for plan (read 14 files), self-review subagent, coverage review subagent
+- Avoidable waste: None significant — the 3 spec review rounds were done before /implement started
+- Suggestions: The dual-accessor pattern (list + per-book from same store) could be documented as a reusable pattern for future similar features
+
+### Infrastructure gaps
+- Repeated workarounds: None
+- Missing tooling / config: frontend-design skill not available — design polish skipped
+- Unresolved debt: ActivityPage complexity at 17 (eslint-disable suppressed) — needs sub-component extraction
+
+### Wish I'd Known
+1. `useSyncExternalStore` snapshot functions must return cached values — new objects per call cause infinite loops. See `learnings/usesyncexternalstore-per-book-cache.md`.
+2. When adding terminal phase values to a formatter, add explicit cases immediately — the `default` case silently masks missing terminal labels. See `learnings/terminal-phase-labels-in-formatters.md`.
+3. The existing `useSearchProgress` pattern is a nearly 1:1 template for new ephemeral activity card types — module-level Map + cachedSnapshot + scheduleDismiss + useSyncExternalStore. Future similar features can copy this pattern directly.
+
 ## #424 M4B merge fails on MP3s with embedded cover art — muxer queue overflow — 2026-04-08
 **Skill path:** /implement → /claim → /plan → /handoff
 **Outcome:** success — PR #425

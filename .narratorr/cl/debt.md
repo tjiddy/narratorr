@@ -18,6 +18,8 @@
 
 - **`src/server/services/merge.service.ts`**: Deprecated `mergeBook()` method (lines 222-270) duplicates validation and execution logic from `validatePreEnqueue()` + `executeMerge()`. Kept for backward compatibility with 40+ existing tests that test the synchronous merge path. Should be removed once existing tests are migrated to test via `enqueueMerge()`. (discovered in #368)
 
+- **`src/client/pages/activity/ActivityPage.tsx`**: Cyclomatic complexity at 17 (limit 15), suppressed with eslint-disable. Adding merge cards pushed it over. The page handles downloads tab, events tab, search cards, merge cards, and pagination for two sections. Consider extracting the downloads tab content into a sub-component. (discovered in #422)
+
 - **`collectAudioFiles()` wrappers in 4 places**: Core logic extracted to `src/core/utils/collect-audio-files.ts` (#405), but 4 local wrappers remain in `import-helpers.ts`, `tagging.service.ts`, `audio-processor.ts`, `audio-scanner.ts` — each adds sorting/extensions/return-type variations. Wrappers are thin but still duplicated. (discovered in #405)
 
 ## Accepted Debt
