@@ -147,16 +147,144 @@ describe('BlacklistService', () => {
   });
 
   describe('isBlacklisted', () => {
-    it('returns true when hash is blacklisted', async () => {
-      db.select.mockReturnValue(mockDbChain([mockEntry]));
-      const result = await service.isBlacklisted('abc123def456');
+    // Schema validation
+    it('returns true when infoHash matches a permanent entry', async () => {
+      const spy = vi.spyOn(service, 'getBlacklistedIdentifiers').mockResolvedValue({
+        blacklistedHashes: new Set(['abc123']),
+        blacklistedGuids: new Set(),
+      });
+      const result = await service.isBlacklisted('abc123');
+      expect(result).toBe(true);
+      expect(spy).toHaveBeenCalledWith(['abc123'], undefined);
+      spy.mockRestore();
+    });
+
+    it('returns true when guid matches a permanent entry', async () => {
+      const spy = vi.spyOn(service, 'getBlacklistedIdentifiers').mockResolvedValue({
+        blacklistedHashes: new Set(),
+        blacklistedGuids: new Set(['guid-123']),
+      });
+      const result = await service.isBlacklisted(undefined, 'guid-123');
+      expect(result).toBe(true);
+      expect(spy).toHaveBeenCalledWith(undefined, ['guid-123']);
+      spy.mockRestore();
+    });
+
+    it('returns true when either infoHash or guid matches (OR logic)', async () => {
+      const spy = vi.spyOn(service, 'getBlacklistedIdentifiers').mockResolvedValue({
+        blacklistedHashes: new Set(['abc123']),
+        blacklistedGuids: new Set(),
+      });
+      const result = await service.isBlacklisted('abc123', 'no-match-guid');
+      expect(result).toBe(true);
+      spy.mockRestore();
+    });
+
+    it('returns false when neither identifier is provided', async () => {
+      const spy = vi.spyOn(service, 'getBlacklistedIdentifiers');
+      const result = await service.isBlacklisted();
+      expect(result).toBe(false);
+      expect(spy).not.toHaveBeenCalled();
+      spy.mockRestore();
+    });
+
+    // Boundary values — guid-only and infoHash-only DB entries
+    it('detects guid-only blacklist entry when guid is passed', async () => {
+      const spy = vi.spyOn(service, 'getBlacklistedIdentifiers').mockResolvedValue({
+        blacklistedHashes: new Set(),
+        blacklistedGuids: new Set(['usenet-guid']),
+      });
+      const result = await service.isBlacklisted(undefined, 'usenet-guid');
+      expect(result).toBe(true);
+      expect(spy).toHaveBeenCalledWith(undefined, ['usenet-guid']);
+      spy.mockRestore();
+    });
+
+    it('detects infoHash-only blacklist entry when infoHash is passed', async () => {
+      const spy = vi.spyOn(service, 'getBlacklistedIdentifiers').mockResolvedValue({
+        blacklistedHashes: new Set(['torrent-hash']),
+        blacklistedGuids: new Set(),
+      });
+      const result = await service.isBlacklisted('torrent-hash');
+      expect(result).toBe(true);
+      expect(spy).toHaveBeenCalledWith(['torrent-hash'], undefined);
+      spy.mockRestore();
+    });
+
+    // Null/missing data paths
+    it('passes only infoHash when guid is undefined', async () => {
+      const spy = vi.spyOn(service, 'getBlacklistedIdentifiers').mockResolvedValue({
+        blacklistedHashes: new Set(),
+        blacklistedGuids: new Set(),
+      });
+      await service.isBlacklisted('hash-only');
+      expect(spy).toHaveBeenCalledWith(['hash-only'], undefined);
+      spy.mockRestore();
+    });
+
+    it('passes only guid when infoHash is undefined', async () => {
+      const spy = vi.spyOn(service, 'getBlacklistedIdentifiers').mockResolvedValue({
+        blacklistedHashes: new Set(),
+        blacklistedGuids: new Set(),
+      });
+      await service.isBlacklisted(undefined, 'guid-only');
+      expect(spy).toHaveBeenCalledWith(undefined, ['guid-only']);
+      spy.mockRestore();
+    });
+
+    // Expiry handling — integration tests through getBlacklistedIdentifiers (no spy)
+    it('detects permanent infoHash-only entry', async () => {
+      const entry = { ...mockEntry, infoHash: 'perm-hash', guid: null, blacklistType: 'permanent', expiresAt: null };
+      db.select.mockReturnValue(mockDbChain([entry]));
+      const result = await service.isBlacklisted('perm-hash');
       expect(result).toBe(true);
     });
 
-    it('returns false when hash is not blacklisted', async () => {
+    it('detects permanent guid-only entry', async () => {
+      const entry = { ...mockEntry, infoHash: null, guid: 'perm-guid', blacklistType: 'permanent', expiresAt: null };
+      db.select.mockReturnValue(mockDbChain([entry]));
+      const result = await service.isBlacklisted(undefined, 'perm-guid');
+      expect(result).toBe(true);
+    });
+
+    it('detects temporary infoHash-only entry that has not expired', async () => {
+      const futureDate = new Date(Date.now() + 86400000);
+      const entry = { ...mockEntry, infoHash: 'temp-hash', guid: null, blacklistType: 'temporary', expiresAt: futureDate };
+      db.select.mockReturnValue(mockDbChain([entry]));
+      const result = await service.isBlacklisted('temp-hash');
+      expect(result).toBe(true);
+    });
+
+    it('detects temporary guid-only entry that has not expired', async () => {
+      const futureDate = new Date(Date.now() + 86400000);
+      const entry = { ...mockEntry, infoHash: null, guid: 'temp-guid', blacklistType: 'temporary', expiresAt: futureDate };
+      db.select.mockReturnValue(mockDbChain([entry]));
+      const result = await service.isBlacklisted(undefined, 'temp-guid');
+      expect(result).toBe(true);
+    });
+
+    it('does NOT detect temporary infoHash-only entry that has expired', async () => {
       db.select.mockReturnValue(mockDbChain([]));
-      const result = await service.isBlacklisted('unknown');
+      const result = await service.isBlacklisted('expired-hash');
       expect(result).toBe(false);
+    });
+
+    it('does NOT detect temporary guid-only entry that has expired', async () => {
+      db.select.mockReturnValue(mockDbChain([]));
+      const result = await service.isBlacklisted(undefined, 'expired-guid');
+      expect(result).toBe(false);
+    });
+
+    // Delegation verification
+    it('delegates to getBlacklistedIdentifiers for dual-field + expiry logic', async () => {
+      const spy = vi.spyOn(service, 'getBlacklistedIdentifiers').mockResolvedValue({
+        blacklistedHashes: new Set(['h1']),
+        blacklistedGuids: new Set(['g1']),
+      });
+      const result = await service.isBlacklisted('h1', 'g1');
+      expect(result).toBe(true);
+      expect(spy).toHaveBeenCalledWith(['h1'], ['g1']);
+      spy.mockRestore();
     });
   });
 
