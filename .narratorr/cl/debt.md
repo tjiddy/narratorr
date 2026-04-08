@@ -20,6 +20,8 @@
 
 - **`src/client/pages/activity/ActivityPage.tsx`**: Cyclomatic complexity at 17 (limit 15), suppressed with eslint-disable. Adding merge cards pushed it over. The page handles downloads tab, events tab, search cards, merge cards, and pagination for two sections. Consider extracting the downloads tab content into a sub-component. (discovered in #422)
 
+- **Merge phase enum in 4 locations**: `mergePhaseSchema` in `sse-events.ts` is the source of truth, but the phase union is also implicitly encoded in `merge.service.ts` (`emitMergeProgress` type annotation), `useMergeProgress.ts` (`phase: string` — untyped), and `merge.ts` (format switch cases). Renaming `finalizing` → `committing` required touching all 4. The `MergePhase` type is now exported from schemas — consumer files should import and use it instead of inline string unions. (discovered in #431)
+
 - **`collectAudioFiles()` wrappers in 4 places**: Core logic extracted to `src/core/utils/collect-audio-files.ts` (#405), but 4 local wrappers remain in `import-helpers.ts`, `tagging.service.ts`, `audio-processor.ts`, `audio-scanner.ts` — each adds sorting/extensions/return-type variations. Wrappers are thin but still duplicated. (discovered in #405)
 
 ## Accepted Debt
