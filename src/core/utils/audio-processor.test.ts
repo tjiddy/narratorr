@@ -1201,6 +1201,37 @@ describe('#424 cover art detection and extraction', () => {
     );
   });
 
+  it('returns warnings in ProcessingResult when extraction fails (no callbacks needed)', async () => {
+    setupMergeFiles([120, 120]);
+    mockExecFileWithStreams({
+      '/lib/book/01.mp3': 1,
+      '/lib/book/02.mp3': 0,
+    });
+
+    let callIdx = 0;
+    mockSpawn.mockImplementation(() => {
+      callIdx++;
+      const child = new MockChildProcess();
+      if (callIdx === 1) {
+        process.nextTick(() => child.emit('close', 1));
+      } else {
+        process.nextTick(() => child.emit('close', 0));
+      }
+      return child as never;
+    });
+
+    // No callbacks — simulates import/bulk-convert callers
+    const result = await processAudioFiles(
+      '/lib/book', { ...defaultConfig, mergeBehavior: 'always' }, defaultContext,
+    );
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.warnings).toEqual(
+        expect.arrayContaining([expect.stringContaining('Cover art extraction failed')]),
+      );
+    }
+  });
+
   it('zero-byte extracted cover skips reattach', async () => {
     setupMergeFiles([120, 120]);
     mockExecFileWithStreams({
@@ -1353,6 +1384,37 @@ describe('#424 cover art reattach (M4B only)', () => {
     expect(onStderr).toHaveBeenCalledWith(
       expect.stringContaining('Cover art reattach failed'),
     );
+  });
+
+  it('returns warnings in ProcessingResult when reattach fails (no callbacks needed)', async () => {
+    setupMergeFiles([120, 120]);
+    mockExecFileWithStreams({
+      '/lib/book/01.mp3': 1,
+      '/lib/book/02.mp3': 0,
+    });
+
+    let callIdx = 0;
+    mockSpawn.mockImplementation(() => {
+      callIdx++;
+      const child = new MockChildProcess();
+      if (callIdx === 3) {
+        process.nextTick(() => child.emit('close', 1));
+      } else {
+        process.nextTick(() => child.emit('close', 0));
+      }
+      return child as never;
+    });
+
+    // No callbacks — simulates import/bulk-convert callers
+    const result = await processAudioFiles(
+      '/lib/book', { ...defaultConfig, mergeBehavior: 'always' }, defaultContext,
+    );
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.warnings).toEqual(
+        expect.arrayContaining([expect.stringContaining('Cover art reattach failed')]),
+      );
+    }
   });
 });
 

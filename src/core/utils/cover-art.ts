@@ -8,9 +8,15 @@ const execFileAsync = promisify(execFile);
 /** Type for an ffmpeg spawn function (injected from audio-processor). */
 type SpawnFfmpegFn = (ffmpegPath: string, args: string[]) => Promise<void>;
 
+export interface CoverArtPipelineResult {
+  outputFiles: string[];
+  warnings: string[];
+}
+
 /**
  * Run a processing callback with cover art detection, extraction, reattach, and cleanup.
  * Handles the full cover art lifecycle: detect → extract → process(callback) → reattach → cleanup.
+ * Returns both output files and any degradation warnings.
  */
 export async function withCoverArtPipeline(
   ffmpegPath: string,
@@ -19,14 +25,14 @@ export async function withCoverArtPipeline(
   outputFormat: 'm4b' | 'mp3',
   processFn: () => Promise<string[]>,
   spawnFfmpeg: SpawnFfmpegFn,
-  onWarning?: (message: string) => void,
-): Promise<string[]> {
+): Promise<CoverArtPipelineResult> {
+  const warnings: string[] = [];
   const coverSource = await detectCoverArtSource(ffmpegPath, audioFiles);
   let coverPath: string | null = null;
   if (coverSource) {
     coverPath = await extractCoverArt(ffmpegPath, coverSource, targetDir, spawnFfmpeg);
     if (!coverPath) {
-      onWarning?.('Cover art extraction failed — output will not contain embedded cover art');
+      warnings.push('Cover art extraction failed — output will not contain embedded cover art');
     }
   }
 
@@ -38,12 +44,12 @@ export async function withCoverArtPipeline(
       for (const outputFile of outputFiles) {
         const ok = await reattachCoverArt(ffmpegPath, outputFile, coverPath, targetDir, spawnFfmpeg);
         if (!ok) {
-          onWarning?.('Cover art reattach failed — output will not contain embedded cover art');
+          warnings.push('Cover art reattach failed — output will not contain embedded cover art');
         }
       }
     }
 
-    return outputFiles;
+    return { outputFiles, warnings };
   } finally {
     if (coverPath) await rm(coverPath, { force: true }).catch(() => {});
   }

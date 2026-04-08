@@ -38,7 +38,7 @@ export interface ProcessingContext {
 }
 
 export type ProcessingResult =
-  | { success: true; outputFiles: string[] }
+  | { success: true; outputFiles: string[]; warnings?: string[] }
   | { success: false; error: string };
 
 /** Callbacks for streaming progress and stderr from ffmpeg. Keeps src/core/ adapter-agnostic. */
@@ -295,16 +295,20 @@ async function mergeFiles(
   };
 
   try {
-    const outputFiles = await withCoverArtPipeline(
+    const result = await withCoverArtPipeline(
       config.ffmpegPath, audioFiles, targetDir, outputExt, encodeFn, spawnFfmpeg,
-      callbacks?.onStderr,
     );
+    for (const w of result.warnings) callbacks?.onStderr?.(w);
 
     // Clean up: remove source files and temp files
     await cleanupTempFiles(concatPath, join(targetDir, '_metadata.txt'));
     await removeSourceFiles(audioFiles, outputPath);
 
-    return { success: true, outputFiles };
+    return {
+      success: true,
+      outputFiles: result.outputFiles,
+      warnings: result.warnings.length > 0 ? result.warnings : undefined,
+    };
   } catch (error: unknown) {
     await cleanupTempFiles(concatPath, join(targetDir, '_metadata.txt')).catch(() => {});
     throw error;
@@ -369,11 +373,15 @@ async function convertFiles(
     return results;
   };
 
-  const outputFiles = await withCoverArtPipeline(
+  const result = await withCoverArtPipeline(
     config.ffmpegPath, audioFiles, targetDir, config.outputFormat, encodeFn, spawnFfmpeg,
-    callbacks?.onStderr,
   );
-  return { success: true, outputFiles };
+  for (const w of result.warnings) callbacks?.onStderr?.(w);
+  return {
+    success: true,
+    outputFiles: result.outputFiles,
+    warnings: result.warnings.length > 0 ? result.warnings : undefined,
+  };
 }
 
 /**
