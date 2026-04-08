@@ -6,21 +6,45 @@ export interface MergeProgress {
   position?: number;
 }
 
-const mergeProgressMap = new Map<number, MergeProgress | null>();
-const listeners = new Set<() => void>();
-
-function notify() {
-  for (const listener of listeners) listener();
+export interface MergeCardState {
+  bookId: number;
+  bookTitle: string;
+  phase: string;
+  percentage?: number;
+  position?: number;
+  outcome?: 'success' | 'error';
+  message?: string;
+  error?: string;
+  enrichmentWarning?: string;
 }
 
-/** Called by useEventSource to update merge progress for a book. Pass null to clear. */
-export function setMergeProgress(bookId: number, progress: MergeProgress | null): void {
-  if (progress === null) {
-    mergeProgressMap.delete(bookId);
-  } else {
-    mergeProgressMap.set(bookId, progress);
+const DISMISS_DELAY_MS = 3000;
+
+const mergeProgressMap = new Map<number, MergeCardState>();
+const dismissTimers = new Map<number, ReturnType<typeof setTimeout>>();
+const listeners = new Set<() => void>();
+
+let cachedSnapshot: MergeCardState[] = [];
+const perBookCache = new Map<number, MergeProgress | null>();
+
+function rebuildPerBookCache() {
+  perBookCache.clear();
+  for (const [bookId, entry] of mergeProgressMap) {
+    if (entry.outcome !== undefined) {
+      perBookCache.set(bookId, null);
+    } else {
+      const result: MergeProgress = { phase: entry.phase };
+      if (entry.percentage !== undefined) result.percentage = entry.percentage;
+      if (entry.position !== undefined) result.position = entry.position;
+      perBookCache.set(bookId, result);
+    }
   }
-  notify();
+}
+
+function notify() {
+  cachedSnapshot = [...mergeProgressMap.values()];
+  rebuildPerBookCache();
+  for (const listener of listeners) listener();
 }
 
 function subscribe(callback: () => void): () => void {
@@ -28,11 +52,64 @@ function subscribe(callback: () => void): () => void {
   return () => { listeners.delete(callback); };
 }
 
-/** Reactive hook — returns current merge progress for a book, or null if no merge in progress. */
+function scheduleDismiss(bookId: number): void {
+  const existing = dismissTimers.get(bookId);
+  if (existing) clearTimeout(existing);
+
+  dismissTimers.set(bookId, setTimeout(() => {
+    mergeProgressMap.delete(bookId);
+    dismissTimers.delete(bookId);
+    notify();
+  }, DISMISS_DELAY_MS));
+}
+
+function isTerminal(state: Omit<MergeCardState, 'bookId'>): boolean {
+  return state.outcome !== undefined;
+}
+
+/** Called by useEventSource to update merge progress for a book. Pass null to clear. */
+export function setMergeProgress(bookId: number, progress: Omit<MergeCardState, 'bookId'> | null): void {
+  if (progress === null) {
+    const existing = dismissTimers.get(bookId);
+    if (existing) clearTimeout(existing);
+    dismissTimers.delete(bookId);
+    mergeProgressMap.delete(bookId);
+  } else {
+    mergeProgressMap.set(bookId, { bookId, ...progress });
+    if (isTerminal(progress)) {
+      scheduleDismiss(bookId);
+    }
+  }
+  notify();
+}
+
+/** Reactive hook — returns all active merge progress entries for ActivityPage. */
+export function useMergeActivityCards(): MergeCardState[] {
+  return useSyncExternalStore(
+    subscribe,
+    () => cachedSnapshot,
+    () => [],
+  );
+}
+
+/**
+ * Reactive hook — returns current merge progress for a single book.
+ * Backward-compatible API for BookDetails. Returns null for terminal entries
+ * (completed/failed merges are activity-card-only, not shown as progress indicators).
+ */
 export function useMergeProgress(bookId: number): MergeProgress | null {
   return useSyncExternalStore(
     subscribe,
-    () => mergeProgressMap.get(bookId) ?? null,
+    () => perBookCache.get(bookId) ?? null,
     () => null,
   );
+}
+
+/** Reset store state for testing. */
+export function _resetForTesting(): void {
+  mergeProgressMap.clear();
+  for (const timer of dismissTimers.values()) clearTimeout(timer);
+  dismissTimers.clear();
+  listeners.clear();
+  cachedSnapshot = [];
 }
