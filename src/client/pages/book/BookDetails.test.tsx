@@ -1451,16 +1451,16 @@ describe('#257 merge observability — BookDetails progress', () => {
       expect(screen.queryByRole('button', { name: /cancel merge/i })).not.toBeInTheDocument();
     });
 
-    it('clicking cancel triggers cancel mutation with correct API call', async () => {
+    it('clicking cancel triggers cancel mutation with the rendered book ID', async () => {
       vi.mocked(api.cancelMergeBook).mockResolvedValue({ success: true });
       mockUseMergeProgress.mockReturnValue({ phase: 'processing', percentage: 0.5 });
       const user = userEvent.setup();
-      renderBookDetails({ status: 'imported', topLevelAudioFileCount: 3 });
+      renderBookDetails({ id: 999, status: 'imported', topLevelAudioFileCount: 3 });
 
       await user.click(screen.getByRole('button', { name: /cancel merge/i }));
 
       await waitFor(() => {
-        expect(api.cancelMergeBook).toHaveBeenCalledWith(expect.any(Number));
+        expect(api.cancelMergeBook).toHaveBeenCalledWith(999);
       });
     });
   });
