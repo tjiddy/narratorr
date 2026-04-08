@@ -280,7 +280,6 @@ export class MergeService {
     try {
       this.emitMergeProgress(bookId, book.title, 'staging');
       const stagedM4b = await this.runStaging(stagingDir, { ...book, path: bookPath }, topLevelAudioFiles, processingSettings, bookId, book.title);
-      this.emitMergeProgress(bookId, book.title, 'verifying');
       this.emitMergeProgress(bookId, book.title, 'committing');
       const outputPath = await this.commitMerge(stagingDir, stagedM4b, bookPath, topLevelAudioFiles, bookId);
       const enrichResult = await enrichBookFromAudio(bookId, bookPath, book, this.db, this.log, this.bookService);
@@ -351,6 +350,8 @@ export class MergeService {
     if (!processingResult.success) {
       throw new Error(`Audio processing failed: ${processingResult.error}`);
     }
+
+    this.emitMergeProgress(bookId, bookTitle, 'verifying');
 
     const scanResult = await scanAudioDirectory(stagingDir);
     if (!scanResult) {
