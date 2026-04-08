@@ -45,6 +45,7 @@ vi.mock('@/lib/api', async (importOriginal) => {
       renameBook: vi.fn(),
       retagBook: vi.fn(),
       mergeBookToM4b: vi.fn(),
+      cancelMergeBook: vi.fn(),
       markBookAsWrongRelease: vi.fn(),
       deleteBook: vi.fn(),
       getSettings: vi.fn(),
@@ -1448,6 +1449,19 @@ describe('#257 merge observability — BookDetails progress', () => {
       mockUseMergeProgress.mockReturnValue(null);
       renderBookDetails({ status: 'imported', topLevelAudioFileCount: 3 });
       expect(screen.queryByRole('button', { name: /cancel merge/i })).not.toBeInTheDocument();
+    });
+
+    it('clicking cancel triggers cancel mutation with correct API call', async () => {
+      vi.mocked(api.cancelMergeBook).mockResolvedValue({ success: true });
+      mockUseMergeProgress.mockReturnValue({ phase: 'processing', percentage: 0.5 });
+      const user = userEvent.setup();
+      renderBookDetails({ status: 'imported', topLevelAudioFileCount: 3 });
+
+      await user.click(screen.getByRole('button', { name: /cancel merge/i }));
+
+      await waitFor(() => {
+        expect(api.cancelMergeBook).toHaveBeenCalledWith(expect.any(Number));
+      });
     });
   });
 });
