@@ -117,3 +117,13 @@ describe('searchWithSwapRetry', () => {
     expect(searchFn).toHaveBeenCalledTimes(2);
   });
 });
+
+describe('searchWithSwapRetryTrace', () => {
+  it.todo('returns initialQuery, initialResultCount, and all results on first-search hit');
+  it.todo('returns swapRetry: true and swapQuery when initial search returns zero and author present');
+  it.todo('returns swapRetry: false and swapQuery: null when initial search has results');
+  it.todo('returns swapRetry: false when no author (no swap attempted)');
+  it.todo('returns all results from the successful search (initial or swap)');
+  it.todo('returns empty results array when both searches return zero');
+  it.todo('propagates search function errors without catching');
+});
