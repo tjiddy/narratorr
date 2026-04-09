@@ -1501,5 +1501,18 @@ describe('BookService — transaction atomicity (#214)', () => {
       expect(err).toBeInstanceOf(CoverUploadError);
       expect((err as CoverUploadError).code).toBe('INVALID_MIME');
     });
+
+    it('cleans up temp file when rename fails (no partial state)', async () => {
+      setupUploadMocks('/library/book');
+      (rename as Mock).mockRejectedValue(new Error('EACCES'));
+      (unlink as Mock).mockResolvedValue(undefined);
+
+      await expect(service.uploadCover(1, testBuffer, 'image/jpeg')).rejects.toThrow('EACCES');
+
+      // Temp file should have been written
+      expect(writeFile).toHaveBeenCalled();
+      // Temp file should have been cleaned up
+      expect(unlink).toHaveBeenCalledWith(expect.stringContaining('.cover-upload-'));
+    });
   });
 });
