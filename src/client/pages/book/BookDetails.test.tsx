@@ -1593,6 +1593,61 @@ describe('#257 merge observability — BookDetails progress', () => {
       });
     });
 
+    it('shows error toast for disallowed image type via paste', async () => {
+      renderBookDetails({ path: '/library/book', status: 'imported' });
+
+      // Paste a GIF — useCoverPaste accepts image/* but handleCoverFile rejects non-jpg/png/webp
+      const file = new File(['gif-data'], 'image.gif', { type: 'image/gif' });
+      const item = {
+        kind: 'file',
+        type: 'image/gif',
+        getAsFile: () => file,
+        getAsString: vi.fn(),
+        webkitGetAsEntry: vi.fn(),
+      } as unknown as DataTransferItem;
+      const event = new Event('paste', { bubbles: true }) as ClipboardEvent;
+      Object.defineProperty(event, 'clipboardData', {
+        value: { items: [item] as unknown as DataTransferItemList },
+      });
+      document.dispatchEvent(event);
+
+      await waitFor(() => {
+        expect(toast.error).toHaveBeenCalledWith('Only JPG, PNG, and WebP images are supported');
+      });
+      expect(screen.queryByAltText('Cover preview')).not.toBeInTheDocument();
+    });
+
+    it('replacing preview revokes previous object URL before creating new one', async () => {
+      const user = userEvent.setup();
+      const revokeObjectURLSpy = vi.spyOn(URL, 'revokeObjectURL');
+      const createObjectURLSpy = vi.spyOn(URL, 'createObjectURL').mockReturnValueOnce('blob:first').mockReturnValueOnce('blob:second');
+
+      renderBookDetails({ path: '/library/book', status: 'imported' });
+
+      const fileInput = document.querySelector('input[type="file"]') as HTMLInputElement;
+
+      // First file selection → preview A
+      const file1 = new File(['img1'], 'a.jpg', { type: 'image/jpeg' });
+      await user.upload(fileInput, file1);
+
+      await waitFor(() => {
+        expect(screen.getByAltText('Cover preview')).toHaveAttribute('src', 'blob:first');
+      });
+
+      // Second file selection → preview B (should revoke A first)
+      revokeObjectURLSpy.mockClear();
+      const file2 = new File(['img2'], 'b.png', { type: 'image/png' });
+      await user.upload(fileInput, file2);
+
+      await waitFor(() => {
+        expect(revokeObjectURLSpy).toHaveBeenCalledWith('blob:first');
+        expect(screen.getByAltText('Cover preview')).toHaveAttribute('src', 'blob:second');
+      });
+
+      createObjectURLSpy.mockRestore();
+      revokeObjectURLSpy.mockRestore();
+    });
+
     describe('paste wiring', () => {
       function dispatchImagePaste() {
         const file = new File([new ArrayBuffer(1024)], 'pasted.png', { type: 'image/png' });
