@@ -1149,3 +1149,38 @@ describe('#406 searchAndGrabForBook blacklist filtering with broadcaster', () =>
     expect(downloadService.grab).toHaveBeenCalledWith(expect.objectContaining({ title: 'Clean' }));
   });
 });
+
+describe('filterAndRankResults — narrator priority', () => {
+  describe('narrator-match tier in canonicalCompare', () => {
+    it.todo('narrator-match result beats non-match when priority is accuracy (Fair vs Good quality)');
+    it.todo('narrator-match with 29 MB/hr does NOT beat non-match — below quality floor');
+    it.todo('narrator-match with exactly 30 MB/hr beats non-match — meets Low tier floor');
+    it.todo('two narrator-matched results sorted by quality (higher quality wins)');
+    it.todo('two non-matched results sorted by quality as today (no change)');
+    it.todo('unknown quality narrator-match beats known Good quality non-match');
+    it.todo('match-score gate: score delta > 0.1 overrides narrator tier');
+  });
+
+  describe('narratorPriority parameter behavior', () => {
+    it.todo('omitting narratorPriority preserves exact current ranking (regression)');
+    it.todo('empty bookNarrators array disables narrator tier');
+    it.todo('undefined SearchResult.narrator treated as non-match (no crash)');
+  });
+
+  describe('fuzzy narrator matching in scoring', () => {
+    it.todo('normalized names match via diceCoefficient >= 0.8');
+    it.todo('different person similar name below 0.8 threshold is not boosted');
+    it.todo('multi-value result narrator tokenized before matching');
+    it.todo('multi-narrator book uses max pairwise score');
+  });
+
+  describe('fallback behavior', () => {
+    it.todo('priority accuracy with zero narrator matches falls back to quality ranking');
+    it.todo('priority accuracy with no book narrators falls back to quality ranking');
+  });
+});
+
+describe('searchAndGrabForBook — narrator priority threading', () => {
+  it.todo('passes narratorPriority to filterAndRankResults when provided');
+  it.todo('does not pass narratorPriority when not provided');
+});

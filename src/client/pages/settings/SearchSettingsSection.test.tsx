@@ -317,4 +317,10 @@ describe('SearchSettingsSection', () => {
       expect(mockToast.error).toHaveBeenCalledWith('Network error');
     });
   });
+
+  describe('search priority dropdown (#439)', () => {
+    it.todo('renders search priority dropdown with both options');
+    it.todo('selecting accuracy and saving fires mutation with correct payload');
+    it.todo('form loads with current saved searchPriority value');
+  });
 });

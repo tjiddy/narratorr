@@ -113,3 +113,23 @@ describe('scoreResult', () => {
     expect(score).toBeGreaterThan(0.7);
   });
 });
+
+describe('tokenizeNarrators', () => {
+  it.todo('splits on comma delimiter');
+  it.todo('splits on semicolon delimiter');
+  it.todo('splits on ampersand delimiter');
+  it.todo('drops empty tokens from consecutive delimiters');
+  it.todo('drops whitespace-only tokens');
+  it.todo('returns single token when no delimiter');
+  it.todo('returns empty array for empty string');
+});
+
+describe('normalizeNarrator', () => {
+  it.todo('strips periods and lowercases');
+  it.todo('lowercases without stripping when no punctuation');
+  it.todo('trims and collapses whitespace');
+  it.todo('strips apostrophes');
+  it.todo('returns empty string for empty input');
+  it.todo('returns single character unchanged except lowercase');
+  it.todo('does NOT strip commas, semicolons, or ampersands');
+});

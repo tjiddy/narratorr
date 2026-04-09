@@ -780,4 +780,11 @@ describe('settingsRegistry', () => {
       expect(result.success).toBe(true);
     });
   });
+
+  describe('searchPriority setting (#439)', () => {
+    it.todo('valid searchPriority values accepted by schema');
+    it.todo('invalid searchPriority value rejected by schema');
+    it.todo('missing searchPriority defaults to quality');
+    it.todo('DEFAULT_SETTINGS.search includes searchPriority: quality');
+  });
 });
