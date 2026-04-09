@@ -95,6 +95,7 @@ All GitHub commands use: `node scripts/gh.ts` (referred to as `gh` below).
    - If any changed code file is not reviewed, **STOP** and continue reviewing before producing verdict.
 
 5d. **Enumerate behavior deltas per reviewed code file (MANDATORY):**
+   - **IMPORTANT: Complete ALL file reads and ALL behavior enumeration before forming ANY opinions about findings. Do NOT emit findings, mentally commit to a verdict, or stop reading files early because you've found "enough" issues. The finding classification step (11) comes AFTER steps 5d through 9 are fully complete. If you notice a potential issue while reading, note the file and line internally but keep reading every remaining file. Stopping early is the #1 cause of round-2 findings that should have been caught in round 1.**
    - For each `reviewed` changed code file, enumerate all new/modified behaviors introduced by the diff:
      - Branches/conditionals (including precedence logic),
      - Error paths and fallback paths,
@@ -257,6 +258,13 @@ All GitHub commands use: `node scripts/gh.ts` (referred to as `gh` below).
     - Do NOT use other severity terms like "high", "medium", "low", "critical" — only `"blocking"` or `"suggestion"`. This is consumed by `/respond-to-pr-review` which has different resolution rules per severity.
     - Every finding MUST include a concrete "why" — what breaks, what's inconsistent, what principle is violated. No vague "this could be better."
 
+    **New-finding classification (mandatory for re-reviews, round 2+):**
+    - For every NEW finding (not a re-raise of a prior finding), classify its `source` as one of:
+      - `"MISSED_R1"` — this file/behavior was reviewed in a prior round and marked "no issues found" or not enumerated in the Behavior Coverage table, but now I see a problem. This means I didn't analyze deeply enough in the prior round.
+      - `"NEW_SCOPE"` — this finding is about code or behavior that was introduced by fix commits since my last review, or about an interaction that only became visible after prior fixes changed the code.
+    - Add `"source": "MISSED_R1"` or `"source": "NEW_SCOPE"` to each new finding's JSON object.
+    - This classification is telemetry — it does not affect severity or the author's response. It tracks whether the review process is catching everything in round 1.
+
     **Prior-round deduplication (mandatory for re-reviews):**
     - Before finalizing findings, cross-reference each finding against the prior finding map from step 5b.
     - If a finding matches one that was previously `fixed`, verify the fix in the current diff. If fixed, do not re-raise. If the fix is incomplete or wrong, raise a new finding with a description that explains what the fix missed.
@@ -380,6 +388,10 @@ All GitHub commands use: `node scripts/gh.ts` (referred to as `gh` below).
       ## Verdict: approve | needs-work
 
       <Summary — what needs to change, if anything>
+
+      <!-- REVIEW_METRICS
+      {"round": <N>, "files_reviewed": <N>, "files_skipped": <N>, "behaviors_enumerated": <N>, "findings_blocking": <N>, "findings_suggestion": <N>, "findings_missed_r1": <N>, "findings_new_scope": <N>}
+      -->
 
       ## Findings
 
