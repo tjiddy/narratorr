@@ -1,5 +1,34 @@
 # Workflow Log
 
+## #454 Detect ASIN in bracket patterns for direct Audible lookup — 2026-04-09
+**Skill path:** /implement → /claim → /plan → /handoff
+**Outcome:** success — PR #459
+
+### Metrics
+- Files changed: 5 | Tests added/modified: 27
+- Quality gate runs: 2 (pass on attempt 1 both times)
+- Fix iterations: 0
+- Context compactions: 0
+
+### Workflow experience
+- What went smoothly: Clean TDD cycle — red/green per module was straightforward. The spec was thorough after 3 rounds of review, making implementation unambiguous.
+- Friction / issues encountered: None significant. The elaborate/respond-to-spec-review cycle was long (3 rounds) but the spec quality going into implementation was excellent as a result.
+
+### Token efficiency
+- Highest-token actions: Spec elaboration and review response rounds (3 rounds before implementation started)
+- Avoidable waste: None — the spec review rounds caught real issues (scope/claim mismatch, trace contract ambiguity) that would have been implementation bugs
+- Suggestions: None
+
+### Infrastructure gaps
+- Repeated workarounds: None
+- Missing tooling / config: None
+- Unresolved debt: DiscoveredBook DRY-1 (already logged) — bulk import ASIN matching deferred to separate issue
+
+### Wish I'd Known
+1. The scan-debug route has its own search code path completely separate from `lookupMetadata` — any new search behavior must be implemented in both places (see `scan-debug-separate-from-lookupmetadata.md`)
+2. The 2-part branch in `parseFolderStructure` bypasses `parseSingleFolder` entirely — shared helpers are the only way to ensure all branches get new extraction logic (see `parsefolder-2part-branch-asin.md`)
+3. ASIN extraction must happen before ALL pattern matching, not just before `parenMatch` — the series-number-title and dash patterns can also misinterpret ASIN bracket content (see `asin-extraction-before-pattern-matching.md`)
+
 ## #455 Book event history timeline polish — 2026-04-09
 **Skill path:** /implement → /claim → /plan → /handoff
 **Outcome:** success — PR #458
