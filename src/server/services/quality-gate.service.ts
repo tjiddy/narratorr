@@ -58,6 +58,30 @@ export class QualityGateService {
     }));
   }
 
+  /** Single-record lookup for a completed download by ID, with book + narrators. */
+  async getCompletedDownloadById(downloadId: number): Promise<{ download: DownloadRow; book: BookWithNarrators | null } | null> {
+    const rows = await this.db
+      .select({ download: downloads, book: books })
+      .from(downloads)
+      .leftJoin(books, eq(downloads.bookId, books.id))
+      .where(and(eq(downloads.id, downloadId), eq(downloads.status, 'completed')))
+      .limit(1);
+
+    const row = rows[0];
+    if (!row) return null;
+
+    if (row.book) {
+      const narratorRows = await this.db
+        .select({ bookId: bookNarrators.bookId, name: narrators.name })
+        .from(bookNarrators)
+        .innerJoin(narrators, eq(bookNarrators.narratorId, narrators.id))
+        .where(eq(bookNarrators.bookId, row.book.id));
+      return { download: row.download, book: { ...row.book, narrators: narratorRows.map(r => ({ name: r.name })) } };
+    }
+
+    return { download: row.download, book: null };
+  }
+
   /**
    * Pure quality decision: given a download, book, and scan result,
    * compute the decision (accept/reject/hold), execute the DB status transition,
