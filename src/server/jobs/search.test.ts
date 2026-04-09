@@ -1157,45 +1157,67 @@ describe('#392 searchAllWanted broadcaster wiring', () => {
 });
 
 describe('runSearchJob — narrator priority wiring (#439)', () => {
-  it('fetches search settings and passes narratorPriority when searchPriority is accuracy', async () => {
+  // Two candidates in the same match-score band:
+  // - Fair-quality narrator match (79 MB/hr for 10h book = ~828 MB)
+  // - Good-quality non-match (200 MB/hr for 10h book = ~2097 MB)
+  const FAIR_SIZE = Math.round(79 * 10 * 1024 * 1024);
+  const GOOD_SIZE = Math.round(200 * 10 * 1024 * 1024);
+  const narratorMatch: SearchResult = {
+    title: 'Book One', protocol: 'torrent', indexer: 'test', seeders: 10,
+    size: FAIR_SIZE, downloadUrl: 'magnet:?xt=urn:btih:narrator', narrator: 'Kevin R. Free', matchScore: 0.9,
+  };
+  const qualityWin: SearchResult = {
+    title: 'Book One', protocol: 'torrent', indexer: 'test', seeders: 10,
+    size: GOOD_SIZE, downloadUrl: 'magnet:?xt=urn:btih:quality', narrator: 'Someone Else', matchScore: 0.9,
+  };
+  const wantedBooks = [
+    { id: 1, title: 'Book One', duration: 36000, authors: [{ name: 'Author' }], narrators: [{ name: 'Kevin R. Free' }] },
+  ];
+
+  it('accuracy mode grabs narrator-matched release over higher-quality non-match', async () => {
     const testLog = createMockLogger();
-    const wantedBooks = [
-      { id: 1, title: 'Book One', authors: [{ name: 'Author' }], narrators: [{ name: 'Kevin R. Free' }] },
-    ];
-    const settings = createMockSettingsService({
-      search: { enabled: true, intervalMinutes: 60, searchPriority: 'accuracy' },
-    });
+    const settings = createMockSettingsService({ search: { enabled: true, intervalMinutes: 60, searchPriority: 'accuracy' } });
     const bookList = createMockBookListService(wantedBooks);
-    const indexer = createMockIndexerService([{
-      title: 'Book One', protocol: 'torrent', indexer: 'test', seeders: 10,
-      size: 500 * 1024 * 1024, downloadUrl: 'magnet:?xt=urn:btih:aaa', narrator: 'Kevin R. Free',
-    }]);
+    const indexer = createMockIndexerService([qualityWin, narratorMatch]);
     const download = createMockDownloadOrchestrator();
 
     await runSearchJob(settings, bookList, indexer, download, inject<FastifyBaseLogger>(testLog), createMockBlacklistService());
 
-    expect(settings.get).toHaveBeenCalledWith('search');
-    expect(download.grab).toHaveBeenCalled();
+    expect(download.grab).toHaveBeenCalledWith(expect.objectContaining({ downloadUrl: 'magnet:?xt=urn:btih:narrator' }));
   });
 
-  it('does not pass narratorPriority when searchPriority is quality (default)', async () => {
+  it('quality mode grabs higher-quality non-match over narrator-matched release', async () => {
     const testLog = createMockLogger();
-    const wantedBooks = [
-      { id: 1, title: 'Book One', authors: [{ name: 'Author' }], narrators: [{ name: 'Kevin R. Free' }] },
-    ];
-    const settings = createMockSettingsService({
-      search: { enabled: true, intervalMinutes: 60, searchPriority: 'quality' },
-    });
+    const settings = createMockSettingsService({ search: { enabled: true, intervalMinutes: 60, searchPriority: 'quality' } });
     const bookList = createMockBookListService(wantedBooks);
-    const indexer = createMockIndexerService([{
-      title: 'Book One', protocol: 'torrent', indexer: 'test', seeders: 10,
-      size: 500 * 1024 * 1024, downloadUrl: 'magnet:?xt=urn:btih:aaa',
-    }]);
+    const indexer = createMockIndexerService([narratorMatch, qualityWin]);
     const download = createMockDownloadOrchestrator();
 
     await runSearchJob(settings, bookList, indexer, download, inject<FastifyBaseLogger>(testLog), createMockBlacklistService());
 
-    expect(settings.get).toHaveBeenCalledWith('search');
-    expect(download.grab).toHaveBeenCalled();
+    expect(download.grab).toHaveBeenCalledWith(expect.objectContaining({ downloadUrl: 'magnet:?xt=urn:btih:quality' }));
+  });
+});
+
+describe('searchAllWanted — narrator priority wiring (#439)', () => {
+  const FAIR_SIZE = Math.round(79 * 10 * 1024 * 1024);
+  const GOOD_SIZE = Math.round(200 * 10 * 1024 * 1024);
+  const wantedBooks = [
+    { id: 1, title: 'Book One', duration: 36000, authors: [{ name: 'Author' }], narrators: [{ name: 'Kevin R. Free' }] },
+  ];
+
+  it('accuracy mode grabs narrator-matched release in searchAllWanted', async () => {
+    const testLog = createMockLogger();
+    const settings = createMockSettingsService({ search: { enabled: true, intervalMinutes: 60, searchPriority: 'accuracy' } });
+    const bookList = createMockBookListService(wantedBooks);
+    const indexer = createMockIndexerService([
+      { title: 'Book One', protocol: 'torrent', indexer: 'test', seeders: 10, size: GOOD_SIZE, downloadUrl: 'magnet:?xt=urn:btih:quality', narrator: 'Someone Else', matchScore: 0.9 },
+      { title: 'Book One', protocol: 'torrent', indexer: 'test', seeders: 10, size: FAIR_SIZE, downloadUrl: 'magnet:?xt=urn:btih:narrator', narrator: 'Kevin R. Free', matchScore: 0.9 },
+    ]);
+    const download = createMockDownloadOrchestrator();
+
+    await searchAllWanted(settings, bookList, indexer, download, inject<FastifyBaseLogger>(testLog), createMockBlacklistService());
+
+    expect(download.grab).toHaveBeenCalledWith(expect.objectContaining({ downloadUrl: 'magnet:?xt=urn:btih:narrator' }));
   });
 });

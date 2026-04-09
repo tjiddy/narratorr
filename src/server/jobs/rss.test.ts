@@ -773,4 +773,29 @@ describe('startRssJob', () => {
     const grabCall = vi.mocked(download.grab).mock.calls[0][0];
     expect(grabCall).not.toHaveProperty('indexerId');
   });
+
+  // #439 — RSS ranking honors searchPriority
+  it('accuracy mode grabs narrator-matched release over higher-quality non-match via RSS', async () => {
+    const FAIR_SIZE = Math.round(79 * 10 * 1024 * 1024);
+    const GOOD_SIZE = Math.round(200 * 10 * 1024 * 1024);
+    const wanted = [{ ...makeWantedBook(1, 'Book One', 'Author'), narrators: [{ name: 'Kevin R. Free' }], audioDuration: 36000 }];
+    const { bookList, book } = createMockBookServices(wanted);
+    const settings = createMockSettingsService({
+      rss: { enabled: true, intervalMinutes: 30 },
+      search: { searchPriority: 'accuracy' },
+    });
+    const indexer = createMockIndexerService();
+    vi.mocked(indexer.pollRss).mockResolvedValue([
+      makeResult('Book One', 'Author', { size: GOOD_SIZE, downloadUrl: 'magnet:?xt=urn:btih:quality', narrator: 'Someone Else', matchScore: 0.9 }),
+      makeResult('Book One', 'Author', { size: FAIR_SIZE, downloadUrl: 'magnet:?xt=urn:btih:narrator', narrator: 'Kevin R. Free', matchScore: 0.9 }),
+    ]);
+    const download = createMockDownloadOrchestrator();
+    const blacklist = createMockBlacklistService();
+
+    await runRssJob(settings, bookList, book, indexer, download, blacklist, inject<FastifyBaseLogger>(log));
+
+    expect(download.grab).toHaveBeenCalledWith(
+      expect.objectContaining({ downloadUrl: 'magnet:?xt=urn:btih:narrator' }),
+    );
+  });
 });
