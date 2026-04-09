@@ -53,14 +53,13 @@ export function BookDetails({ libraryBook, metadataBook }: {
 
   const showWrongRelease = canShowWrongRelease(libraryBook);
 
-  const MAX_COVER_SIZE = 10 * 1024 * 1024;
-
   const handleCoverFile = useCallback((file: File) => {
+    const maxSize = 10 * 1024 * 1024;
     if (!file.type.startsWith('image/') || !['image/jpeg', 'image/png', 'image/webp'].includes(file.type)) {
       toast.error('Only JPG, PNG, and WebP images are supported');
       return;
     }
-    if (file.size > MAX_COVER_SIZE) {
+    if (file.size > maxSize) {
       toast.error('Cover image must be under 10 MB');
       return;
     }
