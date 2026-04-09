@@ -12,7 +12,7 @@ import { processAudioFiles } from '../../core/utils/audio-processor.js';
 import { scanAudioDirectory } from '../../core/utils/audio-scanner.js';
 import { enrichBookFromAudio } from './enrichment-utils.js';
 import { AUDIO_EXTENSIONS } from '../../core/utils/audio-constants.js';
-import { deriveFfprobePath } from '../../core/utils/ffprobe-path.js';
+import { resolveFfprobePathFromSettings } from '../../core/utils/ffprobe-path.js';
 import { toSourceBitrateKbps, logBitrateCapping } from '../utils/audio-bitrate.js';
 import { Semaphore } from '../utils/semaphore.js';
 import type { SSEEventType, SSEEventPayloads, MergePhase, MergeFailedReason } from '../../shared/schemas/sse-events.js';
@@ -237,7 +237,7 @@ export class MergeService {
       this.emitMergeProgress(bookId, book.title, 'committing');
       const outputPath = await this.commitMerge(stagingDir, stagedM4b, bookPath, topLevelAudioFiles, bookId);
 
-      const ffprobePath = processingSettings.ffmpegPath?.trim() ? deriveFfprobePath(processingSettings.ffmpegPath.trim()) : undefined;
+      const ffprobePath = resolveFfprobePathFromSettings(processingSettings.ffmpegPath);
       const enrichResult = await enrichBookFromAudio(bookId, bookPath, book, this.db, this.log, this.bookService, ffprobePath);
       let enrichmentWarning: string | undefined;
       if (!enrichResult.enriched) {
@@ -284,7 +284,7 @@ export class MergeService {
       const stagedM4b = await this.runStaging(stagingDir, { ...book, path: bookPath }, topLevelAudioFiles, processingSettings, bookId, book.title);
       this.emitMergeProgress(bookId, book.title, 'committing');
       const outputPath = await this.commitMerge(stagingDir, stagedM4b, bookPath, topLevelAudioFiles, bookId);
-      const ffprobePath2 = processingSettings.ffmpegPath?.trim() ? deriveFfprobePath(processingSettings.ffmpegPath.trim()) : undefined;
+      const ffprobePath2 = resolveFfprobePathFromSettings(processingSettings.ffmpegPath);
       const enrichResult = await enrichBookFromAudio(bookId, bookPath, book, this.db, this.log, this.bookService, ffprobePath2);
       let enrichmentWarning: string | undefined;
       if (!enrichResult.enriched) {
@@ -356,7 +356,7 @@ export class MergeService {
 
     this.emitMergeProgress(bookId, bookTitle, 'verifying');
 
-    const ffprobePathVerify = processingSettings.ffmpegPath?.trim() ? deriveFfprobePath(processingSettings.ffmpegPath.trim()) : undefined;
+    const ffprobePathVerify = resolveFfprobePathFromSettings(processingSettings.ffmpegPath);
     const scanResult = await scanAudioDirectory(stagingDir, { ffprobePath: ffprobePathVerify, log: this.log });
     if (!scanResult) {
       throw new Error('Staged M4B failed verification — audio scan returned null');

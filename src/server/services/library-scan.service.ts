@@ -15,7 +15,7 @@ import type { BookMetadata } from '../../core/metadata/index.js';
 import { buildTargetPath, getPathSize } from '../utils/import-helpers.js';
 import { toNamingOptions } from '../../core/utils/naming.js';
 import { enrichBookFromAudio } from './enrichment-utils.js';
-import { deriveFfprobePath } from '../../core/utils/ffprobe-path.js';
+import { resolveFfprobePathFromSettings } from '../../core/utils/ffprobe-path.js';
 import type { EventHistoryService } from './event-history.service.js';
 import { getErrorMessage } from '../utils/error-message.js';
 import { searchWithSwapRetry } from '../utils/search-helpers.js';
@@ -380,7 +380,7 @@ export class LibraryScanService {
 
     // Enrich with audio file metadata
     const processingSettings = await this.settingsService.get('processing');
-    const ffprobePath = processingSettings?.ffmpegPath?.trim() ? deriveFfprobePath(processingSettings.ffmpegPath.trim()) : undefined;
+    const ffprobePath = resolveFfprobePathFromSettings(processingSettings?.ffmpegPath);
     const audioResult = await enrichBookFromAudio(
       book.id,
       finalPath,
@@ -599,7 +599,7 @@ export class LibraryScanService {
     // Enrich with audio file metadata (WITH cover extraction)
     this.log.debug({ bookId }, 'Starting audio enrichment');
     const processingSettings2 = await this.settingsService.get('processing');
-    const ffprobePath2 = processingSettings2?.ffmpegPath?.trim() ? deriveFfprobePath(processingSettings2.ffmpegPath.trim()) : undefined;
+    const ffprobePath2 = resolveFfprobePathFromSettings(processingSettings2?.ffmpegPath);
     await enrichBookFromAudio(bookId, finalPath, { narrators: narratorName ? [{ name: narratorName }] : null, duration, coverUrl }, this.db, this.log, this.bookService, ffprobePath2);
 
     // Read current genres from DB (may have been filled since placeholder creation)

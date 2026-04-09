@@ -14,7 +14,7 @@ import type { QualityDecisionReason } from './quality-gate.types.js';
 import { NULL_REASON } from './quality-gate.types.js';
 import { books } from '../../db/schema.js';
 import { scanAudioDirectory } from '../../core/utils/audio-scanner.js';
-import { deriveFfprobePath } from '../../core/utils/ffprobe-path.js';
+import { resolveFfprobePathFromSettings } from '../../core/utils/ffprobe-path.js';
 import { resolveSavePath } from '../utils/download-path.js';
 import { revertBookStatus } from '../utils/book-status.js';
 import type { RetrySearchDeps } from './retry-search.js';
@@ -316,7 +316,7 @@ export class QualityGateOrchestrator {
     return { id: result.id, status: result.status };
   }
 
-  private async resolveFfprobePath(): Promise<string | undefined> { const s = await this.settingsService?.get('processing'); return s?.ffmpegPath?.trim() ? deriveFfprobePath(s.ffmpegPath.trim()) : undefined; }
+  private async resolveFfprobePath(): Promise<string | undefined> { const s = await this.settingsService?.get('processing'); return resolveFfprobePathFromSettings(s?.ffmpegPath); }
   /** Hold for probe failure: set pending_review + SSE + event recording. */
   private async holdForProbeFailure(
     download: DownloadRow,

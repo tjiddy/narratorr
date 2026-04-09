@@ -251,7 +251,7 @@ describe('QualityGateOrchestrator', () => {
       const settingsService = inject<SettingsService>({
         get: vi.fn().mockResolvedValue({ ffmpegPath: '/usr/bin/ffmpeg' }),
       });
-      const { orchestrator, qualityGateService, log } = createOrchestrator({ settingsService });
+      const { orchestrator, qualityGateService } = createOrchestrator({ settingsService });
       qualityGateService.getCompletedDownloads.mockResolvedValue([{ download: baseDownload, book: baseBook }]);
 
       await orchestrator.processCompletedDownloads();
