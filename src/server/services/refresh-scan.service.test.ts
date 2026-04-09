@@ -268,6 +268,13 @@ describe('refreshScanBook', () => {
     await expect(refreshScanBook(1, mockBookService, mockSettingsService, log)).rejects.toThrow('DB constraint failure');
   });
 
+  it('propagates readdir failure instead of silently zeroing topLevelAudioFileCount', async () => {
+    vi.mocked(readdir).mockRejectedValue(new Error('EACCES: permission denied'));
+    await expect(refreshScanBook(1, mockBookService, mockSettingsService, log)).rejects.toThrow('EACCES: permission denied');
+    // bookService.update should NOT have been called — the error should prevent persisting bad data
+    expect(mockBookService.update).not.toHaveBeenCalled();
+  });
+
   // topLevelAudioFileCount
   it('counts only root-level audio files for topLevelAudioFileCount', async () => {
     vi.mocked(readdir).mockResolvedValue(

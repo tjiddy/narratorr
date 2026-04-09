@@ -60,7 +60,7 @@ export async function refreshScanBook(
   }
 
   // Count top-level (non-recursive) audio files
-  const topLevelEntries = await readdir(book.path).catch(() => [] as string[]);
+  const topLevelEntries = await readdir(book.path);
   const topLevelAudioFileCount = topLevelEntries.filter(
     (f) => AUDIO_EXTENSIONS.has(extname(String(f)).toLowerCase()),
   ).length;
