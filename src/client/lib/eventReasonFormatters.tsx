@@ -1,13 +1,14 @@
 import { formatBytes } from '@/lib/api';
 import { QualityComparisonPanel } from '@/pages/activity/QualityComparisonPanel';
+import { AlertCircleIcon } from '@/components/icons';
 import type { QualityGateData } from '@/lib/api/activity';
 
 type IndexerMap = Map<number, string>;
 
 function KeyValueRow({ label, value }: { label: string; value: string }) {
   return (
-    <div className="flex gap-2 text-xs">
-      <span className="text-muted-foreground shrink-0">{label}:</span>
+    <div className="flex gap-2 text-xs leading-relaxed">
+      <span className="text-muted-foreground/70 shrink-0 w-16">{label}:</span>
       <span className="text-foreground break-all">{value}</span>
     </div>
   );
@@ -57,8 +58,9 @@ function ErrorDetails({ reason }: { reason: Record<string, unknown> }) {
   const error = reason.error as string | undefined;
   if (!error) return <GenericDetails reason={reason} />;
   return (
-    <div className="text-xs text-destructive break-all">
-      {error}
+    <div className="flex items-start gap-2 text-xs text-destructive">
+      <AlertCircleIcon className="w-3.5 h-3.5 shrink-0 mt-0.5" />
+      <span className="break-all">{error}</span>
     </div>
   );
 }
@@ -101,16 +103,19 @@ export function EventReasonDetails({ eventType, reason, indexerMap }: {
   indexerMap: IndexerMap;
 }) {
   const Renderer = DETAIL_RENDERERS[eventType];
-  if (Renderer) {
-    return (
-      <div className="mt-2 bg-muted/50 rounded-xl p-3">
-        <Renderer reason={reason} indexerMap={indexerMap} />
-      </div>
-    );
+  const isHeldForReview = eventType === 'held_for_review';
+
+  if (isHeldForReview && Renderer) {
+    return <Renderer reason={reason} indexerMap={indexerMap} />;
   }
+
   return (
-    <div className="mt-2 bg-muted/50 rounded-xl p-3">
-      <GenericDetails reason={reason} />
+    <div className="mt-2 p-3 bg-muted/50 rounded-xl border border-border/50 animate-fade-in">
+      {Renderer ? (
+        <Renderer reason={reason} indexerMap={indexerMap} />
+      ) : (
+        <GenericDetails reason={reason} />
+      )}
     </div>
   );
 }
