@@ -25,6 +25,7 @@ vi.mock('@/lib/api', async (importOriginal) => {
       markBookAsWrongRelease: vi.fn(),
       deleteBook: vi.fn(),
       uploadBookCover: vi.fn(),
+      refreshScanBook: vi.fn(),
       getSettings: vi.fn().mockResolvedValue({
         processing: { ffmpegPath: '/usr/bin/ffmpeg', enabled: false, outputFormat: 'm4b', keepOriginalBitrate: false, bitrate: 128, mergeBehavior: 'multi-file-only', maxConcurrentProcessing: 2 },
         library: { path: '/audiobooks', folderFormat: '{author}/{title}', fileFormat: '{author} - {title}' },
@@ -559,6 +560,67 @@ describe('useBookActions', () => {
       await waitFor(() => {
         expect(toast.error).toHaveBeenCalledWith('Cover upload failed: Server error');
       });
+    });
+  });
+
+  describe('refreshScanMutation', () => {
+    it('calls api.refreshScanBook with correct bookId', async () => {
+      (api.refreshScanBook as Mock).mockResolvedValue({
+        bookId: 42, codec: 'mp3', bitrate: 128000, fileCount: 3, durationMinutes: 120, narratorsUpdated: true,
+      });
+      const { queryClient, wrapper } = createTestHarness();
+      const { result } = renderHook(() => useBookActions(42, false), { wrapper });
+
+      act(() => { result.current.refreshScanMutation.mutate(); });
+
+      await waitFor(() => {
+        expect(api.refreshScanBook).toHaveBeenCalledWith(42);
+      });
+      queryClient.clear();
+    });
+
+    it('shows success toast "Refreshed audio metadata" on success', async () => {
+      (api.refreshScanBook as Mock).mockResolvedValue({
+        bookId: 1, codec: 'mp3', bitrate: 128000, fileCount: 1, durationMinutes: 60, narratorsUpdated: false,
+      });
+      const { queryClient, wrapper } = createTestHarness();
+      const { result } = renderHook(() => useBookActions(1, false), { wrapper });
+
+      act(() => { result.current.refreshScanMutation.mutate(); });
+
+      await waitFor(() => {
+        expect(toast.success).toHaveBeenCalledWith('Refreshed audio metadata');
+      });
+      queryClient.clear();
+    });
+
+    it('shows error toast on API failure', async () => {
+      (api.refreshScanBook as Mock).mockRejectedValue(new Error('No audio files found'));
+      const { queryClient, wrapper } = createTestHarness();
+      const { result } = renderHook(() => useBookActions(1, false), { wrapper });
+
+      act(() => { result.current.refreshScanMutation.mutate(); });
+
+      await waitFor(() => {
+        expect(toast.error).toHaveBeenCalledWith('Refresh scan failed: No audio files found');
+      });
+      queryClient.clear();
+    });
+
+    it('invalidates book queries after successful scan', async () => {
+      (api.refreshScanBook as Mock).mockResolvedValue({
+        bookId: 1, codec: 'mp3', bitrate: 128000, fileCount: 1, durationMinutes: 60, narratorsUpdated: false,
+      });
+      const { queryClient, wrapper } = createTestHarness();
+      const invalidateSpy = vi.spyOn(queryClient, 'invalidateQueries');
+      const { result } = renderHook(() => useBookActions(1, false), { wrapper });
+
+      act(() => { result.current.refreshScanMutation.mutate(); });
+
+      await waitFor(() => {
+        expect(invalidateSpy).toHaveBeenCalled();
+      });
+      queryClient.clear();
     });
   });
 });

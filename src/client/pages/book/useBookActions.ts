@@ -58,6 +58,17 @@ export function useBookActions(bookId: number, monitorForUpgrades: boolean) {
     },
   });
 
+  const refreshScanMutation = useMutation({
+    mutationFn: () => api.refreshScanBook(bookId),
+    onSuccess: () => {
+      invalidateBookQueries();
+      toast.success('Refreshed audio metadata');
+    },
+    onError: (error: Error) => {
+      toast.error(`Refresh scan failed: ${error.message}`);
+    },
+  });
+
   const { data: settings } = useQuery({
     queryKey: queryKeys.settings(),
     queryFn: api.getSettings,
@@ -146,6 +157,7 @@ export function useBookActions(bookId: number, monitorForUpgrades: boolean) {
     mergeMutation,
     cancelMergeMutation,
     retagMutation,
+    refreshScanMutation,
     deleteMutation,
     monitorMutation,
     wrongReleaseMutation,
