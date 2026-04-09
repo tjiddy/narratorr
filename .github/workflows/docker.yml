@@ -115,7 +115,7 @@ jobs:
           cache-to: type=gha,mode=max
           build-args: |
             GIT_COMMIT=${{ github.sha }}
-            GIT_TAG=${{ github.ref_name }}
+            GIT_TAG=v${{ steps.version.outputs.version }}
             BUILD_TIME=${{ steps.version.outputs.build_time }}
 
       - name: Report image size
