@@ -44,8 +44,11 @@ export async function refreshScanBook(
 
   try {
     await stat(book.path);
-  } catch {
-    throw new RefreshScanError('PATH_MISSING', `Book path does not exist on disk: ${book.path}`);
+  } catch (error: unknown) {
+    if (error instanceof Error && 'code' in error && (error as NodeJS.ErrnoException).code === 'ENOENT') {
+      throw new RefreshScanError('PATH_MISSING', `Book path does not exist on disk: ${book.path}`);
+    }
+    throw error;
   }
 
   const processingSettings = await settingsService.get('processing');

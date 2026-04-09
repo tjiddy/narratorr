@@ -305,16 +305,32 @@ describe('refreshScanBook', () => {
     }
   });
 
-  it('throws RefreshScanError PATH_MISSING when book path does not exist on disk', async () => {
+  it('throws RefreshScanError PATH_MISSING when book path does not exist on disk (ENOENT)', async () => {
     const { stat: statFn } = await import('node:fs/promises');
-    vi.mocked(statFn).mockRejectedValueOnce(new Error('ENOENT'));
+    const enoent = Object.assign(new Error('ENOENT: no such file or directory'), { code: 'ENOENT' });
+    vi.mocked(statFn).mockRejectedValueOnce(enoent);
     await expect(refreshScanBook(1, mockBookService, mockSettingsService, log))
       .rejects.toThrow(RefreshScanError);
-    vi.mocked(statFn).mockRejectedValueOnce(new Error('ENOENT'));
+    vi.mocked(statFn).mockRejectedValueOnce(Object.assign(new Error('ENOENT'), { code: 'ENOENT' }));
     try {
       await refreshScanBook(1, mockBookService, mockSettingsService, log);
     } catch (error: unknown) {
       expect((error as RefreshScanError).code).toBe('PATH_MISSING');
+    }
+  });
+
+  it('rethrows non-ENOENT stat errors as unexpected failures', async () => {
+    const { stat: statFn } = await import('node:fs/promises');
+    const eacces = Object.assign(new Error('EACCES: permission denied'), { code: 'EACCES' });
+    vi.mocked(statFn).mockRejectedValueOnce(eacces);
+    await expect(refreshScanBook(1, mockBookService, mockSettingsService, log))
+      .rejects.toThrow('EACCES: permission denied');
+    // Verify it's NOT a RefreshScanError
+    vi.mocked(statFn).mockRejectedValueOnce(Object.assign(new Error('EACCES'), { code: 'EACCES' }));
+    try {
+      await refreshScanBook(1, mockBookService, mockSettingsService, log);
+    } catch (error: unknown) {
+      expect(error).not.toBeInstanceOf(RefreshScanError);
     }
   });
 
