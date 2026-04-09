@@ -56,11 +56,6 @@ export class MatchJobService {
     private settingsService: SettingsService,
   ) {}
 
-  private async resolveFfprobePath(): Promise<string | undefined> {
-    const s = await this.settingsService.get('processing');
-    return resolveFfprobePathFromSettings(s?.ffmpegPath);
-  }
-
   createJob(books: MatchCandidate[]): string {
     const id = randomUUID();
     const job = new MatchJob(id, books, this.metadataService, this.log, this.settingsService, () => {
@@ -112,6 +107,11 @@ class MatchJob {
     private settingsService: SettingsService,
     private onComplete: () => void,
   ) {}
+
+  private async resolveFfprobePath(): Promise<string | undefined> {
+    const s = await this.settingsService.get('processing');
+    return resolveFfprobePathFromSettings(s?.ffmpegPath);
+  }
 
   getStatus(): MatchJobStatus {
     return {
