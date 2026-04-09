@@ -212,13 +212,13 @@ async function handleScanDebug(
   const { folderName } = request.body;
   request.log.info({ folderName }, 'Scan debug trace requested');
 
-  const { parts, raw, pattern, cleaning, cleanedTitle, cleanedAuthor } = buildParsingTrace(folderName);
+  const { parts, raw, pattern, cleaning, cleanedTitle, cleanedAuthor, asin } = buildParsingTrace(folderName);
   const partialTrace = { input: folderName, parts, parsing: { pattern, raw }, cleaning, search: null, match: null, duplicate: null };
 
   // Search step — 502 on metadata provider failure
   let searchResult;
   try {
-    searchResult = await runSearchTrace(cleanedTitle, cleanedAuthor, metadataService, request.log);
+    searchResult = await runSearchTrace(cleanedTitle, cleanedAuthor, metadataService, request.log, asin);
   } catch (error: unknown) {
     request.log.error(error, 'Scan debug metadata search failed');
     return reply.status(502).send({
@@ -249,19 +249,28 @@ async function handleScanDebug(
 function buildParsingTrace(folderName: string) {
   const parts = folderName.split(/[/\\]/).filter(Boolean);
   const parsed = parseFolderStructure(parts);
-  const raw = parseFolderStructureRaw(parts);
+  const rawParsed = parseFolderStructureRaw(parts);
   const pattern = parts.length <= 1 ? '1-part' : parts.length === 2 ? '2-part' : '3+-part';
+
+  // Build raw output with asin (null when not detected)
+  const raw = {
+    author: rawParsed.author,
+    title: rawParsed.title,
+    series: rawParsed.series,
+    asin: rawParsed.asin ?? null,
+  };
 
   // Trace cleaning from raw (pre-cleanName) values so each step shows real transformations
   const cleaning: Record<string, ReturnType<typeof cleanNameWithTrace>> = {};
   for (const [key, value] of Object.entries(raw) as [string, string | null][]) {
-    if (value) cleaning[key] = cleanNameWithTrace(value);
+    if (value && key !== 'asin') cleaning[key] = cleanNameWithTrace(value);
   }
 
   const cleanedTitle = cleaning.title?.result ?? parsed.title;
   const cleanedAuthor = cleaning.author?.result ?? parsed.author ?? undefined;
+  const asin = rawParsed.asin;
 
-  return { parts, raw, pattern, cleaning, cleanedTitle, cleanedAuthor };
+  return { parts, raw, pattern, cleaning, cleanedTitle, cleanedAuthor, asin };
 }
 
 async function runSearchTrace(
@@ -269,7 +278,35 @@ async function runSearchTrace(
   cleanedAuthor: string | undefined,
   metadataService: MetadataService,
   log: FastifyBaseLogger,
+  asin?: string,
 ) {
+  // Direct ASIN lookup when available
+  let directLookup: { asin: string; hit: boolean } | null = null;
+  if (asin) {
+    try {
+      const direct = await metadataService.getBook(asin);
+      if (direct) {
+        directLookup = { asin, hit: true };
+        const results = [toSearchResultItem(direct)];
+        const search: ScanDebugTrace['search'] = {
+          directLookup,
+          initialQuery: asin,
+          initialResultCount: 1,
+          swapRetry: false,
+          swapQuery: null,
+          results,
+        };
+        const match: ScanDebugTrace['match'] = { status: 'matched', selected: results[0] };
+        return { search, match };
+      }
+      directLookup = { asin, hit: false };
+    } catch (error: unknown) {
+      log.warn({ error, asin }, 'Scan debug direct ASIN lookup failed — falling back to keyword search');
+      directLookup = { asin, hit: false };
+    }
+  }
+
+  // Keyword search (fallback or no ASIN)
   const searchResult = await searchWithSwapRetryTrace({
     searchFn: (query, options) => metadataService.searchBooks(query, options),
     title: cleanedTitle,
@@ -278,6 +315,7 @@ async function runSearchTrace(
   });
 
   const search: ScanDebugTrace['search'] = {
+    directLookup,
     initialQuery: searchResult.initialQuery,
     initialResultCount: searchResult.initialResultCount,
     swapRetry: searchResult.swapRetry,

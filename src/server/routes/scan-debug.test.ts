@@ -478,11 +478,112 @@ describe('POST /api/library/scan-debug', () => {
   });
 
   describe('ASIN direct lookup trace (issue #454)', () => {
-    it.todo('returns parsing.raw.asin for ASIN-tagged folder');
-    it.todo('returns parsing.raw.asin as null for non-ASIN folder');
-    it.todo('returns parsing.raw.title as ASIN-stripped value');
-    it.todo('returns search.directLookup with hit:true when getBook succeeds');
-    it.todo('returns search.directLookup with hit:false when getBook returns null, falls back to keyword search');
-    it.todo('returns search.directLookup as null when no ASIN detected');
+    it('returns parsing.raw.asin for ASIN-tagged folder', async () => {
+      (services.metadata.getBook as ReturnType<typeof vi.fn>)
+        .mockResolvedValue({ title: 'Tress', authors: [{ name: 'Sanderson' }], asin: 'B0D18DYG5C', providerId: 'p1' });
+      (services.book.findDuplicate as ReturnType<typeof vi.fn>)
+        .mockResolvedValue(null);
+
+      const res = await app.inject({
+        method: 'POST',
+        url: '/api/library/scan-debug',
+        payload: { folderName: 'Tress of the Emerald Sea [B0D18DYG5C]' },
+      });
+
+      const body = res.json();
+      expect(res.statusCode).toBe(200);
+      expect(body.parsing.raw.asin).toBe('B0D18DYG5C');
+    });
+
+    it('returns parsing.raw.asin as null for non-ASIN folder', async () => {
+      (services.metadata.searchBooks as ReturnType<typeof vi.fn>)
+        .mockResolvedValue([{ title: 'Title', authors: [{ name: 'Author' }], asin: null, providerId: null }]);
+      (services.book.findDuplicate as ReturnType<typeof vi.fn>)
+        .mockResolvedValue(null);
+
+      const res = await app.inject({
+        method: 'POST',
+        url: '/api/library/scan-debug',
+        payload: { folderName: 'Just A Title' },
+      });
+
+      const body = res.json();
+      expect(res.statusCode).toBe(200);
+      expect(body.parsing.raw.asin).toBeNull();
+    });
+
+    it('returns parsing.raw.title as ASIN-stripped value', async () => {
+      (services.metadata.getBook as ReturnType<typeof vi.fn>)
+        .mockResolvedValue({ title: 'Tress', authors: [{ name: 'Sanderson' }], asin: 'B0D18DYG5C', providerId: 'p1' });
+      (services.book.findDuplicate as ReturnType<typeof vi.fn>)
+        .mockResolvedValue(null);
+
+      const res = await app.inject({
+        method: 'POST',
+        url: '/api/library/scan-debug',
+        payload: { folderName: 'Tress of the Emerald Sea [B0D18DYG5C]' },
+      });
+
+      const body = res.json();
+      expect(body.parsing.raw.title).toBe('Tress of the Emerald Sea');
+    });
+
+    it('returns search.directLookup with hit:true when getBook succeeds', async () => {
+      (services.metadata.getBook as ReturnType<typeof vi.fn>)
+        .mockResolvedValue({ title: 'Tress', authors: [{ name: 'Sanderson' }], asin: 'B0D18DYG5C', providerId: 'p1' });
+      (services.book.findDuplicate as ReturnType<typeof vi.fn>)
+        .mockResolvedValue(null);
+
+      const res = await app.inject({
+        method: 'POST',
+        url: '/api/library/scan-debug',
+        payload: { folderName: 'Tress [B0D18DYG5C]' },
+      });
+
+      const body = res.json();
+      expect(body.search.directLookup).toEqual({ asin: 'B0D18DYG5C', hit: true });
+      expect(body.search.initialQuery).toBe('B0D18DYG5C');
+      expect(body.search.initialResultCount).toBe(1);
+      expect(body.search.swapRetry).toBe(false);
+      expect(body.search.results).toHaveLength(1);
+      expect(body.match.status).toBe('matched');
+    });
+
+    it('returns search.directLookup with hit:false when getBook returns null, falls back to keyword search', async () => {
+      (services.metadata.getBook as ReturnType<typeof vi.fn>)
+        .mockResolvedValue(null);
+      (services.metadata.searchBooks as ReturnType<typeof vi.fn>)
+        .mockResolvedValue([{ title: 'Fallback', authors: [{ name: 'Author' }], asin: null, providerId: null }]);
+      (services.book.findDuplicate as ReturnType<typeof vi.fn>)
+        .mockResolvedValue(null);
+
+      const res = await app.inject({
+        method: 'POST',
+        url: '/api/library/scan-debug',
+        payload: { folderName: 'Tress [B0D18DYG5C]' },
+      });
+
+      const body = res.json();
+      expect(body.search.directLookup).toEqual({ asin: 'B0D18DYG5C', hit: false });
+      // Falls back to keyword search
+      expect(body.search.results).toHaveLength(1);
+      expect(body.search.results[0].title).toBe('Fallback');
+    });
+
+    it('returns search.directLookup as null when no ASIN detected', async () => {
+      (services.metadata.searchBooks as ReturnType<typeof vi.fn>)
+        .mockResolvedValue([{ title: 'Title', authors: [{ name: 'Author' }], asin: null, providerId: null }]);
+      (services.book.findDuplicate as ReturnType<typeof vi.fn>)
+        .mockResolvedValue(null);
+
+      const res = await app.inject({
+        method: 'POST',
+        url: '/api/library/scan-debug',
+        payload: { folderName: 'Just A Title' },
+      });
+
+      const body = res.json();
+      expect(body.search.directLookup).toBeNull();
+    });
   });
 });

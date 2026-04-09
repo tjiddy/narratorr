@@ -108,10 +108,15 @@ export const scanDebugTraceSchema = z.object({
       author: z.string().nullable(),
       title: z.string(),
       series: z.string().nullable(),
+      asin: z.string().nullable(),
     }),
   }),
   cleaning: z.record(z.string(), cleanNameTraceSchema),
   search: z.object({
+    directLookup: z.object({
+      asin: z.string(),
+      hit: z.boolean(),
+    }).nullable(),
     initialQuery: z.string(),
     initialResultCount: z.number(),
     swapRetry: z.boolean(),
