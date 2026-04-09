@@ -150,9 +150,10 @@ describe('MergeCard', () => {
   });
 
   describe('hover state', () => {
-    it('container includes hover classes and transition matching DownloadCard', () => {
+    it('container includes hover:border-primary/20 and transition-all duration-300 matching DownloadCard', () => {
       const { container } = render(<MergeCard state={makeState({ phase: 'starting' })} />);
       const card = container.firstElementChild as HTMLElement;
+      expect(card.className).toContain('hover:border-primary/20');
       expect(card.className).toContain('transition-all');
       expect(card.className).toContain('duration-300');
     });
@@ -166,6 +167,7 @@ describe('MergeCard', () => {
       for (const state of phases) {
         const { container, unmount } = render(<MergeCard state={state} />);
         const card = container.firstElementChild as HTMLElement;
+        expect(card.className).toContain('hover:border-primary/20');
         expect(card.className).toContain('transition-all');
         expect(card.className).toContain('duration-300');
         unmount();
