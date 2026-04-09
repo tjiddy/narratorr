@@ -1,6 +1,9 @@
-import { useState } from 'react';
-import { type BookEvent } from '@/lib/api';
+import { useState, useMemo } from 'react';
+import { useQuery } from '@tanstack/react-query';
+import { type BookEvent, api } from '@/lib/api';
+import { queryKeys } from '@/lib/queryKeys';
 import { formatRelativeDate } from '@/lib/format';
+import { hasReasonContent, getEventSummary, EventReasonDetails } from '@/lib/eventReasonFormatters';
 import {
   ArrowDownIcon,
   CheckCircleIcon,
@@ -56,6 +59,25 @@ export function EventHistoryCard({ event, onMarkFailed, isMarkingFailed, onDelet
   const Icon = config.icon;
   const isActionable = ACTIONABLE_TYPES.includes(event.eventType) && event.downloadId != null;
 
+  const { data: indexers } = useQuery({
+    queryKey: queryKeys.indexers(),
+    queryFn: api.getIndexers,
+    staleTime: 5 * 60 * 1000,
+  });
+
+  const indexerMap = useMemo(() => {
+    const map = new Map<number, string>();
+    if (indexers) {
+      for (const idx of indexers) {
+        map.set(idx.id, idx.name);
+      }
+    }
+    return map;
+  }, [indexers]);
+
+  const showDetails = hasReasonContent(event.reason);
+  const summary = getEventSummary(event.eventType, event.reason, indexerMap);
+
   return (
     <div
       className="glass-card rounded-2xl p-4 hover:border-primary/20 transition-all duration-300 animate-fade-in-up"
@@ -69,6 +91,9 @@ export function EventHistoryCard({ event, onMarkFailed, isMarkingFailed, onDelet
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-2 flex-wrap">
             <span className="text-sm font-semibold">{config.label}</span>
+            {summary && (
+              <span className="text-xs text-muted-foreground">{summary}</span>
+            )}
             <span className="text-xs text-muted-foreground/70">{formatRelativeDate(event.createdAt)}</span>
             <span className="text-xs px-1.5 py-0.5 rounded-md bg-muted text-muted-foreground font-medium">
               {event.source}
@@ -82,8 +107,9 @@ export function EventHistoryCard({ event, onMarkFailed, isMarkingFailed, onDelet
             </p>
           )}
 
-          {event.reason && (
+          {showDetails && (
             <button
+              type="button"
               onClick={() => setShowReason(!showReason)}
               className="text-xs text-primary hover:text-primary/80 mt-1.5 font-medium transition-colors"
             >
@@ -92,9 +118,7 @@ export function EventHistoryCard({ event, onMarkFailed, isMarkingFailed, onDelet
           )}
 
           {showReason && event.reason && (
-            <pre className="text-xs bg-muted/50 rounded-xl p-3 mt-2 overflow-x-auto text-muted-foreground leading-relaxed">
-              {JSON.stringify(event.reason, null, 2)}
-            </pre>
+            <EventReasonDetails eventType={event.eventType} reason={event.reason} indexerMap={indexerMap} />
           )}
         </div>
 
