@@ -19,7 +19,7 @@ import { resolveFfprobePathFromSettings } from '../../core/utils/ffprobe-path.js
 import type { EventHistoryService } from './event-history.service.js';
 import { getErrorMessage } from '../utils/error-message.js';
 import { searchWithSwapRetry } from '../utils/search-helpers.js';
-import { parseFolderStructure, cleanName, extractYear } from '../utils/folder-parsing.js';
+import { parseFolderStructure } from '../utils/folder-parsing.js';
 
 /** Minimum ratio of target/source file size for copy verification to pass. */
 const COPY_VERIFICATION_THRESHOLD = 0.99;
