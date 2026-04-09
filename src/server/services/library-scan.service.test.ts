@@ -801,6 +801,13 @@ describe('LibraryScanService', () => {
     });
   });
 
+  describe('lookupMetadata direct ASIN lookup (issue #454)', () => {
+    it.todo('calls getBook(asin) directly when asin is provided — skips keyword search');
+    it.todo('returns null fallback to keyword search when getBook(asin) returns null');
+    it.todo('falls back to keyword search with warning when getBook(asin) throws');
+    it.todo('uses keyword search when asin is not provided — existing flow unchanged');
+  });
+
   describe('lookupMetadata swap retry (issue #426)', () => {
     it('returns match when first search succeeds — no swap', async () => {
       mockMetadataService.searchBooks.mockResolvedValue([{ title: 'Found' }]);

@@ -476,4 +476,13 @@ describe('POST /api/library/scan-debug', () => {
       expect(body.partialTrace.duplicate).toBeNull();
     });
   });
+
+  describe('ASIN direct lookup trace (issue #454)', () => {
+    it.todo('returns parsing.raw.asin for ASIN-tagged folder');
+    it.todo('returns parsing.raw.asin as null for non-ASIN folder');
+    it.todo('returns parsing.raw.title as ASIN-stripped value');
+    it.todo('returns search.directLookup with hit:true when getBook succeeds');
+    it.todo('returns search.directLookup with hit:false when getBook returns null, falls back to keyword search');
+    it.todo('returns search.directLookup as null when no ASIN detected');
+  });
 });

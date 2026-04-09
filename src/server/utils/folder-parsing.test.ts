@@ -355,6 +355,34 @@ describe('folder-parsing (extracted from library-scan.service)', () => {
     });
   });
 
+  describe('ASIN detection (issue #454)', () => {
+    describe('positive cases', () => {
+      it.todo('detects ASIN in "Title [B0D18DYG5C]" and does not treat as author');
+      it.todo('detects ASIN with mixed alpha/numeric chars "Title [B0ABCDEF12]"');
+      it.todo('normalizes lowercase ASIN to uppercase: "Title [b0d18dyg5c]" → asin: B0D18DYG5C');
+      it.todo('extracts ASIN in 1-part path via parseFolderStructure');
+      it.todo('extracts ASIN in 2-part path (exercises 2-part branch that bypasses parseSingleFolder)');
+      it.todo('extracts ASIN in 3+-part path');
+      it.todo('parseFolderStructureRaw returns ASIN in raw output with ASIN-stripped title');
+    });
+
+    describe('negative cases (no false positives)', () => {
+      it.todo('does not match [Author Name] — author parsed normally');
+      it.todo('does not match [2017] — year parsed normally');
+      it.todo('does not match [B0SHORT] — too few chars after B0');
+      it.todo('does not match [NOTASIN1234] — does not start with B0');
+      it.todo('does not match [B0TOOLONG123] — too many chars after B0');
+    });
+
+    describe('boundary values and edge cases', () => {
+      it.todo('folder name is ONLY the ASIN bracket — title falls back to original input');
+      it.todo('ASIN in middle position — "Title [B0D18DYG5C] Extra" — extracts ASIN, parses remainder');
+      it.todo('ASIN stripped before author-title split: "Author - Title [B0D18DYG5C]"');
+      it.todo('multiple ASIN-like brackets — only first match extracted');
+      it.todo('extractYear not affected by ASIN brackets');
+    });
+  });
+
   describe('extraction integrity', () => {
     it('parseFolderStructure returns identical results after extraction', () => {
       // Same test cases from library-scan.service.test.ts
