@@ -602,5 +602,19 @@ describe('BookHero', () => {
         expect(screen.getByLabelText('Confirm cover')).toBeInTheDocument();
       });
     });
+
+    describe('touch affordance CSS classes', () => {
+      it.todo('upload overlay button includes no-hover:opacity-100 class for touch device visibility');
+
+      it.todo('upload icon container includes no-hover:scale-100 class for touch device full-size display');
+
+      it.todo('upload overlay button retains opacity-0 and group-hover:opacity-100 classes for desktop hover');
+
+      it.todo('upload icon container retains scale-90 and group-hover:scale-100 classes for desktop hover animation');
+
+      it.todo('touch affordance classes are not present in DOM when hasPath is false');
+
+      it.todo('touch affordance classes are not present in DOM when onCoverFileSelect is not provided');
+    });
   });
 });
