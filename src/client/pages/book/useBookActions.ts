@@ -112,6 +112,17 @@ export function useBookActions(bookId: number, monitorForUpgrades: boolean) {
     }
   };
 
+  const uploadCoverMutation = useMutation({
+    mutationFn: (file: File) => api.uploadBookCover(bookId, file),
+    onSuccess: () => {
+      invalidateBookQueries();
+      toast.success('Cover updated');
+    },
+    onError: (error: Error) => {
+      toast.error(`Cover upload failed: ${error.message}`);
+    },
+  });
+
   const cancelMergeMutation = useMutation({
     mutationFn: () => api.cancelMergeBook(bookId),
     onError: (error: Error) => {
@@ -138,6 +149,7 @@ export function useBookActions(bookId: number, monitorForUpgrades: boolean) {
     deleteMutation,
     monitorMutation,
     wrongReleaseMutation,
+    uploadCoverMutation,
     ffmpegConfigured,
     isSaving,
     handleSave,

@@ -1,7 +1,7 @@
 import { useRef, useState, useEffect, useCallback } from 'react';
 import { Link } from 'react-router-dom';
 import { resolveCoverUrl } from '@/lib/url-utils';
-import { ArrowLeftIcon, SearchIcon, BookOpenIcon, PencilIcon, RefreshIcon, TagIcon, PackageIcon, TrashIcon, XCircleIcon, MoreVerticalIcon } from '@/components/icons';
+import { ArrowLeftIcon, SearchIcon, BookOpenIcon, PencilIcon, RefreshIcon, TagIcon, PackageIcon, TrashIcon, XCircleIcon, MoreVerticalIcon, UploadIcon, CheckIcon, XIcon } from '@/components/icons';
 import { ToolbarDropdown } from '@/components/ToolbarDropdown';
 
 interface BookHeroProps {
@@ -40,6 +40,16 @@ interface BookHeroProps {
   monitorForUpgrades: boolean;
   onMonitorToggle: () => void;
   isMonitorToggling: boolean;
+  /** Preview object URL from file picker or paste. Null when no preview active. */
+  previewUrl?: string | null;
+  /** Called when user selects a file via the file picker. */
+  onCoverFileSelect?: (file: File) => void;
+  /** Called when user confirms the preview (checkmark). */
+  onCoverConfirm?: () => void;
+  /** Called when user cancels the preview (X). */
+  onCoverCancel?: () => void;
+  /** Whether a cover upload is in progress. */
+  isUploadingCover?: boolean;
   children?: React.ReactNode;
 }
 
@@ -53,8 +63,10 @@ export function BookHero({
   onRemoveClick, isRemoving,
   showWrongRelease, onWrongReleaseClick, isWrongReleasing,
   importListName, monitorForUpgrades, onMonitorToggle, isMonitorToggling,
+  previewUrl, onCoverFileSelect, onCoverConfirm, onCoverCancel, isUploadingCover,
   children,
 }: BookHeroProps) {
+  const fileInputRef = useRef<HTMLInputElement>(null);
   const [menuOpen, setMenuOpen] = useState(false);
   const [focusIndex, setFocusIndex] = useState(0);
   const triggerRef = useRef<HTMLButtonElement>(null);
@@ -109,7 +121,9 @@ export function BookHero({
       <div className="flex flex-col sm:flex-row gap-6 sm:gap-8">
         <div className="shrink-0 mx-auto sm:mx-0 animate-fade-in-up stagger-1">
           <div className="relative w-44 sm:w-48 lg:w-56 aspect-square rounded-2xl overflow-hidden shadow-card-hover ring-1 ring-white/[0.08] group">
-            {coverUrl ? (
+            {previewUrl ? (
+              <img src={previewUrl} alt="Cover preview" className="w-full h-full object-cover" />
+            ) : coverUrl ? (
               <img src={resolveCoverUrl(coverUrl, updatedAt)} alt={`Cover of ${title}`} className="w-full h-full object-cover transition-transform duration-500 group-hover:scale-105" loading="lazy" />
             ) : (
               <div className="w-full h-full flex items-center justify-center bg-muted">
@@ -117,7 +131,56 @@ export function BookHero({
               </div>
             )}
             <div className="absolute inset-0 ring-1 ring-inset ring-white/[0.08] rounded-2xl" />
+
+            {/* Cover upload overlay — confirm/cancel when preview active, upload button on hover otherwise */}
+            {previewUrl && onCoverConfirm && onCoverCancel ? (
+              <div className="absolute inset-0 flex items-end justify-center gap-3 pb-3 bg-gradient-to-t from-black/60 to-transparent">
+                <button
+                  type="button"
+                  aria-label="Confirm cover"
+                  disabled={isUploadingCover}
+                  onClick={onCoverConfirm}
+                  className="flex items-center justify-center w-10 h-10 rounded-full bg-green-500/90 text-white hover:bg-green-500 transition-colors shadow-lg disabled:opacity-50"
+                >
+                  <CheckIcon className="w-5 h-5" />
+                </button>
+                <button
+                  type="button"
+                  aria-label="Cancel cover"
+                  disabled={isUploadingCover}
+                  onClick={onCoverCancel}
+                  className="flex items-center justify-center w-10 h-10 rounded-full bg-red-500/90 text-white hover:bg-red-500 transition-colors shadow-lg disabled:opacity-50"
+                >
+                  <XIcon className="w-5 h-5" />
+                </button>
+              </div>
+            ) : hasPath && onCoverFileSelect && (
+              <button
+                type="button"
+                aria-label="Upload cover"
+                onClick={() => fileInputRef.current?.click()}
+                className="absolute inset-0 flex items-center justify-center bg-black/0 hover:bg-black/40 transition-colors opacity-0 group-hover:opacity-100 cursor-pointer"
+              >
+                <UploadIcon className="w-8 h-8 text-white drop-shadow-lg" />
+              </button>
+            )}
           </div>
+
+          {/* Hidden file input for cover upload */}
+          {hasPath && onCoverFileSelect && (
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept="image/jpeg,image/png,image/webp"
+              className="hidden"
+              onChange={(e) => {
+                const file = e.target.files?.[0];
+                if (file) onCoverFileSelect(file);
+                // Reset so re-selecting the same file triggers change
+                e.target.value = '';
+              }}
+            />
+          )}
         </div>
 
         <div className="flex-1 min-w-0 text-center sm:text-left">
