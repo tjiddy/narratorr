@@ -502,4 +502,35 @@ describe('retrySearch — GUID blacklist filtering', () => {
     const grabCall = vi.mocked(deps.downloadOrchestrator.grab).mock.calls[0][0];
     expect(grabCall).not.toHaveProperty('indexerId');
   });
+
+  // #439 — retry search honors searchPriority
+  it('accuracy mode grabs narrator-matched release over higher-quality non-match on retry', async () => {
+    const FAIR_SIZE = Math.round(79 * 10 * 1024 * 1024);
+    const GOOD_SIZE = Math.round(200 * 10 * 1024 * 1024);
+    const bookWithNarrators: BookWithAuthor = {
+      ...createMockDbBook({ duration: 36000 }),
+      authors: [createMockDbAuthor()],
+      narrators: [{ id: 1, name: 'Kevin R. Free', slug: 'kevin-r-free', createdAt: new Date() }],
+    };
+    const deps = createDeps({
+      bookService: inject<BookService>({
+        getById: vi.fn().mockResolvedValue(bookWithNarrators),
+      }),
+      indexerService: inject<IndexerService>({
+        searchAll: vi.fn().mockResolvedValue([
+          { ...mockSearchResult, size: GOOD_SIZE, downloadUrl: 'magnet:?xt=urn:btih:quality', narrator: 'Someone Else', matchScore: 0.9 },
+          { ...mockSearchResult, size: FAIR_SIZE, downloadUrl: 'magnet:?xt=urn:btih:narrator', narrator: 'Kevin R. Free', matchScore: 0.9 },
+        ]),
+      }),
+      settingsService: createMockSettingsService({
+        search: { searchPriority: 'accuracy' },
+      }),
+    });
+
+    await retrySearch(1, deps);
+
+    expect(deps.downloadOrchestrator.grab).toHaveBeenCalledWith(
+      expect.objectContaining({ downloadUrl: 'magnet:?xt=urn:btih:narrator' }),
+    );
+  });
 });

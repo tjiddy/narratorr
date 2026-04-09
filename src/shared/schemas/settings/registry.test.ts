@@ -65,11 +65,12 @@ describe('settingsRegistry', () => {
     });
 
     it('search schema defaults match registry defaults', () => {
-      expect(DEFAULT_SETTINGS.search).toEqual({ intervalMinutes: 360, enabled: true, blacklistTtlDays: 7 });
+      expect(DEFAULT_SETTINGS.search).toEqual({ intervalMinutes: 360, enabled: true, blacklistTtlDays: 7, searchPriority: 'quality' });
       const schemaParsed = settingsRegistry.search.schema.parse({});
       expect(schemaParsed.intervalMinutes).toBe(360);
       expect(schemaParsed.enabled).toBe(true);
       expect(schemaParsed.blacklistTtlDays).toBe(7);
+      expect(schemaParsed.searchPriority).toBe('quality');
       expect(schemaParsed).toEqual(DEFAULT_SETTINGS.search);
     });
 
@@ -576,10 +577,10 @@ describe('settingsRegistry', () => {
     it('spreads defaults under stored values', () => {
       const settings = {
         ...DEFAULT_SETTINGS,
-        search: { intervalMinutes: 120, enabled: false, blacklistTtlDays: 14 },
+        search: { intervalMinutes: 120, enabled: false, blacklistTtlDays: 14, searchPriority: 'quality' as const },
       };
       const result = settingsToFormData(settings);
-      expect(result.search).toEqual({ intervalMinutes: 120, enabled: false, blacklistTtlDays: 14 });
+      expect(result.search).toEqual({ intervalMinutes: 120, enabled: false, blacklistTtlDays: 14, searchPriority: 'quality' });
     });
 
     it('falls back to defaults for missing category properties', () => {
@@ -778,6 +779,26 @@ describe('settingsRegistry', () => {
     it('full update with all fields still applies correctly', () => {
       const result = updateSettingsSchema.safeParse(DEFAULT_SETTINGS);
       expect(result.success).toBe(true);
+    });
+  });
+
+  describe('searchPriority setting (#439)', () => {
+    it('valid searchPriority values accepted by schema', () => {
+      expect(settingsRegistry.search.schema.safeParse({ searchPriority: 'quality' }).success).toBe(true);
+      expect(settingsRegistry.search.schema.safeParse({ searchPriority: 'accuracy' }).success).toBe(true);
+    });
+
+    it('invalid searchPriority value rejected by schema', () => {
+      expect(settingsRegistry.search.schema.safeParse({ searchPriority: 'speed' }).success).toBe(false);
+    });
+
+    it('missing searchPriority defaults to quality', () => {
+      const parsed = settingsRegistry.search.schema.parse({});
+      expect(parsed.searchPriority).toBe('quality');
+    });
+
+    it('DEFAULT_SETTINGS.search includes searchPriority: quality', () => {
+      expect(DEFAULT_SETTINGS.search.searchPriority).toBe('quality');
     });
   });
 });

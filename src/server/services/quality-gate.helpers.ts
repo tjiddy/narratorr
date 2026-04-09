@@ -1,5 +1,6 @@
 import type { books } from '../../db/schema.js';
 import { resolveBookQualityInputs } from '../../core/utils/quality.js';
+import { tokenizeNarrators, normalizeNarrator } from '../../core/utils/similarity.js';
 import type { QualityDecisionReason } from './quality-gate.types.js';
 import { DURATION_TOLERANCE } from './quality-gate.types.js';
 
@@ -57,10 +58,9 @@ export function buildQualityAssessment(
   let existingNarrator: string | null = null;
   let downloadNarrator: string | null = null;
   // Use narrator array directly — no re-join+split to avoid punctuation heuristics
-  const existingNarratorNames = book?.narrators?.map(n => n.name.trim().toLowerCase()).filter(n => n.length > 0) ?? [];
+  const existingNarratorNames = book?.narrators?.map(n => normalizeNarrator(n.name)).filter(n => n.length > 0) ?? [];
   if (book && book.path !== null && scanResult.tagNarrator && existingNarratorNames.length > 0) {
-    const tokenize = (s: string) => s.split(/[,;&]/).map(n => n.trim().toLowerCase()).filter(n => n.length > 0);
-    const downloadTokens = tokenize(scanResult.tagNarrator);
+    const downloadTokens = tokenizeNarrators(scanResult.tagNarrator).map(normalizeNarrator).filter(n => n.length > 0);
     // Skip if download tag produces no tokens after normalization (AC5)
     if (downloadTokens.length > 0) {
       existingNarrator = book.narrators!.map(n => n.name).join('; ');

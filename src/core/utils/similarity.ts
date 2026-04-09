@@ -1,4 +1,28 @@
 /**
+ * Split a multi-value narrator string on `[,;&]` delimiters.
+ * Trims each token and drops empties.
+ */
+export function tokenizeNarrators(raw: string): string[] {
+  if (!raw) return [];
+  return raw.split(/[,;&]/).map((t) => t.trim()).filter((t) => t.length > 0);
+}
+
+/**
+ * Normalize a single narrator name token for comparison.
+ * 1. Trim and lowercase
+ * 2. Strip punctuation (periods, quotes, hyphens, etc.) — NOT commas/semicolons/ampersands (delimiters)
+ * 3. Collapse whitespace
+ */
+export function normalizeNarrator(name: string): string {
+  return name
+    .trim()
+    .toLowerCase()
+    .replace(/[.!?'"-]/g, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+/**
  * Bigram-based Dice coefficient for fuzzy string matching.
  * Returns 0-1 where 1 = identical, 0 = no bigrams in common.
  */

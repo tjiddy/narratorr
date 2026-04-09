@@ -43,7 +43,7 @@ describe('SettingsService', () => {
       db.select.mockReturnValue(mockDbChain([]));
 
       const result = await service.get('search');
-      expect(result).toEqual({ intervalMinutes: 360, enabled: true, blacklistTtlDays: 7 });
+      expect(result).toEqual({ intervalMinutes: 360, enabled: true, blacklistTtlDays: 7, searchPriority: 'quality' });
     });
   });
 
@@ -58,7 +58,7 @@ describe('SettingsService', () => {
       // Zod fills missing fileFormat with default
       expect(result.library).toEqual({ path: '/custom', folderFormat: '{title}', fileFormat: '{author} - {title}', namingSeparator: 'space', namingCase: 'default' });
       // Other sections fall back to defaults
-      expect(result.search).toEqual({ intervalMinutes: 360, enabled: true, blacklistTtlDays: 7 });
+      expect(result.search).toEqual({ intervalMinutes: 360, enabled: true, blacklistTtlDays: 7, searchPriority: 'quality' });
       expect(result.import).toEqual({ deleteAfterImport: false, minSeedTime: 60, minSeedRatio: 0, minFreeSpaceGB: 5, redownloadFailed: true });
       expect(result.general).toEqual({ logLevel: 'info', housekeepingRetentionDays: 90, welcomeSeen: false });
     });
@@ -186,7 +186,7 @@ describe('SettingsService', () => {
 
   describe('update deep-merge', () => {
     it('preserves other fields when updating a single field in a category', async () => {
-      const existingSearch = { intervalMinutes: 360, enabled: true, blacklistTtlDays: 7 };
+      const existingSearch = { intervalMinutes: 360, enabled: true, blacklistTtlDays: 7, searchPriority: 'quality' };
       // First select for get() inside update, second for getAll()
       db.select
         .mockReturnValueOnce(mockDbChain([{ key: 'search', value: existingSearch }]))  // get('search')
@@ -199,7 +199,7 @@ describe('SettingsService', () => {
       // The stored value should have merged: intervalMinutes changed, others preserved
       const chain = db.insert.mock.results[0].value as { values: { mock: { calls: Array<Array<{ value: unknown }>> } } };
       const storedValue = chain.values.mock.calls[0][0].value as Record<string, unknown>;
-      expect(storedValue).toEqual({ intervalMinutes: 120, enabled: true, blacklistTtlDays: 7 });
+      expect(storedValue).toEqual({ intervalMinutes: 120, enabled: true, blacklistTtlDays: 7, searchPriority: 'quality' });
     });
 
     it('preserves other flat fields in quality when updating minSeeders', async () => {
@@ -218,9 +218,9 @@ describe('SettingsService', () => {
     });
 
     it('works with a full category object (backward compat)', async () => {
-      const full = { intervalMinutes: 120, enabled: false, blacklistTtlDays: 14 };
+      const full = { intervalMinutes: 120, enabled: false, blacklistTtlDays: 14, searchPriority: 'quality' as const };
       db.select
-        .mockReturnValueOnce(mockDbChain([{ key: 'search', value: { intervalMinutes: 360, enabled: true, blacklistTtlDays: 7 } }]))
+        .mockReturnValueOnce(mockDbChain([{ key: 'search', value: { intervalMinutes: 360, enabled: true, blacklistTtlDays: 7, searchPriority: 'quality' } }]))
         .mockReturnValueOnce(mockDbChain([]))
         .mockReturnValueOnce(mockDbChain([]));
       db.insert.mockReturnValue(mockDbChain());
@@ -249,7 +249,7 @@ describe('SettingsService', () => {
 
   describe('patch', () => {
     it('preserves existing intervalMinutes and blacklistTtlDays when patching enabled', async () => {
-      const existingSearch = { intervalMinutes: 360, enabled: true, blacklistTtlDays: 7 };
+      const existingSearch = { intervalMinutes: 360, enabled: true, blacklistTtlDays: 7, searchPriority: 'quality' };
       db.select
         .mockReturnValueOnce(mockDbChain([{ key: 'search', value: existingSearch }]))  // get('search')
         .mockReturnValueOnce(mockDbChain([]));  // sentinel lookup in set()
@@ -259,8 +259,8 @@ describe('SettingsService', () => {
 
       const chain = db.insert.mock.results[0].value as { values: { mock: { calls: Array<Array<{ value: unknown }>> } } };
       const storedValue = chain.values.mock.calls[0][0].value as Record<string, unknown>;
-      expect(storedValue).toEqual({ intervalMinutes: 360, enabled: false, blacklistTtlDays: 7 });
-      expect(result).toEqual({ intervalMinutes: 360, enabled: false, blacklistTtlDays: 7 });
+      expect(storedValue).toEqual({ intervalMinutes: 360, enabled: false, blacklistTtlDays: 7, searchPriority: 'quality' });
+      expect(result).toEqual({ intervalMinutes: 360, enabled: false, blacklistTtlDays: 7, searchPriority: 'quality' });
     });
 
     it('preserves existing deleteAfterImport and minSeedTime when patching minFreeSpaceGB', async () => {
@@ -294,7 +294,7 @@ describe('SettingsService', () => {
     });
 
     it('stores falsy value false, not the default', async () => {
-      const existingSearch = { intervalMinutes: 360, enabled: true, blacklistTtlDays: 7 };
+      const existingSearch = { intervalMinutes: 360, enabled: true, blacklistTtlDays: 7, searchPriority: 'quality' };
       db.select
         .mockReturnValueOnce(mockDbChain([{ key: 'search', value: existingSearch }]))
         .mockReturnValueOnce(mockDbChain([]));
@@ -309,7 +309,7 @@ describe('SettingsService', () => {
     });
 
     it('empty partial is a no-op — returns existing values unchanged without DB write', async () => {
-      const existingSearch = { intervalMinutes: 360, enabled: true, blacklistTtlDays: 7 };
+      const existingSearch = { intervalMinutes: 360, enabled: true, blacklistTtlDays: 7, searchPriority: 'quality' };
       db.select
         .mockReturnValueOnce(mockDbChain([{ key: 'search', value: existingSearch }]));
 
@@ -329,8 +329,8 @@ describe('SettingsService', () => {
 
       const chain = db.insert.mock.results[0].value as { values: { mock: { calls: Array<Array<{ value: unknown }>> } } };
       const storedValue = chain.values.mock.calls[0][0].value as Record<string, unknown>;
-      expect(storedValue).toEqual({ intervalMinutes: 360, enabled: false, blacklistTtlDays: 7 });
-      expect(result).toEqual({ intervalMinutes: 360, enabled: false, blacklistTtlDays: 7 });
+      expect(storedValue).toEqual({ intervalMinutes: 360, enabled: false, blacklistTtlDays: 7, searchPriority: 'quality' });
+      expect(result).toEqual({ intervalMinutes: 360, enabled: false, blacklistTtlDays: 7, searchPriority: 'quality' });
     });
 
     it('sentinel passthrough preserves existing encrypted value', async () => {
@@ -351,7 +351,7 @@ describe('SettingsService', () => {
 
   describe('update with UpdateSettingsInput', () => {
     it('accepts partial category values via UpdateSettingsInput', async () => {
-      const existingSearch = { intervalMinutes: 360, enabled: true, blacklistTtlDays: 7 };
+      const existingSearch = { intervalMinutes: 360, enabled: true, blacklistTtlDays: 7, searchPriority: 'quality' };
       db.select
         .mockReturnValueOnce(mockDbChain([{ key: 'search', value: existingSearch }]))  // get('search') in patch
         .mockReturnValueOnce(mockDbChain([]))  // sentinel lookup in set()
@@ -363,7 +363,7 @@ describe('SettingsService', () => {
 
       const chain = db.insert.mock.results[0].value as { values: { mock: { calls: Array<Array<{ value: unknown }>> } } };
       const storedValue = chain.values.mock.calls[0][0].value as Record<string, unknown>;
-      expect(storedValue).toEqual({ intervalMinutes: 360, enabled: false, blacklistTtlDays: 7 });
+      expect(storedValue).toEqual({ intervalMinutes: 360, enabled: false, blacklistTtlDays: 7, searchPriority: 'quality' });
     });
 
     it('returns all settings without DB writes for empty input', async () => {

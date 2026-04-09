@@ -141,7 +141,7 @@ describe('SearchSettingsSection', () => {
 
     await waitFor(() => {
       expect(mockApi.updateSettings).toHaveBeenCalledWith({
-        search: { enabled: true, intervalMinutes: 360, blacklistTtlDays: 7 },
+        search: { enabled: true, intervalMinutes: 360, blacklistTtlDays: 7, searchPriority: 'quality' },
         rss: { enabled: false, intervalMinutes: 30 },
         quality: { protocolPreference: 'none' },
       });
@@ -262,7 +262,7 @@ describe('SearchSettingsSection', () => {
 
     await waitFor(() => {
       expect(mockApi.updateSettings).toHaveBeenCalledWith({
-        search: { enabled: false, intervalMinutes: 360, blacklistTtlDays: 14 },
+        search: { enabled: false, intervalMinutes: 360, blacklistTtlDays: 14, searchPriority: 'quality' },
         rss: { enabled: false, intervalMinutes: 60 },
         quality: { protocolPreference: 'none' },
       });
@@ -291,7 +291,7 @@ describe('SearchSettingsSection', () => {
 
     await waitFor(() => {
       expect(mockApi.updateSettings).toHaveBeenCalledWith({
-        search: { enabled: false, intervalMinutes: 360, blacklistTtlDays: 7 },
+        search: { enabled: false, intervalMinutes: 360, blacklistTtlDays: 7, searchPriority: 'quality' },
         rss: { enabled: false, intervalMinutes: 30 },
         quality: { protocolPreference: 'usenet' },
       });
@@ -315,6 +315,58 @@ describe('SearchSettingsSection', () => {
 
     await waitFor(() => {
       expect(mockToast.error).toHaveBeenCalledWith('Network error');
+    });
+  });
+
+  describe('search priority dropdown (#439)', () => {
+    it('renders search priority dropdown with both options and per-option descriptions', async () => {
+      renderWithProviders(<SearchSettingsSection />);
+
+      await waitFor(() => {
+        expect(screen.getByLabelText('Search Priority')).toBeInTheDocument();
+      });
+
+      const options = screen.getByLabelText('Search Priority').querySelectorAll('option');
+      expect(options).toHaveLength(2);
+      expect(options[0]).toHaveTextContent('Audio Quality');
+      expect(options[1]).toHaveTextContent('Narrator Accuracy');
+
+      expect(screen.getByText(/Prioritize higher bitrate releases/)).toBeInTheDocument();
+      expect(screen.getByText(/Prioritize releases matching the narrator/)).toBeInTheDocument();
+    });
+
+    it('selecting accuracy and saving fires mutation with correct payload', async () => {
+      mockApi.updateSettings.mockResolvedValue(mockSettings);
+      const user = userEvent.setup();
+      renderWithProviders(<SearchSettingsSection />);
+
+      await waitFor(() => {
+        expect(screen.getByLabelText('Search Priority')).toBeInTheDocument();
+      });
+
+      await user.selectOptions(screen.getByLabelText('Search Priority'), 'accuracy');
+
+      await user.click(screen.getByRole('button', { name: /save/i }));
+
+      await waitFor(() => {
+        expect(mockApi.updateSettings).toHaveBeenCalledWith(
+          expect.objectContaining({
+            search: expect.objectContaining({ searchPriority: 'accuracy' }),
+          }),
+        );
+      });
+    });
+
+    it('form loads with current saved searchPriority value', async () => {
+      const accuracySettings = createMockSettings({
+        search: { enabled: true, intervalMinutes: 360, blacklistTtlDays: 7, searchPriority: 'accuracy' },
+      });
+      mockApi.getSettings.mockResolvedValue(accuracySettings);
+      renderWithProviders(<SearchSettingsSection />);
+
+      await waitFor(() => {
+        expect(screen.getByLabelText('Search Priority')).toHaveValue('accuracy');
+      });
     });
   });
 });

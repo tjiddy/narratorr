@@ -1,5 +1,34 @@
 # Workflow Log
 
+## #439 Search priority setting — Audio Quality vs Narrator Accuracy — 2026-04-09
+**Skill path:** /implement → /claim → /plan → /handoff
+**Outcome:** success — PR #443
+
+### Metrics
+- Files changed: 18 | Tests added/modified: 64
+- Quality gate runs: 4 (pass on attempt 4 — 3 lint/typecheck/test iterations)
+- Fix iterations: 3 (settings blast radius in service tests, e2e typecheck, ESLint max-lines + regex escape + complexity)
+- Context compactions: 0
+
+### Workflow experience
+- What went smoothly: TDD cycle worked well — red/green per module kept progress steady. Optional parameter pattern for narrator priority was clean and avoided splitting shared helpers.
+- Friction / issues encountered: Settings blast radius was the main friction — adding `searchPriority` required updating hardcoded assertions in settings.service.test.ts (8 tests) and multi-entity e2e test. The `max-lines-per-function` limit on SearchSettingsSection required extracting `inputClass` and compacting JSX descriptions.
+
+### Token efficiency
+- Highest-token actions: Explore subagent for plan + self-review + coverage review (3 subagents)
+- Avoidable waste: Could have grepped for all hardcoded search settings assertions upfront before starting module 2
+- Suggestions: For settings schema changes, run `grep -r 'intervalMinutes.*enabled.*blacklistTtlDays' **/*.test.ts*` upfront to find all blast radius targets
+
+### Infrastructure gaps
+- Repeated workarounds: Local `inputClass` helper to stay under line limit (3rd instance of this pattern across settings sections)
+- Missing tooling / config: No shared `inputClass` utility imported across settings sections
+- Unresolved debt: Updated existing debt entry for `inputClass` duplication to include SearchSettingsSection
+
+### Wish I'd Known
+1. The settings blast radius is wider than `createMockSettings()` covers — `settings.service.test.ts` and `multi-entity.e2e.test.ts` use inline objects that don't auto-merge defaults
+2. `react-hook-form`'s `watch()` triggers `react-hooks/incompatible-library` lint rule — use static descriptions instead of reactive descriptions
+3. ESLint `max-lines-per-function` is at exactly 150 for SearchSettingsSection — any future field additions will need compensating JSX compaction
+
 ## #437 Author ASINs never backfilled — findOrCreateAuthor discards ASIN on existing authors — 2026-04-09
 **Skill path:** /elaborate → /implement → /claim → /plan → /handoff
 **Outcome:** success — PR #442

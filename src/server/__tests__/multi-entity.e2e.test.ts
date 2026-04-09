@@ -305,6 +305,7 @@ describe('Job lifecycle E2E', () => {
       enabled: true,
       intervalMinutes: 60,
       blacklistTtlDays: 7,
+      searchPriority: 'quality',
     });
   });
 

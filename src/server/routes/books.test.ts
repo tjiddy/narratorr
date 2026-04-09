@@ -375,6 +375,7 @@ describe('books routes', () => {
       (services.settings.get as Mock).mockImplementation((cat: string) => {
         if (cat === 'quality') return Promise.resolve(DEFAULT_SETTINGS.quality);
         if (cat === 'metadata') return Promise.resolve({ audibleRegion: 'us', languages: ['english', 'french'] });
+        if (cat === 'search') return Promise.resolve(DEFAULT_SETTINGS.search);
         return Promise.resolve(undefined);
       });
       mockStreamingSearch([
@@ -401,6 +402,7 @@ describe('books routes', () => {
       (services.settings.get as Mock).mockImplementation((cat: string) => {
         if (cat === 'quality') return Promise.resolve(DEFAULT_SETTINGS.quality);
         if (cat === 'metadata') return Promise.resolve({ audibleRegion: 'us', languages: ['english'] });
+        if (cat === 'search') return Promise.resolve(DEFAULT_SETTINGS.search);
         return Promise.resolve(undefined);
       });
       mockStreamingSearch([
@@ -513,6 +515,38 @@ describe('books routes', () => {
 
       expect(res.statusCode).toBe(201);
       expect(services.indexer.searchAllStreaming).not.toHaveBeenCalled();
+    });
+
+    // #439 — fire-and-forget search respects searchPriority narrator-accuracy mode
+    it('fire-and-forget search grabs narrator-matched release when searchPriority is accuracy', async () => {
+      const bookWithNarrators = { ...mockBook, narrators: [{ name: 'Kevin R. Free' }], duration: 36000 };
+      (services.book.findDuplicate as Mock).mockResolvedValue(null);
+      (services.book.create as Mock).mockResolvedValue(bookWithNarrators);
+      (services.settings.get as Mock).mockImplementation((cat: string) => {
+        if (cat === 'quality') return Promise.resolve(DEFAULT_SETTINGS.quality);
+        if (cat === 'metadata') return Promise.resolve(DEFAULT_SETTINGS.metadata);
+        if (cat === 'search') return Promise.resolve({ ...DEFAULT_SETTINGS.search, searchPriority: 'accuracy' });
+        return Promise.resolve(undefined);
+      });
+      const FAIR_SIZE = Math.round(79 * 10 * 1024 * 1024);
+      const GOOD_SIZE = Math.round(200 * 10 * 1024 * 1024);
+      mockStreamingSearch([
+        { title: 'The Way of Kings', downloadUrl: 'https://example.com/quality', protocol: 'torrent', size: GOOD_SIZE, seeders: 10, narrator: 'Someone Else', matchScore: 0.9 },
+        { title: 'The Way of Kings', downloadUrl: 'https://example.com/narrator', protocol: 'torrent', size: FAIR_SIZE, seeders: 10, narrator: 'Kevin R. Free', matchScore: 0.9 },
+      ]);
+
+      const res = await app.inject({
+        method: 'POST',
+        url: '/api/books',
+        payload: { title: 'The Way of Kings', authors: [{ name: 'Brandon Sanderson' }], searchImmediately: true },
+      });
+
+      expect(res.statusCode).toBe(201);
+      await new Promise(r => setTimeout(r, 50));
+
+      expect(services.downloadOrchestrator.grab).toHaveBeenCalledWith(
+        expect.objectContaining({ downloadUrl: 'https://example.com/narrator' }),
+      );
     });
 
     it('passes monitorForUpgrades to create service', async () => {
@@ -1346,6 +1380,7 @@ describe('books routes', () => {
       (services.settings.get as Mock).mockImplementation((cat: string) => {
         if (cat === 'quality') return Promise.resolve(qualitySettings);
         if (cat === 'metadata') return Promise.resolve({ audibleRegion: 'us', languages: ['english'] });
+        if (cat === 'search') return Promise.resolve(DEFAULT_SETTINGS.search);
         return Promise.resolve(undefined);
       });
       mockStreamingSearch([
@@ -1363,6 +1398,7 @@ describe('books routes', () => {
       (services.settings.get as Mock).mockImplementation((cat: string) => {
         if (cat === 'quality') return Promise.resolve(qualitySettings);
         if (cat === 'metadata') return Promise.resolve({ audibleRegion: 'us', languages: ['english'] });
+        if (cat === 'search') return Promise.resolve(DEFAULT_SETTINGS.search);
         return Promise.resolve(undefined);
       });
       mockStreamingSearch([
@@ -1379,6 +1415,31 @@ describe('books routes', () => {
       expect(services.downloadOrchestrator.grab).toHaveBeenCalledTimes(1);
       expect(services.downloadOrchestrator.grab).toHaveBeenCalledWith(
         expect.objectContaining({ downloadUrl: 'https://example.com/dl-en' }),
+      );
+    });
+
+    // #439 — per-book search respects searchPriority narrator-accuracy mode
+    it('per-book search grabs narrator-matched release when searchPriority is accuracy', async () => {
+      const bookWithNarrators = { ...mockBook, narrators: [{ name: 'Kevin R. Free' }], duration: 36000 };
+      (services.book.getById as Mock).mockResolvedValue(bookWithNarrators);
+      const FAIR_SIZE = Math.round(79 * 10 * 1024 * 1024);
+      const GOOD_SIZE = Math.round(200 * 10 * 1024 * 1024);
+      (services.settings.get as Mock).mockImplementation((cat: string) => {
+        if (cat === 'quality') return Promise.resolve(DEFAULT_SETTINGS.quality);
+        if (cat === 'metadata') return Promise.resolve(DEFAULT_SETTINGS.metadata);
+        if (cat === 'search') return Promise.resolve({ ...DEFAULT_SETTINGS.search, searchPriority: 'accuracy' });
+        return Promise.resolve(undefined);
+      });
+      mockStreamingSearch([
+        { title: 'The Way of Kings', downloadUrl: 'https://example.com/quality', protocol: 'torrent', size: GOOD_SIZE, seeders: 10, narrator: 'Someone Else', matchScore: 0.9, indexerId: 1 },
+        { title: 'The Way of Kings', downloadUrl: 'https://example.com/narrator', protocol: 'torrent', size: FAIR_SIZE, seeders: 10, narrator: 'Kevin R. Free', matchScore: 0.9, indexerId: 1 },
+      ]);
+
+      const res = await app.inject({ method: 'POST', url: '/api/books/1/search' });
+
+      expect(res.statusCode).toBe(200);
+      expect(services.downloadOrchestrator.grab).toHaveBeenCalledWith(
+        expect.objectContaining({ downloadUrl: 'https://example.com/narrator' }),
       );
     });
 
