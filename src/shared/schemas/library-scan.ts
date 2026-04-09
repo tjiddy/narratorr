@@ -71,3 +71,61 @@ export const matchStartBodySchema = z.object({
 export const jobIdParamSchema = z.object({
   jobId: z.string().trim().min(1),
 });
+
+// ============================================================================
+// Scan debug schemas
+// ============================================================================
+
+export const scanDebugBodySchema = z.object({
+  folderName: z.string().trim().min(1, 'folderName is required and must be a non-empty string'),
+});
+export type ScanDebugBody = z.infer<typeof scanDebugBodySchema>;
+
+const cleanNameStepSchema = z.object({
+  name: z.string(),
+  output: z.string(),
+});
+
+const cleanNameTraceSchema = z.object({
+  input: z.string(),
+  steps: z.array(cleanNameStepSchema),
+  result: z.string(),
+});
+
+const searchResultItemSchema = z.object({
+  title: z.string(),
+  authors: z.array(z.string()),
+  asin: z.string().nullable(),
+  providerId: z.string().nullable(),
+});
+
+export const scanDebugTraceSchema = z.object({
+  input: z.string(),
+  parts: z.array(z.string()),
+  parsing: z.object({
+    pattern: z.string(),
+    raw: z.object({
+      author: z.string().nullable(),
+      title: z.string(),
+      series: z.string().nullable(),
+    }),
+  }),
+  cleaning: z.record(z.string(), cleanNameTraceSchema),
+  search: z.object({
+    initialQuery: z.string(),
+    initialResultCount: z.number(),
+    swapRetry: z.boolean(),
+    swapQuery: z.string().nullable(),
+    results: z.array(searchResultItemSchema),
+  }).nullable(),
+  match: z.object({
+    status: z.enum(['matched', 'no match']),
+    selected: searchResultItemSchema.nullable(),
+  }).nullable(),
+  duplicate: z.object({
+    isDuplicate: z.boolean(),
+    existingBookId: z.number().nullable(),
+    reason: z.string().nullable(),
+  }).nullable(),
+});
+export type ScanDebugTrace = z.infer<typeof scanDebugTraceSchema>;
