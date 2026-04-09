@@ -3,7 +3,7 @@ import { formatDuration } from '@/lib/helpers';
 import type { SuggestionRow } from '@/lib/api';
 import {
   BookOpenIcon,
-  UsersIcon,
+  HeadphonesIcon,
   ClockIcon,
   PlusIcon,
   XIcon,
@@ -63,7 +63,7 @@ export function SuggestionCard({
 
           {suggestion.narratorName && (
             <p className="text-sm text-muted-foreground flex items-center gap-1.5 mt-0.5">
-              <UsersIcon className="w-3.5 h-3.5" />
+              <HeadphonesIcon className="w-3.5 h-3.5" />
               Narrated by {suggestion.narratorName}
             </p>
           )}

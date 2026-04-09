@@ -301,10 +301,43 @@ describe('BookMetadataModal', () => {
       });
     });
 
+    it('auto-fires search on mount when query is pre-populated', async () => {
+      const { api } = await import('@/lib/api');
+      const searchMock = vi.mocked(api.searchMetadata);
+      searchMock.mockResolvedValue({ books: [createMockBookMetadata({ title: 'Auto Result' })], authors: [], series: [] });
+
+      const user = userEvent.setup();
+      renderModal();
+
+      await user.click(screen.getByText('Search for metadata'));
+
+      // Search should fire automatically without clicking the Search button
+      await waitFor(() => {
+        expect(searchMock).toHaveBeenCalledWith('The Way of Kings Brandon Sanderson');
+      });
+
+      // Results should appear without manual search click
+      await screen.findByText('Auto Result');
+    });
+
+    it('does not auto-fire search when query would be empty', async () => {
+      const { api } = await import('@/lib/api');
+      const searchMock = vi.mocked(api.searchMetadata);
+
+      const user = userEvent.setup();
+      const bookNoTitleOrAuthor = { ...mockBook, title: '', authors: [] };
+      renderModal({ book: bookNoTitleOrAuthor });
+
+      await user.click(screen.getByText('Search for metadata'));
+
+      // Should not have called search
+      expect(searchMock).not.toHaveBeenCalled();
+    });
+
     it('calls api.searchMetadata when search is submitted', async () => {
       const { api } = await import('@/lib/api');
       const searchMock = vi.mocked(api.searchMetadata);
-      searchMock.mockResolvedValueOnce({ books: [], authors: [], series: [] });
+      searchMock.mockResolvedValue({ books: [], authors: [], series: [] });
 
       const user = userEvent.setup();
       renderModal();
@@ -320,7 +353,7 @@ describe('BookMetadataModal', () => {
     it('submits search on Enter key', async () => {
       const { api } = await import('@/lib/api');
       const searchMock = vi.mocked(api.searchMetadata);
-      searchMock.mockResolvedValueOnce({ books: [], authors: [], series: [] });
+      searchMock.mockResolvedValue({ books: [], authors: [], series: [] });
 
       const user = userEvent.setup();
       renderModal();
@@ -336,7 +369,7 @@ describe('BookMetadataModal', () => {
     it('renders search results with title, author, and narrator', async () => {
       const { api } = await import('@/lib/api');
       const searchMock = vi.mocked(api.searchMetadata);
-      searchMock.mockResolvedValueOnce({
+      searchMock.mockResolvedValue({
         books: [
           createMockBookMetadata({ title: 'Result One', authors: [{ name: 'Author A' }], narrators: ['Narrator X'] }),
           createMockBookMetadata({ title: 'Result Two', authors: [{ name: 'Author B' }], narrators: ['Narrator Y'], asin: 'B002' }),
@@ -362,7 +395,7 @@ describe('BookMetadataModal', () => {
     it('auto-fills fields when a search result is selected', async () => {
       const { api } = await import('@/lib/api');
       const searchMock = vi.mocked(api.searchMetadata);
-      searchMock.mockResolvedValueOnce({
+      searchMock.mockResolvedValue({
         books: [
           createMockBookMetadata({
             title: 'Words of Radiance',
@@ -396,7 +429,7 @@ describe('BookMetadataModal', () => {
     it('allows editing auto-filled fields before saving', async () => {
       const { api } = await import('@/lib/api');
       const searchMock = vi.mocked(api.searchMetadata);
-      searchMock.mockResolvedValueOnce({
+      searchMock.mockResolvedValue({
         books: [createMockBookMetadata({ title: 'Auto Title', narrators: ['Auto Narrator'] })],
         authors: [],
         series: [],
@@ -428,7 +461,7 @@ describe('BookMetadataModal', () => {
     it('does not modify form fields when search is dismissed without selecting', async () => {
       const { api } = await import('@/lib/api');
       const searchMock = vi.mocked(api.searchMetadata);
-      searchMock.mockResolvedValueOnce({
+      searchMock.mockResolvedValue({
         books: [createMockBookMetadata({ title: 'Some Result' })],
         authors: [],
         series: [],
@@ -454,14 +487,14 @@ describe('BookMetadataModal', () => {
     it('shows empty state when search returns no results', async () => {
       const { api } = await import('@/lib/api');
       const searchMock = vi.mocked(api.searchMetadata);
-      searchMock.mockResolvedValueOnce({ books: [], authors: [], series: [] });
+      searchMock.mockResolvedValue({ books: [], authors: [], series: [] });
 
       const user = userEvent.setup();
       renderModal();
 
       await user.click(screen.getByText('Search for metadata'));
-      await user.click(screen.getByRole('button', { name: 'Search' }));
 
+      // Auto-search fires on mount — wait for the no-results state
       await screen.findByText(/No results found/);
     });
 
@@ -469,7 +502,7 @@ describe('BookMetadataModal', () => {
       const { api } = await import('@/lib/api');
       const searchMock = vi.mocked(api.searchMetadata);
       // Never resolve to keep loading
-      searchMock.mockReturnValueOnce(new Promise(() => {}));
+      searchMock.mockReturnValue(new Promise(() => {}));
 
       const user = userEvent.setup();
       renderModal();
@@ -486,7 +519,7 @@ describe('BookMetadataModal', () => {
     it('shows error message when search fails', async () => {
       const { api } = await import('@/lib/api');
       const searchMock = vi.mocked(api.searchMetadata);
-      searchMock.mockRejectedValueOnce(new Error('Network error'));
+      searchMock.mockRejectedValue(new Error('Network error'));
 
       const user = userEvent.setup();
       renderModal();
@@ -500,7 +533,7 @@ describe('BookMetadataModal', () => {
     it('saves correct payload after auto-fill from search', async () => {
       const { api } = await import('@/lib/api');
       const searchMock = vi.mocked(api.searchMetadata);
-      searchMock.mockResolvedValueOnce({
+      searchMock.mockResolvedValue({
         books: [
           createMockBookMetadata({
             title: 'New Title',
@@ -551,7 +584,7 @@ describe('BookMetadataModal', () => {
 
         const { api } = await import('@/lib/api');
         const searchMock = vi.mocked(api.searchMetadata);
-        searchMock.mockResolvedValueOnce({
+        searchMock.mockResolvedValue({
           books: [
             createMockBookMetadata({ title: 'Prefixed Cover', coverUrl: '/api/books/1/cover', asin: 'B999' }),
           ],
@@ -576,7 +609,7 @@ describe('BookMetadataModal', () => {
     it('clears narrator field when selected metadata has no narrators', async () => {
       const { api } = await import('@/lib/api');
       const searchMock = vi.mocked(api.searchMetadata);
-      searchMock.mockResolvedValueOnce({
+      searchMock.mockResolvedValue({
         books: [createMockBookMetadata({ title: 'No Narrator Book', narrators: undefined })],
         authors: [],
         series: [],
@@ -621,7 +654,7 @@ describe('BookMetadataModal', () => {
 
   it('search-result selection buttons have explicit type="button"', async () => {
     const { api: mockApi } = await import('@/lib/api');
-    vi.mocked(mockApi.searchMetadata).mockResolvedValueOnce({
+    vi.mocked(mockApi.searchMetadata).mockResolvedValue({
       books: [createMockBookMetadata({ title: 'Result One', authors: [{ name: 'Author A' }] })],
       authors: [],
       series: [],

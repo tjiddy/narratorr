@@ -40,6 +40,7 @@ export function BookMetadataModal({ book, onSave, onClose, isSaving }: BookMetad
     const prefill = [book.title, book.authors[0]?.name ?? ''].filter(Boolean).join(' ').trim();
     setSearchQuery(prefill);
     setView('search');
+    if (prefill) search(prefill);
   };
 
   const handleSearch = () => {

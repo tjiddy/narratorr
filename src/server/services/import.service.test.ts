@@ -257,7 +257,7 @@ describe('ImportService', () => {
   let clientService: ReturnType<typeof createMockDownloadClientService>;
   let settingsService: ReturnType<typeof createMockSettingsService>;
   let service: ImportService;
-  let mockBookService: { getById: ReturnType<typeof vi.fn> };
+  let mockBookService: { getById: ReturnType<typeof vi.fn>; update: ReturnType<typeof vi.fn> };
 
   /** Wrap a bare book row in a BookWithAuthor shell (authors + narrators arrays). */
   function withAuthor(book: Record<string, unknown>, narratorNames: string[] = []) {
@@ -275,7 +275,7 @@ describe('ImportService', () => {
     log = createMockLogger();
     clientService = createMockDownloadClientService();
     settingsService = createMockSettingsService();
-    mockBookService = { getById: vi.fn().mockResolvedValue(withAuthor(mockBook)) };
+    mockBookService = { getById: vi.fn().mockResolvedValue(withAuthor(mockBook)), update: vi.fn().mockResolvedValue(undefined) };
     service = new ImportService(inject<Db>(db), clientService, settingsService, inject<FastifyBaseLogger>(log), undefined, mockBookService as never);
 
     // Default: stat returns a directory for source, then directory for target (size verification)
@@ -1152,7 +1152,7 @@ describe('ImportService', () => {
         expect.anything(),  // book
         expect.anything(),  // db
         expect.anything(),  // log
-        undefined,          // bookService (not passed in importDownload)
+        expect.anything(),  // bookService
         '/usr/bin/ffprobe', // ffprobePath derived from /usr/bin/ffmpeg
       );
     });
@@ -1850,7 +1850,7 @@ describe('ImportService consolidation (issue #79)', () => {
   // ── #229 Observability — logging improvements ───────────────────────────
   describe('logging improvements (#229)', () => {
     let service: ImportService;
-    let mockBookService: { getById: ReturnType<typeof vi.fn> };
+    let mockBookService: { getById: ReturnType<typeof vi.fn>; update: ReturnType<typeof vi.fn> };
 
     function withAuthor(book: Record<string, unknown>) {
       return {
@@ -1866,7 +1866,7 @@ describe('ImportService consolidation (issue #79)', () => {
       log = createMockLogger();
       clientService = createMockDownloadClientService();
       settingsService = createMockSettingsService();
-      mockBookService = { getById: vi.fn().mockResolvedValue(withAuthor(mockBook)) };
+      mockBookService = { getById: vi.fn().mockResolvedValue(withAuthor(mockBook)), update: vi.fn().mockResolvedValue(undefined) };
       service = new ImportService(inject<Db>(db), clientService, settingsService, inject<FastifyBaseLogger>(log), undefined, mockBookService as never);
 
       vi.mocked(stat).mockResolvedValue({ isFile: () => false, isDirectory: () => true, size: 500_000_000 } as never);
@@ -1996,7 +1996,7 @@ describe('ImportService consolidation (issue #79)', () => {
   // #318 — minSeedRatio gating in handleTorrentRemoval
   describe('seed ratio gating (handleTorrentRemoval)', () => {
     let service: ImportService;
-    let mockBookService: { getById: ReturnType<typeof vi.fn> };
+    let mockBookService: { getById: ReturnType<typeof vi.fn>; update: ReturnType<typeof vi.fn> };
 
     beforeEach(() => {
       vi.clearAllMocks();
@@ -2004,7 +2004,7 @@ describe('ImportService consolidation (issue #79)', () => {
       log = createMockLogger();
       clientService = createMockDownloadClientService();
       settingsService = createMockSettingsService();
-      mockBookService = { getById: vi.fn().mockResolvedValue({ ...createMockDbBook({ status: 'downloading' as const }), authors: [createMockDbAuthor()], narrators: [] }) };
+      mockBookService = { getById: vi.fn().mockResolvedValue({ ...createMockDbBook({ status: 'downloading' as const }), authors: [createMockDbAuthor()], narrators: [] }), update: vi.fn().mockResolvedValue(undefined) };
       service = new ImportService(inject<Db>(db), clientService, settingsService, inject<FastifyBaseLogger>(log), undefined, mockBookService as never);
       // Default: stat returns directory, readdir returns audio file
       vi.mocked(stat).mockResolvedValue({ isFile: () => false, isDirectory: () => true, size: 500_000_000 } as never);

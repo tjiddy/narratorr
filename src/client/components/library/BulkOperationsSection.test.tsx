@@ -33,12 +33,10 @@ vi.mock('@/lib/api', () => ({
   api: {
     getBulkRenameCount: vi.fn(),
     getBulkRetagCount: vi.fn(),
-    getBulkConvertCount: vi.fn(),
-    getSettings: vi.fn(),
   },
 }));
 
-function setup(overrides?: { ffmpegPath?: string; isRunning?: boolean; jobType?: string | null; completed?: number; total?: number; failures?: number }) {
+function setup(overrides?: { isRunning?: boolean; jobType?: string | null; completed?: number; total?: number; failures?: number }) {
   mockIsRunning.current = overrides?.isRunning ?? false;
   mockJobType.current = overrides?.jobType ?? null;
   mockProgress.current = {
@@ -46,13 +44,8 @@ function setup(overrides?: { ffmpegPath?: string; isRunning?: boolean; jobType?:
     total: overrides?.total ?? 0,
     failures: overrides?.failures ?? 0,
   };
-  const ffmpegPath = overrides?.ffmpegPath ?? '/usr/bin/ffmpeg';
-  (api.getSettings as ReturnType<typeof vi.fn>).mockResolvedValue({
-    processing: { ffmpegPath },
-  });
   (api.getBulkRenameCount as ReturnType<typeof vi.fn>).mockResolvedValue({ mismatched: 5, alreadyMatching: 10 });
   (api.getBulkRetagCount as ReturnType<typeof vi.fn>).mockResolvedValue({ total: 15 });
-  (api.getBulkConvertCount as ReturnType<typeof vi.fn>).mockResolvedValue({ total: 3 });
   return renderWithProviders(<BulkOperationsSection />);
 }
 
@@ -63,25 +56,15 @@ describe('BulkOperationsSection', () => {
   });
 
   // Rendering
-  it('renders Rename All Books, Re-tag All Books, Convert All to M4B buttons', () => {
+  it('renders Rename All Books and Re-tag All Books buttons', () => {
     setup();
     expect(screen.getByRole('button', { name: /rename all books/i })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /re-tag all books/i })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: /convert all to m4b/i })).toBeInTheDocument();
   });
 
-  it('Convert All to M4B button is disabled with tooltip when ffmpegPath is not configured', async () => {
-    setup({ ffmpegPath: '' });
-    const convertBtn = screen.getByRole('button', { name: /convert all to m4b/i });
-    expect(convertBtn).toBeDisabled();
-  });
-
-  it('Convert All to M4B button is enabled when ffmpegPath is configured', async () => {
-    setup({ ffmpegPath: '/usr/bin/ffmpeg' });
-    // Wait for settings query to resolve and enable the button
-    await waitFor(() => {
-      expect(screen.getByRole('button', { name: /convert all to m4b/i })).not.toBeDisabled();
-    });
+  it('does not render Convert All to M4B button', () => {
+    setup();
+    expect(screen.queryByRole('button', { name: /convert all to m4b/i })).not.toBeInTheDocument();
   });
 
   // Confirmation modal — counts
@@ -107,18 +90,6 @@ describe('BulkOperationsSection', () => {
     });
     expect(within(screen.getByRole('dialog')).getByText(/15 books/i)).toBeInTheDocument();
     expect(api.getBulkRetagCount).toHaveBeenCalled();
-  });
-
-  it('clicking Convert All to M4B fetches count then opens confirmation modal with count text', async () => {
-    const user = userEvent.setup({});
-    setup();
-    const btn = screen.getByRole('button', { name: /convert all to m4b/i });
-    await user.click(btn);
-    await waitFor(() => {
-      expect(screen.getByRole('dialog')).toBeInTheDocument();
-    });
-    expect(within(screen.getByRole('dialog')).getByText(/3 books/i)).toBeInTheDocument();
-    expect(api.getBulkConvertCount).toHaveBeenCalled();
   });
 
   it('clicking Cancel on any modal closes it without calling the start endpoint', async () => {
@@ -167,24 +138,15 @@ describe('BulkOperationsSection', () => {
     expect(btn.textContent).toMatch(/2\/8/);
   });
 
-  it('after confirming convert, button shows Converting... N/total with spinner and is disabled', async () => {
-    setup({ isRunning: true, jobType: 'convert', completed: 1, total: 5 });
-    const btn = screen.getByRole('button', { name: /converting/i });
-    expect(btn).toBeDisabled();
-    expect(btn.textContent).toMatch(/1\/5/);
-  });
-
   // Cross-op disabling
-  it('while rename is running, Re-tag All Books and Convert All to M4B buttons are disabled', () => {
+  it('while rename is running, Re-tag All Books button is disabled', () => {
     setup({ isRunning: true, jobType: 'rename' });
     expect(screen.getByRole('button', { name: /re-tag all books/i })).toBeDisabled();
-    expect(screen.getByRole('button', { name: /convert all to m4b/i })).toBeDisabled();
   });
 
-  it('while retag is running, Rename All Books and Convert All to M4B buttons are disabled', () => {
+  it('while retag is running, Rename All Books button is disabled', () => {
     setup({ isRunning: true, jobType: 'retag' });
     expect(screen.getByRole('button', { name: /rename all books/i })).toBeDisabled();
-    expect(screen.getByRole('button', { name: /convert all to m4b/i })).toBeDisabled();
   });
 
   // Navigation persistence
@@ -255,20 +217,6 @@ describe('BulkOperationsSection', () => {
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
   });
 
-  it('shows toast.error when convert count API rejects', async () => {
-    const user = userEvent.setup({});
-    setup({ ffmpegPath: '/usr/bin/ffmpeg' });
-    await waitFor(() => {
-      expect(screen.getByRole('button', { name: /convert all to m4b/i })).not.toBeDisabled();
-    });
-    (api.getBulkConvertCount as ReturnType<typeof vi.fn>).mockRejectedValue(new Error('Convert error'));
-    await user.click(screen.getByRole('button', { name: /convert all to m4b/i }));
-    await waitFor(() => {
-      expect(toast.error).toHaveBeenCalledWith('Convert error');
-    });
-    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
-  });
-
   it('shows fallback toast message when rename count API rejects a non-Error value', async () => {
     const user = userEvent.setup({});
     setup();
@@ -292,19 +240,6 @@ describe('BulkOperationsSection', () => {
     setup({ isRunning: true, jobType: 'rename' });
     const retagBtn = screen.getByRole('button', { name: /re-tag all books/i });
     expect(retagBtn).toHaveAttribute('title', 'A bulk operation is already running.');
-  });
-
-  it('Convert All to M4B button has tooltip "A bulk operation is already running." when another job is running (even when ffmpeg is disabled)', () => {
-    setup({ isRunning: true, jobType: 'rename', ffmpegPath: '' });
-    const convertBtn = screen.getByRole('button', { name: /convert all to m4b/i });
-    expect(convertBtn).toHaveAttribute('title', 'A bulk operation is already running.');
-  });
-
-  // AC6: Convert tooltip copy (#141)
-  it('Convert All to M4B button tooltip reads "Requires ffmpeg — configure in Settings > Post Processing" when ffmpeg not configured', () => {
-    setup({ ffmpegPath: '' });
-    const convertBtn = screen.getByRole('button', { name: /convert all to m4b/i });
-    expect(convertBtn).toHaveAttribute('title', 'Requires ffmpeg — configure in Settings > Post Processing');
   });
 
   // Finding 1: Library Actions section rename (#227)

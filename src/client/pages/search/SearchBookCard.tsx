@@ -8,7 +8,7 @@ import { formatDuration, mapBookMetadataToPayload, isBookInLibrary } from '@/lib
 import { queryKeys } from '@/lib/queryKeys';
 import {
   BookOpenIcon,
-  UsersIcon,
+  HeadphonesIcon,
   CheckCircleIcon,
   ClockIcon,
 } from '@/components/icons';
@@ -78,7 +78,7 @@ export function SearchBookCard({
 
           {book.narrators && book.narrators.length > 0 && (
             <p className="text-sm text-muted-foreground flex items-center gap-1.5 mt-0.5">
-              <UsersIcon className="w-3.5 h-3.5" />
+              <HeadphonesIcon className="w-3.5 h-3.5" />
               Narrated by {book.narrators.join(', ')}
             </p>
           )}

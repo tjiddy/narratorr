@@ -135,7 +135,7 @@ export class ImportService {
 
       await this.db.update(books).set({ status: 'imported', path: targetPath, size: targetSize, lastGrabGuid: download.guid ?? null, lastGrabInfoHash: download.infoHash ?? null, updatedAt: new Date() }).where(eq(books.id, book.id));
       const ffprobePath = resolveFfprobePathFromSettings(processingSettings?.ffmpegPath);
-      await enrichBookFromAudio(book.id, targetPath, book, this.db, this.log, undefined, ffprobePath);
+      await enrichBookFromAudio(book.id, targetPath, book, this.db, this.log, this.bookService, ffprobePath);
 
       await this.db.update(downloads).set({ status: 'imported' }).where(eq(downloads.id, downloadId));
       this.log.info({ downloadId, bookId: book.id, bookTitle: book.title, targetPath, fileCount, totalSize: targetSize, elapsedMs: Date.now() - startMs }, 'Import completed successfully');

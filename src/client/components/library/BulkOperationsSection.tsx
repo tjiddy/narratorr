@@ -1,25 +1,19 @@
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
-import { useQuery } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import { api, type RenameCount } from '@/lib/api';
-import { queryKeys } from '@/lib/queryKeys';
 import { FolderIcon } from '@/components/icons';
 import { useBulkOperation } from '../../hooks/useBulkOperation.js';
 import { ConfirmModal } from '@/components/ConfirmModal';
 
-type PendingOp = 'rename' | 'retag' | 'convert' | null;
+type PendingOp = 'rename' | 'retag' | null;
 type ModalCount = RenameCount | number;
 
-async function fetchCountForOp(op: 'rename' | 'retag' | 'convert'): Promise<ModalCount> {
+async function fetchCountForOp(op: 'rename' | 'retag'): Promise<ModalCount> {
   if (op === 'rename') {
     return api.getBulkRenameCount();
   }
-  if (op === 'retag') {
-    const r = await api.getBulkRetagCount();
-    return r.total;
-  }
-  const r = await api.getBulkConvertCount();
+  const r = await api.getBulkRetagCount();
   return r.total;
 }
 
@@ -36,11 +30,6 @@ const MODAL_LABELS: Record<NonNullable<PendingOp>, { title: string; message: (da
     title: 'Re-tag All Books?',
     message: (n) => `This will re-write audio tags for ${n as number} ${(n as number) !== 1 ? 'books' : 'book'}.`,
     confirmLabel: 'Re-tag All',
-  },
-  convert: {
-    title: 'Convert All to M4B?',
-    message: (n) => `This will convert ${n as number} ${(n as number) !== 1 ? 'books' : 'book'} to M4B format. Original files will be replaced.`,
-    confirmLabel: 'Convert All',
   },
 };
 
@@ -113,16 +102,9 @@ export function BulkOperationsSection() {
   const [modalCount, setModalCount] = useState<ModalCount | null>(null);
   const [isLoadingCount, setIsLoadingCount] = useState(false);
 
-  const { data: settings } = useQuery({
-    queryKey: queryKeys.settings(),
-    queryFn: api.getSettings,
-    staleTime: 60_000,
-  });
-
-  const ffmpegConfigured = Boolean(settings?.processing?.ffmpegPath?.trim());
   const anyBusy = isRunning || isLoadingCount;
 
-  async function handleOperationClick(op: 'rename' | 'retag' | 'convert') {
+  async function handleOperationClick(op: 'rename' | 'retag') {
     setIsLoadingCount(true);
     try {
       const count = await fetchCountForOp(op);
@@ -176,16 +158,6 @@ export function BulkOperationsSection() {
           isAnyRunning={anyBusy}
           progress={progress}
           onClick={() => handleOperationClick('retag')}
-        />
-        <BulkButton
-          label="Convert All to M4B"
-          runningLabel="Converting..."
-          isThisRunning={isRunning && jobType === 'convert'}
-          isAnyRunning={anyBusy}
-          isDisabled={!ffmpegConfigured}
-          disabledReason="Requires ffmpeg — configure in Settings > Post Processing"
-          progress={progress}
-          onClick={() => handleOperationClick('convert')}
         />
       </div>
       {progress.failures > 0 && (
