@@ -1,5 +1,5 @@
 import type { EnrichmentStatus } from '../../../shared/schemas.js';
-import { fetchApi } from './client.js';
+import { fetchApi, URL_BASE, ApiError } from './client.js';
 
 export interface Author {
   id: number;
@@ -238,4 +238,21 @@ export const booksApi = {
     fetchApi<{ success: boolean }>(`/books/${id}/merge-to-m4b`, { method: 'DELETE' }),
   markBookAsWrongRelease: (id: number) =>
     fetchApi<{ success: boolean }>(`/books/${id}/wrong-release`, { method: 'POST' }),
+  uploadBookCover: async (id: number, file: File): Promise<BookWithAuthor> => {
+    const formData = new FormData();
+    formData.append('file', file);
+
+    const response = await fetch(`${URL_BASE}/api/books/${id}/cover`, {
+      method: 'POST',
+      body: formData,
+      credentials: 'include',
+    });
+
+    if (!response.ok) {
+      const error = await response.json().catch(() => ({ error: `HTTP ${response.status}` }));
+      throw new ApiError(response.status, error);
+    }
+
+    return response.json();
+  },
 };
