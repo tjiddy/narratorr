@@ -2457,6 +2457,22 @@ describe('POST /api/books/:id/cover', () => {
   });
 
   describe('size validation', () => {
+    it('accepts file at exactly 10 MB boundary', async () => {
+      (services.book.uploadCover as Mock).mockResolvedValue(updatedBook);
+      const exactlyTenMb = Buffer.alloc(10 * 1024 * 1024);
+      const { payload, contentType } = createCoverPayload('exact.jpg', exactlyTenMb, 'image/jpeg');
+
+      const res = await app.inject({
+        method: 'POST',
+        url: '/api/books/1/cover',
+        payload,
+        headers: { 'content-type': contentType },
+      });
+
+      expect(res.statusCode).toBe(200);
+      expect(services.book.uploadCover).toHaveBeenCalledWith(1, expect.any(Buffer), 'image/jpeg');
+    });
+
     it('rejects file over 10 MB with 400', async () => {
       const oversized = Buffer.alloc(10 * 1024 * 1024 + 1);
       const { payload, contentType } = createCoverPayload('big.jpg', oversized, 'image/jpeg');
