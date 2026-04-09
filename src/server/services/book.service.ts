@@ -1,11 +1,14 @@
 import { rm } from 'node:fs/promises';
 import { cleanEmptyParents } from '../utils/paths.js';
+import { uploadBookCover, CoverUploadError } from './cover-upload.js';
 import { eq, and, sql, inArray, notExists } from 'drizzle-orm';
 import type { Db, DbOrTx } from '../../db/index.js';
 import type { FastifyBaseLogger } from 'fastify';
 import { books, authors, narrators, bookAuthors, bookNarrators, unmatchedGenres, importLists } from '../../db/schema.js';
 import { slugify, findUnmatchedGenres } from '../../core/index.js';
 import { type MetadataService } from './metadata.service.js';
+
+export { CoverUploadError } from './cover-upload.js';
 
 type BookRow = typeof books.$inferSelect;
 type NewBook = typeof books.$inferInsert;
@@ -299,6 +302,33 @@ export class BookService {
     this.log.info({ path: bookPath }, 'Book files deleted from disk');
 
     await cleanEmptyParents(bookPath, libraryRoot, this.log);
+  }
+
+  /**
+   * Upload a custom cover image for a book.
+   * Validates book exists and has a path, then delegates to uploadBookCover utility.
+   */
+  private static readonly ALLOWED_COVER_MIMES = new Set(['image/jpeg', 'image/png', 'image/webp']);
+
+  async uploadCover(
+    bookId: number,
+    buffer: Buffer,
+    mimeType: string,
+  ): Promise<BookWithAuthor> {
+    if (!BookService.ALLOWED_COVER_MIMES.has(mimeType)) {
+      throw new CoverUploadError('Only JPG, PNG, and WebP images are supported', 'INVALID_MIME');
+    }
+
+    const book = await this.getById(bookId);
+    if (!book) {
+      throw new CoverUploadError('Book not found', 'NOT_FOUND');
+    }
+    if (!book.path) {
+      throw new CoverUploadError('Book has no path on disk', 'NO_PATH');
+    }
+
+    await uploadBookCover(bookId, book.path, buffer, mimeType, this.db, this.log);
+    return this.getById(bookId) as Promise<BookWithAuthor>;
   }
 
   async getMonitoredBooks(): Promise<BookWithAuthor[]> {

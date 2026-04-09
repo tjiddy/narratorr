@@ -2305,4 +2305,267 @@ describe('PUT /api/books/:id — array update contract (#71)', () => {
       expect(res.statusCode).toBe(400);
     });
   });
+
+});
+
+// #445 — POST /api/books/:id/cover
+// Separate top-level describe because createTestApp does NOT register @fastify/multipart.
+import Fastify from 'fastify';
+import {
+  serializerCompiler,
+  validatorCompiler,
+  type ZodTypeProvider,
+} from 'fastify-type-provider-zod';
+import multipart from '@fastify/multipart';
+import { registerRoutes } from './index.js';
+import type { Db } from '../../db/index.js';
+import { inject } from '../__tests__/helpers.js';
+import { CoverUploadError } from '../services/book.service.js';
+
+/** Build a raw multipart/form-data payload for Fastify inject. */
+function createCoverPayload(filename: string, content: Buffer, mimetype: string, boundary = 'boundary123') {
+  const header = Buffer.from(
+    `--${boundary}\r\n` +
+    `Content-Disposition: form-data; name="file"; filename="${filename}"\r\n` +
+    `Content-Type: ${mimetype}\r\n` +
+    `\r\n`
+  );
+  const footer = Buffer.from(`\r\n--${boundary}--\r\n`);
+  const payload = Buffer.concat([header, content, footer]);
+  return { payload, contentType: `multipart/form-data; boundary=${boundary}` };
+}
+
+describe('POST /api/books/:id/cover', () => {
+  let app: Awaited<ReturnType<typeof Fastify>>;
+  let services: Services;
+
+  const updatedBook = {
+    ...mockBook,
+    path: '/library/book',
+    coverUrl: '/api/books/1/cover',
+    updatedAt: new Date('2024-06-01T00:00:00Z'),
+  };
+
+  beforeAll(async () => {
+    services = createMockServices();
+    const mockDb = inject<Db>({ run: vi.fn().mockResolvedValue(undefined) });
+
+    const instance = Fastify({ logger: false }).withTypeProvider<ZodTypeProvider>();
+    instance.setValidatorCompiler(validatorCompiler);
+    instance.setSerializerCompiler(serializerCompiler);
+    const { errorHandlerPlugin } = await import('../plugins/error-handler.js');
+    await instance.register(errorHandlerPlugin);
+    await instance.register(multipart, { limits: { fileSize: 500 * 1024 * 1024 } });
+    await registerRoutes(instance, services, mockDb);
+    await instance.ready();
+    app = instance;
+  });
+
+  afterAll(async () => {
+    await app.close();
+  });
+
+  beforeEach(() => {
+    resetMockServices(services);
+  });
+
+  describe('happy path', () => {
+    it('uploads valid JPEG and returns 200 with updated book', async () => {
+      (services.book.uploadCover as Mock).mockResolvedValue(updatedBook);
+      const imageData = Buffer.from('fake-jpeg-data');
+      const { payload, contentType } = createCoverPayload('cover.jpg', imageData, 'image/jpeg');
+
+      const res = await app.inject({
+        method: 'POST',
+        url: '/api/books/1/cover',
+        payload,
+        headers: { 'content-type': contentType },
+      });
+
+      expect(res.statusCode).toBe(200);
+      const body = JSON.parse(res.payload);
+      expect(body.coverUrl).toBe('/api/books/1/cover');
+      expect(services.book.uploadCover).toHaveBeenCalledWith(1, expect.any(Buffer), 'image/jpeg');
+    });
+
+    it('uploads valid PNG and passes image/png mimetype to service', async () => {
+      (services.book.uploadCover as Mock).mockResolvedValue(updatedBook);
+      const imageData = Buffer.from('fake-png-data');
+      const { payload, contentType } = createCoverPayload('cover.png', imageData, 'image/png');
+
+      const res = await app.inject({
+        method: 'POST',
+        url: '/api/books/1/cover',
+        payload,
+        headers: { 'content-type': contentType },
+      });
+
+      expect(res.statusCode).toBe(200);
+      expect(services.book.uploadCover).toHaveBeenCalledWith(1, expect.any(Buffer), 'image/png');
+    });
+
+    it('uploads valid WebP and passes image/webp mimetype to service', async () => {
+      (services.book.uploadCover as Mock).mockResolvedValue(updatedBook);
+      const imageData = Buffer.from('fake-webp-data');
+      const { payload, contentType } = createCoverPayload('cover.webp', imageData, 'image/webp');
+
+      const res = await app.inject({
+        method: 'POST',
+        url: '/api/books/1/cover',
+        payload,
+        headers: { 'content-type': contentType },
+      });
+
+      expect(res.statusCode).toBe(200);
+      expect(services.book.uploadCover).toHaveBeenCalledWith(1, expect.any(Buffer), 'image/webp');
+    });
+  });
+
+  describe('MIME type validation', () => {
+    it('rejects application/pdf with 400', async () => {
+      (services.book.uploadCover as Mock).mockRejectedValue(
+        new CoverUploadError('Only JPG, PNG, and WebP images are supported', 'INVALID_MIME'),
+      );
+      const { payload, contentType } = createCoverPayload('file.pdf', Buffer.from('pdf-data'), 'application/pdf');
+
+      const res = await app.inject({
+        method: 'POST',
+        url: '/api/books/1/cover',
+        payload,
+        headers: { 'content-type': contentType },
+      });
+
+      expect(res.statusCode).toBe(400);
+      expect(JSON.parse(res.payload).error).toContain('Only JPG, PNG, and WebP');
+    });
+
+    it('rejects image/gif with 400', async () => {
+      (services.book.uploadCover as Mock).mockRejectedValue(
+        new CoverUploadError('Only JPG, PNG, and WebP images are supported', 'INVALID_MIME'),
+      );
+      const { payload, contentType } = createCoverPayload('image.gif', Buffer.from('gif-data'), 'image/gif');
+
+      const res = await app.inject({
+        method: 'POST',
+        url: '/api/books/1/cover',
+        payload,
+        headers: { 'content-type': contentType },
+      });
+
+      expect(res.statusCode).toBe(400);
+    });
+  });
+
+  describe('size validation', () => {
+    it('accepts file at exactly 10 MB boundary', async () => {
+      (services.book.uploadCover as Mock).mockResolvedValue(updatedBook);
+      const exactlyTenMb = Buffer.alloc(10 * 1024 * 1024);
+      const { payload, contentType } = createCoverPayload('exact.jpg', exactlyTenMb, 'image/jpeg');
+
+      const res = await app.inject({
+        method: 'POST',
+        url: '/api/books/1/cover',
+        payload,
+        headers: { 'content-type': contentType },
+      });
+
+      expect(res.statusCode).toBe(200);
+      expect(services.book.uploadCover).toHaveBeenCalledWith(1, expect.any(Buffer), 'image/jpeg');
+    });
+
+    it('rejects file over 10 MB with 400', async () => {
+      const oversized = Buffer.alloc(10 * 1024 * 1024 + 1);
+      const { payload, contentType } = createCoverPayload('big.jpg', oversized, 'image/jpeg');
+
+      const res = await app.inject({
+        method: 'POST',
+        url: '/api/books/1/cover',
+        payload,
+        headers: { 'content-type': contentType },
+      });
+
+      expect(res.statusCode).toBe(400);
+      expect(JSON.parse(res.payload).error).toContain('10 MB');
+      // Service should NOT have been called
+      expect(services.book.uploadCover).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('error paths', () => {
+    it('returns 404 for non-existent book', async () => {
+      (services.book.uploadCover as Mock).mockRejectedValue(
+        new CoverUploadError('Book not found', 'NOT_FOUND'),
+      );
+      const { payload, contentType } = createCoverPayload('cover.jpg', Buffer.from('data'), 'image/jpeg');
+
+      const res = await app.inject({
+        method: 'POST',
+        url: '/api/books/999/cover',
+        payload,
+        headers: { 'content-type': contentType },
+      });
+
+      expect(res.statusCode).toBe(404);
+    });
+
+    it('returns 400 for book with no path', async () => {
+      (services.book.uploadCover as Mock).mockRejectedValue(
+        new CoverUploadError('Book has no path on disk', 'NO_PATH'),
+      );
+      const { payload, contentType } = createCoverPayload('cover.jpg', Buffer.from('data'), 'image/jpeg');
+
+      const res = await app.inject({
+        method: 'POST',
+        url: '/api/books/1/cover',
+        payload,
+        headers: { 'content-type': contentType },
+      });
+
+      expect(res.statusCode).toBe(400);
+    });
+
+    it('returns 400 when no file is attached', async () => {
+      const boundary = 'boundary456';
+      const emptyPayload = Buffer.from(
+        `--${boundary}\r\nContent-Disposition: form-data; name="text"\r\n\r\nempty\r\n--${boundary}--\r\n`
+      );
+
+      const res = await app.inject({
+        method: 'POST',
+        url: '/api/books/1/cover',
+        payload: emptyPayload,
+        headers: { 'content-type': `multipart/form-data; boundary=${boundary}` },
+      });
+
+      expect(res.statusCode).toBe(400);
+      expect(JSON.parse(res.payload).error).toContain('No file uploaded');
+    });
+
+    it('returns 500 on unexpected service error', async () => {
+      (services.book.uploadCover as Mock).mockRejectedValue(new Error('EACCES: permission denied'));
+      const { payload, contentType } = createCoverPayload('cover.jpg', Buffer.from('data'), 'image/jpeg');
+
+      const res = await app.inject({
+        method: 'POST',
+        url: '/api/books/1/cover',
+        payload,
+        headers: { 'content-type': contentType },
+      });
+
+      expect(res.statusCode).toBe(500);
+    });
+
+    it('returns 400 for invalid bookId param', async () => {
+      const { payload, contentType } = createCoverPayload('cover.jpg', Buffer.from('data'), 'image/jpeg');
+
+      const res = await app.inject({
+        method: 'POST',
+        url: '/api/books/abc/cover',
+        payload,
+        headers: { 'content-type': contentType },
+      });
+
+      expect(res.statusCode).toBe(400);
+    });
+  });
 });

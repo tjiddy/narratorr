@@ -4,6 +4,7 @@ import type { FastifyInstance, FastifyBaseLogger } from 'fastify';
 import { serveCoverFromCache, cleanCoverCache, COVER_FILE_REGEX } from '../utils/cover-cache.js';
 import { config } from '../config.js';
 import type { BookService, BookListService, DownloadService, SettingsService, RenameService, EventHistoryService, TaggingService, IndexerService } from '../services/index.js';
+import { CoverUploadError } from '../services/book.service.js';
 import type { DownloadOrchestrator } from '../services/download-orchestrator.js';
 import type { MergeService } from '../services/merge.service.js';
 import type { BookRejectionService } from '../services/book-rejection.service.js';
@@ -385,6 +386,45 @@ export async function bookFilesRoute(app: FastifyInstance, bookService: BookServ
       }
 
       return reply.status(404).send({ error: 'No cover image' });
+    },
+  );
+
+  const MAX_COVER_SIZE = 10 * 1024 * 1024; // 10 MB
+
+  // POST /api/books/:id/cover — upload custom cover art
+  app.post<{ Params: IdParam }>(
+    '/api/books/:id/cover',
+    { schema: { params: idParamSchema } },
+    async (request, reply) => {
+      const { id } = request.params;
+
+      const data = await request.file();
+      if (!data) {
+        return reply.status(400).send({ error: 'No file uploaded' });
+      }
+
+      const buffer = await data.toBuffer();
+
+      if (buffer.length > MAX_COVER_SIZE) {
+        return reply.status(400).send({ error: 'Cover image must be under 10 MB' });
+      }
+
+      const mimeType = data.mimetype;
+
+      try {
+        const book = await bookService.uploadCover(id, buffer, mimeType);
+        request.log.info({ id }, 'Cover uploaded');
+        return book;
+      } catch (error: unknown) {
+        if (error instanceof CoverUploadError) {
+          if (error.code === 'NOT_FOUND') {
+            return reply.status(404).send({ error: error.message });
+          }
+          return reply.status(400).send({ error: error.message });
+        }
+        request.log.error(error, 'Cover upload failed');
+        return reply.status(500).send({ error: 'Failed to upload cover' });
+      }
     },
   );
 

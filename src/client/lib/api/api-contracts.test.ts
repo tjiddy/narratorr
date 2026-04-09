@@ -11,11 +11,13 @@ const mockFetchApi = vi.fn().mockResolvedValue({});
 
 vi.mock('./client.js', () => ({
   fetchApi: (...args: unknown[]) => mockFetchApi(...args),
+  URL_BASE: '',
   ApiError: class ApiError extends Error {
     status: number;
     body: unknown;
     constructor(status: number, body: unknown) {
-      super(`HTTP ${status}`);
+      const message = (body as { error?: string })?.error || `HTTP ${status}`;
+      super(message);
       this.status = status;
       this.body = body;
     }
@@ -275,6 +277,44 @@ describe('booksApi', () => {
   it('renameBook → POST /books/:id/rename', async () => {
     await booksApi.renameBook(8);
     expect(mockFetchApi).toHaveBeenCalledWith('/books/8/rename', expect.objectContaining({ method: 'POST' }));
+  });
+
+  it('uploadBookCover → POST /api/books/:id/cover with FormData and credentials', async () => {
+    const mockResponse = { ok: true, json: () => Promise.resolve({ id: 7, coverUrl: '/api/books/7/cover' }) };
+    const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue(mockResponse as Response);
+
+    const file = new File(['img'], 'cover.jpg', { type: 'image/jpeg' });
+    const result = await booksApi.uploadBookCover(7, file);
+
+    expect(fetchSpy).toHaveBeenCalledWith(
+      expect.stringContaining('/api/books/7/cover'),
+      expect.objectContaining({
+        method: 'POST',
+        credentials: 'include',
+      }),
+    );
+    // Verify FormData body (not JSON)
+    const callArgs = fetchSpy.mock.calls[0][1] as RequestInit;
+    expect(callArgs.body).toBeInstanceOf(FormData);
+    // Should NOT set Content-Type header (browser handles multipart boundary)
+    expect(callArgs.headers).toBeUndefined();
+    expect(result).toEqual({ id: 7, coverUrl: '/api/books/7/cover' });
+
+    fetchSpy.mockRestore();
+  });
+
+  it('uploadBookCover throws ApiError on non-OK response', async () => {
+    const mockResponse = {
+      ok: false,
+      status: 400,
+      json: () => Promise.resolve({ error: 'Only JPG, PNG, and WebP images are supported' }),
+    };
+    const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue(mockResponse as Response);
+
+    const file = new File(['img'], 'cover.gif', { type: 'image/gif' });
+    await expect(booksApi.uploadBookCover(1, file)).rejects.toThrow('Only JPG, PNG, and WebP images are supported');
+
+    fetchSpy.mockRestore();
   });
 });
 

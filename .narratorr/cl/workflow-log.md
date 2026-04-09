@@ -1,5 +1,34 @@
 # Workflow Log
 
+## #445 Upload custom cover art — inline preview with paste support — 2026-04-09
+**Skill path:** /implement → /claim → /plan → /handoff
+**Outcome:** success — PR #451
+
+### Metrics
+- Files changed: 13 | Tests added/modified: 28
+- Quality gate runs: 2 (pass on attempt 1 after lint fix, pass on attempt 2 clean)
+- Fix iterations: 1 (lint: exhaustive-deps + max-lines — fixed by extracting cover-upload.ts and inlining constant)
+- Context compactions: 0
+
+### Workflow experience
+- What went smoothly: Full-stack feature with clear existing patterns (cover-download.ts, backups.ts multipart, useBookActions mutations). Spec was well-elaborated with all ACs verified against codebase.
+- Friction / issues encountered: book.service.ts max-lines limit hit at 468 lines — had to extract cover-upload.ts mid-implementation. Service test mock ordering for getById (3 selects per call) required careful mock chain setup.
+
+### Token efficiency
+- Highest-token actions: Explore subagent for plan (comprehensive codebase read), coverage review subagent
+- Avoidable waste: Could have checked book.service.ts line count before adding the method, avoiding the extraction refactor mid-stream
+- Suggestions: Pre-check max-lines on target files before adding methods
+
+### Infrastructure gaps
+- Repeated workarounds: none
+- Missing tooling / config: none
+- Unresolved debt: none introduced
+
+### Wish I'd Known
+1. book.service.ts is near the 400-line limit — check line count before adding methods to large service files (learned: cover-upload-extraction-max-lines.md)
+2. Multipart route tests need a separate top-level describe with custom Fastify app — can't use base createTestApp (learned: multipart-route-tests-separate-app.md)
+3. BookService getById consumes 3 mock return values per call — methods calling it twice need 6 mocks in total (learned: service-test-mock-ordering-getbyid.md)
+
 ## #447 Title similarity floor rejects valid matches after swap retry — 2026-04-09
 **Skill path:** /implement → /claim → /plan → /handoff
 **Outcome:** success — PR #449

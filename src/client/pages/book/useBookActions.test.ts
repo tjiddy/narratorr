@@ -24,6 +24,7 @@ vi.mock('@/lib/api', async (importOriginal) => {
       mergeBookToM4b: vi.fn(),
       markBookAsWrongRelease: vi.fn(),
       deleteBook: vi.fn(),
+      uploadBookCover: vi.fn(),
       getSettings: vi.fn().mockResolvedValue({
         processing: { ffmpegPath: '/usr/bin/ffmpeg', enabled: false, outputFormat: 'm4b', keepOriginalBitrate: false, bitrate: 128, mergeBehavior: 'multi-file-only', maxConcurrentProcessing: 2 },
         library: { path: '/audiobooks', folderFormat: '{author}/{title}', fileFormat: '{author} - {title}' },
@@ -501,6 +502,62 @@ describe('useBookActions', () => {
         expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: ['books', 5] });
         expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: ['books', 5, 'files'] });
         expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: ['books'] });
+      });
+    });
+  });
+
+  // #445 — uploadCoverMutation
+  describe('uploadCoverMutation', () => {
+    const testFile = new File(['data'], 'cover.jpg', { type: 'image/jpeg' });
+
+    it('calls api.uploadBookCover with bookId and file', async () => {
+      (api.uploadBookCover as Mock).mockResolvedValue({ id: 5, coverUrl: '/api/books/5/cover' });
+      const { wrapper } = createTestHarness();
+      const { result } = renderHook(() => useBookActions(5, false), { wrapper });
+
+      act(() => { result.current.uploadCoverMutation.mutate(testFile); });
+
+      await waitFor(() => {
+        expect(api.uploadBookCover).toHaveBeenCalledWith(5, testFile);
+      });
+    });
+
+    it('shows success toast "Cover updated" on success', async () => {
+      (api.uploadBookCover as Mock).mockResolvedValue({ id: 5, coverUrl: '/api/books/5/cover' });
+      const { wrapper } = createTestHarness();
+      const { result } = renderHook(() => useBookActions(5, false), { wrapper });
+
+      act(() => { result.current.uploadCoverMutation.mutate(testFile); });
+
+      await waitFor(() => {
+        expect(toast.success).toHaveBeenCalledWith('Cover updated');
+      });
+    });
+
+    it('invalidates book, bookFiles, and books queries on success', async () => {
+      (api.uploadBookCover as Mock).mockResolvedValue({ id: 5, coverUrl: '/api/books/5/cover' });
+      const { queryClient, wrapper } = createTestHarness();
+      const invalidateSpy = vi.spyOn(queryClient, 'invalidateQueries');
+      const { result } = renderHook(() => useBookActions(5, false), { wrapper });
+
+      act(() => { result.current.uploadCoverMutation.mutate(testFile); });
+
+      await waitFor(() => {
+        expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: ['books', 5] });
+        expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: ['books', 5, 'files'] });
+        expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: ['books'] });
+      });
+    });
+
+    it('shows error toast on upload failure', async () => {
+      (api.uploadBookCover as Mock).mockRejectedValue(new Error('Server error'));
+      const { wrapper } = createTestHarness();
+      const { result } = renderHook(() => useBookActions(5, false), { wrapper });
+
+      act(() => { result.current.uploadCoverMutation.mutate(testFile); });
+
+      await waitFor(() => {
+        expect(toast.error).toHaveBeenCalledWith('Cover upload failed: Server error');
       });
     });
   });

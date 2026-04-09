@@ -1,4 +1,4 @@
-import { useRef, useState } from 'react';
+import { useRef, useState, useCallback, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { SearchReleasesModal } from '@/components/SearchReleasesModal';
 import { BookMetadataModal } from '@/components/book/BookMetadataModal.js';
@@ -14,6 +14,8 @@ import { useBookActions } from './useBookActions.js';
 import { useMergeProgress } from '@/hooks/useMergeProgress.js';
 import { formatMergePhase } from '@/lib/format/merge.js';
 import { AudioPreview } from './AudioPreview.js';
+import { useCoverPaste } from '@/hooks/useCoverPaste.js';
+import { toast } from 'sonner';
 
 function getArrowTabIndex(key: string, currentIndex: number, length: number): number | null {
   if (key === 'ArrowRight') return (currentIndex + 1) % length;
@@ -39,15 +41,63 @@ export function BookDetails({ libraryBook, metadataBook }: {
   const [confirmDeleteOpen, setConfirmDeleteOpen] = useState(false);
   const [confirmWrongReleaseOpen, setConfirmWrongReleaseOpen] = useState(false);
   const [tab, setTab] = useState<'details' | 'history'>('details');
+  const [coverPreviewUrl, setCoverPreviewUrl] = useState<string | null>(null);
+  const [coverFile, setCoverFile] = useState<File | null>(null);
 
   const tabRefs = useRef<(HTMLButtonElement | null)[]>([]);
   const tabs = ['details', 'history'] as const;
 
   const merged = mergeBookData(libraryBook, metadataBook);
-  const { renameMutation, mergeMutation, cancelMergeMutation, retagMutation, deleteMutation, monitorMutation, wrongReleaseMutation, ffmpegConfigured, isSaving, handleSave } =
+  const { renameMutation, mergeMutation, cancelMergeMutation, retagMutation, deleteMutation, monitorMutation, wrongReleaseMutation, uploadCoverMutation, ffmpegConfigured, isSaving, handleSave } =
     useBookActions(libraryBook.id, libraryBook.monitorForUpgrades);
 
   const showWrongRelease = canShowWrongRelease(libraryBook);
+
+  const handleCoverFile = useCallback((file: File) => {
+    const maxSize = 10 * 1024 * 1024;
+    if (!file.type.startsWith('image/') || !['image/jpeg', 'image/png', 'image/webp'].includes(file.type)) {
+      toast.error('Only JPG, PNG, and WebP images are supported');
+      return;
+    }
+    if (file.size > maxSize) {
+      toast.error('Cover image must be under 10 MB');
+      return;
+    }
+    // Revoke previous preview URL if replacing
+    if (coverPreviewUrl) URL.revokeObjectURL(coverPreviewUrl);
+    setCoverFile(file);
+    setCoverPreviewUrl(URL.createObjectURL(file));
+  }, [coverPreviewUrl]);
+
+  const handleCoverConfirm = useCallback(() => {
+    if (!coverFile) return;
+    uploadCoverMutation.mutate(coverFile, {
+      onSettled: () => {
+        if (coverPreviewUrl) URL.revokeObjectURL(coverPreviewUrl);
+        setCoverPreviewUrl(null);
+        setCoverFile(null);
+      },
+    });
+  }, [coverFile, coverPreviewUrl, uploadCoverMutation]);
+
+  const handleCoverCancel = useCallback(() => {
+    if (coverPreviewUrl) URL.revokeObjectURL(coverPreviewUrl);
+    setCoverPreviewUrl(null);
+    setCoverFile(null);
+  }, [coverPreviewUrl]);
+
+  // Clean up object URL on unmount
+  useEffect(() => {
+    return () => {
+      if (coverPreviewUrl) URL.revokeObjectURL(coverPreviewUrl);
+    };
+  }, [coverPreviewUrl]);
+
+  useCoverPaste({
+    enabled: !!libraryBook.path,
+    onPaste: handleCoverFile,
+    onError: (msg) => toast.error(msg),
+  });
 
   const mergeProgress = useMergeProgress(libraryBook.id);
   const canMerge = libraryBook.status === 'imported' &&
@@ -100,6 +150,11 @@ export function BookDetails({ libraryBook, metadataBook }: {
         monitorForUpgrades={libraryBook.monitorForUpgrades}
         onMonitorToggle={() => monitorMutation.mutate()}
         isMonitorToggling={monitorMutation.isPending}
+        previewUrl={coverPreviewUrl}
+        onCoverFileSelect={handleCoverFile}
+        onCoverConfirm={handleCoverConfirm}
+        onCoverCancel={handleCoverCancel}
+        isUploadingCover={uploadCoverMutation.isPending}
       >
         <AudioPreview bookId={libraryBook.id} status={libraryBook.status} path={libraryBook.path ?? null} />
       </BookHero>

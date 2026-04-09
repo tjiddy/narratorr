@@ -488,4 +488,119 @@ describe('BookHero', () => {
       expect(onEditClick).toHaveBeenCalledTimes(1);
     });
   });
+
+  // #445 — Cover upload overlay
+  describe('cover upload overlay', () => {
+    describe('overlay visibility', () => {
+      it('renders upload button on cover when book has path and onCoverFileSelect provided', () => {
+        renderHero({ hasPath: true, onCoverFileSelect: vi.fn() });
+        expect(screen.getByLabelText('Upload cover')).toBeInTheDocument();
+      });
+
+      it('does not render upload button when book has no path', () => {
+        renderHero({ hasPath: false, onCoverFileSelect: vi.fn() });
+        expect(screen.queryByLabelText('Upload cover')).not.toBeInTheDocument();
+      });
+
+      it('clicking upload button triggers hidden file input', async () => {
+        const user = userEvent.setup();
+        const onCoverFileSelect = vi.fn();
+        renderHero({ hasPath: true, onCoverFileSelect });
+
+        const uploadBtn = screen.getByLabelText('Upload cover');
+        // The button should exist and be clickable
+        await user.click(uploadBtn);
+        // Verify file input exists with correct accept attribute
+        const fileInput = document.querySelector('input[type="file"]') as HTMLInputElement;
+        expect(fileInput).not.toBeNull();
+        expect(fileInput.accept).toBe('image/jpeg,image/png,image/webp');
+      });
+    });
+
+    describe('file picker', () => {
+      it('file input has accept attribute restricted to image types', () => {
+        renderHero({ hasPath: true, onCoverFileSelect: vi.fn() });
+        const fileInput = document.querySelector('input[type="file"]') as HTMLInputElement;
+        expect(fileInput).not.toBeNull();
+        expect(fileInput.accept).toBe('image/jpeg,image/png,image/webp');
+      });
+    });
+
+    describe('preview state', () => {
+      it('shows checkmark and X overlays when preview is active', () => {
+        renderHero({
+          previewUrl: 'blob:http://localhost/preview',
+          onCoverConfirm: vi.fn(),
+          onCoverCancel: vi.fn(),
+        });
+        expect(screen.getByLabelText('Confirm cover')).toBeInTheDocument();
+        expect(screen.getByLabelText('Cancel cover')).toBeInTheDocument();
+      });
+
+      it('displays preview image instead of original cover', () => {
+        renderHero({
+          coverUrl: 'https://example.com/original.jpg',
+          previewUrl: 'blob:http://localhost/preview',
+          onCoverConfirm: vi.fn(),
+          onCoverCancel: vi.fn(),
+        });
+        const previewImg = screen.getByAltText('Cover preview');
+        expect(previewImg).toBeInTheDocument();
+        expect(previewImg).toHaveAttribute('src', 'blob:http://localhost/preview');
+      });
+
+      it('clicking checkmark calls onCoverConfirm', async () => {
+        const user = userEvent.setup();
+        const onCoverConfirm = vi.fn();
+        renderHero({
+          previewUrl: 'blob:http://localhost/preview',
+          onCoverConfirm,
+          onCoverCancel: vi.fn(),
+        });
+
+        await user.click(screen.getByLabelText('Confirm cover'));
+        expect(onCoverConfirm).toHaveBeenCalledTimes(1);
+      });
+
+      it('clicking X calls onCoverCancel', async () => {
+        const user = userEvent.setup();
+        const onCoverCancel = vi.fn();
+        renderHero({
+          previewUrl: 'blob:http://localhost/preview',
+          onCoverConfirm: vi.fn(),
+          onCoverCancel,
+        });
+
+        await user.click(screen.getByLabelText('Cancel cover'));
+        expect(onCoverCancel).toHaveBeenCalledTimes(1);
+      });
+
+      it('disables confirm and cancel buttons when upload is in progress', () => {
+        renderHero({
+          previewUrl: 'blob:http://localhost/preview',
+          onCoverConfirm: vi.fn(),
+          onCoverCancel: vi.fn(),
+          isUploadingCover: true,
+        });
+
+        expect(screen.getByLabelText('Confirm cover')).toBeDisabled();
+        expect(screen.getByLabelText('Cancel cover')).toBeDisabled();
+      });
+
+      it('does not show upload overlay when preview is active (confirm/cancel shown instead)', () => {
+        renderHero({
+          hasPath: true,
+          onCoverFileSelect: vi.fn(),
+          previewUrl: 'blob:http://localhost/preview',
+          onCoverConfirm: vi.fn(),
+          onCoverCancel: vi.fn(),
+        });
+
+        // Upload button should NOT be visible when preview is active
+        expect(screen.queryByLabelText('Upload cover')).not.toBeInTheDocument();
+        // Confirm/cancel should be visible
+        expect(screen.getByLabelText('Confirm cover')).toBeInTheDocument();
+      });
+    });
+  });
 });
