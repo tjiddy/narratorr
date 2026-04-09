@@ -26,6 +26,8 @@
 
 - **`src/server/services/quality-gate-orchestrator.ts` at 501 lines (max 400)**: File exceeds ESLint max-lines rule and any net addition triggers a "new violation" in verify.ts diff-based linting. Needs to be split — e.g., extract deferred-cleanup logic or SSE emission into a separate module. (discovered in #434)
 
+- **`src/server/routes/search-stream.test.ts`**: Module-level `vi.mock('../services/search-pipeline.js')` prevents integration testing of `postProcessSearchResults` in the same file. New integration tests had to go in a separate file (`search-stream-filtering.test.ts`). Consider refactoring the existing tests to use per-test mocking or moving the mocked tests to a separate file so the main test file can run unmocked. (discovered in #438)
+
 ## Accepted Debt
 
 Items below are real but not worth fixing — the cost of change outweighs the benefit.
