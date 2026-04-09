@@ -361,6 +361,9 @@ export class BookService {
       .limit(1);
 
     if (existing.length > 0) {
+      if (asin && !existing[0].asin) {
+        await tx.update(authors).set({ asin }).where(eq(authors.id, existing[0].id));
+      }
       return existing[0].id;
     }
 
@@ -378,6 +381,9 @@ export class BookService {
         .where(eq(authors.slug, slug))
         .limit(1);
       if (retryAuthor.length > 0) {
+        if (asin && !retryAuthor[0].asin) {
+          await tx.update(authors).set({ asin }).where(eq(authors.id, retryAuthor[0].id));
+        }
         return retryAuthor[0].id;
       }
       throw new Error(`Failed to find or create author: ${name}`);

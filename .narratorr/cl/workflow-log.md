@@ -1,5 +1,29 @@
 # Workflow Log
 
+## #437 Author ASINs never backfilled — findOrCreateAuthor discards ASIN on existing authors — 2026-04-09
+**Skill path:** /elaborate → /implement → /claim → /plan → /handoff
+**Outcome:** success — PR #442
+
+### Metrics
+- Files changed: 2 | Tests added/modified: 5 new tests
+- Quality gate runs: 2 (pass on attempt 1 both times)
+- Fix iterations: 0
+- Context compactions: 0
+
+### Workflow experience
+- What went smoothly: Small, well-scoped bug fix with clear root cause in the spec. The elaborate step had already validated the codebase and added a test plan, making planning and implementation straightforward.
+- Friction / issues encountered: Edit tool couldn't disambiguate `findOrCreateAuthor` from `findOrCreateNarrator` (identical early-return patterns) — needed larger context string for the replacement.
+
+### Token efficiency
+- Highest-token actions: Explore subagent during /plan (codebase already explored in /elaborate)
+- Avoidable waste: The /plan explore could have been lighter since /elaborate already validated everything
+- Suggestions: For trivial bug fixes where /elaborate was thorough, /plan exploration could be minimal
+
+### Wish I'd Known
+1. The `findOrCreateAuthor` and `findOrCreateNarrator` functions have near-identical structure — edits need unique context to disambiguate
+2. The conflict-retry catch block (unique constraint race) needs the same backfill treatment as the primary path — easy to forget
+3. BookHero already has conditional author link rendering — the fix is purely backend
+
 ## #438 Reject words not filtering manual search results — 2026-04-09
 **Skill path:** /elaborate → /respond-to-spec-review (x2) → /implement → /claim → /plan → /handoff
 **Outcome:** success — PR #441

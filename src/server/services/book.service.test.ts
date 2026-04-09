@@ -2,7 +2,8 @@ import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { createMockDb, createMockLogger, inject, mockDbChain } from '../__tests__/helpers.js';
 import { createMockDbBook, createMockDbAuthor } from '../__tests__/factories.js';
 import { BookService } from './book.service.js';
-import { books, bookAuthors } from '../../db/schema.js';
+import { eq } from 'drizzle-orm';
+import { authors, books, bookAuthors } from '../../db/schema.js';
 import type { FastifyBaseLogger } from 'fastify';
 import type { Db, DbOrTx } from '../../db/index.js';
 import type { MetadataService } from './metadata.service.js';
@@ -1186,6 +1187,123 @@ describe('BookService — transaction atomicity (#214)', () => {
       expect(tx.insert).toHaveBeenCalledTimes(2);
       expect(db.select).not.toHaveBeenCalled();
       expect(db.insert).not.toHaveBeenCalled();
+    });
+  });
+
+  // ── #437 Author ASIN backfill ────────────────────────────────────────────
+  describe('findOrCreateAuthor ASIN backfill (#437)', () => {
+    it('backfills null ASIN on existing author when caller provides one', async () => {
+      const tx = createMockDb();
+      const existingAuthor = createMockDbAuthor({ id: 5, asin: null });
+      tx.select.mockReturnValueOnce(mockDbChain([existingAuthor])); // found existing
+      tx.update.mockReturnValueOnce(mockDbChain([]));               // ASIN update
+      tx.delete.mockReturnValueOnce(mockDbChain([]));               // junction delete
+      tx.insert.mockReturnValueOnce(mockDbChain([]));               // junction insert
+
+      await service.syncAuthors(inject<DbOrTx>(tx), 10, [{ name: 'Brandon Sanderson', asin: 'B001IGFHW6' }]);
+
+      // Assert update targets the correct author row
+      expect(tx.update).toHaveBeenCalledTimes(1);
+      const updateChain = tx.update.mock.results[0].value;
+      expect(updateChain.set).toHaveBeenCalledWith({ asin: 'B001IGFHW6' });
+      expect(updateChain.where).toHaveBeenCalledWith(eq(authors.id, 5));
+
+      // Assert junction insert uses the existing author ID (not a new one)
+      const junctionChain = tx.insert.mock.results[0].value;
+      expect(junctionChain.values).toHaveBeenCalledWith({ bookId: 10, authorId: 5, position: 0 });
+    });
+
+    it('does not overwrite existing non-null ASIN (first-write-wins)', async () => {
+      const tx = createMockDb();
+      const existingAuthor = createMockDbAuthor({ id: 5, asin: 'B_OLD' });
+      tx.select.mockReturnValueOnce(mockDbChain([existingAuthor])); // found existing with ASIN
+      tx.delete.mockReturnValueOnce(mockDbChain([]));               // junction delete
+      tx.insert.mockReturnValueOnce(mockDbChain([]));               // junction insert
+
+      await service.syncAuthors(inject<DbOrTx>(tx), 10, [{ name: 'Brandon Sanderson', asin: 'B_NEW' }]);
+
+      expect(tx.update).not.toHaveBeenCalled();
+    });
+
+    it('does not update when caller provides no ASIN (undefined)', async () => {
+      const tx = createMockDb();
+      const existingAuthor = createMockDbAuthor({ id: 5, asin: null });
+      tx.select.mockReturnValueOnce(mockDbChain([existingAuthor])); // found existing
+      tx.delete.mockReturnValueOnce(mockDbChain([]));               // junction delete
+      tx.insert.mockReturnValueOnce(mockDbChain([]));               // junction insert
+
+      await service.syncAuthors(inject<DbOrTx>(tx), 10, [{ name: 'Brandon Sanderson' }]);
+
+      expect(tx.update).not.toHaveBeenCalled();
+    });
+
+    it('does not update when caller provides empty string ASIN', async () => {
+      const tx = createMockDb();
+      const existingAuthor = createMockDbAuthor({ id: 5, asin: null });
+      tx.select.mockReturnValueOnce(mockDbChain([existingAuthor])); // found existing
+      tx.delete.mockReturnValueOnce(mockDbChain([]));               // junction delete
+      tx.insert.mockReturnValueOnce(mockDbChain([]));               // junction insert
+
+      await service.syncAuthors(inject<DbOrTx>(tx), 10, [{ name: 'Brandon Sanderson', asin: '' }]);
+
+      expect(tx.update).not.toHaveBeenCalled();
+    });
+
+    it('backfills ASIN on conflict-retry path (unique constraint race)', async () => {
+      const tx = createMockDb();
+      const existingAuthor = createMockDbAuthor({ id: 5, asin: null });
+      tx.select
+        .mockReturnValueOnce(mockDbChain([]))                      // first lookup: not found
+        .mockReturnValueOnce(mockDbChain([existingAuthor]));        // retry lookup after conflict
+      tx.insert
+        .mockReturnValueOnce(mockDbChain(undefined, { error: new Error('UNIQUE constraint failed') })) // insert fails
+        .mockReturnValueOnce(mockDbChain([]));                      // junction insert
+      tx.update.mockReturnValueOnce(mockDbChain([]));               // ASIN backfill
+      tx.delete.mockReturnValueOnce(mockDbChain([]));               // junction delete
+
+      await service.syncAuthors(inject<DbOrTx>(tx), 10, [{ name: 'Brandon Sanderson', asin: 'B001IGFHW6' }]);
+
+      // Assert update targets the correct author row
+      expect(tx.update).toHaveBeenCalledTimes(1);
+      const updateChain = tx.update.mock.results[0].value;
+      expect(updateChain.set).toHaveBeenCalledWith({ asin: 'B001IGFHW6' });
+      expect(updateChain.where).toHaveBeenCalledWith(eq(authors.id, 5));
+
+      // Assert junction insert uses the retried author ID
+      const junctionChain = tx.insert.mock.results[1].value;  // [0] is the failed author insert
+      expect(junctionChain.values).toHaveBeenCalledWith({ bookId: 10, authorId: 5, position: 0 });
+    });
+
+    it('does not overwrite existing ASIN on conflict-retry path (first-write-wins)', async () => {
+      const tx = createMockDb();
+      const existingAuthor = createMockDbAuthor({ id: 5, asin: 'B_OLD' });
+      tx.select
+        .mockReturnValueOnce(mockDbChain([]))                      // first lookup: not found
+        .mockReturnValueOnce(mockDbChain([existingAuthor]));        // retry lookup: has ASIN
+      tx.insert
+        .mockReturnValueOnce(mockDbChain(undefined, { error: new Error('UNIQUE constraint failed') })) // insert fails
+        .mockReturnValueOnce(mockDbChain([]));                      // junction insert
+      tx.delete.mockReturnValueOnce(mockDbChain([]));               // junction delete
+
+      await service.syncAuthors(inject<DbOrTx>(tx), 10, [{ name: 'Brandon Sanderson', asin: 'B_NEW' }]);
+
+      expect(tx.update).not.toHaveBeenCalled();
+    });
+
+    it('does not update on conflict-retry path when caller provides no ASIN', async () => {
+      const tx = createMockDb();
+      const existingAuthor = createMockDbAuthor({ id: 5, asin: null });
+      tx.select
+        .mockReturnValueOnce(mockDbChain([]))                      // first lookup: not found
+        .mockReturnValueOnce(mockDbChain([existingAuthor]));        // retry lookup: null ASIN
+      tx.insert
+        .mockReturnValueOnce(mockDbChain(undefined, { error: new Error('UNIQUE constraint failed') })) // insert fails
+        .mockReturnValueOnce(mockDbChain([]));                      // junction insert
+      tx.delete.mockReturnValueOnce(mockDbChain([]));               // junction delete
+
+      await service.syncAuthors(inject<DbOrTx>(tx), 10, [{ name: 'Brandon Sanderson' }]);
+
+      expect(tx.update).not.toHaveBeenCalled();
     });
   });
 
