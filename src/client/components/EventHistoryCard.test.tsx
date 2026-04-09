@@ -6,11 +6,12 @@ import { EventHistoryCard } from './EventHistoryCard';
 import type { BookEvent } from '@/lib/api';
 
 vi.mock('@/lib/api', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('@/lib/api')>();
+  const actual = await importOriginal() as Record<string, unknown>;
+  const actualApi = (actual as { api: Record<string, unknown> }).api;
   return {
     ...actual,
     api: {
-      ...actual.api,
+      ...actualApi,
       getIndexers: vi.fn().mockResolvedValue([
         { id: 3, name: 'DrunkenSlug', type: 'newznab', enabled: true, priority: 1, settings: {}, source: null, sourceIndexerId: null, createdAt: '' },
       ]),

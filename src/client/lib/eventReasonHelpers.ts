@@ -1,0 +1,28 @@
+import { formatBytes } from '@/lib/api';
+
+type Reason = Record<string, unknown> | null;
+type IndexerMap = Map<number, string>;
+
+/** Returns false for null or empty-object reasons (treat {} same as null for toggle visibility). */
+export function hasReasonContent(reason: Reason): boolean {
+  if (reason == null) return false;
+  return Object.keys(reason).length > 0;
+}
+
+/** Returns an inline summary string for grabbed events, null for all others. */
+export function getEventSummary(eventType: string, reason: Reason, indexerMap: IndexerMap): string | null {
+  if (reason == null || eventType !== 'grabbed') return null;
+  const indexerId = reason.indexerId as number | undefined;
+  const size = reason.size as number | undefined;
+  const protocol = reason.protocol as string | undefined;
+
+  const indexerName = indexerId != null ? (indexerMap.get(indexerId) ?? String(indexerId)) : null;
+  const protocolLabel = protocol ? protocol.charAt(0).toUpperCase() + protocol.slice(1) : null;
+  const sizeLabel = size != null ? formatBytes(size) : null;
+
+  const parts: string[] = [];
+  if (indexerName) parts.push(`from ${indexerName}`);
+  if (protocolLabel) parts.push(`(${protocolLabel})`);
+  if (sizeLabel) parts.push(`· ${sizeLabel}`);
+  return parts.length > 0 ? parts.join(' ') : null;
+}

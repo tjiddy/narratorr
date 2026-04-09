@@ -3,7 +3,8 @@ import { useQuery } from '@tanstack/react-query';
 import { type BookEvent, api } from '@/lib/api';
 import { queryKeys } from '@/lib/queryKeys';
 import { formatRelativeDate } from '@/lib/format';
-import { hasReasonContent, getEventSummary, EventReasonDetails } from '@/lib/eventReasonFormatters';
+import { hasReasonContent, getEventSummary } from '@/lib/eventReasonHelpers';
+import { EventReasonDetails } from '@/lib/eventReasonFormatters';
 import {
   ArrowDownIcon,
   CheckCircleIcon,

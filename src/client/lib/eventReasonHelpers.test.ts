@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { hasReasonContent, getEventSummary } from './eventReasonFormatters';
+import { hasReasonContent, getEventSummary } from './eventReasonHelpers';
 
 describe('hasReasonContent', () => {
   it('returns false for null reason', () => {
