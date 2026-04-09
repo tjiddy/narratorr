@@ -48,6 +48,7 @@ vi.mock('@/lib/api', async (importOriginal) => {
       cancelMergeBook: vi.fn(),
       markBookAsWrongRelease: vi.fn(),
       deleteBook: vi.fn(),
+      uploadBookCover: vi.fn(),
       getSettings: vi.fn(),
     },
   };
@@ -1461,6 +1462,134 @@ describe('#257 merge observability — BookDetails progress', () => {
 
       await waitFor(() => {
         expect(api.cancelMergeBook).toHaveBeenCalledWith(999);
+      });
+    });
+  });
+
+  // #445 — Cover upload orchestration
+  describe('cover upload', () => {
+    it('shows upload overlay on cover when book has path', () => {
+      renderBookDetails({ path: '/library/book', status: 'imported' });
+      expect(screen.getByLabelText('Upload cover')).toBeInTheDocument();
+    });
+
+    it('does not show upload overlay when book has no path', () => {
+      renderBookDetails({ path: null, status: 'wanted' });
+      expect(screen.queryByLabelText('Upload cover')).not.toBeInTheDocument();
+    });
+
+    it('shows preview with confirm/cancel after selecting a valid image file', async () => {
+      const user = userEvent.setup();
+      renderBookDetails({ path: '/library/book', status: 'imported' });
+
+      const fileInput = document.querySelector('input[type="file"]') as HTMLInputElement;
+      const file = new File(['image-data'], 'cover.jpg', { type: 'image/jpeg' });
+      await user.upload(fileInput, file);
+
+      await waitFor(() => {
+        expect(screen.getByAltText('Cover preview')).toBeInTheDocument();
+        expect(screen.getByLabelText('Confirm cover')).toBeInTheDocument();
+        expect(screen.getByLabelText('Cancel cover')).toBeInTheDocument();
+      });
+    });
+
+    it('shows error toast for oversized file via file picker', async () => {
+      const user = userEvent.setup();
+      renderBookDetails({ path: '/library/book', status: 'imported' });
+
+      const fileInput = document.querySelector('input[type="file"]') as HTMLInputElement;
+      // Create a file that reports > 10 MB via Object.defineProperty
+      const file = new File(['x'], 'big.jpg', { type: 'image/jpeg' });
+      Object.defineProperty(file, 'size', { value: 10 * 1024 * 1024 + 1 });
+      await user.upload(fileInput, file);
+
+      expect(toast.error).toHaveBeenCalledWith('Cover image must be under 10 MB');
+      expect(screen.queryByAltText('Cover preview')).not.toBeInTheDocument();
+    });
+
+    it('clicking cancel restores original cover and clears preview', async () => {
+      const user = userEvent.setup();
+      renderBookDetails({ path: '/library/book', status: 'imported', coverUrl: 'https://example.com/cover.jpg' });
+
+      // Select file to enter preview state
+      const fileInput = document.querySelector('input[type="file"]') as HTMLInputElement;
+      const file = new File(['image-data'], 'cover.jpg', { type: 'image/jpeg' });
+      await user.upload(fileInput, file);
+
+      await waitFor(() => {
+        expect(screen.getByLabelText('Cancel cover')).toBeInTheDocument();
+      });
+
+      // Cancel
+      await user.click(screen.getByLabelText('Cancel cover'));
+
+      await waitFor(() => {
+        expect(screen.queryByAltText('Cover preview')).not.toBeInTheDocument();
+        expect(screen.queryByLabelText('Cancel cover')).not.toBeInTheDocument();
+      });
+    });
+
+    it('clicking confirm calls uploadBookCover with correct bookId and file', async () => {
+      vi.mocked(api.uploadBookCover).mockResolvedValue(makeBook({ coverUrl: '/api/books/1/cover' }));
+      const user = userEvent.setup();
+      renderBookDetails({ id: 42, path: '/library/book', status: 'imported' });
+
+      // Select file
+      const fileInput = document.querySelector('input[type="file"]') as HTMLInputElement;
+      const file = new File(['image-data'], 'cover.jpg', { type: 'image/jpeg' });
+      await user.upload(fileInput, file);
+
+      await waitFor(() => {
+        expect(screen.getByLabelText('Confirm cover')).toBeInTheDocument();
+      });
+
+      // Confirm upload
+      await user.click(screen.getByLabelText('Confirm cover'));
+
+      await waitFor(() => {
+        expect(api.uploadBookCover).toHaveBeenCalledWith(42, expect.any(File));
+      });
+    });
+
+    it('shows success toast and clears preview after successful upload', async () => {
+      vi.mocked(api.uploadBookCover).mockResolvedValue(makeBook({ coverUrl: '/api/books/1/cover' }));
+      const user = userEvent.setup();
+      renderBookDetails({ path: '/library/book', status: 'imported' });
+
+      const fileInput = document.querySelector('input[type="file"]') as HTMLInputElement;
+      const file = new File(['image-data'], 'cover.jpg', { type: 'image/jpeg' });
+      await user.upload(fileInput, file);
+
+      await waitFor(() => {
+        expect(screen.getByLabelText('Confirm cover')).toBeInTheDocument();
+      });
+
+      await user.click(screen.getByLabelText('Confirm cover'));
+
+      await waitFor(() => {
+        expect(toast.success).toHaveBeenCalledWith('Cover updated');
+        expect(screen.queryByAltText('Cover preview')).not.toBeInTheDocument();
+      });
+    });
+
+    it('shows error toast on upload failure and clears preview', async () => {
+      vi.mocked(api.uploadBookCover).mockRejectedValue(new Error('Server error'));
+      const user = userEvent.setup();
+      renderBookDetails({ path: '/library/book', status: 'imported' });
+
+      const fileInput = document.querySelector('input[type="file"]') as HTMLInputElement;
+      const file = new File(['image-data'], 'cover.jpg', { type: 'image/jpeg' });
+      await user.upload(fileInput, file);
+
+      await waitFor(() => {
+        expect(screen.getByLabelText('Confirm cover')).toBeInTheDocument();
+      });
+
+      await user.click(screen.getByLabelText('Confirm cover'));
+
+      await waitFor(() => {
+        expect(toast.error).toHaveBeenCalledWith('Cover upload failed: Server error');
+        expect(screen.queryByAltText('Cover preview')).not.toBeInTheDocument();
       });
     });
   });
