@@ -298,14 +298,20 @@ export function BookDetails({ libraryBook, metadataBook }: {
 const CANCELLABLE_MERGE_PHASES = new Set(['queued', 'starting', 'staging', 'processing', 'verifying']);
 
 function MergeProgressIndicator({ progress, onCancel, isCancelling }: {
-  progress: { phase: string; percentage?: number; position?: number };
+  progress: { phase: string; percentage?: number; position?: number; outcome?: string };
   onCancel?: () => void;
   isCancelling?: boolean;
 }) {
   const isQueued = progress.phase === 'queued';
-  const canCancel = onCancel && CANCELLABLE_MERGE_PHASES.has(progress.phase);
+  const isTerminal = progress.outcome !== undefined;
+  const canCancel = !isTerminal && onCancel && CANCELLABLE_MERGE_PHASES.has(progress.phase);
+  const percentage = progress.percentage !== undefined ? Math.round(progress.percentage * 100) : undefined;
   return (
-    <div className="glass-card rounded-2xl p-4 animate-fade-in-up" role="status" aria-label="Merge progress">
+    <div
+      className={`glass-card rounded-2xl p-4 animate-fade-in-up${isTerminal ? ' animate-fade-out' : ''}`}
+      role="status"
+      aria-label="Merge progress"
+    >
       <div className="flex items-center gap-3">
         <div className="shrink-0 p-2 rounded-xl bg-primary/10">
           <RefreshIcon className={`w-4 h-4 text-primary ${isQueued ? '' : 'animate-spin'}`} />
@@ -314,11 +320,17 @@ function MergeProgressIndicator({ progress, onCancel, isCancelling }: {
           <p className="text-sm font-medium">
             {formatMergePhase(progress.phase, progress.percentage, progress.position)}
           </p>
-          {progress.phase === 'processing' && progress.percentage !== undefined && (
-            <div className="mt-2 h-1.5 rounded-full bg-muted overflow-hidden">
+          {progress.phase === 'processing' && percentage !== undefined && (
+            <div
+              className="mt-2 h-1.5 rounded-full bg-muted overflow-hidden"
+              role="progressbar"
+              aria-valuenow={percentage}
+              aria-valuemin={0}
+              aria-valuemax={100}
+            >
               <div
                 className="h-full rounded-full bg-primary transition-all duration-500"
-                style={{ width: `${Math.round(progress.percentage * 100)}%` }}
+                style={{ width: `${percentage}%` }}
               />
             </div>
           )}
