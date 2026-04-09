@@ -1,6 +1,7 @@
 import { describe, it, expect, type vi, beforeAll, afterAll, beforeEach } from 'vitest';
 import { createTestApp, createMockServices, resetMockServices } from '../__tests__/helpers.js';
 import type { Services } from './index.js';
+import { scanDebugTraceSchema } from '../../shared/schemas.js';
 
 describe('POST /api/library/scan-debug', () => {
   let app: Awaited<ReturnType<typeof createTestApp>>;
@@ -34,6 +35,9 @@ describe('POST /api/library/scan-debug', () => {
 
       expect(res.statusCode).toBe(200);
       const body = JSON.parse(res.payload);
+      // Validate response conforms to the shared debug-trace schema
+      const parsed = scanDebugTraceSchema.safeParse(body);
+      expect(parsed.success).toBe(true);
       expect(body.input).toBe('Author/Title');
       expect(body.parts).toEqual(['Author', 'Title']);
       expect(body.parsing).toBeDefined();

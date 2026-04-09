@@ -35,6 +35,7 @@ async function createApp(authService: AuthService): Promise<FastifyInstance> {
   // Test routes behind auth
   app.get('/api/test', async () => ({ ok: true }));
   app.put('/api/system/update/dismiss', async () => ({ ok: true }));
+  app.post('/api/library/scan-debug', async () => ({ ok: true }));
 
   // Non-API route (should not be intercepted)
   app.get('/healthcheck', async () => ({ ok: true }));
@@ -76,6 +77,7 @@ describe('auth middleware', () => {
         { method: 'GET' as const, url: '/api/system/tasks' },
         { method: 'POST' as const, url: '/api/system/tasks/monitor/run' },
         { method: 'GET' as const, url: '/api/system/info' },
+        { method: 'POST' as const, url: '/api/library/scan-debug' },
       ];
       for (const { method, url } of protectedRoutes) {
         const res = await app.inject({ method, url });

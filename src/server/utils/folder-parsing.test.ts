@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   parseFolderStructure,
+  parseFolderStructureRaw,
   cleanName,
   cleanNameWithTrace,
   extractYear,
@@ -246,6 +247,111 @@ describe('folder-parsing (extracted from library-scan.service)', () => {
     it('rejects years outside 1900-2099 range', () => {
       expect(extractYear('Title 1899')).toBeUndefined();
       expect(extractYear('Title 2100')).toBeUndefined();
+    });
+  });
+
+  describe('parseFolderStructureRaw', () => {
+    it('returns Unknown for empty parts', () => {
+      expect(parseFolderStructureRaw([])).toEqual({ title: 'Unknown', author: null, series: null });
+    });
+
+    it('returns raw "Author - Title" from regex capture groups', () => {
+      const result = parseFolderStructureRaw(['Andy Weir - Project Hail Mary']);
+      // Dash regex: /^(.+?)\s*-\s*(.+)$/ — group 2 captures everything after "- "
+      expect(result.author).toBe('Andy Weir');
+      expect(result.title).toBe('Project Hail Mary');
+    });
+
+    it('returns raw "Title (Author)" without cleaning', () => {
+      const result = parseFolderStructureRaw(['Dune (Frank Herbert)']);
+      expect(result.title).toBe('Dune');
+      expect(result.author).toBe('Frank Herbert');
+    });
+
+    it('returns raw "Title [Author]" without cleaning', () => {
+      const result = parseFolderStructureRaw(['Dune [Frank Herbert]']);
+      expect(result.title).toBe('Dune');
+      expect(result.author).toBe('Frank Herbert');
+    });
+
+    it('returns raw "Title by Author" without cleaning', () => {
+      const result = parseFolderStructureRaw(['Project Hail Mary by Andy Weir']);
+      // parseSingleFolderRaw trims the by-match groups (same as cleaned parser guard logic)
+      expect(result.title).toBe('Project Hail Mary');
+      expect(result.author).toBe('Andy Weir');
+    });
+
+    it('returns raw title with no author when no pattern matches', () => {
+      const result = parseFolderStructureRaw(['JustATitle MP3']);
+      expect(result.title).toBe('JustATitle MP3');
+      expect(result.author).toBeNull();
+    });
+
+    it('skips dash pattern when left is numeric (same as cleaned parser)', () => {
+      const result = parseFolderStructureRaw(['01 - The Way of Kings']);
+      // Numeric left skips dash match, falls through to "just a title"
+      expect(result.title).toBe('01 - The Way of Kings');
+      expect(result.author).toBeNull();
+    });
+
+    it('returns raw Series–NN–Title for single segment', () => {
+      const result = parseFolderStructureRaw(['Stormlight Archive - 1 - The Way of Kings']);
+      expect(result.series).toBe('Stormlight Archive');
+      expect(result.title).toBe('The Way of Kings');
+      expect(result.author).toBeNull();
+    });
+
+    it('returns raw 2-part Author/Title without cleaning', () => {
+      const result = parseFolderStructureRaw(['Author Name', 'Title MP3']);
+      expect(result.author).toBe('Author Name');
+      expect(result.title).toBe('Title MP3');
+      expect(result.series).toBeNull();
+    });
+
+    it('returns raw 2-part with Series–NN–Title in second segment', () => {
+      const result = parseFolderStructureRaw(['Author', 'Series - 1 - Title']);
+      expect(result.author).toBe('Author');
+      expect(result.title).toBe('Title');
+      expect(result.series).toBe('Series');
+    });
+
+    it('returns raw 3-part segments without cleaning', () => {
+      const result = parseFolderStructureRaw(['Author MP3', 'Series (2020)', 'Title [GA]']);
+      expect(result.author).toBe('Author MP3');
+      expect(result.series).toBe('Series (2020)');
+      expect(result.title).toBe('Title [GA]');
+    });
+
+    it('returns raw 4+ part segments using first/second-to-last/last', () => {
+      const result = parseFolderStructureRaw(['Author', 'SubDir', 'Series', 'Title MP3']);
+      expect(result.author).toBe('Author');
+      expect(result.series).toBe('Series');
+      expect(result.title).toBe('Title MP3');
+    });
+
+    it('stays branch-aligned with cleaned parser for all patterns', () => {
+      const cases: string[][] = [
+        [],
+        ['Author - Title'],
+        ['Title (Author)'],
+        ['Title [Author]'],
+        ['Title by Author'],
+        ['Series - 1 - Title'],
+        ['JustATitle'],
+        ['01 - Title'],
+        ['Author', 'Title'],
+        ['Author', 'Series - 1 - Title'],
+        ['Author', 'Series', 'Title'],
+        ['A', 'B', 'C', 'D'],
+      ];
+      for (const parts of cases) {
+        const raw = parseFolderStructureRaw(parts);
+        const cleaned = parseFolderStructure(parts);
+        // Raw and cleaned must agree on which fields are null vs non-null
+        expect(raw.title !== null).toBe(cleaned.title !== null);
+        expect((raw.author !== null)).toBe((cleaned.author !== null));
+        expect((raw.series !== null)).toBe((cleaned.series !== null));
+      }
     });
   });
 
