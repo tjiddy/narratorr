@@ -2,6 +2,7 @@
 @import "tailwindcss";
 
 @variant dark (&:where(.dark, .dark *));
+@custom-variant no-hover (&@media (hover: none));
 
 @theme {
   --font-sans: 'DM Sans', system-ui, sans-serif;

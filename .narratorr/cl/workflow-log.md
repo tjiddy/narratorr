@@ -1,5 +1,34 @@
 # Workflow Log
 
+## #450 Cover upload: touch/mobile affordance for cover action — 2026-04-09
+**Skill path:** /implement → /claim → /plan → /handoff
+**Outcome:** success — PR #457
+
+### Metrics
+- Files changed: 3 | Tests added/modified: 6
+- Quality gate runs: 1 (pass on attempt 1)
+- Fix iterations: 0
+- Context compactions: 0
+
+### Workflow experience
+- What went smoothly: Very small scope — CSS-only change with clear spec. Red/green TDD was clean (2 tests failed as expected, 4 boundary tests already covered by existing suite).
+- Friction / issues encountered: Spec review required 3 rounds due to hybrid device ambiguity and Tailwind `@variant` vs `@custom-variant` naming. The `@variant` alias was verified in Tailwind dist but official docs use `@custom-variant`.
+
+### Token efficiency
+- Highest-token actions: Spec review rounds (3 rounds of elaborate/respond-to-spec-review before implementation)
+- Avoidable waste: The `@variant` vs `@custom-variant` issue could have been caught in the first elaboration if the spec had cross-referenced Tailwind docs
+- Suggestions: For CSS-related specs, verify directive syntax against installed package before elaboration
+
+### Infrastructure gaps
+- Repeated workarounds: None
+- Missing tooling / config: No automated way to test compiled CSS output (jsdom doesn't process Tailwind); class-string assertions are the proxy
+- Unresolved debt: LibraryBookCard has same hover-gated pattern needing `no-hover:` treatment (logged to debt.md)
+
+### Wish I'd Known
+1. Tailwind 4 aliases `@variant` → `@custom-variant` internally, but `@custom-variant` is the documented directive — always use the documented name to avoid spec review round-trips
+2. The existing codebase has 5 components using `group-hover:opacity-100` for hover-gated visibility — a broader touch affordance pass could be done in one sweep
+3. Class-string assertions via `toHaveClass()` with multi-arg form are the established test pattern for CSS class verification (14+ test files use this)
+
 ## #430 MergeCard and search modal design polish — 2026-04-09
 **Skill path:** /implement → /claim → /plan → /handoff
 **Outcome:** success — PR #456
