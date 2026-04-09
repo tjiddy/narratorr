@@ -291,7 +291,7 @@ export class LibraryScanService {
     const book = this.buildDiscoveredBook(bookPath, parsed, fileCount, totalSize, false);
 
     // Look up metadata providers
-    const metadata = await this.lookupMetadata(parsed.title, parsed.author || undefined);
+    const metadata = await this.lookupMetadata(parsed.title, parsed.author || undefined, parsed.asin);
 
     return { book, metadata };
   }
@@ -638,7 +638,21 @@ export class LibraryScanService {
    * Search metadata providers for a book by title + author.
    * Returns the best match or null if no confident match found.
    */
-  async lookupMetadata(title: string, authorName?: string): Promise<BookMetadata | null> {
+  async lookupMetadata(title: string, authorName?: string, asin?: string): Promise<BookMetadata | null> {
+    // Direct ASIN lookup — skip keyword search when we have an ASIN
+    if (asin) {
+      try {
+        const direct = await this.metadataService.getBook(asin);
+        if (direct) {
+          this.log.info({ asin, title: direct.title }, 'Direct ASIN lookup succeeded');
+          return direct;
+        }
+        this.log.debug({ asin }, 'Direct ASIN lookup returned null — falling back to keyword search');
+      } catch (error: unknown) {
+        this.log.warn({ error, asin }, 'Direct ASIN lookup failed — falling back to keyword search');
+      }
+    }
+
     try {
       const results = await searchWithSwapRetry({
         searchFn: (q) => this.metadataService.searchBooks(q),

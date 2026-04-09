@@ -801,6 +801,55 @@ describe('LibraryScanService', () => {
     });
   });
 
+  describe('lookupMetadata direct ASIN lookup (issue #454)', () => {
+    it('calls getBook(asin) directly when asin is provided — skips keyword search', async () => {
+      mockMetadataService.getBook.mockResolvedValue({
+        title: 'Tress of the Emerald Sea',
+        asin: 'B0D18DYG5C',
+        authors: [{ name: 'Brandon Sanderson' }],
+      });
+
+      const result = await service.lookupMetadata('Tress of the Emerald Sea', undefined, 'B0D18DYG5C');
+
+      expect(mockMetadataService.getBook).toHaveBeenCalledWith('B0D18DYG5C');
+      expect(mockMetadataService.searchBooks).not.toHaveBeenCalled();
+      expect(result?.asin).toBe('B0D18DYG5C');
+      expect(result?.title).toBe('Tress of the Emerald Sea');
+    });
+
+    it('falls back to keyword search when getBook(asin) returns null', async () => {
+      mockMetadataService.getBook.mockResolvedValue(null);
+      mockMetadataService.searchBooks.mockResolvedValue([{ title: 'Fallback Result' }]);
+
+      const result = await service.lookupMetadata('Tress', undefined, 'B0INVALID1');
+
+      expect(mockMetadataService.getBook).toHaveBeenCalledWith('B0INVALID1');
+      expect(mockMetadataService.searchBooks).toHaveBeenCalled();
+      expect(result?.title).toBe('Fallback Result');
+    });
+
+    it('falls back to keyword search with warning when getBook(asin) throws', async () => {
+      mockMetadataService.getBook.mockRejectedValue(new Error('Provider down'));
+      mockMetadataService.searchBooks.mockResolvedValue([{ title: 'Fallback Result' }]);
+
+      const result = await service.lookupMetadata('Tress', undefined, 'B0D18DYG5C');
+
+      expect(mockMetadataService.getBook).toHaveBeenCalledWith('B0D18DYG5C');
+      expect(mockMetadataService.searchBooks).toHaveBeenCalled();
+      expect(result?.title).toBe('Fallback Result');
+    });
+
+    it('uses keyword search when asin is not provided — existing flow unchanged', async () => {
+      mockMetadataService.searchBooks.mockResolvedValue([{ title: 'Search Result' }]);
+
+      const result = await service.lookupMetadata('Title', 'Author');
+
+      expect(mockMetadataService.getBook).not.toHaveBeenCalled();
+      expect(mockMetadataService.searchBooks).toHaveBeenCalled();
+      expect(result?.title).toBe('Search Result');
+    });
+  });
+
   describe('lookupMetadata swap retry (issue #426)', () => {
     it('returns match when first search succeeds — no swap', async () => {
       mockMetadataService.searchBooks.mockResolvedValue([{ title: 'Found' }]);
