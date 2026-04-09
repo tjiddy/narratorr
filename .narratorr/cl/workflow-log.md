@@ -1,5 +1,34 @@
 # Workflow Log
 
+## #446 Scan debug endpoint — trace folder parsing and metadata matching pipeline — 2026-04-09
+**Skill path:** /implement → /claim → /plan → /handoff
+**Outcome:** success — PR #448
+
+### Metrics
+- Files changed: 10 | Tests added/modified: 80 (46 folder-parsing + 7 search-helpers + 27 route)
+- Quality gate runs: 3 (pass on attempt 3 — lint fixes needed)
+- Fix iterations: 1 (lint: route function too long + complexity + unused imports)
+- Context compactions: 0
+
+### Workflow experience
+- What went smoothly: Extraction of pure functions was clean — no `this` dependencies, all callers identified upfront, re-exports maintained backward compatibility
+- Friction / issues encountered: ESLint `max-lines-per-function` (150) and `complexity` (15) hit on the route factory function after adding the new endpoint. Had to extract helpers outside the factory. Also, re-exporting with `export { } from` while also importing the same symbols causes unused-import lint error.
+
+### Token efficiency
+- Highest-token actions: Spec review response rounds (2 rounds of back-and-forth before approval)
+- Avoidable waste: The elaborate/spec-review cycle consumed significant context before implementation started
+- Suggestions: For extraction issues, the spec should pre-verify parser contract (parts: string[] vs raw string) before review — this was the main blocker
+
+### Infrastructure gaps
+- Repeated workarounds: None
+- Missing tooling / config: Route test helper `createTestApp()` doesn't register auth plugin — auth must be tested separately via `auth.plugin.test.ts` pattern
+- Unresolved debt: DiscoveredBook type still in 3 places (pre-existing, #342)
+
+### Wish I'd Known
+1. `export { foo } from './module.js'` is a standalone re-export — adding `import { foo }` in the same file causes unused-import lint errors. Use only the re-export form. (See `re-export-unused-import-lint.md`)
+2. Fastify route factory functions easily exceed ESLint's function line/complexity limits when endpoints have non-trivial logic. Always extract handler bodies into standalone helpers from the start. (See `route-function-line-limit.md`)
+3. Creating a trace-mode variant as a separate function (`cleanNameWithTrace`) rather than a boolean flag on the original avoids return type changes that cascade to all callers. (See `trace-mode-parity-pattern.md`)
+
 ## #439 Search priority setting — Audio Quality vs Narrator Accuracy — 2026-04-09
 **Skill path:** /implement → /claim → /plan → /handoff
 **Outcome:** success — PR #443

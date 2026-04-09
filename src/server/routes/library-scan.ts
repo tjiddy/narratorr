@@ -1,9 +1,13 @@
-import type { FastifyInstance } from 'fastify';
+import type { FastifyInstance, FastifyBaseLogger } from 'fastify';
 import type { LibraryScanService } from '../services/library-scan.service.js';
 import type { ImportConfirmItem } from '../services/library-scan.service.js';
 import { ScanInProgressError, LibraryPathError } from '../services/library-scan.service.js';
 import type { MatchJobService } from '../services/match-job.service.js';
+import type { BookService } from '../services/book.service.js';
+import type { MetadataService } from '../services/metadata.service.js';
 import { getErrorMessage } from '../utils/error-message.js';
+import { parseFolderStructure, parseFolderStructureRaw, cleanNameWithTrace } from '../utils/folder-parsing.js';
+import { searchWithSwapRetryTrace } from '../utils/search-helpers.js';
 import { type z } from 'zod';
 import {
   scanSingleBodySchema,
@@ -13,6 +17,9 @@ import {
   importConfirmBodySchema,
   matchStartBodySchema,
   jobIdParamSchema,
+  scanDebugBodySchema,
+  type ScanDebugBody,
+  type ScanDebugTrace,
 } from '../../shared/schemas.js';
 
 type ScanSingleBody = z.infer<typeof scanSingleBodySchema>;
@@ -22,10 +29,27 @@ type ImportConfirmBody = z.infer<typeof importConfirmBodySchema>;
 type MatchStartBody = z.infer<typeof matchStartBodySchema>;
 type JobIdParam = z.infer<typeof jobIdParamSchema>;
 
+/** Map a BookMetadata author ref to a plain string name. */
+function toAuthorName(a: string | { name: string }): string {
+  return typeof a === 'string' ? a : a.name;
+}
+
+/** Map a BookMetadata result to the scan-debug response shape. */
+function toSearchResultItem(r: { title: string; authors?: (string | { name: string })[]; asin?: string; providerId?: string }) {
+  return {
+    title: r.title,
+    authors: r.authors?.map(toAuthorName) ?? [],
+    asin: r.asin ?? null,
+    providerId: r.providerId ?? null,
+  };
+}
+
 export async function libraryScanRoutes(
   app: FastifyInstance,
   libraryScan: LibraryScanService,
   matchJobService: MatchJobService,
+  bookService: BookService,
+  metadataService: MetadataService,
 ): Promise<void> {
   // Scan a single book folder — returns parsed metadata + provider match
   app.post<{ Body: ScanSingleBody }>(
@@ -168,4 +192,102 @@ export async function libraryScanRoutes(
       return { cancelled };
     },
   );
+
+  // Scan debug — trace folder parsing and metadata matching pipeline
+  app.post<{ Body: ScanDebugBody }>(
+    '/api/library/scan-debug',
+    { schema: { body: scanDebugBodySchema } },
+    (request, reply) => handleScanDebug(request, reply, metadataService, bookService),
+  );
+}
+
+// ─── Scan Debug Helpers ─────────────────────────────────────────────
+
+async function handleScanDebug(
+  request: { body: ScanDebugBody; log: FastifyBaseLogger },
+  reply: { status: (code: number) => { send: (body: unknown) => unknown } },
+  metadataService: MetadataService,
+  bookService: BookService,
+) {
+  const { folderName } = request.body;
+  request.log.info({ folderName }, 'Scan debug trace requested');
+
+  const { parts, parsed, pattern, cleaning, cleanedTitle, cleanedAuthor } = buildParsingTrace(folderName);
+  const partialTrace = { input: folderName, parts, parsing: { pattern, raw: parsed }, cleaning, search: null, match: null, duplicate: null };
+
+  // Search step — 502 on metadata provider failure
+  let searchResult;
+  try {
+    searchResult = await runSearchTrace(cleanedTitle, cleanedAuthor, metadataService, request.log);
+  } catch (error: unknown) {
+    request.log.error(error, 'Scan debug metadata search failed');
+    return reply.status(502).send({
+      statusCode: 502, error: 'Bad Gateway',
+      message: `Metadata search provider failed: ${getErrorMessage(error, 'unknown error')}`,
+      partialTrace,
+    });
+  }
+
+  // Duplicate check — 500 on database failure (not a provider issue)
+  let duplicate: ScanDebugTrace['duplicate'];
+  try {
+    const authorList = cleanedAuthor ? [{ name: cleanedAuthor }] : undefined;
+    const existing = await bookService.findDuplicate(cleanedTitle, authorList);
+    duplicate = { isDuplicate: existing !== null, existingBookId: existing?.id ?? null, reason: existing ? 'library-match' : null };
+  } catch (error: unknown) {
+    request.log.error(error, 'Scan debug duplicate check failed');
+    return reply.status(500).send({
+      statusCode: 500, error: 'Internal Server Error',
+      message: `Duplicate check failed: ${getErrorMessage(error, 'unknown error')}`,
+      partialTrace: { ...partialTrace, search: searchResult.search, match: searchResult.match },
+    });
+  }
+
+  return { input: folderName, parts, parsing: { pattern, raw: parsed }, cleaning, ...searchResult, duplicate };
+}
+
+function buildParsingTrace(folderName: string) {
+  const parts = folderName.split(/[/\\]/).filter(Boolean);
+  const parsed = parseFolderStructure(parts);
+  const raw = parseFolderStructureRaw(parts);
+  const pattern = parts.length <= 1 ? '1-part' : parts.length === 2 ? '2-part' : '3+-part';
+
+  // Trace cleaning from raw (pre-cleanName) values so each step shows real transformations
+  const cleaning: Record<string, ReturnType<typeof cleanNameWithTrace>> = {};
+  for (const [key, value] of Object.entries(raw) as [string, string | null][]) {
+    if (value) cleaning[key] = cleanNameWithTrace(value);
+  }
+
+  const cleanedTitle = cleaning.title?.result ?? parsed.title;
+  const cleanedAuthor = cleaning.author?.result ?? parsed.author ?? undefined;
+
+  return { parts, parsed, pattern, cleaning, cleanedTitle, cleanedAuthor };
+}
+
+async function runSearchTrace(
+  cleanedTitle: string,
+  cleanedAuthor: string | undefined,
+  metadataService: MetadataService,
+  log: FastifyBaseLogger,
+) {
+  const searchResult = await searchWithSwapRetryTrace({
+    searchFn: (query, options) => metadataService.searchBooks(query, options),
+    title: cleanedTitle,
+    author: cleanedAuthor,
+    log,
+  });
+
+  const search: ScanDebugTrace['search'] = {
+    initialQuery: searchResult.initialQuery,
+    initialResultCount: searchResult.initialResultCount,
+    swapRetry: searchResult.swapRetry,
+    swapQuery: searchResult.swapQuery,
+    results: searchResult.results.map(toSearchResultItem),
+  };
+
+  const match: ScanDebugTrace['match'] = searchResult.results.length > 0
+    ? { status: 'matched', selected: toSearchResultItem(searchResult.results[0]) }
+    : { status: 'no match', selected: null };
+
+  return { search, match };
 }

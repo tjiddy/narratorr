@@ -42,3 +42,58 @@ export async function searchWithSwapRetry(args: {
 
   return searchFn(swappedQuery, swappedOptions);
 }
+
+// ─── Trace Types ────────────────────────────────────────────────────
+
+export interface SearchTraceResult {
+  initialQuery: string;
+  initialResultCount: number;
+  swapRetry: boolean;
+  swapQuery: string | null;
+  results: BookMetadata[];
+}
+
+/**
+ * Trace-mode variant of searchWithSwapRetry.
+ * Returns the same results but also captures query strings and whether swap was triggered.
+ * Does NOT modify the existing searchWithSwapRetry contract.
+ */
+export async function searchWithSwapRetryTrace(args: {
+  searchFn: SearchFn;
+  title: string;
+  author: string | undefined;
+  log: FastifyBaseLogger;
+  options?: SearchOptions;
+}): Promise<SearchTraceResult> {
+  const { searchFn, title, author, log, options } = args;
+
+  const initialQuery = author ? `${title} ${author}` : title;
+  const initialResults = await searchFn(initialQuery, options);
+
+  if (initialResults.length > 0 || !author) {
+    return {
+      initialQuery,
+      initialResultCount: initialResults.length,
+      swapRetry: false,
+      swapQuery: null,
+      results: initialResults,
+    };
+  }
+
+  // Swap retry: try with author as title and title as author
+  log.debug({ title, author }, 'Zero results — retrying with swapped author/title');
+  const swapQuery = `${author} ${title}`;
+  const swappedOptions = options
+    ? { ...options, title: author, author: title }
+    : undefined;
+
+  const swappedResults = await searchFn(swapQuery, swappedOptions);
+
+  return {
+    initialQuery,
+    initialResultCount: 0,
+    swapRetry: true,
+    swapQuery,
+    results: swappedResults,
+  };
+}
