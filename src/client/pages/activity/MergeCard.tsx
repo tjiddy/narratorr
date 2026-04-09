@@ -24,7 +24,7 @@ export function MergeCard({ state, onCancel, isCancelling }: {
   const canCancel = !state.outcome && CANCELLABLE_PHASES.has(state.phase) && onCancel;
 
   return (
-    <div className="glass-card rounded-2xl p-4 sm:p-5 animate-fade-in-up border border-primary/20 hover:border-primary/30 hover:shadow-md transition-all duration-300">
+    <div className="glass-card rounded-2xl p-4 sm:p-5 animate-fade-in-up hover:border-primary/20 transition-all duration-300">
       {/* Header */}
       <div className="flex items-center gap-3 mb-3">
         <div className="p-1.5 bg-primary/10 rounded-lg">
