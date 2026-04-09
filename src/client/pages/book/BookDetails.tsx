@@ -4,7 +4,7 @@ import { SearchReleasesModal } from '@/components/SearchReleasesModal';
 import { BookMetadataModal } from '@/components/book/BookMetadataModal.js';
 import { ConfirmModal } from '@/components/ConfirmModal.js';
 import { DeleteBookModal } from '@/components/DeleteBookModal.js';
-import { HistoryIcon, BookOpenIcon, RefreshIcon } from '@/components/icons';
+import { HistoryIcon, BookOpenIcon, RefreshIcon, CheckCircleIcon, AlertCircleIcon, XCircleIcon, LoadingSpinner } from '@/components/icons';
 import type { BookWithAuthor } from '@/lib/api';
 import { BookHero } from './BookHero.js';
 import { BookDetailsContent } from './BookDetailsContent.js';
@@ -314,7 +314,11 @@ function MergeProgressIndicator({ progress, onCancel, isCancelling }: {
     >
       <div className="flex items-center gap-3">
         <div className="shrink-0 p-2 rounded-xl bg-primary/10">
-          <RefreshIcon className={`w-4 h-4 text-primary ${isQueued ? '' : 'animate-spin'}`} />
+          {progress.outcome === 'success' ? <CheckCircleIcon className="w-4 h-4 text-success" />
+            : progress.outcome === 'error' ? <AlertCircleIcon className="w-4 h-4 text-destructive" />
+            : progress.outcome === 'cancelled' ? <XCircleIcon className="w-4 h-4 text-muted-foreground" />
+            : isQueued ? <LoadingSpinner className="w-4 h-4 text-primary" />
+            : <RefreshIcon className="w-4 h-4 text-primary animate-spin" />}
         </div>
         <div className="flex-1 min-w-0">
           <p className="text-sm font-medium">
