@@ -1,5 +1,34 @@
 # Workflow Log
 
+## #455 Book event history timeline polish — 2026-04-09
+**Skill path:** /implement → /claim → /plan → /handoff
+**Outcome:** success — PR #458
+
+### Metrics
+- Files changed: 5 | Tests added/modified: 3 (50 new assertions)
+- Quality gate runs: 2 (pass on attempt 2 — first failed on lint + typecheck)
+- Fix iterations: 1 (react-refresh lint rule + TS spread type error)
+- Context compactions: 0
+
+### Workflow experience
+- What went smoothly: Spec was well-refined after 3 rounds of review — payload shapes verified, indexer lookup contract defined, blast radius documented. TDD cycle was clean.
+- Friction / issues encountered: react-refresh/only-export-components lint rule forced splitting helpers from component into separate .ts file. vi.mock importOriginal generic caused TS2698 spread error.
+
+### Token efficiency
+- Highest-token actions: Explore subagent for plan (read 15+ files), spec review response rounds (3 total across elaborate + respond-to-spec-review)
+- Avoidable waste: First quality gate run could have been avoided by checking lint rules for .tsx exports before committing
+- Suggestions: Check react-refresh lint rule when creating .tsx files that export non-components
+
+### Infrastructure gaps
+- Repeated workarounds: None
+- Missing tooling / config: None
+- Unresolved debt: None new (existing pagination clamp debt covers EventHistorySection)
+
+### Wish I'd Known
+1. `.tsx` files exporting non-component functions trigger `react-refresh/only-export-components` — split helpers into `.ts` files from the start (see `react-refresh-mixed-exports.md`)
+2. `formatBytes()` uses binary units (1024), so 500MB ≠ `formatBytes(500000000)` — always read the formatter source before writing byte assertions (see `formatbytes-binary-units.md`)
+3. `vi.mock()` with `importOriginal` generic type parameter causes TS2698 on spread — use untyped `await importOriginal()` with explicit casts instead (see `vi-mock-importoriginal-spread.md`)
+
 ## #450 Cover upload: touch/mobile affordance for cover action — 2026-04-09
 **Skill path:** /implement → /claim → /plan → /handoff
 **Outcome:** success — PR #457
