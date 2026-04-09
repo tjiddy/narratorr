@@ -112,8 +112,7 @@ export class QualityGateOrchestrator {
 
   /** Process a single completed download through the quality gate, with inline import on approval. */
   async processOneDownload(downloadId: number): Promise<void> {
-    const [ffprobePath2, rows] = await Promise.all([this.resolveFfprobePath(), this.qualityGateService.getCompletedDownloads()]);
-    const row = rows.find((r) => r.download.id === downloadId);
+    const [ffprobePath2, row] = await Promise.all([this.resolveFfprobePath(), this.qualityGateService.getCompletedDownloadById(downloadId)]);
     if (!row) { this.log.warn({ downloadId }, 'Quality gate: processOneDownload — download not found or not completed'); return; }
     if (!row.download.externalId || !row.download.bookId) { this.log.debug({ id: row.download.id }, 'Quality gate: skipping download without externalId or bookId'); return; }
     const claimed = await this.qualityGateService.atomicClaim(row.download.id);

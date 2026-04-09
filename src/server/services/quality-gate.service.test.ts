@@ -86,6 +86,57 @@ describe('QualityGateService', () => {
     });
   });
 
+  describe('getCompletedDownloadById', () => {
+    it('returns { download, book } for a completed download with matching ID and associated book+narrators', async () => {
+      const { service, db } = createService();
+      const row = { download: baseDownload, book: { ...baseBook } };
+      db.select
+        .mockReturnValueOnce(mockDbChain([row]))
+        .mockReturnValueOnce(mockDbChain([{ bookId: 1, name: 'John Smith' }]));
+
+      const result = await service.getCompletedDownloadById(1);
+
+      expect(result).not.toBeNull();
+      expect(result!.download).toEqual(baseDownload);
+      expect(result!.book).toEqual({ ...baseBook, narrators: [{ name: 'John Smith' }] });
+      const chain = db.select.mock.results[0].value;
+      expect(chain.where).toHaveBeenCalledWith(
+        and(eq(downloads.id, 1), eq(downloads.status, 'completed')),
+      );
+    });
+
+    it('returns { download, book: null } when the download has no associated book', async () => {
+      const { service, db } = createService();
+      const row = { download: { ...baseDownload, bookId: null }, book: null };
+      db.select.mockReturnValue(mockDbChain([row]));
+
+      const result = await service.getCompletedDownloadById(1);
+
+      expect(result).not.toBeNull();
+      expect(result!.download.bookId).toBeNull();
+      expect(result!.book).toBeNull();
+    });
+
+    it('returns null when no download exists with the given ID', async () => {
+      const { service, db } = createService();
+      db.select.mockReturnValue(mockDbChain([]));
+
+      const result = await service.getCompletedDownloadById(999);
+
+      expect(result).toBeNull();
+    });
+
+    it('returns null when download exists but status is not completed', async () => {
+      const { service, db } = createService();
+      // Query filters by status=completed, so a non-completed download returns empty result set
+      db.select.mockReturnValue(mockDbChain([]));
+
+      const result = await service.getCompletedDownloadById(1);
+
+      expect(result).toBeNull();
+    });
+  });
+
   describe('processDownload — quality comparison', () => {
     it('auto-imports when download MB/hr is strictly greater than existing', async () => {
       const { service, db } = createService();

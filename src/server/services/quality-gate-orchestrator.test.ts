@@ -64,6 +64,7 @@ function createOrchestrator(opts?: {
 
   const qualityGateService = {
     getCompletedDownloads: vi.fn().mockResolvedValue([]),
+    getCompletedDownloadById: vi.fn().mockResolvedValue(null),
     atomicClaim: vi.fn().mockResolvedValue(true),
     setStatus: vi.fn().mockResolvedValue(undefined),
     processDownload: vi.fn().mockResolvedValue({ action: 'imported', reason: { action: 'imported', holdReasons: [] }, statusTransition: { from: 'checking', to: 'completed' } }),
@@ -1657,10 +1658,11 @@ describe('QualityGateOrchestrator', () => {
 
     it('approves and imports when slot is available', async () => {
       const { orchestrator, qualityGateService, importOrchestrator, importService } = createOrchestrator();
-      qualityGateService.getCompletedDownloads.mockResolvedValue([{ download: completedDownload, book: { ...downloadingBook } }]);
+      qualityGateService.getCompletedDownloadById.mockResolvedValue({ download: completedDownload, book: { ...downloadingBook } });
 
       await orchestrator.processOneDownload(1);
 
+      expect(qualityGateService.getCompletedDownloadById).toHaveBeenCalledWith(1);
       expect(qualityGateService.atomicClaim).toHaveBeenCalledWith(1);
       expect(importService.tryAcquireSlot).toHaveBeenCalled();
       expect(importOrchestrator.importDownload).toHaveBeenCalledWith(1);
@@ -1668,7 +1670,7 @@ describe('QualityGateOrchestrator', () => {
 
     it('queues to processing_queued when no slot available', async () => {
       const { orchestrator, qualityGateService, importOrchestrator, importService } = createOrchestrator();
-      qualityGateService.getCompletedDownloads.mockResolvedValue([{ download: completedDownload, book: { ...downloadingBook } }]);
+      qualityGateService.getCompletedDownloadById.mockResolvedValue({ download: completedDownload, book: { ...downloadingBook } });
       (importService.tryAcquireSlot as ReturnType<typeof vi.fn>).mockReturnValue(false);
 
       await orchestrator.processOneDownload(1);
@@ -1679,7 +1681,7 @@ describe('QualityGateOrchestrator', () => {
 
     it('holds for review and reverts book status to downloading', async () => {
       const { orchestrator, qualityGateService, db, broadcaster } = createOrchestrator();
-      qualityGateService.getCompletedDownloads.mockResolvedValue([{ download: completedDownload, book: { ...downloadingBook } }]);
+      qualityGateService.getCompletedDownloadById.mockResolvedValue({ download: completedDownload, book: { ...downloadingBook } });
       qualityGateService.processDownload.mockResolvedValue({
         action: 'held', reason: { action: 'held', holdReasons: ['low_bitrate'] }, statusTransition: { from: 'checking', to: 'pending_review' },
       });
@@ -1695,7 +1697,7 @@ describe('QualityGateOrchestrator', () => {
 
     it('rejects and reverts book status to downloading', async () => {
       const { orchestrator, qualityGateService, broadcaster } = createOrchestrator();
-      qualityGateService.getCompletedDownloads.mockResolvedValue([{ download: completedDownload, book: { ...downloadingBook } }]);
+      qualityGateService.getCompletedDownloadById.mockResolvedValue({ download: completedDownload, book: { ...downloadingBook } });
       qualityGateService.processDownload.mockResolvedValue({
         action: 'rejected', reason: { action: 'rejected', holdReasons: [] }, statusTransition: { from: 'checking', to: 'failed' },
       });
@@ -1709,7 +1711,7 @@ describe('QualityGateOrchestrator', () => {
 
     it('returns early when atomic claim fails (double-process guard)', async () => {
       const { orchestrator, qualityGateService, importOrchestrator } = createOrchestrator();
-      qualityGateService.getCompletedDownloads.mockResolvedValue([{ download: completedDownload, book: { ...downloadingBook } }]);
+      qualityGateService.getCompletedDownloadById.mockResolvedValue({ download: completedDownload, book: { ...downloadingBook } });
       qualityGateService.atomicClaim.mockResolvedValue(false);
 
       await orchestrator.processOneDownload(1);
@@ -1722,7 +1724,7 @@ describe('QualityGateOrchestrator', () => {
       const { orchestrator, qualityGateService, db } = createOrchestrator();
       const chain = mockDbChain();
       db.update.mockReturnValue(chain);
-      qualityGateService.getCompletedDownloads.mockResolvedValue([{ download: completedDownload, book: { ...downloadingBook } }]);
+      qualityGateService.getCompletedDownloadById.mockResolvedValue({ download: completedDownload, book: { ...downloadingBook } });
 
       await orchestrator.processOneDownload(1);
 
@@ -1733,7 +1735,7 @@ describe('QualityGateOrchestrator', () => {
 
     it('emits book_status_change SSE after promoting book', async () => {
       const { orchestrator, qualityGateService, broadcaster } = createOrchestrator();
-      qualityGateService.getCompletedDownloads.mockResolvedValue([{ download: completedDownload, book: { ...downloadingBook } }]);
+      qualityGateService.getCompletedDownloadById.mockResolvedValue({ download: completedDownload, book: { ...downloadingBook } });
 
       await orchestrator.processOneDownload(1);
 
@@ -1745,7 +1747,7 @@ describe('QualityGateOrchestrator', () => {
     it('updates in-memory book status so revert guards fire correctly', async () => {
       const { orchestrator, qualityGateService, broadcaster } = createOrchestrator();
       const bookCopy = { ...downloadingBook };
-      qualityGateService.getCompletedDownloads.mockResolvedValue([{ download: completedDownload, book: bookCopy }]);
+      qualityGateService.getCompletedDownloadById.mockResolvedValue({ download: completedDownload, book: bookCopy });
       qualityGateService.processDownload.mockResolvedValue({
         action: 'held', reason: { action: 'held', holdReasons: ['low_bitrate'] }, statusTransition: { from: 'checking', to: 'pending_review' },
       });
@@ -1761,17 +1763,18 @@ describe('QualityGateOrchestrator', () => {
 
     it('returns early for non-existent download', async () => {
       const { orchestrator, qualityGateService, log } = createOrchestrator();
-      qualityGateService.getCompletedDownloads.mockResolvedValue([]);
+      // Default mock returns null — no need to set
 
       await orchestrator.processOneDownload(999);
 
+      expect(qualityGateService.getCompletedDownloadById).toHaveBeenCalledWith(999);
       expect(log.warn).toHaveBeenCalledWith({ downloadId: 999 }, expect.stringContaining('not found'));
       expect(qualityGateService.atomicClaim).not.toHaveBeenCalled();
     });
 
     it('holds for probe failure and reverts book to downloading', async () => {
       const { orchestrator, qualityGateService, broadcaster } = createOrchestrator();
-      qualityGateService.getCompletedDownloads.mockResolvedValue([{ download: completedDownload, book: { ...downloadingBook } }]);
+      qualityGateService.getCompletedDownloadById.mockResolvedValue({ download: completedDownload, book: { ...downloadingBook } });
       (scanAudioDirectory as ReturnType<typeof vi.fn>).mockRejectedValue(new Error('Scan failed'));
 
       await orchestrator.processOneDownload(1);
@@ -1784,7 +1787,7 @@ describe('QualityGateOrchestrator', () => {
 
     it('skips early when download has no bookId', async () => {
       const { orchestrator, qualityGateService } = createOrchestrator();
-      qualityGateService.getCompletedDownloads.mockResolvedValue([{ download: { ...completedDownload, bookId: null }, book: null }]);
+      qualityGateService.getCompletedDownloadById.mockResolvedValue({ download: { ...completedDownload, bookId: null }, book: null });
 
       await orchestrator.processOneDownload(1);
 
@@ -1793,7 +1796,7 @@ describe('QualityGateOrchestrator', () => {
 
     it('skips early when download has no externalId', async () => {
       const { orchestrator, qualityGateService } = createOrchestrator();
-      qualityGateService.getCompletedDownloads.mockResolvedValue([{ download: { ...completedDownload, externalId: null }, book: { ...downloadingBook } }]);
+      qualityGateService.getCompletedDownloadById.mockResolvedValue({ download: { ...completedDownload, externalId: null }, book: { ...downloadingBook } });
 
       await orchestrator.processOneDownload(1);
 
@@ -1802,7 +1805,7 @@ describe('QualityGateOrchestrator', () => {
 
     it('reverts book to downloading on unhandled error after promotion', async () => {
       const { orchestrator, qualityGateService, broadcaster, db } = createOrchestrator();
-      qualityGateService.getCompletedDownloads.mockResolvedValue([{ download: completedDownload, book: { ...downloadingBook } }]);
+      qualityGateService.getCompletedDownloadById.mockResolvedValue({ download: completedDownload, book: { ...downloadingBook } });
       qualityGateService.processDownload.mockRejectedValue(new Error('Unexpected QG failure'));
       db.update.mockReturnValue(mockDbChain());
 
@@ -1818,7 +1821,7 @@ describe('QualityGateOrchestrator', () => {
 
     it('releases slot in finally even when import fails and logs error', async () => {
       const { orchestrator, qualityGateService, importOrchestrator, importService, log } = createOrchestrator();
-      qualityGateService.getCompletedDownloads.mockResolvedValue([{ download: completedDownload, book: { ...downloadingBook } }]);
+      qualityGateService.getCompletedDownloadById.mockResolvedValue({ download: completedDownload, book: { ...downloadingBook } });
       (importOrchestrator.importDownload as ReturnType<typeof vi.fn>).mockRejectedValue(new Error('Import failed'));
 
       await orchestrator.processOneDownload(1);
@@ -1838,7 +1841,7 @@ describe('QualityGateOrchestrator', () => {
         get: vi.fn().mockResolvedValue({ ffmpegPath: '/usr/bin/ffmpeg' }),
       });
       const { orchestrator, qualityGateService } = createOrchestrator({ settingsService });
-      qualityGateService.getCompletedDownloads.mockResolvedValue([{ download: completedDownload, book: { ...downloadingBook } }]);
+      qualityGateService.getCompletedDownloadById.mockResolvedValue({ download: completedDownload, book: { ...downloadingBook } });
 
       await orchestrator.processOneDownload(1);
 
