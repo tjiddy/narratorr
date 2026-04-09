@@ -9,7 +9,7 @@ import type { SettingsService } from './settings.service.js';
 import { Semaphore } from '../utils/semaphore.js';
 import { scoreResult, diceCoefficient } from '../../core/utils/similarity.js';
 import { extractYear } from '../utils/folder-parsing.js';
-import { searchWithSwapRetry } from '../utils/search-helpers.js';
+import { searchWithSwapRetryTrace } from '../utils/search-helpers.js';
 
 // ============ Types ============
 
@@ -182,7 +182,7 @@ class MatchJob {
 
       // Send structured search params when title/author available, with swap retry
       this.log.debug({ path: book.path, title: book.title, author: book.author, duration }, 'Searching metadata for book');
-      const searchResults = await searchWithSwapRetry({
+      const trace = await searchWithSwapRetryTrace({
         searchFn: (q, opts) => this.metadataService.searchBooks(q, opts),
         title: book.title,
         author: book.author,
@@ -190,23 +190,28 @@ class MatchJob {
         options: { title: book.title, author: book.author },
       });
 
-      if (searchResults.length === 0) {
+      if (trace.results.length === 0) {
         this.log.debug({ path: book.path }, 'No search results returned');
         return { path: book.path, confidence: 'none', bestMatch: null, alternatives: [] };
       }
 
-      this.log.debug({ path: book.path, resultCount: searchResults.length }, 'Search returned results');
+      this.log.debug({ path: book.path, resultCount: trace.results.length, swapRetry: trace.swapRetry }, 'Search returned results');
+
+      // When swap retry fired and author is present, use swapped context for ranking and similarity
+      const context: MatchCandidate = trace.swapRetry && book.author
+        ? { ...book, title: book.author, author: book.title }
+        : book;
 
       // Fetch full detail for all results to get ASIN/duration
-      const detailed = await this.fetchDetails(searchResults);
+      const detailed = await this.fetchDetails(trace.results);
 
       // Score, re-rank, and apply year tiebreaker
-      const scored = rankResults(detailed, book);
+      const scored = rankResults(detailed, context);
       const topScored = scored[0];
 
       // Title similarity floor: below 50% → confidence 'none'
-      const titleSimilarity = book.title && topScored.meta.title
-        ? diceCoefficient(topScored.meta.title, book.title)
+      const titleSimilarity = context.title && topScored.meta.title
+        ? diceCoefficient(topScored.meta.title, context.title)
         : 0;
       if (titleSimilarity < TITLE_SIMILARITY_FLOOR) {
         this.log.debug(
