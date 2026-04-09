@@ -1,5 +1,34 @@
 # Workflow Log
 
+## #447 Title similarity floor rejects valid matches after swap retry — 2026-04-09
+**Skill path:** /implement → /claim → /plan → /handoff
+**Outcome:** success — PR #449
+
+### Metrics
+- Files changed: 2 | Tests added/modified: 10
+- Quality gate runs: 2 (pass on attempt 1 both times)
+- Fix iterations: 0 (clean implementation)
+- Context compactions: 0
+
+### Workflow experience
+- What went smoothly: The spec had already been through elaborate + spec-review + respond-to-spec-review, so all design decisions (trace-based swap detection, swapped context for both ranking and similarity) were resolved before implementation started. Production code was ~10 lines.
+- Friction / issues encountered: None — the spec was precise and the existing `searchWithSwapRetryTrace()` helper made the fix trivial.
+
+### Token efficiency
+- Highest-token actions: Explore subagent during /plan (reading match-job.service.ts and test file)
+- Avoidable waste: The /plan explore duplicated some codebase reads from the earlier /elaborate phase
+- Suggestions: For issues that went through /elaborate + /respond-to-spec-review in the same session, /plan exploration could be lighter
+
+### Infrastructure gaps
+- Repeated workarounds: None
+- Missing tooling / config: None
+- Unresolved debt: None introduced
+
+### Wish I'd Known
+1. `searchWithSwapRetryTrace()` already existed and was used in the scan-debug endpoint — the fix was a one-line import change plus a context swap conditional (see `swap-retry-trace-context-pattern.md`)
+2. When swap retry fires, ALL downstream consumers of the search context need the swapped version — not just the similarity floor (see `swap-retry-affects-all-downstream-consumers.md`)
+3. The existing swap retry tests (lines 1701-1785) verified swap mechanics but never checked result confidence, which is why the bug wasn't caught by existing tests
+
 ## #446 Scan debug endpoint — trace folder parsing and metadata matching pipeline — 2026-04-09
 **Skill path:** /implement → /claim → /plan → /handoff
 **Outcome:** success — PR #448
