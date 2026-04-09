@@ -1189,6 +1189,80 @@ describe('BookService — transaction atomicity (#214)', () => {
     });
   });
 
+  // ── #437 Author ASIN backfill ────────────────────────────────────────────
+  describe('findOrCreateAuthor ASIN backfill (#437)', () => {
+    it('backfills null ASIN on existing author when caller provides one', async () => {
+      const tx = createMockDb();
+      const existingAuthor = createMockDbAuthor({ id: 5, asin: null });
+      tx.select.mockReturnValueOnce(mockDbChain([existingAuthor])); // found existing
+      tx.update.mockReturnValueOnce(mockDbChain([]));               // ASIN update
+      tx.delete.mockReturnValueOnce(mockDbChain([]));               // junction delete
+      tx.insert.mockReturnValueOnce(mockDbChain([]));               // junction insert
+
+      await service.syncAuthors(inject<DbOrTx>(tx), 10, [{ name: 'Brandon Sanderson', asin: 'B001IGFHW6' }]);
+
+      expect(tx.update).toHaveBeenCalledTimes(1);
+      const updateChain = tx.update.mock.results[0].value;
+      expect(updateChain.set).toHaveBeenCalledWith({ asin: 'B001IGFHW6' });
+      expect(updateChain.where).toHaveBeenCalled();
+    });
+
+    it('does not overwrite existing non-null ASIN (first-write-wins)', async () => {
+      const tx = createMockDb();
+      const existingAuthor = createMockDbAuthor({ id: 5, asin: 'B_OLD' });
+      tx.select.mockReturnValueOnce(mockDbChain([existingAuthor])); // found existing with ASIN
+      tx.delete.mockReturnValueOnce(mockDbChain([]));               // junction delete
+      tx.insert.mockReturnValueOnce(mockDbChain([]));               // junction insert
+
+      await service.syncAuthors(inject<DbOrTx>(tx), 10, [{ name: 'Brandon Sanderson', asin: 'B_NEW' }]);
+
+      expect(tx.update).not.toHaveBeenCalled();
+    });
+
+    it('does not update when caller provides no ASIN (undefined)', async () => {
+      const tx = createMockDb();
+      const existingAuthor = createMockDbAuthor({ id: 5, asin: null });
+      tx.select.mockReturnValueOnce(mockDbChain([existingAuthor])); // found existing
+      tx.delete.mockReturnValueOnce(mockDbChain([]));               // junction delete
+      tx.insert.mockReturnValueOnce(mockDbChain([]));               // junction insert
+
+      await service.syncAuthors(inject<DbOrTx>(tx), 10, [{ name: 'Brandon Sanderson' }]);
+
+      expect(tx.update).not.toHaveBeenCalled();
+    });
+
+    it('does not update when caller provides empty string ASIN', async () => {
+      const tx = createMockDb();
+      const existingAuthor = createMockDbAuthor({ id: 5, asin: null });
+      tx.select.mockReturnValueOnce(mockDbChain([existingAuthor])); // found existing
+      tx.delete.mockReturnValueOnce(mockDbChain([]));               // junction delete
+      tx.insert.mockReturnValueOnce(mockDbChain([]));               // junction insert
+
+      await service.syncAuthors(inject<DbOrTx>(tx), 10, [{ name: 'Brandon Sanderson', asin: '' }]);
+
+      expect(tx.update).not.toHaveBeenCalled();
+    });
+
+    it('backfills ASIN on conflict-retry path (unique constraint race)', async () => {
+      const tx = createMockDb();
+      const existingAuthor = createMockDbAuthor({ id: 5, asin: null });
+      tx.select
+        .mockReturnValueOnce(mockDbChain([]))                      // first lookup: not found
+        .mockReturnValueOnce(mockDbChain([existingAuthor]));        // retry lookup after conflict
+      tx.insert
+        .mockReturnValueOnce(mockDbChain(undefined, { error: new Error('UNIQUE constraint failed') })) // insert fails
+        .mockReturnValueOnce(mockDbChain([]));                      // junction insert
+      tx.update.mockReturnValueOnce(mockDbChain([]));               // ASIN backfill
+      tx.delete.mockReturnValueOnce(mockDbChain([]));               // junction delete
+
+      await service.syncAuthors(inject<DbOrTx>(tx), 10, [{ name: 'Brandon Sanderson', asin: 'B001IGFHW6' }]);
+
+      expect(tx.update).toHaveBeenCalledTimes(1);
+      const updateChain = tx.update.mock.results[0].value;
+      expect(updateChain.set).toHaveBeenCalledWith({ asin: 'B001IGFHW6' });
+    });
+  });
+
   // ── #229 Observability — CRUD log enrichment ────────────────────────────
   describe('logging improvements (#229)', () => {
     it('create log includes { authors, asin }', async () => {
