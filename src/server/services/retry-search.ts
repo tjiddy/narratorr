@@ -6,7 +6,7 @@ import type { BlacklistService } from './blacklist.service.js';
 import type { BookService } from './book.service.js';
 import type { SettingsService } from './settings.service.js';
 import type { RetryBudget } from './retry-budget.js';
-import { buildSearchQuery, filterAndRankResults, filterBlacklistedResults } from './search-pipeline.js';
+import { buildSearchQuery, buildNarratorPriority, filterAndRankResults, filterBlacklistedResults } from './search-pipeline.js';
 import { buildGrabPayload } from './grab-payload.js';
 
 export type RetryOutcome =
@@ -91,6 +91,8 @@ export async function retrySearch(
     // Quality filtering and ranking
     const qualitySettings = await settingsService.get('quality');
     const metadataSettings = await settingsService.get('metadata');
+    const searchSettings = await settingsService.get('search');
+    const narratorPriority = buildNarratorPriority(searchSettings.searchPriority, book.narrators);
     const { results } = filterAndRankResults(
       filteredResults,
       book.duration ?? undefined,
@@ -100,6 +102,7 @@ export async function retrySearch(
       qualitySettings.rejectWords,
       qualitySettings.requiredWords,
       metadataSettings.languages,
+      narratorPriority,
     );
 
     // Take best downloadable result

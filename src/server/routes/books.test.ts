@@ -375,6 +375,7 @@ describe('books routes', () => {
       (services.settings.get as Mock).mockImplementation((cat: string) => {
         if (cat === 'quality') return Promise.resolve(DEFAULT_SETTINGS.quality);
         if (cat === 'metadata') return Promise.resolve({ audibleRegion: 'us', languages: ['english', 'french'] });
+        if (cat === 'search') return Promise.resolve(DEFAULT_SETTINGS.search);
         return Promise.resolve(undefined);
       });
       mockStreamingSearch([
@@ -401,6 +402,7 @@ describe('books routes', () => {
       (services.settings.get as Mock).mockImplementation((cat: string) => {
         if (cat === 'quality') return Promise.resolve(DEFAULT_SETTINGS.quality);
         if (cat === 'metadata') return Promise.resolve({ audibleRegion: 'us', languages: ['english'] });
+        if (cat === 'search') return Promise.resolve(DEFAULT_SETTINGS.search);
         return Promise.resolve(undefined);
       });
       mockStreamingSearch([
@@ -1346,6 +1348,7 @@ describe('books routes', () => {
       (services.settings.get as Mock).mockImplementation((cat: string) => {
         if (cat === 'quality') return Promise.resolve(qualitySettings);
         if (cat === 'metadata') return Promise.resolve({ audibleRegion: 'us', languages: ['english'] });
+        if (cat === 'search') return Promise.resolve(DEFAULT_SETTINGS.search);
         return Promise.resolve(undefined);
       });
       mockStreamingSearch([
@@ -1363,6 +1366,7 @@ describe('books routes', () => {
       (services.settings.get as Mock).mockImplementation((cat: string) => {
         if (cat === 'quality') return Promise.resolve(qualitySettings);
         if (cat === 'metadata') return Promise.resolve({ audibleRegion: 'us', languages: ['english'] });
+        if (cat === 'search') return Promise.resolve(DEFAULT_SETTINGS.search);
         return Promise.resolve(undefined);
       });
       mockStreamingSearch([

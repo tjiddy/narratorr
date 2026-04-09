@@ -9,7 +9,7 @@ import type { IndexerService } from '../services/indexer.service.js';
 import type { DownloadOrchestrator } from '../services/download-orchestrator.js';
 import type { BlacklistService } from '../services/blacklist.service.js';
 import { DuplicateDownloadError } from '../services/download.service.js';
-import { filterAndRankResults, filterBlacklistedResults } from '../services/search-pipeline.js';
+import { buildNarratorPriority, filterAndRankResults, filterBlacklistedResults } from '../services/search-pipeline.js';
 import { buildGrabPayload } from '../services/grab-payload.js';
 
 const MATCH_THRESHOLD = 0.7;
@@ -42,6 +42,7 @@ export async function runRssJob(
 
   const qualitySettings = await settingsService.get('quality');
   const metadataSettings = await settingsService.get('metadata');
+  const searchSettings = await settingsService.get('search');
 
   // Load candidate books: wanted + monitored-for-upgrade
   const { data: wantedBooks } = await bookListService.getAll('wanted');
@@ -147,6 +148,7 @@ export async function runRssJob(
     const duration = candidate.duration
       ? candidate.duration * 60
       : (candidate.audioDuration ?? undefined);
+    const narratorPriority = buildNarratorPriority(searchSettings.searchPriority, candidate.narrators);
     const { results: ranked } = filterAndRankResults(
       bookResults,
       duration,
@@ -156,6 +158,7 @@ export async function runRssJob(
       qualitySettings.rejectWords,
       qualitySettings.requiredWords,
       metadataSettings.languages,
+      narratorPriority,
     );
 
     if (ranked.length === 0) {

@@ -24,7 +24,7 @@ export interface BookRouteDeps {
   blacklistService?: BlacklistService;
   eventBroadcaster?: EventBroadcasterService;
 }
-import { searchAndGrabForBook } from '../services/search-pipeline.js';
+import { searchAndGrabForBook, buildNarratorPriority } from '../services/search-pipeline.js';
 import { type z } from 'zod';
 import {
   idParamSchema,
@@ -48,13 +48,14 @@ import { AUDIO_EXTENSIONS } from '../../core/utils/audio-constants.js';
 
 /** Fire-and-forget: search indexers and grab the best result for a newly added book. */
 function triggerImmediateSearch(
-  book: { id: number; title: string; duration?: number | null; authors?: Array<{ name: string }> | null },
+  book: { id: number; title: string; duration?: number | null; authors?: Array<{ name: string }> | null; narrators?: Array<{ name: string }> | null },
   deps: Pick<BookRouteDeps, 'indexerService' | 'downloadOrchestrator' | 'settingsService' | 'blacklistService' | 'eventBroadcaster'>,
   log: FastifyBaseLogger,
 ) {
-  Promise.all([deps.settingsService.get('quality'), deps.settingsService.get('metadata')])
-    .then(async ([qualitySettings, metadataSettings]) => {
-      await searchAndGrabForBook(book, deps.indexerService!, deps.downloadOrchestrator, { ...qualitySettings, languages: metadataSettings.languages }, log, deps.blacklistService!, deps.eventBroadcaster);
+  Promise.all([deps.settingsService.get('quality'), deps.settingsService.get('metadata'), deps.settingsService.get('search')])
+    .then(async ([qualitySettings, metadataSettings, searchSettings]) => {
+      const narratorPriority = buildNarratorPriority(searchSettings.searchPriority, book.narrators);
+      await searchAndGrabForBook(book, deps.indexerService!, deps.downloadOrchestrator, { ...qualitySettings, languages: metadataSettings.languages, narratorPriority }, log, deps.blacklistService!, deps.eventBroadcaster);
     })
     .catch((err) => {
       log.warn({ error: err, bookId: book.id }, 'Search-immediately trigger failed');
@@ -151,11 +152,13 @@ function registerBookSearchRoute(app: FastifyInstance, deps: Pick<BookRouteDeps,
 
       const qualitySettings = await deps.settingsService.get('quality');
       const metadataSettings = await deps.settingsService.get('metadata');
+      const searchSettings = await deps.settingsService.get('search');
+      const narratorPriority = buildNarratorPriority(searchSettings.searchPriority, book.narrators);
       const result = await searchAndGrabForBook(
         book,
         deps.indexerService!,
         deps.downloadOrchestrator,
-        { ...qualitySettings, languages: metadataSettings.languages },
+        { ...qualitySettings, languages: metadataSettings.languages, narratorPriority },
         request.log,
         deps.blacklistService!,
         deps.eventBroadcaster,

@@ -18,10 +18,24 @@ export function buildSearchQuery(book: { title: string; authors?: Array<{ name: 
 }
 
 /**
- * Canonical ranking comparator:
- * matchScore gate → MB/hr → protocol preference → language → indexer priority → grabs → seeders.
+ * Build a NarratorPriority config from search settings and book narrators.
+ * Returns undefined when priority is 'quality' or book has no narrators.
  */
-// eslint-disable-next-line complexity -- 7-tier sort with null coalescing inflates counted branches
+export function buildNarratorPriority(
+  searchPriority: string,
+  bookNarrators?: Array<{ name: string }> | null,
+): NarratorPriority | undefined {
+  if (searchPriority !== 'accuracy') return undefined;
+  const names = bookNarrators?.map(n => n.name).filter(Boolean) ?? [];
+  if (names.length === 0) return undefined;
+  return { bookNarrators: names };
+}
+
+/**
+ * Canonical ranking comparator:
+ * matchScore gate → narrator match → MB/hr → protocol preference → language → indexer priority → grabs → seeders.
+ */
+// eslint-disable-next-line complexity -- multi-tier sort with null coalescing inflates counted branches
 /** Optional narrator-priority config for auto-grab scoring. */
 export interface NarratorPriority {
   bookNarrators: string[];
@@ -339,10 +353,10 @@ async function tryGrab(
 }
 
 async function searchWithBroadcaster(
-  book: { id: number; title: string; duration?: number | null; authors?: Array<{ name: string }> | null },
+  book: { id: number; title: string; duration?: number | null; authors?: Array<{ name: string }> | null; narrators?: Array<{ name: string }> | null },
   indexerService: IndexerService,
   downloadOrchestrator: DownloadOrchestrator,
-  qualitySettings: { grabFloor: number; minSeeders: number; protocolPreference: string; rejectWords?: string; requiredWords?: string; languages?: readonly string[] },
+  qualitySettings: { grabFloor: number; minSeeders: number; protocolPreference: string; rejectWords?: string; requiredWords?: string; languages?: readonly string[]; narratorPriority?: NarratorPriority },
   log: FastifyBaseLogger,
   blacklistService: BlacklistService,
   broadcaster: EventBroadcasterService,
@@ -400,6 +414,7 @@ async function searchWithBroadcaster(
     afterBlacklist, book.duration ?? undefined,
     qualitySettings.grabFloor, qualitySettings.minSeeders, qualitySettings.protocolPreference,
     qualitySettings.rejectWords, qualitySettings.requiredWords, qualitySettings.languages,
+    qualitySettings.narratorPriority,
   );
 
   const best = results.find((r) => r.downloadUrl);
@@ -428,10 +443,10 @@ async function searchWithBroadcaster(
  * Core search-and-grab logic shared by all callers (jobs, routes).
  */
 export async function searchAndGrabForBook(
-  book: { id: number; title: string; duration?: number | null; authors?: Array<{ name: string }> | null },
+  book: { id: number; title: string; duration?: number | null; authors?: Array<{ name: string }> | null; narrators?: Array<{ name: string }> | null },
   indexerService: IndexerService,
   downloadOrchestrator: DownloadOrchestrator,
-  qualitySettings: { grabFloor: number; minSeeders: number; protocolPreference: string; rejectWords?: string; requiredWords?: string; languages?: readonly string[] },
+  qualitySettings: { grabFloor: number; minSeeders: number; protocolPreference: string; rejectWords?: string; requiredWords?: string; languages?: readonly string[]; narratorPriority?: NarratorPriority },
   log: FastifyBaseLogger,
   blacklistService: BlacklistService,
   broadcaster?: EventBroadcasterService,
@@ -468,6 +483,7 @@ export async function searchAndGrabForBook(
     qualitySettings.rejectWords,
     qualitySettings.requiredWords,
     qualitySettings.languages,
+    qualitySettings.narratorPriority,
   );
 
   const best = results.find((r) => r.downloadUrl);
