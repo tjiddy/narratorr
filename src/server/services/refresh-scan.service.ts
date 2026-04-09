@@ -1,9 +1,6 @@
 import { stat, readdir } from 'node:fs/promises';
 import { extname } from 'node:path';
 import type { FastifyBaseLogger } from 'fastify';
-import type { Db } from '../../db/index.js';
-import { books } from '../../db/schema.js';
-import { eq } from 'drizzle-orm';
 import { scanAudioDirectory } from '../../core/utils/audio-scanner.js';
 import { AUDIO_EXTENSIONS } from '../../core/utils/audio-constants.js';
 import { resolveFfprobePathFromSettings } from '../../core/utils/ffprobe-path.js';
@@ -32,7 +29,6 @@ export class RefreshScanError extends Error {
 
 export async function refreshScanBook(
   bookId: number,
-  db: Db,
   bookService: BookService,
   settingsService: SettingsService,
   log: FastifyBaseLogger,
@@ -72,29 +68,27 @@ export async function refreshScanBook(
   const durationMinutes = Math.round(scanResult.totalDuration / 60);
   const narratorsUpdated = !!scanResult.tagNarrator;
 
-  // Wrap narrator + book-row writes in a single transaction
-  await db.transaction(async (tx) => {
-    if (scanResult.tagNarrator) {
-      const narratorNames = scanResult.tagNarrator.split(/[,;&]/).map(n => n.trim()).filter(n => n.length > 0);
-      await bookService.syncNarrators(tx, bookId, narratorNames);
-    }
+  // Narrator names from tags (split on delimiters)
+  const narrators = scanResult.tagNarrator
+    ? scanResult.tagNarrator.split(/[,;&]/).map(n => n.trim()).filter(n => n.length > 0)
+    : undefined;
 
-    await tx.update(books).set({
-      audioCodec: scanResult.codec,
-      audioBitrate: scanResult.bitrate,
-      audioSampleRate: scanResult.sampleRate,
-      audioChannels: scanResult.channels,
-      audioBitrateMode: scanResult.bitrateMode,
-      audioFileFormat: scanResult.fileFormat,
-      audioFileCount: scanResult.fileCount,
-      topLevelAudioFileCount,
-      audioTotalSize: scanResult.totalSize,
-      audioDuration: Math.round(scanResult.totalDuration),
-      size: directorySize,
-      duration: durationMinutes,
-      enrichmentStatus: 'file-enriched',
-      updatedAt: new Date(),
-    }).where(eq(books.id, bookId));
+  // bookService.update() wraps narrator sync + book row update in a single transaction
+  await bookService.update(bookId, {
+    audioCodec: scanResult.codec,
+    audioBitrate: scanResult.bitrate,
+    audioSampleRate: scanResult.sampleRate,
+    audioChannels: scanResult.channels,
+    audioBitrateMode: scanResult.bitrateMode,
+    audioFileFormat: scanResult.fileFormat,
+    audioFileCount: scanResult.fileCount,
+    topLevelAudioFileCount,
+    audioTotalSize: scanResult.totalSize,
+    audioDuration: Math.round(scanResult.totalDuration),
+    size: directorySize,
+    duration: durationMinutes,
+    enrichmentStatus: 'file-enriched',
+    ...(narrators !== undefined ? { narrators } : {}),
   });
 
   log.info(
