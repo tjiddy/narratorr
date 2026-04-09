@@ -1361,32 +1361,44 @@ describe('#257 merge observability — BookDetails progress', () => {
   });
 
   describe('#430 fade-out animation on terminal state', () => {
-    it('fade-out animation class is applied when outcome is set (success)', () => {
+    it('fade-out animation class is applied and spinner stops on success', () => {
       mockUseMergeProgress.mockReturnValue({ phase: 'complete', outcome: 'success' });
       renderBookDetails({ status: 'imported', topLevelAudioFileCount: 3 });
       const indicator = screen.getByRole('status', { name: /merge progress/i });
       expect(indicator.className).toContain('animate-fade-out');
+      // Terminal state should show success icon (text-success), not spinning RefreshIcon
+      const svg = indicator.querySelector('svg');
+      expect(svg?.className.baseVal ?? svg?.getAttribute('class')).toContain('text-success');
+      expect(svg?.className.baseVal ?? svg?.getAttribute('class')).not.toContain('animate-spin');
     });
 
-    it('fade-out animation class is applied when outcome is error', () => {
+    it('fade-out animation class is applied and error icon shown on error', () => {
       mockUseMergeProgress.mockReturnValue({ phase: 'failed', outcome: 'error' });
       renderBookDetails({ status: 'imported', topLevelAudioFileCount: 3 });
       const indicator = screen.getByRole('status', { name: /merge progress/i });
       expect(indicator.className).toContain('animate-fade-out');
+      const svg = indicator.querySelector('svg');
+      expect(svg?.className.baseVal ?? svg?.getAttribute('class')).toContain('text-destructive');
+      expect(svg?.className.baseVal ?? svg?.getAttribute('class')).not.toContain('animate-spin');
     });
 
-    it('fade-out animation class is applied when outcome is cancelled', () => {
+    it('fade-out animation class is applied and cancel icon shown on cancelled', () => {
       mockUseMergeProgress.mockReturnValue({ phase: 'cancelled', outcome: 'cancelled' });
       renderBookDetails({ status: 'imported', topLevelAudioFileCount: 3 });
       const indicator = screen.getByRole('status', { name: /merge progress/i });
       expect(indicator.className).toContain('animate-fade-out');
+      const svg = indicator.querySelector('svg');
+      expect(svg?.className.baseVal ?? svg?.getAttribute('class')).toContain('text-muted-foreground');
+      expect(svg?.className.baseVal ?? svg?.getAttribute('class')).not.toContain('animate-spin');
     });
 
-    it('fade-out animation class is NOT applied during active (non-terminal) merge', () => {
+    it('active merge shows spinning icon without fade-out', () => {
       mockUseMergeProgress.mockReturnValue({ phase: 'processing', percentage: 0.5 });
       renderBookDetails({ status: 'imported', topLevelAudioFileCount: 3 });
       const indicator = screen.getByRole('status', { name: /merge progress/i });
       expect(indicator.className).not.toContain('animate-fade-out');
+      const svg = indicator.querySelector('svg');
+      expect(svg?.className.baseVal ?? svg?.getAttribute('class')).toContain('animate-spin');
     });
 
     it('indicator is not rendered when mergeProgress is null (after dismiss)', () => {
