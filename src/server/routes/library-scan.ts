@@ -197,47 +197,54 @@ export async function libraryScanRoutes(
   app.post<{ Body: ScanDebugBody }>(
     '/api/library/scan-debug',
     { schema: { body: scanDebugBodySchema } },
-    async (request, reply) => {
-      const { folderName } = request.body;
-      request.log.info({ folderName }, 'Scan debug trace requested');
-
-      const { parts, parsed, pattern, cleaning, cleanedTitle, cleanedAuthor } = buildParsingTrace(folderName);
-      const partialTrace = { input: folderName, parts, parsing: { pattern, raw: parsed }, cleaning, search: null, match: null, duplicate: null };
-
-      // Search step — 502 on metadata provider failure
-      let searchResult;
-      try {
-        searchResult = await runSearchTrace(cleanedTitle, cleanedAuthor, metadataService, request.log);
-      } catch (error: unknown) {
-        request.log.error(error, 'Scan debug metadata search failed');
-        return reply.status(502).send({
-          statusCode: 502, error: 'Bad Gateway',
-          message: `Metadata search provider failed: ${getErrorMessage(error, 'unknown error')}`,
-          partialTrace,
-        });
-      }
-
-      // Duplicate check — 500 on database failure (not a provider issue)
-      let duplicate: ScanDebugTrace['duplicate'];
-      try {
-        const authorList = cleanedAuthor ? [{ name: cleanedAuthor }] : undefined;
-        const existing = await bookService.findDuplicate(cleanedTitle, authorList);
-        duplicate = { isDuplicate: existing !== null, existingBookId: existing?.id ?? null, reason: existing ? 'library-match' : null };
-      } catch (error: unknown) {
-        request.log.error(error, 'Scan debug duplicate check failed');
-        return reply.status(500).send({
-          statusCode: 500, error: 'Internal Server Error',
-          message: `Duplicate check failed: ${getErrorMessage(error, 'unknown error')}`,
-          partialTrace: { ...partialTrace, search: searchResult.search, match: searchResult.match },
-        });
-      }
-
-      return { input: folderName, parts, parsing: { pattern, raw: parsed }, cleaning, ...searchResult, duplicate };
-    },
+    (request, reply) => handleScanDebug(request, reply, metadataService, bookService),
   );
 }
 
 // ─── Scan Debug Helpers ─────────────────────────────────────────────
+
+async function handleScanDebug(
+  request: { body: ScanDebugBody; log: FastifyBaseLogger },
+  reply: { status: (code: number) => { send: (body: unknown) => unknown } },
+  metadataService: MetadataService,
+  bookService: BookService,
+) {
+  const { folderName } = request.body;
+  request.log.info({ folderName }, 'Scan debug trace requested');
+
+  const { parts, parsed, pattern, cleaning, cleanedTitle, cleanedAuthor } = buildParsingTrace(folderName);
+  const partialTrace = { input: folderName, parts, parsing: { pattern, raw: parsed }, cleaning, search: null, match: null, duplicate: null };
+
+  // Search step — 502 on metadata provider failure
+  let searchResult;
+  try {
+    searchResult = await runSearchTrace(cleanedTitle, cleanedAuthor, metadataService, request.log);
+  } catch (error: unknown) {
+    request.log.error(error, 'Scan debug metadata search failed');
+    return reply.status(502).send({
+      statusCode: 502, error: 'Bad Gateway',
+      message: `Metadata search provider failed: ${getErrorMessage(error, 'unknown error')}`,
+      partialTrace,
+    });
+  }
+
+  // Duplicate check — 500 on database failure (not a provider issue)
+  let duplicate: ScanDebugTrace['duplicate'];
+  try {
+    const authorList = cleanedAuthor ? [{ name: cleanedAuthor }] : undefined;
+    const existing = await bookService.findDuplicate(cleanedTitle, authorList);
+    duplicate = { isDuplicate: existing !== null, existingBookId: existing?.id ?? null, reason: existing ? 'library-match' : null };
+  } catch (error: unknown) {
+    request.log.error(error, 'Scan debug duplicate check failed');
+    return reply.status(500).send({
+      statusCode: 500, error: 'Internal Server Error',
+      message: `Duplicate check failed: ${getErrorMessage(error, 'unknown error')}`,
+      partialTrace: { ...partialTrace, search: searchResult.search, match: searchResult.match },
+    });
+  }
+
+  return { input: folderName, parts, parsing: { pattern, raw: parsed }, cleaning, ...searchResult, duplicate };
+}
 
 function buildParsingTrace(folderName: string) {
   const parts = folderName.split(/[/\\]/).filter(Boolean);
