@@ -4,12 +4,12 @@ export const phases: PhaseDefinition[] = [
   {
     marker: "self-review-complete",
     prompt:
-      "STOP BLOCKED: You are inside /handoff. Self-review has not been completed. Your next action: run the self-review diff check (step 2), then write the self-review-complete marker. Do NOT stop.",
+      "STOP BLOCKED: You are inside /handoff. Step 2 marker not written. Write the self-review-complete marker (step 2b) and continue. Do NOT stop.",
   },
   {
     marker: "coverage-complete",
     prompt:
-      "STOP BLOCKED: You are inside /handoff. Coverage review has not been completed. Your next action: check for remaining test stubs and coverage gaps (step 3), then write the coverage-complete marker. Do NOT stop.",
+      "STOP BLOCKED: You are inside /handoff. Coverage check has not been completed. Your next action: run the test coverage check (step 4), then write the coverage-complete marker. Do NOT stop.",
   },
   {
     marker: "verify-complete",

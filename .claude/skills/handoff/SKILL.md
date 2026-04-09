@@ -31,66 +31,7 @@ All GitHub commands use: `node scripts/gh.ts` (referred to as `gh` below).
 
 1. **Verify branch:** Run `git branch --show-current`. It must match `feature/issue-<id>-*`. If not, write `mkdir -p .narratorr/state/handoff-<id> && echo done > .narratorr/state/handoff-<id>/stopped` then STOP: "Not on the expected feature branch for #<id>."
 
-2. **Author self-review (pre-flight depth check)** via an Explore subagent:
-
-   This catches behavioral bugs and security issues before running expensive quality gates — things where the code itself is wrong, not just untested. Launch an **Explore subagent** (Agent tool, `subagent_type: "Explore"`, thoroughness: "very thorough") with this prompt:
-
-   > You are the author reviewing your own code before handing off for external review.
-   >
-   > **IMPORTANT: Show your work.** Every claim must include evidence — the files you read, the line numbers you checked, the specific code you evaluated. Conclusions without receipts are unacceptable; providing proof forces thorough investigation.
-   >
-   > Run `git diff main --name-only -- '*.ts' '*.tsx' | grep -v '\.test\.'` to get changed source files.
-   > Read each changed source file and its diff (`git diff main -- <file>`).
-   >
-   > For each file, perform these checks:
-   >
-   > **1. Behavior correctness under combined configurations:**
-   > For each new conditional/branch, enumerate the configuration combinations that affect it.
-   > Example: if code checks `proxyUrl`, also check what happens when `flareSolverrUrl` is set alongside it.
-   > Ask: "Does this branch do the right thing under ALL valid config states, not just the one I was thinking about?"
-   >
-   > **2. Interaction analysis:**
-   > For each feature this file touches, identify other features that interact with it.
-   > Check each intersection for correctness. Common problem areas:
-   > - Precedence logic (feature A takes priority over feature B — does the code enforce this everywhere?)
-   > - Cache/state invalidation (what triggers invalidation? Does it fire only when it should, or too broadly?)
-   > - Data flow through layers (does each layer correctly forward new fields? Response shapes, optional fields?)
-   > - Full-form vs partial-form submission (does the code handle both correctly?)
-   >
-   > **3. AC keyword cross-check:**
-   > Read the linked issue's acceptance criteria. For each AC that contains assertion keywords
-   > (e.g., "roundtrip", "full payload", "all keys", "end-to-end"), verify the test code contains
-   > a concrete assertion matching that keyword's intent. If an AC says "settings roundtrip," the
-   > test must assert settings in both the request AND the response — not just one side.
-   > Report any AC whose keywords don't map to concrete test assertions.
-   >
-   > **4. Security quick-scan:**
-   > - Log statements: do any log sensitive data (passwords, tokens, API keys, proxy credentials)?
-   > - Input handling: is user input sanitized before use in shell commands, SQL, file paths?
-   > - Response data: could any endpoint leak internal state or credentials?
-   >
-   > **5. Infrastructure artifact check (trigger: diff contains any file matching `Dockerfile*`, `docker-compose*`, `.dockerignore`, `docker/**`, `.github/workflows/*`, `package.json`, `pnpm-lock.yaml`, `*.sh`, `*.config.js`, `*.config.ts`, `tsconfig*.json`):**
-   > If any changed file matches the trigger patterns above, check:
-   > - Shell scripts: execute bit set (`git ls-files -s <file>` should show 100755, not 100644)
-   > - Dockerfile: base image assumptions (Node.js availability, s6-overlay service naming conventions)
-   > - CI workflow files: syntax valid, steps reference correct scripts/commands
-   > - `.dockerignore`: new build artifacts or output directories are excluded
-   > - Config files (`*.config.js`, `*.config.ts`, `tsconfig*.json`): syntax valid, no broken references
-   > If no changed files match the trigger patterns, skip this check entirely.
-   >
-   > Return ONLY this structured output:
-   > ```
-   > SELF-REVIEW:
-   > - <file>:
-   >   - [interaction] <description> → correct (evidence) | BUG: <what's wrong>
-   >   - [security] <description> → clean | ISSUE: <what's wrong>
-   >   - [config-combo] <description> → correct (evidence) | BUG: <what's wrong>
-   >   - [infra] <description> → correct | ISSUE: <what's wrong> (only if trigger files matched)
-   >
-   > RESULT: pass | fail (N issues found)
-   > ```
-
-   If RESULT is `fail` → STOP and report the issues. Fix them in the main context, then restart from step 2. Do NOT proceed past this step with known bugs.
+2. *(Removed — self-review subagent was 0-for-5 on actionable findings across recent PRs. External Codex reviewer is the quality gate.)*
 
 2b. **Write phase marker:** `mkdir -p .narratorr/state/handoff-<id> && echo done > .narratorr/state/handoff-<id>/self-review-complete`
 
@@ -105,46 +46,22 @@ All GitHub commands use: `node scripts/gh.ts` (referred to as `gh` below).
      These stubs were created from spec interactions during `/claim`. Each one must be implemented as a real test before handoff.
    - If none remain (or no test files changed), continue to step 4.
 
-4. **Test coverage review (HARD GATE)** — skip for small diffs (≤3 source files AND ≤50 changed lines, checked via `git diff main --stat`). For larger diffs, launch via an Explore subagent (keeps file reads out of main context). Before launching, verify `git branch --show-current` matches the expected feature branch — abort if on wrong branch.
+4. **Test coverage check (HARD GATE)** — deterministic, not LLM-based.
 
-   Launch an **Explore subagent** (Agent tool, `subagent_type: "Explore"`, thoroughness: "very thorough") with this prompt:
-
-   > Do an exhaustive behavioral test gap analysis for **branch-introduced changes only** (not pre-existing gaps).
-   >
-   > **IMPORTANT: Show your work.** Every claim must include evidence — the files you read, the line numbers you checked, the test files you verified. Conclusions without receipts are unacceptable; providing proof forces thorough investigation.
-   >
-   > 1. Run: `git diff main --name-only -- '*.ts' '*.tsx' | grep -v '\.test\.'` to get changed source files.
-   > 1b. Run: `git diff main -- <file>` for each file to see the **actual diff**. Only behaviors introduced or modified by this branch need coverage. Pre-existing untested code is out of scope.
-   > 2. For each **changed hunk** (not the full file), identify every:
-   >    - New function, method, or API endpoint
-   >    - Conditional branch (if/else, switch, ternary) — especially error paths and edge cases
-   >    - User interaction (button click, form submit, toggle, popover open/close)
-   >    - API call with success/error handling
-   >    - Fire-and-forget or async side effects
-   >    - State transitions (enabled→disabled, open→closed, etc.)
-   >    - DB persistence (new columns, new queries, create/update with new fields)
-   > 3. Find the co-located test file (e.g., `foo.ts` → `foo.test.ts`) or parent component/integration test files. **Read each test file thoroughly** — don't just check it exists, read the actual assertions.
-   > 4. Cross-reference: verify each behavior has an explicit test that asserts the specific outcome. Name the test. A test file existing is NOT sufficient — the specific behavior must be exercised and asserted.
-   >
-   > **Common gaps to watch for:**
-   > - Route handlers with new fields passed through to services but never tested at the route level
-   > - Fire-and-forget async operations (`.then().catch()`) — both success and failure paths
-   > - UI components with new props/callbacks that have no interaction tests
-   > - Toggle/mutation success and error toast messages
-   > - Settings fetch failure fallback behavior
-   > - Wiring files that pass new data through — verify parent integration tests cover the flow
-   >
-   > Return ONLY this structured checklist:
-   > ```
-   > COVERAGE REVIEW:
-   > - <file>:
-   >   - <behavior 1> → tested in <test file>: "<test name>" ✓
-   >   - <behavior 2> → UNTESTED ✗ — <what bug this could catch>
-   >
-   > RESULT: pass | fail (N untested behaviors)
-   > ```
-
-   If RESULT is `fail` (any behavior marked UNTESTED) → STOP — write the missing tests in the main context, then restart from step 2. Do NOT proceed to push with untested behavior.
+   Run `pnpm exec vitest run --coverage` and check that every changed source file has a co-located test file:
+   ```bash
+   # List changed source files without tests
+   for f in $(git diff main --name-only -- '*.ts' '*.tsx' | grep -v '\.test\.'); do
+     testfile="${f%.ts}.test.${f##*.}"
+     testfile2="${f%.tsx}.test.${f##*.}"
+     if [ ! -f "$testfile" ] && [ ! -f "$testfile2" ]; then
+       echo "MISSING TEST: $f"
+     fi
+   done
+   ```
+   - If any source file is missing a co-located test file, STOP and write the tests.
+   - Files that are pure re-exports, barrel `index.ts` files, or type-only files are exempt.
+   - This replaces the previous Explore subagent which had a ~75% false positive rate and missed entire test files.
 
 4b. **Write phase marker:** `mkdir -p .narratorr/state/handoff-<id> && echo done > .narratorr/state/handoff-<id>/coverage-complete`
 
