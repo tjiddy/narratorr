@@ -1,5 +1,34 @@
 # Workflow Log
 
+## #413 processOneDownload() O(N) scan — add single-record query — 2026-04-09
+**Skill path:** /implement → /claim → /plan → /handoff
+**Outcome:** success — PR #460
+
+### Metrics
+- Files changed: 3 | Tests added/modified: 19 (4 new service tests + 15 updated orchestrator tests)
+- Quality gate runs: 2 (pass on attempt 1 both times)
+- Fix iterations: 0
+- Context compactions: 0
+
+### Workflow experience
+- What went smoothly: Clean red/green TDD cycle — all 4 new tests failed before implementation, all 15 migrated tests failed before production code update. Spec was well-prepared from elaborate + respond-to-spec-review rounds.
+- Friction / issues encountered: None — the existing `approve()`/`reject()` patterns made the query implementation straightforward.
+
+### Token efficiency
+- Highest-token actions: Reading the full processOneDownload test block (200 lines) to understand all 15 test mocks
+- Avoidable waste: None — the spec review rounds pre-resolved all ambiguity
+- Suggestions: For simple chores like this, the elaborate → spec-review → implement pipeline is overkill but still fast
+
+### Infrastructure gaps
+- Repeated workarounds: None
+- Missing tooling / config: None
+- Unresolved debt: quality-gate-orchestrator.ts at ~500 lines still needs splitting (tracked in debt.md)
+
+### Wish I'd Known
+1. The narrator attachment pattern in `getCompletedDownloads()` (batch join via bookNarrators) is the only reference for this — `approve()`/`reject()` skip narrators entirely
+2. The processOneDownload test block uses a consistent pattern where each test mocks the data source then calls the method — bulk mock replacement was safe as a single edit
+3. Net line count matters — the orchestrator file is at the max-lines boundary, so the 1-line reduction from removing the `.find()` was important
+
 ## #454 Detect ASIN in bracket patterns for direct Audible lookup — 2026-04-09
 **Skill path:** /implement → /claim → /plan → /handoff
 **Outcome:** success — PR #459
