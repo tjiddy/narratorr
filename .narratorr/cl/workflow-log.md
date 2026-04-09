@@ -1,5 +1,34 @@
 # Workflow Log
 
+## #444 Refresh & Scan — per-book rescan of audio files and narrator from disk — 2026-04-09
+**Skill path:** /implement → /claim → /plan → /handoff
+**Outcome:** success — PR #452
+
+### Metrics
+- Files changed: 13 | Tests added/modified: 50 (across 5 test files)
+- Quality gate runs: 2 (pass on attempt 1 both times)
+- Fix iterations: 1 (refactored service to use `bookService.update()` instead of managing own transaction — eliminated need for `db` parameter)
+- Context compactions: 0
+
+### Workflow experience
+- What went smoothly: Spec was well-groomed after 3 rounds of spec review. Existing patterns (RetagError, retag route, useBookActions mutation) made implementation predictable. TDD cycle was clean — red→green worked without surprises.
+- Friction / issues encountered: Initial service design used a standalone `db.transaction()` which required threading `db` through route deps. Discovered `bookService.update()` already handles narrator+book-row atomicity, simplifying the design significantly. The refactor happened before route implementation so no wasted work.
+
+### Token efficiency
+- Highest-token actions: Elaborate + spec review response rounds (3 rounds of spec review before approval)
+- Avoidable waste: None significant — the spec review rounds caught real issues (publisher field, error contract, atomicity, skipCover)
+- Suggestions: For future features following existing patterns closely, a single elaborate+review cycle should suffice
+
+### Infrastructure gaps
+- Repeated workarounds: None
+- Missing tooling / config: None
+- Unresolved debt: None introduced
+
+### Wish I'd Known
+1. `bookService.update()` already wraps narrator sync + book row in a single transaction via `Partial<NewBook>` — no need for standalone transaction management or `db` injection into routes
+2. `getPathSize()` in import-helpers.ts already does recursive all-files directory size — no need to extract `getAudioStats()` from LibraryScanService
+3. The spec review process was thorough but the `publisher` field doesn't exist in the schema — always grep the schema before referencing field names in specs
+
 ## #445 Upload custom cover art — inline preview with paste support — 2026-04-09
 **Skill path:** /implement → /claim → /plan → /handoff
 **Outcome:** success — PR #451
