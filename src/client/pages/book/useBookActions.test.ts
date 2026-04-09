@@ -534,7 +534,7 @@ describe('useBookActions', () => {
       });
     });
 
-    it('invalidates book queries on success', async () => {
+    it('invalidates book, bookFiles, and books queries on success', async () => {
       (api.uploadBookCover as Mock).mockResolvedValue({ id: 5, coverUrl: '/api/books/5/cover' });
       const { queryClient, wrapper } = createTestHarness();
       const invalidateSpy = vi.spyOn(queryClient, 'invalidateQueries');
@@ -544,6 +544,7 @@ describe('useBookActions', () => {
 
       await waitFor(() => {
         expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: ['books', 5] });
+        expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: ['books', 5, 'files'] });
         expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: ['books'] });
       });
     });
