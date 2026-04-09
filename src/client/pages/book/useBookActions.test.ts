@@ -607,7 +607,7 @@ describe('useBookActions', () => {
       queryClient.clear();
     });
 
-    it('invalidates book queries after successful scan', async () => {
+    it('invalidates book, bookFiles, and books query keys after successful scan', async () => {
       (api.refreshScanBook as Mock).mockResolvedValue({
         bookId: 1, codec: 'mp3', bitrate: 128000, fileCount: 1, durationMinutes: 60, narratorsUpdated: false,
       });
@@ -618,7 +618,9 @@ describe('useBookActions', () => {
       act(() => { result.current.refreshScanMutation.mutate(); });
 
       await waitFor(() => {
-        expect(invalidateSpy).toHaveBeenCalled();
+        expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: ['books', 1] });
+        expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: ['books', 1, 'files'] });
+        expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: ['books'] });
       });
       queryClient.clear();
     });
