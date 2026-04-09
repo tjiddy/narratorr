@@ -574,6 +574,33 @@ describe('BookHero', () => {
         await user.click(screen.getByLabelText('Cancel cover'));
         expect(onCoverCancel).toHaveBeenCalledTimes(1);
       });
+
+      it('disables confirm and cancel buttons when upload is in progress', () => {
+        renderHero({
+          previewUrl: 'blob:http://localhost/preview',
+          onCoverConfirm: vi.fn(),
+          onCoverCancel: vi.fn(),
+          isUploadingCover: true,
+        });
+
+        expect(screen.getByLabelText('Confirm cover')).toBeDisabled();
+        expect(screen.getByLabelText('Cancel cover')).toBeDisabled();
+      });
+
+      it('does not show upload overlay when preview is active (confirm/cancel shown instead)', () => {
+        renderHero({
+          hasPath: true,
+          onCoverFileSelect: vi.fn(),
+          previewUrl: 'blob:http://localhost/preview',
+          onCoverConfirm: vi.fn(),
+          onCoverCancel: vi.fn(),
+        });
+
+        // Upload button should NOT be visible when preview is active
+        expect(screen.queryByLabelText('Upload cover')).not.toBeInTheDocument();
+        // Confirm/cancel should be visible
+        expect(screen.getByLabelText('Confirm cover')).toBeInTheDocument();
+      });
     });
   });
 });
