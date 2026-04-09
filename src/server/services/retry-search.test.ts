@@ -510,7 +510,7 @@ describe('retrySearch — GUID blacklist filtering', () => {
     const bookWithNarrators: BookWithAuthor = {
       ...createMockDbBook({ duration: 36000 }),
       authors: [createMockDbAuthor()],
-      narrators: [{ id: 1, name: 'Kevin R. Free', createdAt: new Date() }],
+      narrators: [{ id: 1, name: 'Kevin R. Free', slug: 'kevin-r-free', createdAt: new Date() }],
     };
     const deps = createDeps({
       bookService: inject<BookService>({
