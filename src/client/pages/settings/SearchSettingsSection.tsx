@@ -12,16 +12,9 @@ import { SelectWithChevron } from '@/components/settings/SelectWithChevron';
 import { protocolPreferenceSchema, searchPrioritySchema, DEFAULT_SETTINGS, type AppSettings } from '../../../shared/schemas.js';
 import { SettingsSection } from './SettingsSection';
 
-const PROTOCOL_LABELS: Record<string, string> = {
-  none: 'No Preference',
-  usenet: 'Prefer Usenet',
-  torrent: 'Prefer Torrent',
-};
-
+const PROTOCOL_LABELS: Record<string, string> = { none: 'No Preference', usenet: 'Prefer Usenet', torrent: 'Prefer Torrent' };
 const PRIORITY_LABELS: Record<string, string> = { quality: 'Audio Quality', accuracy: 'Narrator Accuracy' };
-
-const inputClass = (hasError: boolean) =>
-  `w-full px-4 py-3 bg-background border rounded-xl focus-ring focus:border-transparent transition-all ${hasError ? 'border-destructive' : 'border-border'}`;
+const inputClass = (hasError: boolean) => `w-full px-4 py-3 bg-background border rounded-xl focus-ring focus:border-transparent transition-all ${hasError ? 'border-destructive' : 'border-border'}`;
 
 const searchFormSchema = z.object({
   searchEnabled: z.boolean(),
@@ -156,7 +149,8 @@ export function SearchSettingsSection() {
               </option>
             ))}
           </SelectWithChevron>
-          <p className="text-sm text-muted-foreground mt-2">How auto-grab chooses between quality and narrator match when searching.</p>
+          <p className="text-sm text-muted-foreground mt-2"><span className="font-medium text-foreground/70">Audio Quality:</span> Prioritize higher bitrate releases. May download full cast or alternative narrator editions.</p>
+          <p className="text-sm text-muted-foreground mt-0.5"><span className="font-medium text-foreground/70">Narrator Accuracy:</span> Prioritize releases matching the narrator from metadata. May result in lower quality audio.</p>
         </div>
 
         <div>

@@ -319,7 +319,7 @@ describe('SearchSettingsSection', () => {
   });
 
   describe('search priority dropdown (#439)', () => {
-    it('renders search priority dropdown with both options', async () => {
+    it('renders search priority dropdown with both options and per-option descriptions', async () => {
       renderWithProviders(<SearchSettingsSection />);
 
       await waitFor(() => {
@@ -330,6 +330,9 @@ describe('SearchSettingsSection', () => {
       expect(options).toHaveLength(2);
       expect(options[0]).toHaveTextContent('Audio Quality');
       expect(options[1]).toHaveTextContent('Narrator Accuracy');
+
+      expect(screen.getByText(/Prioritize higher bitrate releases/)).toBeInTheDocument();
+      expect(screen.getByText(/Prioritize releases matching the narrator/)).toBeInTheDocument();
     });
 
     it('selecting accuracy and saving fires mutation with correct payload', async () => {
