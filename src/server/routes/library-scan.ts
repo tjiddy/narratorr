@@ -212,8 +212,8 @@ async function handleScanDebug(
   const { folderName } = request.body;
   request.log.info({ folderName }, 'Scan debug trace requested');
 
-  const { parts, parsed, pattern, cleaning, cleanedTitle, cleanedAuthor } = buildParsingTrace(folderName);
-  const partialTrace = { input: folderName, parts, parsing: { pattern, raw: parsed }, cleaning, search: null, match: null, duplicate: null };
+  const { parts, raw, pattern, cleaning, cleanedTitle, cleanedAuthor } = buildParsingTrace(folderName);
+  const partialTrace = { input: folderName, parts, parsing: { pattern, raw }, cleaning, search: null, match: null, duplicate: null };
 
   // Search step — 502 on metadata provider failure
   let searchResult;
@@ -243,7 +243,7 @@ async function handleScanDebug(
     });
   }
 
-  return { input: folderName, parts, parsing: { pattern, raw: parsed }, cleaning, ...searchResult, duplicate };
+  return { input: folderName, parts, parsing: { pattern, raw }, cleaning, ...searchResult, duplicate };
 }
 
 function buildParsingTrace(folderName: string) {
@@ -261,7 +261,7 @@ function buildParsingTrace(folderName: string) {
   const cleanedTitle = cleaning.title?.result ?? parsed.title;
   const cleanedAuthor = cleaning.author?.result ?? parsed.author ?? undefined;
 
-  return { parts, parsed, pattern, cleaning, cleanedTitle, cleanedAuthor };
+  return { parts, raw, pattern, cleaning, cleanedTitle, cleanedAuthor };
 }
 
 async function runSearchTrace(

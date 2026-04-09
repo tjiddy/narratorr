@@ -1923,7 +1923,7 @@ describe('MatchJobService', () => {
       expect(result.confidence).toBe('high');
     });
 
-    it('accepts match when swapped-context similarity is exactly at floor (0.5)', async () => {
+    it('accepts match when swapped-context title matches exactly', async () => {
       // Use titles that produce ~0.5 dice coefficient against the swapped context
       // "Way Ki" vs "The Way of Kings" won't work, need to find a pair that gives ~0.5
       // diceCoefficient compares bigrams, so use a title where ~half the bigrams match

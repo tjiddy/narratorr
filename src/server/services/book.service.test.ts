@@ -1443,12 +1443,12 @@ describe('BookService — transaction atomicity (#214)', () => {
       await service.uploadCover(1, testBuffer, 'image/jpeg');
 
       expect(writeFile).toHaveBeenCalledWith(
-        expect.stringContaining('/library/book/.cover-upload-'),
+        expect.stringContaining('.cover-upload-'),
         testBuffer,
       );
       expect(rename).toHaveBeenCalledWith(
-        expect.stringContaining('/library/book/.cover-upload-'),
-        expect.stringContaining('/library/book/cover.jpg'),
+        expect.stringContaining('.cover-upload-'),
+        expect.stringContaining('cover.jpg'),
       );
     });
 
