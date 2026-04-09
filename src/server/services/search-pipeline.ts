@@ -35,7 +35,6 @@ export function buildNarratorPriority(
  * Canonical ranking comparator:
  * matchScore gate → narrator match → MB/hr → protocol preference → language → indexer priority → grabs → seeders.
  */
-// eslint-disable-next-line complexity -- multi-tier sort with null coalescing inflates counted branches
 /** Optional narrator-priority config for auto-grab scoring. */
 export interface NarratorPriority {
   bookNarrators: string[];
@@ -85,6 +84,7 @@ function narratorTierValue(
   return 1;
 }
 
+// eslint-disable-next-line complexity -- multi-tier sort with null coalescing inflates counted branches
 function canonicalCompare(
   a: SearchResult,
   b: SearchResult,

@@ -18,15 +18,10 @@ const PROTOCOL_LABELS: Record<string, string> = {
   torrent: 'Prefer Torrent',
 };
 
-const PRIORITY_LABELS: Record<string, string> = {
-  quality: 'Audio Quality',
-  accuracy: 'Narrator Accuracy',
-};
+const PRIORITY_LABELS: Record<string, string> = { quality: 'Audio Quality', accuracy: 'Narrator Accuracy' };
 
-const PRIORITY_DESCRIPTIONS: Record<string, string> = {
-  quality: 'Prioritize higher bitrate releases. May download full cast or alternative narrator editions.',
-  accuracy: 'Prioritize releases matching the narrator from metadata. May result in lower quality audio.',
-};
+const inputClass = (hasError: boolean) =>
+  `w-full px-4 py-3 bg-background border rounded-xl focus-ring focus:border-transparent transition-all ${hasError ? 'border-destructive' : 'border-border'}`;
 
 const searchFormSchema = z.object({
   searchEnabled: z.boolean(),
@@ -78,7 +73,7 @@ export function SearchSettingsSection() {
     queryFn: api.getSettings,
   });
 
-  const { register, handleSubmit, reset, watch, formState: { errors, isDirty } } = useForm<SearchFormData>({
+  const { register, handleSubmit, reset, formState: { errors, isDirty } } = useForm<SearchFormData>({
     defaultValues: toFormData({ ...DEFAULT_SETTINGS } as AppSettings),
     resolver: zodResolver(searchFormSchema),
   });
@@ -111,9 +106,7 @@ export function SearchSettingsSection() {
         <div className="flex items-center justify-between">
           <div>
             <label htmlFor="searchEnabled" className="block text-sm font-medium">Enable Scheduled Search</label>
-            <p className="text-sm text-muted-foreground mt-0.5">
-              Periodically search indexers and grab the best result for wanted books
-            </p>
+            <p className="text-sm text-muted-foreground mt-0.5">Periodically search indexers and grab the best result for wanted books</p>
           </div>
           <label className="relative inline-flex items-center cursor-pointer">
             <ToggleSwitch id="searchEnabled" {...register('searchEnabled')} />
@@ -126,9 +119,7 @@ export function SearchSettingsSection() {
             id="searchIntervalMinutes"
             type="number"
             {...register('searchIntervalMinutes', { valueAsNumber: true })}
-            className={`w-full px-4 py-3 bg-background border rounded-xl focus-ring focus:border-transparent transition-all ${
-              errors.searchIntervalMinutes ? 'border-destructive' : 'border-border'
-            }`}
+            className={inputClass(!!errors.searchIntervalMinutes)}
             min={5}
             max={1440}
             placeholder="360"
@@ -136,9 +127,7 @@ export function SearchSettingsSection() {
           {errors.searchIntervalMinutes && (
             <p className="text-sm text-destructive mt-1">{errors.searchIntervalMinutes.message}</p>
           )}
-          <p className="text-sm text-muted-foreground mt-2">
-            How often to search for new releases (5-1440 minutes)
-          </p>
+          <p className="text-sm text-muted-foreground mt-2">How often to search for new releases (5-1440 minutes)</p>
         </div>
 
         <div>
@@ -147,9 +136,7 @@ export function SearchSettingsSection() {
             id="blacklistTtlDays"
             type="number"
             {...register('blacklistTtlDays', { valueAsNumber: true })}
-            className={`w-full px-4 py-3 bg-background border rounded-xl focus-ring focus:border-transparent transition-all ${
-              errors.blacklistTtlDays ? 'border-destructive' : 'border-border'
-            }`}
+            className={inputClass(!!errors.blacklistTtlDays)}
             min={1}
             max={365}
             placeholder="7"
@@ -157,9 +144,7 @@ export function SearchSettingsSection() {
           {errors.blacklistTtlDays && (
             <p className="text-sm text-destructive mt-1">{errors.blacklistTtlDays.message}</p>
           )}
-          <p className="text-sm text-muted-foreground mt-2">
-            How long temporary blacklist entries last before expiring (1-365 days)
-          </p>
+          <p className="text-sm text-muted-foreground mt-2">How long temporary blacklist entries last before expiring (1-365 days)</p>
         </div>
 
         <div>
@@ -171,9 +156,7 @@ export function SearchSettingsSection() {
               </option>
             ))}
           </SelectWithChevron>
-          <p className="text-sm text-muted-foreground mt-2">
-            {PRIORITY_DESCRIPTIONS[watch('searchPriority')] ?? PRIORITY_DESCRIPTIONS.quality}
-          </p>
+          <p className="text-sm text-muted-foreground mt-2">How auto-grab chooses between quality and narrator match when searching.</p>
         </div>
 
         <div>
@@ -185,9 +168,7 @@ export function SearchSettingsSection() {
               </option>
             ))}
           </SelectWithChevron>
-          <p className="text-sm text-muted-foreground mt-2">
-            Preferred download protocol. Affects result ordering but does not exclude results.
-          </p>
+          <p className="text-sm text-muted-foreground mt-2">Preferred download protocol. Affects result ordering but does not exclude results.</p>
         </div>
 
         {/* RSS Sync subsection */}
@@ -197,9 +178,7 @@ export function SearchSettingsSection() {
           <div className="flex items-center justify-between">
             <div>
               <label htmlFor="rssEnabled" className="block text-sm font-medium">Enable RSS Sync</label>
-              <p className="text-sm text-muted-foreground mt-0.5">
-                Poll indexer RSS feeds to discover new releases and upgrades
-              </p>
+              <p className="text-sm text-muted-foreground mt-0.5">Poll indexer RSS feeds to discover new releases and upgrades</p>
             </div>
             <label className="relative inline-flex items-center cursor-pointer">
               <ToggleSwitch id="rssEnabled" {...register('rssEnabled')} />
@@ -212,9 +191,7 @@ export function SearchSettingsSection() {
               id="rssIntervalMinutes"
               type="number"
               {...register('rssIntervalMinutes', { valueAsNumber: true })}
-              className={`w-full px-4 py-3 bg-background border rounded-xl focus-ring focus:border-transparent transition-all ${
-                errors.rssIntervalMinutes ? 'border-destructive' : 'border-border'
-              }`}
+              className={inputClass(!!errors.rssIntervalMinutes)}
               min={5}
               max={1440}
               placeholder="30"
@@ -222,9 +199,7 @@ export function SearchSettingsSection() {
             {errors.rssIntervalMinutes && (
               <p className="text-sm text-destructive mt-1">{errors.rssIntervalMinutes.message}</p>
             )}
-            <p className="text-sm text-muted-foreground mt-2">
-              How often to poll RSS feeds (5-1440 minutes)
-            </p>
+            <p className="text-sm text-muted-foreground mt-2">How often to poll RSS feeds (5-1440 minutes)</p>
           </div>
         </div>
 
