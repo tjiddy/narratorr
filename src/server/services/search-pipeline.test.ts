@@ -1151,36 +1151,133 @@ describe('#406 searchAndGrabForBook blacklist filtering with broadcaster', () =>
 });
 
 describe('filterAndRankResults — narrator priority', () => {
+  // Helper: for a 10-hour book (36000s), size for target MB/hr = mbhr * 10 * 1024 * 1024
+  const BOOK_DURATION = 36000; // 10 hours
+  function sizeForMbhr(mbhr: number) { return Math.round(mbhr * 10 * 1024 * 1024); }
+
+  const narratorPriority = { bookNarrators: ['Kevin R. Free'] };
+
   describe('narrator-match tier in canonicalCompare', () => {
-    it.todo('narrator-match result beats non-match when priority is accuracy (Fair vs Good quality)');
-    it.todo('narrator-match with 29 MB/hr does NOT beat non-match — below quality floor');
-    it.todo('narrator-match with exactly 30 MB/hr beats non-match — meets Low tier floor');
-    it.todo('two narrator-matched results sorted by quality (higher quality wins)');
-    it.todo('two non-matched results sorted by quality as today (no change)');
-    it.todo('unknown quality narrator-match beats known Good quality non-match');
-    it.todo('match-score gate: score delta > 0.1 overrides narrator tier');
+    it('narrator-match result beats non-match when priority is accuracy (Fair vs Good quality)', () => {
+      const fairMatch = makeResult({ narrator: 'Kevin R. Free', size: sizeForMbhr(79), matchScore: 0.9 });
+      const goodNoMatch = makeResult({ narrator: 'Someone Else', size: sizeForMbhr(80), matchScore: 0.9 });
+      const { results } = filterAndRankResults([goodNoMatch, fairMatch], BOOK_DURATION, 0, 1, 'none', undefined, undefined, [], narratorPriority);
+      expect(results[0].narrator).toBe('Kevin R. Free');
+    });
+
+    it('narrator-match with 29 MB/hr does NOT beat non-match — below quality floor', () => {
+      const lowMatch = makeResult({ narrator: 'Kevin R. Free', size: sizeForMbhr(29), matchScore: 0.9 });
+      const goodNoMatch = makeResult({ narrator: 'Someone Else', size: sizeForMbhr(200), matchScore: 0.9 });
+      const { results } = filterAndRankResults([lowMatch, goodNoMatch], BOOK_DURATION, 0, 1, 'none', undefined, undefined, [], narratorPriority);
+      expect(results[0].narrator).toBe('Someone Else');
+    });
+
+    it('narrator-match with exactly 30 MB/hr beats non-match — meets Low tier floor', () => {
+      const lowMatch = makeResult({ narrator: 'Kevin R. Free', size: sizeForMbhr(30), matchScore: 0.9 });
+      const goodNoMatch = makeResult({ narrator: 'Someone Else', size: sizeForMbhr(200), matchScore: 0.9 });
+      const { results } = filterAndRankResults([goodNoMatch, lowMatch], BOOK_DURATION, 0, 1, 'none', undefined, undefined, [], narratorPriority);
+      expect(results[0].narrator).toBe('Kevin R. Free');
+    });
+
+    it('two narrator-matched results sorted by quality (higher quality wins)', () => {
+      const fairMatch = makeResult({ narrator: 'Kevin R. Free', size: sizeForMbhr(79), matchScore: 0.9, title: 'A' });
+      const goodMatch = makeResult({ narrator: 'Kevin R. Free', size: sizeForMbhr(200), matchScore: 0.9, title: 'B' });
+      const { results } = filterAndRankResults([fairMatch, goodMatch], BOOK_DURATION, 0, 1, 'none', undefined, undefined, [], narratorPriority);
+      expect(results[0].title).toBe('B');
+    });
+
+    it('two non-matched results sorted by quality as today (no change)', () => {
+      const fair = makeResult({ narrator: 'Someone', size: sizeForMbhr(79), matchScore: 0.9, title: 'A' });
+      const good = makeResult({ narrator: 'Other', size: sizeForMbhr(200), matchScore: 0.9, title: 'B' });
+      const { results } = filterAndRankResults([fair, good], BOOK_DURATION, 0, 1, 'none', undefined, undefined, [], narratorPriority);
+      expect(results[0].title).toBe('B');
+    });
+
+    it('unknown quality narrator-match beats known Good quality non-match', () => {
+      // No size = unknown quality, should still be eligible for narrator boost
+      const unknownMatch = makeResult({ narrator: 'Kevin R. Free', size: undefined, matchScore: 0.9, title: 'Match' });
+      const goodNoMatch = makeResult({ narrator: 'Someone Else', size: sizeForMbhr(200), matchScore: 0.9, title: 'NoMatch' });
+      // Duration unknown path
+      const { results } = filterAndRankResults([goodNoMatch, unknownMatch], undefined, 0, 1, 'none', undefined, undefined, [], narratorPriority);
+      expect(results[0].title).toBe('Match');
+    });
+
+    it('match-score gate: score delta > 0.1 overrides narrator tier', () => {
+      const lowScoreMatch = makeResult({ narrator: 'Kevin R. Free', size: sizeForMbhr(200), matchScore: 0.6 });
+      const highScoreNoMatch = makeResult({ narrator: 'Someone Else', size: sizeForMbhr(200), matchScore: 0.8 });
+      const { results } = filterAndRankResults([lowScoreMatch, highScoreNoMatch], BOOK_DURATION, 0, 1, 'none', undefined, undefined, [], narratorPriority);
+      expect(results[0].narrator).toBe('Someone Else');
+    });
   });
 
   describe('narratorPriority parameter behavior', () => {
-    it.todo('omitting narratorPriority preserves exact current ranking (regression)');
-    it.todo('empty bookNarrators array disables narrator tier');
-    it.todo('undefined SearchResult.narrator treated as non-match (no crash)');
+    it('omitting narratorPriority preserves exact current ranking (regression)', () => {
+      const fair = makeResult({ narrator: 'Kevin R. Free', size: sizeForMbhr(79), matchScore: 0.9, title: 'Fair' });
+      const good = makeResult({ narrator: 'Someone Else', size: sizeForMbhr(200), matchScore: 0.9, title: 'Good' });
+      // No narratorPriority param — should rank by quality
+      const { results } = filterAndRankResults([fair, good], BOOK_DURATION, 0, 1, 'none');
+      expect(results[0].title).toBe('Good');
+    });
+
+    it('empty bookNarrators array disables narrator tier', () => {
+      const fair = makeResult({ narrator: 'Kevin R. Free', size: sizeForMbhr(79), matchScore: 0.9, title: 'Fair' });
+      const good = makeResult({ narrator: 'Someone Else', size: sizeForMbhr(200), matchScore: 0.9, title: 'Good' });
+      const { results } = filterAndRankResults([fair, good], BOOK_DURATION, 0, 1, 'none', undefined, undefined, [], { bookNarrators: [] });
+      expect(results[0].title).toBe('Good');
+    });
+
+    it('undefined SearchResult.narrator treated as non-match (no crash)', () => {
+      const noNarrator = makeResult({ size: sizeForMbhr(200), matchScore: 0.9, title: 'NoNarr' });
+      const withNarrator = makeResult({ narrator: 'Kevin R. Free', size: sizeForMbhr(79), matchScore: 0.9, title: 'WithNarr' });
+      const { results } = filterAndRankResults([noNarrator, withNarrator], BOOK_DURATION, 0, 1, 'none', undefined, undefined, [], narratorPriority);
+      expect(results[0].title).toBe('WithNarr');
+    });
   });
 
   describe('fuzzy narrator matching in scoring', () => {
-    it.todo('normalized names match via diceCoefficient >= 0.8');
-    it.todo('different person similar name below 0.8 threshold is not boosted');
-    it.todo('multi-value result narrator tokenized before matching');
-    it.todo('multi-narrator book uses max pairwise score');
+    it('normalized names match via diceCoefficient >= 0.8', () => {
+      // "Kevin R. Free" normalizes to "kevin r free" — exact match after normalization
+      const match = makeResult({ narrator: 'Kevin R Free', size: sizeForMbhr(79), matchScore: 0.9 });
+      const noMatch = makeResult({ narrator: 'Someone Else', size: sizeForMbhr(200), matchScore: 0.9 });
+      const { results } = filterAndRankResults([noMatch, match], BOOK_DURATION, 0, 1, 'none', undefined, undefined, [], { bookNarrators: ['Kevin R. Free'] });
+      expect(results[0].narrator).toBe('Kevin R Free');
+    });
+
+    it('different person similar name below 0.8 threshold is not boosted', () => {
+      const falseMatch = makeResult({ narrator: 'Mark Kramer', size: sizeForMbhr(79), matchScore: 0.9, title: 'False' });
+      const good = makeResult({ narrator: 'Someone Else', size: sizeForMbhr(200), matchScore: 0.9, title: 'Good' });
+      const { results } = filterAndRankResults([falseMatch, good], BOOK_DURATION, 0, 1, 'none', undefined, undefined, [], { bookNarrators: ['Michael Kramer'] });
+      expect(results[0].title).toBe('Good');
+    });
+
+    it('multi-value result narrator tokenized before matching', () => {
+      const multiNarr = makeResult({ narrator: 'Travis Baldree, Jeff Hays', size: sizeForMbhr(79), matchScore: 0.9 });
+      const good = makeResult({ narrator: 'Someone Else', size: sizeForMbhr(200), matchScore: 0.9 });
+      const { results } = filterAndRankResults([good, multiNarr], BOOK_DURATION, 0, 1, 'none', undefined, undefined, [], { bookNarrators: ['Travis Baldree'] });
+      expect(results[0].narrator).toBe('Travis Baldree, Jeff Hays');
+    });
+
+    it('multi-narrator book uses max pairwise score', () => {
+      const match = makeResult({ narrator: 'Kate Reading', size: sizeForMbhr(79), matchScore: 0.9 });
+      const noMatch = makeResult({ narrator: 'Someone Else', size: sizeForMbhr(200), matchScore: 0.9 });
+      const { results } = filterAndRankResults([noMatch, match], BOOK_DURATION, 0, 1, 'none', undefined, undefined, [], { bookNarrators: ['Michael Kramer', 'Kate Reading'] });
+      expect(results[0].narrator).toBe('Kate Reading');
+    });
   });
 
   describe('fallback behavior', () => {
-    it.todo('priority accuracy with zero narrator matches falls back to quality ranking');
-    it.todo('priority accuracy with no book narrators falls back to quality ranking');
-  });
-});
+    it('priority accuracy with zero narrator matches falls back to quality ranking', () => {
+      const fair = makeResult({ narrator: 'Nobody Match', size: sizeForMbhr(79), matchScore: 0.9, title: 'Fair' });
+      const good = makeResult({ narrator: 'Also Nobody', size: sizeForMbhr(200), matchScore: 0.9, title: 'Good' });
+      const { results } = filterAndRankResults([fair, good], BOOK_DURATION, 0, 1, 'none', undefined, undefined, [], { bookNarrators: ['Specific Narrator'] });
+      expect(results[0].title).toBe('Good');
+    });
 
-describe('searchAndGrabForBook — narrator priority threading', () => {
-  it.todo('passes narratorPriority to filterAndRankResults when provided');
-  it.todo('does not pass narratorPriority when not provided');
+    it('priority accuracy with no book narrators falls back to quality ranking', () => {
+      const fair = makeResult({ narrator: 'Kevin R. Free', size: sizeForMbhr(79), matchScore: 0.9, title: 'Fair' });
+      const good = makeResult({ narrator: 'Someone', size: sizeForMbhr(200), matchScore: 0.9, title: 'Good' });
+      const { results } = filterAndRankResults([fair, good], BOOK_DURATION, 0, 1, 'none', undefined, undefined, [], { bookNarrators: [] });
+      expect(results[0].title).toBe('Good');
+    });
+  });
 });
