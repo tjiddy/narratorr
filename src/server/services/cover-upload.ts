@@ -66,17 +66,10 @@ export async function uploadBookCover(
   }
 
   // Update DB immediately after irreversible filesystem step
-  try {
-    await db.update(books).set({
-      coverUrl: `/api/books/${bookId}/cover`,
-      updatedAt: new Date(),
-    }).where(eq(books.id, bookId));
-  } catch (error: unknown) {
-    // DB update failed after cover file written — cover exists but URL not updated.
-    // This is acceptable: the file is on disk and will be served on next request.
-    // Re-throw so the caller knows the operation didn't fully complete.
-    throw error;
-  }
+  await db.update(books).set({
+    coverUrl: `/api/books/${bookId}/cover`,
+    updatedAt: new Date(),
+  }).where(eq(books.id, bookId));
 
   log.info({ bookId, path: finalPath }, 'Custom cover uploaded');
 }
