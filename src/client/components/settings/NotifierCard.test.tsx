@@ -33,7 +33,7 @@ describe('NotifierCard — view mode', () => {
     );
 
     expect(screen.getByText('My Webhook')).toBeInTheDocument();
-    expect(screen.getByText(/Webhook — https:\/\/example\.com\/hook/)).toBeInTheDocument();
+    expect(screen.getByText(/Webhook — example\.com/)).toBeInTheDocument();
   });
 
   it('displays event labels', () => {
@@ -140,7 +140,7 @@ describe('NotifierCard — view mode', () => {
       />,
     );
 
-    expect(screen.getByText(/Discord — \.\.\.123\/abc/)).toBeInTheDocument();
+    expect(screen.getByText(/Discord — Discord/)).toBeInTheDocument();
   });
 });
 

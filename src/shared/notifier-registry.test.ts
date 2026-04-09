@@ -60,4 +60,70 @@ describe('NOTIFIER_REGISTRY', () => {
       }
     });
   });
+
+  describe('viewSubtitle', () => {
+    it('discord returns static "Discord" for valid webhook URL', () => {
+      expect(NOTIFIER_REGISTRY.discord.viewSubtitle({ webhookUrl: 'https://discord.com/api/webhooks/123/abc' })).toBe('Discord');
+    });
+
+    it('discord returns "Discord" for empty webhookUrl', () => {
+      expect(NOTIFIER_REGISTRY.discord.viewSubtitle({ webhookUrl: '' })).toBe('Discord');
+    });
+
+    it('slack returns static "Slack" for valid webhook URL', () => {
+      expect(NOTIFIER_REGISTRY.slack.viewSubtitle({ webhookUrl: 'https://hooks.slack.com/T00/B00/XXX' })).toBe('Slack');
+    });
+
+    it('slack returns "Slack" for empty webhookUrl', () => {
+      expect(NOTIFIER_REGISTRY.slack.viewSubtitle({ webhookUrl: '' })).toBe('Slack');
+    });
+
+    it('webhook returns hostname for valid URL', () => {
+      expect(NOTIFIER_REGISTRY.webhook.viewSubtitle({ url: 'https://example.com/hook' })).toBe('example.com');
+    });
+
+    it('webhook returns hostname (IP) for URL with port', () => {
+      expect(NOTIFIER_REGISTRY.webhook.viewSubtitle({ url: 'http://192.168.1.1:8080/hook' })).toBe('192.168.1.1');
+    });
+
+    it('webhook returns "Webhook" for empty URL', () => {
+      expect(NOTIFIER_REGISTRY.webhook.viewSubtitle({ url: '' })).toBe('Webhook');
+    });
+
+    it('webhook returns "Webhook" for invalid URL', () => {
+      expect(NOTIFIER_REGISTRY.webhook.viewSubtitle({ url: 'not-a-url' })).toBe('Webhook');
+    });
+
+    it('gotify returns hostname for valid URL', () => {
+      expect(NOTIFIER_REGISTRY.gotify.viewSubtitle({ gotifyUrl: 'https://gotify.local:8080', gotifyToken: '' })).toBe('gotify.local');
+    });
+
+    it('gotify returns "Gotify" for empty URL', () => {
+      expect(NOTIFIER_REGISTRY.gotify.viewSubtitle({ gotifyUrl: '' })).toBe('Gotify');
+    });
+
+    it('gotify returns "Gotify" for invalid URL', () => {
+      expect(NOTIFIER_REGISTRY.gotify.viewSubtitle({ gotifyUrl: 'bad' })).toBe('Gotify');
+    });
+
+    it('email returns toAddress unchanged', () => {
+      expect(NOTIFIER_REGISTRY.email.viewSubtitle({ toAddress: 'a@b.com' })).toBe('a@b.com');
+    });
+
+    it('telegram returns "Chat <id>" format', () => {
+      expect(NOTIFIER_REGISTRY.telegram.viewSubtitle({ chatId: '123' })).toBe('Chat 123');
+    });
+
+    it('pushover returns static "pushover"', () => {
+      expect(NOTIFIER_REGISTRY.pushover.viewSubtitle({})).toBe('pushover');
+    });
+
+    it('ntfy returns topic name', () => {
+      expect(NOTIFIER_REGISTRY.ntfy.viewSubtitle({ ntfyTopic: 'alerts' })).toBe('alerts');
+    });
+
+    it('script returns path unchanged', () => {
+      expect(NOTIFIER_REGISTRY.script.viewSubtitle({ path: '/usr/local/bin/notify.sh' })).toBe('/usr/local/bin/notify.sh');
+    });
+  });
 });
