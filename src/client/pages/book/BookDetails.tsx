@@ -48,7 +48,7 @@ export function BookDetails({ libraryBook, metadataBook }: {
   const tabs = ['details', 'history'] as const;
 
   const merged = mergeBookData(libraryBook, metadataBook);
-  const { renameMutation, mergeMutation, cancelMergeMutation, retagMutation, deleteMutation, monitorMutation, wrongReleaseMutation, uploadCoverMutation, ffmpegConfigured, isSaving, handleSave } =
+  const { renameMutation, mergeMutation, cancelMergeMutation, retagMutation, refreshScanMutation, deleteMutation, monitorMutation, wrongReleaseMutation, uploadCoverMutation, ffmpegConfigured, isSaving, handleSave } =
     useBookActions(libraryBook.id, libraryBook.monitorForUpgrades);
 
   const showWrongRelease = canShowWrongRelease(libraryBook);
@@ -102,6 +102,7 @@ export function BookDetails({ libraryBook, metadataBook }: {
   const mergeProgress = useMergeProgress(libraryBook.id);
   const canMerge = libraryBook.status === 'imported' &&
     (libraryBook.topLevelAudioFileCount ?? 0) >= 2;
+  const showRefreshScan = libraryBook.status === 'imported' && !!libraryBook.path;
 
   function handleTabKeyDown(e: React.KeyboardEvent<HTMLButtonElement>) {
     const nextIndex = getArrowTabIndex(e.key, tabs.indexOf(tab), tabs.length);
@@ -135,6 +136,9 @@ export function BookDetails({ libraryBook, metadataBook }: {
         isRetagging={retagMutation.isPending}
         retagDisabled={!ffmpegConfigured}
         retagTooltip={!ffmpegConfigured ? 'Requires ffmpeg — configure in Settings > Post Processing' : undefined}
+        onRefreshScanClick={() => refreshScanMutation.mutate()}
+        isRefreshingScanning={refreshScanMutation.isPending}
+        showRefreshScan={showRefreshScan}
         onMergeClick={() => setConfirmMergeOpen(true)}
         isMerging={mergeMutation.isPending || !!mergeProgress}
         mergePhase={mergeProgress?.phase}

@@ -25,6 +25,9 @@ interface BookHeroProps {
   isRetagging: boolean;
   retagDisabled: boolean;
   retagTooltip?: string;
+  onRefreshScanClick?: () => void;
+  isRefreshingScanning?: boolean;
+  showRefreshScan?: boolean;
   onMergeClick: () => void;
   isMerging: boolean;
   mergePhase?: string;
@@ -59,6 +62,7 @@ export function BookHero({
   coverUrl, updatedAt, metaDots, statusLabel, statusDotClass,
   hasPath, onBackClick, onSearchClick, onEditClick, onRenameClick, isRenaming,
   onRetagClick, isRetagging, retagDisabled, retagTooltip,
+  onRefreshScanClick, isRefreshingScanning, showRefreshScan,
   onMergeClick, isMerging, mergePhase, canMerge, mergeDisabled, mergeTooltip,
   onRemoveClick, isRemoving,
   showWrongRelease, onWrongReleaseClick, isWrongReleasing,
@@ -278,6 +282,12 @@ export function BookHero({
                     <button role="menuitem" type="button" onClick={() => handleMenuAction(onRetagClick)} disabled={isRetagging || retagDisabled} title={retagDisabled ? retagTooltip : undefined} className="flex items-center gap-2.5 w-full px-3 py-2.5 text-xs text-left text-muted-foreground hover:bg-muted/50 hover:text-foreground transition-colors disabled:opacity-50 disabled:pointer-events-none focus:bg-muted/50 focus-ring">
                       <TagIcon className={`w-3.5 h-3.5 ${isRetagging ? 'animate-spin' : ''}`} />
                       {isRetagging ? 'Re-tagging...' : 'Re-tag files'}
+                    </button>
+                  )}
+                  {showRefreshScan && onRefreshScanClick && (
+                    <button role="menuitem" type="button" onClick={() => handleMenuAction(onRefreshScanClick)} disabled={isRefreshingScanning} className="flex items-center gap-2.5 w-full px-3 py-2.5 text-xs text-left text-muted-foreground hover:bg-muted/50 hover:text-foreground transition-colors disabled:opacity-50 disabled:pointer-events-none focus:bg-muted/50 focus-ring">
+                      <RefreshIcon className={`w-3.5 h-3.5 ${isRefreshingScanning ? 'animate-spin' : ''}`} />
+                      {isRefreshingScanning ? 'Scanning...' : 'Refresh & Scan'}
                     </button>
                   )}
                   {hasPath && canMerge && (
