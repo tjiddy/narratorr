@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { buildSearchQuery, filterAndRankResults, filterBlacklistedResults, searchAndGrabForBook } from './search-pipeline.js';
+import { buildSearchQuery, buildNarratorPriority, filterAndRankResults, filterBlacklistedResults, searchAndGrabForBook } from './search-pipeline.js';
 import type { IndexerService } from './indexer.service.js';
 import type { DownloadOrchestrator } from './download-orchestrator.js';
 import type { BlacklistService } from './blacklist.service.js';
@@ -1279,5 +1279,33 @@ describe('filterAndRankResults — narrator priority', () => {
       const { results } = filterAndRankResults([fair, good], BOOK_DURATION, 0, 1, 'none', undefined, undefined, [], { bookNarrators: [] });
       expect(results[0].title).toBe('Good');
     });
+  });
+});
+
+describe('buildNarratorPriority', () => {
+  it('returns NarratorPriority when searchPriority is accuracy and book has narrators', () => {
+    const result = buildNarratorPriority('accuracy', [{ name: 'Kevin R. Free' }]);
+    expect(result).toEqual({ bookNarrators: ['Kevin R. Free'] });
+  });
+
+  it('returns undefined when searchPriority is quality', () => {
+    expect(buildNarratorPriority('quality', [{ name: 'Kevin R. Free' }])).toBeUndefined();
+  });
+
+  it('returns undefined when book has no narrators (undefined)', () => {
+    expect(buildNarratorPriority('accuracy', undefined)).toBeUndefined();
+  });
+
+  it('returns undefined when book has no narrators (null)', () => {
+    expect(buildNarratorPriority('accuracy', null)).toBeUndefined();
+  });
+
+  it('returns undefined when book has empty narrators array', () => {
+    expect(buildNarratorPriority('accuracy', [])).toBeUndefined();
+  });
+
+  it('extracts names from narrator entities', () => {
+    const result = buildNarratorPriority('accuracy', [{ name: 'Michael Kramer' }, { name: 'Kate Reading' }]);
+    expect(result).toEqual({ bookNarrators: ['Michael Kramer', 'Kate Reading'] });
   });
 });

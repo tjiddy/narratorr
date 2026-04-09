@@ -1155,3 +1155,47 @@ describe('#392 searchAllWanted broadcaster wiring', () => {
     expect(broadcaster.emit).toHaveBeenCalledWith('search_started', expect.objectContaining({ book_id: 1 }));
   });
 });
+
+describe('runSearchJob — narrator priority wiring (#439)', () => {
+  it('fetches search settings and passes narratorPriority when searchPriority is accuracy', async () => {
+    const testLog = createMockLogger();
+    const wantedBooks = [
+      { id: 1, title: 'Book One', authors: [{ name: 'Author' }], narrators: [{ name: 'Kevin R. Free' }] },
+    ];
+    const settings = createMockSettingsService({
+      search: { enabled: true, intervalMinutes: 60, searchPriority: 'accuracy' },
+    });
+    const bookList = createMockBookListService(wantedBooks);
+    const indexer = createMockIndexerService([{
+      title: 'Book One', protocol: 'torrent', indexer: 'test', seeders: 10,
+      size: 500 * 1024 * 1024, downloadUrl: 'magnet:?xt=urn:btih:aaa', narrator: 'Kevin R. Free',
+    }]);
+    const download = createMockDownloadOrchestrator();
+
+    await runSearchJob(settings, bookList, indexer, download, inject<FastifyBaseLogger>(testLog), createMockBlacklistService());
+
+    expect(settings.get).toHaveBeenCalledWith('search');
+    expect(download.grab).toHaveBeenCalled();
+  });
+
+  it('does not pass narratorPriority when searchPriority is quality (default)', async () => {
+    const testLog = createMockLogger();
+    const wantedBooks = [
+      { id: 1, title: 'Book One', authors: [{ name: 'Author' }], narrators: [{ name: 'Kevin R. Free' }] },
+    ];
+    const settings = createMockSettingsService({
+      search: { enabled: true, intervalMinutes: 60, searchPriority: 'quality' },
+    });
+    const bookList = createMockBookListService(wantedBooks);
+    const indexer = createMockIndexerService([{
+      title: 'Book One', protocol: 'torrent', indexer: 'test', seeders: 10,
+      size: 500 * 1024 * 1024, downloadUrl: 'magnet:?xt=urn:btih:aaa',
+    }]);
+    const download = createMockDownloadOrchestrator();
+
+    await runSearchJob(settings, bookList, indexer, download, inject<FastifyBaseLogger>(testLog), createMockBlacklistService());
+
+    expect(settings.get).toHaveBeenCalledWith('search');
+    expect(download.grab).toHaveBeenCalled();
+  });
+});
