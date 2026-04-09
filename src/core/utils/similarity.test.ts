@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { diceCoefficient, scoreResult } from './similarity.js';
+import { diceCoefficient, scoreResult, tokenizeNarrators, normalizeNarrator } from './similarity.js';
 
 describe('diceCoefficient', () => {
   it('returns 1.0 for identical strings', () => {
@@ -115,21 +115,64 @@ describe('scoreResult', () => {
 });
 
 describe('tokenizeNarrators', () => {
-  it.todo('splits on comma delimiter');
-  it.todo('splits on semicolon delimiter');
-  it.todo('splits on ampersand delimiter');
-  it.todo('drops empty tokens from consecutive delimiters');
-  it.todo('drops whitespace-only tokens');
-  it.todo('returns single token when no delimiter');
-  it.todo('returns empty array for empty string');
+  it('splits on comma delimiter', () => {
+    expect(tokenizeNarrators('Travis Baldree, Jeff Hays')).toEqual(['Travis Baldree', 'Jeff Hays']);
+  });
+
+  it('splits on semicolon delimiter', () => {
+    expect(tokenizeNarrators('Travis Baldree; Jeff Hays')).toEqual(['Travis Baldree', 'Jeff Hays']);
+  });
+
+  it('splits on ampersand delimiter', () => {
+    expect(tokenizeNarrators('Travis Baldree & Jeff Hays')).toEqual(['Travis Baldree', 'Jeff Hays']);
+  });
+
+  it('drops empty tokens from consecutive delimiters', () => {
+    expect(tokenizeNarrators('Travis Baldree,, Jeff Hays')).toEqual(['Travis Baldree', 'Jeff Hays']);
+  });
+
+  it('drops whitespace-only tokens', () => {
+    expect(tokenizeNarrators('A, , B')).toEqual(['A', 'B']);
+  });
+
+  it('returns single token when no delimiter', () => {
+    expect(tokenizeNarrators('Single Narrator')).toEqual(['Single Narrator']);
+  });
+
+  it('returns empty array for empty string', () => {
+    expect(tokenizeNarrators('')).toEqual([]);
+  });
 });
 
 describe('normalizeNarrator', () => {
-  it.todo('strips periods and lowercases');
-  it.todo('lowercases without stripping when no punctuation');
-  it.todo('trims and collapses whitespace');
-  it.todo('strips apostrophes');
-  it.todo('returns empty string for empty input');
-  it.todo('returns single character unchanged except lowercase');
-  it.todo('does NOT strip commas, semicolons, or ampersands');
+  it('strips periods and lowercases', () => {
+    expect(normalizeNarrator('Kevin R. Free')).toBe('kevin r free');
+  });
+
+  it('lowercases without stripping when no punctuation', () => {
+    expect(normalizeNarrator('Kevin R Free')).toBe('kevin r free');
+  });
+
+  it('trims and collapses whitespace', () => {
+    expect(normalizeNarrator('  John   Smith  ')).toBe('john smith');
+  });
+
+  it('strips apostrophes', () => {
+    expect(normalizeNarrator("O'Brien")).toBe('obrien');
+  });
+
+  it('returns empty string for empty input', () => {
+    expect(normalizeNarrator('')).toBe('');
+  });
+
+  it('returns single character unchanged except lowercase', () => {
+    expect(normalizeNarrator('A')).toBe('a');
+  });
+
+  it('does NOT strip commas, semicolons, or ampersands', () => {
+    // These are delimiters handled by tokenizeNarrators, not normalization
+    expect(normalizeNarrator('a,b')).toBe('a,b');
+    expect(normalizeNarrator('a;b')).toBe('a;b');
+    expect(normalizeNarrator('a&b')).toBe('a&b');
+  });
 });
