@@ -23,6 +23,9 @@ const SERIES_MARKER_REGEX = /,\s*(?:book|vol(?:ume)?)\s+\d+\s*$/i;
  */
 const NARRATOR_PAREN_REGEX = /\s*\((?!(?:19|20)\d{2}\))(\S+(?:\s+\S+){0,2})\)\s*$/;
 
+/** Matches an Audible ASIN in brackets: B0 + 8 alphanumeric chars (case-insensitive). Non-global. */
+const ASIN_REGEX = /\[B0[A-Z0-9]{8}\]/i;
+
 // ─── Trace Types ────────────────────────────────────────────────────
 
 export interface CleanNameStep {
@@ -178,45 +181,72 @@ export function cleanNameWithTrace(name: string): CleanNameTraceResult {
   return { input: name, steps, result };
 }
 
+// ─── ASIN Extraction ────────────────────────────────────────────────
+
+/**
+ * Extracts an Audible ASIN from bracket notation in a folder name.
+ * Returns the uppercase-normalized ASIN and the cleaned input (bracket stripped).
+ * Only the first match is extracted if multiple ASIN-like brackets exist.
+ */
+export function extractASIN(input: string): { asin: string | undefined; cleaned: string } {
+  const match = input.match(ASIN_REGEX);
+  if (!match) {
+    return { asin: undefined, cleaned: input };
+  }
+  // Strip the bracket, normalize ASIN to uppercase (remove surrounding brackets)
+  const asin = match[0].slice(1, -1).toUpperCase();
+  const cleaned = input.replace(match[0], '').replace(/\s{2,}/g, ' ').trim();
+  return { asin, cleaned };
+}
+
 // ─── Folder Structure Parsing ───────────────────────────────────────
 
 function parseSingleFolder(folder: string): {
   title: string;
   author: string | null;
   series: string | null;
+  asin?: string;
 } {
+  // Extract ASIN bracket before any other pattern matching
+  const { asin, cleaned } = extractASIN(folder);
+  // Use cleaned input for pattern matching; fall back to original if cleaned is empty
+  const input = cleaned || folder;
+
   // Pattern: "Series – NN – Title" or "Series - NN - Title"
-  const seriesNumberMatch = folder.match(SERIES_NUMBER_TITLE_REGEX);
+  const seriesNumberMatch = input.match(SERIES_NUMBER_TITLE_REGEX);
   if (seriesNumberMatch) {
     return {
       title: cleanName(seriesNumberMatch[2]),
       author: null,
       series: cleanName(seriesNumberMatch[1]),
+      asin,
     };
   }
 
   // Pattern: "Author - Title" (skip if left side is just a number like "01 - Title")
-  const dashMatch = folder.match(/^(.+?)\s*-\s*(.+)$/);
+  const dashMatch = input.match(/^(.+?)\s*-\s*(.+)$/);
   if (dashMatch && !/^\d+$/.test(dashMatch[1].trim())) {
     return {
       title: cleanName(dashMatch[2]),
       author: cleanName(dashMatch[1]),
       series: null,
+      asin,
     };
   }
 
   // Pattern: "Title (Author)" or "Title [Author]"
-  const parenMatch = folder.match(/^(.+?)\s*[([](.+?)[)\]]$/);
+  const parenMatch = input.match(/^(.+?)\s*[([](.+?)[)\]]$/);
   if (parenMatch) {
     return {
       title: cleanName(parenMatch[1]),
       author: cleanName(parenMatch[2]),
       series: null,
+      asin,
     };
   }
 
   // Pattern: "Title by Author" (word-boundary, not inside words like "Standby")
-  const byMatch = folder.match(/^(.+?)\bby\b(.+)$/i);
+  const byMatch = input.match(/^(.+?)\bby\b(.+)$/i);
   if (byMatch) {
     const left = byMatch[1].trim();
     const right = byMatch[2].trim();
@@ -226,15 +256,17 @@ function parseSingleFolder(folder: string): {
         title: cleanName(left),
         author: cleanName(right),
         series: null,
+        asin,
       };
     }
   }
 
-  // Just a title
+  // Just a title — use original folder if cleaned was empty (ASIN-only input)
   return {
-    title: cleanName(folder),
+    title: cleaned ? cleanName(input) : cleanName(folder),
     author: null,
     series: null,
+    asin,
   };
 }
 
@@ -254,6 +286,7 @@ export function parseFolderStructure(parts: string[]): {
   title: string;
   author: string | null;
   series: string | null;
+  asin?: string;
 } {
   if (parts.length === 0) {
     return { title: 'Unknown', author: null, series: null };
@@ -266,27 +299,34 @@ export function parseFolderStructure(parts: string[]): {
   }
 
   // Two folders: Author/Title (or Author/Series – NN – Title)
+  // Extract ASIN from the title segment (2-part branch bypasses parseSingleFolder)
   if (parts.length === 2) {
-    const seriesMatch = parts[1].match(SERIES_NUMBER_TITLE_REGEX);
+    const { asin, cleaned: titleSegment } = extractASIN(parts[1]);
+    const seriesMatch = titleSegment.match(SERIES_NUMBER_TITLE_REGEX);
     if (seriesMatch) {
       return {
         title: cleanName(seriesMatch[2]),
         author: cleanName(parts[0]),
         series: cleanName(seriesMatch[1]),
+        asin,
       };
     }
     return {
-      title: cleanName(parts[1]),
+      title: cleanName(titleSegment),
       author: cleanName(parts[0]),
       series: null,
+      asin,
     };
   }
 
   // Three or more folders: Author/Series/Title (take first, second-to-last, last)
+  // Extract ASIN from the title segment (last part)
+  const { asin, cleaned: titleSegment } = extractASIN(parts[parts.length - 1]);
   return {
-    title: cleanName(parts[parts.length - 1]),
+    title: cleanName(titleSegment),
     author: cleanName(parts[0]),
     series: cleanName(parts[parts.length - 2]),
+    asin,
   };
 }
 
@@ -299,6 +339,7 @@ export function parseFolderStructureRaw(parts: string[]): {
   title: string;
   author: string | null;
   series: string | null;
+  asin?: string;
 } {
   if (parts.length === 0) {
     return { title: 'Unknown', author: null, series: null };
@@ -309,17 +350,20 @@ export function parseFolderStructureRaw(parts: string[]): {
   }
 
   if (parts.length === 2) {
-    const seriesMatch = parts[1].match(SERIES_NUMBER_TITLE_REGEX);
+    const { asin, cleaned: titleSegment } = extractASIN(parts[1]);
+    const seriesMatch = titleSegment.match(SERIES_NUMBER_TITLE_REGEX);
     if (seriesMatch) {
-      return { title: seriesMatch[2], author: parts[0], series: seriesMatch[1] };
+      return { title: seriesMatch[2], author: parts[0], series: seriesMatch[1], asin };
     }
-    return { title: parts[1], author: parts[0], series: null };
+    return { title: titleSegment, author: parts[0], series: null, asin };
   }
 
+  const { asin, cleaned: titleSegment } = extractASIN(parts[parts.length - 1]);
   return {
-    title: parts[parts.length - 1],
+    title: titleSegment,
     author: parts[0],
     series: parts[parts.length - 2],
+    asin,
   };
 }
 
@@ -327,32 +371,36 @@ function parseSingleFolderRaw(folder: string): {
   title: string;
   author: string | null;
   series: string | null;
+  asin?: string;
 } {
-  const seriesNumberMatch = folder.match(SERIES_NUMBER_TITLE_REGEX);
+  const { asin, cleaned } = extractASIN(folder);
+  const input = cleaned || folder;
+
+  const seriesNumberMatch = input.match(SERIES_NUMBER_TITLE_REGEX);
   if (seriesNumberMatch) {
-    return { title: seriesNumberMatch[2], author: null, series: seriesNumberMatch[1] };
+    return { title: seriesNumberMatch[2], author: null, series: seriesNumberMatch[1], asin };
   }
 
-  const dashMatch = folder.match(/^(.+?)\s*-\s*(.+)$/);
+  const dashMatch = input.match(/^(.+?)\s*-\s*(.+)$/);
   if (dashMatch && !/^\d+$/.test(dashMatch[1].trim())) {
-    return { title: dashMatch[2], author: dashMatch[1], series: null };
+    return { title: dashMatch[2], author: dashMatch[1], series: null, asin };
   }
 
-  const parenMatch = folder.match(/^(.+?)\s*[([](.+?)[)\]]$/);
+  const parenMatch = input.match(/^(.+?)\s*[([](.+?)[)\]]$/);
   if (parenMatch) {
-    return { title: parenMatch[1], author: parenMatch[2], series: null };
+    return { title: parenMatch[1], author: parenMatch[2], series: null, asin };
   }
 
-  const byMatch = folder.match(/^(.+?)\bby\b(.+)$/i);
+  const byMatch = input.match(/^(.+?)\bby\b(.+)$/i);
   if (byMatch) {
     const left = byMatch[1].trim();
     const right = byMatch[2].trim();
     if (right && !/^\d+$/.test(left)) {
-      return { title: left, author: right, series: null };
+      return { title: left, author: right, series: null, asin };
     }
   }
 
-  return { title: folder, author: null, series: null };
+  return { title: cleaned ? input : folder, author: null, series: null, asin };
 }
 
 /**

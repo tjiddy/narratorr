@@ -5,6 +5,7 @@ import {
   cleanName,
   cleanNameWithTrace,
   extractYear,
+  extractASIN,
   normalizeFolderName,
 } from './folder-parsing.js';
 
@@ -356,30 +357,130 @@ describe('folder-parsing (extracted from library-scan.service)', () => {
   });
 
   describe('ASIN detection (issue #454)', () => {
+    describe('extractASIN helper', () => {
+      it('extracts ASIN and returns cleaned string', () => {
+        const result = extractASIN('Title [B0D18DYG5C]');
+        expect(result).toEqual({ asin: 'B0D18DYG5C', cleaned: 'Title' });
+      });
+
+      it('normalizes lowercase ASIN to uppercase', () => {
+        const result = extractASIN('Title [b0d18dyg5c]');
+        expect(result).toEqual({ asin: 'B0D18DYG5C', cleaned: 'Title' });
+      });
+
+      it('returns undefined asin when no match', () => {
+        const result = extractASIN('Title [Author Name]');
+        expect(result).toEqual({ asin: undefined, cleaned: 'Title [Author Name]' });
+      });
+    });
+
     describe('positive cases', () => {
-      it.todo('detects ASIN in "Title [B0D18DYG5C]" and does not treat as author');
-      it.todo('detects ASIN with mixed alpha/numeric chars "Title [B0ABCDEF12]"');
-      it.todo('normalizes lowercase ASIN to uppercase: "Title [b0d18dyg5c]" → asin: B0D18DYG5C');
-      it.todo('extracts ASIN in 1-part path via parseFolderStructure');
-      it.todo('extracts ASIN in 2-part path (exercises 2-part branch that bypasses parseSingleFolder)');
-      it.todo('extracts ASIN in 3+-part path');
-      it.todo('parseFolderStructureRaw returns ASIN in raw output with ASIN-stripped title');
+      it('detects ASIN in "Title [B0D18DYG5C]" and does not treat as author', () => {
+        const result = parseFolderStructure(['Title [B0D18DYG5C]']);
+        expect(result.title).toBe('Title');
+        expect(result.author).toBeNull();
+        expect(result.asin).toBe('B0D18DYG5C');
+      });
+
+      it('detects ASIN with mixed alpha/numeric chars', () => {
+        const result = parseFolderStructure(['Title [B0ABCDEF12]']);
+        expect(result.asin).toBe('B0ABCDEF12');
+        expect(result.title).toBe('Title');
+      });
+
+      it('normalizes lowercase ASIN to uppercase', () => {
+        const result = parseFolderStructure(['Title [b0d18dyg5c]']);
+        expect(result.asin).toBe('B0D18DYG5C');
+      });
+
+      it('extracts ASIN in 1-part path via parseFolderStructure', () => {
+        const result = parseFolderStructure(['Title [B0D18DYG5C]']);
+        expect(result.asin).toBe('B0D18DYG5C');
+        expect(result.title).toBe('Title');
+        expect(result.author).toBeNull();
+      });
+
+      it('extracts ASIN in 2-part path (exercises 2-part branch)', () => {
+        const result = parseFolderStructure(['Author', 'Title [B0D18DYG5C]']);
+        expect(result.asin).toBe('B0D18DYG5C');
+        expect(result.title).toBe('Title');
+        expect(result.author).toBe('Author');
+      });
+
+      it('extracts ASIN in 3+-part path', () => {
+        const result = parseFolderStructure(['Author', 'Series', 'Title [B0D18DYG5C]']);
+        expect(result.asin).toBe('B0D18DYG5C');
+        expect(result.title).toBe('Title');
+        expect(result.author).toBe('Author');
+        expect(result.series).toBe('Series');
+      });
+
+      it('parseFolderStructureRaw returns ASIN in raw output with ASIN-stripped title', () => {
+        const result = parseFolderStructureRaw(['Title MP3 [B0D18DYG5C]']);
+        expect(result.asin).toBe('B0D18DYG5C');
+        // Raw title is ASIN-stripped but NOT cleaned (MP3 remains)
+        expect(result.title).toBe('Title MP3');
+      });
     });
 
     describe('negative cases (no false positives)', () => {
-      it.todo('does not match [Author Name] — author parsed normally');
-      it.todo('does not match [2017] — year parsed normally');
-      it.todo('does not match [B0SHORT] — too few chars after B0');
-      it.todo('does not match [NOTASIN1234] — does not start with B0');
-      it.todo('does not match [B0TOOLONG123] — too many chars after B0');
+      it('does not match [Author Name] — author parsed normally', () => {
+        const result = parseFolderStructure(['Dune [Frank Herbert]']);
+        expect(result.asin).toBeUndefined();
+        expect(result.author).toBe('Frank Herbert');
+        expect(result.title).toBe('Dune');
+      });
+
+      it('does not match [2017] — year parsed normally', () => {
+        const result = parseFolderStructure(['Title [2017]']);
+        expect(result.asin).toBeUndefined();
+      });
+
+      it('does not match [B0SHORT] — too few chars after B0', () => {
+        const result = parseFolderStructure(['Title [B0SHORT]']);
+        expect(result.asin).toBeUndefined();
+      });
+
+      it('does not match [NOTASIN1234] — does not start with B0', () => {
+        const result = parseFolderStructure(['Title [NOTASIN1234]']);
+        expect(result.asin).toBeUndefined();
+      });
+
+      it('does not match [B0TOOLONG123] — too many chars after B0', () => {
+        const result = parseFolderStructure(['Title [B0TOOLONG123]']);
+        expect(result.asin).toBeUndefined();
+      });
     });
 
     describe('boundary values and edge cases', () => {
-      it.todo('folder name is ONLY the ASIN bracket — title falls back to original input');
-      it.todo('ASIN in middle position — "Title [B0D18DYG5C] Extra" — extracts ASIN, parses remainder');
-      it.todo('ASIN stripped before author-title split: "Author - Title [B0D18DYG5C]"');
-      it.todo('multiple ASIN-like brackets — only first match extracted');
-      it.todo('extractYear not affected by ASIN brackets');
+      it('folder name is ONLY the ASIN bracket — title falls back to original input', () => {
+        const result = parseFolderStructure(['[B0D18DYG5C]']);
+        expect(result.asin).toBe('B0D18DYG5C');
+        // When stripped result is empty, should fall back
+        expect(result.title).toBe('[B0D18DYG5C]');
+      });
+
+      it('ASIN in middle position — extracts ASIN, parses remainder', () => {
+        const result = parseFolderStructure(['Title [B0D18DYG5C] Extra']);
+        expect(result.asin).toBe('B0D18DYG5C');
+        expect(result.title).toBe('Title Extra');
+      });
+
+      it('ASIN stripped before author-title split', () => {
+        const result = parseFolderStructure(['Author - Title [B0D18DYG5C]']);
+        expect(result.asin).toBe('B0D18DYG5C');
+        expect(result.title).toBe('Title');
+        expect(result.author).toBe('Author');
+      });
+
+      it('multiple ASIN-like brackets — only first match extracted', () => {
+        const result = parseFolderStructure(['Title [B0AAAAAAAA] [B0BBBBBBBB]']);
+        expect(result.asin).toBe('B0AAAAAAAA');
+      });
+
+      it('extractYear not affected by ASIN brackets', () => {
+        expect(extractYear('Title [B0D18DYG5C]')).toBeUndefined();
+      });
     });
   });
 
