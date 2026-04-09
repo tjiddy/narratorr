@@ -1,5 +1,34 @@
 # Workflow Log
 
+## #438 Reject words not filtering manual search results — 2026-04-09
+**Skill path:** /elaborate → /respond-to-spec-review (x2) → /implement → /claim → /plan → /handoff
+**Outcome:** success — PR #441
+
+### Metrics
+- Files changed: 1 | Tests added/modified: 9
+- Quality gate runs: 2 (pass on attempt 1 both times)
+- Fix iterations: 0
+- Context compactions: 0
+
+### Workflow experience
+- What went smoothly: Once the spec was correctly scoped (test-only issue), implementation was straightforward — single test file, clear patterns to follow from search.test.ts
+- Friction / issues encountered: Spec required 3 rounds of review before approval — original bug report was stale (behavior already implemented), needed to reframe as test coverage gap. Module-level vi.mock in search-stream.test.ts forced creation of separate test file.
+
+### Token efficiency
+- Highest-token actions: Spec review rounds (3 cycles of elaborate → review-spec → respond) consumed the most context
+- Avoidable waste: The initial elaboration could have detected the "behavior already exists" issue earlier by reading the SSE route source before writing the spec
+- Suggestions: For bug-type issues, always verify the bug actually exists on main before elaborating the spec
+
+### Infrastructure gaps
+- Repeated workarounds: None
+- Missing tooling / config: None
+- Unresolved debt: search-stream.test.ts module-level vi.mock prevents integration testing in the same file (logged to debt.md)
+
+### Wish I'd Known
+1. The reject word filtering was already wired end-to-end on the SSE path — reading `search-stream.ts:89` first would have saved 2 spec review rounds
+2. Module-level `vi.mock` in Vitest cannot be selectively unmocked per describe block — separate files are the only clean option
+3. For test-only issues where production code exists, tests pass immediately — the red/green TDD convention doesn't apply
+
 ## #434 Use ffprobe for audio duration instead of music-metadata — 2026-04-08
 **Skill path:** /implement → /claim → /plan → /handoff
 **Outcome:** success — PR #440
