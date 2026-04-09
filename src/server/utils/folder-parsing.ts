@@ -301,7 +301,8 @@ export function parseFolderStructure(parts: string[]): {
   // Two folders: Author/Title (or Author/Series – NN – Title)
   // Extract ASIN from the title segment (2-part branch bypasses parseSingleFolder)
   if (parts.length === 2) {
-    const { asin, cleaned: titleSegment } = extractASIN(parts[1]);
+    const { asin, cleaned } = extractASIN(parts[1]);
+    const titleSegment = cleaned || parts[1];
     const seriesMatch = titleSegment.match(SERIES_NUMBER_TITLE_REGEX);
     if (seriesMatch) {
       return {
@@ -321,7 +322,8 @@ export function parseFolderStructure(parts: string[]): {
 
   // Three or more folders: Author/Series/Title (take first, second-to-last, last)
   // Extract ASIN from the title segment (last part)
-  const { asin, cleaned: titleSegment } = extractASIN(parts[parts.length - 1]);
+  const { asin, cleaned } = extractASIN(parts[parts.length - 1]);
+  const titleSegment = cleaned || parts[parts.length - 1];
   return {
     title: cleanName(titleSegment),
     author: cleanName(parts[0]),
@@ -350,7 +352,8 @@ export function parseFolderStructureRaw(parts: string[]): {
   }
 
   if (parts.length === 2) {
-    const { asin, cleaned: titleSegment } = extractASIN(parts[1]);
+    const { asin, cleaned } = extractASIN(parts[1]);
+    const titleSegment = cleaned || parts[1];
     const seriesMatch = titleSegment.match(SERIES_NUMBER_TITLE_REGEX);
     if (seriesMatch) {
       return { title: seriesMatch[2], author: parts[0], series: seriesMatch[1], asin };
@@ -358,7 +361,8 @@ export function parseFolderStructureRaw(parts: string[]): {
     return { title: titleSegment, author: parts[0], series: null, asin };
   }
 
-  const { asin, cleaned: titleSegment } = extractASIN(parts[parts.length - 1]);
+  const { asin, cleaned } = extractASIN(parts[parts.length - 1]);
+  const titleSegment = cleaned || parts[parts.length - 1];
   return {
     title: titleSegment,
     author: parts[0],

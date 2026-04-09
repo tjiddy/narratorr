@@ -478,6 +478,27 @@ describe('folder-parsing (extracted from library-scan.service)', () => {
         expect(result.asin).toBe('B0AAAAAAAA');
       });
 
+      it('ASIN-only segment in 2-part path — title falls back to original segment', () => {
+        const result = parseFolderStructure(['Author', '[B0D18DYG5C]']);
+        expect(result.asin).toBe('B0D18DYG5C');
+        expect(result.title).toBe('[B0D18DYG5C]');
+        expect(result.author).toBe('Author');
+      });
+
+      it('ASIN-only segment in 3+-part path — title falls back to original segment', () => {
+        const result = parseFolderStructure(['Author', 'Series', '[B0D18DYG5C]']);
+        expect(result.asin).toBe('B0D18DYG5C');
+        expect(result.title).toBe('[B0D18DYG5C]');
+        expect(result.author).toBe('Author');
+        expect(result.series).toBe('Series');
+      });
+
+      it('ASIN-only segment in 2-part raw path — title falls back to original', () => {
+        const result = parseFolderStructureRaw(['Author', '[B0D18DYG5C]']);
+        expect(result.asin).toBe('B0D18DYG5C');
+        expect(result.title).toBe('[B0D18DYG5C]');
+      });
+
       it('extractYear not affected by ASIN brackets', () => {
         expect(extractYear('Title [B0D18DYG5C]')).toBeUndefined();
       });
