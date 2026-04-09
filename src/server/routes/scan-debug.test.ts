@@ -152,7 +152,7 @@ describe('POST /api/library/scan-debug', () => {
       expect(body.parsing.pattern).toBe('1-part');
     });
 
-    it('reports 3-part pattern for three-segment path', async () => {
+    it('reports 3+-part pattern for three-segment path', async () => {
       const res = await app.inject({
         method: 'POST',
         url: '/api/library/scan-debug',
@@ -160,10 +160,21 @@ describe('POST /api/library/scan-debug', () => {
       });
 
       const body = JSON.parse(res.payload);
-      expect(body.parsing.pattern).toBe('3-part');
+      expect(body.parsing.pattern).toBe('3+-part');
       expect(body.parsing.raw.author).toBe('Author');
       expect(body.parsing.raw.title).toBe('Title');
       expect(body.parsing.raw.series).toBe('Series');
+    });
+
+    it('reports 3+-part pattern for four-segment path (same parser branch)', async () => {
+      const res = await app.inject({
+        method: 'POST',
+        url: '/api/library/scan-debug',
+        payload: { folderName: 'Author/SubDir/Series/Title' },
+      });
+
+      const body = JSON.parse(res.payload);
+      expect(body.parsing.pattern).toBe('3+-part');
     });
 
     it('extracts author/title from "Author - Title" single segment', async () => {
@@ -213,7 +224,7 @@ describe('POST /api/library/scan-debug', () => {
       ]);
     });
 
-    it('shows transformation for segment with codec tag', async () => {
+    it('shows transformation for segment with codec tag starting from raw input', async () => {
       const res = await app.inject({
         method: 'POST',
         url: '/api/library/scan-debug',
@@ -221,7 +232,9 @@ describe('POST /api/library/scan-debug', () => {
       });
 
       const body = JSON.parse(res.payload);
-      // normalize step should strip "MP3"
+      // Cleaning trace must start from the raw segment, not the already-cleaned parser output
+      expect(body.cleaning.title.input).toBe('Title MP3');
+      // normalize step is the transition that strips "MP3"
       const normalizeStep = body.cleaning.title.steps.find((s: { name: string }) => s.name === 'normalize');
       expect(normalizeStep.output).toBe('Title');
       expect(body.cleaning.title.result).toBe('Title');
@@ -435,6 +448,28 @@ describe('POST /api/library/scan-debug', () => {
       expect(res.statusCode).toBe(400);
       const body = JSON.parse(res.payload);
       expect(body.partialTrace).toBeUndefined();
+    });
+
+    it('returns 500 when duplicate check fails (not 502 metadata error)', async () => {
+      (services.metadata.searchBooks as ReturnType<typeof vi.fn>).mockResolvedValue([]);
+      (services.book.findDuplicate as ReturnType<typeof vi.fn>)
+        .mockRejectedValue(new Error('DB connection lost'));
+
+      const res = await app.inject({
+        method: 'POST',
+        url: '/api/library/scan-debug',
+        payload: { folderName: 'Author/Title' },
+      });
+
+      expect(res.statusCode).toBe(500);
+      const body = JSON.parse(res.payload);
+      expect(body.error).toBe('Internal Server Error');
+      expect(body.message).toContain('Duplicate check failed');
+      expect(body.message).toContain('DB connection lost');
+      // Partial trace should include completed search/match but null duplicate
+      expect(body.partialTrace.search).not.toBeNull();
+      expect(body.partialTrace.match).not.toBeNull();
+      expect(body.partialTrace.duplicate).toBeNull();
     });
   });
 });

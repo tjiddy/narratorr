@@ -6,7 +6,7 @@ import type { MatchJobService } from '../services/match-job.service.js';
 import type { BookService } from '../services/book.service.js';
 import type { MetadataService } from '../services/metadata.service.js';
 import { getErrorMessage } from '../utils/error-message.js';
-import { parseFolderStructure, cleanNameWithTrace } from '../utils/folder-parsing.js';
+import { parseFolderStructure, parseFolderStructureRaw, cleanNameWithTrace } from '../utils/folder-parsing.js';
 import { searchWithSwapRetryTrace } from '../utils/search-helpers.js';
 import { type z } from 'zod';
 import {
@@ -202,21 +202,37 @@ export async function libraryScanRoutes(
       request.log.info({ folderName }, 'Scan debug trace requested');
 
       const { parts, parsed, pattern, cleaning, cleanedTitle, cleanedAuthor } = buildParsingTrace(folderName);
+      const partialTrace = { input: folderName, parts, parsing: { pattern, raw: parsed }, cleaning, search: null, match: null, duplicate: null };
 
+      // Search step — 502 on metadata provider failure
+      let searchResult;
       try {
-        const { search, match, duplicate } = await buildSearchTrace(
-          cleanedTitle, cleanedAuthor, metadataService, bookService, request.log,
-        );
-        return { input: folderName, parts, parsing: { pattern, raw: parsed }, cleaning, search, match, duplicate };
+        searchResult = await runSearchTrace(cleanedTitle, cleanedAuthor, metadataService, request.log);
       } catch (error: unknown) {
         request.log.error(error, 'Scan debug metadata search failed');
         return reply.status(502).send({
-          statusCode: 502,
-          error: 'Bad Gateway',
+          statusCode: 502, error: 'Bad Gateway',
           message: `Metadata search provider failed: ${getErrorMessage(error, 'unknown error')}`,
-          partialTrace: { input: folderName, parts, parsing: { pattern, raw: parsed }, cleaning, search: null, match: null, duplicate: null },
+          partialTrace,
         });
       }
+
+      // Duplicate check — 500 on database failure (not a provider issue)
+      let duplicate: ScanDebugTrace['duplicate'];
+      try {
+        const authorList = cleanedAuthor ? [{ name: cleanedAuthor }] : undefined;
+        const existing = await bookService.findDuplicate(cleanedTitle, authorList);
+        duplicate = { isDuplicate: existing !== null, existingBookId: existing?.id ?? null, reason: existing ? 'library-match' : null };
+      } catch (error: unknown) {
+        request.log.error(error, 'Scan debug duplicate check failed');
+        return reply.status(500).send({
+          statusCode: 500, error: 'Internal Server Error',
+          message: `Duplicate check failed: ${getErrorMessage(error, 'unknown error')}`,
+          partialTrace: { ...partialTrace, search: searchResult.search, match: searchResult.match },
+        });
+      }
+
+      return { input: folderName, parts, parsing: { pattern, raw: parsed }, cleaning, ...searchResult, duplicate };
     },
   );
 }
@@ -226,10 +242,12 @@ export async function libraryScanRoutes(
 function buildParsingTrace(folderName: string) {
   const parts = folderName.split(/[/\\]/).filter(Boolean);
   const parsed = parseFolderStructure(parts);
-  const pattern = parts.length <= 1 ? '1-part' : parts.length === 2 ? '2-part' : `${parts.length}-part`;
+  const raw = parseFolderStructureRaw(parts);
+  const pattern = parts.length <= 1 ? '1-part' : parts.length === 2 ? '2-part' : '3+-part';
 
+  // Trace cleaning from raw (pre-cleanName) values so each step shows real transformations
   const cleaning: Record<string, ReturnType<typeof cleanNameWithTrace>> = {};
-  for (const [key, value] of Object.entries(parsed) as [string, string | null][]) {
+  for (const [key, value] of Object.entries(raw) as [string, string | null][]) {
     if (value) cleaning[key] = cleanNameWithTrace(value);
   }
 
@@ -239,11 +257,10 @@ function buildParsingTrace(folderName: string) {
   return { parts, parsed, pattern, cleaning, cleanedTitle, cleanedAuthor };
 }
 
-async function buildSearchTrace(
+async function runSearchTrace(
   cleanedTitle: string,
   cleanedAuthor: string | undefined,
   metadataService: MetadataService,
-  bookService: BookService,
   log: FastifyBaseLogger,
 ) {
   const searchResult = await searchWithSwapRetryTrace({
@@ -265,13 +282,5 @@ async function buildSearchTrace(
     ? { status: 'matched', selected: toSearchResultItem(searchResult.results[0]) }
     : { status: 'no match', selected: null };
 
-  const authorList = cleanedAuthor ? [{ name: cleanedAuthor }] : undefined;
-  const existing = await bookService.findDuplicate(cleanedTitle, authorList);
-  const duplicate: ScanDebugTrace['duplicate'] = {
-    isDuplicate: existing !== null,
-    existingBookId: existing?.id ?? null,
-    reason: existing ? 'library-match' : null,
-  };
-
-  return { search, match, duplicate };
+  return { search, match };
 }

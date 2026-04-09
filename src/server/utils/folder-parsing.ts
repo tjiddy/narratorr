@@ -291,6 +291,71 @@ export function parseFolderStructure(parts: string[]): {
 }
 
 /**
+ * Like parseFolderStructure, but returns the raw (pre-cleanName) values.
+ * Used by the scan-debug endpoint to build cleaning traces from the actual
+ * raw segments rather than the already-cleaned parser output.
+ */
+export function parseFolderStructureRaw(parts: string[]): {
+  title: string;
+  author: string | null;
+  series: string | null;
+} {
+  if (parts.length === 0) {
+    return { title: 'Unknown', author: null, series: null };
+  }
+
+  if (parts.length === 1) {
+    return parseSingleFolderRaw(parts[0]);
+  }
+
+  if (parts.length === 2) {
+    const seriesMatch = parts[1].match(SERIES_NUMBER_TITLE_REGEX);
+    if (seriesMatch) {
+      return { title: seriesMatch[2], author: parts[0], series: seriesMatch[1] };
+    }
+    return { title: parts[1], author: parts[0], series: null };
+  }
+
+  return {
+    title: parts[parts.length - 1],
+    author: parts[0],
+    series: parts[parts.length - 2],
+  };
+}
+
+function parseSingleFolderRaw(folder: string): {
+  title: string;
+  author: string | null;
+  series: string | null;
+} {
+  const seriesNumberMatch = folder.match(SERIES_NUMBER_TITLE_REGEX);
+  if (seriesNumberMatch) {
+    return { title: seriesNumberMatch[2], author: null, series: seriesNumberMatch[1] };
+  }
+
+  const dashMatch = folder.match(/^(.+?)\s*-\s*(.+)$/);
+  if (dashMatch && !/^\d+$/.test(dashMatch[1].trim())) {
+    return { title: dashMatch[2], author: dashMatch[1], series: null };
+  }
+
+  const parenMatch = folder.match(/^(.+?)\s*[([](.+?)[)\]]$/);
+  if (parenMatch) {
+    return { title: parenMatch[1], author: parenMatch[2], series: null };
+  }
+
+  const byMatch = folder.match(/^(.+?)\bby\b(.+)$/i);
+  if (byMatch) {
+    const left = byMatch[1].trim();
+    const right = byMatch[2].trim();
+    if (right && !/^\d+$/.test(left)) {
+      return { title: left, author: right, series: null };
+    }
+  }
+
+  return { title: folder, author: null, series: null };
+}
+
+/**
  * Extracts a 4-digit year (1900–2099) from a folder name string.
  * Checks parenthesized, bracketed, and bare trailing years.
  */
