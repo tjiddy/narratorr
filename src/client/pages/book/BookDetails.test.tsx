@@ -49,6 +49,7 @@ vi.mock('@/lib/api', async (importOriginal) => {
       markBookAsWrongRelease: vi.fn(),
       deleteBook: vi.fn(),
       uploadBookCover: vi.fn(),
+      refreshScanBook: vi.fn(),
       getSettings: vi.fn(),
     },
   };
@@ -1684,6 +1685,55 @@ describe('#257 merge observability — BookDetails progress', () => {
 
         expect(screen.queryByAltText('Cover preview')).not.toBeInTheDocument();
         expect(screen.queryByLabelText('Confirm cover')).not.toBeInTheDocument();
+      });
+    });
+  });
+
+  describe('Refresh & Scan wiring', () => {
+    it('shows Refresh & Scan menu item for imported book with path', async () => {
+      const user = userEvent.setup();
+      renderBookDetails({ status: 'imported', path: '/lib/book' });
+      await openOverflowMenu(user);
+      expect(screen.getByRole('menuitem', { name: 'Refresh & Scan' })).toBeInTheDocument();
+    });
+
+    it('hides Refresh & Scan for non-imported book even with path', async () => {
+      const user = userEvent.setup();
+      renderBookDetails({ status: 'wanted', path: '/lib/book' });
+      await openOverflowMenu(user);
+      expect(screen.queryByRole('menuitem', { name: 'Refresh & Scan' })).not.toBeInTheDocument();
+    });
+
+    it('hides Refresh & Scan when book has no path', async () => {
+      const user = userEvent.setup();
+      renderBookDetails({ status: 'imported', path: null });
+      await openOverflowMenu(user);
+      expect(screen.queryByRole('menuitem', { name: 'Refresh & Scan' })).not.toBeInTheDocument();
+    });
+
+    it('fires refreshScanMutation on menu item click', async () => {
+      const user = userEvent.setup();
+      (api.refreshScanBook as Mock).mockResolvedValue({
+        bookId: 1, codec: 'mp3', bitrate: 128000, fileCount: 1, durationMinutes: 60, narratorsUpdated: false,
+      });
+      renderBookDetails({ status: 'imported', path: '/lib/book' });
+      await openOverflowMenu(user);
+      await user.click(screen.getByRole('menuitem', { name: 'Refresh & Scan' }));
+      await waitFor(() => {
+        expect(api.refreshScanBook).toHaveBeenCalled();
+      });
+    });
+
+    it('shows success toast after successful refresh scan', async () => {
+      const user = userEvent.setup();
+      (api.refreshScanBook as Mock).mockResolvedValue({
+        bookId: 1, codec: 'mp3', bitrate: 128000, fileCount: 1, durationMinutes: 60, narratorsUpdated: false,
+      });
+      renderBookDetails({ status: 'imported', path: '/lib/book' });
+      await openOverflowMenu(user);
+      await user.click(screen.getByRole('menuitem', { name: 'Refresh & Scan' }));
+      await waitFor(() => {
+        expect(toast.success).toHaveBeenCalledWith('Refreshed audio metadata');
       });
     });
   });

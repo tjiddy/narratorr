@@ -46,6 +46,7 @@ type BooksListQuery = z.infer<typeof booksListQuerySchema>;
 type IdParam = z.infer<typeof idParamSchema>;
 
 import { AUDIO_EXTENSIONS } from '../../core/utils/audio-constants.js';
+import { refreshScanBook } from '../services/refresh-scan.service.js';
 
 /** Fire-and-forget: search indexers and grab the best result for a newly added book. */
 function triggerImmediateSearch(
@@ -295,6 +296,17 @@ export async function booksRoutes(app: FastifyInstance, deps: BookRouteDeps) {
       const { id } = request.params;
       const result = await taggingService.retagBook(id);
       request.log.info({ id, tagged: result.tagged, skipped: result.skipped, failed: result.failed }, 'Book re-tagged');
+      return result;
+    },
+  );
+
+  // POST /api/books/:id/refresh-scan
+  app.post<{ Params: IdParam }>(
+    '/api/books/:id/refresh-scan',
+    { schema: { params: idParamSchema } },
+    async (request) => {
+      const { id } = request.params;
+      const result = await refreshScanBook(id, deps.bookService, deps.settingsService, request.log);
       return result;
     },
   );

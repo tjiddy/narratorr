@@ -142,6 +142,15 @@ export interface RetagResult {
   warnings: string[];
 }
 
+export interface RefreshScanResult {
+  bookId: number;
+  codec: string;
+  bitrate: number;
+  fileCount: number;
+  durationMinutes: number;
+  narratorsUpdated: boolean;
+}
+
 export interface MergeResult {
   bookId: number;
   outputFile: string;
@@ -230,6 +239,8 @@ export const booksApi = {
     fetchApi<RenameResult>(`/books/${id}/rename`, { method: 'POST' }),
   retagBook: (id: number) =>
     fetchApi<RetagResult>(`/books/${id}/retag`, { method: 'POST' }),
+  refreshScanBook: (id: number) =>
+    fetchApi<RefreshScanResult>(`/books/${id}/refresh-scan`, { method: 'POST' }),
   searchBook: (id: number) =>
     fetchApi<SingleBookSearchResult>(`/books/${id}/search`, { method: 'POST' }),
   mergeBookToM4b: (id: number) =>

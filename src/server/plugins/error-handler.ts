@@ -11,6 +11,7 @@ import { ScanInProgressError, LibraryPathError } from '../services/library-scan.
 import { DownloadError, DuplicateDownloadError } from '../services/download.service.js';
 import { TaskRegistryError } from '../services/task-registry.js';
 import { BookRejectionError } from '../services/book-rejection.service.js';
+import { RefreshScanError } from '../services/refresh-scan.service.js';
 
 // ---------------------------------------------------------------------------
 // Error → HTTP status registry
@@ -37,6 +38,7 @@ const ERROR_REGISTRY = new Map<new (...args: any[]) => Error, ErrorEntry>([
   [DuplicateDownloadError, { type: 'coded', codes: { ACTIVE_DOWNLOAD_EXISTS: 409, PIPELINE_ACTIVE: 409 } }],
   [TaskRegistryError, { type: 'coded', codes: { NOT_FOUND: 404, ALREADY_RUNNING: 409 } }],
   [BookRejectionError, { type: 'coded', codes: { NOT_FOUND: 404, NOT_IMPORTED: 400, NO_IDENTIFIERS: 400 } }],
+  [RefreshScanError, { type: 'coded', codes: { NOT_FOUND: 404, NO_PATH: 400, PATH_MISSING: 400, NO_AUDIO_FILES: 400 } }],
 ]);
 
 /** Maps typed error codes to HTTP status codes. */
