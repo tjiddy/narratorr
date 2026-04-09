@@ -122,7 +122,7 @@ export function BookHero({
         <div className="shrink-0 mx-auto sm:mx-0 animate-fade-in-up stagger-1">
           <div className="relative w-44 sm:w-48 lg:w-56 aspect-square rounded-2xl overflow-hidden shadow-card-hover ring-1 ring-white/[0.08] group">
             {previewUrl ? (
-              <img src={previewUrl} alt="Cover preview" className="w-full h-full object-cover" />
+              <img src={previewUrl} alt="Cover preview" className="w-full h-full object-cover animate-fade-in" />
             ) : coverUrl ? (
               <img src={resolveCoverUrl(coverUrl, updatedAt)} alt={`Cover of ${title}`} className="w-full h-full object-cover transition-transform duration-500 group-hover:scale-105" loading="lazy" />
             ) : (
@@ -134,34 +134,43 @@ export function BookHero({
 
             {/* Cover upload overlay — confirm/cancel when preview active, upload button on hover otherwise */}
             {previewUrl && onCoverConfirm && onCoverCancel ? (
-              <div className="absolute inset-0 flex items-end justify-center gap-3 pb-3 bg-gradient-to-t from-black/60 to-transparent">
-                <button
-                  type="button"
-                  aria-label="Confirm cover"
-                  disabled={isUploadingCover}
-                  onClick={onCoverConfirm}
-                  className="flex items-center justify-center w-10 h-10 rounded-full bg-green-500/90 text-white hover:bg-green-500 transition-colors shadow-lg disabled:opacity-50"
-                >
-                  <CheckIcon className="w-5 h-5" />
-                </button>
-                <button
-                  type="button"
-                  aria-label="Cancel cover"
-                  disabled={isUploadingCover}
-                  onClick={onCoverCancel}
-                  className="flex items-center justify-center w-10 h-10 rounded-full bg-red-500/90 text-white hover:bg-red-500 transition-colors shadow-lg disabled:opacity-50"
-                >
-                  <XIcon className="w-5 h-5" />
-                </button>
+              <div className="absolute inset-0 flex flex-col items-center justify-end bg-gradient-to-t from-black/70 via-black/20 to-transparent animate-fade-in">
+                {isUploadingCover && (
+                  <div className="absolute inset-0 flex items-center justify-center">
+                    <RefreshIcon className="w-8 h-8 text-white animate-spin drop-shadow-lg" />
+                  </div>
+                )}
+                <div className="flex items-center gap-2.5 pb-3">
+                  <button
+                    type="button"
+                    aria-label="Confirm cover"
+                    disabled={isUploadingCover}
+                    onClick={onCoverConfirm}
+                    className="flex items-center justify-center w-9 h-9 rounded-xl bg-primary/90 text-primary-foreground hover:bg-primary transition-all duration-200 shadow-glow hover:shadow-glow-lg disabled:opacity-40 disabled:pointer-events-none backdrop-blur-sm"
+                  >
+                    <CheckIcon className="w-4.5 h-4.5" />
+                  </button>
+                  <button
+                    type="button"
+                    aria-label="Cancel cover"
+                    disabled={isUploadingCover}
+                    onClick={onCoverCancel}
+                    className="flex items-center justify-center w-9 h-9 rounded-xl bg-card/60 text-muted-foreground hover:text-foreground hover:bg-card/80 transition-all duration-200 shadow-lg disabled:opacity-40 disabled:pointer-events-none backdrop-blur-sm border border-border/30"
+                  >
+                    <XIcon className="w-4.5 h-4.5" />
+                  </button>
+                </div>
               </div>
             ) : hasPath && onCoverFileSelect && (
               <button
                 type="button"
                 aria-label="Upload cover"
                 onClick={() => fileInputRef.current?.click()}
-                className="absolute inset-0 flex items-center justify-center bg-black/0 hover:bg-black/40 transition-colors opacity-0 group-hover:opacity-100 cursor-pointer"
+                className="absolute inset-0 flex items-center justify-center bg-black/0 hover:bg-black/40 transition-all duration-300 opacity-0 group-hover:opacity-100 cursor-pointer"
               >
-                <UploadIcon className="w-8 h-8 text-white drop-shadow-lg" />
+                <div className="flex items-center justify-center w-11 h-11 rounded-2xl bg-card/60 backdrop-blur-sm border border-border/30 shadow-lg transition-transform duration-300 group-hover:scale-100 scale-90">
+                  <UploadIcon className="w-5 h-5 text-foreground" />
+                </div>
               </button>
             )}
           </div>
