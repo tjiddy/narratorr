@@ -86,6 +86,13 @@ describe('QualityGateService', () => {
     });
   });
 
+  describe('getCompletedDownloadById', () => {
+    it.todo('returns { download, book } for a completed download with matching ID and associated book+narrators');
+    it.todo('returns { download, book: null } when the download has no associated book');
+    it.todo('returns null when no download exists with the given ID');
+    it.todo('returns null when download exists but status is not completed');
+  });
+
   describe('processDownload — quality comparison', () => {
     it('auto-imports when download MB/hr is strictly greater than existing', async () => {
       const { service, db } = createService();
