@@ -730,6 +730,54 @@ describe('runUpgradeSearchJob', () => {
     );
     expect(result.grabbed).toBe(1);
   });
+
+  // #439 — upgrade search honors searchPriority
+  it('accuracy mode grabs narrator-matched upgrade over higher-quality non-match upgrade', async () => {
+    // Existing: 100 MB/hr (100MB over 3600s). Both candidates are upgrades.
+    const book = makeMonitoredBook({ narrators: [{ name: 'Kevin R. Free' }] });
+    const settings = createMockSettingsService({ search: { enabled: true, intervalMinutes: 60, searchPriority: 'accuracy' } });
+    const books = createMockBookService([book]);
+    const narratorUpgrade: SearchResult = {
+      title: 'Narrator Match', protocol: 'torrent', indexer: 'test', seeders: 10,
+      size: 200 * 1024 * 1024, downloadUrl: 'magnet:?xt=urn:btih:narrator', narrator: 'Kevin R. Free', matchScore: 0.9,
+    };
+    const qualityUpgrade: SearchResult = {
+      title: 'Higher Quality', protocol: 'torrent', indexer: 'test', seeders: 10,
+      size: 400 * 1024 * 1024, downloadUrl: 'magnet:?xt=urn:btih:quality', narrator: 'Someone Else', matchScore: 0.9,
+    };
+    const indexer = createMockIndexerService([qualityUpgrade, narratorUpgrade]);
+    const download = createMockDownloadOrchestrator();
+
+    const result = await runUpgradeSearchJob(settings, books, indexer, download, inject<FastifyBaseLogger>(log));
+
+    expect(result.grabbed).toBe(1);
+    expect(download.grab).toHaveBeenCalledWith(
+      expect.objectContaining({ downloadUrl: 'magnet:?xt=urn:btih:narrator' }),
+    );
+  });
+
+  it('quality mode grabs higher-quality upgrade over narrator-matched upgrade', async () => {
+    const book = makeMonitoredBook({ narrators: [{ name: 'Kevin R. Free' }] });
+    const settings = createMockSettingsService({ search: { enabled: true, intervalMinutes: 60, searchPriority: 'quality' } });
+    const books = createMockBookService([book]);
+    const narratorUpgrade: SearchResult = {
+      title: 'Narrator Match', protocol: 'torrent', indexer: 'test', seeders: 10,
+      size: 200 * 1024 * 1024, downloadUrl: 'magnet:?xt=urn:btih:narrator', narrator: 'Kevin R. Free', matchScore: 0.9,
+    };
+    const qualityUpgrade: SearchResult = {
+      title: 'Higher Quality', protocol: 'torrent', indexer: 'test', seeders: 10,
+      size: 400 * 1024 * 1024, downloadUrl: 'magnet:?xt=urn:btih:quality', narrator: 'Someone Else', matchScore: 0.9,
+    };
+    const indexer = createMockIndexerService([narratorUpgrade, qualityUpgrade]);
+    const download = createMockDownloadOrchestrator();
+
+    const result = await runUpgradeSearchJob(settings, books, indexer, download, inject<FastifyBaseLogger>(log));
+
+    expect(result.grabbed).toBe(1);
+    expect(download.grab).toHaveBeenCalledWith(
+      expect.objectContaining({ downloadUrl: 'magnet:?xt=urn:btih:quality' }),
+    );
+  });
 });
 
 describe('searchAllWanted', () => {
