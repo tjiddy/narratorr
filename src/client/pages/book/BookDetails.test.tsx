@@ -1592,5 +1592,44 @@ describe('#257 merge observability — BookDetails progress', () => {
         expect(screen.queryByAltText('Cover preview')).not.toBeInTheDocument();
       });
     });
+
+    describe('paste wiring', () => {
+      function dispatchImagePaste() {
+        const file = new File([new ArrayBuffer(1024)], 'pasted.png', { type: 'image/png' });
+        const item = {
+          kind: 'file',
+          type: 'image/png',
+          getAsFile: () => file,
+          getAsString: vi.fn(),
+          webkitGetAsEntry: vi.fn(),
+        } as unknown as DataTransferItem;
+
+        const event = new Event('paste', { bubbles: true }) as ClipboardEvent;
+        Object.defineProperty(event, 'clipboardData', {
+          value: { items: [item] as unknown as DataTransferItemList },
+        });
+        document.dispatchEvent(event);
+      }
+
+      it('pasting an image on the page shows preview when book has a path', async () => {
+        renderBookDetails({ path: '/library/book', status: 'imported' });
+
+        dispatchImagePaste();
+
+        await waitFor(() => {
+          expect(screen.getByAltText('Cover preview')).toBeInTheDocument();
+          expect(screen.getByLabelText('Confirm cover')).toBeInTheDocument();
+        });
+      });
+
+      it('pasting an image does nothing when book has no path', () => {
+        renderBookDetails({ path: null, status: 'wanted' });
+
+        dispatchImagePaste();
+
+        expect(screen.queryByAltText('Cover preview')).not.toBeInTheDocument();
+        expect(screen.queryByLabelText('Confirm cover')).not.toBeInTheDocument();
+      });
+    });
   });
 });
