@@ -2,7 +2,8 @@ import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { createMockDb, createMockLogger, inject, mockDbChain } from '../__tests__/helpers.js';
 import { createMockDbBook, createMockDbAuthor } from '../__tests__/factories.js';
 import { BookService } from './book.service.js';
-import { books, bookAuthors } from '../../db/schema.js';
+import { eq } from 'drizzle-orm';
+import { authors, books, bookAuthors } from '../../db/schema.js';
 import type { FastifyBaseLogger } from 'fastify';
 import type { Db, DbOrTx } from '../../db/index.js';
 import type { MetadataService } from './metadata.service.js';
@@ -1201,10 +1202,15 @@ describe('BookService — transaction atomicity (#214)', () => {
 
       await service.syncAuthors(inject<DbOrTx>(tx), 10, [{ name: 'Brandon Sanderson', asin: 'B001IGFHW6' }]);
 
+      // Assert update targets the correct author row
       expect(tx.update).toHaveBeenCalledTimes(1);
       const updateChain = tx.update.mock.results[0].value;
       expect(updateChain.set).toHaveBeenCalledWith({ asin: 'B001IGFHW6' });
-      expect(updateChain.where).toHaveBeenCalled();
+      expect(updateChain.where).toHaveBeenCalledWith(eq(authors.id, 5));
+
+      // Assert junction insert uses the existing author ID (not a new one)
+      const junctionChain = tx.insert.mock.results[0].value;
+      expect(junctionChain.values).toHaveBeenCalledWith({ bookId: 10, authorId: 5, position: 0 });
     });
 
     it('does not overwrite existing non-null ASIN (first-write-wins)', async () => {
@@ -1257,9 +1263,47 @@ describe('BookService — transaction atomicity (#214)', () => {
 
       await service.syncAuthors(inject<DbOrTx>(tx), 10, [{ name: 'Brandon Sanderson', asin: 'B001IGFHW6' }]);
 
+      // Assert update targets the correct author row
       expect(tx.update).toHaveBeenCalledTimes(1);
       const updateChain = tx.update.mock.results[0].value;
       expect(updateChain.set).toHaveBeenCalledWith({ asin: 'B001IGFHW6' });
+      expect(updateChain.where).toHaveBeenCalledWith(eq(authors.id, 5));
+
+      // Assert junction insert uses the retried author ID
+      const junctionChain = tx.insert.mock.results[1].value;  // [0] is the failed author insert
+      expect(junctionChain.values).toHaveBeenCalledWith({ bookId: 10, authorId: 5, position: 0 });
+    });
+
+    it('does not overwrite existing ASIN on conflict-retry path (first-write-wins)', async () => {
+      const tx = createMockDb();
+      const existingAuthor = createMockDbAuthor({ id: 5, asin: 'B_OLD' });
+      tx.select
+        .mockReturnValueOnce(mockDbChain([]))                      // first lookup: not found
+        .mockReturnValueOnce(mockDbChain([existingAuthor]));        // retry lookup: has ASIN
+      tx.insert
+        .mockReturnValueOnce(mockDbChain(undefined, { error: new Error('UNIQUE constraint failed') })) // insert fails
+        .mockReturnValueOnce(mockDbChain([]));                      // junction insert
+      tx.delete.mockReturnValueOnce(mockDbChain([]));               // junction delete
+
+      await service.syncAuthors(inject<DbOrTx>(tx), 10, [{ name: 'Brandon Sanderson', asin: 'B_NEW' }]);
+
+      expect(tx.update).not.toHaveBeenCalled();
+    });
+
+    it('does not update on conflict-retry path when caller provides no ASIN', async () => {
+      const tx = createMockDb();
+      const existingAuthor = createMockDbAuthor({ id: 5, asin: null });
+      tx.select
+        .mockReturnValueOnce(mockDbChain([]))                      // first lookup: not found
+        .mockReturnValueOnce(mockDbChain([existingAuthor]));        // retry lookup: null ASIN
+      tx.insert
+        .mockReturnValueOnce(mockDbChain(undefined, { error: new Error('UNIQUE constraint failed') })) // insert fails
+        .mockReturnValueOnce(mockDbChain([]));                      // junction insert
+      tx.delete.mockReturnValueOnce(mockDbChain([]));               // junction delete
+
+      await service.syncAuthors(inject<DbOrTx>(tx), 10, [{ name: 'Brandon Sanderson' }]);
+
+      expect(tx.update).not.toHaveBeenCalled();
     });
   });
 
