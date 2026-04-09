@@ -1328,6 +1328,86 @@ describe('#257 merge observability — BookDetails progress', () => {
     });
   });
 
+  describe('#430 progress bar accessibility', () => {
+    it('progress bar renders with role=progressbar, aria-valuenow, aria-valuemin=0, aria-valuemax=100 when processing', () => {
+      mockUseMergeProgress.mockReturnValue({ phase: 'processing', percentage: 0.5 });
+      renderBookDetails({ status: 'imported', topLevelAudioFileCount: 3 });
+      const bar = screen.getByRole('progressbar');
+      expect(bar).toHaveAttribute('aria-valuenow', '50');
+      expect(bar).toHaveAttribute('aria-valuemin', '0');
+      expect(bar).toHaveAttribute('aria-valuemax', '100');
+    });
+
+    it('aria-valuenow reflects the current percentage value (e.g., 0.34 → 34)', () => {
+      mockUseMergeProgress.mockReturnValue({ phase: 'processing', percentage: 0.34 });
+      renderBookDetails({ status: 'imported', topLevelAudioFileCount: 3 });
+      const bar = screen.getByRole('progressbar');
+      expect(bar).toHaveAttribute('aria-valuenow', '34');
+    });
+
+    it('aria-valuenow is 0 when percentage is 0 (not omitted)', () => {
+      mockUseMergeProgress.mockReturnValue({ phase: 'processing', percentage: 0 });
+      renderBookDetails({ status: 'imported', topLevelAudioFileCount: 3 });
+      const bar = screen.getByRole('progressbar');
+      expect(bar).toHaveAttribute('aria-valuenow', '0');
+    });
+
+    it('aria-valuenow is 100 when percentage is 1.0', () => {
+      mockUseMergeProgress.mockReturnValue({ phase: 'processing', percentage: 1.0 });
+      renderBookDetails({ status: 'imported', topLevelAudioFileCount: 3 });
+      const bar = screen.getByRole('progressbar');
+      expect(bar).toHaveAttribute('aria-valuenow', '100');
+    });
+  });
+
+  describe('#430 fade-out animation on terminal state', () => {
+    it('fade-out animation class is applied and spinner stops on success', () => {
+      mockUseMergeProgress.mockReturnValue({ phase: 'complete', outcome: 'success' });
+      renderBookDetails({ status: 'imported', topLevelAudioFileCount: 3 });
+      const indicator = screen.getByRole('status', { name: /merge progress/i });
+      expect(indicator.className).toContain('animate-fade-out');
+      // Terminal state should show success icon (text-success), not spinning RefreshIcon
+      const svg = indicator.querySelector('svg');
+      expect(svg?.className.baseVal ?? svg?.getAttribute('class')).toContain('text-success');
+      expect(svg?.className.baseVal ?? svg?.getAttribute('class')).not.toContain('animate-spin');
+    });
+
+    it('fade-out animation class is applied and error icon shown on error', () => {
+      mockUseMergeProgress.mockReturnValue({ phase: 'failed', outcome: 'error' });
+      renderBookDetails({ status: 'imported', topLevelAudioFileCount: 3 });
+      const indicator = screen.getByRole('status', { name: /merge progress/i });
+      expect(indicator.className).toContain('animate-fade-out');
+      const svg = indicator.querySelector('svg');
+      expect(svg?.className.baseVal ?? svg?.getAttribute('class')).toContain('text-destructive');
+      expect(svg?.className.baseVal ?? svg?.getAttribute('class')).not.toContain('animate-spin');
+    });
+
+    it('fade-out animation class is applied and cancel icon shown on cancelled', () => {
+      mockUseMergeProgress.mockReturnValue({ phase: 'cancelled', outcome: 'cancelled' });
+      renderBookDetails({ status: 'imported', topLevelAudioFileCount: 3 });
+      const indicator = screen.getByRole('status', { name: /merge progress/i });
+      expect(indicator.className).toContain('animate-fade-out');
+      const svg = indicator.querySelector('svg');
+      expect(svg?.className.baseVal ?? svg?.getAttribute('class')).toContain('text-muted-foreground');
+      expect(svg?.className.baseVal ?? svg?.getAttribute('class')).not.toContain('animate-spin');
+    });
+
+    it('active merge shows spinning icon without fade-out', () => {
+      mockUseMergeProgress.mockReturnValue({ phase: 'processing', percentage: 0.5 });
+      renderBookDetails({ status: 'imported', topLevelAudioFileCount: 3 });
+      const indicator = screen.getByRole('status', { name: /merge progress/i });
+      expect(indicator.className).not.toContain('animate-fade-out');
+      const svg = indicator.querySelector('svg');
+      expect(svg?.className.baseVal ?? svg?.getAttribute('class')).toContain('animate-spin');
+    });
+
+    it('indicator is not rendered when mergeProgress is null (after dismiss)', () => {
+      mockUseMergeProgress.mockReturnValue(null);
+      renderBookDetails({ status: 'imported', topLevelAudioFileCount: 3 });
+      expect(screen.queryByRole('status', { name: /merge progress/i })).not.toBeInTheDocument();
+    });
+  });
+
   describe('Wrong Release action', () => {
     it('shows Wrong Release button when book is imported with lastGrabGuid', async () => {
       const user = userEvent.setup();

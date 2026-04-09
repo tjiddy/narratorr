@@ -149,6 +149,32 @@ describe('MergeCard', () => {
     });
   });
 
+  describe('hover state', () => {
+    it('container includes hover:border-primary/20 and transition-all duration-300 matching DownloadCard', () => {
+      const { container } = render(<MergeCard state={makeState({ phase: 'starting' })} />);
+      const card = container.firstElementChild as HTMLElement;
+      expect(card.className).toContain('hover:border-primary/20');
+      expect(card.className).toContain('transition-all');
+      expect(card.className).toContain('duration-300');
+    });
+
+    it('hover classes are present regardless of merge phase (processing, complete, failed)', () => {
+      const phases = [
+        makeState({ phase: 'processing', percentage: 0.5 }),
+        makeState({ phase: 'complete', outcome: 'success', message: 'done' }),
+        makeState({ phase: 'failed', outcome: 'error', error: 'fail' }),
+      ];
+      for (const state of phases) {
+        const { container, unmount } = render(<MergeCard state={state} />);
+        const card = container.firstElementChild as HTMLElement;
+        expect(card.className).toContain('hover:border-primary/20');
+        expect(card.className).toContain('transition-all');
+        expect(card.className).toContain('duration-300');
+        unmount();
+      }
+    });
+  });
+
   describe('cancel interaction', () => {
     it('clicking cancel calls onCancel with correct bookId', async () => {
       const user = userEvent.setup();

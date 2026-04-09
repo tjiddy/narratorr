@@ -607,6 +607,9 @@ describe('#257 merge observability — useEventSource', () => {
   });
 
   describe('merge progress store transitions', () => {
+    beforeEach(() => {
+      resetMergeStore();
+    });
     afterEach(() => {
       // Clean up store state between tests
       setMergeProgress(42, null);
@@ -640,7 +643,7 @@ describe('#257 merge observability — useEventSource', () => {
       expect(progressResult.current).toEqual({ phase: 'processing', percentage: 0.5 });
     });
 
-    it('merge_complete clears progress back to null', () => {
+    it('merge_complete surfaces terminal state with outcome to per-book hook during dismiss window', () => {
       const { wrapper } = createWrapper();
       renderHook(() => useEventSource('key'), { wrapper });
       const { result: progressResult } = renderHook(() => useMergeProgress(42));
@@ -654,10 +657,11 @@ describe('#257 merge observability — useEventSource', () => {
         book_id: 42, book_title: 'My Book', success: true, message: 'done',
       }));
 
-      expect(progressResult.current).toBeNull();
+      expect(progressResult.current).not.toBeNull();
+      expect(progressResult.current).toMatchObject({ phase: 'complete', outcome: 'success' });
     });
 
-    it('merge_failed clears progress back to null', () => {
+    it('merge_failed surfaces terminal state with outcome to per-book hook during dismiss window', () => {
       const { wrapper } = createWrapper();
       renderHook(() => useEventSource('key'), { wrapper });
       const { result: progressResult } = renderHook(() => useMergeProgress(42));
@@ -671,7 +675,8 @@ describe('#257 merge observability — useEventSource', () => {
         book_id: 42, book_title: 'My Book', error: 'ffmpeg crashed',
       }));
 
-      expect(progressResult.current).toBeNull();
+      expect(progressResult.current).not.toBeNull();
+      expect(progressResult.current).toMatchObject({ phase: 'failed', outcome: 'error' });
     });
   });
 

@@ -4,6 +4,7 @@ export interface MergeProgress {
   phase: string;
   percentage?: number;
   position?: number;
+  outcome?: 'success' | 'error' | 'cancelled';
 }
 
 export interface MergeCardState {
@@ -30,14 +31,11 @@ const perBookCache = new Map<number, MergeProgress | null>();
 function rebuildPerBookCache() {
   perBookCache.clear();
   for (const [bookId, entry] of mergeProgressMap) {
-    if (entry.outcome !== undefined) {
-      perBookCache.set(bookId, null);
-    } else {
-      const result: MergeProgress = { phase: entry.phase };
-      if (entry.percentage !== undefined) result.percentage = entry.percentage;
-      if (entry.position !== undefined) result.position = entry.position;
-      perBookCache.set(bookId, result);
-    }
+    const result: MergeProgress = { phase: entry.phase };
+    if (entry.percentage !== undefined) result.percentage = entry.percentage;
+    if (entry.position !== undefined) result.position = entry.position;
+    if (entry.outcome !== undefined) result.outcome = entry.outcome;
+    perBookCache.set(bookId, result);
   }
 }
 
@@ -100,8 +98,8 @@ export function useMergeActivityCards(): MergeCardState[] {
 
 /**
  * Reactive hook — returns current merge progress for a single book.
- * Backward-compatible API for BookDetails. Returns null for terminal entries
- * (completed/failed merges are activity-card-only, not shown as progress indicators).
+ * Returns progress with `outcome` field during the dismiss window for terminal entries,
+ * allowing BookDetails to show fade-out animation before removal.
  */
 export function useMergeProgress(bookId: number): MergeProgress | null {
   return useSyncExternalStore(

@@ -96,7 +96,7 @@ describe('useMergeProgress (per-book backward compatibility)', () => {
     expect(result.current).toEqual({ phase: 'starting' });
   });
 
-  it('returns null for terminal entries (they are activity-only)', () => {
+  it('returns terminal state with outcome during dismiss window (not null)', () => {
     const { result } = renderHook(() => useMergeProgress(42));
 
     act(() => {
@@ -108,8 +108,77 @@ describe('useMergeProgress (per-book backward compatibility)', () => {
       });
     });
 
-    // Per-book accessor should return null for terminal entries
-    // (BookDetails should not show a progress indicator for completed merges)
+    // Per-book accessor should now return terminal entries with outcome
+    // so BookDetails can show fade-out animation
+    expect(result.current).not.toBeNull();
+    expect(result.current).toMatchObject({ phase: 'complete', outcome: 'success' });
+  });
+
+  it('returns MergeProgress with outcome: success when merge completes (terminal state visible during dismiss window)', () => {
+    const { result } = renderHook(() => useMergeProgress(42));
+
+    act(() => {
+      setMergeProgress(42, {
+        bookTitle: 'Test',
+        phase: 'complete',
+        outcome: 'success',
+        message: 'done',
+      });
+    });
+
+    expect(result.current).not.toBeNull();
+    expect(result.current).toMatchObject({ phase: 'complete', outcome: 'success' });
+  });
+
+  it('returns MergeProgress with outcome: error when merge fails (terminal state visible during dismiss window)', () => {
+    const { result } = renderHook(() => useMergeProgress(42));
+
+    act(() => {
+      setMergeProgress(42, {
+        bookTitle: 'Test',
+        phase: 'failed',
+        outcome: 'error',
+        error: 'ffmpeg crashed',
+      });
+    });
+
+    expect(result.current).not.toBeNull();
+    expect(result.current).toMatchObject({ phase: 'failed', outcome: 'error' });
+  });
+
+  it('returns MergeProgress with outcome: cancelled when merge is cancelled (terminal state visible during dismiss window)', () => {
+    const { result } = renderHook(() => useMergeProgress(42));
+
+    act(() => {
+      setMergeProgress(42, {
+        bookTitle: 'Test',
+        phase: 'cancelled',
+        outcome: 'cancelled',
+      });
+    });
+
+    expect(result.current).not.toBeNull();
+    expect(result.current).toMatchObject({ phase: 'cancelled', outcome: 'cancelled' });
+  });
+
+  it('returns null after DISMISS_DELAY_MS elapses for terminal entries (existing cleanup preserved)', () => {
+    const { result } = renderHook(() => useMergeProgress(42));
+
+    act(() => {
+      setMergeProgress(42, {
+        bookTitle: 'Test',
+        phase: 'complete',
+        outcome: 'success',
+        message: 'done',
+      });
+    });
+
+    expect(result.current).not.toBeNull();
+
+    act(() => {
+      vi.advanceTimersByTime(3000);
+    });
+
     expect(result.current).toBeNull();
   });
 });
