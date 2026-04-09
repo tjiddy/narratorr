@@ -219,6 +219,38 @@ describe('enrichBookFromAudio', () => {
     expect(writeFile).not.toHaveBeenCalled();
   });
 
+  it('forwards ffprobePath and log to scanAudioDirectory when provided', async () => {
+    vi.mocked(scanAudioDirectory).mockResolvedValue({
+      codec: 'mp3', bitrate: 128000, sampleRate: 44100, channels: 2,
+      bitrateMode: 'cbr' as const, fileFormat: 'MPEG', fileCount: 1,
+      totalSize: 1000, totalDuration: 100, hasCoverArt: false,
+    });
+
+    await enrichBookFromAudio(
+      1, '/books/test',
+      { narrators: null, duration: null, coverUrl: null },
+      inject<Db>(mockDb), log, undefined, '/usr/bin/ffprobe',
+    );
+
+    expect(scanAudioDirectory).toHaveBeenCalledWith('/books/test', { ffprobePath: '/usr/bin/ffprobe', log });
+  });
+
+  it('passes ffprobePath as undefined to scanAudioDirectory when not provided', async () => {
+    vi.mocked(scanAudioDirectory).mockResolvedValue({
+      codec: 'mp3', bitrate: 128000, sampleRate: 44100, channels: 2,
+      bitrateMode: 'cbr' as const, fileFormat: 'MPEG', fileCount: 1,
+      totalSize: 1000, totalDuration: 100, hasCoverArt: false,
+    });
+
+    await enrichBookFromAudio(
+      1, '/books/test',
+      { narrators: null, duration: null, coverUrl: null },
+      inject<Db>(mockDb), log,
+    );
+
+    expect(scanAudioDirectory).toHaveBeenCalledWith('/books/test', { ffprobePath: undefined, log });
+  });
+
   it('returns error info when scan throws', async () => {
     vi.mocked(scanAudioDirectory).mockRejectedValue(new Error('Permission denied'));
 

@@ -1,5 +1,34 @@
 # Workflow Log
 
+## #434 Use ffprobe for audio duration instead of music-metadata — 2026-04-08
+**Skill path:** /implement → /claim → /plan → /handoff
+**Outcome:** success — PR #440
+
+### Metrics
+- Files changed: 18 | Tests added/modified: 21 new + 4 updated
+- Quality gate runs: 3 (pass on attempt 3)
+- Fix iterations: 2 (ESLint complexity in scanAudioDirectory + max-lines in quality-gate-orchestrator)
+- Context compactions: 0
+
+### Workflow experience
+- What went smoothly: Spec was thorough after 2 elaboration rounds; threading strategy was well-defined; existing ffprobe patterns in cover-art.ts and audio-processor.ts made implementation straightforward
+- Friction / issues encountered: MatchJobService delegates to inner MatchJob class — adding settingsService to outer class wasn't enough, had to thread to inner class. Quality-gate-orchestrator.ts was already at 501/400 max-lines — any net line addition triggered a false "new violation" in verify.ts diff-based linting, requiring line compression to net-zero.
+
+### Token efficiency
+- Highest-token actions: Explore subagents for plan and self-review
+- Avoidable waste: Could have checked MatchJob inner class structure before first typecheck attempt
+- Suggestions: When adding constructor params to services, always grep for inner/delegate classes that need the same param
+
+### Infrastructure gaps
+- Repeated workarounds: Compressing quality-gate-orchestrator.ts to stay at net-zero lines due to pre-existing max-lines violation
+- Missing tooling / config: verify.ts diff-based lint doesn't handle file-level rules (max-lines) well when the violation is pre-existing
+- Unresolved debt: quality-gate-orchestrator.ts at 501 lines needs splitting (logged in debt.md)
+
+### Wish I'd Known
+1. MatchJobService has an inner `MatchJob` class — settingsService must be threaded through both constructors, not just the outer one
+2. quality-gate-orchestrator.ts is already 101 lines over the max-lines lint limit — any change to this file requires net-zero line additions
+3. ESLint cyclomatic complexity counts `??` operators — destructuring options (`const { a = false, b } = opts ?? {}`) is one point cheaper than separate `opts?.a ?? false` lines
+
 ## #414 ActivityPage flaky test — queue pagination timing — 2026-04-08
 **Skill path:** /implement → /claim → /plan → /handoff
 **Outcome:** success — PR #436

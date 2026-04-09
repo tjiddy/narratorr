@@ -2,6 +2,7 @@ import { rename, rm, stat } from 'node:fs/promises';
 import { join } from 'node:path';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
+import { deriveFfprobePath } from './ffprobe-path.js';
 
 const execFileAsync = promisify(execFile);
 
@@ -60,7 +61,7 @@ export async function withCoverArtPipeline(
  * Returns the file path of the first file with a video stream, or null.
  */
 export async function detectCoverArtSource(ffmpegPath: string, filePaths: string[]): Promise<string | null> {
-  const ffprobePath = ffmpegPath.replace(/ffmpeg(\.exe)?$/i, 'ffprobe$1');
+  const ffprobePath = deriveFfprobePath(ffmpegPath);
 
   for (const filePath of filePaths) {
     try {

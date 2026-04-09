@@ -32,9 +32,10 @@ export async function enrichBookFromAudio(
   db: Db,
   log: FastifyBaseLogger,
   bookService?: BookService,
+  ffprobePath?: string,
 ): Promise<EnrichmentResult> {
   try {
-    const scanResult = await scanAudioDirectory(targetPath);
+    const scanResult = await scanAudioDirectory(targetPath, { ffprobePath, log });
     if (!scanResult) {
       log.debug({ bookId, targetPath }, 'No audio metadata extracted');
       return { enriched: false };

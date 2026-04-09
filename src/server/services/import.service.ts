@@ -4,6 +4,7 @@ import type { FastifyBaseLogger } from 'fastify';
 import { downloads, books } from '../../db/schema.js';
 import { renameFilesWithTemplate } from '../utils/paths.js';
 import { enrichBookFromAudio } from './enrichment-utils.js';
+import { resolveFfprobePathFromSettings } from '../../core/utils/ffprobe-path.js';
 import type { DownloadClientService } from './download-client.service.js';
 import type { SettingsService } from './settings.service.js';
 import type { RemotePathMappingService } from './remote-path-mapping.service.js';
@@ -133,7 +134,8 @@ export class ImportService {
       await cleanupOldBookPath({ bookPath: book.path, targetPath, log: this.log });
 
       await this.db.update(books).set({ status: 'imported', path: targetPath, size: targetSize, lastGrabGuid: download.guid ?? null, lastGrabInfoHash: download.infoHash ?? null, updatedAt: new Date() }).where(eq(books.id, book.id));
-      await enrichBookFromAudio(book.id, targetPath, book, this.db, this.log);
+      const ffprobePath = resolveFfprobePathFromSettings(processingSettings?.ffmpegPath);
+      await enrichBookFromAudio(book.id, targetPath, book, this.db, this.log, undefined, ffprobePath);
 
       await this.db.update(downloads).set({ status: 'imported' }).where(eq(downloads.id, downloadId));
       this.log.info({ downloadId, bookId: book.id, bookTitle: book.title, targetPath, fileCount, totalSize: targetSize, elapsedMs: Date.now() - startMs }, 'Import completed successfully');

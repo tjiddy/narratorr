@@ -528,7 +528,7 @@ describe('BulkOperationService — convert batch', () => {
       expect.objectContaining({ ffmpegPath: '/usr/bin/ffmpeg', outputFormat: 'm4b', mergeBehavior: 'always' }),
       expect.objectContaining({ title: 'Title' }),
     );
-    expect(enrichBookFromAudio).toHaveBeenCalledWith(1, BOOK_PATH, expect.anything(), expect.anything(), expect.anything(), expect.anything());
+    expect(enrichBookFromAudio).toHaveBeenCalledWith(1, BOOK_PATH, expect.anything(), expect.anything(), expect.anything(), expect.anything(), '/usr/bin/ffprobe');
   });
 
   it('forwards sourceBitrateKbps from book.audioBitrate to processAudioFiles', async () => {

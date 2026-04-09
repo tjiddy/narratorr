@@ -247,6 +247,33 @@ describe('QualityGateOrchestrator', () => {
       expect(qualityGateService.setStatus).not.toHaveBeenCalledWith(1, 'pending_review');
     });
 
+    it('passes derived ffprobePath and log to scanAudioDirectory when ffmpegPath is configured', async () => {
+      const settingsService = inject<SettingsService>({
+        get: vi.fn().mockResolvedValue({ ffmpegPath: '/usr/bin/ffmpeg' }),
+      });
+      const { orchestrator, qualityGateService } = createOrchestrator({ settingsService });
+      qualityGateService.getCompletedDownloads.mockResolvedValue([{ download: baseDownload, book: baseBook }]);
+
+      await orchestrator.processCompletedDownloads();
+
+      expect(scanAudioDirectory).toHaveBeenCalledWith(
+        '/downloads/test',
+        { skipCover: true, ffprobePath: '/usr/bin/ffprobe', log: expect.anything() },
+      );
+    });
+
+    it('passes ffprobePath as undefined when settingsService has no ffmpegPath', async () => {
+      const { orchestrator, qualityGateService } = createOrchestrator();
+      qualityGateService.getCompletedDownloads.mockResolvedValue([{ download: baseDownload, book: baseBook }]);
+
+      await orchestrator.processCompletedDownloads();
+
+      expect(scanAudioDirectory).toHaveBeenCalledWith(
+        '/downloads/test',
+        { skipCover: true, ffprobePath: undefined, log: expect.anything() },
+      );
+    });
+
     it('emits SSE and records probeFailure event on probe failure', async () => {
       const { orchestrator, qualityGateService, broadcaster, eventHistory } = createOrchestrator();
       qualityGateService.getCompletedDownloads.mockResolvedValue([{ download: baseDownload, book: baseBook }]);
@@ -1803,6 +1830,21 @@ describe('QualityGateOrchestrator', () => {
       expect(log.error).toHaveBeenCalledWith(
         expect.objectContaining({ downloadId: 1, error: expect.any(Error) }),
         'Quality gate: inline import failed',
+      );
+    });
+
+    it('passes derived ffprobePath to scanAudioDirectory when ffmpegPath is configured', async () => {
+      const settingsService = inject<SettingsService>({
+        get: vi.fn().mockResolvedValue({ ffmpegPath: '/usr/bin/ffmpeg' }),
+      });
+      const { orchestrator, qualityGateService } = createOrchestrator({ settingsService });
+      qualityGateService.getCompletedDownloads.mockResolvedValue([{ download: completedDownload, book: { ...downloadingBook } }]);
+
+      await orchestrator.processOneDownload(1);
+
+      expect(scanAudioDirectory).toHaveBeenCalledWith(
+        '/downloads/test',
+        { skipCover: true, ffprobePath: '/usr/bin/ffprobe', log: expect.anything() },
       );
     });
   });

@@ -4,6 +4,8 @@ import type { FastifyBaseLogger } from 'fastify';
 import type { MetadataService } from './metadata.service.js';
 import type { BookMetadata } from '../../core/metadata/index.js';
 import { scanAudioDirectory } from '../../core/utils/audio-scanner.js';
+import { resolveFfprobePathFromSettings } from '../../core/utils/ffprobe-path.js';
+import type { SettingsService } from './settings.service.js';
 import { Semaphore } from '../utils/semaphore.js';
 import { scoreResult, diceCoefficient } from '../../core/utils/similarity.js';
 import { extractYear } from './library-scan.service.js';
@@ -51,11 +53,12 @@ export class MatchJobService {
   constructor(
     private metadataService: MetadataService,
     private log: FastifyBaseLogger,
+    private settingsService: SettingsService,
   ) {}
 
   createJob(books: MatchCandidate[]): string {
     const id = randomUUID();
-    const job = new MatchJob(id, books, this.metadataService, this.log, () => {
+    const job = new MatchJob(id, books, this.metadataService, this.log, this.settingsService, () => {
       this.scheduleCleanup(id);
     });
     this.jobs.set(id, job);
@@ -101,8 +104,14 @@ class MatchJob {
     private books: MatchCandidate[],
     private metadataService: MetadataService,
     private log: FastifyBaseLogger,
+    private settingsService: SettingsService,
     private onComplete: () => void,
   ) {}
+
+  private async resolveFfprobePath(): Promise<string | undefined> {
+    const s = await this.settingsService.get('processing');
+    return resolveFfprobePathFromSettings(s?.ffmpegPath);
+  }
 
   getStatus(): MatchJobStatus {
     return {
@@ -160,7 +169,8 @@ class MatchJob {
       // Scan audio files for duration (used for runtime disambiguation)
       let duration: number | undefined;
       try {
-        const audioResult = await scanAudioDirectory(book.path, { skipCover: true });
+        const ffprobePath = await this.resolveFfprobePath();
+        const audioResult = await scanAudioDirectory(book.path, { skipCover: true, ffprobePath, log: this.log });
         if (audioResult && audioResult.totalDuration > 0) {
           // Convert seconds → minutes to match Audible's runtime_length_min
           duration = Math.round(audioResult.totalDuration / 60);

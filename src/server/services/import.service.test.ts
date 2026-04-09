@@ -1140,6 +1140,22 @@ describe('ImportService', () => {
       // scanAudioDirectory is called during enrichment
       expect(scanAudioDirectory).toHaveBeenCalled();
     });
+
+    it('passes derived ffprobePath to enrichBookFromAudio when ffmpegPath is configured', async () => {
+      setupImportWithProcessing(false);
+
+      await service.importDownload(1);
+
+      expect(enrichBookFromAudio).toHaveBeenCalledWith(
+        expect.any(Number), // bookId
+        expect.any(String), // targetPath
+        expect.anything(),  // book
+        expect.anything(),  // db
+        expect.anything(),  // log
+        undefined,          // bookService (not passed in importDownload)
+        '/usr/bin/ffprobe', // ffprobePath derived from /usr/bin/ffmpeg
+      );
+    });
   });
 
   describe('remote path mapping integration', () => {

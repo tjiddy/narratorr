@@ -146,8 +146,8 @@ describe('MergeService', () => {
         undefined, // signal (not passed by deprecated mergeBook)
       );
 
-      // scanAudioDirectory called on staging for verification
-      expect(scanAudioDirectory).toHaveBeenCalledWith(STAGING_DIR);
+      // scanAudioDirectory called on staging for verification with derived ffprobe path
+      expect(scanAudioDirectory).toHaveBeenCalledWith(STAGING_DIR, { ffprobePath: '/usr/bin/ffprobe', log: expect.anything() });
 
       // M4B moved from staging to book.path
       expect(rename).toHaveBeenCalledWith(
@@ -263,6 +263,7 @@ describe('MergeService', () => {
         expect.anything(), // db
         expect.anything(), // log
         expect.objectContaining({ getById: expect.any(Function) }), // bookService passed
+        '/usr/bin/ffprobe', // ffprobePath derived from /usr/bin/ffmpeg
       );
     });
 

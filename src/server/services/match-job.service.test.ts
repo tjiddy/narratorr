@@ -3,6 +3,7 @@ import { createMockLogger, inject } from '../__tests__/helpers.js';
 import { MatchJobService, type MatchCandidate } from './match-job.service.js';
 import type { FastifyBaseLogger } from 'fastify';
 import type { MetadataService } from './metadata.service.js';
+import type { SettingsService } from './settings.service.js';
 import type { BookMetadata } from '../../core/metadata/index.js';
 
 // Mock audio scanner
@@ -70,12 +71,14 @@ describe('MatchJobService', () => {
   let service: MatchJobService;
   let metadataService: ReturnType<typeof createMockMetadataService>;
   let log: ReturnType<typeof createMockLogger>;
+  let settingsService: SettingsService;
 
   beforeEach(() => {
     vi.clearAllMocks();
     log = createMockLogger();
     metadataService = createMockMetadataService();
-    service = new MatchJobService(metadataService, inject<FastifyBaseLogger>(log));
+    settingsService = inject<SettingsService>({ get: vi.fn().mockResolvedValue({ ffmpegPath: '' }) });
+    service = new MatchJobService(metadataService, inject<FastifyBaseLogger>(log), settingsService);
     (randomUUID as ReturnType<typeof vi.fn>).mockReturnValue('test-job-id');
   });
 
@@ -721,6 +724,55 @@ describe('MatchJobService', () => {
       expect(log.debug).toHaveBeenCalledWith(
         expect.objectContaining({ path: sampleCandidate.path }),
         'Audio scan failed \u2014 proceeding without duration',
+      );
+    });
+
+    it('passes derived ffprobePath and log to scanAudioDirectory when ffmpegPath is configured', async () => {
+      (settingsService.get as ReturnType<typeof vi.fn>).mockResolvedValue({ ffmpegPath: '/usr/bin/ffmpeg' });
+      (scanAudioDirectory as ReturnType<typeof vi.fn>).mockResolvedValue({ totalDuration: 3600 });
+      (metadataService.searchBooks as ReturnType<typeof vi.fn>).mockResolvedValue([
+        makeBookMetadata({ providerId: undefined }),
+      ]);
+
+      const id = service.createJob([sampleCandidate]);
+      await waitForJob(service, id);
+
+      expect(settingsService.get).toHaveBeenCalledWith('processing');
+      expect(scanAudioDirectory).toHaveBeenCalledWith(
+        sampleCandidate.path,
+        { skipCover: true, ffprobePath: '/usr/bin/ffprobe', log: expect.anything() },
+      );
+    });
+
+    it('passes ffprobePath as undefined when ffmpegPath is empty', async () => {
+      (settingsService.get as ReturnType<typeof vi.fn>).mockResolvedValue({ ffmpegPath: '' });
+      (scanAudioDirectory as ReturnType<typeof vi.fn>).mockResolvedValue({ totalDuration: 3600 });
+      (metadataService.searchBooks as ReturnType<typeof vi.fn>).mockResolvedValue([
+        makeBookMetadata({ providerId: undefined }),
+      ]);
+
+      const id = service.createJob([sampleCandidate]);
+      await waitForJob(service, id);
+
+      expect(scanAudioDirectory).toHaveBeenCalledWith(
+        sampleCandidate.path,
+        { skipCover: true, ffprobePath: undefined, log: expect.anything() },
+      );
+    });
+
+    it('passes ffprobePath as undefined when ffmpegPath is whitespace-only', async () => {
+      (settingsService.get as ReturnType<typeof vi.fn>).mockResolvedValue({ ffmpegPath: '   ' });
+      (scanAudioDirectory as ReturnType<typeof vi.fn>).mockResolvedValue({ totalDuration: 3600 });
+      (metadataService.searchBooks as ReturnType<typeof vi.fn>).mockResolvedValue([
+        makeBookMetadata({ providerId: undefined }),
+      ]);
+
+      const id = service.createJob([sampleCandidate]);
+      await waitForJob(service, id);
+
+      expect(scanAudioDirectory).toHaveBeenCalledWith(
+        sampleCandidate.path,
+        { skipCover: true, ffprobePath: undefined, log: expect.anything() },
       );
     });
   });

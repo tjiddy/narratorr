@@ -1983,6 +1983,38 @@ describe('LibraryScanService', () => {
           mockDb,
           log,
           mockBookService,
+          undefined, // ffprobePath (no ffmpeg configured in mock settings)
+        );
+      });
+    });
+
+    it('passes derived ffprobePath to enrichBookFromAudio when ffmpegPath is configured', async () => {
+      const settingsWithProcessing = createMockSettingsService({
+        library: { path: '/library' },
+        processing: { ffmpegPath: '/usr/bin/ffmpeg' },
+      });
+      const serviceWithFfmpeg = new LibraryScanService(
+        inject<Db>(mockDb),
+        inject<BookService>(mockBookService),
+        inject<MetadataService>(mockMetadataService),
+        inject<SettingsService>(settingsWithProcessing),
+        log,
+        inject<EventHistoryService>(mockEventHistoryService),
+      );
+
+      await serviceWithFfmpeg.confirmImport([
+        { path: '/audiobooks/Book', title: 'Book' },
+      ]);
+
+      await vi.waitFor(() => {
+        expect(enrichBookFromAudio).toHaveBeenCalledWith(
+          1,
+          '/audiobooks/Book',
+          expect.objectContaining({ narrators: null, duration: null }),
+          mockDb,
+          log,
+          mockBookService,
+          '/usr/bin/ffprobe', // ffprobePath derived from /usr/bin/ffmpeg
         );
       });
     });
