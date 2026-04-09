@@ -3,7 +3,11 @@ import type { LibraryScanService } from '../services/library-scan.service.js';
 import type { ImportConfirmItem } from '../services/library-scan.service.js';
 import { ScanInProgressError, LibraryPathError } from '../services/library-scan.service.js';
 import type { MatchJobService } from '../services/match-job.service.js';
+import type { BookService } from '../services/book.service.js';
+import type { MetadataService } from '../services/metadata.service.js';
 import { getErrorMessage } from '../utils/error-message.js';
+import { parseFolderStructure, cleanNameWithTrace } from '../utils/folder-parsing.js';
+import { searchWithSwapRetryTrace } from '../utils/search-helpers.js';
 import { type z } from 'zod';
 import {
   scanSingleBodySchema,
@@ -13,6 +17,9 @@ import {
   importConfirmBodySchema,
   matchStartBodySchema,
   jobIdParamSchema,
+  scanDebugBodySchema,
+  type ScanDebugBody,
+  type ScanDebugTrace,
 } from '../../shared/schemas.js';
 
 type ScanSingleBody = z.infer<typeof scanSingleBodySchema>;
@@ -26,6 +33,8 @@ export async function libraryScanRoutes(
   app: FastifyInstance,
   libraryScan: LibraryScanService,
   matchJobService: MatchJobService,
+  bookService: BookService,
+  metadataService: MetadataService,
 ): Promise<void> {
   // Scan a single book folder — returns parsed metadata + provider match
   app.post<{ Body: ScanSingleBody }>(
@@ -166,6 +175,121 @@ export async function libraryScanRoutes(
       const { jobId } = request.params;
       const cancelled = matchJobService.cancelJob(jobId);
       return { cancelled };
+    },
+  );
+
+  // Scan debug — trace folder parsing and metadata matching pipeline
+  app.post<{ Body: ScanDebugBody }>(
+    '/api/library/scan-debug',
+    { schema: { body: scanDebugBodySchema } },
+    async (request, reply) => {
+      const { folderName } = request.body;
+
+      request.log.info({ folderName }, 'Scan debug trace requested');
+
+      // Pre-parse segmentation: split on path separators, filter empty segments
+      const parts = folderName.split(/[/\\]/).filter(Boolean);
+
+      // Parsing step
+      const parsed = parseFolderStructure(parts);
+      const pattern = parts.length <= 1 ? '1-part' : parts.length === 2 ? '2-part' : `${parts.length}-part`;
+
+      // Cleaning step — trace each field through the pipeline
+      const cleaning: Record<string, { input: string; steps: { name: string; output: string }[]; result: string }> = {};
+      if (parsed.title) {
+        cleaning.title = cleanNameWithTrace(parsed.title);
+      }
+      if (parsed.author) {
+        cleaning.author = cleanNameWithTrace(parsed.author);
+      }
+      if (parsed.series) {
+        cleaning.series = cleanNameWithTrace(parsed.series);
+      }
+
+      // Use cleaned values for search
+      const cleanedTitle = cleaning.title?.result ?? parsed.title;
+      const cleanedAuthor = cleaning.author?.result ?? parsed.author ?? undefined;
+
+      // Search step — trace mode captures query details
+      let searchTrace: ScanDebugTrace['search'] = null;
+      let matchTrace: ScanDebugTrace['match'] = null;
+      let duplicateTrace: ScanDebugTrace['duplicate'] = null;
+
+      try {
+        const searchResult = await searchWithSwapRetryTrace({
+          searchFn: (query, options) => metadataService.searchBooks(query, options),
+          title: cleanedTitle,
+          author: cleanedAuthor,
+          log: request.log,
+        });
+
+        searchTrace = {
+          initialQuery: searchResult.initialQuery,
+          initialResultCount: searchResult.initialResultCount,
+          swapRetry: searchResult.swapRetry,
+          swapQuery: searchResult.swapQuery,
+          results: searchResult.results.map(r => ({
+            title: r.title,
+            authors: r.authors?.map(a => typeof a === 'string' ? a : a.name) ?? [],
+            asin: r.asin ?? null,
+            providerId: r.providerId ?? null,
+          })),
+        };
+
+        // Match step
+        if (searchResult.results.length > 0) {
+          const top = searchResult.results[0];
+          matchTrace = {
+            status: 'matched',
+            selected: {
+              title: top.title,
+              authors: top.authors?.map(a => typeof a === 'string' ? a : a.name) ?? [],
+              asin: top.asin ?? null,
+              providerId: top.providerId ?? null,
+            },
+          };
+        } else {
+          matchTrace = { status: 'no match', selected: null };
+        }
+
+        // Duplicate check
+        const authorList = cleanedAuthor ? [{ name: cleanedAuthor }] : undefined;
+        const duplicate = await bookService.findDuplicate(cleanedTitle, authorList);
+        duplicateTrace = {
+          isDuplicate: duplicate !== null,
+          existingBookId: duplicate?.id ?? null,
+          reason: duplicate ? 'library-match' : null,
+        };
+      } catch (error: unknown) {
+        // Provider failure — return 502 with partial trace
+        request.log.error(error, 'Scan debug metadata search failed');
+        return reply.status(502).send({
+          statusCode: 502,
+          error: 'Bad Gateway',
+          message: `Metadata search provider failed: ${getErrorMessage(error, 'unknown error')}`,
+          partialTrace: {
+            input: folderName,
+            parts,
+            parsing: { pattern, raw: parsed },
+            cleaning,
+            search: null,
+            match: null,
+            duplicate: null,
+          },
+        });
+      }
+
+      const trace: ScanDebugTrace = {
+        input: folderName,
+        parts,
+        parsing: { pattern, raw: parsed },
+        cleaning,
+        search: searchTrace,
+        match: matchTrace,
+        duplicate: duplicateTrace,
+      };
+
+      return trace;
     },
   );
 }
