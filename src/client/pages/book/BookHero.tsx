@@ -170,9 +170,9 @@ export function BookHero({
                 type="button"
                 aria-label="Upload cover"
                 onClick={() => fileInputRef.current?.click()}
-                className="absolute inset-0 flex items-center justify-center bg-black/0 hover:bg-black/40 transition-all duration-300 opacity-0 group-hover:opacity-100 cursor-pointer"
+                className="absolute inset-0 flex items-center justify-center bg-black/0 hover:bg-black/40 transition-all duration-300 opacity-0 group-hover:opacity-100 no-hover:opacity-100 cursor-pointer"
               >
-                <div className="flex items-center justify-center w-11 h-11 rounded-2xl bg-card/60 backdrop-blur-sm border border-border/30 shadow-lg transition-transform duration-300 group-hover:scale-100 scale-90">
+                <div className="flex items-center justify-center w-11 h-11 rounded-2xl bg-card/60 backdrop-blur-sm border border-border/30 shadow-lg transition-transform duration-300 group-hover:scale-100 scale-90 no-hover:scale-100">
                   <UploadIcon className="w-5 h-5 text-foreground" />
                 </div>
               </button>

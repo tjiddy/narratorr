@@ -604,17 +604,41 @@ describe('BookHero', () => {
     });
 
     describe('touch affordance CSS classes', () => {
-      it.todo('upload overlay button includes no-hover:opacity-100 class for touch device visibility');
+      it('upload overlay button includes no-hover:opacity-100 class for touch device visibility', () => {
+        renderHero({ hasPath: true, onCoverFileSelect: vi.fn() });
+        const uploadBtn = screen.getByLabelText('Upload cover');
+        expect(uploadBtn).toHaveClass('no-hover:opacity-100');
+      });
 
-      it.todo('upload icon container includes no-hover:scale-100 class for touch device full-size display');
+      it('upload icon container includes no-hover:scale-100 class for touch device full-size display', () => {
+        renderHero({ hasPath: true, onCoverFileSelect: vi.fn() });
+        const uploadBtn = screen.getByLabelText('Upload cover');
+        const iconContainer = uploadBtn.firstElementChild as HTMLElement;
+        expect(iconContainer).toHaveClass('no-hover:scale-100');
+      });
 
-      it.todo('upload overlay button retains opacity-0 and group-hover:opacity-100 classes for desktop hover');
+      it('upload overlay button retains opacity-0 and group-hover:opacity-100 classes for desktop hover', () => {
+        renderHero({ hasPath: true, onCoverFileSelect: vi.fn() });
+        const uploadBtn = screen.getByLabelText('Upload cover');
+        expect(uploadBtn).toHaveClass('opacity-0', 'group-hover:opacity-100');
+      });
 
-      it.todo('upload icon container retains scale-90 and group-hover:scale-100 classes for desktop hover animation');
+      it('upload icon container retains scale-90 and group-hover:scale-100 classes for desktop hover animation', () => {
+        renderHero({ hasPath: true, onCoverFileSelect: vi.fn() });
+        const uploadBtn = screen.getByLabelText('Upload cover');
+        const iconContainer = uploadBtn.firstElementChild as HTMLElement;
+        expect(iconContainer).toHaveClass('scale-90', 'group-hover:scale-100');
+      });
 
-      it.todo('touch affordance classes are not present in DOM when hasPath is false');
+      it('touch affordance classes are not present in DOM when hasPath is false', () => {
+        renderHero({ hasPath: false, onCoverFileSelect: vi.fn() });
+        expect(screen.queryByLabelText('Upload cover')).not.toBeInTheDocument();
+      });
 
-      it.todo('touch affordance classes are not present in DOM when onCoverFileSelect is not provided');
+      it('touch affordance classes are not present in DOM when onCoverFileSelect is not provided', () => {
+        renderHero({ hasPath: true });
+        expect(screen.queryByLabelText('Upload cover')).not.toBeInTheDocument();
+      });
     });
   });
 });
