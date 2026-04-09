@@ -96,42 +96,47 @@ describe('POST /api/books/:id/refresh-scan', () => {
     expect(JSON.parse(res.payload).narratorsUpdated).toBe(false);
   });
 
-  it('returns 404 when book ID does not exist', async () => {
+  it('returns 404 with error body when book ID does not exist', async () => {
     vi.mocked(refreshScanBook).mockRejectedValue(
       new RefreshScanError('NOT_FOUND', 'Book 999 not found'),
     );
     const res = await app.inject({ method: 'POST', url: '/api/books/999/refresh-scan' });
     expect(res.statusCode).toBe(404);
+    expect(JSON.parse(res.payload)).toEqual({ error: 'Book 999 not found' });
   });
 
-  it('returns 400 NO_PATH when book exists but has no path', async () => {
+  it('returns 400 with error body when book has no path', async () => {
     vi.mocked(refreshScanBook).mockRejectedValue(
-      new RefreshScanError('NO_PATH', 'Book 1 has no library path'),
+      new RefreshScanError('NO_PATH', 'Book 1 has no library path — import it first'),
     );
     const res = await app.inject({ method: 'POST', url: '/api/books/1/refresh-scan' });
     expect(res.statusCode).toBe(400);
+    expect(JSON.parse(res.payload)).toEqual({ error: 'Book 1 has no library path — import it first' });
   });
 
-  it('returns 400 PATH_MISSING when book path does not exist on disk', async () => {
+  it('returns 400 with error body when book path does not exist on disk', async () => {
     vi.mocked(refreshScanBook).mockRejectedValue(
       new RefreshScanError('PATH_MISSING', 'Book path does not exist on disk: /lib/book'),
     );
     const res = await app.inject({ method: 'POST', url: '/api/books/1/refresh-scan' });
     expect(res.statusCode).toBe(400);
+    expect(JSON.parse(res.payload)).toEqual({ error: 'Book path does not exist on disk: /lib/book' });
   });
 
-  it('returns 400 NO_AUDIO_FILES when scanAudioDirectory returns null', async () => {
+  it('returns 400 with error body when no audio files found', async () => {
     vi.mocked(refreshScanBook).mockRejectedValue(
       new RefreshScanError('NO_AUDIO_FILES', 'No audio files found in book directory'),
     );
     const res = await app.inject({ method: 'POST', url: '/api/books/1/refresh-scan' });
     expect(res.statusCode).toBe(400);
+    expect(JSON.parse(res.payload)).toEqual({ error: 'No audio files found in book directory' });
   });
 
-  it('returns 500 on unexpected error', async () => {
+  it('returns 500 with generic error body on unexpected error', async () => {
     vi.mocked(refreshScanBook).mockRejectedValue(new Error('Unexpected'));
     const res = await app.inject({ method: 'POST', url: '/api/books/1/refresh-scan' });
     expect(res.statusCode).toBe(500);
+    expect(JSON.parse(res.payload)).toEqual({ error: 'Internal server error' });
   });
 
   it('passes bookService, settingsService, and request.log to refreshScanBook', async () => {
