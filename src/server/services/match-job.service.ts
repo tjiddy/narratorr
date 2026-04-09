@@ -8,7 +8,7 @@ import { resolveFfprobePathFromSettings } from '../../core/utils/ffprobe-path.js
 import type { SettingsService } from './settings.service.js';
 import { Semaphore } from '../utils/semaphore.js';
 import { scoreResult, diceCoefficient } from '../../core/utils/similarity.js';
-import { extractYear } from './library-scan.service.js';
+import { extractYear } from '../utils/folder-parsing.js';
 import { searchWithSwapRetry } from '../utils/search-helpers.js';
 
 // ============ Types ============
