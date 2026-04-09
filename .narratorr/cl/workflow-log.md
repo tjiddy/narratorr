@@ -1,5 +1,34 @@
 # Workflow Log
 
+## #430 MergeCard and search modal design polish — 2026-04-09
+**Skill path:** /implement → /claim → /plan → /handoff
+**Outcome:** success — PR #456
+
+### Metrics
+- Files changed: 7 | Tests added/modified: 18
+- Quality gate runs: 2 (pass on attempt 1 both times)
+- Fix iterations: 1 (useEventSource.test.ts needed beforeEach resetMergeStore after hook contract change)
+- Context compactions: 0
+
+### Workflow experience
+- What went smoothly: Straightforward TDD cycle — spec was well-defined after 3 rounds of review, all 4 modules implemented cleanly with clear existing patterns to follow
+- Friction / issues encountered: Hook contract change (null → non-null for terminal entries) caused a cascade in useEventSource.test.ts where shared module-level store leaked state between tests. Fixed by adding beforeEach(resetMergeStore). Frontend design pass caught a no-op hover (hover:border-primary/20 matching rest state).
+
+### Token efficiency
+- Highest-token actions: Reading BookDetails.test.tsx (1740 lines) — needed to find the right insertion point for new test stubs
+- Avoidable waste: None — small scope, efficient execution
+- Suggestions: None
+
+### Infrastructure gaps
+- Repeated workarounds: None
+- Missing tooling / config: None
+- Unresolved debt: Merge phase enum still scattered across 4 locations (existing debt entry)
+
+### Wish I'd Known
+1. Module-level stores shared across test describe blocks need `beforeEach(reset)`, not just `afterEach(cleanup)` — test ordering can leak state when a contract change makes previously-invisible entries visible
+2. `hover:border-primary/20` on an element that already has `border-primary/20` at rest is a no-op — DownloadCard's `glass-card` provides a different default border, so the same hover token has different effect
+3. CSS animation stacking with `forwards` fill mode works predictably — later-delayed animations override earlier ones when they share the `opacity` property
+
 ## #444 Refresh & Scan — per-book rescan of audio files and narrator from disk — 2026-04-09
 **Skill path:** /implement → /claim → /plan → /handoff
 **Outcome:** success — PR #452
