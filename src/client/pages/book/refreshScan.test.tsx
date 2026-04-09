@@ -92,6 +92,16 @@ describe('BookHero — Refresh & Scan menu item', () => {
     expect(onRefreshScanClick).toHaveBeenCalledTimes(1);
   });
 
+  it('keeps menu open after clicking Refresh & Scan so loading state is visible', async () => {
+    const user = userEvent.setup();
+    const onRefreshScanClick = vi.fn();
+    renderHero({ showRefreshScan: true, onRefreshScanClick });
+    await openMenu(user);
+    await user.click(screen.getByRole('menuitem', { name: 'Refresh & Scan' }));
+    // Menu should still be open — the menu item should still be in the DOM
+    expect(screen.getByRole('menuitem', { name: 'Refresh & Scan' })).toBeInTheDocument();
+  });
+
   it('menu item positioned between Re-tag and Merge to M4B', async () => {
     const user = userEvent.setup();
     const onRefreshScanClick = vi.fn();
