@@ -9,7 +9,7 @@ import { queryKeys } from '@/lib/queryKeys';
 import { SearchIcon } from '@/components/icons';
 import { ToggleSwitch } from '@/components/settings/ToggleSwitch';
 import { SelectWithChevron } from '@/components/settings/SelectWithChevron';
-import { protocolPreferenceSchema, DEFAULT_SETTINGS, type AppSettings } from '../../../shared/schemas.js';
+import { protocolPreferenceSchema, searchPrioritySchema, DEFAULT_SETTINGS, type AppSettings } from '../../../shared/schemas.js';
 import { SettingsSection } from './SettingsSection';
 
 const PROTOCOL_LABELS: Record<string, string> = {
@@ -18,9 +18,20 @@ const PROTOCOL_LABELS: Record<string, string> = {
   torrent: 'Prefer Torrent',
 };
 
+const PRIORITY_LABELS: Record<string, string> = {
+  quality: 'Audio Quality',
+  accuracy: 'Narrator Accuracy',
+};
+
+const PRIORITY_DESCRIPTIONS: Record<string, string> = {
+  quality: 'Prioritize higher bitrate releases. May download full cast or alternative narrator editions.',
+  accuracy: 'Prioritize releases matching the narrator from metadata. May result in lower quality audio.',
+};
+
 const searchFormSchema = z.object({
   searchEnabled: z.boolean(),
   searchIntervalMinutes: z.number().int().min(5).max(1440),
+  searchPriority: searchPrioritySchema,
   protocolPreference: protocolPreferenceSchema,
   blacklistTtlDays: z.number().int().min(1).max(365),
   rssEnabled: z.boolean(),
@@ -33,6 +44,7 @@ function toFormData(settings: AppSettings): SearchFormData {
   return {
     searchEnabled: settings.search.enabled,
     searchIntervalMinutes: settings.search.intervalMinutes,
+    searchPriority: settings.search.searchPriority,
     protocolPreference: settings.quality.protocolPreference,
     blacklistTtlDays: settings.search.blacklistTtlDays,
     rssEnabled: settings.rss.enabled,
@@ -46,6 +58,7 @@ function toPayload(data: SearchFormData) {
       enabled: data.searchEnabled,
       intervalMinutes: data.searchIntervalMinutes,
       blacklistTtlDays: data.blacklistTtlDays,
+      searchPriority: data.searchPriority,
     },
     rss: {
       enabled: data.rssEnabled,
@@ -65,7 +78,7 @@ export function SearchSettingsSection() {
     queryFn: api.getSettings,
   });
 
-  const { register, handleSubmit, reset, formState: { errors, isDirty } } = useForm<SearchFormData>({
+  const { register, handleSubmit, reset, watch, formState: { errors, isDirty } } = useForm<SearchFormData>({
     defaultValues: toFormData({ ...DEFAULT_SETTINGS } as AppSettings),
     resolver: zodResolver(searchFormSchema),
   });
@@ -146,6 +159,20 @@ export function SearchSettingsSection() {
           )}
           <p className="text-sm text-muted-foreground mt-2">
             How long temporary blacklist entries last before expiring (1-365 days)
+          </p>
+        </div>
+
+        <div>
+          <label htmlFor="searchPriority" className="block text-sm font-medium mb-2">Search Priority</label>
+          <SelectWithChevron id="searchPriority" {...register('searchPriority')}>
+            {searchPrioritySchema.options.map((prio) => (
+              <option key={prio} value={prio}>
+                {PRIORITY_LABELS[prio] ?? prio}
+              </option>
+            ))}
+          </SelectWithChevron>
+          <p className="text-sm text-muted-foreground mt-2">
+            {PRIORITY_DESCRIPTIONS[watch('searchPriority')] ?? PRIORITY_DESCRIPTIONS.quality}
           </p>
         </div>
 
