@@ -1,11 +1,24 @@
-import { rm } from 'node:fs/promises';
+import { rm, writeFile, rename, readdir, unlink } from 'node:fs/promises';
+import { join } from 'node:path';
+import { randomUUID } from 'node:crypto';
 import { cleanEmptyParents } from '../utils/paths.js';
+import { COVER_FILE_REGEX } from '../../core/utils/cover-regex.js';
 import { eq, and, sql, inArray, notExists } from 'drizzle-orm';
 import type { Db, DbOrTx } from '../../db/index.js';
 import type { FastifyBaseLogger } from 'fastify';
 import { books, authors, narrators, bookAuthors, bookNarrators, unmatchedGenres, importLists } from '../../db/schema.js';
 import { slugify, findUnmatchedGenres } from '../../core/index.js';
 import { type MetadataService } from './metadata.service.js';
+
+export type CoverUploadErrorCode = 'INVALID_MIME' | 'NOT_FOUND' | 'NO_PATH';
+
+export class CoverUploadError extends Error {
+  code: CoverUploadErrorCode;
+  constructor(message: string, code: CoverUploadErrorCode) {
+    super(message);
+    this.code = code;
+  }
+}
 
 type BookRow = typeof books.$inferSelect;
 type NewBook = typeof books.$inferInsert;
@@ -299,6 +312,63 @@ export class BookService {
     this.log.info({ path: bookPath }, 'Book files deleted from disk');
 
     await cleanEmptyParents(bookPath, libraryRoot, this.log);
+  }
+
+  /** Map MIME type to file extension for cover images. */
+  private static mimeToExt(mime: string): string | null {
+    if (mime === 'image/jpeg') return 'jpg';
+    if (mime === 'image/png') return 'png';
+    if (mime === 'image/webp') return 'webp';
+    return null;
+  }
+
+  /**
+   * Upload a custom cover image for a book.
+   * Atomic write (temp file → rename), stale sibling cleanup, immediate DB update.
+   * Follows the same pattern as downloadRemoteCover in cover-download.ts.
+   */
+  async uploadCover(
+    bookId: number,
+    buffer: Buffer,
+    mimeType: string,
+  ): Promise<BookWithAuthor> {
+    const ext = BookService.mimeToExt(mimeType);
+    if (!ext) {
+      throw new CoverUploadError('Only JPG, PNG, and WebP images are supported', 'INVALID_MIME');
+    }
+
+    const book = await this.getById(bookId);
+    if (!book) {
+      throw new CoverUploadError('Book not found', 'NOT_FOUND');
+    }
+    if (!book.path) {
+      throw new CoverUploadError('Book has no path on disk', 'NO_PATH');
+    }
+
+    const finalPath = join(book.path, `cover.${ext}`);
+    const tempPath = join(book.path, `.cover-upload-${randomUUID()}.tmp`);
+
+    // Atomic write: temp file → rename (rename() overwrites target)
+    await writeFile(tempPath, buffer);
+    await rename(tempPath, finalPath);
+
+    // Clean up stale cover siblings with different extensions
+    const targetFilename = `cover.${ext}`;
+    const entries = await readdir(book.path).catch(() => [] as string[]);
+    for (const entry of entries) {
+      if (COVER_FILE_REGEX.test(entry) && entry.toLowerCase() !== targetFilename.toLowerCase()) {
+        await unlink(join(book.path, entry)).catch(() => { /* best-effort cleanup */ });
+      }
+    }
+
+    // Update DB immediately after irreversible filesystem step
+    await this.db.update(books).set({
+      coverUrl: `/api/books/${bookId}/cover`,
+      updatedAt: new Date(),
+    }).where(eq(books.id, bookId));
+
+    this.log.info({ bookId, path: finalPath }, 'Custom cover uploaded');
+    return this.getById(bookId) as Promise<BookWithAuthor>;
   }
 
   async getMonitoredBooks(): Promise<BookWithAuthor[]> {

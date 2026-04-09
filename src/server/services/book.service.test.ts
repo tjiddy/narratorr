@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { createMockDb, createMockLogger, inject, mockDbChain } from '../__tests__/helpers.js';
 import { createMockDbBook, createMockDbAuthor } from '../__tests__/factories.js';
-import { BookService } from './book.service.js';
+import { BookService, CoverUploadError } from './book.service.js';
 import { eq } from 'drizzle-orm';
 import { authors, books, bookAuthors } from '../../db/schema.js';
 import type { FastifyBaseLogger } from 'fastify';
@@ -15,10 +15,13 @@ vi.mock('node:fs/promises', async (importOriginal) => {
     rm: vi.fn(),
     rmdir: vi.fn(),
     readdir: vi.fn(),
+    writeFile: vi.fn(),
+    rename: vi.fn(),
+    unlink: vi.fn(),
   };
 });
 
-import { rm, rmdir, readdir } from 'node:fs/promises';
+import { rm, rmdir, readdir, writeFile, rename, unlink } from 'node:fs/promises';
 import type { Mock } from 'vitest';
 
 const mockAuthor = createMockDbAuthor();
@@ -1405,6 +1408,98 @@ describe('BookService — transaction atomicity (#214)', () => {
       expect(result).not.toBeNull();
 
       await new Promise((r) => setTimeout(r, 50));
+    });
+  });
+
+  // #445 — uploadCover
+  describe('uploadCover', () => {
+    const testBuffer = Buffer.from('fake-image-data');
+
+    function setupUploadMocks(bookPath: string | null) {
+      const bookWithPath = createMockDbBook({ path: bookPath, coverUrl: null });
+      // getById for initial check (3 selects)
+      db.select
+        .mockReturnValueOnce(mockDbChain([{ book: bookWithPath, importListName: null }]))
+        .mockReturnValueOnce(mockDbChain([{ author: mockAuthor, position: 0 }]))
+        .mockReturnValueOnce(mockDbChain([]));
+      // writeFile + rename succeed
+      (writeFile as Mock).mockResolvedValue(undefined);
+      (rename as Mock).mockResolvedValue(undefined);
+      // readdir for stale cleanup
+      (readdir as Mock).mockResolvedValue([]);
+      // DB update
+      db.update.mockReturnValue(mockDbChain([bookWithPath]));
+      // getById for return value (3 selects)
+      const updatedBook = createMockDbBook({ path: bookPath, coverUrl: `/api/books/1/cover` });
+      db.select
+        .mockReturnValueOnce(mockDbChain([{ book: updatedBook, importListName: null }]))
+        .mockReturnValueOnce(mockDbChain([{ author: mockAuthor, position: 0 }]))
+        .mockReturnValueOnce(mockDbChain([]));
+    }
+
+    it('writes file to temp path then renames atomically to cover.{ext}', async () => {
+      setupUploadMocks('/library/book');
+
+      await service.uploadCover(1, testBuffer, 'image/jpeg');
+
+      expect(writeFile).toHaveBeenCalledWith(
+        expect.stringContaining('/library/book/.cover-upload-'),
+        testBuffer,
+      );
+      expect(rename).toHaveBeenCalledWith(
+        expect.stringContaining('/library/book/.cover-upload-'),
+        expect.stringContaining('/library/book/cover.jpg'),
+      );
+    });
+
+    it('removes stale cover files with different extensions after write', async () => {
+      setupUploadMocks('/library/book');
+      (readdir as Mock).mockResolvedValue(['cover.jpg', 'cover.png']);
+      (unlink as Mock).mockResolvedValue(undefined);
+
+      await service.uploadCover(1, testBuffer, 'image/png');
+
+      // Should unlink cover.jpg (stale) but not cover.png (target)
+      expect(unlink).toHaveBeenCalledWith(expect.stringContaining('cover.jpg'));
+      expect(unlink).not.toHaveBeenCalledWith(expect.stringContaining('cover.png'));
+    });
+
+    it('updates DB with coverUrl and updatedAt immediately after rename', async () => {
+      setupUploadMocks('/library/book');
+
+      await service.uploadCover(1, testBuffer, 'image/jpeg');
+
+      expect(db.update).toHaveBeenCalled();
+      const setCall = db.update.mock.results[0].value.set;
+      expect(setCall).toHaveBeenCalledWith(expect.objectContaining({
+        coverUrl: '/api/books/1/cover',
+      }));
+    });
+
+    it('throws CoverUploadError with NO_PATH when book has no path', async () => {
+      (writeFile as Mock).mockClear();
+      setupUploadMocks(null);
+
+      const err = await service.uploadCover(1, testBuffer, 'image/jpeg').catch((e: unknown) => e);
+      expect(err).toBeInstanceOf(CoverUploadError);
+      expect((err as CoverUploadError).code).toBe('NO_PATH');
+
+      // No filesystem ops should have occurred
+      expect(writeFile).not.toHaveBeenCalled();
+    });
+
+    it('throws CoverUploadError with NOT_FOUND when book does not exist', async () => {
+      db.select.mockReturnValueOnce(mockDbChain([]));
+
+      const err = await service.uploadCover(999, testBuffer, 'image/jpeg').catch((e: unknown) => e);
+      expect(err).toBeInstanceOf(CoverUploadError);
+      expect((err as CoverUploadError).code).toBe('NOT_FOUND');
+    });
+
+    it('throws CoverUploadError with INVALID_MIME for unsupported MIME type', async () => {
+      const err = await service.uploadCover(1, testBuffer, 'image/gif').catch((e: unknown) => e);
+      expect(err).toBeInstanceOf(CoverUploadError);
+      expect((err as CoverUploadError).code).toBe('INVALID_MIME');
     });
   });
 });
