@@ -74,4 +74,33 @@ describe('EventReasonDetails', () => {
     // Must render as plain text error, not as a generic "Error:" key-value row
     expect(screen.queryByText('Error:')).not.toBeInTheDocument();
   });
+
+  it('renders merge_failed with error text via error renderer', () => {
+    render(<EventReasonDetails eventType="merge_failed" reason={{ error: 'ffmpeg not found' }} indexerMap={emptyMap} />);
+    expect(screen.getByText('ffmpeg not found')).toBeInTheDocument();
+    expect(screen.queryByText('Error:')).not.toBeInTheDocument();
+  });
+
+  it('renders grabbed details with resolved indexer name from map', () => {
+    const indexerMap = new Map<number, string>([[5, 'MyAnonamouse']]);
+    render(<EventReasonDetails eventType="grabbed" reason={{ indexerId: 5, size: 0, protocol: 'torrent' }} indexerMap={indexerMap} />);
+    expect(screen.getByText('MyAnonamouse')).toBeInTheDocument();
+    expect(screen.getByText('Torrent')).toBeInTheDocument();
+    expect(screen.getByText('0 B')).toBeInTheDocument();
+  });
+
+  it('renders imported details with totalSize: 0 as "0 B"', () => {
+    render(<EventReasonDetails eventType="imported" reason={{ targetPath: '/lib/Book', totalSize: 0, fileCount: 1 }} indexerMap={emptyMap} />);
+    expect(screen.getByText('0 B')).toBeInTheDocument();
+  });
+
+  it('renders download_completed with fractional progress', () => {
+    render(<EventReasonDetails eventType="download_completed" reason={{ progress: 0.756 }} indexerMap={emptyMap} />);
+    expect(screen.getByText('76%')).toBeInTheDocument();
+  });
+
+  it('renders generic fallback with nested object as JSON string', () => {
+    render(<EventReasonDetails eventType="custom" reason={{ nested: { foo: 'bar' } }} indexerMap={emptyMap} />);
+    expect(screen.getByText('{"foo":"bar"}')).toBeInTheDocument();
+  });
 });

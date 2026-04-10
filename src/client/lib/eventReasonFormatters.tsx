@@ -1,4 +1,5 @@
 import { formatBytes } from '@/lib/api';
+import { capitalize } from '@/lib/eventReasonHelpers';
 import { QualityComparisonPanel } from '@/pages/activity/QualityComparisonPanel';
 import { AlertCircleIcon } from '@/components/icons';
 import type { QualityGateData } from '@/lib/api/activity';
@@ -23,7 +24,7 @@ function GrabbedDetails({ reason, indexerMap }: { reason: Record<string, unknown
   return (
     <div className="space-y-1">
       <KeyValueRow label="Indexer" value={indexerName} />
-      {protocol && <KeyValueRow label="Protocol" value={protocol.charAt(0).toUpperCase() + protocol.slice(1)} />}
+      {protocol && <KeyValueRow label="Protocol" value={capitalize(protocol)} />}
       {size != null && <KeyValueRow label="Size" value={formatBytes(size)} />}
     </div>
   );
@@ -47,7 +48,7 @@ function ImportedDetails({ reason }: { reason: Record<string, unknown> }) {
   return (
     <div className="space-y-1">
       {targetPath && <KeyValueRow label="Path" value={targetPath} />}
-      {mode && <KeyValueRow label="Mode" value={mode.charAt(0).toUpperCase() + mode.slice(1)} />}
+      {mode && <KeyValueRow label="Mode" value={capitalize(mode)} />}
       {fileCount != null && <KeyValueRow label="Files" value={String(fileCount)} />}
       {totalSize != null && <KeyValueRow label="Size" value={formatBytes(totalSize)} />}
     </div>

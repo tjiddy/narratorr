@@ -1,5 +1,23 @@
 import { describe, it, expect } from 'vitest';
-import { hasReasonContent, getEventSummary } from './eventReasonHelpers';
+import { hasReasonContent, getEventSummary, capitalize } from './eventReasonHelpers';
+
+describe('capitalize', () => {
+  it('capitalizes the first character', () => {
+    expect(capitalize('torrent')).toBe('Torrent');
+  });
+
+  it('preserves already-capitalized strings', () => {
+    expect(capitalize('Usenet')).toBe('Usenet');
+  });
+
+  it('handles single character', () => {
+    expect(capitalize('a')).toBe('A');
+  });
+
+  it('handles empty string without error', () => {
+    expect(capitalize('')).toBe('');
+  });
+});
 
 describe('hasReasonContent', () => {
   it('returns false for null reason', () => {

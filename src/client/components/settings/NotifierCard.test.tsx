@@ -130,7 +130,7 @@ describe('NotifierCard — view mode', () => {
     expect(screen.getByText(/Telegram — Chat -100123/)).toBeInTheDocument();
   });
 
-  it('shows discord subtitle with truncated URL', () => {
+  it('shows discord subtitle as static label', () => {
     renderWithProviders(
       <NotifierCard
         notifier={mockDiscordNotifier}

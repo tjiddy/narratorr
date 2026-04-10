@@ -114,16 +114,36 @@ describe('NOTIFIER_REGISTRY', () => {
       expect(NOTIFIER_REGISTRY.telegram.viewSubtitle({ chatId: '123' })).toBe('Chat 123');
     });
 
-    it('pushover returns static "pushover"', () => {
-      expect(NOTIFIER_REGISTRY.pushover.viewSubtitle({})).toBe('pushover');
+    it('pushover returns static "Pushover"', () => {
+      expect(NOTIFIER_REGISTRY.pushover.viewSubtitle({})).toBe('Pushover');
     });
 
     it('ntfy returns topic name', () => {
       expect(NOTIFIER_REGISTRY.ntfy.viewSubtitle({ ntfyTopic: 'alerts' })).toBe('alerts');
     });
 
+    it('ntfy returns "Ntfy" fallback for empty topic', () => {
+      expect(NOTIFIER_REGISTRY.ntfy.viewSubtitle({ ntfyTopic: '' })).toBe('Ntfy');
+    });
+
     it('script returns path unchanged', () => {
       expect(NOTIFIER_REGISTRY.script.viewSubtitle({ path: '/usr/local/bin/notify.sh' })).toBe('/usr/local/bin/notify.sh');
+    });
+
+    it('script returns "script" fallback for empty path', () => {
+      expect(NOTIFIER_REGISTRY.script.viewSubtitle({ path: '' })).toBe('script');
+    });
+
+    it('email returns "email" fallback for empty toAddress', () => {
+      expect(NOTIFIER_REGISTRY.email.viewSubtitle({ toAddress: '' })).toBe('email');
+    });
+
+    it('telegram returns "Chat ?" fallback for empty chatId', () => {
+      expect(NOTIFIER_REGISTRY.telegram.viewSubtitle({ chatId: '' })).toBe('Chat ?');
+    });
+
+    it('webhook strips credentials from URL', () => {
+      expect(NOTIFIER_REGISTRY.webhook.viewSubtitle({ url: 'https://user:pass@secure.example.com/hook' })).toBe('secure.example.com');
     });
   });
 });

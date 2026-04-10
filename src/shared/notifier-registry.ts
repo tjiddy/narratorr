@@ -66,13 +66,13 @@ export const NOTIFIER_REGISTRY: Record<string, NotifierTypeMetadata> = {
       { path: 'pushoverToken', message: 'API token is required' },
       { path: 'pushoverUser', message: 'User key is required' },
     ],
-    viewSubtitle: () => 'pushover',
+    viewSubtitle: () => 'Pushover',
   },
   ntfy: {
     label: 'ntfy',
     defaultSettings: { ntfyTopic: '', ntfyServer: '' },
     requiredFields: [{ path: 'ntfyTopic', message: 'Topic is required' }],
-    viewSubtitle: (s) => (s.ntfyTopic as string) || 'ntfy',
+    viewSubtitle: (s) => (s.ntfyTopic as string) || 'Ntfy',
   },
   gotify: {
     label: 'Gotify',

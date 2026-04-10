@@ -243,6 +243,12 @@ describe('SearchPage', () => {
       expect(screen.queryByText(/discover/i)).not.toBeInTheDocument();
     });
 
+    it('search input has focus on page load', () => {
+      renderWithProviders(<SearchPage />);
+      const input = screen.getByPlaceholderText(/search by title/i);
+      expect(input).toHaveFocus();
+    });
+
     it('search input is the first interactive control on the page', () => {
       const { container } = renderWithProviders(<SearchPage />);
       const input = screen.getByPlaceholderText(/search by title/i);
