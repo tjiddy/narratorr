@@ -33,11 +33,19 @@ export interface SearchOptions {
   languages?: readonly string[];
 }
 
+export interface IndexerTestResult {
+  success: boolean;
+  message?: string;
+  ip?: string;
+  warning?: string;
+  metadata?: Record<string, unknown>;
+}
+
 export interface IndexerAdapter {
   readonly type: string;
   readonly name: string;
 
   search(query: string, options?: SearchOptions): Promise<SearchResult[]>;
-  test(): Promise<{ success: boolean; message?: string; ip?: string; warning?: string; metadata?: Record<string, unknown> }>;
+  test(): Promise<IndexerTestResult>;
   refreshStatus?(): Promise<{ isVip: boolean; classname: string } | null>;
 }

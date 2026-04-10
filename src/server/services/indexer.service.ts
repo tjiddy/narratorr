@@ -7,6 +7,7 @@ import {
   parseAudiobookTitle,
   scoreResult,
   type IndexerAdapter,
+  type IndexerTestResult,
   type SearchResult,
   type SearchOptions,
 } from '../../core/index.js';
@@ -180,7 +181,7 @@ export class IndexerService {
     this.adapters.clear();
   }
 
-  async testConfig(data: { type: string; settings: Record<string, unknown>; id?: number }): Promise<{ success: boolean; message?: string; ip?: string; warning?: string; metadata?: Record<string, unknown> }> {
+  async testConfig(data: { type: string; settings: Record<string, unknown>; id?: number }): Promise<IndexerTestResult> {
     try {
       this.log.debug({ type: data.type, hostname: data.settings.hostname, pageLimit: data.settings.pageLimit }, 'Testing indexer config');
 
@@ -209,7 +210,7 @@ export class IndexerService {
     }
   }
 
-  async test(id: number): Promise<{ success: boolean; message?: string; ip?: string; warning?: string; metadata?: Record<string, unknown> }> {
+  async test(id: number): Promise<IndexerTestResult> {
     const indexer = await this.getById(id);
     if (!indexer) {
       return { success: false, message: 'Indexer not found' };
