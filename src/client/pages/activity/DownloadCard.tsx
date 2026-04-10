@@ -296,12 +296,8 @@ export function DownloadCard({
                 download={download}
                 onCancel={onCancel}
                 onRetry={onRetry}
-                onApprove={onApprove}
-                onReject={onReject}
                 onDelete={onDelete}
                 isCancelling={isCancelling}
-                isApproving={isApproving}
-                isRejecting={isRejectingDismiss}
                 isDeleting={isDeleting}
                 isRetrying={isRetrying}
               />

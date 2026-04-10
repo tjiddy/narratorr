@@ -1,5 +1,5 @@
 import { readdir } from 'node:fs/promises';
-import { join, extname } from 'node:path';
+import { join, extname, basename } from 'node:path';
 import { AUDIO_EXTENSIONS } from './audio-constants.js';
 
 export interface CollectAudioFileOptions {
@@ -37,4 +37,39 @@ export async function collectAudioFilePaths(
   }
 
   return results;
+}
+
+/** Sort mode for collectSortedAudioFiles. */
+export type AudioFileSortMode = 'lexicographic' | 'locale' | 'locale-numeric';
+
+export interface CollectSortedOptions extends CollectAudioFileOptions {
+  /** Sort mode (default: 'locale-numeric'). */
+  sort?: AudioFileSortMode;
+}
+
+/**
+ * Collect audio files and return them sorted.
+ *
+ * Sort modes:
+ * - `'lexicographic'` — plain `Array.sort()` on full path (default JS string comparison)
+ * - `'locale'` — `localeCompare` on basename (alphabetic, no numeric awareness)
+ * - `'locale-numeric'` — `localeCompare` on basename with `{ numeric: true }` (default)
+ */
+export async function collectSortedAudioFiles(
+  dir: string,
+  options?: CollectSortedOptions,
+): Promise<string[]> {
+  const files = await collectAudioFilePaths(dir, options);
+  const mode = options?.sort ?? 'locale-numeric';
+
+  switch (mode) {
+    case 'lexicographic':
+      return files.sort();
+    case 'locale':
+      return files.sort((a, b) => basename(a).localeCompare(basename(b)));
+    case 'locale-numeric':
+      return files.sort((a, b) =>
+        basename(a).localeCompare(basename(b), undefined, { numeric: true, sensitivity: 'base' }),
+      );
+  }
 }

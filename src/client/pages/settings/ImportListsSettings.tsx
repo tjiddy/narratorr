@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import { api, type ImportList, type ImportListItem } from '@/lib/api';
+import { compactInputClass as inputClass } from '@/components/settings/formStyles';
 import { importListItemKey, deduplicateKeys } from '@/lib/stableKeys.js';
 import { queryKeys } from '@/lib/queryKeys';
 import { useCrudSettings } from '@/hooks/useCrudSettings';
@@ -28,7 +29,6 @@ type ImportListFormData = {
   settings: Record<string, unknown>;
 };
 
-const inputClass = 'w-full px-3 py-2 bg-background border border-border rounded-lg focus-ring';
 const btnSecondary = 'px-3 py-1.5 text-sm font-medium rounded-lg transition-colors disabled:opacity-50';
 
 function getDefaults(initial?: ImportList) {

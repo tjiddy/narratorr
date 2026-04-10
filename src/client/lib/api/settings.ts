@@ -1,18 +1,12 @@
 import type { AppSettings, UpdateSettingsInput } from '../../../shared/schemas.js';
 import { fetchApi } from './client.js';
+import type { IndexerTestResult } from '../../../core/indexers/types.js';
 
 export type Settings = AppSettings;
+export type TestResult = IndexerTestResult;
 
 export interface FfmpegProbeResult {
   version: string;
-}
-
-export interface TestResult {
-  success: boolean;
-  message?: string;
-  ip?: string;
-  warning?: string;
-  metadata?: Record<string, unknown>;
 }
 
 export interface ProxyTestResult {

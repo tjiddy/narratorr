@@ -20,24 +20,12 @@ import type { EventHistoryService } from './event-history.service.js';
 import { getErrorMessage } from '../utils/error-message.js';
 import { searchWithSwapRetry } from '../utils/search-helpers.js';
 import { parseFolderStructure } from '../utils/folder-parsing.js';
+import type { DiscoveredBook } from '../../shared/schemas/library-scan.js';
+
+export type { DiscoveredBook };
 
 /** Minimum ratio of target/source file size for copy verification to pass. */
 const COPY_VERIFICATION_THRESHOLD = 0.99;
-
-export interface DiscoveredBook {
-  path: string;
-  parsedTitle: string;
-  parsedAuthor: string | null;
-  parsedSeries: string | null;
-  fileCount: number;
-  totalSize: number;
-  isDuplicate: boolean;
-  existingBookId?: number;
-  /** 'path' = exact folder path matched; 'slug' = title+author slug matched; 'within-scan' = same title+author seen earlier in the same scan. Only set when isDuplicate=true. */
-  duplicateReason?: 'path' | 'slug' | 'within-scan';
-  /** Path of the first discovery with the same title+author slug. Only set when duplicateReason='within-scan'. */
-  duplicateFirstPath?: string;
-}
 
 export type ImportMode = 'copy' | 'move';
 

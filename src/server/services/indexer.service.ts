@@ -7,6 +7,7 @@ import {
   parseAudiobookTitle,
   scoreResult,
   type IndexerAdapter,
+  type IndexerTestResult,
   type SearchResult,
   type SearchOptions,
 } from '../../core/index.js';
@@ -180,7 +181,7 @@ export class IndexerService {
     this.adapters.clear();
   }
 
-  async testConfig(data: { type: string; settings: Record<string, unknown>; id?: number }): Promise<{ success: boolean; message?: string; ip?: string; warning?: string; metadata?: Record<string, unknown> }> {
+  async testConfig(data: { type: string; settings: Record<string, unknown>; id?: number }): Promise<IndexerTestResult> {
     try {
       this.log.debug({ type: data.type, hostname: data.settings.hostname, pageLimit: data.settings.pageLimit }, 'Testing indexer config');
 
@@ -209,7 +210,7 @@ export class IndexerService {
     }
   }
 
-  async test(id: number): Promise<{ success: boolean; message?: string; ip?: string; warning?: string; metadata?: Record<string, unknown> }> {
+  async test(id: number): Promise<IndexerTestResult> {
     const indexer = await this.getById(id);
     if (!indexer) {
       return { success: false, message: 'Indexer not found' };
@@ -342,19 +343,25 @@ export class IndexerService {
     return rows;
   }
 
-  async searchAll(query: string, options?: SearchOptions): Promise<SearchResult[]> {
+  /** Query all enabled indexer rows (full select) and inject language preferences into search options. */
+  private async getEnabledIndexerRows(options?: SearchOptions) {
     const enabledIndexers = await this.db
       .select()
       .from(indexers)
       .where(eq(indexers.enabled, true))
       .orderBy(indexers.priority);
 
-    // Inject metadata languages into search options for per-adapter filtering (e.g., MAM browse_lang)
     let searchOptions = options;
     if (this.settingsService && !options?.languages) {
       const metadataSettings = await this.settingsService.get('metadata');
       searchOptions = { ...options, languages: metadataSettings.languages };
     }
+
+    return { enabledIndexers, searchOptions };
+  }
+
+  async searchAll(query: string, options?: SearchOptions): Promise<SearchResult[]> {
+    const { enabledIndexers, searchOptions } = await this.getEnabledIndexerRows(options);
 
     this.log.debug({ query, indexers: enabledIndexers.map(i => i.name), count: enabledIndexers.length }, 'Searching enabled indexers');
 
@@ -419,18 +426,7 @@ export class IndexerService {
       onCancelled?: (indexerId: number, name: string) => void;
     },
   ): Promise<SearchResult[]> {
-    const enabledIndexers = await this.db
-      .select()
-      .from(indexers)
-      .where(eq(indexers.enabled, true))
-      .orderBy(indexers.priority);
-
-    // Inject metadata languages into search options for per-adapter filtering (e.g., MAM browse_lang)
-    let searchOptions = options;
-    if (this.settingsService && !options?.languages) {
-      const metadataSettings = await this.settingsService.get('metadata');
-      searchOptions = { ...options, languages: metadataSettings.languages };
-    }
+    const { enabledIndexers, searchOptions } = await this.getEnabledIndexerRows(options);
 
     this.log.debug({ query, indexers: enabledIndexers.map(i => i.name), count: enabledIndexers.length }, 'Streaming search started');
 

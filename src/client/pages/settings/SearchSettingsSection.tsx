@@ -11,10 +11,10 @@ import { ToggleSwitch } from '@/components/settings/ToggleSwitch';
 import { SelectWithChevron } from '@/components/settings/SelectWithChevron';
 import { protocolPreferenceSchema, searchPrioritySchema, DEFAULT_SETTINGS, type AppSettings } from '../../../shared/schemas.js';
 import { SettingsSection } from './SettingsSection';
+import { errorInputClass as inputClass } from '@/components/settings/formStyles';
 
 const PROTOCOL_LABELS: Record<string, string> = { none: 'No Preference', usenet: 'Prefer Usenet', torrent: 'Prefer Torrent' };
 const PRIORITY_LABELS: Record<string, string> = { quality: 'Audio Quality', accuracy: 'Narrator Accuracy' };
-const inputClass = (hasError: boolean) => `w-full px-4 py-3 bg-background border rounded-xl focus-ring focus:border-transparent transition-all ${hasError ? 'border-destructive' : 'border-border'}`;
 
 const searchFormSchema = z.object({
   searchEnabled: z.boolean(),

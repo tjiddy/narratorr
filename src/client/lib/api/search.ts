@@ -1,30 +1,8 @@
 import { fetchApi } from './client.js';
 import { type Download } from './activity.js';
+import type { SearchResult } from '../../../core/indexers/types.js';
 
-export interface SearchResult {
-  title: string;
-  rawTitle?: string;
-  author?: string;
-  narrator?: string;
-  protocol: 'torrent' | 'usenet';
-  downloadUrl?: string;
-  infoHash?: string;
-  size?: number;
-  seeders?: number;
-  leechers?: number;
-  grabs?: number;
-  language?: string;
-  newsgroup?: string;
-  indexer: string;
-  indexerId?: number;
-  indexerPriority?: number;
-  detailsUrl?: string;
-  guid?: string;
-  coverUrl?: string;
-  matchScore?: number;
-  isFreeleech?: boolean;
-  isVipOnly?: boolean;
-}
+export type { SearchResult, DownloadProtocol } from '../../../core/indexers/types.js';
 
 export interface SearchContext {
   author?: string;
