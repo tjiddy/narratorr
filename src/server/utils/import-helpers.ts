@@ -1,7 +1,7 @@
 import { stat, readdir, mkdir, cp } from 'node:fs/promises';
 import { join, extname, basename } from 'node:path';
 import { renderTemplate, toLastFirst, toSortTitle, AUDIO_EXTENSIONS } from '../../core/utils/index.js';
-import { collectSortedAudioFiles } from '../../core/utils/collect-audio-files.js';
+import { collectAudioFilePaths } from '../../core/utils/collect-audio-files.js';
 import { DISC_FOLDER_PATTERN, parseTitledDiscFolder } from '../../core/utils/book-discovery.js';
 import type { NamingOptions } from '../../core/utils/naming.js';
 
@@ -99,8 +99,10 @@ export async function containsAudioFiles(dirPath: string): Promise<boolean> {
 async function collectAudioFiles(
   dir: string,
 ): Promise<Array<{ srcPath: string; name: string }>> {
-  const paths = await collectSortedAudioFiles(dir, { recursive: true });
-  return paths.map(p => ({ srcPath: p, name: basename(p) }));
+  const paths = await collectAudioFilePaths(dir, { recursive: true });
+  return paths
+    .map(p => ({ srcPath: p, name: basename(p) }))
+    .sort((a, b) => a.name.localeCompare(b.name));
 }
 
 type AudioFile = { srcPath: string; name: string };
