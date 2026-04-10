@@ -1,22 +1,8 @@
 import { fetchApi } from './client.js';
 import type { BookMetadata } from './books.js';
 
-export type ImportMode = 'copy' | 'move';
-
-export interface DiscoveredBook {
-  path: string;
-  parsedTitle: string;
-  parsedAuthor: string | null;
-  parsedSeries: string | null;
-  fileCount: number;
-  totalSize: number;
-  isDuplicate: boolean;
-  existingBookId?: number;
-  /** 'path' = exact folder path matched; 'slug' = title+author slug matched; 'within-scan' = same title+author seen earlier in the same scan. Only set when isDuplicate=true. */
-  duplicateReason?: 'path' | 'slug' | 'within-scan';
-  /** Path of the first discovery with the same title+author slug. Only set when duplicateReason='within-scan'. */
-  duplicateFirstPath?: string;
-}
+export type { DiscoveredBook, DuplicateReason, ImportMode } from '../../../shared/schemas/library-scan.js';
+import type { DiscoveredBook, ImportMode } from '../../../shared/schemas/library-scan.js';
 
 export interface SingleBookResult {
   book: DiscoveredBook;

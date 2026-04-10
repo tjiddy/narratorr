@@ -31,6 +31,8 @@ export const discoveredBookSchema = z.object({
   duplicateFirstPath: z.string().optional(),
 });
 
+export type DiscoveredBook = z.infer<typeof discoveredBookSchema>;
+
 export const scanResultSchema = z.object({
   discoveries: z.array(discoveredBookSchema),
   totalFolders: z.number(),
