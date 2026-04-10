@@ -1,6 +1,7 @@
 import { fetchApi } from './client.js';
 import { type Download } from './activity.js';
 import type { SearchResult } from '../../../core/indexers/types.js';
+import { type GrabPayload } from '../../../shared/schemas/search.js';
 
 export type { SearchResult, DownloadProtocol } from '../../../core/indexers/types.js';
 
@@ -33,17 +34,7 @@ export const searchApi = {
       method: 'POST',
     }),
 
-  searchGrab: (params: {
-    downloadUrl: string;
-    title: string;
-    protocol?: 'torrent' | 'usenet';
-    bookId?: number;
-    indexerId?: number;
-    size?: number;
-    seeders?: number;
-    guid?: string;
-    replaceExisting?: boolean;
-  }) =>
+  searchGrab: (params: GrabPayload) =>
     fetchApi<Download>('/search/grab', {
       method: 'POST',
       body: JSON.stringify(params),

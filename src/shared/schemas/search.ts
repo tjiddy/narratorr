@@ -31,3 +31,5 @@ export const grabSchema = z.object({
 
 export type SearchQuery = z.infer<typeof searchQuerySchema>;
 export type GrabInput = z.infer<typeof grabSchema>;
+/** Pre-validation grab input — fields with `.default()` are optional. */
+export type GrabPayload = z.input<typeof grabSchema>;
