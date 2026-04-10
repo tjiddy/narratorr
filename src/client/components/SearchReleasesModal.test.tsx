@@ -1821,3 +1821,395 @@ describe('SearchReleasesModal — streaming search (Phase 1/Phase 2)', () => {
     });
   });
 });
+
+// =============================================================================
+// #412 — Grab payload contract tests (derived type, no cherry-pick)
+// =============================================================================
+
+const mockDownloadResponse = {
+  id: 1,
+  title: 'Test',
+  protocol: 'torrent' as const,
+  status: 'queued' as const,
+  progress: 0,
+  addedAt: '2024-01-01T00:00:00Z',
+  indexerName: null,
+  seeders: null,
+  completedAt: null,
+};
+
+/** SearchResult with ALL grab-contract fields populated, plus non-contract fields. */
+const fullResult: SearchResult = {
+  title: 'Full Result',
+  rawTitle: 'full.result.mp3',
+  author: 'Author Name',
+  narrator: 'Narrator Name',
+  protocol: 'torrent',
+  downloadUrl: 'magnet:?xt=urn:btih:full123',
+  infoHash: 'full123',
+  size: 3 * 1024 * 1024 * 1024,
+  seeders: 15,
+  leechers: 3,
+  grabs: 100,
+  language: 'English',
+  newsgroup: 'alt.binaries.audiobooks',
+  indexer: 'TestIndexer',
+  indexerId: 7,
+  indexerPriority: 1,
+  detailsUrl: 'https://example.com/details/123',
+  guid: 'guid-abc-123',
+  coverUrl: 'https://example.com/cover.jpg',
+  matchScore: 95,
+  isFreeleech: true,
+  isVipOnly: false,
+};
+
+/** The exact grab-contract keys that should appear in the payload (from grabSchema). */
+const GRAB_CONTRACT_KEYS = ['downloadUrl', 'title', 'protocol', 'indexerId', 'size', 'seeders', 'guid'];
+
+/** Non-contract SearchResult keys that must NOT appear. */
+const NON_CONTRACT_KEYS = [
+  'rawTitle', 'author', 'narrator', 'infoHash', 'leechers', 'grabs',
+  'language', 'newsgroup', 'indexer', 'indexerPriority', 'detailsUrl',
+  'coverUrl', 'matchScore', 'isFreeleech', 'isVipOnly',
+];
+
+describe('SearchReleasesModal — grab payload contract (#412)', () => {
+  describe('grab happy path — exact payload', () => {
+    it('torrent grab sends exactly the grab-contract fields plus bookId (no extra SearchResult fields)', async () => {
+      setStreamResults([fullResult]);
+      vi.mocked(api.searchGrab).mockResolvedValue(mockDownloadResponse);
+      const user = userEvent.setup();
+
+      renderWithProviders(
+        <SearchReleasesModal isOpen={true} book={mockBook} onClose={vi.fn()} />,
+      );
+
+      await screen.findByText('Full Result');
+      await user.click(screen.getAllByText('Grab')[0]);
+
+      await waitFor(() => {
+        expect(api.searchGrab).toHaveBeenCalledTimes(1);
+      });
+
+      const payload = vi.mocked(api.searchGrab).mock.calls[0][0];
+
+      // Verify all grab-contract fields are present with correct values
+      expect(payload).toEqual({
+        downloadUrl: 'magnet:?xt=urn:btih:full123',
+        title: 'Full Result',
+        protocol: 'torrent',
+        bookId: mockBook.id,
+        indexerId: 7,
+        size: 3 * 1024 * 1024 * 1024,
+        seeders: 15,
+        guid: 'guid-abc-123',
+      });
+
+      // Verify non-contract fields are absent
+      for (const key of NON_CONTRACT_KEYS) {
+        expect(payload).not.toHaveProperty(key);
+      }
+    });
+
+    it('usenet grab sends protocol: usenet with the same grab-contract fields', async () => {
+      const usenetResult: SearchResult = {
+        ...fullResult,
+        protocol: 'usenet',
+        downloadUrl: 'https://nzb.example.com/dl/123',
+      };
+      setStreamResults([usenetResult]);
+      vi.mocked(api.searchGrab).mockResolvedValue(mockDownloadResponse);
+      const user = userEvent.setup();
+
+      renderWithProviders(
+        <SearchReleasesModal isOpen={true} book={mockBook} onClose={vi.fn()} />,
+      );
+
+      await screen.findByText('Full Result');
+      await user.click(screen.getAllByText('Grab')[0]);
+
+      await waitFor(() => {
+        expect(api.searchGrab).toHaveBeenCalledTimes(1);
+      });
+
+      const payload = vi.mocked(api.searchGrab).mock.calls[0][0];
+      expect(payload.protocol).toBe('usenet');
+      expect(payload.downloadUrl).toBe('https://nzb.example.com/dl/123');
+
+      // Non-contract fields still excluded
+      for (const key of NON_CONTRACT_KEYS) {
+        expect(payload).not.toHaveProperty(key);
+      }
+    });
+
+    it('successful grab shows success toast and does not leave stale pendingReplace state', async () => {
+      setStreamResults([fullResult]);
+      vi.mocked(api.searchGrab).mockResolvedValue(mockDownloadResponse);
+      const onClose = vi.fn();
+      const user = userEvent.setup();
+
+      renderWithProviders(
+        <SearchReleasesModal isOpen={true} book={mockBook} onClose={onClose} />,
+      );
+
+      await screen.findByText('Full Result');
+      await user.click(screen.getAllByText('Grab')[0]);
+
+      await waitFor(() => {
+        expect(toast.success).toHaveBeenCalledWith('Download started! Check the Activity page.');
+        expect(onClose).toHaveBeenCalled();
+      });
+
+      // No confirm modal should be visible (no stale pendingReplace)
+      expect(screen.queryByRole('dialog', { name: /replace/i })).not.toBeInTheDocument();
+    });
+  });
+
+  describe('non-contract field exclusion', () => {
+    it('non-grab-contract fields (rawTitle, author, coverUrl, matchScore, etc.) are NOT included in the mutation payload', async () => {
+      setStreamResults([fullResult]);
+      vi.mocked(api.searchGrab).mockResolvedValue(mockDownloadResponse);
+      const user = userEvent.setup();
+
+      renderWithProviders(
+        <SearchReleasesModal isOpen={true} book={mockBook} onClose={vi.fn()} />,
+      );
+
+      await screen.findByText('Full Result');
+      await user.click(screen.getAllByText('Grab')[0]);
+
+      await waitFor(() => {
+        expect(api.searchGrab).toHaveBeenCalledTimes(1);
+      });
+
+      const payload = vi.mocked(api.searchGrab).mock.calls[0][0];
+      const payloadKeys = Object.keys(payload);
+
+      // Every key in payload should be a grab-contract key or bookId
+      for (const key of payloadKeys) {
+        expect([...GRAB_CONTRACT_KEYS, 'bookId', 'replaceExisting']).toContain(key);
+      }
+    });
+  });
+
+  describe('409 replace-confirm flow — derived type', () => {
+    it('409 error captures grab-contract fields from the original mutation variables', async () => {
+      setStreamResults([fullResult]);
+      vi.mocked(api.searchGrab)
+        .mockRejectedValueOnce(new MockApiError(409, { code: 'ACTIVE_DOWNLOAD_EXISTS' }));
+      const user = userEvent.setup();
+
+      renderWithProviders(
+        <SearchReleasesModal isOpen={true} book={mockBook} onClose={vi.fn()} />,
+      );
+
+      await screen.findByText('Full Result');
+      await user.click(screen.getAllByText('Grab')[0]);
+
+      // Confirm modal should appear (pendingReplace was captured)
+      await waitFor(() => {
+        expect(screen.getByRole('dialog', { name: /replace/i })).toBeInTheDocument();
+      });
+
+      // No error toast — 409 is handled specially
+      expect(toast.error).not.toHaveBeenCalled();
+    });
+
+    it('confirming replace sends { ...pendingReplace, replaceExisting: true } with all grab-contract fields preserved', async () => {
+      setStreamResults([fullResult]);
+      vi.mocked(api.searchGrab)
+        .mockRejectedValueOnce(new MockApiError(409, { code: 'ACTIVE_DOWNLOAD_EXISTS' }))
+        .mockResolvedValueOnce(mockDownloadResponse);
+      const user = userEvent.setup();
+
+      renderWithProviders(
+        <SearchReleasesModal isOpen={true} book={mockBook} onClose={vi.fn()} />,
+      );
+
+      await screen.findByText('Full Result');
+      await user.click(screen.getAllByText('Grab')[0]);
+
+      await waitFor(() => {
+        expect(screen.getByRole('dialog', { name: /replace/i })).toBeInTheDocument();
+      });
+
+      await user.click(screen.getByRole('button', { name: /replace/i }));
+
+      await waitFor(() => {
+        expect(api.searchGrab).toHaveBeenCalledTimes(2);
+      });
+
+      const retryPayload = vi.mocked(api.searchGrab).mock.calls[1][0];
+
+      // All original grab-contract fields preserved, plus replaceExisting
+      expect(retryPayload).toEqual({
+        downloadUrl: 'magnet:?xt=urn:btih:full123',
+        title: 'Full Result',
+        protocol: 'torrent',
+        bookId: mockBook.id,
+        indexerId: 7,
+        size: 3 * 1024 * 1024 * 1024,
+        seeders: 15,
+        guid: 'guid-abc-123',
+        replaceExisting: true,
+      });
+    });
+
+    it('cancelling replace clears pendingReplace state without calling the API', async () => {
+      setStreamResults([fullResult]);
+      vi.mocked(api.searchGrab)
+        .mockRejectedValueOnce(new MockApiError(409, { code: 'ACTIVE_DOWNLOAD_EXISTS' }));
+      const user = userEvent.setup();
+
+      renderWithProviders(
+        <SearchReleasesModal isOpen={true} book={mockBook} onClose={vi.fn()} />,
+      );
+
+      await screen.findByText('Full Result');
+      await user.click(screen.getAllByText('Grab')[0]);
+
+      await waitFor(() => {
+        expect(screen.getByRole('dialog', { name: /replace/i })).toBeInTheDocument();
+      });
+
+      // Click cancel
+      await user.click(screen.getByRole('button', { name: /cancel/i }));
+
+      await waitFor(() => {
+        expect(screen.queryByRole('dialog', { name: /replace/i })).not.toBeInTheDocument();
+      });
+
+      // Only the initial grab call, no retry
+      expect(api.searchGrab).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  describe('field forwarding regression', () => {
+    it('mock SearchResult with all grab-contract fields populated — mutation receives every field plus bookId', async () => {
+      setStreamResults([fullResult]);
+      vi.mocked(api.searchGrab).mockResolvedValue(mockDownloadResponse);
+      const user = userEvent.setup();
+
+      renderWithProviders(
+        <SearchReleasesModal isOpen={true} book={mockBook} onClose={vi.fn()} />,
+      );
+
+      await screen.findByText('Full Result');
+      await user.click(screen.getAllByText('Grab')[0]);
+
+      await waitFor(() => {
+        expect(api.searchGrab).toHaveBeenCalledTimes(1);
+      });
+
+      const payload = vi.mocked(api.searchGrab).mock.calls[0][0];
+
+      // Every SearchResult-sourced grab-contract field is present
+      for (const key of GRAB_CONTRACT_KEYS) {
+        expect(payload).toHaveProperty(key);
+      }
+      expect(payload).toHaveProperty('bookId', mockBook.id);
+    });
+
+    it('mock SearchResult with only required fields (title, protocol, downloadUrl) — mutation succeeds', async () => {
+      const minimalResult: SearchResult = {
+        title: 'Minimal Result',
+        protocol: 'torrent',
+        downloadUrl: 'magnet:?xt=urn:btih:minimal',
+        indexer: 'TestIndexer',
+      };
+      setStreamResults([minimalResult]);
+      vi.mocked(api.searchGrab).mockResolvedValue(mockDownloadResponse);
+      const user = userEvent.setup();
+
+      renderWithProviders(
+        <SearchReleasesModal isOpen={true} book={mockBook} onClose={vi.fn()} />,
+      );
+
+      await screen.findByText('Minimal Result');
+      await user.click(screen.getAllByText('Grab')[0]);
+
+      await waitFor(() => {
+        expect(api.searchGrab).toHaveBeenCalledTimes(1);
+      });
+
+      const payload = vi.mocked(api.searchGrab).mock.calls[0][0];
+      expect(payload.downloadUrl).toBe('magnet:?xt=urn:btih:minimal');
+      expect(payload.title).toBe('Minimal Result');
+      expect(payload.protocol).toBe('torrent');
+      expect(payload.bookId).toBe(mockBook.id);
+    });
+  });
+
+  describe('boundary / edge cases', () => {
+    it('SearchResult with seeders: 0 (falsy but valid) — 0 is forwarded, not dropped', async () => {
+      const zeroSeedersResult: SearchResult = {
+        ...fullResult,
+        seeders: 0,
+      };
+      setStreamResults([zeroSeedersResult]);
+      vi.mocked(api.searchGrab).mockResolvedValue(mockDownloadResponse);
+      const user = userEvent.setup();
+
+      renderWithProviders(
+        <SearchReleasesModal isOpen={true} book={mockBook} onClose={vi.fn()} />,
+      );
+
+      await screen.findByText('Full Result');
+      await user.click(screen.getAllByText('Grab')[0]);
+
+      await waitFor(() => {
+        expect(api.searchGrab).toHaveBeenCalledTimes(1);
+      });
+
+      const payload = vi.mocked(api.searchGrab).mock.calls[0][0];
+      expect(payload.seeders).toBe(0);
+    });
+
+    it('SearchResult with size: 0 — 0 is forwarded, not dropped', async () => {
+      const zeroSizeResult: SearchResult = {
+        ...fullResult,
+        size: 0,
+      };
+      setStreamResults([zeroSizeResult]);
+      vi.mocked(api.searchGrab).mockResolvedValue(mockDownloadResponse);
+      const user = userEvent.setup();
+
+      renderWithProviders(
+        <SearchReleasesModal isOpen={true} book={mockBook} onClose={vi.fn()} />,
+      );
+
+      await screen.findByText('Full Result');
+      await user.click(screen.getAllByText('Grab')[0]);
+
+      await waitFor(() => {
+        expect(api.searchGrab).toHaveBeenCalledTimes(1);
+      });
+
+      const payload = vi.mocked(api.searchGrab).mock.calls[0][0];
+      expect(payload.size).toBe(0);
+    });
+  });
+
+  describe('error paths', () => {
+    it('grab mutation error (non-409) shows error toast and does not set pendingReplace', async () => {
+      setStreamResults([fullResult]);
+      vi.mocked(api.searchGrab).mockRejectedValue(new Error('Network error'));
+      const user = userEvent.setup();
+
+      renderWithProviders(
+        <SearchReleasesModal isOpen={true} book={mockBook} onClose={vi.fn()} />,
+      );
+
+      await screen.findByText('Full Result');
+      await user.click(screen.getAllByText('Grab')[0]);
+
+      await waitFor(() => {
+        expect(toast.error).toHaveBeenCalledWith('Failed to grab: Network error');
+      });
+
+      // No confirm modal (pendingReplace should be null)
+      expect(screen.queryByRole('dialog', { name: /replace/i })).not.toBeInTheDocument();
+    });
+  });
+});
