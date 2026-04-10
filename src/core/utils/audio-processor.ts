@@ -2,7 +2,7 @@ import { execFile, spawn } from 'node:child_process';
 import { rename, unlink, writeFile, rm } from 'node:fs/promises';
 import { join, extname, basename } from 'node:path';
 import { promisify } from 'node:util';
-import { collectAudioFilePaths } from './collect-audio-files.js';
+import { collectSortedAudioFiles } from './collect-audio-files.js';
 import { readChapterSources, resolveChapterTitle } from './chapter-resolver.js';
 import type { ChapterSource } from './chapter-resolver.js';
 import { renderFilename } from './naming.js';
@@ -457,8 +457,7 @@ async function getFileDurations(ffmpegPath: string, filePaths: string[]): Promis
 
 /** Collect audio files in a directory (non-recursive, lexicographic sort). */
 async function collectAudioFiles(dirPath: string): Promise<string[]> {
-  const files = await collectAudioFilePaths(dirPath);
-  return files.sort();
+  return collectSortedAudioFiles(dirPath, { sort: 'lexicographic' });
 }
 
 async function cleanupTempFiles(...paths: (string | undefined)[]): Promise<void> {

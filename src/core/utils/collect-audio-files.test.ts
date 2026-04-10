@@ -171,20 +171,60 @@ describe('collectAudioFilePaths', () => {
 });
 
 describe('collectSortedAudioFiles', () => {
-  it('returns files sorted by basename with locale-aware numeric ordering', async () => {
-    mockReaddir.mockResolvedValueOnce([
-      makeDirent('track10.mp3', true, false),
-      makeDirent('track2.mp3', true, false),
-      makeDirent('track1.mp3', true, false),
-    ] as never);
+  describe('locale-numeric sort (default)', () => {
+    it('sorts by basename with locale-aware numeric ordering', async () => {
+      mockReaddir.mockResolvedValueOnce([
+        makeDirent('track10.mp3', true, false),
+        makeDirent('track2.mp3', true, false),
+        makeDirent('track1.mp3', true, false),
+      ] as never);
 
-    const result = await collectSortedAudioFiles('/dir');
+      const result = await collectSortedAudioFiles('/dir');
 
-    expect(result).toEqual([
-      join('/dir', 'track1.mp3'),
-      join('/dir', 'track2.mp3'),
-      join('/dir', 'track10.mp3'),
-    ]);
+      expect(result).toEqual([
+        join('/dir', 'track1.mp3'),
+        join('/dir', 'track2.mp3'),
+        join('/dir', 'track10.mp3'),
+      ]);
+    });
+  });
+
+  describe('lexicographic sort', () => {
+    it('sorts by full path using default JS string comparison', async () => {
+      mockReaddir.mockResolvedValueOnce([
+        makeDirent('track10.mp3', true, false),
+        makeDirent('track2.mp3', true, false),
+        makeDirent('track1.mp3', true, false),
+      ] as never);
+
+      const result = await collectSortedAudioFiles('/dir', { sort: 'lexicographic' });
+
+      // Lexicographic: "track10" < "track2" because '1' < '2'
+      expect(result).toEqual([
+        join('/dir', 'track1.mp3'),
+        join('/dir', 'track10.mp3'),
+        join('/dir', 'track2.mp3'),
+      ]);
+    });
+  });
+
+  describe('locale sort (no numeric)', () => {
+    it('sorts by basename with locale compare but without numeric awareness', async () => {
+      mockReaddir.mockResolvedValueOnce([
+        makeDirent('track10.mp3', true, false),
+        makeDirent('track2.mp3', true, false),
+        makeDirent('track1.mp3', true, false),
+      ] as never);
+
+      const result = await collectSortedAudioFiles('/dir', { sort: 'locale' });
+
+      // Locale without numeric: "track10" < "track2" because '1' < '2'
+      expect(result).toEqual([
+        join('/dir', 'track1.mp3'),
+        join('/dir', 'track10.mp3'),
+        join('/dir', 'track2.mp3'),
+      ]);
+    });
   });
 
   it('passes recursive option through to collectAudioFilePaths', async () => {
