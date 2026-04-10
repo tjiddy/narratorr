@@ -29,6 +29,35 @@
 2. Removing component props cascades to all callers — TypeScript catches it but you need to fix in same commit (see `dead-code-prop-cascade.md`)
 3. The collectAudioFiles wrappers have genuinely different sort semantics (simple vs locale-numeric) — the consolidation needed a new shared function rather than just removing wrappers
 
+## #412 handleGrab() cherry-picks SearchResult fields — fragile to additions — 2026-04-10
+**Skill path:** /implement → /claim → /plan → /handoff
+**Outcome:** success — PR #462
+
+### Metrics
+- Files changed: 3 | Tests added/modified: 12 new tests
+- Quality gate runs: 2 (pass on attempt 1 both times)
+- Fix iterations: 1 (relative import path depth was wrong — `../../../` vs `../../`)
+- Context compactions: 0
+
+### Workflow experience
+- What went smoothly: Clean refactoring — the existing `grabSchema.shape` API worked as expected, `GrabPayload` type export was straightforward, all 77 pre-existing tests passed unchanged after refactoring.
+- Friction / issues encountered: `z.infer` vs `z.input` divergence for Zod `.default()` fields — `protocol` has `.default('torrent')` which makes it required in the output type but optional in the input type. The inline param type had it optional, so switching to `GrabInput` (`z.infer`) broke callers. Had to export a separate `GrabPayload` (`z.input`) type.
+
+### Token efficiency
+- Highest-token actions: Explore subagent reading full source files for plan phase
+- Avoidable waste: None significant — the issue was well-scoped and the spec review caught all ambiguities upfront
+- Suggestions: For type-only refactoring issues, the plan phase could be lighter
+
+### Infrastructure gaps
+- Repeated workarounds: None
+- Missing tooling / config: No `@shared` path alias for client imports to shared schemas — requires counting `../` levels. Existing debt item covers this.
+- Unresolved debt: `SearchResult` DRY-1 duplication between core and client (existing debt item)
+
+### Wish I'd Known
+1. `z.infer` gives OUTPUT type where `.default()` fields are required — use `z.input` for client-side param types (learning: `zod-infer-vs-input-default-fields.md`)
+2. Component import path from `src/client/components/` to `src/shared/` is `../../shared/` not `../../../shared/` — no `@shared` alias exists
+3. `grabSchema.shape` works reliably in Zod v4 for dynamic key extraction — no runtime gotchas
+
 ## #453 Notification card shows raw webhook URL — 2026-04-10
 **Skill path:** /implement → /claim → /plan → /handoff
 **Outcome:** success — PR #461

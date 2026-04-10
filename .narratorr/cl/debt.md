@@ -9,7 +9,7 @@
 - **`src/server/services/quality-gate.helpers.ts`**: `resolveBookQualityInputs(book)` is called twice in `buildQualityAssessment()` — once at line 40 for MB/hr + existing metadata, again at line 79 for duration delta. Could reuse the first result. Pure function so no side effects, just minor waste. (discovered in #300)
 - ~~**`src/client/pages/activity/DownloadActions.tsx`**: `PendingActionButtons` dead code~~ — resolved in #409
 - ~~**`src/core/indexers/types.ts` / `src/client/lib/api/search.ts`**: `SearchResult` DRY-1~~ — resolved in #409
-- **`src/client/components/SearchReleasesModal.tsx`**: `handleGrab()` cherry-picks fields from SearchResult instead of spreading. Every new SearchResult field requires a manual addition to both the mutation call AND `PendingGrabParams`. Fragile — consider spreading `result` and letting the API schema filter. (discovered in #348)
+- ~~**`src/client/components/SearchReleasesModal.tsx`**: `handleGrab()` cherry-picks fields from SearchResult~~ — resolved in #412
 - ~~**`src/server/services/library-scan.service.ts` / `src/shared/schemas/library-scan.ts` / `src/client/lib/api/library-scan.ts`**: `DiscoveredBook`/`duplicateReason` DRY-1~~ — resolved in #409
 
 - ~~**`src/server/services/quality-gate-orchestrator.ts`**: `processOneDownload()` O(N) scan~~ — resolved in #413
