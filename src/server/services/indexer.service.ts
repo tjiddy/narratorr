@@ -342,19 +342,25 @@ export class IndexerService {
     return rows;
   }
 
-  async searchAll(query: string, options?: SearchOptions): Promise<SearchResult[]> {
+  /** Query all enabled indexer rows (full select) and inject language preferences into search options. */
+  private async getEnabledIndexerRows(options?: SearchOptions) {
     const enabledIndexers = await this.db
       .select()
       .from(indexers)
       .where(eq(indexers.enabled, true))
       .orderBy(indexers.priority);
 
-    // Inject metadata languages into search options for per-adapter filtering (e.g., MAM browse_lang)
     let searchOptions = options;
     if (this.settingsService && !options?.languages) {
       const metadataSettings = await this.settingsService.get('metadata');
       searchOptions = { ...options, languages: metadataSettings.languages };
     }
+
+    return { enabledIndexers, searchOptions };
+  }
+
+  async searchAll(query: string, options?: SearchOptions): Promise<SearchResult[]> {
+    const { enabledIndexers, searchOptions } = await this.getEnabledIndexerRows(options);
 
     this.log.debug({ query, indexers: enabledIndexers.map(i => i.name), count: enabledIndexers.length }, 'Searching enabled indexers');
 
@@ -419,18 +425,7 @@ export class IndexerService {
       onCancelled?: (indexerId: number, name: string) => void;
     },
   ): Promise<SearchResult[]> {
-    const enabledIndexers = await this.db
-      .select()
-      .from(indexers)
-      .where(eq(indexers.enabled, true))
-      .orderBy(indexers.priority);
-
-    // Inject metadata languages into search options for per-adapter filtering (e.g., MAM browse_lang)
-    let searchOptions = options;
-    if (this.settingsService && !options?.languages) {
-      const metadataSettings = await this.settingsService.get('metadata');
-      searchOptions = { ...options, languages: metadataSettings.languages };
-    }
+    const { enabledIndexers, searchOptions } = await this.getEnabledIndexerRows(options);
 
     this.log.debug({ query, indexers: enabledIndexers.map(i => i.name), count: enabledIndexers.length }, 'Streaming search started');
 
