@@ -1,5 +1,34 @@
 # Workflow Log
 
+## #409 DRY + dead code cleanup — parallel types, duplicate constants, dead functions — 2026-04-10
+**Skill path:** /implement → /claim → /plan → /handoff
+**Outcome:** success — PR #463
+
+### Metrics
+- Files changed: 17 | Tests added/modified: 2 (collect-audio-files.test.ts +4 tests, DownloadActions.test.tsx -8 tests)
+- Quality gate runs: 1 (pass on attempt 1)
+- Fix iterations: 0
+- Context compactions: 0
+
+### Workflow experience
+- What went smoothly: Mechanical cleanup executed cleanly — each module was independent and could be committed separately. TypeScript caught all import issues immediately.
+- Friction / issues encountered: `export type { X } from` does not make X available for local use in the same file — caused a quick TS error during SearchResult unification. Dead code removal in DownloadActions required cascading prop cleanup in DownloadCard.
+
+### Token efficiency
+- Highest-token actions: Explore subagent for codebase validation (necessary for 8 cleanup items across ~70 files)
+- Avoidable waste: None significant — the issue was well-specified after 3 spec review rounds
+- Suggestions: For mechanical DRY issues, the elaborate → spec review cycle could be lighter since the changes are verifiable by grep
+
+### Infrastructure gaps
+- Repeated workarounds: None
+- Missing tooling / config: None
+- Unresolved debt: None introduced; 9 items resolved
+
+### Wish I'd Known
+1. `export type { X } from` re-exports don't create local bindings — need separate import for local use (see `type-reexport-local-use.md`)
+2. Removing component props cascades to all callers — TypeScript catches it but you need to fix in same commit (see `dead-code-prop-cascade.md`)
+3. The collectAudioFiles wrappers have genuinely different sort semantics (simple vs locale-numeric) — the consolidation needed a new shared function rather than just removing wrappers
+
 ## #453 Notification card shows raw webhook URL — 2026-04-10
 **Skill path:** /implement → /claim → /plan → /handoff
 **Outcome:** success — PR #461
