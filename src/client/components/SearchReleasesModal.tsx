@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import { api, ApiError, type BookWithAuthor, type SearchResult } from '@/lib/api';
+import { grabSchema, type GrabPayload } from '../../shared/schemas/search.js';
 import { searchResultKey, deduplicateKeys } from '@/lib/stableKeys.js';
 import { resolveBookQualityInputs, calculateQuality } from '@core/utils/index.js';
 import { queryKeys } from '@/lib/queryKeys';
@@ -90,15 +91,17 @@ function IndexerStatusRow({
 // Component
 // ============================================================================
 
-interface PendingGrabParams {
-  downloadUrl: string;
-  title: string;
-  protocol: 'torrent' | 'usenet';
-  bookId?: number;
-  indexerId?: number;
-  size?: number;
-  seeders?: number;
-  guid?: string;
+/** Fields from grabSchema that come from SearchResult (not from UI context). */
+const CONTEXT_KEYS = new Set(['bookId', 'replaceExisting']);
+const GRAB_RESULT_KEYS = Object.keys(grabSchema.shape).filter(k => !CONTEXT_KEYS.has(k));
+
+/** Pick SearchResult-sourced grab-contract fields dynamically from grabSchema.shape. */
+function pickGrabFields(result: SearchResult): Partial<GrabPayload> {
+  const picked: Record<string, unknown> = {};
+  for (const key of GRAB_RESULT_KEYS) {
+    picked[key] = result[key as keyof SearchResult];
+  }
+  return picked as Partial<GrabPayload>;
 }
 
 // eslint-disable-next-line max-lines-per-function, complexity -- modal orchestrates streaming + mutations + 7 conditional states
@@ -168,16 +171,7 @@ export function SearchReleasesModal({ isOpen, book, onClose }: SearchReleasesMod
     },
     onError: (err: Error, variables) => {
       if (err instanceof ApiError && err.status === 409 && (err.body as { code?: string })?.code === 'ACTIVE_DOWNLOAD_EXISTS') {
-        setPendingReplace({
-          downloadUrl: variables.downloadUrl,
-          title: variables.title,
-          protocol: variables.protocol ?? 'torrent',
-          bookId: variables.bookId,
-          indexerId: variables.indexerId,
-          size: variables.size,
-          seeders: variables.seeders,
-          guid: variables.guid,
-        });
+        setPendingReplace(variables);
         return;
       }
       setPendingReplace(null);
@@ -191,18 +185,14 @@ export function SearchReleasesModal({ isOpen, book, onClose }: SearchReleasesMod
       return;
     }
     grabMutation.mutate({
+      ...pickGrabFields(result),
       downloadUrl: result.downloadUrl,
       title: result.title,
-      protocol: result.protocol,
       bookId: book.id,
-      indexerId: result.indexerId,
-      size: result.size,
-      seeders: result.seeders,
-      guid: result.guid,
     });
   };
 
-  const [pendingReplace, setPendingReplace] = useState<PendingGrabParams | null>(null);
+  const [pendingReplace, setPendingReplace] = useState<GrabPayload | null>(null);
 
   const modalRef = useRef<HTMLDivElement>(null);
   useEscapeKey(isOpen, onClose, modalRef);
