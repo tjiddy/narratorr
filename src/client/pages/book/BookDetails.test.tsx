@@ -1653,7 +1653,7 @@ describe('#257 merge observability — BookDetails progress', () => {
       });
     });
 
-    it('shows error toast on upload failure and clears preview', async () => {
+    it('shows error toast on upload failure and keeps preview for retry', async () => {
       vi.mocked(api.uploadBookCover).mockRejectedValue(new Error('Server error'));
       const user = userEvent.setup();
       renderBookDetails({ path: '/library/book', status: 'imported' });
@@ -1670,7 +1670,8 @@ describe('#257 merge observability — BookDetails progress', () => {
 
       await waitFor(() => {
         expect(toast.error).toHaveBeenCalledWith('Cover upload failed: Server error');
-        expect(screen.queryByAltText('Cover preview')).not.toBeInTheDocument();
+        // Preview stays visible on error so user can retry
+        expect(screen.getByAltText('Cover preview')).toBeInTheDocument();
       });
     });
 

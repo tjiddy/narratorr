@@ -72,7 +72,10 @@ export function BookDetails({ libraryBook, metadataBook }: {
   const handleCoverConfirm = useCallback(() => {
     if (!coverFile) return;
     uploadCoverMutation.mutate(coverFile, {
-      onSettled: () => {
+      onSuccess: () => {
+        // Keep preview visible until query refetch brings the new URL,
+        // preventing a flash of the old cached cover between clearing
+        // the blob preview and the cache-busted new image loading.
         if (coverPreviewUrl) URL.revokeObjectURL(coverPreviewUrl);
         setCoverPreviewUrl(null);
         setCoverFile(null);
