@@ -1,8 +1,7 @@
 import { useState } from 'react';
 import { api } from '@/lib/api';
 import { SelectWithChevron } from '@/components/settings/SelectWithChevron';
-
-const inputClass = 'w-full px-3 py-2 bg-background border border-border rounded-lg focus-ring';
+import { compactInputClass as inputClass } from '@/components/settings/formStyles';
 const btnSecondary = 'px-3 py-1.5 text-sm font-medium rounded-lg transition-colors disabled:opacity-50';
 
 interface SettingsProps {

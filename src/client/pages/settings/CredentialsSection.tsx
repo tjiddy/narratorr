@@ -4,8 +4,7 @@ import { queryKeys } from '@/lib/queryKeys';
 import { ShieldIcon } from '@/components/icons';
 import { SettingsSection } from './SettingsSection';
 import { useMutationWithToast } from '@/hooks/useMutationWithToast';
-
-const inputClass = 'w-full px-4 py-3 bg-background border border-border rounded-xl focus-ring focus:border-transparent transition-all';
+import { inputClass } from '@/components/settings/formStyles';
 const btnPrimary = 'px-5 py-3 bg-primary text-primary-foreground font-medium rounded-xl hover:opacity-90 disabled:opacity-50 transition-all focus-ring';
 const btnDestructive = 'px-5 py-3 bg-destructive text-destructive-foreground font-medium rounded-xl hover:opacity-90 disabled:opacity-50 transition-all focus-ring';
 
