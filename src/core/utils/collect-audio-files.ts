@@ -1,5 +1,5 @@
 import { readdir } from 'node:fs/promises';
-import { join, extname } from 'node:path';
+import { join, extname, basename } from 'node:path';
 import { AUDIO_EXTENSIONS } from './audio-constants.js';
 
 export interface CollectAudioFileOptions {
@@ -37,4 +37,18 @@ export async function collectAudioFilePaths(
   }
 
   return results;
+}
+
+/**
+ * Collect audio files and sort by basename with locale-aware numeric ordering.
+ * Convenience wrapper over collectAudioFilePaths for callers that need sorted output.
+ */
+export async function collectSortedAudioFiles(
+  dir: string,
+  options?: CollectAudioFileOptions,
+): Promise<string[]> {
+  const files = await collectAudioFilePaths(dir, options);
+  return files.sort((a, b) =>
+    basename(a).localeCompare(basename(b), undefined, { numeric: true, sensitivity: 'base' }),
+  );
 }
