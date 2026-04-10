@@ -96,7 +96,7 @@ describe('Security Headers (helmet)', () => {
       expect(styleSegment).toMatch(/'unsafe-inline'/);
       expect(styleSegment).not.toMatch(/'nonce-/);
       expect(csp).toContain("font-src 'self' https://fonts.gstatic.com");
-      expect(csp).toContain("img-src 'self' data: https:");
+      expect(csp).toContain("img-src 'self' data: https: blob:");
       expect(csp).toContain("connect-src 'self'");
     });
 

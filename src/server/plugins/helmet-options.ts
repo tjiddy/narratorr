@@ -27,7 +27,7 @@ export function buildHelmetOptions(isDev: boolean): FastifyHelmetOptions {
         scriptSrc: ["'self'"],
         styleSrc: ["'self'", "'unsafe-inline'", 'https://fonts.googleapis.com'],
         fontSrc: ["'self'", 'https://fonts.gstatic.com'],
-        imgSrc: ["'self'", 'data:', 'https:'],
+        imgSrc: ["'self'", 'data:', 'https:', 'blob:'],
         connectSrc: ["'self'"],
         baseUri: ["'self'"],
         formAction: ["'self'"],

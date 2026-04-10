@@ -46,7 +46,7 @@ describe('cspNonceStripPlugin', () => {
       // All other directives must be intact
       expect(csp).toContain("default-src 'self'");
       expect(csp).toContain("font-src 'self' https://fonts.gstatic.com");
-      expect(csp).toContain("img-src 'self' data: https:");
+      expect(csp).toContain("img-src 'self' data: https: blob:");
       expect(csp).toContain("connect-src 'self'");
       // style-src present but without nonce
       expect(csp).toContain("https://fonts.googleapis.com");
