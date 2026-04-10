@@ -1,5 +1,29 @@
 # Workflow Log
 
+## #453 Notification card shows raw webhook URL — 2026-04-10
+**Skill path:** /implement → /claim → /plan → /handoff
+**Outcome:** success — PR #461
+
+### Metrics
+- Files changed: 3 | Tests added/modified: 18 (16 new unit + 2 updated integration)
+- Quality gate runs: 2 (pass on attempt 1 both times)
+- Fix iterations: 0
+- Context compactions: 0
+
+### Workflow experience
+- What went smoothly: Tight scope (3 files), clear spec, clean red/green TDD cycle. 11 tests confirmed red, all green after 4 one-liner changes + helper extraction.
+- Friction / issues encountered: None — this was an ideal small chore.
+
+### Token efficiency
+- Highest-token actions: Explore subagent during /elaborate and /plan (thorough but proportionate for the issue size)
+- Avoidable waste: None significant
+- Suggestions: For pure-registry display changes, skip the deep source analysis in /elaborate — the blast radius is always just the registry + co-located tests.
+
+### Wish I'd Known
+1. Trivial issue with no surprises — the registry pattern is well-established and the change was mechanical.
+2. `new URL()` throws on invalid input (not just returns empty) — the `||` fallback pattern in existing viewSubtitle functions doesn't handle this, requiring try/catch.
+3. The card component always prepends `typeLabel —` before the viewSubtitle output, so returning the type name produces `Discord — Discord` duplication (acknowledged in spec review F1).
+
 ## #413 processOneDownload() O(N) scan — add single-record query — 2026-04-09
 **Skill path:** /implement → /claim → /plan → /handoff
 **Outcome:** success — PR #460

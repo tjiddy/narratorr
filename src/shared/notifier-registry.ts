@@ -6,18 +6,27 @@ export type NotifierType = typeof NOTIFIER_TYPES[number];
 
 type NotifierTypeMetadata = RegistryEntry<CreateNotifierFormData['settings']>;
 
+function extractHostname(url: string, fallback: string): string {
+  if (!url) return fallback;
+  try {
+    return new URL(url).hostname || fallback;
+  } catch {
+    return fallback;
+  }
+}
+
 export const NOTIFIER_REGISTRY: Record<string, NotifierTypeMetadata> = {
   webhook: {
     label: 'Webhook',
     defaultSettings: { url: '', method: 'POST' as const, headers: '', bodyTemplate: '' },
     requiredFields: [{ path: 'url', message: 'URL is required' }],
-    viewSubtitle: (s) => (s.url as string) || 'webhook',
+    viewSubtitle: (s) => extractHostname(s.url as string, 'Webhook'),
   },
   discord: {
     label: 'Discord',
     defaultSettings: { webhookUrl: '', includeCover: true },
     requiredFields: [{ path: 'webhookUrl', message: 'Webhook URL is required' }],
-    viewSubtitle: (s) => (s.webhookUrl as string)?.replace(/^https:\/\/discord\.com\/api\/webhooks\//, '...') || 'discord',
+    viewSubtitle: () => 'Discord',
   },
   script: {
     label: 'Custom Script',
@@ -48,7 +57,7 @@ export const NOTIFIER_REGISTRY: Record<string, NotifierTypeMetadata> = {
     label: 'Slack',
     defaultSettings: { webhookUrl: '' },
     requiredFields: [{ path: 'webhookUrl', message: 'Webhook URL is required' }],
-    viewSubtitle: (s) => (s.webhookUrl as string)?.replace(/^https:\/\/hooks\.slack\.com\//, '...') || 'slack',
+    viewSubtitle: () => 'Slack',
   },
   pushover: {
     label: 'Pushover',
@@ -72,7 +81,7 @@ export const NOTIFIER_REGISTRY: Record<string, NotifierTypeMetadata> = {
       { path: 'gotifyUrl', message: 'Server URL is required' },
       { path: 'gotifyToken', message: 'App token is required' },
     ],
-    viewSubtitle: (s) => (s.gotifyUrl as string)?.replace(/^https?:\/\//, '') || 'gotify',
+    viewSubtitle: (s) => extractHostname(s.gotifyUrl as string, 'Gotify'),
   },
 } satisfies Record<NotifierType, NotifierTypeMetadata>;
 
