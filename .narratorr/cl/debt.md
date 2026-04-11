@@ -31,6 +31,8 @@
 
 - **`src/client/pages/library/LibraryBookCard.tsx`**: Uses same `opacity-0 group-hover:opacity-100` hover-gated pattern as BookHero overlay (lines 87, 119). Touch devices can't discover these actions. Should apply the `no-hover:opacity-100` variant added in #450 for consistency. (discovered in #450)
 
+- **`MAX_COVER_SIZE` duplicated in 3 files**: `src/server/routes/books.ts`, `src/client/hooks/useCoverPaste.ts:3`, `src/client/pages/book/BookDetails.tsx:58` all define `10 * 1024 * 1024` independently. Changing the limit requires updating 3 places. Should extract to a shared constant in `src/shared/`. (discovered in #466)
+
 ## Accepted Debt
 
 Items below are real but not worth fixing — the cost of change outweighs the benefit.

@@ -1,5 +1,34 @@
 # Workflow Log
 
+## #466 Cover upload polish: error registry, redundant checks, constant placement — 2026-04-11
+**Skill path:** /implement → /claim → /plan → /handoff
+**Outcome:** success — PR #475
+
+### Metrics
+- Files changed: 3 | Tests added/modified: 1 (3 new tests in error-handler.test.ts)
+- Quality gate runs: 2 (pass on attempt 1 both times)
+- Fix iterations: 0
+- Context compactions: 0
+
+### Workflow experience
+- What went smoothly: Clean 4-module plan mapped directly to 4 commits. All existing tests passed without modification after each change, confirming the refactors were behavior-preserving.
+- Friction / issues encountered: None — straightforward cleanup issue with well-scoped AC.
+
+### Token efficiency
+- Highest-token actions: Explore subagent for plan (read many files to understand patterns)
+- Avoidable waste: Elaborate subagent had already explored the same files — plan subagent duplicated some reads
+- Suggestions: For polish/cleanup issues where elaborate already ran, plan subagent could be lighter
+
+### Infrastructure gaps
+- Repeated workarounds: None
+- Missing tooling / config: None
+- Unresolved debt: MAX_COVER_SIZE duplicated across 3 files (logged in debt.md)
+
+### Wish I'd Known
+1. React `useEffect` cleanup fires on every dependency change, not just unmount — this made the URL revoke consolidation trivial (see `useeffect-url-revoke-ownership.md`)
+2. Error handler tests pass unchanged after registry addition because they mock the service, not the route catch block (see `error-registry-route-catch-removal.md`)
+3. The 500 response body change ("Failed to upload cover" → "Internal server error") was the only externally visible API change — caught by reviewer suggestion F2
+
 ## #465 MergeProgressIndicator: extract shared icon component + narrow outcome type — 2026-04-11
 **Skill path:** /implement → /claim → /plan → /handoff
 **Outcome:** success — PR #474
