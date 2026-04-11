@@ -23,6 +23,50 @@ function getInitialViewMode(): ViewMode {
   return 'grid';
 }
 
+function applyViewModeChange(
+  mode: ViewMode,
+  filters: ReturnType<typeof useLibraryFilters>,
+  setViewMode: (mode: ViewMode) => void,
+  bulk: ReturnType<typeof useLibraryBulkActions>,
+) {
+  if (mode === 'grid' && TABLE_ONLY_SORTS.includes(filters.state.sortField)) {
+    filters.actions.setSortField('createdAt');
+    filters.actions.setSortDirection('desc');
+  }
+  setViewMode(mode);
+  try { localStorage.setItem(VIEW_STORAGE_KEY, mode); } catch { /* noop */ }
+  if (mode === 'grid') bulk.clearSelection();
+}
+
+function toggleMenuId(prev: number | null, bookId: number): number | null {
+  return prev === bookId ? null : bookId;
+}
+
+function computeBulkStats(selectedBooks: Array<{ path?: string | null; audioFileCount?: number | null }>) {
+  const anySelectedHasPath = selectedBooks.some((b) => b.path);
+  const bulkFileCount = selectedBooks.reduce(
+    (sum, b) => sum + (b.path && b.audioFileCount && b.audioFileCount > 0 ? b.audioFileCount : 0),
+    0,
+  );
+  return { anySelectedHasPath, bulkFileCount };
+}
+
+function buildSubtitle(isSearching: boolean, totalBooks: number, totalAll: number): string {
+  if (isSearching) return `${totalBooks} result${totalBooks !== 1 ? 's' : ''}`;
+  const bp = totalAll !== 1 ? 's' : '';
+  return `${totalAll} book${bp} in your collection`;
+}
+
+function buildSearchAllMessage(wantedCount: number, enabledIndexerCount: number): string {
+  return `Search ${wantedCount} wanted book${wantedCount !== 1 ? 's' : ''} across ${enabledIndexerCount} enabled indexer${enabledIndexerCount !== 1 ? 's' : ''} (~${wantedCount * enabledIndexerCount} API calls)?`;
+}
+
+function computeStatusCounts(stats: ReturnType<typeof useBookStats>['data']) {
+  if (!stats) return { all: 0, wanted: 0, downloading: 0, imported: 0, failed: 0, missing: 0 };
+  const { counts } = stats;
+  return { all: counts.wanted + counts.downloading + counts.imported + counts.failed + counts.missing, ...counts };
+}
+
 export function useLibraryPageState() {
   const navigate = useNavigate();
   const filters = useLibraryFilters();
@@ -69,23 +113,10 @@ export function useLibraryPageState() {
   const [viewMode, setViewMode] = useState<ViewMode>(getInitialViewMode);
 
   const handleViewModeChange = useCallback((mode: ViewMode) => {
-    if (mode === 'grid' && TABLE_ONLY_SORTS.includes(filters.state.sortField)) {
-      filters.actions.setSortField('createdAt');
-      filters.actions.setSortDirection('desc');
-    }
-    setViewMode(mode);
-    try { localStorage.setItem(VIEW_STORAGE_KEY, mode); } catch { /* noop */ }
-    if (mode === 'grid') bulk.clearSelection();
+    applyViewModeChange(mode, filters, setViewMode, bulk);
   }, [bulk, filters]);
 
-  const statusCounts = useMemo(() => {
-    if (!stats) return { all: 0, wanted: 0, downloading: 0, imported: 0, failed: 0, missing: 0 };
-    const { counts } = stats;
-    return {
-      all: counts.wanted + counts.downloading + counts.imported + counts.failed + counts.missing,
-      ...counts,
-    };
-  }, [stats]);
+  const statusCounts = useMemo(() => computeStatusCounts(stats), [stats]);
 
   const missingCount = statusCounts.missing;
   const wantedCount = statusCounts.wanted;
@@ -102,7 +133,7 @@ export function useLibraryPageState() {
 
   const handleCardMenuToggle = useCallback((bookId: number, e: React.MouseEvent) => {
     e.stopPropagation();
-    setOpenMenuId(prev => prev === bookId ? null : bookId);
+    setOpenMenuId(prev => toggleMenuId(prev, bookId));
   }, []);
 
   const handleCardClick = useCallback((bookId: number) => {
@@ -119,21 +150,12 @@ export function useLibraryPageState() {
     setOpenMenuId(null);
   }, [deleteConfirm]);
 
-  const anySelectedHasPath = bulk.selectedBooks.some((b) => b.path);
-  const bulkFileCount = bulk.selectedBooks.reduce(
-    (sum, b) => sum + (b.path && b.audioFileCount && b.audioFileCount > 0 ? b.audioFileCount : 0),
-    0,
-  );
-
+  const { anySelectedHasPath, bulkFileCount } = computeBulkStats(bulk.selectedBooks);
   const uniqueAuthors = stats?.authors ?? [];
   const uniqueSeries = stats?.series ?? [];
   const uniqueNarrators = stats?.narrators ?? [];
-
-  const bp = totalAll !== 1 ? 's' : '';
-  const subtitle = filters.state.isSearching
-    ? `${totalBooks} result${totalBooks !== 1 ? 's' : ''}`
-    : `${totalAll} book${bp} in your collection`;
-  const searchAllWantedMessage = `Search ${wantedCount} wanted book${wantedCount !== 1 ? 's' : ''} across ${enabledIndexerCount} enabled indexer${enabledIndexerCount !== 1 ? 's' : ''} (~${wantedCount * enabledIndexerCount} API calls)?`;
+  const subtitle = buildSubtitle(filters.state.isSearching, totalBooks, totalAll);
+  const searchAllWantedMessage = buildSearchAllMessage(wantedCount, enabledIndexerCount);
 
   return {
     filters,

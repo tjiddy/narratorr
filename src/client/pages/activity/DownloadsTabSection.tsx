@@ -14,48 +14,29 @@ import type { useSearchProgress } from '@/hooks/useSearchProgress';
 import type { Download } from '@/lib/api';
 
 export interface DownloadsTabSectionProps {
-  // Active downloads
   queue: Download[];
   queueTotal: number;
   queuePagination: ReturnType<typeof usePagination>;
   mergeCards: ReturnType<typeof useMergeActivityCards>;
   searchCards: ReturnType<typeof useSearchProgress>;
-  cancelMutation: UseMutationResult<void, Error, number>;
-  retryMutation: UseMutationResult<void, Error, number>;
-  approveMutation: UseMutationResult<void, Error, number>;
-  rejectMutation: UseMutationResult<void, Error, { id: number; retry: boolean }>;
+  cancelMutation: UseMutationResult<unknown, Error, number>;
+  retryMutation: UseMutationResult<unknown, Error, number>;
+  approveMutation: UseMutationResult<unknown, Error, number>;
+  rejectMutation: UseMutationResult<unknown, Error, { id: number; retry?: boolean }>;
   cancellingMergeBookId: number | null;
-  cancelMergeMutation: UseMutationResult<void, Error, number>;
-  // History
+  cancelMergeMutation: UseMutationResult<unknown, Error, number>;
   history: Download[];
   historyTotal: number;
   historyPagination: ReturnType<typeof usePagination>;
-  deleteMutation: UseMutationResult<void, Error, { id: number; bookId: number }>;
-  deleteHistoryMutation: UseMutationResult<void, Error, undefined>;
+  deleteMutation: UseMutationResult<unknown, Error, { id: number; bookId?: number | null }>;
+  deleteHistoryMutation: UseMutationResult<unknown, Error, void>;
   confirmClearHistory: boolean;
   onConfirmClearHistoryChange: (open: boolean) => void;
 }
 
-export function DownloadsTabSection({
-  queue,
-  queueTotal,
-  queuePagination,
-  mergeCards,
-  searchCards,
-  cancelMutation,
-  retryMutation,
-  approveMutation,
-  rejectMutation,
-  cancellingMergeBookId,
-  cancelMergeMutation,
-  history,
-  historyTotal,
-  historyPagination,
-  deleteMutation,
-  deleteHistoryMutation,
-  confirmClearHistory,
-  onConfirmClearHistoryChange,
-}: DownloadsTabSectionProps) {
+export function DownloadsTabSection(props: DownloadsTabSectionProps) {
+  const { queue, queueTotal, queuePagination, mergeCards, searchCards, cancelMutation, retryMutation, approveMutation, rejectMutation, cancellingMergeBookId, cancelMergeMutation } = props;
+
   return (
     <>
       {/* Active Downloads Section */}
@@ -72,26 +53,17 @@ export function DownloadsTabSection({
           </div>
         </div>
 
-        {/* Merge progress cards — ephemeral, above search cards */}
         {mergeCards.length > 0 && (
           <div className="space-y-4">
             {mergeCards.map((card) => (
-              <MergeCard
-                key={card.bookId}
-                state={card}
-                onCancel={(bookId) => cancelMergeMutation.mutate(bookId)}
-                isCancelling={cancellingMergeBookId === card.bookId}
-              />
+              <MergeCard key={card.bookId} state={card} onCancel={(bookId) => cancelMergeMutation.mutate(bookId)} isCancelling={cancellingMergeBookId === card.bookId} />
             ))}
           </div>
         )}
 
-        {/* Search progress cards — ephemeral, above downloads */}
         {searchCards.length > 0 && (
           <div className="space-y-4">
-            {searchCards.map((card) => (
-              <SearchCard key={card.bookId} state={card} />
-            ))}
+            {searchCards.map((card) => (<SearchCard key={card.bookId} state={card} />))}
           </div>
         )}
 
@@ -99,9 +71,7 @@ export function DownloadsTabSection({
           <div className="glass-card rounded-2xl p-8 sm:p-12 text-center">
             <DownloadCloudIcon className="w-12 h-12 text-muted-foreground/40 mx-auto mb-4" />
             <p className="text-lg font-medium">No active downloads</p>
-            <p className="text-sm text-muted-foreground mt-1">
-              Downloads will appear here when you grab audiobooks from search
-            </p>
+            <p className="text-sm text-muted-foreground mt-1">Downloads will appear here when you grab audiobooks from search</p>
           </div>
         ) : queue.length > 0 ? (
           <div className="space-y-4">
@@ -124,16 +94,17 @@ export function DownloadsTabSection({
             ))}
           </div>
         ) : null}
-        <Pagination
-          page={queuePagination.page}
-          totalPages={queuePagination.totalPages(queueTotal)}
-          total={queueTotal}
-          limit={queuePagination.limit}
-          onPageChange={queuePagination.setPage}
-        />
+        <Pagination page={queuePagination.page} totalPages={queuePagination.totalPages(queueTotal)} total={queueTotal} limit={queuePagination.limit} onPageChange={queuePagination.setPage} />
       </section>
 
-      {/* Download History Section */}
+      <DownloadHistorySection {...props} />
+    </>
+  );
+}
+
+function DownloadHistorySection({ history, historyTotal, historyPagination, retryMutation, deleteMutation, deleteHistoryMutation, confirmClearHistory, onConfirmClearHistoryChange }: DownloadsTabSectionProps) {
+  return (
+    <>
       <section className="space-y-5 animate-fade-in-up stagger-3">
         <div className="flex items-center justify-between gap-3">
           <div className="flex items-center gap-3">
@@ -142,17 +113,11 @@ export function DownloadsTabSection({
             </div>
             <div>
               <h2 className="font-display text-xl font-semibold">History</h2>
-              <p className="text-sm text-muted-foreground">
-                {historyTotal} completed download{historyTotal !== 1 ? 's' : ''}
-              </p>
+              <p className="text-sm text-muted-foreground">{historyTotal} completed download{historyTotal !== 1 ? 's' : ''}</p>
             </div>
           </div>
           {historyTotal > 0 && (
-            <button
-              type="button"
-              onClick={() => onConfirmClearHistoryChange(true)}
-              className="flex items-center gap-1.5 px-3 py-2 text-sm font-medium text-muted-foreground hover:text-destructive hover:bg-destructive/10 rounded-xl transition-all focus-ring"
-            >
+            <button type="button" onClick={() => onConfirmClearHistoryChange(true)} className="flex items-center gap-1.5 px-3 py-2 text-sm font-medium text-muted-foreground hover:text-destructive hover:bg-destructive/10 rounded-xl transition-all focus-ring">
               Clear History
             </button>
           )}
@@ -162,34 +127,16 @@ export function DownloadsTabSection({
           <div className="glass-card rounded-2xl p-8 sm:p-12 text-center">
             <HistoryIcon className="w-12 h-12 text-muted-foreground/40 mx-auto mb-4" />
             <p className="text-lg font-medium">No download history</p>
-            <p className="text-sm text-muted-foreground mt-1">
-              Completed downloads will be listed here
-            </p>
+            <p className="text-sm text-muted-foreground mt-1">Completed downloads will be listed here</p>
           </div>
         ) : (
           <div className="space-y-3">
             {history.map((download, index) => (
-              <DownloadCard
-                key={download.id}
-                download={download}
-                onRetry={() => retryMutation.mutate(download.id)}
-                onDelete={() => deleteMutation.mutate({ id: download.id, bookId: download.bookId })}
-                isDeleting={deleteMutation.isPending && deleteMutation.variables?.id === download.id}
-                isRetrying={retryMutation.isPending}
-                showProgress={false}
-                index={index}
-                compact
-              />
+              <DownloadCard key={download.id} download={download} onRetry={() => retryMutation.mutate(download.id)} onDelete={() => deleteMutation.mutate({ id: download.id, bookId: download.bookId })} isDeleting={deleteMutation.isPending && deleteMutation.variables?.id === download.id} isRetrying={retryMutation.isPending} showProgress={false} index={index} compact />
             ))}
           </div>
         )}
-        <Pagination
-          page={historyPagination.page}
-          totalPages={historyPagination.totalPages(historyTotal)}
-          total={historyTotal}
-          limit={historyPagination.limit}
-          onPageChange={historyPagination.setPage}
-        />
+        <Pagination page={historyPagination.page} totalPages={historyPagination.totalPages(historyTotal)} total={historyTotal} limit={historyPagination.limit} onPageChange={historyPagination.setPage} />
       </section>
 
       <ConfirmModal
@@ -197,11 +144,7 @@ export function DownloadsTabSection({
         title="Clear Download History"
         message={`Remove all ${historyTotal} item${historyTotal !== 1 ? 's' : ''} from download history?`}
         confirmLabel="Delete"
-        onConfirm={() => {
-          deleteHistoryMutation.mutate(undefined, {
-            onSettled: () => onConfirmClearHistoryChange(false),
-          });
-        }}
+        onConfirm={() => { deleteHistoryMutation.mutate(undefined, { onSettled: () => onConfirmClearHistoryChange(false) }); }}
         onCancel={() => onConfirmClearHistoryChange(false)}
       />
     </>

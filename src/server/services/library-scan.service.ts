@@ -1,6 +1,6 @@
 /* eslint-disable max-lines -- service covers scan, import, and enrichment pipelines */
 import { access, mkdir, cp, rm } from 'node:fs/promises';
-import { join, relative, resolve, isAbsolute } from 'node:path';
+import { relative, resolve, isAbsolute } from 'node:path';
 import type { Db } from '../../db/index.js';
 import type { FastifyBaseLogger } from 'fastify';
 import { books, authors, bookAuthors } from '../../db/schema.js';
@@ -13,7 +13,7 @@ import type { SettingsService } from './settings.service.js';
 import type { BookMetadata } from '../../core/metadata/index.js';
 import { buildTargetPath, getPathSize } from '../utils/import-helpers.js';
 import { toNamingOptions } from '../../core/utils/naming.js';
-import { orchestrateBookEnrichment, buildBookCreatePayload } from './enrichment-orchestration.helper.js';
+import { orchestrateBookEnrichment, buildBookCreatePayload, type EnrichmentDeps } from './enrichment-orchestration.helper.js';
 import { findAudioLeafFolders, getAudioStats, buildDiscoveredBook } from './library-scan.helpers.js';
 import type { EventHistoryService } from './event-history.service.js';
 import { getErrorMessage } from '../utils/error-message.js';
@@ -75,7 +75,7 @@ export class LibraryScanService {
     private eventHistory: EventHistoryService,
   ) {}
 
-  private get enrichmentDeps(): import('./enrichment-orchestration.helper.js').EnrichmentDeps {
+  private get enrichmentDeps(): EnrichmentDeps {
     return { db: this.db, log: this.log, settingsService: this.settingsService, bookService: this.bookService, metadataService: this.metadataService };
   }
 
@@ -349,6 +349,7 @@ export class LibraryScanService {
     }
   }
 
+  // eslint-disable-next-line complexity -- copy/move + path/size update + enrichment orchestration + event recording
   private async enrichImportedBook(
     item: ImportConfirmItem,
     book: { id: number; narrators?: Array<{ name: string }> | null; duration?: number | null; coverUrl?: string | null; genres?: string[] | null },
@@ -546,6 +547,7 @@ export class LibraryScanService {
     }
   }
 
+  // eslint-disable-next-line complexity -- copy/move + path/size update + genre refresh + enrichment orchestration + status transition + event recording
   private async processOneImport(bookId: number, item: ImportConfirmItem, mode?: ImportMode): Promise<void> {
     this.log.debug({ bookId, title: item.title, mode: mode ?? 'pointer' }, 'Processing import');
 

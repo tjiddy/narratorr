@@ -1,4 +1,3 @@
-import React from 'react';
 import { LoadingSpinner } from '@/components/icons';
 import { LibraryModals } from './LibraryModals.js';
 import { LibraryToolbar } from './LibraryToolbar.js';
