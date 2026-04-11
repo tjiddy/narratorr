@@ -158,6 +158,36 @@ describe('AudioInfo', () => {
     });
   });
 
+  describe('duration formatting (alwaysShowBoth: false)', () => {
+    it('elides zero hours for sub-hour duration', () => {
+      render(<AudioInfo book={makeBook({
+        audioCodec: 'AAC',
+        audioDuration: 2700, // 45 minutes
+      })} />);
+
+      expect(screen.getByText(/45m actual/)).toBeInTheDocument();
+    });
+
+    it('elides zero minutes for exact-hour duration', () => {
+      render(<AudioInfo book={makeBook({
+        audioCodec: 'AAC',
+        audioDuration: 3600, // 1 hour
+      })} />);
+
+      expect(screen.getByText(/1h actual/)).toBeInTheDocument();
+      expect(screen.queryByText(/1h 0m/)).not.toBeInTheDocument();
+    });
+
+    it('shows both parts for mixed hours and minutes', () => {
+      render(<AudioInfo book={makeBook({
+        audioCodec: 'AAC',
+        audioDuration: 5400, // 1h 30m
+      })} />);
+
+      expect(screen.getByText(/1h 30m actual/)).toBeInTheDocument();
+    });
+  });
+
   describe('compact mode', () => {
     it('renders heading and content in compact mode', () => {
       render(<AudioInfo book={makeBook({
