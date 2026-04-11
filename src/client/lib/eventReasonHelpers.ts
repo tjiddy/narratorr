@@ -11,7 +11,7 @@ export function capitalize(s: string): string {
 /** Returns false for null or empty-object reasons (treat {} same as null for toggle visibility). */
 export function hasReasonContent(reason: Reason): boolean {
   if (reason == null) return false;
-  return Object.keys(reason).length > 0;
+  return Object.values(reason).some(v => v != null);
 }
 
 /** Returns an inline summary string for grabbed events, null for all others. */

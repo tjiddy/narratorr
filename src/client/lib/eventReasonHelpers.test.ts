@@ -31,6 +31,23 @@ describe('hasReasonContent', () => {
   it('returns true for object with fields', () => {
     expect(hasReasonContent({ error: 'something' })).toBe(true);
   });
+
+  // #464 — false positive on null values
+  it('returns false when all values are null', () => {
+    expect(hasReasonContent({ error: null })).toBe(false);
+  });
+
+  it('returns false when values are mixed null/undefined', () => {
+    expect(hasReasonContent({ error: null, code: undefined })).toBe(false);
+  });
+
+  it('returns true when at least one value is non-null among nulls', () => {
+    expect(hasReasonContent({ error: null, code: 42 })).toBe(true);
+  });
+
+  it('returns true for non-null string value', () => {
+    expect(hasReasonContent({ protocol: 'torrent' })).toBe(true);
+  });
 });
 
 describe('getEventSummary', () => {
