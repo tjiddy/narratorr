@@ -58,6 +58,12 @@ All GitHub commands use: `node scripts/gh.ts` (referred to as `gh` below).
    > 8. **Settings fixture blast radius check (trigger: plan touches `src/db/schema.ts` settings columns, `src/shared/schemas/settings*.ts`, or any file defining `*Settings*` types):**
    >    If any planned file matches these trigger patterns, grep `**/*.test.ts` and `**/*.test.tsx` for hardcoded settings fixtures (look for `settings:`, `DEFAULT_SETTINGS`, `createMockSettings`, or inline settings objects in test setup). Enumerate every test file containing hardcoded settings fixtures in the return structure under `FIXTURE BLAST RADIUS`. If no planned files match the trigger, skip this check.
    >
+   > 9. **Line count pre-flight** for every file in WIRING POINTS:
+   >    Run `wc -l <file>` for each. Flag any file where:
+   >    - Total lines ≥ 350 (approaching max-lines 400 limit — plan extraction upfront)
+   >    - Any function with an existing `eslint-disable-next-line complexity` or `max-lines-per-function` suppression (the function is already at the limit — new branches will exceed it)
+   >    Report flagged files with current line counts under `LINE COUNT WARNINGS`.
+   >
    > Return this structure:
    > ```
    > PATTERNS: <relevant existing patterns and interfaces found>
@@ -67,6 +73,7 @@ All GitHub commands use: `node scripts/gh.ts` (referred to as `gh` below).
    > KNOWN LEARNINGS: <relevant learnings from .narratorr/cl/learnings/ and debt items, or "none">
    > DESIGN CONCERNS: <any architecture check violations found, with check IDs (e.g., OCP-1, LSP-1), or "none">
    > FIXTURE BLAST RADIUS: <test files with hardcoded settings fixtures, or "N/A (no settings changes)">
+   > LINE COUNT WARNINGS: <files near limits with current line counts, or "none">
    > ```
 
    Use the subagent's structured output directly in the plan comment (step 5).
