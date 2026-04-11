@@ -39,6 +39,8 @@
 
 - **`src/server/jobs/index.ts:54` housekeeping callback lacks per-sub-task error isolation**: The inline housekeeping callback runs VACUUM → pruneOlderThan → deleteExpired sequentially without per-sub-task try/catch. If VACUUM fails, the subsequent cleanup tasks are skipped. The deleted standalone `housekeeping.ts` had proper isolation. Should wrap each sub-task in its own try/catch. (discovered in #477)
 
+- **`src/client/hooks/useBulkOperation.ts`, `src/client/components/settings/useFetchCategories.ts`, `src/client/pages/library/useLibraryBulkActions.ts`**: No co-located test files. These hooks contain error handling and polling logic that could regress silently. (discovered in #486)
+
 ## Accepted Debt
 
 Items below are real but not worth fixing — the cost of change outweighs the benefit.

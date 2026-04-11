@@ -1,5 +1,34 @@
 # Workflow Log
 
+## #486 DRY: add client-side getErrorMessage — 2026-04-11
+**Skill path:** /implement → /claim → /plan → /handoff
+**Outcome:** success — PR #496
+
+### Metrics
+- Files changed: 24 (1 new utility, 1 new test, 22 modified) | Tests added/modified: 1 (10 test cases)
+- Quality gate runs: 2 (pass on attempt 1 both times)
+- Fix iterations: 0
+- Context compactions: 0
+
+### Workflow experience
+- What went smoothly: Straightforward mechanical extraction. Server utility provided exact template. Subagent handled bulk replacement across 22 files efficiently.
+- Friction / issues encountered: Session interrupted between claim and plan due to context loss — had to re-claim. Spec review cycle caught stale counts (83 → 34 → 32) before implementation, saving rework.
+
+### Token efficiency
+- Highest-token actions: Subagent for mechanical replacement across 22 files
+- Avoidable waste: Initial elaboration overcounted instances (34 vs actual 32), causing an extra spec review round
+- Suggestions: For count-sensitive specs, run grep verification once and use that number throughout — don't estimate
+
+### Infrastructure gaps
+- Repeated workarounds: None
+- Missing tooling / config: None
+- Unresolved debt: 3 client hooks (`useBulkOperation`, `useFetchCategories`, `useLibraryBulkActions`) lack co-located test files
+
+### Wish I'd Known
+1. The actual instance count (32) differs from the issue's original claim (83) and the elaboration's count (34) — always verify with a fresh grep before committing to numbers in the spec
+2. The server utility at `src/server/utils/error-message.ts` is the exact 3-line template — no adaptation needed, just copy the signature
+3. Template literal contexts (`${error instanceof Error ? error.message : 'Unknown error'}`) can use the default fallback, simplifying replacements to just `${getErrorMessage(error)}`
+
 ## #487 DRY: consolidate formatDuration (4 copies) and formatChannels (2 copies) — 2026-04-11
 **Skill path:** /implement → /claim → /plan → /handoff
 **Outcome:** success — PR #495
