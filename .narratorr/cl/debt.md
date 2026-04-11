@@ -17,7 +17,7 @@
 
 - **`src/server/services/merge.service.ts`**: Deprecated `mergeBook()` method (lines 222-270) duplicates validation and execution logic from `validatePreEnqueue()` + `executeMerge()`. Kept for backward compatibility with 40+ existing tests that test the synchronous merge path. Should be removed once existing tests are migrated to test via `enqueueMerge()`. (discovered in #368)
 
-- **`src/client/pages/activity/ActivityPage.tsx`**: Cyclomatic complexity at 17 (limit 15), suppressed with eslint-disable. Adding merge cards pushed it over. The page handles downloads tab, events tab, search cards, merge cards, and pagination for two sections. Consider extracting the downloads tab content into a sub-component. (discovered in #422)
+- ~~**`src/client/pages/activity/ActivityPage.tsx`**: Cyclomatic complexity at 17 (limit 15), suppressed with eslint-disable~~ — resolved in #470 (extracted DownloadsTabSection)
 
 - **Merge phase enum in 4 locations**: `mergePhaseSchema` in `sse-events.ts` is the source of truth, but the phase union is also implicitly encoded in `merge.service.ts` (`emitMergeProgress` type annotation), `useMergeProgress.ts` (`phase: string` — untyped), and `merge.ts` (format switch cases). Renaming `finalizing` → `committing` required touching all 4. The `MergePhase` type is now exported from schemas — consumer files should import and use it instead of inline string unions. (discovered in #431)
 
@@ -30,6 +30,8 @@
 - **`src/server/routes/search-stream.test.ts`**: Module-level `vi.mock('../services/search-pipeline.js')` prevents integration testing of `postProcessSearchResults` in the same file. New integration tests had to go in a separate file (`search-stream-filtering.test.ts`). Consider refactoring the existing tests to use per-test mocking or moving the mocked tests to a separate file so the main test file can run unmocked. (discovered in #438)
 
 - **`src/client/pages/library/LibraryBookCard.tsx`**: Uses same `opacity-0 group-hover:opacity-100` hover-gated pattern as BookHero overlay (lines 87, 119). Touch devices can't discover these actions. Should apply the `no-hover:opacity-100` variant added in #450 for consistency. (discovered in #450)
+
+- **`src/server/services/library-scan.service.ts` enrichImportedBook/processOneImport complexity**: Both methods report complexity 19/23 (limit 15) due to nullable field coalescing (`??`, `||`) in event payloads and enrichment configs. Extracting the enrichment orchestration didn't reduce complexity because the operators are in the remaining caller code. Could extract event payload builders as standalone functions to bring methods under threshold. (discovered in #470)
 
 - **`MAX_COVER_SIZE` duplicated in 3 files**: `src/server/routes/books.ts`, `src/client/hooks/useCoverPaste.ts:3`, `src/client/pages/book/BookDetails.tsx:58` all define `10 * 1024 * 1024` independently. Changing the limit requires updating 3 places. Should extract to a shared constant in `src/shared/`. (discovered in #466)
 
