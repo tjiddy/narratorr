@@ -11,7 +11,12 @@ vi.mock('sonner', () => ({
   },
 }));
 
+vi.mock('@/hooks/useEventSource', () => ({
+  useSSEConnected: vi.fn(() => false),
+}));
+
 import { toast } from 'sonner';
+import { useSSEConnected } from '@/hooks/useEventSource';
 
 function createWrapper() {
   const queryClient = new QueryClient({
@@ -138,10 +143,73 @@ describe('useImportPolling', () => {
     // No error thrown means the interval is running fine
   });
 
-  it.todo('does NOT start polling when SSE is connected and imports are active (#488)');
-  it.todo('starts polling when SSE is disconnected and imports are active (#488)');
-  it.todo('stops polling when SSE reconnects mid-import (#488)');
-  it.todo('no polling when importingCount is 0 regardless of SSE state (#488)');
+  it('does NOT start polling when SSE is connected and imports are active (#488)', () => {
+    vi.mocked(useSSEConnected).mockReturnValue(true);
+    const importingBooks = [makeBook({ id: 1, status: 'importing' })];
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const invalidateSpy = vi.spyOn(queryClient, 'invalidateQueries');
+
+    renderHook(() => useImportPolling(importingBooks), {
+      wrapper: ({ children }) => createElement(QueryClientProvider, { client: queryClient }, children),
+    });
+
+    act(() => { vi.advanceTimersByTime(6000); });
+
+    expect(invalidateSpy).not.toHaveBeenCalled();
+  });
+
+  it('starts polling when SSE is disconnected and imports are active (#488)', () => {
+    vi.mocked(useSSEConnected).mockReturnValue(false);
+    const importingBooks = [makeBook({ id: 1, status: 'importing' })];
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const invalidateSpy = vi.spyOn(queryClient, 'invalidateQueries');
+
+    renderHook(() => useImportPolling(importingBooks), {
+      wrapper: ({ children }) => createElement(QueryClientProvider, { client: queryClient }, children),
+    });
+
+    act(() => { vi.advanceTimersByTime(3000); });
+
+    expect(invalidateSpy).toHaveBeenCalled();
+  });
+
+  it('stops polling when SSE reconnects mid-import (#488)', () => {
+    vi.mocked(useSSEConnected).mockReturnValue(false);
+    const importingBooks = [makeBook({ id: 1, status: 'importing' })];
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const invalidateSpy = vi.spyOn(queryClient, 'invalidateQueries');
+
+    const { rerender } = renderHook(() => useImportPolling(importingBooks), {
+      wrapper: ({ children }) => createElement(QueryClientProvider, { client: queryClient }, children),
+    });
+
+    // Polling fires while disconnected
+    act(() => { vi.advanceTimersByTime(3000); });
+    expect(invalidateSpy).toHaveBeenCalledTimes(1);
+
+    // SSE reconnects
+    vi.mocked(useSSEConnected).mockReturnValue(true);
+    rerender();
+    invalidateSpy.mockClear();
+
+    // No more polling after reconnect
+    act(() => { vi.advanceTimersByTime(6000); });
+    expect(invalidateSpy).not.toHaveBeenCalled();
+  });
+
+  it('no polling when importingCount is 0 regardless of SSE state (#488)', () => {
+    vi.mocked(useSSEConnected).mockReturnValue(false);
+    const books = [makeBook({ id: 1, status: 'imported' })];
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const invalidateSpy = vi.spyOn(queryClient, 'invalidateQueries');
+
+    renderHook(() => useImportPolling(books), {
+      wrapper: ({ children }) => createElement(QueryClientProvider, { client: queryClient }, children),
+    });
+
+    act(() => { vi.advanceTimersByTime(6000); });
+    expect(invalidateSpy).not.toHaveBeenCalled();
+  });
 
   it('cleans up interval when no books are importing', () => {
     const importingBooks = [makeBook({ id: 1, status: 'importing' })];
