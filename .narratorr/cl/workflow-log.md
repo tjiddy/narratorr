@@ -1,5 +1,34 @@
 # Workflow Log
 
+## #464 Event history: hasReasonContent false positive on null values + unconditional Indexer row — 2026-04-11
+**Skill path:** /implement → /claim → /plan → /handoff
+**Outcome:** success — PR #473
+
+### Metrics
+- Files changed: 4 | Tests added/modified: 8
+- Quality gate runs: 2 (pass on attempt 1 both times)
+- Fix iterations: 0
+- Context compactions: 0
+
+### Workflow experience
+- What went smoothly: Clean red/green TDD cycle — both bugs had clear failing test cases and one-line fixes
+- Friction / issues encountered: None — straightforward bug fix with well-defined spec
+
+### Token efficiency
+- Highest-token actions: Explore subagent (comprehensive but this was a simple issue)
+- Avoidable waste: Explore subagent could have been skipped for a 2-file bug fix — the elaborate phase already gathered all needed context
+- Suggestions: For simple bug fixes with clear file targets, skip the Explore subagent in /plan and use direct reads
+
+### Infrastructure gaps
+- Repeated workarounds: None
+- Missing tooling / config: None
+- Unresolved debt: `GrabbedDetails` line 20 has dead `'—'` fallback branch in `indexerName` computation (harmless, not worth a separate fix)
+
+### Wish I'd Known
+1. `Object.keys().length` vs `Object.values().some()` is a common false-positive pattern when checking for "meaningful content" in objects with nullable values — worth a CLAUDE.md gotcha entry
+2. The elaborate phase already gathered all codebase context needed — the plan's Explore subagent was redundant for this simple issue
+3. All three test files were well-structured with clear patterns, making test additions trivial
+
 ## #469 SearchReleasesModal: remove redundant fields after pickGrabFields + stale docstring — 2026-04-11
 **Skill path:** /implement → /claim → /plan → /handoff
 **Outcome:** success — PR #472

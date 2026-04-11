@@ -217,6 +217,15 @@ describe('#455 event reason rendering', () => {
       renderWithProviders(<EventHistoryCard event={createMockEvent({ reason: {} })} />);
       expect(screen.queryByText('View details')).not.toBeInTheDocument();
     });
+
+    // #464 — all-null reason should not show toggle (reviewer suggestion F1)
+    it('hides details toggle when all reason values are null/undefined', () => {
+      renderWithProviders(<EventHistoryCard event={createMockEvent({
+        eventType: 'grabbed',
+        reason: { indexerId: undefined, size: undefined, protocol: undefined },
+      })} />);
+      expect(screen.queryByText('View details')).not.toBeInTheDocument();
+    });
   });
 
   describe('grabbed event summary line', () => {
