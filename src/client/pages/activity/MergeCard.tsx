@@ -1,16 +1,9 @@
-import { LoadingSpinner, CheckCircleIcon, AlertCircleIcon, RefreshIcon, XCircleIcon } from '@/components/icons';
+import { LoadingSpinner } from '@/components/icons';
+import { MergeStatusIcon } from '@/components/MergeStatusIcon.js';
 import { formatMergePhase } from '@/lib/format/merge.js';
 import type { MergeCardState } from '@/hooks/useMergeProgress';
 
 const CANCELLABLE_PHASES = new Set(['queued', 'starting', 'staging', 'processing', 'verifying']);
-
-function MergeStatusIcon({ state }: { state: MergeCardState }) {
-  if (state.outcome === 'success') return <CheckCircleIcon className="w-4 h-4 text-success" />;
-  if (state.outcome === 'error') return <AlertCircleIcon className="w-4 h-4 text-destructive" />;
-  if (state.outcome === 'cancelled') return <XCircleIcon className="w-4 h-4 text-muted-foreground" />;
-  if (state.phase === 'queued') return <LoadingSpinner className="w-4 h-4 text-primary" />;
-  return <RefreshIcon className="w-4 h-4 text-primary animate-spin" />;
-}
 
 export function MergeCard({ state, onCancel, isCancelling }: {
   state: MergeCardState;
@@ -28,7 +21,7 @@ export function MergeCard({ state, onCancel, isCancelling }: {
       {/* Header */}
       <div className="flex items-center gap-3 mb-3">
         <div className="p-1.5 bg-primary/10 rounded-lg">
-          <MergeStatusIcon state={state} />
+          <MergeStatusIcon outcome={state.outcome} phase={state.phase} />
         </div>
         <div className="min-w-0 flex-1">
           <h3 className="font-medium text-sm truncate">{state.bookTitle}</h3>

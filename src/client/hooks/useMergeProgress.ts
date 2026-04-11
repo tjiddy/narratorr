@@ -1,10 +1,12 @@
 import { useSyncExternalStore } from 'react';
 
+export type MergeOutcome = 'success' | 'error' | 'cancelled';
+
 export interface MergeProgress {
   phase: string;
   percentage?: number;
   position?: number;
-  outcome?: 'success' | 'error' | 'cancelled';
+  outcome?: MergeOutcome;
 }
 
 export interface MergeCardState {
@@ -13,7 +15,7 @@ export interface MergeCardState {
   phase: string;
   percentage?: number;
   position?: number;
-  outcome?: 'success' | 'error' | 'cancelled';
+  outcome?: MergeOutcome;
   message?: string;
   error?: string;
   enrichmentWarning?: string;

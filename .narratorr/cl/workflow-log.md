@@ -1,5 +1,34 @@
 # Workflow Log
 
+## #465 MergeProgressIndicator: extract shared icon component + narrow outcome type — 2026-04-11
+**Skill path:** /implement → /claim → /plan → /handoff
+**Outcome:** success — PR #474
+
+### Metrics
+- Files changed: 4 | Tests added/modified: 1 (6 new tests)
+- Quality gate runs: 2 (pass on attempt 1 both times)
+- Fix iterations: 1 (LoadingSpinner animate-spin assertion — fixed by using data-testid)
+- Context compactions: 0
+
+### Workflow experience
+- What went smoothly: Clean extraction — identical icon logic in both consumers made the shared component trivial. Existing test coverage in BookDetails.test.tsx and MergeCard.test.tsx passed without modification.
+- Friction / issues encountered: LoadingSpinner has `animate-spin` baked into its base class, so the initial test assertion to distinguish it from RefreshIcon by checking `not.toContain('animate-spin')` failed. Fixed by using `data-testid="loading-spinner"` instead.
+
+### Token efficiency
+- Highest-token actions: Explore subagent for plan phase (thorough but much of the info was already known from /elaborate)
+- Avoidable waste: The elaborate → respond-to-spec-review → plan exploration chain explored the same files 3 times across sessions
+- Suggestions: For simple refactors, the plan Explore could be lighter-weight since elaborate already validated all file paths
+
+### Infrastructure gaps
+- Repeated workarounds: None
+- Missing tooling / config: None
+- Unresolved debt: `phase: string` remains untyped in MergeProgress/MergeCardState (existing debt item at .narratorr/cl/debt.md:22)
+
+### Wish I'd Known
+1. `LoadingSpinner` in `icons.tsx` hardcodes `animate-spin` as a base class — can't use CSS class absence to distinguish it from `RefreshIcon`. Use `data-testid` instead. (See `.narratorr/cl/learnings/loading-spinner-animate-spin.md`)
+2. When extracting a shared component from consumers with different prop shapes, design props as the minimal intersection rather than accepting full state objects. (See `.narratorr/cl/learnings/merge-status-icon-props-narrowing.md`)
+3. The `isQueued` variable in `MergeProgressIndicator` was only used by the icon chain — after extraction it became dead code. Always check for orphaned locals after extracting logic.
+
 ## #464 Event history: hasReasonContent false positive on null values + unconditional Indexer row — 2026-04-11
 **Skill path:** /implement → /claim → /plan → /handoff
 **Outcome:** success — PR #473

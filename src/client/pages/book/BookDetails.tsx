@@ -4,14 +4,15 @@ import { SearchReleasesModal } from '@/components/SearchReleasesModal';
 import { BookMetadataModal } from '@/components/book/BookMetadataModal.js';
 import { ConfirmModal } from '@/components/ConfirmModal.js';
 import { DeleteBookModal } from '@/components/DeleteBookModal.js';
-import { HistoryIcon, BookOpenIcon, RefreshIcon, CheckCircleIcon, AlertCircleIcon, XCircleIcon, LoadingSpinner } from '@/components/icons';
+import { HistoryIcon, BookOpenIcon } from '@/components/icons';
+import { MergeStatusIcon } from '@/components/MergeStatusIcon.js';
 import type { BookWithAuthor } from '@/lib/api';
 import { BookHero } from './BookHero.js';
 import { BookDetailsContent } from './BookDetailsContent.js';
 import { BookEventHistory } from './BookEventHistory.js';
 import { mergeBookData, type MetadataBook } from './helpers.js';
 import { useBookActions } from './useBookActions.js';
-import { useMergeProgress } from '@/hooks/useMergeProgress.js';
+import { useMergeProgress, type MergeProgress } from '@/hooks/useMergeProgress.js';
 import { formatMergePhase } from '@/lib/format/merge.js';
 import { AudioPreview } from './AudioPreview.js';
 import { useCoverPaste } from '@/hooks/useCoverPaste.js';
@@ -301,11 +302,10 @@ export function BookDetails({ libraryBook, metadataBook }: {
 const CANCELLABLE_MERGE_PHASES = new Set(['queued', 'starting', 'staging', 'processing', 'verifying']);
 
 function MergeProgressIndicator({ progress, onCancel, isCancelling }: {
-  progress: { phase: string; percentage?: number; position?: number; outcome?: string };
+  progress: MergeProgress;
   onCancel?: () => void;
   isCancelling?: boolean;
 }) {
-  const isQueued = progress.phase === 'queued';
   const isTerminal = progress.outcome !== undefined;
   const canCancel = !isTerminal && onCancel && CANCELLABLE_MERGE_PHASES.has(progress.phase);
   const percentage = progress.percentage !== undefined ? Math.round(progress.percentage * 100) : undefined;
@@ -317,11 +317,7 @@ function MergeProgressIndicator({ progress, onCancel, isCancelling }: {
     >
       <div className="flex items-center gap-3">
         <div className="shrink-0 p-2 rounded-xl bg-primary/10">
-          {progress.outcome === 'success' ? <CheckCircleIcon className="w-4 h-4 text-success" />
-            : progress.outcome === 'error' ? <AlertCircleIcon className="w-4 h-4 text-destructive" />
-            : progress.outcome === 'cancelled' ? <XCircleIcon className="w-4 h-4 text-muted-foreground" />
-            : isQueued ? <LoadingSpinner className="w-4 h-4 text-primary" />
-            : <RefreshIcon className="w-4 h-4 text-primary animate-spin" />}
+          <MergeStatusIcon outcome={progress.outcome} phase={progress.phase} />
         </div>
         <div className="flex-1 min-w-0">
           <p className="text-sm font-medium">

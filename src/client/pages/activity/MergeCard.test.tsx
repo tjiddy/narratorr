@@ -100,6 +100,39 @@ describe('MergeCard', () => {
     });
   });
 
+  describe('icon wiring', () => {
+    function getIconClass(container: HTMLElement): string {
+      const svg = container.querySelector('svg');
+      return svg?.className.baseVal ?? svg?.getAttribute('class') ?? '';
+    }
+
+    it('renders LoadingSpinner when queued', () => {
+      render(<MergeCard state={makeState({ phase: 'queued' })} />);
+      expect(screen.getByTestId('loading-spinner')).toBeInTheDocument();
+    });
+
+    it('renders spinning RefreshIcon for active non-queued phase', () => {
+      const { container } = render(<MergeCard state={makeState({ phase: 'processing', percentage: 0.5 })} />);
+      expect(screen.queryByTestId('loading-spinner')).not.toBeInTheDocument();
+      expect(getIconClass(container)).toContain('animate-spin');
+    });
+
+    it('renders success icon for success outcome', () => {
+      const { container } = render(<MergeCard state={makeState({ phase: 'complete', outcome: 'success', message: 'done' })} />);
+      expect(getIconClass(container)).toContain('text-success');
+    });
+
+    it('renders error icon for error outcome', () => {
+      const { container } = render(<MergeCard state={makeState({ phase: 'failed', outcome: 'error', error: 'fail' })} />);
+      expect(getIconClass(container)).toContain('text-destructive');
+    });
+
+    it('renders cancelled icon for cancelled outcome', () => {
+      const { container } = render(<MergeCard state={makeState({ phase: 'cancelled', outcome: 'cancelled' })} />);
+      expect(getIconClass(container)).toContain('text-muted-foreground');
+    });
+  });
+
   describe('cancel button visibility', () => {
     const onCancel = vi.fn();
 
