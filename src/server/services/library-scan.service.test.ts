@@ -312,6 +312,34 @@ describe('LibraryScanService', () => {
       );
     });
 
+    it('passes non-null narrator, duration, and coverUrl from created book to audio enrichment', async () => {
+      mockBookService.create.mockResolvedValueOnce({
+        id: 1,
+        title: 'HP',
+        status: 'imported',
+        authors: [{ id: 1, name: 'JKR' }],
+        narrators: [{ name: 'Stephen Fry' }],
+        duration: 480,
+        coverUrl: 'https://example.com/cover.jpg',
+        genres: ['Fantasy'],
+      });
+
+      await service.importSingleBook(
+        { path: '/audiobooks/Title', title: 'HP', authorName: 'JKR' },
+        { title: 'HP', authors: [{ name: 'JKR' }], narrators: ['Stephen Fry'], duration: 480, coverUrl: 'https://example.com/cover.jpg', asin: 'B001', genres: ['Fantasy'] },
+      );
+
+      expect(enrichBookFromAudio).toHaveBeenCalledWith(
+        1,
+        '/audiobooks/Title',
+        { narrators: [{ name: 'Stephen Fry' }], duration: 480, coverUrl: 'https://example.com/cover.jpg' },
+        mockDb,
+        log,
+        mockBookService,
+        undefined, // ffprobePath (no ffmpeg configured in mock settings)
+      );
+    });
+
     it('returns duplicate error without creating', async () => {
       mockBookService.findDuplicate.mockResolvedValueOnce({ id: 1, title: 'Existing' });
 
@@ -2033,6 +2061,42 @@ describe('LibraryScanService', () => {
           log,
           mockBookService,
           undefined, // ffprobePath (no ffmpeg configured in mock settings)
+        );
+      });
+    });
+
+    it('passes item.coverUrl to audio enrichment, falling back to metadata.coverUrl', async () => {
+      await service.confirmImport([
+        { path: '/audiobooks/Book', title: 'Book', coverUrl: 'https://item-cover.jpg', metadata: { title: 'Book', authors: [{ name: 'Author' }], narrators: ['Jim Dale'], duration: 600, coverUrl: 'https://meta-cover.jpg' } },
+      ]);
+
+      await vi.waitFor(() => {
+        expect(enrichBookFromAudio).toHaveBeenCalledWith(
+          1,
+          '/audiobooks/Book',
+          expect.objectContaining({ narrators: [{ name: 'Jim Dale' }], duration: 600, coverUrl: 'https://item-cover.jpg' }),
+          mockDb,
+          log,
+          mockBookService,
+          undefined,
+        );
+      });
+    });
+
+    it('falls back to metadata.coverUrl when item.coverUrl is absent', async () => {
+      await service.confirmImport([
+        { path: '/audiobooks/Book', title: 'Book', metadata: { title: 'Book', authors: [{ name: 'Author' }], narrators: ['Jim Dale'], duration: 600, coverUrl: 'https://meta-cover.jpg' } },
+      ]);
+
+      await vi.waitFor(() => {
+        expect(enrichBookFromAudio).toHaveBeenCalledWith(
+          1,
+          '/audiobooks/Book',
+          expect.objectContaining({ coverUrl: 'https://meta-cover.jpg' }),
+          mockDb,
+          log,
+          mockBookService,
+          undefined,
         );
       });
     });
