@@ -1,5 +1,34 @@
 # Workflow Log
 
+## #480 Bug: LibraryPage silently shows empty state on query error — 2026-04-11
+**Skill path:** /implement → /claim → /plan → /handoff
+**Outcome:** success — PR #493
+
+### Metrics
+- Files changed: 4 | Tests added/modified: 8
+- Quality gate runs: 2 (pass on attempt 1 both times)
+- Fix iterations: 0
+- Context compactions: 0
+
+### Workflow experience
+- What went smoothly: Clean implementation — the DiscoverPage pattern was a clear reference. Red/green TDD cycle worked well with 6 failing tests going green in one implementation pass.
+- Friction / issues encountered: Spec review required 3 rounds due to AC4 stats-failure wording contradicting the test plan (empty vs non-empty books distinction). The loading spinner test stub used `role="status"` which doesn't exist on the `LoadingSpinner` component — had to check the actual component for `data-testid="loading-spinner"`.
+
+### Token efficiency
+- Highest-token actions: Spec review rounds (3 rounds of elaborate + respond-to-spec-review before implementation)
+- Avoidable waste: None significant — the spec review rounds were necessary to disambiguate the AC
+- Suggestions: For simple bug fixes, the spec review cycle could be lighter
+
+### Infrastructure gaps
+- Repeated workarounds: None
+- Missing tooling / config: None
+- Unresolved debt: None new — existing usePagination debt already logged
+
+### Wish I'd Known
+1. The empty-library gate depends on `totalAll` from stats, not `totalBooks` from books — two separate queries with independent failure modes. Reading `useLibraryPageState` upfront would have surfaced the dual-query issue immediately.
+2. `placeholderData: (prev) => prev` in TanStack Query still sets `isError: true` on failure — the stale data is kept but the error flag is reliable for branching.
+3. The `LoadingSpinner` component uses `data-testid="loading-spinner"`, not `role="status"` — always check the actual component before writing test selectors.
+
 ## #481 Bug: health-check notification await blocks check cycle despite fire-and-forget comment — 2026-04-11
 **Skill path:** /implement → /claim → /plan → /handoff
 **Outcome:** success — PR #492
