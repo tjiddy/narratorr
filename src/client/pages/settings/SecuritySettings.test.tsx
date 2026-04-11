@@ -111,9 +111,10 @@ describe('SecuritySettings', () => {
     const noneRadio = screen.getByLabelText('None (No Authentication)');
     await user.click(noneRadio);
 
-    // Confirmation should appear
+    // ConfirmModal should appear with title and action button
     await waitFor(() => {
-      expect(screen.getByText(/are you sure you want to disable authentication/i)).toBeInTheDocument();
+      expect(screen.getByRole('dialog')).toBeInTheDocument();
+      expect(screen.getByText('Disable authentication?')).toBeInTheDocument();
       expect(screen.getByRole('button', { name: /disable auth/i })).toBeInTheDocument();
     });
   });
@@ -780,16 +781,139 @@ describe('SecuritySettings', () => {
   });
 
   describe('ConfirmModal for disable auth (#488)', () => {
-    it.todo('clicking auth mode that triggers confirmation opens ConfirmModal with title and message');
-    it.todo('confirming in modal fires updateAuthConfig mutation with correct auth mode');
-    it.todo('cancelling modal closes it without firing mutation');
-    it.todo('modal dismisses on Escape key press');
+    it('clicking auth mode that triggers confirmation opens ConfirmModal with title and message', async () => {
+      (api.getAuthConfig as ReturnType<typeof vi.fn>).mockResolvedValue({ ...mockConfig, mode: 'forms' });
+      (api.getAuthStatus as ReturnType<typeof vi.fn>).mockResolvedValue({ ...mockStatus, mode: 'forms', hasUser: true });
+      const user = userEvent.setup();
+      renderWithProviders(<SecuritySettings />);
+
+      await waitFor(() => expect(screen.getByText('Authentication Mode')).toBeInTheDocument());
+
+      await user.click(screen.getByLabelText('None (No Authentication)'));
+
+      await waitFor(() => {
+        const dialog = screen.getByRole('dialog');
+        expect(dialog).toBeInTheDocument();
+        expect(screen.getByText('Disable authentication?')).toBeInTheDocument();
+        expect(screen.getByText(/your instance will be accessible without credentials/i)).toBeInTheDocument();
+      });
+    });
+
+    it('confirming in modal fires updateAuthConfig mutation with correct auth mode', async () => {
+      (api.getAuthConfig as ReturnType<typeof vi.fn>).mockResolvedValue({ ...mockConfig, mode: 'forms' });
+      (api.getAuthStatus as ReturnType<typeof vi.fn>).mockResolvedValue({ ...mockStatus, mode: 'forms', hasUser: true });
+      (api.updateAuthConfig as ReturnType<typeof vi.fn>).mockResolvedValue({ mode: 'none', apiKey: 'test-api-key-12345', localBypass: false });
+      const user = userEvent.setup();
+      renderWithProviders(<SecuritySettings />);
+
+      await waitFor(() => expect(screen.getByText('Authentication Mode')).toBeInTheDocument());
+
+      await user.click(screen.getByLabelText('None (No Authentication)'));
+      await waitFor(() => expect(screen.getByRole('dialog')).toBeInTheDocument());
+
+      await user.click(screen.getByRole('button', { name: /disable auth/i }));
+
+      await waitFor(() => expect(api.updateAuthConfig).toHaveBeenCalledWith({ mode: 'none' }));
+    });
+
+    it('cancelling modal closes it without firing mutation', async () => {
+      (api.getAuthConfig as ReturnType<typeof vi.fn>).mockResolvedValue({ ...mockConfig, mode: 'forms' });
+      (api.getAuthStatus as ReturnType<typeof vi.fn>).mockResolvedValue({ ...mockStatus, mode: 'forms', hasUser: true });
+      const user = userEvent.setup();
+      renderWithProviders(<SecuritySettings />);
+
+      await waitFor(() => expect(screen.getByText('Authentication Mode')).toBeInTheDocument());
+
+      await user.click(screen.getByLabelText('None (No Authentication)'));
+      await waitFor(() => expect(screen.getByRole('dialog')).toBeInTheDocument());
+
+      await user.click(screen.getByRole('button', { name: /cancel/i }));
+
+      await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
+      expect(api.updateAuthConfig).not.toHaveBeenCalled();
+    });
+
+    it('modal dismisses on Escape key press', async () => {
+      (api.getAuthConfig as ReturnType<typeof vi.fn>).mockResolvedValue({ ...mockConfig, mode: 'forms' });
+      (api.getAuthStatus as ReturnType<typeof vi.fn>).mockResolvedValue({ ...mockStatus, mode: 'forms', hasUser: true });
+      const user = userEvent.setup();
+      renderWithProviders(<SecuritySettings />);
+
+      await waitFor(() => expect(screen.getByText('Authentication Mode')).toBeInTheDocument());
+
+      await user.click(screen.getByLabelText('None (No Authentication)'));
+      await waitFor(() => expect(screen.getByRole('dialog')).toBeInTheDocument());
+
+      await user.keyboard('{Escape}');
+
+      await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
+      expect(api.updateAuthConfig).not.toHaveBeenCalled();
+    });
   });
 
   describe('ConfirmModal for API key regeneration (#488)', () => {
-    it.todo('clicking regenerate button opens ConfirmModal with regeneration warning');
-    it.todo('confirming fires authRegenerateApiKey mutation');
-    it.todo('cancelling modal closes it without firing mutation');
-    it.todo('error during regeneration shows error toast and modal stays open for retry');
+    it('clicking regenerate button opens ConfirmModal with regeneration warning', async () => {
+      const user = userEvent.setup();
+      renderWithProviders(<SecuritySettings />);
+
+      await waitFor(() => expect(screen.getByText('API Key')).toBeInTheDocument());
+
+      await user.click(screen.getByRole('button', { name: /regenerate api key/i }));
+
+      await waitFor(() => {
+        const dialog = screen.getByRole('dialog');
+        expect(dialog).toBeInTheDocument();
+        expect(screen.getByText('Regenerate API key?')).toBeInTheDocument();
+        expect(screen.getByText(/regenerating will invalidate the current key/i)).toBeInTheDocument();
+      });
+    });
+
+    it('confirming fires authRegenerateApiKey mutation', async () => {
+      (api.authRegenerateApiKey as ReturnType<typeof vi.fn>).mockResolvedValue({ apiKey: 'new-key-67890' });
+      const user = userEvent.setup();
+      renderWithProviders(<SecuritySettings />);
+
+      await waitFor(() => expect(screen.getByText('API Key')).toBeInTheDocument());
+
+      await user.click(screen.getByRole('button', { name: /regenerate api key/i }));
+      await waitFor(() => expect(screen.getByRole('dialog')).toBeInTheDocument());
+
+      await user.click(screen.getByRole('button', { name: /confirm regenerate/i }));
+
+      await waitFor(() => expect(api.authRegenerateApiKey).toHaveBeenCalled());
+    });
+
+    it('cancelling modal closes it without firing mutation', async () => {
+      const user = userEvent.setup();
+      renderWithProviders(<SecuritySettings />);
+
+      await waitFor(() => expect(screen.getByText('API Key')).toBeInTheDocument());
+
+      await user.click(screen.getByRole('button', { name: /regenerate api key/i }));
+      await waitFor(() => expect(screen.getByRole('dialog')).toBeInTheDocument());
+
+      await user.click(screen.getByRole('button', { name: /cancel/i }));
+
+      await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
+      expect(api.authRegenerateApiKey).not.toHaveBeenCalled();
+    });
+
+    it('error during regeneration shows error toast and modal stays open for retry', async () => {
+      (api.authRegenerateApiKey as ReturnType<typeof vi.fn>).mockRejectedValue(new Error('Server error'));
+      const user = userEvent.setup();
+      renderWithProviders(<SecuritySettings />);
+
+      await waitFor(() => expect(screen.getByText('API Key')).toBeInTheDocument());
+
+      await user.click(screen.getByRole('button', { name: /regenerate api key/i }));
+      await waitFor(() => expect(screen.getByRole('dialog')).toBeInTheDocument());
+
+      await user.click(screen.getByRole('button', { name: /confirm regenerate/i }));
+
+      await waitFor(() => expect(toast.error).toHaveBeenCalledWith('Failed to regenerate API key'));
+      // Modal stays open for retry
+      expect(screen.getByRole('dialog')).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: /confirm regenerate/i })).toBeInTheDocument();
+    });
   });
 });
