@@ -1,23 +1,10 @@
 import { AlertTriangleIcon, AlertCircleIcon } from '@/components/icons';
 import type { QualityGateData } from '@/lib/api/activity';
+import { formatDurationSeconds, formatChannels } from '@/lib/format';
 
 function formatMbPerHour(mbPerHour: number | null): string {
   if (mbPerHour === null) return '—';
   return `${Math.round(mbPerHour)} MB/hr`;
-}
-
-function formatDuration(seconds: number | null): string {
-  if (seconds === null) return '—';
-  const hours = Math.floor(seconds / 3600);
-  const minutes = Math.floor((seconds % 3600) / 60);
-  return `${hours}h ${minutes}m`;
-}
-
-function formatChannels(channels: number | null): string {
-  if (channels === null) return '—';
-  if (channels === 1) return 'Mono';
-  if (channels === 2) return 'Stereo';
-  return `${channels}ch`;
 }
 
 type Row = { label: string; current: string; downloaded: string; flagged?: boolean };
@@ -38,8 +25,8 @@ function durationRow(data: QualityGateData): Row | null {
   if (curDuration === null && dlDuration === null) return null;
   return {
     label: 'Duration',
-    current: formatDuration(curDuration),
-    downloaded: formatDuration(dlDuration),
+    current: formatDurationSeconds(curDuration, { fallback: '—' }),
+    downloaded: formatDurationSeconds(dlDuration, { fallback: '—' }),
     flagged: data.durationDelta !== null && Math.abs(data.durationDelta) > 0.15,
   };
 }
@@ -53,7 +40,7 @@ function codecRow(data: QualityGateData): Row | null {
 function channelsRow(data: QualityGateData): Row | null {
   const curChannels = data.existingChannels ?? null;
   if (curChannels === null && data.channels === null) return null;
-  return { label: 'Channels', current: formatChannels(curChannels), downloaded: formatChannels(data.channels) };
+  return { label: 'Channels', current: formatChannels(curChannels, '—'), downloaded: formatChannels(data.channels, '—') };
 }
 
 function buildRows(data: QualityGateData): Row[] {

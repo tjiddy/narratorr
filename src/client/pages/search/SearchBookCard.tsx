@@ -4,7 +4,8 @@ import { AddBookPopover } from '@/components/AddBookPopover';
 import { useMutation, type useQueryClient } from '@tanstack/react-query';
 import { api, ApiError, type BookMetadata, type BookWithAuthor } from '@/lib/api';
 import { toast } from 'sonner';
-import { formatDuration, mapBookMetadataToPayload, isBookInLibrary } from '@/lib/helpers';
+import { mapBookMetadataToPayload, isBookInLibrary } from '@/lib/helpers';
+import { formatDurationMinutes } from '@/lib/format';
 import { queryKeys } from '@/lib/queryKeys';
 import {
   BookOpenIcon,
@@ -94,7 +95,7 @@ export function SearchBookCard({
             {book.duration && (
               <span className="flex items-center gap-1 text-sm text-muted-foreground">
                 <ClockIcon className="w-3.5 h-3.5" />
-                {formatDuration(book.duration)}
+                {formatDurationMinutes(book.duration)}
               </span>
             )}
             {book.genres && book.genres.length > 0 && book.genres.slice(0, 3).map((genre) => (

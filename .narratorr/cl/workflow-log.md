@@ -1,5 +1,34 @@
 # Workflow Log
 
+## #487 DRY: consolidate formatDuration (4 copies) and formatChannels (2 copies) — 2026-04-11
+**Skill path:** /implement → /claim → /plan → /handoff
+**Outcome:** success — PR #495
+
+### Metrics
+- Files changed: 8 | Tests added/modified: 27 new tests in format.test.ts, 6 removed from helpers.test.ts
+- Quality gate runs: 2 (pass on attempt 1 both times)
+- Fix iterations: 0
+- Context compactions: 0
+
+### Workflow experience
+- What went smoothly: Clean DRY refactor — spec was well-defined after 2 rounds of spec review, all component tests served as perfect regression guards, zero fix iterations needed
+- Friction / issues encountered: None — the spec review process caught all contract gaps upfront (undefined handling, dual seconds-formatting modes, channels boundary)
+
+### Token efficiency
+- Highest-token actions: Explore subagent for plan (thorough codebase read of all 6 source files + tests)
+- Avoidable waste: None significant — straightforward implementation
+- Suggestions: For pure DRY refactors with well-reviewed specs, the plan phase could be lighter since the spec already contains all implementation detail
+
+### Infrastructure gaps
+- Repeated workarounds: None
+- Missing tooling / config: None
+- Unresolved debt: None introduced; this PR resolves the formatDuration/formatChannels DRY-2 debt
+
+### Wish I'd Known
+1. The options object pattern (`{ alwaysShowBoth, fallback }`) is cleaner than multiple named variants for formatting functions with behavioral differences — one function, explicit call sites
+2. Component tests are the best regression guard for DRY refactors — 70 existing tests caught zero regressions, confirming behavior preservation
+3. The spec review process (2 rounds) saved significant implementation time by resolving contract ambiguities before any code was written
+
 ## #488 Polish: ActivityPage type=button, SecuritySettings ConfirmModal, useImportPolling SSE — 2026-04-11
 **Skill path:** /implement → /claim → /plan → /handoff
 **Outcome:** success — PR #494

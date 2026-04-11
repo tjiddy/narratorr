@@ -1,35 +1,7 @@
 import { describe, it, expect } from 'vitest';
-import { formatDuration, mapBookMetadataToPayload, isBookInLibrary } from './helpers.js';
+import { mapBookMetadataToPayload, isBookInLibrary } from './helpers.js';
 import { createMockBook } from '@/__tests__/factories';
 import type { BookMetadata, BookWithAuthor, BookIdentifier } from './api/index.js';
-
-describe('formatDuration', () => {
-  it('returns null for undefined', () => {
-    expect(formatDuration(undefined)).toBeNull();
-  });
-
-  it('returns null for null', () => {
-    expect(formatDuration(null)).toBeNull();
-  });
-
-  it('returns null for 0', () => {
-    expect(formatDuration(0)).toBeNull();
-  });
-
-  it('formats minutes only', () => {
-    expect(formatDuration(45)).toBe('45m');
-  });
-
-  it('formats hours only when evenly divisible', () => {
-    expect(formatDuration(60)).toBe('1h');
-    expect(formatDuration(120)).toBe('2h');
-  });
-
-  it('formats hours and minutes', () => {
-    expect(formatDuration(90)).toBe('1h 30m');
-    expect(formatDuration(61)).toBe('1h 1m');
-  });
-});
 
 describe('mapBookMetadataToPayload', () => {
   const fullBook: BookMetadata = {

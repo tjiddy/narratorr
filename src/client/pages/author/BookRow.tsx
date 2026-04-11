@@ -1,5 +1,5 @@
 import { type BookMetadata } from '@/lib/api';
-import { formatDuration } from '@/lib/helpers';
+import { formatDurationMinutes } from '@/lib/format';
 import { resolveUrl } from '@/lib/url-utils';
 import { AddBookPopover } from '@/components/AddBookPopover';
 import { BookOpenIcon, CheckIcon } from '@/components/icons';
@@ -16,7 +16,7 @@ export function BookRow({
   isAdding: boolean;
 }) {
   const seriesPos = book.series?.[0]?.position;
-  const duration = formatDuration(book.duration);
+  const duration = formatDurationMinutes(book.duration);
   const narratorNames = book.narrators?.join(', ');
 
   return (
