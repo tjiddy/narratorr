@@ -356,6 +356,8 @@ export async function booksRoutes(app: FastifyInstance, deps: BookRouteDeps) {
   }
 }
 
+const MAX_COVER_SIZE = 10 * 1024 * 1024; // 10 MB
+
 export async function bookFilesRoute(app: FastifyInstance, bookService: BookService) {
   // GET /api/books/:id/cover — serve embedded cover art from library
   app.get<{ Params: IdParam }>(
@@ -399,8 +401,6 @@ export async function bookFilesRoute(app: FastifyInstance, bookService: BookServ
       return reply.status(404).send({ error: 'No cover image' });
     },
   );
-
-  const MAX_COVER_SIZE = 10 * 1024 * 1024; // 10 MB
 
   // POST /api/books/:id/cover — upload custom cover art
   app.post<{ Params: IdParam }>(
