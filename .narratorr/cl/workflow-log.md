@@ -1,5 +1,34 @@
 # Workflow Log
 
+## #470 ESLint lazy suppression cleanup — 2026-04-11
+**Skill path:** /implement → /claim → /plan → /handoff
+**Outcome:** success — PR #489
+
+### Metrics
+- Files changed: 12 | Tests added/modified: 6 new test files (29 tests)
+- Quality gate runs: 6 (pass on attempt 6 — first 5 had lint, typecheck, unused import issues)
+- Fix iterations: 5 (DownloadsTabSection max-lines, useLibraryPageState complexity, mutation prop types, unused React import, unused path.join)
+- Context compactions: 0
+
+### Workflow experience
+- What went smoothly: Backend extraction (enrichment helper) was clean — 286 existing tests passed on first try after extraction. Frontend ActivityPage extraction also clean — 50 tests passed immediately.
+- Friction / issues encountered: LibraryToolbar props interface mismatch after extracting useLibraryPageState (sortProps/filterProps are nested objects, not flat props). Required reading the original component to understand the API. Also, `enrichImportedBook` and `processOneImport` stayed over complexity threshold after extraction — the spec assumed extraction would fix it but `??`/`||` operators in event payloads inflate the metric.
+
+### Token efficiency
+- Highest-token actions: Multiple verify.ts runs (6 attempts) fixing lint/typecheck issues one at a time
+- Avoidable waste: Should have run `pnpm typecheck` before verify.ts to catch type errors faster. The mutation prop types (`void` vs `{ success: boolean }`) could have been caught by reading useActivity.ts return types upfront.
+- Suggestions: When extracting components with prop interfaces, always check the actual mutation return types from the hook — don't assume `void`.
+
+### Infrastructure gaps
+- Repeated workarounds: None
+- Missing tooling / config: None
+- Unresolved debt: enrichImportedBook/processOneImport complexity (nullable coalescing inflates ESLint metric)
+
+### Wish I'd Known
+1. ESLint counts `??` and `||` as cyclomatic complexity branches — extracting "real" logic doesn't reduce the metric when nullable coalescing remains (see `eslint-complexity-nullish-coalescing.md`)
+2. LibraryToolbar expects `filterProps` and `sortProps` as nested object props, not flat — reading the target component's prop interface before writing the wrapper saves a debug cycle
+3. Extracting a hook from a page component relocates complexity 1:1 — pure helper functions outside the hook are needed to actually reduce the count below threshold (see `hook-extraction-complexity-relocation.md`)
+
 ## #468 Test coverage gaps from PR review batch — 2026-04-11
 **Skill path:** /implement → /claim → /plan → /handoff
 **Outcome:** success — PR #476
