@@ -13,7 +13,7 @@ import type { SettingsService } from './settings.service.js';
 import type { BookMetadata } from '../../core/metadata/index.js';
 import { buildTargetPath, getPathSize } from '../utils/import-helpers.js';
 import { toNamingOptions } from '../../core/utils/naming.js';
-import { orchestrateBookEnrichment, buildBookCreatePayload, type EnrichmentDeps } from './enrichment-orchestration.helper.js';
+import { orchestrateBookEnrichment, buildBookCreatePayload, buildEnrichmentBookInput, buildAudnexusConfig, buildImportedEventPayload, extractImportMetadata, buildBackgroundAudnexusConfig, type EnrichmentDeps } from './enrichment-orchestration.helper.js';
 import { findAudioLeafFolders, getAudioStats, buildDiscoveredBook } from './library-scan.helpers.js';
 import type { EventHistoryService } from './event-history.service.js';
 import { getErrorMessage } from '../utils/error-message.js';
@@ -349,47 +349,26 @@ export class LibraryScanService {
     }
   }
 
-  // eslint-disable-next-line complexity -- copy/move + path/size update + enrichment orchestration + event recording
   private async enrichImportedBook(
     item: ImportConfirmItem,
     book: { id: number; narrators?: Array<{ name: string }> | null; duration?: number | null; coverUrl?: string | null; genres?: string[] | null },
     meta: BookMetadata | null,
     mode?: ImportMode,
   ): Promise<boolean> {
-    // Determine final path: copy/move to library or use source path
     let finalPath = item.path;
     if (mode) {
       finalPath = await this.copyToLibrary(item, book as Parameters<typeof this.copyToLibrary>[1], meta, mode);
     }
 
-    // Set the path and size
     const stats = await getAudioStats(finalPath, this.log);
-    await this.db.update(books).set({
-      path: finalPath,
-      size: stats.totalSize,
-      updatedAt: new Date(),
-    }).where(eq(books.id, book.id));
+    await this.db.update(books).set({ path: finalPath, size: stats.totalSize, updatedAt: new Date() }).where(eq(books.id, book.id));
 
-    // Shared enrichment: audio metadata → audnexus
     const { audioEnriched } = await orchestrateBookEnrichment(
-      book.id,
-      finalPath,
-      { narrators: book.narrators ?? null, duration: book.duration ?? null, coverUrl: book.coverUrl ?? null, existingGenres: book.genres ?? null },
-      this.enrichmentDeps,
-      { primaryAsin: item.asin || meta?.asin, alternateAsins: meta?.alternateAsins, existingNarrator: book.narrators?.[0]?.name ?? null, existingDuration: book.duration, existingGenres: book.genres ?? null },
+      book.id, finalPath, buildEnrichmentBookInput(book), this.enrichmentDeps, buildAudnexusConfig(item, meta, book),
     );
 
-    // Record success event (fire-and-forget)
-    this.eventHistory.create({
-      bookId: book.id,
-      bookTitle: item.title,
-      authorName: item.authorName ?? null,
-      narratorName: meta?.narrators?.[0] ?? null,
-      downloadId: null,
-      eventType: 'imported',
-      source: 'manual',
-      reason: { targetPath: resolve(finalPath), mode: mode ?? 'pointer' },
-    }).catch(err => this.log.warn({ err }, 'Failed to record manual import event'));
+    this.eventHistory.create(buildImportedEventPayload(book.id, item, meta?.narrators?.[0] ?? null, resolve(finalPath), mode))
+      .catch(err => this.log.warn({ err }, 'Failed to record manual import event'));
 
     this.log.info({ bookId: book.id, title: item.title, enriched: audioEnriched, mode: mode ?? 'pointer' }, 'Single book imported');
     return audioEnriched;
@@ -547,64 +526,38 @@ export class LibraryScanService {
     }
   }
 
-  // eslint-disable-next-line complexity -- copy/move + path/size update + genre refresh + enrichment orchestration + status transition + event recording
   private async processOneImport(bookId: number, item: ImportConfirmItem, mode?: ImportMode): Promise<void> {
     this.log.debug({ bookId, title: item.title, mode: mode ?? 'pointer' }, 'Processing import');
 
-    const meta = item.metadata;
-    const narratorName = meta?.narrators?.[0] ?? null;
-    const duration = meta?.duration ?? null;
-    const coverUrl = item.coverUrl || meta?.coverUrl || null;
-    const primaryAsin = item.asin || meta?.asin;
+    const extracted = extractImportMetadata(item);
 
-    // Determine final path: copy/move to library or use source path
     let finalPath = item.path;
     if (mode) {
       const bookRecord = await this.db.select().from(books).where(eq(books.id, bookId)).limit(1);
       if (bookRecord.length > 0) {
-        finalPath = await this.copyToLibrary(item, bookRecord[0], meta ?? null, mode);
+        finalPath = await this.copyToLibrary(item, bookRecord[0], extracted.meta ?? null, mode);
       }
     }
 
-    // Set the path and size
     const stats = await getAudioStats(finalPath, this.log);
     this.log.debug({ bookId, finalPath, fileCount: stats.fileCount, totalSize: stats.totalSize }, 'Audio stats collected');
-    await this.db.update(books).set({
-      path: finalPath,
-      size: stats.totalSize,
-      updatedAt: new Date(),
-    }).where(eq(books.id, bookId));
+    await this.db.update(books).set({ path: finalPath, size: stats.totalSize, updatedAt: new Date() }).where(eq(books.id, bookId));
 
     // Read current genres from DB (may have been filled since placeholder creation)
     const [currentBook] = await this.db.select({ genres: books.genres }).from(books).where(eq(books.id, bookId)).limit(1);
 
-    // Shared enrichment: audio metadata → audnexus
     this.log.debug({ bookId }, 'Starting audio enrichment');
     await orchestrateBookEnrichment(
-      bookId,
-      finalPath,
-      { narrators: narratorName ? [{ name: narratorName }] : null, duration, coverUrl, existingGenres: currentBook?.genres ?? null },
+      bookId, finalPath,
+      buildEnrichmentBookInput({ ...extracted.bookInput, genres: currentBook?.genres ?? null }),
       this.enrichmentDeps,
-      { primaryAsin, alternateAsins: meta?.alternateAsins, existingNarrator: narratorName, existingDuration: duration, existingGenres: currentBook?.genres ?? null },
+      buildBackgroundAudnexusConfig(item, extracted, currentBook?.genres ?? null),
     );
 
-    // Success — mark as imported
-    await this.db.update(books).set({
-      status: 'imported',
-      updatedAt: new Date(),
-    }).where(eq(books.id, bookId));
+    await this.db.update(books).set({ status: 'imported', updatedAt: new Date() }).where(eq(books.id, bookId));
 
-    // Record success event (fire-and-forget)
-    this.eventHistory.create({
-      bookId,
-      bookTitle: item.title,
-      authorName: item.authorName ?? null,
-      narratorName: narratorName,
-      downloadId: null,
-      eventType: 'imported',
-      source: 'manual',
-      reason: { targetPath: resolve(finalPath), mode: mode ?? 'pointer' },
-    }).catch(err => this.log.warn({ err }, 'Failed to record manual import event'));
+    this.eventHistory.create(buildImportedEventPayload(bookId, item, extracted.narratorName, resolve(finalPath), mode))
+      .catch(err => this.log.warn({ err }, 'Failed to record manual import event'));
   }
 
   /**

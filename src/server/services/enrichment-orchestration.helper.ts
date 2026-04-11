@@ -128,6 +128,89 @@ export interface ImportConfirmItem {
   metadata?: BookMetadata | null;
 }
 
+// ─── Enrichment input builders ──────────────────────────────────────────
+// Extracted to reduce cyclomatic complexity in callers (each ?? and || counts as a branch).
+
+export function buildEnrichmentBookInput(
+  book: { narrators?: Array<{ name: string }> | null; duration?: number | null; coverUrl?: string | null; genres?: string[] | null },
+): EnrichmentBookInput {
+  return {
+    narrators: book.narrators ?? null,
+    duration: book.duration ?? null,
+    coverUrl: book.coverUrl ?? null,
+    existingGenres: book.genres ?? null,
+  };
+}
+
+export function buildAudnexusConfig(
+  item: { asin?: string | null },
+  meta: BookMetadata | null,
+  book: { narrators?: Array<{ name: string }> | null; duration?: number | null; genres?: string[] | null },
+): AudnexusConfig {
+  return {
+    primaryAsin: item.asin || meta?.asin,
+    alternateAsins: meta?.alternateAsins,
+    existingNarrator: book.narrators?.[0]?.name ?? null,
+    existingDuration: book.duration ?? null,
+    existingGenres: book.genres ?? null,
+  };
+}
+
+export function buildImportedEventPayload(
+  bookId: number,
+  item: { title: string; authorName?: string | null },
+  narratorName: string | null,
+  finalPath: string,
+  mode?: string | null,
+) {
+  return {
+    bookId,
+    bookTitle: item.title,
+    authorName: item.authorName ?? null,
+    narratorName,
+    downloadId: null,
+    eventType: 'imported' as const,
+    source: 'manual' as const,
+    reason: { targetPath: finalPath, mode: mode ?? 'pointer' },
+  };
+}
+
+/**
+ * Extract metadata fields from an import item for the background import flow.
+ * Centralizes the nullable coalescing that inflates cyclomatic complexity.
+ */
+export function extractImportMetadata(item: ImportConfirmItem) {
+  const meta = item.metadata ?? null;
+  const narratorName = meta?.narrators?.[0] ?? null;
+  const duration = meta?.duration ?? null;
+  const coverUrl = item.coverUrl || meta?.coverUrl || null;
+  return {
+    meta,
+    narratorName,
+    bookInput: {
+      narrators: narratorName ? [{ name: narratorName }] : null,
+      duration,
+      coverUrl,
+    },
+  };
+}
+
+export function buildBackgroundAudnexusConfig(
+  item: { asin?: string | null },
+  extracted: ReturnType<typeof extractImportMetadata>,
+  existingGenres: string[] | null,
+): AudnexusConfig {
+  return {
+    primaryAsin: item.asin || extracted.meta?.asin,
+    alternateAsins: extracted.meta?.alternateAsins,
+    existingNarrator: extracted.narratorName,
+    existingDuration: extracted.bookInput.duration,
+    existingGenres,
+  };
+}
+
+// ─── Book creation payload ──────────────────────────────────────────────
+
 // eslint-disable-next-line complexity -- flat metadata coalescing across item + meta sources
 export function buildBookCreatePayload(
   item: ImportConfirmItem,
