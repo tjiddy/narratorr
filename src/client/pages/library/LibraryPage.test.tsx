@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { screen, within, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
+import { QueryClient } from '@tanstack/react-query';
 import { renderWithProviders } from '@/__tests__/helpers';
 import { createMockBook, createMockAuthor } from '@/__tests__/factories';
 import { LibraryPage } from './LibraryPage';
@@ -2528,6 +2529,36 @@ describe('LibraryPage — error states (#480)', () => {
       });
       expect(screen.getByText('Something went wrong')).toBeInTheDocument();
       expect(screen.getByText(/failed to load/i)).toBeInTheDocument();
+    });
+  });
+
+  describe('refetch failure after previous success', () => {
+    it('shows error state when getBooks succeeds then fails on refetch', async () => {
+      const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+
+      // First call succeeds with books
+      vi.mocked(api.getBooks).mockResolvedValueOnce({ data: mockBooks, total: mockBooks.length });
+      vi.mocked(api.getBookStats).mockResolvedValue({ counts: { wanted: 1, downloading: 1, imported: 1, failed: 0, missing: 0 }, authors: [], series: [], narrators: [] });
+
+      renderWithProviders(<LibraryPage />, { queryClient });
+
+      // Verify books rendered successfully
+      await waitFor(() => {
+        expect(screen.getByText('The Way of Kings')).toBeInTheDocument();
+      });
+
+      // Second call rejects
+      vi.mocked(api.getBooks).mockRejectedValue(new Error('Server down'));
+
+      // Invalidate to trigger refetch
+      queryClient.invalidateQueries();
+
+      // Error state should replace stale book data
+      await waitFor(() => {
+        expect(screen.getByTestId('library-error')).toBeInTheDocument();
+      });
+      expect(screen.queryByText('The Way of Kings')).not.toBeInTheDocument();
+      expect(screen.queryByText('Your library is empty')).not.toBeInTheDocument();
     });
   });
 
