@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import type { FastifyBaseLogger } from 'fastify';
 import type { Db } from '../../db/index.js';
 import { ImportListService } from './import-list.service.js';
+import type { MetadataService } from './metadata.service.js';
 import { initializeKey, _resetKey, encrypt, getKey } from '../utils/secret-codec.js';
 import { randomBytes } from 'node:crypto';
 import { mockDbChain, createMockDb, createMockLogger, inject } from '../__tests__/helpers.js';
@@ -356,6 +357,357 @@ describe('ImportListService', () => {
         return typeof msg === 'string' && msg.includes('Book added');
       });
       expect(bookAddedLog).toBeDefined();
+    });
+
+    // #477 — enrichItem branches (tested via syncDueLists)
+    describe('enrichItem via syncDueLists (#477)', () => {
+      const dueList = {
+        id: 1, name: 'Test List', type: 'abs', enabled: true,
+        settings: { serverUrl: 'http://abs.local', apiKey: 'key', libraryId: 'lib-1' },
+        syncIntervalMinutes: 1440, lastRunAt: null, nextRunAt: new Date(Date.now() - 60_000),
+        lastSyncError: null, createdAt: new Date(),
+      };
+
+      it('no metadata service — book inserted with original ASIN/author from import list item', async () => {
+        const mockProvider = {
+          fetchItems: vi.fn().mockResolvedValue([{ title: 'My Book', author: 'Original Author', asin: 'B001' }]),
+          test: vi.fn(),
+        };
+        mockFactories.abs.mockReturnValue(mockProvider);
+
+        const db = createMockDb();
+        db.select.mockReturnValueOnce(mockDbChain([dueList]));
+        // Author lookup — found
+        db.select.mockReturnValueOnce(mockDbChain([{ id: 1, name: 'Original Author', slug: 'original-author' }]));
+        const bookInsertChain = mockDbChain([{ id: 10, title: 'My Book' }]);
+        db.insert.mockReturnValueOnce(bookInsertChain);
+        db.insert.mockReturnValue(mockDbChain([])); // bookAuthors + bookEvents
+        db.update.mockReturnValue(mockDbChain([]));
+
+        // No metadata service passed
+        service = new ImportListService(inject<Db>(db), mockLog);
+        await service.syncDueLists();
+
+        // Book inserted with original ASIN
+        expect(bookInsertChain.values).toHaveBeenCalledWith(
+          expect.objectContaining({ asin: 'B001', title: 'My Book' }),
+        );
+      });
+
+      it('item already has ASIN — metadata service not called, book inserted with original ASIN', async () => {
+        const mockMetadata = { search: vi.fn(), getBook: vi.fn() } as unknown as MetadataService;
+        const mockProvider = {
+          fetchItems: vi.fn().mockResolvedValue([{ title: 'My Book', author: 'Author', asin: 'B002' }]),
+          test: vi.fn(),
+        };
+        mockFactories.abs.mockReturnValue(mockProvider);
+
+        const db = createMockDb();
+        db.select.mockReturnValueOnce(mockDbChain([dueList]));
+        db.select.mockReturnValueOnce(mockDbChain([{ id: 1, name: 'Author', slug: 'author' }]));
+        const bookInsertChain = mockDbChain([{ id: 10, title: 'My Book' }]);
+        db.insert.mockReturnValueOnce(bookInsertChain);
+        db.insert.mockReturnValue(mockDbChain([]));
+        db.update.mockReturnValue(mockDbChain([]));
+
+        service = new ImportListService(inject<Db>(db), mockLog, mockMetadata);
+        await service.syncDueLists();
+
+        expect(mockMetadata.search).not.toHaveBeenCalled();
+        expect(bookInsertChain.values).toHaveBeenCalledWith(
+          expect.objectContaining({ asin: 'B002' }),
+        );
+      });
+
+      it('metadata search returns zero results — book inserted with original ASIN unchanged', async () => {
+        const mockMetadata = {
+          search: vi.fn().mockResolvedValue({ books: [], authors: [], series: [] }),
+          getBook: vi.fn(),
+        } as unknown as MetadataService;
+        const mockProvider = {
+          fetchItems: vi.fn().mockResolvedValue([{ title: 'Obscure Book', author: 'Nobody' }]),
+          test: vi.fn(),
+        };
+        mockFactories.abs.mockReturnValue(mockProvider);
+
+        const db = createMockDb();
+        db.select.mockReturnValueOnce(mockDbChain([dueList]));
+        db.select.mockReturnValueOnce(mockDbChain([{ id: 1, name: 'Nobody', slug: 'nobody' }]));
+        const bookInsertChain = mockDbChain([{ id: 10, title: 'Obscure Book' }]);
+        db.insert.mockReturnValueOnce(bookInsertChain);
+        db.insert.mockReturnValue(mockDbChain([]));
+        db.update.mockReturnValue(mockDbChain([]));
+
+        service = new ImportListService(inject<Db>(db), mockLog, mockMetadata);
+        await service.syncDueLists();
+
+        expect(mockMetadata.search).toHaveBeenCalled();
+        // Book inserted with null ASIN (original item had none)
+        expect(bookInsertChain.values).toHaveBeenCalledWith(
+          expect.objectContaining({ asin: null }),
+        );
+      });
+
+      it('metadata search match with providerId, getBook returns detail with ASIN — book inserted with detail ASIN and bookAuthors created', async () => {
+        const mockMetadata = {
+          search: vi.fn().mockResolvedValue({
+            books: [{ asin: undefined, providerId: 'prov-123', authors: [{ name: 'Detail Author' }] }],
+            authors: [], series: [],
+          }),
+          getBook: vi.fn().mockResolvedValue({ asin: 'B_DETAIL' }),
+        } as unknown as MetadataService;
+        const mockProvider = {
+          fetchItems: vi.fn().mockResolvedValue([{ title: 'Book With Provider', author: 'Author' }]),
+          test: vi.fn(),
+        };
+        mockFactories.abs.mockReturnValue(mockProvider);
+
+        const db = createMockDb();
+        db.select.mockReturnValueOnce(mockDbChain([dueList]));
+        // findOrCreateAuthor: existing author found
+        db.select.mockReturnValueOnce(mockDbChain([{ id: 1, name: 'Author', slug: 'author' }]));
+        // Book insert
+        const bookInsertChain = mockDbChain([{ id: 10, title: 'Book With Provider' }]);
+        db.insert.mockReturnValueOnce(bookInsertChain);
+        // bookAuthors insert
+        const bookAuthorsChain = mockDbChain([]);
+        db.insert.mockReturnValueOnce(bookAuthorsChain);
+        // bookEvents insert
+        const bookEventsChain = mockDbChain([]);
+        db.insert.mockReturnValueOnce(bookEventsChain);
+        db.update.mockReturnValue(mockDbChain([]));
+
+        service = new ImportListService(inject<Db>(db), mockLog, mockMetadata);
+        await service.syncDueLists();
+
+        expect(mockMetadata.getBook).toHaveBeenCalledWith('prov-123');
+        expect(bookInsertChain.values).toHaveBeenCalledWith(
+          expect.objectContaining({ asin: 'B_DETAIL' }),
+        );
+        // bookAuthors insert with correct author ID
+        expect(bookAuthorsChain.values).toHaveBeenCalledWith({ bookId: 10, authorId: 1, position: 0 });
+        // bookEvents insert with correct payload
+        expect(bookEventsChain.values).toHaveBeenCalledWith(
+          expect.objectContaining({ bookId: 10, eventType: 'grabbed', source: 'import_list' }),
+        );
+      });
+
+      it('metadata search match with providerId, getBook returns null — book inserted with search-result ASIN', async () => {
+        const mockMetadata = {
+          search: vi.fn().mockResolvedValue({
+            books: [{ asin: undefined, providerId: 'prov-456', authors: [{ name: 'Search Author' }] }],
+            authors: [], series: [],
+          }),
+          getBook: vi.fn().mockResolvedValue(null),
+        } as unknown as MetadataService;
+        const mockProvider = {
+          fetchItems: vi.fn().mockResolvedValue([{ title: 'Fallback Book', author: 'Author' }]),
+          test: vi.fn(),
+        };
+        mockFactories.abs.mockReturnValue(mockProvider);
+
+        const db = createMockDb();
+        db.select.mockReturnValueOnce(mockDbChain([dueList]));
+        db.select.mockReturnValueOnce(mockDbChain([{ id: 1, name: 'Author', slug: 'author' }]));
+        const bookInsertChain = mockDbChain([{ id: 10, title: 'Fallback Book' }]);
+        db.insert.mockReturnValueOnce(bookInsertChain);
+        db.insert.mockReturnValue(mockDbChain([]));
+        db.update.mockReturnValue(mockDbChain([]));
+
+        service = new ImportListService(inject<Db>(db), mockLog, mockMetadata);
+        await service.syncDueLists();
+
+        expect(mockMetadata.getBook).toHaveBeenCalledWith('prov-456');
+        // ASIN is null (search result had undefined, getBook returned null)
+        expect(bookInsertChain.values).toHaveBeenCalledWith(
+          expect.objectContaining({ asin: null }),
+        );
+      });
+
+      it('metadata search throws — item still processed with original values, warn logged', async () => {
+        const mockMetadata = {
+          search: vi.fn().mockRejectedValue(new Error('API timeout')),
+          getBook: vi.fn(),
+        } as unknown as MetadataService;
+        const mockProvider = {
+          // Item WITHOUT asin to trigger search path
+          fetchItems: vi.fn().mockResolvedValue([{ title: 'Resilient Book', author: 'Author' }]),
+          test: vi.fn(),
+        };
+        mockFactories.abs.mockReturnValue(mockProvider);
+
+        const db = createMockDb();
+        db.select.mockReturnValueOnce(mockDbChain([dueList]));
+        db.select.mockReturnValueOnce(mockDbChain([{ id: 1, name: 'Author', slug: 'author' }]));
+        const bookInsertChain = mockDbChain([{ id: 10, title: 'Resilient Book' }]);
+        db.insert.mockReturnValueOnce(bookInsertChain);
+        db.insert.mockReturnValue(mockDbChain([]));
+        db.update.mockReturnValue(mockDbChain([]));
+
+        service = new ImportListService(inject<Db>(db), mockLog, mockMetadata);
+        await service.syncDueLists();
+
+        // Metadata enrichment failure was logged at warn level
+        expect(mockLog.warn).toHaveBeenCalledWith(
+          expect.objectContaining({ title: 'Resilient Book' }),
+          expect.stringContaining('Metadata enrichment failed'),
+        );
+        // Book still inserted with null ASIN (original had none)
+        expect(bookInsertChain.values).toHaveBeenCalledWith(
+          expect.objectContaining({ asin: null, title: 'Resilient Book' }),
+        );
+      });
+    });
+
+    // #477 — findOrCreateAuthor branches (tested via syncDueLists)
+    describe('findOrCreateAuthor via syncDueLists (#477)', () => {
+      const dueList = {
+        id: 1, name: 'Test List', type: 'abs', enabled: true,
+        settings: { serverUrl: 'http://abs.local', apiKey: 'key', libraryId: 'lib-1' },
+        syncIntervalMinutes: 1440, lastRunAt: null, nextRunAt: new Date(Date.now() - 60_000),
+        lastSyncError: null, createdAt: new Date(),
+      };
+
+      it('author does not exist — insert succeeds — bookAuthors row created with new author ID', async () => {
+        const mockProvider = {
+          fetchItems: vi.fn().mockResolvedValue([{ title: 'New Book', author: 'New Author' }]),
+          test: vi.fn(),
+        };
+        mockFactories.abs.mockReturnValue(mockProvider);
+
+        const db = createMockDb();
+        db.select.mockReturnValueOnce(mockDbChain([dueList]));
+        // findOrCreateAuthor: initial lookup returns empty
+        db.select.mockReturnValueOnce(mockDbChain([]));
+        // Book insert succeeds
+        const bookInsertChain = mockDbChain([{ id: 10, title: 'New Book' }]);
+        db.insert.mockReturnValueOnce(bookInsertChain);
+        // Author insert succeeds (new author)
+        const authorInsertChain = mockDbChain([{ id: 50, name: 'New Author', slug: 'new-author' }]);
+        db.insert.mockReturnValueOnce(authorInsertChain);
+        // bookAuthors insert
+        const bookAuthorsChain = mockDbChain([]);
+        db.insert.mockReturnValueOnce(bookAuthorsChain);
+        // bookEvents insert
+        const bookEventsChain = mockDbChain([]);
+        db.insert.mockReturnValueOnce(bookEventsChain);
+        db.update.mockReturnValue(mockDbChain([]));
+
+        service = new ImportListService(inject<Db>(db), mockLog);
+        await service.syncDueLists();
+
+        // bookAuthors insert uses new author ID 50
+        expect(bookAuthorsChain.values).toHaveBeenCalledWith({ bookId: 10, authorId: 50, position: 0 });
+        // bookEvents insert with correct payload
+        expect(bookEventsChain.values).toHaveBeenCalledWith(
+          expect.objectContaining({ bookId: 10, bookTitle: 'New Book', eventType: 'grabbed', source: 'import_list' }),
+        );
+      });
+
+      it('race condition — insert returns empty, retry SELECT finds author — bookAuthors created with recovered ID', async () => {
+        const mockProvider = {
+          fetchItems: vi.fn().mockResolvedValue([{ title: 'Race Book', author: 'Race Author' }]),
+          test: vi.fn(),
+        };
+        mockFactories.abs.mockReturnValue(mockProvider);
+
+        const db = createMockDb();
+        db.select.mockReturnValueOnce(mockDbChain([dueList]));
+        // findOrCreateAuthor: initial lookup returns empty
+        db.select.mockReturnValueOnce(mockDbChain([]));
+        // Book insert succeeds
+        db.insert.mockReturnValueOnce(mockDbChain([{ id: 10, title: 'Race Book' }]));
+        // Author insert returns empty (onConflictDoNothing — conflict)
+        db.insert.mockReturnValueOnce(mockDbChain([]));
+        // Retry SELECT finds the author
+        db.select.mockReturnValueOnce(mockDbChain([{ id: 77, name: 'Race Author', slug: 'race-author' }]));
+        // bookAuthors insert
+        const bookAuthorsChain = mockDbChain([]);
+        db.insert.mockReturnValueOnce(bookAuthorsChain);
+        // bookEvents insert
+        const bookEventsChain = mockDbChain([]);
+        db.insert.mockReturnValueOnce(bookEventsChain);
+        db.update.mockReturnValue(mockDbChain([]));
+
+        service = new ImportListService(inject<Db>(db), mockLog);
+        await service.syncDueLists();
+
+        // bookAuthors insert uses recovered author ID 77
+        expect(bookAuthorsChain.values).toHaveBeenCalledWith({ bookId: 10, authorId: 77, position: 0 });
+        // bookEvents still written
+        expect(bookEventsChain.values).toHaveBeenCalledWith(
+          expect.objectContaining({ bookId: 10, bookTitle: 'Race Book', eventType: 'grabbed', source: 'import_list' }),
+        );
+      });
+
+      it('race condition null — insert returns empty, retry SELECT returns empty — bookAuthors skipped, bookEvents still inserted, sync continues', async () => {
+        const mockProvider = {
+          // Two items: first triggers null author path, second proves sync continues
+          fetchItems: vi.fn().mockResolvedValue([
+            { title: 'Null Race Book', author: 'Ghost Author' },
+            { title: 'Second Book', author: 'Real Author' },
+          ]),
+          test: vi.fn(),
+        };
+        mockFactories.abs.mockReturnValue(mockProvider);
+
+        const db = createMockDb();
+        db.select.mockReturnValueOnce(mockDbChain([dueList]));
+
+        // --- Item 1: Null Race Book (ghost author path) ---
+        // findOrCreateAuthor: initial lookup returns empty
+        db.select.mockReturnValueOnce(mockDbChain([]));
+        // Book insert succeeds
+        db.insert.mockReturnValueOnce(mockDbChain([{ id: 10, title: 'Null Race Book' }]));
+        // Author insert returns empty (conflict)
+        db.insert.mockReturnValueOnce(mockDbChain([]));
+        // Retry SELECT also returns empty (null path)
+        db.select.mockReturnValueOnce(mockDbChain([]));
+        // bookEvents insert for item 1 (no bookAuthors — authorId is null)
+        const bookEventsChain1 = mockDbChain([]);
+        db.insert.mockReturnValueOnce(bookEventsChain1);
+
+        // --- Item 2: Second Book (proves sync continues) ---
+        // findOrCreateAuthor: found immediately
+        db.select.mockReturnValueOnce(mockDbChain([{ id: 99, name: 'Real Author', slug: 'real-author' }]));
+        // Book insert succeeds
+        db.insert.mockReturnValueOnce(mockDbChain([{ id: 20, title: 'Second Book' }]));
+        // bookAuthors insert for item 2
+        const bookAuthorsChain2 = mockDbChain([]);
+        db.insert.mockReturnValueOnce(bookAuthorsChain2);
+        // bookEvents insert for item 2
+        const bookEventsChain2 = mockDbChain([]);
+        db.insert.mockReturnValueOnce(bookEventsChain2);
+
+        db.update.mockReturnValue(mockDbChain([]));
+
+        service = new ImportListService(inject<Db>(db), mockLog);
+        await service.syncDueLists();
+
+        // Item 1: bookEvents written despite null author
+        expect(bookEventsChain1.values).toHaveBeenCalledWith(
+          expect.objectContaining({ bookId: 10, bookTitle: 'Null Race Book', eventType: 'grabbed', source: 'import_list' }),
+        );
+        // Item 1: bookAuthors NOT written (authorId was null)
+        // The 3 inserts for item 1 are: book, author(empty), bookEvents — no bookAuthors
+        // Verify by checking that item 2's bookAuthors chain IS called (proving the difference)
+        expect(bookAuthorsChain2.values).toHaveBeenCalledWith({ bookId: 20, authorId: 99, position: 0 });
+
+        // Item 2: bookEvents also written (sync continued after null path)
+        expect(bookEventsChain2.values).toHaveBeenCalledWith(
+          expect.objectContaining({ bookId: 20, bookTitle: 'Second Book', eventType: 'grabbed', source: 'import_list' }),
+        );
+
+        // Both items logged as added
+        expect(mockLog.info).toHaveBeenCalledWith(
+          expect.objectContaining({ bookId: 10, title: 'Null Race Book' }),
+          expect.stringContaining('Book added from import list'),
+        );
+        expect(mockLog.info).toHaveBeenCalledWith(
+          expect.objectContaining({ bookId: 20, title: 'Second Book' }),
+          expect.stringContaining('Book added from import list'),
+        );
+      });
     });
 
     it('isolates provider failures — one list failing does not block others', async () => {

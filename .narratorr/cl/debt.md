@@ -37,6 +37,8 @@
 
 - **`src/server/services/refresh-scan.service.test.ts:329-341`**: `rethrows non-ENOENT stat errors` test still uses the same double-call anti-pattern (rejects.toThrow + try/catch). Was out of scope for #468 which only targeted RefreshScanError-coded tests, but should be consolidated to match. (discovered in #468)
 
+- **`src/server/jobs/index.ts:54` housekeeping callback lacks per-sub-task error isolation**: The inline housekeeping callback runs VACUUM → pruneOlderThan → deleteExpired sequentially without per-sub-task try/catch. If VACUUM fails, the subsequent cleanup tasks are skipped. The deleted standalone `housekeeping.ts` had proper isolation. Should wrap each sub-task in its own try/catch. (discovered in #477)
+
 ## Accepted Debt
 
 Items below are real but not worth fixing — the cost of change outweighs the benefit.
