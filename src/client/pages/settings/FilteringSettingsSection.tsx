@@ -1,14 +1,8 @@
-import { useEffect } from 'react';
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { useForm, useWatch } from 'react-hook-form';
-import { zodResolver } from '@hookform/resolvers/zod';
+import { useWatch } from 'react-hook-form';
 import { z } from 'zod';
-import { toast } from 'sonner';
-import { api } from '@/lib/api';
-import { queryKeys } from '@/lib/queryKeys';
-import { getErrorMessage } from '@/lib/error-message.js';
 import { GlobeIcon } from '@/components/icons';
 import { SelectWithChevron } from '@/components/settings/SelectWithChevron';
+import { useSettingsForm } from '@/hooks/useSettingsForm';
 import { audibleRegionSchema, DEFAULT_SETTINGS, type AppSettings } from '../../../shared/schemas.js';
 import { CANONICAL_LANGUAGES, type CanonicalLanguage } from '../../../shared/language-constants.js';
 import { SettingsSection } from './SettingsSection';
@@ -55,35 +49,15 @@ function toPayload(data: FilteringFormData) {
 }
 
 export function FilteringSettingsSection() {
-  const queryClient = useQueryClient();
-
-  const { data: settings } = useQuery({
-    queryKey: queryKeys.settings(),
-    queryFn: api.getSettings,
-  });
-
-  const { register, handleSubmit, reset, control, setValue, formState: { isDirty } } = useForm<FilteringFormData>({
+  const { form, mutation, onSubmit } = useSettingsForm<FilteringFormData>({
+    schema: filteringFormSchema,
     defaultValues: toFormData({ ...DEFAULT_SETTINGS } as AppSettings),
-    resolver: zodResolver(filteringFormSchema),
+    select: toFormData,
+    toPayload,
+    successMessage: 'Filtering settings saved',
   });
 
-  useEffect(() => {
-    if (settings && !isDirty) {
-      reset(toFormData(settings));
-    }
-  }, [settings, reset, isDirty]);
-
-  const mutation = useMutation({
-    mutationFn: (data: FilteringFormData) => api.updateSettings(toPayload(data)),
-    onSuccess: (_result, submittedData) => {
-      reset(submittedData);
-      queryClient.invalidateQueries({ queryKey: queryKeys.settings() });
-      toast.success('Filtering settings saved');
-    },
-    onError: (err) => {
-      toast.error(getErrorMessage(err, 'Failed to save settings'));
-    },
-  });
+  const { register, handleSubmit, control, setValue, formState: { isDirty } } = form;
 
   const selectedLanguages = useWatch({ control, name: 'languages' }) ?? [];
 
@@ -100,7 +74,7 @@ export function FilteringSettingsSection() {
       title="Filtering"
       description="What search results to keep"
     >
-      <form onSubmit={handleSubmit((data) => mutation.mutate(data))} className="space-y-5">
+      <form onSubmit={handleSubmit((data) => onSubmit(data))} className="space-y-5">
         <div>
           <label htmlFor="audibleRegion" className="block text-sm font-medium mb-2">Region</label>
           <SelectWithChevron id="audibleRegion" {...register('audibleRegion')}>

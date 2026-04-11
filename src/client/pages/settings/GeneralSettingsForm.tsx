@@ -1,59 +1,32 @@
-import { useEffect } from 'react';
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { useForm } from 'react-hook-form';
-import { zodResolver } from '@hookform/resolvers/zod';
 import type { z } from 'zod';
-import { toast } from 'sonner';
-import { api } from '@/lib/api';
-import { queryKeys } from '@/lib/queryKeys';
-import { getErrorMessage } from '@/lib/error-message.js';
 import { ClockIcon, TerminalIcon } from '@/components/icons';
 import { SelectWithChevron } from '@/components/settings/SelectWithChevron';
-import { logLevelSchema, DEFAULT_SETTINGS, generalFormSchema } from '../../../shared/schemas.js';
+import { errorInputClass } from '@/components/settings/formStyles';
+import { useSettingsForm } from '@/hooks/useSettingsForm';
+import { logLevelSchema, DEFAULT_SETTINGS, generalFormSchema, type AppSettings } from '../../../shared/schemas.js';
 import { SettingsSection } from './SettingsSection';
 
 type GeneralFormData = z.infer<typeof generalFormSchema>;
 
 export function GeneralSettingsForm() {
-  const queryClient = useQueryClient();
-
-  const { data: settings } = useQuery({
-    queryKey: queryKeys.settings(),
-    queryFn: api.getSettings,
-  });
-
-  const { register, handleSubmit, reset, formState: { errors, isDirty } } = useForm<GeneralFormData>({
+  const { form, mutation, onSubmit } = useSettingsForm<GeneralFormData>({
+    schema: generalFormSchema,
     defaultValues: {
       logLevel: DEFAULT_SETTINGS.general.logLevel,
       housekeepingRetentionDays: DEFAULT_SETTINGS.general.housekeepingRetentionDays,
     },
-    resolver: zodResolver(generalFormSchema),
+    select: (s: AppSettings) => ({
+      logLevel: s.general.logLevel,
+      housekeepingRetentionDays: s.general.housekeepingRetentionDays,
+    }),
+    toPayload: (d) => ({ general: d }),
+    successMessage: 'General settings saved',
   });
 
-  useEffect(() => {
-    if (settings?.general && !isDirty) {
-      reset({
-        logLevel: settings.general.logLevel,
-        housekeepingRetentionDays: settings.general.housekeepingRetentionDays,
-      });
-    }
-  }, [settings, reset, isDirty]);
-
-  const mutation = useMutation({
-    mutationFn: (data: GeneralFormData) =>
-      api.updateSettings({ general: data }),
-    onSuccess: (_result, submittedData) => {
-      reset(submittedData);
-      queryClient.invalidateQueries({ queryKey: queryKeys.settings() });
-      toast.success('General settings saved');
-    },
-    onError: (err: unknown) => {
-      toast.error(getErrorMessage(err, 'Failed to save settings'));
-    },
-  });
+  const { register, handleSubmit, formState: { errors, isDirty } } = form;
 
   return (
-    <form onSubmit={handleSubmit((data) => mutation.mutate(data))} className="space-y-8">
+    <form onSubmit={handleSubmit((data) => onSubmit(data))} className="space-y-8">
       <SettingsSection
         icon={<ClockIcon className="w-5 h-5 text-primary" />}
         title="Housekeeping"
@@ -67,9 +40,7 @@ export function GeneralSettingsForm() {
             min={1}
             max={365}
             {...register('housekeepingRetentionDays', { valueAsNumber: true })}
-            className={`w-full px-4 py-3 bg-background border rounded-xl focus-ring focus:border-transparent transition-all ${
-              errors.housekeepingRetentionDays ? 'border-destructive' : 'border-border'
-            }`}
+            className={errorInputClass(!!errors.housekeepingRetentionDays)}
           />
           {errors.housekeepingRetentionDays && (
             <p className="text-sm text-destructive mt-1">{errors.housekeepingRetentionDays.message}</p>

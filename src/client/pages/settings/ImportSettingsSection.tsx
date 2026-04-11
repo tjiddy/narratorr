@@ -1,15 +1,9 @@
-import { useEffect } from 'react';
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { useForm } from 'react-hook-form';
-import { zodResolver } from '@hookform/resolvers/zod';
 import type { z } from 'zod';
-import { toast } from 'sonner';
-import { api } from '@/lib/api';
-import { queryKeys } from '@/lib/queryKeys';
-import { getErrorMessage } from '@/lib/error-message.js';
 import { PackageIcon } from '@/components/icons';
 import { ToggleSwitch } from '@/components/settings/ToggleSwitch';
-import { DEFAULT_SETTINGS, importSettingsSchema, stripDefaults } from '../../../shared/schemas.js';
+import { errorInputClass } from '@/components/settings/formStyles';
+import { useSettingsForm } from '@/hooks/useSettingsForm';
+import { DEFAULT_SETTINGS, importSettingsSchema, stripDefaults, type AppSettings } from '../../../shared/schemas.js';
 import { SettingsSection } from './SettingsSection';
 
 const importFormSchema = stripDefaults(importSettingsSchema);
@@ -17,39 +11,18 @@ const importFormSchema = stripDefaults(importSettingsSchema);
 type ImportFormData = z.infer<typeof importFormSchema>;
 
 export function ImportSettingsSection() {
-  const queryClient = useQueryClient();
-
-  const { data: settings } = useQuery({
-    queryKey: queryKeys.settings(),
-    queryFn: api.getSettings,
-  });
-
-  const { register, handleSubmit, reset, watch, formState: { errors, isDirty } } = useForm<ImportFormData>({
+  const { form, mutation, onSubmit } = useSettingsForm<ImportFormData>({
+    schema: importFormSchema,
     defaultValues: DEFAULT_SETTINGS.import,
-    resolver: zodResolver(importFormSchema),
+    select: (s: AppSettings) => s.import as ImportFormData,
+    toPayload: (d) => ({ import: d }),
+    successMessage: 'Import settings saved',
   });
 
-  useEffect(() => {
-    if (settings?.import && !isDirty) {
-      reset(settings.import);
-    }
-  }, [settings, reset, isDirty]);
+  const { register, handleSubmit, watch, formState: { errors, isDirty } } = form;
 
   // eslint-disable-next-line react-hooks/incompatible-library
   const deleteAfterImport = watch('deleteAfterImport') as boolean;
-
-  const mutation = useMutation({
-    mutationFn: (data: ImportFormData) =>
-      api.updateSettings({ import: data }),
-    onSuccess: (_result, submittedData) => {
-      reset(submittedData);
-      queryClient.invalidateQueries({ queryKey: queryKeys.settings() });
-      toast.success('Import settings saved');
-    },
-    onError: (err) => {
-      toast.error(getErrorMessage(err, 'Failed to save settings'));
-    },
-  });
 
   return (
     <SettingsSection
@@ -57,7 +30,7 @@ export function ImportSettingsSection() {
       title="Import"
       description="Configure post-download import behavior"
     >
-      <form onSubmit={handleSubmit((data) => mutation.mutate(data))} className="space-y-5">
+      <form onSubmit={handleSubmit((data) => onSubmit(data))} className="space-y-5">
         <div className="flex items-center justify-between">
           <div>
             <label htmlFor="deleteAfterImport" className="block text-sm font-medium">Delete After Import</label>
@@ -77,9 +50,7 @@ export function ImportSettingsSection() {
             type="number"
             {...register('minSeedTime', { valueAsNumber: true })}
             disabled={!deleteAfterImport}
-            className={`w-full px-4 py-3 bg-background border rounded-xl focus-ring focus:border-transparent transition-all disabled:cursor-not-allowed disabled:opacity-50 ${
-              errors.minSeedTime ? 'border-destructive' : 'border-border'
-            }`}
+            className={`${errorInputClass(!!errors.minSeedTime)} disabled:cursor-not-allowed disabled:opacity-50`}
             min={0}
             placeholder="60"
           />
@@ -98,9 +69,7 @@ export function ImportSettingsSection() {
             type="number"
             {...register('minSeedRatio', { valueAsNumber: true })}
             disabled={!deleteAfterImport}
-            className={`w-full px-4 py-3 bg-background border rounded-xl focus-ring focus:border-transparent transition-all disabled:cursor-not-allowed disabled:opacity-50 ${
-              errors.minSeedRatio ? 'border-destructive' : 'border-border'
-            }`}
+            className={`${errorInputClass(!!errors.minSeedRatio)} disabled:cursor-not-allowed disabled:opacity-50`}
             min={0}
             step={0.1}
             placeholder="0"
@@ -131,9 +100,7 @@ export function ImportSettingsSection() {
             id="minFreeSpaceGB"
             type="number"
             {...register('minFreeSpaceGB', { valueAsNumber: true })}
-            className={`w-full px-4 py-3 bg-background border rounded-xl focus-ring focus:border-transparent transition-all ${
-              errors.minFreeSpaceGB ? 'border-destructive' : 'border-border'
-            }`}
+            className={errorInputClass(!!errors.minFreeSpaceGB)}
             min={0}
             step={1}
             placeholder="5"

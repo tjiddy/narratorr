@@ -1,17 +1,16 @@
-import { useState, useEffect } from 'react';
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { useForm, type UseFormReturn } from 'react-hook-form';
-import { zodResolver } from '@hookform/resolvers/zod';
+import { useState } from 'react';
+import { type UseFormReturn } from 'react-hook-form';
 import { z } from 'zod';
 import { toast } from 'sonner';
 import { api } from '@/lib/api';
-import { queryKeys } from '@/lib/queryKeys';
 import { getErrorMessage } from '@/lib/error-message.js';
 import { FORMAT_LABELS, MERGE_LABELS, TAG_MODE_LABELS } from '@/lib/constants';
 import { ZapIcon, CheckCircleIcon, AlertCircleIcon, LoadingSpinner } from '@/components/icons';
 import { FormField } from '@/components/settings/FormField';
 import { SelectWithChevron } from '@/components/settings/SelectWithChevron';
 import { ToggleSwitch } from '@/components/settings/ToggleSwitch';
+import { errorInputClass } from '@/components/settings/formStyles';
+import { useSettingsForm } from '@/hooks/useSettingsForm';
 import { outputFormatSchema, mergeBehaviorSchema, tagModeSchema, DEFAULT_SETTINGS, type AppSettings } from '../../../shared/schemas.js';
 import { SettingsSection } from './SettingsSection';
 
@@ -140,38 +139,19 @@ function ProbeResultFeedback({ result, error }: { result: { version: string } | 
 
 // eslint-disable-next-line max-lines-per-function -- linear form: ffmpeg, processing, and tagging sections
 export function ProcessingSettingsSection() {
-  const queryClient = useQueryClient();
   const [probeResult, setProbeResult] = useState<{ version: string } | null>(null);
   const [probeError, setProbeError] = useState<string | null>(null);
   const [probing, setProbing] = useState(false);
 
-  const { data: settings } = useQuery({
-    queryKey: queryKeys.settings(),
-    queryFn: api.getSettings,
-  });
-
-  const { register, handleSubmit, reset, watch, formState: { errors, isDirty } } = useForm<ProcessingFormData>({
+  const { form, mutation, onSubmit } = useSettingsForm<ProcessingFormData>({
+    schema: processingFormSchema,
     defaultValues: toFormData({ ...DEFAULT_SETTINGS } as AppSettings),
-    resolver: zodResolver(processingFormSchema),
+    select: toFormData,
+    toPayload,
+    successMessage: 'Processing settings saved',
   });
 
-  useEffect(() => {
-    if (settings && !isDirty) {
-      reset(toFormData(settings));
-    }
-  }, [settings, reset, isDirty]);
-
-  const mutation = useMutation({
-    mutationFn: (data: ProcessingFormData) => api.updateSettings(toPayload(data)),
-    onSuccess: (_result, submittedData) => {
-      reset(submittedData);
-      queryClient.invalidateQueries({ queryKey: queryKeys.settings() });
-      toast.success('Processing settings saved');
-    },
-    onError: (err) => {
-      toast.error(getErrorMessage(err, 'Failed to save settings'));
-    },
-  });
+  const { register, handleSubmit, watch, formState: { errors, isDirty } } = form;
 
   const enabled = watch('processingEnabled');
   const ffmpegPath = watch('ffmpegPath');
@@ -203,7 +183,7 @@ export function ProcessingSettingsSection() {
       title="Post Processing"
       description="Audio file merge and conversion after import"
     >
-      <form onSubmit={handleSubmit((data) => mutation.mutate(data))} className="space-y-5">
+      <form onSubmit={handleSubmit((data) => onSubmit(data))} className="space-y-5">
         <div className="flex items-center justify-between">
           <div>
             <label htmlFor="processingEnabled" className="block text-sm font-medium">Enable Post Processing</label>
@@ -224,9 +204,7 @@ export function ProcessingSettingsSection() {
                 id="ffmpegPath"
                 type="text"
                 {...register('ffmpegPath')}
-                className={`flex-1 px-4 py-3 bg-background border rounded-xl focus-ring focus:border-transparent transition-all ${
-                  errors.ffmpegPath ? 'border-destructive' : 'border-border'
-                }`}
+                className={`flex-1 ${errorInputClass(!!errors.ffmpegPath)}`}
                 placeholder="/usr/bin/ffmpeg"
               />
               <button
@@ -277,9 +255,7 @@ export function ProcessingSettingsSection() {
               type="number"
               {...register('bitrate', { valueAsNumber: true })}
               disabled={keepOriginalBitrate}
-              className={`w-full px-4 py-3 bg-background border rounded-xl focus-ring focus:border-transparent transition-all disabled:cursor-not-allowed disabled:opacity-50 ${
-                errors.bitrate ? 'border-destructive' : 'border-border'
-              }`}
+              className={`${errorInputClass(!!errors.bitrate)} disabled:cursor-not-allowed disabled:opacity-50`}
               min={32}
               max={512}
               placeholder="128"

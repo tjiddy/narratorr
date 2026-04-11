@@ -1,14 +1,12 @@
-import { useState, useEffect } from 'react';
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { useForm } from 'react-hook-form';
-import { zodResolver } from '@hookform/resolvers/zod';
+import { useState } from 'react';
 import { z } from 'zod';
 import { toast } from 'sonner';
 import { api } from '@/lib/api';
-import { queryKeys } from '@/lib/queryKeys';
 import { getErrorMessage } from '@/lib/error-message.js';
 import { WifiIcon, LoadingSpinner } from '@/components/icons';
-import { DEFAULT_SETTINGS } from '../../../shared/schemas.js';
+import { errorInputClass } from '@/components/settings/formStyles';
+import { useSettingsForm } from '@/hooks/useSettingsForm';
+import { DEFAULT_SETTINGS, type AppSettings } from '../../../shared/schemas.js';
 import { SettingsSection } from './SettingsSection';
 
 const VALID_PROXY_SCHEMES = ['http:', 'https:', 'socks5:'];
@@ -37,38 +35,19 @@ const networkFormSchema = z.object({
 type NetworkFormData = z.infer<typeof networkFormSchema>;
 
 export function NetworkSettingsSection() {
-  const queryClient = useQueryClient();
   const [testing, setTesting] = useState(false);
 
-  const { data: settings } = useQuery({
-    queryKey: queryKeys.settings(),
-    queryFn: api.getSettings,
-  });
-
-  const { register, handleSubmit, reset, watch, formState: { errors, isDirty } } = useForm<NetworkFormData>({
+  const { form, mutation, onSubmit } = useSettingsForm<NetworkFormData>({
+    schema: networkFormSchema,
     defaultValues: DEFAULT_SETTINGS.network,
-    resolver: zodResolver(networkFormSchema),
+    select: (s: AppSettings) => s.network as NetworkFormData,
+    toPayload: (d) => ({ network: d }),
+    successMessage: 'Network settings saved',
   });
 
-  useEffect(() => {
-    if (settings?.network && !isDirty) {
-      reset(settings.network);
-    }
-  }, [settings, reset, isDirty]);
+  const { register, handleSubmit, watch, formState: { errors, isDirty } } = form;
 
   const proxyUrl = watch('proxyUrl');
-
-  const mutation = useMutation({
-    mutationFn: (data: NetworkFormData) => api.updateSettings({ network: data }),
-    onSuccess: (_result, submittedData) => {
-      reset(submittedData);
-      queryClient.invalidateQueries({ queryKey: queryKeys.settings() });
-      toast.success('Network settings saved');
-    },
-    onError: (err) => {
-      toast.error(getErrorMessage(err, 'Failed to save settings'));
-    },
-  });
 
   async function handleTestProxy() {
     if (!proxyUrl?.trim()) return;
@@ -94,7 +73,7 @@ export function NetworkSettingsSection() {
       title="Network"
       description="Configure proxy for indexer traffic"
     >
-      <form onSubmit={handleSubmit((data) => mutation.mutate(data))} className="space-y-5">
+      <form onSubmit={handleSubmit((data) => onSubmit(data))} className="space-y-5">
         <div>
           <label htmlFor="proxyUrl" className="block text-sm font-medium mb-2">Proxy URL</label>
           <div className="flex gap-3">
@@ -102,9 +81,7 @@ export function NetworkSettingsSection() {
               id="proxyUrl"
               type="text"
               {...register('proxyUrl')}
-              className={`flex-1 px-4 py-3 bg-background border rounded-xl focus-ring focus:border-transparent transition-all ${
-                errors.proxyUrl ? 'border-destructive' : 'border-border'
-              }`}
+              className={`flex-1 ${errorInputClass(!!errors.proxyUrl)}`}
               placeholder="http://user:pass@proxy:8888 or socks5://localhost:1080"
             />
             <button
