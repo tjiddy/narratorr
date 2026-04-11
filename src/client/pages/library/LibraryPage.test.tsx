@@ -791,21 +791,17 @@ describe('LibraryPage', () => {
     });
   });
 
-  it('shows error toast when getBooks API fails', async () => {
+  it('shows error state when getBooks API fails (#480)', async () => {
     vi.mocked(api.getBooks).mockRejectedValue(new Error('API is down'));
     vi.mocked(api.getBookStats).mockResolvedValue({ counts: { wanted: 0, downloading: 0, imported: 0, failed: 0, missing: 0 }, authors: [], series: [], narrators: [] });
 
     renderWithProviders(<LibraryPage />);
 
-    // The page should render something (loading, then error state handled by TanStack Query)
-    // With retry: false in test setup, it will fail immediately
-    // TanStack Query doesn't show a toast on query failure by default,
-    // but the page should still render without crashing
     await waitFor(() => {
-      // Loading state should eventually resolve
-      // With a failed query, books will be empty default [], showing empty state
-      expect(screen.getByText('Your library is empty')).toBeInTheDocument();
+      expect(screen.getByTestId('library-error')).toBeInTheDocument();
     });
+    expect(screen.getByText('Something went wrong')).toBeInTheDocument();
+    expect(screen.queryByText('Your library is empty')).not.toBeInTheDocument();
   });
 
   it('shows import link in overflow menu', async () => {
@@ -2486,18 +2482,92 @@ describe('LibraryPage — URL param restoration (#352)', () => {
 
 describe('LibraryPage — error states (#480)', () => {
   describe('books query failure', () => {
-    it.todo('shows error state when getBooks rejects on initial load');
-    it.todo('does not show EmptyLibraryState when getBooks rejects');
-    it.todo('does not show NoMatchState or book list when getBooks rejects');
-    it.todo('error state includes descriptive message (not "Your library is empty")');
+    it('shows error state when getBooks rejects on initial load', async () => {
+      vi.mocked(api.getBooks).mockRejectedValue(new Error('API is down'));
+      vi.mocked(api.getBookStats).mockResolvedValue({ counts: { wanted: 0, downloading: 0, imported: 0, failed: 0, missing: 0 }, authors: [], series: [], narrators: [] });
+
+      renderWithProviders(<LibraryPage />);
+
+      await waitFor(() => {
+        expect(screen.getByTestId('library-error')).toBeInTheDocument();
+      });
+    });
+
+    it('does not show EmptyLibraryState when getBooks rejects', async () => {
+      vi.mocked(api.getBooks).mockRejectedValue(new Error('API is down'));
+      vi.mocked(api.getBookStats).mockResolvedValue({ counts: { wanted: 0, downloading: 0, imported: 0, failed: 0, missing: 0 }, authors: [], series: [], narrators: [] });
+
+      renderWithProviders(<LibraryPage />);
+
+      await waitFor(() => {
+        expect(screen.getByTestId('library-error')).toBeInTheDocument();
+      });
+      expect(screen.queryByText('Your library is empty')).not.toBeInTheDocument();
+    });
+
+    it('does not show NoMatchState or book list when getBooks rejects', async () => {
+      vi.mocked(api.getBooks).mockRejectedValue(new Error('API is down'));
+      vi.mocked(api.getBookStats).mockResolvedValue({ counts: { wanted: 0, downloading: 0, imported: 0, failed: 0, missing: 0 }, authors: [], series: [], narrators: [] });
+
+      renderWithProviders(<LibraryPage />);
+
+      await waitFor(() => {
+        expect(screen.getByTestId('library-error')).toBeInTheDocument();
+      });
+      expect(screen.queryByText('No books match your filters')).not.toBeInTheDocument();
+    });
+
+    it('error state includes descriptive message (not "Your library is empty")', async () => {
+      vi.mocked(api.getBooks).mockRejectedValue(new Error('API is down'));
+      vi.mocked(api.getBookStats).mockResolvedValue({ counts: { wanted: 0, downloading: 0, imported: 0, failed: 0, missing: 0 }, authors: [], series: [], narrators: [] });
+
+      renderWithProviders(<LibraryPage />);
+
+      await waitFor(() => {
+        expect(screen.getByTestId('library-error')).toBeInTheDocument();
+      });
+      expect(screen.getByText('Something went wrong')).toBeInTheDocument();
+      expect(screen.getByText(/failed to load/i)).toBeInTheDocument();
+    });
   });
 
   describe('stats query failure with successful books query', () => {
-    it.todo('renders books normally when getBookStats rejects but getBooks returns books');
-    it.todo('shows EmptyLibraryState when getBookStats rejects and getBooks returns empty array');
+    it('renders books normally when getBookStats rejects but getBooks returns books', async () => {
+      vi.mocked(api.getBooks).mockResolvedValue({ data: mockBooks, total: mockBooks.length });
+      vi.mocked(api.getBookStats).mockRejectedValue(new Error('Stats API down'));
+
+      renderWithProviders(<LibraryPage />);
+
+      await waitFor(() => {
+        expect(screen.getByText('The Way of Kings')).toBeInTheDocument();
+      });
+      expect(screen.queryByText('Your library is empty')).not.toBeInTheDocument();
+      expect(screen.queryByTestId('library-error')).not.toBeInTheDocument();
+    });
+
+    it('shows EmptyLibraryState when getBookStats rejects and getBooks returns empty array', async () => {
+      vi.mocked(api.getBooks).mockResolvedValue({ data: [], total: 0 });
+      vi.mocked(api.getBookStats).mockRejectedValue(new Error('Stats API down'));
+
+      renderWithProviders(<LibraryPage />);
+
+      await waitFor(() => {
+        expect(screen.getByText('Your library is empty')).toBeInTheDocument();
+      });
+      expect(screen.queryByTestId('library-error')).not.toBeInTheDocument();
+    });
   });
 
   describe('loading vs error precedence', () => {
-    it.todo('shows loading spinner while isLoading is true, not error state');
+    it('shows loading spinner while isLoading is true, not error state', () => {
+      // getBooks never resolves — stays in loading state
+      vi.mocked(api.getBooks).mockReturnValue(new Promise(() => {}));
+      vi.mocked(api.getBookStats).mockReturnValue(new Promise(() => {}));
+
+      renderWithProviders(<LibraryPage />);
+
+      expect(screen.getByTestId('loading-spinner')).toBeInTheDocument();
+      expect(screen.queryByTestId('library-error')).not.toBeInTheDocument();
+    });
   });
 });

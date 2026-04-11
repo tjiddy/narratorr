@@ -70,7 +70,7 @@ function computeStatusCounts(stats: ReturnType<typeof useBookStats>['data']) {
 export function useLibraryPageState() {
   const navigate = useNavigate();
   const filters = useLibraryFilters();
-  const { data: libraryResponse, isLoading, isPlaceholderData } = useLibrary(filters.params.apiParams);
+  const { data: libraryResponse, isLoading, isPlaceholderData, isError: booksError } = useLibrary(filters.params.apiParams);
   const { data: stats } = useBookStats();
   const { data: settings } = useQuery({ queryKey: queryKeys.settings(), queryFn: api.getSettings });
 
@@ -160,6 +160,7 @@ export function useLibraryPageState() {
   return {
     filters,
     isLoading,
+    booksError,
     totalBooks,
     totalAll,
     displayBooks,

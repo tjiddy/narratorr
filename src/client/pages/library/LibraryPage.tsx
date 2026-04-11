@@ -5,6 +5,7 @@ import { LibraryTableView } from './LibraryTableView.js';
 import { LibraryGridView } from './LibraryGridView.js';
 import { BulkActionToolbar } from './BulkActionToolbar.js';
 import { EmptyLibraryState } from './EmptyLibraryState.js';
+import { LibraryErrorState } from './LibraryErrorState.js';
 import { NoMatchState } from './NoMatchState.js';
 import { LibraryHeader } from './LibraryHeader.js';
 import { Pagination } from '@/components/Pagination';
@@ -21,7 +22,13 @@ export function LibraryPage() {
       </div>
     </div>
   );
-  if (s.totalAll === 0 && !s.filters.state.isSearching && s.filters.state.statusFilter === 'all') return (
+  if (s.booksError) return (
+    <div className="space-y-6">
+      <LibraryHeader />
+      <LibraryErrorState />
+    </div>
+  );
+  if (s.totalAll === 0 && s.totalBooks === 0 && !s.filters.state.isSearching && s.filters.state.statusFilter === 'all') return (
     <div className="space-y-6">
       <LibraryHeader />
       <EmptyLibraryState hasLibraryPath={Boolean(s.settings?.library.path)} />
