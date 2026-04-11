@@ -778,4 +778,18 @@ describe('SecuritySettings', () => {
       expect(api.getAuthStatus).toHaveBeenCalled();
     });
   });
+
+  describe('ConfirmModal for disable auth (#488)', () => {
+    it.todo('clicking auth mode that triggers confirmation opens ConfirmModal with title and message');
+    it.todo('confirming in modal fires updateAuthConfig mutation with correct auth mode');
+    it.todo('cancelling modal closes it without firing mutation');
+    it.todo('modal dismisses on Escape key press');
+  });
+
+  describe('ConfirmModal for API key regeneration (#488)', () => {
+    it.todo('clicking regenerate button opens ConfirmModal with regeneration warning');
+    it.todo('confirming fires authRegenerateApiKey mutation');
+    it.todo('cancelling modal closes it without firing mutation');
+    it.todo('error during regeneration shows error toast and modal stays open for retry');
+  });
 });

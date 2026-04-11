@@ -138,6 +138,11 @@ describe('useImportPolling', () => {
     // No error thrown means the interval is running fine
   });
 
+  it.todo('does NOT start polling when SSE is connected and imports are active (#488)');
+  it.todo('starts polling when SSE is disconnected and imports are active (#488)');
+  it.todo('stops polling when SSE reconnects mid-import (#488)');
+  it.todo('no polling when importingCount is 0 regardless of SSE state (#488)');
+
   it('cleans up interval when no books are importing', () => {
     const importingBooks = [makeBook({ id: 1, status: 'importing' })];
 

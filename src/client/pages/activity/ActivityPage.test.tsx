@@ -1671,3 +1671,7 @@ describe('#478 cancel merge error recovery', () => {
     vi.mocked(useMergeActivityCards).mockReturnValue([]);
   });
 });
+
+describe('ActivityPage tab buttons (#488)', () => {
+  it.todo('tab buttons render with type="button" attribute');
+});
