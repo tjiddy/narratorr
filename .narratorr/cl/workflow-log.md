@@ -1,5 +1,34 @@
 # Workflow Log
 
+## #481 Bug: health-check notification await blocks check cycle despite fire-and-forget comment — 2026-04-11
+**Skill path:** /implement → /claim → /plan → /handoff
+**Outcome:** success — PR #492
+
+### Metrics
+- Files changed: 2 | Tests added/modified: 3 new tests
+- Quality gate runs: 2 (pass on attempt 1 after lint fix)
+- Fix iterations: 1 (unused `log` destructure in test caught by lint)
+- Context compactions: 0
+
+### Workflow experience
+- What went smoothly: Straightforward bug with well-established pattern — 3 existing callers of `fireAndForget` made the fix obvious
+- Friction / issues encountered: None — the spec was well-validated through 2 rounds of spec review before implementation
+
+### Token efficiency
+- Highest-token actions: Explore subagent during /plan (thorough but largely redundant since /elaborate already explored the same area)
+- Avoidable waste: The /plan explore could have been lighter given /elaborate already surfaced all findings
+- Suggestions: For simple bugs with prior /elaborate, /plan explore could be scoped narrower
+
+### Infrastructure gaps
+- Repeated workarounds: None
+- Missing tooling / config: None
+- Unresolved debt: None discovered
+
+### Wish I'd Known
+1. Deferred promise sequencing is the idiomatic way to test fire-and-forget behavior in this codebase — avoids flaky wall-clock assertions (captured in `learnings/deferred-promise-sequencing-test.md`)
+2. The existing test at line 471 only covered rejection-doesn't-throw, not non-blocking behavior — the await bug was invisible to it because rejected promises still resolve through try/catch
+3. No surprises — this was a textbook one-line fix with well-documented prior art
+
 ## #478 Test coverage: untested frontend branches that mask real failures — 2026-04-11
 **Skill path:** /implement → /claim → /plan → /handoff
 **Outcome:** success — PR #491

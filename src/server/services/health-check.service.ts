@@ -8,6 +8,7 @@ import type { SettingsService } from './settings.service.js';
 import type { NotifierService } from './notifier.service.js';
 import { getInProgressStatuses } from '../../shared/download-status-registry.js';
 import { getErrorMessage } from '../utils/error-message.js';
+import { fireAndForget } from '../utils/fire-and-forget.js';
 
 export type HealthState = 'healthy' | 'warning' | 'error';
 
@@ -71,8 +72,8 @@ export class HealthCheckService {
       for (const result of results) {
         const previousState = this.previousStates.get(result.checkName) ?? 'healthy';
         if (previousState !== result.state) {
-          try {
-            await this.notifierService.notify('on_health_issue', {
+          fireAndForget(
+            this.notifierService.notify('on_health_issue', {
               event: 'on_health_issue',
               health: {
                 checkName: result.checkName,
@@ -80,10 +81,10 @@ export class HealthCheckService {
                 currentState: result.state,
                 message: result.message,
               },
-            });
-          } catch {
-            // fire-and-forget
-          }
+            }),
+            this.log,
+            'Failed to send health issue notification',
+          );
         }
         this.previousStates.set(result.checkName, result.state);
       }
