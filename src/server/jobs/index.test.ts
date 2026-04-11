@@ -300,9 +300,96 @@ describe('startJobs', () => {
 
   // #477 — housekeeping callback coverage
   describe('housekeeping callback (#477)', () => {
-    it.todo('executeTracked housekeeping calls VACUUM, pruneOlderThan, and deleteExpired with correct args');
-    it.todo('uses fallback retention of 90 when housekeepingRetentionDays is null');
-    it.todo('VACUUM failure prevents subsequent sub-tasks (pins current lack of per-sub-task isolation)');
+    it('executeTracked housekeeping calls VACUUM, pruneOlderThan, and deleteExpired with correct args', async () => {
+      (services.settings.get as ReturnType<typeof vi.fn>).mockImplementation(async (category: string) => {
+        if (category === 'general') return { housekeepingRetentionDays: 30 };
+        if (category === 'search') return { intervalMinutes: 30 };
+        if (category === 'rss') return { intervalMinutes: 30 };
+        if (category === 'system') return { backupIntervalMinutes: 60 };
+        if (category === 'discovery') return { intervalHours: 24 };
+        return {};
+      });
+      // Add db.run mock for VACUUM
+      (db as Record<string, unknown>).run = vi.fn().mockResolvedValue(undefined);
+
+      const { startJobs } = await import('./index.js');
+      startJobs(injectHelper<Db>(db), services, log);
+      await new Promise((resolve) => setTimeout(resolve, 10));
+
+      vi.clearAllMocks();
+      // Re-mock after clearAllMocks
+      (services.settings.get as ReturnType<typeof vi.fn>).mockImplementation(async (category: string) => {
+        if (category === 'general') return { housekeepingRetentionDays: 30 };
+        return {};
+      });
+      (db as Record<string, unknown>).run = vi.fn().mockResolvedValue(undefined);
+      (services.eventHistory.pruneOlderThan as ReturnType<typeof vi.fn>).mockResolvedValue(5);
+      (services.blacklist.deleteExpired as ReturnType<typeof vi.fn>).mockResolvedValue(3);
+
+      await services.taskRegistry.executeTracked('housekeeping');
+
+      expect((db as Record<string, ReturnType<typeof vi.fn>>).run).toHaveBeenCalledTimes(1);
+      expect(services.eventHistory.pruneOlderThan).toHaveBeenCalledWith(30);
+      expect(services.blacklist.deleteExpired).toHaveBeenCalledTimes(1);
+    });
+
+    it('uses fallback retention of 90 when housekeepingRetentionDays is null', async () => {
+      (services.settings.get as ReturnType<typeof vi.fn>).mockImplementation(async (category: string) => {
+        if (category === 'general') return { housekeepingRetentionDays: null };
+        if (category === 'search') return { intervalMinutes: 30 };
+        if (category === 'rss') return { intervalMinutes: 30 };
+        if (category === 'system') return { backupIntervalMinutes: 60 };
+        if (category === 'discovery') return { intervalHours: 24 };
+        return {};
+      });
+      (db as Record<string, unknown>).run = vi.fn().mockResolvedValue(undefined);
+
+      const { startJobs } = await import('./index.js');
+      startJobs(injectHelper<Db>(db), services, log);
+      await new Promise((resolve) => setTimeout(resolve, 10));
+
+      vi.clearAllMocks();
+      (services.settings.get as ReturnType<typeof vi.fn>).mockImplementation(async (category: string) => {
+        if (category === 'general') return { housekeepingRetentionDays: null };
+        return {};
+      });
+      (db as Record<string, unknown>).run = vi.fn().mockResolvedValue(undefined);
+      (services.eventHistory.pruneOlderThan as ReturnType<typeof vi.fn>).mockResolvedValue(0);
+      (services.blacklist.deleteExpired as ReturnType<typeof vi.fn>).mockResolvedValue(0);
+
+      await services.taskRegistry.executeTracked('housekeeping');
+
+      expect(services.eventHistory.pruneOlderThan).toHaveBeenCalledWith(90);
+    });
+
+    it('VACUUM failure prevents subsequent sub-tasks (pins current lack of per-sub-task isolation)', async () => {
+      (services.settings.get as ReturnType<typeof vi.fn>).mockImplementation(async (category: string) => {
+        if (category === 'search') return { intervalMinutes: 30 };
+        if (category === 'rss') return { intervalMinutes: 30 };
+        if (category === 'system') return { backupIntervalMinutes: 60 };
+        if (category === 'discovery') return { intervalHours: 24 };
+        if (category === 'general') return { housekeepingRetentionDays: 90 };
+        return {};
+      });
+      (db as Record<string, unknown>).run = vi.fn().mockResolvedValue(undefined);
+
+      const { startJobs } = await import('./index.js');
+      startJobs(injectHelper<Db>(db), services, log);
+      await new Promise((resolve) => setTimeout(resolve, 10));
+
+      vi.clearAllMocks();
+      // VACUUM throws
+      (db as Record<string, unknown>).run = vi.fn().mockRejectedValue(new Error('VACUUM failed'));
+
+      // executeTracked propagates errors (no internal catch) — catch here to assert
+      await services.taskRegistry.executeTracked('housekeeping').catch(() => {});
+
+      // VACUUM was attempted
+      expect((db as Record<string, ReturnType<typeof vi.fn>>).run).toHaveBeenCalledTimes(1);
+      // Subsequent sub-tasks were NOT called (no per-sub-task try/catch)
+      expect(services.eventHistory.pruneOlderThan).not.toHaveBeenCalled();
+      expect(services.blacklist.deleteExpired).not.toHaveBeenCalled();
+    });
   });
 
   describe('startup recovery (#358)', () => {
