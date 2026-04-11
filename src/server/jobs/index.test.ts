@@ -328,7 +328,11 @@ describe('startJobs', () => {
 
       await services.taskRegistry.executeTracked('housekeeping');
 
-      expect((db as Record<string, ReturnType<typeof vi.fn>>).run).toHaveBeenCalledTimes(1);
+      const runMock = (db as Record<string, ReturnType<typeof vi.fn>>).run;
+      expect(runMock).toHaveBeenCalledTimes(1);
+      // Assert the SQL argument is VACUUM (drizzle sql`VACUUM` produces queryChunks with "VACUUM")
+      const sqlArg = runMock.mock.calls[0][0] as { queryChunks: { value: string[] }[] };
+      expect(sqlArg.queryChunks[0].value[0]).toBe('VACUUM');
       expect(services.eventHistory.pruneOlderThan).toHaveBeenCalledWith(30);
       expect(services.blacklist.deleteExpired).toHaveBeenCalledTimes(1);
     });
