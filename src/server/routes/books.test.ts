@@ -2553,6 +2553,7 @@ describe('POST /api/books/:id/cover', () => {
       });
 
       expect(res.statusCode).toBe(500);
+      expect(JSON.parse(res.payload)).toEqual({ error: 'Internal server error' });
     });
 
     it('returns 400 for invalid bookId param', async () => {
