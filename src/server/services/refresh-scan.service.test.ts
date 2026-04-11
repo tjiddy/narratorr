@@ -291,25 +291,13 @@ describe('refreshScanBook', () => {
   it('throws RefreshScanError NOT_FOUND when book does not exist', async () => {
     vi.mocked(mockBookService.getById).mockResolvedValue(null);
     await expect(refreshScanBook(999, mockBookService, mockSettingsService, log))
-      .rejects.toThrow(RefreshScanError);
-    vi.mocked(mockBookService.getById).mockResolvedValue(null);
-    try {
-      await refreshScanBook(999, mockBookService, mockSettingsService, log);
-    } catch (error: unknown) {
-      expect((error as RefreshScanError).code).toBe('NOT_FOUND');
-    }
+      .rejects.toMatchObject({ code: 'NOT_FOUND' });
   });
 
   it('throws RefreshScanError NO_PATH when book has no library path', async () => {
     vi.mocked(mockBookService.getById).mockResolvedValue(makeBook({ path: null }));
     await expect(refreshScanBook(1, mockBookService, mockSettingsService, log))
-      .rejects.toThrow(RefreshScanError);
-    vi.mocked(mockBookService.getById).mockResolvedValue(makeBook({ path: null }));
-    try {
-      await refreshScanBook(1, mockBookService, mockSettingsService, log);
-    } catch (error: unknown) {
-      expect((error as RefreshScanError).code).toBe('NO_PATH');
-    }
+      .rejects.toMatchObject({ code: 'NO_PATH' });
   });
 
   it('throws RefreshScanError PATH_MISSING when book path does not exist on disk (ENOENT)', async () => {
@@ -317,13 +305,7 @@ describe('refreshScanBook', () => {
     const enoent = Object.assign(new Error('ENOENT: no such file or directory'), { code: 'ENOENT' });
     vi.mocked(statFn).mockRejectedValueOnce(enoent);
     await expect(refreshScanBook(1, mockBookService, mockSettingsService, log))
-      .rejects.toThrow(RefreshScanError);
-    vi.mocked(statFn).mockRejectedValueOnce(Object.assign(new Error('ENOENT'), { code: 'ENOENT' }));
-    try {
-      await refreshScanBook(1, mockBookService, mockSettingsService, log);
-    } catch (error: unknown) {
-      expect((error as RefreshScanError).code).toBe('PATH_MISSING');
-    }
+      .rejects.toMatchObject({ code: 'PATH_MISSING' });
   });
 
   it('rethrows non-ENOENT stat errors as unexpected failures', async () => {
@@ -344,13 +326,7 @@ describe('refreshScanBook', () => {
   it('throws RefreshScanError NO_AUDIO_FILES when scanAudioDirectory returns null', async () => {
     vi.mocked(scanAudioDirectory).mockResolvedValueOnce(null);
     await expect(refreshScanBook(1, mockBookService, mockSettingsService, log))
-      .rejects.toThrow(RefreshScanError);
-    vi.mocked(scanAudioDirectory).mockResolvedValueOnce(null);
-    try {
-      await refreshScanBook(1, mockBookService, mockSettingsService, log);
-    } catch (error: unknown) {
-      expect((error as RefreshScanError).code).toBe('NO_AUDIO_FILES');
-    }
+      .rejects.toMatchObject({ code: 'NO_AUDIO_FILES' });
   });
 
   // ffprobePath
