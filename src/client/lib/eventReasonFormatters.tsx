@@ -23,7 +23,7 @@ function GrabbedDetails({ reason, indexerMap }: { reason: Record<string, unknown
 
   return (
     <div className="space-y-1">
-      <KeyValueRow label="Indexer" value={indexerName} />
+      {indexerId != null && <KeyValueRow label="Indexer" value={indexerName} />}
       {protocol && <KeyValueRow label="Protocol" value={capitalize(protocol)} />}
       {size != null && <KeyValueRow label="Size" value={formatBytes(size)} />}
     </div>

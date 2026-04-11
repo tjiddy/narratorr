@@ -103,4 +103,29 @@ describe('EventReasonDetails', () => {
     render(<EventReasonDetails eventType="custom" reason={{ nested: { foo: 'bar' } }} indexerMap={emptyMap} />);
     expect(screen.getByText('{"foo":"bar"}')).toBeInTheDocument();
   });
+
+  // #464 — conditional Indexer row in GrabbedDetails
+  it('grabbed — omits Indexer row when indexerId is absent', () => {
+    render(<EventReasonDetails eventType="grabbed" reason={{ size: 1024, protocol: 'torrent' }} indexerMap={emptyMap} />);
+    expect(screen.queryByText('Indexer:')).not.toBeInTheDocument();
+    expect(screen.getByText('Protocol:')).toBeInTheDocument();
+    expect(screen.getByText('Size:')).toBeInTheDocument();
+  });
+
+  it('grabbed — renders only Protocol when only protocol is present', () => {
+    render(<EventReasonDetails eventType="grabbed" reason={{ protocol: 'torrent' }} indexerMap={emptyMap} />);
+    expect(screen.queryByText('Indexer:')).not.toBeInTheDocument();
+    expect(screen.queryByText('Size:')).not.toBeInTheDocument();
+    expect(screen.getByText('Protocol:')).toBeInTheDocument();
+    expect(screen.getByText('Torrent')).toBeInTheDocument();
+  });
+
+  it('grabbed — still renders all three rows when all fields present (regression)', () => {
+    const indexerMap = new Map<number, string>([[1, 'TestIndexer']]);
+    render(<EventReasonDetails eventType="grabbed" reason={{ indexerId: 1, size: 2048, protocol: 'usenet' }} indexerMap={indexerMap} />);
+    expect(screen.getByText('Indexer:')).toBeInTheDocument();
+    expect(screen.getByText('TestIndexer')).toBeInTheDocument();
+    expect(screen.getByText('Protocol:')).toBeInTheDocument();
+    expect(screen.getByText('Size:')).toBeInTheDocument();
+  });
 });
