@@ -486,7 +486,7 @@ describe('HealthCheckService', () => {
 
     it('calls fireAndForget with notification promise, logger, and context string on state transition', async () => {
       const notifyPromise = Promise.resolve();
-      const { service, notifier, log } = createService({
+      const { service, notifier } = createService({
         indexer: {
           getAll: vi.fn().mockResolvedValue([{ id: 1, name: 'NZB', enabled: true }]),
           test: vi.fn().mockResolvedValue({ success: false, message: 'down' }),
@@ -498,10 +498,6 @@ describe('HealthCheckService', () => {
 
       await service.runAllChecks();
 
-      // fireAndForget should have been called — verify by checking that notify was NOT awaited
-      // and that the log is available for error handling. Since fireAndForget is an internal
-      // implementation detail, we verify the observable contract: notify was called, and the
-      // service logger is used for warn-level logging on rejection.
       expect(notifier.notify).toHaveBeenCalledWith('on_health_issue', expect.objectContaining({
         health: expect.objectContaining({
           checkName: 'indexer:NZB',
