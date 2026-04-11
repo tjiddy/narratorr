@@ -1730,6 +1730,84 @@ describe('#257 merge observability — BookDetails progress', () => {
       revokeObjectURLSpy.mockRestore();
     });
 
+    it('confirming upload revokes the active blob URL via effect cleanup', async () => {
+      vi.mocked(api.uploadBookCover).mockResolvedValue(makeBook({ coverUrl: '/api/books/1/cover' }));
+      const user = userEvent.setup();
+      const revokeObjectURLSpy = vi.spyOn(URL, 'revokeObjectURL');
+      const createObjectURLSpy = vi.spyOn(URL, 'createObjectURL').mockReturnValueOnce('blob:confirm-test');
+
+      renderBookDetails({ path: '/library/book', status: 'imported' });
+
+      const fileInput = document.querySelector('input[type="file"]') as HTMLInputElement;
+      const file = new File(['image-data'], 'cover.jpg', { type: 'image/jpeg' });
+      await user.upload(fileInput, file);
+
+      await waitFor(() => {
+        expect(screen.getByLabelText('Confirm cover')).toBeInTheDocument();
+      });
+
+      revokeObjectURLSpy.mockClear();
+      await user.click(screen.getByLabelText('Confirm cover'));
+
+      await waitFor(() => {
+        expect(revokeObjectURLSpy).toHaveBeenCalledWith('blob:confirm-test');
+      });
+
+      createObjectURLSpy.mockRestore();
+      revokeObjectURLSpy.mockRestore();
+    });
+
+    it('cancelling upload revokes the active blob URL via effect cleanup', async () => {
+      const user = userEvent.setup();
+      const revokeObjectURLSpy = vi.spyOn(URL, 'revokeObjectURL');
+      const createObjectURLSpy = vi.spyOn(URL, 'createObjectURL').mockReturnValueOnce('blob:cancel-test');
+
+      renderBookDetails({ path: '/library/book', status: 'imported' });
+
+      const fileInput = document.querySelector('input[type="file"]') as HTMLInputElement;
+      const file = new File(['image-data'], 'cover.jpg', { type: 'image/jpeg' });
+      await user.upload(fileInput, file);
+
+      await waitFor(() => {
+        expect(screen.getByLabelText('Cancel cover')).toBeInTheDocument();
+      });
+
+      revokeObjectURLSpy.mockClear();
+      await user.click(screen.getByLabelText('Cancel cover'));
+
+      await waitFor(() => {
+        expect(revokeObjectURLSpy).toHaveBeenCalledWith('blob:cancel-test');
+      });
+
+      createObjectURLSpy.mockRestore();
+      revokeObjectURLSpy.mockRestore();
+    });
+
+    it('unmounting with active preview revokes the blob URL exactly once', async () => {
+      const user = userEvent.setup();
+      const revokeObjectURLSpy = vi.spyOn(URL, 'revokeObjectURL');
+      const createObjectURLSpy = vi.spyOn(URL, 'createObjectURL').mockReturnValueOnce('blob:unmount-test');
+
+      const { unmount } = renderBookDetails({ path: '/library/book', status: 'imported' });
+
+      const fileInput = document.querySelector('input[type="file"]') as HTMLInputElement;
+      const file = new File(['image-data'], 'cover.jpg', { type: 'image/jpeg' });
+      await user.upload(fileInput, file);
+
+      await waitFor(() => {
+        expect(screen.getByAltText('Cover preview')).toHaveAttribute('src', 'blob:unmount-test');
+      });
+
+      revokeObjectURLSpy.mockClear();
+      unmount();
+
+      expect(revokeObjectURLSpy).toHaveBeenCalledWith('blob:unmount-test');
+      expect(revokeObjectURLSpy).toHaveBeenCalledTimes(1);
+
+      createObjectURLSpy.mockRestore();
+      revokeObjectURLSpy.mockRestore();
+    });
+
     describe('paste wiring', () => {
       function dispatchImagePaste() {
         const file = new File([new ArrayBuffer(1024)], 'pasted.png', { type: 'image/png' });

@@ -56,7 +56,7 @@ export function BookDetails({ libraryBook, metadataBook }: {
 
   const handleCoverFile = useCallback((file: File) => {
     const maxSize = 10 * 1024 * 1024;
-    if (!file.type.startsWith('image/') || !['image/jpeg', 'image/png', 'image/webp'].includes(file.type)) {
+    if (!['image/jpeg', 'image/png', 'image/webp'].includes(file.type)) {
       toast.error('Only JPG, PNG, and WebP images are supported');
       return;
     }
@@ -64,33 +64,26 @@ export function BookDetails({ libraryBook, metadataBook }: {
       toast.error('Cover image must be under 10 MB');
       return;
     }
-    // Revoke previous preview URL if replacing
-    if (coverPreviewUrl) URL.revokeObjectURL(coverPreviewUrl);
     setCoverFile(file);
     setCoverPreviewUrl(URL.createObjectURL(file));
-  }, [coverPreviewUrl]);
+  }, []);
 
   const handleCoverConfirm = useCallback(() => {
     if (!coverFile) return;
     uploadCoverMutation.mutate(coverFile, {
       onSuccess: () => {
-        // Keep preview visible until query refetch brings the new URL,
-        // preventing a flash of the old cached cover between clearing
-        // the blob preview and the cache-busted new image loading.
-        if (coverPreviewUrl) URL.revokeObjectURL(coverPreviewUrl);
         setCoverPreviewUrl(null);
         setCoverFile(null);
       },
     });
-  }, [coverFile, coverPreviewUrl, uploadCoverMutation]);
+  }, [coverFile, uploadCoverMutation]);
 
   const handleCoverCancel = useCallback(() => {
-    if (coverPreviewUrl) URL.revokeObjectURL(coverPreviewUrl);
     setCoverPreviewUrl(null);
     setCoverFile(null);
-  }, [coverPreviewUrl]);
+  }, []);
 
-  // Clean up object URL on unmount
+  // Single owner of blob URL lifecycle — revokes on every change and unmount
   useEffect(() => {
     return () => {
       if (coverPreviewUrl) URL.revokeObjectURL(coverPreviewUrl);

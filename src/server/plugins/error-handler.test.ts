@@ -15,6 +15,7 @@ import { EventHistoryServiceError } from '../services/event-history.service.js';
 import { MergeError } from '../services/merge.service.js';
 import { DownloadError, DuplicateDownloadError } from '../services/download.service.js';
 import { TaskRegistryError } from '../services/task-registry.js';
+import { CoverUploadError } from '../services/cover-upload.js';
 
 function createTestApp() {
   const app = Fastify({ logger: false }).withTypeProvider<ZodTypeProvider>();
@@ -47,6 +48,9 @@ function createTestApp() {
   app.get('/throw-task-already-running', async () => { throw new TaskRegistryError('Task "foo" is already running', 'ALREADY_RUNNING'); });
   app.get('/throw-duplicate-active', async () => { throw new DuplicateDownloadError('Book 1 already has an active download', 'ACTIVE_DOWNLOAD_EXISTS'); });
   app.get('/throw-duplicate-pipeline', async () => { throw new DuplicateDownloadError('Book 1 has pipeline download', 'PIPELINE_ACTIVE'); });
+  app.get('/throw-cover-not-found', async () => { throw new CoverUploadError('Book not found', 'NOT_FOUND'); });
+  app.get('/throw-cover-invalid-mime', async () => { throw new CoverUploadError('Only JPG, PNG, and WebP images are supported', 'INVALID_MIME'); });
+  app.get('/throw-cover-no-path', async () => { throw new CoverUploadError('Book has no path on disk', 'NO_PATH'); });
   app.get('/throw-generic', async () => { throw new Error('disk full'); });
   app.get('/throw-non-error', async () => { throw 'string error'; });
   app.get('/success', async () => ({ ok: true }));
@@ -212,6 +216,25 @@ describe('error-handler plugin', () => {
       const res = await app.inject({ method: 'GET', url: '/throw-duplicate-pipeline' });
       expect(res.statusCode).toBe(409);
       expect(JSON.parse(res.payload)).toEqual({ error: 'Book 1 has pipeline download' });
+    });
+
+    // #466 — CoverUploadError typed error mapping
+    it('maps CoverUploadError NOT_FOUND to 404', async () => {
+      const res = await app.inject({ method: 'GET', url: '/throw-cover-not-found' });
+      expect(res.statusCode).toBe(404);
+      expect(JSON.parse(res.payload)).toEqual({ error: 'Book not found' });
+    });
+
+    it('maps CoverUploadError INVALID_MIME to 400', async () => {
+      const res = await app.inject({ method: 'GET', url: '/throw-cover-invalid-mime' });
+      expect(res.statusCode).toBe(400);
+      expect(JSON.parse(res.payload)).toEqual({ error: 'Only JPG, PNG, and WebP images are supported' });
+    });
+
+    it('maps CoverUploadError NO_PATH to 400', async () => {
+      const res = await app.inject({ method: 'GET', url: '/throw-cover-no-path' });
+      expect(res.statusCode).toBe(400);
+      expect(JSON.parse(res.payload)).toEqual({ error: 'Book has no path on disk' });
     });
   });
 

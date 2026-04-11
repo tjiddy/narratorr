@@ -4,7 +4,6 @@ import type { FastifyInstance, FastifyBaseLogger } from 'fastify';
 import { serveCoverFromCache, cleanCoverCache, COVER_FILE_REGEX } from '../utils/cover-cache.js';
 import { config } from '../config.js';
 import type { BookService, BookListService, DownloadService, SettingsService, RenameService, EventHistoryService, TaggingService, IndexerService } from '../services/index.js';
-import { CoverUploadError } from '../services/book.service.js';
 import type { DownloadOrchestrator } from '../services/download-orchestrator.js';
 import type { MergeService } from '../services/merge.service.js';
 import type { BookRejectionService } from '../services/book-rejection.service.js';
@@ -357,6 +356,8 @@ export async function booksRoutes(app: FastifyInstance, deps: BookRouteDeps) {
   }
 }
 
+const MAX_COVER_SIZE = 10 * 1024 * 1024; // 10 MB
+
 export async function bookFilesRoute(app: FastifyInstance, bookService: BookService) {
   // GET /api/books/:id/cover — serve embedded cover art from library
   app.get<{ Params: IdParam }>(
@@ -401,8 +402,6 @@ export async function bookFilesRoute(app: FastifyInstance, bookService: BookServ
     },
   );
 
-  const MAX_COVER_SIZE = 10 * 1024 * 1024; // 10 MB
-
   // POST /api/books/:id/cover — upload custom cover art
   app.post<{ Params: IdParam }>(
     '/api/books/:id/cover',
@@ -423,20 +422,9 @@ export async function bookFilesRoute(app: FastifyInstance, bookService: BookServ
 
       const mimeType = data.mimetype;
 
-      try {
-        const book = await bookService.uploadCover(id, buffer, mimeType);
-        request.log.info({ id }, 'Cover uploaded');
-        return book;
-      } catch (error: unknown) {
-        if (error instanceof CoverUploadError) {
-          if (error.code === 'NOT_FOUND') {
-            return reply.status(404).send({ error: error.message });
-          }
-          return reply.status(400).send({ error: error.message });
-        }
-        request.log.error(error, 'Cover upload failed');
-        return reply.status(500).send({ error: 'Failed to upload cover' });
-      }
+      const book = await bookService.uploadCover(id, buffer, mimeType);
+      request.log.info({ id }, 'Cover uploaded');
+      return book;
     },
   );
 
