@@ -160,7 +160,7 @@ export function parseWordList(csv: string | undefined): string[] {
 /**
  * Apply quality filtering and canonical ranking to search results.
  * Filters by word lists, MB/hr grab floor, and min seeders, then sorts by
- * canonical order: matchScore gate → MB/hr → protocol preference → seeders.
+ * canonical order: matchScore gate → narrator match → MB/hr → protocol preference → language → indexer priority → grabs → seeders.
  */
 export function filterAndRankResults(
   results: SearchResult[],
