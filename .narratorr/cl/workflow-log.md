@@ -1,5 +1,34 @@
 # Workflow Log
 
+## #478 Test coverage: untested frontend branches that mask real failures — 2026-04-11
+**Skill path:** /implement → /claim → /plan → /handoff
+**Outcome:** success — PR #491
+
+### Metrics
+- Files changed: 2 | Tests added: 5
+- Quality gate runs: 1 (pass on attempt 1)
+- Fix iterations: 0
+- Context compactions: 0
+
+### Workflow experience
+- What went smoothly: Small, focused test-only issue — 3 contract tests + 2 integration tests. All passed on first run.
+- Friction / issues encountered: Elaboration initially claimed `api-contracts.test.ts` didn't exist and proposed creating per-module test files. Cost a full spec review round-trip to correct. Also, ActivityPage mock api object was missing `cancelMergeBook` — needed to add it before tests could work.
+
+### Token efficiency
+- Highest-token actions: Elaborate + respond-to-spec-review (2 rounds before implementation could start)
+- Avoidable waste: Elaboration should have run `git ls-files` to verify test file existence before claiming it didn't exist
+- Suggestions: For test-gap issues, always verify existing test file layout before proposing new files
+
+### Infrastructure gaps
+- Repeated workarounds: None
+- Missing tooling / config: None
+- Unresolved debt: None introduced
+
+### Wish I'd Known
+1. `api-contracts.test.ts` already exists as the centralized API wrapper contract suite — always `git ls-files` before proposing new test files (see `elaborate-verify-existing-tests.md`)
+2. ActivityPage mock api object must explicitly list every `api.*` method — missing methods cause "not a function" errors at runtime (see `activitypage-mock-api-cancelmerge.md`)
+3. Two of five originally-scoped ACs were already complete on main — checking existing test coverage against each AC upfront halves the spec work
+
 ## #477 Test coverage: untested backend branches that mask real failures — 2026-04-11
 **Skill path:** /implement → /claim → /plan → /handoff
 **Outcome:** success — PR #490

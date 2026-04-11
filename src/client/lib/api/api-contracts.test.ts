@@ -316,6 +316,16 @@ describe('booksApi', () => {
 
     fetchSpy.mockRestore();
   });
+
+  it('mergeBookToM4b → POST /books/:id/merge-to-m4b', async () => {
+    await booksApi.mergeBookToM4b(1);
+    expect(mockFetchApi).toHaveBeenCalledWith('/books/1/merge-to-m4b', expect.objectContaining({ method: 'POST' }));
+  });
+
+  it('cancelMergeBook → DELETE /books/:id/merge-to-m4b', async () => {
+    await booksApi.cancelMergeBook(1);
+    expect(mockFetchApi).toHaveBeenCalledWith('/books/1/merge-to-m4b', expect.objectContaining({ method: 'DELETE' }));
+  });
 });
 
 describe('downloadClientsApi', () => {
@@ -668,6 +678,11 @@ describe('systemApi', () => {
       body: JSON.stringify({ version: '0.2.0' }),
     });
     expect(result).toEqual({ ok: true });
+  });
+
+  it('runSystemTask → POST /system/tasks/:name/run', async () => {
+    await systemApi.runSystemTask('cleanup');
+    expect(mockFetchApi).toHaveBeenCalledWith('/system/tasks/cleanup/run', expect.objectContaining({ method: 'POST' }));
   });
 });
 
