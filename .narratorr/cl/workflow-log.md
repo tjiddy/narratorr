@@ -1,5 +1,34 @@
 # Workflow Log
 
+## #477 Test coverage: untested backend branches that mask real failures — 2026-04-11
+**Skill path:** /implement → /claim → /plan → /handoff
+**Outcome:** success — PR #490
+
+### Metrics
+- Files changed: 7 (4 deleted, 3 modified) | Tests added: 14
+- Quality gate runs: 1 (pass on attempt 1)
+- Fix iterations: 1 (readdir ENOENT test passed in isolation but failed in suite — mock leak from missing `vi.clearAllMocks()` in `beforeEach`)
+- Context compactions: 0
+
+### Workflow experience
+- What went smoothly: Dead code deletion was straightforward (grep confirmed zero callers). TDD cycle for housekeeping and import-list tests was clean.
+- Friction / issues encountered: book.service.test.ts `beforeEach` doesn't call `vi.clearAllMocks()`, so fs mock implementations leak between tests. Required explicit `mockReset()` before overriding. Also, `createMockDb()` doesn't include `db.run()` which is needed for the VACUUM test.
+
+### Token efficiency
+- Highest-token actions: Reading existing test files to understand mock patterns
+- Avoidable waste: Could have checked `beforeEach` for `clearAllMocks` before writing the first cover-upload test
+- Suggestions: When adding tests to existing suites, always check the `beforeEach` mock cleanup strategy first
+
+### Infrastructure gaps
+- Repeated workarounds: Adding `db.run` mock manually — `createMockDb()` helper should include it
+- Missing tooling / config: None
+- Unresolved debt: Inline housekeeping callback at `jobs/index.ts:54` lacks per-sub-task error isolation (logged in debt.md)
+
+### Wish I'd Known
+1. `book.service.test.ts` `beforeEach` doesn't call `vi.clearAllMocks()` — must `mockReset()` fs mocks explicitly (see `mock-reset-before-override.md`)
+2. `executeTracked()` propagates errors — no internal catch. Tests must `.catch()` when asserting behavior after a thrown callback (see `executetracked-propagates-errors.md`)
+3. `createMockDb()` omits `db.run()` — must add it manually for VACUUM tests (see `createMockDb-missing-run.md`)
+
 ## #470 ESLint lazy suppression cleanup — 2026-04-11
 **Skill path:** /implement → /claim → /plan → /handoff
 **Outcome:** success — PR #489
