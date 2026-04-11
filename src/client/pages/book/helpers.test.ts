@@ -61,4 +61,24 @@ describe('mergeBookData', () => {
       expect(result.statusLabel).toBe('Wanted');
     });
   });
+
+  describe('metaDots duration formatting', () => {
+    it('includes formatted duration in metaDots from library book', () => {
+      const book = createMockBook({ duration: 90 });
+      const result = mergeBookData(book);
+      expect(result.metaDots).toContain('1h 30m');
+    });
+
+    it('falls back to metadata duration when library book has none', () => {
+      const book = createMockBook({ duration: null });
+      const result = mergeBookData(book, { duration: 60 });
+      expect(result.metaDots).toContain('1h');
+    });
+
+    it('excludes duration from metaDots when both sources are null', () => {
+      const book = createMockBook({ duration: null });
+      const result = mergeBookData(book, { duration: undefined });
+      expect(result.metaDots.some((d: string) => /\d+[hm]/.test(d))).toBe(false);
+    });
+  });
 });
