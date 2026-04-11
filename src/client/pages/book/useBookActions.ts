@@ -3,6 +3,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import { api, type UpdateBookPayload } from '@/lib/api';
 import { queryKeys } from '@/lib/queryKeys';
+import { getErrorMessage } from '@/lib/error-message.js';
 
 export function useBookActions(bookId: number, monitorForUpgrades: boolean) {
   const queryClient = useQueryClient();
@@ -113,11 +114,11 @@ export function useBookActions(bookId: number, monitorForUpgrades: boolean) {
           invalidateBookQueries();
           toast.success(renameResult.message);
         } catch (renameError: unknown) {
-          toast.error(`Rename failed: ${renameError instanceof Error ? renameError.message : 'Unknown error'}`);
+          toast.error(`Rename failed: ${getErrorMessage(renameError)}`);
         }
       }
     } catch (error: unknown) {
-      toast.error(`Failed to update book: ${error instanceof Error ? error.message : 'Unknown error'}`);
+      toast.error(`Failed to update book: ${getErrorMessage(error)}`);
     } finally {
       setIsSaving(false);
     }

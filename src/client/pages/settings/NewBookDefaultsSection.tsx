@@ -6,6 +6,7 @@ import { toast } from 'sonner';
 import type { z } from 'zod';
 import { api } from '@/lib/api';
 import { queryKeys } from '@/lib/queryKeys';
+import { getErrorMessage } from '@/lib/error-message.js';
 import { SparklesIcon } from '@/components/icons';
 import { ToggleSwitch } from '@/components/settings/ToggleSwitch';
 import { DEFAULT_SETTINGS, newBookDefaultsFormSchema } from '../../../shared/schemas.js';
@@ -43,7 +44,7 @@ export function NewBookDefaultsSection() {
       toast.success('New book defaults saved');
     },
     onError: (err) => {
-      toast.error(err instanceof Error ? err.message : 'Failed to save settings');
+      toast.error(getErrorMessage(err, 'Failed to save settings'));
     },
   });
 

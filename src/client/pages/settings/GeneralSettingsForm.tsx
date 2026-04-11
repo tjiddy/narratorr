@@ -6,6 +6,7 @@ import type { z } from 'zod';
 import { toast } from 'sonner';
 import { api } from '@/lib/api';
 import { queryKeys } from '@/lib/queryKeys';
+import { getErrorMessage } from '@/lib/error-message.js';
 import { ClockIcon, TerminalIcon } from '@/components/icons';
 import { SelectWithChevron } from '@/components/settings/SelectWithChevron';
 import { logLevelSchema, DEFAULT_SETTINGS, generalFormSchema } from '../../../shared/schemas.js';
@@ -47,7 +48,7 @@ export function GeneralSettingsForm() {
       toast.success('General settings saved');
     },
     onError: (err: unknown) => {
-      toast.error(err instanceof Error ? err.message : 'Failed to save settings');
+      toast.error(getErrorMessage(err, 'Failed to save settings'));
     },
   });
 

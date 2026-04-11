@@ -6,6 +6,7 @@ import { toast } from 'sonner';
 import { z } from 'zod';
 import { api } from '@/lib/api';
 import { queryKeys } from '@/lib/queryKeys';
+import { getErrorMessage } from '@/lib/error-message.js';
 import { FolderIcon } from '@/components/icons';
 import { PathInput } from '@/components/PathInput';
 import { ConfirmModal } from '@/components/ConfirmModal';
@@ -49,7 +50,7 @@ export function LibrarySettingsSection() {
       setShowRescanPrompt(true);
     },
     onError: (err) => {
-      toast.error(err instanceof Error ? err.message : 'Failed to save library path');
+      toast.error(getErrorMessage(err, 'Failed to save library path'));
     },
   });
 
@@ -60,7 +61,7 @@ export function LibrarySettingsSection() {
       queryClient.invalidateQueries({ queryKey: queryKeys.books() });
     },
     onError: (err) => {
-      toast.error(err instanceof Error ? err.message : 'Library scan failed');
+      toast.error(getErrorMessage(err, 'Library scan failed'));
     },
   });
 

@@ -6,6 +6,7 @@ import type { z } from 'zod';
 import { toast } from 'sonner';
 import { api } from '@/lib/api';
 import { queryKeys } from '@/lib/queryKeys';
+import { getErrorMessage } from '@/lib/error-message.js';
 import { ZapIcon } from '@/components/icons';
 import { DEFAULT_SETTINGS, qualityFormSchema } from '../../../shared/schemas.js';
 import { SettingsSection } from './SettingsSection';
@@ -47,7 +48,7 @@ export function QualitySettingsSection() {
       toast.success('Quality settings saved');
     },
     onError: (err) => {
-      toast.error(err instanceof Error ? err.message : 'Failed to save settings');
+      toast.error(getErrorMessage(err, 'Failed to save settings'));
     },
   });
 

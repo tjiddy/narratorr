@@ -6,6 +6,7 @@ import { z } from 'zod';
 import { toast } from 'sonner';
 import { api } from '@/lib/api';
 import { queryKeys } from '@/lib/queryKeys';
+import { getErrorMessage } from '@/lib/error-message.js';
 import { FORMAT_LABELS, MERGE_LABELS, TAG_MODE_LABELS } from '@/lib/constants';
 import { ZapIcon, CheckCircleIcon, AlertCircleIcon, LoadingSpinner } from '@/components/icons';
 import { FormField } from '@/components/settings/FormField';
@@ -168,7 +169,7 @@ export function ProcessingSettingsSection() {
       toast.success('Processing settings saved');
     },
     onError: (err) => {
-      toast.error(err instanceof Error ? err.message : 'Failed to save settings');
+      toast.error(getErrorMessage(err, 'Failed to save settings'));
     },
   });
 
@@ -188,7 +189,7 @@ export function ProcessingSettingsSection() {
       setProbeResult(result);
       toast.success(`ffmpeg ${result.version} detected`);
     } catch (error: unknown) {
-      const message = error instanceof Error ? error.message : 'ffmpeg probe failed';
+      const message = getErrorMessage(error, 'ffmpeg probe failed');
       setProbeError(message);
       toast.error(message);
     } finally {

@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { api, type MatchCandidate, type MatchResult, type MatchJobStatus } from '@/lib/api';
+import { getErrorMessage } from '@/lib/error-message.js';
 
 const POLL_INTERVAL = 2000;
 
@@ -69,12 +70,12 @@ export function useMatchJob(): UseMatchJobReturn {
           // Job may have expired — stop polling
           stopPolling();
           setIsMatching(false);
-          setError(error instanceof Error ? error.message : 'Unknown error');
+          setError(getErrorMessage(error));
         }
       }, POLL_INTERVAL);
     } catch (error: unknown) {
       setIsMatching(false);
-      setError(error instanceof Error ? error.message : 'Unknown error');
+      setError(getErrorMessage(error));
     }
   }, [cancel, handlePollResult, stopPolling]);
 
