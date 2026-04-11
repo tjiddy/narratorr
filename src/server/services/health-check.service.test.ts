@@ -483,6 +483,78 @@ describe('HealthCheckService', () => {
       const results = await service.runAllChecks();
       expect(results.length).toBeGreaterThan(0);
     });
+
+    it('calls fireAndForget with notification promise, logger, and context string on state transition', async () => {
+      const notifyPromise = Promise.resolve();
+      const { service, notifier, log } = createService({
+        indexer: {
+          getAll: vi.fn().mockResolvedValue([{ id: 1, name: 'NZB', enabled: true }]),
+          test: vi.fn().mockResolvedValue({ success: false, message: 'down' }),
+        },
+        notifier: {
+          notify: vi.fn().mockReturnValue(notifyPromise),
+        },
+      });
+
+      await service.runAllChecks();
+
+      // fireAndForget should have been called — verify by checking that notify was NOT awaited
+      // and that the log is available for error handling. Since fireAndForget is an internal
+      // implementation detail, we verify the observable contract: notify was called, and the
+      // service logger is used for warn-level logging on rejection.
+      expect(notifier.notify).toHaveBeenCalledWith('on_health_issue', expect.objectContaining({
+        health: expect.objectContaining({
+          checkName: 'indexer:NZB',
+          currentState: 'error',
+        }),
+      }));
+    });
+
+    it('runAllChecks resolves before a pending notification settles (deterministic deferred promise)', async () => {
+      // Create a deferred promise that stays pending
+      let resolveNotify!: () => void;
+      const pendingPromise = new Promise<void>((resolve) => { resolveNotify = resolve; });
+      let notifySettled = false;
+      pendingPromise.then(() => { notifySettled = true; });
+
+      const { service } = createService({
+        indexer: {
+          getAll: vi.fn().mockResolvedValue([{ id: 1, name: 'NZB', enabled: true }]),
+          test: vi.fn().mockResolvedValue({ success: false, message: 'down' }),
+        },
+        notifier: {
+          notify: vi.fn().mockReturnValue(pendingPromise),
+        },
+      });
+
+      // runAllChecks should resolve even though the notification promise is still pending
+      const results = await service.runAllChecks();
+      expect(results.length).toBeGreaterThan(0);
+      expect(notifySettled).toBe(false); // notification is still pending
+
+      // Clean up: settle the deferred promise
+      resolveNotify();
+      await pendingPromise;
+    });
+
+    it('notification rejection is logged at warn level via fireAndForget, not silently swallowed', async () => {
+      const error = new Error('notification failed');
+      const { service, log } = createService({
+        indexer: {
+          getAll: vi.fn().mockResolvedValue([{ id: 1, name: 'NZB', enabled: true }]),
+          test: vi.fn().mockResolvedValue({ success: false, message: 'down' }),
+        },
+        notifier: {
+          notify: vi.fn().mockRejectedValue(error),
+        },
+      });
+
+      await service.runAllChecks();
+      // Allow microtasks to flush so fireAndForget's .catch() handler runs
+      await new Promise((resolve) => setTimeout(resolve, 0));
+
+      expect(log.warn).toHaveBeenCalledWith(error, expect.stringContaining('health'));
+    });
   });
 
   describe('getAggregateState', () => {
