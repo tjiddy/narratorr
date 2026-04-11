@@ -1,12 +1,11 @@
 /* eslint-disable max-lines -- service covers scan, import, and enrichment pipelines */
-import { access, readdir, stat, mkdir, cp, rm } from 'node:fs/promises';
-import { join, extname, relative, resolve, isAbsolute } from 'node:path';
+import { access, mkdir, cp, rm } from 'node:fs/promises';
+import { join, relative, resolve, isAbsolute } from 'node:path';
 import type { Db } from '../../db/index.js';
 import type { FastifyBaseLogger } from 'fastify';
 import { books, authors, bookAuthors } from '../../db/schema.js';
 import { eq, inArray, and } from 'drizzle-orm';
 import { slugify } from '../../core/utils/parse.js';
-import { AUDIO_EXTENSIONS } from '../../core/utils/index.js';
 import { discoverBooks } from '../../core/utils/book-discovery.js';
 import type { BookService } from './book.service.js';
 import type { MetadataService } from './metadata.service.js';
@@ -14,8 +13,8 @@ import type { SettingsService } from './settings.service.js';
 import type { BookMetadata } from '../../core/metadata/index.js';
 import { buildTargetPath, getPathSize } from '../utils/import-helpers.js';
 import { toNamingOptions } from '../../core/utils/naming.js';
-import { enrichBookFromAudio } from './enrichment-utils.js';
-import { resolveFfprobePathFromSettings } from '../../core/utils/ffprobe-path.js';
+import { orchestrateBookEnrichment, buildBookCreatePayload } from './enrichment-orchestration.helper.js';
+import { findAudioLeafFolders, getAudioStats, buildDiscoveredBook } from './library-scan.helpers.js';
 import type { EventHistoryService } from './event-history.service.js';
 import { getErrorMessage } from '../utils/error-message.js';
 import { searchWithSwapRetry } from '../utils/search-helpers.js';
@@ -75,6 +74,10 @@ export class LibraryScanService {
     private log: FastifyBaseLogger,
     private eventHistory: EventHistoryService,
   ) {}
+
+  private get enrichmentDeps(): import('./enrichment-orchestration.helper.js').EnrichmentDeps {
+    return { db: this.db, log: this.log, settingsService: this.settingsService, bookService: this.bookService, metadataService: this.metadataService };
+  }
 
   /**
    * Rescan library — verify each book's path exists on disk, mark missing/restored.
@@ -186,7 +189,7 @@ export class LibraryScanService {
       // Check for duplicates by path (in-memory Map lookup)
       if (existingPathMap.has(folder.path)) {
         this.log.debug({ path: folder.path }, 'Duplicate detected (path match)');
-        discoveries.push(this.buildDiscoveredBook(
+        discoveries.push(buildDiscoveredBook(
           folder.path, parsed, folder.audioFileCount, folder.totalSize,
           true, existingPathMap.get(folder.path), 'path',
         ));
@@ -199,7 +202,7 @@ export class LibraryScanService {
         const key = `${parsed.title.toLowerCase()}|${authorSlug}`;
         if (existingTitleAuthorMap.has(key)) {
           this.log.debug({ path: folder.path, title: parsed.title, author: parsed.author }, 'Duplicate detected (title+author match)');
-          discoveries.push(this.buildDiscoveredBook(
+          discoveries.push(buildDiscoveredBook(
             folder.path, parsed, folder.audioFileCount, folder.totalSize,
             true, existingTitleAuthorMap.get(key), 'slug',
           ));
@@ -209,7 +212,7 @@ export class LibraryScanService {
         // Check for within-scan duplicates (same title+author seen earlier in this scan)
         if (withinScanSlugMap.has(key)) {
           this.log.debug({ path: folder.path, title: parsed.title, author: parsed.author }, 'Duplicate detected (within-scan title+author match)');
-          discoveries.push(this.buildDiscoveredBook(
+          discoveries.push(buildDiscoveredBook(
             folder.path, parsed, folder.audioFileCount, folder.totalSize,
             true, undefined, 'within-scan', withinScanSlugMap.get(key),
           ));
@@ -228,7 +231,7 @@ export class LibraryScanService {
         'Discovered book folder',
       );
 
-      discoveries.push(this.buildDiscoveredBook(
+      discoveries.push(buildDiscoveredBook(
         folder.path, parsed, folder.audioFileCount, folder.totalSize, false,
       ));
     }
@@ -252,7 +255,7 @@ export class LibraryScanService {
   async scanSingleBook(folderPath: string): Promise<SingleBookResult> {
     this.log.info({ folderPath }, 'Scanning single book folder');
 
-    const leafFolders = await this.findAudioLeafFolders(folderPath);
+    const leafFolders = await findAudioLeafFolders(folderPath, this.log);
 
     if (leafFolders.length === 0) {
       throw new Error('No audio files found in this folder');
@@ -274,9 +277,9 @@ export class LibraryScanService {
       ? parseFolderStructure(parts)
       : parseFolderStructure([folderPath.split(/[/\\]/).filter(Boolean).pop() || 'Unknown']);
 
-    const { fileCount, totalSize } = await this.getAudioStats(bookPath);
+    const { fileCount, totalSize } = await getAudioStats(bookPath, this.log);
 
-    const book = this.buildDiscoveredBook(bookPath, parsed, fileCount, totalSize, false);
+    const book = buildDiscoveredBook(bookPath, parsed, fileCount, totalSize, false);
 
     // Look up metadata providers
     const metadata = await this.lookupMetadata(parsed.title, parsed.author || undefined, parsed.asin);
@@ -346,7 +349,6 @@ export class LibraryScanService {
     }
   }
 
-  // eslint-disable-next-line complexity -- copy/move + enrich + audnexus + event pipeline, same as processOneImport
   private async enrichImportedBook(
     item: ImportConfirmItem,
     book: { id: number; narrators?: Array<{ name: string }> | null; duration?: number | null; coverUrl?: string | null; genres?: string[] | null },
@@ -360,34 +362,21 @@ export class LibraryScanService {
     }
 
     // Set the path and size
-    const stats = await this.getAudioStats(finalPath);
+    const stats = await getAudioStats(finalPath, this.log);
     await this.db.update(books).set({
       path: finalPath,
       size: stats.totalSize,
       updatedAt: new Date(),
     }).where(eq(books.id, book.id));
 
-    // Enrich with audio file metadata
-    const processingSettings = await this.settingsService.get('processing');
-    const ffprobePath = resolveFfprobePathFromSettings(processingSettings?.ffmpegPath);
-    const audioResult = await enrichBookFromAudio(
+    // Shared enrichment: audio metadata → audnexus
+    const { audioEnriched } = await orchestrateBookEnrichment(
       book.id,
       finalPath,
-      { narrators: book.narrators ?? null, duration: book.duration ?? null, coverUrl: book.coverUrl ?? null },
-      this.db,
-      this.log,
-      this.bookService,
-      ffprobePath,
+      { narrators: book.narrators ?? null, duration: book.duration ?? null, coverUrl: book.coverUrl ?? null, existingGenres: book.genres ?? null },
+      this.enrichmentDeps,
+      { primaryAsin: item.asin || meta?.asin, alternateAsins: meta?.alternateAsins, existingNarrator: book.narrators?.[0]?.name ?? null, existingDuration: book.duration, existingGenres: book.genres ?? null },
     );
-
-    // Audnexus enrichment
-    await this.applyAudnexusEnrichment(book.id, {
-      primaryAsin: item.asin || meta?.asin,
-      alternateAsins: meta?.alternateAsins,
-      existingNarrator: book.narrators?.[0]?.name ?? null,
-      existingDuration: book.duration,
-      existingGenres: book.genres ?? null,
-    });
 
     // Record success event (fire-and-forget)
     this.eventHistory.create({
@@ -401,8 +390,8 @@ export class LibraryScanService {
       reason: { targetPath: resolve(finalPath), mode: mode ?? 'pointer' },
     }).catch(err => this.log.warn({ err }, 'Failed to record manual import event'));
 
-    this.log.info({ bookId: book.id, title: item.title, enriched: audioResult.enriched, mode: mode ?? 'pointer' }, 'Single book imported');
-    return audioResult.enriched;
+    this.log.info({ bookId: book.id, title: item.title, enriched: audioEnriched, mode: mode ?? 'pointer' }, 'Single book imported');
+    return audioEnriched;
   }
 
   /**
@@ -557,7 +546,6 @@ export class LibraryScanService {
     }
   }
 
-  // eslint-disable-next-line complexity -- copy/move + enrich + audnexus pipeline, barely over threshold
   private async processOneImport(bookId: number, item: ImportConfirmItem, mode?: ImportMode): Promise<void> {
     this.log.debug({ bookId, title: item.title, mode: mode ?? 'pointer' }, 'Processing import');
 
@@ -577,7 +565,7 @@ export class LibraryScanService {
     }
 
     // Set the path and size
-    const stats = await this.getAudioStats(finalPath);
+    const stats = await getAudioStats(finalPath, this.log);
     this.log.debug({ bookId, finalPath, fileCount: stats.fileCount, totalSize: stats.totalSize }, 'Audio stats collected');
     await this.db.update(books).set({
       path: finalPath,
@@ -585,23 +573,18 @@ export class LibraryScanService {
       updatedAt: new Date(),
     }).where(eq(books.id, bookId));
 
-    // Enrich with audio file metadata (WITH cover extraction)
-    this.log.debug({ bookId }, 'Starting audio enrichment');
-    const processingSettings2 = await this.settingsService.get('processing');
-    const ffprobePath2 = resolveFfprobePathFromSettings(processingSettings2?.ffmpegPath);
-    await enrichBookFromAudio(bookId, finalPath, { narrators: narratorName ? [{ name: narratorName }] : null, duration, coverUrl }, this.db, this.log, this.bookService, ffprobePath2);
-
     // Read current genres from DB (may have been filled since placeholder creation)
     const [currentBook] = await this.db.select({ genres: books.genres }).from(books).where(eq(books.id, bookId)).limit(1);
 
-    // Audnexus enrichment
-    await this.applyAudnexusEnrichment(bookId, {
-      primaryAsin,
-      alternateAsins: meta?.alternateAsins,
-      existingNarrator: narratorName,
-      existingDuration: duration,
-      existingGenres: currentBook?.genres ?? null,
-    });
+    // Shared enrichment: audio metadata → audnexus
+    this.log.debug({ bookId }, 'Starting audio enrichment');
+    await orchestrateBookEnrichment(
+      bookId,
+      finalPath,
+      { narrators: narratorName ? [{ name: narratorName }] : null, duration, coverUrl, existingGenres: currentBook?.genres ?? null },
+      this.enrichmentDeps,
+      { primaryAsin, alternateAsins: meta?.alternateAsins, existingNarrator: narratorName, existingDuration: duration, existingGenres: currentBook?.genres ?? null },
+    );
 
     // Success — mark as imported
     await this.db.update(books).set({
@@ -681,172 +664,6 @@ export class LibraryScanService {
     }
   }
 
-  /**
-   * Walk directory tree and find leaf folders containing audio files.
-   * A "leaf folder" is a folder containing audio files (it may have subfolders too,
-   * but if it directly contains audio files, it's treated as a book folder).
-   */
-  private async findAudioLeafFolders(dirPath: string): Promise<string[]> {
-    const results: string[] = [];
-
-    try {
-      const entries = await readdir(dirPath, { withFileTypes: true });
-      const hasAudioFiles = entries.some(
-        (e) => e.isFile() && AUDIO_EXTENSIONS.has(extname(e.name).toLowerCase()),
-      );
-
-      if (hasAudioFiles) {
-        // This folder contains audio files — it's a book folder
-        results.push(dirPath);
-      } else {
-        // No audio files here — recurse into subdirectories
-        for (const entry of entries) {
-          if (entry.isDirectory() && !entry.name.startsWith('.')) {
-            const subResults = await this.findAudioLeafFolders(join(dirPath, entry.name));
-            results.push(...subResults);
-          }
-        }
-      }
-    } catch (error: unknown) {
-      this.log.warn({ error, path: dirPath }, 'Error scanning directory');
-    }
-
-    return results;
-  }
-
-  private async getAudioStats(dirPath: string): Promise<{ fileCount: number; totalSize: number }> {
-    let fileCount = 0;
-    let totalSize = 0;
-
-    try {
-      const entries = await readdir(dirPath, { withFileTypes: true });
-      for (const entry of entries) {
-        const entryPath = join(dirPath, entry.name);
-        if (entry.isFile()) {
-          if (AUDIO_EXTENSIONS.has(extname(entry.name).toLowerCase())) {
-            fileCount++;
-          }
-          const s = await stat(entryPath);
-          totalSize += s.size;
-        } else if (entry.isDirectory()) {
-          const sub = await this.getAudioStats(entryPath);
-          fileCount += sub.fileCount;
-          totalSize += sub.totalSize;
-        }
-      }
-    } catch (error: unknown) {
-      this.log.warn({ error, path: dirPath }, 'Error getting audio stats');
-    }
-
-    return { fileCount, totalSize };
-  }
-
-  /** Build a DiscoveredBook from parsed folder data and optional duplicate info. */
-  private buildDiscoveredBook(
-    path: string,
-    parsed: { title: string; author: string | null; series: string | null },
-    fileCount: number,
-    totalSize: number,
-    isDuplicate: boolean,
-    existingBookId?: number,
-    duplicateReason?: 'path' | 'slug' | 'within-scan',
-    duplicateFirstPath?: string,
-  ): DiscoveredBook {
-    return {
-      path,
-      parsedTitle: parsed.title,
-      parsedAuthor: parsed.author,
-      parsedSeries: parsed.series,
-      fileCount,
-      totalSize,
-      isDuplicate,
-      ...(existingBookId !== undefined && { existingBookId }),
-      ...(duplicateReason !== undefined && { duplicateReason }),
-      ...(duplicateFirstPath !== undefined && { duplicateFirstPath }),
-    };
-  }
-
-  /**
-   * Apply Audnexus enrichment — try primary ASIN, then alternates.
-   * Updates narrator/duration if not already present.
-   */
-  private async applyAudnexusEnrichment(
-    bookId: number,
-    opts: {
-      primaryAsin?: string | null;
-      alternateAsins?: string[];
-      existingNarrator?: string | null;
-      existingDuration?: number | null;
-      existingGenres?: string[] | null;
-    },
-  ): Promise<void> {
-    const asinsToTry = [opts.primaryAsin, ...(opts.alternateAsins ?? [])].filter((a): a is string => !!a);
-    if (asinsToTry.length === 0) return;
-
-    for (const asin of asinsToTry) {
-      try {
-        const data = await this.metadataService.enrichBook(asin);
-        if (data) {
-          await this.applyEnrichmentData(bookId, asin, data, opts);
-          break;
-        }
-      } catch (error: unknown) {
-        this.log.warn({ error, bookId, asin }, 'Audnexus enrichment failed');
-      }
-    }
-  }
-
-  private async applyEnrichmentData(
-    bookId: number,
-    asin: string,
-    data: { duration?: number; narrators?: string[]; genres?: string[] },
-    opts: { primaryAsin?: string | null; existingNarrator?: string | null; existingDuration?: number | null; existingGenres?: string[] | null },
-  ): Promise<void> {
-    const updates: Partial<{ enrichmentStatus: string; asin: string; duration: number; updatedAt: Date }> = {
-      enrichmentStatus: 'enriched',
-      updatedAt: new Date(),
-    };
-    if (asin !== opts.primaryAsin) updates.asin = asin;
-    if (!opts.existingDuration && data.duration) {
-      updates.duration = data.duration;
-    }
-    await this.db.update(books).set(updates).where(eq(books.id, bookId));
-    if (!opts.existingNarrator && data.narrators?.length) {
-      await this.bookService.update(bookId, { narrators: data.narrators });
-    }
-    if (data.genres?.length && !opts.existingGenres?.length) {
-      await this.bookService.update(bookId, { genres: data.genres });
-    }
-    this.log.info({ bookId, asin, wasAlternate: asin !== opts.primaryAsin }, 'Audnexus enrichment applied');
-  }
-}
-
-// eslint-disable-next-line complexity -- flat metadata coalescing across item + meta sources
-function buildBookCreatePayload(
-  item: ImportConfirmItem,
-  meta: BookMetadata | null,
-  status: 'imported' | 'importing',
-) {
-  return {
-    title: item.title,
-    // When metadata provides multiple authors (co-authored books), preserve the full array.
-    // For single-author metadata, defer to the parsed folder author (allows user override).
-    authors: (meta?.authors && meta.authors.length > 1)
-      ? meta.authors
-      : (item.authorName ? [{ name: item.authorName }] : (meta?.authors?.length ? meta.authors : [])),
-    narrators: meta?.narrators,
-    seriesName: item.seriesName || meta?.series?.[0]?.name,
-    seriesPosition: meta?.series?.[0]?.position,
-    coverUrl: item.coverUrl || meta?.coverUrl,
-    asin: item.asin || meta?.asin,
-    isbn: meta?.isbn,
-    description: meta?.description,
-    duration: meta?.duration,
-    publishedDate: meta?.publishedDate,
-    genres: meta?.genres,
-    providerId: meta?.providerId,
-    status,
-  };
 }
 
 // Re-export parsing utilities from shared module (extracted for reuse by scan-debug endpoint)
