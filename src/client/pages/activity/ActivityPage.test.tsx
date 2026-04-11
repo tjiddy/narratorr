@@ -1671,3 +1671,23 @@ describe('#478 cancel merge error recovery', () => {
     vi.mocked(useMergeActivityCards).mockReturnValue([]);
   });
 });
+
+describe('ActivityPage tab buttons (#488)', () => {
+  it('tab buttons render with type="button" attribute', async () => {
+    vi.mocked(api.getActivity).mockResolvedValue({ data: [], total: 0 });
+    vi.mocked(api.getEventHistory).mockResolvedValue({ data: [], total: 0 });
+
+    renderWithProviders(<ActivityPage />);
+
+    // Wait for data to load so tabs render (they're behind the loading guard)
+    await waitFor(() => {
+      expect(screen.getByText('Downloads')).toBeInTheDocument();
+    });
+
+    const downloadsTab = screen.getByText('Downloads').closest('button')!;
+    const eventsTab = screen.getByText('Event History').closest('button')!;
+
+    expect(downloadsTab).toHaveAttribute('type', 'button');
+    expect(eventsTab).toHaveAttribute('type', 'button');
+  });
+});

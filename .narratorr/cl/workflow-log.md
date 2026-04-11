@@ -1,5 +1,34 @@
 # Workflow Log
 
+## #488 Polish: ActivityPage type=button, SecuritySettings ConfirmModal, useImportPolling SSE — 2026-04-11
+**Skill path:** /implement → /claim → /plan → /handoff
+**Outcome:** success — PR #494
+
+### Metrics
+- Files changed: 6 | Tests added/modified: 13 new tests across 3 test files
+- Quality gate runs: 2 (pass on attempt 1 both times)
+- Fix iterations: 1 (ActivityPage test needed getEventHistory mock + text-based button query instead of role-based)
+- Context compactions: 0
+
+### Workflow experience
+- What went smoothly: Three isolated changes with clear prior art. ConfirmModal migration was straightforward — existing component, 20+ usage examples.
+- Friction / issues encountered: ActivityPage test button query — `getByRole('button', { name: /downloads/i })` failed because the buttons contain icon SVGs that affect accessible name computation. Solved by using `getByText('Downloads').closest('button')`.
+
+### Token efficiency
+- Highest-token actions: Reading SecuritySettings source + test files to understand full confirm panel and mutation patterns
+- Avoidable waste: None — the elaborate/spec-review rounds in the previous conversation had already validated all assumptions
+- Suggestions: For polish issues with multiple small fixes, the three-module TDD approach works cleanly
+
+### Infrastructure gaps
+- Repeated workarounds: None
+- Missing tooling / config: None
+- Unresolved debt: None introduced
+
+### Wish I'd Known
+1. ActivityPage test file scopes `beforeEach` mocks inside the main `describe` — new top-level describes need their own mock setup (see `activitypage-tab-button-test-setup.md`)
+2. ConfirmModal migration changes DOM structure enough to break text-based assertions — always grep for old inline panel text in tests (see `confirm-modal-migration-test-impact.md`)
+3. Trivial issue overall — prior art (ConfirmModal, useSSEConnected) made all three fixes copy-paste-adapt
+
 ## #480 Bug: LibraryPage silently shows empty state on query error — 2026-04-11
 **Skill path:** /implement → /claim → /plan → /handoff
 **Outcome:** success — PR #493

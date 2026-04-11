@@ -14,6 +14,7 @@ import {
 } from '@/components/icons';
 import { SettingsSection } from './SettingsSection';
 import { CredentialsSection } from './CredentialsSection';
+import { ConfirmModal } from '@/components/ConfirmModal';
 import { useMutationWithToast } from '@/hooks/useMutationWithToast';
 
 const MODE_LABELS: Record<AuthMode, string> = {
@@ -134,29 +135,15 @@ function AuthModeSection({
         })}
       </div>
 
-      {/* Confirmation dialog for disabling auth */}
-      {showConfirm && (
-        <div className="mt-4 p-4 rounded-xl border border-amber-500/40 bg-amber-500/10 animate-fade-in">
-          <p className="text-sm font-medium text-amber-600 dark:text-amber-400 mb-3">
-            Are you sure you want to disable authentication? Your instance will be accessible without credentials.
-          </p>
-          <div className="flex gap-2">
-            <button
-              onClick={() => pendingMode && mutation.mutate(pendingMode)}
-              disabled={mutation.isPending}
-              className="px-4 py-2.5 rounded-xl bg-amber-500 text-white text-sm font-medium hover:bg-amber-600 transition-colors shadow-sm"
-            >
-              {mutation.isPending ? 'Updating...' : 'Disable Auth'}
-            </button>
-            <button
-              onClick={() => { setShowConfirm(false); setPendingMode(null); }}
-              className="px-4 py-2.5 rounded-xl border border-border text-sm font-medium hover:bg-muted transition-colors"
-            >
-              Cancel
-            </button>
-          </div>
-        </div>
-      )}
+      <ConfirmModal
+        isOpen={showConfirm}
+        title="Disable authentication?"
+        message="Your instance will be accessible without credentials."
+        confirmLabel={mutation.isPending ? 'Updating...' : 'Disable Auth'}
+        confirmDisabled={mutation.isPending}
+        onConfirm={() => pendingMode && mutation.mutate(pendingMode)}
+        onCancel={() => { setShowConfirm(false); setPendingMode(null); }}
+      />
     </SettingsSection>
   );
 }
@@ -252,36 +239,23 @@ function ApiKeySection({ apiKey }: { apiKey: string }) {
         </button>
       </div>
 
-      {!showConfirm ? (
-        <button
-          onClick={() => setShowConfirm(true)}
-          className="flex items-center gap-2 px-4 py-2.5 text-sm font-medium text-amber-600 dark:text-amber-400 border border-amber-500/30 rounded-xl hover:bg-amber-500/10 transition-all duration-200"
-        >
-          <RefreshIcon className="w-4 h-4" />
-          Regenerate API Key
-        </button>
-      ) : (
-        <div className="p-4 rounded-xl border border-amber-500/40 bg-amber-500/10 animate-fade-in">
-          <p className="text-sm text-amber-600 dark:text-amber-400 mb-3">
-            Regenerating will invalidate the current key. Any integrations using it will need to be updated.
-          </p>
-          <div className="flex gap-2">
-            <button
-              onClick={() => mutation.mutate()}
-              disabled={mutation.isPending}
-              className="px-4 py-2.5 rounded-xl bg-amber-500 text-white text-sm font-medium hover:bg-amber-600 transition-colors shadow-sm"
-            >
-              {mutation.isPending ? 'Regenerating...' : 'Confirm Regenerate'}
-            </button>
-            <button
-              onClick={() => setShowConfirm(false)}
-              className="px-4 py-2.5 rounded-xl border border-border text-sm font-medium hover:bg-muted transition-colors"
-            >
-              Cancel
-            </button>
-          </div>
-        </div>
-      )}
+      <button
+        type="button"
+        onClick={() => setShowConfirm(true)}
+        className="flex items-center gap-2 px-4 py-2.5 text-sm font-medium text-amber-600 dark:text-amber-400 border border-amber-500/30 rounded-xl hover:bg-amber-500/10 transition-all duration-200"
+      >
+        <RefreshIcon className="w-4 h-4" />
+        Regenerate API Key
+      </button>
+      <ConfirmModal
+        isOpen={showConfirm}
+        title="Regenerate API key?"
+        message="Regenerating will invalidate the current key. Any integrations using it will need to be updated."
+        confirmLabel={mutation.isPending ? 'Regenerating...' : 'Confirm Regenerate'}
+        confirmDisabled={mutation.isPending}
+        onConfirm={() => mutation.mutate()}
+        onCancel={() => setShowConfirm(false)}
+      />
     </SettingsSection>
   );
 }

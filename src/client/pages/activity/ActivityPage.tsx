@@ -84,6 +84,7 @@ export function ActivityPage() {
       <div className="flex justify-center animate-fade-in-up stagger-1">
         <div className="inline-flex items-center glass-card rounded-xl p-1 gap-1">
           <button
+            type="button"
             onClick={() => setTab('downloads')}
             className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
               tab === 'downloads'
@@ -95,6 +96,7 @@ export function ActivityPage() {
             Downloads
           </button>
           <button
+            type="button"
             onClick={() => setTab('events')}
             className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
               tab === 'events'
