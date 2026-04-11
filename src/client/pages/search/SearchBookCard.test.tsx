@@ -74,6 +74,16 @@ describe('SearchBookCard', () => {
     expect(screen.queryByText('Romance')).not.toBeInTheDocument();
   });
 
+  it('renders formatted duration badge', () => {
+    renderCard({ duration: 90 });
+    expect(screen.getByText('1h 30m')).toBeInTheDocument();
+  });
+
+  it('hides duration badge when duration is falsy', () => {
+    renderCard({ duration: null });
+    expect(screen.queryByText(/\d+[hm]/)).not.toBeInTheDocument();
+  });
+
   it('shows Add button when not in library', () => {
     renderCard();
     expect(screen.getByRole('button')).toBeInTheDocument();
