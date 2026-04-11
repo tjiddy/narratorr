@@ -1640,16 +1640,30 @@ describe('#478 cancel merge error recovery', () => {
     vi.mocked(useMergeActivityCards).mockReturnValue([
       { bookId: 42, bookTitle: 'Merge Book', phase: 'processing', percentage: 0.5 },
     ]);
-    vi.mocked(api.cancelMergeBook).mockRejectedValue(new Error('Server error'));
+
+    // Use a deferred promise so we can observe the disabled state before rejection settles
+    let rejectFn!: (err: Error) => void;
+    vi.mocked(api.cancelMergeBook).mockReturnValue(
+      new Promise((_resolve, reject) => { rejectFn = reject; }) as Promise<{ success: boolean }>,
+    );
     vi.mocked(api.getActivity).mockResolvedValue({ data: [], total: 0 });
 
     renderWithProviders(<ActivityPage />);
     await waitFor(() => expect(screen.getByText('Merge Book')).toBeInTheDocument());
 
     const cancelButton = screen.getByRole('button', { name: /cancel merge/i });
+    expect(cancelButton).not.toBeDisabled();
+
     await user.click(cancelButton);
 
-    // After error settles, button should be re-enabled (not disabled)
+    // While the mutation is pending, the button should be disabled (cancellingMergeBookId is set)
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: /cancel merge/i })).toBeDisabled();
+    });
+
+    // Now reject the promise and verify the button re-enables
+    await act(async () => { rejectFn(new Error('Server error')); });
+
     await waitFor(() => {
       expect(screen.getByRole('button', { name: /cancel merge/i })).not.toBeDisabled();
     });
