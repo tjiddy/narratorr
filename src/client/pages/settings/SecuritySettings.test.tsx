@@ -849,6 +849,27 @@ describe('SecuritySettings', () => {
       await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
       expect(api.updateAuthConfig).not.toHaveBeenCalled();
     });
+
+    it('confirm button is disabled and shows pending label while mutation is in flight', async () => {
+      (api.getAuthConfig as ReturnType<typeof vi.fn>).mockResolvedValue({ ...mockConfig, mode: 'forms' });
+      (api.getAuthStatus as ReturnType<typeof vi.fn>).mockResolvedValue({ ...mockStatus, mode: 'forms', hasUser: true });
+      // Never-resolving promise keeps mutation pending
+      (api.updateAuthConfig as ReturnType<typeof vi.fn>).mockReturnValue(new Promise(() => {}));
+      const user = userEvent.setup();
+      renderWithProviders(<SecuritySettings />);
+
+      await waitFor(() => expect(screen.getByText('Authentication Mode')).toBeInTheDocument());
+
+      await user.click(screen.getByLabelText('None (No Authentication)'));
+      await waitFor(() => expect(screen.getByRole('dialog')).toBeInTheDocument());
+
+      await user.click(screen.getByRole('button', { name: /disable auth/i }));
+
+      await waitFor(() => {
+        const confirmBtn = screen.getByRole('button', { name: /updating/i });
+        expect(confirmBtn).toBeDisabled();
+      });
+    });
   });
 
   describe('ConfirmModal for API key regeneration (#488)', () => {
@@ -914,6 +935,25 @@ describe('SecuritySettings', () => {
       // Modal stays open for retry
       expect(screen.getByRole('dialog')).toBeInTheDocument();
       expect(screen.getByRole('button', { name: /confirm regenerate/i })).toBeInTheDocument();
+    });
+
+    it('confirm button is disabled and shows pending label while regeneration is in flight', async () => {
+      // Never-resolving promise keeps mutation pending
+      (api.authRegenerateApiKey as ReturnType<typeof vi.fn>).mockReturnValue(new Promise(() => {}));
+      const user = userEvent.setup();
+      renderWithProviders(<SecuritySettings />);
+
+      await waitFor(() => expect(screen.getByText('API Key')).toBeInTheDocument());
+
+      await user.click(screen.getByRole('button', { name: /regenerate api key/i }));
+      await waitFor(() => expect(screen.getByRole('dialog')).toBeInTheDocument());
+
+      await user.click(screen.getByRole('button', { name: /confirm regenerate/i }));
+
+      await waitFor(() => {
+        const confirmBtn = screen.getByRole('button', { name: /regenerating/i });
+        expect(confirmBtn).toBeDisabled();
+      });
     });
   });
 });

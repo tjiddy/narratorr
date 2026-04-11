@@ -139,7 +139,8 @@ function AuthModeSection({
         isOpen={showConfirm}
         title="Disable authentication?"
         message="Your instance will be accessible without credentials."
-        confirmLabel="Disable Auth"
+        confirmLabel={mutation.isPending ? 'Updating...' : 'Disable Auth'}
+        confirmDisabled={mutation.isPending}
         onConfirm={() => pendingMode && mutation.mutate(pendingMode)}
         onCancel={() => { setShowConfirm(false); setPendingMode(null); }}
       />
@@ -250,7 +251,8 @@ function ApiKeySection({ apiKey }: { apiKey: string }) {
         isOpen={showConfirm}
         title="Regenerate API key?"
         message="Regenerating will invalidate the current key. Any integrations using it will need to be updated."
-        confirmLabel="Confirm Regenerate"
+        confirmLabel={mutation.isPending ? 'Regenerating...' : 'Confirm Regenerate'}
+        confirmDisabled={mutation.isPending}
         onConfirm={() => mutation.mutate()}
         onCancel={() => setShowConfirm(false)}
       />

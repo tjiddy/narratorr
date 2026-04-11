@@ -9,6 +9,7 @@ interface ConfirmModalProps {
   message: string;
   confirmLabel?: string;
   cancelLabel?: string;
+  confirmDisabled?: boolean;
   onConfirm: () => void;
   onCancel: () => void;
   children?: ReactNode;
@@ -39,6 +40,7 @@ export function ConfirmModal({
   message,
   confirmLabel = 'Delete',
   cancelLabel = 'Cancel',
+  confirmDisabled,
   onConfirm,
   onCancel,
   children,
@@ -91,6 +93,7 @@ export function ConfirmModal({
             size="md"
             type="button"
             onClick={onConfirm}
+            disabled={confirmDisabled}
             className="flex-1 text-sm"
           >
             {confirmLabel}
