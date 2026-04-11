@@ -1,5 +1,5 @@
 import { CoverImage } from '@/components/CoverImage';
-import { formatDuration } from '@/lib/helpers';
+import { formatDurationMinutes } from '@/lib/format';
 import type { SuggestionRow } from '@/lib/api';
 import {
   BookOpenIcon,
@@ -11,7 +11,7 @@ import {
 
 function formatDurationFromSeconds(seconds: number | null): string | null {
   if (!seconds) return null;
-  return formatDuration(Math.round(seconds / 60));
+  return formatDurationMinutes(Math.round(seconds / 60));
 }
 
 export function SuggestionCard({

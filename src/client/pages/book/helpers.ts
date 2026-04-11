@@ -1,4 +1,4 @@
-import { formatDuration } from '@/lib/helpers';
+import { formatDurationMinutes } from '@/lib/format';
 import { bookStatusConfig } from '@/lib/status';
 import type { BookWithAuthor } from '@/lib/api';
 
@@ -20,7 +20,7 @@ export function mergeBookData(libraryBook: BookWithAuthor, metadataBook?: Metada
   const genres = libraryBook.genres ?? metadataBook?.genres;
   const seriesName = libraryBook.seriesName || metadataBook?.series?.[0]?.name;
   const seriesPosition = libraryBook.seriesPosition ?? metadataBook?.series?.[0]?.position;
-  const duration = formatDuration(libraryBook.duration ?? metadataBook?.duration);
+  const duration = formatDurationMinutes(libraryBook.duration ?? metadataBook?.duration);
   const publisher = metadataBook?.publisher;
   const status = bookStatusConfig[libraryBook.status] ?? bookStatusConfig.wanted;
   const narratorNames = (libraryBook.narrators.length > 0 ? libraryBook.narrators.map((n) => n.name).join(', ') : null) || metadataBook?.narrators?.join(', ');

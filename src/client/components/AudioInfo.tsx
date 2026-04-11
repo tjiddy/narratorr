@@ -1,14 +1,7 @@
 import type { BookWithAuthor } from '@/lib/api';
 import { HeadphonesIcon, PackageIcon } from '@/components/icons';
 import { formatBytes, calculateQuality, resolveBookQualityInputs, qualityTierBg } from '@core/utils/index.js';
-
-function formatDurationLong(seconds: number): string {
-  const h = Math.floor(seconds / 3600);
-  const m = Math.floor((seconds % 3600) / 60);
-  if (h === 0) return `${m}m`;
-  if (m === 0) return `${h}h`;
-  return `${h}h ${m}m`;
-}
+import { formatDurationSeconds, formatChannels } from '@/lib/format';
 
 function formatBitrate(bps: number): string {
   return `${Math.round(bps / 1000)} kbps`;
@@ -16,12 +9,6 @@ function formatBitrate(bps: number): string {
 
 function formatSampleRate(hz: number): string {
   return `${(hz / 1000).toFixed(1)} kHz`;
-}
-
-function formatChannels(channels: number): string {
-  if (channels === 1) return 'Mono';
-  if (channels === 2) return 'Stereo';
-  return `${channels}ch`;
 }
 
 function buildAudioParts(book: BookWithAuthor): { techParts: string[]; fileParts: string[] } {
@@ -32,7 +19,7 @@ function buildAudioParts(book: BookWithAuthor): { techParts: string[]; fileParts
   const channels = book.audioChannels ? formatChannels(book.audioChannels) : null;
   const fileCount = book.audioFileCount;
   const totalSize = book.audioTotalSize ? formatBytes(book.audioTotalSize) : null;
-  const duration = book.audioDuration ? formatDurationLong(book.audioDuration) : null;
+  const duration = book.audioDuration ? formatDurationSeconds(book.audioDuration, { alwaysShowBoth: false }) : null;
 
   const techParts = [codec, bitrate && bitrateMode ? `${bitrate} ${bitrateMode}` : bitrate, sampleRate, channels].filter(Boolean) as string[];
   const fileParts = [
