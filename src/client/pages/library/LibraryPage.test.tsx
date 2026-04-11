@@ -2483,3 +2483,21 @@ describe('LibraryPage — URL param restoration (#352)', () => {
     });
   });
 });
+
+describe('LibraryPage — error states (#480)', () => {
+  describe('books query failure', () => {
+    it.todo('shows error state when getBooks rejects on initial load');
+    it.todo('does not show EmptyLibraryState when getBooks rejects');
+    it.todo('does not show NoMatchState or book list when getBooks rejects');
+    it.todo('error state includes descriptive message (not "Your library is empty")');
+  });
+
+  describe('stats query failure with successful books query', () => {
+    it.todo('renders books normally when getBookStats rejects but getBooks returns books');
+    it.todo('shows EmptyLibraryState when getBookStats rejects and getBooks returns empty array');
+  });
+
+  describe('loading vs error precedence', () => {
+    it.todo('shows loading spinner while isLoading is true, not error state');
+  });
+});
