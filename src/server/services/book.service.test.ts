@@ -1516,7 +1516,38 @@ describe('BookService — transaction atomicity (#214)', () => {
     });
 
     // #477 — cover-upload edge cases
-    it.todo('still succeeds when readdir rejects (ENOENT) — .catch(() => []) fallback exercised');
-    it.todo('still succeeds when stale sibling unlink rejects (EACCES) — best-effort cleanup swallowed');
+    it('still succeeds when readdir rejects (ENOENT) — .catch(() => []) fallback exercised', async () => {
+      vi.mocked(readdir).mockReset();
+      vi.mocked(rename).mockReset();
+      vi.mocked(writeFile).mockReset();
+      vi.mocked(unlink).mockReset();
+      setupUploadMocks('/library/book');
+      vi.mocked(readdir).mockRejectedValue(new Error('ENOENT: no such file or directory'));
+
+      await service.uploadCover(1, testBuffer, 'image/jpeg');
+
+      // Upload still succeeded — DB was updated
+      expect(db.update).toHaveBeenCalled();
+      // No stale cleanup was attempted (readdir returned empty via .catch)
+      expect(unlink).not.toHaveBeenCalled();
+    });
+
+    it('still succeeds when stale sibling unlink rejects (EACCES) — best-effort cleanup swallowed', async () => {
+      vi.mocked(readdir).mockReset();
+      vi.mocked(rename).mockReset();
+      vi.mocked(writeFile).mockReset();
+      vi.mocked(unlink).mockReset();
+      setupUploadMocks('/library/book');
+      vi.mocked(readdir).mockResolvedValue(['cover.jpg', 'cover.png'] as unknown as Awaited<ReturnType<typeof readdir>>);
+      vi.mocked(unlink).mockRejectedValue(new Error('EACCES: permission denied'));
+
+      // Upload PNG — should try to unlink stale JPG but swallow the error
+      await service.uploadCover(1, testBuffer, 'image/png');
+
+      // Upload still succeeded — DB was updated
+      expect(db.update).toHaveBeenCalled();
+      // Stale cleanup was attempted for the JPG
+      expect(unlink).toHaveBeenCalledWith(expect.stringContaining('cover.jpg'));
+    });
   });
 });
