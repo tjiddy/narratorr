@@ -358,6 +358,23 @@ describe('ImportListService', () => {
       expect(bookAddedLog).toBeDefined();
     });
 
+    // #477 — enrichItem branches (tested via syncDueLists)
+    describe('enrichItem via syncDueLists (#477)', () => {
+      it.todo('no metadata service — book inserted with original ASIN/author from import list item');
+      it.todo('item already has ASIN — metadata service not called, book inserted with original ASIN');
+      it.todo('metadata search returns zero results — book inserted with original ASIN unchanged');
+      it.todo('metadata search match with providerId, getBook returns detail with ASIN — book inserted with detail ASIN');
+      it.todo('metadata search match with providerId, getBook returns null — book inserted with search-result ASIN');
+      it.todo('metadata search throws — item still processed with original values, warn logged');
+    });
+
+    // #477 — findOrCreateAuthor branches (tested via syncDueLists)
+    describe('findOrCreateAuthor via syncDueLists (#477)', () => {
+      it.todo('author does not exist — insert succeeds — bookAuthors row created with new author ID');
+      it.todo('race condition — insert returns empty, retry SELECT finds author — bookAuthors created with existing ID');
+      it.todo('race condition null — insert returns empty, retry SELECT returns empty — bookAuthors skipped, bookEvents still inserted');
+    });
+
     it('isolates provider failures — one list failing does not block others', async () => {
       const failProvider = { fetchItems: vi.fn().mockRejectedValue(new Error('Provider down')), test: vi.fn() };
       const successProvider = { fetchItems: vi.fn().mockResolvedValue([]), test: vi.fn() };

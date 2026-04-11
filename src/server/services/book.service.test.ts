@@ -1514,5 +1514,9 @@ describe('BookService — transaction atomicity (#214)', () => {
       // Temp file should have been cleaned up
       expect(unlink).toHaveBeenCalledWith(expect.stringContaining('.cover-upload-'));
     });
+
+    // #477 — cover-upload edge cases
+    it.todo('still succeeds when readdir rejects (ENOENT) — .catch(() => []) fallback exercised');
+    it.todo('still succeeds when stale sibling unlink rejects (EACCES) — best-effort cleanup swallowed');
   });
 });

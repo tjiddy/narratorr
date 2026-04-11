@@ -298,6 +298,13 @@ describe('startJobs', () => {
     });
   });
 
+  // #477 — housekeeping callback coverage
+  describe('housekeeping callback (#477)', () => {
+    it.todo('executeTracked housekeeping calls VACUUM, pruneOlderThan, and deleteExpired with correct args');
+    it.todo('uses fallback retention of 90 when housekeepingRetentionDays is null');
+    it.todo('VACUUM failure prevents subsequent sub-tasks (pins current lack of per-sub-task isolation)');
+  });
+
   describe('startup recovery (#358)', () => {
     it('resets stuck downloads to completed on boot', async () => {
       const chain = mockDbChain([{ id: 1 }, { id: 2 }]);
