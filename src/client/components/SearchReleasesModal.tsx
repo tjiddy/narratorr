@@ -95,13 +95,14 @@ function IndexerStatusRow({
 const CONTEXT_KEYS = new Set(['bookId', 'replaceExisting']);
 const GRAB_RESULT_KEYS = Object.keys(grabSchema.shape).filter(k => !CONTEXT_KEYS.has(k));
 
-/** Pick SearchResult-sourced grab-contract fields dynamically from grabSchema.shape. */
-function pickGrabFields(result: SearchResult): Partial<GrabPayload> {
+/** Pick SearchResult-sourced grab-contract fields dynamically from grabSchema.shape.
+ *  Caller must guard `result.downloadUrl` before calling — the return type assumes it is present. */
+function pickGrabFields(result: SearchResult): Omit<GrabPayload, 'bookId' | 'replaceExisting'> {
   const picked: Record<string, unknown> = {};
   for (const key of GRAB_RESULT_KEYS) {
     picked[key] = result[key as keyof SearchResult];
   }
-  return picked as Partial<GrabPayload>;
+  return picked as Omit<GrabPayload, 'bookId' | 'replaceExisting'>;
 }
 
 // eslint-disable-next-line max-lines-per-function, complexity -- modal orchestrates streaming + mutations + 7 conditional states
@@ -186,8 +187,6 @@ export function SearchReleasesModal({ isOpen, book, onClose }: SearchReleasesMod
     }
     grabMutation.mutate({
       ...pickGrabFields(result),
-      downloadUrl: result.downloadUrl,
-      title: result.title,
       bookId: book.id,
     });
   };
