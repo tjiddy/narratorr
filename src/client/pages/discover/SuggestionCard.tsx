@@ -9,11 +9,6 @@ import {
   XIcon,
 } from '@/components/icons';
 
-function formatDurationFromSeconds(seconds: number | null): string | null {
-  if (!seconds) return null;
-  return formatDurationMinutes(Math.round(seconds / 60));
-}
-
 export function SuggestionCard({
   suggestion,
   index,
@@ -29,7 +24,7 @@ export function SuggestionCard({
   isAdding: boolean;
   isDismissing: boolean;
 }) {
-  const durationText = formatDurationFromSeconds(suggestion.duration);
+  const durationText = suggestion.duration ? formatDurationMinutes(Math.round(suggestion.duration / 60)) : null;
   const seriesTag =
     suggestion.seriesName
       ? `${suggestion.seriesName}${suggestion.seriesPosition != null ? `, Book ${suggestion.seriesPosition}` : ''}`
