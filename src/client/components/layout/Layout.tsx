@@ -6,6 +6,7 @@ import { useActivityCounts } from '@/hooks/useActivityCounts';
 import { useAuthContext } from '@/hooks/useAuthContext';
 import { SSEProvider } from '@/components/SSEProvider';
 import { api } from '@/lib/api';
+import { getErrorMessage } from '@/lib/error-message.js';
 import { queryKeys } from '@/lib/queryKeys';
 import {
   HeadphonesIcon,
@@ -55,7 +56,7 @@ export function Layout() {
       return queryClient.invalidateQueries({ queryKey: queryKeys.settings() });
     },
     onError: (err: unknown) => {
-      toast.error(err instanceof Error ? err.message : 'Failed to save settings');
+      toast.error(getErrorMessage(err, 'Failed to save settings'));
     },
   });
 

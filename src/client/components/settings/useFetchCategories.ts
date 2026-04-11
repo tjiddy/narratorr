@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback } from 'react';
 import type { UseFormGetValues } from 'react-hook-form';
 import type { CreateDownloadClientFormData } from '../../../shared/schemas.js';
 import { downloadClientsApi, type CategoriesResult } from '@/lib/api/download-clients';
+import { getErrorMessage } from '@/lib/error-message.js';
 
 interface UseFetchCategoriesOptions {
   selectedType: string;
@@ -53,7 +54,7 @@ export function useFetchCategories({ selectedType, clientId, isDirty, getValues 
         setShowDropdown(true);
       }
     } catch (error: unknown) {
-      setError(error instanceof Error ? error.message : 'Failed to fetch categories');
+      setError(getErrorMessage(error, 'Failed to fetch categories'));
       setCategories([]);
       setShowDropdown(false);
     } finally {

@@ -4,6 +4,7 @@ import { toast } from 'sonner';
 import { api } from '@/lib/api';
 import type { BackupMetadata } from '@/lib/api';
 import { queryKeys } from '@/lib/queryKeys';
+import { getErrorMessage } from '@/lib/error-message.js';
 import {
   LoadingSpinner,
   HardDriveIcon,
@@ -71,7 +72,7 @@ export function SystemSettings() {
       }
     },
     onError: (err) => {
-      toast.error(err instanceof Error ? err.message : 'Failed to create backup');
+      toast.error(getErrorMessage(err, 'Failed to create backup'));
     },
   });
 
@@ -89,7 +90,7 @@ export function SystemSettings() {
       setRestoreConfirmOpen(true);
     },
     onError: (err) => {
-      toast.error(err instanceof Error ? err.message : 'Failed to validate restore file');
+      toast.error(getErrorMessage(err, 'Failed to validate restore file'));
     },
   });
 
@@ -107,7 +108,7 @@ export function SystemSettings() {
       setRestoreConfirmOpen(true);
     },
     onError: (err) => {
-      toast.error(err instanceof Error ? err.message : 'Failed to validate backup');
+      toast.error(getErrorMessage(err, 'Failed to validate backup'));
     },
   });
 
@@ -119,7 +120,7 @@ export function SystemSettings() {
       setRestoreInfo(null);
     },
     onError: (err) => {
-      toast.error(err instanceof Error ? err.message : 'Failed to confirm restore');
+      toast.error(getErrorMessage(err, 'Failed to confirm restore'));
     },
   });
 

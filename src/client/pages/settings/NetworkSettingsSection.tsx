@@ -6,6 +6,7 @@ import { z } from 'zod';
 import { toast } from 'sonner';
 import { api } from '@/lib/api';
 import { queryKeys } from '@/lib/queryKeys';
+import { getErrorMessage } from '@/lib/error-message.js';
 import { WifiIcon, LoadingSpinner } from '@/components/icons';
 import { DEFAULT_SETTINGS } from '../../../shared/schemas.js';
 import { SettingsSection } from './SettingsSection';
@@ -65,7 +66,7 @@ export function NetworkSettingsSection() {
       toast.success('Network settings saved');
     },
     onError: (err) => {
-      toast.error(err instanceof Error ? err.message : 'Failed to save settings');
+      toast.error(getErrorMessage(err, 'Failed to save settings'));
     },
   });
 
@@ -81,7 +82,7 @@ export function NetworkSettingsSection() {
         toast.error(result.message || 'Proxy test failed');
       }
     } catch (error: unknown) {
-      toast.error(error instanceof Error ? error.message : 'Proxy test failed');
+      toast.error(getErrorMessage(error, 'Proxy test failed'));
     } finally {
       setTesting(false);
     }

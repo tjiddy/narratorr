@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { toast } from 'sonner';
 import { api, type BulkOpType, type BulkJobStatus } from '@/lib/api';
+import { getErrorMessage } from '@/lib/error-message.js';
 
 const POLL_INTERVAL = 2000;
 
@@ -63,7 +64,7 @@ export function useBulkOperation(): UseBulkOperationReturn {
           setJobType(null);
           setProgress(IDLE_PROGRESS);
           jobIdRef.current = null;
-          toast.error(error instanceof Error ? error.message : 'Bulk operation polling failed');
+          toast.error(getErrorMessage(error, 'Bulk operation polling failed'));
         }
       }
     }, POLL_INTERVAL);

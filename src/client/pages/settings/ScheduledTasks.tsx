@@ -4,6 +4,7 @@ import { toast } from 'sonner';
 import { api } from '@/lib/api';
 import type { TaskMetadata } from '@/lib/api';
 import { queryKeys } from '@/lib/queryKeys';
+import { getErrorMessage } from '@/lib/error-message.js';
 import { LoadingSpinner, ClockIcon, ZapIcon } from '@/components/icons';
 import { SettingsSection } from './SettingsSection';
 
@@ -23,7 +24,7 @@ function TaskRow({ task }: { task: TaskMetadata }) {
       queryClient.invalidateQueries({ queryKey: queryKeys.systemTasks() });
     },
     onError: (err) => {
-      toast.error(err instanceof Error ? err.message : 'Task failed');
+      toast.error(getErrorMessage(err, 'Task failed'));
       queryClient.invalidateQueries({ queryKey: queryKeys.systemTasks() });
     },
     onSettled: () => setRunningName(null),

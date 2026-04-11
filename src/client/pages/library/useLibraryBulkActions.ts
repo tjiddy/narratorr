@@ -3,6 +3,7 @@ import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import { api, type BookWithAuthor, type SingleBookSearchResult } from '@/lib/api';
 import { queryKeys } from '@/lib/queryKeys';
+import { getErrorMessage } from '@/lib/error-message.js';
 
 export function useLibraryBulkActions(visibleBooks: BookWithAuthor[]) {
   const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
@@ -44,7 +45,7 @@ export function useLibraryBulkActions(visibleBooks: BookWithAuthor[]) {
       queryClient.invalidateQueries({ queryKey: queryKeys.books() });
     },
     onError: (error) => {
-      toast.error(`Bulk delete failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
+      toast.error(`Bulk delete failed: ${getErrorMessage(error)}`);
     },
   });
 
@@ -93,7 +94,7 @@ export function useLibraryBulkActions(visibleBooks: BookWithAuthor[]) {
       queryClient.invalidateQueries({ queryKey: queryKeys.activity() });
     },
     onError: (error) => {
-      toast.error(`Bulk search failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
+      toast.error(`Bulk search failed: ${getErrorMessage(error)}`);
     },
   });
 
@@ -111,7 +112,7 @@ export function useLibraryBulkActions(visibleBooks: BookWithAuthor[]) {
       queryClient.invalidateQueries({ queryKey: queryKeys.books() });
     },
     onError: (error) => {
-      toast.error(`Bulk status update failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
+      toast.error(`Bulk status update failed: ${getErrorMessage(error)}`);
     },
   });
 

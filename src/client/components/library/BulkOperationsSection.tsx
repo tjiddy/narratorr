@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { toast } from 'sonner';
 import { api, type RenameCount } from '@/lib/api';
+import { getErrorMessage } from '@/lib/error-message.js';
 import { FolderIcon } from '@/components/icons';
 import { useBulkOperation } from '../../hooks/useBulkOperation.js';
 import { ConfirmModal } from '@/components/ConfirmModal';
@@ -111,7 +112,7 @@ export function BulkOperationsSection() {
       setModalCount(count);
       setPendingOp(op);
     } catch (error: unknown) {
-      toast.error(error instanceof Error ? error.message : 'Failed to fetch operation count');
+      toast.error(getErrorMessage(error, 'Failed to fetch operation count'));
     } finally {
       setIsLoadingCount(false);
     }

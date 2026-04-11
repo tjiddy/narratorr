@@ -6,6 +6,7 @@ import { z } from 'zod';
 import { toast } from 'sonner';
 import { api } from '@/lib/api';
 import { queryKeys } from '@/lib/queryKeys';
+import { getErrorMessage } from '@/lib/error-message.js';
 import { GlobeIcon } from '@/components/icons';
 import { SelectWithChevron } from '@/components/settings/SelectWithChevron';
 import { audibleRegionSchema, DEFAULT_SETTINGS, type AppSettings } from '../../../shared/schemas.js';
@@ -80,7 +81,7 @@ export function FilteringSettingsSection() {
       toast.success('Filtering settings saved');
     },
     onError: (err) => {
-      toast.error(err instanceof Error ? err.message : 'Failed to save settings');
+      toast.error(getErrorMessage(err, 'Failed to save settings'));
     },
   });
 

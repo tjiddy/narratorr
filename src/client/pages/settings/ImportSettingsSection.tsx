@@ -6,6 +6,7 @@ import type { z } from 'zod';
 import { toast } from 'sonner';
 import { api } from '@/lib/api';
 import { queryKeys } from '@/lib/queryKeys';
+import { getErrorMessage } from '@/lib/error-message.js';
 import { PackageIcon } from '@/components/icons';
 import { ToggleSwitch } from '@/components/settings/ToggleSwitch';
 import { DEFAULT_SETTINGS, importSettingsSchema, stripDefaults } from '../../../shared/schemas.js';
@@ -46,7 +47,7 @@ export function ImportSettingsSection() {
       toast.success('Import settings saved');
     },
     onError: (err) => {
-      toast.error(err instanceof Error ? err.message : 'Failed to save settings');
+      toast.error(getErrorMessage(err, 'Failed to save settings'));
     },
   });
 

@@ -5,6 +5,7 @@ import { zodResolver } from '@hookform/resolvers/zod';
 import { toast } from 'sonner';
 import { api } from '@/lib/api';
 import { queryKeys } from '@/lib/queryKeys';
+import { getErrorMessage } from '@/lib/error-message.js';
 import { TagIcon, ChevronRightIcon } from '@/components/icons';
 import { NamingTokenModal } from '@/components/settings/NamingTokenModal';
 import { SelectWithChevron } from '@/components/settings/SelectWithChevron';
@@ -223,7 +224,7 @@ export function NamingSettingsSection() {
       queryClient.invalidateQueries({ queryKey: queryKeys.settings() });
       toast.success('File naming settings saved');
     },
-    onError: (err) => { toast.error(err instanceof Error ? err.message : 'Failed to save settings'); },
+    onError: (err) => { toast.error(getErrorMessage(err, 'Failed to save settings')); },
   });
 
   // eslint-disable-next-line react-hooks/incompatible-library -- watch() is the standard RHF API
