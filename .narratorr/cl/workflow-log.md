@@ -1,5 +1,29 @@
 # Workflow Log
 
+## #468 Test coverage gaps from PR review batch — 2026-04-11
+**Skill path:** /implement → /claim → /plan → /handoff
+**Outcome:** success — PR #476
+
+### Metrics
+- Files changed: 2 | Tests added/modified: 5 (4 refactored, 1 added)
+- Quality gate runs: 1 (pass on attempt 1)
+- Fix iterations: 0
+- Context compactions: 0
+
+### Workflow experience
+- What went smoothly: Small, focused test-only issue — clear spec after 3 rounds of review, mechanical implementation
+- Friction / issues encountered: Spec review required 3 rounds to get AC #3 right (invalid ASIN example, incorrect "already covered" claims). The elaborate step initially missed that 3/5 gaps were already covered, and then overcorrected by claiming NO_AUDIO_FILES was clean.
+
+### Token efficiency
+- Highest-token actions: Spec review rounds (3 rounds consumed significant context before implementation started)
+- Avoidable waste: The elaborate step could have read the actual test file lines more carefully to avoid 2 rounds of spec corrections
+- Suggestions: For test-gap issues, always read the exact lines cited in the spec body before making claims about coverage status
+
+### Wish I'd Known
+1. `rejects.toMatchObject({ code: '...' })` is the idiomatic Vitest pattern for asserting both error type and error properties in one call — eliminates the double-invocation anti-pattern
+2. The ASIN regex requires exactly `B0` + 8 alphanumeric chars — easy to get wrong when writing example values (B0EXAMPLE is only 7)
+3. 3/5 of the originally-reported test gaps had already been filled by prior PRs — always verify gap claims against current main before writing specs
+
 ## #466 Cover upload polish: error registry, redundant checks, constant placement — 2026-04-11
 **Skill path:** /implement → /claim → /plan → /handoff
 **Outcome:** success — PR #475

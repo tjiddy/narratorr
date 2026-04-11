@@ -422,6 +422,14 @@ describe('folder-parsing (extracted from library-scan.service)', () => {
         // Raw title is ASIN-stripped but NOT cleaned (MP3 remains)
         expect(result.title).toBe('Title MP3');
       });
+
+      it('parseFolderStructureRaw extracts ASIN in 3-part path (raw author/series kept)', () => {
+        const result = parseFolderStructureRaw(['Author MP3', 'Series (2020)', 'Title [B0D18DYG5C]']);
+        expect(result.asin).toBe('B0D18DYG5C');
+        expect(result.title).toBe('Title');
+        expect(result.author).toBe('Author MP3');
+        expect(result.series).toBe('Series (2020)');
+      });
     });
 
     describe('negative cases (no false positives)', () => {

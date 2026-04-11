@@ -33,6 +33,8 @@
 
 - **`MAX_COVER_SIZE` duplicated in 3 files**: `src/server/routes/books.ts`, `src/client/hooks/useCoverPaste.ts:3`, `src/client/pages/book/BookDetails.tsx:58` all define `10 * 1024 * 1024` independently. Changing the limit requires updating 3 places. Should extract to a shared constant in `src/shared/`. (discovered in #466)
 
+- **`src/server/services/refresh-scan.service.test.ts:329-341`**: `rethrows non-ENOENT stat errors` test still uses the same double-call anti-pattern (rejects.toThrow + try/catch). Was out of scope for #468 which only targeted RefreshScanError-coded tests, but should be consolidated to match. (discovered in #468)
+
 ## Accepted Debt
 
 Items below are real but not worth fixing — the cost of change outweighs the benefit.
