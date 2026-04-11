@@ -7,6 +7,7 @@ import {
   extractYear,
   extractASIN,
   normalizeFolderName,
+  CODEC_TEST_REGEX,
 } from './folder-parsing.js';
 
 describe('folder-parsing (extracted from library-scan.service)', () => {
@@ -532,6 +533,102 @@ describe('folder-parsing (extracted from library-scan.service)', () => {
       expect(extractYear('Title [2019]')).toBe(2019);
       expect(extractYear('Title 2017')).toBe(2017);
       expect(extractYear('No Year')).toBeUndefined();
+    });
+  });
+
+  describe('CODEC_TEST_REGEX (non-global codec guard)', () => {
+    it('does not have the global flag', () => {
+      expect(CODEC_TEST_REGEX.global).toBe(false);
+    });
+
+    it('matches each codec tag: MP3, M4B, M4A, FLAC, OGG, AAC, Unabridged, Abridged', () => {
+      for (const tag of ['MP3', 'M4B', 'M4A', 'FLAC', 'OGG', 'AAC', 'Unabridged', 'Abridged']) {
+        expect(CODEC_TEST_REGEX.test(tag)).toBe(true);
+      }
+    });
+
+    it('rejects non-codec content', () => {
+      expect(CODEC_TEST_REGEX.test('Jeff Hays')).toBe(false);
+      expect(CODEC_TEST_REGEX.test('Ray Porter')).toBe(false);
+      expect(CODEC_TEST_REGEX.test('Some Title')).toBe(false);
+    });
+
+    it('is case-insensitive', () => {
+      expect(CODEC_TEST_REGEX.test('mp3')).toBe(true);
+      expect(CODEC_TEST_REGEX.test('Flac')).toBe(true);
+      expect(CODEC_TEST_REGEX.test('aac')).toBe(true);
+    });
+
+    it('returns consistent results on consecutive .test() calls (no lastIndex drift)', () => {
+      expect(CODEC_TEST_REGEX.test('MP3')).toBe(true);
+      expect(CODEC_TEST_REGEX.test('MP3')).toBe(true);
+      expect(CODEC_TEST_REGEX.test('MP3')).toBe(true);
+    });
+  });
+
+  describe('cleanName consecutive calls (lastIndex hardening)', () => {
+    it('consecutive calls with narrator parens both strip correctly', () => {
+      const first = cleanName('Title (Jeff Hays)');
+      const second = cleanName('Other Title (Ray Porter)');
+      expect(first).toBe('Title');
+      expect(second).toBe('Other Title');
+    });
+
+    it('input with no parens does not affect subsequent calls', () => {
+      const first = cleanName('Plain Title');
+      const second = cleanName('Another Title (Jeff Hays)');
+      expect(first).toBe('Plain Title');
+      expect(second).toBe('Another Title');
+    });
+
+    it('input with codec tag in name itself still strips narrator paren', () => {
+      const result = cleanName('Title MP3 (Jeff Hays)');
+      expect(result).toBe('Title');
+    });
+  });
+
+  describe('cleanNameWithTrace consecutive calls (lastIndex hardening)', () => {
+    it('consecutive trace calls with narrator parens both strip correctly', () => {
+      const first = cleanNameWithTrace('Title (Jeff Hays)');
+      const second = cleanNameWithTrace('Other Title (Ray Porter)');
+      expect(first.result).toBe('Title');
+      expect(second.result).toBe('Other Title');
+    });
+  });
+
+  describe('mixed cleanName/cleanNameWithTrace calls (shared regex state)', () => {
+    it('cleanName then cleanNameWithTrace produces correct results', () => {
+      const name = cleanName('Title (Jeff Hays)');
+      const trace = cleanNameWithTrace('Other Title (Ray Porter)');
+      expect(name).toBe('Title');
+      expect(trace.result).toBe('Other Title');
+    });
+  });
+
+  describe('rapid consecutive calls (stress)', () => {
+    it('5+ sequential cleanName calls with narrator parens all produce correct results', () => {
+      const inputs = [
+        'Title One (Jeff Hays)',
+        'Title Two (Ray Porter)',
+        'Title Three (Scott Brick)',
+        'Title Four (Jim Dale)',
+        'Title Five (Stephen Fry)',
+      ];
+      const expected = ['Title One', 'Title Two', 'Title Three', 'Title Four', 'Title Five'];
+      for (let i = 0; i < inputs.length; i++) {
+        expect(cleanName(inputs[i])).toBe(expected[i]);
+      }
+    });
+
+    it('trace results match cleanName results for same inputs', () => {
+      const inputs = [
+        'Title One (Jeff Hays)',
+        'Title Two (Ray Porter)',
+        'Title Three (Scott Brick)',
+      ];
+      for (const input of inputs) {
+        expect(cleanNameWithTrace(input).result).toBe(cleanName(input));
+      }
     });
   });
 });

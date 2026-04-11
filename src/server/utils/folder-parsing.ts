@@ -7,6 +7,8 @@
 /** Codec/format tags to strip from folder names (case-insensitive, word-boundary). */
 const CODEC_TAGS = ['MP3', 'M4B', 'M4A', 'FLAC', 'OGG', 'AAC', 'Unabridged', 'Abridged'];
 const CODEC_REGEX = new RegExp(`\\b(${CODEC_TAGS.join('|')})\\b`, 'gi');
+/** Non-global codec regex for `.test()` guards — no `lastIndex` state between calls. */
+export const CODEC_TEST_REGEX = new RegExp(`\\b(${CODEC_TAGS.join('|')})\\b`, 'i');
 
 /** Matches a bare 4-digit year (1900–2099) at end of string. */
 const BARE_YEAR_REGEX = /\b((?:19|20)\d{2})\s*$/;
@@ -75,12 +77,10 @@ export function cleanName(name: string): string {
   if (narratorMatch) {
     const content = narratorMatch[1];
     // Don't strip if content is a known codec tag (already handled, but guard against edge cases)
-    if (!CODEC_REGEX.test(content)) {
+    if (!CODEC_TEST_REGEX.test(content)) {
       const beforeParen = result.replace(NARRATOR_PAREN_REGEX, '').trim();
       if (beforeParen) result = beforeParen;
     }
-    // Reset CODEC_REGEX lastIndex (global flag)
-    CODEC_REGEX.lastIndex = 0;
   }
 
   // Deduplicate repeated title segments: "Title 01 – Title" → "Title"
@@ -153,11 +153,10 @@ export function cleanNameWithTrace(name: string): CleanNameTraceResult {
   const narratorMatch = current.match(NARRATOR_PAREN_REGEX);
   if (narratorMatch) {
     const content = narratorMatch[1];
-    if (!CODEC_REGEX.test(content)) {
+    if (!CODEC_TEST_REGEX.test(content)) {
       const beforeParen = current.replace(NARRATOR_PAREN_REGEX, '').trim();
       if (beforeParen) current = beforeParen;
     }
-    CODEC_REGEX.lastIndex = 0;
   }
   steps.push({ name: 'narratorParen', output: current });
 
