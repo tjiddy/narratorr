@@ -316,6 +316,9 @@ describe('booksApi', () => {
 
     fetchSpy.mockRestore();
   });
+
+  it.todo('mergeBookToM4b → POST /books/:id/merge-to-m4b');
+  it.todo('cancelMergeBook → DELETE /books/:id/merge-to-m4b');
 });
 
 describe('downloadClientsApi', () => {
@@ -669,6 +672,8 @@ describe('systemApi', () => {
     });
     expect(result).toEqual({ ok: true });
   });
+
+  it.todo('runSystemTask → POST /system/tasks/:name/run');
 });
 
 // ============================================================================

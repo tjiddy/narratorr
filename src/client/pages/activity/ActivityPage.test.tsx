@@ -65,6 +65,7 @@ vi.mock('@/lib/api', () => ({
     rejectDownload: vi.fn(),
     deleteHistoryDownload: vi.fn(),
     deleteDownloadHistory: vi.fn(),
+    cancelMergeBook: vi.fn(),
     getEventHistory: vi.fn(),
     markEventFailed: vi.fn(),
     deleteEvent: vi.fn(),
@@ -1605,4 +1606,9 @@ describe('#422 merge activity cards', () => {
     vi.mocked(useSearchProgress).mockReturnValue([]);
     vi.mocked(useMergeActivityCards).mockReturnValue([]);
   });
+});
+
+describe('#478 cancel merge error recovery', () => {
+  it.todo('shows error toast when cancel merge mutation fails');
+  it.todo('re-enables cancel button after cancel merge error (cancellingMergeBookId resets)');
 });
