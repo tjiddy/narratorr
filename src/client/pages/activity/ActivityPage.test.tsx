@@ -1609,6 +1609,51 @@ describe('#422 merge activity cards', () => {
 });
 
 describe('#478 cancel merge error recovery', () => {
-  it.todo('shows error toast when cancel merge mutation fails');
-  it.todo('re-enables cancel button after cancel merge error (cancellingMergeBookId resets)');
+  it('shows error toast when cancel merge mutation fails', async () => {
+    const user = userEvent.setup();
+    const { useMergeActivityCards } = await import('@/hooks/useMergeProgress');
+    const { toast } = await import('sonner');
+
+    vi.mocked(useMergeActivityCards).mockReturnValue([
+      { bookId: 42, bookTitle: 'Merge Book', phase: 'processing', percentage: 0.5 },
+    ]);
+    vi.mocked(api.cancelMergeBook).mockRejectedValue(new Error('Server error'));
+    vi.mocked(api.getActivity).mockResolvedValue({ data: [], total: 0 });
+
+    renderWithProviders(<ActivityPage />);
+    await waitFor(() => expect(screen.getByText('Merge Book')).toBeInTheDocument());
+
+    await user.click(screen.getByRole('button', { name: /cancel merge/i }));
+
+    await waitFor(() => {
+      expect(toast.error).toHaveBeenCalledWith('Cancel failed: Server error');
+    });
+    expect(api.cancelMergeBook).toHaveBeenCalledWith(42);
+
+    vi.mocked(useMergeActivityCards).mockReturnValue([]);
+  });
+
+  it('re-enables cancel button after cancel merge error (cancellingMergeBookId resets)', async () => {
+    const user = userEvent.setup();
+    const { useMergeActivityCards } = await import('@/hooks/useMergeProgress');
+
+    vi.mocked(useMergeActivityCards).mockReturnValue([
+      { bookId: 42, bookTitle: 'Merge Book', phase: 'processing', percentage: 0.5 },
+    ]);
+    vi.mocked(api.cancelMergeBook).mockRejectedValue(new Error('Server error'));
+    vi.mocked(api.getActivity).mockResolvedValue({ data: [], total: 0 });
+
+    renderWithProviders(<ActivityPage />);
+    await waitFor(() => expect(screen.getByText('Merge Book')).toBeInTheDocument());
+
+    const cancelButton = screen.getByRole('button', { name: /cancel merge/i });
+    await user.click(cancelButton);
+
+    // After error settles, button should be re-enabled (not disabled)
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: /cancel merge/i })).not.toBeDisabled();
+    });
+
+    vi.mocked(useMergeActivityCards).mockReturnValue([]);
+  });
 });
