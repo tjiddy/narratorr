@@ -1697,6 +1697,12 @@ describe('ImportService', () => {
       db.select.mockReturnValueOnce(mockDbChain([{ ...mockDownload, bookId: null }]));
       await expect(service.getImportContext(1)).rejects.toThrow('no linked book');
     });
+
+    // #504 — ImportContext identifier extension
+    it.todo('returns infoHash from the download record');
+    it.todo('returns guid from the download record');
+    it.todo('returns null for infoHash when download has no infoHash (usenet)');
+    it.todo('returns null for guid when download has no guid (torrent)');
   });
 
   describe('getEligibleDownloads', () => {

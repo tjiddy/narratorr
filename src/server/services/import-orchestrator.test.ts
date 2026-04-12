@@ -365,4 +365,41 @@ describe('ImportOrchestrator', () => {
       );
     });
   });
+
+  // ── #504 — isContentFailure classifier ──────────────────────────────────
+  describe('isContentFailure classifier (#504)', () => {
+    describe('content failures — positive allowlist (returns true)', () => {
+      it.todo('returns true for "No audio files found in /path"');
+      it.todo('returns true for "Source file is not a supported audio format: file.xyz"');
+      it.todo('returns true for "Duplicate filename \\"01.mp3\\" found during import flattening: ..."');
+      it.todo('returns true for "Copy verification failed: source 1000 bytes, target 500 bytes"');
+    });
+
+    describe('environment failures — everything else (returns false)', () => {
+      it.todo('returns false for "Path not found: /path"');
+      it.todo('returns false for "Import blocked — insufficient disk space"');
+      it.todo('returns false for "Disk space check failed: permission denied"');
+      it.todo('returns false for "Audio processing failed: ffmpeg exited with code 1"');
+      it.todo('returns false for "Audio processing failed: ffmpeg stalled: no progress for 60s"');
+      it.todo('returns false for "Audio processing failed: spawn ENOENT"');
+      it.todo('returns false for "Audio processing failed: Processing aborted"');
+      it.todo('returns false for "Audio processing failed: some codec error"');
+      it.todo('returns false for generic/unknown Error');
+      it.todo('returns false for non-Error throwable (string)');
+    });
+  });
+
+  // ── #504 — import failure blacklisting ──────────────────────────────────
+  describe('import failure blacklisting (#504)', () => {
+    it.todo('content failure triggers blacklistAndRetrySearch with correct identifiers, reason, and blacklistType');
+    it.todo('content failure (duplicate filename) triggers blacklistAndRetrySearch — original loop scenario');
+    it.todo('environment failure does NOT call blacklistAndRetrySearch');
+    it.todo('environment failure (Audio processing failed) does NOT call blacklistAndRetrySearch');
+    it.todo('content failure with redownloadFailed=true triggers re-search after blacklist');
+    it.todo('content failure with redownloadFailed=false creates blacklist but no re-search');
+    it.todo('content failure with missing blacklistService still fires SSE/notification/event');
+    it.todo('content failure with missing retrySearchDeps creates blacklist but skips re-search');
+    it.todo('blacklist call failure does not suppress original import error');
+    it.todo('batch path: content failure in one download blacklists it without affecting others');
+  });
 });

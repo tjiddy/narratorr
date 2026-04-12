@@ -147,4 +147,10 @@ describe('blacklistAndRetrySearch', () => {
     await new Promise((r) => setTimeout(r, 0));
     expect(retrySearch).not.toHaveBeenCalled();
   });
+
+  // #504 — blacklistType passthrough
+  describe('blacklistType passthrough (#504)', () => {
+    it.todo('passes blacklistType: temporary to blacklistService.create() when provided');
+    it.todo('omits blacklistType from blacklistService.create() when not provided (preserves permanent default)');
+  });
 });
