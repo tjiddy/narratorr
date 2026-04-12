@@ -2569,3 +2569,36 @@ describe('POST /api/books/:id/cover', () => {
     });
   });
 });
+
+describe('#514 books route — missing blacklistService guard', () => {
+  let app: Awaited<ReturnType<typeof createTestApp>>;
+  let services: Services;
+
+  beforeAll(async () => {
+    services = createMockServices();
+    (services as unknown as Record<string, unknown>).blacklist = undefined;
+    app = await createTestApp(services);
+  });
+
+  afterAll(async () => {
+    await app.close();
+  });
+
+  it('does not trigger search when blacklistService is absent even with searchImmediately', async () => {
+    (services.book.create as Mock).mockResolvedValueOnce({ ...mockBook, status: 'wanted' });
+
+    const res = await app.inject({
+      method: 'POST',
+      url: '/api/books',
+      payload: { title: 'The Way of Kings', authors: [{ name: 'Brandon Sanderson' }], searchImmediately: true },
+    });
+
+    expect(res.statusCode).toBe(201);
+
+    // Wait for any fire-and-forget promise to settle
+    await new Promise(r => setTimeout(r, 50));
+
+    // If the guard were absent, triggerImmediateSearch would call searchAllStreaming
+    expect(services.indexer.searchAllStreaming).not.toHaveBeenCalled();
+  });
+});

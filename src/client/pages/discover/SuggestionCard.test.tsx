@@ -117,7 +117,7 @@ describe('SuggestionCard', () => {
       );
 
       // Click Add to open popover, then confirm via "Add to Library"
-      await userEvent.click(screen.getByRole('button', { name: /^add$/i }));
+      await userEvent.click(screen.getByRole('button', { name: /^add book$/i }));
       await userEvent.click(screen.getByRole('button', { name: /add to library/i }));
       expect(onAdd).toHaveBeenCalledWith(42, expect.objectContaining({
         searchImmediately: expect.any(Boolean),
@@ -158,7 +158,7 @@ describe('SuggestionCard', () => {
         <SuggestionCard suggestion={makeSuggestion()} {...defaultProps} />,
       );
       // AddBookPopover renders a button with "Add" text
-      expect(screen.getByRole('button', { name: /^add$/i })).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: /^add book$/i })).toBeInTheDocument();
     });
   });
 
@@ -167,7 +167,7 @@ describe('SuggestionCard', () => {
       renderWithProviders(
         <SuggestionCard suggestion={makeSuggestion()} {...defaultProps} isAdded={false} />,
       );
-      expect(screen.getByRole('button', { name: /^add$/i })).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: /^add book$/i })).toBeInTheDocument();
       expect(screen.getByLabelText(/dismiss/i)).toBeInTheDocument();
     });
 

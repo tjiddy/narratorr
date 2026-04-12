@@ -353,7 +353,7 @@ describe('DiscoverPage', () => {
       });
 
       // Click Add to open popover, then confirm
-      const addButtons = screen.getAllByRole('button', { name: /^add$/i });
+      const addButtons = screen.getAllByRole('button', { name: /^add book$/i });
       await userEvent.click(addButtons[0]);
       await userEvent.click(screen.getByRole('button', { name: /add to library/i }));
 
@@ -380,7 +380,7 @@ describe('DiscoverPage', () => {
       });
 
       // Click Add to open popover, then confirm
-      await userEvent.click(screen.getByRole('button', { name: /^add$/i }));
+      await userEvent.click(screen.getByRole('button', { name: /^add book$/i }));
       await userEvent.click(screen.getByRole('button', { name: /add to library/i }));
 
       await waitFor(() => {
@@ -591,7 +591,7 @@ describe('DiscoverPage', () => {
       const callsBefore = mockApi.getDiscoverSuggestions.mock.calls.length;
 
       // Click Add to open popover, then confirm
-      const addButtons = screen.getAllByRole('button', { name: /^add$/i });
+      const addButtons = screen.getAllByRole('button', { name: /^add book$/i });
       await userEvent.click(addButtons[0]);
       await userEvent.click(screen.getByRole('button', { name: /add to library/i }));
 
@@ -604,7 +604,7 @@ describe('DiscoverPage', () => {
       // The added card shows the "In library" checkmark and no longer has an Add button
       expect(screen.getByLabelText('In library')).toBeInTheDocument();
       // Other Book should still have its Add button
-      const remainingAddButtons = screen.getAllByRole('button', { name: /^add$/i });
+      const remainingAddButtons = screen.getAllByRole('button', { name: /^add book$/i });
       expect(remainingAddButtons).toHaveLength(1); // only Other Book's Add button
 
       // Suggestions query should NOT have been re-fetched after add

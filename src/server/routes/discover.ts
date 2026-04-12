@@ -117,9 +117,15 @@ export async function discoverRoutes(app: FastifyInstance, deps: DiscoverRouteDe
       }
 
       // Fire-and-forget: trigger immediate search if requested
-      if (body.searchImmediately && result.book) {
+      if (body.searchImmediately && result.book && deps.indexerService && deps.blacklistService) {
         const book = result.book as { id: number; title: string; duration?: number | null; authors?: Array<{ name: string }> | null; narrators?: Array<{ name: string }> | null };
-        triggerImmediateSearch(book, deps, request.log);
+        triggerImmediateSearch(book, {
+          indexerService: deps.indexerService,
+          downloadOrchestrator: deps.downloadOrchestrator,
+          settingsService: deps.settingsService,
+          blacklistService: deps.blacklistService,
+          eventBroadcaster: deps.eventBroadcaster,
+        }, request.log);
       }
 
       return { suggestion: toSuggestionResponse(result.suggestion), book: result.book };

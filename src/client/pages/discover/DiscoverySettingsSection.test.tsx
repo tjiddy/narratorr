@@ -383,4 +383,43 @@ describe('DiscoverySettingsSection', () => {
     });
     expect(payload.discovery).not.toHaveProperty('weightMultipliers');
   });
+
+  it('#514 shows destructive border on each invalid numeric input', async () => {
+    const user = userEvent.setup();
+
+    const fields = [
+      { label: /refresh interval/i },
+      { label: /max suggestions per author/i },
+      { label: /suggestion expiry/i },
+      { label: /default snooze duration/i },
+    ];
+
+    for (const { label } of fields) {
+      const { unmount } = renderWithProviders(<DiscoverySettingsSection />);
+
+      await waitFor(() => {
+        expect(screen.getByLabelText(label)).toBeInTheDocument();
+      });
+
+      // Enable discovery to show all fields
+      await user.click(screen.getByLabelText(/enable discovery/i));
+
+      const input = screen.getByLabelText(label);
+
+      // Should start with normal border
+      expect(input.className).toContain('border-border');
+      expect(input.className).not.toContain('border-destructive');
+
+      // Clear field to make it invalid, then submit
+      await user.clear(input);
+      await user.click(screen.getByRole('button', { name: /save/i }));
+
+      // Should switch to destructive border
+      await waitFor(() => {
+        expect(input.className).toContain('border-destructive');
+      });
+
+      unmount();
+    }
+  });
 });

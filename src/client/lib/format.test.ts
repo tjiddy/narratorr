@@ -200,3 +200,14 @@ describe('formatChannels', () => {
     expect(formatChannels(null, '—')).toBe('—');
   });
 });
+
+describe('#514 formatDurationSeconds nullability alignment', () => {
+  it('formatDurationSeconds accepts undefined and returns fallback', () => {
+    expect(formatDurationSeconds(undefined)).toBe('');
+    expect(formatDurationSeconds(undefined, { fallback: '—' })).toBe('—');
+  });
+
+  it('formatDurationSeconds(0) returns valid duration string (not falsy shortcut)', () => {
+    expect(formatDurationSeconds(0)).toBe('0h 0m');
+  });
+});

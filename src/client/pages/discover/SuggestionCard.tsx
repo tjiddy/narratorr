@@ -1,6 +1,6 @@
 import { CoverImage } from '@/components/CoverImage';
 import { AddBookPopover } from '@/components/AddBookPopover';
-import { formatDurationMinutes } from '@/lib/format';
+import { formatDurationSeconds } from '@/lib/format';
 import type { SuggestionRow } from '@/lib/api';
 import {
   BookOpenIcon,
@@ -27,7 +27,7 @@ export function SuggestionCard({
   isDismissing: boolean;
   isAdded?: boolean;
 }) {
-  const durationText = suggestion.duration ? formatDurationMinutes(Math.round(suggestion.duration / 60)) : null;
+  const durationText = suggestion.duration ? formatDurationSeconds(suggestion.duration, { alwaysShowBoth: false }) : null;
   const seriesTag =
     suggestion.seriesName
       ? `${suggestion.seriesName}${suggestion.seriesPosition != null ? `, Book ${suggestion.seriesPosition}` : ''}`

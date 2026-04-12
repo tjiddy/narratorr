@@ -227,8 +227,9 @@ export async function booksRoutes(app: FastifyInstance, deps: BookRouteDeps) {
       request.log.info({ title: body.title }, 'Book added');
 
       // Fire-and-forget: trigger search if searchImmediately is set
-      if (body.searchImmediately && book.status === 'wanted' && indexerService) {
-        triggerImmediateSearch(book, deps, request.log);
+      if (body.searchImmediately && book.status === 'wanted' && indexerService && deps.blacklistService) {
+        const { downloadOrchestrator, settingsService, blacklistService, eventBroadcaster } = deps;
+        triggerImmediateSearch(book, { indexerService, downloadOrchestrator, settingsService, blacklistService, eventBroadcaster }, request.log);
       }
 
       return reply.status(201).send(book);

@@ -84,7 +84,7 @@ export function DownloadsTabSection(props: DownloadsTabSectionProps) {
                 onApprove={() => approveMutation.mutate(download.id)}
                 onReject={() => rejectMutation.mutate({ id: download.id, retry: false })}
                 onRejectWithSearch={() => rejectMutation.mutate({ id: download.id, retry: true })}
-                isCancelling={cancelMutation.isPending}
+                isCancelling={cancelMutation.isPending && cancelMutation.variables === download.id}
                 isApproving={approveMutation.isPending}
                 isRejectingDismiss={rejectMutation.isPending && rejectMutation.variables?.id === download.id && !rejectMutation.variables?.retry}
                 isRejectingWithSearch={rejectMutation.isPending && rejectMutation.variables?.id === download.id && !!rejectMutation.variables?.retry}

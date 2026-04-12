@@ -98,6 +98,7 @@ export function AddBookPopover({ onAdd, isPending }: AddBookPopoverProps) {
         type="button"
         onClick={toggleOpen}
         disabled={isPending}
+        aria-label="Add book"
         className="
           flex items-center gap-2 px-4 py-2.5
           bg-primary text-primary-foreground font-medium rounded-xl

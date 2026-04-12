@@ -7,6 +7,7 @@ import { useEventSource, isSSEConnected, useSSEConnected } from './useEventSourc
 import { useMergeProgress, useMergeActivityCards, setMergeProgress, _resetForTesting as resetMergeStore } from './useMergeProgress';
 import { handleSearchEvent } from './useSearchProgress';
 import { queryKeys } from '@/lib/queryKeys';
+import { sseEventTypeSchema } from '../../shared/schemas.js';
 
 vi.mock('./useSearchProgress', () => ({
   handleSearchEvent: vi.fn(),
@@ -1149,5 +1150,18 @@ describe('#312 cache-miss scoping — patchActivityProgress', () => {
         outcome: 'error',
       });
     });
+  });
+});
+
+describe('#514 useEventSource type safety', () => {
+  it('event type list is derived from sseEventTypeSchema.options (single source of truth)', () => {
+    const { wrapper } = createWrapper();
+    renderHook(() => useEventSource('key'), { wrapper });
+
+    const es = MockEventSource.instances[0];
+    const registeredTypes = [...(es as unknown as { listeners: Map<string, unknown[]> }).listeners.keys()];
+    const schemaOptions = [...sseEventTypeSchema.options];
+
+    expect(registeredTypes.sort()).toEqual(schemaOptions.sort());
   });
 });

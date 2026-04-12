@@ -229,7 +229,12 @@ describe('Discover Routes', () => {
       expect(triggerImmediateSearch).toHaveBeenCalledTimes(1);
       expect(triggerImmediateSearch).toHaveBeenCalledWith(
         book,
-        expect.anything(), // deps
+        expect.objectContaining({
+          indexerService: services.indexer,
+          downloadOrchestrator: services.downloadOrchestrator,
+          settingsService: services.settings,
+          blacklistService: services.blacklist,
+        }),
         expect.anything(), // log
       );
     });
@@ -262,6 +267,7 @@ describe('Discover Routes', () => {
       });
       expect(triggerImmediateSearch).not.toHaveBeenCalled();
     });
+
   });
 
   describe('POST /api/discover/refresh', () => {
@@ -535,5 +541,42 @@ describe('Discover Routes', () => {
       expect(res.statusCode).toBe(409);
       expect(services.taskRegistry.runExclusive).not.toHaveBeenCalled();
     });
+  });
+});
+
+describe('#514 discover route — missing blacklistService guard', () => {
+  let app: Awaited<ReturnType<typeof createTestApp>>;
+  let services: Services;
+
+  beforeAll(async () => {
+    services = createMockServices();
+    // Explicitly null out blacklistService so the route guard skips search dispatch
+    (services as unknown as Record<string, unknown>).blacklist = undefined;
+    app = await createTestApp(services);
+  });
+
+  afterAll(async () => {
+    await app.close();
+  });
+
+  beforeEach(() => {
+    (triggerImmediateSearch as Mock).mockReset();
+  });
+
+  it('does not trigger search when blacklistService is absent even with searchImmediately', async () => {
+    const book = { id: 10, title: 'Test' };
+    (services.discovery.addSuggestion as Mock).mockResolvedValueOnce({
+      suggestion: mockSuggestionRow({ id: 1, status: 'added' }),
+      book,
+    });
+
+    const res = await app.inject({
+      method: 'POST',
+      url: '/api/discover/suggestions/1/add',
+      payload: { searchImmediately: true, monitorForUpgrades: false },
+    });
+
+    expect(res.statusCode).toBe(200);
+    expect(triggerImmediateSearch).not.toHaveBeenCalled();
   });
 });

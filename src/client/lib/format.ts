@@ -30,10 +30,10 @@ export function formatDurationMinutes(minutes?: number | null): string | null {
 }
 
 export function formatDurationSeconds(
-  seconds: number | null,
+  seconds?: number | null,
   opts?: { alwaysShowBoth?: boolean; fallback?: string },
 ): string {
-  if (seconds === null) return opts?.fallback ?? '';
+  if (seconds == null) return opts?.fallback ?? '';
   const alwaysShowBoth = opts?.alwaysShowBoth ?? true;
   const h = Math.floor(seconds / 3600);
   const m = Math.floor((seconds % 3600) / 60);
