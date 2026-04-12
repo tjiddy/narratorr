@@ -61,7 +61,7 @@ export function ManualAddForm({ defaultTitle, onSuccess, onPendingChange }: {
       onSuccess?.();
     },
     onError: (err: Error) => {
-      toast.error(getErrorMessage(err, 'Failed to add book'));
+      toast.error(`Failed to add book: ${getErrorMessage(err)}`);
     },
   });
 

@@ -124,7 +124,7 @@ export function useManualImport({ onScanSuccess, libraryPath }: UseManualImportO
       navigate('/library');
     },
     onError: (error: Error) => {
-      toast.error(getErrorMessage(error, 'Import failed'));
+      toast.error(`Import failed: ${getErrorMessage(error)}`);
     },
   });
 

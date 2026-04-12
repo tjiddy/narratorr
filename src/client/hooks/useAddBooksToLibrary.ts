@@ -40,7 +40,7 @@ export function useAddBooksToLibrary(libraryBooks?: (BookIdentifier | BookWithAu
         next.delete(key);
         return next;
       });
-      toast.error(getErrorMessage(error, `Failed to add '${book.title}'`));
+      toast.error(`Failed to add '${book.title}': ${getErrorMessage(error)}`);
     },
   });
 

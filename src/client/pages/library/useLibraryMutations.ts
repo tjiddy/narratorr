@@ -14,7 +14,7 @@ export function useLibraryMutations() {
       queryClient.invalidateQueries({ queryKey: queryKeys.books() });
     },
     onError: (error: Error) => {
-      toast.error(getErrorMessage(error, 'Rescan failed'));
+      toast.error(`Rescan failed: ${getErrorMessage(error)}`);
     },
   });
 
@@ -26,7 +26,7 @@ export function useLibraryMutations() {
       queryClient.invalidateQueries({ queryKey: queryKeys.books() });
     },
     onError: (error: Error) => {
-      toast.error(getErrorMessage(error, 'Failed to remove book'));
+      toast.error(`Failed to remove book: ${getErrorMessage(error)}`);
     },
   });
 
@@ -37,7 +37,7 @@ export function useLibraryMutations() {
       queryClient.invalidateQueries({ queryKey: queryKeys.books() });
     },
     onError: (error: Error) => {
-      toast.error(getErrorMessage(error, 'Failed to remove missing books'));
+      toast.error(`Failed to remove missing books: ${getErrorMessage(error)}`);
     },
   });
 
@@ -52,7 +52,7 @@ export function useLibraryMutations() {
       queryClient.invalidateQueries({ queryKey: queryKeys.activity() });
     },
     onError: (error: Error) => {
-      toast.error(getErrorMessage(error, 'Search all wanted failed'));
+      toast.error(`Search all wanted failed: ${getErrorMessage(error)}`);
     },
   });
 

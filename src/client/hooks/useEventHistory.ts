@@ -25,7 +25,7 @@ export function useEventHistory(params?: EventHistoryParams) {
       toast.success('Release blacklisted and book set to wanted');
     },
     onError: (error: Error) => {
-      toast.error(getErrorMessage(error, 'Mark as failed'));
+      toast.error(`Mark as failed: ${getErrorMessage(error)}`);
     },
   });
 
@@ -36,7 +36,7 @@ export function useEventHistory(params?: EventHistoryParams) {
       toast.success('Event deleted');
     },
     onError: (error: Error) => {
-      toast.error(getErrorMessage(error, 'Delete failed'));
+      toast.error(`Delete failed: ${getErrorMessage(error)}`);
     },
   });
 
@@ -48,7 +48,7 @@ export function useEventHistory(params?: EventHistoryParams) {
       toast.success(`Cleared ${label}`);
     },
     onError: (error: Error) => {
-      toast.error(getErrorMessage(error, 'Clear failed'));
+      toast.error(`Clear failed: ${getErrorMessage(error)}`);
     },
   });
 
@@ -72,7 +72,7 @@ export function useBookEventHistory(bookId: number) {
       toast.success('Release blacklisted and book set to wanted');
     },
     onError: (error: Error) => {
-      toast.error(getErrorMessage(error, 'Mark as failed'));
+      toast.error(`Mark as failed: ${getErrorMessage(error)}`);
     },
   });
 
@@ -84,7 +84,7 @@ export function useBookEventHistory(bookId: number) {
       toast.success('Event deleted');
     },
     onError: (error: Error) => {
-      toast.error(getErrorMessage(error, 'Delete failed'));
+      toast.error(`Delete failed: ${getErrorMessage(error)}`);
     },
   });
 

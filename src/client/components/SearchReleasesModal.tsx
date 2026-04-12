@@ -144,7 +144,7 @@ export function SearchReleasesModal({ isOpen, book, onClose }: SearchReleasesMod
       queryClient.invalidateQueries({ queryKey: ['search-releases'] as const });
     },
     onError: (err: Error) => {
-      toast.error(getErrorMessage(err, 'Failed to blacklist'));
+      toast.error(`Failed to blacklist: ${getErrorMessage(err)}`);
     },
   });
 
@@ -177,7 +177,7 @@ export function SearchReleasesModal({ isOpen, book, onClose }: SearchReleasesMod
         return;
       }
       setPendingReplace(null);
-      toast.error(getErrorMessage(err, 'Failed to grab'));
+      toast.error(`Failed to grab: ${getErrorMessage(err)}`);
     },
   });
 

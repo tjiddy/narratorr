@@ -45,7 +45,7 @@ export function SearchBookCard({
         toast.info('Already in library');
         queryClient.invalidateQueries({ queryKey: queryKeys.books() });
       } else {
-        toast.error(getErrorMessage(error, 'Failed to add book'));
+        toast.error(`Failed to add book: ${getErrorMessage(error)}`);
       }
     },
   });

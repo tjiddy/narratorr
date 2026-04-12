@@ -39,7 +39,7 @@ export function ActivityPage() {
     onSuccess: () => setCancellingMergeBookId(null),
     onError: (error: Error) => {
       setCancellingMergeBookId(null);
-      toast.error(getErrorMessage(error, 'Cancel failed'));
+      toast.error(`Cancel failed: ${getErrorMessage(error)}`);
     },
   });
 

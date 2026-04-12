@@ -130,7 +130,7 @@ export function useLibraryImport() {
       navigate('/library');
     },
     onError: (error: Error) => {
-      toast.error(getErrorMessage(error, 'Registration failed'));
+      toast.error(`Registration failed: ${getErrorMessage(error)}`);
     },
   });
 
