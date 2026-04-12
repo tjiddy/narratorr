@@ -22,7 +22,7 @@ export function useBookActions(bookId: number, monitorForUpgrades: boolean) {
       toast.success(result.message);
     },
     onError: (error: Error) => {
-      toast.error(`Rename failed: ${error.message}`);
+      toast.error(getErrorMessage(error, 'Rename failed'));
     },
   });
 
@@ -40,7 +40,7 @@ export function useBookActions(bookId: number, monitorForUpgrades: boolean) {
     onError: (error: Error) => {
       // API-level failures (e.g., 409 ALREADY_IN_PROGRESS) happen before SSE events fire,
       // so the mutation must handle these directly.
-      toast.error(`Merge failed: ${error.message}`);
+      toast.error(getErrorMessage(error, 'Merge failed'));
     },
   });
 
@@ -55,7 +55,7 @@ export function useBookActions(bookId: number, monitorForUpgrades: boolean) {
       }
     },
     onError: (error: Error) => {
-      toast.error(`Re-tag failed: ${error.message}`);
+      toast.error(getErrorMessage(error, 'Re-tag failed'));
     },
   });
 
@@ -66,7 +66,7 @@ export function useBookActions(bookId: number, monitorForUpgrades: boolean) {
       toast.success('Refreshed audio metadata');
     },
     onError: (error: Error) => {
-      toast.error(`Refresh scan failed: ${error.message}`);
+      toast.error(getErrorMessage(error, 'Refresh scan failed'));
     },
   });
 
@@ -85,7 +85,7 @@ export function useBookActions(bookId: number, monitorForUpgrades: boolean) {
       toast.success(variables.deleteFiles ? 'Removed book and deleted files from disk' : 'Removed book from library');
     },
     onError: (error: Error) => {
-      toast.error(`Failed to remove book: ${error.message}`);
+      toast.error(getErrorMessage(error, 'Failed to remove book'));
     },
   });
 
@@ -96,7 +96,7 @@ export function useBookActions(bookId: number, monitorForUpgrades: boolean) {
       toast.success(monitorForUpgrades ? 'Upgrade monitoring disabled' : 'Upgrade monitoring enabled');
     },
     onError: (error: Error) => {
-      toast.error(`Failed to update: ${error.message}`);
+      toast.error(getErrorMessage(error, 'Failed to update'));
     },
   });
 
@@ -114,11 +114,11 @@ export function useBookActions(bookId: number, monitorForUpgrades: boolean) {
           invalidateBookQueries();
           toast.success(renameResult.message);
         } catch (renameError: unknown) {
-          toast.error(`Rename failed: ${getErrorMessage(renameError)}`);
+          toast.error(getErrorMessage(renameError, 'Rename failed'));
         }
       }
     } catch (error: unknown) {
-      toast.error(`Failed to update book: ${getErrorMessage(error)}`);
+      toast.error(getErrorMessage(error, 'Failed to update book'));
     } finally {
       setIsSaving(false);
     }
@@ -131,14 +131,14 @@ export function useBookActions(bookId: number, monitorForUpgrades: boolean) {
       toast.success('Cover updated');
     },
     onError: (error: Error) => {
-      toast.error(`Cover upload failed: ${error.message}`);
+      toast.error(getErrorMessage(error, 'Cover upload failed'));
     },
   });
 
   const cancelMergeMutation = useMutation({
     mutationFn: () => api.cancelMergeBook(bookId),
     onError: (error: Error) => {
-      toast.error(`Cancel merge failed: ${error.message}`);
+      toast.error(getErrorMessage(error, 'Cancel merge failed'));
     },
   });
 
@@ -149,7 +149,7 @@ export function useBookActions(bookId: number, monitorForUpgrades: boolean) {
       toast.success('Book marked as wrong release — searching for replacement');
     },
     onError: (error: Error) => {
-      toast.error(`Wrong release failed: ${error.message}`);
+      toast.error(getErrorMessage(error, 'Wrong release failed'));
     },
   });
 

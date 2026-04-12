@@ -7,6 +7,7 @@ import { queryKeys } from '@/lib/queryKeys';
 import { useMatchJob } from '@/hooks/useMatchJob';
 import type { ImportRow, BookEditState } from '@/components/manual-import';
 import { isPathInsideLibrary } from '@/lib/pathUtils.js';
+import { getErrorMessage } from '@/lib/error-message.js';
 
 export type Step = 'path' | 'review';
 
@@ -111,7 +112,7 @@ export function useManualImport({ onScanSuccess, libraryPath }: UseManualImportO
       onScanSuccess?.(path);
     },
     onError: (error: Error) => {
-      setScanError(error.message);
+      setScanError(getErrorMessage(error, 'Scan failed'));
     },
   });
 
@@ -123,7 +124,7 @@ export function useManualImport({ onScanSuccess, libraryPath }: UseManualImportO
       navigate('/library');
     },
     onError: (error: Error) => {
-      toast.error(`Import failed: ${error.message}`);
+      toast.error(getErrorMessage(error, 'Import failed'));
     },
   });
 

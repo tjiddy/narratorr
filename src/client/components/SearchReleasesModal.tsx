@@ -21,6 +21,7 @@ import { ConfirmModal } from '@/components/ConfirmModal';
 import { UnsupportedSection } from '@/components/UnsupportedSection';
 import { ReleaseCard } from '@/components/ReleaseCard';
 import { useSearchStream, type IndexerState } from '@/hooks/useSearchStream';
+import { getErrorMessage } from '@/lib/error-message.js';
 
 // ============================================================================
 // Props
@@ -143,7 +144,7 @@ export function SearchReleasesModal({ isOpen, book, onClose }: SearchReleasesMod
       queryClient.invalidateQueries({ queryKey: ['search-releases'] as const });
     },
     onError: (err: Error) => {
-      toast.error(`Failed to blacklist: ${err.message}`);
+      toast.error(getErrorMessage(err, 'Failed to blacklist'));
     },
   });
 
@@ -176,7 +177,7 @@ export function SearchReleasesModal({ isOpen, book, onClose }: SearchReleasesMod
         return;
       }
       setPendingReplace(null);
-      toast.error(`Failed to grab: ${err.message}`);
+      toast.error(getErrorMessage(err, 'Failed to grab'));
     },
   });
 

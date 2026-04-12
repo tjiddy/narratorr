@@ -4,6 +4,7 @@ import { toast } from 'sonner';
 import { api, type BookMetadata, type BookIdentifier, type BookWithAuthor } from '@/lib/api';
 import { mapBookMetadataToPayload, isBookInLibrary } from '@/lib/helpers';
 import { queryKeys } from '@/lib/queryKeys';
+import { getErrorMessage } from '@/lib/error-message.js';
 
 export interface QualityDefaults {
   searchImmediately: boolean;
@@ -39,7 +40,7 @@ export function useAddBooksToLibrary(libraryBooks?: (BookIdentifier | BookWithAu
         next.delete(key);
         return next;
       });
-      toast.error(`Failed to add '${book.title}': ${error.message}`);
+      toast.error(getErrorMessage(error, `Failed to add '${book.title}'`));
     },
   });
 

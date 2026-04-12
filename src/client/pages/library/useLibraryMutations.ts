@@ -2,6 +2,7 @@ import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import { api } from '@/lib/api';
 import { queryKeys } from '@/lib/queryKeys';
+import { getErrorMessage } from '@/lib/error-message.js';
 
 export function useLibraryMutations() {
   const queryClient = useQueryClient();
@@ -13,7 +14,7 @@ export function useLibraryMutations() {
       queryClient.invalidateQueries({ queryKey: queryKeys.books() });
     },
     onError: (error: Error) => {
-      toast.error(`Rescan failed: ${error.message}`);
+      toast.error(getErrorMessage(error, 'Rescan failed'));
     },
   });
 
@@ -25,7 +26,7 @@ export function useLibraryMutations() {
       queryClient.invalidateQueries({ queryKey: queryKeys.books() });
     },
     onError: (error: Error) => {
-      toast.error(`Failed to remove book: ${error.message}`);
+      toast.error(getErrorMessage(error, 'Failed to remove book'));
     },
   });
 
@@ -36,7 +37,7 @@ export function useLibraryMutations() {
       queryClient.invalidateQueries({ queryKey: queryKeys.books() });
     },
     onError: (error: Error) => {
-      toast.error(`Failed to remove missing books: ${error.message}`);
+      toast.error(getErrorMessage(error, 'Failed to remove missing books'));
     },
   });
 
@@ -51,7 +52,7 @@ export function useLibraryMutations() {
       queryClient.invalidateQueries({ queryKey: queryKeys.activity() });
     },
     onError: (error: Error) => {
-      toast.error(`Search all wanted failed: ${error.message}`);
+      toast.error(getErrorMessage(error, 'Search all wanted failed'));
     },
   });
 

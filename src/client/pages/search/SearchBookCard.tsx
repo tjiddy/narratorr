@@ -7,6 +7,7 @@ import { toast } from 'sonner';
 import { mapBookMetadataToPayload, isBookInLibrary } from '@/lib/helpers';
 import { formatDurationMinutes } from '@/lib/format';
 import { queryKeys } from '@/lib/queryKeys';
+import { getErrorMessage } from '@/lib/error-message.js';
 import {
   BookOpenIcon,
   HeadphonesIcon,
@@ -44,7 +45,7 @@ export function SearchBookCard({
         toast.info('Already in library');
         queryClient.invalidateQueries({ queryKey: queryKeys.books() });
       } else {
-        toast.error(`Failed to add book: ${error.message}`);
+        toast.error(getErrorMessage(error, 'Failed to add book'));
       }
     },
   });

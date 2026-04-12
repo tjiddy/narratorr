@@ -13,6 +13,7 @@ import { useMergeActivityCards } from '@/hooks/useMergeProgress.js';
 import { useSearchProgress } from '@/hooks/useSearchProgress';
 import { usePagination } from '@/hooks/usePagination';
 import { api } from '@/lib/api';
+import { getErrorMessage } from '@/lib/error-message.js';
 import { DEFAULT_LIMITS } from '../../../shared/schemas/common.js';
 
 export function ActivityPage() {
@@ -38,7 +39,7 @@ export function ActivityPage() {
     onSuccess: () => setCancellingMergeBookId(null),
     onError: (error: Error) => {
       setCancellingMergeBookId(null);
-      toast.error(`Cancel failed: ${error.message}`);
+      toast.error(getErrorMessage(error, 'Cancel failed'));
     },
   });
 

@@ -2,6 +2,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import { api, type EventHistoryParams } from '@/lib/api';
 import { queryKeys } from '@/lib/queryKeys';
+import { getErrorMessage } from '@/lib/error-message.js';
 
 export function useEventHistory(params?: EventHistoryParams) {
   const queryClient = useQueryClient();
@@ -24,7 +25,7 @@ export function useEventHistory(params?: EventHistoryParams) {
       toast.success('Release blacklisted and book set to wanted');
     },
     onError: (error: Error) => {
-      toast.error(`Mark as failed: ${error.message}`);
+      toast.error(getErrorMessage(error, 'Mark as failed'));
     },
   });
 
@@ -35,7 +36,7 @@ export function useEventHistory(params?: EventHistoryParams) {
       toast.success('Event deleted');
     },
     onError: (error: Error) => {
-      toast.error(`Delete failed: ${error.message}`);
+      toast.error(getErrorMessage(error, 'Delete failed'));
     },
   });
 
@@ -47,7 +48,7 @@ export function useEventHistory(params?: EventHistoryParams) {
       toast.success(`Cleared ${label}`);
     },
     onError: (error: Error) => {
-      toast.error(`Clear failed: ${error.message}`);
+      toast.error(getErrorMessage(error, 'Clear failed'));
     },
   });
 
@@ -71,7 +72,7 @@ export function useBookEventHistory(bookId: number) {
       toast.success('Release blacklisted and book set to wanted');
     },
     onError: (error: Error) => {
-      toast.error(`Mark as failed: ${error.message}`);
+      toast.error(getErrorMessage(error, 'Mark as failed'));
     },
   });
 
@@ -83,7 +84,7 @@ export function useBookEventHistory(bookId: number) {
       toast.success('Event deleted');
     },
     onError: (error: Error) => {
-      toast.error(`Delete failed: ${error.message}`);
+      toast.error(getErrorMessage(error, 'Delete failed'));
     },
   });
 
