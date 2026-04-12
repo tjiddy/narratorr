@@ -351,6 +351,54 @@ describe('enrichment job', () => {
         'Enrichment batch completed',
       );
     });
+
+    it('helper failure for first narrator does not abort batch — second narrator still gets bookNarrators insert and book update completes (#482)', async () => {
+      db.select
+        .mockReturnValueOnce(mockDbChain([]))  // no-asin
+        .mockReturnValueOnce(mockDbChain([{ id: 1, asin: 'B_NAR_FAIL' }]))  // candidates
+        .mockReturnValueOnce(mockDbChain([{ duration: null, genres: null, title: 'Some Book', description: null, coverUrl: null, publishedDate: null, seriesName: null, seriesPosition: null }]));  // existing
+
+      metadataService.enrichBook.mockResolvedValueOnce({
+        title: 'Book', authors: [{ name: 'Author' }],
+        narrators: ['Failing Narrator', 'Good Narrator'],
+        duration: 600,
+      });
+      db.update.mockReturnValue(mockDbChain());
+
+      // narrator lookup: no existing narrators in junction table
+      db.select.mockReturnValueOnce(mockDbChain([]));
+
+      // --- Narrator 1 (Failing Narrator): findOrCreateNarrator fails ---
+      // select: not found
+      db.select.mockReturnValueOnce(mockDbChain([]));
+      // insert: throws unique constraint
+      db.insert.mockReturnValueOnce(mockDbChain(undefined, { error: new Error('UNIQUE constraint') }));
+      // retry select: also empty → throws
+      db.select.mockReturnValueOnce(mockDbChain([]));
+
+      // --- Narrator 2 (Good Narrator): findOrCreateNarrator succeeds ---
+      // select: not found
+      db.select.mockReturnValueOnce(mockDbChain([]));
+      // insert: succeeds
+      db.insert.mockReturnValueOnce(mockDbChain([{ id: 55 }]));
+
+      // bookNarrators insert for narrator 2
+      const junctionChain = mockDbChain([]);
+      db.insert.mockReturnValueOnce(junctionChain);
+
+      await runEnrichment(inject<Db>(db), inject<MetadataService>(metadataService), inject<BookService>(bookService), inject<FastifyBaseLogger>(log));
+
+      // Narrator 2 junction row was inserted with correct narratorId and position
+      expect(junctionChain.values).toHaveBeenCalledWith(
+        expect.objectContaining({ bookId: 1, narratorId: 55, position: 1 }),
+      );
+
+      // Book still got its final update (enrichment completed)
+      expect(log.info).toHaveBeenCalledWith(
+        expect.objectContaining({ filledNarrators: 1 }),
+        'Enrichment batch completed',
+      );
+    });
   });
 
   describe('genre persistence', () => {
