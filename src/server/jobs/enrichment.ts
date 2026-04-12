@@ -2,9 +2,9 @@ import cron from 'node-cron';
 import { eq, and, isNotNull, or, sql } from 'drizzle-orm';
 import type { Db } from '../../db/index.js';
 import type { FastifyBaseLogger } from 'fastify';
-import { books, narrators, bookNarrators } from '../../db/schema.js';
-import { slugify } from '../../core/index.js';
+import { books, bookNarrators } from '../../db/schema.js';
 import { RateLimitError } from '../../core/index.js';
+import { findOrCreateNarrator } from '../utils/find-or-create-person.js';
 import type { MetadataService } from '../services/metadata.service.js';
 import type { BookService } from '../services/book.service.js';
 
@@ -207,18 +207,14 @@ export async function runEnrichment(db: Db, metadataService: MetadataService, bo
           for (let i = 0; i < result.narrators.length; i++) {
             const name = result.narrators[i].trim();
             if (!name) continue;
-            const slug = slugify(name);
-            let [existing_n] = await db.select({ id: narrators.id }).from(narrators).where(eq(narrators.slug, slug)).limit(1);
-            if (!existing_n) {
-              const [created] = await db.insert(narrators).values({ name, slug }).onConflictDoNothing().returning();
-              if (created) {
-                existing_n = created;
-              } else {
-                [existing_n] = await db.select({ id: narrators.id }).from(narrators).where(eq(narrators.slug, slug)).limit(1);
-              }
+            let narratorId: number | undefined;
+            try {
+              narratorId = await findOrCreateNarrator(db, name);
+            } catch (_error: unknown) {
+              // Skip this narrator — batch processing continues
             }
-            if (existing_n) {
-              await db.insert(bookNarrators).values({ bookId: candidate.id, narratorId: existing_n.id, position: i }).onConflictDoNothing();
+            if (narratorId !== undefined) {
+              await db.insert(bookNarrators).values({ bookId: candidate.id, narratorId, position: i }).onConflictDoNothing();
             }
           }
         }

@@ -1,13 +1,13 @@
 import { eq, and, lte } from 'drizzle-orm';
 import type { Db } from '../../db/index.js';
 import type { FastifyBaseLogger } from 'fastify';
-import { importLists, books, bookEvents, authors, bookAuthors } from '../../db/schema.js';
+import { importLists, books, bookEvents, bookAuthors } from '../../db/schema.js';
 import { IMPORT_LIST_ADAPTER_FACTORIES } from '../../core/import-lists/index.js';
 import type { ImportListItem } from '../../core/import-lists/index.js';
 import type { MetadataService } from './metadata.service.js';
 import { encryptFields, decryptFields, resolveSentinelFields, getKey } from '../utils/secret-codec.js';
 import { getErrorMessage } from '../utils/error-message.js';
-import { slugify } from '../../core/index.js';
+import { findOrCreateAuthor } from '../utils/find-or-create-person.js';
 
 /** Milliseconds per minute — used for sync interval calculations. */
 const MS_PER_MINUTE = 60_000;
@@ -182,17 +182,6 @@ export class ImportListService {
     }
   }
 
-  private async findOrCreateAuthor(authorName: string): Promise<number | null> {
-    const slug = slugify(authorName);
-    const existing = await this.db.select().from(authors).where(eq(authors.slug, slug)).limit(1);
-    if (existing.length > 0) return existing[0].id;
-    const inserted = await this.db.insert(authors).values({ name: authorName, slug }).onConflictDoNothing().returning();
-    if (inserted.length > 0) return inserted[0].id;
-    // Race condition: another sync inserted same author between select and insert
-    const retry = await this.db.select().from(authors).where(eq(authors.slug, slug)).limit(1);
-    return retry.length > 0 ? retry[0].id : null;
-  }
-
   private async processItem(item: ImportListItem, list: ImportListRow): Promise<void> {
     const enriched = await this.enrichItem(item);
 
@@ -219,8 +208,13 @@ export class ImportListService {
 
     // Insert author junction row if author is known
     if (enriched.author) {
-      const authorId = await this.findOrCreateAuthor(enriched.author);
-      if (authorId !== null) {
+      let authorId: number | undefined;
+      try {
+        authorId = await findOrCreateAuthor(this.db, enriched.author);
+      } catch (_error: unknown) {
+        this.log.warn({ title: newBook.title, author: enriched.author }, 'Author resolution failed, skipping bookAuthors');
+      }
+      if (authorId !== undefined) {
         await this.db.insert(bookAuthors).values({ bookId: newBook.id, authorId, position: 0 });
       }
     }

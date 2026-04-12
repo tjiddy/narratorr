@@ -7,6 +7,7 @@ import type { Db, DbOrTx } from '../../db/index.js';
 import type { FastifyBaseLogger } from 'fastify';
 import { books, authors, narrators, bookAuthors, bookNarrators, unmatchedGenres, importLists } from '../../db/schema.js';
 import { slugify, findUnmatchedGenres } from '../../core/index.js';
+import { findOrCreateAuthor, findOrCreateNarrator } from '../utils/find-or-create-person.js';
 import { type MetadataService } from './metadata.service.js';
 
 export { CoverUploadError } from './cover-upload.js';
@@ -137,7 +138,7 @@ export class BookService {
     }
 
     for (let i = 0; i < uniqueAuthors.length; i++) {
-      const authorId = await this.findOrCreateAuthor(tx, uniqueAuthors[i].name, uniqueAuthors[i].asin);
+      const authorId = await findOrCreateAuthor(tx, uniqueAuthors[i].name, uniqueAuthors[i].asin);
       await tx
         .insert(bookAuthors)
         .values({ bookId, authorId, position: i });
@@ -163,7 +164,7 @@ export class BookService {
     }
 
     for (let i = 0; i < uniqueNarrators.length; i++) {
-      const narratorId = await this.findOrCreateNarrator(tx, uniqueNarrators[i]);
+      const narratorId = await findOrCreateNarrator(tx, uniqueNarrators[i]);
       await tx
         .insert(bookNarrators)
         .values({ bookId, narratorId, position: i });
@@ -381,75 +382,6 @@ export class BookService {
     }));
   }
 
-  private async findOrCreateAuthor(tx: DbOrTx, name: string, asin?: string): Promise<number> {
-    const slug = slugify(name);
-    const existing = await tx
-      .select()
-      .from(authors)
-      .where(eq(authors.slug, slug))
-      .limit(1);
-
-    if (existing.length > 0) {
-      if (asin && !existing[0].asin) {
-        await tx.update(authors).set({ asin }).where(eq(authors.id, existing[0].id));
-      }
-      return existing[0].id;
-    }
-
-    try {
-      const newAuthor = await tx
-        .insert(authors)
-        .values({ name, slug, asin })
-        .returning();
-      return newAuthor[0].id;
-    } catch {
-      // Unique constraint violation — concurrent creation
-      const retryAuthor = await tx
-        .select()
-        .from(authors)
-        .where(eq(authors.slug, slug))
-        .limit(1);
-      if (retryAuthor.length > 0) {
-        if (asin && !retryAuthor[0].asin) {
-          await tx.update(authors).set({ asin }).where(eq(authors.id, retryAuthor[0].id));
-        }
-        return retryAuthor[0].id;
-      }
-      throw new Error(`Failed to find or create author: ${name}`);
-    }
-  }
-
-  private async findOrCreateNarrator(tx: DbOrTx, name: string): Promise<number> {
-    const slug = slugify(name);
-    const existing = await tx
-      .select()
-      .from(narrators)
-      .where(eq(narrators.slug, slug))
-      .limit(1);
-
-    if (existing.length > 0) {
-      return existing[0].id;
-    }
-
-    try {
-      const newNarrator = await tx
-        .insert(narrators)
-        .values({ name, slug })
-        .returning();
-      return newNarrator[0].id;
-    } catch {
-      // Unique constraint violation — concurrent creation
-      const retryNarrator = await tx
-        .select()
-        .from(narrators)
-        .where(eq(narrators.slug, slug))
-        .limit(1);
-      if (retryNarrator.length > 0) {
-        return retryNarrator[0].id;
-      }
-      throw new Error(`Failed to find or create narrator: ${name}`);
-    }
-  }
 
   /** Fire-and-forget: track genres not in the synonym/known lists for future analysis */
   private async trackUnmatchedGenres(genres: string[] | undefined): Promise<void> {
