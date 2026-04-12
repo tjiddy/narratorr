@@ -45,6 +45,10 @@
 
 - **`src/client/lib/api/books.ts` / `src/core/metadata/schemas.ts`**: Client `BookMetadata` interface is hand-maintained separately from server `BookMetadataSchema`. Fields drift — `language` and `publishedDate` existed server-side but were missing client-side until #497. Should derive client type from the Zod schema or generate it. (discovered in #497)
 
+- **`src/client/components/SearchReleasesModal.tsx` at 391 lines (max 400)**: File is near ESLint max-lines soft limit and already has `eslint-disable max-lines-per-function` at line 108. Any net additions (new state, new UI sections) will trigger the violation. Consider extracting the results list or grab/replace logic into sub-components. (discovered in #484)
+
+- **`src/client/components/book/BookMetadataModal.tsx` at 357 lines (max 400)**: Same situation — already has `eslint-disable max-lines-per-function` at line 18. The search integration (view toggle, search results, apply metadata) could be extracted into a separate component. (discovered in #484)
+
 ## Accepted Debt
 
 Items below are real but not worth fixing — the cost of change outweighs the benefit.
