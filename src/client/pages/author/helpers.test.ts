@@ -41,6 +41,17 @@ describe('groupBooksBySeries', () => {
       expect(standalone.map((b) => b.title)).toEqual(['Late', 'Early', 'Undef']);
     });
 
+    it('sorts same-year standalone books by full date (not just year)', () => {
+      const books = [
+        book({ title: 'March', publishedDate: '2024-03-15' }),
+        book({ title: 'November', publishedDate: '2024-11-01' }),
+        book({ title: 'January', publishedDate: '2024-01-10' }),
+      ];
+
+      const { standalone } = groupBooksBySeries(books);
+      expect(standalone.map((b) => b.title)).toEqual(['November', 'March', 'January']);
+    });
+
     it('handles all standalone books (no series) — sorted by date', () => {
       const books = [
         book({ title: 'C', publishedDate: '2020-01-01' }),
