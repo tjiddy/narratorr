@@ -11,6 +11,7 @@ import { retrySearch, type RetrySearchDeps } from '../services/retry-search.js';
 import type { BlacklistService } from '../services';
 import type { EventBroadcasterService } from '../services/event-broadcaster.service.js';
 import type { DownloadStatus } from '../../shared/schemas/activity.js';
+import { safeEmit } from '../utils/safe-emit.js';
 import { revertBookStatus } from '../utils/book-status.js';
 import { fireAndForget } from '../utils/fire-and-forget.js';
 import type { RemotePathMappingService } from '../services/remote-path-mapping.service.js';
@@ -213,7 +214,7 @@ async function resolveOutputPath(
   return fullPath;
 }
 
-/** Emit SSE progress and status change events. */
+/** Emit SSE progress and status change events. Each emit is independent so a failure in one doesn't skip the rest. */
 function emitProgressEvents(
   download: DownloadRow,
   progress: number,
@@ -222,12 +223,10 @@ function emitProgressEvents(
   log: FastifyBaseLogger,
 ): void {
   if (!download.bookId) return;
-  try {
-    broadcaster?.emit('download_progress', { download_id: download.id, book_id: download.bookId, percentage: progress, speed: null, eta: null });
-    if (download.status !== newStatus) {
-      broadcaster?.emit('download_status_change', { download_id: download.id, book_id: download.bookId, old_status: download.status as DownloadStatus, new_status: newStatus as DownloadStatus });
-    }
-  } catch (error: unknown) { log.debug(error, 'SSE emit failed'); }
+  safeEmit(broadcaster, 'download_progress', { download_id: download.id, book_id: download.bookId, percentage: progress, speed: null, eta: null }, log);
+  if (download.status !== newStatus) {
+    safeEmit(broadcaster, 'download_status_change', { download_id: download.id, book_id: download.bookId, old_status: download.status as DownloadStatus, new_status: newStatus as DownloadStatus }, log);
+  }
 }
 
 /** Handle failure status transitions with retry recovery. */
