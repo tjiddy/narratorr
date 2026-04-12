@@ -1,5 +1,34 @@
 # Workflow Log
 
+## #514 Polish: type safety, React patterns, and consistency fixes — 2026-04-12
+**Skill path:** /elaborate → /respond-to-spec-review (x2) → /implement → /claim → /plan → /handoff
+**Outcome:** success — PR #518
+
+### Metrics
+- Files changed: 15 | Tests added/modified: 7
+- Quality gate runs: 2 (pass on attempt 2)
+- Fix iterations: 1 (react-hooks/refs lint rule on isDirty ref assignment during render; books.ts max-lines-per-function exceeded)
+- Context compactions: 0
+
+### Workflow experience
+- What went smoothly: 12-item chore split cleanly into 5 modules; existing test patterns made it easy to verify each fix. TDD stubs were minimal since most changes were refactors of existing tested code.
+- Friction / issues encountered: Spec review went 3 rounds — AC #1 conflicted with a repo learning (ZodType workaround), AC #4 needed precise route-level type contract. The aria-label change on AddBookPopover had blast radius across 4 test files that wasn't caught until verify.
+
+### Token efficiency
+- Highest-token actions: Spec review rounds (3 cycles), Explore subagent for plan
+- Avoidable waste: Could have checked aria-label test blast radius proactively before committing
+- Suggestions: For shared component changes, always grep `*.test.ts*` for the component's accessible name before committing
+
+### Infrastructure gaps
+- Repeated workarounds: none
+- Missing tooling / config: none
+- Unresolved debt: books.ts `registerBookSearchRoute` still uses `!` assertions on optional deps (lines 145, 149) — guarded by outer `if (indexerService)` but TypeScript doesn't narrow through the function boundary
+
+### Wish I'd Known
+1. React's `react-hooks/refs` rule forbids `ref.current = value` during render — must use a dedicated effect to sync (see `react-hooks-refs-render-rule.md`)
+2. Adding `aria-label` changes the accessible name, breaking `/^add$/i` test patterns across all consuming pages — grep tests before committing (see `aria-label-blast-radius.md`)
+3. `sseEventTypeSchema.options` returns a readonly tuple that can be spread for runtime use — no need for a parallel array (see `sse-event-type-derivation.md`)
+
 ## #482 DRY: consolidate findOrCreateAuthor/Narrator — 4 divergent copies — 2026-04-12
 **Skill path:** /implement → /claim → /plan → /handoff
 **Outcome:** success — PR #519
