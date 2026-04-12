@@ -208,11 +208,14 @@ export class ImportListService {
 
     // Insert author junction row if author is known
     if (enriched.author) {
+      let authorId: number | undefined;
       try {
-        const authorId = await findOrCreateAuthor(this.db, enriched.author);
-        await this.db.insert(bookAuthors).values({ bookId: newBook.id, authorId, position: 0 });
-      } catch {
+        authorId = await findOrCreateAuthor(this.db, enriched.author);
+      } catch (error: unknown) {
         this.log.warn({ title: newBook.title, author: enriched.author }, 'Author resolution failed, skipping bookAuthors');
+      }
+      if (authorId !== undefined) {
+        await this.db.insert(bookAuthors).values({ bookId: newBook.id, authorId, position: 0 });
       }
     }
 

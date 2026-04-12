@@ -207,11 +207,14 @@ export async function runEnrichment(db: Db, metadataService: MetadataService, bo
           for (let i = 0; i < result.narrators.length; i++) {
             const name = result.narrators[i].trim();
             if (!name) continue;
+            let narratorId: number | undefined;
             try {
-              const narratorId = await findOrCreateNarrator(db, name);
-              await db.insert(bookNarrators).values({ bookId: candidate.id, narratorId, position: i }).onConflictDoNothing();
-            } catch {
+              narratorId = await findOrCreateNarrator(db, name);
+            } catch (error: unknown) {
               // Skip this narrator — batch processing continues
+            }
+            if (narratorId !== undefined) {
+              await db.insert(bookNarrators).values({ bookId: candidate.id, narratorId, position: i }).onConflictDoNothing();
             }
           }
         }
