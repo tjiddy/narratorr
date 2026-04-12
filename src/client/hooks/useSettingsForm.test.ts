@@ -434,6 +434,25 @@ describe('useSettingsForm', () => {
       expect(result.current.form.getValues()).toEqual(testDefaults);
     });
 
+    it('rejected settings query does not crash — form retains defaultValues', async () => {
+      mockApi.getSettings.mockRejectedValue(new Error('Network error'));
+
+      const { result } = renderHook(
+        () => useSettingsForm(hookConfig()),
+        { wrapper: createWrapper(queryClient) },
+      );
+
+      // Wait for the query to settle (rejected)
+      await waitFor(() => {
+        expect(mockApi.getSettings).toHaveBeenCalled();
+      });
+
+      // Form should still have defaultValues — not crashed
+      expect(result.current.form.getValues()).toEqual(testDefaults);
+      // Mutation should still be available
+      expect(typeof result.current.onSubmit).toBe('function');
+    });
+
     it('empty string fields in settings are handled (not coerced to undefined)', async () => {
       const stringSchema = z.object({ name: z.string() });
       type StringForm = z.infer<typeof stringSchema>;
