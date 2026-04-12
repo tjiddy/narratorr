@@ -426,6 +426,34 @@ describe('DiscoverPage', () => {
     });
   });
 
+  // --- #501: Client-side language and reject word filtering ---
+
+  describe('language filtering', () => {
+    it.todo('hides suggestions with language not in user configured languages');
+
+    it.todo('shows suggestions with null language (not filtered out)');
+
+    it.todo('shows all suggestions when language settings array is empty');
+
+    it.todo('language filtering combines with reason filter (AND logic)');
+  });
+
+  describe('reject word filtering', () => {
+    it.todo('hides suggestions whose title contains a reject word (case-insensitive)');
+
+    it.todo('shows all suggestions when reject words setting is empty');
+
+    it.todo('combines language filter + reject word filter (AND logic)');
+  });
+
+  describe('add mutation with overrides', () => {
+    it.todo('calls addDiscoverSuggestion with id and quality overrides');
+
+    it.todo('card stays visible after add with green checkmark (no list shift)');
+
+    it.todo('shows error toast and restores card state on add failure');
+  });
+
   // -------------------------------------------------------------------------
   // Diversity filter (#407)
   // -------------------------------------------------------------------------

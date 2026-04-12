@@ -745,6 +745,22 @@ describe('DiscoveryService', () => {
       const result = await service.addSuggestion(999);
       expect(result).toBeNull();
     });
+
+    // --- #501: Metadata forwarding and overrides ---
+
+    it.todo('passes full metadata (coverUrl, narrators, duration, seriesName, seriesPosition, publishedDate, genres) to bookService.create');
+
+    it.todo('maps narratorName to narrators string array (not object array)');
+
+    it.todo('passes empty narrators array when narratorName is null');
+
+    it.todo('does not pass [null] when optional string fields are null');
+
+    it.todo('forwards monitorForUpgrades: true from overrides to bookService.create');
+
+    it.todo('defaults monitorForUpgrades to false when overrides are omitted');
+
+    it.todo('duplicate detection still works with expanded payload');
   });
 
   // --- #408: Expiry ---

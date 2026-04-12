@@ -145,6 +145,30 @@ describe('SuggestionCard', () => {
     });
   });
 
+  // --- #501: AddBookPopover integration and post-add states ---
+
+  describe('AddBookPopover integration', () => {
+    it.todo('renders AddBookPopover instead of bare Add button');
+
+    it.todo('clicking Add opens popover with search/monitor toggles');
+
+    it.todo('confirming add calls onAdd with quality overrides from popover');
+  });
+
+  describe('post-add states', () => {
+    it.todo('shows Add button and Dismiss button in available state');
+
+    it.todo('shows spinner and disables buttons in adding state');
+
+    it.todo('shows green checkmark and no Add button in added state');
+
+    it.todo('shows Dismiss button in added state');
+  });
+
+  describe('cover aspect ratio', () => {
+    it.todo('renders cover image with square aspect ratio (not rectangular)');
+  });
+
   describe('animation', () => {
     it('stagger animation index capped at 9', () => {
       const { container } = render(

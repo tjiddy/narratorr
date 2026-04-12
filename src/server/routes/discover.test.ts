@@ -137,6 +137,24 @@ describe('Discover Routes', () => {
       const res = await app.inject({ method: 'POST', url: '/api/discover/suggestions/999/add' });
       expect(res.statusCode).toBe(404);
     });
+
+    // --- #501: Override body and immediate search ---
+
+    it.todo('passes searchImmediately and monitorForUpgrades from body to service');
+
+    it.todo('triggers triggerImmediateSearch when searchImmediately is true and result has a book');
+
+    it.todo('does not trigger search when searchImmediately is false');
+
+    it.todo('does not trigger search on duplicate result even with searchImmediately true');
+
+    it.todo('accepts partial body with only monitorForUpgrades');
+
+    it.todo('accepts empty body and defaults both overrides to false');
+
+    it.todo('accepts request with no body at all');
+
+    it.todo('rejects invalid override body (searchImmediately: "yes") with 400');
   });
 
   describe('POST /api/discover/refresh', () => {
