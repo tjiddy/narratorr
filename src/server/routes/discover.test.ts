@@ -546,7 +546,7 @@ describe('#514 discover route — missing blacklistService guard', () => {
   beforeAll(async () => {
     services = createMockServices();
     // Explicitly null out blacklistService so the route guard skips search dispatch
-    (services as Record<string, unknown>).blacklist = undefined;
+    (services as unknown as Record<string, unknown>).blacklist = undefined;
     app = await createTestApp(services);
   });
 

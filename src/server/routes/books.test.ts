@@ -2576,7 +2576,7 @@ describe('#514 books route — missing blacklistService guard', () => {
 
   beforeAll(async () => {
     services = createMockServices();
-    (services as Record<string, unknown>).blacklist = undefined;
+    (services as unknown as Record<string, unknown>).blacklist = undefined;
     app = await createTestApp(services);
   });
 
