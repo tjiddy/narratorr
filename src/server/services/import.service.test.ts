@@ -1699,10 +1699,29 @@ describe('ImportService', () => {
     });
 
     // #504 — ImportContext identifier extension
-    it.todo('returns infoHash from the download record');
-    it.todo('returns guid from the download record');
-    it.todo('returns null for infoHash when download has no infoHash (usenet)');
-    it.todo('returns null for guid when download has no guid (torrent)');
+    it('returns infoHash from the download record', async () => {
+      db.select.mockReturnValueOnce(mockDbChain([{ ...mockDownload, infoHash: 'hash-abc' }]));
+      const ctx = await service.getImportContext(1);
+      expect(ctx.infoHash).toBe('hash-abc');
+    });
+
+    it('returns guid from the download record', async () => {
+      db.select.mockReturnValueOnce(mockDbChain([{ ...mockDownload, guid: 'guid-xyz' }]));
+      const ctx = await service.getImportContext(1);
+      expect(ctx.guid).toBe('guid-xyz');
+    });
+
+    it('returns null for infoHash when download has no infoHash (usenet)', async () => {
+      db.select.mockReturnValueOnce(mockDbChain([{ ...mockDownload, infoHash: null, guid: 'usenet-guid' }]));
+      const ctx = await service.getImportContext(1);
+      expect(ctx.infoHash).toBeNull();
+    });
+
+    it('returns null for guid when download has no guid (torrent)', async () => {
+      db.select.mockReturnValueOnce(mockDbChain([mockDownload])); // guid: null in fixture
+      const ctx = await service.getImportContext(1);
+      expect(ctx.guid).toBeNull();
+    });
   });
 
   describe('getEligibleDownloads', () => {

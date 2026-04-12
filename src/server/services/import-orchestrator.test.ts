@@ -60,6 +60,8 @@ const mockContext: ImportContext = {
     id: 1, title: 'The Way of Kings', status: 'wanted', path: null,
     narrators: [{ name: 'Michael Kramer' }], seriesName: 'Stormlight', seriesPosition: 1, coverUrl: '/covers/1.jpg',
   } as ImportContext['book'],
+  infoHash: 'abc123',
+  guid: null,
 };
 
 const mockResult: ImportResult = {

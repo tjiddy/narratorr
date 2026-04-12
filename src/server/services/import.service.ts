@@ -35,6 +35,8 @@ export interface ImportContext {
   authorName: string | null;
   narratorStr: string | null;
   book: BookWithAuthor;
+  infoHash: string | null;
+  guid: string | null;
 }
 
 export class ImportService {
@@ -85,6 +87,8 @@ export class ImportService {
       authorName,
       narratorStr,
       book,
+      infoHash: download.infoHash ?? null,
+      guid: download.guid ?? null,
     };
   }
 
