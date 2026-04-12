@@ -31,7 +31,8 @@ export async function enrichUsenetLanguages(
     (r) => r.protocol === 'usenet' && !r.language,
   );
 
-  // Phase 1: Short-circuit on existing newsgroup field
+  // Phase 1: Detect language from existing newsgroup field; fall through to NZB fetch
+  // when newsgroup is generic (no language token found) so nzbName is still populated.
   const needsFetch: SearchResult[] = [];
   for (const result of usenetResults) {
     if (result.newsgroup) {
@@ -39,8 +40,11 @@ export async function enrichUsenetLanguages(
       if (lang) {
         result.language = lang;
         languagesDetected++;
+      } else if (result.downloadUrl) {
+        // Generic newsgroup (e.g., alt.binaries.audiobooks) — fall through to NZB fetch
+        // so nzbName is populated for reject/required word filtering and name-based language detection
+        needsFetch.push(result);
       }
-      // Do not fall back to NZB fetch — same source
     } else if (result.downloadUrl) {
       needsFetch.push(result);
     }
