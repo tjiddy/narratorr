@@ -166,6 +166,36 @@ describe('settings routes', () => {
     });
   });
 
+  describe('PUT /api/settings (quality maxDownloadSize)', () => {
+    it('round-trips quality.maxDownloadSize through PUT and returns updated value', async () => {
+      const updated = {
+        ...mockSettings,
+        quality: { ...mockSettings.quality, maxDownloadSize: 10 },
+      };
+      (services.settings.update as Mock).mockResolvedValue(updated);
+
+      const res = await app.inject({
+        method: 'PUT',
+        url: '/api/settings',
+        payload: { quality: { maxDownloadSize: 10 } },
+      });
+
+      expect(res.statusCode).toBe(200);
+      const body = JSON.parse(res.payload);
+      expect(body.quality.maxDownloadSize).toBe(10);
+    });
+
+    it('returns default maxDownloadSize when not previously set', async () => {
+      (services.settings.getAll as Mock).mockResolvedValue(mockSettings);
+
+      const res = await app.inject({ method: 'GET', url: '/api/settings' });
+
+      expect(res.statusCode).toBe(200);
+      const body = JSON.parse(res.payload);
+      expect(body.quality.maxDownloadSize).toBe(5);
+    });
+  });
+
   describe('PUT /api/settings (housekeeping)', () => {
     it('round-trips housekeepingRetentionDays through PUT and returns updated value', async () => {
       const updated = {

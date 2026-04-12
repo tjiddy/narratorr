@@ -146,6 +146,38 @@ describe('searchAndGrabForBook', () => {
     expect(result).toEqual({ result: 'no_results' });
   });
 
+  it('returns no_results when all results filtered out by maxDownloadSize', async () => {
+    const GB = 1_073_741_824;
+    vi.mocked(indexerService.searchAll).mockResolvedValue([makeResult({ size: 10 * GB })]);
+    const settings = { ...defaultQualitySettings, maxDownloadSize: 5 };
+    const result = await searchAndGrabForBook(book, indexerService, downloadService, settings, log, blacklistService);
+    expect(result).toEqual({ result: 'no_results' });
+  });
+
+  it('logs quality gate filtering when results are filtered by maxDownloadSize', async () => {
+    const GB = 1_073_741_824;
+    vi.mocked(indexerService.searchAll).mockResolvedValue([
+      makeResult({ title: 'Small', size: 2 * GB }),
+      makeResult({ title: 'Huge', size: 10 * GB }),
+    ]);
+    const settings = { ...defaultQualitySettings, maxDownloadSize: 5 };
+    await searchAndGrabForBook(book, indexerService, downloadService, settings, log, blacklistService);
+    expect(log.debug).toHaveBeenCalledWith(
+      { inputCount: 2, outputCount: 1 },
+      'Quality gate filtering applied',
+    );
+  });
+
+  it('does not log quality gate filtering when no results are filtered', async () => {
+    vi.mocked(indexerService.searchAll).mockResolvedValue([makeResult({ size: 500 * 1024 * 1024 })]);
+    const settings = { ...defaultQualitySettings, maxDownloadSize: 5 };
+    await searchAndGrabForBook(book, indexerService, downloadService, settings, log, blacklistService);
+    expect(log.debug).not.toHaveBeenCalledWith(
+      expect.objectContaining({ inputCount: expect.any(Number), outputCount: expect.any(Number) }),
+      'Quality gate filtering applied',
+    );
+  });
+
   it('returns no_results when no result has downloadUrl', async () => {
     vi.mocked(indexerService.searchAll).mockResolvedValue([makeResult({ downloadUrl: undefined })]);
     const result = await searchAndGrabForBook(book, indexerService, downloadService, defaultQualitySettings, log, blacklistService);
