@@ -245,7 +245,10 @@ describe('MetadataService', () => {
       const result = await service.getAuthorBooks('B001IGFHW6');
       expect(result).toEqual(mockBooks);
       expect(mockAudnexus.getAuthor).toHaveBeenCalledWith('B001IGFHW6');
-      expect(mockAudibleProvider.searchBooks).toHaveBeenCalledWith('Brandon Sanderson');
+      expect(mockAudibleProvider.searchBooks).toHaveBeenCalledWith(
+        'Brandon Sanderson',
+        expect.objectContaining({ author: 'Brandon Sanderson', maxResults: 50 }),
+      );
     });
 
     it('returns empty array when author not found in Audnexus', async () => {
@@ -260,6 +263,176 @@ describe('MetadataService', () => {
 
       const result = await service.getAuthorBooks('B123');
       expect(result).toEqual([]);
+    });
+
+    describe('with SettingsService', () => {
+      const mockSettingsService = {
+        get: vi.fn(),
+        getAll: vi.fn(),
+        set: vi.fn(),
+      };
+      let serviceWithSettings: MetadataService;
+
+      beforeEach(() => {
+        mockSettingsService.get.mockReset();
+        mockSettingsService.get.mockImplementation((key: string) => {
+          if (key === 'quality') return Promise.resolve({ rejectWords: '', requiredWords: '', grabFloor: 0, minSeeders: 1, protocolPreference: 'any', searchImmediately: false, monitorForUpgrades: false });
+          if (key === 'metadata') return Promise.resolve({ audibleRegion: 'us', languages: ['english'] });
+          return Promise.resolve({});
+        });
+        serviceWithSettings = new MetadataService(inject<FastifyBaseLogger>(mockLog), undefined, mockSettingsService as never);
+      });
+
+      it('passes author param and maxResults: 50 to provider.searchBooks', async () => {
+        mockAudnexus.getAuthor.mockResolvedValueOnce({ name: 'Brandon Sanderson', asin: 'B001IGFHW6' });
+        mockAudibleProvider.searchBooks.mockResolvedValueOnce({ books: [{ title: 'Mistborn' }] });
+
+        await serviceWithSettings.getAuthorBooks('B001IGFHW6');
+        expect(mockAudibleProvider.searchBooks).toHaveBeenCalledWith(
+          'Brandon Sanderson',
+          expect.objectContaining({ author: 'Brandon Sanderson', maxResults: 50 }),
+        );
+      });
+
+      it('filters results with reject words in title (case-insensitive)', async () => {
+        mockSettingsService.get.mockImplementation((key: string) => {
+          if (key === 'quality') return Promise.resolve({ rejectWords: 'dramatized', requiredWords: '', grabFloor: 0, minSeeders: 1, protocolPreference: 'any', searchImmediately: false, monitorForUpgrades: false });
+          if (key === 'metadata') return Promise.resolve({ audibleRegion: 'us', languages: [] });
+          return Promise.resolve({});
+        });
+        mockAudnexus.getAuthor.mockResolvedValueOnce({ name: 'Author', asin: 'B123' });
+        mockAudibleProvider.searchBooks.mockResolvedValueOnce({
+          books: [
+            { title: 'Good Book', subtitle: undefined, language: 'english' },
+            { title: 'Dramatized Edition', subtitle: undefined, language: 'english' },
+          ],
+        });
+
+        const result = await serviceWithSettings.getAuthorBooks('B123');
+        expect(result).toEqual([{ title: 'Good Book', subtitle: undefined, language: 'english' }]);
+      });
+
+      it('filters results with reject words in subtitle only', async () => {
+        mockSettingsService.get.mockImplementation((key: string) => {
+          if (key === 'quality') return Promise.resolve({ rejectWords: 'full-cast', requiredWords: '', grabFloor: 0, minSeeders: 1, protocolPreference: 'any', searchImmediately: false, monitorForUpgrades: false });
+          if (key === 'metadata') return Promise.resolve({ audibleRegion: 'us', languages: [] });
+          return Promise.resolve({});
+        });
+        mockAudnexus.getAuthor.mockResolvedValueOnce({ name: 'Author', asin: 'B123' });
+        mockAudibleProvider.searchBooks.mockResolvedValueOnce({
+          books: [
+            { title: 'Clean Title', subtitle: 'A Full-Cast Production', language: 'english' },
+            { title: 'Also Clean', subtitle: 'Unabridged', language: 'english' },
+          ],
+        });
+
+        const result = await serviceWithSettings.getAuthorBooks('B123');
+        expect(result).toEqual([{ title: 'Also Clean', subtitle: 'Unabridged', language: 'english' }]);
+      });
+
+      it('filters results with non-matching language', async () => {
+        mockSettingsService.get.mockImplementation((key: string) => {
+          if (key === 'quality') return Promise.resolve({ rejectWords: '', requiredWords: '', grabFloor: 0, minSeeders: 1, protocolPreference: 'any', searchImmediately: false, monitorForUpgrades: false });
+          if (key === 'metadata') return Promise.resolve({ audibleRegion: 'us', languages: ['english'] });
+          return Promise.resolve({});
+        });
+        mockAudnexus.getAuthor.mockResolvedValueOnce({ name: 'Author', asin: 'B123' });
+        mockAudibleProvider.searchBooks.mockResolvedValueOnce({
+          books: [
+            { title: 'English Book', language: 'english' },
+            { title: 'German Book', language: 'german' },
+          ],
+        });
+
+        const result = await serviceWithSettings.getAuthorBooks('B123');
+        expect(result).toEqual([{ title: 'English Book', language: 'english' }]);
+      });
+
+      it('passes through results with no language field', async () => {
+        mockSettingsService.get.mockImplementation((key: string) => {
+          if (key === 'quality') return Promise.resolve({ rejectWords: '', requiredWords: '', grabFloor: 0, minSeeders: 1, protocolPreference: 'any', searchImmediately: false, monitorForUpgrades: false });
+          if (key === 'metadata') return Promise.resolve({ audibleRegion: 'us', languages: ['english'] });
+          return Promise.resolve({});
+        });
+        mockAudnexus.getAuthor.mockResolvedValueOnce({ name: 'Author', asin: 'B123' });
+        mockAudibleProvider.searchBooks.mockResolvedValueOnce({
+          books: [
+            { title: 'No Language Field' },
+            { title: 'English Book', language: 'english' },
+          ],
+        });
+
+        const result = await serviceWithSettings.getAuthorBooks('B123');
+        expect(result).toHaveLength(2);
+      });
+
+      it('returns all results when reject words setting is empty', async () => {
+        mockAudnexus.getAuthor.mockResolvedValueOnce({ name: 'Author', asin: 'B123' });
+        mockAudibleProvider.searchBooks.mockResolvedValueOnce({
+          books: [{ title: 'Book A' }, { title: 'Book B' }],
+        });
+
+        const result = await serviceWithSettings.getAuthorBooks('B123');
+        expect(result).toHaveLength(2);
+      });
+
+      it('returns all results when languages setting is empty array', async () => {
+        mockSettingsService.get.mockImplementation((key: string) => {
+          if (key === 'quality') return Promise.resolve({ rejectWords: '', requiredWords: '', grabFloor: 0, minSeeders: 1, protocolPreference: 'any', searchImmediately: false, monitorForUpgrades: false });
+          if (key === 'metadata') return Promise.resolve({ audibleRegion: 'us', languages: [] });
+          return Promise.resolve({});
+        });
+        mockAudnexus.getAuthor.mockResolvedValueOnce({ name: 'Author', asin: 'B123' });
+        mockAudibleProvider.searchBooks.mockResolvedValueOnce({
+          books: [
+            { title: 'German Book', language: 'german' },
+            { title: 'English Book', language: 'english' },
+          ],
+        });
+
+        const result = await serviceWithSettings.getAuthorBooks('B123');
+        expect(result).toHaveLength(2);
+      });
+
+      it('applies both reject word and language filters together', async () => {
+        mockSettingsService.get.mockImplementation((key: string) => {
+          if (key === 'quality') return Promise.resolve({ rejectWords: 'dramatized', requiredWords: '', grabFloor: 0, minSeeders: 1, protocolPreference: 'any', searchImmediately: false, monitorForUpgrades: false });
+          if (key === 'metadata') return Promise.resolve({ audibleRegion: 'us', languages: ['english'] });
+          return Promise.resolve({});
+        });
+        mockAudnexus.getAuthor.mockResolvedValueOnce({ name: 'Author', asin: 'B123' });
+        mockAudibleProvider.searchBooks.mockResolvedValueOnce({
+          books: [
+            { title: 'Good English', language: 'english' },
+            { title: 'Dramatized English', language: 'english' },
+            { title: 'Good German', language: 'german' },
+            { title: 'Dramatized German', language: 'german' },
+          ],
+        });
+
+        const result = await serviceWithSettings.getAuthorBooks('B123');
+        expect(result).toEqual([{ title: 'Good English', language: 'english' }]);
+      });
+
+      it('returns unfiltered results when settings lookup fails (fail open)', async () => {
+        mockSettingsService.get.mockRejectedValue(new Error('DB unavailable'));
+        mockAudnexus.getAuthor.mockResolvedValueOnce({ name: 'Author', asin: 'B123' });
+        const allBooks = [{ title: 'Book A' }, { title: 'Book B' }];
+        mockAudibleProvider.searchBooks.mockResolvedValueOnce({ books: allBooks });
+
+        const result = await serviceWithSettings.getAuthorBooks('B123');
+        expect(result).toEqual(allBooks);
+        expect(mockLog.warn).toHaveBeenCalled();
+      });
+    });
+
+    it('returns unfiltered results when no SettingsService injected', async () => {
+      mockAudnexus.getAuthor.mockResolvedValueOnce({ name: 'Author', asin: 'B123' });
+      const allBooks = [{ title: 'Book A' }, { title: 'Book B' }];
+      mockAudibleProvider.searchBooks.mockResolvedValueOnce({ books: allBooks });
+
+      const result = await service.getAuthorBooks('B123');
+      expect(result).toEqual(allBooks);
     });
   });
 
