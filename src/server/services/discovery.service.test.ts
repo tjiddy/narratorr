@@ -672,11 +672,12 @@ describe('DiscoveryService', () => {
       const result = await service.addSuggestion(1);
       expect(result).not.toBeNull();
       expect(result!.suggestion.status).toBe('added');
-      expect(mockBookService.create).toHaveBeenCalledWith({
+      expect(mockBookService.create).toHaveBeenCalledWith(expect.objectContaining({
         title: 'Test',
         authors: [{ name: 'Author' }],
         asin: 'B001',
-      });
+        monitorForUpgrades: false,
+      }));
     });
 
     it('returns alreadyAdded for already-added suggestion', async () => {
@@ -748,19 +749,133 @@ describe('DiscoveryService', () => {
 
     // --- #501: Metadata forwarding and overrides ---
 
-    it.todo('passes full metadata (coverUrl, narrators, duration, seriesName, seriesPosition, publishedDate, genres) to bookService.create');
+    it('passes full metadata (coverUrl, narrators, duration, seriesName, seriesPosition, publishedDate, genres) to bookService.create', async () => {
+      const existing = {
+        id: 1, asin: 'B001', title: 'Test', authorName: 'Author', status: 'pending',
+        coverUrl: 'https://img.com/cover.jpg', narratorName: 'Narrator One',
+        duration: 36000, seriesName: 'Epic Series', seriesPosition: 2,
+        publishedDate: '2024-06-15', genres: ['Fantasy', 'Sci-Fi'],
+      };
+      const db = createMockDb();
+      db.select.mockReturnValue(mockDbChain([existing]));
+      db.update.mockReturnValue(mockDbChain());
+      const { service } = createService(db);
 
-    it.todo('maps narratorName to narrators string array (not object array)');
+      await service.addSuggestion(1);
+      expect(mockBookService.create).toHaveBeenCalledWith(expect.objectContaining({
+        title: 'Test',
+        authors: [{ name: 'Author' }],
+        asin: 'B001',
+        coverUrl: 'https://img.com/cover.jpg',
+        narrators: ['Narrator One'],
+        duration: 36000,
+        seriesName: 'Epic Series',
+        seriesPosition: 2,
+        publishedDate: '2024-06-15',
+        genres: ['Fantasy', 'Sci-Fi'],
+      }));
+    });
 
-    it.todo('passes empty narrators array when narratorName is null');
+    it('maps narratorName to narrators string array (not object array)', async () => {
+      const existing = {
+        id: 1, asin: 'B001', title: 'Test', authorName: 'Author', status: 'pending',
+        narratorName: 'Jane Smith',
+      };
+      const db = createMockDb();
+      db.select.mockReturnValue(mockDbChain([existing]));
+      db.update.mockReturnValue(mockDbChain());
+      const { service } = createService(db);
 
-    it.todo('does not pass [null] when optional string fields are null');
+      await service.addSuggestion(1);
+      const call = mockBookService.create.mock.calls[0][0];
+      expect(call.narrators).toEqual(['Jane Smith']);
+      // Verify it's a string array, not object array
+      expect(typeof call.narrators[0]).toBe('string');
+    });
 
-    it.todo('forwards monitorForUpgrades: true from overrides to bookService.create');
+    it('passes empty narrators array when narratorName is null', async () => {
+      const existing = {
+        id: 1, asin: 'B001', title: 'Test', authorName: 'Author', status: 'pending',
+        narratorName: null,
+      };
+      const db = createMockDb();
+      db.select.mockReturnValue(mockDbChain([existing]));
+      db.update.mockReturnValue(mockDbChain());
+      const { service } = createService(db);
 
-    it.todo('defaults monitorForUpgrades to false when overrides are omitted');
+      await service.addSuggestion(1);
+      const call = mockBookService.create.mock.calls[0][0];
+      expect(call.narrators).toEqual([]);
+    });
 
-    it.todo('duplicate detection still works with expanded payload');
+    it('does not pass [null] when optional string fields are null', async () => {
+      const existing = {
+        id: 1, asin: 'B001', title: 'Test', authorName: 'Author', status: 'pending',
+        narratorName: null, coverUrl: null, duration: null,
+        seriesName: null, seriesPosition: null, publishedDate: null, genres: null,
+      };
+      const db = createMockDb();
+      db.select.mockReturnValue(mockDbChain([existing]));
+      db.update.mockReturnValue(mockDbChain());
+      const { service } = createService(db);
+
+      await service.addSuggestion(1);
+      const call = mockBookService.create.mock.calls[0][0];
+      expect(call.narrators).toEqual([]);
+      // Null fields should be passed as-is (bookService.create accepts them)
+      expect(call.coverUrl).toBeNull();
+      expect(call.duration).toBeNull();
+      expect(call.seriesName).toBeNull();
+      expect(call.seriesPosition).toBeNull();
+      expect(call.publishedDate).toBeNull();
+      expect(call.genres).toBeNull();
+    });
+
+    it('forwards monitorForUpgrades: true from overrides to bookService.create', async () => {
+      const existing = {
+        id: 1, asin: 'B001', title: 'Test', authorName: 'Author', status: 'pending',
+      };
+      const db = createMockDb();
+      db.select.mockReturnValue(mockDbChain([existing]));
+      db.update.mockReturnValue(mockDbChain());
+      const { service } = createService(db);
+
+      await service.addSuggestion(1, { monitorForUpgrades: true });
+      expect(mockBookService.create).toHaveBeenCalledWith(expect.objectContaining({
+        monitorForUpgrades: true,
+      }));
+    });
+
+    it('defaults monitorForUpgrades to false when overrides are omitted', async () => {
+      const existing = {
+        id: 1, asin: 'B001', title: 'Test', authorName: 'Author', status: 'pending',
+      };
+      const db = createMockDb();
+      db.select.mockReturnValue(mockDbChain([existing]));
+      db.update.mockReturnValue(mockDbChain());
+      const { service } = createService(db);
+
+      await service.addSuggestion(1);
+      expect(mockBookService.create).toHaveBeenCalledWith(expect.objectContaining({
+        monitorForUpgrades: false,
+      }));
+    });
+
+    it('duplicate detection still works with expanded payload', async () => {
+      const existing = {
+        id: 1, asin: 'B001', title: 'Test', authorName: 'Author', status: 'pending',
+        coverUrl: 'https://img.com/cover.jpg', narratorName: 'Narrator',
+      };
+      const db = createMockDb();
+      db.select.mockReturnValue(mockDbChain([existing]));
+      db.update.mockReturnValue(mockDbChain());
+      mockBookService.findDuplicate.mockResolvedValueOnce({ id: 99, title: 'Test' });
+      const { service } = createService(db);
+
+      const result = await service.addSuggestion(1);
+      expect(result!.duplicate).toBe(true);
+      expect(mockBookService.create).not.toHaveBeenCalled();
+    });
   });
 
   // --- #408: Expiry ---

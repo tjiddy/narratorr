@@ -259,7 +259,7 @@ export class DiscoveryService {
     return { ...rows[0], status: 'dismissed', dismissedAt: now };
   }
 
-  async addSuggestion(id: number): Promise<{ suggestion: SuggestionRow; book?: unknown; alreadyAdded?: boolean; duplicate?: boolean } | null> {
+  async addSuggestion(id: number, overrides?: { monitorForUpgrades?: boolean }): Promise<{ suggestion: SuggestionRow; book?: unknown; alreadyAdded?: boolean; duplicate?: boolean } | null> {
     const rows = await this.db.select().from(suggestions).where(eq(suggestions.id, id)).limit(1);
     if (rows.length === 0) return null;
     const row = rows[0];
@@ -271,7 +271,19 @@ export class DiscoveryService {
       return { suggestion: { ...row, status: 'added' }, book: dup, duplicate: true };
     }
 
-    const book = await this.bookService.create({ title: row.title, authors: row.authorName ? [{ name: row.authorName }] : [], asin: row.asin });
+    const book = await this.bookService.create({
+      title: row.title,
+      authors: row.authorName ? [{ name: row.authorName }] : [],
+      asin: row.asin,
+      coverUrl: row.coverUrl,
+      narrators: row.narratorName ? [row.narratorName] : [],
+      duration: row.duration,
+      seriesName: row.seriesName,
+      seriesPosition: row.seriesPosition,
+      publishedDate: row.publishedDate,
+      genres: row.genres,
+      monitorForUpgrades: overrides?.monitorForUpgrades ?? false,
+    });
 
     // Record book_added event (fire-and-forget)
     if (this.eventHistory) {
