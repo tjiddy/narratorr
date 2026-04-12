@@ -6,10 +6,10 @@ import type { BlacklistService } from '../services/blacklist.service.js';
 import type { EventBroadcasterService } from '../services/event-broadcaster.service.js';
 
 export interface ImmediateSearchDeps {
-  indexerService?: IndexerService;
+  indexerService: IndexerService;
   downloadOrchestrator: DownloadOrchestrator;
   settingsService: SettingsService;
-  blacklistService?: BlacklistService;
+  blacklistService: BlacklistService;
   eventBroadcaster?: EventBroadcasterService;
 }
 
@@ -22,7 +22,7 @@ export function triggerImmediateSearch(
   Promise.all([deps.settingsService.get('quality'), deps.settingsService.get('metadata'), deps.settingsService.get('search')])
     .then(async ([qualitySettings, metadataSettings, searchSettings]) => {
       const narratorPriority = buildNarratorPriority(searchSettings.searchPriority, book.narrators);
-      await searchAndGrabForBook(book, deps.indexerService!, deps.downloadOrchestrator, { ...qualitySettings, languages: metadataSettings.languages, narratorPriority }, log, deps.blacklistService!, deps.eventBroadcaster);
+      await searchAndGrabForBook(book, deps.indexerService, deps.downloadOrchestrator, { ...qualitySettings, languages: metadataSettings.languages, narratorPriority }, log, deps.blacklistService, deps.eventBroadcaster);
     })
     .catch((err: unknown) => {
       log.warn({ error: err, bookId: book.id }, 'Search-immediately trigger failed');

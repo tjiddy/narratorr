@@ -262,6 +262,7 @@ describe('Discover Routes', () => {
       });
       expect(triggerImmediateSearch).not.toHaveBeenCalled();
     });
+
   });
 
   describe('POST /api/discover/refresh', () => {
