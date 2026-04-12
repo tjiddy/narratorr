@@ -33,7 +33,9 @@ vi.mock('../services', () => ({
   DiscoveryService: vi.fn(),
 }));
 vi.mock('../services/import.service.js', () => ({ ImportService: vi.fn() }));
-vi.mock('../services/import-orchestrator.js', () => ({ ImportOrchestrator: vi.fn() }));
+vi.mock('../services/import-orchestrator.js', () => ({
+  ImportOrchestrator: vi.fn().mockImplementation(function(this: Record<string, unknown>) { this.setBlacklistDeps = vi.fn(); }),
+}));
 vi.mock('../services/download-orchestrator.js', () => ({ DownloadOrchestrator: vi.fn() }));
 vi.mock('../services/quality-gate-orchestrator.js', () => ({ QualityGateOrchestrator: vi.fn() }));
 vi.mock('../services/import-list.service.js', () => ({ ImportListService: vi.fn() }));
@@ -197,5 +199,37 @@ describe('createServices', () => {
 
     expect(mockBootstrap).toHaveBeenCalledOnce();
     expect(mockBootstrap).toHaveBeenCalledWith(detectFfmpegPath);
+  });
+
+  // #504 — setBlacklistDeps wiring
+  it('wires importOrchestrator.setBlacklistDeps with blacklistService and retrySearchDeps', async () => {
+    const { SettingsService, BlacklistService } = await import('../services/index.js');
+    const { ImportOrchestrator } = await import('../services/import-orchestrator.js');
+    const { createRetrySearchDeps } = await import('../services/retry-search.js');
+
+    vi.mocked(SettingsService).mockImplementation(function(this: Record<string, unknown>) {
+      this.get = vi.fn().mockResolvedValue({ audibleRegion: 'us' });
+      this.bootstrapProcessingDefaults = vi.fn().mockResolvedValue(undefined);
+      this.migrateLanguageSettings = vi.fn().mockResolvedValue(undefined);
+    } as never);
+
+    const { createServices } = await import('./index.js');
+    const db = {} as unknown as Db;
+    const log = {
+      info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn(),
+      child: vi.fn().mockReturnThis(), trace: vi.fn(), fatal: vi.fn(),
+    } as unknown as FastifyBaseLogger;
+
+    await createServices(db, log);
+
+    const orchestratorInstances = vi.mocked(ImportOrchestrator).mock.instances;
+    expect(orchestratorInstances).toHaveLength(1);
+    const instance = orchestratorInstances[0] as unknown as Record<string, ReturnType<typeof vi.fn>>;
+    expect(instance.setBlacklistDeps).toHaveBeenCalledOnce();
+    // Verify the actual arguments: BlacklistService instance + retrySearchDeps return value
+    const [blacklistArg, retryDepsArg] = instance.setBlacklistDeps.mock.calls[0];
+    expect(blacklistArg).toBeInstanceOf(BlacklistService);
+    const retrySearchDepsResult = vi.mocked(createRetrySearchDeps).mock.results[0].value;
+    expect(retryDepsArg).toBe(retrySearchDepsResult);
   });
 });

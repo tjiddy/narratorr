@@ -5,14 +5,39 @@ import type { NotifierService } from './notifier.service.js';
 import type { TaggingService } from './tagging.service.js';
 import type { EventHistoryService } from './event-history.service.js';
 import type { EventBroadcasterService } from './event-broadcaster.service.js';
+import type { BlacklistService } from './blacklist.service.js';
+import type { RetrySearchDeps } from './retry-search.js';
 import {
   emitDownloadImporting, emitBookImporting, emitImportSuccess,
   emitImportFailure, notifyImportComplete, notifyImportFailure,
   recordImportEvent, recordImportFailedEvent,
   embedTagsForImport, runImportPostProcessing,
 } from '../utils/import-steps.js';
+import { blacklistAndRetrySearch } from '../utils/rejection-helpers.js';
+
+/** Content-failure signatures — errors caused by bad release content, not host/environment. */
+const CONTENT_FAILURE_PATTERNS = [
+  'No audio files found',
+  'not a supported audio format',
+  'Duplicate filename',
+  'Copy verification failed',
+] as const;
+
+/**
+ * Classify an import error as content-caused (bad release) or environment-caused (host/config).
+ * Uses a positive allowlist — only known content-failure signatures return true.
+ * All unrecognized errors (including Audio processing failed) default to false (conservative).
+ */
+export function isContentFailure(error: unknown): boolean {
+  if (!(error instanceof Error)) return false;
+  const msg = error.message;
+  return CONTENT_FAILURE_PATTERNS.some((pattern) => msg.includes(pattern));
+}
 
 export class ImportOrchestrator {
+  private blacklistService?: BlacklistService;
+  private retrySearchDeps?: RetrySearchDeps;
+
   constructor(
     private importService: ImportService,
     private settingsService: SettingsService,
@@ -22,6 +47,12 @@ export class ImportOrchestrator {
     private eventHistory?: EventHistoryService,
     private broadcaster?: EventBroadcasterService,
   ) {}
+
+  /** Inject blacklist dependencies after construction (setter pattern — avoids constructor reordering). */
+  setBlacklistDeps(blacklistService: BlacklistService, retrySearchDeps: RetrySearchDeps): void {
+    this.blacklistService = blacklistService;
+    this.retrySearchDeps = retrySearchDeps;
+  }
 
   /**
    * Import a download with full side-effect orchestration.
@@ -135,5 +166,26 @@ export class ImportOrchestrator {
 
     // Fire-and-forget: failure event recording
     recordImportFailedEvent({ eventHistory: this.eventHistory, bookId: ctx.bookId, bookTitle: ctx.bookTitle, authorName: ctx.authorName, downloadId: ctx.downloadId, error, log: this.log });
+
+    // #504 — Blacklist content failures and trigger re-search
+    if (isContentFailure(error) && this.blacklistService) {
+      blacklistAndRetrySearch({
+        identifiers: {
+          infoHash: ctx.infoHash ?? undefined,
+          guid: ctx.guid ?? undefined,
+          title: ctx.downloadTitle,
+          bookId: ctx.bookId,
+        },
+        reason: 'bad_quality',
+        blacklistType: 'temporary',
+        book: { id: ctx.bookId },
+        blacklistService: this.blacklistService,
+        retrySearchDeps: this.retrySearchDeps,
+        settingsService: this.settingsService,
+        log: this.log,
+      }).catch((blacklistError: unknown) => {
+        this.log.warn({ error: blacklistError, downloadId: ctx.downloadId }, 'Import failure blacklist dispatch failed');
+      });
+    }
   }
 }

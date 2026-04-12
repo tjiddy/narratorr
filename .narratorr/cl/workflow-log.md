@@ -1,5 +1,34 @@
 # Workflow Log
 
+## #504 Auto-blacklist failed usenet downloads by guid (not just infoHash) — 2026-04-12
+**Skill path:** /elaborate → /respond-to-spec-review (x4) → /implement → /claim → /plan → /handoff
+**Outcome:** success — PR #511
+
+### Metrics
+- Files changed: 6 | Tests added/modified: 30
+- Quality gate runs: 3 (pass on attempt 3 — first: routes/index test mock missing setBlacklistDeps, second: duplicate local inject function conflicted with import)
+- Fix iterations: 2 (mock fix + duplicate function removal)
+- Context compactions: 0
+
+### Workflow experience
+- What went smoothly: Modular TDD cycle worked well — each of 4 modules committed independently with red/green tests. The positive-allowlist classifier was clean and testable.
+- Friction / issues encountered: 4 spec review rounds before approval — the failure classification policy for `Audio processing failed:` errors went through negative blocklist → two-level classifier → positive allowlist. The round 4 review re-raised an already-fixed finding (reviewer evaluated stale spec body), requiring a dispute.
+
+### Token efficiency
+- Highest-token actions: 4 rounds of /respond-to-spec-review consumed significant context reading/writing issue bodies and comments
+- Avoidable waste: The initial spec should have started with a positive allowlist approach rather than iterating through blocklist → two-level → allowlist
+- Suggestions: For error classification specs, start with the most conservative approach (positive allowlist) and expand only if proven insufficient
+
+### Infrastructure gaps
+- Repeated workarounds: None
+- Missing tooling / config: None
+- Unresolved debt: `processAudioFiles()` broad catch block prevents content-level error classification (logged in debt.md)
+
+### Wish I'd Known
+1. Start error classifiers with a positive allowlist, not a negative blocklist — spec review will push you there anyway (see `content-failure-allowlist-pattern.md`)
+2. When adding setter methods to services, the routes/index.test.ts mock must also include the setter — `vi.fn()` alone produces a TypeError (see `import-orchestrator-setter-wiring.md`)
+3. Monitor path guid fix was already committed before this issue was claimed — the remaining work was purely the import-failure path, not the monitor path described in the original title
+
 ## #502 Extract NZB name for language detection and reject word filtering — 2026-04-12
 **Skill path:** /implement → /claim → /plan → /handoff
 **Outcome:** success — PR #510

@@ -21,6 +21,8 @@ export interface BlacklistAndRetryRequest {
   log: FastifyBaseLogger;
   /** When true, bypass the redownloadFailed setting and always trigger retry search. */
   overrideRetry?: boolean;
+  /** Blacklist type — defaults to 'permanent' if omitted (existing behavior unchanged). */
+  blacklistType?: 'temporary' | 'permanent';
 }
 
 /**
@@ -31,7 +33,7 @@ export interface BlacklistAndRetryRequest {
  * (QGO deletes download artifacts, wrong-release deletes library files).
  */
 export async function blacklistAndRetrySearch(request: BlacklistAndRetryRequest): Promise<void> {
-  const { identifiers, reason, book, blacklistService, retrySearchDeps, settingsService, log, overrideRetry } = request;
+  const { identifiers, reason, book, blacklistService, retrySearchDeps, settingsService, log, overrideRetry, blacklistType } = request;
 
   // Blacklist the release
   if ((identifiers.infoHash || identifiers.guid) && blacklistService) {
@@ -42,6 +44,7 @@ export async function blacklistAndRetrySearch(request: BlacklistAndRetryRequest)
         title: identifiers.title,
         bookId: identifiers.bookId,
         reason,
+        ...(blacklistType ? { blacklistType } : {}),
       });
       log.info({ infoHash: identifiers.infoHash, guid: identifiers.guid }, 'Blacklisted rejected release');
     } catch (error: unknown) {
