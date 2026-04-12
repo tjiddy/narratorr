@@ -38,6 +38,7 @@ const defaultQualitySettings = {
   grabFloor: 0,
   minSeeders: 1,
   protocolPreference: 'none',
+  maxDownloadSize: 5,
 };
 
 describe('buildSearchQuery', () => {
