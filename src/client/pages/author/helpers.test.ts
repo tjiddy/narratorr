@@ -3,7 +3,8 @@ import { groupBooksBySeries } from './helpers.js';
 import type { BookMetadata } from '@/lib/api';
 
 function book(overrides: Partial<BookMetadata> & { title: string }): BookMetadata {
-  return { title: overrides.title, authors: [{ name: 'Author' }], ...overrides };
+  const { title, ...rest } = overrides;
+  return { title, authors: [{ name: 'Author' }], ...rest };
 }
 
 describe('groupBooksBySeries', () => {
