@@ -53,12 +53,7 @@ export function useSettingsForm<T extends Record<string, unknown>>({
 
   useEffect(() => {
     if (settings && !isDirty) {
-      try {
-        reset(selectRef.current(settings) as DefaultValues<T>);
-      } catch {
-        // select may fail if settings is a partial object (e.g., in tests
-        // that only mock a subset of categories). Fall back to defaultValues.
-      }
+      reset(selectRef.current(settings) as DefaultValues<T>);
     }
   }, [settings, reset, isDirty]);
 

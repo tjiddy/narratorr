@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { screen, waitFor, fireEvent } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { renderWithProviders } from '@/__tests__/helpers';
+import { createMockSettings } from '@/__tests__/factories';
 import { SystemSettings } from './SystemSettings';
 
 vi.mock('sonner', () => ({
@@ -49,9 +50,9 @@ const mockApi = api as unknown as {
 describe('SystemSettings', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    mockApi.getSettings.mockResolvedValue({
+    mockApi.getSettings.mockResolvedValue(createMockSettings({
       system: { backupIntervalMinutes: 10080, backupRetention: 7, dismissedUpdateVersion: '' },
-    });
+    }));
   });
 
   describe('backup list', () => {
@@ -429,10 +430,10 @@ describe('SystemSettings', () => {
 
 describe('GeneralSettingsForm (housekeeping and logging)', () => {
   it('renders housekeeping retention and log level fields on System tab', async () => {
-    mockApi.getSettings.mockResolvedValue({
+    mockApi.getSettings.mockResolvedValue(createMockSettings({
       system: { backupIntervalMinutes: 10080, backupRetention: 7, dismissedUpdateVersion: '' },
-      general: { logLevel: 'info', housekeepingRetentionDays: 30 },
-    });
+      general: { logLevel: 'info', housekeepingRetentionDays: 30, welcomeSeen: false },
+    }));
     mockApi.getBackups.mockResolvedValue([]);
 
     renderWithProviders(<SystemSettings />);
@@ -445,10 +446,10 @@ describe('GeneralSettingsForm (housekeeping and logging)', () => {
 
   it('submits general settings with correct payload when log level changed', async () => {
     const user = userEvent.setup();
-    mockApi.getSettings.mockResolvedValue({
+    mockApi.getSettings.mockResolvedValue(createMockSettings({
       system: { backupIntervalMinutes: 10080, backupRetention: 7, dismissedUpdateVersion: '' },
-      general: { logLevel: 'warn', housekeepingRetentionDays: 30 },
-    });
+      general: { logLevel: 'warn', housekeepingRetentionDays: 30, welcomeSeen: false },
+    }));
     mockApi.getBackups.mockResolvedValue([]);
     mockApi.updateSettings.mockResolvedValue({});
 
@@ -470,10 +471,10 @@ describe('GeneralSettingsForm (housekeeping and logging)', () => {
 
   it('shows error toast when general settings save fails', async () => {
     const user = userEvent.setup();
-    mockApi.getSettings.mockResolvedValue({
+    mockApi.getSettings.mockResolvedValue(createMockSettings({
       system: { backupIntervalMinutes: 10080, backupRetention: 7, dismissedUpdateVersion: '' },
-      general: { logLevel: 'warn', housekeepingRetentionDays: 30 },
-    });
+      general: { logLevel: 'warn', housekeepingRetentionDays: 30, welcomeSeen: false },
+    }));
     mockApi.getBackups.mockResolvedValue([]);
     mockApi.updateSettings.mockRejectedValue(new Error('Save failed'));
 
@@ -495,9 +496,9 @@ describe('GeneralSettingsForm (housekeeping and logging)', () => {
 describe('#324 — restore modal contract change', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    mockApi.getSettings.mockResolvedValue({
+    mockApi.getSettings.mockResolvedValue(createMockSettings({
       system: { backupIntervalMinutes: 10080, backupRetention: 7, dismissedUpdateVersion: '' },
-    });
+    }));
     mockApi.getBackups.mockResolvedValue([]);
   });
 
