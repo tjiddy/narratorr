@@ -1,4 +1,4 @@
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { retrySearch, createRetrySearchDeps, type RetrySearchDeps } from './retry-search.js';
 import { RetryBudget } from './retry-budget.js';
 import { createMockLogger, inject, createMockSettingsService } from '../__tests__/helpers.js';
@@ -10,6 +10,13 @@ import type { BlacklistService } from './blacklist.service.js';
 import type { BookService, BookWithAuthor } from './book.service.js';
 import type { SettingsService } from './settings.service.js';
 import type { FastifyBaseLogger } from 'fastify';
+
+vi.mock('../utils/enrich-usenet-languages.js', () => ({
+  enrichUsenetLanguages: vi.fn(),
+}));
+
+import { enrichUsenetLanguages } from '../utils/enrich-usenet-languages.js';
+const mockEnrichUsenet = vi.mocked(enrichUsenetLanguages);
 
 const mockBook: BookWithAuthor = {
   ...createMockDbBook({ duration: 3600 }),
@@ -560,5 +567,60 @@ describe('retrySearch — GUID blacklist filtering', () => {
     expect(deps.downloadOrchestrator.grab).toHaveBeenCalledWith(
       expect.objectContaining({ downloadUrl: 'magnet:?xt=urn:btih:narrator' }),
     );
+  });
+});
+
+describe('#502 retrySearch — enrichment before filtering', () => {
+  beforeEach(() => {
+    mockEnrichUsenet.mockReset();
+  });
+
+  it('calls enrichUsenetLanguages before filterAndRankResults', async () => {
+    const usenetResult = {
+      ...mockSearchResult,
+      protocol: 'usenet' as const,
+      downloadUrl: 'http://nzb.test/1',
+      infoHash: undefined,
+    };
+    const deps = createDeps({
+      indexerService: inject<IndexerService>({
+        searchAll: vi.fn().mockResolvedValue([usenetResult]),
+      }),
+    });
+
+    await retrySearch(1, deps);
+
+    expect(mockEnrichUsenet).toHaveBeenCalledWith(
+      expect.arrayContaining([expect.objectContaining({ protocol: 'usenet' })]),
+      expect.anything(),
+    );
+  });
+
+  it('usenet result with reject word in NZB name is filtered out before grab', async () => {
+    const usenetResult = {
+      ...mockSearchResult,
+      protocol: 'usenet' as const,
+      downloadUrl: 'http://nzb.test/1',
+      infoHash: undefined,
+    };
+    const deps = createDeps({
+      indexerService: inject<IndexerService>({
+        searchAll: vi.fn().mockResolvedValue([usenetResult]),
+      }),
+      settingsService: createMockSettingsService({
+        quality: { grabFloor: 0, minSeeders: 0, protocolPreference: 'none', rejectWords: 'pack', requiredWords: '' },
+      }),
+    });
+
+    mockEnrichUsenet.mockImplementation(async (results) => {
+      for (const r of results) {
+        if (r.protocol === 'usenet') r.nzbName = 'Stephen King-Hörbuch-Pack.rar';
+      }
+    });
+
+    const result = await retrySearch(1, deps);
+
+    expect(result.outcome).toBe('no_candidates');
+    expect(deps.downloadOrchestrator.grab).not.toHaveBeenCalled();
   });
 });

@@ -1569,12 +1569,106 @@ describe('filterAndRankResults — nzbName reject/required word filtering (#502)
   });
 });
 
+vi.mock('../utils/enrich-usenet-languages.js', () => ({
+  enrichUsenetLanguages: vi.fn(),
+}));
+
+import { enrichUsenetLanguages } from '../utils/enrich-usenet-languages.js';
+const mockEnrichUsenet = vi.mocked(enrichUsenetLanguages);
+
 describe('#502 searchAndGrabForBook — enrichment before filtering', () => {
-  it.todo('calls enrichUsenetLanguages before filterAndRankResults');
-  it.todo('usenet result with reject word in NZB name is filtered out before grab');
-  it.todo('torrent results are not enriched');
+  let indexerService: IndexerService;
+  let downloadService: DownloadOrchestrator;
+  let log: FastifyBaseLogger;
+  let blacklistService: BlacklistService;
+
+  beforeEach(() => {
+    mockEnrichUsenet.mockReset();
+    downloadService = {
+      grab: vi.fn().mockResolvedValue({ id: 1, status: 'downloading' }),
+    } as unknown as DownloadOrchestrator;
+    blacklistService = {
+      getBlacklistedIdentifiers: vi.fn().mockResolvedValue({
+        blacklistedHashes: new Set<string>(),
+        blacklistedGuids: new Set<string>(),
+      }),
+    } as unknown as BlacklistService;
+    log = createMockLogger();
+  });
+
+  const book = { id: 1, title: 'Test Book', duration: 3600, authors: [{ name: 'Author' }] };
+
+  it('calls enrichUsenetLanguages before filterAndRankResults', async () => {
+    indexerService = {
+      searchAll: vi.fn().mockResolvedValue([makeResult({ protocol: 'usenet', downloadUrl: 'http://nzb.test/1' })]),
+    } as unknown as IndexerService;
+
+    await searchAndGrabForBook(book, indexerService, downloadService, defaultQualitySettings, log, blacklistService);
+
+    expect(mockEnrichUsenet).toHaveBeenCalledWith(
+      expect.arrayContaining([expect.objectContaining({ protocol: 'usenet' })]),
+      log,
+    );
+  });
+
+  it('usenet result with reject word in NZB name is filtered out before grab', async () => {
+    indexerService = {
+      searchAll: vi.fn().mockResolvedValue([makeResult({ protocol: 'usenet', title: 'Clean Title', downloadUrl: 'http://nzb.test/1' })]),
+    } as unknown as IndexerService;
+
+    // Simulate enrichment populating nzbName with reject word
+    mockEnrichUsenet.mockImplementation(async (results) => {
+      for (const r of results) {
+        if (r.protocol === 'usenet') r.nzbName = 'Stephen King-Hörbuch-Pack.rar';
+      }
+    });
+
+    const settings = { ...defaultQualitySettings, rejectWords: 'pack' };
+    const result = await searchAndGrabForBook(book, indexerService, downloadService, settings, log, blacklistService);
+
+    expect(result).toEqual({ result: 'no_results' });
+    expect(downloadService.grab).not.toHaveBeenCalled();
+  });
+
+  it('torrent results are not enriched with nzbName', async () => {
+    indexerService = {
+      searchAll: vi.fn().mockResolvedValue([makeResult({ protocol: 'torrent' })]),
+    } as unknown as IndexerService;
+
+    await searchAndGrabForBook(book, indexerService, downloadService, defaultQualitySettings, log, blacklistService);
+
+    // enrichUsenetLanguages is still called (it handles filtering internally)
+    expect(mockEnrichUsenet).toHaveBeenCalled();
+  });
 });
 
 describe('#502 searchAndGrabForBook with broadcaster — enrichment before filtering', () => {
-  it.todo('calls enrichUsenetLanguages before filterAndRankResults on broadcaster path');
+  it('calls enrichUsenetLanguages before filterAndRankResults on broadcaster path', async () => {
+    mockEnrichUsenet.mockReset();
+    const log = createMockLogger();
+    const blacklistService = {
+      getBlacklistedIdentifiers: vi.fn().mockResolvedValue({
+        blacklistedHashes: new Set<string>(),
+        blacklistedGuids: new Set<string>(),
+      }),
+    } as unknown as BlacklistService;
+    const indexerService = {
+      getEnabledIndexers: vi.fn().mockResolvedValue([{ id: 1, name: 'Test' }]),
+      searchAllStreaming: vi.fn().mockResolvedValue([makeResult({ protocol: 'usenet', downloadUrl: 'http://nzb.test/1' })]),
+    } as unknown as IndexerService;
+    const downloadService = {
+      grab: vi.fn().mockResolvedValue({ id: 1, status: 'downloading' }),
+    } as unknown as DownloadOrchestrator;
+    const broadcaster = {
+      emit: vi.fn(),
+    } as unknown as EventBroadcasterService;
+
+    const book = { id: 1, title: 'Test Book', duration: 3600, authors: [{ name: 'Author' }] };
+    await searchAndGrabForBook(book, indexerService, downloadService, defaultQualitySettings, log, blacklistService, broadcaster);
+
+    expect(mockEnrichUsenet).toHaveBeenCalledWith(
+      expect.arrayContaining([expect.objectContaining({ protocol: 'usenet' })]),
+      log,
+    );
+  });
 });

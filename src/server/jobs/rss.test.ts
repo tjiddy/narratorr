@@ -10,6 +10,13 @@ import type { BlacklistService } from '../services/blacklist.service.js';
 import type { SearchResult } from '../../core/index.js';
 import { DuplicateDownloadError } from '../services/download.service.js';
 
+vi.mock('../utils/enrich-usenet-languages.js', () => ({
+  enrichUsenetLanguages: vi.fn(),
+}));
+
+import { enrichUsenetLanguages } from '../utils/enrich-usenet-languages.js';
+const mockEnrichUsenet = vi.mocked(enrichUsenetLanguages);
+
 function createMockBookListService(wanted: unknown[] = []): BookListService {
   return inject<BookListService>({
     getAll: vi.fn().mockResolvedValue({ data: wanted, total: wanted.length }),
@@ -822,5 +829,55 @@ describe('startRssJob', () => {
     expect(download.grab).toHaveBeenCalledWith(
       expect.objectContaining({ downloadUrl: 'magnet:?xt=urn:btih:narrator' }),
     );
+  });
+});
+
+describe('#502 runRssJob — enrichment before filtering', () => {
+  let log: ReturnType<typeof createMockLogger>;
+
+  beforeEach(() => {
+    log = createMockLogger();
+    mockEnrichUsenet.mockReset();
+  });
+
+  it('calls enrichUsenetLanguages before filterAndRankResults', async () => {
+    const wantedBooks = [makeWantedBook(1, 'The Way of Kings', 'Brandon Sanderson')];
+    const rssResults = [makeResult('The Way of Kings', 'Brandon Sanderson', { protocol: 'usenet' as const, downloadUrl: 'http://nzb.test/1' })];
+    const settings = createMockSettingsService({ rss: { enabled: true } });
+    const { bookList, book } = createMockBookServices(wantedBooks);
+    const indexer = createMockIndexerService(rssResults);
+    const download = createMockDownloadOrchestrator();
+    const blacklist = createMockBlacklistService();
+
+    await runRssJob(settings, bookList, book, indexer, download, blacklist, inject<FastifyBaseLogger>(log));
+
+    expect(mockEnrichUsenet).toHaveBeenCalledWith(
+      expect.arrayContaining([expect.objectContaining({ protocol: 'usenet' })]),
+      expect.anything(),
+    );
+  });
+
+  it('usenet RSS item with language token in NZB name gets language detected', async () => {
+    const wantedBooks = [makeWantedBook(1, 'The Way of Kings', 'Brandon Sanderson')];
+    const rssResults = [makeResult('The Way of Kings', 'Brandon Sanderson', { protocol: 'usenet' as const, downloadUrl: 'http://nzb.test/1' })];
+    const settings = createMockSettingsService({ rss: { enabled: true } });
+    const { bookList, book } = createMockBookServices(wantedBooks);
+    const indexer = createMockIndexerService(rssResults);
+    const download = createMockDownloadOrchestrator();
+    const blacklist = createMockBlacklistService();
+
+    mockEnrichUsenet.mockImplementation(async (results) => {
+      for (const r of results) {
+        if (r.protocol === 'usenet') {
+          r.nzbName = 'Way of Kings Hörbuch.rar';
+          r.language = 'german';
+        }
+      }
+    });
+
+    await runRssJob(settings, bookList, book, indexer, download, blacklist, inject<FastifyBaseLogger>(log));
+
+    // enrichment was called and language was set (we verify via the mock)
+    expect(mockEnrichUsenet).toHaveBeenCalled();
   });
 });

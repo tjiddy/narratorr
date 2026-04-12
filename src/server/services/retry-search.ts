@@ -8,6 +8,7 @@ import type { SettingsService } from './settings.service.js';
 import type { RetryBudget } from './retry-budget.js';
 import { buildSearchQuery, buildNarratorPriority, filterAndRankResults, filterBlacklistedResults } from './search-pipeline.js';
 import { buildGrabPayload } from './grab-payload.js';
+import { enrichUsenetLanguages } from '../utils/enrich-usenet-languages.js';
 
 export type RetryOutcome =
   | { outcome: 'retried'; download: DownloadWithBook }
@@ -87,6 +88,9 @@ export async function retrySearch(
     }
 
     const filteredResults = await filterBlacklistedResults(rawResults, blacklistService);
+
+    // Enrich Usenet results before filtering
+    await enrichUsenetLanguages(filteredResults, log);
 
     // Quality filtering and ranking
     const qualitySettings = await settingsService.get('quality');

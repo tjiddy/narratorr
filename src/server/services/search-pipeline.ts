@@ -417,6 +417,8 @@ async function searchWithBroadcaster(
     return { result: 'no_results' };
   }
 
+  await enrichUsenetLanguages(afterBlacklist, log);
+
   const broadcasterInputCount = afterBlacklist.length;
   const { results } = filterAndRankResults(
     afterBlacklist, book.duration ?? undefined,
@@ -482,6 +484,8 @@ export async function searchAndGrabForBook(
     log.debug({ bookId: book.id, title: book.title }, 'All results blacklisted');
     return { result: 'no_results' };
   }
+
+  await enrichUsenetLanguages(afterBlacklist, log);
 
   const grabInputCount = afterBlacklist.length;
   const { results } = filterAndRankResults(
