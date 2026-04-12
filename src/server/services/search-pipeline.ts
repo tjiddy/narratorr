@@ -182,7 +182,7 @@ export function filterAndRankResults(
   const rejectList = parseWordList(rejectWords);
   if (rejectList.length > 0) {
     filtered = filtered.filter((r) => {
-      const sourceTitle = (r.rawTitle ?? r.title).toLowerCase();
+      const sourceTitle = (r.nzbName || r.rawTitle || r.title).toLowerCase();
       return !rejectList.some((word) => sourceTitle.includes(word));
     });
   }
@@ -191,7 +191,7 @@ export function filterAndRankResults(
   const requiredList = parseWordList(requiredWords);
   if (requiredList.length > 0) {
     filtered = filtered.filter((r) => {
-      const sourceTitle = (r.rawTitle ?? r.title).toLowerCase();
+      const sourceTitle = (r.nzbName || r.rawTitle || r.title).toLowerCase();
       return requiredList.some((word) => sourceTitle.includes(word));
     });
   }

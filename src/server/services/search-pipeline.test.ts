@@ -1522,3 +1522,59 @@ describe('postProcessSearchResults — maxDownloadSize', () => {
     );
   });
 });
+
+describe('filterAndRankResults — nzbName reject/required word filtering (#502)', () => {
+  const base = { bookDuration: undefined as number | undefined, grabFloor: 0, minSeeders: 0, protocolPreference: 'none' };
+
+  it('reject words match against nzbName when present', () => {
+    const results = [makeResult({ title: 'Clean Title', nzbName: 'Title with Pack inside' })];
+    const { results: filtered } = filterAndRankResults(results, base.bookDuration, base.grabFloor, base.minSeeders, base.protocolPreference, 'pack');
+    expect(filtered).toHaveLength(0);
+  });
+
+  it('reject words fall back to rawTitle when nzbName is absent', () => {
+    const results = [makeResult({ title: 'Clean Title', rawTitle: 'Raw with Pack' })];
+    const { results: filtered } = filterAndRankResults(results, base.bookDuration, base.grabFloor, base.minSeeders, base.protocolPreference, 'pack');
+    expect(filtered).toHaveLength(0);
+  });
+
+  it('reject words fall back to title when both nzbName and rawTitle are absent', () => {
+    const results = [makeResult({ title: 'Title with Pack' })];
+    const { results: filtered } = filterAndRankResults(results, base.bookDuration, base.grabFloor, base.minSeeders, base.protocolPreference, 'pack');
+    expect(filtered).toHaveLength(0);
+  });
+
+  it('required words match against nzbName when present', () => {
+    const results = [makeResult({ title: 'Clean Title', nzbName: 'NZB with unabridged inside' })];
+    const { results: filtered } = filterAndRankResults(results, base.bookDuration, base.grabFloor, base.minSeeders, base.protocolPreference, undefined, 'unabridged');
+    expect(filtered).toHaveLength(1);
+  });
+
+  it('required words fall back to rawTitle when nzbName is absent', () => {
+    const results = [makeResult({ title: 'Clean Title', rawTitle: 'Raw with unabridged' })];
+    const { results: filtered } = filterAndRankResults(results, base.bookDuration, base.grabFloor, base.minSeeders, base.protocolPreference, undefined, 'unabridged');
+    expect(filtered).toHaveLength(1);
+  });
+
+  it('matching is case-insensitive with nzbName', () => {
+    const results = [makeResult({ title: 'Clean Title', nzbName: 'Title with PACK inside' })];
+    const { results: filtered } = filterAndRankResults(results, base.bookDuration, base.grabFloor, base.minSeeders, base.protocolPreference, 'pack');
+    expect(filtered).toHaveLength(0);
+  });
+
+  it('result with reject word in nzbName but NOT in rawTitle/title is filtered out', () => {
+    const results = [makeResult({ title: 'Stephen King - The Stand MP3', rawTitle: 'Stephen King - The Stand (2012) MP3', nzbName: 'Stephen King-Hörbuch-Pack.part01.rar' })];
+    const { results: filtered } = filterAndRankResults(results, base.bookDuration, base.grabFloor, base.minSeeders, base.protocolPreference, 'pack');
+    expect(filtered).toHaveLength(0);
+  });
+});
+
+describe('#502 searchAndGrabForBook — enrichment before filtering', () => {
+  it.todo('calls enrichUsenetLanguages before filterAndRankResults');
+  it.todo('usenet result with reject word in NZB name is filtered out before grab');
+  it.todo('torrent results are not enriched');
+});
+
+describe('#502 searchAndGrabForBook with broadcaster — enrichment before filtering', () => {
+  it.todo('calls enrichUsenetLanguages before filterAndRankResults on broadcaster path');
+});
