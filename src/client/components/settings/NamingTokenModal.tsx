@@ -49,6 +49,7 @@ export function NamingTokenModal({
         aria-modal="true"
         aria-labelledby="naming-token-modal-title"
         tabIndex={-1}
+        className="flex flex-col flex-1 min-h-0"
       >
       <div className="flex items-center justify-between p-4 border-b border-border/30">
         <h2 id="naming-token-modal-title" className="text-lg font-semibold">
