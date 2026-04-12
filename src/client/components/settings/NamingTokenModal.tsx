@@ -1,4 +1,4 @@
-import { useMemo } from 'react';
+import { useMemo, useRef } from 'react';
 import { Modal } from '@/components/Modal';
 import { XIcon } from '@/components/icons';
 import { useEscapeKey } from '@/hooks/useEscapeKey';
@@ -24,7 +24,8 @@ export function NamingTokenModal({
   previewTokens,
   namingOptions,
 }: NamingTokenModalProps) {
-  useEscapeKey(isOpen, onClose);
+  const modalRef = useRef<HTMLDivElement>(null);
+  useEscapeKey(isOpen, onClose, modalRef);
 
   const groups: readonly TokenGroup[] = useMemo(() => {
     return scope === 'file' ? [...FOLDER_TOKEN_GROUPS, FILE_ONLY_TOKEN_GROUP] : FOLDER_TOKEN_GROUPS;
@@ -42,8 +43,15 @@ export function NamingTokenModal({
 
   return (
     <Modal onClose={onClose} closeOnBackdropClick={false} className="w-full max-w-lg" scrollable>
+      <div
+        ref={modalRef}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="naming-token-modal-title"
+        tabIndex={-1}
+      >
       <div className="flex items-center justify-between p-4 border-b border-border/30">
-        <h2 className="text-lg font-semibold">
+        <h2 id="naming-token-modal-title" className="text-lg font-semibold">
           {scope === 'folder' ? 'Folder' : 'File'} Token Reference
         </h2>
         <button
@@ -128,6 +136,7 @@ export function NamingTokenModal({
           {preview || <span className="text-muted-foreground italic">Empty format</span>}
           {scope === 'file' && preview ? '.m4b' : ''}
         </p>
+      </div>
       </div>
     </Modal>
   );

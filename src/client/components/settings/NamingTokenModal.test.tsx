@@ -174,4 +174,51 @@ describe('NamingTokenModal', () => {
       expect(screen.queryByText('Folder Token Reference')).not.toBeInTheDocument();
     });
   });
+
+  describe('ARIA and dialog semantics (#484)', () => {
+    it('renders role="dialog" and aria-modal="true" on the dialog element', () => {
+      renderWithProviders(<NamingTokenModal {...defaultProps} />);
+      const dialog = screen.getByRole('dialog');
+      expect(dialog).toHaveAttribute('aria-modal', 'true');
+    });
+
+    it('renders tabIndex={-1} on the dialog element', () => {
+      renderWithProviders(<NamingTokenModal {...defaultProps} />);
+      const dialog = screen.getByRole('dialog');
+      expect(dialog).toHaveAttribute('tabIndex', '-1');
+    });
+
+    it('renders aria-labelledby linked to the heading id', () => {
+      renderWithProviders(<NamingTokenModal {...defaultProps} />);
+      const dialog = screen.getByRole('dialog');
+      expect(dialog).toHaveAttribute('aria-labelledby', 'naming-token-modal-title');
+      const heading = document.getElementById('naming-token-modal-title');
+      expect(heading).toBeInTheDocument();
+      expect(heading!.tagName).toBe('H2');
+    });
+
+    it('dialog element receives focus on open via modalRef', () => {
+      renderWithProviders(<NamingTokenModal {...defaultProps} />);
+      const dialog = screen.getByRole('dialog');
+      expect(dialog).toHaveFocus();
+    });
+  });
+
+  describe('Escape key (#484)', () => {
+    it('calls onClose when Escape is pressed while isOpen=true', async () => {
+      const onClose = vi.fn();
+      const user = userEvent.setup();
+      renderWithProviders(<NamingTokenModal {...defaultProps} onClose={onClose} />);
+      await user.keyboard('{Escape}');
+      expect(onClose).toHaveBeenCalledOnce();
+    });
+
+    it('does not call onClose when Escape is pressed while isOpen=false', async () => {
+      const onClose = vi.fn();
+      const user = userEvent.setup();
+      renderWithProviders(<NamingTokenModal {...defaultProps} isOpen={false} onClose={onClose} />);
+      await user.keyboard('{Escape}');
+      expect(onClose).not.toHaveBeenCalled();
+    });
+  });
 });
