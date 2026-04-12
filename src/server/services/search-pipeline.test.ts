@@ -372,6 +372,112 @@ describe('filterAndRankResults — minSeeders default', () => {
   });
 });
 
+describe('filterAndRankResults — maxDownloadSize', () => {
+  const GB = 1_073_741_824;
+
+  it('filters result exceeding maxDownloadSize threshold', () => {
+    const { results } = filterAndRankResults(
+      [makeResult({ size: 6 * GB })], undefined, 0, 0, 'none',
+      undefined, undefined, undefined, undefined, 5,
+    );
+    expect(results).toHaveLength(0);
+  });
+
+  it('keeps result within maxDownloadSize threshold', () => {
+    const { results } = filterAndRankResults(
+      [makeResult({ size: 3 * GB })], undefined, 0, 0, 'none',
+      undefined, undefined, undefined, undefined, 5,
+    );
+    expect(results).toHaveLength(1);
+  });
+
+  it('keeps result exactly at maxDownloadSize threshold (inclusive <=)', () => {
+    const { results } = filterAndRankResults(
+      [makeResult({ size: 5 * GB })], undefined, 0, 0, 'none',
+      undefined, undefined, undefined, undefined, 5,
+    );
+    expect(results).toHaveLength(1);
+  });
+
+  it('filters result 1 byte over maxDownloadSize threshold', () => {
+    const { results } = filterAndRankResults(
+      [makeResult({ size: 5 * GB + 1 })], undefined, 0, 0, 'none',
+      undefined, undefined, undefined, undefined, 5,
+    );
+    expect(results).toHaveLength(0);
+  });
+
+  it('disables filter when maxDownloadSize is 0', () => {
+    const { results } = filterAndRankResults(
+      [makeResult({ size: 100 * GB })], undefined, 0, 0, 'none',
+      undefined, undefined, undefined, undefined, 0,
+    );
+    expect(results).toHaveLength(1);
+  });
+
+  it('passes result with undefined size when maxDownloadSize is set', () => {
+    const { results } = filterAndRankResults(
+      [makeResult({ size: undefined })], undefined, 0, 0, 'none',
+      undefined, undefined, undefined, undefined, 5,
+    );
+    expect(results).toHaveLength(1);
+  });
+
+  it('passes result with size 0 when maxDownloadSize is set', () => {
+    const { results } = filterAndRankResults(
+      [makeResult({ size: 0 })], undefined, 0, 0, 'none',
+      undefined, undefined, undefined, undefined, 5,
+    );
+    expect(results).toHaveLength(1);
+  });
+
+  it('applies filter even when book duration is unknown', () => {
+    const { results } = filterAndRankResults(
+      [makeResult({ size: 10 * GB })], undefined, 0, 0, 'none',
+      undefined, undefined, undefined, undefined, 5,
+    );
+    expect(results).toHaveLength(0);
+  });
+
+  it('applies filter to both torrent and usenet results', () => {
+    const { results } = filterAndRankResults(
+      [
+        makeResult({ protocol: 'torrent', size: 10 * GB, seeders: 10 }),
+        makeResult({ protocol: 'usenet', size: 10 * GB }),
+      ], undefined, 0, 0, 'none',
+      undefined, undefined, undefined, undefined, 5,
+    );
+    expect(results).toHaveLength(0);
+  });
+
+  it('mixed: only oversized results removed, others retained in order', () => {
+    const small = makeResult({ title: 'Small Book', size: 2 * GB });
+    const big = makeResult({ title: 'Big Pack', size: 30 * GB });
+    const medium = makeResult({ title: 'Medium Book', size: 4 * GB });
+    const { results } = filterAndRankResults(
+      [small, big, medium], undefined, 0, 0, 'none',
+      undefined, undefined, undefined, undefined, 5,
+    );
+    expect(results).toHaveLength(2);
+    expect(results.map(r => r.title)).toContain('Small Book');
+    expect(results.map(r => r.title)).toContain('Medium Book');
+    expect(results.map(r => r.title)).not.toContain('Big Pack');
+  });
+
+  it('interacts with minSeeders and grabFloor independently', () => {
+    const { results } = filterAndRankResults(
+      [
+        makeResult({ title: 'Good', protocol: 'torrent', seeders: 5, size: 2 * GB }),
+        makeResult({ title: 'Too big', protocol: 'torrent', seeders: 5, size: 10 * GB }),
+        makeResult({ title: 'No seeders', protocol: 'torrent', seeders: 0, size: 1 * GB }),
+      ], undefined, 0, 3, 'none',
+      undefined, undefined, undefined, undefined, 5,
+    );
+    expect(results).toHaveLength(1);
+    expect(results[0].title).toBe('Good');
+  });
+});
+
 describe('canonicalCompare — grabs tiebreaker (#272)', () => {
   it('higher grabs wins when matchScore, MB/hr, protocol, and language are equal', () => {
     const a = makeResult({ matchScore: 0.9, grabs: 1000, seeders: 5 });

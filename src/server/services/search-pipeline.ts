@@ -172,6 +172,7 @@ export function filterAndRankResults(
   requiredWords?: string,
   languages?: readonly string[],
   narratorPriority?: NarratorPriority,
+  maxDownloadSize?: number,
 ): { results: SearchResult[]; durationUnknown: boolean } {
   const durationUnknown = !bookDuration || bookDuration <= 0;
 
@@ -223,6 +224,14 @@ export function filterAndRankResults(
       const quality = calculateQuality(r.size, bookDuration!);
       if (!quality) return true; // can't calculate, pass through
       return quality.mbPerHour >= grabFloor;
+    });
+  }
+
+  // Apply max download size filter (protocol-agnostic, duration-independent)
+  if (maxDownloadSize && maxDownloadSize > 0) {
+    filtered = filtered.filter((r) => {
+      if (!r.size || r.size <= 0) return true; // unknown size → pass through
+      return r.size <= maxDownloadSize * 1_073_741_824;
     });
   }
 
