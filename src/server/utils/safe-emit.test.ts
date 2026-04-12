@@ -82,4 +82,17 @@ describe('safeEmit', () => {
       );
     });
   });
+
+  describe('type safety', () => {
+    it('rejects invalid event names at compile time', () => {
+      const broadcaster = mockBroadcaster();
+      const log = mockLog();
+
+      // Valid event compiles fine
+      safeEmit(broadcaster, 'download_progress', { download_id: 1, book_id: 2, percentage: 0, speed: null, eta: null }, log);
+
+      // @ts-expect-error — invalid event name must fail compilation
+      safeEmit(broadcaster, 'not_a_real_event', {}, log);
+    });
+  });
 });
