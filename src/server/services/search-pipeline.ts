@@ -9,7 +9,7 @@ import { DuplicateDownloadError } from './download.service.js';
 import type { BlacklistService } from './blacklist.service.js';
 import type { SettingsService } from './settings.service.js';
 import type { EventBroadcasterService } from './event-broadcaster.service.js';
-import type { SSEEventType, SSEEventPayloads } from '../../shared/schemas/sse-events.js';
+import { safeEmit } from '../utils/safe-emit.js';
 import { buildGrabPayload } from './grab-payload.js';
 import { parseWordList } from '../../shared/parse-word-list.js';
 
@@ -322,16 +322,6 @@ export type SingleBookSearchResult =
   | { result: 'no_results' }
   | { result: 'skipped'; reason: string }
   | { result: 'grab_error'; error: unknown };
-
-function safeEmit<T extends SSEEventType>(
-  broadcaster: EventBroadcasterService | undefined,
-  event: T,
-  payload: SSEEventPayloads[T],
-  log: FastifyBaseLogger,
-): void {
-  if (!broadcaster) return;
-  try { broadcaster.emit(event, payload); } catch (e: unknown) { log.debug(e, `SSE emit failed for ${event}`); }
-}
 
 /** Attempt to grab the best result and return the search outcome. */
 async function tryGrab(
