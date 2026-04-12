@@ -19,10 +19,19 @@ describe('discoverApi', () => {
     expect(mockFetchApi).toHaveBeenCalledWith('/discover/suggestions');
   });
 
-  it('addDiscoverSuggestion calls POST /discover/suggestions/:id/add with correct ID', async () => {
+  it('addDiscoverSuggestion calls POST /discover/suggestions/:id/add with no body when no overrides', async () => {
     await discoverApi.addDiscoverSuggestion(42);
     expect(mockFetchApi).toHaveBeenCalledWith('/discover/suggestions/42/add', {
       method: 'POST',
+    });
+  });
+
+  it('addDiscoverSuggestion sends overrides as JSON body when provided', async () => {
+    await discoverApi.addDiscoverSuggestion(42, { searchImmediately: true, monitorForUpgrades: false });
+    expect(mockFetchApi).toHaveBeenCalledWith('/discover/suggestions/42/add', {
+      method: 'POST',
+      body: JSON.stringify({ searchImmediately: true, monitorForUpgrades: false }),
+      headers: { 'Content-Type': 'application/json' },
     });
   });
 

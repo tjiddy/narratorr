@@ -1,7 +1,8 @@
 import { describe, it, expect, vi } from 'vitest';
-import { render, screen } from '@testing-library/react';
+import { screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import type { SuggestionRow } from '@/lib/api';
+import { renderWithProviders } from '@/__tests__/helpers';
 import { SuggestionCard } from './SuggestionCard';
 
 function makeSuggestion(overrides: Partial<SuggestionRow> = {}): SuggestionRow {
@@ -41,7 +42,7 @@ const defaultProps = {
 describe('SuggestionCard', () => {
   describe('rendering', () => {
     it('renders title, authorName, narratorName, duration, reason tag with reasonContext', () => {
-      render(<SuggestionCard suggestion={makeSuggestion()} {...defaultProps} />);
+      renderWithProviders(<SuggestionCard suggestion={makeSuggestion()} {...defaultProps} />);
 
       expect(screen.getByText('The Way of Kings')).toBeInTheDocument();
       expect(screen.getByText('Brandon Sanderson')).toBeInTheDocument();
@@ -51,12 +52,12 @@ describe('SuggestionCard', () => {
     });
 
     it('renders series tag from seriesName + seriesPosition when seriesName is present', () => {
-      render(<SuggestionCard suggestion={makeSuggestion()} {...defaultProps} />);
+      renderWithProviders(<SuggestionCard suggestion={makeSuggestion()} {...defaultProps} />);
       expect(screen.getByText('The Stormlight Archive, Book 1')).toBeInTheDocument();
     });
 
     it('hides series tag when seriesName is null', () => {
-      render(
+      renderWithProviders(
         <SuggestionCard
           suggestion={makeSuggestion({ seriesName: null, seriesPosition: null })}
           {...defaultProps}
@@ -66,21 +67,21 @@ describe('SuggestionCard', () => {
     });
 
     it('hides duration badge when duration is null', () => {
-      render(
+      renderWithProviders(
         <SuggestionCard suggestion={makeSuggestion({ duration: null })} {...defaultProps} />,
       );
       expect(screen.queryByText('4h 30m')).not.toBeInTheDocument();
     });
 
     it('hides duration badge when duration is 0', () => {
-      render(
+      renderWithProviders(
         <SuggestionCard suggestion={makeSuggestion({ duration: 0 })} {...defaultProps} />,
       );
       expect(screen.queryByText('4h 30m')).not.toBeInTheDocument();
     });
 
     it('shows fallback icon when coverUrl is missing', () => {
-      render(
+      renderWithProviders(
         <SuggestionCard suggestion={makeSuggestion({ coverUrl: null })} {...defaultProps} />,
       );
       // CoverImage renders fallback div when src is null
@@ -88,7 +89,7 @@ describe('SuggestionCard', () => {
     });
 
     it('omits narrator line when narratorName is null', () => {
-      render(
+      renderWithProviders(
         <SuggestionCard
           suggestion={makeSuggestion({ narratorName: null })}
           {...defaultProps}
@@ -98,7 +99,7 @@ describe('SuggestionCard', () => {
     });
 
     it('renders card without reason tag when reasonContext is empty string', () => {
-      render(
+      renderWithProviders(
         <SuggestionCard
           suggestion={makeSuggestion({ reasonContext: '' })}
           {...defaultProps}
@@ -109,22 +110,26 @@ describe('SuggestionCard', () => {
   });
 
   describe('add to library', () => {
-    it('calls onAdd with correct suggestion ID on click', async () => {
+    it('calls onAdd with correct suggestion ID and overrides on confirm', async () => {
       const onAdd = vi.fn();
-      render(
+      renderWithProviders(
         <SuggestionCard suggestion={makeSuggestion({ id: 42 })} {...defaultProps} onAdd={onAdd} />,
       );
 
-      await userEvent.click(screen.getByLabelText(/add.*to library/i));
-      expect(onAdd).toHaveBeenCalledWith(42);
+      // Click Add to open popover, then confirm via "Add to Library"
+      await userEvent.click(screen.getByRole('button', { name: /^add$/i }));
+      await userEvent.click(screen.getByRole('button', { name: /add to library/i }));
+      expect(onAdd).toHaveBeenCalledWith(42, expect.objectContaining({
+        searchImmediately: expect.any(Boolean),
+        monitorForUpgrades: expect.any(Boolean),
+      }));
     });
 
-    it('disables buttons when isAdding is true', () => {
-      render(
+    it('disables dismiss button when isAdding is true', () => {
+      renderWithProviders(
         <SuggestionCard suggestion={makeSuggestion()} {...defaultProps} isAdding={true} />,
       );
 
-      expect(screen.getByLabelText(/add.*to library/i)).toBeDisabled();
       expect(screen.getByLabelText(/dismiss/i)).toBeDisabled();
     });
   });
@@ -132,7 +137,7 @@ describe('SuggestionCard', () => {
   describe('dismiss', () => {
     it('calls onDismiss with correct suggestion ID on click', async () => {
       const onDismiss = vi.fn();
-      render(
+      renderWithProviders(
         <SuggestionCard
           suggestion={makeSuggestion({ id: 7 })}
           {...defaultProps}
@@ -145,9 +150,60 @@ describe('SuggestionCard', () => {
     });
   });
 
+  // --- #501: AddBookPopover integration and post-add states ---
+
+  describe('AddBookPopover integration', () => {
+    it('renders AddBookPopover trigger button with Add text', () => {
+      renderWithProviders(
+        <SuggestionCard suggestion={makeSuggestion()} {...defaultProps} />,
+      );
+      // AddBookPopover renders a button with "Add" text
+      expect(screen.getByRole('button', { name: /^add$/i })).toBeInTheDocument();
+    });
+  });
+
+  describe('post-add states', () => {
+    it('shows Add button and Dismiss button in available state', () => {
+      renderWithProviders(
+        <SuggestionCard suggestion={makeSuggestion()} {...defaultProps} isAdded={false} />,
+      );
+      expect(screen.getByRole('button', { name: /^add$/i })).toBeInTheDocument();
+      expect(screen.getByLabelText(/dismiss/i)).toBeInTheDocument();
+    });
+
+    it('shows green checkmark and no Add button in added state', () => {
+      renderWithProviders(
+        <SuggestionCard suggestion={makeSuggestion()} {...defaultProps} isAdded={true} />,
+      );
+      expect(screen.getByLabelText(/in library/i)).toBeInTheDocument();
+      expect(screen.queryByLabelText(/add.*to library/i)).not.toBeInTheDocument();
+    });
+
+    it('shows Dismiss button in added state', () => {
+      renderWithProviders(
+        <SuggestionCard suggestion={makeSuggestion()} {...defaultProps} isAdded={true} />,
+      );
+      expect(screen.getByLabelText(/dismiss/i)).toBeInTheDocument();
+    });
+  });
+
+  describe('cover aspect ratio', () => {
+    it('renders cover image with square dimensions', () => {
+      const { container } = renderWithProviders(
+        <SuggestionCard suggestion={makeSuggestion()} {...defaultProps} />,
+      );
+      const coverContainer = container.querySelector('.shrink-0');
+      // Should have square classes (w-20 h-20), not rectangular (w-20 h-28)
+      const coverEl = coverContainer?.firstElementChild;
+      expect(coverEl?.className).toMatch(/w-20/);
+      expect(coverEl?.className).toMatch(/h-20/);
+      expect(coverEl?.className).not.toMatch(/h-28/);
+    });
+  });
+
   describe('animation', () => {
     it('stagger animation index capped at 9', () => {
-      const { container } = render(
+      const { container } = renderWithProviders(
         <SuggestionCard suggestion={makeSuggestion()} {...defaultProps} index={15} />,
       );
 

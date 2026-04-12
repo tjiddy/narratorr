@@ -1,6 +1,6 @@
 import { readdir, readFile, stat } from 'node:fs/promises';
 import { join, extname } from 'node:path';
-import type { FastifyInstance, FastifyBaseLogger } from 'fastify';
+import type { FastifyInstance } from 'fastify';
 import { serveCoverFromCache, cleanCoverCache, COVER_FILE_REGEX } from '../utils/cover-cache.js';
 import { config } from '../config.js';
 import type { BookService, BookListService, DownloadService, SettingsService, RenameService, EventHistoryService, TaggingService, IndexerService } from '../services/index.js';
@@ -26,6 +26,7 @@ export interface BookRouteDeps {
 }
 import { searchAndGrabForBook, buildNarratorPriority } from '../services/search-pipeline.js';
 import { type z } from 'zod';
+import { triggerImmediateSearch } from './trigger-immediate-search.js';
 import {
   idParamSchema,
   bookListQuerySchema,
@@ -46,22 +47,6 @@ type IdParam = z.infer<typeof idParamSchema>;
 
 import { AUDIO_EXTENSIONS } from '../../core/utils/audio-constants.js';
 import { refreshScanBook } from '../services/refresh-scan.service.js';
-
-/** Fire-and-forget: search indexers and grab the best result for a newly added book. */
-function triggerImmediateSearch(
-  book: { id: number; title: string; duration?: number | null; authors?: Array<{ name: string }> | null; narrators?: Array<{ name: string }> | null },
-  deps: Pick<BookRouteDeps, 'indexerService' | 'downloadOrchestrator' | 'settingsService' | 'blacklistService' | 'eventBroadcaster'>,
-  log: FastifyBaseLogger,
-) {
-  Promise.all([deps.settingsService.get('quality'), deps.settingsService.get('metadata'), deps.settingsService.get('search')])
-    .then(async ([qualitySettings, metadataSettings, searchSettings]) => {
-      const narratorPriority = buildNarratorPriority(searchSettings.searchPriority, book.narrators);
-      await searchAndGrabForBook(book, deps.indexerService!, deps.downloadOrchestrator, { ...qualitySettings, languages: metadataSettings.languages, narratorPriority }, log, deps.blacklistService!, deps.eventBroadcaster);
-    })
-    .catch((err) => {
-      log.warn({ error: err, bookId: book.id }, 'Search-immediately trigger failed');
-    });
-}
 
 async function registerDeleteBookRoute(app: FastifyInstance, deps: Pick<BookRouteDeps, 'bookService' | 'downloadService' | 'downloadOrchestrator' | 'settingsService' | 'eventHistory'>) {
 app.delete<{ Params: IdParam; Querystring: DeleteBookQuery }>(

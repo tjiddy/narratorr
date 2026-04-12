@@ -3,12 +3,16 @@ import type { Mock } from 'vitest';
 import Fastify from 'fastify';
 
 vi.mock('../config.js', () => ({ config: { authBypass: false, isDev: true } }));
+vi.mock('./trigger-immediate-search.js', () => ({
+  triggerImmediateSearch: vi.fn(),
+}));
 import cookie from '@fastify/cookie';
 import { serializerCompiler, validatorCompiler, type ZodTypeProvider } from 'fastify-type-provider-zod';
 import { createTestApp, createMockServices, resetMockServices } from '../__tests__/helpers.js';
 import type { Services } from './index.js';
 import type { AuthService } from '../services/auth.service.js';
 import { TaskRegistryError } from '../services/task-registry.js';
+import { triggerImmediateSearch } from './trigger-immediate-search.js';
 
 const NOW = new Date('2026-01-15T12:00:00Z');
 
@@ -39,6 +43,7 @@ describe('Discover Routes', () => {
 
   beforeEach(() => {
     resetMockServices(services);
+    (triggerImmediateSearch as Mock).mockReset();
   });
 
   describe('GET /api/discover/suggestions', () => {
@@ -136,6 +141,126 @@ describe('Discover Routes', () => {
 
       const res = await app.inject({ method: 'POST', url: '/api/discover/suggestions/999/add' });
       expect(res.statusCode).toBe(404);
+    });
+
+    // --- #501: Override body and immediate search ---
+
+    it('passes monitorForUpgrades from body to service', async () => {
+      (services.discovery.addSuggestion as Mock).mockResolvedValueOnce({
+        suggestion: mockSuggestionRow({ id: 1, status: 'added' }),
+        book: { id: 10, title: 'Test' },
+      });
+
+      const res = await app.inject({
+        method: 'POST',
+        url: '/api/discover/suggestions/1/add',
+        payload: { searchImmediately: false, monitorForUpgrades: true },
+      });
+      expect(res.statusCode).toBe(200);
+      expect(services.discovery.addSuggestion).toHaveBeenCalledWith(1, { monitorForUpgrades: true });
+    });
+
+    it('accepts partial body with only monitorForUpgrades', async () => {
+      (services.discovery.addSuggestion as Mock).mockResolvedValueOnce({
+        suggestion: mockSuggestionRow({ id: 1, status: 'added' }),
+        book: { id: 10, title: 'Test' },
+      });
+
+      const res = await app.inject({
+        method: 'POST',
+        url: '/api/discover/suggestions/1/add',
+        payload: { monitorForUpgrades: true },
+      });
+      expect(res.statusCode).toBe(200);
+      expect(services.discovery.addSuggestion).toHaveBeenCalledWith(1, { monitorForUpgrades: true });
+    });
+
+    it('accepts empty body and defaults both overrides to false', async () => {
+      (services.discovery.addSuggestion as Mock).mockResolvedValueOnce({
+        suggestion: mockSuggestionRow({ id: 1, status: 'added' }),
+        book: { id: 10, title: 'Test' },
+      });
+
+      const res = await app.inject({
+        method: 'POST',
+        url: '/api/discover/suggestions/1/add',
+        payload: {},
+      });
+      expect(res.statusCode).toBe(200);
+      expect(services.discovery.addSuggestion).toHaveBeenCalledWith(1, { monitorForUpgrades: false });
+    });
+
+    it('accepts request with no body at all', async () => {
+      (services.discovery.addSuggestion as Mock).mockResolvedValueOnce({
+        suggestion: mockSuggestionRow({ id: 1, status: 'added' }),
+        book: { id: 10, title: 'Test' },
+      });
+
+      const res = await app.inject({
+        method: 'POST',
+        url: '/api/discover/suggestions/1/add',
+      });
+      expect(res.statusCode).toBe(200);
+      expect(services.discovery.addSuggestion).toHaveBeenCalledWith(1, { monitorForUpgrades: false });
+    });
+
+    it('rejects invalid override body (searchImmediately: "yes") with 400', async () => {
+      const res = await app.inject({
+        method: 'POST',
+        url: '/api/discover/suggestions/1/add',
+        payload: { searchImmediately: 'yes' },
+      });
+      expect(res.statusCode).toBe(400);
+    });
+
+    it('triggers triggerImmediateSearch when searchImmediately is true and result has a book', async () => {
+      const book = { id: 10, title: 'Test' };
+      (services.discovery.addSuggestion as Mock).mockResolvedValueOnce({
+        suggestion: mockSuggestionRow({ id: 1, status: 'added' }),
+        book,
+      });
+
+      const res = await app.inject({
+        method: 'POST',
+        url: '/api/discover/suggestions/1/add',
+        payload: { searchImmediately: true, monitorForUpgrades: false },
+      });
+      expect(res.statusCode).toBe(200);
+      expect(triggerImmediateSearch).toHaveBeenCalledTimes(1);
+      expect(triggerImmediateSearch).toHaveBeenCalledWith(
+        book,
+        expect.anything(), // deps
+        expect.anything(), // log
+      );
+    });
+
+    it('does not trigger search when searchImmediately is false', async () => {
+      (services.discovery.addSuggestion as Mock).mockResolvedValueOnce({
+        suggestion: mockSuggestionRow({ id: 1, status: 'added' }),
+        book: { id: 10, title: 'Test' },
+      });
+
+      await app.inject({
+        method: 'POST',
+        url: '/api/discover/suggestions/1/add',
+        payload: { searchImmediately: false },
+      });
+      expect(triggerImmediateSearch).not.toHaveBeenCalled();
+    });
+
+    it('does not trigger search on duplicate result even with searchImmediately true', async () => {
+      (services.discovery.addSuggestion as Mock).mockResolvedValueOnce({
+        suggestion: mockSuggestionRow({ id: 1, status: 'added' }),
+        book: { id: 99, title: 'Existing' },
+        duplicate: true,
+      });
+
+      await app.inject({
+        method: 'POST',
+        url: '/api/discover/suggestions/1/add',
+        payload: { searchImmediately: true },
+      });
+      expect(triggerImmediateSearch).not.toHaveBeenCalled();
     });
   });
 
@@ -345,6 +470,7 @@ describe('Discover Routes', () => {
         discoveryService: services.discovery as never,
         settingsService: services.settings as never,
         taskRegistry: services.taskRegistry as never,
+        downloadOrchestrator: services.downloadOrchestrator as never,
       });
       await authApp.ready();
 

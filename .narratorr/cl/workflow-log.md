@@ -1,5 +1,34 @@
 # Workflow Log
 
+## #501 Discover page: reconcile add-book flow with search/author pages — 2026-04-12
+**Skill path:** /implement → /claim → /plan → /handoff
+**Outcome:** success — PR #507
+
+### Metrics
+- Files changed: 13 | Tests added/modified: 29
+- Quality gate runs: 4 (pass on attempt 4 — lint fixes, typecheck fixes, complexity extraction)
+- Fix iterations: 3 (unused FastifyBaseLogger import, null→undefined conversion, complexity extraction)
+- Context compactions: 0
+
+### Workflow experience
+- What went smoothly: Spec was well-defined after 2 rounds of review. Backend metadata forwarding was straightforward. Client-side filtering implemented cleanly with useMemo.
+- Friction / issues encountered: Fastify rejects POST requests with no body when a body schema is defined — had to switch to manual Zod validation. DB row `null` fields vs service `undefined` params required mechanical conversion. Replacing `render()` with `renderWithProviders()` missed multi-line patterns in bulk replace.
+
+### Token efficiency
+- Highest-token actions: Reading existing test files and components (DiscoverPage.test.tsx 465 lines, AddBookPopover.tsx 168 lines)
+- Avoidable waste: Multiple verify runs for lint/typecheck issues that could have been caught earlier
+- Suggestions: Check typecheck after each commit before accumulating fixes
+
+### Infrastructure gaps
+- Repeated workarounds: None
+- Missing tooling / config: No Fastify pattern for optional body schemas — manual Zod parse is the workaround
+- Unresolved debt: books.ts still 450+ lines (pre-existing)
+
+### Wish I'd Known
+1. Fastify body schema validation rejects no-body POST requests — need manual Zod parsing for optional bodies (see `fastify-optional-body-schema.md`)
+2. Drizzle `$inferSelect` produces `T | null` while service params use `T | undefined` — bulk `?? undefined` conversion needed, extract to helper to avoid complexity lint (see `db-null-to-service-undefined.md`)
+3. Bulk `render(` → `renderWithProviders(` replacement misses multi-line calls — grep after replace to catch stragglers (see `render-to-renderWithProviders-migration.md`)
+
 ## #497 Author page: use author= param, bump to 50 results, filter reject words, sort standalone — 2026-04-12
 **Skill path:** /implement → /claim → /plan → /handoff
 **Outcome:** success — PR #506

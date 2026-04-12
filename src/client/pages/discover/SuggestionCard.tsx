@@ -1,11 +1,12 @@
 import { CoverImage } from '@/components/CoverImage';
+import { AddBookPopover } from '@/components/AddBookPopover';
 import { formatDurationMinutes } from '@/lib/format';
 import type { SuggestionRow } from '@/lib/api';
 import {
   BookOpenIcon,
   HeadphonesIcon,
   ClockIcon,
-  PlusIcon,
+  CheckIcon,
   XIcon,
 } from '@/components/icons';
 
@@ -16,13 +17,15 @@ export function SuggestionCard({
   onDismiss,
   isAdding,
   isDismissing,
+  isAdded = false,
 }: {
   suggestion: SuggestionRow;
   index: number;
-  onAdd: (id: number) => void;
+  onAdd: (id: number, overrides: { searchImmediately: boolean; monitorForUpgrades: boolean }) => void;
   onDismiss: (id: number) => void;
   isAdding: boolean;
   isDismissing: boolean;
+  isAdded?: boolean;
 }) {
   const durationText = suggestion.duration ? formatDurationMinutes(Math.round(suggestion.duration / 60)) : null;
   const seriesTag =
@@ -41,7 +44,7 @@ export function SuggestionCard({
           <CoverImage
             src={suggestion.coverUrl}
             alt={suggestion.title}
-            className="w-20 h-28 sm:w-24 sm:h-32 rounded-xl shadow-card"
+            className="w-20 h-20 sm:w-24 sm:h-24 rounded-xl shadow-card"
             fallback={<BookOpenIcon className="w-8 h-8 text-muted-foreground/40" />}
           />
         </div>
@@ -86,16 +89,16 @@ export function SuggestionCard({
 
         {/* Action Buttons */}
         <div className="shrink-0 flex flex-col items-center gap-2 justify-center">
-          <button
-            type="button"
-            onClick={() => onAdd(suggestion.id)}
-            disabled={isAdding || isDismissing}
-            className="flex items-center gap-1.5 px-3 sm:px-4 py-2 rounded-xl text-sm font-medium bg-primary text-primary-foreground hover:shadow-glow disabled:opacity-50 transition-all duration-200 focus-ring"
-            aria-label={`Add ${suggestion.title} to library`}
-          >
-            <PlusIcon className="w-4 h-4" />
-            <span className="hidden sm:inline">Add</span>
-          </button>
+          {isAdded ? (
+            <span className="inline-flex items-center justify-center w-9 h-9 rounded-xl bg-success/10 text-success" role="img" aria-label="In library">
+              <CheckIcon className="w-4 h-4" />
+            </span>
+          ) : (
+            <AddBookPopover
+              onAdd={(overrides) => onAdd(suggestion.id, overrides)}
+              isPending={isAdding}
+            />
+          )}
           <button
             type="button"
             onClick={() => onDismiss(suggestion.id)}
