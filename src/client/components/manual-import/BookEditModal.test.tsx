@@ -671,6 +671,14 @@ describe('save behavior (#185)', () => {
       await user.keyboard('{Escape}');
       expect(onClose).toHaveBeenCalledOnce();
     });
+
+    it('does not call onClose when Escape is pressed with isOpen=false', async () => {
+      const onClose = vi.fn();
+      const user = userEvent.setup();
+      renderModal({ isOpen: false, onClose });
+      await user.keyboard('{Escape}');
+      expect(onClose).not.toHaveBeenCalled();
+    });
   });
 
   describe('ARIA attributes (#484)', () => {

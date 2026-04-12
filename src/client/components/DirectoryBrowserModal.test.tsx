@@ -198,6 +198,14 @@ describe('DirectoryBrowserModal', () => {
     expect(onClose).not.toHaveBeenCalled();
   });
 
+  it('does not call onClose when Escape is pressed while closed', async () => {
+    const onClose = vi.fn();
+    const user = userEvent.setup();
+    renderModal({ isOpen: false, onClose });
+    await user.keyboard('{Escape}');
+    expect(onClose).not.toHaveBeenCalled();
+  });
+
   describe('ARIA attributes (#484)', () => {
     it('renders tabIndex={-1} on the dialog element', async () => {
       renderModal();

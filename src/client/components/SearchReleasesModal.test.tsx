@@ -2271,5 +2271,15 @@ describe('SearchReleasesModal — grab payload contract (#412)', () => {
       await user.keyboard('{Escape}');
       expect(onClose).toHaveBeenCalledOnce();
     });
+
+    it('does not call onClose when Escape is pressed while closed', async () => {
+      const onClose = vi.fn();
+      const user = userEvent.setup();
+      renderWithProviders(
+        <SearchReleasesModal isOpen={false} book={mockBook} onClose={onClose} />,
+      );
+      await user.keyboard('{Escape}');
+      expect(onClose).not.toHaveBeenCalled();
+    });
   });
 });
