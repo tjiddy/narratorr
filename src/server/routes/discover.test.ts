@@ -538,3 +538,40 @@ describe('Discover Routes', () => {
     });
   });
 });
+
+describe('#514 discover route — missing blacklistService guard', () => {
+  let app: Awaited<ReturnType<typeof createTestApp>>;
+  let services: Services;
+
+  beforeAll(async () => {
+    services = createMockServices();
+    // Explicitly null out blacklistService so the route guard skips search dispatch
+    (services as Record<string, unknown>).blacklist = undefined;
+    app = await createTestApp(services);
+  });
+
+  afterAll(async () => {
+    await app.close();
+  });
+
+  beforeEach(() => {
+    (triggerImmediateSearch as Mock).mockReset();
+  });
+
+  it('does not trigger search when blacklistService is absent even with searchImmediately', async () => {
+    const book = { id: 10, title: 'Test' };
+    (services.discovery.addSuggestion as Mock).mockResolvedValueOnce({
+      suggestion: mockSuggestionRow({ id: 1, status: 'added' }),
+      book,
+    });
+
+    const res = await app.inject({
+      method: 'POST',
+      url: '/api/discover/suggestions/1/add',
+      payload: { searchImmediately: true, monitorForUpgrades: false },
+    });
+
+    expect(res.statusCode).toBe(200);
+    expect(triggerImmediateSearch).not.toHaveBeenCalled();
+  });
+});
