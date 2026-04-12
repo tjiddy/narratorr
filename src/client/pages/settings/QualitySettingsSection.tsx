@@ -1,14 +1,8 @@
-import { useEffect } from 'react';
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { useForm } from 'react-hook-form';
-import { zodResolver } from '@hookform/resolvers/zod';
 import type { z } from 'zod';
-import { toast } from 'sonner';
-import { api } from '@/lib/api';
-import { queryKeys } from '@/lib/queryKeys';
-import { getErrorMessage } from '@/lib/error-message.js';
 import { ZapIcon } from '@/components/icons';
-import { DEFAULT_SETTINGS, qualityFormSchema } from '../../../shared/schemas.js';
+import { errorInputClass } from '@/components/settings/formStyles';
+import { useSettingsForm } from '@/hooks/useSettingsForm';
+import { DEFAULT_SETTINGS, qualityFormSchema, type AppSettings } from '../../../shared/schemas.js';
 import { SettingsSection } from './SettingsSection';
 
 const qualityGateFormSchema = qualityFormSchema.pick({ grabFloor: true, minSeeders: true });
@@ -16,41 +10,21 @@ const qualityGateFormSchema = qualityFormSchema.pick({ grabFloor: true, minSeede
 type QualityGateFormData = z.infer<typeof qualityGateFormSchema>;
 
 export function QualitySettingsSection() {
-  const queryClient = useQueryClient();
-
-  const { data: settings } = useQuery({
-    queryKey: queryKeys.settings(),
-    queryFn: api.getSettings,
-  });
-
-  const { register, handleSubmit, reset, formState: { errors, isDirty } } = useForm<QualityGateFormData>({
+  const { form, mutation, onSubmit } = useSettingsForm<QualityGateFormData>({
+    schema: qualityGateFormSchema,
     defaultValues: {
       grabFloor: DEFAULT_SETTINGS.quality.grabFloor,
       minSeeders: DEFAULT_SETTINGS.quality.minSeeders,
     },
-    resolver: zodResolver(qualityGateFormSchema),
+    select: (s: AppSettings) => ({
+      grabFloor: s.quality.grabFloor,
+      minSeeders: s.quality.minSeeders,
+    }),
+    toPayload: (d) => ({ quality: d }),
+    successMessage: 'Quality settings saved',
   });
 
-  useEffect(() => {
-    if (settings?.quality && !isDirty) {
-      reset({
-        grabFloor: settings.quality.grabFloor,
-        minSeeders: settings.quality.minSeeders,
-      });
-    }
-  }, [settings, reset, isDirty]);
-
-  const mutation = useMutation({
-    mutationFn: (data: QualityGateFormData) => api.updateSettings({ quality: data }),
-    onSuccess: (_result, submittedData) => {
-      reset(submittedData);
-      queryClient.invalidateQueries({ queryKey: queryKeys.settings() });
-      toast.success('Quality settings saved');
-    },
-    onError: (err) => {
-      toast.error(getErrorMessage(err, 'Failed to save settings'));
-    },
-  });
+  const { register, handleSubmit, formState: { errors, isDirty } } = form;
 
   return (
     <SettingsSection
@@ -58,16 +32,14 @@ export function QualitySettingsSection() {
       title="Quality"
       description="Minimum bar to grab"
     >
-      <form onSubmit={handleSubmit((data) => mutation.mutate(data))} className="space-y-5">
+      <form onSubmit={handleSubmit((data) => onSubmit(data))} className="space-y-5">
         <div>
           <label htmlFor="grabFloor" className="block text-sm font-medium mb-2">MB/hr Grab Minimum</label>
           <input
             id="grabFloor"
             type="number"
             {...register('grabFloor', { valueAsNumber: true })}
-            className={`w-full px-4 py-3 bg-background border rounded-xl focus-ring focus:border-transparent transition-all ${
-              errors.grabFloor ? 'border-destructive' : 'border-border'
-            }`}
+            className={errorInputClass(!!errors.grabFloor)}
             min={0}
             step="any"
             placeholder="0"
@@ -86,9 +58,7 @@ export function QualitySettingsSection() {
             id="minSeeders"
             type="number"
             {...register('minSeeders', { valueAsNumber: true })}
-            className={`w-full px-4 py-3 bg-background border rounded-xl focus-ring focus:border-transparent transition-all ${
-              errors.minSeeders ? 'border-destructive' : 'border-border'
-            }`}
+            className={errorInputClass(!!errors.minSeeders)}
             min={0}
             step={1}
             placeholder="0"

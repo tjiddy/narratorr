@@ -1,52 +1,25 @@
-import { useEffect } from 'react';
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { useForm } from 'react-hook-form';
-import { zodResolver } from '@hookform/resolvers/zod';
-import { toast } from 'sonner';
 import type { z } from 'zod';
-import { api } from '@/lib/api';
-import { queryKeys } from '@/lib/queryKeys';
-import { getErrorMessage } from '@/lib/error-message.js';
 import { SparklesIcon } from '@/components/icons';
 import { ToggleSwitch } from '@/components/settings/ToggleSwitch';
-import { DEFAULT_SETTINGS, newBookDefaultsFormSchema } from '../../../shared/schemas.js';
+import { useSettingsForm } from '@/hooks/useSettingsForm';
+import { DEFAULT_SETTINGS, newBookDefaultsFormSchema, type AppSettings } from '../../../shared/schemas.js';
 import { SettingsSection } from './SettingsSection';
 
 type NewBookDefaultsFormData = z.infer<typeof newBookDefaultsFormSchema>;
 
 export function NewBookDefaultsSection() {
-  const queryClient = useQueryClient();
-
-  const { data: settings } = useQuery({
-    queryKey: queryKeys.settings(),
-    queryFn: api.getSettings,
-  });
-
-  const { register, handleSubmit, reset, formState: { isDirty } } = useForm<NewBookDefaultsFormData>({
+  const { form, mutation, onSubmit } = useSettingsForm<NewBookDefaultsFormData>({
+    schema: newBookDefaultsFormSchema,
     defaultValues: { searchImmediately: DEFAULT_SETTINGS.quality.searchImmediately, monitorForUpgrades: DEFAULT_SETTINGS.quality.monitorForUpgrades },
-    resolver: zodResolver(newBookDefaultsFormSchema),
+    select: (s: AppSettings) => ({
+      searchImmediately: s.quality.searchImmediately,
+      monitorForUpgrades: s.quality.monitorForUpgrades,
+    }),
+    toPayload: (d) => ({ quality: d }),
+    successMessage: 'New book defaults saved',
   });
 
-  useEffect(() => {
-    if (settings?.quality && !isDirty) {
-      reset({
-        searchImmediately: settings.quality.searchImmediately,
-        monitorForUpgrades: settings.quality.monitorForUpgrades,
-      });
-    }
-  }, [settings, reset, isDirty]);
-
-  const mutation = useMutation({
-    mutationFn: (data: NewBookDefaultsFormData) => api.updateSettings({ quality: data }),
-    onSuccess: (_result, submittedData) => {
-      reset(submittedData);
-      queryClient.invalidateQueries({ queryKey: queryKeys.settings() });
-      toast.success('New book defaults saved');
-    },
-    onError: (err) => {
-      toast.error(getErrorMessage(err, 'Failed to save settings'));
-    },
-  });
+  const { register, handleSubmit, formState: { isDirty } } = form;
 
   return (
     <SettingsSection
@@ -54,7 +27,7 @@ export function NewBookDefaultsSection() {
       title="When a New Book Is Added"
       description="Applied when books are added manually or via import lists, RSS sync, and discovery"
     >
-      <form onSubmit={handleSubmit((data) => mutation.mutate(data))} className="space-y-4">
+      <form onSubmit={handleSubmit((data) => onSubmit(data))} className="space-y-4">
         <div className="flex items-center justify-between">
           <div>
             <label htmlFor="newBookSearchImmediately" className="block text-sm font-medium">Search Immediately</label>

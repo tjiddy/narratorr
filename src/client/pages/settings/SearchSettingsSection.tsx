@@ -1,18 +1,11 @@
-import { useEffect } from 'react';
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { useForm } from 'react-hook-form';
-import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
-import { toast } from 'sonner';
-import { api } from '@/lib/api';
-import { queryKeys } from '@/lib/queryKeys';
-import { getErrorMessage } from '@/lib/error-message.js';
 import { SearchIcon } from '@/components/icons';
 import { ToggleSwitch } from '@/components/settings/ToggleSwitch';
 import { SelectWithChevron } from '@/components/settings/SelectWithChevron';
+import { errorInputClass as inputClass } from '@/components/settings/formStyles';
+import { useSettingsForm } from '@/hooks/useSettingsForm';
 import { protocolPreferenceSchema, searchPrioritySchema, DEFAULT_SETTINGS, type AppSettings } from '../../../shared/schemas.js';
 import { SettingsSection } from './SettingsSection';
-import { errorInputClass as inputClass } from '@/components/settings/formStyles';
 
 const PROTOCOL_LABELS: Record<string, string> = { none: 'No Preference', usenet: 'Prefer Usenet', torrent: 'Prefer Torrent' };
 const PRIORITY_LABELS: Record<string, string> = { quality: 'Audio Quality', accuracy: 'Narrator Accuracy' };
@@ -60,35 +53,15 @@ function toPayload(data: SearchFormData) {
 }
 
 export function SearchSettingsSection() {
-  const queryClient = useQueryClient();
-
-  const { data: settings } = useQuery({
-    queryKey: queryKeys.settings(),
-    queryFn: api.getSettings,
-  });
-
-  const { register, handleSubmit, reset, formState: { errors, isDirty } } = useForm<SearchFormData>({
+  const { form, mutation, onSubmit } = useSettingsForm<SearchFormData>({
+    schema: searchFormSchema,
     defaultValues: toFormData({ ...DEFAULT_SETTINGS } as AppSettings),
-    resolver: zodResolver(searchFormSchema),
+    select: toFormData,
+    toPayload,
+    successMessage: 'Search settings saved',
   });
 
-  useEffect(() => {
-    if (settings && !isDirty) {
-      reset(toFormData(settings));
-    }
-  }, [settings, reset, isDirty]);
-
-  const mutation = useMutation({
-    mutationFn: (data: SearchFormData) => api.updateSettings(toPayload(data)),
-    onSuccess: (_result, submittedData) => {
-      reset(submittedData);
-      queryClient.invalidateQueries({ queryKey: queryKeys.settings() });
-      toast.success('Search settings saved');
-    },
-    onError: (err) => {
-      toast.error(getErrorMessage(err, 'Failed to save settings'));
-    },
-  });
+  const { register, handleSubmit, formState: { errors, isDirty } } = form;
 
   return (
     <SettingsSection
@@ -96,7 +69,7 @@ export function SearchSettingsSection() {
       title="Search"
       description="Automatic searching for wanted books"
     >
-      <form onSubmit={handleSubmit((data) => mutation.mutate(data))} className="space-y-5">
+      <form onSubmit={handleSubmit((data) => onSubmit(data))} className="space-y-5">
         <div className="flex items-center justify-between">
           <div>
             <label htmlFor="searchEnabled" className="block text-sm font-medium">Enable Scheduled Search</label>

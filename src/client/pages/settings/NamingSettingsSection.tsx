@@ -1,16 +1,12 @@
-import { useRef, useMemo, useState, useEffect, type ReactNode } from 'react';
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { useForm, type FieldError } from 'react-hook-form';
-import { zodResolver } from '@hookform/resolvers/zod';
-import { toast } from 'sonner';
-import { api } from '@/lib/api';
-import { queryKeys } from '@/lib/queryKeys';
-import { getErrorMessage } from '@/lib/error-message.js';
+import { useRef, useMemo, useState, type ReactNode } from 'react';
+import { type FieldError } from 'react-hook-form';
 import { TagIcon, ChevronRightIcon } from '@/components/icons';
+import { errorInputClass } from '@/components/settings/formStyles';
+import { useSettingsForm } from '@/hooks/useSettingsForm';
 import { NamingTokenModal } from '@/components/settings/NamingTokenModal';
 import { SelectWithChevron } from '@/components/settings/SelectWithChevron';
 import { renderTemplate, renderFilename, toLastFirst, toSortTitle, NAMING_PRESETS, detectPreset, FOLDER_TOKEN_GROUPS, FILE_ONLY_TOKEN_GROUP, TOKEN_PATTERN_SOURCE } from '@core/utils/index.js';
-import { DEFAULT_SETTINGS, namingSeparatorValues, namingCaseValues, namingFormSchema, hasTitle, hasAuthor, FOLDER_TITLE_MSG, AUTHOR_ADVISORY_MSG } from '../../../shared/schemas.js';
+import { DEFAULT_SETTINGS, namingSeparatorValues, namingCaseValues, namingFormSchema, hasTitle, hasAuthor, FOLDER_TITLE_MSG, AUTHOR_ADVISORY_MSG, type AppSettings } from '../../../shared/schemas.js';
 import type { NamingSeparator, NamingCase } from '../../../shared/schemas/settings/library.js';
 import type { NamingOptions, TokenGroup } from '@core/utils/naming.js';
 import { SettingsSection } from './SettingsSection';
@@ -119,9 +115,7 @@ function FormatField({ id, label, ariaLabel, placeholder, error, preview, previe
         {...registerProps}
         ref={inputRef}
         onKeyDown={onKeyDown}
-        className={`w-full px-4 py-3 bg-background border rounded-xl focus-ring focus:border-transparent transition-all font-mono text-sm ${
-          error ? 'border-destructive' : 'border-border'
-        }`}
+        className={`${errorInputClass(!!error)} font-mono text-sm`}
         placeholder={placeholder}
       />
       {error && <p className="text-sm text-destructive mt-1">{error.message}</p>}
@@ -189,45 +183,30 @@ function FormatField({ id, label, ariaLabel, placeholder, error, preview, previe
 }
 
 export function NamingSettingsSection() {
-  const queryClient = useQueryClient();
   const folderFormatRef = useRef<HTMLInputElement | null>(null);
   const fileFormatRef = useRef<HTMLInputElement | null>(null);
   const [tokenModalScope, setTokenModalScope] = useState<'folder' | 'file' | null>(null);
   const [folderPanelOpen, setFolderPanelOpen] = useState(false);
   const [filePanelOpen, setFilePanelOpen] = useState(false);
 
-  const { data: settings } = useQuery({ queryKey: queryKeys.settings(), queryFn: api.getSettings });
-
-  const { register, handleSubmit, reset, watch, setValue, formState: { errors, isDirty } } = useForm<NamingFormData>({
+  const { form, mutation, onSubmit } = useSettingsForm<NamingFormData>({
+    schema: namingFormSchema,
     defaultValues: {
       folderFormat: DEFAULT_SETTINGS.library.folderFormat,
       fileFormat: DEFAULT_SETTINGS.library.fileFormat,
       namingSeparator: DEFAULT_SETTINGS.library.namingSeparator,
       namingCase: DEFAULT_SETTINGS.library.namingCase,
     },
-    resolver: zodResolver(namingFormSchema),
+    select: (s: AppSettings) => ({
+      folderFormat: s.library.folderFormat, fileFormat: s.library.fileFormat,
+      namingSeparator: s.library.namingSeparator, namingCase: s.library.namingCase,
+    }),
+    toPayload: (d) => ({ library: d }),
+    successMessage: 'File naming settings saved',
   });
 
-  useEffect(() => {
-    if (settings?.library && !isDirty) {
-      reset({
-        folderFormat: settings.library.folderFormat, fileFormat: settings.library.fileFormat,
-        namingSeparator: settings.library.namingSeparator, namingCase: settings.library.namingCase,
-      });
-    }
-  }, [settings, reset, isDirty]);
+  const { register, handleSubmit, watch, setValue, formState: { errors, isDirty } } = form;
 
-  const mutation = useMutation({
-    mutationFn: (data: NamingFormData) => api.updateSettings({ library: data }),
-    onSuccess: (_result, submittedData) => {
-      reset(submittedData);
-      queryClient.invalidateQueries({ queryKey: queryKeys.settings() });
-      toast.success('File naming settings saved');
-    },
-    onError: (err) => { toast.error(getErrorMessage(err, 'Failed to save settings')); },
-  });
-
-  // eslint-disable-next-line react-hooks/incompatible-library -- watch() is the standard RHF API
   const folderFormat = watch('folderFormat');
   const fileFormat = watch('fileFormat');
   const namingSeparator = watch('namingSeparator');
@@ -277,7 +256,7 @@ export function NamingSettingsSection() {
 
   return (
     <SettingsSection icon={<TagIcon className="w-5 h-5 text-primary" />} title="File Naming" description="Configure how audiobook files and folders are named">
-      <form onSubmit={handleSubmit((data) => mutation.mutate(data))} className="space-y-5">
+      <form onSubmit={handleSubmit((data) => onSubmit(data))} className="space-y-5">
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
           <SelectWithChevron id="namingPreset" label="Preset" value={currentPreset} onChange={(e) => handlePresetChange(e.currentTarget.value)}>
             {NAMING_PRESETS.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
@@ -296,7 +275,7 @@ export function NamingSettingsSection() {
           error={errors.folderFormat} preview={folderPreview} previewNoSeries={folderPreviewNoSeries} hasValue={!!folderFormat}
           onOpenTokenModal={() => setTokenModalScope('folder')}
           onInsertToken={(token) => insertTokenAtCursor(folderFormatRef, 'folderFormat', token)}
-          onKeyDown={createFormatKeyDownHandler(folderFormatRef, 'folderFormat', setValue)}
+          onKeyDown={(e) => createFormatKeyDownHandler(folderFormatRef, 'folderFormat', setValue)(e)}
           tokenGroups={FOLDER_TOKEN_GROUPS}
           inlinePanelOpen={folderPanelOpen}
           onToggleInlinePanel={() => setFolderPanelOpen((v) => !v)}
@@ -313,7 +292,7 @@ export function NamingSettingsSection() {
           error={errors.fileFormat} preview={filePreview} previewNoSeries={filePreviewNoSeries} previewMultiFile={filePreviewMultiFile} previewSuffix=".m4b" hasValue={!!fileFormat}
           onOpenTokenModal={() => setTokenModalScope('file')}
           onInsertToken={(token) => insertTokenAtCursor(fileFormatRef, 'fileFormat', token)}
-          onKeyDown={createFormatKeyDownHandler(fileFormatRef, 'fileFormat', setValue)}
+          onKeyDown={(e) => createFormatKeyDownHandler(fileFormatRef, 'fileFormat', setValue)(e)}
           tokenGroups={[...FOLDER_TOKEN_GROUPS, FILE_ONLY_TOKEN_GROUP]}
           inlinePanelOpen={filePanelOpen}
           onToggleInlinePanel={() => setFilePanelOpen((v) => !v)}
