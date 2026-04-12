@@ -89,8 +89,8 @@ export function DiscoverPage() {
     : undefined;
 
   // Client-side language and reject-word filtering
-  const configuredLanguages = useMemo(() => settings?.metadata?.languages ?? [], [settings?.metadata?.languages]);
-  const rejectWords = useMemo(() => parseWordList(settings?.quality?.rejectWords ?? ''), [settings?.quality?.rejectWords]);
+  const configuredLanguages = useMemo(() => settings?.metadata?.languages ?? [], [settings]);
+  const rejectWords = useMemo(() => parseWordList(settings?.quality?.rejectWords ?? ''), [settings]);
 
   const filtered = useMemo(() => {
     if (!suggestions) return [];
