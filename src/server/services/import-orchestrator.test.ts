@@ -39,10 +39,6 @@ import {
   embedTagsForImport, runImportPostProcessing,
 } from '../utils/import-steps.js';
 
-function inject<T>(partial: Record<string, unknown>): T {
-  return partial as T;
-}
-
 function createMockImportService(overrides?: Partial<Record<string, unknown>>): ImportService {
   return inject<ImportService>({
     importDownload: vi.fn(),
