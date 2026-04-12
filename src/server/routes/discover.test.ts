@@ -415,6 +415,7 @@ describe('Discover Routes', () => {
         discoveryService: services.discovery as never,
         settingsService: services.settings as never,
         taskRegistry: services.taskRegistry as never,
+        downloadOrchestrator: services.downloadOrchestrator as never,
       });
       await authApp.ready();
 

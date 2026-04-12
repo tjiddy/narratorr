@@ -22,8 +22,56 @@ function parseWordList(csv: string): string[] {
   return csv.split(',').map((w) => w.trim().toLowerCase()).filter(Boolean);
 }
 
-export function DiscoverPage() {
+function useDiscoverMutations(setAddedIds: React.Dispatch<React.SetStateAction<Set<number>>>) {
   const queryClient = useQueryClient();
+  const [removedIds, setRemovedIds] = useState<Set<number>>(new Set());
+
+  const addMutation = useMutation({
+    mutationFn: ({ id, overrides }: { id: number; overrides: { searchImmediately: boolean; monitorForUpgrades: boolean } }) =>
+      api.addDiscoverSuggestion(id, overrides),
+    onSuccess: (_data, { id }) => {
+      setAddedIds((prev) => new Set(prev).add(id));
+      queryClient.invalidateQueries({ queryKey: queryKeys.discover.suggestions() });
+      queryClient.invalidateQueries({ queryKey: queryKeys.books() });
+      queryClient.invalidateQueries({ queryKey: queryKeys.bookStats() });
+      toast.success('Added to library');
+    },
+    onError: () => {
+      toast.error('Failed to add suggestion');
+    },
+  });
+
+  const dismissMutation = useMutation({
+    mutationFn: (id: number) => api.dismissDiscoverSuggestion(id),
+    onMutate: (id) => { setRemovedIds((prev) => new Set(prev).add(id)); },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: queryKeys.discover.suggestions() });
+      toast.success('Suggestion dismissed');
+    },
+    onError: (_err, id) => {
+      setRemovedIds((prev) => { const next = new Set(prev); next.delete(id); return next; });
+      toast.error('Failed to dismiss suggestion');
+    },
+  });
+
+  const refreshMutation = useMutation({
+    mutationFn: () => api.refreshDiscover(),
+    onSuccess: () => {
+      setRemovedIds(new Set());
+      setAddedIds(new Set());
+      queryClient.invalidateQueries({ queryKey: queryKeys.discover.suggestions() });
+      queryClient.invalidateQueries({ queryKey: queryKeys.discover.stats() });
+      toast.success('Suggestions refreshed');
+    },
+    onError: () => {
+      toast.error('Failed to refresh suggestions');
+    },
+  });
+
+  return { addMutation, dismissMutation, refreshMutation, removedIds };
+}
+
+export function DiscoverPage() {
   const [filter, setFilter] = useState<ReasonFilter>('all');
 
   const { data: suggestions, isLoading, isError } = useQuery({
@@ -43,98 +91,30 @@ export function DiscoverPage() {
     : undefined;
 
   // Client-side language and reject-word filtering
-  const configuredLanguages = settings?.metadata?.languages ?? [];
+  const configuredLanguages = useMemo(() => settings?.metadata?.languages ?? [], [settings?.metadata?.languages]);
   const rejectWords = useMemo(() => parseWordList(settings?.quality?.rejectWords ?? ''), [settings?.quality?.rejectWords]);
 
   const filtered = useMemo(() => {
     if (!suggestions) return [];
     let result = suggestions;
-
-    // Reason filter
-    if (filter !== 'all') {
-      result = result.filter((s) => s.reason === filter);
-    }
-
-    // Language filter — only apply when languages are configured
+    if (filter !== 'all') result = result.filter((s) => s.reason === filter);
     if (configuredLanguages.length > 0) {
       const langSet = new Set(configuredLanguages.map((l) => l.toLowerCase()));
       result = result.filter((s) => !s.language || langSet.has(s.language.toLowerCase()));
     }
-
-    // Reject word filter
     if (rejectWords.length > 0) {
-      result = result.filter((s) => {
-        const titleLower = s.title.toLowerCase();
-        return !rejectWords.some((w) => titleLower.includes(w));
-      });
+      result = result.filter((s) => !rejectWords.some((w) => s.title.toLowerCase().includes(w)));
     }
-
     return result;
   }, [suggestions, filter, configuredLanguages, rejectWords]);
 
-  // Track optimistically removed IDs (dismiss only)
-  const [removedIds, setRemovedIds] = useState<Set<number>>(new Set());
-  // Track added IDs for post-add checkmark state
   const [addedIds, setAddedIds] = useState<Set<number>>(new Set());
+  const { addMutation, dismissMutation, refreshMutation, removedIds } = useDiscoverMutations(setAddedIds);
 
   const visibleSuggestions = useMemo(
     () => filtered.filter((s) => !removedIds.has(s.id)),
     [filtered, removedIds],
   );
-
-  function optimisticRemove(id: number) {
-    setRemovedIds((prev) => new Set(prev).add(id));
-  }
-
-  function optimisticRestore(id: number) {
-    setRemovedIds((prev) => {
-      const next = new Set(prev);
-      next.delete(id);
-      return next;
-    });
-  }
-
-  const addMutation = useMutation({
-    mutationFn: ({ id, overrides }: { id: number; overrides: { searchImmediately: boolean; monitorForUpgrades: boolean } }) =>
-      api.addDiscoverSuggestion(id, overrides),
-    onSuccess: (_data, { id }) => {
-      setAddedIds((prev) => new Set(prev).add(id));
-      queryClient.invalidateQueries({ queryKey: queryKeys.discover.suggestions() });
-      queryClient.invalidateQueries({ queryKey: queryKeys.books() });
-      queryClient.invalidateQueries({ queryKey: queryKeys.bookStats() });
-      toast.success('Added to library');
-    },
-    onError: () => {
-      toast.error('Failed to add suggestion');
-    },
-  });
-
-  const dismissMutation = useMutation({
-    mutationFn: (id: number) => api.dismissDiscoverSuggestion(id),
-    onMutate: (id) => optimisticRemove(id),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: queryKeys.discover.suggestions() });
-      toast.success('Suggestion dismissed');
-    },
-    onError: (_err, id) => {
-      optimisticRestore(id);
-      toast.error('Failed to dismiss suggestion');
-    },
-  });
-
-  const refreshMutation = useMutation({
-    mutationFn: () => api.refreshDiscover(),
-    onSuccess: () => {
-      setRemovedIds(new Set());
-      setAddedIds(new Set());
-      queryClient.invalidateQueries({ queryKey: queryKeys.discover.suggestions() });
-      queryClient.invalidateQueries({ queryKey: queryKeys.discover.stats() });
-      toast.success('Suggestions refreshed');
-    },
-    onError: () => {
-      toast.error('Failed to refresh suggestions');
-    },
-  });
 
   if (isLoading) {
     return (

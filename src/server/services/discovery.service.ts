@@ -36,6 +36,27 @@ export interface LibrarySignals {
 const MAX_STRENGTH_BOOKS = 5;
 
 // ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+
+/** Map a suggestion DB row to a bookService.create() payload. */
+function buildCreatePayload(row: SuggestionRow, overrides?: { monitorForUpgrades?: boolean }) {
+  return {
+    title: row.title,
+    authors: row.authorName ? [{ name: row.authorName }] : [],
+    asin: row.asin ?? undefined,
+    coverUrl: row.coverUrl ?? undefined,
+    narrators: row.narratorName ? [row.narratorName] : [],
+    duration: row.duration ?? undefined,
+    seriesName: row.seriesName ?? undefined,
+    seriesPosition: row.seriesPosition ?? undefined,
+    publishedDate: row.publishedDate ?? undefined,
+    genres: row.genres ?? undefined,
+    monitorForUpgrades: overrides?.monitorForUpgrades ?? false,
+  };
+}
+
+// ---------------------------------------------------------------------------
 // Service
 // ---------------------------------------------------------------------------
 
@@ -271,19 +292,7 @@ export class DiscoveryService {
       return { suggestion: { ...row, status: 'added' }, book: dup, duplicate: true };
     }
 
-    const book = await this.bookService.create({
-      title: row.title,
-      authors: row.authorName ? [{ name: row.authorName }] : [],
-      asin: row.asin,
-      coverUrl: row.coverUrl,
-      narrators: row.narratorName ? [row.narratorName] : [],
-      duration: row.duration,
-      seriesName: row.seriesName,
-      seriesPosition: row.seriesPosition,
-      publishedDate: row.publishedDate,
-      genres: row.genres,
-      monitorForUpgrades: overrides?.monitorForUpgrades ?? false,
-    });
+    const book = await this.bookService.create(buildCreatePayload(row, overrides));
 
     // Record book_added event (fire-and-forget)
     if (this.eventHistory) {

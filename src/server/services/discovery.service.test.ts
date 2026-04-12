@@ -734,7 +734,7 @@ describe('DiscoveryService', () => {
       expect(mockBookService.create).toHaveBeenCalledWith(expect.objectContaining({
         title: 'Shogun',
         authors: [],
-        asin: null,
+        asin: undefined,
       }));
     });
 
@@ -822,13 +822,13 @@ describe('DiscoveryService', () => {
       await service.addSuggestion(1);
       const call = mockBookService.create.mock.calls[0][0];
       expect(call.narrators).toEqual([]);
-      // Null fields should be passed as-is (bookService.create accepts them)
-      expect(call.coverUrl).toBeNull();
-      expect(call.duration).toBeNull();
-      expect(call.seriesName).toBeNull();
-      expect(call.seriesPosition).toBeNull();
-      expect(call.publishedDate).toBeNull();
-      expect(call.genres).toBeNull();
+      // Null fields converted to undefined for bookService.create compatibility
+      expect(call.coverUrl).toBeUndefined();
+      expect(call.duration).toBeUndefined();
+      expect(call.seriesName).toBeUndefined();
+      expect(call.seriesPosition).toBeUndefined();
+      expect(call.publishedDate).toBeUndefined();
+      expect(call.genres).toBeUndefined();
     });
 
     it('forwards monitorForUpgrades: true from overrides to bookService.create', async () => {

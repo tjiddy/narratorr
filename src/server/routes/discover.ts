@@ -1,4 +1,4 @@
-import type { FastifyInstance, FastifyBaseLogger } from 'fastify';
+import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import { suggestionReasonSchema, type SuggestionRowResponse } from '../../shared/schemas/discovery.js';
 import type { DiscoveryService, SettingsService, IndexerService } from '../services/index.js';

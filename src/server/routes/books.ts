@@ -1,6 +1,6 @@
 import { readdir, readFile, stat } from 'node:fs/promises';
 import { join, extname } from 'node:path';
-import type { FastifyInstance, FastifyBaseLogger } from 'fastify';
+import type { FastifyInstance } from 'fastify';
 import { serveCoverFromCache, cleanCoverCache, COVER_FILE_REGEX } from '../utils/cover-cache.js';
 import { config } from '../config.js';
 import type { BookService, BookListService, DownloadService, SettingsService, RenameService, EventHistoryService, TaggingService, IndexerService } from '../services/index.js';
