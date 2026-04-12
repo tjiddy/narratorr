@@ -25,7 +25,7 @@
 
 - **`src/server/services/quality-gate-orchestrator.ts` at 501 lines (max 400)**: File exceeds ESLint max-lines rule and any net addition triggers a "new violation" in verify.ts diff-based linting. Needs to be split — e.g., extract deferred-cleanup logic or SSE emission into a separate module. (discovered in #434)
 
-- **`src/server/services/search-pipeline.ts` at 506 lines (max 400)**: File exceeds ESLint max-lines soft limit. Contains `canonicalCompare`, `filterAndRankResults`, `parseWordList`, and multiple helper functions. Consider extracting `canonicalCompare` and its tier helpers into a separate `search-ranking.ts` module. (discovered in #469, grew in #502)
+- **`src/server/services/search-pipeline.ts` at ~500 lines (max 400)**: File exceeds ESLint max-lines soft limit. Contains `canonicalCompare`, `filterAndRankResults`, and multiple helper functions. `parseWordList` extracted in #513. Consider extracting `canonicalCompare` and its tier helpers into a separate `search-ranking.ts` module. (discovered in #469, grew in #502)
 
 - **`src/server/routes/search-stream.test.ts`**: Module-level `vi.mock('../services/search-pipeline.js')` prevents integration testing of `postProcessSearchResults` in the same file. New integration tests had to go in a separate file (`search-stream-filtering.test.ts`). Consider refactoring the existing tests to use per-test mocking or moving the mocked tests to a separate file so the main test file can run unmocked. (discovered in #438)
 
@@ -33,7 +33,11 @@
 
 - **`src/server/services/library-scan.service.ts` enrichImportedBook/processOneImport complexity**: Both methods report complexity 19/23 (limit 15) due to nullable field coalescing (`??`, `||`) in event payloads and enrichment configs. Extracting the enrichment orchestration didn't reduce complexity because the operators are in the remaining caller code. Could extract event payload builders as standalone functions to bring methods under threshold. (discovered in #470)
 
-- **`MAX_COVER_SIZE` duplicated in 3 files**: `src/server/routes/books.ts`, `src/client/hooks/useCoverPaste.ts:3`, `src/client/pages/book/BookDetails.tsx:58` all define `10 * 1024 * 1024` independently. Changing the limit requires updating 3 places. Should extract to a shared constant in `src/shared/`. (discovered in #466)
+- ~~**`MAX_COVER_SIZE` duplicated in 3 files**~~ — resolved in #513
+
+- **Cover MIME type surfaces still duplicated in 4 locations**: `src/client/pages/book/BookHero.tsx:187` (accept attribute), `src/client/pages/book/BookDetails.tsx:59` (inline array), `src/server/services/cover-download.ts:27` (contentType check), `src/server/utils/cover-cache.ts:70-72` (MIME→ext mapping). These consume MIME types but are UI constraints or separate serving logic — not consolidated in #513 which only extracted the canonical `SUPPORTED_COVER_MIMES` set. (discovered in #513)
+
+- **Core layer has 30 `instanceof Error` ternaries**: `src/core/` adapters (indexers, download-clients, notifiers, import-lists, metadata, utils) still use raw `error instanceof Error ? error.message : fallback` instead of `getErrorMessage()`. Out of scope for #513 (core throws/returns, services catch). Warrants a follow-up issue. (discovered in #513)
 
 - **`src/server/services/refresh-scan.service.test.ts:329-341`**: `rethrows non-ENOENT stat errors` test still uses the same double-call anti-pattern (rejects.toThrow + try/catch). Was out of scope for #468 which only targeted RefreshScanError-coded tests, but should be consolidated to match. (discovered in #468)
 
