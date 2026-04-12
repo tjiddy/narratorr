@@ -43,6 +43,8 @@
 
 - **`BackupScheduleForm.tsx` still uses raw `useMutation`/`useQuery`/`useEffect` boilerplate**: Excluded from `useSettingsForm` migration (#485) because it has no zodResolver, no `!isDirty` guard, and no reset-on-success. A separate `useSettingsForm` variant or standalone refactor could normalize this. (discovered in #485)
 
+- **`src/client/lib/api/books.ts` / `src/core/metadata/schemas.ts`**: Client `BookMetadata` interface is hand-maintained separately from server `BookMetadataSchema`. Fields drift — `language` and `publishedDate` existed server-side but were missing client-side until #497. Should derive client type from the Zod schema or generate it. (discovered in #497)
+
 ## Accepted Debt
 
 Items below are real but not worth fixing — the cost of change outweighs the benefit.
