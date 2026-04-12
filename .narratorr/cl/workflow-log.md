@@ -1,5 +1,34 @@
 # Workflow Log
 
+## #482 DRY: consolidate findOrCreateAuthor/Narrator — 4 divergent copies — 2026-04-12
+**Skill path:** /implement → /claim → /plan → /handoff
+**Outcome:** success — PR #519
+
+### Metrics
+- Files changed: 5 | Tests added/modified: 1 (15 new tests)
+- Quality gate runs: 2 (pass on attempt 2 — first had unused `vi` import lint error)
+- Fix iterations: 1 (lint fix for unused import)
+- Context compactions: 0
+
+### Workflow experience
+- What went smoothly: Mock infrastructure transparency — all 165 existing tests passed without modification after extraction. The `mockDbChain()` proxy pattern meant DB mocks work identically whether the query logic is in a private method or an imported utility.
+- Friction / issues encountered: None significant. The spec review round-trip (elaborate → review-spec → respond) was necessary to resolve the null-vs-throw contract contradiction, but the implementation itself was clean.
+
+### Token efficiency
+- Highest-token actions: Explore subagent for plan (read 4 implementations + 3 test files + helpers)
+- Avoidable waste: Could have skipped reading test files in detail since mocks worked transparently
+- Suggestions: For pure DRY extractions of Drizzle query patterns, trust that mockDbChain will propagate and skip blast-radius test analysis
+
+### Infrastructure gaps
+- Repeated workarounds: None
+- Missing tooling / config: None
+- Unresolved debt: None introduced
+
+### Wish I'd Known
+1. Drizzle mock proxies (`mockDbChain`) are fully transparent through function extraction — no test updates needed for any of the 3 blast-radius suites
+2. The import-list catch scope is critical — wrapping only the author resolution + junction insert, not the whole processItem, preserves bookEvents/logging
+3. The `onConflictDoNothing` vs try/catch divergence was cosmetic — both handle the same race condition, just with different APIs. Unifying to try/catch was the simpler choice since it matches the majority pattern (book.service)
+
 ## #483 DRY: unify SSE safe-emit into shared utility — 2026-04-12
 **Skill path:** /elaborate → /respond-to-spec-review → /implement → /claim → /plan → /handoff
 **Outcome:** success — PR #517
