@@ -140,21 +140,73 @@ describe('Discover Routes', () => {
 
     // --- #501: Override body and immediate search ---
 
-    it.todo('passes searchImmediately and monitorForUpgrades from body to service');
+    it('passes monitorForUpgrades from body to service', async () => {
+      (services.discovery.addSuggestion as Mock).mockResolvedValueOnce({
+        suggestion: mockSuggestionRow({ id: 1, status: 'added' }),
+        book: { id: 10, title: 'Test' },
+      });
 
-    it.todo('triggers triggerImmediateSearch when searchImmediately is true and result has a book');
+      const res = await app.inject({
+        method: 'POST',
+        url: '/api/discover/suggestions/1/add',
+        payload: { searchImmediately: false, monitorForUpgrades: true },
+      });
+      expect(res.statusCode).toBe(200);
+      expect(services.discovery.addSuggestion).toHaveBeenCalledWith(1, { monitorForUpgrades: true });
+    });
 
-    it.todo('does not trigger search when searchImmediately is false');
+    it('accepts partial body with only monitorForUpgrades', async () => {
+      (services.discovery.addSuggestion as Mock).mockResolvedValueOnce({
+        suggestion: mockSuggestionRow({ id: 1, status: 'added' }),
+        book: { id: 10, title: 'Test' },
+      });
 
-    it.todo('does not trigger search on duplicate result even with searchImmediately true');
+      const res = await app.inject({
+        method: 'POST',
+        url: '/api/discover/suggestions/1/add',
+        payload: { monitorForUpgrades: true },
+      });
+      expect(res.statusCode).toBe(200);
+      expect(services.discovery.addSuggestion).toHaveBeenCalledWith(1, { monitorForUpgrades: true });
+    });
 
-    it.todo('accepts partial body with only monitorForUpgrades');
+    it('accepts empty body and defaults both overrides to false', async () => {
+      (services.discovery.addSuggestion as Mock).mockResolvedValueOnce({
+        suggestion: mockSuggestionRow({ id: 1, status: 'added' }),
+        book: { id: 10, title: 'Test' },
+      });
 
-    it.todo('accepts empty body and defaults both overrides to false');
+      const res = await app.inject({
+        method: 'POST',
+        url: '/api/discover/suggestions/1/add',
+        payload: {},
+      });
+      expect(res.statusCode).toBe(200);
+      expect(services.discovery.addSuggestion).toHaveBeenCalledWith(1, { monitorForUpgrades: false });
+    });
 
-    it.todo('accepts request with no body at all');
+    it('accepts request with no body at all', async () => {
+      (services.discovery.addSuggestion as Mock).mockResolvedValueOnce({
+        suggestion: mockSuggestionRow({ id: 1, status: 'added' }),
+        book: { id: 10, title: 'Test' },
+      });
 
-    it.todo('rejects invalid override body (searchImmediately: "yes") with 400');
+      const res = await app.inject({
+        method: 'POST',
+        url: '/api/discover/suggestions/1/add',
+      });
+      expect(res.statusCode).toBe(200);
+      expect(services.discovery.addSuggestion).toHaveBeenCalledWith(1, { monitorForUpgrades: false });
+    });
+
+    it('rejects invalid override body (searchImmediately: "yes") with 400', async () => {
+      const res = await app.inject({
+        method: 'POST',
+        url: '/api/discover/suggestions/1/add',
+        payload: { searchImmediately: 'yes' },
+      });
+      expect(res.statusCode).toBe(400);
+    });
   });
 
   describe('POST /api/discover/refresh', () => {

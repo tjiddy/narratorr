@@ -1,9 +1,13 @@
-import type { FastifyInstance } from 'fastify';
+import type { FastifyInstance, FastifyBaseLogger } from 'fastify';
 import { z } from 'zod';
 import { suggestionReasonSchema, type SuggestionRowResponse } from '../../shared/schemas/discovery.js';
-import type { DiscoveryService, SettingsService } from '../services/index.js';
+import type { DiscoveryService, SettingsService, IndexerService } from '../services/index.js';
+import type { DownloadOrchestrator } from '../services/download-orchestrator.js';
+import type { BlacklistService } from '../services/blacklist.service.js';
+import type { EventBroadcasterService } from '../services/event-broadcaster.service.js';
 import type { TaskRegistry } from '../services/task-registry.js';
 import type { suggestions } from '../../db/schema.js';
+import { triggerImmediateSearch } from './trigger-immediate-search.js';
 
 type SuggestionRow = typeof suggestions.$inferSelect;
 
@@ -37,6 +41,10 @@ export interface DiscoverRouteDeps {
   discoveryService: DiscoveryService;
   settingsService: SettingsService;
   taskRegistry: TaskRegistry;
+  indexerService?: IndexerService;
+  downloadOrchestrator: DownloadOrchestrator;
+  blacklistService?: BlacklistService;
+  eventBroadcaster?: EventBroadcasterService;
 }
 
 const idParamSchema = z.object({ id: z.coerce.number().int().positive() });
@@ -79,11 +87,25 @@ export async function discoverRoutes(app: FastifyInstance, deps: DiscoverRouteDe
   );
 
   // POST /api/discover/suggestions/:id/add
+  const addBodySchema = z.object({
+    searchImmediately: z.boolean().optional().default(false),
+    monitorForUpgrades: z.boolean().optional().default(false),
+  });
+
   app.post<{ Params: IdParam }>(
     '/api/discover/suggestions/:id/add',
     { schema: { params: idParamSchema } },
     async (request, reply) => {
-      const result = await discoveryService.addSuggestion(request.params.id);
+      // Parse optional body — no body or empty body both default to false/false
+      const raw = request.body as Record<string, unknown> | undefined;
+      const parsed = addBodySchema.safeParse(raw ?? {});
+      if (!parsed.success) {
+        return reply.status(400).send({ error: 'Invalid body', details: parsed.error.issues });
+      }
+      const body = parsed.data;
+      const result = await discoveryService.addSuggestion(request.params.id, {
+        monitorForUpgrades: body.monitorForUpgrades,
+      });
       if (!result) {
         return reply.status(404).send({ error: 'Suggestion not found' });
       }
@@ -93,6 +115,13 @@ export async function discoverRoutes(app: FastifyInstance, deps: DiscoverRouteDe
       if (result.duplicate) {
         return { suggestion: toSuggestionResponse(result.suggestion), book: result.book, duplicate: true };
       }
+
+      // Fire-and-forget: trigger immediate search if requested
+      if (body.searchImmediately && result.book) {
+        const book = result.book as { id: number; title: string; duration?: number | null; authors?: Array<{ name: string }> | null; narrators?: Array<{ name: string }> | null };
+        triggerImmediateSearch(book, deps, request.log);
+      }
+
       return { suggestion: toSuggestionResponse(result.suggestion), book: result.book };
     },
   );
