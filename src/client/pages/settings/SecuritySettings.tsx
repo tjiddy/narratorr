@@ -77,7 +77,6 @@ function AuthModeSection({
     successMessage: 'Authentication mode updated',
     errorMessage: (err) => err instanceof ApiError ? err.message : 'Failed to update auth mode',
     onSuccess: () => { setShowConfirm(false); setPendingMode(null); },
-    onError: () => { setShowConfirm(false); setPendingMode(null); },
   });
 
   function handleModeChange(newMode: AuthMode) {

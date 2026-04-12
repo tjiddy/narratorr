@@ -653,10 +653,18 @@ describe('SecuritySettings', () => {
       await user.click(screen.getByRole('button', { name: /disable auth/i }));
 
       await waitFor(() => expect(toast.error).toHaveBeenCalledWith('Custom error'));
-      // onError callback clears the confirmation dialog
-      await waitFor(() => {
-        expect(screen.queryByRole('button', { name: /disable auth/i })).not.toBeInTheDocument();
-      });
+      // Modal stays open on error so user can retry (#512)
+      expect(screen.getByRole('dialog')).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: /disable auth/i })).toBeInTheDocument();
+
+      // Retry: remock to success, click confirm again without re-selecting radio
+      (api.updateAuthConfig as ReturnType<typeof vi.fn>).mockResolvedValue({ mode: 'none' });
+      await user.click(screen.getByRole('button', { name: /disable auth/i }));
+
+      await waitFor(() => expect(api.updateAuthConfig).toHaveBeenCalledTimes(2));
+      expect(api.updateAuthConfig).toHaveBeenLastCalledWith({ mode: 'none' });
+      // Modal closes on successful retry
+      await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
     });
   });
 

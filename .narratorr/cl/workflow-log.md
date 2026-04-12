@@ -1,5 +1,34 @@
 # Workflow Log
 
+## #512 fix: SecuritySettings ConfirmModal closes on error (UX regression) — 2026-04-12
+**Skill path:** /elaborate → /implement → /claim → /plan → /handoff
+**Outcome:** success — PR #515
+
+### Metrics
+- Files changed: 2 | Tests added/modified: 1
+- Quality gate runs: 2 (pass on attempt 1 both times)
+- Fix iterations: 0
+- Context compactions: 0
+
+### Workflow experience
+- What went smoothly: Trivial 1-line production fix with clear prior art (ApiKeySection pattern). Red/green TDD confirmed the test caught the regression.
+- Friction / issues encountered: None — the spec was precise and the fix was obvious.
+
+### Token efficiency
+- Highest-token actions: Explore subagent for plan (more thorough than needed for a 1-line fix)
+- Avoidable waste: For trivial bugs with precise specs, the explore phase could be lighter
+- Suggestions: Consider a "trivial fix" fast path that skips deep codebase exploration when the spec already pinpoints exact lines
+
+### Infrastructure gaps
+- Repeated workarounds: None
+- Missing tooling / config: None
+- Unresolved debt: None introduced
+
+### Wish I'd Known
+1. The fix is literally removing 1 line — the `onError` callback at line 80. The explore phase confirmed what the spec already said.
+2. The ApiKeySection error test (line 922-938) is the exact pattern to follow for the assertion update.
+3. No surprises — this was a clean regression from #488 with a clear fix.
+
 ## #504 Auto-blacklist failed usenet downloads by guid (not just infoHash) — 2026-04-12
 **Skill path:** /elaborate → /respond-to-spec-review (x4) → /implement → /claim → /plan → /handoff
 **Outcome:** success — PR #511
