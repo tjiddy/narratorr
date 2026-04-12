@@ -210,7 +210,7 @@ export async function runEnrichment(db: Db, metadataService: MetadataService, bo
             let narratorId: number | undefined;
             try {
               narratorId = await findOrCreateNarrator(db, name);
-            } catch (error: unknown) {
+            } catch (_error: unknown) {
               // Skip this narrator — batch processing continues
             }
             if (narratorId !== undefined) {

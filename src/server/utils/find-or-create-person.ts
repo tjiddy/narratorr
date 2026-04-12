@@ -40,7 +40,7 @@ async function findOrCreateBySlug(
   try {
     const inserted = await db.insert(table).values(values).returning();
     return (inserted[0] as { id: number }).id;
-  } catch (error: unknown) {
+  } catch (_error: unknown) {
     const retry = await db.select().from(table).where(eq(table.slug, slug)).limit(1);
     if (retry.length > 0) {
       if (onFound) await onFound(db, retry[0] as { id: number });

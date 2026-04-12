@@ -211,7 +211,7 @@ export class ImportListService {
       let authorId: number | undefined;
       try {
         authorId = await findOrCreateAuthor(this.db, enriched.author);
-      } catch (error: unknown) {
+      } catch (_error: unknown) {
         this.log.warn({ title: newBook.title, author: enriched.author }, 'Author resolution failed, skipping bookAuthors');
       }
       if (authorId !== undefined) {
