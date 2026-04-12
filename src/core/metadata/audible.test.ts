@@ -94,6 +94,13 @@ describe('AudibleProvider', () => {
       expect(books[0].language).toBe('english');
     });
 
+    it('preserves full release_date in publishedDate (not truncated to year)', async () => {
+      const { books } = await provider.searchBooks('Harry Potter');
+
+      // Fixture has release_date: "2015-11-20" — must preserve full date for sorting
+      expect(books[0].publishedDate).toBe('2015-11-20');
+    });
+
     it('throws TransientError on API error (5xx)', async () => {
       server.use(
         http.get('https://api.audible.com/1.0/catalog/products', () => {
