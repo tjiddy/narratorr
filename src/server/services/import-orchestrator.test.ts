@@ -447,7 +447,7 @@ describe('ImportOrchestrator', () => {
       orchestrator.setBlacklistDeps(blacklistService, retrySearchDeps);
     });
 
-    it('content failure triggers blacklistAndRetrySearch with correct identifiers, reason, and blacklistType', async () => {
+    it('content failure triggers blacklistAndRetrySearch with correct identifiers, reason, blacklistType, and retry-gating deps', async () => {
       const contentError = new Error('Copy verification failed: source 1000 bytes, target 500 bytes');
       (importService.importDownload as ReturnType<typeof vi.fn>).mockRejectedValue(contentError);
 
@@ -459,6 +459,25 @@ describe('ImportOrchestrator', () => {
         blacklistType: 'temporary',
         book: { id: 1 },
       }));
+
+      // F2: verify retry-gating contract — settingsService and retrySearchDeps present, no overrideRetry
+      const callArg = vi.mocked(blacklistAndRetrySearch).mock.calls[0][0];
+      expect(callArg.settingsService).toBe(settingsService);
+      expect(callArg.retrySearchDeps).toBe(retrySearchDeps);
+      expect(callArg).not.toHaveProperty('overrideRetry');
+    });
+
+    it('guid-only usenet content failure propagates guid to blacklistAndRetrySearch', async () => {
+      const usenetCtx = { ...mockContext, infoHash: null, guid: 'usenet-guid-abc' };
+      (importService.getImportContext as ReturnType<typeof vi.fn>).mockResolvedValue(usenetCtx);
+      const contentError = new Error('No audio files found in /path');
+      (importService.importDownload as ReturnType<typeof vi.fn>).mockRejectedValue(contentError);
+
+      await expect(orchestrator.importDownload(1)).rejects.toThrow();
+
+      const callArg = vi.mocked(blacklistAndRetrySearch).mock.calls[0][0];
+      expect(callArg.identifiers.guid).toBe('usenet-guid-abc');
+      expect(callArg.identifiers.infoHash).toBeUndefined();
     });
 
     it('content failure (duplicate filename) triggers blacklistAndRetrySearch — original loop scenario', async () => {
@@ -505,12 +524,21 @@ describe('ImportOrchestrator', () => {
       expect(recordImportFailedEvent).toHaveBeenCalled();
     });
 
-    it('blacklist call failure does not suppress original import error', async () => {
-      vi.mocked(blacklistAndRetrySearch).mockRejectedValueOnce(new Error('DB blacklist error'));
+    it('blacklist call failure does not suppress original import error and logs warning', async () => {
+      const blacklistError = new Error('DB blacklist error');
+      vi.mocked(blacklistAndRetrySearch).mockRejectedValueOnce(blacklistError);
       const contentError = new Error('Copy verification failed: source 1000 bytes, target 500 bytes');
       (importService.importDownload as ReturnType<typeof vi.fn>).mockRejectedValue(contentError);
 
       await expect(orchestrator.importDownload(1)).rejects.toBe(contentError);
+
+      // F4: verify the fire-and-forget failure is observable via log.warn
+      await vi.waitFor(() => {
+        expect(log.warn).toHaveBeenCalledWith(
+          expect.objectContaining({ error: blacklistError, downloadId: 1 }),
+          'Import failure blacklist dispatch failed',
+        );
+      });
     });
 
     it('batch path: content failure in one download blacklists it without affecting others', async () => {

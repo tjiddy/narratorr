@@ -200,4 +200,30 @@ describe('createServices', () => {
     expect(mockBootstrap).toHaveBeenCalledOnce();
     expect(mockBootstrap).toHaveBeenCalledWith(detectFfmpegPath);
   });
+
+  // #504 — setBlacklistDeps wiring
+  it('wires importOrchestrator.setBlacklistDeps with blacklistService and retrySearchDeps', async () => {
+    const { SettingsService } = await import('../services/index.js');
+    const { ImportOrchestrator } = await import('../services/import-orchestrator.js');
+
+    vi.mocked(SettingsService).mockImplementation(function(this: Record<string, unknown>) {
+      this.get = vi.fn().mockResolvedValue({ audibleRegion: 'us' });
+      this.bootstrapProcessingDefaults = vi.fn().mockResolvedValue(undefined);
+      this.migrateLanguageSettings = vi.fn().mockResolvedValue(undefined);
+    } as never);
+
+    const { createServices } = await import('./index.js');
+    const db = {} as unknown as Db;
+    const log = {
+      info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn(),
+      child: vi.fn().mockReturnThis(), trace: vi.fn(), fatal: vi.fn(),
+    } as unknown as FastifyBaseLogger;
+
+    await createServices(db, log);
+
+    const orchestratorInstances = vi.mocked(ImportOrchestrator).mock.instances;
+    expect(orchestratorInstances).toHaveLength(1);
+    const instance = orchestratorInstances[0] as unknown as Record<string, ReturnType<typeof vi.fn>>;
+    expect(instance.setBlacklistDeps).toHaveBeenCalledOnce();
+  });
 });
