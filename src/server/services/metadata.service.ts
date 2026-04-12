@@ -15,6 +15,7 @@ import {
 } from '../../core/index.js';
 import { parseWordList } from '../../shared/parse-word-list.js';
 import type { SettingsService } from './settings.service.js';
+import { getErrorMessage } from '../utils/error-message.js';
 
 const DEFAULT_THROTTLE_MS = 200;
 
@@ -113,7 +114,7 @@ export class MetadataService {
         this.log.warn(error, `Metadata ${method} failed`);
         return [];
       }
-      const msg = error instanceof Error ? error.message : String(error);
+      const msg = getErrorMessage(error);
       warnings.push(`${provider.name} ${method} failed: ${msg}`);
       this.log.warn(error, `Metadata ${method} failed`);
       return [];

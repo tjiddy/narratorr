@@ -85,7 +85,7 @@ export class ImportListService {
       const provider = factory(data.settings);
       return await provider.test();
     } catch (error: unknown) {
-      return { success: false, message: error instanceof Error ? error.message : 'Unknown error' };
+      return { success: false, message: getErrorMessage(error) };
     }
   }
 
@@ -124,7 +124,7 @@ export class ImportListService {
           .where(eq(importLists.id, list.id));
         this.log.info({ id: list.id, name: list.name }, 'Import list sync completed');
       } catch (error: unknown) {
-        const message = error instanceof Error ? error.message : 'Unknown error';
+        const message = getErrorMessage(error);
         const nextRunAt = new Date(Date.now() + list.syncIntervalMinutes * MS_PER_MINUTE);
         await this.db
           .update(importLists)

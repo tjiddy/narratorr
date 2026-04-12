@@ -14,6 +14,7 @@ import {
 import type { SettingsService } from './settings.service.js';
 import { encryptFields, decryptFields, resolveSentinelFields, getKey } from '../utils/secret-codec.js';
 import { AdapterCache } from '../utils/adapter-cache.js';
+import { getErrorMessage } from '../utils/error-message.js';
 
 type IndexerRow = typeof indexers.$inferSelect;
 type NewIndexer = typeof indexers.$inferInsert;
@@ -205,7 +206,7 @@ export class IndexerService {
     } catch (error: unknown) {
       return {
         success: false,
-        message: error instanceof Error ? error.message : 'Unknown error',
+        message: getErrorMessage(error),
       };
     }
   }
@@ -240,7 +241,7 @@ export class IndexerService {
     } catch (error: unknown) {
       return {
         success: false,
-        message: error instanceof Error ? error.message : 'Unknown error',
+        message: getErrorMessage(error),
       };
     }
   }
@@ -462,7 +463,7 @@ export class IndexerService {
             callbacks.onCancelled?.(indexer.id, indexer.name);
             return;
           }
-          const message = error instanceof Error ? error.message : 'Unknown error';
+          const message = getErrorMessage(error);
           this.log.warn({ indexer: indexer.name, query, err: error }, 'Error searching indexer');
           callbacks.onError(indexer.id, indexer.name, message, elapsedMs);
         }

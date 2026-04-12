@@ -105,7 +105,7 @@ export async function checkDiskSpace(args: CheckDiskSpaceArgs): Promise<DiskSpac
     const fsStats = await statfs(libraryPath);
     freeBytes = Number(fsStats.bavail) * Number(fsStats.bsize);
   } catch (statfsError: unknown) {
-    throw new Error(`Disk space check failed: ${statfsError instanceof Error ? statfsError.message : 'unknown error'}`);
+    throw new Error(`Disk space check failed: ${getErrorMessage(statfsError, 'unknown error')}`);
   }
 
   const freeGB = Math.round((freeBytes / 1024 ** 3) * 10) / 10;

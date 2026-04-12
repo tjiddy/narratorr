@@ -9,6 +9,7 @@ import { AUDIO_EXTENSIONS } from '../../core/utils/audio-constants.js';
 import type { BookService } from './book.service.js';
 import { downloadRemoteCover, isRemoteCoverUrl } from './cover-download.js';
 import { mimeToExt } from '../utils/mime.js';
+import { getErrorMessage } from '../utils/error-message.js';
 
 export interface EnrichmentResult {
   enriched: boolean;
@@ -108,7 +109,7 @@ export async function enrichBookFromAudio(
     );
     return { enriched: true };
   } catch (error: unknown) {
-    const message = error instanceof Error ? error.message : 'Unknown error';
+    const message = getErrorMessage(error);
     log.warn({ error, bookId, targetPath }, 'Audio file enrichment failed');
     return { enriched: false, error: message };
   }

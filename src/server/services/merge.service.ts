@@ -17,6 +17,7 @@ import { toSourceBitrateKbps, logBitrateCapping } from '../utils/audio-bitrate.j
 import { Semaphore } from '../utils/semaphore.js';
 import type { SSEEventType, SSEEventPayloads, MergePhase, MergeFailedReason } from '../../shared/schemas/sse-events.js';
 import { createStderrDeduplicator } from '../utils/stderr-deduplicator.js';
+import { getErrorMessage } from '../utils/error-message.js';
 
 export interface MergeResult {
   bookId: number;
@@ -250,7 +251,7 @@ export class MergeService {
       this.emitMergeComplete(bookId, book.title, message, enrichmentWarning);
       return { bookId, outputFile: outputPath, filesReplaced: topLevelAudioFiles.length, message, enrichmentWarning };
     } catch (error: unknown) {
-      const errorMessage = error instanceof Error ? error.message : 'Unknown merge error';
+      const errorMessage = getErrorMessage(error, 'Unknown merge error');
       const reason: MergeFailedReason = controller.signal.aborted ? 'cancelled' : 'error';
       this.emitMergeFailed(bookId, book.title, errorMessage, reason);
       try { await rm(stagingDir, { recursive: true, force: true }); } catch { /* best-effort */ }
@@ -296,7 +297,7 @@ export class MergeService {
       this.emitMergeComplete(bookId, book.title, message, enrichmentWarning);
       return { bookId, outputFile: outputPath, filesReplaced: topLevelAudioFiles.length, message, enrichmentWarning };
     } catch (error: unknown) {
-      const errorMessage = error instanceof Error ? error.message : 'Unknown merge error';
+      const errorMessage = getErrorMessage(error, 'Unknown merge error');
       this.emitMergeFailed(bookId, book.title, errorMessage);
       try { await rm(stagingDir, { recursive: true, force: true }); } catch { /* best-effort */ }
       throw error;

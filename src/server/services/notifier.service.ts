@@ -8,6 +8,7 @@ import {
   type NotificationEvent,
   type EventPayload,
 } from '../../core/index.js';
+import { getErrorMessage } from '../utils/error-message.js';
 
 type NotifierRow = typeof notifiers.$inferSelect;
 type NewNotifier = typeof notifiers.$inferInsert;
@@ -101,7 +102,7 @@ export class NotifierService {
     } catch (error: unknown) {
       return {
         success: false,
-        message: error instanceof Error ? error.message : 'Unknown error',
+        message: getErrorMessage(error),
       };
     }
   }
@@ -117,7 +118,7 @@ export class NotifierService {
     } catch (error: unknown) {
       return {
         success: false,
-        message: error instanceof Error ? error.message : 'Unknown error',
+        message: getErrorMessage(error),
       };
     }
   }

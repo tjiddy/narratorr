@@ -17,6 +17,7 @@ import { scanAudioDirectory } from '../../core/utils/audio-scanner.js';
 import { resolveFfprobePathFromSettings } from '../../core/utils/ffprobe-path.js';
 import { resolveSavePath } from '../utils/download-path.js';
 import { revertBookStatus } from '../utils/book-status.js';
+import { getErrorMessage } from '../utils/error-message.js';
 import type { RetrySearchDeps } from './retry-search.js';
 import { blacklistAndRetrySearch } from '../utils/rejection-helpers.js';
 import type { SettingsService } from './settings.service.js';
@@ -104,7 +105,7 @@ export class QualityGateOrchestrator {
         this.log.error({ error, downloadId: row.download.id }, 'Quality gate error');
         // Set pending_review with probeFailure on unhandled error
         await this.qualityGateService.setStatus(row.download.id, 'pending_review');
-        const probeError = error instanceof Error ? error.message : String(error);
+        const probeError = getErrorMessage(error);
         this.recordDecision(row.download, row.book, { ...NULL_REASON, probeFailure: true, probeError, holdReasons: ['unhandled_error'] });
       }
     }
@@ -158,7 +159,7 @@ export class QualityGateOrchestrator {
         await this.db.update(books).set({ status: 'downloading' }).where(eq(books.id, row.book.id));
         this.emitSSE('book_status_change', { book_id: row.book.id, old_status: 'importing' as BookStatus, new_status: 'downloading' as BookStatus });
       }
-      const probeError = error instanceof Error ? error.message : String(error);
+      const probeError = getErrorMessage(error);
       this.recordDecision(row.download, row.book, { ...NULL_REASON, probeFailure: true, probeError, holdReasons: ['unhandled_error'] });
     }
   }
@@ -338,8 +339,7 @@ export class QualityGateOrchestrator {
 
     const probeError = error === undefined ? null
       : typeof error === 'string' ? error
-      : error instanceof Error ? error.message
-      : String(error);
+      : getErrorMessage(error);
     this.recordDecision(download, book, { ...NULL_REASON, probeFailure: true, probeError, holdReasons: [holdReason] });
   }
 

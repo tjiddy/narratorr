@@ -9,6 +9,7 @@ import type { RetryBudget } from './retry-budget.js';
 import { buildSearchQuery, buildNarratorPriority, filterAndRankResults, filterBlacklistedResults } from './search-pipeline.js';
 import { buildGrabPayload } from './grab-payload.js';
 import { enrichUsenetLanguages } from '../utils/enrich-usenet-languages.js';
+import { getErrorMessage } from '../utils/error-message.js';
 
 export type RetryOutcome =
   | { outcome: 'retried'; download: DownloadWithBook }
@@ -129,7 +130,7 @@ export async function retrySearch(
     log.info({ bookId, title: best.title, attempt }, 'Retry search grabbed candidate');
     return { outcome: 'retried', download: newDownload };
   } catch (error: unknown) {
-    const message = error instanceof Error ? error.message : String(error);
+    const message = getErrorMessage(error);
     log.warn({ bookId, error, attempt }, 'Retry search failed');
     return { outcome: 'retry_error', error: message };
   }
