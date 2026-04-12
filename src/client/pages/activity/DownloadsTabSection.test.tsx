@@ -132,6 +132,27 @@ describe('DownloadsTabSection', () => {
     });
   });
 
+  describe('#514 per-item cancelling state', () => {
+    it('only the row matching cancelMutation.variables shows cancelling state', () => {
+      const queue = [
+        makeDownload({ id: 1, title: 'Book One', status: 'downloading' }),
+        makeDownload({ id: 2, title: 'Book Two', status: 'downloading' }),
+      ];
+      renderWithProviders(<DownloadsTabSection {...defaultProps({
+        queue,
+        queueTotal: 2,
+        cancelMutation: mockMutation({ isPending: true, variables: 1 }),
+      })} />);
+
+      // First row should show cancelling state
+      const cancellingTexts = screen.getAllByText('Cancelling...');
+      expect(cancellingTexts).toHaveLength(1);
+
+      // Second row should show normal "Cancel & Blacklist" button
+      expect(screen.getByText('Cancel & Blacklist')).toBeInTheDocument();
+    });
+  });
+
   describe('interactions', () => {
     it('clear history button calls onConfirmClearHistoryChange', async () => {
       const user = userEvent.setup();
