@@ -10,6 +10,13 @@ import type { BlacklistService } from '../services/blacklist.service.js';
 import type { SearchResult } from '../../core/index.js';
 import { DuplicateDownloadError } from '../services/download.service.js';
 
+vi.mock('../utils/enrich-usenet-languages.js', () => ({
+  enrichUsenetLanguages: vi.fn(),
+}));
+
+import { enrichUsenetLanguages } from '../utils/enrich-usenet-languages.js';
+const mockEnrichUsenet = vi.mocked(enrichUsenetLanguages);
+
 function createMockBookListService(wanted: unknown[] = []): BookListService {
   return inject<BookListService>({
     getAll: vi.fn().mockResolvedValue({ data: wanted, total: wanted.length }),
@@ -822,5 +829,36 @@ describe('startRssJob', () => {
     expect(download.grab).toHaveBeenCalledWith(
       expect.objectContaining({ downloadUrl: 'magnet:?xt=urn:btih:narrator' }),
     );
+  });
+});
+
+describe('#502 runRssJob — enrichment before filtering', () => {
+  let log: ReturnType<typeof createMockLogger>;
+
+  beforeEach(() => {
+    log = createMockLogger();
+    mockEnrichUsenet.mockReset();
+  });
+
+  it('usenet RSS item with reject word in NZB name is filtered out before grab', async () => {
+    const wantedBooks = [makeWantedBook(1, 'The Way of Kings', 'Brandon Sanderson')];
+    const rssResults = [makeResult('The Way of Kings', 'Brandon Sanderson', { protocol: 'usenet' as const, downloadUrl: 'http://nzb.test/1' })];
+    const settings = createMockSettingsService({ rss: { enabled: true }, quality: { grabFloor: 0, minSeeders: 0, protocolPreference: 'none', rejectWords: 'pack', requiredWords: '' } });
+    const { bookList, book } = createMockBookServices(wantedBooks);
+    const indexer = createMockIndexerService(rssResults);
+    const download = createMockDownloadOrchestrator();
+    const blacklist = createMockBlacklistService();
+
+    // Simulate enrichment populating nzbName with reject word
+    mockEnrichUsenet.mockImplementation(async (results) => {
+      for (const r of results) {
+        if (r.protocol === 'usenet') r.nzbName = 'Way of Kings-Hörbuch-Pack.rar';
+      }
+    });
+
+    const result = await runRssJob(settings, bookList, book, indexer, download, blacklist, inject<FastifyBaseLogger>(log));
+
+    expect(result.grabbed).toBe(0);
+    expect(download.grab).not.toHaveBeenCalled();
   });
 });

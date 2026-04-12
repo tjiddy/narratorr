@@ -25,7 +25,7 @@
 
 - **`src/server/services/quality-gate-orchestrator.ts` at 501 lines (max 400)**: File exceeds ESLint max-lines rule and any net addition triggers a "new violation" in verify.ts diff-based linting. Needs to be split — e.g., extract deferred-cleanup logic or SSE emission into a separate module. (discovered in #434)
 
-- **`src/server/services/search-pipeline.ts` at 495 lines (max 400)**: File exceeds ESLint max-lines soft limit. Contains `canonicalCompare`, `filterAndRankResults`, `parseWordList`, and multiple helper functions. Consider extracting `canonicalCompare` and its tier helpers into a separate `search-ranking.ts` module. (discovered in #469)
+- **`src/server/services/search-pipeline.ts` at 506 lines (max 400)**: File exceeds ESLint max-lines soft limit. Contains `canonicalCompare`, `filterAndRankResults`, `parseWordList`, and multiple helper functions. Consider extracting `canonicalCompare` and its tier helpers into a separate `search-ranking.ts` module. (discovered in #469, grew in #502)
 
 - **`src/server/routes/search-stream.test.ts`**: Module-level `vi.mock('../services/search-pipeline.js')` prevents integration testing of `postProcessSearchResults` in the same file. New integration tests had to go in a separate file (`search-stream-filtering.test.ts`). Consider refactoring the existing tests to use per-test mocking or moving the mocked tests to a separate file so the main test file can run unmocked. (discovered in #438)
 

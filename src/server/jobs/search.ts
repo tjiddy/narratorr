@@ -11,6 +11,7 @@ import type { BlacklistService } from '../services/blacklist.service.js';
 import { buildSearchQuery, buildNarratorPriority, filterAndRankResults, searchAndGrabForBook } from '../services/search-pipeline.js';
 import { DuplicateDownloadError } from '../services/download.service.js';
 import { buildGrabPayload } from '../services/grab-payload.js';
+import { enrichUsenetLanguages } from '../utils/enrich-usenet-languages.js';
 
 export interface SearchJobResult {
   searched: number;
@@ -176,6 +177,9 @@ export async function runUpgradeSearchJob(
         author: book.authors?.[0]?.name,
       });
       searched++;
+
+      // Enrich Usenet results before filtering
+      await enrichUsenetLanguages(rawResults, log);
 
       // Apply quality filtering and ranking
       const narratorPriority = buildNarratorPriority(searchSettings.searchPriority, book.narrators);

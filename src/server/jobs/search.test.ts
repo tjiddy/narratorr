@@ -10,6 +10,13 @@ import type { BlacklistService } from '../services/blacklist.service.js';
 import type { SearchResult } from '../../core/index.js';
 import { DuplicateDownloadError } from '../services/download.service.js';
 
+vi.mock('../utils/enrich-usenet-languages.js', () => ({
+  enrichUsenetLanguages: vi.fn(),
+}));
+
+import { enrichUsenetLanguages } from '../utils/enrich-usenet-languages.js';
+const mockEnrichUsenet = vi.mocked(enrichUsenetLanguages);
+
 function createMockBookListService(books: unknown[] = []): BookListService {
   return inject<BookListService>({
     getAll: vi.fn().mockResolvedValue({ data: books, total: books.length }),
@@ -1290,5 +1297,67 @@ describe('searchAllWanted — narrator priority wiring (#439)', () => {
     await searchAllWanted(settings, bookList, indexer, download, inject<FastifyBaseLogger>(testLog), createMockBlacklistService());
 
     expect(download.grab).toHaveBeenCalledWith(expect.objectContaining({ downloadUrl: 'magnet:?xt=urn:btih:narrator' }));
+  });
+});
+
+describe('#502 runUpgradeSearchJob — enrichment before filtering', () => {
+  let log: ReturnType<typeof createMockLogger>;
+
+  beforeEach(() => {
+    log = createMockLogger();
+    mockEnrichUsenet.mockReset();
+  });
+
+  function makeMonitoredBook(overrides: Record<string, unknown> = {}) {
+    return {
+      id: 1, title: 'Monitored Book', authors: [{ name: 'Author' }],
+      status: 'imported', path: '/library/monitored-book', monitorForUpgrades: true,
+      audioTotalSize: 100 * 1024 * 1024, audioDuration: 3600, size: null, duration: null,
+      ...overrides,
+    };
+  }
+
+  it('calls enrichUsenetLanguages before filterAndRankResults', async () => {
+    const book = makeMonitoredBook();
+    const settings = createMockSettingsService();
+    const books = createMockBookService([book]);
+    const usenetResult: SearchResult = {
+      title: 'Better Quality', protocol: 'usenet', indexer: 'drunkslug',
+      size: 500 * 1024 * 1024, downloadUrl: 'http://nzb.test/1',
+    };
+    const indexer = createMockIndexerService([usenetResult]);
+    const download = createMockDownloadOrchestrator();
+
+    await runUpgradeSearchJob(settings, books, indexer, download, inject<FastifyBaseLogger>(log));
+
+    expect(mockEnrichUsenet).toHaveBeenCalledWith(
+      expect.arrayContaining([expect.objectContaining({ protocol: 'usenet' })]),
+      expect.anything(),
+    );
+  });
+
+  it('usenet result with reject word in NZB name is filtered out before grab', async () => {
+    const book = makeMonitoredBook();
+    const settings = createMockSettingsService({
+      quality: { grabFloor: 0, minSeeders: 0, protocolPreference: 'none', rejectWords: 'pack', requiredWords: '' },
+    });
+    const books = createMockBookService([book]);
+    const usenetResult: SearchResult = {
+      title: 'Clean Title', protocol: 'usenet', indexer: 'drunkslug',
+      size: 500 * 1024 * 1024, downloadUrl: 'http://nzb.test/1',
+    };
+    const indexer = createMockIndexerService([usenetResult]);
+    const download = createMockDownloadOrchestrator();
+
+    mockEnrichUsenet.mockImplementation(async (results) => {
+      for (const r of results) {
+        if (r.protocol === 'usenet') r.nzbName = 'Stephen King-Hörbuch-Pack.rar';
+      }
+    });
+
+    const result = await runUpgradeSearchJob(settings, books, indexer, download, inject<FastifyBaseLogger>(log));
+
+    expect(result.grabbed).toBe(0);
+    expect(download.grab).not.toHaveBeenCalled();
   });
 });

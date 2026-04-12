@@ -14,6 +14,7 @@ export interface SearchResult {
   grabs?: number;
   language?: string;
   newsgroup?: string;
+  nzbName?: string;
   indexer: string;
   indexerId?: number;
   indexerPriority?: number;

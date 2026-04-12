@@ -1,7 +1,7 @@
 import type { FastifyBaseLogger } from 'fastify';
 import type { SearchResult } from '../../core/indexers/types.js';
 import { normalizeLanguage } from '../../core/utils/language-codes.js';
-import { detectLanguageFromNewsgroup, parseNzbGroups } from '../../core/utils/detect-usenet-language.js';
+import { detectLanguageFromNewsgroup, detectLanguageFromNzbName, parseNzbGroups, parseNzbName, parseNzbFileSubject } from '../../core/utils/detect-usenet-language.js';
 import { fetchWithTimeout } from '../../core/utils/fetch-with-timeout.js';
 import { Semaphore } from './semaphore.js';
 
@@ -31,7 +31,8 @@ export async function enrichUsenetLanguages(
     (r) => r.protocol === 'usenet' && !r.language,
   );
 
-  // Phase 1: Short-circuit on existing newsgroup field
+  // Phase 1: Detect language from existing newsgroup field; fall through to NZB fetch
+  // when newsgroup is generic (no language token found) so nzbName is still populated.
   const needsFetch: SearchResult[] = [];
   for (const result of usenetResults) {
     if (result.newsgroup) {
@@ -39,8 +40,11 @@ export async function enrichUsenetLanguages(
       if (lang) {
         result.language = lang;
         languagesDetected++;
+      } else if (result.downloadUrl) {
+        // Generic newsgroup (e.g., alt.binaries.audiobooks) — fall through to NZB fetch
+        // so nzbName is populated for reject/required word filtering and name-based language detection
+        needsFetch.push(result);
       }
-      // Do not fall back to NZB fetch — same source
     } else if (result.downloadUrl) {
       needsFetch.push(result);
     }
@@ -62,13 +66,29 @@ export async function enrichUsenetLanguages(
         return;
       }
       const xml = await response.text();
+
+      // Extract NZB name (meta tag first, file subject as fallback)
+      result.nzbName = parseNzbName(xml) || parseNzbFileSubject(xml) || undefined;
+
+      // Detect language from newsgroups first
       const groups = parseNzbGroups(xml);
+      let langDetected = false;
       for (const group of groups) {
         const lang = normalizeLanguage(detectLanguageFromNewsgroup(group));
         if (lang) {
           result.language = lang;
           languagesDetected++;
+          langDetected = true;
           break;
+        }
+      }
+
+      // Fall back to NZB name for language detection
+      if (!langDetected) {
+        const nameLang = normalizeLanguage(detectLanguageFromNzbName(result.nzbName));
+        if (nameLang) {
+          result.language = nameLang;
+          languagesDetected++;
         }
       }
     } catch (error: unknown) {

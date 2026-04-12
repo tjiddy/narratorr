@@ -66,15 +66,27 @@ describe('enrichUsenetLanguages', () => {
       expect(results[0].language).toBe('german');
     });
 
-    it('leaves language undefined for generic newsgroup, does NOT fetch NZB', async () => {
+    it('falls through to NZB fetch for generic newsgroup (alt.binaries.audiobooks) and populates nzbName', async () => {
+      const nzbXml = `<nzb xmlns="http://www.newzbin.com/DTD/2003/nzb">
+        <head><meta type="name">Stephen King-H?rbuch-Pack.part01.rar</meta></head>
+        <file poster="test" date="123" subject="test">
+          <groups><group>alt.binaries.audiobooks</group></groups>
+          <segments><segment bytes="100" number="1">id@example</segment></segments>
+        </file>
+      </nzb>`;
+      mockFetchWithTimeout.mockResolvedValueOnce(
+        new Response(nzbXml, { status: 200 }),
+      );
+
       const results = [
         makeResult({ protocol: 'usenet', newsgroup: 'alt.binaries.mp3.audiobooks', downloadUrl: 'http://nzb.test/1' }),
       ];
 
       await enrichUsenetLanguages(results, logger);
 
-      expect(results[0].language).toBeUndefined();
-      expect(mockFetchWithTimeout).not.toHaveBeenCalled();
+      expect(mockFetchWithTimeout).toHaveBeenCalledWith('http://nzb.test/1', {}, 5000);
+      expect(results[0].nzbName).toBe('Stephen King-H?rbuch-Pack.part01.rar');
+      expect(results[0].language).toBe('german');
     });
 
     it('fetches NZB when newsgroup is absent and downloadUrl is present', async () => {
@@ -479,6 +491,117 @@ describe('enrichUsenetLanguages', () => {
       expect(mockFetchWithTimeout).not.toHaveBeenCalled();
       expect(results[0].language).toBe('english');
       expect(results[1].language).toBe('french');
+    });
+  });
+
+  describe('NZB name extraction and language detection', () => {
+    const nzbWithName = (name: string, group = 'alt.binaries.audiobooks') => `<nzb>
+      <head><meta type="name">${name}</meta></head>
+      <file poster="t" date="1" subject="fallback subject">
+        <groups><group>${group}</group></groups>
+        <segments><segment bytes="1" number="1">id@e</segment></segments>
+      </file>
+    </nzb>`;
+
+    const nzbWithoutName = (group = 'alt.binaries.audiobooks') => `<nzb>
+      <file poster="t" date="1" subject="File Subject Fallback">
+        <groups><group>${group}</group></groups>
+        <segments><segment bytes="1" number="1">id@e</segment></segments>
+      </file>
+    </nzb>`;
+
+    it('sets nzbName on result from <meta type="name"> when NZB is fetched', async () => {
+      mockFetchWithTimeout.mockResolvedValueOnce(
+        new Response(nzbWithName('Stephen King-Pack.rar'), { status: 200 }),
+      );
+      const results = [makeResult({ protocol: 'usenet', downloadUrl: 'http://nzb.test/1' })];
+
+      await enrichUsenetLanguages(results, logger);
+
+      expect(results[0].nzbName).toBe('Stephen King-Pack.rar');
+    });
+
+    it('sets nzbName even when no language detected from it', async () => {
+      mockFetchWithTimeout.mockResolvedValueOnce(
+        new Response(nzbWithName('Stephen King - The Stand MP3'), { status: 200 }),
+      );
+      const results = [makeResult({ protocol: 'usenet', downloadUrl: 'http://nzb.test/1' })];
+
+      await enrichUsenetLanguages(results, logger);
+
+      expect(results[0].nzbName).toBe('Stephen King - The Stand MP3');
+      expect(results[0].language).toBeUndefined();
+    });
+
+    it('does not set nzbName on torrent results', async () => {
+      const results = [makeResult({ protocol: 'torrent' })];
+
+      await enrichUsenetLanguages(results, logger);
+
+      expect(results[0].nzbName).toBeUndefined();
+      expect(mockFetchWithTimeout).not.toHaveBeenCalled();
+    });
+
+    it('detects language from NZB name when newsgroup detection finds nothing', async () => {
+      mockFetchWithTimeout.mockResolvedValueOnce(
+        new Response(nzbWithName('Stephen King-Hörbuch-Pack.rar'), { status: 200 }),
+      );
+      const results = [makeResult({ protocol: 'usenet', downloadUrl: 'http://nzb.test/1' })];
+
+      await enrichUsenetLanguages(results, logger);
+
+      expect(results[0].language).toBe('german');
+      expect(results[0].nzbName).toBe('Stephen King-Hörbuch-Pack.rar');
+    });
+
+    it('newsgroup-based detection takes priority over NZB name detection', async () => {
+      mockFetchWithTimeout.mockResolvedValueOnce(
+        new Response(nzbWithName('Luisterboek NL.rar', 'alt.binaries.german'), { status: 200 }),
+      );
+      const results = [makeResult({ protocol: 'usenet', downloadUrl: 'http://nzb.test/1' })];
+
+      await enrichUsenetLanguages(results, logger);
+
+      // Group says german, NZB name says dutch — group wins
+      expect(results[0].language).toBe('german');
+    });
+
+    it('uses file subject as fallback when <meta type="name"> is absent', async () => {
+      mockFetchWithTimeout.mockResolvedValueOnce(
+        new Response(nzbWithoutName(), { status: 200 }),
+      );
+      const results = [makeResult({ protocol: 'usenet', downloadUrl: 'http://nzb.test/1' })];
+
+      await enrichUsenetLanguages(results, logger);
+
+      expect(results[0].nzbName).toBe('File Subject Fallback');
+    });
+
+    it('does not overwrite existing result.language with NZB name detection', async () => {
+      const results = [makeResult({ protocol: 'usenet', language: 'english', downloadUrl: 'http://nzb.test/1' })];
+
+      await enrichUsenetLanguages(results, logger);
+
+      expect(results[0].language).toBe('english');
+      expect(mockFetchWithTimeout).not.toHaveBeenCalled();
+    });
+
+    it('does not set nzbName when fetch fails', async () => {
+      mockFetchWithTimeout.mockRejectedValueOnce(new Error('timeout'));
+      const results = [makeResult({ protocol: 'usenet', downloadUrl: 'http://nzb.test/1' })];
+
+      await enrichUsenetLanguages(results, logger);
+
+      expect(results[0].nzbName).toBeUndefined();
+    });
+
+    it('does not fetch when downloadUrl is empty string', async () => {
+      const results = [makeResult({ protocol: 'usenet', downloadUrl: '' })];
+
+      await enrichUsenetLanguages(results, logger);
+
+      expect(results[0].nzbName).toBeUndefined();
+      expect(mockFetchWithTimeout).not.toHaveBeenCalled();
     });
   });
 });

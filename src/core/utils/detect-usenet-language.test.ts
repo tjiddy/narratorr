@@ -2,6 +2,9 @@ import { describe, it, expect } from 'vitest';
 import {
   detectLanguageFromNewsgroup,
   parseNzbGroups,
+  parseNzbName,
+  parseNzbFileSubject,
+  detectLanguageFromNzbName,
 } from './detect-usenet-language.js';
 
 describe('detectLanguageFromNewsgroup', () => {
@@ -155,5 +158,108 @@ describe('parseNzbGroups', () => {
   </file>
 </nzb>`;
     expect(parseNzbGroups(xml)).toEqual(['alt.binaries.german.hoerbuecher']);
+  });
+});
+
+describe('parseNzbName', () => {
+  it('extracts name from <meta type="name">content</meta> tag', () => {
+    const xml = `<nzb><head><meta type="name">Stephen King-Hörbuch-Pack.part01.rar</meta></head></nzb>`;
+    expect(parseNzbName(xml)).toBe('Stephen King-Hörbuch-Pack.part01.rar');
+  });
+
+  it('returns undefined when <meta type="name"> is absent', () => {
+    const xml = `<nzb><head><meta type="password">secret</meta></head></nzb>`;
+    expect(parseNzbName(xml)).toBeUndefined();
+  });
+
+  it('returns undefined for empty <meta type="name"></meta>', () => {
+    const xml = `<nzb><head><meta type="name"></meta></head></nzb>`;
+    expect(parseNzbName(xml)).toBeUndefined();
+  });
+
+  it('handles HTML entities in name content (&quot;, &amp;, &lt;, &gt;)', () => {
+    const xml = `<nzb><head><meta type="name">(02/12) Description &quot;Stephen King&amp;Pack.rar&quot; - 28,76 GB</meta></head></nzb>`;
+    expect(parseNzbName(xml)).toBe('(02/12) Description "Stephen King&Pack.rar" - 28,76 GB');
+  });
+
+  it('case-insensitive match on type="name" attribute', () => {
+    const xml = `<nzb><head><meta type="NAME">Test Name</meta></head></nzb>`;
+    expect(parseNzbName(xml)).toBe('Test Name');
+  });
+
+  it('uses first match when multiple <meta type="name"> tags present', () => {
+    const xml = `<nzb><head><meta type="name">First</meta><meta type="name">Second</meta></head></nzb>`;
+    expect(parseNzbName(xml)).toBe('First');
+  });
+
+  it('returns undefined for malformed XML', () => {
+    expect(parseNzbName('not xml <><><')).toBeUndefined();
+  });
+
+  it('returns undefined for whitespace-only content', () => {
+    const xml = `<nzb><head><meta type="name">   </meta></head></nzb>`;
+    expect(parseNzbName(xml)).toBeUndefined();
+  });
+});
+
+describe('parseNzbFileSubject', () => {
+  it('extracts subject from first <file subject="..."> attribute', () => {
+    const xml = `<nzb><file poster="test" date="123" subject="Stephen King-Pack.part01.rar"><segments></segments></file></nzb>`;
+    expect(parseNzbFileSubject(xml)).toBe('Stephen King-Pack.part01.rar');
+  });
+
+  it('returns undefined when no <file> elements exist', () => {
+    const xml = `<nzb><head></head></nzb>`;
+    expect(parseNzbFileSubject(xml)).toBeUndefined();
+  });
+
+  it('returns undefined for empty subject attribute', () => {
+    const xml = `<nzb><file poster="test" date="123" subject=""><segments></segments></file></nzb>`;
+    expect(parseNzbFileSubject(xml)).toBeUndefined();
+  });
+
+  it('handles HTML entities in subject attribute value', () => {
+    const xml = `<nzb><file poster="test" date="123" subject="Book &amp; Series"><segments></segments></file></nzb>`;
+    expect(parseNzbFileSubject(xml)).toBe('Book & Series');
+  });
+
+  it('returns undefined for malformed XML', () => {
+    expect(parseNzbFileSubject('not xml at all')).toBeUndefined();
+  });
+});
+
+describe('detectLanguageFromNzbName', () => {
+  it('detects hörbuch (with umlaut) as german', () => {
+    expect(detectLanguageFromNzbName('Stephen King-Hörbuch-Pack.rar')).toBe('german');
+  });
+
+  it('detects horbuch (ASCII approximation) as german', () => {
+    expect(detectLanguageFromNzbName('Stephen King-Horbuch-Pack.rar')).toBe('german');
+  });
+
+  it('detects h?rbuch (question-mark mangled umlaut) as german', () => {
+    expect(detectLanguageFromNzbName('Stephen King-H?rbuch-Pack.rar')).toBe('german');
+  });
+
+  it('detects hörbücher and horbucher as german', () => {
+    expect(detectLanguageFromNzbName('Sammlung Hörbücher 2024')).toBe('german');
+    expect(detectLanguageFromNzbName('Sammlung Horbucher 2024')).toBe('german');
+  });
+
+  it('detects luisterboek as dutch', () => {
+    expect(detectLanguageFromNzbName('Boek Luisterboek NL.rar')).toBe('dutch');
+  });
+
+  it('returns undefined for NZB names with no language tokens', () => {
+    expect(detectLanguageFromNzbName('Stephen King - The Stand (2012) MP3')).toBeUndefined();
+  });
+
+  it('token matching is case-insensitive', () => {
+    expect(detectLanguageFromNzbName('HÖRBUCH Pack')).toBe('german');
+    expect(detectLanguageFromNzbName('hörbuch pack')).toBe('german');
+  });
+
+  it('returns undefined for undefined input', () => {
+    expect(detectLanguageFromNzbName(undefined)).toBeUndefined();
   });
 });

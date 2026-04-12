@@ -11,6 +11,7 @@ import type { BlacklistService } from '../services/blacklist.service.js';
 import { DuplicateDownloadError } from '../services/download.service.js';
 import { buildNarratorPriority, filterAndRankResults, filterBlacklistedResults } from '../services/search-pipeline.js';
 import { buildGrabPayload } from '../services/grab-payload.js';
+import { enrichUsenetLanguages } from '../utils/enrich-usenet-languages.js';
 
 const MATCH_THRESHOLD = 0.7;
 
@@ -143,6 +144,9 @@ export async function runRssJob(
   // Process each matched book — filter and rank all candidates together
   for (const [bookId, { results: bookResults, candidate }] of itemsPerBook) {
     matched++;
+
+    // Enrich Usenet results before filtering
+    await enrichUsenetLanguages(bookResults, log);
 
     // Apply filter pipeline to all items for this book, then pick best-ranked
     const duration = candidate.duration
