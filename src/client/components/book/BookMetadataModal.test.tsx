@@ -670,4 +670,37 @@ describe('BookMetadataModal', () => {
       expect(resultBtn).toHaveAttribute('type', 'button');
     });
   });
+
+  describe('Strategy B migration (#484)', () => {
+    it('renders when isOpen is not provided (defaults to true)', () => {
+      renderModal();
+      expect(screen.getByRole('dialog')).toBeInTheDocument();
+    });
+
+    it('returns null when isOpen is false', () => {
+      renderModal({ isOpen: false });
+      expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+      expect(screen.queryByText('Edit Metadata')).not.toBeInTheDocument();
+    });
+
+    it('calls onClose when Escape is pressed with isOpen=true', async () => {
+      const onClose = vi.fn();
+      const user = userEvent.setup();
+      renderModal({ onClose });
+      await user.keyboard('{Escape}');
+      expect(onClose).toHaveBeenCalledOnce();
+    });
+  });
+
+  describe('ARIA attributes (#484)', () => {
+    it('renders aria-labelledby linked to the heading id instead of aria-label', () => {
+      renderModal();
+      const dialog = screen.getByRole('dialog');
+      expect(dialog).toHaveAttribute('aria-labelledby', 'book-metadata-modal-title');
+      expect(dialog).not.toHaveAttribute('aria-label');
+      const heading = document.getElementById('book-metadata-modal-title');
+      expect(heading).toBeInTheDocument();
+      expect(heading!.tagName).toBe('H2');
+    });
+  });
 });
