@@ -203,8 +203,9 @@ describe('createServices', () => {
 
   // #504 — setBlacklistDeps wiring
   it('wires importOrchestrator.setBlacklistDeps with blacklistService and retrySearchDeps', async () => {
-    const { SettingsService } = await import('../services/index.js');
+    const { SettingsService, BlacklistService } = await import('../services/index.js');
     const { ImportOrchestrator } = await import('../services/import-orchestrator.js');
+    const { createRetrySearchDeps } = await import('../services/retry-search.js');
 
     vi.mocked(SettingsService).mockImplementation(function(this: Record<string, unknown>) {
       this.get = vi.fn().mockResolvedValue({ audibleRegion: 'us' });
@@ -225,5 +226,10 @@ describe('createServices', () => {
     expect(orchestratorInstances).toHaveLength(1);
     const instance = orchestratorInstances[0] as unknown as Record<string, ReturnType<typeof vi.fn>>;
     expect(instance.setBlacklistDeps).toHaveBeenCalledOnce();
+    // Verify the actual arguments: BlacklistService instance + retrySearchDeps return value
+    const [blacklistArg, retryDepsArg] = instance.setBlacklistDeps.mock.calls[0];
+    expect(blacklistArg).toBeInstanceOf(BlacklistService);
+    const retrySearchDepsResult = vi.mocked(createRetrySearchDeps).mock.results[0].value;
+    expect(retryDepsArg).toBe(retrySearchDepsResult);
   });
 });
