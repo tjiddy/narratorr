@@ -384,35 +384,42 @@ describe('DiscoverySettingsSection', () => {
     expect(payload.discovery).not.toHaveProperty('weightMultipliers');
   });
 
-  it('#514 shows destructive border on invalid numeric inputs and normal border on valid', async () => {
+  it('#514 shows destructive border on each invalid numeric input', async () => {
     const user = userEvent.setup();
-    renderWithProviders(<DiscoverySettingsSection />);
 
-    await waitFor(() => {
-      expect(screen.getByLabelText(/refresh interval/i)).toBeInTheDocument();
-    });
+    const fields = [
+      { label: /refresh interval/i },
+      { label: /max suggestions per author/i },
+      { label: /suggestion expiry/i },
+      { label: /default snooze duration/i },
+    ];
 
-    // Enable discovery to show all fields
-    await user.click(screen.getByLabelText(/enable discovery/i));
+    for (const { label } of fields) {
+      const { unmount } = renderWithProviders(<DiscoverySettingsSection />);
 
-    const intervalInput = screen.getByLabelText(/refresh interval/i);
-    const maxPerAuthor = screen.getByLabelText(/max suggestions per author/i);
-    const expiryInput = screen.getByLabelText(/suggestion expiry/i);
-    const snoozeInput = screen.getByLabelText(/default snooze duration/i);
+      await waitFor(() => {
+        expect(screen.getByLabelText(label)).toBeInTheDocument();
+      });
 
-    // All inputs should start with normal border (no destructive)
-    for (const input of [intervalInput, maxPerAuthor, expiryInput, snoozeInput]) {
+      // Enable discovery to show all fields
+      await user.click(screen.getByLabelText(/enable discovery/i));
+
+      const input = screen.getByLabelText(label);
+
+      // Should start with normal border
       expect(input.className).toContain('border-border');
       expect(input.className).not.toContain('border-destructive');
+
+      // Clear field to make it invalid, then submit
+      await user.clear(input);
+      await user.click(screen.getByRole('button', { name: /save/i }));
+
+      // Should switch to destructive border
+      await waitFor(() => {
+        expect(input.className).toContain('border-destructive');
+      });
+
+      unmount();
     }
-
-    // Clear interval to trigger validation error and submit
-    await user.clear(intervalInput);
-    await user.click(screen.getByRole('button', { name: /save/i }));
-
-    // Wait for validation — interval should show destructive border
-    await waitFor(() => {
-      expect(intervalInput.className).toContain('border-destructive');
-    });
   });
 });
