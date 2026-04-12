@@ -8,6 +8,7 @@ import { scanAudioDirectory } from '../../core/utils/audio-scanner.js';
 import { AUDIO_EXTENSIONS } from '../../core/utils/audio-constants.js';
 import type { BookService } from './book.service.js';
 import { downloadRemoteCover, isRemoteCoverUrl } from './cover-download.js';
+import { mimeToExt } from '../utils/mime.js';
 
 export interface EnrichmentResult {
   enriched: boolean;
@@ -77,7 +78,7 @@ export async function enrichBookFromAudio(
     // Save embedded cover art when no cover URL exists
     if (!book.coverUrl && scanResult.coverImage) {
       try {
-        const ext = mimeToExt(scanResult.coverMimeType);
+        const ext = mimeToExt(scanResult.coverMimeType) ?? 'jpg';
         const coverPath = join(targetPath, `cover.${ext}`);
         await writeFile(coverPath, scanResult.coverImage);
         update.coverUrl = `/api/books/${bookId}/cover`;
@@ -113,9 +114,3 @@ export async function enrichBookFromAudio(
   }
 }
 
-/** Map MIME type to file extension for cover art. */
-function mimeToExt(mime?: string): string {
-  if (mime?.includes('png')) return 'png';
-  if (mime?.includes('webp')) return 'webp';
-  return 'jpg';
-}

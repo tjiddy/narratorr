@@ -6,6 +6,7 @@ import type { Db } from '../../db/index.js';
 import type { FastifyBaseLogger } from 'fastify';
 import { books } from '../../db/schema.js';
 import { COVER_FILE_REGEX } from '../../core/utils/cover-regex.js';
+import { mimeToExt } from '../utils/mime.js';
 
 export type CoverUploadErrorCode = 'INVALID_MIME' | 'NOT_FOUND' | 'NO_PATH';
 
@@ -15,14 +16,6 @@ export class CoverUploadError extends Error {
     super(message);
     this.code = code;
   }
-}
-
-/** Map MIME type to file extension for cover images. */
-function mimeToExt(mime: string): string | null {
-  if (mime === 'image/jpeg') return 'jpg';
-  if (mime === 'image/png') return 'png';
-  if (mime === 'image/webp') return 'webp';
-  return null;
 }
 
 /**
