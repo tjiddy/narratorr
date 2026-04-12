@@ -16,7 +16,7 @@ describe('safeEmit', () => {
     it('calls broadcaster.emit with correct event type and payload', () => {
       const broadcaster = mockBroadcaster();
       const log = mockLog();
-      const payload = { download_id: 1, book_id: 2, progress: 50 };
+      const payload = { download_id: 1, book_id: 2, percentage: 50, speed: null, eta: null };
 
       safeEmit(broadcaster, 'download_progress', payload, log);
 
@@ -27,7 +27,7 @@ describe('safeEmit', () => {
     it('returns void (fire-and-forget)', () => {
       const broadcaster = mockBroadcaster();
       const log = mockLog();
-      const result = safeEmit(broadcaster, 'download_progress', { download_id: 1, book_id: 2, progress: 0 }, log);
+      const result = safeEmit(broadcaster, 'download_progress', { download_id: 1, book_id: 2, percentage: 0, speed: null, eta: null }, log);
 
       expect(result).toBeUndefined();
     });
@@ -37,14 +37,14 @@ describe('safeEmit', () => {
     it('null broadcaster is a no-op with no error and no log call', () => {
       const log = mockLog();
 
-      expect(() => safeEmit(null, 'download_progress', { download_id: 1, book_id: 2, progress: 0 }, log)).not.toThrow();
+      expect(() => safeEmit(null, 'download_progress', { download_id: 1, book_id: 2, percentage: 0, speed: null, eta: null }, log)).not.toThrow();
       expect(log.debug).not.toHaveBeenCalled();
     });
 
     it('undefined broadcaster is a no-op with no error and no log call', () => {
       const log = mockLog();
 
-      expect(() => safeEmit(undefined, 'download_progress', { download_id: 1, book_id: 2, progress: 0 }, log)).not.toThrow();
+      expect(() => safeEmit(undefined, 'download_progress', { download_id: 1, book_id: 2, percentage: 0, speed: null, eta: null }, log)).not.toThrow();
       expect(log.debug).not.toHaveBeenCalled();
     });
   });
@@ -56,7 +56,7 @@ describe('safeEmit', () => {
       const error = new Error('write failed');
       vi.mocked(broadcaster.emit).mockImplementation(() => { throw error; });
 
-      expect(() => safeEmit(broadcaster, 'download_progress', { download_id: 1, book_id: 2, progress: 0 }, log)).not.toThrow();
+      expect(() => safeEmit(broadcaster, 'download_progress', { download_id: 1, book_id: 2, percentage: 0, speed: null, eta: null }, log)).not.toThrow();
       expect(log.debug).toHaveBeenCalledWith(error, 'SSE emit failed for download_progress');
     });
 
@@ -65,7 +65,7 @@ describe('safeEmit', () => {
       const log = mockLog();
       vi.mocked(broadcaster.emit).mockImplementation(() => { throw 'string error'; });
 
-      expect(() => safeEmit(broadcaster, 'grab_started', { book_id: 1, title: 'test', indexer: 'x', download_title: 'y' }, log)).not.toThrow();
+      expect(() => safeEmit(broadcaster, 'grab_started', { book_id: 1, book_title: 'test', release_title: 'y', download_id: 1 }, log)).not.toThrow();
       expect(log.debug).toHaveBeenCalledWith('string error', 'SSE emit failed for grab_started');
     });
 
@@ -74,7 +74,7 @@ describe('safeEmit', () => {
       const log = mockLog();
       vi.mocked(broadcaster.emit).mockImplementation(() => { throw new Error('fail'); });
 
-      safeEmit(broadcaster, 'merge_complete', { book_id: 1, title: 'test' }, log);
+      safeEmit(broadcaster, 'merge_complete', { book_id: 1, book_title: 'test', success: true, message: 'done' }, log);
 
       expect(log.debug).toHaveBeenCalledWith(
         expect.anything(),
