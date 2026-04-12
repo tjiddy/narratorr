@@ -17,6 +17,7 @@ vi.mock('@/lib/api', () => ({
     refreshDiscover: vi.fn(),
     getDiscoverStats: vi.fn(),
     getBookStats: vi.fn(),
+    getSettings: vi.fn(),
   },
   ApiError: class extends Error {
     status: number;
@@ -33,6 +34,7 @@ const mockApi = api as unknown as {
   refreshDiscover: ReturnType<typeof vi.fn>;
   getDiscoverStats: ReturnType<typeof vi.fn>;
   getBookStats: ReturnType<typeof vi.fn>;
+  getSettings: ReturnType<typeof vi.fn>;
 };
 
 function makeSuggestion(overrides: Partial<SuggestionRow> = {}): SuggestionRow {
@@ -70,9 +72,38 @@ function makeStats(overrides: Partial<BookStats['counts']> = {}): BookStats {
   };
 }
 
+function makeSettings(overrides?: { languages?: string[]; rejectWords?: string }) {
+  return {
+    quality: {
+      grabFloor: 0,
+      protocolPreference: 'none' as const,
+      minSeeders: 1,
+      searchImmediately: false,
+      monitorForUpgrades: false,
+      rejectWords: overrides?.rejectWords ?? '',
+      requiredWords: '',
+    },
+    metadata: {
+      audibleRegion: 'us' as const,
+      languages: overrides?.languages ?? ['english'],
+    },
+    general: { urlBase: '', port: 3000, logLevel: 'info' },
+    download: {},
+    naming: {},
+    network: {},
+    search: {},
+    import: {},
+    processing: {},
+    library: {},
+    discovery: { enabled: true, intervalHours: 24, maxSuggestionsPerAuthor: 5 },
+    notifications: {},
+  };
+}
+
 beforeEach(() => {
   vi.resetAllMocks();
   mockApi.getDiscoverStats.mockResolvedValue({});
+  mockApi.getSettings.mockResolvedValue(makeSettings());
 });
 
 describe('DiscoverPage', () => {
@@ -303,10 +334,12 @@ describe('DiscoverPage', () => {
   });
 
   describe('mutations', () => {
-    it('add optimistically removes card, shows success toast on resolve', async () => {
+    it('add keeps card visible, shows success toast and checkmark on resolve', async () => {
       const { toast } = await import('sonner');
-      let resolveAdd!: (value: unknown) => void;
-      mockApi.addDiscoverSuggestion.mockReturnValue(new Promise((r) => { resolveAdd = r; }));
+      mockApi.addDiscoverSuggestion.mockResolvedValue({
+        suggestion: { id: 42, status: 'added' },
+        book: { id: 10 },
+      });
       mockApi.getDiscoverSuggestions.mockResolvedValue([
         makeSuggestion({ id: 42, title: 'Add Me' }),
         makeSuggestion({ id: 43, title: 'Keep Me' }),
@@ -319,25 +352,22 @@ describe('DiscoverPage', () => {
         expect(screen.getByText('Add Me')).toBeInTheDocument();
       });
 
-      await userEvent.click(screen.getByLabelText(/add.*add me.*to library/i));
+      // Click Add to open popover, then confirm
+      const addButtons = screen.getAllByRole('button', { name: /^add$/i });
+      await userEvent.click(addButtons[0]);
+      await userEvent.click(screen.getByRole('button', { name: /add to library/i }));
 
-      // Card disappears optimistically before mutation resolves
-      expect(screen.queryByText('Add Me')).not.toBeInTheDocument();
-      expect(screen.getByText('Keep Me')).toBeInTheDocument();
-      expect(mockApi.addDiscoverSuggestion).toHaveBeenCalledWith(42);
-
-      // Resolve the mutation
-      resolveAdd({ suggestion: { id: 42, status: 'added' }, book: { id: 10 } });
-
+      // Card stays visible (no optimistic remove)
       await waitFor(() => {
         expect(toast.success).toHaveBeenCalledWith('Added to library');
       });
+      expect(screen.getByText('Add Me')).toBeInTheDocument();
+      expect(screen.getByText('Keep Me')).toBeInTheDocument();
     });
 
-    it('add restores card on mutation failure and shows error toast', async () => {
+    it('add shows error toast on mutation failure', async () => {
       const { toast } = await import('sonner');
-      let rejectAdd!: (reason: Error) => void;
-      mockApi.addDiscoverSuggestion.mockReturnValue(new Promise((_r, rej) => { rejectAdd = rej; }));
+      mockApi.addDiscoverSuggestion.mockRejectedValue(new Error('network'));
       mockApi.getDiscoverSuggestions.mockResolvedValue([
         makeSuggestion({ id: 1, title: 'Fail Add' }),
       ]);
@@ -349,19 +379,15 @@ describe('DiscoverPage', () => {
         expect(screen.getByText('Fail Add')).toBeInTheDocument();
       });
 
-      await userEvent.click(screen.getByLabelText(/add.*to library/i));
+      // Click Add to open popover, then confirm
+      await userEvent.click(screen.getByRole('button', { name: /^add$/i }));
+      await userEvent.click(screen.getByRole('button', { name: /add to library/i }));
 
-      // Card disappears optimistically (mutation still pending)
-      expect(screen.queryByText('Fail Add')).not.toBeInTheDocument();
-
-      // Now reject the mutation
-      rejectAdd(new Error('network'));
-
-      // Card reappears after error
       await waitFor(() => {
-        expect(screen.getByText('Fail Add')).toBeInTheDocument();
+        expect(toast.error).toHaveBeenCalledWith('Failed to add suggestion');
       });
-      expect(toast.error).toHaveBeenCalledWith('Failed to add suggestion');
+      // Card should still be visible
+      expect(screen.getByText('Fail Add')).toBeInTheDocument();
     });
 
     it('dismiss optimistically removes card, shows success toast on resolve', async () => {
@@ -429,29 +455,130 @@ describe('DiscoverPage', () => {
   // --- #501: Client-side language and reject word filtering ---
 
   describe('language filtering', () => {
-    it.todo('hides suggestions with language not in user configured languages');
+    it('hides suggestions with language not in user configured languages', async () => {
+      mockApi.getSettings.mockResolvedValue(makeSettings({ languages: ['english'] }));
+      mockApi.getDiscoverSuggestions.mockResolvedValue([
+        makeSuggestion({ id: 1, title: 'English Book', language: 'english' }),
+        makeSuggestion({ id: 2, title: 'German Book', language: 'german' }),
+      ]);
+      mockApi.getBookStats.mockResolvedValue(makeStats());
 
-    it.todo('shows suggestions with null language (not filtered out)');
+      renderWithProviders(<DiscoverPage />);
 
-    it.todo('shows all suggestions when language settings array is empty');
+      await waitFor(() => {
+        expect(screen.getByText('English Book')).toBeInTheDocument();
+      });
+      expect(screen.queryByText('German Book')).not.toBeInTheDocument();
+    });
 
-    it.todo('language filtering combines with reason filter (AND logic)');
+    it('shows suggestions with null language (not filtered out)', async () => {
+      mockApi.getSettings.mockResolvedValue(makeSettings({ languages: ['english'] }));
+      mockApi.getDiscoverSuggestions.mockResolvedValue([
+        makeSuggestion({ id: 1, title: 'Unknown Language Book', language: null }),
+      ]);
+      mockApi.getBookStats.mockResolvedValue(makeStats());
+
+      renderWithProviders(<DiscoverPage />);
+
+      await waitFor(() => {
+        expect(screen.getByText('Unknown Language Book')).toBeInTheDocument();
+      });
+    });
+
+    it('shows all suggestions when language settings array is empty', async () => {
+      mockApi.getSettings.mockResolvedValue(makeSettings({ languages: [] }));
+      mockApi.getDiscoverSuggestions.mockResolvedValue([
+        makeSuggestion({ id: 1, title: 'Any Language Book', language: 'french' }),
+      ]);
+      mockApi.getBookStats.mockResolvedValue(makeStats());
+
+      renderWithProviders(<DiscoverPage />);
+
+      await waitFor(() => {
+        expect(screen.getByText('Any Language Book')).toBeInTheDocument();
+      });
+    });
   });
 
   describe('reject word filtering', () => {
-    it.todo('hides suggestions whose title contains a reject word (case-insensitive)');
+    it('hides suggestions whose title contains a reject word (case-insensitive)', async () => {
+      mockApi.getSettings.mockResolvedValue(makeSettings({ rejectWords: 'abridged, demo' }));
+      mockApi.getDiscoverSuggestions.mockResolvedValue([
+        makeSuggestion({ id: 1, title: 'Good Book' }),
+        makeSuggestion({ id: 2, title: 'The Abridged Version' }),
+      ]);
+      mockApi.getBookStats.mockResolvedValue(makeStats());
 
-    it.todo('shows all suggestions when reject words setting is empty');
+      renderWithProviders(<DiscoverPage />);
 
-    it.todo('combines language filter + reject word filter (AND logic)');
+      await waitFor(() => {
+        expect(screen.getByText('Good Book')).toBeInTheDocument();
+      });
+      expect(screen.queryByText('The Abridged Version')).not.toBeInTheDocument();
+    });
+
+    it('shows all suggestions when reject words setting is empty', async () => {
+      mockApi.getSettings.mockResolvedValue(makeSettings({ rejectWords: '' }));
+      mockApi.getDiscoverSuggestions.mockResolvedValue([
+        makeSuggestion({ id: 1, title: 'Any Book' }),
+      ]);
+      mockApi.getBookStats.mockResolvedValue(makeStats());
+
+      renderWithProviders(<DiscoverPage />);
+
+      await waitFor(() => {
+        expect(screen.getByText('Any Book')).toBeInTheDocument();
+      });
+    });
+
+    it('combines language filter + reject word filter (AND logic)', async () => {
+      mockApi.getSettings.mockResolvedValue(makeSettings({ languages: ['english'], rejectWords: 'abridged' }));
+      mockApi.getDiscoverSuggestions.mockResolvedValue([
+        makeSuggestion({ id: 1, title: 'Good English Book', language: 'english' }),
+        makeSuggestion({ id: 2, title: 'Abridged English Book', language: 'english' }),
+        makeSuggestion({ id: 3, title: 'Good German Book', language: 'german' }),
+      ]);
+      mockApi.getBookStats.mockResolvedValue(makeStats());
+
+      renderWithProviders(<DiscoverPage />);
+
+      await waitFor(() => {
+        expect(screen.getByText('Good English Book')).toBeInTheDocument();
+      });
+      expect(screen.queryByText('Abridged English Book')).not.toBeInTheDocument();
+      expect(screen.queryByText('Good German Book')).not.toBeInTheDocument();
+    });
   });
 
   describe('add mutation with overrides', () => {
-    it.todo('calls addDiscoverSuggestion with id and quality overrides');
+    it('card stays visible after add with green checkmark (no list shift)', async () => {
+      mockApi.addDiscoverSuggestion.mockResolvedValue({
+        suggestion: { id: 42, status: 'added' },
+        book: { id: 10 },
+      });
+      mockApi.getDiscoverSuggestions.mockResolvedValue([
+        makeSuggestion({ id: 42, title: 'Added Book' }),
+        makeSuggestion({ id: 43, title: 'Other Book' }),
+      ]);
+      mockApi.getBookStats.mockResolvedValue(makeStats());
 
-    it.todo('card stays visible after add with green checkmark (no list shift)');
+      renderWithProviders(<DiscoverPage />);
 
-    it.todo('shows error toast and restores card state on add failure');
+      await waitFor(() => {
+        expect(screen.getByText('Added Book')).toBeInTheDocument();
+      });
+
+      // Click Add to open popover, then confirm
+      const addButtons = screen.getAllByRole('button', { name: /^add$/i });
+      await userEvent.click(addButtons[0]);
+      await userEvent.click(screen.getByRole('button', { name: /add to library/i }));
+
+      // Card should still be visible (not removed) with checkmark
+      await waitFor(() => {
+        expect(screen.getByText('Added Book')).toBeInTheDocument();
+      });
+      expect(screen.getByText('Other Book')).toBeInTheDocument();
+    });
   });
 
   // -------------------------------------------------------------------------

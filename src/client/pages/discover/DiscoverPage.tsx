@@ -17,6 +17,11 @@ const FILTER_OPTIONS: { value: ReasonFilter; label: string }[] = [
   ...SUGGESTION_REASONS.map((r) => ({ value: r as ReasonFilter, label: SUGGESTION_REASON_REGISTRY[r].label })),
 ];
 
+/** Parse a comma-separated word list into lowercase trimmed tokens. */
+function parseWordList(csv: string): string[] {
+  return csv.split(',').map((w) => w.trim().toLowerCase()).filter(Boolean);
+}
+
 export function DiscoverPage() {
   const queryClient = useQueryClient();
   const [filter, setFilter] = useState<ReasonFilter>('all');
@@ -27,19 +32,50 @@ export function DiscoverPage() {
     staleTime: 30_000,
   });
 
+  const { data: settings } = useQuery({
+    queryKey: queryKeys.settings(),
+    queryFn: api.getSettings,
+  });
+
   const { data: stats } = useBookStats();
   const totalBooks = stats
     ? Object.values(stats.counts).reduce((sum, n) => sum + n, 0)
     : undefined;
 
+  // Client-side language and reject-word filtering
+  const configuredLanguages = settings?.metadata?.languages ?? [];
+  const rejectWords = useMemo(() => parseWordList(settings?.quality?.rejectWords ?? ''), [settings?.quality?.rejectWords]);
+
   const filtered = useMemo(() => {
     if (!suggestions) return [];
-    if (filter === 'all') return suggestions;
-    return suggestions.filter((s) => s.reason === filter);
-  }, [suggestions, filter]);
+    let result = suggestions;
 
-  // Track optimistically removed IDs
+    // Reason filter
+    if (filter !== 'all') {
+      result = result.filter((s) => s.reason === filter);
+    }
+
+    // Language filter — only apply when languages are configured
+    if (configuredLanguages.length > 0) {
+      const langSet = new Set(configuredLanguages.map((l) => l.toLowerCase()));
+      result = result.filter((s) => !s.language || langSet.has(s.language.toLowerCase()));
+    }
+
+    // Reject word filter
+    if (rejectWords.length > 0) {
+      result = result.filter((s) => {
+        const titleLower = s.title.toLowerCase();
+        return !rejectWords.some((w) => titleLower.includes(w));
+      });
+    }
+
+    return result;
+  }, [suggestions, filter, configuredLanguages, rejectWords]);
+
+  // Track optimistically removed IDs (dismiss only)
   const [removedIds, setRemovedIds] = useState<Set<number>>(new Set());
+  // Track added IDs for post-add checkmark state
+  const [addedIds, setAddedIds] = useState<Set<number>>(new Set());
 
   const visibleSuggestions = useMemo(
     () => filtered.filter((s) => !removedIds.has(s.id)),
@@ -59,16 +95,16 @@ export function DiscoverPage() {
   }
 
   const addMutation = useMutation({
-    mutationFn: (id: number) => api.addDiscoverSuggestion(id),
-    onMutate: (id) => optimisticRemove(id),
-    onSuccess: (_data, _id) => {
+    mutationFn: ({ id, overrides }: { id: number; overrides: { searchImmediately: boolean; monitorForUpgrades: boolean } }) =>
+      api.addDiscoverSuggestion(id, overrides),
+    onSuccess: (_data, { id }) => {
+      setAddedIds((prev) => new Set(prev).add(id));
       queryClient.invalidateQueries({ queryKey: queryKeys.discover.suggestions() });
       queryClient.invalidateQueries({ queryKey: queryKeys.books() });
       queryClient.invalidateQueries({ queryKey: queryKeys.bookStats() });
       toast.success('Added to library');
     },
-    onError: (_err, id) => {
-      optimisticRestore(id);
+    onError: () => {
       toast.error('Failed to add suggestion');
     },
   });
@@ -90,6 +126,7 @@ export function DiscoverPage() {
     mutationFn: () => api.refreshDiscover(),
     onSuccess: () => {
       setRemovedIds(new Set());
+      setAddedIds(new Set());
       queryClient.invalidateQueries({ queryKey: queryKeys.discover.suggestions() });
       queryClient.invalidateQueries({ queryKey: queryKeys.discover.stats() });
       toast.success('Suggestions refreshed');
@@ -163,10 +200,11 @@ export function DiscoverPage() {
               key={suggestion.id}
               suggestion={suggestion}
               index={i}
-              onAdd={(id) => addMutation.mutate(id)}
+              onAdd={(id, overrides) => addMutation.mutate({ id, overrides })}
               onDismiss={(id) => dismissMutation.mutate(id)}
-              isAdding={addMutation.isPending && addMutation.variables === suggestion.id}
+              isAdding={addMutation.isPending && addMutation.variables?.id === suggestion.id}
               isDismissing={dismissMutation.isPending && dismissMutation.variables === suggestion.id}
+              isAdded={addedIds.has(suggestion.id)}
             />
           ))}
         </div>
