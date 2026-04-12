@@ -531,6 +531,25 @@ describe('DiscoverPage', () => {
       });
     });
 
+    it('renders all suggestions when settings query fails (no filtering)', async () => {
+      mockApi.getSettings.mockRejectedValue(new Error('settings fetch failed'));
+      mockApi.getDiscoverSuggestions.mockResolvedValue([
+        makeSuggestion({ id: 1, title: 'French Book', language: 'french' }),
+        makeSuggestion({ id: 2, title: 'English Book', language: 'english' }),
+      ]);
+      mockApi.getBookStats.mockResolvedValue(makeStats());
+
+      renderWithProviders(<DiscoverPage />);
+
+      // Both should render — no filtering when settings unavailable
+      await waitFor(() => {
+        expect(screen.getByText('French Book')).toBeInTheDocument();
+      });
+      expect(screen.getByText('English Book')).toBeInTheDocument();
+      // Should NOT show error state
+      expect(screen.queryByTestId('discover-error')).not.toBeInTheDocument();
+    });
+
     it('combines language filter + reject word filter (AND logic)', async () => {
       mockApi.getSettings.mockResolvedValue(makeSettings({ languages: ['english'], rejectWords: 'abridged' }));
       mockApi.getDiscoverSuggestions.mockResolvedValue([
