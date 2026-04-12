@@ -44,11 +44,11 @@ function parseBreadcrumbs(path: string): { label: string; path: string }[] {
  * This avoids the "setState in useEffect" lint issue by using mount
  * lifecycle to initialize state from initialPath.
  */
-function DirectoryBrowserContent({ initialPath, onSelect, onClose }: Omit<DirectoryBrowserModalProps, 'isOpen'>) {
+function DirectoryBrowserContent({ isOpen = true, initialPath, onSelect, onClose }: DirectoryBrowserModalProps) {
   const modalRef = useRef<HTMLDivElement>(null);
   const [currentPath, setCurrentPath] = useState(initialPath || '/');
 
-  useEscapeKey(true, onClose, modalRef);
+  useEscapeKey(isOpen, onClose, modalRef);
 
   const { data, isLoading, error } = useQuery({
     queryKey: queryKeys.filesystem.browse(currentPath),
@@ -194,5 +194,5 @@ function DirectoryBrowserContent({ initialPath, onSelect, onClose }: Omit<Direct
 /** Wrapper that mounts/unmounts content to reset state on each open. */
 export function DirectoryBrowserModal({ isOpen, ...props }: DirectoryBrowserModalProps) {
   if (!isOpen) return null;
-  return <DirectoryBrowserContent {...props} />;
+  return <DirectoryBrowserContent isOpen={isOpen} {...props} />;
 }
