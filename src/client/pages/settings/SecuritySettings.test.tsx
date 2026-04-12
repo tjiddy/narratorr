@@ -653,10 +653,9 @@ describe('SecuritySettings', () => {
       await user.click(screen.getByRole('button', { name: /disable auth/i }));
 
       await waitFor(() => expect(toast.error).toHaveBeenCalledWith('Custom error'));
-      // onError callback clears the confirmation dialog
-      await waitFor(() => {
-        expect(screen.queryByRole('button', { name: /disable auth/i })).not.toBeInTheDocument();
-      });
+      // Modal stays open on error so user can retry (#512)
+      expect(screen.getByRole('dialog')).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: /disable auth/i })).toBeInTheDocument();
     });
   });
 
