@@ -54,7 +54,10 @@ export function useSettingsForm<T extends Record<string, unknown>>({
 
   const { reset, formState: { isDirty } } = form;
   const isDirtyRef = useRef(isDirty);
-  isDirtyRef.current = isDirty;
+
+  useEffect(() => {
+    isDirtyRef.current = isDirty;
+  }, [isDirty]);
 
   useEffect(() => {
     if (settings && !isDirtyRef.current) {
