@@ -254,9 +254,8 @@ function mapProduct(product: AudibleProduct): Record<string, unknown> {
     product.publisher_summary ?? product.merchandising_summary,
   );
 
-  // Extract publish year from release_date or issue_date
-  const releaseDate = product.release_date ?? product.issue_date;
-  const publishedDate = releaseDate ? releaseDate.slice(0, 4) : undefined;
+  // Preserve full release_date or issue_date for sorting precision
+  const publishedDate = product.release_date ?? product.issue_date ?? undefined;
 
   return {
     asin: product.asin || undefined,
