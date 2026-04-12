@@ -11,6 +11,7 @@ import type { SettingsService } from './settings.service.js';
 import type { EventBroadcasterService } from './event-broadcaster.service.js';
 import type { SSEEventType, SSEEventPayloads } from '../../shared/schemas/sse-events.js';
 import { buildGrabPayload } from './grab-payload.js';
+import { parseWordList } from '../../shared/parse-word-list.js';
 
 /** Build a search query string from a book's title and primary author. */
 export function buildSearchQuery(book: { title: string; authors?: Array<{ name: string }> | null }): string {
@@ -151,11 +152,6 @@ function canonicalCompare(
   return (b.seeders ?? 0) - (a.seeders ?? 0);
 }
 
-/** Parse a comma-separated word list into trimmed, non-empty lowercase entries. */
-export function parseWordList(csv: string | undefined): string[] {
-  if (!csv) return [];
-  return csv.split(',').map((w) => w.trim().toLowerCase()).filter(Boolean);
-}
 
 /**
  * Apply quality filtering and canonical ranking to search results.

@@ -13,7 +13,7 @@ import {
   type SearchBooksOptions,
   type SearchBooksResult,
 } from '../../core/index.js';
-import { parseWordList } from './search-pipeline.js';
+import { parseWordList } from '../../shared/parse-word-list.js';
 import type { SettingsService } from './settings.service.js';
 
 const DEFAULT_THROTTLE_MS = 200;
