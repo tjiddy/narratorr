@@ -64,6 +64,8 @@ export class AudibleProvider implements MetadataSearchProvider {
     if (options?.title) {
       params.set('title', options.title);
       if (options.author) params.set('author', options.author);
+    } else if (options?.author) {
+      params.set('author', options.author);
     } else {
       params.set('keywords', query);
     }

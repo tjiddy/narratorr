@@ -825,5 +825,33 @@ describe('AudibleProvider', () => {
       expect(capturedUrl?.searchParams.has('keywords')).toBe(false);
       expect(capturedUrl?.searchParams.get('title')).toBe('Specific Title');
     });
+
+    it('uses author= param (not keywords=) when options.author set without title', async () => {
+      let capturedUrl: URL | undefined;
+      server.use(
+        http.get('https://api.audible.com/1.0/catalog/products', ({ request }) => {
+          capturedUrl = new URL(request.url);
+          return HttpResponse.json({ products: [] });
+        }),
+      );
+
+      await provider.searchBooks('', { author: 'Stephen King' });
+      expect(capturedUrl?.searchParams.get('author')).toBe('Stephen King');
+      expect(capturedUrl?.searchParams.has('keywords')).toBe(false);
+      expect(capturedUrl?.searchParams.has('title')).toBe(false);
+    });
+
+    it('respects maxResults option in num_results URL param', async () => {
+      let capturedUrl: URL | undefined;
+      server.use(
+        http.get('https://api.audible.com/1.0/catalog/products', ({ request }) => {
+          capturedUrl = new URL(request.url);
+          return HttpResponse.json({ products: [] });
+        }),
+      );
+
+      await provider.searchBooks('test', { maxResults: 50 });
+      expect(capturedUrl?.searchParams.get('num_results')).toBe('50');
+    });
   });
 });
