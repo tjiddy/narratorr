@@ -66,15 +66,27 @@ describe('enrichUsenetLanguages', () => {
       expect(results[0].language).toBe('german');
     });
 
-    it('leaves language undefined for generic newsgroup, does NOT fetch NZB', async () => {
+    it('falls through to NZB fetch for generic newsgroup (alt.binaries.audiobooks) and populates nzbName', async () => {
+      const nzbXml = `<nzb xmlns="http://www.newzbin.com/DTD/2003/nzb">
+        <head><meta type="name">Stephen King-H?rbuch-Pack.part01.rar</meta></head>
+        <file poster="test" date="123" subject="test">
+          <groups><group>alt.binaries.audiobooks</group></groups>
+          <segments><segment bytes="100" number="1">id@example</segment></segments>
+        </file>
+      </nzb>`;
+      mockFetchWithTimeout.mockResolvedValueOnce(
+        new Response(nzbXml, { status: 200 }),
+      );
+
       const results = [
         makeResult({ protocol: 'usenet', newsgroup: 'alt.binaries.mp3.audiobooks', downloadUrl: 'http://nzb.test/1' }),
       ];
 
       await enrichUsenetLanguages(results, logger);
 
-      expect(results[0].language).toBeUndefined();
-      expect(mockFetchWithTimeout).not.toHaveBeenCalled();
+      expect(mockFetchWithTimeout).toHaveBeenCalledWith('http://nzb.test/1', {}, 5000);
+      expect(results[0].nzbName).toBe('Stephen King-H?rbuch-Pack.part01.rar');
+      expect(results[0].language).toBe('german');
     });
 
     it('fetches NZB when newsgroup is absent and downloadUrl is present', async () => {
