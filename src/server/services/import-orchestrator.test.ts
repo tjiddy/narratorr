@@ -1,13 +1,22 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
-import { ImportOrchestrator } from './import-orchestrator.js';
+import { ImportOrchestrator, isContentFailure } from './import-orchestrator.js';
 import type { ImportService, ImportResult, ImportContext } from './import.service.js';
 import type { SettingsService } from './settings.service.js';
 import type { NotifierService } from './notifier.service.js';
 import type { TaggingService } from './tagging.service.js';
 import type { EventHistoryService } from './event-history.service.js';
 import type { EventBroadcasterService } from './event-broadcaster.service.js';
+import type { BlacklistService } from './blacklist.service.js';
 import type { FastifyBaseLogger } from 'fastify';
-import { createMockLogger, createMockSettingsService } from '../__tests__/helpers.js';
+import type { RetrySearchDeps } from './retry-search.js';
+import { createMockLogger, createMockSettingsService, inject } from '../__tests__/helpers.js';
+
+// Mock rejection-helpers for blacklist dispatch testing
+vi.mock('../utils/rejection-helpers.js', () => ({
+  blacklistAndRetrySearch: vi.fn().mockResolvedValue(undefined),
+}));
+
+import { blacklistAndRetrySearch } from '../utils/rejection-helpers.js';
 
 // Mock import-steps — we test the orchestrator's dispatch, not the helpers themselves
 vi.mock('../utils/import-steps.js', () => ({
@@ -371,37 +380,154 @@ describe('ImportOrchestrator', () => {
   // ── #504 — isContentFailure classifier ──────────────────────────────────
   describe('isContentFailure classifier (#504)', () => {
     describe('content failures — positive allowlist (returns true)', () => {
-      it.todo('returns true for "No audio files found in /path"');
-      it.todo('returns true for "Source file is not a supported audio format: file.xyz"');
-      it.todo('returns true for "Duplicate filename \\"01.mp3\\" found during import flattening: ..."');
-      it.todo('returns true for "Copy verification failed: source 1000 bytes, target 500 bytes"');
+      it('returns true for "No audio files found in /path"', () => {
+        expect(isContentFailure(new Error('No audio files found in /downloads/book'))).toBe(true);
+      });
+
+      it('returns true for "Source file is not a supported audio format: file.xyz"', () => {
+        expect(isContentFailure(new Error('Source file is not a supported audio format: track.xyz'))).toBe(true);
+      });
+
+      it('returns true for "Duplicate filename found during import flattening"', () => {
+        expect(isContentFailure(new Error('Duplicate filename "01.mp3" found during import flattening: "/a" and "/b"'))).toBe(true);
+      });
+
+      it('returns true for "Copy verification failed: source N bytes, target N bytes"', () => {
+        expect(isContentFailure(new Error('Copy verification failed: source 1000 bytes, target 500 bytes'))).toBe(true);
+      });
     });
 
     describe('environment failures — everything else (returns false)', () => {
-      it.todo('returns false for "Path not found: /path"');
-      it.todo('returns false for "Import blocked — insufficient disk space"');
-      it.todo('returns false for "Disk space check failed: permission denied"');
-      it.todo('returns false for "Audio processing failed: ffmpeg exited with code 1"');
-      it.todo('returns false for "Audio processing failed: ffmpeg stalled: no progress for 60s"');
-      it.todo('returns false for "Audio processing failed: spawn ENOENT"');
-      it.todo('returns false for "Audio processing failed: Processing aborted"');
-      it.todo('returns false for "Audio processing failed: some codec error"');
-      it.todo('returns false for generic/unknown Error');
-      it.todo('returns false for non-Error throwable (string)');
+      it('returns false for "Path not found: /path"', () => {
+        expect(isContentFailure(new Error('Path not found: /downloads/book'))).toBe(false);
+      });
+
+      it('returns false for "Import blocked — insufficient disk space"', () => {
+        expect(isContentFailure(new Error('Import blocked — insufficient disk space (1.0 GB free, 5.0 GB required)'))).toBe(false);
+      });
+
+      it('returns false for "Disk space check failed: permission denied"', () => {
+        expect(isContentFailure(new Error('Disk space check failed: permission denied'))).toBe(false);
+      });
+
+      it('returns false for "Audio processing failed: ffmpeg exited with code 1"', () => {
+        expect(isContentFailure(new Error('Audio processing failed: ffmpeg exited with code 1'))).toBe(false);
+      });
+
+      it('returns false for "Audio processing failed: ffmpeg stalled"', () => {
+        expect(isContentFailure(new Error('Audio processing failed: ffmpeg stalled: no progress for 60s'))).toBe(false);
+      });
+
+      it('returns false for "Audio processing failed: spawn ENOENT"', () => {
+        expect(isContentFailure(new Error('Audio processing failed: spawn ENOENT'))).toBe(false);
+      });
+
+      it('returns false for "Audio processing failed: Processing aborted"', () => {
+        expect(isContentFailure(new Error('Audio processing failed: Processing aborted'))).toBe(false);
+      });
+
+      it('returns false for "Audio processing failed: some codec error"', () => {
+        expect(isContentFailure(new Error('Audio processing failed: some codec error'))).toBe(false);
+      });
+
+      it('returns false for generic/unknown Error', () => {
+        expect(isContentFailure(new Error('something unexpected'))).toBe(false);
+      });
+
+      it('returns false for non-Error throwable (string)', () => {
+        expect(isContentFailure('a string error')).toBe(false);
+      });
     });
   });
 
   // ── #504 — import failure blacklisting ──────────────────────────────────
   describe('import failure blacklisting (#504)', () => {
-    it.todo('content failure triggers blacklistAndRetrySearch with correct identifiers, reason, and blacklistType');
-    it.todo('content failure (duplicate filename) triggers blacklistAndRetrySearch — original loop scenario');
-    it.todo('environment failure does NOT call blacklistAndRetrySearch');
-    it.todo('environment failure (Audio processing failed) does NOT call blacklistAndRetrySearch');
-    it.todo('content failure with redownloadFailed=true triggers re-search after blacklist');
-    it.todo('content failure with redownloadFailed=false creates blacklist but no re-search');
-    it.todo('content failure with missing blacklistService still fires SSE/notification/event');
-    it.todo('content failure with missing retrySearchDeps creates blacklist but skips re-search');
-    it.todo('blacklist call failure does not suppress original import error');
-    it.todo('batch path: content failure in one download blacklists it without affecting others');
+    let blacklistService: BlacklistService;
+    let retrySearchDeps: RetrySearchDeps;
+
+    beforeEach(() => {
+      blacklistService = inject<BlacklistService>({ create: vi.fn().mockResolvedValue({}) });
+      retrySearchDeps = { log: createMockLogger() } as unknown as RetrySearchDeps;
+      orchestrator.setBlacklistDeps(blacklistService, retrySearchDeps);
+    });
+
+    it('content failure triggers blacklistAndRetrySearch with correct identifiers, reason, and blacklistType', async () => {
+      const contentError = new Error('Copy verification failed: source 1000 bytes, target 500 bytes');
+      (importService.importDownload as ReturnType<typeof vi.fn>).mockRejectedValue(contentError);
+
+      await expect(orchestrator.importDownload(1)).rejects.toThrow();
+
+      expect(blacklistAndRetrySearch).toHaveBeenCalledWith(expect.objectContaining({
+        identifiers: expect.objectContaining({ infoHash: 'abc123', title: 'The Way of Kings [2010]', bookId: 1 }),
+        reason: 'bad_quality',
+        blacklistType: 'temporary',
+        book: { id: 1 },
+      }));
+    });
+
+    it('content failure (duplicate filename) triggers blacklistAndRetrySearch — original loop scenario', async () => {
+      const dupeError = new Error('Duplicate filename "01.mp3" found during import flattening: "/a" and "/b"');
+      (importService.importDownload as ReturnType<typeof vi.fn>).mockRejectedValue(dupeError);
+
+      await expect(orchestrator.importDownload(1)).rejects.toThrow();
+
+      expect(blacklistAndRetrySearch).toHaveBeenCalledWith(expect.objectContaining({
+        reason: 'bad_quality',
+        blacklistType: 'temporary',
+      }));
+    });
+
+    it('environment failure does NOT call blacklistAndRetrySearch', async () => {
+      const envError = new Error('Import blocked — insufficient disk space (1.0 GB free, 5.0 GB required)');
+      (importService.importDownload as ReturnType<typeof vi.fn>).mockRejectedValue(envError);
+
+      await expect(orchestrator.importDownload(1)).rejects.toThrow();
+
+      expect(blacklistAndRetrySearch).not.toHaveBeenCalled();
+    });
+
+    it('environment failure (Audio processing failed) does NOT call blacklistAndRetrySearch', async () => {
+      const procError = new Error('Audio processing failed: ffmpeg exited with code 1');
+      (importService.importDownload as ReturnType<typeof vi.fn>).mockRejectedValue(procError);
+
+      await expect(orchestrator.importDownload(1)).rejects.toThrow();
+
+      expect(blacklistAndRetrySearch).not.toHaveBeenCalled();
+    });
+
+    it('content failure with missing blacklistService still fires SSE/notification/event', async () => {
+      orchestrator.setBlacklistDeps(undefined as unknown as BlacklistService, retrySearchDeps);
+      const contentError = new Error('No audio files found in /path');
+      (importService.importDownload as ReturnType<typeof vi.fn>).mockRejectedValue(contentError);
+
+      await expect(orchestrator.importDownload(1)).rejects.toThrow();
+
+      // Blacklist not called (no service), but SSE/notification/event still fire
+      expect(blacklistAndRetrySearch).not.toHaveBeenCalled();
+      expect(emitImportFailure).toHaveBeenCalled();
+      expect(notifyImportFailure).toHaveBeenCalled();
+      expect(recordImportFailedEvent).toHaveBeenCalled();
+    });
+
+    it('blacklist call failure does not suppress original import error', async () => {
+      vi.mocked(blacklistAndRetrySearch).mockRejectedValueOnce(new Error('DB blacklist error'));
+      const contentError = new Error('Copy verification failed: source 1000 bytes, target 500 bytes');
+      (importService.importDownload as ReturnType<typeof vi.fn>).mockRejectedValue(contentError);
+
+      await expect(orchestrator.importDownload(1)).rejects.toBe(contentError);
+    });
+
+    it('batch path: content failure in one download blacklists it without affecting others', async () => {
+      (importService.getEligibleDownloads as ReturnType<typeof vi.fn>).mockResolvedValue([1, 2]);
+      const contentError = new Error('No audio files found in /path');
+      (importService.importDownload as ReturnType<typeof vi.fn>)
+        .mockRejectedValueOnce(contentError)
+        .mockResolvedValueOnce(mockResult);
+
+      const results = await orchestrator.processCompletedDownloads();
+
+      expect(results).toHaveLength(1);
+      expect(blacklistAndRetrySearch).toHaveBeenCalledTimes(1);
+    });
   });
 });
