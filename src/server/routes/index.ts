@@ -146,7 +146,7 @@ export async function createServices(db: Db, log: FastifyBaseLogger): Promise<Se
   const metadataSettings = await settings.get('metadata');
   const metadata = new MetadataService(log, {
     audibleRegion: metadataSettings?.audibleRegion,
-  });
+  }, settings);
 
   const notifier = new NotifierService(db, log);
   const blacklistService = new BlacklistService(db, log, settings);
