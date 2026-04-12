@@ -10,6 +10,7 @@ import {
   type CacheInvalidationRule,
   CACHE_INVALIDATION_MATRIX,
   TOAST_EVENT_CONFIG,
+  sseEventTypeSchema,
 } from '../../shared/schemas.js';
 import { setMergeProgress } from './useMergeProgress.js';
 import { handleSearchEvent } from './useSearchProgress.js';
@@ -107,6 +108,11 @@ function invalidateFromRule(
   }
 }
 
+/** Narrow an SSE payload to a specific event type. Single cast point for type safety. */
+function asPayload<T extends SSEEventType>(data: SSEEventPayloads[SSEEventType]): SSEEventPayloads[T] {
+  return data as SSEEventPayloads[T];
+}
+
 /**
  * Connects to the SSE endpoint and handles cache invalidation + toast notifications.
  * Should be mounted once at the app root.
@@ -124,15 +130,16 @@ export function useEventSource(apiKey: string | null) {
 
     // Search progress tracking — update the reactive store
     if (type.startsWith('search_')) {
-      handleSearchEvent(type as Extract<SSEEventType, `search_${string}`>, data as SSEEventPayloads[Extract<SSEEventType, `search_${string}`>]);
+      handleSearchEvent(type as Extract<SSEEventType, `search_${string}`>, asPayload<Extract<SSEEventType, `search_${string}`>>(data));
     }
 
     // Toast notifications — suppress for cancelled merges (user-initiated, not an error)
-    const isCancelledMerge = type === 'merge_failed' && 'reason' in data && (data as Record<string, unknown>).reason === 'cancelled';
+    const record = data as Record<string, unknown>;
+    const isCancelledMerge = type === 'merge_failed' && record.reason === 'cancelled';
     const toastConfig = TOAST_EVENT_CONFIG[type];
     if (toastConfig && !isCancelledMerge) {
       const title = toastConfig.titleKey in data
-        ? String((data as Record<string, unknown>)[toastConfig.titleKey])
+        ? String(record[toastConfig.titleKey])
         : type;
       const message = formatToastMessage(type, title);
       switch (toastConfig.level) {
@@ -144,8 +151,8 @@ export function useEventSource(apiKey: string | null) {
     }
 
     // Enrichment warning on merge_complete
-    if (type === 'merge_complete' && 'enrichmentWarning' in data) {
-      const warning = (data as SSEEventPayloads['merge_complete']).enrichmentWarning;
+    if (type === 'merge_complete') {
+      const warning = asPayload<'merge_complete'>(data).enrichmentWarning;
       if (warning) {
         toast.warning(warning);
       }
@@ -168,15 +175,8 @@ export function useEventSource(apiKey: string | null) {
       // Browser auto-reconnects; on reconnect we invalidate everything
     };
 
-    // Listen for each event type
-    const eventTypes: SSEEventType[] = [
-      'download_progress', 'download_status_change', 'book_status_change',
-      'import_complete', 'grab_started', 'review_needed', 'merge_complete',
-      'merge_started', 'merge_progress', 'merge_failed',
-      'merge_queued', 'merge_queue_updated',
-      'search_started', 'search_indexer_complete', 'search_indexer_error',
-      'search_grabbed', 'search_complete',
-    ];
+    // Listen for each event type — derived from schema (single source of truth)
+    const eventTypes: SSEEventType[] = [...sseEventTypeSchema.options];
 
     for (const type of eventTypes) {
       es.addEventListener(type, (event: MessageEvent) => {
@@ -217,24 +217,24 @@ export function useEventSource(apiKey: string | null) {
 
 function updateMergeProgressFromEvent(type: SSEEventType, data: SSEEventPayloads[typeof type]): void {
   if ((type === 'merge_queued' || type === 'merge_queue_updated') && 'book_id' in data) {
-    const queueData = data as { book_id: number; book_title: string; position: number };
-    setMergeProgress(queueData.book_id, {
-      bookTitle: queueData.book_title,
+    const d = asPayload<'merge_queued'>(data);
+    setMergeProgress(d.book_id, {
+      bookTitle: d.book_title,
       phase: 'queued',
-      position: queueData.position,
+      position: d.position,
     });
   } else if (type === 'merge_started' && 'book_id' in data) {
-    const d = data as SSEEventPayloads['merge_started'];
+    const d = asPayload<'merge_started'>(data);
     setMergeProgress(d.book_id, { bookTitle: d.book_title, phase: 'starting' });
   } else if (type === 'merge_progress' && 'book_id' in data) {
-    const d = data as SSEEventPayloads['merge_progress'];
+    const d = asPayload<'merge_progress'>(data);
     setMergeProgress(d.book_id, {
       bookTitle: d.book_title,
       phase: d.phase,
       percentage: d.percentage,
     });
   } else if (type === 'merge_complete' && 'book_id' in data) {
-    const d = data as SSEEventPayloads['merge_complete'];
+    const d = asPayload<'merge_complete'>(data);
     setMergeProgress(d.book_id, {
       bookTitle: d.book_title,
       phase: 'complete',
@@ -243,7 +243,7 @@ function updateMergeProgressFromEvent(type: SSEEventType, data: SSEEventPayloads
       enrichmentWarning: d.enrichmentWarning,
     });
   } else if (type === 'merge_failed' && 'book_id' in data) {
-    const d = data as SSEEventPayloads['merge_failed'];
+    const d = asPayload<'merge_failed'>(data);
     const isCancelled = d.reason === 'cancelled';
     setMergeProgress(d.book_id, {
       bookTitle: d.book_title,
