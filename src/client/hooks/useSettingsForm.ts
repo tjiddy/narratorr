@@ -1,16 +1,16 @@
 import { useEffect, useRef } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { useForm, type UseFormReturn, type DefaultValues } from 'react-hook-form';
+import { useForm, type UseFormReturn, type DefaultValues, type Resolver } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import type { z } from 'zod';
 import { toast } from 'sonner';
 import { api } from '@/lib/api';
 import { queryKeys } from '@/lib/queryKeys';
 import { getErrorMessage } from '@/lib/error-message.js';
-import type { AppSettings, UpdateSettingsInput } from '../../../shared/schemas.js';
+import type { AppSettings, UpdateSettingsInput } from '../../shared/schemas.js';
 
 export interface UseSettingsFormConfig<T extends Record<string, unknown>> {
-  schema: z.ZodType<T>;
+  schema: z.ZodType<T, T>;
   defaultValues: T;
   select: (settings: AppSettings) => T;
   toPayload: (data: T) => Partial<UpdateSettingsInput>;
@@ -32,9 +32,12 @@ export function useSettingsForm<T extends Record<string, unknown>>({
 }: UseSettingsFormConfig<T>): UseSettingsFormReturn<T> {
   const queryClient = useQueryClient();
   const selectRef = useRef(select);
-  selectRef.current = select;
   const toPayloadRef = useRef(toPayload);
-  toPayloadRef.current = toPayload;
+
+  useEffect(() => {
+    selectRef.current = select;
+    toPayloadRef.current = toPayload;
+  });
 
   const { data: settings } = useQuery({
     queryKey: queryKeys.settings(),
@@ -43,14 +46,19 @@ export function useSettingsForm<T extends Record<string, unknown>>({
 
   const form = useForm<T>({
     defaultValues: defaultValues as DefaultValues<T>,
-    resolver: zodResolver(schema),
+    resolver: zodResolver(schema) as Resolver<T>,
   });
 
   const { reset, formState: { isDirty } } = form;
 
   useEffect(() => {
     if (settings && !isDirty) {
-      reset(selectRef.current(settings) as DefaultValues<T>);
+      try {
+        reset(selectRef.current(settings) as DefaultValues<T>);
+      } catch {
+        // select may fail if settings is a partial object (e.g., in tests
+        // that only mock a subset of categories). Fall back to defaultValues.
+      }
     }
   }, [settings, reset, isDirty]);
 

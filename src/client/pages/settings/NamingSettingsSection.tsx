@@ -207,7 +207,6 @@ export function NamingSettingsSection() {
 
   const { register, handleSubmit, watch, setValue, formState: { errors, isDirty } } = form;
 
-  // eslint-disable-next-line react-hooks/incompatible-library -- watch() is the standard RHF API
   const folderFormat = watch('folderFormat');
   const fileFormat = watch('fileFormat');
   const namingSeparator = watch('namingSeparator');
@@ -276,7 +275,7 @@ export function NamingSettingsSection() {
           error={errors.folderFormat} preview={folderPreview} previewNoSeries={folderPreviewNoSeries} hasValue={!!folderFormat}
           onOpenTokenModal={() => setTokenModalScope('folder')}
           onInsertToken={(token) => insertTokenAtCursor(folderFormatRef, 'folderFormat', token)}
-          onKeyDown={createFormatKeyDownHandler(folderFormatRef, 'folderFormat', setValue)}
+          onKeyDown={(e) => createFormatKeyDownHandler(folderFormatRef, 'folderFormat', setValue)(e)}
           tokenGroups={FOLDER_TOKEN_GROUPS}
           inlinePanelOpen={folderPanelOpen}
           onToggleInlinePanel={() => setFolderPanelOpen((v) => !v)}
@@ -293,7 +292,7 @@ export function NamingSettingsSection() {
           error={errors.fileFormat} preview={filePreview} previewNoSeries={filePreviewNoSeries} previewMultiFile={filePreviewMultiFile} previewSuffix=".m4b" hasValue={!!fileFormat}
           onOpenTokenModal={() => setTokenModalScope('file')}
           onInsertToken={(token) => insertTokenAtCursor(fileFormatRef, 'fileFormat', token)}
-          onKeyDown={createFormatKeyDownHandler(fileFormatRef, 'fileFormat', setValue)}
+          onKeyDown={(e) => createFormatKeyDownHandler(fileFormatRef, 'fileFormat', setValue)(e)}
           tokenGroups={[...FOLDER_TOKEN_GROUPS, FILE_ONLY_TOKEN_GROUP]}
           inlinePanelOpen={filePanelOpen}
           onToggleInlinePanel={() => setFilePanelOpen((v) => !v)}

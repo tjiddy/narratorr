@@ -21,7 +21,6 @@ export function ImportSettingsSection() {
 
   const { register, handleSubmit, watch, formState: { errors, isDirty } } = form;
 
-  // eslint-disable-next-line react-hooks/incompatible-library
   const deleteAfterImport = watch('deleteAfterImport') as boolean;
 
   return (

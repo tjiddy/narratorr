@@ -3,6 +3,7 @@ import { renderHook, act, waitFor } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import React from 'react';
 import { z } from 'zod';
+import type { AppSettings } from '../../shared/schemas.js';
 
 vi.mock('sonner', () => ({
   toast: { success: vi.fn(), error: vi.fn() },
@@ -81,10 +82,15 @@ describe('useSettingsForm', () => {
     useSettingsForm = await importHook();
   });
 
+  // Test helper: fullSettings has extra `testSection` not in AppSettings.
+  // Cast through Record to access it safely in tests.
+  type TestSettings = AppSettings & { testSection: { enabled: boolean; value: number; name?: string } };
+  const asTest = (s: AppSettings) => s as unknown as TestSettings;
+
   const hookConfig = () => ({
     schema: testSchema,
     defaultValues: testDefaults,
-    select: (s: typeof fullSettings) => ({ enabled: s.testSection.enabled, value: s.testSection.value }),
+    select: (s: AppSettings) => ({ enabled: asTest(s).testSection.enabled, value: asTest(s).testSection.value }),
     toPayload: (d: TestFormData) => ({ testSection: d } as Record<string, unknown>),
     successMessage: 'Test settings saved',
   });
@@ -166,7 +172,7 @@ describe('useSettingsForm', () => {
   describe('core lifecycle', () => {
     it('select is called with the settings query result to hydrate form data', async () => {
       mockApi.getSettings.mockResolvedValue(fullSettings);
-      const selectFn = vi.fn((s: typeof fullSettings) => ({ enabled: s.testSection.enabled, value: s.testSection.value }));
+      const selectFn = vi.fn((s: AppSettings) => ({ enabled: asTest(s).testSection.enabled, value: asTest(s).testSection.value }));
 
       renderHook(
         () => useSettingsForm({ ...hookConfig(), select: selectFn }),
@@ -333,7 +339,7 @@ describe('useSettingsForm', () => {
       const { result } = renderHook(
         () => useSettingsForm({
           ...hookConfig(),
-          select: (s: typeof fullSettings) => s.import as unknown as TestFormData,
+          select: (s: AppSettings) => s.import as unknown as TestFormData,
         }),
         { wrapper: createWrapper(queryClient) },
       );
@@ -346,7 +352,7 @@ describe('useSettingsForm', () => {
     it('select extracts a cross-category composite — form hydrates with the mapped result', async () => {
       mockApi.getSettings.mockResolvedValue(fullSettings);
 
-      const crossCategorySelect = (s: typeof fullSettings) => ({
+      const crossCategorySelect = (s: AppSettings) => ({
         enabled: s.search.enabled,
         value: s.quality.minSeeders,
       });
@@ -439,7 +445,7 @@ describe('useSettingsForm', () => {
         () => useSettingsForm({
           schema: stringSchema,
           defaultValues: { name: 'default' },
-          select: (s: typeof settingsWithEmptyString) => ({ name: s.testSection.name }),
+          select: (s: AppSettings) => ({ name: asTest(s).testSection.name ?? '' }),
           toPayload: (d: StringForm) => ({ testSection: d } as Record<string, unknown>),
           successMessage: 'Saved',
         }),
