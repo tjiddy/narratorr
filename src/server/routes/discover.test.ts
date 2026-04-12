@@ -229,7 +229,12 @@ describe('Discover Routes', () => {
       expect(triggerImmediateSearch).toHaveBeenCalledTimes(1);
       expect(triggerImmediateSearch).toHaveBeenCalledWith(
         book,
-        expect.anything(), // deps
+        expect.objectContaining({
+          indexerService: services.indexer,
+          downloadOrchestrator: services.downloadOrchestrator,
+          settingsService: services.settings,
+          blacklistService: services.blacklist,
+        }),
         expect.anything(), // log
       );
     });
