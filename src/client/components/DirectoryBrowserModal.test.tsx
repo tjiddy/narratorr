@@ -197,4 +197,22 @@ describe('DirectoryBrowserModal', () => {
     await user.click(screen.getByTestId('modal-backdrop'));
     expect(onClose).not.toHaveBeenCalled();
   });
+
+  describe('ARIA attributes (#484)', () => {
+    it('renders tabIndex={-1} on the dialog element', async () => {
+      renderModal();
+      const dialog = await screen.findByRole('dialog');
+      expect(dialog).toHaveAttribute('tabIndex', '-1');
+    });
+
+    it('renders aria-labelledby linked to the heading id instead of aria-label', async () => {
+      renderModal();
+      const dialog = await screen.findByRole('dialog');
+      expect(dialog).toHaveAttribute('aria-labelledby', 'directory-browser-modal-title');
+      expect(dialog).not.toHaveAttribute('aria-label');
+      const heading = document.getElementById('directory-browser-modal-title');
+      expect(heading).toBeInTheDocument();
+      expect(heading!.tagName).toBe('H2');
+    });
+  });
 });

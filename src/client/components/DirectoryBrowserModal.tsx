@@ -77,12 +77,13 @@ function DirectoryBrowserContent({ initialPath, onSelect, onClose }: Omit<Direct
         ref={modalRef}
         role="dialog"
         aria-modal="true"
-        aria-label="Browse directories"
+        aria-labelledby="directory-browser-modal-title"
+        tabIndex={-1}
       >
         {/* Header */}
         <div className="px-6 pt-5 pb-4 flex items-center justify-between shrink-0">
           <div>
-            <h2 className="font-display text-lg font-semibold tracking-tight">Browse Directories</h2>
+            <h2 id="directory-browser-modal-title" className="font-display text-lg font-semibold tracking-tight">Browse Directories</h2>
             <p className="text-xs text-muted-foreground/50 truncate mt-0.5">Select a folder to scan</p>
           </div>
           <button
