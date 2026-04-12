@@ -22,9 +22,13 @@ export const discoverApi = {
   getDiscoverSuggestions: () =>
     fetchApi<SuggestionRowResponse[]>('/discover/suggestions'),
 
-  addDiscoverSuggestion: (id: number) =>
+  addDiscoverSuggestion: (id: number, overrides?: { searchImmediately: boolean; monitorForUpgrades: boolean }) =>
     fetchApi<AddSuggestionResult>(`/discover/suggestions/${id}/add`, {
       method: 'POST',
+      ...(overrides && {
+        body: JSON.stringify(overrides),
+        headers: { 'Content-Type': 'application/json' },
+      }),
     }),
 
   dismissDiscoverSuggestion: (id: number) =>
