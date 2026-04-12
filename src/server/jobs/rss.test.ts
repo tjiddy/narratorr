@@ -840,44 +840,25 @@ describe('#502 runRssJob — enrichment before filtering', () => {
     mockEnrichUsenet.mockReset();
   });
 
-  it('calls enrichUsenetLanguages before filterAndRankResults', async () => {
+  it('usenet RSS item with reject word in NZB name is filtered out before grab', async () => {
     const wantedBooks = [makeWantedBook(1, 'The Way of Kings', 'Brandon Sanderson')];
     const rssResults = [makeResult('The Way of Kings', 'Brandon Sanderson', { protocol: 'usenet' as const, downloadUrl: 'http://nzb.test/1' })];
-    const settings = createMockSettingsService({ rss: { enabled: true } });
+    const settings = createMockSettingsService({ rss: { enabled: true }, quality: { grabFloor: 0, minSeeders: 0, protocolPreference: 'none', rejectWords: 'pack', requiredWords: '' } });
     const { bookList, book } = createMockBookServices(wantedBooks);
     const indexer = createMockIndexerService(rssResults);
     const download = createMockDownloadOrchestrator();
     const blacklist = createMockBlacklistService();
 
-    await runRssJob(settings, bookList, book, indexer, download, blacklist, inject<FastifyBaseLogger>(log));
-
-    expect(mockEnrichUsenet).toHaveBeenCalledWith(
-      expect.arrayContaining([expect.objectContaining({ protocol: 'usenet' })]),
-      expect.anything(),
-    );
-  });
-
-  it('usenet RSS item with language token in NZB name gets language detected', async () => {
-    const wantedBooks = [makeWantedBook(1, 'The Way of Kings', 'Brandon Sanderson')];
-    const rssResults = [makeResult('The Way of Kings', 'Brandon Sanderson', { protocol: 'usenet' as const, downloadUrl: 'http://nzb.test/1' })];
-    const settings = createMockSettingsService({ rss: { enabled: true } });
-    const { bookList, book } = createMockBookServices(wantedBooks);
-    const indexer = createMockIndexerService(rssResults);
-    const download = createMockDownloadOrchestrator();
-    const blacklist = createMockBlacklistService();
-
+    // Simulate enrichment populating nzbName with reject word
     mockEnrichUsenet.mockImplementation(async (results) => {
       for (const r of results) {
-        if (r.protocol === 'usenet') {
-          r.nzbName = 'Way of Kings Hörbuch.rar';
-          r.language = 'german';
-        }
+        if (r.protocol === 'usenet') r.nzbName = 'Way of Kings-Hörbuch-Pack.rar';
       }
     });
 
-    await runRssJob(settings, bookList, book, indexer, download, blacklist, inject<FastifyBaseLogger>(log));
+    const result = await runRssJob(settings, bookList, book, indexer, download, blacklist, inject<FastifyBaseLogger>(log));
 
-    // enrichment was called and language was set (we verify via the mock)
-    expect(mockEnrichUsenet).toHaveBeenCalled();
+    expect(result.grabbed).toBe(0);
+    expect(download.grab).not.toHaveBeenCalled();
   });
 });

@@ -1643,7 +1643,7 @@ describe('#502 searchAndGrabForBook — enrichment before filtering', () => {
 });
 
 describe('#502 searchAndGrabForBook with broadcaster — enrichment before filtering', () => {
-  it('calls enrichUsenetLanguages before filterAndRankResults on broadcaster path', async () => {
+  it('usenet result with reject word in NZB name is filtered out before grab on broadcaster path', async () => {
     mockEnrichUsenet.mockReset();
     const log = createMockLogger();
     const blacklistService = {
@@ -1654,7 +1654,7 @@ describe('#502 searchAndGrabForBook with broadcaster — enrichment before filte
     } as unknown as BlacklistService;
     const indexerService = {
       getEnabledIndexers: vi.fn().mockResolvedValue([{ id: 1, name: 'Test' }]),
-      searchAllStreaming: vi.fn().mockResolvedValue([makeResult({ protocol: 'usenet', downloadUrl: 'http://nzb.test/1' })]),
+      searchAllStreaming: vi.fn().mockResolvedValue([makeResult({ protocol: 'usenet', title: 'Clean Title', downloadUrl: 'http://nzb.test/1' })]),
     } as unknown as IndexerService;
     const downloadService = {
       grab: vi.fn().mockResolvedValue({ id: 1, status: 'downloading' }),
@@ -1663,12 +1663,18 @@ describe('#502 searchAndGrabForBook with broadcaster — enrichment before filte
       emit: vi.fn(),
     } as unknown as EventBroadcasterService;
 
-    const book = { id: 1, title: 'Test Book', duration: 3600, authors: [{ name: 'Author' }] };
-    await searchAndGrabForBook(book, indexerService, downloadService, defaultQualitySettings, log, blacklistService, broadcaster);
+    // Simulate enrichment populating nzbName with reject word
+    mockEnrichUsenet.mockImplementation(async (results) => {
+      for (const r of results) {
+        if (r.protocol === 'usenet') r.nzbName = 'Stephen King-Hörbuch-Pack.rar';
+      }
+    });
 
-    expect(mockEnrichUsenet).toHaveBeenCalledWith(
-      expect.arrayContaining([expect.objectContaining({ protocol: 'usenet' })]),
-      log,
-    );
+    const settings = { ...defaultQualitySettings, rejectWords: 'pack' };
+    const book = { id: 1, title: 'Test Book', duration: 3600, authors: [{ name: 'Author' }] };
+    const result = await searchAndGrabForBook(book, indexerService, downloadService, settings, log, blacklistService, broadcaster);
+
+    expect(result).toEqual({ result: 'no_results' });
+    expect(downloadService.grab).not.toHaveBeenCalled();
   });
 });
