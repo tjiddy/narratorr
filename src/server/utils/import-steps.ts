@@ -25,7 +25,7 @@ export type {
 } from './import-side-effects.js';
 import type { RemotePathMappingService } from '../services/remote-path-mapping.service.js';
 import {
-  containsAudioFiles, countAudioFiles, copyAudioFiles, getPathSize,
+  containsAudioFiles, countAudioFiles, copyAudioFiles, getPathSize, getAudioPathSize,
   extractYear, COPY_VERIFICATION_THRESHOLD,
 } from './import-helpers.js';
 import { runPostProcessingScript } from './post-processing-script.js';
@@ -234,7 +234,7 @@ export async function verifyCopy(args: VerifyCopyArgs): Promise<number> {
   const { targetPath, sourcePath, processingEnabled } = args;
   const targetSize = await getPathSize(targetPath);
   if (!processingEnabled) {
-    const sourceSize = await getPathSize(sourcePath);
+    const sourceSize = await getAudioPathSize(sourcePath);
     if (targetSize < sourceSize * COPY_VERIFICATION_THRESHOLD) {
       throw new Error(`Copy verification failed: source ${sourceSize} bytes, target ${targetSize} bytes`);
     }

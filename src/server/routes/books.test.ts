@@ -1297,11 +1297,10 @@ describe('books routes', () => {
       expect(res.headers['content-range']).toBe(`bytes */${fileSize}`);
     });
 
-    it('returns application/octet-stream for unknown audio extension', async () => {
-      // Simulating a case where AUDIO_EXTENSIONS is expanded but MIME map isn't
+    it('returns 404 for unrecognized audio extension', async () => {
       (services.book.getById as Mock).mockResolvedValue(bookWithPath);
-      (readdir as Mock).mockResolvedValue(['track.wav']);
-      // wav is not in AUDIO_EXTENSIONS, so preview won't find it → 404
+      (readdir as Mock).mockResolvedValue(['track.mid']);
+      // .mid is not in AUDIO_EXTENSIONS, so preview won't find it → 404
       const res = await app.inject({ method: 'GET', url: '/api/books/1/preview' });
       expect(res.statusCode).toBe(404);
     });

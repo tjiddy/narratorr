@@ -1041,7 +1041,7 @@ describe('ActivityPage', () => {
       resolveRetry(makeDownload({ id: 20, status: 'queued' }));
     });
 
-    it('all retry buttons across all cards are disabled while any retry is in-flight', async () => {
+    it('only the clicked retry button shows Retrying... while in-flight', async () => {
       const user = userEvent.setup();
       let resolveRetry!: (v: ReturnType<typeof makeDownload>) => void;
       vi.mocked(api.retryDownload).mockReturnValue(
@@ -1059,9 +1059,10 @@ describe('ActivityPage', () => {
       const retryBtns = screen.getAllByText('Retry');
       await user.click(retryBtns[0].closest('button')!);
 
-      // Both retry buttons should show Retrying...
+      // Only the clicked card shows Retrying..., the other stays as Retry
       await waitFor(() => {
-        expect(screen.getAllByText('Retrying...')).toHaveLength(2);
+        expect(screen.getAllByText('Retrying...')).toHaveLength(1);
+        expect(screen.getAllByText('Retry')).toHaveLength(1);
       });
 
       resolveRetry(makeDownload({ id: 30, status: 'queued' }));

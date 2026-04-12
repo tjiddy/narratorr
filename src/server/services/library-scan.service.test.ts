@@ -28,12 +28,13 @@ vi.mock('node:fs/promises', () => ({
 vi.mock('../utils/import-helpers.js', () => ({
   buildTargetPath: vi.fn().mockReturnValue('/library/Author/Title'),
   getPathSize: vi.fn().mockResolvedValue(1000),
+  getAudioPathSize: vi.fn().mockResolvedValue(1000),
 }));
 
 import { enrichBookFromAudio } from './enrichment-utils.js';
 import { discoverBooks } from '../../core/utils/book-discovery.js';
 import { access, readdir, stat, mkdir, cp, rm } from 'node:fs/promises';
-import { buildTargetPath, getPathSize } from '../utils/import-helpers.js';
+import { buildTargetPath, getPathSize, getAudioPathSize } from '../utils/import-helpers.js';
 
 // ============================================================================
 // parseFolderStructure (pure function tests)
@@ -1627,6 +1628,7 @@ describe('LibraryScanService', () => {
   describe('importSingleBook with copy/move mode', () => {
     beforeEach(() => {
       vi.mocked(getPathSize).mockResolvedValue(1000);
+      vi.mocked(getAudioPathSize).mockResolvedValue(1000);
       vi.mocked(readdir).mockResolvedValue([
         { name: 'ch1.mp3', isFile: () => true, isDirectory: () => false },
       ] as never);
@@ -1660,7 +1662,7 @@ describe('LibraryScanService', () => {
     });
 
     it('throws when copy verification fails (target too small)', async () => {
-      vi.mocked(getPathSize)
+      vi.mocked(getAudioPathSize)
         .mockResolvedValueOnce(1000)   // source size
         .mockResolvedValueOnce(100);   // target size (way too small)
 
@@ -1803,6 +1805,7 @@ describe('LibraryScanService', () => {
       ] as never);
       vi.mocked(stat).mockResolvedValue({ size: 5000 } as never);
       vi.mocked(getPathSize).mockResolvedValue(5000);
+      vi.mocked(getAudioPathSize).mockResolvedValue(5000);
     });
 
     it('sets book status to imported after successful background processing', async () => {
@@ -2345,6 +2348,7 @@ describe('LibraryScanService', () => {
       ] as never);
       vi.mocked(stat).mockResolvedValue({ size: 5000 } as never);
       vi.mocked(getPathSize).mockResolvedValue(5000);
+      vi.mocked(getAudioPathSize).mockResolvedValue(5000);
     });
 
     it('records imported event in processOneImport on success with source: manual', async () => {

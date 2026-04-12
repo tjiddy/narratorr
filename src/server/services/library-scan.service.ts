@@ -11,7 +11,7 @@ import type { BookService } from './book.service.js';
 import type { MetadataService } from './metadata.service.js';
 import type { SettingsService } from './settings.service.js';
 import type { BookMetadata } from '../../core/metadata/index.js';
-import { buildTargetPath, getPathSize } from '../utils/import-helpers.js';
+import { buildTargetPath, getAudioPathSize } from '../utils/import-helpers.js';
 import { toNamingOptions } from '../../core/utils/naming.js';
 import { orchestrateBookEnrichment, buildBookCreatePayload, buildEnrichmentBookInput, buildAudnexusConfig, buildImportedEventPayload, extractImportMetadata, buildBackgroundAudnexusConfig, type EnrichmentDeps } from './enrichment-orchestration.helper.js';
 import { findAudioLeafFolders, getAudioStats, buildDiscoveredBook } from './library-scan.helpers.js';
@@ -417,9 +417,9 @@ export class LibraryScanService {
     this.log.info({ source: item.path, target: targetPath, mode }, 'Copying files to library');
     await cp(item.path, targetPath, { recursive: true, errorOnExist: false });
 
-    // Verify copy (99% threshold)
-    const sourceSize = await getPathSize(item.path);
-    const targetSize = await getPathSize(targetPath);
+    // Verify copy (99% threshold) — compare audio-only sizes to avoid false failures from non-audio files
+    const sourceSize = await getAudioPathSize(item.path);
+    const targetSize = await getAudioPathSize(targetPath);
     this.log.debug({ source: item.path, sourceSize, targetSize, ratio: sourceSize > 0 ? (targetSize / sourceSize).toFixed(4) : 'N/A' }, 'Copy verification');
     if (targetSize < sourceSize * COPY_VERIFICATION_THRESHOLD) {
       throw new Error(`Copy verification failed: source ${sourceSize} bytes, target ${targetSize} bytes`);

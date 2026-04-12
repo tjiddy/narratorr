@@ -112,7 +112,7 @@ async function handleMissingItem(
     .where(eq(downloads.id, download.id));
 
   if (download.bookId && retryDeps) {
-    const outcome = await handleDownloadFailure(db, download.id, download.bookId, download.infoHash, download.title, retryDeps, log, 'download_failed', 'temporary');
+    const outcome = await handleDownloadFailure(db, download.id, download.bookId, download.infoHash, download.guid, download.title, retryDeps, log, 'download_failed', 'temporary');
     if (outcome === 'retried') {
       await db.delete(downloads).where(eq(downloads.id, download.id));
     }
@@ -241,7 +241,7 @@ async function handleFailureTransition(
   if (newStatus !== 'failed' || download.status === 'failed') return;
 
   if (download.bookId && retryDeps) {
-    const outcome = await handleDownloadFailure(db, download.id, download.bookId, download.infoHash, download.title, retryDeps, log, 'download_failed', 'temporary');
+    const outcome = await handleDownloadFailure(db, download.id, download.bookId, download.infoHash, download.guid, download.title, retryDeps, log, 'download_failed', 'temporary');
     if (outcome === 'retried') {
       await db.delete(downloads).where(eq(downloads.id, download.id));
     }
@@ -300,11 +300,37 @@ async function blacklistOnInfraError(
  * then attempt retry via retrySearch. Updates errorMessage on the download record.
  * Returns the retry outcome string.
  */
+/** Best-effort blacklist by infoHash (torrent) or guid (usenet). */
+async function blacklistRelease(
+  blacklistService: BlacklistService,
+  data: { downloadId: number; infoHash: string | null; guid: string | null; title: string; bookId: number; reason: 'bad_quality' | 'download_failed' | 'infrastructure_error'; blacklistType: 'temporary' | 'permanent' },
+  log: FastifyBaseLogger,
+): Promise<void> {
+  if (!data.infoHash && !data.guid) {
+    log.warn({ downloadId: data.downloadId }, 'Skipping blacklist — no infoHash or guid');
+    return;
+  }
+  try {
+    await blacklistService.create({
+      infoHash: data.infoHash ?? undefined,
+      guid: data.guid ?? undefined,
+      title: data.title,
+      bookId: data.bookId,
+      reason: data.reason,
+      blacklistType: data.blacklistType,
+    });
+    log.info({ downloadId: data.downloadId, infoHash: data.infoHash, guid: data.guid, reason: data.reason, blacklistType: data.blacklistType }, 'Blacklisted failed release before retry');
+  } catch (error: unknown) {
+    log.warn({ downloadId: data.downloadId, error }, 'Failed to blacklist release — proceeding with retry');
+  }
+}
+
 async function handleDownloadFailure(
   db: Db,
   downloadId: number,
   bookId: number,
   infoHash: string | null,
+  guid: string | null,
   title: string,
   retryDeps: MonitorRetryDeps,
   log: FastifyBaseLogger,
@@ -326,23 +352,7 @@ async function handleDownloadFailure(
     return 'redownload_disabled';
   }
 
-  // Blacklist the release if infoHash present
-  if (infoHash) {
-    try {
-      await retryDeps.blacklistService.create({
-        infoHash,
-        title,
-        bookId,
-        reason,
-        blacklistType,
-      });
-      log.info({ downloadId, infoHash, reason, blacklistType }, 'Blacklisted failed release before retry');
-    } catch (error: unknown) {
-      log.warn({ downloadId, error }, 'Failed to blacklist release — proceeding with retry');
-    }
-  } else {
-    log.debug({ downloadId }, 'Skipping blacklist — no infoHash (Usenet download)');
-  }
+  await blacklistRelease(retryDeps.blacklistService, { downloadId, infoHash, guid, title, bookId, reason, blacklistType }, log);
 
   // Attempt retry search
   try {

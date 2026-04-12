@@ -722,9 +722,23 @@ describe('monitor job', () => {
       );
     });
 
-    it('skips blacklist with debug log when infoHash is absent (Usenet)', async () => {
+    it('blacklists by guid when infoHash is absent (Usenet)', async () => {
       db.select.mockReturnValueOnce(mockDbChain([
-        { id: 1, externalId: 'ext-1', downloadClientId: 10, status: 'downloading', bookId: 42, title: 'Test Book', infoHash: null },
+        { id: 1, externalId: 'ext-1', downloadClientId: 10, status: 'downloading', bookId: 42, title: 'Test Book', infoHash: null, guid: 'https://indexer.com/details/abc123' },
+      ]));
+      adapter.getDownload.mockResolvedValueOnce(null);
+      db.update.mockReturnValue(mockDbChain());
+
+      await monitorDownloads(inject<Db>(db), inject<DownloadClientService>(downloadClientService), inject<NotifierService>(notifierService), inject<FastifyBaseLogger>(log), retryDeps as never);
+
+      expect(retryDeps.blacklistService.create).toHaveBeenCalledWith(
+        expect.objectContaining({ guid: 'https://indexer.com/details/abc123', reason: 'download_failed', blacklistType: 'temporary' }),
+      );
+    });
+
+    it('skips blacklist with warning when both infoHash and guid are absent', async () => {
+      db.select.mockReturnValueOnce(mockDbChain([
+        { id: 1, externalId: 'ext-1', downloadClientId: 10, status: 'downloading', bookId: 42, title: 'Test Book', infoHash: null, guid: null },
       ]));
       adapter.getDownload.mockResolvedValueOnce(null);
       db.update.mockReturnValue(mockDbChain());
@@ -732,7 +746,7 @@ describe('monitor job', () => {
       await monitorDownloads(inject<Db>(db), inject<DownloadClientService>(downloadClientService), inject<NotifierService>(notifierService), inject<FastifyBaseLogger>(log), retryDeps as never);
 
       expect(retryDeps.blacklistService.create).not.toHaveBeenCalled();
-      expect(log.debug).toHaveBeenCalledWith({ downloadId: 1 }, 'Skipping blacklist — no infoHash (Usenet download)');
+      expect(log.warn).toHaveBeenCalledWith({ downloadId: 1 }, 'Skipping blacklist — no infoHash or guid');
     });
 
     it('sets errorMessage to "No viable candidates" when search returns nothing', async () => {

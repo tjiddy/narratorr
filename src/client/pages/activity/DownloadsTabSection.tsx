@@ -88,7 +88,7 @@ export function DownloadsTabSection(props: DownloadsTabSectionProps) {
                 isApproving={approveMutation.isPending}
                 isRejectingDismiss={rejectMutation.isPending && rejectMutation.variables?.id === download.id && !rejectMutation.variables?.retry}
                 isRejectingWithSearch={rejectMutation.isPending && rejectMutation.variables?.id === download.id && !!rejectMutation.variables?.retry}
-                isRetrying={retryMutation.isPending}
+                isRetrying={retryMutation.isPending && retryMutation.variables === download.id}
                 index={index}
               />
             ))}
@@ -132,7 +132,7 @@ function DownloadHistorySection({ history, historyTotal, historyPagination, retr
         ) : (
           <div className="space-y-3">
             {history.map((download, index) => (
-              <DownloadCard key={download.id} download={download} onRetry={() => retryMutation.mutate(download.id)} onDelete={() => deleteMutation.mutate({ id: download.id, bookId: download.bookId })} isDeleting={deleteMutation.isPending && deleteMutation.variables?.id === download.id} isRetrying={retryMutation.isPending} showProgress={false} index={index} compact />
+              <DownloadCard key={download.id} download={download} onRetry={() => retryMutation.mutate(download.id)} onDelete={() => deleteMutation.mutate({ id: download.id, bookId: download.bookId })} isDeleting={deleteMutation.isPending && deleteMutation.variables?.id === download.id} isRetrying={retryMutation.isPending && retryMutation.variables === download.id} showProgress={false} index={index} compact />
             ))}
           </div>
         )}

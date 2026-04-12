@@ -81,6 +81,27 @@ export async function getPathSize(path: string): Promise<number> {
   return total;
 }
 
+/** Recursively get total size of audio files only (filtered by AUDIO_EXTENSIONS). */
+export async function getAudioPathSize(path: string): Promise<number> {
+  const stats = await stat(path);
+  if (stats.isFile()) {
+    return AUDIO_EXTENSIONS.has(extname(path).toLowerCase()) ? stats.size : 0;
+  }
+
+  let total = 0;
+  const entries = await readdir(path, { withFileTypes: true });
+  for (const entry of entries) {
+    const entryPath = join(path, entry.name);
+    if (entry.isFile() && AUDIO_EXTENSIONS.has(extname(entry.name).toLowerCase())) {
+      const s = await stat(entryPath);
+      total += s.size;
+    } else if (entry.isDirectory()) {
+      total += await getAudioPathSize(entryPath);
+    }
+  }
+  return total;
+}
+
 /** Check if a path contains audio files (recursively). */
 export async function containsAudioFiles(dirPath: string): Promise<boolean> {
   const entries = await readdir(dirPath, { withFileTypes: true });
