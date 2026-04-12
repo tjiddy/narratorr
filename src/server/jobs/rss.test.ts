@@ -452,6 +452,31 @@ describe('runRssJob', () => {
     expect(result.grabbed).toBe(0);
   });
 
+  it('filters oversized RSS items via maxDownloadSize and logs quality gate', async () => {
+    const GB = 1_073_741_824;
+    const wantedBooks = [makeWantedBook(1, 'Test Book', 'Author')];
+    const rssResults = [
+      makeResult('Test Book', 'Author', { size: 10 * GB, downloadUrl: 'magnet:oversized' }),
+    ];
+    const settings = createMockSettingsService({
+      rss: { enabled: true },
+      quality: { grabFloor: 0, minSeeders: 0, protocolPreference: 'none', maxDownloadSize: 5 },
+    });
+    const { bookList, book } = createMockBookServices(wantedBooks);
+    const indexer = createMockIndexerService(rssResults);
+    const download = createMockDownloadOrchestrator();
+    const blacklist = createMockBlacklistService();
+
+    const result = await runRssJob(settings, bookList, book, indexer, download, blacklist, inject<FastifyBaseLogger>(log));
+
+    expect(result.grabbed).toBe(0);
+    expect(download.grab).not.toHaveBeenCalled();
+    expect(log.debug).toHaveBeenCalledWith(
+      { inputCount: 1, outputCount: 0 },
+      'Quality gate filtering applied',
+    );
+  });
+
   it('grabs the best-ranked item (not just best match score) when multiple items match same book', async () => {
     const wantedBooks = [makeWantedBook(1, 'Test Book', 'Author')];
     const rssResults = [

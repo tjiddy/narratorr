@@ -149,6 +149,7 @@ export async function runRssJob(
       ? candidate.duration * 60
       : (candidate.audioDuration ?? undefined);
     const narratorPriority = buildNarratorPriority(searchSettings.searchPriority, candidate.narrators);
+    const rssInputCount = bookResults.length;
     const { results: ranked } = filterAndRankResults(
       bookResults,
       duration,
@@ -159,7 +160,11 @@ export async function runRssJob(
       qualitySettings.requiredWords,
       metadataSettings.languages,
       narratorPriority,
+      qualitySettings.maxDownloadSize,
     );
+    if (ranked.length < rssInputCount) {
+      log.debug({ inputCount: rssInputCount, outputCount: ranked.length }, 'Quality gate filtering applied');
+    }
 
     if (ranked.length === 0) {
       log.debug({ bookId, title: bookResults[0].title }, 'RSS match filtered out by quality pipeline');

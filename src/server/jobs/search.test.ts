@@ -350,6 +350,29 @@ describe('runSearchJob', () => {
     expect(download.grab).not.toHaveBeenCalled();
   });
 
+  it('applies quality filtering to search results (maxDownloadSize) and logs quality gate', async () => {
+    const GB = 1_073_741_824;
+    const wantedBooks = [{ id: 1, title: 'Book One', authors: [{ name: 'Author A' }], duration: 3600 }];
+    const settings = createMockSettingsService({
+      search: { enabled: true, intervalMinutes: 60 },
+      quality: { grabFloor: 0, minSeeders: 0, protocolPreference: 'none', maxDownloadSize: 5 },
+    });
+    const bookList = createMockBookListService(wantedBooks);
+    const oversizedResult: SearchResult = { ...mockResult(10, 'magnet:?xt=urn:btih:big'), size: 10 * GB };
+    const indexer = createMockIndexerService([oversizedResult]);
+    const download = createMockDownloadOrchestrator();
+
+    const result = await runSearchJob(settings, bookList, indexer, download, inject<FastifyBaseLogger>(log), createMockBlacklistService());
+
+    expect(result.searched).toBe(1);
+    expect(result.grabbed).toBe(0);
+    expect(download.grab).not.toHaveBeenCalled();
+    expect(log.debug).toHaveBeenCalledWith(
+      { inputCount: 1, outputCount: 0 },
+      'Quality gate filtering applied',
+    );
+  });
+
   it('forwards indexerId from best search result to downloadOrchestrator.grab', async () => {
     const wantedBooks = [{ id: 1, title: 'Book One', authors: [{ name: 'Author A' }] }];
     const searchResults: SearchResult[] = [{ ...mockResult(10, 'magnet:?xt=urn:btih:aaa'), indexerId: 42 }];

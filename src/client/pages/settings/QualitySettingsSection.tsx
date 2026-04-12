@@ -5,7 +5,7 @@ import { useSettingsForm } from '@/hooks/useSettingsForm';
 import { DEFAULT_SETTINGS, qualityFormSchema, type AppSettings } from '../../../shared/schemas.js';
 import { SettingsSection } from './SettingsSection';
 
-const qualityGateFormSchema = qualityFormSchema.pick({ grabFloor: true, minSeeders: true });
+const qualityGateFormSchema = qualityFormSchema.pick({ grabFloor: true, minSeeders: true, maxDownloadSize: true });
 
 type QualityGateFormData = z.infer<typeof qualityGateFormSchema>;
 
@@ -15,10 +15,12 @@ export function QualitySettingsSection() {
     defaultValues: {
       grabFloor: DEFAULT_SETTINGS.quality.grabFloor,
       minSeeders: DEFAULT_SETTINGS.quality.minSeeders,
+      maxDownloadSize: DEFAULT_SETTINGS.quality.maxDownloadSize,
     },
     select: (s: AppSettings) => ({
       grabFloor: s.quality.grabFloor,
       minSeeders: s.quality.minSeeders,
+      maxDownloadSize: s.quality.maxDownloadSize,
     }),
     toPayload: (d) => ({ quality: d }),
     successMessage: 'Quality settings saved',
@@ -68,6 +70,25 @@ export function QualitySettingsSection() {
           )}
           <p className="text-sm text-muted-foreground mt-2">
             Torrent results with fewer seeders are hidden. Does not affect Usenet results. Set to 0 to disable.
+          </p>
+        </div>
+
+        <div>
+          <label htmlFor="maxDownloadSize" className="block text-sm font-medium mb-2">Max Download Size (GB)</label>
+          <input
+            id="maxDownloadSize"
+            type="number"
+            {...register('maxDownloadSize', { valueAsNumber: true })}
+            className={errorInputClass(!!errors.maxDownloadSize)}
+            min={0}
+            step="any"
+            placeholder="0"
+          />
+          {errors.maxDownloadSize && (
+            <p className="text-sm text-destructive mt-1">{errors.maxDownloadSize.message}</p>
+          )}
+          <p className="text-sm text-muted-foreground mt-2">
+            Maximum download size in GB. Releases larger than this are hidden from search results. Set to 0 to disable.
           </p>
         </div>
 

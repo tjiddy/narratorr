@@ -93,6 +93,7 @@ export async function retrySearch(
     const metadataSettings = await settingsService.get('metadata');
     const searchSettings = await settingsService.get('search');
     const narratorPriority = buildNarratorPriority(searchSettings.searchPriority, book.narrators);
+    const retryInputCount = filteredResults.length;
     const { results } = filterAndRankResults(
       filteredResults,
       book.duration ?? undefined,
@@ -103,7 +104,11 @@ export async function retrySearch(
       qualitySettings.requiredWords,
       metadataSettings.languages,
       narratorPriority,
+      qualitySettings.maxDownloadSize,
     );
+    if (results.length < retryInputCount) {
+      log.debug({ inputCount: retryInputCount, outputCount: results.length }, 'Quality gate filtering applied');
+    }
 
     // Take best downloadable result
     const best = results.find((r) => r.downloadUrl);

@@ -125,7 +125,7 @@ describe('QualitySettingsSection', () => {
     expect(mockApi.updateSettings).not.toHaveBeenCalled();
   });
 
-  it('saves payload with only grabFloor and minSeeders', async () => {
+  it('saves payload with only quality gate fields', async () => {
     mockApi.updateSettings.mockResolvedValue(mockSettings);
     const user = userEvent.setup();
     renderWithProviders(<QualitySettingsSection />);
@@ -142,7 +142,7 @@ describe('QualitySettingsSection', () => {
 
     await waitFor(() => {
       expect(mockApi.updateSettings).toHaveBeenCalledWith({
-        quality: { grabFloor: 100, minSeeders: 3 },
+        quality: { grabFloor: 100, minSeeders: 3, maxDownloadSize: 5 },
       });
     });
 
@@ -184,6 +184,85 @@ describe('QualitySettingsSection', () => {
     await waitFor(() => {
       expect(mockToast.success).toHaveBeenCalledWith('Quality settings saved');
     });
+  });
+
+  it('renders max download size field', async () => {
+    renderWithProviders(<QualitySettingsSection />);
+
+    await waitFor(() => {
+      expect(screen.getByLabelText('Max Download Size (GB)')).toBeInTheDocument();
+    });
+  });
+
+  it('loads maxDownloadSize setting value into form', async () => {
+    const settings = createMockSettings({ quality: { grabFloor: 50, minSeeders: 3, maxDownloadSize: 10 } });
+    mockApi.getSettings.mockResolvedValue(settings);
+    renderWithProviders(<QualitySettingsSection />);
+
+    await waitFor(() => {
+      expect(screen.getByLabelText('Max Download Size (GB)')).toHaveValue(10);
+    });
+  });
+
+  it('includes maxDownloadSize in save payload', async () => {
+    mockApi.updateSettings.mockResolvedValue(mockSettings);
+    const user = userEvent.setup();
+    renderWithProviders(<QualitySettingsSection />);
+
+    await waitFor(() => {
+      expect(screen.getByLabelText('Max Download Size (GB)')).toBeInTheDocument();
+    });
+
+    const input = screen.getByLabelText('Max Download Size (GB)');
+    await user.tripleClick(input);
+    await user.keyboard('10');
+
+    await user.click(screen.getByRole('button', { name: /save/i }));
+
+    await waitFor(() => {
+      expect(mockApi.updateSettings).toHaveBeenCalledWith(
+        expect.objectContaining({
+          quality: expect.objectContaining({ maxDownloadSize: 10 }),
+        }),
+      );
+    });
+  });
+
+  it('blocks submit when maxDownloadSize is negative', async () => {
+    const user = userEvent.setup();
+    renderWithProviders(<QualitySettingsSection />);
+
+    await waitFor(() => {
+      expect(screen.getByLabelText('Max Download Size (GB)')).toBeInTheDocument();
+    });
+
+    const input = screen.getByLabelText('Max Download Size (GB)');
+    await user.clear(input);
+    await user.type(input, '-1');
+
+    await act(async () => {
+      fireEvent.submit(screen.getByRole('button', { name: /save/i }).closest('form')!);
+    });
+
+    expect(screen.getByText(/too small/i)).toBeInTheDocument();
+    expect(mockApi.updateSettings).not.toHaveBeenCalled();
+  });
+
+  it('tracks dirty state when maxDownloadSize changes', async () => {
+    const user = userEvent.setup();
+    renderWithProviders(<QualitySettingsSection />);
+
+    await waitFor(() => {
+      expect(screen.getByLabelText('Max Download Size (GB)')).toBeInTheDocument();
+    });
+
+    expect(screen.queryByRole('button', { name: /save/i })).not.toBeInTheDocument();
+
+    const input = screen.getByLabelText('Max Download Size (GB)');
+    await user.tripleClick(input);
+    await user.keyboard('10');
+
+    expect(screen.getByRole('button', { name: /save/i })).toBeInTheDocument();
   });
 
   it('shows error toast on save failure', async () => {

@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { buildSearchQuery, buildNarratorPriority, filterAndRankResults, filterBlacklistedResults, searchAndGrabForBook } from './search-pipeline.js';
+import { buildSearchQuery, buildNarratorPriority, filterAndRankResults, filterBlacklistedResults, searchAndGrabForBook, postProcessSearchResults } from './search-pipeline.js';
+import type { SettingsService } from './settings.service.js';
 import type { IndexerService } from './indexer.service.js';
 import type { DownloadOrchestrator } from './download-orchestrator.js';
 import type { BlacklistService } from './blacklist.service.js';
@@ -38,6 +39,7 @@ const defaultQualitySettings = {
   grabFloor: 0,
   minSeeders: 1,
   protocolPreference: 'none',
+  maxDownloadSize: 5,
 };
 
 describe('buildSearchQuery', () => {
@@ -143,6 +145,38 @@ describe('searchAndGrabForBook', () => {
     const settings = { ...defaultQualitySettings, rejectWords: 'bad' };
     const result = await searchAndGrabForBook(book, indexerService, downloadService, settings, log, blacklistService);
     expect(result).toEqual({ result: 'no_results' });
+  });
+
+  it('returns no_results when all results filtered out by maxDownloadSize', async () => {
+    const GB = 1_073_741_824;
+    vi.mocked(indexerService.searchAll).mockResolvedValue([makeResult({ size: 10 * GB })]);
+    const settings = { ...defaultQualitySettings, maxDownloadSize: 5 };
+    const result = await searchAndGrabForBook(book, indexerService, downloadService, settings, log, blacklistService);
+    expect(result).toEqual({ result: 'no_results' });
+  });
+
+  it('logs quality gate filtering when results are filtered by maxDownloadSize', async () => {
+    const GB = 1_073_741_824;
+    vi.mocked(indexerService.searchAll).mockResolvedValue([
+      makeResult({ title: 'Small', size: 2 * GB }),
+      makeResult({ title: 'Huge', size: 10 * GB }),
+    ]);
+    const settings = { ...defaultQualitySettings, maxDownloadSize: 5 };
+    await searchAndGrabForBook(book, indexerService, downloadService, settings, log, blacklistService);
+    expect(log.debug).toHaveBeenCalledWith(
+      { inputCount: 2, outputCount: 1 },
+      'Quality gate filtering applied',
+    );
+  });
+
+  it('does not log quality gate filtering when no results are filtered', async () => {
+    vi.mocked(indexerService.searchAll).mockResolvedValue([makeResult({ size: 500 * 1024 * 1024 })]);
+    const settings = { ...defaultQualitySettings, maxDownloadSize: 5 };
+    await searchAndGrabForBook(book, indexerService, downloadService, settings, log, blacklistService);
+    expect(log.debug).not.toHaveBeenCalledWith(
+      expect.objectContaining({ inputCount: expect.any(Number), outputCount: expect.any(Number) }),
+      'Quality gate filtering applied',
+    );
   });
 
   it('returns no_results when no result has downloadUrl', async () => {
@@ -369,6 +403,112 @@ describe('filterAndRankResults — minSeeders default', () => {
   it('passes usenet result regardless of seeders when minSeeders is 1', () => {
     const { results } = filterAndRankResults([makeResult({ protocol: 'usenet', seeders: undefined })], undefined, 0, 1, 'none');
     expect(results).toHaveLength(1);
+  });
+});
+
+describe('filterAndRankResults — maxDownloadSize', () => {
+  const GB = 1_073_741_824;
+
+  it('filters result exceeding maxDownloadSize threshold', () => {
+    const { results } = filterAndRankResults(
+      [makeResult({ size: 6 * GB })], undefined, 0, 0, 'none',
+      undefined, undefined, undefined, undefined, 5,
+    );
+    expect(results).toHaveLength(0);
+  });
+
+  it('keeps result within maxDownloadSize threshold', () => {
+    const { results } = filterAndRankResults(
+      [makeResult({ size: 3 * GB })], undefined, 0, 0, 'none',
+      undefined, undefined, undefined, undefined, 5,
+    );
+    expect(results).toHaveLength(1);
+  });
+
+  it('keeps result exactly at maxDownloadSize threshold (inclusive <=)', () => {
+    const { results } = filterAndRankResults(
+      [makeResult({ size: 5 * GB })], undefined, 0, 0, 'none',
+      undefined, undefined, undefined, undefined, 5,
+    );
+    expect(results).toHaveLength(1);
+  });
+
+  it('filters result 1 byte over maxDownloadSize threshold', () => {
+    const { results } = filterAndRankResults(
+      [makeResult({ size: 5 * GB + 1 })], undefined, 0, 0, 'none',
+      undefined, undefined, undefined, undefined, 5,
+    );
+    expect(results).toHaveLength(0);
+  });
+
+  it('disables filter when maxDownloadSize is 0', () => {
+    const { results } = filterAndRankResults(
+      [makeResult({ size: 100 * GB })], undefined, 0, 0, 'none',
+      undefined, undefined, undefined, undefined, 0,
+    );
+    expect(results).toHaveLength(1);
+  });
+
+  it('passes result with undefined size when maxDownloadSize is set', () => {
+    const { results } = filterAndRankResults(
+      [makeResult({ size: undefined })], undefined, 0, 0, 'none',
+      undefined, undefined, undefined, undefined, 5,
+    );
+    expect(results).toHaveLength(1);
+  });
+
+  it('passes result with size 0 when maxDownloadSize is set', () => {
+    const { results } = filterAndRankResults(
+      [makeResult({ size: 0 })], undefined, 0, 0, 'none',
+      undefined, undefined, undefined, undefined, 5,
+    );
+    expect(results).toHaveLength(1);
+  });
+
+  it('applies filter even when book duration is unknown', () => {
+    const { results } = filterAndRankResults(
+      [makeResult({ size: 10 * GB })], undefined, 0, 0, 'none',
+      undefined, undefined, undefined, undefined, 5,
+    );
+    expect(results).toHaveLength(0);
+  });
+
+  it('applies filter to both torrent and usenet results', () => {
+    const { results } = filterAndRankResults(
+      [
+        makeResult({ protocol: 'torrent', size: 10 * GB, seeders: 10 }),
+        makeResult({ protocol: 'usenet', size: 10 * GB }),
+      ], undefined, 0, 0, 'none',
+      undefined, undefined, undefined, undefined, 5,
+    );
+    expect(results).toHaveLength(0);
+  });
+
+  it('mixed: only oversized results removed, others retained in order', () => {
+    const small = makeResult({ title: 'Small Book', size: 2 * GB });
+    const big = makeResult({ title: 'Big Pack', size: 30 * GB });
+    const medium = makeResult({ title: 'Medium Book', size: 4 * GB });
+    const { results } = filterAndRankResults(
+      [small, big, medium], undefined, 0, 0, 'none',
+      undefined, undefined, undefined, undefined, 5,
+    );
+    expect(results).toHaveLength(2);
+    expect(results.map(r => r.title)).toContain('Small Book');
+    expect(results.map(r => r.title)).toContain('Medium Book');
+    expect(results.map(r => r.title)).not.toContain('Big Pack');
+  });
+
+  it('interacts with minSeeders and grabFloor independently', () => {
+    const { results } = filterAndRankResults(
+      [
+        makeResult({ title: 'Good', protocol: 'torrent', seeders: 5, size: 2 * GB }),
+        makeResult({ title: 'Too big', protocol: 'torrent', seeders: 5, size: 10 * GB }),
+        makeResult({ title: 'No seeders', protocol: 'torrent', seeders: 0, size: 1 * GB }),
+      ], undefined, 0, 3, 'none',
+      undefined, undefined, undefined, undefined, 5,
+    );
+    expect(results).toHaveLength(1);
+    expect(results[0].title).toBe('Good');
   });
 });
 
@@ -740,6 +880,24 @@ describe('#392 searchAndGrabForBook with broadcaster', () => {
         outcome: 'no_results',
       }));
       expect(broadcaster.emit).not.toHaveBeenCalledWith('search_grabbed', expect.anything());
+    });
+
+    it('filters oversized results via maxDownloadSize in broadcaster path and logs quality gate', async () => {
+      const GB = 1_073_741_824;
+      vi.mocked(indexerService.searchAllStreaming).mockImplementation(
+        async (_q, _o, _c, callbacks) => {
+          callbacks.onComplete(10, 'MAM', 1, 300);
+          return [makeResult({ size: 10 * GB })];
+        },
+      );
+      const settings = { ...defaultQualitySettings, maxDownloadSize: 5 };
+      const result = await searchAndGrabForBook(book, indexerService, downloadService, settings, log, blacklistService, broadcaster);
+      expect(result).toEqual({ result: 'no_results' });
+      expect(downloadService.grab).not.toHaveBeenCalled();
+      expect(log.debug).toHaveBeenCalledWith(
+        { inputCount: 1, outputCount: 0 },
+        'Quality gate filtering applied',
+      );
     });
 
     it('emits search_complete with outcome skipped on DuplicateDownloadError (not search_grabbed)', async () => {
@@ -1307,5 +1465,60 @@ describe('buildNarratorPriority', () => {
   it('extracts names from narrator entities', () => {
     const result = buildNarratorPriority('accuracy', [{ name: 'Michael Kramer' }, { name: 'Kate Reading' }]);
     expect(result).toEqual({ bookNarrators: ['Michael Kramer', 'Kate Reading'] });
+  });
+});
+
+describe('postProcessSearchResults — maxDownloadSize', () => {
+  const GB = 1_073_741_824;
+
+  function createMockSettingsServiceInline(qualityOverrides?: Record<string, unknown>): SettingsService {
+    const qualityDefaults = { grabFloor: 0, minSeeders: 0, protocolPreference: 'none', maxDownloadSize: 5, rejectWords: '', requiredWords: '' };
+    const metadataDefaults = { audibleRegion: 'us', languages: [] };
+    return {
+      get: vi.fn().mockImplementation((cat: string) => {
+        if (cat === 'quality') return Promise.resolve({ ...qualityDefaults, ...qualityOverrides });
+        if (cat === 'metadata') return Promise.resolve(metadataDefaults);
+        return Promise.resolve({});
+      }),
+    } as unknown as SettingsService;
+  }
+
+  it('filters oversized results and logs quality gate filtering', async () => {
+    const log = createMockLogger();
+    const blacklist = {
+      getBlacklistedIdentifiers: vi.fn().mockResolvedValue({ blacklistedHashes: new Set(), blacklistedGuids: new Set() }),
+    } as unknown as BlacklistService;
+    const settings = createMockSettingsServiceInline({ maxDownloadSize: 5 });
+
+    const results = [
+      makeResult({ title: 'Small', size: 2 * GB }),
+      makeResult({ title: 'Huge', size: 10 * GB }),
+    ];
+
+    const output = await postProcessSearchResults(results, 3600, blacklist, settings, log);
+
+    expect(output.results).toHaveLength(1);
+    expect(output.results[0].title).toBe('Small');
+    expect(log.debug).toHaveBeenCalledWith(
+      { inputCount: 2, outputCount: 1 },
+      'Quality gate filtering applied',
+    );
+  });
+
+  it('does not log quality gate filtering when no results are filtered', async () => {
+    const log = createMockLogger();
+    const blacklist = {
+      getBlacklistedIdentifiers: vi.fn().mockResolvedValue({ blacklistedHashes: new Set(), blacklistedGuids: new Set() }),
+    } as unknown as BlacklistService;
+    const settings = createMockSettingsServiceInline({ maxDownloadSize: 5 });
+
+    const results = [makeResult({ title: 'Small', size: 2 * GB })];
+
+    await postProcessSearchResults(results, 3600, blacklist, settings, log);
+
+    expect(log.debug).not.toHaveBeenCalledWith(
+      expect.objectContaining({ inputCount: expect.any(Number), outputCount: expect.any(Number) }),
+      'Quality gate filtering applied',
+    );
   });
 });

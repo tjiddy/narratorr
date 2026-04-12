@@ -217,6 +217,21 @@ describe('SettingsService', () => {
       expect(storedValue).toMatchObject({ grabFloor: 10, protocolPreference: 'none', minSeeders: 5 });
     });
 
+    it('preserves sibling quality fields when updating maxDownloadSize', async () => {
+      const existingQuality = { grabFloor: 10, protocolPreference: 'none', minSeeders: 3, maxDownloadSize: 5, searchImmediately: false, monitorForUpgrades: false, rejectWords: '', requiredWords: '' };
+      db.select
+        .mockReturnValueOnce(mockDbChain([{ key: 'quality', value: existingQuality }]))
+        .mockReturnValueOnce(mockDbChain([]))
+        .mockReturnValueOnce(mockDbChain([]));
+      db.insert.mockReturnValue(mockDbChain());
+
+      await service.update({ quality: { maxDownloadSize: 10 } });
+
+      const chain = db.insert.mock.results[0].value as { values: { mock: { calls: Array<Array<{ value: unknown }>> } } };
+      const storedValue = chain.values.mock.calls[0][0].value as Record<string, unknown>;
+      expect(storedValue).toMatchObject({ grabFloor: 10, protocolPreference: 'none', minSeeders: 3, maxDownloadSize: 10 });
+    });
+
     it('works with a full category object (backward compat)', async () => {
       const full = { intervalMinutes: 120, enabled: false, blacklistTtlDays: 14, searchPriority: 'quality' as const };
       db.select

@@ -306,6 +306,34 @@ describe('retrySearch', () => {
     );
   });
 
+  it('filters oversized candidates via maxDownloadSize and logs quality gate filtering', async () => {
+    const GB = 1_073_741_824;
+    const oversizedResult = {
+      ...mockSearchResult,
+      size: 10 * GB,
+      downloadUrl: 'magnet:?xt=urn:btih:oversized',
+      infoHash: 'oversized123',
+    };
+    const settings = createMockSettingsService({
+      quality: { maxDownloadSize: 5 },
+    });
+    const deps = createDeps({
+      settingsService: settings,
+      indexerService: inject<IndexerService>({
+        searchAll: vi.fn().mockResolvedValue([oversizedResult]),
+      }),
+    });
+
+    const result = await retrySearch(1, deps);
+
+    expect(result.outcome).toBe('no_candidates');
+    expect(deps.downloadOrchestrator.grab).not.toHaveBeenCalled();
+    expect(deps.log.debug).toHaveBeenCalledWith(
+      { inputCount: 1, outputCount: 0 },
+      'Quality gate filtering applied',
+    );
+  });
+
   it('handles book with no active indexers (empty results)', async () => {
     const deps = createDeps({
       indexerService: inject<IndexerService>({
