@@ -230,7 +230,7 @@ describe('AddBookPopover', () => {
 
     // Helper to get the trigger button (not "Add to Library")
     function getTriggerButton() {
-      return screen.getByRole('button', { name: /^add$/i });
+      return screen.getByRole('button', { name: /^add book$/i });
     }
 
     it('renders popover panel into document.body when opened', async () => {
