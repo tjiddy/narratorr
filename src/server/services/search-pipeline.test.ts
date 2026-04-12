@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { buildSearchQuery, buildNarratorPriority, filterAndRankResults, filterBlacklistedResults, searchAndGrabForBook } from './search-pipeline.js';
+import { buildSearchQuery, buildNarratorPriority, filterAndRankResults, filterBlacklistedResults, searchAndGrabForBook, postProcessSearchResults } from './search-pipeline.js';
+import type { SettingsService } from './settings.service.js';
 import type { IndexerService } from './indexer.service.js';
 import type { DownloadOrchestrator } from './download-orchestrator.js';
 import type { BlacklistService } from './blacklist.service.js';
@@ -881,6 +882,24 @@ describe('#392 searchAndGrabForBook with broadcaster', () => {
       expect(broadcaster.emit).not.toHaveBeenCalledWith('search_grabbed', expect.anything());
     });
 
+    it('filters oversized results via maxDownloadSize in broadcaster path and logs quality gate', async () => {
+      const GB = 1_073_741_824;
+      vi.mocked(indexerService.searchAllStreaming).mockImplementation(
+        async (_q, _o, _c, callbacks) => {
+          callbacks.onComplete(10, 'MAM', 1, 300);
+          return [makeResult({ size: 10 * GB })];
+        },
+      );
+      const settings = { ...defaultQualitySettings, maxDownloadSize: 5 };
+      const result = await searchAndGrabForBook(book, indexerService, downloadService, settings, log, blacklistService, broadcaster);
+      expect(result).toEqual({ result: 'no_results' });
+      expect(downloadService.grab).not.toHaveBeenCalled();
+      expect(log.debug).toHaveBeenCalledWith(
+        { inputCount: 1, outputCount: 0 },
+        'Quality gate filtering applied',
+      );
+    });
+
     it('emits search_complete with outcome skipped on DuplicateDownloadError (not search_grabbed)', async () => {
       vi.mocked(downloadService.grab).mockRejectedValue(new DuplicateDownloadError('Active download exists', 'ACTIVE_DOWNLOAD_EXISTS'));
       await searchAndGrabForBook(book, indexerService, downloadService, defaultQualitySettings, log, blacklistService, broadcaster);
@@ -1446,5 +1465,60 @@ describe('buildNarratorPriority', () => {
   it('extracts names from narrator entities', () => {
     const result = buildNarratorPriority('accuracy', [{ name: 'Michael Kramer' }, { name: 'Kate Reading' }]);
     expect(result).toEqual({ bookNarrators: ['Michael Kramer', 'Kate Reading'] });
+  });
+});
+
+describe('postProcessSearchResults — maxDownloadSize', () => {
+  const GB = 1_073_741_824;
+
+  function createMockSettingsServiceInline(qualityOverrides?: Record<string, unknown>): SettingsService {
+    const qualityDefaults = { grabFloor: 0, minSeeders: 0, protocolPreference: 'none', maxDownloadSize: 5, rejectWords: '', requiredWords: '' };
+    const metadataDefaults = { audibleRegion: 'us', languages: [] };
+    return {
+      get: vi.fn().mockImplementation((cat: string) => {
+        if (cat === 'quality') return Promise.resolve({ ...qualityDefaults, ...qualityOverrides });
+        if (cat === 'metadata') return Promise.resolve(metadataDefaults);
+        return Promise.resolve({});
+      }),
+    } as unknown as SettingsService;
+  }
+
+  it('filters oversized results and logs quality gate filtering', async () => {
+    const log = createMockLogger();
+    const blacklist = {
+      getBlacklistedIdentifiers: vi.fn().mockResolvedValue({ blacklistedHashes: new Set(), blacklistedGuids: new Set() }),
+    } as unknown as BlacklistService;
+    const settings = createMockSettingsServiceInline({ maxDownloadSize: 5 });
+
+    const results = [
+      makeResult({ title: 'Small', size: 2 * GB }),
+      makeResult({ title: 'Huge', size: 10 * GB }),
+    ];
+
+    const output = await postProcessSearchResults(results, 3600, blacklist, settings, log);
+
+    expect(output.results).toHaveLength(1);
+    expect(output.results[0].title).toBe('Small');
+    expect(log.debug).toHaveBeenCalledWith(
+      { inputCount: 2, outputCount: 1 },
+      'Quality gate filtering applied',
+    );
+  });
+
+  it('does not log quality gate filtering when no results are filtered', async () => {
+    const log = createMockLogger();
+    const blacklist = {
+      getBlacklistedIdentifiers: vi.fn().mockResolvedValue({ blacklistedHashes: new Set(), blacklistedGuids: new Set() }),
+    } as unknown as BlacklistService;
+    const settings = createMockSettingsServiceInline({ maxDownloadSize: 5 });
+
+    const results = [makeResult({ title: 'Small', size: 2 * GB })];
+
+    await postProcessSearchResults(results, 3600, blacklist, settings, log);
+
+    expect(log.debug).not.toHaveBeenCalledWith(
+      expect.objectContaining({ inputCount: expect.any(Number), outputCount: expect.any(Number) }),
+      'Quality gate filtering applied',
+    );
   });
 });
