@@ -6,7 +6,7 @@ import type { EventBroadcasterService } from './event-broadcaster.service.js';
 import type { BlacklistService } from './blacklist.service.js';
 import type { DownloadClientService } from './download-client.service.js';
 import type { RemotePathMappingService } from './remote-path-mapping.service.js';
-import type { SSEEventType, SSEEventPayloads } from '../../shared/schemas/sse-events.js';
+import { safeEmit } from '../utils/safe-emit.js';
 import type { DownloadStatus } from '../../shared/schemas/activity.js';
 import type { BookStatus } from '../../shared/schemas/book.js';
 import type { DownloadRow } from './types.js';
@@ -67,7 +67,7 @@ export class QualityGateOrchestrator {
 
         // SSE: download_status_change (completed → checking)
         if (row.book) {
-          this.emitSSE('download_status_change', { download_id: row.download.id, book_id: row.book.id, old_status: 'completed', new_status: 'checking' });
+          safeEmit(this.broadcaster, 'download_status_change', { download_id: row.download.id, book_id: row.book.id, old_status: 'completed', new_status: 'checking' }, this.log);
         }
 
         // Resolve save path
@@ -122,11 +122,11 @@ export class QualityGateOrchestrator {
     // Promote book status to 'importing' (taking over from removed handleBookStatusOnCompletion)
     if (row.book) {
       await this.db.update(books).set({ status: 'importing' }).where(eq(books.id, row.book.id));
-      this.emitSSE('book_status_change', { book_id: row.book.id, old_status: row.book.status as BookStatus, new_status: 'importing' as BookStatus });
+      safeEmit(this.broadcaster, 'book_status_change', { book_id: row.book.id, old_status: row.book.status as BookStatus, new_status: 'importing' as BookStatus }, this.log);
       (row.book as { status: string }).status = 'importing'; // Update in-memory so revert guards work
     }
     if (row.book) {
-      this.emitSSE('download_status_change', { download_id: row.download.id, book_id: row.book.id, old_status: 'completed', new_status: 'checking' });
+      safeEmit(this.broadcaster, 'download_status_change', { download_id: row.download.id, book_id: row.book.id, old_status: 'completed', new_status: 'checking' }, this.log);
     }
 
     try {
@@ -157,7 +157,7 @@ export class QualityGateOrchestrator {
       // Revert book from importing → downloading if it was promoted before the error
       if (row.book && row.book.status === 'importing') {
         await this.db.update(books).set({ status: 'downloading' }).where(eq(books.id, row.book.id));
-        this.emitSSE('book_status_change', { book_id: row.book.id, old_status: 'importing' as BookStatus, new_status: 'downloading' as BookStatus });
+        safeEmit(this.broadcaster, 'book_status_change', { book_id: row.book.id, old_status: 'importing' as BookStatus, new_status: 'downloading' as BookStatus }, this.log);
       }
       const probeError = getErrorMessage(error);
       this.recordDecision(row.download, row.book, { ...NULL_REASON, probeFailure: true, probeError, holdReasons: ['unhandled_error'] });
@@ -294,10 +294,10 @@ export class QualityGateOrchestrator {
 
     // Side effects — fire-and-forget
     if (result.book) {
-      this.emitSSE('download_status_change', {
+      safeEmit(this.broadcaster, 'download_status_change', {
         download_id: downloadId, book_id: result.book.id,
         old_status: 'pending_review', new_status: 'importing',
-      });
+      }, this.log);
     }
 
     return { id: result.id, status: result.status };
@@ -328,12 +328,12 @@ export class QualityGateOrchestrator {
 
     // SSE: download_status_change (checking → pending_review) + review_needed
     if (book) {
-      this.emitSSE('download_status_change', { download_id: download.id, book_id: book.id, old_status: 'checking', new_status: 'pending_review' });
-      this.emitSSE('review_needed', { download_id: download.id, book_id: book.id, book_title: book.title });
+      safeEmit(this.broadcaster, 'download_status_change', { download_id: download.id, book_id: book.id, old_status: 'checking', new_status: 'pending_review' }, this.log);
+      safeEmit(this.broadcaster, 'review_needed', { download_id: download.id, book_id: book.id, book_title: book.title }, this.log);
       // Revert book from importing → downloading (monitor pre-promoted on completion)
       if (book.status === 'importing') {
         await this.db.update(books).set({ status: 'downloading' }).where(eq(books.id, book.id));
-        this.emitSSE('book_status_change', { book_id: book.id, old_status: 'importing' as BookStatus, new_status: 'downloading' as BookStatus });
+        safeEmit(this.broadcaster, 'book_status_change', { book_id: book.id, old_status: 'importing' as BookStatus, new_status: 'downloading' as BookStatus }, this.log);
       }
     }
 
@@ -353,18 +353,18 @@ export class QualityGateOrchestrator {
   ): Promise<void> {
     if (action === 'held') {
       if (book) {
-        this.emitSSE('download_status_change', { download_id: download.id, book_id: book.id, old_status: statusTransition.from as DownloadStatus, new_status: statusTransition.to as DownloadStatus });
-        this.emitSSE('review_needed', { download_id: download.id, book_id: book.id, book_title: book.title });
+        safeEmit(this.broadcaster, 'download_status_change', { download_id: download.id, book_id: book.id, old_status: statusTransition.from as DownloadStatus, new_status: statusTransition.to as DownloadStatus }, this.log);
+        safeEmit(this.broadcaster, 'review_needed', { download_id: download.id, book_id: book.id, book_title: book.title }, this.log);
         // Revert book from importing → downloading (monitor pre-promoted on completion)
         if (book.status === 'importing') {
           await this.db.update(books).set({ status: 'downloading' }).where(eq(books.id, book.id));
-          this.emitSSE('book_status_change', { book_id: book.id, old_status: 'importing' as BookStatus, new_status: 'downloading' as BookStatus });
+          safeEmit(this.broadcaster, 'book_status_change', { book_id: book.id, old_status: 'importing' as BookStatus, new_status: 'downloading' as BookStatus }, this.log);
         }
       }
       this.recordDecision(download, book, reason);
     } else if (action === 'imported') {
       if (book) {
-        this.emitSSE('download_status_change', { download_id: download.id, book_id: book.id, old_status: statusTransition.from as DownloadStatus, new_status: statusTransition.to as DownloadStatus });
+        safeEmit(this.broadcaster, 'download_status_change', { download_id: download.id, book_id: book.id, old_status: statusTransition.from as DownloadStatus, new_status: statusTransition.to as DownloadStatus }, this.log);
       }
     } else if (action === 'rejected') {
       await this.performRejectionCleanup(download, book, statusTransition.from as DownloadStatus, true);
@@ -396,8 +396,8 @@ export class QualityGateOrchestrator {
     // Recover book status — errors propagate to caller (manual reject → 500, auto-reject → outer catch → pending_review)
     if (book) {
       const revertStatus = await revertBookStatus(this.db, book);
-      this.emitSSE('download_status_change', { download_id: download.id, book_id: book.id, old_status: oldStatus, new_status: 'failed' });
-      this.emitSSE('book_status_change', { book_id: book.id, old_status: book.status as BookStatus, new_status: revertStatus as BookStatus });
+      safeEmit(this.broadcaster, 'download_status_change', { download_id: download.id, book_id: book.id, old_status: oldStatus, new_status: 'failed' }, this.log);
+      safeEmit(this.broadcaster, 'book_status_change', { book_id: book.id, old_status: book.status as BookStatus, new_status: revertStatus as BookStatus }, this.log);
     }
   }
 
@@ -493,8 +493,4 @@ export class QualityGateOrchestrator {
     });
   }
 
-  /** Fire-and-forget SSE emit — swallows errors to avoid breaking the caller. */
-  private emitSSE<T extends SSEEventType>(eventType: T, payload: SSEEventPayloads[T]): void {
-    try { this.broadcaster?.emit(eventType, payload); } catch (error: unknown) { this.log.debug(error, 'SSE emit failed'); }
-  }
 }

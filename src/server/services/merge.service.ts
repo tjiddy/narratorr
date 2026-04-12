@@ -15,7 +15,8 @@ import { AUDIO_EXTENSIONS } from '../../core/utils/audio-constants.js';
 import { resolveFfprobePathFromSettings } from '../../core/utils/ffprobe-path.js';
 import { toSourceBitrateKbps, logBitrateCapping } from '../utils/audio-bitrate.js';
 import { Semaphore } from '../utils/semaphore.js';
-import type { SSEEventType, SSEEventPayloads, MergePhase, MergeFailedReason } from '../../shared/schemas/sse-events.js';
+import type { MergePhase, MergeFailedReason } from '../../shared/schemas/sse-events.js';
+import { safeEmit } from '../utils/safe-emit.js';
 import { createStderrDeduplicator } from '../utils/stderr-deduplicator.js';
 import { getErrorMessage } from '../utils/error-message.js';
 
@@ -61,39 +62,34 @@ export class MergeService {
     private eventBroadcaster?: EventBroadcasterService,
   ) {}
 
-  private safeEmit<T extends SSEEventType>(event: T, payload: SSEEventPayloads[T]): void {
-    if (!this.eventBroadcaster) return;
-    try { this.eventBroadcaster.emit(event, payload); } catch (e: unknown) { this.log.debug(e, `SSE emit failed for ${event}`); }
-  }
-
   private emitMergeStarted(bookId: number, bookTitle: string): void {
     this.eventHistory?.create({ bookId, bookTitle, eventType: 'merge_started', source: 'manual' })
       .catch((err) => this.log.warn(err, 'Failed to record merge_started event'));
-    this.safeEmit('merge_started', { book_id: bookId, book_title: bookTitle });
+    safeEmit(this.eventBroadcaster, 'merge_started', { book_id: bookId, book_title: bookTitle }, this.log);
   }
 
   private emitMergeFailed(bookId: number, bookTitle: string, error: string, reason: MergeFailedReason = 'error'): void {
     this.eventHistory?.create({ bookId, bookTitle, eventType: 'merge_failed', source: 'manual', reason: { error } })
       .catch((err) => this.log.warn(err, 'Failed to record merge_failed event'));
-    this.safeEmit('merge_failed', { book_id: bookId, book_title: bookTitle, error, reason });
+    safeEmit(this.eventBroadcaster, 'merge_failed', { book_id: bookId, book_title: bookTitle, error, reason }, this.log);
   }
 
   private emitMergeProgress(bookId: number, bookTitle: string, phase: MergePhase, percentage?: number): void {
     this.currentPhase.set(bookId, phase);
-    this.safeEmit('merge_progress', { book_id: bookId, book_title: bookTitle, phase, ...(percentage !== undefined && { percentage }) });
+    safeEmit(this.eventBroadcaster, 'merge_progress', { book_id: bookId, book_title: bookTitle, phase, ...(percentage !== undefined && { percentage }) }, this.log);
   }
 
   private emitMergeComplete(bookId: number, bookTitle: string, message: string, enrichmentWarning?: string): void {
     this.eventHistory?.create({ bookId, bookTitle, eventType: 'merged', source: 'manual' })
       .catch((err) => this.log.warn(err, 'Failed to record merged event'));
-    this.safeEmit('merge_complete', {
+    safeEmit(this.eventBroadcaster, 'merge_complete', {
       book_id: bookId, book_title: bookTitle, success: true, message,
       ...(enrichmentWarning !== undefined && { enrichmentWarning }),
-    });
+    }, this.log);
   }
 
   private emitQueueEvent(event: 'merge_queued' | 'merge_queue_updated', bookId: number, bookTitle: string, position: number): void {
-    this.safeEmit(event, { book_id: bookId, book_title: bookTitle, position });
+    safeEmit(this.eventBroadcaster, event, { book_id: bookId, book_title: bookTitle, position }, this.log);
   }
 
   private async emitQueuePositionUpdates(): Promise<void> {

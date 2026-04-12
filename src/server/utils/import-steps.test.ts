@@ -336,6 +336,20 @@ describe('emitImportSuccess', () => {
     emitImportSuccess({ broadcaster: broadcaster as never, downloadId: 1, bookId: 2, bookTitle: 'Book', log });
     expect(log.debug).toHaveBeenCalled();
   });
+
+  it('continues emitting remaining events when the first emit throws', () => {
+    const log = createMockLog();
+    const broadcaster = {
+      emit: vi.fn()
+        .mockImplementationOnce(() => { throw new Error('first fails'); })
+        .mockImplementationOnce(() => {}) // book_status_change succeeds
+        .mockImplementationOnce(() => {}), // import_complete succeeds
+    };
+    emitImportSuccess({ broadcaster: broadcaster as never, downloadId: 1, bookId: 2, bookTitle: 'Book', log });
+    expect(broadcaster.emit).toHaveBeenCalledTimes(3);
+    expect(broadcaster.emit).toHaveBeenCalledWith('book_status_change', expect.objectContaining({ book_id: 2 }));
+    expect(broadcaster.emit).toHaveBeenCalledWith('import_complete', expect.objectContaining({ download_id: 1 }));
+  });
 });
 
 // ── notifyImportComplete ────────────────────────────────────────────────
@@ -570,6 +584,18 @@ describe('emitImportFailure', () => {
     const log = createMockLog();
     emitImportFailure({ broadcaster: undefined, downloadId: 1, bookId: 2, revertedBookStatus: 'wanted', log });
     expect(log.debug).not.toHaveBeenCalled();
+  });
+
+  it('continues emitting book_status_change when download_status_change throws', () => {
+    const log = createMockLog();
+    const broadcaster = {
+      emit: vi.fn()
+        .mockImplementationOnce(() => { throw new Error('first fails'); })
+        .mockImplementationOnce(() => {}), // book_status_change succeeds
+    };
+    emitImportFailure({ broadcaster: broadcaster as never, downloadId: 1, bookId: 2, revertedBookStatus: 'wanted', log });
+    expect(broadcaster.emit).toHaveBeenCalledTimes(2);
+    expect(broadcaster.emit).toHaveBeenCalledWith('book_status_change', expect.objectContaining({ new_status: 'wanted' }));
   });
 });
 

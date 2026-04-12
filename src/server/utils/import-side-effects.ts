@@ -6,6 +6,7 @@ import type { EventHistoryService } from '../services/event-history.service.js';
 import type { EventBroadcasterService } from '../services/event-broadcaster.service.js';
 import { fireAndForget } from './fire-and-forget.js';
 import { getErrorMessage } from './error-message.js';
+import { safeEmit } from './safe-emit.js';
 
 // ── emitDownloadImporting ────────────────────────────────────────────────
 
@@ -20,10 +21,7 @@ export interface EmitDownloadImportingArgs {
 /** Emit SSE download_status_change for the importing transition. */
 export function emitDownloadImporting(args: EmitDownloadImportingArgs): void {
   const { broadcaster, downloadId, bookId, downloadStatus, log } = args;
-  if (!broadcaster) return;
-  try {
-    broadcaster.emit('download_status_change', { download_id: downloadId, book_id: bookId, old_status: downloadStatus as DownloadStatus, new_status: 'importing' as DownloadStatus });
-  } catch (error: unknown) { log.debug(error, 'SSE emit failed'); }
+  safeEmit(broadcaster, 'download_status_change', { download_id: downloadId, book_id: bookId, old_status: downloadStatus as DownloadStatus, new_status: 'importing' as DownloadStatus }, log);
 }
 
 // ── emitBookImporting ───────────────────────────────────────────────────
@@ -38,11 +36,8 @@ export interface EmitBookImportingArgs {
 /** Emit SSE book_status_change for the importing transition. */
 export function emitBookImporting(args: EmitBookImportingArgs): void {
   const { broadcaster, bookId, bookStatus, log } = args;
-  if (!broadcaster) return;
   if (bookStatus === 'importing') return;
-  try {
-    broadcaster.emit('book_status_change', { book_id: bookId, old_status: bookStatus as BookStatus, new_status: 'importing' as BookStatus });
-  } catch (error: unknown) { log.debug(error, 'SSE emit failed'); }
+  safeEmit(broadcaster, 'book_status_change', { book_id: bookId, old_status: bookStatus as BookStatus, new_status: 'importing' as BookStatus }, log);
 }
 
 // ── emitImportSuccess ───────────────────────────────────────────────────
@@ -55,17 +50,12 @@ export interface EmitImportSuccessArgs {
   log: FastifyBaseLogger;
 }
 
-/** Emit SSE events for successful import. */
+/** Emit SSE events for successful import. Each emit is independent so a failure in one doesn't skip the rest. */
 export function emitImportSuccess(args: EmitImportSuccessArgs): void {
   const { broadcaster, downloadId, bookId, bookTitle, log } = args;
-  if (!broadcaster) return;
-  try {
-    broadcaster.emit('download_status_change', { download_id: downloadId, book_id: bookId, old_status: 'importing' as DownloadStatus, new_status: 'imported' as DownloadStatus });
-    broadcaster.emit('book_status_change', { book_id: bookId, old_status: 'importing' as BookStatus, new_status: 'imported' as BookStatus });
-    broadcaster.emit('import_complete', { download_id: downloadId, book_id: bookId, book_title: bookTitle });
-  } catch (error: unknown) {
-    log.debug(error, 'SSE emit failed');
-  }
+  safeEmit(broadcaster, 'download_status_change', { download_id: downloadId, book_id: bookId, old_status: 'importing' as DownloadStatus, new_status: 'imported' as DownloadStatus }, log);
+  safeEmit(broadcaster, 'book_status_change', { book_id: bookId, old_status: 'importing' as BookStatus, new_status: 'imported' as BookStatus }, log);
+  safeEmit(broadcaster, 'import_complete', { download_id: downloadId, book_id: bookId, book_title: bookTitle }, log);
 }
 
 // ── notifyImportComplete ────────────────────────────────────────────────
@@ -135,14 +125,11 @@ export interface EmitImportFailureArgs {
   log: FastifyBaseLogger;
 }
 
-/** Emit SSE events for a failed import. Fire-and-forget. */
+/** Emit SSE events for a failed import. Each emit is independent so a failure in one doesn't skip the rest. */
 export function emitImportFailure(args: EmitImportFailureArgs): void {
   const { broadcaster, downloadId, bookId, revertedBookStatus, log } = args;
-  if (!broadcaster) return;
-  try {
-    broadcaster.emit('download_status_change', { download_id: downloadId, book_id: bookId, old_status: 'importing' as DownloadStatus, new_status: 'failed' as DownloadStatus });
-    broadcaster.emit('book_status_change', { book_id: bookId, old_status: 'importing' as BookStatus, new_status: revertedBookStatus as BookStatus });
-  } catch (error: unknown) { log.debug(error, 'SSE emit failed'); }
+  safeEmit(broadcaster, 'download_status_change', { download_id: downloadId, book_id: bookId, old_status: 'importing' as DownloadStatus, new_status: 'failed' as DownloadStatus }, log);
+  safeEmit(broadcaster, 'book_status_change', { book_id: bookId, old_status: 'importing' as BookStatus, new_status: revertedBookStatus as BookStatus }, log);
 }
 
 export interface NotifyImportFailureArgs {

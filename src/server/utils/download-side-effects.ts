@@ -5,6 +5,7 @@ import type { NotifierService } from '../services/notifier.service.js';
 import type { EventHistoryService, CreateEventInput } from '../services/event-history.service.js';
 import type { EventBroadcasterService } from '../services/event-broadcaster.service.js';
 import { fireAndForget } from './fire-and-forget.js';
+import { safeEmit } from './safe-emit.js';
 
 // ── emitGrabStarted ─────────────────────────────────────────────────────
 
@@ -20,12 +21,9 @@ export interface EmitGrabStartedArgs {
 /** Emit grab_started SSE event. Fire-and-forget. */
 export function emitGrabStarted(args: EmitGrabStartedArgs): void {
   const { broadcaster, downloadId, bookId, bookTitle, releaseTitle, log } = args;
-  if (!broadcaster) return;
-  try {
-    broadcaster.emit('grab_started', {
-      download_id: downloadId, book_id: bookId, book_title: bookTitle, release_title: releaseTitle,
-    });
-  } catch (error: unknown) { log.debug(error, 'SSE emit failed'); }
+  safeEmit(broadcaster, 'grab_started', {
+    download_id: downloadId, book_id: bookId, book_title: bookTitle, release_title: releaseTitle,
+  }, log);
 }
 
 // ── emitBookStatusChangeOnGrab ──────────────────────────────────────────
@@ -40,13 +38,10 @@ export interface EmitBookStatusChangeOnGrabArgs {
 /** Emit book_status_change SSE for a grab (wanted → downloading or missing). */
 export function emitBookStatusChangeOnGrab(args: EmitBookStatusChangeOnGrabArgs): void {
   const { broadcaster, bookId, isHandoff, log } = args;
-  if (!broadcaster) return;
-  try {
-    const newStatus = isHandoff ? 'missing' as const : 'downloading' as const;
-    broadcaster.emit('book_status_change', {
-      book_id: bookId, old_status: 'wanted' as BookStatus, new_status: newStatus as BookStatus,
-    });
-  } catch (error: unknown) { log.debug(error, 'SSE emit failed'); }
+  const newStatus = isHandoff ? 'missing' as const : 'downloading' as const;
+  safeEmit(broadcaster, 'book_status_change', {
+    book_id: bookId, old_status: 'wanted' as BookStatus, new_status: newStatus as BookStatus,
+  }, log);
 }
 
 // ── emitDownloadProgress ────────────────────────────────────────────────
@@ -62,12 +57,9 @@ export interface EmitDownloadProgressArgs {
 /** Emit download_progress SSE. Fire-and-forget. */
 export function emitDownloadProgress(args: EmitDownloadProgressArgs): void {
   const { broadcaster, downloadId, bookId, progress, log } = args;
-  if (!broadcaster) return;
-  try {
-    broadcaster.emit('download_progress', {
-      download_id: downloadId, book_id: bookId, percentage: progress, speed: null, eta: null,
-    });
-  } catch (error: unknown) { log.debug(error, 'SSE emit failed'); }
+  safeEmit(broadcaster, 'download_progress', {
+    download_id: downloadId, book_id: bookId, percentage: progress, speed: null, eta: null,
+  }, log);
 }
 
 // ── emitDownloadStatusChange ────────────────────────────────────────────
@@ -84,12 +76,9 @@ export interface EmitDownloadStatusChangeArgs {
 /** Emit download_status_change SSE. Fire-and-forget. */
 export function emitDownloadStatusChange(args: EmitDownloadStatusChangeArgs): void {
   const { broadcaster, downloadId, bookId, oldStatus, newStatus, log } = args;
-  if (!broadcaster) return;
-  try {
-    broadcaster.emit('download_status_change', {
-      download_id: downloadId, book_id: bookId, old_status: oldStatus as DownloadStatus, new_status: newStatus as DownloadStatus,
-    });
-  } catch (error: unknown) { log.debug(error, 'SSE emit failed'); }
+  safeEmit(broadcaster, 'download_status_change', {
+    download_id: downloadId, book_id: bookId, old_status: oldStatus as DownloadStatus, new_status: newStatus as DownloadStatus,
+  }, log);
 }
 
 // ── emitBookStatusChange ────────────────────────────────────────────────
@@ -105,12 +94,9 @@ export interface EmitBookStatusChangeArgs {
 /** Emit book_status_change SSE. Fire-and-forget. */
 export function emitBookStatusChange(args: EmitBookStatusChangeArgs): void {
   const { broadcaster, bookId, oldStatus, newStatus, log } = args;
-  if (!broadcaster) return;
-  try {
-    broadcaster.emit('book_status_change', {
-      book_id: bookId, old_status: oldStatus as BookStatus, new_status: newStatus as BookStatus,
-    });
-  } catch (error: unknown) { log.debug(error, 'SSE emit failed'); }
+  safeEmit(broadcaster, 'book_status_change', {
+    book_id: bookId, old_status: oldStatus as BookStatus, new_status: newStatus as BookStatus,
+  }, log);
 }
 
 // ── notifyGrab ──────────────────────────────────────────────────────────

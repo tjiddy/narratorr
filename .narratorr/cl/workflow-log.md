@@ -1,5 +1,34 @@
 # Workflow Log
 
+## #483 DRY: unify SSE safe-emit into shared utility — 2026-04-12
+**Skill path:** /elaborate → /respond-to-spec-review → /implement → /claim → /plan → /handoff
+**Outcome:** success — PR #517
+
+### Metrics
+- Files changed: 8 | Tests added/modified: 4 (safe-emit.test.ts new, import-steps.test.ts +2, monitor.test.ts +1/updated 1)
+- Quality gate runs: 2 (pass on attempt 2 — first failed on test payload type mismatches)
+- Fix iterations: 1 (SSEEventPayloads strict types required exact payload shapes in test fixtures)
+- Context compactions: 0
+
+### Workflow experience
+- What went smoothly: Clean extraction pattern — search-pipeline.ts had the exact reference implementation. All existing test suites passed after migration with minimal changes.
+- Friction / issues encountered: Test payload types are strictly enforced by the SSEEventPayloads mapped type. Used `progress` instead of `percentage` and missed required fields, causing typecheck failure. Always read the Zod schema before writing test payloads.
+
+### Token efficiency
+- Highest-token actions: Explore subagent reading all 7 call sites and their test files
+- Avoidable waste: Could have read SSE payload schemas before writing test fixtures to avoid the typecheck fix iteration
+- Suggestions: For future extractions, read the type definitions first, then write tests
+
+### Infrastructure gaps
+- Repeated workarounds: None
+- Missing tooling / config: Coverage check script flags `import-side-effects.ts` as missing tests because its tests live in `import-steps.test.ts` (re-export barrel pattern)
+- Unresolved debt: quality-gate-orchestrator.ts (501 lines) and search-pipeline.ts (~490 lines after extraction) still exceed max-lines — already tracked in debt.md
+
+### Wish I'd Known
+1. `SSEEventPayloads` mapped type enforces exact shapes per event — read the Zod schema before writing test fixtures
+2. `import-side-effects.ts` functions are tested via `import-steps.test.ts` re-exports, not a co-located test file — coverage check flags a false positive
+3. sed replacements on multi-line call sites don't work — use targeted edits for multi-line patterns
+
 ## #513 DRY: extract shared utils and complete getErrorMessage adoption — 2026-04-12
 **Skill path:** /elaborate → /respond-to-spec-review (×2) → /implement → /claim → /plan → /handoff
 **Outcome:** success — PR #516

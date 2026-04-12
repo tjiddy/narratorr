@@ -945,7 +945,28 @@ describe('monitor job', () => {
         monitorDownloads(inject<Db>(db), inject<DownloadClientService>(downloadClientService), inject<NotifierService>(notifierService), inject<FastifyBaseLogger>(log), undefined, inject<EventBroadcasterService>(broadcaster)),
       ).resolves.not.toThrow();
 
-      expect(log.debug).toHaveBeenCalledWith(sseError, 'SSE emit failed');
+      expect(log.debug).toHaveBeenCalledWith(sseError, 'SSE emit failed for download_progress');
+    });
+
+    it('still emits download_status_change when download_progress throws', async () => {
+      const sseError = new Error('progress broken');
+      const broadcaster = {
+        emit: vi.fn()
+          .mockImplementationOnce(() => { throw sseError; }) // download_progress fails
+          .mockImplementationOnce(() => {}), // download_status_change succeeds
+      };
+      db.select.mockReturnValueOnce(mockDbChain([
+        { id: 1, externalId: 'ext-1', downloadClientId: 10, status: 'downloading', completedAt: null, bookId: 1 },
+      ]));
+      adapter.getDownload.mockResolvedValueOnce({ progress: 50, status: 'completed' });
+      db.update.mockReturnValue(mockDbChain());
+
+      await monitorDownloads(inject<Db>(db), inject<DownloadClientService>(downloadClientService), inject<NotifierService>(notifierService), inject<FastifyBaseLogger>(log), undefined, inject<EventBroadcasterService>(broadcaster));
+
+      expect(broadcaster.emit).toHaveBeenCalledTimes(2);
+      expect(broadcaster.emit).toHaveBeenCalledWith('download_status_change', expect.objectContaining({
+        download_id: 1, old_status: 'downloading', new_status: 'completed',
+      }));
     });
   });
 
