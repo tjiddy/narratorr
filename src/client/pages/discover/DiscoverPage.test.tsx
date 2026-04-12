@@ -595,11 +595,17 @@ describe('DiscoverPage', () => {
       await userEvent.click(addButtons[0]);
       await userEvent.click(screen.getByRole('button', { name: /add to library/i }));
 
-      // Card should still be visible with checkmark
+      // Card should still be visible with checkmark state
       await waitFor(() => {
         expect(screen.getByText('Added Book')).toBeInTheDocument();
       });
       expect(screen.getByText('Other Book')).toBeInTheDocument();
+
+      // The added card shows the "In library" checkmark and no longer has an Add button
+      expect(screen.getByLabelText('In library')).toBeInTheDocument();
+      // Other Book should still have its Add button
+      const remainingAddButtons = screen.getAllByRole('button', { name: /^add$/i });
+      expect(remainingAddButtons).toHaveLength(1); // only Other Book's Add button
 
       // Suggestions query should NOT have been re-fetched after add
       expect(mockApi.getDiscoverSuggestions.mock.calls.length).toBe(callsBefore);
