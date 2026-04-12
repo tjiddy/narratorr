@@ -179,6 +179,7 @@ export async function runUpgradeSearchJob(
 
       // Apply quality filtering and ranking
       const narratorPriority = buildNarratorPriority(searchSettings.searchPriority, book.narrators);
+      const searchInputCount = rawResults.length;
       const { results } = filterAndRankResults(
         rawResults,
         existingDuration,
@@ -189,7 +190,11 @@ export async function runUpgradeSearchJob(
         qualitySettings.requiredWords,
         metadataSettings.languages,
         narratorPriority,
+        qualitySettings.maxDownloadSize,
       );
+      if (results.length < searchInputCount) {
+        log.debug({ inputCount: searchInputCount, outputCount: results.length }, 'Quality gate filtering applied');
+      }
 
       if (results.length === 0) continue;
 

@@ -305,6 +305,7 @@ export async function postProcessSearchResults(
   // Quality filtering and ranking
   const qualitySettings = await settingsService.get('quality');
   const metadataSettings = await settingsService.get('metadata');
+  const inputCount = filteredResults.length;
   const ranked = filterAndRankResults(
     filteredResults,
     bookDuration,
@@ -314,7 +315,12 @@ export async function postProcessSearchResults(
     qualitySettings.rejectWords,
     qualitySettings.requiredWords,
     metadataSettings.languages,
+    undefined,
+    qualitySettings.maxDownloadSize,
   );
+  if (ranked.results.length < inputCount) {
+    logger.debug({ inputCount, outputCount: ranked.results.length }, 'Quality gate filtering applied');
+  }
 
   return {
     results: ranked.results,
@@ -365,7 +371,7 @@ async function searchWithBroadcaster(
   book: { id: number; title: string; duration?: number | null; authors?: Array<{ name: string }> | null; narrators?: Array<{ name: string }> | null },
   indexerService: IndexerService,
   downloadOrchestrator: DownloadOrchestrator,
-  qualitySettings: { grabFloor: number; minSeeders: number; protocolPreference: string; rejectWords?: string; requiredWords?: string; languages?: readonly string[]; narratorPriority?: NarratorPriority },
+  qualitySettings: { grabFloor: number; minSeeders: number; protocolPreference: string; rejectWords?: string; requiredWords?: string; languages?: readonly string[]; narratorPriority?: NarratorPriority; maxDownloadSize?: number },
   log: FastifyBaseLogger,
   blacklistService: BlacklistService,
   broadcaster: EventBroadcasterService,
@@ -419,12 +425,16 @@ async function searchWithBroadcaster(
     return { result: 'no_results' };
   }
 
+  const broadcasterInputCount = afterBlacklist.length;
   const { results } = filterAndRankResults(
     afterBlacklist, book.duration ?? undefined,
     qualitySettings.grabFloor, qualitySettings.minSeeders, qualitySettings.protocolPreference,
     qualitySettings.rejectWords, qualitySettings.requiredWords, qualitySettings.languages,
-    qualitySettings.narratorPriority,
+    qualitySettings.narratorPriority, qualitySettings.maxDownloadSize,
   );
+  if (results.length < broadcasterInputCount) {
+    log.debug({ inputCount: broadcasterInputCount, outputCount: results.length }, 'Quality gate filtering applied');
+  }
 
   const best = results.find((r) => r.downloadUrl);
   if (!best) {
@@ -455,7 +465,7 @@ export async function searchAndGrabForBook(
   book: { id: number; title: string; duration?: number | null; authors?: Array<{ name: string }> | null; narrators?: Array<{ name: string }> | null },
   indexerService: IndexerService,
   downloadOrchestrator: DownloadOrchestrator,
-  qualitySettings: { grabFloor: number; minSeeders: number; protocolPreference: string; rejectWords?: string; requiredWords?: string; languages?: readonly string[]; narratorPriority?: NarratorPriority },
+  qualitySettings: { grabFloor: number; minSeeders: number; protocolPreference: string; rejectWords?: string; requiredWords?: string; languages?: readonly string[]; narratorPriority?: NarratorPriority; maxDownloadSize?: number },
   log: FastifyBaseLogger,
   blacklistService: BlacklistService,
   broadcaster?: EventBroadcasterService,
@@ -483,6 +493,7 @@ export async function searchAndGrabForBook(
     return { result: 'no_results' };
   }
 
+  const grabInputCount = afterBlacklist.length;
   const { results } = filterAndRankResults(
     afterBlacklist,
     book.duration ?? undefined,
@@ -493,7 +504,11 @@ export async function searchAndGrabForBook(
     qualitySettings.requiredWords,
     qualitySettings.languages,
     qualitySettings.narratorPriority,
+    qualitySettings.maxDownloadSize,
   );
+  if (results.length < grabInputCount) {
+    log.debug({ inputCount: grabInputCount, outputCount: results.length }, 'Quality gate filtering applied');
+  }
 
   const best = results.find((r) => r.downloadUrl);
   if (!best) {
