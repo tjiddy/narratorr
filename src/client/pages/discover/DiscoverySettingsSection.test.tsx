@@ -383,4 +383,36 @@ describe('DiscoverySettingsSection', () => {
     });
     expect(payload.discovery).not.toHaveProperty('weightMultipliers');
   });
+
+  it('#514 shows destructive border on invalid numeric inputs and normal border on valid', async () => {
+    const user = userEvent.setup();
+    renderWithProviders(<DiscoverySettingsSection />);
+
+    await waitFor(() => {
+      expect(screen.getByLabelText(/refresh interval/i)).toBeInTheDocument();
+    });
+
+    // Enable discovery to show all fields
+    await user.click(screen.getByLabelText(/enable discovery/i));
+
+    const intervalInput = screen.getByLabelText(/refresh interval/i);
+    const maxPerAuthor = screen.getByLabelText(/max suggestions per author/i);
+    const expiryInput = screen.getByLabelText(/suggestion expiry/i);
+    const snoozeInput = screen.getByLabelText(/default snooze duration/i);
+
+    // All inputs should start with normal border (no destructive)
+    for (const input of [intervalInput, maxPerAuthor, expiryInput, snoozeInput]) {
+      expect(input.className).toContain('border-border');
+      expect(input.className).not.toContain('border-destructive');
+    }
+
+    // Clear interval to trigger validation error and submit
+    await user.clear(intervalInput);
+    await user.click(screen.getByRole('button', { name: /save/i }));
+
+    // Wait for validation — interval should show destructive border
+    await waitFor(() => {
+      expect(intervalInput.className).toContain('border-destructive');
+    });
+  });
 });
