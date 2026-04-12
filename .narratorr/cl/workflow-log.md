@@ -1,5 +1,34 @@
 # Workflow Log
 
+## #502 Extract NZB name for language detection and reject word filtering — 2026-04-12
+**Skill path:** /implement → /claim → /plan → /handoff
+**Outcome:** success — PR #510
+
+### Metrics
+- Files changed: 14 | Tests added/modified: 74+
+- Quality gate runs: 2 (pass on attempt 1 both times)
+- Fix iterations: 1 (operator precedence `??` vs `||` mixing)
+- Context compactions: 0
+
+### Workflow experience
+- What went smoothly: Clean 5-module TDD cycle. Spec was well-elaborated after 2 rounds of spec review — caller surface gap caught early.
+- Friction / issues encountered: `||` and `??` cannot be mixed without parens — esbuild catches this at build time not typecheck. The `beforeEach` import was missing from retry-search.test.ts (existing file didn't need it before).
+
+### Token efficiency
+- Highest-token actions: Explore subagent for plan (reading all 7 target files + test files)
+- Avoidable waste: None significant — plan phase leveraged prior elaborate/respond-to-spec-review context
+- Suggestions: For issues with many wiring points (5+ callers), batch the enrichment wiring into a single commit rather than per-caller
+
+### Infrastructure gaps
+- Repeated workarounds: `search-pipeline.ts` line count (506/400) — every pipeline feature hits this
+- Missing tooling / config: No shared `getSourceTitle()` helper — same `rawTitle || title` pattern duplicated 5× across files
+- Unresolved debt: `filterAndRankResults` 10-param signature (debt #52), `search-pipeline.ts` over line limit (debt #28)
+
+### Wish I'd Known
+1. **`??` and `||` cannot be mixed** — esbuild rejects `(a || b ?? c)` as ambiguous. Use `||` throughout for falsy-coalescing chains. See `nullish-coalescing-vs-or-operator-precedence.md`.
+2. **`enrichUsenetLanguages` had only 1 of 6 call sites wired** — the spec review caught this, but without it the auto-grab path (the actual bug) would have shipped unfixed. See `enrichment-caller-surface-gap.md`.
+3. **Module-level `vi.mock()` in test files with existing tests** — adding the mock doesn't break existing tests because the mock returns `vi.fn()` (no-op), but `beforeEach` must be imported if not already present.
+
 ## #503 Add max download size quality gate — 2026-04-12
 **Skill path:** /implement → /claim → /plan → /handoff
 **Outcome:** success — PR #509
