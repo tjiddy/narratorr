@@ -84,6 +84,8 @@ export interface BookMetadata {
   coverUrl?: string;
   duration?: number;
   genres?: string[];
+  publishedDate?: string;
+  language?: string;
   providerId?: string;
   relevance?: number;
 }

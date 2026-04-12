@@ -1,5 +1,34 @@
 # Workflow Log
 
+## #497 Author page: use author= param, bump to 50 results, filter reject words, sort standalone — 2026-04-12
+**Skill path:** /implement → /claim → /plan → /handoff
+**Outcome:** success — PR #506
+
+### Metrics
+- Files changed: 7 | Tests added/modified: 19 (2 audible, 10 metadata service, 7 helpers)
+- Quality gate runs: 2 (pass on attempt 2 — first failed on TS2783 in test factory)
+- Fix iterations: 1 (test factory `title` specified twice — destructured to fix)
+- Context compactions: 0
+
+### Workflow experience
+- What went smoothly: Clean 4-module TDD cycle. Each module was independent with clear boundaries. Existing `BlacklistService` pattern made settings injection straightforward.
+- Friction / issues encountered: Test factory `{ title: overrides.title, ...overrides }` triggered TS2783 — had to destructure `title` out of overrides before spreading. Minor syntax error (`{ books: }` missing `[]`) caught immediately by test run.
+
+### Token efficiency
+- Highest-token actions: Explore subagent for plan phase (comprehensive but most findings already known from elaborate phase)
+- Avoidable waste: Elaborate phase had already explored most of the same files — plan's explore was partially redundant
+- Suggestions: When `/implement` follows `/elaborate` on the same issue, the plan explore could be lighter
+
+### Infrastructure gaps
+- Repeated workarounds: None
+- Missing tooling / config: None
+- Unresolved debt: Client `BookMetadata` interface maintained separately from server `BookMetadataSchema` (logged in debt.md)
+
+### Wish I'd Known
+1. The `audible.ts` param branching gates on `options?.title` first — `author`-only search silently falls through to `keywords=`. Reading the branching order upfront would have saved a minute of confusion.
+2. Client `BookMetadata` is hand-maintained and drifts from server schema — checking both locations immediately when touching metadata fields saves a review round-trip.
+3. `parseWordList` was already exported and ready to reuse from `search-pipeline.ts` — no need to write a new word parser.
+
 ## #485 DRY: extract useSettingsForm hook — 2026-04-12
 **Skill path:** /implement → /claim → /plan → /handoff
 **Outcome:** success — PR #505

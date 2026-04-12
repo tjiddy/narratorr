@@ -13,6 +13,8 @@ import {
   type SearchBooksOptions,
   type SearchBooksResult,
 } from '../../core/index.js';
+import { parseWordList } from './search-pipeline.js';
+import type { SettingsService } from './settings.service.js';
 
 const DEFAULT_THROTTLE_MS = 200;
 
@@ -41,7 +43,7 @@ export class MetadataService {
   private throttle = new RequestThrottle();
   private rateLimitUntil: Map<string, number> = new Map();
 
-  constructor(private log: FastifyBaseLogger, config?: MetadataServiceConfig) {
+  constructor(private log: FastifyBaseLogger, config?: MetadataServiceConfig, private settingsService?: SettingsService) {
     const region = config?.audibleRegion ?? process.env.AUDIBLE_REGION ?? 'us';
 
     for (const [type, factory] of Object.entries(METADATA_SEARCH_PROVIDER_FACTORIES)) {
@@ -188,8 +190,50 @@ export class MetadataService {
       return [];
     }
 
-    const result = await this.withThrottle<SearchBooksResult>('searchBooks', (provider) => provider.searchBooks(author.name), { books: [] });
-    return result.books;
+    const result = await this.withThrottle<SearchBooksResult>(
+      'searchBooks',
+      (provider) => provider.searchBooks(author.name, { author: author.name, maxResults: 50 }),
+      { books: [] },
+    );
+
+    return this.filterAuthorBooks(result.books);
+  }
+
+  private async filterAuthorBooks(books: BookMetadata[]): Promise<BookMetadata[]> {
+    if (!this.settingsService) return books;
+
+    let rejectWords = '';
+    let languages: readonly string[] = [];
+    try {
+      const [quality, metadata] = await Promise.all([
+        this.settingsService.get('quality'),
+        this.settingsService.get('metadata'),
+      ]);
+      rejectWords = quality.rejectWords;
+      languages = metadata.languages;
+    } catch (error: unknown) {
+      this.log.warn({ error }, 'Failed to read settings for author book filtering — returning unfiltered results');
+      return books;
+    }
+
+    let filtered = books;
+
+    const rejectList = parseWordList(rejectWords);
+    if (rejectList.length > 0) {
+      filtered = filtered.filter((book) => {
+        const surface = `${book.title} ${book.subtitle ?? ''}`.toLowerCase();
+        return !rejectList.some((word) => surface.includes(word));
+      });
+    }
+
+    if (languages.length > 0) {
+      filtered = filtered.filter((book) => {
+        if (!book.language) return true;
+        return languages.includes(book.language.toLowerCase());
+      });
+    }
+
+    return filtered;
   }
 
   async getBook(id: string): Promise<BookMetadata | null> {

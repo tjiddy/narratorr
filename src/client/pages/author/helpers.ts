@@ -40,6 +40,15 @@ export function groupBooksBySeries(books: BookMetadata[]): { series: SeriesGroup
     }))
     .sort((a, b) => a.name.localeCompare(b.name));
 
+  standalone.sort((a, b) => {
+    const dateA = a.publishedDate;
+    const dateB = b.publishedDate;
+    if (!dateA && !dateB) return 0;
+    if (!dateA) return 1;
+    if (!dateB) return -1;
+    return dateB.localeCompare(dateA);
+  });
+
   return { series, standalone };
 }
 
