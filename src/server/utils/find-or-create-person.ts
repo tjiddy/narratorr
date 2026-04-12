@@ -1,17 +1,10 @@
 import { eq } from 'drizzle-orm';
-import type { SQLiteTableWithColumns } from 'drizzle-orm/sqlite-core';
 import type { DbOrTx } from '../../db/index.js';
 import { authors, narrators } from '../../db/schema.js';
 import { slugify } from '../../shared/utils.js';
 
-/** Minimal table shape required by the shared core. */
-type SlugTable = SQLiteTableWithColumns<{
-  dialect: 'sqlite';
-  name: string;
-  schema: undefined;
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  columns: { id: any; slug: any };
-}>;
+/** Table reference for authors or narrators — both have id + slug columns. */
+type PersonTable = typeof authors | typeof narrators;
 
 /**
  * Core find-or-create-by-slug algorithm. Handles concurrent creation
@@ -23,7 +16,7 @@ type SlugTable = SQLiteTableWithColumns<{
  */
 async function findOrCreateBySlug(
   db: DbOrTx,
-  table: SlugTable,
+  table: PersonTable,
   entityLabel: string,
   name: string,
   slug: string,
@@ -33,18 +26,19 @@ async function findOrCreateBySlug(
   const existing = await db.select().from(table).where(eq(table.slug, slug)).limit(1);
 
   if (existing.length > 0) {
-    if (onFound) await onFound(db, existing[0] as { id: number });
-    return (existing[0] as { id: number }).id;
+    if (onFound) await onFound(db, existing[0]);
+    return existing[0].id;
   }
 
   try {
-    const inserted = await db.insert(table).values(values).returning();
-    return (inserted[0] as { id: number }).id;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const inserted = await db.insert(table as any).values(values as any).returning() as { id: number }[];
+    return inserted[0].id;
   } catch (_error: unknown) {
     const retry = await db.select().from(table).where(eq(table.slug, slug)).limit(1);
     if (retry.length > 0) {
-      if (onFound) await onFound(db, retry[0] as { id: number });
-      return (retry[0] as { id: number }).id;
+      if (onFound) await onFound(db, retry[0]);
+      return retry[0].id;
     }
     throw new Error(`Failed to find or create ${entityLabel}: ${name}`);
   }
@@ -67,11 +61,11 @@ export async function findOrCreateAuthor(db: DbOrTx, name: string, asin?: string
     { name, slug, asin },
     asin
       ? async (dbHandle, row) => {
-          const full = row as { id: number; asin: string | null };
-          if (!full.asin) {
-            await dbHandle.update(authors).set({ asin }).where(eq(authors.id, full.id));
+            const full = row as { id: number; asin: string | null };
+            if (!full.asin) {
+              await dbHandle.update(authors).set({ asin }).where(eq(authors.id, full.id));
+            }
           }
-        }
       : undefined,
   );
 }
