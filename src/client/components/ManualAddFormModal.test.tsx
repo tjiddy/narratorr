@@ -108,4 +108,52 @@ describe('ManualAddFormModal', () => {
       expect(onClose).toHaveBeenCalledTimes(1);
     });
   });
+
+  describe('Escape key (#484)', () => {
+    it('calls onClose when Escape is pressed while open and not pending', async () => {
+      const onClose = vi.fn();
+      const user = userEvent.setup();
+      renderWithQuery(
+        <ManualAddFormModal isOpen={true} onClose={onClose} />,
+      );
+      await user.keyboard('{Escape}');
+      expect(onClose).toHaveBeenCalledOnce();
+    });
+
+    it('does not call onClose when Escape is pressed while closed', async () => {
+      const onClose = vi.fn();
+      const user = userEvent.setup();
+      renderWithQuery(
+        <ManualAddFormModal isOpen={false} onClose={onClose} />,
+      );
+      await user.keyboard('{Escape}');
+      expect(onClose).not.toHaveBeenCalled();
+    });
+
+    it('does not call onClose when Escape is pressed while form is pending', async () => {
+      const onClose = vi.fn();
+      const user = userEvent.setup();
+
+      const { api } = await import('@/lib/api');
+      vi.mocked(api.addBook).mockReturnValue(new Promise(() => {}));
+
+      renderWithQuery(
+        <ManualAddFormModal isOpen={true} onClose={onClose} />,
+      );
+
+      // Fill required field and submit to trigger pending state
+      const titleInput = screen.getByPlaceholderText('Book title');
+      await user.type(titleInput, 'Test Book');
+      await user.click(screen.getByRole('button', { name: /add book/i }));
+
+      // Wait for pending state
+      await waitFor(() => {
+        expect(screen.getByLabelText('Close')).toBeDisabled();
+      });
+
+      // Escape should be suppressed by handleEscape guard
+      await user.keyboard('{Escape}');
+      expect(onClose).not.toHaveBeenCalled();
+    });
+  });
 });

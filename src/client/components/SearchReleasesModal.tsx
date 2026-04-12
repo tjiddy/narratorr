@@ -194,7 +194,7 @@ export function SearchReleasesModal({ isOpen, book, onClose }: SearchReleasesMod
   const [pendingReplace, setPendingReplace] = useState<GrabPayload | null>(null);
 
   const modalRef = useRef<HTMLDivElement>(null);
-  useEscapeKey(isOpen, onClose, modalRef);
+  useEscapeKey(isOpen && pendingReplace === null, onClose, modalRef);
 
   if (!isOpen) return null;
 
@@ -208,13 +208,14 @@ export function SearchReleasesModal({ isOpen, book, onClose }: SearchReleasesMod
         ref={modalRef}
         role="dialog"
         aria-modal="true"
+        aria-labelledby="search-releases-modal-title"
         tabIndex={-1}
         className="flex flex-col min-h-0 flex-1"
       >
         {/* Header */}
         <div className="flex items-center justify-between px-6 py-4 border-b border-border/50">
           <div className="min-w-0">
-            <h3 className="font-display text-lg font-semibold truncate">
+            <h3 id="search-releases-modal-title" className="font-display text-lg font-semibold truncate">
               Releases for: {book.title}
             </h3>
             {book.authors[0]?.name && (

@@ -302,7 +302,7 @@ describe('BookDetails', () => {
       await openOverflowMenu(user);
       await user.click(screen.getByRole("menuitem", { name: /Edit/ }));
 
-      expect(screen.getByRole('dialog', { name: /edit book metadata/i })).toBeInTheDocument();
+      expect(screen.getByRole('dialog', { name: /edit metadata/i })).toBeInTheDocument();
     });
 
     it('shows Rename menu item when book has path', async () => {
@@ -357,7 +357,7 @@ describe('BookDetails', () => {
       await openOverflowMenu(user);
       await user.click(screen.getByRole("menuitem", { name: /Edit/ }));
 
-      const dialog = screen.getByRole('dialog', { name: /edit book metadata/i });
+      const dialog = screen.getByRole('dialog', { name: /edit metadata/i });
       const titleInput = dialog.querySelector('#edit-title') as HTMLInputElement;
       await user.clear(titleInput);
       await user.type(titleInput, 'New Title');
@@ -405,7 +405,7 @@ describe('BookDetails', () => {
       await openOverflowMenu(user);
       await user.click(screen.getByRole("menuitem", { name: /Edit/ }));
 
-      const dialog = screen.getByRole('dialog', { name: /edit book metadata/i });
+      const dialog = screen.getByRole('dialog', { name: /edit metadata/i });
       const titleInput = dialog.querySelector('#edit-title') as HTMLInputElement;
       await user.clear(titleInput);
       await user.type(titleInput, 'New Title');

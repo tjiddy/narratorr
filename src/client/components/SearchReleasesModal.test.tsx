@@ -2212,4 +2212,74 @@ describe('SearchReleasesModal — grab payload contract (#412)', () => {
       expect(screen.queryByRole('dialog', { name: /replace/i })).not.toBeInTheDocument();
     });
   });
+
+  describe('ARIA attributes (#484)', () => {
+    it('renders aria-labelledby linked to the heading id', () => {
+      setStreamResults([]);
+      renderWithProviders(
+        <SearchReleasesModal isOpen={true} book={mockBook} onClose={vi.fn()} />,
+      );
+      const dialog = screen.getByRole('dialog');
+      expect(dialog).toHaveAttribute('aria-labelledby', 'search-releases-modal-title');
+      const heading = document.getElementById('search-releases-modal-title');
+      expect(heading).toBeInTheDocument();
+      expect(heading!.tagName).toBe('H3');
+    });
+  });
+
+  describe('nested Escape isolation (#484)', () => {
+    it('Escape while inner ConfirmModal is open does not close the outer modal', async () => {
+      const onClose = vi.fn();
+      const user = userEvent.setup();
+      setStreamResults([fullResult]);
+      vi.mocked(api.searchGrab)
+        .mockRejectedValueOnce(new MockApiError(409, { code: 'ACTIVE_DOWNLOAD_EXISTS' }));
+
+      renderWithProviders(
+        <SearchReleasesModal isOpen={true} book={mockBook} onClose={onClose} />,
+      );
+
+      await screen.findByText('Full Result');
+      await user.click(screen.getAllByText('Grab')[0]);
+
+      // Wait for confirm modal to appear
+      await waitFor(() => {
+        expect(screen.getByRole('dialog', { name: /replace/i })).toBeInTheDocument();
+      });
+
+      // Press Escape — should close only the inner confirm modal, not the outer
+      await user.keyboard('{Escape}');
+
+      await waitFor(() => {
+        expect(screen.queryByRole('dialog', { name: /replace/i })).not.toBeInTheDocument();
+      });
+      // Outer modal should still be open
+      expect(onClose).not.toHaveBeenCalled();
+    });
+
+    it('Escape after inner ConfirmModal is closed closes the outer modal', async () => {
+      const onClose = vi.fn();
+      const user = userEvent.setup();
+      setStreamResults([fullResult]);
+
+      renderWithProviders(
+        <SearchReleasesModal isOpen={true} book={mockBook} onClose={onClose} />,
+      );
+
+      await screen.findByText('Full Result');
+      // No inner confirm modal open — pressing Escape should close the outer modal
+      await user.keyboard('{Escape}');
+      expect(onClose).toHaveBeenCalledOnce();
+    });
+
+    it('does not call onClose when Escape is pressed while closed', async () => {
+      const onClose = vi.fn();
+      const user = userEvent.setup();
+      renderWithProviders(
+        <SearchReleasesModal isOpen={false} book={mockBook} onClose={onClose} />,
+      );
+      await user.keyboard('{Escape}');
+      expect(onClose).not.toHaveBeenCalled();
+    });
+  });
 });

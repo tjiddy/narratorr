@@ -44,11 +44,11 @@ function parseBreadcrumbs(path: string): { label: string; path: string }[] {
  * This avoids the "setState in useEffect" lint issue by using mount
  * lifecycle to initialize state from initialPath.
  */
-function DirectoryBrowserContent({ initialPath, onSelect, onClose }: Omit<DirectoryBrowserModalProps, 'isOpen'>) {
+function DirectoryBrowserContent({ isOpen = true, initialPath, onSelect, onClose }: DirectoryBrowserModalProps) {
   const modalRef = useRef<HTMLDivElement>(null);
   const [currentPath, setCurrentPath] = useState(initialPath || '/');
 
-  useEscapeKey(true, onClose, modalRef);
+  useEscapeKey(isOpen, onClose, modalRef);
 
   const { data, isLoading, error } = useQuery({
     queryKey: queryKeys.filesystem.browse(currentPath),
@@ -77,12 +77,13 @@ function DirectoryBrowserContent({ initialPath, onSelect, onClose }: Omit<Direct
         ref={modalRef}
         role="dialog"
         aria-modal="true"
-        aria-label="Browse directories"
+        aria-labelledby="directory-browser-modal-title"
+        tabIndex={-1}
       >
         {/* Header */}
         <div className="px-6 pt-5 pb-4 flex items-center justify-between shrink-0">
           <div>
-            <h2 className="font-display text-lg font-semibold tracking-tight">Browse Directories</h2>
+            <h2 id="directory-browser-modal-title" className="font-display text-lg font-semibold tracking-tight">Browse Directories</h2>
             <p className="text-xs text-muted-foreground/50 truncate mt-0.5">Select a folder to scan</p>
           </div>
           <button
@@ -193,5 +194,5 @@ function DirectoryBrowserContent({ initialPath, onSelect, onClose }: Omit<Direct
 /** Wrapper that mounts/unmounts content to reset state on each open. */
 export function DirectoryBrowserModal({ isOpen, ...props }: DirectoryBrowserModalProps) {
   if (!isOpen) return null;
-  return <DirectoryBrowserContent {...props} />;
+  return <DirectoryBrowserContent isOpen={isOpen} {...props} />;
 }

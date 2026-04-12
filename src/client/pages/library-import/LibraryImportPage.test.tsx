@@ -290,7 +290,7 @@ describe('LibraryImportPage (#133)', () => {
     await userEvent.click(screen.getByRole('button', { name: /edit metadata/i }));
 
     await waitFor(() => {
-      expect(screen.getByRole('dialog', { name: /edit book metadata/i })).toBeInTheDocument();
+      expect(screen.getByRole('dialog', { name: /edit book/i })).toBeInTheDocument();
     });
     // Modal must be seeded with "New Book" (rows[1]), not "Dup Book" (rows[0])
     expect(screen.getByLabelText('Title')).toHaveValue('New Book');
@@ -517,7 +517,7 @@ describe('LibraryImportPage (#133)', () => {
       // Open edit modal
       await userEvent.click(screen.getByRole('button', { name: /edit metadata/i }));
       await waitFor(() => {
-        expect(screen.getByRole('dialog', { name: /edit book metadata/i })).toBeInTheDocument();
+        expect(screen.getByRole('dialog', { name: /edit book/i })).toBeInTheDocument();
       });
 
       // Edit the title

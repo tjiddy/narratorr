@@ -119,4 +119,24 @@ describe('ConfirmModal', () => {
     await user.keyboard('{Escape}');
     expect(onCancel).toHaveBeenCalledOnce();
   });
+
+  it('does not call onCancel when Escape is pressed while closed', async () => {
+    const onCancel = vi.fn();
+    const user = userEvent.setup();
+    render(<ConfirmModal {...defaultProps} isOpen={false} onCancel={onCancel} />);
+    await user.keyboard('{Escape}');
+    expect(onCancel).not.toHaveBeenCalled();
+  });
+
+  describe('ARIA compliance (#484)', () => {
+    it('has role="dialog", aria-modal="true", tabIndex={-1}, and aria-labelledby on the dialog element', () => {
+      render(<ConfirmModal {...defaultProps} />);
+      const dialog = screen.getByRole('dialog');
+      expect(dialog).toHaveAttribute('aria-modal', 'true');
+      expect(dialog).toHaveAttribute('tabIndex', '-1');
+      expect(dialog).toHaveAttribute('aria-labelledby', 'confirm-modal-title');
+      const heading = document.getElementById('confirm-modal-title');
+      expect(heading).toBeInTheDocument();
+    });
+  });
 });

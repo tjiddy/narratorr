@@ -27,10 +27,11 @@ interface BookEditModalProps {
   alternatives?: BookMetadata[];
   onSave: (state: BookEditState) => void;
   onClose: () => void;
+  isOpen?: boolean;
 }
 
 // eslint-disable-next-line max-lines-per-function, complexity -- metadata edit form with preview, search, and multi-field validation
-export function BookEditModal({ book, initial, confidence, alternatives, onSave, onClose }: BookEditModalProps) {
+export function BookEditModal({ book, initial, confidence, alternatives, onSave, onClose, isOpen = true }: BookEditModalProps) {
   const modalRef = useRef<HTMLDivElement>(null);
   const { data: libraryBooks } = useBookIdentifiers();
   const [title, setTitle] = useState(initial.title);
@@ -49,7 +50,9 @@ export function BookEditModal({ book, initial, confidence, alternatives, onSave,
 
   const { searchResults, hasSearched, isPending, search } = useAudnexusSearch({ initialResults });
 
-  useEscapeKey(true, onClose, modalRef);
+  useEscapeKey(isOpen, onClose, modalRef);
+
+  if (!isOpen) return null;
 
   const applyMetadata = (meta: BookMetadata) => {
     setSelectedMetadata({ ...meta });
@@ -82,13 +85,13 @@ export function BookEditModal({ book, initial, confidence, alternatives, onSave,
         ref={modalRef}
         role="dialog"
         aria-modal="true"
-        aria-label="Edit book metadata"
+        aria-labelledby="book-edit-modal-title"
         tabIndex={-1}
       >
         {/* Header */}
         <div className="px-6 pt-5 pb-4 flex items-center justify-between shrink-0">
           <div className="min-w-0">
-            <h2 className="font-display text-lg font-semibold tracking-tight">Edit Book</h2>
+            <h2 id="book-edit-modal-title" className="font-display text-lg font-semibold tracking-tight">Edit Book</h2>
             <p className="text-xs text-muted-foreground/50 truncate mt-0.5">{book.path}</p>
           </div>
           <button

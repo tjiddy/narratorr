@@ -1,5 +1,34 @@
 # Workflow Log
 
+## #484 DRY: unify modal lifecycle pattern — 3 incompatible strategies — 2026-04-12
+**Skill path:** /implement → /claim → /plan → /handoff
+**Outcome:** success — PR #508
+
+### Metrics
+- Files changed: 12 | Tests added/modified: 9
+- Quality gate runs: 2 (pass on attempt 2 — first run caught blast radius in parent page tests)
+- Fix iterations: 1 (BookDetails.test.tsx and LibraryImportPage.test.tsx dialog name assertions)
+- Context compactions: 0
+
+### Workflow experience
+- What went smoothly: TDD per module was efficient — each modal is independent, so red/green cycles were fast. ConfirmModal and ManualAddFormModal were already fully compliant, saving time.
+- Friction / issues encountered: Replacing `aria-label` with `aria-labelledby` changes the accessible name returned by `getByRole('dialog', { name })`. Parent page tests that queried by the old aria-label text broke. Discovered during first verify run. Also, Strategy B migration test for `isOpen=false` was initially vacuous because Modal.tsx uses createPortal (container is always empty regardless of render state).
+
+### Token efficiency
+- Highest-token actions: Spec review rounds (5 rounds of /respond-to-spec-review before approval)
+- Avoidable waste: Could have verified heading levels (h2 vs h3) in the first elaboration pass instead of introducing inaccurate claims that required 3 review rounds to correct
+- Suggestions: When adding ARIA attributes to existing components, always grep parent test files for the old accessible name pattern before committing
+
+### Infrastructure gaps
+- Repeated workarounds: None
+- Missing tooling / config: No automated a11y check in verify.ts (would catch missing ARIA attributes)
+- Unresolved debt: SearchReleasesModal (391 lines) and BookMetadataModal (357 lines) approaching max-lines limit
+
+### Wish I'd Known
+1. Replacing `aria-label` with `aria-labelledby` changes the accessible name for `getByRole` queries — grep parent tests for the old aria-label text (see `aria-label-to-labelledby-blast-radius.md`)
+2. Modal.tsx uses `createPortal` so `container.querySelector` and `toBeEmptyDOMElement()` give false negatives for portal-rendered content — use `screen.queryByRole` instead (see `strategy-b-isopen-vacuous-test.md`)
+3. Nested Escape isolation is simpler than expected — just gate the outer `useEscapeKey`'s `isOpen` on the inner modal's state, no hook changes needed (see `nested-escape-gating-pattern.md`)
+
 ## #501 Discover page: reconcile add-book flow with search/author pages — 2026-04-12
 **Skill path:** /implement → /claim → /plan → /handoff
 **Outcome:** success — PR #507

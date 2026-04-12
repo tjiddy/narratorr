@@ -13,10 +13,11 @@ interface BookMetadataModalProps {
   onSave: (data: UpdateBookPayload, renameFiles: boolean) => void;
   onClose: () => void;
   isSaving: boolean;
+  isOpen?: boolean;
 }
 
 // eslint-disable-next-line max-lines-per-function, complexity -- metadata edit modal with search integration
-export function BookMetadataModal({ book, onSave, onClose, isSaving }: BookMetadataModalProps) {
+export function BookMetadataModal({ book, onSave, onClose, isSaving, isOpen = true }: BookMetadataModalProps) {
   const modalRef = useRef<HTMLDivElement>(null);
   const [title, setTitle] = useState(book.title);
   const [seriesName, setSeriesName] = useState(book.seriesName ?? '');
@@ -28,7 +29,9 @@ export function BookMetadataModal({ book, onSave, onClose, isSaving }: BookMetad
   const [searchQuery, setSearchQuery] = useState('');
   const { searchResults, hasSearched, searchError, isPending, search } = useAudnexusSearch();
 
-  useEscapeKey(true, onClose, modalRef);
+  useEscapeKey(isOpen, onClose, modalRef);
+
+  if (!isOpen) return null;
 
   const canSave = title.trim().length > 0 && !isSaving;
   const hasPath = !!book.path;
@@ -98,7 +101,7 @@ export function BookMetadataModal({ book, onSave, onClose, isSaving }: BookMetad
         ref={modalRef}
         role="dialog"
         aria-modal="true"
-        aria-label="Edit book metadata"
+        aria-labelledby="book-metadata-modal-title"
         tabIndex={-1}
       >
         {/* Header */}
@@ -114,7 +117,7 @@ export function BookMetadataModal({ book, onSave, onClose, isSaving }: BookMetad
                 <ArrowLeftIcon className="w-4 h-4" />
               </button>
             )}
-            <h2 className="font-display text-lg font-semibold tracking-tight">
+            <h2 id="book-metadata-modal-title" className="font-display text-lg font-semibold tracking-tight">
               {view === 'search' ? 'Search Metadata' : 'Edit Metadata'}
             </h2>
           </div>
