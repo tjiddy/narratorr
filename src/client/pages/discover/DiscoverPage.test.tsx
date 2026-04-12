@@ -551,7 +551,7 @@ describe('DiscoverPage', () => {
   });
 
   describe('add mutation with overrides', () => {
-    it('card stays visible after add with green checkmark (no list shift)', async () => {
+    it('card stays visible after add — suggestions query not refetched', async () => {
       mockApi.addDiscoverSuggestion.mockResolvedValue({
         suggestion: { id: 42, status: 'added' },
         book: { id: 10 },
@@ -568,16 +568,22 @@ describe('DiscoverPage', () => {
         expect(screen.getByText('Added Book')).toBeInTheDocument();
       });
 
+      // Record call count before add
+      const callsBefore = mockApi.getDiscoverSuggestions.mock.calls.length;
+
       // Click Add to open popover, then confirm
       const addButtons = screen.getAllByRole('button', { name: /^add$/i });
       await userEvent.click(addButtons[0]);
       await userEvent.click(screen.getByRole('button', { name: /add to library/i }));
 
-      // Card should still be visible (not removed) with checkmark
+      // Card should still be visible with checkmark
       await waitFor(() => {
         expect(screen.getByText('Added Book')).toBeInTheDocument();
       });
       expect(screen.getByText('Other Book')).toBeInTheDocument();
+
+      // Suggestions query should NOT have been re-fetched after add
+      expect(mockApi.getDiscoverSuggestions.mock.calls.length).toBe(callsBefore);
     });
   });
 

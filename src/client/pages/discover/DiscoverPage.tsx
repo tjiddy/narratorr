@@ -31,7 +31,9 @@ function useDiscoverMutations(setAddedIds: React.Dispatch<React.SetStateAction<S
       api.addDiscoverSuggestion(id, overrides),
     onSuccess: (_data, { id }) => {
       setAddedIds((prev) => new Set(prev).add(id));
-      queryClient.invalidateQueries({ queryKey: queryKeys.discover.suggestions() });
+      // Don't invalidate discover suggestions — the backend now returns this as 'added'
+      // which would remove it from the list. The card stays visible with the checkmark
+      // until the user refreshes manually or navigates away.
       queryClient.invalidateQueries({ queryKey: queryKeys.books() });
       queryClient.invalidateQueries({ queryKey: queryKeys.bookStats() });
       toast.success('Added to library');
