@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import type { FastifyBaseLogger } from 'fastify';
 
 vi.mock('../services/search-pipeline.js', () => ({
   searchAndGrabForBook: vi.fn().mockResolvedValue(undefined),
@@ -54,13 +55,13 @@ describe('triggerImmediateSearch', () => {
       settingsService: { get: settingsGet } as never,
     };
     const book = { id: 99, title: 'Failing Book' };
-    const log = { warn: vi.fn(), info: vi.fn(), error: vi.fn(), debug: vi.fn() } as never;
+    const log = { warn: vi.fn(), info: vi.fn(), error: vi.fn(), debug: vi.fn() } as unknown as FastifyBaseLogger;
 
     // Should not throw — fire-and-forget
     triggerImmediateSearch(book, deps, log);
 
     await vi.waitFor(() => {
-      expect(log.warn).toHaveBeenCalledWith(
+      expect((log as unknown as { warn: ReturnType<typeof vi.fn> }).warn).toHaveBeenCalledWith(
         expect.objectContaining({ bookId: 99 }),
         'Search-immediately trigger failed',
       );
