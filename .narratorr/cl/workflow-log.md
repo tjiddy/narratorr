@@ -1,5 +1,34 @@
 # Workflow Log
 
+## #503 Add max download size quality gate — 2026-04-12
+**Skill path:** /implement → /claim → /plan → /handoff
+**Outcome:** success — PR #509
+
+### Metrics
+- Files changed: 8 | Tests added/modified: 18 (11 backend + 5 frontend + 2 fixture)
+- Quality gate runs: 2 (pass on attempt 2 — first failed on max-lines)
+- Fix iterations: 1 (compacted caller sites to stay within ESLint max-lines)
+- Context compactions: 0
+
+### Workflow experience
+- What went smoothly: Clean additive feature following established patterns. Schema/registry/UI all had clear precedents (grabFloor, minSeeders). Test TDD cycle worked well — stubs caught the payload assertion gap early.
+- Friction / issues encountered: ESLint max-lines fired at 406 non-blank lines despite file being at 495 total on main. Had to compact the new code to stay under. Pre-existing debt item but the verify script treats it as a "new violation" because the line count increased.
+
+### Token efficiency
+- Highest-token actions: Explore subagent for plan (read many caller sites). Spec review response (earlier conversation).
+- Avoidable waste: The elaborate → respond-to-spec-review → implement cycle ran in the same conversation, so earlier exploration was partially repeated.
+- Suggestions: For simple additive features, skip the elaborate step and go straight to implement.
+
+### Infrastructure gaps
+- Repeated workarounds: search-pipeline.ts max-lines debt means every quality gate addition requires code compaction. The positional param pattern (10 args) makes adding new filters tedious.
+- Missing tooling / config: verify.ts could distinguish truly new violations from worsened pre-existing ones (e.g., file was already over 400, just grew).
+- Unresolved debt: `filterAndRankResults` positional params → options object (logged to debt.md).
+
+### Wish I'd Known
+1. ESLint max-lines counts non-blank/non-comment lines, not total lines — the file was at exactly 400 code lines on main, so any net addition would trip it
+2. The inline quality type on `searchWithBroadcaster`/`searchAndGrabForBook` is not derived from the schema — must be updated manually (2 separate locations)
+3. `createMockSettings()` auto-inherits new fields from `DEFAULT_SETTINGS` — only `registry.test.ts` with hardcoded fixtures needed manual updates (narrow blast radius)
+
 ## #484 DRY: unify modal lifecycle pattern — 3 incompatible strategies — 2026-04-12
 **Skill path:** /implement → /claim → /plan → /handoff
 **Outcome:** success — PR #508

@@ -49,6 +49,8 @@
 
 - **`src/client/components/book/BookMetadataModal.tsx` at 357 lines (max 400)**: Same situation — already has `eslint-disable max-lines-per-function` at line 18. The search integration (view toggle, search results, apply metadata) could be extracted into a separate component. (discovered in #484)
 
+- **`src/server/services/search-pipeline.ts` `filterAndRankResults` has 10 positional parameters**: Adding a new quality filter requires updating the function signature plus all 6 call sites and 2 inline type definitions. Should refactor to an options object (`{ results, bookDuration, qualitySettings }`) to make adding future filters a single-file change. (discovered in #503)
+
 ## Accepted Debt
 
 Items below are real but not worth fixing — the cost of change outweighs the benefit.
