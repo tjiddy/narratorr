@@ -150,7 +150,21 @@ describe('blacklistAndRetrySearch', () => {
 
   // #504 — blacklistType passthrough
   describe('blacklistType passthrough (#504)', () => {
-    it.todo('passes blacklistType: temporary to blacklistService.create() when provided');
-    it.todo('omits blacklistType from blacklistService.create() when not provided (preserves permanent default)');
+    it('passes blacklistType: temporary to blacklistService.create() when provided', async () => {
+      const req = makeRequest({ blacklistType: 'temporary' });
+      await blacklistAndRetrySearch(req);
+
+      expect(req.blacklistService!.create).toHaveBeenCalledWith(expect.objectContaining({
+        blacklistType: 'temporary',
+      }));
+    });
+
+    it('omits blacklistType from blacklistService.create() when not provided (preserves permanent default)', async () => {
+      const req = makeRequest();
+      await blacklistAndRetrySearch(req);
+
+      const callArg = (req.blacklistService!.create as ReturnType<typeof vi.fn>).mock.calls[0][0];
+      expect(callArg).not.toHaveProperty('blacklistType');
+    });
   });
 });
