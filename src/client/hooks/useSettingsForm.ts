@@ -53,12 +53,14 @@ export function useSettingsForm<T extends Record<string, unknown>>({
   });
 
   const { reset, formState: { isDirty } } = form;
+  const isDirtyRef = useRef(isDirty);
+  isDirtyRef.current = isDirty;
 
   useEffect(() => {
-    if (settings && !isDirty) {
+    if (settings && !isDirtyRef.current) {
       reset(selectRef.current(settings) as DefaultValues<T>);
     }
-  }, [settings, reset, isDirty]);
+  }, [settings, reset]);
 
   const mutation = useMutation<AppSettings, Error, T>({
     mutationFn: (data: T) => api.updateSettings(toPayloadRef.current(data)),
