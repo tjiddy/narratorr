@@ -2594,8 +2594,11 @@ describe('#514 books route — missing blacklistService guard', () => {
     });
 
     expect(res.statusCode).toBe(201);
-    // triggerImmediateSearch is not mocked at module level in this file,
-    // so we verify indirectly: book was created successfully without errors
-    // (if the guard were absent, passing undefined blacklistService would cause a runtime error)
+
+    // Wait for any fire-and-forget promise to settle
+    await new Promise(r => setTimeout(r, 50));
+
+    // If the guard were absent, triggerImmediateSearch would call searchAllStreaming
+    expect(services.indexer.searchAllStreaming).not.toHaveBeenCalled();
   });
 });
