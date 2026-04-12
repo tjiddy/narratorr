@@ -4,6 +4,7 @@ import { normalizeLanguage } from '../../core/utils/language-codes.js';
 import { detectLanguageFromNewsgroup, detectLanguageFromNzbName, parseNzbGroups, parseNzbName, parseNzbFileSubject } from '../../core/utils/detect-usenet-language.js';
 import { fetchWithTimeout } from '../../core/utils/fetch-with-timeout.js';
 import { Semaphore } from './semaphore.js';
+import { getErrorMessage } from './error-message.js';
 
 const NZB_FETCH_CONCURRENCY = 5;
 const NZB_FETCH_TIMEOUT_MS = 5000;
@@ -93,7 +94,7 @@ export async function enrichUsenetLanguages(
       }
     } catch (error: unknown) {
       logger.warn(
-        { title: result.title, url: result.downloadUrl, error: error instanceof Error ? error.message : String(error) },
+        { title: result.title, url: result.downloadUrl, error: getErrorMessage(error) },
         'NZB fetch failed',
       );
     } finally {

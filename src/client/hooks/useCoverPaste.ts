@@ -1,6 +1,5 @@
 import { useEffect, useCallback } from 'react';
-
-const MAX_COVER_SIZE = 10 * 1024 * 1024; // 10 MB
+import { MAX_COVER_SIZE } from '../../shared/constants.js';
 
 /** Check if the active element is an editable control (input, textarea, contenteditable). */
 function isEditableActive(): boolean {

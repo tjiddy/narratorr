@@ -10,6 +10,7 @@ import {
 import { DOWNLOAD_CLIENT_REGISTRY } from '../../shared/download-client-registry.js';
 import { encryptFields, decryptFields, resolveSentinelFields, getKey } from '../utils/secret-codec.js';
 import { AdapterCache } from '../utils/adapter-cache.js';
+import { getErrorMessage } from '../utils/error-message.js';
 
 type DownloadClientRow = typeof downloadClients.$inferSelect;
 type NewDownloadClient = typeof downloadClients.$inferInsert;
@@ -186,7 +187,7 @@ export class DownloadClientService {
     } catch (error: unknown) {
       return {
         success: false,
-        message: error instanceof Error ? error.message : 'Unknown error',
+        message: getErrorMessage(error),
       };
     }
   }
@@ -206,7 +207,7 @@ export class DownloadClientService {
       this.log.debug({ id, count: categories.length }, 'Fetched download client categories');
       return { categories };
     } catch (error: unknown) {
-      const message = error instanceof Error ? error.message : 'Unknown error';
+      const message = getErrorMessage(error);
       this.log.warn({ id, error }, 'Failed to fetch categories from download client');
       return { categories: [], error: message };
     }
@@ -225,7 +226,7 @@ export class DownloadClientService {
       const categories = await adapter.getCategories();
       return { categories };
     } catch (error: unknown) {
-      const message = error instanceof Error ? error.message : 'Unknown error';
+      const message = getErrorMessage(error);
       this.log.warn({ type: data.type, error }, 'Failed to fetch categories from download client config');
       return { categories: [], error: message };
     }
@@ -245,7 +246,7 @@ export class DownloadClientService {
     } catch (error: unknown) {
       return {
         success: false,
-        message: error instanceof Error ? error.message : 'Unknown error',
+        message: getErrorMessage(error),
       };
     }
   }

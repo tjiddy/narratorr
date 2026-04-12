@@ -8,6 +8,7 @@ import { createClient } from '@libsql/client';
 import type { FastifyBaseLogger } from 'fastify';
 import type { Readable } from 'stream';
 import type { SettingsService } from './settings.service.js';
+import { getErrorMessage } from '../utils/error-message.js';
 
 export interface BackupMetadata {
   filename: string;
@@ -318,7 +319,7 @@ export class BackupService {
         client.close();
       }
     } catch (error: unknown) {
-      const message = error instanceof Error ? error.message : 'Unknown error';
+      const message = getErrorMessage(error);
       return { valid: false, error: `Invalid database file: ${message}` };
     }
   }
@@ -390,7 +391,7 @@ export function applyPendingRestore(configPath: string, dbPath: string, log: { i
       fss.unlinkSync(pendingPath);
       log.warn('Restored database from pending backup (copy fallback — rename failed)');
     } catch (copyError: unknown) {
-      log.warn(`Failed to apply pending restore: ${copyError instanceof Error ? copyError.message : 'unknown error'}`);
+      log.warn(`Failed to apply pending restore: ${getErrorMessage(copyError, 'unknown error')}`);
     }
   }
 }

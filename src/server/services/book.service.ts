@@ -1,6 +1,7 @@
 import { rm } from 'node:fs/promises';
 import { cleanEmptyParents } from '../utils/paths.js';
 import { uploadBookCover, CoverUploadError } from './cover-upload.js';
+import { SUPPORTED_COVER_MIMES } from '../utils/mime.js';
 import { eq, and, sql, inArray, notExists } from 'drizzle-orm';
 import type { Db, DbOrTx } from '../../db/index.js';
 import type { FastifyBaseLogger } from 'fastify';
@@ -308,14 +309,12 @@ export class BookService {
    * Upload a custom cover image for a book.
    * Validates book exists and has a path, then delegates to uploadBookCover utility.
    */
-  private static readonly ALLOWED_COVER_MIMES = new Set(['image/jpeg', 'image/png', 'image/webp']);
-
   async uploadCover(
     bookId: number,
     buffer: Buffer,
     mimeType: string,
   ): Promise<BookWithAuthor> {
-    if (!BookService.ALLOWED_COVER_MIMES.has(mimeType)) {
+    if (!SUPPORTED_COVER_MIMES.has(mimeType)) {
       throw new CoverUploadError('Only JPG, PNG, and WebP images are supported', 'INVALID_MIME');
     }
 

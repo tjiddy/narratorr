@@ -8,6 +8,7 @@ import { useMatchJob } from '@/hooks/useMatchJob';
 import { slugify } from '../../../shared/utils.js';
 import type { ImportRow, BookEditState } from '@/components/manual-import';
 import type { DiscoveredBook } from '@/lib/api';
+import { getErrorMessage } from '@/lib/error-message.js';
 
 export type Step = 'scanning' | 'review' | 'error';
 
@@ -117,7 +118,7 @@ export function useLibraryImport() {
       }
     },
     onError: (error: Error) => {
-      setScanError(error.message);
+      setScanError(getErrorMessage(error, 'Scan failed'));
     },
   });
 
@@ -129,7 +130,7 @@ export function useLibraryImport() {
       navigate('/library');
     },
     onError: (error: Error) => {
-      toast.error(`Registration failed: ${error.message}`);
+      toast.error(`Registration failed: ${getErrorMessage(error)}`);
     },
   });
 

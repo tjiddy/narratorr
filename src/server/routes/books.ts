@@ -341,7 +341,7 @@ export async function booksRoutes(app: FastifyInstance, deps: BookRouteDeps) {
   }
 }
 
-const MAX_COVER_SIZE = 10 * 1024 * 1024; // 10 MB
+import { MAX_COVER_SIZE } from '../../shared/constants.js';
 
 export async function bookFilesRoute(app: FastifyInstance, bookService: BookService) {
   // GET /api/books/:id/cover — serve embedded cover art from library

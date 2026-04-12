@@ -8,6 +8,7 @@ import { api } from '@/lib/api';
 import { queryKeys } from '@/lib/queryKeys';
 import { FormField } from '@/components/settings/FormField';
 import { PlusIcon } from '@/components/icons';
+import { getErrorMessage } from '@/lib/error-message.js';
 
 const manualAddSchema = z.object({
   title: z.string().trim().min(1, 'Title is required'),
@@ -60,7 +61,7 @@ export function ManualAddForm({ defaultTitle, onSuccess, onPendingChange }: {
       onSuccess?.();
     },
     onError: (err: Error) => {
-      toast.error(`Failed to add book: ${err.message}`);
+      toast.error(`Failed to add book: ${getErrorMessage(err)}`);
     },
   });
 

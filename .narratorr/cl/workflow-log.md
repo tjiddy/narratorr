@@ -1,5 +1,34 @@
 # Workflow Log
 
+## #513 DRY: extract shared utils and complete getErrorMessage adoption — 2026-04-12
+**Skill path:** /elaborate → /respond-to-spec-review (×2) → /implement → /claim → /plan → /handoff
+**Outcome:** success — PR #516
+
+### Metrics
+- Files changed: 47 | Tests added/modified: 30 (10 getErrorMessage, 8 parseWordList, 7 mimeToExt, 1 constants, 2 re-export smoke, 2 old test file updates)
+- Quality gate runs: 2 (pass on attempt 2)
+- Fix iterations: 1 (template literal prefixes incorrectly collapsed by subagent — 26 test failures, fixed in commit 7)
+- Context compactions: 0
+
+### Workflow experience
+- What went smoothly: Extraction modules (1-4) were clean — shared files created, tests written, callers updated, all green on first try. Spec review cycle caught real alignment issues (stale inventory, path conflict) that would have caused implementation churn.
+- Friction / issues encountered: Subagent bulk replacement of client error toasts collapsed template literal prefixes into getErrorMessage fallback params, which changed behavior for Error instances (lost the prefix). Required a fix commit touching all 10 client files. Root cause: instruction to subagent was ambiguous about the two replacement patterns (simple vs template-literal-with-prefix).
+
+### Token efficiency
+- Highest-token actions: Two Explore subagents during elaborate and plan phases (codebase-wide grep for 56 callsites across 47 files)
+- Avoidable waste: The first bulk replacement subagent had incorrect instructions, requiring a second fix pass. Better upfront examples would have avoided this.
+- Suggestions: For mechanical bulk replacements, always include explicit examples of BOTH patterns (simple and complex) in the subagent prompt. Test a sample of changes before committing the full batch.
+
+### Infrastructure gaps
+- Repeated workarounds: None
+- Missing tooling / config: The coverage check in handoff step 4 doesn't handle `.ts` → `.test.tsx` extension mapping (false positive for useAddBooksToLibrary)
+- Unresolved debt: Core layer has 30 remaining `instanceof Error` ternaries; cover MIME surfaces duplicated in 4 client/server locations
+
+### Wish I'd Known
+1. `getErrorMessage(error, fallback)` returns `error.message` (not fallback) when error IS an Error — so `toast.error(getErrorMessage(error, 'Prefix'))` loses the prefix. Must keep template literals for prefix+message patterns. See `getErrorMessage-template-literal-pattern.md`.
+2. `src/shared/utils.ts` exists as a flat file, blocking creation of `src/shared/utils/` directory. All new shared files must be flat at `src/shared/` root. See `shared-utils-flat-file-pattern.md`.
+3. Spec review went 3 rounds due to stale adoption inventory (wrong files named, wrong counts). Building the inventory from grep results upfront instead of copying from the original issue would have saved 2 rounds.
+
 ## #512 fix: SecuritySettings ConfirmModal closes on error (UX regression) — 2026-04-12
 **Skill path:** /elaborate → /implement → /claim → /plan → /handoff
 **Outcome:** success — PR #515

@@ -11,6 +11,7 @@ import type { BookService } from './book.service.js';
 import { AUDIO_EXTENSIONS } from '../../core/utils/audio-constants.js';
 import { collectSortedAudioFiles } from '../../core/utils/collect-audio-files.js';
 import { COVER_FILE_REGEX } from '../../core/utils/cover-regex.js';
+import { getErrorMessage } from '../utils/error-message.js';
 
 const execFileAsync = promisify(execFile);
 
@@ -196,7 +197,7 @@ export async function tagFile(
   } catch (error: unknown) {
     // Clean up temp file on failure
     await unlink(tmpPath).catch(() => {});
-    const message = error instanceof Error ? error.message : 'Unknown error';
+    const message = getErrorMessage(error);
     return { file: fileName, status: 'failed', reason: message };
   }
 }

@@ -13,6 +13,7 @@ import { BookEventHistory } from './BookEventHistory.js';
 import { mergeBookData, type MetadataBook } from './helpers.js';
 import { useBookActions } from './useBookActions.js';
 import { useMergeProgress, type MergeProgress } from '@/hooks/useMergeProgress.js';
+import { MAX_COVER_SIZE } from '../../../shared/constants.js';
 import { formatMergePhase } from '@/lib/format/merge.js';
 import { AudioPreview } from './AudioPreview.js';
 import { useCoverPaste } from '@/hooks/useCoverPaste.js';
@@ -55,12 +56,11 @@ export function BookDetails({ libraryBook, metadataBook }: {
   const showWrongRelease = canShowWrongRelease(libraryBook);
 
   const handleCoverFile = useCallback((file: File) => {
-    const maxSize = 10 * 1024 * 1024;
     if (!['image/jpeg', 'image/png', 'image/webp'].includes(file.type)) {
       toast.error('Only JPG, PNG, and WebP images are supported');
       return;
     }
-    if (file.size > maxSize) {
+    if (file.size > MAX_COVER_SIZE) {
       toast.error('Cover image must be under 10 MB');
       return;
     }

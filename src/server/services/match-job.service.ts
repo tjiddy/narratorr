@@ -10,6 +10,7 @@ import { Semaphore } from '../utils/semaphore.js';
 import { scoreResult, diceCoefficient } from '../../core/utils/similarity.js';
 import { extractYear } from '../utils/folder-parsing.js';
 import { searchWithSwapRetryTrace } from '../utils/search-helpers.js';
+import { getErrorMessage } from '../utils/error-message.js';
 
 // ============ Types ============
 
@@ -264,7 +265,7 @@ class MatchJob {
         confidence: 'none',
         bestMatch: null,
         alternatives: [],
-        error: error instanceof Error ? error.message : 'Unknown error',
+        error: getErrorMessage(error),
       };
     }
   }

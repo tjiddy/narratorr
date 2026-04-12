@@ -9,6 +9,7 @@ import { SUGGESTION_REASONS, SUGGESTION_REASON_REGISTRY, type SuggestionReason }
 import { SuggestionCard } from './SuggestionCard.js';
 import { DiscoverEmpty } from './DiscoverEmpty.js';
 import { DiscoverSkeleton } from './DiscoverSkeleton.js';
+import { parseWordList } from '../../../shared/parse-word-list.js';
 
 type ReasonFilter = 'all' | SuggestionReason;
 
@@ -16,11 +17,6 @@ const FILTER_OPTIONS: { value: ReasonFilter; label: string }[] = [
   { value: 'all', label: 'All' },
   ...SUGGESTION_REASONS.map((r) => ({ value: r as ReasonFilter, label: SUGGESTION_REASON_REGISTRY[r].label })),
 ];
-
-/** Parse a comma-separated word list into lowercase trimmed tokens. */
-function parseWordList(csv: string): string[] {
-  return csv.split(',').map((w) => w.trim().toLowerCase()).filter(Boolean);
-}
 
 function useDiscoverMutations(setAddedIds: React.Dispatch<React.SetStateAction<Set<number>>>) {
   const queryClient = useQueryClient();

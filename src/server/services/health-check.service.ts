@@ -143,7 +143,7 @@ export class HealthCheckService {
         results.push({
           checkName: `indexer:${indexer.name}`,
           state: 'error',
-          message: error instanceof Error ? error.message : 'Unknown error',
+          message: getErrorMessage(error),
         });
       }
     }
@@ -168,7 +168,7 @@ export class HealthCheckService {
         results.push({
           checkName: `download-client:${client.name}`,
           state: 'error',
-          message: error instanceof Error ? error.message : 'Unknown error',
+          message: getErrorMessage(error),
         });
       }
     }

@@ -12,6 +12,7 @@ import { DuplicateDownloadError } from '../services/download.service.js';
 import { buildNarratorPriority, filterAndRankResults, filterBlacklistedResults } from '../services/search-pipeline.js';
 import { buildGrabPayload } from '../services/grab-payload.js';
 import { enrichUsenetLanguages } from '../utils/enrich-usenet-languages.js';
+import { getErrorMessage } from '../utils/error-message.js';
 
 const MATCH_THRESHOLD = 0.7;
 
@@ -206,7 +207,7 @@ export async function runRssJob(
       if (grabError instanceof DuplicateDownloadError) {
         log.debug({ bookId }, 'Skipping RSS grab — book already has active download');
       } else {
-        const message = grabError instanceof Error ? grabError.message : String(grabError);
+        const message = getErrorMessage(grabError);
         log.info({ bookId, error: message }, 'RSS grab failed (possible concurrent race)');
       }
     }
