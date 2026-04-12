@@ -1,5 +1,34 @@
 # Workflow Log
 
+## #485 DRY: extract useSettingsForm hook — 2026-04-12
+**Skill path:** /implement → /claim → /plan → /handoff
+**Outcome:** success — PR #505
+
+### Metrics
+- Files changed: 12 | Tests added/modified: 1 (16 new hook tests)
+- Quality gate runs: 3 (pass on attempt 3)
+- Fix iterations: 2 (1. ref-during-render lint + stale eslint-disable directives, 2. import path + zodResolver type + partial settings crash in SystemSettings tests)
+- Context compactions: 0
+
+### Workflow experience
+- What went smoothly: Migration pattern was very mechanical — each section followed identical boilerplate. Once the hook was built and tested, migration was fast.
+- Friction / issues encountered: Three separate quality gate failures: (1) React hooks lint flags ref updates during render, (2) Zod v4 type mismatch with zodResolver's expected input type, (3) SystemSettings.test.tsx mocks partial settings that crash the new generic select function.
+
+### Token efficiency
+- Highest-token actions: Reading all 10 settings sections to understand their patterns; explore subagent for codebase analysis
+- Avoidable waste: Could have run typecheck earlier (before verify.ts) to catch the import path and zodResolver type issues sooner
+- Suggestions: For future hook extractions, run typecheck after writing the hook but before migrating all consumers
+
+### Infrastructure gaps
+- Repeated workarounds: None
+- Missing tooling / config: None
+- Unresolved debt: BackupScheduleForm still uses raw boilerplate (excluded per spec — different lifecycle)
+
+### Wish I'd Known
+1. `react-hooks/refs` lint rule flags `ref.current = value` during render — must use `useEffect` for ref sync (see `react-ref-render-lint.md`)
+2. `zodResolver` with `z.ZodType<T>` in Zod v4 causes type errors because `_input` needs to be `FieldValues` — use `z.ZodType<T, T>` (see `zodresolver-generic-type-mismatch.md`)
+3. Tests that mock `api.getSettings` with partial objects will crash a generic `select(settings)` call — the old per-section `settings?.category` guard doesn't exist in the shared hook (see `settings-hook-partial-settings-guard.md`)
+
 ## #486 DRY: add client-side getErrorMessage — 2026-04-11
 **Skill path:** /implement → /claim → /plan → /handoff
 **Outcome:** success — PR #496

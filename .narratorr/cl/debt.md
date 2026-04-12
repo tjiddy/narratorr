@@ -41,6 +41,8 @@
 
 - **`src/client/hooks/useBulkOperation.ts`, `src/client/components/settings/useFetchCategories.ts`, `src/client/pages/library/useLibraryBulkActions.ts`**: No co-located test files. These hooks contain error handling and polling logic that could regress silently. (discovered in #486)
 
+- **`BackupScheduleForm.tsx` still uses raw `useMutation`/`useQuery`/`useEffect` boilerplate**: Excluded from `useSettingsForm` migration (#485) because it has no zodResolver, no `!isDirty` guard, and no reset-on-success. A separate `useSettingsForm` variant or standalone refactor could normalize this. (discovered in #485)
+
 ## Accepted Debt
 
 Items below are real but not worth fixing — the cost of change outweighs the benefit.
