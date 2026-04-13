@@ -31,6 +31,27 @@ import {
 import { runPostProcessingScript } from './post-processing-script.js';
 import { revertBookStatus } from './book-status.js';
 
+// ── isContentFailure ────────────────────────────────────────────────────
+
+/** Content-failure signatures — errors caused by bad release content, not host/environment. */
+const CONTENT_FAILURE_PATTERNS = [
+  'No audio files found',
+  'not a supported audio format',
+  'Duplicate filename',
+  'Copy verification failed',
+] as const;
+
+/**
+ * Classify an import error as content-caused (bad release) or environment-caused (host/config).
+ * Uses a positive allowlist — only known content-failure signatures return true.
+ * All unrecognized errors (including Audio processing failed) default to false (conservative).
+ */
+export function isContentFailure(error: unknown): boolean {
+  if (!(error instanceof Error)) return false;
+  const msg = error.message;
+  return CONTENT_FAILURE_PATTERNS.some((pattern) => msg.includes(pattern));
+}
+
 // ── validateSource ──────────────────────────────────────────────────────
 
 export interface ValidateSourceResult {

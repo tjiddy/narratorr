@@ -12,27 +12,9 @@ import {
   emitImportFailure, notifyImportComplete, notifyImportFailure,
   recordImportEvent, recordImportFailedEvent,
   embedTagsForImport, runImportPostProcessing,
+  isContentFailure,
 } from '../utils/import-steps.js';
 import { blacklistAndRetrySearch } from '../utils/rejection-helpers.js';
-
-/** Content-failure signatures — errors caused by bad release content, not host/environment. */
-const CONTENT_FAILURE_PATTERNS = [
-  'No audio files found',
-  'not a supported audio format',
-  'Duplicate filename',
-  'Copy verification failed',
-] as const;
-
-/**
- * Classify an import error as content-caused (bad release) or environment-caused (host/config).
- * Uses a positive allowlist — only known content-failure signatures return true.
- * All unrecognized errors (including Audio processing failed) default to false (conservative).
- */
-export function isContentFailure(error: unknown): boolean {
-  if (!(error instanceof Error)) return false;
-  const msg = error.message;
-  return CONTENT_FAILURE_PATTERNS.some((pattern) => msg.includes(pattern));
-}
 
 export class ImportOrchestrator {
   private blacklistService?: BlacklistService;

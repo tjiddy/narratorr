@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
-import { ImportOrchestrator, isContentFailure } from './import-orchestrator.js';
+import { ImportOrchestrator } from './import-orchestrator.js';
+import { isContentFailure } from '../utils/import-steps.js';
 import type { ImportService, ImportResult, ImportContext } from './import.service.js';
 import type { SettingsService } from './settings.service.js';
 import type { NotifierService } from './notifier.service.js';
@@ -19,18 +20,30 @@ vi.mock('../utils/rejection-helpers.js', () => ({
 import { blacklistAndRetrySearch } from '../utils/rejection-helpers.js';
 
 // Mock import-steps — we test the orchestrator's dispatch, not the helpers themselves
-vi.mock('../utils/import-steps.js', () => ({
-  emitDownloadImporting: vi.fn(),
-  emitBookImporting: vi.fn(),
-  emitImportSuccess: vi.fn(),
-  emitImportFailure: vi.fn(),
-  notifyImportComplete: vi.fn(),
-  notifyImportFailure: vi.fn(),
-  recordImportEvent: vi.fn(),
-  recordImportFailedEvent: vi.fn(),
-  embedTagsForImport: vi.fn().mockResolvedValue(undefined),
-  runImportPostProcessing: vi.fn().mockResolvedValue(undefined),
-}));
+vi.mock('../utils/import-steps.js', () => {
+  const CONTENT_FAILURE_PATTERNS = [
+    'No audio files found',
+    'not a supported audio format',
+    'Duplicate filename',
+    'Copy verification failed',
+  ];
+  return {
+    emitDownloadImporting: vi.fn(),
+    emitBookImporting: vi.fn(),
+    emitImportSuccess: vi.fn(),
+    emitImportFailure: vi.fn(),
+    notifyImportComplete: vi.fn(),
+    notifyImportFailure: vi.fn(),
+    recordImportEvent: vi.fn(),
+    recordImportFailedEvent: vi.fn(),
+    embedTagsForImport: vi.fn().mockResolvedValue(undefined),
+    runImportPostProcessing: vi.fn().mockResolvedValue(undefined),
+    isContentFailure: (error: unknown) => {
+      if (!(error instanceof Error)) return false;
+      return CONTENT_FAILURE_PATTERNS.some((p) => error.message.includes(p));
+    },
+  };
+});
 
 import {
   emitDownloadImporting, emitBookImporting, emitImportSuccess,
