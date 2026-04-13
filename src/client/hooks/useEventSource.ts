@@ -216,24 +216,24 @@ export function useEventSource(apiKey: string | null) {
 }
 
 function updateMergeProgressFromEvent(type: SSEEventType, data: SSEEventPayloads[typeof type]): void {
-  if ((type === 'merge_queued' || type === 'merge_queue_updated') && 'book_id' in data) {
+  if (type === 'merge_queued' || type === 'merge_queue_updated') {
     const d = asPayload<'merge_queued'>(data);
     setMergeProgress(d.book_id, {
       bookTitle: d.book_title,
       phase: 'queued',
       position: d.position,
     });
-  } else if (type === 'merge_started' && 'book_id' in data) {
+  } else if (type === 'merge_started') {
     const d = asPayload<'merge_started'>(data);
     setMergeProgress(d.book_id, { bookTitle: d.book_title, phase: 'starting' });
-  } else if (type === 'merge_progress' && 'book_id' in data) {
+  } else if (type === 'merge_progress') {
     const d = asPayload<'merge_progress'>(data);
     setMergeProgress(d.book_id, {
       bookTitle: d.book_title,
       phase: d.phase,
       percentage: d.percentage,
     });
-  } else if (type === 'merge_complete' && 'book_id' in data) {
+  } else if (type === 'merge_complete') {
     const d = asPayload<'merge_complete'>(data);
     setMergeProgress(d.book_id, {
       bookTitle: d.book_title,
@@ -242,7 +242,7 @@ function updateMergeProgressFromEvent(type: SSEEventType, data: SSEEventPayloads
       message: d.message,
       enrichmentWarning: d.enrichmentWarning,
     });
-  } else if (type === 'merge_failed' && 'book_id' in data) {
+  } else if (type === 'merge_failed') {
     const d = asPayload<'merge_failed'>(data);
     const isCancelled = d.reason === 'cancelled';
     setMergeProgress(d.book_id, {
