@@ -102,38 +102,41 @@ export class ImportOrchestrator {
 
   /**
    * Drain the processing_queued import queue one download at a time.
-   * Called fire-and-forget after a slot is released. Chains recursively
-   * until the queue is empty, the atomic claim fails, or no slot is available.
+   * Called fire-and-forget after a slot is released. Iterates until the
+   * queue is empty, no slot is available, or all candidates are already claimed.
+   *
+   * Slot-first admission: acquires a semaphore slot before the DB claim,
+   * so no row is set to 'importing' without a reserved slot.
    */
   async drainQueuedImports(): Promise<void> {
-    const next = await this.importService.getNextQueuedDownload();
-    if (!next) return;
+    while (true) {
+      const next = await this.importService.getNextQueuedDownload();
+      if (!next) return;
 
-    const claimed = await this.importService.claimQueuedDownload(next.id);
-    if (!claimed) return;
+      if (!this.importService.tryAcquireSlot()) return;
 
-    if (!this.importService.tryAcquireSlot()) {
-      // No slot — revert the claim
-      await this.importService.setProcessingQueued(next.id);
-      return;
-    }
+      let claimed = false;
+      try {
+        claimed = await this.importService.claimQueuedDownload(next.id);
+        if (!claimed) continue;
 
-    // Emit SSE explicitly — importDownload() skips it when status is already 'importing'
-    emitDownloadImporting({
-      broadcaster: this.broadcaster,
-      downloadId: next.id,
-      bookId: next.bookId,
-      downloadStatus: 'processing_queued',
-      log: this.log,
-    });
+        // Emit SSE explicitly — importDownload() skips it when status is already 'importing'
+        emitDownloadImporting({
+          broadcaster: this.broadcaster,
+          downloadId: next.id,
+          bookId: next.bookId,
+          downloadStatus: 'processing_queued',
+          log: this.log,
+        });
 
-    try {
-      await this.importDownload(next.id);
-    } catch (error: unknown) {
-      this.log.error({ downloadId: next.id, error }, 'Queued import failed');
-    } finally {
-      this.importService.releaseSlot();
-      await this.drainQueuedImports();
+        try {
+          await this.importDownload(next.id);
+        } catch (error: unknown) {
+          this.log.error({ downloadId: next.id, error }, 'Queued import failed');
+        }
+      } finally {
+        this.importService.releaseSlot();
+      }
     }
   }
 
