@@ -9,6 +9,7 @@ import type { DownloadOrchestrator } from '../services/download-orchestrator.js'
 import type { BlacklistService } from '../services/blacklist.service.js';
 import type { SearchResult } from '../../core/index.js';
 import { DuplicateDownloadError } from '../services/download.service.js';
+import { BYTES_PER_GB } from '../../shared/constants.js';
 
 vi.mock('../utils/enrich-usenet-languages.js', () => ({
   enrichUsenetLanguages: vi.fn(),
@@ -460,10 +461,9 @@ describe('runRssJob', () => {
   });
 
   it('filters oversized RSS items via maxDownloadSize and logs quality gate', async () => {
-    const GB = 1_073_741_824;
     const wantedBooks = [makeWantedBook(1, 'Test Book', 'Author')];
     const rssResults = [
-      makeResult('Test Book', 'Author', { size: 10 * GB, downloadUrl: 'magnet:oversized' }),
+      makeResult('Test Book', 'Author', { size: 10 * BYTES_PER_GB, downloadUrl: 'magnet:oversized' }),
     ];
     const settings = createMockSettingsService({
       rss: { enabled: true },

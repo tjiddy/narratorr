@@ -12,6 +12,7 @@ import type { EventBroadcasterService } from './event-broadcaster.service.js';
 import { safeEmit } from '../utils/safe-emit.js';
 import { buildGrabPayload } from './grab-payload.js';
 import { parseWordList } from '../../shared/parse-word-list.js';
+import { BYTES_PER_GB } from '../../shared/constants.js';
 
 /** Build a search query string from a book's title and primary author. */
 export function buildSearchQuery(book: { title: string; authors?: Array<{ name: string }> | null }): string {
@@ -227,7 +228,7 @@ export function filterAndRankResults(
   if (maxDownloadSize && maxDownloadSize > 0) {
     filtered = filtered.filter((r) => {
       if (!r.size || r.size <= 0) return true; // unknown size → pass through
-      return r.size <= maxDownloadSize * 1_073_741_824;
+      return r.size <= maxDownloadSize * BYTES_PER_GB;
     });
   }
 

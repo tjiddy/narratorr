@@ -10,6 +10,7 @@ import type { BlacklistService } from './blacklist.service.js';
 import type { BookService, BookWithAuthor } from './book.service.js';
 import type { SettingsService } from './settings.service.js';
 import type { FastifyBaseLogger } from 'fastify';
+import { BYTES_PER_GB } from '../../shared/constants.js';
 
 vi.mock('../utils/enrich-usenet-languages.js', () => ({
   enrichUsenetLanguages: vi.fn(),
@@ -314,10 +315,9 @@ describe('retrySearch', () => {
   });
 
   it('filters oversized candidates via maxDownloadSize and logs quality gate filtering', async () => {
-    const GB = 1_073_741_824;
     const oversizedResult = {
       ...mockSearchResult,
-      size: 10 * GB,
+      size: 10 * BYTES_PER_GB,
       downloadUrl: 'magnet:?xt=urn:btih:oversized',
       infoHash: 'oversized123',
     };

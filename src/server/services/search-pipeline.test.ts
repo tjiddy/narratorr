@@ -8,6 +8,7 @@ import { DuplicateDownloadError } from './download.service.js';
 import type { EventBroadcasterService } from './event-broadcaster.service.js';
 import type { FastifyBaseLogger } from 'fastify';
 import type { SearchResult } from '../../core/index.js';
+import { BYTES_PER_GB as GB } from '../../shared/constants.js';
 
 function createMockLogger(): FastifyBaseLogger {
   return {
@@ -148,7 +149,7 @@ describe('searchAndGrabForBook', () => {
   });
 
   it('returns no_results when all results filtered out by maxDownloadSize', async () => {
-    const GB = 1_073_741_824;
+
     vi.mocked(indexerService.searchAll).mockResolvedValue([makeResult({ size: 10 * GB })]);
     const settings = { ...defaultQualitySettings, maxDownloadSize: 5 };
     const result = await searchAndGrabForBook(book, indexerService, downloadService, settings, log, blacklistService);
@@ -156,7 +157,7 @@ describe('searchAndGrabForBook', () => {
   });
 
   it('logs quality gate filtering when results are filtered by maxDownloadSize', async () => {
-    const GB = 1_073_741_824;
+
     vi.mocked(indexerService.searchAll).mockResolvedValue([
       makeResult({ title: 'Small', size: 2 * GB }),
       makeResult({ title: 'Huge', size: 10 * GB }),
@@ -407,7 +408,7 @@ describe('filterAndRankResults — minSeeders default', () => {
 });
 
 describe('filterAndRankResults — maxDownloadSize', () => {
-  const GB = 1_073_741_824;
+
 
   it('filters result exceeding maxDownloadSize threshold', () => {
     const { results } = filterAndRankResults(
@@ -883,7 +884,7 @@ describe('#392 searchAndGrabForBook with broadcaster', () => {
     });
 
     it('filters oversized results via maxDownloadSize in broadcaster path and logs quality gate', async () => {
-      const GB = 1_073_741_824;
+  
       vi.mocked(indexerService.searchAllStreaming).mockImplementation(
         async (_q, _o, _c, callbacks) => {
           callbacks.onComplete(10, 'MAM', 1, 300);
@@ -1469,7 +1470,7 @@ describe('buildNarratorPriority', () => {
 });
 
 describe('postProcessSearchResults — maxDownloadSize', () => {
-  const GB = 1_073_741_824;
+
 
   function createMockSettingsServiceInline(qualityOverrides?: Record<string, unknown>): SettingsService {
     const qualityDefaults = { grabFloor: 0, minSeeders: 0, protocolPreference: 'none', maxDownloadSize: 5, rejectWords: '', requiredWords: '' };
