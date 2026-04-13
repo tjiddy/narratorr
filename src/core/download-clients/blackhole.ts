@@ -1,6 +1,6 @@
 import { writeFile, access, constants } from 'node:fs/promises';
 import { join } from 'node:path';
-import type { DownloadClientAdapter, DownloadItemInfo, AddDownloadOptions, DownloadArtifact, DownloadProtocol } from './types.js';
+import type { DownloadClientAdapter, DownloadItemInfo, DownloadArtifact, DownloadProtocol } from './types.js';
 import { fetchWithTimeout } from '../utils/fetch-with-timeout.js';
 
 export interface BlackholeConfig {

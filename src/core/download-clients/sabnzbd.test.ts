@@ -2,6 +2,7 @@ import { describe, it, expect, beforeEach } from 'vitest';
 import { http, HttpResponse, delay } from 'msw';
 import { useMswServer } from '../__tests__/msw/server.js';
 import { SABnzbdClient } from './sabnzbd.js';
+import type { DownloadArtifact } from './types.js';
 
 const API_BASE = 'http://localhost:8080';
 const API_KEY = 'testapikey';
@@ -29,6 +30,10 @@ const historySlot = {
   storage: '/downloads/complete/Words of Radiance',
   fail_message: '',
 };
+
+function nzbUrl(url: string): DownloadArtifact {
+  return { type: 'nzb-url', url };
+}
 
 describe('SABnzbdClient', () => {
   const server = useMswServer();
@@ -65,7 +70,7 @@ describe('SABnzbdClient', () => {
       );
 
       const id = await client.addDownload(
-        'https://indexer.test/getnzb/abc.nzb?apikey=test',
+        nzbUrl('https://indexer.test/getnzb/abc.nzb?apikey=test'),
       );
 
       expect(id).toBe('SABnzbd_nzo_new123');
@@ -90,7 +95,7 @@ describe('SABnzbdClient', () => {
         }),
       );
 
-      await client.addDownload('https://indexer.test/nzb', {
+      await client.addDownload(nzbUrl('https://indexer.test/nzb'), {
         category: 'audiobooks',
       });
 
@@ -110,7 +115,7 @@ describe('SABnzbdClient', () => {
         }),
       );
 
-      await client.addDownload('https://indexer.test/nzb', { paused: true });
+      await client.addDownload(nzbUrl('https://indexer.test/nzb'), { paused: true });
 
       const url = new URL(capturedUrl);
       expect(url.searchParams.get('priority')).toBe('-1');
@@ -124,7 +129,7 @@ describe('SABnzbdClient', () => {
       );
 
       await expect(
-        client.addDownload('https://indexer.test/nzb'),
+        client.addDownload(nzbUrl('https://indexer.test/nzb')),
       ).rejects.toThrow('failed to add');
     });
   });

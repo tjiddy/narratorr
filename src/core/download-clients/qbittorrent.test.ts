@@ -1,7 +1,8 @@
-import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach } from 'vitest';
 import { http, HttpResponse, delay } from 'msw';
 import { useMswServer } from '../__tests__/msw/server.js';
 import { QBittorrentClient } from './qbittorrent.js';
+import type { DownloadArtifact } from './types.js';
 
 const config = { host: 'localhost', port: 8080, username: 'admin', password: 'password', useSsl: false };
 const BASE_URL = 'http://localhost:8080';
@@ -148,42 +149,20 @@ describe('QBittorrentClient', () => {
   });
 
   describe('addDownload', () => {
-    it('extracts hex hash from magnet URI', async () => {
+    it('returns infoHash from magnet-uri artifact', async () => {
       server.use(
         http.post(`${BASE_URL}/api/v2/torrents/add`, () => {
           return new HttpResponse('');
         }),
       );
 
-      const magnetUri = 'magnet:?xt=urn:btih:a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0&dn=Test';
-      const hash = await client.addDownload(magnetUri);
+      const artifact: DownloadArtifact = {
+        type: 'magnet-uri',
+        uri: 'magnet:?xt=urn:btih:a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0&dn=Test',
+        infoHash: 'a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0',
+      };
+      const hash = await client.addDownload(artifact);
       expect(hash).toBe('a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0');
-    });
-
-    it('converts base32 hash to hex', async () => {
-      server.use(
-        http.post(`${BASE_URL}/api/v2/torrents/add`, () => {
-          return new HttpResponse('');
-        }),
-      );
-
-      // JBSWY3DPEHPK3PXP is a valid base32 string
-      const magnetUri = 'magnet:?xt=urn:btih:JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP&dn=Test';
-      const hash = await client.addDownload(magnetUri);
-      // base32 "JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP" should be converted to hex
-      expect(hash).toMatch(/^[a-f0-9]{40}$/);
-    });
-
-    it('throws when no hash in magnet URI', async () => {
-      server.use(
-        http.post(`${BASE_URL}/api/v2/torrents/add`, () => {
-          return new HttpResponse('');
-        }),
-      );
-
-      await expect(client.addDownload('magnet:?dn=Test')).rejects.toThrow(
-        'Could not extract info hash from magnet URI',
-      );
     });
 
     it('succeeds when qBittorrent returns plain text Ok. response', async () => {
@@ -193,29 +172,23 @@ describe('QBittorrentClient', () => {
         }),
       );
 
-      const magnetUri = 'magnet:?xt=urn:btih:a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0&dn=Test';
-      const hash = await client.addDownload(magnetUri);
+      const artifact: DownloadArtifact = {
+        type: 'magnet-uri',
+        uri: 'magnet:?xt=urn:btih:a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0&dn=Test',
+        infoHash: 'a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0',
+      };
+      const hash = await client.addDownload(artifact);
       expect(hash).toBe('a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0');
     });
 
-    // --- .torrent URL fetch path (issue #367) ---
+    describe('torrent-bytes upload', () => {
+      const fakeTorrentFile = Buffer.from('d8:announce35:http://tracker.example.com/announce4:infod6:lengthi12345e4:name8:test.txte');
 
-    const fakeTorrentFile = Buffer.from('d8:announce35:http://tracker.example.com/announce4:infod6:lengthi12345e4:name8:test.txte');
-    const TORRENT_URL = 'https://example.com/file.torrent?passkey=SECRET123';
-
-    function torrentDownloadHandler(body?: Buffer | string, status = 200) {
-      return http.get('https://example.com/file.torrent', () => {
-        return new HttpResponse(body ?? fakeTorrentFile, { status });
-      });
-    }
-
-    describe('HTTP URL fetch-and-upload', () => {
-      it('fetches .torrent URL and uploads via multipart FormData, returns extracted info hash', async () => {
+      it('uploads torrent bytes via multipart FormData, returns pre-extracted info hash', async () => {
         let capturedContentType = '';
         let bodyContainsTorrent = false;
 
         server.use(
-          torrentDownloadHandler(),
           http.post(`${BASE_URL}/api/v2/torrents/add`, async ({ request }) => {
             capturedContentType = request.headers.get('content-type') || '';
             const text = await request.text();
@@ -224,36 +197,33 @@ describe('QBittorrentClient', () => {
           }),
         );
 
-        const hash = await client.addDownload(TORRENT_URL);
+        const artifact: DownloadArtifact = {
+          type: 'torrent-bytes',
+          data: fakeTorrentFile,
+          infoHash: 'e4c4ed54fbde46fb891a9ef51a368f7cde76eb74',
+        };
+        const hash = await client.addDownload(artifact);
         expect(capturedContentType).toContain('multipart/form-data');
         expect(bodyContainsTorrent).toBe(true);
         expect(hash).toBe('e4c4ed54fbde46fb891a9ef51a368f7cde76eb74');
       });
 
-      it('fetches plain http:// .torrent URL (not just https)', async () => {
-        server.use(
-          http.get('http://tracker.example.com/file.torrent', () => {
-            return new HttpResponse(fakeTorrentFile);
-          }),
-          http.post(`${BASE_URL}/api/v2/torrents/add`, () => new HttpResponse('')),
-        );
-
-        const hash = await client.addDownload('http://tracker.example.com/file.torrent');
-        expect(hash).toBe('e4c4ed54fbde46fb891a9ef51a368f7cde76eb74');
-      });
-
-      it('forwards savePath, category, and paused options through fetch path to addDownloadFromFile', async () => {
+      it('forwards savePath, category, and paused options through torrent-bytes path', async () => {
         let capturedBody = '';
 
         server.use(
-          torrentDownloadHandler(),
           http.post(`${BASE_URL}/api/v2/torrents/add`, async ({ request }) => {
             capturedBody = await request.text();
             return new HttpResponse('');
           }),
         );
 
-        await client.addDownload(TORRENT_URL, {
+        const artifact: DownloadArtifact = {
+          type: 'torrent-bytes',
+          data: fakeTorrentFile,
+          infoHash: 'fakehash123',
+        };
+        await client.addDownload(artifact, {
           savePath: '/audiobooks',
           category: 'books',
           paused: true,
@@ -266,184 +236,6 @@ describe('QBittorrentClient', () => {
         expect(capturedBody).toContain('paused');
         expect(capturedBody).toContain('true');
       });
-    });
-
-    describe('HTTP URL fetch — error handling', () => {
-      it('throws error mentioning HTTP 404 when .torrent URL returns 404, without leaking URL', async () => {
-        server.use(torrentDownloadHandler(undefined, 404));
-
-        const error = await client.addDownload(TORRENT_URL).catch((e: unknown) => e) as Error;
-        expect(error).toBeInstanceOf(Error);
-        expect(error.message).toContain('404');
-        expect(error.message).not.toContain('SECRET123');
-        expect(error.message).not.toContain('example.com');
-      });
-
-      it('throws error mentioning HTTP 500 when .torrent URL returns 500, without leaking URL', async () => {
-        server.use(torrentDownloadHandler(undefined, 500));
-
-        const error = await client.addDownload(TORRENT_URL).catch((e: unknown) => e) as Error;
-        expect(error).toBeInstanceOf(Error);
-        expect(error.message).toContain('500');
-        expect(error.message).not.toContain('SECRET123');
-        expect(error.message).not.toContain('example.com');
-      });
-
-      it('throws Request timed out on network timeout, no HTTP status in message', async () => {
-        server.use(
-          http.get('https://example.com/file.torrent', async () => {
-            await delay('infinite');
-            return new HttpResponse('');
-          }),
-        );
-
-        const originalTimeout = AbortSignal.timeout;
-        AbortSignal.timeout = () => AbortSignal.abort(new DOMException('The operation was aborted', 'TimeoutError'));
-
-        try {
-          const error = await client.addDownload(TORRENT_URL).catch((e: unknown) => e) as Error;
-          expect(error).toBeInstanceOf(Error);
-          expect(error.message).toContain('timed out');
-          expect(error.message).not.toContain('HTTP');
-          expect(error.message).not.toContain('SECRET123');
-        } finally {
-          AbortSignal.timeout = originalTimeout;
-        }
-      });
-
-      it('surfaces sanitized DNS/connection-refused error preserving mapped message without URL or HTTP status', async () => {
-        // Inject the exact TypeError('fetch failed') + cause.code shape that fetchWithTimeout maps
-        const cause = Object.assign(new Error('getaddrinfo ENOTFOUND torrent-host.example'), { code: 'ENOTFOUND' });
-        const fetchSpy = vi.spyOn(globalThis, 'fetch').mockRejectedValueOnce(
-          Object.assign(new TypeError('fetch failed'), { cause }),
-        );
-
-        try {
-          const error = await client.addDownload(TORRENT_URL).catch((e: unknown) => e) as Error;
-          expect(error).toBeInstanceOf(Error);
-          // Should preserve the mapped DNS error message from mapNetworkError
-          expect(error.message).toMatch(/dns/i);
-          expect(error.message).toContain('torrent-host.example');
-          // Must not leak the original download URL or inject HTTP status text
-          expect(error.message).not.toContain('SECRET123');
-          expect(error.message).not.toContain('HTTP');
-        } finally {
-          fetchSpy.mockRestore();
-        }
-      });
-
-      it('catches fetchWithTimeout redirect error and throws sanitized message without source URL or Location header', async () => {
-        server.use(
-          http.get('https://example.com/file.torrent', () => {
-            return new HttpResponse(null, {
-              status: 302,
-              headers: { Location: 'https://auth.example.com/login?token=SENSITIVE_TOKEN' },
-            });
-          }),
-        );
-
-        const error = await client.addDownload(TORRENT_URL).catch((e: unknown) => e) as Error;
-        expect(error).toBeInstanceOf(Error);
-        expect(error.message).not.toContain('SECRET123');
-        expect(error.message).not.toContain('SENSITIVE_TOKEN');
-        expect(error.message).not.toContain('auth.example.com');
-      });
-
-      it('throws descriptive error when fetched content is not a valid torrent (extractInfoHashFromTorrent returns null)', async () => {
-        server.use(
-          torrentDownloadHandler(Buffer.from('<html>Error page</html>')),
-          http.post(`${BASE_URL}/api/v2/torrents/add`, () => new HttpResponse('')),
-        );
-
-        await expect(client.addDownload(TORRENT_URL)).rejects.toThrow('info hash');
-      });
-
-      it('throws descriptive error when fetched response has empty body', async () => {
-        server.use(
-          torrentDownloadHandler(Buffer.from('')),
-          http.post(`${BASE_URL}/api/v2/torrents/add`, () => new HttpResponse('')),
-        );
-
-        await expect(client.addDownload(TORRENT_URL)).rejects.toThrow('info hash');
-      });
-    });
-
-    describe('HTTP URL fetch — URL redaction', () => {
-      it('error from failed HTTP fetch does not contain the original URL with passkey', async () => {
-        server.use(torrentDownloadHandler(undefined, 403));
-
-        const error = await client.addDownload(TORRENT_URL).catch((e: unknown) => e) as Error;
-        expect(error).toBeInstanceOf(Error);
-        expect(error.message).not.toContain('SECRET123');
-        expect(error.message).not.toContain('example.com/file.torrent');
-      });
-
-      it('error from redirect does not contain the Location header URL', async () => {
-        server.use(
-          http.get('https://example.com/file.torrent', () => {
-            return new HttpResponse(null, {
-              status: 301,
-              headers: { Location: 'https://redirect.example.com/secret-path' },
-            });
-          }),
-        );
-
-        const error = await client.addDownload(TORRENT_URL).catch((e: unknown) => e) as Error;
-        expect(error).toBeInstanceOf(Error);
-        expect(error.message).not.toContain('redirect.example.com');
-        expect(error.message).not.toContain('secret-path');
-      });
-
-      it('error from malformed torrent content does not contain the original URL', async () => {
-        server.use(
-          torrentDownloadHandler(Buffer.from('not-a-torrent')),
-          http.post(`${BASE_URL}/api/v2/torrents/add`, () => new HttpResponse('')),
-        );
-
-        const error = await client.addDownload(TORRENT_URL).catch((e: unknown) => e) as Error;
-        expect(error).toBeInstanceOf(Error);
-        expect(error.message).not.toContain('SECRET123');
-        expect(error.message).not.toContain('example.com');
-      });
-    });
-
-    describe('unsupported schemes', () => {
-      it('throws immediately for ftp:// URL with descriptive error and no login/upload side effects', async () => {
-        let loginCalled = false;
-        let uploadCalled = false;
-
-        server.use(
-          http.post(`${BASE_URL}/api/v2/auth/login`, () => {
-            loginCalled = true;
-            return new HttpResponse('Ok.', {
-              headers: { 'Set-Cookie': 'SID=test-session-id; path=/' },
-            });
-          }),
-          http.post(`${BASE_URL}/api/v2/torrents/add`, () => {
-            uploadCalled = true;
-            return new HttpResponse('');
-          }),
-        );
-
-        const error = await client.addDownload('ftp://example.com/file.torrent').catch((e: unknown) => e) as Error;
-        expect(error).toBeInstanceOf(Error);
-        expect(error.message).toContain('Unsupported URL scheme');
-        expect(loginCalled).toBe(false);
-        expect(uploadCalled).toBe(false);
-      });
-    });
-
-    it('throws when btih contains invalid characters', async () => {
-      server.use(
-        http.post(`${BASE_URL}/api/v2/torrents/add`, () => {
-          return new HttpResponse('');
-        }),
-      );
-
-      // Invalid chars prevent regex match entirely — neither hex [a-f0-9]{40} nor base32 [a-z2-7]{32} matches
-      await expect(
-        client.addDownload('magnet:?xt=urn:btih:INVALID!@%23%24CHARS&dn=Test'),
-      ).rejects.toThrow('Could not extract info hash from magnet URI');
     });
   });
 
@@ -1021,19 +813,6 @@ describe('QBittorrentClient', () => {
   });
 
   describe('edge cases — boundary values and malformed data', () => {
-    it('handles invalid base32 characters in hash (skips them)', async () => {
-      server.use(
-        http.post(`${BASE_URL}/api/v2/torrents/add`, () => {
-          return new HttpResponse('');
-        }),
-      );
-
-      // Base32 with invalid chars (0, 1, 8, 9) — they get skipped in base32ToHex
-      const magnetUri = 'magnet:?xt=urn:btih:JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP&dn=Test';
-      const hash = await client.addDownload(magnetUri);
-      expect(hash).toMatch(/^[a-f0-9]+$/);
-    });
-
     it('handles ETA at boundary value 8640000 (excluded)', async () => {
       server.use(
         http.get(`${BASE_URL}/api/v2/torrents/info`, () => {

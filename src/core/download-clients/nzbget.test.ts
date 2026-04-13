@@ -2,6 +2,7 @@ import { describe, it, expect, beforeEach } from 'vitest';
 import { http, HttpResponse, delay } from 'msw';
 import { useMswServer } from '../__tests__/msw/server.js';
 import { NZBGetClient } from './nzbget.js';
+import type { DownloadArtifact } from './types.js';
 
 const RPC_URL = 'http://localhost:6789/jsonrpc';
 
@@ -29,6 +30,10 @@ const historyItem = {
   HistoryTime: 1704110400, // 2024-01-01 12:00:00 UTC
   MinPostTime: 1704067200,
 };
+
+function nzbUrl(url: string): DownloadArtifact {
+  return { type: 'nzb-url', url };
+}
 
 function rpcHandler(
   methodHandlers: Record<string, (params: unknown[]) => unknown>,
@@ -79,7 +84,7 @@ describe('NZBGetClient', () => {
       );
 
       const id = await client.addDownload(
-        'https://indexer.test/getnzb/abc.nzb',
+        nzbUrl('https://indexer.test/getnzb/abc.nzb'),
       );
 
       expect(id).toBe('789');
@@ -98,7 +103,7 @@ describe('NZBGetClient', () => {
         }),
       );
 
-      await client.addDownload('https://indexer.test/nzb', {
+      await client.addDownload(nzbUrl('https://indexer.test/nzb'), {
         category: 'audiobooks',
       });
 
@@ -115,7 +120,7 @@ describe('NZBGetClient', () => {
         }),
       );
 
-      await client.addDownload('https://indexer.test/nzb', { paused: true });
+      await client.addDownload(nzbUrl('https://indexer.test/nzb'), { paused: true });
 
       // Priority is params[3]: -1 = paused
       expect(capturedBody!.params[3]).toBe(-1);
@@ -129,7 +134,7 @@ describe('NZBGetClient', () => {
       );
 
       await expect(
-        client.addDownload('https://indexer.test/nzb'),
+        client.addDownload(nzbUrl('https://indexer.test/nzb')),
       ).rejects.toThrow('failed to add');
     });
   });

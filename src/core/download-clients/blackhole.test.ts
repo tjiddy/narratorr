@@ -2,6 +2,7 @@ import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { http, HttpResponse } from 'msw';
 import { useMswServer } from '../__tests__/msw/server.js';
 import { BlackholeClient } from './blackhole.js';
+import type { DownloadArtifact } from './types.js';
 
 vi.mock('node:fs/promises', () => ({
   writeFile: vi.fn().mockResolvedValue(undefined),
@@ -21,109 +22,118 @@ describe('BlackholeClient', () => {
   });
 
   describe('addDownload', () => {
-    it('fetches URL content and writes file to watchDir', async () => {
-      const fileContent = new Uint8Array([0x64, 0x38]); // d8 - start of torrent file
-      server.use(
-        http.get('https://example.com/file.torrent', () => {
-          return new HttpResponse(fileContent);
-        }),
-      );
+    it('writes torrent-bytes artifact as .torrent file', async () => {
+      const artifact: DownloadArtifact = {
+        type: 'torrent-bytes',
+        data: Buffer.from([0x64, 0x38]),
+        infoHash: 'abc123',
+      };
 
-      await client.addDownload('https://example.com/file.torrent');
+      await client.addDownload(artifact);
       expect(writeFile).toHaveBeenCalledWith(
-        expect.stringContaining('watch'),
-        expect.any(Buffer),
+        expect.stringMatching(/download-\d+\.torrent$/),
+        artifact.data,
       );
     });
 
-    it('preserves .torrent extension from URL', async () => {
-      server.use(
-        http.get('https://example.com/my-audiobook.torrent', () => {
-          return new HttpResponse(new Uint8Array([0x64]));
-        }),
-      );
+    it('writes magnet-uri artifact as .magnet file', async () => {
+      const magnetUri = 'magnet:?xt=urn:btih:abc123&dn=test';
+      const artifact: DownloadArtifact = {
+        type: 'magnet-uri',
+        uri: magnetUri,
+        infoHash: 'abc123',
+      };
 
-      await client.addDownload('https://example.com/my-audiobook.torrent');
+      await client.addDownload(artifact);
       expect(writeFile).toHaveBeenCalledWith(
-        expect.stringMatching(/my-audiobook\.torrent$/),
-        expect.any(Buffer),
+        expect.stringMatching(/\d+\.magnet$/),
+        magnetUri,
       );
     });
 
-    it('preserves .nzb extension from URL', async () => {
-      const nzbClient = new BlackholeClient({ watchDir: '/downloads/watch', protocol: 'usenet' });
-      server.use(
-        http.get('https://example.com/my-audiobook.nzb', () => {
-          return new HttpResponse(new Uint8Array([0x3c]));
-        }),
-      );
-
-      await nzbClient.addDownload('https://example.com/my-audiobook.nzb');
-      expect(writeFile).toHaveBeenCalledWith(
-        expect.stringMatching(/my-audiobook\.nzb$/),
-        expect.any(Buffer),
-      );
-    });
-
-    it('generates filename with correct extension when URL has no extension', async () => {
+    it('fetches nzb-url artifact and writes .nzb file', async () => {
+      const nzbContent = new Uint8Array([0x3c, 0x6e, 0x7a, 0x62]);
       server.use(
         http.get('https://example.com/api/download/123', () => {
-          return new HttpResponse(new Uint8Array([0x64]));
+          return new HttpResponse(nzbContent);
         }),
       );
 
-      await client.addDownload('https://example.com/api/download/123');
+      const artifact: DownloadArtifact = {
+        type: 'nzb-url',
+        url: 'https://example.com/api/download/123',
+      };
+
+      await client.addDownload(artifact);
       expect(writeFile).toHaveBeenCalledWith(
-        expect.stringMatching(/\.torrent$/),
+        expect.stringMatching(/download-\d+\.nzb$/),
         expect.any(Buffer),
       );
     });
 
-    it('generates .nzb extension for usenet protocol', async () => {
-      const nzbClient = new BlackholeClient({ watchDir: '/downloads/watch', protocol: 'usenet' });
-      server.use(
-        http.get('https://example.com/api/download/123', () => {
-          return new HttpResponse(new Uint8Array([0x3c]));
-        }),
-      );
+    it('returns null externalId for torrent-bytes', async () => {
+      const artifact: DownloadArtifact = {
+        type: 'torrent-bytes',
+        data: Buffer.from([0x64]),
+        infoHash: 'abc123',
+      };
 
-      await nzbClient.addDownload('https://example.com/api/download/123');
-      expect(writeFile).toHaveBeenCalledWith(
-        expect.stringMatching(/\.nzb$/),
-        expect.any(Buffer),
-      );
-    });
-
-    it('returns null externalId', async () => {
-      server.use(
-        http.get('https://example.com/file.torrent', () => {
-          return new HttpResponse(new Uint8Array([0x64]));
-        }),
-      );
-
-      const result = await client.addDownload('https://example.com/file.torrent');
+      const result = await client.addDownload(artifact);
       expect(result).toBeNull();
     });
 
-    it('throws on download failure', async () => {
+    it('returns null externalId for magnet-uri', async () => {
+      const artifact: DownloadArtifact = {
+        type: 'magnet-uri',
+        uri: 'magnet:?xt=urn:btih:abc123',
+        infoHash: 'abc123',
+      };
+
+      const result = await client.addDownload(artifact);
+      expect(result).toBeNull();
+    });
+
+    it('returns null externalId for nzb-url', async () => {
       server.use(
-        http.get('https://example.com/file.torrent', () => {
+        http.get('https://example.com/file.nzb', () => {
+          return new HttpResponse(new Uint8Array([0x3c]));
+        }),
+      );
+
+      const artifact: DownloadArtifact = {
+        type: 'nzb-url',
+        url: 'https://example.com/file.nzb',
+      };
+
+      const result = await client.addDownload(artifact);
+      expect(result).toBeNull();
+    });
+
+    it('throws on nzb-url download failure', async () => {
+      server.use(
+        http.get('https://example.com/file.nzb', () => {
           return new HttpResponse(null, { status: 404 });
         }),
       );
 
-      await expect(client.addDownload('https://example.com/file.torrent')).rejects.toThrow('HTTP 404');
+      const artifact: DownloadArtifact = {
+        type: 'nzb-url',
+        url: 'https://example.com/file.nzb',
+      };
+
+      await expect(client.addDownload(artifact)).rejects.toThrow('HTTP 404');
     });
 
     it('throws when writeFile fails', async () => {
       vi.mocked(writeFile).mockRejectedValueOnce(new Error('ENOSPC: no space left on device'));
-      server.use(
-        http.get('https://example.com/file.torrent', () => {
-          return new HttpResponse(new Uint8Array([0x64]));
-        }),
-      );
 
-      await expect(client.addDownload('https://example.com/file.torrent')).rejects.toThrow('ENOSPC');
+      const artifact: DownloadArtifact = {
+        type: 'torrent-bytes',
+        data: Buffer.from([0x64]),
+        infoHash: 'abc123',
+      };
+
+      await expect(client.addDownload(artifact)).rejects.toThrow('ENOSPC');
     });
   });
 
