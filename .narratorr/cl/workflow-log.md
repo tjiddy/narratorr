@@ -1,5 +1,34 @@
 # Workflow Log
 
+## #541 Polish: sanitizeNetworkError URL leak, ebook filter test, mock drift — 2026-04-13
+**Skill path:** /implement → /claim → /plan → /handoff
+**Outcome:** success — PR #542
+
+### Metrics
+- Files changed: 5 | Tests added/modified: 7 new tests across 2 files, 1 mock refactor
+- Quality gate runs: 2 (pass on attempt 1 both times)
+- Fix iterations: 0
+- Context compactions: 0
+
+### Workflow experience
+- What went smoothly: Three independent, well-scoped changes with clear AC. TDD cycle was fast — each module took one red/green pass with no iteration.
+- Friction / issues encountered: Spec review took 3 rounds due to `Audiobook` not being in `AUDIO_FORMAT_RE` — the elaboration step used an incorrect example token. This was caught by the reviewer, not during planning.
+
+### Token efficiency
+- Highest-token actions: Spec review rounds (3 rounds of elaborate → review-spec → respond cycles)
+- Avoidable waste: Initial elaboration should have read `AUDIO_FORMAT_RE` source before choosing test examples
+- Suggestions: When writing spec examples for filter tests, always read the actual regex/constant to pick valid tokens
+
+### Infrastructure gaps
+- Repeated workarounds: None
+- Missing tooling / config: None
+- Unresolved debt: search-pipeline.ts at 491 lines (soft limit 400) — pre-existing, not introduced
+
+### Wish I'd Known
+1. `AUDIO_FORMAT_RE` only matches codec format tokens (`m4b|mp3|flac|aac|ogg`), not genre words like `Audiobook` — would have saved 2 spec review rounds
+2. The `importOriginal` passthrough mock pattern already existed in `import.service.test.ts:61-68` — searching for existing patterns before proposing solutions saves spec review friction
+3. The ebook filter's `||` precedence chain is intentionally different from a "check all fields" approach — the ebook detection should use precedence (first non-empty field), but the audio counter-signal should check all fields independently
+
 ## #537 Activity page: merge Downloads + Event History into Active / History tabs — 2026-04-13
 **Skill path:** /implement → /claim → /plan → /handoff
 **Outcome:** success — PR #538
