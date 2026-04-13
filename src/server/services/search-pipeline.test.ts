@@ -348,6 +348,43 @@ describe('filterAndRankResults — ebook format filtering', () => {
     const { results } = filterAndRankResults([makeResult({ title: 'Dune EPUB OGG' })], base.bookDuration, { grabFloor: base.grabFloor, minSeeders: base.minSeeders, protocolPreference: base.protocolPreference });
     expect(results).toHaveLength(1);
   });
+
+  // #520 — nzbName fallback chain for ebook filter
+  it('filters result when nzbName contains ebook keyword but rawTitle/title do not', () => {
+    const { results } = filterAndRankResults(
+      [makeResult({ nzbName: 'BookTitle-EPUB.part01.rar', rawTitle: 'BookTitle', title: 'Book Title' })],
+      base.bookDuration,
+      { grabFloor: base.grabFloor, minSeeders: base.minSeeders, protocolPreference: base.protocolPreference },
+    );
+    expect(results).toHaveLength(0);
+  });
+
+  it('passes result when nzbName contains ebook keyword AND audio keyword (mixed format)', () => {
+    const { results } = filterAndRankResults(
+      [makeResult({ nzbName: 'BookTitle-EPUB-MP3', rawTitle: 'BookTitle', title: 'Book Title' })],
+      base.bookDuration,
+      { grabFloor: base.grabFloor, minSeeders: base.minSeeders, protocolPreference: base.protocolPreference },
+    );
+    expect(results).toHaveLength(1);
+  });
+
+  it('filters result when nzbName is undefined and rawTitle contains ebook keyword (existing fallback)', () => {
+    const { results } = filterAndRankResults(
+      [makeResult({ nzbName: undefined, rawTitle: 'BookTitle EPUB', title: 'Book Title' })],
+      base.bookDuration,
+      { grabFloor: base.grabFloor, minSeeders: base.minSeeders, protocolPreference: base.protocolPreference },
+    );
+    expect(results).toHaveLength(0);
+  });
+
+  it('filters result when nzbName is empty string and rawTitle contains ebook keyword (|| falls through)', () => {
+    const { results } = filterAndRankResults(
+      [makeResult({ nzbName: '', rawTitle: 'BookTitle MOBI', title: 'Book Title' })],
+      base.bookDuration,
+      { grabFloor: base.grabFloor, minSeeders: base.minSeeders, protocolPreference: base.protocolPreference },
+    );
+    expect(results).toHaveLength(0);
+  });
 });
 
 describe('filterAndRankResults — minSeeders default', () => {
