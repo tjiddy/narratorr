@@ -78,6 +78,43 @@ describe('MetadataService', () => {
       expect(result.authors).toEqual(mockAuthors);
       expect(result.series).toEqual(mockSeries);
     });
+
+    describe('language filtering', () => {
+      const mockSettingsService = {
+        get: vi.fn(),
+        getAll: vi.fn(),
+        set: vi.fn(),
+      };
+      let serviceWithSettings: MetadataService;
+
+      beforeEach(() => {
+        mockSettingsService.get.mockReset();
+        mockSettingsService.get.mockImplementation((key: string) => {
+          if (key === 'quality') return Promise.resolve({ rejectWords: '', requiredWords: '', grabFloor: 0, minSeeders: 1, protocolPreference: 'any', searchImmediately: false, monitorForUpgrades: false });
+          if (key === 'metadata') return Promise.resolve({ audibleRegion: 'us', languages: ['english'] });
+          return Promise.resolve({});
+        });
+        serviceWithSettings = new MetadataService(inject<FastifyBaseLogger>(mockLog), undefined, mockSettingsService as never);
+      });
+
+      it.todo('filters books with non-matching language');
+
+      it.todo('passes through books with no language field');
+
+      it.todo('returns all books when languages array is empty');
+
+      it.todo('applies case-insensitive language comparison');
+
+      it.todo('includes books matching any of multiple configured languages');
+
+      it.todo('returns unfiltered results when SettingsService is not injected (fail-open)');
+
+      it.todo('returns unfiltered results and logs warning when settings lookup throws (fail-open)');
+
+      it.todo('returns empty books array when all books are filtered out');
+
+      it.todo('does not filter authors or series results');
+    });
   });
 
   describe('searchBooks', () => {
