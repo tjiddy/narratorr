@@ -52,7 +52,19 @@ export function useEventHistory(params?: EventHistoryParams) {
     },
   });
 
-  return { events, total, isLoading: query.isLoading, isError: query.isError, markFailedMutation, deleteMutation, bulkDeleteMutation };
+  const retryMutation = useMutation({
+    mutationFn: api.retryDownload,
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['activity'] });
+      queryClient.invalidateQueries({ queryKey: queryKeys.eventHistory.root() });
+      toast.success('Retry initiated');
+    },
+    onError: (error: Error) => {
+      toast.error(`Retry failed: ${getErrorMessage(error)}`);
+    },
+  });
+
+  return { events, total, isLoading: query.isLoading, isError: query.isError, markFailedMutation, deleteMutation, bulkDeleteMutation, retryMutation };
 }
 
 export function useBookEventHistory(bookId: number) {

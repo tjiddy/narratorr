@@ -21,6 +21,7 @@ function mockDefaultHook(overrides: Partial<ReturnType<typeof useEventHistory>> 
     markFailedMutation: { mutate: vi.fn(), isPending: false } as never,
     deleteMutation: { mutate: vi.fn(), isPending: false } as never,
     bulkDeleteMutation: { mutate: vi.fn(), isPending: false } as never,
+    retryMutation: { mutate: vi.fn(), isPending: false } as never,
     ...overrides,
   });
 }

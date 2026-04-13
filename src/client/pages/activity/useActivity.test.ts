@@ -3,7 +3,6 @@ import { renderHook, waitFor, act } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { createElement } from 'react';
 import { useActivity } from './useActivity';
-import type { ActivityListParams } from '@/lib/api/activity';
 import type { Download } from '@/lib/api';
 
 vi.mock('@/lib/api', () => ({

@@ -1,14 +1,10 @@
 import { useState, useCallback, useEffect } from 'react';
-import { useMutation, useQueryClient } from '@tanstack/react-query';
-import { toast } from 'sonner';
 import { useEventHistory } from '@/hooks/useEventHistory';
 import { EventHistoryCard } from '@/components/EventHistoryCard';
 import { ConfirmModal } from '@/components/ConfirmModal';
 import { LoadingSpinner, HistoryIcon, SearchIcon, TrashIcon } from '@/components/icons';
 import { usePagination } from '@/hooks/usePagination';
 import { Pagination } from '@/components/Pagination';
-import { api } from '@/lib/api';
-import { getErrorMessage } from '@/lib/error-message.js';
 import { DEFAULT_LIMITS } from '../../../shared/schemas/common.js';
 
 const EVENT_TYPE_FILTERS = [
@@ -41,24 +37,11 @@ export function EventHistorySection() {
     pagination.reset();
   }, [pagination]);
 
-  const { events, total, isLoading, markFailedMutation, deleteMutation, bulkDeleteMutation } = useEventHistory({
+  const { events, total, isLoading, markFailedMutation, deleteMutation, bulkDeleteMutation, retryMutation } = useEventHistory({
     eventType: eventType || undefined,
     search: search || undefined,
     limit: pagination.limit,
     offset: pagination.offset,
-  });
-
-  const queryClient = useQueryClient();
-  const retryMutation = useMutation({
-    mutationFn: api.retryDownload,
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['activity'] });
-      queryClient.invalidateQueries({ queryKey: ['eventHistory'] });
-      toast.success('Retry initiated');
-    },
-    onError: (error: Error) => {
-      toast.error(`Retry failed: ${getErrorMessage(error)}`);
-    },
   });
 
   // Clamp page when total shrinks
