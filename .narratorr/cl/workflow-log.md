@@ -1,5 +1,34 @@
 # Workflow Log
 
+## #523 Search page should filter or deprioritize metadata results by configured languages — 2026-04-13
+**Skill path:** /elaborate → /respond-to-spec-review (×2) → /implement → /claim → /plan → /handoff
+**Outcome:** success — PR #529
+
+### Metrics
+- Files changed: 2 | Tests added/modified: 9
+- Quality gate runs: 2 (pass on attempt 1 both times)
+- Fix iterations: 0
+- Context compactions: 0
+
+### Workflow experience
+- What went smoothly: Clean extraction pattern — `filterAuthorBooks()` provided an exact template for the new `filterBooksByLanguage()` method. All 9 new tests passed on first green run.
+- Friction / issues encountered: Spec review took 3 rounds (2 rounds of `/respond-to-spec-review`). Round 2 caught a caller-surface gap — `GET /api/metadata/search` serves 3 client hooks, not just the search page. This was a legitimate miss in the original spec.
+
+### Token efficiency
+- Highest-token actions: Spec review round-trips (3 rounds of review comments)
+- Avoidable waste: The caller-surface analysis could have been done in `/elaborate` if we'd grepped for all consumers of `api.searchMetadata()` upfront
+- Suggestions: When elaborating specs that modify shared API endpoints, always enumerate all client consumers in the first pass
+
+### Infrastructure gaps
+- Repeated workarounds: None
+- Missing tooling / config: None
+- Unresolved debt: `BookMetadata` client/server type drift (already in debt.md from #497)
+
+### Wish I'd Known
+1. `GET /api/metadata/search` is consumed by 3 hooks, not just `useMetadataSearch` — would have scoped the spec correctly in the first elaboration pass
+2. `filterAuthorBooks()` does dual filtering (reject words + languages) — knowing this upfront made the extraction decision obvious
+3. The metadata.service.ts file was at 346/350 line limit — the shared method extraction was necessary, not just a DRY nicety
+
 ## #522 Polish: batch review findings from PRs 509-519 — 2026-04-13
 **Skill path:** /elaborate → /respond-to-spec-review → /implement → /claim → /plan → /handoff
 **Outcome:** success — PR #526
