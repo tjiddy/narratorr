@@ -14,7 +14,7 @@ import { revertBookStatus } from '../utils/book-status.js';
 import {
   emitGrabStarted, emitBookStatusChangeOnGrab, emitDownloadProgress,
   emitDownloadStatusChange, emitBookStatusChange, notifyGrab,
-  recordGrabbedEvent, recordDownloadCompletedEvent,
+  recordGrabbedEvent, recordDownloadCompletedEvent, recordDownloadFailedEvent,
 } from '../utils/download-side-effects.js';
 
 export interface GrabParams {
@@ -104,8 +104,9 @@ export class DownloadOrchestrator {
         this.log.warn(revertError, 'Failed to revert book status during cancel');
       }
       this.safe(() => emitDownloadStatusChange({ broadcaster: this.broadcaster, downloadId: id, bookId: download.bookId!, oldStatus, newStatus: 'failed', log: this.log }));
+      this.safe(() => recordDownloadFailedEvent({ eventHistory: this.eventHistory, downloadId: id, bookId: download.bookId!, bookTitle: download.title, errorMessage: 'Cancelled by user', log: this.log }));
     }
-    // Orphaned downloads (no bookId) skip SSE — no book to invalidate
+    // Orphaned downloads (no bookId) skip SSE and event recording — no book to invalidate
 
     return true;
   }
@@ -168,11 +169,14 @@ export class DownloadOrchestrator {
     }
   }
 
-  /** Set download error with SSE dispatch. */
-  async setError(id: number, errorMessage: string, meta?: { bookId?: number; oldStatus?: DownloadStatus }): Promise<void> {
+  /** Set download error with SSE dispatch and event recording. */
+  async setError(id: number, errorMessage: string, meta?: { bookId?: number; bookTitle?: string; oldStatus?: DownloadStatus }): Promise<void> {
     await this.downloadService.setError(id, errorMessage, meta);
     if (meta?.bookId && meta?.oldStatus) {
       emitDownloadStatusChange({ broadcaster: this.broadcaster, downloadId: id, bookId: meta.bookId, oldStatus: meta.oldStatus, newStatus: 'failed', log: this.log });
+    }
+    if (meta?.bookId) {
+      this.safe(() => recordDownloadFailedEvent({ eventHistory: this.eventHistory, downloadId: id, bookId: meta.bookId!, bookTitle: meta.bookTitle ?? '', errorMessage, log: this.log }));
     }
   }
 }

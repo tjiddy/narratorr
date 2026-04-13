@@ -46,10 +46,60 @@ const EVENT_CONFIG: Record<string, EventTypeConfig> = {
 
 const DEFAULT_CONFIG: EventTypeConfig = { icon: ClockIcon, label: 'Unknown', color: 'text-muted-foreground', bgColor: 'bg-muted' };
 
-export function EventHistoryCard({ event, onMarkFailed, isMarkingFailed, onDelete, isDeleting, showBookTitle = true, index = 0 }: {
+function EventCardActions({ eventId, downloadId, canRetry, isActionable, onRetry, isRetrying, onMarkFailed, isMarkingFailed, onDelete, isDeleting }: {
+  eventId: number;
+  downloadId: number | null;
+  canRetry: boolean;
+  isActionable: boolean;
+  onRetry?: (downloadId: number) => void;
+  isRetrying?: boolean;
+  onMarkFailed?: (id: number) => void;
+  isMarkingFailed?: boolean;
+  onDelete?: (id: number) => void;
+  isDeleting?: boolean;
+}) {
+  return (
+    <div className="flex items-center gap-2 shrink-0">
+      {canRetry && onRetry && downloadId != null && (
+        <button
+          type="button"
+          onClick={() => onRetry(downloadId)}
+          disabled={isRetrying}
+          className="text-xs px-3 py-1.5 rounded-lg bg-primary/10 text-primary hover:bg-primary/20 disabled:opacity-50 font-medium transition-colors"
+        >
+          Retry
+        </button>
+      )}
+      {isActionable && onMarkFailed && (
+        <button
+          onClick={() => onMarkFailed(eventId)}
+          disabled={isMarkingFailed}
+          className="text-xs px-3 py-1.5 rounded-lg bg-destructive/10 text-destructive hover:bg-destructive/20 disabled:opacity-50 font-medium transition-colors"
+        >
+          Mark Failed
+        </button>
+      )}
+      {onDelete && (
+        <button
+          type="button"
+          onClick={() => onDelete(eventId)}
+          disabled={isDeleting}
+          className="p-1.5 rounded-lg text-muted-foreground/50 hover:text-destructive hover:bg-destructive/10 disabled:opacity-50 transition-colors"
+          aria-label="Delete event"
+        >
+          <TrashIcon className="w-3.5 h-3.5" />
+        </button>
+      )}
+    </div>
+  );
+}
+
+export function EventHistoryCard({ event, onMarkFailed, isMarkingFailed, onRetry, isRetrying, onDelete, isDeleting, showBookTitle = true, index = 0 }: {
   event: BookEvent;
   onMarkFailed?: (id: number) => void;
   isMarkingFailed?: boolean;
+  onRetry?: (downloadId: number) => void;
+  isRetrying?: boolean;
   onDelete?: (id: number) => void;
   isDeleting?: boolean;
   showBookTitle?: boolean;
@@ -59,6 +109,7 @@ export function EventHistoryCard({ event, onMarkFailed, isMarkingFailed, onDelet
   const config = EVENT_CONFIG[event.eventType] ?? { ...DEFAULT_CONFIG, label: event.eventType };
   const Icon = config.icon;
   const isActionable = ACTIONABLE_TYPES.includes(event.eventType) && event.downloadId != null;
+  const canRetry = event.eventType === 'download_failed' && event.downloadId != null && event.bookId != null;
 
   const { data: indexers } = useQuery({
     queryKey: queryKeys.indexers(),
@@ -123,28 +174,18 @@ export function EventHistoryCard({ event, onMarkFailed, isMarkingFailed, onDelet
           )}
         </div>
 
-        <div className="flex items-center gap-2 shrink-0">
-          {isActionable && onMarkFailed && (
-            <button
-              onClick={() => onMarkFailed(event.id)}
-              disabled={isMarkingFailed}
-              className="text-xs px-3 py-1.5 rounded-lg bg-destructive/10 text-destructive hover:bg-destructive/20 disabled:opacity-50 font-medium transition-colors"
-            >
-              Mark Failed
-            </button>
-          )}
-          {onDelete && (
-            <button
-              type="button"
-              onClick={() => onDelete(event.id)}
-              disabled={isDeleting}
-              className="p-1.5 rounded-lg text-muted-foreground/50 hover:text-destructive hover:bg-destructive/10 disabled:opacity-50 transition-colors"
-              aria-label="Delete event"
-            >
-              <TrashIcon className="w-3.5 h-3.5" />
-            </button>
-          )}
-        </div>
+        <EventCardActions
+          eventId={event.id}
+          downloadId={event.downloadId}
+          canRetry={canRetry}
+          isActionable={isActionable}
+          onRetry={onRetry}
+          isRetrying={isRetrying}
+          onMarkFailed={onMarkFailed}
+          isMarkingFailed={isMarkingFailed}
+          onDelete={onDelete}
+          isDeleting={isDeleting}
+        />
       </div>
     </div>
   );

@@ -37,7 +37,7 @@ export function EventHistorySection() {
     pagination.reset();
   }, [pagination]);
 
-  const { events, total, isLoading, markFailedMutation, deleteMutation, bulkDeleteMutation } = useEventHistory({
+  const { events, total, isLoading, markFailedMutation, deleteMutation, bulkDeleteMutation, retryMutation } = useEventHistory({
     eventType: eventType || undefined,
     search: search || undefined,
     limit: pagination.limit,
@@ -138,6 +138,8 @@ export function EventHistorySection() {
               event={event}
               onMarkFailed={(id) => markFailedMutation.mutate(id)}
               isMarkingFailed={markFailedMutation.isPending}
+              onRetry={(downloadId) => retryMutation.mutate(downloadId)}
+              isRetrying={retryMutation.isPending}
               onDelete={(id) => deleteMutation.mutate(id)}
               isDeleting={deleteMutation.isPending}
               index={idx}

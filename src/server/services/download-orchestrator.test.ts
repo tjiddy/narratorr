@@ -18,6 +18,7 @@ vi.mock('../utils/download-side-effects.js', () => ({
   notifyGrab: vi.fn(),
   recordGrabbedEvent: vi.fn(),
   recordDownloadCompletedEvent: vi.fn(),
+  recordDownloadFailedEvent: vi.fn(),
 }));
 
 // Mock book-status utility
@@ -28,7 +29,7 @@ vi.mock('../utils/book-status.js', () => ({
 import {
   emitGrabStarted, emitBookStatusChangeOnGrab, emitDownloadProgress,
   emitDownloadStatusChange, emitBookStatusChange, notifyGrab,
-  recordGrabbedEvent, recordDownloadCompletedEvent,
+  recordGrabbedEvent, recordDownloadCompletedEvent, recordDownloadFailedEvent,
 } from '../utils/download-side-effects.js';
 import { revertBookStatus } from '../utils/book-status.js';
 
@@ -243,10 +244,17 @@ describe('DownloadOrchestrator', () => {
       expect(emitDownloadStatusChange).not.toHaveBeenCalled();
     });
 
-    it('does NOT record an event (cancel is event-free)', async () => {
+    it('records download_failed event with reason Cancelled by user when bookId present', async () => {
       await orchestrator.cancel(1);
-      expect(recordGrabbedEvent).not.toHaveBeenCalled();
-      expect(recordDownloadCompletedEvent).not.toHaveBeenCalled();
+      expect(recordDownloadFailedEvent).toHaveBeenCalledWith(expect.objectContaining({
+        downloadId: 1, bookId: 2, bookTitle: 'Test Book [2024]', errorMessage: 'Cancelled by user',
+      }));
+    });
+
+    it('skips download_failed event recording when download has no bookId', async () => {
+      (downloadService.getById as ReturnType<typeof vi.fn>).mockResolvedValue({ ...mockDownload, bookId: null, book: undefined });
+      await orchestrator.cancel(1);
+      expect(recordDownloadFailedEvent).not.toHaveBeenCalled();
     });
 
     it('returns same boolean as downloadService.cancel()', async () => {
@@ -417,6 +425,25 @@ describe('DownloadOrchestrator', () => {
     it('skips SSE when meta is missing or incomplete', async () => {
       await orchestrator.setError(1, 'Connection lost');
       expect(emitDownloadStatusChange).not.toHaveBeenCalled();
+    });
+
+    it('records download_failed event with error message in reason when meta.bookId present', async () => {
+      await orchestrator.setError(1, 'Connection lost', { bookId: 2, oldStatus: 'downloading' });
+      expect(recordDownloadFailedEvent).toHaveBeenCalledWith(expect.objectContaining({
+        downloadId: 1, bookId: 2, errorMessage: 'Connection lost',
+      }));
+    });
+
+    it('skips download_failed event recording when meta is missing', async () => {
+      await orchestrator.setError(1, 'Connection lost');
+      expect(recordDownloadFailedEvent).not.toHaveBeenCalled();
+    });
+
+    it('still succeeds if download_failed event recording throws', async () => {
+      (recordDownloadFailedEvent as ReturnType<typeof vi.fn>).mockImplementation(() => { throw new Error('event fail'); });
+      // Should not throw
+      await orchestrator.setError(1, 'Connection lost', { bookId: 2, oldStatus: 'downloading' });
+      expect(downloadService.setError).toHaveBeenCalled();
     });
   });
 

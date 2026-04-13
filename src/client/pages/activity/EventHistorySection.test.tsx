@@ -21,6 +21,7 @@ function mockDefaultHook(overrides: Partial<ReturnType<typeof useEventHistory>> 
     markFailedMutation: { mutate: vi.fn(), isPending: false } as never,
     deleteMutation: { mutate: vi.fn(), isPending: false } as never,
     bulkDeleteMutation: { mutate: vi.fn(), isPending: false } as never,
+    retryMutation: { mutate: vi.fn(), isPending: false } as never,
     ...overrides,
   });
 }
@@ -118,6 +119,23 @@ describe('EventHistorySection', () => {
     await user.click(screen.getByLabelText('Delete event'));
 
     expect(mockDeleteMutate).toHaveBeenCalledWith(42);
+  });
+
+  it('clicking Retry button on download_failed event card calls retryMutation.mutate with downloadId', async () => {
+    const user = userEvent.setup();
+    const mockRetryMutate = vi.fn();
+    mockDefaultHook({
+      events: [
+        { id: 10, bookId: 2, downloadId: 7, bookTitle: 'Failed Book', authorName: null, eventType: 'download_failed', source: 'auto', reason: { error: 'Connection lost' }, createdAt: new Date().toISOString() },
+      ],
+      total: 1,
+      retryMutation: { mutate: mockRetryMutate, isPending: false } as never,
+    });
+
+    renderWithProviders(<EventHistorySection />);
+    await user.click(screen.getByRole('button', { name: /retry/i }));
+
+    expect(mockRetryMutate).toHaveBeenCalledWith(7);
   });
 
   describe('intent-based filter groups', () => {

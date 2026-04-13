@@ -16,6 +16,8 @@ import { revertBookStatus } from '../utils/book-status.js';
 import { fireAndForget } from '../utils/fire-and-forget.js';
 import type { RemotePathMappingService } from '../services/remote-path-mapping.service.js';
 import type { QualityGateOrchestrator } from '../services/quality-gate-orchestrator.js';
+import type { EventHistoryService } from '../services/event-history.service.js';
+import { recordDownloadFailedEvent } from '../utils/download-side-effects.js';
 import { applyPathMapping } from '../../core/utils/path-mapping.js';
 import { join } from 'node:path';
 
@@ -54,6 +56,7 @@ export async function monitorDownloads(
   broadcaster?: EventBroadcasterService,
   remotePathMappingService?: RemotePathMappingService,
   qualityGateOrchestrator?: QualityGateOrchestrator,
+  eventHistory?: EventHistoryService,
 ) {
   const activeDownloads = await db
     .select()
@@ -82,11 +85,11 @@ export async function monitorDownloads(
 
       const item = await adapter.getDownload(download.externalId);
       if (!item) {
-        await handleMissingItem(db, download, notifierService, log, retryDeps);
+        await handleMissingItem(db, download, notifierService, log, retryDeps, eventHistory);
         continue;
       }
 
-      await processDownloadUpdate(db, download, item, notifierService, log, retryDeps, broadcaster, remotePathMappingService, qualityGateOrchestrator);
+      await processDownloadUpdate(db, download, item, notifierService, log, retryDeps, broadcaster, remotePathMappingService, qualityGateOrchestrator, eventHistory);
     } catch (error: unknown) {
       log.error({ error, id: download.id }, 'Error monitoring download');
       await blacklistOnInfraError(download, retryDeps, log);
@@ -105,12 +108,16 @@ async function handleMissingItem(
   notifierService: NotifierService,
   log: FastifyBaseLogger,
   retryDeps?: MonitorRetryDeps,
+  eventHistory?: EventHistoryService,
 ): Promise<void> {
   log.warn({ id: download.id }, 'Download not found in client');
+  const errorMessage = 'Download not found in download client';
   await db
     .update(downloads)
-    .set({ status: 'failed', errorMessage: 'Download not found in download client' })
+    .set({ status: 'failed', errorMessage })
     .where(eq(downloads.id, download.id));
+
+  recordDownloadFailedEvent({ eventHistory, downloadId: download.id, bookId: download.bookId ?? undefined, bookTitle: download.title, errorMessage, log });
 
   if (download.bookId && retryDeps) {
     const outcome = await handleDownloadFailure(db, download.id, download.bookId, download.infoHash, download.guid, download.title, retryDeps, log, 'download_failed', 'temporary');
@@ -143,6 +150,7 @@ async function processDownloadUpdate(
   broadcaster?: EventBroadcasterService,
   remotePathMappingService?: RemotePathMappingService,
   qualityGateOrchestrator?: QualityGateOrchestrator,
+  eventHistory?: EventHistoryService,
 ): Promise<void> {
   const progress = item.progress / 100;
   const newStatus = mapDownloadStatus(item.status);
@@ -171,7 +179,7 @@ async function processDownloadUpdate(
     .where(eq(downloads.id, download.id));
 
   emitProgressEvents(download, progress, newStatus, broadcaster, log);
-  await handleFailureTransition(db, download, newStatus, retryDeps, log);
+  await handleFailureTransition(db, download, newStatus, item.errorMessage, retryDeps, log, eventHistory);
   handleCompletionNotification(download, item, isCompleted, notifierService, log);
 
   // Fire-and-forget quality gate + import for completed downloads (replaces handleBookStatusOnCompletion)
@@ -234,10 +242,14 @@ async function handleFailureTransition(
   db: Db,
   download: DownloadRow,
   newStatus: string,
+  errorMessage: string | undefined,
   retryDeps: MonitorRetryDeps | undefined,
   log: FastifyBaseLogger,
+  eventHistory?: EventHistoryService,
 ): Promise<void> {
   if (newStatus !== 'failed' || download.status === 'failed') return;
+
+  recordDownloadFailedEvent({ eventHistory, downloadId: download.id, bookId: download.bookId ?? undefined, bookTitle: download.title, errorMessage: errorMessage ?? 'Download failed', log });
 
   if (download.bookId && retryDeps) {
     const outcome = await handleDownloadFailure(db, download.id, download.bookId, download.infoHash, download.guid, download.title, retryDeps, log, 'download_failed', 'temporary');

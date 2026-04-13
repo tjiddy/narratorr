@@ -13,6 +13,7 @@ import {
   notifyGrab,
   recordGrabbedEvent,
   recordDownloadCompletedEvent,
+  recordDownloadFailedEvent,
 } from './download-side-effects.js';
 
 function createMockBroadcaster(): EventBroadcasterService {
@@ -258,5 +259,47 @@ describe('recordDownloadCompletedEvent', () => {
     recordDownloadCompletedEvent({ eventHistory, downloadId: 1, bookId: 2, bookTitle: 'Test', log });
     await new Promise((r) => setTimeout(r, 10));
     expect(log.warn).toHaveBeenCalled();
+  });
+});
+
+describe('recordDownloadFailedEvent', () => {
+  let eventHistory: EventHistoryService;
+  let log: FastifyBaseLogger;
+
+  beforeEach(() => {
+    eventHistory = createMockEventHistory();
+    log = createMockLog();
+  });
+
+  it('records download_failed event with eventType, source auto, and error reason', () => {
+    recordDownloadFailedEvent({ eventHistory, downloadId: 1, bookId: 2, bookTitle: 'Test', errorMessage: 'Connection lost', log });
+    expect(eventHistory.create).toHaveBeenCalledWith({
+      bookId: 2, bookTitle: 'Test', downloadId: 1, eventType: 'download_failed', source: 'auto',
+      reason: { error: 'Connection lost' },
+    });
+  });
+
+  it('skips recording when eventHistory is undefined', () => {
+    recordDownloadFailedEvent({ eventHistory: undefined, downloadId: 1, bookId: 2, bookTitle: 'Test', errorMessage: 'fail', log });
+    // No assertion needed — should not throw
+  });
+
+  it('skips recording when bookId is falsy', () => {
+    recordDownloadFailedEvent({ eventHistory, downloadId: 1, bookId: undefined, bookTitle: 'Test', errorMessage: 'fail', log });
+    expect(eventHistory.create).not.toHaveBeenCalled();
+  });
+
+  it('catches and logs recording failures (fire-and-forget)', async () => {
+    (eventHistory.create as ReturnType<typeof vi.fn>).mockRejectedValue(new Error('record fail'));
+    recordDownloadFailedEvent({ eventHistory, downloadId: 1, bookId: 2, bookTitle: 'Test', errorMessage: 'fail', log });
+    await new Promise((r) => setTimeout(r, 10));
+    expect(log.warn).toHaveBeenCalled();
+  });
+
+  it('passes errorMessage in reason.error field', () => {
+    recordDownloadFailedEvent({ eventHistory, downloadId: 1, bookId: 2, bookTitle: 'Test', errorMessage: 'Cancelled by user', log });
+    expect(eventHistory.create).toHaveBeenCalledWith(
+      expect.objectContaining({ reason: { error: 'Cancelled by user' } }),
+    );
   });
 });

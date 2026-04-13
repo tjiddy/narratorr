@@ -1,5 +1,34 @@
 # Workflow Log
 
+## #537 Activity page: merge Downloads + Event History into Active / History tabs — 2026-04-13
+**Skill path:** /implement → /claim → /plan → /handoff
+**Outcome:** success — PR #538
+
+### Metrics
+- Files changed: 11 | Tests added/modified: ~16 new tests, ~40 tests updated/removed
+- Quality gate runs: 2 (pass on attempt 2 — lint violations fixed: complexity extraction, max-lines, unused import)
+- Fix iterations: 1 (EventHistoryCard complexity 19>15 required extracting EventCardActions, EventHistorySection max-lines required moving retryMutation to useEventHistory hook)
+- Context compactions: 0
+
+### Workflow experience
+- What went smoothly: Backend event recording was straightforward — existing pattern (recordGrabbedEvent) was a perfect template. TDD cycle worked well for all 5 modules.
+- Friction / issues encountered: The spec went through 4 rounds of spec review before approval — initial Option A (client-side merge of two paginated endpoints) was fundamentally unsound. The key insight that resolved everything was recognizing bookEvents already captures the download lifecycle, making DownloadHistorySection redundant. This should have been caught during elaboration, not during spec review. ActivityPage test file rewrite was the highest-effort task — 57 tests needed updating due to coupled history/queue mock patterns.
+
+### Token efficiency
+- Highest-token actions: ActivityPage.test.tsx rewrite (delegated to subagent — correct decision given ~600 lines of test code needing structural changes)
+- Avoidable waste: Reading the full EventHistoryCard test file (440 lines) could have been avoided with targeted grep
+- Suggestions: For future tab restructure issues, start by checking what data each tab section actually consumes vs what events already capture
+
+### Infrastructure gaps
+- Repeated workarounds: None
+- Missing tooling / config: None
+- Unresolved debt: usePagination clamp effect pattern still present in EventHistorySection.tsx, BlacklistSettings.tsx, LibraryPage.tsx (existing debt item)
+
+### Wish I'd Known
+1. `bookEvents` already records most download lifecycle events — the "merge two data sources" approach in the original spec was unnecessary. Checking existing event writers first would have avoided 3 spec review rounds.
+2. `EventHistoryCard` was already at cyclomatic complexity 15 — adding any conditional branch would exceed the limit. The Explore subagent flagged this but I didn't plan extraction upfront.
+3. `useActivity` test file had deeply coupled queue/history mock patterns (`mockActivitySections` returning different data per section param, `toHaveBeenCalledTimes(2)` everywhere) — simplifying the hook required rewriting most tests rather than surgical edits.
+
 ## #532 fix: RSS multi-part filter runs before nzbName enrichment — 2026-04-13
 **Skill path:** /elaborate → /respond-to-spec-review → /implement → /claim → /plan → /handoff
 **Outcome:** success — PR #536

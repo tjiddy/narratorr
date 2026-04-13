@@ -1,6 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { screen } from '@testing-library/react';
-import userEvent from '@testing-library/user-event';
 import { renderWithProviders } from '@/__tests__/helpers';
 import { DownloadsTabSection } from './DownloadsTabSection';
 import type { DownloadsTabSectionProps } from './DownloadsTabSection';
@@ -70,13 +69,6 @@ function defaultProps(overrides: Partial<DownloadsTabSectionProps> = {}): Downlo
     rejectMutation: mockMutation(),
     cancellingMergeBookId: null,
     cancelMergeMutation: mockMutation(),
-    history: [],
-    historyTotal: 0,
-    historyPagination: mockPagination(),
-    deleteMutation: mockMutation(),
-    deleteHistoryMutation: mockMutation(),
-    confirmClearHistory: false,
-    onConfirmClearHistoryChange: vi.fn(),
     ...overrides,
   };
 }
@@ -108,27 +100,12 @@ describe('DownloadsTabSection', () => {
       expect(screen.getByText('Book One')).toBeInTheDocument();
       expect(screen.getByText('Book Two')).toBeInTheDocument();
     });
-  });
 
-  describe('download history', () => {
-    it('renders history count in header', () => {
-      renderWithProviders(<DownloadsTabSection {...defaultProps({ historyTotal: 5 })} />);
-      expect(screen.getByText('5 completed downloads')).toBeInTheDocument();
-    });
-
-    it('shows empty state when no history', () => {
+    it('does not render history section or clear history button', () => {
       renderWithProviders(<DownloadsTabSection {...defaultProps()} />);
-      expect(screen.getByText('No download history')).toBeInTheDocument();
-    });
-
-    it('shows clear history button when history has items', () => {
-      renderWithProviders(<DownloadsTabSection {...defaultProps({ historyTotal: 3, history: [makeDownload({ id: 10, status: 'completed' })] })} />);
-      expect(screen.getByText('Clear History')).toBeInTheDocument();
-    });
-
-    it('does not show clear history button when history is empty', () => {
-      renderWithProviders(<DownloadsTabSection {...defaultProps({ historyTotal: 0 })} />);
       expect(screen.queryByText('Clear History')).not.toBeInTheDocument();
+      expect(screen.queryByText(/completed download/)).not.toBeInTheDocument();
+      expect(screen.queryByText('No download history')).not.toBeInTheDocument();
     });
   });
 
@@ -150,21 +127,6 @@ describe('DownloadsTabSection', () => {
 
       // Second row should show normal "Cancel & Blacklist" button
       expect(screen.getByText('Cancel & Blacklist')).toBeInTheDocument();
-    });
-  });
-
-  describe('interactions', () => {
-    it('clear history button calls onConfirmClearHistoryChange', async () => {
-      const user = userEvent.setup();
-      const onConfirmChange = vi.fn();
-      renderWithProviders(<DownloadsTabSection {...defaultProps({
-        historyTotal: 3,
-        history: [makeDownload({ id: 10, status: 'completed' })],
-        onConfirmClearHistoryChange: onConfirmChange,
-      })} />);
-
-      await user.click(screen.getByText('Clear History'));
-      expect(onConfirmChange).toHaveBeenCalledWith(true);
     });
   });
 });

@@ -52,7 +52,25 @@ export function useEventHistory(params?: EventHistoryParams) {
     },
   });
 
-  return { events, total, isLoading: query.isLoading, isError: query.isError, markFailedMutation, deleteMutation, bulkDeleteMutation };
+  const retryMutation = useMutation({
+    mutationFn: api.retryDownload,
+    onSuccess: (data) => {
+      queryClient.invalidateQueries({ queryKey: ['activity'] });
+      queryClient.invalidateQueries({ queryKey: queryKeys.eventHistory.root() });
+      if ('status' in data && data.status === 'no_candidates') {
+        toast.error('No matching releases found for retry');
+      } else if ('status' in data && data.status === 'retry_error') {
+        toast.error('Retry failed — search encountered an error');
+      } else {
+        toast.success('Retry initiated');
+      }
+    },
+    onError: (error: Error) => {
+      toast.error(`Retry failed: ${getErrorMessage(error)}`);
+    },
+  });
+
+  return { events, total, isLoading: query.isLoading, isError: query.isError, markFailedMutation, deleteMutation, bulkDeleteMutation, retryMutation };
 }
 
 export function useBookEventHistory(bookId: number) {

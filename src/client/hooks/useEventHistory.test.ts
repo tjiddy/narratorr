@@ -12,6 +12,7 @@ vi.mock('@/lib/api', () => ({
     markEventFailed: vi.fn(),
     deleteEvent: vi.fn(),
     deleteEvents: vi.fn(),
+    retryDownload: vi.fn(),
   },
 }));
 
@@ -247,6 +248,89 @@ describe('useEventHistory', () => {
 
     await waitFor(() => {
       expect(toast.error).toHaveBeenCalledWith('Mark as failed: Network error');
+    });
+  });
+
+  it('retryMutation calls api.retryDownload with downloadId, invalidates caches, and shows success toast', async () => {
+    vi.mocked(api.getEventHistory).mockResolvedValue({ data: [], total: 0 });
+    vi.mocked(api.retryDownload).mockResolvedValue({ id: 1, title: 'Test', status: 'queued' } as never);
+
+    const { wrapper, queryClient } = createWrapper();
+    const invalidateSpy = vi.spyOn(queryClient, 'invalidateQueries');
+
+    const { result } = renderHook(() => useEventHistory(), { wrapper });
+
+    await waitFor(() => { expect(result.current.isLoading).toBe(false); });
+
+    await act(async () => {
+      result.current.retryMutation.mutate(42);
+    });
+
+    await waitFor(() => {
+      expect(api.retryDownload).toHaveBeenCalledWith(42, expect.anything());
+    });
+
+    expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: ['activity'] });
+    expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: queryKeys.eventHistory.root() });
+    expect(toast.success).toHaveBeenCalledWith('Retry initiated');
+  });
+
+  it('retryMutation shows no-candidates error toast when API returns { status: "no_candidates" }', async () => {
+    vi.mocked(api.getEventHistory).mockResolvedValue({ data: [], total: 0 });
+    vi.mocked(api.retryDownload).mockResolvedValue({ status: 'no_candidates' } as never);
+
+    const { wrapper } = createWrapper();
+
+    const { result } = renderHook(() => useEventHistory(), { wrapper });
+
+    await waitFor(() => { expect(result.current.isLoading).toBe(false); });
+
+    await act(async () => {
+      result.current.retryMutation.mutate(42);
+    });
+
+    await waitFor(() => {
+      expect(toast.error).toHaveBeenCalledWith('No matching releases found for retry');
+    });
+    expect(toast.success).not.toHaveBeenCalled();
+  });
+
+  it('retryMutation shows retry-error toast when API returns { status: "retry_error" }', async () => {
+    vi.mocked(api.getEventHistory).mockResolvedValue({ data: [], total: 0 });
+    vi.mocked(api.retryDownload).mockResolvedValue({ status: 'retry_error' } as never);
+
+    const { wrapper } = createWrapper();
+
+    const { result } = renderHook(() => useEventHistory(), { wrapper });
+
+    await waitFor(() => { expect(result.current.isLoading).toBe(false); });
+
+    await act(async () => {
+      result.current.retryMutation.mutate(42);
+    });
+
+    await waitFor(() => {
+      expect(toast.error).toHaveBeenCalledWith('Retry failed — search encountered an error');
+    });
+    expect(toast.success).not.toHaveBeenCalled();
+  });
+
+  it('retryMutation shows error toast on API rejection', async () => {
+    vi.mocked(api.getEventHistory).mockResolvedValue({ data: [], total: 0 });
+    vi.mocked(api.retryDownload).mockRejectedValue(new Error('Network error'));
+
+    const { wrapper } = createWrapper();
+
+    const { result } = renderHook(() => useEventHistory(), { wrapper });
+
+    await waitFor(() => { expect(result.current.isLoading).toBe(false); });
+
+    await act(async () => {
+      result.current.retryMutation.mutate(42);
+    });
+
+    await waitFor(() => {
+      expect(toast.error).toHaveBeenCalledWith('Retry failed: Network error');
     });
   });
 

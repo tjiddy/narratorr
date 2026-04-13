@@ -437,3 +437,52 @@ describe('#455 event reason rendering', () => {
     });
   });
 });
+
+// ============================================================================
+// #537 — Retry button for download_failed events
+// ============================================================================
+
+describe('#537 retry button on download_failed events', () => {
+  it('shows Retry button for download_failed event with downloadId AND bookId', () => {
+    const onRetry = vi.fn();
+    renderWithProviders(<EventHistoryCard event={createMockEvent({ eventType: 'download_failed', downloadId: 5, bookId: 2 })} onRetry={onRetry} />);
+    expect(screen.getByRole('button', { name: /retry/i })).toBeInTheDocument();
+  });
+
+  it('hides Retry button for download_failed event with null bookId', () => {
+    const onRetry = vi.fn();
+    renderWithProviders(<EventHistoryCard event={createMockEvent({ eventType: 'download_failed', downloadId: 5, bookId: null })} onRetry={onRetry} />);
+    expect(screen.queryByRole('button', { name: /retry/i })).not.toBeInTheDocument();
+  });
+
+  it('hides Retry button for download_failed event with null downloadId', () => {
+    const onRetry = vi.fn();
+    renderWithProviders(<EventHistoryCard event={createMockEvent({ eventType: 'download_failed', downloadId: null, bookId: 2 })} onRetry={onRetry} />);
+    expect(screen.queryByRole('button', { name: /retry/i })).not.toBeInTheDocument();
+  });
+
+  it('hides Retry button for non-download_failed event types (import_failed, grabbed)', () => {
+    const onRetry = vi.fn();
+    renderWithProviders(<EventHistoryCard event={createMockEvent({ eventType: 'import_failed', downloadId: 5, bookId: 2 })} onRetry={onRetry} />);
+    expect(screen.queryByRole('button', { name: /retry/i })).not.toBeInTheDocument();
+
+    const { unmount } = renderWithProviders(<EventHistoryCard event={createMockEvent({ eventType: 'grabbed', downloadId: 5, bookId: 2 })} onRetry={onRetry} />);
+    expect(screen.queryByRole('button', { name: /retry/i })).not.toBeInTheDocument();
+    unmount();
+  });
+
+  it('calls onRetry with downloadId when Retry clicked', async () => {
+    const user = userEvent.setup();
+    const onRetry = vi.fn();
+    renderWithProviders(<EventHistoryCard event={createMockEvent({ eventType: 'download_failed', downloadId: 5, bookId: 2 })} onRetry={onRetry} />);
+
+    await user.click(screen.getByRole('button', { name: /retry/i }));
+    expect(onRetry).toHaveBeenCalledWith(5);
+  });
+
+  it('disables Retry button when isRetrying is true', () => {
+    const onRetry = vi.fn();
+    renderWithProviders(<EventHistoryCard event={createMockEvent({ eventType: 'download_failed', downloadId: 5, bookId: 2 })} onRetry={onRetry} isRetrying />);
+    expect(screen.getByRole('button', { name: /retry/i })).toBeDisabled();
+  });
+});
