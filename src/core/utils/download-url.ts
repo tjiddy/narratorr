@@ -90,75 +90,91 @@ export class DownloadUrl {
       }
       visited.add(currentUrl);
 
-      let response: Response;
-      try {
-        response = await fetch(currentUrl, {
-          redirect: 'manual',
-          signal: AbortSignal.timeout(DOWNLOAD_TIMEOUT_MS),
-        });
-      } catch (error: unknown) {
-        throw sanitizeNetworkError(error);
-      }
+      const response = await fetchDownload(currentUrl);
 
       // Handle redirects
       if (response.status >= 300 && response.status < 400) {
-        const location = response.headers.get('Location');
-        if (!location) {
-          throw new Error('Download failed: server returned redirect with no location header');
-        }
-
-        // Magnet redirect — the core fix for TorrentDownload/Prowlarr
-        if (location.startsWith('magnet:')) {
-          const infoHash = parseInfoHash(location);
-          if (!infoHash) {
-            throw new Error('Download failed: redirect to magnet URI with no info hash');
-          }
-          const normalizedHash = infoHash.length === 32
-            ? base32ToHex(infoHash).toLowerCase()
-            : infoHash.toLowerCase();
-          return { type: 'magnet-uri', uri: location, infoHash: normalizedHash };
-        }
-
-        // HTTP redirect — follow it
-        if (location.startsWith('http://') || location.startsWith('https://')) {
-          currentUrl = location;
+        const result = handleRedirect(response);
+        if (result.type === 'follow') {
+          currentUrl = result.url;
           continue;
         }
-
-        throw new Error(`Download failed: redirect to unsupported scheme (${location.split(':')[0]}:)`);
+        return result.artifact;
       }
 
-      // Non-redirect error responses
       if (!response.ok) {
         throw new Error(`Download failed: HTTP ${response.status}`);
       }
 
-      // 2xx — read body
-      const buffer = Buffer.from(await response.arrayBuffer());
-
-      if (buffer.length === 0) {
-        throw new Error('Download failed: server returned empty response');
-      }
-
-      // Auth proxy detection — check for HTML responses
-      if (isHtmlResponse(response, buffer)) {
-        throw new Error(
-          'Download failed: server returned HTML instead of a torrent file — ' +
-          'an auth proxy may be intercepting requests. ' +
-          'Use the service\'s internal address or whitelist this endpoint in your proxy config.',
-        );
-      }
-
-      const infoHash = extractInfoHashFromTorrent(buffer);
-      if (!infoHash) {
-        throw new Error('Download failed: could not extract info hash from downloaded torrent file');
-      }
-
-      return { type: 'torrent-bytes', data: buffer, infoHash };
+      return processResponseBody(response);
     }
 
     throw new Error('Download failed: too many redirects');
   }
+}
+
+// ── HTTP helpers ──────────────────────────────────────────────────────
+
+async function fetchDownload(url: string): Promise<Response> {
+  try {
+    return await fetch(url, {
+      redirect: 'manual',
+      signal: AbortSignal.timeout(DOWNLOAD_TIMEOUT_MS),
+    });
+  } catch (error: unknown) {
+    throw sanitizeNetworkError(error);
+  }
+}
+
+type RedirectResult =
+  | { type: 'follow'; url: string }
+  | { type: 'resolved'; artifact: DownloadArtifact };
+
+function handleRedirect(response: Response): RedirectResult {
+  const location = response.headers.get('Location');
+  if (!location) {
+    throw new Error('Download failed: server returned redirect with no location header');
+  }
+
+  if (location.startsWith('magnet:')) {
+    const infoHash = parseInfoHash(location);
+    if (!infoHash) {
+      throw new Error('Download failed: redirect to magnet URI with no info hash');
+    }
+    const normalizedHash = infoHash.length === 32
+      ? base32ToHex(infoHash).toLowerCase()
+      : infoHash.toLowerCase();
+    return { type: 'resolved', artifact: { type: 'magnet-uri', uri: location, infoHash: normalizedHash } };
+  }
+
+  if (location.startsWith('http://') || location.startsWith('https://')) {
+    return { type: 'follow', url: location };
+  }
+
+  throw new Error(`Download failed: redirect to unsupported scheme (${location.split(':')[0]}:)`);
+}
+
+async function processResponseBody(response: Response): Promise<DownloadArtifact> {
+  const buffer = Buffer.from(await response.arrayBuffer());
+
+  if (buffer.length === 0) {
+    throw new Error('Download failed: server returned empty response');
+  }
+
+  if (isHtmlResponse(response, buffer)) {
+    throw new Error(
+      'Download failed: server returned HTML instead of a torrent file — ' +
+      'an auth proxy may be intercepting requests. ' +
+      'Use the service\'s internal address or whitelist this endpoint in your proxy config.',
+    );
+  }
+
+  const infoHash = extractInfoHashFromTorrent(buffer);
+  if (!infoHash) {
+    throw new Error('Download failed: could not extract info hash from downloaded torrent file');
+  }
+
+  return { type: 'torrent-bytes', data: buffer, infoHash };
 }
 
 // ── Helpers (exported for use by resolver and tests) ──────────────────

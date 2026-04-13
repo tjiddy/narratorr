@@ -215,6 +215,32 @@ export class DownloadService {
     return { externalId, clientId: client.id, clientType: client.type, clientName: client.name };
   }
 
+  private async checkDuplicateDownloads(bookId: number, replaceExisting?: boolean): Promise<void> {
+    const allActive = await this.getActiveByBookId(bookId);
+    const replaceableSet = new Set<string>(getReplaceableStatuses());
+    const replaceableActive = allActive.filter((dl) => replaceableSet.has(dl.status));
+
+    if (replaceableActive.length > 0) {
+      if (replaceExisting) {
+        for (const dl of replaceableActive) {
+          try {
+            await this.cancel(dl.id, 'Replaced by new download');
+          } catch (cancelErr: unknown) {
+            this.log.warn({ id: dl.id, error: cancelErr }, 'Failed to cancel replaceable download — proceeding with replacement anyway');
+          }
+        }
+        await this.db.update(books).set({ status: 'wanted' }).where(eq(books.id, bookId));
+      } else {
+        throw new DuplicateDownloadError(`Book ${bookId} already has an active download (id: ${replaceableActive[0].id})`, 'ACTIVE_DOWNLOAD_EXISTS');
+      }
+    } else {
+      const pipelineActive = allActive.filter((dl) => !replaceableSet.has(dl.status));
+      if (pipelineActive.length > 0) {
+        throw new DuplicateDownloadError(`Book ${bookId} already has an active download (id: ${pipelineActive[0].id})`, 'PIPELINE_ACTIVE');
+      }
+    }
+  }
+
   async grab(params: {
     downloadUrl: string;
     title: string;
@@ -228,35 +254,8 @@ export class DownloadService {
     replaceExisting?: boolean;
     source?: CreateEventInput['source'];
   }): Promise<DownloadWithBook> {
-    // Check for active downloads for this book
     if (params.bookId && !params.skipDuplicateCheck) {
-      const allActive = await this.getActiveByBookId(params.bookId);
-      const replaceableSet = new Set<string>(getReplaceableStatuses());
-      const replaceableActive = allActive.filter((dl) => replaceableSet.has(dl.status));
-
-      if (replaceableActive.length > 0) {
-        if (params.replaceExisting) {
-          // Cancel each replaceable active download (best-effort: proceed even if cancel fails)
-          for (const dl of replaceableActive) {
-            try {
-              await this.cancel(dl.id, 'Replaced by new download');
-            } catch (cancelErr: unknown) {
-              this.log.warn({ id: dl.id, error: cancelErr }, 'Failed to cancel replaceable download — proceeding with replacement anyway');
-            }
-          }
-          // Revert book status to wanted so a failed grab leaves the book in a recoverable state
-          await this.db.update(books).set({ status: 'wanted' }).where(eq(books.id, params.bookId));
-        } else {
-          throw new DuplicateDownloadError(`Book ${params.bookId} already has an active download (id: ${replaceableActive[0].id})`, 'ACTIVE_DOWNLOAD_EXISTS');
-        }
-      } else {
-        // No replaceable downloads — apply existing duplicate-check for import-pipeline statuses
-        // (processing_queued/importing are not replaceable but still block grabs)
-        const pipelineActive = allActive.filter((dl) => !replaceableSet.has(dl.status));
-        if (pipelineActive.length > 0) {
-          throw new DuplicateDownloadError(`Book ${params.bookId} already has an active download (id: ${pipelineActive[0].id})`, 'PIPELINE_ACTIVE');
-        }
-      }
+      await this.checkDuplicateDownloads(params.bookId, params.replaceExisting);
     }
 
     const protocol = params.protocol ?? 'torrent';
