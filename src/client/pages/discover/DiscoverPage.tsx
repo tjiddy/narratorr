@@ -1,8 +1,9 @@
 import { useState, useMemo } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
-import { api } from '@/lib/api';
+import { api, ApiError, type SuggestionRow, type CreateBookPayload } from '@/lib/api';
 import { queryKeys } from '@/lib/queryKeys';
+import { getErrorMessage } from '@/lib/error-message.js';
 import { useBookStats } from '@/hooks/useLibrary';
 import { RefreshIcon, LoadingSpinner, AlertCircleIcon } from '@/components/icons';
 import { SUGGESTION_REASONS, SUGGESTION_REASON_REGISTRY, type SuggestionReason } from '../../../shared/schemas/discovery.js';
@@ -18,24 +19,53 @@ const FILTER_OPTIONS: { value: ReasonFilter; label: string }[] = [
   ...SUGGESTION_REASONS.map((r) => ({ value: r as ReasonFilter, label: SUGGESTION_REASON_REGISTRY[r].label })),
 ];
 
+/** Build a CreateBookPayload from a suggestion row (inline, not via mapBookMetadataToPayload). */
+function suggestionToPayload(
+  s: SuggestionRow,
+  overrides: { searchImmediately: boolean; monitorForUpgrades: boolean },
+): CreateBookPayload {
+  return {
+    title: s.title,
+    authors: [{ name: s.authorName, asin: s.authorAsin ?? undefined }],
+    narrators: s.narratorName ? [s.narratorName] : undefined,
+    coverUrl: s.coverUrl ?? undefined,
+    asin: s.asin,
+    seriesName: s.seriesName ?? undefined,
+    seriesPosition: s.seriesPosition ?? undefined,
+    duration: s.duration ?? undefined,
+    publishedDate: s.publishedDate ?? undefined,
+    genres: s.genres ?? undefined,
+    searchImmediately: overrides.searchImmediately,
+    monitorForUpgrades: overrides.monitorForUpgrades,
+  };
+}
+
 function useDiscoverMutations(setAddedIds: React.Dispatch<React.SetStateAction<Set<number>>>) {
   const queryClient = useQueryClient();
   const [removedIds, setRemovedIds] = useState<Set<number>>(new Set());
 
+  const markAdded = (id: number) => {
+    setAddedIds((prev) => new Set(prev).add(id));
+    queryClient.invalidateQueries({ queryKey: queryKeys.books() });
+    queryClient.invalidateQueries({ queryKey: queryKeys.bookStats() });
+    // Fire-and-forget: mark suggestion as added in backend
+    api.markDiscoverSuggestionAdded(id).catch(() => { /* suggestion stays visually added */ });
+  };
+
   const addMutation = useMutation({
-    mutationFn: ({ id, overrides }: { id: number; overrides: { searchImmediately: boolean; monitorForUpgrades: boolean } }) =>
-      api.addDiscoverSuggestion(id, overrides),
-    onSuccess: (_data, { id }) => {
-      setAddedIds((prev) => new Set(prev).add(id));
-      // Don't invalidate discover suggestions — the backend now returns this as 'added'
-      // which would remove it from the list. The card stays visible with the checkmark
-      // until the user refreshes manually or navigates away.
-      queryClient.invalidateQueries({ queryKey: queryKeys.books() });
-      queryClient.invalidateQueries({ queryKey: queryKeys.bookStats() });
+    mutationFn: ({ suggestion, overrides }: { suggestion: SuggestionRow; overrides: { searchImmediately: boolean; monitorForUpgrades: boolean } }) =>
+      api.addBook(suggestionToPayload(suggestion, overrides)),
+    onSuccess: (_data, { suggestion }) => {
+      markAdded(suggestion.id);
       toast.success('Added to library');
     },
-    onError: () => {
-      toast.error('Failed to add suggestion');
+    onError: (error: Error, { suggestion }) => {
+      if (error instanceof ApiError && error.status === 409) {
+        markAdded(suggestion.id);
+        toast.info('Already in library');
+      } else {
+        toast.error(`Failed to add book: ${getErrorMessage(error)}`);
+      }
     },
   });
 
@@ -178,9 +208,9 @@ export function DiscoverPage() {
               key={suggestion.id}
               suggestion={suggestion}
               index={i}
-              onAdd={(id, overrides) => addMutation.mutate({ id, overrides })}
+              onAdd={(_id, overrides) => addMutation.mutate({ suggestion, overrides })}
               onDismiss={(id) => dismissMutation.mutate(id)}
-              isAdding={addMutation.isPending && addMutation.variables?.id === suggestion.id}
+              isAdding={addMutation.isPending && addMutation.variables?.suggestion.id === suggestion.id}
               isDismissing={dismissMutation.isPending && dismissMutation.variables === suggestion.id}
               isAdded={addedIds.has(suggestion.id)}
             />

@@ -1,5 +1,34 @@
 # Workflow Log
 
+## #524 Discover page: use standard addBook flow instead of parallel book-creation pipeline — 2026-04-13
+**Skill path:** /elaborate → /respond-to-spec-review (x2) → /implement → /claim → /plan → /handoff
+**Outcome:** success — PR #530
+
+### Metrics
+- Files changed: 14 | Tests added/modified: 16 new tests across 6 test files
+- Quality gate runs: 3 (pass on attempt 3 — first two had typecheck failures from cascading dep removal)
+- Fix iterations: 2 (1: DiscoverRouteDeps had stale downloadOrchestrator prop; 2: bookService/eventHistory removed from constructor but skipped tests still referenced them)
+- Context compactions: 0
+
+### Workflow experience
+- What went smoothly: Red/green TDD per module worked well. The 5-module plan (schema → wire contract → route → client → blast radius) was the right granularity.
+- Friction: Removing `addSuggestion` cascaded into removing constructor deps (bookService, eventHistory), which cascaded into updating route wiring and test factories. TypeScript only reports one error at a time, so it took 2 verify runs to catch all cascading failures.
+
+### Token efficiency
+- Highest-token actions: Reading all existing test files during plan phase; editing the large discovery.service.test.ts file (2500+ lines)
+- Avoidable waste: Could have removed old tests in one pass instead of first trying describe.skip (which still gets typechecked)
+- Suggestions: When removing a service method, plan for 3 cascading layers (method → deps → callers) and handle all in one commit
+
+### Infrastructure gaps
+- Repeated workarounds: none
+- Missing tooling: none
+- Unresolved debt: BookMetadata client/server type drift (existing debt item from #497)
+
+### Wish I'd Known
+1. `describe.skip()` blocks are still type-checked — deleting test blocks is the only clean option when removing methods they reference
+2. Removing a service method cascades into constructor dep removal, which cascades into route wiring and test factory updates — plan all 3 layers upfront
+3. `mapBookMetadataToPayload` omits `publishedDate` — this was caught in spec review but would have caused a subtle data regression if missed
+
 ## #527 Extract DownloadUrlResolver — resolve download URLs before handing to adapters — 2026-04-13
 **Skill path:** /elaborate → /respond-to-spec-review → /implement → /claim → /plan → /handoff
 **Outcome:** success — PR #528

@@ -11,6 +11,7 @@ function makeSuggestion(overrides: Partial<SuggestionRow> = {}): SuggestionRow {
     asin: 'B001',
     title: 'The Way of Kings',
     authorName: 'Brandon Sanderson',
+    authorAsin: 'A_SANDERSON',
     narratorName: 'Michael Kramer',
     coverUrl: 'https://example.com/cover.jpg',
     duration: 16200, // 270 minutes = 4h 30m
@@ -209,6 +210,19 @@ describe('SuggestionCard', () => {
 
       const card = container.firstElementChild as HTMLElement;
       expect(card.style.animationDelay).toBe('450ms'); // Math.min(15, 9) * 50 = 450
+    });
+  });
+
+  // --- #524: SuggestionCard authorAsin in fixture ---
+  describe('authorAsin wire contract', () => {
+    it('includes authorAsin in makeSuggestion fixture', () => {
+      const suggestion = makeSuggestion();
+      expect(suggestion.authorAsin).toBe('A_SANDERSON');
+    });
+
+    it('defaults authorAsin to null when not provided', () => {
+      const suggestion = makeSuggestion({ authorAsin: null });
+      expect(suggestion.authorAsin).toBeNull();
     });
   });
 });

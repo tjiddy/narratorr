@@ -173,7 +173,7 @@ export async function createServices(db: Db, log: FastifyBaseLogger): Promise<Se
   const backup = new BackupService(config.configPath, config.dbPath, settings, log);
   const importList = new ImportListService(db, log, metadata);
   const taskRegistry = new TaskRegistry();
-  const discovery = new DiscoveryService(db, log, metadata, book, settings, eventHistory);
+  const discovery = new DiscoveryService(db, log, metadata, settings);
   const bulkOperation = new BulkOperationService(db, renameService, taggingService, settings, book, log);
 
   // Bootstrap processing defaults on first run (no-op if row exists)
@@ -249,10 +249,6 @@ const routeRegistry: RouteFactory[] = [
     discoveryService: s.discovery,
     settingsService: s.settings,
     taskRegistry: s.taskRegistry,
-    indexerService: s.indexer,
-    downloadOrchestrator: s.downloadOrchestrator,
-    blacklistService: s.blacklist,
-    eventBroadcaster: s.eventBroadcaster,
   }),
   (app, s) => bulkOperationsRoutes(app, s.bulkOperation),
 ];

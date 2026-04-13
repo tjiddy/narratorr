@@ -12,7 +12,8 @@ vi.mock('sonner', () => ({
 vi.mock('@/lib/api', () => ({
   api: {
     getDiscoverSuggestions: vi.fn(),
-    addDiscoverSuggestion: vi.fn(),
+    addBook: vi.fn(),
+    markDiscoverSuggestionAdded: vi.fn(),
     dismissDiscoverSuggestion: vi.fn(),
     refreshDiscover: vi.fn(),
     getDiscoverStats: vi.fn(),
@@ -29,7 +30,8 @@ vi.mock('@/lib/api', () => ({
 import { api } from '@/lib/api';
 const mockApi = api as unknown as {
   getDiscoverSuggestions: ReturnType<typeof vi.fn>;
-  addDiscoverSuggestion: ReturnType<typeof vi.fn>;
+  addBook: ReturnType<typeof vi.fn>;
+  markDiscoverSuggestionAdded: ReturnType<typeof vi.fn>;
   dismissDiscoverSuggestion: ReturnType<typeof vi.fn>;
   refreshDiscover: ReturnType<typeof vi.fn>;
   getDiscoverStats: ReturnType<typeof vi.fn>;
@@ -43,6 +45,7 @@ function makeSuggestion(overrides: Partial<SuggestionRow> = {}): SuggestionRow {
     asin: 'B001',
     title: 'Test Book',
     authorName: 'Test Author',
+    authorAsin: null,
     narratorName: 'Test Narrator',
     coverUrl: null,
     duration: 3600,
@@ -336,10 +339,8 @@ describe('DiscoverPage', () => {
   describe('mutations', () => {
     it('add keeps card visible, shows success toast and checkmark on resolve', async () => {
       const { toast } = await import('sonner');
-      mockApi.addDiscoverSuggestion.mockResolvedValue({
-        suggestion: { id: 42, status: 'added' },
-        book: { id: 10 },
-      });
+      mockApi.addBook.mockResolvedValue({ id: 10, title: 'Add Me' });
+      mockApi.markDiscoverSuggestionAdded.mockResolvedValue({ suggestion: { id: 42, status: 'added' } });
       mockApi.getDiscoverSuggestions.mockResolvedValue([
         makeSuggestion({ id: 42, title: 'Add Me' }),
         makeSuggestion({ id: 43, title: 'Keep Me' }),
@@ -367,7 +368,7 @@ describe('DiscoverPage', () => {
 
     it('add shows error toast on mutation failure', async () => {
       const { toast } = await import('sonner');
-      mockApi.addDiscoverSuggestion.mockRejectedValue(new Error('network'));
+      mockApi.addBook.mockRejectedValue(new Error('network'));
       mockApi.getDiscoverSuggestions.mockResolvedValue([
         makeSuggestion({ id: 1, title: 'Fail Add' }),
       ]);
@@ -384,7 +385,7 @@ describe('DiscoverPage', () => {
       await userEvent.click(screen.getByRole('button', { name: /add to library/i }));
 
       await waitFor(() => {
-        expect(toast.error).toHaveBeenCalledWith('Failed to add suggestion');
+        expect(toast.error).toHaveBeenCalledWith(expect.stringContaining('Failed to add book'));
       });
       // Card should still be visible
       expect(screen.getByText('Fail Add')).toBeInTheDocument();
@@ -571,10 +572,8 @@ describe('DiscoverPage', () => {
 
   describe('add mutation with overrides', () => {
     it('card stays visible after add — suggestions query not refetched', async () => {
-      mockApi.addDiscoverSuggestion.mockResolvedValue({
-        suggestion: { id: 42, status: 'added' },
-        book: { id: 10 },
-      });
+      mockApi.addBook.mockResolvedValue({ id: 10, title: 'Added Book' });
+      mockApi.markDiscoverSuggestionAdded.mockResolvedValue({ suggestion: { id: 42, status: 'added' } });
       mockApi.getDiscoverSuggestions.mockResolvedValue([
         makeSuggestion({ id: 42, title: 'Added Book' }),
         makeSuggestion({ id: 43, title: 'Other Book' }),
@@ -646,6 +645,99 @@ describe('DiscoverPage', () => {
 
       expect(screen.getByText('Diverse Book')).toBeInTheDocument();
       expect(screen.queryByText('Author Book')).not.toBeInTheDocument();
+    });
+  });
+
+  // --- #524: unified add flow via api.addBook + mark-added ---
+  describe('unified add flow', () => {
+    it('calls api.addBook with full inline payload including authorAsin, publishedDate, and overrides', async () => {
+      mockApi.addBook.mockResolvedValue({ id: 10 });
+      mockApi.markDiscoverSuggestionAdded.mockResolvedValue({ suggestion: { id: 1, status: 'added' } });
+      mockApi.getDiscoverSuggestions.mockResolvedValue([
+        makeSuggestion({
+          id: 1, title: 'ASIN Book', authorName: 'Joe', authorAsin: 'A123',
+          asin: 'B001', duration: 3600, publishedDate: '2024-06-15',
+          narratorName: 'Narrator', seriesName: 'Epic', seriesPosition: 2, genres: ['Fantasy'],
+        }),
+      ]);
+      mockApi.getBookStats.mockResolvedValue(makeStats());
+
+      renderWithProviders(<DiscoverPage />);
+      await waitFor(() => { expect(screen.getByText('ASIN Book')).toBeInTheDocument(); });
+
+      await userEvent.click(screen.getByRole('button', { name: /^add book$/i }));
+      await userEvent.click(screen.getByRole('button', { name: /add to library/i }));
+
+      await waitFor(() => {
+        expect(mockApi.addBook).toHaveBeenCalledWith(expect.objectContaining({
+          title: 'ASIN Book',
+          authors: [{ name: 'Joe', asin: 'A123' }],
+          asin: 'B001',
+          duration: 3600,
+          publishedDate: '2024-06-15',
+          narrators: ['Narrator'],
+          seriesName: 'Epic',
+          seriesPosition: 2,
+          genres: ['Fantasy'],
+          searchImmediately: expect.any(Boolean),
+          monitorForUpgrades: expect.any(Boolean),
+        }));
+      });
+    });
+
+    it('calls mark-added endpoint after successful addBook', async () => {
+      mockApi.addBook.mockResolvedValue({ id: 10 });
+      mockApi.markDiscoverSuggestionAdded.mockResolvedValue({ suggestion: { id: 1, status: 'added' } });
+      mockApi.getDiscoverSuggestions.mockResolvedValue([makeSuggestion({ id: 1 })]);
+      mockApi.getBookStats.mockResolvedValue(makeStats());
+
+      renderWithProviders(<DiscoverPage />);
+      await waitFor(() => { expect(screen.getByText('Test Book')).toBeInTheDocument(); });
+
+      await userEvent.click(screen.getByRole('button', { name: /^add book$/i }));
+      await userEvent.click(screen.getByRole('button', { name: /add to library/i }));
+
+      await waitFor(() => {
+        expect(mockApi.markDiscoverSuggestionAdded).toHaveBeenCalledWith(1);
+      });
+    });
+
+    it('treats addBook 409 as success and marks suggestion added', async () => {
+      const { ApiError: MockApiError } = await import('@/lib/api');
+      const { toast } = await import('sonner');
+      mockApi.addBook.mockRejectedValue(new MockApiError(409, {}));
+      mockApi.markDiscoverSuggestionAdded.mockResolvedValue({ suggestion: { id: 1, status: 'added' } });
+      mockApi.getDiscoverSuggestions.mockResolvedValue([makeSuggestion({ id: 1 })]);
+      mockApi.getBookStats.mockResolvedValue(makeStats());
+
+      renderWithProviders(<DiscoverPage />);
+      await waitFor(() => { expect(screen.getByText('Test Book')).toBeInTheDocument(); });
+
+      await userEvent.click(screen.getByRole('button', { name: /^add book$/i }));
+      await userEvent.click(screen.getByRole('button', { name: /add to library/i }));
+
+      await waitFor(() => {
+        expect(toast.info).toHaveBeenCalledWith('Already in library');
+      });
+      expect(mockApi.markDiscoverSuggestionAdded).toHaveBeenCalledWith(1);
+    });
+
+    it('does not call mark-added on addBook non-409 failure', async () => {
+      const { toast } = await import('sonner');
+      mockApi.addBook.mockRejectedValue(new Error('server error'));
+      mockApi.getDiscoverSuggestions.mockResolvedValue([makeSuggestion({ id: 1 })]);
+      mockApi.getBookStats.mockResolvedValue(makeStats());
+
+      renderWithProviders(<DiscoverPage />);
+      await waitFor(() => { expect(screen.getByText('Test Book')).toBeInTheDocument(); });
+
+      await userEvent.click(screen.getByRole('button', { name: /^add book$/i }));
+      await userEvent.click(screen.getByRole('button', { name: /add to library/i }));
+
+      await waitFor(() => {
+        expect(toast.error).toHaveBeenCalledWith(expect.stringContaining('Failed to add book'));
+      });
+      expect(mockApi.markDiscoverSuggestionAdded).not.toHaveBeenCalled();
     });
   });
 });

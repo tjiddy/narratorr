@@ -25,6 +25,7 @@ export interface ScoredCandidate {
   asin: string;
   title: string;
   authorName: string;
+  authorAsin?: string;
   narratorName?: string;
   coverUrl?: string;
   duration?: number;
@@ -211,6 +212,7 @@ function isTitleAuthorDuplicate(title: string, authorName: string, existing: Arr
 export function toScoredCandidate(book: BookMetadata, reason: SuggestionReason, reasonContext: string, score: number): ScoredCandidate {
   return {
     asin: book.asin!, title: book.title, authorName: book.authors?.[0]?.name ?? 'Unknown',
+    authorAsin: book.authors?.[0]?.asin,
     narratorName: book.narrators?.[0], coverUrl: book.coverUrl, duration: book.duration,
     publishedDate: book.publishedDate, language: book.language, genres: book.genres,
     seriesName: book.series?.[0]?.name, seriesPosition: book.series?.[0]?.position,

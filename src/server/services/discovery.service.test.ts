@@ -42,9 +42,7 @@ function createService(dbOverrides?: ReturnType<typeof createMockDb>) {
       inject<Db>(db),
       inject<FastifyBaseLogger>(log),
       inject(mockMetadataService),
-      inject(mockBookService),
       inject(settingsService),
-      inject(mockEventHistoryService),
     ),
     db,
     log,
@@ -661,219 +659,55 @@ describe('DiscoveryService', () => {
     });
   });
 
-  describe('addSuggestion', () => {
-    it('creates wanted book and sets status to added', async () => {
+  /* addSuggestion + buildCreatePayload tests removed — #524 replaced with markSuggestionAdded.
+     Book creation now happens via POST /api/books (client-side), not the discovery service. */
+
+  // --- #524: markSuggestionAdded (status-flip only) ---
+  describe('markSuggestionAdded', () => {
+    it('flips status from pending to added and returns updated row', async () => {
       const existing = { id: 1, asin: 'B001', title: 'Test', authorName: 'Author', status: 'pending' };
       const db = createMockDb();
       db.select.mockReturnValue(mockDbChain([existing]));
       db.update.mockReturnValue(mockDbChain());
       const { service } = createService(db);
 
-      const result = await service.addSuggestion(1);
+      const result = await service.markSuggestionAdded(1);
       expect(result).not.toBeNull();
+      expect(result!.alreadyAdded).toBeFalsy();
       expect(result!.suggestion.status).toBe('added');
-      expect(mockBookService.create).toHaveBeenCalledWith(expect.objectContaining({
-        title: 'Test',
-        authors: [{ name: 'Author' }],
-        asin: 'B001',
-        monitorForUpgrades: false,
-      }));
+      // Must NOT call bookService.create — status flip only
+      expect(mockBookService.create).not.toHaveBeenCalled();
+      expect(mockBookService.findDuplicate).not.toHaveBeenCalled();
+      expect(mockEventHistoryService.create).not.toHaveBeenCalled();
     });
 
-    it('returns alreadyAdded for already-added suggestion', async () => {
+    it('returns alreadyAdded: true for suggestion with status added', async () => {
       const existing = { id: 1, asin: 'B001', status: 'added' };
       const db = createMockDb();
       db.select.mockReturnValue(mockDbChain([existing]));
       const { service } = createService(db);
 
-      const result = await service.addSuggestion(1);
+      const result = await service.markSuggestionAdded(1);
       expect(result!.alreadyAdded).toBe(true);
-      expect(mockBookService.create).not.toHaveBeenCalled();
     });
 
-    it('detects library duplicate and sets status without creating book', async () => {
-      const existing = { id: 1, asin: 'B001', title: 'Test', authorName: 'Author', status: 'pending' };
-      const db = createMockDb();
-      db.select.mockReturnValue(mockDbChain([existing]));
-      db.update.mockReturnValue(mockDbChain());
-      mockBookService.findDuplicate.mockResolvedValueOnce({ id: 99, title: 'Test' });
-      const { service } = createService(db);
-
-      const result = await service.addSuggestion(1);
-      expect(result!.duplicate).toBe(true);
-      expect(mockBookService.create).not.toHaveBeenCalled();
-    });
-
-    it('detects authorless duplicate by title and sets status without creating book (#246)', async () => {
-      const existing = { id: 1, asin: null, title: 'Shogun', authorName: null, status: 'pending' };
-      const db = createMockDb();
-      db.select.mockReturnValue(mockDbChain([existing]));
-      db.update.mockReturnValue(mockDbChain());
-      mockBookService.findDuplicate.mockResolvedValueOnce({ id: 99, title: 'Shogun' });
-      const { service } = createService(db);
-
-      const result = await service.addSuggestion(1);
-      expect(result!.duplicate).toBe(true);
-      expect(mockBookService.findDuplicate).toHaveBeenCalledWith('Shogun', undefined, null);
-      expect(mockBookService.create).not.toHaveBeenCalled();
-    });
-
-    it('adds authorless suggestion when only authored matches exist (#253)', async () => {
-      // findDuplicate returns null — authored "Shogun" excluded by notExists
-      const existing = { id: 1, asin: null, title: 'Shogun', authorName: null, status: 'pending' };
-      const db = createMockDb();
-      db.select.mockReturnValue(mockDbChain([existing]));
-      db.update.mockReturnValue(mockDbChain());
-      mockBookService.findDuplicate.mockResolvedValueOnce(null);
-      mockBookService.create.mockResolvedValueOnce({ id: 42, title: 'Shogun', status: 'wanted' });
-      const { service } = createService(db);
-
-      const result = await service.addSuggestion(1);
-      expect(result!.duplicate).toBeFalsy();
-      expect(mockBookService.findDuplicate).toHaveBeenCalledWith('Shogun', undefined, null);
-      expect(mockBookService.create).toHaveBeenCalledWith(expect.objectContaining({
-        title: 'Shogun',
-        authors: [],
-        asin: undefined,
-      }));
-    });
-
-    it('returns null for unknown suggestion ID', async () => {
+    it('returns null for non-existent suggestion ID', async () => {
       const db = createMockDb();
       db.select.mockReturnValue(mockDbChain([]));
       const { service } = createService(db);
 
-      const result = await service.addSuggestion(999);
+      const result = await service.markSuggestionAdded(999);
       expect(result).toBeNull();
     });
 
-    // --- #501: Metadata forwarding and overrides ---
-
-    it('passes full metadata (coverUrl, narrators, duration, seriesName, seriesPosition, publishedDate, genres) to bookService.create', async () => {
-      const existing = {
-        id: 1, asin: 'B001', title: 'Test', authorName: 'Author', status: 'pending',
-        coverUrl: 'https://img.com/cover.jpg', narratorName: 'Narrator One',
-        duration: 36000, seriesName: 'Epic Series', seriesPosition: 2,
-        publishedDate: '2024-06-15', genres: ['Fantasy', 'Sci-Fi'],
-      };
+    it('returns invalidStatus for dismissed suggestion', async () => {
+      const existing = { id: 1, asin: 'B001', status: 'dismissed' };
       const db = createMockDb();
       db.select.mockReturnValue(mockDbChain([existing]));
-      db.update.mockReturnValue(mockDbChain());
       const { service } = createService(db);
 
-      await service.addSuggestion(1);
-      expect(mockBookService.create).toHaveBeenCalledWith(expect.objectContaining({
-        title: 'Test',
-        authors: [{ name: 'Author' }],
-        asin: 'B001',
-        coverUrl: 'https://img.com/cover.jpg',
-        narrators: ['Narrator One'],
-        duration: 36000,
-        seriesName: 'Epic Series',
-        seriesPosition: 2,
-        publishedDate: '2024-06-15',
-        genres: ['Fantasy', 'Sci-Fi'],
-      }));
-    });
-
-    it('maps narratorName to narrators string array (not object array)', async () => {
-      const existing = {
-        id: 1, asin: 'B001', title: 'Test', authorName: 'Author', status: 'pending',
-        narratorName: 'Jane Smith',
-      };
-      const db = createMockDb();
-      db.select.mockReturnValue(mockDbChain([existing]));
-      db.update.mockReturnValue(mockDbChain());
-      const { service } = createService(db);
-
-      await service.addSuggestion(1);
-      const call = mockBookService.create.mock.calls[0][0];
-      expect(call.narrators).toEqual(['Jane Smith']);
-      // Verify it's a string array, not object array
-      expect(typeof call.narrators[0]).toBe('string');
-    });
-
-    it('passes empty narrators array when narratorName is null', async () => {
-      const existing = {
-        id: 1, asin: 'B001', title: 'Test', authorName: 'Author', status: 'pending',
-        narratorName: null,
-      };
-      const db = createMockDb();
-      db.select.mockReturnValue(mockDbChain([existing]));
-      db.update.mockReturnValue(mockDbChain());
-      const { service } = createService(db);
-
-      await service.addSuggestion(1);
-      const call = mockBookService.create.mock.calls[0][0];
-      expect(call.narrators).toEqual([]);
-    });
-
-    it('does not pass [null] when optional string fields are null', async () => {
-      const existing = {
-        id: 1, asin: 'B001', title: 'Test', authorName: 'Author', status: 'pending',
-        narratorName: null, coverUrl: null, duration: null,
-        seriesName: null, seriesPosition: null, publishedDate: null, genres: null,
-      };
-      const db = createMockDb();
-      db.select.mockReturnValue(mockDbChain([existing]));
-      db.update.mockReturnValue(mockDbChain());
-      const { service } = createService(db);
-
-      await service.addSuggestion(1);
-      const call = mockBookService.create.mock.calls[0][0];
-      expect(call.narrators).toEqual([]);
-      // Null fields converted to undefined for bookService.create compatibility
-      expect(call.coverUrl).toBeUndefined();
-      expect(call.duration).toBeUndefined();
-      expect(call.seriesName).toBeUndefined();
-      expect(call.seriesPosition).toBeUndefined();
-      expect(call.publishedDate).toBeUndefined();
-      expect(call.genres).toBeUndefined();
-    });
-
-    it('forwards monitorForUpgrades: true from overrides to bookService.create', async () => {
-      const existing = {
-        id: 1, asin: 'B001', title: 'Test', authorName: 'Author', status: 'pending',
-      };
-      const db = createMockDb();
-      db.select.mockReturnValue(mockDbChain([existing]));
-      db.update.mockReturnValue(mockDbChain());
-      const { service } = createService(db);
-
-      await service.addSuggestion(1, { monitorForUpgrades: true });
-      expect(mockBookService.create).toHaveBeenCalledWith(expect.objectContaining({
-        monitorForUpgrades: true,
-      }));
-    });
-
-    it('defaults monitorForUpgrades to false when overrides are omitted', async () => {
-      const existing = {
-        id: 1, asin: 'B001', title: 'Test', authorName: 'Author', status: 'pending',
-      };
-      const db = createMockDb();
-      db.select.mockReturnValue(mockDbChain([existing]));
-      db.update.mockReturnValue(mockDbChain());
-      const { service } = createService(db);
-
-      await service.addSuggestion(1);
-      expect(mockBookService.create).toHaveBeenCalledWith(expect.objectContaining({
-        monitorForUpgrades: false,
-      }));
-    });
-
-    it('duplicate detection still works with expanded payload', async () => {
-      const existing = {
-        id: 1, asin: 'B001', title: 'Test', authorName: 'Author', status: 'pending',
-        coverUrl: 'https://img.com/cover.jpg', narratorName: 'Narrator',
-      };
-      const db = createMockDb();
-      db.select.mockReturnValue(mockDbChain([existing]));
-      db.update.mockReturnValue(mockDbChain());
-      mockBookService.findDuplicate.mockResolvedValueOnce({ id: 99, title: 'Test' });
-      const { service } = createService(db);
-
-      const result = await service.addSuggestion(1);
-      expect(result!.duplicate).toBe(true);
+      const result = await service.markSuggestionAdded(1);
+      expect(result!.invalidStatus).toBe(true);
       expect(mockBookService.create).not.toHaveBeenCalled();
     });
   });
@@ -2486,64 +2320,5 @@ describe('DiscoveryService', () => {
     });
   });
 
-  // #341 — book_added event on addSuggestion
-  describe('book_added event on addSuggestion', () => {
-    it('records book_added event with source=auto after successful bookService.create()', async () => {
-      const existing = { id: 1, asin: 'B001', title: 'Test', authorName: 'Author', status: 'pending' };
-      const db = createMockDb();
-      db.select.mockReturnValue(mockDbChain([existing]));
-      db.update.mockReturnValue(mockDbChain());
-      const { service } = createService(db);
-
-      await service.addSuggestion(1);
-
-      expect(mockEventHistoryService.create).toHaveBeenCalledWith(
-        expect.objectContaining({
-          eventType: 'book_added',
-          source: 'auto',
-          bookId: 1,
-          bookTitle: 'Test',
-          authorName: 'Author',
-        }),
-      );
-    });
-
-    it('does NOT record book_added event for already-added suggestions', async () => {
-      const existing = { id: 1, asin: 'B001', status: 'added' };
-      const db = createMockDb();
-      db.select.mockReturnValue(mockDbChain([existing]));
-      const { service } = createService(db);
-
-      await service.addSuggestion(1);
-
-      expect(mockEventHistoryService.create).not.toHaveBeenCalled();
-    });
-
-    it('does NOT record book_added event for duplicate-matched suggestions', async () => {
-      const existing = { id: 1, asin: 'B001', title: 'Test', authorName: 'Author', status: 'pending' };
-      const db = createMockDb();
-      db.select.mockReturnValue(mockDbChain([existing]));
-      db.update.mockReturnValue(mockDbChain());
-      mockBookService.findDuplicate.mockResolvedValueOnce({ id: 99, title: 'Test' });
-      const { service } = createService(db);
-
-      await service.addSuggestion(1);
-
-      expect(mockEventHistoryService.create).not.toHaveBeenCalled();
-    });
-
-    it('book creation succeeds even if eventHistory.create() rejects', async () => {
-      const existing = { id: 1, asin: 'B001', title: 'Test', authorName: 'Author', status: 'pending' };
-      const db = createMockDb();
-      db.select.mockReturnValue(mockDbChain([existing]));
-      db.update.mockReturnValue(mockDbChain());
-      mockEventHistoryService.create.mockRejectedValueOnce(new Error('DB write failed'));
-      const { service } = createService(db);
-
-      const result = await service.addSuggestion(1);
-
-      expect(result).not.toBeNull();
-      expect(result!.book).toBeDefined();
-    });
-  });
+  // #341 — book_added event tests removed — #524 moved event recording to POST /api/books
 });

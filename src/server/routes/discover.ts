@@ -1,13 +1,9 @@
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import { suggestionReasonSchema, type SuggestionRowResponse } from '../../shared/schemas/discovery.js';
-import type { DiscoveryService, SettingsService, IndexerService } from '../services/index.js';
-import type { DownloadOrchestrator } from '../services/download-orchestrator.js';
-import type { BlacklistService } from '../services/blacklist.service.js';
-import type { EventBroadcasterService } from '../services/event-broadcaster.service.js';
+import type { DiscoveryService, SettingsService } from '../services/index.js';
 import type { TaskRegistry } from '../services/task-registry.js';
 import type { suggestions } from '../../db/schema.js';
-import { triggerImmediateSearch } from './trigger-immediate-search.js';
 
 type SuggestionRow = typeof suggestions.$inferSelect;
 
@@ -18,6 +14,7 @@ function toSuggestionResponse(row: SuggestionRow): SuggestionRowResponse {
     asin: row.asin,
     title: row.title,
     authorName: row.authorName,
+    authorAsin: row.authorAsin,
     narratorName: row.narratorName,
     coverUrl: row.coverUrl,
     duration: row.duration,
@@ -41,10 +38,6 @@ export interface DiscoverRouteDeps {
   discoveryService: DiscoveryService;
   settingsService: SettingsService;
   taskRegistry: TaskRegistry;
-  indexerService?: IndexerService;
-  downloadOrchestrator: DownloadOrchestrator;
-  blacklistService?: BlacklistService;
-  eventBroadcaster?: EventBroadcasterService;
 }
 
 const idParamSchema = z.object({ id: z.coerce.number().int().positive() });
@@ -86,49 +79,22 @@ export async function discoverRoutes(app: FastifyInstance, deps: DiscoverRouteDe
     },
   );
 
-  // POST /api/discover/suggestions/:id/add
-  const addBodySchema = z.object({
-    searchImmediately: z.boolean().optional().default(false),
-    monitorForUpgrades: z.boolean().optional().default(false),
-  });
-
+  // POST /api/discover/suggestions/:id/mark-added — status flip only (#524)
   app.post<{ Params: IdParam }>(
-    '/api/discover/suggestions/:id/add',
+    '/api/discover/suggestions/:id/mark-added',
     { schema: { params: idParamSchema } },
     async (request, reply) => {
-      // Parse optional body — no body or empty body both default to false/false
-      const raw = request.body as Record<string, unknown> | undefined;
-      const parsed = addBodySchema.safeParse(raw ?? {});
-      if (!parsed.success) {
-        return reply.status(400).send({ error: 'Invalid body', details: parsed.error.issues });
-      }
-      const body = parsed.data;
-      const result = await discoveryService.addSuggestion(request.params.id, {
-        monitorForUpgrades: body.monitorForUpgrades,
-      });
+      const result = await discoveryService.markSuggestionAdded(request.params.id);
       if (!result) {
         return reply.status(404).send({ error: 'Suggestion not found' });
       }
       if (result.alreadyAdded) {
         return reply.status(409).send({ error: 'Suggestion already added' });
       }
-      if (result.duplicate) {
-        return { suggestion: toSuggestionResponse(result.suggestion), book: result.book, duplicate: true };
+      if (result.invalidStatus) {
+        return reply.status(409).send({ error: 'Suggestion is not pending' });
       }
-
-      // Fire-and-forget: trigger immediate search if requested
-      if (body.searchImmediately && result.book && deps.indexerService && deps.blacklistService) {
-        const book = result.book as { id: number; title: string; duration?: number | null; authors?: Array<{ name: string }> | null; narrators?: Array<{ name: string }> | null };
-        triggerImmediateSearch(book, {
-          indexerService: deps.indexerService,
-          downloadOrchestrator: deps.downloadOrchestrator,
-          settingsService: deps.settingsService,
-          blacklistService: deps.blacklistService,
-          eventBroadcaster: deps.eventBroadcaster,
-        }, request.log);
-      }
-
-      return { suggestion: toSuggestionResponse(result.suggestion), book: result.book };
+      return { suggestion: toSuggestionResponse(result.suggestion) };
     },
   );
 

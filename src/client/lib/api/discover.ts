@@ -6,10 +6,8 @@ export type SuggestionRow = SuggestionRowResponse;
 
 export type DiscoverStats = Partial<Record<SuggestionReason, number>>;
 
-export interface AddSuggestionResult {
+export interface MarkAddedResult {
   suggestion: SuggestionRowResponse;
-  book?: { id: number; title: string };
-  duplicate?: boolean;
 }
 
 export interface RefreshResult {
@@ -22,13 +20,9 @@ export const discoverApi = {
   getDiscoverSuggestions: () =>
     fetchApi<SuggestionRowResponse[]>('/discover/suggestions'),
 
-  addDiscoverSuggestion: (id: number, overrides?: { searchImmediately: boolean; monitorForUpgrades: boolean }) =>
-    fetchApi<AddSuggestionResult>(`/discover/suggestions/${id}/add`, {
+  markDiscoverSuggestionAdded: (id: number) =>
+    fetchApi<MarkAddedResult>(`/discover/suggestions/${id}/mark-added`, {
       method: 'POST',
-      ...(overrides && {
-        body: JSON.stringify(overrides),
-        headers: { 'Content-Type': 'application/json' },
-      }),
     }),
 
   dismissDiscoverSuggestion: (id: number) =>
