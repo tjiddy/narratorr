@@ -3,6 +3,7 @@ import type {
   DownloadClientAdapter,
   DownloadItemInfo,
   AddDownloadOptions,
+  DownloadArtifact,
   DownloadProtocol,
 } from './types.js';
 import { fetchWithTimeout } from '../utils/fetch-with-timeout.js';
@@ -37,14 +38,18 @@ export class NZBGetClient implements DownloadClientAdapter {
   }
 
   async addDownload(
-    url: string,
+    artifact: DownloadArtifact,
     options?: AddDownloadOptions,
   ): Promise<string> {
+    if (artifact.type !== 'nzb-url') {
+      throw new Error('NZBGet only supports usenet artifacts (nzb-url)');
+    }
+
     // NZBGet append method: (NZBFilename, NZBContent, Category, Priority, DupeKey, DupeScore, DupeMode, AddUrlParams)
     // For URL-based adds, we use empty NZBContent and pass URL via AddUrlParams
     const params = [
       '', // NZBFilename (auto-detected from URL)
-      url, // NZBContent (or URL when filename is empty)
+      artifact.url, // NZBContent (or URL when filename is empty)
       options?.category || '', // Category
       options?.paused ? -1 : 0, // Priority: -1=paused, 0=normal
       false, // AddToTop

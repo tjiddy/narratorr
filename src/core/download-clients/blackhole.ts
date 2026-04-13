@@ -1,6 +1,6 @@
 import { writeFile, access, constants } from 'node:fs/promises';
-import { join, basename } from 'node:path';
-import type { DownloadClientAdapter, DownloadItemInfo, AddDownloadOptions, DownloadProtocol } from './types.js';
+import { join } from 'node:path';
+import type { DownloadClientAdapter, DownloadItemInfo, AddDownloadOptions, DownloadArtifact, DownloadProtocol } from './types.js';
 import { fetchWithTimeout } from '../utils/fetch-with-timeout.js';
 
 export interface BlackholeConfig {
@@ -20,28 +20,30 @@ export class BlackholeClient implements DownloadClientAdapter {
     this.protocol = config.protocol;
   }
 
-  async addDownload(url: string, options?: AddDownloadOptions): Promise<null> {
-    // Torrent file path — write bytes directly to watch directory
-    if (options?.torrentFile) {
-      const ext = this.config.protocol === 'usenet' ? '.nzb' : '.torrent';
-      const filename = `download-${Date.now()}${ext}`;
-      const filePath = join(this.config.watchDir, filename);
-      await writeFile(filePath, options.torrentFile);
+  async addDownload(artifact: DownloadArtifact): Promise<null> {
+    const timestamp = Date.now();
+
+    if (artifact.type === 'torrent-bytes') {
+      const filePath = join(this.config.watchDir, `download-${timestamp}.torrent`);
+      await writeFile(filePath, artifact.data);
       return null;
     }
 
-    const response = await fetchWithTimeout(url, {}, REQUEST_TIMEOUT_MS);
+    if (artifact.type === 'magnet-uri') {
+      const filePath = join(this.config.watchDir, `${timestamp}.magnet`);
+      await writeFile(filePath, artifact.uri);
+      return null;
+    }
+
+    // nzb-url — fetch the URL and write the bytes
+    const response = await fetchWithTimeout(artifact.url, {}, REQUEST_TIMEOUT_MS);
     if (!response.ok) {
       throw new Error(`Failed to download file: HTTP ${response.status}`);
     }
-
     const buffer = Buffer.from(await response.arrayBuffer());
-    const filename = this.resolveFilename(url);
-    const filePath = join(this.config.watchDir, filename);
-
+    const filePath = join(this.config.watchDir, `download-${timestamp}.nzb`);
     await writeFile(filePath, buffer);
 
-    // No external ID — Blackhole downloads are not tracked
     return null;
   }
 
@@ -87,20 +89,4 @@ export class BlackholeClient implements DownloadClientAdapter {
     }
   }
 
-  private resolveFilename(url: string): string {
-    try {
-      const parsed = new URL(url);
-      const pathBasename = basename(parsed.pathname);
-      if (pathBasename && (pathBasename.endsWith('.torrent') || pathBasename.endsWith('.nzb'))) {
-        return pathBasename;
-      }
-    } catch {
-      // Not a valid URL — fall through
-    }
-
-    // Default extension based on protocol
-    const ext = this.config.protocol === 'usenet' ? '.nzb' : '.torrent';
-    const timestamp = Date.now();
-    return `download-${timestamp}${ext}`;
-  }
 }
