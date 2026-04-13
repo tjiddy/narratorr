@@ -92,7 +92,7 @@ export async function queryAuthorCandidates(deps: QueryDeps, signals: LibrarySig
 export async function querySeriesCandidates(deps: QueryDeps, signals: LibrarySignals, ctx: CandidateContext, map: Map<string, ScoredCandidate>) {
   for (const gap of signals.seriesGaps) {
     try {
-      const { books: results, warnings } = await deps.metadataService.searchBooksForDiscovery(`"${gap.seriesName} ${gap.authorName}"`);
+      const { books: results, warnings } = await deps.metadataService.searchBooksForDiscovery(gap.seriesName, { title: gap.seriesName, author: gap.authorName });
       ctx.warnings.push(...warnings);
       const filtered = results.filter(b => {
         const s = b.series?.find(s => s.name?.toLowerCase() === gap.seriesName.toLowerCase());

@@ -1985,7 +1985,7 @@ describe('DiscoveryService', () => {
     });
 
     describe('AC3 — query construction', () => {
-      it('calls searchBooksForDiscovery with exact string "${seriesName} ${authorName}"', async () => {
+      it('calls searchBooksForDiscovery with structured title+author params', async () => {
         const db = setupSeriesTest([
           makeBookRow({ id: 1, seriesName: 'Stormlight', seriesPosition: 1 }),
           makeBookRow({ id: 2, seriesName: 'Stormlight', seriesPosition: 2 }),
@@ -1995,9 +1995,12 @@ describe('DiscoveryService', () => {
         const signals = await service.analyzeLibrary();
         await service.generateCandidates(signals);
 
-        // Find the call for the series query (author queries happen first)
-        const calls = mockMetadataService.searchBooksForDiscovery.mock.calls.map((c: string[]) => c[0]);
-        expect(calls).toContain('"Stormlight Author A"');
+        // Series query should use structured title+author, not a keywords blob
+        const seriesCall = mockMetadataService.searchBooksForDiscovery.mock.calls.find(
+          (c: unknown[]) => c[0] === 'Stormlight' && (c[1] as { title?: string })?.title === 'Stormlight',
+        );
+        expect(seriesCall).toBeDefined();
+        expect(seriesCall![1]).toEqual(expect.objectContaining({ title: 'Stormlight', author: 'Author A' }));
       });
 
       it('filters metadata results to only books matching the series name (case-insensitive)', async () => {
