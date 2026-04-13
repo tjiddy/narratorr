@@ -549,7 +549,7 @@ describe('ImportOrchestrator', () => {
         .mockResolvedValueOnce({ id: 5, bookId: 1 })
         .mockResolvedValue(null);
 
-      const [r1, r2] = await Promise.all([
+      await Promise.all([
         orchestrator.drainQueuedImports(),
         orchestrator.drainQueuedImports(),
       ]);
