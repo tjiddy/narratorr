@@ -1,5 +1,34 @@
 # Workflow Log
 
+## #532 fix: RSS multi-part filter runs before nzbName enrichment — 2026-04-13
+**Skill path:** /elaborate → /respond-to-spec-review → /implement → /claim → /plan → /handoff
+**Outcome:** success — PR #536
+
+### Metrics
+- Files changed: 2 | Tests added/modified: 10
+- Quality gate runs: 2 (pass on attempt 1 both times)
+- Fix iterations: 0 (clean implementation)
+- Context compactions: 0
+
+### Workflow experience
+- What went smoothly: Spec had already been through elaborate + spec-review + respond-to-spec-review, so the implementation was unambiguous. The #533 search-pipeline fix provided an exact template to follow.
+- Friction / issues encountered: None significant. The `.narratorr/state/` directory got cleaned up between phases requiring `mkdir -p` recreation.
+
+### Token efficiency
+- Highest-token actions: Explore subagent in /plan (codebase was already well-understood from /elaborate)
+- Avoidable waste: The /plan Explore subagent duplicated much of the /elaborate exploration — for sequential issues in the same area, the plan could have been lighter
+- Suggestions: For follow-up issues to recently completed work (#533 → #532), the plan phase could skip deep exploration and rely on the recent context
+
+### Infrastructure gaps
+- Repeated workarounds: None
+- Missing tooling / config: None
+- Unresolved debt: `rss.test.ts` is now 875 lines — approaching the soft limit but still manageable
+
+### Wish I'd Known
+1. The RSS enrichment is per-book (inside the matching loop) while search-pipeline enrichment is global — this structural difference was the key constraint for the fix and caused 2 spec review rounds
+2. The `matched` count semantic change was non-obvious but intentional — multi-part rejection is a quality filter, not a matching filter, so matched books whose candidates are all rejected should still count
+3. The `||` vs `??` operator distinction for title precedence chains is a recurring pattern — empty string nzbName from failed NZB parse must fall through, which `??` would not allow
+
 ## #533 fix: search multi-part filter runs before nzbName enrichment — 2026-04-13
 **Skill path:** /elaborate → /respond-to-spec-review → /implement → /claim → /plan → /handoff
 **Outcome:** success — PR #535
