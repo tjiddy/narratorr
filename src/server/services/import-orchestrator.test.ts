@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
-import { ImportOrchestrator, isContentFailure } from './import-orchestrator.js';
+import { ImportOrchestrator } from './import-orchestrator.js';
 import type { ImportService, ImportResult, ImportContext } from './import.service.js';
 import type { SettingsService } from './settings.service.js';
 import type { NotifierService } from './notifier.service.js';
@@ -19,18 +19,30 @@ vi.mock('../utils/rejection-helpers.js', () => ({
 import { blacklistAndRetrySearch } from '../utils/rejection-helpers.js';
 
 // Mock import-steps — we test the orchestrator's dispatch, not the helpers themselves
-vi.mock('../utils/import-steps.js', () => ({
-  emitDownloadImporting: vi.fn(),
-  emitBookImporting: vi.fn(),
-  emitImportSuccess: vi.fn(),
-  emitImportFailure: vi.fn(),
-  notifyImportComplete: vi.fn(),
-  notifyImportFailure: vi.fn(),
-  recordImportEvent: vi.fn(),
-  recordImportFailedEvent: vi.fn(),
-  embedTagsForImport: vi.fn().mockResolvedValue(undefined),
-  runImportPostProcessing: vi.fn().mockResolvedValue(undefined),
-}));
+vi.mock('../utils/import-steps.js', () => {
+  const CONTENT_FAILURE_PATTERNS = [
+    'No audio files found',
+    'not a supported audio format',
+    'Duplicate filename',
+    'Copy verification failed',
+  ];
+  return {
+    emitDownloadImporting: vi.fn(),
+    emitBookImporting: vi.fn(),
+    emitImportSuccess: vi.fn(),
+    emitImportFailure: vi.fn(),
+    notifyImportComplete: vi.fn(),
+    notifyImportFailure: vi.fn(),
+    recordImportEvent: vi.fn(),
+    recordImportFailedEvent: vi.fn(),
+    embedTagsForImport: vi.fn().mockResolvedValue(undefined),
+    runImportPostProcessing: vi.fn().mockResolvedValue(undefined),
+    isContentFailure: (error: unknown) => {
+      if (!(error instanceof Error)) return false;
+      return CONTENT_FAILURE_PATTERNS.some((p) => error.message.includes(p));
+    },
+  };
+});
 
 import {
   emitDownloadImporting, emitBookImporting, emitImportSuccess,
@@ -370,69 +382,6 @@ describe('ImportOrchestrator', () => {
         expect.objectContaining({ total: 1, succeeded: 0, failed: 1, elapsedMs: expect.any(Number) }),
         'Import batch completed',
       );
-    });
-  });
-
-  // ── #504 — isContentFailure classifier ──────────────────────────────────
-  describe('isContentFailure classifier (#504)', () => {
-    describe('content failures — positive allowlist (returns true)', () => {
-      it('returns true for "No audio files found in /path"', () => {
-        expect(isContentFailure(new Error('No audio files found in /downloads/book'))).toBe(true);
-      });
-
-      it('returns true for "Source file is not a supported audio format: file.xyz"', () => {
-        expect(isContentFailure(new Error('Source file is not a supported audio format: track.xyz'))).toBe(true);
-      });
-
-      it('returns true for "Duplicate filename found during import flattening"', () => {
-        expect(isContentFailure(new Error('Duplicate filename "01.mp3" found during import flattening: "/a" and "/b"'))).toBe(true);
-      });
-
-      it('returns true for "Copy verification failed: source N bytes, target N bytes"', () => {
-        expect(isContentFailure(new Error('Copy verification failed: source 1000 bytes, target 500 bytes'))).toBe(true);
-      });
-    });
-
-    describe('environment failures — everything else (returns false)', () => {
-      it('returns false for "Path not found: /path"', () => {
-        expect(isContentFailure(new Error('Path not found: /downloads/book'))).toBe(false);
-      });
-
-      it('returns false for "Import blocked — insufficient disk space"', () => {
-        expect(isContentFailure(new Error('Import blocked — insufficient disk space (1.0 GB free, 5.0 GB required)'))).toBe(false);
-      });
-
-      it('returns false for "Disk space check failed: permission denied"', () => {
-        expect(isContentFailure(new Error('Disk space check failed: permission denied'))).toBe(false);
-      });
-
-      it('returns false for "Audio processing failed: ffmpeg exited with code 1"', () => {
-        expect(isContentFailure(new Error('Audio processing failed: ffmpeg exited with code 1'))).toBe(false);
-      });
-
-      it('returns false for "Audio processing failed: ffmpeg stalled"', () => {
-        expect(isContentFailure(new Error('Audio processing failed: ffmpeg stalled: no progress for 60s'))).toBe(false);
-      });
-
-      it('returns false for "Audio processing failed: spawn ENOENT"', () => {
-        expect(isContentFailure(new Error('Audio processing failed: spawn ENOENT'))).toBe(false);
-      });
-
-      it('returns false for "Audio processing failed: Processing aborted"', () => {
-        expect(isContentFailure(new Error('Audio processing failed: Processing aborted'))).toBe(false);
-      });
-
-      it('returns false for "Audio processing failed: some codec error"', () => {
-        expect(isContentFailure(new Error('Audio processing failed: some codec error'))).toBe(false);
-      });
-
-      it('returns false for generic/unknown Error', () => {
-        expect(isContentFailure(new Error('something unexpected'))).toBe(false);
-      });
-
-      it('returns false for non-Error throwable (string)', () => {
-        expect(isContentFailure('a string error')).toBe(false);
-      });
     });
   });
 

@@ -1,5 +1,34 @@
 # Workflow Log
 
+## #522 Polish: batch review findings from PRs 509-519 — 2026-04-13
+**Skill path:** /elaborate → /respond-to-spec-review → /implement → /claim → /plan → /handoff
+**Outcome:** success — PR #526
+
+### Metrics
+- Files changed: 15 | Tests added/modified: 6 test files updated + 1 new test
+- Quality gate runs: 2 (pass on attempt 1 both times)
+- Fix iterations: 1 (mechanical transform script broke 7 test calls with comma-in-string literals)
+- Context compactions: 0
+
+### Workflow experience
+- What went smoothly: The module-by-module approach worked well — BYTES_PER_GB extraction first (smallest), then the big options bag refactor, then smaller independent changes. Each commit was independently testable.
+- Friction / issues encountered: The mechanical transform script for ~132 test callsites broke on string literals containing commas ('German, Abridged'). Required manual post-fix of 7 lines. Also, moving `isContentFailure` to a mocked module required adding the function to the mock factory — `importOriginal` failed due to heavy module dependencies.
+
+### Token efficiency
+- Highest-token actions: Reading and transforming ~132 `filterAndRankResults` test callsites across 2 test files
+- Avoidable waste: Could have written a more robust transform script that tracks quote depth, avoiding the manual fixup pass
+- Suggestions: For large mechanical refactors, write transform scripts that handle string literals properly (track quote state alongside brace depth)
+
+### Infrastructure gaps
+- Repeated workarounds: None
+- Missing tooling / config: A codemod tool (jscodeshift or ts-morph) would handle the options-bag refactor more safely than regex/string-based transforms
+- Unresolved debt: `search-pipeline.ts` still at ~484 lines (over 400 soft limit) — extracting `canonicalCompare` is tracked in debt.md
+
+### Wish I'd Known
+1. Comma-in-string literals break naive argument-splitting scripts — always track quote depth in transform tools (see `mechanical-transform-comma-in-string.md`)
+2. Moving a function into a mocked module requires adding it to the mock factory — `importOriginal` can fail if the real module has heavy dependencies (see `mock-passthrough-moved-function.md`)
+3. The `filterAndRankResults` 10-param → options-bag refactor is purely mechanical but high-volume (~132 test callsites) — budget time for verification, not just transformation
+
 ## #514 Polish: type safety, React patterns, and consistency fixes — 2026-04-12
 **Skill path:** /elaborate → /respond-to-spec-review (x2) → /implement → /claim → /plan → /handoff
 **Outcome:** success — PR #518

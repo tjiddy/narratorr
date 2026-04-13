@@ -33,17 +33,17 @@ describe('filterAndRankResults', () => {
   const ONE_HOUR = 3600; // 1 hour in seconds
 
   it('returns durationUnknown: true when bookDuration is undefined', () => {
-    const { durationUnknown } = filterAndRankResults([], undefined, 0, 0, 'none');
+    const { durationUnknown } = filterAndRankResults([], undefined, { grabFloor: 0, minSeeders: 0, protocolPreference: 'none' });
     expect(durationUnknown).toBe(true);
   });
 
   it('returns durationUnknown: true when bookDuration is 0', () => {
-    const { durationUnknown } = filterAndRankResults([], 0, 0, 0, 'none');
+    const { durationUnknown } = filterAndRankResults([], 0, { grabFloor: 0, minSeeders: 0, protocolPreference: 'none' });
     expect(durationUnknown).toBe(true);
   });
 
   it('returns durationUnknown: false when bookDuration is positive', () => {
-    const { durationUnknown } = filterAndRankResults([], ONE_HOUR, 0, 0, 'none');
+    const { durationUnknown } = filterAndRankResults([], ONE_HOUR, { grabFloor: 0, minSeeders: 0, protocolPreference: 'none' });
     expect(durationUnknown).toBe(false);
   });
 
@@ -52,7 +52,7 @@ describe('filterAndRankResults', () => {
       makeResult({ seeders: 3, title: 'Low Seeds' }),
       makeResult({ seeders: 10, title: 'High Seeds' }),
     ];
-    const { results: filtered } = filterAndRankResults(results, ONE_HOUR, 0, 5, 'none');
+    const { results: filtered } = filterAndRankResults(results, ONE_HOUR, { grabFloor: 0, minSeeders: 5, protocolPreference: 'none' });
     expect(filtered).toHaveLength(1);
     expect(filtered[0].title).toBe('High Seeds');
   });
@@ -62,7 +62,7 @@ describe('filterAndRankResults', () => {
       makeResult({ protocol: 'usenet', seeders: 0, title: 'Usenet Result' }),
       makeResult({ protocol: 'torrent', seeders: 0, title: 'Torrent No Seeds' }),
     ];
-    const { results: filtered } = filterAndRankResults(results, ONE_HOUR, 0, 5, 'none');
+    const { results: filtered } = filterAndRankResults(results, ONE_HOUR, { grabFloor: 0, minSeeders: 5, protocolPreference: 'none' });
     expect(filtered).toHaveLength(1);
     expect(filtered[0].title).toBe('Usenet Result');
   });
@@ -73,7 +73,7 @@ describe('filterAndRankResults', () => {
       makeResult({ size: 100 * 1024 * 1024, title: 'Low Quality' }),
       makeResult({ size: 200 * 1024 * 1024, title: 'High Quality' }),
     ];
-    const { results: filtered } = filterAndRankResults(results, ONE_HOUR, 150, 0, 'none');
+    const { results: filtered } = filterAndRankResults(results, ONE_HOUR, { grabFloor: 150, minSeeders: 0, protocolPreference: 'none' });
     expect(filtered).toHaveLength(1);
     expect(filtered[0].title).toBe('High Quality');
   });
@@ -82,7 +82,7 @@ describe('filterAndRankResults', () => {
     const results = [
       makeResult({ size: undefined, title: 'No Size' }),
     ];
-    const { results: filtered } = filterAndRankResults(results, ONE_HOUR, 150, 0, 'none');
+    const { results: filtered } = filterAndRankResults(results, ONE_HOUR, { grabFloor: 150, minSeeders: 0, protocolPreference: 'none' });
     expect(filtered).toHaveLength(1);
     expect(filtered[0].title).toBe('No Size');
   });
@@ -92,7 +92,7 @@ describe('filterAndRankResults', () => {
     const results = [
       makeResult({ size: 10 * 1024 * 1024, title: 'Tiny' }),
     ];
-    const { results: filtered } = filterAndRankResults(results, undefined, 9999, 0, 'none');
+    const { results: filtered } = filterAndRankResults(results, undefined, { grabFloor: 9999, minSeeders: 0, protocolPreference: 'none' });
     expect(filtered).toHaveLength(1);
   });
 
@@ -101,7 +101,7 @@ describe('filterAndRankResults', () => {
       makeResult({ matchScore: 0.5, title: 'Low Score', seeders: 100 }),
       makeResult({ matchScore: 0.9, title: 'High Score', seeders: 1 }),
     ];
-    const { results: sorted } = filterAndRankResults(results, ONE_HOUR, 0, 0, 'none');
+    const { results: sorted } = filterAndRankResults(results, ONE_HOUR, { grabFloor: 0, minSeeders: 0, protocolPreference: 'none' });
     expect(sorted[0].title).toBe('High Score');
     expect(sorted[1].title).toBe('Low Score');
   });
@@ -111,7 +111,7 @@ describe('filterAndRankResults', () => {
       makeResult({ matchScore: 0.8, size: 100 * 1024 * 1024, title: 'Small' }),
       makeResult({ matchScore: 0.85, size: 500 * 1024 * 1024, title: 'Large' }),
     ];
-    const { results: sorted } = filterAndRankResults(results, ONE_HOUR, 0, 0, 'none');
+    const { results: sorted } = filterAndRankResults(results, ONE_HOUR, { grabFloor: 0, minSeeders: 0, protocolPreference: 'none' });
     // Score diff is 0.05 (<= 0.1), so MB/hr wins. Large = 500 MB/hr > Small = 100 MB/hr
     expect(sorted[0].title).toBe('Large');
     expect(sorted[1].title).toBe('Small');
@@ -122,7 +122,7 @@ describe('filterAndRankResults', () => {
       makeResult({ matchScore: 0.8, size: 200 * 1024 * 1024, protocol: 'torrent', title: 'Torrent' }),
       makeResult({ matchScore: 0.8, size: 200 * 1024 * 1024, protocol: 'usenet', title: 'Usenet' }),
     ];
-    const { results: sorted } = filterAndRankResults(results, ONE_HOUR, 0, 0, 'usenet');
+    const { results: sorted } = filterAndRankResults(results, ONE_HOUR, { grabFloor: 0, minSeeders: 0, protocolPreference: 'usenet' });
     expect(sorted[0].title).toBe('Usenet');
     expect(sorted[1].title).toBe('Torrent');
   });
@@ -132,7 +132,7 @@ describe('filterAndRankResults', () => {
       makeResult({ matchScore: 0.8, size: 200 * 1024 * 1024, seeders: 5, title: 'Few Seeds' }),
       makeResult({ matchScore: 0.8, size: 200 * 1024 * 1024, seeders: 50, title: 'Many Seeds' }),
     ];
-    const { results: sorted } = filterAndRankResults(results, ONE_HOUR, 0, 0, 'none');
+    const { results: sorted } = filterAndRankResults(results, ONE_HOUR, { grabFloor: 0, minSeeders: 0, protocolPreference: 'none' });
     expect(sorted[0].title).toBe('Many Seeds');
     expect(sorted[1].title).toBe('Few Seeds');
   });
@@ -142,26 +142,26 @@ describe('filterAndRankResults', () => {
       makeResult({ seeders: 1 }),
       makeResult({ seeders: 2 }),
     ];
-    const { results: filtered } = filterAndRankResults(results, ONE_HOUR, 0, 10, 'none');
+    const { results: filtered } = filterAndRankResults(results, ONE_HOUR, { grabFloor: 0, minSeeders: 10, protocolPreference: 'none' });
     expect(filtered).toHaveLength(0);
   });
 
   describe('reject word filtering', () => {
     it('excludes result with title containing a reject word', () => {
       const results = [makeResult({ title: 'German Language Edition' })];
-      const { results: filtered } = filterAndRankResults(results, ONE_HOUR, 0, 0, 'none', 'German', '');
+      const { results: filtered } = filterAndRankResults(results, ONE_HOUR, { grabFloor: 0, minSeeders: 0, protocolPreference: 'none', rejectWords: 'German', requiredWords: '' });
       expect(filtered).toHaveLength(0);
     });
 
     it('excludes result when reject word differs in case (case-insensitive)', () => {
       const results = [makeResult({ title: 'GERMAN Language Edition' })];
-      const { results: filtered } = filterAndRankResults(results, ONE_HOUR, 0, 0, 'none', 'german', '');
+      const { results: filtered } = filterAndRankResults(results, ONE_HOUR, { grabFloor: 0, minSeeders: 0, protocolPreference: 'none', rejectWords: 'german', requiredWords: '' });
       expect(filtered).toHaveLength(0);
     });
 
     it('reject word matches as substring (e.g., "german" matches "German Language Edition")', () => {
       const results = [makeResult({ title: 'German Language Edition' })];
-      const { results: filtered } = filterAndRankResults(results, ONE_HOUR, 0, 0, 'none', 'german', '');
+      const { results: filtered } = filterAndRankResults(results, ONE_HOUR, { grabFloor: 0, minSeeders: 0, protocolPreference: 'none', rejectWords: 'german', requiredWords: '' });
       expect(filtered).toHaveLength(0);
     });
 
@@ -171,14 +171,14 @@ describe('filterAndRankResults', () => {
         makeResult({ title: 'German Edition' }),
         makeResult({ title: 'Normal Audiobook' }),
       ];
-      const { results: filtered } = filterAndRankResults(results, ONE_HOUR, 0, 0, 'none', 'German, Abridged', '');
+      const { results: filtered } = filterAndRankResults(results, ONE_HOUR, { grabFloor: 0, minSeeders: 0, protocolPreference: 'none', rejectWords: 'German, Abridged', requiredWords: '' });
       expect(filtered).toHaveLength(1);
       expect(filtered[0].title).toBe('Normal Audiobook');
     });
 
     it('does NOT exclude when no reject words match', () => {
       const results = [makeResult({ title: 'Normal Audiobook' })];
-      const { results: filtered } = filterAndRankResults(results, ONE_HOUR, 0, 0, 'none', 'German, Abridged', '');
+      const { results: filtered } = filterAndRankResults(results, ONE_HOUR, { grabFloor: 0, minSeeders: 0, protocolPreference: 'none', rejectWords: 'German, Abridged', requiredWords: '' });
       expect(filtered).toHaveLength(1);
     });
 
@@ -187,7 +187,7 @@ describe('filterAndRankResults', () => {
         makeResult({ title: 'German Torrent', protocol: 'torrent' }),
         makeResult({ title: 'German Usenet', protocol: 'usenet' }),
       ];
-      const { results: filtered } = filterAndRankResults(results, ONE_HOUR, 0, 0, 'none', 'German', '');
+      const { results: filtered } = filterAndRankResults(results, ONE_HOUR, { grabFloor: 0, minSeeders: 0, protocolPreference: 'none', rejectWords: 'German', requiredWords: '' });
       expect(filtered).toHaveLength(0);
     });
 
@@ -196,7 +196,7 @@ describe('filterAndRankResults', () => {
         makeResult({ title: 'Clean Title', rawTitle: 'German Raw Title' }),
         makeResult({ title: 'German In Title Only' }),
       ];
-      const { results: filtered } = filterAndRankResults(results, ONE_HOUR, 0, 0, 'none', 'German', '');
+      const { results: filtered } = filterAndRankResults(results, ONE_HOUR, { grabFloor: 0, minSeeders: 0, protocolPreference: 'none', rejectWords: 'German', requiredWords: '' });
       expect(filtered).toHaveLength(0);
     });
   });
@@ -204,31 +204,31 @@ describe('filterAndRankResults', () => {
   describe('required word filtering', () => {
     it('includes result when title contains at least one required word', () => {
       const results = [makeResult({ title: 'Book M4B Unabridged' })];
-      const { results: filtered } = filterAndRankResults(results, ONE_HOUR, 0, 0, 'none', '', 'M4B');
+      const { results: filtered } = filterAndRankResults(results, ONE_HOUR, { grabFloor: 0, minSeeders: 0, protocolPreference: 'none', rejectWords: '', requiredWords: 'M4B' });
       expect(filtered).toHaveLength(1);
     });
 
     it('excludes result when title contains no required words (list non-empty)', () => {
       const results = [makeResult({ title: 'Book MP3 Version' })];
-      const { results: filtered } = filterAndRankResults(results, ONE_HOUR, 0, 0, 'none', '', 'M4B, Unabridged');
+      const { results: filtered } = filterAndRankResults(results, ONE_HOUR, { grabFloor: 0, minSeeders: 0, protocolPreference: 'none', rejectWords: '', requiredWords: 'M4B, Unabridged' });
       expect(filtered).toHaveLength(0);
     });
 
     it('all results pass when required word list is empty', () => {
       const results = [makeResult({ title: 'Any Book' })];
-      const { results: filtered } = filterAndRankResults(results, ONE_HOUR, 0, 0, 'none', '', '');
+      const { results: filtered } = filterAndRankResults(results, ONE_HOUR, { grabFloor: 0, minSeeders: 0, protocolPreference: 'none', rejectWords: '', requiredWords: '' });
       expect(filtered).toHaveLength(1);
     });
 
     it('all results pass when required word list is undefined', () => {
       const results = [makeResult({ title: 'Any Book' })];
-      const { results: filtered } = filterAndRankResults(results, ONE_HOUR, 0, 0, 'none', '', undefined);
+      const { results: filtered } = filterAndRankResults(results, ONE_HOUR, { grabFloor: 0, minSeeders: 0, protocolPreference: 'none', rejectWords: '', requiredWords: undefined });
       expect(filtered).toHaveLength(1);
     });
 
     it('matching is case-insensitive substring', () => {
       const results = [makeResult({ title: 'Book m4b format' })];
-      const { results: filtered } = filterAndRankResults(results, ONE_HOUR, 0, 0, 'none', '', 'M4B');
+      const { results: filtered } = filterAndRankResults(results, ONE_HOUR, { grabFloor: 0, minSeeders: 0, protocolPreference: 'none', rejectWords: '', requiredWords: 'M4B' });
       expect(filtered).toHaveLength(1);
     });
 
@@ -237,7 +237,7 @@ describe('filterAndRankResults', () => {
         makeResult({ title: 'Clean Title', rawTitle: 'Book M4B Raw' }),
         makeResult({ title: 'Book M4B In Title' }),
       ];
-      const { results: filtered } = filterAndRankResults(results, ONE_HOUR, 0, 0, 'none', '', 'M4B');
+      const { results: filtered } = filterAndRankResults(results, ONE_HOUR, { grabFloor: 0, minSeeders: 0, protocolPreference: 'none', rejectWords: '', requiredWords: 'M4B' });
       expect(filtered).toHaveLength(2);
     });
   });
@@ -245,7 +245,7 @@ describe('filterAndRankResults', () => {
   describe('reject + required combined', () => {
     it('reject takes precedence — result matching both reject and required word is excluded', () => {
       const results = [makeResult({ title: 'German M4B Audiobook' })];
-      const { results: filtered } = filterAndRankResults(results, ONE_HOUR, 0, 0, 'none', 'German', 'M4B');
+      const { results: filtered } = filterAndRankResults(results, ONE_HOUR, { grabFloor: 0, minSeeders: 0, protocolPreference: 'none', rejectWords: 'German', requiredWords: 'M4B' });
       expect(filtered).toHaveLength(0);
     });
   });
@@ -253,19 +253,19 @@ describe('filterAndRankResults', () => {
   describe('word list parsing edge cases', () => {
     it('empty entries after comma split are ignored', () => {
       const results = [makeResult({ title: 'German Edition' })];
-      const { results: filtered } = filterAndRankResults(results, ONE_HOUR, 0, 0, 'none', 'German, , Abridged', '');
+      const { results: filtered } = filterAndRankResults(results, ONE_HOUR, { grabFloor: 0, minSeeders: 0, protocolPreference: 'none', rejectWords: 'German, , Abridged', requiredWords: '' });
       expect(filtered).toHaveLength(0);
     });
 
     it('whitespace around words is trimmed', () => {
       const results = [makeResult({ title: 'German Edition' })];
-      const { results: filtered } = filterAndRankResults(results, ONE_HOUR, 0, 0, 'none', ' German , Abridged ', '');
+      const { results: filtered } = filterAndRankResults(results, ONE_HOUR, { grabFloor: 0, minSeeders: 0, protocolPreference: 'none', rejectWords: ' German , Abridged ', requiredWords: '' });
       expect(filtered).toHaveLength(0);
     });
 
     it('single-word list works (no comma)', () => {
       const results = [makeResult({ title: 'German Edition' })];
-      const { results: filtered } = filterAndRankResults(results, ONE_HOUR, 0, 0, 'none', 'German', '');
+      const { results: filtered } = filterAndRankResults(results, ONE_HOUR, { grabFloor: 0, minSeeders: 0, protocolPreference: 'none', rejectWords: 'German', requiredWords: '' });
       expect(filtered).toHaveLength(0);
     });
 
@@ -274,7 +274,7 @@ describe('filterAndRankResults', () => {
         makeResult({ title: 'German High Score', matchScore: 1.0, seeders: 100 }),
         makeResult({ title: 'Normal Low Score', matchScore: 0.5, seeders: 5 }),
       ];
-      const { results: filtered } = filterAndRankResults(results, ONE_HOUR, 0, 0, 'none', 'German', '');
+      const { results: filtered } = filterAndRankResults(results, ONE_HOUR, { grabFloor: 0, minSeeders: 0, protocolPreference: 'none', rejectWords: 'German', requiredWords: '' });
       expect(filtered).toHaveLength(1);
       expect(filtered[0].title).toBe('Normal Low Score');
     });
@@ -284,7 +284,7 @@ describe('filterAndRankResults', () => {
         makeResult({ title: 'Perfect Match German', matchScore: 1.0 }),
         makeResult({ title: 'Decent Match', matchScore: 0.7 }),
       ];
-      const { results: filtered } = filterAndRankResults(results, ONE_HOUR, 0, 0, 'none', 'German', '');
+      const { results: filtered } = filterAndRankResults(results, ONE_HOUR, { grabFloor: 0, minSeeders: 0, protocolPreference: 'none', rejectWords: 'German', requiredWords: '' });
       expect(filtered).toHaveLength(1);
       expect(filtered[0].title).toBe('Decent Match');
     });

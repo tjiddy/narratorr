@@ -186,6 +186,15 @@ describe('QualitySettingsSection', () => {
     });
   });
 
+  it('max download size input uses integer step', async () => {
+    renderWithProviders(<QualitySettingsSection />);
+
+    await waitFor(() => {
+      expect(screen.getByLabelText('Max Download Size (GB)')).toBeInTheDocument();
+    });
+    expect(screen.getByLabelText('Max Download Size (GB)')).toHaveAttribute('step', '1');
+  });
+
   it('renders max download size field', async () => {
     renderWithProviders(<QualitySettingsSection />);
 

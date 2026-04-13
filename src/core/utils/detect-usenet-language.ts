@@ -32,6 +32,7 @@ export function detectLanguageFromNewsgroup(group: string | undefined): string |
   return undefined;
 }
 
+// TODO: Add numeric character reference decoding (&#123; / &#xAB;) — older NZB generators may use these
 /** Decode common XML/HTML entities. */
 function decodeEntities(text: string): string {
   return text
