@@ -94,7 +94,7 @@ export class DownloadUrl {
 
       // Handle redirects
       if (response.status >= 300 && response.status < 400) {
-        const result = handleRedirect(response);
+        const result = handleRedirect(response, currentUrl);
         if (result.type === 'follow') {
           currentUrl = result.url;
           continue;
@@ -130,7 +130,7 @@ type RedirectResult =
   | { type: 'follow'; url: string }
   | { type: 'resolved'; artifact: DownloadArtifact };
 
-function handleRedirect(response: Response): RedirectResult {
+function handleRedirect(response: Response, currentUrl: string): RedirectResult {
   const location = response.headers.get('Location');
   if (!location) {
     throw new Error('Download failed: server returned redirect with no location header');
@@ -147,8 +147,14 @@ function handleRedirect(response: Response): RedirectResult {
     return { type: 'resolved', artifact: { type: 'magnet-uri', uri: location, infoHash: normalizedHash } };
   }
 
-  if (location.startsWith('http://') || location.startsWith('https://')) {
-    return { type: 'follow', url: location };
+  // Resolve relative Location headers against the current URL
+  try {
+    const resolved = new URL(location, currentUrl).href;
+    if (resolved.startsWith('http://') || resolved.startsWith('https://')) {
+      return { type: 'follow', url: resolved };
+    }
+  } catch {
+    // Invalid URL — fall through to unsupported scheme error
   }
 
   throw new Error(`Download failed: redirect to unsupported scheme (${location.split(':')[0]}:)`);
@@ -265,12 +271,21 @@ function sanitizeNetworkError(error: unknown): Error {
   }
 
   if (error instanceof Error) {
-    const code = (error as NodeJS.ErrnoException).code;
+    // Undici wraps DNS/connection failures as TypeError('fetch failed') with the real error on .cause
+    const cause = (error as Error & { cause?: NodeJS.ErrnoException }).cause;
+    const code = cause?.code ?? (error as NodeJS.ErrnoException).code;
+
     if (code === 'ENOTFOUND') {
       return new Error('Download failed: could not resolve hostname');
     }
     if (code === 'ECONNREFUSED') {
       return new Error('Download failed: connection refused');
+    }
+    if (code === 'ETIMEDOUT' || code === 'UND_ERR_CONNECT_TIMEOUT') {
+      return new Error('Download failed: connection timed out');
+    }
+    if (code === 'ECONNRESET') {
+      return new Error('Download failed: connection reset');
     }
     return new Error(`Download failed: ${error.message}`);
   }

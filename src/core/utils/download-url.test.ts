@@ -318,6 +318,28 @@ describe('DownloadUrl', () => {
       await expect(dl.resolve()).rejects.toThrow(/redirect loop/i);
     });
 
+    it('follows relative Location header by resolving against current URL', async () => {
+      const { buffer, expectedHash } = fakeTorrentBuffer();
+
+      // First fetch: redirect with relative Location
+      mockFetch.mockResolvedValueOnce(
+        new Response(null, { status: 301, headers: { Location: '/file.torrent' } }),
+      );
+      // Second fetch: actual file at resolved absolute URL
+      mockFetch.mockResolvedValueOnce(mockResponse(buffer, {
+        status: 200,
+        headers: { 'Content-Type': 'application/x-bittorrent' },
+      }));
+
+      const dl = new DownloadUrl('https://indexer.example.com/dl/12345', 'torrent');
+      const artifact = await dl.resolve();
+
+      expect(artifact.type).toBe('torrent-bytes');
+      expect((artifact as Extract<DownloadArtifact, { type: 'torrent-bytes' }>).infoHash).toBe(expectedHash);
+      // Verify the second fetch used the resolved absolute URL
+      expect(mockFetch).toHaveBeenCalledWith('https://indexer.example.com/file.torrent', expect.any(Object));
+    });
+
     it('throws after max redirect depth (>5 hops)', async () => {
       // Create a chain of unique URLs exceeding 5 redirects
       for (let i = 0; i < 6; i++) {
@@ -364,6 +386,33 @@ describe('DownloadUrl', () => {
       const error = await dl.resolve().catch((e: Error) => e);
       expect(error).toBeInstanceOf(Error);
       expect((error as Error).message).not.toContain('secret-passkey');
+    });
+
+    it('unwraps undici TypeError("fetch failed") with ENOTFOUND on cause', async () => {
+      const secretUrl = 'https://indexer.example.com/dl/secret-passkey-12345';
+      const cause = new Error('getaddrinfo ENOTFOUND indexer.example.com') as NodeJS.ErrnoException;
+      cause.code = 'ENOTFOUND';
+      const err = new TypeError('fetch failed', { cause });
+      mockFetch.mockRejectedValueOnce(err);
+
+      const dl = new DownloadUrl(secretUrl, 'torrent');
+      const error = await dl.resolve().catch((e: Error) => e);
+      expect(error).toBeInstanceOf(Error);
+      expect((error as Error).message).toBe('Download failed: could not resolve hostname');
+      expect((error as Error).message).not.toContain('secret-passkey');
+    });
+
+    it('unwraps undici TypeError("fetch failed") with ECONNREFUSED on cause', async () => {
+      const secretUrl = 'https://indexer.example.com/dl/secret-passkey-12345';
+      const cause = new Error('connect ECONNREFUSED') as NodeJS.ErrnoException;
+      cause.code = 'ECONNREFUSED';
+      const err = new TypeError('fetch failed', { cause });
+      mockFetch.mockRejectedValueOnce(err);
+
+      const dl = new DownloadUrl(secretUrl, 'torrent');
+      const error = await dl.resolve().catch((e: Error) => e);
+      expect(error).toBeInstanceOf(Error);
+      expect((error as Error).message).toBe('Download failed: connection refused');
     });
   });
 });
