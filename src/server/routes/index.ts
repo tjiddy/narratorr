@@ -249,10 +249,6 @@ const routeRegistry: RouteFactory[] = [
     discoveryService: s.discovery,
     settingsService: s.settings,
     taskRegistry: s.taskRegistry,
-    indexerService: s.indexer,
-    downloadOrchestrator: s.downloadOrchestrator,
-    blacklistService: s.blacklist,
-    eventBroadcaster: s.eventBroadcaster,
   }),
   (app, s) => bulkOperationsRoutes(app, s.bulkOperation),
 ];

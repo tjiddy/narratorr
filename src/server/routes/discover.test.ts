@@ -3,22 +3,18 @@ import type { Mock } from 'vitest';
 import Fastify from 'fastify';
 
 vi.mock('../config.js', () => ({ config: { authBypass: false, isDev: true } }));
-vi.mock('./trigger-immediate-search.js', () => ({
-  triggerImmediateSearch: vi.fn(),
-}));
 import cookie from '@fastify/cookie';
 import { serializerCompiler, validatorCompiler, type ZodTypeProvider } from 'fastify-type-provider-zod';
 import { createTestApp, createMockServices, resetMockServices } from '../__tests__/helpers.js';
 import type { Services } from './index.js';
 import type { AuthService } from '../services/auth.service.js';
 import { TaskRegistryError } from '../services/task-registry.js';
-import { triggerImmediateSearch } from './trigger-immediate-search.js';
 
 const NOW = new Date('2026-01-15T12:00:00Z');
 
 function mockSuggestionRow(overrides: Record<string, unknown> = {}) {
   return {
-    id: 1, asin: 'B001', title: 'Test Book', authorName: 'Author',
+    id: 1, asin: 'B001', title: 'Test Book', authorName: 'Author', authorAsin: null,
     narratorName: null, coverUrl: null, duration: null, publishedDate: null,
     language: null, genres: null, seriesName: null, seriesPosition: null,
     reason: 'author', reasonContext: 'test', score: 80,
@@ -43,7 +39,6 @@ describe('Discover Routes', () => {
 
   beforeEach(() => {
     resetMockServices(services);
-    (triggerImmediateSearch as Mock).mockReset();
   });
 
   describe('GET /api/discover/suggestions', () => {
@@ -100,182 +95,48 @@ describe('Discover Routes', () => {
     });
   });
 
-  describe('POST /api/discover/suggestions/:id/add', () => {
-    it('creates wanted book and returns 200', async () => {
-      (services.discovery.addSuggestion as Mock).mockResolvedValueOnce({
-        suggestion: mockSuggestionRow({ id: 1, status: 'added' }),
-        book: { id: 10, title: 'Test' },
-      });
-
-      const res = await app.inject({ method: 'POST', url: '/api/discover/suggestions/1/add' });
-      expect(res.statusCode).toBe(200);
-      const body = JSON.parse(res.payload);
-      expect(body.suggestion.status).toBe('added');
-      expect(body.book.id).toBe(10);
-    });
-
-    it('returns 409 for already-added suggestion', async () => {
-      (services.discovery.addSuggestion as Mock).mockResolvedValueOnce({
-        suggestion: { id: 1, status: 'added' },
-        alreadyAdded: true,
-      });
-
-      const res = await app.inject({ method: 'POST', url: '/api/discover/suggestions/1/add' });
-      expect(res.statusCode).toBe(409);
-    });
-
-    it('returns 200 with duplicate flag when library duplicate exists', async () => {
-      (services.discovery.addSuggestion as Mock).mockResolvedValueOnce({
-        suggestion: mockSuggestionRow({ id: 1, status: 'added' }),
-        book: { id: 99, title: 'Existing' },
-        duplicate: true,
-      });
-
-      const res = await app.inject({ method: 'POST', url: '/api/discover/suggestions/1/add' });
-      expect(res.statusCode).toBe(200);
-      expect(JSON.parse(res.payload).duplicate).toBe(true);
-    });
-
-    it('returns 404 for unknown suggestion ID', async () => {
-      (services.discovery.addSuggestion as Mock).mockResolvedValueOnce(null);
-
-      const res = await app.inject({ method: 'POST', url: '/api/discover/suggestions/999/add' });
-      expect(res.statusCode).toBe(404);
-    });
-
-    // --- #501: Override body and immediate search ---
-
-    it('passes monitorForUpgrades from body to service', async () => {
-      (services.discovery.addSuggestion as Mock).mockResolvedValueOnce({
-        suggestion: mockSuggestionRow({ id: 1, status: 'added' }),
-        book: { id: 10, title: 'Test' },
-      });
-
-      const res = await app.inject({
-        method: 'POST',
-        url: '/api/discover/suggestions/1/add',
-        payload: { searchImmediately: false, monitorForUpgrades: true },
-      });
-      expect(res.statusCode).toBe(200);
-      expect(services.discovery.addSuggestion).toHaveBeenCalledWith(1, { monitorForUpgrades: true });
-    });
-
-    it('accepts partial body with only monitorForUpgrades', async () => {
-      (services.discovery.addSuggestion as Mock).mockResolvedValueOnce({
-        suggestion: mockSuggestionRow({ id: 1, status: 'added' }),
-        book: { id: 10, title: 'Test' },
-      });
-
-      const res = await app.inject({
-        method: 'POST',
-        url: '/api/discover/suggestions/1/add',
-        payload: { monitorForUpgrades: true },
-      });
-      expect(res.statusCode).toBe(200);
-      expect(services.discovery.addSuggestion).toHaveBeenCalledWith(1, { monitorForUpgrades: true });
-    });
-
-    it('accepts empty body and defaults both overrides to false', async () => {
-      (services.discovery.addSuggestion as Mock).mockResolvedValueOnce({
-        suggestion: mockSuggestionRow({ id: 1, status: 'added' }),
-        book: { id: 10, title: 'Test' },
-      });
-
-      const res = await app.inject({
-        method: 'POST',
-        url: '/api/discover/suggestions/1/add',
-        payload: {},
-      });
-      expect(res.statusCode).toBe(200);
-      expect(services.discovery.addSuggestion).toHaveBeenCalledWith(1, { monitorForUpgrades: false });
-    });
-
-    it('accepts request with no body at all', async () => {
-      (services.discovery.addSuggestion as Mock).mockResolvedValueOnce({
-        suggestion: mockSuggestionRow({ id: 1, status: 'added' }),
-        book: { id: 10, title: 'Test' },
-      });
-
-      const res = await app.inject({
-        method: 'POST',
-        url: '/api/discover/suggestions/1/add',
-      });
-      expect(res.statusCode).toBe(200);
-      expect(services.discovery.addSuggestion).toHaveBeenCalledWith(1, { monitorForUpgrades: false });
-    });
-
-    it('rejects invalid override body (searchImmediately: "yes") with 400', async () => {
-      const res = await app.inject({
-        method: 'POST',
-        url: '/api/discover/suggestions/1/add',
-        payload: { searchImmediately: 'yes' },
-      });
-      expect(res.statusCode).toBe(400);
-    });
-
-    it('triggers triggerImmediateSearch when searchImmediately is true and result has a book', async () => {
-      const book = { id: 10, title: 'Test' };
-      (services.discovery.addSuggestion as Mock).mockResolvedValueOnce({
-        suggestion: mockSuggestionRow({ id: 1, status: 'added' }),
-        book,
-      });
-
-      const res = await app.inject({
-        method: 'POST',
-        url: '/api/discover/suggestions/1/add',
-        payload: { searchImmediately: true, monitorForUpgrades: false },
-      });
-      expect(res.statusCode).toBe(200);
-      expect(triggerImmediateSearch).toHaveBeenCalledTimes(1);
-      expect(triggerImmediateSearch).toHaveBeenCalledWith(
-        book,
-        expect.objectContaining({
-          indexerService: services.indexer,
-          downloadOrchestrator: services.downloadOrchestrator,
-          settingsService: services.settings,
-          blacklistService: services.blacklist,
-        }),
-        expect.anything(), // log
-      );
-    });
-
-    it('does not trigger search when searchImmediately is false', async () => {
-      (services.discovery.addSuggestion as Mock).mockResolvedValueOnce({
-        suggestion: mockSuggestionRow({ id: 1, status: 'added' }),
-        book: { id: 10, title: 'Test' },
-      });
-
-      await app.inject({
-        method: 'POST',
-        url: '/api/discover/suggestions/1/add',
-        payload: { searchImmediately: false },
-      });
-      expect(triggerImmediateSearch).not.toHaveBeenCalled();
-    });
-
-    it('does not trigger search on duplicate result even with searchImmediately true', async () => {
-      (services.discovery.addSuggestion as Mock).mockResolvedValueOnce({
-        suggestion: mockSuggestionRow({ id: 1, status: 'added' }),
-        book: { id: 99, title: 'Existing' },
-        duplicate: true,
-      });
-
-      await app.inject({
-        method: 'POST',
-        url: '/api/discover/suggestions/1/add',
-        payload: { searchImmediately: true },
-      });
-      expect(triggerImmediateSearch).not.toHaveBeenCalled();
-    });
-
-  });
+  // Old POST /api/discover/suggestions/:id/add tests removed — #524 replaced with mark-added
 
   // --- #524: mark-added endpoint (status-flip only) ---
   describe('POST /api/discover/suggestions/:id/mark-added', () => {
-    it.todo('flips status from pending to added and returns updated suggestion');
-    it.todo('returns 409 for already-added suggestion');
-    it.todo('returns 404 for non-existent suggestion');
-    it.todo('includes authorAsin in suggestion response');
+    it('flips status from pending to added and returns updated suggestion', async () => {
+      (services.discovery.markSuggestionAdded as Mock).mockResolvedValueOnce({
+        suggestion: mockSuggestionRow({ id: 1, status: 'added' }),
+      });
+
+      const res = await app.inject({ method: 'POST', url: '/api/discover/suggestions/1/mark-added' });
+      expect(res.statusCode).toBe(200);
+      const body = JSON.parse(res.payload);
+      expect(body.suggestion.status).toBe('added');
+    });
+
+    it('returns 409 for already-added suggestion', async () => {
+      (services.discovery.markSuggestionAdded as Mock).mockResolvedValueOnce({
+        suggestion: mockSuggestionRow({ id: 1, status: 'added' }),
+        alreadyAdded: true,
+      });
+
+      const res = await app.inject({ method: 'POST', url: '/api/discover/suggestions/1/mark-added' });
+      expect(res.statusCode).toBe(409);
+    });
+
+    it('returns 404 for non-existent suggestion', async () => {
+      (services.discovery.markSuggestionAdded as Mock).mockResolvedValueOnce(null);
+
+      const res = await app.inject({ method: 'POST', url: '/api/discover/suggestions/999/mark-added' });
+      expect(res.statusCode).toBe(404);
+    });
+
+    it('includes authorAsin in suggestion response', async () => {
+      (services.discovery.markSuggestionAdded as Mock).mockResolvedValueOnce({
+        suggestion: mockSuggestionRow({ id: 1, status: 'added', authorAsin: 'A001' }),
+      });
+
+      const res = await app.inject({ method: 'POST', url: '/api/discover/suggestions/1/mark-added' });
+      expect(res.statusCode).toBe(200);
+      const body = JSON.parse(res.payload);
+      expect(body.suggestion.authorAsin).toBe('A001');
+    });
   });
 
   describe('POST /api/discover/refresh', () => {
@@ -442,16 +303,16 @@ describe('Discover Routes', () => {
     });
 
     it('rejects non-numeric id param with 400', async () => {
-      const res = await app.inject({ method: 'POST', url: '/api/discover/suggestions/abc/add' });
+      const res = await app.inject({ method: 'POST', url: '/api/discover/suggestions/abc/mark-added' });
       expect(res.statusCode).toBe(400);
     });
   });
 
   describe('error propagation', () => {
-    it('returns 500 when addSuggestion throws', async () => {
-      (services.discovery.addSuggestion as Mock).mockRejectedValueOnce(new Error('DB connection lost'));
+    it('returns 500 when markSuggestionAdded throws', async () => {
+      (services.discovery.markSuggestionAdded as Mock).mockRejectedValueOnce(new Error('DB connection lost'));
 
-      const res = await app.inject({ method: 'POST', url: '/api/discover/suggestions/1/add' });
+      const res = await app.inject({ method: 'POST', url: '/api/discover/suggestions/1/mark-added' });
       expect(res.statusCode).toBe(500);
     });
 
@@ -552,39 +413,4 @@ describe('Discover Routes', () => {
   });
 });
 
-describe('#514 discover route — missing blacklistService guard', () => {
-  let app: Awaited<ReturnType<typeof createTestApp>>;
-  let services: Services;
-
-  beforeAll(async () => {
-    services = createMockServices();
-    // Explicitly null out blacklistService so the route guard skips search dispatch
-    (services as unknown as Record<string, unknown>).blacklist = undefined;
-    app = await createTestApp(services);
-  });
-
-  afterAll(async () => {
-    await app.close();
-  });
-
-  beforeEach(() => {
-    (triggerImmediateSearch as Mock).mockReset();
-  });
-
-  it('does not trigger search when blacklistService is absent even with searchImmediately', async () => {
-    const book = { id: 10, title: 'Test' };
-    (services.discovery.addSuggestion as Mock).mockResolvedValueOnce({
-      suggestion: mockSuggestionRow({ id: 1, status: 'added' }),
-      book,
-    });
-
-    const res = await app.inject({
-      method: 'POST',
-      url: '/api/discover/suggestions/1/add',
-      payload: { searchImmediately: true, monitorForUpgrades: false },
-    });
-
-    expect(res.statusCode).toBe(200);
-    expect(triggerImmediateSearch).not.toHaveBeenCalled();
-  });
-});
+// #514 blacklistService guard tests removed — #524 moved search dispatch to POST /api/books
