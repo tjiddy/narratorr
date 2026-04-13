@@ -99,18 +99,16 @@ export async function retrySearch(
     const searchSettings = await settingsService.get('search');
     const narratorPriority = buildNarratorPriority(searchSettings.searchPriority, book.narrators);
     const retryInputCount = filteredResults.length;
-    const { results } = filterAndRankResults(
-      filteredResults,
-      book.duration ?? undefined,
-      qualitySettings.grabFloor,
-      qualitySettings.minSeeders,
-      qualitySettings.protocolPreference,
-      qualitySettings.rejectWords,
-      qualitySettings.requiredWords,
-      metadataSettings.languages,
+    const { results } = filterAndRankResults(filteredResults, book.duration ?? undefined, {
+      grabFloor: qualitySettings.grabFloor,
+      minSeeders: qualitySettings.minSeeders,
+      protocolPreference: qualitySettings.protocolPreference,
+      rejectWords: qualitySettings.rejectWords,
+      requiredWords: qualitySettings.requiredWords,
+      languages: metadataSettings.languages,
       narratorPriority,
-      qualitySettings.maxDownloadSize,
-    );
+      maxDownloadSize: qualitySettings.maxDownloadSize,
+    });
     if (results.length < retryInputCount) {
       log.debug({ inputCount: retryInputCount, outputCount: results.length }, 'Quality gate filtering applied');
     }

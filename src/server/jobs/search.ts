@@ -184,18 +184,16 @@ export async function runUpgradeSearchJob(
       // Apply quality filtering and ranking
       const narratorPriority = buildNarratorPriority(searchSettings.searchPriority, book.narrators);
       const searchInputCount = rawResults.length;
-      const { results } = filterAndRankResults(
-        rawResults,
-        existingDuration,
-        qualitySettings.grabFloor,
-        qualitySettings.minSeeders,
-        qualitySettings.protocolPreference,
-        qualitySettings.rejectWords,
-        qualitySettings.requiredWords,
-        metadataSettings.languages,
+      const { results } = filterAndRankResults(rawResults, existingDuration, {
+        grabFloor: qualitySettings.grabFloor,
+        minSeeders: qualitySettings.minSeeders,
+        protocolPreference: qualitySettings.protocolPreference,
+        rejectWords: qualitySettings.rejectWords,
+        requiredWords: qualitySettings.requiredWords,
+        languages: metadataSettings.languages,
         narratorPriority,
-        qualitySettings.maxDownloadSize,
-      );
+        maxDownloadSize: qualitySettings.maxDownloadSize,
+      });
       if (results.length < searchInputCount) {
         log.debug({ inputCount: searchInputCount, outputCount: results.length }, 'Quality gate filtering applied');
       }

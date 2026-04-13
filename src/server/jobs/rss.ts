@@ -155,18 +155,16 @@ export async function runRssJob(
       : (candidate.audioDuration ?? undefined);
     const narratorPriority = buildNarratorPriority(searchSettings.searchPriority, candidate.narrators);
     const rssInputCount = bookResults.length;
-    const { results: ranked } = filterAndRankResults(
-      bookResults,
-      duration,
-      qualitySettings.grabFloor,
-      qualitySettings.minSeeders,
-      qualitySettings.protocolPreference,
-      qualitySettings.rejectWords,
-      qualitySettings.requiredWords,
-      metadataSettings.languages,
+    const { results: ranked } = filterAndRankResults(bookResults, duration, {
+      grabFloor: qualitySettings.grabFloor,
+      minSeeders: qualitySettings.minSeeders,
+      protocolPreference: qualitySettings.protocolPreference,
+      rejectWords: qualitySettings.rejectWords,
+      requiredWords: qualitySettings.requiredWords,
+      languages: metadataSettings.languages,
       narratorPriority,
-      qualitySettings.maxDownloadSize,
-    );
+      maxDownloadSize: qualitySettings.maxDownloadSize,
+    });
     if (ranked.length < rssInputCount) {
       log.debug({ inputCount: rssInputCount, outputCount: ranked.length }, 'Quality gate filtering applied');
     }

@@ -43,6 +43,18 @@ export interface NarratorPriority {
   threshold?: number;
 }
 
+/** Aggregated filter/rank options crossing quality, metadata, and computed settings. */
+export interface SearchFilterOptions {
+  grabFloor: number;
+  minSeeders: number;
+  protocolPreference: string;
+  rejectWords?: string;
+  requiredWords?: string;
+  languages?: readonly string[];
+  narratorPriority?: NarratorPriority;
+  maxDownloadSize?: number;
+}
+
 const NARRATOR_MATCH_THRESHOLD = 0.8;
 const NARRATOR_QUALITY_FLOOR_MBHR = 30; // Low tier boundary
 
@@ -162,15 +174,9 @@ function canonicalCompare(
 export function filterAndRankResults(
   results: SearchResult[],
   bookDuration: number | undefined,
-  grabFloor: number,
-  minSeeders: number,
-  protocolPreference: string,
-  rejectWords?: string,
-  requiredWords?: string,
-  languages?: readonly string[],
-  narratorPriority?: NarratorPriority,
-  maxDownloadSize?: number,
+  options: SearchFilterOptions,
 ): { results: SearchResult[]; durationUnknown: boolean } {
+  const { grabFloor, minSeeders, protocolPreference, rejectWords, requiredWords, languages, narratorPriority, maxDownloadSize } = options;
   const durationUnknown = !bookDuration || bookDuration <= 0;
 
   let filtered = results;
@@ -303,12 +309,15 @@ export async function postProcessSearchResults(
   const qualitySettings = await settingsService.get('quality');
   const metadataSettings = await settingsService.get('metadata');
   const inputCount = filteredResults.length;
-  const ranked = filterAndRankResults(
-    filteredResults, bookDuration,
-    qualitySettings.grabFloor, qualitySettings.minSeeders, qualitySettings.protocolPreference,
-    qualitySettings.rejectWords, qualitySettings.requiredWords,
-    metadataSettings.languages, undefined, qualitySettings.maxDownloadSize,
-  );
+  const ranked = filterAndRankResults(filteredResults, bookDuration, {
+    grabFloor: qualitySettings.grabFloor,
+    minSeeders: qualitySettings.minSeeders,
+    protocolPreference: qualitySettings.protocolPreference,
+    rejectWords: qualitySettings.rejectWords,
+    requiredWords: qualitySettings.requiredWords,
+    languages: metadataSettings.languages,
+    maxDownloadSize: qualitySettings.maxDownloadSize,
+  });
   if (ranked.results.length < inputCount) logger.debug({ inputCount, outputCount: ranked.results.length }, 'Quality gate filtering applied');
 
   return {
@@ -350,7 +359,7 @@ async function searchWithBroadcaster(
   book: { id: number; title: string; duration?: number | null; authors?: Array<{ name: string }> | null; narrators?: Array<{ name: string }> | null },
   indexerService: IndexerService,
   downloadOrchestrator: DownloadOrchestrator,
-  qualitySettings: { grabFloor: number; minSeeders: number; protocolPreference: string; rejectWords?: string; requiredWords?: string; languages?: readonly string[]; narratorPriority?: NarratorPriority; maxDownloadSize?: number },
+  qualitySettings: SearchFilterOptions,
   log: FastifyBaseLogger,
   blacklistService: BlacklistService,
   broadcaster: EventBroadcasterService,
@@ -407,12 +416,7 @@ async function searchWithBroadcaster(
   await enrichUsenetLanguages(afterBlacklist, log);
 
   const broadcasterInputCount = afterBlacklist.length;
-  const { results } = filterAndRankResults(
-    afterBlacklist, book.duration ?? undefined,
-    qualitySettings.grabFloor, qualitySettings.minSeeders, qualitySettings.protocolPreference,
-    qualitySettings.rejectWords, qualitySettings.requiredWords, qualitySettings.languages,
-    qualitySettings.narratorPriority, qualitySettings.maxDownloadSize,
-  );
+  const { results } = filterAndRankResults(afterBlacklist, book.duration ?? undefined, qualitySettings);
   if (results.length < broadcasterInputCount) log.debug({ inputCount: broadcasterInputCount, outputCount: results.length }, 'Quality gate filtering applied');
 
   const best = results.find((r) => r.downloadUrl);
@@ -444,7 +448,7 @@ export async function searchAndGrabForBook(
   book: { id: number; title: string; duration?: number | null; authors?: Array<{ name: string }> | null; narrators?: Array<{ name: string }> | null },
   indexerService: IndexerService,
   downloadOrchestrator: DownloadOrchestrator,
-  qualitySettings: { grabFloor: number; minSeeders: number; protocolPreference: string; rejectWords?: string; requiredWords?: string; languages?: readonly string[]; narratorPriority?: NarratorPriority; maxDownloadSize?: number },
+  qualitySettings: SearchFilterOptions,
   log: FastifyBaseLogger,
   blacklistService: BlacklistService,
   broadcaster?: EventBroadcasterService,
@@ -475,12 +479,7 @@ export async function searchAndGrabForBook(
   await enrichUsenetLanguages(afterBlacklist, log);
 
   const grabInputCount = afterBlacklist.length;
-  const { results } = filterAndRankResults(
-    afterBlacklist, book.duration ?? undefined,
-    qualitySettings.grabFloor, qualitySettings.minSeeders, qualitySettings.protocolPreference,
-    qualitySettings.rejectWords, qualitySettings.requiredWords, qualitySettings.languages,
-    qualitySettings.narratorPriority, qualitySettings.maxDownloadSize,
-  );
+  const { results } = filterAndRankResults(afterBlacklist, book.duration ?? undefined, qualitySettings);
   if (results.length < grabInputCount) log.debug({ inputCount: grabInputCount, outputCount: results.length }, 'Quality gate filtering applied');
 
   const best = results.find((r) => r.downloadUrl);
