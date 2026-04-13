@@ -1,5 +1,29 @@
 # Workflow Log
 
+## #520 fix: ebook filter skips nzbName — 2026-04-13
+**Skill path:** /elaborate → /respond-to-spec-review (x2) → /implement → /claim → /plan → /handoff
+**Outcome:** success — PR #534
+
+### Metrics
+- Files changed: 2 | Tests added/modified: 4
+- Quality gate runs: 2 (pass on attempt 1 both times)
+- Fix iterations: 0
+- Context compactions: 0
+
+### Workflow experience
+- What went smoothly: Minimal scope issue — one line fix, straightforward TDD cycle
+- Friction / issues encountered: Spec review took 3 rounds due to progressively discovering that multi-part filters (both search and RSS) run before nzbName enrichment. Each round removed one more out-of-scope AC. The data-flow ordering was the core insight.
+
+### Token efficiency
+- Highest-token actions: Spec review rounds (3 full review+response cycles before implementation)
+- Avoidable waste: The original spec could have been narrowed to ebook-only from the start if enrichment ordering had been checked during elaboration
+- Suggestions: During /elaborate, always trace the data-flow path for any field the spec assumes is available — check when it's populated relative to when it's consumed
+
+### Wish I'd Known
+1. `nzbName` is only populated by `enrichUsenetLanguages()` — any filter running before it gets undefined. This eliminated 2 of 3 originally-planned ACs (see `.narratorr/cl/learnings/nzbname-enrichment-ordering.md`)
+2. `filterAndRankResults()` ends at line 254; the multi-part filter at line 290 is in `postProcessSearchResults()` — different function, different caller surface
+3. The issue was truly 1-line fix, 4-test addition. Spec review rounds consumed ~80% of total effort — correct for spec quality, but the implementation itself was trivial
+
 ## #525 fix: import slot release should nudge queued downloads instead of waiting for next cron tick — 2026-04-13
 **Skill path:** /elaborate → /respond-to-spec-review (x2) → /implement → /claim → /plan → /handoff
 **Outcome:** success — PR #531
