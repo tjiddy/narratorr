@@ -54,10 +54,16 @@ export function useEventHistory(params?: EventHistoryParams) {
 
   const retryMutation = useMutation({
     mutationFn: api.retryDownload,
-    onSuccess: () => {
+    onSuccess: (data) => {
       queryClient.invalidateQueries({ queryKey: ['activity'] });
       queryClient.invalidateQueries({ queryKey: queryKeys.eventHistory.root() });
-      toast.success('Retry initiated');
+      if ('status' in data && data.status === 'no_candidates') {
+        toast.error('No matching releases found for retry');
+      } else if ('status' in data && data.status === 'retry_error') {
+        toast.error('Retry failed — search encountered an error');
+      } else {
+        toast.success('Retry initiated');
+      }
     },
     onError: (error: Error) => {
       toast.error(`Retry failed: ${getErrorMessage(error)}`);
