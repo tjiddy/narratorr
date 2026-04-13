@@ -880,9 +880,41 @@ describe('DiscoveryService', () => {
 
   // --- #524: markSuggestionAdded (status-flip only) ---
   describe('markSuggestionAdded', () => {
-    it.todo('flips status from pending to added and returns updated row');
-    it.todo('returns alreadyAdded: true for suggestion with status added');
-    it.todo('returns null for non-existent suggestion ID');
+    it('flips status from pending to added and returns updated row', async () => {
+      const existing = { id: 1, asin: 'B001', title: 'Test', authorName: 'Author', status: 'pending' };
+      const db = createMockDb();
+      db.select.mockReturnValue(mockDbChain([existing]));
+      db.update.mockReturnValue(mockDbChain());
+      const { service } = createService(db);
+
+      const result = await service.markSuggestionAdded(1);
+      expect(result).not.toBeNull();
+      expect(result!.alreadyAdded).toBeFalsy();
+      expect(result!.suggestion.status).toBe('added');
+      // Must NOT call bookService.create — status flip only
+      expect(mockBookService.create).not.toHaveBeenCalled();
+      expect(mockBookService.findDuplicate).not.toHaveBeenCalled();
+      expect(mockEventHistoryService.create).not.toHaveBeenCalled();
+    });
+
+    it('returns alreadyAdded: true for suggestion with status added', async () => {
+      const existing = { id: 1, asin: 'B001', status: 'added' };
+      const db = createMockDb();
+      db.select.mockReturnValue(mockDbChain([existing]));
+      const { service } = createService(db);
+
+      const result = await service.markSuggestionAdded(1);
+      expect(result!.alreadyAdded).toBe(true);
+    });
+
+    it('returns null for non-existent suggestion ID', async () => {
+      const db = createMockDb();
+      db.select.mockReturnValue(mockDbChain([]));
+      const { service } = createService(db);
+
+      const result = await service.markSuggestionAdded(999);
+      expect(result).toBeNull();
+    });
   });
 
   // --- #408: Expiry ---

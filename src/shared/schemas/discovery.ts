@@ -36,6 +36,7 @@ export interface SuggestionRowResponse {
   asin: string;
   title: string;
   authorName: string;
+  authorAsin: string | null;
   narratorName: string | null;
   coverUrl: string | null;
   duration: number | null;

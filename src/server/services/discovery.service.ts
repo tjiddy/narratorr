@@ -309,6 +309,16 @@ export class DiscoveryService {
     return { suggestion: { ...row, status: 'added' }, book };
   }
 
+  async markSuggestionAdded(id: number): Promise<{ suggestion: SuggestionRow; alreadyAdded?: boolean } | null> {
+    const rows = await this.db.select().from(suggestions).where(eq(suggestions.id, id)).limit(1);
+    if (rows.length === 0) return null;
+    const row = rows[0];
+    if (row.status === 'added') return { suggestion: row, alreadyAdded: true };
+
+    await this.db.update(suggestions).set({ status: 'added' }).where(eq(suggestions.id, id));
+    return { suggestion: { ...row, status: 'added' as const } };
+  }
+
   private async queryDismissalCounts(): Promise<Array<{ reason: string; status: string; count: number }>> {
     return this.db
       .select({

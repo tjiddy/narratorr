@@ -18,6 +18,7 @@ function toSuggestionResponse(row: SuggestionRow): SuggestionRowResponse {
     asin: row.asin,
     title: row.title,
     authorName: row.authorName,
+    authorAsin: row.authorAsin,
     narratorName: row.narratorName,
     coverUrl: row.coverUrl,
     duration: row.duration,
