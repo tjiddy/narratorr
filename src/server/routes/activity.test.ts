@@ -437,6 +437,12 @@ describe('activity routes', () => {
     });
   });
 
+  // ── #525 — approve route nudge ──────────────────────────────────────────
+  describe('POST /api/activity/:id/approve — queued import nudge (#525)', () => {
+    it.todo('nudge fires after approve inline import completes — drainQueuedImports called');
+    it.todo('nudge fires after approve inline import fails — slot released and nudge fires');
+  });
+
   describe('POST /api/activity/:id/reject', () => {
     it('transitions pending_review download to failed with default retry=false', async () => {
       (services.qualityGateOrchestrator.reject as Mock).mockResolvedValue({ id: 1, status: 'failed' });

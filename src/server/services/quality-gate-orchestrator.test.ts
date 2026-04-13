@@ -1851,4 +1851,12 @@ describe('QualityGateOrchestrator', () => {
       );
     });
   });
+
+  // ── #525 — triggerImportWithSlotAdmission nudge ──────────────────────────
+  describe('triggerImportWithSlotAdmission — queued import nudge (#525)', () => {
+    it.todo('nudge fires after inline import completes — drainQueuedImports called fire-and-forget');
+    it.todo('nudge fires after inline import fails — releaseSlot and drainQueuedImports both called');
+    it.todo('nudge rejection is caught — drainQueuedImports rejects, error logged not propagated');
+    it.todo('guard: importService/importOrchestrator null check — returns early without error');
+  });
 });

@@ -385,6 +385,20 @@ describe('ImportOrchestrator', () => {
     });
   });
 
+  // ── #525 — drainQueuedImports ──────────────────────────────────────────
+  describe('drainQueuedImports', () => {
+    it.todo('drains one processing_queued download — acquires slot, claims row, emits SSE, calls importDownload');
+    it.todo('ignores completed downloads — only imports processing_queued rows');
+    it.todo('atomic claim prevents duplicate pickup — concurrent calls, only one succeeds');
+    it.todo('concurrent claims with maxConcurrentProcessing > 1 — each nudge claims a different row');
+    it.todo('no-op when queue is empty — no processing_queued rows exist');
+    it.todo('error in importDownload does not break drain — error caught and logged, slot released, chain continues');
+    it.todo('chain drains multiple queued downloads — sequential claim and import');
+    it.todo('chain terminates when no slots available — tryAcquireSlot returns false');
+    it.todo('SSE event fires exactly once per queued import — emitDownloadImporting called with processing_queued');
+    it.todo('SSE event is not emitted when claim fails — rows affected = 0');
+  });
+
   // ── #504 — import failure blacklisting ──────────────────────────────────
   describe('import failure blacklisting (#504)', () => {
     let blacklistService: BlacklistService;
