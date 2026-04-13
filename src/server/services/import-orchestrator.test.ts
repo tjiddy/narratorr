@@ -18,15 +18,11 @@ vi.mock('../utils/rejection-helpers.js', () => ({
 
 import { blacklistAndRetrySearch } from '../utils/rejection-helpers.js';
 
-// Mock import-steps — we test the orchestrator's dispatch, not the helpers themselves
-vi.mock('../utils/import-steps.js', () => {
-  const CONTENT_FAILURE_PATTERNS = [
-    'No audio files found',
-    'not a supported audio format',
-    'Duplicate filename',
-    'Copy verification failed',
-  ];
+// Mock import-steps — passthrough isContentFailure to real implementation, spy on the rest
+vi.mock('../utils/import-steps.js', async (importOriginal) => {
+  const actual = await importOriginal() as Record<string, unknown>;
   return {
+    ...actual,
     emitDownloadImporting: vi.fn(),
     emitBookImporting: vi.fn(),
     emitImportSuccess: vi.fn(),
@@ -37,10 +33,6 @@ vi.mock('../utils/import-steps.js', () => {
     recordImportFailedEvent: vi.fn(),
     embedTagsForImport: vi.fn().mockResolvedValue(undefined),
     runImportPostProcessing: vi.fn().mockResolvedValue(undefined),
-    isContentFailure: (error: unknown) => {
-      if (!(error instanceof Error)) return false;
-      return CONTENT_FAILURE_PATTERNS.some((p) => error.message.includes(p));
-    },
   };
 });
 
