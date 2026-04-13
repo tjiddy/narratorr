@@ -154,6 +154,32 @@ describe('startJobs', () => {
     setTimeoutSpy.mockRestore();
   });
 
+  it('#537 monitor callback passes services.eventHistory to monitorDownloads', async () => {
+    const { monitorDownloads } = await import('./monitor.js');
+    const { startJobs } = await import('./index.js');
+    startJobs(injectHelper<Db>(db), services, log);
+
+    // Find and execute the monitor cron callback
+    const cronCalls = vi.mocked(cron.schedule).mock.calls;
+    const monitorCall = cronCalls.find(([expr]) => expr === '*/30 * * * * *');
+    expect(monitorCall).toBeDefined();
+    const cronCallback = monitorCall![1] as () => Promise<void>;
+    await cronCallback();
+
+    // Assert monitorDownloads received services.eventHistory as the last argument
+    expect(monitorDownloads).toHaveBeenCalledWith(
+      expect.anything(), // db
+      expect.anything(), // downloadClientService
+      expect.anything(), // notifierService
+      expect.anything(), // log
+      expect.anything(), // retryDeps
+      expect.anything(), // broadcaster
+      expect.anything(), // remotePathMappingService
+      expect.anything(), // qualityGateOrchestrator
+      services.eventHistory, // eventHistory — must be the actual service instance
+    );
+  });
+
   describe('scheduleCron error handling (#448 item 9)', () => {
     it('logs error when cron job callback throws', async () => {
       // Make the monitor job's callback throw by making monitorDownloads reject
