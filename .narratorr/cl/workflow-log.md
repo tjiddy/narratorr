@@ -1,5 +1,34 @@
 # Workflow Log
 
+## #540 DRY: extract shared multi-part and language filter helpers — 2026-04-13
+**Skill path:** /implement → /claim → /plan → /handoff
+**Outcome:** success — PR #543
+
+### Metrics
+- Files changed: 5 | Tests added/modified: 1 (21 new tests)
+- Quality gate runs: 2 (pass on attempt 1 both times)
+- Fix iterations: 1 (removed `langs` variable still used downstream; barrel export not wired before consumer)
+- Context compactions: 0
+
+### Workflow experience
+- What went smoothly: Clean extraction — all 309 existing tests passed after wiring, confirming behavioral equivalence
+- Friction / issues encountered: Two sequencing errors: (1) wired consumer before adding barrel export → 155 test failures, (2) deleted `const langs` declaration without checking downstream references → 48 failures. Both were trivial fixes but wasted a test run each.
+
+### Token efficiency
+- Highest-token actions: Explore subagent for plan — comprehensive but necessary given the 3-file cross-cutting scope
+- Avoidable waste: Could have wired barrel export first (before any consumer changes) to avoid a full test-run failure
+- Suggestions: When creating new modules in core/utils, always add barrel export as the first step before touching consumers
+
+### Infrastructure gaps
+- Repeated workarounds: None
+- Missing tooling / config: None
+- Unresolved debt: Removed resolved debt item (metadata language predicate duplication). Discovery language gate inconsistency remains (debt.md line 70).
+
+### Wish I'd Known
+1. Always update barrel exports before wiring consumers — the import-from-barrel pattern means the module isn't visible until re-exported (see `barrel-export-before-consumer-wiring.md`)
+2. When extracting inline code, grep for all downstream references to any removed locals before deleting (see `filter-extraction-preserve-downstream-refs.md`)
+3. The `filterMultiPartUsenet` return shape `{ filtered, rejectedTitles }` cleanly supports both callers — search-pipeline uses both, RSS destructures only `filtered`
+
 ## #541 Polish: sanitizeNetworkError URL leak, ebook filter test, mock drift — 2026-04-13
 **Skill path:** /implement → /claim → /plan → /handoff
 **Outcome:** success — PR #542
