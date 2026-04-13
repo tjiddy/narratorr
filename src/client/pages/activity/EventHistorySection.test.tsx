@@ -121,6 +121,23 @@ describe('EventHistorySection', () => {
     expect(mockDeleteMutate).toHaveBeenCalledWith(42);
   });
 
+  it('clicking Retry button on download_failed event card calls retryMutation.mutate with downloadId', async () => {
+    const user = userEvent.setup();
+    const mockRetryMutate = vi.fn();
+    mockDefaultHook({
+      events: [
+        { id: 10, bookId: 2, downloadId: 7, bookTitle: 'Failed Book', authorName: null, eventType: 'download_failed', source: 'auto', reason: { error: 'Connection lost' }, createdAt: new Date().toISOString() },
+      ],
+      total: 1,
+      retryMutation: { mutate: mockRetryMutate, isPending: false } as never,
+    });
+
+    renderWithProviders(<EventHistorySection />);
+    await user.click(screen.getByRole('button', { name: /retry/i }));
+
+    expect(mockRetryMutate).toHaveBeenCalledWith(7);
+  });
+
   describe('intent-based filter groups', () => {
     it('renders exactly 8 filter buttons (All + 7 groups)', () => {
       mockDefaultHook();
