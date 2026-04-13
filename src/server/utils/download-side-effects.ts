@@ -163,3 +163,24 @@ export function recordDownloadCompletedEvent(args: RecordDownloadCompletedEventA
     reason: { progress: 1 },
   }).catch((err: unknown) => log.warn(err, 'Failed to record download_completed event'));
 }
+
+// ── recordDownloadFailedEvent ─────────────────────────────────────────
+
+export interface RecordDownloadFailedEventArgs {
+  eventHistory: EventHistoryService | undefined;
+  downloadId: number;
+  bookId: number | undefined;
+  bookTitle: string;
+  errorMessage: string;
+  log: FastifyBaseLogger;
+}
+
+/** Fire-and-forget download_failed event recording. Skips if no eventHistory or bookId. */
+export function recordDownloadFailedEvent(args: RecordDownloadFailedEventArgs): void {
+  const { eventHistory, bookId, bookTitle, downloadId, errorMessage, log } = args;
+  if (!eventHistory || !bookId) return;
+  eventHistory.create({
+    bookId, bookTitle, downloadId, eventType: 'download_failed', source: 'auto',
+    reason: { error: errorMessage },
+  }).catch((err: unknown) => log.warn(err, 'Failed to record download_failed event'));
+}
