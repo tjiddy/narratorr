@@ -3,6 +3,7 @@ import { join, extname } from 'node:path';
 import type { FastifyInstance } from 'fastify';
 import { serveCoverFromCache, cleanCoverCache, COVER_FILE_REGEX } from '../utils/cover-cache.js';
 import { config } from '../config.js';
+import { MAX_COVER_SIZE } from '../../shared/constants.js';
 import type { BookService, BookListService, DownloadService, SettingsService, RenameService, EventHistoryService, TaggingService, IndexerService } from '../services/index.js';
 import type { DownloadOrchestrator } from '../services/download-orchestrator.js';
 import type { MergeService } from '../services/merge.service.js';
@@ -341,8 +342,6 @@ export async function booksRoutes(app: FastifyInstance, deps: BookRouteDeps) {
     );
   }
 }
-
-import { MAX_COVER_SIZE } from '../../shared/constants.js';
 
 export async function bookFilesRoute(app: FastifyInstance, bookService: BookService) {
   // GET /api/books/:id/cover — serve embedded cover art from library
