@@ -5,15 +5,8 @@
     {
       "idx": 0,
       "version": "6",
-      "when": 1775587753875,
-      "tag": "0000_colossal_annihilus",
-      "breakpoints": true
-    },
-    {
-      "idx": 1,
-      "version": "6",
-      "when": 1776073341705,
-      "tag": "0001_odd_squadron_sinister",
+      "when": 1776121953971,
+      "tag": "0000_classy_skrulls",
       "breakpoints": true
     }
   ]

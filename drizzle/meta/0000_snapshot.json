@@ -1,7 +1,7 @@
 {
   "version": "6",
   "dialect": "sqlite",
-  "id": "4bd4429d-d5b6-4679-9699-f9a2e765ca86",
+  "id": "63890db9-20f4-4342-9226-ce49e7b97fd9",
   "prevId": "00000000-0000-0000-0000-000000000000",
   "tables": {
     "authors": {
@@ -1569,6 +1569,13 @@
           "type": "text",
           "primaryKey": false,
           "notNull": true,
+          "autoincrement": false
+        },
+        "author_asin": {
+          "name": "author_asin",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
           "autoincrement": false
         },
         "narrator_name": {

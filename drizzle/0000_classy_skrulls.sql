@@ -227,6 +227,7 @@ CREATE TABLE `suggestions` (
 	`asin` text NOT NULL,
 	`title` text NOT NULL,
 	`author_name` text NOT NULL,
+	`author_asin` text,
 	`narrator_name` text,
 	`cover_url` text,
 	`duration` integer,
