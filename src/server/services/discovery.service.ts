@@ -4,9 +4,7 @@ import type { FastifyBaseLogger } from 'fastify';
 import { suggestions, books, authors, bookAuthors, bookNarrators, narrators } from '../../db/schema.js';
 import { REGION_LANGUAGES, type BookMetadata } from '../../core/index.js';
 import type { MetadataService } from './metadata.service.js';
-import type { BookService } from './book.service.js';
 import type { SettingsService } from './settings.service.js';
-import type { EventHistoryService } from './event-history.service.js';
 import type { SuggestionReason } from '../../shared/schemas/discovery.js';
 import { extractSignals } from './discovery-signals.js';
 import { computeWeightMultipliers, DEFAULT_MULTIPLIERS, type DismissalStats, type WeightMultipliers } from './discovery-weights.js';
@@ -48,9 +46,7 @@ export class DiscoveryService {
     private db: Db,
     private log: FastifyBaseLogger,
     private metadataService: MetadataService,
-    private bookService: BookService,
     private settingsService: SettingsService,
-    private eventHistory?: EventHistoryService,
   ) {}
 
   async analyzeLibrary(): Promise<LibrarySignals> {
