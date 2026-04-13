@@ -1,5 +1,34 @@
 # Workflow Log
 
+## #525 fix: import slot release should nudge queued downloads instead of waiting for next cron tick — 2026-04-13
+**Skill path:** /elaborate → /respond-to-spec-review (x2) → /implement → /claim → /plan → /handoff
+**Outcome:** success — PR #531
+
+### Metrics
+- Files changed: 4 source + 3 test | Tests added/modified: 16 new
+- Quality gate runs: 2 (pass on both)
+- Fix iterations: 1 (activity test asserted on real semaphore function instead of spy — fixed assertion)
+- Context compactions: 0
+
+### Workflow experience
+- What went smoothly: Clean TDD cycle — each module was small and self-contained. Existing mock patterns were easy to follow.
+- Friction / issues encountered: Activity route tests use real Semaphore functions for tryAcquireSlot/releaseSlot (not mocks), so standard spy assertions fail on those methods.
+
+### Token efficiency
+- Highest-token actions: Spec review rounds (3 rounds before approval) dominated context
+- Avoidable waste: Spec elaboration could have caught the SSE dedupe conflict earlier
+- Suggestions: When adding CAS-style status changes, always check downstream consumers of the target status value
+
+### Infrastructure gaps
+- Repeated workarounds: `rowsAffected` cast pattern (no typed Drizzle API for this)
+- Missing tooling / config: None
+- Unresolved debt: QGO file at 498 lines (pre-existing, line 26 of debt.md)
+
+### Wish I'd Known
+1. `ImportOrchestrator.importDownload()` skips download SSE when status is already `importing` — this is the "approve-path dedupe" and any new path that pre-sets `importing` must emit SSE explicitly (see `import-orchestrator-sse-dedupe.md`)
+2. Activity route tests use real Semaphore instances, not mocks — spy assertions on `releaseSlot`/`tryAcquireSlot` will fail (see `activity-test-real-semaphore.md`)
+3. Drizzle `db.update()` return type needs an unsafe cast to access `rowsAffected` (see `drizzle-rowsaffected-cast.md`)
+
 ## #524 Discover page: use standard addBook flow instead of parallel book-creation pipeline — 2026-04-13
 **Skill path:** /elaborate → /respond-to-spec-review (x2) → /implement → /claim → /plan → /handoff
 **Outcome:** success — PR #530
