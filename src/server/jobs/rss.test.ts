@@ -861,4 +861,249 @@ describe('#502 runRssJob — enrichment before filtering', () => {
     expect(result.grabbed).toBe(0);
     expect(download.grab).not.toHaveBeenCalled();
   });
+
+  it('usenet RSS item with multi-part marker in nzbName but clean title/rawTitle → filtered out', async () => {
+    const wantedBooks = [makeWantedBook(1, 'The Way of Kings', 'Brandon Sanderson')];
+    const rssResults = [makeResult('The Way of Kings', 'Brandon Sanderson', { protocol: 'usenet' as const, downloadUrl: 'http://nzb.test/1' })];
+    const settings = createMockSettingsService({ rss: { enabled: true } });
+    const { bookList, book } = createMockBookServices(wantedBooks);
+    const indexer = createMockIndexerService(rssResults);
+    const download = createMockDownloadOrchestrator();
+    const blacklist = createMockBlacklistService();
+
+    // Enrichment populates nzbName with multi-part marker (title/rawTitle are clean)
+    mockEnrichUsenet.mockImplementation(async (results) => {
+      for (const r of results) {
+        if (r.protocol === 'usenet') r.nzbName = 'The Way of Kings (01 of 30).rar';
+      }
+    });
+
+    const result = await runRssJob(settings, bookList, book, indexer, download, blacklist, inject<FastifyBaseLogger>(log));
+
+    expect(result.grabbed).toBe(0);
+    expect(download.grab).not.toHaveBeenCalled();
+  });
+
+  it('usenet RSS item with multi-part marker in rawTitle → still filtered (regression)', async () => {
+    const wantedBooks = [makeWantedBook(1, 'Test Book', 'Author')];
+    const rssResults = [makeResult('Test Book', 'Author', { protocol: 'usenet' as const, rawTitle: 'Test Book (3/10)', downloadUrl: 'http://nzb.test/2' })];
+    const settings = createMockSettingsService({ rss: { enabled: true } });
+    const { bookList, book } = createMockBookServices(wantedBooks);
+    const indexer = createMockIndexerService(rssResults);
+    const download = createMockDownloadOrchestrator();
+    const blacklist = createMockBlacklistService();
+
+    const result = await runRssJob(settings, bookList, book, indexer, download, blacklist, inject<FastifyBaseLogger>(log));
+
+    expect(result.grabbed).toBe(0);
+    expect(download.grab).not.toHaveBeenCalled();
+  });
+
+  it('torrent RSS item skips multi-part filter regardless of title content', async () => {
+    const wantedBooks = [makeWantedBook(1, 'Test Book', 'Author')];
+    // Torrent with multi-part pattern in title — should NOT be filtered
+    const rssResults = [makeResult('Test Book (1/5)', 'Author', { protocol: 'torrent' as const })];
+    const settings = createMockSettingsService({ rss: { enabled: true } });
+    const { bookList, book } = createMockBookServices(wantedBooks);
+    const indexer = createMockIndexerService(rssResults);
+    const download = createMockDownloadOrchestrator();
+    const blacklist = createMockBlacklistService();
+
+    const result = await runRssJob(settings, bookList, book, indexer, download, blacklist, inject<FastifyBaseLogger>(log));
+
+    expect(result.grabbed).toBe(1);
+    expect(download.grab).toHaveBeenCalled();
+  });
+
+  it('multi-part check prefers nzbName over rawTitle when both present', async () => {
+    const wantedBooks = [makeWantedBook(1, 'Test Book', 'Author')];
+    // rawTitle is clean, but nzbName has multi-part marker
+    const rssResults = [makeResult('Test Book', 'Author', {
+      protocol: 'usenet' as const,
+      rawTitle: 'Test Book [Audiobook]',
+      downloadUrl: 'http://nzb.test/3',
+    })];
+    const settings = createMockSettingsService({ rss: { enabled: true } });
+    const { bookList, book } = createMockBookServices(wantedBooks);
+    const indexer = createMockIndexerService(rssResults);
+    const download = createMockDownloadOrchestrator();
+    const blacklist = createMockBlacklistService();
+
+    mockEnrichUsenet.mockImplementation(async (results) => {
+      for (const r of results) {
+        if (r.protocol === 'usenet') r.nzbName = 'Test Book (02 of 15).rar';
+      }
+    });
+
+    const result = await runRssJob(settings, bookList, book, indexer, download, blacklist, inject<FastifyBaseLogger>(log));
+
+    expect(result.grabbed).toBe(0);
+    expect(download.grab).not.toHaveBeenCalled();
+  });
+
+  it('empty nzbName falls through to rawTitle (|| operator, not ??)', async () => {
+    const wantedBooks = [makeWantedBook(1, 'Test Book', 'Author')];
+    // rawTitle has multi-part marker; nzbName will be empty string (should fall through)
+    const rssResults = [makeResult('Test Book', 'Author', {
+      protocol: 'usenet' as const,
+      rawTitle: 'Test Book (1/8)',
+      downloadUrl: 'http://nzb.test/4',
+    })];
+    const settings = createMockSettingsService({ rss: { enabled: true } });
+    const { bookList, book } = createMockBookServices(wantedBooks);
+    const indexer = createMockIndexerService(rssResults);
+    const download = createMockDownloadOrchestrator();
+    const blacklist = createMockBlacklistService();
+
+    // Enrichment sets empty string nzbName (failed NZB parse)
+    mockEnrichUsenet.mockImplementation(async (results) => {
+      for (const r of results) {
+        if (r.protocol === 'usenet') r.nzbName = '';
+      }
+    });
+
+    const result = await runRssJob(settings, bookList, book, indexer, download, blacklist, inject<FastifyBaseLogger>(log));
+
+    expect(result.grabbed).toBe(0);
+    expect(download.grab).not.toHaveBeenCalled();
+  });
+
+  it('single-part usenet post (total === 1) with nzbName is NOT filtered', async () => {
+    const wantedBooks = [makeWantedBook(1, 'Test Book', 'Author')];
+    const rssResults = [makeResult('Test Book', 'Author', { protocol: 'usenet' as const, downloadUrl: 'http://nzb.test/5' })];
+    const settings = createMockSettingsService({ rss: { enabled: true } });
+    const { bookList, book } = createMockBookServices(wantedBooks);
+    const indexer = createMockIndexerService(rssResults);
+    const download = createMockDownloadOrchestrator();
+    const blacklist = createMockBlacklistService();
+
+    // Enrichment sets nzbName with single-part marker (1 of 1)
+    mockEnrichUsenet.mockImplementation(async (results) => {
+      for (const r of results) {
+        if (r.protocol === 'usenet') r.nzbName = 'Test Book (01 of 01).rar';
+      }
+    });
+
+    const result = await runRssJob(settings, bookList, book, indexer, download, blacklist, inject<FastifyBaseLogger>(log));
+
+    expect(result.grabbed).toBe(1);
+    expect(download.grab).toHaveBeenCalled();
+  });
+
+  it('usenet result with pre-populated language — enrichment skips, multi-part uses rawTitle fallback', async () => {
+    const wantedBooks = [makeWantedBook(1, 'Test Book', 'Author')];
+    // Pre-populated language means enrichment won't set nzbName; rawTitle has multi-part marker
+    const rssResults = [makeResult('Test Book', 'Author', {
+      protocol: 'usenet' as const,
+      rawTitle: 'Test Book (2/10)',
+      language: 'English',
+      downloadUrl: 'http://nzb.test/6',
+    })];
+    const settings = createMockSettingsService({ rss: { enabled: true } });
+    const { bookList, book } = createMockBookServices(wantedBooks);
+    const indexer = createMockIndexerService(rssResults);
+    const download = createMockDownloadOrchestrator();
+    const blacklist = createMockBlacklistService();
+
+    // Enrichment does nothing (language already set)
+    mockEnrichUsenet.mockImplementation(async () => {});
+
+    const result = await runRssJob(settings, bookList, book, indexer, download, blacklist, inject<FastifyBaseLogger>(log));
+
+    expect(result.grabbed).toBe(0);
+    expect(download.grab).not.toHaveBeenCalled();
+  });
+
+  it('blacklisted RSS items are never passed to enrichUsenetLanguages', async () => {
+    const wantedBooks = [makeWantedBook(1, 'Test Book', 'Author')];
+    const rssResults = [makeResult('Test Book', 'Author', { protocol: 'usenet' as const, infoHash: 'blacklisted123', downloadUrl: 'http://nzb.test/7' })];
+    const settings = createMockSettingsService({ rss: { enabled: true } });
+    const { bookList, book } = createMockBookServices(wantedBooks);
+    const indexer = createMockIndexerService(rssResults);
+    const download = createMockDownloadOrchestrator();
+    const blacklist = createMockBlacklistService(new Set(['blacklisted123']));
+
+    const result = await runRssJob(settings, bookList, book, indexer, download, blacklist, inject<FastifyBaseLogger>(log));
+
+    expect(result.grabbed).toBe(0);
+    expect(mockEnrichUsenet).not.toHaveBeenCalled();
+  });
+
+  it('enrichment only receives matched candidates, not unmatched below-threshold items', async () => {
+    const wantedBooks = [makeWantedBook(1, 'The Way of Kings', 'Brandon Sanderson')];
+    const rssResults = [
+      // Matched: title matches wanted book above threshold
+      makeResult('The Way of Kings', 'Brandon Sanderson', { protocol: 'usenet' as const, downloadUrl: 'http://nzb.test/matched' }),
+      // Unmatched: completely different title, will score below 0.7
+      makeResult('Totally Unrelated Book XYZ', 'Someone Else', { protocol: 'usenet' as const, downloadUrl: 'http://nzb.test/unmatched' }),
+    ];
+    const settings = createMockSettingsService({ rss: { enabled: true } });
+    const { bookList, book } = createMockBookServices(wantedBooks);
+    const indexer = createMockIndexerService(rssResults);
+    const download = createMockDownloadOrchestrator();
+    const blacklist = createMockBlacklistService();
+
+    const result = await runRssJob(settings, bookList, book, indexer, download, blacklist, inject<FastifyBaseLogger>(log));
+
+    // enrichUsenetLanguages called exactly once (for the matched book's candidates)
+    expect(mockEnrichUsenet).toHaveBeenCalledTimes(1);
+    // The call should contain only the matched result, not the unmatched one
+    const enrichedResults = mockEnrichUsenet.mock.calls[0][0];
+    expect(enrichedResults).toHaveLength(1);
+    expect(enrichedResults[0].title).toBe('The Way of Kings');
+    expect(result.grabbed).toBe(1);
+  });
+
+  it('matched count includes books whose candidates were all multi-part rejected', async () => {
+    const wantedBooks = [makeWantedBook(1, 'Test Book', 'Author')];
+    const rssResults = [makeResult('Test Book', 'Author', { protocol: 'usenet' as const, downloadUrl: 'http://nzb.test/8' })];
+    const settings = createMockSettingsService({ rss: { enabled: true } });
+    const { bookList, book } = createMockBookServices(wantedBooks);
+    const indexer = createMockIndexerService(rssResults);
+    const download = createMockDownloadOrchestrator();
+    const blacklist = createMockBlacklistService();
+
+    // Enrichment populates nzbName with multi-part marker
+    mockEnrichUsenet.mockImplementation(async (results) => {
+      for (const r of results) {
+        if (r.protocol === 'usenet') r.nzbName = 'Test Book (05 of 20).rar';
+      }
+    });
+
+    const result = await runRssJob(settings, bookList, book, indexer, download, blacklist, inject<FastifyBaseLogger>(log));
+
+    // Book was matched but all candidates rejected by multi-part filter
+    expect(result.matched).toBe(1);
+    expect(result.grabbed).toBe(0);
+  });
+
+  it('grabbed count excludes multi-part-rejected items', async () => {
+    const wantedBooks = [makeWantedBook(1, 'Test Book A', 'Author'), makeWantedBook(2, 'Test Book B', 'Author')];
+    const rssResults = [
+      // Book A: clean result, should be grabbed
+      makeResult('Test Book A', 'Author', { protocol: 'usenet' as const, downloadUrl: 'http://nzb.test/9' }),
+      // Book B: will get multi-part nzbName, should NOT be grabbed
+      makeResult('Test Book B', 'Author', { protocol: 'usenet' as const, downloadUrl: 'http://nzb.test/10' }),
+    ];
+    const settings = createMockSettingsService({ rss: { enabled: true } });
+    const { bookList, book } = createMockBookServices(wantedBooks);
+    const indexer = createMockIndexerService(rssResults);
+    const download = createMockDownloadOrchestrator();
+    const blacklist = createMockBlacklistService();
+
+    // Only Book B gets multi-part nzbName
+    mockEnrichUsenet.mockImplementation(async (results) => {
+      for (const r of results) {
+        if (r.protocol === 'usenet' && r.title === 'Test Book B') {
+          r.nzbName = 'Test Book B (03 of 12).rar';
+        }
+      }
+    });
+
+    const result = await runRssJob(settings, bookList, book, indexer, download, blacklist, inject<FastifyBaseLogger>(log));
+
+    expect(result.matched).toBe(2);
+    expect(result.grabbed).toBe(1);
+    expect(download.grab).toHaveBeenCalledTimes(1);
+  });
 });

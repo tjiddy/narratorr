@@ -92,15 +92,7 @@ export async function runRssJob(
     return { polled, matched: 0, grabbed: 0 };
   }
 
-  // Filter multi-part Usenet posts
-  const afterMultipart = allResults.filter((r) => {
-    if (r.protocol !== 'usenet') return true;
-    const sourceTitle = r.rawTitle ?? r.title;
-    const multiPart = isMultiPartUsenetPost(sourceTitle);
-    return !(multiPart.match && multiPart.total! > 1);
-  });
-
-  const filtered = await filterBlacklistedResults(afterMultipart, blacklistService);
+  const filtered = await filterBlacklistedResults(allResults, blacklistService);
 
   // Match each feed item to the best candidate book
   // Collect all matching items per book so we can rank the full set after filtering
@@ -149,13 +141,21 @@ export async function runRssJob(
     // Enrich Usenet results before filtering
     await enrichUsenetLanguages(bookResults, log);
 
+    // Filter multi-part Usenet posts (after enrichment so nzbName is available)
+    const afterMultipart = bookResults.filter((r) => {
+      if (r.protocol !== 'usenet') return true;
+      const sourceTitle = r.nzbName || r.rawTitle || r.title;
+      const multiPart = isMultiPartUsenetPost(sourceTitle);
+      return !(multiPart.match && multiPart.total! > 1);
+    });
+
     // Apply filter pipeline to all items for this book, then pick best-ranked
     const duration = candidate.duration
       ? candidate.duration * 60
       : (candidate.audioDuration ?? undefined);
     const narratorPriority = buildNarratorPriority(searchSettings.searchPriority, candidate.narrators);
-    const rssInputCount = bookResults.length;
-    const { results: ranked } = filterAndRankResults(bookResults, duration, {
+    const rssInputCount = afterMultipart.length;
+    const { results: ranked } = filterAndRankResults(afterMultipart, duration, {
       grabFloor: qualitySettings.grabFloor,
       minSeeders: qualitySettings.minSeeders,
       protocolPreference: qualitySettings.protocolPreference,
