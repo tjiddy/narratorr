@@ -156,9 +156,9 @@ export class DiscoveryService {
         if (rows[0].snoozeUntil != null) {
           // Clear snoozeUntil if it's in the past (resurfaced), keep if still active
           const clearSnooze = rows[0].snoozeUntil <= now ? { snoozeUntil: null } : {};
-          await this.db.update(suggestions).set({ score: c.score, refreshedAt: now, ...clearSnooze }).where(eq(suggestions.id, rows[0].id));
+          await this.db.update(suggestions).set({ score: c.score, authorAsin: c.authorAsin, refreshedAt: now, ...clearSnooze }).where(eq(suggestions.id, rows[0].id));
         } else {
-          await this.db.update(suggestions).set({ score: c.score, reason: c.reason, reasonContext: c.reasonContext, refreshedAt: now }).where(eq(suggestions.id, rows[0].id));
+          await this.db.update(suggestions).set({ score: c.score, reason: c.reason, reasonContext: c.reasonContext, authorAsin: c.authorAsin, refreshedAt: now }).where(eq(suggestions.id, rows[0].id));
         }
       } else {
         await this.db.insert(suggestions).values({ ...c, status: 'pending', refreshedAt: now });
