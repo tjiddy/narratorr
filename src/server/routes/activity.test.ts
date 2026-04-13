@@ -439,8 +439,32 @@ describe('activity routes', () => {
 
   // ── #525 — approve route nudge ──────────────────────────────────────────
   describe('POST /api/activity/:id/approve — queued import nudge (#525)', () => {
-    it.todo('nudge fires after approve inline import completes — drainQueuedImports called');
-    it.todo('nudge fires after approve inline import fails — slot released and nudge fires');
+    it('nudge fires after approve inline import completes', async () => {
+      (services.qualityGateOrchestrator.approve as Mock).mockResolvedValue({ id: 1, status: 'importing' });
+      (services.importOrchestrator.importDownload as Mock).mockResolvedValue({});
+
+      const res = await app.inject({ method: 'POST', url: '/api/activity/1/approve' });
+      expect(res.statusCode).toBe(200);
+
+      // Wait for fire-and-forget promise to settle
+      await new Promise(resolve => setTimeout(resolve, 10));
+
+      expect(services.importOrchestrator.drainQueuedImports).toHaveBeenCalled();
+    });
+
+    it('nudge fires after approve inline import fails', async () => {
+      (services.qualityGateOrchestrator.approve as Mock).mockResolvedValue({ id: 1, status: 'importing' });
+      (services.importOrchestrator.importDownload as Mock).mockRejectedValue(new Error('import failed'));
+
+      const res = await app.inject({ method: 'POST', url: '/api/activity/1/approve' });
+      expect(res.statusCode).toBe(200);
+
+      await new Promise(resolve => setTimeout(resolve, 10));
+
+      // releaseSlot is a real function (semaphore override), not a spy — verified by existing test
+      // drainQueuedImports should still fire after error + slot release
+      expect(services.importOrchestrator.drainQueuedImports).toHaveBeenCalled();
+    });
   });
 
   describe('POST /api/activity/:id/reject', () => {
