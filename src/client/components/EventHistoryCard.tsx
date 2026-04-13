@@ -46,10 +46,12 @@ const EVENT_CONFIG: Record<string, EventTypeConfig> = {
 
 const DEFAULT_CONFIG: EventTypeConfig = { icon: ClockIcon, label: 'Unknown', color: 'text-muted-foreground', bgColor: 'bg-muted' };
 
-export function EventHistoryCard({ event, onMarkFailed, isMarkingFailed, onDelete, isDeleting, showBookTitle = true, index = 0 }: {
+export function EventHistoryCard({ event, onMarkFailed, isMarkingFailed, onRetry, isRetrying, onDelete, isDeleting, showBookTitle = true, index = 0 }: {
   event: BookEvent;
   onMarkFailed?: (id: number) => void;
   isMarkingFailed?: boolean;
+  onRetry?: (downloadId: number) => void;
+  isRetrying?: boolean;
   onDelete?: (id: number) => void;
   isDeleting?: boolean;
   showBookTitle?: boolean;
@@ -59,6 +61,7 @@ export function EventHistoryCard({ event, onMarkFailed, isMarkingFailed, onDelet
   const config = EVENT_CONFIG[event.eventType] ?? { ...DEFAULT_CONFIG, label: event.eventType };
   const Icon = config.icon;
   const isActionable = ACTIONABLE_TYPES.includes(event.eventType) && event.downloadId != null;
+  const canRetry = event.eventType === 'download_failed' && event.downloadId != null && event.bookId != null;
 
   const { data: indexers } = useQuery({
     queryKey: queryKeys.indexers(),
@@ -124,6 +127,16 @@ export function EventHistoryCard({ event, onMarkFailed, isMarkingFailed, onDelet
         </div>
 
         <div className="flex items-center gap-2 shrink-0">
+          {canRetry && onRetry && (
+            <button
+              type="button"
+              onClick={() => onRetry(event.downloadId!)}
+              disabled={isRetrying}
+              className="text-xs px-3 py-1.5 rounded-lg bg-primary/10 text-primary hover:bg-primary/20 disabled:opacity-50 font-medium transition-colors"
+            >
+              Retry
+            </button>
+          )}
           {isActionable && onMarkFailed && (
             <button
               onClick={() => onMarkFailed(event.id)}
