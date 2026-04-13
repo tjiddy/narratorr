@@ -39,23 +39,6 @@ const MAX_STRENGTH_BOOKS = 5;
 // Helpers
 // ---------------------------------------------------------------------------
 
-/** Map a suggestion DB row to a bookService.create() payload. */
-function buildCreatePayload(row: SuggestionRow, overrides?: { monitorForUpgrades?: boolean }) {
-  return {
-    title: row.title,
-    authors: row.authorName ? [{ name: row.authorName }] : [],
-    asin: row.asin ?? undefined,
-    coverUrl: row.coverUrl ?? undefined,
-    narrators: row.narratorName ? [row.narratorName] : [],
-    duration: row.duration ?? undefined,
-    seriesName: row.seriesName ?? undefined,
-    seriesPosition: row.seriesPosition ?? undefined,
-    publishedDate: row.publishedDate ?? undefined,
-    genres: row.genres ?? undefined,
-    monitorForUpgrades: overrides?.monitorForUpgrades ?? false,
-  };
-}
-
 // ---------------------------------------------------------------------------
 // Service
 // ---------------------------------------------------------------------------
@@ -278,35 +261,6 @@ export class DiscoveryService {
     const now = new Date();
     await this.db.update(suggestions).set({ status: 'dismissed', dismissedAt: now }).where(eq(suggestions.id, id));
     return { ...rows[0], status: 'dismissed', dismissedAt: now };
-  }
-
-  async addSuggestion(id: number, overrides?: { monitorForUpgrades?: boolean }): Promise<{ suggestion: SuggestionRow; book?: unknown; alreadyAdded?: boolean; duplicate?: boolean } | null> {
-    const rows = await this.db.select().from(suggestions).where(eq(suggestions.id, id)).limit(1);
-    if (rows.length === 0) return null;
-    const row = rows[0];
-    if (row.status === 'added') return { suggestion: row, alreadyAdded: true };
-
-    const dup = await this.bookService.findDuplicate(row.title, row.authorName ? [{ name: row.authorName }] : undefined, row.asin);
-    if (dup) {
-      await this.db.update(suggestions).set({ status: 'added' }).where(eq(suggestions.id, id));
-      return { suggestion: { ...row, status: 'added' }, book: dup, duplicate: true };
-    }
-
-    const book = await this.bookService.create(buildCreatePayload(row, overrides));
-
-    // Record book_added event (fire-and-forget)
-    if (this.eventHistory) {
-      this.eventHistory.create({
-        bookId: book.id,
-        bookTitle: book.title,
-        authorName: row.authorName ?? null,
-        eventType: 'book_added',
-        source: 'auto',
-      }).catch((err: unknown) => this.log.warn({ err }, 'Failed to record book_added event'));
-    }
-
-    await this.db.update(suggestions).set({ status: 'added' }).where(eq(suggestions.id, id));
-    return { suggestion: { ...row, status: 'added' }, book };
   }
 
   async markSuggestionAdded(id: number): Promise<{ suggestion: SuggestionRow; alreadyAdded?: boolean } | null> {

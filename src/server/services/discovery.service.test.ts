@@ -661,7 +661,8 @@ describe('DiscoveryService', () => {
     });
   });
 
-  describe('addSuggestion', () => {
+  // addSuggestion tests removed — #524 replaced with markSuggestionAdded (status-flip only)
+  describe.skip('addSuggestion (removed — #524)', () => {
     it('creates wanted book and sets status to added', async () => {
       const existing = { id: 1, asin: 'B001', title: 'Test', authorName: 'Author', status: 'pending' };
       const db = createMockDb();
@@ -2525,8 +2526,8 @@ describe('DiscoveryService', () => {
     });
   });
 
-  // #341 — book_added event on addSuggestion
-  describe('book_added event on addSuggestion', () => {
+  // #341 — book_added event on addSuggestion — #524 removed (event now recorded by POST /api/books)
+  describe.skip('book_added event on addSuggestion (removed — #524)', () => {
     it('records book_added event with source=auto after successful bookService.create()', async () => {
       const existing = { id: 1, asin: 'B001', title: 'Test', authorName: 'Author', status: 'pending' };
       const db = createMockDb();
