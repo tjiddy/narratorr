@@ -803,6 +803,81 @@ describe('DownloadService', () => {
       );
     });
 
+    it('resolver failure prevents adapter call and DB insert', async () => {
+      const mockAdapter = {
+        addDownload: vi.fn().mockResolvedValue('ext-123'),
+      };
+
+      (clientService.getFirstEnabledForProtocol as Mock).mockResolvedValue({ id: 1, name: 'qBit' });
+      (clientService.getAdapter as Mock).mockResolvedValue(mockAdapter);
+
+      // Use a magnet URI with no info hash — resolver will throw
+      await expect(
+        service.grab({
+          downloadUrl: 'magnet:?dn=Test+File',
+          title: 'Bad Magnet',
+        }),
+      ).rejects.toThrow(/info hash/i);
+
+      // Neither adapter nor DB should have been called
+      expect(mockAdapter.addDownload).not.toHaveBeenCalled();
+      expect(db.insert).not.toHaveBeenCalled();
+    });
+
+    it('persists resolved infoHash to downloads row for data: URI', async () => {
+      const mockAdapter = {
+        addDownload: vi.fn().mockResolvedValue('ext-789'),
+      };
+
+      (clientService.getFirstEnabledForProtocol as Mock).mockResolvedValue({ id: 1, name: 'qBit' });
+      (clientService.getAdapter as Mock).mockResolvedValue(mockAdapter);
+
+      db.insert.mockReturnValue(mockDbChain([{ id: 1 }]));
+      db.update.mockReturnValue(mockDbChain());
+      db.select.mockReturnValue(
+        mockDbChain([{ download: mockDownload, book: mockBook }]),
+      );
+
+      // Build a minimal valid torrent and data: URI
+      const { createHash: createHashFn } = await import('node:crypto');
+      const inner = Buffer.from('d6:lengthi1024e4:name8:test.mp3e');
+      const expectedHash = createHashFn('sha1').update(inner).digest('hex');
+      const torrentContent = Buffer.from(`d8:announce5:x.com4:info${inner.toString()}e`);
+      const dataUri = `data:application/x-bittorrent;base64,${torrentContent.toString('base64')}`;
+
+      await service.grab({
+        downloadUrl: dataUri,
+        title: 'MAM Torrent',
+      });
+
+      const insertValues = db.insert.mock.results[0].value.values.mock.calls[0][0];
+      expect(insertValues.infoHash).toBe(expectedHash);
+    });
+
+    it('persists null infoHash for nzb-url artifact', async () => {
+      const mockAdapter = {
+        addDownload: vi.fn().mockResolvedValue('sab-123'),
+      };
+
+      (clientService.getFirstEnabledForProtocol as Mock).mockResolvedValue({ id: 1, name: 'SAB' });
+      (clientService.getAdapter as Mock).mockResolvedValue(mockAdapter);
+
+      db.insert.mockReturnValue(mockDbChain([{ id: 1 }]));
+      db.update.mockReturnValue(mockDbChain());
+      db.select.mockReturnValue(
+        mockDbChain([{ download: { ...mockDownload, protocol: 'usenet' }, book: mockBook }]),
+      );
+
+      await service.grab({
+        downloadUrl: 'https://indexer.test/nzb/12345',
+        title: 'Usenet NZB',
+        protocol: 'usenet',
+      });
+
+      const insertValues = db.insert.mock.results[0].value.values.mock.calls[0][0];
+      expect(insertValues.infoHash).toBeNull();
+    });
+
     it('logs truncated URL for data: URIs instead of full base64', async () => {
       const mockAdapter = {
         addDownload: vi.fn().mockResolvedValue('ext-789'),
