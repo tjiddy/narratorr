@@ -650,11 +650,15 @@ describe('DiscoverPage', () => {
 
   // --- #524: unified add flow via api.addBook + mark-added ---
   describe('unified add flow', () => {
-    it('calls api.addBook with correct payload including authorAsin on add', async () => {
+    it('calls api.addBook with full inline payload including authorAsin, publishedDate, and overrides', async () => {
       mockApi.addBook.mockResolvedValue({ id: 10 });
       mockApi.markDiscoverSuggestionAdded.mockResolvedValue({ suggestion: { id: 1, status: 'added' } });
       mockApi.getDiscoverSuggestions.mockResolvedValue([
-        makeSuggestion({ id: 1, title: 'ASIN Book', authorName: 'Joe', authorAsin: 'A123', asin: 'B001', duration: 3600 }),
+        makeSuggestion({
+          id: 1, title: 'ASIN Book', authorName: 'Joe', authorAsin: 'A123',
+          asin: 'B001', duration: 3600, publishedDate: '2024-06-15',
+          narratorName: 'Narrator', seriesName: 'Epic', seriesPosition: 2, genres: ['Fantasy'],
+        }),
       ]);
       mockApi.getBookStats.mockResolvedValue(makeStats());
 
@@ -670,6 +674,13 @@ describe('DiscoverPage', () => {
           authors: [{ name: 'Joe', asin: 'A123' }],
           asin: 'B001',
           duration: 3600,
+          publishedDate: '2024-06-15',
+          narrators: ['Narrator'],
+          seriesName: 'Epic',
+          seriesPosition: 2,
+          genres: ['Fantasy'],
+          searchImmediately: expect.any(Boolean),
+          monitorForUpgrades: expect.any(Boolean),
         }));
       });
     });
