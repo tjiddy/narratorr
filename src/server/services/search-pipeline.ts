@@ -287,11 +287,16 @@ export async function postProcessSearchResults(
   durationUnknown: boolean;
   unsupportedResults: { count: number; titles: string[] };
 }> {
-  // Filter multi-part Usenet posts
+  const filteredResults = await filterBlacklistedResults(allResults, blacklistService);
+
+  // Enrich Usenet results with language from newsgroup metadata
+  await enrichUsenetLanguages(filteredResults, logger);
+
+  // Filter multi-part Usenet posts (after enrichment so nzbName is available)
   const unsupportedTitles: string[] = [];
-  const results = allResults.filter((r) => {
+  const results = filteredResults.filter((r) => {
     if (r.protocol !== 'usenet') return true;
-    const sourceTitle = r.rawTitle ?? r.title;
+    const sourceTitle = r.nzbName || r.rawTitle || r.title;
     const multiPart = isMultiPartUsenetPost(sourceTitle);
     if (multiPart.match && multiPart.total! > 1) {
       unsupportedTitles.push(sourceTitle);
@@ -300,16 +305,11 @@ export async function postProcessSearchResults(
     return true;
   });
 
-  const filteredResults = await filterBlacklistedResults(results, blacklistService);
-
-  // Enrich Usenet results with language from newsgroup metadata
-  await enrichUsenetLanguages(filteredResults, logger);
-
   // Quality filtering and ranking
   const qualitySettings = await settingsService.get('quality');
   const metadataSettings = await settingsService.get('metadata');
-  const inputCount = filteredResults.length;
-  const ranked = filterAndRankResults(filteredResults, bookDuration, {
+  const inputCount = results.length;
+  const ranked = filterAndRankResults(results, bookDuration, {
     grabFloor: qualitySettings.grabFloor,
     minSeeders: qualitySettings.minSeeders,
     protocolPreference: qualitySettings.protocolPreference,
