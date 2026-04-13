@@ -6,6 +6,7 @@ import type { DownloadClientService } from '../services/download-client.service.
 import type { NotifierService } from '../services/notifier.service.js';
 import type { RetryBudget } from '../services/retry-budget.js';
 import type { EventBroadcasterService } from '../services/event-broadcaster.service.js';
+import type { EventHistoryService } from '../services/event-history.service.js';
 import { createMockDbBook } from '../__tests__/factories.js';
 
 let cronCallback: (() => Promise<void>) | null = null;
@@ -1784,5 +1785,105 @@ describe('monitor job', () => {
       // outputPath should not be in the set payload (undefined skipped by spread)
       expect(setCalls[0]?.outputPath).toBeUndefined();
     });
+  });
+});
+
+// ============================================================================
+// #537 — download_failed event recording in monitor failure paths
+// ============================================================================
+
+describe('#537 monitor download_failed event recording', () => {
+  let db: ReturnType<typeof createMockDb>;
+  let downloadClientService: { getAdapter: ReturnType<typeof vi.fn> };
+  let notifierService: { notify: ReturnType<typeof vi.fn> };
+  let log: ReturnType<typeof createMockLogger>;
+  let adapter: { getDownload: ReturnType<typeof vi.fn> };
+  let eventHistory: { create: ReturnType<typeof vi.fn> };
+
+  beforeEach(() => {
+    db = createMockDb();
+    log = createMockLogger();
+    adapter = { getDownload: vi.fn() };
+    downloadClientService = { getAdapter: vi.fn().mockResolvedValue(adapter) };
+    notifierService = { notify: vi.fn().mockResolvedValue(undefined) };
+    eventHistory = { create: vi.fn().mockResolvedValue(undefined) };
+  });
+
+  it('records download_failed event with correct fields when download is missing from client', async () => {
+    db.select.mockReturnValueOnce(mockDbChain([
+      { id: 1, externalId: 'ext-1', downloadClientId: 10, status: 'downloading', bookId: 42, title: 'Missing Book' },
+    ]));
+    adapter.getDownload.mockResolvedValueOnce(null);
+    db.update.mockReturnValue(mockDbChain());
+
+    await monitorDownloads(
+      inject<Db>(db), inject<DownloadClientService>(downloadClientService),
+      inject<NotifierService>(notifierService), inject<FastifyBaseLogger>(log),
+      undefined, undefined, undefined, undefined, inject<EventHistoryService>(eventHistory),
+    );
+
+    expect(eventHistory.create).toHaveBeenCalledWith({
+      bookId: 42, bookTitle: 'Missing Book', downloadId: 1,
+      eventType: 'download_failed', source: 'auto',
+      reason: { error: 'Download not found in download client' },
+    });
+  });
+
+  it('records download_failed event with adapter error message on failed-status transition', async () => {
+    db.select.mockReturnValueOnce(mockDbChain([
+      { id: 2, externalId: 'ext-2', downloadClientId: 10, status: 'downloading', bookId: 7, title: 'Error Book', completedAt: null, progress: 0.5 },
+    ]));
+    adapter.getDownload.mockResolvedValueOnce({
+      progress: 50, status: 'error', savePath: '/tmp', name: 'file', size: 1000, errorMessage: 'Disk full',
+    });
+    db.update.mockReturnValue(mockDbChain());
+
+    await monitorDownloads(
+      inject<Db>(db), inject<DownloadClientService>(downloadClientService),
+      inject<NotifierService>(notifierService), inject<FastifyBaseLogger>(log),
+      undefined, undefined, undefined, undefined, inject<EventHistoryService>(eventHistory),
+    );
+
+    expect(eventHistory.create).toHaveBeenCalledWith({
+      bookId: 7, bookTitle: 'Error Book', downloadId: 2,
+      eventType: 'download_failed', source: 'auto',
+      reason: { error: 'Disk full' },
+    });
+  });
+
+  it('records download_failed event with fallback message when adapter errorMessage is absent', async () => {
+    db.select.mockReturnValueOnce(mockDbChain([
+      { id: 3, externalId: 'ext-3', downloadClientId: 10, status: 'downloading', bookId: 9, title: 'Fallback Book', completedAt: null, progress: 0.1 },
+    ]));
+    adapter.getDownload.mockResolvedValueOnce({
+      progress: 10, status: 'error', savePath: '/tmp', name: 'file', size: 500,
+    });
+    db.update.mockReturnValue(mockDbChain());
+
+    await monitorDownloads(
+      inject<Db>(db), inject<DownloadClientService>(downloadClientService),
+      inject<NotifierService>(notifierService), inject<FastifyBaseLogger>(log),
+      undefined, undefined, undefined, undefined, inject<EventHistoryService>(eventHistory),
+    );
+
+    expect(eventHistory.create).toHaveBeenCalledWith(
+      expect.objectContaining({ reason: { error: 'Download failed' } }),
+    );
+  });
+
+  it('skips event recording when bookId is null (orphan download)', async () => {
+    db.select.mockReturnValueOnce(mockDbChain([
+      { id: 4, externalId: 'ext-4', downloadClientId: 10, status: 'downloading', bookId: null, title: 'Orphan' },
+    ]));
+    adapter.getDownload.mockResolvedValueOnce(null);
+    db.update.mockReturnValue(mockDbChain());
+
+    await monitorDownloads(
+      inject<Db>(db), inject<DownloadClientService>(downloadClientService),
+      inject<NotifierService>(notifierService), inject<FastifyBaseLogger>(log),
+      undefined, undefined, undefined, undefined, inject<EventHistoryService>(eventHistory),
+    );
+
+    expect(eventHistory.create).not.toHaveBeenCalled();
   });
 });
