@@ -13,6 +13,7 @@ import {
   type SearchBooksOptions,
   type SearchBooksResult,
 } from '../../core/index.js';
+import { filterByLanguage } from '../../core/utils/index.js';
 import { parseWordList } from '../../shared/parse-word-list.js';
 import type { SettingsService } from './settings.service.js';
 import { getErrorMessage } from '../utils/error-message.js';
@@ -214,12 +215,7 @@ export class MetadataService {
       return books;
     }
 
-    if (languages.length === 0) return books;
-
-    return books.filter((book) => {
-      if (!book.language) return true;
-      return languages.includes(book.language.toLowerCase());
-    });
+    return filterByLanguage(books, languages);
   }
 
   private async filterAuthorBooks(books: BookMetadata[]): Promise<BookMetadata[]> {
@@ -249,12 +245,7 @@ export class MetadataService {
       });
     }
 
-    if (languages.length > 0) {
-      filtered = filtered.filter((book) => {
-        if (!book.language) return true;
-        return languages.includes(book.language.toLowerCase());
-      });
-    }
+    filtered = filterByLanguage(filtered, languages);
 
     return filtered;
   }

@@ -61,7 +61,6 @@
 
 - **`src/client/pages/discover/DiscoverPage.tsx:52` markAdded fire-and-forget has no error logging**: `api.markDiscoverSuggestionAdded(id).catch(() => {})` silently swallows all errors. If the backend call fails, the suggestion reappears on next page load with no warning. Add `.catch((err) => console.warn('mark-added failed:', err))` at minimum. Failure path is also untested. (discovered in Archer session review of #524)
 
-- **`src/server/services/metadata.service.ts:219-221 vs 252-255` language predicate duplicated**: The `if (!book.language) return true; return languages.includes(book.language.toLowerCase())` predicate appears in both `filterBooksByLanguage` and `filterAuthorBooks`. Extract a `bookMatchesLanguages(book, languages)` one-liner to prevent drift. (discovered in Archer session review of #523)
 
 - **`src/core/utils/download-url.ts:65-66, 107-110` base32 normalization duplicated**: `infoHash.length === 32 ? base32ToHex(infoHash).toLowerCase() : infoHash.toLowerCase()` appears in both `resolveMagnet()` and `handleRedirect()`. Extract a `normalizeInfoHash(hash)` helper. (discovered in Archer session review of #527)
 
