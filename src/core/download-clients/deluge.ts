@@ -1,4 +1,4 @@
-import { type DownloadClientAdapter, type DownloadItemInfo, type AddDownloadOptions, type DownloadProtocol, ETA_UPPER_BOUND_SEC } from './types.js';
+import { type DownloadClientAdapter, type DownloadItemInfo, type AddDownloadOptions, type DownloadArtifact, type DownloadProtocol, ETA_UPPER_BOUND_SEC } from './types.js';
 import { fetchWithTimeout } from '../utils/fetch-with-timeout.js';
 import { DEFAULT_REQUEST_TIMEOUT_MS } from '../utils/constants.js';
 
@@ -143,7 +143,11 @@ export class DelugeClient implements DownloadClientAdapter {
     this.authenticated = true;
   }
 
-  async addDownload(url: string, options?: AddDownloadOptions): Promise<string> {
+  async addDownload(artifact: DownloadArtifact, options?: AddDownloadOptions): Promise<string> {
+    if (artifact.type === 'nzb-url') {
+      throw new Error('Deluge only supports torrent artifacts (torrent-bytes, magnet-uri)');
+    }
+
     const addOptions: Record<string, unknown> = {};
     if (options?.savePath) {
       addOptions.download_location = options.savePath;
@@ -152,7 +156,7 @@ export class DelugeClient implements DownloadClientAdapter {
       addOptions.add_paused = true;
     }
 
-    const torrentId = await this.addTorrent(url, addOptions, options?.torrentFile);
+    const torrentId = await this.addTorrent(artifact, addOptions);
 
     // Try to set label (category) — graceful fallback if plugin unavailable
     if (options?.category) {
@@ -166,16 +170,14 @@ export class DelugeClient implements DownloadClientAdapter {
     return torrentId;
   }
 
-  private async addTorrent(url: string, addOptions: Record<string, unknown>, torrentFile?: Buffer): Promise<string> {
+  private async addTorrent(artifact: Extract<DownloadArtifact, { type: 'torrent-bytes' } | { type: 'magnet-uri' }>, addOptions: Record<string, unknown>): Promise<string> {
     let result: unknown;
 
-    if (torrentFile) {
-      const fileContent = torrentFile.toString('base64');
+    if (artifact.type === 'torrent-bytes') {
+      const fileContent = artifact.data.toString('base64');
       result = await this.rpc('core.add_torrent_file', ['upload.torrent', fileContent, addOptions]);
-    } else if (url.startsWith('magnet:')) {
-      result = await this.rpc('core.add_torrent_magnet', [url, addOptions]);
     } else {
-      result = await this.rpc('core.add_torrent_url', [url, addOptions]);
+      result = await this.rpc('core.add_torrent_magnet', [artifact.uri, addOptions]);
     }
 
     if (!result || typeof result !== 'string') {

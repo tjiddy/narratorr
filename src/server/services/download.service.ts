@@ -2,7 +2,9 @@ import { eq, desc, inArray, and, count, sql } from 'drizzle-orm';
 import { type Db } from '../../db/index.js';
 import type { FastifyBaseLogger } from 'fastify';
 import { downloads, books, indexers } from '../../db/schema.js';
-import { parseInfoHash, type DownloadProtocol } from '../../core/index.js';
+import type { DownloadProtocol } from '../../core/index.js';
+import { DownloadUrl } from '../../core/utils/download-url.js';
+import type { DownloadArtifact } from '../../core/download-clients/types.js';
 import { getInProgressStatuses, getTerminalStatuses, getCompletedStatuses, isTerminalStatus, getReplaceableStatuses } from '../../shared/download-status-registry.js';
 import type { DownloadStatus } from '../../shared/schemas/activity.js';
 import { type DownloadClientService } from './download-client.service.js';
@@ -200,29 +202,43 @@ export class DownloadService {
     }));
   }
 
-  /** Send a download to the client and return the external ID. */
-  private async sendToClient(downloadUrl: string, protocol: DownloadProtocol, torrentFile?: Buffer): Promise<{ externalId: string | null; clientId: number; clientType: string; clientName: string }> {
+  /** Send a pre-resolved artifact to the client and return the external ID. */
+  private async sendToClient(artifact: DownloadArtifact, protocol: DownloadProtocol): Promise<{ externalId: string | null; clientId: number; clientType: string; clientName: string }> {
     const client = await this.downloadClientService.getFirstEnabledForProtocol(protocol);
     if (!client) throw new Error('No download client configured');
     const adapter = await this.downloadClientService.getAdapter(client.id);
     if (!adapter) throw new Error('Could not initialize download client');
     const settings = (client.settings ?? {}) as Record<string, unknown>;
     const category = (settings.category as string | undefined)?.trim() || undefined;
-    const addOptions = { ...(category ? { category } : {}), ...(torrentFile ? { torrentFile } : {}) };
-    const externalId = await adapter.addDownload(downloadUrl, Object.keys(addOptions).length > 0 ? addOptions : undefined);
+    const addOptions = { ...(category ? { category } : {}) };
+    const externalId = await adapter.addDownload(artifact, Object.keys(addOptions).length > 0 ? addOptions : undefined);
     return { externalId, clientId: client.id, clientType: client.type, clientName: client.name };
   }
 
-  /** Parse data: URI torrent files into a buffer + metadata. */
-  private parseDownloadInput(downloadUrl: string, protocol: DownloadProtocol): { torrentFile?: Buffer; infoHash: string | null; logUrl: string } {
-    const isDataUri = downloadUrl.startsWith('data:application/x-bittorrent;base64,');
-    if (isDataUri) {
-      const base64Content = downloadUrl.slice('data:application/x-bittorrent;base64,'.length);
-      const torrentFile = Buffer.from(base64Content, 'base64');
-      return { torrentFile, infoHash: null, logUrl: `data:application/x-bittorrent [${(torrentFile.length / 1024).toFixed(1)} KB]` };
+  private async checkDuplicateDownloads(bookId: number, replaceExisting?: boolean): Promise<void> {
+    const allActive = await this.getActiveByBookId(bookId);
+    const replaceableSet = new Set<string>(getReplaceableStatuses());
+    const replaceableActive = allActive.filter((dl) => replaceableSet.has(dl.status));
+
+    if (replaceableActive.length > 0) {
+      if (replaceExisting) {
+        for (const dl of replaceableActive) {
+          try {
+            await this.cancel(dl.id, 'Replaced by new download');
+          } catch (cancelErr: unknown) {
+            this.log.warn({ id: dl.id, error: cancelErr }, 'Failed to cancel replaceable download — proceeding with replacement anyway');
+          }
+        }
+        await this.db.update(books).set({ status: 'wanted' }).where(eq(books.id, bookId));
+      } else {
+        throw new DuplicateDownloadError(`Book ${bookId} already has an active download (id: ${replaceableActive[0].id})`, 'ACTIVE_DOWNLOAD_EXISTS');
+      }
+    } else {
+      const pipelineActive = allActive.filter((dl) => !replaceableSet.has(dl.status));
+      if (pipelineActive.length > 0) {
+        throw new DuplicateDownloadError(`Book ${bookId} already has an active download (id: ${pipelineActive[0].id})`, 'PIPELINE_ACTIVE');
+      }
     }
-    const infoHash = protocol === 'torrent' ? parseInfoHash(downloadUrl) : null;
-    return { infoHash, logUrl: downloadUrl };
   }
 
   async grab(params: {
@@ -238,43 +254,25 @@ export class DownloadService {
     replaceExisting?: boolean;
     source?: CreateEventInput['source'];
   }): Promise<DownloadWithBook> {
-    // Check for active downloads for this book
     if (params.bookId && !params.skipDuplicateCheck) {
-      const allActive = await this.getActiveByBookId(params.bookId);
-      const replaceableSet = new Set<string>(getReplaceableStatuses());
-      const replaceableActive = allActive.filter((dl) => replaceableSet.has(dl.status));
-
-      if (replaceableActive.length > 0) {
-        if (params.replaceExisting) {
-          // Cancel each replaceable active download (best-effort: proceed even if cancel fails)
-          for (const dl of replaceableActive) {
-            try {
-              await this.cancel(dl.id, 'Replaced by new download');
-            } catch (cancelErr: unknown) {
-              this.log.warn({ id: dl.id, error: cancelErr }, 'Failed to cancel replaceable download — proceeding with replacement anyway');
-            }
-          }
-          // Revert book status to wanted so a failed grab leaves the book in a recoverable state
-          await this.db.update(books).set({ status: 'wanted' }).where(eq(books.id, params.bookId));
-        } else {
-          throw new DuplicateDownloadError(`Book ${params.bookId} already has an active download (id: ${replaceableActive[0].id})`, 'ACTIVE_DOWNLOAD_EXISTS');
-        }
-      } else {
-        // No replaceable downloads — apply existing duplicate-check for import-pipeline statuses
-        // (processing_queued/importing are not replaceable but still block grabs)
-        const pipelineActive = allActive.filter((dl) => !replaceableSet.has(dl.status));
-        if (pipelineActive.length > 0) {
-          throw new DuplicateDownloadError(`Book ${params.bookId} already has an active download (id: ${pipelineActive[0].id})`, 'PIPELINE_ACTIVE');
-        }
-      }
+      await this.checkDuplicateDownloads(params.bookId, params.replaceExisting);
     }
 
     const protocol = params.protocol ?? 'torrent';
-    const { torrentFile, infoHash, logUrl } = this.parseDownloadInput(params.downloadUrl, protocol);
+
+    // Resolve the download URL into a typed artifact
+    const downloadUrlObj = new DownloadUrl(params.downloadUrl, protocol);
+    const artifact = await downloadUrlObj.resolve();
+
+    // Extract info hash from artifact (torrent-bytes and magnet-uri have it; nzb-url does not)
+    const infoHash = 'infoHash' in artifact ? artifact.infoHash : null;
+    const logUrl = downloadUrlObj.isDataUri
+      ? `data:application/x-bittorrent [resolved]`
+      : params.downloadUrl;
 
     // Send to download client
     this.log.debug({ protocol, downloadUrl: logUrl, infoHash }, 'Sending download to client');
-    const { externalId, clientId, clientType, clientName } = await this.sendToClient(params.downloadUrl, protocol, torrentFile);
+    const { externalId, clientId, clientType, clientName } = await this.sendToClient(artifact, protocol);
     this.log.debug({ externalId, clientName, bookId: params.bookId }, 'Download sent to client');
 
     // Handoff clients (e.g. Blackhole) return null externalId — mark as completed immediately

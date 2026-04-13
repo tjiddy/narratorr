@@ -268,7 +268,7 @@ describe('DownloadService', () => {
 
       await expect(
         service.grab({
-          downloadUrl: 'magnet:?xt=urn:btih:abc',
+          downloadUrl: 'magnet:?xt=urn:btih:0000000000000000000000000000000000000abc',
           title: 'Test',
         }),
       ).rejects.toThrow('No download client configured');
@@ -280,7 +280,7 @@ describe('DownloadService', () => {
 
       await expect(
         service.grab({
-          downloadUrl: 'magnet:?xt=urn:btih:abc',
+          downloadUrl: 'magnet:?xt=urn:btih:0000000000000000000000000000000000000abc',
           title: 'Test',
         }),
       ).rejects.toThrow('Could not initialize download client');
@@ -318,7 +318,7 @@ describe('DownloadService', () => {
       );
 
       const result = await service.grab({
-        downloadUrl: 'magnet:?xt=urn:btih:abc',
+        downloadUrl: 'magnet:?xt=urn:btih:0000000000000000000000000000000000000abc',
         title: 'Test',
       });
 
@@ -344,7 +344,7 @@ describe('DownloadService', () => {
 
       // Even though bookId is provided, skipDuplicateCheck bypasses the guard
       const result = await service.grab({
-        downloadUrl: 'magnet:?xt=urn:btih:abc',
+        downloadUrl: 'magnet:?xt=urn:btih:0000000000000000000000000000000000000abc',
         title: 'Test',
         bookId: 1,
         skipDuplicateCheck: true,
@@ -371,7 +371,7 @@ describe('DownloadService', () => {
       );
 
       const result = await service.grab({
-        downloadUrl: 'https://example.com/file.torrent',
+        downloadUrl: 'magnet:?xt=urn:btih:aaf4c61ddcc5e8a2dabede0f3b482cd9aea9434d',
         title: 'Test Blackhole',
         bookId: 1,
         skipDuplicateCheck: true,
@@ -401,7 +401,7 @@ describe('DownloadService', () => {
       );
 
       await service.grab({
-        downloadUrl: 'magnet:?xt=urn:btih:abc',
+        downloadUrl: 'magnet:?xt=urn:btih:0000000000000000000000000000000000000abc',
         title: 'Test',
         bookId: 1,
         indexerId: 42,
@@ -557,7 +557,7 @@ describe('DownloadService', () => {
       const svc = new DownloadService(inject<Db>(db), clientService, inject<FastifyBaseLogger>(log));
 
       await svc.grab({
-        downloadUrl: 'https://example.com/file.torrent',
+        downloadUrl: 'magnet:?xt=urn:btih:aaf4c61ddcc5e8a2dabede0f3b482cd9aea9434d',
         title: 'Test',
       });
 
@@ -586,7 +586,7 @@ describe('DownloadService', () => {
       const svc = new DownloadService(inject<Db>(db), clientService, inject<FastifyBaseLogger>(log));
 
       await svc.grab({
-        downloadUrl: 'https://example.com/file.torrent',
+        downloadUrl: 'magnet:?xt=urn:btih:aaf4c61ddcc5e8a2dabede0f3b482cd9aea9434d',
         title: 'Test',
       });
 
@@ -608,7 +608,7 @@ describe('DownloadService', () => {
 
       await expect(
         service.grab({
-          downloadUrl: 'magnet:?xt=urn:btih:abc',
+          downloadUrl: 'magnet:?xt=urn:btih:0000000000000000000000000000000000000abc',
           title: 'Test',
         }),
       ).rejects.toThrow('UNIQUE constraint failed');
@@ -663,7 +663,7 @@ describe('DownloadService', () => {
       });
 
       expect(mockAdapter.addDownload).toHaveBeenCalledWith(
-        'magnet:?xt=urn:btih:aaf4c61ddcc5e8a2dabede0f3b482cd9aea9434d',
+        expect.objectContaining({ type: 'magnet-uri' }),
         { category: 'audiobooks' },
       );
     });
@@ -689,7 +689,7 @@ describe('DownloadService', () => {
       });
 
       expect(mockAdapter.addDownload).toHaveBeenCalledWith(
-        'magnet:?xt=urn:btih:aaf4c61ddcc5e8a2dabede0f3b482cd9aea9434d',
+        expect.objectContaining({ type: 'magnet-uri' }),
         undefined,
       );
     });
@@ -710,12 +710,12 @@ describe('DownloadService', () => {
       );
 
       await service.grab({
-        downloadUrl: 'magnet:?xt=urn:btih:abc',
+        downloadUrl: 'magnet:?xt=urn:btih:0000000000000000000000000000000000000abc',
         title: 'Test',
       });
 
       expect(mockAdapter.addDownload).toHaveBeenCalledWith(
-        'magnet:?xt=urn:btih:abc',
+        expect.objectContaining({ type: 'magnet-uri' }),
         undefined,
       );
     });
@@ -735,7 +735,7 @@ describe('DownloadService', () => {
       );
 
       await service.grab({
-        downloadUrl: 'magnet:?xt=urn:btih:abc',
+        downloadUrl: 'magnet:?xt=urn:btih:0000000000000000000000000000000000000abc',
         title: 'Test',
       });
 
@@ -743,9 +743,7 @@ describe('DownloadService', () => {
       expect(db.update).not.toHaveBeenCalled();
     });
 
-    it('decodes data: URI and passes torrentFile to adapter', async () => {
-      const torrentContent = Buffer.from('fake-torrent-bytes');
-      const dataUri = `data:application/x-bittorrent;base64,${torrentContent.toString('base64')}`;
+    it('resolves data: URI and passes torrent-bytes artifact to adapter', async () => {
       const mockAdapter = {
         addDownload: vi.fn().mockResolvedValue('ext-789'),
       };
@@ -759,21 +757,24 @@ describe('DownloadService', () => {
         mockDbChain([{ download: mockDownload, book: mockBook }]),
       );
 
+      // Build a minimal valid torrent for the resolver to extract a hash
+      const inner = Buffer.from('d6:lengthi1024e4:name8:test.mp3e');
+      const torrentContent = Buffer.from(`d8:announce5:x.com4:info${inner.toString()}e`);
+      const dataUri = `data:application/x-bittorrent;base64,${torrentContent.toString('base64')}`;
+
       await service.grab({
         downloadUrl: dataUri,
         title: 'MAM Torrent',
       });
 
+      // Adapter should receive a torrent-bytes artifact (not the raw data: URI)
       expect(mockAdapter.addDownload).toHaveBeenCalledWith(
-        dataUri,
-        expect.objectContaining({ torrentFile: expect.any(Buffer) }),
+        expect.objectContaining({ type: 'torrent-bytes', data: expect.any(Buffer) }),
+        undefined,
       );
-      // Verify the decoded buffer matches original content
-      const passedOptions = mockAdapter.addDownload.mock.calls[0][1];
-      expect(passedOptions.torrentFile.toString()).toBe('fake-torrent-bytes');
     });
 
-    it('does not pass torrentFile for non-data: URIs', async () => {
+    it('passes magnet-uri artifact for magnet URIs', async () => {
       const mockAdapter = {
         addDownload: vi.fn().mockResolvedValue('ext-123'),
       };
@@ -793,14 +794,37 @@ describe('DownloadService', () => {
       });
 
       expect(mockAdapter.addDownload).toHaveBeenCalledWith(
-        'magnet:?xt=urn:btih:aaf4c61ddcc5e8a2dabede0f3b482cd9aea9434d',
+        expect.objectContaining({
+          type: 'magnet-uri',
+          uri: 'magnet:?xt=urn:btih:aaf4c61ddcc5e8a2dabede0f3b482cd9aea9434d',
+          infoHash: 'aaf4c61ddcc5e8a2dabede0f3b482cd9aea9434d',
+        }),
         undefined,
       );
     });
 
-    it('logs truncated URL for data: URIs instead of full base64', async () => {
-      const torrentContent = Buffer.from('fake-torrent-bytes');
-      const dataUri = `data:application/x-bittorrent;base64,${torrentContent.toString('base64')}`;
+    it('resolver failure prevents adapter call and DB insert', async () => {
+      const mockAdapter = {
+        addDownload: vi.fn().mockResolvedValue('ext-123'),
+      };
+
+      (clientService.getFirstEnabledForProtocol as Mock).mockResolvedValue({ id: 1, name: 'qBit' });
+      (clientService.getAdapter as Mock).mockResolvedValue(mockAdapter);
+
+      // Use a magnet URI with no info hash — resolver will throw
+      await expect(
+        service.grab({
+          downloadUrl: 'magnet:?dn=Test+File',
+          title: 'Bad Magnet',
+        }),
+      ).rejects.toThrow(/info hash/i);
+
+      // Neither adapter nor DB should have been called
+      expect(mockAdapter.addDownload).not.toHaveBeenCalled();
+      expect(db.insert).not.toHaveBeenCalled();
+    });
+
+    it('persists resolved infoHash to downloads row for data: URI', async () => {
       const mockAdapter = {
         addDownload: vi.fn().mockResolvedValue('ext-789'),
       };
@@ -813,6 +837,65 @@ describe('DownloadService', () => {
       db.select.mockReturnValue(
         mockDbChain([{ download: mockDownload, book: mockBook }]),
       );
+
+      // Build a minimal valid torrent and data: URI
+      const { createHash: createHashFn } = await import('node:crypto');
+      const inner = Buffer.from('d6:lengthi1024e4:name8:test.mp3e');
+      const expectedHash = createHashFn('sha1').update(inner).digest('hex');
+      const torrentContent = Buffer.from(`d8:announce5:x.com4:info${inner.toString()}e`);
+      const dataUri = `data:application/x-bittorrent;base64,${torrentContent.toString('base64')}`;
+
+      await service.grab({
+        downloadUrl: dataUri,
+        title: 'MAM Torrent',
+      });
+
+      const insertValues = db.insert.mock.results[0].value.values.mock.calls[0][0];
+      expect(insertValues.infoHash).toBe(expectedHash);
+    });
+
+    it('persists null infoHash for nzb-url artifact', async () => {
+      const mockAdapter = {
+        addDownload: vi.fn().mockResolvedValue('sab-123'),
+      };
+
+      (clientService.getFirstEnabledForProtocol as Mock).mockResolvedValue({ id: 1, name: 'SAB' });
+      (clientService.getAdapter as Mock).mockResolvedValue(mockAdapter);
+
+      db.insert.mockReturnValue(mockDbChain([{ id: 1 }]));
+      db.update.mockReturnValue(mockDbChain());
+      db.select.mockReturnValue(
+        mockDbChain([{ download: { ...mockDownload, protocol: 'usenet' }, book: mockBook }]),
+      );
+
+      await service.grab({
+        downloadUrl: 'https://indexer.test/nzb/12345',
+        title: 'Usenet NZB',
+        protocol: 'usenet',
+      });
+
+      const insertValues = db.insert.mock.results[0].value.values.mock.calls[0][0];
+      expect(insertValues.infoHash).toBeNull();
+    });
+
+    it('logs truncated URL for data: URIs instead of full base64', async () => {
+      const mockAdapter = {
+        addDownload: vi.fn().mockResolvedValue('ext-789'),
+      };
+
+      (clientService.getFirstEnabledForProtocol as Mock).mockResolvedValue({ id: 1, name: 'qBit' });
+      (clientService.getAdapter as Mock).mockResolvedValue(mockAdapter);
+
+      db.insert.mockReturnValue(mockDbChain([{ id: 1 }]));
+      db.update.mockReturnValue(mockDbChain());
+      db.select.mockReturnValue(
+        mockDbChain([{ download: mockDownload, book: mockBook }]),
+      );
+
+      // Build a minimal valid torrent
+      const inner = Buffer.from('d6:lengthi1024e4:name8:test.mp3e');
+      const torrentContent = Buffer.from(`d8:announce5:x.com4:info${inner.toString()}e`);
+      const dataUri = `data:application/x-bittorrent;base64,${torrentContent.toString('base64')}`;
 
       const log = createMockLogger();
       const svc = new DownloadService(inject<Db>(db), clientService, inject<FastifyBaseLogger>(log));
@@ -829,7 +912,6 @@ describe('DownloadService', () => {
       );
       const debugCall = (log.debug as ReturnType<typeof vi.fn>).mock.calls[0][0] as Record<string, unknown>;
       expect(debugCall.downloadUrl).not.toContain(torrentContent.toString('base64'));
-      expect(debugCall.downloadUrl).toContain('KB');
     });
   });
 
@@ -939,7 +1021,7 @@ describe('DownloadService', () => {
 
       it('returns retried and deletes old record on successful retry', async () => {
         const failedDownload = { ...mockDownload, id: 1, status: 'failed' as const };
-        const searchResult = { title: 'Better Release', protocol: 'torrent', downloadUrl: 'magnet:?xt=urn:btih:new', infoHash: 'new123', size: 500000000, seeders: 5, indexer: 'Test' };
+        const searchResult = { title: 'Better Release', protocol: 'torrent', downloadUrl: 'magnet:?xt=urn:btih:00000000000000000000000000000000000000ee', infoHash: 'new123', size: 500000000, seeders: 5, indexer: 'Test' };
         mockRetryDeps.indexerService.searchAll.mockResolvedValue([searchResult]);
 
         db.select.mockReturnValue(mockDbChain([{ download: failedDownload, book: mockBook }]));
@@ -1025,7 +1107,7 @@ describe('DownloadService', () => {
 
       it('logs warning but still returns retried when old record deletion fails', async () => {
         const failedDownload = { ...mockDownload, id: 1, status: 'failed' as const };
-        const searchResult = { title: 'Better Release', protocol: 'torrent', downloadUrl: 'magnet:?xt=urn:btih:new', infoHash: 'new123', size: 500000000, seeders: 5, indexer: 'Test' };
+        const searchResult = { title: 'Better Release', protocol: 'torrent', downloadUrl: 'magnet:?xt=urn:btih:00000000000000000000000000000000000000ee', infoHash: 'new123', size: 500000000, seeders: 5, indexer: 'Test' };
         mockRetryDeps.indexerService.searchAll.mockResolvedValue([searchResult]);
 
         db.select.mockReturnValue(mockDbChain([{ download: failedDownload, book: mockBook }]));
@@ -1325,7 +1407,7 @@ describe('DownloadService', () => {
       db.insert.mockReturnValue(mockDbChain([{ id: 10 }]));
 
       await service.grab({
-        downloadUrl: 'magnet:?xt=urn:btih:abc',
+        downloadUrl: 'magnet:?xt=urn:btih:0000000000000000000000000000000000000abc',
         title: 'Test',
         bookId: 1,
         replaceExisting: true,
@@ -1359,7 +1441,7 @@ describe('DownloadService', () => {
       db.insert.mockReturnValue(mockDbChain([{ id: 10 }]));
 
       await service.grab({
-        downloadUrl: 'magnet:?xt=urn:btih:abc',
+        downloadUrl: 'magnet:?xt=urn:btih:0000000000000000000000000000000000000abc',
         title: 'Test',
         bookId: 1,
         replaceExisting: true,
@@ -1375,7 +1457,7 @@ describe('DownloadService', () => {
       db.select.mockReturnValueOnce(mockDbChain([{ download: replaceableDownload, book: mockBook }]));
 
       const err = await service.grab({
-        downloadUrl: 'magnet:?xt=urn:btih:abc',
+        downloadUrl: 'magnet:?xt=urn:btih:0000000000000000000000000000000000000abc',
         title: 'Test',
         bookId: 1,
       }).catch((e: unknown) => e);
@@ -1391,7 +1473,7 @@ describe('DownloadService', () => {
       db.select.mockReturnValueOnce(mockDbChain([{ download: pipelineDownload, book: mockBook }]));
 
       const err = await service.grab({
-        downloadUrl: 'magnet:?xt=urn:btih:abc',
+        downloadUrl: 'magnet:?xt=urn:btih:0000000000000000000000000000000000000abc',
         title: 'Test',
         bookId: 1,
       }).catch((e: unknown) => e);
@@ -1407,7 +1489,7 @@ describe('DownloadService', () => {
       db.select.mockReturnValueOnce(mockDbChain([{ download: replaceableDownload, book: mockBook }]));
 
       const err = await service.grab({
-        downloadUrl: 'magnet:?xt=urn:btih:abc',
+        downloadUrl: 'magnet:?xt=urn:btih:0000000000000000000000000000000000000abc',
         title: 'Test',
         bookId: 1,
       }).catch((e: unknown) => e);
@@ -1422,7 +1504,7 @@ describe('DownloadService', () => {
       db.select.mockReturnValueOnce(mockDbChain([{ download: pipelineDownload, book: mockBook }]));
 
       const err = await service.grab({
-        downloadUrl: 'magnet:?xt=urn:btih:abc',
+        downloadUrl: 'magnet:?xt=urn:btih:0000000000000000000000000000000000000abc',
         title: 'Test',
         bookId: 1,
       }).catch((e: unknown) => e);
@@ -1446,7 +1528,7 @@ describe('DownloadService', () => {
       mockAdapter.addDownload.mockRejectedValue(new Error('Client rejected'));
 
       const err = await service.grab({
-        downloadUrl: 'magnet:?xt=urn:btih:abc',
+        downloadUrl: 'magnet:?xt=urn:btih:0000000000000000000000000000000000000abc',
         title: 'Test',
         bookId: 1,
         replaceExisting: true,
@@ -1468,7 +1550,7 @@ describe('DownloadService', () => {
       db.update.mockReturnValue(mockDbChain());
 
       const result = await service.grab({
-        downloadUrl: 'magnet:?xt=urn:btih:abc',
+        downloadUrl: 'magnet:?xt=urn:btih:0000000000000000000000000000000000000abc',
         title: 'Test',
         bookId: 1,
         replaceExisting: true,
@@ -1490,7 +1572,7 @@ describe('DownloadService', () => {
 
       // Should not throw
       const result = await service.grab({
-        downloadUrl: 'magnet:?xt=urn:btih:abc',
+        downloadUrl: 'magnet:?xt=urn:btih:0000000000000000000000000000000000000abc',
         title: 'Test',
         bookId: 1,
         replaceExisting: true,

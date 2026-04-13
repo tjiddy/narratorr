@@ -2,6 +2,7 @@ import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { http, HttpResponse } from 'msw';
 import { useMswServer } from '../__tests__/msw/server.js';
 import { DelugeClient } from './deluge.js';
+import type { DownloadArtifact } from './types.js';
 
 const config = { host: 'localhost', port: 8112, password: 'deluge', useSsl: false };
 const BASE_URL = 'http://localhost:8112';
@@ -23,6 +24,15 @@ const mockTorrentStatus = {
   time_added: 1700000000,
   is_finished: false,
 };
+
+function magnetArtifact(uri: string): DownloadArtifact {
+  const match = uri.match(/btih:([a-fA-F0-9]+)/);
+  return { type: 'magnet-uri', uri, infoHash: match?.[1] ?? 'abc123' };
+}
+
+function torrentBytesArtifact(data?: Buffer): DownloadArtifact {
+  return { type: 'torrent-bytes', data: data ?? Buffer.from('fake'), infoHash: 'fakehash123' };
+}
 
 function rpcHandler(methodHandlers: Record<string, (params: unknown[]) => unknown>) {
   return http.post(`${BASE_URL}/json`, async ({ request }) => {
@@ -141,28 +151,30 @@ describe('DelugeClient', () => {
 
   describe('addDownload', () => {
     it('adds magnet URI via core.add_torrent_magnet', async () => {
-      const magnetUri = 'magnet:?xt=urn:btih:abc123&dn=test';
+      const artifact = magnetArtifact('magnet:?xt=urn:btih:abc123&dn=test');
       server.use(rpcHandler({
         'auth.login': () => true,
         'core.add_torrent_magnet': () => 'abc123hash',
       }));
 
-      const result = await client.addDownload(magnetUri);
+      const result = await client.addDownload(artifact);
       expect(result).toBe('abc123hash');
     });
 
-    it('adds torrent URL via core.add_torrent_url', async () => {
+    it('adds torrent bytes via core.add_torrent_file', async () => {
+      const artifact = torrentBytesArtifact();
       server.use(rpcHandler({
         'auth.login': () => true,
-        'core.add_torrent_url': () => 'url123hash',
+        'core.add_torrent_file': () => 'url123hash',
       }));
 
-      const result = await client.addDownload('https://example.com/file.torrent');
+      const result = await client.addDownload(artifact);
       expect(result).toBe('url123hash');
     });
 
     it('sets category via label plugin after adding', async () => {
       const methods: string[] = [];
+      const artifact = magnetArtifact('magnet:?xt=urn:btih:abc123');
       server.use(http.post(`${BASE_URL}/json`, async ({ request }) => {
         const body = await request.json() as { method: string; params: unknown[]; id: number };
         methods.push(body.method);
@@ -177,13 +189,14 @@ describe('DelugeClient', () => {
         return HttpResponse.json({ id: body.id, result: null, error: null });
       }));
 
-      await client.addDownload('magnet:?xt=urn:btih:abc123', { category: 'audiobooks' });
+      await client.addDownload(artifact, { category: 'audiobooks' });
       expect(methods).toContain('label.set_torrent');
     });
 
     it('calls onWarn when label plugin is unavailable', async () => {
       const onWarn = vi.fn();
       const warnClient = new DelugeClient({ ...config, onWarn });
+      const artifact = magnetArtifact('magnet:?xt=urn:btih:abc123');
       server.use(http.post(`${BASE_URL}/json`, async ({ request }) => {
         const body = await request.json() as { method: string; params: unknown[]; id: number };
         if (body.method === 'auth.login') {
@@ -197,12 +210,13 @@ describe('DelugeClient', () => {
         return HttpResponse.json({ id: body.id, result: null, error: null });
       }));
 
-      await warnClient.addDownload('magnet:?xt=urn:btih:abc123', { category: 'audiobooks' });
+      await warnClient.addDownload(artifact, { category: 'audiobooks' });
       expect(onWarn).toHaveBeenCalledWith(expect.stringContaining('Label plugin not available'));
       expect(onWarn).toHaveBeenCalledWith(expect.stringContaining('audiobooks'));
     });
 
     it('succeeds without category when label plugin is unavailable', async () => {
+      const artifact = magnetArtifact('magnet:?xt=urn:btih:abc123');
       server.use(http.post(`${BASE_URL}/json`, async ({ request }) => {
         const body = await request.json() as { method: string; params: unknown[]; id: number };
         if (body.method === 'auth.login') {
@@ -216,17 +230,24 @@ describe('DelugeClient', () => {
         return HttpResponse.json({ id: body.id, result: null, error: null });
       }));
 
-      const result = await client.addDownload('magnet:?xt=urn:btih:abc123', { category: 'audiobooks' });
+      const result = await client.addDownload(artifact, { category: 'audiobooks' });
       expect(result).toBe('hash123');
     });
 
     it('throws when Deluge returns no hash', async () => {
+      const artifact = magnetArtifact('magnet:?xt=urn:btih:abc123');
       server.use(rpcHandler({
         'auth.login': () => true,
         'core.add_torrent_magnet': () => null,
       }));
 
-      await expect(client.addDownload('magnet:?xt=urn:btih:abc123')).rejects.toThrow('no torrent hash');
+      await expect(client.addDownload(artifact)).rejects.toThrow('no torrent hash');
+    });
+
+    it('rejects nzb-url artifact with torrent-only error', async () => {
+      await expect(
+        client.addDownload({ type: 'nzb-url', url: 'https://indexer.test/nzb' }),
+      ).rejects.toThrow('only supports torrent artifacts');
     });
   });
 

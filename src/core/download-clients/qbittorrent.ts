@@ -1,6 +1,5 @@
-import { createHash } from 'node:crypto';
 import { basename, dirname, relative } from 'node:path';
-import { type DownloadClientAdapter, type DownloadItemInfo, type AddDownloadOptions, type DownloadProtocol, ETA_UPPER_BOUND_SEC } from './types.js';
+import { type DownloadClientAdapter, type DownloadItemInfo, type AddDownloadOptions, type DownloadArtifact, type DownloadProtocol, ETA_UPPER_BOUND_SEC } from './types.js';
 import { qbTorrentsResponseSchema } from './schemas.js';
 import { fetchWithTimeout } from '../utils/fetch-with-timeout.js';
 import { DEFAULT_REQUEST_TIMEOUT_MS } from '../utils/constants.js';
@@ -139,58 +138,38 @@ export class QBittorrentClient implements DownloadClientAdapter {
     }
   }
 
-  async addDownload(url: string, options?: AddDownloadOptions): Promise<string> {
-    // Torrent file upload path — uses multipart form data
-    if (options?.torrentFile) {
-      return this.addDownloadFromFile(options.torrentFile, options);
+  async addDownload(artifact: DownloadArtifact, options?: AddDownloadOptions): Promise<string> {
+    if (artifact.type === 'torrent-bytes') {
+      return this.addDownloadFromFile(artifact.data, artifact.infoHash, options);
     }
 
-    // HTTP/HTTPS URL — fetch .torrent file and upload via multipart
-    if (url.startsWith('http://') || url.startsWith('https://')) {
-      return this.fetchAndUploadTorrent(url, options);
-    }
+    if (artifact.type === 'magnet-uri') {
+      const formData = new URLSearchParams();
+      formData.set('urls', artifact.uri);
 
-    // Unsupported schemes (ftp:, etc.) — reject
-    if (!url.startsWith('magnet:')) {
-      throw new Error(
-        'Unsupported URL scheme. Only magnet URIs and HTTP/HTTPS .torrent URLs are supported (URL omitted to avoid leaking passkeys/tokens in logs).',
-      );
-    }
-
-    const formData = new URLSearchParams();
-    formData.set('urls', url);
-
-    if (options?.savePath) {
-      formData.set('savepath', options.savePath);
-    }
-    if (options?.category) {
-      formData.set('category', options.category);
-    }
-    if (options?.paused) {
-      formData.set('paused', 'true');
-    }
-
-    await this.request('/api/v2/torrents/add', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-      body: formData,
-    });
-
-    // Extract hash from magnet URI
-    const hashMatch = url.match(/btih(?::|%3A)([a-f0-9]{40}|[a-z2-7]{32})/i);
-    if (hashMatch) {
-      // If it's base32, convert to hex
-      const hash = hashMatch[1];
-      if (hash.length === 32) {
-        return base32ToHex(hash).toLowerCase();
+      if (options?.savePath) {
+        formData.set('savepath', options.savePath);
       }
-      return hash.toLowerCase();
+      if (options?.category) {
+        formData.set('category', options.category);
+      }
+      if (options?.paused) {
+        formData.set('paused', 'true');
+      }
+
+      await this.request('/api/v2/torrents/add', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: formData,
+      });
+
+      return artifact.infoHash;
     }
 
-    throw new Error('Could not extract info hash from magnet URI');
+    throw new Error('qBittorrent only supports torrent artifacts (torrent-bytes, magnet-uri)');
   }
 
-  private async addDownloadFromFile(torrentFile: Buffer, options?: AddDownloadOptions): Promise<string> {
+  private async addDownloadFromFile(torrentFile: Buffer, infoHash: string, options?: AddDownloadOptions): Promise<string> {
     if (!this.cookie) {
       await this.login();
     }
@@ -221,34 +200,9 @@ export class QBittorrentClient implements DownloadClientAdapter {
       throw new Error(`Request failed: HTTP ${response.status} /api/v2/torrents/add`);
     }
 
-    // Compute info hash from torrent file content using SHA-1 of bencoded info dictionary
-    const hash = extractInfoHashFromTorrent(torrentFile);
-    if (hash) {
-      return hash.toLowerCase();
-    }
-
-    throw new Error('Could not extract info hash from torrent file');
+    return infoHash;
   }
 
-  private async fetchAndUploadTorrent(url: string, options?: AddDownloadOptions): Promise<string> {
-    let response: Response;
-    try {
-      response = await fetchWithTimeout(url, {}, DEFAULT_REQUEST_TIMEOUT_MS);
-    } catch (error: unknown) {
-      // Redirect errors from fetchWithTimeout include Location header — sanitize
-      if (error instanceof Error && error.message.includes('redirected')) {
-        throw new Error('Server redirected the .torrent download — an auth proxy may be intercepting requests. Use the service\'s internal address or whitelist this endpoint in your proxy config.');
-      }
-      throw error; // Network errors from mapNetworkError are already sanitized
-    }
-
-    if (!response.ok) {
-      throw new Error(`Failed to fetch .torrent file: HTTP ${response.status} (URL omitted to avoid leaking passkeys/tokens in logs)`);
-    }
-
-    const torrentBuffer = Buffer.from(await response.arrayBuffer());
-    return this.addDownloadFromFile(torrentBuffer, options);
-  }
 
   async getDownload(hash: string): Promise<DownloadItemInfo | null> {
     const raw = await this.request<unknown>(
@@ -400,71 +354,3 @@ export class QBittorrentClient implements DownloadClientAdapter {
   }
 }
 
-/** Extract info_hash by finding '4:info' marker and hashing the bencode dict that follows.
- *  Searches all occurrences of '4:info' in case earlier string payloads contain the same bytes. */
-function extractInfoHashFromTorrent(torrent: Buffer): string | null {
-  const marker = Buffer.from('4:info');
-  let searchFrom = 0;
-
-  while (searchFrom < torrent.length) {
-    const idx = torrent.indexOf(marker, searchFrom);
-    if (idx === -1) return null;
-
-    const infoStart = idx + marker.length;
-    // The info value must be a bencoded dictionary starting with 'd'
-    if (infoStart < torrent.length && torrent[infoStart] === 0x64) {
-      const result = hashBencodeDict(torrent, infoStart);
-      if (result !== null) return result;
-    }
-
-    // This occurrence wasn't a valid info dict — try the next one
-    searchFrom = idx + 1;
-  }
-
-  return null;
-}
-
-/** Hash a bencoded dictionary starting at `start` in the buffer. Returns null on parse failure. */
-function hashBencodeDict(torrent: Buffer, start: number): string | null {
-  let depth = 0;
-  let pos = start;
-  do {
-    const byte = torrent[pos];
-    if (byte === 0x64 || byte === 0x6C) depth++; // 'd' or 'l'
-    else if (byte === 0x65) depth--; // 'e'
-    else if (byte === 0x69) { // 'i' — integer, skip to closing 'e' (not a container end)
-      pos = torrent.indexOf(0x65, pos + 1);
-      if (pos === -1) return null;
-    } else if (byte >= 0x30 && byte <= 0x39) { // digit — string length prefix
-      const colonIdx = torrent.indexOf(0x3A, pos); // ':'
-      if (colonIdx === -1) return null;
-      const len = parseInt(torrent.subarray(pos, colonIdx).toString(), 10);
-      pos = colonIdx + len; // skip past the string content
-    }
-    pos++;
-  } while (depth > 0 && pos < torrent.length);
-
-  if (depth !== 0) return null;
-
-  const infoDict = torrent.subarray(start, pos);
-  return createHash('sha1').update(infoDict).digest('hex');
-}
-
-// Helper function to convert base32 to hex
-function base32ToHex(base32: string): string {
-  const alphabet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ234567';
-  let bits = '';
-  let hex = '';
-
-  for (const char of base32.toUpperCase()) {
-    const index = alphabet.indexOf(char);
-    if (index === -1) continue;
-    bits += index.toString(2).padStart(5, '0');
-  }
-
-  for (let i = 0; i + 4 <= bits.length; i += 4) {
-    hex += parseInt(bits.substring(i, i + 4), 2).toString(16);
-  }
-
-  return hex;
-}

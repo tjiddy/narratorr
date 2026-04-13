@@ -2,6 +2,7 @@ import { describe, it, expect, beforeEach } from 'vitest';
 import { http, HttpResponse } from 'msw';
 import { useMswServer } from '../__tests__/msw/server.js';
 import { TransmissionClient } from './transmission.js';
+import type { DownloadArtifact } from './types.js';
 
 const config = { host: 'localhost', port: 9091, username: 'admin', password: 'password', useSsl: false };
 const BASE_URL = 'http://localhost:9091';
@@ -27,6 +28,14 @@ const mockTorrent = {
   errorString: '',
   leftUntilDone: 500000,
 };
+
+function magnetArtifact(uri: string, infoHash: string): DownloadArtifact {
+  return { type: 'magnet-uri', uri, infoHash };
+}
+
+function torrentBytesArtifact(data: Buffer = Buffer.from('fake'), infoHash = 'fakehash123'): DownloadArtifact {
+  return { type: 'torrent-bytes', data, infoHash };
+}
 
 function rpcHandler(expectedMethod?: string, responseArgs?: Record<string, unknown>) {
   return http.post(RPC_URL, async ({ request }) => {
@@ -171,7 +180,7 @@ describe('TransmissionClient', () => {
   });
 
   describe('addDownload', () => {
-    it('sends torrent-add RPC and returns hash', async () => {
+    it('sends torrent-add RPC with magnet URI and returns hash', async () => {
       let capturedBody: Record<string, unknown> | null = null;
       server.use(
         http.post(RPC_URL, async ({ request }) => {
@@ -185,11 +194,36 @@ describe('TransmissionClient', () => {
         }),
       );
 
-      const hash = await client.addDownload('magnet:?xt=urn:btih:abc123def456');
+      const artifact = magnetArtifact('magnet:?xt=urn:btih:abc123def456', 'abc123def456');
+      const hash = await client.addDownload(artifact);
       expect(hash).toBe('abc123def456');
       expect(capturedBody).toMatchObject({
         method: 'torrent-add',
         arguments: { filename: 'magnet:?xt=urn:btih:abc123def456' },
+      });
+    });
+
+    it('sends torrent-add RPC with torrent bytes as metainfo', async () => {
+      let capturedBody: Record<string, unknown> | null = null;
+      const torrentData = Buffer.from('fake-torrent-data');
+      server.use(
+        http.post(RPC_URL, async ({ request }) => {
+          capturedBody = (await request.json()) as Record<string, unknown>;
+          return HttpResponse.json({
+            result: 'success',
+            arguments: {
+              'torrent-added': { hashString: 'abc123def456' },
+            },
+          });
+        }),
+      );
+
+      const artifact = torrentBytesArtifact(torrentData, 'abc123def456');
+      const hash = await client.addDownload(artifact);
+      expect(hash).toBe('abc123def456');
+      expect(capturedBody).toMatchObject({
+        method: 'torrent-add',
+        arguments: { metainfo: torrentData.toString('base64') },
       });
     });
 
@@ -205,7 +239,8 @@ describe('TransmissionClient', () => {
         }),
       );
 
-      const hash = await client.addDownload('magnet:?xt=urn:btih:abc123def456');
+      const artifact = magnetArtifact('magnet:?xt=urn:btih:abc123def456', 'abc123def456');
+      const hash = await client.addDownload(artifact);
       expect(hash).toBe('abc123def456');
     });
 
@@ -223,7 +258,8 @@ describe('TransmissionClient', () => {
         }),
       );
 
-      await client.addDownload('magnet:?xt=urn:btih:abc123', {
+      const artifact = magnetArtifact('magnet:?xt=urn:btih:abc123', 'abc123');
+      await client.addDownload(artifact, {
         savePath: '/my/path',
         paused: true,
       });
@@ -240,9 +276,16 @@ describe('TransmissionClient', () => {
     it('throws when no hash in response', async () => {
       server.use(rpcHandler('torrent-add', {}));
 
-      await expect(client.addDownload('magnet:?xt=urn:btih:abc123')).rejects.toThrow(
+      const artifact = magnetArtifact('magnet:?xt=urn:btih:abc123', 'abc123');
+      await expect(client.addDownload(artifact)).rejects.toThrow(
         'Could not extract torrent hash',
       );
+    });
+
+    it('rejects nzb-url artifact with torrent-only error', async () => {
+      await expect(
+        client.addDownload({ type: 'nzb-url', url: 'https://indexer.test/nzb' }),
+      ).rejects.toThrow('only supports torrent artifacts');
     });
   });
 
@@ -485,7 +528,8 @@ describe('TransmissionClient', () => {
         }),
       );
 
-      const hash = await client.addDownload('magnet:?xt=urn:btih:ABC123');
+      const artifact = magnetArtifact('magnet:?xt=urn:btih:ABC123', 'abc123');
+      const hash = await client.addDownload(artifact);
       expect(hash).toBe('abc123def456');
     });
   });

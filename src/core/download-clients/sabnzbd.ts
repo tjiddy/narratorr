@@ -3,6 +3,7 @@ import type {
   DownloadClientAdapter,
   DownloadItemInfo,
   AddDownloadOptions,
+  DownloadArtifact,
   DownloadProtocol,
 } from './types.js';
 import { fetchWithTimeout } from '../utils/fetch-with-timeout.js';
@@ -77,12 +78,16 @@ export class SABnzbdClient implements DownloadClientAdapter {
   }
 
   async addDownload(
-    url: string,
+    artifact: DownloadArtifact,
     options?: AddDownloadOptions,
   ): Promise<string> {
+    if (artifact.type !== 'nzb-url') {
+      throw new Error('SABnzbd only supports usenet artifacts (nzb-url)');
+    }
+
     const params: Record<string, string> = {
       mode: 'addurl',
-      name: url,
+      name: artifact.url,
     };
 
     if (options?.category) {

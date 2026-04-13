@@ -1,4 +1,4 @@
-import type { DownloadClientAdapter, DownloadItemInfo, AddDownloadOptions, DownloadProtocol } from './types.js';
+import type { DownloadClientAdapter, DownloadItemInfo, AddDownloadOptions, DownloadArtifact, DownloadProtocol } from './types.js';
 import { transmissionRpcResponseSchema } from './schemas.js';
 import { fetchWithTimeout } from '../utils/fetch-with-timeout.js';
 import { DEFAULT_REQUEST_TIMEOUT_MS } from '../utils/constants.js';
@@ -70,14 +70,17 @@ export class TransmissionClient implements DownloadClientAdapter {
     this.authHeader = 'Basic ' + btoa(`${config.username}:${config.password}`);
   }
 
-  async addDownload(url: string, options?: AddDownloadOptions): Promise<string> {
+  async addDownload(artifact: DownloadArtifact, options?: AddDownloadOptions): Promise<string> {
+    if (artifact.type === 'nzb-url') {
+      throw new Error('Transmission only supports torrent artifacts (torrent-bytes, magnet-uri)');
+    }
+
     const args: Record<string, unknown> = {};
 
-    // Torrent file path — use metainfo base64 parameter
-    if (options?.torrentFile) {
-      args.metainfo = options.torrentFile.toString('base64');
+    if (artifact.type === 'torrent-bytes') {
+      args.metainfo = artifact.data.toString('base64');
     } else {
-      args.filename = url;
+      args.filename = artifact.uri;
     }
 
     if (options?.savePath) {

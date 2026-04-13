@@ -5,6 +5,7 @@ import { QBittorrentClient } from './qbittorrent.js';
 import { TransmissionClient } from './transmission.js';
 import { DelugeClient } from './deluge.js';
 import { BlackholeClient } from './blackhole.js';
+import type { DownloadArtifact } from './types.js';
 import { writeFile } from 'node:fs/promises';
 
 vi.mock('node:fs/promises', async () => {
@@ -23,10 +24,10 @@ const fakeTorrentWithInfoInString = Buffer.from(
   'd7:comment26:tracker says: see 4:infod8:announce35:http://tracker.example.com/announce4:infod6:lengthi12345e4:name8:test.txte',
 );
 
-describe('Torrent file handoff — data: URI pipeline', () => {
+describe('Torrent file handoff — DownloadArtifact pipeline', () => {
   const server = useMswServer();
 
-  describe('qBittorrent — torrentFile handling', () => {
+  describe('qBittorrent — artifact handling', () => {
     const qbConfig = { host: 'localhost', port: 8080, username: 'admin', password: 'pass', useSsl: false };
     const QB_BASE = 'http://localhost:8080';
 
@@ -38,7 +39,7 @@ describe('Torrent file handoff — data: URI pipeline', () => {
       });
     }
 
-    it('uses multipart file upload when torrentFile provided', async () => {
+    it('uses multipart file upload for torrent-bytes artifact', async () => {
       let capturedContentType = '';
       let bodyContainsTorrent = false;
 
@@ -53,11 +54,12 @@ describe('Torrent file handoff — data: URI pipeline', () => {
       );
 
       const client = new QBittorrentClient(qbConfig);
-      const hash = await client.addDownload('unused-url', { torrentFile: fakeTorrentFile });
+      const artifact: DownloadArtifact = { type: 'torrent-bytes', data: fakeTorrentFile, infoHash: 'fakehash123' };
+      const hash = await client.addDownload(artifact);
 
       expect(capturedContentType).toContain('multipart/form-data');
       expect(bodyContainsTorrent).toBe(true);
-      expect(hash).toBe('e4c4ed54fbde46fb891a9ef51a368f7cde76eb74');
+      expect(hash).toBe('fakehash123');
     });
 
     it('extracts correct info hash when 4:info appears in earlier string payload', async () => {
@@ -72,14 +74,14 @@ describe('Torrent file handoff — data: URI pipeline', () => {
       );
 
       const client = new QBittorrentClient(qbConfig);
-      const hash = await client.addDownload('unused-url', { torrentFile: fakeTorrentWithInfoInString });
+      const artifact: DownloadArtifact = { type: 'torrent-bytes', data: fakeTorrentWithInfoInString, infoHash: 'fakehash123' };
+      const hash = await client.addDownload(artifact);
 
       expect(capturedContentType).toContain('multipart/form-data');
-      // Should produce the same info hash since the info dict is identical
-      expect(hash).toBe('e4c4ed54fbde46fb891a9ef51a368f7cde76eb74');
+      expect(hash).toBe('fakehash123');
     });
 
-    it('uses existing magnet-only path when torrentFile not provided', async () => {
+    it('uses magnet-uri path for magnet artifact', async () => {
       server.use(
         qbLoginHandler(),
         http.post(`${QB_BASE}/api/v2/torrents/add`, () => {
@@ -89,21 +91,17 @@ describe('Torrent file handoff — data: URI pipeline', () => {
 
       const client = new QBittorrentClient(qbConfig);
       const magnet = 'magnet:?xt=urn:btih:a94a8fe5ccb19ba61c4c0873d391e987982fbbd3&dn=test';
-      const hash = await client.addDownload(magnet);
+      const artifact: DownloadArtifact = { type: 'magnet-uri', uri: magnet, infoHash: 'a94a8fe5ccb19ba61c4c0873d391e987982fbbd3' };
+      const hash = await client.addDownload(artifact);
       expect(hash).toBe('a94a8fe5ccb19ba61c4c0873d391e987982fbbd3');
     });
 
-    it('fetches HTTP .torrent URL and uploads via multipart when torrentFile not provided (end-to-end)', async () => {
+    it('uploads torrent-bytes via multipart for pre-resolved HTTP download', async () => {
       let capturedContentType = '';
       let bodyContainsTorrent = false;
 
       server.use(
         qbLoginHandler(),
-        http.get('https://indexer.example.com/download/12345', () => {
-          return new HttpResponse(fakeTorrentFile, {
-            headers: { 'Content-Type': 'application/x-bittorrent' },
-          });
-        }),
         http.post(`${QB_BASE}/api/v2/torrents/add`, async ({ request }) => {
           capturedContentType = request.headers.get('content-type') || '';
           const text = await request.text();
@@ -113,44 +111,22 @@ describe('Torrent file handoff — data: URI pipeline', () => {
       );
 
       const client = new QBittorrentClient(qbConfig);
-      const hash = await client.addDownload('https://indexer.example.com/download/12345');
+      const artifact: DownloadArtifact = { type: 'torrent-bytes', data: Buffer.from('fake'), infoHash: 'fakehash123' };
+      const hash = await client.addDownload(artifact);
 
       expect(capturedContentType).toContain('multipart/form-data');
       expect(bodyContainsTorrent).toBe(true);
-      expect(hash).toBe('e4c4ed54fbde46fb891a9ef51a368f7cde76eb74');
-    });
-
-    it('torrentFile option still bypasses URL fetch when both URL and file provided', async () => {
-      let fetchCalled = false;
-
-      server.use(
-        qbLoginHandler(),
-        http.get('https://indexer.example.com/download/12345', () => {
-          fetchCalled = true;
-          return new HttpResponse(fakeTorrentFile);
-        }),
-        http.post(`${QB_BASE}/api/v2/torrents/add`, () => {
-          return new HttpResponse('');
-        }),
-      );
-
-      const client = new QBittorrentClient(qbConfig);
-      const hash = await client.addDownload('https://indexer.example.com/download/12345', {
-        torrentFile: fakeTorrentFile,
-      });
-
-      expect(fetchCalled).toBe(false);
-      expect(hash).toBe('e4c4ed54fbde46fb891a9ef51a368f7cde76eb74');
+      expect(hash).toBe('fakehash123');
     });
   });
 
-  describe('Transmission — torrentFile handling', () => {
+  describe('Transmission — artifact handling', () => {
     const trConfig = { host: 'localhost', port: 9091, username: 'admin', password: 'pass', useSsl: false };
     const TR_BASE = 'http://localhost:9091';
     const RPC_URL = `${TR_BASE}/transmission/rpc`;
     const SESSION_ID = 'test-session';
 
-    it('uses metainfo base64 parameter when torrentFile provided', async () => {
+    it('uses metainfo base64 parameter for torrent-bytes artifact', async () => {
       let capturedMetainfo = '';
 
       server.use(
@@ -171,12 +147,13 @@ describe('Torrent file handoff — data: URI pipeline', () => {
       );
 
       const client = new TransmissionClient(trConfig);
-      const hash = await client.addDownload('unused', { torrentFile: fakeTorrentFile });
+      const artifact: DownloadArtifact = { type: 'torrent-bytes', data: fakeTorrentFile, infoHash: 'fakehash123' };
+      const hash = await client.addDownload(artifact);
       expect(hash).toBe('abc123');
       expect(capturedMetainfo).toBe(fakeTorrentFile.toString('base64'));
     });
 
-    it('uses existing URL path when torrentFile not provided', async () => {
+    it('uses filename parameter for magnet-uri artifact', async () => {
       let capturedFilename = '';
 
       server.use(
@@ -198,13 +175,14 @@ describe('Torrent file handoff — data: URI pipeline', () => {
 
       const client = new TransmissionClient(trConfig);
       const magnetUrl = 'magnet:?xt=urn:btih:abc123';
-      const hash = await client.addDownload(magnetUrl);
+      const artifact: DownloadArtifact = { type: 'magnet-uri', uri: magnetUrl, infoHash: 'abc123' };
+      const hash = await client.addDownload(artifact);
       expect(hash).toBe('def456');
       expect(capturedFilename).toBe(magnetUrl);
     });
   });
 
-  describe('Deluge — torrentFile handling', () => {
+  describe('Deluge — artifact handling', () => {
     const delugeConfig = { host: 'localhost', port: 8112, password: 'deluge', useSsl: false };
     const DELUGE_BASE = 'http://localhost:8112';
 
@@ -228,7 +206,7 @@ describe('Torrent file handoff — data: URI pipeline', () => {
       });
     }
 
-    it('uses add_torrent_file RPC when torrentFile provided', async () => {
+    it('uses add_torrent_file RPC for torrent-bytes artifact', async () => {
       let capturedMethod = '';
       let capturedParams: unknown[] = [];
 
@@ -248,26 +226,29 @@ describe('Torrent file handoff — data: URI pipeline', () => {
       );
 
       const client = new DelugeClient(delugeConfig);
-      const hash = await client.addDownload('unused', { torrentFile: fakeTorrentFile });
+      const artifact: DownloadArtifact = { type: 'torrent-bytes', data: fakeTorrentFile, infoHash: 'fakehash123' };
+      const hash = await client.addDownload(artifact);
       expect(hash).toBe('torrent-hash-123');
       expect(capturedMethod).toBe('core.add_torrent_file');
       expect(capturedParams[0]).toBe('upload.torrent');
       expect(capturedParams[1]).toBe(fakeTorrentFile.toString('base64'));
     });
 
-    it('uses existing magnet path when torrentFile not provided', async () => {
+    it('uses magnet path for magnet-uri artifact', async () => {
       server.use(delugeHandler());
 
       const client = new DelugeClient(delugeConfig);
-      const hash = await client.addDownload('magnet:?xt=urn:btih:abc');
+      const artifact: DownloadArtifact = { type: 'magnet-uri', uri: 'magnet:?xt=urn:btih:abc', infoHash: 'abc' };
+      const hash = await client.addDownload(artifact);
       expect(hash).toBe('hash-from-magnet');
     });
   });
 
-  describe('Blackhole — torrentFile handling', () => {
-    it('writes bytes directly to watch directory when torrentFile provided', async () => {
+  describe('Blackhole — artifact handling', () => {
+    it('writes torrent-bytes data directly to watch directory', async () => {
       const client = new BlackholeClient({ watchDir: '/tmp/watch', protocol: 'torrent' });
-      await client.addDownload('unused-url', { torrentFile: fakeTorrentFile });
+      const artifact: DownloadArtifact = { type: 'torrent-bytes', data: fakeTorrentFile, infoHash: 'fakehash123' };
+      await client.addDownload(artifact);
 
       expect(writeFile).toHaveBeenCalledWith(
         expect.stringMatching(/[/\\]tmp[/\\]watch[/\\]download-/),
@@ -275,21 +256,14 @@ describe('Torrent file handoff — data: URI pipeline', () => {
       );
     });
 
-    it('uses existing fetch-and-write path when torrentFile not provided', async () => {
-      server.use(
-        http.get('https://example.com/file.torrent', () => {
-          return new HttpResponse(Buffer.from('torrent-content'), {
-            headers: { 'Content-Type': 'application/x-bittorrent' },
-          });
-        }),
-      );
-
+    it('writes torrent-bytes from pre-resolved HTTP download to watch directory', async () => {
       const client = new BlackholeClient({ watchDir: '/tmp/watch', protocol: 'torrent' });
-      await client.addDownload('https://example.com/file.torrent');
+      const artifact: DownloadArtifact = { type: 'torrent-bytes', data: Buffer.from('fake'), infoHash: 'fakehash123' };
+      await client.addDownload(artifact);
 
       expect(writeFile).toHaveBeenCalledWith(
-        expect.stringMatching(/[/\\]tmp[/\\]watch[/\\]file\.torrent$/),
-        expect.any(Buffer),
+        expect.stringMatching(/[/\\]tmp[/\\]watch[/\\]download-/),
+        Buffer.from('fake'),
       );
     });
   });

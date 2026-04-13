@@ -55,6 +55,8 @@
 
 - ~~**`src/server/services/search-pipeline.ts` `filterAndRankResults` has 10 positional parameters**~~ — resolved in #522 (options bag with `SearchFilterOptions`)
 
+- **SABnzbd/NZBGet adapters lack byte-upload paths**: Both usenet adapters only support URL submission (`mode=addurl` / RPC `append` with URL string). `nzb-bytes` artifact variant was scoped out of #527. SABnzbd supports `mode=addlocalfile` / multipart upload, NZBGet supports base64 content in `append` params[1]. Adding this would allow the resolver to fetch NZB bytes and upload directly, removing dependency on the indexer URL remaining accessible after resolution. (discovered in #527)
+
 ## Accepted Debt
 
 Items below are real but not worth fixing — the cost of change outweighs the benefit.
