@@ -84,11 +84,13 @@ export class MetadataService {
     const authors = await this.withThrottledSearch(provider, 'searchAuthors', (p) => p.searchAuthors(query), warnings);
     const series = await this.withThrottledSearch(provider, 'searchSeries', (p) => p.searchSeries(query), warnings);
 
+    const filteredBooks = await this.filterBooksByLanguage(books);
+
     this.log.debug(
-      { books: books.length, authors: authors.length, series: series.length },
+      { books: filteredBooks.length, authors: authors.length, series: series.length },
       'Metadata search results'
     );
-    return warnings.length > 0 ? { books, authors, series, warnings } : { books, authors, series };
+    return warnings.length > 0 ? { books: filteredBooks, authors, series, warnings } : { books: filteredBooks, authors, series };
   }
 
   private async withThrottledSearch<T>(
@@ -198,6 +200,26 @@ export class MetadataService {
     );
 
     return this.filterAuthorBooks(result.books);
+  }
+
+  private async filterBooksByLanguage(books: BookMetadata[]): Promise<BookMetadata[]> {
+    if (!this.settingsService) return books;
+
+    let languages: readonly string[] = [];
+    try {
+      const metadata = await this.settingsService.get('metadata');
+      languages = metadata.languages;
+    } catch (error: unknown) {
+      this.log.warn({ error }, 'Failed to read language settings for search filtering — returning unfiltered results');
+      return books;
+    }
+
+    if (languages.length === 0) return books;
+
+    return books.filter((book) => {
+      if (!book.language) return true;
+      return languages.includes(book.language.toLowerCase());
+    });
   }
 
   private async filterAuthorBooks(books: BookMetadata[]): Promise<BookMetadata[]> {
