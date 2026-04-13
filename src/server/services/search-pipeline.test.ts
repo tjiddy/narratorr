@@ -1677,3 +1677,179 @@ describe('#502 searchAndGrabForBook with broadcaster — enrichment before filte
     expect(downloadService.grab).not.toHaveBeenCalled();
   });
 });
+
+describe('#533 postProcessSearchResults — multi-part filter uses nzbName after enrichment', () => {
+  function createMockSettingsService533(): SettingsService {
+    const qualityDefaults = { grabFloor: 0, minSeeders: 0, protocolPreference: 'none', maxDownloadSize: 5, rejectWords: '', requiredWords: '' };
+    const metadataDefaults = { audibleRegion: 'us', languages: [] };
+    return {
+      get: vi.fn().mockImplementation((cat: string) => {
+        if (cat === 'quality') return Promise.resolve(qualityDefaults);
+        if (cat === 'metadata') return Promise.resolve(metadataDefaults);
+        return Promise.resolve({});
+      }),
+    } as unknown as SettingsService;
+  }
+
+  function createMockBlacklist533(): BlacklistService {
+    return {
+      getBlacklistedIdentifiers: vi.fn().mockResolvedValue({
+        blacklistedHashes: new Set<string>(),
+        blacklistedGuids: new Set<string>(),
+      }),
+    } as unknown as BlacklistService;
+  }
+
+  beforeEach(() => {
+    mockEnrichUsenet.mockReset();
+  });
+
+  it('filters Usenet result whose nzbName contains multi-part marker but rawTitle/title do not', async () => {
+    const log = createMockLogger();
+    // Simulate enrichment populating nzbName with multi-part marker
+    mockEnrichUsenet.mockImplementation(async (results) => {
+      for (const r of results) {
+        if (r.protocol === 'usenet') r.nzbName = 'Book Title (01 of 30).part01.rar';
+      }
+    });
+
+    const results = [makeResult({ protocol: 'usenet', title: 'Book Title', downloadUrl: 'http://nzb.test/1' })];
+    const output = await postProcessSearchResults(results, 3600, createMockBlacklist533(), createMockSettingsService533(), log);
+
+    expect(output.results).toHaveLength(0);
+    expect(output.unsupportedResults.count).toBe(1);
+  });
+
+  it('still filters Usenet result whose rawTitle contains multi-part marker when nzbName is absent (regression)', async () => {
+    const log = createMockLogger();
+    // Enrichment does not populate nzbName — rawTitle should be checked
+    mockEnrichUsenet.mockResolvedValue(undefined);
+
+    const results = [makeResult({ protocol: 'usenet', title: 'Book Title', rawTitle: 'Book (08 of 30)', downloadUrl: 'http://nzb.test/1' })];
+    const output = await postProcessSearchResults(results, 3600, createMockBlacklist533(), createMockSettingsService533(), log);
+
+    expect(output.results).toHaveLength(0);
+    expect(output.unsupportedResults.count).toBe(1);
+  });
+
+  it('still filters Usenet result whose title contains multi-part marker with no rawTitle or nzbName (regression)', async () => {
+    const log = createMockLogger();
+    mockEnrichUsenet.mockResolvedValue(undefined);
+
+    const results = [makeResult({ protocol: 'usenet', title: 'Book (3/10)', downloadUrl: 'http://nzb.test/1' })];
+    const output = await postProcessSearchResults(results, 3600, createMockBlacklist533(), createMockSettingsService533(), log);
+
+    expect(output.results).toHaveLength(0);
+    expect(output.unsupportedResults.count).toBe(1);
+  });
+
+  it('falls through to rawTitle when nzbName is empty string (|| not ?? operator)', async () => {
+    const log = createMockLogger();
+    // Enrichment sets nzbName to empty string — || should skip it, ?? would not
+    mockEnrichUsenet.mockImplementation(async (results) => {
+      for (const r of results) {
+        if (r.protocol === 'usenet') r.nzbName = '';
+      }
+    });
+
+    const results = [makeResult({ protocol: 'usenet', title: 'Clean Title', rawTitle: 'Book (01 of 30)', downloadUrl: 'http://nzb.test/1' })];
+    const output = await postProcessSearchResults(results, 3600, createMockBlacklist533(), createMockSettingsService533(), log);
+
+    // Should fall through empty nzbName to rawTitle which has multi-part marker
+    expect(output.results).toHaveLength(0);
+    expect(output.unsupportedResults.count).toBe(1);
+  });
+
+  it('falls through to rawTitle then title when nzbName is undefined', async () => {
+    const log = createMockLogger();
+    mockEnrichUsenet.mockResolvedValue(undefined);
+
+    const results = [makeResult({ protocol: 'usenet', title: 'Book (5/10)', downloadUrl: 'http://nzb.test/1' })];
+    const output = await postProcessSearchResults(results, 3600, createMockBlacklist533(), createMockSettingsService533(), log);
+
+    expect(output.results).toHaveLength(0);
+    expect(output.unsupportedResults.count).toBe(1);
+  });
+
+  it('torrent result with multi-part-like title passes through unfiltered (protocol gate)', async () => {
+    const log = createMockLogger();
+    mockEnrichUsenet.mockResolvedValue(undefined);
+
+    const results = [makeResult({ protocol: 'torrent', title: 'Book (01/05)', seeders: 5 })];
+    const output = await postProcessSearchResults(results, 3600, createMockBlacklist533(), createMockSettingsService533(), log);
+
+    expect(output.results).toHaveLength(1);
+    expect(output.results[0].title).toBe('Book (01/05)');
+    expect(output.unsupportedResults.count).toBe(0);
+  });
+
+  it('Usenet result with pre-populated language and multi-part marker in rawTitle is still filtered', async () => {
+    const log = createMockLogger();
+    // Enrichment skips results with pre-populated language — nzbName stays undefined
+    mockEnrichUsenet.mockResolvedValue(undefined);
+
+    const results = [makeResult({ protocol: 'usenet', title: 'Clean Title', rawTitle: 'Book (08 of 30)', language: 'English', downloadUrl: 'http://nzb.test/1' })];
+    const output = await postProcessSearchResults(results, 3600, createMockBlacklist533(), createMockSettingsService533(), log);
+
+    expect(output.results).toHaveLength(0);
+    expect(output.unsupportedResults.count).toBe(1);
+  });
+
+  it('Usenet result with pre-populated language and no nzbName falls back to rawTitle for detection', async () => {
+    const log = createMockLogger();
+    mockEnrichUsenet.mockResolvedValue(undefined);
+
+    // Result has language set (enrichment won't populate nzbName), and rawTitle is clean
+    const results = [makeResult({ protocol: 'usenet', title: 'Clean Title', rawTitle: 'Also Clean', language: 'English', downloadUrl: 'http://nzb.test/1' })];
+    const output = await postProcessSearchResults(results, 3600, createMockBlacklist533(), createMockSettingsService533(), log);
+
+    // No multi-part marker in any field — should pass through
+    expect(output.results).toHaveLength(1);
+    expect(output.unsupportedResults.count).toBe(0);
+  });
+
+  it('records nzbName in unsupportedResults.titles when nzbName triggers the filter', async () => {
+    const log = createMockLogger();
+    mockEnrichUsenet.mockImplementation(async (results) => {
+      for (const r of results) {
+        if (r.protocol === 'usenet') r.nzbName = 'NZB Multi-Part (01 of 30).rar';
+      }
+    });
+
+    const results = [makeResult({ protocol: 'usenet', title: 'Clean Title', downloadUrl: 'http://nzb.test/1' })];
+    const output = await postProcessSearchResults(results, 3600, createMockBlacklist533(), createMockSettingsService533(), log);
+
+    expect(output.unsupportedResults.titles).toEqual(['NZB Multi-Part (01 of 30).rar']);
+  });
+
+  it('blacklist filtering still runs before enrichment (blacklisted result not enriched)', async () => {
+    const log = createMockLogger();
+    const blacklist = {
+      getBlacklistedIdentifiers: vi.fn().mockResolvedValue({
+        blacklistedHashes: new Set<string>(),
+        blacklistedGuids: new Set(['blacklisted-guid']),
+      }),
+    } as unknown as BlacklistService;
+
+    mockEnrichUsenet.mockImplementation(async (results) => {
+      for (const r of results) {
+        if (r.protocol === 'usenet') r.nzbName = 'Some NZB Name';
+      }
+    });
+
+    const results = [
+      makeResult({ protocol: 'usenet', title: 'Blacklisted', guid: 'blacklisted-guid', downloadUrl: 'http://nzb.test/1' }),
+      makeResult({ protocol: 'usenet', title: 'Clean Result', guid: 'clean-guid', downloadUrl: 'http://nzb.test/2' }),
+    ];
+    const output = await postProcessSearchResults(results, 3600, blacklist, createMockSettingsService533(), log);
+
+    // Only the clean result should be enriched — blacklisted one removed before enrichment
+    expect(mockEnrichUsenet).toHaveBeenCalledWith(
+      expect.not.arrayContaining([expect.objectContaining({ guid: 'blacklisted-guid' })]),
+      log,
+    );
+    // Clean result passes (no multi-part marker in nzbName)
+    expect(output.results).toHaveLength(1);
+    expect(output.results[0].guid).toBe('clean-guid');
+  });
+});
