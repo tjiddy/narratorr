@@ -648,4 +648,15 @@ describe('DiscoverPage', () => {
       expect(screen.queryByText('Author Book')).not.toBeInTheDocument();
     });
   });
+
+  // --- #524: unified add flow via api.addBook + mark-added ---
+  describe('unified add flow', () => {
+    it.todo('calls api.addBook with correct payload including authorAsin on add');
+    it.todo('calls mark-added endpoint after successful addBook (201)');
+    it.todo('treats addBook 409 as success and marks suggestion added');
+    it.todo('shows "Already in library" toast on addBook 409');
+    it.todo('shows error toast on addBook non-409 failure');
+    it.todo('does not call mark-added on addBook non-409 failure');
+    it.todo('forwards searchImmediately and monitorForUpgrades overrides to addBook');
+  });
 });

@@ -878,6 +878,13 @@ describe('DiscoveryService', () => {
     });
   });
 
+  // --- #524: markSuggestionAdded (status-flip only) ---
+  describe('markSuggestionAdded', () => {
+    it.todo('flips status from pending to added and returns updated row');
+    it.todo('returns alreadyAdded: true for suggestion with status added');
+    it.todo('returns null for non-existent suggestion ID');
+  });
+
   // --- #408: Expiry ---
 
   describe('expireSuggestions (within refreshSuggestions)', () => {

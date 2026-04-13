@@ -211,4 +211,9 @@ describe('SuggestionCard', () => {
       expect(card.style.animationDelay).toBe('450ms'); // Math.min(15, 9) * 50 = 450
     });
   });
+
+  // --- #524: SuggestionCard renders authorAsin in fixture ---
+  describe('authorAsin wire contract', () => {
+    it.todo('includes authorAsin in makeSuggestion fixture');
+  });
 });

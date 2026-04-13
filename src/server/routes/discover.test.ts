@@ -270,6 +270,14 @@ describe('Discover Routes', () => {
 
   });
 
+  // --- #524: mark-added endpoint (status-flip only) ---
+  describe('POST /api/discover/suggestions/:id/mark-added', () => {
+    it.todo('flips status from pending to added and returns updated suggestion');
+    it.todo('returns 409 for already-added suggestion');
+    it.todo('returns 404 for non-existent suggestion');
+    it.todo('includes authorAsin in suggestion response');
+  });
+
   describe('POST /api/discover/refresh', () => {
     it('triggers manual refresh via task registry and returns refresh summary', async () => {
       const refreshResult = { added: 3, removed: 1, warnings: ['some warning'] };
