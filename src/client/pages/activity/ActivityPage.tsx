@@ -18,19 +18,16 @@ import { DEFAULT_LIMITS } from '../../../shared/schemas/common.js';
 
 export function ActivityPage() {
   const queuePagination = usePagination(DEFAULT_LIMITS.activity);
-  const historyPagination = usePagination(DEFAULT_LIMITS.activity);
   const { clampToTotal: clampQueuePage } = queuePagination;
-  const { clampToTotal: clampHistoryPage } = historyPagination;
 
   const { state, status, mutations } = useActivity(
     { limit: queuePagination.limit, offset: queuePagination.offset },
-    { limit: historyPagination.limit, offset: historyPagination.offset },
   );
-  const { queue, queueTotal, history, historyTotal } = state;
+  const { queue, queueTotal } = state;
   const mergeCards = useMergeActivityCards();
   const searchCards = useSearchProgress();
   const { isLoading } = status;
-  const { cancelMutation, retryMutation, approveMutation, rejectMutation, deleteMutation, deleteHistoryMutation } = mutations;
+  const { cancelMutation, retryMutation, approveMutation, rejectMutation } = mutations;
 
   const [cancellingMergeBookId, setCancellingMergeBookId] = useState<number | null>(null);
   const cancelMergeMutation = useMutation({
@@ -43,13 +40,11 @@ export function ActivityPage() {
     },
   });
 
-  // Clamp pages when totals shrink — use stable clampToTotal callbacks (destructured above)
-  // instead of the full pagination objects to avoid re-running on every render.
+  // Clamp page when total shrinks — use stable clampToTotal callback (destructured above)
+  // instead of the full pagination object to avoid re-running on every render.
   useEffect(() => { clampQueuePage(queueTotal); }, [queueTotal, clampQueuePage]);
-  useEffect(() => { clampHistoryPage(historyTotal); }, [historyTotal, clampHistoryPage]);
 
-  const [tab, setTab] = useState<'downloads' | 'events'>('downloads');
-  const [confirmClearHistory, setConfirmClearHistory] = useState(false);
+  const [tab, setTab] = useState<'active' | 'history'>('active');
 
   if (isLoading) {
     return (
@@ -86,32 +81,32 @@ export function ActivityPage() {
         <div className="inline-flex items-center glass-card rounded-xl p-1 gap-1">
           <button
             type="button"
-            onClick={() => setTab('downloads')}
+            onClick={() => setTab('active')}
             className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
-              tab === 'downloads'
+              tab === 'active'
                 ? 'bg-primary text-primary-foreground shadow-glow'
                 : 'text-muted-foreground hover:text-foreground'
             }`}
           >
             <ActivityIcon className="w-4 h-4" />
-            Downloads
+            Active
           </button>
           <button
             type="button"
-            onClick={() => setTab('events')}
+            onClick={() => setTab('history')}
             className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
-              tab === 'events'
+              tab === 'history'
                 ? 'bg-primary text-primary-foreground shadow-glow'
                 : 'text-muted-foreground hover:text-foreground'
             }`}
           >
             <HistoryIcon className="w-4 h-4" />
-            Event History
+            History
           </button>
         </div>
       </div>
 
-      {tab === 'downloads' && (
+      {tab === 'active' && (
         <DownloadsTabSection
           queue={queue}
           queueTotal={queueTotal}
@@ -124,17 +119,10 @@ export function ActivityPage() {
           rejectMutation={rejectMutation}
           cancellingMergeBookId={cancellingMergeBookId}
           cancelMergeMutation={cancelMergeMutation}
-          history={history}
-          historyTotal={historyTotal}
-          historyPagination={historyPagination}
-          deleteMutation={deleteMutation}
-          deleteHistoryMutation={deleteHistoryMutation}
-          confirmClearHistory={confirmClearHistory}
-          onConfirmClearHistoryChange={setConfirmClearHistory}
         />
       )}
 
-      {tab === 'events' && (
+      {tab === 'history' && (
         <div className="animate-fade-in-up stagger-2">
           <EventHistorySection />
         </div>
