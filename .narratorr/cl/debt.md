@@ -57,6 +57,28 @@
 
 - **SABnzbd/NZBGet adapters lack byte-upload paths**: Both usenet adapters only support URL submission (`mode=addurl` / RPC `append` with URL string). `nzb-bytes` artifact variant was scoped out of #527. SABnzbd supports `mode=addlocalfile` / multipart upload, NZBGet supports base64 content in `append` params[1]. Adding this would allow the resolver to fetch NZB bytes and upload directly, removing dependency on the indexer URL remaining accessible after resolution. (discovered in #527)
 
+- **`src/core/utils/download-url.ts:290` sanitizeNetworkError fallthrough leaks error.message**: The catch-all `return new Error('Download failed: ${error.message}')` copies the raw message verbatim. If an unexpected error type includes the download URL (with passkeys/tokens), it would leak. Known error codes (ENOTFOUND, ECONNREFUSED, ETIMEDOUT, ECONNRESET) are all handled safely above, but the catch-all is unverified. Consider replacing with a static message or stripping URL-like patterns. (discovered in Archer session review of #527)
+
+- **`src/client/pages/discover/DiscoverPage.tsx:52` markAdded fire-and-forget has no error logging**: `api.markDiscoverSuggestionAdded(id).catch(() => {})` silently swallows all errors. If the backend call fails, the suggestion reappears on next page load with no warning. Add `.catch((err) => console.warn('mark-added failed:', err))` at minimum. Failure path is also untested. (discovered in Archer session review of #524)
+
+- **`src/server/services/metadata.service.ts:219-221 vs 252-255` language predicate duplicated**: The `if (!book.language) return true; return languages.includes(book.language.toLowerCase())` predicate appears in both `filterBooksByLanguage` and `filterAuthorBooks`. Extract a `bookMatchesLanguages(book, languages)` one-liner to prevent drift. (discovered in Archer session review of #523)
+
+- **`src/core/utils/download-url.ts:65-66, 107-110` base32 normalization duplicated**: `infoHash.length === 32 ? base32ToHex(infoHash).toLowerCase() : infoHash.toLowerCase()` appears in both `resolveMagnet()` and `handleRedirect()`. Extract a `normalizeInfoHash(hash)` helper. (discovered in Archer session review of #527)
+
+- **`src/server/services/import-orchestrator.test.ts:23-28` mock CONTENT_FAILURE_PATTERNS is a silent copy**: The mock factory inlines its own copy of the 4 pattern strings that must stay in sync with `import-steps.ts`. No comment warns of this. Add a sync-warning comment. (discovered in Archer session review of #522)
+
+- **Discovery candidates use region-only language gate, not configured-languages array**: `discovery-candidates.ts:182` checks `book.language.toLowerCase() !== ctx.regionLang` (single region-derived language), while search/author filtering uses the full `metadata.languages` array. A user with `languages: ['english', 'french']` but `audibleRegion: 'us'` will have French books filtered out of discovery but not search. Undocumented inconsistency. (discovered in Archer session review of #523)
+
+- **`src/server/services/import-orchestrator.ts:122-128` SSE status mismatch in drain path**: `drainQueuedImports` emits `emitDownloadImporting` with `downloadStatus: 'processing_queued'` while the DB row is already `importing` (set by `claimQueuedDownload`). SSE consumers that display the payload status would briefly show the wrong state. (discovered in Archer session review of #525)
+
+- **No concurrent-drain test for import nudge**: Two simultaneous `drainQueuedImports` calls racing on the same queued item are safe via CAS (`claimQueuedDownload`) but no test exercises this scenario. `src/server/services/import-orchestrator.test.ts`. (discovered in Archer session review of #525)
+
+- **`src/server/services/import-orchestrator.ts:85` processCompletedDownloads doesn't nudge**: The cron batch path releases slots but does not call `drainQueuedImports`. Intentional (cron re-queries immediately), but undocumented — a future reader might add nudge without understanding the design. Add a comment. (discovered in Archer session review of #525)
+
+- **`src/client/pages/settings/QualitySettingsSection.tsx:65 vs 84` step attribute inconsistency**: `minSeeders` uses `step={1}` (number) while `maxDownloadSize` uses `step="1"` (string). Both render identically but mixing forms is inconsistent. (discovered in Archer session review of #522)
+
+- **`src/server/services/download.service.ts:271` logs raw passkey URL at debug level**: `logUrl` passes `params.downloadUrl` (which may contain passkeys/tokens) to `this.log.debug`. Pre-existing behavior, not introduced by #527, but worth noting since the resolver was careful to sanitize error messages. (discovered in Archer session review of #527)
+
 ## Accepted Debt
 
 Items below are real but not worth fixing — the cost of change outweighs the benefit.

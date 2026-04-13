@@ -14,7 +14,7 @@ function makeSuggestion(overrides: Partial<SuggestionRow> = {}): SuggestionRow {
     authorAsin: 'A_SANDERSON',
     narratorName: 'Michael Kramer',
     coverUrl: 'https://example.com/cover.jpg',
-    duration: 16200, // 270 minutes = 4h 30m
+    duration: 270, // 270 minutes = 4h 30m (Audible runtime_length_min)
     publishedDate: '2010-08-31',
     language: 'English',
     genres: ['Fantasy', 'Epic'],
