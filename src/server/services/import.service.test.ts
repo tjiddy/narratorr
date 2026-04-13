@@ -7,7 +7,7 @@ import type { DownloadClientService } from './download-client.service.js';
 import type { RemotePathMappingService } from './remote-path-mapping.service.js';
 import type { FastifyBaseLogger } from 'fastify';
 import type { Db } from '../../db/index.js';
-import { and, inArray, isNotNull } from 'drizzle-orm';
+import { and, eq, inArray, isNotNull } from 'drizzle-orm';
 import { downloads } from '../../db/schema.js';
 
 // Mock node:fs/promises
@@ -1772,6 +1772,82 @@ describe('ImportService', () => {
         .map((r: { value: unknown }) => ((r.value as { set: ReturnType<typeof vi.fn> }).set))
         .flatMap((s: ReturnType<typeof vi.fn>) => s.mock.calls.map((c: unknown[]) => c[0] as Record<string, unknown>));
       expect(updateSetCalls).toContainEqual({ status: 'processing_queued' });
+    });
+  });
+
+  // ── #525 — getNextQueuedDownload + claimQueuedDownload ──────────────────
+  describe('getNextQueuedDownload', () => {
+    beforeEach(setupDefaults);
+
+    it('returns oldest processing_queued download with non-null bookId', async () => {
+      const queued = { id: 5, bookId: 3 };
+      const chain = mockDbChain([queued]);
+      db.select.mockReturnValueOnce(chain);
+
+      const result = await service.getNextQueuedDownload();
+
+      expect(result).toEqual({ id: 5, bookId: 3 });
+
+      // Verify where predicate: status = processing_queued AND bookId IS NOT NULL
+      const whereFn = (chain as Record<string, Mock>).where;
+      expect(whereFn).toHaveBeenCalledWith(
+        and(eq(downloads.status, 'processing_queued'), isNotNull(downloads.bookId)),
+      );
+
+      // Verify FIFO ordering: completedAt, id
+      const orderByFn = (chain as Record<string, Mock>).orderBy;
+      expect(orderByFn).toHaveBeenCalledWith(downloads.completedAt, downloads.id);
+
+      // Verify limit(1)
+      const limitFn = (chain as Record<string, Mock>).limit;
+      expect(limitFn).toHaveBeenCalledWith(1);
+    });
+
+    it('returns null when no processing_queued rows exist', async () => {
+      db.select.mockReturnValueOnce(mockDbChain([]));
+
+      const result = await service.getNextQueuedDownload();
+
+      expect(result).toBeNull();
+    });
+
+    it('returns null when row has null bookId', async () => {
+      db.select.mockReturnValueOnce(mockDbChain([{ id: 5, bookId: null }]));
+
+      const result = await service.getNextQueuedDownload();
+
+      expect(result).toBeNull();
+    });
+  });
+
+  describe('claimQueuedDownload', () => {
+    beforeEach(setupDefaults);
+
+    it('returns true when CAS update affects 1 row', async () => {
+      const chain = mockDbChain({ rowsAffected: 1 });
+      db.update.mockReturnValueOnce(chain);
+
+      const result = await service.claimQueuedDownload(5);
+
+      expect(result).toBe(true);
+
+      // Verify set payload: { status: 'importing' }
+      const setFn = (chain as Record<string, Mock>).set;
+      expect(setFn).toHaveBeenCalledWith({ status: 'importing' });
+
+      // Verify where predicate: id = 5 AND status = 'processing_queued'
+      const whereFn = (chain as Record<string, Mock>).where;
+      expect(whereFn).toHaveBeenCalledWith(
+        and(eq(downloads.id, 5), eq(downloads.status, 'processing_queued')),
+      );
+    });
+
+    it('returns false when CAS update affects 0 rows (already claimed)', async () => {
+      db.update.mockReturnValueOnce(mockDbChain({ rowsAffected: 0 }));
+
+      const result = await service.claimQueuedDownload(5);
+
+      expect(result).toBe(false);
     });
   });
 
