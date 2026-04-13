@@ -287,7 +287,8 @@ function sanitizeNetworkError(error: unknown): Error {
     if (code === 'ECONNRESET') {
       return new Error('Download failed: connection reset');
     }
-    return new Error(`Download failed: ${error.message}`);
+    const sanitized = error.message.replace(/https?:\/\/\S+/gi, '[redacted-url]');
+    return new Error(`Download failed: ${sanitized}`);
   }
 
   return new Error('Download failed: unknown network error');

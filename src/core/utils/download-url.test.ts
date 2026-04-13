@@ -414,6 +414,55 @@ describe('DownloadUrl', () => {
       expect(error).toBeInstanceOf(Error);
       expect((error as Error).message).toBe('Download failed: connection refused');
     });
+
+    // #541 — sanitizeNetworkError URL redaction for non-undici errors
+    it('redacts URL with passkey/token from unknown error message', async () => {
+      const secretUrl = 'https://indexer.example.com/dl/secret-passkey-12345';
+      const err = new Error('connect ECONNREFUSED https://indexer.example.com/api?apikey=SECRET123');
+      mockFetch.mockRejectedValueOnce(err);
+
+      const dl = new DownloadUrl(secretUrl, 'torrent');
+      const error = await dl.resolve().catch((e: Error) => e);
+      expect(error).toBeInstanceOf(Error);
+      expect((error as Error).message).not.toContain('https://');
+      expect((error as Error).message).not.toContain('SECRET123');
+      expect((error as Error).message).toMatch(/^Download failed:/);
+    });
+
+    it('redacts URL without credentials from unknown error message', async () => {
+      const secretUrl = 'https://indexer.example.com/dl/secret-passkey-12345';
+      const err = new Error('Failed to fetch https://example.com/file.nzb');
+      mockFetch.mockRejectedValueOnce(err);
+
+      const dl = new DownloadUrl(secretUrl, 'torrent');
+      const error = await dl.resolve().catch((e: Error) => e);
+      expect(error).toBeInstanceOf(Error);
+      expect((error as Error).message).not.toContain('https://');
+      expect((error as Error).message).toMatch(/^Download failed:/);
+    });
+
+    it('passes through error message with no URL unchanged', async () => {
+      const secretUrl = 'https://indexer.example.com/dl/secret-passkey-12345';
+      const err = new Error('socket hang up');
+      mockFetch.mockRejectedValueOnce(err);
+
+      const dl = new DownloadUrl(secretUrl, 'torrent');
+      const error = await dl.resolve().catch((e: Error) => e);
+      expect(error).toBeInstanceOf(Error);
+      expect((error as Error).message).toBe('Download failed: socket hang up');
+    });
+
+    it('redacts bare URL string as error message', async () => {
+      const secretUrl = 'https://indexer.example.com/dl/secret-passkey-12345';
+      const err = new Error('https://indexer.example.com/dl/secret-passkey-12345');
+      mockFetch.mockRejectedValueOnce(err);
+
+      const dl = new DownloadUrl(secretUrl, 'torrent');
+      const error = await dl.resolve().catch((e: Error) => e);
+      expect(error).toBeInstanceOf(Error);
+      expect((error as Error).message).not.toContain('https://');
+      expect((error as Error).message).toMatch(/^Download failed:/);
+    });
   });
 });
 

@@ -385,6 +385,34 @@ describe('filterAndRankResults — ebook format filtering', () => {
     );
     expect(results).toHaveLength(0);
   });
+
+  // #541 — cross-field ebook/audio detection
+  it('keeps result when nzbName has ebook keyword and rawTitle has audio keyword (cross-field)', () => {
+    const { results } = filterAndRankResults(
+      [makeResult({ nzbName: 'BookTitle-EPUB.part01.rar', rawTitle: 'BookTitle MP3', title: 'Book Title' })],
+      base.bookDuration,
+      { grabFloor: base.grabFloor, minSeeders: base.minSeeders, protocolPreference: base.protocolPreference },
+    );
+    expect(results).toHaveLength(1);
+  });
+
+  it('keeps result when nzbName has ebook keyword and title has audio keyword (cross-field)', () => {
+    const { results } = filterAndRankResults(
+      [makeResult({ nzbName: 'BookTitle-EPUB.part01.rar', rawTitle: 'BookTitle', title: 'Book Title M4B' })],
+      base.bookDuration,
+      { grabFloor: base.grabFloor, minSeeders: base.minSeeders, protocolPreference: base.protocolPreference },
+    );
+    expect(results).toHaveLength(1);
+  });
+
+  it('filters result when nzbName has ebook keyword and no audio keyword in any field', () => {
+    const { results } = filterAndRankResults(
+      [makeResult({ nzbName: 'BookTitle-EPUB.part01.rar', rawTitle: 'BookTitle', title: 'Book Title' })],
+      base.bookDuration,
+      { grabFloor: base.grabFloor, minSeeders: base.minSeeders, protocolPreference: base.protocolPreference },
+    );
+    expect(results).toHaveLength(0);
+  });
 });
 
 describe('filterAndRankResults — minSeeders default', () => {

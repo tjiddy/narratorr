@@ -208,7 +208,9 @@ export function filterAndRankResults(
   filtered = filtered.filter((r) => {
     const sourceTitle = r.nzbName || r.rawTitle || r.title;
     if (!EBOOK_FORMAT_RE.test(sourceTitle)) return true;
-    return AUDIO_FORMAT_RE.test(sourceTitle);
+    // Check all available title fields for audio keywords — ebook and audio markers
+    // may be split across fields (e.g., nzbName=EPUB, rawTitle=MP3).
+    return [r.nzbName, r.rawTitle, r.title].some((t) => t && AUDIO_FORMAT_RE.test(t));
   });
 
   // Apply min seeders filter (torrent only)

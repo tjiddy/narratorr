@@ -57,7 +57,7 @@
 
 - **SABnzbd/NZBGet adapters lack byte-upload paths**: Both usenet adapters only support URL submission (`mode=addurl` / RPC `append` with URL string). `nzb-bytes` artifact variant was scoped out of #527. SABnzbd supports `mode=addlocalfile` / multipart upload, NZBGet supports base64 content in `append` params[1]. Adding this would allow the resolver to fetch NZB bytes and upload directly, removing dependency on the indexer URL remaining accessible after resolution. (discovered in #527)
 
-- **`src/core/utils/download-url.ts:290` sanitizeNetworkError fallthrough leaks error.message**: The catch-all `return new Error('Download failed: ${error.message}')` copies the raw message verbatim. If an unexpected error type includes the download URL (with passkeys/tokens), it would leak. Known error codes (ENOTFOUND, ECONNREFUSED, ETIMEDOUT, ECONNRESET) are all handled safely above, but the catch-all is unverified. Consider replacing with a static message or stripping URL-like patterns. (discovered in Archer session review of #527)
+- ~~**`src/core/utils/download-url.ts:290` sanitizeNetworkError fallthrough leaks error.message**~~ — resolved in #541 (URL redaction via regex)
 
 - **`src/client/pages/discover/DiscoverPage.tsx:52` markAdded fire-and-forget has no error logging**: `api.markDiscoverSuggestionAdded(id).catch(() => {})` silently swallows all errors. If the backend call fails, the suggestion reappears on next page load with no warning. Add `.catch((err) => console.warn('mark-added failed:', err))` at minimum. Failure path is also untested. (discovered in Archer session review of #524)
 
@@ -65,7 +65,7 @@
 
 - **`src/core/utils/download-url.ts:65-66, 107-110` base32 normalization duplicated**: `infoHash.length === 32 ? base32ToHex(infoHash).toLowerCase() : infoHash.toLowerCase()` appears in both `resolveMagnet()` and `handleRedirect()`. Extract a `normalizeInfoHash(hash)` helper. (discovered in Archer session review of #527)
 
-- **`src/server/services/import-orchestrator.test.ts:23-28` mock CONTENT_FAILURE_PATTERNS is a silent copy**: The mock factory inlines its own copy of the 4 pattern strings that must stay in sync with `import-steps.ts`. No comment warns of this. Add a sync-warning comment. (discovered in Archer session review of #522)
+- ~~**`src/server/services/import-orchestrator.test.ts:23-28` mock CONTENT_FAILURE_PATTERNS is a silent copy**~~ — resolved in #541 (replaced with importOriginal passthrough)
 
 - **Discovery candidates use region-only language gate, not configured-languages array**: `discovery-candidates.ts:182` checks `book.language.toLowerCase() !== ctx.regionLang` (single region-derived language), while search/author filtering uses the full `metadata.languages` array. A user with `languages: ['english', 'french']` but `audibleRegion: 'us'` will have French books filtered out of discovery but not search. Undocumented inconsistency. (discovered in Archer session review of #523)
 
