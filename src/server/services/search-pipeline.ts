@@ -206,7 +206,7 @@ export function filterAndRankResults(
   const EBOOK_FORMAT_RE = /(?<![a-zA-Z\d])(azw3|epub|pdf|mobi)(?![a-zA-Z\d])/i;
   const AUDIO_FORMAT_RE = /(?<![a-zA-Z\d])(m4b|mp3|flac|aac|ogg)(?![a-zA-Z\d])/i;
   filtered = filtered.filter((r) => {
-    const sourceTitle = r.rawTitle ?? r.title;
+    const sourceTitle = r.nzbName || r.rawTitle || r.title;
     if (!EBOOK_FORMAT_RE.test(sourceTitle)) return true;
     return AUDIO_FORMAT_RE.test(sourceTitle);
   });
