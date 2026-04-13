@@ -699,6 +699,17 @@ describe('DiscoveryService', () => {
       const result = await service.markSuggestionAdded(999);
       expect(result).toBeNull();
     });
+
+    it('returns invalidStatus for dismissed suggestion', async () => {
+      const existing = { id: 1, asin: 'B001', status: 'dismissed' };
+      const db = createMockDb();
+      db.select.mockReturnValue(mockDbChain([existing]));
+      const { service } = createService(db);
+
+      const result = await service.markSuggestionAdded(1);
+      expect(result!.invalidStatus).toBe(true);
+      expect(mockBookService.create).not.toHaveBeenCalled();
+    });
   });
 
   // --- #408: Expiry ---

@@ -127,6 +127,17 @@ describe('Discover Routes', () => {
       expect(res.statusCode).toBe(404);
     });
 
+    it('returns 409 for dismissed suggestion (not pending)', async () => {
+      (services.discovery.markSuggestionAdded as Mock).mockResolvedValueOnce({
+        suggestion: mockSuggestionRow({ id: 1, status: 'dismissed' }),
+        invalidStatus: true,
+      });
+
+      const res = await app.inject({ method: 'POST', url: '/api/discover/suggestions/1/mark-added' });
+      expect(res.statusCode).toBe(409);
+      expect(JSON.parse(res.payload).error).toBe('Suggestion is not pending');
+    });
+
     it('includes authorAsin in suggestion response', async () => {
       (services.discovery.markSuggestionAdded as Mock).mockResolvedValueOnce({
         suggestion: mockSuggestionRow({ id: 1, status: 'added', authorAsin: 'A001' }),

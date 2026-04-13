@@ -91,6 +91,9 @@ export async function discoverRoutes(app: FastifyInstance, deps: DiscoverRouteDe
       if (result.alreadyAdded) {
         return reply.status(409).send({ error: 'Suggestion already added' });
       }
+      if (result.invalidStatus) {
+        return reply.status(409).send({ error: 'Suggestion is not pending' });
+      }
       return { suggestion: toSuggestionResponse(result.suggestion) };
     },
   );
