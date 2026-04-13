@@ -43,6 +43,7 @@ import {
   recordImportFailedEvent,
   handleImportFailure,
   runAudioProcessing,
+  isContentFailure,
 } from './import-steps.js';
 
 function createMockLog(): FastifyBaseLogger {
@@ -846,6 +847,44 @@ describe('runAudioProcessing', () => {
         sourcePath: '/src', sourceStats: { isDirectory: () => false, size: 100 } as unknown as Stats,
         libraryPath: '/lib', minFreeSpaceGB: 1, processingEnabled: false,
       })).rejects.toThrow('Disk space check failed');
+    });
+  });
+
+  describe('isContentFailure classifier (#504)', () => {
+    it('returns true for "No audio files found in /path"', () => {
+      expect(isContentFailure(new Error('No audio files found in /downloads/book'))).toBe(true);
+    });
+
+    it('returns true for "not a supported audio format"', () => {
+      expect(isContentFailure(new Error('Source file is not a supported audio format: track.xyz'))).toBe(true);
+    });
+
+    it('returns true for "Duplicate filename"', () => {
+      expect(isContentFailure(new Error('Duplicate filename "01.mp3" found during import flattening: "/a" and "/b"'))).toBe(true);
+    });
+
+    it('returns true for "Copy verification failed"', () => {
+      expect(isContentFailure(new Error('Copy verification failed: source 1000 bytes, target 500 bytes'))).toBe(true);
+    });
+
+    it('returns false for environment errors (path not found, disk space)', () => {
+      expect(isContentFailure(new Error('Path not found: /downloads/book'))).toBe(false);
+      expect(isContentFailure(new Error('Import blocked — insufficient disk space'))).toBe(false);
+      expect(isContentFailure(new Error('Disk space check failed: permission denied'))).toBe(false);
+    });
+
+    it('returns false for audio processing failures', () => {
+      expect(isContentFailure(new Error('Audio processing failed: ffmpeg exited with code 1'))).toBe(false);
+      expect(isContentFailure(new Error('Audio processing failed: ffmpeg stalled'))).toBe(false);
+      expect(isContentFailure(new Error('Audio processing failed: spawn ENOENT'))).toBe(false);
+    });
+
+    it('returns false for generic/unknown Error', () => {
+      expect(isContentFailure(new Error('something unexpected'))).toBe(false);
+    });
+
+    it('returns false for non-Error throwable', () => {
+      expect(isContentFailure('a string error')).toBe(false);
     });
   });
 });
