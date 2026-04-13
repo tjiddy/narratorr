@@ -1,5 +1,5 @@
 import type { FastifyBaseLogger } from 'fastify';
-import { calculateQuality, isMultiPartUsenetPost } from '../../core/utils/index.js';
+import { calculateQuality, filterByLanguage, filterMultiPartUsenet } from '../../core/utils/index.js';
 import { diceCoefficient, tokenizeNarrators, normalizeNarrator } from '../../core/utils/similarity.js';
 import { enrichUsenetLanguages } from '../utils/enrich-usenet-languages.js';
 import type { SearchResult } from '../../core/index.js';
@@ -242,12 +242,7 @@ export function filterAndRankResults(
 
   // Language filtering: exclude results with explicit non-matching language
   const langs = languages ?? [];
-  if (langs.length > 0) {
-    filtered = filtered.filter((r) => {
-      if (!r.language) return true; // unknown → pass through
-      return langs.includes(r.language.toLowerCase());
-    });
-  }
+  filtered = filterByLanguage(filtered, langs);
 
   // Canonical ranking
   filtered.sort((a, b) => canonicalCompare(a, b, bookDuration, durationUnknown, protocolPreference, langs, narratorPriority));
@@ -295,17 +290,7 @@ export async function postProcessSearchResults(
   await enrichUsenetLanguages(filteredResults, logger);
 
   // Filter multi-part Usenet posts (after enrichment so nzbName is available)
-  const unsupportedTitles: string[] = [];
-  const results = filteredResults.filter((r) => {
-    if (r.protocol !== 'usenet') return true;
-    const sourceTitle = r.nzbName || r.rawTitle || r.title;
-    const multiPart = isMultiPartUsenetPost(sourceTitle);
-    if (multiPart.match && multiPart.total! > 1) {
-      unsupportedTitles.push(sourceTitle);
-      return false;
-    }
-    return true;
-  });
+  const { filtered: results, rejectedTitles: unsupportedTitles } = filterMultiPartUsenet(filteredResults);
 
   // Quality filtering and ranking
   const qualitySettings = await settingsService.get('quality');
