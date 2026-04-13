@@ -326,6 +326,7 @@ export const suggestions = sqliteTable('suggestions', {
   asin: text('asin').notNull(),
   title: text('title').notNull(),
   authorName: text('author_name').notNull(),
+  authorAsin: text('author_asin'),
   narratorName: text('narrator_name'),
   coverUrl: text('cover_url'),
   duration: integer('duration'),
