@@ -210,6 +210,30 @@ export class ImportService {
     await this.db.update(downloads).set({ status: 'processing_queued' }).where(eq(downloads.id, downloadId));
   }
 
+  /** Get the next processing_queued download (oldest first). Returns null if none queued. */
+  async getNextQueuedDownload(): Promise<{ id: number; bookId: number } | null> {
+    const rows = await this.db
+      .select({ id: downloads.id, bookId: downloads.bookId })
+      .from(downloads)
+      .where(and(
+        eq(downloads.status, 'processing_queued'),
+        isNotNull(downloads.bookId),
+      ))
+      .orderBy(downloads.completedAt, downloads.id)
+      .limit(1);
+    if (!rows[0] || rows[0].bookId === null) return null;
+    return { id: rows[0].id, bookId: rows[0].bookId };
+  }
+
+  /** Atomically claim a processing_queued download for import. Returns true if claimed. */
+  async claimQueuedDownload(downloadId: number): Promise<boolean> {
+    const result = await this.db
+      .update(downloads)
+      .set({ status: 'importing' })
+      .where(and(eq(downloads.id, downloadId), eq(downloads.status, 'processing_queued')));
+    return (result as unknown as { rowsAffected?: number }).rowsAffected === 1;
+  }
+
   private async getDownload(id: number): Promise<DownloadRow | null> {
     const results = await this.db.select().from(downloads).where(eq(downloads.id, id)).limit(1);
     return results[0] ?? null;

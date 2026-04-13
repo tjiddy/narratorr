@@ -175,6 +175,9 @@ export class QualityGateOrchestrator {
         })
         .finally(() => {
           this.importService!.releaseSlot();
+          this.importOrchestrator!.drainQueuedImports().catch((error: unknown) => {
+            this.log.error({ error }, 'Quality gate: queued import drain failed');
+          });
         });
     } else {
       await this.importService.setProcessingQueued(downloadId);

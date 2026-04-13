@@ -152,6 +152,9 @@ export async function activityRoutes(app: FastifyInstance, downloadService: Down
           })
           .finally(() => {
             importService.releaseSlot();
+            importOrchestrator.drainQueuedImports().catch((error: unknown) => {
+              request.log.error({ error }, 'Approve: queued import drain failed');
+            });
           });
         return result;
       } else {

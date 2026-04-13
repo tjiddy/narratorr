@@ -100,6 +100,43 @@ export class ImportOrchestrator {
     return results;
   }
 
+  /**
+   * Drain the processing_queued import queue one download at a time.
+   * Called fire-and-forget after a slot is released. Chains recursively
+   * until the queue is empty, the atomic claim fails, or no slot is available.
+   */
+  async drainQueuedImports(): Promise<void> {
+    const next = await this.importService.getNextQueuedDownload();
+    if (!next) return;
+
+    const claimed = await this.importService.claimQueuedDownload(next.id);
+    if (!claimed) return;
+
+    if (!this.importService.tryAcquireSlot()) {
+      // No slot — revert the claim
+      await this.importService.setProcessingQueued(next.id);
+      return;
+    }
+
+    // Emit SSE explicitly — importDownload() skips it when status is already 'importing'
+    emitDownloadImporting({
+      broadcaster: this.broadcaster,
+      downloadId: next.id,
+      bookId: next.bookId,
+      downloadStatus: 'processing_queued',
+      log: this.log,
+    });
+
+    try {
+      await this.importDownload(next.id);
+    } catch (error: unknown) {
+      this.log.error({ downloadId: next.id, error }, 'Queued import failed');
+    } finally {
+      this.importService.releaseSlot();
+      await this.drainQueuedImports();
+    }
+  }
+
   private async dispatchSuccessSideEffects(result: ImportResult, ctx: ImportContext): Promise<void> {
     // Best-effort: tagging
     try {
