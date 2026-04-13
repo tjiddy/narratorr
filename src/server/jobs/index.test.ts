@@ -366,7 +366,7 @@ describe('startJobs', () => {
       expect(services.eventHistory.pruneOlderThan).toHaveBeenCalledWith(90);
     });
 
-    // TODO: invert when per-sub-task isolation is implemented (see debt.md)
+    // TODO: invert when per-sub-task isolation is implemented (see .narratorr/cl/debt.md)
     it('VACUUM failure prevents subsequent sub-tasks (pins current lack of per-sub-task isolation)', async () => {
       (services.settings.get as ReturnType<typeof vi.fn>).mockImplementation(async (category: string) => {
         if (category === 'search') return { intervalMinutes: 30 };
