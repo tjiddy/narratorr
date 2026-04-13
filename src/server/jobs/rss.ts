@@ -1,6 +1,5 @@
 import type { FastifyBaseLogger } from 'fastify';
-import { calculateQuality, compareQuality, resolveBookQualityInputs, scoreResult } from '../../core/utils/index.js';
-import { isMultiPartUsenetPost } from '../../core/utils/index.js';
+import { calculateQuality, compareQuality, filterMultiPartUsenet, resolveBookQualityInputs, scoreResult } from '../../core/utils/index.js';
 import type { SearchResult } from '../../core/index.js';
 import type { SettingsService } from '../services/settings.service.js';
 import type { BookService, BookWithAuthor } from '../services/book.service.js';
@@ -142,12 +141,7 @@ export async function runRssJob(
     await enrichUsenetLanguages(bookResults, log);
 
     // Filter multi-part Usenet posts (after enrichment so nzbName is available)
-    const afterMultipart = bookResults.filter((r) => {
-      if (r.protocol !== 'usenet') return true;
-      const sourceTitle = r.nzbName || r.rawTitle || r.title;
-      const multiPart = isMultiPartUsenetPost(sourceTitle);
-      return !(multiPart.match && multiPart.total! > 1);
-    });
+    const { filtered: afterMultipart } = filterMultiPartUsenet(bookResults);
 
     // Apply filter pipeline to all items for this book, then pick best-ranked
     const duration = candidate.duration
