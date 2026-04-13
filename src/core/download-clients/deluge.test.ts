@@ -243,6 +243,12 @@ describe('DelugeClient', () => {
 
       await expect(client.addDownload(artifact)).rejects.toThrow('no torrent hash');
     });
+
+    it('rejects nzb-url artifact with torrent-only error', async () => {
+      await expect(
+        client.addDownload({ type: 'nzb-url', url: 'https://indexer.test/nzb' }),
+      ).rejects.toThrow('only supports torrent artifacts');
+    });
   });
 
   describe('getDownload', () => {

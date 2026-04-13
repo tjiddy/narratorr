@@ -237,6 +237,12 @@ describe('QBittorrentClient', () => {
         expect(capturedBody).toContain('true');
       });
     });
+
+    it('rejects nzb-url artifact with torrent-only error', async () => {
+      await expect(
+        client.addDownload({ type: 'nzb-url', url: 'https://indexer.test/nzb' }),
+      ).rejects.toThrow('only supports torrent artifacts');
+    });
   });
 
   describe('getDownload', () => {

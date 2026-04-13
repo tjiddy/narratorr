@@ -137,6 +137,12 @@ describe('NZBGetClient', () => {
         client.addDownload(nzbUrl('https://indexer.test/nzb')),
       ).rejects.toThrow('failed to add');
     });
+
+    it('rejects torrent artifact with usenet-only error', async () => {
+      await expect(
+        client.addDownload({ type: 'magnet-uri', uri: 'magnet:?xt=urn:btih:abc123', infoHash: 'abc123' }),
+      ).rejects.toThrow('only supports usenet artifacts');
+    });
   });
 
   describe('getDownload', () => {
