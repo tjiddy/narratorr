@@ -1,5 +1,34 @@
 # Workflow Log
 
+## #533 fix: search multi-part filter runs before nzbName enrichment — 2026-04-13
+**Skill path:** /elaborate → /respond-to-spec-review → /implement → /claim → /plan → /handoff
+**Outcome:** success — PR #535
+
+### Metrics
+- Files changed: 2 | Tests added/modified: 10
+- Quality gate runs: 2 (pass on attempt 1 both times)
+- Fix iterations: 1 (regression test expected nzbName to be ignored when present and clean — corrected test expectation)
+- Context compactions: 0
+
+### Workflow experience
+- What went smoothly: Small, focused change — one function reorder plus operator change. TDD caught the regression test expectation error immediately.
+- Friction / issues encountered: Spec review required 2 rounds — the blocking finding about `enrichUsenetLanguages()` skipping `!r.language` results was not obvious from the code without reading the full enrichment function. The `/elaborate` → `/respond-to-spec-review` cycle was productive.
+
+### Token efficiency
+- Highest-token actions: Explore subagent during /elaborate (read enrichment function, all callers, test patterns)
+- Avoidable waste: The Explore subagent in /plan partially duplicated /elaborate exploration
+- Suggestions: When /elaborate has already run, /plan could reuse findings from the elaborate verdict
+
+### Infrastructure gaps
+- Repeated workarounds: None
+- Missing tooling / config: None
+- Unresolved debt: search-pipeline.ts still ~491 lines (existing debt item)
+
+### Wish I'd Known
+1. `enrichUsenetLanguages()` has a `!r.language` guard that skips language-pre-populated results — this scope limitation was the blocking spec review finding and cost an extra review round
+2. The `||` vs `??` operator difference at line 294 was the actual semantic bug beyond just ordering — `??` doesn't skip empty strings, `||` does. See `or-vs-nullish-coalescing-title-precedence.md`
+3. One regression test (rawTitle marker with clean nzbName) needed rewriting because `nzbName || rawTitle` precedence means nzbName takes priority — the test was asserting old behavior
+
 ## #520 fix: ebook filter skips nzbName — 2026-04-13
 **Skill path:** /elaborate → /respond-to-spec-review (x2) → /implement → /claim → /plan → /handoff
 **Outcome:** success — PR #534
