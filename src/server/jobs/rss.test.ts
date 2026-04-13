@@ -1029,6 +1029,31 @@ describe('#502 runRssJob — enrichment before filtering', () => {
     expect(mockEnrichUsenet).not.toHaveBeenCalled();
   });
 
+  it('enrichment only receives matched candidates, not unmatched below-threshold items', async () => {
+    const wantedBooks = [makeWantedBook(1, 'The Way of Kings', 'Brandon Sanderson')];
+    const rssResults = [
+      // Matched: title matches wanted book above threshold
+      makeResult('The Way of Kings', 'Brandon Sanderson', { protocol: 'usenet' as const, downloadUrl: 'http://nzb.test/matched' }),
+      // Unmatched: completely different title, will score below 0.7
+      makeResult('Totally Unrelated Book XYZ', 'Someone Else', { protocol: 'usenet' as const, downloadUrl: 'http://nzb.test/unmatched' }),
+    ];
+    const settings = createMockSettingsService({ rss: { enabled: true } });
+    const { bookList, book } = createMockBookServices(wantedBooks);
+    const indexer = createMockIndexerService(rssResults);
+    const download = createMockDownloadOrchestrator();
+    const blacklist = createMockBlacklistService();
+
+    const result = await runRssJob(settings, bookList, book, indexer, download, blacklist, inject<FastifyBaseLogger>(log));
+
+    // enrichUsenetLanguages called exactly once (for the matched book's candidates)
+    expect(mockEnrichUsenet).toHaveBeenCalledTimes(1);
+    // The call should contain only the matched result, not the unmatched one
+    const enrichedResults = mockEnrichUsenet.mock.calls[0][0];
+    expect(enrichedResults).toHaveLength(1);
+    expect(enrichedResults[0].title).toBe('The Way of Kings');
+    expect(result.grabbed).toBe(1);
+  });
+
   it('matched count includes books whose candidates were all multi-part rejected', async () => {
     const wantedBooks = [makeWantedBook(1, 'Test Book', 'Author')];
     const rssResults = [makeResult('Test Book', 'Author', { protocol: 'usenet' as const, downloadUrl: 'http://nzb.test/8' })];
