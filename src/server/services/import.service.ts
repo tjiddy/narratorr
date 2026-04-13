@@ -231,7 +231,12 @@ export class ImportService {
       .update(downloads)
       .set({ status: 'importing' })
       .where(and(eq(downloads.id, downloadId), eq(downloads.status, 'processing_queued')));
-    return (result as unknown as { rowsAffected?: number }).rowsAffected === 1;
+    const rowsAffected = (result as unknown as { rowsAffected?: number }).rowsAffected;
+    if (rowsAffected === undefined) {
+      this.log.warn({ downloadId }, 'claimQueuedDownload: rowsAffected missing from update result — treating as unclaimed');
+      return false;
+    }
+    return rowsAffected === 1;
   }
 
   private async getDownload(id: number): Promise<DownloadRow | null> {
