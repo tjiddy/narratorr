@@ -2465,6 +2465,85 @@ describe('DiscoveryService', () => {
       });
     });
 
+    describe('chunk boundaries (#554 F3)', () => {
+      function createLargeService(dbOverride: ReturnType<typeof createMockDb>, maxPerAuthor: number) {
+        const log = createMockLogger();
+        const settings = createMockSettingsService({
+          discovery: { enabled: true, intervalHours: 24, maxSuggestionsPerAuthor: maxPerAuthor },
+          metadata: { audibleRegion: 'us' },
+        });
+        return {
+          service: new DiscoveryService(
+            inject<Db>(dbOverride),
+            inject<FastifyBaseLogger>(log),
+            inject(mockMetadataService),
+            inject(settings),
+          ),
+          log,
+        };
+      }
+
+      it('1001 candidates → 2 read-side batch SELECTs (chunked at 999)', async () => {
+        const db = createMockDb();
+        const candidateCount = 1001;
+        db.select
+          .mockReturnValueOnce(mockDbChain([]))
+          .mockReturnValueOnce(mockDbChain([makeBookRow({ id: 1, genres: ['Fantasy'], duration: 1000 })]))
+          .mockReturnValueOnce(mockDbChain([]))
+          .mockReturnValueOnce(mockDbChain([]))
+          .mockReturnValueOnce(mockDbChain([]))
+          .mockReturnValueOnce(mockDbChain([]))
+          // 2 chunked batch SELECTs for 1001 ASINs (999 + 2)
+          .mockReturnValueOnce(mockDbChain([]))
+          .mockReturnValueOnce(mockDbChain([]));
+        db.insert.mockReturnValue(mockDbChain());
+        db.delete.mockReturnValue(mockDbChain());
+
+        const books = Array.from({ length: candidateCount }, (_, i) => ({
+          asin: `C${i}`, title: `Book ${i}`, authors: [{ name: 'Author A' }], language: 'English',
+        }));
+        mockMetadataService.searchBooksForDiscovery
+          .mockResolvedValueOnce({ books, warnings: [] })
+          .mockResolvedValue({ books: [], warnings: [] });
+
+        const { service } = createLargeService(db, candidateCount);
+        await service.refreshSuggestions();
+
+        // 6 fixed + 2 chunked batch SELECTs = 8
+        expect(db.select).toHaveBeenCalledTimes(8);
+      });
+
+      it('50 new candidates → 2 write-side INSERT chunks (47 + 3)', async () => {
+        const db = createMockDb();
+        const candidateCount = 50;
+        db.select
+          .mockReturnValueOnce(mockDbChain([]))
+          .mockReturnValueOnce(mockDbChain([makeBookRow({ id: 1, genres: ['Fantasy'], duration: 1000 })]))
+          .mockReturnValueOnce(mockDbChain([]))
+          .mockReturnValueOnce(mockDbChain([]))
+          .mockReturnValueOnce(mockDbChain([]))
+          .mockReturnValueOnce(mockDbChain([]))
+          // 1 batch SELECT (50 < 999)
+          .mockReturnValueOnce(mockDbChain([]));
+        db.insert.mockReturnValue(mockDbChain());
+        db.delete.mockReturnValue(mockDbChain());
+
+        const books = Array.from({ length: candidateCount }, (_, i) => ({
+          asin: `C${i}`, title: `Book ${i}`, authors: [{ name: 'Author A' }], language: 'English',
+        }));
+        mockMetadataService.searchBooksForDiscovery
+          .mockResolvedValueOnce({ books, warnings: [] })
+          .mockResolvedValue({ books: [], warnings: [] });
+
+        const { service } = createLargeService(db, candidateCount);
+        const result = await service.refreshSuggestions();
+
+        expect(result.added).toBe(50);
+        // 2 chunked INSERT calls (47 + 3)
+        expect(db.insert).toHaveBeenCalledTimes(2);
+      });
+    });
+
     describe('boundary values', () => {
       it('empty candidate list → no upsert DB queries', async () => {
         const db = createMockDb();
