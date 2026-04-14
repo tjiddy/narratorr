@@ -6,6 +6,7 @@ export interface BookEvent {
   downloadId: number | null;
   bookTitle: string;
   authorName: string | null;
+  narratorName: string | null;
   eventType: string;
   source: string;
   reason: Record<string, unknown> | null;
