@@ -17,7 +17,6 @@ interface BookMetadataModalProps {
   isOpen?: boolean;
 }
 
-// eslint-disable-next-line max-lines-per-function, complexity -- metadata edit modal with search integration
 export function BookMetadataModal({ book, onSave, onClose, isSaving, isOpen = true }: BookMetadataModalProps) {
   const modalRef = useRef<HTMLDivElement>(null);
   const [title, setTitle] = useState(book.title);

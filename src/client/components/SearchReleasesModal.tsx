@@ -86,6 +86,58 @@ export function IndexerStatusRow({
 }
 
 // ============================================================================
+// Header
+// ============================================================================
+
+function SearchReleasesHeader({
+  book,
+  isSearching,
+  onRefresh,
+  onClose,
+}: {
+  book: BookWithAuthor;
+  isSearching: boolean;
+  onRefresh: () => void;
+  onClose: () => void;
+}) {
+  return (
+    <div className="flex items-center justify-between px-6 py-4 border-b border-border/50">
+      <div className="min-w-0">
+        <h3 id="search-releases-modal-title" className="font-display text-lg font-semibold truncate">
+          Releases for: {book.title}
+        </h3>
+        {book.authors[0]?.name && (
+          <p className="text-sm text-muted-foreground truncate">by {book.authors[0].name}</p>
+        )}
+        {book.narrators?.length > 0 && (
+          <p className="text-sm text-muted-foreground truncate">Narrated by {book.narrators.map(n => n.name).join(', ')}</p>
+        )}
+        {(() => { const q = calculateQuality(book.audioTotalSize ?? 0, book.audioDuration ?? 0); return q ? <p className="text-sm text-muted-foreground truncate">Current quality · {q.mbPerHour} MB/hr · {q.tier}</p> : null; })()}
+      </div>
+      <div className="flex items-center gap-2 shrink-0 ml-4">
+        <button
+          type="button"
+          onClick={onRefresh}
+          disabled={isSearching}
+          className="p-2 rounded-lg text-muted-foreground hover:text-foreground hover:bg-muted/80 transition-colors focus-ring"
+          aria-label="Refresh results"
+        >
+          <RefreshIcon className={`w-4 h-4 ${isSearching ? 'animate-spin' : ''}`} />
+        </button>
+        <button
+          type="button"
+          onClick={onClose}
+          className="p-2 rounded-lg text-muted-foreground hover:text-foreground hover:bg-muted/80 transition-colors focus-ring"
+          aria-label="Close modal"
+        >
+          <XIcon className="w-4 h-4" />
+        </button>
+      </div>
+    </div>
+  );
+}
+
+// ============================================================================
 // Component
 // ============================================================================
 
@@ -103,7 +155,6 @@ function pickGrabFields(result: SearchResult): Omit<GrabPayload, 'bookId' | 'rep
   return picked as Omit<GrabPayload, 'bookId' | 'replaceExisting'>;
 }
 
-// eslint-disable-next-line max-lines-per-function, complexity -- modal orchestrates streaming + mutations + 7 conditional states
 export function SearchReleasesModal({ isOpen, book, onClose }: SearchReleasesModalProps) {
   const queryClient = useQueryClient();
   const searchQuery = `${book.title} ${book.authors[0]?.name ?? ''}`.trim();
@@ -195,8 +246,6 @@ export function SearchReleasesModal({ isOpen, book, onClose }: SearchReleasesMod
 
   if (!isOpen) return null;
 
-  const isSearching = state.phase === 'searching';
-
   return (
     <>
     <Modal onClose={onClose} closeOnBackdropClick={false} className="w-full max-w-4xl max-h-[85vh] flex flex-col">
@@ -208,50 +257,19 @@ export function SearchReleasesModal({ isOpen, book, onClose }: SearchReleasesMod
         tabIndex={-1}
         className="flex flex-col min-h-0 flex-1"
       >
-        {/* Header */}
-        <div className="flex items-center justify-between px-6 py-4 border-b border-border/50">
-          <div className="min-w-0">
-            <h3 id="search-releases-modal-title" className="font-display text-lg font-semibold truncate">
-              Releases for: {book.title}
-            </h3>
-            {book.authors[0]?.name && (
-              <p className="text-sm text-muted-foreground truncate">by {book.authors[0].name}</p>
-            )}
-            {book.narrators?.length > 0 && (
-              <p className="text-sm text-muted-foreground truncate">Narrated by {book.narrators.map(n => n.name).join(', ')}</p>
-            )}
-            {(() => { const q = calculateQuality(book.audioTotalSize ?? 0, book.audioDuration ?? 0); return q ? <p className="text-sm text-muted-foreground truncate">Current quality · {q.mbPerHour} MB/hr · {q.tier}</p> : null; })()}
-          </div>
-          <div className="flex items-center gap-2 shrink-0 ml-4">
-            <button
-              type="button"
-              onClick={() => {
-                hasStartedRef.current = false;
-                actions.reset();
-                // Re-trigger search
-                setTimeout(() => {
-                  hasStartedRef.current = true;
-                  actions.start();
-                }, 0);
-              }}
-              disabled={isSearching}
-              className="p-2 rounded-lg text-muted-foreground hover:text-foreground hover:bg-muted/80 transition-colors focus-ring"
-              aria-label="Refresh results"
-            >
-              <RefreshIcon className={`w-4 h-4 ${isSearching ? 'animate-spin' : ''}`} />
-            </button>
-            <button
-              type="button"
-              onClick={onClose}
-              className="p-2 rounded-lg text-muted-foreground hover:text-foreground hover:bg-muted/80 transition-colors focus-ring"
-              aria-label="Close modal"
-            >
-              <XIcon className="w-4 h-4" />
-            </button>
-          </div>
-        </div>
-
-        {/* Body */}
+        <SearchReleasesHeader
+          book={book}
+          isSearching={state.phase === 'searching'}
+          onRefresh={() => {
+            hasStartedRef.current = false;
+            actions.reset();
+            setTimeout(() => {
+              hasStartedRef.current = true;
+              actions.start();
+            }, 0);
+          }}
+          onClose={onClose}
+        />
         <SearchReleasesContent
           phase={state.phase}
           indexers={state.indexers}
