@@ -5,6 +5,7 @@ import { ConfirmModal } from '@/components/ConfirmModal';
 import { LoadingSpinner, HistoryIcon, SearchIcon, TrashIcon } from '@/components/icons';
 import { usePagination } from '@/hooks/usePagination';
 import { Pagination } from '@/components/Pagination';
+import { FilterPill } from '@/components/FilterPill.js';
 import { DEFAULT_LIMITS } from '../../../shared/schemas/common.js';
 
 const EVENT_TYPE_FILTERS = [
@@ -69,17 +70,12 @@ export function EventHistorySection() {
         {/* Type filter pills */}
         <div className="flex flex-wrap gap-1.5">
           {EVENT_TYPE_FILTERS.map((filter) => (
-            <button
+            <FilterPill
               key={filter.value}
+              label={filter.label}
+              active={eventType === filter.value}
               onClick={() => setEventType(filter.value)}
-              className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-colors ${
-                eventType === filter.value
-                  ? 'bg-primary text-primary-foreground shadow-glow'
-                  : 'bg-muted text-muted-foreground hover:text-foreground'
-              }`}
-            >
-              {filter.label}
-            </button>
+            />
           ))}
         </div>
 
