@@ -1,10 +1,13 @@
-import { describe, it, expect, beforeAll, afterAll, beforeEach, type Mock } from 'vitest';
-import { createTestApp, createMockServices, resetMockServices } from '../__tests__/helpers.js';
+import { describe, it, expect, beforeAll, afterAll, beforeEach, vi, type Mock } from 'vitest';
+import Fastify from 'fastify';
+import { serializerCompiler, validatorCompiler, type ZodTypeProvider } from 'fastify-type-provider-zod';
+import { createTestApp, createMockServices, resetMockServices, inject } from '../__tests__/helpers.js';
+import { registerRoutes, type Services } from './index.js';
 import { DEFAULT_SETTINGS } from '../../shared/schemas/settings/registry.js';
-import type { Services } from './index.js';
 import { filterAndRankResults } from '../services/search-pipeline.js';
 import type { SearchResult } from '../../core/index.js';
 import { DuplicateDownloadError } from '../services/download.service.js';
+import type { Db } from '../../db/index.js';
 
 const mockSearchResult = {
   title: 'The Way of Kings',
@@ -691,6 +694,49 @@ describe('search routes', () => {
 
       expect(res.statusCode).toBe(409);
       expect(JSON.parse(res.payload)).toEqual({ error: 'Book 1 has pipeline download' });
+    });
+
+    it('sanitizes downloadUrl in debug log (strips query params from HTTP URL)', async () => {
+      const mockDownload = { id: 1, title: 'Test', status: 'downloading' };
+      (services.downloadOrchestrator.grab as Mock).mockResolvedValue(mockDownload);
+
+      // Create a separate app instance with logging enabled to capture log output
+      const logLines: string[] = [];
+      const { Writable } = await import('node:stream');
+      const logStream = new Writable({
+        write(chunk: Buffer, _encoding: string, callback: () => void) {
+          logLines.push(chunk.toString());
+          callback();
+        },
+      });
+
+      const logApp = Fastify({
+        logger: { level: 'debug', stream: logStream },
+      }).withTypeProvider<ZodTypeProvider>();
+      logApp.setValidatorCompiler(validatorCompiler);
+      logApp.setSerializerCompiler(serializerCompiler);
+      const { errorHandlerPlugin } = await import('../plugins/error-handler.js');
+      await logApp.register(errorHandlerPlugin);
+      const mockDb = inject<Db>({ run: vi.fn().mockResolvedValue(undefined) });
+      await registerRoutes(logApp, services, mockDb);
+      await logApp.ready();
+
+      await logApp.inject({
+        method: 'POST',
+        url: '/api/search/grab',
+        payload: {
+          downloadUrl: 'https://indexer.example.com/nzb/12345?apikey=SECRETKEY123',
+          title: 'Test Book',
+          protocol: 'usenet',
+        },
+      });
+
+      await logApp.close();
+
+      const grabDetailLine = logLines.find((l) => l.includes('Grab details'));
+      expect(grabDetailLine).toBeDefined();
+      expect(grabDetailLine).toContain('https://indexer.example.com/nzb/12345');
+      expect(grabDetailLine).not.toContain('SECRETKEY123');
     });
   });
 
