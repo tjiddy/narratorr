@@ -12,8 +12,10 @@ export function useClickOutside(
 
     const handleMouseDown = (e: MouseEvent) => {
       const target = e.target as Node;
-      const isInside = refArray.some(
-        (ref) => ref.current?.contains(target),
+      const mounted = refArray.filter((ref) => ref.current !== null);
+      if (mounted.length === 0) return;
+      const isInside = mounted.some(
+        (ref) => ref.current!.contains(target),
       );
       if (!isInside) handler();
     };

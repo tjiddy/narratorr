@@ -49,8 +49,7 @@ describe('useClickOutside', () => {
 
       document.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }));
 
-      // Handler should still fire — null ref means nothing to check containment against
-      expect(handler).toHaveBeenCalledTimes(1);
+      expect(handler).not.toHaveBeenCalled();
     });
   });
 
