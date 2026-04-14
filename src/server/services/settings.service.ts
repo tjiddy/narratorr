@@ -38,32 +38,61 @@ function parseCategory<K extends SettingsCategory>(
   return DEFAULT_SETTINGS[key];
 }
 
+const CACHE_TTL_MS = 30_000;
+
+interface CacheEntry {
+  value: unknown;
+  expiresAt: number;
+}
+
 export class SettingsService {
+  private categoryCache = new Map<string, CacheEntry>();
+  private allCache: CacheEntry | null = null;
+
   constructor(private db: Db, private log: FastifyBaseLogger) {}
 
+  private invalidateCache(key?: string): void {
+    if (key) {
+      this.categoryCache.delete(key);
+    }
+    this.allCache = null;
+  }
+
   async get<K extends SettingsCategory>(key: K): Promise<AppSettings[K]> {
+    const cached = this.categoryCache.get(key);
+    if (cached && cached.expiresAt > Date.now()) {
+      return cached.value as AppSettings[K];
+    }
+
     const result = await this.db.select().from(settings).where(eq(settings.key, key)).limit(1);
 
     if (result.length === 0) {
-      return DEFAULT_SETTINGS[key];
+      const defaultVal = DEFAULT_SETTINGS[key];
+      this.categoryCache.set(key, { value: defaultVal, expiresAt: Date.now() + CACHE_TTL_MS });
+      return defaultVal;
     }
 
     let raw = result[0].value;
-    // Decrypt secret fields before Zod parsing
     const entity = SECRET_CATEGORIES[key];
     if (entity && raw && typeof raw === 'object') {
       raw = decryptFields(entity, { ...(raw as Record<string, unknown>) }, getKey());
     }
 
-    return parseCategory(key, raw, this.log);
+    const parsed = parseCategory(key, raw, this.log);
+    this.categoryCache.set(key, { value: parsed, expiresAt: Date.now() + CACHE_TTL_MS });
+    return parsed;
   }
 
   async getAll(): Promise<AppSettings> {
+    if (this.allCache && this.allCache.expiresAt > Date.now()) {
+      return this.allCache.value as AppSettings;
+    }
+
     const results = await this.db.select().from(settings);
 
     const settingsMap = new Map(results.map((r) => [r.key, r.value]));
 
-    return Object.fromEntries(
+    const all = Object.fromEntries(
       SETTINGS_CATEGORIES.map((key) => {
         let raw = settingsMap.get(key);
         const entity = SECRET_CATEGORIES[key];
@@ -73,6 +102,9 @@ export class SettingsService {
         return [key, parseCategory(key, raw, this.log)];
       }),
     ) as AppSettings;
+
+    this.allCache = { value: all, expiresAt: Date.now() + CACHE_TTL_MS };
+    return all;
   }
 
   async set<K extends SettingsCategory>(key: K, value: AppSettings[K]): Promise<void> {
@@ -93,6 +125,7 @@ export class SettingsService {
         target: settings.key,
         set: { value: dbValue },
       });
+    this.invalidateCache(key);
     this.log.info({ category: key }, 'Settings updated');
   }
 
@@ -165,6 +198,7 @@ export class SettingsService {
         .insert(settings)
         .values({ key: 'quality', value: qualityBlob })
         .onConflictDoUpdate({ target: settings.key, set: { value: qualityBlob } });
+      this.invalidateCache('quality');
     } catch (error: unknown) {
       this.log.warn({ error }, 'Language settings migration failed — fresh defaults will apply');
     }

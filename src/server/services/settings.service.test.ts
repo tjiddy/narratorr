@@ -657,3 +657,262 @@ describe('migrateLanguageSettings', () => {
     expect(log.warn).toHaveBeenCalled();
   });
 });
+
+describe('SettingsService — cache (#554)', () => {
+  let db: ReturnType<typeof createMockDb>;
+  let service: SettingsService;
+
+  beforeEach(() => {
+    initializeKey(TEST_KEY);
+    db = createMockDb();
+    service = new SettingsService(inject<Db>(db), inject<FastifyBaseLogger>(createMockLogger()));
+  });
+
+  afterEach(() => {
+    _resetKey();
+  });
+
+  describe('cache hit/miss', () => {
+    it('returns correct value from DB on first call (cache miss)', async () => {
+      const stored = { path: '/my-audiobooks', folderFormat: '{author}/{title}' };
+      db.select.mockReturnValue(mockDbChain([{ key: 'library', value: stored }]));
+
+      const result = await service.get('library');
+      expect(result.path).toBe('/my-audiobooks');
+      expect(db.select).toHaveBeenCalledTimes(1);
+    });
+
+    it('returns cached value on second call within TTL without DB query (cache hit)', async () => {
+      const stored = { path: '/my-audiobooks', folderFormat: '{author}/{title}' };
+      db.select.mockReturnValue(mockDbChain([{ key: 'library', value: stored }]));
+
+      await service.get('library');
+      expect(db.select).toHaveBeenCalledTimes(1);
+
+      db.select.mockClear();
+      const result2 = await service.get('library');
+      expect(result2.path).toBe('/my-audiobooks');
+      expect(db.select).not.toHaveBeenCalled();
+    });
+
+    it('caches different categories independently', async () => {
+      db.select
+        .mockReturnValueOnce(mockDbChain([{ key: 'library', value: { path: '/lib' } }]))
+        .mockReturnValueOnce(mockDbChain([{ key: 'search', value: { intervalMinutes: 120 } }]));
+
+      const lib = await service.get('library');
+      const search = await service.get('search');
+      expect(lib.path).toBe('/lib');
+      expect(search.intervalMinutes).toBe(120);
+      expect(db.select).toHaveBeenCalledTimes(2);
+
+      db.select.mockClear();
+      const lib2 = await service.get('library');
+      const search2 = await service.get('search');
+      expect(lib2.path).toBe('/lib');
+      expect(search2.intervalMinutes).toBe(120);
+      expect(db.select).not.toHaveBeenCalled();
+    });
+
+    it('getAll() caches aggregate independently from per-category cache', async () => {
+      db.select.mockReturnValue(mockDbChain([{ key: 'library', value: { path: '/lib' } }]));
+
+      await service.getAll();
+      expect(db.select).toHaveBeenCalledTimes(1);
+
+      db.select.mockClear();
+      await service.getAll();
+      expect(db.select).not.toHaveBeenCalled();
+    });
+
+    it('getAll() returns cached aggregate on second call within TTL', async () => {
+      db.select.mockReturnValue(mockDbChain([{ key: 'library', value: { path: '/custom' } }]));
+
+      const first = await service.getAll();
+      db.select.mockClear();
+      const second = await service.getAll();
+      expect(second.library.path).toBe(first.library.path);
+      expect(db.select).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('cache invalidation — per-category and aggregate', () => {
+    it('set() invalidates per-category cache; subsequent get() returns fresh value', async () => {
+      db.select.mockReturnValue(mockDbChain([{ key: 'library', value: { path: '/old' } }]));
+      db.insert.mockReturnValue(mockDbChain());
+
+      await service.get('library');
+      db.select.mockClear();
+
+      await service.set('library', { path: '/new', folderFormat: '{author}/{title}', fileFormat: '{author} - {title}', namingSeparator: 'space' as const, namingCase: 'default' as const });
+
+      db.select.mockReturnValue(mockDbChain([{ key: 'library', value: { path: '/new' } }]));
+      const result = await service.get('library');
+      expect(result.path).toBe('/new');
+      expect(db.select).toHaveBeenCalled();
+    });
+
+    it('set() invalidates getAll() aggregate cache', async () => {
+      db.select.mockReturnValue(mockDbChain([{ key: 'library', value: { path: '/old' } }]));
+      db.insert.mockReturnValue(mockDbChain());
+
+      await service.getAll();
+      db.select.mockClear();
+
+      await service.set('library', { path: '/new', folderFormat: '{author}/{title}', fileFormat: '{author} - {title}', namingSeparator: 'space' as const, namingCase: 'default' as const });
+
+      db.select.mockReturnValue(mockDbChain([{ key: 'library', value: { path: '/new' } }]));
+      await service.getAll();
+      expect(db.select).toHaveBeenCalled();
+    });
+
+    it('patch() invalidates per-category cache', async () => {
+      db.select.mockReturnValue(mockDbChain([{ key: 'library', value: { path: '/old' } }]));
+      db.insert.mockReturnValue(mockDbChain());
+
+      await service.get('library');
+      db.select.mockClear();
+
+      db.select.mockReturnValue(mockDbChain([{ key: 'library', value: { path: '/old' } }]));
+      await service.patch('library', { path: '/patched' });
+      db.select.mockClear();
+
+      db.select.mockReturnValue(mockDbChain([{ key: 'library', value: { path: '/patched' } }]));
+      const result = await service.get('library');
+      expect(result.path).toBe('/patched');
+      expect(db.select).toHaveBeenCalled();
+    });
+
+    it('patch() invalidates getAll() aggregate cache', async () => {
+      db.select.mockReturnValue(mockDbChain([]));
+      db.insert.mockReturnValue(mockDbChain());
+
+      await service.getAll();
+      db.select.mockClear();
+
+      db.select.mockReturnValue(mockDbChain([]));
+      await service.patch('library', { path: '/patched' });
+      db.select.mockClear();
+
+      db.select.mockReturnValue(mockDbChain([{ key: 'library', value: { path: '/patched' } }]));
+      await service.getAll();
+      expect(db.select).toHaveBeenCalled();
+    });
+
+    it('migrateLanguageSettings() invalidates quality cache after cleanup write', async () => {
+      // Prime quality cache
+      db.select.mockReturnValue(mockDbChain([{ key: 'quality', value: { minBitrate: 64 } }]));
+      await service.get('quality');
+      db.select.mockClear();
+
+      // migrateLanguageSettings: metadata has no languages, quality has no preferredLanguage
+      // → skips migration but still cleans up quality blob
+      db.select
+        .mockReturnValueOnce(mockDbChain([{ key: 'metadata', value: {} }]))
+        .mockReturnValueOnce(mockDbChain([{ key: 'quality', value: { minBitrate: 64 } }]));
+      db.insert.mockReturnValue(mockDbChain());
+      await service.migrateLanguageSettings();
+      db.select.mockClear();
+
+      // quality cache should be invalidated after the cleanup write
+      db.select.mockReturnValue(mockDbChain([{ key: 'quality', value: { minBitrate: 64 } }]));
+      await service.get('quality');
+      expect(db.select).toHaveBeenCalled();
+    });
+
+    it('update() returns fresh aggregate reflecting the write', async () => {
+      // patch('library') → get('library') returns empty (defaults)
+      db.select.mockReturnValueOnce(mockDbChain([]));
+      db.insert.mockReturnValue(mockDbChain());
+      // getAll() after patch returns the updated row
+      db.select.mockReturnValueOnce(mockDbChain([{ key: 'library', value: { path: '/updated', folderFormat: '{author}/{title}' } }]));
+
+      const result = await service.update({ library: { path: '/updated' } } as UpdateSettingsInput);
+      expect(result.library.path).toBe('/updated');
+    });
+  });
+
+  describe('TTL expiry', () => {
+    it('cached value expires after 30s; get() after expiry hits DB again', async () => {
+      db.select.mockReturnValue(mockDbChain([{ key: 'library', value: { path: '/lib' } }]));
+
+      await service.get('library');
+      db.select.mockClear();
+
+      vi.spyOn(Date, 'now').mockReturnValue(Date.now() + 31_000);
+
+      db.select.mockReturnValue(mockDbChain([{ key: 'library', value: { path: '/lib' } }]));
+      await service.get('library');
+      expect(db.select).toHaveBeenCalled();
+
+      vi.restoreAllMocks();
+    });
+
+    it('cache expiry is per-key — key A expiring does not expire key B', async () => {
+      const baseNow = Date.now();
+      vi.spyOn(Date, 'now').mockReturnValue(baseNow);
+
+      db.select.mockReturnValueOnce(mockDbChain([{ key: 'library', value: { path: '/lib' } }]));
+      await service.get('library');
+
+      vi.spyOn(Date, 'now').mockReturnValue(baseNow + 15_000);
+      db.select.mockReturnValueOnce(mockDbChain([{ key: 'search', value: { intervalMinutes: 120 } }]));
+      await service.get('search');
+
+      // At +31s, library expired but search (cached at +15s) still valid
+      vi.spyOn(Date, 'now').mockReturnValue(baseNow + 31_000);
+      db.select.mockClear();
+
+      db.select.mockReturnValue(mockDbChain([{ key: 'library', value: { path: '/lib' } }]));
+      await service.get('library');
+      expect(db.select).toHaveBeenCalledTimes(1);
+
+      db.select.mockClear();
+      await service.get('search');
+      expect(db.select).not.toHaveBeenCalled();
+
+      vi.restoreAllMocks();
+    });
+
+    it('getAll() aggregate cache has independent TTL', async () => {
+      db.select.mockReturnValue(mockDbChain([]));
+
+      await service.getAll();
+      db.select.mockClear();
+
+      vi.spyOn(Date, 'now').mockReturnValue(Date.now() + 31_000);
+
+      db.select.mockReturnValue(mockDbChain([]));
+      await service.getAll();
+      expect(db.select).toHaveBeenCalled();
+
+      vi.restoreAllMocks();
+    });
+  });
+
+  describe('boundary values', () => {
+    it('get() for category with no DB row returns DEFAULT_SETTINGS and caches the default', async () => {
+      db.select.mockReturnValue(mockDbChain([]));
+
+      const result = await service.get('library');
+      expect(result.path).toBe('/audiobooks');
+      db.select.mockClear();
+
+      const result2 = await service.get('library');
+      expect(result2.path).toBe('/audiobooks');
+      expect(db.select).not.toHaveBeenCalled();
+    });
+
+    it('get() for category with malformed JSON returns default via safeParse fallback', async () => {
+      db.select.mockReturnValue(mockDbChain([{ key: 'library', value: 'not-an-object' }]));
+
+      const result = await service.get('library');
+      expect(result.path).toBe('/audiobooks');
+      db.select.mockClear();
+
+      const result2 = await service.get('library');
+      expect(result2.path).toBe('/audiobooks');
+      expect(db.select).not.toHaveBeenCalled();
+    });
+  });
+});
