@@ -1,6 +1,7 @@
 import { describe, it, expect, vi } from 'vitest';
 import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
+import type { ComponentProps } from 'react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { SearchReleasesContent } from './SearchReleasesContent';
 import { createMockBook } from '@/__tests__/factories';
@@ -35,9 +36,11 @@ const mockResult: SearchResult = {
   indexerId: 3,
 };
 
-const defaultProps = {
-  phase: 'idle' as const,
-  indexers: [] as IndexerState[],
+type ContentProps = ComponentProps<typeof SearchReleasesContent>;
+
+const defaultProps: ContentProps = {
+  phase: 'idle',
+  indexers: [],
   hasResults: false,
   error: null,
   searchResponse: null,
