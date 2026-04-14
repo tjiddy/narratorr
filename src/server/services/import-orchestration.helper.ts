@@ -13,6 +13,7 @@ import { orchestrateBookEnrichment, buildBookCreatePayload, buildEnrichmentBookI
 import { getAudioStats } from './library-scan.helpers.js';
 import type { EventHistoryService } from './event-history.service.js';
 import { getErrorMessage } from '../utils/error-message.js';
+import { snapshotBookForEvent } from '../utils/event-helpers.js';
 import type { ImportConfirmItem, ImportMode, ImportSingleResult } from './library-scan.service.js';
 
 const COPY_VERIFICATION_THRESHOLD = 0.99;
@@ -26,7 +27,6 @@ export interface ImportPipelineDeps {
   enrichmentDeps: EnrichmentDeps;
 }
 
-// eslint-disable-next-line complexity -- create + duplicate check + metadata lookup + event recording + enrichment pipeline
 export async function importSingleBook(
   item: ImportConfirmItem,
   deps: ImportPipelineDeps,
@@ -63,8 +63,7 @@ export async function importSingleBook(
 
   eventHistory.create({
     bookId: book.id,
-    bookTitle: book.title,
-    authorName: book.authors?.map(a => a.name).join(', ') || null,
+    ...snapshotBookForEvent(book),
     eventType: 'book_added',
     source: 'manual',
   }).catch(err => log.warn({ err }, 'Failed to record book_added event'));
@@ -205,8 +204,7 @@ export async function confirmImport(
 
       eventHistory.create({
         bookId: book.id,
-        bookTitle: book.title,
-        authorName: book.authors?.map(a => a.name).join(', ') || null,
+        ...snapshotBookForEvent(book),
         eventType: 'book_added',
         source: 'manual',
       }).catch(err => log.warn({ err }, 'Failed to record book_added event'));

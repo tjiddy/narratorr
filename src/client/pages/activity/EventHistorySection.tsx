@@ -26,6 +26,7 @@ export function EventHistorySection() {
   const [searchInput, setSearchInput] = useState('');
   const [confirmAction, setConfirmAction] = useState<'errors' | 'all' | null>(null);
   const pagination = usePagination(DEFAULT_LIMITS.eventHistory);
+  const { clampToTotal: clampHistoryPage } = pagination;
 
   // Reset pagination when filters change
   const setEventType = useCallback((value: string) => {
@@ -45,10 +46,9 @@ export function EventHistorySection() {
     offset: pagination.offset,
   });
 
-  // Clamp page when total shrinks
   useEffect(() => {
-    pagination.clampToTotal(total);
-  }, [total, pagination]);
+    clampHistoryPage(total);
+  }, [total, clampHistoryPage]);
 
   const handleSearchSubmit = (e: React.FormEvent) => {
     e.preventDefault();

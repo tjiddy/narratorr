@@ -1,8 +1,30 @@
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { renderHook, waitFor } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { MemoryRouter } from 'react-router-dom';
 import type { ReactNode } from 'react';
+
+let clampToTotalCallCount = 0;
+type ClampFn = (total: number) => void;
+const clampWrapperCache = new WeakMap<ClampFn, ClampFn>();
+vi.mock('@/hooks/usePagination', async () => {
+  // eslint-disable-next-line @typescript-eslint/consistent-type-imports
+  const mod: typeof import('@/hooks/usePagination') = await vi.importActual('@/hooks/usePagination');
+  return {
+    ...mod,
+    usePagination: (...args: Parameters<typeof mod.usePagination>) => {
+      const result = mod.usePagination(...args);
+      const original = result.clampToTotal;
+      if (!clampWrapperCache.has(original)) {
+        clampWrapperCache.set(original, (total: number) => {
+          clampToTotalCallCount++;
+          return original(total);
+        });
+      }
+      return { ...result, clampToTotal: clampWrapperCache.get(original)! };
+    },
+  };
+});
 
 vi.mock('@/hooks/useLibrary', () => ({
   useLibrary: vi.fn().mockReturnValue({ data: { data: [], total: 0 }, isLoading: false, isPlaceholderData: false }),
@@ -26,6 +48,7 @@ vi.mock('./useImportPolling.js', () => ({
   useImportPolling: vi.fn(),
 }));
 
+import { useLibrary } from '@/hooks/useLibrary';
 import { useLibraryPageState } from './useLibraryPageState';
 
 function wrapper({ children }: { children: ReactNode }) {
@@ -38,6 +61,10 @@ function wrapper({ children }: { children: ReactNode }) {
 }
 
 describe('useLibraryPageState', () => {
+  beforeEach(() => {
+    clampToTotalCallCount = 0;
+  });
+
   it('returns initial state with loading false and empty books', async () => {
     const { result } = renderHook(() => useLibraryPageState(), { wrapper });
 
@@ -63,5 +90,26 @@ describe('useLibraryPageState', () => {
     await waitFor(() => {
       expect(result.current.subtitle).toBe('0 books in your collection');
     });
+  });
+
+  it('clamp effect does not re-fire on re-render when totalBooks is unchanged (stable deps)', async () => {
+    const TOTAL = 80;
+    const mockReturn = {
+      data: { data: [], total: TOTAL },
+      isLoading: false,
+      isPlaceholderData: false,
+    } as unknown as ReturnType<typeof useLibrary>;
+    vi.mocked(useLibrary).mockReturnValue(mockReturn);
+
+    const { result, rerender } = renderHook(() => useLibraryPageState(), { wrapper });
+
+    await waitFor(() => expect(result.current.totalBooks).toBe(TOTAL));
+
+    const countBeforeRerender = clampToTotalCallCount;
+
+    vi.mocked(useLibrary).mockReturnValue(mockReturn);
+    rerender();
+
+    expect(clampToTotalCallCount).toBe(countBeforeRerender);
   });
 });

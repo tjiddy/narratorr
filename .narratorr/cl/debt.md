@@ -5,8 +5,8 @@
 - ~~**`src/client/pages/settings/CredentialsSection.tsx` + `ImportListProviderSettings.tsx` + `SearchSettingsSection.tsx`**: inputClass duplication~~ — resolved in #409
 - ~~**`src/server/jobs/search.ts`**: `startSearchJob()` dead code~~ — resolved in #409
 - ~~**`src/server/services/indexer.service.ts`**: duplicate enabled indexer query~~ — resolved in #409
-- **`usePagination` clamp effect pattern across 3 files**: `BlacklistSettings.tsx:45-47`, `EventHistorySection.tsx:47-50`, `LibraryPage.tsx:56-59` all use the full pagination object in `useEffect` deps, causing the effect to fire on every render. Fixed in `ActivityPage` (#414) by destructuring `clampToTotal` — same pattern should be applied to these 3 files. (discovered in #414)
-- **`src/server/services/quality-gate.helpers.ts`**: `resolveBookQualityInputs(book)` is called twice in `buildQualityAssessment()` — once at line 40 for MB/hr + existing metadata, again at line 79 for duration delta. Could reuse the first result. Pure function so no side effects, just minor waste. (discovered in #300)
+- ~~**`usePagination` clamp effect pattern across 3 files**~~ — resolved in #555 (destructured `clampToTotal` in all 3 files)
+- ~~**`src/server/services/quality-gate.helpers.ts`**: `resolveBookQualityInputs(book)` called twice~~ — resolved in #555 (cached result)
 - ~~**`src/client/pages/activity/DownloadActions.tsx`**: `PendingActionButtons` dead code~~ — resolved in #409
 - ~~**`src/core/indexers/types.ts` / `src/client/lib/api/search.ts`**: `SearchResult` DRY-1~~ — resolved in #409
 - ~~**`src/client/components/SearchReleasesModal.tsx`**: `handleGrab()` cherry-picks fields from SearchResult~~ — resolved in #412

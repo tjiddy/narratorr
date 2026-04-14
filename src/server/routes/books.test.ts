@@ -2197,6 +2197,7 @@ describe('PUT /api/books/:id — array update contract (#71)', () => {
         bookId: 42,
         bookTitle: 'Test Book',
         authorName: createdBook.authors.map(a => a.name).join(', '),
+        narratorName: null,
         eventType: 'book_added',
         source: 'manual',
       });

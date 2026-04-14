@@ -85,9 +85,10 @@ export function useLibraryPageState() {
     setSettledGridKey(currentSortKey);
   }
 
+  const { clampToTotal } = filters.params.pagination;
   useEffect(() => {
-    filters.params.pagination.clampToTotal(totalBooks);
-  }, [totalBooks, filters.params.pagination]);
+    clampToTotal(totalBooks);
+  }, [totalBooks, clampToTotal]);
 
   useImportPolling(books);
 

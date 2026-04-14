@@ -664,6 +664,54 @@ describe('RenameService', () => {
         }),
       );
     });
+
+    it('emits comma-joined authorName for multi-author books', async () => {
+      const db = createMockDb();
+      const eventHistory = { create: vi.fn().mockResolvedValue({ id: 1 }) };
+      const multiAuthorBook = {
+        ...createMockDbBook({
+          path: '/library/Author A/Multi Author Book',
+          status: 'imported',
+        }),
+        authors: [
+          createMockDbAuthor({ id: 1, name: 'Author A' }),
+          createMockDbAuthor({ id: 2, name: 'Author B' }),
+        ],
+      };
+      const bookService = {
+        getById: vi.fn().mockResolvedValue(multiAuthorBook),
+        getAll: vi.fn(),
+        update: vi.fn(),
+      };
+      const settingsService = createMockSettingsService({
+        library: { ...libraryOverrides.library, folderFormat: '{author}/{series}/{title}' },
+      });
+      const log = createMockLogger();
+
+      const service = new RenameService(
+        inject<Db>(db),
+        inject<BookService>(bookService),
+        inject<SettingsService>(settingsService),
+        inject<FastifyBaseLogger>(log),
+        inject<EventHistoryService>(eventHistory),
+      );
+
+      (stat as Mock).mockRejectedValue(Object.assign(new Error('ENOENT'), { code: 'ENOENT' }));
+      (rename as Mock).mockResolvedValue(undefined);
+      (readdir as Mock).mockResolvedValue([]);
+      (mkdir as Mock).mockResolvedValue(undefined);
+
+      await service.renameBook(1);
+
+      expect(eventHistory.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          bookId: 1,
+          bookTitle: multiAuthorBook.title,
+          authorName: 'Author A, Author B',
+          eventType: 'renamed',
+        }),
+      );
+    });
   });
 
   // ── #229 Observability — skip logging ───────────────────────────────────

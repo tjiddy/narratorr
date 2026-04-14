@@ -8,6 +8,7 @@ import type { BookService } from './book.service.js';
 import type { SettingsService } from './settings.service.js';
 import type { EventHistoryService } from './event-history.service.js';
 import { buildTargetPath } from '../utils/import-helpers.js';
+import { snapshotBookForEvent } from '../utils/event-helpers.js';
 import { cleanEmptyParents, renameFilesWithTemplate } from '../utils/paths.js';
 import { toNamingOptions } from '../../core/utils/naming.js';
 
@@ -31,8 +32,7 @@ export class RenameService {
   private emitEvent(bookId: number, book: { title: string; authors?: Array<{ name: string }> }, oldPath: string, newPath: string, filesRenamed: number): void {
     this.eventHistory?.create({
       bookId,
-      bookTitle: book.title,
-      authorName: book.authors?.[0]?.name,
+      ...snapshotBookForEvent(book),
       eventType: 'renamed',
       source: 'manual',
       reason: { oldPath, newPath, filesRenamed },
