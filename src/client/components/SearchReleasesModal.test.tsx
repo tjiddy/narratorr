@@ -1045,6 +1045,67 @@ describe('SearchReleasesModal', () => {
     expect(screen.getByLabelText('Refresh results')).toBeDisabled();
   });
 
+  it('refresh button triggers reset and restart when clicked', async () => {
+    setStreamResults(mockResults);
+    const user = userEvent.setup();
+
+    renderWithProviders(
+      <SearchReleasesModal isOpen={true} book={mockBook} onClose={vi.fn()} />,
+    );
+
+    vi.clearAllMocks();
+    await user.click(screen.getByLabelText('Refresh results'));
+
+    expect(mockStreamActions.reset).toHaveBeenCalledOnce();
+    await waitFor(() => {
+      expect(mockStreamActions.start).toHaveBeenCalledOnce();
+    });
+  });
+
+  it('shows narrator line in header when narrators exist', () => {
+    setStreamResults(mockResults);
+    const bookWithNarrator = createMockBook({
+      narrators: [
+        { id: 1, name: 'Michael Kramer', slug: 'michael-kramer' },
+        { id: 2, name: 'Kate Reading', slug: 'kate-reading' },
+      ],
+    });
+
+    renderWithProviders(
+      <SearchReleasesModal isOpen={true} book={bookWithNarrator} onClose={vi.fn()} />,
+    );
+
+    expect(screen.getByText('Narrated by Michael Kramer, Kate Reading')).toBeInTheDocument();
+  });
+
+  it('shows current quality in header when audio size and duration are present', () => {
+    setStreamResults(mockResults);
+    const bookWithAudio = createMockBook({
+      audioTotalSize: 1500 * 1024 * 1024,
+      audioDuration: 52320,
+    });
+
+    renderWithProviders(
+      <SearchReleasesModal isOpen={true} book={bookWithAudio} onClose={vi.fn()} />,
+    );
+
+    expect(screen.getByText(/Current quality .+ MB\/hr/)).toBeInTheDocument();
+  });
+
+  it('hides current quality in header when audio size is zero', () => {
+    setStreamResults(mockResults);
+    const bookNoAudio = createMockBook({
+      audioTotalSize: 0,
+      audioDuration: 0,
+    });
+
+    renderWithProviders(
+      <SearchReleasesModal isOpen={true} book={bookNoAudio} onClose={vi.fn()} />,
+    );
+
+    expect(screen.queryByText(/Current quality/)).not.toBeInTheDocument();
+  });
+
   it('grab buttons are all disabled while a grab mutation is pending', async () => {
     setStreamResults(mockResults);
     vi.mocked(api.searchGrab).mockReturnValue(new Promise(() => {})); // never resolves

@@ -169,6 +169,26 @@ describe('BookMetadataModal', () => {
       });
     });
 
+    it('sends trimmed split narrators when narrator field is edited', async () => {
+      const onSave = vi.fn();
+      const user = userEvent.setup();
+      renderModal({ onSave });
+
+      const narratorInput = screen.getByLabelText(/narrator/i);
+      await user.clear(narratorInput);
+      await user.type(narratorInput, 'Kate Reading, Tim Gerard Reynolds');
+      await user.click(screen.getByText('Save'));
+
+      await waitFor(() => {
+        expect(onSave).toHaveBeenCalledWith(
+          expect.objectContaining({
+            narrators: ['Kate Reading', 'Tim Gerard Reynolds'],
+          }),
+          false,
+        );
+      });
+    });
+
     it('shows "Search for metadata" button', () => {
       renderModal();
       expect(screen.getByText('Search for metadata')).toBeInTheDocument();
