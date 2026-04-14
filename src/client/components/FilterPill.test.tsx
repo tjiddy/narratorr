@@ -39,4 +39,39 @@ describe('FilterPill', () => {
     render(<FilterPill label="All" active={false} onClick={() => {}} className="extra" />);
     expect(screen.getByRole('button')).toHaveClass('extra');
   });
+
+  it('renders children instead of label when both provided', () => {
+    render(
+      <FilterPill active={false} onClick={() => {}}>
+        <span>Custom</span>
+      </FilterPill>
+    );
+    expect(screen.getByText('Custom')).toBeInTheDocument();
+  });
+
+  describe('toolbar variant', () => {
+    it('applies toolbar active styling', () => {
+      render(<FilterPill label="Filters" active variant="toolbar" onClick={() => {}} />);
+      const btn = screen.getByRole('button');
+      expect(btn).toHaveClass('bg-muted/80', 'text-foreground');
+      expect(btn).not.toHaveClass('bg-primary');
+    });
+
+    it('applies toolbar inactive styling', () => {
+      render(<FilterPill label="Sort" active={false} variant="toolbar" onClick={() => {}} />);
+      const btn = screen.getByRole('button');
+      expect(btn).toHaveClass('text-muted-foreground');
+      expect(btn).not.toHaveClass('bg-muted/80');
+    });
+
+    it('supports aria-label', () => {
+      render(<FilterPill label="Sort" active={false} variant="toolbar" onClick={() => {}} aria-label="Sort by title" />);
+      expect(screen.getByRole('button')).toHaveAttribute('aria-label', 'Sort by title');
+    });
+
+    it('supports aria-pressed', () => {
+      render(<FilterPill label="Series" active variant="toolbar" onClick={() => {}} aria-pressed={true} />);
+      expect(screen.getByRole('button')).toHaveAttribute('aria-pressed', 'true');
+    });
+  });
 });
