@@ -30,7 +30,7 @@ function canShowWrongRelease(book: BookWithAuthor): boolean {
   return book.status === 'imported' && !!(book.lastGrabGuid || book.lastGrabInfoHash);
 }
 
-// eslint-disable-next-line max-lines-per-function, complexity -- page orchestrator with multiple confirm modals
+// eslint-disable-next-line max-lines-per-function -- page orchestrator with multiple confirm modals
 export function BookDetails({ libraryBook, metadataBook }: {
   libraryBook: BookWithAuthor;
   metadataBook?: MetadataBook | null;
