@@ -1,6 +1,7 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useRef } from 'react';
 import { TrashIcon, SearchIcon, ChevronDownIcon } from '@/components/icons';
 import { DeleteBookModal } from '@/components/DeleteBookModal';
+import { useClickOutside } from '@/hooks/useClickOutside';
 
 export function BulkActionToolbar({
   selectedCount,
@@ -27,16 +28,7 @@ export function BulkActionToolbar({
   const [showStatusMenu, setShowStatusMenu] = useState(false);
   const statusMenuRef = useRef<HTMLDivElement>(null);
 
-  useEffect(() => {
-    if (!showStatusMenu) return;
-    function handleClick(e: MouseEvent) {
-      if (statusMenuRef.current && !statusMenuRef.current.contains(e.target as Node)) {
-        setShowStatusMenu(false);
-      }
-    }
-    document.addEventListener('mousedown', handleClick);
-    return () => document.removeEventListener('mousedown', handleClick);
-  }, [showStatusMenu]);
+  useClickOutside(statusMenuRef, () => setShowStatusMenu(false), showStatusMenu);
 
   if (selectedCount === 0) return null;
 

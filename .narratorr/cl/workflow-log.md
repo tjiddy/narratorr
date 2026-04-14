@@ -1,5 +1,29 @@
 # Workflow Log
 
+## #549 Wave 2B: Hook extraction — useBookModals, useClickOutside — 2026-04-14
+**Skill path:** /implement → /claim → /plan → /handoff
+**Outcome:** success — PR #569
+
+### Metrics
+- Files changed: 10 | Tests added/modified: 2 (15 new tests)
+- Quality gate runs: 1 (pass on attempt 1)
+- Fix iterations: 0
+- Context compactions: 0
+
+### Workflow experience
+- What went smoothly: Spec review iterations (3 rounds) produced a precise hook contract and migration plan. Every line number in the spec was accurate. All existing tests passed unchanged after migration — zero behavioral regressions.
+- Friction / issues encountered: None significant. The library card menu migration required understanding the dual purpose of stopPropagation (outside-click vs navigation guard), but this was fully resolved during spec review.
+
+### Token efficiency
+- Highest-token actions: Reading full BookDetails.tsx (349 lines) and performing 14 individual replace-all edits for modal state migration
+- Avoidable waste: The 14 individual Edit calls for BookDetails could have been a single Write with the full file, but Edit was safer for preserving surrounding code
+- Suggestions: For future modal state extractions, batch the replacements
+
+### Wish I'd Known
+1. Container ref pattern — wrapping trigger + menu in one ref is simpler than threading individual refs via forwardRef (see `click-outside-container-ref-pattern.md`)
+2. stopPropagation serves dual purposes in card menus — always audit each call site before removing any (see `stoppropagation-dual-purpose.md`)
+3. All 4 click-outside sites were nearly identical except the library card menu — 3 were mechanical replacements, only 1 needed structural thought
+
 ## #547 Wave 1C: Minor correctness — BookEvent type, markAdded logging, housekeeping isolation — 2026-04-14
 **Skill path:** /implement → /claim → /plan → /handoff
 **Outcome:** success — PR #568

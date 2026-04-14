@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { screen, within, waitFor } from '@testing-library/react';
+import { screen, within, waitFor, fireEvent } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { QueryClient } from '@tanstack/react-query';
 import { renderWithProviders } from '@/__tests__/helpers';
@@ -2127,6 +2127,69 @@ describe('LibraryPage — card menu observable behavior (#183)', () => {
     await waitFor(() => {
       expect(screen.queryByRole('menu')).not.toBeInTheDocument();
     });
+  });
+
+  it('closes menu on mousedown outside (not just click)', async () => {
+    mockLibraryData(mockBooks);
+    const user = userEvent.setup();
+
+    renderWithProviders(<LibraryPage />);
+
+    await waitForLibraryLoad();
+
+    const optionsButtons = screen.getAllByLabelText('Book options');
+    await user.click(optionsButtons[0]);
+
+    await waitFor(() => {
+      expect(screen.getByRole('menu')).toBeInTheDocument();
+    });
+
+    fireEvent.mouseDown(screen.getByText('Library'));
+
+    await waitFor(() => {
+      expect(screen.queryByRole('menu')).not.toBeInTheDocument();
+    });
+  });
+
+  it('does not navigate when menu trigger is clicked', async () => {
+    mockLibraryData(mockBooks);
+    mockNavigate.mockClear();
+    const user = userEvent.setup();
+
+    renderWithProviders(<LibraryPage />);
+
+    await waitForLibraryLoad();
+
+    const optionsButtons = screen.getAllByLabelText('Book options');
+    await user.click(optionsButtons[0]);
+
+    await waitFor(() => {
+      expect(screen.getByRole('menu')).toBeInTheDocument();
+    });
+
+    expect(mockNavigate).not.toHaveBeenCalled();
+  });
+
+  it('does not navigate when a menu item is clicked', async () => {
+    mockLibraryData(mockBooks);
+    vi.mocked(api.searchBooks).mockResolvedValue({ results: [], durationUnknown: false, unsupportedResults: { count: 0, titles: [] } });
+    mockNavigate.mockClear();
+    const user = userEvent.setup();
+
+    renderWithProviders(<LibraryPage />);
+
+    await waitForLibraryLoad();
+
+    const optionsButtons = screen.getAllByLabelText('Book options');
+    await user.click(optionsButtons[0]);
+
+    await waitFor(() => {
+      expect(screen.getByRole('menuitem', { name: /search releases/i })).toBeInTheDocument();
+    });
+
+    await user.click(screen.getByRole('menuitem', { name: /search releases/i }));
+
+    expect(mockNavigate).not.toHaveBeenCalled();
   });
 });
 

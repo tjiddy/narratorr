@@ -124,12 +124,6 @@ export function useLibraryPageState() {
   const totalAll = statusCounts.all;
 
   const closeMenu = useCallback(() => setOpenMenuId(null), []);
-  useEffect(() => {
-    if (openMenuId !== null) {
-      document.addEventListener('click', closeMenu);
-      return () => document.removeEventListener('click', closeMenu);
-    }
-  }, [openMenuId, closeMenu]);
 
   const handleCardMenuToggle = useCallback((bookId: number, e: React.MouseEvent) => {
     e.stopPropagation();

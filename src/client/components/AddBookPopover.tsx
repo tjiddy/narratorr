@@ -4,6 +4,7 @@ import { useQuery } from '@tanstack/react-query';
 import { api } from '@/lib/api';
 import { queryKeys } from '@/lib/queryKeys';
 import { PlusIcon, LoadingSpinner } from '@/components/icons';
+import { useClickOutside } from '@/hooks/useClickOutside';
 
 interface AddBookPopoverProps {
   onAdd: (overrides: { searchImmediately: boolean; monitorForUpgrades: boolean }) => void;
@@ -67,18 +68,7 @@ export function AddBookPopover({ onAdd, isPending }: AddBookPopoverProps) {
   };
 
   // Close on outside click — dual-ref: close only when click is outside BOTH trigger and panel
-  useEffect(() => {
-    function handleClick(e: MouseEvent) {
-      const target = e.target as Node;
-      const insideTrigger = triggerRef.current?.contains(target);
-      const insidePanel = panelRef.current?.contains(target);
-      if (!insideTrigger && !insidePanel) {
-        setIsOpen(false);
-      }
-    }
-    if (isOpen) document.addEventListener('mousedown', handleClick);
-    return () => document.removeEventListener('mousedown', handleClick);
-  }, [isOpen]);
+  useClickOutside([triggerRef, panelRef], () => setIsOpen(false), isOpen);
 
   // Reposition on scroll/resize while open
   useEffect(() => {
