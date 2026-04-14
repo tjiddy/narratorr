@@ -1,18 +1,39 @@
+import { lazy, Suspense } from 'react';
 import { Routes, Route, Navigate } from 'react-router-dom';
 import { Toaster } from 'sonner';
 import { AuthProvider } from './components/AuthProvider';
 import { Layout } from './components/layout/Layout';
-import { LoginPage } from './pages/login';
-import { LibraryPage } from './pages/library';
-import { SearchPage } from './pages/search';
-import { ActivityPage } from './pages/activity';
-import { DiscoverPage } from './pages/discover';
-import { BookPage } from './pages/book';
-import { AuthorPage } from './pages/author';
-import { ManualImportPage } from './pages/manual-import';
-import { LibraryImportPage } from './pages/library-import/LibraryImportPage.js';
-import { SettingsLayout } from './pages/settings';
-import { settingsPageRegistry } from './pages/settings/registry';
+import { LoadingSpinner } from './components/icons';
+import { RouteErrorBoundary } from './components/RouteErrorBoundary';
+
+const LoginPage = lazy(() => import('./pages/login').then(m => ({ default: m.LoginPage })));
+const LibraryPage = lazy(() => import('./pages/library').then(m => ({ default: m.LibraryPage })));
+const SearchPage = lazy(() => import('./pages/search').then(m => ({ default: m.SearchPage })));
+const ActivityPage = lazy(() => import('./pages/activity').then(m => ({ default: m.ActivityPage })));
+const DiscoverPage = lazy(() => import('./pages/discover').then(m => ({ default: m.DiscoverPage })));
+const BookPage = lazy(() => import('./pages/book').then(m => ({ default: m.BookPage })));
+const AuthorPage = lazy(() => import('./pages/author').then(m => ({ default: m.AuthorPage })));
+const ManualImportPage = lazy(() => import('./pages/manual-import').then(m => ({ default: m.ManualImportPage })));
+const LibraryImportPage = lazy(() => import('./pages/library-import/LibraryImportPage.js').then(m => ({ default: m.LibraryImportPage })));
+const SettingsLayout = lazy(() => import('./pages/settings').then(m => ({ default: m.SettingsLayout })));
+
+function PageFallback() {
+  return (
+    <div className="flex items-center justify-center py-32">
+      <LoadingSpinner className="w-8 h-8 text-muted-foreground" />
+    </div>
+  );
+}
+
+function LazyRoute({ children }: { children: React.ReactNode }) {
+  return (
+    <RouteErrorBoundary>
+      <Suspense fallback={<PageFallback />}>
+        {children}
+      </Suspense>
+    </RouteErrorBoundary>
+  );
+}
 
 export function App() {
   return (
@@ -20,30 +41,19 @@ export function App() {
       <Toaster position="bottom-right" richColors theme="system" />
       <AuthProvider>
         <Routes>
-          {/* Login page — rendered outside the Layout shell */}
-          <Route path="/login" element={<LoginPage />} />
+          <Route path="/login" element={<LazyRoute><LoginPage /></LazyRoute>} />
 
-          {/* Protected routes — wrapped in Layout */}
           <Route path="/" element={<Layout />}>
             <Route index element={<Navigate to="/library" replace />} />
-            <Route path="library" element={<LibraryPage />} />
-            <Route path="import" element={<ManualImportPage />} />
-            <Route path="library-import" element={<LibraryImportPage />} />
-            <Route path="search" element={<SearchPage />} />
-            <Route path="discover" element={<DiscoverPage />} />
-            <Route path="activity" element={<ActivityPage />} />
-            <Route path="books/:id" element={<BookPage />} />
-            <Route path="authors/:asin" element={<AuthorPage />} />
-            <Route path="settings" element={<SettingsLayout />}>
-              {settingsPageRegistry.map((entry) => {
-                const Component = entry.component;
-                return entry.path === '' ? (
-                  <Route key="index" index element={<Component />} />
-                ) : (
-                  <Route key={entry.path} path={entry.path} element={<Component />} />
-                );
-              })}
-            </Route>
+            <Route path="library" element={<LazyRoute><LibraryPage /></LazyRoute>} />
+            <Route path="import" element={<LazyRoute><ManualImportPage /></LazyRoute>} />
+            <Route path="library-import" element={<LazyRoute><LibraryImportPage /></LazyRoute>} />
+            <Route path="search" element={<LazyRoute><SearchPage /></LazyRoute>} />
+            <Route path="discover" element={<LazyRoute><DiscoverPage /></LazyRoute>} />
+            <Route path="activity" element={<LazyRoute><ActivityPage /></LazyRoute>} />
+            <Route path="books/:id" element={<LazyRoute><BookPage /></LazyRoute>} />
+            <Route path="authors/:asin" element={<LazyRoute><AuthorPage /></LazyRoute>} />
+            <Route path="settings/*" element={<LazyRoute><SettingsLayout /></LazyRoute>} />
           </Route>
         </Routes>
       </AuthProvider>
