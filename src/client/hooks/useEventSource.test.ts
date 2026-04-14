@@ -3,7 +3,7 @@ import { renderHook, act } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { createElement, type ReactNode } from 'react';
 import { toast } from 'sonner';
-import { useEventSource, isSSEConnected, useSSEConnected } from './useEventSource';
+import { useEventSource, useSSEConnected } from './useEventSource';
 import { useMergeProgress, useMergeActivityCards, setMergeProgress, _resetForTesting as resetMergeStore } from './useMergeProgress';
 import { handleSearchEvent } from './useSearchProgress';
 import { queryKeys } from '@/lib/queryKeys';
@@ -444,29 +444,31 @@ describe('useEventSource', () => {
     it('sets sseConnected to true when open', () => {
       const { wrapper } = createWrapper();
       renderHook(() => useEventSource('key'), { wrapper });
+      const connectedResult = renderHook(() => useSSEConnected(), { wrapper });
       const es = MockEventSource.instances[0];
 
       act(() => es.simulateOpen());
-      expect(isSSEConnected()).toBe(true);
+      expect(connectedResult.result.current).toBe(true);
     });
 
     it('sets sseConnected to false on error and unmount', () => {
       const { wrapper } = createWrapper();
       const { unmount } = renderHook(() => useEventSource('key'), { wrapper });
+      const connectedResult = renderHook(() => useSSEConnected(), { wrapper });
       const es = MockEventSource.instances[0];
 
       act(() => es.simulateOpen());
-      expect(isSSEConnected()).toBe(true);
+      expect(connectedResult.result.current).toBe(true);
 
       act(() => es.simulateError());
-      expect(isSSEConnected()).toBe(false);
+      expect(connectedResult.result.current).toBe(false);
 
       // Re-open then unmount
       act(() => es.simulateOpen());
-      expect(isSSEConnected()).toBe(true);
+      expect(connectedResult.result.current).toBe(true);
 
       unmount();
-      expect(isSSEConnected()).toBe(false);
+      expect(connectedResult.result.current).toBe(false);
     });
 
     it('useSSEConnected reactively updates when connection state changes', () => {

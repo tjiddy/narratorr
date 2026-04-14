@@ -45,11 +45,6 @@ export function useSSEConnected(): boolean {
   return useSyncExternalStore(subscribeSseConnected, getSseConnected, getSseConnected);
 }
 
-/** Non-reactive getter for use outside React (e.g., tests). */
-export function isSSEConnected(): boolean {
-  return sseConnected;
-}
-
 /** Patch download progress in-place across cached activity pages; returns true if found.
  *  Skips non-page queries (e.g. activityCounts) that share the ['activity'] prefix
  *  but have a different data shape ({ active, completed } instead of { data[], total }). */
