@@ -361,6 +361,8 @@ describe('startJobs', () => {
       expect(sqlArg.queryChunks[0].value[0]).toBe('VACUUM');
       expect(services.eventHistory.pruneOlderThan).toHaveBeenCalledWith(30);
       expect(services.blacklist.deleteExpired).toHaveBeenCalledTimes(1);
+      // No warnings emitted on successful housekeeping
+      expect(log.warn).not.toHaveBeenCalled();
     });
 
     it('uses fallback retention of 90 when housekeepingRetentionDays is null', async () => {
@@ -390,6 +392,8 @@ describe('startJobs', () => {
       await services.taskRegistry.executeTracked('housekeeping');
 
       expect(services.eventHistory.pruneOlderThan).toHaveBeenCalledWith(90);
+      // No warnings emitted on successful housekeeping with null retention fallback
+      expect(log.warn).not.toHaveBeenCalled();
     });
 
     // #547: per-sub-task error isolation
