@@ -41,6 +41,12 @@ All GitHub commands use: `node scripts/gh.ts` (referred to as `gh` below).
    - Parse the `## Findings` JSON block from that comment
    - If no findings JSON found, report error and stop
 
+2a. **Belt-and-suspenders: check merge state:** Even if the latest verdict comment says approve, the PR can develop conflicts with main between review and merge (e.g., a sibling PR landed first). Run `node scripts/gh.ts pr view <pr-number> --json mergeStateStatus --jq '.mergeStateStatus'`. If the output is `DIRTY`, the branch has merge conflicts — override any parsed findings with a synthesized rebase finding and proceed to step 2b:
+   ```json
+   [{"id":"F1","severity":"blocking","category":"rebase","description":"PR has merge conflicts with main","files":[]}]
+   ```
+   This protects against missing/lost conflict verdict comments and late-breaking conflicts. Do NOT exit early if the latest verdict comment is `approve` but the PR is `DIRTY` — the merge state is authoritative.
+
 2b. **Handle rebase findings first:** If any finding has `"category": "rebase"`:
    1. `git fetch origin main && git rebase origin/main`
    2. Resolve any merge conflicts that arise during the rebase

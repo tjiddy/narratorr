@@ -426,24 +426,24 @@ All GitHub commands use: `node scripts/gh.ts` (referred to as `gh` below).
     - Set `stage/approved` on the **PR**: `node scripts/update-labels.ts <pr-number> --pr --replace "stage/" "stage/approved"`
     - Verify the PR output shows `stage/approved`
     - Then run `node scripts/merge.ts <pr-number>` to squash merge, update issue labels, and clean up the branch
-    - If merge output starts with `REBASE:` — the branch is behind main. Attempt a clean rebase:
+    - If merge output starts with `REBASE_CONFLICT:` — `merge.ts` has already posted a `## Verdict: needs-work` conflict comment on the PR and flipped the stage label to `stage/fixes-pr`. Issue status stays at `status/in-review`. **STOP.** The implementer will pick this up via `/respond-to-pr-review`.
+    - If merge output starts with `REBASE:` — the branch is behind main (but not conflicting). Attempt a clean rebase:
       1. `git checkout <head-branch> && git fetch origin main && git rebase origin/main`
       2. If the rebase succeeds (no conflicts): `node scripts/git-push.ts --force-with-lease` then re-run `node scripts/merge.ts <pr-number>`
-      3. If the rebase has conflicts: `git rebase --abort && git checkout main` — fall through to the `REBASE_CONFLICT` handling below
-    - If merge output starts with `REBASE_CONFLICT:` (or a `REBASE:` rebase attempt failed with conflicts above):
-      1. Overwrite `.narratorr/state/review-pr-<pr-number>/review.md` with a conflict verdict:
-         ```
-         ## Verdict: needs-work
+      3. If the rebase has conflicts during your local attempt: `git rebase --abort && git checkout main` — you cannot resolve conflicts on behalf of the implementer. Post a conflict verdict manually:
+         a. Overwrite `.narratorr/state/review-pr-<pr-number>/review.md` with:
+            ```
+            ## Verdict: needs-work
 
-         ## Findings
-         ```json
-         [{"id":"F1","severity":"blocking","category":"rebase","description":"Branch has merge conflicts with main. Run `git fetch origin main && git rebase origin/main`, resolve all conflicts, and push.","files":[]}]
-         ```
-         ```
-         Then run: `node scripts/post-review.ts <pr-number> --force` to post the conflict verdict (--force bypasses the posted-marker guard since the approve was already posted).
-      2. Set `stage/fixes-pr` on the **PR**: `node scripts/update-labels.ts <pr-number> --pr --replace "stage/" "stage/fixes-pr"`
-      3. **Do NOT change the issue status** — it stays at `status/in-review`. The orchestrator uses `stage/*` on the PR to drive the review cycle.
-      4. **STOP.** The implementer will pick this up via `/respond-to-pr-review`.
+            ## Findings
+            ```json
+            [{"id":"F1","severity":"blocking","category":"rebase","description":"Branch has merge conflicts with main. Run `git fetch origin main && git rebase origin/main`, resolve all conflicts, and push.","files":[]}]
+            ```
+            ```
+         b. Run `node scripts/post-review.ts <pr-number> --force` to post the conflict verdict (--force bypasses the posted-marker guard since the approve was already posted).
+         c. Set `stage/fixes-pr` on the **PR**: `node scripts/update-labels.ts <pr-number> --pr --replace "stage/" "stage/fixes-pr"`
+         d. **Do NOT change the issue status** — it stays at `status/in-review`. The orchestrator uses `stage/*` on the PR to drive the review cycle.
+         e. **STOP.** The implementer will pick this up via `/respond-to-pr-review`.
     - If merge output starts with `ERROR:` — report the error, do not retry
 
     **If verdict is `needs-work`:**

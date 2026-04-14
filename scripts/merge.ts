@@ -73,20 +73,26 @@ if (commentsRaw.includes("## Status: needs-human-input")) {
 const mergeStateStatus = gh("pr", "view", prNum, "--json", "mergeStateStatus", "--jq", ".mergeStateStatus").trim();
 
 function routeConflict(): never {
+  // Post a machine-parseable conflict verdict on the PR so /respond-to-pr-review
+  // can find it via its standard verdict/findings parser. Issue status stays at
+  // status/in-review — the stage/* label on the PR drives the review cycle.
+  const conflictComment = [
+    "## Verdict: needs-work",
+    "",
+    "## Findings",
+    "```json",
+    '[{"id":"F1","severity":"blocking","category":"rebase","description":"Branch has merge conflicts with main. Run `git fetch origin main && git rebase origin/main`, resolve all conflicts, and push.","files":[]}]',
+    "```",
+  ].join("\n");
+  withTempFile(conflictComment, (p) => {
+    gh("pr", "comment", prNum, "--body-file", p);
+  });
+
   const prOut = gh("pr", "view", prNum, "--json", GH_FIELDS.PR, "--jq", JQ.PR);
   const prLabels = replaceLabel(parseLabels(prOut), "stage/", "stage/fixes-pr");
   ghSetLabels(prNum, prLabels);
 
-  if (linkedIssueId) {
-    const issueOut = gh("issue", "view", linkedIssueId, "--json", GH_FIELDS.ISSUE, "--jq", JQ.ISSUE);
-    const newLabels = replaceLabel(parseLabels(issueOut), "status/", "status/in-progress");
-    ghSetLabels(linkedIssueId, newLabels);
-    withTempFile(
-      `**Rebase needed** — PR #${prNum} has merge conflicts with main. Rebase onto main, resolve conflicts, push, and set \`stage/review-pr\` for a lightweight re-review.`,
-      (p) => { gh("issue", "comment", linkedIssueId, "--body-file", p); }
-    );
-  }
-  die(`REBASE_CONFLICT: PR #${prNum} has merge conflicts with main — sent back to implementer`);
+  die(`REBASE_CONFLICT: PR #${prNum} has merge conflicts with main — conflict verdict posted, sent back to implementer`);
 }
 
 if (mergeStateStatus === "DIRTY") routeConflict();
