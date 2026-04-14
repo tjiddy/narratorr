@@ -1,5 +1,6 @@
 import type { FastifyInstance } from 'fastify';
 import { cleanCoverCache } from '../utils/cover-cache.js';
+import { snapshotBookForEvent } from '../utils/event-helpers.js';
 import { config } from '../config.js';
 import type { BookService, BookListService, DownloadService, SettingsService, RenameService, EventHistoryService, TaggingService, IndexerService } from '../services/index.js';
 import type { DownloadOrchestrator } from '../services/download-orchestrator.js';
@@ -90,9 +91,7 @@ app.delete<{ Params: IdParam; Querystring: DeleteBookQuery }>(
     if (book && deps.eventHistory) {
       deps.eventHistory.create({
         bookId: id,
-        bookTitle: book.title,
-        authorName: book.authors?.map(a => a.name).join(', ') || undefined,
-        narratorName: book.narrators?.map(n => n.name).join(', ') || undefined,
+        ...snapshotBookForEvent(book),
         eventType: 'deleted',
         source: 'manual',
       }).catch((err) => request.log.warn(err, 'Failed to record deleted event'));
@@ -214,8 +213,7 @@ export async function booksRoutes(app: FastifyInstance, deps: BookRouteDeps) {
       if (deps.eventHistory) {
         deps.eventHistory.create({
           bookId: book.id,
-          bookTitle: book.title,
-          authorName: book.authors?.map(a => a.name).join(', ') || undefined,
+          ...snapshotBookForEvent(book),
           eventType: 'book_added',
           source: 'manual',
         }).catch((err: unknown) => request.log.warn(err, 'Failed to record book_added event'));
