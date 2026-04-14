@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState, useCallback, type RefObject, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
+import { useClickOutside } from '@/hooks/useClickOutside';
 
 type Position = { top: number; left: number };
 
@@ -45,16 +46,7 @@ export function ToolbarDropdown({
   }, [open, updatePosition]);
 
   // Close on outside click — dual-ref: close only when click is outside BOTH trigger and panel
-  useEffect(() => {
-    function handleMouseDown(e: MouseEvent) {
-      const target = e.target as Node;
-      if (!triggerRef.current?.contains(target) && !panelRef.current?.contains(target)) {
-        onClose();
-      }
-    }
-    if (open) document.addEventListener('mousedown', handleMouseDown);
-    return () => document.removeEventListener('mousedown', handleMouseDown);
-  }, [open, onClose, triggerRef]);
+  useClickOutside([triggerRef, panelRef], onClose, open);
 
   // Close on Escape
   useEffect(() => {
