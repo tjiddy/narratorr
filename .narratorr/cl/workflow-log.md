@@ -1,5 +1,34 @@
 # Workflow Log
 
+## #552 Wave 3A: Backend file splits — books.ts, library-scan, quality-gate-orchestrator, search-pipeline — 2026-04-14
+**Skill path:** /implement → /claim → /plan → /handoff
+**Outcome:** success — PR #573
+
+### Metrics
+- Files changed: 8 (4 new, 4 modified) | Tests added/modified: 0
+- Quality gate runs: 2 (pass on attempt 1 both times)
+- Fix iterations: 1 (NarratorPriority re-export needed to be moved before first usage)
+- Context compactions: 0
+
+### Workflow experience
+- What went smoothly: All 4 extractions were clean mechanical moves. Existing test suites caught no regressions across 10,913 tests.
+- Friction / issues encountered: The spec review had 2 rounds due to stale extraction targets in the original spec (enrichment-orchestration.helper.ts already existed). The NarratorPriority type re-export from search-ranking.ts needed to be placed before first usage in search-pipeline.ts.
+
+### Token efficiency
+- Highest-token actions: Reading all 4 target files + routes/index.ts for context
+- Avoidable waste: The elaborate + respond-to-spec-review cycle could have been avoided if the spec had been validated against current codebase before filing
+- Suggestions: For extraction issues, always verify named artifacts exist before spec review
+
+### Infrastructure gaps
+- Repeated workarounds: None
+- Missing tooling / config: None
+- Unresolved debt: library-scan.service.ts enrichImportedBook/processOneImport complexity (19/23) remains — extraction didn't reduce it since the `??`/`||` operators are in the function bodies, not the call sites
+
+### Wish I'd Known
+1. ESLint max-lines is configured with `skipBlankLines: true, skipComments: true` — raw `wc -l` overcounts by 50-80 lines per file. Check `eslint.config.js` first.
+2. The enrichment-orchestration helper extraction was already done in a prior issue — spec was stale. Always grep for named extraction targets before planning.
+3. Class method extraction to standalone helpers requires a `Deps` interface pattern — follow the existing `enrichment-orchestration.helper.ts` convention.
+
 ## #551 Wave 2D: Accessibility — modal focus trap, touch hover, step attribute — 2026-04-14
 **Skill path:** /implement → /claim → /plan → /handoff
 **Outcome:** success — PR #572

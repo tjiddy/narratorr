@@ -23,9 +23,9 @@
 
 - ~~**`collectAudioFiles()` wrappers in 4 places**: collectAudioFiles wrapper consolidation~~ — resolved in #409 (audio-scanner excluded per spec)
 
-- **`src/server/services/quality-gate-orchestrator.ts` at 501 lines (max 400)**: File exceeds ESLint max-lines rule and any net addition triggers a "new violation" in verify.ts diff-based linting. Needs to be split — e.g., extract deferred-cleanup logic or SSE emission into a separate module. (discovered in #434)
+- ~~**`src/server/services/quality-gate-orchestrator.ts` at 501 lines (max 400)**~~ — resolved in #552 (extracted deferred-cleanup to helper)
 
-- **`src/server/services/search-pipeline.ts` at ~500 lines (max 400)**: File exceeds ESLint max-lines soft limit. Contains `canonicalCompare`, `filterAndRankResults`, and multiple helper functions. `parseWordList` extracted in #513. Consider extracting `canonicalCompare` and its tier helpers into a separate `search-ranking.ts` module. (discovered in #469, grew in #502)
+- ~~**`src/server/services/search-pipeline.ts` at ~500 lines (max 400)**~~ — resolved in #552 (extracted canonicalCompare + ranking helpers to search-ranking.ts)
 
 - **`src/server/routes/search-stream.test.ts`**: Module-level `vi.mock('../services/search-pipeline.js')` prevents integration testing of `postProcessSearchResults` in the same file. New integration tests had to go in a separate file (`search-stream-filtering.test.ts`). Consider refactoring the existing tests to use per-test mocking or moving the mocked tests to a separate file so the main test file can run unmocked. (discovered in #438)
 
