@@ -604,4 +604,46 @@ describe('enrichUsenetLanguages', () => {
       expect(mockFetchWithTimeout).not.toHaveBeenCalled();
     });
   });
+
+  describe('URL credential sanitization in logs', () => {
+    it('logs sanitized URL on non-OK status (strips query params)', async () => {
+      const results = [makeResult({
+        protocol: 'usenet',
+        downloadUrl: 'https://indexer.example.com/nzb/12345?apikey=SECRET',
+      })];
+
+      mockFetchWithTimeout.mockResolvedValue({ ok: false, status: 403, text: vi.fn() } as any);
+
+      await enrichUsenetLanguages(results, logger);
+
+      expect(logger.warn).toHaveBeenCalledWith(
+        expect.objectContaining({
+          url: 'https://indexer.example.com/nzb/12345',
+        }),
+        expect.any(String),
+      );
+      const warnCall = (logger.warn as ReturnType<typeof vi.fn>).mock.calls[0][0] as Record<string, unknown>;
+      expect(warnCall.url).not.toContain('SECRET');
+    });
+
+    it('logs sanitized URL on fetch error (strips query params)', async () => {
+      const results = [makeResult({
+        protocol: 'usenet',
+        downloadUrl: 'https://indexer.example.com/nzb/12345?apikey=SECRET',
+      })];
+
+      mockFetchWithTimeout.mockRejectedValue(new Error('Network error'));
+
+      await enrichUsenetLanguages(results, logger);
+
+      expect(logger.warn).toHaveBeenCalledWith(
+        expect.objectContaining({
+          url: 'https://indexer.example.com/nzb/12345',
+        }),
+        expect.any(String),
+      );
+      const warnCall = (logger.warn as ReturnType<typeof vi.fn>).mock.calls[0][0] as Record<string, unknown>;
+      expect(warnCall.url).not.toContain('SECRET');
+    });
+  });
 });

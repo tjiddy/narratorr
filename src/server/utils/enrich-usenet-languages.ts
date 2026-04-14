@@ -5,6 +5,7 @@ import { detectLanguageFromNewsgroup, detectLanguageFromNzbName, parseNzbGroups,
 import { fetchWithTimeout } from '../../core/utils/fetch-with-timeout.js';
 import { Semaphore } from './semaphore.js';
 import { getErrorMessage } from './error-message.js';
+import { sanitizeLogUrl } from './sanitize-log-url.js';
 
 const NZB_FETCH_CONCURRENCY = 5;
 const NZB_FETCH_TIMEOUT_MS = 5000;
@@ -61,7 +62,7 @@ export async function enrichUsenetLanguages(
       const response = await fetchWithTimeout(result.downloadUrl!, {}, NZB_FETCH_TIMEOUT_MS);
       if (!response.ok) {
         logger.warn(
-          { title: result.title, status: response.status, url: result.downloadUrl },
+          { title: result.title, status: response.status, url: sanitizeLogUrl(result.downloadUrl!) },
           'NZB fetch failed with non-OK status',
         );
         return;
@@ -94,7 +95,7 @@ export async function enrichUsenetLanguages(
       }
     } catch (error: unknown) {
       logger.warn(
-        { title: result.title, url: result.downloadUrl, error: getErrorMessage(error) },
+        { title: result.title, url: sanitizeLogUrl(result.downloadUrl!), error: getErrorMessage(error) },
         'NZB fetch failed',
       );
     } finally {
