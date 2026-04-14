@@ -1,13 +1,53 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
+import { Routes, Route } from 'react-router-dom';
 import { renderWithProviders } from '@/__tests__/helpers';
 import { SettingsLayout } from './SettingsLayout';
+
+function SettingsApp() {
+  return (
+    <Routes>
+      <Route path="/settings/*" element={<SettingsLayout />} />
+    </Routes>
+  );
+}
+
+vi.mock('./GeneralSettings.js', () => ({
+  GeneralSettings: () => <div data-testid="general-settings">General Settings Content</div>,
+}));
+vi.mock('./SystemSettings.js', () => ({
+  SystemSettings: () => <div data-testid="system-settings">System Settings Content</div>,
+}));
+vi.mock('./IndexersSettings.js', () => ({
+  IndexersSettings: () => <div data-testid="indexers-settings">Indexers Settings Content</div>,
+}));
+vi.mock('./PostProcessingSettings.js', () => ({
+  PostProcessingSettings: () => <div>Post Processing Content</div>,
+}));
+vi.mock('./DownloadClientsSettings.js', () => ({
+  DownloadClientsSettings: () => <div>Download Clients Content</div>,
+}));
+vi.mock('./SearchSettingsPage.js', () => ({
+  SearchSettingsPage: () => <div>Search Settings Content</div>,
+}));
+vi.mock('./NotificationsSettings.js', () => ({
+  NotificationsSettings: () => <div>Notifications Content</div>,
+}));
+vi.mock('./BlacklistSettings.js', () => ({
+  BlacklistSettings: () => <div>Blacklist Content</div>,
+}));
+vi.mock('./SecuritySettings.js', () => ({
+  SecuritySettings: () => <div>Security Content</div>,
+}));
+vi.mock('./ImportListsSettings.js', () => ({
+  ImportListsSettings: () => <div>Import Lists Content</div>,
+}));
 
 describe('SettingsLayout', () => {
   it('renders all nav items with correct link targets', async () => {
     const user = userEvent.setup();
-    renderWithProviders(<SettingsLayout />, { route: '/settings' });
+    renderWithProviders(<SettingsApp />, { route: '/settings' });
 
     expect(screen.getByText('Settings')).toBeInTheDocument();
     expect(screen.getByText('General').closest('a')).toHaveAttribute('href', '/settings');
@@ -27,7 +67,7 @@ describe('SettingsLayout', () => {
   });
 
   it('applies active styling to General when at /settings', () => {
-    renderWithProviders(<SettingsLayout />, { route: '/settings' });
+    renderWithProviders(<SettingsApp />, { route: '/settings' });
 
     const generalLink = screen.getByText('General').closest('a')!;
     const systemLink = screen.getByText('System').closest('a')!;
@@ -37,18 +77,17 @@ describe('SettingsLayout', () => {
   });
 
   it('applies active styling to System when at /settings/system', () => {
-    renderWithProviders(<SettingsLayout />, { route: '/settings/system' });
+    renderWithProviders(<SettingsApp />, { route: '/settings/system' });
 
     const generalLink = screen.getByText('General').closest('a')!;
     const systemLink = screen.getByText('System').closest('a')!;
 
-    // General (end: true) should NOT be active at /settings/system
     expect(generalLink.className).not.toContain('bg-primary');
     expect(systemLink.className).toContain('bg-primary');
   });
 
   it('applies active styling to Post Processing when at /settings/post-processing', () => {
-    renderWithProviders(<SettingsLayout />, { route: '/settings/post-processing' });
+    renderWithProviders(<SettingsApp />, { route: '/settings/post-processing' });
 
     const generalLink = screen.getByText('General').closest('a')!;
     const postProcessingLink = screen.getByText('Post Processing').closest('a')!;
@@ -59,7 +98,7 @@ describe('SettingsLayout', () => {
 
   it('navigates between settings sections', async () => {
     const user = userEvent.setup();
-    renderWithProviders(<SettingsLayout />, { route: '/settings' });
+    renderWithProviders(<SettingsApp />, { route: '/settings' });
 
     await user.click(screen.getByText('Download Clients'));
     expect(screen.getByText('Download Clients').closest('a')).toHaveAttribute('href', '/settings/download-clients');
@@ -68,8 +107,21 @@ describe('SettingsLayout', () => {
     expect(screen.getByText('Notifications').closest('a')).toHaveAttribute('href', '/settings/notifications');
   });
 
-  // #550 — settings sub-route restructuring (routes now defined inside SettingsLayout)
-  it.todo('renders General settings content at /settings (index route)');
-  it.todo('renders System settings content at /settings/system');
-  it.todo('renders Indexers settings content at /settings/indexers');
+  it('renders General settings content at /settings (index route)', () => {
+    renderWithProviders(<SettingsApp />, { route: '/settings' });
+
+    expect(screen.getByTestId('general-settings')).toBeInTheDocument();
+  });
+
+  it('renders System settings content at /settings/system', () => {
+    renderWithProviders(<SettingsApp />, { route: '/settings/system' });
+
+    expect(screen.getByTestId('system-settings')).toBeInTheDocument();
+  });
+
+  it('renders Indexers settings content at /settings/indexers', () => {
+    renderWithProviders(<SettingsApp />, { route: '/settings/indexers' });
+
+    expect(screen.getByTestId('indexers-settings')).toBeInTheDocument();
+  });
 });
