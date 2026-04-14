@@ -2717,6 +2717,28 @@ describe('LibraryScanService', () => {
         );
       });
 
+      it('includes narratorName from created book in book_added event', async () => {
+        mockBookService.create.mockResolvedValueOnce({
+          id: 1,
+          title: 'Book',
+          status: 'imported',
+          authors: [{ id: 1, name: 'Author' }],
+          narrators: [{ id: 1, name: 'Narrator X' }, { id: 2, name: 'Narrator Y' }],
+        });
+
+        await service.importSingleBook(
+          { path: '/audiobooks/Author/Book', title: 'Book', authorName: 'Author' },
+          null,
+        );
+
+        expect(mockEventHistoryService.create).toHaveBeenCalledWith(
+          expect.objectContaining({
+            eventType: 'book_added',
+            narratorName: 'Narrator X, Narrator Y',
+          }),
+        );
+      });
+
       it('records book_added event in addition to imported event', async () => {
         await service.importSingleBook(
           { path: '/audiobooks/Author/Book', title: 'Book', authorName: 'Author' },
@@ -2781,6 +2803,27 @@ describe('LibraryScanService', () => {
           expect.objectContaining({
             eventType: 'book_added',
             authorName: 'Author A, Author B',
+          }),
+        );
+      });
+
+      it('includes narratorName from created book in book_added event', async () => {
+        mockBookService.create.mockResolvedValueOnce({
+          id: 1,
+          title: 'Title',
+          status: 'importing',
+          authors: [{ id: 1, name: 'Author' }],
+          narrators: [{ id: 1, name: 'Narrator Z' }],
+        });
+
+        await service.confirmImport([
+          { path: '/audiobooks/Author/Title', title: 'Title', authorName: 'Author' },
+        ]);
+
+        expect(mockEventHistoryService.create).toHaveBeenCalledWith(
+          expect.objectContaining({
+            eventType: 'book_added',
+            narratorName: 'Narrator Z',
           }),
         );
       });
