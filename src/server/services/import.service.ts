@@ -142,10 +142,7 @@ export class ImportService {
       });
 
       const ffprobePath = resolveFfprobePathFromSettings(processingSettings?.ffmpegPath);
-      const enrichResult = await enrichBookFromAudio(book.id, targetPath, book, this.db, this.log, this.bookService, ffprobePath);
-      if (enrichResult && typeof enrichResult === 'object' && 'enriched' in enrichResult && !enrichResult.enriched) {
-        this.log.warn({ bookId: book.id, error: (enrichResult as { error?: string }).error }, 'Audio enrichment failed — import successful but metadata incomplete');
-      }
+      await this.enrichAfterImport(book.id, targetPath!, book, ffprobePath);
 
       this.log.info({ downloadId, bookId: book.id, bookTitle: book.title, targetPath, fileCount, totalSize: targetSize, elapsedMs: Date.now() - startMs }, 'Import completed successfully');
 
@@ -160,6 +157,13 @@ export class ImportService {
         error, targetPath, db: this.db, downloadId,
         book, log: this.log, elapsedMs: Date.now() - startMs,
       });
+    }
+  }
+
+  private async enrichAfterImport(bookId: number, targetPath: string, book: BookWithAuthor, ffprobePath?: string): Promise<void> {
+    const enrichResult = await enrichBookFromAudio(bookId, targetPath, book, this.db, this.log, this.bookService, ffprobePath);
+    if (enrichResult && typeof enrichResult === 'object' && 'enriched' in enrichResult && !enrichResult.enriched) {
+      this.log.warn({ bookId, error: (enrichResult as { error?: string }).error }, 'Audio enrichment failed — import successful but metadata incomplete');
     }
   }
 
