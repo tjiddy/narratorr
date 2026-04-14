@@ -261,7 +261,8 @@ export class AuthService {
 
   async validateApiKey(key: string): Promise<boolean> {
     const config = await this.getAuthConfig();
-    return config.apiKey === key;
+    if (config.apiKey.length !== key.length) return false;
+    return timingSafeEqual(Buffer.from(config.apiKey), Buffer.from(key));
   }
 
   async regenerateApiKey(): Promise<string> {
