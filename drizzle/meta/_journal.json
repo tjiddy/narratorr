@@ -8,6 +8,13 @@
       "when": 1776121953971,
       "tag": "0000_classy_skrulls",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "6",
+      "when": 1776162427745,
+      "tag": "0001_acoustic_living_lightning",
+      "breakpoints": true
     }
   ]
 }

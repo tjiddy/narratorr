@@ -264,18 +264,6 @@ export const bookEvents = sqliteTable('book_events', {
 
 // ============ SEARCH & BLACKLIST ============
 
-export const searchHistory = sqliteTable('search_history', {
-  id: integer('id').primaryKey({ autoIncrement: true }),
-  query: text('query').notNull(),
-  type: text('type', { enum: ['metadata', 'indexer'] }).notNull(),
-  resultsCount: integer('results_count'),
-  searchedAt: integer('searched_at', { mode: 'timestamp' })
-    .notNull()
-    .default(sql`(unixepoch())`),
-}, (table) => [
-  index('idx_search_history_searched_at').on(table.searchedAt),
-]);
-
 export const blacklist = sqliteTable('blacklist', {
   id: integer('id').primaryKey({ autoIncrement: true }),
   bookId: integer('book_id').references(() => books.id, { onDelete: 'set null' }),
