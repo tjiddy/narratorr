@@ -1851,16 +1851,24 @@ describe('ImportService', () => {
     });
 
     // ── #539 — rowsAffected guard ──────────────────────────────────────────
-    it('throws when rowsAffected field is missing (undefined) — prevents infinite retry', async () => {
+    it('logs warning and throws when rowsAffected field is missing (undefined)', async () => {
       db.update.mockReturnValueOnce(mockDbChain({}));
 
       await expect(service.claimQueuedDownload(5)).rejects.toThrow('rowsAffected missing');
+      expect(log.warn).toHaveBeenCalledWith(
+        expect.objectContaining({ downloadId: 5 }),
+        expect.stringContaining('rowsAffected'),
+      );
     });
 
-    it('error message includes download ID for debuggability', async () => {
+    it('warning log includes download ID for debuggability', async () => {
       db.update.mockReturnValueOnce(mockDbChain({}));
 
       await expect(service.claimQueuedDownload(42)).rejects.toThrow('download 42');
+      expect(log.warn).toHaveBeenCalledWith(
+        expect.objectContaining({ downloadId: 42 }),
+        expect.any(String),
+      );
     });
   });
 
