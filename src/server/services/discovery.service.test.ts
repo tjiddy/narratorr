@@ -482,7 +482,7 @@ describe('DiscoveryService', () => {
         .mockReturnValueOnce(mockDbChain([]))
         // currentPending (no existing pending)
         .mockReturnValueOnce(mockDbChain([]))
-        // per-candidate lookup (no existing row for this ASIN)
+        // batch SELECT for upsert (#554)
         .mockReturnValueOnce(mockDbChain([]));
       db.insert.mockReturnValue(mockDbChain());
       db.delete.mockReturnValue(mockDbChain());
@@ -513,8 +513,8 @@ describe('DiscoveryService', () => {
         .mockReturnValueOnce(mockDbChain([]))
         // currentPending: no pending
         .mockReturnValueOnce(mockDbChain([]))
-        // per-candidate lookup: existing dismissed row
-        .mockReturnValueOnce(mockDbChain([{ id: 10, asin: 'DISMISSED1', status: 'dismissed' }]));
+        // batch SELECT for upsert (#554) — existing dismissed row
+        .mockReturnValueOnce(mockDbChain([{ asin: 'DISMISSED1', status: 'dismissed', snoozeUntil: null }]));
       db.insert.mockReturnValue(mockDbChain());
       db.delete.mockReturnValue(mockDbChain());
 
@@ -527,7 +527,6 @@ describe('DiscoveryService', () => {
       const result = await service.refreshSuggestions();
       // Should not insert or update dismissed row
       expect(result.added).toBe(0);
-      expect(db.update).not.toHaveBeenCalled();
     });
 
     it('updates existing pending suggestions with new score', async () => {
@@ -544,10 +543,10 @@ describe('DiscoveryService', () => {
         // dismissed suggestions
         .mockReturnValueOnce(mockDbChain([]))
         // currentPending: one existing pending
-        .mockReturnValueOnce(mockDbChain([{ id: 5, asin: 'EXISTING_PENDING' }]))
-        // per-candidate lookup: existing pending row
-        .mockReturnValueOnce(mockDbChain([{ id: 5, asin: 'EXISTING_PENDING', status: 'pending', score: 30 }]));
-      db.update.mockReturnValue(mockDbChain());
+        .mockReturnValueOnce(mockDbChain([{ id: 5, asin: 'EXISTING_PENDING', snoozeUntil: null, reason: 'author', reasonContext: 'ctx', authorName: 'Author A', narratorName: null, duration: null, publishedDate: null, seriesName: null, seriesPosition: null }]))
+        // batch SELECT for upsert (#554) — existing pending row
+        .mockReturnValueOnce(mockDbChain([{ asin: 'EXISTING_PENDING', status: 'pending', snoozeUntil: null }]));
+      db.insert.mockReturnValue(mockDbChain());
       db.delete.mockReturnValue(mockDbChain());
 
       mockMetadataService.searchBooksForDiscovery.mockResolvedValueOnce({
@@ -558,7 +557,8 @@ describe('DiscoveryService', () => {
       const { service } = createService(db);
       const result = await service.refreshSuggestions();
       expect(result.added).toBe(0);
-      expect(db.update).toHaveBeenCalled();
+      // Existing pending row updated via INSERT ON CONFLICT DO UPDATE (#554)
+      expect(db.insert).toHaveBeenCalled();
     });
 
     it('deletes stale pending suggestions not regenerated', async () => {
@@ -575,7 +575,7 @@ describe('DiscoveryService', () => {
         // dismissed suggestions
         .mockReturnValueOnce(mockDbChain([]))
         // currentPending: one stale pending (won't be regenerated)
-        .mockReturnValueOnce(mockDbChain([{ id: 99, asin: 'STALE1' }]));
+        .mockReturnValueOnce(mockDbChain([{ id: 99, asin: 'STALE1', snoozeUntil: null, reason: 'author', reasonContext: 'ctx', authorName: 'Author A', narratorName: null, duration: null, publishedDate: null, seriesName: null, seriesPosition: null }]));
       db.delete.mockReturnValue(mockDbChain());
 
       // No candidates generated (empty results)
@@ -787,7 +787,7 @@ describe('DiscoveryService', () => {
       db.select.mockReturnValueOnce(mockDbChain([]));
       // currentPending
       db.select.mockReturnValueOnce(mockDbChain([]));
-      // per-candidate lookup
+      // batch SELECT for upsert (#554)
       db.select.mockReturnValueOnce(mockDbChain([]));
       db.insert.mockReturnValue(mockDbChain());
       // stale delete
@@ -1046,10 +1046,10 @@ describe('DiscoveryService', () => {
       // dismissed
       db.select.mockReturnValueOnce(mockDbChain([]));
       // currentPending
-      db.select.mockReturnValueOnce(mockDbChain([{ id: 5, asin: 'EXISTING_PENDING' }]));
-      // per-candidate lookup: existing pending row with no snoozeUntil
-      db.select.mockReturnValueOnce(mockDbChain([{ id: 5, asin: 'EXISTING_PENDING', status: 'pending', score: 30, snoozeUntil: null }]));
-      db.update.mockReturnValue(mockDbChain());
+      db.select.mockReturnValueOnce(mockDbChain([{ id: 5, asin: 'EXISTING_PENDING', snoozeUntil: null, reason: 'author', reasonContext: 'ctx', authorName: 'Author A', narratorName: null, duration: null, publishedDate: null, seriesName: null, seriesPosition: null }]));
+      // batch SELECT for upsert (#554)
+      db.select.mockReturnValueOnce(mockDbChain([{ asin: 'EXISTING_PENDING', status: 'pending', snoozeUntil: null }]));
+      db.insert.mockReturnValue(mockDbChain());
 
       mockMetadataService.searchBooksForDiscovery.mockResolvedValueOnce({
         books: [{ asin: 'EXISTING_PENDING', title: 'Updated', authors: [{ name: 'Author A' }], language: 'English' }],
@@ -1059,8 +1059,8 @@ describe('DiscoveryService', () => {
       const { service } = createService(db);
       await service.refreshSuggestions();
 
-      // Normal pending rows get full update including reason/reasonContext
-      expect(db.update).toHaveBeenCalled();
+      // Normal pending rows get upserted via INSERT ON CONFLICT DO UPDATE (#554)
+      expect(db.insert).toHaveBeenCalled();
     });
   });
 
@@ -2324,4 +2324,278 @@ describe('DiscoveryService', () => {
   });
 
   // #341 — book_added event tests removed — #524 moved event recording to POST /api/books
+
+  describe('batch upsert (#554)', () => {
+    function setupRefreshMocks(db: ReturnType<typeof createMockDb>, opts: {
+      existingRows?: Array<{ id: number; asin: string; status: string; snoozeUntil?: Date | null }>;
+      candidateCount?: number;
+    } = {}) {
+      const { existingRows = [], candidateCount = 1 } = opts;
+      // Pre-upsert fixed calls:
+      db.select
+        // dismissal stats
+        .mockReturnValueOnce(mockDbChain([]))
+        // analyzeLibrary: books
+        .mockReturnValueOnce(mockDbChain([makeBookRow({ id: 1, genres: ['Fantasy'], duration: 1000 })]))
+        // analyzeLibrary: narrators
+        .mockReturnValueOnce(mockDbChain([]))
+        // existing books
+        .mockReturnValueOnce(mockDbChain([]))
+        // dismissed suggestions
+        .mockReturnValueOnce(mockDbChain([]))
+        // currentPending
+        .mockReturnValueOnce(mockDbChain(existingRows.filter(r => r.status === 'pending').map(r => ({
+          id: r.id, asin: r.asin, snoozeUntil: r.snoozeUntil ?? null,
+          reason: 'author' as const, reasonContext: 'ctx', authorName: 'Author A',
+          narratorName: null, duration: null, publishedDate: null,
+          seriesName: null, seriesPosition: null,
+        }))))
+        // batch SELECT for upsert
+        .mockReturnValueOnce(mockDbChain(existingRows));
+      db.insert.mockReturnValue(mockDbChain());
+      db.update.mockReturnValue(mockDbChain());
+      db.delete.mockReturnValue(mockDbChain());
+
+      // Generate candidate metadata responses
+      const books = Array.from({ length: candidateCount }, (_, i) => ({
+        asin: existingRows[i]?.asin ?? `NEW${i}`,
+        title: `Book ${i}`,
+        authors: [{ name: 'Author A' }],
+        language: 'English',
+      }));
+      mockMetadataService.searchBooksForDiscovery
+        .mockResolvedValueOnce({ books, warnings: [] })
+        .mockResolvedValue({ books: [], warnings: [] });
+    }
+
+    describe('happy path', () => {
+      it('new candidates only → batch SELECT + batch upsert (no per-candidate selects)', async () => {
+        const db = createMockDb();
+        setupRefreshMocks(db, { candidateCount: 3 });
+
+        const { service } = createService(db);
+        await service.refreshSuggestions();
+
+        // db.insert is used for the batch upsert (INSERT ON CONFLICT)
+        expect(db.insert).toHaveBeenCalled();
+        // No individual per-candidate selects: the 7th select call is the batch SELECT
+        // Total selects should be exactly 7 (6 fixed + 1 batch), not 6 + N
+        expect(db.select).toHaveBeenCalledTimes(7);
+      });
+
+      it('existing non-snoozed pending → batch SELECT finds them, upsert updates via ON CONFLICT', async () => {
+        const db = createMockDb();
+        setupRefreshMocks(db, {
+          existingRows: [
+            { id: 10, asin: 'NEW0', status: 'pending', snoozeUntil: null },
+            { id: 11, asin: 'NEW1', status: 'pending', snoozeUntil: null },
+          ],
+          candidateCount: 2,
+        });
+
+        const { service } = createService(db);
+        const result = await service.refreshSuggestions();
+
+        // Existing pending rows updated via ON CONFLICT, not individual updates
+        expect(db.insert).toHaveBeenCalled();
+        // No per-candidate selects
+        expect(db.select).toHaveBeenCalledTimes(7);
+        // Updated, not added
+        expect(result.added).toBe(0);
+      });
+
+      it('dismissed candidates are skipped (not upserted)', async () => {
+        const db = createMockDb();
+        setupRefreshMocks(db, {
+          existingRows: [{ id: 10, asin: 'NEW0', status: 'dismissed' }],
+          candidateCount: 1,
+        });
+
+        const { service } = createService(db);
+        const result = await service.refreshSuggestions();
+
+        expect(result.added).toBe(0);
+      });
+
+      it('mix of new + existing → single batch upsert call', async () => {
+        const db = createMockDb();
+        setupRefreshMocks(db, {
+          existingRows: [{ id: 10, asin: 'NEW0', status: 'pending', snoozeUntil: null }],
+          candidateCount: 3,
+        });
+
+        const { service } = createService(db);
+        const result = await service.refreshSuggestions();
+
+        // 2 new + 1 existing = 1 batch upsert
+        expect(db.insert).toHaveBeenCalled();
+        expect(db.select).toHaveBeenCalledTimes(7);
+        expect(result.added).toBe(2);
+      });
+    });
+
+    describe('snooze logic', () => {
+      it('existing row with future snoozeUntil — included in upsert batch', async () => {
+        const db = createMockDb();
+        const future = new Date(Date.now() + 86400000);
+        setupRefreshMocks(db, {
+          existingRows: [{ id: 10, asin: 'NEW0', status: 'pending', snoozeUntil: future }],
+          candidateCount: 1,
+        });
+
+        const { service } = createService(db);
+        await service.refreshSuggestions();
+
+        // Snoozed row included in batch upsert (ON CONFLICT handles snooze via CASE)
+        expect(db.insert).toHaveBeenCalled();
+      });
+
+      it('existing row with past snoozeUntil — included in upsert batch', async () => {
+        const db = createMockDb();
+        const past = new Date(Date.now() - 86400000);
+        setupRefreshMocks(db, {
+          existingRows: [{ id: 10, asin: 'NEW0', status: 'pending', snoozeUntil: past }],
+          candidateCount: 1,
+        });
+
+        const { service } = createService(db);
+        await service.refreshSuggestions();
+
+        expect(db.insert).toHaveBeenCalled();
+      });
+    });
+
+    describe('chunk boundaries (#554 F3)', () => {
+      function createLargeService(dbOverride: ReturnType<typeof createMockDb>, maxPerAuthor: number) {
+        const log = createMockLogger();
+        const settings = createMockSettingsService({
+          discovery: { enabled: true, intervalHours: 24, maxSuggestionsPerAuthor: maxPerAuthor },
+          metadata: { audibleRegion: 'us' },
+        });
+        return {
+          service: new DiscoveryService(
+            inject<Db>(dbOverride),
+            inject<FastifyBaseLogger>(log),
+            inject(mockMetadataService),
+            inject(settings),
+          ),
+          log,
+        };
+      }
+
+      it('1001 candidates → 2 read-side batch SELECTs (chunked at 999)', async () => {
+        const db = createMockDb();
+        const candidateCount = 1001;
+        db.select
+          .mockReturnValueOnce(mockDbChain([]))
+          .mockReturnValueOnce(mockDbChain([makeBookRow({ id: 1, genres: ['Fantasy'], duration: 1000 })]))
+          .mockReturnValueOnce(mockDbChain([]))
+          .mockReturnValueOnce(mockDbChain([]))
+          .mockReturnValueOnce(mockDbChain([]))
+          .mockReturnValueOnce(mockDbChain([]))
+          // 2 chunked batch SELECTs for 1001 ASINs (999 + 2)
+          .mockReturnValueOnce(mockDbChain([]))
+          .mockReturnValueOnce(mockDbChain([]));
+        db.insert.mockReturnValue(mockDbChain());
+        db.delete.mockReturnValue(mockDbChain());
+
+        const books = Array.from({ length: candidateCount }, (_, i) => ({
+          asin: `C${i}`, title: `Book ${i}`, authors: [{ name: 'Author A' }], language: 'English',
+        }));
+        mockMetadataService.searchBooksForDiscovery
+          .mockResolvedValueOnce({ books, warnings: [] })
+          .mockResolvedValue({ books: [], warnings: [] });
+
+        const { service } = createLargeService(db, candidateCount);
+        await service.refreshSuggestions();
+
+        // 6 fixed + 2 chunked batch SELECTs = 8
+        expect(db.select).toHaveBeenCalledTimes(8);
+      });
+
+      it('50 new candidates → 2 write-side INSERT chunks (47 + 3)', async () => {
+        const db = createMockDb();
+        const candidateCount = 50;
+        db.select
+          .mockReturnValueOnce(mockDbChain([]))
+          .mockReturnValueOnce(mockDbChain([makeBookRow({ id: 1, genres: ['Fantasy'], duration: 1000 })]))
+          .mockReturnValueOnce(mockDbChain([]))
+          .mockReturnValueOnce(mockDbChain([]))
+          .mockReturnValueOnce(mockDbChain([]))
+          .mockReturnValueOnce(mockDbChain([]))
+          // 1 batch SELECT (50 < 999)
+          .mockReturnValueOnce(mockDbChain([]));
+        db.insert.mockReturnValue(mockDbChain());
+        db.delete.mockReturnValue(mockDbChain());
+
+        const books = Array.from({ length: candidateCount }, (_, i) => ({
+          asin: `C${i}`, title: `Book ${i}`, authors: [{ name: 'Author A' }], language: 'English',
+        }));
+        mockMetadataService.searchBooksForDiscovery
+          .mockResolvedValueOnce({ books, warnings: [] })
+          .mockResolvedValue({ books: [], warnings: [] });
+
+        const { service } = createLargeService(db, candidateCount);
+        const result = await service.refreshSuggestions();
+
+        expect(result.added).toBe(50);
+        // 2 chunked INSERT calls (47 + 3)
+        expect(db.insert).toHaveBeenCalledTimes(2);
+      });
+    });
+
+    describe('boundary values', () => {
+      it('empty candidate list → no upsert DB queries', async () => {
+        const db = createMockDb();
+        setupRefreshMocks(db, { candidateCount: 0 });
+        // Override metadata to return no candidates
+        mockMetadataService.searchBooksForDiscovery.mockReset();
+        mockMetadataService.searchBooksForDiscovery.mockResolvedValue({ books: [], warnings: [] });
+
+        const { service } = createService(db);
+        const result = await service.refreshSuggestions();
+
+        expect(result.added).toBe(0);
+      });
+
+      it('single candidate → batch of 1 works correctly', async () => {
+        const db = createMockDb();
+        setupRefreshMocks(db, { candidateCount: 1 });
+
+        const { service } = createService(db);
+        const result = await service.refreshSuggestions();
+
+        expect(result.added).toBe(1);
+        expect(db.insert).toHaveBeenCalled();
+      });
+    });
+
+    describe('stale cleanup', () => {
+      it('stale suggestion removal still works after batch optimization', async () => {
+        const db = createMockDb();
+        db.delete.mockReturnValue(mockDbChain());
+        db.select
+          // dismissal stats
+          .mockReturnValueOnce(mockDbChain([]))
+          // analyzeLibrary: books
+          .mockReturnValueOnce(mockDbChain([makeBookRow({ id: 1, genres: ['Fantasy'], duration: 1000 })]))
+          // analyzeLibrary: narrators
+          .mockReturnValueOnce(mockDbChain([]))
+          // existing books
+          .mockReturnValueOnce(mockDbChain([]))
+          // dismissed
+          .mockReturnValueOnce(mockDbChain([]))
+          // currentPending: one stale pending not in candidates
+          .mockReturnValueOnce(mockDbChain([{ id: 99, asin: 'STALE1', snoozeUntil: null, reason: 'author', reasonContext: 'ctx', authorName: 'Author A', narratorName: null, duration: null, publishedDate: null, seriesName: null, seriesPosition: null }]));
+        // No candidates → empty batch SELECT not needed (short-circuit)
+        mockMetadataService.searchBooksForDiscovery.mockResolvedValue({ books: [], warnings: [] });
+
+        const { service } = createService(db);
+        const result = await service.refreshSuggestions();
+
+        expect(result.removed).toBe(1);
+        expect(db.delete).toHaveBeenCalled();
+      });
+    });
+  });
 });

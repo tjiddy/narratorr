@@ -1319,33 +1319,27 @@ describe('ImportService', () => {
       );
     });
 
-    it('reverts download and book status when enrichBookFromAudio throws', async () => {
+    it('import succeeds when enrichBookFromAudio throws (#554 — enrichment isolated)', async () => {
       const log = createMockLogger();
       const svc = new ImportService(inject<Db>(db), clientService, settingsService, inject<FastifyBaseLogger>(log), undefined, mockBookService as never);
 
       db.select.mockReturnValueOnce(mockDbChain([mockDownload]));
       db.update.mockReturnValue(mockDbChain());
 
-      // Make enrichBookFromAudio throw (simulating a scenario where internal catch is absent)
       const enrichMock = vi.mocked(enrichBookFromAudio);
       enrichMock.mockRejectedValueOnce(new Error('Enrichment exploded'));
 
-      await expect(svc.importDownload(1)).rejects.toThrow('Enrichment exploded');
+      const result = await svc.importDownload(1);
 
-      // Verify download reverted to 'failed'
-      const updateCalls = db.update.mock.results;
-      const setCalls = updateCalls
-        .map((r: { value: unknown }) => ((r.value as { set: ReturnType<typeof vi.fn> }).set))
-        .filter(Boolean);
-      const allSetArgs = setCalls.flatMap((s: ReturnType<typeof vi.fn>) => s.mock.calls.map((c: unknown[]) => c[0] as Record<string, unknown>));
-      expect(allSetArgs).toContainEqual(expect.objectContaining({ status: 'failed' }));
-      // Book reverted to 'wanted' (no path)
-      expect(allSetArgs).toContainEqual(expect.objectContaining({ status: 'wanted' }));
-      // Error logged
-      expect(log.error).toHaveBeenCalledWith(
-        expect.objectContaining({ downloadId: 1 }),
-        'Import failed',
+      // Import succeeds despite enrichment throw
+      expect(result.downloadId).toBe(1);
+      // Warning logged, not error
+      expect(log.warn).toHaveBeenCalledWith(
+        expect.objectContaining({ error: expect.any(Error) }),
+        expect.stringContaining('enrichment threw'),
       );
+      // No revert to failed — import is committed
+      expect(log.error).not.toHaveBeenCalled();
     });
   });
 
@@ -2402,6 +2396,127 @@ describe('ImportService consolidation (issue #79)', () => {
       await service.cleanupDeferredImports();
 
       expect(mockAdapter.removeDownload).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('import transaction (#554)', () => {
+    let service: ImportService;
+    let mockBookSvc: { getById: ReturnType<typeof vi.fn>; update: ReturnType<typeof vi.fn> };
+
+    function withAuthor554(book: Record<string, unknown>) {
+      return { ...book, authors: [createMockDbAuthor()], narrators: [] };
+    }
+
+    beforeEach(() => {
+      vi.clearAllMocks();
+      db = createMockDb();
+      log = createMockLogger();
+      clientService = createMockDownloadClientService();
+      settingsService = createMockSettingsService();
+      mockBookSvc = { getById: vi.fn().mockResolvedValue(withAuthor554(createMockDbBook({ status: 'downloading' as const }))), update: vi.fn().mockResolvedValue(undefined) };
+      service = new ImportService(inject<Db>(db), clientService, settingsService, inject<FastifyBaseLogger>(log), undefined, mockBookSvc as never);
+      vi.mocked(stat).mockResolvedValue({ isFile: () => false, isDirectory: () => true, size: 500_000_000 } as never);
+      vi.mocked(readdir).mockResolvedValue([{ name: 'ch1.mp3', isFile: () => true, isDirectory: () => false }] as never);
+    });
+
+    describe('happy path', () => {
+      it('wraps direct DB mutations in db.transaction()', async () => {
+        db.select.mockReturnValueOnce(mockDbChain([mockDownload]));
+        db.update.mockReturnValue(mockDbChain());
+
+        await service.importDownload(1);
+
+        expect(db.transaction).toHaveBeenCalledTimes(1);
+        expect(db.transaction).toHaveBeenCalledWith(expect.any(Function));
+      });
+
+      it('enrichment runs after transaction commit', async () => {
+        db.select.mockReturnValueOnce(mockDbChain([mockDownload]));
+        db.update.mockReturnValue(mockDbChain());
+
+        const callOrder: string[] = [];
+        db.transaction.mockImplementation(async (cb: (tx: typeof db) => Promise<unknown>) => {
+          const result = await cb(db);
+          callOrder.push('transaction-done');
+          return result;
+        });
+        vi.mocked(enrichBookFromAudio).mockImplementation(async () => {
+          callOrder.push('enrich');
+          return { enriched: true };
+        });
+
+        await service.importDownload(1);
+
+        expect(callOrder.indexOf('transaction-done')).toBeLessThan(callOrder.indexOf('enrich'));
+      });
+    });
+
+    describe('partial failure / rollback', () => {
+      it('book update failure inside transaction triggers handleImportFailure', async () => {
+        db.select.mockReturnValueOnce(mockDbChain([mockDownload]));
+        let updateCallCount = 0;
+        db.update.mockImplementation(() => {
+          updateCallCount++;
+          if (updateCallCount === 2) {
+            return mockDbChain([], { error: new Error('DB write failed') });
+          }
+          return mockDbChain();
+        });
+
+        await expect(service.importDownload(1)).rejects.toThrow();
+        expect(rm).toHaveBeenCalled();
+      });
+    });
+
+    describe('enrichment isolation', () => {
+      it('enrichment returning { enriched: false } → warning logged, import stays successful', async () => {
+        db.select.mockReturnValueOnce(mockDbChain([mockDownload]));
+        db.update.mockReturnValue(mockDbChain());
+        vi.mocked(enrichBookFromAudio).mockResolvedValueOnce({ enriched: false, error: 'scan failed' });
+
+        const result = await service.importDownload(1);
+
+        expect(result.downloadId).toBe(1);
+        expect(log.warn).toHaveBeenCalledWith(
+          expect.objectContaining({ error: 'scan failed' }),
+          expect.stringContaining('enrichment'),
+        );
+      });
+
+      it('enrichment throwing unexpectedly → caught, import still succeeds', async () => {
+        db.select.mockReturnValueOnce(mockDbChain([mockDownload]));
+        db.update.mockReturnValue(mockDbChain());
+        vi.mocked(enrichBookFromAudio).mockRejectedValueOnce(new Error('unexpected crash'));
+
+        const result = await service.importDownload(1);
+
+        expect(result.downloadId).toBe(1);
+        expect(log.warn).toHaveBeenCalledWith(
+          expect.objectContaining({ error: expect.any(Error) }),
+          expect.stringContaining('enrichment threw'),
+        );
+        expect(rm).not.toHaveBeenCalled();
+      });
+    });
+
+    describe('filesystem isolation', () => {
+      it('filesystem ops execute before the transaction', async () => {
+        db.select.mockReturnValueOnce(mockDbChain([mockDownload]));
+        db.update.mockReturnValue(mockDbChain());
+
+        const callOrder: string[] = [];
+        vi.mocked(cp).mockImplementation(async () => { callOrder.push('cp'); });
+        db.transaction.mockImplementation(async (cb: (tx: typeof db) => Promise<unknown>) => {
+          callOrder.push('transaction');
+          return cb(db);
+        });
+
+        await service.importDownload(1);
+
+        const cpIndex = callOrder.indexOf('cp');
+        const txIndex = callOrder.indexOf('transaction');
+        expect(cpIndex).toBeLessThan(txIndex);
+      });
     });
   });
 });
