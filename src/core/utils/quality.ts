@@ -33,17 +33,6 @@ function getTier(mbPerHour: number): QualityTier {
   return 'Lossless';
 }
 
-/** Color class for each quality tier (Tailwind). */
-export function qualityTierColor(tier: QualityTier): string {
-  switch (tier) {
-    case 'Low': return 'text-red-400';
-    case 'Fair': return 'text-yellow-400';
-    case 'Good': return 'text-green-400';
-    case 'High': return 'text-blue-400';
-    case 'Lossless': return 'text-purple-400';
-  }
-}
-
 export type QualityComparison = 'lower' | 'higher' | 'similar';
 
 /**

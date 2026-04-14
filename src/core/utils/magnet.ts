@@ -25,11 +25,3 @@ export function parseInfoHash(magnetUri: string): string | null {
   const match = magnetUri.match(/xt=urn(?::|%3A)btih(?::|%3A)([a-fA-F0-9]{40}|[a-zA-Z2-7]{32})/i);
   return match ? match[1].toLowerCase() : null;
 }
-
-export function extractDisplayName(magnetUri: string): string | null {
-  const match = magnetUri.match(/dn=([^&]+)/);
-  if (match) {
-    return decodeURIComponent(match[1].replace(/\+/g, ' '));
-  }
-  return null;
-}

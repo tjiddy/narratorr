@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { buildMagnetUri, parseInfoHash, extractDisplayName } from './magnet.js';
+import { buildMagnetUri, parseInfoHash } from './magnet.js';
 
 describe('buildMagnetUri', () => {
   it('builds a valid magnet URI from info hash', () => {
@@ -78,31 +78,5 @@ describe('parseInfoHash', () => {
     const uri = `magnet:?xt=urn:btih:${hash}`;
 
     expect(parseInfoHash(uri)).toBe(hash.toLowerCase());
-  });
-});
-
-describe('extractDisplayName', () => {
-  it('extracts display name from magnet URI', () => {
-    const uri = 'magnet:?xt=urn:btih:abc123&dn=My+Audiobook&tr=udp://tracker.example.com';
-
-    expect(extractDisplayName(uri)).toBe('My Audiobook');
-  });
-
-  it('decodes URI-encoded display name', () => {
-    const uri = 'magnet:?xt=urn:btih:abc123&dn=The%20Way%20of%20Kings';
-
-    expect(extractDisplayName(uri)).toBe('The Way of Kings');
-  });
-
-  it('returns null when no display name present', () => {
-    const uri = 'magnet:?xt=urn:btih:abc123&tr=udp://tracker.example.com';
-
-    expect(extractDisplayName(uri)).toBeNull();
-  });
-
-  it('handles display name with special characters', () => {
-    const uri = 'magnet:?xt=urn:btih:abc123&dn=Book%20%26%20Author%20%2D%20Title';
-
-    expect(extractDisplayName(uri)).toBe('Book & Author - Title');
   });
 });

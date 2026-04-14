@@ -46,8 +46,6 @@
   --animate-fade-out: fade-out 1s ease-in 2s forwards;
   --animate-slide-in-right: slide-in-right 0.4s ease-out forwards;
   --animate-pulse-glow: pulse-glow 2s ease-in-out infinite;
-  --animate-border-pulse: border-pulse 2s ease-in-out infinite;
-
   @keyframes fade-in-up {
     from {
       opacity: 0;
@@ -87,11 +85,6 @@
     50% {
       box-shadow: 0 0 30px -5px hsl(var(--primary) / 0.6);
     }
-  }
-
-  @keyframes border-pulse {
-    0%, 100% { border-left-color: rgb(59 130 246 / 0.5); }
-    50% { border-left-color: rgb(59 130 246 / 1); }
   }
 
   @keyframes shimmer {
@@ -277,10 +270,6 @@
 
 @utility focus-ring {
   @apply focus:outline-none focus-visible:ring-2 focus-visible:ring-foreground focus-visible:ring-offset-2 focus-visible:ring-offset-background;
-}
-
-@utility text-gradient {
-  @apply bg-clip-text text-transparent bg-gradient-to-r from-primary to-amber-400;
 }
 
 /* Skeleton loading shimmer */

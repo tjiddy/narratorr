@@ -1,5 +1,34 @@
 # Workflow Log
 
+## #546 Wave 1B: Dead code cleanup + dependency hygiene — 2026-04-14
+**Skill path:** /implement → /claim → /plan → /handoff
+**Outcome:** success — PR #567
+
+### Metrics
+- Files changed: 14 | Tests added/modified: 4 (updated 3 test files, deleted 1)
+- Quality gate runs: 2 (pass on attempt 2 — first failed on unused `dirname` import)
+- Fix iterations: 1 (unused import after `getDiscFolder` removal)
+- Context compactions: 0
+
+### Workflow experience
+- What went smoothly: Pure deletion issue — all dead code claims were pre-verified by spec review, so implementation was mechanical removal + test updates
+- Friction / issues encountered: `parseFilenameForTitle` downgrade to module-private required removing direct test imports (spec said "keep tests" but tests imported the now-private function); resolved by removing direct tests since `resolveChapterTitle` tests cover the same paths indirectly
+
+### Token efficiency
+- Highest-token actions: Reading all 12+ target files and their test files up front
+- Avoidable waste: Could have batched the source reads more aggressively
+- Suggestions: For cleanup issues, read all targets in one parallel batch, then implement all in sequence
+
+### Infrastructure gaps
+- Repeated workarounds: None
+- Missing tooling / config: None
+- Unresolved debt: None introduced or discovered
+
+### Wish I'd Known
+1. Removing `getDiscFolder` orphans the `dirname` import — always scan imports after function removal (see `unused-import-after-function-removal.md`)
+2. Downgrading a function from export to module-private breaks direct test imports even when tests import from the file (not barrel) — the test still uses a named export (see `non-exported-function-test-access.md`)
+3. `isSSEConnected` test assertions can be cleanly rewritten to use `useSSEConnected` hook via a parallel `renderHook` in the same wrapper (see `sse-connected-test-rewrite-pattern.md`)
+
 ## #545 Wave 1A: Security hardening — timing-safe API key, fastify bump, pnpm overrides, passkey log — 2026-04-14
 **Skill path:** /implement → /claim → /plan → /handoff
 **Outcome:** success — PR #566

@@ -2,7 +2,6 @@ import { describe, it, expect, vi } from 'vitest';
 import {
   sortChapterSources,
   resolveChapterTitle,
-  parseFilenameForTitle,
   readChapterSources,
   type ChapterSource,
 } from './chapter-resolver.js';
@@ -114,6 +113,16 @@ describe('chapter-resolver', () => {
       expect(resolveChapterTitle(source, 0)).toBe('Chapter 1');
     });
 
+    it('strips Part prefix from disc subfolder path', () => {
+      const source: ChapterSource = { filePath: '/audiobooks/Part 1/01 - The Start.mp3' };
+      expect(resolveChapterTitle(source, 0)).toBe('The Start');
+    });
+
+    it('strips Part prefix from filename', () => {
+      const source: ChapterSource = { filePath: '/a/Part 1 - Introduction.mp3' };
+      expect(resolveChapterTitle(source, 0)).toBe('Introduction');
+    });
+
     it('handles mixed sources — some ID3, some filename', () => {
       const withId3: ChapterSource = { filePath: '/a/01.mp3', title: 'From ID3' };
       const withFilename: ChapterSource = { filePath: '/a/02 - From Filename.mp3' };
@@ -125,29 +134,4 @@ describe('chapter-resolver', () => {
     });
   });
 
-  describe('parseFilenameForTitle', () => {
-    it('parses "Chapter 01 - Title.mp3"', () => {
-      expect(parseFilenameForTitle('/a/Chapter 01 - The Beginning.mp3')).toBe('The Beginning');
-    });
-
-    it('parses "01 Title.mp3"', () => {
-      expect(parseFilenameForTitle('/a/01 Prologue.mp3')).toBe('Prologue');
-    });
-
-    it('parses "01 - Title.mp3"', () => {
-      expect(parseFilenameForTitle('/a/01 - Opening.mp3')).toBe('Opening');
-    });
-
-    it('returns null for "01.mp3" (just a number)', () => {
-      expect(parseFilenameForTitle('/a/01.mp3')).toBeNull();
-    });
-
-    it('parses "Part 1/01 - Title.mp3" (disc subfolder)', () => {
-      expect(parseFilenameForTitle('/audiobooks/Part 1/01 - The Start.mp3')).toBe('The Start');
-    });
-
-    it('strips Part prefix from filename', () => {
-      expect(parseFilenameForTitle('/a/Part 1 - Introduction.mp3')).toBe('Introduction');
-    });
-  });
 });
