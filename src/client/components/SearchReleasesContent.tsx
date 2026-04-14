@@ -2,10 +2,71 @@ import type { BookWithAuthor, SearchResult } from '@/lib/api';
 import type { IndexerState } from '@/hooks/useSearchStream';
 import type { SearchResponse } from '@/lib/api/search';
 import { resolveBookQualityInputs } from '@core/utils/index.js';
-import { SearchIcon, LoadingSpinner, AlertTriangleIcon } from '@/components/icons';
+import {
+  SearchIcon,
+  LoadingSpinner,
+  AlertTriangleIcon,
+  CheckIcon,
+  AlertCircleIcon,
+  XIcon,
+} from '@/components/icons';
 import { UnsupportedSection } from '@/components/UnsupportedSection';
 import { ReleaseCard } from '@/components/ReleaseCard';
-import { IndexerStatusRow } from '@/components/SearchReleasesModal';
+
+// ============================================================================
+// Indexer Status Row
+// ============================================================================
+
+function IndexerStatusIcon({ status }: { status: IndexerState['status'] }) {
+  switch (status) {
+    case 'pending':
+      return <LoadingSpinner className="w-4 h-4 text-primary" />;
+    case 'complete':
+      return <CheckIcon className="w-4 h-4 text-green-400" />;
+    case 'error':
+      return <AlertCircleIcon className="w-4 h-4 text-destructive" />;
+    case 'cancelled':
+      return <XIcon className="w-4 h-4 text-muted-foreground" />;
+  }
+}
+
+function IndexerStatusRow({
+  indexer,
+  onCancel,
+}: {
+  indexer: IndexerState;
+  onCancel: (id: number) => void;
+}) {
+  const statusText = (() => {
+    switch (indexer.status) {
+      case 'pending': return 'Searching...';
+      case 'complete': return `${indexer.resultCount ?? 0} result${(indexer.resultCount ?? 0) !== 1 ? 's' : ''}`;
+      case 'error': return indexer.error ?? 'Failed';
+      case 'cancelled': return 'Cancelled';
+    }
+  })();
+
+  return (
+    <div className="flex items-center justify-between py-2 px-3 rounded-lg bg-card/50">
+      <div className="flex items-center gap-3 min-w-0">
+        <IndexerStatusIcon status={indexer.status} />
+        <span className="text-sm font-medium truncate">{indexer.name}</span>
+        <span className={`text-xs ${indexer.status === 'error' ? 'text-destructive' : 'text-muted-foreground'}`}>
+          {statusText}
+        </span>
+      </div>
+      {indexer.status === 'pending' && (
+        <button
+          type="button"
+          onClick={() => onCancel(indexer.id)}
+          className="text-xs text-muted-foreground hover:text-foreground px-2 py-1 rounded hover:bg-muted/80 transition-colors"
+        >
+          Cancel
+        </button>
+      )}
+    </div>
+  );
+}
 
 // ============================================================================
 // Phase Components
