@@ -2489,12 +2489,19 @@ describe('ImportService consolidation (issue #79)', () => {
         );
       });
 
-      it('enrichment throwing unexpectedly → caught by outer handler', async () => {
+      it('enrichment throwing unexpectedly → caught, import still succeeds', async () => {
         db.select.mockReturnValueOnce(mockDbChain([mockDownload]));
         db.update.mockReturnValue(mockDbChain());
         vi.mocked(enrichBookFromAudio).mockRejectedValueOnce(new Error('unexpected crash'));
 
-        await expect(service.importDownload(1)).rejects.toThrow('unexpected crash');
+        const result = await service.importDownload(1);
+
+        expect(result.downloadId).toBe(1);
+        expect(log.warn).toHaveBeenCalledWith(
+          expect.objectContaining({ error: expect.any(Error) }),
+          expect.stringContaining('enrichment threw'),
+        );
+        expect(rm).not.toHaveBeenCalled();
       });
     });
 

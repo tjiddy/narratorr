@@ -107,6 +107,8 @@ export class ImportService {
     if (!book) throw new Error(`Book ${download.bookId} not found`);
     const authorName = book.authors[0]?.name ?? null;
 
+    await this.db.update(downloads).set({ status: 'importing' }).where(eq(downloads.id, downloadId));
+
     let targetPath: string | undefined;
     try {
       const { resolvedPath: savePath, originalPath } = await resolveSavePath(download, this.downloadClientService, this.remotePathMappingService);
@@ -136,7 +138,6 @@ export class ImportService {
       await cleanupOldBookPath({ bookPath: book.path, targetPath, log: this.log });
 
       await this.db.transaction(async (tx) => {
-        await tx.update(downloads).set({ status: 'importing' }).where(eq(downloads.id, downloadId));
         await tx.update(books).set({ status: 'imported', path: targetPath, size: targetSize, lastGrabGuid: download.guid ?? null, lastGrabInfoHash: download.infoHash ?? null, updatedAt: new Date() }).where(eq(books.id, book.id));
         await tx.update(downloads).set({ status: 'imported' }).where(eq(downloads.id, downloadId));
       });
@@ -161,9 +162,13 @@ export class ImportService {
   }
 
   private async enrichAfterImport(bookId: number, targetPath: string, book: BookWithAuthor, ffprobePath?: string): Promise<void> {
-    const enrichResult = await enrichBookFromAudio(bookId, targetPath, book, this.db, this.log, this.bookService, ffprobePath);
-    if (enrichResult && typeof enrichResult === 'object' && 'enriched' in enrichResult && !enrichResult.enriched) {
-      this.log.warn({ bookId, error: (enrichResult as { error?: string }).error }, 'Audio enrichment failed — import successful but metadata incomplete');
+    try {
+      const enrichResult = await enrichBookFromAudio(bookId, targetPath, book, this.db, this.log, this.bookService, ffprobePath);
+      if (enrichResult && typeof enrichResult === 'object' && 'enriched' in enrichResult && !enrichResult.enriched) {
+        this.log.warn({ bookId, error: (enrichResult as { error?: string }).error }, 'Audio enrichment failed — import successful but metadata incomplete');
+      }
+    } catch (error: unknown) {
+      this.log.warn({ bookId, error }, 'Audio enrichment threw — import successful but metadata incomplete');
     }
   }
 
