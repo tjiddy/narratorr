@@ -244,12 +244,12 @@ describe('DiscoverPage', () => {
       renderWithProviders(<DiscoverPage />);
 
       await waitFor(() => {
-        expect(screen.getByTestId('suggestion-count')).toHaveTextContent('Showing 3 suggestions');
+        expect(screen.getByText('Showing 3 suggestions')).toBeInTheDocument();
       });
 
       await userEvent.click(screen.getByRole('button', { name: 'Author' }));
 
-      expect(screen.getByTestId('suggestion-count')).toHaveTextContent('Showing 2 suggestions');
+      expect(screen.getByText('Showing 2 suggestions')).toBeInTheDocument();
     });
   });
 
@@ -332,7 +332,7 @@ describe('DiscoverPage', () => {
       });
       // Verify header affordances are present in no-suggestions state
       expect(screen.getByText('Refresh')).toBeInTheDocument();
-      expect(screen.getByTestId('suggestion-count')).toHaveTextContent('Showing 0 suggestions');
+      expect(screen.getByText('Showing 0 suggestions')).toBeInTheDocument();
     });
   });
 

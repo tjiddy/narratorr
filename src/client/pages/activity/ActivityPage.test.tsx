@@ -887,7 +887,7 @@ describe('ActivityPage', () => {
         expect(screen.getByText('No active downloads')).toBeInTheDocument();
       });
 
-      await user.click(screen.getByRole('button', { name: /history/i }));
+      await user.click(screen.getByRole('tab', { name: /history/i }));
 
       // Downloads content hidden
       await waitFor(() => {
@@ -907,13 +907,13 @@ describe('ActivityPage', () => {
       });
 
       // Switch to History
-      await user.click(screen.getByRole('button', { name: /history/i }));
+      await user.click(screen.getByRole('tab', { name: /history/i }));
       await waitFor(() => {
         expect(screen.queryByText('No active downloads')).not.toBeInTheDocument();
       });
 
       // Switch back to Active
-      await user.click(screen.getByRole('button', { name: /active/i }));
+      await user.click(screen.getByRole('tab', { name: /active/i }));
 
       await waitFor(() => {
         expect(screen.getByText('No active downloads')).toBeInTheDocument();
@@ -1272,7 +1272,7 @@ describe('#478 cancel merge error recovery', () => {
 });
 
 describe('ActivityPage tab buttons (#488)', () => {
-  it('tab buttons render with type="button" attribute', async () => {
+  it('tab buttons render with type="button" and ARIA tab role', async () => {
     vi.mocked(api.getActivity).mockResolvedValue({ data: [], total: 0 });
     vi.mocked(api.getEventHistory).mockResolvedValue({ data: [], total: 0 });
 
@@ -1283,13 +1283,12 @@ describe('ActivityPage tab buttons (#488)', () => {
       expect(screen.getByText('No active downloads')).toBeInTheDocument();
     });
 
-    // "Active" appears both as a tab label and a section heading — use getAllByText
-    const activeButtons = screen.getAllByText('Active').map((el) => el.closest('button')).filter(Boolean);
-    const historyTab = screen.getByText('History').closest('button')!;
-
-    // The tab button for "Active" should have type="button"
-    expect(activeButtons.length).toBeGreaterThanOrEqual(1);
-    expect(activeButtons[0]).toHaveAttribute('type', 'button');
-    expect(historyTab).toHaveAttribute('type', 'button');
+    const tabs = screen.getAllByRole('tab');
+    expect(tabs).toHaveLength(2);
+    for (const tab of tabs) {
+      expect(tab).toHaveAttribute('type', 'button');
+    }
+    expect(tabs[0]).toHaveAttribute('aria-selected', 'true');
+    expect(tabs[1]).toHaveAttribute('aria-selected', 'false');
   });
 });

@@ -34,6 +34,7 @@ export function Tabs({ tabs, value, onChange, ariaLabel }: TabsProps) {
       {tabs.map((tab, i) => (
         <button
           key={tab.value}
+          type="button"
           ref={(el) => { tabRefs.current[i] = el; }}
           id={`tab-${tab.value}`}
           role="tab"
