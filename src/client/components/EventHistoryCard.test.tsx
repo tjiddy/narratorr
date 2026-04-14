@@ -26,6 +26,7 @@ function createMockEvent(overrides?: Partial<BookEvent>): BookEvent {
     downloadId: 5,
     bookTitle: 'The Way of Kings',
     authorName: 'Brandon Sanderson',
+    narratorName: null,
     eventType: 'grabbed',
     source: 'auto',
     reason: null,

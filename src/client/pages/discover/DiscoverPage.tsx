@@ -49,7 +49,7 @@ function useDiscoverMutations(setAddedIds: React.Dispatch<React.SetStateAction<S
     queryClient.invalidateQueries({ queryKey: queryKeys.books() });
     queryClient.invalidateQueries({ queryKey: queryKeys.bookStats() });
     // Fire-and-forget: mark suggestion as added in backend
-    api.markDiscoverSuggestionAdded(id).catch(() => { /* suggestion stays visually added */ });
+    api.markDiscoverSuggestionAdded(id).catch((err) => console.warn('mark-added failed:', err));
   };
 
   const addMutation = useMutation({

@@ -43,7 +43,7 @@ describe('useEventHistory', () => {
   });
 
   it('returns events from API', async () => {
-    const mockEvents = [{ id: 1, bookId: 1, downloadId: 1, bookTitle: 'Test', authorName: 'Author', eventType: 'grab', source: 'search', reason: null, createdAt: '2026-01-01' }];
+    const mockEvents = [{ id: 1, bookId: 1, downloadId: 1, bookTitle: 'Test', authorName: 'Author', narratorName: null, eventType: 'grab', source: 'search', reason: null, createdAt: '2026-01-01' }];
     vi.mocked(api.getEventHistory).mockResolvedValue({ data: mockEvents, total: mockEvents.length });
 
     const { wrapper } = createWrapper();
@@ -341,6 +341,7 @@ describe('useEventHistory', () => {
       downloadId: 1,
       bookTitle: 'Page 1 Event',
       authorName: 'Author',
+      narratorName: null,
       eventType: 'grab',
       source: 'search',
       reason: null,
@@ -390,7 +391,7 @@ describe('useBookEventHistory', () => {
   });
 
   it('returns book-specific events from API', async () => {
-    const mockEvents = [{ id: 1, bookId: 42, downloadId: 1, bookTitle: 'Test', authorName: 'Author', eventType: 'import', source: 'scan', reason: null, createdAt: '2026-01-01' }];
+    const mockEvents = [{ id: 1, bookId: 42, downloadId: 1, bookTitle: 'Test', authorName: 'Author', narratorName: null, eventType: 'import', source: 'scan', reason: null, createdAt: '2026-01-01' }];
     vi.mocked(api.getBookEventHistory).mockResolvedValue(mockEvents);
 
     const { wrapper } = createWrapper();

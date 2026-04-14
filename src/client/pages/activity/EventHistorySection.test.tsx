@@ -48,7 +48,7 @@ describe('EventHistorySection', () => {
   it('renders event cards', () => {
     mockDefaultHook({
       events: [
-        { id: 1, bookId: 1, downloadId: 5, bookTitle: 'The Way of Kings', authorName: 'Brandon Sanderson', eventType: 'grabbed', source: 'auto', reason: null, createdAt: new Date().toISOString() },
+        { id: 1, bookId: 1, downloadId: 5, bookTitle: 'The Way of Kings', authorName: 'Brandon Sanderson', narratorName: null, eventType: 'grabbed', source: 'auto', reason: null, createdAt: new Date().toISOString() },
       ],
       total: 1,
     });
@@ -109,7 +109,7 @@ describe('EventHistorySection', () => {
     const mockDeleteMutate = vi.fn();
     mockDefaultHook({
       events: [
-        { id: 42, bookId: 1, downloadId: 5, bookTitle: 'Test Book', authorName: null, eventType: 'grabbed', source: 'auto', reason: null, createdAt: new Date().toISOString() },
+        { id: 42, bookId: 1, downloadId: 5, bookTitle: 'Test Book', authorName: null, narratorName: null, eventType: 'grabbed', source: 'auto', reason: null, createdAt: new Date().toISOString() },
       ],
       total: 1,
       deleteMutation: { mutate: mockDeleteMutate, isPending: false } as never,
@@ -126,7 +126,7 @@ describe('EventHistorySection', () => {
     const mockRetryMutate = vi.fn();
     mockDefaultHook({
       events: [
-        { id: 10, bookId: 2, downloadId: 7, bookTitle: 'Failed Book', authorName: null, eventType: 'download_failed', source: 'auto', reason: { error: 'Connection lost' }, createdAt: new Date().toISOString() },
+        { id: 10, bookId: 2, downloadId: 7, bookTitle: 'Failed Book', authorName: null, narratorName: null, eventType: 'download_failed', source: 'auto', reason: { error: 'Connection lost' }, createdAt: new Date().toISOString() },
       ],
       total: 1,
       retryMutation: { mutate: mockRetryMutate, isPending: false } as never,

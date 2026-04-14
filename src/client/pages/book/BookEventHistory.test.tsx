@@ -48,7 +48,7 @@ describe('BookEventHistory', () => {
     const mockDeleteMutate = vi.fn();
     mockUseBookEventHistory.mockReturnValue({
       events: [
-        { id: 7, bookId: 1, downloadId: 5, bookTitle: 'Test', authorName: null, eventType: 'grabbed', source: 'auto', reason: null, createdAt: new Date().toISOString() },
+        { id: 7, bookId: 1, downloadId: 5, bookTitle: 'Test', authorName: null, narratorName: null, eventType: 'grabbed', source: 'auto', reason: null, createdAt: new Date().toISOString() },
       ],
       isLoading: false,
       isError: false,
@@ -66,8 +66,8 @@ describe('BookEventHistory', () => {
   it('renders event cards for each event', () => {
     mockUseBookEventHistory.mockReturnValue({
       events: [
-        { id: 1, bookId: 1, downloadId: 5, bookTitle: 'Test', authorName: null, eventType: 'grabbed', source: 'auto', reason: null, createdAt: new Date().toISOString() },
-        { id: 2, bookId: 1, downloadId: null, bookTitle: 'Test', authorName: null, eventType: 'imported', source: 'auto', reason: null, createdAt: new Date().toISOString() },
+        { id: 1, bookId: 1, downloadId: 5, bookTitle: 'Test', authorName: null, narratorName: null, eventType: 'grabbed', source: 'auto', reason: null, createdAt: new Date().toISOString() },
+        { id: 2, bookId: 1, downloadId: null, bookTitle: 'Test', authorName: null, narratorName: null, eventType: 'imported', source: 'auto', reason: null, createdAt: new Date().toISOString() },
       ],
       isLoading: false,
       isError: false,
