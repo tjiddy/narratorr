@@ -612,7 +612,7 @@ describe('enrichUsenetLanguages', () => {
         downloadUrl: 'https://indexer.example.com/nzb/12345?apikey=SECRET',
       })];
 
-      mockFetchWithTimeout.mockResolvedValue({ ok: false, status: 403, text: vi.fn() } as any);
+      mockFetchWithTimeout.mockResolvedValue(new Response('', { status: 403 }));
 
       await enrichUsenetLanguages(results, logger);
 
