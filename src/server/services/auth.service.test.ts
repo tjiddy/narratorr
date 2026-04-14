@@ -254,6 +254,56 @@ describe('AuthService', () => {
       expect(await service.validateApiKey('test-key-123')).toBe(true);
       expect(await service.validateApiKey('wrong-key')).toBe(false);
     });
+
+    it('calls timingSafeEqual with Buffer args for correct key', async () => {
+      const authConfig = { mode: 'none', apiKey: 'test-key-123', sessionSecret: 'secret', localBypass: false };
+      db.select.mockReturnValue(mockDbChain([{ key: 'auth', value: authConfig }]));
+      vi.mocked(timingSafeEqual).mockClear();
+
+      const result = await service.validateApiKey('test-key-123');
+
+      expect(result).toBe(true);
+      expect(timingSafeEqual).toHaveBeenCalledWith(
+        Buffer.from('test-key-123'),
+        Buffer.from('test-key-123'),
+      );
+    });
+
+    it('calls timingSafeEqual for wrong key of same length (not short-circuited)', async () => {
+      const authConfig = { mode: 'none', apiKey: 'test-key-123', sessionSecret: 'secret', localBypass: false };
+      db.select.mockReturnValue(mockDbChain([{ key: 'auth', value: authConfig }]));
+      vi.mocked(timingSafeEqual).mockClear();
+
+      const result = await service.validateApiKey('wrong-key-00');
+
+      expect(result).toBe(false);
+      expect(timingSafeEqual).toHaveBeenCalledWith(
+        Buffer.from('test-key-123'),
+        Buffer.from('wrong-key-00'),
+      );
+    });
+
+    it('returns false without calling timingSafeEqual for wrong key of different length', async () => {
+      const authConfig = { mode: 'none', apiKey: 'test-key-123', sessionSecret: 'secret', localBypass: false };
+      db.select.mockReturnValue(mockDbChain([{ key: 'auth', value: authConfig }]));
+      vi.mocked(timingSafeEqual).mockClear();
+
+      const result = await service.validateApiKey('short');
+
+      expect(result).toBe(false);
+      expect(timingSafeEqual).not.toHaveBeenCalled();
+    });
+
+    it('returns false without throwing for empty string key', async () => {
+      const authConfig = { mode: 'none', apiKey: 'test-key-123', sessionSecret: 'secret', localBypass: false };
+      db.select.mockReturnValue(mockDbChain([{ key: 'auth', value: authConfig }]));
+      vi.mocked(timingSafeEqual).mockClear();
+
+      const result = await service.validateApiKey('');
+
+      expect(result).toBe(false);
+      expect(timingSafeEqual).not.toHaveBeenCalled();
+    });
   });
 
   describe('deleteCredentials', () => {

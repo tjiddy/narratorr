@@ -8,6 +8,7 @@ import type { DownloadArtifact } from '../../core/download-clients/types.js';
 import { getInProgressStatuses, getTerminalStatuses, getCompletedStatuses, isTerminalStatus, getReplaceableStatuses } from '../../shared/download-status-registry.js';
 import type { DownloadStatus } from '../../shared/schemas/activity.js';
 import { type DownloadClientService } from './download-client.service.js';
+import { sanitizeLogUrl } from '../utils/sanitize-log-url.js';
 import { type CreateEventInput } from './event-history.service.js';
 import { retrySearch, type RetrySearchDeps } from './retry-search.js';
 
@@ -266,9 +267,7 @@ export class DownloadService {
 
     // Extract info hash from artifact (torrent-bytes and magnet-uri have it; nzb-url does not)
     const infoHash = 'infoHash' in artifact ? artifact.infoHash : null;
-    const logUrl = downloadUrlObj.isDataUri
-      ? `data:application/x-bittorrent [resolved]`
-      : params.downloadUrl;
+    const logUrl = sanitizeLogUrl(params.downloadUrl);
 
     // Send to download client
     this.log.debug({ protocol, downloadUrl: logUrl, infoHash }, 'Sending download to client');

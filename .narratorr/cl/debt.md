@@ -76,7 +76,9 @@
 
 - **`src/client/pages/settings/QualitySettingsSection.tsx:65 vs 84` step attribute inconsistency**: `minSeeders` uses `step={1}` (number) while `maxDownloadSize` uses `step="1"` (string). Both render identically but mixing forms is inconsistent. (discovered in Archer session review of #522)
 
-- **`src/server/services/download.service.ts:271` logs raw passkey URL at debug level**: `logUrl` passes `params.downloadUrl` (which may contain passkeys/tokens) to `this.log.debug`. Pre-existing behavior, not introduced by #527, but worth noting since the resolver was careful to sanitize error messages. (discovered in Archer session review of #527)
+- ~~**`src/server/services/download.service.ts:271` logs raw passkey URL at debug level**~~ — **RESOLVED in #545**: `sanitizeLogUrl` now applied at all 3 log sites (download.service, search route, enrich-usenet-languages)
+
+- **`src/server/services/cover-download.ts:55,61,92` logs raw remote URLs**: Cover download service logs `url: remoteUrl` unsanitized in warn/debug calls. Cover URLs are unlikely to contain indexer credentials but pattern is inconsistent with the sanitized grab/search paths. (discovered in #545)
 
 ## Accepted Debt
 

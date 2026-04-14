@@ -4,6 +4,7 @@ import { type DownloadOrchestrator } from '../services/download-orchestrator.js'
 import { type BlacklistService } from '../services';
 import { type SettingsService } from '../services';
 import { getErrorMessage } from '../utils/error-message.js';
+import { sanitizeLogUrl } from '../utils/sanitize-log-url.js';
 import { DuplicateDownloadError } from '../services/download.service.js';
 import { postProcessSearchResults } from '../services/search-pipeline.js';
 import {
@@ -56,7 +57,7 @@ export async function searchRoutes(
 
       try {
         request.log.info({ title: data.title }, 'Grab requested');
-        request.log.debug({ title: data.title, protocol: data.protocol, downloadUrl: data.downloadUrl, bookId: data.bookId }, 'Grab details');
+        request.log.debug({ title: data.title, protocol: data.protocol, downloadUrl: sanitizeLogUrl(data.downloadUrl), bookId: data.bookId }, 'Grab details');
         const download = await downloadOrchestrator.grab(data);
         request.log.debug({ downloadId: download.id, status: download.status, externalId: download.externalId }, 'Grab completed');
         return await reply.status(201).send(download);

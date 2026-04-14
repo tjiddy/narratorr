@@ -913,6 +913,61 @@ describe('DownloadService', () => {
       const debugCall = (log.debug as ReturnType<typeof vi.fn>).mock.calls[0][0] as Record<string, unknown>;
       expect(debugCall.downloadUrl).not.toContain(torrentContent.toString('base64'));
     });
+
+    it('logs sanitized URL for HTTP URL with credential query params', async () => {
+      const mockAdapter = {
+        addDownload: vi.fn().mockResolvedValue('ext-456'),
+      };
+
+      (clientService.getFirstEnabledForProtocol as Mock).mockResolvedValue({ id: 1, name: 'SABnzbd' });
+      (clientService.getAdapter as Mock).mockResolvedValue(mockAdapter);
+
+      db.insert.mockReturnValue(mockDbChain([{ id: 1 }]));
+      db.update.mockReturnValue(mockDbChain());
+      db.select.mockReturnValue(
+        mockDbChain([{ download: mockDownload, book: mockBook }]),
+      );
+
+      const log = createMockLogger();
+      const svc = new DownloadService(inject<Db>(db), clientService, inject<FastifyBaseLogger>(log));
+
+      await svc.grab({
+        downloadUrl: 'https://indexer.example.com/api/v1/download/12345?apikey=SECRETKEY123',
+        title: 'Test NZB',
+        protocol: 'usenet',
+      });
+
+      const debugCall = (log.debug as ReturnType<typeof vi.fn>).mock.calls[0][0] as Record<string, unknown>;
+      expect(debugCall.downloadUrl).toBe('https://indexer.example.com/api/v1/download/12345');
+      expect(debugCall.downloadUrl).not.toContain('SECRETKEY123');
+    });
+
+    it('logs magnet:[infoHash] for magnet URI', async () => {
+      const mockAdapter = {
+        addDownload: vi.fn().mockResolvedValue('ext-123'),
+      };
+
+      (clientService.getFirstEnabledForProtocol as Mock).mockResolvedValue({ id: 1, name: 'qBit' });
+      (clientService.getAdapter as Mock).mockResolvedValue(mockAdapter);
+
+      db.insert.mockReturnValue(mockDbChain([{ id: 1 }]));
+      db.update.mockReturnValue(mockDbChain());
+      db.select.mockReturnValue(
+        mockDbChain([{ download: mockDownload, book: mockBook }]),
+      );
+
+      const log = createMockLogger();
+      const svc = new DownloadService(inject<Db>(db), clientService, inject<FastifyBaseLogger>(log));
+
+      await svc.grab({
+        downloadUrl: 'magnet:?xt=urn:btih:aaf4c61ddcc5e8a2dabede0f3b482cd9aea9434d&dn=Test&tr=udp://tracker.example.com',
+        title: 'Test Magnet',
+      });
+
+      const debugCall = (log.debug as ReturnType<typeof vi.fn>).mock.calls[0][0] as Record<string, unknown>;
+      expect(debugCall.downloadUrl).toBe('magnet:[aaf4c61ddcc5e8a2dabede0f3b482cd9aea9434d]');
+      expect(debugCall.downloadUrl).not.toContain('tracker.example.com');
+    });
   });
 
   describe('cancel — download status only (book status reverted by orchestrator)', () => {

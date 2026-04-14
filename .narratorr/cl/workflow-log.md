@@ -1,5 +1,34 @@
 # Workflow Log
 
+## #545 Wave 1A: Security hardening — timing-safe API key, fastify bump, pnpm overrides, passkey log — 2026-04-14
+**Skill path:** /implement → /claim → /plan → /handoff
+**Outcome:** success — PR #566
+
+### Metrics
+- Files changed: 9 (+ pnpm-lock.yaml) | Tests added/modified: 18 new assertions across 4 test files
+- Quality gate runs: 2 (pass on attempt 2 — lint fix for `as any` in test mock)
+- Fix iterations: 1 (test string length mismatch: 'wrong-key-xxx' was 13 chars vs 12-char stored key)
+- Context compactions: 0
+
+### Workflow experience
+- What went smoothly: Spec was well-groomed after 3 rounds of review — all file paths, line numbers, and contracts were verified. Existing `timingSafeEqual` spy pattern in auth tests made new tests straightforward to write. `createMockLogger` helper made service/utility log assertions easy.
+- Friction / issues encountered: Route-layer log testing blocked by `logger: false` in test helper — relied on helper unit tests instead. Test string `'wrong-key-xxx'` was 13 chars, not 12 — caused confusing spy assertion failure that looked like a production bug.
+
+### Token efficiency
+- Highest-token actions: Spec review response rounds (3 rounds before approval)
+- Avoidable waste: None significant — implementation was straightforward after grooming
+- Suggestions: For dependency audit issues, run `pnpm audit --json` early in elaboration to avoid stale spec data
+
+### Infrastructure gaps
+- Repeated workarounds: Route integration tests can't verify log output because test helper uses `logger: false`
+- Missing tooling / config: No shared test helper for capturing Fastify route log output
+- Unresolved debt: cover-download.ts still logs raw URLs (out of scope, logged as debt)
+
+### Wish I'd Known
+1. `new URL('magnet:...')` returns `origin: "null"` — any URL sanitization contract must handle non-standard schemes explicitly (see `magnet-url-origin-null.md`)
+2. `timingSafeEqual` throws on length mismatch — always guard with a length check first (see `timing-safe-equal-length-guard.md`)
+3. When writing "same length, different value" test fixtures, count the characters (see `test-string-length-mismatch.md`)
+
 ## #539 Import pipeline hardening: recursion, CAS guard, claim visibility — 2026-04-13
 **Skill path:** /implement → /claim → /plan → /handoff
 **Outcome:** success — PR #544
