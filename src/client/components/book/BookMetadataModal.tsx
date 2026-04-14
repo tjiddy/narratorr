@@ -2,8 +2,9 @@ import { useState, useRef } from 'react';
 import type { BookWithAuthor, UpdateBookPayload, BookMetadata } from '@/lib/api';
 import { useEscapeKey } from '@/hooks/useEscapeKey';
 import { useAudnexusSearch } from '@/hooks/useAudnexusSearch';
-import { XIcon, SearchIcon, ArrowLeftIcon } from '@/components/icons';
+import { XIcon, ArrowLeftIcon } from '@/components/icons';
 import { Modal } from '@/components/Modal';
+import { MetadataEditFields } from '@/components/book/MetadataEditFields';
 import { MetadataSearchView } from '@/components/book/MetadataSearchView';
 
 type SearchView = 'edit' | 'search';
@@ -127,104 +128,21 @@ export function BookMetadataModal({ book, onSave, onClose, isSaving, isOpen = tr
         <div className="border-t border-white/5" />
 
         {view === 'edit' ? (
-          /* Edit fields view */
-          <div className="p-6 space-y-4 overflow-y-auto">
-            <div>
-              <label htmlFor="edit-title" className="block text-xs font-medium text-muted-foreground mb-1.5">
-                Title <span className="text-red-400">*</span>
-              </label>
-              <input
-                id="edit-title"
-                type="text"
-                value={title}
-                onChange={(e) => setTitle(e.target.value)}
-                className="w-full px-3 py-2 glass-card rounded-xl text-sm focus-ring"
-                autoFocus
-              />
-            </div>
-
-            <div className="grid grid-cols-2 gap-3">
-              <div>
-                <label htmlFor="edit-series" className="block text-xs font-medium text-muted-foreground mb-1.5">
-                  Series
-                </label>
-                <input
-                  id="edit-series"
-                  type="text"
-                  value={seriesName}
-                  onChange={(e) => setSeriesName(e.target.value)}
-                  placeholder="e.g. Harry Potter"
-                  className="w-full px-3 py-2 glass-card rounded-xl text-sm focus-ring"
-                />
-              </div>
-              <div>
-                <label htmlFor="edit-series-position" className="block text-xs font-medium text-muted-foreground mb-1.5">
-                  Position
-                </label>
-                <input
-                  id="edit-series-position"
-                  type="text"
-                  inputMode="decimal"
-                  value={seriesPosition}
-                  onChange={(e) => setSeriesPosition(e.target.value)}
-                  placeholder="e.g. 1"
-                  className={`w-full px-3 py-2 glass-card rounded-xl text-sm focus-ring${positionError ? ' border-red-400/50' : ''}`}
-                />
-                {positionError && (
-                  <p className="text-xs text-red-400 mt-1">{positionError}</p>
-                )}
-              </div>
-            </div>
-
-            <div>
-              <label htmlFor="edit-narrator" className="block text-xs font-medium text-muted-foreground mb-1.5">
-                Narrator
-              </label>
-              <input
-                id="edit-narrator"
-                type="text"
-                value={narrator}
-                onChange={(e) => setNarrator(e.target.value)}
-                className="w-full px-3 py-2 glass-card rounded-xl text-sm focus-ring"
-              />
-            </div>
-
-            {/* Divider + Search metadata */}
-            <div className="pt-1">
-              <div className="border-t border-white/5 mb-3" />
-              <button
-                type="button"
-                onClick={handleOpenSearch}
-                className="w-full flex items-center justify-center gap-2 px-3 py-2 text-xs font-medium glass-card rounded-xl hover:border-primary/30 hover:text-primary transition-all focus-ring"
-              >
-                <SearchIcon className="w-3.5 h-3.5" />
-                Search for metadata
-              </button>
-            </div>
-
-            {/* Rename files checkbox */}
-            {hasPath && (
-              <div className="pt-1">
-                <div className="border-t border-white/5 mb-4" />
-                <label className="flex items-center gap-3 cursor-pointer group">
-                  <input
-                    type="checkbox"
-                    checked={renameFiles}
-                    onChange={(e) => setRenameFiles(e.target.checked)}
-                    className="w-4 h-4 rounded border-white/20 bg-transparent text-primary focus:ring-primary/30 focus:ring-offset-0"
-                  />
-                  <div>
-                    <span className="text-sm text-muted-foreground group-hover:text-foreground transition-colors">
-                      Rename files after saving
-                    </span>
-                    <p className="text-xs text-muted-foreground/50 mt-0.5">
-                      Reorganize folder and filenames to match format templates
-                    </p>
-                  </div>
-                </label>
-              </div>
-            )}
-          </div>
+          <MetadataEditFields
+            title={title}
+            onTitleChange={setTitle}
+            seriesName={seriesName}
+            onSeriesNameChange={setSeriesName}
+            seriesPosition={seriesPosition}
+            onSeriesPositionChange={setSeriesPosition}
+            positionError={positionError}
+            narrator={narrator}
+            onNarratorChange={setNarrator}
+            renameFiles={renameFiles}
+            onRenameFilesChange={setRenameFiles}
+            hasPath={hasPath}
+            onOpenSearch={handleOpenSearch}
+          />
         ) : (
           <MetadataSearchView
             searchQuery={searchQuery}
