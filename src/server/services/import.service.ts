@@ -107,8 +107,6 @@ export class ImportService {
     if (!book) throw new Error(`Book ${download.bookId} not found`);
     const authorName = book.authors[0]?.name ?? null;
 
-    await this.db.update(downloads).set({ status: 'importing' }).where(eq(downloads.id, downloadId));
-
     let targetPath: string | undefined;
     try {
       const { resolvedPath: savePath, originalPath } = await resolveSavePath(download, this.downloadClientService, this.remotePathMappingService);
@@ -137,11 +135,18 @@ export class ImportService {
       this.log.debug({ downloadId, bookTitle: book.title, sourceSize: sourceStats.size, targetSize }, 'Copy verified');
       await cleanupOldBookPath({ bookPath: book.path, targetPath, log: this.log });
 
-      await this.db.update(books).set({ status: 'imported', path: targetPath, size: targetSize, lastGrabGuid: download.guid ?? null, lastGrabInfoHash: download.infoHash ?? null, updatedAt: new Date() }).where(eq(books.id, book.id));
-      const ffprobePath = resolveFfprobePathFromSettings(processingSettings?.ffmpegPath);
-      await enrichBookFromAudio(book.id, targetPath, book, this.db, this.log, this.bookService, ffprobePath);
+      await this.db.transaction(async (tx) => {
+        await tx.update(downloads).set({ status: 'importing' }).where(eq(downloads.id, downloadId));
+        await tx.update(books).set({ status: 'imported', path: targetPath, size: targetSize, lastGrabGuid: download.guid ?? null, lastGrabInfoHash: download.infoHash ?? null, updatedAt: new Date() }).where(eq(books.id, book.id));
+        await tx.update(downloads).set({ status: 'imported' }).where(eq(downloads.id, downloadId));
+      });
 
-      await this.db.update(downloads).set({ status: 'imported' }).where(eq(downloads.id, downloadId));
+      const ffprobePath = resolveFfprobePathFromSettings(processingSettings?.ffmpegPath);
+      const enrichResult = await enrichBookFromAudio(book.id, targetPath, book, this.db, this.log, this.bookService, ffprobePath);
+      if (enrichResult && typeof enrichResult === 'object' && 'enriched' in enrichResult && !enrichResult.enriched) {
+        this.log.warn({ bookId: book.id, error: (enrichResult as { error?: string }).error }, 'Audio enrichment failed — import successful but metadata incomplete');
+      }
+
       this.log.info({ downloadId, bookId: book.id, bookTitle: book.title, targetPath, fileCount, totalSize: targetSize, elapsedMs: Date.now() - startMs }, 'Import completed successfully');
 
       if (importSettings.deleteAfterImport) {
