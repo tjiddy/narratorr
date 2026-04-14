@@ -13,6 +13,7 @@ import { BookEventHistory } from './BookEventHistory.js';
 import { mergeBookData, type MetadataBook } from './helpers.js';
 import { useBookActions } from './useBookActions.js';
 import { useMergeProgress, type MergeProgress } from '@/hooks/useMergeProgress.js';
+import { useBookModals } from '@/hooks/useBookModals.js';
 import { MAX_COVER_SIZE } from '../../../shared/constants.js';
 import { formatMergePhase } from '@/lib/format/merge.js';
 import { AudioPreview } from './AudioPreview.js';
@@ -35,13 +36,7 @@ export function BookDetails({ libraryBook, metadataBook }: {
   metadataBook?: MetadataBook | null;
 }) {
   const navigate = useNavigate();
-  const [searchModalOpen, setSearchModalOpen] = useState(false);
-  const [editModalOpen, setEditModalOpen] = useState(false);
-  const [confirmRenameOpen, setConfirmRenameOpen] = useState(false);
-  const [confirmRetagOpen, setConfirmRetagOpen] = useState(false);
-  const [confirmMergeOpen, setConfirmMergeOpen] = useState(false);
-  const [confirmDeleteOpen, setConfirmDeleteOpen] = useState(false);
-  const [confirmWrongReleaseOpen, setConfirmWrongReleaseOpen] = useState(false);
+  const { modals, open, close } = useBookModals();
   const [tab, setTab] = useState<'details' | 'history'>('details');
   const [coverPreviewUrl, setCoverPreviewUrl] = useState<string | null>(null);
   const [coverFile, setCoverFile] = useState<File | null>(null);
@@ -125,27 +120,27 @@ export function BookDetails({ libraryBook, metadataBook }: {
         statusDotClass={merged.statusDotClass}
         hasPath={!!libraryBook.path}
         onBackClick={() => navigate(-1)}
-        onSearchClick={() => setSearchModalOpen(true)}
-        onEditClick={() => setEditModalOpen(true)}
-        onRenameClick={() => setConfirmRenameOpen(true)}
+        onSearchClick={() => open('search')}
+        onEditClick={() => open('edit')}
+        onRenameClick={() => open('confirmRename')}
         isRenaming={renameMutation.isPending}
-        onRetagClick={() => setConfirmRetagOpen(true)}
+        onRetagClick={() => open('confirmRetag')}
         isRetagging={retagMutation.isPending}
         retagDisabled={!ffmpegConfigured}
         retagTooltip={!ffmpegConfigured ? 'Requires ffmpeg — configure in Settings > Post Processing' : undefined}
         onRefreshScanClick={() => refreshScanMutation.mutate()}
         isRefreshingScanning={refreshScanMutation.isPending}
         showRefreshScan={showRefreshScan}
-        onMergeClick={() => setConfirmMergeOpen(true)}
+        onMergeClick={() => open('confirmMerge')}
         isMerging={mergeMutation.isPending || !!mergeProgress}
         mergePhase={mergeProgress?.phase}
         canMerge={canMerge}
         mergeDisabled={!ffmpegConfigured || !!mergeProgress}
         mergeTooltip={!ffmpegConfigured ? 'Requires ffmpeg — configure in Settings > Post Processing' : undefined}
-        onRemoveClick={() => setConfirmDeleteOpen(true)}
+        onRemoveClick={() => open('confirmDelete')}
         isRemoving={deleteMutation.isPending}
         showWrongRelease={showWrongRelease}
-        onWrongReleaseClick={() => setConfirmWrongReleaseOpen(true)}
+        onWrongReleaseClick={() => open('confirmWrongRelease')}
         isWrongReleasing={wrongReleaseMutation.isPending}
         importListName={libraryBook.importListName}
         monitorForUpgrades={libraryBook.monitorForUpgrades}
@@ -224,69 +219,69 @@ export function BookDetails({ libraryBook, metadataBook }: {
       )}
 
       <SearchReleasesModal
-        isOpen={searchModalOpen}
+        isOpen={modals.search}
         book={libraryBook}
-        onClose={() => setSearchModalOpen(false)}
+        onClose={() => close('search')}
       />
 
-      {editModalOpen && (
+      {modals.edit && (
         <BookMetadataModal
           book={libraryBook}
-          onSave={(data, renameFiles) => handleSave(data, renameFiles, () => setEditModalOpen(false))}
-          onClose={() => setEditModalOpen(false)}
+          onSave={(data, renameFiles) => handleSave(data, renameFiles, () => close('edit'))}
+          onClose={() => close('edit')}
           isSaving={isSaving}
         />
       )}
 
       <ConfirmModal
-        isOpen={confirmRenameOpen}
+        isOpen={modals.confirmRename}
         title="Rename files?"
         message={`Rename files for "${libraryBook.title}"? This will move files to match your folder format template. This cannot be undone.`}
         confirmLabel="Rename"
-        onConfirm={() => { setConfirmRenameOpen(false); renameMutation.mutate(); }}
-        onCancel={() => setConfirmRenameOpen(false)}
+        onConfirm={() => { close('confirmRename'); renameMutation.mutate(); }}
+        onCancel={() => close('confirmRename')}
       />
 
       <ConfirmModal
-        isOpen={confirmRetagOpen}
+        isOpen={modals.confirmRetag}
         title="Re-tag audio files?"
         message={`Re-tag audio files for "${libraryBook.title}"? This will overwrite existing audio metadata tags. This cannot be undone.`}
         confirmLabel="Re-tag"
-        onConfirm={() => { setConfirmRetagOpen(false); retagMutation.mutate(); }}
-        onCancel={() => setConfirmRetagOpen(false)}
+        onConfirm={() => { close('confirmRetag'); retagMutation.mutate(); }}
+        onCancel={() => close('confirmRetag')}
       />
 
       <ConfirmModal
-        isOpen={confirmMergeOpen}
+        isOpen={modals.confirmMerge}
         title="Merge to M4B?"
         message={`Merge all audio files for "${libraryBook.title}" into a single M4B? Original files will be replaced. This may take several minutes.`}
         confirmLabel="Merge"
-        onConfirm={() => { setConfirmMergeOpen(false); mergeMutation.mutate(); }}
-        onCancel={() => setConfirmMergeOpen(false)}
+        onConfirm={() => { close('confirmMerge'); mergeMutation.mutate(); }}
+        onCancel={() => close('confirmMerge')}
       />
 
       <ConfirmModal
-        isOpen={confirmWrongReleaseOpen}
+        isOpen={modals.confirmWrongRelease}
         title="Wrong Release?"
         message={`This will delete the files for "${libraryBook.title}", blacklist this release, and search for a new one. This cannot be undone.`}
         confirmLabel="Wrong Release"
-        onConfirm={() => { setConfirmWrongReleaseOpen(false); wrongReleaseMutation.mutate(); }}
-        onCancel={() => setConfirmWrongReleaseOpen(false)}
+        onConfirm={() => { close('confirmWrongRelease'); wrongReleaseMutation.mutate(); }}
+        onCancel={() => close('confirmWrongRelease')}
       />
 
       <DeleteBookModal
-        isOpen={confirmDeleteOpen}
+        isOpen={modals.confirmDelete}
         title="Remove from Library"
         message={`Are you sure you want to remove "${libraryBook.title}" from your library? This will cancel any active downloads.`}
         fileCount={libraryBook.audioFileCount}
         hasPath={!!libraryBook.path}
         onConfirm={(deleteFiles) => {
-          setConfirmDeleteOpen(false);
+          close('confirmDelete');
           deleteMutation.mutate({ deleteFiles }, {
             onSuccess: () => navigate('/library'),
           });
         }}
-        onCancel={() => setConfirmDeleteOpen(false)}
+        onCancel={() => close('confirmDelete')}
       />
     </div>
   );
