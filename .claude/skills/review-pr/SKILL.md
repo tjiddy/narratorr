@@ -442,14 +442,14 @@ All GitHub commands use: `node scripts/gh.ts` (referred to as `gh` below).
          ```
          Then run: `node scripts/post-review.ts <pr-number> --force` to post the conflict verdict (--force bypasses the posted-marker guard since the approve was already posted).
       2. Set `stage/fixes-pr` on the **PR**: `node scripts/update-labels.ts <pr-number> --pr --replace "stage/" "stage/fixes-pr"`
-      3. Set `status/in-progress` on the **issue**: `node scripts/update-labels.ts <id> --replace "status/" "status/in-progress"`
+      3. **Do NOT change the issue status** — it stays at `status/in-review`. The orchestrator uses `stage/*` on the PR to drive the review cycle.
       4. **STOP.** The implementer will pick this up via `/respond-to-pr-review`.
     - If merge output starts with `ERROR:` — report the error, do not retry
 
     **If verdict is `needs-work`:**
     - Set `stage/fixes-pr` on the **PR**: `node scripts/update-labels.ts <pr-number> --pr --replace "stage/" "stage/fixes-pr"`
-    - Set `status/in-progress` on the **issue**: `node scripts/update-labels.ts <id> --replace "status/" "status/in-progress"`
-    - Verify the PR shows `stage/fixes-pr` and the issue shows `status/in-progress`
+    - **Do NOT change the issue status** — it stays at `status/in-review`. The orchestrator uses `stage/*` on the PR to drive the review cycle.
+    - Verify the PR shows `stage/fixes-pr` and the issue shows `status/in-review`
     - **STOP.** Do not attempt to fix anything — that's the author's job via `/respond-to-pr-review`
 
 15. **Clean up state:** `rm -rf .narratorr/state/review-pr-<pr-number>/`
