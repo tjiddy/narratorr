@@ -1,6 +1,7 @@
 import { describe, it, expect, vi } from 'vitest';
 import { render, screen, act } from '@testing-library/react';
-import { MemoryRouter } from 'react-router-dom';
+import userEvent from '@testing-library/user-event';
+import { MemoryRouter, Routes, Route, Link } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import React from 'react';
 import { LazyRoute } from '@/components/LazyRoute';
@@ -51,14 +52,22 @@ describe('LazyRoute', () => {
     spy.mockRestore();
   });
 
-  it('does not replace the layout shell when one route fails', async () => {
+  it('user can navigate to another route after one lazy route fails', async () => {
     const spy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const user = userEvent.setup();
 
     const FailingLazy = React.lazy(
       () => Promise.reject(new Error('chunk load error')),
     );
 
-    const GoodComponent = () => <div data-testid="shell">Shell Content</div>;
+    const GoodPage = () => <div data-testid="good-page">Good Page</div>;
+    const GoodLazy = React.lazy(
+      () => Promise.resolve({ default: GoodPage }),
+    );
+
+    function Nav() {
+      return <nav><Link to="/good">Go to good page</Link></nav>;
+    }
 
     const queryClient = new QueryClient({
       defaultOptions: { queries: { retry: false } },
@@ -66,15 +75,23 @@ describe('LazyRoute', () => {
 
     render(
       <QueryClientProvider client={queryClient}>
-        <MemoryRouter>
-          <GoodComponent />
-          <LazyRoute><FailingLazy /></LazyRoute>
+        <MemoryRouter initialEntries={['/bad']}>
+          <Nav />
+          <Routes>
+            <Route path="/bad" element={<LazyRoute><FailingLazy /></LazyRoute>} />
+            <Route path="/good" element={<LazyRoute><GoodLazy /></LazyRoute>} />
+          </Routes>
         </MemoryRouter>
       </QueryClientProvider>,
     );
 
     await screen.findByText('Failed to load this page');
-    expect(screen.getByTestId('shell')).toBeInTheDocument();
+    expect(screen.queryByTestId('good-page')).not.toBeInTheDocument();
+
+    await user.click(screen.getByText('Go to good page'));
+
+    await screen.findByTestId('good-page');
+    expect(screen.queryByText('Failed to load this page')).not.toBeInTheDocument();
 
     spy.mockRestore();
   });

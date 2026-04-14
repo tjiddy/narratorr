@@ -1,4 +1,5 @@
 import { Suspense } from 'react';
+import { useLocation } from 'react-router-dom';
 import { LoadingSpinner } from './icons';
 import { RouteErrorBoundary } from './RouteErrorBoundary';
 
@@ -11,8 +12,9 @@ export function PageFallback() {
 }
 
 export function LazyRoute({ children }: { children: React.ReactNode }) {
+  const { pathname } = useLocation();
   return (
-    <RouteErrorBoundary>
+    <RouteErrorBoundary key={pathname}>
       <Suspense fallback={<PageFallback />}>
         {children}
       </Suspense>
