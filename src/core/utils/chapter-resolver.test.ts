@@ -113,6 +113,16 @@ describe('chapter-resolver', () => {
       expect(resolveChapterTitle(source, 0)).toBe('Chapter 1');
     });
 
+    it('strips Part prefix from disc subfolder path', () => {
+      const source: ChapterSource = { filePath: '/audiobooks/Part 1/01 - The Start.mp3' };
+      expect(resolveChapterTitle(source, 0)).toBe('The Start');
+    });
+
+    it('strips Part prefix from filename', () => {
+      const source: ChapterSource = { filePath: '/a/Part 1 - Introduction.mp3' };
+      expect(resolveChapterTitle(source, 0)).toBe('Introduction');
+    });
+
     it('handles mixed sources — some ID3, some filename', () => {
       const withId3: ChapterSource = { filePath: '/a/01.mp3', title: 'From ID3' };
       const withFilename: ChapterSource = { filePath: '/a/02 - From Filename.mp3' };
