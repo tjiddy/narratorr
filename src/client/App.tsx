@@ -1,10 +1,9 @@
-import { lazy, Suspense } from 'react';
+import { lazy } from 'react';
 import { Routes, Route, Navigate } from 'react-router-dom';
 import { Toaster } from 'sonner';
 import { AuthProvider } from './components/AuthProvider';
 import { Layout } from './components/layout/Layout';
-import { LoadingSpinner } from './components/icons';
-import { RouteErrorBoundary } from './components/RouteErrorBoundary';
+import { LazyRoute } from './components/LazyRoute';
 
 const LoginPage = lazy(() => import('./pages/login').then(m => ({ default: m.LoginPage })));
 const LibraryPage = lazy(() => import('./pages/library').then(m => ({ default: m.LibraryPage })));
@@ -16,24 +15,6 @@ const AuthorPage = lazy(() => import('./pages/author').then(m => ({ default: m.A
 const ManualImportPage = lazy(() => import('./pages/manual-import').then(m => ({ default: m.ManualImportPage })));
 const LibraryImportPage = lazy(() => import('./pages/library-import/LibraryImportPage.js').then(m => ({ default: m.LibraryImportPage })));
 const SettingsLayout = lazy(() => import('./pages/settings').then(m => ({ default: m.SettingsLayout })));
-
-function PageFallback() {
-  return (
-    <div className="flex items-center justify-center py-32">
-      <LoadingSpinner className="w-8 h-8 text-muted-foreground" />
-    </div>
-  );
-}
-
-function LazyRoute({ children }: { children: React.ReactNode }) {
-  return (
-    <RouteErrorBoundary>
-      <Suspense fallback={<PageFallback />}>
-        {children}
-      </Suspense>
-    </RouteErrorBoundary>
-  );
-}
 
 export function App() {
   return (
