@@ -35,7 +35,8 @@ import { TaskRegistry } from '../services/task-registry.js';
 import { config } from '../config.js';
 import fsp from 'fs/promises';
 
-import { booksRoutes, bookFilesRoute } from './books.js';
+import { booksRoutes } from './books.js';
+import { bookFilesRoute } from './book-files.js';
 import { bookPreviewRoute } from './book-preview.js';
 import { searchRoutes } from './search.js';
 import { activityRoutes } from './activity.js';
