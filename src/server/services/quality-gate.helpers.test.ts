@@ -1,5 +1,6 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { buildQualityAssessment } from './quality-gate.helpers.js';
+import * as qualityModule from '../../core/utils/quality.js';
 
 const baseBook = {
   id: 1, title: 'Test Book', status: 'imported' as const,
@@ -104,5 +105,32 @@ describe('buildQualityAssessment — existing audio metadata fields', () => {
     const book = { ...baseBook, audioChannels: 0 };
     const result = buildQualityAssessment(baseScan, book);
     expect(result.existingChannels).toBeNull();
+  });
+});
+
+describe('buildQualityAssessment — resolveBookQualityInputs caching', () => {
+  it('calls resolveBookQualityInputs exactly once when book has path (upgrade scenario)', () => {
+    const spy = vi.spyOn(qualityModule, 'resolveBookQualityInputs');
+    try {
+      buildQualityAssessment(baseScan, baseBook);
+      expect(spy).toHaveBeenCalledTimes(1);
+      expect(spy).toHaveBeenCalledWith(baseBook);
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  it('still produces correct results when book.path is null (no existing file)', () => {
+    const book = { ...baseBook, path: null };
+    const spy = vi.spyOn(qualityModule, 'resolveBookQualityInputs');
+    try {
+      const result = buildQualityAssessment(baseScan, book);
+      expect(spy).toHaveBeenCalledTimes(1);
+      expect(result.existingCodec).toBeNull();
+      expect(result.existingChannels).toBeNull();
+      expect(result.durationDelta).toBeNull();
+    } finally {
+      spy.mockRestore();
+    }
   });
 });

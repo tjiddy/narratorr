@@ -32,21 +32,21 @@ export function buildQualityAssessment(
     ? (newSizeBytes / (1024 * 1024)) / (newDurationSeconds / 3600)
     : null;
 
-  // Resolve existing book quality
+  // Resolve existing book quality (cached — reused for duration delta below)
   let existingMbPerHour: number | null = null;
   let existingCodec: string | null = null;
   let existingChannels: number | null = null;
   let existingDuration: number | null = null;
-  if (book) {
-    const existing = resolveBookQualityInputs(book);
-    if (existing.sizeBytes && existing.durationSeconds && existing.durationSeconds > 0) {
-      existingMbPerHour = (existing.sizeBytes / (1024 * 1024)) / (existing.durationSeconds / 3600);
+  const existingInputs = book ? resolveBookQualityInputs(book) : null;
+  if (book && existingInputs) {
+    if (existingInputs.sizeBytes && existingInputs.durationSeconds && existingInputs.durationSeconds > 0) {
+      existingMbPerHour = (existingInputs.sizeBytes / (1024 * 1024)) / (existingInputs.durationSeconds / 3600);
     }
     // Populate existing audio metadata (only for books with files on disk)
     if (book.path !== null) {
       existingCodec = book.audioCodec || null;
       existingChannels = book.audioChannels || null;
-      existingDuration = existing.durationSeconds;
+      existingDuration = existingInputs.durationSeconds;
     }
   }
 
@@ -75,8 +75,7 @@ export function buildQualityAssessment(
 
   // Check duration delta (skip for placeholder books with no existing files)
   let durationDelta: number | null = null;
-  if (book && book.path !== null) {
-    const existingInputs = resolveBookQualityInputs(book);
+  if (book && book.path !== null && existingInputs) {
     if (existingInputs.durationSeconds && existingInputs.durationSeconds > 0 && newDurationSeconds > 0) {
       durationDelta = (newDurationSeconds - existingInputs.durationSeconds) / existingInputs.durationSeconds;
       // Hold if delta exceeds ±15% (boundary exclusive: exactly ±15% is OK)
