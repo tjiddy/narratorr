@@ -12,7 +12,6 @@ import {
   NetworkIcon,
   SparklesIcon,
 } from '@/components/icons.js';
-import { useFocusTrap } from '@/hooks/useFocusTrap.js';
 import { Modal } from '@/components/Modal';
 
 interface WelcomeModalProps {
@@ -99,9 +98,6 @@ export function WelcomeModal({ isOpen, isPending = false, onDismiss }: WelcomeMo
       scrollableRef.current.scrollTop = 0;
     }
   }, [isOpen]);
-  // Focus trap: keep keyboard focus inside the modal; no escape-to-dismiss
-  // (onboarding requires explicit "Get Started" action)
-  useFocusTrap(isOpen, modalRef);
   // When pending, pull focus back to the dialog container so card links are
   // not reachable via Tab while saving (regression guard from issue #169)
   useEffect(() => {

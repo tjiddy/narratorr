@@ -157,4 +157,91 @@ describe('Modal', () => {
       expect(onClose).not.toHaveBeenCalled();
     });
   });
+
+  describe('focus trap', () => {
+    it('Tab key cycles through focusable elements within an open Modal (does not escape to background)', async () => {
+      const user = userEvent.setup();
+      render(
+        <>
+          <button data-testid="outside">outside</button>
+          <Modal>
+            <button data-testid="first">first</button>
+            <button data-testid="second">second</button>
+          </Modal>
+        </>,
+      );
+      const first = screen.getByTestId('first');
+      const second = screen.getByTestId('second');
+      // Focus first button, then Tab — should wrap to second, not escape
+      first.focus();
+      await user.keyboard('{Tab}');
+      expect(document.activeElement).toBe(second);
+      // Tab again from last — should wrap to first
+      await user.keyboard('{Tab}');
+      expect(document.activeElement).toBe(first);
+      // Outside button should never receive focus
+      expect(document.activeElement).not.toBe(screen.getByTestId('outside'));
+    });
+
+    it('Shift+Tab wraps backward to last focusable element within Modal', async () => {
+      const user = userEvent.setup();
+      render(
+        <Modal>
+          <button data-testid="first">first</button>
+          <button data-testid="second">second</button>
+        </Modal>,
+      );
+      const first = screen.getByTestId('first');
+      const second = screen.getByTestId('second');
+      first.focus();
+      await user.keyboard('{Shift>}{Tab}{/Shift}');
+      expect(document.activeElement).toBe(second);
+    });
+
+    it('Modal with no focusable children keeps focus on panel container (does not escape)', async () => {
+      const user = userEvent.setup();
+      render(
+        <>
+          <button data-testid="outside">outside</button>
+          <Modal><p>no focusable content</p></Modal>
+        </>,
+      );
+      const panel = screen.getByText('no focusable content').parentElement!;
+      expect(document.activeElement).toBe(panel);
+      await user.keyboard('{Tab}');
+      expect(document.activeElement).not.toBe(screen.getByTestId('outside'));
+      expect(panel.contains(document.activeElement)).toBe(true);
+    });
+
+    it('focus moves into Modal panel when it opens', () => {
+      render(<Modal><button>btn</button></Modal>);
+      // Panel should have tabIndex={-1} and receive initial focus
+      const panel = screen.getByText('btn').parentElement!;
+      expect(panel).toHaveAttribute('tabindex', '-1');
+      expect(document.activeElement).toBe(panel);
+    });
+
+    it('nested modals: inner modal traps focus independently of outer modal', async () => {
+      const user = userEvent.setup();
+      render(
+        <>
+          <Modal>
+            <button data-testid="outer-btn">outer</button>
+            <Modal>
+              <button data-testid="inner-a">a</button>
+              <button data-testid="inner-b">b</button>
+            </Modal>
+          </Modal>
+        </>,
+      );
+      const innerA = screen.getByTestId('inner-a');
+      const innerB = screen.getByTestId('inner-b');
+      innerA.focus();
+      await user.keyboard('{Tab}');
+      expect(document.activeElement).toBe(innerB);
+      // Tab should wrap within inner, not escape to outer
+      await user.keyboard('{Tab}');
+      expect(document.activeElement).toBe(innerA);
+    });
+  });
 });

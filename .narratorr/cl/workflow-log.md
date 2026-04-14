@@ -1,5 +1,34 @@
 # Workflow Log
 
+## #551 Wave 2D: Accessibility — modal focus trap, touch hover, step attribute — 2026-04-14
+**Skill path:** /implement → /claim → /plan → /handoff
+**Outcome:** success — PR #572
+
+### Metrics
+- Files changed: 7 | Tests added/modified: 12
+- Quality gate runs: 2 (pass on attempt 2 — first failed on Narrator type in test fixture)
+- Fix iterations: 1 (Narrator type missing `id` and `slug` fields in test fixture)
+- Context compactions: 0
+
+### Workflow experience
+- What went smoothly: Clean TDD cycle — 4 modules each with red/green/commit. Spec was thoroughly reviewed (4 rounds) so implementation matched codebase exactly.
+- Friction / issues encountered: WelcomeModal had a duplicate initial-focus test at line 359 that wasn't in the spec review — found it only when the test suite ran after removing useFocusTrap.
+
+### Token efficiency
+- Highest-token actions: Spec review rounds (4 rounds before approval) consumed significant context in the elaboration phase
+- Avoidable waste: None — the spec review rounds were valuable and caught real issues
+- Suggestions: When reading test files for focus assertions, grep for ALL occurrences of `document.activeElement` to catch duplicate assertions
+
+### Infrastructure gaps
+- Repeated workarounds: None
+- Missing tooling / config: None
+- Unresolved debt: 2 debt items resolved (LibraryBookCard touch affordance, QualitySettingsSection step inconsistency)
+
+### Wish I'd Known
+1. WelcomeModal has a duplicate initial-focus test at line 359 (separate from the one at line 92) — grep `document.activeElement` across the full test file before updating focus assertions
+2. React effect order in parent-child: Modal (child component) effects fire before consumer (parent) effects — this is why useEscapeKey's autofocus overrides Modal's useFocusTrap initial focus
+3. `createMockBook` Narrator type requires `id` and `slug` fields, not just `name` — check the interface before writing test fixtures
+
 ## #550 Wave 2C: Route code splitting — React.lazy + vendor chunk separation — 2026-04-14
 **Skill path:** /implement → /claim → /plan → /handoff
 **Outcome:** success — PR #570

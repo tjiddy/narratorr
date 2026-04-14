@@ -88,10 +88,13 @@ describe('WelcomeModal', () => {
     document.body.style.overflow = ''; // cleanup
   });
 
-  // Focus trap (AC2) — updated for 11 tabbable elements (10 card links + Get Started button)
-  it('places focus on the dialog container (not first card) when modal opens', () => {
+  // Focus trap — base Modal now owns useFocusTrap, so non-pending focus lands on Modal panel
+  it('places focus on the Modal panel (not inner dialog) when modal opens without pending state', () => {
     render(<WelcomeModal isOpen onDismiss={onDismiss} />);
-    expect(document.activeElement).toBe(screen.getByRole('dialog'));
+    const dialog = screen.getByRole('dialog');
+    const panel = dialog.parentElement!;
+    expect(panel).toHaveAttribute('tabindex', '-1');
+    expect(document.activeElement).toBe(panel);
   });
 
   it('places focus on dialog container when isPending=true (card links remain active but keyboard focus is locked to container)', () => {
@@ -353,9 +356,10 @@ describe('WelcomeModal', () => {
   });
 
   // Keyboard navigation with 10 tabbable links + Get Started button
-  it('initial focus lands on dialog container, not any card link', () => {
+  it('initial focus lands on Modal panel, not any card link', () => {
     render(<WelcomeModal isOpen onDismiss={onDismiss} />);
-    expect(document.activeElement).toBe(screen.getByRole('dialog'));
+    const panel = screen.getByRole('dialog').parentElement!;
+    expect(document.activeElement).toBe(panel);
   });
 
   it('Tab from the last card link moves focus to the Get Started button', async () => {

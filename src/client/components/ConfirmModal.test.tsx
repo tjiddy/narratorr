@@ -128,6 +128,30 @@ describe('ConfirmModal', () => {
     expect(onCancel).not.toHaveBeenCalled();
   });
 
+  describe('focus trap coexistence with base Modal (#551)', () => {
+    it('initial focus lands on inner dialog wrapper (useEscapeKey autofocus overrides base Modal trap)', () => {
+      render(<ConfirmModal {...defaultProps} />);
+      const dialog = screen.getByRole('dialog');
+      expect(document.activeElement).toBe(dialog);
+    });
+
+    it('Tab cycles through Cancel and Delete buttons within the modal', async () => {
+      const user = userEvent.setup();
+      render(<ConfirmModal {...defaultProps} />);
+      const cancelBtn = screen.getByText('Cancel').closest('button')!;
+      const deleteBtn = screen.getByText('Delete').closest('button')!;
+      // Focus the first button
+      cancelBtn.focus();
+      expect(document.activeElement).toBe(cancelBtn);
+      // Tab to second button
+      await user.keyboard('{Tab}');
+      expect(document.activeElement).toBe(deleteBtn);
+      // Tab wraps back to first
+      await user.keyboard('{Tab}');
+      expect(document.activeElement).toBe(cancelBtn);
+    });
+  });
+
   describe('ARIA compliance (#484)', () => {
     it('has role="dialog", aria-modal="true", tabIndex={-1}, and aria-labelledby on the dialog element', () => {
       render(<ConfirmModal {...defaultProps} />);

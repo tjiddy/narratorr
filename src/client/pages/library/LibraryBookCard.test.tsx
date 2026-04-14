@@ -513,4 +513,44 @@ describe('React.memo (REACT-2 refactor)', () => {
       expect(screen.getByRole('link')).toHaveStyle({ animationDelay: '450ms' });
     });
   });
+
+  describe('touch affordance CSS classes', () => {
+    it('context menu wrapper has both group-hover:opacity-100 and no-hover:opacity-100 classes', () => {
+      render(<LibraryBookCard {...defaultProps()} />);
+      const menuBtn = screen.getByLabelText('Book options');
+      const menuWrapper = menuBtn.parentElement!;
+      expect(menuWrapper).toHaveClass('group-hover:opacity-100', 'no-hover:opacity-100');
+    });
+
+    it('context menu wrapper retains opacity-0 for desktop hover default', () => {
+      render(<LibraryBookCard {...defaultProps()} />);
+      const menuBtn = screen.getByLabelText('Book options');
+      const menuWrapper = menuBtn.parentElement!;
+      expect(menuWrapper).toHaveClass('opacity-0');
+    });
+
+    it('hover-expand info section has both group-hover:opacity-100 and no-hover:opacity-100 classes', () => {
+      const book = createMockBook({ narrators: [{ id: 1, name: 'Tim Gerard Reynolds', slug: 'tim-gerard-reynolds' }] });
+      render(<LibraryBookCard {...defaultProps({ book })} />);
+      const narratorText = screen.getByText('Tim Gerard Reynolds');
+      const expandSection = narratorText.closest('.overflow-hidden')!;
+      expect(expandSection).toHaveClass('group-hover:opacity-100', 'no-hover:opacity-100');
+    });
+
+    it('hover-expand info section has no-hover:max-h-16 class for touch visibility', () => {
+      const book = createMockBook({ narrators: [{ id: 1, name: 'Tim Gerard Reynolds', slug: 'tim-gerard-reynolds' }] });
+      render(<LibraryBookCard {...defaultProps({ book })} />);
+      const narratorText = screen.getByText('Tim Gerard Reynolds');
+      const expandSection = narratorText.closest('.overflow-hidden')!;
+      expect(expandSection).toHaveClass('no-hover:max-h-16');
+    });
+
+    it('hover-expand info section retains max-h-0 and group-hover:max-h-16 for desktop hover', () => {
+      const book = createMockBook({ narrators: [{ id: 1, name: 'Tim Gerard Reynolds', slug: 'tim-gerard-reynolds' }] });
+      render(<LibraryBookCard {...defaultProps({ book })} />);
+      const narratorText = screen.getByText('Tim Gerard Reynolds');
+      const expandSection = narratorText.closest('.overflow-hidden')!;
+      expect(expandSection).toHaveClass('max-h-0', 'group-hover:max-h-16');
+    });
+  });
 });

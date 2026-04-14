@@ -87,7 +87,7 @@ export const LibraryBookCard = memo(function LibraryBookCard({
         <div className="absolute inset-x-0 bottom-0 h-1/2 bg-gradient-to-t from-black/60 via-black/20 to-transparent pointer-events-none" />
 
         {/* Context menu — hover-reveal only */}
-        <div ref={menuAreaRef} className="absolute top-2 right-2 opacity-0 group-hover:opacity-100 transition-opacity duration-200">
+        <div ref={menuAreaRef} className="absolute top-2 right-2 opacity-0 group-hover:opacity-100 no-hover:opacity-100 transition-opacity duration-200">
           <button
             onClick={(e) => { e.stopPropagation(); onMenuToggle(book.id, e); }}
             className={`p-1.5 rounded-lg backdrop-blur-md text-white/80 hover:text-white transition-all focus-ring ${isMenuOpen ? 'bg-black/70 text-white opacity-100' : 'bg-black/40 hover:bg-black/60'}`}
@@ -119,7 +119,7 @@ export const LibraryBookCard = memo(function LibraryBookCard({
 
           {/* Hover expand: narrator + series */}
           {!isCollapsed && (book.narrators.length > 0 || book.seriesName) && (
-            <div className="max-h-0 opacity-0 group-hover:max-h-16 group-hover:opacity-100 overflow-hidden transition-all duration-300 ease-out">
+            <div className="max-h-0 opacity-0 group-hover:max-h-16 group-hover:opacity-100 no-hover:max-h-16 no-hover:opacity-100 overflow-hidden transition-all duration-300 ease-out">
               <div className="px-3 pb-2 flex flex-wrap gap-x-3 gap-y-0.5">
                 {book.narrators.length > 0 && (
                   <p className="text-[11px] text-white/50 truncate">{book.narrators[0].name}</p>
