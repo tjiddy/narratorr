@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { ImportCard, ImportSummaryBar, BookEditModal } from '@/components/manual-import';
 import { ArrowLeftIcon, CheckIcon, AlertCircleIcon, LoadingSpinner } from '@/components/icons';
+import { PageHeader } from '@/components/PageHeader.js';
 import { makeRelativePath } from '@/lib/pathUtils.js';
 import { useLibraryImport } from './useLibraryImport.js';
 
@@ -53,7 +54,7 @@ export function LibraryImportPage() {
           >
             <ArrowLeftIcon className="w-4 h-4" />
           </Link>
-          <h1 className="font-display text-3xl sm:text-4xl font-bold tracking-tight">Library Import</h1>
+          <PageHeader title="Library Import" />
         </div>
         <p className="text-muted-foreground mt-1 ml-10">
           {!hasLibraryPath

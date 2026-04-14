@@ -1,4 +1,5 @@
 import { NavLink, Outlet, useLocation } from 'react-router-dom';
+import { PageHeader } from '@/components/PageHeader.js';
 import { settingsPageRegistry } from './registry.js';
 
 export function SettingsLayout() {
@@ -7,14 +8,7 @@ export function SettingsLayout() {
   return (
     <div className="space-y-8">
       {/* Header */}
-      <div className="animate-fade-in-up">
-        <h1 className="font-display text-3xl sm:text-4xl font-bold tracking-tight">
-          Settings
-        </h1>
-        <p className="text-muted-foreground mt-2">
-          Configure your Narratorr installation
-        </p>
-      </div>
+      <PageHeader title="Settings" subtitle="Configure your Narratorr installation" />
 
       <div className="flex flex-col lg:flex-row gap-8">
         {/* Navigation Sidebar */}

@@ -6,6 +6,7 @@ import {
   ActivityIcon,
   HistoryIcon,
 } from '@/components/icons';
+import { PageHeader } from '@/components/PageHeader.js';
 import { EventHistorySection } from './EventHistorySection.js';
 import { DownloadsTabSection } from './DownloadsTabSection.js';
 import { useActivity } from './useActivity.js';
@@ -49,14 +50,7 @@ export function ActivityPage() {
   if (isLoading) {
     return (
       <div className="space-y-8">
-        <div className="animate-fade-in-up">
-          <h1 className="font-display text-3xl sm:text-4xl font-bold tracking-tight">
-            Activity
-          </h1>
-          <p className="text-muted-foreground mt-2">
-            Monitor your downloads and import history
-          </p>
-        </div>
+        <PageHeader title="Activity" subtitle="Monitor your downloads and import history" />
         <div className="flex items-center justify-center py-24">
           <LoadingSpinner className="w-8 h-8 text-primary" />
         </div>
@@ -67,14 +61,7 @@ export function ActivityPage() {
   return (
     <div className="space-y-10">
       {/* Header */}
-      <div className="animate-fade-in-up">
-        <h1 className="font-display text-3xl sm:text-4xl font-bold tracking-tight">
-          Activity
-        </h1>
-        <p className="text-muted-foreground mt-2">
-          Monitor your downloads and import history
-        </p>
-      </div>
+      <PageHeader title="Activity" subtitle="Monitor your downloads and import history" />
 
       {/* Tab buttons */}
       <div className="flex justify-center animate-fade-in-up stagger-1">

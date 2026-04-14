@@ -6,6 +6,7 @@ import { queryKeys } from '@/lib/queryKeys';
 import { getErrorMessage } from '@/lib/error-message.js';
 import { useBookStats } from '@/hooks/useLibrary';
 import { RefreshIcon, LoadingSpinner, AlertCircleIcon } from '@/components/icons';
+import { PageHeader } from '@/components/PageHeader.js';
 import { SUGGESTION_REASONS, SUGGESTION_REASON_REGISTRY, type SuggestionReason } from '../../../shared/schemas/discovery.js';
 import { SuggestionCard } from './SuggestionCard.js';
 import { DiscoverEmpty } from './DiscoverEmpty.js';
@@ -147,7 +148,7 @@ export function DiscoverPage() {
   if (isLoading) {
     return (
       <div>
-        <PageHeader count={0} filter={filter} onFilterChange={setFilter} />
+        <DiscoverHeader count={0} filter={filter} onFilterChange={setFilter} />
         <DiscoverSkeleton />
       </div>
     );
@@ -175,7 +176,7 @@ export function DiscoverPage() {
   if (!suggestions || suggestions.length === 0) {
     return (
       <div>
-        <PageHeader
+        <DiscoverHeader
           count={0}
           filter={filter}
           onFilterChange={setFilter}
@@ -189,7 +190,7 @@ export function DiscoverPage() {
 
   return (
     <div>
-      <PageHeader
+      <DiscoverHeader
         count={visibleSuggestions.length}
         filter={filter}
         onFilterChange={setFilter}
@@ -221,7 +222,7 @@ export function DiscoverPage() {
   );
 }
 
-function PageHeader({
+function DiscoverHeader({
   count,
   filter,
   onFilterChange,
@@ -237,12 +238,7 @@ function PageHeader({
   return (
     <div className="mb-6 sm:mb-8 animate-fade-in-up">
       <div className="flex items-center justify-between mb-4">
-        <div>
-          <h1 className="font-display text-3xl sm:text-4xl font-bold tracking-tight">Discover</h1>
-          <p className="text-muted-foreground mt-1" data-testid="suggestion-count">
-            Showing {count} suggestion{count !== 1 ? 's' : ''}
-          </p>
-        </div>
+        <PageHeader title="Discover" subtitle={`Showing ${count} suggestion${count !== 1 ? 's' : ''}`} />
         {onRefresh && (
           <button
             type="button"

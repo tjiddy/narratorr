@@ -3,6 +3,7 @@ import { useSearchParams } from 'react-router-dom';
 import { useQueryClient } from '@tanstack/react-query';
 import { useMetadataSearch } from '@/hooks/useMetadata';
 import { SearchIcon, LoadingSpinner } from '@/components/icons';
+import { PageHeader } from '@/components/PageHeader.js';
 import { SearchResults } from './SearchResults.js';
 
 export function SearchPage() {
@@ -22,10 +23,7 @@ export function SearchPage() {
   return (
     <div className="space-y-8">
       {/* Page Header */}
-      <div className="animate-fade-in-up">
-        <h1 className="font-display text-3xl sm:text-4xl font-bold tracking-tight">Add Book</h1>
-        <p className="text-muted-foreground mt-1">Search metadata providers to find audiobooks to add</p>
-      </div>
+      <PageHeader title="Add Book" subtitle="Search metadata providers to find audiobooks to add" />
 
       {/* Search Form */}
       <form onSubmit={handleSearch} className="max-w-3xl mx-auto animate-fade-in-up stagger-1">
