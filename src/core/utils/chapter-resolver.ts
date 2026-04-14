@@ -1,4 +1,4 @@
-import { basename, extname, dirname } from 'node:path';
+import { basename, extname } from 'node:path';
 import { parseFile } from 'music-metadata';
 
 export interface ChapterSource {
