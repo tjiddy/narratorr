@@ -1,8 +1,32 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { screen } from '@testing-library/react';
+import { render, screen, act, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { MemoryRouter } from 'react-router-dom';
 import { renderWithProviders } from '@/__tests__/helpers';
 import { EventHistorySection } from './EventHistorySection';
+
+let clampToTotalCallCount = 0;
+type ClampFn = (total: number) => void;
+const clampWrapperCache = new WeakMap<ClampFn, ClampFn>();
+vi.mock('@/hooks/usePagination', async () => {
+  // eslint-disable-next-line @typescript-eslint/consistent-type-imports
+  const mod: typeof import('@/hooks/usePagination') = await vi.importActual('@/hooks/usePagination');
+  return {
+    ...mod,
+    usePagination: (...args: Parameters<typeof mod.usePagination>) => {
+      const result = mod.usePagination(...args);
+      const original = result.clampToTotal;
+      if (!clampWrapperCache.has(original)) {
+        clampWrapperCache.set(original, (total: number) => {
+          clampToTotalCallCount++;
+          return original(total);
+        });
+      }
+      return { ...result, clampToTotal: clampWrapperCache.get(original)! };
+    },
+  };
+});
 
 vi.mock('@/hooks/useEventHistory', () => ({
   useEventHistory: vi.fn(),
@@ -29,6 +53,7 @@ function mockDefaultHook(overrides: Partial<ReturnType<typeof useEventHistory>> 
 describe('EventHistorySection', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    clampToTotalCallCount = 0;
   });
 
   it('shows loading spinner while loading', () => {
@@ -295,5 +320,32 @@ describe('EventHistorySection', () => {
 
     renderWithProviders(<EventHistorySection />);
     expect(screen.getByText('Events will appear here as books are processed')).toBeInTheDocument();
+  });
+
+  it('clamp effect does not re-fire on re-render when total is unchanged (stable deps)', () => {
+    const TOTAL = 50;
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    mockDefaultHook({ total: TOTAL });
+
+    const { rerender } = render(
+      <QueryClientProvider client={queryClient}>
+        <MemoryRouter>
+          <EventHistorySection />
+        </MemoryRouter>
+      </QueryClientProvider>,
+    );
+
+    const countBeforeRerender = clampToTotalCallCount;
+
+    mockDefaultHook({ total: TOTAL });
+    rerender(
+      <QueryClientProvider client={queryClient}>
+        <MemoryRouter>
+          <EventHistorySection />
+        </MemoryRouter>
+      </QueryClientProvider>,
+    );
+
+    expect(clampToTotalCallCount).toBe(countBeforeRerender);
   });
 });

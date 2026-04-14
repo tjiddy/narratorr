@@ -6,6 +6,28 @@ import { MemoryRouter } from 'react-router-dom';
 import { renderWithProviders } from '@/__tests__/helpers';
 import { BlacklistSettings } from './BlacklistSettings';
 
+let clampToTotalCallCount = 0;
+type ClampFn = (total: number) => void;
+const clampWrapperCache = new WeakMap<ClampFn, ClampFn>();
+vi.mock('@/hooks/usePagination', async () => {
+  // eslint-disable-next-line @typescript-eslint/consistent-type-imports
+  const mod: typeof import('@/hooks/usePagination') = await vi.importActual('@/hooks/usePagination');
+  return {
+    ...mod,
+    usePagination: (...args: Parameters<typeof mod.usePagination>) => {
+      const result = mod.usePagination(...args);
+      const original = result.clampToTotal;
+      if (!clampWrapperCache.has(original)) {
+        clampWrapperCache.set(original, (total: number) => {
+          clampToTotalCallCount++;
+          return original(total);
+        });
+      }
+      return { ...result, clampToTotal: clampWrapperCache.get(original)! };
+    },
+  };
+});
+
 vi.mock('@/lib/api', () => ({
   api: {
     getBlacklist: vi.fn(),
@@ -47,6 +69,7 @@ const mockEntries = [
 
 beforeEach(() => {
   vi.clearAllMocks();
+  clampToTotalCallCount = 0;
 });
 
 describe('BlacklistSettings', () => {
@@ -459,5 +482,34 @@ describe('pagination placeholderData', () => {
 
     await waitFor(() => expect(screen.queryByText('Bad Release [Unabridged]')).not.toBeInTheDocument());
     expect(screen.getByText('Page 2 Release')).toBeInTheDocument();
+  });
+
+  it('clamp effect does not re-fire on re-render when total is unchanged (stable deps)', async () => {
+    const TOTAL = 110;
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+
+    vi.mocked(api.getBlacklist).mockResolvedValue({ data: mockEntries, total: TOTAL });
+
+    const { rerender } = render(
+      <QueryClientProvider client={queryClient}>
+        <MemoryRouter>
+          <BlacklistSettings />
+        </MemoryRouter>
+      </QueryClientProvider>,
+    );
+
+    await waitFor(() => expect(screen.getByText('Bad Release [Unabridged]')).toBeInTheDocument());
+
+    const countBeforeRerender = clampToTotalCallCount;
+
+    rerender(
+      <QueryClientProvider client={queryClient}>
+        <MemoryRouter>
+          <BlacklistSettings />
+        </MemoryRouter>
+      </QueryClientProvider>,
+    );
+
+    expect(clampToTotalCallCount).toBe(countBeforeRerender);
   });
 });

@@ -31,6 +31,7 @@ export function BlacklistSettings() {
   const queryClient = useQueryClient();
   const [deleteTarget, setDeleteTarget] = useState<BlacklistEntry | null>(null);
   const pagination = usePagination(DEFAULT_LIMITS.blacklist);
+  const { clampToTotal: clampBlacklistPage } = pagination;
 
   const paginationParams = { limit: pagination.limit, offset: pagination.offset };
   const { data: response, isLoading } = useQuery({
@@ -41,10 +42,9 @@ export function BlacklistSettings() {
   const entries = response?.data ?? [];
   const total = response?.total ?? 0;
 
-  // Clamp page when total shrinks (e.g., after deleting last item on a page)
   useEffect(() => {
-    pagination.clampToTotal(total);
-  }, [total, pagination]);
+    clampBlacklistPage(total);
+  }, [total, clampBlacklistPage]);
 
   const deleteMutation = useMutation({
     mutationFn: api.removeFromBlacklist,
