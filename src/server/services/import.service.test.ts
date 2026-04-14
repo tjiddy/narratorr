@@ -1319,33 +1319,27 @@ describe('ImportService', () => {
       );
     });
 
-    it('reverts download and book status when enrichBookFromAudio throws', async () => {
+    it('import succeeds when enrichBookFromAudio throws (#554 — enrichment isolated)', async () => {
       const log = createMockLogger();
       const svc = new ImportService(inject<Db>(db), clientService, settingsService, inject<FastifyBaseLogger>(log), undefined, mockBookService as never);
 
       db.select.mockReturnValueOnce(mockDbChain([mockDownload]));
       db.update.mockReturnValue(mockDbChain());
 
-      // Make enrichBookFromAudio throw (simulating a scenario where internal catch is absent)
       const enrichMock = vi.mocked(enrichBookFromAudio);
       enrichMock.mockRejectedValueOnce(new Error('Enrichment exploded'));
 
-      await expect(svc.importDownload(1)).rejects.toThrow('Enrichment exploded');
+      const result = await svc.importDownload(1);
 
-      // Verify download reverted to 'failed'
-      const updateCalls = db.update.mock.results;
-      const setCalls = updateCalls
-        .map((r: { value: unknown }) => ((r.value as { set: ReturnType<typeof vi.fn> }).set))
-        .filter(Boolean);
-      const allSetArgs = setCalls.flatMap((s: ReturnType<typeof vi.fn>) => s.mock.calls.map((c: unknown[]) => c[0] as Record<string, unknown>));
-      expect(allSetArgs).toContainEqual(expect.objectContaining({ status: 'failed' }));
-      // Book reverted to 'wanted' (no path)
-      expect(allSetArgs).toContainEqual(expect.objectContaining({ status: 'wanted' }));
-      // Error logged
-      expect(log.error).toHaveBeenCalledWith(
-        expect.objectContaining({ downloadId: 1 }),
-        'Import failed',
+      // Import succeeds despite enrichment throw
+      expect(result.downloadId).toBe(1);
+      // Warning logged, not error
+      expect(log.warn).toHaveBeenCalledWith(
+        expect.objectContaining({ error: expect.any(Error) }),
+        expect.stringContaining('enrichment threw'),
       );
+      // No revert to failed — import is committed
+      expect(log.error).not.toHaveBeenCalled();
     });
   });
 
