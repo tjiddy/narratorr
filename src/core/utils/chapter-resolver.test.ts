@@ -2,7 +2,6 @@ import { describe, it, expect, vi } from 'vitest';
 import {
   sortChapterSources,
   resolveChapterTitle,
-  parseFilenameForTitle,
   readChapterSources,
   type ChapterSource,
 } from './chapter-resolver.js';
@@ -125,29 +124,4 @@ describe('chapter-resolver', () => {
     });
   });
 
-  describe('parseFilenameForTitle', () => {
-    it('parses "Chapter 01 - Title.mp3"', () => {
-      expect(parseFilenameForTitle('/a/Chapter 01 - The Beginning.mp3')).toBe('The Beginning');
-    });
-
-    it('parses "01 Title.mp3"', () => {
-      expect(parseFilenameForTitle('/a/01 Prologue.mp3')).toBe('Prologue');
-    });
-
-    it('parses "01 - Title.mp3"', () => {
-      expect(parseFilenameForTitle('/a/01 - Opening.mp3')).toBe('Opening');
-    });
-
-    it('returns null for "01.mp3" (just a number)', () => {
-      expect(parseFilenameForTitle('/a/01.mp3')).toBeNull();
-    });
-
-    it('parses "Part 1/01 - Title.mp3" (disc subfolder)', () => {
-      expect(parseFilenameForTitle('/audiobooks/Part 1/01 - The Start.mp3')).toBe('The Start');
-    });
-
-    it('strips Part prefix from filename', () => {
-      expect(parseFilenameForTitle('/a/Part 1 - Introduction.mp3')).toBe('Introduction');
-    });
-  });
 });

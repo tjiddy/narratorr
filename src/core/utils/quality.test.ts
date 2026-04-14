@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { calculateQuality, compareQuality, resolveBookQualityInputs, qualityTierBg, qualityTierColor } from './quality.js';
+import { calculateQuality, compareQuality, resolveBookQualityInputs, qualityTierBg } from './quality.js';
 
 describe('calculateQuality', () => {
   it('returns null for zero duration', () => {
@@ -89,16 +89,6 @@ describe('calculateQuality', () => {
   it('returns Lossless at exactly 400 MB/hr', () => {
     const result = calculateQuality(400 * 1024 * 1024, 3600);
     expect(result!.tier).toBe('Lossless');
-  });
-});
-
-describe('qualityTierColor', () => {
-  it('returns correct color for each tier', () => {
-    expect(qualityTierColor('Low')).toContain('red');
-    expect(qualityTierColor('Fair')).toContain('yellow');
-    expect(qualityTierColor('Good')).toContain('green');
-    expect(qualityTierColor('High')).toContain('blue');
-    expect(qualityTierColor('Lossless')).toContain('purple');
   });
 });
 

@@ -88,7 +88,7 @@ export function resolveChapterTitle(source: ChapterSource, index: number): strin
  * Parse a filename to extract a chapter title.
  * Strips extension, leading track numbers, and common prefixes like "Chapter XX - ".
  */
-export function parseFilenameForTitle(filePath: string): string | null {
+function parseFilenameForTitle(filePath: string): string | null {
   const name = basename(filePath, extname(filePath));
 
   // Strip leading track numbers and separators: "01 - Title", "01. Title", "01 Title"
@@ -110,15 +110,3 @@ export function parseFilenameForTitle(filePath: string): string | null {
   return result;
 }
 
-/**
- * Get the disc folder name for sorting purposes.
- * E.g., "Part 1/01 - Title.mp3" → "Part 1"
- */
-export function getDiscFolder(filePath: string): string | null {
-  const dir = dirname(filePath);
-  const folderName = basename(dir);
-  if (/^(disc|cd|part|disk)\s*\d+$/i.test(folderName)) {
-    return folderName;
-  }
-  return null;
-}
