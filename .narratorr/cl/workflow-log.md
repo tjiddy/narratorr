@@ -1,5 +1,34 @@
 # Workflow Log
 
+## #553 Wave 3B: Frontend file splits — SearchReleasesModal, BookMetadataModal — 2026-04-14
+**Skill path:** /implement → /claim → /plan → /handoff
+**Outcome:** success — PR #574
+
+### Metrics
+- Files changed: 5 source + 3 test | Tests added/modified: 44 new tests across 3 files
+- Quality gate runs: 2 (pass on attempt 1 both times)
+- Fix iterations: 1 (eslint-disable removal revealed max-lines-per-function and complexity violations requiring additional header extraction and phase splitting)
+- Context compactions: 0
+
+### Workflow experience
+- What went smoothly: Existing tests (93 + 42 = 135) passed unchanged after every extraction — strong confidence in behavioral preservation
+- Friction / issues encountered: Initial plan underestimated extraction depth. The `max-lines-per-function` limit (150) is much stricter than the file line limit (350). First extraction pass got files under 350 but left functions over 150, requiring a second round of extraction (header + phase splitting).
+
+### Token efficiency
+- Highest-token actions: Reading full source of both modal files + existing test setup patterns
+- Avoidable waste: Could have checked `max-lines-per-function` eslint config before planning — would have planned the right extraction depth from the start
+- Suggestions: For extraction issues, always check eslint function-level limits (not just file-level) during /plan
+
+### Infrastructure gaps
+- Repeated workarounds: None
+- Missing tooling / config: None
+- Unresolved debt: BookEditModal/BookMetadataModal search results rendering duplication (90% similar patterns, logged to debt.md)
+
+### Wish I'd Known
+1. `max-lines-per-function` is 150 (with skipBlankLines/skipComments) — much stricter than the 350-line file target. Check this during /plan to avoid re-extraction.
+2. Extracting conditional JSX branches into a single component preserves complexity — must split by phase into separate sub-components to get under the complexity limit of 15.
+3. The error condition `!isSearching && !isResults` simplifies to `phase === 'idle'` — cleaner for extracted components that receive phase as a prop.
+
 ## #552 Wave 3A: Backend file splits — books.ts, library-scan, quality-gate-orchestrator, search-pipeline — 2026-04-14
 **Skill path:** /implement → /claim → /plan → /handoff
 **Outcome:** success — PR #573

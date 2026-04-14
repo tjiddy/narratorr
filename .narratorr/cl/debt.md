@@ -49,9 +49,11 @@
 
 - **`src/client/lib/api/books.ts` / `src/core/metadata/schemas.ts`**: Client `BookMetadata` interface is hand-maintained separately from server `BookMetadataSchema`. Fields drift — `language` and `publishedDate` existed server-side but were missing client-side until #497. Should derive client type from the Zod schema or generate it. (discovered in #497)
 
-- **`src/client/components/SearchReleasesModal.tsx` at 391 lines (max 400)**: File is near ESLint max-lines soft limit and already has `eslint-disable max-lines-per-function` at line 108. Any net additions (new state, new UI sections) will trigger the violation. Consider extracting the results list or grab/replace logic into sub-components. (discovered in #484)
+- ~~**`src/client/components/SearchReleasesModal.tsx` at 391 lines (max 400)**~~ — resolved in #553 (extracted SearchReleasesContent, SearchReleasesHeader, phase sub-components)
 
-- **`src/client/components/book/BookMetadataModal.tsx` at 357 lines (max 400)**: Same situation — already has `eslint-disable max-lines-per-function` at line 18. The search integration (view toggle, search results, apply metadata) could be extracted into a separate component. (discovered in #484)
+- ~~**`src/client/components/book/BookMetadataModal.tsx` at 357 lines (max 400)**~~ — resolved in #553 (extracted MetadataSearchView, MetadataEditFields)
+
+- **`BookMetadataModal` / `BookEditModal` search results rendering 90% duplicated**: `BookMetadataModal`'s `MetadataSearchView` (line 278+) and `BookEditModal`'s inline search results (line 213+) use near-identical cover-image + metadata display patterns but differ in height (`max-h-72` vs `max-h-36`), slice count (8 vs 6), and optional fields (duration, library badge). A shared `MetadataResultItem` component could be extracted if both modals continue to evolve. (discovered in #553)
 
 - ~~**`src/server/services/search-pipeline.ts` `filterAndRankResults` has 10 positional parameters**~~ — resolved in #522 (options bag with `SearchFilterOptions`)
 
