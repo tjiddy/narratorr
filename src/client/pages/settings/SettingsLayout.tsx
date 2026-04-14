@@ -1,4 +1,4 @@
-import { NavLink, Outlet, useLocation } from 'react-router-dom';
+import { NavLink, Routes, Route, useLocation } from 'react-router-dom';
 import { PageHeader } from '@/components/PageHeader.js';
 import { settingsPageRegistry } from './registry.js';
 
@@ -45,7 +45,16 @@ export function SettingsLayout() {
 
         {/* Content */}
         <div className="flex-1 min-w-0 animate-fade-in-up stagger-2">
-          <Outlet />
+          <Routes>
+            {settingsPageRegistry.map((entry) => {
+              const Component = entry.component;
+              return entry.path === '' ? (
+                <Route key="index" index element={<Component />} />
+              ) : (
+                <Route key={entry.path} path={entry.path} element={<Component />} />
+              );
+            })}
+          </Routes>
         </div>
       </div>
     </div>

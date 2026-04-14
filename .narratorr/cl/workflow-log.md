@@ -1,5 +1,34 @@
 # Workflow Log
 
+## #550 Wave 2C: Route code splitting — React.lazy + vendor chunk separation — 2026-04-14
+**Skill path:** /implement → /claim → /plan → /handoff
+**Outcome:** success — PR #570
+
+### Metrics
+- Files changed: 7 | Tests added/modified: 4
+- Quality gate runs: 1 (pass on attempt 1)
+- Fix iterations: 0
+- Context compactions: 0
+
+### Workflow experience
+- What went smoothly: Clean modular implementation — each module (RouteErrorBoundary, SettingsLayout restructuring, App.tsx lazy loading, Vite config) was independent and testable. All 10837 existing tests passed without modification (except the expected App.test.tsx and SettingsPage.test.tsx updates).
+- Friction / issues encountered: SettingsLayout test routing context — after converting from `<Outlet>` to internal `<Routes>`, tests needed a parent `<Route path="/settings/*">` wrapper. SettingsPage.test.tsx imported individual settings components from the barrel that was trimmed.
+
+### Token efficiency
+- Highest-token actions: Full test suite run (131s, 10837 tests) and codebase exploration subagent
+- Avoidable waste: None significant — the modular approach kept each step focused
+- Suggestions: For future route restructuring, check all test files that import from affected barrels upfront
+
+### Infrastructure gaps
+- Repeated workarounds: None
+- Missing tooling / config: None
+- Unresolved debt: Settings barrel export trimming (noted in debt.md)
+
+### Wish I'd Known
+1. `React.lazy()` requires default exports — all Narratorr pages use named exports, needing `.then(m => ({ default: m.X }))` wrapper on every lazy import (see `react-lazy-named-exports.md`)
+2. Moving route definitions inside a layout component requires `path="settings/*"` wildcard in the parent and `<Routes>` inside the child — plus test wrappers need matching route context (see `settings-test-route-context.md`)
+3. The settings registry was imported from both App.tsx and SettingsLayout — this invisible coupling meant lazy-loading SettingsLayout alone wouldn't defer the sub-pages (see `settings-registry-route-coupling.md`)
+
 ## #549 Wave 2B: Hook extraction — useBookModals, useClickOutside — 2026-04-14
 **Skill path:** /implement → /claim → /plan → /handoff
 **Outcome:** success — PR #569

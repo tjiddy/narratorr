@@ -4,12 +4,7 @@ import userEvent from '@testing-library/user-event';
 import { render } from '@testing-library/react';
 import { MemoryRouter, Routes, Route } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import {
-  SettingsLayout,
-  GeneralSettings,
-  IndexersSettings,
-  DownloadClientsSettings,
-} from '@/pages/settings';
+import { SettingsLayout } from '@/pages/settings';
 
 vi.mock('@/components/library/BulkOperationsSection', () => ({
   BulkOperationsSection: () => null,
@@ -99,11 +94,7 @@ function renderSettingsPage(route = '/settings/indexers') {
     <QueryClientProvider client={queryClient}>
       <MemoryRouter initialEntries={[route]}>
         <Routes>
-          <Route path="settings" element={<SettingsLayout />}>
-            <Route index element={<GeneralSettings />} />
-            <Route path="indexers" element={<IndexersSettings />} />
-            <Route path="download-clients" element={<DownloadClientsSettings />} />
-          </Route>
+          <Route path="settings/*" element={<SettingsLayout />} />
         </Routes>
       </MemoryRouter>
     </QueryClientProvider>,
