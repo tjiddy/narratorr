@@ -27,7 +27,6 @@ export interface ImportPipelineDeps {
   enrichmentDeps: EnrichmentDeps;
 }
 
-// eslint-disable-next-line complexity -- create + duplicate check + metadata lookup + event recording + enrichment pipeline
 export async function importSingleBook(
   item: ImportConfirmItem,
   deps: ImportPipelineDeps,
