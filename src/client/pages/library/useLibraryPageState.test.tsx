@@ -94,11 +94,12 @@ describe('useLibraryPageState', () => {
 
   it('clamp effect does not re-fire on re-render when totalBooks is unchanged (stable deps)', async () => {
     const TOTAL = 80;
-    vi.mocked(useLibrary).mockReturnValue({
+    const mockReturn = {
       data: { data: [], total: TOTAL },
       isLoading: false,
       isPlaceholderData: false,
-    } as ReturnType<typeof useLibrary>);
+    } as unknown as ReturnType<typeof useLibrary>;
+    vi.mocked(useLibrary).mockReturnValue(mockReturn);
 
     const { result, rerender } = renderHook(() => useLibraryPageState(), { wrapper });
 
@@ -106,12 +107,7 @@ describe('useLibraryPageState', () => {
 
     const countBeforeRerender = clampToTotalCallCount;
 
-    vi.mocked(useLibrary).mockReturnValue({
-      data: { data: [], total: TOTAL },
-      isLoading: false,
-      isPlaceholderData: false,
-    } as ReturnType<typeof useLibrary>);
-
+    vi.mocked(useLibrary).mockReturnValue(mockReturn);
     rerender();
 
     expect(clampToTotalCallCount).toBe(countBeforeRerender);
