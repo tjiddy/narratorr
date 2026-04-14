@@ -70,7 +70,7 @@
 
 - **`src/server/services/import-orchestrator.ts:122-128` SSE status mismatch in drain path**: `drainQueuedImports` emits `emitDownloadImporting` with `downloadStatus: 'processing_queued'` while the DB row is already `importing` (set by `claimQueuedDownload`). SSE consumers that display the payload status would briefly show the wrong state. (discovered in Archer session review of #525)
 
-- **No concurrent-drain test for import nudge**: Two simultaneous `drainQueuedImports` calls racing on the same queued item are safe via CAS (`claimQueuedDownload`) but no test exercises this scenario. `src/server/services/import-orchestrator.test.ts`. (discovered in Archer session review of #525)
+- ~~**No concurrent-drain test for import nudge**: resolved in #539 — concurrent drain contention test added to import-orchestrator.test.ts~~
 
 - **`src/server/services/import-orchestrator.ts:85` processCompletedDownloads doesn't nudge**: The cron batch path releases slots but does not call `drainQueuedImports`. Intentional (cron re-queries immediately), but undocumented — a future reader might add nudge without understanding the design. Add a comment. (discovered in Archer session review of #525)
 

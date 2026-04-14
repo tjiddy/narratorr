@@ -1849,6 +1849,27 @@ describe('ImportService', () => {
 
       expect(result).toBe(false);
     });
+
+    // ── #539 — rowsAffected guard ──────────────────────────────────────────
+    it('logs warning and throws when rowsAffected field is missing (undefined)', async () => {
+      db.update.mockReturnValueOnce(mockDbChain({}));
+
+      await expect(service.claimQueuedDownload(5)).rejects.toThrow('rowsAffected missing');
+      expect(log.warn).toHaveBeenCalledWith(
+        expect.objectContaining({ downloadId: 5 }),
+        expect.stringContaining('rowsAffected'),
+      );
+    });
+
+    it('warning log includes download ID for debuggability', async () => {
+      db.update.mockReturnValueOnce(mockDbChain({}));
+
+      await expect(service.claimQueuedDownload(42)).rejects.toThrow('download 42');
+      expect(log.warn).toHaveBeenCalledWith(
+        expect.objectContaining({ downloadId: 42 }),
+        expect.any(String),
+      );
+    });
   });
 
   describe('lastGrab identifier tracking', () => {

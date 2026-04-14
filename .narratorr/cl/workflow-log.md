@@ -1,5 +1,34 @@
 # Workflow Log
 
+## #539 Import pipeline hardening: recursion, CAS guard, claim visibility — 2026-04-13
+**Skill path:** /implement → /claim → /plan → /handoff
+**Outcome:** success — PR #544
+
+### Metrics
+- Files changed: 4 | Tests added/modified: 18 (16 orchestrator, 2 service)
+- Quality gate runs: 2 (pass on attempt 2 — first had unused variable lint error)
+- Fix iterations: 1 (unused destructured variables in concurrent drain test)
+- Context compactions: 0
+
+### Workflow experience
+- What went smoothly: Spec was well-elaborated after two spec review rounds — slot-first admission design was clear and the implementation was straightforward
+- Friction / issues encountered: Had to think through the `finally`/`continue` interaction to avoid double-releasing semaphore slots. Initial implementation had a separate `releaseSlot()` in the CAS-miss branch AND in `finally` — caught before running tests by reading through the control flow.
+
+### Token efficiency
+- Highest-token actions: Explore subagent for plan phase (full file reads of orchestrator + service + both test files)
+- Avoidable waste: None — the elaboration phase had already surfaced all relevant context
+- Suggestions: For hardening issues with clear file scope, a lighter explore pass would suffice
+
+### Infrastructure gaps
+- Repeated workarounds: None
+- Missing tooling / config: None
+- Unresolved debt: SSE status mismatch in drain path (debt.md:71) — emits `processing_queued` while DB is `importing`. Still present, out of scope for this fix.
+
+### Wish I'd Known
+1. `continue` inside `try` triggers `finally` before the next loop iteration — this made the slot release pattern much simpler than expected (see `finally-release-with-continue.md`)
+2. Slot-first admission eliminates the entire revert path by design — the spec review round-trip that led to this was the most valuable part of the process (see `slot-first-eliminates-revert.md`)
+3. The existing test suite for `drainQueuedImports` was comprehensive enough that most tests only needed assertion updates (ordering changes), not full rewrites
+
 ## #540 DRY: extract shared multi-part and language filter helpers — 2026-04-13
 **Skill path:** /implement → /claim → /plan → /handoff
 **Outcome:** success — PR #543
