@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
-import { screen, within } from '@testing-library/react';
+import { screen, within, fireEvent } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { renderWithProviders } from '@/__tests__/helpers';
 import { BulkActionToolbar } from './BulkActionToolbar';
@@ -68,6 +68,20 @@ describe('BulkActionToolbar', () => {
       await user.click(within(dialog).getByRole('button', { name: 'Remove' }));
 
       expect(onDelete).toHaveBeenCalledWith(false);
+    });
+  });
+
+  describe('status menu outside-close', () => {
+    it('closes the status menu when mousedown fires outside the menu', async () => {
+      const user = userEvent.setup();
+      renderWithProviders(<BulkActionToolbar {...baseProps} />);
+
+      await user.click(screen.getByRole('button', { name: /Set Status/ }));
+      expect(screen.getByText('Wanted')).toBeInTheDocument();
+
+      fireEvent.mouseDown(document.body);
+
+      expect(screen.queryByText('Wanted')).not.toBeInTheDocument();
     });
   });
 
