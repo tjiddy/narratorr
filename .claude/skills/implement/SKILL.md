@@ -103,7 +103,7 @@ All GitHub commands use: `node scripts/gh.ts` (referred to as `gh` below).
 6d. **Drain background tasks (pre-handoff):** Run TaskList to check for any outstanding background tasks. For each task still in `running` state, call TaskStop to terminate it. Wait until TaskList shows no running tasks before proceeding. This prevents orphaned background tasks from keeping the session alive after handoff completes.
 
 7. **Invoke `/handoff <id>`** via the Skill tool. Include in your message: "Current branch: `<branch-name-from-step-6b>`".
-   - This pushes, creates the PR, updates labels, posts the handoff comment, updates the context cache, and appends the workflow log.
+   - This pushes, creates the PR, updates labels, posts the handoff comment, and updates the context cache.
    - **When `/handoff` returns → IMMEDIATELY continue to step 8.** Do not end your turn.
 
 8. **Verify label transition (safety net):** Check both sides of the bridge:

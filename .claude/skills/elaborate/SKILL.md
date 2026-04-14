@@ -43,7 +43,9 @@ All GitHub commands use: `node scripts/gh.ts` (referred to as `gh` below).
    > Do ALL of the following and return a structured summary:
    >
    > **Workflow history:**
+   > <!-- DISABLED (workflow log retired, re-enable for next project spin-up):
    > 1. Read `.narratorr/cl/workflow-log.md` — find entries touching the same area (matching file paths, service names, feature names). Note recurring workarounds, fix iterations, infrastructure gaps.
+   > -->
    > 2. Read `.narratorr/cl/observations.md` — look for known debt, gotchas, or patterns relevant to the scope.
    > 3. Scan `.narratorr/cl/learnings/` — grep learning files by scope tags and file paths matching the issue's area.
    > 4. Read `.narratorr/cl/debt.md` — check for known debt items in the target area.
@@ -84,7 +86,7 @@ All GitHub commands use: `node scripts/gh.ts` (referred to as `gh` below).
    >
    > Return this structure:
    > ```
-   > IMPLEMENTATION HAZARDS: <relevant workflow-log/learnings/debt findings, or "none">
+   > IMPLEMENTATION HAZARDS: <relevant learnings/debt findings, or "none">
    > SIMILAR FEATURES: <existing patterns to follow>
    > INTERFACES & TYPES: <relevant interfaces the implementation will use/extend>
    > TOUCH POINTS: <wiring files, registries, route registrations>
@@ -121,7 +123,7 @@ All GitHub commands use: `node scripts/gh.ts` (referred to as `gh` below).
    Dependencies: none | met | unmet (<list>)
    Overlap: none | <PR links>
    Gaps Filled: <list or "none">
-   Implementation Hazards: <relevant workflow-log/observations findings or "none">
+   Implementation Hazards: <relevant observations/learnings findings or "none">
    Codebase Findings: <compact implementation hints — ephemeral>
    ```
 

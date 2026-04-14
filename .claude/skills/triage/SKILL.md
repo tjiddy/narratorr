@@ -57,7 +57,10 @@ All GitHub commands use: `node scripts/gh.ts` (referred to as `gh` below).
 
    a. **Learnings:** Read all files in `.narratorr/cl/learnings/`.
    b. **Debt:** Read `.narratorr/cl/debt.md` if it exists.
+   <!-- DISABLED (workflow log retired, re-enable for next project spin-up):
    c. **Workflow log:** Read `.narratorr/cl/workflow-log.md`. Extract `### Wish I'd Known` entries.
+   -->
+   c. (workflow log source retired)
    <!-- DISABLED: Review retrospectives capture is turned off — see review-pr and respond-to-pr-review skills.
    d. **Review retrospectives:** Read all files in `.narratorr/cl/reviews/`. These contain "Prompt fix" suggestions from implementers and reviewers.
    -->
@@ -149,7 +152,7 @@ All GitHub commands use: `node scripts/gh.ts` (referred to as `gh` below).
    After user reviews and approves:
    - **Delete** all dogshit files and graduated files from `.narratorr/cl/learnings/`.
    - **Remove** resolved debt items from `.narratorr/cl/debt.md`.
-   - **Truncate** `.narratorr/cl/workflow-log.md` to `# Workflow Log\n`.
+   <!-- DISABLED (workflow log retired): - **Truncate** `.narratorr/cl/workflow-log.md` to `# Workflow Log\n`. -->
    - **Do NOT auto-create issues or edit skills** — the report is the deliverable. User acts on actionable items manually or queues them.
 
 ## Important

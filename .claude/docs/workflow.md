@@ -10,7 +10,7 @@ A detailed plan, pre-made spec, or explicit implementation instructions do NOT b
 1. **Before writing any code** → `/claim <id>` (validates status, creates branch, updates labels)
 2. **Plan** → `/plan <id>` (explores codebase, extracts test stubs, posts implementation plan)
 3. **Implement** — follow the plan from step 2
-4. **After tests/typecheck/build pass** → `/handoff <id>` (pushes, creates PR, comments, updates labels, appends workflow log)
+4. **After tests/typecheck/build pass** → `/handoff <id>` (pushes, creates PR, comments, updates labels)
 
 **PR review cycle:**
 1. `/review-pr <pr>` — reviewer posts structured findings with verdict
@@ -23,14 +23,16 @@ A detailed plan, pre-made spec, or explicit implementation instructions do NOT b
 - `/block <id>` — mark blocked and stop (at any point)
 
 Skipping `/claim` means no validation, no branch, no tracking, no audit trail.
-Skipping `/handoff` means no PR, no label update, no workflow log entry.
+Skipping `/handoff` means no PR, no label update.
 
 **Workflow guardrails:**
 - **No pausing between sub-skills.** When `/plan`, `/handoff`, or a script (`verify.ts`, `claim.ts`) returns inside a parent skill (`/implement`, `/respond-to-pr-review`), immediately continue the parent flow. These are mid-flow return values, not stopping points.
 - **Self-review guard.** `/review-pr` checks the current user against the PR author — if they match, it STOPs and suggests `/respond-to-pr-review` instead.
 - **Merge author validation.** `scripts/merge.ts` requires the most recent `approve` verdict to come from a different user than the PR author. Stale approvals (superseded by `needs-work`) are ignored.
 - **Dispute escalation.** If `/respond-to-pr-review` disputes a blocking finding, the issue gets the `blocked` flag and STOPs for human input.
+<!-- DISABLED (workflow log retired, re-enable for next project spin-up):
 - **Auto-maintained files.** `/handoff` prepends to `.narratorr/cl/workflow-log.md`.
+-->
 
 ## Labels
 

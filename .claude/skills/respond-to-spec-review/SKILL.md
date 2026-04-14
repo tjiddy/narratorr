@@ -80,7 +80,7 @@ All GitHub commands use: `node scripts/gh.ts` (referred to as `gh` below).
    Dependencies: none | met | unmet (<list>)
    Overlap: none | <PR links>
    Gaps Filled: <list or "none">
-   Implementation Hazards: <relevant workflow-log/observations findings or "none">
+   Implementation Hazards: <relevant observations/learnings findings or "none">
    Codebase Findings: <compact implementation hints — ephemeral>
    ```
 

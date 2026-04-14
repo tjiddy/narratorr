@@ -136,7 +136,7 @@ All GitHub commands use: `node scripts/gh.ts` (referred to as `gh` below).
    ```
    - Clean up the temp file after posting.
 
-11. **Continuous Learning retrospective** — before writing the workflow log, reflect on the implementation:
+11. **Continuous Learning retrospective** — reflect on the implementation:
 
    a. **Read scratch context:** If `.narratorr/cl/scratch.md` exists, read it — this contains recent assistant context captured before compaction. Use it as supplementary memory for the retrospective steps below. (If the file doesn't exist, that's fine — proceed without it.)
 
@@ -155,14 +155,16 @@ All GitHub commands use: `node scripts/gh.ts` (referred to as `gh` below).
 
    c. **Log debt observations:** If you noticed anything out of scope that needs fixing (bad patterns, missing tests, poor abstractions, confusing naming), append one-liner bullets to `.narratorr/cl/debt.md`. Create the file with a `# Technical Debt` heading if it doesn't exist. Format: `- **<file or area>**: <what's wrong and why it matters> (discovered in #<id>)`. **Dedup check:** Before appending, read the existing debt file and check if the same issue is already logged (same file/area and same problem). If it is, do NOT add a duplicate entry — the existing entry is sufficient regardless of which issue discovered it first.
 
-   d. **Rank top 3:** Ask yourself: "What are 3 things I wish I'd known before starting this issue?" Write these to a `### Wish I'd Known` section in the workflow log entry (step 12). Reference the full learning files from 11b where applicable.
+   d. **Delete scratch file:** If `.narratorr/cl/scratch.md` exists, delete it — it's been consumed.
 
-   e. **Delete scratch file:** If `.narratorr/cl/scratch.md` exists, delete it — it's been consumed.
-
-   f. **Verify capture (HARD GATE):** Before proceeding to step 12, verify:
-      - `.narratorr/cl/learnings/` exists and contains at least one `.md` file with `issue: <id>` in its frontmatter — OR the workflow log entry (step 12) explicitly states under `### Wish I'd Known` why zero learnings were captured (e.g., "Trivial issue with no surprises — no learnings to capture").
+   e. **Verify capture (HARD GATE):** Before proceeding, verify:
+      - `.narratorr/cl/learnings/` exists and contains at least one `.md` file with `issue: <id>` in its frontmatter — OR you have explicitly decided there are no learnings worth capturing (e.g., "Trivial issue with no surprises").
       - If debt was discovered during implementation (fix iterations, dead code, out-of-scope issues found while reading code), `.narratorr/cl/debt.md` exists and contains at least one entry referencing `#<id>`.
       - If either check fails, STOP and complete the missing capture before continuing. Do NOT skip this step — it is the safety net for mid-implementation capture being skipped (which happens reliably).
+
+<!-- DISABLED (workflow log retired — CL process winding down on this project, re-enable for next project spin-up):
+
+   d. **Rank top 3:** Ask yourself: "What are 3 things I wish I'd known before starting this issue?" Write these to a `### Wish I'd Known` section in the workflow log entry (step 12). Reference the full learning files from 11b where applicable.
 
 12. **Prepend to workflow log** (`.narratorr/cl/workflow-log.md`) — add a new entry at the **top** of the file (below the `# Workflow Log` heading), so entries are reverse-chronological. If the file doesn't exist, create it with the heading first.
 
@@ -197,8 +199,11 @@ All GitHub commands use: `node scripts/gh.ts` (referred to as `gh` below).
    2. <second most impactful>
    3. <third most impactful>
    ```
+-->
 
-13. **Commit and push CL files:** The learning files, debt log, and workflow log written in steps 11–12 are on the feature branch. Commit and push so they land on main with the PR merge:
+12. **(reserved — workflow log step retired; see comment above)**
+
+13. **Commit and push CL files:** The learning files and debt log written in step 11 are on the feature branch. Commit and push so they land on main with the PR merge:
     ```bash
     git add .narratorr/cl/
     git commit -m "CL from #<id>"
