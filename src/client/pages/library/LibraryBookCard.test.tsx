@@ -530,7 +530,7 @@ describe('React.memo (REACT-2 refactor)', () => {
     });
 
     it('hover-expand info section has both group-hover:opacity-100 and no-hover:opacity-100 classes', () => {
-      const book = createMockBook({ narrators: [{ name: 'Tim Gerard Reynolds' }] });
+      const book = createMockBook({ narrators: [{ id: 1, name: 'Tim Gerard Reynolds', slug: 'tim-gerard-reynolds' }] });
       render(<LibraryBookCard {...defaultProps({ book })} />);
       const narratorText = screen.getByText('Tim Gerard Reynolds');
       const expandSection = narratorText.closest('.overflow-hidden')!;
@@ -538,7 +538,7 @@ describe('React.memo (REACT-2 refactor)', () => {
     });
 
     it('hover-expand info section has no-hover:max-h-16 class for touch visibility', () => {
-      const book = createMockBook({ narrators: [{ name: 'Tim Gerard Reynolds' }] });
+      const book = createMockBook({ narrators: [{ id: 1, name: 'Tim Gerard Reynolds', slug: 'tim-gerard-reynolds' }] });
       render(<LibraryBookCard {...defaultProps({ book })} />);
       const narratorText = screen.getByText('Tim Gerard Reynolds');
       const expandSection = narratorText.closest('.overflow-hidden')!;
@@ -546,7 +546,7 @@ describe('React.memo (REACT-2 refactor)', () => {
     });
 
     it('hover-expand info section retains max-h-0 and group-hover:max-h-16 for desktop hover', () => {
-      const book = createMockBook({ narrators: [{ name: 'Tim Gerard Reynolds' }] });
+      const book = createMockBook({ narrators: [{ id: 1, name: 'Tim Gerard Reynolds', slug: 'tim-gerard-reynolds' }] });
       render(<LibraryBookCard {...defaultProps({ book })} />);
       const narratorText = screen.getByText('Tim Gerard Reynolds');
       const expandSection = narratorText.closest('.overflow-hidden')!;
