@@ -206,9 +206,11 @@ describe('Modal', () => {
           <Modal><p>no focusable content</p></Modal>
         </>,
       );
-      // Tab should not move focus to the outside button
+      const panel = screen.getByText('no focusable content').parentElement!;
+      expect(document.activeElement).toBe(panel);
       await user.keyboard('{Tab}');
       expect(document.activeElement).not.toBe(screen.getByTestId('outside'));
+      expect(panel.contains(document.activeElement)).toBe(true);
     });
 
     it('focus moves into Modal panel when it opens', () => {
