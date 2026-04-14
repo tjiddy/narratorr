@@ -41,7 +41,7 @@
 
 - **`src/server/services/refresh-scan.service.test.ts:329-341`**: `rethrows non-ENOENT stat errors` test still uses the same double-call anti-pattern (rejects.toThrow + try/catch). Was out of scope for #468 which only targeted RefreshScanError-coded tests, but should be consolidated to match. (discovered in #468)
 
-- **`src/server/jobs/index.ts:54` housekeeping callback lacks per-sub-task error isolation**: The inline housekeeping callback runs VACUUM → pruneOlderThan → deleteExpired sequentially without per-sub-task try/catch. If VACUUM fails, the subsequent cleanup tasks are skipped. The deleted standalone `housekeeping.ts` had proper isolation. Should wrap each sub-task in its own try/catch. (discovered in #477)
+- ~~**`src/server/jobs/index.ts:54` housekeeping callback lacks per-sub-task error isolation**~~ — resolved in #547 (per-sub-task try/catch with log.warn)
 
 - **`src/client/hooks/useBulkOperation.ts`, `src/client/components/settings/useFetchCategories.ts`, `src/client/pages/library/useLibraryBulkActions.ts`**: No co-located test files. These hooks contain error handling and polling logic that could regress silently. (discovered in #486)
 
@@ -59,7 +59,7 @@
 
 - ~~**`src/core/utils/download-url.ts:290` sanitizeNetworkError fallthrough leaks error.message**~~ — resolved in #541 (URL redaction via regex)
 
-- **`src/client/pages/discover/DiscoverPage.tsx:52` markAdded fire-and-forget has no error logging**: `api.markDiscoverSuggestionAdded(id).catch(() => {})` silently swallows all errors. If the backend call fails, the suggestion reappears on next page load with no warning. Add `.catch((err) => console.warn('mark-added failed:', err))` at minimum. Failure path is also untested. (discovered in Archer session review of #524)
+- ~~**`src/client/pages/discover/DiscoverPage.tsx:52` markAdded fire-and-forget has no error logging**~~ — resolved in #547 (console.warn on catch + error path tests)
 
 
 - **`src/core/utils/download-url.ts:65-66, 107-110` base32 normalization duplicated**: `infoHash.length === 32 ? base32ToHex(infoHash).toLowerCase() : infoHash.toLowerCase()` appears in both `resolveMagnet()` and `handleRedirect()`. Extract a `normalizeInfoHash(hash)` helper. (discovered in Archer session review of #527)

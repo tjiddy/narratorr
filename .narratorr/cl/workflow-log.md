@@ -1,5 +1,34 @@
 # Workflow Log
 
+## #547 Wave 1C: Minor correctness — BookEvent type, markAdded logging, housekeeping isolation — 2026-04-14
+**Skill path:** /implement → /claim → /plan → /handoff
+**Outcome:** success — PR #568
+
+### Metrics
+- Files changed: 8 | Tests added/modified: 7 new tests across 2 test files
+- Quality gate runs: 1 (pass on attempt 1)
+- Fix iterations: 1 (missed one BookEvent mock in useEventHistory.test.ts — `replace_all` only caught 2 of 3 patterns due to different field values)
+- Context compactions: 0
+
+### Workflow experience
+- What went smoothly: Three isolated fixes mapped cleanly to three TDD modules. Spec review's F1/F2 suggestions (settings.get as 4th fallible step, mock blast radius) were directly actionable.
+- Friction / issues encountered: `replace_all` edit for BookEvent mocks only caught instances with identical field values (`'grab', 'search'`), missing the `'import', 'scan'` variant. Typecheck caught it immediately.
+
+### Token efficiency
+- Highest-token actions: Reading blast-radius test files (4 files) to find all mock sites
+- Avoidable waste: Could have used a single grep for all `authorName.*eventType` patterns instead of reading each file separately
+- Suggestions: For interface field additions, grep for the type name in test files and batch-fix all matches
+
+### Infrastructure gaps
+- Repeated workarounds: Inline BookEvent mocks in 4 test files — only EventHistoryCard.test.tsx uses a factory function. Others use inline objects that break on any interface change.
+- Missing tooling / config: No shared BookEvent test factory across consumer test files
+- Unresolved debt: BookEvent/BookMetadata client types are hand-maintained separately from server (debt.md:50) — recurring drift risk
+
+### Wish I'd Known
+1. `replace_all` matches exact strings — inline mock objects with different field values need separate edits even for the same type addition
+2. `executeTracked` propagates errors with no catch — after adding per-sub-task isolation, the callback no longer throws, simplifying test patterns
+3. The spec review's blast radius finding (F2) was exact — 4 files, 8+ sites — enumeration upfront saved debugging time
+
 ## #546 Wave 1B: Dead code cleanup + dependency hygiene — 2026-04-14
 **Skill path:** /implement → /claim → /plan → /handoff
 **Outcome:** success — PR #567
