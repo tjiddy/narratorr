@@ -392,14 +392,14 @@ describe('startJobs', () => {
       expect(services.eventHistory.pruneOlderThan).toHaveBeenCalledWith(90);
     });
 
-    // TODO: invert when per-sub-task isolation is implemented (see .narratorr/cl/debt.md)
-    it('VACUUM failure prevents subsequent sub-tasks (pins current lack of per-sub-task isolation)', async () => {
+    // #547: per-sub-task error isolation
+    it('VACUUM failure does not prevent pruneOlderThan and deleteExpired from running', async () => {
       (services.settings.get as ReturnType<typeof vi.fn>).mockImplementation(async (category: string) => {
         if (category === 'search') return { intervalMinutes: 30 };
         if (category === 'rss') return { intervalMinutes: 30 };
         if (category === 'system') return { backupIntervalMinutes: 60 };
         if (category === 'discovery') return { intervalHours: 24 };
-        if (category === 'general') return { housekeepingRetentionDays: 90 };
+        if (category === 'general') return { housekeepingRetentionDays: 30 };
         return {};
       });
       (db as Record<string, unknown>).run = vi.fn().mockResolvedValue(undefined);
@@ -409,17 +409,146 @@ describe('startJobs', () => {
       await new Promise((resolve) => setTimeout(resolve, 10));
 
       vi.clearAllMocks();
-      // VACUUM throws
       (db as Record<string, unknown>).run = vi.fn().mockRejectedValue(new Error('VACUUM failed'));
+      (services.settings.get as ReturnType<typeof vi.fn>).mockImplementation(async (category: string) => {
+        if (category === 'general') return { housekeepingRetentionDays: 30 };
+        return {};
+      });
+      (services.eventHistory.pruneOlderThan as ReturnType<typeof vi.fn>).mockResolvedValue(5);
+      (services.blacklist.deleteExpired as ReturnType<typeof vi.fn>).mockResolvedValue(3);
 
-      // executeTracked propagates errors (no internal catch) — catch here to assert
-      await services.taskRegistry.executeTracked('housekeeping').catch(() => {});
+      await services.taskRegistry.executeTracked('housekeeping');
 
-      // VACUUM was attempted
+      expect(services.eventHistory.pruneOlderThan).toHaveBeenCalledWith(30);
+      expect(services.blacklist.deleteExpired).toHaveBeenCalledTimes(1);
+      expect(log.warn).toHaveBeenCalledWith(expect.any(Error), expect.stringContaining('VACUUM'));
+    });
+
+    it('pruneOlderThan failure does not prevent deleteExpired from running', async () => {
+      (services.settings.get as ReturnType<typeof vi.fn>).mockImplementation(async (category: string) => {
+        if (category === 'search') return { intervalMinutes: 30 };
+        if (category === 'rss') return { intervalMinutes: 30 };
+        if (category === 'system') return { backupIntervalMinutes: 60 };
+        if (category === 'discovery') return { intervalHours: 24 };
+        if (category === 'general') return { housekeepingRetentionDays: 30 };
+        return {};
+      });
+      (db as Record<string, unknown>).run = vi.fn().mockResolvedValue(undefined);
+
+      const { startJobs } = await import('./index.js');
+      startJobs(injectHelper<Db>(db), services, log);
+      await new Promise((resolve) => setTimeout(resolve, 10));
+
+      vi.clearAllMocks();
+      (db as Record<string, unknown>).run = vi.fn().mockResolvedValue(undefined);
+      (services.settings.get as ReturnType<typeof vi.fn>).mockImplementation(async (category: string) => {
+        if (category === 'general') return { housekeepingRetentionDays: 30 };
+        return {};
+      });
+      (services.eventHistory.pruneOlderThan as ReturnType<typeof vi.fn>).mockRejectedValue(new Error('prune failed'));
+      (services.blacklist.deleteExpired as ReturnType<typeof vi.fn>).mockResolvedValue(3);
+
+      await services.taskRegistry.executeTracked('housekeeping');
+
+      expect(services.blacklist.deleteExpired).toHaveBeenCalledTimes(1);
+      expect(log.warn).toHaveBeenCalledWith(expect.any(Error), expect.stringContaining('prune'));
+    });
+
+    it('deleteExpired failure does not affect already-completed VACUUM and prune', async () => {
+      (services.settings.get as ReturnType<typeof vi.fn>).mockImplementation(async (category: string) => {
+        if (category === 'search') return { intervalMinutes: 30 };
+        if (category === 'rss') return { intervalMinutes: 30 };
+        if (category === 'system') return { backupIntervalMinutes: 60 };
+        if (category === 'discovery') return { intervalHours: 24 };
+        if (category === 'general') return { housekeepingRetentionDays: 30 };
+        return {};
+      });
+      (db as Record<string, unknown>).run = vi.fn().mockResolvedValue(undefined);
+
+      const { startJobs } = await import('./index.js');
+      startJobs(injectHelper<Db>(db), services, log);
+      await new Promise((resolve) => setTimeout(resolve, 10));
+
+      vi.clearAllMocks();
+      (db as Record<string, unknown>).run = vi.fn().mockResolvedValue(undefined);
+      (services.settings.get as ReturnType<typeof vi.fn>).mockImplementation(async (category: string) => {
+        if (category === 'general') return { housekeepingRetentionDays: 30 };
+        return {};
+      });
+      (services.eventHistory.pruneOlderThan as ReturnType<typeof vi.fn>).mockResolvedValue(5);
+      (services.blacklist.deleteExpired as ReturnType<typeof vi.fn>).mockRejectedValue(new Error('delete failed'));
+
+      await services.taskRegistry.executeTracked('housekeeping');
+
       expect((db as Record<string, ReturnType<typeof vi.fn>>).run).toHaveBeenCalledTimes(1);
-      // Subsequent sub-tasks were NOT called (no per-sub-task try/catch)
+      expect(services.eventHistory.pruneOlderThan).toHaveBeenCalledWith(30);
+      expect(log.warn).toHaveBeenCalledWith(expect.any(Error), expect.stringContaining('blacklist'));
+    });
+
+    it('settings.get general failure does not prevent deleteExpired from running', async () => {
+      (services.settings.get as ReturnType<typeof vi.fn>).mockImplementation(async (category: string) => {
+        if (category === 'search') return { intervalMinutes: 30 };
+        if (category === 'rss') return { intervalMinutes: 30 };
+        if (category === 'system') return { backupIntervalMinutes: 60 };
+        if (category === 'discovery') return { intervalHours: 24 };
+        if (category === 'general') throw new Error('settings unavailable');
+        return {};
+      });
+      (db as Record<string, unknown>).run = vi.fn().mockResolvedValue(undefined);
+
+      const { startJobs } = await import('./index.js');
+      startJobs(injectHelper<Db>(db), services, log);
+      await new Promise((resolve) => setTimeout(resolve, 10));
+
+      vi.clearAllMocks();
+      (db as Record<string, unknown>).run = vi.fn().mockResolvedValue(undefined);
+      (services.settings.get as ReturnType<typeof vi.fn>).mockImplementation(async (category: string) => {
+        if (category === 'general') throw new Error('settings unavailable');
+        return {};
+      });
+      (services.blacklist.deleteExpired as ReturnType<typeof vi.fn>).mockResolvedValue(2);
+
+      await services.taskRegistry.executeTracked('housekeeping');
+
+      // pruneOlderThan should NOT be called (no retention days available)
       expect(services.eventHistory.pruneOlderThan).not.toHaveBeenCalled();
-      expect(services.blacklist.deleteExpired).not.toHaveBeenCalled();
+      // deleteExpired should still run
+      expect(services.blacklist.deleteExpired).toHaveBeenCalledTimes(1);
+      expect(log.warn).toHaveBeenCalledWith(expect.any(Error), expect.stringContaining('retention'));
+    });
+
+    it('each sub-task failure logs warn with sub-task name and error', async () => {
+      (services.settings.get as ReturnType<typeof vi.fn>).mockImplementation(async (category: string) => {
+        if (category === 'search') return { intervalMinutes: 30 };
+        if (category === 'rss') return { intervalMinutes: 30 };
+        if (category === 'system') return { backupIntervalMinutes: 60 };
+        if (category === 'discovery') return { intervalHours: 24 };
+        if (category === 'general') return { housekeepingRetentionDays: 30 };
+        return {};
+      });
+      (db as Record<string, unknown>).run = vi.fn().mockResolvedValue(undefined);
+
+      const { startJobs } = await import('./index.js');
+      startJobs(injectHelper<Db>(db), services, log);
+      await new Promise((resolve) => setTimeout(resolve, 10));
+
+      vi.clearAllMocks();
+      const vacuumError = new Error('VACUUM failed');
+      const pruneError = new Error('prune failed');
+      const deleteError = new Error('delete failed');
+      (db as Record<string, unknown>).run = vi.fn().mockRejectedValue(vacuumError);
+      (services.settings.get as ReturnType<typeof vi.fn>).mockImplementation(async (category: string) => {
+        if (category === 'general') return { housekeepingRetentionDays: 30 };
+        return {};
+      });
+      (services.eventHistory.pruneOlderThan as ReturnType<typeof vi.fn>).mockRejectedValue(pruneError);
+      (services.blacklist.deleteExpired as ReturnType<typeof vi.fn>).mockRejectedValue(deleteError);
+
+      await services.taskRegistry.executeTracked('housekeeping');
+
+      expect(log.warn).toHaveBeenCalledWith(vacuumError, expect.stringContaining('VACUUM'));
+      expect(log.warn).toHaveBeenCalledWith(pruneError, expect.stringContaining('prune'));
+      expect(log.warn).toHaveBeenCalledWith(deleteError, expect.stringContaining('blacklist'));
     });
   });
 
