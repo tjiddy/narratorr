@@ -16,6 +16,15 @@ export default defineConfig({
   build: {
     outDir: '../../dist/client',
     emptyOutDir: true,
+    rollupOptions: {
+      output: {
+        manualChunks(id) {
+          if (id.includes('node_modules/react-dom')) return 'vendor-react';
+          if (id.includes('node_modules/react-router')) return 'vendor-react';
+          if (id.includes('node_modules/react/')) return 'vendor-react';
+        },
+      },
+    },
   },
   server: {
     port: 5173,
