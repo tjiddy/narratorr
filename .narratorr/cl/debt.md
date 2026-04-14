@@ -29,7 +29,7 @@
 
 - **`src/server/routes/search-stream.test.ts`**: Module-level `vi.mock('../services/search-pipeline.js')` prevents integration testing of `postProcessSearchResults` in the same file. New integration tests had to go in a separate file (`search-stream-filtering.test.ts`). Consider refactoring the existing tests to use per-test mocking or moving the mocked tests to a separate file so the main test file can run unmocked. (discovered in #438)
 
-- **`src/client/pages/library/LibraryBookCard.tsx`**: Uses same `opacity-0 group-hover:opacity-100` hover-gated pattern as BookHero overlay (lines 87, 119). Touch devices can't discover these actions. Should apply the `no-hover:opacity-100` variant added in #450 for consistency. (discovered in #450)
+- ~~**`src/client/pages/library/LibraryBookCard.tsx`**: Uses same `opacity-0 group-hover:opacity-100` hover-gated pattern as BookHero overlay (lines 87, 119). Touch devices can't discover these actions. Should apply the `no-hover:opacity-100` variant added in #450 for consistency.~~ — resolved in #551
 
 - **`src/server/services/library-scan.service.ts` enrichImportedBook/processOneImport complexity**: Both methods report complexity 19/23 (limit 15) due to nullable field coalescing (`??`, `||`) in event payloads and enrichment configs. Extracting the enrichment orchestration didn't reduce complexity because the operators are in the remaining caller code. Could extract event payload builders as standalone functions to bring methods under threshold. (discovered in #470)
 
@@ -74,7 +74,7 @@
 
 - **`src/server/services/import-orchestrator.ts:85` processCompletedDownloads doesn't nudge**: The cron batch path releases slots but does not call `drainQueuedImports`. Intentional (cron re-queries immediately), but undocumented — a future reader might add nudge without understanding the design. Add a comment. (discovered in Archer session review of #525)
 
-- **`src/client/pages/settings/QualitySettingsSection.tsx:65 vs 84` step attribute inconsistency**: `minSeeders` uses `step={1}` (number) while `maxDownloadSize` uses `step="1"` (string). Both render identically but mixing forms is inconsistent. (discovered in Archer session review of #522)
+- ~~**`src/client/pages/settings/QualitySettingsSection.tsx:65 vs 84` step attribute inconsistency**: `minSeeders` uses `step={1}` (number) while `maxDownloadSize` uses `step="1"` (string). Both render identically but mixing forms is inconsistent.~~ — resolved in #551
 
 - ~~**`src/server/services/download.service.ts:271` logs raw passkey URL at debug level**~~ — **RESOLVED in #545**: `sanitizeLogUrl` now applied at all 3 log sites (download.service, search route, enrich-usenet-languages)
 
