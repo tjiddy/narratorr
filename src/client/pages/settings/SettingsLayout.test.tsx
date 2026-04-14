@@ -67,4 +67,9 @@ describe('SettingsLayout', () => {
     await user.click(screen.getByText('Notifications'));
     expect(screen.getByText('Notifications').closest('a')).toHaveAttribute('href', '/settings/notifications');
   });
+
+  // #550 — settings sub-route restructuring (routes now defined inside SettingsLayout)
+  it.todo('renders General settings content at /settings (index route)');
+  it.todo('renders System settings content at /settings/system');
+  it.todo('renders Indexers settings content at /settings/indexers');
 });

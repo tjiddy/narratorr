@@ -141,4 +141,16 @@ describe('App', () => {
 
     expect(screen.getByTestId('library-import-page')).toBeInTheDocument();
   });
+
+  // #550 — missing route coverage
+  it.todo('renders login page at /login');
+  it.todo('renders book page at /books/:id');
+  it.todo('renders author page at /authors/:asin');
+  it.todo('renders manual import page at /import');
+
+  // #550 — lazy loading / Suspense behavior
+  it.todo('shows loading spinner while lazy chunk loads');
+  it.todo('route-scoped error boundary catches chunk load failure');
+  it.todo('other routes remain navigable after one chunk fails');
+  it.todo('redirect from / to /library works with lazy-loaded page');
 });
