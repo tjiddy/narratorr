@@ -24,6 +24,35 @@
 2. stopPropagation serves dual purposes in card menus — always audit each call site before removing any (see `stoppropagation-dual-purpose.md`)
 3. All 4 click-outside sites were nearly identical except the library card menu — 3 were mechanical replacements, only 1 needed structural thought
 
+## #548 Wave 2A: Shared component extraction — PageHeader, Tabs, EmptyState, FilterPill, ErrorState — 2026-04-14
+**Skill path:** /implement → /claim → /plan → /handoff
+**Outcome:** success — PR #571
+
+### Metrics
+- Files changed: 15 source + 7 test | Tests added/modified: 43 new + 5 updated
+- Quality gate runs: 2 (pass on attempt 2 — first had unused eslint-disable)
+- Fix iterations: 1 (BookDetails complexity eslint-disable stale after extraction)
+- Context compactions: 1 (caused session to end before handoff, required manual resume)
+
+### Workflow experience
+- What went smoothly: Red/green TDD per component was efficient — each component was small (15-60 lines), tests were straightforward, replacements were mechanical
+- Friction / issues encountered: Session ended after frontend-design pass returned, before handoff could run. Required manual resume in new session. FilterPill spec claimed 4 files but StatusDropdown/SortDropdown/LibraryToolbar are dropdown triggers, not filter pills — only EventHistorySection was a genuine match.
+
+### Token efficiency
+- Highest-token actions: Explore subagent during /plan (read all 15+ source files)
+- Avoidable waste: Spec review had 3 rounds (F1-F5) — stale `EmptyState.tsx` reference and `actions` slot inconsistency could have been caught in elaboration
+- Suggestions: For extraction issues, run a mechanical verification pass on all spec claims during elaboration to avoid round-trips
+
+### Infrastructure gaps
+- Repeated workarounds: `.narratorr/state/` directory disappears between sessions — `mkdir -p` needed before every marker write
+- Missing tooling / config: No automatic resume mechanism when /implement is interrupted mid-flow
+- Unresolved debt: None new — existing debt items unchanged
+
+### Wish I'd Known
+1. The `role="tab"` change breaks `getByRole('button')` queries in existing tests — should have grepped for all tab-related button queries upfront (see `tabs-aria-role-breaks-button-queries.md`)
+2. Extracting logic from a file with `eslint-disable complexity` can cause a "unused directive" lint failure when complexity drops below the threshold (see `eslint-disable-removal-after-extraction.md`)
+3. FilterPill only genuinely fits EventHistorySection — the other 3 files named in the spec are dropdown triggers with refs, aria-labels, and complex children, not toggle pills
+
 ## #547 Wave 1C: Minor correctness — BookEvent type, markAdded logging, housekeeping isolation — 2026-04-14
 **Skill path:** /implement → /claim → /plan → /handoff
 **Outcome:** success — PR #568

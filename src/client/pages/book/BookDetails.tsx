@@ -1,10 +1,11 @@
-import { useRef, useState, useCallback, useEffect } from 'react';
+import { useState, useCallback, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { SearchReleasesModal } from '@/components/SearchReleasesModal';
 import { BookMetadataModal } from '@/components/book/BookMetadataModal.js';
 import { ConfirmModal } from '@/components/ConfirmModal.js';
 import { DeleteBookModal } from '@/components/DeleteBookModal.js';
 import { HistoryIcon, BookOpenIcon } from '@/components/icons';
+import { Tabs, type TabItem } from '@/components/Tabs.js';
 import { MergeStatusIcon } from '@/components/MergeStatusIcon.js';
 import type { BookWithAuthor } from '@/lib/api';
 import { BookHero } from './BookHero.js';
@@ -20,17 +21,16 @@ import { AudioPreview } from './AudioPreview.js';
 import { useCoverPaste } from '@/hooks/useCoverPaste.js';
 import { toast } from 'sonner';
 
-function getArrowTabIndex(key: string, currentIndex: number, length: number): number | null {
-  if (key === 'ArrowRight') return (currentIndex + 1) % length;
-  if (key === 'ArrowLeft') return (currentIndex - 1 + length) % length;
-  return null;
-}
+const BOOK_TABS: TabItem[] = [
+  { value: 'details', label: 'Details', icon: <BookOpenIcon className="w-4 h-4" /> },
+  { value: 'history', label: 'History', icon: <HistoryIcon className="w-4 h-4" /> },
+];
 
 function canShowWrongRelease(book: BookWithAuthor): boolean {
   return book.status === 'imported' && !!(book.lastGrabGuid || book.lastGrabInfoHash);
 }
 
-// eslint-disable-next-line max-lines-per-function, complexity -- page orchestrator with multiple confirm modals
+// eslint-disable-next-line max-lines-per-function -- page orchestrator with multiple confirm modals
 export function BookDetails({ libraryBook, metadataBook }: {
   libraryBook: BookWithAuthor;
   metadataBook?: MetadataBook | null;
@@ -40,9 +40,6 @@ export function BookDetails({ libraryBook, metadataBook }: {
   const [tab, setTab] = useState<'details' | 'history'>('details');
   const [coverPreviewUrl, setCoverPreviewUrl] = useState<string | null>(null);
   const [coverFile, setCoverFile] = useState<File | null>(null);
-
-  const tabRefs = useRef<(HTMLButtonElement | null)[]>([]);
-  const tabs = ['details', 'history'] as const;
 
   const merged = mergeBookData(libraryBook, metadataBook);
   const { renameMutation, mergeMutation, cancelMergeMutation, retagMutation, refreshScanMutation, deleteMutation, monitorMutation, wrongReleaseMutation, uploadCoverMutation, ffmpegConfigured, isSaving, handleSave } =
@@ -95,15 +92,6 @@ export function BookDetails({ libraryBook, metadataBook }: {
   const canMerge = libraryBook.status === 'imported' &&
     (libraryBook.topLevelAudioFileCount ?? 0) >= 2;
   const showRefreshScan = libraryBook.status === 'imported' && !!libraryBook.path;
-
-  function handleTabKeyDown(e: React.KeyboardEvent<HTMLButtonElement>) {
-    const nextIndex = getArrowTabIndex(e.key, tabs.indexOf(tab), tabs.length);
-    if (nextIndex !== null) {
-      e.preventDefault();
-      setTab(tabs[nextIndex]);
-      tabRefs.current[nextIndex]?.focus();
-    }
-  }
 
   return (
     <div className="space-y-6">
@@ -165,44 +153,7 @@ export function BookDetails({ libraryBook, metadataBook }: {
 
       {/* Tab buttons */}
       <div className="flex justify-center animate-fade-in-up stagger-4">
-        <div role="tablist" aria-label="Book details" className="inline-flex items-center glass-card rounded-xl p-1 gap-1">
-          <button
-            ref={(el) => { tabRefs.current[0] = el; }}
-            id="tab-details"
-            role="tab"
-            aria-selected={tab === 'details'}
-            aria-controls="tabpanel-details"
-            tabIndex={tab === 'details' ? 0 : -1}
-            onClick={() => setTab('details')}
-            onKeyDown={handleTabKeyDown}
-            className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
-              tab === 'details'
-                ? 'bg-primary text-primary-foreground shadow-glow'
-                : 'text-muted-foreground hover:text-foreground'
-            }`}
-          >
-            <BookOpenIcon className="w-4 h-4" />
-            Details
-          </button>
-          <button
-            ref={(el) => { tabRefs.current[1] = el; }}
-            id="tab-history"
-            role="tab"
-            aria-selected={tab === 'history'}
-            aria-controls="tabpanel-history"
-            tabIndex={tab === 'history' ? 0 : -1}
-            onClick={() => setTab('history')}
-            onKeyDown={handleTabKeyDown}
-            className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
-              tab === 'history'
-                ? 'bg-primary text-primary-foreground shadow-glow'
-                : 'text-muted-foreground hover:text-foreground'
-            }`}
-          >
-            <HistoryIcon className="w-4 h-4" />
-            History
-          </button>
-        </div>
+        <Tabs tabs={BOOK_TABS} value={tab} onChange={(v) => setTab(v as 'details' | 'history')} ariaLabel="Book details" />
       </div>
 
       {/* Tab content */}

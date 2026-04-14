@@ -1,5 +1,6 @@
 import { useRef, useState, useEffect, useCallback } from 'react';
 import { ChevronDownIcon } from '@/components/icons';
+import { FilterPill } from '@/components/FilterPill.js';
 import { ToolbarDropdown } from '@/components/ToolbarDropdown';
 import type { SortField, SortDirection } from './helpers.js';
 
@@ -111,16 +112,17 @@ export function SortDropdown({ sortField, onSortFieldChange, sortDirection, onSo
 
   return (
     <div className="relative">
-      <button
+      <FilterPill
         ref={triggerRef}
-        type="button"
+        active={false}
+        variant="toolbar"
         onClick={() => open ? handleClose() : setOpen(true)}
         aria-label={triggerLabel}
-        className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium text-muted-foreground hover:text-foreground hover:bg-muted/50 transition-all duration-200 focus-ring"
+        className="flex items-center gap-1.5 focus-ring"
       >
         <span>{triggerLabel}</span>
         <ChevronDownIcon className={`w-3 h-3 transition-transform duration-200 ${open ? 'rotate-180' : ''}`} />
-      </button>
+      </FilterPill>
 
       <ToolbarDropdown triggerRef={triggerRef} open={open} onClose={handleClose}>
         <div

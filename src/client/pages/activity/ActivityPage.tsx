@@ -6,6 +6,8 @@ import {
   ActivityIcon,
   HistoryIcon,
 } from '@/components/icons';
+import { PageHeader } from '@/components/PageHeader.js';
+import { Tabs, type TabItem } from '@/components/Tabs.js';
 import { EventHistorySection } from './EventHistorySection.js';
 import { DownloadsTabSection } from './DownloadsTabSection.js';
 import { useActivity } from './useActivity.js';
@@ -15,6 +17,11 @@ import { usePagination } from '@/hooks/usePagination';
 import { api } from '@/lib/api';
 import { getErrorMessage } from '@/lib/error-message.js';
 import { DEFAULT_LIMITS } from '../../../shared/schemas/common.js';
+
+const ACTIVITY_TABS: TabItem[] = [
+  { value: 'active', label: 'Active', icon: <ActivityIcon className="w-4 h-4" /> },
+  { value: 'history', label: 'History', icon: <HistoryIcon className="w-4 h-4" /> },
+];
 
 export function ActivityPage() {
   const queuePagination = usePagination(DEFAULT_LIMITS.activity);
@@ -49,14 +56,7 @@ export function ActivityPage() {
   if (isLoading) {
     return (
       <div className="space-y-8">
-        <div className="animate-fade-in-up">
-          <h1 className="font-display text-3xl sm:text-4xl font-bold tracking-tight">
-            Activity
-          </h1>
-          <p className="text-muted-foreground mt-2">
-            Monitor your downloads and import history
-          </p>
-        </div>
+        <PageHeader title="Activity" subtitle="Monitor your downloads and import history" />
         <div className="flex items-center justify-center py-24">
           <LoadingSpinner className="w-8 h-8 text-primary" />
         </div>
@@ -67,46 +67,15 @@ export function ActivityPage() {
   return (
     <div className="space-y-10">
       {/* Header */}
-      <div className="animate-fade-in-up">
-        <h1 className="font-display text-3xl sm:text-4xl font-bold tracking-tight">
-          Activity
-        </h1>
-        <p className="text-muted-foreground mt-2">
-          Monitor your downloads and import history
-        </p>
-      </div>
+      <PageHeader title="Activity" subtitle="Monitor your downloads and import history" />
 
       {/* Tab buttons */}
       <div className="flex justify-center animate-fade-in-up stagger-1">
-        <div className="inline-flex items-center glass-card rounded-xl p-1 gap-1">
-          <button
-            type="button"
-            onClick={() => setTab('active')}
-            className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
-              tab === 'active'
-                ? 'bg-primary text-primary-foreground shadow-glow'
-                : 'text-muted-foreground hover:text-foreground'
-            }`}
-          >
-            <ActivityIcon className="w-4 h-4" />
-            Active
-          </button>
-          <button
-            type="button"
-            onClick={() => setTab('history')}
-            className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
-              tab === 'history'
-                ? 'bg-primary text-primary-foreground shadow-glow'
-                : 'text-muted-foreground hover:text-foreground'
-            }`}
-          >
-            <HistoryIcon className="w-4 h-4" />
-            History
-          </button>
-        </div>
+        <Tabs tabs={ACTIVITY_TABS} value={tab} onChange={(v) => setTab(v as 'active' | 'history')} ariaLabel="Activity" />
       </div>
 
       {tab === 'active' && (
+        <div role="tabpanel" id="tabpanel-active" aria-labelledby="tab-active">
         <DownloadsTabSection
           queue={queue}
           queueTotal={queueTotal}
@@ -120,10 +89,11 @@ export function ActivityPage() {
           cancellingMergeBookId={cancellingMergeBookId}
           cancelMergeMutation={cancelMergeMutation}
         />
+        </div>
       )}
 
       {tab === 'history' && (
-        <div className="animate-fade-in-up stagger-2">
+        <div role="tabpanel" id="tabpanel-history" aria-labelledby="tab-history" className="animate-fade-in-up stagger-2">
           <EventHistorySection />
         </div>
       )}

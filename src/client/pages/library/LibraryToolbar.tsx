@@ -1,4 +1,5 @@
 import { SearchIcon, XIcon, ChevronDownIcon, LibraryIcon } from '@/components/icons';
+import { FilterPill } from '@/components/FilterPill.js';
 import { type StatusFilter } from './helpers.js';
 import { StatusDropdown } from './StatusDropdown';
 import { FilterRow, type FilterProps } from './FilterRow';
@@ -71,16 +72,12 @@ export function LibraryToolbar({
           statusCounts={statusCounts}
         />
 
-        <button
+        <FilterPill
+          active={filtersOpen}
+          variant="toolbar"
           onClick={onFiltersToggle}
           aria-label="Toggle filters"
-          className={`
-            relative flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-all duration-200 focus-ring
-            ${filtersOpen
-              ? 'bg-muted/80 text-foreground'
-              : 'text-muted-foreground hover:text-foreground hover:bg-muted/50'
-            }
-          `}
+          className="relative flex items-center gap-1.5 focus-ring"
         >
           <ChevronDownIcon className={`w-3 h-3 transition-transform duration-200 ${filtersOpen ? 'rotate-180' : ''}`} />
           Filters
@@ -89,25 +86,21 @@ export function LibraryToolbar({
               {activeFilterCount}
             </span>
           )}
-        </button>
+        </FilterPill>
 
         <SortDropdown {...sortProps} />
 
-        <button
+        <FilterPill
+          active={collapseSeriesEnabled}
+          variant="toolbar"
           onClick={onCollapseSeriesToggle}
-          className={`
-            flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-all duration-200 focus-ring
-            ${collapseSeriesEnabled
-              ? 'bg-muted/80 text-foreground'
-              : 'text-muted-foreground hover:text-foreground hover:bg-muted/50'
-            }
-          `}
           aria-label="Collapse series"
           aria-pressed={collapseSeriesEnabled}
+          className="flex items-center gap-1.5 focus-ring"
         >
           <LibraryIcon className="w-3 h-3" />
           Series
-        </button>
+        </FilterPill>
 
         <ViewToggle viewMode={viewMode} onViewModeChange={onViewModeChange} />
 

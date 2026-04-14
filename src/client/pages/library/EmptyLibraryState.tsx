@@ -6,27 +6,19 @@ import {
   FolderIcon,
   SettingsIcon,
 } from '@/components/icons';
+import { EmptyState } from '@/components/EmptyState.js';
 
 interface EmptyLibraryStateProps {
-  /** When true, shows Scan Library CTA; when false/absent, shows Go to Settings CTA */
   hasLibraryPath?: boolean;
 }
 
 export function EmptyLibraryState({ hasLibraryPath }: EmptyLibraryStateProps) {
   return (
-    <div className="flex flex-col items-center justify-center py-16 sm:py-24 animate-fade-in-up stagger-2">
-      <div className="relative mb-8">
-        <div className="absolute inset-0 bg-primary/20 rounded-full blur-2xl" />
-        <div className="relative p-6 bg-gradient-to-br from-primary/10 to-amber-500/10 rounded-full">
-          <BookShelfIcon className="w-16 h-16 text-primary" />
-        </div>
-      </div>
-      <h3 className="font-display text-2xl sm:text-3xl font-semibold text-center mb-3">
-        Your library is empty
-      </h3>
-      <p className="text-muted-foreground text-center max-w-md mb-8">
-        Start building your audiobook collection by discovering and adding books
-      </p>
+    <EmptyState
+      icon={BookShelfIcon}
+      title="Your library is empty"
+      subtitle="Start building your audiobook collection by discovering and adding books"
+    >
       <div className="flex flex-wrap items-center gap-3">
         {hasLibraryPath ? (
           <Link
@@ -62,6 +54,6 @@ export function EmptyLibraryState({ hasLibraryPath }: EmptyLibraryStateProps) {
           Add a Book
         </Link>
       </div>
-    </div>
+    </EmptyState>
   );
 }

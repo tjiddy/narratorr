@@ -4,6 +4,7 @@ import {
   ArrowLeftIcon,
   CheckIcon,
 } from '@/components/icons';
+import { PageHeader } from '@/components/PageHeader.js';
 import { api } from '@/lib/api';
 import { queryKeys } from '@/lib/queryKeys';
 import { useManualImport } from './useManualImport.js';
@@ -40,7 +41,7 @@ export function ManualImportPage() {
           >
             <ArrowLeftIcon className="w-4 h-4" />
           </button>
-          <h1 className="font-display text-3xl sm:text-4xl font-bold tracking-tight">Manual Import</h1>
+          <PageHeader title="Manual Import" />
         </div>
         <p className="text-muted-foreground mt-1 ml-10">
           {step === 'path'
