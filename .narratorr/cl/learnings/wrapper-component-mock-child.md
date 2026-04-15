@@ -4,4 +4,4 @@ files: [src/client/pages/manual-import/PathStep.tsx]
 issue: 562
 date: 2026-04-15
 ---
-When testing wrapper-specific prop forwarding (e.g., PathStep forwards libraryPath as fallbackBrowsePath to PathInput), mocking the child component is the pragmatic approach despite the "mock at API boundary" guideline. The mock captures props for assertion while providing a minimal DOM surface for interaction tests (onChange, onKeyDown). This avoids pulling in the child's internal dependencies (DirectoryBrowserModal) without sacrificing coverage of the wrapper contract.
+When testing wrapper-specific prop forwarding (e.g., PathStep forwards libraryPath as fallbackBrowsePath to PathInput), render the real child and mock only the API boundary. For fallbackBrowsePath, the observable effect is that `api.browseDirectory` is called with the forwarded path when the Browse modal opens — test by clicking Browse and asserting on the mock. This follows the project standard of API-boundary mocking while proving the real integration path works.

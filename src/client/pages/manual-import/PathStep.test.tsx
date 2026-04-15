@@ -1,39 +1,34 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen } from '@testing-library/react';
+import { screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { MemoryRouter } from 'react-router-dom';
+import { renderWithProviders } from '@/__tests__/helpers';
 import { PathStep } from './PathStep';
 import type { FolderEntry } from './useFolderHistory.js';
 
-let capturedProps: Record<string, unknown> = {};
+const mockBrowseDirectory = vi.fn();
+vi.mock('@/lib/api', async () => {
+  const actual = await vi.importActual('@/lib/api');
+  return {
+    ...actual,
+    api: {
+      ...(actual as { api: object }).api,
+      browseDirectory: (...args: unknown[]) => mockBrowseDirectory(...args),
+    },
+  };
+});
 
-vi.mock('@/components/PathInput', () => ({
-  PathInput: (props: Record<string, unknown>) => {
-    capturedProps = props;
-    return (
-      <input
-        data-testid="path-input"
-        value={props.value as string}
-        onChange={(e) => (props.onChange as (v: string) => void)?.(e.target.value)}
-        onKeyDown={props.onKeyDown as React.KeyboardEventHandler<HTMLInputElement>}
-        placeholder={props.placeholder as string}
-      />
-    );
-  },
-}));
-
-function defaultProps(overrides: Partial<{
-  scanPath: string;
-  setScanPath: (path: string) => void;
-  setScanError: (error: string | null) => void;
-  scanError: string | null;
-  handleScan: () => void;
-  isPending: boolean;
-  libraryPath: string;
-  isInsideLibraryRoot: boolean;
-  favorites: FolderEntry[];
-  recents: FolderEntry[];
-}> = {}) {
+function defaultProps(overrides: {
+  scanPath?: string;
+  setScanPath?: (path: string) => void;
+  setScanError?: (error: string | null) => void;
+  scanError?: string | null;
+  handleScan?: () => void;
+  isPending?: boolean;
+  libraryPath?: string;
+  isInsideLibraryRoot?: boolean;
+  favorites?: FolderEntry[];
+  recents?: FolderEntry[];
+} = {}) {
   return {
     scanPath: overrides.scanPath ?? '/some/path',
     setScanPath: overrides.setScanPath ?? vi.fn(),
@@ -58,18 +53,14 @@ function renderPathStep(overrides: Parameters<typeof defaultProps>[0] = {}) {
   const props = defaultProps(overrides);
   return {
     props,
-    ...render(
-      <MemoryRouter>
-        <PathStep {...props} />
-      </MemoryRouter>,
-    ),
+    ...renderWithProviders(<PathStep {...props} />),
   };
 }
 
 describe('PathStep', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    capturedProps = {};
+    mockBrowseDirectory.mockResolvedValue({ dirs: [], parent: '/' });
   });
 
   describe('error clearing on path change', () => {
@@ -78,23 +69,35 @@ describe('PathStep', () => {
       const setScanError = vi.fn();
       renderPathStep({ setScanError });
 
-      await user.type(screen.getByTestId('path-input'), 'a');
+      await user.type(screen.getByRole('textbox'), 'a');
 
       expect(setScanError).toHaveBeenCalledWith(null);
     });
   });
 
   describe('fallbackBrowsePath forwarding', () => {
-    it('forwards libraryPath as fallbackBrowsePath to PathInput', () => {
-      renderPathStep({ libraryPath: '/my/library' });
+    it('Browse modal uses libraryPath when scanPath is empty', async () => {
+      const user = userEvent.setup();
+      renderPathStep({ scanPath: '', libraryPath: '/my/library' });
 
-      expect(capturedProps.fallbackBrowsePath).toBe('/my/library');
+      await user.click(screen.getByRole('button', { name: /browse/i }));
+      await screen.findByRole('dialog');
+
+      await waitFor(() => {
+        expect(mockBrowseDirectory).toHaveBeenCalledWith('/my/library');
+      });
     });
 
-    it('forwards "/" as fallbackBrowsePath when libraryPath is empty', () => {
-      renderPathStep({ libraryPath: '' });
+    it('Browse modal falls back to "/" when both scanPath and libraryPath are empty', async () => {
+      const user = userEvent.setup();
+      renderPathStep({ scanPath: '', libraryPath: '' });
 
-      expect(capturedProps.fallbackBrowsePath).toBe('/');
+      await user.click(screen.getByRole('button', { name: /browse/i }));
+      await screen.findByRole('dialog');
+
+      await waitFor(() => {
+        expect(mockBrowseDirectory).toHaveBeenCalledWith('/');
+      });
     });
   });
 
@@ -104,7 +107,7 @@ describe('PathStep', () => {
       const handleScan = vi.fn();
       renderPathStep({ handleScan });
 
-      await user.type(screen.getByTestId('path-input'), '{Enter}');
+      await user.type(screen.getByRole('textbox'), '{Enter}');
 
       expect(handleScan).toHaveBeenCalled();
     });
@@ -114,13 +117,13 @@ describe('PathStep', () => {
     it('disables scan button when scanPath is empty', () => {
       renderPathStep({ scanPath: '' });
 
-      expect(screen.getByRole('button', { name: /scan/i })).toBeDisabled();
+      expect(screen.getByRole('button', { name: /scan$/i })).toBeDisabled();
     });
 
     it('disables scan button when scanPath is whitespace-only', () => {
       renderPathStep({ scanPath: '   ' });
 
-      expect(screen.getByRole('button', { name: /scan/i })).toBeDisabled();
+      expect(screen.getByRole('button', { name: /scan$/i })).toBeDisabled();
     });
 
     it('disables scan button when isPending is true', () => {
@@ -132,7 +135,7 @@ describe('PathStep', () => {
     it('disables scan button when isInsideLibraryRoot is true', () => {
       renderPathStep({ isInsideLibraryRoot: true });
 
-      expect(screen.getByRole('button', { name: /scan/i })).toBeDisabled();
+      expect(screen.getByRole('button', { name: /scan$/i })).toBeDisabled();
     });
 
     it('enables scan button and calls handleScan when valid path set', async () => {
@@ -140,7 +143,7 @@ describe('PathStep', () => {
       const handleScan = vi.fn();
       renderPathStep({ scanPath: '/valid/path', handleScan });
 
-      const scanButton = screen.getByRole('button', { name: /scan/i });
+      const scanButton = screen.getByRole('button', { name: /scan$/i });
       expect(scanButton).toBeEnabled();
 
       await user.click(scanButton);
