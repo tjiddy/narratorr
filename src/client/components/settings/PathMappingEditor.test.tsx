@@ -58,6 +58,23 @@ describe('PathMappingEditor', () => {
     expect(addButton).toBeDisabled();
   });
 
+  describe('Wave 2D touch affordance (#583)', () => {
+    it('delete button includes no-hover:opacity-100 for touch devices', () => {
+      const mappings = [{ remotePath: '/remote/a', localPath: '/local/a' }];
+      renderWithProviders(<PathMappingEditor mappings={mappings} onChange={vi.fn()} />);
+      const removeButton = screen.getByRole('button', { name: /remove/i });
+      expect(removeButton.className).toContain('no-hover:opacity-100');
+    });
+
+    it('delete button preserves desktop hover classes (opacity-0, group-hover:opacity-100)', () => {
+      const mappings = [{ remotePath: '/remote/a', localPath: '/local/a' }];
+      renderWithProviders(<PathMappingEditor mappings={mappings} onChange={vi.fn()} />);
+      const removeButton = screen.getByRole('button', { name: /remove/i });
+      expect(removeButton.className).toContain('opacity-0');
+      expect(removeButton.className).toContain('group-hover:opacity-100');
+    });
+  });
+
   it('disables Add button when only whitespace entered', async () => {
     const user = userEvent.setup();
     renderWithProviders(<PathMappingEditor mappings={[]} onChange={vi.fn()} />);
