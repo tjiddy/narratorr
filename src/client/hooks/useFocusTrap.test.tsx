@@ -3,6 +3,7 @@ import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { useRef } from 'react';
 import { useFocusTrap } from './useFocusTrap.js';
+import { useFocusTrap as useFocusTrapFromBarrel } from '@/hooks';
 
 /** Renders a container with N buttons and wires useFocusTrap */
 function Trap({ isOpen, count = 2 }: { isOpen: boolean; count?: number }) {
@@ -27,6 +28,12 @@ function TrapEmpty({ isOpen }: { isOpen: boolean }) {
     </div>
   );
 }
+
+describe('hooks barrel export', () => {
+  it('useFocusTrap from barrel matches direct export', () => {
+    expect(useFocusTrapFromBarrel).toBe(useFocusTrap);
+  });
+});
 
 describe('useFocusTrap', () => {
   it('focuses the container on mount (not the first tabbable element)', () => {
