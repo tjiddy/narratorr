@@ -24,10 +24,10 @@ vi.mock('@/components/PathInput', () => ({
 
 function defaultProps(overrides: Partial<{
   scanPath: string;
-  setScanPath: ReturnType<typeof vi.fn>;
-  setScanError: ReturnType<typeof vi.fn>;
+  setScanPath: (path: string) => void;
+  setScanError: (error: string | null) => void;
   scanError: string | null;
-  handleScan: ReturnType<typeof vi.fn>;
+  handleScan: () => void;
   isPending: boolean;
   libraryPath: string;
   isInsideLibraryRoot: boolean;
