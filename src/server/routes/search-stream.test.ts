@@ -500,3 +500,38 @@ describe('searchStreamRoutes — app.inject() integration', () => {
   });
 
 });
+
+describe('searchStreamRoutes — unmocked postProcessSearchResults', () => {
+  it('runs real postProcessSearchResults when spy is not installed', async () => {
+    const sessionManager = new SearchSessionManager();
+    const blacklistService = createMockBlacklistService();
+    const settingsService = createMockSettingsService();
+    const indexerService = createMockIndexerService();
+
+    let streamHandler: ((req: FastifyRequest, reply: FastifyReply) => Promise<void>) | null = null;
+
+    const { searchStreamRoutes } = await import('./search-stream.js');
+    const mockApp = {
+      get: (_path: string, _opts: unknown, handler: (req: FastifyRequest, reply: FastifyReply) => Promise<void>) => {
+        streamHandler = handler;
+      },
+      post: vi.fn(),
+    };
+
+    await searchStreamRoutes(mockApp as never, indexerService, blacklistService, settingsService, sessionManager);
+
+    const { reply, request, write } = createMockReplyAndRequest();
+    await streamHandler!(request, reply);
+
+    const completeCall = write.mock.calls.find(
+      (call: unknown[]) => typeof call[0] === 'string' && (call[0] as string).includes('event: search-complete'),
+    );
+    expect(completeCall).toBeDefined();
+
+    const dataLine = (completeCall![0] as string).split('\n').find((l: string) => l.startsWith('data: '));
+    const data = JSON.parse(dataLine!.replace('data: ', ''));
+    expect(data).toHaveProperty('results');
+    expect(data).toHaveProperty('durationUnknown');
+    expect(data).toHaveProperty('unsupportedResults');
+  });
+});
