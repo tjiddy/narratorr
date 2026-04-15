@@ -38,6 +38,10 @@ describe('manualChunks', () => {
     expect(manualChunks('/project/node_modules/@tanstack/react-table/build/index.js')).toBeUndefined();
   });
 
+  it('does not assign @tanstack/react-query-devtools to tanstack-query chunk', () => {
+    expect(manualChunks('/project/node_modules/@tanstack/react-query-devtools/build/index.js')).toBeUndefined();
+  });
+
   it('does not match react substring in non-react packages', () => {
     expect(manualChunks('/project/node_modules/react-icons/lib/index.js')).toBeUndefined();
   });
