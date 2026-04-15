@@ -1,13 +1,11 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { screen, waitFor, fireEvent } from '@testing-library/react';
+import { screen, waitFor, fireEvent, act } from '@testing-library/react';
 import { renderWithProviders } from '@/__tests__/helpers';
+import { createMockSettings } from '@/__tests__/factories';
 import { BackupScheduleForm } from './BackupScheduleForm';
 
 vi.mock('sonner', () => ({
-  toast: {
-    success: vi.fn(),
-    error: vi.fn(),
-  },
+  toast: { success: vi.fn(), error: vi.fn() },
 }));
 
 vi.mock('@/lib/api', () => ({
@@ -28,12 +26,14 @@ const mockToast = toast as unknown as {
   error: ReturnType<typeof vi.fn>;
 };
 
+const mockSettings = createMockSettings({
+  system: { backupIntervalMinutes: 10080, backupRetention: 7, dismissedUpdateVersion: '' },
+});
+
 describe('BackupScheduleForm', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    mockApi.getSettings.mockResolvedValue({
-      system: { backupIntervalMinutes: 10080, backupRetention: 7, dismissedUpdateVersion: '' },
-    });
+    mockApi.getSettings.mockResolvedValue(mockSettings);
   });
 
   it('renders interval and retention inputs with values from settings', async () => {
@@ -45,30 +45,41 @@ describe('BackupScheduleForm', () => {
     });
   });
 
-  it('save button is disabled when form is clean', async () => {
+  it('hides save button when form is clean', async () => {
     renderWithProviders(<BackupScheduleForm />);
 
     await waitFor(() => {
       expect(screen.getByLabelText(/backup interval/i)).toHaveValue(10080);
     });
 
-    expect(screen.getByRole('button', { name: /save/i })).toBeDisabled();
+    expect(screen.queryByRole('button', { name: /save/i })).not.toBeInTheDocument();
+  });
+
+  it('shows save button when form is dirty', async () => {
+    renderWithProviders(<BackupScheduleForm />);
+
+    await waitFor(() => {
+      expect(screen.getByLabelText(/backup interval/i)).toHaveValue(10080);
+    });
+
+    expect(screen.queryByRole('button', { name: /save/i })).not.toBeInTheDocument();
+
+    fireEvent.change(screen.getByLabelText(/backup interval/i), { target: { value: '1440' } });
+
+    expect(screen.getByRole('button', { name: /save/i })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /save/i })).not.toBeDisabled();
   });
 
   it('calls updateSettings with system category on form submit', async () => {
-    mockApi.updateSettings.mockResolvedValue({
-      system: { backupIntervalMinutes: 10080, backupRetention: 7, dismissedUpdateVersion: '' },
-    });
-
+    mockApi.updateSettings.mockResolvedValue(mockSettings);
     renderWithProviders(<BackupScheduleForm />);
 
     await waitFor(() => {
       expect(screen.getByLabelText(/backup interval/i)).toHaveValue(10080);
     });
 
-    // Direct form submit — button is disabled until isDirty, and number inputs
-    // can't be made dirty via userEvent in jsdom (same constraint as NetworkSettingsSection)
-    fireEvent.submit(screen.getByRole('button', { name: /save/i }).closest('form')!);
+    // Direct form submit — number inputs can't be made dirty via userEvent in jsdom
+    fireEvent.submit(screen.getByLabelText(/backup interval/i).closest('form')!);
 
     await waitFor(() => {
       expect(mockApi.updateSettings).toHaveBeenCalledWith({
@@ -80,7 +91,7 @@ describe('BackupScheduleForm', () => {
       expect(mockToast.success).toHaveBeenCalledWith('System settings saved');
     });
 
-    // Cache invalidation causes settings to be refetched
+    // Cache invalidation triggers refetch
     await waitFor(() => {
       expect(mockApi.getSettings.mock.calls.length).toBeGreaterThanOrEqual(2);
     });
@@ -88,18 +99,50 @@ describe('BackupScheduleForm', () => {
 
   it('shows error toast when save fails', async () => {
     mockApi.updateSettings.mockRejectedValue(new Error('Save failed'));
-
     renderWithProviders(<BackupScheduleForm />);
 
     await waitFor(() => {
       expect(screen.getByLabelText(/backup retention/i)).toHaveValue(7);
     });
 
-    // Direct form submit — same jsdom constraint as above
-    fireEvent.submit(screen.getByRole('button', { name: /save/i }).closest('form')!);
+    fireEvent.submit(screen.getByLabelText(/backup interval/i).closest('form')!);
 
     await waitFor(() => {
       expect(mockToast.error).toHaveBeenCalledWith('Save failed');
     });
+  });
+
+  it('zodResolver blocks invalid backupIntervalMinutes and shows inline error', async () => {
+    renderWithProviders(<BackupScheduleForm />);
+
+    await waitFor(() => {
+      expect(screen.getByLabelText(/backup interval/i)).toHaveValue(10080);
+    });
+
+    fireEvent.change(screen.getByLabelText(/backup interval/i), { target: { value: '1' } });
+
+    await act(async () => {
+      fireEvent.submit(screen.getByLabelText(/backup interval/i).closest('form')!);
+    });
+
+    expect(screen.getByText(/too small/i)).toBeInTheDocument();
+    expect(mockApi.updateSettings).not.toHaveBeenCalled();
+  });
+
+  it('zodResolver blocks invalid backupRetention and shows inline error', async () => {
+    renderWithProviders(<BackupScheduleForm />);
+
+    await waitFor(() => {
+      expect(screen.getByLabelText(/backup retention/i)).toHaveValue(7);
+    });
+
+    fireEvent.change(screen.getByLabelText(/backup retention/i), { target: { value: '0' } });
+
+    await act(async () => {
+      fireEvent.submit(screen.getByLabelText(/backup retention/i).closest('form')!);
+    });
+
+    expect(screen.getByText(/too small/i)).toBeInTheDocument();
+    expect(mockApi.updateSettings).not.toHaveBeenCalled();
   });
 });

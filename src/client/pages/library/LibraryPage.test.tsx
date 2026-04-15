@@ -2667,5 +2667,17 @@ describe('LibraryPage — error states (#480)', () => {
       expect(screen.getByTestId('loading-spinner')).toBeInTheDocument();
       expect(screen.queryByTestId('library-error')).not.toBeInTheDocument();
     });
+
+    it('preserves LibraryHeader with Import Files action during loading', () => {
+      vi.mocked(api.getBooks).mockReturnValue(new Promise(() => {}));
+      vi.mocked(api.getBookStats).mockReturnValue(new Promise(() => {}));
+
+      renderWithProviders(<LibraryPage />);
+
+      expect(screen.getByTestId('loading-spinner')).toBeInTheDocument();
+      const importLink = screen.getByRole('link', { name: /import files/i });
+      expect(importLink).toBeInTheDocument();
+      expect(importLink).toHaveAttribute('href', '/import');
+    });
   });
 });

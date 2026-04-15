@@ -1,4 +1,4 @@
-import { LoadingSpinner } from '@/components/icons';
+import { PageLoading } from '@/components/PageLoading';
 import { LibraryModals } from './LibraryModals.js';
 import { LibraryToolbar } from './LibraryToolbar.js';
 import { LibraryTableView } from './LibraryTableView.js';
@@ -14,14 +14,7 @@ import { useLibraryPageState } from './useLibraryPageState.js';
 export function LibraryPage() {
   const s = useLibraryPageState();
 
-  if (s.isLoading) return (
-    <div className="space-y-6">
-      <LibraryHeader />
-      <div className="flex items-center justify-center py-24">
-        <LoadingSpinner className="w-8 h-8 text-primary" />
-      </div>
-    </div>
-  );
+  if (s.isLoading) return <PageLoading header={<LibraryHeader />} />;
   if (s.booksError) return (
     <div className="space-y-6">
       <LibraryHeader />

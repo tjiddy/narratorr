@@ -1,3 +1,4 @@
+// Does not use useSettingsForm: authentication form with password validation, not a settings API patch.
 import { useState, type FormEvent } from 'react';
 import { api, ApiError } from '@/lib/api';
 import { queryKeys } from '@/lib/queryKeys';

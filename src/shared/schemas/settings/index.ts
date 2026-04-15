@@ -8,6 +8,7 @@ export { outputFormatSchema, type OutputFormat, mergeBehaviorSchema, type MergeB
 export { tagModeSchema, type TagMode, taggingSettingsSchema } from './tagging.js';
 export { protocolPreferenceSchema, type ProtocolPreference, qualitySettingsSchema, qualityFormSchema, qualityFilteringFormSchema, newBookDefaultsFormSchema } from './quality.js';
 export { networkSettingsSchema } from './network.js';
+export { systemSettingsSchema, systemFormSchema } from './system.js';
 export { discoverySettingsSchema, discoveryFormSchema } from './discovery.js';
 export {
   settingsRegistry,

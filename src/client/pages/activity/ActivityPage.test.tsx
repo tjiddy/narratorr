@@ -360,11 +360,12 @@ describe('ActivityPage pagination clamp (#93)', () => {
 });
 
 describe('ActivityPage', () => {
-  it('shows loading state with spinner', () => {
+  it('shows loading state with spinner and page header', () => {
     vi.mocked(api.getActivity).mockReturnValue(new Promise(() => {}));
 
     renderWithProviders(<ActivityPage />);
 
+    expect(screen.getByTestId('loading-spinner')).toBeInTheDocument();
     expect(screen.getByText('Activity')).toBeInTheDocument();
     expect(screen.getByText('Monitor your downloads and import history')).toBeInTheDocument();
   });
