@@ -258,51 +258,6 @@ export class MergeService {
     }
   }
 
-  /** @deprecated Use enqueueMerge() instead. Synchronous merge for backward compatibility with existing tests. */
-  async mergeBook(bookId: number): Promise<MergeResult> {
-    const book = await this.bookService.getById(bookId);
-    if (!book) throw new MergeError('Book not found', 'NOT_FOUND');
-    if (!book.path) throw new MergeError('Book has no path — not imported yet', 'NO_PATH');
-    if (book.status !== 'imported') throw new MergeError(`Book is not imported (status: ${book.status})`, 'NO_STATUS');
-    const processingSettings = await this.settingsService.get('processing');
-    if (!processingSettings?.ffmpegPath?.trim()) throw new MergeError('ffmpeg is not configured', 'FFMPEG_NOT_CONFIGURED');
-    const allEntries = await readdir(book.path);
-    const topLevelAudioFiles = allEntries.filter((f) => AUDIO_EXTENSIONS.has(extname(f).toLowerCase()));
-    if (topLevelAudioFiles.length < 2) throw new MergeError('No top-level audio files to merge (requires ≥2)', 'NO_TOP_LEVEL_FILES');
-    if (this.inProgress.has(bookId)) throw new MergeError('Merge already in progress for this book', 'ALREADY_IN_PROGRESS');
-
-    this.inProgress.add(bookId);
-    this.emitMergeStarted(bookId, book.title);
-    const bookPath = book.path;
-    const stagingDir = bookPath + '.merge-tmp';
-
-    try {
-      this.emitMergeProgress(bookId, book.title, 'staging');
-      const stagedM4b = await this.runStaging(stagingDir, { ...book, path: bookPath }, topLevelAudioFiles, processingSettings, bookId, book.title);
-      this.emitMergeProgress(bookId, book.title, 'committing');
-      const outputPath = await this.commitMerge(stagingDir, stagedM4b, bookPath, topLevelAudioFiles, bookId);
-      const ffprobePath2 = resolveFfprobePathFromSettings(processingSettings.ffmpegPath);
-      const enrichResult = await enrichBookFromAudio(bookId, bookPath, book, this.db, this.log, this.bookService, ffprobePath2);
-      let enrichmentWarning: string | undefined;
-      if (!enrichResult.enriched) {
-        enrichmentWarning = 'Merge succeeded but metadata update failed — audio fields may be stale';
-        this.log.warn({ bookId }, 'Post-merge enrichment did not enrich — merge succeeded on disk, but DB audio fields may be stale');
-      }
-      this.log.info({ bookId, outputPath, filesReplaced: topLevelAudioFiles.length }, 'Book merged to M4B');
-      const message = `Merged ${topLevelAudioFiles.length} files into ${basename(stagedM4b)}`;
-      this.emitMergeComplete(bookId, book.title, message, enrichmentWarning);
-      return { bookId, outputFile: outputPath, filesReplaced: topLevelAudioFiles.length, message, enrichmentWarning };
-    } catch (error: unknown) {
-      const errorMessage = getErrorMessage(error, 'Unknown merge error');
-      this.emitMergeFailed(bookId, book.title, errorMessage);
-      try { await rm(stagingDir, { recursive: true, force: true }); } catch { /* best-effort */ }
-      throw error;
-    } finally {
-      this.inProgress.delete(bookId);
-      this.currentPhase.delete(bookId);
-    }
-  }
-
   /** Steps 1-5: copy to staging, process, verify. Returns the staged M4B filename. */
   private async runStaging(
     stagingDir: string,

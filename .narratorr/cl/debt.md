@@ -15,7 +15,7 @@
 - ~~**`src/server/services/quality-gate-orchestrator.ts`**: `processOneDownload()` O(N) scan~~ — resolved in #413
 - ~~**`src/core/indexers/types.ts` / `src/server/services/indexer.service.ts` / `src/client/lib/api/settings.ts`**: `IndexerTestResult` DRY-1~~ — resolved in #409
 
-- **`src/server/services/merge.service.ts`**: Deprecated `mergeBook()` method (lines 222-270) duplicates validation and execution logic from `validatePreEnqueue()` + `executeMerge()`. Kept for backward compatibility with 40+ existing tests that test the synchronous merge path. Should be removed once existing tests are migrated to test via `enqueueMerge()`. (discovered in #368)
+- ~~**`src/server/services/merge.service.ts`**: Deprecated `mergeBook()` method~~ — resolved in #556 (deleted method, migrated 57 tests to `enqueueMerge()`)
 
 - ~~**`src/client/pages/activity/ActivityPage.tsx`**: Cyclomatic complexity at 17 (limit 15), suppressed with eslint-disable~~ — resolved in #470 (extracted DownloadsTabSection)
 
