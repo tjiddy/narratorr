@@ -3,7 +3,7 @@ import { type DownloadClientAdapter, type DownloadItemInfo, type AddDownloadOpti
 import { qbTorrentsResponseSchema } from './schemas.js';
 import { fetchWithTimeout } from '../utils/fetch-with-timeout.js';
 import { DEFAULT_REQUEST_TIMEOUT_MS } from '../utils/constants.js';
-import { DownloadClientAuthError, DownloadClientError, DownloadClientTimeoutError, isTimeoutError } from './errors.js';
+import { DownloadClientAuthError, DownloadClientError } from './errors.js';
 import { requestWithRetry } from './retry.js';
 
 export interface QBittorrentConfig {
@@ -178,43 +178,53 @@ export class QBittorrentClient implements DownloadClientAdapter {
   }
 
   private async addDownloadFromFile(torrentFile: Buffer, infoHash: string, options?: AddDownloadOptions): Promise<string> {
-    if (!this.cookie) {
-      await this.login();
-    }
+    return requestWithRetry(
+      async () => {
+        if (!this.cookie) {
+          await this.login();
+        }
 
-    const formData = new FormData();
-    formData.append('torrents', new Blob([new Uint8Array(torrentFile)], { type: 'application/x-bittorrent' }), 'upload.torrent');
+        const formData = new FormData();
+        formData.append('torrents', new Blob([new Uint8Array(torrentFile)], { type: 'application/x-bittorrent' }), 'upload.torrent');
 
-    if (options?.savePath) {
-      formData.append('savepath', options.savePath);
-    }
-    if (options?.category) {
-      formData.append('category', options.category);
-    }
-    if (options?.paused) {
-      formData.append('paused', 'true');
-    }
+        if (options?.savePath) {
+          formData.append('savepath', options.savePath);
+        }
+        if (options?.category) {
+          formData.append('category', options.category);
+        }
+        if (options?.paused) {
+          formData.append('paused', 'true');
+        }
 
-    let response: Response;
-    try {
-      response = await fetchWithTimeout(`${this.baseUrl}/api/v2/torrents/add`, {
-        method: 'POST',
-        headers: {
-          Cookie: this.cookie!,
-          Referer: this.baseUrl,
+        const response = await fetchWithTimeout(`${this.baseUrl}/api/v2/torrents/add`, {
+          method: 'POST',
+          headers: {
+            Cookie: this.cookie!,
+            Referer: this.baseUrl,
+          },
+          body: formData,
+        }, DEFAULT_REQUEST_TIMEOUT_MS);
+
+        if (response.status === 403) {
+          throw new DownloadClientAuthError(this.name, `Session expired: HTTP 403 /api/v2/torrents/add`);
+        }
+
+        if (!response.ok) {
+          throw new DownloadClientError(this.name, `Request failed: HTTP ${response.status} /api/v2/torrents/add`);
+        }
+
+        return infoHash;
+      },
+      {
+        clientName: this.name,
+        shouldRetry: (e) => e instanceof DownloadClientAuthError,
+        onRetry: async () => {
+          this.cookie = undefined;
+          await this.login();
         },
-        body: formData,
-      }, DEFAULT_REQUEST_TIMEOUT_MS);
-    } catch (error: unknown) {
-      if (isTimeoutError(error)) throw new DownloadClientTimeoutError(this.name, (error as Error).message);
-      throw new DownloadClientError(this.name, error instanceof Error ? error.message : String(error));
-    }
-
-    if (!response.ok) {
-      throw new DownloadClientError(this.name, `Request failed: HTTP ${response.status} /api/v2/torrents/add`);
-    }
-
-    return infoHash;
+      },
+    );
   }
 
 

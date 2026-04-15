@@ -241,6 +241,70 @@ describe('QBittorrentClient', () => {
       });
     });
 
+    describe('torrent-bytes retry/auth', () => {
+      const fakeTorrentFile = Buffer.from('d8:announce35:http://tracker.example.com/announce4:infod6:lengthi12345e4:name8:test.txte');
+      const torrentArtifact: DownloadArtifact = {
+        type: 'torrent-bytes',
+        data: fakeTorrentFile,
+        infoHash: 'e4c4ed54fbde46fb891a9ef51a368f7cde76eb74',
+      };
+
+      it('retries once on 403 (session expired) during torrent-bytes upload', async () => {
+        let uploadCallCount = 0;
+        server.use(
+          http.post(`${BASE_URL}/api/v2/torrents/add`, () => {
+            uploadCallCount++;
+            if (uploadCallCount === 1) {
+              return new HttpResponse(null, { status: 403 });
+            }
+            return new HttpResponse('');
+          }),
+        );
+
+        const hash = await client.addDownload(torrentArtifact);
+        expect(hash).toBe('e4c4ed54fbde46fb891a9ef51a368f7cde76eb74');
+        expect(uploadCallCount).toBe(2);
+      });
+
+      it('throws DownloadClientAuthError after retry exhaustion on torrent-bytes upload', async () => {
+        server.use(
+          http.post(`${BASE_URL}/api/v2/torrents/add`, () => {
+            return new HttpResponse(null, { status: 403 });
+          }),
+        );
+
+        await expect(client.addDownload(torrentArtifact)).rejects.toBeInstanceOf(DownloadClientAuthError);
+      });
+
+      it('throws DownloadClientError on non-auth HTTP failure during torrent-bytes upload', async () => {
+        server.use(
+          http.post(`${BASE_URL}/api/v2/torrents/add`, () => {
+            return new HttpResponse(null, { status: 500 });
+          }),
+        );
+
+        const error = await client.addDownload(torrentArtifact).catch((e: unknown) => e);
+        expect(error).toBeInstanceOf(DownloadClientError);
+        expect(error).not.toBeInstanceOf(DownloadClientAuthError);
+      });
+
+      it('throws DownloadClientTimeoutError on timeout during torrent-bytes upload', async () => {
+        server.use(
+          http.post(`${BASE_URL}/api/v2/torrents/add`, async () => {
+            await delay('infinite');
+            return new HttpResponse('');
+          }),
+        );
+
+        const originalTimeout = AbortSignal.timeout;
+        AbortSignal.timeout = () => AbortSignal.abort(new DOMException('The operation was aborted', 'TimeoutError'));
+
+        await expect(client.addDownload(torrentArtifact)).rejects.toBeInstanceOf(DownloadClientTimeoutError);
+
+        AbortSignal.timeout = originalTimeout;
+      });
+    });
+
     it('rejects nzb-url artifact with torrent-only error', async () => {
       await expect(
         client.addDownload({ type: 'nzb-url', url: 'https://indexer.test/nzb' }),

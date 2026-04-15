@@ -1,8 +1,9 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
-import { http, HttpResponse } from 'msw';
+import { http, HttpResponse, delay } from 'msw';
 import { useMswServer } from '../__tests__/msw/server.js';
 import { BlackholeClient } from './blackhole.js';
 import type { DownloadArtifact } from './types.js';
+import { DownloadClientError, DownloadClientTimeoutError } from './errors.js';
 
 vi.mock('node:fs/promises', () => ({
   writeFile: vi.fn().mockResolvedValue(undefined),
@@ -109,7 +110,7 @@ describe('BlackholeClient', () => {
       expect(result).toBeNull();
     });
 
-    it('throws on nzb-url download failure', async () => {
+    it('throws DownloadClientError on nzb-url download failure', async () => {
       server.use(
         http.get('https://example.com/file.nzb', () => {
           return new HttpResponse(null, { status: 404 });
@@ -121,7 +122,45 @@ describe('BlackholeClient', () => {
         url: 'https://example.com/file.nzb',
       };
 
-      await expect(client.addDownload(artifact)).rejects.toThrow('HTTP 404');
+      const error = await client.addDownload(artifact).catch((e: unknown) => e);
+      expect(error).toBeInstanceOf(DownloadClientError);
+      expect((error as DownloadClientError).message).toContain('HTTP 404');
+    });
+
+    it('throws DownloadClientTimeoutError on nzb-url fetch timeout', async () => {
+      server.use(
+        http.get('https://example.com/file.nzb', async () => {
+          await delay('infinite');
+          return new HttpResponse('');
+        }),
+      );
+
+      const originalTimeout = AbortSignal.timeout;
+      AbortSignal.timeout = () => AbortSignal.abort(new DOMException('The operation was aborted', 'TimeoutError'));
+
+      const artifact: DownloadArtifact = {
+        type: 'nzb-url',
+        url: 'https://example.com/file.nzb',
+      };
+
+      await expect(client.addDownload(artifact)).rejects.toBeInstanceOf(DownloadClientTimeoutError);
+
+      AbortSignal.timeout = originalTimeout;
+    });
+
+    it('throws DownloadClientError on nzb-url network error', async () => {
+      server.use(
+        http.get('https://example.com/file.nzb', () => {
+          return HttpResponse.error();
+        }),
+      );
+
+      const artifact: DownloadArtifact = {
+        type: 'nzb-url',
+        url: 'https://example.com/file.nzb',
+      };
+
+      await expect(client.addDownload(artifact)).rejects.toBeInstanceOf(DownloadClientError);
     });
 
     it('throws when writeFile fails', async () => {
