@@ -10,7 +10,7 @@ export function PageLoading({ header }: PageLoadingProps) {
     <div className="space-y-6">
       {header}
       <div className="flex items-center justify-center py-24">
-        <LoadingSpinner className="w-8 h-8 text-primary" />
+        <LoadingSpinner className="w-8 h-8 text-primary" label="Loading" />
       </div>
     </div>
   );
