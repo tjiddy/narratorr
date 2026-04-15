@@ -7,8 +7,7 @@
 
 import { mapNetworkError } from '../utils/map-network-error.js';
 
-const DEFAULT_TIMEOUT_MS = 30_000;
-const PROXY_TIMEOUT_MS = 60_000;
+import { INDEXER_TIMEOUT_MS, PROXY_TIMEOUT_MS } from '../utils/constants.js';
 
 export interface FetchWithProxyOptions {
   url: string;
@@ -43,7 +42,7 @@ export async function fetchWithProxy(options: FetchWithProxyOptions): Promise<st
     return fetchViaProxy(url, headers, proxyUrl, options.timeoutMs ?? PROXY_TIMEOUT_MS, options.signal);
   }
 
-  return fetchDirect(url, headers, options.timeoutMs ?? DEFAULT_TIMEOUT_MS, options.signal);
+  return fetchDirect(url, headers, options.timeoutMs ?? INDEXER_TIMEOUT_MS, options.signal);
 }
 
 async function fetchDirect(

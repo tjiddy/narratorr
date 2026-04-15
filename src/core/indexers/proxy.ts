@@ -11,7 +11,7 @@ import { ProxyError } from './errors.js';
 import { getErrorMessage } from '../../shared/error-message.js';
 import { mapNetworkError } from '../utils/map-network-error.js';
 
-const PROXY_TIMEOUT_MS = 30_000;
+import { INDEXER_TIMEOUT_MS } from '../utils/constants.js';
 const IPIFY_URL = 'https://api.ipify.org?format=json';
 
 type ProxyDispatcher = ProxyAgent | SocksProxyAgent;
@@ -49,7 +49,7 @@ export async function fetchWithProxyAgent(
     signal?: AbortSignal;
   } = {},
 ): Promise<string> {
-  const { proxyUrl, headers, timeoutMs = PROXY_TIMEOUT_MS } = options;
+  const { proxyUrl, headers, timeoutMs = INDEXER_TIMEOUT_MS } = options;
   const dispatcher = createProxyAgent(proxyUrl);
 
   const controller = new AbortController();

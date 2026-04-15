@@ -13,7 +13,7 @@ export interface ABBConfig {
   proxyUrl?: string;
 }
 
-const REQUEST_TIMEOUT_MS = 30000;
+import { INDEXER_TIMEOUT_MS } from '../utils/constants.js';
 
 const DEFAULT_USER_AGENTS = [
   'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
@@ -329,7 +329,7 @@ export class AudioBookBayIndexer implements IndexerAdapter {
 
   private async testDirect(): Promise<{ success: boolean; message?: string }> {
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+    const timeoutId = setTimeout(() => controller.abort(), INDEXER_TIMEOUT_MS);
 
     try {
       const response = await fetch(this.baseUrl, {

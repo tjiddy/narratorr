@@ -15,7 +15,7 @@ export interface MAMConfig {
 }
 
 const DEFAULT_BASE_URL = 'https://www.myanonamouse.net';
-const REQUEST_TIMEOUT_MS = 30_000;
+import { INDEXER_TIMEOUT_MS } from '../utils/constants.js';
 
 interface MAMSearchResponse {
   error?: string;
@@ -244,7 +244,7 @@ export class MyAnonamouseIndexer implements IndexerAdapter {
    */
   private async fetchWithCookie(url: string, callerSignal?: AbortSignal): Promise<string> {
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+    const timeoutId = setTimeout(() => controller.abort(), INDEXER_TIMEOUT_MS);
     const signal = callerSignal
       ? AbortSignal.any([controller.signal, callerSignal])
       : controller.signal;
@@ -268,7 +268,7 @@ export class MyAnonamouseIndexer implements IndexerAdapter {
       } catch (error: unknown) {
         if (dispatcher) {
           if (error instanceof DOMException && error.name === 'AbortError') {
-            throw new ProxyError(`Proxy timed out after ${Math.round(REQUEST_TIMEOUT_MS / 1000)}s`);
+            throw new ProxyError(`Proxy timed out after ${Math.round(INDEXER_TIMEOUT_MS / 1000)}s`);
           }
           const msg = getErrorMessage(error);
           throw new ProxyError(`Proxy connection failed: ${msg}`);
@@ -350,7 +350,7 @@ export class MyAnonamouseIndexer implements IndexerAdapter {
   private async fetchTorrentAsDataUri(torrentId: number, callerSignal?: AbortSignal): Promise<string | undefined> {
     const url = `${this.baseUrl}/tor/download.php?tid=${torrentId}`;
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+    const timeoutId = setTimeout(() => controller.abort(), INDEXER_TIMEOUT_MS);
     const signal = callerSignal
       ? AbortSignal.any([controller.signal, callerSignal])
       : controller.signal;
@@ -375,7 +375,7 @@ export class MyAnonamouseIndexer implements IndexerAdapter {
         // Proxy errors must propagate — not be swallowed as undefined
         if (dispatcher) {
           if (error instanceof DOMException && error.name === 'AbortError') {
-            throw new ProxyError(`Proxy timed out after ${Math.round(REQUEST_TIMEOUT_MS / 1000)}s`);
+            throw new ProxyError(`Proxy timed out after ${Math.round(INDEXER_TIMEOUT_MS / 1000)}s`);
           }
           const msg = getErrorMessage(error);
           throw new ProxyError(`Proxy connection failed: ${msg}`);
