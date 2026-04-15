@@ -51,40 +51,27 @@ export class NZBGetClient implements DownloadClientAdapter {
       if (artifact.data.length === 0) {
         throw new DownloadClientError(this.name, 'Cannot add empty NZB file');
       }
-
-      const params = [
-        'upload.nzb',
-        artifact.data.toString('base64'),
-        options?.category || '',
-        options?.paused ? -1 : 0,
-        false,
-        false,
-        '',
-        0,
-        'score',
-      ];
-
-      const result = await this.rpc<number>('append', params);
-
-      if (!result || result <= 0) {
-        throw new DownloadClientError(this.name, 'NZBGet failed to add download');
-      }
-
-      return String(result);
+      return this.appendNzb('upload.nzb', artifact.data.toString('base64'), options);
     }
 
-    // NZBGet append method: (NZBFilename, NZBContent, Category, Priority, DupeKey, DupeScore, DupeMode, AddUrlParams)
-    // For URL-based adds, we use empty NZBContent and pass URL via AddUrlParams
+    return this.appendNzb('', artifact.url, options);
+  }
+
+  private async appendNzb(
+    filename: string,
+    content: string,
+    options?: AddDownloadOptions,
+  ): Promise<string> {
     const params = [
-      '', // NZBFilename (auto-detected from URL)
-      artifact.url, // NZBContent (or URL when filename is empty)
-      options?.category || '', // Category
-      options?.paused ? -1 : 0, // Priority: -1=paused, 0=normal
-      false, // AddToTop
-      false, // AddPaused (use priority instead)
-      '', // DupeKey
-      0, // DupeScore
-      'score', // DupeMode
+      filename,
+      content,
+      options?.category || '',
+      options?.paused ? -1 : 0,
+      false,
+      false,
+      '',
+      0,
+      'score',
     ];
 
     const result = await this.rpc<number>('append', params);
