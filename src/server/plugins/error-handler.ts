@@ -13,6 +13,7 @@ import { TaskRegistryError } from '../services/task-registry.js';
 import { BookRejectionError } from '../services/book-rejection.service.js';
 import { RefreshScanError } from '../services/refresh-scan.service.js';
 import { CoverUploadError } from '../services/cover-upload.js';
+import { DownloadClientError, DownloadClientAuthError, DownloadClientTimeoutError } from '../../core/download-clients/errors.js';
 
 // ---------------------------------------------------------------------------
 // Error → HTTP status registry
@@ -41,6 +42,9 @@ const ERROR_REGISTRY = new Map<new (...args: any[]) => Error, ErrorEntry>([
   [BookRejectionError, { type: 'coded', codes: { NOT_FOUND: 404, NOT_IMPORTED: 400, NO_IDENTIFIERS: 400 } }],
   [RefreshScanError, { type: 'coded', codes: { NOT_FOUND: 404, NO_PATH: 400, PATH_MISSING: 400, NO_AUDIO_FILES: 400 } }],
   [CoverUploadError, { type: 'coded', codes: { NOT_FOUND: 404, INVALID_MIME: 400, NO_PATH: 400 } }],
+  [DownloadClientAuthError, { type: 'flat', status: 401 }],
+  [DownloadClientTimeoutError, { type: 'flat', status: 504 }],
+  [DownloadClientError, { type: 'flat', status: 502 }],
 ]);
 
 /** Maps typed error codes to HTTP status codes. */

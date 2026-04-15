@@ -7,6 +7,7 @@ import { DEFAULT_SETTINGS } from '../../shared/schemas/settings/registry.js';
 import { filterAndRankResults } from '../services/search-pipeline.js';
 import type { SearchResult } from '../../core/index.js';
 import { DuplicateDownloadError } from '../services/download.service.js';
+import { DownloadClientAuthError, DownloadClientError, DownloadClientTimeoutError } from '../../core/download-clients/errors.js';
 import type { Db } from '../../db/index.js';
 
 const mockSearchResult = {
@@ -694,6 +695,65 @@ describe('search routes', () => {
 
       expect(res.statusCode).toBe(409);
       expect(JSON.parse(res.payload)).toEqual({ error: 'Book 1 has pipeline download' });
+    });
+
+    // #558 — Typed download client errors propagate to error-handler plugin
+    it('returns 401 when DownloadClientAuthError propagates through error handler', async () => {
+      (services.downloadOrchestrator.grab as Mock).mockRejectedValue(
+        new DownloadClientAuthError('qBittorrent', 'Session expired'),
+      );
+
+      const res = await app.inject({
+        method: 'POST',
+        url: '/api/search/grab',
+        payload: { downloadUrl: 'magnet:?xt=urn:btih:abc123', title: 'Test' },
+      });
+
+      expect(res.statusCode).toBe(401);
+      expect(JSON.parse(res.payload)).toEqual({ error: 'Session expired' });
+    });
+
+    it('returns 504 when DownloadClientTimeoutError propagates through error handler', async () => {
+      (services.downloadOrchestrator.grab as Mock).mockRejectedValue(
+        new DownloadClientTimeoutError('SABnzbd', 'Request timed out'),
+      );
+
+      const res = await app.inject({
+        method: 'POST',
+        url: '/api/search/grab',
+        payload: { downloadUrl: 'magnet:?xt=urn:btih:abc123', title: 'Test' },
+      });
+
+      expect(res.statusCode).toBe(504);
+      expect(JSON.parse(res.payload)).toEqual({ error: 'Request timed out' });
+    });
+
+    it('returns 502 when generic DownloadClientError propagates through error handler', async () => {
+      (services.downloadOrchestrator.grab as Mock).mockRejectedValue(
+        new DownloadClientError('Transmission', 'HTTP 500: Internal Server Error'),
+      );
+
+      const res = await app.inject({
+        method: 'POST',
+        url: '/api/search/grab',
+        payload: { downloadUrl: 'magnet:?xt=urn:btih:abc123', title: 'Test' },
+      });
+
+      expect(res.statusCode).toBe(502);
+      expect(JSON.parse(res.payload)).toEqual({ error: 'HTTP 500: Internal Server Error' });
+    });
+
+    it('still returns 500 for non-download-client errors', async () => {
+      (services.downloadOrchestrator.grab as Mock).mockRejectedValue(new Error('Some other error'));
+
+      const res = await app.inject({
+        method: 'POST',
+        url: '/api/search/grab',
+        payload: { downloadUrl: 'magnet:?xt=urn:btih:abc123', title: 'Test' },
+      });
+
+      expect(res.statusCode).toBe(500);
+      expect(JSON.parse(res.payload).error).toBe('Some other error');
     });
 
     it('sanitizes downloadUrl in debug log (strips query params from HTTP URL)', async () => {

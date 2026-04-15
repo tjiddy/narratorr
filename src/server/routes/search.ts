@@ -6,6 +6,7 @@ import { type SettingsService } from '../services';
 import { getErrorMessage } from '../utils/error-message.js';
 import { sanitizeLogUrl } from '../utils/sanitize-log-url.js';
 import { DuplicateDownloadError } from '../services/download.service.js';
+import { DownloadClientError } from '../../core/download-clients/errors.js';
 import { postProcessSearchResults } from '../services/search-pipeline.js';
 import {
   searchQuerySchema,
@@ -67,6 +68,11 @@ export async function searchRoutes(
             return reply.status(409).send({ code: 'ACTIVE_DOWNLOAD_EXISTS' });
           }
           // PIPELINE_ACTIVE — propagate to error-handler plugin (returns 409 { error: message })
+          throw error;
+        }
+        if (error instanceof DownloadClientError) {
+          // Typed download-client errors propagate to error-handler plugin
+          // (DownloadClientAuthError → 401, DownloadClientTimeoutError → 504, DownloadClientError → 502)
           throw error;
         }
         request.log.error(error, 'Grab failed');

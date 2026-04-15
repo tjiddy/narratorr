@@ -16,6 +16,7 @@ import { MergeError } from '../services/merge.service.js';
 import { DownloadError, DuplicateDownloadError } from '../services/download.service.js';
 import { TaskRegistryError } from '../services/task-registry.js';
 import { CoverUploadError } from '../services/cover-upload.js';
+import { DownloadClientError, DownloadClientAuthError, DownloadClientTimeoutError } from '../../core/download-clients/errors.js';
 
 function createTestApp() {
   const app = Fastify({ logger: false }).withTypeProvider<ZodTypeProvider>();
@@ -51,6 +52,9 @@ function createTestApp() {
   app.get('/throw-cover-not-found', async () => { throw new CoverUploadError('Book not found', 'NOT_FOUND'); });
   app.get('/throw-cover-invalid-mime', async () => { throw new CoverUploadError('Only JPG, PNG, and WebP images are supported', 'INVALID_MIME'); });
   app.get('/throw-cover-no-path', async () => { throw new CoverUploadError('Book has no path on disk', 'NO_PATH'); });
+  app.get('/throw-dc-auth', async () => { throw new DownloadClientAuthError('qBittorrent', 'Session expired'); });
+  app.get('/throw-dc-timeout', async () => { throw new DownloadClientTimeoutError('SABnzbd', 'Request timed out'); });
+  app.get('/throw-dc-generic', async () => { throw new DownloadClientError('Transmission', 'HTTP 500: Internal Server Error'); });
   app.get('/throw-generic', async () => { throw new Error('disk full'); });
   app.get('/throw-non-error', async () => { throw 'string error'; });
   app.get('/success', async () => ({ ok: true }));
@@ -237,6 +241,27 @@ describe('error-handler plugin', () => {
       expect(JSON.parse(res.payload)).toEqual({ error: 'Book has no path on disk' });
     });
   });
+
+  // #558 — Download client typed error mapping
+    describe('download client error mapping', () => {
+      it('maps DownloadClientAuthError to 401', async () => {
+        const res = await app.inject({ method: 'GET', url: '/throw-dc-auth' });
+        expect(res.statusCode).toBe(401);
+        expect(JSON.parse(res.payload)).toEqual({ error: 'Session expired' });
+      });
+
+      it('maps DownloadClientTimeoutError to 504', async () => {
+        const res = await app.inject({ method: 'GET', url: '/throw-dc-timeout' });
+        expect(res.statusCode).toBe(504);
+        expect(JSON.parse(res.payload)).toEqual({ error: 'Request timed out' });
+      });
+
+      it('maps DownloadClientError to 502', async () => {
+        const res = await app.inject({ method: 'GET', url: '/throw-dc-generic' });
+        expect(res.statusCode).toBe(502);
+        expect(JSON.parse(res.payload)).toEqual({ error: 'HTTP 500: Internal Server Error' });
+      });
+    });
 
   describe('generic error handling', () => {
     it('maps untyped Error to 500 with generic message (no stack leak)', async () => {
