@@ -196,12 +196,12 @@ describe('runPostProcessingScript', () => {
       expect(result.warning).toContain('EACCES');
     });
 
-    it('returns inaccessible warning with "Unknown error" fallback when access rejects a non-Error value', async () => {
+    it('returns inaccessible warning with stringified value when access rejects a non-Error value', async () => {
       mockAccess.mockRejectedValue('string-rejection');
       const result = await runPostProcessingScript(defaultArgs);
 
       expect(result.success).toBe(false);
-      expect(result.warning).toBe('Post-processing script inaccessible: /scripts/post-import.sh (Unknown error)');
+      expect(result.warning).toBe('Post-processing script inaccessible: /scripts/post-import.sh (string-rejection)');
       expect(mockLog.warn).toHaveBeenCalledWith(
         expect.objectContaining({ scriptPath: '/scripts/post-import.sh', error: 'string-rejection' }),
         expect.stringContaining('inaccessible'),

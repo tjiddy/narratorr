@@ -217,13 +217,13 @@ describe('BulkOperationsSection', () => {
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
   });
 
-  it('shows fallback toast message when rename count API rejects a non-Error value', async () => {
+  it('shows stringified error toast when rename count API rejects a non-Error value', async () => {
     const user = userEvent.setup({});
     setup();
     (api.getBulkRenameCount as ReturnType<typeof vi.fn>).mockRejectedValue('string-rejection');
     await user.click(screen.getByRole('button', { name: /rename all books/i }));
     await waitFor(() => {
-      expect(toast.error).toHaveBeenCalledWith('Failed to fetch operation count');
+      expect(toast.error).toHaveBeenCalledWith('string-rejection');
     });
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
     expect(screen.getByRole('button', { name: /rename all books/i })).not.toBeDisabled();

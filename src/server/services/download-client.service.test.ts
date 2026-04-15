@@ -415,7 +415,7 @@ describe('DownloadClientService', () => {
       expect(result.message).toBe('ECONNREFUSED');
     });
 
-    it('returns "Unknown error" for non-Error thrown values', async () => {
+    it('returns stringified value for non-Error thrown values', async () => {
       const throwingClient = { ...mockClient };
       db.select.mockReturnValue(mockDbChain([throwingClient]));
 
@@ -426,7 +426,7 @@ describe('DownloadClientService', () => {
       const result = await service.test(1);
 
       expect(result.success).toBe(false);
-      expect(result.message).toBe('Unknown error');
+      expect(result.message).toBe('string error');
     });
   });
 

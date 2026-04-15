@@ -821,7 +821,7 @@ describe('IndexerService', () => {
       expect(result.message).toBe('ECONNREFUSED');
     });
 
-    it('returns "Unknown error" for non-Error thrown values', async () => {
+    it('returns stringified value for non-Error thrown values', async () => {
       db.select.mockReturnValue(mockDbChain([mockIndexer]));
 
       const mockAdapter = { test: vi.fn().mockRejectedValue('string thrown'), search: vi.fn() };
@@ -830,7 +830,7 @@ describe('IndexerService', () => {
       const result = await service.test(1);
 
       expect(result.success).toBe(false);
-      expect(result.message).toBe('Unknown error');
+      expect(result.message).toBe('string thrown');
     });
   });
 

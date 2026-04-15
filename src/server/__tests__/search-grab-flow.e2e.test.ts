@@ -524,7 +524,7 @@ describe('Search → Grab flow E2E', () => {
         payload: { downloadUrl: MAGNET_URI, title: 'Guard Test', protocol: 'torrent', bookId, indexerId },
       });
       expect(res.statusCode).toBe(500);
-      expect(res.json()).toEqual({ error: 'Unknown error' });
+      expect(res.json()).toEqual({ error: 'null' });
     });
 
     it('returns 500 without crashing when orchestrator throws a plain string', async () => {
@@ -535,7 +535,7 @@ describe('Search → Grab flow E2E', () => {
         payload: { downloadUrl: MAGNET_URI, title: 'Guard Test', protocol: 'torrent', bookId, indexerId },
       });
       expect(res.statusCode).toBe(500);
-      expect(res.json()).toEqual({ error: 'Unknown error' });
+      expect(res.json()).toEqual({ error: 'unexpected failure' });
     });
 
     it('returns 500 without crashing when orchestrator throws a plain object without a code property', async () => {
@@ -546,7 +546,7 @@ describe('Search → Grab flow E2E', () => {
         payload: { downloadUrl: MAGNET_URI, title: 'Guard Test', protocol: 'torrent', bookId, indexerId },
       });
       expect(res.statusCode).toBe(500);
-      expect(res.json()).toEqual({ error: 'Unknown error' });
+      expect(res.json()).toEqual({ error: '[object Object]' });
     });
   });
 });

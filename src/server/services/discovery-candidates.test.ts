@@ -17,7 +17,7 @@ function makeCtx(overrides: Partial<CandidateContext> = {}): CandidateContext {
     existingTitleAuthors: [],
     dismissedAsins: new Set<string>(),
     maxPerAuthor: 5,
-    signals: { topAuthors: [], topSeries: [], topGenres: [], topNarrators: [], underrepresentedGenres: [] },
+    signals: { authorAffinity: new Map(), genreDistribution: new Map(), seriesGaps: [], narratorAffinity: new Map(), durationStats: null },
     warnings: [],
     multipliers: { author: 1, series: 1, genre: 1, narrator: 1, diversity: 1 },
     ...overrides,
