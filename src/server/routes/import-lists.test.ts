@@ -108,7 +108,7 @@ describe('import-lists routes', () => {
 
       expect(res.statusCode).toBe(400);
       const body = res.json();
-      expect(body.message).toContain('API key is required');
+      expect(body.message).toContain('settings/apiKey');
     });
 
     it('rejects sync interval below minimum', async () => {
@@ -145,7 +145,7 @@ describe('import-lists routes', () => {
 
       expect(res.statusCode).toBe(400);
       const body = res.json();
-      expect(body.message).toContain('API key is required');
+      expect(body.message).toContain('settings/apiKey');
     });
 
     it('accepts toggle-only update without type or settings', async () => {

@@ -372,11 +372,11 @@ describe('indexers routes', () => {
         method: 'POST',
         url: '/api/indexers',
         payload: {
-          name: 'AudioBookBay',
-          type: 'abb',
+          name: 'Test Newznab',
+          type: 'newznab',
           enabled: true,
           priority: 50,
-          settings: { hostname: 'audiobookbay.lu', apiKey: 'new-key' },
+          settings: { apiUrl: 'https://indexer.test', apiKey: 'new-key' },
         },
       });
       const body = JSON.parse(res.payload);

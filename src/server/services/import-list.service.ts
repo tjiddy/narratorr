@@ -8,6 +8,7 @@ import type { MetadataService } from './metadata.service.js';
 import { encryptFields, decryptFields, resolveSentinelFields, getKey } from '../utils/secret-codec.js';
 import { getErrorMessage } from '../utils/error-message.js';
 import { findOrCreateAuthor } from '../utils/find-or-create-person.js';
+import type { ImportListSettings } from '../../shared/schemas/import-list.js';
 
 /** Milliseconds per minute — used for sync interval calculations. */
 const MS_PER_MINUTE = 60_000;
@@ -80,9 +81,9 @@ export class ImportListService {
 
   async testConfig(data: { type: string; settings: Record<string, unknown> }): Promise<{ success: boolean; message?: string }> {
     try {
-      const factory = IMPORT_LIST_ADAPTER_FACTORIES[data.type];
+      const factory = IMPORT_LIST_ADAPTER_FACTORIES[data.type as keyof typeof IMPORT_LIST_ADAPTER_FACTORIES];
       if (!factory) return { success: false, message: `Unknown provider type: ${data.type}` };
-      const provider = factory(data.settings);
+      const provider = factory(data.settings as ImportListSettings);
       return await provider.test();
     } catch (error: unknown) {
       return { success: false, message: getErrorMessage(error) };
@@ -96,9 +97,9 @@ export class ImportListService {
   }
 
   async preview(data: { type: string; settings: Record<string, unknown> }): Promise<{ items: ImportListItem[]; total: number }> {
-    const factory = IMPORT_LIST_ADAPTER_FACTORIES[data.type];
+    const factory = IMPORT_LIST_ADAPTER_FACTORIES[data.type as keyof typeof IMPORT_LIST_ADAPTER_FACTORIES];
     if (!factory) throw new Error(`Unknown provider type: ${data.type}`);
-    const provider = factory(data.settings);
+    const provider = factory(data.settings as ImportListSettings);
     const allItems = await provider.fetchItems();
     return { items: allItems.slice(0, 10), total: allItems.length };
   }
@@ -137,10 +138,10 @@ export class ImportListService {
 
   private async syncList(list: ImportListRow): Promise<void> {
     const decrypted = this.decryptRow(list);
-    const factory = IMPORT_LIST_ADAPTER_FACTORIES[decrypted.type];
+    const factory = IMPORT_LIST_ADAPTER_FACTORIES[decrypted.type as keyof typeof IMPORT_LIST_ADAPTER_FACTORIES];
     if (!factory) throw new Error(`Unknown provider type: ${decrypted.type}`);
 
-    const provider = factory(decrypted.settings as Record<string, unknown>);
+    const provider = factory(decrypted.settings as ImportListSettings);
     const items = await provider.fetchItems();
 
     this.log.info({ id: list.id, name: list.name, itemCount: items.length }, 'Fetched items from provider');
