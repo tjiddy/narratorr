@@ -1,8 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { renderHook, act } from '@testing-library/react';
 import { useFetchCategories } from './useFetchCategories';
-import type { UseFormGetValues } from 'react-hook-form';
-import type { CreateDownloadClientFormData } from '../../../shared/schemas.js';
 
 vi.mock('@/lib/api/download-clients', () => ({
   downloadClientsApi: {
@@ -26,7 +24,7 @@ function makeOptions(overrides: { selectedType?: string; clientId?: number; isDi
     selectedType: overrides.selectedType ?? 'qbittorrent',
     clientId: overrides.clientId,
     isDirty: overrides.isDirty,
-    getValues: mockGetValues as unknown as UseFormGetValues<CreateDownloadClientFormData>,
+    getValues: mockGetValues as never,
   };
 }
 
