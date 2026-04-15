@@ -1,6 +1,8 @@
 import { type DownloadClientAdapter, type DownloadItemInfo, type AddDownloadOptions, type DownloadArtifact, type DownloadProtocol, ETA_UPPER_BOUND_SEC } from './types.js';
 import { fetchWithTimeout } from '../utils/fetch-with-timeout.js';
 import { DEFAULT_REQUEST_TIMEOUT_MS } from '../utils/constants.js';
+import { DownloadClientAuthError, DownloadClientError } from './errors.js';
+import { requestWithRetry } from './retry.js';
 
 export interface DelugeConfig {
   host: string;
@@ -57,51 +59,64 @@ export class DelugeClient implements DownloadClientAdapter {
     this.baseUrl = `${protocol}://${config.host}:${config.port}`;
   }
 
-  private async rpc(method: string, params: unknown[] = [], retried = false): Promise<unknown> {
-    if (!this.authenticated) {
-      await this.login();
-    }
+  private async rpc(method: string, params: unknown[] = []): Promise<unknown> {
+    let wasAuthFailure = false;
 
-    const id = ++this.requestId;
-    const headers: Record<string, string> = { 'Content-Type': 'application/json' };
-    if (this.sessionCookie) {
-      headers.Cookie = this.sessionCookie;
-    }
+    return requestWithRetry(
+      async () => {
+        wasAuthFailure = false;
 
-    const response = await fetchWithTimeout(`${this.baseUrl}/json`, {
-      method: 'POST',
-      headers,
-      body: JSON.stringify({ method, params, id }),
-    }, DEFAULT_REQUEST_TIMEOUT_MS);
+        if (!this.authenticated) {
+          await this.login();
+        }
 
-    if ((response.status === 401 || response.status === 403) && !retried) {
-      this.authenticated = false;
-      await this.login();
-      return this.rpc(method, params, true);
-    }
+        const id = ++this.requestId;
+        const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+        if (this.sessionCookie) {
+          headers.Cookie = this.sessionCookie;
+        }
 
-    if (!response.ok) {
-      throw new Error(`Deluge request failed: HTTP ${response.status}`);
-    }
+        const response = await fetchWithTimeout(`${this.baseUrl}/json`, {
+          method: 'POST',
+          headers,
+          body: JSON.stringify({ method, params, id }),
+        }, DEFAULT_REQUEST_TIMEOUT_MS);
 
-    let data: DelugeRpcResponse;
-    try {
-      data = await response.json() as DelugeRpcResponse;
-    } catch {
-      throw new Error('Connection failed: server didn\'t respond as expected. Check host, port, SSL settings, and any reverse proxy that may be intercepting requests.');
-    }
+        if (response.status === 401 || response.status === 403) {
+          wasAuthFailure = true;
+          throw new DownloadClientAuthError(this.name, `Deluge request failed: HTTP ${response.status}`);
+        }
 
-    if (data.error) {
-      // Session expired — auth error from Deluge itself
-      if (!retried && data.error.code === 1) {
-        this.authenticated = false;
-        await this.login();
-        return this.rpc(method, params, true);
-      }
-      throw new Error(`Deluge RPC error: ${data.error.message}`);
-    }
+        if (!response.ok) {
+          throw new DownloadClientError(this.name, `Deluge request failed: HTTP ${response.status}`);
+        }
 
-    return data.result;
+        let data: DelugeRpcResponse;
+        try {
+          data = await response.json() as DelugeRpcResponse;
+        } catch {
+          throw new DownloadClientError(this.name, 'Connection failed: server didn\'t respond as expected. Check host, port, SSL settings, and any reverse proxy that may be intercepting requests.');
+        }
+
+        if (data.error) {
+          if (data.error.code === 1) {
+            wasAuthFailure = true;
+            throw new DownloadClientAuthError(this.name, `Deluge session expired: ${data.error.message}`);
+          }
+          throw new DownloadClientError(this.name, `Deluge RPC error: ${data.error.message}`);
+        }
+
+        return data.result;
+      },
+      {
+        clientName: this.name,
+        shouldRetry: () => wasAuthFailure,
+        onRetry: async () => {
+          this.authenticated = false;
+          await this.login();
+        },
+      },
+    );
   }
 
   private async login(): Promise<void> {
@@ -116,22 +131,22 @@ export class DelugeClient implements DownloadClientAdapter {
     }, DEFAULT_REQUEST_TIMEOUT_MS);
 
     if (!response.ok) {
-      throw new Error(`Deluge login failed: HTTP ${response.status}`);
+      throw new DownloadClientError(this.name, `Deluge login failed: HTTP ${response.status}`);
     }
 
     let data: DelugeRpcResponse;
     try {
       data = await response.json() as DelugeRpcResponse;
     } catch {
-      throw new Error('Connection failed: server didn\'t respond as expected. Check host, port, SSL settings, and any reverse proxy that may be intercepting requests.');
+      throw new DownloadClientError(this.name, 'Connection failed: server didn\'t respond as expected. Check host, port, SSL settings, and any reverse proxy that may be intercepting requests.');
     }
 
     if (data.error) {
-      throw new Error(`Deluge login error: ${data.error.message}`);
+      throw new DownloadClientAuthError(this.name, `Deluge login error: ${data.error.message}`);
     }
 
     if (data.result !== true) {
-      throw new Error('Deluge login failed: Invalid password');
+      throw new DownloadClientAuthError(this.name, 'Deluge login failed: Invalid password');
     }
 
     // Persist session cookie for subsequent authenticated requests
@@ -145,7 +160,7 @@ export class DelugeClient implements DownloadClientAdapter {
 
   async addDownload(artifact: DownloadArtifact, options?: AddDownloadOptions): Promise<string> {
     if (artifact.type === 'nzb-url') {
-      throw new Error('Deluge only supports torrent artifacts (torrent-bytes, magnet-uri)');
+      throw new DownloadClientError(this.name, 'Deluge only supports torrent artifacts (torrent-bytes, magnet-uri)');
     }
 
     const addOptions: Record<string, unknown> = {};
@@ -181,7 +196,7 @@ export class DelugeClient implements DownloadClientAdapter {
     }
 
     if (!result || typeof result !== 'string') {
-      throw new Error('Deluge returned no torrent hash');
+      throw new DownloadClientError(this.name, 'Deluge returned no torrent hash');
     }
 
     return result;

@@ -3,6 +3,7 @@ import { http, HttpResponse, delay } from 'msw';
 import { useMswServer } from '../__tests__/msw/server.js';
 import { NZBGetClient } from './nzbget.js';
 import type { DownloadArtifact } from './types.js';
+import { DownloadClientAuthError, DownloadClientError, DownloadClientTimeoutError } from './errors.js';
 
 const RPC_URL = 'http://localhost:6789/jsonrpc';
 
@@ -336,7 +337,7 @@ describe('NZBGetClient', () => {
 
       const result = await client.test();
       expect(result.success).toBe(false);
-      expect(result.message).toContain('401');
+      expect(result.message).toContain('Authentication failed');
     });
 
     it('returns failure on network error', async () => {
@@ -536,27 +537,27 @@ describe('NZBGetClient', () => {
       expect(categories).toEqual([]);
     });
 
-    it('throws on auth failure (HTTP 401)', async () => {
+    it('throws DownloadClientAuthError on auth failure (HTTP 401)', async () => {
       server.use(
         http.post(RPC_URL, () => {
           return new HttpResponse(null, { status: 401 });
         }),
       );
 
-      await expect(client.getCategories()).rejects.toThrow('401');
+      await expect(client.getCategories()).rejects.toBeInstanceOf(DownloadClientAuthError);
     });
 
-    it('throws on network error', async () => {
+    it('throws DownloadClientError on network error', async () => {
       server.use(
         http.post(RPC_URL, () => {
           return HttpResponse.error();
         }),
       );
 
-      await expect(client.getCategories()).rejects.toThrow();
+      await expect(client.getCategories()).rejects.toBeInstanceOf(DownloadClientError);
     });
 
-    it('throws on malformed response (HTML instead of JSON)', async () => {
+    it('throws DownloadClientError on malformed response (HTML instead of JSON)', async () => {
       server.use(
         http.post(RPC_URL, () => {
           return new HttpResponse('<html>Not JSON</html>', {
@@ -565,10 +566,12 @@ describe('NZBGetClient', () => {
         }),
       );
 
-      await expect(client.getCategories()).rejects.toThrow('didn\'t respond as expected');
+      const error = await client.getCategories().catch((e: unknown) => e);
+      expect(error).toBeInstanceOf(DownloadClientError);
+      expect((error as DownloadClientError).message).toContain('didn\'t respond as expected');
     });
 
-    it('throws on request timeout', async () => {
+    it('throws DownloadClientTimeoutError on request timeout', async () => {
       server.use(
         http.post(RPC_URL, async () => {
           await delay('infinite');
@@ -579,7 +582,7 @@ describe('NZBGetClient', () => {
       const originalTimeout = AbortSignal.timeout;
       AbortSignal.timeout = () => AbortSignal.abort(new DOMException('The operation was aborted', 'TimeoutError'));
 
-      await expect(client.getCategories()).rejects.toThrow();
+      await expect(client.getCategories()).rejects.toBeInstanceOf(DownloadClientTimeoutError);
 
       AbortSignal.timeout = originalTimeout;
     });

@@ -2,6 +2,7 @@ import { writeFile, access, constants } from 'node:fs/promises';
 import { join } from 'node:path';
 import type { DownloadClientAdapter, DownloadItemInfo, DownloadArtifact, DownloadProtocol } from './types.js';
 import { fetchWithTimeout } from '../utils/fetch-with-timeout.js';
+import { DownloadClientError, DownloadClientTimeoutError, isTimeoutError } from './errors.js';
 
 export interface BlackholeConfig {
   watchDir: string;
@@ -36,9 +37,15 @@ export class BlackholeClient implements DownloadClientAdapter {
     }
 
     // nzb-url — fetch the URL and write the bytes
-    const response = await fetchWithTimeout(artifact.url, {}, REQUEST_TIMEOUT_MS);
+    let response: Response;
+    try {
+      response = await fetchWithTimeout(artifact.url, {}, REQUEST_TIMEOUT_MS);
+    } catch (error: unknown) {
+      if (isTimeoutError(error)) throw new DownloadClientTimeoutError(this.name, (error as Error).message);
+      throw new DownloadClientError(this.name, error instanceof Error ? error.message : String(error));
+    }
     if (!response.ok) {
-      throw new Error(`Failed to download file: HTTP ${response.status}`);
+      throw new DownloadClientError(this.name, `Failed to download file: HTTP ${response.status}`);
     }
     const buffer = Buffer.from(await response.arrayBuffer());
     const filePath = join(this.config.watchDir, `download-${timestamp}.nzb`);

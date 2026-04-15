@@ -3,6 +3,8 @@ import { type DownloadClientAdapter, type DownloadItemInfo, type AddDownloadOpti
 import { qbTorrentsResponseSchema } from './schemas.js';
 import { fetchWithTimeout } from '../utils/fetch-with-timeout.js';
 import { DEFAULT_REQUEST_TIMEOUT_MS } from '../utils/constants.js';
+import { DownloadClientAuthError, DownloadClientError } from './errors.js';
+import { requestWithRetry } from './retry.js';
 
 export interface QBittorrentConfig {
   host: string;
@@ -72,12 +74,12 @@ export class QBittorrentClient implements DownloadClientAdapter {
     }, DEFAULT_REQUEST_TIMEOUT_MS);
 
     if (!response.ok) {
-      throw new Error(`Login failed: HTTP ${response.status}`);
+      throw new DownloadClientError(this.name, `Login failed: HTTP ${response.status}`);
     }
 
     const text = await response.text();
     if (text === 'Fails.') {
-      throw new Error('Login failed: Invalid credentials');
+      throw new DownloadClientAuthError(this.name, 'Login failed: Invalid credentials');
     }
 
     // Extract SID cookie from response headers
@@ -90,52 +92,58 @@ export class QBittorrentClient implements DownloadClientAdapter {
     }
 
     if (!this.cookie) {
-      throw new Error('Login failed: No session cookie received');
+      throw new DownloadClientAuthError(this.name, 'Login failed: No session cookie received');
     }
   }
 
-  private async request<T>(path: string, options: RequestInit = {}, retried = false): Promise<T> {
-    if (!this.cookie) {
-      await this.login();
-    }
+  private async request<T>(path: string, options: RequestInit = {}): Promise<T> {
+    return requestWithRetry(
+      async () => {
+        if (!this.cookie) {
+          await this.login();
+        }
 
-    const response = await fetchWithTimeout(`${this.baseUrl}${path}`, {
-      ...options,
-      headers: {
-        ...options.headers,
-        Cookie: this.cookie!,
-        Referer: this.baseUrl,
+        const response = await fetchWithTimeout(`${this.baseUrl}${path}`, {
+          ...options,
+          headers: {
+            ...options.headers,
+            Cookie: this.cookie!,
+            Referer: this.baseUrl,
+          },
+        }, DEFAULT_REQUEST_TIMEOUT_MS);
+
+        if (response.status === 403) {
+          throw new DownloadClientAuthError(this.name, `Session expired: HTTP 403 ${path}`);
+        }
+
+        if (!response.ok) {
+          throw new DownloadClientError(this.name, `Request failed: HTTP ${response.status} ${path}`);
+        }
+
+        const text = await response.text();
+        if (!text) {
+          return undefined as T;
+        }
+
+        try {
+          return JSON.parse(text) as T;
+        } catch {
+          const contentType = response.headers.get('content-type') ?? '';
+          if (contentType.includes('text/html')) {
+            throw new DownloadClientError(this.name, 'Connection failed: server didn\'t respond as expected. Check host, port, SSL settings, and any reverse proxy (e.g. Authelia) that may be intercepting requests.');
+          }
+          return undefined as T;
+        }
       },
-    }, DEFAULT_REQUEST_TIMEOUT_MS);
-
-    if (response.status === 403 && !retried) {
-      // Session expired, re-login and retry once
-      this.cookie = undefined;
-      await this.login();
-      return this.request(path, options, true);
-    }
-
-    if (!response.ok) {
-      throw new Error(`Request failed: HTTP ${response.status} ${path}`);
-    }
-
-    const text = await response.text();
-    if (!text) {
-      return undefined as T;
-    }
-
-    try {
-      return JSON.parse(text) as T;
-    } catch {
-      // Non-JSON 2xx response (e.g. qB returns "Ok." for /torrents/add).
-      // Check Content-Type to distinguish: HTML/text from a proxy is an error,
-      // plain text from qB (no content-type or text/plain) is a valid non-JSON response.
-      const contentType = response.headers.get('content-type') ?? '';
-      if (contentType.includes('text/html')) {
-        throw new Error('Connection failed: server didn\'t respond as expected. Check host, port, SSL settings, and any reverse proxy (e.g. Authelia) that may be intercepting requests.');
-      }
-      return undefined as T;
-    }
+      {
+        clientName: this.name,
+        shouldRetry: (e) => e instanceof DownloadClientAuthError,
+        onRetry: async () => {
+          this.cookie = undefined;
+          await this.login();
+        },
+      },
+    );
   }
 
   async addDownload(artifact: DownloadArtifact, options?: AddDownloadOptions): Promise<string> {
@@ -166,41 +174,57 @@ export class QBittorrentClient implements DownloadClientAdapter {
       return artifact.infoHash;
     }
 
-    throw new Error('qBittorrent only supports torrent artifacts (torrent-bytes, magnet-uri)');
+    throw new DownloadClientError(this.name, 'qBittorrent only supports torrent artifacts (torrent-bytes, magnet-uri)');
   }
 
   private async addDownloadFromFile(torrentFile: Buffer, infoHash: string, options?: AddDownloadOptions): Promise<string> {
-    if (!this.cookie) {
-      await this.login();
-    }
+    return requestWithRetry(
+      async () => {
+        if (!this.cookie) {
+          await this.login();
+        }
 
-    const formData = new FormData();
-    formData.append('torrents', new Blob([new Uint8Array(torrentFile)], { type: 'application/x-bittorrent' }), 'upload.torrent');
+        const formData = new FormData();
+        formData.append('torrents', new Blob([new Uint8Array(torrentFile)], { type: 'application/x-bittorrent' }), 'upload.torrent');
 
-    if (options?.savePath) {
-      formData.append('savepath', options.savePath);
-    }
-    if (options?.category) {
-      formData.append('category', options.category);
-    }
-    if (options?.paused) {
-      formData.append('paused', 'true');
-    }
+        if (options?.savePath) {
+          formData.append('savepath', options.savePath);
+        }
+        if (options?.category) {
+          formData.append('category', options.category);
+        }
+        if (options?.paused) {
+          formData.append('paused', 'true');
+        }
 
-    const response = await fetchWithTimeout(`${this.baseUrl}/api/v2/torrents/add`, {
-      method: 'POST',
-      headers: {
-        Cookie: this.cookie!,
-        Referer: this.baseUrl,
+        const response = await fetchWithTimeout(`${this.baseUrl}/api/v2/torrents/add`, {
+          method: 'POST',
+          headers: {
+            Cookie: this.cookie!,
+            Referer: this.baseUrl,
+          },
+          body: formData,
+        }, DEFAULT_REQUEST_TIMEOUT_MS);
+
+        if (response.status === 403) {
+          throw new DownloadClientAuthError(this.name, `Session expired: HTTP 403 /api/v2/torrents/add`);
+        }
+
+        if (!response.ok) {
+          throw new DownloadClientError(this.name, `Request failed: HTTP ${response.status} /api/v2/torrents/add`);
+        }
+
+        return infoHash;
       },
-      body: formData,
-    }, DEFAULT_REQUEST_TIMEOUT_MS);
-
-    if (!response.ok) {
-      throw new Error(`Request failed: HTTP ${response.status} /api/v2/torrents/add`);
-    }
-
-    return infoHash;
+      {
+        clientName: this.name,
+        shouldRetry: (e) => e instanceof DownloadClientAuthError,
+        onRetry: async () => {
+          this.cookie = undefined;
+          await this.login();
+        },
+      },
+    );
   }
 
 
@@ -213,7 +237,7 @@ export class QBittorrentClient implements DownloadClientAdapter {
 
     const parsed = qbTorrentsResponseSchema.safeParse(raw);
     if (!parsed.success) {
-      throw new Error(`qBittorrent returned unexpected torrent data: ${parsed.error.issues[0]?.message ?? 'unknown'}`);
+      throw new DownloadClientError(this.name, `qBittorrent returned unexpected torrent data: ${parsed.error.issues[0]?.message ?? 'unknown'}`);
     }
 
     if (parsed.data.length === 0) return null;
@@ -228,7 +252,7 @@ export class QBittorrentClient implements DownloadClientAdapter {
 
     const parsed = qbTorrentsResponseSchema.safeParse(raw);
     if (!parsed.success) {
-      throw new Error(`qBittorrent returned unexpected torrent data: ${parsed.error.issues[0]?.message ?? 'unknown'}`);
+      throw new DownloadClientError(this.name, `qBittorrent returned unexpected torrent data: ${parsed.error.issues[0]?.message ?? 'unknown'}`);
     }
 
     return parsed.data.map((t) => this.mapItem(t as QBTorrent));

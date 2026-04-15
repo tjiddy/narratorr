@@ -3,6 +3,7 @@ import { http, HttpResponse, delay } from 'msw';
 import { useMswServer } from '../__tests__/msw/server.js';
 import { QBittorrentClient } from './qbittorrent.js';
 import type { DownloadArtifact } from './types.js';
+import { DownloadClientAuthError, DownloadClientError, DownloadClientTimeoutError } from './errors.js';
 
 const config = { host: 'localhost', port: 8080, username: 'admin', password: 'password', useSsl: false };
 const BASE_URL = 'http://localhost:8080';
@@ -92,6 +93,19 @@ describe('QBittorrentClient', () => {
       expect(result.success).toBe(false);
       expect(result.message).toBe('Login failed: No session cookie received');
     });
+
+    it('throws DownloadClientError (not auth) on non-auth login HTTP failure', async () => {
+      server.use(
+        http.post(`${BASE_URL}/api/v2/auth/login`, () => {
+          return new HttpResponse(null, { status: 500 });
+        }),
+      );
+
+      const error = await client.getAllDownloads().catch((e: unknown) => e);
+      expect(error).toBeInstanceOf(DownloadClientError);
+      expect(error).not.toBeInstanceOf(DownloadClientAuthError);
+      expect((error as DownloadClientError).message).toContain('500');
+    });
   });
 
   describe('request', () => {
@@ -125,7 +139,7 @@ describe('QBittorrentClient', () => {
       expect(result).toBeNull();
     });
 
-    it('throws for HTML response from proxy interception', async () => {
+    it('throws DownloadClientError for HTML response from proxy interception', async () => {
       server.use(
         http.get(`${BASE_URL}/api/v2/torrents/info`, () => {
           return new HttpResponse('<html><body>Authelia Login</body></html>', {
@@ -134,17 +148,19 @@ describe('QBittorrentClient', () => {
         }),
       );
 
-      await expect(client.getDownload('abc123')).rejects.toThrow('didn\'t respond as expected');
+      const error = await client.getDownload('abc123').catch((e: unknown) => e);
+      expect(error).toBeInstanceOf(DownloadClientError);
+      expect((error as DownloadClientError).message).toContain('didn\'t respond as expected');
     });
 
-    it('does not retry infinitely (throws after second 403)', async () => {
+    it('does not retry infinitely (throws DownloadClientAuthError after second 403)', async () => {
       server.use(
         http.get(`${BASE_URL}/api/v2/torrents/info`, () => {
           return new HttpResponse(null, { status: 403 });
         }),
       );
 
-      await expect(client.getAllDownloads()).rejects.toThrow('Request failed: HTTP 403');
+      await expect(client.getAllDownloads()).rejects.toBeInstanceOf(DownloadClientAuthError);
     });
   });
 
@@ -235,6 +251,70 @@ describe('QBittorrentClient', () => {
         expect(capturedBody).toContain('books');
         expect(capturedBody).toContain('paused');
         expect(capturedBody).toContain('true');
+      });
+    });
+
+    describe('torrent-bytes retry/auth', () => {
+      const fakeTorrentFile = Buffer.from('d8:announce35:http://tracker.example.com/announce4:infod6:lengthi12345e4:name8:test.txte');
+      const torrentArtifact: DownloadArtifact = {
+        type: 'torrent-bytes',
+        data: fakeTorrentFile,
+        infoHash: 'e4c4ed54fbde46fb891a9ef51a368f7cde76eb74',
+      };
+
+      it('retries once on 403 (session expired) during torrent-bytes upload', async () => {
+        let uploadCallCount = 0;
+        server.use(
+          http.post(`${BASE_URL}/api/v2/torrents/add`, () => {
+            uploadCallCount++;
+            if (uploadCallCount === 1) {
+              return new HttpResponse(null, { status: 403 });
+            }
+            return new HttpResponse('');
+          }),
+        );
+
+        const hash = await client.addDownload(torrentArtifact);
+        expect(hash).toBe('e4c4ed54fbde46fb891a9ef51a368f7cde76eb74');
+        expect(uploadCallCount).toBe(2);
+      });
+
+      it('throws DownloadClientAuthError after retry exhaustion on torrent-bytes upload', async () => {
+        server.use(
+          http.post(`${BASE_URL}/api/v2/torrents/add`, () => {
+            return new HttpResponse(null, { status: 403 });
+          }),
+        );
+
+        await expect(client.addDownload(torrentArtifact)).rejects.toBeInstanceOf(DownloadClientAuthError);
+      });
+
+      it('throws DownloadClientError on non-auth HTTP failure during torrent-bytes upload', async () => {
+        server.use(
+          http.post(`${BASE_URL}/api/v2/torrents/add`, () => {
+            return new HttpResponse(null, { status: 500 });
+          }),
+        );
+
+        const error = await client.addDownload(torrentArtifact).catch((e: unknown) => e);
+        expect(error).toBeInstanceOf(DownloadClientError);
+        expect(error).not.toBeInstanceOf(DownloadClientAuthError);
+      });
+
+      it('throws DownloadClientTimeoutError on timeout during torrent-bytes upload', async () => {
+        server.use(
+          http.post(`${BASE_URL}/api/v2/torrents/add`, async () => {
+            await delay('infinite');
+            return new HttpResponse('');
+          }),
+        );
+
+        const originalTimeout = AbortSignal.timeout;
+        AbortSignal.timeout = () => AbortSignal.abort(new DOMException('The operation was aborted', 'TimeoutError'));
+
+        await expect(client.addDownload(torrentArtifact)).rejects.toBeInstanceOf(DownloadClientTimeoutError);
+
+        AbortSignal.timeout = originalTimeout;
       });
     });
 
@@ -614,27 +694,27 @@ describe('QBittorrentClient', () => {
       expect(categories).toEqual([]);
     });
 
-    it('throws on auth failure (403 after retry)', async () => {
+    it('throws DownloadClientAuthError on auth failure (403 after retry)', async () => {
       server.use(
         http.get(`${BASE_URL}/api/v2/torrents/categories`, () => {
           return new HttpResponse(null, { status: 403 });
         }),
       );
 
-      await expect(client.getCategories()).rejects.toThrow('403');
+      await expect(client.getCategories()).rejects.toBeInstanceOf(DownloadClientAuthError);
     });
 
-    it('throws on network error', async () => {
+    it('throws DownloadClientError on network error', async () => {
       server.use(
         http.get(`${BASE_URL}/api/v2/torrents/categories`, () => {
           return HttpResponse.error();
         }),
       );
 
-      await expect(client.getCategories()).rejects.toThrow();
+      await expect(client.getCategories()).rejects.toBeInstanceOf(DownloadClientError);
     });
 
-    it('throws on malformed response (HTML instead of JSON)', async () => {
+    it('throws DownloadClientError on malformed response (HTML instead of JSON)', async () => {
       server.use(
         http.get(`${BASE_URL}/api/v2/torrents/categories`, () => {
           return new HttpResponse('<html>Not JSON</html>', {
@@ -643,10 +723,12 @@ describe('QBittorrentClient', () => {
         }),
       );
 
-      await expect(client.getCategories()).rejects.toThrow('didn\'t respond as expected');
+      const error = await client.getCategories().catch((e: unknown) => e);
+      expect(error).toBeInstanceOf(DownloadClientError);
+      expect((error as DownloadClientError).message).toContain('didn\'t respond as expected');
     });
 
-    it('throws on request timeout', async () => {
+    it('throws DownloadClientTimeoutError on request timeout', async () => {
       server.use(
         http.get(`${BASE_URL}/api/v2/torrents/categories`, async () => {
           await delay('infinite');
@@ -657,7 +739,7 @@ describe('QBittorrentClient', () => {
       const originalTimeout = AbortSignal.timeout;
       AbortSignal.timeout = () => AbortSignal.abort(new DOMException('The operation was aborted', 'TimeoutError'));
 
-      await expect(client.getCategories()).rejects.toThrow();
+      await expect(client.getCategories()).rejects.toBeInstanceOf(DownloadClientTimeoutError);
 
       AbortSignal.timeout = originalTimeout;
     });
@@ -852,7 +934,7 @@ describe('QBittorrentClient', () => {
       expect(result!.eta).toBeUndefined();
     });
 
-    it('handles whitespace-only response body with HTML content-type as error', async () => {
+    it('handles whitespace-only response body with HTML content-type as DownloadClientError', async () => {
       server.use(
         http.get(`${BASE_URL}/api/v2/torrents/info`, () => {
           return new HttpResponse('   ', {
@@ -861,7 +943,9 @@ describe('QBittorrentClient', () => {
         }),
       );
 
-      await expect(client.getDownload('abc123')).rejects.toThrow('didn\'t respond as expected');
+      const error = await client.getDownload('abc123').catch((e: unknown) => e);
+      expect(error).toBeInstanceOf(DownloadClientError);
+      expect((error as DownloadClientError).message).toContain('didn\'t respond as expected');
     });
 
     it('handles whitespace-only response body without HTML content-type as undefined', async () => {

@@ -4,6 +4,7 @@ import { useMswServer } from '../__tests__/msw/server.js';
 import { TransmissionClient } from './transmission.js';
 import type { DownloadArtifact } from './types.js';
 
+
 const config = { host: 'localhost', port: 9091, username: 'admin', password: 'password', useSsl: false };
 const BASE_URL = 'http://localhost:9091';
 const RPC_URL = `${BASE_URL}/transmission/rpc`;
