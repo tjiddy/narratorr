@@ -89,6 +89,18 @@ describe('indexers routes', () => {
 
       expect(res.statusCode).toBe(400);
     });
+
+    it('returns 400 for invalid typed settings and does not call service.create', async () => {
+      const res = await app.inject({
+        method: 'POST',
+        url: '/api/indexers',
+        payload: { name: 'Bad', type: 'newznab', settings: { apiKey: 'key' } }, // missing apiUrl
+      });
+
+      expect(res.statusCode).toBe(400);
+      expect(res.json().message).toContain('settings/apiUrl');
+      expect(services.indexer.create).not.toHaveBeenCalled();
+    });
   });
 
   describe('PUT /api/indexers/:id', () => {
@@ -114,6 +126,18 @@ describe('indexers routes', () => {
       });
 
       expect(res.statusCode).toBe(404);
+    });
+
+    it('returns 400 when settings provided without type', async () => {
+      const res = await app.inject({
+        method: 'PUT',
+        url: '/api/indexers/1',
+        payload: { settings: { apiUrl: 'https://test', apiKey: 'key' } },
+      });
+
+      expect(res.statusCode).toBe(400);
+      expect(res.json().message).toContain('type');
+      expect(services.indexer.update).not.toHaveBeenCalled();
     });
   });
 

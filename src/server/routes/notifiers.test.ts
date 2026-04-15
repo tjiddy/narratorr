@@ -79,6 +79,18 @@ describe('notifiers routes', () => {
       });
       expect(res.statusCode).toBe(400);
     });
+
+    it('returns 400 for invalid typed settings and does not call service.create', async () => {
+      const res = await app.inject({
+        method: 'POST',
+        url: '/api/notifiers',
+        payload: { name: 'Bad', type: 'webhook', events: ['on_grab'], settings: { method: 'POST' } }, // missing url
+      });
+
+      expect(res.statusCode).toBe(400);
+      expect(res.json().message).toContain('settings/url');
+      expect(services.notifier.create).not.toHaveBeenCalled();
+    });
   });
 
   describe('PUT /api/notifiers/:id', () => {
@@ -101,6 +113,18 @@ describe('notifiers routes', () => {
         payload: { name: 'Nope' },
       });
       expect(res.statusCode).toBe(404);
+    });
+
+    it('returns 400 when settings provided without type', async () => {
+      const res = await app.inject({
+        method: 'PUT',
+        url: '/api/notifiers/1',
+        payload: { settings: { url: 'https://test' } },
+      });
+
+      expect(res.statusCode).toBe(400);
+      expect(res.json().message).toContain('type');
+      expect(services.notifier.update).not.toHaveBeenCalled();
     });
   });
 
