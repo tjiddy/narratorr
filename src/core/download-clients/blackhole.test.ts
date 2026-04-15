@@ -261,6 +261,57 @@ describe('BlackholeClient', () => {
     });
   });
 
+  describe('addDownload — nzb-bytes', () => {
+    let usenetClient: BlackholeClient;
+
+    beforeEach(() => {
+      usenetClient = new BlackholeClient({ watchDir: '/downloads/watch', protocol: 'usenet' });
+    });
+
+    it('writes nzb-bytes data directly to watch dir as .nzb file (no HTTP fetch)', async () => {
+      const nzbData = Buffer.from('<nzb><file subject="test"/></nzb>');
+      await usenetClient.addDownload({ type: 'nzb-bytes', data: nzbData });
+
+      expect(writeFile).toHaveBeenCalledWith(
+        expect.stringMatching(/download-\d+\.nzb$/),
+        nzbData,
+      );
+    });
+
+    it('file contents match the original buffer exactly', async () => {
+      const binaryData = Buffer.from([0x00, 0x01, 0xFF, 0xFE, 0x80, 0x7F]);
+      await usenetClient.addDownload({ type: 'nzb-bytes', data: binaryData });
+
+      expect(writeFile).toHaveBeenCalledWith(
+        expect.any(String),
+        binaryData,
+      );
+    });
+
+    it('rejects zero-length nzb-bytes with DownloadClientError before any filesystem write', async () => {
+      const emptyBuffer = Buffer.alloc(0);
+      await expect(
+        usenetClient.addDownload({ type: 'nzb-bytes', data: emptyBuffer }),
+      ).rejects.toThrow(DownloadClientError);
+      expect(writeFile).not.toHaveBeenCalled();
+    });
+
+    it('existing nzb-url path unchanged (still fetches URL and writes)', async () => {
+      server.use(
+        http.get('https://indexer.test/nzb', () => {
+          return new HttpResponse(Buffer.from('<nzb/>'), { status: 200 });
+        }),
+      );
+
+      await usenetClient.addDownload({ type: 'nzb-url', url: 'https://indexer.test/nzb' });
+
+      expect(writeFile).toHaveBeenCalledWith(
+        expect.stringMatching(/download-\d+\.nzb$/),
+        expect.any(Buffer),
+      );
+    });
+  });
+
   describe('protocol', () => {
     it('reflects configured protocol', () => {
       expect(client.protocol).toBe('torrent');

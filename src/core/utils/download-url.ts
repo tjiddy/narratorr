@@ -6,12 +6,14 @@ import { normalizeInfoHash } from './normalize-info-hash.js';
 export type DownloadArtifact =
   | { type: 'torrent-bytes'; data: Buffer; infoHash: string }
   | { type: 'magnet-uri'; uri: string; infoHash: string }
-  | { type: 'nzb-url'; url: string };
+  | { type: 'nzb-url'; url: string }
+  | { type: 'nzb-bytes'; data: Buffer };
 
 export type DownloadProtocol = 'torrent' | 'usenet';
 
 // ── Constants ─────────────────────────────────────────────────────────
-const DATA_URI_PREFIX = 'data:application/x-bittorrent;base64,';
+const DATA_TORRENT_URI_PREFIX = 'data:application/x-bittorrent;base64,';
+const DATA_NZB_URI_PREFIX = 'data:application/x-nzb;base64,';
 const MAX_REDIRECTS = 5;
 const DOWNLOAD_TIMEOUT_MS = 30_000;
 
@@ -31,7 +33,7 @@ export class DownloadUrl {
   }
 
   get isDataUri(): boolean {
-    return this.raw.startsWith(DATA_URI_PREFIX);
+    return this.raw.startsWith(DATA_TORRENT_URI_PREFIX) || this.raw.startsWith(DATA_NZB_URI_PREFIX);
   }
 
   async resolve(): Promise<DownloadArtifact> {
@@ -43,7 +45,7 @@ export class DownloadUrl {
       return this.resolveDataUri();
     }
 
-    // Usenet HTTP URLs — passthrough (adapters only support URL submission)
+    // Usenet HTTP URLs — passthrough as nzb-url (adapters handle URL submission)
     if (this.protocol === 'usenet' && this.isHttp) {
       return { type: 'nzb-url', url: this.raw };
     }
@@ -65,7 +67,12 @@ export class DownloadUrl {
   }
 
   private resolveDataUri(): DownloadArtifact {
-    const base64Content = this.raw.slice(DATA_URI_PREFIX.length);
+    if (this.raw.startsWith(DATA_NZB_URI_PREFIX)) {
+      const base64Content = this.raw.slice(DATA_NZB_URI_PREFIX.length);
+      return { type: 'nzb-bytes', data: Buffer.from(base64Content, 'base64') };
+    }
+
+    const base64Content = this.raw.slice(DATA_TORRENT_URI_PREFIX.length);
     const buffer = Buffer.from(base64Content, 'base64');
 
     const infoHash = extractInfoHashFromTorrent(buffer);

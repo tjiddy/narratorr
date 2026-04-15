@@ -37,6 +37,15 @@ export class BlackholeClient implements DownloadClientAdapter {
       return null;
     }
 
+    if (artifact.type === 'nzb-bytes') {
+      if (artifact.data.length === 0) {
+        throw new DownloadClientError(this.name, 'Cannot add empty NZB file');
+      }
+      const filePath = join(this.config.watchDir, `download-${timestamp}.nzb`);
+      await writeFile(filePath, artifact.data);
+      return null;
+    }
+
     // nzb-url — fetch the URL and write the bytes
     let response: Response;
     try {

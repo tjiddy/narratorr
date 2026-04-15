@@ -134,6 +134,168 @@ describe('SABnzbdClient', () => {
       ).rejects.toThrow('failed to add');
     });
 
+    it('submits nzb-bytes artifact via multipart POST with mode=addlocalfile', async () => {
+      let capturedUrl = '';
+      let capturedContentType = '';
+      server.use(
+        http.post(`${API_BASE}/api`, async ({ request }) => {
+          capturedUrl = request.url;
+          capturedContentType = request.headers.get('content-type') ?? '';
+          return HttpResponse.json({ status: true, nzo_ids: ['SABnzbd_nzo_bytes1'] });
+        }),
+      );
+
+      const nzbData = Buffer.from('<nzb><file/></nzb>');
+      const id = await client.addDownload({ type: 'nzb-bytes', data: nzbData });
+
+      expect(id).toBe('SABnzbd_nzo_bytes1');
+      const url = new URL(capturedUrl);
+      expect(url.searchParams.get('mode')).toBe('addlocalfile');
+      expect(url.searchParams.get('apikey')).toBe(API_KEY);
+      expect(url.searchParams.get('output')).toBe('json');
+      expect(capturedContentType).toContain('multipart/form-data');
+    });
+
+    it('multipart request body contains correct NZB content', async () => {
+      let capturedBody: FormData | null = null;
+      server.use(
+        http.post(`${API_BASE}/api`, async ({ request }) => {
+          capturedBody = await request.formData();
+          return HttpResponse.json({ status: true, nzo_ids: ['SABnzbd_nzo_bytes2'] });
+        }),
+      );
+
+      const nzbContent = '<nzb><file subject="test"/></nzb>';
+      const nzbData = Buffer.from(nzbContent);
+      await client.addDownload({ type: 'nzb-bytes', data: nzbData });
+
+      expect(capturedBody).not.toBeNull();
+      const file = capturedBody!.get('name') as File;
+      expect(file).toBeInstanceOf(File);
+      const fileText = await file.text();
+      expect(fileText).toBe(nzbContent);
+    });
+
+    it('forwards category and priority options in multipart nzb-bytes request', async () => {
+      let capturedUrl = '';
+      server.use(
+        http.post(`${API_BASE}/api`, async ({ request }) => {
+          capturedUrl = request.url;
+          return HttpResponse.json({ status: true, nzo_ids: ['SABnzbd_nzo_bytes3'] });
+        }),
+      );
+
+      const nzbData = Buffer.from('<nzb><file/></nzb>');
+      await client.addDownload({ type: 'nzb-bytes', data: nzbData }, { category: 'audiobooks', paused: true });
+
+      const url = new URL(capturedUrl);
+      expect(url.searchParams.get('cat')).toBe('audiobooks');
+      expect(url.searchParams.get('priority')).toBe('-1');
+    });
+
+    it('throws DownloadClientError when addlocalfile returns status: false', async () => {
+      server.use(
+        http.post(`${API_BASE}/api`, () => {
+          return HttpResponse.json({ status: false, nzo_ids: [] });
+        }),
+      );
+
+      const nzbData = Buffer.from('<nzb><file/></nzb>');
+      await expect(
+        client.addDownload({ type: 'nzb-bytes', data: nzbData }),
+      ).rejects.toThrow('failed to add');
+    });
+
+    it('throws DownloadClientError when addlocalfile returns empty nzo_ids', async () => {
+      server.use(
+        http.post(`${API_BASE}/api`, () => {
+          return HttpResponse.json({ status: true, nzo_ids: [] });
+        }),
+      );
+
+      const nzbData = Buffer.from('<nzb><file/></nzb>');
+      await expect(
+        client.addDownload({ type: 'nzb-bytes', data: nzbData }),
+      ).rejects.toThrow('failed to add');
+    });
+
+    it('rejects zero-length nzb-bytes with DownloadClientError before any network call', async () => {
+      let requestMade = false;
+      server.use(
+        http.post(`${API_BASE}/api`, () => {
+          requestMade = true;
+          return HttpResponse.json({ status: true, nzo_ids: ['SABnzbd_nzo_empty'] });
+        }),
+      );
+
+      const emptyBuffer = Buffer.alloc(0);
+      await expect(
+        client.addDownload({ type: 'nzb-bytes', data: emptyBuffer }),
+      ).rejects.toThrow(DownloadClientError);
+      expect(requestMade).toBe(false);
+    });
+
+    it('throws DownloadClientAuthError on 401 multipart response', async () => {
+      server.use(
+        http.post(`${API_BASE}/api`, () => {
+          return new HttpResponse(null, { status: 401, statusText: 'Unauthorized' });
+        }),
+      );
+
+      const nzbData = Buffer.from('<nzb/>');
+      await expect(
+        client.addDownload({ type: 'nzb-bytes', data: nzbData }),
+      ).rejects.toThrow(DownloadClientAuthError);
+    });
+
+    it('throws DownloadClientTimeoutError on multipart request timeout', async () => {
+      server.use(
+        http.post(`${API_BASE}/api`, async () => {
+          await delay('infinite');
+          return HttpResponse.json({ status: true, nzo_ids: ['SABnzbd_nzo_timeout'] });
+        }),
+      );
+
+      const originalTimeout = AbortSignal.timeout;
+      AbortSignal.timeout = () => AbortSignal.abort(new DOMException('The operation was aborted', 'TimeoutError'));
+
+      const nzbData = Buffer.from('<nzb/>');
+      await expect(
+        client.addDownload({ type: 'nzb-bytes', data: nzbData }),
+      ).rejects.toBeInstanceOf(DownloadClientTimeoutError);
+
+      AbortSignal.timeout = originalTimeout;
+    });
+
+    it('throws DownloadClientError on non-OK multipart response', async () => {
+      server.use(
+        http.post(`${API_BASE}/api`, () => {
+          return new HttpResponse(null, { status: 500, statusText: 'Internal Server Error' });
+        }),
+      );
+
+      const nzbData = Buffer.from('<nzb/>');
+      await expect(
+        client.addDownload({ type: 'nzb-bytes', data: nzbData }),
+      ).rejects.toThrow('HTTP 500');
+    });
+
+    it('throws DownloadClientError on non-JSON multipart response (proxy intercept)', async () => {
+      server.use(
+        http.post(`${API_BASE}/api`, () => {
+          return new HttpResponse('<html>Login</html>', {
+            status: 200,
+            headers: { 'Content-Type': 'text/html' },
+          });
+        }),
+      );
+
+      const nzbData = Buffer.from('<nzb/>');
+      await expect(
+        client.addDownload({ type: 'nzb-bytes', data: nzbData }),
+      ).rejects.toThrow('reverse proxy');
+    });
+
     it('rejects torrent artifact with usenet-only error', async () => {
       await expect(
         client.addDownload({ type: 'magnet-uri', uri: 'magnet:?xt=urn:btih:abc123', infoHash: 'abc123' }),

@@ -494,6 +494,44 @@ describe('extractInfoHashFromTorrent', () => {
   });
 });
 
+describe('resolve() — nzb-bytes data URI', () => {
+  const nzbContent = '<nzb xmlns="http://www.newzbin.com/DTD/2003/nzb"><file></file></nzb>';
+  const nzbBase64 = Buffer.from(nzbContent).toString('base64');
+  const nzbDataUri = `data:application/x-nzb;base64,${nzbBase64}`;
+
+  beforeEach(() => {
+    mockFetch.mockClear();
+  });
+
+  it('resolves data:application/x-nzb;base64 URI to nzb-bytes artifact with correct decoded content', async () => {
+    const dl = new DownloadUrl(nzbDataUri, 'usenet');
+    const artifact = await dl.resolve();
+
+    expect(artifact.type).toBe('nzb-bytes');
+    const nb = artifact as Extract<DownloadArtifact, { type: 'nzb-bytes' }>;
+    expect(nb.data.toString('utf-8')).toBe(nzbContent);
+    expect(mockFetch).not.toHaveBeenCalled();
+  });
+
+  it('usenet HTTP URLs still produce nzb-url (passthrough unchanged)', async () => {
+    const dl = new DownloadUrl('https://indexer.example.com/dl/12345.nzb', 'usenet');
+    const artifact = await dl.resolve();
+
+    expect(artifact).toEqual({ type: 'nzb-url', url: 'https://indexer.example.com/dl/12345.nzb' });
+    expect(mockFetch).not.toHaveBeenCalled();
+  });
+
+  it('data:application/x-bittorrent;base64 still produces torrent-bytes (no regression)', async () => {
+    const { buffer, expectedHash } = fakeTorrentBuffer();
+    const dl = new DownloadUrl(fakeDataUri(buffer), 'torrent');
+    const artifact = await dl.resolve();
+
+    expect(artifact.type).toBe('torrent-bytes');
+    const tb = artifact as Extract<DownloadArtifact, { type: 'torrent-bytes' }>;
+    expect(tb.infoHash).toBe(expectedHash);
+  });
+});
+
 describe('base32ToHex', () => {
   it('converts base32-encoded hash to hex', () => {
     // "JBSWY3DPEHPK3PXP" → "48656c6c6f21deadbeef" (Hello!...)

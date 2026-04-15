@@ -264,6 +264,12 @@ describe('DelugeClient', () => {
         client.addDownload({ type: 'nzb-url', url: 'https://indexer.test/nzb' }),
       ).rejects.toThrow('only supports torrent artifacts');
     });
+
+    it('rejects nzb-bytes artifact with DownloadClientError', async () => {
+      await expect(
+        client.addDownload({ type: 'nzb-bytes', data: Buffer.from('<nzb/>') }),
+      ).rejects.toThrow('only supports torrent artifacts');
+    });
   });
 
   describe('getDownload', () => {
