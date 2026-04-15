@@ -208,15 +208,6 @@ CREATE TABLE `remote_path_mappings` (
 );
 --> statement-breakpoint
 CREATE INDEX `idx_remote_path_mappings_client` ON `remote_path_mappings` (`download_client_id`);--> statement-breakpoint
-CREATE TABLE `search_history` (
-	`id` integer PRIMARY KEY AUTOINCREMENT NOT NULL,
-	`query` text NOT NULL,
-	`type` text NOT NULL,
-	`results_count` integer,
-	`searched_at` integer DEFAULT (unixepoch()) NOT NULL
-);
---> statement-breakpoint
-CREATE INDEX `idx_search_history_searched_at` ON `search_history` (`searched_at`);--> statement-breakpoint
 CREATE TABLE `settings` (
 	`key` text PRIMARY KEY NOT NULL,
 	`value` text NOT NULL
