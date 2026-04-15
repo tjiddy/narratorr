@@ -2,11 +2,11 @@ import { useState, useEffect } from 'react';
 import { useMutation } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import {
-  LoadingSpinner,
   ActivityIcon,
   HistoryIcon,
 } from '@/components/icons';
 import { PageHeader } from '@/components/PageHeader.js';
+import { PageLoading } from '@/components/PageLoading';
 import { Tabs, type TabItem } from '@/components/Tabs.js';
 import { EventHistorySection } from './EventHistorySection.js';
 import { DownloadsTabSection } from './DownloadsTabSection.js';
@@ -54,14 +54,7 @@ export function ActivityPage() {
   const [tab, setTab] = useState<'active' | 'history'>('active');
 
   if (isLoading) {
-    return (
-      <div className="space-y-8">
-        <PageHeader title="Activity" subtitle="Monitor your downloads and import history" />
-        <div className="flex items-center justify-center py-24">
-          <LoadingSpinner className="w-8 h-8 text-primary" />
-        </div>
-      </div>
-    );
+    return <PageLoading header={<PageHeader title="Activity" subtitle="Monitor your downloads and import history" />} />;
   }
 
   return (
