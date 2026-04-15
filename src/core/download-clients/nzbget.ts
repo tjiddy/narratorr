@@ -8,6 +8,7 @@ import type {
 } from './types.js';
 import { fetchWithTimeout } from '../utils/fetch-with-timeout.js';
 import { DEFAULT_REQUEST_TIMEOUT_MS } from '../utils/constants.js';
+import { DownloadClientAuthError, DownloadClientError, DownloadClientTimeoutError, isTimeoutError } from './errors.js';
 
 export interface NZBGetConfig {
   host: string;
@@ -42,7 +43,7 @@ export class NZBGetClient implements DownloadClientAdapter {
     options?: AddDownloadOptions,
   ): Promise<string> {
     if (artifact.type !== 'nzb-url') {
-      throw new Error('NZBGet only supports usenet artifacts (nzb-url)');
+      throw new DownloadClientError(this.name, 'NZBGet only supports usenet artifacts (nzb-url)');
     }
 
     // NZBGet append method: (NZBFilename, NZBContent, Category, Priority, DupeKey, DupeScore, DupeMode, AddUrlParams)
@@ -62,7 +63,7 @@ export class NZBGetClient implements DownloadClientAdapter {
     const result = await this.rpc<number>('append', params);
 
     if (!result || result <= 0) {
-      throw new Error('NZBGet failed to add download');
+      throw new DownloadClientError(this.name, 'NZBGet failed to add download');
     }
 
     return String(result);
@@ -151,38 +152,48 @@ export class NZBGetClient implements DownloadClientAdapter {
   }
 
   private async rpc<T>(method: string, params: unknown[] = []): Promise<T> {
-    const response = await fetchWithTimeout(this.rpcUrl, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: this.authHeader,
-      },
-      body: JSON.stringify({
-        method,
-        params,
-      }),
-    }, DEFAULT_REQUEST_TIMEOUT_MS);
+    let response: Response;
+    try {
+      response = await fetchWithTimeout(this.rpcUrl, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: this.authHeader,
+        },
+        body: JSON.stringify({
+          method,
+          params,
+        }),
+      }, DEFAULT_REQUEST_TIMEOUT_MS);
+    } catch (error: unknown) {
+      if (isTimeoutError(error)) throw new DownloadClientTimeoutError(this.name, (error as Error).message);
+      throw new DownloadClientError(this.name, error instanceof Error ? error.message : String(error));
+    }
+
+    if (response.status === 401) {
+      throw new DownloadClientAuthError(this.name, `Authentication failed: invalid credentials`);
+    }
 
     if (!response.ok) {
-      throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+      throw new DownloadClientError(this.name, `HTTP ${response.status}: ${response.statusText}`);
     }
 
     const contentType = response.headers.get('content-type') ?? '';
     if (!contentType.includes('application/json') && !contentType.includes('text/json')) {
-      throw new Error(`Connection failed: server didn't respond as expected. Check host, port, SSL settings, and any reverse proxy (e.g. Authelia) that may be intercepting requests.`);
+      throw new DownloadClientError(this.name, `Connection failed: server didn't respond as expected. Check host, port, SSL settings, and any reverse proxy (e.g. Authelia) that may be intercepting requests.`);
     }
 
     const json = await response.json();
     const parsed = nzbgetRpcResponseSchema.safeParse(json);
 
     if (!parsed.success) {
-      throw new Error(`NZBGet returned unexpected response: ${parsed.error.message}`);
+      throw new DownloadClientError(this.name, `NZBGet returned unexpected response: ${parsed.error.message}`);
     }
 
     if (parsed.data.error) {
       const { message, code, name } = parsed.data.error;
       const detail = message || `${name} (code ${code})`;
-      throw new Error(`NZBGet RPC error: ${detail}`);
+      throw new DownloadClientError(this.name, `NZBGet RPC error: ${detail}`);
     }
 
     return parsed.data.result as T;
