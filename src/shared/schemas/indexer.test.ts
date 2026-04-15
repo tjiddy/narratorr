@@ -637,6 +637,22 @@ describe('createIndexerSchema — typed settings validation', () => {
   });
 });
 
+describe('createIndexerSchema — invalid discriminant rejection', () => {
+  it('rejects unknown type value with z.enum error on the type field', () => {
+    const result = createIndexerSchema.safeParse({
+      name: 'Bad Indexer',
+      type: 'badIndexer',
+      settings: { apiUrl: 'https://test.example', apiKey: 'key' },
+    });
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      expect(result.error.issues).toContainEqual(
+        expect.objectContaining({ path: ['type'] }),
+      );
+    }
+  });
+});
+
 describe('updateIndexerSchema — type required when settings present', () => {
   it('accepts update with settings + type', () => {
     const result = updateIndexerSchema.safeParse({

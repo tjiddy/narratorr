@@ -509,6 +509,23 @@ describe('createNotifierSchema — typed settings validation', () => {
   });
 });
 
+describe('createNotifierSchema — invalid discriminant rejection', () => {
+  it('rejects unknown type value with z.enum error on the type field', () => {
+    const result = createNotifierSchema.safeParse({
+      name: 'Bad Notifier',
+      type: 'badNotifier',
+      events: ['on_grab'],
+      settings: { url: 'https://test.example' },
+    });
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      expect(result.error.issues).toContainEqual(
+        expect.objectContaining({ path: ['type'] }),
+      );
+    }
+  });
+});
+
 describe('updateNotifierSchema — type required when settings present', () => {
   it('accepts update with settings + type', () => {
     const result = updateNotifierSchema.safeParse({
