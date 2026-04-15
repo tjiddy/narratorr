@@ -43,4 +43,30 @@ describe('IMPORT_LIST_REGISTRY', () => {
       }
     });
   });
+
+  describe('viewSubtitle fallback branches', () => {
+    it('abs viewSubtitle returns abs when serverUrl is empty', () => {
+      expect(IMPORT_LIST_REGISTRY.abs.viewSubtitle({ serverUrl: '' })).toBe('abs');
+    });
+
+    it('abs viewSubtitle returns serverUrl when populated', () => {
+      expect(IMPORT_LIST_REGISTRY.abs.viewSubtitle({ serverUrl: 'http://my-abs.local' })).toBe('http://my-abs.local');
+    });
+
+    it('nyt viewSubtitle returns audio-fiction when list is empty', () => {
+      expect(IMPORT_LIST_REGISTRY.nyt.viewSubtitle({ list: '' })).toBe('audio-fiction');
+    });
+
+    it('nyt viewSubtitle returns list value when populated', () => {
+      expect(IMPORT_LIST_REGISTRY.nyt.viewSubtitle({ list: 'audio-nonfiction' })).toBe('audio-nonfiction');
+    });
+
+    it('hardcover viewSubtitle returns trending when listType is empty', () => {
+      expect(IMPORT_LIST_REGISTRY.hardcover.viewSubtitle({ listType: '' })).toBe('trending');
+    });
+
+    it('hardcover viewSubtitle returns listType value when populated', () => {
+      expect(IMPORT_LIST_REGISTRY.hardcover.viewSubtitle({ listType: 'shelf' })).toBe('shelf');
+    });
+  });
 });
