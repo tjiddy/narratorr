@@ -654,8 +654,7 @@ describe('LibraryPage', () => {
     }, { timeout: 2000 });
   });
 
-  // TODO: #372 — Test needs rework for debounced server-side search (clear triggers async refetch)
-  it.skip('clears search with clear button', async () => {
+  it('clears search with clear button', async () => {
     mockLibraryData(mockBooks);
     const user = userEvent.setup();
 
@@ -668,26 +667,27 @@ describe('LibraryPage', () => {
     const searchInput = screen.getByPlaceholderText('Search library...');
     await user.type(searchInput, 'Hail Mary');
 
-    // Wait for debounced search to filter
     await waitFor(() => {
       expect(screen.queryByText('The Way of Kings')).not.toBeInTheDocument();
     }, { timeout: 2000 });
 
-    // Clear the search — look for the × button next to search input
-    const clearButton = searchInput.parentElement?.querySelector('button');
-    expect(clearButton).toBeTruthy();
-    await user.click(clearButton!);
+    await user.click(screen.getByLabelText('Clear search'));
 
-    // All books should reappear after debounce
     await waitFor(() => {
+      expect(searchInput).toHaveValue('');
       expect(screen.getByText('The Way of Kings')).toBeInTheDocument();
       expect(screen.getByText('Project Hail Mary')).toBeInTheDocument();
       expect(screen.getByText('Recursion')).toBeInTheDocument();
     }, { timeout: 2000 });
+
+    await waitFor(() => {
+      expect(vi.mocked(api.getBooks)).toHaveBeenCalledWith(
+        expect.objectContaining({ search: undefined }),
+      );
+    });
   });
 
-  // TODO: #372 — Test needs rework for debounced server-side search + filter interaction
-  it.skip('combines search with status filter', async () => {
+  it('combines search with status filter', async () => {
     mockLibraryData(mockBooks);
     const user = userEvent.setup();
 
@@ -697,7 +697,6 @@ describe('LibraryPage', () => {
       expect(screen.getByText('The Way of Kings')).toBeInTheDocument();
     });
 
-    // Search for Sanderson (matches Way of Kings and Words of Radiance, both "wanted")
     const searchInput = screen.getByPlaceholderText('Search library...');
     await user.type(searchInput, 'Sanderson');
 
@@ -705,13 +704,18 @@ describe('LibraryPage', () => {
       expect(screen.queryByText('Project Hail Mary')).not.toBeInTheDocument();
     }, { timeout: 2000 });
 
-    // Click Wanted tab — should still show Sanderson's wanted books
-    await user.click(screen.getByRole('button', { name: /^Wanted\s*\d*$/i }));
+    // Open status dropdown and select Wanted
+    await user.click(screen.getByRole('button', { name: /all/i }));
+    await user.click(screen.getByRole('option', { name: /wanted/i }));
 
     await waitFor(() => {
       expect(screen.getByText('The Way of Kings')).toBeInTheDocument();
       expect(screen.getByText('Words of Radiance')).toBeInTheDocument();
     }, { timeout: 2000 });
+
+    expect(vi.mocked(api.getBooks)).toHaveBeenLastCalledWith(
+      expect.objectContaining({ search: 'Sanderson', status: 'wanted' }),
+    );
   });
 
   it('opens search releases modal when Search Releases is clicked', async () => {

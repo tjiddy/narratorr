@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach, type MockInstance } from 'vitest';
 import Fastify from 'fastify';
 import cookie from '@fastify/cookie';
 import type { FastifyReply, FastifyRequest } from 'fastify';
@@ -10,17 +10,13 @@ import type { SettingsService } from '../services/settings.service.js';
 import type { AuthService } from '../services/auth.service.js';
 import { DEFAULT_SETTINGS } from '../../shared/schemas/settings/registry.js';
 import authPlugin from '../plugins/auth.js';
+import * as searchPipeline from '../services/search-pipeline.js';
 
-// Mock the search pipeline
-vi.mock('../services/search-pipeline.js', () => ({
-  postProcessSearchResults: vi.fn().mockResolvedValue({
-    results: [],
-    durationUnknown: false,
-    unsupportedResults: { count: 0, titles: [] },
-  }),
-}));
-
-import { postProcessSearchResults } from '../services/search-pipeline.js';
+const EMPTY_POST_PROCESS_RESULT = {
+  results: [],
+  durationUnknown: false,
+  unsupportedResults: { count: 0, titles: [] },
+};
 
 function createMockReplyAndRequest(_query = 'test+query') {
   const writeHead = vi.fn();
@@ -89,9 +85,12 @@ describe('searchStreamRoutes', () => {
   let settingsService: ReturnType<typeof createMockSettingsService>;
   let streamHandler: ((req: FastifyRequest, reply: FastifyReply) => Promise<void>) | null;
   let cancelHandler: ((req: FastifyRequest, reply: FastifyReply) => Promise<void>) | null;
+  let postProcessSpy: MockInstance;
 
   beforeEach(async () => {
     vi.clearAllMocks();
+    postProcessSpy = vi.spyOn(searchPipeline, 'postProcessSearchResults')
+      .mockResolvedValue(EMPTY_POST_PROCESS_RESULT);
     sessionManager = new SearchSessionManager();
     indexerService = createMockIndexerService();
     blacklistService = createMockBlacklistService();
@@ -117,6 +116,10 @@ describe('searchStreamRoutes', () => {
       settingsService,
       sessionManager,
     );
+  });
+
+  afterEach(() => {
+    postProcessSpy.mockRestore();
   });
 
   describe('GET /api/search/stream', () => {
@@ -159,7 +162,7 @@ describe('searchStreamRoutes', () => {
         durationUnknown: true,
         unsupportedResults: { count: 1, titles: ['Multi-part'] },
       };
-      (postProcessSearchResults as ReturnType<typeof vi.fn>).mockResolvedValue(mockProcessed);
+      postProcessSpy.mockResolvedValue(mockProcessed);
 
       const { reply, request, write } = createMockReplyAndRequest();
       await streamHandler!(request, reply);
@@ -335,6 +338,8 @@ vi.mock('../config.js', () => ({
 }));
 
 describe('searchStreamRoutes — app.inject() integration', () => {
+  let postProcessSpy: MockInstance;
+
   function createMockAuthService(valid = false) {
     return {
       validateApiKey: vi.fn().mockResolvedValue(valid),
@@ -342,6 +347,15 @@ describe('searchStreamRoutes — app.inject() integration', () => {
       hasUser: vi.fn().mockResolvedValue(true),
     } as unknown as AuthService;
   }
+
+  beforeEach(() => {
+    postProcessSpy = vi.spyOn(searchPipeline, 'postProcessSearchResults')
+      .mockResolvedValue(EMPTY_POST_PROCESS_RESULT);
+  });
+
+  afterEach(() => {
+    postProcessSpy.mockRestore();
+  });
 
   it('rejects unauthenticated request with 401', async () => {
     const authService = createMockAuthService(false);
@@ -402,13 +416,6 @@ describe('searchStreamRoutes — app.inject() integration', () => {
   it('successful GET with valid apikey and zero indexers returns SSE stream with empty results', async () => {
     // app.inject() hangs on hijacked SSE responses (per fastify-sse-hijack-testing learning),
     // so use app.listen(0) + real HTTP fetch to test the full Fastify stack.
-    // Reset the shared mock to return empty results for zero-indexer case
-    (postProcessSearchResults as ReturnType<typeof vi.fn>).mockResolvedValue({
-      results: [],
-      durationUnknown: false,
-      unsupportedResults: { count: 0, titles: [] },
-    });
-
     const authService = createMockAuthService(true);
     const zeroIndexerService = {
       ...createMockIndexerService(),
@@ -492,4 +499,39 @@ describe('searchStreamRoutes — app.inject() integration', () => {
     await app.close();
   });
 
+});
+
+describe('searchStreamRoutes — unmocked postProcessSearchResults', () => {
+  it('runs real postProcessSearchResults when spy is not installed', async () => {
+    const sessionManager = new SearchSessionManager();
+    const blacklistService = createMockBlacklistService();
+    const settingsService = createMockSettingsService();
+    const indexerService = createMockIndexerService();
+
+    let streamHandler: ((req: FastifyRequest, reply: FastifyReply) => Promise<void>) | null = null;
+
+    const { searchStreamRoutes } = await import('./search-stream.js');
+    const mockApp = {
+      get: (_path: string, _opts: unknown, handler: (req: FastifyRequest, reply: FastifyReply) => Promise<void>) => {
+        streamHandler = handler;
+      },
+      post: vi.fn(),
+    };
+
+    await searchStreamRoutes(mockApp as never, indexerService, blacklistService, settingsService, sessionManager);
+
+    const { reply, request, write } = createMockReplyAndRequest();
+    await streamHandler!(request, reply);
+
+    const completeCall = write.mock.calls.find(
+      (call: unknown[]) => typeof call[0] === 'string' && (call[0] as string).includes('event: search-complete'),
+    );
+    expect(completeCall).toBeDefined();
+
+    const dataLine = (completeCall![0] as string).split('\n').find((l: string) => l.startsWith('data: '));
+    const data = JSON.parse(dataLine!.replace('data: ', ''));
+    expect(data).toHaveProperty('results');
+    expect(data).toHaveProperty('durationUnknown');
+    expect(data).toHaveProperty('unsupportedResults');
+  });
 });

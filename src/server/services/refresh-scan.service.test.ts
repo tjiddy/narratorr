@@ -312,15 +312,9 @@ describe('refreshScanBook', () => {
     const { stat: statFn } = await import('node:fs/promises');
     const eacces = Object.assign(new Error('EACCES: permission denied'), { code: 'EACCES' });
     vi.mocked(statFn).mockRejectedValueOnce(eacces);
-    await expect(refreshScanBook(1, mockBookService, mockSettingsService, log))
-      .rejects.toThrow('EACCES: permission denied');
-    // Verify it's NOT a RefreshScanError
-    vi.mocked(statFn).mockRejectedValueOnce(Object.assign(new Error('EACCES'), { code: 'EACCES' }));
-    try {
-      await refreshScanBook(1, mockBookService, mockSettingsService, log);
-    } catch (error: unknown) {
-      expect(error).not.toBeInstanceOf(RefreshScanError);
-    }
+    const rejection = refreshScanBook(1, mockBookService, mockSettingsService, log);
+    await expect(rejection).rejects.toMatchObject({ message: 'EACCES: permission denied' });
+    await expect(rejection).rejects.not.toBeInstanceOf(RefreshScanError);
   });
 
   it('throws RefreshScanError NO_AUDIO_FILES when scanAudioDirectory returns null', async () => {
