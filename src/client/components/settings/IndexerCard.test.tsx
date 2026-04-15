@@ -1027,4 +1027,19 @@ describe('IndexerCard — Prowlarr-managed indicators (AC8)', () => {
       expect(screen.getByText(/Search disabled — Mouse class cannot download/)).toBeInTheDocument();
     });
   });
+
+  describe('Wave 2D step attribute (#583)', () => {
+    it('priority input has step=1 in edit mode', () => {
+      renderWithProviders(
+        <IndexerCard
+          indexer={mockIndexer}
+          mode="edit"
+          onSubmit={vi.fn()}
+          onFormTest={vi.fn()}
+        />,
+      );
+      const input = screen.getByLabelText('Priority');
+      expect(input).toHaveAttribute('step', '1');
+    });
+  });
 });

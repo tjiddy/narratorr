@@ -134,7 +134,7 @@ export function PathMappingEditor({ mappings, onChange }: PathMappingEditorProps
               <button
                 type="button"
                 onClick={() => handleRemove(index)}
-                className="px-2.5 py-1.5 text-xs font-medium text-destructive/70 hover:text-destructive border border-transparent hover:border-destructive/30 rounded-lg transition-all opacity-0 group-hover:opacity-100 group-focus-within:opacity-100"
+                className="px-2.5 py-1.5 text-xs font-medium text-destructive/70 hover:text-destructive border border-transparent hover:border-destructive/30 rounded-lg transition-all opacity-0 group-hover:opacity-100 no-hover:opacity-100 group-focus-within:opacity-100"
               >
                 Remove
               </button>

@@ -513,4 +513,10 @@ describe('DownloadClientFields', () => {
       document.removeEventListener('keydown', modalEscapeHandler);
     });
   });
+
+  it('port input has step=1 attribute', () => {
+    render(<FieldWrapper type="qbittorrent" />);
+    const portInput = screen.getByLabelText('Port');
+    expect(portInput).toHaveAttribute('step', '1');
+  });
 });

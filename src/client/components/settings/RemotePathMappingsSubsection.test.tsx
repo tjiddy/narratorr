@@ -318,4 +318,31 @@ describe('RemotePathMappingsSubsection', () => {
       expect(screen.getByText('Save')).toBeDisabled();
     });
   });
+
+  describe('Wave 2D touch affordance (#583)', () => {
+    it('action button container includes no-hover:opacity-100 for touch devices', async () => {
+      (api.getRemotePathMappingsByClientId as Mock).mockResolvedValue([mockMapping]);
+      renderWithProviders(<RemotePathMappingsSubsection clientId={5} />);
+
+      await waitFor(() => {
+        expect(screen.getByText('Edit')).toBeInTheDocument();
+      });
+      const editButton = screen.getByText('Edit');
+      const container = editButton.parentElement!;
+      expect(container.className).toContain('no-hover:opacity-100');
+    });
+
+    it('action button container preserves desktop hover classes (opacity-0, group-hover:opacity-100)', async () => {
+      (api.getRemotePathMappingsByClientId as Mock).mockResolvedValue([mockMapping]);
+      renderWithProviders(<RemotePathMappingsSubsection clientId={5} />);
+
+      await waitFor(() => {
+        expect(screen.getByText('Edit')).toBeInTheDocument();
+      });
+      const editButton = screen.getByText('Edit');
+      const container = editButton.parentElement!;
+      expect(container.className).toContain('opacity-0');
+      expect(container.className).toContain('group-hover:opacity-100');
+    });
+  });
 });
