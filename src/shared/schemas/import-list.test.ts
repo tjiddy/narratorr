@@ -141,6 +141,22 @@ describe('createImportListSchema — typed settings validation', () => {
   });
 });
 
+describe('createImportListSchema — invalid discriminant rejection', () => {
+  it('rejects unknown type value with z.enum error on the type field', () => {
+    const result = createImportListSchema.safeParse({
+      name: 'Bad List',
+      type: 'badList',
+      settings: { serverUrl: 'http://abs.local', apiKey: 'key', libraryId: 'lib1' },
+    });
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      expect(result.error.issues).toContainEqual(
+        expect.objectContaining({ path: ['type'] }),
+      );
+    }
+  });
+});
+
 describe('previewImportListSchema — typed settings validation', () => {
   it('accepts valid preview with typed settings per provider', () => {
     const result = previewImportListSchema.safeParse({

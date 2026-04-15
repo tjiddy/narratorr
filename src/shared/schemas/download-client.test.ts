@@ -571,6 +571,22 @@ describe('createDownloadClientSchema — typed settings validation', () => {
   });
 });
 
+describe('createDownloadClientSchema — invalid discriminant rejection', () => {
+  it('rejects unknown type value with z.enum error on the type field', () => {
+    const result = createDownloadClientSchema.safeParse({
+      name: 'Bad Client',
+      type: 'badClient',
+      settings: { host: 'localhost', port: 8080 },
+    });
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      expect(result.error.issues).toContainEqual(
+        expect.objectContaining({ path: ['type'] }),
+      );
+    }
+  });
+});
+
 describe('updateDownloadClientSchema — type required when settings present', () => {
   it('accepts update with settings + type', () => {
     const result = updateDownloadClientSchema.safeParse({

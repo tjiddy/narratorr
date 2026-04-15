@@ -395,4 +395,40 @@ describe('requestWithRetry', () => {
       vi.restoreAllMocks();
     });
   });
+
+  describe('abort-error propagation through shouldRetry', () => {
+    it('stops retry loop immediately when shouldRetry returns false for an abort-shaped DOMException', async () => {
+      const abortError = new DOMException('The operation was aborted', 'AbortError');
+      const fn = vi.fn().mockRejectedValue(abortError);
+      const shouldRetry = vi.fn().mockReturnValue(false);
+
+      await expect(
+        requestWithRetry(fn, {
+          clientName: 'TestClient',
+          maxRetries: 3,
+          shouldRetry,
+        }),
+      ).rejects.toThrow(DownloadClientError);
+
+      expect(fn).toHaveBeenCalledTimes(1);
+      expect(shouldRetry).toHaveBeenCalledTimes(1);
+      expect(shouldRetry).toHaveBeenCalledWith(abortError);
+    });
+
+    it('wraps the original DOMException as cause in the thrown DownloadClientError', async () => {
+      const abortError = new DOMException('The operation was aborted', 'AbortError');
+      const fn = vi.fn().mockRejectedValue(abortError);
+
+      try {
+        await requestWithRetry(fn, {
+          clientName: 'TestClient',
+          shouldRetry: () => false,
+        });
+        expect.unreachable('should have thrown');
+      } catch (error: unknown) {
+        expect(error).toBeInstanceOf(DownloadClientError);
+        expect((error as DownloadClientError).cause).toBe(abortError);
+      }
+    });
+  });
 });

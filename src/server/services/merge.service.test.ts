@@ -319,6 +319,54 @@ describe('MergeService', () => {
       expect(unlink).not.toHaveBeenCalled();
     });
 
+    it('db.update failure after rename — rename and stat are called, unlink is NOT called, error is logged', async () => {
+      setupHappyPath();
+      const { service, db, log } = createService();
+      db.update.mockReturnValue({
+        set: vi.fn().mockReturnValue({ where: vi.fn().mockRejectedValue(new Error('DB write failed')) }),
+      });
+
+      await service.enqueueMerge(42);
+      await settle();
+
+      const expectedOutputPath = join(BOOK_PATH, 'The Way of Kings.m4b');
+      expect(rename).toHaveBeenCalledWith(join(STAGING_DIR, 'The Way of Kings.m4b'), expectedOutputPath);
+      expect(stat).toHaveBeenCalledWith(expectedOutputPath);
+      expect(unlink).not.toHaveBeenCalled();
+      expect(log.error).toHaveBeenCalledWith(expect.any(Error), expect.stringContaining('Merge failed'), expect.anything());
+    });
+
+    it('stat() failure after rename — db.update NOT called, unlink NOT called, error surfaces as merge failure', async () => {
+      setupHappyPath();
+      (stat as Mock).mockRejectedValue(new Error('stat failed'));
+      const { service, db, log } = createService();
+
+      await service.enqueueMerge(42);
+      await settle();
+
+      expect(rename).toHaveBeenCalled();
+      expect(db.update).not.toHaveBeenCalled();
+      expect(unlink).not.toHaveBeenCalled();
+      expect(log.error).toHaveBeenCalledWith(expect.any(Error), expect.stringContaining('Merge failed'), expect.anything());
+    });
+
+    it('unlink() failure on one original does not prevent cleanup of remaining originals', async () => {
+      setupHappyPath();
+      (unlink as Mock)
+        .mockRejectedValueOnce(new Error('permission denied'))
+        .mockResolvedValue(undefined);
+      const { service } = createService();
+
+      await service.enqueueMerge(42);
+      await settle();
+
+      // originalsToDelete is topLevelAudioFiles: ['01.mp3', '02.mp3'] (cover.jpg excluded)
+      // First unlink fails but second is still attempted
+      expect(unlink).toHaveBeenCalledTimes(2);
+      expect(unlink).toHaveBeenCalledWith(join(BOOK_PATH, '01.mp3'));
+      expect(unlink).toHaveBeenCalledWith(join(BOOK_PATH, '02.mp3'));
+    });
+
     it('db.update receives both size and updatedAt from stat() on the post-rename destination path', async () => {
       setupHappyPath();
       (stat as Mock).mockResolvedValue({ size: 123_456_789 });

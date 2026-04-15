@@ -710,6 +710,71 @@ describe('ImportListService', () => {
       });
     });
 
+    it('all processItem calls fail — lastSyncError remains null, lastRunAt updated, log.warn per item', async () => {
+      const mockProvider = {
+        fetchItems: vi.fn().mockResolvedValue([
+          { title: 'Book A', author: 'Author' },
+          { title: 'Book B', author: 'Author' },
+          { title: 'Book C', author: 'Author' },
+        ]),
+        test: vi.fn(),
+      };
+      mockFactories.abs.mockReturnValue(mockProvider);
+
+      const db = createMockDb();
+      const dueList = {
+        id: 1, name: 'Failing Items', type: 'abs', enabled: true,
+        settings: { serverUrl: 'http://abs.local', apiKey: 'key', libraryId: 'lib-1' },
+        syncIntervalMinutes: 60, lastRunAt: null, nextRunAt: new Date(Date.now() - 60_000),
+        lastSyncError: null, createdAt: new Date(),
+      };
+      db.select.mockReturnValueOnce(mockDbChain([dueList]));
+      // Author lookups all fail → processItem throws for each
+      db.select.mockReturnValue(mockDbChain([]));
+      db.insert.mockReturnValue({ values: vi.fn().mockReturnValue({ onConflictDoNothing: vi.fn().mockReturnValue({ returning: vi.fn().mockRejectedValue(new Error('insert failed')) }) }) });
+      const updateChain = mockDbChain([]);
+      db.update.mockReturnValue(updateChain);
+
+      service = new ImportListService(inject<Db>(db), mockLog);
+      await service.syncDueLists();
+
+      // Item failures are swallowed by syncList — outer syncDueLists treats it as success
+      const setCall = updateChain.set.mock.calls[0][0] as Record<string, unknown>;
+      expect(setCall.lastSyncError).toBeNull();
+      expect(setCall.lastRunAt).toBeInstanceOf(Date);
+      // log.warn called for each failed item
+      const warnCalls = (mockLog.warn as ReturnType<typeof vi.fn>).mock.calls as unknown[][];
+      const failedItemWarns = warnCalls.filter((call) => {
+        const msg = call[1] as string;
+        return typeof msg === 'string' && msg.includes('Failed to process');
+      });
+      expect(failedItemWarns).toHaveLength(3);
+    });
+
+    it('unknown provider type during syncList — lastSyncError persisted with error message, nextRunAt advanced', async () => {
+      const db = createMockDb();
+      const dueList = {
+        id: 1, name: 'Unknown Type', type: 'nonexistent', enabled: true,
+        settings: { serverUrl: 'http://test.local' },
+        syncIntervalMinutes: 60, lastRunAt: null, nextRunAt: new Date(Date.now() - 60_000),
+        lastSyncError: null, createdAt: new Date(),
+      };
+      db.select.mockReturnValue(mockDbChain([dueList]));
+      const updateChain = mockDbChain([]);
+      db.update.mockReturnValue(updateChain);
+
+      service = new ImportListService(inject<Db>(db), mockLog);
+      await service.syncDueLists();
+
+      const setCall = updateChain.set.mock.calls[0][0] as Record<string, unknown>;
+      expect(setCall.lastSyncError).toContain('Unknown provider type');
+      expect(setCall.nextRunAt).toBeInstanceOf(Date);
+      expect(mockLog.error).toHaveBeenCalledWith(
+        expect.objectContaining({ name: 'Unknown Type' }),
+        expect.stringContaining('sync failed'),
+      );
+    });
+
     it('isolates provider failures — one list failing does not block others', async () => {
       const failProvider = { fetchItems: vi.fn().mockRejectedValue(new Error('Provider down')), test: vi.fn() };
       const successProvider = { fetchItems: vi.fn().mockResolvedValue([]), test: vi.fn() };

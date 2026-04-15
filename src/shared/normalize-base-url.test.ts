@@ -21,4 +21,16 @@ describe('normalizeBaseUrl', () => {
   it('returns undefined for undefined input (nullable passthrough)', () => {
     expect(normalizeBaseUrl(undefined)).toBeUndefined();
   });
+
+  it('strips trailing slash after query string', () => {
+    expect(normalizeBaseUrl('https://host/api?x=1/')).toBe('https://host/api?x=1');
+  });
+
+  it('strips trailing slash after fragment', () => {
+    expect(normalizeBaseUrl('https://host/page#frag/')).toBe('https://host/page#frag');
+  });
+
+  it('strips trailing slash after query string and fragment', () => {
+    expect(normalizeBaseUrl('https://host/api?x=1#frag/')).toBe('https://host/api?x=1#frag');
+  });
 });
