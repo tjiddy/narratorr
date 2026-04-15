@@ -25,7 +25,7 @@ import { rm, stat } from 'node:fs/promises';
 import { eq } from 'drizzle-orm';
 import { downloads } from '../../db/schema.js';
 import { isTorrentRemovalDeferred } from '../utils/seed-helpers.js';
-import { cleanupDeferredRejections as cleanupDeferred } from './quality-gate-deferred-cleanup.helper.js';
+import { cleanupDeferredRejections as cleanupDeferred } from './quality-gate-deferred-cleanup.helpers.js';
 import type { ImportOrchestrator } from './import-orchestrator.js';
 import type { ImportService } from './import.service.js';
 type BookRow = typeof books.$inferSelect;

@@ -15,7 +15,7 @@ vi.mock('../../core/utils/ffprobe-path.js', () => ({
 
 import { enrichBookFromAudio } from './enrichment-utils.js';
 import { resolveFfprobePathFromSettings } from '../../core/utils/ffprobe-path.js';
-import { orchestrateBookEnrichment, applyAudnexusEnrichment } from './enrichment-orchestration.helper.js';
+import { orchestrateBookEnrichment, applyAudnexusEnrichment } from './enrichment-orchestration.helpers.js';
 
 const mockEnrichBookFromAudio = vi.mocked(enrichBookFromAudio);
 const mockResolveFfprobePath = vi.mocked(resolveFfprobePathFromSettings);
