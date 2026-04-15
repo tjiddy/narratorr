@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { INDEXER_REGISTRY, INDEXER_TYPES } from '../indexer-registry';
+import { INDEXER_REGISTRY, INDEXER_TYPES, type IndexerType, type MamSearchType } from '../indexer-registry';
 
 // ============================================================================
 // Indexer schemas
@@ -7,38 +7,116 @@ import { INDEXER_REGISTRY, INDEXER_TYPES } from '../indexer-registry';
 
 export const indexerTypeSchema = z.enum(INDEXER_TYPES);
 
-/** Trim string values for known credential fields in the settings record. */
-function trimSettingsCredentials(settings: Record<string, unknown>): Record<string, unknown> {
-  const result = { ...settings };
-  for (const key of ['apiUrl', 'apiKey']) {
-    if (typeof result[key] === 'string') {
-      result[key] = (result[key] as string).trim();
+// ── Per-adapter settings schemas (strict — rejects unknown fields) ──────────
+
+const apiKeySettingsFields = {
+  apiUrl: z.string().trim().min(1),
+  apiKey: z.string().trim().min(1),
+  flareSolverrUrl: z.string().optional(),
+  useProxy: z.boolean().optional(),
+};
+
+export const newznabSettingsSchema = z.object(apiKeySettingsFields).strict();
+export const torznabSettingsSchema = z.object(apiKeySettingsFields).strict();
+
+const mamSearchTypeServerSchema = z.union([
+  z.enum(['all', 'active', 'fl', 'fl-VIP', 'VIP', 'nVIP']),
+  z.number().transform((n): MamSearchType => {
+    const map: Record<number, MamSearchType> = { 0: 'all', 1: 'active', 2: 'fl', 3: 'fl-VIP' };
+    return map[n] ?? 'active';
+  }),
+]);
+
+export const mamSettingsSchema = z.object({
+  mamId: z.string().min(1),
+  baseUrl: z.string().trim().optional(),
+  searchLanguages: z.array(z.number()).optional(),
+  searchType: mamSearchTypeServerSchema.optional(),
+  isVip: z.boolean().optional(),
+  mamUsername: z.string().optional(),
+  classname: z.string().optional(),
+  useProxy: z.boolean().optional(),
+  flareSolverrUrl: z.string().optional(),
+}).strict();
+
+export const abbSettingsSchema = z.object({
+  hostname: z.string().min(1),
+  pageLimit: z.number().int().min(1).max(10).optional(),
+  flareSolverrUrl: z.string().optional(),
+  useProxy: z.boolean().optional(),
+}).strict();
+
+// ── Settings types and dispatch map ─────────────────────────────────────────
+
+export type NewznabSettings = z.infer<typeof newznabSettingsSchema>;
+export type TorznabSettings = z.infer<typeof torznabSettingsSchema>;
+export type MamSettings = z.infer<typeof mamSettingsSchema>;
+export type AbbSettings = z.infer<typeof abbSettingsSchema>;
+
+export type IndexerSettingsMap = {
+  newznab: NewznabSettings;
+  torznab: TorznabSettings;
+  myanonamouse: MamSettings;
+  abb: AbbSettings;
+};
+
+export type IndexerSettings = IndexerSettingsMap[IndexerType];
+
+export const indexerSettingsSchemas: Record<IndexerType, z.ZodTypeAny> = {
+  newznab: newznabSettingsSchema,
+  torznab: torznabSettingsSchema,
+  myanonamouse: mamSettingsSchema,
+  abb: abbSettingsSchema,
+};
+
+// ── Server-side schemas ─────────────────────────────────────────────────────
+
+function validateSettingsPerType(
+  data: { type: string; settings: Record<string, unknown> },
+  ctx: z.RefinementCtx,
+) {
+  const schema = indexerSettingsSchemas[data.type as IndexerType];
+  if (!schema) return;
+  const result = schema.safeParse(data.settings);
+  if (!result.success) {
+    for (const issue of result.error.issues) {
+      ctx.addIssue({ ...issue, path: ['settings', ...issue.path] });
     }
+  } else {
+    data.settings = result.data as Record<string, unknown>;
   }
-  return result;
 }
 
-// Server-side: accepts any settings shape (type-specific validation is client-side only)
 export const createIndexerSchema = z.object({
   name: z.string().trim().min(1, 'Name is required').max(100),
   type: indexerTypeSchema,
   enabled: z.boolean().default(true),
   priority: z.number().int().min(0).max(100).default(50),
-  settings: z.record(z.string(), z.unknown()).transform(trimSettingsCredentials),
-});
+  settings: z.record(z.string(), z.unknown()),
+}).superRefine(validateSettingsPerType);
 
 export const updateIndexerSchema = z.object({
   name: z.string().trim().min(1).max(100).optional(),
+  type: indexerTypeSchema.optional(),
   enabled: z.boolean().optional(),
   priority: z.number().int().min(0).max(100).optional(),
-  settings: z.record(z.string(), z.unknown()).transform(trimSettingsCredentials).optional(),
+  settings: z.record(z.string(), z.unknown()).optional(),
+}).superRefine((data, ctx) => {
+  if (data.settings !== undefined && !data.type) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['type'], message: 'Type is required when settings are provided' });
+    return;
+  }
+  if (data.settings !== undefined && data.type) {
+    validateSettingsPerType(data as { type: string; settings: Record<string, unknown> }, ctx);
+  }
 });
 
-// Output types (after Zod applies defaults)
+// Output types (after Zod applies defaults/transforms)
 export type CreateIndexerInput = z.infer<typeof createIndexerSchema>;
 export type UpdateIndexerInput = z.infer<typeof updateIndexerSchema>;
 
-// Form schema: all possible settings fields optional, superRefine validates per-type
+// ── Form schema (unchanged — uses superRefine + registry.requiredFields for zodResolver compat) ──
+
 export const createIndexerFormSchema = z.object({
   name: z.string().trim().min(1, 'Name is required').max(100),
   type: indexerTypeSchema,
