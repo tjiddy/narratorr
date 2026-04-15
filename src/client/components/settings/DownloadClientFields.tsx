@@ -47,7 +47,7 @@ export function DownloadClientFields({ selectedType, register, errors, clientId,
         </div>
         <div>
           <label htmlFor="clientPort" className="block text-sm font-medium mb-2">Port</label>
-          <input id="clientPort" type="number" {...register('settings.port', { valueAsNumber: true })} className={errorInputClass(!!errors.settings?.port)} />
+          <input id="clientPort" type="number" step={1} {...register('settings.port', { valueAsNumber: true })} className={errorInputClass(!!errors.settings?.port)} />
           {errors.settings?.port && <p className="text-sm text-destructive mt-1">{errors.settings.port.message}</p>}
         </div>
         {fields.useSsl && (

@@ -203,6 +203,7 @@ export function IndexerCard(props: IndexerCardProps) {
               <input
                 id="indexerPriority"
                 type="number"
+                step={1}
                 {...register('priority', { valueAsNumber: true })}
                 className="w-full px-4 py-3 bg-background border border-border rounded-xl focus-ring focus:border-transparent transition-all"
               />

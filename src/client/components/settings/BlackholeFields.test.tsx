@@ -106,6 +106,12 @@ describe('BlackholeFields', () => {
     expect(select).not.toHaveClass('border-destructive');
   });
 
+  it('priority input has step=1 in edit mode', () => {
+    render(<FieldWrapper isEdit />);
+    const input = screen.getByLabelText('Priority');
+    expect(input).toHaveAttribute('step', '1');
+  });
+
   it('protocol select shows error styling when validation fails', () => {
     render(<FieldWrapper protocolError />);
     const select = screen.getByLabelText('Protocol');
