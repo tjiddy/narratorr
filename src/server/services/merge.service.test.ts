@@ -102,10 +102,13 @@ function createService(opts?: { eventHistory?: EventHistoryService; eventBroadca
   return { service, db, bookService, log };
 }
 
+const settle = () => new Promise((r) => setTimeout(r, 50));
+
 function setupHappyPath() {
-  (readdir as Mock)
-    .mockResolvedValueOnce(['01.mp3', '02.mp3', 'cover.jpg']) // book.path scan
-    .mockResolvedValueOnce(['The Way of Kings.m4b']); // staging scan after processing
+  (readdir as Mock).mockImplementation(async (dir: string) => {
+    if (dir.endsWith('.merge-tmp')) return ['The Way of Kings.m4b'];
+    return ['01.mp3', '02.mp3', 'cover.jpg'];
+  });
   (mkdir as Mock).mockResolvedValue(undefined);
   (cp as Mock).mockResolvedValue(undefined);
   (processAudioFiles as Mock).mockResolvedValue({ success: true, outputFiles: [STAGING_DIR + '/The Way of Kings.m4b'] });
@@ -122,12 +125,15 @@ describe('MergeService', () => {
     vi.resetAllMocks();
   });
 
-  describe('mergeBook — success path', () => {
+  describe('enqueueMerge — success path', () => {
     it('copies source files to staging dir, runs processAudioFiles on staging, verifies with scanAudioDirectory, moves M4B to book.path, deletes originals, cleans staging', async () => {
       setupHappyPath();
       const { service } = createService();
 
-      const result = await service.mergeBook(42);
+      const ack = await service.enqueueMerge(42);
+      await settle();
+
+      expect(ack).toEqual({ status: 'started', bookId: 42 });
 
       // Staging dir created
       expect(mkdir).toHaveBeenCalledWith(STAGING_DIR, { recursive: true });
@@ -143,7 +149,7 @@ describe('MergeService', () => {
         expect.objectContaining({ ffmpegPath: '/usr/bin/ffmpeg', mergeBehavior: 'always', outputFormat: 'm4b' }),
         expect.objectContaining({ title: 'The Way of Kings' }),
         expect.objectContaining({ onProgress: expect.any(Function), onStderr: expect.any(Function) }),
-        undefined, // signal (not passed by deprecated mergeBook)
+        expect.any(AbortSignal),
       );
 
       // scanAudioDirectory called on staging for verification with derived ffprobe path
@@ -161,13 +167,6 @@ describe('MergeService', () => {
 
       // Staging dir cleaned
       expect(rm).toHaveBeenCalledWith(STAGING_DIR, { recursive: true, force: true });
-
-      // Result shape
-      expect(result).toMatchObject({
-        bookId: 42,
-        outputFile: join(BOOK_PATH, 'The Way of Kings.m4b'),
-        filesReplaced: 2,
-      });
     });
 
     it('forwards sourceBitrateKbps from book.audioBitrate to processAudioFiles', async () => {
@@ -180,14 +179,15 @@ describe('MergeService', () => {
       bookService.getById.mockResolvedValue(bookWithBitrate);
       setupHappyPath();
 
-      await service.mergeBook(42);
+      await service.enqueueMerge(42);
+      await settle();
 
       expect(processAudioFiles).toHaveBeenCalledWith(
         STAGING_DIR,
         expect.objectContaining({ sourceBitrateKbps: 64 }),
         expect.any(Object),
         expect.any(Object),
-        undefined,
+        expect.any(AbortSignal),
       );
     });
 
@@ -196,14 +196,15 @@ describe('MergeService', () => {
       const { service } = createService();
       setupHappyPath();
 
-      await service.mergeBook(42);
+      await service.enqueueMerge(42);
+      await settle();
 
       expect(processAudioFiles).toHaveBeenCalledWith(
         STAGING_DIR,
         expect.objectContaining({ sourceBitrateKbps: undefined }),
         expect.any(Object),
         expect.any(Object),
-        undefined,
+        expect.any(AbortSignal),
       );
     });
 
@@ -217,7 +218,8 @@ describe('MergeService', () => {
       bookService.getById.mockResolvedValue(bookWithBitrate);
       setupHappyPath();
 
-      await service.mergeBook(42);
+      await service.enqueueMerge(42);
+      await settle();
 
       expect(log.debug).toHaveBeenCalledWith(
         expect.objectContaining({ sourceBitrateKbps: 64, targetBitrateKbps: 128, effectiveBitrateKbps: 64 }),
@@ -227,9 +229,10 @@ describe('MergeService', () => {
 
     it('does not delete the output file when an original shares the same basename as the staged M4B', async () => {
       // Book already has a top-level .m4b alongside other files
-      (readdir as Mock)
-        .mockResolvedValueOnce(['01.mp3', '02.mp3', 'The Way of Kings.m4b']) // book.path — includes pre-existing m4b
-        .mockResolvedValueOnce(['The Way of Kings.m4b']); // staging scan
+      (readdir as Mock).mockImplementation(async (dir: string) => {
+        if (dir.endsWith('.merge-tmp')) return ['The Way of Kings.m4b'];
+        return ['01.mp3', '02.mp3', 'The Way of Kings.m4b'];
+      });
       (mkdir as Mock).mockResolvedValue(undefined);
       (cp as Mock).mockResolvedValue(undefined);
       (processAudioFiles as Mock).mockResolvedValue({ success: true, outputFiles: [STAGING_DIR + '/The Way of Kings.m4b'] });
@@ -241,7 +244,8 @@ describe('MergeService', () => {
       (enrichBookFromAudio as Mock).mockResolvedValue({ enriched: true });
       const { service } = createService();
 
-      await service.mergeBook(42);
+      await service.enqueueMerge(42);
+      await settle();
 
       // The original mp3s are deleted
       expect(unlink).toHaveBeenCalledWith(join(BOOK_PATH, '01.mp3'));
@@ -254,7 +258,8 @@ describe('MergeService', () => {
       setupHappyPath();
       const { service } = createService();
 
-      await service.mergeBook(42);
+      await service.enqueueMerge(42);
+      await settle();
 
       expect(enrichBookFromAudio).toHaveBeenCalledWith(
         42,
@@ -271,7 +276,8 @@ describe('MergeService', () => {
       setupHappyPath();
       const { service, db } = createService();
 
-      await service.mergeBook(42);
+      await service.enqueueMerge(42);
+      await settle();
 
       expect(db.update).toHaveBeenCalled();
     });
@@ -288,7 +294,8 @@ describe('MergeService', () => {
       });
       void chain; // suppress unused var warning
 
-      await service.mergeBook(42);
+      await service.enqueueMerge(42);
+      await settle();
 
       const renameIdx = callOrder.indexOf('rename');
       const dbUpdateIdx = callOrder.indexOf('db.update');
@@ -300,13 +307,15 @@ describe('MergeService', () => {
 
     it('does not call unlink() when db.update throws after rename (DB failure stops cleanup)', async () => {
       setupHappyPath();
-      const { service, db } = createService();
+      const { service, db, log } = createService();
       db.update.mockReturnValue({
         set: vi.fn().mockReturnValue({ where: vi.fn().mockRejectedValue(new Error('DB write failed')) }),
       });
 
-      await expect(service.mergeBook(42)).rejects.toThrow('DB write failed');
+      await service.enqueueMerge(42);
+      await settle();
 
+      expect(log.error).toHaveBeenCalledWith(expect.any(Error), expect.stringContaining('Merge failed'), expect.anything());
       expect(unlink).not.toHaveBeenCalled();
     });
 
@@ -315,7 +324,8 @@ describe('MergeService', () => {
       (stat as Mock).mockResolvedValue({ size: 123_456_789 });
       const { service, db } = createService();
 
-      await service.mergeBook(42);
+      await service.enqueueMerge(42);
+      await settle();
 
       // stat() must be called on the destination path (book.path/stagedM4b), not the staging path
       const expectedOutputPath = join(BOOK_PATH, 'The Way of Kings.m4b');
@@ -333,7 +343,8 @@ describe('MergeService', () => {
       const eventBroadcaster = { emit: vi.fn() } as unknown as EventBroadcasterService;
       const { service } = createService({ eventBroadcaster });
 
-      await service.mergeBook(42);
+      await service.enqueueMerge(42);
+      await settle();
 
       expect(eventBroadcaster.emit).toHaveBeenCalledWith('merge_complete', {
         book_id: 42,
@@ -348,7 +359,8 @@ describe('MergeService', () => {
       const eventHistory = { create: vi.fn().mockResolvedValue(undefined) } as unknown as EventHistoryService;
       const { service } = createService({ eventHistory });
 
-      await service.mergeBook(42);
+      await service.enqueueMerge(42);
+      await settle();
 
       expect(eventHistory.create).toHaveBeenCalledWith(expect.objectContaining({
         bookId: 42,
@@ -361,49 +373,56 @@ describe('MergeService', () => {
       setupHappyPath();
       const { service } = createService();
 
-      await service.mergeBook(42);
+      await service.enqueueMerge(42);
+      await settle();
 
       // Second call should not throw ALREADY_IN_PROGRESS
       setupHappyPath();
-      await expect(service.mergeBook(42)).resolves.toBeDefined();
+      await expect(service.enqueueMerge(42)).resolves.toBeDefined();
+      await settle();
     });
   });
 
-  describe('mergeBook — processAudioFiles failure (pre-verification)', () => {
-    it('throws when processAudioFiles returns { success: false }', async () => {
-      (readdir as Mock).mockResolvedValueOnce(['01.mp3', '02.mp3']);
+  describe('enqueueMerge — processAudioFiles failure (pre-verification)', () => {
+    it('logs error when processAudioFiles returns { success: false }', async () => {
+      (readdir as Mock).mockResolvedValue(['01.mp3', '02.mp3']);
       (mkdir as Mock).mockResolvedValue(undefined);
       (cp as Mock).mockResolvedValue(undefined);
       (processAudioFiles as Mock).mockResolvedValue({ success: false, error: 'ffmpeg error' });
       (rm as Mock).mockResolvedValue(undefined);
 
-      const { service } = createService();
+      const { service, log } = createService();
 
-      await expect(service.mergeBook(42)).rejects.toThrow('Audio processing failed: ffmpeg error');
+      await service.enqueueMerge(42);
+      await settle();
+
+      expect(log.error).toHaveBeenCalledWith(expect.any(Error), expect.stringContaining('Merge failed'), expect.anything());
     });
 
     it('cleans staging dir when processAudioFiles fails', async () => {
-      (readdir as Mock).mockResolvedValueOnce(['01.mp3', '02.mp3']);
+      (readdir as Mock).mockResolvedValue(['01.mp3', '02.mp3']);
       (mkdir as Mock).mockResolvedValue(undefined);
       (cp as Mock).mockResolvedValue(undefined);
       (processAudioFiles as Mock).mockResolvedValue({ success: false, error: 'ffmpeg error' });
       (rm as Mock).mockResolvedValue(undefined);
 
       const { service } = createService();
-      await service.mergeBook(42).catch(() => undefined);
+      await service.enqueueMerge(42);
+      await settle();
 
       expect(rm).toHaveBeenCalledWith(STAGING_DIR, { recursive: true, force: true });
     });
 
     it('leaves book.path unchanged when processAudioFiles fails', async () => {
-      (readdir as Mock).mockResolvedValueOnce(['01.mp3', '02.mp3']);
+      (readdir as Mock).mockResolvedValue(['01.mp3', '02.mp3']);
       (mkdir as Mock).mockResolvedValue(undefined);
       (cp as Mock).mockResolvedValue(undefined);
       (processAudioFiles as Mock).mockResolvedValue({ success: false, error: 'ffmpeg error' });
       (rm as Mock).mockResolvedValue(undefined);
 
       const { service } = createService();
-      await service.mergeBook(42).catch(() => undefined);
+      await service.enqueueMerge(42);
+      await settle();
 
       // rename (move) should NOT have been called — book.path untouched
       expect(rename).not.toHaveBeenCalled();
@@ -411,104 +430,98 @@ describe('MergeService', () => {
     });
 
     it('clears in-progress lock after failure', async () => {
-      (readdir as Mock).mockResolvedValueOnce(['01.mp3', '02.mp3']);
+      (readdir as Mock).mockResolvedValue(['01.mp3', '02.mp3']);
       (mkdir as Mock).mockResolvedValue(undefined);
       (cp as Mock).mockResolvedValue(undefined);
       (processAudioFiles as Mock).mockResolvedValue({ success: false, error: 'ffmpeg error' });
       (rm as Mock).mockResolvedValue(undefined);
 
       const { service } = createService();
-      await service.mergeBook(42).catch(() => undefined);
+      await service.enqueueMerge(42);
+      await settle();
 
       // Second call should not throw ALREADY_IN_PROGRESS
-      (readdir as Mock).mockResolvedValueOnce(['01.mp3', '02.mp3']);
-      (mkdir as Mock).mockResolvedValue(undefined);
-      (cp as Mock).mockResolvedValue(undefined);
-      (processAudioFiles as Mock).mockResolvedValue({ success: false, error: 'again' });
-      (rm as Mock).mockResolvedValue(undefined);
-      await expect(service.mergeBook(42)).rejects.not.toMatchObject({ code: 'ALREADY_IN_PROGRESS' });
+      await expect(service.enqueueMerge(42)).resolves.toBeDefined();
+      await settle();
     });
   });
 
-  describe('mergeBook — staged verification failure', () => {
-    it('throws when scanAudioDirectory returns null on staging dir', async () => {
-      (readdir as Mock)
-        .mockResolvedValueOnce(['01.mp3', '02.mp3'])
-        .mockResolvedValueOnce(['The Way of Kings.m4b']);
+  describe('enqueueMerge — staged verification failure', () => {
+    function setupScanFailure() {
+      (readdir as Mock).mockImplementation(async (dir: string) => {
+        if (dir.endsWith('.merge-tmp')) return ['The Way of Kings.m4b'];
+        return ['01.mp3', '02.mp3'];
+      });
       (mkdir as Mock).mockResolvedValue(undefined);
       (cp as Mock).mockResolvedValue(undefined);
       (processAudioFiles as Mock).mockResolvedValue({ success: true, outputFiles: [] });
       (scanAudioDirectory as Mock).mockResolvedValue(null);
       (rm as Mock).mockResolvedValue(undefined);
+    }
 
-      const { service } = createService();
+    it('logs error when scanAudioDirectory returns null on staging dir', async () => {
+      setupScanFailure();
+      const { service, log } = createService();
 
-      await expect(service.mergeBook(42)).rejects.toThrow('verification');
+      await service.enqueueMerge(42);
+      await settle();
+
+      expect(log.error).toHaveBeenCalledWith(expect.any(Error), expect.stringContaining('Merge failed'), expect.anything());
     });
 
     it('cleans staging dir when scan fails', async () => {
-      (readdir as Mock)
-        .mockResolvedValueOnce(['01.mp3', '02.mp3'])
-        .mockResolvedValueOnce(['The Way of Kings.m4b']);
-      (mkdir as Mock).mockResolvedValue(undefined);
-      (cp as Mock).mockResolvedValue(undefined);
-      (processAudioFiles as Mock).mockResolvedValue({ success: true, outputFiles: [] });
-      (scanAudioDirectory as Mock).mockResolvedValue(null);
-      (rm as Mock).mockResolvedValue(undefined);
-
+      setupScanFailure();
       const { service } = createService();
-      await service.mergeBook(42).catch(() => undefined);
+
+      await service.enqueueMerge(42);
+      await settle();
 
       expect(rm).toHaveBeenCalledWith(STAGING_DIR, { recursive: true, force: true });
     });
 
     it('leaves book.path unchanged when scan fails', async () => {
-      (readdir as Mock)
-        .mockResolvedValueOnce(['01.mp3', '02.mp3'])
-        .mockResolvedValueOnce(['The Way of Kings.m4b']);
-      (mkdir as Mock).mockResolvedValue(undefined);
-      (cp as Mock).mockResolvedValue(undefined);
-      (processAudioFiles as Mock).mockResolvedValue({ success: true, outputFiles: [] });
-      (scanAudioDirectory as Mock).mockResolvedValue(null);
-      (rm as Mock).mockResolvedValue(undefined);
-
+      setupScanFailure();
       const { service } = createService();
-      await service.mergeBook(42).catch(() => undefined);
+
+      await service.enqueueMerge(42);
+      await settle();
 
       expect(rename).not.toHaveBeenCalled();
       expect(unlink).not.toHaveBeenCalled();
     });
 
     it('does not call enrichBookFromAudio when scan fails', async () => {
-      (readdir as Mock)
-        .mockResolvedValueOnce(['01.mp3', '02.mp3'])
-        .mockResolvedValueOnce(['The Way of Kings.m4b']);
-      (mkdir as Mock).mockResolvedValue(undefined);
-      (cp as Mock).mockResolvedValue(undefined);
-      (processAudioFiles as Mock).mockResolvedValue({ success: true, outputFiles: [] });
-      (scanAudioDirectory as Mock).mockResolvedValue(null);
-      (rm as Mock).mockResolvedValue(undefined);
-
+      setupScanFailure();
       const { service } = createService();
-      await service.mergeBook(42).catch(() => undefined);
+
+      await service.enqueueMerge(42);
+      await settle();
 
       expect(enrichBookFromAudio).not.toHaveBeenCalled();
     });
   });
 
-  describe('mergeBook — post-commit enrichment failure', () => {
-    it('surfaces enrichmentWarning in result when enrichBookFromAudio returns { enriched: false }', async () => {
+  describe('enqueueMerge — post-commit enrichment failure', () => {
+    it('surfaces enrichmentWarning via merge_complete event when enrichBookFromAudio returns { enriched: false }', async () => {
       setupHappyPath();
       (enrichBookFromAudio as Mock).mockResolvedValue({ enriched: false });
-      const { service, log } = createService();
+      const eventBroadcaster = { emit: vi.fn() } as unknown as EventBroadcasterService;
+      const { service, log } = createService({ eventBroadcaster });
 
-      // Should still resolve (not throw) — merge succeeded on disk
-      const result = await service.mergeBook(42);
-      expect(result.bookId).toBe(42);
-      expect(result.enrichmentWarning).toBe('Merge succeeded but metadata update failed — audio fields may be stale');
+      await service.enqueueMerge(42);
+      await settle();
 
       // Warning logged
       expect(log.warn).toHaveBeenCalled();
+
+      // enrichmentWarning surfaces via merge_complete SSE event
+      const completeCall = (eventBroadcaster.emit as Mock).mock.calls.find(
+        (c: unknown[]) => c[0] === 'merge_complete',
+      );
+      expect(completeCall).toBeDefined();
+      expect(completeCall![1]).toMatchObject({
+        enrichmentWarning: 'Merge succeeded but metadata update failed — audio fields may be stale',
+      });
     });
 
     it('M4B remains in book.path after enrichment failure (no rollback)', async () => {
@@ -516,7 +529,8 @@ describe('MergeService', () => {
       (enrichBookFromAudio as Mock).mockResolvedValue({ enriched: false });
       const { service } = createService();
 
-      await service.mergeBook(42);
+      await service.enqueueMerge(42);
+      await settle();
 
       // rename (move) was called before enrichment
       expect(rename).toHaveBeenCalledWith(
@@ -526,40 +540,40 @@ describe('MergeService', () => {
     });
   });
 
-  describe('mergeBook — guard conditions', () => {
+  describe('enqueueMerge — guard conditions', () => {
     it('throws MergeError NOT_FOUND when book does not exist', async () => {
       const { service, bookService } = createService();
       (bookService.getById as Mock).mockResolvedValue(null);
 
-      await expect(service.mergeBook(99)).rejects.toMatchObject({ code: 'NOT_FOUND' });
+      await expect(service.enqueueMerge(99)).rejects.toMatchObject({ code: 'NOT_FOUND' });
     });
 
     it('throws MergeError NO_PATH when book has no path', async () => {
       const { service, bookService } = createService();
       (bookService.getById as Mock).mockResolvedValue({ ...mockBook, path: null });
 
-      await expect(service.mergeBook(42)).rejects.toMatchObject({ code: 'NO_PATH' });
+      await expect(service.enqueueMerge(42)).rejects.toMatchObject({ code: 'NO_PATH' });
     });
 
     it('throws MergeError NO_STATUS when book is not in imported status', async () => {
       const { service, bookService } = createService();
       (bookService.getById as Mock).mockResolvedValue({ ...mockBook, status: 'wanted' });
 
-      await expect(service.mergeBook(42)).rejects.toMatchObject({ code: 'NO_STATUS' });
+      await expect(service.enqueueMerge(42)).rejects.toMatchObject({ code: 'NO_STATUS' });
     });
 
     it('throws MergeError NO_TOP_LEVEL_FILES when fewer than 2 top-level audio files exist', async () => {
       (readdir as Mock).mockResolvedValue(['Chapter 01.m4b']); // only 1 audio file
       const { service } = createService();
 
-      await expect(service.mergeBook(42)).rejects.toMatchObject({ code: 'NO_TOP_LEVEL_FILES' });
+      await expect(service.enqueueMerge(42)).rejects.toMatchObject({ code: 'NO_TOP_LEVEL_FILES' });
     });
 
     it('throws MergeError NO_TOP_LEVEL_FILES when only non-audio files are present', async () => {
       (readdir as Mock).mockResolvedValue(['cover.jpg', 'metadata.nfo']);
       const { service } = createService();
 
-      await expect(service.mergeBook(42)).rejects.toMatchObject({ code: 'NO_TOP_LEVEL_FILES' });
+      await expect(service.enqueueMerge(42)).rejects.toMatchObject({ code: 'NO_TOP_LEVEL_FILES' });
     });
 
     it('throws MergeError FFMPEG_NOT_CONFIGURED when ffmpegPath is not set', async () => {
@@ -571,29 +585,21 @@ describe('MergeService', () => {
         inject<FastifyBaseLogger>(createMockLogger()),
       );
 
-      await expect(noFfmpegService.mergeBook(42)).rejects.toMatchObject({ code: 'FFMPEG_NOT_CONFIGURED' });
+      await expect(noFfmpegService.enqueueMerge(42)).rejects.toMatchObject({ code: 'FFMPEG_NOT_CONFIGURED' });
     });
 
     it('throws MergeError ALREADY_IN_PROGRESS when same book is already being merged', async () => {
-      // Set up a slow processAudioFiles so the first call is still in-progress
-      let resolveProcessing!: () => void;
       (readdir as Mock).mockResolvedValue(['01.mp3', '02.mp3']);
       (mkdir as Mock).mockResolvedValue(undefined);
       (cp as Mock).mockResolvedValue(undefined);
-      (processAudioFiles as Mock).mockReturnValue(new Promise((resolve) => {
-        resolveProcessing = () => resolve({ success: false, error: 'cancelled' });
-      }));
+      (processAudioFiles as Mock).mockReturnValue(new Promise(() => {})); // never resolves
       (rm as Mock).mockResolvedValue(undefined);
 
       const { service } = createService();
-      const firstCall = service.mergeBook(42);
+      await service.enqueueMerge(42);
 
       // Second call while first is in progress
-      await expect(service.mergeBook(42)).rejects.toMatchObject({ code: 'ALREADY_IN_PROGRESS' });
-
-      // Clean up
-      resolveProcessing();
-      await firstCall.catch(() => undefined);
+      await expect(service.enqueueMerge(42)).rejects.toMatchObject({ code: 'ALREADY_IN_PROGRESS' });
     });
   });
 
@@ -611,18 +617,20 @@ describe('MergeService', () => {
       (rm as Mock).mockResolvedValue(undefined);
 
       const { service } = createService();
-      await service.mergeBook(42).catch(() => undefined);
+      await service.enqueueMerge(42);
+      await settle();
 
       expect(lockChecked).toBe(true);
     });
 
-    it('clears lock via try/finally even when an exception is thrown mid-flow', async () => {
+    it('clears lock via finally even when an exception is thrown mid-flow', async () => {
       (readdir as Mock).mockResolvedValue(['01.mp3', '02.mp3']);
       (mkdir as Mock).mockImplementation(() => { throw new Error('disk full'); });
       (rm as Mock).mockResolvedValue(undefined);
 
       const { service } = createService();
-      await service.mergeBook(42).catch(() => undefined);
+      await service.enqueueMerge(42);
+      await settle();
 
       // Lock cleared — second call should not throw ALREADY_IN_PROGRESS
       (readdir as Mock).mockResolvedValue(['01.mp3', '02.mp3']);
@@ -631,19 +639,22 @@ describe('MergeService', () => {
       (processAudioFiles as Mock).mockResolvedValue({ success: false, error: 'test' });
       (rm as Mock).mockResolvedValue(undefined);
 
-      await expect(service.mergeBook(42)).rejects.not.toMatchObject({ code: 'ALREADY_IN_PROGRESS' });
+      await expect(service.enqueueMerge(42)).resolves.toBeDefined();
+      await settle();
     });
 
     it('allows a second merge request after the first completes', async () => {
       setupHappyPath();
       const { service } = createService();
 
-      await service.mergeBook(42);
+      await service.enqueueMerge(42);
+      await settle();
 
       // Second call: reset mocks and try again
       vi.clearAllMocks();
       setupHappyPath();
-      await expect(service.mergeBook(42)).resolves.toBeDefined();
+      await expect(service.enqueueMerge(42)).resolves.toBeDefined();
+      await settle();
     });
   });
 });
@@ -656,7 +667,7 @@ describe('#257 merge observability — merge service', () => {
   describe('merge_started event', () => {
     it('recorded immediately after pre-flight checks pass (before ffmpeg runs)', async () => {
       let startedRecorded = false;
-      (readdir as Mock).mockResolvedValueOnce(['01.mp3', '02.mp3']);
+      (readdir as Mock).mockResolvedValue(['01.mp3', '02.mp3']);
       (mkdir as Mock).mockResolvedValue(undefined);
       (cp as Mock).mockResolvedValue(undefined);
       (processAudioFiles as Mock).mockImplementation(async () => {
@@ -668,7 +679,8 @@ describe('#257 merge observability — merge service', () => {
 
       const eventHistory = { create: vi.fn().mockResolvedValue(undefined) } as unknown as EventHistoryService;
       const { service } = createService({ eventHistory });
-      await service.mergeBook(42).catch(() => undefined);
+      await service.enqueueMerge(42);
+      await settle();
 
       expect(startedRecorded).toBe(true);
       // merge_started should have been called before processAudioFiles
@@ -684,7 +696,8 @@ describe('#257 merge observability — merge service', () => {
       const eventBroadcaster = { emit: vi.fn() } as unknown as EventBroadcasterService;
       const { service } = createService({ eventBroadcaster });
 
-      await service.mergeBook(42);
+      await service.enqueueMerge(42);
+      await settle();
 
       expect(eventBroadcaster.emit).toHaveBeenCalledWith('merge_started', {
         book_id: 42,
@@ -697,7 +710,7 @@ describe('#257 merge observability — merge service', () => {
       const { service, bookService } = createService({ eventHistory });
       (bookService.getById as Mock).mockResolvedValue(null);
 
-      await service.mergeBook(99).catch(() => undefined);
+      await service.enqueueMerge(99).catch(() => undefined);
 
       expect(eventHistory.create).not.toHaveBeenCalledWith(expect.objectContaining({
         eventType: 'merge_started',
@@ -707,7 +720,7 @@ describe('#257 merge observability — merge service', () => {
 
   describe('merge_failed event', () => {
     it('recorded when processAudioFiles fails, with error in reason JSON', async () => {
-      (readdir as Mock).mockResolvedValueOnce(['01.mp3', '02.mp3']);
+      (readdir as Mock).mockResolvedValue(['01.mp3', '02.mp3']);
       (mkdir as Mock).mockResolvedValue(undefined);
       (cp as Mock).mockResolvedValue(undefined);
       (processAudioFiles as Mock).mockResolvedValue({ success: false, error: 'ffmpeg error' });
@@ -715,7 +728,8 @@ describe('#257 merge observability — merge service', () => {
 
       const eventHistory = { create: vi.fn().mockResolvedValue(undefined) } as unknown as EventHistoryService;
       const { service } = createService({ eventHistory });
-      await service.mergeBook(42).catch(() => undefined);
+      await service.enqueueMerge(42);
+      await settle();
 
       expect(eventHistory.create).toHaveBeenCalledWith(expect.objectContaining({
         bookId: 42,
@@ -725,7 +739,7 @@ describe('#257 merge observability — merge service', () => {
     });
 
     it('SSE event emitted with { book_id, book_title, error } payload', async () => {
-      (readdir as Mock).mockResolvedValueOnce(['01.mp3', '02.mp3']);
+      (readdir as Mock).mockResolvedValue(['01.mp3', '02.mp3']);
       (mkdir as Mock).mockResolvedValue(undefined);
       (cp as Mock).mockResolvedValue(undefined);
       (processAudioFiles as Mock).mockResolvedValue({ success: false, error: 'ffmpeg error' });
@@ -733,7 +747,8 @@ describe('#257 merge observability — merge service', () => {
 
       const eventBroadcaster = { emit: vi.fn() } as unknown as EventBroadcasterService;
       const { service } = createService({ eventBroadcaster });
-      await service.mergeBook(42).catch(() => undefined);
+      await service.enqueueMerge(42);
+      await settle();
 
       expect(eventBroadcaster.emit).toHaveBeenCalledWith('merge_failed', {
         book_id: 42,
@@ -749,7 +764,7 @@ describe('#257 merge observability — merge service', () => {
       const { service, bookService } = createService({ eventHistory, eventBroadcaster });
       (bookService.getById as Mock).mockResolvedValue(null);
 
-      await service.mergeBook(99).catch(() => undefined);
+      await service.enqueueMerge(99).catch(() => undefined);
 
       expect(eventHistory.create).not.toHaveBeenCalledWith(expect.objectContaining({
         eventType: 'merge_failed',
@@ -764,7 +779,8 @@ describe('#257 merge observability — merge service', () => {
       const eventBroadcaster = { emit: vi.fn() } as unknown as EventBroadcasterService;
       const { service } = createService({ eventBroadcaster });
 
-      await service.mergeBook(42);
+      await service.enqueueMerge(42);
+      await settle();
 
       const progressCalls = (eventBroadcaster.emit as Mock).mock.calls.filter(
         (c: unknown[]) => c[0] === 'merge_progress',
@@ -783,10 +799,14 @@ describe('#257 merge observability — merge service', () => {
       const eventBroadcaster = {
         emit: vi.fn().mockImplementation(() => { throw new Error('SSE broken'); }),
       } as unknown as EventBroadcasterService;
-      const { service } = createService({ eventBroadcaster });
+      const { service, log } = createService({ eventBroadcaster });
 
-      const result = await service.mergeBook(42);
-      expect(result.bookId).toBe(42);
+      const ack = await service.enqueueMerge(42);
+      expect(ack.bookId).toBe(42);
+      await settle();
+
+      // Merge completed despite SSE failures
+      expect(log.info).toHaveBeenCalledWith(expect.objectContaining({ bookId: 42 }), expect.any(String));
     });
 
     it('event history creation failure does not fail the merge operation', async () => {
@@ -794,36 +814,37 @@ describe('#257 merge observability — merge service', () => {
       const eventHistory = {
         create: vi.fn().mockRejectedValue(new Error('DB write failed')),
       } as unknown as EventHistoryService;
-      const { service } = createService({ eventHistory });
+      const { service, log } = createService({ eventHistory });
 
-      const result = await service.mergeBook(42);
-      expect(result.bookId).toBe(42);
+      const ack = await service.enqueueMerge(42);
+      expect(ack.bookId).toBe(42);
+      await settle();
+
+      // Merge completed despite event history failures
+      expect(log.info).toHaveBeenCalledWith(expect.objectContaining({ bookId: 42 }), expect.any(String));
     });
   });
 
   describe('concurrent merge guard with events', () => {
     it('first accepted merge records merge_started; second ALREADY_IN_PROGRESS records nothing', async () => {
-      let resolveProcessing!: () => void;
       (readdir as Mock).mockResolvedValue(['01.mp3', '02.mp3']);
       (mkdir as Mock).mockResolvedValue(undefined);
       (cp as Mock).mockResolvedValue(undefined);
-      (processAudioFiles as Mock).mockReturnValue(new Promise((resolve) => {
-        resolveProcessing = () => resolve({ success: false, error: 'cancelled' });
-      }));
+      (processAudioFiles as Mock).mockReturnValue(new Promise(() => {})); // never resolves
       (rm as Mock).mockResolvedValue(undefined);
 
       const eventBroadcaster = { emit: vi.fn() } as unknown as EventBroadcasterService;
       const { service } = createService({ eventBroadcaster });
 
-      const firstCall = service.mergeBook(42);
+      await service.enqueueMerge(42);
 
-      // Wait a tick so the first call's sync emit fires
+      // Wait a tick so the fire-and-forget merge_started emit fires
       await new Promise((r) => process.nextTick(r));
 
       const emitsBefore = (eventBroadcaster.emit as Mock).mock.calls.length;
 
       // Second call — should throw without emitting any events
-      await expect(service.mergeBook(42)).rejects.toMatchObject({ code: 'ALREADY_IN_PROGRESS' });
+      await expect(service.enqueueMerge(42)).rejects.toMatchObject({ code: 'ALREADY_IN_PROGRESS' });
 
       // No additional SSE events from the rejected second request
       expect((eventBroadcaster.emit as Mock).mock.calls.length).toBe(emitsBefore);
@@ -833,35 +854,40 @@ describe('#257 merge observability — merge service', () => {
         (c: unknown[]) => c[0] === 'merge_started',
       );
       expect(startedEmits).toHaveLength(1);
-
-      resolveProcessing();
-      await firstCall.catch(() => undefined);
     });
   });
 
   describe('stderr deduplication', () => {
-    it('3 identical lines logged once with × 3 suffix', async () => {
-      (readdir as Mock).mockResolvedValueOnce(['01.mp3', '02.mp3']);
+    function setupStderrTest(onStderrSetup: (callbacks: { onStderr?: (line: string) => void }) => void) {
+      (readdir as Mock).mockImplementation(async (dir: string) => {
+        if (dir.endsWith('.merge-tmp')) return ['out.m4b'];
+        return ['01.mp3', '02.mp3'];
+      });
       (mkdir as Mock).mockResolvedValue(undefined);
       (cp as Mock).mockResolvedValue(undefined);
       (processAudioFiles as Mock).mockImplementation(async (_dir: string, _config: unknown, _ctx: unknown, callbacks: { onStderr?: (line: string) => void }) => {
-        callbacks?.onStderr?.('Too many packets buffered');
-        callbacks?.onStderr?.('Too many packets buffered');
-        callbacks?.onStderr?.('Too many packets buffered');
+        onStderrSetup(callbacks);
         return { success: true, outputFiles: ['/staging/out.m4b'] };
       });
       (scanAudioDirectory as Mock).mockResolvedValue(SCAN_RESULT);
-      (readdir as Mock).mockResolvedValueOnce(['out.m4b']);
       (rename as Mock).mockResolvedValue(undefined);
       (stat as Mock).mockResolvedValue({ size: 100 });
       (unlink as Mock).mockResolvedValue(undefined);
       (rm as Mock).mockResolvedValue(undefined);
       (enrichBookFromAudio as Mock).mockResolvedValue({ enriched: true });
+    }
+
+    it('3 identical lines logged once with × 3 suffix', async () => {
+      setupStderrTest((callbacks) => {
+        callbacks?.onStderr?.('Too many packets buffered');
+        callbacks?.onStderr?.('Too many packets buffered');
+        callbacks?.onStderr?.('Too many packets buffered');
+      });
 
       const { service, log } = createService();
-      await service.mergeBook(42);
+      await service.enqueueMerge(42);
+      await settle();
 
-      // Should be logged once with count
       const debugCalls = (log.debug as Mock).mock.calls;
       const stderrCalls = debugCalls.filter(
         (c: unknown[]) => typeof c[0] === 'object' && c[0] !== null && 'stderr' in (c[0] as Record<string, unknown>),
@@ -872,25 +898,15 @@ describe('#257 merge observability — merge service', () => {
     });
 
     it('interleaved different lines each logged separately', async () => {
-      (readdir as Mock).mockResolvedValueOnce(['01.mp3', '02.mp3']);
-      (mkdir as Mock).mockResolvedValue(undefined);
-      (cp as Mock).mockResolvedValue(undefined);
-      (processAudioFiles as Mock).mockImplementation(async (_dir: string, _config: unknown, _ctx: unknown, callbacks: { onStderr?: (line: string) => void }) => {
+      setupStderrTest((callbacks) => {
         callbacks?.onStderr?.('line A');
         callbacks?.onStderr?.('line B');
         callbacks?.onStderr?.('line A');
-        return { success: true, outputFiles: ['/staging/out.m4b'] };
       });
-      (scanAudioDirectory as Mock).mockResolvedValue(SCAN_RESULT);
-      (readdir as Mock).mockResolvedValueOnce(['out.m4b']);
-      (rename as Mock).mockResolvedValue(undefined);
-      (stat as Mock).mockResolvedValue({ size: 100 });
-      (unlink as Mock).mockResolvedValue(undefined);
-      (rm as Mock).mockResolvedValue(undefined);
-      (enrichBookFromAudio as Mock).mockResolvedValue({ enriched: true });
 
       const { service, log } = createService();
-      await service.mergeBook(42);
+      await service.enqueueMerge(42);
+      await settle();
 
       const debugCalls = (log.debug as Mock).mock.calls;
       const stderrCalls = debugCalls.filter(
@@ -903,23 +919,13 @@ describe('#257 merge observability — merge service', () => {
     });
 
     it('single occurrence logged without count suffix', async () => {
-      (readdir as Mock).mockResolvedValueOnce(['01.mp3', '02.mp3']);
-      (mkdir as Mock).mockResolvedValue(undefined);
-      (cp as Mock).mockResolvedValue(undefined);
-      (processAudioFiles as Mock).mockImplementation(async (_dir: string, _config: unknown, _ctx: unknown, callbacks: { onStderr?: (line: string) => void }) => {
+      setupStderrTest((callbacks) => {
         callbacks?.onStderr?.('single line');
-        return { success: true, outputFiles: ['/staging/out.m4b'] };
       });
-      (scanAudioDirectory as Mock).mockResolvedValue(SCAN_RESULT);
-      (readdir as Mock).mockResolvedValueOnce(['out.m4b']);
-      (rename as Mock).mockResolvedValue(undefined);
-      (stat as Mock).mockResolvedValue({ size: 100 });
-      (unlink as Mock).mockResolvedValue(undefined);
-      (rm as Mock).mockResolvedValue(undefined);
-      (enrichBookFromAudio as Mock).mockResolvedValue({ enriched: true });
 
       const { service, log } = createService();
-      await service.mergeBook(42);
+      await service.enqueueMerge(42);
+      await settle();
 
       const debugCalls = (log.debug as Mock).mock.calls;
       const stderrCalls = debugCalls.filter(
@@ -1307,7 +1313,8 @@ describe('#257 merge observability — merge service', () => {
       const eventBroadcaster = { emit: vi.fn() } as unknown as EventBroadcasterService;
       const { service } = createService({ eventBroadcaster });
 
-      await service.mergeBook(42);
+      await service.enqueueMerge(42);
+      await settle();
 
       const emitCalls = (eventBroadcaster as unknown as { emit: Mock }).emit.mock.calls;
       const completeEvent = emitCalls.find((c: unknown[]) => c[0] === 'merge_complete');
@@ -1639,7 +1646,8 @@ describe('#257 merge observability — merge service', () => {
       it('returns not-found for a completed merge', async () => {
         setupHappyPath();
         const { service } = createServiceWithBroadcasterForCancel();
-        await service.mergeBook(42);
+        await service.enqueueMerge(42);
+        await settle();
 
         const result = await service.cancelMerge(42);
         expect(result.status).toBe('not-found');
@@ -1656,7 +1664,8 @@ describe('#257 merge observability — merge service', () => {
         eventBroadcaster: inject<EventBroadcasterService>(broadcaster),
       });
 
-      await service.mergeBook(42);
+      await service.enqueueMerge(42);
+      await settle();
 
       const progressEvents = emitted
         .filter(e => e.event === 'merge_progress')
@@ -1677,7 +1686,8 @@ describe('#257 merge observability — merge service', () => {
         eventBroadcaster: inject<EventBroadcasterService>(broadcaster),
       });
 
-      await service.mergeBook(42);
+      await service.enqueueMerge(42);
+      await settle();
 
       const phases = emitted
         .filter(e => e.event === 'merge_progress')
@@ -1688,7 +1698,7 @@ describe('#257 merge observability — merge service', () => {
 
   describe('typed cancellation signal', () => {
     it('merge_failed event includes reason error on real failures', async () => {
-      (readdir as Mock).mockResolvedValueOnce(['01.mp3', '02.mp3']);
+      (readdir as Mock).mockResolvedValue(['01.mp3', '02.mp3']);
       (mkdir as Mock).mockResolvedValue(undefined);
       (cp as Mock).mockResolvedValue(undefined);
       (processAudioFiles as Mock).mockResolvedValue({ success: false, error: 'ffmpeg crashed' });
@@ -1700,7 +1710,8 @@ describe('#257 merge observability — merge service', () => {
         eventBroadcaster: inject<EventBroadcasterService>(broadcaster),
       });
 
-      await expect(service.mergeBook(42)).rejects.toThrow();
+      await service.enqueueMerge(42);
+      await settle();
 
       const failedEvents = emitted.filter(e => e.event === 'merge_failed');
       expect(failedEvents).toHaveLength(1);
