@@ -7,6 +7,7 @@ describe('PageLoading', () => {
     render(<PageLoading />);
 
     expect(screen.getByTestId('loading-spinner')).toBeInTheDocument();
+    expect(screen.getByRole('status')).toHaveAccessibleName('Loading');
   });
 
   it('renders header slot above spinner when header ReactNode provided', () => {
