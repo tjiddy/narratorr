@@ -6,6 +6,7 @@ import type { Db } from '../../db/index.js';
 import type { FastifyBaseLogger } from 'fastify';
 import { books } from '../../db/schema.js';
 import { COVER_FILE_REGEX } from '../../core/utils/cover-regex.js';
+import { mimeToExt } from '../../shared/mime.js';
 
 const DOWNLOAD_TIMEOUT_MS = 30_000;
 
@@ -15,11 +16,11 @@ export function isRemoteCoverUrl(url: string | null | undefined): boolean {
   return url.startsWith('http://') || url.startsWith('https://');
 }
 
-/** Map Content-Type header to file extension. */
+/** Map Content-Type header to file extension, defaulting to jpg. */
 function contentTypeToExt(contentType: string | null): string {
-  if (contentType?.includes('png')) return 'png';
-  if (contentType?.includes('webp')) return 'webp';
-  return 'jpg';
+  if (!contentType) return 'jpg';
+  const base = contentType.split(';')[0].trim();
+  return mimeToExt(base) ?? 'jpg';
 }
 
 /** Check if content-type indicates an image. */
