@@ -13,7 +13,7 @@ const variantClasses: Record<FilterPillVariant, { active: string; inactive: stri
   },
 };
 
-interface FilterPillProps {
+export interface FilterPillProps {
   label?: string;
   active: boolean;
   onClick: () => void;

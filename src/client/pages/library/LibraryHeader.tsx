@@ -4,7 +4,7 @@ import { PageHeader } from '@/components/PageHeader.js';
 
 export function LibraryHeader({ subtitle }: { subtitle?: string }) {
   return (
-    <div className="animate-fade-in-up flex items-start justify-between">
+    <div className="flex items-start justify-between">
       <PageHeader title="Library" subtitle={subtitle ?? 'Your audiobook collection'} />
       <Link
         to="/import"

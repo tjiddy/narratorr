@@ -46,7 +46,7 @@ export function Tabs({ tabs, value, onChange, ariaLabel }: TabsProps) {
           className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-all duration-200 ${
             value === tab.value
               ? 'bg-primary text-primary-foreground shadow-glow'
-              : 'text-muted-foreground hover:text-foreground'
+              : 'text-muted-foreground hover:text-foreground no-hover:text-foreground'
           }`}
         >
           {tab.icon}

@@ -24,4 +24,12 @@ describe('LibraryHeader', () => {
     const link = screen.getByText('Import Files').closest('a');
     expect(link).toHaveAttribute('href', '/import');
   });
+
+  describe('animation dedup', () => {
+    it('wrapper div does not include animate-fade-in-up class', () => {
+      const { container } = renderWithProviders(<LibraryHeader />);
+      const wrapperDiv = container.firstElementChild as HTMLElement;
+      expect(wrapperDiv.className).not.toContain('animate-fade-in-up');
+    });
+  });
 });
