@@ -1,4 +1,5 @@
 import type { ImportListProvider, ImportListItem } from './types.js';
+import { getErrorMessage } from '../../shared/error-message.js';
 
 export interface NytConfig {
   apiKey: string;
@@ -72,7 +73,7 @@ export class NytProvider implements ImportListProvider {
 
       return { success: true };
     } catch (error: unknown) {
-      return { success: false, message: `Connection failed: ${error instanceof Error ? error.message : 'Unknown error'}` };
+      return { success: false, message: `Connection failed: ${getErrorMessage(error)}` };
     }
   }
 }

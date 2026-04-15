@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto';
 import { parseInfoHash } from './magnet.js';
+import { normalizeInfoHash } from './normalize-info-hash.js';
 
 // ── Types ─────────────────────────────────────────────────────────────
 export type DownloadArtifact =
@@ -60,12 +61,7 @@ export class DownloadUrl {
       throw new Error('Could not extract info hash from magnet URI — missing or malformed xt parameter');
     }
 
-    // Handle base32 hashes (32 chars) — convert to hex
-    const normalizedHash = infoHash.length === 32
-      ? base32ToHex(infoHash).toLowerCase()
-      : infoHash.toLowerCase();
-
-    return { type: 'magnet-uri', uri: this.raw, infoHash: normalizedHash };
+    return { type: 'magnet-uri', uri: this.raw, infoHash: normalizeInfoHash(infoHash) };
   }
 
   private resolveDataUri(): DownloadArtifact {
@@ -141,10 +137,7 @@ function handleRedirect(response: Response, currentUrl: string): RedirectResult 
     if (!infoHash) {
       throw new Error('Download failed: redirect to magnet URI with no info hash');
     }
-    const normalizedHash = infoHash.length === 32
-      ? base32ToHex(infoHash).toLowerCase()
-      : infoHash.toLowerCase();
-    return { type: 'resolved', artifact: { type: 'magnet-uri', uri: location, infoHash: normalizedHash } };
+    return { type: 'resolved', artifact: { type: 'magnet-uri', uri: location, infoHash: normalizeInfoHash(infoHash) } };
   }
 
   // Resolve relative Location headers against the current URL

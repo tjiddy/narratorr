@@ -105,14 +105,14 @@ describe('HardcoverProvider', () => {
       expect(result.message).toContain('Invalid API key');
     });
 
-    it('returns failure with "Unknown error" when fetch throws a non-Error value', async () => {
+    it('returns stringified value when fetch throws a non-Error value', async () => {
       vi.stubGlobal('fetch', vi.fn().mockRejectedValue('network-string-error'));
 
       const provider = new HardcoverProvider({ apiKey: 'test-key', listType: 'trending' });
       const result = await provider.test();
 
       expect(result.success).toBe(false);
-      expect(result.message).toBe('Connection failed: Unknown error');
+      expect(result.message).toBe('Connection failed: network-string-error');
 
       vi.unstubAllGlobals();
     });

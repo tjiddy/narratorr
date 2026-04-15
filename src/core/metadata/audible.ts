@@ -3,6 +3,7 @@ import { RateLimitError, TransientError } from './errors.js';
 import { REGION_LANGUAGES } from './region-languages.js';
 import { AUDIBLE_TIMEOUT_MS } from '../utils/constants.js';
 import { fetchWithTimeout } from '../utils/fetch-with-timeout.js';
+import { getErrorMessage } from '../../shared/error-message.js';
 import type {
   MetadataSearchProvider,
   BookMetadata,
@@ -160,7 +161,7 @@ export class AudibleProvider implements MetadataSearchProvider {
     } catch (error: unknown) {
       return {
         success: false,
-        message: error instanceof Error ? error.message : 'Connection failed',
+        message: getErrorMessage(error),
       };
     }
   }
@@ -193,8 +194,7 @@ export class AudibleProvider implements MetadataSearchProvider {
     } catch (error: unknown) {
       if (error instanceof RateLimitError) throw error;
       if (error instanceof TransientError) throw error;
-      const message = error instanceof Error ? error.message : String(error);
-      throw new TransientError(this.name, message);
+      throw new TransientError(this.name, getErrorMessage(error));
     }
   }
 }

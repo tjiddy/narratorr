@@ -3,6 +3,7 @@ import { rename, unlink, writeFile, rm } from 'node:fs/promises';
 import { join, extname, basename } from 'node:path';
 import { promisify } from 'node:util';
 import { collectSortedAudioFiles } from './collect-audio-files.js';
+import { getErrorMessage } from '../../shared/error-message.js';
 import { readChapterSources, resolveChapterTitle } from './chapter-resolver.js';
 import type { ChapterSource } from './chapter-resolver.js';
 import { renderFilename } from './naming.js';
@@ -115,10 +116,9 @@ export async function processAudioFiles(
       return await convertFiles(targetDir, audioFiles, config, context, chapterSources, callbacks, signal);
     }
   } catch (error: unknown) {
-    const message = error instanceof Error ? error.message : 'Audio processing failed';
     return {
       success: false,
-      error: message,
+      error: getErrorMessage(error),
     };
   }
 }

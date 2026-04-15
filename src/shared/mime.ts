@@ -1,0 +1,18 @@
+/** MIME types supported for cover images, mapped to file extensions. */
+export const MIME_TO_EXT: Record<string, string> = {
+  'image/jpeg': 'jpg',
+  'image/png': 'png',
+  'image/webp': 'webp',
+};
+
+/** Set of supported cover image MIME types. */
+export const SUPPORTED_COVER_MIMES = new Set(Object.keys(MIME_TO_EXT));
+
+/** Comma-separated MIME string for HTML file input accept attributes. */
+export const SUPPORTED_COVER_ACCEPT = Object.keys(MIME_TO_EXT).join(',');
+
+/** Map a MIME type to its file extension. Returns null for unsupported types. */
+export function mimeToExt(mime: string | undefined): string | null {
+  if (!mime) return null;
+  return MIME_TO_EXT[mime] ?? null;
+}

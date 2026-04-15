@@ -1,6 +1,7 @@
 import { useRef, useState, useEffect, useCallback } from 'react';
 import { Link } from 'react-router-dom';
 import { resolveCoverUrl } from '@/lib/url-utils';
+import { SUPPORTED_COVER_ACCEPT } from '../../../shared/mime.js';
 import { ArrowLeftIcon, SearchIcon, BookOpenIcon, PencilIcon, RefreshIcon, TagIcon, PackageIcon, TrashIcon, XCircleIcon, MoreVerticalIcon, UploadIcon, CheckIcon, XIcon } from '@/components/icons';
 import { ToolbarDropdown } from '@/components/ToolbarDropdown';
 
@@ -184,7 +185,7 @@ export function BookHero({
             <input
               ref={fileInputRef}
               type="file"
-              accept="image/jpeg,image/png,image/webp"
+              accept={SUPPORTED_COVER_ACCEPT}
               className="hidden"
               onChange={(e) => {
                 const file = e.target.files?.[0];

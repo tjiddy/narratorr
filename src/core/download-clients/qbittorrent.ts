@@ -5,6 +5,7 @@ import { fetchWithTimeout } from '../utils/fetch-with-timeout.js';
 import { DEFAULT_REQUEST_TIMEOUT_MS } from '../utils/constants.js';
 import { DownloadClientAuthError, DownloadClientError } from './errors.js';
 import { requestWithRetry } from './retry.js';
+import { getErrorMessage } from '../../shared/error-message.js';
 
 export interface QBittorrentConfig {
   host: string;
@@ -311,7 +312,7 @@ export class QBittorrentClient implements DownloadClientAdapter {
     } catch (error: unknown) {
       return {
         success: false,
-        message: error instanceof Error ? error.message : 'Unknown error',
+        message: getErrorMessage(error),
       };
     }
   }

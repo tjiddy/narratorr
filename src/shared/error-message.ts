@@ -1,8 +1,9 @@
 /**
  * Extract a human-readable message from an unknown error value.
- * Falls back to the provided string (or 'Unknown error') for non-Error values.
+ * Returns error.message for Error instances, String(value) for everything else.
  */
-export function getErrorMessage(error: unknown, fallback = 'Unknown error'): string {
+export function getErrorMessage(error: unknown, fallback?: string): string {
   if (error instanceof Error) return error.message;
-  return fallback;
+  const str = String(error);
+  return str || (fallback ?? 'Unknown error');
 }

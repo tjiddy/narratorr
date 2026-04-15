@@ -95,7 +95,7 @@ describe('useBookActions', () => {
         await result.current.handleSave({ title: 'x' }, false);
       });
 
-      expect(toast.error).toHaveBeenCalledWith('Failed to update book: Unknown error');
+      expect(toast.error).toHaveBeenCalledWith('Failed to update book: string error');
     });
 
     it('resets isSaving after failure', async () => {

@@ -11,36 +11,33 @@ describe('getErrorMessage (shared)', () => {
     expect(getErrorMessage(new RangeError('out of range'))).toBe('out of range');
   });
 
-  it('returns fallback for non-Error primitives (string, number, boolean)', () => {
-    expect(getErrorMessage('just a string')).toBe('Unknown error');
-    expect(getErrorMessage(42)).toBe('Unknown error');
-    expect(getErrorMessage(true)).toBe('Unknown error');
+  it('returns String(value) for non-Error string', () => {
+    expect(getErrorMessage('just a string')).toBe('just a string');
   });
 
-  it('returns fallback for null', () => {
-    expect(getErrorMessage(null)).toBe('Unknown error');
+  it('returns String(value) for non-Error number', () => {
+    expect(getErrorMessage(42)).toBe('42');
   });
 
-  it('returns fallback for undefined', () => {
-    expect(getErrorMessage(undefined)).toBe('Unknown error');
+  it('returns String(value) for non-Error boolean', () => {
+    expect(getErrorMessage(true)).toBe('true');
   });
 
-  it('returns fallback for plain object with .message property', () => {
-    expect(getErrorMessage({ message: 'sneaky' })).toBe('Unknown error');
-    expect(getErrorMessage({ code: 'ERR' })).toBe('Unknown error');
+  it('returns String(value) for null', () => {
+    expect(getErrorMessage(null)).toBe('null');
+  });
+
+  it('returns String(value) for undefined', () => {
+    expect(getErrorMessage(undefined)).toBe('undefined');
+  });
+
+  it('returns String(value) for plain object', () => {
+    expect(getErrorMessage({ message: 'sneaky' })).toBe('[object Object]');
+    expect(getErrorMessage({ code: 'ERR' })).toBe('[object Object]');
   });
 
   it('returns empty string when Error has empty .message', () => {
     expect(getErrorMessage(new Error(''))).toBe('');
-  });
-
-  it('uses custom fallback when provided', () => {
-    expect(getErrorMessage('oops', 'Scan failed')).toBe('Scan failed');
-    expect(getErrorMessage(null, 'Database unreachable')).toBe('Database unreachable');
-  });
-
-  it('uses default fallback "Unknown error" when no fallback provided', () => {
-    expect(getErrorMessage({})).toBe('Unknown error');
   });
 
   it('returns .message from custom Error subclass', () => {

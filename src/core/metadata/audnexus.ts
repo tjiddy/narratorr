@@ -3,6 +3,7 @@ import { RateLimitError, TransientError } from './errors.js';
 import { normalizeGenres } from './genres.js';
 import { AUDNEXUS_TIMEOUT_MS } from '../utils/constants.js';
 import { fetchWithTimeout } from '../utils/fetch-with-timeout.js';
+import { getErrorMessage } from '../../shared/error-message.js';
 import type {
   MetadataEnrichmentProvider,
   BookMetadata,
@@ -66,8 +67,7 @@ export class AudnexusProvider implements MetadataEnrichmentProvider {
     } catch (error: unknown) {
       if (error instanceof RateLimitError) throw error;
       if (error instanceof TransientError) throw error;
-      const message = error instanceof Error ? error.message : String(error);
-      throw new TransientError('Audnexus', message);
+      throw new TransientError('Audnexus', getErrorMessage(error));
     }
   }
 }

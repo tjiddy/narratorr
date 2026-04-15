@@ -213,6 +213,21 @@ describe('downloadRemoteCover', () => {
     expect(renameDest).toBe('/books/test/cover.png');
   });
 
+  it('strips charset suffix from content-type before extension mapping', async () => {
+    mockFetch.mockResolvedValue(new Response(Buffer.from('data'), {
+      status: 200,
+      headers: { 'content-type': 'image/png; charset=utf-8' },
+    }));
+
+    await downloadRemoteCover(
+      42, '/books/test', 'https://cdn.example.com/cover',
+      inject<Db>(mockDb), log,
+    );
+
+    const renameDest = String(vi.mocked(rename).mock.calls[0][1]).split('\\').join('/');
+    expect(renameDest).toBe('/books/test/cover.png');
+  });
+
   it('defaults to jpg when content-type is a generic image type', async () => {
     mockFetch.mockResolvedValue(new Response(Buffer.from('data'), {
       status: 200,

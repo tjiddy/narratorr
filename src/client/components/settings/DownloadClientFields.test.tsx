@@ -363,7 +363,7 @@ describe('DownloadClientFields', () => {
       });
     });
 
-    it('shows fallback message and hides dropdown when API rejects a non-Error value', async () => {
+    it('shows stringified error and hides dropdown when API rejects a non-Error value', async () => {
       const user = userEvent.setup();
       const mockFn = downloadClientsApi.getClientCategoriesFromConfig as ReturnType<typeof vi.fn>;
       // First fetch succeeds and opens the dropdown
@@ -382,7 +382,7 @@ describe('DownloadClientFields', () => {
       // Trigger the non-Error rejection
       await user.click(screen.getByRole('button', { name: /fetch/i }));
       await waitFor(() => {
-        expect(screen.getByText('Failed to fetch categories')).toBeInTheDocument();
+        expect(screen.getByText('string-rejection')).toBeInTheDocument();
       });
       expect(screen.queryByText('No categories found')).not.toBeInTheDocument();
     });

@@ -3,6 +3,8 @@ import { IndexerAuthError, ProxyError } from './errors.js';
 import { createProxyAgent, resolveProxyIp } from './proxy.js';
 import { normalizeLanguage } from '../utils/language-codes.js';
 import { MAM_LANGUAGES } from '../../shared/indexer-registry.js';
+import { getErrorMessage } from '../../shared/error-message.js';
+import { normalizeBaseUrl } from '../../shared/normalize-base-url.js';
 
 export interface MAMConfig {
   mamId: string;
@@ -14,7 +16,7 @@ export interface MAMConfig {
 }
 
 const DEFAULT_BASE_URL = 'https://www.myanonamouse.net';
-const REQUEST_TIMEOUT_MS = 30_000;
+import { INDEXER_TIMEOUT_MS } from '../utils/constants.js';
 
 interface MAMSearchResponse {
   error?: string;
@@ -81,7 +83,7 @@ export class MyAnonamouseIndexer implements IndexerAdapter {
 
   constructor(config: MAMConfig, name?: string) {
     this.mamId = config.mamId;
-    this.baseUrl = (config.baseUrl || DEFAULT_BASE_URL).replace(/\/+$/, '');
+    this.baseUrl = normalizeBaseUrl(config.baseUrl || DEFAULT_BASE_URL);
     this.proxyUrl = config.proxyUrl;
     this.searchLanguages = config.searchLanguages;
     this.searchType = config.searchType;
@@ -212,7 +214,7 @@ export class MyAnonamouseIndexer implements IndexerAdapter {
       }
       return {
         success: false,
-        message: error instanceof Error ? error.message : 'Connection failed',
+        message: getErrorMessage(error),
       };
     }
   }
@@ -243,7 +245,7 @@ export class MyAnonamouseIndexer implements IndexerAdapter {
    */
   private async fetchWithCookie(url: string, callerSignal?: AbortSignal): Promise<string> {
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+    const timeoutId = setTimeout(() => controller.abort(), INDEXER_TIMEOUT_MS);
     const signal = callerSignal
       ? AbortSignal.any([controller.signal, callerSignal])
       : controller.signal;
@@ -267,9 +269,9 @@ export class MyAnonamouseIndexer implements IndexerAdapter {
       } catch (error: unknown) {
         if (dispatcher) {
           if (error instanceof DOMException && error.name === 'AbortError') {
-            throw new ProxyError(`Proxy timed out after ${Math.round(REQUEST_TIMEOUT_MS / 1000)}s`);
+            throw new ProxyError(`Proxy timed out after ${Math.round(INDEXER_TIMEOUT_MS / 1000)}s`);
           }
-          const msg = error instanceof Error ? error.message : 'unknown error';
+          const msg = getErrorMessage(error);
           throw new ProxyError(`Proxy connection failed: ${msg}`);
         }
         throw error;
@@ -349,7 +351,7 @@ export class MyAnonamouseIndexer implements IndexerAdapter {
   private async fetchTorrentAsDataUri(torrentId: number, callerSignal?: AbortSignal): Promise<string | undefined> {
     const url = `${this.baseUrl}/tor/download.php?tid=${torrentId}`;
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+    const timeoutId = setTimeout(() => controller.abort(), INDEXER_TIMEOUT_MS);
     const signal = callerSignal
       ? AbortSignal.any([controller.signal, callerSignal])
       : controller.signal;
@@ -374,9 +376,9 @@ export class MyAnonamouseIndexer implements IndexerAdapter {
         // Proxy errors must propagate — not be swallowed as undefined
         if (dispatcher) {
           if (error instanceof DOMException && error.name === 'AbortError') {
-            throw new ProxyError(`Proxy timed out after ${Math.round(REQUEST_TIMEOUT_MS / 1000)}s`);
+            throw new ProxyError(`Proxy timed out after ${Math.round(INDEXER_TIMEOUT_MS / 1000)}s`);
           }
-          const msg = error instanceof Error ? error.message : 'unknown error';
+          const msg = getErrorMessage(error);
           throw new ProxyError(`Proxy connection failed: ${msg}`);
         }
         throw error;

@@ -1,9 +1,11 @@
 import * as cheerio from 'cheerio';
 import type { IndexerAdapter, SearchResult, SearchOptions } from './types.js';
 import { buildMagnetUri } from '../utils';
+import { normalizeBaseUrl } from '../../shared/normalize-base-url.js';
 import { fetchWithProxy } from './fetch.js';
 import { isProxyRelatedError } from './errors.js';
 import { fetchWithProxyAgent, resolveProxyIp } from './proxy.js';
+import { getErrorMessage } from '../../shared/error-message.js';
 
 export interface ABBConfig {
   hostname: string; // e.g., 'audiobookbay.lu'
@@ -12,7 +14,7 @@ export interface ABBConfig {
   proxyUrl?: string;
 }
 
-const REQUEST_TIMEOUT_MS = 30000;
+import { INDEXER_TIMEOUT_MS } from '../utils/constants.js';
 
 const DEFAULT_USER_AGENTS = [
   'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
@@ -32,7 +34,7 @@ export class AudioBookBayIndexer implements IndexerAdapter {
 
   constructor(private config: ABBConfig) {
     this.baseUrl = `https://${config.hostname}`;
-    this.flareSolverrUrl = config.flareSolverrUrl?.replace(/\/+$/, '');
+    this.flareSolverrUrl = normalizeBaseUrl(config.flareSolverrUrl);
     this.proxyUrl = config.proxyUrl;
   }
 
@@ -328,7 +330,7 @@ export class AudioBookBayIndexer implements IndexerAdapter {
 
   private async testDirect(): Promise<{ success: boolean; message?: string }> {
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+    const timeoutId = setTimeout(() => controller.abort(), INDEXER_TIMEOUT_MS);
 
     try {
       const response = await fetch(this.baseUrl, {
@@ -351,7 +353,7 @@ export class AudioBookBayIndexer implements IndexerAdapter {
     } catch (error: unknown) {
       return {
         success: false,
-        message: error instanceof Error ? error.message : 'Connection failed',
+        message: getErrorMessage(error),
       };
     } finally {
       clearTimeout(timeoutId);
@@ -370,7 +372,7 @@ export class AudioBookBayIndexer implements IndexerAdapter {
     } catch (error: unknown) {
       return {
         success: false,
-        message: error instanceof Error ? error.message : 'Connection failed',
+        message: getErrorMessage(error),
       };
     }
   }
@@ -387,7 +389,7 @@ export class AudioBookBayIndexer implements IndexerAdapter {
     } catch (error: unknown) {
       return {
         success: false,
-        message: error instanceof Error ? error.message : 'Connection failed',
+        message: getErrorMessage(error),
       };
     }
   }

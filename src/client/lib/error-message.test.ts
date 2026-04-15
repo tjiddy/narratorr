@@ -4,7 +4,7 @@ import { getErrorMessage } from './error-message.js';
 describe('getErrorMessage (client re-export)', () => {
   it('re-exports getErrorMessage from shared module', () => {
     expect(getErrorMessage(new Error('test'))).toBe('test');
-    expect(getErrorMessage(null)).toBe('Unknown error');
-    expect(getErrorMessage('oops', 'Custom fallback')).toBe('Custom fallback');
+    expect(getErrorMessage(null)).toBe('null');
+    expect(getErrorMessage('oops')).toBe('oops');
   });
 });

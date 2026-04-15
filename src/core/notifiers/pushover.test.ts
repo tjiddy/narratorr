@@ -125,14 +125,14 @@ describe('PushoverNotifier', () => {
 
   // --- #199 error-handling tests ---
 
-  it('returns Unknown error for non-Error thrown value', async () => {
+  it('returns stringified value for non-Error thrown value', async () => {
     const spy = vi.spyOn(fetchModule, 'fetchWithTimeout').mockRejectedValueOnce('string-error');
 
     const notifier = new PushoverNotifier({ token: 'app-token', user: 'user-key' });
     const result = await notifier.send('on_grab', { event: 'on_grab' });
 
     expect(result.success).toBe(false);
-    expect(result.message).toBe('Unknown error');
+    expect(result.message).toBe('string-error');
     spy.mockRestore();
   });
 

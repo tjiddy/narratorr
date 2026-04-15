@@ -8,6 +8,7 @@ import { HistoryIcon, BookOpenIcon } from '@/components/icons';
 import { Tabs, type TabItem } from '@/components/Tabs.js';
 import { MergeStatusIcon } from '@/components/MergeStatusIcon.js';
 import type { BookWithAuthor } from '@/lib/api';
+import { SUPPORTED_COVER_MIMES } from '../../../shared/mime.js';
 import { BookHero } from './BookHero.js';
 import { BookDetailsContent } from './BookDetailsContent.js';
 import { BookEventHistory } from './BookEventHistory.js';
@@ -48,7 +49,7 @@ export function BookDetails({ libraryBook, metadataBook }: {
   const showWrongRelease = canShowWrongRelease(libraryBook);
 
   const handleCoverFile = useCallback((file: File) => {
-    if (!['image/jpeg', 'image/png', 'image/webp'].includes(file.type)) {
+    if (!SUPPORTED_COVER_MIMES.has(file.type)) {
       toast.error('Only JPG, PNG, and WebP images are supported');
       return;
     }

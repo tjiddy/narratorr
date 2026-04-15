@@ -64,11 +64,11 @@
 - ~~**`src/client/pages/discover/DiscoverPage.tsx:52` markAdded fire-and-forget has no error logging**~~ — resolved in #547 (console.warn on catch + error path tests)
 
 
-- **`src/core/utils/download-url.ts:65-66, 107-110` base32 normalization duplicated**: `infoHash.length === 32 ? base32ToHex(infoHash).toLowerCase() : infoHash.toLowerCase()` appears in both `resolveMagnet()` and `handleRedirect()`. Extract a `normalizeInfoHash(hash)` helper. (discovered in Archer session review of #527)
+- ~~**`src/core/utils/download-url.ts:65-66, 107-110` base32 normalization duplicated**~~ — resolved in #560 (extracted `normalizeInfoHash()` helper)
 
 - ~~**`src/server/services/import-orchestrator.test.ts:23-28` mock CONTENT_FAILURE_PATTERNS is a silent copy**~~ — resolved in #541 (replaced with importOriginal passthrough)
 
-- **Discovery candidates use region-only language gate, not configured-languages array**: `discovery-candidates.ts:182` checks `book.language.toLowerCase() !== ctx.regionLang` (single region-derived language), while search/author filtering uses the full `metadata.languages` array. A user with `languages: ['english', 'french']` but `audibleRegion: 'us'` will have French books filtered out of discovery but not search. Undocumented inconsistency. (discovered in Archer session review of #523)
+- ~~**Discovery candidates use region-only language gate, not configured-languages array**~~ — resolved in #560 (replaced `regionLang` with `languages[]` array in CandidateContext)
 
 - **`src/server/services/import-orchestrator.ts:122-128` SSE status mismatch in drain path**: `drainQueuedImports` emits `emitDownloadImporting` with `downloadStatus: 'processing_queued'` while the DB row is already `importing` (set by `claimQueuedDownload`). SSE consumers that display the payload status would briefly show the wrong state. (discovered in Archer session review of #525)
 
@@ -81,6 +81,10 @@
 - ~~**`src/server/services/download.service.ts:271` logs raw passkey URL at debug level**~~ — **RESOLVED in #545**: `sanitizeLogUrl` now applied at all 3 log sites (download.service, search route, enrich-usenet-languages)
 
 - **`src/server/services/cover-download.ts:55,61,92` logs raw remote URLs**: Cover download service logs `url: remoteUrl` unsanitized in warn/debug calls. Cover URLs are unlikely to contain indexer credentials but pattern is inconsistent with the sanitized grab/search paths. (discovered in #545)
+
+- **`src/core/download-clients/blackhole.ts:13` and `src/server/services/cover-download.ts:10` have private 30s timeout constants**: Both define local `REQUEST_TIMEOUT_MS = 30000` / `DOWNLOAD_TIMEOUT_MS = 30_000` that could be centralized in `constants.ts`. Not indexer-scoped so out of scope for #560, but same DRY pattern. (discovered in #560)
+
+- **20+ server callers pass unused fallback to `getErrorMessage(error, 'Context message')`**: After #560, the fallback param is only used when `String(error)` is empty (effectively never for real-world values). The second argument is dead code in most call sites. Low priority — no behavioral impact. (discovered in #560)
 
 ## Accepted Debt
 

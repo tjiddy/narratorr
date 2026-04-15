@@ -89,6 +89,12 @@ export const mergePhaseSchema = z.enum(['staging', 'processing', 'verifying', 'c
 
 export type MergePhase = z.infer<typeof mergePhaseSchema>;
 
+export const mergeDisplayPhaseSchema = z.enum([
+  'queued', 'starting', 'staging', 'processing', 'verifying', 'committing', 'complete', 'cancelled', 'failed',
+]);
+
+export type MergeDisplayPhase = z.infer<typeof mergeDisplayPhaseSchema>;
+
 export const mergeProgressPayload = z.object({
   book_id: z.number(),
   book_title: z.string(),

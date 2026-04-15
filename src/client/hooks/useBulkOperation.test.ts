@@ -272,7 +272,7 @@ describe('useBulkOperation', () => {
     expect(toast.error).not.toHaveBeenCalled();
   });
 
-  it('shows fallback toast message when poll throws a non-Error value', async () => {
+  it('shows stringified error toast when poll throws a non-Error value', async () => {
     mockGetActiveBulkJob.mockResolvedValue(null);
     mockGetBulkJob.mockRejectedValue('string-rejection');
 
@@ -283,7 +283,7 @@ describe('useBulkOperation', () => {
     await act(async () => { vi.advanceTimersByTime(2000); });
 
     expect(result.current.isRunning).toBe(false);
-    expect(toast.error).toHaveBeenCalledWith('Bulk operation polling failed');
+    expect(toast.error).toHaveBeenCalledWith('string-rejection');
   });
 
   it('exposes a frozen progress object on initial render (IDLE_PROGRESS regression)', async () => {

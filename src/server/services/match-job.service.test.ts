@@ -675,14 +675,14 @@ describe('MatchJobService', () => {
       expect(result.error).toBe('Network failure');
     });
 
-    it('handles non-Error thrown values', async () => {
+    it('returns stringified value for non-Error thrown values', async () => {
       (metadataService.searchBooks as ReturnType<typeof vi.fn>).mockRejectedValue('string error');
 
       const id = service.createJob([sampleCandidate]);
       await waitForJob(service, id);
 
       const result = service.getJob(id)!.results[0];
-      expect(result.error).toBe('Unknown error');
+      expect(result.error).toBe('string error');
     });
 
     it('continues matching other books when one fails', async () => {

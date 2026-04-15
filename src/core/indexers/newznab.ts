@@ -3,6 +3,8 @@ import type { IndexerAdapter, SearchResult, SearchOptions } from './types.js';
 import { fetchWithProxy } from './fetch.js';
 import { fetchWithProxyAgent, resolveProxyIp } from './proxy.js';
 import { normalizeLanguage } from '../utils/language-codes.js';
+import { getErrorMessage } from '../../shared/error-message.js';
+import { normalizeBaseUrl } from '../../shared/normalize-base-url.js';
 
 export interface NewznabConfig {
   apiUrl: string; // e.g., 'https://nzbgeek.info'
@@ -24,9 +26,9 @@ export class NewznabIndexer implements IndexerAdapter {
 
   constructor(config: NewznabConfig, name?: string) {
     // Normalize: strip trailing slash
-    this.apiUrl = config.apiUrl.replace(/\/+$/, '');
+    this.apiUrl = normalizeBaseUrl(config.apiUrl);
     this.apiKey = config.apiKey;
-    this.flareSolverrUrl = config.flareSolverrUrl?.replace(/\/+$/, '');
+    this.flareSolverrUrl = normalizeBaseUrl(config.flareSolverrUrl);
     this.proxyUrl = config.proxyUrl;
     this.name = name || new URL(config.apiUrl).hostname;
   }
@@ -81,7 +83,7 @@ export class NewznabIndexer implements IndexerAdapter {
     } catch (error: unknown) {
       return {
         success: false,
-        message: error instanceof Error ? error.message : 'Connection failed',
+        message: getErrorMessage(error),
       };
     }
   }

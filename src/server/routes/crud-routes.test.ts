@@ -136,13 +136,13 @@ describe('crud-routes shared error paths', () => {
       expect(res.json()).toEqual({ error: 'Foreign key constraint' });
     });
 
-    it('returns generic message for non-Error throws', async () => {
+    it('returns stringified value for non-Error throws', async () => {
       (services.notifier.delete as Mock).mockRejectedValue('string error');
 
       const res = await app.inject({ method: 'DELETE', url: '/api/notifiers/1' });
 
       expect(res.statusCode).toBe(500);
-      expect(res.json()).toEqual({ error: 'Failed to delete' });
+      expect(res.json()).toEqual({ error: 'string error' });
     });
   });
 

@@ -54,7 +54,7 @@ describe('formatMergePhase', () => {
     expect(formatMergePhase('failed')).toBe('Merge failed');
   });
 
-  it('returns "Merging..." for unknown phase', () => {
-    expect(formatMergePhase('something_unknown')).toBe('Merging...');
+  it('returns "Merging..." for unrecognized phase at runtime', () => {
+    expect(formatMergePhase('something_unknown' as never)).toBe('Merging...');
   });
 });

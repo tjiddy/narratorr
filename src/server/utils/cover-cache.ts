@@ -2,6 +2,7 @@ import { readdir, copyFile, mkdir, rm, readFile, unlink } from 'node:fs/promises
 import { join } from 'node:path';
 import type { FastifyBaseLogger } from 'fastify';
 import { COVER_FILE_REGEX } from '../../core/utils/cover-regex.js';
+import { MIME_TO_EXT } from '../../shared/mime.js';
 
 export { COVER_FILE_REGEX };
 
@@ -67,9 +68,8 @@ export async function serveCoverFromCache(
     if (!coverFile) return null;
 
     const data = await readFile(join(cacheDir, coverFile));
-    const mime = coverFile.endsWith('.png') ? 'image/png'
-      : coverFile.endsWith('.webp') ? 'image/webp'
-      : 'image/jpeg';
+    const ext = coverFile.split('.').pop();
+    const mime = Object.entries(MIME_TO_EXT).find(([, e]) => e === ext)?.[0] ?? 'image/jpeg';
 
     return { data, mime };
   } catch {

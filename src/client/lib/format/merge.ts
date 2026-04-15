@@ -1,4 +1,6 @@
-export function formatMergePhase(phase: string, percentage?: number, position?: number): string {
+import type { MergeDisplayPhase } from '../../../shared/schemas/sse-events.js';
+
+export function formatMergePhase(phase: MergeDisplayPhase, percentage?: number, position?: number): string {
   switch (phase) {
     case 'queued':
       return position !== undefined ? `Queued (position ${position})` : 'Queued';

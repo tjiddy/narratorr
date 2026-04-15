@@ -40,7 +40,7 @@ export interface ScoredCandidate {
 }
 
 export interface CandidateContext {
-  regionLang: string;
+  languages: string[];
   existingAsins: Set<string>;
   existingTitleAuthors: Array<{ title: string; author: string }>;
   dismissedAsins: Set<string>;
@@ -179,7 +179,11 @@ export function filterAndScore(
 export function isEligibleCandidate(book: BookMetadata, ctx: CandidateContext, authorCap?: Map<string, number>): boolean {
   if (!book.asin) return false;
   if (ctx.existingAsins.has(book.asin) || ctx.dismissedAsins.has(book.asin)) return false;
-  if (!book.language || book.language.toLowerCase() !== ctx.regionLang) return false;
+  if (ctx.languages.length > 0) {
+    if (!book.language || !ctx.languages.some(l => l.toLowerCase() === book.language!.toLowerCase())) return false;
+  } else if (!book.language) {
+    return false;
+  }
   const candidateAuthor = book.authors?.[0]?.name ?? '';
   if (isTitleAuthorDuplicate(book.title, candidateAuthor, ctx.existingTitleAuthors)) return false;
   if (!isAuthorMatchClose(candidateAuthor, ctx.queriedAuthor)) return false;

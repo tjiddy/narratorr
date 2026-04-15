@@ -265,13 +265,13 @@ describe('HealthCheckService', () => {
       expect(check!.message).toContain('Permission denied');
     });
 
-    it('returns "Unknown error" fallback message when statfs rejects a non-Error value', async () => {
+    it('returns stringified value when statfs rejects a non-Error value', async () => {
       const { service } = createService({
         fsStatfs: vi.fn().mockRejectedValue('string-rejection'),
       });
       const results = await service.runAllChecks();
       const check = results.find((r) => r.checkName === 'disk-space');
-      expect(check).toMatchObject({ state: 'error', message: 'Failed to check disk space: Unknown error' });
+      expect(check).toMatchObject({ state: 'error', message: 'Failed to check disk space: string-rejection' });
     });
   });
 
@@ -384,7 +384,7 @@ describe('HealthCheckService', () => {
       expect(check!.message).toContain('DB connection lost');
     });
 
-    it('returns "Unknown error" fallback message when download query rejects a non-Error value', async () => {
+    it('returns stringified value when download query rejects a non-Error value', async () => {
       const { service } = createService({
         db: {
           select: vi.fn().mockReturnValue({
@@ -396,7 +396,7 @@ describe('HealthCheckService', () => {
       });
       const results = await service.runAllChecks();
       const check = results.find((r) => r.checkName === 'stuck-downloads');
-      expect(check).toMatchObject({ state: 'error', message: 'Failed to check downloads: Unknown error' });
+      expect(check).toMatchObject({ state: 'error', message: 'Failed to check downloads: string-rejection' });
     });
   });
 

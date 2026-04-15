@@ -3,6 +3,7 @@ import { join } from 'node:path';
 import type { DownloadClientAdapter, DownloadItemInfo, DownloadArtifact, DownloadProtocol } from './types.js';
 import { fetchWithTimeout } from '../utils/fetch-with-timeout.js';
 import { DownloadClientError, DownloadClientTimeoutError, isTimeoutError } from './errors.js';
+import { getErrorMessage } from '../../shared/error-message.js';
 
 export interface BlackholeConfig {
   watchDir: string;
@@ -42,7 +43,7 @@ export class BlackholeClient implements DownloadClientAdapter {
       response = await fetchWithTimeout(artifact.url, {}, REQUEST_TIMEOUT_MS);
     } catch (error: unknown) {
       if (isTimeoutError(error)) throw new DownloadClientTimeoutError(this.name, (error as Error).message);
-      throw new DownloadClientError(this.name, error instanceof Error ? error.message : String(error));
+      throw new DownloadClientError(this.name, getErrorMessage(error));
     }
     if (!response.ok) {
       throw new DownloadClientError(this.name, `Failed to download file: HTTP ${response.status}`);
@@ -91,8 +92,7 @@ export class BlackholeClient implements DownloadClientAdapter {
       if (code === 'EACCES') {
         return { success: false, message: `Watch directory is not writable: ${this.config.watchDir}` };
       }
-      const message = error instanceof Error ? error.message : 'Unknown error';
-      return { success: false, message };
+      return { success: false, message: getErrorMessage(error) };
     }
   }
 

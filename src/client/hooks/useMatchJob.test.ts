@@ -188,7 +188,7 @@ describe('useMatchJob', () => {
     expect(result.current.isMatching).toBe(false);
   });
 
-  it('sets "Unknown error" fallback when startMatchJob rejects a non-Error value', async () => {
+  it('sets stringified error when startMatchJob rejects a non-Error value', async () => {
     mockStartMatchJob.mockRejectedValueOnce('string-rejection');
 
     const { result } = renderHook(() => useMatchJob());
@@ -197,7 +197,7 @@ describe('useMatchJob', () => {
       result.current.startMatching([{ path: '/a', title: 'A' }]);
     });
 
-    expect(result.current.error).toBe('Unknown error');
+    expect(result.current.error).toBe('string-rejection');
     expect(result.current.isMatching).toBe(false);
   });
 
@@ -218,7 +218,7 @@ describe('useMatchJob', () => {
     expect(result.current.error).toBe('Job expired');
   });
 
-  it('sets "Unknown error" fallback and stops polling when getMatchJob rejects a non-Error value', async () => {
+  it('sets stringified error and stops polling when getMatchJob rejects a non-Error value', async () => {
     mockStartMatchJob.mockResolvedValueOnce({ jobId: 'job-1' });
     mockGetMatchJob.mockRejectedValueOnce('string-rejection');
 
@@ -232,7 +232,7 @@ describe('useMatchJob', () => {
       vi.advanceTimersByTime(2000);
     });
 
-    expect(result.current.error).toBe('Unknown error');
+    expect(result.current.error).toBe('string-rejection');
     expect(result.current.isMatching).toBe(false);
 
     // Confirm polling has stopped — another tick should not trigger a call

@@ -158,7 +158,7 @@ describe('library-scan routes', () => {
       expect(body.error).toContain('DB write failed');
     });
 
-    it('returns generic message when non-Error is thrown', async () => {
+    it('returns stringified value when non-Error is thrown', async () => {
       (services.libraryScan.confirmImport as ReturnType<typeof vi.fn>)
         .mockRejectedValue('string error');
 
@@ -172,7 +172,7 @@ describe('library-scan routes', () => {
 
       expect(res.statusCode).toBe(500);
       const body = JSON.parse(res.payload);
-      expect(body.error).toBe('Import failed');
+      expect(body.error).toBe('string error');
     });
   });
 
@@ -237,7 +237,7 @@ describe('library-scan routes', () => {
       expect(body.error).toContain('Folder not found');
     });
 
-    it('returns generic message when non-Error is thrown', async () => {
+    it('returns stringified value when non-Error is thrown', async () => {
       (services.libraryScan.scanSingleBook as ReturnType<typeof vi.fn>)
         .mockRejectedValue('unexpected');
 
@@ -249,7 +249,7 @@ describe('library-scan routes', () => {
 
       expect(res.statusCode).toBe(400);
       const body = JSON.parse(res.payload);
-      expect(body.error).toBe('Scan failed');
+      expect(body.error).toBe('unexpected');
     });
   });
 
@@ -362,7 +362,7 @@ describe('library-scan routes', () => {
       expect(body.error).toContain('Disk full');
     });
 
-    it('returns generic message when non-Error is thrown', async () => {
+    it('returns stringified value when non-Error is thrown', async () => {
       (services.libraryScan.importSingleBook as ReturnType<typeof vi.fn>)
         .mockRejectedValue(42);
 
@@ -378,7 +378,7 @@ describe('library-scan routes', () => {
 
       expect(res.statusCode).toBe(500);
       const body = JSON.parse(res.payload);
-      expect(body.error).toBe('Import failed');
+      expect(body.error).toBe('42');
     });
   });
 
@@ -520,7 +520,7 @@ describe('library-scan routes', () => {
   });
 
   describe('POST /api/library/import/scan (additional edge cases)', () => {
-    it('returns generic message when non-Error is thrown', async () => {
+    it('returns stringified value when non-Error is thrown', async () => {
       (services.libraryScan.scanDirectory as ReturnType<typeof vi.fn>)
         .mockRejectedValue({ code: 'UNKNOWN' });
 
@@ -532,7 +532,7 @@ describe('library-scan routes', () => {
 
       expect(res.statusCode).toBe(500);
       const body = JSON.parse(res.payload);
-      expect(body.error).toBe('Scan failed');
+      expect(body.error).toBe('[object Object]');
     });
   });
 
@@ -608,7 +608,7 @@ describe('library-scan routes', () => {
       expect(body.error).toBe('Unexpected DB failure');
     });
 
-    it('returns generic message when non-Error is thrown', async () => {
+    it('returns stringified value when non-Error is thrown', async () => {
       (services.libraryScan.rescanLibrary as ReturnType<typeof vi.fn>)
         .mockRejectedValue('unknown');
 
@@ -619,7 +619,7 @@ describe('library-scan routes', () => {
 
       expect(res.statusCode).toBe(500);
       const body = JSON.parse(res.payload);
-      expect(body.error).toBe('Rescan failed');
+      expect(body.error).toBe('unknown');
     });
   });
 
