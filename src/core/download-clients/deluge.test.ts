@@ -264,6 +264,8 @@ describe('DelugeClient', () => {
         client.addDownload({ type: 'nzb-url', url: 'https://indexer.test/nzb' }),
       ).rejects.toThrow('only supports torrent artifacts');
     });
+
+    it.todo('rejects nzb-bytes artifact with DownloadClientError (no RPC call made)');
   });
 
   describe('getDownload', () => {

@@ -261,6 +261,13 @@ describe('BlackholeClient', () => {
     });
   });
 
+  describe('addDownload — nzb-bytes', () => {
+    it.todo('writes nzb-bytes data directly to watch dir as .nzb file (no HTTP fetch)');
+    it.todo('file contents match the original buffer exactly');
+    it.todo('rejects zero-length nzb-bytes with DownloadClientError before any filesystem write');
+    it.todo('existing nzb-url path unchanged (still fetches URL and writes)');
+  });
+
   describe('protocol', () => {
     it('reflects configured protocol', () => {
       expect(client.protocol).toBe('torrent');

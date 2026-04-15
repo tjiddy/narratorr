@@ -134,6 +134,14 @@ describe('SABnzbdClient', () => {
       ).rejects.toThrow('failed to add');
     });
 
+    it.todo('submits nzb-bytes artifact via multipart upload with mode=addlocalfile');
+    it.todo('multipart request body contains correct NZB content');
+    it.todo('forwards category and priority options in multipart request');
+    it.todo('returns NZB ID from successful addlocalfile response');
+    it.todo('throws DownloadClientError when addlocalfile returns status: false');
+    it.todo('throws DownloadClientError when addlocalfile returns empty nzo_ids');
+    it.todo('rejects zero-length nzb-bytes with DownloadClientError before any network call');
+
     it('rejects torrent artifact with usenet-only error', async () => {
       await expect(
         client.addDownload({ type: 'magnet-uri', uri: 'magnet:?xt=urn:btih:abc123', infoHash: 'abc123' }),

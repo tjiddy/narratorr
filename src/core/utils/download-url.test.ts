@@ -494,6 +494,12 @@ describe('extractInfoHashFromTorrent', () => {
   });
 });
 
+describe('resolve() — nzb-bytes data URI', () => {
+    it.todo('resolves data:application/x-nzb;base64 URI to nzb-bytes artifact with correct decoded content');
+    it.todo('usenet HTTP URLs still produce nzb-url (passthrough unchanged)');
+    it.todo('data:application/x-bittorrent;base64 still produces torrent-bytes (no regression)');
+  });
+
 describe('base32ToHex', () => {
   it('converts base32-encoded hash to hex', () => {
     // "JBSWY3DPEHPK3PXP" → "48656c6c6f21deadbeef" (Hello!...)

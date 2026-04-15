@@ -712,6 +712,15 @@ describe('NZBGetClient', () => {
     });
   });
 
+  describe('addDownload — nzb-bytes', () => {
+    it.todo('submits nzb-bytes artifact via append RPC with base64-encoded content');
+    it.todo('base64 encoding round-trips correctly (decode matches original buffer)');
+    it.todo('forwards category and priority options in RPC params');
+    it.todo('returns NZB ID from successful append response');
+    it.todo('throws DownloadClientError when append returns 0 or negative');
+    it.todo('rejects zero-length nzb-bytes with DownloadClientError before any network call');
+  });
+
   describe('Zod response validation', () => {
     it('rpc() with valid response shape parses correctly and returns result', async () => {
       server.use(
