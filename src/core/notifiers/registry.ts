@@ -1,4 +1,6 @@
 import type { NotifierAdapter } from './types.js';
+import type { NotifierType } from '../../shared/notifier-registry.js';
+import type { NotifierSettingsMap, NotifierSettings } from '../../shared/schemas/notifier.js';
 import { WebhookNotifier } from './webhook.js';
 import { DiscordNotifier } from './discord.js';
 import { ScriptNotifier } from './script.js';
@@ -9,8 +11,6 @@ import { PushoverNotifier } from './pushover.js';
 import { NtfyNotifier } from './ntfy.js';
 import { GotifyNotifier } from './gotify.js';
 
-type AdapterFactory = (settings: Record<string, unknown>) => NotifierAdapter;
-
 function parseWebhookHeaders(headers: unknown): Record<string, string> | undefined {
   if (typeof headers !== 'string') return undefined;
   try {
@@ -20,47 +20,52 @@ function parseWebhookHeaders(headers: unknown): Record<string, string> | undefin
   }
 }
 
-export const ADAPTER_FACTORIES: Record<string, AdapterFactory> = {
+const TYPED_FACTORIES: { [K in NotifierType]: (settings: NotifierSettingsMap[K]) => NotifierAdapter } = {
   webhook: (s) => new WebhookNotifier({
-    url: s.url as string,
-    method: (s.method as 'POST' | 'PUT') || 'POST',
+    url: s.url,
+    method: s.method || 'POST',
     headers: parseWebhookHeaders(s.headers),
-    bodyTemplate: s.bodyTemplate as string | undefined,
+    bodyTemplate: s.bodyTemplate,
   }),
   discord: (s) => new DiscordNotifier({
-    webhookUrl: s.webhookUrl as string,
-    includeCover: (s.includeCover as boolean) ?? true,
+    webhookUrl: s.webhookUrl,
+    includeCover: s.includeCover ?? true,
   }),
   script: (s) => new ScriptNotifier({
-    path: s.path as string,
-    timeout: (s.timeout as number) || 30,
+    path: s.path,
+    timeout: s.timeout || 30,
   }),
   email: (s) => new EmailNotifier({
-    host: s.smtpHost as string,
-    port: (s.smtpPort as number) || 587,
-    user: s.smtpUser as string | undefined,
-    pass: s.smtpPass as string | undefined,
-    tls: (s.smtpTls as boolean) ?? false,
-    from: s.fromAddress as string,
-    to: s.toAddress as string,
+    host: s.smtpHost,
+    port: s.smtpPort || 587,
+    user: s.smtpUser,
+    pass: s.smtpPass,
+    tls: s.smtpTls ?? false,
+    from: s.fromAddress,
+    to: s.toAddress,
   }),
   telegram: (s) => new TelegramNotifier({
-    botToken: s.botToken as string,
-    chatId: s.chatId as string,
+    botToken: s.botToken,
+    chatId: s.chatId,
   }),
   slack: (s) => new SlackNotifier({
-    webhookUrl: s.webhookUrl as string,
+    webhookUrl: s.webhookUrl,
   }),
   pushover: (s) => new PushoverNotifier({
-    token: s.pushoverToken as string,
-    user: s.pushoverUser as string,
+    token: s.pushoverToken,
+    user: s.pushoverUser,
   }),
   ntfy: (s) => new NtfyNotifier({
-    topic: s.ntfyTopic as string,
-    serverUrl: s.ntfyServer as string | undefined,
+    topic: s.ntfyTopic,
+    serverUrl: s.ntfyServer,
   }),
   gotify: (s) => new GotifyNotifier({
-    serverUrl: s.gotifyUrl as string,
-    token: s.gotifyToken as string,
+    serverUrl: s.gotifyUrl,
+    token: s.gotifyToken,
   }),
 };
+
+export type NotifierAdapterFactory = (settings: NotifierSettings) => NotifierAdapter;
+
+export const ADAPTER_FACTORIES: Record<NotifierType, NotifierAdapterFactory> =
+  TYPED_FACTORIES as Record<NotifierType, NotifierAdapterFactory>;

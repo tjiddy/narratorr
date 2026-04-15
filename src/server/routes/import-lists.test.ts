@@ -108,7 +108,7 @@ describe('import-lists routes', () => {
 
       expect(res.statusCode).toBe(400);
       const body = res.json();
-      expect(body.message).toContain('API key is required');
+      expect(body.message).toContain('settings/apiKey');
     });
 
     it('rejects sync interval below minimum', async () => {
@@ -145,7 +145,19 @@ describe('import-lists routes', () => {
 
       expect(res.statusCode).toBe(400);
       const body = res.json();
-      expect(body.message).toContain('API key is required');
+      expect(body.message).toContain('settings/apiKey');
+    });
+
+    it('returns 400 when settings provided without type', async () => {
+      const res = await app.inject({
+        method: 'PUT',
+        url: '/api/import-lists/1',
+        payload: { settings: { apiKey: 'key', serverUrl: 'http://test', libraryId: 'lib' } },
+      });
+
+      expect(res.statusCode).toBe(400);
+      expect(res.json().message).toContain('type');
+      expect(services.importList.update).not.toHaveBeenCalled();
     });
 
     it('accepts toggle-only update without type or settings', async () => {
@@ -293,6 +305,18 @@ describe('import-lists routes', () => {
 
       expect(res.statusCode).toBe(200);
       expect(res.json()).toEqual({ items: [], total: 0 });
+    });
+
+    it('returns 400 for invalid typed settings and does not call service.preview', async () => {
+      const res = await app.inject({
+        method: 'POST',
+        url: '/api/import-lists/preview',
+        payload: { type: 'abs', settings: { serverUrl: 'http://abs.local' } }, // missing apiKey, libraryId
+      });
+
+      expect(res.statusCode).toBe(400);
+      expect(res.json().message).toContain('settings/apiKey');
+      expect(services.importList.preview).not.toHaveBeenCalled();
     });
   });
 });

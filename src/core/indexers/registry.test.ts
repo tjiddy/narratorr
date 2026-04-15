@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { http, HttpResponse } from 'msw';
 import { useMswServer } from '../__tests__/msw/server.js';
 import { ADAPTER_FACTORIES } from './registry.js';
-import { indexerTypeSchema } from '../../shared/schemas/indexer.js';
+import { indexerTypeSchema, type IndexerSettings } from '../../shared/schemas/indexer.js';
 
 const MAM_BASE = 'https://www.myanonamouse.net';
 
@@ -18,7 +18,7 @@ describe('Indexer ADAPTER_FACTORIES', () => {
     });
 
     it('each factory returns an object satisfying the IndexerAdapter interface', () => {
-      const configs: Record<string, Record<string, unknown>> = {
+      const configs: Record<string, IndexerSettings> = {
         abb: { hostname: 'test.com', pageLimit: 2 },
         torznab: { apiUrl: 'https://test.com', apiKey: 'key' },
         newznab: { apiUrl: 'https://test.com', apiKey: 'key' },
@@ -143,7 +143,7 @@ describe('Indexer ADAPTER_FACTORIES', () => {
 
   describe('error handling', () => {
     it('returns undefined for unknown indexer type (no factory)', () => {
-      expect(ADAPTER_FACTORIES['unknown']).toBeUndefined();
+      expect((ADAPTER_FACTORIES as Record<string, unknown>)['unknown']).toBeUndefined();
     });
   });
 
@@ -171,7 +171,7 @@ describe('Indexer ADAPTER_FACTORIES', () => {
       const captured = { value: '' };
       captureSearchUrl(captured);
       const adapter = ADAPTER_FACTORIES.myanonamouse(
-        { mamId: 'test-id', searchLanguages: [1], searchType: 0 }, 'MAM',
+        { mamId: 'test-id', searchLanguages: [1], searchType: 0 as never }, 'MAM',
       );
       await adapter.search('test');
       expect(new URL(captured.value).searchParams.get('tor[searchType]')).toBe('all');
@@ -181,7 +181,7 @@ describe('Indexer ADAPTER_FACTORIES', () => {
       const captured = { value: '' };
       captureSearchUrl(captured);
       const adapter = ADAPTER_FACTORIES.myanonamouse(
-        { mamId: 'test-id', searchLanguages: [1], searchType: 1 }, 'MAM',
+        { mamId: 'test-id', searchLanguages: [1], searchType: 1 as never }, 'MAM',
       );
       await adapter.search('test');
       expect(new URL(captured.value).searchParams.get('tor[searchType]')).toBe('active');
@@ -191,7 +191,7 @@ describe('Indexer ADAPTER_FACTORIES', () => {
       const captured = { value: '' };
       captureSearchUrl(captured);
       const adapter = ADAPTER_FACTORIES.myanonamouse(
-        { mamId: 'test-id', searchLanguages: [1], searchType: 2 }, 'MAM',
+        { mamId: 'test-id', searchLanguages: [1], searchType: 2 as never }, 'MAM',
       );
       await adapter.search('test');
       expect(new URL(captured.value).searchParams.get('tor[searchType]')).toBe('fl');
@@ -201,7 +201,7 @@ describe('Indexer ADAPTER_FACTORIES', () => {
       const captured = { value: '' };
       captureSearchUrl(captured);
       const adapter = ADAPTER_FACTORIES.myanonamouse(
-        { mamId: 'test-id', searchLanguages: [1], searchType: 3 }, 'MAM',
+        { mamId: 'test-id', searchLanguages: [1], searchType: 3 as never }, 'MAM',
       );
       await adapter.search('test');
       expect(new URL(captured.value).searchParams.get('tor[searchType]')).toBe('fl-VIP');
@@ -211,7 +211,7 @@ describe('Indexer ADAPTER_FACTORIES', () => {
       const captured = { value: '' };
       captureSearchUrl(captured);
       const adapter = ADAPTER_FACTORIES.myanonamouse(
-        { mamId: 'test-id', searchLanguages: [1], searchType: 4 }, 'MAM',
+        { mamId: 'test-id', searchLanguages: [1], searchType: 4 as never }, 'MAM',
       );
       await adapter.search('test');
       expect(new URL(captured.value).searchParams.get('tor[searchType]')).toBe('active');

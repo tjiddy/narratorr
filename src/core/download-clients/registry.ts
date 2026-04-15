@@ -1,4 +1,6 @@
 import type { DownloadClientAdapter } from './types.js';
+import type { DownloadClientType } from '../../shared/download-client-registry.js';
+import type { DownloadClientSettingsMap, DownloadClientSettings } from '../../shared/schemas/download-client.js';
 import { QBittorrentClient } from './qbittorrent.js';
 import { SABnzbdClient } from './sabnzbd.js';
 import { NZBGetClient } from './nzbget.js';
@@ -10,45 +12,48 @@ interface FactoryOptions {
   onWarn?: (msg: string) => void;
 }
 
-type AdapterFactory = (settings: Record<string, unknown>, options?: FactoryOptions) => DownloadClientAdapter;
-
-export const ADAPTER_FACTORIES: Record<string, AdapterFactory> = {
+const TYPED_FACTORIES: { [K in DownloadClientType]: (settings: DownloadClientSettingsMap[K], options?: FactoryOptions) => DownloadClientAdapter } = {
   qbittorrent: (s) => new QBittorrentClient({
-    host: (s.host as string) || 'localhost',
-    port: (s.port as number) || 8080,
-    username: (s.username as string) || 'admin',
-    password: (s.password as string) || '',
-    useSsl: (s.useSsl as boolean) || false,
+    host: s.host || 'localhost',
+    port: s.port || 8080,
+    username: s.username || 'admin',
+    password: s.password || '',
+    useSsl: s.useSsl || false,
   }),
   sabnzbd: (s) => new SABnzbdClient({
-    host: (s.host as string) || 'localhost',
-    port: (s.port as number) || 8080,
-    apiKey: (s.apiKey as string) || '',
-    useSsl: (s.useSsl as boolean) || false,
+    host: s.host || 'localhost',
+    port: s.port || 8080,
+    apiKey: s.apiKey || '',
+    useSsl: s.useSsl || false,
   }),
   nzbget: (s) => new NZBGetClient({
-    host: (s.host as string) || 'localhost',
-    port: (s.port as number) || 6789,
-    username: (s.username as string) || 'nzbget',
-    password: (s.password as string) || '',
-    useSsl: (s.useSsl as boolean) || false,
+    host: s.host || 'localhost',
+    port: s.port || 6789,
+    username: s.username || 'nzbget',
+    password: s.password || '',
+    useSsl: s.useSsl || false,
   }),
   transmission: (s) => new TransmissionClient({
-    host: (s.host as string) || 'localhost',
-    port: (s.port as number) || 9091,
-    username: (s.username as string) || '',
-    password: (s.password as string) || '',
-    useSsl: (s.useSsl as boolean) || false,
+    host: s.host || 'localhost',
+    port: s.port || 9091,
+    username: s.username || '',
+    password: s.password || '',
+    useSsl: s.useSsl || false,
   }),
   deluge: (s, opts) => new DelugeClient({
-    host: (s.host as string) || 'localhost',
-    port: (s.port as number) || 8112,
-    password: (s.password as string) || '',
-    useSsl: (s.useSsl as boolean) || false,
+    host: s.host || 'localhost',
+    port: s.port || 8112,
+    password: s.password || '',
+    useSsl: s.useSsl || false,
     onWarn: opts?.onWarn,
   }),
   blackhole: (s) => new BlackholeClient({
-    watchDir: (s.watchDir as string) || '',
-    protocol: ((s.protocol as string) || 'torrent') as 'torrent' | 'usenet',
+    watchDir: s.watchDir || '',
+    protocol: s.protocol || 'torrent',
   }),
 };
+
+export type DownloadClientAdapterFactory = (settings: DownloadClientSettings, options?: FactoryOptions) => DownloadClientAdapter;
+
+export const ADAPTER_FACTORIES: Record<DownloadClientType, DownloadClientAdapterFactory> =
+  TYPED_FACTORIES as Record<DownloadClientType, DownloadClientAdapterFactory>;

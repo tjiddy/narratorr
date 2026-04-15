@@ -372,3 +372,165 @@ describe('createNotifierFormSchema — settings trim (#284)', () => {
     if (result.success) expect(result.data.settings.headers).toBe('');
   });
 });
+
+// #557 — Typed adapter settings schemas (discriminated unions)
+describe('createNotifierSchema — typed settings validation', () => {
+  const base = { name: 'Test', enabled: true, events: ['on_grab' as const] };
+
+  describe('positive cases — each type with valid settings', () => {
+    it('accepts valid webhook settings (url)', () => {
+      const result = createNotifierSchema.safeParse({
+        ...base, type: 'webhook', settings: { url: 'https://hooks.test' },
+      });
+      expect(result.success).toBe(true);
+    });
+
+    it('accepts valid discord settings (webhookUrl)', () => {
+      const result = createNotifierSchema.safeParse({
+        ...base, type: 'discord', settings: { webhookUrl: 'https://discord.com/webhook' },
+      });
+      expect(result.success).toBe(true);
+    });
+
+    it('accepts valid script settings (path)', () => {
+      const result = createNotifierSchema.safeParse({
+        ...base, type: 'script', settings: { path: '/usr/local/bin/notify.sh' },
+      });
+      expect(result.success).toBe(true);
+    });
+
+    it('accepts valid email settings (smtpHost + fromAddress + toAddress)', () => {
+      const result = createNotifierSchema.safeParse({
+        ...base, type: 'email', settings: { smtpHost: 'smtp.test', fromAddress: 'a@b.com', toAddress: 'c@d.com' },
+      });
+      expect(result.success).toBe(true);
+    });
+
+    it('accepts valid telegram settings (botToken + chatId)', () => {
+      const result = createNotifierSchema.safeParse({
+        ...base, type: 'telegram', settings: { botToken: 'tok123', chatId: '456' },
+      });
+      expect(result.success).toBe(true);
+    });
+
+    it('accepts valid slack settings (webhookUrl)', () => {
+      const result = createNotifierSchema.safeParse({
+        ...base, type: 'slack', settings: { webhookUrl: 'https://hooks.slack.com/test' },
+      });
+      expect(result.success).toBe(true);
+    });
+
+    it('accepts valid pushover settings (pushoverToken + pushoverUser)', () => {
+      const result = createNotifierSchema.safeParse({
+        ...base, type: 'pushover', settings: { pushoverToken: 'tok', pushoverUser: 'usr' },
+      });
+      expect(result.success).toBe(true);
+    });
+
+    it('accepts valid ntfy settings (ntfyTopic)', () => {
+      const result = createNotifierSchema.safeParse({
+        ...base, type: 'ntfy', settings: { ntfyTopic: 'audiobooks' },
+      });
+      expect(result.success).toBe(true);
+    });
+
+    it('accepts valid gotify settings (gotifyUrl + gotifyToken)', () => {
+      const result = createNotifierSchema.safeParse({
+        ...base, type: 'gotify', settings: { gotifyUrl: 'https://gotify.test', gotifyToken: 'tok' },
+      });
+      expect(result.success).toBe(true);
+    });
+  });
+
+  describe('negative cases', () => {
+    it('rejects missing required fields for webhook (no url)', () => {
+      const result = createNotifierSchema.safeParse({
+        ...base, type: 'webhook', settings: { method: 'POST' },
+      });
+      expect(result.success).toBe(false);
+      if (!result.success) {
+        expect(result.error.issues).toContainEqual(
+          expect.objectContaining({ path: ['settings', 'url'] }),
+        );
+      }
+    });
+
+    it('rejects extra unknown fields', () => {
+      const result = createNotifierSchema.safeParse({
+        ...base, type: 'webhook', settings: { url: 'https://test', badField: true },
+      });
+      expect(result.success).toBe(false);
+    });
+
+    it('rejects empty string for required fields', () => {
+      const result = createNotifierSchema.safeParse({
+        ...base, type: 'telegram', settings: { botToken: '', chatId: 'id' },
+      });
+      expect(result.success).toBe(false);
+    });
+  });
+
+  describe('boundary values', () => {
+    it('accepts timeout at minimum (1)', () => {
+      const result = createNotifierSchema.safeParse({
+        ...base, type: 'script', settings: { path: '/test.sh', timeout: 1 },
+      });
+      expect(result.success).toBe(true);
+    });
+
+    it('accepts timeout at maximum (300)', () => {
+      const result = createNotifierSchema.safeParse({
+        ...base, type: 'script', settings: { path: '/test.sh', timeout: 300 },
+      });
+      expect(result.success).toBe(true);
+    });
+
+    it('webhook method must be POST or PUT', () => {
+      const good = createNotifierSchema.safeParse({
+        ...base, type: 'webhook', settings: { url: 'https://test', method: 'PUT' },
+      });
+      expect(good.success).toBe(true);
+
+      const bad = createNotifierSchema.safeParse({
+        ...base, type: 'webhook', settings: { url: 'https://test', method: 'DELETE' },
+      });
+      expect(bad.success).toBe(false);
+    });
+  });
+
+  describe('notifier secret handling', () => {
+    it('notifier settings are NOT masked (plaintext in/out)', () => {
+      const result = createNotifierSchema.safeParse({
+        ...base, type: 'telegram', settings: { botToken: 'secret-token-123', chatId: 'id' },
+      });
+      expect(result.success).toBe(true);
+      if (result.success) expect(result.data.settings.botToken).toBe('secret-token-123');
+    });
+  });
+});
+
+describe('updateNotifierSchema — type required when settings present', () => {
+  it('accepts update with settings + type', () => {
+    const result = updateNotifierSchema.safeParse({
+      type: 'webhook' as const, settings: { url: 'https://new.test' },
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it('accepts update without settings (type not required)', () => {
+    const result = updateNotifierSchema.safeParse({ name: 'New Name' });
+    expect(result.success).toBe(true);
+  });
+
+  it('rejects update with settings but no type', () => {
+    const result = updateNotifierSchema.safeParse({
+      settings: { url: 'https://test' },
+    });
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      expect(result.error.issues).toContainEqual(
+        expect.objectContaining({ path: ['type'], message: 'Type is required when settings are provided' }),
+      );
+    }
+  });
+});

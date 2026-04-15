@@ -9,6 +9,7 @@ import {
   type EventPayload,
 } from '../../core/index.js';
 import { getErrorMessage } from '../utils/error-message.js';
+import type { NotifierSettings } from '../../shared/schemas/notifier.js';
 
 type NotifierRow = typeof notifiers.$inferSelect;
 type NewNotifier = typeof notifiers.$inferInsert;
@@ -124,19 +125,21 @@ export class NotifierService {
   }
 
   private createAdapter(notifier: NotifierRow): NotifierAdapter {
-    const factory = ADAPTER_FACTORIES[notifier.type];
+    const factory = ADAPTER_FACTORIES[notifier.type as keyof typeof ADAPTER_FACTORIES];
     if (!factory) throw new Error(`Unknown notifier type: ${notifier.type}`);
+
+    const settings = notifier.settings as NotifierSettings;
 
     // Log warning for malformed webhook headers (factory silently ignores them)
     if (notifier.type === 'webhook') {
-      const settings = notifier.settings as Record<string, unknown>;
-      if (typeof settings.headers === 'string') {
-        try { JSON.parse(settings.headers); } catch {
+      const webhookSettings = settings as NotifierSettings & { headers?: string };
+      if (typeof webhookSettings.headers === 'string') {
+        try { JSON.parse(webhookSettings.headers); } catch {
           this.log.warn({ notifierId: notifier.id }, 'Failed to parse webhook headers JSON, ignoring');
         }
       }
     }
 
-    return factory(notifier.settings as Record<string, unknown>);
+    return factory(settings);
   }
 }

@@ -87,6 +87,18 @@ describe('download-clients routes', () => {
 
       expect(res.statusCode).toBe(400);
     });
+
+    it('returns 400 for invalid typed settings and does not call service.create', async () => {
+      const res = await app.inject({
+        method: 'POST',
+        url: '/api/download-clients',
+        payload: { name: 'Bad', type: 'qbittorrent', settings: { port: 8080 } }, // missing host
+      });
+
+      expect(res.statusCode).toBe(400);
+      expect(res.json().message).toContain('settings/host');
+      expect(services.downloadClient.create).not.toHaveBeenCalled();
+    });
   });
 
   // ===== #263 — create with pathMappings =====
@@ -185,6 +197,18 @@ describe('download-clients routes', () => {
       });
 
       expect(res.statusCode).toBe(200);
+    });
+
+    it('returns 400 when settings provided without type', async () => {
+      const res = await app.inject({
+        method: 'PUT',
+        url: '/api/download-clients/1',
+        payload: { settings: { host: 'localhost', port: 8080 } },
+      });
+
+      expect(res.statusCode).toBe(400);
+      expect(res.json().message).toContain('type');
+      expect(services.downloadClient.update).not.toHaveBeenCalled();
     });
 
     it('returns 404 when not found', async () => {

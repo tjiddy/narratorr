@@ -11,6 +11,7 @@ import { DOWNLOAD_CLIENT_REGISTRY } from '../../shared/download-client-registry.
 import { encryptFields, decryptFields, resolveSentinelFields, getKey } from '../utils/secret-codec.js';
 import { AdapterCache } from '../utils/adapter-cache.js';
 import { getErrorMessage } from '../utils/error-message.js';
+import type { DownloadClientSettings } from '../../shared/schemas/download-client.js';
 
 type DownloadClientRow = typeof downloadClients.$inferSelect;
 type NewDownloadClient = typeof downloadClients.$inferInsert;
@@ -167,13 +168,13 @@ export class DownloadClientService {
   }
 
   private createAdapter(client: DownloadClientRow): DownloadClientAdapter {
-    const settings = client.settings as Record<string, unknown>;
-    const factory = DOWNLOAD_CLIENT_ADAPTER_FACTORIES[client.type];
+    const settings = client.settings as DownloadClientSettings;
+    const factory = DOWNLOAD_CLIENT_ADAPTER_FACTORIES[client.type as keyof typeof DOWNLOAD_CLIENT_ADAPTER_FACTORIES];
     if (!factory) {
       throw new Error(`Unknown download client type: ${client.type}`);
     }
     this.log.debug({ client: client.name, type: client.type }, 'Creating download client adapter');
-    return factory(settings, { onWarn: (msg) => this.log.warn(msg) });
+    return factory(settings, { onWarn: (msg: string) => this.log.warn(msg) });
   }
 
   async testConfig(data: { type: string; settings: Record<string, unknown> }): Promise<{ success: boolean; message?: string }> {

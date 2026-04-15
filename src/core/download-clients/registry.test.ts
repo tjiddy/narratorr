@@ -1,11 +1,11 @@
 import { describe, it, expect } from 'vitest';
 import { ADAPTER_FACTORIES } from './registry.js';
-import { downloadClientTypeSchema } from '../../shared/schemas/download-client.js';
+import { downloadClientTypeSchema, type DownloadClientSettings } from '../../shared/schemas/download-client.js';
 
 describe('Download Client ADAPTER_FACTORIES', () => {
   const types = downloadClientTypeSchema.options;
 
-  const configs: Record<string, Record<string, unknown>> = {
+  const configs: Record<string, DownloadClientSettings> = {
     qbittorrent: { host: 'localhost', port: 8080, username: 'admin', password: '', useSsl: false },
     sabnzbd: { host: 'localhost', port: 8080, apiKey: 'key', useSsl: false },
     nzbget: { host: 'localhost', port: 6789, username: 'nzbget', password: '', useSsl: false },
@@ -88,7 +88,7 @@ describe('Download Client ADAPTER_FACTORIES', () => {
 
   describe('error handling', () => {
     it('returns undefined for unknown download client type (no factory)', () => {
-      expect(ADAPTER_FACTORIES['unknown']).toBeUndefined();
+      expect((ADAPTER_FACTORIES as Record<string, unknown>)['unknown']).toBeUndefined();
     });
   });
 });

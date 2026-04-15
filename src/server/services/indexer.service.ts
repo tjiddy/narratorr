@@ -13,6 +13,7 @@ import {
 } from '../../core/index.js';
 import type { SettingsService } from './settings.service.js';
 import { encryptFields, decryptFields, resolveSentinelFields, getKey } from '../utils/secret-codec.js';
+import type { IndexerSettings } from '../../shared/schemas/indexer.js';
 import { AdapterCache } from '../utils/adapter-cache.js';
 import { getErrorMessage } from '../utils/error-message.js';
 
@@ -162,8 +163,8 @@ export class IndexerService {
   }
 
   private createAdapter(indexer: IndexerRow, proxyUrl?: string): IndexerAdapter {
-    const settings = indexer.settings as Record<string, unknown>;
-    const factory = INDEXER_ADAPTER_FACTORIES[indexer.type];
+    const settings = indexer.settings as IndexerSettings;
+    const factory = INDEXER_ADAPTER_FACTORIES[indexer.type as keyof typeof INDEXER_ADAPTER_FACTORIES];
     if (!factory) {
       throw new Error(`Unknown indexer type: ${indexer.type}`);
     }

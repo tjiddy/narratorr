@@ -305,7 +305,7 @@ describe('createDownloadClientFormSchema', () => {
 const validCreateClient = {
   name: 'My Client',
   type: 'qbittorrent' as const,
-  settings: {},
+  settings: { host: 'localhost', port: 8080 },
 };
 
 describe('createDownloadClientSchema — trim behavior', () => {
@@ -434,6 +434,165 @@ describe('createDownloadClientFormSchema — settings trim (#284)', () => {
       expect(result.data.settings.category).toBe('');
       expect(result.data.settings.watchDir).toBe('');
       expect(result.data.settings.username).toBe('');
+    }
+  });
+});
+
+// #557 — Typed adapter settings schemas (discriminated unions)
+describe('createDownloadClientSchema — typed settings validation', () => {
+  const base = { name: 'Test', enabled: true, priority: 50 };
+
+  describe('positive cases — each type with valid settings', () => {
+    it('accepts valid qbittorrent settings (host + port)', () => {
+      const result = createDownloadClientSchema.safeParse({
+        ...base, type: 'qbittorrent', settings: { host: 'localhost', port: 8080 },
+      });
+      expect(result.success).toBe(true);
+    });
+
+    it('accepts valid transmission settings (host + port)', () => {
+      const result = createDownloadClientSchema.safeParse({
+        ...base, type: 'transmission', settings: { host: 'localhost', port: 9091 },
+      });
+      expect(result.success).toBe(true);
+    });
+
+    it('accepts valid sabnzbd settings (host + port + apiKey)', () => {
+      const result = createDownloadClientSchema.safeParse({
+        ...base, type: 'sabnzbd', settings: { host: 'localhost', port: 8080, apiKey: 'key123' },
+      });
+      expect(result.success).toBe(true);
+    });
+
+    it('accepts valid nzbget settings (host + port)', () => {
+      const result = createDownloadClientSchema.safeParse({
+        ...base, type: 'nzbget', settings: { host: 'localhost', port: 6789 },
+      });
+      expect(result.success).toBe(true);
+    });
+
+    it('accepts valid deluge settings (host + port)', () => {
+      const result = createDownloadClientSchema.safeParse({
+        ...base, type: 'deluge', settings: { host: 'localhost', port: 8112 },
+      });
+      expect(result.success).toBe(true);
+    });
+
+    it('accepts valid blackhole settings (watchDir + protocol)', () => {
+      const result = createDownloadClientSchema.safeParse({
+        ...base, type: 'blackhole', settings: { watchDir: '/downloads', protocol: 'torrent' },
+      });
+      expect(result.success).toBe(true);
+    });
+  });
+
+  describe('negative cases', () => {
+    it('rejects missing required fields for qbittorrent (no host)', () => {
+      const result = createDownloadClientSchema.safeParse({
+        ...base, type: 'qbittorrent', settings: { port: 8080 },
+      });
+      expect(result.success).toBe(false);
+      if (!result.success) {
+        expect(result.error.issues).toContainEqual(
+          expect.objectContaining({ path: ['settings', 'host'] }),
+        );
+      }
+    });
+
+    it('rejects port as string instead of number', () => {
+      const result = createDownloadClientSchema.safeParse({
+        ...base, type: 'qbittorrent', settings: { host: 'localhost', port: '8080' },
+      });
+      expect(result.success).toBe(false);
+    });
+
+    it('rejects extra unknown fields', () => {
+      const result = createDownloadClientSchema.safeParse({
+        ...base, type: 'qbittorrent', settings: { host: 'localhost', port: 8080, badField: true },
+      });
+      expect(result.success).toBe(false);
+    });
+
+    it('rejects blackhole with invalid protocol', () => {
+      const result = createDownloadClientSchema.safeParse({
+        ...base, type: 'blackhole', settings: { watchDir: '/dl', protocol: 'ftp' },
+      });
+      expect(result.success).toBe(false);
+    });
+  });
+
+  describe('boundary values', () => {
+    it('accepts port at minimum (1)', () => {
+      const result = createDownloadClientSchema.safeParse({
+        ...base, type: 'qbittorrent', settings: { host: 'localhost', port: 1 },
+      });
+      expect(result.success).toBe(true);
+    });
+
+    it('accepts port at maximum (65535)', () => {
+      const result = createDownloadClientSchema.safeParse({
+        ...base, type: 'qbittorrent', settings: { host: 'localhost', port: 65535 },
+      });
+      expect(result.success).toBe(true);
+    });
+
+    it('rejects port at 0', () => {
+      const result = createDownloadClientSchema.safeParse({
+        ...base, type: 'qbittorrent', settings: { host: 'localhost', port: 0 },
+      });
+      expect(result.success).toBe(false);
+    });
+
+    it('rejects port above 65535', () => {
+      const result = createDownloadClientSchema.safeParse({
+        ...base, type: 'qbittorrent', settings: { host: 'localhost', port: 65536 },
+      });
+      expect(result.success).toBe(false);
+    });
+  });
+
+  describe('persisted metadata', () => {
+    it('accepts download client settings with category field', () => {
+      const result = createDownloadClientSchema.safeParse({
+        ...base, type: 'qbittorrent', settings: { host: 'localhost', port: 8080, category: 'audiobooks' },
+      });
+      expect(result.success).toBe(true);
+      if (result.success) expect(result.data.settings.category).toBe('audiobooks');
+    });
+
+    it('blackhole protocol must be torrent or usenet', () => {
+      for (const protocol of ['torrent', 'usenet']) {
+        const result = createDownloadClientSchema.safeParse({
+          ...base, type: 'blackhole', settings: { watchDir: '/dl', protocol },
+        });
+        expect(result.success).toBe(true);
+      }
+    });
+  });
+});
+
+describe('updateDownloadClientSchema — type required when settings present', () => {
+  it('accepts update with settings + type', () => {
+    const result = updateDownloadClientSchema.safeParse({
+      type: 'qbittorrent' as const, settings: { host: 'newhost', port: 8080 },
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it('accepts update without settings (type not required)', () => {
+    const result = updateDownloadClientSchema.safeParse({ name: 'New Name' });
+    expect(result.success).toBe(true);
+  });
+
+  it('rejects update with settings but no type', () => {
+    const result = updateDownloadClientSchema.safeParse({
+      settings: { host: 'localhost', port: 8080 },
+    });
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      expect(result.error.issues).toContainEqual(
+        expect.objectContaining({ path: ['type'], message: 'Type is required when settings are provided' }),
+      );
     }
   });
 });

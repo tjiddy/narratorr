@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   createImportListFormSchema,
   createImportListSchema,
+  previewImportListSchema,
   updateImportListSchema,
 } from './import-list.js';
 
@@ -60,5 +61,124 @@ describe('createImportListFormSchema — trim behavior', () => {
     const result = createImportListFormSchema.safeParse({ ...validForm, name: '  My List  ' });
     expect(result.success).toBe(true);
     if (result.success) expect(result.data.name).toBe('My List');
+  });
+});
+
+// #557 — Typed adapter settings schemas (discriminated unions)
+describe('createImportListSchema — typed settings validation', () => {
+  const base = { name: 'Test' };
+
+  describe('positive cases — each type with valid settings', () => {
+    it('accepts valid abs settings (serverUrl + apiKey + libraryId)', () => {
+      const result = createImportListSchema.safeParse({
+        ...base, type: 'abs', settings: { serverUrl: 'http://abs.local', apiKey: 'key', libraryId: 'lib1' },
+      });
+      expect(result.success).toBe(true);
+    });
+
+    it('accepts valid nyt settings (apiKey)', () => {
+      const result = createImportListSchema.safeParse({
+        ...base, type: 'nyt', settings: { apiKey: 'nytkey' },
+      });
+      expect(result.success).toBe(true);
+    });
+
+    it('accepts valid hardcover settings (apiKey)', () => {
+      const result = createImportListSchema.safeParse({
+        ...base, type: 'hardcover', settings: { apiKey: 'hckey' },
+      });
+      expect(result.success).toBe(true);
+    });
+  });
+
+  describe('negative cases', () => {
+    it('rejects missing required fields for abs (no serverUrl)', () => {
+      const result = createImportListSchema.safeParse({
+        ...base, type: 'abs', settings: { apiKey: 'key', libraryId: 'lib' },
+      });
+      expect(result.success).toBe(false);
+      if (!result.success) {
+        expect(result.error.issues).toContainEqual(
+          expect.objectContaining({ path: ['settings', 'serverUrl'] }),
+        );
+      }
+    });
+
+    it('rejects extra unknown fields', () => {
+      const result = createImportListSchema.safeParse({
+        ...base, type: 'nyt', settings: { apiKey: 'key', badField: true },
+      });
+      expect(result.success).toBe(false);
+    });
+
+    it('rejects empty string for required field', () => {
+      const result = createImportListSchema.safeParse({
+        ...base, type: 'nyt', settings: { apiKey: '' },
+      });
+      expect(result.success).toBe(false);
+    });
+  });
+
+  describe('conditional validation', () => {
+    it('hardcover with listType shelf requires shelfId', () => {
+      const result = createImportListSchema.safeParse({
+        ...base, type: 'hardcover', settings: { apiKey: 'key', listType: 'shelf' },
+      });
+      expect(result.success).toBe(false);
+      if (!result.success) {
+        expect(result.error.issues).toContainEqual(
+          expect.objectContaining({ path: ['settings', 'shelfId'] }),
+        );
+      }
+    });
+
+    it('hardcover with listType trending does not require shelfId', () => {
+      const result = createImportListSchema.safeParse({
+        ...base, type: 'hardcover', settings: { apiKey: 'key', listType: 'trending' },
+      });
+      expect(result.success).toBe(true);
+    });
+  });
+});
+
+describe('previewImportListSchema — typed settings validation', () => {
+  it('accepts valid preview with typed settings per provider', () => {
+    const result = previewImportListSchema.safeParse({
+      type: 'abs', settings: { serverUrl: 'http://abs.local', apiKey: 'key', libraryId: 'lib1' },
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it('rejects preview with invalid settings', () => {
+    const result = previewImportListSchema.safeParse({
+      type: 'abs', settings: { apiKey: 'key' },
+    });
+    expect(result.success).toBe(false);
+  });
+});
+
+describe('updateImportListSchema — type required when settings present', () => {
+  it('accepts update with settings + type', () => {
+    const result = updateImportListSchema.safeParse({
+      type: 'nyt' as const, settings: { apiKey: 'newkey' },
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it('accepts update without settings (type not required)', () => {
+    const result = updateImportListSchema.safeParse({ name: 'New Name' });
+    expect(result.success).toBe(true);
+  });
+
+  it('rejects update with settings but no type', () => {
+    const result = updateImportListSchema.safeParse({
+      settings: { apiKey: 'key' },
+    });
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      expect(result.error.issues).toContainEqual(
+        expect.objectContaining({ path: ['type'], message: 'Type is required when settings are provided' }),
+      );
+    }
   });
 });
