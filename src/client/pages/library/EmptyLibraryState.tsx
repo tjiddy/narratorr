@@ -19,41 +19,39 @@ export function EmptyLibraryState({ hasLibraryPath }: EmptyLibraryStateProps) {
       title="Your library is empty"
       subtitle="Start building your audiobook collection by discovering and adding books"
     >
-      <div className="flex flex-wrap items-center gap-3">
-        {hasLibraryPath ? (
-          <Link
-            to="/library-import"
-            className="inline-flex items-center gap-2 px-6 py-3 bg-primary text-primary-foreground font-medium rounded-xl hover:opacity-90 hover:shadow-glow transition-all duration-200 focus-ring"
-          >
-            <FolderIcon className="w-4 h-4" />
-            Scan Library
-            <ArrowRightIcon className="w-4 h-4" />
-          </Link>
-        ) : (
-          <Link
-            to="/settings"
-            className="inline-flex items-center gap-2 px-6 py-3 bg-primary text-primary-foreground font-medium rounded-xl hover:opacity-90 hover:shadow-glow transition-all duration-200 focus-ring"
-          >
-            <SettingsIcon className="w-4 h-4" />
-            Go to Settings
-            <ArrowRightIcon className="w-4 h-4" />
-          </Link>
-        )}
+      {hasLibraryPath ? (
         <Link
-          to="/import"
-          className="inline-flex items-center gap-2 px-6 py-3 glass-card font-medium rounded-xl hover:border-primary/30 hover:text-primary transition-all duration-200 focus-ring"
+          to="/library-import"
+          className="inline-flex items-center gap-2 px-6 py-3 bg-primary text-primary-foreground font-medium rounded-xl hover:opacity-90 hover:shadow-glow transition-all duration-200 focus-ring"
         >
           <FolderIcon className="w-4 h-4" />
-          Manual Import
+          Scan Library
+          <ArrowRightIcon className="w-4 h-4" />
         </Link>
+      ) : (
         <Link
-          to="/search"
-          className="inline-flex items-center gap-2 px-6 py-3 glass-card font-medium rounded-xl hover:border-primary/30 hover:text-primary transition-all duration-200 focus-ring"
+          to="/settings"
+          className="inline-flex items-center gap-2 px-6 py-3 bg-primary text-primary-foreground font-medium rounded-xl hover:opacity-90 hover:shadow-glow transition-all duration-200 focus-ring"
         >
-          <SearchIcon className="w-4 h-4" />
-          Add a Book
+          <SettingsIcon className="w-4 h-4" />
+          Go to Settings
+          <ArrowRightIcon className="w-4 h-4" />
         </Link>
-      </div>
+      )}
+      <Link
+        to="/import"
+        className="inline-flex items-center gap-2 px-6 py-3 glass-card font-medium rounded-xl hover:border-primary/30 hover:text-primary transition-all duration-200 focus-ring"
+      >
+        <FolderIcon className="w-4 h-4" />
+        Manual Import
+      </Link>
+      <Link
+        to="/search"
+        className="inline-flex items-center gap-2 px-6 py-3 glass-card font-medium rounded-xl hover:border-primary/30 hover:text-primary transition-all duration-200 focus-ring"
+      >
+        <SearchIcon className="w-4 h-4" />
+        Add a Book
+      </Link>
     </EmptyState>
   );
 }

@@ -19,16 +19,14 @@ export function DiscoverEmpty({
       data-testid="discover-empty"
     >
       {variant === 'no-library' && (
-        <div className="flex flex-wrap items-center gap-3">
-          <Link
-            to="/search"
-            className="inline-flex items-center gap-2 px-6 py-3 bg-primary text-primary-foreground font-medium rounded-xl hover:opacity-90 hover:shadow-glow transition-all duration-200 focus-ring"
-          >
-            <SearchIcon className="w-4 h-4" />
-            Find Books
-            <ArrowRightIcon className="w-4 h-4" />
-          </Link>
-        </div>
+        <Link
+          to="/search"
+          className="inline-flex items-center gap-2 px-6 py-3 bg-primary text-primary-foreground font-medium rounded-xl hover:opacity-90 hover:shadow-glow transition-all duration-200 focus-ring"
+        >
+          <SearchIcon className="w-4 h-4" />
+          Find Books
+          <ArrowRightIcon className="w-4 h-4" />
+        </Link>
       )}
     </EmptyState>
   );
