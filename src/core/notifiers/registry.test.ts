@@ -1,0 +1,42 @@
+import { describe, it, expect } from 'vitest';
+import { ADAPTER_FACTORIES } from './registry.js';
+import { notifierTypeSchema, type NotifierSettings } from '../../shared/schemas/notifier.js';
+
+describe('Notifier ADAPTER_FACTORIES', () => {
+  const types = notifierTypeSchema.options;
+
+  const configs: Record<string, NotifierSettings> = {
+    webhook: { url: 'https://hooks.test' },
+    discord: { webhookUrl: 'https://discord.com/webhook' },
+    script: { path: '/usr/local/bin/notify.sh' },
+    email: { smtpHost: 'smtp.test', fromAddress: 'a@b.com', toAddress: 'c@d.com' },
+    telegram: { botToken: 'tok123', chatId: '456' },
+    slack: { webhookUrl: 'https://hooks.slack.com/test' },
+    pushover: { pushoverToken: 'tok', pushoverUser: 'usr' },
+    ntfy: { ntfyTopic: 'audiobooks' },
+    gotify: { gotifyUrl: 'https://gotify.test', gotifyToken: 'tok' },
+  };
+
+  describe('invariants', () => {
+    it('has a factory for every notifier type in the Zod enum', () => {
+      for (const type of types) {
+        expect(ADAPTER_FACTORIES[type], `Missing factory for type: ${type}`).toBeTypeOf('function');
+      }
+    });
+
+    it('each factory returns an object satisfying the NotifierAdapter interface', () => {
+      for (const type of types) {
+        const adapter = ADAPTER_FACTORIES[type](configs[type]);
+        expect(adapter).toHaveProperty('type');
+        expect(adapter.send).toBeTypeOf('function');
+        expect(adapter.test).toBeTypeOf('function');
+      }
+    });
+  });
+
+  describe('error handling', () => {
+    it('returns undefined for unknown notifier type (no factory)', () => {
+      expect((ADAPTER_FACTORIES as Record<string, unknown>)['unknown']).toBeUndefined();
+    });
+  });
+});
