@@ -161,6 +161,11 @@ export class SABnzbdClient implements DownloadClientAdapter {
       throw new DownloadClientError(this.name, `HTTP ${response.status}: ${response.statusText}`);
     }
 
+    const contentType = response.headers.get('content-type') ?? '';
+    if (!contentType.includes('application/json') && !contentType.includes('text/json')) {
+      throw new DownloadClientError(this.name, `Connection failed: server didn't respond as expected. Check host, port, SSL settings, and any reverse proxy (e.g. Authelia) that may be intercepting requests.`);
+    }
+
     const result = (await response.json()) as { status: boolean; nzo_ids: string[] };
 
     if (!result.status || !result.nzo_ids?.length) {

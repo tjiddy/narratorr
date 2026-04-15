@@ -235,6 +235,67 @@ describe('SABnzbdClient', () => {
       expect(requestMade).toBe(false);
     });
 
+    it('throws DownloadClientAuthError on 401 multipart response', async () => {
+      server.use(
+        http.post(`${API_BASE}/api`, () => {
+          return new HttpResponse(null, { status: 401, statusText: 'Unauthorized' });
+        }),
+      );
+
+      const nzbData = Buffer.from('<nzb/>');
+      await expect(
+        client.addDownload({ type: 'nzb-bytes', data: nzbData }),
+      ).rejects.toThrow(DownloadClientAuthError);
+    });
+
+    it('throws DownloadClientTimeoutError on multipart request timeout', async () => {
+      server.use(
+        http.post(`${API_BASE}/api`, async () => {
+          await delay('infinite');
+          return HttpResponse.json({ status: true, nzo_ids: ['SABnzbd_nzo_timeout'] });
+        }),
+      );
+
+      const originalTimeout = AbortSignal.timeout;
+      AbortSignal.timeout = () => AbortSignal.abort(new DOMException('The operation was aborted', 'TimeoutError'));
+
+      const nzbData = Buffer.from('<nzb/>');
+      await expect(
+        client.addDownload({ type: 'nzb-bytes', data: nzbData }),
+      ).rejects.toBeInstanceOf(DownloadClientTimeoutError);
+
+      AbortSignal.timeout = originalTimeout;
+    });
+
+    it('throws DownloadClientError on non-OK multipart response', async () => {
+      server.use(
+        http.post(`${API_BASE}/api`, () => {
+          return new HttpResponse(null, { status: 500, statusText: 'Internal Server Error' });
+        }),
+      );
+
+      const nzbData = Buffer.from('<nzb/>');
+      await expect(
+        client.addDownload({ type: 'nzb-bytes', data: nzbData }),
+      ).rejects.toThrow('HTTP 500');
+    });
+
+    it('throws DownloadClientError on non-JSON multipart response (proxy intercept)', async () => {
+      server.use(
+        http.post(`${API_BASE}/api`, () => {
+          return new HttpResponse('<html>Login</html>', {
+            status: 200,
+            headers: { 'Content-Type': 'text/html' },
+          });
+        }),
+      );
+
+      const nzbData = Buffer.from('<nzb/>');
+      await expect(
+        client.addDownload({ type: 'nzb-bytes', data: nzbData }),
+      ).rejects.toThrow('reverse proxy');
+    });
+
     it('rejects torrent artifact with usenet-only error', async () => {
       await expect(
         client.addDownload({ type: 'magnet-uri', uri: 'magnet:?xt=urn:btih:abc123', infoHash: 'abc123' }),
