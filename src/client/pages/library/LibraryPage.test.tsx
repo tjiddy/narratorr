@@ -674,10 +674,17 @@ describe('LibraryPage', () => {
     await user.click(screen.getByLabelText('Clear search'));
 
     await waitFor(() => {
+      expect(searchInput).toHaveValue('');
       expect(screen.getByText('The Way of Kings')).toBeInTheDocument();
       expect(screen.getByText('Project Hail Mary')).toBeInTheDocument();
       expect(screen.getByText('Recursion')).toBeInTheDocument();
     }, { timeout: 2000 });
+
+    await waitFor(() => {
+      expect(vi.mocked(api.getBooks)).toHaveBeenCalledWith(
+        expect.objectContaining({ search: undefined }),
+      );
+    });
   });
 
   it('combines search with status filter', async () => {
@@ -705,6 +712,10 @@ describe('LibraryPage', () => {
       expect(screen.getByText('The Way of Kings')).toBeInTheDocument();
       expect(screen.getByText('Words of Radiance')).toBeInTheDocument();
     }, { timeout: 2000 });
+
+    expect(vi.mocked(api.getBooks)).toHaveBeenLastCalledWith(
+      expect.objectContaining({ search: 'Sanderson', status: 'wanted' }),
+    );
   });
 
   it('opens search releases modal when Search Releases is clicked', async () => {
