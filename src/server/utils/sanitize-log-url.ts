@@ -24,7 +24,7 @@ export function sanitizeLogUrl(raw: string): string {
     // Strip search + hash to prevent credential/token leaks in logs
     return url.origin + url.pathname;
   } catch {
-    // Unrecognized schemes (ftp:, custom protocols) returned as-is intentionally
+    // Malformed/non-URL strings that fail new URL() are returned as-is intentionally
     return raw;
   }
 }
