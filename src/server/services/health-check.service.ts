@@ -251,7 +251,7 @@ export class HealthCheckService {
         .from(downloads)
         .where(
           and(
-            inArray(downloads.status, inProgressStatuses as unknown as string[]),
+            inArray(downloads.status, inProgressStatuses),
           )
         );
 

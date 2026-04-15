@@ -4,7 +4,7 @@ import { z } from 'zod';
 // Activity schemas
 // ============================================================================
 
-export const downloadStatusSchema = z.enum([
+export const DOWNLOAD_STATUSES = [
   'queued',
   'downloading',
   'paused',
@@ -15,6 +15,7 @@ export const downloadStatusSchema = z.enum([
   'importing',
   'imported',
   'failed',
-]);
+] as const;
 
+export const downloadStatusSchema = z.enum(DOWNLOAD_STATUSES);
 export type DownloadStatus = z.infer<typeof downloadStatusSchema>;

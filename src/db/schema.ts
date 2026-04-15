@@ -1,14 +1,13 @@
 import { sqliteTable, text, integer, real, index, uniqueIndex, primaryKey } from 'drizzle-orm/sqlite-core';
 import { sql } from 'drizzle-orm';
-import { downloadStatusSchema } from '../shared/schemas/activity';
+import { DOWNLOAD_STATUSES } from '../shared/schemas/activity';
 import { SUGGESTION_REASONS } from '../shared/schemas/discovery';
-import { bookStatusSchema } from '../shared/schemas/book';
+import { BOOK_STATUSES, ENRICHMENT_STATUSES } from '../shared/schemas/book';
 import { BLACKLIST_REASONS } from '../shared/schemas/blacklist';
-import { enrichmentStatusSchema } from '../shared/schemas/enrichment';
-import { indexerTypeSchema } from '../shared/schemas/indexer';
-import { downloadClientTypeSchema } from '../shared/schemas/download-client';
-import { notifierTypeSchema } from '../shared/schemas/notifier';
-import { importListTypeSchema } from '../shared/schemas/import-list';
+import { INDEXER_TYPES } from '../shared/indexer-registry';
+import { DOWNLOAD_CLIENT_TYPES } from '../shared/download-client-registry';
+import { NOTIFIER_TYPES } from '../shared/notifier-registry';
+import { IMPORT_LIST_TYPES } from '../shared/import-list-registry';
 
 // ============ LIBRARY ============
 
@@ -53,12 +52,12 @@ export const books = sqliteTable('books', {
   publishedDate: text('published_date'),
   genres: text('genres', { mode: 'json' }).$type<string[]>(),
   status: text('status', {
-    enum: bookStatusSchema.options as unknown as [string, ...string[]],
+    enum: BOOK_STATUSES,
   })
     .notNull()
     .default('wanted'),
   enrichmentStatus: text('enrichment_status', {
-    enum: enrichmentStatusSchema.options as unknown as [string, ...string[]],
+    enum: ENRICHMENT_STATUSES,
   })
     .notNull()
     .default('pending'),
@@ -116,7 +115,7 @@ export const bookNarrators = sqliteTable('book_narrators', {
 export const indexers = sqliteTable('indexers', {
   id: integer('id').primaryKey({ autoIncrement: true }),
   name: text('name').notNull(),
-  type: text('type', { enum: indexerTypeSchema.options as unknown as [string, ...string[]] }).notNull(),
+  type: text('type', { enum: INDEXER_TYPES }).notNull(),
   enabled: integer('enabled', { mode: 'boolean' }).notNull().default(true),
   priority: integer('priority').notNull().default(50),
   settings: text('settings', { mode: 'json' }).notNull().$type<Record<string, unknown>>(),
@@ -132,7 +131,7 @@ export const indexers = sqliteTable('indexers', {
 export const downloadClients = sqliteTable('download_clients', {
   id: integer('id').primaryKey({ autoIncrement: true }),
   name: text('name').notNull(),
-  type: text('type', { enum: downloadClientTypeSchema.options as unknown as [string, ...string[]] }).notNull(),
+  type: text('type', { enum: DOWNLOAD_CLIENT_TYPES }).notNull(),
   enabled: integer('enabled', { mode: 'boolean' }).notNull().default(true),
   priority: integer('priority').notNull().default(50),
   settings: text('settings', { mode: 'json' }).notNull().$type<Record<string, unknown>>(),
@@ -163,7 +162,7 @@ export const remotePathMappings = sqliteTable('remote_path_mappings', {
 export const notifiers = sqliteTable('notifiers', {
   id: integer('id').primaryKey({ autoIncrement: true }),
   name: text('name').notNull(),
-  type: text('type', { enum: notifierTypeSchema.options as unknown as [string, ...string[]] }).notNull(),
+  type: text('type', { enum: NOTIFIER_TYPES }).notNull(),
   enabled: integer('enabled', { mode: 'boolean' }).notNull().default(true),
   events: text('events', { mode: 'json' }).notNull().$type<string[]>(),
   settings: text('settings', { mode: 'json' }).notNull().$type<Record<string, unknown>>(),
@@ -177,7 +176,7 @@ export const notifiers = sqliteTable('notifiers', {
 export const importLists = sqliteTable('import_lists', {
   id: integer('id').primaryKey({ autoIncrement: true }),
   name: text('name').notNull(),
-  type: text('type', { enum: importListTypeSchema.options as unknown as [string, ...string[]] }).notNull(),
+  type: text('type', { enum: IMPORT_LIST_TYPES }).notNull(),
   enabled: integer('enabled', { mode: 'boolean' }).notNull().default(true),
   settings: text('settings', { mode: 'json' }).notNull().$type<Record<string, unknown>>(),
   syncIntervalMinutes: integer('sync_interval_minutes').notNull().default(1440),
@@ -205,7 +204,7 @@ export const downloads = sqliteTable('downloads', {
   size: integer('size'),
   seeders: integer('seeders'),
   status: text('status', {
-    enum: downloadStatusSchema.options as unknown as [string, ...string[]],
+    enum: DOWNLOAD_STATUSES,
   })
     .notNull()
     .default('queued'),
@@ -323,7 +322,7 @@ export const suggestions = sqliteTable('suggestions', {
   genres: text('genres', { mode: 'json' }).$type<string[]>(),
   seriesName: text('series_name'),
   seriesPosition: real('series_position'),
-  reason: text('reason', { enum: SUGGESTION_REASONS as unknown as [string, ...string[]] }).notNull(),
+  reason: text('reason', { enum: SUGGESTION_REASONS }).notNull(),
   reasonContext: text('reason_context').notNull(),
   score: real('score').notNull(),
   status: text('status', { enum: ['pending', 'added', 'dismissed'] })
