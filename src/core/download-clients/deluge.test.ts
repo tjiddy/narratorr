@@ -265,7 +265,11 @@ describe('DelugeClient', () => {
       ).rejects.toThrow('only supports torrent artifacts');
     });
 
-    it.todo('rejects nzb-bytes artifact with DownloadClientError (no RPC call made)');
+    it('rejects nzb-bytes artifact with DownloadClientError', async () => {
+      await expect(
+        client.addDownload({ type: 'nzb-bytes', data: Buffer.from('<nzb/>') }),
+      ).rejects.toThrow('only supports torrent artifacts');
+    });
   });
 
   describe('getDownload', () => {

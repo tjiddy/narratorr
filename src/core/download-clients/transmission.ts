@@ -74,7 +74,7 @@ export class TransmissionClient implements DownloadClientAdapter {
   }
 
   async addDownload(artifact: DownloadArtifact, options?: AddDownloadOptions): Promise<string> {
-    if (artifact.type === 'nzb-url') {
+    if (artifact.type !== 'torrent-bytes' && artifact.type !== 'magnet-uri') {
       throw new DownloadClientError(this.name, 'Transmission only supports torrent artifacts (torrent-bytes, magnet-uri)');
     }
 
