@@ -8,6 +8,7 @@ import type {
 } from './types.js';
 import { fetchWithTimeout } from '../utils/fetch-with-timeout.js';
 import { DEFAULT_REQUEST_TIMEOUT_MS } from '../utils/constants.js';
+import { DownloadClientAuthError, DownloadClientError, DownloadClientTimeoutError, isTimeoutError } from './errors.js';
 
 /**
  * SABnzbd's `storage` is the full destination path (e.g., `/downloads/complete/BookTitle`).
@@ -82,7 +83,7 @@ export class SABnzbdClient implements DownloadClientAdapter {
     options?: AddDownloadOptions,
   ): Promise<string> {
     if (artifact.type !== 'nzb-url') {
-      throw new Error('SABnzbd only supports usenet artifacts (nzb-url)');
+      throw new DownloadClientError(this.name, 'SABnzbd only supports usenet artifacts (nzb-url)');
     }
 
     const params: Record<string, string> = {
@@ -103,7 +104,7 @@ export class SABnzbdClient implements DownloadClientAdapter {
     }>(params);
 
     if (!response.status || !response.nzo_ids?.length) {
-      throw new Error('SABnzbd failed to add download');
+      throw new DownloadClientError(this.name, 'SABnzbd failed to add download');
     }
 
     return response.nzo_ids[0];
@@ -233,15 +234,25 @@ export class SABnzbdClient implements DownloadClientAdapter {
       url.searchParams.set(key, value);
     }
 
-    const response = await fetchWithTimeout(url.toString(), {}, DEFAULT_REQUEST_TIMEOUT_MS);
+    let response: Response;
+    try {
+      response = await fetchWithTimeout(url.toString(), {}, DEFAULT_REQUEST_TIMEOUT_MS);
+    } catch (error: unknown) {
+      if (isTimeoutError(error)) throw new DownloadClientTimeoutError(this.name, (error as Error).message);
+      throw new DownloadClientError(this.name, error instanceof Error ? error.message : String(error));
+    }
+
+    if (response.status === 401 || response.status === 403) {
+      throw new DownloadClientAuthError(this.name, `HTTP ${response.status}: ${response.statusText}`);
+    }
 
     if (!response.ok) {
-      throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+      throw new DownloadClientError(this.name, `HTTP ${response.status}: ${response.statusText}`);
     }
 
     const contentType = response.headers.get('content-type') ?? '';
     if (!contentType.includes('application/json') && !contentType.includes('text/json')) {
-      throw new Error(`Connection failed: server didn't respond as expected. Check host, port, SSL settings, and any reverse proxy (e.g. Authelia) that may be intercepting requests.`);
+      throw new DownloadClientError(this.name, `Connection failed: server didn't respond as expected. Check host, port, SSL settings, and any reverse proxy (e.g. Authelia) that may be intercepting requests.`);
     }
 
     return (await response.json()) as T;
