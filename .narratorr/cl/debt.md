@@ -57,7 +57,9 @@
 
 - ~~**`src/server/services/search-pipeline.ts` `filterAndRankResults` has 10 positional parameters**~~ — resolved in #522 (options bag with `SearchFilterOptions`)
 
-- **SABnzbd/NZBGet adapters lack byte-upload paths**: Both usenet adapters only support URL submission (`mode=addurl` / RPC `append` with URL string). `nzb-bytes` artifact variant was scoped out of #527. SABnzbd supports `mode=addlocalfile` / multipart upload, NZBGet supports base64 content in `append` params[1]. Adding this would allow the resolver to fetch NZB bytes and upload directly, removing dependency on the indexer URL remaining accessible after resolution. (discovered in #527)
+- ~~**SABnzbd/NZBGet adapters lack byte-upload paths**~~ — resolved in #565 (added `nzb-bytes` multipart/base64 paths to SABnzbd, NZBGet, and Blackhole)
+
+- **`src/core/utils/download-url.test.ts` mockFetch call history accumulates across tests**: The `vi.fn()` mock at line 28 is never cleared between tests — `vi.restoreAllMocks()` only affects spies, not manual `vi.fn()`. Tests using `not.toHaveBeenCalled()` work by accident because they run before fetch-calling tests in file order. New tests appended at the end of the file must add `mockFetch.mockClear()` in their own `beforeEach`. Fix: add `mockFetch.mockClear()` to the top-level `beforeEach`. (discovered in #565)
 
 - ~~**`src/core/utils/download-url.ts:290` sanitizeNetworkError fallthrough leaks error.message**~~ — resolved in #541 (URL redaction via regex)
 
