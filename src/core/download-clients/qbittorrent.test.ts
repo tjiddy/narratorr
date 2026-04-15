@@ -93,6 +93,19 @@ describe('QBittorrentClient', () => {
       expect(result.success).toBe(false);
       expect(result.message).toBe('Login failed: No session cookie received');
     });
+
+    it('throws DownloadClientError (not auth) on non-auth login HTTP failure', async () => {
+      server.use(
+        http.post(`${BASE_URL}/api/v2/auth/login`, () => {
+          return new HttpResponse(null, { status: 500 });
+        }),
+      );
+
+      const error = await client.getAllDownloads().catch((e: unknown) => e);
+      expect(error).toBeInstanceOf(DownloadClientError);
+      expect(error).not.toBeInstanceOf(DownloadClientAuthError);
+      expect((error as DownloadClientError).message).toContain('500');
+    });
   });
 
   describe('request', () => {

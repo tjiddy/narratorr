@@ -74,7 +74,7 @@ export class QBittorrentClient implements DownloadClientAdapter {
     }, DEFAULT_REQUEST_TIMEOUT_MS);
 
     if (!response.ok) {
-      throw new DownloadClientAuthError(this.name, `Login failed: HTTP ${response.status}`);
+      throw new DownloadClientError(this.name, `Login failed: HTTP ${response.status}`);
     }
 
     const text = await response.text();

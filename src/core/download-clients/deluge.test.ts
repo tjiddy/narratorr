@@ -3,7 +3,7 @@ import { http, HttpResponse } from 'msw';
 import { useMswServer } from '../__tests__/msw/server.js';
 import { DelugeClient } from './deluge.js';
 import type { DownloadArtifact } from './types.js';
-
+import { DownloadClientAuthError, DownloadClientError } from './errors.js';
 
 const config = { host: 'localhost', port: 8112, password: 'deluge', useSsl: false };
 const BASE_URL = 'http://localhost:8112';
@@ -85,6 +85,20 @@ describe('DelugeClient', () => {
       const result = await client.test();
       expect(result.success).toBe(false);
       expect(result.message).toContain('Invalid password');
+    });
+
+    it('throws DownloadClientError (not auth) on non-auth login HTTP failure', async () => {
+      server.use(
+        http.post(`${BASE_URL}/json`, () => {
+          return new HttpResponse(null, { status: 500 });
+        }),
+      );
+      client = new DelugeClient(config);
+
+      const error = await client.getAllDownloads().catch((e: unknown) => e);
+      expect(error).toBeInstanceOf(DownloadClientError);
+      expect(error).not.toBeInstanceOf(DownloadClientAuthError);
+      expect((error as DownloadClientError).message).toContain('500');
     });
 
     it('re-authenticates on session expiry (auth error code)', async () => {

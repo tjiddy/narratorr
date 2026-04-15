@@ -131,7 +131,7 @@ export class DelugeClient implements DownloadClientAdapter {
     }, DEFAULT_REQUEST_TIMEOUT_MS);
 
     if (!response.ok) {
-      throw new DownloadClientAuthError(this.name, `Deluge login failed: HTTP ${response.status}`);
+      throw new DownloadClientError(this.name, `Deluge login failed: HTTP ${response.status}`);
     }
 
     let data: DelugeRpcResponse;
