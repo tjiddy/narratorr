@@ -71,8 +71,8 @@ describe('Import List IMPORT_LIST_ADAPTER_FACTORIES', () => {
       expect(NytProvider).toHaveBeenCalledWith({ apiKey: 'key', list: 'audio-nonfiction' });
     });
 
-    it('hardcover factory uses trending default when listType is empty string', () => {
-      IMPORT_LIST_ADAPTER_FACTORIES.hardcover({ apiKey: 'key', listType: '', shelfId: '' });
+    it('hardcover factory uses trending default when listType is undefined', () => {
+      IMPORT_LIST_ADAPTER_FACTORIES.hardcover({ apiKey: 'key', listType: undefined, shelfId: '' });
       expect(HardcoverProvider).toHaveBeenCalledWith({ apiKey: 'key', listType: 'trending', shelfId: undefined });
     });
 
