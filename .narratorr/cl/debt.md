@@ -27,7 +27,7 @@
 
 - ~~**`src/server/services/search-pipeline.ts` at ~500 lines (max 400)**~~ — resolved in #552 (extracted canonicalCompare + ranking helpers to search-ranking.ts)
 
-- **`src/server/routes/search-stream.test.ts`**: Module-level `vi.mock('../services/search-pipeline.js')` prevents integration testing of `postProcessSearchResults` in the same file. New integration tests had to go in a separate file (`search-stream-filtering.test.ts`). Consider refactoring the existing tests to use per-test mocking or moving the mocked tests to a separate file so the main test file can run unmocked. (discovered in #438)
+- ~~**`src/server/routes/search-stream.test.ts`**: Module-level `vi.mock('../services/search-pipeline.js')` prevents integration testing~~ — resolved in #563 (replaced with per-test `vi.spyOn`)
 
 - ~~**`src/client/pages/library/LibraryBookCard.tsx`**: Uses same `opacity-0 group-hover:opacity-100` hover-gated pattern as BookHero overlay (lines 87, 119). Touch devices can't discover these actions. Should apply the `no-hover:opacity-100` variant added in #450 for consistency.~~ — resolved in #551
 
@@ -39,7 +39,7 @@
 
 - **Core layer has 30 `instanceof Error` ternaries**: `src/core/` adapters (indexers, download-clients, notifiers, import-lists, metadata, utils) still use raw `error instanceof Error ? error.message : fallback` instead of `getErrorMessage()`. Out of scope for #513 (core throws/returns, services catch). Warrants a follow-up issue. (discovered in #513)
 
-- **`src/server/services/refresh-scan.service.test.ts:329-341`**: `rethrows non-ENOENT stat errors` test still uses the same double-call anti-pattern (rejects.toThrow + try/catch). Was out of scope for #468 which only targeted RefreshScanError-coded tests, but should be consolidated to match. (discovered in #468)
+- ~~**`src/server/services/refresh-scan.service.test.ts:329-341`**: double-call anti-pattern~~ — resolved in #563 (consolidated to `rejects.toMatchObject` + `rejects.not.toBeInstanceOf`)
 
 - ~~**`src/server/jobs/index.ts:54` housekeeping callback lacks per-sub-task error isolation**~~ — resolved in #547 (per-sub-task try/catch with log.warn)
 
