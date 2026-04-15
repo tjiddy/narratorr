@@ -83,8 +83,12 @@ export class SABnzbdClient implements DownloadClientAdapter {
     artifact: DownloadArtifact,
     options?: AddDownloadOptions,
   ): Promise<string> {
-    if (artifact.type !== 'nzb-url') {
-      throw new DownloadClientError(this.name, 'SABnzbd only supports usenet artifacts (nzb-url)');
+    if (artifact.type !== 'nzb-url' && artifact.type !== 'nzb-bytes') {
+      throw new DownloadClientError(this.name, 'SABnzbd only supports usenet artifacts (nzb-url, nzb-bytes)');
+    }
+
+    if (artifact.type === 'nzb-bytes') {
+      return this.addDownloadFromBytes(artifact.data, options);
     }
 
     const params: Record<string, string> = {
@@ -109,6 +113,61 @@ export class SABnzbdClient implements DownloadClientAdapter {
     }
 
     return response.nzo_ids[0];
+  }
+
+  private async addDownloadFromBytes(
+    data: Buffer,
+    options?: AddDownloadOptions,
+  ): Promise<string> {
+    if (data.length === 0) {
+      throw new DownloadClientError(this.name, 'Cannot add empty NZB file');
+    }
+
+    const url = new URL('/api', this.baseUrl);
+    url.searchParams.set('apikey', this.apiKey);
+    url.searchParams.set('output', 'json');
+    url.searchParams.set('mode', 'addlocalfile');
+
+    if (options?.category) {
+      url.searchParams.set('cat', options.category);
+    }
+    if (options?.paused) {
+      url.searchParams.set('priority', '-1');
+    }
+
+    const formData = new FormData();
+    formData.append(
+      'name',
+      new Blob([new Uint8Array(data)], { type: 'application/x-nzb' }),
+      'upload.nzb',
+    );
+
+    let response: Response;
+    try {
+      response = await fetchWithTimeout(url.toString(), {
+        method: 'POST',
+        body: formData,
+      }, DEFAULT_REQUEST_TIMEOUT_MS);
+    } catch (error: unknown) {
+      if (isTimeoutError(error)) throw new DownloadClientTimeoutError(this.name, (error as Error).message);
+      throw new DownloadClientError(this.name, getErrorMessage(error));
+    }
+
+    if (response.status === 401 || response.status === 403) {
+      throw new DownloadClientAuthError(this.name, `HTTP ${response.status}: ${response.statusText}`);
+    }
+
+    if (!response.ok) {
+      throw new DownloadClientError(this.name, `HTTP ${response.status}: ${response.statusText}`);
+    }
+
+    const result = (await response.json()) as { status: boolean; nzo_ids: string[] };
+
+    if (!result.status || !result.nzo_ids?.length) {
+      throw new DownloadClientError(this.name, 'SABnzbd failed to add download');
+    }
+
+    return result.nzo_ids[0];
   }
 
   async getDownload(id: string): Promise<DownloadItemInfo | null> {
