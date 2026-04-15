@@ -36,7 +36,7 @@ export async function requestWithRetry<T>(
 
   if (onExhausted) {
     try {
-      onExhausted({ clientName, attempts, error: lastError });
+      await Promise.resolve(onExhausted({ clientName, attempts, error: lastError }));
     } catch {
       // fire-and-forget — callback errors must not mask the real failure
     }

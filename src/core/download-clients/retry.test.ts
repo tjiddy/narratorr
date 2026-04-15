@@ -324,6 +324,23 @@ describe('requestWithRetry', () => {
       expect(onExhausted).toHaveBeenCalledOnce();
     });
 
+    it('async onExhausted rejection is swallowed — real error still thrown', async () => {
+      const onExhausted = vi.fn().mockRejectedValue(new Error('async callback boom'));
+      const fn = vi.fn().mockRejectedValue(new Error('real error'));
+      try {
+        await requestWithRetry(fn, {
+          clientName: 'TestClient',
+          shouldRetry: () => true,
+          onExhausted,
+        });
+        expect.fail('should have thrown');
+      } catch (error: unknown) {
+        expect(error).toBeInstanceOf(DownloadClientError);
+        expect((error as DownloadClientError).message).toBe('real error');
+      }
+      expect(onExhausted).toHaveBeenCalledOnce();
+    });
+
     it('fires with attempts=1 when maxRetries=0', async () => {
       const onExhausted = vi.fn();
       const fn = vi.fn().mockRejectedValue(new Error('fail'));
