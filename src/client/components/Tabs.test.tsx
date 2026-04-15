@@ -124,6 +124,31 @@ describe('Tabs', () => {
     });
   });
 
+  describe('touch affordance', () => {
+    it('inactive tab className includes no-hover:text-foreground', () => {
+      render(<Tabs tabs={tabs} value="books" onChange={() => {}} ariaLabel="Test" />);
+      const inactiveTab = screen.getByRole('tab', { name: /authors/i });
+      expect(inactiveTab.className).toContain('no-hover:text-foreground');
+    });
+
+    it('active tab className is unchanged', () => {
+      render(<Tabs tabs={tabs} value="books" onChange={() => {}} ariaLabel="Test" />);
+      const activeTab = screen.getByRole('tab', { name: /books/i });
+      expect(activeTab.className).toContain('bg-primary');
+      expect(activeTab.className).not.toContain('no-hover:text-foreground');
+    });
+
+    it('keyboard navigation still works after adding no-hover class', async () => {
+      const user = userEvent.setup();
+      const onChange = vi.fn();
+      render(<Tabs tabs={tabs} value="books" onChange={onChange} ariaLabel="Test" />);
+      const booksTab = screen.getByRole('tab', { name: /books/i });
+      booksTab.focus();
+      await user.keyboard('{ArrowRight}');
+      expect(onChange).toHaveBeenCalledWith('authors');
+    });
+  });
+
   describe('boundary values', () => {
     it('single tab renders correctly', () => {
       const singleTab: TabItem[] = [{ value: 'only', label: 'Only Tab' }];
