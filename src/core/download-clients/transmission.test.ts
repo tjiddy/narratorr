@@ -3,6 +3,7 @@ import { http, HttpResponse } from 'msw';
 import { useMswServer } from '../__tests__/msw/server.js';
 import { TransmissionClient } from './transmission.js';
 import type { DownloadArtifact } from './types.js';
+import { DownloadClientAuthError, DownloadClientError } from './errors.js';
 
 const config = { host: 'localhost', port: 9091, username: 'admin', password: 'password', useSsl: false };
 const BASE_URL = 'http://localhost:9091';

@@ -2,6 +2,8 @@ import type { DownloadClientAdapter, DownloadItemInfo, AddDownloadOptions, Downl
 import { transmissionRpcResponseSchema } from './schemas.js';
 import { fetchWithTimeout } from '../utils/fetch-with-timeout.js';
 import { DEFAULT_REQUEST_TIMEOUT_MS } from '../utils/constants.js';
+import { DownloadClientAuthError, DownloadClientError } from './errors.js';
+import { requestWithRetry } from './retry.js';
 
 export interface TransmissionConfig {
   host: string;
@@ -72,7 +74,7 @@ export class TransmissionClient implements DownloadClientAdapter {
 
   async addDownload(artifact: DownloadArtifact, options?: AddDownloadOptions): Promise<string> {
     if (artifact.type === 'nzb-url') {
-      throw new Error('Transmission only supports torrent artifacts (torrent-bytes, magnet-uri)');
+      throw new DownloadClientError(this.name, 'Transmission only supports torrent artifacts (torrent-bytes, magnet-uri)');
     }
 
     const args: Record<string, unknown> = {};
@@ -99,7 +101,7 @@ export class TransmissionClient implements DownloadClientAdapter {
       return added.hashString.toLowerCase();
     }
 
-    throw new Error('Could not extract torrent hash from response');
+    throw new DownloadClientError(this.name, 'Could not extract torrent hash from response');
   }
 
   async getDownload(id: string): Promise<DownloadItemInfo | null> {
@@ -166,54 +168,63 @@ export class TransmissionClient implements DownloadClientAdapter {
     }
   }
 
-  private async rpc(method: string, args: Record<string, unknown>, retried = false): Promise<RpcResponse> {
-    const response = await fetchWithTimeout(`${this.baseUrl}/transmission/rpc`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: this.authHeader,
-        'X-Transmission-Session-Id': this.sessionId,
+  private async rpc(method: string, args: Record<string, unknown>): Promise<RpcResponse> {
+    let retrySessionId: string | undefined;
+    let was409 = false;
+
+    return requestWithRetry(
+      async () => {
+        was409 = false;
+        const response = await fetchWithTimeout(`${this.baseUrl}/transmission/rpc`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: this.authHeader,
+            'X-Transmission-Session-Id': this.sessionId,
+          },
+          body: JSON.stringify({ method, arguments: args }),
+        }, DEFAULT_REQUEST_TIMEOUT_MS);
+
+        if (response.status === 409) {
+          was409 = true;
+          retrySessionId = response.headers.get('X-Transmission-Session-Id') ?? undefined;
+          throw new DownloadClientAuthError(this.name, 'Session ID rotation failed: repeated 409');
+        }
+
+        if (response.status === 401) {
+          throw new DownloadClientAuthError(this.name, 'Authentication failed: invalid credentials');
+        }
+
+        if (!response.ok) {
+          throw new DownloadClientError(this.name, `HTTP ${response.status}: ${response.statusText}`);
+        }
+
+        const contentType = response.headers.get('content-type') ?? '';
+        if (!contentType.includes('application/json') && !contentType.includes('text/json')) {
+          throw new DownloadClientError(this.name, `Connection failed: server didn't respond as expected. Check host, port, SSL settings, and any reverse proxy (e.g. Authelia) that may be intercepting requests.`);
+        }
+
+        const raw = await response.json();
+        const parsed = transmissionRpcResponseSchema.safeParse(raw);
+        if (!parsed.success) {
+          throw new DownloadClientError(this.name, `Transmission returned unexpected response: ${parsed.error.issues[0]?.message ?? 'unknown'}`);
+        }
+        const data = parsed.data as RpcResponse;
+
+        if (data.result !== 'success') {
+          throw new DownloadClientError(this.name, `RPC error: ${data.result}`);
+        }
+
+        return data;
       },
-      body: JSON.stringify({ method, arguments: args }),
-    }, DEFAULT_REQUEST_TIMEOUT_MS);
-
-    if (response.status === 409 && !retried) {
-      const newSessionId = response.headers.get('X-Transmission-Session-Id');
-      if (newSessionId) {
-        this.sessionId = newSessionId;
-      }
-      return this.rpc(method, args, true);
-    }
-
-    if (response.status === 409) {
-      throw new Error('Session ID rotation failed: repeated 409');
-    }
-
-    if (response.status === 401) {
-      throw new Error('Authentication failed: invalid credentials');
-    }
-
-    if (!response.ok) {
-      throw new Error(`HTTP ${response.status}: ${response.statusText}`);
-    }
-
-    const contentType = response.headers.get('content-type') ?? '';
-    if (!contentType.includes('application/json') && !contentType.includes('text/json')) {
-      throw new Error(`Connection failed: server didn't respond as expected. Check host, port, SSL settings, and any reverse proxy (e.g. Authelia) that may be intercepting requests.`);
-    }
-
-    const raw = await response.json();
-    const parsed = transmissionRpcResponseSchema.safeParse(raw);
-    if (!parsed.success) {
-      throw new Error(`Transmission returned unexpected response: ${parsed.error.issues[0]?.message ?? 'unknown'}`);
-    }
-    const data = parsed.data as RpcResponse;
-
-    if (data.result !== 'success') {
-      throw new Error(`RPC error: ${data.result}`);
-    }
-
-    return data;
+      {
+        clientName: this.name,
+        shouldRetry: () => was409,
+        onRetry: async () => {
+          if (retrySessionId) this.sessionId = retrySessionId;
+        },
+      },
+    );
   }
 
   private mapTorrent(t: TransmissionTorrent): DownloadItemInfo {
