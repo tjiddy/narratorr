@@ -19,14 +19,14 @@ const mockGetValues = vi.fn().mockReturnValue({
   enabled: true,
   priority: 50,
   settings: { host: 'localhost', port: 8080 },
-}) as unknown as UseFormGetValues<CreateDownloadClientFormData>;
+});
 
 function makeOptions(overrides: { selectedType?: string; clientId?: number; isDirty?: boolean } = {}) {
   return {
     selectedType: overrides.selectedType ?? 'qbittorrent',
     clientId: overrides.clientId,
     isDirty: overrides.isDirty,
-    getValues: mockGetValues,
+    getValues: mockGetValues as unknown as UseFormGetValues<CreateDownloadClientFormData>,
   };
 }
 

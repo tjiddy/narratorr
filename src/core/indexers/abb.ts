@@ -6,6 +6,7 @@ import { fetchWithProxy } from './fetch.js';
 import { isProxyRelatedError } from './errors.js';
 import { fetchWithProxyAgent, resolveProxyIp } from './proxy.js';
 import { getErrorMessage } from '../../shared/error-message.js';
+import { INDEXER_TIMEOUT_MS } from '../utils/constants.js';
 
 export interface ABBConfig {
   hostname: string; // e.g., 'audiobookbay.lu'
@@ -13,8 +14,6 @@ export interface ABBConfig {
   flareSolverrUrl?: string;
   proxyUrl?: string;
 }
-
-import { INDEXER_TIMEOUT_MS } from '../utils/constants.js';
 
 const DEFAULT_USER_AGENTS = [
   'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
