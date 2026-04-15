@@ -19,8 +19,24 @@ describe('METADATA_SEARCH_PROVIDER_FACTORIES', () => {
   });
 
   it('factory map is extensible — adding a new provider requires only a registry entry', () => {
-    // Registry is a plain object — new entries can be added without modifying existing code
     expect(typeof METADATA_SEARCH_PROVIDER_FACTORIES).toBe('object');
     expect(Object.keys(METADATA_SEARCH_PROVIDER_FACTORIES)).toEqual(['audible']);
+  });
+
+  describe('region coercion branches', () => {
+    it('defaults to US behavior when region config is missing', () => {
+      const provider = METADATA_SEARCH_PROVIDER_FACTORIES.audible({});
+      expect(provider.name).toBe('Audible.com');
+    });
+
+    it('defaults to US behavior when region is empty string', () => {
+      const provider = METADATA_SEARCH_PROVIDER_FACTORIES.audible({ region: '' });
+      expect(provider.name).toBe('Audible.com');
+    });
+
+    it('passes through explicit region to provider', () => {
+      const provider = METADATA_SEARCH_PROVIDER_FACTORIES.audible({ region: 'uk' });
+      expect(provider.name).toBe('Audible.co.uk');
+    });
   });
 });
