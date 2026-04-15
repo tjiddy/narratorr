@@ -237,14 +237,14 @@ describe('createIndexerSchema — settings credential trim (#272)', () => {
     if (result.success) expect(result.data.settings.apiKey).toBe('key123');
   });
 
-  it('leaves non-credential settings fields untouched', () => {
+  it('trims hostname in abb settings', () => {
     const result = createIndexerSchema.safeParse({
       ...validCreateIndexer,
       type: 'abb' as const,
       settings: { hostname: '  host  ' },
     });
     expect(result.success).toBe(true);
-    if (result.success) expect(result.data.settings.hostname).toBe('  host  ');
+    if (result.success) expect(result.data.settings.hostname).toBe('host');
   });
 });
 
@@ -513,6 +513,22 @@ describe('createIndexerSchema — typed settings validation', () => {
         ...base, type: 'abb', settings: { hostname: 'abb.test', pageLimit: 5 },
       });
       expect(result.success).toBe(true);
+    });
+  });
+
+  describe('ZOD-1 — whitespace-only required strings rejected', () => {
+    it('rejects whitespace-only mamId', () => {
+      const result = createIndexerSchema.safeParse({
+        ...base, type: 'myanonamouse', settings: { mamId: '   ' },
+      });
+      expect(result.success).toBe(false);
+    });
+
+    it('rejects whitespace-only hostname', () => {
+      const result = createIndexerSchema.safeParse({
+        ...base, type: 'abb', settings: { hostname: '   ' },
+      });
+      expect(result.success).toBe(false);
     });
   });
 

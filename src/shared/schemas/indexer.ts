@@ -28,7 +28,7 @@ const mamSearchTypeServerSchema = z.union([
 ]);
 
 export const mamSettingsSchema = z.object({
-  mamId: z.string().min(1),
+  mamId: z.string().trim().min(1),
   baseUrl: z.string().trim().optional(),
   searchLanguages: z.array(z.number()).optional(),
   searchType: mamSearchTypeServerSchema.optional(),
@@ -40,7 +40,7 @@ export const mamSettingsSchema = z.object({
 }).strict();
 
 export const abbSettingsSchema = z.object({
-  hostname: z.string().min(1),
+  hostname: z.string().trim().min(1),
   pageLimit: z.number().int().min(1).max(10).optional(),
   flareSolverrUrl: z.string().optional(),
   useProxy: z.boolean().optional(),
