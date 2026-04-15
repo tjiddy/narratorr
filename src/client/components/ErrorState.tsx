@@ -1,7 +1,7 @@
 import type { ElementType } from 'react';
 import { AlertCircleIcon, RefreshIcon } from '@/components/icons';
 
-interface ErrorStateProps {
+export interface ErrorStateProps {
   title: string;
   description: string;
   icon?: ElementType;
