@@ -2,7 +2,7 @@ import { eq, and, desc, sql, inArray, lt, isNull, or, lte as drizzleLte } from '
 import type { Db } from '../../db/index.js';
 import type { FastifyBaseLogger } from 'fastify';
 import { suggestions, books, authors, bookAuthors, bookNarrators, narrators } from '../../db/schema.js';
-import { REGION_LANGUAGES, type BookMetadata } from '../../core/index.js';
+import type { BookMetadata } from '../../core/index.js';
 import { chunkArray } from '../utils/batch.js';
 import type { MetadataService } from './metadata.service.js';
 import type { SettingsService } from './settings.service.js';
@@ -69,7 +69,7 @@ export class DiscoveryService {
   async generateCandidates(signals: LibrarySignals, multipliers?: WeightMultipliers): Promise<ScoredCandidate[]> {
     const settings = await this.settingsService.get('discovery');
     const metadataSettings = await this.settingsService.get('metadata');
-    const regionLang = REGION_LANGUAGES[metadataSettings.audibleRegion] ?? 'english';
+    const languages = metadataSettings.languages;
     const warnings: string[] = [];
 
     const existingRows = await this.db
@@ -83,7 +83,7 @@ export class DiscoveryService {
     const dismissedAsins = new Set(dismissedRows.map(s => s.asin));
 
     const effectiveMultipliers = multipliers ?? DEFAULT_MULTIPLIERS;
-    const ctx: CandidateContext = { regionLang, existingAsins, existingTitleAuthors, dismissedAsins, maxPerAuthor: settings.maxSuggestionsPerAuthor, signals, warnings, queriedAuthor: undefined, multipliers: effectiveMultipliers };
+    const ctx: CandidateContext = { languages, existingAsins, existingTitleAuthors, dismissedAsins, maxPerAuthor: settings.maxSuggestionsPerAuthor, signals, warnings, queriedAuthor: undefined, multipliers: effectiveMultipliers };
     const map = new Map<string, ScoredCandidate>();
     const deps = { metadataService: this.metadataService, log: this.log };
 
