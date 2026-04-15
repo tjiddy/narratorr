@@ -1,9 +1,10 @@
 import { useSyncExternalStore } from 'react';
+import type { MergeDisplayPhase } from '../../shared/schemas/sse-events.js';
 
 export type MergeOutcome = 'success' | 'error' | 'cancelled';
 
 export interface MergeProgress {
-  phase: string;
+  phase: MergeDisplayPhase;
   percentage?: number;
   position?: number;
   outcome?: MergeOutcome;
@@ -12,7 +13,7 @@ export interface MergeProgress {
 export interface MergeCardState {
   bookId: number;
   bookTitle: string;
-  phase: string;
+  phase: MergeDisplayPhase;
   percentage?: number;
   position?: number;
   outcome?: MergeOutcome;
