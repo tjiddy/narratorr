@@ -27,6 +27,7 @@ describe('LazyRoute', () => {
     wrap(<LazyRoute><LazyComponent /></LazyRoute>);
 
     expect(screen.getByTestId('loading-spinner')).toBeInTheDocument();
+    expect(screen.getByRole('status')).toHaveAccessibleName('Loading');
 
     await act(async () => {
       resolveImport({ default: () => <div data-testid="lazy-content">Loaded</div> });

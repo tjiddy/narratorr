@@ -6,7 +6,7 @@ import { RouteErrorBoundary } from './RouteErrorBoundary';
 export function PageFallback() {
   return (
     <div className="flex items-center justify-center py-32">
-      <LoadingSpinner className="w-8 h-8 text-muted-foreground" />
+      <LoadingSpinner className="w-8 h-8 text-muted-foreground" label="Loading" />
     </div>
   );
 }
