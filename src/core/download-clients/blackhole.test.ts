@@ -3,6 +3,7 @@ import { http, HttpResponse } from 'msw';
 import { useMswServer } from '../__tests__/msw/server.js';
 import { BlackholeClient } from './blackhole.js';
 import type { DownloadArtifact } from './types.js';
+import { DownloadClientError } from './errors.js';
 
 vi.mock('node:fs/promises', () => ({
   writeFile: vi.fn().mockResolvedValue(undefined),
