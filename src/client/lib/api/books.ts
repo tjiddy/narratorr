@@ -1,5 +1,8 @@
 import type { EnrichmentStatus } from '../../../shared/schemas.js';
+import type { BookMetadata } from '../../../core/metadata/types.js';
 import { fetchApi, URL_BASE, ApiError } from './client.js';
+
+export type { BookMetadata };
 
 export interface Author {
   id: number;
@@ -72,23 +75,6 @@ export interface CreateBookPayload {
   searchImmediately?: boolean;
 }
 
-export interface BookMetadata {
-  asin?: string;
-  title: string;
-  subtitle?: string;
-  authors: { name: string; asin?: string }[];
-  narrators?: string[];
-  series?: { name: string; position?: number; asin?: string }[];
-  description?: string;
-  publisher?: string;
-  coverUrl?: string;
-  duration?: number;
-  genres?: string[];
-  publishedDate?: string;
-  language?: string;
-  providerId?: string;
-  relevance?: number;
-}
 
 export interface AuthorMetadata {
   asin?: string;
