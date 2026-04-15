@@ -8,6 +8,7 @@
 import { ProxyAgent } from 'undici';
 import { SocksProxyAgent } from 'socks-proxy-agent';
 import { ProxyError } from './errors.js';
+import { getErrorMessage } from '../../shared/error-message.js';
 import { mapNetworkError } from '../utils/map-network-error.js';
 
 const PROXY_TIMEOUT_MS = 30_000;
@@ -75,7 +76,7 @@ export async function fetchWithProxyAgent(
       if (error instanceof DOMException && error.name === 'AbortError') {
         throw new ProxyError(`Proxy timed out after ${Math.round(timeoutMs / 1000)}s`);
       }
-      const msg = error instanceof Error ? error.message : 'unknown error';
+      const msg = getErrorMessage(error);
       throw new ProxyError(`Proxy connection failed: ${msg}`);
     }
 
@@ -111,7 +112,7 @@ export async function resolveProxyIp(proxyUrl: string): Promise<string> {
     return data.ip;
   } catch (error: unknown) {
     if (error instanceof ProxyError) throw error;
-    const msg = error instanceof Error ? error.message : 'unknown error';
+    const msg = getErrorMessage(error);
     throw new ProxyError(`Failed to resolve proxy exit IP: ${msg}`);
   }
 }

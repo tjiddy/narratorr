@@ -1,4 +1,5 @@
 import { DownloadClientError, DownloadClientTimeoutError, isTimeoutError } from './errors.js';
+import { getErrorMessage } from '../../shared/error-message.js';
 
 export interface RetryConfig {
   clientName: string;
@@ -37,6 +38,6 @@ export async function requestWithRetry<T>(
 
   throw new DownloadClientError(
     clientName,
-    lastError instanceof Error ? lastError.message : String(lastError),
+    getErrorMessage(lastError),
   );
 }

@@ -9,6 +9,7 @@ import type {
 import { fetchWithTimeout } from '../utils/fetch-with-timeout.js';
 import { DEFAULT_REQUEST_TIMEOUT_MS } from '../utils/constants.js';
 import { DownloadClientAuthError, DownloadClientError, DownloadClientTimeoutError, isTimeoutError } from './errors.js';
+import { getErrorMessage } from '../../shared/error-message.js';
 
 export interface NZBGetConfig {
   host: string;
@@ -146,7 +147,7 @@ export class NZBGetClient implements DownloadClientAdapter {
     } catch (error: unknown) {
       return {
         success: false,
-        message: error instanceof Error ? error.message : 'Connection failed',
+        message: getErrorMessage(error),
       };
     }
   }
@@ -167,7 +168,7 @@ export class NZBGetClient implements DownloadClientAdapter {
       }, DEFAULT_REQUEST_TIMEOUT_MS);
     } catch (error: unknown) {
       if (isTimeoutError(error)) throw new DownloadClientTimeoutError(this.name, (error as Error).message);
-      throw new DownloadClientError(this.name, error instanceof Error ? error.message : String(error));
+      throw new DownloadClientError(this.name, getErrorMessage(error));
     }
 
     if (response.status === 401) {

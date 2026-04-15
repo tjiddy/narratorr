@@ -3,6 +3,7 @@ import { formatEventMessage } from './types.js';
 import { EVENT_TITLES } from '../../shared/notification-events.js';
 import { fetchWithTimeout } from '../utils/fetch-with-timeout.js';
 import { NOTIFIER_TIMEOUT_MS } from '../utils/constants.js';
+import { getErrorMessage } from '../../shared/error-message.js';
 
 export interface PushoverConfig {
   token: string;
@@ -39,7 +40,7 @@ export class PushoverNotifier implements NotifierAdapter {
       if (error instanceof DOMException && error.name === 'TimeoutError') {
         return { success: false, message: 'Request timed out' };
       }
-      return { success: false, message: error instanceof Error ? error.message : 'Unknown error' };
+      return { success: false, message: getErrorMessage(error) };
     }
   }
 

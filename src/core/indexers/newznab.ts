@@ -3,6 +3,7 @@ import type { IndexerAdapter, SearchResult, SearchOptions } from './types.js';
 import { fetchWithProxy } from './fetch.js';
 import { fetchWithProxyAgent, resolveProxyIp } from './proxy.js';
 import { normalizeLanguage } from '../utils/language-codes.js';
+import { getErrorMessage } from '../../shared/error-message.js';
 
 export interface NewznabConfig {
   apiUrl: string; // e.g., 'https://nzbgeek.info'
@@ -81,7 +82,7 @@ export class NewznabIndexer implements IndexerAdapter {
     } catch (error: unknown) {
       return {
         success: false,
-        message: error instanceof Error ? error.message : 'Connection failed',
+        message: getErrorMessage(error),
       };
     }
   }

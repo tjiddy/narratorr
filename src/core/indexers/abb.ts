@@ -4,6 +4,7 @@ import { buildMagnetUri } from '../utils';
 import { fetchWithProxy } from './fetch.js';
 import { isProxyRelatedError } from './errors.js';
 import { fetchWithProxyAgent, resolveProxyIp } from './proxy.js';
+import { getErrorMessage } from '../../shared/error-message.js';
 
 export interface ABBConfig {
   hostname: string; // e.g., 'audiobookbay.lu'
@@ -351,7 +352,7 @@ export class AudioBookBayIndexer implements IndexerAdapter {
     } catch (error: unknown) {
       return {
         success: false,
-        message: error instanceof Error ? error.message : 'Connection failed',
+        message: getErrorMessage(error),
       };
     } finally {
       clearTimeout(timeoutId);
@@ -370,7 +371,7 @@ export class AudioBookBayIndexer implements IndexerAdapter {
     } catch (error: unknown) {
       return {
         success: false,
-        message: error instanceof Error ? error.message : 'Connection failed',
+        message: getErrorMessage(error),
       };
     }
   }
@@ -387,7 +388,7 @@ export class AudioBookBayIndexer implements IndexerAdapter {
     } catch (error: unknown) {
       return {
         success: false,
-        message: error instanceof Error ? error.message : 'Connection failed',
+        message: getErrorMessage(error),
       };
     }
   }

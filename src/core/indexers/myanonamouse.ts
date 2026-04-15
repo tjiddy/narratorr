@@ -3,6 +3,7 @@ import { IndexerAuthError, ProxyError } from './errors.js';
 import { createProxyAgent, resolveProxyIp } from './proxy.js';
 import { normalizeLanguage } from '../utils/language-codes.js';
 import { MAM_LANGUAGES } from '../../shared/indexer-registry.js';
+import { getErrorMessage } from '../../shared/error-message.js';
 
 export interface MAMConfig {
   mamId: string;
@@ -212,7 +213,7 @@ export class MyAnonamouseIndexer implements IndexerAdapter {
       }
       return {
         success: false,
-        message: error instanceof Error ? error.message : 'Connection failed',
+        message: getErrorMessage(error),
       };
     }
   }
@@ -269,7 +270,7 @@ export class MyAnonamouseIndexer implements IndexerAdapter {
           if (error instanceof DOMException && error.name === 'AbortError') {
             throw new ProxyError(`Proxy timed out after ${Math.round(REQUEST_TIMEOUT_MS / 1000)}s`);
           }
-          const msg = error instanceof Error ? error.message : 'unknown error';
+          const msg = getErrorMessage(error);
           throw new ProxyError(`Proxy connection failed: ${msg}`);
         }
         throw error;
@@ -376,7 +377,7 @@ export class MyAnonamouseIndexer implements IndexerAdapter {
           if (error instanceof DOMException && error.name === 'AbortError') {
             throw new ProxyError(`Proxy timed out after ${Math.round(REQUEST_TIMEOUT_MS / 1000)}s`);
           }
-          const msg = error instanceof Error ? error.message : 'unknown error';
+          const msg = getErrorMessage(error);
           throw new ProxyError(`Proxy connection failed: ${msg}`);
         }
         throw error;

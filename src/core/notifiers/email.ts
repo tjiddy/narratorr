@@ -1,6 +1,7 @@
 import { createTransport } from 'nodemailer';
 import type { NotifierAdapter, NotificationEvent, EventPayload } from './types.js';
 import { formatEventMessage } from './types.js';
+import { getErrorMessage } from '../../shared/error-message.js';
 
 export interface EmailConfig {
   host: string;
@@ -44,7 +45,7 @@ export class EmailNotifier implements NotifierAdapter {
 
       return { success: true };
     } catch (error: unknown) {
-      const msg = error instanceof Error ? error.message : 'Unknown error';
+      const msg = getErrorMessage(error);
       if (msg.includes('authentication') || msg.includes('auth') || msg.includes('AUTH')) {
         return { success: false, message: 'SMTP authentication failed' };
       }
