@@ -769,6 +769,10 @@ describe('ImportListService', () => {
       const setCall = updateChain.set.mock.calls[0][0] as Record<string, unknown>;
       expect(setCall.lastSyncError).toContain('Unknown provider type');
       expect(setCall.nextRunAt).toBeInstanceOf(Date);
+      // nextRunAt must advance by ~syncIntervalMinutes (60min), not reuse the old overdue timestamp
+      const diff = (setCall.nextRunAt as Date).getTime() - Date.now();
+      expect(diff).toBeGreaterThan(59 * 60_000);
+      expect(diff).toBeLessThan(61 * 60_000);
       expect(mockLog.error).toHaveBeenCalledWith(
         expect.objectContaining({ name: 'Unknown Type' }),
         expect.stringContaining('sync failed'),

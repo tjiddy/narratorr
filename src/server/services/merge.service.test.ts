@@ -355,7 +355,7 @@ describe('MergeService', () => {
       (unlink as Mock)
         .mockRejectedValueOnce(new Error('permission denied'))
         .mockResolvedValue(undefined);
-      const { service } = createService();
+      const { service, log } = createService();
 
       await service.enqueueMerge(42);
       await settle();
@@ -365,6 +365,9 @@ describe('MergeService', () => {
       expect(unlink).toHaveBeenCalledTimes(2);
       expect(unlink).toHaveBeenCalledWith(join(BOOK_PATH, '01.mp3'));
       expect(unlink).toHaveBeenCalledWith(join(BOOK_PATH, '02.mp3'));
+      // Merge still completes: staging dir cleanup runs (success-only path)
+      expect(rm).toHaveBeenCalledWith(STAGING_DIR, { recursive: true, force: true });
+      expect(log.error).not.toHaveBeenCalled();
     });
 
     it('db.update receives both size and updatedAt from stat() on the post-rename destination path', async () => {
