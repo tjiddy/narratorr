@@ -142,31 +142,10 @@ export class SABnzbdClient implements DownloadClientAdapter {
       'upload.nzb',
     );
 
-    let response: Response;
-    try {
-      response = await fetchWithTimeout(url.toString(), {
-        method: 'POST',
-        body: formData,
-      }, DEFAULT_REQUEST_TIMEOUT_MS);
-    } catch (error: unknown) {
-      if (isTimeoutError(error)) throw new DownloadClientTimeoutError(this.name, (error as Error).message);
-      throw new DownloadClientError(this.name, getErrorMessage(error));
-    }
-
-    if (response.status === 401 || response.status === 403) {
-      throw new DownloadClientAuthError(this.name, `HTTP ${response.status}: ${response.statusText}`);
-    }
-
-    if (!response.ok) {
-      throw new DownloadClientError(this.name, `HTTP ${response.status}: ${response.statusText}`);
-    }
-
-    const contentType = response.headers.get('content-type') ?? '';
-    if (!contentType.includes('application/json') && !contentType.includes('text/json')) {
-      throw new DownloadClientError(this.name, `Connection failed: server didn't respond as expected. Check host, port, SSL settings, and any reverse proxy (e.g. Authelia) that may be intercepting requests.`);
-    }
-
-    const result = (await response.json()) as { status: boolean; nzo_ids: string[] };
+    const result = await this.fetchApi<{ status: boolean; nzo_ids: string[] }>(url.toString(), {
+      method: 'POST',
+      body: formData,
+    });
 
     if (!result.status || !result.nzo_ids?.length) {
       throw new DownloadClientError(this.name, 'SABnzbd failed to add download');
@@ -299,9 +278,13 @@ export class SABnzbdClient implements DownloadClientAdapter {
       url.searchParams.set(key, value);
     }
 
+    return this.fetchApi<T>(url.toString(), {});
+  }
+
+  private async fetchApi<T>(url: string, init: RequestInit): Promise<T> {
     let response: Response;
     try {
-      response = await fetchWithTimeout(url.toString(), {}, DEFAULT_REQUEST_TIMEOUT_MS);
+      response = await fetchWithTimeout(url, init, DEFAULT_REQUEST_TIMEOUT_MS);
     } catch (error: unknown) {
       if (isTimeoutError(error)) throw new DownloadClientTimeoutError(this.name, (error as Error).message);
       throw new DownloadClientError(this.name, getErrorMessage(error));
