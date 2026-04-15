@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import { INDEXER_REGISTRY, INDEXER_TYPES, type IndexerType, type MamSearchType } from '../indexer-registry';
-import { normalizeBaseUrl } from '../../core/utils/normalize-base-url.js';
+import { normalizeBaseUrl } from '../normalize-base-url.js';
 
 // ============================================================================
 // Indexer schemas

@@ -5,7 +5,7 @@ import { fetchWithProxy } from './fetch.js';
 import { fetchWithProxyAgent, resolveProxyIp } from './proxy.js';
 import { normalizeLanguage } from '../utils/language-codes.js';
 import { getErrorMessage } from '../../shared/error-message.js';
-import { normalizeBaseUrl } from '../utils/normalize-base-url.js';
+import { normalizeBaseUrl } from '../../shared/normalize-base-url.js';
 
 export interface TorznabConfig {
   apiUrl: string; // e.g., 'https://jackett.example.com/api/v2.0/indexers/mytracker/results/torznab'

@@ -4,7 +4,7 @@ import { createProxyAgent, resolveProxyIp } from './proxy.js';
 import { normalizeLanguage } from '../utils/language-codes.js';
 import { MAM_LANGUAGES } from '../../shared/indexer-registry.js';
 import { getErrorMessage } from '../../shared/error-message.js';
-import { normalizeBaseUrl } from '../utils/normalize-base-url.js';
+import { normalizeBaseUrl } from '../../shared/normalize-base-url.js';
 
 export interface MAMConfig {
   mamId: string;

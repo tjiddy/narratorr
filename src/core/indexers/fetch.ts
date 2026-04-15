@@ -8,7 +8,7 @@
 import { mapNetworkError } from '../utils/map-network-error.js';
 
 import { INDEXER_TIMEOUT_MS, PROXY_TIMEOUT_MS } from '../utils/constants.js';
-import { normalizeBaseUrl } from '../utils/normalize-base-url.js';
+import { normalizeBaseUrl } from '../../shared/normalize-base-url.js';
 
 export interface FetchWithProxyOptions {
   url: string;
