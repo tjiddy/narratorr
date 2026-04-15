@@ -312,7 +312,7 @@ describe('QualityGateService', () => {
         makeScan({ totalSize: 600_000_000, tagNarrator: 'Jane Doe' }),
       );
 
-      expect(result.reason.existingNarrator).toBe('John Smith; Jane Doe');
+      expect(result.reason.existingNarrator).toBe('John Smith, Jane Doe');
       expect(result.reason.downloadNarrator).toBe('Jane Doe');
     });
 

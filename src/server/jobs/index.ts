@@ -52,13 +52,13 @@ export function startJobs(db: Db, services: Services, log: FastifyBaseLogger) {
     { name: 'rss', type: 'timeout', getIntervalMinutes: () => services.settings.get('rss').then((s) => s.intervalMinutes), callback: () => runRssJob(services.settings, services.bookList, services.book, services.indexer, services.downloadOrchestrator, services.blacklist, log) },
     { name: 'backup', type: 'timeout', getIntervalMinutes: () => services.settings.get('system').then((s) => s.backupIntervalMinutes), callback: () => runBackupJob(services.backup, log) },
     { name: 'housekeeping', type: 'cron', schedule: '0 0 * * 0', callback: async () => {
-      try { await db.run(sql`VACUUM`); } catch (error: unknown) { log.warn(error as Error, 'Housekeeping: VACUUM failed'); }
+      try { await db.run(sql`VACUUM`); } catch (error: unknown) { log.warn(error, 'Housekeeping: VACUUM failed'); }
       try {
         const generalSettings = await services.settings.get('general');
         const retentionDays = generalSettings.housekeepingRetentionDays ?? 90;
         await services.eventHistory.pruneOlderThan(retentionDays);
-      } catch (error: unknown) { log.warn(error as Error, 'Housekeeping: retention prune failed'); }
-      try { await services.blacklist.deleteExpired(); } catch (error: unknown) { log.warn(error as Error, 'Housekeeping: blacklist cleanup failed'); }
+      } catch (error: unknown) { log.warn(error, 'Housekeeping: retention prune failed'); }
+      try { await services.blacklist.deleteExpired(); } catch (error: unknown) { log.warn(error, 'Housekeeping: blacklist cleanup failed'); }
     } },
     { name: 'health-check', type: 'cron', schedule: '*/5 * * * *', callback: () => services.healthCheck.runAllChecks() },
     { name: 'version-check', type: 'cron', schedule: '0 2 * * *', callback: () => checkForUpdate(log) },

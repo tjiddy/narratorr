@@ -63,7 +63,7 @@ export function buildQualityAssessment(
     const downloadTokens = tokenizeNarrators(scanResult.tagNarrator).map(normalizeNarrator).filter(n => n.length > 0);
     // Skip if download tag produces no tokens after normalization (AC5)
     if (downloadTokens.length > 0) {
-      existingNarrator = book.narrators!.map(n => n.name).join('; ');
+      existingNarrator = book.narrators!.map(n => n.name).join(', ');
       downloadNarrator = scanResult.tagNarrator;
       const existingSet = new Set(existingNarratorNames);
       narratorMatch = downloadTokens.some(n => existingSet.has(n));

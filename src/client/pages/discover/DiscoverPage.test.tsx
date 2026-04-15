@@ -741,10 +741,9 @@ describe('DiscoverPage', () => {
     });
   });
 
-  // #547: markAdded fire-and-forget error logging
-  describe('markAdded error logging (#547)', () => {
-    it('logs console.warn when markDiscoverSuggestionAdded rejects and preserves optimistic added state', async () => {
-      const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+  // #547/#586: markAdded fire-and-forget silently catches rejection
+  describe('markAdded silent catch (#586)', () => {
+    it('silently catches markDiscoverSuggestionAdded rejection and preserves optimistic added state', async () => {
       mockApi.addBook.mockResolvedValue({ id: 10 });
       mockApi.markDiscoverSuggestionAdded.mockRejectedValue(new Error('Network error'));
       mockApi.getDiscoverSuggestions.mockResolvedValue([makeSuggestion({ id: 1 })]);
@@ -757,18 +756,16 @@ describe('DiscoverPage', () => {
       await userEvent.click(screen.getByRole('button', { name: /add to library/i }));
 
       await waitFor(() => {
-        expect(warnSpy).toHaveBeenCalledWith('mark-added failed:', expect.any(Error));
+        expect(mockApi.markDiscoverSuggestionAdded).toHaveBeenCalledWith(1);
       });
 
       // Optimistic added state is preserved despite rejection
       expect(screen.getByText('Test Book')).toBeInTheDocument();
       expect(screen.getByLabelText('In library')).toBeInTheDocument();
       expect(screen.queryByRole('button', { name: /^add book$/i })).not.toBeInTheDocument();
-
-      warnSpy.mockRestore();
     });
 
-    it('does not log warnings on successful markAdded', async () => {
+    it('does not warn on successful markAdded', async () => {
       const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
       mockApi.addBook.mockResolvedValue({ id: 10 });
       mockApi.markDiscoverSuggestionAdded.mockResolvedValue({ suggestion: { id: 1, status: 'added' } });
