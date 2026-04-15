@@ -43,8 +43,34 @@ export class NZBGetClient implements DownloadClientAdapter {
     artifact: DownloadArtifact,
     options?: AddDownloadOptions,
   ): Promise<string> {
-    if (artifact.type !== 'nzb-url') {
-      throw new DownloadClientError(this.name, 'NZBGet only supports usenet artifacts (nzb-url)');
+    if (artifact.type !== 'nzb-url' && artifact.type !== 'nzb-bytes') {
+      throw new DownloadClientError(this.name, 'NZBGet only supports usenet artifacts (nzb-url, nzb-bytes)');
+    }
+
+    if (artifact.type === 'nzb-bytes') {
+      if (artifact.data.length === 0) {
+        throw new DownloadClientError(this.name, 'Cannot add empty NZB file');
+      }
+
+      const params = [
+        'upload.nzb',
+        artifact.data.toString('base64'),
+        options?.category || '',
+        options?.paused ? -1 : 0,
+        false,
+        false,
+        '',
+        0,
+        'score',
+      ];
+
+      const result = await this.rpc<number>('append', params);
+
+      if (!result || result <= 0) {
+        throw new DownloadClientError(this.name, 'NZBGet failed to add download');
+      }
+
+      return String(result);
     }
 
     // NZBGet append method: (NZBFilename, NZBContent, Category, Priority, DupeKey, DupeScore, DupeMode, AddUrlParams)

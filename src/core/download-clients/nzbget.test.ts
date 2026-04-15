@@ -713,12 +713,101 @@ describe('NZBGetClient', () => {
   });
 
   describe('addDownload — nzb-bytes', () => {
-    it.todo('submits nzb-bytes artifact via append RPC with base64-encoded content');
-    it.todo('base64 encoding round-trips correctly (decode matches original buffer)');
-    it.todo('forwards category and priority options in RPC params');
-    it.todo('returns NZB ID from successful append response');
-    it.todo('throws DownloadClientError when append returns 0 or negative');
-    it.todo('rejects zero-length nzb-bytes with DownloadClientError before any network call');
+    it('submits nzb-bytes artifact via append RPC with base64-encoded content', async () => {
+      let capturedBody: { method: string; params: unknown[] } | null = null;
+      server.use(
+        http.post(RPC_URL, async ({ request }) => {
+          capturedBody = (await request.json()) as typeof capturedBody;
+          return HttpResponse.json({ result: 101 });
+        }),
+      );
+
+      const nzbContent = '<nzb><file subject="test"/></nzb>';
+      const nzbData = Buffer.from(nzbContent);
+      const id = await client.addDownload({ type: 'nzb-bytes', data: nzbData });
+
+      expect(id).toBe('101');
+      expect(capturedBody!.method).toBe('append');
+      expect(capturedBody!.params[0]).toBe('upload.nzb');
+      const decoded = Buffer.from(capturedBody!.params[1] as string, 'base64').toString('utf-8');
+      expect(decoded).toBe(nzbContent);
+    });
+
+    it('base64 encoding round-trips correctly (decode matches original buffer)', async () => {
+      let capturedParams: unknown[] = [];
+      server.use(
+        http.post(RPC_URL, async ({ request }) => {
+          const body = (await request.json()) as { params: unknown[] };
+          capturedParams = body.params;
+          return HttpResponse.json({ result: 102 });
+        }),
+      );
+
+      const binaryData = Buffer.from([0x00, 0x01, 0xFF, 0xFE, 0x80, 0x7F]);
+      await client.addDownload({ type: 'nzb-bytes', data: binaryData });
+
+      const roundTripped = Buffer.from(capturedParams[1] as string, 'base64');
+      expect(roundTripped).toEqual(binaryData);
+    });
+
+    it('forwards category and priority options in RPC params', async () => {
+      let capturedParams: unknown[] = [];
+      server.use(
+        http.post(RPC_URL, async ({ request }) => {
+          const body = (await request.json()) as { params: unknown[] };
+          capturedParams = body.params;
+          return HttpResponse.json({ result: 103 });
+        }),
+      );
+
+      const nzbData = Buffer.from('<nzb/>');
+      await client.addDownload({ type: 'nzb-bytes', data: nzbData }, { category: 'audiobooks', paused: true });
+
+      expect(capturedParams[2]).toBe('audiobooks');
+      expect(capturedParams[3]).toBe(-1);
+    });
+
+    it('throws DownloadClientError when append returns 0', async () => {
+      server.use(
+        http.post(RPC_URL, async () => {
+          return HttpResponse.json({ result: 0 });
+        }),
+      );
+
+      const nzbData = Buffer.from('<nzb/>');
+      await expect(
+        client.addDownload({ type: 'nzb-bytes', data: nzbData }),
+      ).rejects.toThrow('failed to add');
+    });
+
+    it('throws DownloadClientError when append returns negative', async () => {
+      server.use(
+        http.post(RPC_URL, async () => {
+          return HttpResponse.json({ result: -1 });
+        }),
+      );
+
+      const nzbData = Buffer.from('<nzb/>');
+      await expect(
+        client.addDownload({ type: 'nzb-bytes', data: nzbData }),
+      ).rejects.toThrow('failed to add');
+    });
+
+    it('rejects zero-length nzb-bytes with DownloadClientError before any network call', async () => {
+      let requestMade = false;
+      server.use(
+        http.post(RPC_URL, async () => {
+          requestMade = true;
+          return HttpResponse.json({ result: 999 });
+        }),
+      );
+
+      const emptyBuffer = Buffer.alloc(0);
+      await expect(
+        client.addDownload({ type: 'nzb-bytes', data: emptyBuffer }),
+      ).rejects.toThrow(DownloadClientError);
+      expect(requestMade).toBe(false);
+    });
   });
 
   describe('Zod response validation', () => {
