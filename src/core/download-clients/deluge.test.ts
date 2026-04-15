@@ -3,7 +3,7 @@ import { http, HttpResponse } from 'msw';
 import { useMswServer } from '../__tests__/msw/server.js';
 import { DelugeClient } from './deluge.js';
 import type { DownloadArtifact } from './types.js';
-import { DownloadClientAuthError, DownloadClientError } from './errors.js';
+
 
 const config = { host: 'localhost', port: 8112, password: 'deluge', useSsl: false };
 const BASE_URL = 'http://localhost:8112';
