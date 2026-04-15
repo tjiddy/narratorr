@@ -38,6 +38,7 @@ function parseCategory<K extends SettingsCategory>(
   return DEFAULT_SETTINGS[key];
 }
 
+// 30s covers page-load + navigation jitter without stale reads on settings flips
 const CACHE_TTL_MS = 30_000;
 
 interface CacheEntry {

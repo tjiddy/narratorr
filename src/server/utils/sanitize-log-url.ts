@@ -21,8 +21,10 @@ export function sanitizeLogUrl(raw: string): string {
 
   try {
     const url = new URL(raw);
+    // Strip search + hash to prevent credential/token leaks in logs
     return url.origin + url.pathname;
   } catch {
+    // Malformed/non-URL strings that fail new URL() are returned as-is intentionally
     return raw;
   }
 }

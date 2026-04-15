@@ -207,6 +207,7 @@ export class DiscoveryService {
 
     const candidateAsins = candidates.map(c => c.asin);
     const existingRows: Array<{ asin: string; status: string; snoozeUntil: Date | null }> = [];
+    // SQLite bind-param limit is 999 — chunk read-side SELECTs to stay under
     for (const chunk of chunkArray(candidateAsins, 999)) {
       const rows = await this.db.select({
         asin: suggestions.asin,
@@ -228,6 +229,7 @@ export class DiscoveryService {
       if (!existingByAsin.has(c.asin)) added++;
     }
 
+    // 47 rows × ~20 bind params per row ≈ 940, safely under the SQLite 999 limit
     const WRITE_CHUNK_SIZE = 47;
     for (const chunk of chunkArray(toUpsert, WRITE_CHUNK_SIZE)) {
       await this.db.insert(suggestions)

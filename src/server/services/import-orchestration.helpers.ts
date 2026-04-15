@@ -1,3 +1,7 @@
+/**
+ * Single-book import pipeline — copies/moves audio to library, enriches metadata,
+ * and creates the book record. Extracted for consistency with quality-gate helpers.
+ */
 import { mkdir, cp, rm } from 'node:fs/promises';
 import { relative, resolve, isAbsolute } from 'node:path';
 import type { Db } from '../../db/index.js';

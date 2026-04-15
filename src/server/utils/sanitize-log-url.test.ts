@@ -47,6 +47,16 @@ describe('sanitizeLogUrl', () => {
       expect(sanitizeLogUrl('magnet:?dn=Test&tr=udp://tracker.example.com'))
         .toBe('magnet:[unknown]');
     });
+
+    it('handles encoded-colon (%3A) in magnet URI with hex hash', () => {
+      expect(sanitizeLogUrl('magnet:?xt=urn%3Abtih%3Aabcdef1234567890abcdef1234567890abcdef12&dn=Test&tr=udp://tracker.example.com'))
+        .toBe('magnet:[abcdef1234567890abcdef1234567890abcdef12]');
+    });
+
+    it('handles encoded-colon (%3A) in magnet URI with base32 hash', () => {
+      expect(sanitizeLogUrl('magnet:?xt=urn%3Abtih%3AJBSWY3DPEHPK3PXPIRSWMZLOOMQGCZZA'))
+        .toBe('magnet:[jbswy3dpehpk3pxpirswmzloomqgczza]');
+    });
   });
 
   describe('edge cases', () => {
