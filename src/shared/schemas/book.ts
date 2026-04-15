@@ -4,10 +4,12 @@ import { z } from 'zod';
 // Book schemas
 // ============================================================================
 
-export const bookStatusSchema = z.enum(['wanted', 'searching', 'downloading', 'importing', 'imported', 'missing', 'failed']);
+export const BOOK_STATUSES = ['wanted', 'searching', 'downloading', 'importing', 'imported', 'missing', 'failed'] as const;
+export const bookStatusSchema = z.enum(BOOK_STATUSES);
 export type BookStatus = z.infer<typeof bookStatusSchema>;
 
-export const enrichmentStatusSchema = z.enum(['pending', 'enriched', 'failed', 'skipped', 'file-enriched']);
+export const ENRICHMENT_STATUSES = ['pending', 'enriched', 'failed', 'skipped', 'file-enriched'] as const;
+export const enrichmentStatusSchema = z.enum(ENRICHMENT_STATUSES);
 export type EnrichmentStatus = z.infer<typeof enrichmentStatusSchema>;
 
 export const bookSortFieldSchema = z.enum(['createdAt', 'title', 'author', 'narrator', 'series', 'quality', 'size', 'format']);

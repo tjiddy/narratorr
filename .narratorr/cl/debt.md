@@ -47,7 +47,7 @@
 
 - **`BackupScheduleForm.tsx` still uses raw `useMutation`/`useQuery`/`useEffect` boilerplate**: Excluded from `useSettingsForm` migration (#485) because it has no zodResolver, no `!isDirty` guard, and no reset-on-success. A separate `useSettingsForm` variant or standalone refactor could normalize this. (discovered in #485)
 
-- **`src/client/lib/api/books.ts` / `src/core/metadata/schemas.ts`**: Client `BookMetadata` interface is hand-maintained separately from server `BookMetadataSchema`. Fields drift — `language` and `publishedDate` existed server-side but were missing client-side until #497. Should derive client type from the Zod schema or generate it. (discovered in #497)
+- ~~**`src/client/lib/api/books.ts` / `src/core/metadata/schemas.ts`**: Client `BookMetadata` drift~~ — resolved in #559 (client type now derived from server schema via `src/core/metadata/types.ts`)
 
 - ~~**`src/client/components/SearchReleasesModal.tsx` at 391 lines (max 400)**~~ — resolved in #553 (extracted SearchReleasesContent, SearchReleasesHeader, phase sub-components)
 
@@ -95,6 +95,7 @@ Items below are real but not worth fixing — the cost of change outweighs the b
 - **`src/client/components/settings/indexer-fields/mam-fields.tsx`**: `DetectionOverlay` was converted from fixed viewport overlay to inline relative positioning (#353). The visual appearance changed (no longer dims the full viewport). If a full-viewport detection UX is desired in non-modal contexts, this would need to be re-added conditionally. (discovered in #353)
 - ~~**`src/server/services/indexer.service.ts`**: language injection duplication between searchAll/searchAllStreaming~~ — resolved in #409 (shared getEnabledIndexerRows)
 - **`src/core/utils/audio-processor.ts:108-123`**: `processAudioFiles()` has a broad catch block that wraps ffmpeg errors, file I/O errors, chapter-source reading errors, and temp-file operations under one `{ success: false, error: message }` return. This prevents downstream code from distinguishing content-caused failures (bad media) from environment failures (broken tooling). Adding structured error types (e.g., `ProcessingErrorKind: 'media' | 'tooling' | 'io'`) would enable more precise blacklist classification in import-orchestrator. (discovered in #504)
-- **`tsconfig.json`**: Missing `vite/client` type reference — `import.meta.env` is untyped in client code, forcing workarounds like `process.env.NODE_ENV`. Add `"vite/client"` to `types` array or create a `src/client/env.d.ts` with `/// <reference types="vite/client" />` (discovered in #416)
+- ~~**`tsconfig.json`**: Missing `vite/client` type reference~~ — resolved in #559 (`src/client/env.d.ts` created)
+- **`src/client/lib/api/books.ts`**: Client `MetadataSearchResults` and `AuthorMetadata` interfaces are still hand-maintained separately from server schemas in `src/core/metadata/schemas.ts`. `MetadataSearchResults.series` is typed as `unknown[]` (server uses `SeriesMetadataSchema[]`) and is missing the `warnings` field. `BookMetadata` was aligned in #559; sibling types should follow. (discovered in #559)
 
 - **`src/client/pages/settings/index.ts` barrel still re-exports individual settings page components unnecessarily**: Before #550, the barrel exported all 10 settings sub-pages + registry. #550 trimmed it to just `SettingsLayout`, but if future code imports individual settings components from the barrel, it will re-add the coupling. No consumer currently needs this. (discovered in #550)

@@ -136,7 +136,7 @@ export class DownloadOrchestrator {
   }
 
   /** Update download status with SSE dispatch. */
-  async updateStatus(id: number, status: string, meta?: { bookId?: number; oldStatus?: DownloadStatus }): Promise<void> {
+  async updateStatus(id: number, status: DownloadStatus, meta?: { bookId?: number; oldStatus?: DownloadStatus }): Promise<void> {
     await this.downloadService.updateStatus(id, status, meta);
     if (meta?.bookId && meta?.oldStatus) {
       emitDownloadStatusChange({ broadcaster: this.broadcaster, downloadId: id, bookId: meta.bookId, oldStatus: meta.oldStatus, newStatus: status, log: this.log });

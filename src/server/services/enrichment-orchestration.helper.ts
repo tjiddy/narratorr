@@ -8,6 +8,7 @@ import type { SettingsService } from './settings.service.js';
 import { enrichBookFromAudio } from './enrichment-utils.js';
 import { resolveFfprobePathFromSettings } from '../../core/utils/ffprobe-path.js';
 import type { BookMetadata } from '../../core/metadata/index.js';
+import type { EnrichmentStatus } from '../../shared/schemas/enrichment.js';
 
 // ─── Shared types ───────────────────────────────────────────────────────
 
@@ -98,7 +99,7 @@ async function applyEnrichmentData(
   opts: { primaryAsin?: string | null; existingNarrator?: string | null; existingDuration?: number | null; existingGenres?: string[] | null },
   deps: Pick<EnrichmentDeps, 'db' | 'log' | 'bookService'>,
 ): Promise<void> {
-  const updates: Partial<{ enrichmentStatus: string; asin: string; duration: number; updatedAt: Date }> = {
+  const updates: Partial<{ enrichmentStatus: EnrichmentStatus; asin: string; duration: number; updatedAt: Date }> = {
     enrichmentStatus: 'enriched',
     updatedAt: new Date(),
   };
