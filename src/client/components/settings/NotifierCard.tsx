@@ -1,3 +1,4 @@
+// Does not use useSettingsForm: entity form for notifier CRUD, not a settings category patch.
 import { useEffect } from 'react';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';

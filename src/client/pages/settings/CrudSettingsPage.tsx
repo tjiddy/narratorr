@@ -1,3 +1,5 @@
+// Does not use useSettingsForm: manages entity CRUD lifecycles (create/edit/delete/test),
+// not single-category settings patches.
 import { useCallback, useRef, type ReactNode } from 'react';
 import type { TestResult } from '@/lib/api';
 import { Modal } from '@/components/Modal';
