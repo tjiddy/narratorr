@@ -1,6 +1,7 @@
 import * as cheerio from 'cheerio';
 import type { IndexerAdapter, SearchResult, SearchOptions } from './types.js';
 import { buildMagnetUri } from '../utils';
+import { normalizeBaseUrl } from '../utils/normalize-base-url.js';
 import { fetchWithProxy } from './fetch.js';
 import { isProxyRelatedError } from './errors.js';
 import { fetchWithProxyAgent, resolveProxyIp } from './proxy.js';
@@ -33,7 +34,7 @@ export class AudioBookBayIndexer implements IndexerAdapter {
 
   constructor(private config: ABBConfig) {
     this.baseUrl = `https://${config.hostname}`;
-    this.flareSolverrUrl = config.flareSolverrUrl?.replace(/\/+$/, '');
+    this.flareSolverrUrl = normalizeBaseUrl(config.flareSolverrUrl);
     this.proxyUrl = config.proxyUrl;
   }
 

@@ -8,6 +8,7 @@
 import { mapNetworkError } from '../utils/map-network-error.js';
 
 import { INDEXER_TIMEOUT_MS, PROXY_TIMEOUT_MS } from '../utils/constants.js';
+import { normalizeBaseUrl } from '../utils/normalize-base-url.js';
 
 export interface FetchWithProxyOptions {
   url: string;
@@ -91,7 +92,7 @@ async function fetchViaProxy(
     ? AbortSignal.any([controller.signal, callerSignal])
     : controller.signal;
 
-  const proxyEndpoint = `${proxyUrl.replace(/\/+$/, '')}/v1`;
+  const proxyEndpoint = `${normalizeBaseUrl(proxyUrl)}/v1`;
 
   try {
     const body: Record<string, unknown> = {

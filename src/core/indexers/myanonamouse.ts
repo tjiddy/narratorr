@@ -4,6 +4,7 @@ import { createProxyAgent, resolveProxyIp } from './proxy.js';
 import { normalizeLanguage } from '../utils/language-codes.js';
 import { MAM_LANGUAGES } from '../../shared/indexer-registry.js';
 import { getErrorMessage } from '../../shared/error-message.js';
+import { normalizeBaseUrl } from '../utils/normalize-base-url.js';
 
 export interface MAMConfig {
   mamId: string;
@@ -82,7 +83,7 @@ export class MyAnonamouseIndexer implements IndexerAdapter {
 
   constructor(config: MAMConfig, name?: string) {
     this.mamId = config.mamId;
-    this.baseUrl = (config.baseUrl || DEFAULT_BASE_URL).replace(/\/+$/, '');
+    this.baseUrl = normalizeBaseUrl(config.baseUrl || DEFAULT_BASE_URL);
     this.proxyUrl = config.proxyUrl;
     this.searchLanguages = config.searchLanguages;
     this.searchType = config.searchType;

@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { INDEXER_REGISTRY, INDEXER_TYPES, type IndexerType, type MamSearchType } from '../indexer-registry';
+import { normalizeBaseUrl } from '../../core/utils/normalize-base-url.js';
 
 // ============================================================================
 // Indexer schemas
@@ -149,7 +150,7 @@ export const createIndexerFormSchema = z.object({
   }
 
   // Validate FlareSolverr URL if provided (applies to all types)
-  const proxyUrl = data.settings.flareSolverrUrl?.replace(/\/+$/, '').trim();
+  const proxyUrl = normalizeBaseUrl(data.settings.flareSolverrUrl)?.trim();
   if (proxyUrl === '********') {
     // Sentinel passthrough — persisted secret, skip validation
   } else if (proxyUrl) {
