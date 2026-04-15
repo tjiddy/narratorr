@@ -437,3 +437,40 @@ describe('createDownloadClientFormSchema — settings trim (#284)', () => {
     }
   });
 });
+
+// #557 — Typed adapter settings schemas (discriminated unions)
+describe('createDownloadClientSchema — typed settings validation', () => {
+  describe('positive cases — each type with valid settings', () => {
+    it.todo('accepts valid qbittorrent settings (host + port)');
+    it.todo('accepts valid transmission settings (host + port)');
+    it.todo('accepts valid sabnzbd settings (host + port + apiKey)');
+    it.todo('accepts valid nzbget settings (host + port)');
+    it.todo('accepts valid deluge settings (host + port)');
+    it.todo('accepts valid blackhole settings (watchDir + protocol)');
+  });
+
+  describe('negative cases', () => {
+    it.todo('rejects missing required fields for qbittorrent (no host)');
+    it.todo('rejects port as string instead of number');
+    it.todo('rejects extra unknown fields');
+    it.todo('rejects wrong type discriminator');
+  });
+
+  describe('boundary values', () => {
+    it.todo('accepts port at minimum (1)');
+    it.todo('accepts port at maximum (65535)');
+    it.todo('rejects port at 0');
+    it.todo('rejects port above 65535');
+  });
+
+  describe('persisted metadata', () => {
+    it.todo('accepts download client settings with category field');
+    it.todo('blackhole protocol must be torrent or usenet');
+  });
+});
+
+describe('updateDownloadClientSchema — type required when settings present', () => {
+  it.todo('accepts update with settings + type');
+  it.todo('accepts update without settings (type not required)');
+  it.todo('rejects update with settings but no type');
+});

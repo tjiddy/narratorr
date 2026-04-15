@@ -372,3 +372,40 @@ describe('createNotifierFormSchema — settings trim (#284)', () => {
     if (result.success) expect(result.data.settings.headers).toBe('');
   });
 });
+
+// #557 — Typed adapter settings schemas (discriminated unions)
+describe('createNotifierSchema — typed settings validation', () => {
+  describe('positive cases — each type with valid settings', () => {
+    it.todo('accepts valid webhook settings (url)');
+    it.todo('accepts valid discord settings (webhookUrl)');
+    it.todo('accepts valid script settings (path)');
+    it.todo('accepts valid email settings (smtpHost + fromAddress + toAddress)');
+    it.todo('accepts valid telegram settings (botToken + chatId)');
+    it.todo('accepts valid slack settings (webhookUrl)');
+    it.todo('accepts valid pushover settings (pushoverToken + pushoverUser)');
+    it.todo('accepts valid ntfy settings (ntfyTopic)');
+    it.todo('accepts valid gotify settings (gotifyUrl + gotifyToken)');
+  });
+
+  describe('negative cases', () => {
+    it.todo('rejects missing required fields for webhook (no url)');
+    it.todo('rejects extra unknown fields');
+    it.todo('rejects wrong type discriminator');
+  });
+
+  describe('boundary values', () => {
+    it.todo('accepts timeout at minimum (1)');
+    it.todo('accepts timeout at maximum (300)');
+    it.todo('webhook method must be POST or PUT');
+  });
+
+  describe('notifier secret handling', () => {
+    it.todo('notifier settings are NOT masked (plaintext in/out)');
+  });
+});
+
+describe('updateNotifierSchema — type required when settings present', () => {
+  it.todo('accepts update with settings + type');
+  it.todo('accepts update without settings (type not required)');
+  it.todo('rejects update with settings but no type');
+});

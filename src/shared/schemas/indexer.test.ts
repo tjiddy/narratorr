@@ -478,3 +478,40 @@ describe('#363 — searchType string values', () => {
     if (result.success) expect(result.data.settings.searchType).toBeUndefined();
   });
 });
+
+// #557 — Typed adapter settings schemas (discriminated unions)
+describe('createIndexerSchema — typed settings validation', () => {
+  describe('positive cases — each type with valid settings', () => {
+    it.todo('accepts valid newznab settings (apiUrl + apiKey)');
+    it.todo('accepts valid torznab settings (apiUrl + apiKey)');
+    it.todo('accepts valid myanonamouse settings (mamId + optional fields)');
+    it.todo('accepts valid abb settings (hostname + optional pageLimit)');
+  });
+
+  describe('negative cases — type mismatch and missing fields', () => {
+    it.todo('rejects settings missing required fields for newznab (no apiUrl)');
+    it.todo('rejects settings missing required fields for abb (no hostname)');
+    it.todo('rejects settings with wrong type discriminator');
+    it.todo('rejects extra unknown fields in strict settings object');
+    it.todo('rejects wrong field types (e.g., pageLimit as string)');
+  });
+
+  describe('persisted operational metadata', () => {
+    it.todo('accepts MAM settings with isVip and classname (service-written)');
+    it.todo('accepts MAM settings with mamUsername (user-configured)');
+    it.todo('accepts MAM settings with searchLanguages: [] (unrestricted)');
+    it.todo('accepts MAM settings with searchLanguages: [1, 2] (populated)');
+    it.todo('accepts indexer settings with useProxy and flareSolverrUrl');
+  });
+
+  describe('legacy coercion', () => {
+    it.todo('server-side schema accepts legacy numeric searchType and coerces to string');
+    it.todo('form-derived schema accepts only string enum for searchType');
+  });
+});
+
+describe('updateIndexerSchema — type required when settings present', () => {
+  it.todo('accepts update with settings + type');
+  it.todo('accepts update without settings (type not required)');
+  it.todo('rejects update with settings but no type');
+});

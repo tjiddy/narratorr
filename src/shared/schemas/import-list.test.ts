@@ -62,3 +62,34 @@ describe('createImportListFormSchema — trim behavior', () => {
     if (result.success) expect(result.data.name).toBe('My List');
   });
 });
+
+// #557 — Typed adapter settings schemas (discriminated unions)
+describe('createImportListSchema — typed settings validation', () => {
+  describe('positive cases — each type with valid settings', () => {
+    it.todo('accepts valid abs settings (serverUrl + apiKey + libraryId)');
+    it.todo('accepts valid nyt settings (apiKey)');
+    it.todo('accepts valid hardcover settings (apiKey)');
+  });
+
+  describe('negative cases', () => {
+    it.todo('rejects missing required fields for abs (no serverUrl)');
+    it.todo('rejects extra unknown fields');
+    it.todo('rejects wrong type discriminator');
+  });
+
+  describe('conditional validation', () => {
+    it.todo('hardcover with listType shelf requires shelfId');
+    it.todo('hardcover with listType trending does not require shelfId');
+  });
+});
+
+describe('previewImportListSchema — typed settings validation', () => {
+  it.todo('accepts valid preview with typed settings per provider');
+  it.todo('rejects preview with invalid settings');
+});
+
+describe('updateImportListSchema — type required when settings present', () => {
+  it.todo('accepts update with settings + type');
+  it.todo('accepts update without settings (type not required)');
+  it.todo('rejects update with settings but no type');
+});
