@@ -55,6 +55,21 @@ describe('BackupScheduleForm', () => {
     expect(screen.queryByRole('button', { name: /save/i })).not.toBeInTheDocument();
   });
 
+  it('shows save button when form is dirty', async () => {
+    renderWithProviders(<BackupScheduleForm />);
+
+    await waitFor(() => {
+      expect(screen.getByLabelText(/backup interval/i)).toHaveValue(10080);
+    });
+
+    expect(screen.queryByRole('button', { name: /save/i })).not.toBeInTheDocument();
+
+    fireEvent.change(screen.getByLabelText(/backup interval/i), { target: { value: '1440' } });
+
+    expect(screen.getByRole('button', { name: /save/i })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /save/i })).not.toBeDisabled();
+  });
+
   it('calls updateSettings with system category on form submit', async () => {
     mockApi.updateSettings.mockResolvedValue(mockSettings);
     renderWithProviders(<BackupScheduleForm />);
@@ -97,18 +112,34 @@ describe('BackupScheduleForm', () => {
     });
   });
 
-  it('zodResolver blocks invalid input and shows inline error', async () => {
+  it('zodResolver blocks invalid backupIntervalMinutes and shows inline error', async () => {
     renderWithProviders(<BackupScheduleForm />);
 
     await waitFor(() => {
       expect(screen.getByLabelText(/backup interval/i)).toHaveValue(10080);
     });
 
-    // Set value below minimum (60) — zodResolver should reject
     fireEvent.change(screen.getByLabelText(/backup interval/i), { target: { value: '1' } });
 
     await act(async () => {
       fireEvent.submit(screen.getByLabelText(/backup interval/i).closest('form')!);
+    });
+
+    expect(screen.getByText(/too small/i)).toBeInTheDocument();
+    expect(mockApi.updateSettings).not.toHaveBeenCalled();
+  });
+
+  it('zodResolver blocks invalid backupRetention and shows inline error', async () => {
+    renderWithProviders(<BackupScheduleForm />);
+
+    await waitFor(() => {
+      expect(screen.getByLabelText(/backup retention/i)).toHaveValue(7);
+    });
+
+    fireEvent.change(screen.getByLabelText(/backup retention/i), { target: { value: '0' } });
+
+    await act(async () => {
+      fireEvent.submit(screen.getByLabelText(/backup retention/i).closest('form')!);
     });
 
     expect(screen.getByText(/too small/i)).toBeInTheDocument();
