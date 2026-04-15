@@ -12,6 +12,7 @@ interface ModalProps {
 
 export function Modal({ onClose, closeOnBackdropClick = true, className = '', scrollable = false, children }: ModalProps) {
   const panelRef = useRef<HTMLDivElement>(null);
+  // Fires before consumer effects — lets WelcomeModal's autofocus override initial placement
   useFocusTrap(true, panelRef);
 
   const panelClasses = [
