@@ -101,3 +101,38 @@ describe('isTimeoutError', () => {
     expect(isTimeoutError(undefined)).toBe(false);
   });
 });
+
+describe('ErrorOptions cause propagation', () => {
+  it('DownloadClientError constructed with { cause } preserves .cause', () => {
+    const cause = new Error('original failure');
+    const error = new DownloadClientError('qBittorrent', 'wrapper message', { cause });
+    expect(error.cause).toBe(cause);
+    expect(error.message).toBe('wrapper message');
+    expect(error.clientName).toBe('qBittorrent');
+  });
+
+  it('DownloadClientTimeoutError constructed with { cause } propagates through hierarchy', () => {
+    const cause = new Error('socket hang up');
+    const error = new DownloadClientTimeoutError('Transmission', 'Request timed out', { cause });
+    expect(error.cause).toBe(cause);
+    expect(error).toBeInstanceOf(DownloadClientError);
+    expect(error).toBeInstanceOf(Error);
+  });
+
+  it('DownloadClientAuthError constructed with { cause } propagates through hierarchy', () => {
+    const cause = new Error('401 Unauthorized');
+    const error = new DownloadClientAuthError('Deluge', 'bad credentials', { cause });
+    expect(error.cause).toBe(cause);
+    expect(error).toBeInstanceOf(DownloadClientError);
+    expect(error).toBeInstanceOf(Error);
+  });
+
+  it('constructed without options has undefined .cause (backward compat)', () => {
+    const base = new DownloadClientError('qBittorrent', 'test');
+    const auth = new DownloadClientAuthError('qBittorrent');
+    const timeout = new DownloadClientTimeoutError('qBittorrent');
+    expect(base.cause).toBeUndefined();
+    expect(auth.cause).toBeUndefined();
+    expect(timeout.cause).toBeUndefined();
+  });
+});
