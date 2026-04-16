@@ -1,10 +1,6 @@
-import { mkdtempSync, writeFileSync } from 'node:fs';
+import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { fileURLToPath } from 'node:url';
-import { dirname } from 'node:path';
-
-const STATE_FILE_NAME = '.run-state.json';
 
 export interface RunTempDirs {
   dbPath: string;
@@ -12,16 +8,22 @@ export interface RunTempDirs {
   configPath: string;
 }
 
-export interface RunState extends RunTempDirs {
-  pid: number;
-  createdAt: string;
-}
+/**
+ * Module-level state for the current Playwright run. Populated by
+ * createRunTempDirs() at config-load time; consumed by globalTeardown()
+ * at run-end. Both execute in the same Node process (Playwright invokes
+ * globalTeardown from the main process that loaded the config), so module
+ * state is sufficient — no state file needed.
+ *
+ * Keeping state in-memory also avoids the concurrent-run footgun a shared
+ * state file creates: two `pnpm test:e2e` processes in the same workspace
+ * now have fully isolated run state.
+ */
+let currentRun: RunTempDirs | undefined;
 
 /**
  * Creates three per-run temp directories (DB file, library root, config root)
- * and writes their paths to e2e/.run-state.json so globalTeardown can clean them up.
- *
- * Called at Playwright config load time — the paths returned populate webServer.env.
+ * and stores their paths in module-level state for globalTeardown to consume.
  */
 export function createRunTempDirs(): RunTempDirs {
   const prefix = join(tmpdir(), 'narratorr-e2e-');
@@ -30,22 +32,18 @@ export function createRunTempDirs(): RunTempDirs {
   const configPath = mkdtempSync(prefix);
 
   const dbPath = join(dbDir, 'narratorr.db');
+  const run: RunTempDirs = { dbPath, libraryPath, configPath };
 
-  const state: RunState = {
-    dbPath,
-    libraryPath,
-    configPath,
-    pid: process.pid,
-    createdAt: new Date().toISOString(),
-  };
-
-  writeFileSync(runStateFilePath(), JSON.stringify(state, null, 2));
-
-  return { dbPath, libraryPath, configPath };
+  currentRun = run;
+  return run;
 }
 
-export function runStateFilePath(): string {
-  // Resolve relative to this file so it works regardless of cwd.
-  const here = dirname(fileURLToPath(import.meta.url));
-  return join(here, '..', STATE_FILE_NAME);
+/** Returns the temp-dir state created by this process's run, or undefined. */
+export function getCurrentRun(): RunTempDirs | undefined {
+  return currentRun;
+}
+
+/** Resets module-level state — for tests only. */
+export function _resetCurrentRunForTests(): void {
+  currentRun = undefined;
 }

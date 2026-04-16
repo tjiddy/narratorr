@@ -32,27 +32,46 @@ pnpm exec playwright install chromium
 | `URL_BASE`     | `/`                                                |
 
 The three temp directories are created by `fixtures/temp-dirs.ts` at config-load
-time and persisted to `.run-state.json`. `global-teardown.ts` reads that file
-after the run and removes all three (including libSQL `-wal`/`-shm` sidecars).
+time and stored in module-level state. `global-teardown.ts` imports that state
+at run-end and removes all three (including libSQL `-wal`/`-shm` sidecars).
+There is no on-disk state file — module state is sufficient because Playwright's
+global teardown runs in the same Node process that loaded the config, and it
+avoids the concurrent-run footgun a shared state file would create.
 
 `reuseExistingServer: false` — local `--ui` mode still boots its own hermetic
 server. This prevents silent attachment to a `pnpm dev:server` / `pnpm dev:client`
 process that would be using the committed `./config`, `./audiobooks`, and DB.
 
+## Two test runners, two extensions
+
+This folder intentionally hosts both runners, disambiguated by file extension:
+
+| Extension   | Runner     | Purpose                                              |
+|-------------|------------|------------------------------------------------------|
+| `*.spec.ts` | Playwright | Browser E2E — invoked by `pnpm test:e2e`             |
+| `*.test.ts` | vitest     | Unit tests for harness helpers — invoked by `pnpm test` |
+
+Vitest discovers `e2e/fixtures/**/*.test.ts` and `e2e/*.test.ts` via
+`vitest.config.ts`. This keeps cleanup-contract tests (e.g. does
+`globalTeardown` remove every temp dir?) under deterministic regression
+coverage without requiring a browser.
+
 ## Folder layout
 
 ```
 e2e/
-├── playwright.config.ts   # Playwright config + webServer wiring
-├── tsconfig.json          # extends root tsconfig, scopes to e2e/**
-├── global-teardown.ts     # cleans the temp dirs after the run
+├── playwright.config.ts          # Playwright config + webServer wiring
+├── tsconfig.json                 # extends root tsconfig, scopes to e2e/**
+├── global-teardown.ts            # cleans temp dirs after the Playwright run
+├── global-teardown.test.ts       # vitest — cleanup contract regression tests
 ├── fixtures/
-│   └── temp-dirs.ts       # creates per-run DB/library/config temp dirs
-├── fakes/                 # (Phase 2+) fake external service servers
-├── assets/                # (Phase 2+) test fixtures — audio files, covers
+│   ├── temp-dirs.ts              # creates per-run DB/library/config temp dirs
+│   └── temp-dirs.test.ts         # vitest — temp-dir lifecycle tests
+├── fakes/                        # (Phase 2+) fake external service servers
+├── assets/                       # (Phase 2+) test fixtures — audio, covers
 └── tests/
     └── smoke/
-        └── library.spec.ts
+        └── library.spec.ts       # Playwright — one smoke test
 ```
 
 ## Debugging a CI failure
