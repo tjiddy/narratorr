@@ -8,6 +8,7 @@ import { type CreateNotifierFormData } from '../../../shared/schemas.js';
 export function NotificationsSettings() {
   return (
     <CrudSettingsPage<Notifier, CreateNotifierFormData>
+      modal
       config={{
         queryKey: queryKeys.notifiers(),
         queryFn: api.getNotifiers,

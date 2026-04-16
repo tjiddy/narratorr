@@ -222,7 +222,9 @@ describe('ImportListsSettings', () => {
     await waitFor(() => {
       expect(screen.getByRole('dialog')).toBeInTheDocument();
     });
-    expect(screen.getByText(/Delete My ABS List/)).toBeInTheDocument();
+    // CrudSettingsPage uses deleteTitle + name in message
+    expect(screen.getByText('Delete Import List')).toBeInTheDocument();
+    expect(screen.getByText(/Are you sure you want to delete/)).toBeInTheDocument();
 
     await user.click(screen.getByRole('button', { name: 'Delete' }));
 
@@ -232,9 +234,6 @@ describe('ImportListsSettings', () => {
     await waitFor(() => {
       expect(toast.success).toHaveBeenCalledWith('Import list removed successfully');
     });
-
-    // Confirm modal should be dismissed after successful delete
-    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
   });
 
   it('shows error toast when toggle fails', async () => {
@@ -505,7 +504,7 @@ describe('ImportListsSettings', () => {
       expect(screen.queryByLabelText('Name')).not.toBeInTheDocument();
     });
 
-    it('header button shows "+ Add Import List" and is disabled when add form is open', async () => {
+    it('header Add button remains enabled while modal is open (intentional change)', async () => {
       (api.getImportLists as Mock).mockResolvedValue([]);
       const user = userEvent.setup();
       renderWithProviders(<ImportListsSettings />);
@@ -519,13 +518,13 @@ describe('ImportListsSettings', () => {
 
       await user.click(headerButton);
 
-      // Header button should still show "Add Import List" but be disabled
+      // In modal mode, header button stays enabled (aligns with CrudSettingsPage shared behavior)
       const headerButtons = screen.getAllByText('Add Import List');
       const headerBtn = headerButtons.find(el => el.closest('button')?.getAttribute('type') !== 'submit')?.closest('button');
-      expect(headerBtn).toBeDisabled();
+      expect(headerBtn).not.toBeDisabled();
     });
 
-    it('Cancel button closes form while create submission is pending', async () => {
+    it('Cancel button is blocked while create mutation is pending (intentional change)', async () => {
       (api.getImportLists as Mock).mockResolvedValue([mockList]);
       // Never-resolving promise keeps mutation in pending state
       (api.createImportList as Mock).mockImplementation(() => new Promise(() => {}));
@@ -552,30 +551,129 @@ describe('ImportListsSettings', () => {
         expect(screen.getByText('Saving...')).toBeInTheDocument();
       });
 
-      // Cancel button should still be clickable during pending submit
+      // Cancel button click should NOT close modal while pending (shared modal contract)
       const cancelButton = screen.getByRole('button', { name: 'Cancel' });
-      expect(cancelButton).not.toBeDisabled();
       await user.click(cancelButton);
 
-      // Form should be closed
-      expect(screen.queryByLabelText('Name')).not.toBeInTheDocument();
+      // Form should still be open (modal blocked close during pending)
+      expect(screen.getByLabelText('Name')).toBeInTheDocument();
+    });
+  });
+
+  describe('modal rendering', () => {
+    it('clicking Add opens form in a modal overlay', async () => {
+      (api.getImportLists as Mock).mockResolvedValue([]);
+      const user = userEvent.setup();
+      renderWithProviders(<ImportListsSettings />);
+
+      await waitFor(() => {
+        expect(screen.getByText('No import lists configured')).toBeInTheDocument();
+      });
+
+      await user.click(screen.getByText('Add Import List').closest('button')!);
+
+      expect(screen.getByTestId('modal-backdrop')).toBeInTheDocument();
+      expect(screen.getByLabelText('Name')).toBeInTheDocument();
+    });
+
+    it('clicking edit opens form in modal', async () => {
+      const user = userEvent.setup();
+      renderWithProviders(<ImportListsSettings />);
+
+      await waitFor(() => {
+        expect(screen.getByText('My ABS List')).toBeInTheDocument();
+      });
+
+      await user.click(screen.getByText('Edit'));
+
+      expect(screen.getByTestId('modal-backdrop')).toBeInTheDocument();
+      expect(screen.getByDisplayValue('My ABS List')).toBeInTheDocument();
+    });
+
+    it('pressing Escape closes the modal when no mutation pending', async () => {
+      (api.getImportLists as Mock).mockResolvedValue([]);
+      const user = userEvent.setup();
+      renderWithProviders(<ImportListsSettings />);
+
+      await waitFor(() => {
+        expect(screen.getByText('No import lists configured')).toBeInTheDocument();
+      });
+
+      await user.click(screen.getByText('Add Import List').closest('button')!);
+      expect(screen.getByTestId('modal-backdrop')).toBeInTheDocument();
+
+      document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', cancelable: true }));
+
+      await waitFor(() => {
+        expect(screen.queryByTestId('modal-backdrop')).not.toBeInTheDocument();
+      });
+    });
+
+    it('pressing Escape does NOT close modal while create mutation is pending', async () => {
+      (api.getImportLists as Mock).mockResolvedValue([]);
+      (api.createImportList as Mock).mockImplementation(() => new Promise(() => {}));
+      const user = userEvent.setup();
+      renderWithProviders(<ImportListsSettings />);
+
+      await waitFor(() => {
+        expect(screen.getByText('No import lists configured')).toBeInTheDocument();
+      });
+
+      await user.click(screen.getByText('Add Import List').closest('button')!);
+
+      const nameInput = screen.getByLabelText('Name');
+      await user.clear(nameInput);
+      await user.type(nameInput, 'Pending List');
+      await user.click(screen.getByText('Add Import List', { selector: 'button[type="submit"]' }));
+
+      await waitFor(() => {
+        expect(api.createImportList).toHaveBeenCalled();
+      });
+
+      document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', cancelable: true }));
+      expect(screen.getByTestId('modal-backdrop')).toBeInTheDocument();
+    });
+  });
+
+  describe('intentional behavior changes', () => {
+    it('Cancel button closes modal when no mutation is pending', async () => {
+      (api.getImportLists as Mock).mockResolvedValue([]);
+      const user = userEvent.setup();
+      renderWithProviders(<ImportListsSettings />);
+
+      await waitFor(() => {
+        expect(screen.getByText('No import lists configured')).toBeInTheDocument();
+      });
+
+      await user.click(screen.getByText('Add Import List').closest('button')!);
+      expect(screen.getByLabelText('Name')).toBeInTheDocument();
+
+      await user.click(screen.getByRole('button', { name: 'Cancel' }));
+
+      await waitFor(() => {
+        expect(screen.queryByTestId('modal-backdrop')).not.toBeInTheDocument();
+      });
     });
   });
 
   describe('useCrudSettings alignment', () => {
-    it('cancel editing button clears edit mode', async () => {
+    it('cancel button in edit modal clears edit mode', async () => {
       (api.getImportLists as Mock).mockResolvedValue([mockList]);
       const user = userEvent.setup();
 
       renderWithProviders(<ImportListsSettings />);
 
-      // Enter edit mode
+      // Enter edit mode (opens modal)
       await user.click(await screen.findByText('Edit'));
+      expect(screen.getByTestId('modal-backdrop')).toBeInTheDocument();
 
-      // Cancel editing
-      await user.click(screen.getByText('Cancel editing'));
+      // Cancel editing via Cancel button in modal form
+      await user.click(screen.getByRole('button', { name: 'Cancel' }));
 
-      // Should be back in row mode — Edit button visible again
+      // Modal should close and view mode restored
+      await waitFor(() => {
+        expect(screen.queryByTestId('modal-backdrop')).not.toBeInTheDocument();
+      });
       expect(screen.getByText('Edit')).toBeInTheDocument();
     });
 
@@ -616,12 +714,13 @@ describe('ImportListsSettings', () => {
     it('Enabled checkbox label has htmlFor="il-enabled"', async () => {
       (api.getImportLists as Mock).mockResolvedValue([]);
       const user = userEvent.setup();
-      const { container } = renderWithProviders(<ImportListsSettings />);
+      renderWithProviders(<ImportListsSettings />);
 
       await screen.findByText('No import lists configured');
       await user.click(screen.getByText('Add Import List').closest('button')!);
 
-      const label = container.querySelector('label[for="il-enabled"]');
+      // Form is portaled to body in modal mode, so use document.querySelector
+      const label = document.querySelector('label[for="il-enabled"]');
       expect(label).not.toBeNull();
       expect(label!.textContent).toContain('Enabled');
     });

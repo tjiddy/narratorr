@@ -86,7 +86,6 @@ export function CrudSettingsPage<TItem extends { id: number; name: string }, TFo
 
   return (
     <div className="space-y-6">
-      {/* Header */}
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-3">
           <div className="p-2 bg-primary/10 rounded-xl">
@@ -158,7 +157,6 @@ export function CrudSettingsPage<TItem extends { id: number; name: string }, TFo
           )}
         </div>
       )}
-
       <ConfirmModal
         isOpen={deleteTarget !== null}
         title={deleteTitle}
@@ -174,9 +172,10 @@ export function CrudSettingsPage<TItem extends { id: number; name: string }, TFo
           <Modal
             onClose={handleModalClose}
             closeOnBackdropClick={!isMutationPending}
+            scrollable
             className="w-full max-w-3xl"
           >
-            <div ref={modalRef} tabIndex={-1} className="p-6">
+            <div ref={modalRef} tabIndex={-1} className="p-6 overflow-y-auto">
               {showForm && renderForm({
                 onSubmit: (data) => createMutation.mutate(data),
                 onFormTest: handleFormTest,

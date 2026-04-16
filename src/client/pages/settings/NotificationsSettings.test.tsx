@@ -212,6 +212,67 @@ describe('NotificationsSettings', () => {
     expect(api.createNotifier).not.toHaveBeenCalled();
   });
 
+  describe('modal rendering', () => {
+    it('clicking Add Notifier opens form in a modal overlay (not inline)', async () => {
+      const user = userEvent.setup();
+      renderWithProviders(<NotificationsSettings />);
+      await waitForListLoad('My Discord');
+
+      await user.click(screen.getByText('Add Notifier').closest('button')!);
+
+      // Form should be in a modal portal (modal-backdrop exists)
+      expect(screen.getByTestId('modal-backdrop')).toBeInTheDocument();
+    });
+
+    it('clicking edit on a notifier opens form in modal', async () => {
+      const user = userEvent.setup();
+      renderWithProviders(<NotificationsSettings />);
+      await waitForListLoad('My Discord');
+
+      await user.click(screen.getByLabelText('Edit My Discord'));
+
+      expect(screen.getByTestId('modal-backdrop')).toBeInTheDocument();
+      expect(screen.getByText('Edit Notifier')).toBeInTheDocument();
+    });
+
+    it('pressing Escape closes the modal when no mutation pending', async () => {
+      const user = userEvent.setup();
+      renderWithProviders(<NotificationsSettings />);
+      await waitForListLoad('My Discord');
+
+      await user.click(screen.getByText('Add Notifier').closest('button')!);
+      expect(screen.getByTestId('modal-backdrop')).toBeInTheDocument();
+
+      document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', cancelable: true }));
+
+      await waitFor(() => {
+        expect(screen.queryByTestId('modal-backdrop')).not.toBeInTheDocument();
+      });
+    });
+
+    it('pressing Escape does NOT close modal while create mutation is pending', async () => {
+      const user = userEvent.setup();
+      // Never-resolving promise keeps mutation pending
+      (api.createNotifier as Mock).mockImplementation(() => new Promise(() => {}));
+      renderWithProviders(<NotificationsSettings />);
+      await waitForListLoad('My Discord');
+
+      await user.click(screen.getByText('Add Notifier').closest('button')!);
+      // Fill required fields to submit
+      await user.type(screen.getByPlaceholderText('My Webhook'), 'Test');
+      await user.type(screen.getByPlaceholderText('https://example.com/webhook'), 'https://example.com');
+      await user.click(screen.getByText('Add Notifier', { selector: 'button[type="submit"]' }));
+
+      await waitFor(() => {
+        expect(api.createNotifier).toHaveBeenCalled();
+      });
+
+      // Escape should NOT close modal while pending
+      document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', cancelable: true }));
+      expect(screen.getByTestId('modal-backdrop')).toBeInTheDocument();
+    });
+  });
+
   it('tests an existing notifier', async () => {
     const user = userEvent.setup();
     (api.testNotifier as Mock).mockResolvedValue({ success: true, message: 'Sent' });
