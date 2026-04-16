@@ -1,2 +1,4 @@
-/** Monitor poll interval — every 30 seconds. */
-export const MONITOR_CRON_INTERVAL = '*/30 * * * * *';
+import { config } from '../config.js';
+
+/** Monitor poll interval — default every 30 seconds; override via `MONITOR_INTERVAL_CRON` env var. */
+export const MONITOR_CRON_INTERVAL = config.monitorIntervalCron;

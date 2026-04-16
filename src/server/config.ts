@@ -28,6 +28,12 @@ const envSchema = z.object({
       // Strip trailing slash
       return v.endsWith('/') ? v.slice(0, -1) : v;
     }),
+  // Monitor poll cadence. Default is 30s (production). E2E harness overrides to '*/2 * * * * *' so
+  // the test doesn't spend 30 seconds of every run waiting for one poll cycle.
+  MONITOR_INTERVAL_CRON: z
+    .string()
+    .default('*/30 * * * * *')
+    .transform((v) => v || '*/30 * * * * *'),
 });
 
 const parsed = envSchema.safeParse(process.env);
@@ -53,4 +59,5 @@ export const config = {
   dbPath: parsed.data.DATABASE_URL,
   authBypass: parsed.data.AUTH_BYPASS,
   urlBase: parsed.data.URL_BASE,
+  monitorIntervalCron: parsed.data.MONITOR_INTERVAL_CRON,
 };

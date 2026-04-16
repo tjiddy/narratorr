@@ -65,6 +65,20 @@ describe('config', () => {
     });
   });
 
+  describe('MONITOR_INTERVAL_CRON', () => {
+    it('defaults to */30 * * * * * when MONITOR_INTERVAL_CRON is not set', async () => {
+      delete process.env.MONITOR_INTERVAL_CRON;
+      const config = await loadConfig();
+      expect(config.monitorIntervalCron).toBe('*/30 * * * * *');
+    });
+
+    it('uses MONITOR_INTERVAL_CRON from env when set', async () => {
+      process.env.MONITOR_INTERVAL_CRON = '*/2 * * * * *';
+      const config = await loadConfig();
+      expect(config.monitorIntervalCron).toBe('*/2 * * * * *');
+    });
+  });
+
   describe('isDev', () => {
     it('is false when NODE_ENV is production', async () => {
       process.env.NODE_ENV = 'production';
