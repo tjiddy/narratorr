@@ -25,7 +25,10 @@ export const SelectWithChevron = forwardRef<HTMLSelectElement, SelectWithChevron
     return (
       <div>
         {label && (
-          <label htmlFor={id} className="block text-xs font-medium text-muted-foreground mb-1">{label}</label>
+          <label htmlFor={id} className={isCompact
+            ? 'block text-xs font-medium text-muted-foreground mb-1'
+            : 'block text-sm font-medium mb-2'
+          }>{label}</label>
         )}
         <div className="relative">
           <select
