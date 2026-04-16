@@ -205,7 +205,7 @@ describe('ImportListCard', () => {
 
     it('switching provider type clears stale test feedback', async () => {
       const user = userEvent.setup();
-      const { rerender } = renderWithProviders(
+      renderWithProviders(
         <ImportListCard
           mode="create"
           onSubmit={noop}
