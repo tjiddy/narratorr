@@ -196,7 +196,7 @@ function ImportListForm({
   const isTesting = initial ? testingId === initial.id : !!testingForm;
   const currentTestResult = initial
     ? (testResult?.id === initial.id ? testResult : null)
-    : formTestResult;
+    : formTestResult ?? null;
 
   const submitLabel = isPending ? 'Saving...' : (initial ? 'Update' : 'Add Import List');
 
