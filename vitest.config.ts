@@ -41,6 +41,10 @@ export default defineConfig({
             'src/db/**/*.test.ts',
             'scripts/**/*.test.ts',
             'docker/**/*.test.ts',
+            // Harness helper unit tests. Naming convention: .test.ts = vitest,
+            // .spec.ts = Playwright. See e2e/README.md.
+            'e2e/fixtures/**/*.test.ts',
+            'e2e/*.test.ts',
           ],
         },
       },

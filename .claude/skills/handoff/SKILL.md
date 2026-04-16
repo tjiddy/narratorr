@@ -50,8 +50,13 @@ All GitHub commands use: `node scripts/gh.ts` (referred to as `gh` below).
 
    Run `pnpm exec vitest run --coverage` and check that every changed source file has a co-located test file:
    ```bash
-   # List changed source files without tests
-   for f in $(git diff main --name-only -- '*.ts' '*.tsx' | grep -v '\.test\.'); do
+   # List changed source files without tests. Exempt:
+   #  - .test.ts / .test.tsx (vitest tests)
+   #  - .spec.ts / .spec.tsx (Playwright specs — self-testing)
+   #  - .config.ts / .config.tsx (tool/framework configs)
+   for f in $(git diff main --name-only -- '*.ts' '*.tsx' \
+               | grep -vE '\.(test|spec)\.(ts|tsx)$' \
+               | grep -vE '\.config\.(ts|tsx)$'); do
      testfile="${f%.ts}.test.${f##*.}"
      testfile2="${f%.tsx}.test.${f##*.}"
      if [ ! -f "$testfile" ] && [ ! -f "$testfile2" ]; then
@@ -61,6 +66,9 @@ All GitHub commands use: `node scripts/gh.ts` (referred to as `gh` below).
    ```
    - If any source file is missing a co-located test file, STOP and write the tests.
    - Files that are pure re-exports, barrel `index.ts` files, or type-only files are exempt.
+   - `*.spec.ts` files are treated as tests (Playwright convention) — they ARE tests, no co-location required.
+   - `*.config.ts` / `*.config.tsx` files are exempt — tool/framework configs (`vitest.config.ts`, `playwright.config.ts`, `drizzle.config.ts`, etc.) don't ship co-located unit tests.
+   - Harness helpers under `e2e/fixtures/` and `e2e/*.ts` (non-spec, non-config) DO need co-located `.test.ts` coverage — vitest is configured to scan `e2e/fixtures/**/*.test.ts` and `e2e/*.test.ts` so these tests run as part of `pnpm test`.
    - This replaces the previous Explore subagent which had a ~75% false positive rate and missed entire test files.
 
 4b. **Write phase marker:** `mkdir -p .narratorr/state/handoff-<id> && echo done > .narratorr/state/handoff-<id>/coverage-complete`
