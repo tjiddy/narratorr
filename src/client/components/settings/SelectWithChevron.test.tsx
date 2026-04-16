@@ -298,6 +298,54 @@ describe('SelectWithChevron', () => {
       expect(screen.getByText('Compact Label').tagName).toBe('LABEL');
     });
 
+    it('default variant label uses text-sm font-medium mb-2 classes', () => {
+      render(
+        <SelectWithChevron id="test" variant="default" label="Default Label">
+          <option value="a">A</option>
+        </SelectWithChevron>
+      );
+      const label = screen.getByText('Default Label');
+      expect(label).toHaveClass('text-sm');
+      expect(label).toHaveClass('font-medium');
+      expect(label).toHaveClass('mb-2');
+    });
+
+    it('default variant label does not have text-xs text-muted-foreground mb-1 classes', () => {
+      render(
+        <SelectWithChevron id="test" variant="default" label="Default Label">
+          <option value="a">A</option>
+        </SelectWithChevron>
+      );
+      const label = screen.getByText('Default Label');
+      expect(label).not.toHaveClass('text-xs');
+      expect(label).not.toHaveClass('text-muted-foreground');
+      expect(label).not.toHaveClass('mb-1');
+    });
+
+    it('compact variant label uses text-xs font-medium text-muted-foreground mb-1 classes', () => {
+      render(
+        <SelectWithChevron id="test" variant="compact" label="Compact Label">
+          <option value="a">A</option>
+        </SelectWithChevron>
+      );
+      const label = screen.getByText('Compact Label');
+      expect(label).toHaveClass('text-xs');
+      expect(label).toHaveClass('font-medium');
+      expect(label).toHaveClass('text-muted-foreground');
+      expect(label).toHaveClass('mb-1');
+    });
+
+    it('compact variant label does not have text-sm or mb-2 classes', () => {
+      render(
+        <SelectWithChevron id="test" variant="compact" label="Compact Label">
+          <option value="a">A</option>
+        </SelectWithChevron>
+      );
+      const label = screen.getByText('Compact Label');
+      expect(label).not.toHaveClass('text-sm');
+      expect(label).not.toHaveClass('mb-2');
+    });
+
     it('forwardRef works in compact variant', () => {
       const ref = { current: null as HTMLSelectElement | null };
       render(
