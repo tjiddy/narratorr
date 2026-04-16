@@ -286,12 +286,14 @@ export function ImportListCard(props: ImportListCardProps) {
 
   if (mode === 'view' && list) {
     return (
-      <ImportListRow
-        list={list}
-        onToggle={() => toggleMutation.mutate({ id: list.id, enabled: !list.enabled })}
-        onEdit={() => onEdit?.()}
-        onDelete={() => onDelete?.()}
-      />
+      <div className="glass-card rounded-xl p-4">
+        <ImportListRow
+          list={list}
+          onToggle={() => toggleMutation.mutate({ id: list.id, enabled: !list.enabled })}
+          onEdit={() => onEdit?.()}
+          onDelete={() => onDelete?.()}
+        />
+      </div>
     );
   }
 
