@@ -174,9 +174,10 @@ export function CrudSettingsPage<TItem extends { id: number; name: string }, TFo
           <Modal
             onClose={handleModalClose}
             closeOnBackdropClick={!isMutationPending}
+            scrollable
             className="w-full max-w-3xl"
           >
-            <div ref={modalRef} tabIndex={-1} className="p-6">
+            <div ref={modalRef} tabIndex={-1} className="p-6 overflow-y-auto">
               {showForm && renderForm({
                 onSubmit: (data) => createMutation.mutate(data),
                 onFormTest: handleFormTest,
