@@ -50,8 +50,9 @@ All GitHub commands use: `node scripts/gh.ts` (referred to as `gh` below).
 
    Run `pnpm exec vitest run --coverage` and check that every changed source file has a co-located test file:
    ```bash
-   # List changed source files without tests
-   for f in $(git diff main --name-only -- '*.ts' '*.tsx' | grep -v '\.test\.'); do
+   # List changed source files without tests.
+   # Exclude e2e/** — Playwright-owned, tested by `pnpm test:e2e`, not vitest.
+   for f in $(git diff main --name-only -- '*.ts' '*.tsx' | grep -v '\.test\.' | grep -v '^e2e/'); do
      testfile="${f%.ts}.test.${f##*.}"
      testfile2="${f%.tsx}.test.${f##*.}"
      if [ ! -f "$testfile" ] && [ ! -f "$testfile2" ]; then
@@ -61,6 +62,7 @@ All GitHub commands use: `node scripts/gh.ts` (referred to as `gh` below).
    ```
    - If any source file is missing a co-located test file, STOP and write the tests.
    - Files that are pure re-exports, barrel `index.ts` files, or type-only files are exempt.
+   - Files under `e2e/` are exempt — Playwright is the test runner for that folder; its harness + specs are exercised by `pnpm test:e2e`, not vitest co-location.
    - This replaces the previous Explore subagent which had a ~75% false positive rate and missed entire test files.
 
 4b. **Write phase marker:** `mkdir -p .narratorr/state/handoff-<id> && echo done > .narratorr/state/handoff-<id>/coverage-complete`
