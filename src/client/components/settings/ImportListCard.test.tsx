@@ -223,7 +223,7 @@ describe('ImportListCard', () => {
       expect(screen.queryByText('Connection OK')).not.toBeInTheDocument();
     });
 
-    it('new test after provider switch shows fresh result', async () => {
+    it('new test after provider switch restores feedback visibility', async () => {
       const user = userEvent.setup();
       const onFormTest = vi.fn();
       renderWithProviders(
@@ -239,9 +239,12 @@ describe('ImportListCard', () => {
       await user.selectOptions(screen.getByLabelText('Provider Type'), 'nyt');
       expect(screen.queryByText('Connection OK')).not.toBeInTheDocument();
 
-      // Run new test — should show result again
+      // Click Test Connection — clears stale flag, feedback should reappear
       await user.click(screen.getByRole('button', { name: 'Test Connection' }));
       expect(onFormTest).toHaveBeenCalledWith(expect.objectContaining({ type: 'nyt' }));
+
+      // formTestResult prop is still { success: true } — now visible again after stale flag cleared
+      expect(screen.getByText('Connection OK')).toBeInTheDocument();
     });
 
     it('Preview Items calls API and displays results', async () => {
