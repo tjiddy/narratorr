@@ -39,6 +39,11 @@ lighthouse-reports/
 .lighthouseci/
 .lighthouserc.json
 
+# Playwright E2E
+e2e/test-results/
+e2e/playwright-report/
+e2e/.run-state.json
+
 # Turbo
 .turbo/
 
