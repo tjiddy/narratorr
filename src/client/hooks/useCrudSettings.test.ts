@@ -1,8 +1,9 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { renderHook, act, waitFor } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import React from 'react';
 import { useCrudSettings } from './useCrudSettings';
+import type { TestResult } from '@/lib/api';
 
 vi.mock('sonner', () => ({
   toast: {
@@ -293,12 +294,8 @@ describe('useCrudSettings', () => {
 
     it('handleToggleForm clears formTestResult when opening the create form (showForm false → true)', () => {
       const { result } = renderCrudHook();
-
-      // Form is closed initially
-      expect(result.current.state.showForm).toBe(false);
       mockClearFormTestResult.mockClear();
 
-      // Open form — should clear any stale formTestResult
       act(() => {
         result.current.actions.handleToggleForm();
       });
@@ -310,14 +307,11 @@ describe('useCrudSettings', () => {
     it('handleToggleForm clears formTestResult when closing the create form (showForm true → false) — regression guard', () => {
       const { result } = renderCrudHook();
 
-      // Open form first
       act(() => {
         result.current.actions.handleToggleForm();
       });
-      expect(result.current.state.showForm).toBe(true);
       mockClearFormTestResult.mockClear();
 
-      // Close form — should clear formTestResult
       act(() => {
         result.current.actions.handleToggleForm();
       });
@@ -329,14 +323,11 @@ describe('useCrudSettings', () => {
     it('handleEdit clears formTestResult when switching from one edit entity to another', () => {
       const { result } = renderCrudHook();
 
-      // Start editing entity 1
       act(() => {
         result.current.actions.handleEdit(1);
       });
-      expect(result.current.state.editingId).toBe(1);
       mockClearFormTestResult.mockClear();
 
-      // Switch to editing entity 2 — should clear formTestResult
       act(() => {
         result.current.actions.handleEdit(2);
       });
@@ -423,5 +414,102 @@ describe('grouped return shape (REACT-1 refactor)', () => {
     expect(typeof result.current.tests.handleTest).toBe('function');
     expect(typeof result.current.tests.handleFormTest).toBe('function');
     expect(typeof result.current.tests.clearFormTestResult).toBe('function');
+  });
+});
+
+describe('formTestResult real state transitions (#610 regression)', () => {
+  let queryClient: QueryClient;
+  const testByConfig = vi.fn<(data: TestFormData) => Promise<TestResult>>();
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- dynamic import for real hook
+  let realUseConnectionTest: any;
+
+  beforeEach(async () => {
+    vi.clearAllMocks();
+    queryClient = createQueryClient();
+    // Get the real implementation for integration tests
+    const actual = await vi.importActual<typeof import('@/hooks/useConnectionTest')>('@/hooks/useConnectionTest');
+    realUseConnectionTest = actual.useConnectionTest;
+    vi.mocked(useConnectionTest).mockImplementation(realUseConnectionTest);
+    testByConfig.mockResolvedValue({ success: true, message: 'connected' });
+  });
+
+  afterEach(() => {
+    // Re-mock for any subsequent describe blocks
+    vi.mocked(useConnectionTest).mockReturnValue({
+      testingId: null, testResult: null, testingForm: false, formTestResult: null,
+      handleTest: vi.fn(), handleFormTest: vi.fn(), clearFormTestResult: vi.fn(),
+    });
+  });
+
+  function renderRealHook() {
+    return renderHook(
+      () => useCrudSettings<TestItem, TestFormData>({
+        queryKey: ['test-entities'],
+        queryFn: vi.fn<() => Promise<TestItem[]>>().mockResolvedValue([]),
+        createFn: vi.fn(), updateFn: vi.fn(), deleteFn: vi.fn(),
+        testById: vi.fn(), testByConfig, entityName: 'Widget',
+      }),
+      { wrapper: createWrapper(queryClient) },
+    );
+  }
+
+  async function seedFormTestResult(result: ReturnType<typeof renderRealHook>) {
+    await act(async () => {
+      await result.result.current.tests.handleFormTest({ name: 'test', url: 'http://example.com' });
+    });
+    expect(result.result.current.tests.formTestResult).toEqual({ success: true, message: 'connected' });
+  }
+
+  it('handleToggleForm opening clears a non-null formTestResult to null', async () => {
+    const hook = renderRealHook();
+    await seedFormTestResult(hook);
+
+    // Open form — stale formTestResult must be cleared
+    act(() => {
+      hook.result.current.actions.handleToggleForm();
+    });
+
+    expect(hook.result.current.state.showForm).toBe(true);
+    expect(hook.result.current.tests.formTestResult).toBeNull();
+  });
+
+  it('handleToggleForm closing clears a non-null formTestResult to null', async () => {
+    const hook = renderRealHook();
+
+    // Open form
+    act(() => {
+      hook.result.current.actions.handleToggleForm();
+    });
+
+    // Seed result while form is open
+    await seedFormTestResult(hook);
+
+    // Close form — formTestResult must be cleared
+    act(() => {
+      hook.result.current.actions.handleToggleForm();
+    });
+
+    expect(hook.result.current.state.showForm).toBe(false);
+    expect(hook.result.current.tests.formTestResult).toBeNull();
+  });
+
+  it('handleEdit switching targets clears a non-null formTestResult to null', async () => {
+    const hook = renderRealHook();
+
+    // Start editing entity 1
+    act(() => {
+      hook.result.current.actions.handleEdit(1);
+    });
+
+    // Seed result while editing
+    await seedFormTestResult(hook);
+
+    // Switch to entity 2 — stale formTestResult must be cleared
+    act(() => {
+      hook.result.current.actions.handleEdit(2);
+    });
+
+    expect(hook.result.current.state.editingId).toBe(2);
+    expect(hook.result.current.tests.formTestResult).toBeNull();
   });
 });
