@@ -208,8 +208,12 @@ function ImportListForm({
   return (
     <form
       onSubmit={handleSubmit}
-      className="glass-card rounded-2xl p-6 space-y-4"
+      className="glass-card rounded-2xl p-6 animate-fade-in-up space-y-5"
     >
+      <h3 className="font-display text-lg font-semibold">
+        {initial ? 'Edit Import List' : 'Add Import List'}
+      </h3>
+
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
         <div>
           <label htmlFor="il-name" className="block text-sm font-medium mb-1">Name</label>
@@ -316,7 +320,10 @@ export function ImportListCard(props: ImportListCardProps) {
 
   if (mode === 'view' && list) {
     return (
-      <div className="glass-card rounded-xl p-4">
+      <div
+        className="glass-card rounded-2xl p-5 animate-fade-in-up"
+        style={props.animationDelay ? { animationDelay: props.animationDelay } : undefined}
+      >
         <ImportListRow
           list={list}
           onToggle={() => toggleMutation.mutate({ id: list.id, enabled: !list.enabled })}
