@@ -480,6 +480,21 @@ describe('CrudSettingsPage', () => {
       expect(capturedHandlers.inModal).toBe(false);
     });
 
+    it('modal panel carries scrollable constraint and inner wrapper has overflow-y-auto', () => {
+      mockUseCrudSettings.mockReturnValue(createMockHookReturn({ state: { showForm: true } }));
+      render(<CrudSettingsPage {...modalProps} />);
+
+      // The Modal's scrollable prop adds max-h-[85vh] to the panel
+      const backdrop = screen.getByTestId('modal-backdrop');
+      const modalRoot = backdrop.closest('.fixed.inset-0')!;
+      const panel = modalRoot.querySelector('.glass-card') as HTMLElement;
+      expect(panel.className).toContain('max-h-[85vh]');
+
+      // The inner content wrapper has overflow-y-auto for scrolling
+      const innerWrapper = panel.querySelector('[tabindex="-1"]') as HTMLElement;
+      expect(innerWrapper.className).toContain('overflow-y-auto');
+    });
+
     it('does not render modal when modal prop is false (inline behavior preserved)', () => {
       mockUseCrudSettings.mockReturnValue(createMockHookReturn({ state: { showForm: true } }));
       render(<CrudSettingsPage {...baseProps} />);
