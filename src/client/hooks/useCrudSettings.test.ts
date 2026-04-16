@@ -290,6 +290,60 @@ describe('useCrudSettings', () => {
       expect(result.current.state.editingId).toBeNull();
       expect(mockClearFormTestResult).toHaveBeenCalled();
     });
+
+    it('handleToggleForm clears formTestResult when opening the create form (showForm false → true)', () => {
+      const { result } = renderCrudHook();
+
+      // Form is closed initially
+      expect(result.current.state.showForm).toBe(false);
+      mockClearFormTestResult.mockClear();
+
+      // Open form — should clear any stale formTestResult
+      act(() => {
+        result.current.actions.handleToggleForm();
+      });
+
+      expect(result.current.state.showForm).toBe(true);
+      expect(mockClearFormTestResult).toHaveBeenCalledOnce();
+    });
+
+    it('handleToggleForm clears formTestResult when closing the create form (showForm true → false) — regression guard', () => {
+      const { result } = renderCrudHook();
+
+      // Open form first
+      act(() => {
+        result.current.actions.handleToggleForm();
+      });
+      expect(result.current.state.showForm).toBe(true);
+      mockClearFormTestResult.mockClear();
+
+      // Close form — should clear formTestResult
+      act(() => {
+        result.current.actions.handleToggleForm();
+      });
+
+      expect(result.current.state.showForm).toBe(false);
+      expect(mockClearFormTestResult).toHaveBeenCalledOnce();
+    });
+
+    it('handleEdit clears formTestResult when switching from one edit entity to another', () => {
+      const { result } = renderCrudHook();
+
+      // Start editing entity 1
+      act(() => {
+        result.current.actions.handleEdit(1);
+      });
+      expect(result.current.state.editingId).toBe(1);
+      mockClearFormTestResult.mockClear();
+
+      // Switch to editing entity 2 — should clear formTestResult
+      act(() => {
+        result.current.actions.handleEdit(2);
+      });
+
+      expect(result.current.state.editingId).toBe(2);
+      expect(mockClearFormTestResult).toHaveBeenCalledOnce();
+    });
   });
 });
 

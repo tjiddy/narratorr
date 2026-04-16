@@ -74,9 +74,8 @@ export function useCrudSettings<TItem extends { id: number; name: string }, TFor
   });
 
   const handleToggleForm = useCallback(() => {
-    if (showForm) {
-      connectionTest.clearFormTestResult();
-    } else {
+    connectionTest.clearFormTestResult();
+    if (!showForm) {
       setEditingId(null);
     }
     setShowForm(!showForm);
