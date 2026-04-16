@@ -203,6 +203,47 @@ describe('ImportListCard', () => {
       expect(screen.getByText('Invalid API key')).toBeInTheDocument();
     });
 
+    it('switching provider type clears stale test feedback', async () => {
+      const user = userEvent.setup();
+      const { rerender } = renderWithProviders(
+        <ImportListCard
+          mode="create"
+          onSubmit={noop}
+          formTestResult={{ success: true }}
+        />
+      );
+
+      // Test result should be visible initially
+      expect(screen.getByText('Connection OK')).toBeInTheDocument();
+
+      // Switch provider type
+      await user.selectOptions(screen.getByLabelText('Provider Type'), 'nyt');
+
+      // Test result should be hidden after provider change
+      expect(screen.queryByText('Connection OK')).not.toBeInTheDocument();
+    });
+
+    it('new test after provider switch shows fresh result', async () => {
+      const user = userEvent.setup();
+      const onFormTest = vi.fn();
+      renderWithProviders(
+        <ImportListCard
+          mode="create"
+          onSubmit={noop}
+          onFormTest={onFormTest}
+          formTestResult={{ success: true }}
+        />
+      );
+
+      // Switch provider to hide stale result
+      await user.selectOptions(screen.getByLabelText('Provider Type'), 'nyt');
+      expect(screen.queryByText('Connection OK')).not.toBeInTheDocument();
+
+      // Run new test — should show result again
+      await user.click(screen.getByRole('button', { name: 'Test Connection' }));
+      expect(onFormTest).toHaveBeenCalledWith(expect.objectContaining({ type: 'nyt' }));
+    });
+
     it('Preview Items calls API and displays results', async () => {
       const user = userEvent.setup();
       (api.previewImportList as Mock).mockResolvedValue({

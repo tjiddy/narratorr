@@ -169,17 +169,22 @@ function ImportListForm({
   const [previewTotal, setPreviewTotal] = useState(0);
   const [previewing, setPreviewing] = useState(false);
 
+  // Track whether test result is stale (provider changed since last test)
+  const [testResultStale, setTestResultStale] = useState(false);
+
   function handleTypeChange(newType: ImportListFormData['type']) {
     const newMeta = IMPORT_LIST_REGISTRY[newType];
     setType(newType);
     setSettings(newMeta?.defaultSettings ?? {});
     if (!name || name === (IMPORT_LIST_REGISTRY[type]?.label ?? '')) setName(newMeta?.label ?? '');
     setPreviewItems(null);
+    setTestResultStale(true);
   }
 
   const formData = { name, type, enabled, syncIntervalMinutes: syncInterval, settings };
 
   function handleTest() {
+    setTestResultStale(false);
     if (initial && onTest) onTest(initial.id);
     else onFormTest?.(formData);
   }
@@ -194,9 +199,9 @@ function ImportListForm({
   }
 
   const isTesting = initial ? testingId === initial.id : !!testingForm;
-  const currentTestResult = initial
+  const currentTestResult = testResultStale ? null : (initial
     ? (testResult?.id === initial.id ? testResult : null)
-    : formTestResult ?? null;
+    : formTestResult ?? null);
 
   const submitLabel = isPending ? 'Saving...' : (initial ? 'Update' : 'Add Import List');
 
