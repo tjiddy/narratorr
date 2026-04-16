@@ -420,14 +420,13 @@ describe('grouped return shape (REACT-1 refactor)', () => {
 describe('formTestResult real state transitions (#610 regression)', () => {
   let queryClient: QueryClient;
   const testByConfig = vi.fn<(data: TestFormData) => Promise<TestResult>>();
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- dynamic import for real hook
-  let realUseConnectionTest: any;
+  let realUseConnectionTest: typeof useConnectionTest;
 
   beforeEach(async () => {
     vi.clearAllMocks();
     queryClient = createQueryClient();
     // Get the real implementation for integration tests
-    const actual = await vi.importActual<typeof import('@/hooks/useConnectionTest')>('@/hooks/useConnectionTest');
+    const actual = await vi.importActual('@/hooks/useConnectionTest') as { useConnectionTest: typeof useConnectionTest };
     realUseConnectionTest = actual.useConnectionTest;
     vi.mocked(useConnectionTest).mockImplementation(realUseConnectionTest);
     testByConfig.mockResolvedValue({ success: true, message: 'connected' });
