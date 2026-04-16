@@ -29,13 +29,13 @@ describe('seedE2ERun', () => {
   it('runs Drizzle migrations against the per-run DB path before inserting rows', async () => {
     // If migrations didn't run, the insert would throw `no such table: indexers`.
     await expect(seedE2ERun({
-      dbPath, mamUrl: 'http://localhost:4100', qbitHost: 'localhost', qbitPort: 4200,
+      dbPath, mamUrl: 'http://localhost:4100', qbitHost: 'localhost', qbitPort: 4200, libraryPath: '/tmp/library',
     })).resolves.toBeDefined();
   });
 
   it('inserts an indexers row with baseUrl and mamId in settings', async () => {
     const ids = await seedE2ERun({
-      dbPath, mamUrl: 'http://localhost:4100', qbitHost: 'localhost', qbitPort: 4200,
+      dbPath, mamUrl: 'http://localhost:4100', qbitHost: 'localhost', qbitPort: 4200, libraryPath: '/tmp/library',
     });
 
     const { client, db } = openDb();
@@ -53,7 +53,7 @@ describe('seedE2ERun', () => {
 
   it('inserts a download_clients row with qBit settings (no savePath field)', async () => {
     const ids = await seedE2ERun({
-      dbPath, mamUrl: 'http://localhost:4100', qbitHost: 'localhost', qbitPort: 4200,
+      dbPath, mamUrl: 'http://localhost:4100', qbitHost: 'localhost', qbitPort: 4200, libraryPath: '/tmp/library',
     });
 
     const { client, db } = openDb();
@@ -73,7 +73,7 @@ describe('seedE2ERun', () => {
 
   it('inserts an author row with the seeded author name', async () => {
     const ids = await seedE2ERun({
-      dbPath, mamUrl: 'http://localhost:4100', qbitHost: 'localhost', qbitPort: 4200,
+      dbPath, mamUrl: 'http://localhost:4100', qbitHost: 'localhost', qbitPort: 4200, libraryPath: '/tmp/library',
     });
 
     const { client, db } = openDb();
@@ -88,7 +88,7 @@ describe('seedE2ERun', () => {
 
   it('inserts a book row linked to the author with status=wanted', async () => {
     const ids = await seedE2ERun({
-      dbPath, mamUrl: 'http://localhost:4100', qbitHost: 'localhost', qbitPort: 4200,
+      dbPath, mamUrl: 'http://localhost:4100', qbitHost: 'localhost', qbitPort: 4200, libraryPath: '/tmp/library',
     });
 
     const { client, db } = openDb();
@@ -107,7 +107,7 @@ describe('seedE2ERun', () => {
 
   it('returns the primary-key ids for all inserted rows', async () => {
     const ids = await seedE2ERun({
-      dbPath, mamUrl: 'http://localhost:4100', qbitHost: 'localhost', qbitPort: 4200,
+      dbPath, mamUrl: 'http://localhost:4100', qbitHost: 'localhost', qbitPort: 4200, libraryPath: '/tmp/library',
     });
     expect(ids.indexerId).toBeGreaterThan(0);
     expect(ids.downloadClientId).toBeGreaterThan(0);

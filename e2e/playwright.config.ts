@@ -27,6 +27,12 @@ const PORT = 3100;
 
 export default defineConfig({
   testDir: 'tests',
+  // Harness-helper *.test.ts files (e2e/fakes/, e2e/fixtures/) run under vitest
+  // and import '@vitest/expect'. Playwright's default testMatch includes
+  // '*.test.ts', and its TS transform collides on the jest-matchers-object
+  // Symbol if it ever loads one. Restrict to '.spec.ts' so only actual
+  // Playwright specs under tests/ are picked up.
+  testMatch: /.*\.spec\.ts/,
   outputDir: join(CONFIG_DIR, 'test-results'),
   fullyParallel: true,
   forbidOnly: Boolean(process.env.CI),

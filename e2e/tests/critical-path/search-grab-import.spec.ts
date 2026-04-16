@@ -1,4 +1,5 @@
 import { test, expect } from '@playwright/test';
+import { qbitControlUrl } from '../../global-setup.js';
 
 /**
  * Phase 2 critical path #1 — exercises the full grab → import → library pipeline:
@@ -19,10 +20,9 @@ import { test, expect } from '@playwright/test';
 
 test.describe('Critical path: search → grab → import → library', () => {
   test('seeded book grabs from fake MAM, completes via fake qBit, imports, and renders as Imported', async ({ page }) => {
-    const qbitUrl = process.env.E2E_QBIT_URL;
-    if (!qbitUrl) {
-      throw new Error('E2E_QBIT_URL not set — globalSetup did not run or envp did not propagate');
-    }
+    // Playwright's globalSetup `process.env` mutations do NOT propagate to test
+    // worker processes — the helper falls back to the default qBit port (4200),
+    // which matches playwright.config.ts's fixed E2E_QBIT_PORT.
 
     // ── Library: seeded book is visible ────────────────────────────────────
     await test.step('library page shows the seeded book', async () => {
@@ -56,7 +56,7 @@ test.describe('Critical path: search → grab → import → library', () => {
 
     // ── Trigger fake qBit completion ──────────────────────────────────────
     await test.step('fake qBit flips the torrent to complete', async () => {
-      const res = await fetch(`${qbitUrl}/__control/complete-latest`, {
+      const res = await fetch(qbitControlUrl('/__control/complete-latest'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({}),

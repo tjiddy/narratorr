@@ -24,6 +24,13 @@ export interface SeedE2ERunOptions {
   qbitHost: string;
   /** qBit fake port. */
   qbitPort: number;
+  /**
+   * Absolute path Narratorr should use as the library root. Written to
+   * `settings.library.path` so `importDownload` sees a real directory when it
+   * calls `statfs(libraryPath)` during the disk-space gate. Narratorr's
+   * LIBRARY_PATH env var is decorative — nothing reads it at runtime.
+   */
+  libraryPath: string;
   /** mam_id cookie the fake accepts. */
   mamId?: string;
   /** qBit fake credentials. */
@@ -120,6 +127,30 @@ export async function seedE2ERun(options: SeedE2ERunOptions): Promise<SeededRowI
       await tx.insert(settings).values({
         key: 'general',
         value: { logLevel: 'info', housekeepingRetentionDays: 90, welcomeSeen: true },
+      });
+
+      // Library settings must point at the per-run temp dir. Narratorr's
+      // LIBRARY_PATH env var is decorative — only settings.library.path is
+      // read at runtime (verified: grep `config.libraryPath` has no non-test
+      // consumers). Without this, imports hit the registry default `/audiobooks`
+      // which doesn't exist on the test host → statfs ENOENT → import fails.
+      await tx.insert(settings).values({
+        key: 'library',
+        value: {
+          path: options.libraryPath,
+          folderFormat: '{author}/{title}',
+          fileFormat: '{author} - {title}',
+          namingSeparator: 'space',
+          namingCase: 'default',
+        },
+      });
+
+      // Disable the disk-space gate. Temp runners may report low free space,
+      // and the E2E fixture is sub-5KB — the gate's sole purpose is protecting
+      // real-user libraries, not validating our copy path.
+      await tx.insert(settings).values({
+        key: 'import',
+        value: { deleteAfterImport: false, minSeedTime: 60, minSeedRatio: 0, minFreeSpaceGB: 0, redownloadFailed: true },
       });
 
       return {

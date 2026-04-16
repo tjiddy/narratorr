@@ -94,6 +94,7 @@ export default async function globalSetup(): Promise<void> {
     mamUrl: mam.url,
     qbitHost: 'localhost',
     qbitPort: qbitPort,
+    libraryPath: run.libraryPath,
   });
 
   // Also stash paths into the process env so specs can read them if they need
