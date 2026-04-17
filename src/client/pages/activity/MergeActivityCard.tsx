@@ -5,7 +5,7 @@ import type { MergeCardState } from '@/hooks/useMergeProgress';
 
 const CANCELLABLE_PHASES = new Set(['queued', 'starting', 'staging', 'processing', 'verifying']);
 
-export function MergeCard({ state, onCancel, isCancelling }: {
+export function MergeActivityCard({ state, onCancel, isCancelling }: {
   state: MergeCardState;
   onCancel?: (bookId: number) => void;
   isCancelling?: boolean;

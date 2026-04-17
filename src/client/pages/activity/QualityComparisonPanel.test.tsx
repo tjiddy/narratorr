@@ -2,7 +2,7 @@ import { describe, it, expect, vi } from 'vitest';
 import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { QualityComparisonPanel } from './QualityComparisonPanel';
-import { DownloadCard } from './DownloadCard';
+import { DownloadActivityCard } from './DownloadActivityCard';
 import { createMockDownload } from '@/__tests__/factories';
 import type { QualityGateData } from '@/lib/api/activity';
 
@@ -76,7 +76,7 @@ describe('QualityComparisonPanel', () => {
   });
 });
 
-describe('DownloadCard - pending_review', () => {
+describe('DownloadActivityCard - pending_review', () => {
   async function expandPendingReview() {
     const user = userEvent.setup();
     const toggle = screen.getByRole('button', { expanded: false });
@@ -86,7 +86,7 @@ describe('DownloadCard - pending_review', () => {
 
   it('shows approve button for pending_review downloads after expanding', async () => {
     const download = createMockDownload({ status: 'pending_review', qualityGate: baseGateData });
-    render(<DownloadCard download={download} onApprove={vi.fn()} onReject={vi.fn()} />);
+    render(<DownloadActivityCard download={download} onApprove={vi.fn()} onReject={vi.fn()} />);
 
     await expandPendingReview();
     expect(screen.getByText('Approve')).toBeInTheDocument();
@@ -94,7 +94,7 @@ describe('DownloadCard - pending_review', () => {
 
   it('shows reject button for pending_review downloads after expanding', async () => {
     const download = createMockDownload({ status: 'pending_review', qualityGate: baseGateData });
-    render(<DownloadCard download={download} onApprove={vi.fn()} onReject={vi.fn()} />);
+    render(<DownloadActivityCard download={download} onApprove={vi.fn()} onReject={vi.fn()} />);
 
     await expandPendingReview();
     expect(screen.getByText('Reject')).toBeInTheDocument();
@@ -102,7 +102,7 @@ describe('DownloadCard - pending_review', () => {
 
   it('does not show approve/reject buttons for non-pending_review downloads', () => {
     const download = createMockDownload({ status: 'downloading' });
-    render(<DownloadCard download={download} onApprove={vi.fn()} onReject={vi.fn()} />);
+    render(<DownloadActivityCard download={download} onApprove={vi.fn()} onReject={vi.fn()} />);
 
     expect(screen.queryByText('Approve')).not.toBeInTheDocument();
     expect(screen.queryByText('Reject')).not.toBeInTheDocument();
@@ -111,7 +111,7 @@ describe('DownloadCard - pending_review', () => {
   it('calls onApprove when approve clicked', async () => {
     const onApprove = vi.fn();
     const download = createMockDownload({ status: 'pending_review', qualityGate: baseGateData });
-    render(<DownloadCard download={download} onApprove={onApprove} onReject={vi.fn()} />);
+    render(<DownloadActivityCard download={download} onApprove={onApprove} onReject={vi.fn()} />);
 
     const user = await expandPendingReview();
     await user.click(screen.getByText('Approve'));
@@ -121,7 +121,7 @@ describe('DownloadCard - pending_review', () => {
   it('calls onReject when reject clicked', async () => {
     const onReject = vi.fn();
     const download = createMockDownload({ status: 'pending_review', qualityGate: baseGateData });
-    render(<DownloadCard download={download} onApprove={vi.fn()} onReject={onReject} />);
+    render(<DownloadActivityCard download={download} onApprove={vi.fn()} onReject={onReject} />);
 
     const user = await expandPendingReview();
     await user.click(screen.getByText('Reject'));
@@ -130,14 +130,14 @@ describe('DownloadCard - pending_review', () => {
 
   it('renders checking status as processing indicator', () => {
     const download = createMockDownload({ status: 'checking' });
-    render(<DownloadCard download={download} />);
+    render(<DownloadActivityCard download={download} />);
 
     expect(screen.getByText('Checking audio quality...')).toBeInTheDocument();
   });
 
   it('renders comparison panel for pending_review with quality gate data after expanding', async () => {
     const download = createMockDownload({ status: 'pending_review', qualityGate: baseGateData });
-    render(<DownloadCard download={download} onApprove={vi.fn()} onReject={vi.fn()} />);
+    render(<DownloadActivityCard download={download} onApprove={vi.fn()} onReject={vi.fn()} />);
 
     await expandPendingReview();
     expect(screen.getByText('Quality Comparison')).toBeInTheDocument();

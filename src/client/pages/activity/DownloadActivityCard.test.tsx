@@ -3,7 +3,7 @@ import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter, Routes, Route } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { DownloadCard } from './DownloadCard';
+import { DownloadActivityCard } from './DownloadActivityCard';
 import { renderWithProviders } from '@/__tests__/helpers';
 import { createMockDownload } from '@/__tests__/factories';
 import type { Download } from '@/lib/api';
@@ -13,7 +13,7 @@ beforeEach(() => {
   vi.clearAllMocks();
 });
 
-describe('DownloadCard', () => {
+describe('DownloadActivityCard', () => {
   describe('status rendering', () => {
     const allStatuses: Download['status'][] = [
       'queued', 'downloading', 'paused', 'completed', 'checking', 'pending_review', 'processing_queued', 'importing', 'imported', 'failed',
@@ -32,7 +32,7 @@ describe('DownloadCard', () => {
         imported: 'Imported',
         failed: 'Failed',
       };
-      renderWithProviders(<DownloadCard download={createMockDownload({ status })} />);
+      renderWithProviders(<DownloadActivityCard download={createMockDownload({ status })} />);
 
       expect(screen.getByText(labels[status])).toBeInTheDocument();
     });
@@ -40,37 +40,37 @@ describe('DownloadCard', () => {
 
   describe('title and metadata', () => {
     it('displays the download title', () => {
-      renderWithProviders(<DownloadCard download={createMockDownload({ title: 'My Audiobook' })} />);
+      renderWithProviders(<DownloadActivityCard download={createMockDownload({ title: 'My Audiobook' })} />);
       expect(screen.getByText('My Audiobook')).toBeInTheDocument();
     });
 
     it('displays size when present', () => {
-      renderWithProviders(<DownloadCard download={createMockDownload({ size: 1048576 })} />);
+      renderWithProviders(<DownloadActivityCard download={createMockDownload({ size: 1048576 })} />);
       expect(screen.getByText('1 MB')).toBeInTheDocument();
     });
 
     it('does not display size when absent', () => {
-      renderWithProviders(<DownloadCard download={createMockDownload({ size: undefined })} />);
+      renderWithProviders(<DownloadActivityCard download={createMockDownload({ size: undefined })} />);
       expect(screen.queryByText(/MB|KB|GB/)).not.toBeInTheDocument();
     });
 
     it('displays seeders when present', () => {
-      renderWithProviders(<DownloadCard download={createMockDownload({ seeders: 12 })} />);
+      renderWithProviders(<DownloadActivityCard download={createMockDownload({ seeders: 12 })} />);
       expect(screen.getByText('12 seeders')).toBeInTheDocument();
     });
 
     it('displays protocol badge', () => {
-      renderWithProviders(<DownloadCard download={createMockDownload({ protocol: 'torrent' })} />);
+      renderWithProviders(<DownloadActivityCard download={createMockDownload({ protocol: 'torrent' })} />);
       expect(screen.getByText('Torrent')).toBeInTheDocument();
     });
 
     it('displays usenet protocol badge', () => {
-      renderWithProviders(<DownloadCard download={createMockDownload({ protocol: 'usenet' })} />);
+      renderWithProviders(<DownloadActivityCard download={createMockDownload({ protocol: 'usenet' })} />);
       expect(screen.getByText('Usenet')).toBeInTheDocument();
     });
 
     it('hides seeders count when protocol is usenet (#82)', () => {
-      renderWithProviders(<DownloadCard download={createMockDownload({ protocol: 'usenet', seeders: 5 })} />);
+      renderWithProviders(<DownloadActivityCard download={createMockDownload({ protocol: 'usenet', seeders: 5 })} />);
       expect(screen.queryByText('5 seeders')).not.toBeInTheDocument();
       // Protocol badge still shows
       expect(screen.getByText('Usenet')).toBeInTheDocument();
@@ -80,7 +80,7 @@ describe('DownloadCard', () => {
   describe('error message', () => {
     it('displays error message when present on failed download', () => {
       renderWithProviders(
-        <DownloadCard download={createMockDownload({ status: 'failed', errorMessage: 'Tracker error' })} />,
+        <DownloadActivityCard download={createMockDownload({ status: 'failed', errorMessage: 'Tracker error' })} />,
       );
       expect(screen.getByText('Tracker error')).toBeInTheDocument();
     });
@@ -88,13 +88,13 @@ describe('DownloadCard', () => {
     it('displays error message on non-failed status when present', () => {
       // Per reviewer suggestion F4: errorMessage is status-agnostic
       renderWithProviders(
-        <DownloadCard download={createMockDownload({ status: 'downloading', errorMessage: 'Tracker warning' })} />,
+        <DownloadActivityCard download={createMockDownload({ status: 'downloading', errorMessage: 'Tracker warning' })} />,
       );
       expect(screen.getByText('Tracker warning')).toBeInTheDocument();
     });
 
     it('does not display error section when no error message', () => {
-      renderWithProviders(<DownloadCard download={createMockDownload({ status: 'failed' })} />);
+      renderWithProviders(<DownloadActivityCard download={createMockDownload({ status: 'failed' })} />);
       expect(screen.queryByText('Tracker error')).not.toBeInTheDocument();
     });
   });
@@ -102,7 +102,7 @@ describe('DownloadCard', () => {
   describe('progress section', () => {
     it('shows progress when downloading and showProgress is true', () => {
       renderWithProviders(
-        <DownloadCard
+        <DownloadActivityCard
           download={createMockDownload({ status: 'downloading', progress: 0.45, size: 1048576 })}
           showProgress
         />,
@@ -112,7 +112,7 @@ describe('DownloadCard', () => {
 
     it('hides progress when showProgress is false', () => {
       renderWithProviders(
-        <DownloadCard
+        <DownloadActivityCard
           download={createMockDownload({ status: 'downloading', progress: 0.45 })}
           showProgress={false}
         />,
@@ -122,7 +122,7 @@ describe('DownloadCard', () => {
 
     it('hides progress for non-downloading statuses', () => {
       renderWithProviders(
-        <DownloadCard
+        <DownloadActivityCard
           download={createMockDownload({ status: 'completed', progress: 1 })}
           showProgress
         />,
@@ -154,7 +154,7 @@ describe('DownloadCard', () => {
 
     function renderPendingReview(
       downloadOverrides?: Partial<Download>,
-      cardProps?: Partial<Omit<Parameters<typeof DownloadCard>[0], 'download'>>,
+      cardProps?: Partial<Omit<Parameters<typeof DownloadActivityCard>[0], 'download'>>,
     ) {
       const user = userEvent.setup();
       const download = createMockDownload({
@@ -163,7 +163,7 @@ describe('DownloadCard', () => {
         ...downloadOverrides,
       });
       const result = renderWithProviders(
-        <DownloadCard
+        <DownloadActivityCard
           download={download}
           onApprove={vi.fn()}
           onReject={vi.fn()}
@@ -235,7 +235,7 @@ describe('DownloadCard', () => {
       // When the download status changes (parent re-renders with different status),
       // PendingReviewDetails is not rendered, effectively "collapsing" the panel
       renderWithProviders(
-        <DownloadCard
+        <DownloadActivityCard
           download={createMockDownload({ status: 'importing' })}
         />,
       );
@@ -247,7 +247,7 @@ describe('DownloadCard', () => {
 
     it('handles null quality gate data — shows reject buttons without comparison panel', () => {
       renderWithProviders(
-        <DownloadCard
+        <DownloadActivityCard
           download={createMockDownload({ status: 'pending_review', qualityGate: undefined })}
           onReject={vi.fn()}
           onRejectWithSearch={vi.fn()}
@@ -274,7 +274,7 @@ describe('DownloadCard', () => {
   describe('orphaned downloads (bookId null)', () => {
     it('shows title and errorMessage for an orphaned failed download', () => {
       renderWithProviders(
-        <DownloadCard
+        <DownloadActivityCard
           download={createMockDownload({
             status: 'failed',
             bookId: null,
@@ -289,7 +289,7 @@ describe('DownloadCard', () => {
 
     it('does not show retry button for an orphaned failed download with bookId null', () => {
       renderWithProviders(
-        <DownloadCard
+        <DownloadActivityCard
           download={createMockDownload({ status: 'failed', bookId: null })}
           onRetry={vi.fn()}
         />,
@@ -301,7 +301,7 @@ describe('DownloadCard', () => {
   describe('compact mode', () => {
     it('renders with compact styling', () => {
       const { container } = renderWithProviders(
-        <DownloadCard download={createMockDownload()} compact />,
+        <DownloadActivityCard download={createMockDownload()} compact />,
       );
       // Compact mode uses p-4 instead of p-5
       const card = container.firstElementChild as HTMLElement;
@@ -310,7 +310,7 @@ describe('DownloadCard', () => {
 
     it('renders with default (non-compact) styling', () => {
       const { container } = renderWithProviders(
-        <DownloadCard download={createMockDownload()} />,
+        <DownloadActivityCard download={createMockDownload()} />,
       );
       const card = container.firstElementChild as HTMLElement;
       expect(card.className).toContain('p-5');
@@ -319,17 +319,17 @@ describe('DownloadCard', () => {
 
   describe('indexer name (#57)', () => {
     it('renders indexer name text when indexerName is a non-empty string', () => {
-      renderWithProviders(<DownloadCard download={createMockDownload({ indexerName: 'AudioBookBay' })} />);
+      renderWithProviders(<DownloadActivityCard download={createMockDownload({ indexerName: 'AudioBookBay' })} />);
       expect(screen.getByText('AudioBookBay')).toBeInTheDocument();
     });
 
     it('renders without indexer name when indexerName is null', () => {
-      renderWithProviders(<DownloadCard download={createMockDownload({ indexerName: null })} />);
+      renderWithProviders(<DownloadActivityCard download={createMockDownload({ indexerName: null })} />);
       expect(screen.queryByText('AudioBookBay')).not.toBeInTheDocument();
     });
 
     it('renders without indexer name when indexerName is undefined', () => {
-      const { container } = renderWithProviders(<DownloadCard download={createMockDownload({ indexerName: undefined })} />);
+      const { container } = renderWithProviders(<DownloadActivityCard download={createMockDownload({ indexerName: undefined })} />);
       // no indexer span — just verify no crash and no extra text
       expect(container).toBeInTheDocument();
     });
@@ -359,7 +359,7 @@ describe('DownloadCard', () => {
     it('both Reject and Reject & Search buttons render on pending_review downloads with qualityGate data', async () => {
       const user = userEvent.setup();
       renderWithProviders(
-        <DownloadCard
+        <DownloadActivityCard
           download={createMockDownload({ status: 'pending_review', qualityGate: gateData301 })}
           onReject={vi.fn()}
           onRejectWithSearch={vi.fn()}
@@ -373,7 +373,7 @@ describe('DownloadCard', () => {
 
     it('both Reject and Reject & Search buttons render on pending_review downloads without qualityGate data', () => {
       renderWithProviders(
-        <DownloadCard
+        <DownloadActivityCard
           download={createMockDownload({ status: 'pending_review', qualityGate: undefined })}
           onReject={vi.fn()}
           onRejectWithSearch={vi.fn()}
@@ -389,7 +389,7 @@ describe('DownloadCard', () => {
       const user = userEvent.setup();
       const onReject = vi.fn();
       renderWithProviders(
-        <DownloadCard
+        <DownloadActivityCard
           download={createMockDownload({ status: 'pending_review', qualityGate: undefined })}
           onReject={onReject}
           onRejectWithSearch={vi.fn()}
@@ -404,7 +404,7 @@ describe('DownloadCard', () => {
       const user = userEvent.setup();
       const onRejectWithSearch = vi.fn();
       renderWithProviders(
-        <DownloadCard
+        <DownloadActivityCard
           download={createMockDownload({ status: 'pending_review', qualityGate: undefined })}
           onReject={vi.fn()}
           onRejectWithSearch={onRejectWithSearch}
@@ -417,7 +417,7 @@ describe('DownloadCard', () => {
 
     it('Reject and Reject & Search buttons not shown on non-pending downloads', () => {
       renderWithProviders(
-        <DownloadCard
+        <DownloadActivityCard
           download={createMockDownload({ status: 'failed' })}
           onReject={vi.fn()}
           onRejectWithSearch={vi.fn()}
@@ -431,7 +431,7 @@ describe('DownloadCard', () => {
     it('Reject button has primary destructive styling, Reject & Search has secondary/outline styling', async () => {
       const user = userEvent.setup();
       renderWithProviders(
-        <DownloadCard
+        <DownloadActivityCard
           download={createMockDownload({ status: 'pending_review', qualityGate: gateData301 })}
           onReject={vi.fn()}
           onRejectWithSearch={vi.fn()}
@@ -450,7 +450,7 @@ describe('DownloadCard', () => {
     it('loading state: rejecting disables both buttons and shows spinner', async () => {
       const user = userEvent.setup();
       renderWithProviders(
-        <DownloadCard
+        <DownloadActivityCard
           download={createMockDownload({ status: 'pending_review', qualityGate: gateData301 })}
           onReject={vi.fn()}
           onRejectWithSearch={vi.fn()}
@@ -466,7 +466,7 @@ describe('DownloadCard', () => {
     it('loading state: approving disables both reject buttons', async () => {
       const user = userEvent.setup();
       renderWithProviders(
-        <DownloadCard
+        <DownloadActivityCard
           download={createMockDownload({ status: 'pending_review', qualityGate: gateData301 })}
           onApprove={vi.fn()}
           onReject={vi.fn()}
@@ -484,7 +484,7 @@ describe('DownloadCard', () => {
   describe('AC5 — reject button spinner scoping', () => {
     it('shows spinner on Reject button only when reject-dismiss is pending for this card', () => {
       renderWithProviders(
-        <DownloadCard
+        <DownloadActivityCard
           download={createMockDownload({ status: 'pending_review', qualityGate: undefined })}
           onReject={vi.fn()}
           onRejectWithSearch={vi.fn()}
@@ -498,7 +498,7 @@ describe('DownloadCard', () => {
 
     it('shows spinner on Reject & Search button only when reject-with-search is pending for this card', () => {
       renderWithProviders(
-        <DownloadCard
+        <DownloadActivityCard
           download={createMockDownload({ status: 'pending_review', qualityGate: undefined })}
           onReject={vi.fn()}
           onRejectWithSearch={vi.fn()}
@@ -515,7 +515,7 @@ describe('DownloadCard', () => {
 
     it('shows no spinner on either button when reject is pending for a different card', () => {
       renderWithProviders(
-        <DownloadCard
+        <DownloadActivityCard
           download={createMockDownload({ status: 'pending_review', qualityGate: undefined })}
           onReject={vi.fn()}
           onRejectWithSearch={vi.fn()}
@@ -529,7 +529,7 @@ describe('DownloadCard', () => {
 
     it('disables both buttons on this card when either reject action is pending for this card', () => {
       renderWithProviders(
-        <DownloadCard
+        <DownloadActivityCard
           download={createMockDownload({ status: 'pending_review', qualityGate: undefined })}
           onReject={vi.fn()}
           onRejectWithSearch={vi.fn()}
@@ -545,7 +545,7 @@ describe('DownloadCard', () => {
   // #357 — Indexer name pill
   describe('indexer name pill (#357)', () => {
     it('renders indexer name in a pill element alongside protocol badge when indexerName is present', () => {
-      renderWithProviders(<DownloadCard download={createMockDownload({ indexerName: 'MAM' })} />);
+      renderWithProviders(<DownloadActivityCard download={createMockDownload({ indexerName: 'MAM' })} />);
       const pill = screen.getByTestId('indexer-badge');
       expect(pill).toHaveTextContent('MAM');
       // Protocol badge also present
@@ -553,18 +553,18 @@ describe('DownloadCard', () => {
     });
 
     it('does not render indexer pill when indexerName is null', () => {
-      renderWithProviders(<DownloadCard download={createMockDownload({ indexerName: null })} />);
+      renderWithProviders(<DownloadActivityCard download={createMockDownload({ indexerName: null })} />);
       expect(screen.queryByTestId('indexer-badge')).not.toBeInTheDocument();
     });
 
     it('renders indexer pill on compact (history) cards', () => {
-      renderWithProviders(<DownloadCard download={createMockDownload({ indexerName: 'DrunkenSlug (Prowlarr)' })} compact />);
+      renderWithProviders(<DownloadActivityCard download={createMockDownload({ indexerName: 'DrunkenSlug (Prowlarr)' })} compact />);
       const pill = screen.getByTestId('indexer-badge');
       expect(pill).toHaveTextContent('DrunkenSlug (Prowlarr)');
     });
 
     it('does not render empty indexer pill when indexerName is null on compact cards', () => {
-      renderWithProviders(<DownloadCard download={createMockDownload({ indexerName: null })} compact />);
+      renderWithProviders(<DownloadActivityCard download={createMockDownload({ indexerName: null })} compact />);
       expect(screen.queryByTestId('indexer-badge')).not.toBeInTheDocument();
     });
   });
@@ -572,19 +572,19 @@ describe('DownloadCard', () => {
   // #357 — Book title link
   describe('book title link (#357)', () => {
     it('renders title as a link to /books/:id when bookId is present', () => {
-      renderWithProviders(<DownloadCard download={createMockDownload({ bookId: 42, title: 'Linked Book' })} />);
+      renderWithProviders(<DownloadActivityCard download={createMockDownload({ bookId: 42, title: 'Linked Book' })} />);
       const link = screen.getByRole('link', { name: 'Linked Book' });
       expect(link).toHaveAttribute('href', '/books/42');
     });
 
     it('renders title as plain text when bookId is null', () => {
-      renderWithProviders(<DownloadCard download={createMockDownload({ bookId: null, title: 'Orphan Title' })} />);
+      renderWithProviders(<DownloadActivityCard download={createMockDownload({ bookId: null, title: 'Orphan Title' })} />);
       expect(screen.getByText('Orphan Title')).toBeInTheDocument();
       expect(screen.queryByRole('link', { name: 'Orphan Title' })).not.toBeInTheDocument();
     });
 
     it('renders title as plain text when bookId is undefined', () => {
-      renderWithProviders(<DownloadCard download={createMockDownload({ bookId: undefined, title: 'No Book' })} />);
+      renderWithProviders(<DownloadActivityCard download={createMockDownload({ bookId: undefined, title: 'No Book' })} />);
       expect(screen.getByText('No Book')).toBeInTheDocument();
       expect(screen.queryByRole('link', { name: 'No Book' })).not.toBeInTheDocument();
     });
@@ -596,7 +596,7 @@ describe('DownloadCard', () => {
         <QueryClientProvider client={client}>
           <MemoryRouter initialEntries={['/activity']}>
             <Routes>
-              <Route path="/activity" element={<DownloadCard download={createMockDownload({ bookId: 7, title: 'Clickable Book' })} />} />
+              <Route path="/activity" element={<DownloadActivityCard download={createMockDownload({ bookId: 7, title: 'Clickable Book' })} />} />
               <Route path="/books/:id" element={<div>Book Detail Page</div>} />
             </Routes>
           </MemoryRouter>
@@ -612,21 +612,21 @@ describe('DownloadCard', () => {
     it('renders relative timestamp with dot separator on compact cards when completedAt is present', () => {
       const recentDate = new Date(Date.now() - 3 * 3600000).toISOString(); // 3 hours ago
       renderWithProviders(
-        <DownloadCard download={createMockDownload({ completedAt: recentDate })} compact />,
+        <DownloadActivityCard download={createMockDownload({ completedAt: recentDate })} compact />,
       );
       expect(screen.getByText(/· 3h ago/)).toBeInTheDocument();
     });
 
     it('does not render timestamp when completedAt is null', () => {
       renderWithProviders(
-        <DownloadCard download={createMockDownload({ completedAt: null })} compact />,
+        <DownloadActivityCard download={createMockDownload({ completedAt: null })} compact />,
       );
       expect(screen.queryByText(/·.*ago/)).not.toBeInTheDocument();
     });
 
     it('does not render timestamp when completedAt is undefined', () => {
       renderWithProviders(
-        <DownloadCard download={createMockDownload({ completedAt: undefined })} compact />,
+        <DownloadActivityCard download={createMockDownload({ completedAt: undefined })} compact />,
       );
       expect(screen.queryByText(/·.*ago/)).not.toBeInTheDocument();
     });
@@ -634,7 +634,7 @@ describe('DownloadCard', () => {
     it('does not render timestamp on non-compact (active) cards', () => {
       const recentDate = new Date(Date.now() - 3 * 3600000).toISOString();
       renderWithProviders(
-        <DownloadCard download={createMockDownload({ completedAt: recentDate })} />,
+        <DownloadActivityCard download={createMockDownload({ completedAt: recentDate })} />,
       );
       expect(screen.queryByText(/· 3h ago/)).not.toBeInTheDocument();
     });
@@ -642,7 +642,7 @@ describe('DownloadCard', () => {
     it('renders native title attribute with full date/time on timestamp', () => {
       const completedAt = '2026-04-01T14:30:00Z';
       renderWithProviders(
-        <DownloadCard download={createMockDownload({ completedAt })} compact />,
+        <DownloadActivityCard download={createMockDownload({ completedAt })} compact />,
       );
       const timestamp = screen.getByTitle(new Date(completedAt).toLocaleString());
       expect(timestamp).toBeInTheDocument();
@@ -652,12 +652,12 @@ describe('DownloadCard', () => {
   // #357 — Seeders label visibility (null/zero)
   describe('seeders null/zero hiding (#357)', () => {
     it('hides seeders when seeders is 0', () => {
-      renderWithProviders(<DownloadCard download={createMockDownload({ seeders: 0, protocol: 'torrent' })} />);
+      renderWithProviders(<DownloadActivityCard download={createMockDownload({ seeders: 0, protocol: 'torrent' })} />);
       expect(screen.queryByText(/seeders/)).not.toBeInTheDocument();
     });
 
     it('hides seeders when seeders is null', () => {
-      renderWithProviders(<DownloadCard download={createMockDownload({ seeders: null, protocol: 'torrent' })} />);
+      renderWithProviders(<DownloadActivityCard download={createMockDownload({ seeders: null, protocol: 'torrent' })} />);
       expect(screen.queryByText(/seeders/)).not.toBeInTheDocument();
     });
   });

@@ -9,7 +9,7 @@ import { PageHeader } from '@/components/PageHeader.js';
 import { PageLoading } from '@/components/PageLoading';
 import { Tabs, type TabItem } from '@/components/Tabs.js';
 import { EventHistorySection } from './EventHistorySection.js';
-import { DownloadsTabSection } from './DownloadsTabSection.js';
+import { ActiveTabSection } from './ActiveTabSection.js';
 import { useActivity } from './useActivity.js';
 import { useMergeActivityCards } from '@/hooks/useMergeProgress.js';
 import { useSearchProgress } from '@/hooks/useSearchProgress';
@@ -69,7 +69,7 @@ export function ActivityPage() {
 
       {tab === 'active' && (
         <div role="tabpanel" id="tabpanel-active" aria-labelledby="tab-active">
-        <DownloadsTabSection
+        <ActiveTabSection
           queue={queue}
           queueTotal={queueTotal}
           queuePagination={queuePagination}
