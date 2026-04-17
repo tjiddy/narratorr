@@ -1,5 +1,6 @@
 import { useState, useCallback, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { useQuery } from '@tanstack/react-query';
 import { SearchReleasesModal } from '@/components/SearchReleasesModal';
 import { BookMetadataModal } from '@/components/book/BookMetadataModal.js';
 import { ConfirmModal } from '@/components/ConfirmModal.js';
@@ -7,7 +8,7 @@ import { DeleteBookModal } from '@/components/DeleteBookModal.js';
 import { HistoryIcon, BookOpenIcon } from '@/components/icons';
 import { Tabs, type TabItem } from '@/components/Tabs.js';
 import { MergeStatusIcon } from '@/components/MergeStatusIcon.js';
-import type { BookWithAuthor } from '@/lib/api';
+import { api, type BookWithAuthor } from '@/lib/api';
 import { SUPPORTED_COVER_MIMES } from '../../../shared/mime.js';
 import { BookHero } from './BookHero.js';
 import { BookDetailsContent } from './BookDetailsContent.js';
@@ -47,6 +48,15 @@ export function BookDetails({ libraryBook, metadataBook }: {
     useBookActions(libraryBook.id, libraryBook.monitorForUpgrades);
 
   const showWrongRelease = canShowWrongRelease(libraryBook);
+
+  // Only query retry availability when book is failed — avoids unnecessary API calls
+  const { data: retryCheck } = useQuery({
+    queryKey: ['book', libraryBook.id, 'retry-import-available'],
+    queryFn: () => api.checkRetryImportAvailable(libraryBook.id),
+    enabled: libraryBook.status === 'failed',
+    staleTime: 30_000,
+  });
+  const canRetryImport = libraryBook.status === 'failed' && retryCheck?.available === true;
 
   const handleCoverFile = useCallback((file: File) => {
     if (!SUPPORTED_COVER_MIMES.has(file.type)) {
@@ -140,7 +150,7 @@ export function BookDetails({ libraryBook, metadataBook }: {
         onCoverConfirm={handleCoverConfirm}
         onCoverCancel={handleCoverCancel}
         isUploadingCover={uploadCoverMutation.isPending}
-        onRetryImportClick={libraryBook.status === 'failed' ? () => retryImportMutation.mutate() : undefined}
+        onRetryImportClick={canRetryImport ? () => retryImportMutation.mutate() : undefined}
         isRetryingImport={retryImportMutation.isPending}
       >
         <AudioPreview bookId={libraryBook.id} status={libraryBook.status} path={libraryBook.path ?? null} />

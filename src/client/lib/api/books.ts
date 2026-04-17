@@ -224,6 +224,8 @@ export const booksApi = {
     fetchApi<{ success: boolean }>(`/books/${id}/wrong-release`, { method: 'POST' }),
   retryBookImport: (id: number) =>
     fetchApi<{ jobId: number }>(`/books/${id}/retry-import`, { method: 'POST' }),
+  checkRetryImportAvailable: (id: number) =>
+    fetchApi<{ available: boolean }>(`/books/${id}/retry-import`),
   uploadBookCover: async (id: number, file: File): Promise<BookWithAuthor> => {
     const formData = new FormData();
     formData.append('file', file);
