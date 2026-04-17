@@ -72,7 +72,7 @@ export function SystemSettings() {
       }
     },
     onError: (err) => {
-      toast.error(getErrorMessage(err, 'Failed to create backup'));
+      toast.error(getErrorMessage(err));
     },
   });
 
@@ -90,7 +90,7 @@ export function SystemSettings() {
       setRestoreConfirmOpen(true);
     },
     onError: (err) => {
-      toast.error(getErrorMessage(err, 'Failed to validate restore file'));
+      toast.error(getErrorMessage(err));
     },
   });
 
@@ -108,7 +108,7 @@ export function SystemSettings() {
       setRestoreConfirmOpen(true);
     },
     onError: (err) => {
-      toast.error(getErrorMessage(err, 'Failed to validate backup'));
+      toast.error(getErrorMessage(err));
     },
   });
 
@@ -120,7 +120,7 @@ export function SystemSettings() {
       setRestoreInfo(null);
     },
     onError: (err) => {
-      toast.error(getErrorMessage(err, 'Failed to confirm restore'));
+      toast.error(getErrorMessage(err));
     },
   });
 

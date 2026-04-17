@@ -52,7 +52,7 @@ export function LibrarySettingsSection() {
       setShowRescanPrompt(true);
     },
     onError: (err) => {
-      toast.error(getErrorMessage(err, 'Failed to save library path'));
+      toast.error(getErrorMessage(err));
     },
   });
 
@@ -63,7 +63,7 @@ export function LibrarySettingsSection() {
       queryClient.invalidateQueries({ queryKey: queryKeys.books() });
     },
     onError: (err) => {
-      toast.error(getErrorMessage(err, 'Library scan failed'));
+      toast.error(getErrorMessage(err));
     },
   });
 

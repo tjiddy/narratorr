@@ -54,7 +54,7 @@ export function useFetchCategories({ selectedType, clientId, isDirty, getValues 
         setShowDropdown(true);
       }
     } catch (error: unknown) {
-      setError(getErrorMessage(error, 'Failed to fetch categories'));
+      setError(getErrorMessage(error));
       setCategories([]);
       setShowDropdown(false);
     } finally {

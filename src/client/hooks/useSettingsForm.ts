@@ -73,7 +73,7 @@ export function useSettingsForm<T extends Record<string, unknown>>({
       toast.success(successMessage);
     },
     onError: (err) => {
-      toast.error(getErrorMessage(err, 'Failed to save settings'));
+      toast.error(getErrorMessage(err));
     },
   });
 

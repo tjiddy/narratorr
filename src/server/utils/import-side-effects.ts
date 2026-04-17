@@ -147,7 +147,7 @@ export function notifyImportFailure(args: NotifyImportFailureArgs): void {
     notifierService.notify('on_failure', {
       event: 'on_failure',
       book: { title: downloadTitle },
-      error: { message: getErrorMessage(error, 'Import failed'), stage: 'import' },
+      error: { message: getErrorMessage(error), stage: 'import' },
     }),
     log,
     'Failed to send failure notification',
@@ -175,6 +175,6 @@ export function recordImportFailedEvent(args: RecordImportFailedEventArgs): void
     downloadId,
     eventType: 'import_failed',
     source: 'auto',
-    reason: { error: getErrorMessage(error, 'Import failed') },
+    reason: { error: getErrorMessage(error) },
   }).catch((err: unknown) => log.warn(err, 'Failed to record import_failed event'));
 }

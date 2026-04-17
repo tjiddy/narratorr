@@ -56,7 +56,7 @@ export function Layout() {
       return queryClient.invalidateQueries({ queryKey: queryKeys.settings() });
     },
     onError: (err: unknown) => {
-      toast.error(getErrorMessage(err, 'Failed to save settings'));
+      toast.error(getErrorMessage(err));
     },
   });
 

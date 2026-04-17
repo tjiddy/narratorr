@@ -393,7 +393,7 @@ export function applyPendingRestore(configPath: string, dbPath: string, log: { i
       fss.unlinkSync(pendingPath);
       log.warn('Restored database from pending backup (copy fallback — rename failed)');
     } catch (copyError: unknown) {
-      log.warn(`Failed to apply pending restore: ${getErrorMessage(copyError, 'unknown error')}`);
+      log.warn(`Failed to apply pending restore: ${getErrorMessage(copyError)}`);
     }
   }
 }

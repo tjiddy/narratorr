@@ -112,7 +112,7 @@ export function useManualImport({ onScanSuccess, libraryPath }: UseManualImportO
       onScanSuccess?.(path);
     },
     onError: (error: Error) => {
-      setScanError(getErrorMessage(error, 'Scan failed'));
+      setScanError(getErrorMessage(error));
     },
   });
 

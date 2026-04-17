@@ -127,7 +127,7 @@ export async function checkDiskSpace(args: CheckDiskSpaceArgs): Promise<DiskSpac
     const fsStats = await statfs(libraryPath);
     freeBytes = Number(fsStats.bavail) * Number(fsStats.bsize);
   } catch (statfsError: unknown) {
-    throw new Error(`Disk space check failed: ${getErrorMessage(statfsError, 'unknown error')}`);
+    throw new Error(`Disk space check failed: ${getErrorMessage(statfsError)}`);
   }
 
   const freeGB = Math.round((freeBytes / 1024 ** 3) * 10) / 10;
@@ -384,7 +384,7 @@ export async function handleImportFailure(args: HandleImportFailureArgs): Promis
   // Revert download to failed
   await db.update(downloads).set({
     status: 'failed',
-    errorMessage: getErrorMessage(error, 'Import failed'),
+    errorMessage: getErrorMessage(error),
   }).where(eq(downloads.id, downloadId));
 
   // Recover book status

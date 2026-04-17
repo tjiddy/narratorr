@@ -52,7 +52,7 @@ export async function importListsRoutes(app: FastifyInstance, importListService:
       } catch (error: unknown) {
         request.log.error(error, 'Import list preview failed');
         return reply.status(500).send({
-          error: getErrorMessage(error, 'Preview failed'),
+          error: getErrorMessage(error),
         });
       }
     },

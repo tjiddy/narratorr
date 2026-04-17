@@ -45,7 +45,7 @@ export async function systemRoutes(app: FastifyInstance, services: Services, db:
         timestamp: new Date().toISOString(),
         version: getVersion(),
         commit: getCommit(),
-        error: getErrorMessage(error, 'Database unreachable'),
+        error: getErrorMessage(error),
       });
     }
   });

@@ -61,7 +61,7 @@ export function NetworkSettingsSection() {
         toast.error(result.message || 'Proxy test failed');
       }
     } catch (error: unknown) {
-      toast.error(getErrorMessage(error, 'Proxy test failed'));
+      toast.error(getErrorMessage(error));
     } finally {
       setTesting(false);
     }
