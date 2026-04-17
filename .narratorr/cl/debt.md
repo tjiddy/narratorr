@@ -43,7 +43,7 @@
 
 - ~~**`src/server/jobs/index.ts:54` housekeeping callback lacks per-sub-task error isolation**~~ — resolved in #547 (per-sub-task try/catch with log.warn)
 
-- **`src/client/hooks/useBulkOperation.ts`, `src/client/components/settings/useFetchCategories.ts`, `src/client/pages/library/useLibraryBulkActions.ts`**: No co-located test files. These hooks contain error handling and polling logic that could regress silently. (discovered in #486)
+- ~~**`src/client/hooks/useBulkOperation.ts`, `src/client/components/settings/useFetchCategories.ts`, `src/client/pages/library/useLibraryBulkActions.ts`**: No co-located test files.~~ — all three now have co-located tests (useBulkOperation and useFetchCategories resolved earlier, useLibraryBulkActions resolved in #626)
 
 - ~~**`BackupScheduleForm.tsx` still uses raw `useMutation`/`useQuery`/`useEffect` boilerplate**~~ — resolved in #564 (migrated to `useSettingsForm` with `zodResolver`)
 
