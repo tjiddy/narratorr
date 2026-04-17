@@ -155,13 +155,8 @@ export function useBookActions(bookId: number, monitorForUpgrades: boolean) {
 
   const retryImportMutation = useMutation({
     mutationFn: () => api.retryBookImport(bookId),
-    onSuccess: () => {
-      invalidateBookQueries();
-      toast.success('Import retry queued');
-    },
-    onError: (error: Error) => {
-      toast.error(`Retry import failed: ${getErrorMessage(error)}`);
-    },
+    onSuccess: () => { invalidateBookQueries(); toast.success('Import retry queued'); },
+    onError: (error: Error) => { toast.error(`Retry import failed: ${getErrorMessage(error)}`); },
   });
 
   return {
