@@ -143,6 +143,10 @@ export class ImportQueueWorker {
       .where(and(eq(importJobs.id, candidateId), eq(importJobs.status, 'pending')));
 
     const rowsAffected = (result as unknown as { rowsAffected?: number }).rowsAffected;
+    if (rowsAffected === undefined) {
+      this.log.warn({ candidateId }, 'claimImportJob: rowsAffected missing from update result');
+      throw new Error(`claimImportJob: rowsAffected missing from update result for job ${candidateId}`);
+    }
     if (rowsAffected !== 1) {
       // Another process claimed it — retry with next row
       return true;
