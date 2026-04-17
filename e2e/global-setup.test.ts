@@ -223,3 +223,14 @@ describe('globalSetup', () => {
     delete process.env.E2E_RUN_STATE_DIR;
   });
 });
+
+describe('playwright.config.ts webServer.env contract', () => {
+  it('does not pass LIBRARY_PATH to the server process', async () => {
+    const { readFileSync } = await import('node:fs');
+    const { join, dirname: dn } = await import('node:path');
+    const { fileURLToPath } = await import('node:url');
+    const configPath = join(dn(fileURLToPath(import.meta.url)), 'playwright.config.ts');
+    const content = readFileSync(configPath, 'utf-8');
+    expect(content).not.toContain('LIBRARY_PATH');
+  });
+});

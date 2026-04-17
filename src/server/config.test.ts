@@ -118,12 +118,6 @@ describe('config', () => {
       expect(config.configPath).toBe('./config');
     });
 
-    it('uses default libraryPath when not set', async () => {
-      delete process.env.LIBRARY_PATH;
-      const config = await loadConfig();
-      expect(config.libraryPath).toBe('./audiobooks');
-    });
-
     it('uses default dbPath when not set', async () => {
       delete process.env.DATABASE_URL;
       const config = await loadConfig();
@@ -142,16 +136,17 @@ describe('config', () => {
       expect(config.configPath).toBe('./config');
     });
 
-    it('falls back to default libraryPath when set to empty string', async () => {
-      process.env.LIBRARY_PATH = '';
-      const config = await loadConfig();
-      expect(config.libraryPath).toBe('./audiobooks');
-    });
-
     it('falls back to default dbPath when set to empty string', async () => {
       process.env.DATABASE_URL = '';
       const config = await loadConfig();
       expect(config.dbPath).toBe('./config/narratorr.db');
+    });
+
+    it('ignores LIBRARY_PATH env var (decorative, removed in #623)', async () => {
+      process.env.LIBRARY_PATH = '/tmp/lib';
+      const config = await loadConfig();
+      expect(config).not.toHaveProperty('libraryPath');
+      expect(config.configPath).toBe('./config');
     });
   });
 
