@@ -1,6 +1,6 @@
 import type { BookMetadata } from '@/lib/api';
-import { resolveUrl } from '@/lib/url-utils';
-import { SearchIcon, LoadingSpinner, HeadphonesIcon, AlertCircleIcon } from '@/components/icons';
+import { SearchIcon, LoadingSpinner, AlertCircleIcon } from '@/components/icons';
+import { MetadataResultList } from './MetadataResultList';
 
 interface MetadataSearchViewProps {
   searchQuery: string;
@@ -68,44 +68,16 @@ export function MetadataSearchView({
       {searchResults.length > 0 && (
         <div className="space-y-1.5">
           <p className="text-xs font-medium text-muted-foreground/70">Select a match</p>
-          <div className="max-h-72 overflow-y-auto space-y-1 -mx-1 px-1">
-            {searchResults.slice(0, 8).map((meta, i) => (
-              <button
-                key={meta.asin || meta.providerId || i}
-                type="button"
-                onClick={() => onApplyMetadata(meta)}
-                className="w-full flex items-center gap-3 px-2.5 py-2 text-left rounded-xl hover:bg-muted/40 border border-transparent hover:border-border/30 transition-all group"
-              >
-                <div className="w-9 h-12 shrink-0 rounded-md overflow-hidden bg-muted/30 relative">
-                  {meta.coverUrl ? (
-                    <img src={resolveUrl(meta.coverUrl)} alt="" className="w-full h-full object-cover" />
-                  ) : (
-                    <div className="w-full h-full flex items-center justify-center">
-                      <SearchIcon className="w-3 h-3 text-muted-foreground/20" />
-                    </div>
-                  )}
-                  <div className="absolute inset-0 ring-1 ring-inset ring-black/10 rounded-md" />
-                </div>
-                <div className="min-w-0 flex-1">
-                  <p className="text-xs font-medium truncate group-hover:text-primary transition-colors">{meta.title}</p>
-                  <p className="text-xs text-muted-foreground/60 truncate">
-                    {meta.authors?.map(a => a.name).join(', ')}
-                  </p>
-                  {meta.narrators && meta.narrators.length > 0 && (
-                    <p className="text-[10px] text-muted-foreground/40 truncate flex items-center gap-1">
-                      <HeadphonesIcon className="w-2.5 h-2.5 shrink-0" />
-                      {meta.narrators.join(', ')}
-                    </p>
-                  )}
-                  {meta.series && meta.series.length > 0 && (
-                    <p className="text-[10px] text-muted-foreground/40 truncate">
-                      {meta.series[0].name}{meta.series[0].position != null ? ` #${meta.series[0].position}` : ''}
-                    </p>
-                  )}
-                </div>
-              </button>
-            ))}
-          </div>
+          <MetadataResultList
+            results={searchResults}
+            limit={8}
+            maxHeight="max-h-72"
+            onSelect={onApplyMetadata}
+            showSeries
+            coverSize="md"
+            placeholderIcon={<SearchIcon className="w-3 h-3 text-muted-foreground/20" />}
+            itemClassName="w-full flex items-center gap-3 px-2.5 py-2 text-left rounded-xl hover:bg-muted/40 border border-transparent hover:border-border/30 transition-all group"
+          />
         </div>
       )}
 

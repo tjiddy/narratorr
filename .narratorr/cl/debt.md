@@ -53,7 +53,7 @@
 
 - ~~**`src/client/components/book/BookMetadataModal.tsx` at 357 lines (max 400)**~~ — resolved in #553 (extracted MetadataSearchView, MetadataEditFields)
 
-- **`BookMetadataModal` / `BookEditModal` search results rendering 90% duplicated**: `BookMetadataModal`'s `MetadataSearchView` (line 278+) and `BookEditModal`'s inline search results (line 213+) use near-identical cover-image + metadata display patterns but differ in height (`max-h-72` vs `max-h-36`), slice count (8 vs 6), and optional fields (duration, library badge). A shared `MetadataResultItem` component could be extracted if both modals continue to evolve. (discovered in #553)
+- ~~**`BookMetadataModal` / `BookEditModal` search results rendering 90% duplicated**~~ — resolved in #627 (extracted MetadataResultItem + MetadataResultList shared components)
 
 - ~~**`src/server/services/search-pipeline.ts` `filterAndRankResults` has 10 positional parameters**~~ — resolved in #522 (options bag with `SearchFilterOptions`)
 
