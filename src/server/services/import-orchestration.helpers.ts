@@ -125,7 +125,7 @@ async function enrichImportedBook(
 }
 
 // eslint-disable-next-line complexity -- copy/move pipeline with verification and retry logic
-async function copyToLibrary(
+export async function copyToLibrary(
   item: ImportConfirmItem,
   _book: { id: number; title: string; seriesName?: string | null; seriesPosition?: number | null; publishedDate?: string | null },
   meta: BookMetadata | null,
