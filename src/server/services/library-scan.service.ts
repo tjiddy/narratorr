@@ -83,7 +83,7 @@ export class LibraryScanService {
     return { db: this.db, log: this.log, settingsService: this.settingsService, bookService: this.bookService, metadataService: this.metadataService };
   }
 
-  private get importDeps(): ImportPipelineDeps {
+  get importDeps(): ImportPipelineDeps {
     return { db: this.db, log: this.log, bookService: this.bookService, settingsService: this.settingsService, eventHistory: this.eventHistory, enrichmentDeps: this.enrichmentDeps, broadcaster: this.eventBroadcaster };
   }
 

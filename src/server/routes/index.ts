@@ -63,6 +63,10 @@ import { bulkOperationsRoutes } from './bulk-operations.js';
 import { EventBroadcasterService } from '../services/event-broadcaster.service.js';
 import { BookRejectionService } from '../services/book-rejection.service.js';
 import { createRetrySearchDeps } from '../services/retry-search.js';
+import { ImportQueueWorker } from '../services/import-queue-worker.js';
+import { registerImportAdapter } from '../services/import-adapters/registry.js';
+import { ManualImportAdapter } from '../services/import-adapters/manual.js';
+import { retryImportRoute } from './retry-import.js';
 
 export interface Services {
   settings: SettingsService;
@@ -96,6 +100,7 @@ export interface Services {
   discovery: DiscoveryService;
   bulkOperation: BulkOperationService;
   bookRejection: BookRejectionService;
+  importQueueWorker: ImportQueueWorker;
 }
 
 /**
@@ -135,6 +140,7 @@ export const SERVICE_KEYS = Object.keys({
   discovery: true,
   bulkOperation: true,
   bookRejection: true,
+  importQueueWorker: true,
 } satisfies Record<keyof Services, true>) as (keyof Services)[];
 
 export async function createServices(db: Db, log: FastifyBaseLogger): Promise<Services> {
@@ -203,7 +209,13 @@ export async function createServices(db: Db, log: FastifyBaseLogger): Promise<Se
   const qualityGateOrchestrator = new QualityGateOrchestrator(qualityGateService, db, log, downloadClient, eventHistory, eventBroadcaster, blacklistService, remotePathMapping, retrySearchDeps, settings, importOrchestrator, importService);
   const bookRejection = new BookRejectionService(db, log, book, blacklistService, settings, eventHistory, retrySearchDeps);
 
-  return { settings, auth, indexer, downloadClient, book, bookList, download, downloadOrchestrator, metadata, import: importService, importOrchestrator, libraryScan, matchJob, notifier, blacklist: blacklistService, remotePathMapping, rename: renameService, merge: mergeService, eventHistory, tagging: taggingService, qualityGate: qualityGateService, qualityGateOrchestrator, retryBudget, eventBroadcaster, backup, healthCheck, taskRegistry, importList, discovery, bulkOperation, bookRejection };
+  // Import queue worker + adapter registration
+  const importQueueWorker = new ImportQueueWorker(db, log);
+  const manualAdapter = new ManualImportAdapter(libraryScan.importDeps);
+  registerImportAdapter(manualAdapter);
+  libraryScan.setNudgeWorker(() => importQueueWorker.nudge());
+
+  return { settings, auth, indexer, downloadClient, book, bookList, download, downloadOrchestrator, metadata, import: importService, importOrchestrator, libraryScan, matchJob, notifier, blacklist: blacklistService, remotePathMapping, rename: renameService, merge: mergeService, eventHistory, tagging: taggingService, qualityGate: qualityGateService, qualityGateOrchestrator, retryBudget, eventBroadcaster, backup, healthCheck, taskRegistry, importList, discovery, bulkOperation, bookRejection, importQueueWorker };
 }
 
 type RouteFactory = (app: FastifyInstance, services: Services, db: Db) => Promise<void>;
@@ -252,6 +264,7 @@ const routeRegistry: RouteFactory[] = [
     taskRegistry: s.taskRegistry,
   }),
   (app, s) => bulkOperationsRoutes(app, s.bulkOperation),
+  (app, s, db) => retryImportRoute(app, db, s.importQueueWorker),
 ];
 
 export { routeRegistry };
