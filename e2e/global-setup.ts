@@ -139,12 +139,12 @@ export default async function globalSetup(): Promise<void> {
   process.env.E2E_AUDIBLE_URL = audible.url;
   process.env.E2E_SOURCE_PATH = run.sourcePath;
 
-  // Write sourcePath to a state file that test workers can read. Unlike
-  // fixed-port fakes (qbitControlUrl), the source path is a dynamic temp
-  // dir that can't have a static fallback — file-based handoff is the only
-  // worker-safe mechanism for dynamic paths.
-  const stateFilePath = resolve(dirname(fileURLToPath(import.meta.url)), '.run-paths.json');
-  writeFileSync(stateFilePath, JSON.stringify({ sourcePath: run.sourcePath }), 'utf-8');
+  // Write sourcePath to a per-run state file inside configPath. Workers read
+  // this via getE2ESourcePath(). The file lives inside the per-run temp dir
+  // (not a repo-global path) so concurrent E2E runs stay isolated — each run
+  // discovers its own configPath via E2E_RUN_STATE_DIR, set at config-load
+  // time in playwright.config.ts (config-time env vars propagate to workers).
+  writeFileSync(join(run.configPath, '.run-paths.json'), JSON.stringify({ sourcePath: run.sourcePath }), 'utf-8');
 }
 
 /** Exported constants for spec files that need to construct control URLs. */
@@ -168,37 +168,56 @@ export function qbitControlUrl(path: string): string {
   return `${base}${path}`;
 }
 
+/** State file name — lives inside the per-run configPath directory. */
+const RUN_PATHS_FILENAME = '.run-paths.json';
+
 /**
- * Worker-safe state file path — written by globalSetup, read by helpers,
- * cleaned up by globalTeardown.
+ * Resolves the per-run state file path. Uses E2E_RUN_STATE_DIR (set at
+ * config-load time in playwright.config.ts and inherited by workers) or
+ * falls back to getCurrentRun().configPath for same-process callers.
  */
-const RUN_PATHS_FILE = resolve(dirname(fileURLToPath(import.meta.url)), '.run-paths.json');
+function resolveRunPathsFile(): string | undefined {
+  const dir = process.env.E2E_RUN_STATE_DIR;
+  if (dir) return join(dir, RUN_PATHS_FILENAME);
+  const run = getCurrentRun();
+  if (run) return join(run.configPath, RUN_PATHS_FILENAME);
+  return undefined;
+}
 
 /**
  * Helper for spec files — returns the per-run sourcePath for manual-import
  * fixtures. Unlike fixed-port fakes, sourcePath is a dynamic temp dir that
- * changes every run, so this reads from the state file written by globalSetup.
+ * changes every run, so this reads from a per-run state file.
  *
- * Same worker-safety reasoning as `qbitControlUrl`: specs MUST import this
- * rather than reading `process.env.E2E_SOURCE_PATH` directly.
+ * The file lives inside the per-run configPath directory (not a repo-global
+ * path) so concurrent E2E runs stay isolated. Workers discover the directory
+ * via E2E_RUN_STATE_DIR, set at config-load time in playwright.config.ts
+ * (config-time env vars propagate to workers, unlike globalSetup mutations).
  */
 export function getE2ESourcePath(): string {
   // Same-process fast path (globalSetup, same-process tooling).
   const fromEnv = process.env.E2E_SOURCE_PATH;
   if (fromEnv) return fromEnv;
-  // Worker path — read from state file written by globalSetup.
-  if (existsSync(RUN_PATHS_FILE)) {
-    const data = JSON.parse(readFileSync(RUN_PATHS_FILE, 'utf-8')) as { sourcePath: string };
+  // Worker path — read from per-run state file.
+  const filePath = resolveRunPathsFile();
+  if (filePath && existsSync(filePath)) {
+    const data = JSON.parse(readFileSync(filePath, 'utf-8')) as { sourcePath: string };
     return data.sourcePath;
   }
-  throw new Error('sourcePath unavailable — E2E_SOURCE_PATH not set and .run-paths.json not found');
+  throw new Error(
+    'sourcePath unavailable — E2E_SOURCE_PATH not set and .run-paths.json not found ' +
+    `(looked in E2E_RUN_STATE_DIR=${process.env.E2E_RUN_STATE_DIR ?? '<unset>'})`,
+  );
 }
 
-/** Clean up the state file — called from globalTeardown. */
+/** Clean up the per-run state file — called from globalTeardown. */
 export function cleanupRunPathsFile(): void {
+  const filePath = resolveRunPathsFile();
+  if (!filePath) return;
   try {
-    unlinkSync(RUN_PATHS_FILE);
+    unlinkSync(filePath);
   } catch {
     // Best-effort — file may not exist if globalSetup failed.
+    // Also cleaned up when configPath is removed by teardown.
   }
 }

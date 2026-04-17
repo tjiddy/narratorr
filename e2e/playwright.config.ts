@@ -19,6 +19,13 @@ import { createRunTempDirs } from './fixtures/temp-dirs.js';
 // teardown can remove them after the run.
 const tempDirs = createRunTempDirs();
 
+// Expose the per-run configPath as an env var at config-load time so test
+// workers inherit it (workers fork from this process AFTER config loads).
+// Unlike webServer.env (server-only) or globalSetup mutations (too late),
+// config-load-time env vars DO propagate to Playwright worker processes.
+// Used by getE2ESourcePath() to locate the per-run .run-paths.json file.
+process.env.E2E_RUN_STATE_DIR = tempDirs.configPath;
+
 // Resolve output paths relative to this config file, not the caller's cwd —
 // otherwise Playwright dumps test-results/ at wherever pnpm was invoked from.
 const CONFIG_DIR = dirname(fileURLToPath(import.meta.url));
