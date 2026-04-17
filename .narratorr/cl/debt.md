@@ -31,7 +31,9 @@
 
 - ~~**`src/client/pages/library/LibraryBookCard.tsx`**: Uses same `opacity-0 group-hover:opacity-100` hover-gated pattern as BookHero overlay (lines 87, 119). Touch devices can't discover these actions. Should apply the `no-hover:opacity-100` variant added in #450 for consistency.~~ — resolved in #551
 
-- **`src/server/services/library-scan.service.ts` enrichImportedBook/processOneImport complexity**: Both methods report complexity 19/23 (limit 15) due to nullable field coalescing (`??`, `||`) in event payloads and enrichment configs. Extracting the enrichment orchestration didn't reduce complexity because the operators are in the remaining caller code. Could extract event payload builders as standalone functions to bring methods under threshold. (discovered in #470)
+- ~~**`src/server/services/library-scan.service.ts` enrichImportedBook/processOneImport complexity**: Both methods report complexity 19/23 (limit 15)~~ — `processOneImport` removed in #635 (logic moved to ManualImportAdapter). `enrichImportedBook` complexity remains but is only called from `importSingleBook`.
+
+- **`src/server/services/library-scan.service.test.ts` 26 skipped background processing tests**: Tests skipped with `describe.skip` in #635 after migrating confirmImport to job queue. The tested behavior now lives in ManualImportAdapter (covered by `manual.test.ts`), but the skipped tests should be deleted in a cleanup pass. (discovered in #635)
 
 - ~~**`MAX_COVER_SIZE` duplicated in 3 files**~~ — resolved in #513
 
