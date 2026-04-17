@@ -4,7 +4,7 @@ import type { Db } from '../../db/index.js';
 import type { FastifyBaseLogger } from 'fastify';
 import { ImportQueueWorker } from './import-queue-worker.js';
 import { registerImportAdapter, clearImportAdapters } from './import-adapters/registry.js';
-import type { ImportAdapter, ImportJob } from './import-adapters/types.js';
+import type { ImportAdapter, ImportAdapterContext, ImportJob } from './import-adapters/types.js';
 
 function createMockLogger(): FastifyBaseLogger {
   return {
