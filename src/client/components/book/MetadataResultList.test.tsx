@@ -52,4 +52,41 @@ describe('MetadataResultList', () => {
     await userEvent.click(screen.getByText('Clickable Book'));
     expect(onSelect).toHaveBeenCalledWith(meta);
   });
+
+  it('forwards itemClassName to each item button', () => {
+    const results = Array.from({ length: 2 }, (_, i) =>
+      createMockBookMetadata({ asin: `ASIN${i}`, title: `Book ${i}` }),
+    );
+    render(
+      <MetadataResultList
+        results={results}
+        limit={8}
+        maxHeight="max-h-72"
+        onSelect={defaultOnSelect}
+        itemClassName="custom-row"
+      />,
+    );
+    const buttons = screen.getAllByRole('button');
+    expect(buttons).toHaveLength(2);
+    for (const button of buttons) {
+      expect(button.className).toBe('custom-row');
+    }
+  });
+
+  it('forwards dataTestId with index suffix to each item', () => {
+    const results = Array.from({ length: 2 }, (_, i) =>
+      createMockBookMetadata({ asin: `ASIN${i}`, title: `Book ${i}` }),
+    );
+    render(
+      <MetadataResultList
+        results={results}
+        limit={8}
+        maxHeight="max-h-72"
+        onSelect={defaultOnSelect}
+        dataTestId="result"
+      />,
+    );
+    expect(screen.getByTestId('result-0')).toBeInTheDocument();
+    expect(screen.getByTestId('result-1')).toBeInTheDocument();
+  });
 });
