@@ -81,6 +81,50 @@ function getGhToken(): string | undefined {
 // Exported for testing.
 export { makeJwt as _makeJwt, tokenCache as _tokenCache };
 
+// Resolve the authenticated GitHub identity as it appears in `user.login` on
+// issues, PRs, and comments. Handles both auth modes:
+//   - GitHub App installation: returns `<app-slug>[bot]` (queried via JWT since
+//     `/user` and `/app` are inaccessible to installation tokens)
+//   - Personal / OAuth: returns the user login from `/user`
+//
+// Required because `gh api user` returns 403 under App installation tokens,
+// which broke the self-review guard in /review-pr.
+export function getSelfIdentity(): string {
+  const appId = process.env.GH_APP_ID;
+  const privateKeyPath = process.env.GH_APP_PRIVATE_KEY_PATH;
+  const privateKeyEnv = process.env.GH_APP_PRIVATE_KEY;
+  const hasAppCreds = Boolean(appId && (privateKeyPath || privateKeyEnv));
+
+  if (hasAppCreds) {
+    const privateKey = privateKeyEnv || readFileSync(privateKeyPath!, "utf-8");
+    const jwt = makeJwt(appId!, privateKey);
+    const scriptContent = [
+      `const res = await fetch("https://api.github.com/app", {`,
+      `  headers: {`,
+      `    Authorization: "Bearer " + process.argv[2],`,
+      `    Accept: "application/vnd.github+json",`,
+      `    "X-GitHub-Api-Version": "2022-11-28",`,
+      `  },`,
+      `});`,
+      `if (!res.ok) { process.stderr.write(await res.text()); process.exit(1); }`,
+      `const d = await res.json();`,
+      `process.stdout.write(d.slug);`,
+    ].join("\n");
+
+    const scriptPath = join(tmpdir(), `narratorr-whoami-${process.pid}.mjs`);
+    writeFileSync(scriptPath, scriptContent);
+    try {
+      const slug = execFileSync("node", [scriptPath, jwt],
+        { encoding: "utf-8", stdio: ["pipe", "pipe", "pipe"] }).trim();
+      return `${slug}[bot]`;
+    } finally {
+      try { unlinkSync(scriptPath); } catch { /* cleanup */ }
+    }
+  }
+
+  return gh("api", "user", "--jq", ".login");
+}
+
 // ---------------------------------------------------------------------------
 // JQ output templates — contract between `gh` output and parsers
 // ---------------------------------------------------------------------------

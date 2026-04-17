@@ -44,10 +44,10 @@ All GitHub commands use: `node scripts/gh.ts` (referred to as `gh` below).
    - Title, body, state, head branch, base branch, **author** (`author: <login>` in output), labels
    - Linked issue: parse `Refs #<id>` from PR body
 
-2. **Self-review guard:** Run `node scripts/gh.tsapi user --jq '.login'` to get your authenticated username. Compare against the PR author from step 1.
-   - If your username **matches** the PR author → **STOP**: "Cannot review your own PR. The authenticated user (`<username>`) is the PR author. Run `/review-pr <pr>` from a session authenticated as a different GitHub user (e.g., the reviewer account)."
-   - Before stopping, consider: did the user actually want `/respond-to-pr-review <pr>` instead? If the PR already has review comments with findings from another user, the user likely wants the author to address those findings — suggest `/respond-to-pr-review <pr>` in your stop message.
-   - If they differ → proceed (you are a different user than the author).
+2. **Self-review guard:** Run `node scripts/check-self-review.ts <pr-author>` (pass the PR author login from step 1, e.g., `narratorr-dev[bot]`). The script handles both GitHub App installation tokens and personal auth — do NOT substitute `gh api user` here, that endpoint returns 403 under App auth and will false-negative the guard.
+   - If the script exits **non-zero** (prints `SELF-REVIEW:` or `ERROR:`) → **STOP** and surface the script's message verbatim. Do not proceed with the review — the orchestrator must see a non-zero exit to mark the dispatch as failed.
+   - Before stopping on a `SELF-REVIEW:` line, consider: did the user actually want `/respond-to-pr-review <pr>` instead? If the PR already has review comments with findings from another identity, suggest `/respond-to-pr-review <pr>` alongside the stop message.
+   - If the script exits **0** (prints `OK:`) → proceed (you are a different identity than the author).
 
 3. **Read linked issue:** Run `node scripts/gh.tsissue view <id> --json number,state,title,labels,milestone,body --jq '"#\(.number) [\(.state | ascii_downcase)] \(.title)\nlabels: \([.labels[].name] | join(", "))\(.milestone.title // "" | if . != "" then " | milestone: \(.)" else "" end)\n\n\(.body // "")"'`. Extract the **Acceptance Criteria** section.
 

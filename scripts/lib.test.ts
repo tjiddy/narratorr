@@ -1,4 +1,5 @@
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, vi, beforeAll, beforeEach, afterEach } from 'vitest';
+import { generateKeyPairSync } from 'node:crypto';
 import {
   parseLabels,
   replaceLabel,
@@ -13,6 +14,7 @@ import {
   firstLines,
   parseComments,
   gitPush,
+  getSelfIdentity,
   _tokenCache,
 } from './lib.ts';
 
@@ -405,5 +407,79 @@ describe('gitPush', () => {
 
     expect(mockExec).toHaveBeenCalledTimes(1);
     expect(mockExec).toHaveBeenCalledWith('git', ['push', 'origin', 'HEAD'], expect.any(Object));
+  });
+});
+
+// ---------------------------------------------------------------------------
+// getSelfIdentity
+// ---------------------------------------------------------------------------
+
+describe('getSelfIdentity', () => {
+  const APP_ID = '12345';
+  let realPrivateKey: string;
+
+  // makeJwt() performs real RSA signing, so we need a valid PEM. Generate once
+  // for the suite (2048-bit gen is ~100-200ms).
+  beforeAll(() => {
+    const { privateKey } = generateKeyPairSync('rsa', {
+      modulusLength: 2048,
+      publicKeyEncoding: { type: 'spki', format: 'pem' },
+      privateKeyEncoding: { type: 'pkcs1', format: 'pem' },
+    });
+    realPrivateKey = privateKey;
+  });
+
+  function setAppCreds() {
+    process.env.GH_APP_ID = APP_ID;
+    process.env.GH_INSTALLATION_ID = '999';
+    process.env.GH_APP_PRIVATE_KEY = realPrivateKey;
+  }
+
+  function clearAppCreds() {
+    delete process.env.GH_APP_ID;
+    delete process.env.GH_INSTALLATION_ID;
+    delete process.env.GH_APP_PRIVATE_KEY;
+    delete process.env.GH_APP_PRIVATE_KEY_PATH;
+  }
+
+  beforeEach(() => {
+    mockExec.mockReset();
+  });
+
+  afterEach(() => {
+    clearAppCreds();
+  });
+
+  it('returns <slug>[bot] when GitHub App credentials are configured', () => {
+    setAppCreds();
+    // The tmp-script invocation that fetches /app returns the slug to stdout
+    mockExec.mockReturnValueOnce('narratorr-reviewer');
+
+    expect(getSelfIdentity()).toBe('narratorr-reviewer[bot]');
+
+    // Verify we shelled out to node with the tmp script, not `gh api user`
+    const [[cmd, args]] = mockExec.mock.calls;
+    expect(cmd).toBe('node');
+    expect(args?.[0]).toMatch(/narratorr-whoami-/);
+  });
+
+  it('falls back to `gh api user --jq .login` when no app credentials configured', () => {
+    // no setAppCreds() → hasAppCreds is false
+    mockExec.mockReturnValueOnce('tjiddy');
+
+    expect(getSelfIdentity()).toBe('tjiddy');
+
+    expect(mockExec).toHaveBeenCalledWith(
+      'gh',
+      ['api', 'user', '--jq', '.login'],
+      expect.any(Object),
+    );
+  });
+
+  it('propagates errors when the /app fetch fails', () => {
+    setAppCreds();
+    mockExec.mockImplementationOnce(() => { throw new Error('Bad credentials'); });
+
+    expect(() => getSelfIdentity()).toThrow('Bad credentials');
   });
 });
