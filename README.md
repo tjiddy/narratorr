@@ -103,7 +103,6 @@ src/
 | `PORT` | `3000` | Server port |
 | `NODE_ENV` | `development` | Environment |
 | `CONFIG_PATH` | `./config` | Config and database directory |
-| `LIBRARY_PATH` | `./audiobooks` | Audiobook library path |
 | `DATABASE_URL` | `file:./config/narratorr.db` | SQLite database path |
 | `URL_BASE` | `/` | Subpath for reverse proxy deployments |
 | `NARRATORR_SECRET_KEY` | (auto-generated) | 32-byte hex encryption key for credentials at rest |

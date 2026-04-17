@@ -27,7 +27,6 @@ pnpm exec playwright install chromium
 | `NODE_ENV`              | `production`                                                |
 | `PORT`                  | `3100` (kept off 3000/5173 to avoid dev clash)              |
 | `DATABASE_URL`          | per-run temp libSQL file under `os.tmpdir()`                |
-| `LIBRARY_PATH`          | per-run temp directory                                      |
 | `CONFIG_PATH`           | per-run temp directory (scopes `secret.key` etc.)           |
 | `AUTH_BYPASS`           | `true` — skips login for Phase 1/2                          |
 | `URL_BASE`              | `/`                                                         |
