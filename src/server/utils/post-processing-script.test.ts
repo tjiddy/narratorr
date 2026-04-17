@@ -203,7 +203,7 @@ describe('runPostProcessingScript', () => {
       expect(result.success).toBe(false);
       expect(result.warning).toBe('Post-processing script inaccessible: /scripts/post-import.sh (string-rejection)');
       expect(mockLog.warn).toHaveBeenCalledWith(
-        expect.objectContaining({ scriptPath: '/scripts/post-import.sh', error: 'string-rejection' }),
+        expect.objectContaining({ scriptPath: '/scripts/post-import.sh', error: expect.objectContaining({ message: 'string-rejection', type: 'string' }) }),
         expect.stringContaining('inaccessible'),
       );
     });

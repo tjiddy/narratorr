@@ -451,7 +451,7 @@ describe('ImportOrchestrator', () => {
       expect(importService.releaseSlot).toHaveBeenCalledTimes(2);
       expect(importService.importDownload).toHaveBeenCalledTimes(2);
       expect(log.error).toHaveBeenCalledWith(
-        expect.objectContaining({ downloadId: 5, error: expect.any(Error) }),
+        expect.objectContaining({ downloadId: 5, error: expect.objectContaining({ message: 'import exploded', type: 'Error' }) }),
         expect.stringContaining('Queued import failed'),
       );
     });
@@ -680,7 +680,7 @@ describe('ImportOrchestrator', () => {
       // F4: verify the fire-and-forget failure is observable via log.warn
       await vi.waitFor(() => {
         expect(log.warn).toHaveBeenCalledWith(
-          expect.objectContaining({ error: blacklistError, downloadId: 1 }),
+          expect.objectContaining({ error: expect.objectContaining({ message: 'DB blacklist error', type: 'Error' }), downloadId: 1 }),
           'Import failure blacklist dispatch failed',
         );
       });

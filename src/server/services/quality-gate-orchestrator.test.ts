@@ -1164,7 +1164,7 @@ describe('QualityGateOrchestrator', () => {
 
       expect(mockAdapter.removeDownload).not.toHaveBeenCalled();
       expect(rm).not.toHaveBeenCalled();
-      expect(log.warn).toHaveBeenCalledWith(expect.objectContaining({ error: expect.any(Error) }), expect.stringContaining('import settings'));
+      expect(log.warn).toHaveBeenCalledWith(expect.objectContaining({ error: expect.objectContaining({ message: 'DB connection failed', type: 'Error' }) }), expect.stringContaining('import settings'));
     });
 
     it('adapter.removeDownload() throws → error logged, does not crash cycle, download status still failed', async () => {
@@ -1832,7 +1832,7 @@ describe('QualityGateOrchestrator', () => {
 
       expect(importService.releaseSlot).toHaveBeenCalled();
       expect(log.error).toHaveBeenCalledWith(
-        expect.objectContaining({ downloadId: 1, error: expect.any(Error) }),
+        expect.objectContaining({ downloadId: 1, error: expect.objectContaining({ message: 'Import failed', type: 'Error' }) }),
         'Quality gate: inline import failed',
       );
     });
@@ -1894,7 +1894,7 @@ describe('QualityGateOrchestrator', () => {
 
       // Should not propagate — error should be caught
       expect(log.error).toHaveBeenCalledWith(
-        expect.objectContaining({ error: expect.any(Error) }),
+        expect.objectContaining({ error: expect.objectContaining({ message: 'drain failed', type: 'Error' }) }),
         expect.stringContaining('drain'),
       );
     });

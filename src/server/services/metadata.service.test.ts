@@ -684,7 +684,7 @@ describe('MetadataService', () => {
       const result = await service.getBook('B000TEST');
       expect(result).toBeNull();
       expect(mockLog.warn).toHaveBeenCalledWith(
-        expect.objectContaining({ query: 'B000TEST', error: transientErr }),
+        expect.objectContaining({ query: 'B000TEST', error: expect.objectContaining({ message: 'Audible.com transient failure: HTTP 500 Internal Server Error', type: 'TransientError' }) }),
         'Metadata getBook failed',
       );
     });
@@ -718,7 +718,7 @@ describe('MetadataService', () => {
       const result = await service.enrichBook('B000TEST');
       expect(result).toBeNull();
       expect(mockLog.warn).toHaveBeenCalledWith(
-        expect.objectContaining({ error: transientErr, asin: 'B000TEST' }),
+        expect.objectContaining({ error: expect.objectContaining({ message: 'Audnexus transient failure: Connection timed out', type: 'TransientError' }), asin: 'B000TEST' }),
         'Audnexus enrichment lookup failed',
       );
     });
