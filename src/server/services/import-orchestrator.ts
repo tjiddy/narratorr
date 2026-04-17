@@ -99,6 +99,8 @@ export class ImportOrchestrator {
     const failed = admittedIds.length - succeeded;
     this.log.info({ total: admittedIds.length, succeeded, failed, elapsedMs: Date.now() - startMs }, 'Import batch completed');
 
+    // Intentional: no drainQueuedImports() call here — cron re-queries on next tick;
+    // an explicit nudge would duplicate work and risk race conditions with concurrent drains.
     return results;
   }
 
@@ -122,12 +124,13 @@ export class ImportOrchestrator {
         claimed = await this.importService.claimQueuedDownload(next.id);
         if (!claimed) continue;
 
-        // Emit SSE explicitly — importDownload() skips it when status is already 'importing'
+        // DB row is already 'importing' at this point (set by claimQueuedDownload above).
+        // Emit SSE explicitly — importDownload() skips it when status is already 'importing'.
         emitDownloadImporting({
           broadcaster: this.broadcaster,
           downloadId: next.id,
           bookId: next.bookId,
-          downloadStatus: 'processing_queued',
+          downloadStatus: 'importing',
           log: this.log,
         });
 

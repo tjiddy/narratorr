@@ -327,6 +327,16 @@ describe('ImportOrchestrator', () => {
 
       expect(importService.releaseSlot).toHaveBeenCalledTimes(1);
     });
+
+    it('does not call drainQueuedImports after batch completes (cron re-queries on next tick)', async () => {
+      (importService.getEligibleDownloads as ReturnType<typeof vi.fn>).mockResolvedValue([1]);
+      (importService.importDownload as ReturnType<typeof vi.fn>).mockResolvedValueOnce(mockResult);
+      const drainSpy = vi.spyOn(orchestrator, 'drainQueuedImports');
+
+      await orchestrator.processCompletedDownloads();
+
+      expect(drainSpy).not.toHaveBeenCalled();
+    });
   });
 
   // ── #229 Observability — batch summary logging ──────────────────────────
@@ -402,7 +412,7 @@ describe('ImportOrchestrator', () => {
       expect(importService.tryAcquireSlot).toHaveBeenCalled();
       expect(importService.claimQueuedDownload).toHaveBeenCalledWith(5);
       expect(emitDownloadImporting).toHaveBeenCalledWith(expect.objectContaining({
-        downloadId: 5, bookId: 1, downloadStatus: 'processing_queued',
+        downloadId: 5, bookId: 1, downloadStatus: 'importing',
       }));
       expect(importService.importDownload).toHaveBeenCalledWith(5);
       expect(importService.releaseSlot).toHaveBeenCalled();
@@ -456,7 +466,7 @@ describe('ImportOrchestrator', () => {
       );
     });
 
-    it('SSE event fires exactly once per successfully claimed item with processing_queued status', async () => {
+    it('SSE event fires exactly once per successfully claimed item with importing status', async () => {
       (importService.getNextQueuedDownload as ReturnType<typeof vi.fn>)
         .mockResolvedValueOnce({ id: 5, bookId: 1 })
         .mockResolvedValueOnce(null);
@@ -466,7 +476,7 @@ describe('ImportOrchestrator', () => {
 
       expect(emitDownloadImporting).toHaveBeenCalledTimes(1);
       expect(emitDownloadImporting).toHaveBeenCalledWith(expect.objectContaining({
-        downloadId: 5, bookId: 1, downloadStatus: 'processing_queued',
+        downloadId: 5, bookId: 1, downloadStatus: 'importing',
       }));
     });
 
