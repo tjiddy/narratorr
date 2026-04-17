@@ -122,7 +122,7 @@ describe('ManualImportAdapter', () => {
     ctx = {
       db: inject<Db>(mockDb),
       log,
-      setPhase,
+      setPhase: setPhase as unknown as ImportAdapterContext['setPhase'],
     };
 
     adapter = new ManualImportAdapter(deps);

@@ -18,7 +18,7 @@ describe('confirmImport — import_jobs creation (#635)', () => {
   let mockBookService: { findDuplicate: ReturnType<typeof vi.fn>; create: ReturnType<typeof vi.fn> };
   let mockEventHistory: { create: ReturnType<typeof vi.fn> };
   let insertValues: ReturnType<typeof vi.fn>;
-  let nudgeWorker: ReturnType<typeof vi.fn>;
+  let nudgeWorker: () => void;
 
   beforeEach(() => {
     insertValues = vi.fn().mockResolvedValue(undefined);
@@ -43,7 +43,7 @@ describe('confirmImport — import_jobs creation (#635)', () => {
       })),
     };
     mockEventHistory = { create: vi.fn().mockResolvedValue({}) };
-    nudgeWorker = vi.fn();
+    nudgeWorker = vi.fn() as unknown as () => void;
 
     const log = createMockLogger();
     const mockSettingsService = createMockSettingsService({ library: { path: '/library' } });

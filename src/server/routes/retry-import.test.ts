@@ -6,18 +6,18 @@ import type { Db } from '../../db/index.js';
 import type { ImportQueueWorker } from '../services/import-queue-worker.js';
 import { retryImportRoute } from './retry-import.js';
 
-function createApp(db: Db, worker: ImportQueueWorker) {
+async function createApp(db: Db, worker: ImportQueueWorker) {
   const app = Fastify({ logger: false }).withTypeProvider<ZodTypeProvider>();
   app.setValidatorCompiler(validatorCompiler);
   app.setSerializerCompiler(serializerCompiler);
-  return app.register(async (scoped) => {
+  await app.register(async (scoped) => {
     await retryImportRoute(scoped as unknown as typeof app, db, worker);
   });
+  return app;
 }
 
 describe('POST /api/books/:id/retry-import', () => {
   let mockWorker: { nudge: ReturnType<typeof vi.fn> };
-  let selectResults: Map<number, unknown[]>;
 
   // Helper to build a mock DB with configurable select results
   function buildMockDb(opts: {
