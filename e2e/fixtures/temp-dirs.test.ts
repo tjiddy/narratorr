@@ -23,19 +23,20 @@ describe('createRunTempDirs', () => {
     }
   });
 
-  it('creates four distinct temp directories on disk', () => {
+  it('creates five distinct temp directories on disk', () => {
     const run = createRunTempDirs();
-    createdPaths.push(dirname(run.dbPath), run.libraryPath, run.configPath, run.downloadsPath);
+    createdPaths.push(dirname(run.dbPath), run.libraryPath, run.configPath, run.downloadsPath, run.sourcePath);
 
     expect(statSync(dirname(run.dbPath)).isDirectory()).toBe(true);
     expect(statSync(run.libraryPath).isDirectory()).toBe(true);
     expect(statSync(run.configPath).isDirectory()).toBe(true);
     expect(statSync(run.downloadsPath).isDirectory()).toBe(true);
+    expect(statSync(run.sourcePath).isDirectory()).toBe(true);
 
-    // All four must be distinct — sharing a path would collapse the
+    // All five must be distinct — sharing a path would collapse the
     // hermetic scopes the harness promises.
-    const paths = new Set([dirname(run.dbPath), run.libraryPath, run.configPath, run.downloadsPath]);
-    expect(paths.size).toBe(4);
+    const paths = new Set([dirname(run.dbPath), run.libraryPath, run.configPath, run.downloadsPath, run.sourcePath]);
+    expect(paths.size).toBe(5);
   });
 
   it('returns a dbPath that sits inside a dedicated enclosing directory', () => {
@@ -43,7 +44,7 @@ describe('createRunTempDirs', () => {
     // `narratorr.db` inside a temp dir. This lets teardown remove the
     // directory and sweep up libSQL's -wal / -shm sidecars in one shot.
     const run = createRunTempDirs();
-    createdPaths.push(dirname(run.dbPath), run.libraryPath, run.configPath, run.downloadsPath);
+    createdPaths.push(dirname(run.dbPath), run.libraryPath, run.configPath, run.downloadsPath, run.sourcePath);
 
     expect(run.dbPath.endsWith('narratorr.db')).toBe(true);
     expect(statSync(dirname(run.dbPath)).isDirectory()).toBe(true);
@@ -55,7 +56,7 @@ describe('createRunTempDirs', () => {
     expect(getCurrentRun()).toBeUndefined();
 
     const run = createRunTempDirs();
-    createdPaths.push(dirname(run.dbPath), run.libraryPath, run.configPath, run.downloadsPath);
+    createdPaths.push(dirname(run.dbPath), run.libraryPath, run.configPath, run.downloadsPath, run.sourcePath);
 
     expect(getCurrentRun()).toEqual(run);
   });
@@ -64,7 +65,7 @@ describe('createRunTempDirs', () => {
     // The fake qBit server writes completed torrent payloads here. Must exist
     // on disk before globalSetup starts the fake, so import can read from it.
     const run = createRunTempDirs();
-    createdPaths.push(dirname(run.dbPath), run.libraryPath, run.configPath, run.downloadsPath);
+    createdPaths.push(dirname(run.dbPath), run.libraryPath, run.configPath, run.downloadsPath, run.sourcePath);
 
     expect(statSync(run.downloadsPath).isDirectory()).toBe(true);
     expect(run.downloadsPath).not.toBe(dirname(run.dbPath));
@@ -76,8 +77,8 @@ describe('createRunTempDirs', () => {
     const first = createRunTempDirs();
     const second = createRunTempDirs();
     createdPaths.push(
-      dirname(first.dbPath), first.libraryPath, first.configPath, first.downloadsPath,
-      dirname(second.dbPath), second.libraryPath, second.configPath, second.downloadsPath,
+      dirname(first.dbPath), first.libraryPath, first.configPath, first.downloadsPath, first.sourcePath,
+      dirname(second.dbPath), second.libraryPath, second.configPath, second.downloadsPath, second.sourcePath,
     );
 
     expect(first.downloadsPath).not.toBe(second.downloadsPath);
@@ -87,8 +88,8 @@ describe('createRunTempDirs', () => {
     const first = createRunTempDirs();
     const second = createRunTempDirs();
     createdPaths.push(
-      dirname(first.dbPath), first.libraryPath, first.configPath, first.downloadsPath,
-      dirname(second.dbPath), second.libraryPath, second.configPath, second.downloadsPath,
+      dirname(first.dbPath), first.libraryPath, first.configPath, first.downloadsPath, first.sourcePath,
+      dirname(second.dbPath), second.libraryPath, second.configPath, second.downloadsPath, second.sourcePath,
     );
 
     expect(first.dbPath).not.toBe(second.dbPath);
@@ -96,6 +97,25 @@ describe('createRunTempDirs', () => {
     expect(first.configPath).not.toBe(second.configPath);
   });
 
-  it.todo('provisions sourcePath as a fifth distinct temp directory');
-  it.todo('returns a fresh sourcePath on each call');
+  it('provisions sourcePath as a fifth distinct temp directory', () => {
+    const run = createRunTempDirs();
+    createdPaths.push(dirname(run.dbPath), run.libraryPath, run.configPath, run.downloadsPath, run.sourcePath);
+
+    expect(statSync(run.sourcePath).isDirectory()).toBe(true);
+    expect(run.sourcePath).not.toBe(dirname(run.dbPath));
+    expect(run.sourcePath).not.toBe(run.libraryPath);
+    expect(run.sourcePath).not.toBe(run.configPath);
+    expect(run.sourcePath).not.toBe(run.downloadsPath);
+  });
+
+  it('returns a fresh sourcePath on each call', () => {
+    const first = createRunTempDirs();
+    const second = createRunTempDirs();
+    createdPaths.push(
+      dirname(first.dbPath), first.libraryPath, first.configPath, first.downloadsPath, first.sourcePath,
+      dirname(second.dbPath), second.libraryPath, second.configPath, second.downloadsPath, second.sourcePath,
+    );
+
+    expect(first.sourcePath).not.toBe(second.sourcePath);
+  });
 });

@@ -56,7 +56,7 @@ describe('globalSetup', () => {
 
   it('starts the MAM fake and the qBit fake on the configured ports', async () => {
     const run = createRunTempDirs();
-    orphans.push(dirname(run.dbPath), run.libraryPath, run.configPath, run.downloadsPath);
+    orphans.push(dirname(run.dbPath), run.libraryPath, run.configPath, run.downloadsPath, run.sourcePath);
 
     await globalSetup();
 
@@ -75,7 +75,7 @@ describe('globalSetup', () => {
 
   it('seeds the indexer/download-client/author/book rows into the per-run DB', async () => {
     const run = createRunTempDirs();
-    orphans.push(dirname(run.dbPath), run.libraryPath, run.configPath, run.downloadsPath);
+    orphans.push(dirname(run.dbPath), run.libraryPath, run.configPath, run.downloadsPath, run.sourcePath);
 
     await globalSetup();
 
@@ -93,7 +93,7 @@ describe('globalSetup', () => {
 
   it('pre-seeds MAM with a fixture matching the seeded book title', async () => {
     const run = createRunTempDirs();
-    orphans.push(dirname(run.dbPath), run.libraryPath, run.configPath, run.downloadsPath);
+    orphans.push(dirname(run.dbPath), run.libraryPath, run.configPath, run.downloadsPath, run.sourcePath);
 
     await globalSetup();
 
@@ -112,7 +112,7 @@ describe('globalSetup', () => {
 
   it('exposes fake URLs and paths on process.env for spec files', async () => {
     const run = createRunTempDirs();
-    orphans.push(dirname(run.dbPath), run.libraryPath, run.configPath, run.downloadsPath);
+    orphans.push(dirname(run.dbPath), run.libraryPath, run.configPath, run.downloadsPath, run.sourcePath);
 
     await globalSetup();
 
