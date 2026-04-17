@@ -15,3 +15,6 @@ export const AUDIBLE_TIMEOUT_MS = 10_000;
 
 /** Request timeout for Audnexus metadata API (ms). */
 export const AUDNEXUS_TIMEOUT_MS = 15_000;
+
+/** Request timeout for HTTP file downloads — cover images, NZB files via blackhole (ms). */
+export const HTTP_DOWNLOAD_TIMEOUT_MS = 30_000;

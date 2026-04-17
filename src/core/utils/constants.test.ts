@@ -6,6 +6,7 @@ import {
   NOTIFIER_TIMEOUT_MS,
   AUDIBLE_TIMEOUT_MS,
   AUDNEXUS_TIMEOUT_MS,
+  HTTP_DOWNLOAD_TIMEOUT_MS,
 } from './constants.js';
 
 describe('timeout constants', () => {
@@ -31,5 +32,9 @@ describe('timeout constants', () => {
 
   it('AUDNEXUS_TIMEOUT_MS is 15_000 (15s)', () => {
     expect(AUDNEXUS_TIMEOUT_MS).toBe(15_000);
+  });
+
+  it('HTTP_DOWNLOAD_TIMEOUT_MS is 30_000 (30s)', () => {
+    expect(HTTP_DOWNLOAD_TIMEOUT_MS).toBe(30_000);
   });
 });
