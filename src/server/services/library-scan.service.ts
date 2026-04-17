@@ -14,6 +14,7 @@ import { type EnrichmentDeps } from './enrichment-orchestration.helpers.js';
 import { importSingleBook as importSingleBookHelper, confirmImport as confirmImportHelper, type ImportPipelineDeps } from './import-orchestration.helpers.js';
 import { findAudioLeafFolders, getAudioStats, buildDiscoveredBook } from './library-scan.helpers.js';
 import type { EventHistoryService } from './event-history.service.js';
+import type { EventBroadcasterService } from './event-broadcaster.service.js';
 import { searchWithSwapRetry } from '../utils/search-helpers.js';
 import { parseFolderStructure } from '../utils/folder-parsing.js';
 import type { DiscoveredBook } from '../../shared/schemas/library-scan.js';
@@ -67,6 +68,7 @@ export class LibraryScanService {
     private settingsService: SettingsService,
     private log: FastifyBaseLogger,
     private eventHistory: EventHistoryService,
+    private eventBroadcaster?: EventBroadcasterService,
   ) {}
 
   private get enrichmentDeps(): EnrichmentDeps {
@@ -74,7 +76,7 @@ export class LibraryScanService {
   }
 
   private get importDeps(): ImportPipelineDeps {
-    return { db: this.db, log: this.log, bookService: this.bookService, settingsService: this.settingsService, eventHistory: this.eventHistory, enrichmentDeps: this.enrichmentDeps };
+    return { db: this.db, log: this.log, bookService: this.bookService, settingsService: this.settingsService, eventHistory: this.eventHistory, enrichmentDeps: this.enrichmentDeps, broadcaster: this.eventBroadcaster };
   }
 
   /**
