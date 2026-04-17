@@ -33,7 +33,7 @@ describe('globalTeardown', () => {
 
   it('removes the DB, library, config, and downloads directories', async () => {
     const run = createRunTempDirs();
-    orphans.push(dirname(run.dbPath), run.libraryPath, run.configPath, run.downloadsPath);
+    orphans.push(dirname(run.dbPath), run.libraryPath, run.configPath, run.downloadsPath, run.sourcePath);
 
     // Simulate libSQL having written the DB file and its WAL / SHM sidecars.
     writeFileSync(run.dbPath, 'db-bytes');
@@ -63,7 +63,7 @@ describe('globalTeardown', () => {
     // the library dir but left the config dir. Teardown should clean what
     // remains without exploding on the missing one.
     const run = createRunTempDirs();
-    orphans.push(dirname(run.dbPath), run.libraryPath, run.configPath, run.downloadsPath);
+    orphans.push(dirname(run.dbPath), run.libraryPath, run.configPath, run.downloadsPath, run.sourcePath);
 
     rmSync(run.libraryPath, { recursive: true, force: true });
 
@@ -77,7 +77,7 @@ describe('globalTeardown', () => {
 
   it('closes registered fake-server handles before removing temp directories', async () => {
     const run = createRunTempDirs();
-    orphans.push(dirname(run.dbPath), run.libraryPath, run.configPath, run.downloadsPath);
+    orphans.push(dirname(run.dbPath), run.libraryPath, run.configPath, run.downloadsPath, run.sourcePath);
 
     const closeMam = vi.fn(async () => { /* no-op */ });
     const closeQbit = vi.fn(async () => { /* no-op */ });
@@ -94,7 +94,7 @@ describe('globalTeardown', () => {
 
   it('does not throw when a fake-server handle rejects during close', async () => {
     const run = createRunTempDirs();
-    orphans.push(dirname(run.dbPath), run.libraryPath, run.configPath, run.downloadsPath);
+    orphans.push(dirname(run.dbPath), run.libraryPath, run.configPath, run.downloadsPath, run.sourcePath);
 
     // A dangling listener is cheaper than a failed teardown — must swallow.
     registerFake({ name: 'mam', close: async () => { throw new Error('boom'); } });
@@ -108,6 +108,17 @@ describe('globalTeardown', () => {
     expect(existsSync(run.libraryPath)).toBe(false);
   });
 
+  it('removes sourcePath alongside the other temp dirs', async () => {
+    const run = createRunTempDirs();
+    orphans.push(dirname(run.dbPath), run.libraryPath, run.configPath, run.downloadsPath, run.sourcePath);
+
+    expect(existsSync(run.sourcePath)).toBe(true);
+
+    await globalTeardown();
+
+    expect(existsSync(run.sourcePath)).toBe(false);
+  });
+
   it('ignores temp dirs created by an unrelated process', async () => {
     // Scoping guarantee: globalTeardown only removes what was recorded by
     // this process's createRunTempDirs. A dir created by a concurrent run
@@ -116,7 +127,7 @@ describe('globalTeardown', () => {
     orphans.push(unrelatedDir);
 
     const run = createRunTempDirs();
-    orphans.push(dirname(run.dbPath), run.libraryPath, run.configPath, run.downloadsPath);
+    orphans.push(dirname(run.dbPath), run.libraryPath, run.configPath, run.downloadsPath, run.sourcePath);
 
     await globalTeardown();
 

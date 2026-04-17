@@ -13,6 +13,12 @@ export interface RunTempDirs {
    * `DownloadService.sendToClient` only forwards `category`.
    */
   downloadsPath: string;
+  /**
+   * Per-run source directory for manual-import E2E tests. globalSetup populates
+   * it with an `<author> - <title>` subfolder containing a copy of `silent.m4b`
+   * so the scan endpoint discovers audiobook files during the critical-path spec.
+   */
+  sourcePath: string;
 }
 
 /**
@@ -38,9 +44,10 @@ export function createRunTempDirs(): RunTempDirs {
   const libraryPath = mkdtempSync(prefix);
   const configPath = mkdtempSync(prefix);
   const downloadsPath = mkdtempSync(prefix);
+  const sourcePath = mkdtempSync(prefix);
 
   const dbPath = join(dbDir, 'narratorr.db');
-  const run: RunTempDirs = { dbPath, libraryPath, configPath, downloadsPath };
+  const run: RunTempDirs = { dbPath, libraryPath, configPath, downloadsPath, sourcePath };
 
   currentRun = run;
   return run;

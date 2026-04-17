@@ -45,12 +45,14 @@ export class AudibleProvider implements MetadataSearchProvider {
 
   private tld: string;
   private preferredLanguage: string;
+  private baseUrl: string;
 
   constructor(config: AudibleConfig = {}) {
     const region = config.region ?? 'us';
     this.tld = REGION_TLDS[region] ?? '.com';
     this.preferredLanguage = REGION_LANGUAGES[region] ?? 'english';
     this.name = `Audible${this.tld}`;
+    this.baseUrl = process.env.AUDIBLE_BASE_URL ?? `https://api.audible${this.tld}`;
   }
 
   async searchBooks(query: string, options?: SearchBooksOptions): Promise<SearchBooksResult> {
@@ -152,7 +154,7 @@ export class AudibleProvider implements MetadataSearchProvider {
         image_sizes: IMAGE_SIZES,
       });
       const data = await this.request<{ products?: AudibleProduct[] }>(
-        `https://api.audible${this.tld}/1.0/catalog/products?${params}`,
+        `${this.baseUrl}/1.0/catalog/products?${params}`,
       );
       if (data && Array.isArray(data.products)) {
         return { success: true, message: `Connected to Audible (${this.name})` };
@@ -167,13 +169,13 @@ export class AudibleProvider implements MetadataSearchProvider {
   }
 
   private async fetchProducts(params: URLSearchParams): Promise<AudibleProduct[]> {
-    const url = `https://api.audible${this.tld}/1.0/catalog/products?${params}`;
+    const url = `${this.baseUrl}/1.0/catalog/products?${params}`;
     const data = await this.request<{ products?: AudibleProduct[] }>(url);
     return data?.products ?? [];
   }
 
   private async fetchProduct(asin: string, params: URLSearchParams): Promise<AudibleProduct | null> {
-    const url = `https://api.audible${this.tld}/1.0/catalog/products/${asin}?${params}`;
+    const url = `${this.baseUrl}/1.0/catalog/products/${asin}?${params}`;
     const data = await this.request<{ product?: AudibleProduct }>(url);
     return data?.product ?? null;
   }

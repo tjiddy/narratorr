@@ -1,9 +1,11 @@
-import { resolve, dirname } from 'node:path';
+import { resolve, dirname, join } from 'node:path';
+import { copyFileSync, mkdirSync, writeFileSync, readFileSync, existsSync, unlinkSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { getCurrentRun } from './fixtures/temp-dirs.js';
 import { registerFake } from './fixtures/run-state.js';
 import { createMAMFake } from './fakes/mam.js';
 import { createQBitFake } from './fakes/qbit.js';
+import { createAudibleFake } from './fakes/audible.js';
 import { seedE2ERun, SEED_SEARCH_QUERY } from './fixtures/seed.js';
 
 /**
@@ -12,16 +14,23 @@ import { seedE2ERun, SEED_SEARCH_QUERY } from './fixtures/seed.js';
  * webServer command starts.
  *
  * Responsibilities:
- *   1. Start the fake MAM + qBit servers on fixed ports (4100 / 4200)
+ *   1. Start the fake MAM + qBit + Audible servers on fixed ports (4100 / 4200 / 4300)
  *   2. Pre-seed the MAM fake with the fixture the critical-path spec searches for
- *   3. Run Drizzle migrations and insert indexer/download-client/author/book rows
+ *   3. Pre-populate sourcePath with an author-title subfolder for manual-import
+ *   4. Run Drizzle migrations and insert indexer/download-client/author/book rows
  *      into the per-run DB so Narratorr finds them at boot
- *   4. Register fake-server handles in run-state module state so globalTeardown
+ *   5. Register fake-server handles in run-state module state so globalTeardown
  *      can `await handle.close()` on each
  */
 
 const DEFAULT_MAM_PORT = 4100;
 const DEFAULT_QBIT_PORT = 4200;
+const DEFAULT_AUDIBLE_PORT = 4300;
+
+/** Manual-import fixture constants — folder name parsed by scanDirectory. */
+export const SEED_MANUAL_IMPORT_AUTHOR = 'E2E Manual Author';
+export const SEED_MANUAL_IMPORT_TITLE = 'E2E Manual Import Book';
+const MANUAL_IMPORT_FOLDER = `${SEED_MANUAL_IMPORT_AUTHOR} - ${SEED_MANUAL_IMPORT_TITLE}`;
 
 /**
  * Resolve the port a fake server should listen on. Reads `env` first (for tests
@@ -46,6 +55,7 @@ export default async function globalSetup(): Promise<void> {
 
   const mamPort = resolvePort('E2E_MAM_PORT', DEFAULT_MAM_PORT);
   const qbitPort = resolvePort('E2E_QBIT_PORT', DEFAULT_QBIT_PORT);
+  const audiblePort = resolvePort('E2E_AUDIBLE_PORT', DEFAULT_AUDIBLE_PORT);
 
   // Resolve the silent m4b fixture relative to this file so it works in both
   // dev (tsx) and compiled (tsc) invocations.
@@ -74,6 +84,15 @@ export default async function globalSetup(): Promise<void> {
     addLatencyMs: 150,
   });
   registerFake({ name: 'qbit', close: qbit.close });
+
+  const audible = await createAudibleFake({ port: audiblePort });
+  registerFake({ name: 'audible', close: audible.close });
+
+  // Pre-populate sourcePath with the manual-import fixture folder so the
+  // scan endpoint discovers an audiobook during the manual-import spec.
+  const bookFolder = join(run.sourcePath, MANUAL_IMPORT_FOLDER);
+  mkdirSync(bookFolder, { recursive: true });
+  copyFileSync(fixturePath, join(bookFolder, 'silent.m4b'));
 
   // Seed one default fixture matching the book title so the release-search
   // modal finds results without further spec-side setup.
@@ -117,12 +136,22 @@ export default async function globalSetup(): Promise<void> {
   process.env.E2E_LIBRARY_PATH = run.libraryPath;
   process.env.E2E_MAM_URL = mam.url;
   process.env.E2E_QBIT_URL = qbit.url;
+  process.env.E2E_AUDIBLE_URL = audible.url;
+  process.env.E2E_SOURCE_PATH = run.sourcePath;
+
+  // Write sourcePath to a per-run state file inside configPath. Workers read
+  // this via getE2ESourcePath(). The file lives inside the per-run temp dir
+  // (not a repo-global path) so concurrent E2E runs stay isolated — each run
+  // discovers its own configPath via E2E_RUN_STATE_DIR, set at config-load
+  // time in playwright.config.ts (config-time env vars propagate to workers).
+  writeFileSync(join(run.configPath, '.run-paths.json'), JSON.stringify({ sourcePath: run.sourcePath }), 'utf-8');
 }
 
 /** Exported constants for spec files that need to construct control URLs. */
 export const E2E_DEFAULT_PORTS = {
   mam: DEFAULT_MAM_PORT,
   qbit: DEFAULT_QBIT_PORT,
+  audible: DEFAULT_AUDIBLE_PORT,
 } as const;
 
 /**
@@ -137,4 +166,58 @@ export const E2E_DEFAULT_PORTS = {
 export function qbitControlUrl(path: string): string {
   const base = process.env.E2E_QBIT_URL ?? `http://localhost:${DEFAULT_QBIT_PORT}`;
   return `${base}${path}`;
+}
+
+/** State file name — lives inside the per-run configPath directory. */
+const RUN_PATHS_FILENAME = '.run-paths.json';
+
+/**
+ * Resolves the per-run state file path. Uses E2E_RUN_STATE_DIR (set at
+ * config-load time in playwright.config.ts and inherited by workers) or
+ * falls back to getCurrentRun().configPath for same-process callers.
+ */
+function resolveRunPathsFile(): string | undefined {
+  const dir = process.env.E2E_RUN_STATE_DIR;
+  if (dir) return join(dir, RUN_PATHS_FILENAME);
+  const run = getCurrentRun();
+  if (run) return join(run.configPath, RUN_PATHS_FILENAME);
+  return undefined;
+}
+
+/**
+ * Helper for spec files — returns the per-run sourcePath for manual-import
+ * fixtures. Unlike fixed-port fakes, sourcePath is a dynamic temp dir that
+ * changes every run, so this reads from a per-run state file.
+ *
+ * The file lives inside the per-run configPath directory (not a repo-global
+ * path) so concurrent E2E runs stay isolated. Workers discover the directory
+ * via E2E_RUN_STATE_DIR, set at config-load time in playwright.config.ts
+ * (config-time env vars propagate to workers, unlike globalSetup mutations).
+ */
+export function getE2ESourcePath(): string {
+  // Same-process fast path (globalSetup, same-process tooling).
+  const fromEnv = process.env.E2E_SOURCE_PATH;
+  if (fromEnv) return fromEnv;
+  // Worker path — read from per-run state file.
+  const filePath = resolveRunPathsFile();
+  if (filePath && existsSync(filePath)) {
+    const data = JSON.parse(readFileSync(filePath, 'utf-8')) as { sourcePath: string };
+    return data.sourcePath;
+  }
+  throw new Error(
+    'sourcePath unavailable — E2E_SOURCE_PATH not set and .run-paths.json not found ' +
+    `(looked in E2E_RUN_STATE_DIR=${process.env.E2E_RUN_STATE_DIR ?? '<unset>'})`,
+  );
+}
+
+/** Clean up the per-run state file — called from globalTeardown. */
+export function cleanupRunPathsFile(): void {
+  const filePath = resolveRunPathsFile();
+  if (!filePath) return;
+  try {
+    unlinkSync(filePath);
+  } catch {
+    // Best-effort — file may not exist if globalSetup failed.
+    // Also cleaned up when configPath is removed by teardown.
+  }
 }

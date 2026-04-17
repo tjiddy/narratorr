@@ -6,7 +6,7 @@ import { drizzle } from 'drizzle-orm/libsql';
 import { _resetCurrentRunForTests, createRunTempDirs, getCurrentRun } from './fixtures/temp-dirs.js';
 import { _resetRegisteredFakesForTests, getRegisteredFakes } from './fixtures/run-state.js';
 import { authors, books, downloadClients, indexers } from '../src/db/schema.js';
-import globalSetup from './global-setup.js';
+import globalSetup, { getE2ESourcePath, cleanupRunPathsFile } from './global-setup.js';
 
 /**
  * globalSetup runs real Fastify servers on fixed ports 4100/4200. These tests
@@ -17,10 +17,11 @@ import globalSetup from './global-setup.js';
 // don't collide on 4100/4200. Production runs still use the fixed defaults
 // because env vars aren't set.
 let nextPortBase = 15100;
-function allocatePortPair(): { mam: number; qbit: number } {
+function allocatePortPair(): { mam: number; qbit: number; audible: number } {
   const mam = nextPortBase++;
   const qbit = nextPortBase++;
-  return { mam, qbit };
+  const audible = nextPortBase++;
+  return { mam, qbit, audible };
 }
 
 describe('globalSetup', () => {
@@ -30,9 +31,10 @@ describe('globalSetup', () => {
     _resetCurrentRunForTests();
     _resetRegisteredFakesForTests();
     orphans.length = 0;
-    const { mam, qbit } = allocatePortPair();
+    const { mam, qbit, audible } = allocatePortPair();
     process.env.E2E_MAM_PORT = String(mam);
     process.env.E2E_QBIT_PORT = String(qbit);
+    process.env.E2E_AUDIBLE_PORT = String(audible);
   });
 
   afterEach(async () => {
@@ -45,6 +47,9 @@ describe('globalSetup', () => {
     }
     delete process.env.E2E_MAM_PORT;
     delete process.env.E2E_QBIT_PORT;
+    delete process.env.E2E_AUDIBLE_PORT;
+    delete process.env.E2E_AUDIBLE_URL;
+    delete process.env.E2E_RUN_STATE_DIR;
   });
 
   it('throws a clear error if createRunTempDirs has not been called', async () => {
@@ -56,7 +61,7 @@ describe('globalSetup', () => {
 
   it('starts the MAM fake and the qBit fake on the configured ports', async () => {
     const run = createRunTempDirs();
-    orphans.push(dirname(run.dbPath), run.libraryPath, run.configPath, run.downloadsPath);
+    orphans.push(dirname(run.dbPath), run.libraryPath, run.configPath, run.downloadsPath, run.sourcePath);
 
     await globalSetup();
 
@@ -75,7 +80,7 @@ describe('globalSetup', () => {
 
   it('seeds the indexer/download-client/author/book rows into the per-run DB', async () => {
     const run = createRunTempDirs();
-    orphans.push(dirname(run.dbPath), run.libraryPath, run.configPath, run.downloadsPath);
+    orphans.push(dirname(run.dbPath), run.libraryPath, run.configPath, run.downloadsPath, run.sourcePath);
 
     await globalSetup();
 
@@ -93,7 +98,7 @@ describe('globalSetup', () => {
 
   it('pre-seeds MAM with a fixture matching the seeded book title', async () => {
     const run = createRunTempDirs();
-    orphans.push(dirname(run.dbPath), run.libraryPath, run.configPath, run.downloadsPath);
+    orphans.push(dirname(run.dbPath), run.libraryPath, run.configPath, run.downloadsPath, run.sourcePath);
 
     await globalSetup();
 
@@ -107,9 +112,47 @@ describe('globalSetup', () => {
     expect(body.data![0].title).toMatch(/E2E Test Book/);
   });
 
+  it('starts the Audible fake on a configured port and registers it for teardown', async () => {
+    const run = createRunTempDirs();
+    orphans.push(dirname(run.dbPath), run.libraryPath, run.configPath, run.downloadsPath, run.sourcePath);
+
+    await globalSetup();
+
+    const names = getRegisteredFakes().map((f) => f.name);
+    expect(names).toContain('audible');
+
+    // The fake should respond to Audible API catalog requests with empty products.
+    const audibleRes = await fetch(`${process.env.E2E_AUDIBLE_URL}/1.0/catalog/products?title=test`);
+    expect(audibleRes.status).toBe(200);
+    const body = await audibleRes.json() as { products: unknown[]; total_results: number };
+    expect(body.products).toEqual([]);
+    expect(body.total_results).toBe(0);
+  });
+
+  it('pre-populates sourcePath with an author-title subfolder containing silent.m4b', async () => {
+    const run = createRunTempDirs();
+    orphans.push(dirname(run.dbPath), run.libraryPath, run.configPath, run.downloadsPath, run.sourcePath);
+
+    await globalSetup();
+
+    const { existsSync, readdirSync } = await import('node:fs');
+    const { join } = await import('node:path');
+
+    // Should have exactly one subfolder matching the expected name.
+    const entries = readdirSync(run.sourcePath);
+    expect(entries).toHaveLength(1);
+    expect(entries[0]).toBe('E2E Manual Author - E2E Manual Import Book');
+
+    // The subfolder should contain the silent.m4b fixture.
+    const bookDir = join(run.sourcePath, entries[0]);
+    const files = readdirSync(bookDir);
+    expect(files).toContain('silent.m4b');
+    expect(existsSync(join(bookDir, 'silent.m4b'))).toBe(true);
+  });
+
   it('exposes fake URLs and paths on process.env for spec files', async () => {
     const run = createRunTempDirs();
-    orphans.push(dirname(run.dbPath), run.libraryPath, run.configPath, run.downloadsPath);
+    orphans.push(dirname(run.dbPath), run.libraryPath, run.configPath, run.downloadsPath, run.sourcePath);
 
     await globalSetup();
 
@@ -120,5 +163,63 @@ describe('globalSetup', () => {
 
     // Sanity — getCurrentRun is still populated and consistent with env.
     expect(getCurrentRun()?.downloadsPath).toBe(run.downloadsPath);
+  });
+
+  it('writes .run-paths.json to configPath with the current sourcePath', async () => {
+    const run = createRunTempDirs();
+    orphans.push(dirname(run.dbPath), run.libraryPath, run.configPath, run.downloadsPath, run.sourcePath);
+
+    await globalSetup();
+
+    const { existsSync, readFileSync } = await import('node:fs');
+    const { join } = await import('node:path');
+
+    const stateFile = join(run.configPath, '.run-paths.json');
+    expect(existsSync(stateFile)).toBe(true);
+
+    const data = JSON.parse(readFileSync(stateFile, 'utf-8')) as { sourcePath: string };
+    expect(data.sourcePath).toBe(run.sourcePath);
+  });
+
+  it('getE2ESourcePath reads from the state file when E2E_SOURCE_PATH is unset', async () => {
+    const run = createRunTempDirs();
+    orphans.push(dirname(run.dbPath), run.libraryPath, run.configPath, run.downloadsPath, run.sourcePath);
+
+    // Set E2E_RUN_STATE_DIR so the helper can find the per-run state file.
+    process.env.E2E_RUN_STATE_DIR = run.configPath;
+
+    await globalSetup();
+
+    // Clear E2E_SOURCE_PATH to simulate a worker process that doesn't
+    // have same-process env mutations from globalSetup.
+    const saved = process.env.E2E_SOURCE_PATH;
+    delete process.env.E2E_SOURCE_PATH;
+    try {
+      const result = getE2ESourcePath();
+      expect(result).toBe(run.sourcePath);
+    } finally {
+      process.env.E2E_SOURCE_PATH = saved;
+      delete process.env.E2E_RUN_STATE_DIR;
+    }
+  });
+
+  it('cleanupRunPathsFile removes the per-run state file', async () => {
+    const run = createRunTempDirs();
+    orphans.push(dirname(run.dbPath), run.libraryPath, run.configPath, run.downloadsPath, run.sourcePath);
+
+    // Set E2E_RUN_STATE_DIR so cleanup can find the per-run state file.
+    process.env.E2E_RUN_STATE_DIR = run.configPath;
+
+    await globalSetup();
+
+    const { existsSync } = await import('node:fs');
+    const { join } = await import('node:path');
+
+    expect(existsSync(join(run.configPath, '.run-paths.json'))).toBe(true);
+
+    cleanupRunPathsFile();
+
+    expect(existsSync(join(run.configPath, '.run-paths.json'))).toBe(false);
+    delete process.env.E2E_RUN_STATE_DIR;
   });
 });

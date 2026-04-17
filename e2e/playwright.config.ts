@@ -19,6 +19,13 @@ import { createRunTempDirs } from './fixtures/temp-dirs.js';
 // teardown can remove them after the run.
 const tempDirs = createRunTempDirs();
 
+// Expose the per-run configPath as an env var at config-load time so test
+// workers inherit it (workers fork from this process AFTER config loads).
+// Unlike webServer.env (server-only) or globalSetup mutations (too late),
+// config-load-time env vars DO propagate to Playwright worker processes.
+// Used by getE2ESourcePath() to locate the per-run .run-paths.json file.
+process.env.E2E_RUN_STATE_DIR = tempDirs.configPath;
+
 // Resolve output paths relative to this config file, not the caller's cwd —
 // otherwise Playwright dumps test-results/ at wherever pnpm was invoked from.
 const CONFIG_DIR = dirname(fileURLToPath(import.meta.url));
@@ -78,6 +85,14 @@ export default defineConfig({
       // Not consumed by app code — the fake qBit already knows the path from
       // its constructor in global-setup.ts.
       E2E_DOWNLOADS_PATH: tempDirs.downloadsPath,
+      // Override the Audible API base URL so AudibleProvider sends requests to
+      // the E2E fake instead of the real Audible API. The fake returns empty
+      // products, making the match job resolve to confidence 'none'.
+      AUDIBLE_BASE_URL: 'http://localhost:4300',
+      // Surface the per-run source path for the manual-import spec. The spec
+      // enters this path in the scan input so Narratorr discovers the seeded
+      // audiobook folder.
+      E2E_SOURCE_PATH: tempDirs.sourcePath,
     },
   },
 });
