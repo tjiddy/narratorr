@@ -17,10 +17,11 @@ import globalSetup from './global-setup.js';
 // don't collide on 4100/4200. Production runs still use the fixed defaults
 // because env vars aren't set.
 let nextPortBase = 15100;
-function allocatePortPair(): { mam: number; qbit: number } {
+function allocatePortPair(): { mam: number; qbit: number; audible: number } {
   const mam = nextPortBase++;
   const qbit = nextPortBase++;
-  return { mam, qbit };
+  const audible = nextPortBase++;
+  return { mam, qbit, audible };
 }
 
 describe('globalSetup', () => {
@@ -30,9 +31,10 @@ describe('globalSetup', () => {
     _resetCurrentRunForTests();
     _resetRegisteredFakesForTests();
     orphans.length = 0;
-    const { mam, qbit } = allocatePortPair();
+    const { mam, qbit, audible } = allocatePortPair();
     process.env.E2E_MAM_PORT = String(mam);
     process.env.E2E_QBIT_PORT = String(qbit);
+    process.env.E2E_AUDIBLE_PORT = String(audible);
   });
 
   afterEach(async () => {
@@ -45,6 +47,8 @@ describe('globalSetup', () => {
     }
     delete process.env.E2E_MAM_PORT;
     delete process.env.E2E_QBIT_PORT;
+    delete process.env.E2E_AUDIBLE_PORT;
+    delete process.env.E2E_AUDIBLE_URL;
   });
 
   it('throws a clear error if createRunTempDirs has not been called', async () => {
@@ -107,8 +111,42 @@ describe('globalSetup', () => {
     expect(body.data![0].title).toMatch(/E2E Test Book/);
   });
 
-  it.todo('starts the Audible fake on a configured port and registers it for teardown');
-  it.todo('pre-populates sourcePath with an author-title subfolder containing silent.m4b');
+  it('starts the Audible fake on a configured port and registers it for teardown', async () => {
+    const run = createRunTempDirs();
+    orphans.push(dirname(run.dbPath), run.libraryPath, run.configPath, run.downloadsPath, run.sourcePath);
+
+    await globalSetup();
+
+    const names = getRegisteredFakes().map((f) => f.name);
+    expect(names).toContain('audible');
+
+    // The fake should respond to Audible API catalog requests with empty products.
+    const audibleRes = await fetch(`${process.env.E2E_AUDIBLE_URL}/1.0/catalog/products?title=test`);
+    expect(audibleRes.status).toBe(200);
+    const body = await audibleRes.json() as { products: unknown[] };
+    expect(body).toEqual({ products: [] });
+  });
+
+  it('pre-populates sourcePath with an author-title subfolder containing silent.m4b', async () => {
+    const run = createRunTempDirs();
+    orphans.push(dirname(run.dbPath), run.libraryPath, run.configPath, run.downloadsPath, run.sourcePath);
+
+    await globalSetup();
+
+    const { existsSync, readdirSync } = await import('node:fs');
+    const { join } = await import('node:path');
+
+    // Should have exactly one subfolder matching the expected name.
+    const entries = readdirSync(run.sourcePath);
+    expect(entries).toHaveLength(1);
+    expect(entries[0]).toBe('E2E Manual Author - E2E Manual Import Book');
+
+    // The subfolder should contain the silent.m4b fixture.
+    const bookDir = join(run.sourcePath, entries[0]);
+    const files = readdirSync(bookDir);
+    expect(files).toContain('silent.m4b');
+    expect(existsSync(join(bookDir, 'silent.m4b'))).toBe(true);
+  });
 
   it('exposes fake URLs and paths on process.env for spec files', async () => {
     const run = createRunTempDirs();

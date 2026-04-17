@@ -1,9 +1,11 @@
-import { resolve, dirname } from 'node:path';
+import { resolve, dirname, join } from 'node:path';
+import { copyFileSync, mkdirSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { getCurrentRun } from './fixtures/temp-dirs.js';
 import { registerFake } from './fixtures/run-state.js';
 import { createMAMFake } from './fakes/mam.js';
 import { createQBitFake } from './fakes/qbit.js';
+import { createAudibleFake } from './fakes/audible.js';
 import { seedE2ERun, SEED_SEARCH_QUERY } from './fixtures/seed.js';
 
 /**
@@ -12,16 +14,23 @@ import { seedE2ERun, SEED_SEARCH_QUERY } from './fixtures/seed.js';
  * webServer command starts.
  *
  * Responsibilities:
- *   1. Start the fake MAM + qBit servers on fixed ports (4100 / 4200)
+ *   1. Start the fake MAM + qBit + Audible servers on fixed ports (4100 / 4200 / 4300)
  *   2. Pre-seed the MAM fake with the fixture the critical-path spec searches for
- *   3. Run Drizzle migrations and insert indexer/download-client/author/book rows
+ *   3. Pre-populate sourcePath with an author-title subfolder for manual-import
+ *   4. Run Drizzle migrations and insert indexer/download-client/author/book rows
  *      into the per-run DB so Narratorr finds them at boot
- *   4. Register fake-server handles in run-state module state so globalTeardown
+ *   5. Register fake-server handles in run-state module state so globalTeardown
  *      can `await handle.close()` on each
  */
 
 const DEFAULT_MAM_PORT = 4100;
 const DEFAULT_QBIT_PORT = 4200;
+const DEFAULT_AUDIBLE_PORT = 4300;
+
+/** Manual-import fixture constants — folder name parsed by scanDirectory. */
+export const SEED_MANUAL_IMPORT_AUTHOR = 'E2E Manual Author';
+export const SEED_MANUAL_IMPORT_TITLE = 'E2E Manual Import Book';
+const MANUAL_IMPORT_FOLDER = `${SEED_MANUAL_IMPORT_AUTHOR} - ${SEED_MANUAL_IMPORT_TITLE}`;
 
 /**
  * Resolve the port a fake server should listen on. Reads `env` first (for tests
@@ -46,6 +55,7 @@ export default async function globalSetup(): Promise<void> {
 
   const mamPort = resolvePort('E2E_MAM_PORT', DEFAULT_MAM_PORT);
   const qbitPort = resolvePort('E2E_QBIT_PORT', DEFAULT_QBIT_PORT);
+  const audiblePort = resolvePort('E2E_AUDIBLE_PORT', DEFAULT_AUDIBLE_PORT);
 
   // Resolve the silent m4b fixture relative to this file so it works in both
   // dev (tsx) and compiled (tsc) invocations.
@@ -74,6 +84,15 @@ export default async function globalSetup(): Promise<void> {
     addLatencyMs: 150,
   });
   registerFake({ name: 'qbit', close: qbit.close });
+
+  const audible = await createAudibleFake({ port: audiblePort });
+  registerFake({ name: 'audible', close: audible.close });
+
+  // Pre-populate sourcePath with the manual-import fixture folder so the
+  // scan endpoint discovers an audiobook during the manual-import spec.
+  const bookFolder = join(run.sourcePath, MANUAL_IMPORT_FOLDER);
+  mkdirSync(bookFolder, { recursive: true });
+  copyFileSync(fixturePath, join(bookFolder, 'silent.m4b'));
 
   // Seed one default fixture matching the book title so the release-search
   // modal finds results without further spec-side setup.
@@ -117,12 +136,15 @@ export default async function globalSetup(): Promise<void> {
   process.env.E2E_LIBRARY_PATH = run.libraryPath;
   process.env.E2E_MAM_URL = mam.url;
   process.env.E2E_QBIT_URL = qbit.url;
+  process.env.E2E_AUDIBLE_URL = audible.url;
+  process.env.E2E_SOURCE_PATH = run.sourcePath;
 }
 
 /** Exported constants for spec files that need to construct control URLs. */
 export const E2E_DEFAULT_PORTS = {
   mam: DEFAULT_MAM_PORT,
   qbit: DEFAULT_QBIT_PORT,
+  audible: DEFAULT_AUDIBLE_PORT,
 } as const;
 
 /**
