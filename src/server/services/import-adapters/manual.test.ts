@@ -11,29 +11,19 @@ import type { ImportPipelineDeps } from '../import-orchestration.helpers.js';
 import type { ImportAdapterContext, ImportJob, ManualImportJobPayload } from './types.js';
 import { ManualImportAdapter } from './manual.js';
 
-vi.mock('../enrichment-orchestration.helpers.js', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('../enrichment-orchestration.helpers.js')>();
-  return {
-    ...actual,
-    orchestrateBookEnrichment: vi.fn().mockResolvedValue({ audioEnriched: true }),
-    extractImportMetadata: actual.extractImportMetadata,
-    buildEnrichmentBookInput: actual.buildEnrichmentBookInput,
-    buildBackgroundAudnexusConfig: actual.buildBackgroundAudnexusConfig,
-    buildImportedEventPayload: actual.buildImportedEventPayload,
-  };
-});
+vi.mock('../enrichment-orchestration.helpers.js', async () => ({
+  ...(await vi.importActual('../enrichment-orchestration.helpers.js')),
+  orchestrateBookEnrichment: vi.fn().mockResolvedValue({ audioEnriched: true }),
+}));
 
 vi.mock('../library-scan.helpers.js', () => ({
   getAudioStats: vi.fn().mockResolvedValue({ fileCount: 3, totalSize: 100_000 }),
 }));
 
-vi.mock('../import-orchestration.helpers.js', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('../import-orchestration.helpers.js')>();
-  return {
-    ...actual,
-    copyToLibrary: vi.fn().mockResolvedValue('/library/Author/Title'),
-  };
-});
+vi.mock('../import-orchestration.helpers.js', async () => ({
+  ...(await vi.importActual('../import-orchestration.helpers.js')),
+  copyToLibrary: vi.fn().mockResolvedValue('/library/Author/Title'),
+}));
 
 vi.mock('../../utils/safe-emit.js', () => ({
   safeEmit: vi.fn(),
