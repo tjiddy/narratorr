@@ -82,9 +82,11 @@
 
 - ~~**`src/server/services/download.service.ts:271` logs raw passkey URL at debug level**~~ — **RESOLVED in #545**: `sanitizeLogUrl` now applied at all 3 log sites (download.service, search route, enrich-usenet-languages)
 
-- **`src/server/services/cover-download.ts:55,61,92` logs raw remote URLs**: Cover download service logs `url: remoteUrl` unsanitized in warn/debug calls. Cover URLs are unlikely to contain indexer credentials but pattern is inconsistent with the sanitized grab/search paths. (discovered in #545)
+- ~~**`src/server/services/cover-download.ts:55,61,92` logs raw remote URLs**~~ — **RESOLVED in #622**: All 3 log sites now wrapped with `sanitizeLogUrl()`
 
-- **`src/core/download-clients/blackhole.ts:13` and `src/server/services/cover-download.ts:10` have private 30s timeout constants**: Both define local `REQUEST_TIMEOUT_MS = 30000` / `DOWNLOAD_TIMEOUT_MS = 30_000` that could be centralized in `constants.ts`. Not indexer-scoped so out of scope for #560, but same DRY pattern. (discovered in #560)
+- ~~**`src/core/download-clients/blackhole.ts:13` and `src/server/services/cover-download.ts:10` have private 30s timeout constants**~~ — **RESOLVED in #622**: Both replaced with shared `HTTP_DOWNLOAD_TIMEOUT_MS` from `src/core/utils/constants.ts`
+
+- **`src/core/utils/download-url.ts:18` has private `DOWNLOAD_TIMEOUT_MS = 30_000`**: Same 30s timeout as the now-shared `HTTP_DOWNLOAD_TIMEOUT_MS` in `constants.ts`. Intentionally left out of scope in #622 per spec boundary — could be migrated in a future cleanup pass. (discovered in #622)
 
 ## Accepted Debt
 

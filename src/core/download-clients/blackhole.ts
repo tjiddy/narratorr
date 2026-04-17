@@ -2,6 +2,7 @@ import { writeFile, access, constants } from 'node:fs/promises';
 import { join } from 'node:path';
 import type { DownloadClientAdapter, DownloadItemInfo, DownloadArtifact, DownloadProtocol } from './types.js';
 import { fetchWithTimeout } from '../utils/fetch-with-timeout.js';
+import { HTTP_DOWNLOAD_TIMEOUT_MS } from '../utils/constants.js';
 import { DownloadClientError, DownloadClientTimeoutError, isTimeoutError } from './errors.js';
 import { getErrorMessage } from '../../shared/error-message.js';
 
@@ -9,8 +10,6 @@ export interface BlackholeConfig {
   watchDir: string;
   protocol: DownloadProtocol;
 }
-
-const REQUEST_TIMEOUT_MS = 30000;
 
 export class BlackholeClient implements DownloadClientAdapter {
   readonly type = 'blackhole';
@@ -49,7 +48,7 @@ export class BlackholeClient implements DownloadClientAdapter {
     // nzb-url — fetch the URL and write the bytes
     let response: Response;
     try {
-      response = await fetchWithTimeout(artifact.url, {}, REQUEST_TIMEOUT_MS);
+      response = await fetchWithTimeout(artifact.url, {}, HTTP_DOWNLOAD_TIMEOUT_MS);
     } catch (error: unknown) {
       if (isTimeoutError(error)) throw new DownloadClientTimeoutError(this.name, (error as Error).message);
       throw new DownloadClientError(this.name, getErrorMessage(error));
