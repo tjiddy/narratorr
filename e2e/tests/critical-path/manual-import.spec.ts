@@ -46,8 +46,10 @@ test.describe('Critical path: manual import', () => {
       await page.getByRole('button', { name: /^Scan$/i }).click();
 
       // Wait for the Review step to appear with the discovered book.
-      await expect(page.getByText(SEED_MANUAL_IMPORT_TITLE)).toBeVisible({ timeout: 15_000 });
-      await expect(page.getByText(SEED_MANUAL_IMPORT_AUTHOR)).toBeVisible();
+      // Use .first() — the title/author text appears in both the parsed card
+      // fields and the folder path display, triggering strict-mode violations.
+      await expect(page.getByText(SEED_MANUAL_IMPORT_TITLE).first()).toBeVisible({ timeout: 15_000 });
+      await expect(page.getByText(SEED_MANUAL_IMPORT_AUTHOR).first()).toBeVisible();
     });
 
     // ── Match completes with confidence 'none' ───────────────────────────
