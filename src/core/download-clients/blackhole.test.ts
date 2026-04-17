@@ -312,6 +312,26 @@ describe('BlackholeClient', () => {
     });
   });
 
+  describe('timeout constant', () => {
+    it('uses HTTP_DOWNLOAD_TIMEOUT_MS (30s) for nzb-url fetch timeout', async () => {
+      const timeoutSpy = vi.spyOn(AbortSignal, 'timeout');
+      server.use(
+        http.get('https://example.com/file.nzb', () => {
+          return new HttpResponse(new Uint8Array([0x3c]));
+        }),
+      );
+
+      const artifact: DownloadArtifact = {
+        type: 'nzb-url',
+        url: 'https://example.com/file.nzb',
+      };
+
+      await client.addDownload(artifact);
+      expect(timeoutSpy).toHaveBeenCalledWith(30_000);
+      timeoutSpy.mockRestore();
+    });
+  });
+
   describe('protocol', () => {
     it('reflects configured protocol', () => {
       expect(client.protocol).toBe('torrent');
