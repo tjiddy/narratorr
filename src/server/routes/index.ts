@@ -209,6 +209,7 @@ export async function createServices(db: Db, log: FastifyBaseLogger): Promise<Se
 
   // Import queue worker + adapter registration (before QGO — it needs the nudge callback)
   const importQueueWorker = new ImportQueueWorker(db, log);
+  importOrchestrator.setQueueDeps(db, () => importQueueWorker.nudge());
   const manualAdapter = new ManualImportAdapter(libraryScan.importDeps);
   const autoAdapter = new AutoImportAdapter(importOrchestrator);
   registerImportAdapter(manualAdapter);

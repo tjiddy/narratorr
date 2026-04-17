@@ -175,21 +175,18 @@ export class ImportService {
   }
 
   /**
-   * Query eligible downloads and apply semaphore admission.
-   * Returns download IDs that acquired a slot. Downloads that couldn't acquire
-   * a slot are set to processing_queued.
+   * Query eligible downloads for import enqueueing.
+   * Returns download IDs + bookIds. No slot admission — caller enqueues to import_jobs.
    */
-  async getEligibleDownloads(): Promise<number[]> {
-    const processingSettings = await this.settingsService.get('processing');
-    this.semaphore.setMax(processingSettings.maxConcurrentProcessing);
-
+  async getEligibleDownloads(): Promise<Array<{ id: number; bookId: number }>> {
     const eligibleDownloads = await this.db
-      .select()
+      .select({ id: downloads.id, bookId: downloads.bookId })
       .from(downloads)
       .where(and(
-        inArray(downloads.status, ['completed', 'processing_queued']),
+        inArray(downloads.status, ['completed']),
         isNotNull(downloads.externalId),
         isNotNull(downloads.completedAt),
+        isNotNull(downloads.bookId),
       ))
       .orderBy(downloads.completedAt, downloads.id);
 
@@ -198,27 +195,8 @@ export class ImportService {
       return [];
     }
 
-    this.log.info({ count: eligibleDownloads.length }, 'Processing completed downloads for import');
-    const admitted: number[] = [];
-
-    for (const download of eligibleDownloads) {
-      if (!download.bookId) {
-        this.log.debug({ id: download.id }, 'Skipping download with no linked book');
-        continue;
-      }
-
-      if (!this.semaphore.tryAcquire()) {
-        if (download.status !== 'processing_queued') {
-          await this.db.update(downloads).set({ status: 'processing_queued' }).where(eq(downloads.id, download.id));
-        }
-        this.log.debug({ downloadId: download.id }, 'Concurrency limit reached, queuing for next tick');
-        continue;
-      }
-
-      admitted.push(download.id);
-    }
-
-    return admitted;
+    this.log.info({ count: eligibleDownloads.length }, 'Eligible downloads for import');
+    return eligibleDownloads.filter((d): d is { id: number; bookId: number } => d.bookId != null);
   }
 
   /** Set a download to processing_queued status (for deferred import). */
