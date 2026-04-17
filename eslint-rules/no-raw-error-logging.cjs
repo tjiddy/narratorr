@@ -151,14 +151,23 @@ const rule = {
               const sourceCode = context.sourceCode;
               const text = sourceCode.getText();
               if (!text.includes('serializeError')) {
-                // Find last import statement to insert after
+                // Determine correct relative import path based on file location
+                const filePath = context.filename || context.getFilename();
+                const isUtilFile = filePath.replace(/\\/g, '/').includes('/utils/');
+                const importPath = isUtilFile
+                  ? './serialize-error.js'
+                  : '../utils/serialize-error.js';
+
+                // Find last import in the top-level import block to insert after
                 const program = sourceCode.ast;
                 let lastImport = null;
                 for (const stmt of program.body) {
                   if (stmt.type === 'ImportDeclaration') lastImport = stmt;
+                  else if (!lastImport) continue;
+                  else break; // stop at first non-import after the import block
                 }
                 const importText =
-                  "import { serializeError } from '../utils/serialize-error.js';\n";
+                  `import { serializeError } from '${importPath}';\n`;
                 if (lastImport) {
                   fixes.push(fixer.insertTextAfter(lastImport, '\n' + importText));
                 } else {
