@@ -5,7 +5,6 @@ import type { BookWithAuthor } from '@/lib/api';
 import { bookStatusConfig } from '@/lib/status';
 import { resolveCoverUrl } from '@/lib/url-utils';
 import { BookOpenIcon, MoreVerticalIcon, BrokenLinkIcon } from '@/components/icons';
-import { useRetryImportAvailable } from '@/hooks/useRetryImportAvailable.js';
 import { BookContextMenu } from './BookContextMenu.js';
 
 // eslint-disable-next-line complexity -- card has inherent conditional rendering: cover, missing chip, collapsed badge, status bar, menu, hover expand
@@ -35,7 +34,6 @@ export const LibraryBookCard = memo(function LibraryBookCard({
   const { hasError: imageError, onError: onImageError } = useImageError();
   const menuAreaRef = useRef<HTMLDivElement>(null);
   useClickOutside(menuAreaRef, onMenuClose, isMenuOpen);
-  const canRetryImport = useRetryImportAvailable(book.id, book.status);
   const isMissing = book.status === 'missing' || book.status === 'failed';
   const isCollapsed = (collapsedCount ?? 0) > 0;
 
@@ -107,7 +105,7 @@ export const LibraryBookCard = memo(function LibraryBookCard({
               onSearchReleases={() => onSearchReleases(book)}
               onRemove={() => onRemove(book)}
               onClose={onMenuClose}
-              onRetryImport={onRetryImport && canRetryImport ? () => onRetryImport(book) : undefined}
+              onRetryImport={onRetryImport && book.status === 'failed' ? () => onRetryImport(book) : undefined}
             />
           )}
         </div>

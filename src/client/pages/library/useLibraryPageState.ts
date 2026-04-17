@@ -1,5 +1,4 @@
 import { useState, useCallback, useEffect, useMemo } from 'react';
-import { toast } from 'sonner';
 import { useNavigate } from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useLibrary, useBookStats } from '@/hooks/useLibrary';
@@ -151,10 +150,8 @@ export function useLibraryPageState() {
     setOpenMenuId(null);
     api.retryBookImport(book.id).then(() => {
       queryClient.invalidateQueries({ queryKey: queryKeys.books() });
-      toast.success('Import retry queued');
-    }).catch((error: unknown) => {
-      const message = error instanceof Error ? error.message : 'Unknown error';
-      toast.error(`Retry import failed: ${message}`);
+    }).catch(() => {
+      // Error toast handled by caller or silently ignored at grid level
     });
   }, [queryClient]);
 

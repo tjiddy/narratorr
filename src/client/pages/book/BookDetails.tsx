@@ -20,7 +20,6 @@ import { MAX_COVER_SIZE } from '../../../shared/constants.js';
 import { formatMergePhase } from '@/lib/format/merge.js';
 import { AudioPreview } from './AudioPreview.js';
 import { useCoverPaste } from '@/hooks/useCoverPaste.js';
-import { useRetryImportAvailable } from '@/hooks/useRetryImportAvailable.js';
 import { toast } from 'sonner';
 
 const BOOK_TABS: TabItem[] = [
@@ -31,7 +30,6 @@ const BOOK_TABS: TabItem[] = [
 function canShowWrongRelease(book: BookWithAuthor): boolean {
   return book.status === 'imported' && !!(book.lastGrabGuid || book.lastGrabInfoHash);
 }
-
 
 // eslint-disable-next-line max-lines-per-function -- page orchestrator with multiple confirm modals
 export function BookDetails({ libraryBook, metadataBook }: {
@@ -49,8 +47,6 @@ export function BookDetails({ libraryBook, metadataBook }: {
     useBookActions(libraryBook.id, libraryBook.monitorForUpgrades);
 
   const showWrongRelease = canShowWrongRelease(libraryBook);
-
-  const canRetryImport = useRetryImportAvailable(libraryBook.id, libraryBook.status);
 
   const handleCoverFile = useCallback((file: File) => {
     if (!SUPPORTED_COVER_MIMES.has(file.type)) {
@@ -144,7 +140,7 @@ export function BookDetails({ libraryBook, metadataBook }: {
         onCoverConfirm={handleCoverConfirm}
         onCoverCancel={handleCoverCancel}
         isUploadingCover={uploadCoverMutation.isPending}
-        onRetryImportClick={canRetryImport ? () => retryImportMutation.mutate() : undefined}
+        onRetryImportClick={libraryBook.status === 'failed' ? () => retryImportMutation.mutate() : undefined}
         isRetryingImport={retryImportMutation.isPending}
       >
         <AudioPreview bookId={libraryBook.id} status={libraryBook.status} path={libraryBook.path ?? null} />
