@@ -31,7 +31,7 @@ export default async function globalTeardown(): Promise<void> {
   }
 
   const dbDir = dirname(state.dbPath);
-  for (const target of [dbDir, state.libraryPath, state.configPath, state.downloadsPath]) {
+  for (const target of [dbDir, state.libraryPath, state.configPath, state.downloadsPath, state.sourcePath]) {
     try {
       rmSync(target, { recursive: true, force: true });
     } catch {

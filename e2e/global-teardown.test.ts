@@ -108,7 +108,16 @@ describe('globalTeardown', () => {
     expect(existsSync(run.libraryPath)).toBe(false);
   });
 
-  it.todo('removes sourcePath alongside the other temp dirs');
+  it('removes sourcePath alongside the other temp dirs', async () => {
+    const run = createRunTempDirs();
+    orphans.push(dirname(run.dbPath), run.libraryPath, run.configPath, run.downloadsPath, run.sourcePath);
+
+    expect(existsSync(run.sourcePath)).toBe(true);
+
+    await globalTeardown();
+
+    expect(existsSync(run.sourcePath)).toBe(false);
+  });
 
   it('ignores temp dirs created by an unrelated process', async () => {
     // Scoping guarantee: globalTeardown only removes what was recorded by
