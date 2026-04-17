@@ -6,6 +6,7 @@ import type { BookService } from './book.service.js';
 import type { MetadataService } from './metadata.service.js';
 import type { SettingsService } from './settings.service.js';
 import type { EventHistoryService } from './event-history.service.js';
+import type { EventBroadcasterService } from './event-broadcaster.service.js';
 import { parseFolderStructure, extractYear, LibraryScanService } from './library-scan.service.js';
 
 vi.mock('./enrichment-utils.js', () => ({
@@ -1101,6 +1102,167 @@ describe('LibraryScanService', () => {
 
       expect(result.accepted).toBe(0);
       expect(mockBookService.create).not.toHaveBeenCalled();
+    });
+  });
+
+  // ============================================================================
+  // confirmImport — SSE emissions (#618)
+  // ============================================================================
+
+  describe('confirmImport SSE emissions', () => {
+    let mockBroadcaster: { emit: ReturnType<typeof vi.fn> };
+    let sseService: LibraryScanService;
+
+    beforeEach(() => {
+      mockBroadcaster = { emit: vi.fn() };
+      sseService = new LibraryScanService(
+        inject<Db>(mockDb),
+        inject<BookService>(mockBookService),
+        inject<MetadataService>(mockMetadataService),
+        inject<SettingsService>(createMockSettingsService({ library: { path: '/library' } })),
+        log,
+        inject<EventHistoryService>(mockEventHistoryService),
+        mockBroadcaster as unknown as EventBroadcasterService,
+      );
+    });
+
+    it('emits book_status_change with importing→imported after successful background processing', async () => {
+      mockBookService.create.mockResolvedValueOnce({ id: 42, title: 'Test', status: 'importing' });
+
+      await sseService.confirmImport([
+        { path: '/audiobooks/Author/Title', title: 'Test', authorName: 'Author' },
+      ]);
+
+      await vi.waitFor(() => {
+        expect(mockBroadcaster.emit).toHaveBeenCalledWith('book_status_change', {
+          book_id: 42,
+          old_status: 'importing',
+          new_status: 'imported',
+        });
+      });
+    });
+
+    it('emits book_status_change with importing→missing when background processing fails', async () => {
+      mockBookService.create.mockResolvedValueOnce({ id: 7, title: 'Broken', status: 'importing' });
+      // Make enrichment throw — orchestrateBookEnrichment propagates errors to processOneImport
+      vi.mocked(enrichBookFromAudio).mockRejectedValueOnce(new Error('Enrichment failed'));
+
+      await sseService.confirmImport([
+        { path: '/nonexistent/path', title: 'Broken' },
+      ]);
+
+      await vi.waitFor(() => {
+        expect(mockBroadcaster.emit).toHaveBeenCalledWith('book_status_change', {
+          book_id: 7,
+          old_status: 'importing',
+          new_status: 'missing',
+        });
+      });
+    });
+
+    it('emits one book_status_change per book when multiple items are imported', async () => {
+      mockBookService.create
+        .mockResolvedValueOnce({ id: 10, title: 'Book A', status: 'importing' })
+        .mockResolvedValueOnce({ id: 11, title: 'Book B', status: 'importing' });
+
+      await sseService.confirmImport([
+        { path: '/a/b', title: 'Book A' },
+        { path: '/a/c', title: 'Book B' },
+      ]);
+
+      await vi.waitFor(() => {
+        expect(mockBroadcaster.emit).toHaveBeenCalledTimes(2);
+      });
+      expect(mockBroadcaster.emit).toHaveBeenCalledWith('book_status_change', {
+        book_id: 10, old_status: 'importing', new_status: 'imported',
+      });
+      expect(mockBroadcaster.emit).toHaveBeenCalledWith('book_status_change', {
+        book_id: 11, old_status: 'importing', new_status: 'imported',
+      });
+    });
+
+    it('emits success for remaining items when one item fails in a batch', async () => {
+      mockBookService.create
+        .mockResolvedValueOnce({ id: 20, title: 'Fail', status: 'importing' })
+        .mockResolvedValueOnce({ id: 21, title: 'OK', status: 'importing' });
+      // First enrichment call fails (for book 20), subsequent calls succeed
+      vi.mocked(enrichBookFromAudio).mockRejectedValueOnce(new Error('Enrichment failed'));
+
+      await sseService.confirmImport([
+        { path: '/bad', title: 'Fail' },
+        { path: '/good', title: 'OK' },
+      ]);
+
+      await vi.waitFor(() => {
+        expect(mockBroadcaster.emit).toHaveBeenCalledTimes(2);
+      });
+      expect(mockBroadcaster.emit).toHaveBeenCalledWith('book_status_change', {
+        book_id: 20, old_status: 'importing', new_status: 'missing',
+      });
+      expect(mockBroadcaster.emit).toHaveBeenCalledWith('book_status_change', {
+        book_id: 21, old_status: 'importing', new_status: 'imported',
+      });
+    });
+
+    it('does not emit any SSE event for duplicate-skipped items', async () => {
+      mockBookService.findDuplicate.mockResolvedValueOnce({ id: 1, title: 'Dup' });
+
+      await sseService.confirmImport([
+        { path: '/a/b', title: 'Dup', authorName: 'Author' },
+      ]);
+
+      // Give background processing time to run (if any)
+      await new Promise(r => setTimeout(r, 50));
+      expect(mockBroadcaster.emit).not.toHaveBeenCalled();
+    });
+
+    it('does not emit any SSE event for empty items array', async () => {
+      await sseService.confirmImport([]);
+
+      await new Promise(r => setTimeout(r, 50));
+      expect(mockBroadcaster.emit).not.toHaveBeenCalled();
+    });
+
+    it('does not throw when broadcaster is undefined (safeEmit no-ops)', async () => {
+      const noBroadcasterService = new LibraryScanService(
+        inject<Db>(mockDb),
+        inject<BookService>(mockBookService),
+        inject<MetadataService>(mockMetadataService),
+        inject<SettingsService>(createMockSettingsService({ library: { path: '/library' } })),
+        log,
+        inject<EventHistoryService>(mockEventHistoryService),
+      );
+      mockBookService.create.mockResolvedValueOnce({ id: 5, title: 'No Broadcast', status: 'importing' });
+
+      await noBroadcasterService.confirmImport([
+        { path: '/a/b', title: 'No Broadcast' },
+      ]);
+
+      // Should complete without throwing — give background time
+      await new Promise(r => setTimeout(r, 50));
+      expect(mockBroadcaster.emit).not.toHaveBeenCalled();
+    });
+
+    it('still records eventHistory when broadcaster is undefined', async () => {
+      const noBroadcasterService = new LibraryScanService(
+        inject<Db>(mockDb),
+        inject<BookService>(mockBookService),
+        inject<MetadataService>(mockMetadataService),
+        inject<SettingsService>(createMockSettingsService({ library: { path: '/library' } })),
+        log,
+        inject<EventHistoryService>(mockEventHistoryService),
+      );
+      mockBookService.create.mockResolvedValueOnce({ id: 8, title: 'History Test', status: 'importing' });
+
+      await noBroadcasterService.confirmImport([
+        { path: '/a/b', title: 'History Test' },
+      ]);
+
+      await vi.waitFor(() => {
+        expect(mockEventHistoryService.create).toHaveBeenCalledWith(
+          expect.objectContaining({ eventType: 'imported', source: 'manual' }),
+        );
+      });
     });
   });
 

@@ -99,15 +99,6 @@ test.describe('Critical path: manual import', () => {
 
     // ── Library card shows imported status ────────────────────────────────
     await test.step('library card shows imported status (bg-emerald-500)', async () => {
-      // WORKAROUND for #618 — manual import does not emit SSE `book_status_change`,
-      // so /library's TanStack Query cache never refetches after the server-side
-      // import completes (~200ms for the 4KB fixture). A single page.reload()
-      // forces a fresh books query and the card flips to emerald.
-      //
-      // When #618 ships, try removing ONLY the page.reload() call below. If the
-      // test still passes, the SSE fix is working — delete this comment block.
-      // If the test fails without the reload, #618 is still unresolved.
-      await page.reload();
       const bookCard = page.getByRole('link', { name: new RegExp(SEED_MANUAL_IMPORT_TITLE) }).first();
       const statusBar = bookCard.getByTestId('status-bar');
       await expect(statusBar).toHaveClass(/bg-emerald-500/, { timeout: 15_000 });

@@ -232,4 +232,32 @@ describe('createServices', () => {
     const retrySearchDepsResult = vi.mocked(createRetrySearchDeps).mock.results[0].value;
     expect(retryDepsArg).toBe(retrySearchDepsResult);
   });
+
+  // #618 — EventBroadcasterService wired into LibraryScanService
+  it('passes EventBroadcasterService into LibraryScanService constructor', async () => {
+    const { SettingsService } = await import('../services/index.js');
+    const { LibraryScanService } = await import('../services/library-scan.service.js');
+    const { EventBroadcasterService } = await import('../services/event-broadcaster.service.js');
+
+    vi.mocked(SettingsService).mockImplementation(function(this: Record<string, unknown>) {
+      this.get = vi.fn().mockResolvedValue({ audibleRegion: 'us' });
+      this.bootstrapProcessingDefaults = vi.fn().mockResolvedValue(undefined);
+      this.migrateLanguageSettings = vi.fn().mockResolvedValue(undefined);
+    } as never);
+
+    const { createServices } = await import('./index.js');
+    const db = {} as unknown as Db;
+    const log = {
+      info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn(),
+      child: vi.fn().mockReturnThis(), trace: vi.fn(), fatal: vi.fn(),
+    } as unknown as FastifyBaseLogger;
+
+    await createServices(db, log);
+
+    // LibraryScanService constructor should receive EventBroadcasterService as 7th arg
+    const libraryScanCalls = vi.mocked(LibraryScanService).mock.calls;
+    expect(libraryScanCalls).toHaveLength(1);
+    const broadcasterArg = libraryScanCalls[0][6];
+    expect(broadcasterArg).toBeInstanceOf(EventBroadcasterService);
+  });
 });

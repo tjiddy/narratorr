@@ -16,6 +16,9 @@ import { toNamingOptions } from '../../core/utils/naming.js';
 import { orchestrateBookEnrichment, buildBookCreatePayload, buildEnrichmentBookInput, buildAudnexusConfig, buildImportedEventPayload, extractImportMetadata, buildBackgroundAudnexusConfig, type EnrichmentDeps } from './enrichment-orchestration.helpers.js';
 import { getAudioStats } from './library-scan.helpers.js';
 import type { EventHistoryService } from './event-history.service.js';
+import type { EventBroadcasterService } from './event-broadcaster.service.js';
+import type { BookStatus } from '../../shared/schemas/book.js';
+import { safeEmit } from '../utils/safe-emit.js';
 import { getErrorMessage } from '../utils/error-message.js';
 import { snapshotBookForEvent } from '../utils/event-helpers.js';
 import type { ImportConfirmItem, ImportMode, ImportSingleResult } from './library-scan.service.js';
@@ -29,6 +32,7 @@ export interface ImportPipelineDeps {
   settingsService: SettingsService;
   eventHistory: EventHistoryService;
   enrichmentDeps: EnrichmentDeps;
+  broadcaster?: EventBroadcasterService;
 }
 
 export async function importSingleBook(
@@ -245,6 +249,7 @@ async function processImportsInBackground(
         status: 'missing',
         updatedAt: new Date(),
       }).where(eq(books.id, bookId));
+      safeEmit(deps.broadcaster, 'book_status_change', { book_id: bookId, old_status: 'importing' as BookStatus, new_status: 'missing' as BookStatus }, log);
       eventHistory.create({
         bookId,
         bookTitle: item.title,
@@ -289,6 +294,7 @@ async function processOneImport(bookId: number, item: ImportConfirmItem, deps: I
   );
 
   await db.update(books).set({ status: 'imported', updatedAt: new Date() }).where(eq(books.id, bookId));
+  safeEmit(deps.broadcaster, 'book_status_change', { book_id: bookId, old_status: 'importing' as BookStatus, new_status: 'imported' as BookStatus }, log);
 
   eventHistory.create(buildImportedEventPayload(bookId, item, extracted.narratorName, resolve(finalPath), mode))
     .catch(err => log.warn({ err }, 'Failed to record manual import event'));
