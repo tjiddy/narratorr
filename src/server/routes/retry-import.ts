@@ -14,24 +14,6 @@ export async function retryImportRoute(
   db: Db,
   worker: ImportQueueWorker,
 ): Promise<void> {
-  // Check whether retry is available for a book (used by UI to show/hide button)
-  app.get<{ Params: z.infer<typeof paramsSchema> }>(
-    '/api/books/:id/retry-import',
-    { schema: { params: paramsSchema } },
-    async (request, reply) => {
-      const bookId = request.params.id;
-      const [failedJob] = await db.select({ id: importJobs.id })
-        .from(importJobs)
-        .where(and(
-          eq(importJobs.bookId, bookId),
-          eq(importJobs.status, 'failed'),
-        ))
-        .limit(1);
-
-      return reply.send({ available: !!failedJob });
-    },
-  );
-
   app.post<{ Params: z.infer<typeof paramsSchema> }>(
     '/api/books/:id/retry-import',
     { schema: { params: paramsSchema } },
