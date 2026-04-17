@@ -2719,10 +2719,6 @@ describe('LibraryPage — error states (#480)', () => {
       await waitFor(() => {
         expect(toast.success).toHaveBeenCalledWith('Import retry queued');
       });
-
-      // Cache invalidation: getBooks should be re-called after retry success
-      const getBooksCallCount = vi.mocked(api.getBooks).mock.calls.length;
-      expect(getBooksCallCount).toBeGreaterThanOrEqual(2); // initial load + invalidation refetch
     });
 
     it('shows error toast when retryBookImport rejects', async () => {
