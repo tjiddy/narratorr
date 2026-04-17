@@ -123,8 +123,9 @@ describe('globalSetup', () => {
     // The fake should respond to Audible API catalog requests with empty products.
     const audibleRes = await fetch(`${process.env.E2E_AUDIBLE_URL}/1.0/catalog/products?title=test`);
     expect(audibleRes.status).toBe(200);
-    const body = await audibleRes.json() as { products: unknown[] };
-    expect(body).toEqual({ products: [] });
+    const body = await audibleRes.json() as { products: unknown[]; total_results: number };
+    expect(body.products).toEqual([]);
+    expect(body.total_results).toBe(0);
   });
 
   it('pre-populates sourcePath with an author-title subfolder containing silent.m4b', async () => {
