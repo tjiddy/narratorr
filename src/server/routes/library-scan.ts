@@ -68,7 +68,7 @@ export async function libraryScanRoutes(
       } catch (error: unknown) {
         request.log.warn({ error: serializeError(error), path }, 'Single book scan failed');
         return reply.status(400).send({
-          error: getErrorMessage(error, 'Scan failed'),
+          error: getErrorMessage(error),
         });
       }
     },
@@ -89,7 +89,7 @@ export async function libraryScanRoutes(
       } catch (error: unknown) {
         request.log.error(error, 'Single book import failed');
         return reply.status(500).send({
-          error: getErrorMessage(error, 'Import failed'),
+          error: getErrorMessage(error),
         });
       }
     },
@@ -110,7 +110,7 @@ export async function libraryScanRoutes(
       }
       request.log.error(error, 'Library rescan failed');
       return reply.status(500).send({
-        error: getErrorMessage(error, 'Rescan failed'),
+        error: getErrorMessage(error),
       });
     }
   });
@@ -130,7 +130,7 @@ export async function libraryScanRoutes(
       } catch (error: unknown) {
         request.log.error(error, 'Directory scan failed');
         return reply.status(500).send({
-          error: getErrorMessage(error, 'Scan failed'),
+          error: getErrorMessage(error),
         });
       }
     },
@@ -151,7 +151,7 @@ export async function libraryScanRoutes(
       } catch (error: unknown) {
         request.log.error(error, 'Import confirmation failed');
         return reply.status(500).send({
-          error: getErrorMessage(error, 'Import failed'),
+          error: getErrorMessage(error),
         });
       }
     },
@@ -225,7 +225,7 @@ async function handleScanDebug(
     request.log.error(error, 'Scan debug metadata search failed');
     return reply.status(502).send({
       statusCode: 502, error: 'Bad Gateway',
-      message: `Metadata search provider failed: ${getErrorMessage(error, 'unknown error')}`,
+      message: `Metadata search provider failed: ${getErrorMessage(error)}`,
       partialTrace,
     });
   }
@@ -240,7 +240,7 @@ async function handleScanDebug(
     request.log.error(error, 'Scan debug duplicate check failed');
     return reply.status(500).send({
       statusCode: 500, error: 'Internal Server Error',
-      message: `Duplicate check failed: ${getErrorMessage(error, 'unknown error')}`,
+      message: `Duplicate check failed: ${getErrorMessage(error)}`,
       partialTrace: { ...partialTrace, search: searchResult.search, match: searchResult.match },
     });
   }

@@ -307,6 +307,19 @@ describe('import-lists routes', () => {
       expect(res.json()).toEqual({ items: [], total: 0 });
     });
 
+    it('returns 500 with error message when preview service rejects', async () => {
+      (services.importList.preview as Mock).mockRejectedValue(new Error('Preview exploded'));
+
+      const res = await app.inject({
+        method: 'POST',
+        url: '/api/import-lists/preview',
+        payload: { type: validImportList.type, settings: validImportList.settings },
+      });
+
+      expect(res.statusCode).toBe(500);
+      expect(res.json().error).toBe('Preview exploded');
+    });
+
     it('returns 400 for invalid typed settings and does not call service.preview', async () => {
       const res = await app.inject({
         method: 'POST',

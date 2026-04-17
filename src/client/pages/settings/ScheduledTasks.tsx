@@ -24,7 +24,7 @@ function TaskRow({ task }: { task: TaskMetadata }) {
       queryClient.invalidateQueries({ queryKey: queryKeys.systemTasks() });
     },
     onError: (err) => {
-      toast.error(getErrorMessage(err, 'Task failed'));
+      toast.error(getErrorMessage(err));
       queryClient.invalidateQueries({ queryKey: queryKeys.systemTasks() });
     },
     onSettled: () => setRunningName(null),

@@ -64,7 +64,7 @@ export function useBulkOperation(): UseBulkOperationReturn {
           setJobType(null);
           setProgress(IDLE_PROGRESS);
           jobIdRef.current = null;
-          toast.error(getErrorMessage(error, 'Bulk operation polling failed'));
+          toast.error(getErrorMessage(error));
         }
       }
     }, POLL_INTERVAL);

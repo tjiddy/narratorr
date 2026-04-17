@@ -107,7 +107,7 @@ export async function registerCrudRoutes(
       } catch (error: unknown) {
         request.log.error({ id, error: serializeError(error) }, `Failed to delete ${lower}`);
         return reply.status(500).send({
-          error: getErrorMessage(error, 'Failed to delete'),
+          error: getErrorMessage(error),
         });
       }
     },

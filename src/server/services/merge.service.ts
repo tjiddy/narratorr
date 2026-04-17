@@ -247,7 +247,7 @@ export class MergeService {
       this.emitMergeComplete(bookId, book.title, message, enrichmentWarning);
       return { bookId, outputFile: outputPath, filesReplaced: topLevelAudioFiles.length, message, enrichmentWarning };
     } catch (error: unknown) {
-      const errorMessage = getErrorMessage(error, 'Unknown merge error');
+      const errorMessage = getErrorMessage(error);
       const reason: MergeFailedReason = controller.signal.aborted ? 'cancelled' : 'error';
       this.emitMergeFailed(bookId, book.title, errorMessage, reason);
       try { await rm(stagingDir, { recursive: true, force: true }); } catch { /* best-effort */ }

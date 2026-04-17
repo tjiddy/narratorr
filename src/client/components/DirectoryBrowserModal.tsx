@@ -132,7 +132,7 @@ function DirectoryBrowserContent({ isOpen = true, initialPath, onSelect, onClose
             <div className="flex items-start gap-2.5 mx-6 my-4 px-3 py-2.5 rounded-xl bg-destructive/5 border border-destructive/20">
               <AlertCircleIcon className="w-4 h-4 mt-0.5 shrink-0 text-destructive" />
               <span className="text-sm text-destructive/90">
-                {getErrorMessage(error, 'Failed to browse directory')}
+                {getErrorMessage(error)}
               </span>
             </div>
           )}

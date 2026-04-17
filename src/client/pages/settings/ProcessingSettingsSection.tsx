@@ -169,7 +169,7 @@ export function ProcessingSettingsSection() {
       setProbeResult(result);
       toast.success(`ffmpeg ${result.version} detected`);
     } catch (error: unknown) {
-      const message = getErrorMessage(error, 'ffmpeg probe failed');
+      const message = getErrorMessage(error);
       setProbeError(message);
       toast.error(message);
     } finally {

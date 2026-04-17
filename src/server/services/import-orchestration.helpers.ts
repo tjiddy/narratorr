@@ -66,7 +66,7 @@ export async function importSingleBook(
       downloadId: null,
       eventType: 'import_failed',
       source: 'manual',
-      reason: { error: getErrorMessage(error, 'Import failed') },
+      reason: { error: getErrorMessage(error) },
     }).catch(err => log.warn({ err }, 'Failed to record manual import failed event'));
     throw error;
   }
@@ -90,7 +90,7 @@ export async function importSingleBook(
       downloadId: null,
       eventType: 'import_failed',
       source: 'manual',
-      reason: { error: getErrorMessage(error, 'Import failed') },
+      reason: { error: getErrorMessage(error) },
     }).catch(err => log.warn({ err }, 'Failed to record manual import failed event'));
     throw error;
   }
@@ -260,7 +260,7 @@ async function processImportsInBackground(
         downloadId: null,
         eventType: 'import_failed',
         source: 'manual',
-        reason: { error: getErrorMessage(error, 'Import failed') },
+        reason: { error: getErrorMessage(error) },
       }).catch(err => log.warn({ err }, 'Failed to record import failed event'));
     }
   }

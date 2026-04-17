@@ -98,6 +98,26 @@ describe('useFetchCategories', () => {
       expect(result.current.showDropdown).toBe(false);
     });
 
+    it('sets error, clears categories, and hides dropdown when fetch rejects', async () => {
+      (downloadClientsApi.getClientCategoriesFromConfig as ReturnType<typeof vi.fn>).mockRejectedValue(
+        new Error('Network error'),
+      );
+
+      const { result } = renderHook(
+        (props) => useFetchCategories(props),
+        { initialProps: makeOptions() },
+      );
+
+      await act(async () => {
+        await result.current.fetchCategories();
+      });
+
+      expect(result.current.error).toBe('Network error');
+      expect(result.current.categories).toEqual([]);
+      expect(result.current.showDropdown).toBe(false);
+      expect(result.current.fetching).toBe(false);
+    });
+
     it('clears previously fetched categories when selectedType changes', async () => {
       (downloadClientsApi.getClientCategories as ReturnType<typeof vi.fn>).mockResolvedValue({
         categories: ['tv', 'movies', 'audiobooks'],

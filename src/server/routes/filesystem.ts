@@ -24,7 +24,7 @@ export async function filesystemRoutes(app: FastifyInstance): Promise<void> {
       try {
         entries = await readdir(targetPath, { withFileTypes: true });
       } catch (error: unknown) {
-        const message = getErrorMessage(error, 'Failed to read directory');
+        const message = getErrorMessage(error);
         request.log.warn({ error: serializeError(error), targetPath }, 'Directory browse failed');
         return reply.status(400).send({ error: message });
       }

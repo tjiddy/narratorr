@@ -46,4 +46,24 @@ describe('getErrorMessage (shared)', () => {
     }
     expect(getErrorMessage(new AppError('custom'))).toBe('custom');
   });
+
+  it('returns Unknown error for empty string (String("") is empty)', () => {
+    expect(getErrorMessage('')).toBe('Unknown error');
+  });
+
+  it('returns Unknown error for empty array (String([]) is empty)', () => {
+    expect(getErrorMessage([])).toBe('Unknown error');
+  });
+
+  it('returns "0" for falsy number zero (String(0) is non-empty)', () => {
+    expect(getErrorMessage(0)).toBe('0');
+  });
+
+  it('returns "false" for falsy boolean (String(false) is non-empty)', () => {
+    expect(getErrorMessage(false)).toBe('false');
+  });
+
+  it('returns "NaN" for NaN (String(NaN) is non-empty)', () => {
+    expect(getErrorMessage(NaN)).toBe('NaN');
+  });
 });

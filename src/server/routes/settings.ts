@@ -132,7 +132,7 @@ export async function settingsRoutes(
       } catch (error: unknown) {
         request.log.warn({ error: serializeError(error) }, 'ffmpeg probe failed');
         return reply.status(400).send({
-          error: getErrorMessage(error, 'ffmpeg probe failed'),
+          error: getErrorMessage(error),
         });
       }
     }
@@ -153,7 +153,7 @@ export async function settingsRoutes(
         request.log.info({ ip, proxyUrl: redactProxyUrl(proxyUrl) }, 'Proxy test successful');
         return { success: true, ip };
       } catch (error: unknown) {
-        const message = getErrorMessage(error, 'Proxy test failed');
+        const message = getErrorMessage(error);
         request.log.warn({ error: serializeError(error), proxyUrl: redactProxyUrl(request.body.proxyUrl) }, 'Proxy test failed');
         return reply.status(200).send({ success: false, message });
       }

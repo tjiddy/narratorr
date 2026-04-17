@@ -118,7 +118,7 @@ export function useLibraryImport() {
       }
     },
     onError: (error: Error) => {
-      setScanError(getErrorMessage(error, 'Scan failed'));
+      setScanError(getErrorMessage(error));
     },
   });
 
