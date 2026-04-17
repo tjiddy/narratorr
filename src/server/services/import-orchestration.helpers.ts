@@ -6,14 +6,14 @@ import { mkdir, cp, rm } from 'node:fs/promises';
 import { relative, resolve, isAbsolute } from 'node:path';
 import type { Db } from '../../db/index.js';
 import type { FastifyBaseLogger } from 'fastify';
-import { books } from '../../db/schema.js';
+import { books, importJobs } from '../../db/schema.js';
 import { eq } from 'drizzle-orm';
 import type { BookService } from './book.service.js';
 import type { SettingsService } from './settings.service.js';
 import type { BookMetadata } from '../../core/metadata/index.js';
 import { buildTargetPath, getAudioPathSize } from '../utils/import-helpers.js';
 import { toNamingOptions } from '../../core/utils/naming.js';
-import { orchestrateBookEnrichment, buildBookCreatePayload, buildEnrichmentBookInput, buildAudnexusConfig, buildImportedEventPayload, extractImportMetadata, buildBackgroundAudnexusConfig, type EnrichmentDeps } from './enrichment-orchestration.helpers.js';
+import { orchestrateBookEnrichment, buildBookCreatePayload, buildEnrichmentBookInput, buildAudnexusConfig, buildImportedEventPayload, buildBackgroundAudnexusConfig, type EnrichmentDeps } from './enrichment-orchestration.helpers.js';
 import { getAudioStats } from './library-scan.helpers.js';
 import type { EventHistoryService } from './event-history.service.js';
 import type { EventBroadcasterService } from './event-broadcaster.service.js';
@@ -23,6 +23,7 @@ import { getErrorMessage } from '../utils/error-message.js';
 import { snapshotBookForEvent } from '../utils/event-helpers.js';
 import type { ImportConfirmItem, ImportMode, ImportSingleResult } from './library-scan.service.js';
 import { serializeError } from '../utils/serialize-error.js';
+import type { ManualImportJobPayload } from './import-adapters/types.js';
 
 
 const COPY_VERIFICATION_THRESHOLD = 0.99;
@@ -183,8 +184,9 @@ export async function confirmImport(
   items: ImportConfirmItem[],
   deps: ImportPipelineDeps,
   mode?: ImportMode,
+  nudgeWorker?: () => void,
 ): Promise<{ accepted: number }> {
-  const { log, bookService, eventHistory } = deps;
+  const { db, log, bookService, eventHistory } = deps;
 
   log.info({ count: items.length, mode: mode ?? 'pointer' }, 'Accepting library import');
 
@@ -212,6 +214,20 @@ export async function confirmImport(
 
       const book = await bookService.create(buildBookCreatePayload(item, item.metadata ?? null, 'importing'));
 
+      // Build the persisted payload — mode omitted for pointer mode
+      const payload: ManualImportJobPayload = { ...item };
+      if (mode) {
+        payload.mode = mode;
+      }
+
+      await db.insert(importJobs).values({
+        bookId: book.id,
+        type: 'manual',
+        status: 'pending',
+        phase: 'queued',
+        metadata: JSON.stringify(payload),
+      });
+
       eventHistory.create({
         bookId: book.id,
         ...snapshotBookForEvent(book),
@@ -225,79 +241,11 @@ export async function confirmImport(
     }
   }
 
-  log.info({ accepted: accepted.length }, 'Import placeholders created, starting background processing');
+  log.info({ accepted: accepted.length }, 'Import jobs created, nudging worker');
 
-  processImportsInBackground(accepted, deps, mode).catch(error => {
-    log.error({ error: serializeError(error) }, 'Background import processing failed');
-  });
+  if (accepted.length > 0 && nudgeWorker) {
+    nudgeWorker();
+  }
 
   return { accepted: accepted.length };
-}
-
-async function processImportsInBackground(
-  items: Array<{ bookId: number; item: ImportConfirmItem }>,
-  deps: ImportPipelineDeps,
-  mode?: ImportMode,
-): Promise<void> {
-  const { db, log, eventHistory } = deps;
-
-  for (const { bookId, item } of items) {
-    try {
-      await processOneImport(bookId, item, deps, mode);
-      log.info({ bookId, title: item.title }, 'Book import completed');
-    } catch (error: unknown) {
-      log.error({ error: serializeError(error), bookId, title: item.title }, 'Book import failed');
-      await db.update(books).set({
-        status: 'missing',
-        updatedAt: new Date(),
-      }).where(eq(books.id, bookId));
-      safeEmit(deps.broadcaster, 'book_status_change', { book_id: bookId, old_status: 'importing' as BookStatus, new_status: 'missing' as BookStatus }, log);
-      eventHistory.create({
-        bookId,
-        bookTitle: item.title,
-        authorName: item.authorName ?? null,
-        narratorName: item.metadata?.narrators?.[0] ?? null,
-        downloadId: null,
-        eventType: 'import_failed',
-        source: 'manual',
-        reason: { error: getErrorMessage(error) },
-      }).catch(err => log.warn({ err }, 'Failed to record import failed event'));
-    }
-  }
-}
-
-async function processOneImport(bookId: number, item: ImportConfirmItem, deps: ImportPipelineDeps, mode?: ImportMode): Promise<void> {
-  const { db, log, eventHistory, enrichmentDeps } = deps;
-
-  log.debug({ bookId, title: item.title, mode: mode ?? 'pointer' }, 'Processing import');
-
-  const extracted = extractImportMetadata(item);
-
-  let finalPath = item.path;
-  if (mode) {
-    const bookRecord = await db.select().from(books).where(eq(books.id, bookId)).limit(1);
-    if (bookRecord.length > 0) {
-      finalPath = await copyToLibrary(item, bookRecord[0], extracted.meta ?? null, mode, deps);
-    }
-  }
-
-  const stats = await getAudioStats(finalPath, log);
-  log.debug({ bookId, finalPath, fileCount: stats.fileCount, totalSize: stats.totalSize }, 'Audio stats collected');
-  await db.update(books).set({ path: finalPath, size: stats.totalSize, updatedAt: new Date() }).where(eq(books.id, bookId));
-
-  const [currentBook] = await db.select({ genres: books.genres }).from(books).where(eq(books.id, bookId)).limit(1);
-
-  log.debug({ bookId }, 'Starting audio enrichment');
-  await orchestrateBookEnrichment(
-    bookId, finalPath,
-    buildEnrichmentBookInput({ ...extracted.bookInput, genres: currentBook?.genres ?? null }),
-    enrichmentDeps,
-    buildBackgroundAudnexusConfig(item, extracted, currentBook?.genres ?? null),
-  );
-
-  await db.update(books).set({ status: 'imported', updatedAt: new Date() }).where(eq(books.id, bookId));
-  safeEmit(deps.broadcaster, 'book_status_change', { book_id: bookId, old_status: 'importing' as BookStatus, new_status: 'imported' as BookStatus }, log);
-
-  eventHistory.create(buildImportedEventPayload(bookId, item, extracted.narratorName, resolve(finalPath), mode))
-    .catch(err => log.warn({ err }, 'Failed to record manual import event'));
 }
