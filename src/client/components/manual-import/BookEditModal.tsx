@@ -17,6 +17,7 @@ import {
 } from '@/components/icons';
 import { Badge } from '@/components/Badge';
 import { Modal } from '@/components/Modal';
+import { MetadataResultList } from '@/components/book/MetadataResultList';
 import type { BookEditState } from './types.js';
 export type { BookEditState } from './types.js';
 
@@ -216,46 +217,16 @@ export function BookEditModal({ book, initial, confidence, alternatives, onSave,
               <p className="text-xs font-medium text-muted-foreground/70">
                 {confidence === 'medium' ? 'Pick the correct match' : confidence === 'none' ? 'Possible matches' : 'Other matches'}
               </p>
-              <div className="max-h-36 overflow-y-auto space-y-1 -mx-1 px-1">
-                {searchResults.slice(0, 6).map((meta, i) => (
-                  <button
-                    type="button"
-                    key={meta.providerId || i}
-                    onClick={() => applyMetadata(meta)}
-                    className="w-full flex items-center gap-2.5 px-2.5 py-2 text-left rounded-xl hover:bg-muted/40 transition-colors group"
-                  >
-                    <div className="w-8 h-8 shrink-0 rounded overflow-hidden bg-muted/30 relative">
-                      {meta.coverUrl ? (
-                        <img src={resolveUrl(meta.coverUrl)} alt="" className="w-full h-full object-cover" />
-                      ) : (
-                        <div className="w-full h-full flex items-center justify-center">
-                          <BookOpenIcon className="w-3 h-3 text-muted-foreground/20" />
-                        </div>
-                      )}
-                    </div>
-                    <div className="min-w-0 flex-1">
-                      <p className="text-xs font-medium truncate group-hover:text-primary transition-colors">{meta.title}</p>
-                      <p className="text-xs text-muted-foreground/60 truncate">
-                        {meta.authors?.map(a => a.name).join(', ')}
-                      </p>
-                      {meta.narrators && meta.narrators.length > 0 && (
-                        <p className="text-[10px] text-muted-foreground/40 truncate flex items-center gap-1">
-                          <HeadphonesIcon className="w-2.5 h-2.5 shrink-0" />
-                          {meta.narrators.join(', ')}
-                        </p>
-                      )}
-                      {meta.duration != null && meta.duration > 0 && (
-                        <p className="text-[10px] text-muted-foreground/40">
-                          {Math.floor(meta.duration / 60)}h {meta.duration % 60}m
-                        </p>
-                      )}
-                    </div>
-                    {isBookInLibrary(meta, libraryBooks) && (
-                      <CheckCircleIcon className="w-3.5 h-3.5 shrink-0 text-emerald-400/70" />
-                    )}
-                  </button>
-                ))}
-              </div>
+              <MetadataResultList
+                results={searchResults}
+                limit={6}
+                maxHeight="max-h-36"
+                onSelect={applyMetadata}
+                showDuration
+                showLibraryBadge
+                libraryBooks={libraryBooks}
+                placeholderIcon={<BookOpenIcon className="w-3 h-3 text-muted-foreground/20" />}
+              />
             </div>
           )}
 
