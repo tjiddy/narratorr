@@ -21,32 +21,14 @@ import { test, expect } from '@playwright/test';
  * playwright.config.ts's static webServer.env (which is deterministic).
  */
 
-// sourcePath is set statically in playwright.config.ts → webServer.env.
-// But webServer.env is only for the server process, not test workers.
-// However, the temp dir paths are deterministic per-run (created at config
-// load time). We can read it from the config module directly.
-// Actually, we need the path the SERVER sees — which is E2E_SOURCE_PATH in
-// the webServer env. But we can't read that from the worker.
-//
-// Solution: read from the temp-dirs module state (same process as config).
-import { getCurrentRun } from '../../fixtures/temp-dirs.js';
-import { SEED_MANUAL_IMPORT_AUTHOR, SEED_MANUAL_IMPORT_TITLE } from '../../global-setup.js';
-
-/**
- * Helper — returns the sourcePath for the current E2E run. Falls back to a
- * temp-dir state read when env is unavailable (Playwright workers).
- */
-function getSourcePath(): string {
-  const fromEnv = process.env.E2E_SOURCE_PATH;
-  if (fromEnv) return fromEnv;
-  const run = getCurrentRun();
-  if (run) return run.sourcePath;
-  throw new Error('sourcePath unavailable — E2E_SOURCE_PATH not set and getCurrentRun() is empty');
-}
+// Worker-safe helper — reads from the state file written by globalSetup.
+// Unlike fixed-port fakes (qbitControlUrl), sourcePath is a dynamic temp dir
+// that changes every run, so we use a file-based handoff mechanism.
+import { getE2ESourcePath, SEED_MANUAL_IMPORT_TITLE, SEED_MANUAL_IMPORT_AUTHOR } from '../../global-setup.js';
 
 test.describe('Critical path: manual import', () => {
   test('scans a source folder, edits metadata, imports, and renders as Imported on /library', async ({ page }) => {
-    const sourcePath = getSourcePath();
+    const sourcePath = getE2ESourcePath();
 
     // ── Library: navigate to import page ─────────────────────────────────
     await test.step('navigate to /library and click Import Files', async () => {

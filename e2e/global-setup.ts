@@ -1,5 +1,5 @@
 import { resolve, dirname, join } from 'node:path';
-import { copyFileSync, mkdirSync } from 'node:fs';
+import { copyFileSync, mkdirSync, writeFileSync, readFileSync, existsSync, unlinkSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { getCurrentRun } from './fixtures/temp-dirs.js';
 import { registerFake } from './fixtures/run-state.js';
@@ -138,6 +138,13 @@ export default async function globalSetup(): Promise<void> {
   process.env.E2E_QBIT_URL = qbit.url;
   process.env.E2E_AUDIBLE_URL = audible.url;
   process.env.E2E_SOURCE_PATH = run.sourcePath;
+
+  // Write sourcePath to a state file that test workers can read. Unlike
+  // fixed-port fakes (qbitControlUrl), the source path is a dynamic temp
+  // dir that can't have a static fallback — file-based handoff is the only
+  // worker-safe mechanism for dynamic paths.
+  const stateFilePath = resolve(dirname(fileURLToPath(import.meta.url)), '.run-paths.json');
+  writeFileSync(stateFilePath, JSON.stringify({ sourcePath: run.sourcePath }), 'utf-8');
 }
 
 /** Exported constants for spec files that need to construct control URLs. */
@@ -159,4 +166,39 @@ export const E2E_DEFAULT_PORTS = {
 export function qbitControlUrl(path: string): string {
   const base = process.env.E2E_QBIT_URL ?? `http://localhost:${DEFAULT_QBIT_PORT}`;
   return `${base}${path}`;
+}
+
+/**
+ * Worker-safe state file path — written by globalSetup, read by helpers,
+ * cleaned up by globalTeardown.
+ */
+const RUN_PATHS_FILE = resolve(dirname(fileURLToPath(import.meta.url)), '.run-paths.json');
+
+/**
+ * Helper for spec files — returns the per-run sourcePath for manual-import
+ * fixtures. Unlike fixed-port fakes, sourcePath is a dynamic temp dir that
+ * changes every run, so this reads from the state file written by globalSetup.
+ *
+ * Same worker-safety reasoning as `qbitControlUrl`: specs MUST import this
+ * rather than reading `process.env.E2E_SOURCE_PATH` directly.
+ */
+export function getE2ESourcePath(): string {
+  // Same-process fast path (globalSetup, same-process tooling).
+  const fromEnv = process.env.E2E_SOURCE_PATH;
+  if (fromEnv) return fromEnv;
+  // Worker path — read from state file written by globalSetup.
+  if (existsSync(RUN_PATHS_FILE)) {
+    const data = JSON.parse(readFileSync(RUN_PATHS_FILE, 'utf-8')) as { sourcePath: string };
+    return data.sourcePath;
+  }
+  throw new Error('sourcePath unavailable — E2E_SOURCE_PATH not set and .run-paths.json not found');
+}
+
+/** Clean up the state file — called from globalTeardown. */
+export function cleanupRunPathsFile(): void {
+  try {
+    unlinkSync(RUN_PATHS_FILE);
+  } catch {
+    // Best-effort — file may not exist if globalSetup failed.
+  }
 }

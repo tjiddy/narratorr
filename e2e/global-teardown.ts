@@ -2,6 +2,7 @@ import { rmSync } from 'node:fs';
 import { dirname } from 'node:path';
 import { getCurrentRun } from './fixtures/temp-dirs.js';
 import { getRegisteredFakes, clearRegisteredFakes } from './fixtures/run-state.js';
+import { cleanupRunPathsFile } from './global-setup.js';
 
 /**
  * Playwright global teardown — closes fake servers registered in module state
@@ -23,6 +24,7 @@ export default async function globalTeardown(): Promise<void> {
     }
   }
   clearRegisteredFakes();
+  cleanupRunPathsFile();
 
   const state = getCurrentRun();
   if (!state) {
