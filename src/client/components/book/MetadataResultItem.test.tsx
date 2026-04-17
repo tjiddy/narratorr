@@ -3,7 +3,6 @@ import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MetadataResultItem } from './MetadataResultItem';
 import { createMockBookMetadata } from '@/__tests__/factories';
-import { SearchIcon } from '@/components/icons';
 
 const defaultOnSelect = vi.fn();
 
@@ -182,7 +181,7 @@ describe('MetadataResultItem', () => {
       renderItem({
         meta: createMockBookMetadata({ asin: 'B003P2WO5E' }),
         showLibraryBadge: true,
-        libraryBooks: [{ asin: 'B003P2WO5E', title: 'The Way of Kings', authorName: 'Brandon Sanderson' }],
+        libraryBooks: [{ asin: 'B003P2WO5E', title: 'The Way of Kings', authorName: 'Brandon Sanderson', authorSlug: 'brandon-sanderson' }],
       });
       // CheckCircleIcon is the badge indicator — it renders as an SVG
       const buttons = screen.getAllByRole('button');
@@ -191,9 +190,9 @@ describe('MetadataResultItem', () => {
     });
 
     it('hides library badge when showLibraryBadge is false (default)', () => {
-      const { container } = renderItem({
+      renderItem({
         meta: createMockBookMetadata({ asin: 'B003P2WO5E' }),
-        libraryBooks: [{ asin: 'B003P2WO5E', title: 'The Way of Kings', authorName: 'Brandon Sanderson' }],
+        libraryBooks: [{ asin: 'B003P2WO5E', title: 'The Way of Kings', authorName: 'Brandon Sanderson', authorSlug: 'brandon-sanderson' }],
       });
       // Only the cover placeholder and metadata text — no trailing CheckCircle icon
       const button = screen.getByRole('button');
@@ -202,10 +201,10 @@ describe('MetadataResultItem', () => {
     });
 
     it('hides library badge when book does not match library', () => {
-      const { container } = renderItem({
+      renderItem({
         meta: createMockBookMetadata({ asin: 'B003P2WO5E' }),
         showLibraryBadge: true,
-        libraryBooks: [{ asin: 'DIFFERENT', title: 'Other Book', authorName: 'Other Author' }],
+        libraryBooks: [{ asin: 'DIFFERENT', title: 'Other Book', authorName: 'Other Author', authorSlug: 'other-author' }],
       });
       const button = screen.getByRole('button');
       const svgs = button.querySelectorAll(':scope > svg');
