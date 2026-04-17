@@ -55,7 +55,7 @@ test.describe('Critical path: manual import', () => {
     // ── Match completes with confidence 'none' ───────────────────────────
     await test.step('match completes with no-match (Audible fake returns empty for structured search)', async () => {
       // Wait for the match job to complete — "No Match" badge appears.
-      await expect(page.getByText('No Match')).toBeVisible({ timeout: 15_000 });
+      await expect(page.getByText('No Match').first()).toBeVisible({ timeout: 15_000 });
       // Import button should be disabled because selected rows have unmatched confidence.
       await expect(page.getByRole('button', { name: /^Import/i })).toBeDisabled();
     });
