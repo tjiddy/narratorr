@@ -28,6 +28,8 @@ function fakeDataUri(torrentBuffer: Buffer): string {
 const mockFetch = vi.fn<(url: string | URL | Request, init?: RequestInit) => Promise<Response>>();
 
 beforeEach(() => {
+  // restoreAllMocks doesn't clear manual vi.fn() call history
+  mockFetch.mockClear();
   vi.stubGlobal('fetch', mockFetch);
 });
 
@@ -498,10 +500,6 @@ describe('resolve() — nzb-bytes data URI', () => {
   const nzbContent = '<nzb xmlns="http://www.newzbin.com/DTD/2003/nzb"><file></file></nzb>';
   const nzbBase64 = Buffer.from(nzbContent).toString('base64');
   const nzbDataUri = `data:application/x-nzb;base64,${nzbBase64}`;
-
-  beforeEach(() => {
-    mockFetch.mockClear();
-  });
 
   it('resolves data:application/x-nzb;base64 URI to nzb-bytes artifact with correct decoded content', async () => {
     const dl = new DownloadUrl(nzbDataUri, 'usenet');

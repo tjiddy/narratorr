@@ -59,7 +59,7 @@
 
 - ~~**SABnzbd/NZBGet adapters lack byte-upload paths**~~ — resolved in #565 (added `nzb-bytes` multipart/base64 paths to SABnzbd, NZBGet, and Blackhole)
 
-- **`src/core/utils/download-url.test.ts` mockFetch call history accumulates across tests**: The `vi.fn()` mock at line 28 is never cleared between tests — `vi.restoreAllMocks()` only affects spies, not manual `vi.fn()`. Tests using `not.toHaveBeenCalled()` work by accident because they run before fetch-calling tests in file order. New tests appended at the end of the file must add `mockFetch.mockClear()` in their own `beforeEach`. Fix: add `mockFetch.mockClear()` to the top-level `beforeEach`. (discovered in #565)
+- ~~**`src/core/utils/download-url.test.ts` mockFetch call history accumulates across tests**~~ — resolved in #624 (added `mockFetch.mockClear()` to top-level `beforeEach`, removed redundant nested clear)
 
 - ~~**`src/core/utils/download-url.ts:290` sanitizeNetworkError fallthrough leaks error.message**~~ — resolved in #541 (URL redaction via regex)
 
