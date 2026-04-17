@@ -99,12 +99,25 @@ test.describe('Critical path: manual import', () => {
 
     // ── Library card shows imported status ────────────────────────────────
     await test.step('library card shows imported status (bg-emerald-500)', async () => {
-      // Wait for the background import to complete and the library to refresh.
-      // Budget 25s for: background import (file copy + enrichment + DB update)
-      // + SSE/query refetch propagation.
-      const bookCard = page.getByRole('link', { name: new RegExp(SEED_MANUAL_IMPORT_TITLE) }).first();
-      const statusBar = bookCard.getByTestId('status-bar');
-      await expect(statusBar).toHaveClass(/bg-emerald-500/, { timeout: 25_000 });
+      // Manual import does not emit SSE events, so the TanStack Query cache
+      // on /library won't auto-refresh. The background import completes in
+      // ~200ms (4KB fixture), but the frontend needs a page reload to see
+      // the updated status. Poll with reload until the status-bar class
+      // flips to bg-emerald-500 or the timeout expires.
+      const deadline = Date.now() + 25_000;
+      let found = false;
+      while (Date.now() < deadline && !found) {
+        await page.reload({ waitUntil: 'networkidle' });
+        const bookCard = page.getByRole('link', { name: new RegExp(SEED_MANUAL_IMPORT_TITLE) }).first();
+        const statusBar = bookCard.getByTestId('status-bar');
+        try {
+          await expect(statusBar).toHaveClass(/bg-emerald-500/, { timeout: 2_000 });
+          found = true;
+        } catch {
+          // Not ready yet — loop will reload and retry.
+        }
+      }
+      expect(found).toBe(true);
     });
 
     // ── Book detail page shows "Imported" ────────────────────────────────
