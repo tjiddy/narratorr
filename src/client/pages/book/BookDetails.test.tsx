@@ -51,6 +51,8 @@ vi.mock('@/lib/api', async (importOriginal) => {
       uploadBookCover: vi.fn(),
       refreshScanBook: vi.fn(),
       getSettings: vi.fn(),
+      retryBookImport: vi.fn(),
+      checkRetryImportAvailable: vi.fn().mockResolvedValue({ available: false }),
     },
   };
 });
@@ -1893,6 +1895,73 @@ describe('#257 merge observability — BookDetails progress', () => {
       await user.click(screen.getByRole('menuitem', { name: 'Refresh & Scan' }));
       await waitFor(() => {
         expect(toast.success).toHaveBeenCalledWith('Refreshed audio metadata');
+      });
+    });
+  });
+
+  describe('retry import (#635)', () => {
+    it('shows Retry Import when book is failed and retry is available', async () => {
+      const user = userEvent.setup();
+      vi.mocked(api.checkRetryImportAvailable).mockResolvedValue({ available: true });
+
+      renderBookDetails({ status: 'failed', path: '/lib/book' });
+
+      await openOverflowMenu(user);
+      await waitFor(() => {
+        expect(screen.getByRole('menuitem', { name: /Retry Import/ })).toBeInTheDocument();
+      });
+    });
+
+    it('hides Retry Import when book is failed but retry is not available', async () => {
+      const user = userEvent.setup();
+      vi.mocked(api.checkRetryImportAvailable).mockResolvedValue({ available: false });
+
+      renderBookDetails({ status: 'failed', path: '/lib/book' });
+
+      await openOverflowMenu(user);
+      // Wait for the menu to render, then check retry is absent
+      await waitFor(() => {
+        expect(screen.getByRole('menuitem', { name: /Remove/ })).toBeInTheDocument();
+      });
+      expect(screen.queryByRole('menuitem', { name: /Retry Import/ })).not.toBeInTheDocument();
+    });
+
+    it('calls retryBookImport and shows success toast on click', async () => {
+      const user = userEvent.setup();
+      vi.mocked(api.checkRetryImportAvailable).mockResolvedValue({ available: true });
+      vi.mocked(api.retryBookImport).mockResolvedValue({ jobId: 42 });
+
+      renderBookDetails({ id: 7, status: 'failed', path: '/lib/book' });
+
+      await openOverflowMenu(user);
+      await waitFor(() => {
+        expect(screen.getByRole('menuitem', { name: /Retry Import/ })).toBeInTheDocument();
+      });
+      await user.click(screen.getByRole('menuitem', { name: /Retry Import/ }));
+
+      await waitFor(() => {
+        expect(api.retryBookImport).toHaveBeenCalledWith(7);
+      });
+      await waitFor(() => {
+        expect(toast.success).toHaveBeenCalledWith('Import retry queued');
+      });
+    });
+
+    it('shows error toast when retryBookImport fails', async () => {
+      const user = userEvent.setup();
+      vi.mocked(api.checkRetryImportAvailable).mockResolvedValue({ available: true });
+      vi.mocked(api.retryBookImport).mockRejectedValue(new Error('No failed import job'));
+
+      renderBookDetails({ id: 7, status: 'failed', path: '/lib/book' });
+
+      await openOverflowMenu(user);
+      await waitFor(() => {
+        expect(screen.getByRole('menuitem', { name: /Retry Import/ })).toBeInTheDocument();
+      });
+      await user.click(screen.getByRole('menuitem', { name: /Retry Import/ }));
+
+      await waitFor(() => {
+        expect(toast.error).toHaveBeenCalledWith('Retry import failed: No failed import job');
       });
     });
   });
