@@ -6,11 +6,10 @@ import type { Db } from '../../db/index.js';
 import type { FastifyBaseLogger } from 'fastify';
 import { books } from '../../db/schema.js';
 import { COVER_FILE_REGEX } from '../../core/utils/cover-regex.js';
+import { HTTP_DOWNLOAD_TIMEOUT_MS } from '../../core/utils/constants.js';
 import { mimeToExt } from '../../shared/mime.js';
 import { serializeError } from '../utils/serialize-error.js';
-
-
-const DOWNLOAD_TIMEOUT_MS = 30_000;
+import { sanitizeLogUrl } from '../utils/sanitize-log-url.js';
 
 /** Check whether a coverUrl points to a remote HTTP(S) resource. */
 export function isRemoteCoverUrl(url: string | null | undefined): boolean {
@@ -51,17 +50,17 @@ export async function downloadRemoteCover(
   try {
     const response = await fetch(remoteUrl, {
       redirect: 'follow',
-      signal: AbortSignal.timeout(DOWNLOAD_TIMEOUT_MS),
+      signal: AbortSignal.timeout(HTTP_DOWNLOAD_TIMEOUT_MS),
     });
 
     if (!response.ok) {
-      log.warn({ bookId, status: response.status, url: remoteUrl }, 'Remote cover download returned non-OK status');
+      log.warn({ bookId, status: response.status, url: sanitizeLogUrl(remoteUrl) }, 'Remote cover download returned non-OK status');
       return false;
     }
 
     const contentType = response.headers.get('content-type');
     if (!isImageContentType(contentType)) {
-      log.warn({ bookId, contentType, url: remoteUrl }, 'Remote cover response is not an image');
+      log.warn({ bookId, contentType, url: sanitizeLogUrl(remoteUrl) }, 'Remote cover response is not an image');
       return false;
     }
 
@@ -92,7 +91,7 @@ export async function downloadRemoteCover(
     log.info({ bookId, path: finalPath }, 'Remote cover downloaded and saved locally');
     return true;
   } catch (error: unknown) {
-    log.warn({ error: serializeError(error), bookId, url: remoteUrl }, 'Failed to download remote cover');
+    log.warn({ error: serializeError(error), bookId, url: sanitizeLogUrl(remoteUrl) }, 'Failed to download remote cover');
     return false;
   }
 }

@@ -256,6 +256,114 @@ describe('downloadRemoteCover', () => {
     expect(vi.mocked(writeFile)).toHaveBeenCalledTimes(1);
   });
 
+  describe('URL sanitization in logs', () => {
+    it('sanitizes URL with query params in non-OK status warning log', async () => {
+      mockFetch.mockResolvedValue(new Response('Not Found', {
+        status: 404,
+        headers: { 'content-type': 'text/plain' },
+      }));
+
+      await downloadRemoteCover(
+        1, '/books/test', 'https://cdn.example.com/cover.jpg?apikey=secret',
+        inject<Db>(mockDb), log,
+      );
+
+      const warnCall = (log.warn as ReturnType<typeof vi.fn>).mock.calls.find(
+        (call: unknown[]) => typeof call[1] === 'string' && call[1].includes('non-OK'),
+      );
+      expect(warnCall).toBeDefined();
+      expect(warnCall![0].url).toBe('https://cdn.example.com/cover.jpg');
+      expect(warnCall![0].url).not.toContain('secret');
+    });
+
+    it('sanitizes URL with query params in non-image content-type warning log', async () => {
+      mockFetch.mockResolvedValue(new Response('<html></html>', {
+        status: 200,
+        headers: { 'content-type': 'text/html' },
+      }));
+
+      await downloadRemoteCover(
+        1, '/books/test', 'https://cdn.example.com/cover.jpg?apikey=secret',
+        inject<Db>(mockDb), log,
+      );
+
+      const warnCall = (log.warn as ReturnType<typeof vi.fn>).mock.calls.find(
+        (call: unknown[]) => typeof call[1] === 'string' && call[1].includes('not an image'),
+      );
+      expect(warnCall).toBeDefined();
+      expect(warnCall![0].url).toBe('https://cdn.example.com/cover.jpg');
+      expect(warnCall![0].url).not.toContain('secret');
+    });
+
+    it('sanitizes URL with query params in exception path warning log', async () => {
+      mockFetch.mockRejectedValue(new Error('Network error'));
+
+      await downloadRemoteCover(
+        1, '/books/test', 'https://cdn.example.com/cover.jpg?apikey=secret',
+        inject<Db>(mockDb), log,
+      );
+
+      const warnCall = (log.warn as ReturnType<typeof vi.fn>).mock.calls.find(
+        (call: unknown[]) => typeof call[1] === 'string' && call[1].includes('Failed to download'),
+      );
+      expect(warnCall).toBeDefined();
+      expect(warnCall![0].url).toBe('https://cdn.example.com/cover.jpg');
+      expect(warnCall![0].url).not.toContain('secret');
+    });
+
+    it('passes through clean URL unchanged in log output', async () => {
+      mockFetch.mockResolvedValue(new Response('Not Found', {
+        status: 404,
+        headers: { 'content-type': 'text/plain' },
+      }));
+
+      await downloadRemoteCover(
+        1, '/books/test', 'https://cdn.example.com/cover.jpg',
+        inject<Db>(mockDb), log,
+      );
+
+      const warnCall = (log.warn as ReturnType<typeof vi.fn>).mock.calls.find(
+        (call: unknown[]) => typeof call[1] === 'string' && call[1].includes('non-OK'),
+      );
+      expect(warnCall).toBeDefined();
+      expect(warnCall![0].url).toBe('https://cdn.example.com/cover.jpg');
+    });
+
+    it('sanitizes URL with userinfo credentials in log output', async () => {
+      mockFetch.mockResolvedValue(new Response('Not Found', {
+        status: 404,
+        headers: { 'content-type': 'text/plain' },
+      }));
+
+      await downloadRemoteCover(
+        1, '/books/test', 'https://user:pass@cdn.example.com/cover.jpg',
+        inject<Db>(mockDb), log,
+      );
+
+      const warnCall = (log.warn as ReturnType<typeof vi.fn>).mock.calls.find(
+        (call: unknown[]) => typeof call[1] === 'string' && call[1].includes('non-OK'),
+      );
+      expect(warnCall).toBeDefined();
+      expect(warnCall![0].url).not.toContain('user:pass');
+      expect(warnCall![0].url).toBe('https://cdn.example.com/cover.jpg');
+    });
+  });
+
+  describe('timeout constant', () => {
+    it('passes HTTP_DOWNLOAD_TIMEOUT_MS to AbortSignal.timeout', async () => {
+      const timeoutSpy = vi.spyOn(AbortSignal, 'timeout');
+      mockFetch.mockResolvedValue(createImageResponse());
+
+      await downloadRemoteCover(
+        1, '/books/test', 'https://cdn.example.com/cover.jpg',
+        inject<Db>(mockDb), log,
+      );
+
+      expect(timeoutSpy).toHaveBeenCalledWith(30_000);
+      timeoutSpy.mockRestore();
+    });
+  });
+
   it('returns false and warns on non-OK HTTP status without writing files', async () => {
     mockFetch.mockResolvedValue(new Response('Not Found', {
       status: 404,
