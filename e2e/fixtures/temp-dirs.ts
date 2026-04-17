@@ -6,6 +6,13 @@ export interface RunTempDirs {
   dbPath: string;
   libraryPath: string;
   configPath: string;
+  /**
+   * Per-run save path used by the fake qBit server. The fake is constructed with this
+   * path at globalSetup time and uses it as its default `save_path` for every
+   * `POST /api/v2/torrents/add` that omits one — which is all of them, today, because
+   * `DownloadService.sendToClient` only forwards `category`.
+   */
+  downloadsPath: string;
 }
 
 /**
@@ -30,9 +37,10 @@ export function createRunTempDirs(): RunTempDirs {
   const dbDir = mkdtempSync(prefix);
   const libraryPath = mkdtempSync(prefix);
   const configPath = mkdtempSync(prefix);
+  const downloadsPath = mkdtempSync(prefix);
 
   const dbPath = join(dbDir, 'narratorr.db');
-  const run: RunTempDirs = { dbPath, libraryPath, configPath };
+  const run: RunTempDirs = { dbPath, libraryPath, configPath, downloadsPath };
 
   currentRun = run;
   return run;

@@ -2,9 +2,8 @@
   "extends": "../tsconfig.json",
   "compilerOptions": {
     "types": ["node", "@playwright/test"],
-    "noEmit": true,
-    "rootDir": "."
+    "noEmit": true
   },
-  "include": ["**/*.ts"],
+  "include": ["**/*.ts", "../src/**/*.ts"],
   "exclude": ["node_modules", "test-results", "playwright-report"]
 }

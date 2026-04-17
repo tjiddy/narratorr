@@ -1,15 +1,17 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { mkdtempSync, writeFileSync, existsSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import globalTeardown from './global-teardown.js';
 import { _resetCurrentRunForTests, createRunTempDirs, getCurrentRun } from './fixtures/temp-dirs.js';
+import { registerFake, _resetRegisteredFakesForTests, getRegisteredFakes } from './fixtures/run-state.js';
 
 describe('globalTeardown', () => {
   const orphans: string[] = [];
 
   beforeEach(() => {
     _resetCurrentRunForTests();
+    _resetRegisteredFakesForTests();
     orphans.length = 0;
   });
 
@@ -29,9 +31,9 @@ describe('globalTeardown', () => {
     await expect(globalTeardown()).resolves.toBeUndefined();
   });
 
-  it('removes the DB directory, library directory, and config directory', async () => {
+  it('removes the DB, library, config, and downloads directories', async () => {
     const run = createRunTempDirs();
-    orphans.push(dirname(run.dbPath), run.libraryPath, run.configPath);
+    orphans.push(dirname(run.dbPath), run.libraryPath, run.configPath, run.downloadsPath);
 
     // Simulate libSQL having written the DB file and its WAL / SHM sidecars.
     writeFileSync(run.dbPath, 'db-bytes');
@@ -43,6 +45,7 @@ describe('globalTeardown', () => {
     expect(existsSync(`${run.dbPath}-shm`)).toBe(true);
     expect(existsSync(run.libraryPath)).toBe(true);
     expect(existsSync(run.configPath)).toBe(true);
+    expect(existsSync(run.downloadsPath)).toBe(true);
 
     await globalTeardown();
 
@@ -52,6 +55,7 @@ describe('globalTeardown', () => {
     expect(existsSync(dirname(run.dbPath))).toBe(false);
     expect(existsSync(run.libraryPath)).toBe(false);
     expect(existsSync(run.configPath)).toBe(false);
+    expect(existsSync(run.downloadsPath)).toBe(false);
   });
 
   it('does not throw when a target directory was already removed', async () => {
@@ -59,7 +63,7 @@ describe('globalTeardown', () => {
     // the library dir but left the config dir. Teardown should clean what
     // remains without exploding on the missing one.
     const run = createRunTempDirs();
-    orphans.push(dirname(run.dbPath), run.libraryPath, run.configPath);
+    orphans.push(dirname(run.dbPath), run.libraryPath, run.configPath, run.downloadsPath);
 
     rmSync(run.libraryPath, { recursive: true, force: true });
 
@@ -68,6 +72,40 @@ describe('globalTeardown', () => {
     expect(existsSync(run.libraryPath)).toBe(false);
     expect(existsSync(dirname(run.dbPath))).toBe(false);
     expect(existsSync(run.configPath)).toBe(false);
+    expect(existsSync(run.downloadsPath)).toBe(false);
+  });
+
+  it('closes registered fake-server handles before removing temp directories', async () => {
+    const run = createRunTempDirs();
+    orphans.push(dirname(run.dbPath), run.libraryPath, run.configPath, run.downloadsPath);
+
+    const closeMam = vi.fn(async () => { /* no-op */ });
+    const closeQbit = vi.fn(async () => { /* no-op */ });
+    registerFake({ name: 'mam', close: closeMam });
+    registerFake({ name: 'qbit', close: closeQbit });
+
+    await globalTeardown();
+
+    expect(closeMam).toHaveBeenCalledTimes(1);
+    expect(closeQbit).toHaveBeenCalledTimes(1);
+    // Registry is cleared after teardown so a second run starts clean.
+    expect(getRegisteredFakes()).toEqual([]);
+  });
+
+  it('does not throw when a fake-server handle rejects during close', async () => {
+    const run = createRunTempDirs();
+    orphans.push(dirname(run.dbPath), run.libraryPath, run.configPath, run.downloadsPath);
+
+    // A dangling listener is cheaper than a failed teardown — must swallow.
+    registerFake({ name: 'mam', close: async () => { throw new Error('boom'); } });
+    const qbitClose = vi.fn(async () => { /* no-op */ });
+    registerFake({ name: 'qbit', close: qbitClose });
+
+    await expect(globalTeardown()).resolves.toBeUndefined();
+
+    // Second fake still closed even though the first threw.
+    expect(qbitClose).toHaveBeenCalledTimes(1);
+    expect(existsSync(run.libraryPath)).toBe(false);
   });
 
   it('ignores temp dirs created by an unrelated process', async () => {
@@ -78,7 +116,7 @@ describe('globalTeardown', () => {
     orphans.push(unrelatedDir);
 
     const run = createRunTempDirs();
-    orphans.push(dirname(run.dbPath), run.libraryPath, run.configPath);
+    orphans.push(dirname(run.dbPath), run.libraryPath, run.configPath, run.downloadsPath);
 
     await globalTeardown();
 

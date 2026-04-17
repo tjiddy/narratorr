@@ -27,6 +27,12 @@ const PORT = 3100;
 
 export default defineConfig({
   testDir: 'tests',
+  // Harness-helper *.test.ts files (e2e/fakes/, e2e/fixtures/) run under vitest
+  // and import '@vitest/expect'. Playwright's default testMatch includes
+  // '*.test.ts', and its TS transform collides on the jest-matchers-object
+  // Symbol if it ever loads one. Restrict to '.spec.ts' so only actual
+  // Playwright specs under tests/ are picked up.
+  testMatch: /.*\.spec\.ts/,
   outputDir: join(CONFIG_DIR, 'test-results'),
   fullyParallel: true,
   forbidOnly: Boolean(process.env.CI),
@@ -34,6 +40,7 @@ export default defineConfig({
   reporter: process.env.CI
     ? [['html', { outputFolder: join(CONFIG_DIR, 'playwright-report'), open: 'never' }]]
     : 'list',
+  globalSetup: './global-setup.ts',
   globalTeardown: './global-teardown.ts',
 
   use: {
@@ -54,6 +61,8 @@ export default defineConfig({
     url: `http://localhost:${PORT}/api/health`,
     reuseExistingServer: false,
     timeout: 60_000,
+    stdout: 'pipe',
+    stderr: 'pipe',
     env: {
       NODE_ENV: 'production',
       PORT: String(PORT),
@@ -62,6 +71,13 @@ export default defineConfig({
       CONFIG_PATH: tempDirs.configPath,
       AUTH_BYPASS: 'true',
       URL_BASE: '/',
+      // Poll every 2 seconds instead of the default 30 so the spec doesn't wait a
+      // full minute for the monitor to notice the fake qBit's "complete" flip.
+      MONITOR_INTERVAL_CRON: '*/2 * * * * *',
+      // Surface the per-run downloads path for spec-side forensics/assertions.
+      // Not consumed by app code — the fake qBit already knows the path from
+      // its constructor in global-setup.ts.
+      E2E_DOWNLOADS_PATH: tempDirs.downloadsPath,
     },
   },
 });

@@ -44,6 +44,7 @@ export default defineConfig({
             // Harness helper unit tests. Naming convention: .test.ts = vitest,
             // .spec.ts = Playwright. See e2e/README.md.
             'e2e/fixtures/**/*.test.ts',
+            'e2e/fakes/**/*.test.ts',
             'e2e/*.test.ts',
           ],
         },
