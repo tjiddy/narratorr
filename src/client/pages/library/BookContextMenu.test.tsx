@@ -130,4 +130,23 @@ describe('BookContextMenu', () => {
       expect(menu).toHaveClass('z-30');
     });
   });
+
+  describe('Retry Import action (#635)', () => {
+    it('shows Retry Import item when onRetryImport is provided', () => {
+      renderMenu({ onRetryImport: vi.fn() });
+      expect(screen.getByText('Retry Import')).toBeInTheDocument();
+    });
+
+    it('does not show Retry Import item when onRetryImport is not provided', () => {
+      renderMenu();
+      expect(screen.queryByText('Retry Import')).not.toBeInTheDocument();
+    });
+
+    it('calls onRetryImport when clicked', async () => {
+      const user = userEvent.setup();
+      const props = renderMenu({ onRetryImport: vi.fn() });
+      await user.click(screen.getByText('Retry Import'));
+      expect(props.onRetryImport).toHaveBeenCalledTimes(1);
+    });
+  });
 });

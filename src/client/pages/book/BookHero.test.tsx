@@ -641,4 +641,50 @@ describe('BookHero', () => {
       });
     });
   });
+
+  describe('Retry Import action (#635)', () => {
+    it('shows Retry Import menu item when onRetryImportClick is provided', async () => {
+      const user = userEvent.setup();
+      renderHero({ onRetryImportClick: vi.fn() });
+
+      // Open the overflow menu
+      const moreBtn = screen.getByLabelText('More actions');
+      await user.click(moreBtn);
+
+      expect(screen.getByText('Retry Import')).toBeInTheDocument();
+    });
+
+    it('does not show Retry Import when onRetryImportClick is not provided', async () => {
+      const user = userEvent.setup();
+      renderHero();
+
+      const moreBtn = screen.getByLabelText('More actions');
+      await user.click(moreBtn);
+
+      expect(screen.queryByText('Retry Import')).not.toBeInTheDocument();
+    });
+
+    it('calls onRetryImportClick when Retry Import is clicked', async () => {
+      const user = userEvent.setup();
+      const onRetryImportClick = vi.fn();
+      renderHero({ onRetryImportClick });
+
+      const moreBtn = screen.getByLabelText('More actions');
+      await user.click(moreBtn);
+      await user.click(screen.getByText('Retry Import'));
+
+      expect(onRetryImportClick).toHaveBeenCalledTimes(1);
+    });
+
+    it('disables Retry Import button and shows Retrying... when isRetryingImport is true', async () => {
+      const user = userEvent.setup();
+      renderHero({ onRetryImportClick: vi.fn(), isRetryingImport: true });
+
+      const moreBtn = screen.getByLabelText('More actions');
+      await user.click(moreBtn);
+
+      const retryBtn = screen.getByText('Retrying...');
+      expect(retryBtn.closest('button')).toBeDisabled();
+    });
+  });
 });
