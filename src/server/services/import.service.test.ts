@@ -7,8 +7,6 @@ import type { DownloadClientService } from './download-client.service.js';
 import type { RemotePathMappingService } from './remote-path-mapping.service.js';
 import type { FastifyBaseLogger } from 'fastify';
 import type { Db } from '../../db/index.js';
-import { and, eq, inArray, isNotNull } from 'drizzle-orm';
-import { downloads } from '../../db/schema.js';
 
 // Mock node:fs/promises
 vi.mock('node:fs/promises', () => ({
@@ -1408,9 +1406,7 @@ describe('ImportService', () => {
 
   // concurrency limiting tests removed in #636 (slot-based concurrency replaced by import_jobs queue)
 
-  describe('_removed_concurrency_limiting', () => { it.skip('removed in #636', () => {}); });
-  // eslint-disable-next-line no-constant-condition
-  // Tests for removed methods deleted in #636
+  // Slot-based concurrency tests removed in #636 (replaced by import_jobs queue)
 
   describe('disk space check', () => {
     beforeEach(setupDefaults);

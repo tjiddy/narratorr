@@ -124,10 +124,8 @@ export class QualityGateOrchestrator {
     if (row.book) {
       await this.db.update(books).set({ status: 'importing' }).where(eq(books.id, row.book.id));
       safeEmit(this.broadcaster, 'book_status_change', { book_id: row.book.id, old_status: row.book.status as BookStatus, new_status: 'importing' as BookStatus }, this.log);
-      (row.book as { status: string }).status = 'importing'; // Update in-memory so revert guards work
-    }
-    if (row.book) {
       safeEmit(this.broadcaster, 'download_status_change', { download_id: row.download.id, book_id: row.book.id, old_status: 'completed', new_status: 'checking' }, this.log);
+      (row.book as { status: string }).status = 'importing'; // Update in-memory so revert guards work
     }
 
     try {
