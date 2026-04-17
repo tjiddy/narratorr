@@ -390,7 +390,7 @@ export async function handleImportFailure(args: HandleImportFailureArgs): Promis
   // Recover book status
   const revertStatus = await revertBookStatus(db, book);
 
-  log.error({ error, downloadId, bookStatus: revertStatus, elapsedMs }, 'Import failed');
+  log.error({ error: serializeError(error), downloadId, bookStatus: revertStatus, elapsedMs }, 'Import failed');
 
   throw error;
 }

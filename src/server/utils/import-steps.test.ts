@@ -516,6 +516,26 @@ describe('handleImportFailure', () => {
       downloadId: 1, book: { id: 1, title: 'Book', path: null }, log,
     })).rejects.toBe(originalError);
   });
+
+  it('logs serialized error shape in final log.error call (#621)', async () => {
+    const log = createMockLog();
+    await expect(handleImportFailure({
+      error: new TypeError('constraint violation'), targetPath: undefined, db: mockDb as never,
+      downloadId: 99, book: { id: 3, title: 'Book', path: null }, log,
+    })).rejects.toThrow('constraint violation');
+
+    expect(log.error).toHaveBeenCalledWith(
+      expect.objectContaining({
+        error: expect.objectContaining({
+          message: 'constraint violation',
+          type: 'TypeError',
+          stack: expect.any(String),
+        }),
+        downloadId: 99,
+      }),
+      'Import failed',
+    );
+  });
 });
 
 // ── emitDownloadImporting ───────────────────────────────────────────────
