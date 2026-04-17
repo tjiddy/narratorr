@@ -71,10 +71,10 @@ test.describe('Critical path: manual import', () => {
       // returns one generic product from the Audible fake.
       await dialog.getByRole('button', { name: /Search/i }).click();
 
-      // Wait for the search result to appear and click it.
-      await expect(dialog.getByText('E2E Manual Import Book').first()).toBeVisible({ timeout: 10_000 });
-      // Click the result card to select it as metadata.
-      await dialog.locator('[role="button"]').filter({ hasText: 'E2E Manual Import Book' }).first().click();
+      // Wait for a search result button to appear and click it to select metadata.
+      const resultButton = dialog.getByRole('button', { name: /E2E Manual Import Book/i }).first();
+      await expect(resultButton).toBeVisible({ timeout: 10_000 });
+      await resultButton.click();
 
       // Save — this triggers handleEdit with metadata set, upgrading
       // confidence from 'none' to 'medium' and auto-checking the row.
