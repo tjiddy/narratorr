@@ -19,7 +19,7 @@ describe('notifyImportFailure', () => {
 
   it('calls notifierService.notify with error message from getErrorMessage()', () => {
     const notifyMock = vi.fn().mockResolvedValue(undefined);
-    const notifierService = { notify: notifyMock } as any;
+    const notifierService = { notify: notifyMock } as unknown as Parameters<typeof notifyImportFailure>[0]['notifierService'];
 
     notifyImportFailure({
       notifierService,
@@ -53,7 +53,7 @@ describe('recordImportFailedEvent', () => {
 
   it('calls eventHistory.create with error message from getErrorMessage()', () => {
     const createMock = vi.fn().mockResolvedValue(undefined);
-    const eventHistory = { create: createMock } as any;
+    const eventHistory = { create: createMock } as unknown as Parameters<typeof recordImportFailedEvent>[0]['eventHistory'];
 
     recordImportFailedEvent({
       eventHistory,
