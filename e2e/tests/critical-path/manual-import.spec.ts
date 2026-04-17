@@ -102,8 +102,8 @@ test.describe('Critical path: manual import', () => {
       // Wait for the background import to complete and the library to refresh.
       // Budget 25s for: background import (file copy + enrichment + DB update)
       // + SSE/query refetch propagation.
-      const bookCard = page.locator('a').filter({ hasText: SEED_MANUAL_IMPORT_TITLE }).first();
-      const statusBar = bookCard.locator('[data-testid="status-bar"]');
+      const bookCard = page.getByRole('link', { name: new RegExp(SEED_MANUAL_IMPORT_TITLE) }).first();
+      const statusBar = bookCard.getByTestId('status-bar');
       await expect(statusBar).toHaveClass(/bg-emerald-500/, { timeout: 25_000 });
     });
 
