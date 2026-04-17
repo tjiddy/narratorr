@@ -243,7 +243,7 @@ const routeRegistry: RouteFactory[] = [
   (app, s) => bookFilesRoute(app, s.book),
   (app, s) => bookPreviewRoute(app, s.book),
   (app, s) => searchRoutes(app, s.indexer, s.downloadOrchestrator, s.blacklist, s.settings),
-  (app, s) => activityRoutes(app, s.download, s.downloadOrchestrator, s.qualityGate, s.qualityGateOrchestrator, s.import, s.importOrchestrator),
+  (app, s, db) => activityRoutes(app, s.download, s.downloadOrchestrator, s.qualityGate, s.qualityGateOrchestrator, db, () => s.importQueueWorker.nudge()),
   (app, s) => indexersRoutes(app, s.indexer),
   (app, s) => downloadClientsRoutes(app, s.downloadClient),
   (app, s) => settingsRoutes(app, s.settings, s.indexer, s.healthCheck),

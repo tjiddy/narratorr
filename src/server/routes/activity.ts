@@ -3,11 +3,10 @@ import type { DownloadService } from '../services';
 import type { DownloadOrchestrator } from '../services/download-orchestrator.js';
 import type { QualityGateService } from '../services/quality-gate.service.js';
 import type { QualityGateOrchestrator } from '../services/quality-gate-orchestrator.js';
-import type { ImportService } from '../services/import.service.js';
-import type { ImportOrchestrator } from '../services/import-orchestrator.js';
+import type { Db } from '../../db/index.js';
 import { idParamSchema, paginationParamsSchema, DEFAULT_LIMITS } from '../../shared/schemas.js';
 import { z } from 'zod';
-import { serializeError } from '../utils/serialize-error.js';
+import { enqueueAutoImport } from '../utils/enqueue-auto-import.js';
 
 
 type IdParam = z.infer<typeof idParamSchema>;
@@ -19,7 +18,7 @@ const activityListQuerySchema = z.object({
 
 type ActivityListQuery = z.infer<typeof activityListQuerySchema>;
 
-export async function activityRoutes(app: FastifyInstance, downloadService: DownloadService, downloadOrchestrator: DownloadOrchestrator, qualityGateService: QualityGateService, qualityGateOrchestrator: QualityGateOrchestrator, importService: ImportService, importOrchestrator: ImportOrchestrator) {
+export async function activityRoutes(app: FastifyInstance, downloadService: DownloadService, downloadOrchestrator: DownloadOrchestrator, qualityGateService: QualityGateService, qualityGateOrchestrator: QualityGateOrchestrator, db: Db, nudgeImportWorker: () => void) {
   // GET /api/activity
   app.get<{ Querystring: ActivityListQuery }>(
     '/api/activity',
@@ -145,26 +144,12 @@ export async function activityRoutes(app: FastifyInstance, downloadService: Down
       request.log.info({ id }, 'Download approved');
       const result = await qualityGateOrchestrator.approve(id);
 
-      // Try to acquire a concurrency slot for immediate import
-      if (importService.tryAcquireSlot()) {
-        // Slot available — fire-and-forget import with guaranteed slot release
-        importOrchestrator.importDownload(id)
-          .catch((err) => {
-            request.log.error({ id, error: serializeError(err) }, 'Import after approve failed');
-          })
-          .finally(() => {
-            importService.releaseSlot();
-            importOrchestrator.drainQueuedImports().catch((error: unknown) => {
-              request.log.error({ error: serializeError(error) }, 'Approve: queued import drain failed');
-            });
-          });
-        return result;
-      } else {
-        // No slot available — queue for next tick
-        request.log.info({ id }, 'Concurrency limit reached, queuing approved download');
-        await importService.setProcessingQueued(id);
-        return { ...result, status: 'processing_queued' };
+      // Enqueue auto import job — sets download to processing_queued, nudges worker
+      if (result.bookId) {
+        await enqueueAutoImport(db, id, result.bookId, nudgeImportWorker, request.log);
       }
+
+      return result;
     },
   );
 

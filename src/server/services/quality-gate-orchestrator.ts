@@ -181,7 +181,7 @@ export class QualityGateOrchestrator {
    * Approve a pending_review download — delegates DB transition to service,
    * dispatches SSE + event recording side effects.
    */
-  async approve(downloadId: number): Promise<{ id: number; status: string }> {
+  async approve(downloadId: number): Promise<{ id: number; status: string; bookId: number | null }> {
     const result = await this.qualityGateService.approve(downloadId);
 
     // Side effects — fire-and-forget
@@ -192,7 +192,7 @@ export class QualityGateOrchestrator {
       }, this.log);
     }
 
-    return { id: result.id, status: result.status };
+    return { id: result.id, status: result.status, bookId: result.book?.id ?? null };
   }
 
   /**
