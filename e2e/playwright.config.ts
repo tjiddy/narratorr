@@ -78,6 +78,14 @@ export default defineConfig({
       // Not consumed by app code — the fake qBit already knows the path from
       // its constructor in global-setup.ts.
       E2E_DOWNLOADS_PATH: tempDirs.downloadsPath,
+      // Override the Audible API base URL so AudibleProvider sends requests to
+      // the E2E fake instead of the real Audible API. The fake returns empty
+      // products, making the match job resolve to confidence 'none'.
+      AUDIBLE_BASE_URL: 'http://localhost:4300',
+      // Surface the per-run source path for the manual-import spec. The spec
+      // enters this path in the scan input so Narratorr discovers the seeded
+      // audiobook folder.
+      E2E_SOURCE_PATH: tempDirs.sourcePath,
     },
   },
 });
