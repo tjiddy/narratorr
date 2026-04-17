@@ -4,7 +4,7 @@ import userEvent from '@testing-library/user-event';
 import { MergeActivityCard } from './MergeActivityCard';
 import type { MergeCardState } from '@/hooks/useMergeProgress';
 
-function makeState(overrides: Partial<MergeActivityCardState> = {}): MergeCardState {
+function makeState(overrides: Partial<MergeCardState> = {}): MergeCardState {
   return { bookId: 42, bookTitle: 'Test Book', phase: 'starting', ...overrides };
 }
 

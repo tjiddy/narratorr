@@ -3,7 +3,7 @@ import { render, screen } from '@testing-library/react';
 import { SearchActivityCard } from './SearchActivityCard';
 import type { SearchCardState, IndexerState } from '@/hooks/useSearchProgress';
 
-function makeState(overrides: Partial<SearchActivityCardState> = {}): SearchCardState {
+function makeState(overrides: Partial<SearchCardState> = {}): SearchCardState {
   return {
     bookId: 1,
     bookTitle: 'The Way of Kings',
