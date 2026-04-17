@@ -10,6 +10,8 @@ import type { BookService } from './book.service.js';
 import { downloadRemoteCover, isRemoteCoverUrl } from './cover-download.js';
 import { mimeToExt } from '../utils/mime.js';
 import { getErrorMessage } from '../utils/error-message.js';
+import { serializeError } from '../utils/serialize-error.js';
+
 
 export interface EnrichmentResult {
   enriched: boolean;
@@ -85,14 +87,14 @@ export async function enrichBookFromAudio(
         update.coverUrl = `/api/books/${bookId}/cover`;
         log.info({ bookId, coverPath }, 'Saved embedded cover art');
       } catch (coverError: unknown) {
-        log.warn({ error: coverError, bookId }, 'Failed to save embedded cover art');
+        log.warn({ error: serializeError(coverError), bookId }, 'Failed to save embedded cover art');
       }
     }
 
     // Download remote cover if book has a remote coverUrl and no embedded cover was saved
     if (isRemoteCoverUrl(book.coverUrl) && !update.coverUrl) {
       downloadRemoteCover(bookId, targetPath, book.coverUrl!, db, log)
-        .catch((err: unknown) => log.warn({ error: err, bookId }, 'Fire-and-forget remote cover download failed'));
+        .catch((err: unknown) => log.warn({ error: serializeError(err), bookId }, 'Fire-and-forget remote cover download failed'));
     }
 
     await db.update(books).set(update).where(eq(books.id, bookId));
@@ -110,7 +112,7 @@ export async function enrichBookFromAudio(
     return { enriched: true };
   } catch (error: unknown) {
     const message = getErrorMessage(error);
-    log.warn({ error, bookId, targetPath }, 'Audio file enrichment failed');
+    log.warn({ error: serializeError(error), bookId, targetPath }, 'Audio file enrichment failed');
     return { enriched: false, error: message };
   }
 }

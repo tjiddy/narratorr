@@ -3,6 +3,8 @@ import { join } from 'node:path';
 import type { FastifyBaseLogger } from 'fastify';
 import { COVER_FILE_REGEX } from '../../core/utils/cover-regex.js';
 import { MIME_TO_EXT } from '../../shared/mime.js';
+import { serializeError } from './serialize-error.js';
+
 
 export { COVER_FILE_REGEX };
 
@@ -35,7 +37,7 @@ export async function preserveBookCover(
     await copyFile(join(bookPath, coverFile), join(cacheDir, coverFile));
     log.debug({ bookId, coverFile }, 'Preserved cover in cache');
   } catch (error: unknown) {
-    log.warn({ bookId, error }, 'Failed to preserve cover in cache');
+    log.warn({ bookId, error: serializeError(error) }, 'Failed to preserve cover in cache');
   }
 }
 
@@ -50,7 +52,7 @@ export async function cleanCoverCache(
   try {
     await rm(join(configPath, 'covers', String(bookId)), { recursive: true, force: true });
   } catch (error: unknown) {
-    log.warn({ bookId, error }, 'Failed to clean cover cache');
+    log.warn({ bookId, error: serializeError(error) }, 'Failed to clean cover cache');
   }
 }
 

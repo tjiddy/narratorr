@@ -10,6 +10,8 @@ import { buildSearchQuery, buildNarratorPriority, filterAndRankResults, filterBl
 import { buildGrabPayload } from './grab-payload.js';
 import { enrichUsenetLanguages } from '../utils/enrich-usenet-languages.js';
 import { getErrorMessage } from '../utils/error-message.js';
+import { serializeError } from '../utils/serialize-error.js';
+
 
 export type RetryOutcome =
   | { outcome: 'retried'; download: DownloadWithBook }
@@ -129,7 +131,7 @@ export async function retrySearch(
     return { outcome: 'retried', download: newDownload };
   } catch (error: unknown) {
     const message = getErrorMessage(error);
-    log.warn({ bookId, error, attempt }, 'Retry search failed');
+    log.warn({ bookId, error: serializeError(error), attempt }, 'Retry search failed');
     return { outcome: 'retry_error', error: message };
   }
 }

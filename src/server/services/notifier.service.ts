@@ -10,6 +10,8 @@ import {
 } from '../../core/index.js';
 import { getErrorMessage } from '../utils/error-message.js';
 import type { NotifierSettings } from '../../shared/schemas/notifier.js';
+import { serializeError } from '../utils/serialize-error.js';
+
 
 type NotifierRow = typeof notifiers.$inferSelect;
 type NewNotifier = typeof notifiers.$inferInsert;
@@ -85,7 +87,7 @@ export class NotifierService {
             this.log.debug({ notifier: notifier.name, notifierType: notifier.type, event }, 'Notification sent');
           }
         } catch (error: unknown) {
-          this.log.warn({ notifier: notifier.name, notifierType: notifier.type, event, error }, 'Notification error');
+          this.log.warn({ notifier: notifier.name, notifierType: notifier.type, event, error: serializeError(error) }, 'Notification error');
         }
       }),
     );

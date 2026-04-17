@@ -28,6 +28,8 @@ import { isTorrentRemovalDeferred } from '../utils/seed-helpers.js';
 import { cleanupDeferredRejections as cleanupDeferred } from './quality-gate-deferred-cleanup.helpers.js';
 import type { ImportOrchestrator } from './import-orchestrator.js';
 import type { ImportService } from './import.service.js';
+import { serializeError } from '../utils/serialize-error.js';
+
 type BookRow = typeof books.$inferSelect;
 
 export class QualityGateOrchestrator {
@@ -76,7 +78,7 @@ export class QualityGateOrchestrator {
         try {
           ({ resolvedPath: savePath } = await resolveSavePath(row.download, this.downloadClientService, this.remotePathMappingService));
         } catch (error: unknown) {
-          this.log.error({ error, downloadId: row.download.id }, 'Quality gate: failed to resolve save path');
+          this.log.error({ error: serializeError(error), downloadId: row.download.id }, 'Quality gate: failed to resolve save path');
           await this.holdForProbeFailure(row.download, row.book, 'probe_failed', error);
           continue;
         }
@@ -86,7 +88,7 @@ export class QualityGateOrchestrator {
         try {
           scanResult = await scanAudioDirectory(savePath, { skipCover: true, ffprobePath, log: this.log });
         } catch (error: unknown) {
-          this.log.error({ error, downloadId: row.download.id }, 'Quality gate: scan failed');
+          this.log.error({ error: serializeError(error), downloadId: row.download.id }, 'Quality gate: scan failed');
           await this.holdForProbeFailure(row.download, row.book, 'probe_failed', error);
           continue;
         }
@@ -103,7 +105,7 @@ export class QualityGateOrchestrator {
         // Dispatch side effects based on decision
         await this.dispatchSideEffects(decision.action, row.download, row.book, decision.reason, decision.statusTransition);
       } catch (error: unknown) {
-        this.log.error({ error, downloadId: row.download.id }, 'Quality gate error');
+        this.log.error({ error: serializeError(error), downloadId: row.download.id }, 'Quality gate error');
         // Set pending_review with probeFailure on unhandled error
         await this.qualityGateService.setStatus(row.download.id, 'pending_review');
         const probeError = getErrorMessage(error);
@@ -135,7 +137,7 @@ export class QualityGateOrchestrator {
       try {
         ({ resolvedPath: savePath } = await resolveSavePath(row.download, this.downloadClientService, this.remotePathMappingService));
       } catch (error: unknown) {
-        this.log.error({ error, downloadId: row.download.id }, 'Quality gate: failed to resolve save path');
+        this.log.error({ error: serializeError(error), downloadId: row.download.id }, 'Quality gate: failed to resolve save path');
         await this.holdForProbeFailure(row.download, row.book, 'probe_failed', error);
         return;
       }
@@ -143,7 +145,7 @@ export class QualityGateOrchestrator {
       try {
         scanResult = await scanAudioDirectory(savePath, { skipCover: true, ffprobePath: ffprobePath2, log: this.log });
       } catch (error: unknown) {
-        this.log.error({ error, downloadId: row.download.id }, 'Quality gate: scan failed');
+        this.log.error({ error: serializeError(error), downloadId: row.download.id }, 'Quality gate: scan failed');
         await this.holdForProbeFailure(row.download, row.book, 'probe_failed', error);
         return;
       }
@@ -153,7 +155,7 @@ export class QualityGateOrchestrator {
       await this.dispatchSideEffects(decision.action, row.download, row.book, decision.reason, decision.statusTransition);
       if (decision.action === 'imported') { await this.triggerImportWithSlotAdmission(downloadId); }
     } catch (error: unknown) {
-      this.log.error({ error, downloadId: row.download.id }, 'Quality gate error');
+      this.log.error({ error: serializeError(error), downloadId: row.download.id }, 'Quality gate error');
       await this.qualityGateService.setStatus(row.download.id, 'pending_review');
       // Revert book from importing → downloading if it was promoted before the error
       if (row.book && row.book.status === 'importing') {
@@ -172,12 +174,12 @@ export class QualityGateOrchestrator {
     if (this.importService.tryAcquireSlot()) {
       this.importOrchestrator.importDownload(downloadId)
         .catch((err: unknown) => {
-          this.log.error({ downloadId, error: err }, 'Quality gate: inline import failed');
+          this.log.error({ downloadId, error: serializeError(err) }, 'Quality gate: inline import failed');
         })
         .finally(() => {
           this.importService!.releaseSlot();
           this.importOrchestrator!.drainQueuedImports().catch((error: unknown) => {
-            this.log.error({ error }, 'Quality gate: queued import drain failed');
+            this.log.error({ error: serializeError(error) }, 'Quality gate: queued import drain failed');
           });
         });
     } else {
@@ -323,7 +325,7 @@ export class QualityGateOrchestrator {
         importSettings = { minSeedTime: settings.minSeedTime, minSeedRatio: settings.minSeedRatio };
       }
     } catch (error: unknown) {
-      this.log.warn({ downloadId: download.id, error }, 'Quality gate: failed to read import settings — defaulting to non-destructive cleanup');
+      this.log.warn({ downloadId: download.id, error: serializeError(error) }, 'Quality gate: failed to read import settings — defaulting to non-destructive cleanup');
       shouldDelete = false;
     }
 
@@ -362,7 +364,7 @@ export class QualityGateOrchestrator {
         }
       }
     } catch (error: unknown) {
-      this.log.warn({ downloadId: download.id, error }, 'Quality gate: failed to delete download files');
+      this.log.warn({ downloadId: download.id, error: serializeError(error) }, 'Quality gate: failed to delete download files');
     }
   }
 
@@ -384,7 +386,7 @@ export class QualityGateOrchestrator {
       await rm(download.outputPath, { recursive: true, force: true });
       this.log.info({ downloadId: download.id, outputPath: download.outputPath }, 'Quality gate: fallback deleted orphaned files');
     } catch (error: unknown) {
-      this.log.warn({ downloadId: download.id, outputPath: download.outputPath, error }, 'Quality gate: fallback file deletion failed');
+      this.log.warn({ downloadId: download.id, outputPath: download.outputPath, error: serializeError(error) }, 'Quality gate: fallback file deletion failed');
     }
   }
 

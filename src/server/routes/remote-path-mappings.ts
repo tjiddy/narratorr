@@ -3,6 +3,8 @@ import { type z } from 'zod';
 import { type RemotePathMappingService } from '../services/remote-path-mapping.service.js';
 import { createRemotePathMappingSchema, updateRemotePathMappingSchema, idParamSchema, type CreateRemotePathMappingInput, type UpdateRemotePathMappingInput } from '../../shared/schemas.js';
 import { getErrorMessage } from '../utils/error-message.js';
+import { serializeError } from '../utils/serialize-error.js';
+
 
 type IdParam = z.infer<typeof idParamSchema>;
 
@@ -80,7 +82,7 @@ export async function remotePathMappingRoutes(
         request.log.info({ id }, 'Remote path mapping deleted');
         return { success: true };
       } catch (error: unknown) {
-        request.log.error({ id, error }, 'Failed to delete remote path mapping');
+        request.log.error({ id, error: serializeError(error) }, 'Failed to delete remote path mapping');
         return reply.status(500).send({
           error: getErrorMessage(error, 'Failed to delete'),
         });

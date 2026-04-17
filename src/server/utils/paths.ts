@@ -4,6 +4,8 @@ import type { FastifyBaseLogger } from 'fastify';
 import { renderFilename, toLastFirst, toSortTitle, AUDIO_EXTENSIONS } from '../../core/utils/index.js';
 import type { NamingOptions } from '../../core/utils/naming.js';
 import { extractYear } from './import-helpers.js';
+import { serializeError } from './serialize-error.js';
+
 
 /** Minimal book shape required by renameFilesWithTemplate. */
 export interface RenameableBook {
@@ -119,7 +121,7 @@ export async function renameFilesWithTemplate(
     }
   } catch (error: unknown) {
     // Attempt rollback
-    log.error({ error, completed: completed.length, total: renames.length }, 'Rename failed mid-operation, attempting rollback');
+    log.error({ error: serializeError(error), completed: completed.length, total: renames.length }, 'Rename failed mid-operation, attempting rollback');
     for (const { from, to } of completed.reverse()) {
       try {
         await rename(join(targetPath, to), join(targetPath, from));

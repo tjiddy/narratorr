@@ -3,6 +3,8 @@ import type { Db } from '../../db/index.js';
 import type { FastifyBaseLogger } from 'fastify';
 import { books } from '../../db/schema.js';
 import { downloadRemoteCover } from '../services/cover-download.js';
+import { serializeError } from '../utils/serialize-error.js';
+
 
 /**
  * Startup backfill: download covers for imported books that still have remote coverUrl values.
@@ -40,7 +42,7 @@ export async function runCoverBackfill(db: Db, log: FastifyBaseLogger): Promise<
       }
     } catch (error: unknown) {
       failed++;
-      log.warn({ error, bookId: book.id }, 'Cover backfill: unexpected error during download');
+      log.warn({ error: serializeError(error), bookId: book.id }, 'Cover backfill: unexpected error during download');
     }
   }
 

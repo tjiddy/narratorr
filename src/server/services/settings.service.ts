@@ -13,6 +13,8 @@ import {
 import { normalizeLanguage } from '../../core/utils/language-codes.js';
 import { CANONICAL_LANGUAGES } from '../../shared/language-constants.js';
 import { encryptFields, decryptFields, resolveSentinelFields, getKey, type SecretEntity } from '../utils/secret-codec.js';
+import { serializeError } from '../utils/serialize-error.js';
+
 
 export type { AppSettings };
 
@@ -201,7 +203,7 @@ export class SettingsService {
         .onConflictDoUpdate({ target: settings.key, set: { value: qualityBlob } });
       this.invalidateCache('quality');
     } catch (error: unknown) {
-      this.log.warn({ error }, 'Language settings migration failed — fresh defaults will apply');
+      this.log.warn({ error: serializeError(error) }, 'Language settings migration failed — fresh defaults will apply');
     }
   }
 }

@@ -6,6 +6,8 @@ import type { IndexerService } from '../services/indexer.service.js';
 import type { HealthCheckService } from '../services/health-check.service.js';
 import { maskFields, isSentinel, type SecretEntity } from '../utils/secret-codec.js';
 import { getErrorMessage } from '../utils/error-message.js';
+import { serializeError } from '../utils/serialize-error.js';
+
 
 function redactProxyUrl(proxyUrl: string): string {
   try {
@@ -128,7 +130,7 @@ export async function settingsRoutes(
         request.log.info({ version, path }, 'ffmpeg probe successful');
         return { version };
       } catch (error: unknown) {
-        request.log.warn({ error }, 'ffmpeg probe failed');
+        request.log.warn({ error: serializeError(error) }, 'ffmpeg probe failed');
         return reply.status(400).send({
           error: getErrorMessage(error, 'ffmpeg probe failed'),
         });
@@ -152,7 +154,7 @@ export async function settingsRoutes(
         return { success: true, ip };
       } catch (error: unknown) {
         const message = getErrorMessage(error, 'Proxy test failed');
-        request.log.warn({ error, proxyUrl: redactProxyUrl(request.body.proxyUrl) }, 'Proxy test failed');
+        request.log.warn({ error: serializeError(error), proxyUrl: redactProxyUrl(request.body.proxyUrl) }, 'Proxy test failed');
         return reply.status(200).send({ success: false, message });
       }
     }

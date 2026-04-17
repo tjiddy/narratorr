@@ -12,6 +12,8 @@ import { encryptFields, decryptFields, resolveSentinelFields, getKey } from '../
 import { AdapterCache } from '../utils/adapter-cache.js';
 import { getErrorMessage } from '../utils/error-message.js';
 import type { DownloadClientSettings } from '../../shared/schemas/download-client.js';
+import { serializeError } from '../utils/serialize-error.js';
+
 
 type DownloadClientRow = typeof downloadClients.$inferSelect;
 type NewDownloadClient = typeof downloadClients.$inferInsert;
@@ -209,7 +211,7 @@ export class DownloadClientService {
       return { categories };
     } catch (error: unknown) {
       const message = getErrorMessage(error);
-      this.log.warn({ id, error }, 'Failed to fetch categories from download client');
+      this.log.warn({ id, error: serializeError(error) }, 'Failed to fetch categories from download client');
       return { categories: [], error: message };
     }
   }
@@ -228,7 +230,7 @@ export class DownloadClientService {
       return { categories };
     } catch (error: unknown) {
       const message = getErrorMessage(error);
-      this.log.warn({ type: data.type, error }, 'Failed to fetch categories from download client config');
+      this.log.warn({ type: data.type, error: serializeError(error) }, 'Failed to fetch categories from download client config');
       return { categories: [], error: message };
     }
   }

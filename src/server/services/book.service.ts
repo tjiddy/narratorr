@@ -9,6 +9,8 @@ import { books, authors, narrators, bookAuthors, bookNarrators, unmatchedGenres,
 import { slugify, findUnmatchedGenres } from '../../core/index.js';
 import { findOrCreateAuthor, findOrCreateNarrator } from '../utils/find-or-create-person.js';
 import { type MetadataService } from './metadata.service.js';
+import { serializeError } from '../utils/serialize-error.js';
+
 
 export { CoverUploadError } from './cover-upload.js';
 
@@ -198,7 +200,7 @@ export class BookService {
           this.log.info({ title: data.title, providerId: data.providerId, asin: enrichedAsin }, 'Enriched book with ASIN from provider');
         }
       } catch (error: unknown) {
-        this.log.warn({ error, providerId: data.providerId }, 'ASIN enrichment failed');
+        this.log.warn({ error: serializeError(error), providerId: data.providerId }, 'ASIN enrichment failed');
       }
     }
 
@@ -233,7 +235,7 @@ export class BookService {
 
     this.log.info({ title: data.title, authors: data.authors?.map(a => a.name), asin: data.asin }, 'Book added to library');
     this.trackUnmatchedGenres(data.genres).catch((error) => {
-      this.log.debug({ error }, 'Failed to track unmatched genres');
+      this.log.debug({ error: serializeError(error) }, 'Failed to track unmatched genres');
     });
     return this.getById(bookId) as Promise<BookWithAuthor>;
   }
@@ -268,7 +270,7 @@ export class BookService {
 
     if ('genres' in data && data.genres !== undefined) {
       this.trackUnmatchedGenres(data.genres ?? undefined).catch((error: unknown) => {
-        this.log.debug({ error }, 'Failed to track unmatched genres');
+        this.log.debug({ error: serializeError(error) }, 'Failed to track unmatched genres');
       });
     }
 

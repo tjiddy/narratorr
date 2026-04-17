@@ -16,6 +16,8 @@ import { encryptFields, decryptFields, resolveSentinelFields, getKey } from '../
 import type { IndexerSettings } from '../../shared/schemas/indexer.js';
 import { AdapterCache } from '../utils/adapter-cache.js';
 import { getErrorMessage } from '../utils/error-message.js';
+import { serializeError } from '../utils/serialize-error.js';
+
 
 type IndexerRow = typeof indexers.$inferSelect;
 type NewIndexer = typeof indexers.$inferInsert;
@@ -234,7 +236,7 @@ export class IndexerService {
           await this.update(id, { settings: { ...existingSettings, ...updates } });
           this.log.info({ id, isVip: result.metadata.isVip, classname: result.metadata.classname }, 'Persisted VIP/class status from test');
         } catch (error: unknown) {
-          this.log.warn({ id, error }, 'Failed to persist VIP metadata after test');
+          this.log.warn({ id, error: serializeError(error) }, 'Failed to persist VIP metadata after test');
         }
       }
 
@@ -278,7 +280,7 @@ export class IndexerService {
         await this.update(indexer.id, { settings: { ...existingSettings, isVip: status.isVip, classname: status.classname } });
         this.log.info({ id: indexer.id, classname: status.classname }, 'Persisted Mouse status from pre-search refresh');
       } catch (error: unknown) {
-        this.log.warn({ id: indexer.id, error }, 'Failed to persist status from pre-search refresh');
+        this.log.warn({ id: indexer.id, error: serializeError(error) }, 'Failed to persist status from pre-search refresh');
       }
       return { skip: true, error: 'Searches disabled — Mouse class' };
     }
@@ -290,7 +292,7 @@ export class IndexerService {
         await this.update(indexer.id, { settings: { ...existingSettings, isVip: status.isVip, classname: status.classname } });
         this.log.info({ id: indexer.id, isVip: status.isVip, classname: status.classname }, 'Persisted class change from pre-search refresh');
       } catch (error: unknown) {
-        this.log.warn({ id: indexer.id, error }, 'Failed to persist class change from pre-search refresh');
+        this.log.warn({ id: indexer.id, error: serializeError(error) }, 'Failed to persist class change from pre-search refresh');
       }
     }
 

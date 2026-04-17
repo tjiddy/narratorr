@@ -17,6 +17,8 @@ import { filterByLanguage } from '../../core/utils/index.js';
 import { parseWordList } from '../../shared/parse-word-list.js';
 import type { SettingsService } from './settings.service.js';
 import { getErrorMessage } from '../utils/error-message.js';
+import { serializeError } from '../utils/serialize-error.js';
+
 
 const DEFAULT_THROTTLE_MS = 200;
 
@@ -211,7 +213,7 @@ export class MetadataService {
       const metadata = await this.settingsService.get('metadata');
       languages = metadata.languages;
     } catch (error: unknown) {
-      this.log.warn({ error }, 'Failed to read language settings for search filtering — returning unfiltered results');
+      this.log.warn({ error: serializeError(error) }, 'Failed to read language settings for search filtering — returning unfiltered results');
       return books;
     }
 
@@ -231,7 +233,7 @@ export class MetadataService {
       rejectWords = quality.rejectWords;
       languages = metadata.languages;
     } catch (error: unknown) {
-      this.log.warn({ error }, 'Failed to read settings for author book filtering — returning unfiltered results');
+      this.log.warn({ error: serializeError(error) }, 'Failed to read settings for author book filtering — returning unfiltered results');
       return books;
     }
 
@@ -282,7 +284,7 @@ export class MetadataService {
         this.setRateLimited(error.provider, error.retryAfterMs);
         throw error; // Re-throw so enrichment job can handle it
       }
-      this.log.warn({ error, asin }, 'Audnexus enrichment lookup failed');
+      this.log.warn({ error: serializeError(error), asin }, 'Audnexus enrichment lookup failed');
       return null;
     }
   }
@@ -352,7 +354,7 @@ export class MetadataService {
         this.setRateLimited(error.provider, error.retryAfterMs);
         return fallback;
       }
-      this.log.warn({ ...context, error }, `Metadata ${method} failed`);
+      this.log.warn({ ...context, error: serializeError(error) }, `Metadata ${method} failed`);
       return fallback;
     }
   }

@@ -11,6 +11,7 @@ import { processAudioFiles } from '../../core/utils/audio-processor.js';
 import { getErrorMessage } from './error-message.js';
 import { toSourceBitrateKbps, logBitrateCapping } from './audio-bitrate.js';
 import type { TaggingService } from '../services/tagging.service.js';
+import { serializeError } from './serialize-error.js';
 
 // Re-export side-effect functions for backwards compatibility
 export {
@@ -279,7 +280,7 @@ export async function cleanupOldBookPath(args: CleanupOldBookPathArgs): Promise<
     await rm(bookPath, { recursive: true, force: true });
     log.info({ oldPath: bookPath, newPath: targetPath }, 'Deleted old book files during upgrade');
   } catch (rmError: unknown) {
-    log.warn({ error: rmError, oldPath: bookPath }, 'Failed to delete old book files during upgrade — continuing');
+    log.warn({ error: serializeError(rmError), oldPath: bookPath }, 'Failed to delete old book files during upgrade — continuing');
   }
 }
 
@@ -321,7 +322,7 @@ export async function embedTagsForImport(args: EmbedTagsArgs): Promise<void> {
       'Tag embedding during import',
     );
   } catch (tagError: unknown) {
-    log.warn({ error: tagError, bookId }, 'Tag embedding failed during import — continuing');
+    log.warn({ error: serializeError(tagError), bookId }, 'Tag embedding failed during import — continuing');
   }
 }
 
@@ -354,7 +355,7 @@ export async function runImportPostProcessing(args: RunImportPostProcessingArgs)
       log,
     });
   } catch (scriptError: unknown) {
-    log.warn({ error: scriptError, bookId }, 'Post-processing script failed during import — continuing');
+    log.warn({ error: serializeError(scriptError), bookId }, 'Post-processing script failed during import — continuing');
   }
 }
 
@@ -377,7 +378,7 @@ export async function handleImportFailure(args: HandleImportFailureArgs): Promis
   // Clean up copied files
   if (targetPath) {
     await rm(targetPath, { recursive: true, force: true })
-      .catch((rmError) => log.warn({ error: rmError, targetPath }, 'Failed to clean up target path after import failure'));
+      .catch((rmError) => log.warn({ error: serializeError(rmError), targetPath }, 'Failed to clean up target path after import failure'));
   }
 
   // Revert download to failed

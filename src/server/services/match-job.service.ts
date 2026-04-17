@@ -11,6 +11,8 @@ import { scoreResult, diceCoefficient } from '../../core/utils/similarity.js';
 import { extractYear } from '../utils/folder-parsing.js';
 import { searchWithSwapRetryTrace } from '../utils/search-helpers.js';
 import { getErrorMessage } from '../utils/error-message.js';
+import { serializeError } from '../utils/serialize-error.js';
+
 
 // ============ Types ============
 
@@ -130,7 +132,7 @@ class MatchJob {
 
   start(): void {
     this.run().catch(error => {
-      this.log.error({ error, jobId: this.id }, 'Match job failed unexpectedly');
+      this.log.error({ error: serializeError(error), jobId: this.id }, 'Match job failed unexpectedly');
     });
   }
 
@@ -178,7 +180,7 @@ class MatchJob {
           this.log.debug({ path: book.path, duration: `${duration}min` }, 'Audio duration scanned');
         }
       } catch (error: unknown) {
-        this.log.debug({ error, path: book.path }, 'Audio scan failed — proceeding without duration');
+        this.log.debug({ error: serializeError(error), path: book.path }, 'Audio scan failed — proceeding without duration');
       }
 
       // Send structured search params when title/author available, with swap retry
@@ -259,7 +261,7 @@ class MatchJob {
         alternatives: scored.slice(1).map(s => s.meta),
       };
     } catch (error: unknown) {
-      this.log.warn({ error, path: book.path, title: book.title }, 'Match failed for book');
+      this.log.warn({ error: serializeError(error), path: book.path, title: book.title }, 'Match failed for book');
       return {
         path: book.path,
         confidence: 'none',
@@ -284,7 +286,7 @@ class MatchJob {
             continue;
           }
         } catch (error: unknown) {
-          this.log.debug({ error, providerId: result.providerId }, 'Detail fetch failed, using search result');
+          this.log.debug({ error: serializeError(error), providerId: result.providerId }, 'Detail fetch failed, using search result');
         }
       }
       detailed.push(result);

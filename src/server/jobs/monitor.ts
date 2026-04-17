@@ -20,6 +20,7 @@ import type { EventHistoryService } from '../services/event-history.service.js';
 import { recordDownloadFailedEvent } from '../utils/download-side-effects.js';
 import { applyPathMapping } from '../../core/utils/path-mapping.js';
 import { join } from 'node:path';
+import { serializeError } from '../utils/serialize-error.js';
 
 export interface MonitorRetryDeps {
   blacklistService: BlacklistService;
@@ -91,7 +92,7 @@ export async function monitorDownloads(
 
       await processDownloadUpdate(db, download, item, notifierService, log, retryDeps, broadcaster, remotePathMappingService, qualityGateOrchestrator, eventHistory);
     } catch (error: unknown) {
-      log.error({ error, id: download.id }, 'Error monitoring download');
+      log.error({ error: serializeError(error), id: download.id }, 'Error monitoring download');
       await blacklistOnInfraError(download, retryDeps, log);
     }
   }
@@ -302,7 +303,7 @@ async function blacklistOnInfraError(
     });
     log.info({ downloadId: download.id, infoHash: download.infoHash }, 'Blacklisted release as infrastructure_error (temporary)');
   } catch (error: unknown) {
-    log.warn({ downloadId: download.id, error }, 'Failed to blacklist release on infrastructure error');
+    log.warn({ downloadId: download.id, error: serializeError(error) }, 'Failed to blacklist release on infrastructure error');
   }
 }
 
@@ -332,7 +333,7 @@ async function blacklistRelease(
     });
     log.info({ downloadId: data.downloadId, infoHash: data.infoHash, guid: data.guid, reason: data.reason, blacklistType: data.blacklistType }, 'Blacklisted failed release before retry');
   } catch (error: unknown) {
-    log.warn({ downloadId: data.downloadId, error }, 'Failed to blacklist release — proceeding with retry');
+    log.warn({ downloadId: data.downloadId, error: serializeError(error) }, 'Failed to blacklist release — proceeding with retry');
   }
 }
 
@@ -354,7 +355,7 @@ async function handleDownloadFailure(
     const importSettings = await retryDeps.retrySearchDeps.settingsService.get('import');
     redownloadFailed = importSettings.redownloadFailed;
   } catch (error: unknown) {
-    log.warn({ downloadId, error }, 'Failed to read import settings — proceeding with retry');
+    log.warn({ downloadId, error: serializeError(error) }, 'Failed to read import settings — proceeding with retry');
   }
 
   if (!redownloadFailed) {
@@ -391,7 +392,7 @@ async function handleDownloadFailure(
         return 'retry_error';
     }
   } catch (error: unknown) {
-    log.error({ downloadId, bookId, error }, 'handleDownloadFailure unexpected error');
+    log.error({ downloadId, bookId, error: serializeError(error) }, 'handleDownloadFailure unexpected error');
     await db.update(downloads).set({ errorMessage: 'Retry failed - will retry next cycle' }).where(eq(downloads.id, downloadId));
     return 'retry_error';
   }

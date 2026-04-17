@@ -12,6 +12,8 @@ import { buildSearchQuery, buildNarratorPriority, filterAndRankResults, searchAn
 import { DuplicateDownloadError } from '../services/download.service.js';
 import { buildGrabPayload } from '../services/grab-payload.js';
 import { enrichUsenetLanguages } from '../utils/enrich-usenet-languages.js';
+import { serializeError } from '../utils/serialize-error.js';
+
 
 export interface SearchJobResult {
   searched: number;
@@ -70,7 +72,7 @@ export async function runSearchJob(
         log.warn({ error: result.error, bookId: book.id, title: book.title }, 'Search failed for book');
       }
     } catch (error: unknown) {
-      log.warn({ error, bookId: book.id, title: book.title }, 'Search failed for book');
+      log.warn({ error: serializeError(error), bookId: book.id, title: book.title }, 'Search failed for book');
     }
   }
 
@@ -121,7 +123,7 @@ export async function searchAllWanted(
       }
     } catch (error: unknown) {
       errors++;
-      log.warn({ error, bookId: book.id, title: book.title }, 'Search failed for book');
+      log.warn({ error: serializeError(error), bookId: book.id, title: book.title }, 'Search failed for book');
     }
   }
 
@@ -228,7 +230,7 @@ export async function runUpgradeSearchJob(
         }
       }
     } catch (error: unknown) {
-      log.warn({ error, bookId: book.id, title: book.title }, 'Upgrade search failed for book');
+      log.warn({ error: serializeError(error), bookId: book.id, title: book.title }, 'Upgrade search failed for book');
     }
   }
 

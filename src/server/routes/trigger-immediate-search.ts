@@ -4,6 +4,8 @@ import type { IndexerService, SettingsService } from '../services/index.js';
 import type { DownloadOrchestrator } from '../services/download-orchestrator.js';
 import type { BlacklistService } from '../services/blacklist.service.js';
 import type { EventBroadcasterService } from '../services/event-broadcaster.service.js';
+import { serializeError } from '../utils/serialize-error.js';
+
 
 export interface ImmediateSearchDeps {
   indexerService: IndexerService;
@@ -25,6 +27,6 @@ export function triggerImmediateSearch(
       await searchAndGrabForBook(book, deps.indexerService, deps.downloadOrchestrator, { ...qualitySettings, languages: metadataSettings.languages, narratorPriority }, log, deps.blacklistService, deps.eventBroadcaster);
     })
     .catch((err: unknown) => {
-      log.warn({ error: err, bookId: book.id }, 'Search-immediately trigger failed');
+      log.warn({ error: serializeError(err), bookId: book.id }, 'Search-immediately trigger failed');
     });
 }

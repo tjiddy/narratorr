@@ -8,6 +8,7 @@ import type { MergeService } from '../services/merge.service.js';
 import type { BookRejectionService } from '../services/book-rejection.service.js';
 import type { EventBroadcasterService } from '../services/event-broadcaster.service.js';
 import type { BlacklistService } from '../services/blacklist.service.js';
+import { serializeError } from '../utils/serialize-error.js';
 export interface BookRouteDeps {
   bookService: BookService;
   bookListService: BookListService;
@@ -46,6 +47,7 @@ type IdParam = z.infer<typeof idParamSchema>;
 
 import { refreshScanBook } from '../services/refresh-scan.service.js';
 
+
 async function registerDeleteBookRoute(app: FastifyInstance, deps: Pick<BookRouteDeps, 'bookService' | 'downloadService' | 'downloadOrchestrator' | 'settingsService' | 'eventHistory'>) {
 app.delete<{ Params: IdParam; Querystring: DeleteBookQuery }>(
   '/api/books/:id',
@@ -68,7 +70,7 @@ app.delete<{ Params: IdParam; Querystring: DeleteBookQuery }>(
           const librarySettings = await deps.settingsService.get('library');
           await deps.bookService.deleteBookFiles(book.path, librarySettings.path);
         } catch (error: unknown) {
-          request.log.error({ bookId: id, error }, 'Failed to delete book files');
+          request.log.error({ bookId: id, error: serializeError(error) }, 'Failed to delete book files');
           return reply.status(500).send({ error: 'Failed to delete book files from disk' });
         }
       }
@@ -80,7 +82,7 @@ app.delete<{ Params: IdParam; Querystring: DeleteBookQuery }>(
       try {
         await deps.downloadOrchestrator.cancel(download.id);
       } catch (error: unknown) {
-        request.log.warn({ downloadId: download.id, error }, 'Failed to cancel download during book deletion');
+        request.log.warn({ downloadId: download.id, error: serializeError(error) }, 'Failed to cancel download during book deletion');
       }
     }
     if (activeDownloads.length > 0) {
@@ -105,7 +107,7 @@ app.delete<{ Params: IdParam; Querystring: DeleteBookQuery }>(
 
     // Clean up cached cover after successful DB delete (best-effort)
     cleanCoverCache(id, config.configPath, request.log).catch((error: unknown) => {
-      request.log.warn({ bookId: id, error }, 'Failed to clean cover cache during deletion');
+      request.log.warn({ bookId: id, error: serializeError(error) }, 'Failed to clean cover cache during deletion');
     });
 
     request.log.info({ id, deleteFiles }, 'Book deleted');

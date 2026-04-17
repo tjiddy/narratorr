@@ -19,6 +19,8 @@ import { resolveFfprobePathFromSettings } from '../../core/utils/ffprobe-path.js
 import { AUDIO_EXTENSIONS } from '../../core/utils/audio-constants.js';
 import { extname } from 'node:path';
 import { toSourceBitrateKbps, logBitrateCapping } from '../utils/audio-bitrate.js';
+import { serializeError } from '../utils/serialize-error.js';
+
 
 // ============ Types ============
 
@@ -181,7 +183,7 @@ export class BulkOperationService {
             tick(false); // skip silently
             continue;
           }
-          this.log.warn({ bookId, jobId: id, error }, 'Bulk rename: book failed');
+          this.log.warn({ bookId, jobId: id, error: serializeError(error) }, 'Bulk rename: book failed');
           tick(true); // failure
           continue;
         }
@@ -215,7 +217,7 @@ export class BulkOperationService {
             tick(false); // skip silently
             continue;
           }
-          this.log.warn({ bookId, jobId: id, error }, 'Bulk re-tag: book failed');
+          this.log.warn({ bookId, jobId: id, error: serializeError(error) }, 'Bulk re-tag: book failed');
           tick(true); // failure
           continue;
         }
@@ -258,7 +260,7 @@ export class BulkOperationService {
         try {
           await this.convertBook(row.id, row.path, row.title, processingSettings);
         } catch (error: unknown) {
-          this.log.warn({ bookId: row.id, jobId: id, error }, 'Bulk convert: book failed');
+          this.log.warn({ bookId: row.id, jobId: id, error: serializeError(error) }, 'Bulk convert: book failed');
           tick(true); // failure
           continue;
         }

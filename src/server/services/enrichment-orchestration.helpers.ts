@@ -9,6 +9,8 @@ import { enrichBookFromAudio } from './enrichment-utils.js';
 import { resolveFfprobePathFromSettings } from '../../core/utils/ffprobe-path.js';
 import type { BookMetadata } from '../../core/metadata/index.js';
 import type { EnrichmentStatus } from '../../shared/schemas/enrichment.js';
+import { serializeError } from '../utils/serialize-error.js';
+
 
 // ─── Shared types ───────────────────────────────────────────────────────
 
@@ -87,7 +89,7 @@ export async function applyAudnexusEnrichment(
         break;
       }
     } catch (error: unknown) {
-      deps.log.warn({ error, bookId, asin }, 'Audnexus enrichment failed');
+      deps.log.warn({ error: serializeError(error), bookId, asin }, 'Audnexus enrichment failed');
     }
   }
 }
