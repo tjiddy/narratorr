@@ -32,6 +32,17 @@ function canShowWrongRelease(book: BookWithAuthor): boolean {
   return book.status === 'imported' && !!(book.lastGrabGuid || book.lastGrabInfoHash);
 }
 
+/** Check if a failed book has a retryable import job. Only queries when status is 'failed'. */
+function useRetryImportAvailable(bookId: number, status: string): boolean {
+  const { data } = useQuery({
+    queryKey: ['book', bookId, 'retry-import-available'],
+    queryFn: () => api.checkRetryImportAvailable(bookId),
+    enabled: status === 'failed',
+    staleTime: 30_000,
+  });
+  return status === 'failed' && data?.available === true;
+}
+
 // eslint-disable-next-line max-lines-per-function -- page orchestrator with multiple confirm modals
 export function BookDetails({ libraryBook, metadataBook }: {
   libraryBook: BookWithAuthor;
@@ -49,14 +60,7 @@ export function BookDetails({ libraryBook, metadataBook }: {
 
   const showWrongRelease = canShowWrongRelease(libraryBook);
 
-  // Only query retry availability when book is failed — avoids unnecessary API calls
-  const { data: retryCheck } = useQuery({
-    queryKey: ['book', libraryBook.id, 'retry-import-available'],
-    queryFn: () => api.checkRetryImportAvailable(libraryBook.id),
-    enabled: libraryBook.status === 'failed',
-    staleTime: 30_000,
-  });
-  const canRetryImport = libraryBook.status === 'failed' && retryCheck?.available === true;
+  const canRetryImport = useRetryImportAvailable(libraryBook.id, libraryBook.status);
 
   const handleCoverFile = useCallback((file: File) => {
     if (!SUPPORTED_COVER_MIMES.has(file.type)) {
