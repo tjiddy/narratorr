@@ -76,6 +76,7 @@ export function MetadataSearchView({
             showSeries
             coverSize="md"
             placeholderIcon={<SearchIcon className="w-3 h-3 text-muted-foreground/20" />}
+            itemClassName="w-full flex items-center gap-3 px-2.5 py-2 text-left rounded-xl hover:bg-muted/40 border border-transparent hover:border-border/30 transition-all group"
           />
         </div>
       )}

@@ -179,14 +179,14 @@ describe('MetadataResultItem', () => {
   describe('conditional rows — library badge', () => {
     it('renders library badge when showLibraryBadge is true and book matches library', () => {
       renderItem({
-        meta: createMockBookMetadata({ asin: 'B003P2WO5E' }),
+        meta: createMockBookMetadata({ asin: 'B003P2WO5E', narrators: ['Michael Kramer'] }),
         showLibraryBadge: true,
         libraryBooks: [{ asin: 'B003P2WO5E', title: 'The Way of Kings', authorName: 'Brandon Sanderson', authorSlug: 'brandon-sanderson' }],
       });
-      // CheckCircleIcon is the badge indicator — it renders as an SVG
-      const buttons = screen.getAllByRole('button');
-      // The badge should be inside the button
-      expect(buttons[0].querySelector('svg:last-child')).toBeTruthy();
+      // CheckCircleIcon is a direct child of the button (not nested inside the metadata div)
+      const button = screen.getByRole('button');
+      const directChildSvgs = button.querySelectorAll(':scope > svg');
+      expect(directChildSvgs).toHaveLength(1);
     });
 
     it('hides library badge when showLibraryBadge is false (default)', () => {

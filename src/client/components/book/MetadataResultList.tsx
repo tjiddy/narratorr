@@ -14,6 +14,8 @@ export interface MetadataResultListProps {
   libraryBooks?: (BookIdentifier | BookWithAuthor)[];
   placeholderIcon?: ReactNode;
   coverSize?: 'sm' | 'md';
+  itemClassName?: string;
+  dataTestId?: string;
 }
 
 export function MetadataResultList({
@@ -28,6 +30,8 @@ export function MetadataResultList({
   libraryBooks,
   placeholderIcon,
   coverSize,
+  itemClassName,
+  dataTestId,
 }: MetadataResultListProps) {
   if (results.length === 0) return null;
 
@@ -45,6 +49,8 @@ export function MetadataResultList({
           libraryBooks={libraryBooks}
           placeholderIcon={placeholderIcon}
           coverSize={coverSize}
+          className={itemClassName}
+          dataTestId={dataTestId ? `${dataTestId}-${i}` : undefined}
         />
       ))}
     </div>

@@ -2,6 +2,7 @@ import type { ReactNode } from 'react';
 import type { BookMetadata, BookIdentifier, BookWithAuthor } from '@/lib/api';
 import { resolveUrl } from '@/lib/url-utils';
 import { isBookInLibrary } from '@/lib/helpers';
+import { formatDurationMinutes } from '@/lib/format';
 import { HeadphonesIcon, CheckCircleIcon } from '@/components/icons';
 
 export interface MetadataResultItemProps {
@@ -14,6 +15,7 @@ export interface MetadataResultItemProps {
   libraryBooks?: (BookIdentifier | BookWithAuthor)[];
   placeholderIcon?: ReactNode;
   coverSize?: 'sm' | 'md';
+  className?: string;
   dataTestId?: string;
 }
 
@@ -65,12 +67,14 @@ function MetadataDetails({ meta, showNarrators, showSeries, showDuration }: {
       )}
       {showDuration && meta.duration != null && meta.duration > 0 && (
         <p className="text-[10px] text-muted-foreground/40">
-          {Math.floor(meta.duration / 60)}h {meta.duration % 60}m
+          {formatDurationMinutes(meta.duration)}
         </p>
       )}
     </div>
   );
 }
+
+const DEFAULT_CLASS = 'w-full flex items-center gap-2.5 px-2.5 py-2 text-left rounded-xl hover:bg-muted/40 transition-colors group';
 
 export function MetadataResultItem({
   meta,
@@ -82,13 +86,14 @@ export function MetadataResultItem({
   libraryBooks,
   placeholderIcon,
   coverSize = 'sm',
+  className,
   dataTestId,
 }: MetadataResultItemProps) {
   return (
     <button
       type="button"
       onClick={() => onSelect(meta)}
-      className="w-full flex items-center gap-2.5 px-2.5 py-2 text-left rounded-xl hover:bg-muted/40 transition-colors group"
+      className={className ?? DEFAULT_CLASS}
       data-testid={dataTestId}
     >
       <CoverImage coverUrl={meta.coverUrl} placeholderIcon={placeholderIcon} size={coverSize} />
