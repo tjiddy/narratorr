@@ -161,7 +161,7 @@ describe('LibrarySettingsSection', () => {
       await user.type(pathInput, '/new-path');
       fireEvent.blur(pathInput);
       await waitFor(() => {
-        expect(mockToast.error).toHaveBeenCalled();
+        expect(mockToast.error).toHaveBeenCalledWith('fail');
       });
       expect(screen.queryByText('Scan Library?')).not.toBeInTheDocument();
     });
@@ -197,6 +197,26 @@ describe('LibrarySettingsSection', () => {
       await user.click(screen.getByRole('button', { name: /scan/i }));
       await waitFor(() => {
         expect(mockApi.rescanLibrary).toHaveBeenCalled();
+      });
+    });
+
+    it('shows error toast with exact error message when rescanLibrary rejects', async () => {
+      mockApi.rescanLibrary.mockRejectedValueOnce(new Error('Scan failed'));
+      const user = userEvent.setup();
+      renderWithProviders(<LibrarySettingsSection />);
+      await waitFor(() => {
+        expect(screen.getByPlaceholderText('/audiobooks')).toHaveValue('/audiobooks');
+      });
+      const pathInput = screen.getByPlaceholderText('/audiobooks');
+      await user.clear(pathInput);
+      await user.type(pathInput, '/new-path');
+      fireEvent.blur(pathInput);
+      await waitFor(() => {
+        expect(screen.getByText('Scan Library?')).toBeInTheDocument();
+      });
+      await user.click(screen.getByRole('button', { name: /scan/i }));
+      await waitFor(() => {
+        expect(mockToast.error).toHaveBeenCalledWith('Scan failed');
       });
     });
 
