@@ -747,11 +747,22 @@ describe('LibraryScanService', () => {
       expect(result).toBeNull();
     });
 
-    it('returns null on error', async () => {
+    it('returns null on error and logs serialized error shape (#621)', async () => {
       mockMetadataService.searchBooks.mockRejectedValue(new Error('API down'));
 
       const result = await service.lookupMetadata('Title');
       expect(result).toBeNull();
+      expect(log.warn).toHaveBeenCalledWith(
+        {
+          error: expect.objectContaining({
+            message: 'API down',
+            type: 'Error',
+            stack: expect.any(String),
+          }),
+          title: 'Title',
+        },
+        'Metadata lookup failed during import',
+      );
     });
 
     it('fetches full book detail when search result has providerId but no ASIN', async () => {

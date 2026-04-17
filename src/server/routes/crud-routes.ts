@@ -3,6 +3,8 @@ import { z, type ZodTypeAny } from 'zod';
 import { idParamSchema } from '../../shared/schemas.js';
 import { maskFields, type SecretEntity } from '../utils/secret-codec.js';
 import { getErrorMessage } from '../utils/error-message.js';
+import { serializeError } from '../utils/serialize-error.js';
+
 
 type IdParam = z.infer<typeof idParamSchema>;
 
@@ -103,7 +105,7 @@ export async function registerCrudRoutes(
         request.log.info({ id }, `${entityName} deleted`);
         return { success: true };
       } catch (error: unknown) {
-        request.log.error({ id, error }, `Failed to delete ${lower}`);
+        request.log.error({ id, error: serializeError(error) }, `Failed to delete ${lower}`);
         return reply.status(500).send({
           error: getErrorMessage(error, 'Failed to delete'),
         });

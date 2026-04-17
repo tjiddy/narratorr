@@ -3,6 +3,8 @@ import { join, extname } from 'node:path';
 import type { FastifyBaseLogger } from 'fastify';
 import { AUDIO_EXTENSIONS } from '../../core/utils/index.js';
 import type { DiscoveredBook } from '../../shared/schemas/library-scan.js';
+import { serializeError } from '../utils/serialize-error.js';
+
 
 /**
  * Walk directory tree and find leaf folders containing audio files.
@@ -29,7 +31,7 @@ export async function findAudioLeafFolders(dirPath: string, log: FastifyBaseLogg
       }
     }
   } catch (error: unknown) {
-    log.warn({ error, path: dirPath }, 'Error scanning directory');
+    log.warn({ error: serializeError(error), path: dirPath }, 'Error scanning directory');
   }
 
   return results;
@@ -56,7 +58,7 @@ export async function getAudioStats(dirPath: string, log: FastifyBaseLogger): Pr
       }
     }
   } catch (error: unknown) {
-    log.warn({ error, path: dirPath }, 'Error getting audio stats');
+    log.warn({ error: serializeError(error), path: dirPath }, 'Error getting audio stats');
   }
 
   return { fileCount, totalSize };

@@ -12,6 +12,8 @@ import { buildNarratorPriority, filterAndRankResults, filterBlacklistedResults }
 import { buildGrabPayload } from '../services/grab-payload.js';
 import { enrichUsenetLanguages } from '../utils/enrich-usenet-languages.js';
 import { getErrorMessage } from '../utils/error-message.js';
+import { serializeError } from '../utils/serialize-error.js';
+
 
 const MATCH_THRESHOLD = 0.7;
 
@@ -82,7 +84,7 @@ export async function runRssJob(
         allResults.push(...results);
       }
     } catch (error: unknown) {
-      log.warn({ indexer: indexer.name, error }, 'RSS poll failed for indexer');
+      log.warn({ indexer: indexer.name, error: serializeError(error) }, 'RSS poll failed for indexer');
     }
   }
 

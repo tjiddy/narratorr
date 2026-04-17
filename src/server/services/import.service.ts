@@ -21,6 +21,8 @@ import type { DownloadRow } from './types.js';
 import { isTorrentRemovalDeferred } from '../utils/seed-helpers.js';
 
 import type { ImportResult } from '../utils/import-helpers.js';
+import { serializeError } from '../utils/serialize-error.js';
+
 export type { ImportResult } from '../utils/import-helpers.js';
 
 /** Lightweight context for orchestrator side-effect dispatch. */
@@ -168,7 +170,7 @@ export class ImportService {
         this.log.warn({ bookId, error: (enrichResult as { error?: string }).error }, 'Audio enrichment failed — import successful but metadata incomplete');
       }
     } catch (error: unknown) {
-      this.log.warn({ bookId, error }, 'Audio enrichment threw — import successful but metadata incomplete');
+      this.log.warn({ bookId, error: serializeError(error) }, 'Audio enrichment threw — import successful but metadata incomplete');
     }
   }
 
@@ -289,7 +291,7 @@ export class ImportService {
         this.log.info({ downloadId: download.id, externalId: download.externalId, clientType: client?.type, deleteFiles: true }, 'Torrent removed from client after import');
       }
     } catch (error: unknown) {
-      this.log.error({ error, downloadId: download.id }, 'Failed to remove torrent after import');
+      this.log.error({ error: serializeError(error), downloadId: download.id }, 'Failed to remove torrent after import');
     }
   }
 
@@ -303,7 +305,7 @@ export class ImportService {
     try {
       importSettings = await this.settingsService.get('import');
     } catch (error: unknown) {
-      this.log.warn({ error }, 'Failed to read import settings for deferred import cleanup — skipping cycle');
+      this.log.warn({ error: serializeError(error) }, 'Failed to read import settings for deferred import cleanup — skipping cycle');
       return;
     }
 
@@ -334,7 +336,7 @@ export class ImportService {
         this.log.info({ downloadId: download.id, externalId: download.externalId, clientType: client?.type }, 'Deferred torrent removal completed after import');
         await this.db.update(downloads).set({ pendingCleanup: null }).where(eq(downloads.id, download.id));
       } catch (error: unknown) {
-        this.log.error({ error, downloadId: download.id }, 'Failed deferred torrent removal — will retry next cycle');
+        this.log.error({ error: serializeError(error), downloadId: download.id }, 'Failed deferred torrent removal — will retry next cycle');
       }
     }
   }

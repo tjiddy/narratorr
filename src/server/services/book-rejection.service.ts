@@ -10,6 +10,8 @@ import type { RetrySearchDeps } from './retry-search.js';
 import { blacklistAndRetrySearch } from '../utils/rejection-helpers.js';
 import { preserveBookCover } from '../utils/cover-cache.js';
 import { config } from '../config.js';
+import { serializeError } from '../utils/serialize-error.js';
+
 
 type BookRow = typeof books.$inferSelect;
 
@@ -82,7 +84,7 @@ export class BookRejectionService {
         const librarySettings = await this.settingsService.get('library');
         await this.bookService.deleteBookFiles(book.path, librarySettings.path);
       } catch (error: unknown) {
-        this.log.warn({ bookId, path: book.path, error }, 'Wrong release: failed to delete book files (continuing)');
+        this.log.warn({ bookId, path: book.path, error: serializeError(error) }, 'Wrong release: failed to delete book files (continuing)');
       }
     }
 
@@ -105,7 +107,7 @@ export class BookRejectionService {
         lastGrabInfoHash: book.lastGrabInfoHash,
       },
     }).catch((error: unknown) => {
-      this.log.warn({ bookId: book.id, error }, 'Wrong release: failed to record event');
+      this.log.warn({ bookId: book.id, error: serializeError(error) }, 'Wrong release: failed to record event');
     });
   }
 }

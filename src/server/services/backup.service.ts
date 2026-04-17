@@ -9,6 +9,8 @@ import type { FastifyBaseLogger } from 'fastify';
 import type { Readable } from 'stream';
 import type { SettingsService } from './settings.service.js';
 import { getErrorMessage } from '../utils/error-message.js';
+import { serializeError } from '../utils/serialize-error.js';
+
 
 export interface BackupMetadata {
   filename: string;
@@ -172,7 +174,7 @@ export class BackupService {
         await fs.unlink(path.join(this.backupsDir, backup.filename));
         deleted++;
       } catch (error: unknown) {
-        this.log.warn({ filename: backup.filename, error }, 'Failed to delete old backup');
+        this.log.warn({ filename: backup.filename, error: serializeError(error) }, 'Failed to delete old backup');
       }
     }
 

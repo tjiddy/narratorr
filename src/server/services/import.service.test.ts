@@ -1335,7 +1335,7 @@ describe('ImportService', () => {
       expect(result.downloadId).toBe(1);
       // Warning logged, not error
       expect(log.warn).toHaveBeenCalledWith(
-        expect.objectContaining({ error: expect.any(Error) }),
+        expect.objectContaining({ error: expect.objectContaining({ message: 'Enrichment exploded', type: 'Error' }) }),
         expect.stringContaining('enrichment threw'),
       );
       // No revert to failed — import is committed
@@ -2492,7 +2492,7 @@ describe('ImportService consolidation (issue #79)', () => {
 
         expect(result.downloadId).toBe(1);
         expect(log.warn).toHaveBeenCalledWith(
-          expect.objectContaining({ error: expect.any(Error) }),
+          expect.objectContaining({ error: expect.objectContaining({ message: 'unexpected crash', type: 'Error' }) }),
           expect.stringContaining('enrichment threw'),
         );
         expect(rm).not.toHaveBeenCalled();

@@ -13,6 +13,8 @@ import { type CreateEventInput } from './event-history.service.js';
 import { retrySearch, type RetrySearchDeps } from './retry-search.js';
 
 import type { DownloadRow } from './types.js';
+import { serializeError } from '../utils/serialize-error.js';
+
 
 type BookRow = typeof books.$inferSelect;
 
@@ -227,7 +229,7 @@ export class DownloadService {
           try {
             await this.cancel(dl.id, 'Replaced by new download');
           } catch (cancelErr: unknown) {
-            this.log.warn({ id: dl.id, error: cancelErr }, 'Failed to cancel replaceable download — proceeding with replacement anyway');
+            this.log.warn({ id: dl.id, error: serializeError(cancelErr) }, 'Failed to cancel replaceable download — proceeding with replacement anyway');
           }
         }
         await this.db.update(books).set({ status: 'wanted' }).where(eq(books.id, bookId));
@@ -352,7 +354,7 @@ export class DownloadService {
           await adapter.removeDownload(download.externalId, true);
         }
       } catch (error: unknown) {
-        this.log.error({ error, id }, 'Failed to remove download from client');
+        this.log.error({ error: serializeError(error), id }, 'Failed to remove download from client');
       }
     }
 
@@ -387,7 +389,7 @@ export class DownloadService {
         try {
           await this.db.delete(downloads).where(eq(downloads.id, id));
         } catch (error: unknown) {
-          this.log.warn({ oldId: id, newId: result.download.id, error }, 'Failed to delete old download record after retry');
+          this.log.warn({ oldId: id, newId: result.download.id, error: serializeError(error) }, 'Failed to delete old download record after retry');
         }
         this.log.info({ oldId: id, newId: result.download.id }, 'Download retried');
         return { status: 'retried', download: result.download };

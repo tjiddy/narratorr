@@ -22,6 +22,8 @@ import { safeEmit } from '../utils/safe-emit.js';
 import { getErrorMessage } from '../utils/error-message.js';
 import { snapshotBookForEvent } from '../utils/event-helpers.js';
 import type { ImportConfirmItem, ImportMode, ImportSingleResult } from './library-scan.service.js';
+import { serializeError } from '../utils/serialize-error.js';
+
 
 const COPY_VERIFICATION_THRESHOLD = 0.99;
 
@@ -219,14 +221,14 @@ export async function confirmImport(
 
       accepted.push({ bookId: book.id, item });
     } catch (error: unknown) {
-      log.error({ error, title: item.title }, 'Failed to create placeholder for import');
+      log.error({ error: serializeError(error), title: item.title }, 'Failed to create placeholder for import');
     }
   }
 
   log.info({ accepted: accepted.length }, 'Import placeholders created, starting background processing');
 
   processImportsInBackground(accepted, deps, mode).catch(error => {
-    log.error({ error }, 'Background import processing failed');
+    log.error({ error: serializeError(error) }, 'Background import processing failed');
   });
 
   return { accepted: accepted.length };
@@ -244,7 +246,7 @@ async function processImportsInBackground(
       await processOneImport(bookId, item, deps, mode);
       log.info({ bookId, title: item.title }, 'Book import completed');
     } catch (error: unknown) {
-      log.error({ error, bookId, title: item.title }, 'Book import failed');
+      log.error({ error: serializeError(error), bookId, title: item.title }, 'Book import failed');
       await db.update(books).set({
         status: 'missing',
         updatedAt: new Date(),

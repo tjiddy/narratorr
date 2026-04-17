@@ -21,6 +21,8 @@ import {
   type ScanDebugBody,
   type ScanDebugTrace,
 } from '../../shared/schemas.js';
+import { serializeError } from '../utils/serialize-error.js';
+
 
 type ScanSingleBody = z.infer<typeof scanSingleBodySchema>;
 type ScanDirectoryBody = z.infer<typeof scanDirectoryBodySchema>;
@@ -64,7 +66,7 @@ export async function libraryScanRoutes(
         const result = await libraryScan.scanSingleBook(path);
         return result;
       } catch (error: unknown) {
-        request.log.warn({ error, path }, 'Single book scan failed');
+        request.log.warn({ error: serializeError(error), path }, 'Single book scan failed');
         return reply.status(400).send({
           error: getErrorMessage(error, 'Scan failed'),
         });
@@ -301,7 +303,7 @@ async function runSearchTrace(
       }
       directLookup = { asin, hit: false };
     } catch (error: unknown) {
-      log.warn({ error, asin }, 'Scan debug direct ASIN lookup failed — falling back to keyword search');
+      log.warn({ error: serializeError(error), asin }, 'Scan debug direct ASIN lookup failed — falling back to keyword search');
       directLookup = { asin, hit: false };
     }
   }

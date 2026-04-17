@@ -2,6 +2,8 @@ import { execFile } from 'node:child_process';
 import { access } from 'node:fs/promises';
 import type { FastifyBaseLogger } from 'fastify';
 import { getErrorMessage } from './error-message.js';
+import { serializeError } from './serialize-error.js';
+
 
 export interface PostProcessingScriptArgs {
   scriptPath: string;
@@ -33,7 +35,7 @@ export async function runPostProcessingScript(args: PostProcessingScriptArgs): P
     const warning = code === 'ENOENT'
       ? `Post-processing script not found: ${scriptPath}`
       : `Post-processing script inaccessible: ${scriptPath} (${code ?? getErrorMessage(error)})`;
-    log.warn({ scriptPath, error }, warning);
+    log.warn({ scriptPath, error: serializeError(error) }, warning);
     return { success: false, warning };
   }
 

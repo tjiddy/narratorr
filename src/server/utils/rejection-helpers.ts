@@ -3,6 +3,8 @@ import type { BlacklistService } from '../services/blacklist.service.js';
 import type { SettingsService } from '../services/settings.service.js';
 import { retrySearch, type RetrySearchDeps } from '../services/retry-search.js';
 import type { BlacklistReason } from '../../shared/schemas/blacklist.js';
+import { serializeError } from './serialize-error.js';
+
 
 export interface BlacklistIdentifiers {
   infoHash?: string;
@@ -48,7 +50,7 @@ export async function blacklistAndRetrySearch(request: BlacklistAndRetryRequest)
       });
       log.info({ infoHash: identifiers.infoHash, guid: identifiers.guid }, 'Blacklisted rejected release');
     } catch (error: unknown) {
-      log.warn({ error }, 'Failed to blacklist release');
+      log.warn({ error: serializeError(error) }, 'Failed to blacklist release');
     }
   } else if (!identifiers.infoHash && !identifiers.guid) {
     log.info('Blacklist skipped — no infoHash or guid');
@@ -67,7 +69,7 @@ export async function blacklistAndRetrySearch(request: BlacklistAndRetryRequest)
   if (overrideRetry) {
     log.info({ bookId }, 'Triggering re-search after reject');
     retrySearch(bookId, deps).catch((error: unknown) => {
-      log.warn({ bookId, error }, 'Re-search after reject failed');
+      log.warn({ bookId, error: serializeError(error) }, 'Re-search after reject failed');
     });
     return;
   }
@@ -78,10 +80,10 @@ export async function blacklistAndRetrySearch(request: BlacklistAndRetryRequest)
     if (importSettings.redownloadFailed) {
       log.info({ bookId }, 'Triggering re-search after reject');
       retrySearch(bookId, deps).catch((error: unknown) => {
-        log.warn({ bookId, error }, 'Re-search after reject failed');
+        log.warn({ bookId, error: serializeError(error) }, 'Re-search after reject failed');
       });
     }
   }).catch((error: unknown) => {
-    log.warn({ error }, 'Failed to check redownloadFailed setting');
+    log.warn({ error: serializeError(error) }, 'Failed to check redownloadFailed setting');
   });
 }

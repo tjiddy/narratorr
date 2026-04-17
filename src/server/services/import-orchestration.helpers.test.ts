@@ -197,4 +197,25 @@ describe('confirmImport — SSE emissions (#618)', () => {
     await new Promise(r => setTimeout(r, 50));
     expect(mockBroadcaster.emit).not.toHaveBeenCalled();
   });
+
+  it('logs serialized error shape when bookService.create throws (#621)', async () => {
+    mockBookService.create.mockRejectedValueOnce(new TypeError('DB constraint violated'));
+
+    await confirmImport(
+      [{ path: '/fail', title: 'FailBook' }],
+      deps,
+    );
+
+    expect(deps.log.error).toHaveBeenCalledWith(
+      {
+        error: expect.objectContaining({
+          message: 'DB constraint violated',
+          type: 'TypeError',
+          stack: expect.any(String),
+        }),
+        title: 'FailBook',
+      },
+      'Failed to create placeholder for import',
+    );
+  });
 });

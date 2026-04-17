@@ -7,6 +7,8 @@ import type { FastifyBaseLogger } from 'fastify';
 import { books } from '../../db/schema.js';
 import { COVER_FILE_REGEX } from '../../core/utils/cover-regex.js';
 import { mimeToExt } from '../../shared/mime.js';
+import { serializeError } from '../utils/serialize-error.js';
+
 
 const DOWNLOAD_TIMEOUT_MS = 30_000;
 
@@ -90,7 +92,7 @@ export async function downloadRemoteCover(
     log.info({ bookId, path: finalPath }, 'Remote cover downloaded and saved locally');
     return true;
   } catch (error: unknown) {
-    log.warn({ error, bookId, url: remoteUrl }, 'Failed to download remote cover');
+    log.warn({ error: serializeError(error), bookId, url: remoteUrl }, 'Failed to download remote cover');
     return false;
   }
 }

@@ -7,6 +7,8 @@ import type { ImportService } from '../services/import.service.js';
 import type { ImportOrchestrator } from '../services/import-orchestrator.js';
 import { idParamSchema, paginationParamsSchema, DEFAULT_LIMITS } from '../../shared/schemas.js';
 import { z } from 'zod';
+import { serializeError } from '../utils/serialize-error.js';
+
 
 type IdParam = z.infer<typeof idParamSchema>;
 
@@ -148,12 +150,12 @@ export async function activityRoutes(app: FastifyInstance, downloadService: Down
         // Slot available — fire-and-forget import with guaranteed slot release
         importOrchestrator.importDownload(id)
           .catch((err) => {
-            request.log.error({ id, error: err }, 'Import after approve failed');
+            request.log.error({ id, error: serializeError(err) }, 'Import after approve failed');
           })
           .finally(() => {
             importService.releaseSlot();
             importOrchestrator.drainQueuedImports().catch((error: unknown) => {
-              request.log.error({ error }, 'Approve: queued import drain failed');
+              request.log.error({ error: serializeError(error) }, 'Approve: queued import drain failed');
             });
           });
         return result;

@@ -50,6 +50,8 @@ Uses Fastify's built-in Pino logger. Use `FastifyBaseLogger` from `fastify` for 
 
 **Levels:** `error` (unexpected failures) · `warn` (recoverable issues) · `info` (CRUD, job lifecycle, settings) · `debug` (API payloads, intermediate state)
 
+**Logging errors:** Always wrap `unknown` catch values with `serializeError()` from `src/server/utils/serialize-error.js` before passing to Pino — raw `unknown` values serialize to `{}` in JSON logs. The `narratorr/no-raw-error-logging` ESLint rule enforces this.
+
 ## Security
 
 See `SECURITY.md` for full model. Filesystem browsing is intentionally unrestricted (single-user self-hosted app). All `/api/*` routes require auth except health/status/auth endpoints. Passwords use scrypt with timing-safe comparison. Never use `startsWith()` for path ancestry checks — use `path.relative()` and verify the result doesn't start with `..`. Redact credentials from proxy URLs before logging. Normalize sentinel values *before* comparison, not after. Allow sentinel passthrough at schema level for validated secret fields.

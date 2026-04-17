@@ -18,6 +18,8 @@ import type { EventBroadcasterService } from './event-broadcaster.service.js';
 import { searchWithSwapRetry } from '../utils/search-helpers.js';
 import { parseFolderStructure } from '../utils/folder-parsing.js';
 import type { DiscoveredBook } from '../../shared/schemas/library-scan.js';
+import { serializeError } from '../utils/serialize-error.js';
+
 
 export type { DiscoveredBook };
 
@@ -310,7 +312,7 @@ export class LibraryScanService {
         }
         this.log.debug({ asin }, 'Direct ASIN lookup returned null — falling back to keyword search');
       } catch (error: unknown) {
-        this.log.warn({ error, asin }, 'Direct ASIN lookup failed — falling back to keyword search');
+        this.log.warn({ error: serializeError(error), asin }, 'Direct ASIN lookup failed — falling back to keyword search');
       }
     }
 
@@ -339,7 +341,7 @@ export class LibraryScanService {
             match = { ...match, ...detail, title: match.title };
           }
         } catch (error: unknown) {
-          this.log.warn({ error, providerId: match.providerId }, 'Failed to fetch book detail — using search result');
+          this.log.warn({ error: serializeError(error), providerId: match.providerId }, 'Failed to fetch book detail — using search result');
         }
       }
 
@@ -349,7 +351,7 @@ export class LibraryScanService {
       );
       return match;
     } catch (error: unknown) {
-      this.log.warn({ error, title }, 'Metadata lookup failed during import');
+      this.log.warn({ error: serializeError(error), title }, 'Metadata lookup failed during import');
       return null;
     }
   }

@@ -3,6 +3,8 @@ import { readdir, access, constants } from 'node:fs/promises';
 import { dirname, join, parse, resolve } from 'node:path';
 import { z } from 'zod';
 import { getErrorMessage } from '../utils/error-message.js';
+import { serializeError } from '../utils/serialize-error.js';
+
 
 const browseQuerySchema = z.object({
   path: z.string().optional(),
@@ -23,7 +25,7 @@ export async function filesystemRoutes(app: FastifyInstance): Promise<void> {
         entries = await readdir(targetPath, { withFileTypes: true });
       } catch (error: unknown) {
         const message = getErrorMessage(error, 'Failed to read directory');
-        request.log.warn({ error, targetPath }, 'Directory browse failed');
+        request.log.warn({ error: serializeError(error), targetPath }, 'Directory browse failed');
         return reply.status(400).send({ error: message });
       }
 

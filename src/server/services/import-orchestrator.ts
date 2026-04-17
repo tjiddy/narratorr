@@ -15,6 +15,8 @@ import {
   isContentFailure,
 } from '../utils/import-steps.js';
 import { blacklistAndRetrySearch } from '../utils/rejection-helpers.js';
+import { serializeError } from '../utils/serialize-error.js';
+
 
 export class ImportOrchestrator {
   private blacklistService?: BlacklistService;
@@ -132,7 +134,7 @@ export class ImportOrchestrator {
         try {
           await this.importDownload(next.id);
         } catch (error: unknown) {
-          this.log.error({ downloadId: next.id, error }, 'Queued import failed');
+          this.log.error({ downloadId: next.id, error: serializeError(error) }, 'Queued import failed');
         }
       } finally {
         this.importService.releaseSlot();
@@ -153,7 +155,7 @@ export class ImportOrchestrator {
         log: this.log,
       });
     } catch (tagError: unknown) {
-      this.log.warn({ error: tagError, bookId: ctx.bookId }, 'Tagging failed during import — continuing');
+      this.log.warn({ error: serializeError(tagError), bookId: ctx.bookId }, 'Tagging failed during import — continuing');
     }
 
     // Best-effort: post-processing
@@ -166,7 +168,7 @@ export class ImportOrchestrator {
         fileCount: result.fileCount, bookId: ctx.bookId, log: this.log,
       });
     } catch (scriptError: unknown) {
-      this.log.warn({ error: scriptError, bookId: ctx.bookId }, 'Post-processing failed during import — continuing');
+      this.log.warn({ error: serializeError(scriptError), bookId: ctx.bookId }, 'Post-processing failed during import — continuing');
     }
 
     // Fire-and-forget: SSE success
@@ -206,7 +208,7 @@ export class ImportOrchestrator {
         settingsService: this.settingsService,
         log: this.log,
       }).catch((blacklistError: unknown) => {
-        this.log.warn({ error: blacklistError, downloadId: ctx.downloadId }, 'Import failure blacklist dispatch failed');
+        this.log.warn({ error: serializeError(blacklistError), downloadId: ctx.downloadId }, 'Import failure blacklist dispatch failed');
       });
     }
   }

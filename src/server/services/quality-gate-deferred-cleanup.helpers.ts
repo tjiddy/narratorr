@@ -8,6 +8,8 @@ import { isTorrentRemovalDeferred } from '../utils/seed-helpers.js';
 import { rm, stat } from 'node:fs/promises';
 import { eq } from 'drizzle-orm';
 import { downloads } from '../../db/schema.js';
+import { serializeError } from '../utils/serialize-error.js';
+
 
 export interface DeferredCleanupDeps {
   qualityGateService: QualityGateService;
@@ -32,7 +34,7 @@ export async function cleanupDeferredRejections(deps: DeferredCleanupDeps): Prom
       importSettings = { minSeedTime: settings.minSeedTime, minSeedRatio: settings.minSeedRatio };
     }
   } catch (error: unknown) {
-    log.warn({ error }, 'Quality gate: failed to read import settings for deferred cleanup — skipping cycle');
+    log.warn({ error: serializeError(error) }, 'Quality gate: failed to read import settings for deferred cleanup — skipping cycle');
     return;
   }
 
@@ -43,7 +45,7 @@ export async function cleanupDeferredRejections(deps: DeferredCleanupDeps): Prom
     try {
       await processDeferredCandidate(download, importSettings, deps);
     } catch (error: unknown) {
-      log.warn({ downloadId: download.id, error }, 'Quality gate: deferred cleanup error — will retry next cycle');
+      log.warn({ downloadId: download.id, error: serializeError(error) }, 'Quality gate: deferred cleanup error — will retry next cycle');
     }
   }
 }
@@ -89,7 +91,7 @@ async function deferredRemoveFromClient(download: DownloadRow, deps: DeferredCle
     }
     return true;
   } catch (error: unknown) {
-    log.warn({ downloadId: download.id, error }, 'Quality gate: deferred cleanup — failed to remove from client');
+    log.warn({ downloadId: download.id, error: serializeError(error) }, 'Quality gate: deferred cleanup — failed to remove from client');
     return false;
   }
 }
@@ -106,7 +108,7 @@ async function deferredDeleteFiles(download: DownloadRow, deps: DeferredCleanupD
       log.debug({ downloadId: download.id }, 'Quality gate: deferred cleanup — outputPath does not exist or already removed');
       return true;
     }
-    log.warn({ downloadId: download.id, outputPath: download.outputPath, error }, 'Quality gate: deferred cleanup — stat failed (non-ENOENT)');
+    log.warn({ downloadId: download.id, outputPath: download.outputPath, error: serializeError(error) }, 'Quality gate: deferred cleanup — stat failed (non-ENOENT)');
     return false;
   }
 
@@ -115,7 +117,7 @@ async function deferredDeleteFiles(download: DownloadRow, deps: DeferredCleanupD
     log.info({ downloadId: download.id, outputPath: download.outputPath }, 'Quality gate: deferred cleanup — deleted files');
     return true;
   } catch (error: unknown) {
-    log.warn({ downloadId: download.id, outputPath: download.outputPath, error }, 'Quality gate: deferred cleanup — file deletion failed');
+    log.warn({ downloadId: download.id, outputPath: download.outputPath, error: serializeError(error) }, 'Quality gate: deferred cleanup — file deletion failed');
     return false;
   }
 }
