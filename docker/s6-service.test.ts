@@ -147,6 +147,7 @@ describe('s6-overlay service definition', () => {
       const content = fs.readFileSync(dockerfile, 'utf-8');
       expect(content).toContain('ENV CONFIG_PATH=/config');
       expect(content).toContain('ENV DATABASE_URL=file:/config/narratorr.db');
+      expect(content).not.toContain('ENV LIBRARY_PATH');
     });
   });
 
@@ -167,6 +168,7 @@ describe('s6-overlay service definition', () => {
       const content = fs.readFileSync(composeFile, 'utf-8');
       expect(content).toContain('CONFIG_PATH=/config');
       expect(content).toContain('DATABASE_URL=file:/config/narratorr.db');
+      expect(content).not.toContain('LIBRARY_PATH');
     });
 
     it('includes PUID and PGID environment variables', () => {

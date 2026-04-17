@@ -141,6 +141,13 @@ describe('config', () => {
       const config = await loadConfig();
       expect(config.dbPath).toBe('./config/narratorr.db');
     });
+
+    it('ignores LIBRARY_PATH env var (decorative, removed in #623)', async () => {
+      process.env.LIBRARY_PATH = '/tmp/lib';
+      const config = await loadConfig();
+      expect(config).not.toHaveProperty('libraryPath');
+      expect(config.configPath).toBe('./config');
+    });
   });
 
   describe('urlBase', () => {
