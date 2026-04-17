@@ -72,11 +72,11 @@
 
 - ~~**Discovery candidates use region-only language gate, not configured-languages array**~~ — resolved in #560 (replaced `regionLang` with `languages[]` array in CandidateContext)
 
-- **`src/server/services/import-orchestrator.ts:122-128` SSE status mismatch in drain path**: `drainQueuedImports` emits `emitDownloadImporting` with `downloadStatus: 'processing_queued'` while the DB row is already `importing` (set by `claimQueuedDownload`). SSE consumers that display the payload status would briefly show the wrong state. (discovered in Archer session review of #525)
+- ~~**`src/server/services/import-orchestrator.ts:122-128` SSE status mismatch in drain path**~~ — resolved in #628 (changed `downloadStatus` from `'processing_queued'` to `'importing'`)
 
 - ~~**No concurrent-drain test for import nudge**: resolved in #539 — concurrent drain contention test added to import-orchestrator.test.ts~~
 
-- **`src/server/services/import-orchestrator.ts:85` processCompletedDownloads doesn't nudge**: The cron batch path releases slots but does not call `drainQueuedImports`. Intentional (cron re-queries immediately), but undocumented — a future reader might add nudge without understanding the design. Add a comment. (discovered in Archer session review of #525)
+- ~~**`src/server/services/import-orchestrator.ts:85` processCompletedDownloads doesn't nudge**~~ — resolved in #628 (added design comment explaining intentional cron-driven re-query)
 
 - ~~**`src/client/pages/settings/QualitySettingsSection.tsx:65 vs 84` step attribute inconsistency**: `minSeeders` uses `step={1}` (number) while `maxDownloadSize` uses `step="1"` (string). Both render identically but mixing forms is inconsistent.~~ — resolved in #551
 
