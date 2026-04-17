@@ -6,7 +6,7 @@ import { drizzle } from 'drizzle-orm/libsql';
 import { _resetCurrentRunForTests, createRunTempDirs, getCurrentRun } from './fixtures/temp-dirs.js';
 import { _resetRegisteredFakesForTests, getRegisteredFakes } from './fixtures/run-state.js';
 import { authors, books, downloadClients, indexers } from '../src/db/schema.js';
-import globalSetup from './global-setup.js';
+import globalSetup, { getE2ESourcePath, cleanupRunPathsFile } from './global-setup.js';
 
 /**
  * globalSetup runs real Fastify servers on fixed ports 4100/4200. These tests
@@ -49,6 +49,7 @@ describe('globalSetup', () => {
     delete process.env.E2E_QBIT_PORT;
     delete process.env.E2E_AUDIBLE_PORT;
     delete process.env.E2E_AUDIBLE_URL;
+    delete process.env.E2E_RUN_STATE_DIR;
   });
 
   it('throws a clear error if createRunTempDirs has not been called', async () => {
@@ -162,5 +163,63 @@ describe('globalSetup', () => {
 
     // Sanity — getCurrentRun is still populated and consistent with env.
     expect(getCurrentRun()?.downloadsPath).toBe(run.downloadsPath);
+  });
+
+  it('writes .run-paths.json to configPath with the current sourcePath', async () => {
+    const run = createRunTempDirs();
+    orphans.push(dirname(run.dbPath), run.libraryPath, run.configPath, run.downloadsPath, run.sourcePath);
+
+    await globalSetup();
+
+    const { existsSync, readFileSync } = await import('node:fs');
+    const { join } = await import('node:path');
+
+    const stateFile = join(run.configPath, '.run-paths.json');
+    expect(existsSync(stateFile)).toBe(true);
+
+    const data = JSON.parse(readFileSync(stateFile, 'utf-8')) as { sourcePath: string };
+    expect(data.sourcePath).toBe(run.sourcePath);
+  });
+
+  it('getE2ESourcePath reads from the state file when E2E_SOURCE_PATH is unset', async () => {
+    const run = createRunTempDirs();
+    orphans.push(dirname(run.dbPath), run.libraryPath, run.configPath, run.downloadsPath, run.sourcePath);
+
+    // Set E2E_RUN_STATE_DIR so the helper can find the per-run state file.
+    process.env.E2E_RUN_STATE_DIR = run.configPath;
+
+    await globalSetup();
+
+    // Clear E2E_SOURCE_PATH to simulate a worker process that doesn't
+    // have same-process env mutations from globalSetup.
+    const saved = process.env.E2E_SOURCE_PATH;
+    delete process.env.E2E_SOURCE_PATH;
+    try {
+      const result = getE2ESourcePath();
+      expect(result).toBe(run.sourcePath);
+    } finally {
+      process.env.E2E_SOURCE_PATH = saved;
+      delete process.env.E2E_RUN_STATE_DIR;
+    }
+  });
+
+  it('cleanupRunPathsFile removes the per-run state file', async () => {
+    const run = createRunTempDirs();
+    orphans.push(dirname(run.dbPath), run.libraryPath, run.configPath, run.downloadsPath, run.sourcePath);
+
+    // Set E2E_RUN_STATE_DIR so cleanup can find the per-run state file.
+    process.env.E2E_RUN_STATE_DIR = run.configPath;
+
+    await globalSetup();
+
+    const { existsSync } = await import('node:fs');
+    const { join } = await import('node:path');
+
+    expect(existsSync(join(run.configPath, '.run-paths.json'))).toBe(true);
+
+    cleanupRunPathsFile();
+
+    expect(existsSync(join(run.configPath, '.run-paths.json'))).toBe(false);
+    delete process.env.E2E_RUN_STATE_DIR;
   });
 });
