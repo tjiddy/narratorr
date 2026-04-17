@@ -90,6 +90,8 @@
 
 - **`src/core/utils/download-url.ts:18` has private `DOWNLOAD_TIMEOUT_MS = 30_000`**: Same 30s timeout as the now-shared `HTTP_DOWNLOAD_TIMEOUT_MS` in `constants.ts`. Intentionally left out of scope in #622 per spec boundary — could be migrated in a future cleanup pass. (discovered in #622)
 
+- **`processing_queued` download status may be vestigial**: After #636, `processing_queued` is still set by `enqueueAutoImport()` but the window between queue insertion and worker pickup is very short (serial queue, immediate nudge). The status exists mainly for UI display. If the queue grows large or the worker is slow, it's useful; for typical single-download flows it's a no-op transition. Consider removing it if the UI moves to job-based status tracking (#637). (discovered in #636)
+
 ## Accepted Debt
 
 Items below are real but not worth fixing — the cost of change outweighs the benefit.
