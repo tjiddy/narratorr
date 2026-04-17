@@ -3,6 +3,9 @@ import tseslint from 'typescript-eslint';
 import reactHooks from 'eslint-plugin-react-hooks';
 import reactRefresh from 'eslint-plugin-react-refresh';
 import globals from 'globals';
+import { createRequire } from 'node:module';
+const require = createRequire(import.meta.url);
+const noRawErrorLogging = require('./eslint-rules/no-raw-error-logging.cjs');
 
 export default tseslint.config(
   // Ignore patterns
@@ -15,6 +18,7 @@ export default tseslint.config(
       '**/drizzle/**',
       '**/coverage/**',
       'e2e/**',
+      'eslint-rules/**',
     ],
   },
 
@@ -67,6 +71,18 @@ export default tseslint.config(
     files: ['**/src/server/**/*.ts', '**/src/core/**/*.ts', '**/src/db/**/*.ts', 'e2e/**/*.ts'],
     rules: {
       'no-console': 'off',
+    },
+  },
+
+  // Server-side custom rules — prevent raw error logging that Pino drops
+  {
+    files: ['**/src/server/**/*.ts'],
+    ignores: ['**/*.test.ts'],
+    plugins: {
+      'narratorr': { rules: { 'no-raw-error-logging': noRawErrorLogging } },
+    },
+    rules: {
+      'narratorr/no-raw-error-logging': 'error',
     },
   },
 
