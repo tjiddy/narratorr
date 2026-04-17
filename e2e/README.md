@@ -166,8 +166,15 @@ spec-side use:
   - `POST /__control/complete-latest` — convenience for single-torrent flows
   - `POST /__control/reset` — clears all torrents
 
-Specs read the base URLs from `process.env.E2E_MAM_URL` / `process.env.E2E_QBIT_URL`
-(populated by `global-setup.ts`) rather than hardcoding ports.
+**Spec-side URLs must come from an imported helper, not `process.env`.**
+Playwright's `globalSetup` runs in the config process; `process.env` mutations
+there do NOT propagate to test worker processes. A spec reading
+`process.env.E2E_QBIT_URL` at runtime gets `undefined`. Import the
+`qbitControlUrl(path)` helper from `global-setup.ts` instead — it resolves to
+the fixed default port (4200) when the env is absent, which matches the
+static port wired through `playwright.config.ts`. Future MAM helpers should
+follow the same pattern. The `E2E_MAM_URL` / `E2E_QBIT_URL` env writes in
+`global-setup.ts` are only useful to same-process code (e.g. globalTeardown).
 
 ### Async UI wait pattern
 

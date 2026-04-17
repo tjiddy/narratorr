@@ -67,6 +67,11 @@ export default async function globalSetup(): Promise<void> {
     port: qbitPort,
     downloadsPath: run.downloadsPath,
     fixturePath,
+    // Inject a small latency on torrent add so Playwright can observe the grab
+    // button's pending state before the mutation resolves. Without this the
+    // hermetic fake completes faster than React can re-render the disabled
+    // attribute, making `toBeDisabled()` flake.
+    addLatencyMs: 150,
   });
   registerFake({ name: 'qbit', close: qbit.close });
 
@@ -97,8 +102,17 @@ export default async function globalSetup(): Promise<void> {
     libraryPath: run.libraryPath,
   });
 
-  // Also stash paths into the process env so specs can read them if they need
-  // to (e.g. to assert on an imported file landing in libraryPath).
+  // Stash paths into the setup-process env so same-process tooling (this
+  // function's callers, globalTeardown, helper functions invoked from the
+  // config module) can read them.
+  //
+  // IMPORTANT: Playwright runs `globalSetup` in the config process, NOT in the
+  // test worker processes. `process.env` mutations made here DO NOT reach tests
+  // at runtime. If a spec needs one of these values, import a helper from this
+  // module (e.g. `qbitControlUrl`) that falls back to a known static default,
+  // or wire the value statically through `playwright.config.ts`'s
+  // `webServer.env` / `use.env`. Reading `process.env.E2E_*` directly from a
+  // spec will get `undefined`.
   process.env.E2E_DOWNLOADS_PATH = run.downloadsPath;
   process.env.E2E_LIBRARY_PATH = run.libraryPath;
   process.env.E2E_MAM_URL = mam.url;
@@ -112,9 +126,13 @@ export const E2E_DEFAULT_PORTS = {
 } as const;
 
 /**
- * Helper for spec files — hits POST /__control/complete on the qBit fake.
- * Reads the qBit URL from the env var populated by globalSetup so the spec
- * doesn't hardcode the port twice.
+ * Helper for spec files — builds a qBit fake control URL (e.g.
+ * `/__control/complete-latest`). Specs MUST import this rather than reading
+ * `process.env.E2E_QBIT_URL` directly: Playwright runs `globalSetup` in the
+ * config process, so env mutations there do not propagate to test worker
+ * processes. The fallback path (`http://localhost:${DEFAULT_QBIT_PORT}`) is
+ * what actually runs in specs; the `process.env` branch only matters when
+ * same-process tooling calls this helper with a non-default port.
  */
 export function qbitControlUrl(path: string): string {
   const base = process.env.E2E_QBIT_URL ?? `http://localhost:${DEFAULT_QBIT_PORT}`;

@@ -52,6 +52,13 @@ export interface CreateQBitFakeOptions {
   fixturePath: string;
   /** Version string returned by `/api/v2/app/version`. Defaults to `4.6.0`. */
   version?: string;
+  /**
+   * Artificial latency (ms) injected into `POST /api/v2/torrents/add` before it
+   * returns `Ok.`. Defaults to 0 for unit tests. E2E specs should set a small
+   * non-zero value so the grab-button pending state becomes observable —
+   * otherwise the fake resolves the mutation before React can re-render.
+   */
+  addLatencyMs?: number;
 }
 
 export interface QBitFakeHandle {
@@ -88,6 +95,7 @@ export async function createQBitFake(options: CreateQBitFakeOptions): Promise<QB
   const username = options.username ?? 'admin';
   const password = options.password ?? 'adminadmin';
   const version = options.version ?? '4.6.0';
+  const addLatencyMs = options.addLatencyMs ?? 0;
   const downloadsPath = resolve(options.downloadsPath);
   const fixturePath = resolve(options.fixturePath);
 
@@ -185,6 +193,13 @@ export async function createQBitFake(options: CreateQBitFakeOptions): Promise<QB
       added_on: Math.floor(Date.now() / 1000),
       completion_on: 0,
     });
+
+    // Optional artificial latency so spec-side tests can observe the grab
+    // button's pending state before the mutation resolves. A real qBit add is
+    // not instant either — this just makes the fake closer to reality.
+    if (addLatencyMs > 0) {
+      await new Promise((res) => setTimeout(res, addLatencyMs));
+    }
 
     // Real qBit returns plain text "Ok." on success.
     return reply.status(200).type('text/plain').send('Ok.');

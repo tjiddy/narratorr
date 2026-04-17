@@ -48,10 +48,21 @@ test.describe('Critical path: search → grab → import → library', () => {
 
     // ── Grab ───────────────────────────────────────────────────────────────
     await test.step('clicks Grab on the result', async () => {
-      // Result card has a Grab button per row — take the first.
-      await page.getByRole('button', { name: /^Grab$/i }).first().click();
+      // Capture the specific button locator so we can assert pending state
+      // before the mutation resolves (clicking a fresh locator would re-resolve
+      // after the modal closes and miss the pending window).
+      const grabButton = page.getByRole('button', { name: /^Grab$/i }).first();
+      await grabButton.click();
+      // ReleaseCard.tsx:133 disables the button while `isGrabbing` is true —
+      // the React state flip happens synchronously with the click before the
+      // mutation settles, so the assertion below should catch the pending
+      // state without racing the success path.
+      await expect(grabButton).toBeDisabled();
       // Grab success toast comes from grabMutation.onSuccess in SearchReleasesModal.
       await expect(page.getByText(/Download started/i)).toBeVisible({ timeout: 10_000 });
+      // SearchReleasesModal.tsx:158 calls `onClose()` on mutation success —
+      // dialog must go away rather than stay stuck open.
+      await expect(page.getByRole('dialog')).not.toBeVisible({ timeout: 5_000 });
     });
 
     // ── Trigger fake qBit completion ──────────────────────────────────────
@@ -64,14 +75,32 @@ test.describe('Critical path: search → grab → import → library', () => {
       expect(res.status).toBe(200);
     });
 
-    // ── Wait for import to land and navigate to book detail ───────────────
-    await test.step('book transitions to Imported on the detail page', async () => {
+    // ── Wait for import to land and assert state on BOTH /library and detail ─
+    // Issue #614 explicitly names "same book card now renders with imported
+    // status" on /library as the user-visible outcome. Without asserting that,
+    // a regression in the library-page books query or card rendering could
+    // slip through if only the detail page still reflected the import.
+    await test.step('library card shows Imported status', async () => {
       // The monitor polls every 2s (E2E override), then fire-and-forget import
       // runs. Budget ~25s to cover: poll (up to 2s) + import (file copy + DB
       // writes, usually sub-second) + SSE/query refetch propagation.
       await page.goto('/library');
-      await page.getByText('E2E Test Book').first().click();
-      await expect(page.getByText('Imported', { exact: true })).toBeVisible({ timeout: 25_000 });
+      // LibraryBookCard.tsx:113 — status-bar class comes from
+      // `bookStatusConfig[book.status].barClass`. `imported` maps to
+      // `bg-emerald-500` (src/client/lib/status.ts:37), so the emerald class
+      // appearing on the card proves the library-page query picked up the
+      // import and mapped it to the imported bucket.
+      const statusBar = page.locator('[data-testid="status-bar"]').first();
+      await expect(statusBar).toHaveClass(/bg-emerald-500/, { timeout: 25_000 });
+    });
+
+    await test.step('book detail confirms Imported status', async () => {
+      // Target the library card's role=link specifically — the success toast
+      // ("E2E Test Book imported successfully") also contains the title, so
+      // `getByText(...).first()` can match the toast and click nowhere useful.
+      await page.getByRole('link', { name: /E2E Test Book/ }).first().click();
+      await expect(page).toHaveURL(/\/books\/\d+$/);
+      await expect(page.getByText('Imported', { exact: true })).toBeVisible({ timeout: 10_000 });
     });
   });
 });

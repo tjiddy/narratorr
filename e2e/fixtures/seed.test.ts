@@ -5,7 +5,7 @@ import { join } from 'node:path';
 import { createClient } from '@libsql/client';
 import { drizzle } from 'drizzle-orm/libsql';
 import { eq } from 'drizzle-orm';
-import { authors, bookAuthors, books, downloadClients, indexers } from '../../src/db/schema.js';
+import { authors, bookAuthors, books, downloadClients, indexers, settings } from '../../src/db/schema.js';
 import { seedE2ERun, SEED_AUTHOR_NAME, SEED_BOOK_TITLE } from './seed.js';
 
 describe('seedE2ERun', () => {
@@ -100,6 +100,63 @@ describe('seedE2ERun', () => {
       const link = (await db.select().from(bookAuthors).where(eq(bookAuthors.bookId, ids.bookId)))[0];
       expect(link.authorId).toBe(ids.authorId);
       expect(link.position).toBe(0);
+    } finally {
+      client.close();
+    }
+  });
+
+  it('seeds general settings with welcomeSeen=true so WelcomeModal does not intercept clicks', async () => {
+    await seedE2ERun({
+      dbPath, mamUrl: 'http://localhost:4100', qbitHost: 'localhost', qbitPort: 4200, libraryPath: '/tmp/library',
+    });
+
+    const { client, db } = openDb();
+    try {
+      const row = (await db.select().from(settings).where(eq(settings.key, 'general')))[0];
+      expect(row).toBeDefined();
+      const value = row.value as Record<string, unknown>;
+      expect(value.welcomeSeen).toBe(true);
+    } finally {
+      client.close();
+    }
+  });
+
+  it('seeds library settings with the provided libraryPath so the import disk-space gate sees a real directory', async () => {
+    await seedE2ERun({
+      dbPath, mamUrl: 'http://localhost:4100', qbitHost: 'localhost', qbitPort: 4200, libraryPath: '/some/absolute/library-path',
+    });
+
+    const { client, db } = openDb();
+    try {
+      const row = (await db.select().from(settings).where(eq(settings.key, 'library')))[0];
+      expect(row).toBeDefined();
+      const value = row.value as Record<string, unknown>;
+      expect(value.path).toBe('/some/absolute/library-path');
+      // Folder/file formats must be valid token strings so library form validation
+      // doesn't reject them if the UI ever round-trips these settings.
+      expect(value.folderFormat).toBe('{author}/{title}');
+      expect(value.fileFormat).toBe('{author} - {title}');
+    } finally {
+      client.close();
+    }
+  });
+
+  it('seeds import settings with minFreeSpaceGB=0 so the disk-space gate is disabled', async () => {
+    await seedE2ERun({
+      dbPath, mamUrl: 'http://localhost:4100', qbitHost: 'localhost', qbitPort: 4200, libraryPath: '/tmp/library',
+    });
+
+    const { client, db } = openDb();
+    try {
+      const row = (await db.select().from(settings).where(eq(settings.key, 'import')))[0];
+      expect(row).toBeDefined();
+      const value = row.value as Record<string, unknown>;
+      // minFreeSpaceGB=0 is the early-return sentinel in checkDiskSpace
+      // (src/server/utils/import-steps.ts) — without it a low-disk host trips
+      // the gate and imports fail.
+      expect(value.minFreeSpaceGB).toBe(0);
+      expect(value.deleteAfterImport).toBe(false);
+      expect(value.redownloadFailed).toBe(true);
     } finally {
       client.close();
     }
