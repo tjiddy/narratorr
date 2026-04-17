@@ -144,9 +144,10 @@ describe('BookContextMenu', () => {
 
     it('calls onRetryImport when clicked', async () => {
       const user = userEvent.setup();
-      const props = renderMenu({ onRetryImport: vi.fn() });
+      const onRetryImport = vi.fn();
+      renderMenu({ onRetryImport });
       await user.click(screen.getByText('Retry Import'));
-      expect(props.onRetryImport).toHaveBeenCalledTimes(1);
+      expect(onRetryImport).toHaveBeenCalledTimes(1);
     });
   });
 });
