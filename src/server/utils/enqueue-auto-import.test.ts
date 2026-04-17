@@ -34,11 +34,11 @@ function createMockDb(existingJobs: Array<{ id: number; metadata: string }> = []
 
 describe('enqueueAutoImport', () => {
   let log: FastifyBaseLogger;
-  let nudge: ReturnType<typeof vi.fn>;
+  const nudge = vi.fn((): void => {});
 
   beforeEach(() => {
     log = createMockLogger();
-    nudge = vi.fn();
+    nudge.mockClear();
   });
 
   it('creates import_jobs row with type=auto, sets download to processing_queued, nudges worker', async () => {

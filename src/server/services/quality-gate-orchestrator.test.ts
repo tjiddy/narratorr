@@ -97,8 +97,7 @@ function createOrchestrator(opts?: {
     undefined, // remotePathMappingService
     opts?.retrySearchDeps ? inject<RetrySearchDeps>(opts.retrySearchDeps) : undefined,
     opts?.settingsService ? inject<SettingsService>(opts.settingsService) : undefined,
-    inject<ImportOrchestrator>(importOrchestrator),
-    inject<ImportService>(importService),
+    vi.fn<() => void>(), // nudgeImportWorker
   );
 
   return { orchestrator, qualityGateService, db, log, eventHistory, broadcaster, blacklistService, downloadClientService, importOrchestrator, importService };
