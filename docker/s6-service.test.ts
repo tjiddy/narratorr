@@ -143,10 +143,9 @@ describe('s6-overlay service definition', () => {
       expect(content).toContain('/downloads');
     });
 
-    it('CONFIG_PATH, LIBRARY_PATH, DATABASE_URL env defaults are set', () => {
+    it('CONFIG_PATH, DATABASE_URL env defaults are set', () => {
       const content = fs.readFileSync(dockerfile, 'utf-8');
       expect(content).toContain('ENV CONFIG_PATH=/config');
-      expect(content).toContain('ENV LIBRARY_PATH=/audiobooks');
       expect(content).toContain('ENV DATABASE_URL=file:/config/narratorr.db');
     });
   });
@@ -167,7 +166,6 @@ describe('s6-overlay service definition', () => {
     it('includes required environment variables', () => {
       const content = fs.readFileSync(composeFile, 'utf-8');
       expect(content).toContain('CONFIG_PATH=/config');
-      expect(content).toContain('LIBRARY_PATH=/audiobooks');
       expect(content).toContain('DATABASE_URL=file:/config/narratorr.db');
     });
 

@@ -16,7 +16,6 @@ services:
       - TZ=America/New_York
       - NODE_ENV=production
       - CONFIG_PATH=/config
-      - LIBRARY_PATH=/audiobooks
       - DATABASE_URL=file:/config/narratorr.db
       - PUID=1000                # Set container process UID (default: 911)
       - PGID=1000                # Set container process GID (default: 911)

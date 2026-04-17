@@ -72,7 +72,6 @@ EXPOSE 3000
 VOLUME ["/config", "/audiobooks", "/downloads"]
 
 ENV CONFIG_PATH=/config
-ENV LIBRARY_PATH=/audiobooks
 ENV DATABASE_URL=file:/config/narratorr.db
 
 # Health check — uses URL_BASE env var for subpath deployments
