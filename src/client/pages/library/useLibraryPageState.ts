@@ -1,6 +1,7 @@
 import { useState, useCallback, useEffect, useMemo } from 'react';
+import { toast } from 'sonner';
 import { useNavigate } from 'react-router-dom';
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useLibrary, useBookStats } from '@/hooks/useLibrary';
 import { api, type BookWithAuthor } from '@/lib/api';
 import { queryKeys } from '@/lib/queryKeys';
@@ -145,6 +146,18 @@ export function useLibraryPageState() {
     setOpenMenuId(null);
   }, [deleteConfirm]);
 
+  const queryClient = useQueryClient();
+  const handleRetryImport = useCallback((book: BookWithAuthor) => {
+    setOpenMenuId(null);
+    api.retryBookImport(book.id).then(() => {
+      queryClient.invalidateQueries({ queryKey: queryKeys.books() });
+      toast.success('Import retry queued');
+    }).catch((error: unknown) => {
+      const message = error instanceof Error ? error.message : 'Unknown error';
+      toast.error(`Retry import failed: ${message}`);
+    });
+  }, [queryClient]);
+
   const { anySelectedHasPath, bulkFileCount } = computeBulkStats(bulk.selectedBooks);
   const uniqueAuthors = stats?.authors ?? [];
   const uniqueSeries = stats?.series ?? [];
@@ -190,6 +203,7 @@ export function useLibraryPageState() {
     handleCardClick,
     handleCardSearchReleases,
     handleCardRemove,
+    handleRetryImport,
     closeMenu,
     setSearchBook,
     setShowRemoveMissingModal,

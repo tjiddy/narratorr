@@ -20,6 +20,8 @@ vi.mock('@/lib/api', () => ({
     searchAllWanted: vi.fn(),
     searchBook: vi.fn(),
     updateBook: vi.fn(),
+    retryBookImport: vi.fn(),
+    checkRetryImportAvailable: vi.fn().mockResolvedValue({ available: false }),
     getIndexers: vi.fn().mockResolvedValue([
       { id: 1, name: 'Indexer A', enabled: true },
       { id: 2, name: 'Indexer B', enabled: true },
@@ -2678,6 +2680,95 @@ describe('LibraryPage — error states (#480)', () => {
       const importLink = screen.getByRole('link', { name: /import files/i });
       expect(importLink).toBeInTheDocument();
       expect(importLink).toHaveAttribute('href', '/import');
+    });
+  });
+
+  describe('retry import from library grid (#635)', () => {
+    const failedBook = createMockBook({
+      id: 99,
+      title: 'Failed Import Book',
+      status: 'failed',
+      coverUrl: null,
+    });
+
+    it('calls retryBookImport and shows success toast on resolve', async () => {
+      vi.mocked(api.checkRetryImportAvailable).mockResolvedValue({ available: true });
+      vi.mocked(api.retryBookImport).mockResolvedValue({ jobId: 42 });
+      mockLibraryData([failedBook]);
+      const user = userEvent.setup();
+
+      renderWithProviders(<LibraryPage />);
+
+      await waitFor(() => {
+        expect(screen.getByText('Failed Import Book')).toBeInTheDocument();
+      });
+
+      const menuBtn = screen.getByLabelText('Book options');
+      await user.click(menuBtn);
+
+      await waitFor(() => {
+        expect(screen.getByText('Retry Import')).toBeInTheDocument();
+      });
+      await user.click(screen.getByText('Retry Import'));
+
+      await waitFor(() => {
+        expect(api.retryBookImport).toHaveBeenCalledWith(99);
+      });
+
+      const { toast } = await import('sonner');
+      await waitFor(() => {
+        expect(toast.success).toHaveBeenCalledWith('Import retry queued');
+      });
+
+      // Cache invalidation: getBooks should be re-called after retry success
+      const getBooksCallCount = vi.mocked(api.getBooks).mock.calls.length;
+      expect(getBooksCallCount).toBeGreaterThanOrEqual(2); // initial load + invalidation refetch
+    });
+
+    it('shows error toast when retryBookImport rejects', async () => {
+      vi.mocked(api.checkRetryImportAvailable).mockResolvedValue({ available: true });
+      vi.mocked(api.retryBookImport).mockRejectedValue(new Error('No failed import job found'));
+      mockLibraryData([failedBook]);
+      const user = userEvent.setup();
+
+      renderWithProviders(<LibraryPage />);
+
+      await waitFor(() => {
+        expect(screen.getByText('Failed Import Book')).toBeInTheDocument();
+      });
+
+      const menuBtn = screen.getByLabelText('Book options');
+      await user.click(menuBtn);
+
+      await waitFor(() => {
+        expect(screen.getByText('Retry Import')).toBeInTheDocument();
+      });
+      await user.click(screen.getByText('Retry Import'));
+
+      const { toast } = await import('sonner');
+      await waitFor(() => {
+        expect(toast.error).toHaveBeenCalledWith('Retry import failed: No failed import job found');
+      });
+    });
+
+    it('does not show Retry Import when checkRetryImportAvailable returns false', async () => {
+      vi.mocked(api.checkRetryImportAvailable).mockResolvedValue({ available: false });
+      mockLibraryData([failedBook]);
+      const user = userEvent.setup();
+
+      renderWithProviders(<LibraryPage />);
+
+      await waitFor(() => {
+        expect(screen.getByText('Failed Import Book')).toBeInTheDocument();
+      });
+
+      const menuBtn = screen.getByLabelText('Book options');
+      await user.click(menuBtn);
+
+      await waitFor(() => {
+        expect(screen.getByText('Search Releases')).toBeInTheDocument();
+      });
+      expect(screen.queryByText('Retry Import')).not.toBeInTheDocument();
     });
   });
 });

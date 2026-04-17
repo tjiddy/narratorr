@@ -39,24 +39,37 @@ vi.mock('../services/import-orchestrator.js', () => ({
 vi.mock('../services/download-orchestrator.js', () => ({ DownloadOrchestrator: vi.fn() }));
 vi.mock('../services/quality-gate-orchestrator.js', () => ({ QualityGateOrchestrator: vi.fn() }));
 vi.mock('../services/import-list.service.js', () => ({ ImportListService: vi.fn() }));
-vi.mock('../services/library-scan.service.js', () => ({ LibraryScanService: vi.fn() }));
+vi.mock('../services/library-scan.service.js', () => ({
+  LibraryScanService: vi.fn().mockImplementation(function(this: Record<string, unknown>) {
+    this.setNudgeWorker = vi.fn();
+    this.importDeps = {};
+  }),
+}));
 vi.mock('../services/match-job.service.js', () => ({ MatchJobService: vi.fn() }));
 vi.mock('../services/backup.service.js', () => ({ BackupService: vi.fn() }));
 vi.mock('../services/health-check.service.js', () => ({ HealthCheckService: vi.fn() }));
 vi.mock('../services/task-registry.js', () => ({ TaskRegistry: vi.fn() }));
 vi.mock('../services/event-broadcaster.service.js', () => ({ EventBroadcasterService: vi.fn() }));
 vi.mock('../services/retry-search.js', () => ({ createRetrySearchDeps: vi.fn().mockReturnValue({}) }));
+vi.mock('../services/import-queue-worker.js', () => ({ ImportQueueWorker: vi.fn() }));
+vi.mock('../services/import-adapters/registry.js', () => ({
+  registerImportAdapter: vi.fn(),
+  getImportAdapter: vi.fn(),
+  clearImportAdapters: vi.fn(),
+}));
+vi.mock('../services/import-adapters/manual.js', () => ({ ManualImportAdapter: vi.fn() }));
+vi.mock('./retry-import.js', () => ({ retryImportRoute: vi.fn() }));
 vi.mock('../config.js', () => ({ config: { configPath: '/tmp/config', dbPath: '/tmp/db.sqlite' } }));
 vi.mock('../../core/utils/audio-processor.js', () => ({ detectFfmpegPath: vi.fn(), probeFfmpeg: vi.fn() }));
 vi.mock('../../core/indexers/proxy.js', () => ({ resolveProxyIp: vi.fn() }));
 
 describe('routeRegistry', () => {
-  it('contains all 24 route factories', () => {
+  it('contains all 25 route factories', () => {
     // books, bookFiles, bookPreview, search, activity, indexers, downloadClients,
     // settings, metadata, libraryScan, system, update, notifiers, blacklist,
     // auth, remotePathMapping, filesystem, eventHistory, events, searchStream,
-    // prowlarrCompat, importLists, discover, bulkOperations
-    expect(routeRegistry).toHaveLength(24);
+    // prowlarrCompat, importLists, discover, bulkOperations, retryImport
+    expect(routeRegistry).toHaveLength(25);
   });
 
   it('every entry is a function', () => {

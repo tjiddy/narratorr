@@ -102,6 +102,7 @@ export function LibraryPage() {
           onClick={s.handleCardClick}
           onSearchReleases={s.handleCardSearchReleases}
           onRemove={s.handleCardRemove}
+          onRetryImport={s.handleRetryImport}
         />
       )}
 

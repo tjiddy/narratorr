@@ -8,6 +8,7 @@ import { INDEXER_TYPES } from '../shared/indexer-registry';
 import { DOWNLOAD_CLIENT_TYPES } from '../shared/download-client-registry';
 import { NOTIFIER_TYPES } from '../shared/notifier-registry';
 import { IMPORT_LIST_TYPES } from '../shared/import-list-registry';
+import { IMPORT_JOB_TYPES, IMPORT_JOB_STATUSES, IMPORT_JOB_PHASES } from '../shared/schemas/import-job';
 
 // ============ LIBRARY ============
 
@@ -339,6 +340,28 @@ export const suggestions = sqliteTable('suggestions', {
 }, (table) => [
   index('idx_suggestions_status_score').on(table.status, table.score),
   uniqueIndex('idx_suggestions_asin_unique').on(table.asin),
+]);
+
+// ============ IMPORT QUEUE ============
+
+export const importJobs = sqliteTable('import_jobs', {
+  id: integer('id').primaryKey({ autoIncrement: true }),
+  bookId: integer('book_id').references(() => books.id, { onDelete: 'set null' }),
+  type: text('type', { enum: IMPORT_JOB_TYPES }).notNull(),
+  status: text('status', { enum: IMPORT_JOB_STATUSES }).notNull().default('pending'),
+  phase: text('phase', { enum: IMPORT_JOB_PHASES }).default('queued'),
+  metadata: text('metadata').notNull(),
+  lastError: text('last_error'),
+  createdAt: integer('created_at', { mode: 'timestamp' })
+    .notNull()
+    .default(sql`(unixepoch())`),
+  updatedAt: integer('updated_at', { mode: 'timestamp' })
+    .notNull()
+    .default(sql`(unixepoch())`),
+  startedAt: integer('started_at', { mode: 'timestamp' }),
+  completedAt: integer('completed_at', { mode: 'timestamp' }),
+}, (table) => [
+  index('idx_import_jobs_status_created').on(table.status, table.createdAt),
 ]);
 
 // ============ SETTINGS ============

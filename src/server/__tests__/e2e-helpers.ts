@@ -8,6 +8,7 @@ import { createDb, runMigrations, type Db } from '../../db/index.js';
 import { eq } from 'drizzle-orm';
 import { downloads, books } from '../../db/schema.js';
 import { createServices, registerRoutes, type Services } from '../routes/index.js';
+import { clearImportAdapters } from '../services/import-adapters/registry.js';
 import { tmpdir } from 'os';
 import { join } from 'path';
 import { randomBytes } from 'crypto';
@@ -46,6 +47,7 @@ export async function createE2EApp(): Promise<E2EApp> {
   app.setValidatorCompiler(validatorCompiler);
   app.setSerializerCompiler(serializerCompiler);
 
+  clearImportAdapters(); // Reset module-level registry between test runs
   const services = await createServices(db, app.log);
   await registerRoutes(app, services, db);
   await app.ready();

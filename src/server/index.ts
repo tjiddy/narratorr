@@ -134,14 +134,27 @@ async function main() {
   // Start background jobs
   startJobs(db, services, app.log);
 
+  // Start import queue worker (boot recovery + drain loop)
+  await services.importQueueWorker.start();
+
   // Graceful shutdown — ensures port is released on tsx watch restarts
   const shutdown = async () => {
     app.log.info('Shutting down server…');
+    await services.importQueueWorker.stop();
     await app.close();
     process.exit(0);
   };
   process.on('SIGTERM', shutdown);
   process.on('SIGINT', shutdown);
+
+  // Crash logging — captures unhandled errors that would otherwise be silent
+  process.on('uncaughtException', (err) => {
+    app.log.fatal({ err }, 'Uncaught exception — process will exit');
+    process.exit(1);
+  });
+  process.on('unhandledRejection', (reason) => {
+    app.log.error({ reason }, 'Unhandled promise rejection');
+  });
 
   await listenWithRetry(app, config.port);
 

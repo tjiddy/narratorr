@@ -11,6 +11,7 @@ export interface LibraryGridViewProps {
   onClick: (bookId: number) => void;
   onSearchReleases: (book: BookWithAuthor) => void;
   onRemove: (book: BookWithAuthor) => void;
+  onRetryImport?: (book: BookWithAuthor) => void;
 }
 
 export function LibraryGridView({
@@ -22,6 +23,7 @@ export function LibraryGridView({
   onClick,
   onSearchReleases,
   onRemove,
+  onRetryImport,
 }: LibraryGridViewProps) {
   return (
     <div key={settledGridKey} className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 2xl:grid-cols-6 gap-3">
@@ -37,6 +39,7 @@ export function LibraryGridView({
           onClick={onClick}
           onSearchReleases={onSearchReleases}
           onRemove={onRemove}
+          onRetryImport={onRetryImport}
         />
       ))}
     </div>

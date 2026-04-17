@@ -153,6 +153,12 @@ export function useBookActions(bookId: number, monitorForUpgrades: boolean) {
     },
   });
 
+  const retryImportMutation = useMutation({
+    mutationFn: () => api.retryBookImport(bookId),
+    onSuccess: () => { invalidateBookQueries(); toast.success('Import retry queued'); },
+    onError: (error: Error) => { toast.error(`Retry import failed: ${getErrorMessage(error)}`); },
+  });
+
   return {
     renameMutation,
     mergeMutation,
@@ -162,6 +168,7 @@ export function useBookActions(bookId: number, monitorForUpgrades: boolean) {
     deleteMutation,
     monitorMutation,
     wrongReleaseMutation,
+    retryImportMutation,
     uploadCoverMutation,
     ffmpegConfigured,
     isSaving,

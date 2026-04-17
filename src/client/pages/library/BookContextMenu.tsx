@@ -1,14 +1,16 @@
 import { useRef, useState, useEffect, useCallback } from 'react';
-import { SearchIcon, TrashIcon } from '@/components/icons';
+import { SearchIcon, TrashIcon, RefreshIcon } from '@/components/icons';
 
 export function BookContextMenu({
   onSearchReleases,
   onRemove,
   onClose,
+  onRetryImport,
 }: {
   onSearchReleases: () => void;
   onRemove: () => void;
   onClose: () => void;
+  onRetryImport?: () => void;
 }) {
   const menuRef = useRef<HTMLDivElement>(null);
   const [focusIndex, setFocusIndex] = useState(0);
@@ -57,6 +59,19 @@ export function BookContextMenu({
         <SearchIcon className="w-4 h-4 text-muted-foreground" />
         Search Releases
       </button>
+      {onRetryImport && (
+        <>
+          <div className="border-t border-border/50" />
+          <button
+            role="menuitem"
+            onClick={onRetryImport}
+            className="flex items-center gap-3 w-full px-4 py-2.5 text-sm text-left hover:bg-muted/80 transition-colors focus:bg-muted/80 focus-ring"
+          >
+            <RefreshIcon className="w-4 h-4 text-muted-foreground" />
+            Retry Import
+          </button>
+        </>
+      )}
       <div className="border-t border-border/50" />
       <button
         role="menuitem"

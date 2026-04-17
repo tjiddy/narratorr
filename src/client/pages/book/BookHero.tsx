@@ -54,6 +54,8 @@ interface BookHeroProps {
   onCoverCancel?: () => void;
   /** Whether a cover upload is in progress. */
   isUploadingCover?: boolean;
+  onRetryImportClick?: () => void;
+  isRetryingImport?: boolean;
   children?: React.ReactNode;
 }
 
@@ -69,6 +71,7 @@ export function BookHero({
   showWrongRelease, onWrongReleaseClick, isWrongReleasing,
   importListName, monitorForUpgrades, onMonitorToggle, isMonitorToggling,
   previewUrl, onCoverFileSelect, onCoverConfirm, onCoverCancel, isUploadingCover,
+  onRetryImportClick, isRetryingImport,
   children,
 }: BookHeroProps) {
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -301,6 +304,12 @@ export function BookHero({
                     <button role="menuitem" type="button" onClick={() => handleMenuAction(onWrongReleaseClick)} disabled={isWrongReleasing} className="flex items-center gap-2.5 w-full px-3 py-2.5 text-xs text-left text-destructive hover:bg-destructive/10 transition-colors disabled:opacity-50 disabled:pointer-events-none focus:bg-destructive/10 focus-ring">
                       <XCircleIcon className={`w-3.5 h-3.5 ${isWrongReleasing ? 'animate-spin' : ''}`} />
                       {isWrongReleasing ? 'Rejecting...' : 'Wrong Release'}
+                    </button>
+                  )}
+                  {onRetryImportClick && (
+                    <button role="menuitem" type="button" onClick={() => handleMenuAction(onRetryImportClick)} disabled={isRetryingImport} className="flex items-center gap-2.5 w-full px-3 py-2.5 text-xs text-left text-muted-foreground hover:bg-muted/50 hover:text-foreground transition-colors disabled:opacity-50 disabled:pointer-events-none focus:bg-muted/50 focus-ring">
+                      <RefreshIcon className={`w-3.5 h-3.5 ${isRetryingImport ? 'animate-spin' : ''}`} />
+                      {isRetryingImport ? 'Retrying...' : 'Retry Import'}
                     </button>
                   )}
                   <button role="menuitem" type="button" onClick={() => handleMenuAction(onRemoveClick)} disabled={isRemoving} className="flex items-center gap-2.5 w-full px-3 py-2.5 text-xs text-left text-destructive hover:bg-destructive/10 transition-colors disabled:opacity-50 disabled:pointer-events-none focus:bg-destructive/10 focus-ring">
