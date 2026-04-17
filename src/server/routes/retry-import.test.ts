@@ -148,3 +148,41 @@ describe('POST /api/books/:id/retry-import', () => {
     expect(JSON.parse(res.payload)).toEqual({ error: 'Book not found' });
   });
 });
+
+describe('GET /api/books/:id/retry-import', () => {
+  it('returns available true when a failed import job exists', async () => {
+    const db = {
+      select: vi.fn().mockReturnValue({
+        from: vi.fn().mockReturnThis(),
+        where: vi.fn().mockReturnThis(),
+        limit: vi.fn().mockResolvedValue([{ id: 10 }]),
+      }),
+      update: vi.fn().mockReturnValue({ set: vi.fn().mockReturnValue({ where: vi.fn().mockResolvedValue({}) }) }),
+      insert: vi.fn().mockReturnValue({ values: vi.fn().mockReturnValue({ returning: vi.fn().mockResolvedValue([]) }) }),
+    };
+    const app = await createApp(inject<Db>(db), inject<ImportQueueWorker>({ nudge: vi.fn() }));
+
+    const res = await app.inject({ method: 'GET', url: '/api/books/1/retry-import' });
+
+    expect(res.statusCode).toBe(200);
+    expect(JSON.parse(res.payload)).toEqual({ available: true });
+  });
+
+  it('returns available false when no failed import job exists', async () => {
+    const db = {
+      select: vi.fn().mockReturnValue({
+        from: vi.fn().mockReturnThis(),
+        where: vi.fn().mockReturnThis(),
+        limit: vi.fn().mockResolvedValue([]),
+      }),
+      update: vi.fn().mockReturnValue({ set: vi.fn().mockReturnValue({ where: vi.fn().mockResolvedValue({}) }) }),
+      insert: vi.fn().mockReturnValue({ values: vi.fn().mockReturnValue({ returning: vi.fn().mockResolvedValue([]) }) }),
+    };
+    const app = await createApp(inject<Db>(db), inject<ImportQueueWorker>({ nudge: vi.fn() }));
+
+    const res = await app.inject({ method: 'GET', url: '/api/books/1/retry-import' });
+
+    expect(res.statusCode).toBe(200);
+    expect(JSON.parse(res.payload)).toEqual({ available: false });
+  });
+});

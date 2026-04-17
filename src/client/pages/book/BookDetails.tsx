@@ -1,6 +1,5 @@
 import { useState, useCallback, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { useQuery } from '@tanstack/react-query';
 import { SearchReleasesModal } from '@/components/SearchReleasesModal';
 import { BookMetadataModal } from '@/components/book/BookMetadataModal.js';
 import { ConfirmModal } from '@/components/ConfirmModal.js';
@@ -8,7 +7,7 @@ import { DeleteBookModal } from '@/components/DeleteBookModal.js';
 import { HistoryIcon, BookOpenIcon } from '@/components/icons';
 import { Tabs, type TabItem } from '@/components/Tabs.js';
 import { MergeStatusIcon } from '@/components/MergeStatusIcon.js';
-import { api, type BookWithAuthor } from '@/lib/api';
+import type { BookWithAuthor } from '@/lib/api';
 import { SUPPORTED_COVER_MIMES } from '../../../shared/mime.js';
 import { BookHero } from './BookHero.js';
 import { BookDetailsContent } from './BookDetailsContent.js';
@@ -21,6 +20,7 @@ import { MAX_COVER_SIZE } from '../../../shared/constants.js';
 import { formatMergePhase } from '@/lib/format/merge.js';
 import { AudioPreview } from './AudioPreview.js';
 import { useCoverPaste } from '@/hooks/useCoverPaste.js';
+import { useRetryImportAvailable } from '@/hooks/useRetryImportAvailable.js';
 import { toast } from 'sonner';
 
 const BOOK_TABS: TabItem[] = [
@@ -32,16 +32,6 @@ function canShowWrongRelease(book: BookWithAuthor): boolean {
   return book.status === 'imported' && !!(book.lastGrabGuid || book.lastGrabInfoHash);
 }
 
-/** Check if a failed book has a retryable import job. Only queries when status is 'failed'. */
-function useRetryImportAvailable(bookId: number, status: string): boolean {
-  const { data } = useQuery({
-    queryKey: ['book', bookId, 'retry-import-available'],
-    queryFn: () => api.checkRetryImportAvailable(bookId),
-    enabled: status === 'failed',
-    staleTime: 30_000,
-  });
-  return status === 'failed' && data?.available === true;
-}
 
 // eslint-disable-next-line max-lines-per-function -- page orchestrator with multiple confirm modals
 export function BookDetails({ libraryBook, metadataBook }: {
