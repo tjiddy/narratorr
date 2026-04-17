@@ -43,7 +43,7 @@ export function BookDetails({ libraryBook, metadataBook }: {
   const [coverFile, setCoverFile] = useState<File | null>(null);
 
   const merged = mergeBookData(libraryBook, metadataBook);
-  const { renameMutation, mergeMutation, cancelMergeMutation, retagMutation, refreshScanMutation, deleteMutation, monitorMutation, wrongReleaseMutation, uploadCoverMutation, ffmpegConfigured, isSaving, handleSave } =
+  const { renameMutation, mergeMutation, cancelMergeMutation, retagMutation, refreshScanMutation, deleteMutation, monitorMutation, wrongReleaseMutation, retryImportMutation, uploadCoverMutation, ffmpegConfigured, isSaving, handleSave } =
     useBookActions(libraryBook.id, libraryBook.monitorForUpgrades);
 
   const showWrongRelease = canShowWrongRelease(libraryBook);
@@ -140,6 +140,8 @@ export function BookDetails({ libraryBook, metadataBook }: {
         onCoverConfirm={handleCoverConfirm}
         onCoverCancel={handleCoverCancel}
         isUploadingCover={uploadCoverMutation.isPending}
+        onRetryImportClick={libraryBook.status === 'failed' ? () => retryImportMutation.mutate() : undefined}
+        isRetryingImport={retryImportMutation.isPending}
       >
         <AudioPreview bookId={libraryBook.id} status={libraryBook.status} path={libraryBook.path ?? null} />
       </BookHero>

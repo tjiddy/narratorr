@@ -18,6 +18,7 @@ export const LibraryBookCard = memo(function LibraryBookCard({
   onClick,
   onSearchReleases,
   onRemove,
+  onRetryImport,
 }: {
   book: BookWithAuthor;
   index: number;
@@ -28,6 +29,7 @@ export const LibraryBookCard = memo(function LibraryBookCard({
   onClick: (bookId: number) => void;
   onSearchReleases: (book: BookWithAuthor) => void;
   onRemove: (book: BookWithAuthor) => void;
+  onRetryImport?: (book: BookWithAuthor) => void;
 }) {
   const { hasError: imageError, onError: onImageError } = useImageError();
   const menuAreaRef = useRef<HTMLDivElement>(null);
@@ -103,6 +105,7 @@ export const LibraryBookCard = memo(function LibraryBookCard({
               onSearchReleases={() => onSearchReleases(book)}
               onRemove={() => onRemove(book)}
               onClose={onMenuClose}
+              onRetryImport={onRetryImport && book.status === 'failed' ? () => onRetryImport(book) : undefined}
             />
           )}
         </div>
