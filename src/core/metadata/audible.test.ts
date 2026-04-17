@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { http, HttpResponse, delay } from 'msw';
 import { useMswServer } from '../__tests__/msw/server.js';
 import { AudibleProvider } from './audible.js';
@@ -863,7 +863,43 @@ describe('AudibleProvider', () => {
   });
 
   describe('AUDIBLE_BASE_URL override', () => {
-    it.todo('sends requests to AUDIBLE_BASE_URL when env var is set');
-    it.todo('uses default https://api.audible{tld} URL when AUDIBLE_BASE_URL is not set');
+    afterEach(() => {
+      delete process.env.AUDIBLE_BASE_URL;
+    });
+
+    it('sends requests to AUDIBLE_BASE_URL when env var is set', async () => {
+      const fakeBase = 'http://localhost:9999';
+      process.env.AUDIBLE_BASE_URL = fakeBase;
+      const overridden = new AudibleProvider({ region: 'us' });
+
+      let capturedUrl: URL | undefined;
+      server.use(
+        http.get(`${fakeBase}/1.0/catalog/products`, ({ request }) => {
+          capturedUrl = new URL(request.url);
+          return HttpResponse.json({ products: [] });
+        }),
+      );
+
+      await overridden.searchBooks('test query');
+      expect(capturedUrl).toBeDefined();
+      expect(capturedUrl!.origin).toBe(fakeBase);
+    });
+
+    it('uses default https://api.audible{tld} URL when AUDIBLE_BASE_URL is not set', async () => {
+      delete process.env.AUDIBLE_BASE_URL;
+      const defaultProvider = new AudibleProvider({ region: 'us' });
+
+      let capturedUrl: URL | undefined;
+      server.use(
+        http.get('https://api.audible.com/1.0/catalog/products', ({ request }) => {
+          capturedUrl = new URL(request.url);
+          return HttpResponse.json({ products: [] });
+        }),
+      );
+
+      await defaultProvider.searchBooks('test query');
+      expect(capturedUrl).toBeDefined();
+      expect(capturedUrl!.origin).toBe('https://api.audible.com');
+    });
   });
 });
