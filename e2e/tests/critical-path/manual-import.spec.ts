@@ -58,7 +58,7 @@ test.describe('Critical path: manual import', () => {
 
     // ── Path step: scan the pre-populated source folder ──────────────────
     await test.step('enter sourcePath and scan', async () => {
-      const pathInput = page.getByPlaceholderText('/path/to/audiobooks');
+      const pathInput = page.getByPlaceholder('/path/to/audiobooks');
       await expect(pathInput).toBeVisible();
       await pathInput.fill(sourcePath);
       await page.getByRole('button', { name: /^Scan$/i }).click();
