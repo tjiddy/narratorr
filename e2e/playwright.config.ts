@@ -74,7 +74,6 @@ export default defineConfig({
       NODE_ENV: 'production',
       PORT: String(PORT),
       DATABASE_URL: tempDirs.dbPath,
-      LIBRARY_PATH: tempDirs.libraryPath,
       CONFIG_PATH: tempDirs.configPath,
       AUTH_BYPASS: 'true',
       URL_BASE: '/',
