@@ -861,4 +861,9 @@ describe('AudibleProvider', () => {
       expect(capturedUrl?.searchParams.get('num_results')).toBe('50');
     });
   });
+
+  describe('AUDIBLE_BASE_URL override', () => {
+    it.todo('sends requests to AUDIBLE_BASE_URL when env var is set');
+    it.todo('uses default https://api.audible{tld} URL when AUDIBLE_BASE_URL is not set');
+  });
 });

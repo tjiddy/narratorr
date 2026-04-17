@@ -95,4 +95,7 @@ describe('createRunTempDirs', () => {
     expect(first.libraryPath).not.toBe(second.libraryPath);
     expect(first.configPath).not.toBe(second.configPath);
   });
+
+  it.todo('provisions sourcePath as a fifth distinct temp directory');
+  it.todo('returns a fresh sourcePath on each call');
 });

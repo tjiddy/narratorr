@@ -108,6 +108,8 @@ describe('globalTeardown', () => {
     expect(existsSync(run.libraryPath)).toBe(false);
   });
 
+  it.todo('removes sourcePath alongside the other temp dirs');
+
   it('ignores temp dirs created by an unrelated process', async () => {
     // Scoping guarantee: globalTeardown only removes what was recorded by
     // this process's createRunTempDirs. A dir created by a concurrent run

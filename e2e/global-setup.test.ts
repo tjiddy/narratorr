@@ -107,6 +107,9 @@ describe('globalSetup', () => {
     expect(body.data![0].title).toMatch(/E2E Test Book/);
   });
 
+  it.todo('starts the Audible fake on a configured port and registers it for teardown');
+  it.todo('pre-populates sourcePath with an author-title subfolder containing silent.m4b');
+
   it('exposes fake URLs and paths on process.env for spec files', async () => {
     const run = createRunTempDirs();
     orphans.push(dirname(run.dbPath), run.libraryPath, run.configPath, run.downloadsPath);
