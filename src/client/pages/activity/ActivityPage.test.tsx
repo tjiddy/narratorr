@@ -388,7 +388,7 @@ describe('ActivityPage', () => {
     renderWithProviders(<ActivityPage />);
 
     await waitFor(() => {
-      expect(screen.getByText('No active downloads')).toBeInTheDocument();
+      expect(screen.getByText('Nothing running right now')).toBeInTheDocument();
     });
   });
 
@@ -412,7 +412,7 @@ describe('ActivityPage', () => {
     expect(screen.getAllByText('Downloading').length).toBeGreaterThanOrEqual(1);
     expect(screen.getByText('45%')).toBeInTheDocument();
     expect(screen.getByText('12 seeders')).toBeInTheDocument();
-    expect(screen.getByText('1 active download')).toBeInTheDocument();
+    expect(screen.getByText('1 in queue')).toBeInTheDocument();
   });
 
   it('shows failed item with error message and retry button', async () => {
@@ -872,8 +872,8 @@ describe('ActivityPage', () => {
       renderWithProviders(<ActivityPage />);
 
       await waitFor(() => {
-        // Active tab content visible — "No active downloads" empty state
-        expect(screen.getByText('No active downloads')).toBeInTheDocument();
+        // Active tab content visible — "Nothing running right now" empty state
+        expect(screen.getByText('Nothing running right now')).toBeInTheDocument();
       });
 
       // Event History content not rendered
@@ -885,14 +885,14 @@ describe('ActivityPage', () => {
       renderWithProviders(<ActivityPage />);
 
       await waitFor(() => {
-        expect(screen.getByText('No active downloads')).toBeInTheDocument();
+        expect(screen.getByText('Nothing running right now')).toBeInTheDocument();
       });
 
       await user.click(screen.getByRole('tab', { name: /history/i }));
 
       // Downloads content hidden
       await waitFor(() => {
-        expect(screen.queryByText('No active downloads')).not.toBeInTheDocument();
+        expect(screen.queryByText('Nothing running right now')).not.toBeInTheDocument();
       });
 
       // Event History section rendered — filter dropdown "All" option visible
@@ -904,20 +904,20 @@ describe('ActivityPage', () => {
       renderWithProviders(<ActivityPage />);
 
       await waitFor(() => {
-        expect(screen.getByText('No active downloads')).toBeInTheDocument();
+        expect(screen.getByText('Nothing running right now')).toBeInTheDocument();
       });
 
       // Switch to History
       await user.click(screen.getByRole('tab', { name: /history/i }));
       await waitFor(() => {
-        expect(screen.queryByText('No active downloads')).not.toBeInTheDocument();
+        expect(screen.queryByText('Nothing running right now')).not.toBeInTheDocument();
       });
 
       // Switch back to Active
       await user.click(screen.getByRole('tab', { name: /active/i }));
 
       await waitFor(() => {
-        expect(screen.getByText('No active downloads')).toBeInTheDocument();
+        expect(screen.getByText('Nothing running right now')).toBeInTheDocument();
       });
     });
   });
@@ -1005,7 +1005,7 @@ describe('#312 page-level SSE integration', () => {
 
     // Wait for initial empty state
     await waitFor(() => {
-      expect(screen.getByText('No active downloads')).toBeInTheDocument();
+      expect(screen.getByText('Nothing running right now')).toBeInTheDocument();
     });
 
     const es = MockEventSource.instances[0];
@@ -1020,7 +1020,7 @@ describe('#312 page-level SSE integration', () => {
     await waitFor(() => {
       expect(screen.getByText('New Audiobook')).toBeInTheDocument();
     });
-    expect(screen.queryByText('No active downloads')).not.toBeInTheDocument();
+    expect(screen.queryByText('Nothing running right now')).not.toBeInTheDocument();
   });
 
   it('updates download progress in-place via SSE patch without full page reload', async () => {
@@ -1101,7 +1101,7 @@ describe('#392 search progress cards', () => {
 
     renderWithProviders(<ActivityPage />);
     await waitFor(() => {
-      expect(screen.getByText('No active downloads')).toBeInTheDocument();
+      expect(screen.getByText('Nothing running right now')).toBeInTheDocument();
     });
   });
 });
@@ -1167,7 +1167,7 @@ describe('#422 merge activity cards', () => {
 
     renderWithProviders(<ActivityPage />);
     await waitFor(() => {
-      expect(screen.getByText('No active downloads')).toBeInTheDocument();
+      expect(screen.getByText('Nothing running right now')).toBeInTheDocument();
     });
 
     // No merge-specific content should appear
@@ -1281,7 +1281,7 @@ describe('ActivityPage tab buttons (#488)', () => {
 
     // Wait for data to load so tabs render (they're behind the loading guard)
     await waitFor(() => {
-      expect(screen.getByText('No active downloads')).toBeInTheDocument();
+      expect(screen.getByText('Nothing running right now')).toBeInTheDocument();
     });
 
     const tabs = screen.getAllByRole('tab');

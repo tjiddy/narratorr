@@ -1,8 +1,8 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { screen } from '@testing-library/react';
 import { renderWithProviders } from '@/__tests__/helpers';
-import { DownloadsTabSection } from './DownloadsTabSection';
-import type { DownloadsTabSectionProps } from './DownloadsTabSection';
+import { ActiveTabSection } from './ActiveTabSection';
+import type { ActiveTabSectionProps } from './ActiveTabSection';
 import type { Download } from '@/lib/api';
 
 function mockMutation(overrides: Partial<{ mutate: ReturnType<typeof vi.fn>; isPending: boolean; variables: unknown }> = {}) {
@@ -56,7 +56,7 @@ function makeDownload(overrides: Partial<Download> = {}): Download {
   } as Download;
 }
 
-function defaultProps(overrides: Partial<DownloadsTabSectionProps> = {}): DownloadsTabSectionProps {
+function defaultProps(overrides: Partial<ActiveTabSectionProps> = {}): ActiveTabSectionProps {
   return {
     queue: [],
     queueTotal: 0,
@@ -73,36 +73,36 @@ function defaultProps(overrides: Partial<DownloadsTabSectionProps> = {}): Downlo
   };
 }
 
-describe('DownloadsTabSection', () => {
+describe('ActiveTabSection', () => {
   beforeEach(() => {
     vi.clearAllMocks();
   });
 
-  describe('active downloads', () => {
-    it('renders active downloads count in header', () => {
-      renderWithProviders(<DownloadsTabSection {...defaultProps({ queueTotal: 3 })} />);
-      expect(screen.getByText('3 active downloads')).toBeInTheDocument();
+  describe('queue count and empty state', () => {
+    it('renders queue count in header', () => {
+      renderWithProviders(<ActiveTabSection {...defaultProps({ queueTotal: 3 })} />);
+      expect(screen.getByText('3 in queue')).toBeInTheDocument();
     });
 
-    it('shows singular form for 1 download', () => {
-      renderWithProviders(<DownloadsTabSection {...defaultProps({ queueTotal: 1 })} />);
-      expect(screen.getByText('1 active download')).toBeInTheDocument();
+    it('shows queue count for 1 item', () => {
+      renderWithProviders(<ActiveTabSection {...defaultProps({ queueTotal: 1 })} />);
+      expect(screen.getByText('1 in queue')).toBeInTheDocument();
     });
 
     it('shows empty state when no downloads, merges, or searches active', () => {
-      renderWithProviders(<DownloadsTabSection {...defaultProps()} />);
-      expect(screen.getByText('No active downloads')).toBeInTheDocument();
+      renderWithProviders(<ActiveTabSection {...defaultProps()} />);
+      expect(screen.getByText('Nothing running right now')).toBeInTheDocument();
     });
 
     it('renders download cards for active queue items', () => {
       const queue = [makeDownload({ id: 1, title: 'Book One' }), makeDownload({ id: 2, title: 'Book Two' })];
-      renderWithProviders(<DownloadsTabSection {...defaultProps({ queue, queueTotal: 2 })} />);
+      renderWithProviders(<ActiveTabSection {...defaultProps({ queue, queueTotal: 2 })} />);
       expect(screen.getByText('Book One')).toBeInTheDocument();
       expect(screen.getByText('Book Two')).toBeInTheDocument();
     });
 
     it('does not render history section or clear history button', () => {
-      renderWithProviders(<DownloadsTabSection {...defaultProps()} />);
+      renderWithProviders(<ActiveTabSection {...defaultProps()} />);
       expect(screen.queryByText('Clear History')).not.toBeInTheDocument();
       expect(screen.queryByText(/completed download/)).not.toBeInTheDocument();
       expect(screen.queryByText('No download history')).not.toBeInTheDocument();
@@ -115,7 +115,7 @@ describe('DownloadsTabSection', () => {
         makeDownload({ id: 1, title: 'Book One', status: 'downloading' }),
         makeDownload({ id: 2, title: 'Book Two', status: 'downloading' }),
       ];
-      renderWithProviders(<DownloadsTabSection {...defaultProps({
+      renderWithProviders(<ActiveTabSection {...defaultProps({
         queue,
         queueTotal: 2,
         cancelMutation: mockMutation({ isPending: true, variables: 1 }),

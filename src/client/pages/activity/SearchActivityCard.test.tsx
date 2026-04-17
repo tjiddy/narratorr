@@ -1,9 +1,9 @@
 import { describe, it, expect } from 'vitest';
 import { render, screen } from '@testing-library/react';
-import { SearchCard } from './SearchCard';
+import { SearchActivityCard } from './SearchActivityCard';
 import type { SearchCardState, IndexerState } from '@/hooks/useSearchProgress';
 
-function makeState(overrides: Partial<SearchCardState> = {}): SearchCardState {
+function makeState(overrides: Partial<SearchActivityCardState> = {}): SearchCardState {
   return {
     bookId: 1,
     bookTitle: 'The Way of Kings',
@@ -15,21 +15,21 @@ function makeState(overrides: Partial<SearchCardState> = {}): SearchCardState {
   };
 }
 
-describe('SearchCard', () => {
+describe('SearchActivityCard', () => {
   describe('initial state (all pending)', () => {
     it('renders book title in card header', () => {
-      render(<SearchCard state={makeState()} />);
+      render(<SearchActivityCard state={makeState()} />);
       expect(screen.getByText('The Way of Kings')).toBeInTheDocument();
     });
 
     it('shows "searching..." for each pending indexer', () => {
-      render(<SearchCard state={makeState()} />);
+      render(<SearchActivityCard state={makeState()} />);
       const searchingItems = screen.getAllByText('searching...');
       expect(searchingItems).toHaveLength(2);
     });
 
     it('shows indexer names', () => {
-      render(<SearchCard state={makeState()} />);
+      render(<SearchActivityCard state={makeState()} />);
       expect(screen.getByText('MAM')).toBeInTheDocument();
       expect(screen.getByText('ABB')).toBeInTheDocument();
     });
@@ -43,7 +43,7 @@ describe('SearchCard', () => {
           [20, { name: 'ABB', status: 'pending' }],
         ]),
       });
-      render(<SearchCard state={state} />);
+      render(<SearchActivityCard state={state} />);
       expect(screen.getByText(/3 results/)).toBeInTheDocument();
       expect(screen.getByText(/1\.2s/)).toBeInTheDocument();
     });
@@ -54,7 +54,7 @@ describe('SearchCard', () => {
           [10, { name: 'MAM', status: 'error', error: 'timeout', elapsedMs: 30000 }],
         ]),
       });
-      render(<SearchCard state={state} />);
+      render(<SearchActivityCard state={state} />);
       expect(screen.getByText(/timeout/)).toBeInTheDocument();
       expect(screen.getByText(/30\.0s/)).toBeInTheDocument();
     });
@@ -66,7 +66,7 @@ describe('SearchCard', () => {
         outcome: 'grabbed',
         grabbedFrom: 'MAM',
       });
-      render(<SearchCard state={state} />);
+      render(<SearchActivityCard state={state} />);
       expect(screen.getByText(/Grabbed from MAM/)).toBeInTheDocument();
     });
   });
@@ -74,7 +74,7 @@ describe('SearchCard', () => {
   describe('no_results outcome', () => {
     it('shows "No results found" outcome text', () => {
       const state = makeState({ outcome: 'no_results' });
-      render(<SearchCard state={state} />);
+      render(<SearchActivityCard state={state} />);
       expect(screen.getByText(/No results found/)).toBeInTheDocument();
     });
   });
@@ -82,7 +82,7 @@ describe('SearchCard', () => {
   describe('skipped outcome', () => {
     it('shows "Already has an active download" when skipped', () => {
       const state = makeState({ outcome: 'skipped' });
-      render(<SearchCard state={state} />);
+      render(<SearchActivityCard state={state} />);
       expect(screen.getByText(/Already has an active download/)).toBeInTheDocument();
     });
   });
@@ -90,7 +90,7 @@ describe('SearchCard', () => {
   describe('grab_error outcome', () => {
     it('shows "Grab failed" when grab errors', () => {
       const state = makeState({ outcome: 'grab_error' });
-      render(<SearchCard state={state} />);
+      render(<SearchActivityCard state={state} />);
       expect(screen.getByText(/Grab failed/)).toBeInTheDocument();
     });
   });
@@ -105,7 +105,7 @@ describe('SearchCard', () => {
           [40, { name: 'NZB', status: 'pending' }],
         ]),
       });
-      render(<SearchCard state={state} />);
+      render(<SearchActivityCard state={state} />);
       expect(screen.getByText(/3 results/)).toBeInTheDocument();
       expect(screen.getByText(/0 results/)).toBeInTheDocument();
       expect(screen.getByText(/timeout/)).toBeInTheDocument();
@@ -120,7 +120,7 @@ describe('SearchCard', () => {
           [10, { name: 'MAM', status: 'complete', resultsFound: 0, elapsedMs: 100 }],
         ]),
       });
-      render(<SearchCard state={state} />);
+      render(<SearchActivityCard state={state} />);
       expect(screen.getByText(/0 results/)).toBeInTheDocument();
     });
 
@@ -130,7 +130,7 @@ describe('SearchCard', () => {
           [10, { name: 'MAM', status: 'complete', resultsFound: 1, elapsedMs: 0 }],
         ]),
       });
-      render(<SearchCard state={state} />);
+      render(<SearchActivityCard state={state} />);
       expect(screen.getByText(/0\.0s/)).toBeInTheDocument();
     });
 
@@ -140,7 +140,7 @@ describe('SearchCard', () => {
           [10, { name: 'MAM', status: 'pending' }],
         ]),
       });
-      render(<SearchCard state={state} />);
+      render(<SearchActivityCard state={state} />);
       expect(screen.getByText('MAM')).toBeInTheDocument();
       expect(screen.getAllByText('searching...')).toHaveLength(1);
     });

@@ -229,7 +229,7 @@ function DownloadMetadata({ download, compact, config, StatusIcon }: {
   );
 }
 
-export function DownloadCard({
+export function DownloadActivityCard({
   download,
   onCancel,
   onRetry,

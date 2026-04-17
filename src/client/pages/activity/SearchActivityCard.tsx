@@ -47,7 +47,7 @@ const STATUS_LABELS: Record<string, string> = {
   grab_error: 'grab failed',
 };
 
-export function SearchCard({ state }: { state: SearchCardState }) {
+export function SearchActivityCard({ state }: { state: SearchCardState }) {
   const overallStatus = state.outcome
     ? STATUS_LABELS[state.outcome] ?? state.outcome
     : 'searching';
