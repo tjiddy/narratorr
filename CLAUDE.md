@@ -102,7 +102,7 @@ Mechanical workflow steps live in `scripts/` as deterministic Node scripts (not 
 
 | Script | What it does | Output |
 |--------|-------------|--------|
-| `scripts/verify.ts` | lint → test+coverage → typecheck → build | `VERIFY: pass/fail` |
+| `scripts/verify.ts` | lint → test+coverage → typecheck → build → e2e | `VERIFY: pass/fail` |
 | `scripts/claim.ts <id>` | Validate status, create branch, update labels | `CLAIMED:/ERROR:` |
 | `scripts/merge.ts <pr>` | Validate approval, CI, squash merge, close issue | `MERGED:/ERROR:` |
 | `scripts/block.ts <id> "<reason>"` | Post blocker comment, update labels | `BLOCKED:` |

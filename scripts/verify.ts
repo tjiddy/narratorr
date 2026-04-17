@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// Quality gates: lint → test+coverage → typecheck → build
+// Quality gates: lint → test+coverage → typecheck → build → e2e
 // Usage: node scripts/verify.ts
 // Output: "VERIFY: pass" on success, structured failures otherwise.
 
@@ -92,6 +92,30 @@ if (!failed) {
   }
 } else {
   addGate("BUILD", "skipped", true);
+}
+
+// --- E2E (Playwright critical-path + smoke) ---
+// Runs against the dist bundle built above. Headless Chromium, ~10-15s total.
+// This is the only gate that exercises the full UI → API → DB → filesystem chain;
+// unit tests catch logic regressions but miss wiring failures (settings defaults,
+// route/UI contract drift, async flow timing) that only show up in a real browser.
+if (!failed) {
+  const e2e = run("pnpm test:e2e");
+  const combined = [e2e.stdout, e2e.stderr].filter(Boolean).join("\n");
+  if (e2e.ok) {
+    const passedMatch = combined.match(/(\d+) passed/);
+    addGate("E2E", `pass (${passedMatch?.[1] ?? "?"} specs)`, true);
+  } else {
+    const failedMatch = combined.match(/(\d+) failed/);
+    // Capture the failing spec name(s) and the first error line for diagnosis.
+    const failLines = combined.split("\n")
+      .filter(l => /^\s*\d+\)\s.*spec\.ts:/.test(l) || /^\s*Error:/.test(l))
+      .map(l => l.trim())
+      .slice(0, 6);
+    addGate("E2E", `fail (${failedMatch?.[1] ?? "?"} failed)${failLines.length ? "\n" + failLines.join("\n") : ""}`, false);
+  }
+} else {
+  addGate("E2E", "skipped", true);
 }
 
 // --- Coverage analysis (only if all gates passed) ---
