@@ -176,5 +176,28 @@ describe('ManualImportAdapter', () => {
       // copyToLibrary should have been called (mode='copy')
       expect(vi.mocked(copyToLibrary)).toHaveBeenCalled();
     });
+
+    it('emits book_status_change SSE and records import_failed event on failure (#636 F2)', async () => {
+      const { safeEmit } = await import('../../utils/safe-emit.js');
+      const { copyToLibrary } = await import('../import-orchestration.helpers.js');
+      vi.mocked(copyToLibrary).mockRejectedValueOnce(new Error('Disk full'));
+
+      const job = makeJob();
+      await expect(adapter.process(job, ctx)).rejects.toThrow('Disk full');
+
+      // Failure SSE emitted
+      expect(vi.mocked(safeEmit)).toHaveBeenCalledWith(
+        mockBroadcaster,
+        'book_status_change',
+        expect.objectContaining({ book_id: 42, old_status: 'importing', new_status: 'failed' }),
+        expect.anything(),
+      );
+
+      // Failure event recorded
+      expect(mockEventHistory.create).toHaveBeenCalledWith(expect.objectContaining({
+        type: 'import_failed',
+        bookId: 42,
+      }));
+    });
   });
 });
