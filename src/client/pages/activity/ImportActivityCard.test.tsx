@@ -4,7 +4,7 @@ import { renderWithProviders } from '@/__tests__/helpers';
 import { ImportActivityCard } from './ImportActivityCard';
 import type { ImportJobWithBook } from '@/lib/api/import-jobs';
 
-function makeJob(overrides: Partial<ImportJobWithBook> & { _progress?: number; _byteCounter?: { current: number; total: number } } = {}): ImportJobWithBook & { _progress?: number; _byteCounter?: { current: number; total: number } } {
+function makeJob(overrides: Partial<ImportJobWithBook> & { _progress?: number; _byteCounter?: { current: number; total: number }; _progressPhase?: string } = {}): ImportJobWithBook & { _progress?: number; _byteCounter?: { current: number; total: number } } {
   return {
     id: 1,
     bookId: 42,
