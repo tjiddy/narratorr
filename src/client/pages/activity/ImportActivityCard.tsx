@@ -34,19 +34,19 @@ function formatProgress(phase: string, progress?: number, byteCounter?: { curren
 function PhaseIcon({ isDone, isCurrent }: { isDone: boolean; isCurrent: boolean }) {
   if (isDone) {
     return (
-      <div className="w-3.5 h-3.5 rounded-full bg-success/20 flex items-center justify-center">
+      <div className="w-4 h-4 rounded-full bg-success/20 flex items-center justify-center ring-2 ring-success/10">
         <CheckIcon className="w-2.5 h-2.5 text-success" />
       </div>
     );
   }
   if (isCurrent) {
     return (
-      <div className="w-3.5 h-3.5 flex items-center justify-center">
-        <LoadingSpinner className="w-3.5 h-3.5 text-amber-500" />
+      <div className="w-4 h-4 flex items-center justify-center">
+        <LoadingSpinner className="w-4 h-4 text-amber-500" />
       </div>
     );
   }
-  return <div className="w-2 h-2 rounded-full bg-muted" />;
+  return <div className="w-2.5 h-2.5 rounded-full bg-muted-foreground/20" />;
 }
 
 function PhaseRow({ entry, isLast, progress, byteCounter }: {
@@ -62,16 +62,16 @@ function PhaseRow({ entry, isLast, progress, byteCounter }: {
   const statusText = isDone ? 'completed' : isCurrent ? 'in progress' : 'pending';
 
   return (
-    <div className="relative flex items-center gap-2 text-xs" aria-label={`${label}: ${statusText}`}>
-      <div className="absolute -left-5 flex items-center justify-center">
+    <div className="relative flex items-center gap-2.5 text-xs py-0.5" aria-label={`${label}: ${statusText}`}>
+      <div className="absolute -left-[22px] flex items-center justify-center">
         <PhaseIcon isDone={isDone} isCurrent={isCurrent} />
       </div>
       <div className="flex-1 min-w-0">
         {showProgress ? (
-          <div className="relative overflow-hidden rounded">
+          <div className="relative overflow-hidden rounded-md py-0.5 px-1.5 -mx-1.5">
             {progress !== undefined && (
               <div
-                className="absolute inset-0 bg-amber-500/10 rounded transition-all duration-500"
+                className="absolute inset-0 bg-amber-500/8 dark:bg-amber-500/12 rounded-md transition-all duration-700 ease-out"
                 style={{ width: `${Math.round(progress * 100)}%` }}
                 role="progressbar"
                 aria-valuenow={Math.round(progress * 100)}
@@ -79,7 +79,7 @@ function PhaseRow({ entry, isLast, progress, byteCounter }: {
                 aria-valuemax={100}
               />
             )}
-            <span className="relative text-foreground">
+            <span className="relative text-foreground font-medium">
               {formatProgress(entry.phase, progress, byteCounter)}
             </span>
           </div>
@@ -87,7 +87,7 @@ function PhaseRow({ entry, isLast, progress, byteCounter }: {
           <span className={isDone ? 'text-muted-foreground' : 'text-foreground'}>
             {label}
             {isDone && entry.completedAt && (
-              <span className="ml-1 text-muted-foreground/60">
+              <span className="ml-1.5 text-muted-foreground/50 tabular-nums">
                 {formatElapsed(entry.startedAt, entry.completedAt)}
               </span>
             )}
@@ -112,16 +112,16 @@ export function ImportActivityCard({ job }: ImportActivityCardProps) {
   return (
     <div
       className={`glass-card rounded-2xl p-4 sm:p-5 animate-fade-in-up transition-all duration-300 ${
-        isProcessing ? 'ring-1 ring-amber-500/30 shadow-amber-500/10 shadow-lg' : ''
+        isProcessing ? 'ring-1 ring-amber-500/20 shadow-lg shadow-amber-500/5 dark:ring-amber-500/30 dark:shadow-amber-500/10' : ''
       } ${isCompleted ? 'animate-fade-out' : ''}`}
     >
       {/* Header with cover + title */}
       <div className="flex items-start gap-3 mb-3">
         {coverUrl ? (
-          <img src={coverUrl} alt={`Cover for ${job.book.title}`} className="w-10 h-10 rounded-lg object-cover flex-shrink-0" />
+          <img src={coverUrl} alt={`Cover for ${job.book.title}`} className="w-10 h-10 rounded-lg object-cover flex-shrink-0 shadow-sm" />
         ) : (
           <div className="w-10 h-10 rounded-lg bg-muted flex items-center justify-center flex-shrink-0">
-            <HeadphonesIcon className="w-5 h-5 text-muted-foreground" />
+            <HeadphonesIcon className="w-5 h-5 text-muted-foreground/60" />
           </div>
         )}
         <div className="min-w-0 flex-1">
@@ -131,30 +131,48 @@ export function ImportActivityCard({ job }: ImportActivityCardProps) {
           )}
         </div>
         {isCompleted && (
-          <span className="text-xs text-success font-medium flex items-center gap-1">
-            <CheckIcon className="w-3.5 h-3.5" />Imported
+          <span className="text-[11px] text-success font-medium flex items-center gap-1 bg-success/10 px-2 py-0.5 rounded-full">
+            <CheckIcon className="w-3 h-3" />Imported
           </span>
         )}
         {isFailed && (
-          <span className="text-xs text-destructive font-medium flex items-center gap-1">
-            <XIcon className="w-3.5 h-3.5" />Failed
+          <span className="text-[11px] text-destructive font-medium flex items-center gap-1 bg-destructive/10 px-2 py-0.5 rounded-full">
+            <XIcon className="w-3 h-3" />Failed
           </span>
         )}
       </div>
 
       {/* Phase checklist */}
       {phaseHistory.length > 0 && (
-        <div className="relative pl-5 space-y-1.5">
-          <div className="absolute left-[7px] top-1 bottom-1 w-0.5 bg-muted rounded-full" />
-          {phaseHistory.map((entry, idx) => (
-            <PhaseRow
-              key={entry.phase}
-              entry={entry}
-              isLast={idx === phaseHistory.length - 1}
-              progress={job._progress}
-              byteCounter={job._byteCounter}
-            />
-          ))}
+        <div className="relative pl-[22px] space-y-0.5 mt-1">
+          {/* Vertical connector — segmented by completion state */}
+          <div className="absolute left-[7px] top-1.5 bottom-1.5 w-px bg-border/60 dark:bg-border/40" />
+          {phaseHistory.map((entry, idx) => {
+            const isDone = entry.completedAt !== undefined;
+            if (isDone && idx < phaseHistory.length - 1) {
+              return (
+                <div key={entry.phase}>
+                  <div
+                    className="absolute left-[7px] w-px bg-success/40"
+                    style={{
+                      top: `${(idx / phaseHistory.length) * 100}%`,
+                      height: `${(1 / phaseHistory.length) * 100}%`,
+                    }}
+                  />
+                  <PhaseRow entry={entry} isLast={false} progress={job._progress} byteCounter={job._byteCounter} />
+                </div>
+              );
+            }
+            return (
+              <PhaseRow
+                key={entry.phase}
+                entry={entry}
+                isLast={idx === phaseHistory.length - 1}
+                progress={job._progress}
+                byteCounter={job._byteCounter}
+              />
+            );
+          })}
         </div>
       )}
     </div>
