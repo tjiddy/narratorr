@@ -34,8 +34,12 @@ export interface ActiveTabSectionProps {
 export function ActiveTabSection(props: ActiveTabSectionProps) {
   const { queue, queueTotal, queuePagination, mergeCards, searchCards, importJobs = [], cancelMutation, retryMutation, approveMutation, rejectMutation, cancellingMergeBookId, cancelMergeMutation } = props;
 
-  const activeImportJobs = importJobs.filter((j) => j.status === 'processing');
-  const queuedImportJobs = importJobs.filter((j) => j.status === 'pending');
+  const activeImportJobs = importJobs
+    .filter((j) => j.status === 'processing')
+    .sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime());
+  const queuedImportJobs = importJobs
+    .filter((j) => j.status === 'pending')
+    .sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime());
   const hasAnyActivity = queue.length > 0 || searchCards.length > 0 || mergeCards.length > 0 || importJobs.length > 0;
 
   // Refresh "now" every 10s for batch banner cooldown without impure Date.now() in render
