@@ -112,8 +112,10 @@ Mechanical workflow steps live in `scripts/` as deterministic Node scripts (not 
 | `scripts/changelog.ts [since]` | Categorized changelog from git + GitHub | Markdown |
 | `scripts/git-push.ts <args>` | Token-aware git push (mints fresh GitHub App token) | stdout or error |
 | `scripts/post-review.ts <pr>` | Post review comment from state dir with guards | `POSTED:` or `ERROR:` |
+| `scripts/check-self-review.ts <author>` | Guard against self-review (works under App + personal auth) | `OK:` or `SELF-REVIEW:`/`ERROR:` |
+| `scripts/update-labels.ts <id> [--pr] --replace <prefix> <label>` | Atomic label replacement on issue or PR | stdout or error |
 | `scripts/gh.ts` | Token-aware `gh` CLI wrapper (drop-in replacement) | stdout or error |
-| `scripts/lib.ts` | Shared helpers (gh, git, gitPush, label parsing) | — |
+| `scripts/lib.ts` | Shared helpers (gh, git, gitPush, label parsing, self-identity) | — |
 
 ## GitHub CLI Auth
 
@@ -128,15 +130,7 @@ If `node scripts/gh.ts` returns 401, the app credentials may be misconfigured �
 
 ## Project Management (GitHub)
 
-All work tracked as GitHub issues at `https://github.com/tjiddy/narratorr`. Scripts and skills use `gh` CLI for all GitHub API interactions. Token management for GitHub Apps is handled by `scripts/lib.ts` (JWT → installation token, auto-refresh).
-
-## Codebase Knowledge Graph (MCP)
-
-Project is indexed via `codebase-memory-mcp` with auto-sync (graph stays fresh as files change). Prefer graph tools over Explore subagents for structural queries — use grep/glob for text pattern matching.
-
-- **`trace_call_path`** — "what calls X?" / "what does X call?" (blast radius, dependency chains)
-- **`detect_changes`** — map git diff to affected symbols with risk classification (`scope='branch'` for PR review)
-- **`search_graph`** — find functions/classes/modules by name with degree filtering (dead code, fan-out)
+All work tracked as GitHub issues at `https://github.com/tjiddy/narratorr`.
 
 ## Extended Documentation
 
