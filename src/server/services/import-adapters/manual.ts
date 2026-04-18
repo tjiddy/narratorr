@@ -72,8 +72,13 @@ export class ManualImportAdapter implements ImportAdapter {
     } catch (error: unknown) {
       // Failure side effects — emit SSE and record event before re-throwing (worker marks job/book as failed)
       safeEmit(broadcaster, 'book_status_change', { book_id: bookId, old_status: 'importing' as BookStatus, new_status: 'failed' as BookStatus }, log);
-      eventHistory.create({ type: 'import_failed', bookId, data: { error: String(error) } })
-        .catch((err: unknown) => log.warn({ err }, 'Failed to record manual import failure event'));
+      eventHistory.create({
+        bookId,
+        bookTitle: payload.title ?? 'Unknown',
+        authorName: payload.authorName ?? null,
+        eventType: 'import_failed',
+        source: 'import',
+      }).catch((err: unknown) => log.warn({ err }, 'Failed to record manual import failure event'));
       throw error;
     }
   }

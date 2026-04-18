@@ -195,8 +195,9 @@ describe('ManualImportAdapter', () => {
 
       // Failure event recorded
       expect(mockEventHistory.create).toHaveBeenCalledWith(expect.objectContaining({
-        type: 'import_failed',
+        eventType: 'import_failed',
         bookId: 42,
+        source: 'import',
       }));
     });
   });
