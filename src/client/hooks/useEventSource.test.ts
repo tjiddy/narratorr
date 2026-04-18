@@ -1160,13 +1160,13 @@ describe('#312 cache-miss scoping — patchActivityProgress', () => {
 // ============================================================================
 
 describe('#637 import SSE cache/toast behaviors', () => {
-  it('import_progress patches cached importJobs rows via setQueryData', () => {
+  it('import_progress patches the matching cached job row with _progress and _byteCounter', () => {
     const { wrapper, queryClient } = createWrapper();
-    const setDataSpy = vi.spyOn(queryClient, 'setQueryData');
 
-    // Seed cache with an import job
+    // Seed cache with two import jobs
     queryClient.setQueryData(queryKeys.importJobs(), [
       { id: 1, bookId: 42, status: 'processing', phase: 'copying' },
+      { id: 2, bookId: 43, status: 'pending', phase: 'queued' },
     ]);
 
     renderHook(() => useEventSource('key'), { wrapper });
@@ -1176,14 +1176,18 @@ describe('#637 import SSE cache/toast behaviors', () => {
       es.simulateOpen();
       es.simulateEvent('import_progress', {
         job_id: 1, book_id: 42, book_title: 'Test', phase: 'copying', progress: 0.5,
+        byte_counter: { current: 5000, total: 10000 },
       });
     });
 
-    // setQueryData should have been called on the importJobs query
-    const importJobsCalls = setDataSpy.mock.calls.filter(
-      (call) => Array.isArray(call[0]) && call[0][0] === 'importJobs'
-    );
-    expect(importJobsCalls.length).toBeGreaterThanOrEqual(1);
+    // Verify the actual cached data was patched
+    const cached = queryClient.getQueryData(queryKeys.importJobs()) as Record<string, unknown>[];
+    expect(cached).toHaveLength(2);
+    // Matching row should have _progress and _byteCounter
+    expect(cached[0]).toMatchObject({ id: 1, _progress: 0.5, _byteCounter: { current: 5000, total: 10000 } });
+    // Non-matching row should be unchanged
+    expect(cached[1]).toMatchObject({ id: 2, status: 'pending' });
+    expect(cached[1]).not.toHaveProperty('_progress');
   });
 
   it('import_progress falls back to invalidateQueries on cache miss', () => {

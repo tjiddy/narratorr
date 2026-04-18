@@ -73,6 +73,27 @@ describe('streamCopyWithProgress', () => {
     expect(true).toBe(true);
   });
 
+  it('fires onProgress multiple times with increasing byte counts for a large single file', async () => {
+    // 256KB file — exceeds Node stream highWaterMark (64KB), so multiple chunks are emitted
+    const size = 256 * 1024;
+    await writeFile(join(srcDir, 'large.m4b'), Buffer.alloc(size, 'x'));
+    const onProgress = vi.fn();
+
+    await streamCopyWithProgress(srcDir, destDir, onProgress);
+
+    // Should have been called multiple times (not just once at end)
+    expect(onProgress.mock.calls.length).toBeGreaterThan(1);
+
+    // Each call should have increasing current byte counts
+    const byteCounts = onProgress.mock.calls.map((call: unknown[]) => (call[1] as { current: number }).current);
+    for (let i = 1; i < byteCounts.length; i++) {
+      expect(byteCounts[i]).toBeGreaterThan(byteCounts[i - 1]);
+    }
+
+    // Final call should reach the total
+    expect(byteCounts[byteCounts.length - 1]).toBe(size);
+  });
+
   it('single file copy works correctly', async () => {
     const content = Buffer.alloc(8192, 'x');
     await writeFile(join(srcDir, 'single.m4b'), content);

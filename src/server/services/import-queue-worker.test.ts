@@ -456,6 +456,50 @@ describe('ImportQueueWorker', () => {
       });
     });
 
+    it('failed job persists closed phaseHistory with completedAt', async () => {
+      const mockBroadcaster = { emit: vi.fn() };
+      const workerWithBroadcaster = new ImportQueueWorker(inject<Db>(mockDb.db), log, mockBroadcaster as never);
+
+      const adapter: ImportAdapter = {
+        type: 'manual',
+        async process(_job: ImportJob, ctx) {
+          await ctx.setPhase('copying');
+          throw new Error('disk full');
+        },
+      };
+      registerImportAdapter(adapter);
+
+      let selectCallCount = 0;
+      mockDb.db.select = vi.fn().mockImplementation(() => {
+        selectCallCount++;
+        if (selectCallCount === 1) return { from: vi.fn().mockReturnThis(), where: vi.fn().mockResolvedValue([]) };
+        if (selectCallCount === 2) return { from: vi.fn().mockReturnThis(), where: vi.fn().mockReturnThis(), orderBy: vi.fn().mockReturnThis(), limit: vi.fn().mockResolvedValue([{ id: 3 }]) };
+        if (selectCallCount === 3) return { from: vi.fn().mockReturnThis(), where: vi.fn().mockReturnThis(), limit: vi.fn().mockResolvedValue([{ id: 3, bookId: 30, type: 'manual', status: 'processing', metadata: '{"title":"Disk Full"}', phaseHistory: null }]) };
+        return { from: vi.fn().mockReturnThis(), where: vi.fn().mockReturnThis(), orderBy: vi.fn().mockReturnThis(), limit: vi.fn().mockResolvedValue([]) };
+      });
+
+      const updateSets: Record<string, unknown>[] = [];
+      mockDb.db.update = vi.fn().mockImplementation(() => ({
+        set: vi.fn().mockImplementation((payload: Record<string, unknown>) => {
+          updateSets.push(payload);
+          return { where: vi.fn().mockResolvedValue({ rowsAffected: 1 }) };
+        }),
+      }));
+
+      await workerWithBroadcaster.start();
+      await new Promise(r => setTimeout(r, 100));
+      await workerWithBroadcaster.stop();
+
+      // The failed-row update should include phaseHistory with closed entry
+      const failedUpdate = updateSets.find(s => s.status === 'failed' && s.phaseHistory);
+      expect(failedUpdate).toBeDefined();
+      const history = JSON.parse(failedUpdate!.phaseHistory as string);
+      expect(history.length).toBeGreaterThanOrEqual(1);
+      const lastEntry = history[history.length - 1];
+      expect(lastEntry.phase).toBe('copying');
+      expect(lastEntry.completedAt).toBeTypeOf('number');
+    });
+
     it('EventBroadcasterService is injected via constructor', () => {
       const mockBroadcaster = { emit: vi.fn() };
       // Should not throw with 3rd arg
