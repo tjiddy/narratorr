@@ -47,7 +47,9 @@ export class ManualImportAdapter implements ImportAdapter {
       let finalPath = payload.path;
       if (mode) {
         await ctx.setPhase('copying');
-        finalPath = await copyToLibrary(payload, bookRow, extracted.meta ?? null, mode, this.deps);
+        finalPath = await copyToLibrary(payload, bookRow, extracted.meta ?? null, mode, this.deps, (progress, byteCounter) => {
+          ctx.emitProgress('copying', progress, byteCounter);
+        });
       }
 
       const stats = await getAudioStats(finalPath, log);
