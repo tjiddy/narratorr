@@ -217,6 +217,20 @@ describe('ManualImportAdapter', () => {
         expect(phases).toEqual(['analyzing', 'copying', 'renaming', 'fetching_metadata']);
       });
 
+      it('mode=copy + fileFormat set: reads settingsService.get(library) exactly once for copy+rename snapshot', async () => {
+        const settingsSvc = makeRenameSettingsService('{title}');
+        deps.settingsService = inject<SettingsService>(settingsSvc);
+        deps.bookService = makeBookServiceWithNarrators([]);
+        adapter = new ManualImportAdapter(deps);
+
+        const job = makeJob();
+        await adapter.process(job, ctx);
+
+        const libraryCalls = (settingsSvc.get as ReturnType<typeof vi.fn>).mock.calls
+          .filter((c: unknown[]) => c[0] === 'library');
+        expect(libraryCalls).toHaveLength(1);
+      });
+
       it('mode=copy + fileFormat set: calls renameFilesWithTemplate with correct args', async () => {
         const { renameFilesWithTemplate } = await import('../../utils/paths.js');
         const settingsSvc = makeRenameSettingsService('{title}');
