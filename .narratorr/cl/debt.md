@@ -24,8 +24,6 @@
 
 ### Existing actionable
 
-- **`src/server/services/library-scan.service.test.ts` ~58 skipped background-processing tests**: Two `describe.skip` blocks at lines 1894 and 2437 (background import processing + event history — removed in #635 after migrating `confirmImport` to the import_jobs queue) contain ~58 `it()` statements that no longer exercise live code. The tested behavior now lives in `ManualImportAdapter` (covered by `manual.test.ts`). Delete the `describe.skip` blocks. (discovered in #635)
-
 - **Core layer has 11 `instanceof Error` ternaries**: `src/core/` adapters still use raw `error instanceof Error ? error.message : fallback` instead of `getErrorMessage()`. Down from 30 after #621's `serializeError` migration. Out of scope for #513 and #621 because `src/core` throws/returns rather than logs — services catch and log. Warrants a follow-up issue for consistency. (discovered in #513; count updated 2026-04-18 per fs grep)
 
 - **`src/core/utils/download-url.ts:18` has private `DOWNLOAD_TIMEOUT_MS = 30_000`**: Same 30s timeout as the shared `HTTP_DOWNLOAD_TIMEOUT_MS` in `src/core/utils/constants.ts`. Intentionally left out of scope in #622. Could be migrated in a future cleanup pass. (discovered in #622)
