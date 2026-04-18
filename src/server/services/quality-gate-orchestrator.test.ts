@@ -12,6 +12,10 @@ import type { DownloadClientService } from './download-client.service.js';
 import type { ImportOrchestrator } from './import-orchestrator.js';
 import type { ImportService } from './import.service.js';
 
+vi.mock('../utils/enqueue-auto-import.js', () => ({
+  enqueueAutoImport: vi.fn().mockResolvedValue(true),
+}));
+
 vi.mock('../../core/utils/audio-scanner.js', () => ({
   scanAudioDirectory: vi.fn(),
 }));
@@ -33,6 +37,7 @@ vi.mock('./retry-search.js', () => ({
   retrySearch: vi.fn(),
 }));
 
+import { enqueueAutoImport } from '../utils/enqueue-auto-import.js';
 import { scanAudioDirectory } from '../../core/utils/audio-scanner.js';
 import { resolveSavePath } from '../utils/download-path.js';
 import { revertBookStatus } from '../utils/book-status.js';
@@ -432,7 +437,7 @@ describe('QualityGateOrchestrator', () => {
       const result = await orchestrator.approve(1);
 
       expect(qualityGateService.approve).toHaveBeenCalledWith(1);
-      expect(result).toEqual({ id: 1, status: 'importing' });
+      expect(result).toEqual({ id: 1, status: 'importing', bookId: 1 });
       expect(broadcaster.emit).toHaveBeenCalledWith('download_status_change', expect.objectContaining({
         download_id: 1, book_id: 1, old_status: 'pending_review', new_status: 'importing',
       }));
@@ -1656,27 +1661,18 @@ describe('QualityGateOrchestrator', () => {
     const completedDownload = { ...baseDownload, status: 'completed' as const, bookId: 1 };
     const downloadingBook = { ...baseBook, status: 'downloading' as const };
 
-    it('approves and imports when slot is available', async () => {
-      const { orchestrator, qualityGateService, importOrchestrator, importService } = createOrchestrator();
+    it('import job picks up completed downloads and runs import flow', async () => {
+      const { orchestrator, qualityGateService } = createOrchestrator();
       qualityGateService.getCompletedDownloadById.mockResolvedValue({ download: completedDownload, book: { ...downloadingBook } });
 
       await orchestrator.processOneDownload(1);
 
       expect(qualityGateService.getCompletedDownloadById).toHaveBeenCalledWith(1);
       expect(qualityGateService.atomicClaim).toHaveBeenCalledWith(1);
-      expect(importService.tryAcquireSlot).toHaveBeenCalled();
-      expect(importOrchestrator.importDownload).toHaveBeenCalledWith(1);
-    });
-
-    it('queues to processing_queued when no slot available', async () => {
-      const { orchestrator, qualityGateService, importOrchestrator, importService } = createOrchestrator();
-      qualityGateService.getCompletedDownloadById.mockResolvedValue({ download: completedDownload, book: { ...downloadingBook } });
-      (importService.tryAcquireSlot as ReturnType<typeof vi.fn>).mockReturnValue(false);
-
-      await orchestrator.processOneDownload(1);
-
-      expect(importService.setProcessingQueued).toHaveBeenCalledWith(1);
-      expect(importOrchestrator.importDownload).not.toHaveBeenCalled();
+      // After migration: enqueues auto import job instead of slot-based inline execution
+      expect(enqueueAutoImport).toHaveBeenCalledWith(
+        expect.anything(), 1, 1, expect.any(Function), expect.anything(),
+      );
     });
 
     it('holds for review and reverts book status to downloading', async () => {
@@ -1819,23 +1815,6 @@ describe('QualityGateOrchestrator', () => {
       }));
     });
 
-    it('releases slot in finally even when import fails and logs error', async () => {
-      const { orchestrator, qualityGateService, importOrchestrator, importService, log } = createOrchestrator();
-      qualityGateService.getCompletedDownloadById.mockResolvedValue({ download: completedDownload, book: { ...downloadingBook } });
-      (importOrchestrator.importDownload as ReturnType<typeof vi.fn>).mockRejectedValue(new Error('Import failed'));
-
-      await orchestrator.processOneDownload(1);
-
-      // Wait for the fire-and-forget promise to settle
-      await new Promise((resolve) => setTimeout(resolve, 10));
-
-      expect(importService.releaseSlot).toHaveBeenCalled();
-      expect(log.error).toHaveBeenCalledWith(
-        expect.objectContaining({ downloadId: 1, error: expect.objectContaining({ message: 'Import failed', type: 'Error' }) }),
-        'Quality gate: inline import failed',
-      );
-    });
-
     it('passes derived ffprobePath to scanAudioDirectory when ffmpegPath is configured', async () => {
       const settingsService = inject<SettingsService>({
         get: vi.fn().mockResolvedValue({ ffmpegPath: '/usr/bin/ffmpeg' }),
@@ -1852,50 +1831,4 @@ describe('QualityGateOrchestrator', () => {
     });
   });
 
-  // ── #525 — triggerImportWithSlotAdmission nudge ──────────────────────────
-  describe('triggerImportWithSlotAdmission — queued import nudge (#525)', () => {
-    const completedDownload = { ...baseDownload, status: 'completed' as const, bookId: 1 };
-    const downloadingBook = { ...baseBook, status: 'downloading' as const };
-
-    it('nudge fires after inline import completes', async () => {
-      const { orchestrator, qualityGateService, importOrchestrator } = createOrchestrator();
-      qualityGateService.getCompletedDownloadById.mockResolvedValue({ download: completedDownload, book: { ...downloadingBook } });
-      (importOrchestrator.importDownload as ReturnType<typeof vi.fn>).mockResolvedValue(null);
-
-      await orchestrator.processOneDownload(1);
-
-      // Wait for fire-and-forget promise to settle
-      await new Promise((resolve) => setTimeout(resolve, 10));
-
-      expect(importOrchestrator.drainQueuedImports).toHaveBeenCalled();
-    });
-
-    it('nudge fires after inline import fails', async () => {
-      const { orchestrator, qualityGateService, importOrchestrator, importService } = createOrchestrator();
-      qualityGateService.getCompletedDownloadById.mockResolvedValue({ download: completedDownload, book: { ...downloadingBook } });
-      (importOrchestrator.importDownload as ReturnType<typeof vi.fn>).mockRejectedValue(new Error('Import failed'));
-
-      await orchestrator.processOneDownload(1);
-      await new Promise((resolve) => setTimeout(resolve, 10));
-
-      expect(importService.releaseSlot).toHaveBeenCalled();
-      expect(importOrchestrator.drainQueuedImports).toHaveBeenCalled();
-    });
-
-    it('nudge rejection is caught and logged', async () => {
-      const { orchestrator, qualityGateService, importOrchestrator, log } = createOrchestrator();
-      qualityGateService.getCompletedDownloadById.mockResolvedValue({ download: completedDownload, book: { ...downloadingBook } });
-      (importOrchestrator.importDownload as ReturnType<typeof vi.fn>).mockResolvedValue(null);
-      (importOrchestrator.drainQueuedImports as ReturnType<typeof vi.fn>).mockRejectedValue(new Error('drain failed'));
-
-      await orchestrator.processOneDownload(1);
-      await new Promise((resolve) => setTimeout(resolve, 10));
-
-      // Should not propagate — error should be caught
-      expect(log.error).toHaveBeenCalledWith(
-        expect.objectContaining({ error: expect.objectContaining({ message: 'drain failed', type: 'Error' }) }),
-        expect.stringContaining('drain'),
-      );
-    });
-  });
 });

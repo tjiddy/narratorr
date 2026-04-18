@@ -16,6 +16,13 @@ vi.mock('../utils/rejection-helpers.js', () => ({
   blacklistAndRetrySearch: vi.fn().mockResolvedValue(undefined),
 }));
 
+// Mock enqueue helper for processCompletedDownloads testing
+vi.mock('../utils/enqueue-auto-import.js', () => ({
+  enqueueAutoImport: vi.fn().mockResolvedValue(true),
+}));
+
+import { enqueueAutoImport } from '../utils/enqueue-auto-import.js';
+
 import { blacklistAndRetrySearch } from '../utils/rejection-helpers.js';
 
 // Mock import-steps — passthrough isContentFailure to real implementation, spy on the rest
@@ -48,11 +55,6 @@ function createMockImportService(overrides?: Partial<Record<string, unknown>>): 
     importDownload: vi.fn(),
     getImportContext: vi.fn(),
     getEligibleDownloads: vi.fn().mockResolvedValue([]),
-    tryAcquireSlot: vi.fn().mockReturnValue(true),
-    releaseSlot: vi.fn(),
-    setProcessingQueued: vi.fn(),
-    getNextQueuedDownload: vi.fn().mockResolvedValue(null),
-    claimQueuedDownload: vi.fn().mockResolvedValue(true),
     ...overrides,
   });
 }
@@ -275,319 +277,59 @@ describe('ImportOrchestrator', () => {
     });
   });
 
-  describe('processCompletedDownloads — batch loop', () => {
-    it('calls importService.getEligibleDownloads() and iterates with importDownload per item', async () => {
-      (importService.getEligibleDownloads as ReturnType<typeof vi.fn>).mockResolvedValue([1, 2]);
-      const result2: ImportResult = { ...mockResult, downloadId: 2 };
-      (importService.importDownload as ReturnType<typeof vi.fn>)
-        .mockResolvedValueOnce(mockResult)
-        .mockResolvedValueOnce(result2);
-
-      const results = await orchestrator.processCompletedDownloads();
-
-      expect(importService.getEligibleDownloads).toHaveBeenCalled();
-      expect(results).toHaveLength(2);
-    });
-
-    it('returns empty array when no eligible downloads', async () => {
-      const results = await orchestrator.processCompletedDownloads();
-      expect(results).toEqual([]);
-    });
-
-    it('collects results via Promise.allSettled — one failure does not block others', async () => {
-      (importService.getEligibleDownloads as ReturnType<typeof vi.fn>).mockResolvedValue([1, 2]);
-      (importService.importDownload as ReturnType<typeof vi.fn>)
-        .mockRejectedValueOnce(new Error('failed'))
-        .mockResolvedValueOnce(mockResult);
-
-      const results = await orchestrator.processCompletedDownloads();
-
-      // Only the successful import should be in results
-      expect(results).toHaveLength(1);
-      expect(results[0]).toEqual(mockResult);
-    });
-
-    it('dispatches failure-path side effects for each failed download in batch', async () => {
-      (importService.getEligibleDownloads as ReturnType<typeof vi.fn>).mockResolvedValue([1]);
-      (importService.importDownload as ReturnType<typeof vi.fn>).mockRejectedValueOnce(new Error('boom'));
-
-      await orchestrator.processCompletedDownloads();
-
-      // Failure side effects dispatched via orchestrator.importDownload catch
-      expect(emitImportFailure).toHaveBeenCalled();
-      expect(notifyImportFailure).toHaveBeenCalled();
-      expect(recordImportFailedEvent).toHaveBeenCalled();
-    });
-
-    it('releases semaphore in .finally() even on throw', async () => {
-      (importService.getEligibleDownloads as ReturnType<typeof vi.fn>).mockResolvedValue([1]);
-      (importService.importDownload as ReturnType<typeof vi.fn>).mockRejectedValueOnce(new Error('boom'));
-
-      await orchestrator.processCompletedDownloads();
-
-      expect(importService.releaseSlot).toHaveBeenCalledTimes(1);
-    });
-
-    it('does not call drainQueuedImports after batch completes (cron re-queries on next tick)', async () => {
-      (importService.getEligibleDownloads as ReturnType<typeof vi.fn>).mockResolvedValue([1]);
-      (importService.importDownload as ReturnType<typeof vi.fn>).mockResolvedValueOnce(mockResult);
-      const drainSpy = vi.spyOn(orchestrator, 'drainQueuedImports');
-
-      await orchestrator.processCompletedDownloads();
-
-      expect(drainSpy).not.toHaveBeenCalled();
-    });
-  });
-
-  // ── #229 Observability — batch summary logging ──────────────────────────
-  describe('batch summary logging (#229)', () => {
-    it('logs { total, succeeded, failed, elapsedMs } at info after mixed results', async () => {
-      (importService.getEligibleDownloads as ReturnType<typeof vi.fn>).mockResolvedValue([1, 2]);
-      (importService.importDownload as ReturnType<typeof vi.fn>)
-        .mockResolvedValueOnce(mockResult)
-        .mockRejectedValueOnce(new Error('fail'));
-
-      await orchestrator.processCompletedDownloads();
-
-      expect(log.info).toHaveBeenCalledWith(
-        expect.objectContaining({ total: 2, succeeded: 1, failed: 1, elapsedMs: expect.any(Number) }),
-        'Import batch completed',
-      );
-    });
-
-    it('no summary log emitted when zero eligible downloads', async () => {
-      await orchestrator.processCompletedDownloads();
-
-      expect(log.info).not.toHaveBeenCalledWith(
-        expect.objectContaining({ total: expect.any(Number) }),
-        'Import batch completed',
-      );
-    });
-
-    it('all imports succeed: failed is 0', async () => {
-      (importService.getEligibleDownloads as ReturnType<typeof vi.fn>).mockResolvedValue([1]);
-      (importService.importDownload as ReturnType<typeof vi.fn>).mockResolvedValueOnce(mockResult);
-
-      await orchestrator.processCompletedDownloads();
-
-      expect(log.info).toHaveBeenCalledWith(
-        expect.objectContaining({ total: 1, succeeded: 1, failed: 0, elapsedMs: expect.any(Number) }),
-        'Import batch completed',
-      );
-    });
-
-    it('all imports fail: succeeded is 0', async () => {
-      (importService.getEligibleDownloads as ReturnType<typeof vi.fn>).mockResolvedValue([1]);
-      (importService.importDownload as ReturnType<typeof vi.fn>).mockRejectedValueOnce(new Error('boom'));
-
-      await orchestrator.processCompletedDownloads();
-
-      expect(log.info).toHaveBeenCalledWith(
-        expect.objectContaining({ total: 1, succeeded: 0, failed: 1, elapsedMs: expect.any(Number) }),
-        'Import batch completed',
-      );
-    });
-  });
-
-  // ── #525/#539 — drainQueuedImports (iterative loop, slot-first) ────────
-  describe('drainQueuedImports', () => {
-    const queuedCtx: ImportContext = { ...mockContext, downloadStatus: 'importing' };
-
+  describe('processCompletedDownloads — batch enqueue (#636)', () => {
     beforeEach(() => {
-      (importService.getImportContext as ReturnType<typeof vi.fn>).mockResolvedValue(queuedCtx);
-      (importService.importDownload as ReturnType<typeof vi.fn>).mockResolvedValue(mockResult);
+      orchestrator.setQueueDeps({} as never, vi.fn());
+      vi.mocked(enqueueAutoImport).mockResolvedValue(true);
     });
 
-    // ── iterative loop ───────────────────────────────────────────────────
-    it('drains one processing_queued download — acquires slot, claims row, emits SSE, calls importDownload', async () => {
-      (importService.getNextQueuedDownload as ReturnType<typeof vi.fn>)
-        .mockResolvedValueOnce({ id: 5, bookId: 1 })
-        .mockResolvedValueOnce(null);
-      (importService.claimQueuedDownload as ReturnType<typeof vi.fn>).mockResolvedValue(true);
-
-      await orchestrator.drainQueuedImports();
-
-      expect(importService.getNextQueuedDownload).toHaveBeenCalled();
-      // Slot-first: acquire slot before claim
-      expect(importService.tryAcquireSlot).toHaveBeenCalled();
-      expect(importService.claimQueuedDownload).toHaveBeenCalledWith(5);
-      expect(emitDownloadImporting).toHaveBeenCalledWith(expect.objectContaining({
-        downloadId: 5, bookId: 1, downloadStatus: 'importing',
-      }));
-      expect(importService.importDownload).toHaveBeenCalledWith(5);
-      expect(importService.releaseSlot).toHaveBeenCalled();
-    });
-
-    it('no-op when queue is empty', async () => {
-      (importService.getNextQueuedDownload as ReturnType<typeof vi.fn>).mockResolvedValue(null);
-
-      await orchestrator.drainQueuedImports();
-
-      expect(importService.tryAcquireSlot).not.toHaveBeenCalled();
-      expect(importService.claimQueuedDownload).not.toHaveBeenCalled();
-      expect(importService.importDownload).not.toHaveBeenCalled();
-      expect(importService.releaseSlot).not.toHaveBeenCalled();
-    });
-
-    it('loop drains multiple queued downloads sequentially', async () => {
-      (importService.getNextQueuedDownload as ReturnType<typeof vi.fn>)
-        .mockResolvedValueOnce({ id: 1, bookId: 1 })
-        .mockResolvedValueOnce({ id: 2, bookId: 2 })
-        .mockResolvedValueOnce({ id: 3, bookId: 3 })
-        .mockResolvedValueOnce(null);
-      (importService.claimQueuedDownload as ReturnType<typeof vi.fn>).mockResolvedValue(true);
-
-      await orchestrator.drainQueuedImports();
-
-      expect(importService.importDownload).toHaveBeenCalledTimes(3);
-      expect(importService.importDownload).toHaveBeenCalledWith(1);
-      expect(importService.importDownload).toHaveBeenCalledWith(2);
-      expect(importService.importDownload).toHaveBeenCalledWith(3);
-      expect(importService.releaseSlot).toHaveBeenCalledTimes(3);
-    });
-
-    it('error in importDownload does not break drain — error caught, slot released, loop continues', async () => {
-      (importService.getNextQueuedDownload as ReturnType<typeof vi.fn>)
-        .mockResolvedValueOnce({ id: 5, bookId: 1 })
-        .mockResolvedValueOnce({ id: 6, bookId: 2 })
-        .mockResolvedValueOnce(null);
-      (importService.claimQueuedDownload as ReturnType<typeof vi.fn>).mockResolvedValue(true);
-      (importService.importDownload as ReturnType<typeof vi.fn>)
-        .mockRejectedValueOnce(new Error('import exploded'))
-        .mockResolvedValueOnce(mockResult);
-
-      await orchestrator.drainQueuedImports();
-
-      expect(importService.releaseSlot).toHaveBeenCalledTimes(2);
-      expect(importService.importDownload).toHaveBeenCalledTimes(2);
-      expect(log.error).toHaveBeenCalledWith(
-        expect.objectContaining({ downloadId: 5, error: expect.objectContaining({ message: 'import exploded', type: 'Error' }) }),
-        expect.stringContaining('Queued import failed'),
-      );
-    });
-
-    it('SSE event fires exactly once per successfully claimed item with importing status', async () => {
-      (importService.getNextQueuedDownload as ReturnType<typeof vi.fn>)
-        .mockResolvedValueOnce({ id: 5, bookId: 1 })
-        .mockResolvedValueOnce(null);
-      (importService.claimQueuedDownload as ReturnType<typeof vi.fn>).mockResolvedValue(true);
-
-      await orchestrator.drainQueuedImports();
-
-      expect(emitDownloadImporting).toHaveBeenCalledTimes(1);
-      expect(emitDownloadImporting).toHaveBeenCalledWith(expect.objectContaining({
-        downloadId: 5, bookId: 1, downloadStatus: 'importing',
-      }));
-    });
-
-    // ── slot-first admission (#539) ──────────────────────────────────────
-    it('slot-first: no slot available → claimQueuedDownload never called, no DB write', async () => {
-      (importService.getNextQueuedDownload as ReturnType<typeof vi.fn>).mockResolvedValue({ id: 5, bookId: 1 });
-      (importService.tryAcquireSlot as ReturnType<typeof vi.fn>).mockReturnValue(false);
-
-      await orchestrator.drainQueuedImports();
-
-      expect(importService.claimQueuedDownload).not.toHaveBeenCalled();
-      expect(importService.importDownload).not.toHaveBeenCalled();
-      expect(importService.setProcessingQueued).not.toHaveBeenCalled();
-      expect(emitDownloadImporting).not.toHaveBeenCalled();
-    });
-
-    it('slot-first: slot acquired, claim succeeds → import proceeds normally', async () => {
-      (importService.getNextQueuedDownload as ReturnType<typeof vi.fn>)
-        .mockResolvedValueOnce({ id: 5, bookId: 1 })
-        .mockResolvedValueOnce(null);
-      (importService.claimQueuedDownload as ReturnType<typeof vi.fn>).mockResolvedValue(true);
-
-      await orchestrator.drainQueuedImports();
-
-      expect(importService.tryAcquireSlot).toHaveBeenCalled();
-      expect(importService.claimQueuedDownload).toHaveBeenCalledWith(5);
-      expect(importService.importDownload).toHaveBeenCalledWith(5);
-    });
-
-    it('slot-first: slot acquired, claim fails (CAS miss) → slot released, loop continues to next item', async () => {
-      (importService.getNextQueuedDownload as ReturnType<typeof vi.fn>)
-        .mockResolvedValueOnce({ id: 5, bookId: 1 })
-        .mockResolvedValueOnce({ id: 6, bookId: 2 })
-        .mockResolvedValueOnce(null);
-      (importService.claimQueuedDownload as ReturnType<typeof vi.fn>)
-        .mockResolvedValueOnce(false)
-        .mockResolvedValueOnce(true);
-
-      await orchestrator.drainQueuedImports();
-
-      // First item: slot acquired, claim failed → slot released
-      // Second item: slot acquired, claim succeeded → import runs
-      expect(importService.releaseSlot).toHaveBeenCalledTimes(2);
-      expect(importService.importDownload).toHaveBeenCalledTimes(1);
-      expect(importService.importDownload).toHaveBeenCalledWith(6);
-      expect(emitDownloadImporting).not.toHaveBeenCalledWith(expect.objectContaining({ downloadId: 5 }));
-    });
-
-    it('slot-first: setProcessingQueued is NOT called in the no-slot path', async () => {
-      (importService.getNextQueuedDownload as ReturnType<typeof vi.fn>).mockResolvedValue({ id: 5, bookId: 1 });
-      (importService.tryAcquireSlot as ReturnType<typeof vi.fn>).mockReturnValue(false);
-
-      await orchestrator.drainQueuedImports();
-
-      expect(importService.setProcessingQueued).not.toHaveBeenCalled();
-    });
-
-    it('SSE event is not emitted when claim fails', async () => {
-      (importService.getNextQueuedDownload as ReturnType<typeof vi.fn>)
-        .mockResolvedValueOnce({ id: 5, bookId: 1 })
-        .mockResolvedValueOnce(null);
-      (importService.claimQueuedDownload as ReturnType<typeof vi.fn>).mockResolvedValue(false);
-
-      await orchestrator.drainQueuedImports();
-
-      expect(emitDownloadImporting).not.toHaveBeenCalled();
-    });
-
-    // ── concurrent drain contention (#539) ───────────────────────────────
-    it('concurrent drains — first CAS claim succeeds, second fails, only one import runs', async () => {
-      (importService.getNextQueuedDownload as ReturnType<typeof vi.fn>)
-        .mockResolvedValue({ id: 5, bookId: 1 });
-      // First claim succeeds, second fails (row already claimed)
-      (importService.claimQueuedDownload as ReturnType<typeof vi.fn>)
-        .mockResolvedValueOnce(true)
-        .mockResolvedValueOnce(false);
-      // After first import, queue empty
-      (importService.getNextQueuedDownload as ReturnType<typeof vi.fn>)
-        .mockResolvedValueOnce({ id: 5, bookId: 1 })
-        .mockResolvedValueOnce({ id: 5, bookId: 1 })
-        .mockResolvedValue(null);
-
-      await Promise.all([
-        orchestrator.drainQueuedImports(),
-        orchestrator.drainQueuedImports(),
+    it('calls getEligibleDownloads and enqueues each as auto import job', async () => {
+      (importService.getEligibleDownloads as ReturnType<typeof vi.fn>).mockResolvedValue([
+        { id: 1, bookId: 10 }, { id: 2, bookId: 20 },
       ]);
 
-      // Exactly one import should run — the one that won the CAS
-      expect(importService.importDownload).toHaveBeenCalledTimes(1);
-      expect(importService.importDownload).toHaveBeenCalledWith(5);
+      const count = await orchestrator.processCompletedDownloads();
+
+      expect(importService.getEligibleDownloads).toHaveBeenCalled();
+      expect(enqueueAutoImport).toHaveBeenCalledTimes(2);
+      expect(enqueueAutoImport).toHaveBeenCalledWith(expect.anything(), 1, 10, expect.any(Function), expect.anything());
+      expect(enqueueAutoImport).toHaveBeenCalledWith(expect.anything(), 2, 20, expect.any(Function), expect.anything());
+      expect(count).toBe(2);
     });
 
-    // ── error isolation (#539) ───────────────────────────────────────────
-    it('getNextQueuedDownload throws — drain exits, error propagates', async () => {
-      (importService.getNextQueuedDownload as ReturnType<typeof vi.fn>)
-        .mockRejectedValue(new Error('DB connection lost'));
-
-      await expect(orchestrator.drainQueuedImports()).rejects.toThrow('DB connection lost');
-
-      expect(importService.tryAcquireSlot).not.toHaveBeenCalled();
+    it('returns 0 when no eligible downloads', async () => {
+      const count = await orchestrator.processCompletedDownloads();
+      expect(count).toBe(0);
     });
 
-    it('claimQueuedDownload throws (DB error) — slot released, error propagates', async () => {
-      (importService.getNextQueuedDownload as ReturnType<typeof vi.fn>)
-        .mockResolvedValue({ id: 5, bookId: 1 });
-      (importService.claimQueuedDownload as ReturnType<typeof vi.fn>)
-        .mockRejectedValue(new Error('DB write failed'));
+    it('continues enqueueing when one fails', async () => {
+      (importService.getEligibleDownloads as ReturnType<typeof vi.fn>).mockResolvedValue([
+        { id: 1, bookId: 10 }, { id: 2, bookId: 20 },
+      ]);
+      vi.mocked(enqueueAutoImport)
+        .mockRejectedValueOnce(new Error('db error'))
+        .mockResolvedValueOnce(true);
 
-      await expect(orchestrator.drainQueuedImports()).rejects.toThrow('DB write failed');
+      const count = await orchestrator.processCompletedDownloads();
 
-      expect(importService.releaseSlot).toHaveBeenCalled();
+      expect(count).toBe(1);
+      expect(log.warn).toHaveBeenCalledWith(
+        expect.objectContaining({ downloadId: 1 }),
+        expect.stringContaining('Failed to enqueue'),
+      );
+    });
+
+    it('logs batch summary with total and enqueued count', async () => {
+      (importService.getEligibleDownloads as ReturnType<typeof vi.fn>).mockResolvedValue([
+        { id: 1, bookId: 10 },
+      ]);
+
+      await orchestrator.processCompletedDownloads();
+
+      expect(log.info).toHaveBeenCalledWith(
+        expect.objectContaining({ total: 1, enqueued: 1 }),
+        'Import batch enqueued',
+      );
     });
   });
 
@@ -696,16 +438,13 @@ describe('ImportOrchestrator', () => {
       });
     });
 
-    it('batch path: content failure in one download blacklists it without affecting others', async () => {
-      (importService.getEligibleDownloads as ReturnType<typeof vi.fn>).mockResolvedValue([1, 2]);
+    it('batch path: content failure blacklisting verified via importDownload (not processCompletedDownloads which now enqueues)', async () => {
+      // processCompletedDownloads now enqueues jobs — blacklisting happens when the adapter runs importDownload
       const contentError = new Error('No audio files found in /path');
-      (importService.importDownload as ReturnType<typeof vi.fn>)
-        .mockRejectedValueOnce(contentError)
-        .mockResolvedValueOnce(mockResult);
+      (importService.importDownload as ReturnType<typeof vi.fn>).mockRejectedValue(contentError);
 
-      const results = await orchestrator.processCompletedDownloads();
+      await expect(orchestrator.importDownload(1)).rejects.toThrow();
 
-      expect(results).toHaveLength(1);
       expect(blacklistAndRetrySearch).toHaveBeenCalledTimes(1);
     });
   });

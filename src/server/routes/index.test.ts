@@ -34,7 +34,7 @@ vi.mock('../services', () => ({
 }));
 vi.mock('../services/import.service.js', () => ({ ImportService: vi.fn() }));
 vi.mock('../services/import-orchestrator.js', () => ({
-  ImportOrchestrator: vi.fn().mockImplementation(function(this: Record<string, unknown>) { this.setBlacklistDeps = vi.fn(); }),
+  ImportOrchestrator: vi.fn().mockImplementation(function(this: Record<string, unknown>) { this.setBlacklistDeps = vi.fn(); this.setQueueDeps = vi.fn(); }),
 }));
 vi.mock('../services/download-orchestrator.js', () => ({ DownloadOrchestrator: vi.fn() }));
 vi.mock('../services/quality-gate-orchestrator.js', () => ({ QualityGateOrchestrator: vi.fn() }));

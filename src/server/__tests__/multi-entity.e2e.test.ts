@@ -434,14 +434,9 @@ describe('Job lifecycle E2E', () => {
       qbGetTorrentHandler(TORRENT_HASH, downloadParent),
     );
 
-    // Call processCompletedDownloads directly (what the import job cron calls)
-    const results = await e2e.services.importOrchestrator.processCompletedDownloads();
-
-    expect(results.length).toBeGreaterThanOrEqual(1);
-    const importResult = results.find((r) => r.downloadId === downloadId);
-    expect(importResult).toBeTruthy();
-    expect(importResult!.bookId).toBe(bookId);
-    expect(importResult!.fileCount).toBe(2);
+    // #636: processCompletedDownloads now enqueues to import_jobs (returns count).
+    // For E2E, call importDownload directly to verify the full import pipeline.
+    await e2e.services.importOrchestrator.importDownload(downloadId);
 
     // Book should now be imported
     const bookRes = await e2e.app.inject({ method: 'GET', url: `/api/books/${bookId}` });
