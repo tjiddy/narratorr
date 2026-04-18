@@ -1,9 +1,14 @@
-import { describe, it, expect, beforeAll, afterAll, beforeEach, type Mock } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll, beforeEach, vi, type Mock } from 'vitest';
 import { createTestApp, createMockServices, resetMockServices } from '../__tests__/helpers.js';
 import type { Services } from './index.js';
-import { Semaphore } from '../utils/semaphore.js';
 import { QualityGateServiceError } from '../services/quality-gate.service.js';
 import { DownloadError } from '../services/download.service.js';
+
+vi.mock('../utils/enqueue-auto-import.js', () => ({
+  enqueueAutoImport: vi.fn().mockResolvedValue(true),
+}));
+
+import { enqueueAutoImport } from '../utils/enqueue-auto-import.js';
 
 const mockDownload = {
   id: 1,
@@ -28,15 +33,9 @@ const mockDownload = {
 describe('activity routes', () => {
   let app: Awaited<ReturnType<typeof createTestApp>>;
   let services: Services;
-  const importSemaphore = new Semaphore(2);
 
   beforeAll(async () => {
-    services = createMockServices({
-      import: {
-        tryAcquireSlot: () => importSemaphore.tryAcquire(),
-        releaseSlot: () => importSemaphore.release(),
-      },
-    });
+    services = createMockServices({});
     app = await createTestApp(services);
   });
 
@@ -46,6 +45,7 @@ describe('activity routes', () => {
 
   beforeEach(() => {
     resetMockServices(services);
+    vi.mocked(enqueueAutoImport).mockClear();
   });
 
   describe('GET /api/activity', () => {
@@ -322,35 +322,25 @@ describe('activity routes', () => {
   });
 
   describe('POST /api/activity/:id/approve', () => {
-    it('transitions pending_review download to importing and triggers import', async () => {
-      (services.qualityGateOrchestrator.approve as Mock).mockResolvedValue({ id: 1, status: 'importing' });
-      (services.importOrchestrator.importDownload as Mock).mockResolvedValue({});
+    it('transitions pending_review download to importing and enqueues auto import job', async () => {
+      (services.qualityGateOrchestrator.approve as Mock).mockResolvedValue({ id: 1, status: 'importing', bookId: 1 });
 
       const res = await app.inject({ method: 'POST', url: '/api/activity/1/approve' });
 
       expect(res.statusCode).toBe(200);
-      expect(JSON.parse(res.payload)).toEqual({ id: 1, status: 'importing' });
-      expect(services.importOrchestrator.importDownload).toHaveBeenCalledWith(1);
+      expect(JSON.parse(res.payload)).toEqual({ id: 1, status: 'importing', bookId: 1 });
+      expect(enqueueAutoImport).toHaveBeenCalledWith(
+        expect.anything(), 1, 1, expect.any(Function), expect.anything(),
+      );
     });
 
-    it('logs error when fire-and-forget import trigger fails', async () => {
-      (services.qualityGateOrchestrator.approve as Mock).mockResolvedValue({ id: 1, status: 'importing' });
-      const importError = new Error('Import pipeline crashed');
-      let rejectImport: (err: Error) => void;
-      (services.importOrchestrator.importDownload as Mock).mockReturnValue(
-        new Promise((_resolve, reject) => { rejectImport = reject; })
-      );
+    it('skips enqueue when bookId is null', async () => {
+      (services.qualityGateOrchestrator.approve as Mock).mockResolvedValue({ id: 1, status: 'importing', bookId: null });
 
       const res = await app.inject({ method: 'POST', url: '/api/activity/1/approve' });
 
-      // Response should succeed regardless of import failure
       expect(res.statusCode).toBe(200);
-      expect(JSON.parse(res.payload)).toEqual({ id: 1, status: 'importing' });
-
-      // Trigger the rejection and verify it doesn't throw unhandled
-      rejectImport!(importError);
-      // Allow microtask queue to flush the .catch handler
-      await new Promise((r) => setTimeout(r, 10));
+      expect(enqueueAutoImport).not.toHaveBeenCalled();
     });
 
     it('returns 409 when download is not in pending_review status', async () => {
@@ -379,93 +369,7 @@ describe('activity routes', () => {
     });
   });
 
-  describe('POST /api/activity/:id/approve — concurrency', () => {
-    it('approve when slot available triggers import immediately', async () => {
-      (services.qualityGateOrchestrator.approve as Mock).mockResolvedValue({ id: 1, status: 'importing' });
-      (services.importOrchestrator.importDownload as Mock).mockResolvedValue({});
-
-      const res = await app.inject({ method: 'POST', url: '/api/activity/1/approve' });
-
-      expect(res.statusCode).toBe(200);
-      expect(services.importOrchestrator.importDownload).toHaveBeenCalledWith(1);
-      // setProcessingQueued should NOT have been called
-      expect(services.import.setProcessingQueued).not.toHaveBeenCalled();
-    });
-
-    it('approve when no concurrency slot available sets download to processing_queued', async () => {
-      // Fill all semaphore slots
-      importSemaphore.setMax(2);
-      importSemaphore.tryAcquire();
-      importSemaphore.tryAcquire();
-
-      (services.qualityGateOrchestrator.approve as Mock).mockResolvedValue({ id: 1, status: 'importing' });
-
-      const res = await app.inject({ method: 'POST', url: '/api/activity/1/approve' });
-
-      expect(res.statusCode).toBe(200);
-      expect(JSON.parse(res.payload)).toEqual({ id: 1, status: 'processing_queued' });
-      expect(services.importOrchestrator.importDownload).not.toHaveBeenCalled();
-      expect(services.import.setProcessingQueued).toHaveBeenCalledWith(1);
-
-      // Release slots for cleanup
-      importSemaphore.release();
-      importSemaphore.release();
-    });
-
-    it('releases semaphore slot when import fails after approve', async () => {
-      (services.qualityGateOrchestrator.approve as Mock).mockResolvedValue({ id: 1, status: 'importing' });
-      (services.importOrchestrator.importDownload as Mock).mockRejectedValue(new Error('import failed'));
-
-      // Semaphore starts with capacity 2, both free
-      expect(importSemaphore.tryAcquire()).toBe(true);
-      importSemaphore.release(); // confirm slot was available
-
-      const res = await app.inject({ method: 'POST', url: '/api/activity/1/approve' });
-
-      expect(res.statusCode).toBe(200);
-      expect(services.importOrchestrator.importDownload).toHaveBeenCalledWith(1);
-
-      // Wait for fire-and-forget promise to settle
-      await new Promise(resolve => setTimeout(resolve, 10));
-
-      // Semaphore slot should be released despite import failure
-      // If we can acquire 2 slots, all capacity is free (none leaked)
-      expect(importSemaphore.tryAcquire()).toBe(true);
-      expect(importSemaphore.tryAcquire()).toBe(true);
-      importSemaphore.release();
-      importSemaphore.release();
-    });
-  });
-
-  // ── #525 — approve route nudge ──────────────────────────────────────────
-  describe('POST /api/activity/:id/approve — queued import nudge (#525)', () => {
-    it('nudge fires after approve inline import completes', async () => {
-      (services.qualityGateOrchestrator.approve as Mock).mockResolvedValue({ id: 1, status: 'importing' });
-      (services.importOrchestrator.importDownload as Mock).mockResolvedValue({});
-
-      const res = await app.inject({ method: 'POST', url: '/api/activity/1/approve' });
-      expect(res.statusCode).toBe(200);
-
-      // Wait for fire-and-forget promise to settle
-      await new Promise(resolve => setTimeout(resolve, 10));
-
-      expect(services.importOrchestrator.drainQueuedImports).toHaveBeenCalled();
-    });
-
-    it('nudge fires after approve inline import fails', async () => {
-      (services.qualityGateOrchestrator.approve as Mock).mockResolvedValue({ id: 1, status: 'importing' });
-      (services.importOrchestrator.importDownload as Mock).mockRejectedValue(new Error('import failed'));
-
-      const res = await app.inject({ method: 'POST', url: '/api/activity/1/approve' });
-      expect(res.statusCode).toBe(200);
-
-      await new Promise(resolve => setTimeout(resolve, 10));
-
-      // releaseSlot is a real function (semaphore override), not a spy — verified by existing test
-      // drainQueuedImports should still fire after error + slot release
-      expect(services.importOrchestrator.drainQueuedImports).toHaveBeenCalled();
-    });
-  });
+  // Slot-based concurrency tests removed in #636 — approve now enqueues via enqueueAutoImport
 
   describe('POST /api/activity/:id/reject', () => {
     it('transitions pending_review download to failed with default retry=false', async () => {

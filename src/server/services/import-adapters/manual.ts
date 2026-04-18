@@ -8,6 +8,7 @@ import { copyToLibrary } from '../import-orchestration.helpers.js';
 import { getAudioStats } from '../library-scan.helpers.js';
 import { orchestrateBookEnrichment, buildEnrichmentBookInput, buildBackgroundAudnexusConfig, buildImportedEventPayload, extractImportMetadata } from '../enrichment-orchestration.helpers.js';
 import { safeEmit } from '../../utils/safe-emit.js';
+import { getErrorMessage } from '../../utils/error-message.js';
 
 export class ManualImportAdapter implements ImportAdapter {
   readonly type = 'manual' as const;
@@ -38,35 +39,49 @@ export class ManualImportAdapter implements ImportAdapter {
       throw new Error(`Book ${bookId} not found — may have been deleted after import was queued`);
     }
 
-    await ctx.setPhase('analyzing');
+    try {
+      await ctx.setPhase('analyzing');
 
-    const extracted = extractImportMetadata(payload);
+      const extracted = extractImportMetadata(payload);
 
-    let finalPath = payload.path;
-    if (mode) {
-      await ctx.setPhase('copying');
-      finalPath = await copyToLibrary(payload, bookRow, extracted.meta ?? null, mode, this.deps);
+      let finalPath = payload.path;
+      if (mode) {
+        await ctx.setPhase('copying');
+        finalPath = await copyToLibrary(payload, bookRow, extracted.meta ?? null, mode, this.deps);
+      }
+
+      const stats = await getAudioStats(finalPath, log);
+      log.debug({ bookId, finalPath, fileCount: stats.fileCount, totalSize: stats.totalSize }, 'Audio stats collected');
+      await db.update(books).set({ path: finalPath, size: stats.totalSize, updatedAt: new Date() }).where(eq(books.id, bookId));
+
+      await ctx.setPhase('fetching_metadata');
+
+      const [currentBook] = await db.select({ genres: books.genres }).from(books).where(eq(books.id, bookId)).limit(1);
+
+      await orchestrateBookEnrichment(
+        bookId, finalPath,
+        buildEnrichmentBookInput({ ...extracted.bookInput, genres: currentBook?.genres ?? null }),
+        enrichmentDeps,
+        buildBackgroundAudnexusConfig(payload, extracted, currentBook?.genres ?? null),
+      );
+
+      await db.update(books).set({ status: 'imported', updatedAt: new Date() }).where(eq(books.id, bookId));
+      safeEmit(broadcaster, 'book_status_change', { book_id: bookId, old_status: 'importing' as BookStatus, new_status: 'imported' as BookStatus }, log);
+
+      eventHistory.create(buildImportedEventPayload(bookId, payload, extracted.narratorName, resolve(finalPath), mode))
+        .catch((err: unknown) => log.warn({ err }, 'Failed to record manual import event'));
+    } catch (error: unknown) {
+      // Failure side effects — emit SSE and record event before re-throwing (worker marks job/book as failed)
+      safeEmit(broadcaster, 'book_status_change', { book_id: bookId, old_status: 'importing' as BookStatus, new_status: 'failed' as BookStatus }, log);
+      eventHistory.create({
+        bookId,
+        bookTitle: payload.title ?? 'Unknown',
+        authorName: payload.authorName ?? null,
+        eventType: 'import_failed',
+        source: 'manual',
+        reason: { error: getErrorMessage(error) },
+      }).catch((err: unknown) => log.warn({ err }, 'Failed to record manual import failure event'));
+      throw error;
     }
-
-    const stats = await getAudioStats(finalPath, log);
-    log.debug({ bookId, finalPath, fileCount: stats.fileCount, totalSize: stats.totalSize }, 'Audio stats collected');
-    await db.update(books).set({ path: finalPath, size: stats.totalSize, updatedAt: new Date() }).where(eq(books.id, bookId));
-
-    await ctx.setPhase('fetching_metadata');
-
-    const [currentBook] = await db.select({ genres: books.genres }).from(books).where(eq(books.id, bookId)).limit(1);
-
-    await orchestrateBookEnrichment(
-      bookId, finalPath,
-      buildEnrichmentBookInput({ ...extracted.bookInput, genres: currentBook?.genres ?? null }),
-      enrichmentDeps,
-      buildBackgroundAudnexusConfig(payload, extracted, currentBook?.genres ?? null),
-    );
-
-    await db.update(books).set({ status: 'imported', updatedAt: new Date() }).where(eq(books.id, bookId));
-    safeEmit(broadcaster, 'book_status_change', { book_id: bookId, old_status: 'importing' as BookStatus, new_status: 'imported' as BookStatus }, log);
-
-    eventHistory.create(buildImportedEventPayload(bookId, payload, extracted.narratorName, resolve(finalPath), mode))
-      .catch((err: unknown) => log.warn({ err }, 'Failed to record manual import event'));
   }
 }

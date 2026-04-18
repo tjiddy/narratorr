@@ -131,11 +131,11 @@ async function main() {
     await registerStaticAndSpa(app, urlBasePrefix);
   }
 
-  // Start background jobs
-  startJobs(db, services, app.log);
-
-  // Start import queue worker (boot recovery + drain loop)
+  // Start import queue worker first (boot recovery marks orphaned jobs as failed BEFORE download recovery)
   await services.importQueueWorker.start();
+
+  // Start background jobs (includes download startup recovery which may re-enqueue downloads)
+  startJobs(db, services, app.log);
 
   // Graceful shutdown — ensures port is released on tsx watch restarts
   const shutdown = async () => {

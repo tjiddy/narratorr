@@ -66,6 +66,7 @@ import { createRetrySearchDeps } from '../services/retry-search.js';
 import { ImportQueueWorker } from '../services/import-queue-worker.js';
 import { registerImportAdapter } from '../services/import-adapters/registry.js';
 import { ManualImportAdapter } from '../services/import-adapters/manual.js';
+import { AutoImportAdapter } from '../services/import-adapters/auto.js';
 import { retryImportRoute } from './retry-import.js';
 
 export interface Services {
@@ -206,14 +207,17 @@ export async function createServices(db: Db, log: FastifyBaseLogger): Promise<Se
   eventHistory.setRetrySearchDeps(retrySearchDeps);
   importOrchestrator.setBlacklistDeps(blacklistService, retrySearchDeps);
 
-  const qualityGateOrchestrator = new QualityGateOrchestrator(qualityGateService, db, log, downloadClient, eventHistory, eventBroadcaster, blacklistService, remotePathMapping, retrySearchDeps, settings, importOrchestrator, importService);
-  const bookRejection = new BookRejectionService(db, log, book, blacklistService, settings, eventHistory, retrySearchDeps);
-
-  // Import queue worker + adapter registration
+  // Import queue worker + adapter registration (before QGO — it needs the nudge callback)
   const importQueueWorker = new ImportQueueWorker(db, log);
+  importOrchestrator.setQueueDeps(db, () => importQueueWorker.nudge());
   const manualAdapter = new ManualImportAdapter(libraryScan.importDeps);
+  const autoAdapter = new AutoImportAdapter(importOrchestrator);
   registerImportAdapter(manualAdapter);
+  registerImportAdapter(autoAdapter);
   libraryScan.setNudgeWorker(() => importQueueWorker.nudge());
+
+  const qualityGateOrchestrator = new QualityGateOrchestrator(qualityGateService, db, log, downloadClient, eventHistory, eventBroadcaster, blacklistService, remotePathMapping, retrySearchDeps, settings, () => importQueueWorker.nudge());
+  const bookRejection = new BookRejectionService(db, log, book, blacklistService, settings, eventHistory, retrySearchDeps);
 
   return { settings, auth, indexer, downloadClient, book, bookList, download, downloadOrchestrator, metadata, import: importService, importOrchestrator, libraryScan, matchJob, notifier, blacklist: blacklistService, remotePathMapping, rename: renameService, merge: mergeService, eventHistory, tagging: taggingService, qualityGate: qualityGateService, qualityGateOrchestrator, retryBudget, eventBroadcaster, backup, healthCheck, taskRegistry, importList, discovery, bulkOperation, bookRejection, importQueueWorker };
 }
@@ -240,7 +244,7 @@ const routeRegistry: RouteFactory[] = [
   (app, s) => bookFilesRoute(app, s.book),
   (app, s) => bookPreviewRoute(app, s.book),
   (app, s) => searchRoutes(app, s.indexer, s.downloadOrchestrator, s.blacklist, s.settings),
-  (app, s) => activityRoutes(app, s.download, s.downloadOrchestrator, s.qualityGate, s.qualityGateOrchestrator, s.import, s.importOrchestrator),
+  (app, s, db) => activityRoutes(app, s.download, s.downloadOrchestrator, s.qualityGate, s.qualityGateOrchestrator, db, () => s.importQueueWorker.nudge()),
   (app, s) => indexersRoutes(app, s.indexer),
   (app, s) => downloadClientsRoutes(app, s.downloadClient),
   (app, s) => settingsRoutes(app, s.settings, s.indexer, s.healthCheck),

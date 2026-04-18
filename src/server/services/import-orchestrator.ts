@@ -16,11 +16,15 @@ import {
 } from '../utils/import-steps.js';
 import { blacklistAndRetrySearch } from '../utils/rejection-helpers.js';
 import { serializeError } from '../utils/serialize-error.js';
+import type { Db } from '../../db/index.js';
+import { enqueueAutoImport } from '../utils/enqueue-auto-import.js';
 
 
 export class ImportOrchestrator {
   private blacklistService?: BlacklistService;
   private retrySearchDeps?: RetrySearchDeps;
+  private db?: Db;
+  private nudgeImportWorker?: () => void;
 
   constructor(
     private importService: ImportService,
@@ -36,6 +40,12 @@ export class ImportOrchestrator {
   setBlacklistDeps(blacklistService: BlacklistService, retrySearchDeps: RetrySearchDeps): void {
     this.blacklistService = blacklistService;
     this.retrySearchDeps = retrySearchDeps;
+  }
+
+  /** Inject queue dependencies after construction (setter pattern — worker created after orchestrator). */
+  setQueueDeps(db: Db, nudge: () => void): void {
+    this.db = db;
+    this.nudgeImportWorker = nudge;
   }
 
   /**
@@ -68,81 +78,33 @@ export class ImportOrchestrator {
   }
 
   /**
-   * Process all eligible downloads in a batch with per-download failure visibility.
-   * Owns the batch loop so failure-path side effects can be dispatched per download.
+   * Process all eligible downloads by enqueueing them as auto import jobs.
+   * The serial ImportQueueWorker drains from the queue.
    */
-  async processCompletedDownloads(): Promise<ImportResult[]> {
-    const admittedIds = await this.importService.getEligibleDownloads();
-
-    if (admittedIds.length === 0) return [];
-
-    const startMs = Date.now();
-    const importPromises = admittedIds.map((id) =>
-      this.importDownload(id)
-        .then((result): ImportResult | null => result)
-        .catch((_error): null => {
-          this.log.warn({ downloadId: id }, 'Skipping failed import, continuing with next');
-          return null;
-        })
-        .finally(() => { this.importService.releaseSlot(); }),
-    );
-
-    const settled = await Promise.allSettled(importPromises);
-    const results: ImportResult[] = [];
-    for (const outcome of settled) {
-      if (outcome.status === 'fulfilled' && outcome.value) {
-        results.push(outcome.value);
-      }
+  async processCompletedDownloads(): Promise<number> {
+    if (!this.db) {
+      this.log.warn('processCompletedDownloads called without queue deps — skipping');
+      return 0;
     }
 
-    const succeeded = results.length;
-    const failed = admittedIds.length - succeeded;
-    this.log.info({ total: admittedIds.length, succeeded, failed, elapsedMs: Date.now() - startMs }, 'Import batch completed');
+    const admittedDownloads = await this.importService.getEligibleDownloads();
 
-    // Intentional: no drainQueuedImports() call here — cron re-queries on next tick;
-    // an explicit nudge would duplicate work and risk race conditions with concurrent drains.
-    return results;
-  }
+    if (admittedDownloads.length === 0) return 0;
 
-  /**
-   * Drain the processing_queued import queue one download at a time.
-   * Called fire-and-forget after a slot is released. Iterates until the
-   * queue is empty, no slot is available, or all candidates are already claimed.
-   *
-   * Slot-first admission: acquires a semaphore slot before the DB claim,
-   * so no row is set to 'importing' without a reserved slot.
-   */
-  async drainQueuedImports(): Promise<void> {
-    while (true) {
-      const next = await this.importService.getNextQueuedDownload();
-      if (!next) return;
-
-      if (!this.importService.tryAcquireSlot()) return;
-
-      let claimed = false;
+    let enqueued = 0;
+    for (const download of admittedDownloads) {
       try {
-        claimed = await this.importService.claimQueuedDownload(next.id);
-        if (!claimed) continue;
-
-        // DB row is already 'importing' at this point (set by claimQueuedDownload above).
-        // Emit SSE explicitly — importDownload() skips it when status is already 'importing'.
-        emitDownloadImporting({
-          broadcaster: this.broadcaster,
-          downloadId: next.id,
-          bookId: next.bookId,
-          downloadStatus: 'importing',
-          log: this.log,
-        });
-
-        try {
-          await this.importDownload(next.id);
-        } catch (error: unknown) {
-          this.log.error({ downloadId: next.id, error: serializeError(error) }, 'Queued import failed');
-        }
-      } finally {
-        this.importService.releaseSlot();
+        const created = await enqueueAutoImport(
+          this.db, download.id, download.bookId, this.nudgeImportWorker ?? (() => {}), this.log,
+        );
+        if (created) enqueued++;
+      } catch (error: unknown) {
+        this.log.warn({ downloadId: download.id, error: serializeError(error) }, 'Failed to enqueue auto import — continuing');
       }
     }
+
+    this.log.info({ total: admittedDownloads.length, enqueued }, 'Import batch enqueued');
+    return enqueued;
   }
 
   private async dispatchSuccessSideEffects(result: ImportResult, ctx: ImportContext): Promise<void> {

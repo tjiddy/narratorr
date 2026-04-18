@@ -30,3 +30,11 @@ export interface ImportAdapter {
 export interface ManualImportJobPayload extends ImportConfirmItem {
   mode?: ImportMode;
 }
+
+/**
+ * Persisted payload for auto import jobs.
+ * Stores the download ID — the adapter hydrates the full context from the DB at processing time.
+ */
+export interface AutoImportJobPayload {
+  downloadId: number;
+}

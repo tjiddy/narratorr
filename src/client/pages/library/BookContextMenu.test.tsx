@@ -149,5 +149,32 @@ describe('BookContextMenu', () => {
       await user.click(screen.getByText('Retry Import'));
       expect(onRetryImport).toHaveBeenCalledTimes(1);
     });
+
+    it('keyboard ArrowDown cycles through all 3 items and Enter invokes Retry Import (#636 F1)', async () => {
+      const user = userEvent.setup();
+      const onRetryImport = vi.fn();
+      const onRemove = vi.fn();
+      renderMenu({ onRetryImport, onRemove });
+
+      // ArrowDown from Search Releases (index 0) → Retry Import (index 1)
+      await user.keyboard('{ArrowDown}');
+      // Enter should invoke Retry Import, NOT Remove
+      await user.keyboard('{Enter}');
+
+      expect(onRetryImport).toHaveBeenCalledTimes(1);
+      expect(onRemove).not.toHaveBeenCalled();
+    });
+
+    it('keyboard ArrowDown wraps past Remove back to Search Releases with 3 items (#636 F1)', async () => {
+      const user = userEvent.setup();
+      const onSearchReleases = vi.fn();
+      renderMenu({ onRetryImport: vi.fn(), onSearchReleases });
+
+      // ArrowDown 3 times: Search (0) → Retry (1) → Remove (2) → Search (0)
+      await user.keyboard('{ArrowDown}{ArrowDown}{ArrowDown}');
+      await user.keyboard('{Enter}');
+
+      expect(onSearchReleases).toHaveBeenCalledTimes(1);
+    });
   });
 });

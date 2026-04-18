@@ -26,9 +26,8 @@ import { eq } from 'drizzle-orm';
 import { downloads } from '../../db/schema.js';
 import { isTorrentRemovalDeferred } from '../utils/seed-helpers.js';
 import { cleanupDeferredRejections as cleanupDeferred } from './quality-gate-deferred-cleanup.helpers.js';
-import type { ImportOrchestrator } from './import-orchestrator.js';
-import type { ImportService } from './import.service.js';
 import { serializeError } from '../utils/serialize-error.js';
+import { enqueueAutoImport } from '../utils/enqueue-auto-import.js';
 
 type BookRow = typeof books.$inferSelect;
 
@@ -44,8 +43,7 @@ export class QualityGateOrchestrator {
     private remotePathMappingService?: RemotePathMappingService,
     private retrySearchDeps?: RetrySearchDeps,
     private settingsService?: SettingsService,
-    private importOrchestrator?: ImportOrchestrator,
-    private importService?: ImportService,
+    private nudgeImportWorker?: () => void,
   ) {}
 
   /**
@@ -126,10 +124,8 @@ export class QualityGateOrchestrator {
     if (row.book) {
       await this.db.update(books).set({ status: 'importing' }).where(eq(books.id, row.book.id));
       safeEmit(this.broadcaster, 'book_status_change', { book_id: row.book.id, old_status: row.book.status as BookStatus, new_status: 'importing' as BookStatus }, this.log);
-      (row.book as { status: string }).status = 'importing'; // Update in-memory so revert guards work
-    }
-    if (row.book) {
       safeEmit(this.broadcaster, 'download_status_change', { download_id: row.download.id, book_id: row.book.id, old_status: 'completed', new_status: 'checking' }, this.log);
+      (row.book as { status: string }).status = 'importing'; // Update in-memory so revert guards work
     }
 
     try {
@@ -153,7 +149,9 @@ export class QualityGateOrchestrator {
 
       const decision = await this.qualityGateService.processDownload(row.download, row.book, scanResult);
       await this.dispatchSideEffects(decision.action, row.download, row.book, decision.reason, decision.statusTransition);
-      if (decision.action === 'imported') { await this.triggerImportWithSlotAdmission(downloadId); }
+      if (decision.action === 'imported' && row.book) {
+        await enqueueAutoImport(this.db, downloadId, row.book.id, this.nudgeImportWorker ?? (() => {}), this.log);
+      }
     } catch (error: unknown) {
       this.log.error({ error: serializeError(error), downloadId: row.download.id }, 'Quality gate error');
       await this.qualityGateService.setStatus(row.download.id, 'pending_review');
@@ -164,27 +162,6 @@ export class QualityGateOrchestrator {
       }
       const probeError = getErrorMessage(error);
       this.recordDecision(row.download, row.book, { ...NULL_REASON, probeFailure: true, probeError, holdReasons: ['unhandled_error'] });
-    }
-  }
-
-  /** Slot admission for inline import: acquire slot → fire-and-forget import, or queue for next sweep. */
-  private async triggerImportWithSlotAdmission(downloadId: number): Promise<void> {
-    if (!this.importService || !this.importOrchestrator) return;
-
-    if (this.importService.tryAcquireSlot()) {
-      this.importOrchestrator.importDownload(downloadId)
-        .catch((err: unknown) => {
-          this.log.error({ downloadId, error: serializeError(err) }, 'Quality gate: inline import failed');
-        })
-        .finally(() => {
-          this.importService!.releaseSlot();
-          this.importOrchestrator!.drainQueuedImports().catch((error: unknown) => {
-            this.log.error({ error: serializeError(error) }, 'Quality gate: queued import drain failed');
-          });
-        });
-    } else {
-      await this.importService.setProcessingQueued(downloadId);
-      this.log.info({ downloadId }, 'Quality gate: concurrency limit reached, queued for next maintenance sweep');
     }
   }
 
@@ -202,7 +179,7 @@ export class QualityGateOrchestrator {
    * Approve a pending_review download — delegates DB transition to service,
    * dispatches SSE + event recording side effects.
    */
-  async approve(downloadId: number): Promise<{ id: number; status: string }> {
+  async approve(downloadId: number): Promise<{ id: number; status: string; bookId: number | null }> {
     const result = await this.qualityGateService.approve(downloadId);
 
     // Side effects — fire-and-forget
@@ -213,7 +190,7 @@ export class QualityGateOrchestrator {
       }, this.log);
     }
 
-    return { id: result.id, status: result.status };
+    return { id: result.id, status: result.status, bookId: result.book?.id ?? null };
   }
 
   /**

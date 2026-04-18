@@ -5,9 +5,8 @@ import { LibraryBookCard } from './LibraryBookCard';
 import { createMockBook } from '@/__tests__/factories';
 import * as ImageErrorModule from '@/hooks/useImageError';
 
-// Mock the retry availability hook so LibraryBookCard renders without QueryClientProvider
-vi.mock('@/hooks/useRetryImportAvailable.js', () => ({
-  useRetryImportAvailable: vi.fn().mockReturnValue(false),
+vi.mock('@/hooks/useRetryImportAvailable', () => ({
+  useRetryImportAvailable: () => false,
 }));
 
 function defaultProps(overrides = {}) {
