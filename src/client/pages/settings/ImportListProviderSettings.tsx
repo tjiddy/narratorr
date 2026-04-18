@@ -1,8 +1,7 @@
 import { useState } from 'react';
 import { api } from '@/lib/api';
 import { SelectWithChevron } from '@/components/settings/SelectWithChevron';
-import { compactInputClass as inputClass } from '@/components/settings/formStyles';
-const btnSecondary = 'px-3 py-1.5 text-sm font-medium rounded-lg transition-colors disabled:opacity-50';
+import { compactInputClass as inputClass, btnSecondary } from '@/components/settings/formStyles';
 
 interface SettingsProps {
   settings: Record<string, unknown>;

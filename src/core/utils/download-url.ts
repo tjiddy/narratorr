@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 import { parseInfoHash } from './magnet.js';
 import { normalizeInfoHash } from './normalize-info-hash.js';
+import { HTTP_DOWNLOAD_TIMEOUT_MS } from './constants.js';
 
 // ── Types ─────────────────────────────────────────────────────────────
 export type DownloadArtifact =
@@ -15,7 +16,6 @@ export type DownloadProtocol = 'torrent' | 'usenet';
 const DATA_TORRENT_URI_PREFIX = 'data:application/x-bittorrent;base64,';
 const DATA_NZB_URI_PREFIX = 'data:application/x-nzb;base64,';
 const MAX_REDIRECTS = 5;
-const DOWNLOAD_TIMEOUT_MS = 30_000;
 
 // ── DownloadUrl value object ──────────────────────────────────────────
 export class DownloadUrl {
@@ -122,7 +122,7 @@ async function fetchDownload(url: string): Promise<Response> {
   try {
     return await fetch(url, {
       redirect: 'manual',
-      signal: AbortSignal.timeout(DOWNLOAD_TIMEOUT_MS),
+      signal: AbortSignal.timeout(HTTP_DOWNLOAD_TIMEOUT_MS),
     });
   } catch (error: unknown) {
     throw sanitizeNetworkError(error);
