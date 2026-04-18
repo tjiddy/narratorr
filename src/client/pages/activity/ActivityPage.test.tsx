@@ -64,6 +64,7 @@ vi.mock('@/lib/api', () => ({
     approveDownload: vi.fn(),
     rejectDownload: vi.fn(),
     cancelMergeBook: vi.fn(),
+    getImportJobs: vi.fn().mockResolvedValue([]),
     getEventHistory: vi.fn(),
     markEventFailed: vi.fn(),
     deleteEvent: vi.fn(),
@@ -1291,5 +1292,66 @@ describe('ActivityPage tab buttons (#488)', () => {
     }
     expect(tabs[0]).toHaveAttribute('aria-selected', 'true');
     expect(tabs[1]).toHaveAttribute('aria-selected', 'false');
+  });
+});
+
+// ============================================================================
+// #637 — Activity page URL state
+// ============================================================================
+
+describe('#637 Activity page URL state', () => {
+  beforeEach(() => {
+    vi.mocked(api.getActivity).mockResolvedValue({ data: [], total: 0 });
+    vi.mocked(api.getEventHistory).mockResolvedValue({ data: [], total: 0 });
+  });
+
+  it('reads tab from URL search params ?tab=history — History tab active', async () => {
+    renderWithProviders(<ActivityPage />, { route: '/activity?tab=history' });
+
+    await waitFor(() => {
+      const historyTab = screen.getByRole('tab', { name: /history/i });
+      expect(historyTab).toHaveAttribute('aria-selected', 'true');
+    });
+  });
+
+  it('defaults to Active tab when no tab param present', async () => {
+    renderWithProviders(<ActivityPage />, { route: '/activity' });
+
+    await waitFor(() => {
+      const activeTab = screen.getByRole('tab', { name: /active/i });
+      expect(activeTab).toHaveAttribute('aria-selected', 'true');
+    });
+  });
+
+  it('tab change updates URL — clicking History tab shows history panel', async () => {
+    const user = userEvent.setup();
+    renderWithProviders(<ActivityPage />, { route: '/activity' });
+
+    await waitFor(() => {
+      expect(screen.getByRole('tab', { name: /active/i })).toHaveAttribute('aria-selected', 'true');
+    });
+
+    const historyTab = screen.getByRole('tab', { name: /history/i });
+    await user.click(historyTab);
+
+    await waitFor(() => {
+      expect(historyTab).toHaveAttribute('aria-selected', 'true');
+    });
+  });
+
+  it('navigation to /activity?tab=history&filter=import_failed opens History with filter applied', async () => {
+    renderWithProviders(<ActivityPage />, { route: '/activity?tab=history&filter=import_failed' });
+
+    await waitFor(() => {
+      const historyTab = screen.getByRole('tab', { name: /history/i });
+      expect(historyTab).toHaveAttribute('aria-selected', 'true');
+    });
+
+    // The event history API should be called with the filter
+    await waitFor(() => {
+      expect(api.getEventHistory).toHaveBeenCalledWith(
+        expect.objectContaining({ eventType: 'import_failed' }),
+      );
+    });
   });
 });

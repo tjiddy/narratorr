@@ -11,6 +11,9 @@ export const sseEventTypeSchema = z.enum([
   'download_status_change',
   'book_status_change',
   'import_complete',
+  'import_phase_change',
+  'import_progress',
+  'import_failed',
   'grab_started',
   'review_needed',
   'merge_complete',
@@ -64,6 +67,36 @@ export const importCompletePayload = z.object({
   download_id: z.number(),
   book_id: z.number(),
   book_title: z.string(),
+  job_id: z.number().optional(),
+  elapsed_ms: z.number().optional(),
+});
+
+export const importPhaseChangePayload = z.object({
+  job_id: z.number(),
+  book_id: z.number(),
+  book_title: z.string(),
+  from: z.string(),
+  to: z.string(),
+});
+
+export const importProgressPayload = z.object({
+  job_id: z.number(),
+  book_id: z.number(),
+  book_title: z.string(),
+  phase: z.string(),
+  progress: z.number(),
+  byte_counter: z.object({
+    current: z.number(),
+    total: z.number(),
+  }).optional(),
+});
+
+export const importFailedPayload = z.object({
+  job_id: z.number(),
+  book_id: z.number(),
+  book_title: z.string(),
+  phase: z.string(),
+  error_message: z.string(),
 });
 
 export const reviewNeededPayload = z.object({
@@ -168,6 +201,9 @@ export type SSEEventPayloads = {
   download_status_change: z.infer<typeof downloadStatusChangePayload>;
   book_status_change: z.infer<typeof bookStatusChangePayload>;
   import_complete: z.infer<typeof importCompletePayload>;
+  import_phase_change: z.infer<typeof importPhaseChangePayload>;
+  import_progress: z.infer<typeof importProgressPayload>;
+  import_failed: z.infer<typeof importFailedPayload>;
   grab_started: z.infer<typeof grabStartedPayload>;
   review_needed: z.infer<typeof reviewNeededPayload>;
   merge_complete: z.infer<typeof mergeCompletePayload>;
@@ -194,6 +230,7 @@ export interface CacheInvalidationRule {
   activityCounts?: CacheAction;
   books?: CacheAction;
   eventHistory?: CacheAction;
+  importJobs?: CacheAction;
 }
 
 export const CACHE_INVALIDATION_MATRIX: Record<SSEEventType, CacheInvalidationRule> = {
@@ -201,7 +238,10 @@ export const CACHE_INVALIDATION_MATRIX: Record<SSEEventType, CacheInvalidationRu
   download_status_change: { activity: 'invalidate', activityCounts: 'invalidate' },
   book_status_change: { books: 'invalidate' },
   grab_started: { activity: 'invalidate', activityCounts: 'invalidate', eventHistory: 'invalidate' },
-  import_complete: { activity: 'invalidate', activityCounts: 'invalidate', books: 'invalidate', eventHistory: 'invalidate' },
+  import_complete: { activity: 'invalidate', activityCounts: 'invalidate', books: 'invalidate', eventHistory: 'invalidate', importJobs: 'invalidate' },
+  import_phase_change: { importJobs: 'invalidate' },
+  import_progress: { importJobs: 'patch' },
+  import_failed: { importJobs: 'invalidate', books: 'invalidate', eventHistory: 'invalidate' },
   review_needed: { activity: 'invalidate', activityCounts: 'invalidate' },
   merge_complete: { activity: 'invalidate', activityCounts: 'invalidate', books: 'invalidate', eventHistory: 'invalidate' },
   merge_started: { eventHistory: 'invalidate' },
@@ -219,6 +259,7 @@ export const CACHE_INVALIDATION_MATRIX: Record<SSEEventType, CacheInvalidationRu
 // Event types that should trigger toast notifications
 export const TOAST_EVENT_CONFIG: Partial<Record<SSEEventType, { level: 'success' | 'info' | 'warning' | 'error'; titleKey: string }>> = {
   import_complete: { level: 'success', titleKey: 'book_title' },
+  import_failed: { level: 'error', titleKey: 'book_title' },
   review_needed: { level: 'warning', titleKey: 'book_title' },
   merge_started: { level: 'info', titleKey: 'book_title' },
   merge_failed: { level: 'error', titleKey: 'book_title' },

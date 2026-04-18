@@ -71,6 +71,7 @@ function makeJob(overrides: Partial<ImportJob> = {}): ImportJob {
     createdAt: new Date(),
     updatedAt: new Date(),
     startedAt: new Date(),
+    phaseHistory: null,
     completedAt: null,
     ...overrides,
   };
@@ -113,6 +114,7 @@ describe('ManualImportAdapter', () => {
       db: inject<Db>(mockDb),
       log,
       setPhase: setPhase as unknown as ImportAdapterContext['setPhase'],
+      emitProgress: vi.fn(),
     };
 
     adapter = new ManualImportAdapter(deps);

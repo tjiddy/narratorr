@@ -40,6 +40,7 @@ import { bookFilesRoute } from './book-files.js';
 import { bookPreviewRoute } from './book-preview.js';
 import { searchRoutes } from './search.js';
 import { activityRoutes } from './activity.js';
+import { importJobsRoutes } from './import-jobs.js';
 import { indexersRoutes } from './indexers.js';
 import { downloadClientsRoutes } from './download-clients.js';
 import { settingsRoutes } from './settings.js';
@@ -208,7 +209,7 @@ export async function createServices(db: Db, log: FastifyBaseLogger): Promise<Se
   importOrchestrator.setBlacklistDeps(blacklistService, retrySearchDeps);
 
   // Import queue worker + adapter registration (before QGO — it needs the nudge callback)
-  const importQueueWorker = new ImportQueueWorker(db, log);
+  const importQueueWorker = new ImportQueueWorker(db, log, eventBroadcaster);
   importOrchestrator.setQueueDeps(db, () => importQueueWorker.nudge());
   const manualAdapter = new ManualImportAdapter(libraryScan.importDeps);
   const autoAdapter = new AutoImportAdapter(importOrchestrator);
@@ -245,6 +246,7 @@ const routeRegistry: RouteFactory[] = [
   (app, s) => bookPreviewRoute(app, s.book),
   (app, s) => searchRoutes(app, s.indexer, s.downloadOrchestrator, s.blacklist, s.settings),
   (app, s, db) => activityRoutes(app, s.download, s.downloadOrchestrator, s.qualityGate, s.qualityGateOrchestrator, db, () => s.importQueueWorker.nudge()),
+  (app, _s, db) => importJobsRoutes(app, db),
   (app, s) => indexersRoutes(app, s.indexer),
   (app, s) => downloadClientsRoutes(app, s.downloadClient),
   (app, s) => settingsRoutes(app, s.settings, s.indexer, s.healthCheck),

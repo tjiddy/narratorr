@@ -11,8 +11,10 @@ export type ImportJob = typeof importJobs.$inferSelect;
 export interface ImportAdapterContext {
   db: Db;
   log: FastifyBaseLogger;
-  /** Update the job's phase column (adapter calls this as it progresses). */
+  /** Update the job's phase column + phaseHistory + emit import_phase_change SSE. */
   setPhase(phase: ImportJobPhase): Promise<void>;
+  /** Throttled progress emitter — calls safeEmit with import_progress at ≥250ms intervals. */
+  emitProgress(phase: ImportJobPhase, progress: number, byteCounter?: { current: number; total: number }): void;
 }
 
 /** Contract every import adapter must implement. */

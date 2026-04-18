@@ -1155,6 +1155,115 @@ describe('#312 cache-miss scoping — patchActivityProgress', () => {
   });
 });
 
+// ============================================================================
+// #637 — Import SSE event behaviors
+// ============================================================================
+
+describe('#637 import SSE cache/toast behaviors', () => {
+  it('import_progress patches the matching cached job row with _progress and _byteCounter', () => {
+    const { wrapper, queryClient } = createWrapper();
+
+    // Seed cache with two import jobs
+    queryClient.setQueryData(queryKeys.importJobs(), [
+      { id: 1, bookId: 42, status: 'processing', phase: 'copying' },
+      { id: 2, bookId: 43, status: 'pending', phase: 'queued' },
+    ]);
+
+    renderHook(() => useEventSource('key'), { wrapper });
+    const es = MockEventSource.instances[0];
+
+    act(() => {
+      es.simulateOpen();
+      es.simulateEvent('import_progress', {
+        job_id: 1, book_id: 42, book_title: 'Test', phase: 'copying', progress: 0.5,
+        byte_counter: { current: 5000, total: 10000 },
+      });
+    });
+
+    // Verify the actual cached data was patched
+    const cached = queryClient.getQueryData(queryKeys.importJobs()) as Record<string, unknown>[];
+    expect(cached).toHaveLength(2);
+    // Matching row should have _progress and _byteCounter
+    expect(cached[0]).toMatchObject({ id: 1, _progress: 0.5, _byteCounter: { current: 5000, total: 10000 } });
+    // Non-matching row should be unchanged
+    expect(cached[1]).toMatchObject({ id: 2, status: 'pending' });
+    expect(cached[1]).not.toHaveProperty('_progress');
+  });
+
+  it('import_progress falls back to invalidateQueries on cache miss', () => {
+    const { wrapper, queryClient } = createWrapper();
+    const invalidateSpy = vi.spyOn(queryClient, 'invalidateQueries');
+
+    // No cached importJobs data — cache miss
+    renderHook(() => useEventSource('key'), { wrapper });
+    const es = MockEventSource.instances[0];
+
+    act(() => {
+      es.simulateOpen();
+      es.simulateEvent('import_progress', {
+        job_id: 99, book_id: 42, book_title: 'Test', phase: 'copying', progress: 0.5,
+      });
+    });
+
+    expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: ['importJobs'] });
+  });
+
+  it('import_failed invalidates importJobs, books, eventHistory and shows error toast', () => {
+    const { wrapper, queryClient } = createWrapper();
+    const invalidateSpy = vi.spyOn(queryClient, 'invalidateQueries');
+
+    renderHook(() => useEventSource('key'), { wrapper });
+    const es = MockEventSource.instances[0];
+
+    act(() => {
+      es.simulateOpen();
+      es.simulateEvent('import_failed', {
+        job_id: 1, book_id: 42, book_title: 'Failed Book', phase: 'copying', error_message: 'Copy failed',
+      });
+    });
+
+    expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: ['importJobs'] });
+    expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: queryKeys.books() });
+    expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: queryKeys.eventHistory.root() });
+    expect(toast.error).toHaveBeenCalledWith(expect.stringContaining('Failed Book'), expect.any(Object));
+  });
+
+  it('import_phase_change invalidates importJobs', () => {
+    const { wrapper, queryClient } = createWrapper();
+    const invalidateSpy = vi.spyOn(queryClient, 'invalidateQueries');
+
+    renderHook(() => useEventSource('key'), { wrapper });
+    const es = MockEventSource.instances[0];
+
+    act(() => {
+      es.simulateOpen();
+      es.simulateEvent('import_phase_change', {
+        job_id: 1, book_id: 42, book_title: 'Test', from: 'analyzing', to: 'copying',
+      });
+    });
+
+    expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: ['importJobs'] });
+  });
+
+  it('import_complete invalidates importJobs alongside existing caches', () => {
+    const { wrapper, queryClient } = createWrapper();
+    const invalidateSpy = vi.spyOn(queryClient, 'invalidateQueries');
+
+    renderHook(() => useEventSource('key'), { wrapper });
+    const es = MockEventSource.instances[0];
+
+    act(() => {
+      es.simulateOpen();
+      es.simulateEvent('import_complete', {
+        download_id: 0, book_id: 42, book_title: 'Done Book', job_id: 1, elapsed_ms: 5000,
+      });
+    });
+
+    expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: ['importJobs'] });
+    expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: queryKeys.books() });
+  });
+});
+
 describe('#514 useEventSource type safety', () => {
   it('event type list is derived from sseEventTypeSchema.options (single source of truth)', () => {
     const { wrapper } = createWrapper();

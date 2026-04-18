@@ -129,4 +129,89 @@ describe('ActiveTabSection', () => {
       expect(screen.getByText('Cancel & Blacklist')).toBeInTheDocument();
     });
   });
+
+  // ===========================================================================
+  // #637 — Import jobs integration
+  // ===========================================================================
+
+  describe('#637 import jobs integration', () => {
+    it('renders ImportActivityCard for processing import jobs', () => {
+      const importJobs = [{
+        id: 1, bookId: 42, type: 'manual' as const, status: 'processing' as const, phase: 'copying',
+        phaseHistory: [{ phase: 'analyzing', startedAt: 1000, completedAt: 2000 }, { phase: 'copying', startedAt: 2000 }],
+        createdAt: '2025-01-01T00:00:00Z', updatedAt: '2025-01-01T00:00:00Z',
+        startedAt: '2025-01-01T00:00:00Z', completedAt: null,
+        book: { title: 'Import Book', coverUrl: null, primaryAuthorName: 'Author' },
+      }];
+      renderWithProviders(<ActiveTabSection {...defaultProps({ importJobs })} />);
+      expect(screen.getByText('Import Book')).toBeInTheDocument();
+    });
+
+    it('renders queued subsection with ImportQueuedRow components', () => {
+      const importJobs = [{
+        id: 2, bookId: 43, type: 'manual' as const, status: 'pending' as const, phase: 'queued',
+        phaseHistory: [],
+        createdAt: '2025-01-01T00:00:00Z', updatedAt: '2025-01-01T00:00:00Z',
+        startedAt: null, completedAt: null,
+        book: { title: 'Queued Book', coverUrl: null, primaryAuthorName: null },
+      }];
+      renderWithProviders(<ActiveTabSection {...defaultProps({ importJobs })} />);
+      expect(screen.getByText('Queued Book')).toBeInTheDocument();
+      expect(screen.getByText('Queued')).toBeInTheDocument();
+    });
+
+    it('shows "Queued · N waiting" section header', () => {
+      const importJobs = [
+        { id: 1, bookId: 41, type: 'manual' as const, status: 'pending' as const, phase: 'queued', phaseHistory: [], createdAt: '2025-01-01T00:00:00Z', updatedAt: '2025-01-01T00:00:00Z', startedAt: null, completedAt: null, book: { title: 'Q1', coverUrl: null, primaryAuthorName: null } },
+        { id: 2, bookId: 42, type: 'manual' as const, status: 'pending' as const, phase: 'queued', phaseHistory: [], createdAt: '2025-01-01T00:00:00Z', updatedAt: '2025-01-01T00:00:00Z', startedAt: null, completedAt: null, book: { title: 'Q2', coverUrl: null, primaryAuthorName: null } },
+      ];
+      renderWithProviders(<ActiveTabSection {...defaultProps({ importJobs })} />);
+      expect(screen.getByText(/2 waiting/)).toBeInTheDocument();
+    });
+
+    it('empty state unchanged when no activity of any type', () => {
+      renderWithProviders(<ActiveTabSection {...defaultProps()} />);
+      expect(screen.getByText('Nothing running right now')).toBeInTheDocument();
+    });
+
+    it('sorts processing imports by updatedAt descending and queued by createdAt ascending', () => {
+      const importJobs = [
+        // Intentionally out of order: older update first
+        { id: 1, bookId: 41, type: 'manual' as const, status: 'processing' as const, phase: 'copying',
+          phaseHistory: [{ phase: 'copying', startedAt: 1000 }],
+          createdAt: '2025-01-01T00:00:00Z', updatedAt: '2025-01-01T01:00:00Z',
+          startedAt: '2025-01-01T00:00:00Z', completedAt: null,
+          book: { title: 'Older Processing', coverUrl: null, primaryAuthorName: null } },
+        { id: 2, bookId: 42, type: 'manual' as const, status: 'processing' as const, phase: 'analyzing',
+          phaseHistory: [{ phase: 'analyzing', startedAt: 2000 }],
+          createdAt: '2025-01-01T00:00:00Z', updatedAt: '2025-01-01T02:00:00Z',
+          startedAt: '2025-01-01T00:00:00Z', completedAt: null,
+          book: { title: 'Newer Processing', coverUrl: null, primaryAuthorName: null } },
+        // Queued: newer created first (should render second)
+        { id: 3, bookId: 43, type: 'manual' as const, status: 'pending' as const, phase: 'queued',
+          phaseHistory: [],
+          createdAt: '2025-01-01T02:00:00Z', updatedAt: '2025-01-01T02:00:00Z',
+          startedAt: null, completedAt: null,
+          book: { title: 'Newer Queued', coverUrl: null, primaryAuthorName: null } },
+        { id: 4, bookId: 44, type: 'manual' as const, status: 'pending' as const, phase: 'queued',
+          phaseHistory: [],
+          createdAt: '2025-01-01T01:00:00Z', updatedAt: '2025-01-01T01:00:00Z',
+          startedAt: null, completedAt: null,
+          book: { title: 'Older Queued', coverUrl: null, primaryAuthorName: null } },
+      ];
+
+      renderWithProviders(<ActiveTabSection {...defaultProps({ importJobs })} />);
+
+      const titles = screen.getAllByRole('heading', { level: 3 }).map(h => h.textContent);
+      // Processing: Newer first (updatedAt desc), then queued section: Older first (createdAt asc)
+      const newerIdx = titles.indexOf('Newer Processing');
+      const olderIdx = titles.indexOf('Older Processing');
+      expect(newerIdx).toBeLessThan(olderIdx);
+
+      const allText = document.body.textContent ?? '';
+      const olderQueuedPos = allText.indexOf('Older Queued');
+      const newerQueuedPos = allText.indexOf('Newer Queued');
+      expect(olderQueuedPos).toBeLessThan(newerQueuedPos);
+    });
+  });
 });

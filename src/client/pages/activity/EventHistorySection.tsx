@@ -20,8 +20,15 @@ const EVENT_TYPE_FILTERS = [
 
 const CLEAR_ERRORS_EVENT_TYPES = 'download_failed,import_failed,merge_failed';
 
-export function EventHistorySection() {
-  const [eventType, setEventTypeState] = useState('');
+export interface EventHistorySectionProps {
+  urlFilter?: string;
+  onFilterChange?: (value: string) => void;
+}
+
+export function EventHistorySection({ urlFilter, onFilterChange }: EventHistorySectionProps = {}) {
+  const [localFilter, setLocalFilterState] = useState('');
+  // Derived state: URL filter takes precedence when provided
+  const eventType = urlFilter ?? localFilter;
   const [search, setSearchState] = useState('');
   const [searchInput, setSearchInput] = useState('');
   const [confirmAction, setConfirmAction] = useState<'errors' | 'all' | null>(null);
@@ -30,9 +37,10 @@ export function EventHistorySection() {
 
   // Reset pagination when filters change
   const setEventType = useCallback((value: string) => {
-    setEventTypeState(value);
+    setLocalFilterState(value);
+    onFilterChange?.(value);
     pagination.reset();
-  }, [pagination]);
+  }, [pagination, onFilterChange]);
 
   const setSearch = useCallback((value: string) => {
     setSearchState(value);

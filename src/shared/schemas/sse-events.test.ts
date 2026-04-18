@@ -7,6 +7,9 @@ import {
   bookStatusChangePayload,
   grabStartedPayload,
   importCompletePayload,
+  importPhaseChangePayload,
+  importProgressPayload,
+  importFailedPayload,
   reviewNeededPayload,
   mergeCompletePayload,
   mergeStartedPayload,
@@ -39,11 +42,12 @@ describe('bookStatusSchema widening', () => {
 });
 
 describe('SSE event schemas', () => {
-  it('defines all 17 event types', () => {
+  it('defines all 20 event types', () => {
     const types = sseEventTypeSchema.options;
     expect(types).toEqual([
       'download_progress', 'download_status_change', 'book_status_change',
-      'import_complete', 'grab_started', 'review_needed', 'merge_complete',
+      'import_complete', 'import_phase_change', 'import_progress', 'import_failed',
+      'grab_started', 'review_needed', 'merge_complete',
       'merge_started', 'merge_progress', 'merge_failed',
       'merge_queued', 'merge_queue_updated',
       'search_started', 'search_indexer_complete', 'search_indexer_error',
@@ -259,9 +263,9 @@ describe('#257 merge observability — SSE payload schemas', () => {
 // ============================================================================
 
 describe('#392 search progress — SSE event schemas', () => {
-  it('defines all 17 event types (12 existing + 5 new search events)', () => {
+  it('defines all 20 event types (12 existing + 5 search + 3 import events)', () => {
     const types = sseEventTypeSchema.options;
-    expect(types).toHaveLength(17);
+    expect(types).toHaveLength(20);
     expect(types).toContain('search_started');
     expect(types).toContain('search_indexer_complete');
     expect(types).toContain('search_indexer_error');
@@ -364,6 +368,110 @@ describe('#392 search progress — SSE event schemas', () => {
       for (const event of searchEvents) {
         expect(CACHE_INVALIDATION_MATRIX[event]).toEqual({});
       }
+    });
+  });
+});
+
+// ============================================================================
+// #637 — Import progress instrumentation SSE event schemas
+// ============================================================================
+
+describe('#637 import progress — SSE event schemas', () => {
+  describe('import_phase_change payload', () => {
+    it('parses valid payload with job_id, book_id, from, to', () => {
+      const valid = { job_id: 1, book_id: 2, book_title: 'Test Book', from: 'analyzing', to: 'copying' };
+      expect(importPhaseChangePayload.parse(valid)).toEqual(valid);
+    });
+
+    it('rejects payload missing required job_id', () => {
+      expect(() => importPhaseChangePayload.parse({ book_id: 2, book_title: 'Test', from: 'analyzing', to: 'copying' })).toThrow();
+    });
+
+    it('rejects payload missing required from/to fields', () => {
+      expect(() => importPhaseChangePayload.parse({ job_id: 1, book_id: 2, book_title: 'Test' })).toThrow();
+    });
+  });
+
+  describe('import_progress payload', () => {
+    it('parses valid payload with job_id, book_id, phase, progress', () => {
+      const valid = { job_id: 1, book_id: 2, book_title: 'Test Book', phase: 'copying', progress: 0.43 };
+      expect(importProgressPayload.parse(valid)).toEqual(valid);
+    });
+
+    it('accepts optional byte_counter with current and total', () => {
+      const valid = { job_id: 1, book_id: 2, book_title: 'Test Book', phase: 'copying', progress: 0.5, byte_counter: { current: 12_000_000, total: 24_000_000 } };
+      expect(importProgressPayload.parse(valid)).toEqual(valid);
+    });
+
+    it('rejects payload missing required fields', () => {
+      expect(() => importProgressPayload.parse({ job_id: 1, book_id: 2 })).toThrow();
+    });
+  });
+
+  describe('import_failed payload', () => {
+    it('parses valid payload with job_id, book_id, phase, error_message', () => {
+      const valid = { job_id: 1, book_id: 2, book_title: 'Test Book', phase: 'copying', error_message: 'Copy failed' };
+      expect(importFailedPayload.parse(valid)).toEqual(valid);
+    });
+
+    it('rejects payload missing error_message', () => {
+      expect(() => importFailedPayload.parse({ job_id: 1, book_id: 2, book_title: 'Test', phase: 'copying' })).toThrow();
+    });
+  });
+
+  describe('import_complete payload (extended)', () => {
+    it('parses legacy shape without job_id or elapsed_ms (backward compat)', () => {
+      const legacy = { download_id: 1, book_id: 2, book_title: 'My Book' };
+      expect(importCompletePayload.parse(legacy)).toEqual(legacy);
+    });
+
+    it('parses extended shape with optional job_id and elapsed_ms', () => {
+      const extended = { download_id: 1, book_id: 2, book_title: 'My Book', job_id: 5, elapsed_ms: 8400 };
+      expect(importCompletePayload.parse(extended)).toEqual(extended);
+    });
+  });
+
+  describe('sseEventTypeSchema includes import events', () => {
+    it('contains import_phase_change, import_progress, import_failed', () => {
+      const types = sseEventTypeSchema.options;
+      expect(types).toContain('import_phase_change');
+      expect(types).toContain('import_progress');
+      expect(types).toContain('import_failed');
+    });
+  });
+
+  describe('cache invalidation matrix for import events', () => {
+    it('import_phase_change invalidates importJobs', () => {
+      expect(CACHE_INVALIDATION_MATRIX.import_phase_change.importJobs).toBe('invalidate');
+    });
+
+    it('import_progress patches importJobs', () => {
+      expect(CACHE_INVALIDATION_MATRIX.import_progress.importJobs).toBe('patch');
+    });
+
+    it('import_complete invalidates importJobs, books, and eventHistory', () => {
+      const rule = CACHE_INVALIDATION_MATRIX.import_complete;
+      expect(rule.importJobs).toBe('invalidate');
+      expect(rule.books).toBe('invalidate');
+      expect(rule.eventHistory).toBe('invalidate');
+    });
+
+    it('import_failed invalidates importJobs, books, and eventHistory', () => {
+      const rule = CACHE_INVALIDATION_MATRIX.import_failed;
+      expect(rule.importJobs).toBe('invalidate');
+      expect(rule.books).toBe('invalidate');
+      expect(rule.eventHistory).toBe('invalidate');
+    });
+  });
+
+  describe('TOAST_EVENT_CONFIG for import events', () => {
+    it('import_failed has error level with book_title titleKey', () => {
+      expect(TOAST_EVENT_CONFIG.import_failed).toEqual({ level: 'error', titleKey: 'book_title' });
+    });
+
+    it('import_phase_change and import_progress have no toast config', () => {
+      expect(TOAST_EVENT_CONFIG.import_phase_change).toBeUndefined();
+      expect(TOAST_EVENT_CONFIG.import_progress).toBeUndefined();
     });
   });
 });

@@ -71,6 +71,30 @@ function patchActivityProgress(queryClient: ReturnType<typeof useQueryClient>, p
   return { found, hasPageQueries };
 }
 
+/** Patch import job progress in-place across cached import-jobs queries. */
+function patchImportJobProgress(queryClient: ReturnType<typeof useQueryClient>, data: SSEEventPayloads['import_progress']): void {
+  const cachedQueries = queryClient.getQueryCache().findAll({ queryKey: ['importJobs'] });
+  let found = false;
+  for (const query of cachedQueries) {
+    const cached = query.state.data;
+    if (!Array.isArray(cached)) continue;
+    queryClient.setQueryData(query.queryKey, (old: unknown) => {
+      if (!Array.isArray(old)) return old;
+      return old.map((job: unknown) => {
+        const j = job as Record<string, unknown>;
+        if (j.id === data.job_id) {
+          found = true;
+          return { ...j, _progress: data.progress, _byteCounter: data.byte_counter };
+        }
+        return j;
+      });
+    });
+  }
+  if (!found) {
+    queryClient.invalidateQueries({ queryKey: ['importJobs'] });
+  }
+}
+
 /** Apply cache invalidation rules for an SSE event. */
 function invalidateFromRule(
   queryClient: ReturnType<typeof useQueryClient>,
@@ -100,6 +124,11 @@ function invalidateFromRule(
   }
   if (rule.eventHistory) {
     queryClient.invalidateQueries({ queryKey: queryKeys.eventHistory.root() });
+  }
+  if (rule.importJobs === 'invalidate') {
+    queryClient.invalidateQueries({ queryKey: ['importJobs'] });
+  } else if (rule.importJobs === 'patch' && type === 'import_progress') {
+    patchImportJobProgress(queryClient, data as SSEEventPayloads['import_progress']);
   }
 }
 
@@ -252,6 +281,7 @@ function updateMergeProgressFromEvent(type: SSEEventType, data: SSEEventPayloads
 function formatToastMessage(type: SSEEventType, title: string): string {
   switch (type) {
     case 'import_complete': return `"${title}" imported successfully`;
+    case 'import_failed': return `Import failed: "${title}"`;
     case 'grab_started': return `Downloading "${title}"`;
     case 'review_needed': return `"${title}" needs review`;
     case 'merge_started': return `Merging "${title}"...`;

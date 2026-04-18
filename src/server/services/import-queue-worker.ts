@@ -7,21 +7,33 @@ import { getImportAdapter } from './import-adapters/registry.js';
 import type { ImportAdapterContext } from './import-adapters/types.js';
 import type { ImportJobPhase } from '../../shared/schemas/import-job.js';
 import { serializeError } from '../utils/serialize-error.js';
+import { safeEmit } from '../utils/safe-emit.js';
+import type { EventBroadcasterService } from './event-broadcaster.service.js';
+
 
 const SAFETY_POLL_INTERVAL_MS = 30_000;
+const PROGRESS_THROTTLE_MS = 250;
+
+export interface PhaseHistoryEntry {
+  phase: string;
+  startedAt: number;
+  completedAt?: number;
+}
 
 export class ImportQueueWorker {
   private readonly db: Db;
   private readonly log: FastifyBaseLogger;
+  private readonly broadcaster: EventBroadcasterService | null;
   private readonly emitter = new EventEmitter();
   private running = false;
   private stopping = false;
   private currentJobPromise: Promise<void> | null = null;
   private pollTimer: ReturnType<typeof setInterval> | null = null;
 
-  constructor(db: Db, log: FastifyBaseLogger) {
+  constructor(db: Db, log: FastifyBaseLogger, broadcaster?: EventBroadcasterService) {
     this.db = db;
     this.log = log.child({ component: 'ImportQueueWorker' });
+    this.broadcaster = broadcaster ?? null;
   }
 
   /** Nudge the worker to check for new pending jobs. */
@@ -165,20 +177,54 @@ export class ImportQueueWorker {
     const adapter = getImportAdapter(job.type);
     if (!adapter) {
       this.log.error({ jobId: job.id, type: job.type }, 'No import adapter registered for job type');
-      await this.markJobFailed(job.id, job.bookId, JSON.stringify({ message: `No import adapter registered for type "${job.type}"`, type: 'UnknownAdapterType' }));
+      await this.markJobFailed(job.id, job.bookId, job.phase ?? 'queued', this.extractTitle(job.metadata), JSON.stringify({ message: `No import adapter registered for type "${job.type}"`, type: 'UnknownAdapterType' }));
       return true;
     }
 
-    // Process the job
+    // Build phase history from persisted state
+    const phaseHistory: PhaseHistoryEntry[] = job.phaseHistory ? JSON.parse(job.phaseHistory) : [];
+    let currentPhase = job.phase ?? 'queued';
+
+    // Build adapter context with enhanced setPhase
     const ctx: ImportAdapterContext = {
       db: this.db,
       log: this.log.child({ jobId: job.id, type: job.type }),
       setPhase: async (phase: ImportJobPhase) => {
-        await this.db.update(importJobs).set({ phase, updatedAt: new Date() }).where(eq(importJobs.id, job.id));
+        const nowMs = Date.now();
+        const previousPhase = currentPhase;
+
+        // Close previous phase entry
+        if (phaseHistory.length > 0) {
+          const last = phaseHistory[phaseHistory.length - 1];
+          if (last.completedAt === undefined) {
+            last.completedAt = nowMs;
+          }
+        }
+
+        // Append new phase entry
+        phaseHistory.push({ phase, startedAt: nowMs });
+        currentPhase = phase;
+
+        await this.db.update(importJobs).set({
+          phase,
+          phaseHistory: JSON.stringify(phaseHistory),
+          updatedAt: new Date(),
+        }).where(eq(importJobs.id, job.id));
+
+        // Emit SSE event
+        safeEmit(this.broadcaster, 'import_phase_change', {
+          job_id: job.id,
+          book_id: job.bookId ?? 0,
+          book_title: this.extractTitle(job.metadata),
+          from: previousPhase,
+          to: phase,
+        }, this.log);
       },
+      emitProgress: this.createThrottledProgressEmitter(job.id, job.bookId ?? 0, this.extractTitle(job.metadata)),
     };
 
-    this.currentJobPromise = this.processJob(job.id, job.bookId, adapter, job, ctx);
+    const startTime = Date.now();
+    this.currentJobPromise = this.processJob(job.id, job.bookId, adapter, job, ctx, phaseHistory, startTime);
     await this.currentJobPromise;
     this.currentJobPromise = null;
 
@@ -191,31 +237,61 @@ export class ImportQueueWorker {
     adapter: { process: (job: typeof importJobs.$inferSelect, ctx: ImportAdapterContext) => Promise<void> },
     job: typeof importJobs.$inferSelect,
     ctx: ImportAdapterContext,
+    phaseHistory: PhaseHistoryEntry[],
+    startTime: number,
   ): Promise<void> {
+    const bookTitle = this.extractTitle(job.metadata);
     try {
       await adapter.process(job, ctx);
+
+      // Close current phase entry
+      if (phaseHistory.length > 0) {
+        const last = phaseHistory[phaseHistory.length - 1];
+        if (last.completedAt === undefined) {
+          last.completedAt = Date.now();
+        }
+      }
 
       const now = new Date();
       await this.db.update(importJobs).set({
         status: 'completed',
         phase: 'done',
+        phaseHistory: JSON.stringify(phaseHistory),
         completedAt: now,
         updatedAt: now,
       }).where(eq(importJobs.id, jobId));
 
-      this.log.info({ jobId }, 'Import job completed successfully');
+      const elapsedMs = Date.now() - startTime;
+      safeEmit(this.broadcaster, 'import_complete', {
+        download_id: 0,
+        book_id: bookId ?? 0,
+        book_title: bookTitle,
+        job_id: jobId,
+        elapsed_ms: elapsedMs,
+      }, this.log);
+
+      this.log.info({ jobId, elapsedMs }, 'Import job completed successfully');
     } catch (error: unknown) {
       this.log.error({ error: serializeError(error), jobId }, 'Import job failed');
-      await this.markJobFailed(jobId, bookId, JSON.stringify(serializeError(error)));
+      // Close the active phase entry before persisting
+      if (phaseHistory.length > 0) {
+        const last = phaseHistory[phaseHistory.length - 1];
+        if (last.completedAt === undefined) {
+          last.completedAt = Date.now();
+        }
+      }
+      const currentPhase = phaseHistory.length > 0 ? phaseHistory[phaseHistory.length - 1].phase : 'queued';
+      await this.markJobFailed(jobId, bookId, currentPhase, bookTitle, JSON.stringify(serializeError(error)), phaseHistory);
     }
   }
 
-  private async markJobFailed(jobId: number, bookId: number | null, lastError: string): Promise<void> {
+  private async markJobFailed(jobId: number, bookId: number | null, currentPhase: string, bookTitle: string, lastError: string, phaseHistory?: PhaseHistoryEntry[]): Promise<void> {
     const now = new Date();
     await this.db.update(importJobs).set({
       status: 'failed',
       phase: 'failed',
       lastError,
+      ...(phaseHistory ? { phaseHistory: JSON.stringify(phaseHistory) } : {}),
       completedAt: now,
       updatedAt: now,
     }).where(eq(importJobs.id, jobId));
@@ -226,5 +302,54 @@ export class ImportQueueWorker {
         updatedAt: now,
       }).where(eq(books.id, bookId));
     }
+
+    // Parse error message for SSE
+    let errorMessage: string;
+    try {
+      const parsed = JSON.parse(lastError);
+      errorMessage = parsed.message ?? lastError;
+    } catch {
+      errorMessage = lastError;
+    }
+
+    safeEmit(this.broadcaster, 'import_failed', {
+      job_id: jobId,
+      book_id: bookId ?? 0,
+      book_title: bookTitle,
+      phase: currentPhase,
+      error_message: errorMessage,
+    }, this.log);
+  }
+
+  /** Extract book title from job metadata JSON. */
+  private extractTitle(metadata: string): string {
+    try {
+      const parsed = JSON.parse(metadata);
+      return parsed.title ?? 'Unknown';
+    } catch {
+      return 'Unknown';
+    }
+  }
+
+  /** Create a throttled progress emitter for a specific job. */
+  private createThrottledProgressEmitter(
+    jobId: number,
+    bookId: number,
+    bookTitle: string,
+  ): ImportAdapterContext['emitProgress'] {
+    let lastEmitTime = 0;
+    return (phase, progress, byteCounter) => {
+      const now = Date.now();
+      if (now - lastEmitTime < PROGRESS_THROTTLE_MS) return;
+      lastEmitTime = now;
+      safeEmit(this.broadcaster, 'import_progress', {
+        job_id: jobId,
+        book_id: bookId,
+        book_title: bookTitle,
+        phase,
+        progress,
+        ...(byteCounter ? { byte_counter: byteCounter } : {}),
+      }, this.log);
+    };
   }
 }

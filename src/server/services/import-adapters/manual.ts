@@ -47,11 +47,19 @@ export class ManualImportAdapter implements ImportAdapter {
       let finalPath = payload.path;
       if (mode) {
         await ctx.setPhase('copying');
-        finalPath = await copyToLibrary(payload, bookRow, extracted.meta ?? null, mode, this.deps);
+        finalPath = await copyToLibrary(payload, bookRow, extracted.meta ?? null, mode, this.deps, (progress, byteCounter) => {
+          ctx.emitProgress('copying', progress, byteCounter);
+        });
       }
 
       const stats = await getAudioStats(finalPath, log);
       log.debug({ bookId, finalPath, fileCount: stats.fileCount, totalSize: stats.totalSize }, 'Audio stats collected');
+
+      // Flattening phase: currently no-op for manual imports (merge/flatten is a separate
+      // user-initiated action via MergeService). The phase transition and emitProgress
+      // infrastructure are ready — when the import pipeline gains auto-flatten capability,
+      // add: await ctx.setPhase('flattening'); + pass onProgress callback to audio processing.
+
       await db.update(books).set({ path: finalPath, size: stats.totalSize, updatedAt: new Date() }).where(eq(books.id, bookId));
 
       await ctx.setPhase('fetching_metadata');

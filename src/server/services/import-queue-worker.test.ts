@@ -238,6 +238,276 @@ describe('ImportQueueWorker', () => {
     });
   });
 
+  // ===========================================================================
+  // #637 — Phase history persistence + event wiring
+  // ===========================================================================
+
+  describe('#637 phase history persistence', () => {
+    it('setPhase appends new phaseHistory entry with startedAt', async () => {
+      const mockBroadcaster = { emit: vi.fn() };
+      const workerWithBroadcaster = new ImportQueueWorker(inject<Db>(mockDb.db), log, mockBroadcaster as never);
+
+      // Register a simple adapter that calls setPhase
+      const adapter: ImportAdapter = {
+        type: 'manual',
+        async process(_job: ImportJob, ctx) {
+          await ctx.setPhase('analyzing');
+        },
+      };
+      registerImportAdapter(adapter);
+
+      // Mock: boot recovery = no orphans, 1 pending job, then no more
+      let selectCallCount = 0;
+      mockDb.db.select = vi.fn().mockImplementation(() => {
+        selectCallCount++;
+        if (selectCallCount === 1) return { from: vi.fn().mockReturnThis(), where: vi.fn().mockResolvedValue([]) };
+        if (selectCallCount === 2) return { from: vi.fn().mockReturnThis(), where: vi.fn().mockReturnThis(), orderBy: vi.fn().mockReturnThis(), limit: vi.fn().mockResolvedValue([{ id: 1 }]) };
+        if (selectCallCount === 3) return { from: vi.fn().mockReturnThis(), where: vi.fn().mockReturnThis(), limit: vi.fn().mockResolvedValue([{ id: 1, bookId: 10, type: 'manual', status: 'processing', metadata: '{"title":"Test"}', phaseHistory: null }]) };
+        return { from: vi.fn().mockReturnThis(), where: vi.fn().mockReturnThis(), orderBy: vi.fn().mockReturnThis(), limit: vi.fn().mockResolvedValue([]) };
+      });
+
+      const updateSets: Record<string, unknown>[] = [];
+      mockDb.db.update = vi.fn().mockImplementation(() => ({
+        set: vi.fn().mockImplementation((payload: Record<string, unknown>) => {
+          updateSets.push(payload);
+          return { where: vi.fn().mockResolvedValue({ rowsAffected: 1 }) };
+        }),
+      }));
+
+      await workerWithBroadcaster.start();
+      await new Promise(r => setTimeout(r, 100));
+      await workerWithBroadcaster.stop();
+
+      // Find the setPhase update that includes phaseHistory
+      const phaseUpdate = updateSets.find(s => s.phase === 'analyzing' && s.phaseHistory);
+      expect(phaseUpdate).toBeDefined();
+      const history = JSON.parse(phaseUpdate!.phaseHistory as string);
+      expect(history).toHaveLength(1);
+      expect(history[0].phase).toBe('analyzing');
+      expect(history[0].startedAt).toBeTypeOf('number');
+      expect(history[0].completedAt).toBeUndefined();
+    });
+
+    it('job completion closes the current phaseHistory entry', async () => {
+      const mockBroadcaster = { emit: vi.fn() };
+      const workerWithBroadcaster = new ImportQueueWorker(inject<Db>(mockDb.db), log, mockBroadcaster as never);
+
+      const adapter: ImportAdapter = {
+        type: 'manual',
+        async process(_job: ImportJob, ctx) {
+          await ctx.setPhase('analyzing');
+        },
+      };
+      registerImportAdapter(adapter);
+
+      let selectCallCount = 0;
+      mockDb.db.select = vi.fn().mockImplementation(() => {
+        selectCallCount++;
+        if (selectCallCount === 1) return { from: vi.fn().mockReturnThis(), where: vi.fn().mockResolvedValue([]) };
+        if (selectCallCount === 2) return { from: vi.fn().mockReturnThis(), where: vi.fn().mockReturnThis(), orderBy: vi.fn().mockReturnThis(), limit: vi.fn().mockResolvedValue([{ id: 1 }]) };
+        if (selectCallCount === 3) return { from: vi.fn().mockReturnThis(), where: vi.fn().mockReturnThis(), limit: vi.fn().mockResolvedValue([{ id: 1, bookId: 10, type: 'manual', status: 'processing', metadata: '{"title":"Test"}', phaseHistory: null }]) };
+        return { from: vi.fn().mockReturnThis(), where: vi.fn().mockReturnThis(), orderBy: vi.fn().mockReturnThis(), limit: vi.fn().mockResolvedValue([]) };
+      });
+
+      const updateSets: Record<string, unknown>[] = [];
+      mockDb.db.update = vi.fn().mockImplementation(() => ({
+        set: vi.fn().mockImplementation((payload: Record<string, unknown>) => {
+          updateSets.push(payload);
+          return { where: vi.fn().mockResolvedValue({ rowsAffected: 1 }) };
+        }),
+      }));
+
+      await workerWithBroadcaster.start();
+      await new Promise(r => setTimeout(r, 100));
+      await workerWithBroadcaster.stop();
+
+      // The completion update should have phaseHistory with completedAt set
+      const completionUpdate = updateSets.find(s => s.status === 'completed' && s.phaseHistory);
+      expect(completionUpdate).toBeDefined();
+      const history = JSON.parse(completionUpdate!.phaseHistory as string);
+      const lastEntry = history[history.length - 1];
+      expect(lastEntry.completedAt).toBeTypeOf('number');
+    });
+  });
+
+  describe('#637 event wiring', () => {
+    it('setPhase emits import_phase_change SSE with from and to fields', async () => {
+      const emitSpy = vi.fn();
+      const mockBroadcaster = { emit: emitSpy };
+      const workerWithBroadcaster = new ImportQueueWorker(inject<Db>(mockDb.db), log, mockBroadcaster as never);
+
+      const adapter: ImportAdapter = {
+        type: 'manual',
+        async process(_job: ImportJob, ctx) {
+          await ctx.setPhase('analyzing');
+          await ctx.setPhase('copying');
+        },
+      };
+      registerImportAdapter(adapter);
+
+      let selectCallCount = 0;
+      mockDb.db.select = vi.fn().mockImplementation(() => {
+        selectCallCount++;
+        if (selectCallCount === 1) return { from: vi.fn().mockReturnThis(), where: vi.fn().mockResolvedValue([]) };
+        if (selectCallCount === 2) return { from: vi.fn().mockReturnThis(), where: vi.fn().mockReturnThis(), orderBy: vi.fn().mockReturnThis(), limit: vi.fn().mockResolvedValue([{ id: 1 }]) };
+        if (selectCallCount === 3) return { from: vi.fn().mockReturnThis(), where: vi.fn().mockReturnThis(), limit: vi.fn().mockResolvedValue([{ id: 1, bookId: 10, type: 'manual', status: 'processing', metadata: '{"title":"Test Book"}', phaseHistory: null }]) };
+        return { from: vi.fn().mockReturnThis(), where: vi.fn().mockReturnThis(), orderBy: vi.fn().mockReturnThis(), limit: vi.fn().mockResolvedValue([]) };
+      });
+
+      mockDb.db.update = vi.fn().mockImplementation(() => ({
+        set: vi.fn().mockReturnValue({ where: vi.fn().mockResolvedValue({ rowsAffected: 1 }) }),
+      }));
+
+      await workerWithBroadcaster.start();
+      await new Promise(r => setTimeout(r, 100));
+      await workerWithBroadcaster.stop();
+
+      // Should have emitted import_phase_change events
+      const phaseChangeCalls = emitSpy.mock.calls.filter(
+        (call: unknown[]) => call[0] === 'import_phase_change'
+      );
+      expect(phaseChangeCalls.length).toBeGreaterThanOrEqual(1);
+      // First phase change: queued → analyzing
+      expect(phaseChangeCalls[0][1]).toMatchObject({
+        job_id: 1,
+        book_id: 10,
+        from: 'queued',
+        to: 'analyzing',
+      });
+    });
+
+    it('worker emits import_complete on job success with job_id and elapsed_ms', async () => {
+      const emitSpy = vi.fn();
+      const mockBroadcaster = { emit: emitSpy };
+      const workerWithBroadcaster = new ImportQueueWorker(inject<Db>(mockDb.db), log, mockBroadcaster as never);
+
+      const adapter: ImportAdapter = {
+        type: 'manual',
+        async process() { /* success */ },
+      };
+      registerImportAdapter(adapter);
+
+      let selectCallCount = 0;
+      mockDb.db.select = vi.fn().mockImplementation(() => {
+        selectCallCount++;
+        if (selectCallCount === 1) return { from: vi.fn().mockReturnThis(), where: vi.fn().mockResolvedValue([]) };
+        if (selectCallCount === 2) return { from: vi.fn().mockReturnThis(), where: vi.fn().mockReturnThis(), orderBy: vi.fn().mockReturnThis(), limit: vi.fn().mockResolvedValue([{ id: 5 }]) };
+        if (selectCallCount === 3) return { from: vi.fn().mockReturnThis(), where: vi.fn().mockReturnThis(), limit: vi.fn().mockResolvedValue([{ id: 5, bookId: 50, type: 'manual', status: 'processing', metadata: '{"title":"My Book"}', phaseHistory: null }]) };
+        return { from: vi.fn().mockReturnThis(), where: vi.fn().mockReturnThis(), orderBy: vi.fn().mockReturnThis(), limit: vi.fn().mockResolvedValue([]) };
+      });
+
+      mockDb.db.update = vi.fn().mockImplementation(() => ({
+        set: vi.fn().mockReturnValue({ where: vi.fn().mockResolvedValue({ rowsAffected: 1 }) }),
+      }));
+
+      await workerWithBroadcaster.start();
+      await new Promise(r => setTimeout(r, 100));
+      await workerWithBroadcaster.stop();
+
+      const completeCalls = emitSpy.mock.calls.filter(
+        (call: unknown[]) => call[0] === 'import_complete'
+      );
+      expect(completeCalls).toHaveLength(1);
+      expect(completeCalls[0][1]).toMatchObject({
+        job_id: 5,
+        book_id: 50,
+        book_title: 'My Book',
+      });
+      expect(completeCalls[0][1].elapsed_ms).toBeTypeOf('number');
+    });
+
+    it('worker emits import_failed on job failure with phase and error_message', async () => {
+      const emitSpy = vi.fn();
+      const mockBroadcaster = { emit: emitSpy };
+      const workerWithBroadcaster = new ImportQueueWorker(inject<Db>(mockDb.db), log, mockBroadcaster as never);
+
+      const adapter: ImportAdapter = {
+        type: 'manual',
+        async process() { throw new Error('Copy verification failed'); },
+      };
+      registerImportAdapter(adapter);
+
+      let selectCallCount = 0;
+      mockDb.db.select = vi.fn().mockImplementation(() => {
+        selectCallCount++;
+        if (selectCallCount === 1) return { from: vi.fn().mockReturnThis(), where: vi.fn().mockResolvedValue([]) };
+        if (selectCallCount === 2) return { from: vi.fn().mockReturnThis(), where: vi.fn().mockReturnThis(), orderBy: vi.fn().mockReturnThis(), limit: vi.fn().mockResolvedValue([{ id: 7 }]) };
+        if (selectCallCount === 3) return { from: vi.fn().mockReturnThis(), where: vi.fn().mockReturnThis(), limit: vi.fn().mockResolvedValue([{ id: 7, bookId: 70, type: 'manual', status: 'processing', phase: 'copying', metadata: '{"title":"Failed Book"}', phaseHistory: null }]) };
+        return { from: vi.fn().mockReturnThis(), where: vi.fn().mockReturnThis(), orderBy: vi.fn().mockReturnThis(), limit: vi.fn().mockResolvedValue([]) };
+      });
+
+      mockDb.db.update = vi.fn().mockImplementation(() => ({
+        set: vi.fn().mockReturnValue({ where: vi.fn().mockResolvedValue({ rowsAffected: 1 }) }),
+      }));
+
+      await workerWithBroadcaster.start();
+      await new Promise(r => setTimeout(r, 100));
+      await workerWithBroadcaster.stop();
+
+      const failedCalls = emitSpy.mock.calls.filter(
+        (call: unknown[]) => call[0] === 'import_failed'
+      );
+      expect(failedCalls).toHaveLength(1);
+      expect(failedCalls[0][1]).toMatchObject({
+        job_id: 7,
+        book_id: 70,
+        book_title: 'Failed Book',
+        error_message: 'Copy verification failed',
+      });
+    });
+
+    it('failed job persists closed phaseHistory with completedAt', async () => {
+      const mockBroadcaster = { emit: vi.fn() };
+      const workerWithBroadcaster = new ImportQueueWorker(inject<Db>(mockDb.db), log, mockBroadcaster as never);
+
+      const adapter: ImportAdapter = {
+        type: 'manual',
+        async process(_job: ImportJob, ctx) {
+          await ctx.setPhase('copying');
+          throw new Error('disk full');
+        },
+      };
+      registerImportAdapter(adapter);
+
+      let selectCallCount = 0;
+      mockDb.db.select = vi.fn().mockImplementation(() => {
+        selectCallCount++;
+        if (selectCallCount === 1) return { from: vi.fn().mockReturnThis(), where: vi.fn().mockResolvedValue([]) };
+        if (selectCallCount === 2) return { from: vi.fn().mockReturnThis(), where: vi.fn().mockReturnThis(), orderBy: vi.fn().mockReturnThis(), limit: vi.fn().mockResolvedValue([{ id: 3 }]) };
+        if (selectCallCount === 3) return { from: vi.fn().mockReturnThis(), where: vi.fn().mockReturnThis(), limit: vi.fn().mockResolvedValue([{ id: 3, bookId: 30, type: 'manual', status: 'processing', metadata: '{"title":"Disk Full"}', phaseHistory: null }]) };
+        return { from: vi.fn().mockReturnThis(), where: vi.fn().mockReturnThis(), orderBy: vi.fn().mockReturnThis(), limit: vi.fn().mockResolvedValue([]) };
+      });
+
+      const updateSets: Record<string, unknown>[] = [];
+      mockDb.db.update = vi.fn().mockImplementation(() => ({
+        set: vi.fn().mockImplementation((payload: Record<string, unknown>) => {
+          updateSets.push(payload);
+          return { where: vi.fn().mockResolvedValue({ rowsAffected: 1 }) };
+        }),
+      }));
+
+      await workerWithBroadcaster.start();
+      await new Promise(r => setTimeout(r, 100));
+      await workerWithBroadcaster.stop();
+
+      // The failed-row update should include phaseHistory with closed entry
+      const failedUpdate = updateSets.find(s => s.status === 'failed' && s.phaseHistory);
+      expect(failedUpdate).toBeDefined();
+      const history = JSON.parse(failedUpdate!.phaseHistory as string);
+      expect(history.length).toBeGreaterThanOrEqual(1);
+      const lastEntry = history[history.length - 1];
+      expect(lastEntry.phase).toBe('copying');
+      expect(lastEntry.completedAt).toBeTypeOf('number');
+    });
+
+    it('EventBroadcasterService is injected via constructor', () => {
+      const mockBroadcaster = { emit: vi.fn() };
+      // Should not throw with 3rd arg
+      const w = new ImportQueueWorker(inject<Db>(mockDb.db), log, mockBroadcaster as never);
+      expect(w).toBeDefined();
+    });
+  });
+
   describe('nudge', () => {
     it('nudge wakes idle worker', async () => {
       let selectCallCount = 0;
