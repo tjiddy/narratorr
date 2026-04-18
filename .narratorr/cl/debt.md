@@ -18,15 +18,11 @@
 
 - **`useManualImport.ts` / `useLibraryImport.ts` confidence upgrade duplication**: `upgradeConfidence(confidence, hasMetadata)` logic (none→medium, medium→high) is duplicated verbatim in both hooks' `handleEdit` callbacks. Extract to a shared util (~10 lines of actual logic). Risk of drift if confidence rules change. (discovered in #335, re-classified 2026-04-18 — trivial extraction shouldn't sit in accepted.)
 
-- **`btnSecondary` Tailwind class string duplicated**: Same class string defined in `src/client/pages/settings/ImportListCard.tsx` and `src/client/pages/settings/ImportListProviderSettings.tsx`. Extract to `src/client/components/settings/formStyles.ts` alongside existing `compactInputClass`. Pure copy-paste fix. (discovered in #607, re-classified 2026-04-18.)
-
 - **`src/server/__tests__/e2e-helpers.ts` leaks `.db` files on abnormal exit**: `cleanup()` uses per-file `unlink()` wrapped in try/catch; a crash or Ctrl+C leaves `narratorr-e2e-*.db` + their `-wal`/`-shm` sidecars in `os.tmpdir()`. Observed accumulation dating back to April 9. Playwright harness already solved this by creating a containing *directory* per run and `rm -rf`ing it. The vitest helper should adopt the same pattern (or register a process-exit handler). (discovered in #612, re-classified 2026-04-18 — this is a queued cleanup, not "accepted forever".)
 
 ### Existing actionable
 
 - **Core layer has 11 `instanceof Error` ternaries**: `src/core/` adapters still use raw `error instanceof Error ? error.message : fallback` instead of `getErrorMessage()`. Down from 30 after #621's `serializeError` migration. Out of scope for #513 and #621 because `src/core` throws/returns rather than logs — services catch and log. Warrants a follow-up issue for consistency. (discovered in #513; count updated 2026-04-18 per fs grep)
-
-- **`src/core/utils/download-url.ts:18` has private `DOWNLOAD_TIMEOUT_MS = 30_000`**: Same 30s timeout as the shared `HTTP_DOWNLOAD_TIMEOUT_MS` in `src/core/utils/constants.ts`. Intentionally left out of scope in #622. Could be migrated in a future cleanup pass. (discovered in #622)
 
 - **`processing_queued` download status may be vestigial**: After #636 and #637, `processing_queued` is still set by `enqueueAutoImport()` as an intermediate download.status between completion and import start. The window between queue insertion and worker pickup is very short (serial queue, immediate nudge). The UI can now query `import_jobs` directly via `GET /api/import-jobs` (#637), so `processing_queued` may be removable from the download.status enum. Callers verified via grep: `src/server/routes/activity.ts:147` (comment), `src/server/utils/enqueue-auto-import.ts` (writer), `src/server/services/download.service.ts` (duplicate-check logic), plus several tests. Removal would require auditing the duplicate-check paths in download.service. (discovered in #636; re-evaluated 2026-04-18 after #637 merged)
 
