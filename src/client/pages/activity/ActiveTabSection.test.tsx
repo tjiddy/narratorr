@@ -135,10 +135,43 @@ describe('ActiveTabSection', () => {
   // ===========================================================================
 
   describe('#637 import jobs integration', () => {
-    it.todo('renders ImportActivityCard for processing import jobs');
-    it.todo('renders import cards between search cards and download cards (type-grouped order)');
-    it.todo('renders queued subsection with ImportQueuedRow components');
-    it.todo('shows "Queued · N waiting" section header');
-    it.todo('empty state unchanged when no activity of any type');
+    it('renders ImportActivityCard for processing import jobs', () => {
+      const importJobs = [{
+        id: 1, bookId: 42, type: 'manual' as const, status: 'processing' as const, phase: 'copying',
+        phaseHistory: [{ phase: 'analyzing', startedAt: 1000, completedAt: 2000 }, { phase: 'copying', startedAt: 2000 }],
+        createdAt: '2025-01-01T00:00:00Z', updatedAt: '2025-01-01T00:00:00Z',
+        startedAt: '2025-01-01T00:00:00Z', completedAt: null,
+        book: { title: 'Import Book', coverUrl: null, primaryAuthorName: 'Author' },
+      }];
+      renderWithProviders(<ActiveTabSection {...defaultProps({ importJobs })} />);
+      expect(screen.getByText('Import Book')).toBeInTheDocument();
+    });
+
+    it('renders queued subsection with ImportQueuedRow components', () => {
+      const importJobs = [{
+        id: 2, bookId: 43, type: 'manual' as const, status: 'pending' as const, phase: 'queued',
+        phaseHistory: [],
+        createdAt: '2025-01-01T00:00:00Z', updatedAt: '2025-01-01T00:00:00Z',
+        startedAt: null, completedAt: null,
+        book: { title: 'Queued Book', coverUrl: null, primaryAuthorName: null },
+      }];
+      renderWithProviders(<ActiveTabSection {...defaultProps({ importJobs })} />);
+      expect(screen.getByText('Queued Book')).toBeInTheDocument();
+      expect(screen.getByText('Queued')).toBeInTheDocument();
+    });
+
+    it('shows "Queued · N waiting" section header', () => {
+      const importJobs = [
+        { id: 1, bookId: 41, type: 'manual' as const, status: 'pending' as const, phase: 'queued', phaseHistory: [], createdAt: '2025-01-01T00:00:00Z', updatedAt: '2025-01-01T00:00:00Z', startedAt: null, completedAt: null, book: { title: 'Q1', coverUrl: null, primaryAuthorName: null } },
+        { id: 2, bookId: 42, type: 'manual' as const, status: 'pending' as const, phase: 'queued', phaseHistory: [], createdAt: '2025-01-01T00:00:00Z', updatedAt: '2025-01-01T00:00:00Z', startedAt: null, completedAt: null, book: { title: 'Q2', coverUrl: null, primaryAuthorName: null } },
+      ];
+      renderWithProviders(<ActiveTabSection {...defaultProps({ importJobs })} />);
+      expect(screen.getByText(/2 waiting/)).toBeInTheDocument();
+    });
+
+    it('empty state unchanged when no activity of any type', () => {
+      renderWithProviders(<ActiveTabSection {...defaultProps()} />);
+      expect(screen.getByText('Nothing running right now')).toBeInTheDocument();
+    });
   });
 });
