@@ -21,7 +21,10 @@ export function BookContextMenu({
   }, [focusIndex]);
 
   const handleKeyDown = useCallback((e: React.KeyboardEvent) => {
-    const actions = [onSearchReleases, onRemove];
+    const actions: Array<() => void> = [onSearchReleases];
+    if (onRetryImport) actions.push(onRetryImport);
+    actions.push(onRemove);
+
     switch (e.key) {
       case 'Escape':
         e.preventDefault();
@@ -41,7 +44,7 @@ export function BookContextMenu({
         actions[focusIndex]();
         break;
     }
-  }, [onClose, onSearchReleases, onRemove, focusIndex]);
+  }, [onClose, onSearchReleases, onRemove, onRetryImport, focusIndex]);
 
   return (
     <div
