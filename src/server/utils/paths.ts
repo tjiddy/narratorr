@@ -61,6 +61,7 @@ export async function renameFilesWithTemplate(
   authorName: string | null,
   log: FastifyBaseLogger,
   options?: NamingOptions,
+  onProgress?: (current: number, total: number) => void,
 ): Promise<number> {
   const entries = await readdir(targetPath, { withFileTypes: true });
   const audioFiles = entries
@@ -117,6 +118,7 @@ export async function renameFilesWithTemplate(
     for (const { from, to } of renames) {
       await rename(join(targetPath, from), join(targetPath, to));
       completed.push({ from, to });
+      onProgress?.(completed.length, renames.length);
       log.debug({ from, to }, 'Renamed file using template');
     }
   } catch (error: unknown) {
