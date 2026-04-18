@@ -156,7 +156,6 @@ describe('BookContextMenu', () => {
       const onRemove = vi.fn();
       renderMenu({ onRetryImport, onRemove });
 
-      const menu = screen.getByRole('menu');
       // ArrowDown from Search Releases (index 0) → Retry Import (index 1)
       await user.keyboard('{ArrowDown}');
       // Enter should invoke Retry Import, NOT Remove
