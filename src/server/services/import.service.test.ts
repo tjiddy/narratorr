@@ -42,9 +42,9 @@ vi.mock('../../core/utils/audio-scanner.js', () => ({
   scanAudioDirectory: vi.fn().mockResolvedValue(null),
 }));
 
-// Mock audio processor
+// Mock audio processor (retained for regression assertion — processAudioFiles must NOT be called)
 vi.mock('../../core/utils/audio-processor.js', () => ({
-  processAudioFiles: vi.fn().mockResolvedValue({ success: true, outputFiles: [] }),
+  processAudioFiles: vi.fn(),
 }));
 
 // Spy on import-helpers — passthrough to real implementation so existing unit tests still work
@@ -53,15 +53,6 @@ vi.mock('../utils/import-helpers.js', async (importOriginal) => {
   return {
     ...actual,
     buildTargetPath: vi.fn().mockImplementation(actual.buildTargetPath as (...args: unknown[]) => unknown),
-  };
-});
-
-// Spy on import-steps — passthrough to real implementation
-vi.mock('../utils/import-steps.js', async (importOriginal) => {
-  const actual = await importOriginal() as Record<string, unknown>;
-  return {
-    ...actual,
-    runAudioProcessing: vi.fn().mockImplementation(actual.runAudioProcessing as (...args: unknown[]) => unknown),
   };
 });
 
@@ -78,7 +69,6 @@ import { mkdir, cp, stat, readdir, writeFile, rename, rm, statfs } from 'node:fs
 import { scanAudioDirectory } from '../../core/utils/audio-scanner.js';
 import { processAudioFiles } from '../../core/utils/audio-processor.js';
 import { enrichBookFromAudio } from './enrichment-utils.js';
-import { runAudioProcessing } from '../utils/import-steps.js';
 import { renameFilesWithTemplate } from '../utils/paths.js';
 
 import { createMockDbBook, createMockDbAuthor } from '../__tests__/factories.js';
@@ -386,12 +376,12 @@ describe('ImportService', () => {
       );
     });
 
-    it('forwards non-default naming options to runAudioProcessing and renameFilesWithTemplate', async () => {
+    it('forwards non-default naming options to renameFilesWithTemplate', async () => {
       const settingsGet = settingsService.get as ReturnType<typeof vi.fn>;
       settingsGet.mockImplementation((key: string) => {
         if (key === 'library') return Promise.resolve({ path: '/audiobooks', folderFormat: '{author}/{title}', fileFormat: '{author} - {title}', namingSeparator: 'period', namingCase: 'upper' });
         if (key === 'import') return Promise.resolve({ deleteAfterImport: false, minSeedTime: 0, minSeedRatio: 0, minFreeSpaceGB: 0 });
-        if (key === 'processing') return Promise.resolve({ enabled: true, ffmpegPath: '/usr/bin/ffmpeg', outputFormat: 'm4b', keepOriginalBitrate: true, bitrate: 128, mergeBehavior: 'always' });
+        if (key === 'processing') return Promise.resolve({ ffmpegPath: '/usr/bin/ffmpeg' });
         return Promise.resolve({});
       });
 
@@ -400,9 +390,6 @@ describe('ImportService', () => {
 
       await service.importDownload(1);
 
-      expect(runAudioProcessing).toHaveBeenCalledWith(
-        expect.objectContaining({ namingOptions: { separator: 'period', case: 'upper' } }),
-      );
       expect(renameFilesWithTemplate).toHaveBeenCalledWith(
         expect.any(String),
         '{author} - {title}',
@@ -410,48 +397,6 @@ describe('ImportService', () => {
         expect.any(String),
         expect.anything(),
         expect.objectContaining({ separator: 'period', case: 'upper' }),
-      );
-    });
-
-    it('forwards book.audioBitrate as sourceBitrateBps to runAudioProcessing', async () => {
-      const bookWithBitrate = createMockDbBook({ audioBitrate: 128000, status: 'downloading' as const });
-      mockBookService.getById.mockResolvedValue(withAuthor(bookWithBitrate));
-
-      const settingsGet = settingsService.get as ReturnType<typeof vi.fn>;
-      settingsGet.mockImplementation((key: string) => {
-        if (key === 'library') return Promise.resolve({ path: '/audiobooks', folderFormat: '{author}/{title}', fileFormat: '{author} - {title}' });
-        if (key === 'import') return Promise.resolve({ deleteAfterImport: false, minSeedTime: 0, minSeedRatio: 0, minFreeSpaceGB: 0 });
-        if (key === 'processing') return Promise.resolve({ enabled: true, ffmpegPath: '/usr/bin/ffmpeg', outputFormat: 'm4b', keepOriginalBitrate: false, bitrate: 128, mergeBehavior: 'always' });
-        return Promise.resolve({});
-      });
-
-      db.select.mockReturnValueOnce(mockDbChain([mockDownload]));
-      db.update.mockReturnValue(mockDbChain());
-
-      await service.importDownload(1);
-
-      expect(runAudioProcessing).toHaveBeenCalledWith(
-        expect.objectContaining({ sourceBitrateBps: 128000 }),
-      );
-    });
-
-    it('passes sourceBitrateBps as null when book.audioBitrate is null', async () => {
-      // mockBook has audioBitrate: null by default
-      const settingsGet = settingsService.get as ReturnType<typeof vi.fn>;
-      settingsGet.mockImplementation((key: string) => {
-        if (key === 'library') return Promise.resolve({ path: '/audiobooks', folderFormat: '{author}/{title}', fileFormat: '{author} - {title}' });
-        if (key === 'import') return Promise.resolve({ deleteAfterImport: false, minSeedTime: 0, minSeedRatio: 0, minFreeSpaceGB: 0 });
-        if (key === 'processing') return Promise.resolve({ enabled: true, ffmpegPath: '/usr/bin/ffmpeg', outputFormat: 'm4b', keepOriginalBitrate: false, bitrate: 128, mergeBehavior: 'always' });
-        return Promise.resolve({});
-      });
-
-      db.select.mockReturnValueOnce(mockDbChain([mockDownload]));
-      db.update.mockReturnValue(mockDbChain());
-
-      await service.importDownload(1);
-
-      expect(runAudioProcessing).toHaveBeenCalledWith(
-        expect.objectContaining({ sourceBitrateBps: null }),
       );
     });
 
@@ -895,40 +840,6 @@ describe('ImportService', () => {
       expect(allSetArgs).toContainEqual(expect.objectContaining({ status: 'imported' }));
     });
 
-    it('reverts book to imported on audio processing failure when book has path', async () => {
-      const importedBook = createMockDbBook({
-        status: 'downloading' as const,
-        path: '/audiobooks/existing',
-      });
-      mockBookService.getById.mockResolvedValueOnce(withAuthor(importedBook));
-
-      const settingsGet = settingsService.get as ReturnType<typeof vi.fn>;
-      settingsGet.mockImplementation((key: string) => {
-        if (key === 'library') return Promise.resolve({ path: '/audiobooks', folderFormat: '{author}/{title}', fileFormat: '{author} - {title}' });
-        if (key === 'import') return Promise.resolve({ deleteAfterImport: false, minSeedTime: 0, minSeedRatio: 0 });
-        if (key === 'processing') return Promise.resolve({
-          enabled: true, ffmpegPath: '/usr/bin/ffmpeg', outputFormat: 'm4b',
-          keepOriginalBitrate: false, bitrate: 128, mergeBehavior: 'multi-file-only',
-        });
-        return Promise.resolve({});
-      });
-
-      db.select.mockReturnValueOnce(mockDbChain([mockDownload]));
-      db.update.mockReturnValue(mockDbChain());
-
-      const mockProcess = vi.mocked(processAudioFiles);
-      mockProcess.mockResolvedValue({ success: false, error: 'ffmpeg crashed' });
-
-      await expect(service.importDownload(1)).rejects.toThrow('Audio processing failed');
-
-      const updateCalls = db.update.mock.results;
-      const setCalls = updateCalls
-        .map((r: { value: unknown }) => ((r.value as { set: ReturnType<typeof vi.fn> }).set))
-        .filter(Boolean);
-      const allSetArgs = setCalls.flatMap((s: ReturnType<typeof vi.fn>) => s.mock.calls.map((c: unknown[]) => c[0] as Record<string, unknown>));
-      // Should have both the 'failed' status from processing error AND 'imported' from recovery
-      expect(allSetArgs).toContainEqual(expect.objectContaining({ status: 'imported' }));
-    });
   });
 
   describe('target path cleanup on import failure', () => {
@@ -1034,16 +945,16 @@ describe('ImportService', () => {
     });
   });
 
-  describe('audio processing integration', () => {
+  describe('audio processing removal regression (#649)', () => {
     beforeEach(setupDefaults);
 
-    function setupImportWithProcessing(processingEnabled: boolean) {
+    it('importDownload does not invoke processAudioFiles even when processing.enabled=true', async () => {
       const settingsGet = settingsService.get as ReturnType<typeof vi.fn>;
       settingsGet.mockImplementation((key: string) => {
-        if (key === 'library') return Promise.resolve({ path: '/audiobooks', folderFormat: '{author}/{title}', fileFormat: '{author} - {title}' });
+        if (key === 'library') return Promise.resolve({ path: '/audiobooks', folderFormat: '{author}/{title}', fileFormat: '' });
         if (key === 'import') return Promise.resolve({ deleteAfterImport: false, minSeedTime: 0, minSeedRatio: 0 });
         if (key === 'processing') return Promise.resolve({
-          enabled: processingEnabled,
+          enabled: true,
           ffmpegPath: '/usr/bin/ffmpeg',
           outputFormat: 'm4b',
           keepOriginalBitrate: false,
@@ -1055,57 +966,29 @@ describe('ImportService', () => {
 
       db.select.mockReturnValueOnce(mockDbChain([mockDownload]));
       db.update.mockReturnValue(mockDbChain());
-    }
 
-    it('calls audio processor when processing enabled and multi-file import', async () => {
-      setupImportWithProcessing(true);
-      const mockProcess = vi.mocked(processAudioFiles);
-      mockProcess.mockResolvedValue({ success: true, outputFiles: ['/audiobooks/out.m4b'] });
+      const result = await service.importDownload(1);
 
-      await service.importDownload(1);
-
-      expect(mockProcess).toHaveBeenCalledWith(
-        expect.stringMatching(/audiobooks/),
-        expect.objectContaining({ ffmpegPath: '/usr/bin/ffmpeg', outputFormat: 'm4b' }),
-        expect.objectContaining({ author: 'Brandon Sanderson', title: 'The Way of Kings' }),
-      );
+      expect(result.downloadId).toBe(1);
+      // processAudioFiles must NOT be called from the import path (#649)
+      expect(processAudioFiles).not.toHaveBeenCalled();
+      // enrichment still runs
+      expect(scanAudioDirectory).toHaveBeenCalled();
     });
+  });
 
-    it('skips audio processor when processing disabled', async () => {
-      setupImportWithProcessing(false);
-      const mockProcess = vi.mocked(processAudioFiles);
+  describe('ffprobe path derivation', () => {
+    beforeEach(setupDefaults);
 
-      await service.importDownload(1);
-
-      expect(mockProcess).not.toHaveBeenCalled();
-    });
-
-    it('sets book status to failed on processor error', async () => {
-      setupImportWithProcessing(true);
-      const mockProcess = vi.mocked(processAudioFiles);
-      mockProcess.mockResolvedValue({ success: false, error: 'ffmpeg crashed' });
-
-      await expect(service.importDownload(1)).rejects.toThrow('Audio processing failed: ffmpeg crashed');
-
-      // Verify book was set to 'failed' status
-      const updateCalls = db.update.mock.results;
-      const setCalls = updateCalls
-        .map((r: { value: unknown }) => ((r.value as { set: ReturnType<typeof vi.fn> }).set))
-        .filter(Boolean);
-      const allSetArgs = setCalls.flatMap((s: ReturnType<typeof vi.fn>) => s.mock.calls.map((c: unknown[]) => c[0] as Record<string, unknown>));
-      expect(allSetArgs).toContainEqual(expect.objectContaining({ status: 'failed' }));
-    });
-
-    it('passes undefined bitrate when keepOriginalBitrate is true', async () => {
+    it('passes derived ffprobePath to enrichBookFromAudio when ffmpegPath is configured', async () => {
       const settingsGet = settingsService.get as ReturnType<typeof vi.fn>;
       settingsGet.mockImplementation((key: string) => {
         if (key === 'library') return Promise.resolve({ path: '/audiobooks', folderFormat: '{author}/{title}', fileFormat: '{author} - {title}' });
         if (key === 'import') return Promise.resolve({ deleteAfterImport: false, minSeedTime: 0, minSeedRatio: 0 });
         if (key === 'processing') return Promise.resolve({
-          enabled: true,
           ffmpegPath: '/usr/bin/ffmpeg',
           outputFormat: 'm4b',
-          keepOriginalBitrate: true,
+          keepOriginalBitrate: false,
           bitrate: 128,
           mergeBehavior: 'multi-file-only',
         });
@@ -1114,33 +997,6 @@ describe('ImportService', () => {
 
       db.select.mockReturnValueOnce(mockDbChain([mockDownload]));
       db.update.mockReturnValue(mockDbChain());
-
-      const mockProcess = vi.mocked(processAudioFiles);
-      mockProcess.mockResolvedValue({ success: true, outputFiles: ['/audiobooks/out.m4b'] });
-
-      await service.importDownload(1);
-
-      expect(mockProcess).toHaveBeenCalledWith(
-        expect.any(String),
-        expect.objectContaining({ bitrate: undefined }),
-        expect.any(Object),
-      );
-    });
-
-    it('proceeds to enrichment after successful processing', async () => {
-      setupImportWithProcessing(true);
-      const mockProcess = vi.mocked(processAudioFiles);
-      mockProcess.mockResolvedValue({ success: true, outputFiles: ['/audiobooks/out.m4b'] });
-
-      const result = await service.importDownload(1);
-
-      expect(result.downloadId).toBe(1);
-      // scanAudioDirectory is called during enrichment
-      expect(scanAudioDirectory).toHaveBeenCalled();
-    });
-
-    it('passes derived ffprobePath to enrichBookFromAudio when ffmpegPath is configured', async () => {
-      setupImportWithProcessing(false);
 
       await service.importDownload(1);
 
@@ -1411,11 +1267,10 @@ describe('ImportService', () => {
   describe('disk space check', () => {
     beforeEach(setupDefaults);
 
-    function setupDiskCheckMocks(overrides?: { minFreeSpaceGB?: number; processingEnabled?: boolean }) {
+    function setupDiskCheckMocks(overrides?: { minFreeSpaceGB?: number }) {
       return createMockSettingsService({
         import: { minSeedTime: 0, minFreeSpaceGB: overrides?.minFreeSpaceGB ?? 5 },
         processing: {
-          enabled: overrides?.processingEnabled ?? false,
           ffmpegPath: '/usr/bin/ffmpeg',
         },
       });
@@ -1454,7 +1309,7 @@ describe('ImportService', () => {
       const svc = new ImportService(inject<Db>(db), clientService, customSettings, inject<FastifyBaseLogger>(log), undefined, mockBookService as never);
       setupImportMocks();
 
-      // Source size is 500_000_000 (from stat mock), processing disabled so multiplier=1
+      // Source size is 500_000_000 (from stat mock), multiplier=1
       // Required = 5 * 1024^3 + 500_000_000 = 5_368_709_120 + 500_000_000 = 5_868_709_120
       const exactlyEnough = BigInt(5) * BigInt(1024 ** 3) + BigInt(500_000_000);
       vi.mocked(statfs).mockResolvedValueOnce({ bavail: exactlyEnough, bsize: BigInt(1) } as never);
@@ -1463,27 +1318,13 @@ describe('ImportService', () => {
       expect(result.downloadId).toBe(1);
     });
 
-    it('estimated output uses sourceSize * 1.5 when processing enabled', async () => {
+    it('estimated output uses sourceSize * 1 (no processing multiplier)', async () => {
       // Use minFreeSpaceGB=1 so disk check actually runs (0 skips it)
-      const customSettings = setupDiskCheckMocks({ minFreeSpaceGB: 1, processingEnabled: true });
+      const customSettings = setupDiskCheckMocks({ minFreeSpaceGB: 1 });
       const svc = new ImportService(inject<Db>(db), clientService, customSettings, inject<FastifyBaseLogger>(log), undefined, mockBookService as never);
       setupImportMocks();
 
-      // Source = 500MB, with processing: estimated = 750MB, threshold = 1GB
-      // Required = 1GB + 750MB = ~1.75GB
-      // Free = 1.5GB → should fail because 1.5GB < 1.75GB
-      vi.mocked(statfs).mockResolvedValueOnce({ bavail: BigInt(1_500_000_000), bsize: BigInt(1) } as never);
-
-      await expect(svc.importDownload(1)).rejects.toThrow('insufficient disk space');
-    });
-
-    it('estimated output uses sourceSize * 1 when processing disabled', async () => {
-      // Use minFreeSpaceGB=1 so disk check actually runs (0 skips it)
-      const customSettings = setupDiskCheckMocks({ minFreeSpaceGB: 1, processingEnabled: false });
-      const svc = new ImportService(inject<Db>(db), clientService, customSettings, inject<FastifyBaseLogger>(log), undefined, mockBookService as never);
-      setupImportMocks();
-
-      // Source = 500MB, no processing: estimated = 500MB, threshold = 1GB
+      // Source = 500MB, estimated = 500MB, threshold = 1GB
       // Required = 1GB + 500MB = ~1.5GB
       // Free = 2GB → should succeed because 2GB >= 1.5GB
       vi.mocked(statfs).mockResolvedValueOnce({ bavail: BigInt(2_000_000_000), bsize: BigInt(1) } as never);

@@ -6,6 +6,9 @@ All notable changes to Narratorr are documented in this file.
 
 Initial public release. Full audiobook acquisition and organization pipeline.
 
+### Breaking Changes
+- **Flatten-on-download removed.** Auto-import no longer runs audio processing (ffmpeg merge/convert) on downloaded books. Imports now complete in seconds instead of minutes. Users who relied on `processing.enabled` for automatic transcoding should configure `postProcessingScript` in Settings → Post Processing → Custom Script as the replacement path.
+
 ### Core Pipeline
 - Search indexers (Torznab, Newznab, MyAnonamouse) for audiobooks
 - Grab releases to download clients (qBittorrent, Transmission, Deluge, SABnzbd, NZBGet, Blackhole)

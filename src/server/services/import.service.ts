@@ -13,7 +13,7 @@ import { resolveSavePath } from '../utils/download-path.js';
 import { buildTargetPath } from '../utils/import-helpers.js';
 import { toNamingOptions } from '../../core/utils/naming.js';
 import {
-  validateSource, checkDiskSpace, copyToLibrary, runAudioProcessing,
+  validateSource, checkDiskSpace, copyToLibrary,
   verifyCopy, cleanupOldBookPath, handleImportFailure,
 } from '../utils/import-steps.js';
 import type { DownloadRow } from './types.js';
@@ -107,22 +107,20 @@ export class ImportService {
         this.settingsService.get('import'),
         this.settingsService.get('processing'),
       ]);
-      const processingEnabled = !!processingSettings?.enabled;
       const namingOptions = toNamingOptions(librarySettings);
       targetPath = buildTargetPath(librarySettings.path, librarySettings.folderFormat, book, authorName, namingOptions);
       this.log.debug({ downloadId, bookTitle: book.title, targetPath }, 'Built target path');
 
       const { sourcePath, fileCount, sourceStats } = await validateSource(savePath, this.remotePathMappingService, download.downloadClientId);
       this.log.debug({ downloadId, bookTitle: book.title, fileCount, sourceSize: sourceStats.size }, 'Validated source');
-      const diskSpace = await checkDiskSpace({ sourcePath, sourceStats, libraryPath: librarySettings.path, minFreeSpaceGB: importSettings.minFreeSpaceGB, processingEnabled });
+      const diskSpace = await checkDiskSpace({ sourcePath, sourceStats, libraryPath: librarySettings.path, minFreeSpaceGB: importSettings.minFreeSpaceGB });
       this.log.debug({ downloadId, bookTitle: book.title, freeGB: diskSpace.freeGB, requiredGB: diskSpace.requiredGB }, 'Disk space check passed');
       await copyToLibrary({ sourcePath, targetPath, sourceStats, log: this.log });
-      await runAudioProcessing({ processingSettings, librarySettings, targetPath, book: book, authorName: authorName || 'Unknown Author', sourceBitrateBps: book.audioBitrate, namingOptions, db: this.db, log: this.log });
 
       if (librarySettings.fileFormat) {
         await renameFilesWithTemplate(targetPath, librarySettings.fileFormat, book, authorName, this.log, namingOptions);
       }
-      const targetSize = await verifyCopy({ targetPath, sourcePath, processingEnabled });
+      const targetSize = await verifyCopy({ targetPath, sourcePath });
       this.log.debug({ downloadId, bookTitle: book.title, sourceSize: sourceStats.size, targetSize }, 'Copy verified');
       await cleanupOldBookPath({ bookPath: book.path, targetPath, log: this.log });
 

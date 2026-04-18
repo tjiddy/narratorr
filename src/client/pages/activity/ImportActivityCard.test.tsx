@@ -60,19 +60,6 @@ describe('ImportActivityCard', () => {
       expect(screen.getByText(/43%/)).toBeInTheDocument();
     });
 
-    it('renders inline progress for flatten phase', () => {
-      const job = makeJob({
-        phase: 'flattening',
-        phaseHistory: [
-          { phase: 'analyzing', startedAt: 1000, completedAt: 2000 },
-          { phase: 'flattening', startedAt: 2000 },
-        ],
-        _progress: 0.54,
-      });
-      renderWithProviders(<ImportActivityCard job={job} />);
-
-      expect(screen.getByText(/54%.*encoding/)).toBeInTheDocument();
-    });
   });
 
   describe('cover image', () => {

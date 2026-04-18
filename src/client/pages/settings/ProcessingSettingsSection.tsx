@@ -90,7 +90,7 @@ function CustomScriptSection({ register, errors }: Pick<UseFormReturn<Processing
       <div className="mb-4">
         <h3 className="text-sm font-medium">Custom Script</h3>
         <p className="text-sm text-muted-foreground mt-0.5">
-          Run a script after each successful import. The audiobook folder path is passed as the first argument.
+          Run a custom script after each successful import. To run ffmpeg or other transforms on each downloaded book, configure a post-processing script here.
         </p>
       </div>
       <div className="space-y-5">
@@ -181,14 +181,14 @@ export function ProcessingSettingsSection() {
     <SettingsSection
       icon={<ZapIcon className="w-5 h-5 text-primary" />}
       title="Post Processing"
-      description="Audio file merge and conversion after import"
+      description="Audio file merge and conversion for Merge and Bulk operations"
     >
       <form onSubmit={handleSubmit((data) => onSubmit(data))} className="space-y-5">
         <div className="flex items-center justify-between">
           <div>
             <label htmlFor="processingEnabled" className="block text-sm font-medium">Enable Post Processing</label>
             <p className="text-sm text-muted-foreground mt-0.5">
-              Merge and convert audio files after import. Requires ffmpeg.
+              Enable audio merge and conversion for Merge and Bulk operations. Requires ffmpeg.
             </p>
           </div>
           <label className="relative inline-flex items-center cursor-pointer">
