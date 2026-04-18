@@ -465,10 +465,11 @@ describe('LibraryBookCard', () => {
       const onRetryImport = vi.fn();
       renderWithProviders(<LibraryBookCard {...defaultProps({ book, isMenuOpen: true, onRetryImport })} />);
 
-      // Wait for the query to settle, then verify absence
+      // Wait for the query to settle, then verify menu renders without retry option
       await waitFor(() => {
         expect(api.checkRetryImportAvailable).toHaveBeenCalledWith(book.id);
       });
+      expect(screen.getByText('Search Releases')).toBeInTheDocument();
       expect(screen.queryByText('Retry Import')).not.toBeInTheDocument();
     });
 
@@ -481,6 +482,7 @@ describe('LibraryBookCard', () => {
       await waitFor(() => {
         expect(api.checkRetryImportAvailable).toHaveBeenCalledWith(book.id);
       });
+      expect(screen.getByText('Search Releases')).toBeInTheDocument();
       expect(screen.queryByText('Retry Import')).not.toBeInTheDocument();
     });
 
