@@ -1293,3 +1293,16 @@ describe('ActivityPage tab buttons (#488)', () => {
     expect(tabs[1]).toHaveAttribute('aria-selected', 'false');
   });
 });
+
+// ============================================================================
+// #637 — Activity page URL state
+// ============================================================================
+
+describe('#637 Activity page URL state', () => {
+  it.todo('reads tab from URL search params ?tab=history → History tab active');
+  it.todo('defaults to Active tab when no tab param present');
+  it.todo('tab change updates URL search params');
+  it.todo('reads filter from URL search params ?filter=import_failed → filter applied');
+  it.todo('navigation to /activity?tab=history&filter=import_failed opens History with filter');
+  it.todo('no pill highlighted when URL filter does not match a preset pill exactly');
+});

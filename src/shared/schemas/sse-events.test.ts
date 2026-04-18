@@ -367,3 +367,47 @@ describe('#392 search progress — SSE event schemas', () => {
     });
   });
 });
+
+// ============================================================================
+// #637 — Import progress instrumentation SSE event schemas
+// ============================================================================
+
+describe('#637 import progress — SSE event schemas', () => {
+  describe('import_phase_change payload', () => {
+    it.todo('parses valid payload with job_id, book_id, from, to');
+    it.todo('rejects payload missing required job_id');
+    it.todo('rejects payload missing required from/to fields');
+  });
+
+  describe('import_progress payload', () => {
+    it.todo('parses valid payload with job_id, book_id, phase, progress');
+    it.todo('accepts optional byte_counter with current and total');
+    it.todo('rejects payload missing required fields');
+  });
+
+  describe('import_failed payload', () => {
+    it.todo('parses valid payload with job_id, book_id, phase, error_message');
+    it.todo('rejects payload missing error_message');
+  });
+
+  describe('import_complete payload (extended)', () => {
+    it.todo('parses legacy shape without job_id or elapsed_ms (backward compat)');
+    it.todo('parses extended shape with optional job_id and elapsed_ms');
+  });
+
+  describe('sseEventTypeSchema includes import events', () => {
+    it.todo('contains import_phase_change, import_progress, import_failed');
+  });
+
+  describe('cache invalidation matrix for import events', () => {
+    it.todo('import_phase_change invalidates importJobs');
+    it.todo('import_progress patches importJobs');
+    it.todo('import_complete invalidates importJobs, books, and eventHistory');
+    it.todo('import_failed invalidates importJobs, books, and eventHistory');
+  });
+
+  describe('TOAST_EVENT_CONFIG for import events', () => {
+    it.todo('import_failed has error level with book_title titleKey');
+    it.todo('import_phase_change and import_progress have no toast config');
+  });
+});

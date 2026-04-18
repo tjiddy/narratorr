@@ -238,6 +238,27 @@ describe('ImportQueueWorker', () => {
     });
   });
 
+  // ===========================================================================
+  // #637 — Phase history persistence + event wiring
+  // ===========================================================================
+
+  describe('#637 phase history persistence', () => {
+    it.todo('setPhase appends new phaseHistory entry with startedAt');
+    it.todo('setPhase closes previous phaseHistory entry with completedAt');
+    it.todo('job completion closes the current phaseHistory entry');
+    it.todo('job failure closes the current phaseHistory entry');
+    it.todo('skipped phase has no phaseHistory entry');
+  });
+
+  describe('#637 event wiring', () => {
+    it.todo('setPhase emits import_phase_change SSE with from and to fields');
+    it.todo('emitProgress throttles at 250ms — two calls <250ms apart produce one SSE event');
+    it.todo('worker emits import_complete on job success with job_id and elapsed_ms');
+    it.todo('worker emits import_failed on job failure with phase and error_message');
+    it.todo('worker emits import_failed with book_title from job metadata');
+    it.todo('EventBroadcasterService is injected via constructor');
+  });
+
   describe('nudge', () => {
     it('nudge wakes idle worker', async () => {
       let selectCallCount = 0;

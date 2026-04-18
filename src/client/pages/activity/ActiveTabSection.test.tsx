@@ -129,4 +129,16 @@ describe('ActiveTabSection', () => {
       expect(screen.getByText('Cancel & Blacklist')).toBeInTheDocument();
     });
   });
+
+  // ===========================================================================
+  // #637 — Import jobs integration
+  // ===========================================================================
+
+  describe('#637 import jobs integration', () => {
+    it.todo('renders ImportActivityCard for processing import jobs');
+    it.todo('renders import cards between search cards and download cards (type-grouped order)');
+    it.todo('renders queued subsection with ImportQueuedRow components');
+    it.todo('shows "Queued · N waiting" section header');
+    it.todo('empty state unchanged when no activity of any type');
+  });
 });
