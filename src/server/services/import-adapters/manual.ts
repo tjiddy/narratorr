@@ -4,9 +4,13 @@ import { books } from '../../../db/schema.js';
 import type { BookStatus } from '../../../shared/schemas/book.js';
 import type { ImportAdapter, ImportAdapterContext, ImportJob, ManualImportJobPayload } from './types.js';
 import type { ImportPipelineDeps } from '../import-orchestration.helpers.js';
+import type { AppSettings } from '../../../shared/schemas/settings/registry.js';
 import { copyToLibrary } from '../import-orchestration.helpers.js';
 import { getAudioStats } from '../library-scan.helpers.js';
 import { orchestrateBookEnrichment, buildEnrichmentBookInput, buildBackgroundAudnexusConfig, buildImportedEventPayload, extractImportMetadata } from '../enrichment-orchestration.helpers.js';
+import { renameFilesWithTemplate } from '../../utils/paths.js';
+import type { RenameableBook } from '../../utils/paths.js';
+import { toNamingOptions } from '../../../core/utils/naming.js';
 import { safeEmit } from '../../utils/safe-emit.js';
 import { getErrorMessage } from '../../utils/error-message.js';
 
@@ -46,10 +50,13 @@ export class ManualImportAdapter implements ImportAdapter {
 
       let finalPath = payload.path;
       if (mode) {
+        const librarySettings = await this.deps.settingsService.get('library');
         await ctx.setPhase('copying');
         finalPath = await copyToLibrary(payload, bookRow, extracted.meta ?? null, mode, this.deps, (progress, byteCounter) => {
           ctx.emitProgress('copying', progress, byteCounter);
         });
+
+        await this.renameIfConfigured(finalPath, bookId, bookRow, payload, ctx, librarySettings);
       }
 
       const stats = await getAudioStats(finalPath, log);
@@ -86,5 +93,33 @@ export class ManualImportAdapter implements ImportAdapter {
       }).catch((err: unknown) => log.warn({ err }, 'Failed to record manual import failure event'));
       throw error;
     }
+  }
+
+  private async renameIfConfigured(
+    finalPath: string, bookId: number, bookRow: { title: string; seriesName: string | null; seriesPosition: number | null; publishedDate: string | null },
+    payload: ManualImportJobPayload, ctx: ImportAdapterContext,
+    librarySettings: AppSettings['library'],
+  ): Promise<void> {
+    if (!librarySettings.fileFormat?.trim()) return;
+
+    await ctx.setPhase('renaming');
+    const fullBook = await this.deps.bookService.getById(bookId);
+    const renameableBook: RenameableBook = {
+      title: fullBook?.title ?? bookRow.title,
+      seriesName: fullBook?.seriesName ?? bookRow.seriesName,
+      seriesPosition: fullBook?.seriesPosition ?? bookRow.seriesPosition,
+      narrators: fullBook?.narrators?.map(n => ({ name: n.name })) ?? null,
+      publishedDate: fullBook?.publishedDate ?? bookRow.publishedDate,
+    };
+    const namingOptions = toNamingOptions(librarySettings);
+    await renameFilesWithTemplate(
+      finalPath,
+      librarySettings.fileFormat,
+      renameableBook,
+      payload.authorName ?? null,
+      ctx.log,
+      namingOptions,
+      (current, total) => ctx.emitProgress('renaming', total > 0 ? current / total : 0, { current, total }),
+    );
   }
 }

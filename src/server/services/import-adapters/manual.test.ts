@@ -29,6 +29,11 @@ vi.mock('../../utils/safe-emit.js', () => ({
   safeEmit: vi.fn(),
 }));
 
+vi.mock('../../utils/paths.js', async () => ({
+  ...(await vi.importActual('../../utils/paths.js')),
+  renameFilesWithTemplate: vi.fn().mockResolvedValue(3),
+}));
+
 function createMockLogger(): FastifyBaseLogger {
   return {
     info: vi.fn(), debug: vi.fn(), warn: vi.fn(), error: vi.fn(),
@@ -86,24 +91,27 @@ describe('ManualImportAdapter', () => {
   let mockBroadcaster: { emit: ReturnType<typeof vi.fn> };
   let setPhase: ReturnType<typeof vi.fn>;
 
-  beforeEach(() => {
+  beforeEach(async () => {
+    const { renameFilesWithTemplate } = await import('../../utils/paths.js');
+    vi.mocked(renameFilesWithTemplate).mockClear();
+    vi.mocked(renameFilesWithTemplate).mockResolvedValue(3);
     mockDb = createMockDb();
     mockEventHistory = { create: vi.fn().mockResolvedValue({}) };
     mockBroadcaster = { emit: vi.fn() };
     const log = createMockLogger();
-    const mockSettingsService = createMockSettingsService({ library: { path: '/library' } });
+    const mockSettingsService = createMockSettingsService({ library: { path: '/library', fileFormat: '' } });
 
     deps = {
       db: inject<Db>(mockDb),
       log,
-      bookService: inject<BookService>({ findDuplicate: vi.fn(), create: vi.fn() }),
+      bookService: inject<BookService>({ findDuplicate: vi.fn(), create: vi.fn(), getById: vi.fn().mockResolvedValue(null) }),
       settingsService: inject<SettingsService>(mockSettingsService),
       eventHistory: inject<EventHistoryService>(mockEventHistory),
       enrichmentDeps: {
         db: inject<Db>(mockDb),
         log,
         settingsService: inject<SettingsService>(mockSettingsService),
-        bookService: inject<BookService>({ findDuplicate: vi.fn(), create: vi.fn() }),
+        bookService: inject<BookService>({ findDuplicate: vi.fn(), create: vi.fn(), getById: vi.fn().mockResolvedValue(null) }),
         metadataService: { searchBooks: vi.fn(), getBook: vi.fn(), enrichBook: vi.fn() } as never,
       } satisfies EnrichmentDeps,
       broadcaster: mockBroadcaster as unknown as EventBroadcasterService,
@@ -177,6 +185,194 @@ describe('ManualImportAdapter', () => {
 
       // copyToLibrary should have been called (mode='copy')
       expect(vi.mocked(copyToLibrary)).toHaveBeenCalled();
+    });
+
+    describe('renaming phase (#650)', () => {
+      function makeRenameSettingsService(fileFormat: string) {
+        return createMockSettingsService({ library: { path: '/library', fileFormat } });
+      }
+
+      function makeBookServiceWithNarrators(narrators: Array<{ id: number; name: string; asin: string | null }>) {
+        return inject<BookService>({
+          findDuplicate: vi.fn(), create: vi.fn(),
+          getById: vi.fn().mockResolvedValue({
+            id: 1, title: 'Test Book', seriesName: 'Test Series', seriesPosition: 1,
+            narrators, authors: [{ id: 1, name: 'Author', asin: null }],
+            publishedDate: '2024-01-15', path: '/library/Author/Title',
+            status: 'importing', size: 100_000, genres: ['Fantasy'],
+          }),
+        });
+      }
+
+      it('mode=copy + fileFormat set: calls setPhase in order [analyzing, copying, renaming, fetching_metadata]', async () => {
+        const settingsSvc = makeRenameSettingsService('{title}');
+        deps.settingsService = inject<SettingsService>(settingsSvc);
+        deps.bookService = makeBookServiceWithNarrators([]);
+        adapter = new ManualImportAdapter(deps);
+
+        const job = makeJob();
+        await adapter.process(job, ctx);
+
+        const phases = setPhase.mock.calls.map((c: unknown[]) => c[0]);
+        expect(phases).toEqual(['analyzing', 'copying', 'renaming', 'fetching_metadata']);
+      });
+
+      it('mode=copy + fileFormat set: reads settingsService.get(library) exactly once for copy+rename snapshot', async () => {
+        const settingsSvc = makeRenameSettingsService('{title}');
+        deps.settingsService = inject<SettingsService>(settingsSvc);
+        deps.bookService = makeBookServiceWithNarrators([]);
+        adapter = new ManualImportAdapter(deps);
+
+        const job = makeJob();
+        await adapter.process(job, ctx);
+
+        const libraryCalls = (settingsSvc.get as ReturnType<typeof vi.fn>).mock.calls
+          .filter((c: unknown[]) => c[0] === 'library');
+        expect(libraryCalls).toHaveLength(1);
+      });
+
+      it('mode=copy + fileFormat set: calls renameFilesWithTemplate with correct args', async () => {
+        const { renameFilesWithTemplate } = await import('../../utils/paths.js');
+        const settingsSvc = makeRenameSettingsService('{title}');
+        deps.settingsService = inject<SettingsService>(settingsSvc);
+        deps.bookService = makeBookServiceWithNarrators([{ id: 1, name: 'Jane Narrator', asin: null }]);
+        adapter = new ManualImportAdapter(deps);
+
+        const job = makeJob();
+        await adapter.process(job, ctx);
+
+        expect(vi.mocked(renameFilesWithTemplate)).toHaveBeenCalledWith(
+          '/library/Author/Title', // finalPath from copyToLibrary mock
+          '{title}',
+          expect.objectContaining({
+            title: 'Test Book',
+            narrators: [{ name: 'Jane Narrator' }],
+          }),
+          'Author', // payload.authorName
+          expect.anything(), // log
+          expect.anything(), // namingOptions
+          expect.any(Function), // onProgress
+        );
+      });
+
+      it('mode=move + fileFormat set: includes renaming in setPhase sequence', async () => {
+        const settingsSvc = makeRenameSettingsService('{title}');
+        deps.settingsService = inject<SettingsService>(settingsSvc);
+        deps.bookService = makeBookServiceWithNarrators([]);
+        adapter = new ManualImportAdapter(deps);
+
+        const payload: ManualImportJobPayload = { path: '/audiobooks/Author/Title', title: 'Test Book', authorName: 'Author', mode: 'move' };
+        const job = makeJob({ metadata: JSON.stringify(payload) });
+        await adapter.process(job, ctx);
+
+        const phases = setPhase.mock.calls.map((c: unknown[]) => c[0]);
+        expect(phases).toContain('renaming');
+      });
+
+      it('mode=copy + fileFormat empty (defensive): does NOT call setPhase(renaming) or renameFilesWithTemplate', async () => {
+        const { renameFilesWithTemplate } = await import('../../utils/paths.js');
+        // fileFormat already '' in default beforeEach setup
+        const job = makeJob();
+        await adapter.process(job, ctx);
+
+        const phases = setPhase.mock.calls.map((c: unknown[]) => c[0]);
+        expect(phases).not.toContain('renaming');
+        expect(vi.mocked(renameFilesWithTemplate)).not.toHaveBeenCalled();
+      });
+
+      it('mode=copy + fileFormat whitespace only (defensive): does NOT call setPhase(renaming) or renameFilesWithTemplate', async () => {
+        const { renameFilesWithTemplate } = await import('../../utils/paths.js');
+        const settingsSvc = makeRenameSettingsService('   ');
+        deps.settingsService = inject<SettingsService>(settingsSvc);
+        adapter = new ManualImportAdapter(deps);
+
+        const job = makeJob();
+        await adapter.process(job, ctx);
+
+        const phases = setPhase.mock.calls.map((c: unknown[]) => c[0]);
+        expect(phases).not.toContain('renaming');
+        expect(vi.mocked(renameFilesWithTemplate)).not.toHaveBeenCalled();
+      });
+
+      it('mode=undefined (pointer/Library Import) + fileFormat set: does NOT call setPhase(renaming) or renameFilesWithTemplate', async () => {
+        const { renameFilesWithTemplate } = await import('../../utils/paths.js');
+        const settingsSvc = makeRenameSettingsService('{title}');
+        deps.settingsService = inject<SettingsService>(settingsSvc);
+        adapter = new ManualImportAdapter(deps);
+
+        const payload: ManualImportJobPayload = { path: '/audiobooks/Author/Title', title: 'Test Book', authorName: 'Author' };
+        const job = makeJob({ metadata: JSON.stringify(payload) });
+        await adapter.process(job, ctx);
+
+        const phases = setPhase.mock.calls.map((c: unknown[]) => c[0]);
+        expect(phases).not.toContain('renaming');
+        expect(vi.mocked(renameFilesWithTemplate)).not.toHaveBeenCalled();
+      });
+
+      it('mode=copy + fileFormat set + renameFilesWithTemplate throws: adapter catches, marks failed, re-throws', async () => {
+        const { renameFilesWithTemplate } = await import('../../utils/paths.js');
+        const { safeEmit } = await import('../../utils/safe-emit.js');
+        vi.mocked(renameFilesWithTemplate).mockRejectedValueOnce(new Error('ENOSPC'));
+        const settingsSvc = makeRenameSettingsService('{title}');
+        deps.settingsService = inject<SettingsService>(settingsSvc);
+        deps.bookService = makeBookServiceWithNarrators([]);
+        adapter = new ManualImportAdapter(deps);
+
+        const job = makeJob();
+        await expect(adapter.process(job, ctx)).rejects.toThrow('ENOSPC');
+
+        expect(vi.mocked(safeEmit)).toHaveBeenCalledWith(
+          expect.anything(), 'book_status_change',
+          expect.objectContaining({ book_id: 42, new_status: 'failed' }),
+          expect.anything(),
+        );
+        expect(mockEventHistory.create).toHaveBeenCalledWith(expect.objectContaining({
+          eventType: 'import_failed',
+          reason: { error: 'ENOSPC' },
+        }));
+      });
+
+      it('mode=copy + fileFormat set + bookService.getById returns narrators: RenameableBook.narrators populated', async () => {
+        const { renameFilesWithTemplate } = await import('../../utils/paths.js');
+        const settingsSvc = makeRenameSettingsService('{narrator}');
+        deps.settingsService = inject<SettingsService>(settingsSvc);
+        deps.bookService = makeBookServiceWithNarrators([
+          { id: 1, name: 'Jane Narrator', asin: null },
+          { id: 2, name: 'John Reader', asin: null },
+        ]);
+        adapter = new ManualImportAdapter(deps);
+
+        const job = makeJob();
+        await adapter.process(job, ctx);
+
+        expect(vi.mocked(renameFilesWithTemplate)).toHaveBeenCalledWith(
+          expect.anything(), '{narrator}',
+          expect.objectContaining({
+            narrators: [{ name: 'Jane Narrator' }, { name: 'John Reader' }],
+          }),
+          expect.anything(), expect.anything(), expect.anything(), expect.any(Function),
+        );
+      });
+
+      it('mode=copy + fileFormat set + bookService.getById returns empty narrators: rename proceeds with null', async () => {
+        const { renameFilesWithTemplate } = await import('../../utils/paths.js');
+        const settingsSvc = makeRenameSettingsService('{title}');
+        deps.settingsService = inject<SettingsService>(settingsSvc);
+        deps.bookService = inject<BookService>({
+          findDuplicate: vi.fn(), create: vi.fn(),
+          getById: vi.fn().mockResolvedValue(null),
+        });
+        adapter = new ManualImportAdapter(deps);
+
+        const job = makeJob();
+        await adapter.process(job, ctx);
+
+        expect(vi.mocked(renameFilesWithTemplate)).toHaveBeenCalledWith(
+          expect.anything(), '{title}',
+          expect.objectContaining({ narrators: null }),
+          expect.anything(), expect.anything(), expect.anything(), expect.any(Function),
+        );
+      });
     });
 
     it('emits book_status_change SSE and records import_failed event on failure (#636 F2)', async () => {

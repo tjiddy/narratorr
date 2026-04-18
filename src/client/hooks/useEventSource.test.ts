@@ -1183,11 +1183,12 @@ describe('#637 import SSE cache/toast behaviors', () => {
     // Verify the actual cached data was patched
     const cached = queryClient.getQueryData(queryKeys.importJobs()) as Record<string, unknown>[];
     expect(cached).toHaveLength(2);
-    // Matching row should have _progress and _byteCounter
-    expect(cached[0]).toMatchObject({ id: 1, _progress: 0.5, _byteCounter: { current: 5000, total: 10000 } });
+    // Matching row should have _progress, _byteCounter, and _progressPhase
+    expect(cached[0]).toMatchObject({ id: 1, _progress: 0.5, _byteCounter: { current: 5000, total: 10000 }, _progressPhase: 'copying' });
     // Non-matching row should be unchanged
     expect(cached[1]).toMatchObject({ id: 2, status: 'pending' });
     expect(cached[1]).not.toHaveProperty('_progress');
+    expect(cached[1]).not.toHaveProperty('_progressPhase');
   });
 
   it('import_progress falls back to invalidateQueries on cache miss', () => {
