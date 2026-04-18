@@ -273,17 +273,25 @@ export class ImportQueueWorker {
       this.log.info({ jobId, elapsedMs }, 'Import job completed successfully');
     } catch (error: unknown) {
       this.log.error({ error: serializeError(error), jobId }, 'Import job failed');
+      // Close the active phase entry before persisting
+      if (phaseHistory.length > 0) {
+        const last = phaseHistory[phaseHistory.length - 1];
+        if (last.completedAt === undefined) {
+          last.completedAt = Date.now();
+        }
+      }
       const currentPhase = phaseHistory.length > 0 ? phaseHistory[phaseHistory.length - 1].phase : 'queued';
-      await this.markJobFailed(jobId, bookId, currentPhase, bookTitle, JSON.stringify(serializeError(error)));
+      await this.markJobFailed(jobId, bookId, currentPhase, bookTitle, JSON.stringify(serializeError(error)), phaseHistory);
     }
   }
 
-  private async markJobFailed(jobId: number, bookId: number | null, currentPhase: string, bookTitle: string, lastError: string): Promise<void> {
+  private async markJobFailed(jobId: number, bookId: number | null, currentPhase: string, bookTitle: string, lastError: string, phaseHistory?: PhaseHistoryEntry[]): Promise<void> {
     const now = new Date();
     await this.db.update(importJobs).set({
       status: 'failed',
       phase: 'failed',
       lastError,
+      ...(phaseHistory ? { phaseHistory: JSON.stringify(phaseHistory) } : {}),
       completedAt: now,
       updatedAt: now,
     }).where(eq(importJobs.id, jobId));
