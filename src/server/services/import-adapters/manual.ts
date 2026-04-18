@@ -77,7 +77,7 @@ export class ManualImportAdapter implements ImportAdapter {
         bookTitle: payload.title ?? 'Unknown',
         authorName: payload.authorName ?? null,
         eventType: 'import_failed',
-        source: 'import',
+        source: 'manual',
       }).catch((err: unknown) => log.warn({ err }, 'Failed to record manual import failure event'));
       throw error;
     }
