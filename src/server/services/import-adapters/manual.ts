@@ -8,6 +8,7 @@ import { copyToLibrary } from '../import-orchestration.helpers.js';
 import { getAudioStats } from '../library-scan.helpers.js';
 import { orchestrateBookEnrichment, buildEnrichmentBookInput, buildBackgroundAudnexusConfig, buildImportedEventPayload, extractImportMetadata } from '../enrichment-orchestration.helpers.js';
 import { safeEmit } from '../../utils/safe-emit.js';
+import { getErrorMessage } from '../../utils/error-message.js';
 
 export class ManualImportAdapter implements ImportAdapter {
   readonly type = 'manual' as const;
@@ -78,6 +79,7 @@ export class ManualImportAdapter implements ImportAdapter {
         authorName: payload.authorName ?? null,
         eventType: 'import_failed',
         source: 'manual',
+        reason: { error: getErrorMessage(error) },
       }).catch((err: unknown) => log.warn({ err }, 'Failed to record manual import failure event'));
       throw error;
     }

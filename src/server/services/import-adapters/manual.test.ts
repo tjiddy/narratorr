@@ -193,11 +193,12 @@ describe('ManualImportAdapter', () => {
         expect.anything(),
       );
 
-      // Failure event recorded
+      // Failure event recorded with error payload for UI display
       expect(mockEventHistory.create).toHaveBeenCalledWith(expect.objectContaining({
         eventType: 'import_failed',
         bookId: 42,
         source: 'manual',
+        reason: { error: 'Disk full' },
       }));
     });
   });
