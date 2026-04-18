@@ -118,7 +118,13 @@ export async function renameFilesWithTemplate(
     for (const { from, to } of renames) {
       await rename(join(targetPath, from), join(targetPath, to));
       completed.push({ from, to });
-      onProgress?.(completed.length, renames.length);
+      // Shield rename loop from progress-callback failures — SSE/broadcaster
+      // errors should never cause rollback of successfully-renamed files.
+      try {
+        onProgress?.(completed.length, renames.length);
+      } catch (progressError: unknown) {
+        log.warn({ error: serializeError(progressError) }, 'onProgress callback threw during rename; continuing');
+      }
       log.debug({ from, to }, 'Renamed file using template');
     }
   } catch (error: unknown) {

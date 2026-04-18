@@ -124,7 +124,10 @@ describe('renameFilesWithTemplate', () => {
       expect(onProgress).toHaveBeenNthCalledWith(2, 2, 3);
     });
 
-    it('propagates errors thrown inside onProgress callback', async () => {
+    it('swallows errors thrown inside onProgress and continues renaming', async () => {
+      // Callback failures (e.g. SSE broadcaster throwing) must never trigger a
+      // rollback of successfully-renamed files. The rename loop catches the
+      // callback throw, logs a warning, and keeps going.
       const { readdir, rename } = await import('node:fs/promises');
       vi.mocked(readdir).mockResolvedValue([
         makeDirent('a.mp3', true),
@@ -136,9 +139,18 @@ describe('renameFilesWithTemplate', () => {
         throw new Error('callback error');
       });
 
-      await expect(
-        renameFilesWithTemplate('/target', '{title}', book, 'Author', log, undefined, onProgress),
-      ).rejects.toThrow('callback error');
+      // Should resolve successfully, not reject
+      const renamedCount = await renameFilesWithTemplate('/target', '{title}', book, 'Author', log, undefined, onProgress);
+      expect(renamedCount).toBe(2);
+
+      // onProgress called for every rename even after throwing
+      expect(onProgress).toHaveBeenCalledTimes(2);
+
+      // Warning logged for each swallowed callback error
+      expect(log.warn).toHaveBeenCalledWith(
+        expect.objectContaining({ error: expect.anything() }),
+        expect.stringMatching(/onProgress callback threw/),
+      );
     });
   });
 });

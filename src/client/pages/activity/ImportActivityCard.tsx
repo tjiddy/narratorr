@@ -67,15 +67,20 @@ function PhaseRow({ entry, isLast, progress, byteCounter }: {
       </div>
       <div className="flex-1 min-w-0">
         {showProgress ? (
-          <div className="relative overflow-hidden rounded-md py-0.5 px-1.5 -mx-1.5">
+          <div
+            className="relative overflow-hidden rounded-md py-0.5 px-1.5 -mx-1.5"
+            {...(progress !== undefined && {
+              role: 'progressbar',
+              'aria-valuenow': Math.round(progress * 100),
+              'aria-valuemin': 0,
+              'aria-valuemax': 100,
+            })}
+          >
             {progress !== undefined && (
               <div
                 className="absolute inset-0 bg-amber-500/8 dark:bg-amber-500/12 rounded-md transition-all duration-700 ease-out"
                 style={{ width: `${Math.round(progress * 100)}%` }}
-                role="progressbar"
-                aria-valuenow={Math.round(progress * 100)}
-                aria-valuemin={0}
-                aria-valuemax={100}
+                aria-hidden="true"
               />
             )}
             <span className="relative text-foreground font-medium">
