@@ -107,6 +107,70 @@ describe('ImportActivityCard', () => {
     });
   });
 
+  describe('renaming phase progress (#650)', () => {
+    it('renders "Renaming files · 50% (14/28 files)" with progress bar when renaming phase is current', () => {
+      const job = makeJob({
+        phase: 'renaming',
+        phaseHistory: [
+          { phase: 'analyzing', startedAt: 1000, completedAt: 1500 },
+          { phase: 'copying', startedAt: 1500, completedAt: 2000 },
+          { phase: 'renaming', startedAt: 2000 },
+        ],
+        _progress: 0.5,
+        _byteCounter: { current: 14, total: 28 },
+      });
+      renderWithProviders(<ImportActivityCard job={job} />);
+
+      expect(screen.getByText(/Renaming files/)).toBeInTheDocument();
+      expect(screen.getByText(/50%/)).toBeInTheDocument();
+      expect(screen.getByText(/14\/28 files/)).toBeInTheDocument();
+    });
+
+    it('renders "Renaming files" plain when renaming phase is current but no progress events', () => {
+      const job = makeJob({
+        phase: 'renaming',
+        phaseHistory: [
+          { phase: 'analyzing', startedAt: 1000, completedAt: 1500 },
+          { phase: 'copying', startedAt: 1500, completedAt: 2000 },
+          { phase: 'renaming', startedAt: 2000 },
+        ],
+      });
+      renderWithProviders(<ImportActivityCard job={job} />);
+
+      expect(screen.getByText(/Renaming files/)).toBeInTheDocument();
+      // No percentage shown without progress data
+      expect(screen.queryByText(/%/)).not.toBeInTheDocument();
+    });
+
+    it('renders "Renaming files" with elapsed time when renaming phase is completed', () => {
+      const job = makeJob({
+        phase: 'fetching_metadata',
+        phaseHistory: [
+          { phase: 'analyzing', startedAt: 1000, completedAt: 1500 },
+          { phase: 'copying', startedAt: 1500, completedAt: 2000 },
+          { phase: 'renaming', startedAt: 2000, completedAt: 4300 },
+          { phase: 'fetching_metadata', startedAt: 4300 },
+        ],
+      });
+      renderWithProviders(<ImportActivityCard job={job} />);
+
+      expect(screen.getByText(/Renaming files/)).toBeInTheDocument();
+      expect(screen.getByText(/2\.3s/)).toBeInTheDocument();
+    });
+
+    it('does not render renaming row when phase is absent from phaseHistory', () => {
+      const job = makeJob({
+        phaseHistory: [
+          { phase: 'analyzing', startedAt: 1000, completedAt: 2000 },
+          { phase: 'copying', startedAt: 2000 },
+        ],
+      });
+      renderWithProviders(<ImportActivityCard job={job} />);
+
+      expect(screen.queryByText(/Renaming files/)).not.toBeInTheDocument();
+    });
+  });
+
   describe('accessibility', () => {
     it('phase status communicated via aria-label', () => {
       const job = makeJob();

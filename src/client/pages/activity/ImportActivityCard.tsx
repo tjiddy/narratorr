@@ -21,6 +21,9 @@ function formatProgress(phase: string, progress?: number, byteCounter?: { curren
   const label = PHASE_LABELS[phase] ?? phase;
   if (progress === undefined) return label;
   const pct = Math.round(progress * 100);
+  if (phase === 'renaming' && byteCounter) {
+    return `${label} \u00B7 ${pct}% (${byteCounter.current}/${byteCounter.total} files)`;
+  }
   if (byteCounter && byteCounter.total > 0) {
     return `${label} \u00B7 ${pct}% (${formatBytes(byteCounter.current)}/${formatBytes(byteCounter.total)})`;
   }
@@ -53,7 +56,7 @@ function PhaseRow({ entry, isLast, progress, byteCounter }: {
 }) {
   const isDone = entry.completedAt !== undefined;
   const isCurrent = !isDone && isLast;
-  const showProgress = isCurrent && entry.phase === 'copying';
+  const showProgress = isCurrent && (entry.phase === 'copying' || entry.phase === 'renaming');
   const label = PHASE_LABELS[entry.phase] ?? entry.phase;
   const statusText = isDone ? 'completed' : isCurrent ? 'in progress' : 'pending';
 
