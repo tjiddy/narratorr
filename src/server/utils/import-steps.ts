@@ -3,13 +3,10 @@ import type { Stats } from 'node:fs';
 import { join, extname, basename, normalize } from 'node:path';
 import type { FastifyBaseLogger } from 'fastify';
 import type { Db } from '../../db/index.js';
-import { downloads, books } from '../../db/schema.js';
+import { downloads } from '../../db/schema.js';
 import { eq } from 'drizzle-orm';
-import { toLastFirst, toSortTitle, AUDIO_EXTENSIONS } from '../../core/utils/index.js';
-import type { NamingOptions } from '../../core/utils/naming.js';
-import { processAudioFiles } from '../../core/utils/audio-processor.js';
+import { AUDIO_EXTENSIONS } from '../../core/utils/index.js';
 import { getErrorMessage } from './error-message.js';
-import { toSourceBitrateKbps, logBitrateCapping } from './audio-bitrate.js';
 import type { TaggingService } from '../services/tagging.service.js';
 import { serializeError } from './serialize-error.js';
 
@@ -27,7 +24,7 @@ export type {
 import type { RemotePathMappingService } from '../services/remote-path-mapping.service.js';
 import {
   containsAudioFiles, countAudioFiles, copyAudioFiles, getPathSize, getAudioPathSize,
-  extractYear, COPY_VERIFICATION_THRESHOLD,
+  COPY_VERIFICATION_THRESHOLD,
 } from './import-helpers.js';
 import { runPostProcessingScript } from './post-processing-script.js';
 import { revertBookStatus } from './book-status.js';
@@ -104,7 +101,6 @@ export interface CheckDiskSpaceArgs {
   sourceStats: Stats;
   libraryPath: string;
   minFreeSpaceGB: number;
-  processingEnabled: boolean;
 }
 
 export interface DiskSpaceResult {
@@ -114,12 +110,11 @@ export interface DiskSpaceResult {
 
 /** Check that enough disk space is available for the import. */
 export async function checkDiskSpace(args: CheckDiskSpaceArgs): Promise<DiskSpaceResult> {
-  const { sourcePath, sourceStats, libraryPath, minFreeSpaceGB, processingEnabled } = args;
+  const { sourcePath, sourceStats, libraryPath, minFreeSpaceGB } = args;
   if (minFreeSpaceGB <= 0) return { freeGB: -1, requiredGB: 0 };
 
   const sourceSize = sourceStats.isDirectory() ? await getPathSize(sourcePath) : sourceStats.size;
-  const multiplier = processingEnabled ? 1.5 : 1;
-  const estimatedOutputSize = sourceSize * multiplier;
+  const estimatedOutputSize = sourceSize;
   const requiredBytes = minFreeSpaceGB * 1024 ** 3 + estimatedOutputSize;
 
   let freeBytes: number;
@@ -165,101 +160,20 @@ export async function copyToLibrary(args: CopyToLibraryArgs): Promise<void> {
   }
 }
 
-// ── runAudioProcessing ──────────────────────────────────────────────────
-
-export interface RunAudioProcessingArgs {
-  processingSettings: {
-    enabled?: boolean;
-    ffmpegPath: string;
-    outputFormat: 'm4b' | 'mp3';
-    keepOriginalBitrate: boolean;
-    bitrate: number;
-    mergeBehavior: 'always' | 'multi-file-only' | 'never';
-  };
-  librarySettings: { fileFormat: string };
-  targetPath: string;
-  book: {
-    id: number;
-    title: string;
-    seriesName: string | null;
-    seriesPosition: number | null;
-    narrators?: Array<{ name: string }> | null;
-    publishedDate: string | null;
-  };
-  authorName: string;
-  /** Source audio bitrate in bps from scan result. Converted to kbps for the processor. */
-  sourceBitrateBps?: number | null;
-  namingOptions?: NamingOptions;
-  db: Db;
-  log: FastifyBaseLogger;
-}
-
-/** Resolve target and source bitrate, log if capping occurs. */
-function resolveBitrate(
-  processingSettings: RunAudioProcessingArgs['processingSettings'],
-  sourceBitrateBps: number | null | undefined,
-  log: FastifyBaseLogger,
-): { targetBitrateKbps: number | undefined; sourceBitrateKbps: number | undefined } {
-  const targetBitrateKbps = processingSettings.keepOriginalBitrate ? undefined : processingSettings.bitrate;
-  const sourceBitrateKbps = toSourceBitrateKbps(sourceBitrateBps);
-  return logBitrateCapping(sourceBitrateKbps, targetBitrateKbps, log);
-}
-
-/** Run audio processing (merge/convert) on imported files. Throws on failure. */
-export async function runAudioProcessing(args: RunAudioProcessingArgs): Promise<void> {
-  const { processingSettings, librarySettings, targetPath, book, authorName, sourceBitrateBps, namingOptions, db, log } = args;
-  if (!processingSettings?.enabled) return;
-
-  log.info({ targetPath, config: processingSettings }, 'Running audio processing');
-  if (processingSettings.outputFormat === 'mp3' && processingSettings.mergeBehavior !== 'never') {
-    log.warn('MP3 output does not support embedded chapters');
-  }
-
-  const { targetBitrateKbps, sourceBitrateKbps } = resolveBitrate(processingSettings, sourceBitrateBps, log);
-
-  const processingResult = await processAudioFiles(targetPath, {
-    ffmpegPath: processingSettings.ffmpegPath,
-    outputFormat: processingSettings.outputFormat,
-    bitrate: targetBitrateKbps,
-    sourceBitrateKbps,
-    mergeBehavior: processingSettings.mergeBehavior,
-  }, {
-    author: authorName, title: book.title, fileFormat: librarySettings.fileFormat,
-    namingOptions,
-    bookTokens: {
-      authorLastFirst: toLastFirst(authorName), titleSort: toSortTitle(book.title),
-      series: book.seriesName || undefined, seriesPosition: book.seriesPosition ?? undefined,
-      narrator: book.narrators?.[0]?.name || undefined,
-      narratorLastFirst: book.narrators?.[0]?.name ? toLastFirst(book.narrators[0].name) : undefined,
-      year: extractYear(book.publishedDate),
-    },
-  });
-
-  if (!processingResult.success) {
-    await db.update(books).set({ status: 'failed', updatedAt: new Date() }).where(eq(books.id, book.id));
-    throw new Error(`Audio processing failed: ${processingResult.error}`);
-  }
-  processingResult.warnings?.forEach(w => log.warn(w));
-  log.info({ outputFiles: processingResult.outputFiles.length }, 'Audio processing completed');
-}
-
 // ── verifyCopy ──────────────────────────────────────────────────────────
 
 export interface VerifyCopyArgs {
   targetPath: string;
   sourcePath: string;
-  processingEnabled: boolean;
 }
 
-/** Verify that copy produced files of expected size (skip if processing changed sizes). */
+/** Verify that copy produced files of expected size. */
 export async function verifyCopy(args: VerifyCopyArgs): Promise<number> {
-  const { targetPath, sourcePath, processingEnabled } = args;
+  const { targetPath, sourcePath } = args;
   const targetSize = await getPathSize(targetPath);
-  if (!processingEnabled) {
-    const sourceSize = await getAudioPathSize(sourcePath);
-    if (targetSize < sourceSize * COPY_VERIFICATION_THRESHOLD) {
-      throw new Error(`Copy verification failed: source ${sourceSize} bytes, target ${targetSize} bytes`);
-    }
+  const sourceSize = await getAudioPathSize(sourcePath);
+  if (targetSize < sourceSize * COPY_VERIFICATION_THRESHOLD) {
+    throw new Error(`Copy verification failed: source ${sourceSize} bytes, target ${targetSize} bytes`);
   }
   return targetSize;
 }

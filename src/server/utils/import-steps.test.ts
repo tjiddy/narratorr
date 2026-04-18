@@ -17,16 +17,10 @@ vi.mock('../utils/book-status.js', () => ({
   revertBookStatus: vi.fn().mockResolvedValue('wanted'),
 }));
 
-vi.mock('../../core/utils/audio-processor.js', () => ({
-  processAudioFiles: vi.fn().mockResolvedValue({ success: true, outputFiles: [] }),
-}));
-
 import { stat, rm, statfs } from 'node:fs/promises';
 import { runPostProcessingScript } from '../utils/post-processing-script.js';
 import { revertBookStatus } from '../utils/book-status.js';
 import type { Stats } from 'node:fs';
-
-import { processAudioFiles } from '../../core/utils/audio-processor.js';
 
 import {
   validateSource,
@@ -42,7 +36,6 @@ import {
   recordImportEvent,
   recordImportFailedEvent,
   handleImportFailure,
-  runAudioProcessing,
   isContentFailure,
 } from './import-steps.js';
 
@@ -131,12 +124,12 @@ describe('checkDiskSpace', () => {
   it('skips check when minFreeSpaceGB is 0', async () => {
     await checkDiskSpace({
       sourcePath: '/src', sourceStats: { isDirectory: () => true } as Stats,
-      libraryPath: '/lib', minFreeSpaceGB: 0, processingEnabled: false,
+      libraryPath: '/lib', minFreeSpaceGB: 0,
     });
     expect(statfs).not.toHaveBeenCalled();
   });
 
-  it('uses 1.5x multiplier when processing enabled', async () => {
+  it('uses 1x source size for disk space estimation', async () => {
     vi.mocked(statfs).mockResolvedValue({ bavail: BigInt(100_000_000_000), bsize: BigInt(1) } as never);
     vi.mocked(stat).mockResolvedValue({ size: 100 } as Stats);
     const { readdir } = await import('node:fs/promises');
@@ -145,7 +138,7 @@ describe('checkDiskSpace', () => {
     // Should not throw with plenty of space
     await checkDiskSpace({
       sourcePath: '/src', sourceStats: { isDirectory: () => false, size: 1_000_000_000 } as unknown as Stats,
-      libraryPath: '/lib', minFreeSpaceGB: 1, processingEnabled: true,
+      libraryPath: '/lib', minFreeSpaceGB: 1,
     });
     expect(statfs).toHaveBeenCalledWith('/lib');
   });
@@ -156,7 +149,7 @@ describe('checkDiskSpace', () => {
 
     await expect(checkDiskSpace({
       sourcePath: '/src', sourceStats: { isDirectory: () => false, size: 5_000_000_000 } as unknown as Stats,
-      libraryPath: '/lib', minFreeSpaceGB: 5, processingEnabled: false,
+      libraryPath: '/lib', minFreeSpaceGB: 5,
     })).rejects.toThrow('insufficient disk space');
   });
 
@@ -165,7 +158,7 @@ describe('checkDiskSpace', () => {
 
     await expect(checkDiskSpace({
       sourcePath: '/src', sourceStats: { isDirectory: () => false, size: 100 } as unknown as Stats,
-      libraryPath: '/lib', minFreeSpaceGB: 1, processingEnabled: false,
+      libraryPath: '/lib', minFreeSpaceGB: 1,
     })).rejects.toThrow('Disk space check failed');
   });
 });
@@ -684,227 +677,76 @@ describe('recordImportFailedEvent', () => {
   });
 });
 
-describe('runAudioProcessing', () => {
-  it('forwards namingOptions into processAudioFiles context', async () => {
-    const log = createMockLog();
-    const mockDb = {} as never;
+// ── #229 Observability — checkDiskSpace return type ─────────────────────
+describe('checkDiskSpace return type (#229)', () => {
+  it('returns { freeGB, requiredGB } on success', async () => {
+    vi.mocked(statfs).mockResolvedValue({ bavail: BigInt(100_000_000_000), bsize: BigInt(1) } as never);
 
-    await runAudioProcessing({
-      processingSettings: {
-        enabled: true,
-        ffmpegPath: '/usr/bin/ffmpeg',
-        outputFormat: 'm4b',
-        bitrate: 128,
-        keepOriginalBitrate: false,
-        mergeBehavior: 'always',
-      },
-      librarySettings: {
-        fileFormat: '{author} - {title}',
-      },
-      targetPath: '/library/Author/Book',
-      book: { id: 1, title: 'Book', seriesName: null, seriesPosition: null, narrators: null, publishedDate: null },
-      authorName: 'Author',
-      namingOptions: { separator: 'period', case: 'upper' },
-      db: mockDb,
-      log,
+    const result = await checkDiskSpace({
+      sourcePath: '/src', sourceStats: { isDirectory: () => false, size: 1_000_000_000 } as unknown as Stats,
+      libraryPath: '/lib', minFreeSpaceGB: 1,
     });
 
-    expect(processAudioFiles).toHaveBeenCalledWith(
-      '/library/Author/Book',
-      expect.any(Object),
-      expect.objectContaining({
-        namingOptions: { separator: 'period', case: 'upper' },
-      }),
-    );
+    expect(result).toHaveProperty('freeGB');
+    expect(result).toHaveProperty('requiredGB');
+    expect(typeof result.freeGB).toBe('number');
+    expect(typeof result.requiredGB).toBe('number');
+    expect(result.freeGB).toBeGreaterThan(0);
   });
 
-  it('forwards sourceBitrateKbps to processAudioFiles when sourceBitrateBps is provided', async () => {
-    const log = createMockLog();
-    const mockDb = {} as never;
+  it('still throws on insufficient disk space', async () => {
+    vi.mocked(statfs).mockResolvedValue({ bavail: BigInt(1_000_000_000), bsize: BigInt(1) } as never);
 
-    await runAudioProcessing({
-      processingSettings: {
-        enabled: true,
-        ffmpegPath: '/usr/bin/ffmpeg',
-        outputFormat: 'm4b',
-        bitrate: 128,
-        keepOriginalBitrate: false,
-        mergeBehavior: 'always',
-      },
-      librarySettings: { fileFormat: '{author} - {title}' },
-      targetPath: '/library/Author/Book',
-      book: { id: 1, title: 'Book', seriesName: null, seriesPosition: null, narrators: null, publishedDate: null },
-      authorName: 'Author',
-      sourceBitrateBps: 64000,
-      db: mockDb,
-      log,
-    });
-
-    expect(processAudioFiles).toHaveBeenCalledWith(
-      '/library/Author/Book',
-      expect.objectContaining({ sourceBitrateKbps: 64, bitrate: 128 }),
-      expect.any(Object),
-    );
+    await expect(checkDiskSpace({
+      sourcePath: '/src', sourceStats: { isDirectory: () => false, size: 5_000_000_000 } as unknown as Stats,
+      libraryPath: '/lib', minFreeSpaceGB: 5,
+    })).rejects.toThrow('insufficient disk space');
   });
 
-  it('passes sourceBitrateKbps as undefined when sourceBitrateBps is null', async () => {
-    const log = createMockLog();
-    const mockDb = {} as never;
+  it('still throws on statfs failure', async () => {
+    vi.mocked(statfs).mockRejectedValue(new Error('disk error'));
 
-    await runAudioProcessing({
-      processingSettings: {
-        enabled: true,
-        ffmpegPath: '/usr/bin/ffmpeg',
-        outputFormat: 'm4b',
-        bitrate: 128,
-        keepOriginalBitrate: false,
-        mergeBehavior: 'always',
-      },
-      librarySettings: { fileFormat: '{author} - {title}' },
-      targetPath: '/library/Author/Book',
-      book: { id: 1, title: 'Book', seriesName: null, seriesPosition: null, narrators: null, publishedDate: null },
-      authorName: 'Author',
-      sourceBitrateBps: null,
-      db: mockDb,
-      log,
-    });
+    await expect(checkDiskSpace({
+      sourcePath: '/src', sourceStats: { isDirectory: () => false, size: 100 } as unknown as Stats,
+      libraryPath: '/lib', minFreeSpaceGB: 1,
+    })).rejects.toThrow('Disk space check failed');
+  });
+});
 
-    expect(processAudioFiles).toHaveBeenCalledWith(
-      '/library/Author/Book',
-      expect.objectContaining({ sourceBitrateKbps: undefined }),
-      expect.any(Object),
-    );
+describe('isContentFailure classifier (#504)', () => {
+  it('returns true for "No audio files found in /path"', () => {
+    expect(isContentFailure(new Error('No audio files found in /downloads/book'))).toBe(true);
   });
 
-  it('logs debug when source bitrate is lower than target', async () => {
-    const log = createMockLog();
-    const mockDb = {} as never;
-
-    await runAudioProcessing({
-      processingSettings: {
-        enabled: true,
-        ffmpegPath: '/usr/bin/ffmpeg',
-        outputFormat: 'm4b',
-        bitrate: 128,
-        keepOriginalBitrate: false,
-        mergeBehavior: 'always',
-      },
-      librarySettings: { fileFormat: '{author} - {title}' },
-      targetPath: '/library/Author/Book',
-      book: { id: 1, title: 'Book', seriesName: null, seriesPosition: null, narrators: null, publishedDate: null },
-      authorName: 'Author',
-      sourceBitrateBps: 64000,
-      db: mockDb,
-      log,
-    });
-
-    expect(log.debug).toHaveBeenCalledWith(
-      expect.objectContaining({ sourceBitrateKbps: 64, targetBitrateKbps: 128, effectiveBitrateKbps: 64 }),
-      expect.stringContaining('Capping target bitrate'),
-    );
+  it('returns true for "not a supported audio format"', () => {
+    expect(isContentFailure(new Error('Source file is not a supported audio format: track.xyz'))).toBe(true);
   });
 
-  it('logs warnings from ProcessingResult when cover art degrades', async () => {
-    const log = createMockLog();
-    const mockDb = {} as never;
-    vi.mocked(processAudioFiles).mockResolvedValueOnce({
-      success: true,
-      outputFiles: ['/library/Author/Book/output.m4b'],
-      warnings: ['Cover art extraction failed — output will not contain embedded cover art'],
-    });
-
-    await runAudioProcessing({
-      processingSettings: {
-        enabled: true,
-        ffmpegPath: '/usr/bin/ffmpeg',
-        outputFormat: 'm4b',
-        bitrate: 128,
-        keepOriginalBitrate: false,
-        mergeBehavior: 'always',
-      },
-      librarySettings: { fileFormat: '{author} - {title}' },
-      targetPath: '/library/Author/Book',
-      book: { id: 1, title: 'Book', seriesName: null, seriesPosition: null, narrators: null, publishedDate: null },
-      authorName: 'Author',
-      sourceBitrateBps: 128000,
-      db: mockDb,
-      log,
-    });
-
-    expect(log.warn).toHaveBeenCalledWith('Cover art extraction failed — output will not contain embedded cover art');
+  it('returns true for "Duplicate filename"', () => {
+    expect(isContentFailure(new Error('Duplicate filename "01.mp3" found during import flattening: "/a" and "/b"'))).toBe(true);
   });
 
-  // ── #229 Observability — checkDiskSpace return type ─────────────────────
-  describe('checkDiskSpace return type (#229)', () => {
-    it('returns { freeGB, requiredGB } on success', async () => {
-      vi.mocked(statfs).mockResolvedValue({ bavail: BigInt(100_000_000_000), bsize: BigInt(1) } as never);
-
-      const result = await checkDiskSpace({
-        sourcePath: '/src', sourceStats: { isDirectory: () => false, size: 1_000_000_000 } as unknown as Stats,
-        libraryPath: '/lib', minFreeSpaceGB: 1, processingEnabled: false,
-      });
-
-      expect(result).toHaveProperty('freeGB');
-      expect(result).toHaveProperty('requiredGB');
-      expect(typeof result.freeGB).toBe('number');
-      expect(typeof result.requiredGB).toBe('number');
-      expect(result.freeGB).toBeGreaterThan(0);
-    });
-
-    it('still throws on insufficient disk space', async () => {
-      vi.mocked(statfs).mockResolvedValue({ bavail: BigInt(1_000_000_000), bsize: BigInt(1) } as never);
-
-      await expect(checkDiskSpace({
-        sourcePath: '/src', sourceStats: { isDirectory: () => false, size: 5_000_000_000 } as unknown as Stats,
-        libraryPath: '/lib', minFreeSpaceGB: 5, processingEnabled: false,
-      })).rejects.toThrow('insufficient disk space');
-    });
-
-    it('still throws on statfs failure', async () => {
-      vi.mocked(statfs).mockRejectedValue(new Error('disk error'));
-
-      await expect(checkDiskSpace({
-        sourcePath: '/src', sourceStats: { isDirectory: () => false, size: 100 } as unknown as Stats,
-        libraryPath: '/lib', minFreeSpaceGB: 1, processingEnabled: false,
-      })).rejects.toThrow('Disk space check failed');
-    });
+  it('returns true for "Copy verification failed"', () => {
+    expect(isContentFailure(new Error('Copy verification failed: source 1000 bytes, target 500 bytes'))).toBe(true);
   });
 
-  describe('isContentFailure classifier (#504)', () => {
-    it('returns true for "No audio files found in /path"', () => {
-      expect(isContentFailure(new Error('No audio files found in /downloads/book'))).toBe(true);
-    });
+  it('returns false for environment errors (path not found, disk space)', () => {
+    expect(isContentFailure(new Error('Path not found: /downloads/book'))).toBe(false);
+    expect(isContentFailure(new Error('Import blocked — insufficient disk space'))).toBe(false);
+    expect(isContentFailure(new Error('Disk space check failed: permission denied'))).toBe(false);
+  });
 
-    it('returns true for "not a supported audio format"', () => {
-      expect(isContentFailure(new Error('Source file is not a supported audio format: track.xyz'))).toBe(true);
-    });
+  it('returns false for audio processing failures', () => {
+    expect(isContentFailure(new Error('Audio processing failed: ffmpeg exited with code 1'))).toBe(false);
+    expect(isContentFailure(new Error('Audio processing failed: ffmpeg stalled'))).toBe(false);
+    expect(isContentFailure(new Error('Audio processing failed: spawn ENOENT'))).toBe(false);
+  });
 
-    it('returns true for "Duplicate filename"', () => {
-      expect(isContentFailure(new Error('Duplicate filename "01.mp3" found during import flattening: "/a" and "/b"'))).toBe(true);
-    });
+  it('returns false for generic/unknown Error', () => {
+    expect(isContentFailure(new Error('something unexpected'))).toBe(false);
+  });
 
-    it('returns true for "Copy verification failed"', () => {
-      expect(isContentFailure(new Error('Copy verification failed: source 1000 bytes, target 500 bytes'))).toBe(true);
-    });
-
-    it('returns false for environment errors (path not found, disk space)', () => {
-      expect(isContentFailure(new Error('Path not found: /downloads/book'))).toBe(false);
-      expect(isContentFailure(new Error('Import blocked — insufficient disk space'))).toBe(false);
-      expect(isContentFailure(new Error('Disk space check failed: permission denied'))).toBe(false);
-    });
-
-    it('returns false for audio processing failures', () => {
-      expect(isContentFailure(new Error('Audio processing failed: ffmpeg exited with code 1'))).toBe(false);
-      expect(isContentFailure(new Error('Audio processing failed: ffmpeg stalled'))).toBe(false);
-      expect(isContentFailure(new Error('Audio processing failed: spawn ENOENT'))).toBe(false);
-    });
-
-    it('returns false for generic/unknown Error', () => {
-      expect(isContentFailure(new Error('something unexpected'))).toBe(false);
-    });
-
-    it('returns false for non-Error throwable', () => {
-      expect(isContentFailure('a string error')).toBe(false);
-    });
+  it('returns false for non-Error throwable', () => {
+    expect(isContentFailure('a string error')).toBe(false);
   });
 });
