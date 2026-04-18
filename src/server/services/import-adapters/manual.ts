@@ -7,6 +7,9 @@ import type { ImportPipelineDeps } from '../import-orchestration.helpers.js';
 import { copyToLibrary } from '../import-orchestration.helpers.js';
 import { getAudioStats } from '../library-scan.helpers.js';
 import { orchestrateBookEnrichment, buildEnrichmentBookInput, buildBackgroundAudnexusConfig, buildImportedEventPayload, extractImportMetadata } from '../enrichment-orchestration.helpers.js';
+import { renameFilesWithTemplate } from '../../utils/paths.js';
+import type { RenameableBook } from '../../utils/paths.js';
+import { toNamingOptions } from '../../../core/utils/naming.js';
 import { safeEmit } from '../../utils/safe-emit.js';
 import { getErrorMessage } from '../../utils/error-message.js';
 
@@ -50,6 +53,29 @@ export class ManualImportAdapter implements ImportAdapter {
         finalPath = await copyToLibrary(payload, bookRow, extracted.meta ?? null, mode, this.deps, (progress, byteCounter) => {
           ctx.emitProgress('copying', progress, byteCounter);
         });
+
+        const librarySettings = await this.deps.settingsService.get('library');
+        if (librarySettings.fileFormat?.trim()) {
+          await ctx.setPhase('renaming');
+          const fullBook = await this.deps.bookService.getById(bookId);
+          const renameableBook: RenameableBook = {
+            title: fullBook?.title ?? bookRow.title,
+            seriesName: fullBook?.seriesName ?? bookRow.seriesName,
+            seriesPosition: fullBook?.seriesPosition ?? bookRow.seriesPosition,
+            narrators: fullBook?.narrators?.map(n => ({ name: n.name })) ?? null,
+            publishedDate: fullBook?.publishedDate ?? bookRow.publishedDate,
+          };
+          const namingOptions = toNamingOptions(librarySettings);
+          await renameFilesWithTemplate(
+            finalPath,
+            librarySettings.fileFormat,
+            renameableBook,
+            payload.authorName ?? null,
+            log,
+            namingOptions,
+            (current, total) => ctx.emitProgress('renaming', total > 0 ? current / total : 0, { current, total }),
+          );
+        }
       }
 
       const stats = await getAudioStats(finalPath, log);
