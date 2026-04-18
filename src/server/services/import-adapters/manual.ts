@@ -54,28 +54,7 @@ export class ManualImportAdapter implements ImportAdapter {
           ctx.emitProgress('copying', progress, byteCounter);
         });
 
-        const librarySettings = await this.deps.settingsService.get('library');
-        if (librarySettings.fileFormat?.trim()) {
-          await ctx.setPhase('renaming');
-          const fullBook = await this.deps.bookService.getById(bookId);
-          const renameableBook: RenameableBook = {
-            title: fullBook?.title ?? bookRow.title,
-            seriesName: fullBook?.seriesName ?? bookRow.seriesName,
-            seriesPosition: fullBook?.seriesPosition ?? bookRow.seriesPosition,
-            narrators: fullBook?.narrators?.map(n => ({ name: n.name })) ?? null,
-            publishedDate: fullBook?.publishedDate ?? bookRow.publishedDate,
-          };
-          const namingOptions = toNamingOptions(librarySettings);
-          await renameFilesWithTemplate(
-            finalPath,
-            librarySettings.fileFormat,
-            renameableBook,
-            payload.authorName ?? null,
-            log,
-            namingOptions,
-            (current, total) => ctx.emitProgress('renaming', total > 0 ? current / total : 0, { current, total }),
-          );
-        }
+        await this.renameIfConfigured(finalPath, bookId, bookRow, payload, ctx);
       }
 
       const stats = await getAudioStats(finalPath, log);
@@ -112,5 +91,33 @@ export class ManualImportAdapter implements ImportAdapter {
       }).catch((err: unknown) => log.warn({ err }, 'Failed to record manual import failure event'));
       throw error;
     }
+  }
+
+  private async renameIfConfigured(
+    finalPath: string, bookId: number, bookRow: { title: string; seriesName: string | null; seriesPosition: number | null; publishedDate: string | null },
+    payload: ManualImportJobPayload, ctx: ImportAdapterContext,
+  ): Promise<void> {
+    const librarySettings = await this.deps.settingsService.get('library');
+    if (!librarySettings.fileFormat?.trim()) return;
+
+    await ctx.setPhase('renaming');
+    const fullBook = await this.deps.bookService.getById(bookId);
+    const renameableBook: RenameableBook = {
+      title: fullBook?.title ?? bookRow.title,
+      seriesName: fullBook?.seriesName ?? bookRow.seriesName,
+      seriesPosition: fullBook?.seriesPosition ?? bookRow.seriesPosition,
+      narrators: fullBook?.narrators?.map(n => ({ name: n.name })) ?? null,
+      publishedDate: fullBook?.publishedDate ?? bookRow.publishedDate,
+    };
+    const namingOptions = toNamingOptions(librarySettings);
+    await renameFilesWithTemplate(
+      finalPath,
+      librarySettings.fileFormat,
+      renameableBook,
+      payload.authorName ?? null,
+      ctx.log,
+      namingOptions,
+      (current, total) => ctx.emitProgress('renaming', total > 0 ? current / total : 0, { current, total }),
+    );
   }
 }
