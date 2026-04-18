@@ -84,7 +84,7 @@ function patchImportJobProgress(queryClient: ReturnType<typeof useQueryClient>, 
         const j = job as Record<string, unknown>;
         if (j.id === data.job_id) {
           found = true;
-          return { ...j, _progress: data.progress, _byteCounter: data.byte_counter };
+          return { ...j, _progress: data.progress, _byteCounter: data.byte_counter, _progressPhase: data.phase };
         }
         return j;
       });

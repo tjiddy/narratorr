@@ -98,7 +98,7 @@ function PhaseRow({ entry, isLast, progress, byteCounter }: {
 }
 
 export interface ImportActivityCardProps {
-  job: ImportJobWithBook & { _progress?: number; _byteCounter?: { current: number; total: number } };
+  job: ImportJobWithBook & { _progress?: number; _byteCounter?: { current: number; total: number }; _progressPhase?: string };
 }
 
 export function ImportActivityCard({ job }: ImportActivityCardProps) {
@@ -148,6 +148,9 @@ export function ImportActivityCard({ job }: ImportActivityCardProps) {
           <div className="absolute left-[7px] top-1.5 bottom-1.5 w-px bg-border/60 dark:bg-border/40" />
           {phaseHistory.map((entry, idx) => {
             const isDone = entry.completedAt !== undefined;
+            const phaseMatches = job._progressPhase === entry.phase;
+            const progress = phaseMatches ? job._progress : undefined;
+            const byteCounter = phaseMatches ? job._byteCounter : undefined;
             if (isDone && idx < phaseHistory.length - 1) {
               return (
                 <div key={entry.phase}>
@@ -158,7 +161,7 @@ export function ImportActivityCard({ job }: ImportActivityCardProps) {
                       height: `${(1 / phaseHistory.length) * 100}%`,
                     }}
                   />
-                  <PhaseRow entry={entry} isLast={false} progress={job._progress} byteCounter={job._byteCounter} />
+                  <PhaseRow entry={entry} isLast={false} progress={progress} byteCounter={byteCounter} />
                 </div>
               );
             }
@@ -167,8 +170,8 @@ export function ImportActivityCard({ job }: ImportActivityCardProps) {
                 key={entry.phase}
                 entry={entry}
                 isLast={idx === phaseHistory.length - 1}
-                progress={job._progress}
-                byteCounter={job._byteCounter}
+                progress={progress}
+                byteCounter={byteCounter}
               />
             );
           })}
