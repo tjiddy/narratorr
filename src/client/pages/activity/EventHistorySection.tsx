@@ -20,19 +20,33 @@ const EVENT_TYPE_FILTERS = [
 
 const CLEAR_ERRORS_EVENT_TYPES = 'download_failed,import_failed,merge_failed';
 
-export function EventHistorySection() {
-  const [eventType, setEventTypeState] = useState('');
+export interface EventHistorySectionProps {
+  urlFilter?: string;
+  onFilterChange?: (value: string) => void;
+}
+
+export function EventHistorySection({ urlFilter, onFilterChange }: EventHistorySectionProps = {}) {
+  const [eventType, setEventTypeState] = useState(urlFilter ?? '');
   const [search, setSearchState] = useState('');
   const [searchInput, setSearchInput] = useState('');
   const [confirmAction, setConfirmAction] = useState<'errors' | 'all' | null>(null);
   const pagination = usePagination(DEFAULT_LIMITS.eventHistory);
   const { clampToTotal: clampHistoryPage } = pagination;
 
+  // Sync from URL filter on mount / URL change
+  useEffect(() => {
+    if (urlFilter !== undefined && urlFilter !== eventType) {
+      setEventTypeState(urlFilter);
+      pagination.reset();
+    }
+  }, [urlFilter]); // eslint-disable-line react-hooks/exhaustive-deps
+
   // Reset pagination when filters change
   const setEventType = useCallback((value: string) => {
     setEventTypeState(value);
+    onFilterChange?.(value);
     pagination.reset();
-  }, [pagination]);
+  }, [pagination, onFilterChange]);
 
   const setSearch = useCallback((value: string) => {
     setSearchState(value);

@@ -1,5 +1,6 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { useMutation } from '@tanstack/react-query';
+import { useSearchParams } from 'react-router-dom';
 import { toast } from 'sonner';
 import {
   ActivityIcon,
@@ -60,7 +61,26 @@ export function ActivityPage() {
   // instead of the full pagination object to avoid re-running on every render.
   useEffect(() => { clampQueuePage(queueTotal); }, [queueTotal, clampQueuePage]);
 
-  const [tab, setTab] = useState<'active' | 'history'>('active');
+  const [searchParams, setSearchParams] = useSearchParams();
+  const tabParam = searchParams.get('tab');
+  const tab: 'active' | 'history' = tabParam === 'history' ? 'history' : 'active';
+  const filterParam = searchParams.get('filter') ?? '';
+
+  const setTab = useCallback((value: string) => {
+    setSearchParams((prev) => {
+      const next = new URLSearchParams(prev);
+      if (value === 'active') {
+        next.delete('tab');
+      } else {
+        next.set('tab', value);
+      }
+      // Clear filter when switching to active tab
+      if (value === 'active') {
+        next.delete('filter');
+      }
+      return next;
+    }, { replace: true });
+  }, [setSearchParams]);
 
   if (isLoading) {
     return <PageLoading header={<PageHeader title="Activity" subtitle="Monitor your downloads and import history" />} />;
@@ -97,7 +117,20 @@ export function ActivityPage() {
 
       {tab === 'history' && (
         <div role="tabpanel" id="tabpanel-history" aria-labelledby="tab-history" className="animate-fade-in-up stagger-2">
-          <EventHistorySection />
+          <EventHistorySection
+            urlFilter={filterParam}
+            onFilterChange={(value) => {
+              setSearchParams((prev) => {
+                const next = new URLSearchParams(prev);
+                if (value) {
+                  next.set('filter', value);
+                } else {
+                  next.delete('filter');
+                }
+                return next;
+              }, { replace: true });
+            }}
+          />
         </div>
       )}
     </div>
