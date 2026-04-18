@@ -14,7 +14,9 @@ import { useActivity } from './useActivity.js';
 import { useMergeActivityCards } from '@/hooks/useMergeProgress.js';
 import { useSearchProgress } from '@/hooks/useSearchProgress';
 import { usePagination } from '@/hooks/usePagination';
+import { useQuery } from '@tanstack/react-query';
 import { api } from '@/lib/api';
+import { queryKeys } from '@/lib/queryKeys';
 import { getErrorMessage } from '@/lib/error-message.js';
 import { DEFAULT_LIMITS } from '../../../shared/schemas/common.js';
 
@@ -34,6 +36,13 @@ export function ActivityPage() {
   const mergeCards = useMergeActivityCards();
   const searchCards = useSearchProgress();
   const { isLoading } = status;
+
+  const importJobsQuery = useQuery({
+    queryKey: queryKeys.importJobs(),
+    queryFn: () => api.getImportJobs(),
+    refetchInterval: 5000,
+  });
+  const importJobs = importJobsQuery.data ?? [];
   const { cancelMutation, retryMutation, approveMutation, rejectMutation } = mutations;
 
   const [cancellingMergeBookId, setCancellingMergeBookId] = useState<number | null>(null);
@@ -75,6 +84,7 @@ export function ActivityPage() {
           queuePagination={queuePagination}
           mergeCards={mergeCards}
           searchCards={searchCards}
+          importJobs={importJobs}
           cancelMutation={cancelMutation}
           retryMutation={retryMutation}
           approveMutation={approveMutation}
