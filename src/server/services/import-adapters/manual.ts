@@ -4,6 +4,7 @@ import { books } from '../../../db/schema.js';
 import type { BookStatus } from '../../../shared/schemas/book.js';
 import type { ImportAdapter, ImportAdapterContext, ImportJob, ManualImportJobPayload } from './types.js';
 import type { ImportPipelineDeps } from '../import-orchestration.helpers.js';
+import type { AppSettings } from '../../../shared/schemas/settings/registry.js';
 import { copyToLibrary } from '../import-orchestration.helpers.js';
 import { getAudioStats } from '../library-scan.helpers.js';
 import { orchestrateBookEnrichment, buildEnrichmentBookInput, buildBackgroundAudnexusConfig, buildImportedEventPayload, extractImportMetadata } from '../enrichment-orchestration.helpers.js';
@@ -49,12 +50,13 @@ export class ManualImportAdapter implements ImportAdapter {
 
       let finalPath = payload.path;
       if (mode) {
+        const librarySettings = await this.deps.settingsService.get('library');
         await ctx.setPhase('copying');
         finalPath = await copyToLibrary(payload, bookRow, extracted.meta ?? null, mode, this.deps, (progress, byteCounter) => {
           ctx.emitProgress('copying', progress, byteCounter);
         });
 
-        await this.renameIfConfigured(finalPath, bookId, bookRow, payload, ctx);
+        await this.renameIfConfigured(finalPath, bookId, bookRow, payload, ctx, librarySettings);
       }
 
       const stats = await getAudioStats(finalPath, log);
@@ -96,8 +98,8 @@ export class ManualImportAdapter implements ImportAdapter {
   private async renameIfConfigured(
     finalPath: string, bookId: number, bookRow: { title: string; seriesName: string | null; seriesPosition: number | null; publishedDate: string | null },
     payload: ManualImportJobPayload, ctx: ImportAdapterContext,
+    librarySettings: AppSettings['library'],
   ): Promise<void> {
-    const librarySettings = await this.deps.settingsService.get('library');
     if (!librarySettings.fileFormat?.trim()) return;
 
     await ctx.setPhase('renaming');
