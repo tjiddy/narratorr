@@ -52,7 +52,7 @@ export class ManualImportAdapter implements ImportAdapter {
       if (mode) {
         const librarySettings = await this.deps.settingsService.get('library');
         await ctx.setPhase('copying');
-        finalPath = await copyToLibrary(payload, bookRow, extracted.meta ?? null, mode, this.deps, (progress, byteCounter) => {
+        finalPath = await copyToLibrary(payload, extracted.meta ?? null, mode, this.deps, (progress, byteCounter) => {
           ctx.emitProgress('copying', progress, byteCounter);
         });
 

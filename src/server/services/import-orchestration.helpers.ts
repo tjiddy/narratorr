@@ -109,7 +109,7 @@ async function enrichImportedBook(
 
   let finalPath = item.path;
   if (mode) {
-    finalPath = await copyToLibrary(item, book as Parameters<typeof copyToLibrary>[1], meta, mode, deps);
+    finalPath = await copyToLibrary(item, meta, mode, deps);
   }
 
   const stats = await getAudioStats(finalPath, log);
@@ -183,7 +183,6 @@ async function collectFiles(dir: string, prefix: string, out: { relativePath: st
 // eslint-disable-next-line complexity -- copy/move pipeline with verification and retry logic
 export async function copyToLibrary(
   item: ImportConfirmItem,
-  _book: { id: number; title: string; seriesName?: string | null; seriesPosition?: number | null; publishedDate?: string | null },
   meta: BookMetadata | null,
   mode: ImportMode,
   deps: ImportPipelineDeps,
