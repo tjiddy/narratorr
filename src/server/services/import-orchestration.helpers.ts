@@ -4,6 +4,7 @@
  */
 import { mkdir, cp, rm, readdir, stat } from 'node:fs/promises';
 import { createReadStream, createWriteStream } from 'node:fs';
+import { Transform } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
 import { relative, resolve, isAbsolute, join } from 'node:path';
 import type { Db } from '../../db/index.js';
@@ -147,14 +148,21 @@ export async function streamCopyWithProgress(
     const destPath = join(destDir, file.relativePath);
     await mkdir(join(destPath, '..'), { recursive: true });
 
+    // Track bytes per-chunk for live progress within large files
+    const tracker = new Transform({
+      transform(chunk: Buffer, _encoding, callback) {
+        bytesCopied += chunk.length;
+        const progress = totalSize > 0 ? bytesCopied / totalSize : 1;
+        onProgress(progress, { current: bytesCopied, total: totalSize });
+        callback(null, chunk);
+      },
+    });
+
     await pipeline(
       createReadStream(srcPath),
+      tracker,
       createWriteStream(destPath),
     );
-
-    bytesCopied += file.size;
-    const progress = totalSize > 0 ? bytesCopied / totalSize : 1;
-    onProgress(progress, { current: bytesCopied, total: totalSize });
   }
 }
 
