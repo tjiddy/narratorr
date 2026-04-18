@@ -25,6 +25,7 @@ function makeJob(overrides: Partial<ImportJob> = {}): ImportJob {
     createdAt: new Date(),
     updatedAt: new Date(),
     startedAt: new Date(),
+    phaseHistory: null,
     completedAt: null,
     ...overrides,
   };
@@ -46,6 +47,7 @@ describe('AutoImportAdapter', () => {
       db: {} as never,
       log: createMockLogger(),
       setPhase: setPhase as unknown as ImportAdapterContext['setPhase'],
+      emitProgress: vi.fn(),
     };
 
     adapter = new AutoImportAdapter(mockOrchestrator as unknown as ImportOrchestrator);
