@@ -351,6 +351,7 @@ export const importJobs = sqliteTable('import_jobs', {
   status: text('status', { enum: IMPORT_JOB_STATUSES }).notNull().default('pending'),
   phase: text('phase', { enum: IMPORT_JOB_PHASES }).default('queued'),
   metadata: text('metadata').notNull(),
+  phaseHistory: text('phase_history'),
   lastError: text('last_error'),
   createdAt: integer('created_at', { mode: 'timestamp' })
     .notNull()
