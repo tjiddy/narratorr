@@ -26,24 +26,18 @@ export interface EventHistorySectionProps {
 }
 
 export function EventHistorySection({ urlFilter, onFilterChange }: EventHistorySectionProps = {}) {
-  const [eventType, setEventTypeState] = useState(urlFilter ?? '');
+  const [localFilter, setLocalFilterState] = useState('');
+  // Derived state: URL filter takes precedence when provided
+  const eventType = urlFilter ?? localFilter;
   const [search, setSearchState] = useState('');
   const [searchInput, setSearchInput] = useState('');
   const [confirmAction, setConfirmAction] = useState<'errors' | 'all' | null>(null);
   const pagination = usePagination(DEFAULT_LIMITS.eventHistory);
   const { clampToTotal: clampHistoryPage } = pagination;
 
-  // Sync from URL filter on mount / URL change
-  useEffect(() => {
-    if (urlFilter !== undefined && urlFilter !== eventType) {
-      setEventTypeState(urlFilter);
-      pagination.reset();
-    }
-  }, [urlFilter]); // eslint-disable-line react-hooks/exhaustive-deps
-
   // Reset pagination when filters change
   const setEventType = useCallback((value: string) => {
-    setEventTypeState(value);
+    setLocalFilterState(value);
     onFilterChange?.(value);
     pagination.reset();
   }, [pagination, onFilterChange]);

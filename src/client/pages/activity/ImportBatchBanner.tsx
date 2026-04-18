@@ -1,3 +1,4 @@
+import { useMemo } from 'react';
 import { Link } from 'react-router-dom';
 import type { ImportJobWithBook } from '@/lib/api/import-jobs';
 
@@ -5,13 +6,12 @@ const COOLDOWN_MS = 60_000;
 
 export interface ImportBatchBannerProps {
   jobs: ImportJobWithBook[];
+  /** Current timestamp — passed from parent to keep render pure */
+  now: number;
 }
 
-export function ImportBatchBanner({ jobs }: ImportBatchBannerProps) {
-  const now = Date.now();
-
-  // Batch membership: non-terminal + terminal within 60s
-  const batchJobs = jobs.filter((job) => {
+function filterBatchJobs(jobs: ImportJobWithBook[], now: number): ImportJobWithBook[] {
+  return jobs.filter((job) => {
     if (job.status === 'pending' || job.status === 'processing') return true;
     if (job.completedAt) {
       const completedMs = new Date(job.completedAt).getTime();
@@ -19,6 +19,10 @@ export function ImportBatchBanner({ jobs }: ImportBatchBannerProps) {
     }
     return false;
   });
+}
+
+export function ImportBatchBanner({ jobs, now }: ImportBatchBannerProps) {
+  const batchJobs = useMemo(() => filterBatchJobs(jobs, now), [jobs, now]);
 
   if (batchJobs.length === 0) return null;
 

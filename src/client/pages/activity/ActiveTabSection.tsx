@@ -1,3 +1,4 @@
+import { useState, useEffect } from 'react';
 import type { UseMutationResult } from '@tanstack/react-query';
 import {
   DownloadCloudIcon,
@@ -37,11 +38,18 @@ export function ActiveTabSection(props: ActiveTabSectionProps) {
   const queuedImportJobs = importJobs.filter((j) => j.status === 'pending');
   const hasAnyActivity = queue.length > 0 || searchCards.length > 0 || mergeCards.length > 0 || importJobs.length > 0;
 
+  // Refresh "now" every 10s for batch banner cooldown without impure Date.now() in render
+  const [bannerNow, setBannerNow] = useState(() => Date.now());
+  useEffect(() => {
+    const timer = setInterval(() => setBannerNow(Date.now()), 10_000);
+    return () => clearInterval(timer);
+  }, []);
+
   return (
     <section className="space-y-5 animate-fade-in-up stagger-2">
       {/* Import batch banner */}
       {importJobs.length > 0 && (
-        <ImportBatchBanner jobs={importJobs} />
+        <ImportBatchBanner jobs={importJobs} now={bannerNow} />
       )}
 
       <div className="flex items-center gap-3">

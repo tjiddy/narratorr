@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect } from 'vitest';
 import { screen } from '@testing-library/react';
 import { renderWithProviders } from '@/__tests__/helpers';
 import { ImportBatchBanner } from './ImportBatchBanner';
@@ -22,68 +22,50 @@ function makeJob(overrides: Partial<ImportJobWithBook> = {}): ImportJobWithBook 
 }
 
 describe('ImportBatchBanner', () => {
-  let dateNowSpy: ReturnType<typeof vi.spyOn>;
-
-  beforeEach(() => {
-    dateNowSpy = vi.spyOn(Date, 'now');
-  });
-
-  afterEach(() => {
-    dateNowSpy.mockRestore();
-  });
+  const NOW = 1700000000000;
 
   describe('visibility', () => {
     it('renders when import jobs exist in non-terminal states', () => {
-      renderWithProviders(<ImportBatchBanner jobs={[makeJob({ status: 'processing' })]} />);
+      renderWithProviders(<ImportBatchBanner jobs={[makeJob({ status: 'processing' })]} now={NOW} />);
 
       expect(screen.getByText(/0 of 1 processed/)).toBeInTheDocument();
     });
 
     it('renders when most recent terminal job completed <60s ago', () => {
-      const now = Date.now();
-      dateNowSpy.mockReturnValue(now);
-
       const job = makeJob({
         status: 'completed',
-        completedAt: new Date(now - 30_000).toISOString(), // 30s ago
+        completedAt: new Date(NOW - 30_000).toISOString(),
       });
-      renderWithProviders(<ImportBatchBanner jobs={[job]} />);
+      renderWithProviders(<ImportBatchBanner jobs={[job]} now={NOW} />);
 
       expect(screen.getByText(/1 of 1 processed/)).toBeInTheDocument();
     });
 
     it('hides when all jobs terminal and completedAt >60s ago', () => {
-      const now = Date.now();
-      dateNowSpy.mockReturnValue(now);
-
       const job = makeJob({
         status: 'completed',
-        completedAt: new Date(now - 90_000).toISOString(), // 90s ago
+        completedAt: new Date(NOW - 90_000).toISOString(),
       });
-      const { container } = renderWithProviders(<ImportBatchBanner jobs={[job]} />);
+      const { container } = renderWithProviders(<ImportBatchBanner jobs={[job]} now={NOW} />);
 
-      // Banner should not render
       expect(container.textContent).toBe('');
     });
 
     it('hides when no import jobs exist', () => {
-      const { container } = renderWithProviders(<ImportBatchBanner jobs={[]} />);
+      const { container } = renderWithProviders(<ImportBatchBanner jobs={[]} now={NOW} />);
       expect(container.textContent).toBe('');
     });
   });
 
   describe('counts', () => {
     it('shows correct X of Y processed, A imported, B failed', () => {
-      const now = Date.now();
-      dateNowSpy.mockReturnValue(now);
-
       const jobs = [
-        makeJob({ id: 1, status: 'completed', completedAt: new Date(now - 10_000).toISOString() }),
-        makeJob({ id: 2, status: 'failed', completedAt: new Date(now - 5_000).toISOString() }),
+        makeJob({ id: 1, status: 'completed', completedAt: new Date(NOW - 10_000).toISOString() }),
+        makeJob({ id: 2, status: 'failed', completedAt: new Date(NOW - 5_000).toISOString() }),
         makeJob({ id: 3, status: 'processing' }),
         makeJob({ id: 4, status: 'pending' }),
       ];
-      renderWithProviders(<ImportBatchBanner jobs={jobs} />);
+      renderWithProviders(<ImportBatchBanner jobs={jobs} now={NOW} />);
 
       expect(screen.getByText(/2 of 4 processed/)).toBeInTheDocument();
       expect(screen.getByText(/1 imported/)).toBeInTheDocument();
@@ -92,20 +74,17 @@ describe('ImportBatchBanner', () => {
 
   describe('failed link', () => {
     it('"B failed →" link rendered when B > 0', () => {
-      const now = Date.now();
-      dateNowSpy.mockReturnValue(now);
-
       const jobs = [
-        makeJob({ id: 1, status: 'failed', completedAt: new Date(now - 5_000).toISOString() }),
+        makeJob({ id: 1, status: 'failed', completedAt: new Date(NOW - 5_000).toISOString() }),
       ];
-      renderWithProviders(<ImportBatchBanner jobs={jobs} />);
+      renderWithProviders(<ImportBatchBanner jobs={jobs} now={NOW} />);
 
       const link = screen.getByText(/failed/);
       expect(link.closest('a')).toHaveAttribute('href', '/activity?tab=history&filter=import_failed');
     });
 
     it('does not render failed link when B is 0', () => {
-      renderWithProviders(<ImportBatchBanner jobs={[makeJob({ status: 'processing' })]} />);
+      renderWithProviders(<ImportBatchBanner jobs={[makeJob({ status: 'processing' })]} now={NOW} />);
 
       expect(screen.queryByText(/failed/)).not.toBeInTheDocument();
     });
