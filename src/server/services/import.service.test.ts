@@ -42,6 +42,11 @@ vi.mock('../../core/utils/audio-scanner.js', () => ({
   scanAudioDirectory: vi.fn().mockResolvedValue(null),
 }));
 
+// Mock audio processor (retained for regression assertion — processAudioFiles must NOT be called)
+vi.mock('../../core/utils/audio-processor.js', () => ({
+  processAudioFiles: vi.fn(),
+}));
+
 // Spy on import-helpers — passthrough to real implementation so existing unit tests still work
 vi.mock('../utils/import-helpers.js', async (importOriginal) => {
   const actual = await importOriginal() as Record<string, unknown>;
@@ -62,6 +67,7 @@ vi.mock('../utils/paths.js', async (importOriginal) => {
 
 import { mkdir, cp, stat, readdir, writeFile, rename, rm, statfs } from 'node:fs/promises';
 import { scanAudioDirectory } from '../../core/utils/audio-scanner.js';
+import { processAudioFiles } from '../../core/utils/audio-processor.js';
 import { enrichBookFromAudio } from './enrichment-utils.js';
 import { renameFilesWithTemplate } from '../utils/paths.js';
 
@@ -964,9 +970,10 @@ describe('ImportService', () => {
       const result = await service.importDownload(1);
 
       expect(result.downloadId).toBe(1);
-      // processAudioFiles is no longer called from the import path — audio processing
-      // was removed in #649. Verify import completes without touching audio processor.
-      expect(scanAudioDirectory).toHaveBeenCalled(); // enrichment still runs
+      // processAudioFiles must NOT be called from the import path (#649)
+      expect(processAudioFiles).not.toHaveBeenCalled();
+      // enrichment still runs
+      expect(scanAudioDirectory).toHaveBeenCalled();
     });
   });
 

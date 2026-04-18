@@ -17,14 +17,25 @@ vi.mock('../utils/book-status.js', () => ({
   revertBookStatus: vi.fn().mockResolvedValue('wanted'),
 }));
 
+vi.mock('./import-helpers.js', async (importOriginal) => {
+  const actual = await importOriginal() as Record<string, unknown>;
+  return {
+    ...actual,
+    getPathSize: vi.fn().mockResolvedValue(1000),
+    getAudioPathSize: vi.fn().mockResolvedValue(1000),
+  };
+});
+
 import { stat, rm, statfs } from 'node:fs/promises';
 import { runPostProcessingScript } from '../utils/post-processing-script.js';
 import { revertBookStatus } from '../utils/book-status.js';
+import { getPathSize, getAudioPathSize } from './import-helpers.js';
 import type { Stats } from 'node:fs';
 
 import {
   validateSource,
   checkDiskSpace,
+  verifyCopy,
   embedTagsForImport,
   runImportPostProcessing,
   emitImportSuccess,
@@ -748,5 +759,29 @@ describe('isContentFailure classifier (#504)', () => {
 
   it('returns false for non-Error throwable', () => {
     expect(isContentFailure('a string error')).toBe(false);
+  });
+});
+
+// ── verifyCopy ──────────────────────────────────────────────────────────
+
+describe('verifyCopy', () => {
+  it('returns target size when copy matches source audio size', async () => {
+    vi.mocked(getPathSize).mockResolvedValue(5000);
+    vi.mocked(getAudioPathSize).mockResolvedValue(5000);
+
+    const result = await verifyCopy({ targetPath: '/lib/book', sourcePath: '/src/book' });
+
+    expect(result).toBe(5000);
+    expect(getPathSize).toHaveBeenCalledWith('/lib/book');
+    expect(getAudioPathSize).toHaveBeenCalledWith('/src/book');
+  });
+
+  it('throws when target size is below threshold of source audio size', async () => {
+    // COPY_VERIFICATION_THRESHOLD = 0.99, so target must be >= source * 0.99
+    vi.mocked(getPathSize).mockResolvedValue(400);
+    vi.mocked(getAudioPathSize).mockResolvedValue(1000);
+
+    await expect(verifyCopy({ targetPath: '/lib/book', sourcePath: '/src/book' }))
+      .rejects.toThrow('Copy verification failed: source 1000 bytes, target 400 bytes');
   });
 });
