@@ -17,7 +17,6 @@ export const IMPORT_JOB_PHASES = [
   'analyzing',
   'renaming',
   'copying',
-  'flattening',
   'fetching_metadata',
   'done',
   'failed',

@@ -8,7 +8,6 @@ const PHASE_LABELS: Record<string, string> = {
   analyzing: 'Analyzing',
   renaming: 'Renaming files',
   copying: 'Copying files',
-  flattening: 'Flattening tracks',
   fetching_metadata: 'Fetching metadata',
 };
 
@@ -24,9 +23,6 @@ function formatProgress(phase: string, progress?: number, byteCounter?: { curren
   const pct = Math.round(progress * 100);
   if (byteCounter && byteCounter.total > 0) {
     return `${label} \u00B7 ${pct}% (${formatBytes(byteCounter.current)}/${formatBytes(byteCounter.total)})`;
-  }
-  if (phase === 'flattening') {
-    return `${label} \u00B7 ${pct}% \u2014 encoding`;
   }
   return `${label} \u00B7 ${pct}%`;
 }
@@ -57,7 +53,7 @@ function PhaseRow({ entry, isLast, progress, byteCounter }: {
 }) {
   const isDone = entry.completedAt !== undefined;
   const isCurrent = !isDone && isLast;
-  const showProgress = isCurrent && (entry.phase === 'copying' || entry.phase === 'flattening');
+  const showProgress = isCurrent && entry.phase === 'copying';
   const label = PHASE_LABELS[entry.phase] ?? entry.phase;
   const statusText = isDone ? 'completed' : isCurrent ? 'in progress' : 'pending';
 
