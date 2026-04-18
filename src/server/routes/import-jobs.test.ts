@@ -5,14 +5,6 @@ import Fastify from 'fastify';
 import { serializerCompiler, validatorCompiler } from 'fastify-type-provider-zod';
 import { importJobsRoutes } from './import-jobs.js';
 
-function createMockLogger(): FastifyBaseLogger {
-  return {
-    info: vi.fn(), debug: vi.fn(), warn: vi.fn(), error: vi.fn(),
-    trace: vi.fn(), fatal: vi.fn(), child: vi.fn().mockReturnThis(),
-    level: 'info', silent: vi.fn(),
-  } as unknown as FastifyBaseLogger;
-}
-
 function createMockDb() {
   const chain = {
     from: vi.fn().mockReturnThis(),

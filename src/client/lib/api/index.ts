@@ -18,6 +18,7 @@ export type { HealthState, HealthCheckResult, HealthSummary, TaskMetadata, Syste
 export type { ImportList, ImportListItem, ImportListPreview } from './import-lists.js';
 export type { SuggestionRow, DiscoverStats, MarkAddedResult, RefreshResult } from './discover.js';
 export type { BulkOpType, BulkJobStatus, RenameCount } from './bulk-operations.js';
+export type { ImportJobWithBook, ImportJobBook, ImportJobsParams } from './import-jobs.js';
 
 export { formatBytes } from '@core/utils/parse.js';
 export { formatProgress } from './utils.js';
@@ -40,6 +41,7 @@ import { backupsApi } from './backups.js';
 import { importListsApi } from './import-lists.js';
 import { discoverApi } from './discover.js';
 import { bulkOperationsApi } from './bulk-operations.js';
+import { importJobsApi } from './import-jobs.js';
 
 export const api = {
   ...booksApi,
@@ -60,4 +62,5 @@ export const api = {
   ...importListsApi,
   ...discoverApi,
   ...bulkOperationsApi,
+  ...importJobsApi,
 };

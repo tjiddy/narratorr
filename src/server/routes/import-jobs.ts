@@ -1,7 +1,8 @@
 import type { FastifyInstance } from 'fastify';
 import type { Db } from '../../db/index.js';
 import { importJobs, books, bookAuthors, authors } from '../../db/schema.js';
-import { eq, and, inArray } from 'drizzle-orm';
+import { eq, and, inArray, type SQL } from 'drizzle-orm';
+import type { ImportJobStatus } from '../../shared/schemas/import-job.js';
 import { z } from 'zod';
 import type { PhaseHistoryEntry } from '../services/import-queue-worker.js';
 
@@ -18,9 +19,9 @@ export async function importJobsRoutes(app: FastifyInstance, db: Db) {
     async (request) => {
       const { status } = request.query;
 
-      const conditions = [];
+      const conditions: SQL[] = [];
       if (status) {
-        const statuses = status.split(',');
+        const statuses = status.split(',') as ImportJobStatus[];
         conditions.push(inArray(importJobs.status, statuses));
       }
 
