@@ -16,8 +16,6 @@
 
 - **`src/server/utils/paths.ts` + `src/server/services/quality-gate-deferred-cleanup.helpers.ts` lack co-located tests**: Both contain error-handling logic (rename rollback with per-file undo, settings read failure on deferred cleanup) that deserves direct unit coverage. Indirect coverage via parent service tests exercises the happy path but not the rollback edge cases. (discovered in #621, re-classified 2026-04-18 — error-path logic warrants direct tests.)
 
-- **`useManualImport.ts` / `useLibraryImport.ts` confidence upgrade duplication**: `upgradeConfidence(confidence, hasMetadata)` logic (none→medium, medium→high) is duplicated verbatim in both hooks' `handleEdit` callbacks. Extract to a shared util (~10 lines of actual logic). Risk of drift if confidence rules change. (discovered in #335, re-classified 2026-04-18 — trivial extraction shouldn't sit in accepted.)
-
 - **`src/server/__tests__/e2e-helpers.ts` leaks `.db` files on abnormal exit**: `cleanup()` uses per-file `unlink()` wrapped in try/catch; a crash or Ctrl+C leaves `narratorr-e2e-*.db` + their `-wal`/`-shm` sidecars in `os.tmpdir()`. Observed accumulation dating back to April 9. Playwright harness already solved this by creating a containing *directory* per run and `rm -rf`ing it. The vitest helper should adopt the same pattern (or register a process-exit handler). (discovered in #612, re-classified 2026-04-18 — this is a queued cleanup, not "accepted forever".)
 
 ### Existing actionable
