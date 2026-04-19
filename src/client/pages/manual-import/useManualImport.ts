@@ -8,6 +8,7 @@ import { useMatchJob } from '@/hooks/useMatchJob';
 import type { ImportRow, BookEditState } from '@/components/manual-import';
 import { isPathInsideLibrary } from '@/lib/pathUtils.js';
 import { getErrorMessage } from '@/lib/error-message.js';
+import { upgradeMatchConfidence } from '@/lib/upgrade-match-confidence.js';
 
 export type Step = 'path' | 'review';
 
@@ -150,19 +151,7 @@ export function useManualImport({ onScanSuccess, libraryPath }: UseManualImportO
     setRows(prev => prev.map((r, i) => {
       if (i !== index) return r;
       const autoCheck = !r.selected && state.metadata ? true : r.selected;
-      // Upgrade confidence when user explicitly selects provider metadata:
-      // none → medium (user provided metadata on an unmatched row)
-      // medium → high (user confirmed/re-selected on a review row)
-      // The medium→high upgrade requires a NEW metadata selection (different reference),
-      // not just the pre-populated bestMatch passed back unchanged on save.
-      const metadataChanged = state.metadata && state.metadata !== r.edited.metadata;
-      const matchResult = r.matchResult && state.metadata
-        ? r.matchResult.confidence === 'none'
-          ? { ...r.matchResult, confidence: 'medium' as const }
-          : r.matchResult.confidence === 'medium' && metadataChanged
-            ? { ...r.matchResult, confidence: 'high' as const, reason: undefined }
-            : r.matchResult
-        : r.matchResult;
+      const matchResult = upgradeMatchConfidence(r.matchResult, state.metadata, r.edited.metadata);
       return { ...r, edited: state, selected: autoCheck, matchResult };
     }));
   }, []);
