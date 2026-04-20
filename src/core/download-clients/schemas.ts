@@ -14,6 +14,7 @@ export const qbTorrentSchema = z.object({
   num_seeds: z.number().default(0),
   num_leechs: z.number().default(0),
   eta: z.number().default(0),
+  dlspeed: z.number().optional(),
   save_path: z.string().default(''),
   content_path: z.string().optional(),
   added_on: z.number().default(0),
