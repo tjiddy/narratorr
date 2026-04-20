@@ -607,6 +607,56 @@ describe('NZBGetClient', () => {
       expect(item!.eta).toBeUndefined();
     });
 
+    it('computes downloadSpeed from DownloadedSizeMB / DownloadTimeSec (MiB/s → bytes/s)', async () => {
+      server.use(
+        rpcHandler({
+          // 10 MiB in 5s = 2 MiB/s = 2 * 1048576 bytes/s
+          listgroups: () => [{ ...activeGroup, DownloadedSizeMB: 10, DownloadTimeSec: 5 }],
+          history: () => [],
+        }),
+      );
+
+      const item = await client.getDownload('123');
+      expect(item!.downloadSpeed).toBe(2 * 1024 * 1024);
+    });
+
+    it('leaves downloadSpeed undefined when DownloadTimeSec=0 (divide-by-zero guard)', async () => {
+      server.use(
+        rpcHandler({
+          listgroups: () => [{ ...activeGroup, DownloadTimeSec: 0 }],
+          history: () => [],
+        }),
+      );
+
+      const item = await client.getDownload('123');
+      expect(item!.downloadSpeed).toBeUndefined();
+    });
+
+    it('leaves downloadSpeed undefined when DownloadedSizeMB=0 (no progress yet)', async () => {
+      server.use(
+        rpcHandler({
+          listgroups: () => [{ ...activeGroup, DownloadedSizeMB: 0, DownloadTimeSec: 10 }],
+          history: () => [],
+        }),
+      );
+
+      const item = await client.getDownload('123');
+      // No downloaded bytes yet — rate is unknown, not 0 (which would mean "actively stalled").
+      expect(item!.downloadSpeed).toBeUndefined();
+    });
+
+    it('history items have no downloadSpeed (no active rate)', async () => {
+      server.use(
+        rpcHandler({
+          listgroups: () => [],
+          history: () => [historyItem],
+        }),
+      );
+
+      const item = await client.getDownload('456');
+      expect(item!.downloadSpeed).toBeUndefined();
+    });
+
     it('handles RemainingSizeMB=0 (download complete, no ETA)', async () => {
       server.use(
         rpcHandler({
