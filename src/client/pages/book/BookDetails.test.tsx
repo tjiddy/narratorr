@@ -1965,4 +1965,5 @@ describe('#257 merge observability — BookDetails progress', () => {
       });
     });
   });
+
 });

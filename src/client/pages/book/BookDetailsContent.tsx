@@ -1,6 +1,7 @@
 import { AudioInfo } from '@/components/AudioInfo';
 import { type BookWithAuthor } from '@/lib/api';
 import { BookDescription } from './BookDescription.js';
+import { BookLocationSection } from './BookLocationSection.js';
 import { FileList } from './FileList.js';
 
 interface MergedData {
@@ -14,8 +15,8 @@ export function BookDetailsContent({ libraryBook, merged }: {
 }) {
   const hasDescription = !!merged.description;
   const hasGenres = merged.genres && merged.genres.length > 0;
-  const hasFiles = !!libraryBook.path;
-  const hasSidebar = libraryBook.audioCodec || hasGenres || hasFiles;
+  const hasPath = !!libraryBook.path;
+  const hasSidebar = libraryBook.audioCodec || hasGenres || hasPath;
 
   if (!hasDescription && !hasSidebar) return null;
 
@@ -51,7 +52,9 @@ export function BookDetailsContent({ libraryBook, merged }: {
             </div>
           )}
 
-          {hasFiles && <FileList bookId={libraryBook.id} />}
+          {hasPath && <FileList bookId={libraryBook.id} />}
+
+          {hasPath && <BookLocationSection path={libraryBook.path!} />}
         </div>
       )}
     </div>
