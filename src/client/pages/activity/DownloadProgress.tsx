@@ -1,18 +1,26 @@
-import { formatBytes, formatProgress, type Download } from '@/lib/api';
+import { formatBytes, formatBytesPerSec, formatProgress, type Download } from '@/lib/api';
 
 export function DownloadProgress({ download }: { download: Download }) {
+  // Speed is rendered when the server reported a numeric rate (including 0,
+  // the stalled signal). null / undefined means "not reported" — omit the label.
+  const showSpeed = typeof download.downloadSpeed === 'number';
   return (
     <div className="mt-4 space-y-2">
       <div className="flex items-center justify-between text-sm">
         <span className="font-medium text-primary">
           {formatProgress(download.progress)}
         </span>
-        {download.size && (
-          <span className="text-muted-foreground">
-            {formatBytes(download.size * download.progress)} /{' '}
-            {formatBytes(download.size)}
-          </span>
-        )}
+        <span className="flex items-center gap-3 text-muted-foreground">
+          {showSpeed && (
+            <span>{formatBytesPerSec(download.downloadSpeed as number)}</span>
+          )}
+          {download.size && (
+            <span>
+              {formatBytes(download.size * download.progress)} /{' '}
+              {formatBytes(download.size)}
+            </span>
+          )}
+        </span>
       </div>
       <div className="relative h-2.5 bg-muted rounded-full overflow-hidden">
         {/* Animated background */}

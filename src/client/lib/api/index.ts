@@ -21,6 +21,7 @@ export type { BulkOpType, BulkJobStatus, RenameCount } from './bulk-operations.j
 export type { ImportJobWithBook, ImportJobBook, ImportJobsParams } from './import-jobs.js';
 
 export { formatBytes } from '@core/utils/parse.js';
+export { formatBytesPerSec } from './formatBytesPerSec.js';
 export { formatProgress } from './utils.js';
 
 import { booksApi } from './books.js';

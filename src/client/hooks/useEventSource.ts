@@ -61,7 +61,7 @@ function patchActivityProgress(queryClient: ReturnType<typeof useQueryClient>, p
       const patched = old.data.map((d) => {
         if (d.id === progressData.download_id) {
           found = true;
-          return { ...d, progress: progressData.percentage };
+          return { ...d, progress: progressData.percentage, downloadSpeed: progressData.speed };
         }
         return d;
       });

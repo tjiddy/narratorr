@@ -17,6 +17,13 @@ export interface Download {
   /** Quality gate comparison data, present when status is pending_review */
   qualityGate?: QualityGateData;
   progress: number;
+  /**
+   * Current download rate in bytes/sec. SSE-only — the REST /activity response
+   * does not populate this field (speed is transient and not persisted). Patched
+   * into the Query cache by useEventSource when a download_progress event arrives.
+   * `null`/`undefined` means not reported; `0` means active but stalled.
+   */
+  downloadSpeed?: number | null;
   externalId?: string;
   errorMessage?: string;
   addedAt: string;
