@@ -100,7 +100,7 @@ export async function monitorDownloads(
 
 import type { DownloadRow } from '../services/types.js';
 
-type DownloadItem = { progress: number; status: 'downloading' | 'seeding' | 'paused' | 'completed' | 'error'; savePath: string; name: string; size: number; errorMessage?: string };
+type DownloadItem = { progress: number; status: 'downloading' | 'seeding' | 'paused' | 'completed' | 'error'; savePath: string; name: string; size: number; errorMessage?: string; downloadSpeed?: number };
 
 /** Handle a download that has been removed from the client externally. */
 async function handleMissingItem(
@@ -179,7 +179,7 @@ async function processDownloadUpdate(
     })
     .where(eq(downloads.id, download.id));
 
-  emitProgressEvents(download, progress, newStatus, broadcaster, log);
+  emitProgressEvents(download, progress, newStatus, item.downloadSpeed, broadcaster, log);
   await handleFailureTransition(db, download, newStatus, item.errorMessage, retryDeps, log, eventHistory);
   handleCompletionNotification(download, item, isCompleted, notifierService, log);
 
@@ -228,11 +228,12 @@ function emitProgressEvents(
   download: DownloadRow,
   progress: number,
   newStatus: string,
+  downloadSpeed: number | undefined,
   broadcaster: EventBroadcasterService | undefined,
   log: FastifyBaseLogger,
 ): void {
   if (!download.bookId) return;
-  safeEmit(broadcaster, 'download_progress', { download_id: download.id, book_id: download.bookId, percentage: progress, speed: null, eta: null }, log);
+  safeEmit(broadcaster, 'download_progress', { download_id: download.id, book_id: download.bookId, percentage: progress, speed: downloadSpeed ?? null, eta: null }, log);
   if (download.status !== newStatus) {
     safeEmit(broadcaster, 'download_status_change', { download_id: download.id, book_id: download.bookId, old_status: download.status as DownloadStatus, new_status: newStatus as DownloadStatus }, log);
   }

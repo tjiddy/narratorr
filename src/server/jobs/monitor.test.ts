@@ -917,6 +917,51 @@ describe('monitor job', () => {
       });
     });
 
+    it('forwards adapter downloadSpeed into the SSE payload', async () => {
+      const broadcaster = { emit: vi.fn() };
+      db.select.mockReturnValueOnce(mockDbChain([
+        { id: 1, externalId: 'ext-1', downloadClientId: 10, status: 'downloading', completedAt: null, bookId: 1 },
+      ]));
+      adapter.getDownload.mockResolvedValueOnce({ progress: 50, status: 'downloading', downloadSpeed: 2_000_000 });
+      db.update.mockReturnValue(mockDbChain());
+
+      await monitorDownloads(inject<Db>(db), inject<DownloadClientService>(downloadClientService), inject<NotifierService>(notifierService), inject<FastifyBaseLogger>(log), undefined, inject<EventBroadcasterService>(broadcaster));
+
+      expect(broadcaster.emit).toHaveBeenCalledWith('download_progress', {
+        download_id: 1, book_id: 1, percentage: 0.5, speed: 2_000_000, eta: null,
+      });
+    });
+
+    it('preserves downloadSpeed=0 (stalled) rather than coercing to null', async () => {
+      const broadcaster = { emit: vi.fn() };
+      db.select.mockReturnValueOnce(mockDbChain([
+        { id: 1, externalId: 'ext-1', downloadClientId: 10, status: 'downloading', completedAt: null, bookId: 1 },
+      ]));
+      adapter.getDownload.mockResolvedValueOnce({ progress: 50, status: 'downloading', downloadSpeed: 0 });
+      db.update.mockReturnValue(mockDbChain());
+
+      await monitorDownloads(inject<Db>(db), inject<DownloadClientService>(downloadClientService), inject<NotifierService>(notifierService), inject<FastifyBaseLogger>(log), undefined, inject<EventBroadcasterService>(broadcaster));
+
+      expect(broadcaster.emit).toHaveBeenCalledWith('download_progress', {
+        download_id: 1, book_id: 1, percentage: 0.5, speed: 0, eta: null,
+      });
+    });
+
+    it('emits speed: null when adapter does not report downloadSpeed (undefined)', async () => {
+      const broadcaster = { emit: vi.fn() };
+      db.select.mockReturnValueOnce(mockDbChain([
+        { id: 1, externalId: 'ext-1', downloadClientId: 10, status: 'downloading', completedAt: null, bookId: 1 },
+      ]));
+      adapter.getDownload.mockResolvedValueOnce({ progress: 50, status: 'downloading' });
+      db.update.mockReturnValue(mockDbChain());
+
+      await monitorDownloads(inject<Db>(db), inject<DownloadClientService>(downloadClientService), inject<NotifierService>(notifierService), inject<FastifyBaseLogger>(log), undefined, inject<EventBroadcasterService>(broadcaster));
+
+      expect(broadcaster.emit).toHaveBeenCalledWith('download_progress', {
+        download_id: 1, book_id: 1, percentage: 0.5, speed: null, eta: null,
+      });
+    });
+
     it('emits download_status_change when status transitions', async () => {
       const broadcaster = { emit: vi.fn() };
       db.select.mockReturnValueOnce(mockDbChain([
