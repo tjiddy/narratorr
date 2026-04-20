@@ -1,7 +1,10 @@
+import { useState } from 'react';
 import { toast } from 'sonner';
 import { CopyIcon } from '@/components/icons';
 
 export function BookLocationSection({ path }: { path: string }) {
+  const [copied, setCopied] = useState(false);
+
   async function handleCopy() {
     try {
       if (navigator.clipboard) {
@@ -18,6 +21,8 @@ export function BookLocationSection({ path }: { path: string }) {
         if (!ok) throw new Error('execCommand copy failed');
       }
       toast.success('Copied to clipboard');
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
     } catch {
       toast.error('Failed to copy to clipboard');
     }
@@ -43,6 +48,7 @@ export function BookLocationSection({ path }: { path: string }) {
             title="Copy to clipboard"
           >
             <CopyIcon className="w-4 h-4" />
+            {copied && <span className="sr-only">Copied!</span>}
           </button>
         </div>
       </div>
