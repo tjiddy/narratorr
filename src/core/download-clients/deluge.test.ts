@@ -298,6 +298,50 @@ describe('DelugeClient', () => {
       expect(result).toBeNull();
     });
 
+    it('maps download_rate to downloadSpeed in bytes/sec', async () => {
+      server.use(rpcHandler({
+        'auth.login': () => true,
+        'core.get_torrent_status': () => ({ ...mockTorrentStatus, download_rate: 524288 }),
+      }));
+
+      const result = await client.getDownload('abc123def456');
+      expect(result!.downloadSpeed).toBe(524288);
+    });
+
+    it('preserves download_rate=0 (stalled) rather than coercing to undefined', async () => {
+      server.use(rpcHandler({
+        'auth.login': () => true,
+        'core.get_torrent_status': () => ({ ...mockTorrentStatus, download_rate: 0 }),
+      }));
+
+      const result = await client.getDownload('abc123def456');
+      expect(result!.downloadSpeed).toBe(0);
+    });
+
+    it('leaves downloadSpeed undefined when download_rate field is absent', async () => {
+      server.use(rpcHandler({
+        'auth.login': () => true,
+        'core.get_torrent_status': () => mockTorrentStatus,
+      }));
+
+      const result = await client.getDownload('abc123def456');
+      expect(result!.downloadSpeed).toBeUndefined();
+    });
+
+    it('requests download_rate in TORRENT_STATUS_KEYS', async () => {
+      const capturedKeys: string[][] = [];
+      server.use(rpcHandler({
+        'auth.login': () => true,
+        'core.get_torrent_status': (params) => {
+          capturedKeys.push(params[1] as string[]);
+          return mockTorrentStatus;
+        },
+      }));
+
+      await client.getDownload('abc123def456');
+      expect(capturedKeys[0]).toContain('download_rate');
+    });
+
     it('maps Seeding + is_finished=true to completed', async () => {
       server.use(rpcHandler({
         'auth.login': () => true,
