@@ -149,6 +149,15 @@ describe('BookLocationSection', () => {
     expect(code.className).toContain('select-all');
   });
 
+  it('sets the code element title attribute to the exact path for the hover fallback', () => {
+    const path = '/library/audiobooks/Sanderson/The Way of Kings';
+    renderWithProviders(<BookLocationSection path={path} />);
+
+    const code = screen.getByText(path);
+    expect(code.tagName).toBe('CODE');
+    expect(code.getAttribute('title')).toBe(path);
+  });
+
   it('announces "Copied!" to screen readers after a successful copy', async () => {
     const writeText = vi.fn().mockResolvedValue(undefined);
     const user = userEvent.setup();
