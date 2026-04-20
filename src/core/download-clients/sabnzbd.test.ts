@@ -374,6 +374,78 @@ describe('SABnzbdClient', () => {
       const item = await client.getDownload('nonexistent');
       expect(item).toBeNull();
     });
+
+    it('maps queue kbpersec to downloadSpeed in bytes/sec using binary KiB (* 1024)', async () => {
+      server.use(
+        http.get(`${API_BASE}/api`, ({ request }) => {
+          const url = new URL(request.url);
+          const mode = url.searchParams.get('mode');
+          if (mode === 'queue') {
+            return HttpResponse.json({
+              queue: { slots: [{ ...queueSlot, kbpersec: '1024' }] },
+            });
+          }
+          return HttpResponse.json({ history: { slots: [] } });
+        }),
+      );
+
+      const item = await client.getDownload('SABnzbd_nzo_abc123');
+      // SABnzbd computes kbpersec as bytes_per_sec / 1024, so reversing yields * 1024.
+      expect(item!.downloadSpeed).toBe(1_048_576);
+    });
+
+    it('maps kbpersec="0" (stalled) to downloadSpeed=0, not undefined', async () => {
+      server.use(
+        http.get(`${API_BASE}/api`, ({ request }) => {
+          const url = new URL(request.url);
+          const mode = url.searchParams.get('mode');
+          if (mode === 'queue') {
+            return HttpResponse.json({
+              queue: { slots: [{ ...queueSlot, kbpersec: '0' }] },
+            });
+          }
+          return HttpResponse.json({ history: { slots: [] } });
+        }),
+      );
+
+      const item = await client.getDownload('SABnzbd_nzo_abc123');
+      expect(item!.downloadSpeed).toBe(0);
+    });
+
+    it('leaves downloadSpeed undefined when kbpersec is absent', async () => {
+      server.use(
+        http.get(`${API_BASE}/api`, ({ request }) => {
+          const url = new URL(request.url);
+          const mode = url.searchParams.get('mode');
+          if (mode === 'queue') {
+            return HttpResponse.json({ queue: { slots: [queueSlot] } });
+          }
+          return HttpResponse.json({ history: { slots: [] } });
+        }),
+      );
+
+      const item = await client.getDownload('SABnzbd_nzo_abc123');
+      expect(item!.downloadSpeed).toBeUndefined();
+    });
+
+    it('leaves downloadSpeed undefined for history-only items (no rate in history)', async () => {
+      server.use(
+        http.get(`${API_BASE}/api`, ({ request }) => {
+          const url = new URL(request.url);
+          const mode = url.searchParams.get('mode');
+          if (mode === 'queue') {
+            return HttpResponse.json({ queue: { slots: [] } });
+          }
+          if (mode === 'history') {
+            return HttpResponse.json({ history: { slots: [historySlot] } });
+          }
+          return HttpResponse.json({});
+        }),
+      );
+
+      const item = await client.getDownload('SABnzbd_nzo_def456');
+      expect(item!.downloadSpeed).toBeUndefined();
+    });
   });
 
   describe('getAllDownloads', () => {
