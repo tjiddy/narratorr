@@ -53,4 +53,30 @@ describe('DownloadProgress', () => {
     const fillStyles = Array.from(fills).map(el => (el as HTMLElement).style.width);
     expect(fillStyles).toContain('75%');
   });
+
+  describe('download speed label', () => {
+    it('renders the formatted speed when downloadSpeed is a positive number', () => {
+      const download = createMockDownload({ progress: 0.5, size: 1_000_000, downloadSpeed: 1_048_576 });
+      render(<DownloadProgress download={download} />);
+      expect(screen.getByText(/1\.0 MB\/s/)).toBeInTheDocument();
+    });
+
+    it('renders "0 KB/s" when downloadSpeed is 0 (stalled signal)', () => {
+      const download = createMockDownload({ progress: 0.5, size: 1_000_000, downloadSpeed: 0 });
+      render(<DownloadProgress download={download} />);
+      expect(screen.getByText(/0 KB\/s/)).toBeInTheDocument();
+    });
+
+    it('omits the speed label when downloadSpeed is null', () => {
+      const download = createMockDownload({ progress: 0.5, size: 1_000_000, downloadSpeed: null });
+      render(<DownloadProgress download={download} />);
+      expect(screen.queryByText(/\/s/)).not.toBeInTheDocument();
+    });
+
+    it('omits the speed label when downloadSpeed is undefined', () => {
+      const download = createMockDownload({ progress: 0.5, size: 1_000_000 });
+      render(<DownloadProgress download={download} />);
+      expect(screen.queryByText(/\/s/)).not.toBeInTheDocument();
+    });
+  });
 });

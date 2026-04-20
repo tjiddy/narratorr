@@ -51,14 +51,20 @@ export interface EmitDownloadProgressArgs {
   downloadId: number;
   bookId: number;
   progress: number;
+  /**
+   * Current download rate in bytes/sec. Optional — callers without adapter
+   * context (e.g. DownloadOrchestrator.updateProgress) may omit it and the
+   * payload will be emitted with `speed: null`. `0` is preserved (stalled).
+   */
+  speed?: number | null;
   log: FastifyBaseLogger;
 }
 
 /** Emit download_progress SSE. Fire-and-forget. */
 export function emitDownloadProgress(args: EmitDownloadProgressArgs): void {
-  const { broadcaster, downloadId, bookId, progress, log } = args;
+  const { broadcaster, downloadId, bookId, progress, speed, log } = args;
   safeEmit(broadcaster, 'download_progress', {
-    download_id: downloadId, book_id: bookId, percentage: progress, speed: null, eta: null,
+    download_id: downloadId, book_id: bookId, percentage: progress, speed: speed ?? null, eta: null,
   }, log);
 }
 

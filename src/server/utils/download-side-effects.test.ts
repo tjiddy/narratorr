@@ -112,6 +112,33 @@ describe('emitDownloadProgress', () => {
     emitDownloadProgress({ broadcaster, downloadId: 1, bookId: 2, progress: 0.5, log });
     expect(log.debug).toHaveBeenCalled();
   });
+
+  it('forwards a numeric speed into the payload', () => {
+    const broadcaster = createMockBroadcaster();
+    const log = createMockLog();
+    emitDownloadProgress({ broadcaster, downloadId: 1, bookId: 2, progress: 0.5, speed: 1_048_576, log });
+    expect(broadcaster.emit).toHaveBeenCalledWith('download_progress', {
+      download_id: 1, book_id: 2, percentage: 0.5, speed: 1_048_576, eta: null,
+    });
+  });
+
+  it('preserves speed=0 (stalled) rather than coercing to null', () => {
+    const broadcaster = createMockBroadcaster();
+    const log = createMockLog();
+    emitDownloadProgress({ broadcaster, downloadId: 1, bookId: 2, progress: 0.5, speed: 0, log });
+    expect(broadcaster.emit).toHaveBeenCalledWith('download_progress', {
+      download_id: 1, book_id: 2, percentage: 0.5, speed: 0, eta: null,
+    });
+  });
+
+  it('coerces explicit null speed to null (orchestrator caller pattern)', () => {
+    const broadcaster = createMockBroadcaster();
+    const log = createMockLog();
+    emitDownloadProgress({ broadcaster, downloadId: 1, bookId: 2, progress: 0.5, speed: null, log });
+    expect(broadcaster.emit).toHaveBeenCalledWith('download_progress', {
+      download_id: 1, book_id: 2, percentage: 0.5, speed: null, eta: null,
+    });
+  });
 });
 
 describe('emitDownloadStatusChange', () => {

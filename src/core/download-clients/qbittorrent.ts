@@ -27,6 +27,7 @@ interface QBTorrent {
   num_seeds: number;
   num_leechs: number;
   eta: number;
+  dlspeed?: number;
   save_path: string;
   content_path?: string;
   added_on: number;
@@ -333,6 +334,7 @@ export class QBittorrentClient implements DownloadClientAdapter {
       seeders: qbt.num_seeds,
       leechers: qbt.num_leechs,
       eta: qbt.eta > 0 && qbt.eta < ETA_UPPER_BOUND_SEC ? qbt.eta : undefined,
+      downloadSpeed: qbt.dlspeed,
       addedAt: new Date(qbt.added_on * 1000),
       completedAt: qbt.completion_on > 0 ? new Date(qbt.completion_on * 1000) : undefined,
     };

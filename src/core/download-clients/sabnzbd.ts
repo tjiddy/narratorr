@@ -21,6 +21,18 @@ function splitStorage(storage: string | undefined, fallbackName: string): { pare
   return { parent: dirname(storage), base: basename(storage) };
 }
 
+/**
+ * Parse SABnzbd's queue `kbpersec` string into bytes/sec.
+ * SABnzbd computes it as `bytes_per_sec / 1024` (binary KiB), so we reverse with `* 1024`.
+ * Returns `undefined` if the field is absent or unparseable; preserves `0` (stalled).
+ */
+function parseKbpersec(raw: string | undefined): number | undefined {
+  if (raw === undefined || raw === null || raw === '') return undefined;
+  const kib = parseFloat(raw);
+  if (!Number.isFinite(kib)) return undefined;
+  return kib * 1024;
+}
+
 export interface SABnzbdConfig {
   host: string;
   port: number;
@@ -36,6 +48,7 @@ interface SABnzbdQueueSlot {
   mbleft: string;
   percentage: string;
   timeleft: string;
+  kbpersec?: string;
   cat: string;
   storage?: string;
 }
@@ -329,6 +342,7 @@ export class SABnzbdClient implements DownloadClientAdapter {
       seeders: 0,
       leechers: 0,
       eta: this.parseTimeleft(slot.timeleft),
+      downloadSpeed: parseKbpersec(slot.kbpersec),
       addedAt: new Date(), // SABnzbd queue doesn't expose added time
       completedAt: undefined,
     };

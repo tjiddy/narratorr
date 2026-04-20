@@ -31,6 +31,7 @@ interface DelugeTorrentStatus {
   num_seeds: number;
   num_peers: number;
   eta: number;
+  download_rate?: number;
   save_path: string;
   time_added: number;
   label?: string;
@@ -40,7 +41,7 @@ interface DelugeTorrentStatus {
 const TORRENT_STATUS_KEYS = [
   'hash', 'name', 'state', 'progress', 'total_size',
   'total_done', 'total_uploaded', 'ratio', 'num_seeds',
-  'num_peers', 'eta', 'save_path', 'time_added', 'label',
+  'num_peers', 'eta', 'download_rate', 'save_path', 'time_added', 'label',
   'is_finished',
 ];
 
@@ -277,6 +278,7 @@ export class DelugeClient implements DownloadClientAdapter {
       seeders: t.num_seeds,
       leechers: t.num_peers,
       eta: t.eta > 0 && t.eta < ETA_UPPER_BOUND_SEC ? t.eta : undefined,
+      downloadSpeed: t.download_rate,
       addedAt: new Date(t.time_added * 1000),
     };
   }

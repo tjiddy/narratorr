@@ -161,6 +161,69 @@ describe('useEventSource', () => {
       expect(cached!.data[1].progress).toBe(0.9);  // untouched
     });
 
+    it('patches downloadSpeed onto the cached row from the download_progress event', () => {
+      const { wrapper, queryClient } = createWrapper();
+
+      const queueKey = ['activity', { section: 'queue', limit: 50, offset: 0 }];
+      queryClient.setQueryData(queueKey, {
+        data: [{ id: 1, bookId: 2, title: 'Book', progress: 0.1, status: 'downloading' }],
+        total: 1,
+      });
+
+      renderHook(() => useEventSource('key'), { wrapper });
+      const es = MockEventSource.instances[0];
+
+      act(() => {
+        es.simulateOpen();
+        es.simulateEvent('download_progress', { download_id: 1, book_id: 2, percentage: 0.5, speed: 1_048_576, eta: null });
+      });
+
+      const cached = queryClient.getQueryData<{ data: { id: number; downloadSpeed: number | null }[]; total: number }>(queueKey);
+      expect(cached!.data[0].downloadSpeed).toBe(1_048_576);
+    });
+
+    it('preserves downloadSpeed=0 (stalled) when patching — does NOT drop falsy values', () => {
+      const { wrapper, queryClient } = createWrapper();
+
+      const queueKey = ['activity', { section: 'queue', limit: 50, offset: 0 }];
+      queryClient.setQueryData(queueKey, {
+        data: [{ id: 1, bookId: 2, title: 'Book', progress: 0.1, status: 'downloading', downloadSpeed: 1000 }],
+        total: 1,
+      });
+
+      renderHook(() => useEventSource('key'), { wrapper });
+      const es = MockEventSource.instances[0];
+
+      act(() => {
+        es.simulateOpen();
+        es.simulateEvent('download_progress', { download_id: 1, book_id: 2, percentage: 0.5, speed: 0, eta: null });
+      });
+
+      const cached = queryClient.getQueryData<{ data: { id: number; downloadSpeed: number | null }[]; total: number }>(queueKey);
+      expect(cached!.data[0].downloadSpeed).toBe(0);
+    });
+
+    it('stores downloadSpeed as null when the SSE payload is null', () => {
+      const { wrapper, queryClient } = createWrapper();
+
+      const queueKey = ['activity', { section: 'queue', limit: 50, offset: 0 }];
+      queryClient.setQueryData(queueKey, {
+        data: [{ id: 1, bookId: 2, title: 'Book', progress: 0.1, status: 'downloading', downloadSpeed: 1000 }],
+        total: 1,
+      });
+
+      renderHook(() => useEventSource('key'), { wrapper });
+      const es = MockEventSource.instances[0];
+
+      act(() => {
+        es.simulateOpen();
+        es.simulateEvent('download_progress', { download_id: 1, book_id: 2, percentage: 0.5, speed: null, eta: null });
+      });
+
+      const cached = queryClient.getQueryData<{ data: { id: number; downloadSpeed: number | null }[]; total: number }>(queueKey);
+      expect(cached!.data[0].downloadSpeed).toBeNull();
+    });
+
     it('does not invalidate activity queries on download_progress when download is in cache', () => {
       const { wrapper, queryClient } = createWrapper();
 

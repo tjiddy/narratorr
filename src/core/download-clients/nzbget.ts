@@ -221,11 +221,16 @@ export class NZBGetClient implements DownloadClientAdapter {
     const progress = sizeMb > 0 ? Math.round((downloadedMb / sizeMb) * 100) : 0;
 
     const remainingMb = group.RemainingSizeMB || 0;
-    let eta: number | undefined;
-    if (remainingMb > 0 && group.DownloadTimeSec > 0 && downloadedMb > 0) {
-      const speedMbps = downloadedMb / group.DownloadTimeSec;
-      eta = speedMbps > 0 ? Math.round(remainingMb / speedMbps) : undefined;
+    let speedMbps: number | undefined;
+    if (group.DownloadTimeSec > 0 && downloadedMb > 0) {
+      speedMbps = downloadedMb / group.DownloadTimeSec;
     }
+    const eta = remainingMb > 0 && speedMbps !== undefined && speedMbps > 0
+      ? Math.round(remainingMb / speedMbps)
+      : undefined;
+    const downloadSpeed = speedMbps !== undefined
+      ? Math.round(speedMbps * 1024 * 1024)
+      : undefined;
 
     return {
       id: String(group.NZBID),
@@ -240,6 +245,7 @@ export class NZBGetClient implements DownloadClientAdapter {
       seeders: 0,
       leechers: 0,
       eta,
+      downloadSpeed,
       addedAt: group.MinPostTime
         ? new Date(group.MinPostTime * 1000)
         : new Date(),

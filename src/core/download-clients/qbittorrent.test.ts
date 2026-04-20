@@ -371,6 +371,39 @@ describe('QBittorrentClient', () => {
 
       await expect(client.getDownload('abc123')).rejects.toThrow('unexpected torrent data');
     });
+
+    it('maps dlspeed to downloadSpeed in bytes/sec', async () => {
+      server.use(
+        http.get(`${BASE_URL}/api/v2/torrents/info`, () => {
+          return HttpResponse.json([{ ...mockTorrent, dlspeed: 1_048_576 }]);
+        }),
+      );
+
+      const result = await client.getDownload('abc123');
+      expect(result!.downloadSpeed).toBe(1_048_576);
+    });
+
+    it('preserves dlspeed=0 (stalled) rather than coercing to undefined', async () => {
+      server.use(
+        http.get(`${BASE_URL}/api/v2/torrents/info`, () => {
+          return HttpResponse.json([{ ...mockTorrent, dlspeed: 0 }]);
+        }),
+      );
+
+      const result = await client.getDownload('abc123');
+      expect(result!.downloadSpeed).toBe(0);
+    });
+
+    it('leaves downloadSpeed undefined when dlspeed field is absent', async () => {
+      server.use(
+        http.get(`${BASE_URL}/api/v2/torrents/info`, () => {
+          return HttpResponse.json([mockTorrent]);
+        }),
+      );
+
+      const result = await client.getDownload('abc123');
+      expect(result!.downloadSpeed).toBeUndefined();
+    });
   });
 
   describe('getAllDownloads', () => {

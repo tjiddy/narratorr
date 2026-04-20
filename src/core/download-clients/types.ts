@@ -20,6 +20,12 @@ export interface DownloadItemInfo {
   seeders: number;
   leechers: number;
   eta?: number; // Seconds
+  /**
+   * Current download rate in bytes/sec.
+   * `undefined` means the client did not report a rate; `0` means the download is
+   * active but currently stalled (zero throughput). Consumers must distinguish these.
+   */
+  downloadSpeed?: number;
   addedAt: Date;
   completedAt?: Date;
   errorMessage?: string;

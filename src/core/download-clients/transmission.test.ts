@@ -325,6 +325,15 @@ describe('TransmissionClient', () => {
       expect(result).toBeNull();
     });
 
+    it('leaves downloadSpeed undefined (deferred — see #655 out-of-scope note)', async () => {
+      // Transmission's RPC exposes rate_download but this adapter does not request it today.
+      // Downstream consumers must treat undefined as "not reported".
+      server.use(rpcHandler('torrent-get', { torrents: [mockTorrent] }));
+
+      const result = await client.getDownload('abc123def456');
+      expect(result!.downloadSpeed).toBeUndefined();
+    });
+
     it('throws on malformed RPC response', async () => {
       server.use(
         http.post(RPC_URL, async () => {
