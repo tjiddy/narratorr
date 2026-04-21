@@ -17,7 +17,7 @@ build/
 .vscode/
 
 # Codex symlink (resolves to .claude/ — don't track as separate dir)
-.agents/
+.agents
 *.swp
 *.swo
 
