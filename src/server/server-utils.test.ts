@@ -56,6 +56,28 @@ describe('listenWithRetry', () => {
     expect(app.log.warn).toHaveBeenCalled();
   });
 
+  it('waits exactly LISTEN_RETRY_DELAY_MS (1000ms) between EADDRINUSE retries', async () => {
+    const app = createMockApp();
+    const addrInUse = Object.assign(new Error('EADDRINUSE'), { code: 'EADDRINUSE' });
+    const delays: number[] = [];
+    const originalSetTimeout = globalThis.setTimeout;
+    vi.spyOn(globalThis, 'setTimeout').mockImplementation(((fn: () => void, ms?: number) => {
+      delays.push(ms ?? 0);
+      return originalSetTimeout(fn, 0);
+    }) as typeof globalThis.setTimeout);
+
+    (app.listen as ReturnType<typeof vi.fn>)
+      .mockRejectedValueOnce(addrInUse)
+      .mockRejectedValueOnce(addrInUse)
+      .mockResolvedValueOnce(undefined);
+
+    await listenWithRetry(app, 3000, 5);
+
+    // Two retry waits scheduled before the successful third attempt
+    expect(delays).toEqual([1000, 1000]);
+    vi.restoreAllMocks();
+  });
+
   it('throws after exhausting retries on EADDRINUSE', async () => {
     const app = createMockApp();
     const addrInUse = Object.assign(new Error('EADDRINUSE'), { code: 'EADDRINUSE' });
