@@ -19,6 +19,7 @@
     "test": "vitest run",
     "test:e2e": "playwright test --config=e2e/playwright.config.ts",
     "test:e2e:ui": "playwright test --config=e2e/playwright.config.ts --ui",
+    "verify": "node scripts/verify.ts",
     "db:generate": "drizzle-kit generate",
     "db:migrate": "tsx src/db/migrate.ts",
     "docker:build": "docker build -t narratorr .",
