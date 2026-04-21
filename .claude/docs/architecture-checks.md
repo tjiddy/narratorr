@@ -1,6 +1,6 @@
 # Architecture Checks
 
-Greppable SOLID and DRY checks run by `/spec`, `/plan`, `/review-pr`, and `/review-spec` at appropriate stages.
+Greppable SOLID and DRY checks. `/spec` (narratorr) applies these when creating a new issue. Workflume's `/review-spec` and `/review-pr` skills pull this doc in at dispatch time and enforce each applicable check.
 
 ## Always Check
 
@@ -38,7 +38,6 @@ Greppable SOLID and DRY checks run by `/spec`, `/plan`, `/review-pr`, and `/revi
 
 ## How to Apply
 
-- **`/spec`**: Check proposed design against OCP-1, OCP-2, DRY-1. Flag if the spec implies architecture that will require growing switches or 4+ file wiring.
-- **`/plan`**: Verify the implementation plan doesn't introduce new violations. Check touch points against OCP-2.
-- **`/review-pr`**: Grep for new switch/case, if-chains on type, parallel type definitions. Check framework rules (ZOD-1, TS-1/2, CSS-1, REACT-1/2/3/4/5, ERR-1, DB-1) against changed files. For every new helper/component/regex in the diff, grep unchanged files for equivalent patterns (DRY-2). Code-cleanup ACs (extract, share, deduplicate) require the same verification rigor as behavioral ACs — "it works" is insufficient when the spec says "share." Flag violations as blocking findings.
-- **`/review-spec`**: Check that acceptance criteria don't encode assumptions that violate these checks.
+- **`/spec`** (narratorr): Check proposed design against OCP-1, OCP-2, DRY-1. Flag if the spec implies architecture that will require growing switches or 4+ file wiring.
+- **`/review-pr`** (workflume): Grep for new switch/case, if-chains on type, parallel type definitions. Check framework rules (ZOD-1, TS-1/2, CSS-1, REACT-1/2/3/4/5, ERR-1, DB-1) against changed files. For every new helper/component/regex in the diff, grep unchanged files for equivalent patterns (DRY-2). Code-cleanup ACs (extract, share, deduplicate) require the same verification rigor as behavioral ACs — "it works" is insufficient when the spec says "share." Flag violations as blocking findings.
+- **`/review-spec`** (workflume): Check that acceptance criteria don't encode assumptions that violate these checks.

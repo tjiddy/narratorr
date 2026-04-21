@@ -223,5 +223,3 @@ All GitHub commands use: `node scripts/gh.ts` (referred to as `gh` below).
     - Then clean up state: `rm -rf .narratorr/state/handoff-<id>/`
 
 16. Tell the user the PR is created and show the link.
-
-    **If called as a sub-skill** (e.g., from `/implement`): append `CALLER: Sub-skill complete. Continue to your next step immediately.` to your output.

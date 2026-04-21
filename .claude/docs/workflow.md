@@ -3,36 +3,33 @@
 **Every task referencing a GitHub issue (#N) MUST follow this lifecycle — no exceptions.**
 A detailed plan, pre-made spec, or explicit implementation instructions do NOT bypass these steps.
 
-**Full auto (preferred):**
-1. `/implement <id>` — claims, plans, implements, and hands off in one pass
+## Two execution modes
 
-**Manual control:**
+**Automated (preferred — add `automate` label to the issue):**
+Workflume's orchestrator owns the full pipeline end-to-end: elaborate → review-spec → implement → review-pr → respond-to-pr-review → merge. These skills live in the workflume repo, not here.
+
+**Manual (no `automate` label — human-driven):**
 1. **Before writing any code** → `/claim <id>` (validates status, creates branch, updates labels)
-2. **Plan** → `/plan <id>` (explores codebase, extracts test stubs, posts implementation plan)
-3. **Implement** — follow the plan from step 2
-4. **After tests/typecheck/build pass** → `/handoff <id>` (pushes, creates PR, comments, updates labels)
-
-**PR review cycle:**
-1. `/review-pr <pr>` — reviewer posts structured findings with verdict
-2. `/respond-to-pr-review <pr>` — author addresses each finding (fix/accept/defer/dispute), pushes, posts response
-3. `/review-pr <pr>` — re-review after fixes (repeat until approved)
-4. `node scripts/merge.ts <pr>` — squash merge once verdict is `approve`
-
-**Standalone tools:**
-- `/elaborate <id>` — groom/triage without claiming (no side effects)
-- `/block <id>` — mark blocked and stop (at any point)
+2. **Implement** — write code, run tests, commit
+3. **After tests/typecheck/build pass** → `/handoff <id>` (pushes, creates PR, comments, updates labels)
+4. **Merge** → `node scripts/merge.ts <pr>` (validates approval + CI, squash-merges, closes issue)
 
 Skipping `/claim` means no validation, no branch, no tracking, no audit trail.
 Skipping `/handoff` means no PR, no label update.
 
-**Workflow guardrails:**
-- **No pausing between sub-skills.** When `/plan`, `/handoff`, or a script (`verify.ts`, `claim.ts`) returns inside a parent skill (`/implement`, `/respond-to-pr-review`), immediately continue the parent flow. These are mid-flow return values, not stopping points.
-- **Self-review guard.** `/review-pr` checks the current user against the PR author — if they match, it STOPs and suggests `/respond-to-pr-review` instead.
+## Standalone tools (any time, either mode)
+
+- `/block <id>` — mark blocked, overlay `blocked` flag on the issue (halts automation)
+- `/resume <id>` — restore a previously blocked issue's working state
+- `/verify` — run lint + test + typecheck + build + e2e
+- `/triage` — read-only priority analysis across open issues
+- `/spec` — create a new issue from the spec template
+
+## Workflow guardrails
+
+- **Self-review.** The `/review-pr` skill (workflume) refuses to review a PR authored by the same identity.
 - **Merge author validation.** `scripts/merge.ts` requires the most recent `approve` verdict to come from a different user than the PR author. Stale approvals (superseded by `needs-work`) are ignored.
-- **Dispute escalation.** If `/respond-to-pr-review` disputes a blocking finding, the issue gets the `blocked` flag and STOPs for human input.
-<!-- DISABLED (workflow log retired, re-enable for next project spin-up):
-- **Auto-maintained files.** `/handoff` prepends to `.narratorr/cl/workflow-log.md`.
--->
+- **Dispute escalation.** Workflume's `/respond-to-pr-review` flags the linked issue with `blocked` when a blocking finding is disputed, forcing human intervention.
 
 ## Labels
 
@@ -47,9 +44,8 @@ Skipping `/handoff` means no PR, no label update.
 ### Standalone flags (additive, not exclusive)
 
 - `blocked` — something is preventing progress (overlays current status, doesn't replace it)
-- `automate` — enables autonomous orchestration (narrator-automate)
+- `automate` — enables autonomous orchestration (workflume)
 
 ### Metadata labels (additive)
 
 Type: `type/feature` · `type/bug` · `type/chore` | Priority: `priority/high` · `priority/medium` · `priority/low` | Scope: `scope/backend` · `scope/frontend` · `scope/core` · `scope/db` · `scope/infra` · `scope/api` · `scope/services` · `scope/ui`
-

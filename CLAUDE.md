@@ -96,7 +96,7 @@ Graduated learnings from the CL system — non-obvious patterns that have caused
 
 ## Frontend Design Quality
 
-Issues with `scope/frontend` must include a UI/UX design pass. Use the `frontend-design` skill before handoff. Enforced by `/implement` (proactive) and `/review-pr` (blocking finding).
+Issues with `scope/frontend` must include a UI/UX design pass. Use the `frontend-design` skill before handoff. Workflume's `/implement` (proactive) and `/review-pr` (blocking finding) enforce this in automation.
 
 ## Workflow Scripts
 
