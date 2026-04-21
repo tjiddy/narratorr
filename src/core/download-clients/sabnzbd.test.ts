@@ -446,6 +446,34 @@ describe('SABnzbdClient', () => {
       const item = await client.getDownload('SABnzbd_nzo_def456');
       expect(item!.downloadSpeed).toBeUndefined();
     });
+
+    it('sends limit=1000 on both queue and history requests when queue misses', async () => {
+      const capturedByMode = new Map<string, string>();
+      server.use(
+        http.get(`${API_BASE}/api`, ({ request }) => {
+          const url = new URL(request.url);
+          const mode = url.searchParams.get('mode');
+          if (mode) capturedByMode.set(mode, request.url);
+
+          if (mode === 'queue') {
+            return HttpResponse.json({ queue: { slots: [] } });
+          }
+          if (mode === 'history') {
+            return HttpResponse.json({ history: { slots: [] } });
+          }
+          return HttpResponse.json({});
+        }),
+      );
+
+      await client.getDownload('nonexistent');
+
+      const queueUrl = capturedByMode.get('queue');
+      const historyUrl = capturedByMode.get('history');
+      expect(queueUrl).toBeDefined();
+      expect(historyUrl).toBeDefined();
+      expect(new URL(queueUrl!).searchParams.get('limit')).toBe('1000');
+      expect(new URL(historyUrl!).searchParams.get('limit')).toBe('1000');
+    });
   });
 
   describe('getAllDownloads', () => {
@@ -497,6 +525,60 @@ describe('SABnzbdClient', () => {
         const url = new URL(captured);
         expect(url.searchParams.get('cat')).toBe('audiobooks');
       }
+    });
+
+    it('sends limit=1000 on both queue and history requests', async () => {
+      const capturedByMode = new Map<string, string>();
+      server.use(
+        http.get(`${API_BASE}/api`, ({ request }) => {
+          const url = new URL(request.url);
+          const mode = url.searchParams.get('mode');
+          if (mode) capturedByMode.set(mode, request.url);
+
+          if (mode === 'queue') {
+            return HttpResponse.json({ queue: { slots: [] } });
+          }
+          return HttpResponse.json({ history: { slots: [] } });
+        }),
+      );
+
+      await client.getAllDownloads();
+
+      const queueUrl = capturedByMode.get('queue');
+      const historyUrl = capturedByMode.get('history');
+      expect(queueUrl).toBeDefined();
+      expect(historyUrl).toBeDefined();
+      expect(new URL(queueUrl!).searchParams.get('limit')).toBe('1000');
+      expect(new URL(historyUrl!).searchParams.get('limit')).toBe('1000');
+    });
+
+    it('sends limit=1000 alongside category filter on both requests', async () => {
+      const capturedByMode = new Map<string, string>();
+      server.use(
+        http.get(`${API_BASE}/api`, ({ request }) => {
+          const url = new URL(request.url);
+          const mode = url.searchParams.get('mode');
+          if (mode) capturedByMode.set(mode, request.url);
+
+          if (mode === 'queue') {
+            return HttpResponse.json({ queue: { slots: [] } });
+          }
+          return HttpResponse.json({ history: { slots: [] } });
+        }),
+      );
+
+      await client.getAllDownloads('audiobooks');
+
+      const queueUrl = capturedByMode.get('queue');
+      const historyUrl = capturedByMode.get('history');
+      expect(queueUrl).toBeDefined();
+      expect(historyUrl).toBeDefined();
+      const queueParams = new URL(queueUrl!).searchParams;
+      const historyParams = new URL(historyUrl!).searchParams;
+      expect(queueParams.get('limit')).toBe('1000');
+      expect(queueParams.get('cat')).toBe('audiobooks');
+      expect(historyParams.get('limit')).toBe('1000');
+      expect(historyParams.get('cat')).toBe('audiobooks');
     });
   });
 

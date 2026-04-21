@@ -11,6 +11,8 @@ import { DEFAULT_REQUEST_TIMEOUT_MS } from '../utils/constants.js';
 import { DownloadClientAuthError, DownloadClientError, DownloadClientTimeoutError, isTimeoutError } from './errors.js';
 import { getErrorMessage } from '../../shared/error-message.js';
 
+const SABNZBD_LIST_LIMIT = '1000';
+
 /**
  * SABnzbd's `storage` is the full destination path (e.g., `/downloads/complete/BookTitle`).
  * The import pipeline expects `savePath` (parent) + `name` (child) joined together.
@@ -171,7 +173,7 @@ export class SABnzbdClient implements DownloadClientAdapter {
     // Check queue first
     const queueResponse = await this.request<SABnzbdQueueResponse>({
       mode: 'queue',
-      limit: '1000',
+      limit: SABNZBD_LIST_LIMIT,
     });
 
     const queueSlot = queueResponse.queue.slots.find(
@@ -184,7 +186,7 @@ export class SABnzbdClient implements DownloadClientAdapter {
     // Check history
     const historyResponse = await this.request<SABnzbdHistoryResponse>({
       mode: 'history',
-      limit: '1000',
+      limit: SABNZBD_LIST_LIMIT,
     });
 
     const historySlot = historyResponse.history.slots.find(
@@ -200,7 +202,7 @@ export class SABnzbdClient implements DownloadClientAdapter {
   async getAllDownloads(category?: string): Promise<DownloadItemInfo[]> {
     const queueParams: Record<string, string> = {
       mode: 'queue',
-      limit: '1000',
+      limit: SABNZBD_LIST_LIMIT,
     };
     if (category) {
       queueParams.cat = category;
@@ -208,7 +210,7 @@ export class SABnzbdClient implements DownloadClientAdapter {
 
     const historyParams: Record<string, string> = {
       mode: 'history',
-      limit: '1000',
+      limit: SABNZBD_LIST_LIMIT,
     };
     if (category) {
       historyParams.cat = category;
