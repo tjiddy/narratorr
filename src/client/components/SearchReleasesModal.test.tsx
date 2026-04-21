@@ -23,21 +23,29 @@ const { MockApiError } = vi.hoisted(() => {
   return { MockApiError };
 });
 
-vi.mock('@/lib/api', () => ({
-  api: {
-    searchBooks: vi.fn(),
-    searchGrab: vi.fn(),
-    addToBlacklist: vi.fn(),
-    cancelSearchIndexer: vi.fn().mockResolvedValue({ cancelled: true }),
-    getAuthConfig: vi.fn().mockResolvedValue({ apiKey: 'test-key' }),
-    getSettings: vi.fn().mockResolvedValue({ metadata: { languages: [] } }),
-  },
-  formatBytes: (bytes?: number) => {
-    if (!bytes) return '0 B';
-    return `${(bytes / (1024 * 1024 * 1024)).toFixed(1)} GB`;
-  },
-  ApiError: MockApiError,
-}));
+vi.mock('@/lib/api', async () => {
+  const actual = await vi.importActual('@/lib/api');
+  return {
+    ...actual,
+    api: {
+      ...(actual as { api: object }).api,
+      searchBooks: vi.fn(),
+      searchGrab: vi.fn(),
+      addToBlacklist: vi.fn(),
+      cancelSearchIndexer: vi.fn().mockResolvedValue({ cancelled: true }),
+      getAuthConfig: vi.fn().mockResolvedValue({ apiKey: 'test-key' }),
+      getSettings: vi.fn().mockResolvedValue({ metadata: { languages: [] } }),
+    },
+    // Override formatBytes with a GB-only formatter that existing assertions depend on.
+    formatBytes: (bytes?: number) => {
+      if (!bytes) return '0 B';
+      return `${(bytes / (1024 * 1024 * 1024)).toFixed(1)} GB`;
+    },
+    // Override ApiError with a hoisted class so `instanceof ApiError` checks in the
+    // component match this test-local class (the real class is bundled separately).
+    ApiError: MockApiError,
+  };
+});
 
 // Mock useSearchStream — existing tests provide results via mockStreamState
 const mockStreamActions = {

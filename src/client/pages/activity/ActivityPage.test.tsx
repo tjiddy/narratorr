@@ -55,30 +55,27 @@ vi.mock('@/hooks/usePagination', async () => {
   };
 });
 
-vi.mock('@/lib/api', () => ({
-  api: {
-    getActivity: vi.fn(),
-    getAuthConfig: vi.fn(),
-    cancelDownload: vi.fn(),
-    retryDownload: vi.fn(),
-    approveDownload: vi.fn(),
-    rejectDownload: vi.fn(),
-    cancelMergeBook: vi.fn(),
-    getImportJobs: vi.fn().mockResolvedValue([]),
-    getEventHistory: vi.fn(),
-    markEventFailed: vi.fn(),
-    deleteEvent: vi.fn(),
-    deleteEvents: vi.fn(),
-  },
-  formatBytes: (bytes?: number) => {
-    if (!bytes || bytes === 0) return '0 B';
-    const k = 1024;
-    const sizes = ['B', 'KB', 'MB', 'GB', 'TB'];
-    const i = Math.floor(Math.log(bytes) / Math.log(k));
-    return `${parseFloat((bytes / Math.pow(k, i)).toFixed(2))} ${sizes[i]}`;
-  },
-  formatProgress: (progress: number) => `${Math.round(progress * 100)}%`,
-}));
+vi.mock('@/lib/api', async () => {
+  const actual = await vi.importActual('@/lib/api');
+  return {
+    ...actual,
+    api: {
+      ...(actual as { api: object }).api,
+      getActivity: vi.fn(),
+      getAuthConfig: vi.fn(),
+      cancelDownload: vi.fn(),
+      retryDownload: vi.fn(),
+      approveDownload: vi.fn(),
+      rejectDownload: vi.fn(),
+      cancelMergeBook: vi.fn(),
+      getImportJobs: vi.fn().mockResolvedValue([]),
+      getEventHistory: vi.fn(),
+      markEventFailed: vi.fn(),
+      deleteEvent: vi.fn(),
+      deleteEvents: vi.fn(),
+    },
+  };
+});
 
 import { api } from '@/lib/api';
 

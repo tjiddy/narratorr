@@ -5,9 +5,14 @@ import { renderWithProviders } from '@/__tests__/helpers';
 import { BackupTable } from './BackupTable';
 import type { BackupMetadata } from '@/lib/api';
 
-vi.mock('@/lib/api', () => ({
-  formatBytes: (bytes: number) => `${(bytes / 1024).toFixed(1)} KB`,
-}));
+vi.mock('@/lib/api', async () => {
+  const actual = await vi.importActual('@/lib/api');
+  return {
+    ...actual,
+    // Override formatBytes with a KB-only formatter that existing assertions depend on.
+    formatBytes: (bytes: number) => `${(bytes / 1024).toFixed(1)} KB`,
+  };
+});
 
 const mockBackups: BackupMetadata[] = [
   { filename: 'narratorr-backup-20260101T000000000Z.zip', timestamp: '2026-01-01T00:00:00Z', size: 102400 },

@@ -7,32 +7,33 @@ import { createMockBook, createMockAuthor } from '@/__tests__/factories';
 import { LibraryPage } from './LibraryPage';
 
 // Mock api
-vi.mock('@/lib/api', () => ({
-  api: {
-    getBooks: vi.fn(),
-    getBookStats: vi.fn(),
-    getSettings: vi.fn(),
-    deleteBook: vi.fn(),
-    deleteMissingBooks: vi.fn(),
-    rescanLibrary: vi.fn(),
-    searchBooks: vi.fn(),
-    searchGrab: vi.fn(),
-    searchAllWanted: vi.fn(),
-    searchBook: vi.fn(),
-    updateBook: vi.fn(),
-    retryBookImport: vi.fn(),
-    checkRetryImportAvailable: vi.fn().mockResolvedValue({ available: false }),
-    getIndexers: vi.fn().mockResolvedValue([
-      { id: 1, name: 'Indexer A', enabled: true },
-      { id: 2, name: 'Indexer B', enabled: true },
-      { id: 3, name: 'Indexer C', enabled: false },
-    ]),
-  },
-  formatBytes: (bytes?: number) => {
-    if (!bytes) return '0 B';
-    return `${bytes} bytes`;
-  },
-}));
+vi.mock('@/lib/api', async () => {
+  const actual = await vi.importActual('@/lib/api');
+  return {
+    ...actual,
+    api: {
+      ...(actual as { api: object }).api,
+      getBooks: vi.fn(),
+      getBookStats: vi.fn(),
+      getSettings: vi.fn(),
+      deleteBook: vi.fn(),
+      deleteMissingBooks: vi.fn(),
+      rescanLibrary: vi.fn(),
+      searchBooks: vi.fn(),
+      searchGrab: vi.fn(),
+      searchAllWanted: vi.fn(),
+      searchBook: vi.fn(),
+      updateBook: vi.fn(),
+      retryBookImport: vi.fn(),
+      checkRetryImportAvailable: vi.fn().mockResolvedValue({ available: false }),
+      getIndexers: vi.fn().mockResolvedValue([
+        { id: 1, name: 'Indexer A', enabled: true },
+        { id: 2, name: 'Indexer B', enabled: true },
+        { id: 3, name: 'Indexer C', enabled: false },
+      ]),
+    },
+  };
+});
 
 // Mock sonner
 vi.mock('sonner', () => ({
