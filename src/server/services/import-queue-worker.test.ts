@@ -58,51 +58,228 @@ describe('ImportQueueWorker', () => {
   });
 
   describe('boot recovery', () => {
-    it('marks processing rows as failed with last_error JSON on startup', async () => {
-      // Seed: first select returns orphan rows, second (drain) returns no pending
-      const selectChain = {
-        from: vi.fn().mockReturnThis(),
-        where: vi.fn().mockReturnThis(),
-        orderBy: vi.fn().mockReturnThis(),
-        limit: vi.fn().mockResolvedValue([]),
-      };
+    /**
+     * Wires a boot-recovery select that returns `orphans`, plus drain-loop
+     * selects that always return empty. Returns `updateSets` collected from
+     * every transactional update so tests can assert the write payloads.
+     */
+    function setupBootRecovery(orphans: Array<{ id: number; bookId: number | null }>) {
       let selectCallCount = 0;
       mockDb.db.select = vi.fn().mockImplementation(() => {
         selectCallCount++;
         if (selectCallCount === 1) {
-          // Boot recovery: return orphan
           return {
             from: vi.fn().mockReturnThis(),
-            where: vi.fn().mockResolvedValue([{ id: 99, bookId: 42 }]),
+            where: vi.fn().mockResolvedValue(orphans),
           };
         }
-        // Drain loop: no pending
-        return selectChain;
+        return {
+          from: vi.fn().mockReturnThis(),
+          where: vi.fn().mockReturnThis(),
+          orderBy: vi.fn().mockReturnThis(),
+          limit: vi.fn().mockResolvedValue([]),
+        };
       });
 
-      const updateSets: Record<string, unknown>[] = [];
-      mockDb.db.update = vi.fn().mockImplementation(() => ({
+      const updateSets: Array<{ payload: Record<string, unknown>; viaTx: boolean }> = [];
+
+      const makeUpdate = (viaTx: boolean) => vi.fn().mockImplementation(() => ({
         set: vi.fn().mockImplementation((payload: Record<string, unknown>) => {
-          updateSets.push(payload);
+          updateSets.push({ payload, viaTx });
           return { where: vi.fn().mockResolvedValue({ rowsAffected: 1 }) };
         }),
       }));
 
+      mockDb.db.update = makeUpdate(false);
+
+      const tx = {
+        update: makeUpdate(true),
+      };
+
+      // Default: real behavior — tx runs callback and resolves. Tests can override per-orphan.
+      mockDb.db.transaction = vi.fn().mockImplementation(async (cb: (tx: typeof tx) => Promise<unknown>) => cb(tx));
+
+      return { updateSets, tx };
+    }
+
+    it('marks processing rows as failed with last_error JSON on startup', async () => {
+      const { updateSets } = setupBootRecovery([{ id: 99, bookId: 42 }]);
+
       await worker.start();
-      // Give drain loop a tick to run
       await new Promise(r => setTimeout(r, 50));
 
-      // First update is the import_jobs row
-      expect(updateSets[0]).toMatchObject({
-        status: 'failed',
-        phase: 'failed',
-      });
-      const lastError = JSON.parse(updateSets[0].lastError as string);
+      // Both writes should have gone through the transaction handle
+      const txWrites = updateSets.filter(u => u.viaTx);
+      expect(txWrites).toHaveLength(2);
+
+      const jobWrite = txWrites[0].payload;
+      expect(jobWrite).toMatchObject({ status: 'failed', phase: 'failed' });
+      const lastError = JSON.parse(jobWrite.lastError as string);
       expect(lastError.message).toBe('Interrupted by server restart');
       expect(lastError.type).toBe('ProcessRestart');
 
-      // Second update is the books row
-      expect(updateSets[1]).toMatchObject({ status: 'failed' });
+      expect(txWrites[1].payload).toMatchObject({ status: 'failed' });
+    });
+
+    it('atomicity: both writes run inside the same tx; a books failure surfaces as a caught error with job+book context', async () => {
+      setupBootRecovery([{ id: 99, bookId: 42 }]);
+
+      // Track ordered writes within the tx. The jobs write succeeds, then the
+      // books write throws — the error bubbles out of the tx callback, which in
+      // a real libSQL transaction triggers rollback. The service catches it and
+      // continues. This assertion proves the code path goes through db.transaction()
+      // for both writes (not two independent updates), which is the only atomicity
+      // property a mock can verify.
+      const attempted: Array<'jobs' | 'books'> = [];
+      mockDb.db.transaction = vi.fn().mockImplementation(async (cb: (tx: unknown) => Promise<unknown>) => {
+        const tx = {
+          update: vi.fn().mockImplementation(() => ({
+            set: vi.fn().mockImplementation(() => ({
+              where: vi.fn().mockImplementation(async () => {
+                if (attempted.length === 0) {
+                  attempted.push('jobs');
+                  return { rowsAffected: 1 };
+                }
+                attempted.push('books');
+                throw new Error('books write failed');
+              }),
+            })),
+          })),
+        };
+        await cb(tx);
+      });
+
+      // Direct (non-tx) update should NOT be called during boot recovery
+      const rawUpdateSpy = mockDb.db.update as unknown as ReturnType<typeof vi.fn>;
+      rawUpdateSpy.mockClear();
+
+      await worker.start();
+      await new Promise(r => setTimeout(r, 50));
+
+      // Both writes were attempted inside the SAME tx callback
+      expect(attempted).toEqual(['jobs', 'books']);
+      expect(mockDb.db.transaction).toHaveBeenCalledTimes(1);
+      // No bare (non-tx) update was issued during recovery
+      expect(rawUpdateSpy).not.toHaveBeenCalled();
+
+      // The per-orphan failure is logged at error level with jobId/bookId/serialized error
+      const logMock = log as unknown as { error: ReturnType<typeof vi.fn> };
+      const errorCalls = logMock.error.mock.calls.filter(
+        (call: unknown[]) => {
+          const ctx = call[0] as Record<string, unknown>;
+          return ctx && ctx.jobId === 99 && ctx.bookId === 42 && 'error' in ctx;
+        },
+      );
+      expect(errorCalls.length).toBe(1);
+      const errorCtx = errorCalls[0][0] as { error: unknown };
+      expect(errorCtx.error).toBeTypeOf('object');
+    });
+
+    it('continue-on-error: a failing orphan does not abort the sweep', async () => {
+      setupBootRecovery([
+        { id: 1, bookId: 10 },
+        { id: 2, bookId: 20 },
+        { id: 3, bookId: 30 },
+      ]);
+
+      const recoveredIds: number[] = [];
+      mockDb.db.transaction = vi.fn().mockImplementation(async (cb: (tx: unknown) => Promise<unknown>) => {
+        // Intercept which orphan this tx is for by tracking via `where`
+        let seenJobId: number | null = null;
+        const tx = {
+          update: vi.fn().mockImplementation(() => ({
+            set: vi.fn().mockImplementation(() => ({
+              where: vi.fn().mockImplementation(async (predicate: unknown) => {
+                // Heuristic: first update in each tx is importJobs; capture orphan id via closure on caller state
+                void predicate;
+                return { rowsAffected: 1 };
+              }),
+            })),
+          })),
+        };
+        // Determine orphan id from call order: transaction call N corresponds to orphan index N-1
+        const callIndex = (mockDb.db.transaction as unknown as { mock: { calls: unknown[] } }).mock.calls.length - 1;
+        seenJobId = [1, 2, 3][callIndex] ?? null;
+
+        if (seenJobId === 2) {
+          throw new Error('orphan 2 blew up');
+        }
+        await cb(tx);
+        if (seenJobId != null) recoveredIds.push(seenJobId);
+      });
+
+      await worker.start();
+      await new Promise(r => setTimeout(r, 50));
+
+      expect(recoveredIds).toEqual([1, 3]);
+
+      // Summary log includes count/recovered/failed
+      const logMock = log as unknown as { info: ReturnType<typeof vi.fn> };
+      const summaryCall = logMock.info.mock.calls.find((call: unknown[]) => {
+        const ctx = call[0] as Record<string, unknown>;
+        return ctx && ctx.count === 3 && ctx.recovered === 2 && ctx.failed === 1;
+      });
+      expect(summaryCall).toBeDefined();
+    });
+
+    it('summary log is emitted after a fully-successful sweep', async () => {
+      setupBootRecovery([
+        { id: 1, bookId: 10 },
+        { id: 2, bookId: 20 },
+      ]);
+
+      await worker.start();
+      await new Promise(r => setTimeout(r, 50));
+
+      const logMock = log as unknown as { info: ReturnType<typeof vi.fn> };
+      const summaryCall = logMock.info.mock.calls.find((call: unknown[]) => {
+        const ctx = call[0] as Record<string, unknown>;
+        return ctx && ctx.count === 2 && ctx.recovered === 2 && ctx.failed === 0;
+      });
+      expect(summaryCall).toBeDefined();
+    });
+
+    it('orphan with null bookId skips the books update but still succeeds', async () => {
+      const { tx } = setupBootRecovery([{ id: 77, bookId: null }]);
+
+      await worker.start();
+      await new Promise(r => setTimeout(r, 50));
+
+      // tx.update was called exactly once (importJobs only, no books)
+      expect(tx.update).toHaveBeenCalledTimes(1);
+
+      const logMock = log as unknown as { info: ReturnType<typeof vi.fn> };
+      const summaryCall = logMock.info.mock.calls.find((call: unknown[]) => {
+        const ctx = call[0] as Record<string, unknown>;
+        return ctx && ctx.count === 1 && ctx.recovered === 1 && ctx.failed === 0;
+      });
+      expect(summaryCall).toBeDefined();
+    });
+
+    it('empty orphan set: no updates, no summary log, early return', async () => {
+      setupBootRecovery([]);
+
+      await worker.start();
+      await new Promise(r => setTimeout(r, 50));
+
+      expect(mockDb.db.transaction).not.toHaveBeenCalled();
+      expect(mockDb.db.update).not.toHaveBeenCalled();
+
+      const logMock = log as unknown as { info: ReturnType<typeof vi.fn> };
+      const summaryCall = logMock.info.mock.calls.find((call: unknown[]) => {
+        const ctx = call[0] as Record<string, unknown>;
+        return ctx && 'recovered' in ctx && 'failed' in ctx;
+      });
+      expect(summaryCall).toBeUndefined();
+    });
+
+    it('catastrophic load failure: the initial SELECT throwing propagates out of start()', async () => {
+      mockDb.db.select = vi.fn().mockImplementation(() => ({
+        from: vi.fn().mockReturnThis(),
+        where: vi.fn().mockRejectedValue(new Error('db is gone')),
+      }));
+
+      await expect(worker.start()).rejects.toThrow('db is gone');
     });
   });
 

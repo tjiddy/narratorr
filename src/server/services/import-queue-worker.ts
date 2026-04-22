@@ -85,24 +85,39 @@ export class ImportQueueWorker {
     const now = new Date();
     const errorJson = JSON.stringify({ message: 'Interrupted by server restart', type: 'ProcessRestart' });
 
+    let recovered = 0;
+    let failed = 0;
+
     for (const orphan of orphans) {
-      await this.db.update(importJobs).set({
-        status: 'failed',
-        phase: 'failed',
-        lastError: errorJson,
-        completedAt: now,
-        updatedAt: now,
-      }).where(eq(importJobs.id, orphan.id));
+      try {
+        await this.db.transaction(async (tx) => {
+          await tx.update(importJobs).set({
+            status: 'failed',
+            phase: 'failed',
+            lastError: errorJson,
+            completedAt: now,
+            updatedAt: now,
+          }).where(eq(importJobs.id, orphan.id));
 
-      if (orphan.bookId != null) {
-        await this.db.update(books).set({
-          status: 'failed',
-          updatedAt: now,
-        }).where(eq(books.id, orphan.bookId));
+          if (orphan.bookId != null) {
+            await tx.update(books).set({
+              status: 'failed',
+              updatedAt: now,
+            }).where(eq(books.id, orphan.bookId));
+          }
+        });
+        recovered++;
+        this.log.info({ jobId: orphan.id, bookId: orphan.bookId }, 'Orphaned import job marked as failed');
+      } catch (error: unknown) {
+        failed++;
+        this.log.error(
+          { error: serializeError(error), jobId: orphan.id, bookId: orphan.bookId },
+          'Failed to recover orphaned import job',
+        );
       }
-
-      this.log.info({ jobId: orphan.id, bookId: orphan.bookId }, 'Orphaned import job marked as failed');
     }
+
+    this.log.info({ count: orphans.length, recovered, failed }, 'Boot recovery complete');
   }
 
   /** Main drain loop: wait for nudge or poll, then drain all pending jobs. */
