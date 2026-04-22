@@ -6,6 +6,8 @@ import fastifyStatic from '@fastify/static';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
+export const LISTEN_RETRY_DELAY_MS = 1000;
+
 export async function registerStaticAndSpa(
   app: FastifyInstance,
   urlBasePrefix: string,
@@ -78,7 +80,7 @@ export async function listenWithRetry(app: FastifyInstance, port: number, maxRet
       const isAddrInUse = err instanceof Error && 'code' in err && (err as NodeJS.ErrnoException).code === 'EADDRINUSE';
       if (isAddrInUse && attempt < maxRetries) {
         app.log.warn({ port, attempt }, 'Port in use, retrying…');
-        await new Promise((r) => setTimeout(r, 1000));
+        await new Promise((r) => setTimeout(r, LISTEN_RETRY_DELAY_MS));
         continue;
       }
       throw err;
