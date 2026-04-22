@@ -81,21 +81,28 @@ export class ManualImportAdapter implements ImportAdapter {
       eventHistory.create(buildImportedEventPayload(bookId, payload, extracted.narratorName, resolve(finalPath), mode))
         .catch((err: unknown) => log.warn({ err }, 'Failed to record manual import event'));
     } catch (error: unknown) {
-      // Failure side effects — emit SSE and record event before re-throwing (worker marks job/book as failed)
-      safeEmit(broadcaster, 'book_status_change', { book_id: bookId, old_status: 'importing' as BookStatus, new_status: 'failed' as BookStatus }, log);
-      recordImportFailedEvent({
-        eventHistory,
-        bookId,
-        bookTitle: payload.title ?? 'Unknown',
-        authorName: payload.authorName ?? null,
-        narratorName: payload.metadata?.narrators?.[0] ?? null,
-        downloadId: null,
-        source: 'manual',
-        error,
-        log,
-      });
+      this.dispatchFailureSideEffects(error, bookId, payload, log);
       throw error;
     }
+  }
+
+  private dispatchFailureSideEffects(
+    error: unknown, bookId: number, payload: ManualImportJobPayload, log: ImportAdapterContext['log'],
+  ): void {
+    const { eventHistory, broadcaster } = this.deps;
+    // Failure side effects — emit SSE and record event before re-throwing (worker marks job/book as failed)
+    safeEmit(broadcaster, 'book_status_change', { book_id: bookId, old_status: 'importing' as BookStatus, new_status: 'failed' as BookStatus }, log);
+    recordImportFailedEvent({
+      eventHistory,
+      bookId,
+      bookTitle: payload.title ?? 'Unknown',
+      authorName: payload.authorName ?? null,
+      narratorName: payload.metadata?.narrators?.[0] ?? null,
+      downloadId: null,
+      source: 'manual',
+      error,
+      log,
+    });
   }
 
   private async renameIfConfigured(
