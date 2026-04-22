@@ -97,7 +97,7 @@ describe('ImportQueueWorker', () => {
       };
 
       // Default: real behavior — tx runs callback and resolves. Tests can override per-orphan.
-      mockDb.db.transaction = vi.fn().mockImplementation(async (cb: (tx: typeof tx) => Promise<unknown>) => cb(tx));
+      mockDb.db.transaction = vi.fn().mockImplementation(async (cb: (txArg: unknown) => Promise<unknown>) => cb(tx));
 
       return { updateSets, tx };
     }
