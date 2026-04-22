@@ -3,6 +3,7 @@ import { http, HttpResponse } from 'msw';
 import { useMswServer } from '../__tests__/msw/server.js';
 import { MyAnonamouseIndexer } from './myanonamouse.js';
 import { IndexerAuthError, ProxyError } from './errors.js';
+import { filterByLanguage } from '../utils/filters.js';
 
 const MAM_BASE = 'https://mam.test';
 
@@ -956,6 +957,31 @@ describe('MyAnonamouseIndexer', () => {
 
       const results = await indexer.search('test');
       expect(results[0].language).toBe('english');
+    });
+
+    it("MAM result with lang_code '1' survives default languages: ['english'] filter (#668)", async () => {
+      // Interaction guard: the user-visible regression in #668 was that a MAM result
+      // originating as `lang_code: '1'` was dropped by the default `metadataSettings.languages:
+      // ['english']` filter. Chain the adapter's parse path into `filterByLanguage` — the same
+      // predicate the search pipeline uses — so a regression at either layer fails this test.
+      server.use(
+        http.get(`${MAM_BASE}/tor/js/loadSearchJSONbasic.php`, () => {
+          return HttpResponse.json({
+            data: [
+              makeResult({ id: 1, title: 'English Book', lang_code: '1' }),
+              makeResult({ id: 2, title: 'German Book', lang_code: '37' }),
+            ],
+          });
+        }),
+      );
+      stubTorrentDownload(server);
+
+      const parsed = await indexer.search('test');
+      const surviving = filterByLanguage(parsed, ['english']);
+
+      expect(surviving).toHaveLength(1);
+      expect(surviving[0].title).toBe('English Book');
+      expect(surviving[0].language).toBe('english');
     });
   });
 
