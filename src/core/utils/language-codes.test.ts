@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { normalizeLanguage } from './language-codes.js';
+import { MAM_LANGUAGES } from '../../shared/indexer-registry.js';
 
 describe('normalizeLanguage', () => {
   it('converts ISO 639 three-letter code to lowercase full name', () => {
@@ -62,5 +63,19 @@ describe('normalizeLanguage', () => {
   it('returns undefined for undefined/null input', () => {
     expect(normalizeLanguage(undefined)).toBeUndefined();
     expect(normalizeLanguage(null as unknown as string)).toBeUndefined();
+  });
+
+  describe('MAM numeric language codes (#668)', () => {
+    it.each(MAM_LANGUAGES.map((l) => [String(l.id), l.label.toLowerCase()] as const))(
+      "resolves MAM id '%s' to '%s'",
+      (id, name) => {
+        expect(normalizeLanguage(id)).toBe(name);
+      },
+    );
+
+    it('passes through numeric strings not in MAM_LANGUAGES unchanged', () => {
+      expect(normalizeLanguage('0')).toBe('0');
+      expect(normalizeLanguage('999')).toBe('999');
+    });
   });
 });

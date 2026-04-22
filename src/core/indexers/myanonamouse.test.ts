@@ -945,6 +945,18 @@ describe('MyAnonamouseIndexer', () => {
       const results = await indexer.search('test');
       expect(results[0].language).toBe('xyz');
     });
+
+    it("resolves MAM numeric lang_code '1' to 'english' (#668)", async () => {
+      server.use(
+        http.get(`${MAM_BASE}/tor/js/loadSearchJSONbasic.php`, () => {
+          return HttpResponse.json({ data: [makeResult({ lang_code: '1' })] });
+        }),
+      );
+      stubTorrentDownload(server);
+
+      const results = await indexer.search('test');
+      expect(results[0].language).toBe('english');
+    });
   });
 
   describe('search — language and search type params (#291)', () => {

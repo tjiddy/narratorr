@@ -4,6 +4,8 @@
  * into the app's canonical format (lowercase full names, matching region-languages.ts).
  */
 
+import { MAM_LANGUAGES } from '../../shared/indexer-registry.js';
+
 const ISO_639_TO_NAME: Record<string, string> = {
   // ISO 639-2/B (bibliographic) — used by MAM and most Newznab indexers
   eng: 'english',
@@ -89,6 +91,12 @@ const ISO_639_TO_NAME: Record<string, string> = {
 // Also accept full language names (pass-through)
 const KNOWN_NAMES = new Set(Object.values(ISO_639_TO_NAME));
 
+// MAM sends `lang_code` as numeric strings (e.g. '1' for English).
+// Build a string-keyed lookup from the shared registry so we stay in sync with the UI/API side.
+const MAM_NUMERIC_TO_NAME = new Map<string, string>(
+  MAM_LANGUAGES.map((l) => [String(l.id), l.label.toLowerCase()]),
+);
+
 /**
  * Normalize a language code or name to a lowercase full name.
  * Returns undefined for empty/missing input.
@@ -98,5 +106,9 @@ export function normalizeLanguage(code: string | undefined | null): string | und
   if (!code || !code.trim()) return undefined;
   const lower = code.trim().toLowerCase();
   if (KNOWN_NAMES.has(lower)) return lower;
-  return ISO_639_TO_NAME[lower] ?? lower;
+  const iso = ISO_639_TO_NAME[lower];
+  if (iso) return iso;
+  const mam = MAM_NUMERIC_TO_NAME.get(lower);
+  if (mam) return mam;
+  return lower;
 }
