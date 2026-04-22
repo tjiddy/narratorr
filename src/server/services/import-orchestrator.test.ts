@@ -225,7 +225,7 @@ describe('ImportOrchestrator', () => {
       await expect(orchestrator.importDownload(1)).rejects.toThrow();
 
       expect(recordImportFailedEvent).toHaveBeenCalledWith(expect.objectContaining({
-        bookId: 1, bookTitle: 'The Way of Kings', downloadId: 1, error: importError,
+        bookId: 1, bookTitle: 'The Way of Kings', downloadId: 1, source: 'auto', error: importError,
       }));
     });
 

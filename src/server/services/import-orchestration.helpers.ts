@@ -20,8 +20,8 @@ import { orchestrateBookEnrichment, buildBookCreatePayload, buildEnrichmentBookI
 import { getAudioStats } from './library-scan.helpers.js';
 import type { EventHistoryService } from './event-history.service.js';
 import type { EventBroadcasterService } from './event-broadcaster.service.js';
-import { getErrorMessage } from '../utils/error-message.js';
 import { snapshotBookForEvent } from '../utils/event-helpers.js';
+import { recordImportFailedEvent } from '../utils/import-side-effects.js';
 import type { ImportConfirmItem, ImportMode, ImportSingleResult } from './library-scan.service.js';
 import { serializeError } from '../utils/serialize-error.js';
 import type { ManualImportJobPayload } from './import-adapters/types.js';
@@ -60,16 +60,17 @@ export async function importSingleBook(
   try {
     book = await bookService.create(buildBookCreatePayload(item, meta, 'imported'));
   } catch (error: unknown) {
-    eventHistory.create({
+    recordImportFailedEvent({
+      eventHistory,
       bookId: null,
       bookTitle: item.title,
       authorName: item.authorName ?? null,
       narratorName: meta?.narrators?.[0] ?? null,
       downloadId: null,
-      eventType: 'import_failed',
       source: 'manual',
-      reason: { error: getErrorMessage(error) },
-    }).catch(err => log.warn({ err }, 'Failed to record manual import failed event'));
+      error,
+      log,
+    });
     throw error;
   }
 
@@ -84,16 +85,17 @@ export async function importSingleBook(
     const enriched = await enrichImportedBook(item, book, meta, deps, mode);
     return { imported: true, bookId: book.id, enriched };
   } catch (error: unknown) {
-    eventHistory.create({
+    recordImportFailedEvent({
+      eventHistory,
       bookId: book.id,
       bookTitle: item.title,
       authorName: item.authorName ?? null,
       narratorName: meta?.narrators?.[0] ?? null,
       downloadId: null,
-      eventType: 'import_failed',
       source: 'manual',
-      reason: { error: getErrorMessage(error) },
-    }).catch(err => log.warn({ err }, 'Failed to record manual import failed event'));
+      error,
+      log,
+    });
     throw error;
   }
 }

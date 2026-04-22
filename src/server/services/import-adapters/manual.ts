@@ -12,7 +12,7 @@ import { renameFilesWithTemplate } from '../../utils/paths.js';
 import type { RenameableBook } from '../../utils/paths.js';
 import { toNamingOptions } from '../../../core/utils/naming.js';
 import { safeEmit } from '../../utils/safe-emit.js';
-import { getErrorMessage } from '../../utils/error-message.js';
+import { recordImportFailedEvent } from '../../utils/import-side-effects.js';
 
 export class ManualImportAdapter implements ImportAdapter {
   readonly type = 'manual' as const;
@@ -83,14 +83,17 @@ export class ManualImportAdapter implements ImportAdapter {
     } catch (error: unknown) {
       // Failure side effects — emit SSE and record event before re-throwing (worker marks job/book as failed)
       safeEmit(broadcaster, 'book_status_change', { book_id: bookId, old_status: 'importing' as BookStatus, new_status: 'failed' as BookStatus }, log);
-      eventHistory.create({
+      recordImportFailedEvent({
+        eventHistory,
         bookId,
         bookTitle: payload.title ?? 'Unknown',
         authorName: payload.authorName ?? null,
-        eventType: 'import_failed',
+        narratorName: payload.metadata?.narrators?.[0] ?? null,
+        downloadId: null,
         source: 'manual',
-        reason: { error: getErrorMessage(error) },
-      }).catch((err: unknown) => log.warn({ err }, 'Failed to record manual import failure event'));
+        error,
+        log,
+      });
       throw error;
     }
   }

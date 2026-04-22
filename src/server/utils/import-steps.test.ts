@@ -677,13 +677,13 @@ describe('recordImportFailedEvent', () => {
     const log = createMockLog();
     const catchFn = vi.fn();
     const create = vi.fn().mockReturnValue({ catch: catchFn });
-    recordImportFailedEvent({ eventHistory: { create } as never, bookId: 1, bookTitle: 'Book', authorName: null, downloadId: 10, error: new Error('fail'), log });
+    recordImportFailedEvent({ eventHistory: { create } as never, bookId: 1, bookTitle: 'Book', authorName: null, downloadId: 10, source: 'auto', error: new Error('fail'), log });
     expect(create).toHaveBeenCalledWith(expect.objectContaining({ eventType: 'import_failed' }));
   });
 
   it('skips when eventHistory is undefined', () => {
     const log = createMockLog();
-    recordImportFailedEvent({ eventHistory: undefined, bookId: 1, bookTitle: 'Book', authorName: null, downloadId: 10, error: new Error('fail'), log });
+    recordImportFailedEvent({ eventHistory: undefined, bookId: 1, bookTitle: 'Book', authorName: null, downloadId: 10, source: 'auto', error: new Error('fail'), log });
     expect(log.warn).not.toHaveBeenCalled();
   });
 });

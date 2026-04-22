@@ -713,10 +713,10 @@ describe('LibraryScanService', () => {
 
       // Event creation was attempted
       expect(mockEventHistoryService.create).toHaveBeenCalled();
-      // Warning was logged for the event creation failure
+      // Warning was logged for the event creation failure — helper logs the raw error + generic message
       expect(log.warn).toHaveBeenCalledWith(
-        expect.objectContaining({ err: expect.any(Error) }),
-        'Failed to record manual import failed event',
+        expect.any(Error),
+        'Failed to record import_failed event',
       );
     });
   });
