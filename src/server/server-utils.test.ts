@@ -3,7 +3,7 @@ import Fastify from 'fastify';
 import fs from 'fs';
 import path from 'path';
 import os from 'os';
-import { listenWithRetry, registerStaticAndSpa } from './server-utils.js';
+import { LISTEN_RETRY_DELAY_MS, listenWithRetry, registerStaticAndSpa } from './server-utils.js';
 import { registerSecurityPlugins } from './plugins/security-plugins.js';
 
 function createMockApp() {
@@ -72,6 +72,27 @@ describe('listenWithRetry', () => {
 
     await expect(listenWithRetry(app, 3000)).rejects.toThrow('EACCES');
     expect(app.listen).toHaveBeenCalledTimes(1);
+  });
+
+  it('uses LISTEN_RETRY_DELAY_MS for the backoff delay between retries', async () => {
+    const app = createMockApp();
+    const addrInUse = Object.assign(new Error('EADDRINUSE'), { code: 'EADDRINUSE' });
+
+    (app.listen as ReturnType<typeof vi.fn>)
+      .mockRejectedValueOnce(addrInUse)
+      .mockResolvedValueOnce(undefined);
+
+    const originalSetTimeout = globalThis.setTimeout;
+    const setTimeoutSpy = vi
+      .spyOn(globalThis, 'setTimeout')
+      .mockImplementation(((fn: () => void) => originalSetTimeout(fn, 0)) as typeof globalThis.setTimeout);
+
+    try {
+      await listenWithRetry(app, 3000, 3);
+      expect(setTimeoutSpy).toHaveBeenCalledWith(expect.any(Function), LISTEN_RETRY_DELAY_MS);
+    } finally {
+      setTimeoutSpy.mockRestore();
+    }
   });
 });
 
