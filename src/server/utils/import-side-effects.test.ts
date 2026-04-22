@@ -45,13 +45,14 @@ describe('recordImportFailedEvent', () => {
         bookTitle: 'Test Book',
         authorName: 'Author',
         downloadId: 10,
+        source: 'auto',
         error: new Error('copy failed'),
         log: mockLog,
       }),
     ).not.toThrow();
   });
 
-  it('calls eventHistory.create with error message from getErrorMessage()', () => {
+  it('auto source: calls eventHistory.create with source=auto and omits narratorName', () => {
     const createMock = vi.fn().mockResolvedValue(undefined);
     const eventHistory = { create: createMock } as unknown as Parameters<typeof recordImportFailedEvent>[0]['eventHistory'];
 
@@ -61,6 +62,7 @@ describe('recordImportFailedEvent', () => {
       bookTitle: 'Test Book',
       authorName: 'Author',
       downloadId: 10,
+      source: 'auto',
       error: new Error('copy failed'),
       log: mockLog,
     });
@@ -74,5 +76,110 @@ describe('recordImportFailedEvent', () => {
       source: 'auto',
       reason: { error: 'copy failed' },
     });
+    // narratorName should NOT be present on the payload when not passed
+    expect(createMock.mock.calls[0][0]).not.toHaveProperty('narratorName');
+  });
+
+  it('manual source with narratorName: forwards both', () => {
+    const createMock = vi.fn().mockResolvedValue(undefined);
+    const eventHistory = { create: createMock } as unknown as Parameters<typeof recordImportFailedEvent>[0]['eventHistory'];
+
+    recordImportFailedEvent({
+      eventHistory,
+      bookId: 42,
+      bookTitle: 'Test Book',
+      authorName: 'Author',
+      narratorName: 'Alice',
+      downloadId: null,
+      source: 'manual',
+      error: new Error('copy failed'),
+      log: mockLog,
+    });
+
+    expect(createMock).toHaveBeenCalledWith(expect.objectContaining({
+      bookId: 42,
+      source: 'manual',
+      narratorName: 'Alice',
+      downloadId: null,
+    }));
+  });
+
+  it('manual source with narratorName=null: forwards null explicitly', () => {
+    const createMock = vi.fn().mockResolvedValue(undefined);
+    const eventHistory = { create: createMock } as unknown as Parameters<typeof recordImportFailedEvent>[0]['eventHistory'];
+
+    recordImportFailedEvent({
+      eventHistory,
+      bookId: 1,
+      bookTitle: 'Test Book',
+      authorName: 'Author',
+      narratorName: null,
+      downloadId: null,
+      source: 'manual',
+      error: new Error('fail'),
+      log: mockLog,
+    });
+
+    expect(createMock).toHaveBeenCalledWith(expect.objectContaining({ narratorName: null }));
+  });
+
+  it('bookId=null (creation failed): forwards bookId: null', () => {
+    const createMock = vi.fn().mockResolvedValue(undefined);
+    const eventHistory = { create: createMock } as unknown as Parameters<typeof recordImportFailedEvent>[0]['eventHistory'];
+
+    recordImportFailedEvent({
+      eventHistory,
+      bookId: null,
+      bookTitle: 'Test Book',
+      authorName: 'Author',
+      downloadId: null,
+      source: 'manual',
+      error: new Error('fail'),
+      log: mockLog,
+    });
+
+    expect(createMock).toHaveBeenCalledWith(expect.objectContaining({ bookId: null }));
+  });
+
+  it('downloadId=null: forwards downloadId: null', () => {
+    const createMock = vi.fn().mockResolvedValue(undefined);
+    const eventHistory = { create: createMock } as unknown as Parameters<typeof recordImportFailedEvent>[0]['eventHistory'];
+
+    recordImportFailedEvent({
+      eventHistory,
+      bookId: 1,
+      bookTitle: 'Test Book',
+      authorName: 'Author',
+      downloadId: null,
+      source: 'manual',
+      error: new Error('fail'),
+      log: mockLog,
+    });
+
+    expect(createMock).toHaveBeenCalledWith(expect.objectContaining({ downloadId: null }));
+  });
+
+  it('eventHistory.create rejects: logs via log.warn and does not throw', async () => {
+    const rejection = new Error('db gone');
+    const createMock = vi.fn().mockRejectedValue(rejection);
+    const eventHistory = { create: createMock } as unknown as Parameters<typeof recordImportFailedEvent>[0]['eventHistory'];
+    const warn = vi.fn();
+    const log = { ...mockLog, warn } as unknown as FastifyBaseLogger;
+
+    recordImportFailedEvent({
+      eventHistory,
+      bookId: 1,
+      bookTitle: 'Test Book',
+      authorName: 'Author',
+      downloadId: null,
+      source: 'manual',
+      error: new Error('original'),
+      log,
+    });
+
+    // Flush the rejected promise
+    await new Promise(r => setImmediate(r));
+
+    expect(warn).toHaveBeenCalledWith(rejection, expect.stringContaining('import_failed'));
   });
 });

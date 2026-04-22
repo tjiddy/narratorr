@@ -156,25 +156,28 @@ export function notifyImportFailure(args: NotifyImportFailureArgs): void {
 
 export interface RecordImportFailedEventArgs {
   eventHistory: EventHistoryService | undefined;
-  bookId: number;
+  bookId: number | null;
   bookTitle: string;
   authorName: string | null | undefined;
-  downloadId: number;
+  narratorName?: string | null;
+  downloadId: number | null;
+  source: 'manual' | 'auto';
   error: unknown;
   log: FastifyBaseLogger;
 }
 
 /** Fire-and-forget failure event recording. */
 export function recordImportFailedEvent(args: RecordImportFailedEventArgs): void {
-  const { eventHistory, bookId, bookTitle, authorName, downloadId, error, log } = args;
+  const { eventHistory, bookId, bookTitle, authorName, narratorName, downloadId, source, error, log } = args;
   if (!eventHistory) return;
   eventHistory.create({
     bookId,
     bookTitle,
     authorName: authorName ?? undefined,
+    ...(narratorName !== undefined ? { narratorName } : {}),
     downloadId,
     eventType: 'import_failed',
-    source: 'auto',
+    source,
     reason: { error: getErrorMessage(error) },
   }).catch((err: unknown) => log.warn(err, 'Failed to record import_failed event'));
 }

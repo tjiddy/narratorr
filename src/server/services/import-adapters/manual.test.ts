@@ -396,7 +396,57 @@ describe('ManualImportAdapter', () => {
         eventType: 'import_failed',
         bookId: 42,
         source: 'manual',
+        downloadId: null,
         reason: { error: 'Disk full' },
+      }));
+    });
+
+    it('failure path: forwards narratorName from payload.metadata.narrators[0] (#672)', async () => {
+      const { copyToLibrary } = await import('../import-orchestration.helpers.js');
+      vi.mocked(copyToLibrary).mockRejectedValueOnce(new Error('Disk full'));
+
+      const payload: ManualImportJobPayload = {
+        path: '/audiobooks/Author/Title',
+        title: 'Test Book',
+        authorName: 'Author',
+        mode: 'copy',
+        metadata: {
+          title: 'Test Book',
+          authors: [{ name: 'Author' }],
+          narrators: ['Alice', 'Bob'],
+        },
+      };
+      const job = makeJob({ metadata: JSON.stringify(payload) });
+
+      await expect(adapter.process(job, ctx)).rejects.toThrow('Disk full');
+
+      expect(mockEventHistory.create).toHaveBeenCalledWith(expect.objectContaining({
+        eventType: 'import_failed',
+        source: 'manual',
+        bookTitle: 'Test Book',
+        narratorName: 'Alice',
+        downloadId: null,
+      }));
+    });
+
+    it('failure path: narratorName is null when payload.metadata is undefined (#672)', async () => {
+      const { copyToLibrary } = await import('../import-orchestration.helpers.js');
+      vi.mocked(copyToLibrary).mockRejectedValueOnce(new Error('Disk full'));
+
+      const payload: ManualImportJobPayload = {
+        path: '/audiobooks/Author/Title',
+        title: 'Test Book',
+        authorName: 'Author',
+        mode: 'copy',
+      };
+      const job = makeJob({ metadata: JSON.stringify(payload) });
+
+      await expect(adapter.process(job, ctx)).rejects.toThrow('Disk full');
+
+      expect(mockEventHistory.create).toHaveBeenCalledWith(expect.objectContaining({
+        eventType: 'import_failed',
+        source: 'manual',
+        narratorName: null,
       }));
     });
   });

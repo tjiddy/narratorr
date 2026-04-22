@@ -154,7 +154,7 @@ export class ImportOrchestrator {
     notifyImportFailure({ notifierService: this.notifierService, downloadTitle: ctx.downloadTitle, error, log: this.log });
 
     // Fire-and-forget: failure event recording
-    recordImportFailedEvent({ eventHistory: this.eventHistory, bookId: ctx.bookId, bookTitle: ctx.bookTitle, authorName: ctx.authorName, downloadId: ctx.downloadId, error, log: this.log });
+    recordImportFailedEvent({ eventHistory: this.eventHistory, bookId: ctx.bookId, bookTitle: ctx.bookTitle, authorName: ctx.authorName, downloadId: ctx.downloadId, source: 'auto', error, log: this.log });
 
     // #504 — Blacklist content failures and trigger re-search
     if (isContentFailure(error) && this.blacklistService) {
