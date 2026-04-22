@@ -87,7 +87,7 @@ All GitHub commands use: `node scripts/gh.ts` (referred to as `gh` below).
    node scripts/git-push.ts -u origin $(git branch --show-current)
    ```
 
-7. **Read the issue** to get the title and details: `node scripts/gh.tsissue view $ARGUMENTS --json number,state,title,labels,milestone,body --jq '"#\(.number) [\(.state | ascii_downcase)] \(.title)\nlabels: \([.labels[].name] | join(", "))\(.milestone.title // "" | if . != "" then " | milestone: \(.)" else "" end)\n\n\(.body // "")"'`
+7. **Read the issue** to get the title and details: `node scripts/gh.ts issue view $ARGUMENTS --json number,state,title,labels,milestone,body --jq '"#\(.number) [\(.state | ascii_downcase)] \(.title)\nlabels: \([.labels[].name] | join(", "))\(.milestone.title // "" | if . != "" then " | milestone: \(.)" else "" end)\n\n\(.body // "")"'`
 
 8. **Create the PR** via the GitHub CLI:
    - Write the PR body to a temp file (avoids shell escaping issues with multiline content):
@@ -179,7 +179,7 @@ All GitHub commands use: `node scripts/gh.ts` (referred to as `gh` below).
    Entry format:
    ```
    ## #<id> <issue title> — <YYYY-MM-DD>
-   **Skill path:** /implement → /claim → /plan → /handoff
+   **Skill path:** /claim → (implement) → /handoff
    **Outcome:** success — PR #<number>
 
    ### Metrics

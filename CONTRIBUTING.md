@@ -42,7 +42,7 @@ Issues use two exclusive label groups:
 
 **Standalone flags** (additive, not exclusive):
 - `blocked` — something is preventing progress (overlays current status)
-- `yolo` — enables autonomous orchestration (narrator-yolo)
+- `automate` — enables autonomous orchestration (workflume picks up labelled issues and runs the full pipeline end-to-end)
 
 Other labels: `type/feature` · `type/bug` · `type/chore` | `priority/high` · `priority/medium` · `priority/low` | `scope/backend` · `scope/frontend` · `scope/core` · `scope/db` · `scope/infra` · `scope/api` · `scope/services` · `scope/ui`
 
@@ -269,23 +269,28 @@ Mechanical workflow steps are deterministic Node scripts in `scripts/`. These ru
 
 ## Claude Code Skills
 
-If you're using Claude Code, workflow skills automate the steps above. Some are thin wrappers around the scripts above, others use LLM reasoning:
+Narratorr ships 11 human-facing Claude Code skills under `.claude/skills/`. Some are thin wrappers around the scripts above, others use LLM reasoning for tasks like triage or spec grooming:
 
 | Skill | What it does |
 |-------|-------------|
-| `/implement <id>` | Full lifecycle: claim → plan → implement → verify → handoff |
-| `/plan <id>` | JIT elaboration: explore codebase, extract test stubs, post plan |
-| `/handoff <id>` | Self-review, coverage review, verify, push, create PR, update labels |
-| `/elaborate <id>` | Groom/validate issue spec (read-only) |
-| `/review-pr <pr>` | Review PR against linked issue AC |
-| `/respond-to-pr-review <pr>` | Address PR review findings |
-| `/respond-to-spec-review <id>` | Address spec review findings |
-| `/triage` | Rank and categorize open issues |
-| `/claim <id>` | Wrapper: runs `scripts/claim.ts` |
+| `/spec <title>` | Draft a new issue from the spec template and create it in GitHub |
+| `/issue <id>` | Read/summarize a single issue |
+| `/issues` | List open issues with labels and state |
+| `/triage` | Rank and categorize open issues, graduate CL learnings |
+| `/claim <id>` | Wrapper: runs `scripts/claim.ts` (validates status, creates branch, updates labels) |
+| `/handoff <id>` | Self-review, coverage check, verify, push, create PR, update labels, capture CL |
 | `/verify` | Wrapper: runs `scripts/verify.ts` |
-| `/block <id>` | Gathers reason from user, then runs `scripts/block.ts` |
-| `/resume <id>` | Wrapper: runs `scripts/resume.ts`, presents context |
-| `/merge <pr>` | Wrapper: runs `scripts/merge.ts` |
+| `/block <id>` | Gathers reason, runs `scripts/block.ts` |
+| `/resume <id>` | Wrapper: runs `scripts/resume.ts`, presents recovered context |
 | `/changelog [since]` | Wrapper: runs `scripts/changelog.ts` |
+| `/setup-labels` | Idempotent label setup for a fresh repo |
 
-These are optional conveniences — the workflow steps above work with any tool.
+The manual lifecycle is: `/claim → (implement the work yourself) → /handoff`. There is no `/implement` or `/plan` skill in narratorr — those live in workflume and only run under the `automate` label path.
+
+### Automated mode (workflume)
+
+Adding the `automate` label delegates the full pipeline (elaborate → review-spec → respond → implement → review-pr → respond → merge) to the [workflume](https://github.com/tjiddy/workflume) orchestrator. The pipeline skills (`/elaborate`, `/review-spec`, `/respond-to-spec-review`, `/implement`, `/review-pr`, `/respond-to-pr-review`, `/merge`) live in workflume and are overlaid into worker clones at container boot — they are not part of narratorr's repo and are not invocable manually.
+
+Choose per issue:
+- **Manual:** skip the `automate` label; use `/claim → /handoff` or equivalent manual steps.
+- **Automated:** add `automate`; workflume runs it end-to-end.

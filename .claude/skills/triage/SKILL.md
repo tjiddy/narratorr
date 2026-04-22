@@ -17,16 +17,16 @@ All GitHub commands use: `node scripts/gh.ts` (referred to as `gh` below).
 
 ## Steps
 
-1. **Fetch all open issues:** Run `node scripts/gh.tsissue list --state open --limit 100 --json number,state,title,labels,milestone --jq '.[] | "#\(.number) [\(.state | ascii_downcase)] \(.title)\n   labels: \([.labels[].name] | join(", "))\(.milestone.title // "" | if . != "" then " | milestone: \(.)" else "" end)"'` to get all open issues.
+1. **Fetch all open issues:** Run `node scripts/gh.ts issue list --state open --limit 100 --json number,state,title,labels,milestone --jq '.[] | "#\(.number) [\(.state | ascii_downcase)] \(.title)\n   labels: \([.labels[].name] | join(", "))\(.milestone.title // "" | if . != "" then " | milestone: \(.)" else "" end)"'` to get all open issues.
 
-2. **Read each issue:** For each issue, run `node scripts/gh.tsissue view <id> --json number,state,title,labels,milestone,body --jq '"#\(.number) [\(.state | ascii_downcase)] \(.title)\nlabels: \([.labels[].name] | join(", "))\(.milestone.title // "" | if . != "" then " | milestone: \(.)" else "" end)\n\n\(.body // "")"'` to get the full body. Parse from body text only (NO codebase exploration):
+2. **Read each issue:** For each issue, run `node scripts/gh.ts issue view <id> --json number,state,title,labels,milestone,body --jq '"#\(.number) [\(.state | ascii_downcase)] \(.title)\nlabels: \([.labels[].name] | join(", "))\(.milestone.title // "" | if . != "" then " | milestone: \(.)" else "" end)\n\n\(.body // "")"'` to get the full body. Parse from body text only (NO codebase exploration):
    - Acceptance Criteria: present / missing
    - Test Plan: present / missing
    - Dependencies: list any `#<id>` references, note if those are open/closed
    - Labels: extract status, priority, type, scope
 
 3. **Categorize each issue** into one of:
-   - **Ready to Claim** — has `status/ready` label, AC and test plan present, no unmet deps
+   - **Ready to Claim** — has `status/ready-for-dev` label, AC and test plan present, no unmet deps
    - **Needs Grooming** — missing AC, test plan, or implementation detail
    - **Blocked on Deps** — references open issues that aren't `status/done`
    - **Overlapping** — scope overlaps with any `status/in-progress` issue

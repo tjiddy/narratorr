@@ -32,7 +32,7 @@ All GitHub commands use: `node scripts/gh.ts` (referred to as `gh` below).
    - Type: `type/feature`, `type/bug`, or `type/chore`
    - Priority: `priority/high`, `priority/medium`, or `priority/low` (ask if unclear)
    - Scope: `scope/frontend`, `scope/backend`, `scope/core`, `scope/db` (can be multiple)
-   - Status: `status/backlog` (default) or `status/ready` if user wants it next
+   - Status: `status/backlog` (default) or `status/ready-for-dev` if user wants it next
 6. Create the issue:
    ```
    node scripts/gh.ts issue create --title "<title>" --body-file <temp-file-path> --label "<labels>"

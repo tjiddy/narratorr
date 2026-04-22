@@ -2,7 +2,7 @@
 
 All new/changed code must include tests. Run `pnpm test` (Vitest) to execute all suites.
 
-**Red/green TDD convention:** Implementation follows a strict red→green cycle per module. `/plan` creates `it.todo()` stubs from the spec. During `/implement`, for each module: (1) convert stubs to real failing tests with full assertions/mocks, (2) run the test file and **confirm tests fail** (if a test passes before implementation exists, the assertion is vacuous — fix it), (3) write production code until tests pass, (4) commit. This applies to both backend logic and frontend component behavior.
+**Red/green TDD convention:** Implementation follows a strict red→green cycle per module. Before writing production code, create `it.todo()` stubs (or real failing tests) from the spec's interactions and system behaviors. For each module: (1) convert stubs to real failing tests with full assertions/mocks, (2) run the test file and **confirm tests fail** (if a test passes before implementation exists, the assertion is vacuous — fix it), (3) write production code until tests pass, (4) commit. This applies to both backend logic and frontend component behavior.
 
 **Conventions:**
 - Co-located test files: `foo.ts` → `foo.test.ts` (or `.test.tsx` for JSX)
