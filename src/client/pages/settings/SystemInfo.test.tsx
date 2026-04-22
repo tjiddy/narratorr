@@ -3,18 +3,16 @@ import { screen, waitFor } from '@testing-library/react';
 import { renderWithProviders } from '../../__tests__/helpers';
 import { SystemInfo } from './SystemInfo';
 
-vi.mock('@/lib/api', () => ({
-  api: {
-    getSystemInfo: vi.fn(),
-  },
-  formatBytes: (bytes?: number) => {
-    if (!bytes || bytes === 0) return '0 B';
-    const k = 1024;
-    const sizes = ['B', 'KB', 'MB', 'GB', 'TB'];
-    const i = Math.floor(Math.log(bytes) / Math.log(k));
-    return `${parseFloat((bytes / Math.pow(k, i)).toFixed(2))} ${sizes[i]}`;
-  },
-}));
+vi.mock('@/lib/api', async () => {
+  const actual = await vi.importActual('@/lib/api');
+  return {
+    ...actual,
+    api: {
+      ...(actual as { api: object }).api,
+      getSystemInfo: vi.fn(),
+    },
+  };
+});
 
 import { api } from '@/lib/api';
 import type { Mock } from 'vitest';

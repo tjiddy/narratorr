@@ -12,23 +12,27 @@ vi.mock('sonner', () => ({
   },
 }));
 
-vi.mock('@/lib/api', () => ({
-  api: {
-    getBackups: vi.fn(),
-    getSettings: vi.fn(),
-    updateSettings: vi.fn(),
-    createBackup: vi.fn(),
-    getBackupDownloadUrl: vi.fn((filename: string) => `/api/system/backups/${filename}/download`),
-    uploadRestore: vi.fn(),
-    restoreBackupDirect: vi.fn(),
-    confirmRestore: vi.fn(),
-    getHealthStatus: vi.fn().mockResolvedValue([]),
-    getHealthSummary: vi.fn().mockResolvedValue({ state: 'healthy' }),
-    getSystemTasks: vi.fn().mockResolvedValue([]),
-    getSystemInfo: vi.fn().mockResolvedValue({ version: '0.1.0', commit: 'unknown', nodeVersion: 'v20.0.0', os: 'linux', dbSize: 1024, libraryPath: '/books', freeSpace: 100000000000 }),
-  },
-  formatBytes: vi.fn((bytes: number) => `${(bytes / 1024).toFixed(1)} KB`),
-}));
+vi.mock('@/lib/api', async () => {
+  const actual = await vi.importActual('@/lib/api');
+  return {
+    ...actual,
+    api: {
+      ...(actual as { api: object }).api,
+      getBackups: vi.fn(),
+      getSettings: vi.fn(),
+      updateSettings: vi.fn(),
+      createBackup: vi.fn(),
+      getBackupDownloadUrl: vi.fn((filename: string) => `/api/system/backups/${filename}/download`),
+      uploadRestore: vi.fn(),
+      restoreBackupDirect: vi.fn(),
+      confirmRestore: vi.fn(),
+      getHealthStatus: vi.fn().mockResolvedValue([]),
+      getHealthSummary: vi.fn().mockResolvedValue({ state: 'healthy' }),
+      getSystemTasks: vi.fn().mockResolvedValue([]),
+      getSystemInfo: vi.fn().mockResolvedValue({ version: '0.1.0', commit: 'unknown', nodeVersion: 'v20.0.0', os: 'linux', dbSize: 1024, libraryPath: '/books', freeSpace: 100000000000 }),
+    },
+  };
+});
 
 // Import mocked modules after mock setup
 const { api } = await import('@/lib/api');

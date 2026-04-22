@@ -19,27 +19,28 @@ import { matchesStatusFilter, sortBooks } from './helpers';
 import type { StatusFilter, SortField, SortDirection } from './helpers';
 
 // Mock api — same pattern as LibraryPage.test.tsx but WITHOUT mocking useNavigate
-vi.mock('@/lib/api', () => ({
-  api: {
-    getBooks: vi.fn(),
-    getBookStats: vi.fn(),
-    getSettings: vi.fn(),
-    deleteBook: vi.fn(),
-    deleteMissingBooks: vi.fn(),
-    rescanLibrary: vi.fn(),
-    searchBooks: vi.fn(),
-    searchGrab: vi.fn(),
-    searchAllWanted: vi.fn(),
-    searchBook: vi.fn(),
-    updateBook: vi.fn(),
-    getIndexers: vi.fn().mockResolvedValue([]),
-    getBook: vi.fn(),
-  },
-  formatBytes: (bytes?: number) => {
-    if (!bytes) return '0 B';
-    return `${bytes} bytes`;
-  },
-}));
+vi.mock('@/lib/api', async () => {
+  const actual = await vi.importActual('@/lib/api');
+  return {
+    ...actual,
+    api: {
+      ...(actual as { api: object }).api,
+      getBooks: vi.fn(),
+      getBookStats: vi.fn(),
+      getSettings: vi.fn(),
+      deleteBook: vi.fn(),
+      deleteMissingBooks: vi.fn(),
+      rescanLibrary: vi.fn(),
+      searchBooks: vi.fn(),
+      searchGrab: vi.fn(),
+      searchAllWanted: vi.fn(),
+      searchBook: vi.fn(),
+      updateBook: vi.fn(),
+      getIndexers: vi.fn().mockResolvedValue([]),
+      getBook: vi.fn(),
+    },
+  };
+});
 
 vi.mock('sonner', () => ({
   toast: { success: vi.fn(), error: vi.fn(), info: vi.fn() },

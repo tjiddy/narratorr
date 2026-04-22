@@ -9,13 +9,13 @@ import type { SearchResult } from '@/lib/api';
 import type { SearchResponse } from '@/lib/api/search';
 import type { IndexerState } from '@/hooks/useSearchStream';
 
-vi.mock('@/lib/api', () => ({
-  api: {},
-  formatBytes: (bytes?: number) => {
-    if (!bytes) return '0 B';
-    return `${(bytes / (1024 * 1024 * 1024)).toFixed(1)} GB`;
-  },
-}));
+vi.mock('@/lib/api', async () => {
+  const actual = await vi.importActual('@/lib/api');
+  return {
+    ...actual,
+    api: { ...(actual as { api: object }).api },
+  };
+});
 
 vi.mock('sonner', () => ({
   toast: { success: vi.fn(), error: vi.fn() },

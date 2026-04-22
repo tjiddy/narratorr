@@ -1,0 +1,7 @@
+---
+scope: [frontend]
+files: [src/client/pages/activity/ActivityPage.test.tsx, src/client/pages/settings/SystemInfo.test.tsx, src/client/pages/settings/SystemSettings.test.tsx, src/client/pages/settings/BackupTable.test.tsx, src/client/pages/library/LibraryPage.test.tsx, src/client/pages/library/LibraryPage.url-restore.test.tsx, src/client/components/SearchReleasesContent.test.tsx, src/client/components/SearchReleasesModal.test.tsx]
+issue: 666
+date: 2026-04-21
+---
+Frontend test files that mock `@/lib/api` with a hardcoded object literal develop dormant "X is not a function" bugs every time a new util lands in the barrel (e.g. `formatBytesPerSec` in #655). The fix is `vi.importActual('@/lib/api')` plus a two-level spread — top-level `...actual` for exports like `formatBytes`/`formatProgress`, and a nested `api: { ...(actual as { api: object }).api, fn: vi.fn() }` so only the methods a test controls are replaced. Overrides (hoisted `ApiError` class, KB-format `formatBytes`, GB-format `formatBytes`) still land on top of the spread — the spread is the floor, not the ceiling. Avoid the `vi.importActual<typeof import('@/lib/api')>(...)` generic: ESLint's `@typescript-eslint/consistent-type-imports` rule treats the inline `import()` as a forbidden annotation. Instead, use the bare call and rely on the cast at the access site (matches `PathInput.test.tsx` / `PathStep.test.tsx` reference pattern).
