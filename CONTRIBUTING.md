@@ -1,6 +1,6 @@
 # Contributing to Narratorr
 
-This guide covers the development workflow, conventions, and tooling for contributing to Narratorr — whether you're a human, Claude Code, Cursor, or any other AI agent.
+> **Note:** This guide is a work in progress and will be expanded before the 1.0 release. If something looks thin or missing, please open an issue.
 
 ## Getting Started
 
@@ -11,145 +11,30 @@ pnpm install
 pnpm dev           # API on :3000, Vite on :5173
 ```
 
-## GitHub Project Management
+## Development Workflow
 
-All work is tracked as issues on [GitHub](https://github.com/tjiddy/narratorr/issues). Each issue is self-contained — the spec, acceptance criteria, and test plan live in the issue body.
+1. Find or open an issue describing what you want to change.
+2. Branch off `main`: `git checkout -b feature/<short-slug>`.
+3. Make your changes with tests for anything new or modified.
+4. Run the quality gates (see below).
+5. Open a PR against `main`.
 
-### CLI Tool
+## Quality Gates
 
-We use the [GitHub CLI (`gh`)](https://cli.github.com/) for all issue and PR interactions:
-
-```bash
-gh issue list                        # List open issues
-gh issue view <id>                   # Read full issue (spec, AC, test plan)
-gh issue edit <id> --add-label X     # Add labels
-gh issue comment <id> -b "msg"       # Comment on issue
-gh pr list                           # List open PRs
-gh pr view <number>                  # Read PR details
-gh pr create --title "..." --body "..."  # Create PR
-gh pr comment <number> -b "msg"      # Comment on PR
-```
-
-### Labels (2-axis model)
-
-Issues use two exclusive label groups:
-
-**Status** (lifecycle — exactly one):
-`status/backlog` → `status/review-spec` ↔ `status/fixes-spec` → `status/ready-for-dev` → `status/in-progress` → `status/in-review` → `status/done`
-
-**Stage** (pipeline — exactly one, on the PR):
-`stage/review-pr` ↔ `stage/fixes-pr` → `stage/approved`
-
-**Standalone flags** (additive, not exclusive):
-- `blocked` — something is preventing progress (overlays current status)
-- `automate` — enables autonomous orchestration (workflume picks up labelled issues and runs the full pipeline end-to-end)
-
-Other labels: `type/feature` · `type/bug` · `type/chore` | `priority/high` · `priority/medium` · `priority/low` | `scope/backend` · `scope/frontend` · `scope/core` · `scope/db` · `scope/infra` · `scope/api` · `scope/services` · `scope/ui`
-
----
-
-## Issue Lifecycle
-
-Every issue follows this lifecycle. No shortcuts.
-
-### 1. Validate the spec
-
-Before writing any code, verify the issue has:
-- **Acceptance Criteria** — clear, testable statements (REQUIRED)
-- **Test Plan** — specific test cases (REQUIRED)
-- **Implementation detail** — file paths, interfaces, wiring points (recommended)
-- **Dependencies** — any referenced issues should be `status/done`
-
-If the spec is incomplete and you can fill gaps from codebase knowledge, update the issue body (preserve existing content, append new sections). If it needs human input, comment with what's missing and set `blocked`.
-
-### 2. Check for conflicts
-
-- `gh pr list` — any open PR touching the same area?
-- Any `status/in-progress` issues that overlap?
-
-If conflicts exist, stop and flag them.
-
-### 3. Claim the issue
-
-Post a claim comment on the issue:
-```
-**Claiming #<id>**
-- Plan:
-    1. ...
-    2. ...
-- Expected changes: `<files/modules>`
-- Verification: `<tests to run>`
-```
-
-Update labels:
-```bash
-gh issue edit <id> --add-label "status/in-progress" --remove-label "status/ready-for-dev"
-```
-
-### 4. Create a branch
-
-```bash
-git checkout main && git pull
-git checkout -b feature/issue-<id>-<slug>
-```
-
-Branch naming: `feature/issue-<id>-<kebab-case-summary>` (e.g., `feature/issue-58-newznab-indexer`)
-
-### 5. Implement
-
-- Follow the Acceptance Criteria as a checklist
-- Write tests for all new/changed code (see Testing section below)
-- Commit with `#<id>` prefix: `#58 Add Newznab search adapter`
-- Stay in scope — if requirements expand, stop and flag it
-
-### 6. Run quality gates
-
-All four must pass before opening a PR:
+Before opening a PR, all of these must pass:
 
 ```bash
 pnpm lint        # ESLint
-pnpm test        # Vitest (all packages)
+pnpm test        # Vitest
 pnpm typecheck   # TypeScript strict
 pnpm build       # Full build
 ```
 
-Or run them all at once: `node scripts/verify.ts`
-
-### 7. Push and create PR
+Or run them all at once:
 
 ```bash
-git push -u origin $(git branch --show-current)
+pnpm verify
 ```
-
-PR title: `#<id> <issue title>`
-PR body must include `Closes #<id>` and these sections:
-
-```markdown
-Closes #<id>
-
-## Summary
-- <what changed>
-
-## Acceptance Criteria
-- [ ] <from the issue spec>
-
-## Tests / Verification
-- Commands: <what was run>
-- Manual: <what was checked>
-
-## Risk / Rollback
-- Risk: low — <rationale>
-- Rollback: revert PR
-```
-
-### 8. Hand off
-
-After creating the PR:
-- Update labels: add `stage/review-pr` to the PR, set `status/in-review` on the issue
-- Comment on the issue with PR link + what changed + how verified
-- Switch back to main: `git checkout main`
-
----
 
 ## Architecture Overview
 
@@ -183,8 +68,6 @@ src/
 
 **Frontend** uses React Router (routes in `App.tsx`), nav items in `Layout.tsx`, TanStack Query for server state, Tailwind for styling.
 
----
-
 ## Testing
 
 All new/changed code must include tests.
@@ -199,8 +82,6 @@ All new/changed code must include tests.
 
 Global test setup: `src/client/__tests__/setup.ts`
 Test helpers: `src/client/__tests__/helpers.tsx` (`renderWithProviders`)
-
----
 
 ## Code Style
 
@@ -222,75 +103,4 @@ Test helpers: `src/client/__tests__/helpers.tsx` (`renderWithProviders`)
 
 Every catch block must log. Every create/update/delete should log at info. Core adapters (`src/core/`) do NOT log — they throw or return failures.
 
----
-
-## Blocked Workflow
-
-When you can't proceed:
-
-1. Comment on the issue with the `BLOCKED` template:
-```
-**BLOCKED — need input**
-
-Context: <what you tried and where you got stuck>
-
-Decision needed:
-1. <Question>?
-    - A) ...
-    - B) ...
-    - Default if no answer: A
-```
-
-2. Add the `blocked` label (keep current `status/*`)
-3. Stop working
-
-### Resuming a blocked issue
-
-1. Read the issue and find the most recent `BLOCKED` comment
-2. Read comments posted after it for answers
-3. Check out the existing branch: `git checkout feature/issue-<id>-*`
-4. Remove the `blocked` label
-5. Continue implementation
-
----
-
-## Workflow Scripts
-
-Mechanical workflow steps are deterministic Node scripts in `scripts/`. These run without an LLM:
-
-| Script | What it does | Output |
-|--------|-------------|--------|
-| `node scripts/verify.ts` | lint → test+coverage → typecheck → build | `VERIFY: pass/fail` |
-| `node scripts/claim.ts <id>` | Validate status, create branch, update labels | `CLAIMED:/ERROR:` |
-| `node scripts/merge.ts <pr>` | Validate approval, CI, squash merge, close issue | `MERGED:/ERROR:` |
-| `node scripts/block.ts <id> "<reason>"` | Post blocker comment, update labels | `BLOCKED:` |
-| `node scripts/resume.ts <id>` | Restore branch, collect context | Branch + context |
-| `node scripts/changelog.ts [since]` | Categorized changelog from git + GitHub | Markdown |
-
-## Claude Code Skills
-
-Narratorr ships 11 human-facing Claude Code skills under `.claude/skills/`. Some are thin wrappers around the scripts above, others use LLM reasoning for tasks like triage or spec grooming:
-
-| Skill | What it does |
-|-------|-------------|
-| `/spec <title>` | Draft a new issue from the spec template and create it in GitHub |
-| `/issue <id>` | Read/summarize a single issue |
-| `/issues` | List open issues with labels and state |
-| `/triage` | Rank and categorize open issues, graduate CL learnings |
-| `/claim <id>` | Wrapper: runs `scripts/claim.ts` (validates status, creates branch, updates labels) |
-| `/handoff <id>` | Self-review, coverage check, verify, push, create PR, update labels, capture CL |
-| `/verify` | Wrapper: runs `scripts/verify.ts` |
-| `/block <id>` | Gathers reason, runs `scripts/block.ts` |
-| `/resume <id>` | Wrapper: runs `scripts/resume.ts`, presents recovered context |
-| `/changelog [since]` | Wrapper: runs `scripts/changelog.ts` |
-| `/setup-labels` | Idempotent label setup for a fresh repo |
-
-The manual lifecycle is: `/claim → (implement the work yourself) → /handoff`. There is no `/implement` or `/plan` skill in narratorr — those live in workflume and only run under the `automate` label path.
-
-### Automated mode (workflume)
-
-Adding the `automate` label delegates the full pipeline (elaborate → review-spec → respond → implement → review-pr → respond → merge) to the [workflume](https://github.com/tjiddy/workflume) orchestrator. The pipeline skills (`/elaborate`, `/review-spec`, `/respond-to-spec-review`, `/implement`, `/review-pr`, `/respond-to-pr-review`, `/merge`) live in workflume and are overlaid into worker clones at container boot — they are not part of narratorr's repo and are not invocable manually.
-
-Choose per issue:
-- **Manual:** skip the `automate` label; use `/claim → /handoff` or equivalent manual steps.
-- **Automated:** add `automate`; workflume runs it end-to-end.
+See `CLAUDE.md` for additional conventions, gotchas, and architectural context.

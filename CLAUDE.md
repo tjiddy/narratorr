@@ -22,6 +22,7 @@ pnpm | Node.js 24+ | Fastify 5 | Drizzle ORM + libSQL | React 18 + Vite 6 | TanS
 pnpm install       # Install deps
 pnpm dev           # Dev servers (API :3000, Vite :5173)
 pnpm build         # Build all
+pnpm verify        # Lint + test + typecheck + build
 pnpm db:generate   # Generate Drizzle migration after schema change
 pnpm typecheck     # TypeScript checking
 ```
@@ -58,7 +59,7 @@ See `SECURITY.md` for full model. Filesystem browsing is intentionally unrestric
 
 ## Gotchas
 
-Graduated learnings from the CL system — non-obvious patterns that have caused bugs:
+Non-obvious patterns that have caused bugs:
 
 - **SQLite NULL uniqueness:** NULL ≠ NULL in unique indexes — nullable columns don't prevent duplicates. Ensure populated before insert.
 - **SQLite 999 bind limit:** Account for ALL bound params in WHERE when chunking `IN(...)` queries, not just the list.
@@ -85,7 +86,6 @@ Graduated learnings from the CL system — non-obvious patterns that have caused
 - **CSP nonce kills unsafe-inline:** Never combine `'nonce-'` and `'unsafe-inline'` in the same CSP directive — per CSP Level 2, a nonce's presence silently disables `unsafe-inline`. Use a Fastify `onSend` hook to strip the nonce from `style-src` after helmet injects it, preserving the nonce only in `script-src`.
 - **`backdrop-filter` creates stacking context:** Elements with `backdrop-filter` (e.g., glass-card containers) trap z-index of descendants. Portals for dropdowns/modals must attach to `<body>`, not the nearest parent.
 - **Zod `.min(1)` allows whitespace:** Use `.trim().min(1)` for user-facing text fields — bare `.min(1)` accepts `'   '` (spaces-only).
-- **Aborted tool calls are errors:** Tool calls that return `aborted` are errors. Never continue a workflow step that depends on an aborted call. Retry the call once if it is safe to retry. If the retry fails or is aborted, stop and report the workflow as blocked. After any parallel tool call, verify that every required sub-call succeeded before proceeding.
 - **`vi.useFakeTimers()` breaks TanStack Query:** Full `useFakeTimers()` deadlocks Query's internal `setTimeout`. Use `vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] })` and explicit `vi.advanceTimersByTime()` in tests that mix polling hooks with Query.
 - **TanStack Query optimistic updates:** Call `cancelQueries` before `setQueryData` — without cancel, a pending refetch can overwrite the optimistic data. For paginated queries, use `placeholderData: (prev) => prev` to prevent flicker during page transitions.
 - **Fire-and-forget pre-flight:** When a service method creates a background job (`.start()`), pre-flight checks MUST happen before job creation — not inside the async work function. Throws inside async work are unreachable by the caller (route already returned 202). Make the method `async` and validate synchronously before creating the job.
@@ -93,50 +93,3 @@ Graduated learnings from the CL system — non-obvious patterns that have caused
 - **Drizzle enum type derivation:** Drizzle inline `text('col', { enum: [...] })` produces narrow literal unions in `$inferInsert`. Derive shared types from the schema (`NonNullable<typeof table.$inferInsert['col']>`) instead of using bare `string`.
 - **Zod + zodResolver type divergence:** `z.preprocess()`, `z.transform()`, and `z.default()` create ZodEffects where input ≠ output type. `zodResolver` requires aligned types. Fix: omit `.default()` in form schemas (forms always have explicit `defaultValues`), use `setValueAs` in `register()` for coercion instead of `z.preprocess()`. See `stripDefaults()` for removing defaults from server schemas before form use.
 - **Settings dual default path:** New settings fields need TWO places: Zod schema `.default()` AND `settingsRegistry.*.defaults` / `DEFAULT_SETTINGS` in `registry.ts`. Runtime uses `DEFAULT_SETTINGS` (not Zod parsing), so adding only to the schema leaves runtime and mock factories missing the field.
-
-## Frontend Design Quality
-
-Issues with `scope/frontend` must include a UI/UX design pass. Use the `frontend-design` skill before handoff. Workflume's `/implement` (proactive) and `/review-pr` (blocking finding) enforce this in automation.
-
-## Workflow Scripts
-
-Mechanical workflow steps live in `scripts/` as deterministic Node scripts (not LLM-powered). Skills call these directly:
-
-| Script | What it does | Output |
-|--------|-------------|--------|
-| `scripts/verify.ts` | lint → test+coverage → typecheck → build → e2e | `VERIFY: pass/fail` |
-| `scripts/claim.ts <id>` | Validate status, create branch, update labels | `CLAIMED:/ERROR:` |
-| `scripts/merge.ts <pr>` | Validate approval, CI, squash merge, close issue | `MERGED:/ERROR:` |
-| `scripts/block.ts <id> "<reason>"` | Post blocker comment, update labels | `BLOCKED:` |
-| `scripts/resume.ts <id>` | Restore branch, collect context | Branch + context |
-| `scripts/changelog.ts [since]` | Categorized changelog from git + GitHub | Markdown |
-| `scripts/git-push.ts <args>` | Token-aware git push (mints fresh GitHub App token) | stdout or error |
-| `scripts/post-review.ts <pr>` | Post review comment from state dir with guards | `POSTED:` or `ERROR:` |
-| `scripts/check-self-review.ts <author>` | Guard against self-review (works under App + personal auth) | `OK:` or `SELF-REVIEW:`/`ERROR:` |
-| `scripts/update-labels.ts <id> [--pr] --replace <prefix> <label>` | Atomic label replacement on issue or PR | stdout or error |
-| `scripts/gh.ts` | Token-aware `gh` CLI wrapper (drop-in replacement) | stdout or error |
-| `scripts/lib.ts` | Shared helpers (gh, git, gitPush, label parsing, self-identity) | — |
-
-## GitHub CLI Auth
-
-**Never call bare `gh` — always use `node scripts/gh.ts`** (reads AND writes). This wrapper routes through `scripts/lib.ts`, which auto-mints GitHub App installation tokens from app credentials (`GH_APP_ID`, `GH_APP_PRIVATE_KEY_PATH`, `GH_INSTALLATION_ID`). Falls back to the user's `gh auth` session when no app credentials are configured.
-
-- **All `gh` calls:** `node scripts/gh.ts <args>` (e.g., `node scripts/gh.ts issue view 123 --json title`)
-- **Label changes:** `node scripts/update-labels.ts` (atomic label replacement)
-- **Git push:** `node scripts/git-push.ts` (token-aware push)
-- **Review posting:** `node scripts/post-review.ts` (guarded single-post)
-
-If `node scripts/gh.ts` returns 401, the app credentials may be misconfigured — do not fall back to bare `gh`.
-
-## Project Management (GitHub)
-
-All work tracked as GitHub issues at `https://github.com/tjiddy/narratorr`.
-
-## Extended Documentation
-
-Detailed standards and workflow are in `.claude/docs/`. Skills inject only the docs they need via `!`cat`` dynamic context injection — they are NOT loaded globally.
-
-- `.claude/docs/testing.md` — Test conventions, quality standards, coverage gate, test plan completeness
-- `.claude/docs/workflow.md` — Issue lifecycle, label model, workflow guardrails
-- `.claude/docs/design-principles.md` — SOLID principles, co-location, extraction patterns
-- `.claude/docs/architecture-checks.md` — Greppable OCP/SRP/DRY/LSP/ISP checks for specs and reviews

@@ -1,6 +1,6 @@
 # Architecture Checks
 
-Greppable SOLID and DRY checks. `/spec` (narratorr) applies these when creating a new issue. Workflume's `/review-spec` and `/review-pr` skills pull this doc in at dispatch time and enforce each applicable check.
+Greppable SOLID and DRY checks. Apply these when designing a new feature (before writing code) and when reviewing changes (before merging).
 
 ## Always Check
 
@@ -38,6 +38,6 @@ Greppable SOLID and DRY checks. `/spec` (narratorr) applies these when creating 
 
 ## How to Apply
 
-- **`/spec`** (narratorr): Check proposed design against OCP-1, OCP-2, DRY-1. Flag if the spec implies architecture that will require growing switches or 4+ file wiring.
-- **`/review-pr`** (workflume): Grep for new switch/case, if-chains on type, parallel type definitions. Check framework rules (ZOD-1, TS-1/2, CSS-1, REACT-1/2/3/4/5, ERR-1, DB-1) against changed files. For every new helper/component/regex in the diff, grep unchanged files for equivalent patterns (DRY-2). Code-cleanup ACs (extract, share, deduplicate) require the same verification rigor as behavioral ACs — "it works" is insufficient when the spec says "share." Flag violations as blocking findings.
-- **`/review-spec`** (workflume): Check that acceptance criteria don't encode assumptions that violate these checks.
+- **When specing a feature:** Check proposed design against OCP-1, OCP-2, DRY-1. Flag if the design implies architecture that will require growing switches or 4+ file wiring.
+- **When reviewing a PR:** Grep for new switch/case, if-chains on type, parallel type definitions. Check framework rules (ZOD-1, TS-1/2, CSS-1, REACT-1/2/3/4/5, ERR-1, DB-1) against changed files. For every new helper/component/regex in the diff, grep unchanged files for equivalent patterns (DRY-2). Code-cleanup work (extract, share, deduplicate) requires the same verification rigor as behavioral work — "it works" is insufficient when the goal is "share."
+- **When reviewing a spec/design:** Check that acceptance criteria don't encode assumptions that violate these checks.

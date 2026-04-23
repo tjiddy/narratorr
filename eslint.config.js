@@ -119,17 +119,6 @@ export default tseslint.config(
     },
   },
 
-  // Scripts - standalone CLI utilities, exempt from file hygiene limits
-  {
-    files: ['scripts/**/*.ts'],
-    rules: {
-      'max-lines': 'off',
-      'max-lines-per-function': 'off',
-      'complexity': 'off',
-      'no-console': 'off',
-    },
-  },
-
   // Test files - relax rules that don't add value in tests
   {
     files: ['**/*.test.ts', '**/*.test.tsx'],

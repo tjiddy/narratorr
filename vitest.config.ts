@@ -17,7 +17,7 @@ export default defineConfig({
     coverage: {
       provider: 'v8' as const,
       reportsDirectory: 'coverage',
-      exclude: ['scripts/**', 'src/server/index.ts', 'src/client/main.tsx'],
+      exclude: ['src/server/index.ts', 'src/client/main.tsx'],
     },
     projects: [
       {
@@ -39,7 +39,6 @@ export default defineConfig({
             'src/shared/**/*.test.ts',
             'src/core/**/*.test.ts',
             'src/db/**/*.test.ts',
-            'scripts/**/*.test.ts',
             'docker/**/*.test.ts',
             // Harness helper unit tests. Naming convention: .test.ts = vitest,
             // .spec.ts = Playwright. See e2e/README.md.
