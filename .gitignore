@@ -66,5 +66,3 @@ temp/
 # Skills: ignore everything by default; add `!.claude/skills/<name>/` lines to ship specific skills
 .claude/skills/*
 
-# CL scratch is ephemeral
-.narratorr/cl/scratch.md
