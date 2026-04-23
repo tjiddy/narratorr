@@ -773,6 +773,58 @@ describe('DiscoveryService', () => {
 
       expect(result.warnings).toEqual(expect.arrayContaining([expect.stringContaining('Expiry')]));
       expect(log.warn).toHaveBeenCalled();
+
+      // The catch's log.warn receives a serializeError()-wrapped object, not the raw Error.
+      // A serialized error is a plain object with message/type; Pino would drop a raw Error
+      // instance to {} in JSON logs.
+      const warnMock = log.warn as ReturnType<typeof vi.fn>;
+      const expiryWarn = warnMock.mock.calls.find(
+        (call: unknown[]) => typeof call[1] === 'string' && call[1].includes('expiry step failed'),
+      );
+      expect(expiryWarn).toBeDefined();
+      const logged = expiryWarn![0] as Record<string, unknown>;
+      expect(logged).not.toBeInstanceOf(Error);
+      expect(logged.message).toBe('DB locked');
+      expect(logged.type).toBe('Error');
+    });
+
+    it('surfaces driver weirdness (delete result missing rowsAffected) via the outer catch', async () => {
+      // Regression: pre-helper, the cast `as unknown as { rowsAffected?: number }`
+      // silently coalesced missing values to 0 via `?? 0`. After conversion to the
+      // throwing getRowsAffected() helper, a missing rowsAffected flows through the
+      // outer try/catch — expireSuggestions() returns 0, pushes the expiry warning,
+      // and log.warn receives a serializeError-wrapped payload.
+      const db = createMockDb();
+      // Expiry delete: resolves with a result that has no rowsAffected field
+      db.delete.mockReturnValueOnce(mockDbChain({}));
+      // analyzeLibrary
+      db.select.mockReturnValueOnce(mockDbChain([]));
+      // existing books
+      db.select.mockReturnValueOnce(mockDbChain([]));
+      // dismissed suggestions
+      db.select.mockReturnValueOnce(mockDbChain([]));
+      // currentPending
+      db.select.mockReturnValueOnce(mockDbChain([]));
+      // stale delete (no stale)
+      db.delete.mockReturnValue(mockDbChain());
+
+      mockMetadataService.searchBooksForDiscovery.mockResolvedValue({ books: [], warnings: [] });
+
+      const { service, log } = createService(db);
+      const result = await service.refreshSuggestions();
+
+      expect(result.warnings).toEqual(expect.arrayContaining([expect.stringContaining('Expiry')]));
+
+      const warnMock = log.warn as ReturnType<typeof vi.fn>;
+      const expiryWarn = warnMock.mock.calls.find(
+        (call: unknown[]) => typeof call[1] === 'string' && call[1].includes('expiry step failed'),
+      );
+      expect(expiryWarn).toBeDefined();
+      const logged = expiryWarn![0] as Record<string, unknown>;
+      // serializeError shape: plain object with message + type, NOT a raw Error instance
+      expect(logged).not.toBeInstanceOf(Error);
+      expect(logged.message).toEqual(expect.stringContaining('rowsAffected'));
+      expect(logged.type).toBe('Error');
     });
 
     it('continues candidate generation after expiry failure', async () => {

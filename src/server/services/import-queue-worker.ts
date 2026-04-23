@@ -7,6 +7,7 @@ import { getImportAdapter } from './import-adapters/registry.js';
 import type { ImportAdapterContext } from './import-adapters/types.js';
 import type { ImportJobPhase } from '../../shared/schemas/import-job.js';
 import { serializeError } from '../utils/serialize-error.js';
+import { getRowsAffected } from '../utils/db-helpers.js';
 import { safeEmit } from '../utils/safe-emit.js';
 import type { EventBroadcasterService } from './event-broadcaster.service.js';
 
@@ -169,11 +170,7 @@ export class ImportQueueWorker {
       .set({ status: 'processing', startedAt: now, updatedAt: now })
       .where(and(eq(importJobs.id, candidateId), eq(importJobs.status, 'pending')));
 
-    const rowsAffected = (result as unknown as { rowsAffected?: number }).rowsAffected;
-    if (rowsAffected === undefined) {
-      this.log.warn({ candidateId }, 'claimImportJob: rowsAffected missing from update result');
-      throw new Error(`claimImportJob: rowsAffected missing from update result for job ${candidateId}`);
-    }
+    const rowsAffected = getRowsAffected(result);
     if (rowsAffected !== 1) {
       // Another process claimed it — retry with next row
       return true;
