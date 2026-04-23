@@ -41,7 +41,7 @@ export function startMonitorJob(
     try {
       await monitorDownloads(db, downloadClientService, notifierService, log, retryDeps, broadcaster, remotePathMappingService);
     } catch (error: unknown) {
-      log.error(error, 'Monitor job error');
+      log.error({ error: serializeError(error) }, 'Monitor job error');
     }
   });
 

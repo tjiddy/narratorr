@@ -43,7 +43,7 @@ describe('runBackupJob', () => {
     expect(mockBackup.prune).not.toHaveBeenCalled();
   });
 
-  it('logs error on failure', async () => {
+  it('logs error on failure with canonical serialized payload', async () => {
     const mockBackup = {
       create: vi.fn().mockRejectedValue(new Error('disk full')),
       prune: vi.fn(),
@@ -52,7 +52,10 @@ describe('runBackupJob', () => {
 
     await runBackupJob(mockBackup, log);
 
-    expect((log as unknown as { error: ReturnType<typeof vi.fn> }).error).toHaveBeenCalled();
+    expect(log.error).toHaveBeenCalledWith(
+      expect.objectContaining({ error: expect.objectContaining({ message: 'disk full', type: 'Error' }) }),
+      'Backup job failed',
+    );
   });
 });
 
@@ -79,7 +82,7 @@ describe('startBackupJob', () => {
     expect(vi.getTimerCount()).toBe(1);
   });
 
-  it('retries in 5 minutes when settings read fails', async () => {
+  it('retries in 5 minutes when settings read fails and logs canonical serialized error', async () => {
     const mockSettings = {
       get: vi.fn().mockRejectedValue(new Error('db error')),
     } as unknown as SettingsService;
@@ -92,6 +95,33 @@ describe('startBackupJob', () => {
     await vi.advanceTimersByTimeAsync(0);
 
     expect(vi.getTimerCount()).toBe(1);
+    expect(log.error).toHaveBeenCalledWith(
+      expect.objectContaining({ error: expect.objectContaining({ message: 'db error', type: 'Error' }) }),
+      'Failed to read backup interval, retrying in 5 minutes',
+    );
+  });
+
+  it('logs canonical serialized error via runBackupJob on scheduled timer fire', async () => {
+    // runBackupJob swallows all errors internally, so the outer setTimeout-level
+    // `Backup job error` catch is unreachable in normal flow. This test confirms
+    // that scheduled timer fires produce a canonical-shape log from the inner
+    // runBackupJob catch when the injected service is broken.
+    const throwingService = {
+      create: vi.fn().mockRejectedValue(new Error('disk full on timer fire')),
+      prune: vi.fn(),
+    } as unknown as BackupService;
+    const mockSettings = createMockSettingsService({ system: { backupIntervalMinutes: 60 } });
+    const log = createMockLog();
+
+    startBackupJob(mockSettings, throwingService, log);
+
+    await vi.advanceTimersByTimeAsync(0);
+    await vi.advanceTimersByTimeAsync(60 * 60 * 1000);
+
+    expect(log.error).toHaveBeenCalledWith(
+      expect.objectContaining({ error: expect.objectContaining({ message: 'disk full on timer fire', type: 'Error' }) }),
+      'Backup job failed',
+    );
   });
 
   it('fires the timer callback, runs backup job, and recursively reschedules', async () => {

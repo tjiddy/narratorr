@@ -233,12 +233,12 @@ export function startRssJob(
         try {
           await runRssJob(settingsService, bookListService, bookService, indexerService, downloadOrchestrator, blacklistService, log);
         } catch (error: unknown) {
-          log.error(error, 'RSS sync job error');
+          log.error({ error: serializeError(error) }, 'RSS sync job error');
         }
         scheduleNext();
       }, intervalMs);
     } catch (error: unknown) {
-      log.error(error, 'Failed to read RSS interval, retrying in 5 minutes');
+      log.error({ error: serializeError(error) }, 'Failed to read RSS interval, retrying in 5 minutes');
       setTimeout(scheduleNext, 5 * 60 * 1000);
     }
   }

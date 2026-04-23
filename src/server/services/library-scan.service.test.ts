@@ -715,7 +715,7 @@ describe('LibraryScanService', () => {
       expect(mockEventHistoryService.create).toHaveBeenCalled();
       // Warning was logged for the event creation failure — helper logs the raw error + generic message
       expect(log.warn).toHaveBeenCalledWith(
-        expect.any(Error),
+        expect.objectContaining({ error: expect.objectContaining({ message: 'Event DB failure', type: 'Error' }) }),
         'Failed to record import_failed event',
       );
     });

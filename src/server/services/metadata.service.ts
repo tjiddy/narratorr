@@ -116,12 +116,12 @@ export class MetadataService {
       }
       if (error instanceof TransientError) {
         warnings.push(`${provider.name} ${method} transient failure: ${error.message}`);
-        this.log.warn(error, `Metadata ${method} failed`);
+        this.log.warn({ error: serializeError(error) }, `Metadata ${method} failed`);
         return [];
       }
       const msg = getErrorMessage(error);
       warnings.push(`${provider.name} ${method} failed: ${msg}`);
-      this.log.warn(error, `Metadata ${method} failed`);
+      this.log.warn({ error: serializeError(error) }, `Metadata ${method} failed`);
       return [];
     }
   }
@@ -183,7 +183,7 @@ export class MetadataService {
         this.setRateLimited(error.provider, error.retryAfterMs);
         return null;
       }
-      this.log.warn(error, 'Audnexus getAuthor failed');
+      this.log.warn({ error: serializeError(error) }, 'Audnexus getAuthor failed');
       return null;
     }
   }

@@ -4,6 +4,8 @@ import { UserExistsError, AuthConfigError, IncorrectPasswordError, NoCredentials
 import { loginSchema, setupCredentialsSchema, changePasswordSchema, updateAuthConfigSchema, type LoginInput, type SetupCredentialsInput, type ChangePasswordInput, type UpdateAuthConfigInput } from '../../shared/schemas.js';
 import { config } from '../config.js';
 import { isPrivateIp } from '../plugins/auth.js';
+import { serializeError } from '../utils/serialize-error.js';
+
 
 export async function authRoutes(app: FastifyInstance, authService: AuthService) {
   // GET /api/auth/status — public, no secrets
@@ -32,7 +34,7 @@ export async function authRoutes(app: FastifyInstance, authService: AuthService)
 
       return { ...status, authenticated, bypassActive, envBypass };
     } catch (error: unknown) {
-      request.log.error(error, 'Failed to fetch auth status');
+      request.log.error({ error: serializeError(error) }, 'Failed to fetch auth status');
       throw error;
     }
   });

@@ -695,7 +695,10 @@ describe('MetadataService', () => {
 
       const result = await service.getAuthor('B001TEST');
       expect(result).toBeNull();
-      expect(mockLog.warn).toHaveBeenCalledWith(transientErr, 'Audnexus getAuthor failed');
+      expect(mockLog.warn).toHaveBeenCalledWith(
+        expect.objectContaining({ error: expect.objectContaining({ message: transientErr.message, type: 'TransientError' }) }),
+        'Audnexus getAuthor failed',
+      );
     });
 
     it('getAuthor(): Audnexus RateLimitError returns null and sets rate limit', async () => {

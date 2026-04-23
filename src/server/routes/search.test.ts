@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeAll, afterAll, beforeEach, vi, type Mock } from 'vitest';
 import Fastify from 'fastify';
 import { serializerCompiler, validatorCompiler, type ZodTypeProvider } from 'fastify-type-provider-zod';
-import { createTestApp, createMockServices, resetMockServices, inject } from '../__tests__/helpers.js';
+import { createTestApp, createMockServices, installMockAppLog, resetMockServices, inject } from '../__tests__/helpers.js';
 import { registerRoutes, type Services } from './index.js';
 import { DEFAULT_SETTINGS } from '../../shared/schemas/settings/registry.js';
 import { filterAndRankResults } from '../services/search-pipeline.js';
@@ -298,18 +298,25 @@ describe('filterAndRankResults', () => {
 describe('search routes', () => {
   let app: Awaited<ReturnType<typeof createTestApp>>;
   let services: Services;
+  let logSpies: ReturnType<typeof installMockAppLog>['spies'];
+  let restoreLog: () => void;
 
   beforeAll(async () => {
     services = createMockServices();
     app = await createTestApp(services);
+    const installed = installMockAppLog(app);
+    logSpies = installed.spies;
+    restoreLog = installed.restore;
   });
 
   afterAll(async () => {
+    restoreLog();
     await app.close();
   });
 
   beforeEach(() => {
     resetMockServices(services);
+    for (const s of Object.values(logSpies)) s.mockClear();
   });
 
   describe('GET /api/search', () => {
@@ -743,7 +750,7 @@ describe('search routes', () => {
       expect(JSON.parse(res.payload)).toEqual({ error: 'HTTP 500: Internal Server Error' });
     });
 
-    it('still returns 500 for non-download-client errors', async () => {
+    it('still returns 500 for non-download-client errors and logs canonical serialized error', async () => {
       (services.downloadOrchestrator.grab as Mock).mockRejectedValue(new Error('Some other error'));
 
       const res = await app.inject({
@@ -754,6 +761,10 @@ describe('search routes', () => {
 
       expect(res.statusCode).toBe(500);
       expect(JSON.parse(res.payload).error).toBe('Some other error');
+      expect(logSpies.error).toHaveBeenCalledWith(
+        expect.objectContaining({ error: expect.objectContaining({ message: 'Some other error', type: 'Error' }) }),
+        'Grab failed',
+      );
     });
 
     it('sanitizes downloadUrl in debug log (strips query params from HTTP URL)', async () => {

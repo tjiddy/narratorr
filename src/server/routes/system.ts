@@ -12,6 +12,8 @@ import { getErrorMessage } from '../utils/error-message.js';
 import { RestoreUploadError } from '../services/backup.service.js';
 import fs from 'fs';
 import fsp from 'fs/promises';
+import { serializeError } from '../utils/serialize-error.js';
+
 
 export async function systemRoutes(app: FastifyInstance, services: Services, db: Db) {
   // GET /api/system/status
@@ -39,7 +41,7 @@ export async function systemRoutes(app: FastifyInstance, services: Services, db:
         commit: getCommit(),
       };
     } catch (error: unknown) {
-      request.log.warn(error, 'Health check DB probe failed');
+      request.log.warn({ error: serializeError(error) }, 'Health check DB probe failed');
       return reply.status(503).send({
         status: 'error',
         timestamp: new Date().toISOString(),
@@ -143,7 +145,7 @@ export async function systemRoutes(app: FastifyInstance, services: Services, db:
       if (error instanceof RestoreUploadError) {
         return reply.status(400).send({ error: error.message });
       }
-      request.log.error(error, 'Restore from backup failed');
+      request.log.error({ error: serializeError(error) }, 'Restore from backup failed');
       return reply.status(500).send({ error: 'Failed to restore from backup' });
     }
   });
@@ -161,7 +163,7 @@ export async function systemRoutes(app: FastifyInstance, services: Services, db:
       if (error instanceof RestoreUploadError) {
         return reply.status(400).send({ error: error.message });
       }
-      request.log.error(error, 'Restore upload failed');
+      request.log.error({ error: serializeError(error) }, 'Restore upload failed');
       return reply.status(500).send({ error: 'Failed to process restore file' });
     }
   });

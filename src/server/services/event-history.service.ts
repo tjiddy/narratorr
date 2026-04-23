@@ -6,6 +6,8 @@ import { type BlacklistService } from './blacklist.service.js';
 import { type BookService } from './book.service.js';
 import { actionableEventTypes, type EventType, type EventSource } from '../../shared/schemas/event-history.js';
 import { retrySearch, type RetrySearchDeps } from './retry-search.js';
+import { serializeError } from '../utils/serialize-error.js';
+
 
 type BookEventRow = typeof bookEvents.$inferSelect;
 
@@ -201,7 +203,7 @@ export class EventHistoryService {
     // Trigger book-scoped retry search (fire-and-forget) — does NOT reset global retry budget
     if (event.bookId && this.retrySearchDeps) {
       retrySearch(event.bookId, this.retrySearchDeps)
-        .catch((err) => this.log.warn(err, 'Mark-as-failed retry search failed'));
+        .catch((err) => this.log.warn({ error: serializeError(err) }, 'Mark-as-failed retry search failed'));
     }
 
     return { success: true };

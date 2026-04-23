@@ -549,7 +549,28 @@ describe('HealthCheckService', () => {
       // Allow microtasks to flush so fireAndForget's .catch() handler runs
       await new Promise((resolve) => setTimeout(resolve, 0));
 
-      expect(log.warn).toHaveBeenCalledWith(error, expect.stringContaining('health'));
+      expect(log.warn).toHaveBeenCalledWith(
+        expect.objectContaining({ error: expect.objectContaining({ message: error.message, type: 'Error' }) }),
+        expect.stringContaining('health'),
+      );
+    });
+
+    it('logs canonical serialized error when a sub-check throws outside its inner try', async () => {
+      // indexerService.getAll() throws — this is called before checkIndexers'
+      // inner try/catch, so the rejection propagates up to runAllChecks' catch.
+      const { service, log } = createService({
+        indexer: {
+          getAll: vi.fn().mockRejectedValue(new Error('indexer backend down')),
+          test: vi.fn(),
+        },
+      });
+
+      await service.runAllChecks();
+
+      expect(log.error).toHaveBeenCalledWith(
+        expect.objectContaining({ error: expect.objectContaining({ message: 'indexer backend down', type: 'Error' }) }),
+        'Health check failed',
+      );
     });
   });
 

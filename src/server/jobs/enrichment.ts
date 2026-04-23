@@ -7,6 +7,8 @@ import { RateLimitError } from '../../core/index.js';
 import { findOrCreateNarrator } from '../utils/find-or-create-person.js';
 import type { MetadataService } from '../services/metadata.service.js';
 import type { BookService } from '../services/book.service.js';
+import { serializeError } from '../utils/serialize-error.js';
+
 
 const BATCH_LIMIT = 5;
 const RETRY_AFTER_MS = 60 * 60 * 1000; // 1 hour
@@ -83,7 +85,7 @@ export function startEnrichmentJob(db: Db, metadataService: MetadataService, boo
     try {
       await runEnrichment(db, metadataService, bookService, log);
     } catch (error: unknown) {
-      log.error(error, 'Enrichment job error');
+      log.error({ error: serializeError(error) }, 'Enrichment job error');
     }
   });
 

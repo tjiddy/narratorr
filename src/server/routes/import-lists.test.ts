@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeAll, afterAll, beforeEach, vi, type Mock } from 'vitest';
-import { createTestApp, createMockServices, resetMockServices } from '../__tests__/helpers.js';
+import { createTestApp, createMockServices, installMockAppLog, resetMockServices } from '../__tests__/helpers.js';
 import type { Services } from './index.js';
 
 const validImportList = {
@@ -22,18 +22,25 @@ const savedList = {
 describe('import-lists routes', () => {
   let app: Awaited<ReturnType<typeof createTestApp>>;
   let services: Services;
+  let logSpies: ReturnType<typeof installMockAppLog>['spies'];
+  let restoreLog: () => void;
 
   beforeAll(async () => {
     services = createMockServices();
     app = await createTestApp(services);
+    const installed = installMockAppLog(app);
+    logSpies = installed.spies;
+    restoreLog = installed.restore;
   });
 
   afterAll(async () => {
+    restoreLog();
     await app.close();
   });
 
   beforeEach(() => {
     resetMockServices(services);
+    for (const s of Object.values(logSpies)) s.mockClear();
   });
 
   describe('GET /api/import-lists', () => {
@@ -307,7 +314,7 @@ describe('import-lists routes', () => {
       expect(res.json()).toEqual({ items: [], total: 0 });
     });
 
-    it('returns 500 with error message when preview service rejects', async () => {
+    it('returns 500 with error message and logs canonical serialized error when preview service rejects', async () => {
       (services.importList.preview as Mock).mockRejectedValue(new Error('Preview exploded'));
 
       const res = await app.inject({
@@ -318,6 +325,10 @@ describe('import-lists routes', () => {
 
       expect(res.statusCode).toBe(500);
       expect(res.json().error).toBe('Preview exploded');
+      expect(logSpies.error).toHaveBeenCalledWith(
+        expect.objectContaining({ error: expect.objectContaining({ message: 'Preview exploded', type: 'Error' }) }),
+        'Import list preview failed',
+      );
     });
 
     it('returns 400 for invalid typed settings and does not call service.preview', async () => {

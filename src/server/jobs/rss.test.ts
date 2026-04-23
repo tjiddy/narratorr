@@ -640,7 +640,7 @@ describe('startRssJob', () => {
     await vi.advanceTimersByTimeAsync(0);
 
     expect(log.error).toHaveBeenCalledWith(
-      expect.any(Error),
+      expect.objectContaining({ error: expect.objectContaining({ message: 'DB connection lost', type: 'Error' }) }),
       'Failed to read RSS interval, retrying in 5 minutes',
     );
 

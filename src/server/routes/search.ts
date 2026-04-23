@@ -14,6 +14,8 @@ import {
   type SearchQuery,
   type GrabInput,
 } from '../../shared/schemas.js';
+import { serializeError } from '../utils/serialize-error.js';
+
 
 export async function searchRoutes(
   app: FastifyInstance,
@@ -75,7 +77,7 @@ export async function searchRoutes(
           // (DownloadClientAuthError → 401, DownloadClientTimeoutError → 504, DownloadClientError → 502)
           throw error;
         }
-        request.log.error(error, 'Grab failed');
+        request.log.error({ error: serializeError(error) }, 'Grab failed');
         const message = getErrorMessage(error);
         return reply.status(500).send({ error: message });
       }

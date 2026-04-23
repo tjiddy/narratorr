@@ -991,7 +991,10 @@ describe('monitor job', () => {
         monitorDownloads(inject<Db>(db), inject<DownloadClientService>(downloadClientService), inject<NotifierService>(notifierService), inject<FastifyBaseLogger>(log), undefined, inject<EventBroadcasterService>(broadcaster)),
       ).resolves.not.toThrow();
 
-      expect(log.debug).toHaveBeenCalledWith(sseError, 'SSE emit failed for download_progress');
+      expect(log.debug).toHaveBeenCalledWith(
+        expect.objectContaining({ error: expect.objectContaining({ message: sseError.message, type: 'Error' }) }),
+        'SSE emit failed for download_progress',
+      );
     });
 
     it('still emits download_status_change when download_progress throws', async () => {

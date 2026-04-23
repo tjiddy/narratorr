@@ -133,14 +133,17 @@ describe('version check job', () => {
       expect(getUpdateStatus('')).toBeUndefined();
     });
 
-    it('network timeout → error logged, cached result used', async () => {
+    it('network timeout → error logged with canonical serialized payload, cached result used', async () => {
       mockFetch.mockResolvedValue(makeGitHubRelease('v0.2.0', 'https://github.com/releases/v0.2.0'));
       await runCheck();
 
       mockFetch.mockRejectedValue(new Error('fetch failed'));
       await runCheck();
 
-      expect(log.error).toHaveBeenCalled();
+      expect(log.error).toHaveBeenCalledWith(
+        expect.objectContaining({ error: expect.objectContaining({ message: 'fetch failed', type: 'Error' }) }),
+        'Version check: failed to check for updates',
+      );
       expect(getUpdateStatus('')).toBeDefined();
     });
 

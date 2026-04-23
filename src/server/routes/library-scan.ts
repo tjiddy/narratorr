@@ -87,7 +87,7 @@ export async function libraryScanRoutes(
         const result = await libraryScan.importSingleBook(importItem, metadata as ImportConfirmItem['metadata'], mode);
         return result;
       } catch (error: unknown) {
-        request.log.error(error, 'Single book import failed');
+        request.log.error({ error: serializeError(error) }, 'Single book import failed');
         return reply.status(500).send({
           error: getErrorMessage(error),
         });
@@ -108,7 +108,7 @@ export async function libraryScanRoutes(
       if (error instanceof LibraryPathError) {
         return reply.status(400).send({ error: error.message });
       }
-      request.log.error(error, 'Library rescan failed');
+      request.log.error({ error: serializeError(error) }, 'Library rescan failed');
       return reply.status(500).send({
         error: getErrorMessage(error),
       });
@@ -128,7 +128,7 @@ export async function libraryScanRoutes(
         const result = await libraryScan.scanDirectory(path);
         return scanResultSchema.parse(result);
       } catch (error: unknown) {
-        request.log.error(error, 'Directory scan failed');
+        request.log.error({ error: serializeError(error) }, 'Directory scan failed');
         return reply.status(500).send({
           error: getErrorMessage(error),
         });
@@ -149,7 +149,7 @@ export async function libraryScanRoutes(
         const result = await libraryScan.confirmImport(items as ImportConfirmItem[], mode);
         return await reply.status(202).send(result);
       } catch (error: unknown) {
-        request.log.error(error, 'Import confirmation failed');
+        request.log.error({ error: serializeError(error) }, 'Import confirmation failed');
         return reply.status(500).send({
           error: getErrorMessage(error),
         });
@@ -222,7 +222,7 @@ async function handleScanDebug(
   try {
     searchResult = await runSearchTrace(cleanedTitle, cleanedAuthor, metadataService, request.log, asin);
   } catch (error: unknown) {
-    request.log.error(error, 'Scan debug metadata search failed');
+    request.log.error({ error: serializeError(error) }, 'Scan debug metadata search failed');
     return reply.status(502).send({
       statusCode: 502, error: 'Bad Gateway',
       message: `Metadata search provider failed: ${getErrorMessage(error)}`,
@@ -237,7 +237,7 @@ async function handleScanDebug(
     const existing = await bookService.findDuplicate(cleanedTitle, authorList);
     duplicate = { isDuplicate: existing !== null, existingBookId: existing?.id ?? null, reason: existing ? 'library-match' : null };
   } catch (error: unknown) {
-    request.log.error(error, 'Scan debug duplicate check failed');
+    request.log.error({ error: serializeError(error) }, 'Scan debug duplicate check failed');
     return reply.status(500).send({
       statusCode: 500, error: 'Internal Server Error',
       message: `Duplicate check failed: ${getErrorMessage(error)}`,

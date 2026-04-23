@@ -248,11 +248,14 @@ describe('recordGrabbedEvent', () => {
     expect(eventHistory.create).not.toHaveBeenCalled();
   });
 
-  it('catches and logs recording failures (fire-and-forget)', async () => {
+  it('catches and logs recording failures with canonical serialized payload (fire-and-forget)', async () => {
     (eventHistory.create as ReturnType<typeof vi.fn>).mockRejectedValue(new Error('record fail'));
     recordGrabbedEvent({ eventHistory, bookId: 1, bookTitle: 'Test', downloadId: 5, source: 'auto', reason: {}, log });
     await new Promise((r) => setTimeout(r, 10));
-    expect(log.warn).toHaveBeenCalled();
+    expect(log.warn).toHaveBeenCalledWith(
+      expect.objectContaining({ error: expect.objectContaining({ message: 'record fail', type: 'Error' }) }),
+      'Failed to record grabbed event',
+    );
   });
 });
 
@@ -279,13 +282,16 @@ describe('recordDownloadCompletedEvent', () => {
     expect(eventHistory.create).not.toHaveBeenCalled();
   });
 
-  it('catches and logs recording failures (fire-and-forget)', async () => {
+  it('catches and logs recording failures with canonical serialized payload (fire-and-forget)', async () => {
     const eventHistory = createMockEventHistory();
     (eventHistory.create as ReturnType<typeof vi.fn>).mockRejectedValue(new Error('record fail'));
     const log = createMockLog();
     recordDownloadCompletedEvent({ eventHistory, downloadId: 1, bookId: 2, bookTitle: 'Test', log });
     await new Promise((r) => setTimeout(r, 10));
-    expect(log.warn).toHaveBeenCalled();
+    expect(log.warn).toHaveBeenCalledWith(
+      expect.objectContaining({ error: expect.objectContaining({ message: 'record fail', type: 'Error' }) }),
+      'Failed to record download_completed event',
+    );
   });
 });
 
@@ -316,11 +322,14 @@ describe('recordDownloadFailedEvent', () => {
     expect(eventHistory.create).not.toHaveBeenCalled();
   });
 
-  it('catches and logs recording failures (fire-and-forget)', async () => {
+  it('catches and logs recording failures with canonical serialized payload (fire-and-forget)', async () => {
     (eventHistory.create as ReturnType<typeof vi.fn>).mockRejectedValue(new Error('record fail'));
     recordDownloadFailedEvent({ eventHistory, downloadId: 1, bookId: 2, bookTitle: 'Test', errorMessage: 'fail', log });
     await new Promise((r) => setTimeout(r, 10));
-    expect(log.warn).toHaveBeenCalled();
+    expect(log.warn).toHaveBeenCalledWith(
+      expect.objectContaining({ error: expect.objectContaining({ message: 'record fail', type: 'Error' }) }),
+      'Failed to record download_failed event',
+    );
   });
 
   it('passes errorMessage in reason.error field', () => {

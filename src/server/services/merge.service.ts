@@ -19,6 +19,8 @@ import type { MergePhase, MergeFailedReason } from '../../shared/schemas/sse-eve
 import { safeEmit } from '../utils/safe-emit.js';
 import { createStderrDeduplicator } from '../utils/stderr-deduplicator.js';
 import { getErrorMessage } from '../utils/error-message.js';
+import { serializeError } from '../utils/serialize-error.js';
+
 
 export interface MergeResult {
   bookId: number;
@@ -64,13 +66,13 @@ export class MergeService {
 
   private emitMergeStarted(bookId: number, bookTitle: string): void {
     this.eventHistory?.create({ bookId, bookTitle, eventType: 'merge_started', source: 'manual' })
-      .catch((err) => this.log.warn(err, 'Failed to record merge_started event'));
+      .catch((err) => this.log.warn({ error: serializeError(err) }, 'Failed to record merge_started event'));
     safeEmit(this.eventBroadcaster, 'merge_started', { book_id: bookId, book_title: bookTitle }, this.log);
   }
 
   private emitMergeFailed(bookId: number, bookTitle: string, error: string, reason: MergeFailedReason = 'error'): void {
     this.eventHistory?.create({ bookId, bookTitle, eventType: 'merge_failed', source: 'manual', reason: { error } })
-      .catch((err) => this.log.warn(err, 'Failed to record merge_failed event'));
+      .catch((err) => this.log.warn({ error: serializeError(err) }, 'Failed to record merge_failed event'));
     safeEmit(this.eventBroadcaster, 'merge_failed', { book_id: bookId, book_title: bookTitle, error, reason }, this.log);
   }
 
@@ -81,7 +83,7 @@ export class MergeService {
 
   private emitMergeComplete(bookId: number, bookTitle: string, message: string, enrichmentWarning?: string): void {
     this.eventHistory?.create({ bookId, bookTitle, eventType: 'merged', source: 'manual' })
-      .catch((err) => this.log.warn(err, 'Failed to record merged event'));
+      .catch((err) => this.log.warn({ error: serializeError(err) }, 'Failed to record merged event'));
     safeEmit(this.eventBroadcaster, 'merge_complete', {
       book_id: bookId, book_title: bookTitle, success: true, message,
       ...(enrichmentWarning !== undefined && { enrichmentWarning }),
@@ -131,7 +133,7 @@ export class MergeService {
       // Slot available — start immediately, fire-and-forget
       this.executeMerge(bookId)
         .catch((error: unknown) => {
-          this.log.error(error, 'Merge failed for book %d', bookId);
+          this.log.error({ error: serializeError(error) }, 'Merge failed for book %d', bookId);
         })
         .finally(() => {
           this.inProgress.delete(bookId);
@@ -163,12 +165,12 @@ export class MergeService {
     this.inProgress.add(nextBookId);
 
     this.emitQueuePositionUpdates().catch((error: unknown) => {
-      this.log.debug(error, 'Failed to emit queue position updates');
+      this.log.debug({ error: serializeError(error) }, 'Failed to emit queue position updates');
     });
 
     this.executeWithRevalidation(nextBookId)
       .catch((error: unknown) => {
-        this.log.error(error, 'Queued merge failed for book %d', nextBookId);
+        this.log.error({ error: serializeError(error) }, 'Queued merge failed for book %d', nextBookId);
       })
       .finally(() => {
         this.inProgress.delete(nextBookId);
@@ -186,7 +188,7 @@ export class MergeService {
         const book = await this.bookService.getById(bookId);
         this.emitMergeFailed(bookId, book?.title ?? `Book ${bookId}`, error.message);
       } else {
-        this.log.error(error, 'Dequeue-time merge execution failed for book %d', bookId);
+        this.log.error({ error: serializeError(error) }, 'Dequeue-time merge execution failed for book %d', bookId);
       }
     }
   }
@@ -363,7 +365,7 @@ export class MergeService {
       const bookTitle = book?.title ?? `Book ${bookId}`;
       this.emitMergeFailed(bookId, bookTitle, 'Cancelled by user', 'cancelled');
       this.emitQueuePositionUpdates().catch((error: unknown) => {
-        this.log.debug(error, 'Failed to emit queue position updates after cancellation');
+        this.log.debug({ error: serializeError(error) }, 'Failed to emit queue position updates after cancellation');
       });
       return { status: 'cancelled' };
     }

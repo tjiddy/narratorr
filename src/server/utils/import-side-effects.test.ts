@@ -180,6 +180,9 @@ describe('recordImportFailedEvent', () => {
     // Flush the rejected promise
     await new Promise(r => setImmediate(r));
 
-    expect(warn).toHaveBeenCalledWith(rejection, expect.stringContaining('import_failed'));
+    expect(warn).toHaveBeenCalledWith(
+      expect.objectContaining({ error: expect.objectContaining({ message: rejection.message, type: 'Error' }) }),
+      expect.stringContaining('import_failed'),
+    );
   });
 });

@@ -782,10 +782,10 @@ describe('DiscoveryService', () => {
         (call: unknown[]) => typeof call[1] === 'string' && call[1].includes('expiry step failed'),
       );
       expect(expiryWarn).toBeDefined();
-      const logged = expiryWarn![0] as Record<string, unknown>;
-      expect(logged).not.toBeInstanceOf(Error);
-      expect(logged.message).toBe('DB locked');
-      expect(logged.type).toBe('Error');
+      const logged = expiryWarn![0] as { error: Record<string, unknown> };
+      expect(logged.error).not.toBeInstanceOf(Error);
+      expect(logged.error.message).toBe('DB locked');
+      expect(logged.error.type).toBe('Error');
     });
 
     it('surfaces driver weirdness (delete result missing rowsAffected) via the outer catch', async () => {
@@ -820,11 +820,11 @@ describe('DiscoveryService', () => {
         (call: unknown[]) => typeof call[1] === 'string' && call[1].includes('expiry step failed'),
       );
       expect(expiryWarn).toBeDefined();
-      const logged = expiryWarn![0] as Record<string, unknown>;
-      // serializeError shape: plain object with message + type, NOT a raw Error instance
-      expect(logged).not.toBeInstanceOf(Error);
-      expect(logged.message).toEqual(expect.stringContaining('rowsAffected'));
-      expect(logged.type).toBe('Error');
+      const logged = expiryWarn![0] as { error: Record<string, unknown> };
+      // Canonical shape: { error: serializeError(...) } — not a raw Error instance
+      expect(logged.error).not.toBeInstanceOf(Error);
+      expect(logged.error.message).toEqual(expect.stringContaining('rowsAffected'));
+      expect(logged.error.type).toBe('Error');
     });
 
     it('continues candidate generation after expiry failure', async () => {

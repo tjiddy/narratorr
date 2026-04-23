@@ -5,6 +5,8 @@ import type { Services } from './index.js';
 import fsp from 'fs/promises';
 import os from 'os';
 import { getVersion, getCommit, getBuildTime } from '../utils/version.js';
+import { serializeError } from '../utils/serialize-error.js';
+
 
 export async function healthRoutes(app: FastifyInstance, services: Services, db: Db) {
   // GET /api/system/health/status — detailed health check results
@@ -48,7 +50,7 @@ export async function healthRoutes(app: FastifyInstance, services: Services, db:
         dbSize = (row[0] as number) * (row[1] as number);
       }
     } catch (error: unknown) {
-      request.log.debug(error, 'Failed to query DB size');
+      request.log.debug({ error: serializeError(error) }, 'Failed to query DB size');
     }
 
     let freeSpace: number | null = null;
