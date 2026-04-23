@@ -55,6 +55,37 @@ export async function createTestApp(services: Services, db?: Db) {
 }
 
 /**
+ * Replace the Fastify app's logger methods with vi.fn() stubs so route tests
+ * can assert on `request.log.*` calls. With `logger: false`, app.log is a
+ * shared abstract-logger singleton whose `.child()` returns `this` — so the
+ * same spies intercept both app.log and request.log.
+ *
+ * Returns a cleanup function that restores the original methods.
+ */
+export function installMockAppLog(app: { log: unknown }) {
+  const methods = ['error', 'warn', 'info', 'debug', 'fatal', 'trace'] as const;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const logRecord = app.log as Record<string, any>;
+  const originals: Record<string, unknown> = {};
+  for (const m of methods) {
+    originals[m] = logRecord[m];
+    logRecord[m] = vi.fn();
+  }
+  const spies = {
+    error: logRecord.error as Mock,
+    warn: logRecord.warn as Mock,
+    info: logRecord.info as Mock,
+    debug: logRecord.debug as Mock,
+    fatal: logRecord.fatal as Mock,
+    trace: logRecord.trace as Mock,
+  };
+  const restore = () => {
+    for (const m of methods) logRecord[m] = originals[m];
+  };
+  return { spies, restore };
+}
+
+/**
  * Creates a thenable chain that simulates Drizzle ORM query builder.
  * Uses a Proxy to auto-generate `vi.fn()` stubs for any chained method.
  * When awaited, resolves to `result` (or rejects with `opts.error`).

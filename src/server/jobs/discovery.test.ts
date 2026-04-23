@@ -63,6 +63,9 @@ describe('Discovery Job', () => {
 
     // Should not throw
     await runDiscoveryJob(inject(mockDiscoveryService), inject(settingsService), inject<FastifyBaseLogger>(log));
-    expect(log.error).toHaveBeenCalled();
+    expect(log.error).toHaveBeenCalledWith(
+      expect.objectContaining({ error: expect.objectContaining({ message: 'Provider down', type: 'Error' }) }),
+      'Discovery refresh failed',
+    );
   });
 });

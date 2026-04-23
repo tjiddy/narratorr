@@ -7,7 +7,7 @@ import multipart from '@fastify/multipart';
 import Fastify from 'fastify';
 import { serializerCompiler, validatorCompiler, type ZodTypeProvider } from 'fastify-type-provider-zod';
 import type { Db } from '../../db/index.js';
-import { createTestApp, createMockServices, resetMockServices, inject } from '../__tests__/helpers.js';
+import { createTestApp, createMockServices, installMockAppLog, resetMockServices, inject } from '../__tests__/helpers.js';
 import { DEFAULT_SETTINGS } from '../../shared/schemas/settings/registry.js';
 import { registerRoutes, type Services } from './index.js';
 
@@ -26,18 +26,25 @@ import { getUpdateStatus } from '../jobs/version-check.js';
 describe('system routes', () => {
   let app: Awaited<ReturnType<typeof createTestApp>>;
   let services: Services;
+  let logSpies: ReturnType<typeof installMockAppLog>['spies'];
+  let restoreLog: () => void;
 
   beforeAll(async () => {
     services = createMockServices();
     app = await createTestApp(services);
+    const installed = installMockAppLog(app);
+    logSpies = installed.spies;
+    restoreLog = installed.restore;
   });
 
   afterAll(async () => {
+    restoreLog();
     await app.close();
   });
 
   beforeEach(() => {
     resetMockServices(services);
+    for (const s of Object.values(logSpies)) s.mockClear();
   });
 
   describe('GET /api/system/status', () => {
@@ -173,10 +180,11 @@ describe('system routes', () => {
       await failApp.close();
     });
 
-    it('returns 503 with error when DB probe fails', async () => {
+    it('returns 503 with error and logs canonical serialized warning when DB probe fails', async () => {
       const failingDb = inject<Db>({ run: vi.fn().mockRejectedValue(new Error('SQLITE_CANTOPEN')) });
       const failServices = createMockServices();
       const failApp = await createTestApp(failServices, failingDb);
+      const { spies: failSpies, restore: failRestore } = installMockAppLog(failApp);
 
       const res = await failApp.inject({ method: 'GET', url: '/api/health' });
 
@@ -186,9 +194,14 @@ describe('system routes', () => {
       expect(payload.status).toBe('error');
       expect(payload.error).toBe('SQLITE_CANTOPEN');
       expect(payload.timestamp).toBeDefined();
+      expect(failSpies.warn).toHaveBeenCalledWith(
+        expect.objectContaining({ error: expect.objectContaining({ message: 'SQLITE_CANTOPEN', type: 'Error' }) }),
+        'Health check DB probe failed',
+      );
       const timestamp = new Date(payload.timestamp);
       expect(timestamp.toISOString()).toBe(payload.timestamp);
 
+      failRestore();
       await failApp.close();
     });
   });
@@ -552,7 +565,7 @@ describe('system routes', () => {
       await fsp.rm(tmpDir, { recursive: true }).catch(() => {});
     });
 
-    it('returns 500 for unexpected errors from restoreServerBackup', async () => {
+    it('returns 500 and logs canonical serialized error for unexpected errors from restoreServerBackup', async () => {
       const tmpDir = await fsp.mkdtemp(path.join(os.tmpdir(), 'narratorr-route-test-'));
       const tmpFile = path.join(tmpDir, 'test.zip');
       await fsp.writeFile(tmpFile, 'fake');
@@ -566,6 +579,10 @@ describe('system routes', () => {
 
       expect(res.statusCode).toBe(500);
       expect(JSON.parse(res.payload).error).toBe('Failed to restore from backup');
+      expect(logSpies.error).toHaveBeenCalledWith(
+        expect.objectContaining({ error: expect.objectContaining({ message: 'disk full', type: 'Error' }) }),
+        'Restore from backup failed',
+      );
 
       await fsp.rm(tmpDir, { recursive: true }).catch(() => {});
     });
@@ -656,6 +673,8 @@ function createMultipartPayload(filename: string, content: Buffer, boundary = 'b
 describe('POST /api/system/restore', () => {
   let app: Awaited<ReturnType<typeof createTestApp>>;
   let services: Services;
+  let uploadLogSpies: ReturnType<typeof installMockAppLog>['spies'];
+  let restoreUploadLog: () => void;
 
   beforeAll(async () => {
     services = createMockServices();
@@ -669,14 +688,19 @@ describe('POST /api/system/restore', () => {
     await registerRoutes(instance, services, mockDb);
     await instance.ready();
     app = instance as typeof app;
+    const installed = installMockAppLog(app);
+    uploadLogSpies = installed.spies;
+    restoreUploadLog = installed.restore;
   });
 
   afterAll(async () => {
+    restoreUploadLog();
     await app.close();
   });
 
   beforeEach(() => {
     resetMockServices(services);
+    for (const s of Object.values(uploadLogSpies)) s.mockClear();
   });
 
   it('returns 200 with validation result for valid zip containing narratorr.db', async () => {
@@ -791,7 +815,7 @@ describe('POST /api/system/restore', () => {
     expect(JSON.parse(res.payload).error).toBe('File is not a valid zip archive');
   });
 
-  it('returns 500 for unexpected errors from processRestoreUpload', async () => {
+  it('returns 500 and logs canonical serialized error for unexpected errors from processRestoreUpload', async () => {
     (services.backup.processRestoreUpload as Mock).mockRejectedValue(new Error('disk full'));
 
     const zipBuffer = await createZipBuffer([
@@ -808,6 +832,10 @@ describe('POST /api/system/restore', () => {
 
     expect(res.statusCode).toBe(500);
     expect(JSON.parse(res.payload).error).toBe('Failed to process restore file');
+    expect(uploadLogSpies.error).toHaveBeenCalledWith(
+      expect.objectContaining({ error: expect.objectContaining({ message: 'disk full', type: 'Error' }) }),
+      'Restore upload failed',
+    );
   });
 
   describe('#324 — restore route contract change', () => {

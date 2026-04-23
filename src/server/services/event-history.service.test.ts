@@ -3,7 +3,15 @@ import type { Db } from '../../db/index.js';
 import type { FastifyBaseLogger } from 'fastify';
 import { createMockDb, createMockLogger, inject, mockDbChain, createMockSettingsService } from '../__tests__/helpers.js';
 import { createMockDbBookEvent } from '../__tests__/factories.js';
+
+import type * as RetrySearchModule from './retry-search.js';
+vi.mock('./retry-search.js', async () => {
+  const actual = await vi.importActual<typeof RetrySearchModule>('./retry-search.js');
+  return { ...actual, retrySearch: vi.fn(actual.retrySearch) };
+});
+
 import { EventHistoryService, EventHistoryServiceError } from './event-history.service.js';
+import { retrySearch } from './retry-search.js';
 import type { BlacklistService } from './blacklist.service.js';
 import type { BookService } from './book.service.js';
 
@@ -333,6 +341,39 @@ describe('EventHistoryService', () => {
       // No retrySearchDeps set on service — should succeed without triggering search
       const result = await service.markFailed(1);
       expect(result).toEqual({ success: true });
+    });
+
+    it('logs canonical serialized warning when retrySearch promise itself rejects', async () => {
+      const event = createMockDbBookEvent({ downloadId: 5, bookId: 42 });
+      const download = { id: 5, infoHash: 'abc123', title: 'Test' };
+
+      db.select
+        .mockReturnValueOnce(mockDbChain([event]))
+        .mockReturnValueOnce(mockDbChain([download]));
+
+      // Force the retrySearch promise itself to reject (bypassing its internal try/catch)
+      vi.mocked(retrySearch).mockRejectedValueOnce(new Error('retry search exploded'));
+
+      const { RetryBudget } = await import('./retry-budget.js');
+      service.setRetrySearchDeps({
+        indexerService: { searchAll: vi.fn() },
+        downloadService: { grab: vi.fn() },
+        blacklistService: { getBlacklistedHashes: vi.fn().mockResolvedValue(new Set()), getBlacklistedIdentifiers: vi.fn().mockResolvedValue({ blacklistedHashes: new Set(), blacklistedGuids: new Set() }) },
+        bookService: { getById: vi.fn().mockResolvedValue({ id: 42, title: 'Test', duration: 3600, author: { name: 'Author' } }) },
+        settingsService: createMockSettingsService(),
+        retryBudget: new RetryBudget(),
+        log: createMockLogger(),
+      } as never);
+
+      const result = await service.markFailed(1);
+      expect(result).toEqual({ success: true });
+
+      await vi.waitFor(() => {
+        expect(log.warn).toHaveBeenCalledWith(
+          expect.objectContaining({ error: expect.objectContaining({ message: 'retry search exploded', type: 'Error' }) }),
+          'Mark-as-failed retry search failed',
+        );
+      });
     });
   });
 

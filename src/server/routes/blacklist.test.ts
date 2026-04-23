@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeAll, afterAll, beforeEach, type Mock } from 'vitest';
-import { createTestApp, createMockServices, resetMockServices } from '../__tests__/helpers.js';
+import { createTestApp, createMockServices, installMockAppLog, resetMockServices } from '../__tests__/helpers.js';
 import type { Services } from './index.js';
 
 const mockEntry = {
@@ -18,18 +18,25 @@ const mockEntry = {
 describe('blacklist routes', () => {
   let app: Awaited<ReturnType<typeof createTestApp>>;
   let services: Services;
+  let logSpies: ReturnType<typeof installMockAppLog>['spies'];
+  let restoreLog: () => void;
 
   beforeAll(async () => {
     services = createMockServices();
     app = await createTestApp(services);
+    const installed = installMockAppLog(app);
+    logSpies = installed.spies;
+    restoreLog = installed.restore;
   });
 
   afterAll(async () => {
+    restoreLog();
     await app.close();
   });
 
   beforeEach(() => {
     resetMockServices(services);
+    for (const s of Object.values(logSpies)) s.mockClear();
   });
 
   describe('GET /api/blacklist', () => {
@@ -113,6 +120,20 @@ describe('blacklist routes', () => {
       });
       expect(res.statusCode).toBe(201);
     });
+
+    it('logs canonical serialized error when blacklist.create throws', async () => {
+      vi.mocked(services.blacklist.create).mockRejectedValue(new Error('create boom'));
+      const res = await app.inject({
+        method: 'POST',
+        url: '/api/blacklist',
+        payload: { infoHash: 'abc123def456', title: 'Bad Release [Unabridged]', reason: 'wrong_content' },
+      });
+      expect(res.statusCode).toBe(500);
+      expect(logSpies.error).toHaveBeenCalledWith(
+        expect.objectContaining({ error: expect.objectContaining({ message: 'create boom', type: 'Error' }) }),
+        'Failed to add to blacklist',
+      );
+    });
   });
 
   describe('DELETE /api/blacklist/:id', () => {
@@ -177,7 +198,7 @@ describe('blacklist routes', () => {
       expect(res.statusCode).toBe(404);
     });
 
-    it('returns 500 when toggleType service throws', async () => {
+    it('returns 500 and logs canonical serialized error when toggleType service throws', async () => {
       vi.mocked(services.blacklist.toggleType).mockRejectedValue(new Error('DB connection lost'));
 
       const res = await app.inject({
@@ -188,6 +209,10 @@ describe('blacklist routes', () => {
 
       expect(res.statusCode).toBe(500);
       expect(res.json()).toMatchObject({ error: 'DB connection lost' });
+      expect(logSpies.error).toHaveBeenCalledWith(
+        expect.objectContaining({ error: expect.objectContaining({ message: 'DB connection lost', type: 'Error' }) }),
+        'Failed to toggle blacklist type',
+      );
     });
 
     it('returns 400 for invalid blacklistType value', async () => {
