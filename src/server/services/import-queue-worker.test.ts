@@ -392,6 +392,51 @@ describe('ImportQueueWorker', () => {
     });
   });
 
+  describe('drainOne CAS claim', () => {
+    // Private-method bypass seam for direct assertion. `start()` fire-and-forgets
+    // `drainLoop()` (import-queue-worker.ts:124-145) so drainOne() rejections
+    // never surface through the public API — direct invocation is the only seam.
+    type DrainSeam = { drainOne(): Promise<boolean> };
+
+    function setupSingleCandidate(claimResult: unknown) {
+      mockDb.db.select = vi.fn().mockReturnValueOnce({
+        from: vi.fn().mockReturnThis(),
+        where: vi.fn().mockReturnThis(),
+        orderBy: vi.fn().mockReturnThis(),
+        limit: vi.fn().mockResolvedValue([{ id: 42 }]),
+      });
+      mockDb.db.update = vi.fn().mockReturnValue({
+        set: vi.fn().mockReturnValue({
+          where: vi.fn().mockResolvedValue(claimResult),
+        }),
+      });
+    }
+
+    it('returns true on lost race (rowsAffected === 0) so the outer loop continues', async () => {
+      setupSingleCandidate({ rowsAffected: 0 });
+
+      const result = await (worker as unknown as DrainSeam).drainOne();
+
+      expect(result).toBe(true);
+    });
+
+    it('throws an error mentioning rowsAffected when the claim result is missing the field', async () => {
+      setupSingleCandidate({});
+
+      await expect(
+        (worker as unknown as DrainSeam).drainOne(),
+      ).rejects.toThrow(/rowsAffected/);
+    });
+
+    it('throws an error mentioning rowsAffected when the claim result explicitly sets undefined', async () => {
+      setupSingleCandidate({ rowsAffected: undefined });
+
+      await expect(
+        (worker as unknown as DrainSeam).drainOne(),
+      ).rejects.toThrow(/rowsAffected/);
+    });
+  });
+
   describe('drain loop', () => {
     it('failure of one job does NOT stop drain of subsequent jobs', async () => {
       const processedIds: number[] = [];

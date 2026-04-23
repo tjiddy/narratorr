@@ -4,6 +4,8 @@ import type { FastifyBaseLogger } from 'fastify';
 import { suggestions, books, authors, bookAuthors, bookNarrators, narrators } from '../../db/schema.js';
 import type { BookMetadata } from '../../core/index.js';
 import { chunkArray } from '../utils/batch.js';
+import { getRowsAffected } from '../utils/db-helpers.js';
+import { serializeError } from '../utils/serialize-error.js';
 import type { MetadataService } from './metadata.service.js';
 import type { SettingsService } from './settings.service.js';
 import type { SuggestionReason } from '../../shared/schemas/discovery.js';
@@ -174,11 +176,11 @@ export class DiscoveryService {
       const result = await this.db.delete(suggestions).where(
         and(eq(suggestions.status, 'pending'), lt(suggestions.createdAt, cutoff)),
       );
-      const expired = (result as unknown as { rowsAffected?: number }).rowsAffected ?? 0;
+      const expired = getRowsAffected(result);
       if (expired > 0) this.log.info({ expired }, 'Discovery: expired stale suggestions');
       return expired;
     } catch (error: unknown) {
-      this.log.warn(error, 'Discovery: expiry step failed');
+      this.log.warn(serializeError(error), 'Discovery: expiry step failed');
       warnings.push('Expiry step failed — continuing with candidate generation');
       return 0;
     }
