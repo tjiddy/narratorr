@@ -310,7 +310,10 @@ describe('DownloadOrchestrator', () => {
     it('logs warning when blacklistService.create() throws', async () => {
       (blacklistService.create as ReturnType<typeof vi.fn>).mockRejectedValue(new Error('blacklist boom'));
       await orchestrator.cancel(1);
-      expect(log.warn).toHaveBeenCalledWith(expect.any(Error), expect.stringContaining('blacklist'));
+      expect(log.warn).toHaveBeenCalledWith(
+        expect.objectContaining({ error: expect.objectContaining({ message: expect.any(String), type: 'Error' }) }),
+        expect.stringContaining('blacklist'),
+      );
     });
 
     it('still runs revertBookStatus and SSE side effects after blacklistService.create() rejects', async () => {

@@ -34,7 +34,10 @@ describe('fireAndForget', () => {
     // Wait for the rejection to be caught
     await new Promise((r) => setTimeout(r, 10));
 
-    expect(log.warn).toHaveBeenCalledWith(error, 'send grab notification');
+    expect(log.warn).toHaveBeenCalledWith(
+      expect.objectContaining({ error: expect.objectContaining({ message: error.message, type: 'Error' }) }),
+      'send grab notification',
+    );
   });
 
   it('does not re-throw the error', () => {

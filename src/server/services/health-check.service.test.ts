@@ -549,7 +549,10 @@ describe('HealthCheckService', () => {
       // Allow microtasks to flush so fireAndForget's .catch() handler runs
       await new Promise((resolve) => setTimeout(resolve, 0));
 
-      expect(log.warn).toHaveBeenCalledWith(error, expect.stringContaining('health'));
+      expect(log.warn).toHaveBeenCalledWith(
+        expect.objectContaining({ error: expect.objectContaining({ message: error.message, type: 'Error' }) }),
+        expect.stringContaining('health'),
+      );
     });
   });
 

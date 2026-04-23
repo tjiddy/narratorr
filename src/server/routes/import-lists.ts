@@ -3,6 +3,8 @@ import type { ImportListService } from '../services/import-list.service.js';
 import { createImportListSchema, updateImportListSchema, previewImportListSchema } from '../../shared/schemas.js';
 import { registerCrudRoutes } from './crud-routes.js';
 import { getErrorMessage } from '../utils/error-message.js';
+import { serializeError } from '../utils/serialize-error.js';
+
 
 export async function importListsRoutes(app: FastifyInstance, importListService: ImportListService) {
   await registerCrudRoutes(app, {
@@ -50,7 +52,7 @@ export async function importListsRoutes(app: FastifyInstance, importListService:
         const result = await importListService.preview({ type, settings: settings as Record<string, unknown> });
         return result;
       } catch (error: unknown) {
-        request.log.error(error, 'Import list preview failed');
+        request.log.error({ error: serializeError(error) }, 'Import list preview failed');
         return reply.status(500).send({
           error: getErrorMessage(error),
         });

@@ -10,6 +10,8 @@ import {
   DEFAULT_LIMITS,
   type CreateBlacklistInput,
 } from '../../shared/schemas.js';
+import { serializeError } from '../utils/serialize-error.js';
+
 
 type IdParam = z.infer<typeof idParamSchema>;
 type ToggleBody = z.infer<typeof toggleBlacklistTypeSchema>;
@@ -42,7 +44,7 @@ export async function blacklistRoutes(app: FastifyInstance, blacklistService: Bl
         const entry = await blacklistService.create(data);
         return await reply.status(201).send(entry);
       } catch (error: unknown) {
-        request.log.error(error, 'Failed to add to blacklist');
+        request.log.error({ error: serializeError(error) }, 'Failed to add to blacklist');
         const message = getErrorMessage(error);
         return reply.status(500).send({ error: message });
       }
@@ -66,7 +68,7 @@ export async function blacklistRoutes(app: FastifyInstance, blacklistService: Bl
         }
         return updated;
       } catch (error: unknown) {
-        request.log.error(error, 'Failed to toggle blacklist type');
+        request.log.error({ error: serializeError(error) }, 'Failed to toggle blacklist type');
         const message = getErrorMessage(error);
         return reply.status(500).send({ error: message });
       }

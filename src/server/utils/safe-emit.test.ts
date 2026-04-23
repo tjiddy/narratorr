@@ -57,7 +57,10 @@ describe('safeEmit', () => {
       vi.mocked(broadcaster.emit).mockImplementation(() => { throw error; });
 
       expect(() => safeEmit(broadcaster, 'download_progress', { download_id: 1, book_id: 2, percentage: 0, speed: null, eta: null }, log)).not.toThrow();
-      expect(log.debug).toHaveBeenCalledWith(error, 'SSE emit failed for download_progress');
+      expect(log.debug).toHaveBeenCalledWith(
+        expect.objectContaining({ error: expect.objectContaining({ message: error.message, type: 'Error' }) }),
+        'SSE emit failed for download_progress',
+      );
     });
 
     it('catches non-Error value thrown by broadcaster.emit and logs at debug level', () => {
@@ -66,7 +69,10 @@ describe('safeEmit', () => {
       vi.mocked(broadcaster.emit).mockImplementation(() => { throw 'string error'; });
 
       expect(() => safeEmit(broadcaster, 'grab_started', { book_id: 1, book_title: 'test', release_title: 'y', download_id: 1 }, log)).not.toThrow();
-      expect(log.debug).toHaveBeenCalledWith('string error', 'SSE emit failed for grab_started');
+      expect(log.debug).toHaveBeenCalledWith(
+        expect.objectContaining({ error: expect.objectContaining({ message: 'string error', type: 'string' }) }),
+        'SSE emit failed for grab_started',
+      );
     });
 
     it('log message includes event type for diagnostics', () => {

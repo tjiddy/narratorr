@@ -16,6 +16,8 @@ import {
   emitDownloadStatusChange, emitBookStatusChange, notifyGrab,
   recordGrabbedEvent, recordDownloadCompletedEvent, recordDownloadFailedEvent,
 } from '../utils/download-side-effects.js';
+import { serializeError } from '../utils/serialize-error.js';
+
 
 export interface GrabParams {
   downloadUrl: string;
@@ -101,7 +103,7 @@ export class DownloadOrchestrator {
         const revertStatus = await revertBookStatus(this.db, { id: download.bookId, path: download.book?.path ?? null });
         this.safe(() => emitBookStatusChange({ broadcaster: this.broadcaster, bookId: download.bookId!, oldStatus: oldBookStatus as string, newStatus: revertStatus, log: this.log }));
       } catch (revertError: unknown) {
-        this.log.warn(revertError, 'Failed to revert book status during cancel');
+        this.log.warn({ error: serializeError(revertError) }, 'Failed to revert book status during cancel');
       }
       this.safe(() => emitDownloadStatusChange({ broadcaster: this.broadcaster, downloadId: id, bookId: download.bookId!, oldStatus, newStatus: 'failed', log: this.log }));
       this.safe(() => recordDownloadFailedEvent({ eventHistory: this.eventHistory, downloadId: id, bookId: download.bookId!, bookTitle: download.title, errorMessage: 'Cancelled by user', log: this.log }));
@@ -145,7 +147,7 @@ export class DownloadOrchestrator {
 
   /** Run a side-effect function, catching and logging any error. */
   private safe(fn: () => void): void {
-    try { fn(); } catch (error: unknown) { this.log.warn(error, 'Side-effect dispatch failed'); }
+    try { fn(); } catch (error: unknown) { this.log.warn({ error: serializeError(error) }, 'Side-effect dispatch failed'); }
   }
 
   /** Best-effort blacklist of a cancelled release. Skips when no identifiers are present. */
@@ -165,7 +167,7 @@ export class DownloadOrchestrator {
         blacklistType: 'permanent',
       });
     } catch (error: unknown) {
-      this.log.warn(error, 'Failed to blacklist release during cancel');
+      this.log.warn({ error: serializeError(error) }, 'Failed to blacklist release during cancel');
     }
   }
 

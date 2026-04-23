@@ -1,5 +1,7 @@
 import type { FastifyBaseLogger } from 'fastify';
 import type { DiscoveryService, SettingsService } from '../services/index.js';
+import { serializeError } from '../utils/serialize-error.js';
+
 
 export async function runDiscoveryJob(
   discoveryService: DiscoveryService,
@@ -23,6 +25,6 @@ export async function runDiscoveryJob(
       log.warn({ warning }, 'Discovery refresh warning');
     }
   } catch (error: unknown) {
-    log.error(error, 'Discovery refresh failed');
+    log.error({ error: serializeError(error) }, 'Discovery refresh failed');
   }
 }

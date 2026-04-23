@@ -6,6 +6,8 @@ import type { EventHistoryService, CreateEventInput } from '../services/event-hi
 import type { EventBroadcasterService } from '../services/event-broadcaster.service.js';
 import { fireAndForget } from './fire-and-forget.js';
 import { safeEmit } from './safe-emit.js';
+import { serializeError } from './serialize-error.js';
+
 
 // ── emitGrabStarted ─────────────────────────────────────────────────────
 
@@ -147,7 +149,7 @@ export function recordGrabbedEvent(args: RecordGrabbedEventArgs): void {
   if (!eventHistory || !bookId) return;
   eventHistory.create({
     bookId, bookTitle, downloadId, eventType: 'grabbed', source, reason,
-  }).catch((err: unknown) => log.warn(err, 'Failed to record grabbed event'));
+  }).catch((err: unknown) => log.warn({ error: serializeError(err) }, 'Failed to record grabbed event'));
 }
 
 // ── recordDownloadCompletedEvent ────────────────────────────────────────
@@ -167,7 +169,7 @@ export function recordDownloadCompletedEvent(args: RecordDownloadCompletedEventA
   eventHistory.create({
     bookId, bookTitle, downloadId, eventType: 'download_completed', source: 'auto',
     reason: { progress: 1 },
-  }).catch((err: unknown) => log.warn(err, 'Failed to record download_completed event'));
+  }).catch((err: unknown) => log.warn({ error: serializeError(err) }, 'Failed to record download_completed event'));
 }
 
 // ── recordDownloadFailedEvent ─────────────────────────────────────────
@@ -188,5 +190,5 @@ export function recordDownloadFailedEvent(args: RecordDownloadFailedEventArgs): 
   eventHistory.create({
     bookId, bookTitle, downloadId, eventType: 'download_failed', source: 'auto',
     reason: { error: errorMessage },
-  }).catch((err: unknown) => log.warn(err, 'Failed to record download_failed event'));
+  }).catch((err: unknown) => log.warn({ error: serializeError(err) }, 'Failed to record download_failed event'));
 }

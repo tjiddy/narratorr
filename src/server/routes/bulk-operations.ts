@@ -2,6 +2,8 @@ import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import type { BulkOperationService } from '../services/bulk-operation.service.js';
 import { BulkOpError } from '../services/bulk-operation.service.js';
+import { serializeError } from '../utils/serialize-error.js';
+
 
 const jobIdParamsSchema = z.object({ jobId: z.string() });
 type JobIdParams = z.infer<typeof jobIdParamsSchema>;
@@ -38,7 +40,7 @@ export async function bulkOperationsRoutes(
         if (error.code === 'LIBRARY_NOT_CONFIGURED') return reply.status(400).send({ error: error.message });
         if (error.code === 'BULK_OP_IN_PROGRESS') return reply.status(409).send({ error: error.message });
       }
-      request.log.error(error, 'Failed to start bulk rename job');
+      request.log.error({ error: serializeError(error) }, 'Failed to start bulk rename job');
       return reply.status(500).send({ error: 'Internal server error' });
     }
   });
@@ -51,7 +53,7 @@ export async function bulkOperationsRoutes(
       if (error instanceof BulkOpError) {
         if (error.code === 'BULK_OP_IN_PROGRESS') return reply.status(409).send({ error: error.message });
       }
-      request.log.error(error, 'Failed to start bulk retag job');
+      request.log.error({ error: serializeError(error) }, 'Failed to start bulk retag job');
       return reply.status(500).send({ error: 'Internal server error' });
     }
   });
@@ -65,7 +67,7 @@ export async function bulkOperationsRoutes(
         if (error.code === 'FFMPEG_NOT_CONFIGURED') return reply.status(503).send({ error: error.message });
         if (error.code === 'BULK_OP_IN_PROGRESS') return reply.status(409).send({ error: error.message });
       }
-      request.log.error(error, 'Failed to start bulk convert job');
+      request.log.error({ error: serializeError(error) }, 'Failed to start bulk convert job');
       return reply.status(500).send({ error: 'Internal server error' });
     }
   });

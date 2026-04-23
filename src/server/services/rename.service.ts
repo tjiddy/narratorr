@@ -11,6 +11,8 @@ import { buildTargetPath } from '../utils/import-helpers.js';
 import { snapshotBookForEvent } from '../utils/event-helpers.js';
 import { cleanEmptyParents, renameFilesWithTemplate } from '../utils/paths.js';
 import { toNamingOptions } from '../../core/utils/naming.js';
+import { serializeError } from '../utils/serialize-error.js';
+
 
 export interface RenameResult {
   oldPath: string;
@@ -36,7 +38,7 @@ export class RenameService {
       eventType: 'renamed',
       source: 'manual',
       reason: { oldPath, newPath, filesRenamed },
-    }).catch((err) => this.log.warn(err, 'Failed to record renamed event'));
+    }).catch((err) => this.log.warn({ error: serializeError(err) }, 'Failed to record renamed event'));
   }
 
   /**

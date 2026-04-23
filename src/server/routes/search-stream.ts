@@ -11,6 +11,8 @@ import type {
   IndexerErrorEvent,
   IndexerCancelledEvent,
 } from '../../shared/schemas/search-stream.js';
+import { serializeError } from '../utils/serialize-error.js';
+
 
 function writeSSE(reply: FastifyReply, event: string, data: unknown): void {
   reply.raw.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
@@ -89,7 +91,7 @@ export async function searchStreamRoutes(
         const processed = await postProcessSearchResults(allResults, bookDuration, blacklistService, settingsService, request.log);
         writeSSE(reply, 'search-complete', processed);
       } catch (error: unknown) {
-        request.log.error(error, 'Search stream error');
+        request.log.error({ error: serializeError(error) }, 'Search stream error');
         writeSSE(reply, 'search-complete', {
           results: [],
           durationUnknown: true,

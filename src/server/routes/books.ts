@@ -96,7 +96,7 @@ app.delete<{ Params: IdParam; Querystring: DeleteBookQuery }>(
         ...snapshotBookForEvent(book),
         eventType: 'deleted',
         source: 'manual',
-      }).catch((err) => request.log.warn(err, 'Failed to record deleted event'));
+      }).catch((err) => request.log.warn({ error: serializeError(err) }, 'Failed to record deleted event'));
     }
 
     const deleted = await deps.bookService.delete(id);
@@ -218,7 +218,7 @@ export async function booksRoutes(app: FastifyInstance, deps: BookRouteDeps) {
           ...snapshotBookForEvent(book),
           eventType: 'book_added',
           source: 'manual',
-        }).catch((err: unknown) => request.log.warn(err, 'Failed to record book_added event'));
+        }).catch((err: unknown) => request.log.warn({ error: serializeError(err) }, 'Failed to record book_added event'));
       }
 
       request.log.info({ title: body.title }, 'Book added');

@@ -1,5 +1,7 @@
 import type { FastifyBaseLogger } from 'fastify';
 import { getVersion, isNewerVersion } from '../utils/version.js';
+import { serializeError } from '../utils/serialize-error.js';
+
 
 interface CachedUpdate {
   latestVersion: string;
@@ -47,7 +49,7 @@ export async function checkForUpdate(log: FastifyBaseLogger): Promise<void> {
       log.debug({ currentVersion, latestVersion }, 'Version check: on latest version');
     }
   } catch (error: unknown) {
-    log.error(error, 'Version check: failed to check for updates');
+    log.error({ error: serializeError(error) }, 'Version check: failed to check for updates');
   }
 }
 

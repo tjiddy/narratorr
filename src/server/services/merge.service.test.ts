@@ -315,7 +315,11 @@ describe('MergeService', () => {
       await service.enqueueMerge(42);
       await settle();
 
-      expect(log.error).toHaveBeenCalledWith(expect.any(Error), expect.stringContaining('Merge failed'), expect.anything());
+      expect(log.error).toHaveBeenCalledWith(
+        expect.objectContaining({ error: expect.objectContaining({ message: expect.any(String), type: expect.any(String) }) }),
+        expect.stringContaining('Merge failed'),
+        expect.anything(),
+      );
       expect(unlink).not.toHaveBeenCalled();
     });
 
@@ -333,7 +337,11 @@ describe('MergeService', () => {
       expect(rename).toHaveBeenCalledWith(join(STAGING_DIR, 'The Way of Kings.m4b'), expectedOutputPath);
       expect(stat).toHaveBeenCalledWith(expectedOutputPath);
       expect(unlink).not.toHaveBeenCalled();
-      expect(log.error).toHaveBeenCalledWith(expect.any(Error), expect.stringContaining('Merge failed'), expect.anything());
+      expect(log.error).toHaveBeenCalledWith(
+        expect.objectContaining({ error: expect.objectContaining({ message: expect.any(String), type: expect.any(String) }) }),
+        expect.stringContaining('Merge failed'),
+        expect.anything(),
+      );
     });
 
     it('stat() failure after rename — db.update NOT called, unlink NOT called, error surfaces as merge failure', async () => {
@@ -347,7 +355,11 @@ describe('MergeService', () => {
       expect(rename).toHaveBeenCalled();
       expect(db.update).not.toHaveBeenCalled();
       expect(unlink).not.toHaveBeenCalled();
-      expect(log.error).toHaveBeenCalledWith(expect.any(Error), expect.stringContaining('Merge failed'), expect.anything());
+      expect(log.error).toHaveBeenCalledWith(
+        expect.objectContaining({ error: expect.objectContaining({ message: expect.any(String), type: expect.any(String) }) }),
+        expect.stringContaining('Merge failed'),
+        expect.anything(),
+      );
     });
 
     it('unlink() failure on one original does not prevent cleanup of remaining originals', async () => {
@@ -447,7 +459,11 @@ describe('MergeService', () => {
       await service.enqueueMerge(42);
       await settle();
 
-      expect(log.error).toHaveBeenCalledWith(expect.any(Error), expect.stringContaining('Merge failed'), expect.anything());
+      expect(log.error).toHaveBeenCalledWith(
+        expect.objectContaining({ error: expect.objectContaining({ message: expect.any(String), type: expect.any(String) }) }),
+        expect.stringContaining('Merge failed'),
+        expect.anything(),
+      );
     });
 
     it('cleans staging dir when processAudioFiles fails', async () => {
@@ -517,7 +533,11 @@ describe('MergeService', () => {
       await service.enqueueMerge(42);
       await settle();
 
-      expect(log.error).toHaveBeenCalledWith(expect.any(Error), expect.stringContaining('Merge failed'), expect.anything());
+      expect(log.error).toHaveBeenCalledWith(
+        expect.objectContaining({ error: expect.objectContaining({ message: expect.any(String), type: expect.any(String) }) }),
+        expect.stringContaining('Merge failed'),
+        expect.anything(),
+      );
     });
 
     it('cleans staging dir when scan fails', async () => {

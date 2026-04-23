@@ -2,6 +2,8 @@ import dotenv from 'dotenv';
 import path from 'path';
 import fs from 'fs';
 import { fileURLToPath } from 'url';
+import { serializeError } from './utils/serialize-error.js';
+
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -109,7 +111,7 @@ async function main() {
       app.log.level = generalSettings.logLevel;
     }
   } catch (error: unknown) {
-    app.log.warn(error, 'Failed to load log level setting, using default');
+    app.log.warn({ error: serializeError(error) }, 'Failed to load log level setting, using default');
   }
 
   // Initialize auth and register cookie/auth plugins

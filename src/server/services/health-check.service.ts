@@ -9,6 +9,8 @@ import type { NotifierService } from './notifier.service.js';
 import { getInProgressStatuses } from '../../shared/download-status-registry.js';
 import { getErrorMessage } from '../utils/error-message.js';
 import { fireAndForget } from '../utils/fire-and-forget.js';
+import { serializeError } from '../utils/serialize-error.js';
+
 
 export type HealthState = 'healthy' | 'warning' | 'error';
 
@@ -64,7 +66,7 @@ export class HealthCheckService {
           const checkResults = await check();
           results.push(...checkResults);
         } catch (error: unknown) {
-          this.log.error(error, 'Health check failed');
+          this.log.error({ error: serializeError(error) }, 'Health check failed');
         }
       }
 

@@ -199,7 +199,10 @@ describe('startJobs', () => {
       const cronCallback = monitorCall![1] as () => Promise<void>;
       await cronCallback();
 
-      expect(log.error).toHaveBeenCalledWith(error, 'monitor job error');
+      expect(log.error).toHaveBeenCalledWith(
+        expect.objectContaining({ error: expect.objectContaining({ message: error.message, type: 'Error' }) }),
+        'monitor job error',
+      );
     });
   });
 
@@ -260,7 +263,10 @@ describe('startJobs', () => {
       await timeoutCallback();
 
       // Error should be logged
-      expect(log.error).toHaveBeenCalledWith(jobError, 'search job error');
+      expect(log.error).toHaveBeenCalledWith(
+        expect.objectContaining({ error: expect.objectContaining({ message: jobError.message, type: 'Error' }) }),
+        'search job error',
+      );
 
       // scheduleNext should have been called again (another setTimeout)
       const laterCalls = setTimeoutSpy.mock.calls.filter(([, delay]) => delay === oneMinMs);
@@ -425,7 +431,10 @@ describe('startJobs', () => {
 
       expect(services.eventHistory.pruneOlderThan).toHaveBeenCalledWith(30);
       expect(services.blacklist.deleteExpired).toHaveBeenCalledTimes(1);
-      expect(log.warn).toHaveBeenCalledWith(expect.any(Error), expect.stringContaining('VACUUM'));
+      expect(log.warn).toHaveBeenCalledWith(
+        expect.objectContaining({ error: expect.objectContaining({ message: expect.any(String), type: 'Error' }) }),
+        expect.stringContaining('VACUUM'),
+      );
     });
 
     it('pruneOlderThan failure does not prevent deleteExpired from running', async () => {
@@ -455,7 +464,10 @@ describe('startJobs', () => {
       await services.taskRegistry.executeTracked('housekeeping');
 
       expect(services.blacklist.deleteExpired).toHaveBeenCalledTimes(1);
-      expect(log.warn).toHaveBeenCalledWith(expect.any(Error), expect.stringContaining('prune'));
+      expect(log.warn).toHaveBeenCalledWith(
+        expect.objectContaining({ error: expect.objectContaining({ message: expect.any(String), type: 'Error' }) }),
+        expect.stringContaining('prune'),
+      );
     });
 
     it('deleteExpired failure does not affect already-completed VACUUM and prune', async () => {
@@ -486,7 +498,10 @@ describe('startJobs', () => {
 
       expect((db as Record<string, ReturnType<typeof vi.fn>>).run).toHaveBeenCalledTimes(1);
       expect(services.eventHistory.pruneOlderThan).toHaveBeenCalledWith(30);
-      expect(log.warn).toHaveBeenCalledWith(expect.any(Error), expect.stringContaining('blacklist'));
+      expect(log.warn).toHaveBeenCalledWith(
+        expect.objectContaining({ error: expect.objectContaining({ message: expect.any(String), type: 'Error' }) }),
+        expect.stringContaining('blacklist'),
+      );
     });
 
     it('settings.get general failure does not prevent deleteExpired from running', async () => {
@@ -518,7 +533,10 @@ describe('startJobs', () => {
       expect(services.eventHistory.pruneOlderThan).not.toHaveBeenCalled();
       // deleteExpired should still run
       expect(services.blacklist.deleteExpired).toHaveBeenCalledTimes(1);
-      expect(log.warn).toHaveBeenCalledWith(expect.any(Error), expect.stringContaining('retention'));
+      expect(log.warn).toHaveBeenCalledWith(
+        expect.objectContaining({ error: expect.objectContaining({ message: expect.any(String), type: 'Error' }) }),
+        expect.stringContaining('retention'),
+      );
     });
 
     it('each sub-task failure logs warn with sub-task name and error', async () => {
@@ -550,9 +568,18 @@ describe('startJobs', () => {
 
       await services.taskRegistry.executeTracked('housekeeping');
 
-      expect(log.warn).toHaveBeenCalledWith(vacuumError, expect.stringContaining('VACUUM'));
-      expect(log.warn).toHaveBeenCalledWith(pruneError, expect.stringContaining('prune'));
-      expect(log.warn).toHaveBeenCalledWith(deleteError, expect.stringContaining('blacklist'));
+      expect(log.warn).toHaveBeenCalledWith(
+        expect.objectContaining({ error: expect.objectContaining({ message: vacuumError.message, type: 'Error' }) }),
+        expect.stringContaining('VACUUM'),
+      );
+      expect(log.warn).toHaveBeenCalledWith(
+        expect.objectContaining({ error: expect.objectContaining({ message: pruneError.message, type: 'Error' }) }),
+        expect.stringContaining('prune'),
+      );
+      expect(log.warn).toHaveBeenCalledWith(
+        expect.objectContaining({ error: expect.objectContaining({ message: deleteError.message, type: 'Error' }) }),
+        expect.stringContaining('blacklist'),
+      );
     });
   });
 

@@ -1,6 +1,8 @@
 import type { FastifyBaseLogger } from 'fastify';
 import type { SSEEventType, SSEEventPayloads } from '../../shared/schemas/sse-events.js';
 import type { EventBroadcasterService } from '../services/event-broadcaster.service.js';
+import { serializeError } from './serialize-error.js';
+
 
 /**
  * Fire-and-forget SSE emit with error swallowing.
@@ -17,6 +19,6 @@ export function safeEmit<T extends SSEEventType>(
   try {
     broadcaster.emit(event, payload);
   } catch (error: unknown) {
-    log.debug(error, `SSE emit failed for ${event}`);
+    log.debug({ error: serializeError(error) }, `SSE emit failed for ${event}`);
   }
 }

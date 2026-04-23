@@ -15,6 +15,8 @@ import { runBackupJob } from './backup.js';
 import { checkForUpdate } from './version-check.js';
 import { runDiscoveryJob } from './discovery.js';
 import { runCoverBackfill } from './cover-backfill.js';
+import { serializeError } from '../utils/serialize-error.js';
+
 
 interface CronJob {
   name: string;
@@ -52,13 +54,13 @@ export function startJobs(db: Db, services: Services, log: FastifyBaseLogger) {
     { name: 'rss', type: 'timeout', getIntervalMinutes: () => services.settings.get('rss').then((s) => s.intervalMinutes), callback: () => runRssJob(services.settings, services.bookList, services.book, services.indexer, services.downloadOrchestrator, services.blacklist, log) },
     { name: 'backup', type: 'timeout', getIntervalMinutes: () => services.settings.get('system').then((s) => s.backupIntervalMinutes), callback: () => runBackupJob(services.backup, log) },
     { name: 'housekeeping', type: 'cron', schedule: '0 0 * * 0', callback: async () => {
-      try { await db.run(sql`VACUUM`); } catch (error: unknown) { log.warn(error, 'Housekeeping: VACUUM failed'); }
+      try { await db.run(sql`VACUUM`); } catch (error: unknown) { log.warn({ error: serializeError(error) }, 'Housekeeping: VACUUM failed'); }
       try {
         const generalSettings = await services.settings.get('general');
         const retentionDays = generalSettings.housekeepingRetentionDays ?? 90;
         await services.eventHistory.pruneOlderThan(retentionDays);
-      } catch (error: unknown) { log.warn(error, 'Housekeeping: retention prune failed'); }
-      try { await services.blacklist.deleteExpired(); } catch (error: unknown) { log.warn(error, 'Housekeeping: blacklist cleanup failed'); }
+      } catch (error: unknown) { log.warn({ error: serializeError(error) }, 'Housekeeping: retention prune failed'); }
+      try { await services.blacklist.deleteExpired(); } catch (error: unknown) { log.warn({ error: serializeError(error) }, 'Housekeeping: blacklist cleanup failed'); }
     } },
     { name: 'health-check', type: 'cron', schedule: '*/5 * * * *', callback: () => services.healthCheck.runAllChecks() },
     { name: 'version-check', type: 'cron', schedule: '0 2 * * *', callback: () => checkForUpdate(log) },
@@ -83,7 +85,7 @@ export function startJobs(db: Db, services: Services, log: FastifyBaseLogger) {
 
   // Startup recovery: reset stuck downloads and reprocess (#358)
   runStartupRecovery(db, services, log).catch((error: unknown) => {
-    log.error(error, 'Startup recovery failed — jobs continue normally');
+    log.error({ error: serializeError(error) }, 'Startup recovery failed — jobs continue normally');
   });
 }
 
@@ -112,7 +114,7 @@ function scheduleCron(reg: TaskRegistry, name: string, expression: string, log: 
     try {
       await reg.executeTracked(name);
     } catch (error: unknown) {
-      log.error(error, `${name} job error`);
+      log.error({ error: serializeError(error) }, `${name} job error`);
     }
   });
 }
@@ -133,12 +135,12 @@ function scheduleTimeoutLoop(
         try {
           await reg.executeTracked(name);
         } catch (error: unknown) {
-          log.error(error, `${name} job error`);
+          log.error({ error: serializeError(error) }, `${name} job error`);
         }
         scheduleNext();
       }, intervalMs);
     } catch (error: unknown) {
-      log.error(error, `Failed to read ${name} interval, retrying in 5 minutes`);
+      log.error({ error: serializeError(error) }, `Failed to read ${name} interval, retrying in 5 minutes`);
       setTimeout(scheduleNext, 5 * 60 * 1000);
     }
   }

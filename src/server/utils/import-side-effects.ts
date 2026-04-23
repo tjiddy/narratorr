@@ -7,6 +7,8 @@ import type { EventBroadcasterService } from '../services/event-broadcaster.serv
 import { fireAndForget } from './fire-and-forget.js';
 import { getErrorMessage } from './error-message.js';
 import { safeEmit } from './safe-emit.js';
+import { serializeError } from './serialize-error.js';
+
 
 // ── emitDownloadImporting ────────────────────────────────────────────────
 
@@ -112,7 +114,7 @@ export function recordImportEvent(args: RecordImportEventArgs): void {
     eventType: isUpgrade ? 'upgraded' : 'imported',
     source: 'auto',
     reason: { targetPath, fileCount, totalSize },
-  }).catch((err: unknown) => log.warn(err, 'Failed to record import event'));
+  }).catch((err: unknown) => log.warn({ error: serializeError(err) }, 'Failed to record import event'));
 }
 
 // ── Failure-path side effects ───────────────────────────────────────────
@@ -179,5 +181,5 @@ export function recordImportFailedEvent(args: RecordImportFailedEventArgs): void
     eventType: 'import_failed',
     source,
     reason: { error: getErrorMessage(error) },
-  }).catch((err: unknown) => log.warn(err, 'Failed to record import_failed event'));
+  }).catch((err: unknown) => log.warn({ error: serializeError(err) }, 'Failed to record import_failed event'));
 }
