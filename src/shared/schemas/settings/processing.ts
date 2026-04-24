@@ -7,7 +7,6 @@ export const mergeBehaviorSchema = z.enum(['always', 'multi-file-only', 'never']
 export type MergeBehavior = z.infer<typeof mergeBehaviorSchema>;
 
 export const processingSettingsSchema = z.object({
-  enabled: z.boolean().default(false),
   ffmpegPath: z.string().default(''),
   outputFormat: outputFormatSchema.default('m4b'),
   keepOriginalBitrate: z.boolean().default(false),
@@ -23,7 +22,6 @@ export const processingSettingsSchema = z.object({
 const nanToUndefined = (v: unknown) => (typeof v === 'number' && Number.isNaN(v) ? undefined : v);
 
 export const processingFormSchema = z.object({
-  enabled: z.boolean(),
   ffmpegPath: z.string(),
   outputFormat: outputFormatSchema,
   keepOriginalBitrate: z.boolean(),

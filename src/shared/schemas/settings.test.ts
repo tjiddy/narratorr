@@ -110,47 +110,23 @@ describe('taggingSettingsSchema', () => {
 });
 
 describe('updateSettingsSchema', () => {
-  describe('superRefine — ffmpeg validation', () => {
-    it('rejects processing enabled with empty ffmpegPath', () => {
-      const result = updateSettingsSchema.safeParse({
-        processing: { enabled: true, ffmpegPath: '' },
-      });
-      expect(result.success).toBe(false);
-      if (!result.success) {
-        expect(result.error.issues).toContainEqual(
-          expect.objectContaining({
-            path: ['processing', 'ffmpegPath'],
-            message: 'ffmpeg path is required when processing is enabled',
-          }),
-        );
-      }
+  it('accepts processing update with valid ffmpegPath', () => {
+    const result = updateSettingsSchema.safeParse({
+      processing: { ffmpegPath: '/usr/bin/ffmpeg' },
     });
+    expect(result.success).toBe(true);
+  });
 
-    it('rejects processing enabled with whitespace-only ffmpegPath', () => {
-      const result = updateSettingsSchema.safeParse({
-        processing: { enabled: true, ffmpegPath: '   ' },
-      });
-      expect(result.success).toBe(false);
+  it('accepts processing update with empty ffmpegPath', () => {
+    const result = updateSettingsSchema.safeParse({
+      processing: { ffmpegPath: '' },
     });
+    expect(result.success).toBe(true);
+  });
 
-    it('accepts processing enabled with valid ffmpegPath', () => {
-      const result = updateSettingsSchema.safeParse({
-        processing: { enabled: true, ffmpegPath: '/usr/bin/ffmpeg' },
-      });
-      expect(result.success).toBe(true);
-    });
-
-    it('accepts processing disabled with empty ffmpegPath', () => {
-      const result = updateSettingsSchema.safeParse({
-        processing: { enabled: false, ffmpegPath: '' },
-      });
-      expect(result.success).toBe(true);
-    });
-
-    it('accepts empty update (no processing section)', () => {
-      const result = updateSettingsSchema.safeParse({});
-      expect(result.success).toBe(true);
-    });
+  it('accepts empty update (no processing section)', () => {
+    const result = updateSettingsSchema.safeParse({});
+    expect(result.success).toBe(true);
   });
 });
 

@@ -32,7 +32,7 @@ function createService(overrides?: {
     ...overrides?.downloadClient,
   };
   const settings = overrides?.settings ?? createMockSettingsService({
-    processing: { ffmpegPath: '/usr/bin/ffmpeg', enabled: true },
+    processing: { ffmpegPath: '/usr/bin/ffmpeg' },
   });
   const notifier = {
     notify: vi.fn().mockResolvedValue(undefined),

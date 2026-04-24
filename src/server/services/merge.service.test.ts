@@ -57,7 +57,6 @@ const mockBook = {
 const processingOverrides = {
   processing: {
     ffmpegPath: '/usr/bin/ffmpeg',
-    enabled: true,
     outputFormat: 'm4b' as const,
     bitrate: 128,
     keepOriginalBitrate: false,

@@ -15,7 +15,6 @@ import { outputFormatSchema, mergeBehaviorSchema, tagModeSchema, DEFAULT_SETTING
 import { SettingsSection } from './SettingsSection';
 
 const processingFormSchema = z.object({
-  processingEnabled: z.boolean(),
   ffmpegPath: z.string(),
   outputFormat: outputFormatSchema,
   keepOriginalBitrate: z.boolean(),
@@ -28,13 +27,6 @@ const processingFormSchema = z.object({
   tagMode: tagModeSchema,
   embedCover: z.boolean(),
 }).superRefine((data, ctx) => {
-  if (data.processingEnabled && !data.ffmpegPath.trim()) {
-    ctx.addIssue({
-      code: z.ZodIssueCode.custom,
-      path: ['ffmpegPath'],
-      message: 'ffmpeg path is required when processing is enabled',
-    });
-  }
   if (data.postProcessingScript?.trim() && data.postProcessingScriptTimeout == null) {
     ctx.addIssue({
       code: z.ZodIssueCode.custom,
@@ -48,7 +40,6 @@ type ProcessingFormData = z.infer<typeof processingFormSchema>;
 
 function toFormData(settings: AppSettings): ProcessingFormData {
   return {
-    processingEnabled: settings.processing.enabled,
     ffmpegPath: settings.processing.ffmpegPath,
     outputFormat: settings.processing.outputFormat,
     keepOriginalBitrate: settings.processing.keepOriginalBitrate,
@@ -66,7 +57,6 @@ function toFormData(settings: AppSettings): ProcessingFormData {
 function toPayload(data: ProcessingFormData) {
   return {
     processing: {
-      enabled: data.processingEnabled,
       ffmpegPath: data.ffmpegPath,
       outputFormat: data.outputFormat,
       keepOriginalBitrate: data.keepOriginalBitrate,
@@ -154,7 +144,6 @@ export function ProcessingSettingsSection() {
 
   const { register, handleSubmit, watch, formState: { errors, isDirty } } = form;
 
-  const enabled = watch('processingEnabled');
   const ffmpegPath = watch('ffmpegPath');
   const keepOriginalBitrate = watch('keepOriginalBitrate');
   const taggingEnabled = watch('taggingEnabled');
@@ -185,19 +174,7 @@ export function ProcessingSettingsSection() {
       description="Audio file merge and conversion for Merge and Bulk operations"
     >
       <form onSubmit={handleSubmit((data) => onSubmit(data))} className="space-y-5">
-        <div className="flex items-center justify-between">
-          <div>
-            <label htmlFor="processingEnabled" className="block text-sm font-medium">Enable Post Processing</label>
-            <p className="text-sm text-muted-foreground mt-0.5">
-              Enable audio merge and conversion for Merge and Bulk operations. Requires ffmpeg.
-            </p>
-          </div>
-          <label className="relative inline-flex items-center cursor-pointer">
-            <ToggleSwitch id="processingEnabled" {...register('processingEnabled')} />
-          </label>
-        </div>
-
-        {enabled && <div className="space-y-5">
+        <div className="space-y-5">
           <div>
             <label htmlFor="ffmpegPath" className="block text-sm font-medium mb-2">ffmpeg Path</label>
             <div className="flex gap-2">
@@ -297,7 +274,7 @@ export function ProcessingSettingsSection() {
             placeholder="2"
             hint="Maximum number of imports that can run simultaneously. Higher values use more CPU and disk I/O."
           />
-        </div>}
+        </div>
 
         <div className="pt-6 mt-6 border-t border-border">
           <div className="flex items-center justify-between">

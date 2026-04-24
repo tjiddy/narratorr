@@ -42,11 +42,6 @@ vi.mock('../../core/utils/audio-scanner.js', () => ({
   scanAudioDirectory: vi.fn().mockResolvedValue(null),
 }));
 
-// Mock audio processor (retained for regression assertion — processAudioFiles must NOT be called)
-vi.mock('../../core/utils/audio-processor.js', () => ({
-  processAudioFiles: vi.fn(),
-}));
-
 // Spy on import-helpers — passthrough to real implementation so existing unit tests still work
 vi.mock('../utils/import-helpers.js', async (importOriginal) => {
   const actual = await importOriginal() as Record<string, unknown>;
@@ -67,7 +62,6 @@ vi.mock('../utils/paths.js', async (importOriginal) => {
 
 import { mkdir, cp, stat, readdir, writeFile, rename, rm, statfs } from 'node:fs/promises';
 import { scanAudioDirectory } from '../../core/utils/audio-scanner.js';
-import { processAudioFiles } from '../../core/utils/audio-processor.js';
 import { enrichBookFromAudio } from './enrichment-utils.js';
 import { renameFilesWithTemplate } from '../utils/paths.js';
 
@@ -358,7 +352,7 @@ describe('ImportService', () => {
       settingsGet.mockImplementation((key: string) => {
         if (key === 'library') return Promise.resolve({ path: '/audiobooks', folderFormat: '{author}/{title}', fileFormat: '', namingSeparator: 'period', namingCase: 'upper' });
         if (key === 'import') return Promise.resolve({ deleteAfterImport: false, minSeedTime: 0, minSeedRatio: 0, minFreeSpaceGB: 0 });
-        if (key === 'processing') return Promise.resolve({ enabled: false });
+        if (key === 'processing') return Promise.resolve({});
         return Promise.resolve({});
       });
 
@@ -712,7 +706,7 @@ describe('ImportService', () => {
       settingsGet.mockImplementation((key: string) => {
         if (key === 'library') return Promise.resolve({ path: '/audiobooks', folderFormat: '{author}/{title}', fileFormat: '{author} - {title}' });
         if (key === 'import') return Promise.resolve({ deleteAfterImport: false, minSeedTime: 0, minSeedRatio: 0 });
-        if (key === 'processing') return Promise.resolve({ enabled: false });
+        if (key === 'processing') return Promise.resolve({});
         return Promise.resolve({});
       });
 
@@ -942,38 +936,6 @@ describe('ImportService', () => {
 
       const renameMock = vi.mocked(rename);
       expect(renameMock).toHaveBeenCalled();
-    });
-  });
-
-  describe('audio processing removal regression (#649)', () => {
-    beforeEach(setupDefaults);
-
-    it('importDownload does not invoke processAudioFiles even when processing.enabled=true', async () => {
-      const settingsGet = settingsService.get as ReturnType<typeof vi.fn>;
-      settingsGet.mockImplementation((key: string) => {
-        if (key === 'library') return Promise.resolve({ path: '/audiobooks', folderFormat: '{author}/{title}', fileFormat: '' });
-        if (key === 'import') return Promise.resolve({ deleteAfterImport: false, minSeedTime: 0, minSeedRatio: 0 });
-        if (key === 'processing') return Promise.resolve({
-          enabled: true,
-          ffmpegPath: '/usr/bin/ffmpeg',
-          outputFormat: 'm4b',
-          keepOriginalBitrate: false,
-          bitrate: 128,
-          mergeBehavior: 'multi-file-only',
-        });
-        return Promise.resolve({});
-      });
-
-      db.select.mockReturnValueOnce(mockDbChain([mockDownload]));
-      db.update.mockReturnValue(mockDbChain());
-
-      const result = await service.importDownload(1);
-
-      expect(result.downloadId).toBe(1);
-      // processAudioFiles must NOT be called from the import path (#649)
-      expect(processAudioFiles).not.toHaveBeenCalled();
-      // enrichment still runs
-      expect(scanAudioDirectory).toHaveBeenCalled();
     });
   });
 

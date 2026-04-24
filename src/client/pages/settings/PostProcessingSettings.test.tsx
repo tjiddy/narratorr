@@ -33,7 +33,7 @@ describe('PostProcessingSettings', () => {
     await waitFor(() => {
       expect(screen.getByText('Post Processing')).toBeInTheDocument();
     });
-    expect(screen.getByLabelText('Enable Post Processing')).toBeInTheDocument();
+    expect(screen.getByLabelText('ffmpeg Path')).toBeInTheDocument();
   });
 
   // Detailed progressive disclosure, form behavior, and payload tests are in

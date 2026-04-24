@@ -54,7 +54,6 @@ export const settingsRegistry = {
   processing: defineCategory({
     schema: processingSettingsSchema,
     defaults: {
-      enabled: false,
       ffmpegPath: '',
       outputFormat: 'm4b' as const,
       keepOriginalBitrate: false,
@@ -156,30 +155,14 @@ export const updateSettingsSchema = z.object(
   Object.fromEntries(
     SETTINGS_CATEGORIES.map((key) => [key, stripDefaults(settingsRegistry[key].schema).partial().optional()]),
   ),
-).superRefine((data: Record<string, unknown>, ctx) => {
-  const processing = data.processing as { enabled?: boolean; ffmpegPath?: string } | undefined;
-  if (processing?.enabled && !processing.ffmpegPath?.trim()) {
-    ctx.addIssue({
-      code: z.ZodIssueCode.custom,
-      path: ['processing', 'ffmpegPath'],
-      message: 'ffmpeg path is required when processing is enabled',
-    });
-  }
-}) as unknown as z.ZodType<UpdateSettingsInput>;
+) as unknown as z.ZodType<UpdateSettingsInput>;
 
 const _formSchemaBase = z.object(
   Object.fromEntries(
     SETTINGS_CATEGORIES.map((key) => [key, getFormSchema(settingsRegistry[key])]),
   ),
 ).superRefine((data: Record<string, unknown>, ctx) => {
-  const processing = data.processing as { enabled: boolean; ffmpegPath: string; postProcessingScript: string; postProcessingScriptTimeout?: number };
-  if (processing.enabled && !processing.ffmpegPath.trim()) {
-    ctx.addIssue({
-      code: z.ZodIssueCode.custom,
-      path: ['processing', 'ffmpegPath'],
-      message: 'ffmpeg not found at specified path',
-    });
-  }
+  const processing = data.processing as { postProcessingScript: string; postProcessingScriptTimeout?: number };
   if (processing.postProcessingScript?.trim() && processing.postProcessingScriptTimeout == null) {
     ctx.addIssue({
       code: z.ZodIssueCode.custom,
