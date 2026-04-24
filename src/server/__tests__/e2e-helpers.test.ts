@@ -68,6 +68,37 @@ describe('createE2EApp harness', () => {
     expect(existsSync(b.dir)).toBe(false);
   });
 
+  it('registers signal handlers only once across repeated createE2EApp() calls', async () => {
+    // Guard against regression of registerSignalHandlersOnce() — without the
+    // once-only check, each of the 10+ consumer suites would add three more
+    // listeners (SIGINT/SIGTERM/exit) and trip MaxListenersExceededWarning.
+    // Prime the module state with one call so handlers are definitely
+    // registered, capture the baseline listener counts, then make additional
+    // calls and assert the counts stay flat. If the guard is removed the
+    // second call would grow each count by 1 and this test fails.
+    const primed = await createE2EApp();
+    orphans.push(primed.dir);
+
+    const baseline = {
+      sigint: process.listenerCount('SIGINT'),
+      sigterm: process.listenerCount('SIGTERM'),
+      exit: process.listenerCount('exit'),
+    };
+
+    const second = await createE2EApp();
+    orphans.push(second.dir);
+    const third = await createE2EApp();
+    orphans.push(third.dir);
+
+    expect(process.listenerCount('SIGINT')).toBe(baseline.sigint);
+    expect(process.listenerCount('SIGTERM')).toBe(baseline.sigterm);
+    expect(process.listenerCount('exit')).toBe(baseline.exit);
+
+    await primed.cleanup();
+    await second.cleanup();
+    await third.cleanup();
+  });
+
   it('removes the run directory when the process is interrupted by SIGINT', () => {
     // Spawn a child that boots createE2EApp, prints its dir, then SIGINTs
     // itself. The module-level signal handler must purge the dir before the
