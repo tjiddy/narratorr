@@ -186,13 +186,13 @@ describe('QualitySettingsSection', () => {
     });
   });
 
-  it('max download size input uses integer step', async () => {
+  it('max download size input accepts decimal values', async () => {
     renderWithProviders(<QualitySettingsSection />);
 
     await waitFor(() => {
       expect(screen.getByLabelText('Max Download Size (GB)')).toBeInTheDocument();
     });
-    expect(screen.getByLabelText('Max Download Size (GB)')).toHaveAttribute('step', '1');
+    expect(screen.getByLabelText('Max Download Size (GB)')).toHaveAttribute('step', 'any');
   });
 
   it('renders max download size field', async () => {

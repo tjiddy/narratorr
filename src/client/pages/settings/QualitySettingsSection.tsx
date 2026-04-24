@@ -81,7 +81,7 @@ export function QualitySettingsSection() {
             {...register('maxDownloadSize', { valueAsNumber: true })}
             className={errorInputClass(!!errors.maxDownloadSize)}
             min={0}
-            step={1}
+            step="any"
             placeholder="0"
           />
           {errors.maxDownloadSize && (
