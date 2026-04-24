@@ -1,5 +1,5 @@
 import type { FastifyBaseLogger } from 'fastify';
-import type { ImportService, ImportResult, ImportContext } from './import.service.js';
+import type { ImportService, ImportResult, ImportContext, ImportProgressCallbacks } from './import.service.js';
 import type { SettingsService } from './settings.service.js';
 import type { NotifierService } from './notifier.service.js';
 import type { TaggingService } from './tagging.service.js';
@@ -54,7 +54,7 @@ export class ImportOrchestrator {
    * SSE start → core import → tagging → post-processing → SSE success → notification → event recording.
    * On failure: SSE failure → failure notification → failure event recording.
    */
-  async importDownload(downloadId: number): Promise<ImportResult> {
+  async importDownload(downloadId: number, callbacks?: ImportProgressCallbacks): Promise<ImportResult> {
     const ctx = await this.importService.getImportContext(downloadId);
 
     // Pre-import SSE — book status always, download status only if not already importing (approve-path dedupe)
@@ -64,7 +64,7 @@ export class ImportOrchestrator {
     }
 
     try {
-      const result = await this.importService.importDownload(downloadId);
+      const result = await this.importService.importDownload(downloadId, callbacks);
 
       // Success side effects
       await this.dispatchSuccessSideEffects(result, ctx);

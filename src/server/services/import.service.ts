@@ -21,8 +21,15 @@ import { isTorrentRemovalDeferred } from '../utils/seed-helpers.js';
 
 import type { ImportResult } from '../utils/import-helpers.js';
 import { serializeError } from '../utils/serialize-error.js';
+import type { ImportJobPhase } from '../../shared/schemas/import-job.js';
 
 export type { ImportResult } from '../utils/import-helpers.js';
+
+/** Optional phase/progress callbacks threaded from the adapter through the orchestrator. */
+export interface ImportProgressCallbacks {
+  setPhase?: (phase: ImportJobPhase) => Promise<void>;
+  emitProgress?: (phase: ImportJobPhase, progress: number, byteCounter?: { current: number; total: number }) => void;
+}
 
 /** Lightweight context for orchestrator side-effect dispatch. */
 export interface ImportContext {
@@ -86,7 +93,7 @@ export class ImportService {
    * Core import lifecycle: copies files, updates DB records, enriches from audio, handles torrent removal.
    * Side effects (SSE, notifications, events, tagging, post-processing) are dispatched by the orchestrator.
    */
-  async importDownload(downloadId: number): Promise<ImportResult> {
+  async importDownload(downloadId: number, callbacks?: ImportProgressCallbacks): Promise<ImportResult> {
     const startMs = Date.now();
     const download = await this.getDownload(downloadId);
     if (!download) throw new Error(`Download ${downloadId} not found`);
@@ -115,10 +122,22 @@ export class ImportService {
       this.log.debug({ downloadId, bookTitle: book.title, fileCount, sourceSize: sourceStats.size }, 'Validated source');
       const diskSpace = await checkDiskSpace({ sourcePath, sourceStats, libraryPath: librarySettings.path, minFreeSpaceGB: importSettings.minFreeSpaceGB });
       this.log.debug({ downloadId, bookTitle: book.title, freeGB: diskSpace.freeGB, requiredGB: diskSpace.requiredGB }, 'Disk space check passed');
-      await copyToLibrary({ sourcePath, targetPath, sourceStats, log: this.log });
+      await callbacks?.setPhase?.('copying');
+      await copyToLibrary({
+        sourcePath, targetPath, sourceStats, log: this.log,
+        onProgress: callbacks?.emitProgress
+          ? (ratio, byteCounter) => callbacks.emitProgress!('copying', ratio, byteCounter)
+          : undefined,
+      });
 
       if (librarySettings.fileFormat) {
-        await renameFilesWithTemplate(targetPath, librarySettings.fileFormat, book, authorName, this.log, namingOptions);
+        await callbacks?.setPhase?.('renaming');
+        await renameFilesWithTemplate(
+          targetPath, librarySettings.fileFormat, book, authorName, this.log, namingOptions,
+          callbacks?.emitProgress
+            ? (current, total) => callbacks.emitProgress!('renaming', total > 0 ? current / total : 1, { current, total })
+            : undefined,
+        );
       }
       const targetSize = await verifyCopy({ targetPath, sourcePath });
       this.log.debug({ downloadId, bookTitle: book.title, sourceSize: sourceStats.size, targetSize }, 'Copy verified');
@@ -130,6 +149,7 @@ export class ImportService {
       });
 
       const ffprobePath = resolveFfprobePathFromSettings(processingSettings?.ffmpegPath);
+      await callbacks?.setPhase?.('fetching_metadata');
       await this.enrichAfterImport(book.id, targetPath!, book, ffprobePath);
 
       this.log.info({ downloadId, bookId: book.id, bookTitle: book.title, targetPath, fileCount, totalSize: targetSize, elapsedMs: Date.now() - startMs }, 'Import completed successfully');

@@ -391,6 +391,7 @@ describe('ImportService', () => {
         expect.any(String),
         expect.anything(),
         expect.objectContaining({ separator: 'period', case: 'upper' }),
+        undefined,
       );
     });
 
@@ -936,6 +937,61 @@ describe('ImportService', () => {
 
       const renameMock = vi.mocked(rename);
       expect(renameMock).toHaveBeenCalled();
+    });
+  });
+
+  describe('phase + progress callbacks (#681)', () => {
+    beforeEach(setupDefaults);
+
+    it('calls setPhase in order: copying → renaming → fetching_metadata when rename branch fires', async () => {
+      const settingsGet = settingsService.get as ReturnType<typeof vi.fn>;
+      settingsGet.mockImplementation((key: string) => {
+        if (key === 'library') return Promise.resolve({ path: '/audiobooks', folderFormat: '{author}/{title}', fileFormat: '{author} - {title}' });
+        if (key === 'import') return Promise.resolve({ deleteAfterImport: false, minSeedTime: 0, minSeedRatio: 0, minFreeSpaceGB: 0 });
+        if (key === 'processing') return Promise.resolve({});
+        return Promise.resolve({});
+      });
+
+      db.select.mockReturnValueOnce(mockDbChain([mockDownload]));
+      db.update.mockReturnValue(mockDbChain());
+
+      const setPhase = vi.fn().mockResolvedValue(undefined);
+
+      await service.importDownload(1, { setPhase });
+
+      // Service should have called setPhase for copying, renaming, fetching_metadata in that order
+      const phaseArgs = setPhase.mock.calls.map((c) => c[0]);
+      expect(phaseArgs).toEqual(['copying', 'renaming', 'fetching_metadata']);
+    });
+
+    it('omits renaming phase when fileFormat is empty (rename branch skipped)', async () => {
+      const settingsGet = settingsService.get as ReturnType<typeof vi.fn>;
+      settingsGet.mockImplementation((key: string) => {
+        if (key === 'library') return Promise.resolve({ path: '/audiobooks', folderFormat: '{author}/{title}', fileFormat: '' });
+        if (key === 'import') return Promise.resolve({ deleteAfterImport: false, minSeedTime: 0, minSeedRatio: 0, minFreeSpaceGB: 0 });
+        if (key === 'processing') return Promise.resolve({});
+        return Promise.resolve({});
+      });
+
+      db.select.mockReturnValueOnce(mockDbChain([mockDownload]));
+      db.update.mockReturnValue(mockDbChain());
+
+      const setPhase = vi.fn().mockResolvedValue(undefined);
+
+      await service.importDownload(1, { setPhase });
+
+      const phaseArgs = setPhase.mock.calls.map((c) => c[0]);
+      expect(phaseArgs).toEqual(['copying', 'fetching_metadata']);
+    });
+
+    it('behaves identically when callbacks are omitted (backward compatibility)', async () => {
+      db.select.mockReturnValueOnce(mockDbChain([mockDownload]));
+      db.update.mockReturnValue(mockDbChain());
+
+      // No callbacks — should complete without error and not invoke anything extra
+      const result = await service.importDownload(1);
+      expect(result.downloadId).toBe(1);
+      expect(result.bookId).toBe(1);
     });
   });
 

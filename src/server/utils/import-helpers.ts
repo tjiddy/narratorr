@@ -1,4 +1,7 @@
 import { stat, readdir, mkdir, cp } from 'node:fs/promises';
+import { createReadStream, createWriteStream } from 'node:fs';
+import { Transform } from 'node:stream';
+import { pipeline } from 'node:stream/promises';
 import { join, extname, basename } from 'node:path';
 import { renderTemplate, toLastFirst, toSortTitle, AUDIO_EXTENSIONS } from '../../core/utils/index.js';
 import { collectSortedAudioFiles } from '../../core/utils/collect-audio-files.js';
@@ -224,7 +227,11 @@ async function collectFlatFiles(
 }
 
 /** Copy audio files from source to target, flattening all subdirectories. */
-export async function copyAudioFiles(source: string, target: string): Promise<void> {
+export async function copyAudioFiles(
+  source: string,
+  target: string,
+  onProgress?: (progress: number, byteCounter: { current: number; total: number }) => void,
+): Promise<void> {
   const rootEntries = await readdir(source, { withFileTypes: true });
 
   const discFolders: Array<{ name: string; path: string }> = [];
@@ -243,8 +250,33 @@ export async function copyAudioFiles(source: string, target: string): Promise<vo
     : await collectFlatFiles(source, rootEntries);
 
   await mkdir(target, { recursive: true });
-  for (const file of files) {
-    await cp(file.srcPath, join(target, file.name), { errorOnExist: false });
+
+  if (!onProgress) {
+    for (const file of files) {
+      await cp(file.srcPath, join(target, file.name), { errorOnExist: false });
+    }
+    return;
+  }
+
+  // Stream-copy with byte-level progress tracking
+  const sizes = await Promise.all(files.map(f => stat(f.srcPath).then(s => s.size)));
+  const totalSize = sizes.reduce((sum, n) => sum + n, 0);
+  let bytesCopied = 0;
+
+  for (let i = 0; i < files.length; i++) {
+    const srcPath = files[i].srcPath;
+    const destPath = join(target, files[i].name);
+
+    const tracker = new Transform({
+      transform(chunk: Buffer, _encoding, callback) {
+        bytesCopied += chunk.length;
+        const progress = totalSize > 0 ? bytesCopied / totalSize : 1;
+        onProgress(progress, { current: bytesCopied, total: totalSize });
+        callback(null, chunk);
+      },
+    });
+
+    await pipeline(createReadStream(srcPath), tracker, createWriteStream(destPath));
   }
 }
 

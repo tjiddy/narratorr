@@ -1,4 +1,7 @@
 import { stat, rm, statfs, mkdir, cp } from 'node:fs/promises';
+import { createReadStream, createWriteStream } from 'node:fs';
+import { Transform } from 'node:stream';
+import { pipeline } from 'node:stream/promises';
 import type { Stats } from 'node:fs';
 import { join, extname, basename, normalize } from 'node:path';
 import type { FastifyBaseLogger } from 'fastify';
@@ -142,22 +145,41 @@ export interface CopyToLibraryArgs {
   targetPath: string;
   sourceStats: Stats;
   log: FastifyBaseLogger;
+  onProgress?: (progress: number, byteCounter: { current: number; total: number }) => void;
 }
 
 /** Copy audio files from source to target library path. */
 export async function copyToLibrary(args: CopyToLibraryArgs): Promise<void> {
-  const { sourcePath, targetPath, sourceStats, log } = args;
+  const { sourcePath, targetPath, sourceStats, log, onProgress } = args;
   await mkdir(targetPath, { recursive: true });
   log.info({ source: sourcePath, target: targetPath }, 'Copying files to library');
 
   if (sourceStats.isDirectory()) {
-    await copyAudioFiles(sourcePath, targetPath);
-  } else {
-    if (!AUDIO_EXTENSIONS.has(extname(sourcePath).toLowerCase())) {
-      throw new Error(`Source file is not a supported audio format: ${basename(sourcePath)}`);
-    }
-    await cp(sourcePath, join(targetPath, basename(sourcePath)), { errorOnExist: false });
+    await copyAudioFiles(sourcePath, targetPath, onProgress);
+    return;
   }
+
+  if (!AUDIO_EXTENSIONS.has(extname(sourcePath).toLowerCase())) {
+    throw new Error(`Source file is not a supported audio format: ${basename(sourcePath)}`);
+  }
+
+  const destPath = join(targetPath, basename(sourcePath));
+  if (!onProgress) {
+    await cp(sourcePath, destPath, { errorOnExist: false });
+    return;
+  }
+
+  const totalSize = sourceStats.size;
+  let bytesCopied = 0;
+  const tracker = new Transform({
+    transform(chunk: Buffer, _encoding, callback) {
+      bytesCopied += chunk.length;
+      const progress = totalSize > 0 ? bytesCopied / totalSize : 1;
+      onProgress(progress, { current: bytesCopied, total: totalSize });
+      callback(null, chunk);
+    },
+  });
+  await pipeline(createReadStream(sourcePath), tracker, createWriteStream(destPath));
 }
 
 // ── verifyCopy ──────────────────────────────────────────────────────────

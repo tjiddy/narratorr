@@ -58,7 +58,19 @@ describe('AutoImportAdapter', () => {
       const job = makeJob();
       await adapter.process(job, ctx);
 
-      expect(mockOrchestrator.importDownload).toHaveBeenCalledWith(99);
+      expect(mockOrchestrator.importDownload).toHaveBeenCalledWith(
+        99,
+        expect.objectContaining({ setPhase: ctx.setPhase, emitProgress: ctx.emitProgress }),
+      );
+    });
+
+    it('forwards ctx.setPhase and ctx.emitProgress as callback bag to orchestrator', async () => {
+      const job = makeJob();
+      await adapter.process(job, ctx);
+
+      const [, callbacks] = mockOrchestrator.importDownload.mock.calls[0];
+      expect(callbacks.setPhase).toBe(ctx.setPhase);
+      expect(callbacks.emitProgress).toBe(ctx.emitProgress);
     });
 
     it('calls setPhase with analyzing before delegating', async () => {

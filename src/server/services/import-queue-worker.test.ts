@@ -839,6 +839,101 @@ describe('ImportQueueWorker', () => {
     });
   });
 
+  // ===========================================================================
+  // #681 — Auto-import phase history (analyzing → copying → renaming → fetching_metadata)
+  // ===========================================================================
+
+  describe('#681 auto-import phase history', () => {
+    function setupAutoJob(jobRow: Record<string, unknown>) {
+      let selectCallCount = 0;
+      mockDb.db.select = vi.fn().mockImplementation(() => {
+        selectCallCount++;
+        if (selectCallCount === 1) return { from: vi.fn().mockReturnThis(), where: vi.fn().mockResolvedValue([]) };
+        if (selectCallCount === 2) return { from: vi.fn().mockReturnThis(), where: vi.fn().mockReturnThis(), orderBy: vi.fn().mockReturnThis(), limit: vi.fn().mockResolvedValue([{ id: jobRow.id }]) };
+        if (selectCallCount === 3) return { from: vi.fn().mockReturnThis(), where: vi.fn().mockReturnThis(), limit: vi.fn().mockResolvedValue([jobRow]) };
+        return { from: vi.fn().mockReturnThis(), where: vi.fn().mockReturnThis(), orderBy: vi.fn().mockReturnThis(), limit: vi.fn().mockResolvedValue([]) };
+      });
+    }
+
+    it('successful auto-import persists analyzing → copying → renaming → fetching_metadata with startedAt/completedAt on each entry', async () => {
+      const mockBroadcaster = { emit: vi.fn() };
+      const workerWithBroadcaster = new ImportQueueWorker(inject<Db>(mockDb.db), log, mockBroadcaster as never);
+
+      // Adapter simulates the full auto sequence that the real AutoImportAdapter drives
+      const adapter: ImportAdapter = {
+        type: 'auto',
+        async process(_job: ImportJob, ctx) {
+          await ctx.setPhase('analyzing');
+          await ctx.setPhase('copying');
+          await ctx.setPhase('renaming');
+          await ctx.setPhase('fetching_metadata');
+        },
+      };
+      registerImportAdapter(adapter);
+
+      setupAutoJob({ id: 101, bookId: 202, type: 'auto', status: 'processing', metadata: '{"downloadId":99}', phaseHistory: null });
+
+      const updateSets: Record<string, unknown>[] = [];
+      mockDb.db.update = vi.fn().mockImplementation(() => ({
+        set: vi.fn().mockImplementation((payload: Record<string, unknown>) => {
+          updateSets.push(payload);
+          return { where: vi.fn().mockResolvedValue({ rowsAffected: 1 }) };
+        }),
+      }));
+
+      await workerWithBroadcaster.start();
+      await new Promise(r => setTimeout(r, 100));
+      await workerWithBroadcaster.stop();
+
+      // Final completion update carries the canonical phaseHistory snapshot
+      const completionUpdate = updateSets.find(s => s.status === 'completed' && s.phaseHistory);
+      expect(completionUpdate).toBeDefined();
+      const history = JSON.parse(completionUpdate!.phaseHistory as string) as Array<{ phase: string; startedAt: number; completedAt?: number }>;
+      const phases = history.map(h => h.phase);
+      expect(phases).toEqual(['analyzing', 'copying', 'renaming', 'fetching_metadata']);
+      for (const entry of history) {
+        expect(entry.startedAt).toBeTypeOf('number');
+        expect(entry.completedAt).toBeTypeOf('number');
+      }
+    });
+
+    it('auto-import failure during copy persists copying as the most recent closed phase', async () => {
+      const mockBroadcaster = { emit: vi.fn() };
+      const workerWithBroadcaster = new ImportQueueWorker(inject<Db>(mockDb.db), log, mockBroadcaster as never);
+
+      const adapter: ImportAdapter = {
+        type: 'auto',
+        async process(_job: ImportJob, ctx) {
+          await ctx.setPhase('analyzing');
+          await ctx.setPhase('copying');
+          throw new Error('ENOSPC: disk full');
+        },
+      };
+      registerImportAdapter(adapter);
+
+      setupAutoJob({ id: 202, bookId: 303, type: 'auto', status: 'processing', metadata: '{"downloadId":77}', phaseHistory: null });
+
+      const updateSets: Record<string, unknown>[] = [];
+      mockDb.db.update = vi.fn().mockImplementation(() => ({
+        set: vi.fn().mockImplementation((payload: Record<string, unknown>) => {
+          updateSets.push(payload);
+          return { where: vi.fn().mockResolvedValue({ rowsAffected: 1 }) };
+        }),
+      }));
+
+      await workerWithBroadcaster.start();
+      await new Promise(r => setTimeout(r, 100));
+      await workerWithBroadcaster.stop();
+
+      const failedUpdate = updateSets.find(s => s.status === 'failed' && s.phase === 'failed' && s.phaseHistory);
+      expect(failedUpdate).toBeDefined();
+      const history = JSON.parse(failedUpdate!.phaseHistory as string) as Array<{ phase: string; startedAt: number; completedAt?: number }>;
+      const lastEntry = history[history.length - 1];
+      expect(lastEntry.phase).toBe('copying');
+      expect(lastEntry.completedAt).toBeTypeOf('number');
+    });
+  });
+
   describe('nudge', () => {
     it('nudge wakes idle worker', async () => {
       let selectCallCount = 0;

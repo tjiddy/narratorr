@@ -32,6 +32,9 @@ export class AutoImportAdapter implements ImportAdapter {
     // Delegate to ImportOrchestrator.importDownload() — the full side-effect wrapper.
     // This preserves all success/failure side effects: SSE, tagging, post-processing,
     // notifications, event history, blacklist + retry-search.
-    await this.importOrchestrator.importDownload(payload.downloadId);
+    await this.importOrchestrator.importDownload(payload.downloadId, {
+      setPhase: ctx.setPhase,
+      emitProgress: ctx.emitProgress,
+    });
   }
 }
