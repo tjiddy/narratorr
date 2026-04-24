@@ -117,7 +117,7 @@ describe('ImportOrchestrator', () => {
       const result = await orchestrator.importDownload(1);
 
       expect(importService.getImportContext).toHaveBeenCalledWith(1);
-      expect(importService.importDownload).toHaveBeenCalledWith(1);
+      expect(importService.importDownload).toHaveBeenCalledWith(1, undefined);
       expect(result).toEqual(mockResult);
     });
 
@@ -195,6 +195,13 @@ describe('ImportOrchestrator', () => {
     it('returns ImportResult from importService', async () => {
       const result = await orchestrator.importDownload(1);
       expect(result).toEqual(mockResult);
+    });
+
+    it('forwards optional callbacks bag to importService.importDownload (#681)', async () => {
+      const callbacks = { setPhase: vi.fn().mockResolvedValue(undefined), emitProgress: vi.fn() };
+      await orchestrator.importDownload(1, callbacks);
+
+      expect(importService.importDownload).toHaveBeenCalledWith(1, callbacks);
     });
   });
 
