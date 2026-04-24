@@ -8,6 +8,10 @@ import { createE2EApp } from './e2e-helpers.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
+// Tests that assert on post-cleanup filesystem state (existsSync === false)
+// are skipped on Windows because libSQL's native binding leaks the DB file
+// handle past Client.close(), preventing rmSync from removing the run dir.
+// Cleanup still runs — it's just best-effort on Windows (see rmDirOrLeak).
 describe('createE2EApp harness', () => {
   const orphans: string[] = [];
 
@@ -33,7 +37,7 @@ describe('createE2EApp harness', () => {
     await e2e.cleanup();
   });
 
-  it('cleanup() removes the entire run directory including WAL/SHM sidecars', async () => {
+  it.skipIf(process.platform === 'win32')('cleanup() removes the entire run directory including WAL/SHM sidecars', async () => {
     const e2e = await createE2EApp();
     orphans.push(e2e.dir);
     const dbPath = join(e2e.dir, 'narratorr.db');
@@ -51,7 +55,7 @@ describe('createE2EApp harness', () => {
     expect(existsSync(e2e.dir)).toBe(false);
   });
 
-  it('sequential createE2EApp() calls produce distinct run directories', async () => {
+  it.skipIf(process.platform === 'win32')('sequential createE2EApp() calls produce distinct run directories', async () => {
     const a = await createE2EApp();
     orphans.push(a.dir);
     const b = await createE2EApp();
@@ -99,7 +103,7 @@ describe('createE2EApp harness', () => {
     await third.cleanup();
   });
 
-  it('removes the run directory when the process is interrupted by SIGINT', () => {
+  it.skipIf(process.platform === 'win32')('removes the run directory when the process is interrupted by SIGINT', () => {
     // Spawn a child that boots createE2EApp, prints its dir, then SIGINTs
     // itself. The module-level signal handler must purge the dir before the
     // child exits, leaving nothing behind for the parent to observe.

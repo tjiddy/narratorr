@@ -14,9 +14,15 @@ export async function runMigrations(dbPath: string) {
 
   // In dev (tsx): __dirname = src/db/, migrations at ../../drizzle/
   // In prod (bundled): __dirname = dist/server/, migrations at ../../drizzle/
-  await migrate(db, {
-    migrationsFolder: path.join(__dirname, '../../drizzle'),
-  });
+  try {
+    await migrate(db, {
+      migrationsFolder: path.join(__dirname, '../../drizzle'),
+    });
+  } finally {
+    // Release the DB file handle. Without this, Windows keeps the file locked
+    // and any subsequent cleanup (rmSync) fails with EPERM. No-op on Linux.
+    client.close();
+  }
 
   return db;
 }

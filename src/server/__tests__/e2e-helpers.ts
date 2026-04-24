@@ -29,6 +29,26 @@ export interface E2EApp {
 
 const activeRunDirs = new Set<string>();
 let signalHandlersRegistered = false;
+const isWindows = process.platform === 'win32';
+
+/**
+ * libSQL's Windows native binding has a known bug where the OS file handle
+ * is not released even after Client.close() returns — confirmed with a
+ * minimal repro (create-client → close → rmSync fails EPERM). WAL checkpoint,
+ * journal_mode=DELETE, and forced GC do not help. On Windows we accept the
+ * leak and let the OS clean up on process exit. On Linux (CI + prod) we
+ * require cleanup to succeed so #685's leak-prevention intent stands.
+ */
+function rmDirOrLeak(dir: string) {
+  try {
+    rmSync(dir, { recursive: true, force: true });
+  } catch (err) {
+    const code = (err as NodeJS.ErrnoException).code;
+    const isLockError = code === 'EPERM' || code === 'EBUSY' || code === 'ENOTEMPTY';
+    if (isWindows && isLockError) return; // libsql file-handle leak — unavoidable on Windows
+    throw err;
+  }
+}
 
 function purgeActiveDirs() {
   for (const dir of activeRunDirs) {
@@ -100,10 +120,14 @@ export async function createE2EApp(): Promise<E2EApp> {
 
   const cleanup = async () => {
     await app.close();
-    // Surface rmSync failures on the happy path so tests can distinguish
-    // success from masked failure. Best-effort swallowing is reserved for
-    // the signal-handler branch above.
-    rmSync(dir, { recursive: true, force: true });
+    // Release the libSQL file handle before rmSync — on Linux this frees
+    // the DB file immediately; on Windows libsql's native binding keeps the
+    // handle regardless (see rmDirOrLeak for background).
+    db.$client.close();
+    // Surface rmSync failures on the happy path on Linux/CI so tests can
+    // distinguish success from masked failure. On Windows we accept the
+    // libsql leak — the OS reclaims on process exit.
+    rmDirOrLeak(dir);
     activeRunDirs.delete(dir);
   };
 
