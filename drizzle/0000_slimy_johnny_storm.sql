@@ -151,6 +151,23 @@ CREATE INDEX `idx_downloads_status` ON `downloads` (`status`);--> statement-brea
 CREATE INDEX `idx_downloads_status_completed` ON `downloads` (`status`,`completed_at`);--> statement-breakpoint
 CREATE INDEX `idx_downloads_book_id` ON `downloads` (`book_id`);--> statement-breakpoint
 CREATE INDEX `idx_downloads_pending_cleanup` ON `downloads` (`pending_cleanup`);--> statement-breakpoint
+CREATE TABLE `import_jobs` (
+	`id` integer PRIMARY KEY AUTOINCREMENT NOT NULL,
+	`book_id` integer,
+	`type` text NOT NULL,
+	`status` text DEFAULT 'pending' NOT NULL,
+	`phase` text DEFAULT 'queued',
+	`metadata` text NOT NULL,
+	`phase_history` text,
+	`last_error` text,
+	`created_at` integer DEFAULT (unixepoch()) NOT NULL,
+	`updated_at` integer DEFAULT (unixepoch()) NOT NULL,
+	`started_at` integer,
+	`completed_at` integer,
+	FOREIGN KEY (`book_id`) REFERENCES `books`(`id`) ON UPDATE no action ON DELETE set null
+);
+--> statement-breakpoint
+CREATE INDEX `idx_import_jobs_status_created` ON `import_jobs` (`status`,`created_at`);--> statement-breakpoint
 CREATE TABLE `import_lists` (
 	`id` integer PRIMARY KEY AUTOINCREMENT NOT NULL,
 	`name` text NOT NULL,

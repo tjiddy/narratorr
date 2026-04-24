@@ -5,29 +5,8 @@
     {
       "idx": 0,
       "version": "6",
-      "when": 1776261255627,
-      "tag": "0000_overjoyed_catseye",
-      "breakpoints": true
-    },
-    {
-      "idx": 1,
-      "version": "6",
-      "when": 1776456221467,
-      "tag": "0001_concerned_black_bird",
-      "breakpoints": true
-    },
-    {
-      "idx": 2,
-      "version": "6",
-      "when": 1776475951875,
-      "tag": "0002_nifty_apocalypse",
-      "breakpoints": true
-    },
-    {
-      "idx": 3,
-      "version": "6",
-      "when": 1777651200000,
-      "tag": "0003_backfill_removed_download_status",
+      "when": 1777049451574,
+      "tag": "0000_slimy_johnny_storm",
       "breakpoints": true
     }
   ]
