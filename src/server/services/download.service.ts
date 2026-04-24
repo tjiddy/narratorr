@@ -1,7 +1,7 @@
 import { eq, desc, inArray, and, count, sql } from 'drizzle-orm';
 import { type Db } from '../../db/index.js';
 import type { FastifyBaseLogger } from 'fastify';
-import { downloads, books, indexers } from '../../db/schema.js';
+import { downloads, books, indexers, importJobs } from '../../db/schema.js';
 import type { DownloadProtocol } from '../../core/index.js';
 import { DownloadUrl } from '../../core/utils/download-url.js';
 import type { DownloadArtifact } from '../../core/download-clients/types.js';
@@ -240,6 +240,21 @@ export class DownloadService {
       const pipelineActive = allActive.filter((dl) => !replaceableSet.has(dl.status));
       if (pipelineActive.length > 0) {
         throw new DuplicateDownloadError(`Book ${bookId} already has an active download (id: ${pipelineActive[0].id})`, 'PIPELINE_ACTIVE');
+      }
+
+      // Guard the window where the download is already `completed` (terminal,
+      // so filtered out above) but an auto import_jobs row is pending/processing.
+      const pendingAutoJobs = await this.db
+        .select({ id: importJobs.id })
+        .from(importJobs)
+        .where(and(
+          eq(importJobs.bookId, bookId),
+          eq(importJobs.type, 'auto'),
+          inArray(importJobs.status, ['pending', 'processing']),
+        ))
+        .limit(1);
+      if (pendingAutoJobs.length > 0) {
+        throw new DuplicateDownloadError(`Book ${bookId} already has an active auto import job (id: ${pendingAutoJobs[0].id})`, 'PIPELINE_ACTIVE');
       }
     }
   }

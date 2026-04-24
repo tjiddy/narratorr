@@ -247,7 +247,9 @@ describe('DownloadService', () => {
       db.update.mockReturnValue(mockDbChain());
       // First select: getActiveByBookId (no active downloads)
       db.select.mockReturnValueOnce(mockDbChain([]));
-      // Second select: getById for return
+      // Second select: import_jobs same-book auto-job lookup (no pending jobs)
+      db.select.mockReturnValueOnce(mockDbChain([]));
+      // Third select: getById for return
       db.select.mockReturnValueOnce(
         mockDbChain([{ download: mockDownload, book: mockBook }]),
       );
@@ -395,6 +397,7 @@ describe('DownloadService', () => {
 
       db.insert.mockReturnValue(mockDbChain([{ id: 1 }]));
       db.update.mockReturnValue(mockDbChain());
+      db.select.mockReturnValueOnce(mockDbChain([]));
       db.select.mockReturnValueOnce(mockDbChain([]));
       db.select.mockReturnValueOnce(
         mockDbChain([{ download: mockDownload, book: mockBook }]),
@@ -651,7 +654,9 @@ describe('DownloadService', () => {
       db.update.mockReturnValue(mockDbChain());
       // First select: getActiveByBookId (no active downloads)
       db.select.mockReturnValueOnce(mockDbChain([]));
-      // Second select: getById for return
+      // Second select: import_jobs same-book auto-job lookup (no pending jobs)
+      db.select.mockReturnValueOnce(mockDbChain([]));
+      // Third select: getById for return
       db.select.mockReturnValueOnce(
         mockDbChain([{ download: mockDownload, book: mockBook }]),
       );
@@ -1369,7 +1374,7 @@ describe('DownloadService', () => {
       expect(result).toBe(true);
     });
 
-    it.each(['downloading', 'queued', 'paused', 'checking', 'pending_review', 'processing_queued', 'importing'] as const)(
+    it.each(['downloading', 'queued', 'paused', 'checking', 'pending_review', 'importing'] as const)(
       'throws when status is %s',
       async (status) => {
         db.select.mockReturnValue(
@@ -1522,8 +1527,8 @@ describe('DownloadService', () => {
       expect(db.insert).not.toHaveBeenCalled();
     });
 
-    it('throws DuplicateDownloadError with PIPELINE_ACTIVE code when only processing_queued/importing downloads exist', async () => {
-      const pipelineDownload = { ...mockDownload, id: 5, status: 'processing_queued' as const };
+    it('throws DuplicateDownloadError with PIPELINE_ACTIVE code when only importing downloads exist', async () => {
+      const pipelineDownload = { ...mockDownload, id: 5, status: 'importing' as const };
       // getActiveByBookId returns only pipeline download
       db.select.mockReturnValueOnce(mockDbChain([{ download: pipelineDownload, book: mockBook }]));
 
@@ -1555,7 +1560,7 @@ describe('DownloadService', () => {
     });
 
     it('throws DuplicateDownloadError with code PIPELINE_ACTIVE for pipeline-active duplicate', async () => {
-      const pipelineDownload = { ...mockDownload, id: 5, status: 'processing_queued' as const };
+      const pipelineDownload = { ...mockDownload, id: 5, status: 'importing' as const };
       db.select.mockReturnValueOnce(mockDbChain([{ download: pipelineDownload, book: mockBook }]));
 
       const err = await service.grab({
@@ -1567,6 +1572,59 @@ describe('DownloadService', () => {
       expect(err).toBeInstanceOf(DuplicateDownloadError);
       expect((err as DuplicateDownloadError).code).toBe('PIPELINE_ACTIVE');
       expect((err as DuplicateDownloadError).name).toBe('DuplicateDownloadError');
+    });
+
+    it('throws PIPELINE_ACTIVE when no active downloads but a pending auto import job exists for the same book', async () => {
+      // getActiveByBookId returns empty
+      db.select.mockReturnValueOnce(mockDbChain([]));
+      // import_jobs same-book auto-job lookup returns one pending job
+      db.select.mockReturnValueOnce(mockDbChain([{ id: 77 }]));
+
+      const err = await service.grab({
+        downloadUrl: 'magnet:?xt=urn:btih:0000000000000000000000000000000000000abc',
+        title: 'Test',
+        bookId: 1,
+      }).catch((e: unknown) => e);
+
+      expect(err).toBeInstanceOf(DuplicateDownloadError);
+      expect((err as DuplicateDownloadError).code).toBe('PIPELINE_ACTIVE');
+      expect(db.insert).not.toHaveBeenCalled();
+    });
+
+    it('throws PIPELINE_ACTIVE when a processing auto import job exists for the same book', async () => {
+      db.select.mockReturnValueOnce(mockDbChain([]));
+      // import_jobs lookup returns a processing auto job row
+      db.select.mockReturnValueOnce(mockDbChain([{ id: 88 }]));
+
+      const err = await service.grab({
+        downloadUrl: 'magnet:?xt=urn:btih:0000000000000000000000000000000000000abc',
+        title: 'Test',
+        bookId: 1,
+      }).catch((e: unknown) => e);
+
+      expect(err).toBeInstanceOf(DuplicateDownloadError);
+      expect((err as DuplicateDownloadError).code).toBe('PIPELINE_ACTIVE');
+      expect(db.insert).not.toHaveBeenCalled();
+    });
+
+    it('proceeds when no active downloads and no pending auto import jobs exist for the book', async () => {
+      // getActiveByBookId returns empty
+      db.select.mockReturnValueOnce(mockDbChain([]));
+      // import_jobs lookup returns empty
+      db.select.mockReturnValueOnce(mockDbChain([]));
+      // getById for return after insert
+      db.select.mockReturnValueOnce(mockDbChain([{ download: mockDownload, book: mockBook }]));
+      db.insert.mockReturnValue(mockDbChain([{ id: 10 }]));
+      db.update.mockReturnValue(mockDbChain());
+
+      const result = await service.grab({
+        downloadUrl: 'magnet:?xt=urn:btih:0000000000000000000000000000000000000abc',
+        title: 'Test',
+        bookId: 1,
+      });
+
+      expect(result).toBeDefined();
+      expect(db.insert).toHaveBeenCalledTimes(1);
     });
 
     it('reverts book status to wanted when cancel succeeds but follow-up grab fails', async () => {
@@ -1599,6 +1657,8 @@ describe('DownloadService', () => {
     });
 
     it('proceeds when no replaceable active downloads exist and replaceExisting is true', async () => {
+      db.select.mockReturnValueOnce(mockDbChain([]));
+      // import_jobs same-book auto-job lookup returns empty
       db.select.mockReturnValueOnce(mockDbChain([]));
       db.select.mockReturnValueOnce(mockDbChain([{ download: mockDownload, book: mockBook }]));
       db.insert.mockReturnValue(mockDbChain([{ id: 10 }]));
@@ -1785,6 +1845,7 @@ describe('DownloadService', () => {
       db.insert.mockReturnValue(mockDbChain([{ id: 1 }]));
       db.update.mockReturnValue(mockDbChain());
       db.select.mockReturnValueOnce(mockDbChain([])); // no active downloads
+      db.select.mockReturnValueOnce(mockDbChain([])); // no pending auto import jobs
       db.select.mockReturnValueOnce(mockDbChain([{ download: mockDownload, book: mockBook }]));
 
       await svc.grab({

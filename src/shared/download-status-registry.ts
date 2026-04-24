@@ -60,14 +60,6 @@ export const DOWNLOAD_STATUS_REGISTRY: Record<DownloadStatus, DownloadStatusMeta
     bgColor: 'bg-amber-500/10',
     textColor: 'text-amber-600 dark:text-amber-400',
   },
-  processing_queued: {
-    category: 'inProgress',
-    label: 'Processing Queued',
-    icon: 'clock',
-    color: 'text-amber-500',
-    bgColor: 'bg-amber-500/10',
-    textColor: 'text-amber-600 dark:text-amber-400',
-  },
   importing: {
     category: 'inProgress',
     label: 'Importing',
@@ -127,8 +119,8 @@ export function getCompletedStatuses(): DownloadStatus[] {
 
 /**
  * Statuses that can be replaced by a new grab.
- * Excludes import-pipeline statuses (processing_queued, importing) which require
- * a separate cancellation mechanism beyond the download-client cancel path.
+ * Excludes the import-pipeline status (importing) which requires a separate
+ * cancellation mechanism beyond the download-client cancel path.
  */
 const REPLACEABLE_STATUSES: DownloadStatus[] = ['queued', 'downloading', 'paused', 'checking', 'pending_review'];
 
@@ -138,7 +130,7 @@ export function getReplaceableStatuses(): DownloadStatus[] {
 
 /**
  * Statuses that should be polled from external download clients.
- * Excludes internal pipeline statuses (checking, pending_review, processing_queued, importing)
+ * Excludes internal pipeline statuses (checking, pending_review, importing)
  * that are managed by quality-gate/import flows, not download client APIs.
  */
 const CLIENT_POLLED_STATUSES: DownloadStatus[] = ['downloading', 'queued', 'paused'];

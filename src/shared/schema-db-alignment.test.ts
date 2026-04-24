@@ -121,7 +121,7 @@ describe('schema-DB alignment', () => {
     });
 
     it('download status values match (already derived — baseline)', () => {
-      const original = ['queued', 'downloading', 'paused', 'completed', 'checking', 'pending_review', 'processing_queued', 'importing', 'imported', 'failed'];
+      const original = ['queued', 'downloading', 'paused', 'completed', 'checking', 'pending_review', 'importing', 'imported', 'failed'];
       expect([...downloadStatusSchema.options].sort()).toEqual(original.sort());
     });
 

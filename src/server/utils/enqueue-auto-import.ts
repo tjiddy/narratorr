@@ -1,11 +1,11 @@
 import { eq, and, inArray } from 'drizzle-orm';
 import type { Db } from '../../db/index.js';
 import type { FastifyBaseLogger } from 'fastify';
-import { importJobs, downloads } from '../../db/schema.js';
+import { importJobs } from '../../db/schema.js';
 import type { AutoImportJobPayload } from '../services/import-adapters/types.js';
 
 /**
- * Shared helper: create an auto import_jobs row, set download to processing_queued, nudge worker.
+ * Shared helper: create an auto import_jobs row and nudge the worker.
  * Called by all 3 auto-import entrypoints (quality gate, approve route, batch cron).
  * Includes duplicate protection — skips if a pending/processing auto job already exists for this download.
  * Returns true if a job was created, false if skipped (duplicate).
@@ -47,8 +47,6 @@ export async function enqueueAutoImport(
     phase: 'queued',
     metadata: JSON.stringify(payload),
   });
-
-  await db.update(downloads).set({ status: 'processing_queued' }).where(eq(downloads.id, downloadId));
 
   log.info({ downloadId, bookId }, 'Auto import job enqueued');
   nudge();
