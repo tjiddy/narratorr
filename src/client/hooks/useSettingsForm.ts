@@ -12,7 +12,6 @@ import type { AppSettings, UpdateSettingsInput } from '../../shared/schemas.js';
 export interface UseSettingsFormConfig<T extends Record<string, unknown>> {
   // z.ZodType<T, T> is intentional: z.ZodType<T> sets _input to unknown, which conflicts
   // with zodResolver's FieldValues constraint. The second T aligns _input with the output type.
-  // See .narratorr/cl/learnings/zodresolver-generic-type-mismatch.md
   schema: z.ZodType<T, T>;
   defaultValues: T;
   select: (settings: AppSettings) => T;

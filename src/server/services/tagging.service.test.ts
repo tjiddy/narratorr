@@ -42,7 +42,6 @@ vi.mock('music-metadata', () => ({
 // sql, etc.) while only overriding `eq` for assertion capture. This is necessary because
 // drizzle-orm is imported at module scope by transitive dependencies (e.g., book-list.service.ts
 // uses getTableColumns). Without importOriginal, those imports would be undefined.
-// See: .narratorr/cl/learnings/getTableColumns-module-scope-mock.md
 vi.mock('drizzle-orm', async (importOriginal) => {
   const actual = await importOriginal();
   return {
