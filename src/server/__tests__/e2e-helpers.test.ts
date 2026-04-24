@@ -1,0 +1,90 @@
+import { describe, it, expect, afterEach } from 'vitest';
+import { spawnSync } from 'child_process';
+import { existsSync, writeFileSync, rmSync } from 'fs';
+import { join, resolve, dirname } from 'path';
+import { tmpdir } from 'os';
+import { fileURLToPath } from 'url';
+import { createE2EApp } from './e2e-helpers.js';
+
+const __dirname = dirname(fileURLToPath(import.meta.url));
+
+describe('createE2EApp harness', () => {
+  const orphans: string[] = [];
+
+  afterEach(() => {
+    for (const p of orphans) {
+      try {
+        rmSync(p, { recursive: true, force: true });
+      } catch {
+        // Best-effort — test-scope cleanup.
+      }
+    }
+    orphans.length = 0;
+  });
+
+  it('creates a per-run directory under tmpdir with the narratorr-e2e- prefix', async () => {
+    const e2e = await createE2EApp();
+    orphans.push(e2e.dir);
+
+    expect(existsSync(e2e.dir)).toBe(true);
+    expect(e2e.dir.startsWith(join(tmpdir(), 'narratorr-e2e-'))).toBe(true);
+    expect(existsSync(join(e2e.dir, 'narratorr.db'))).toBe(true);
+
+    await e2e.cleanup();
+  });
+
+  it('cleanup() removes the entire run directory including WAL/SHM sidecars', async () => {
+    const e2e = await createE2EApp();
+    orphans.push(e2e.dir);
+    const dbPath = join(e2e.dir, 'narratorr.db');
+
+    // Simulate libSQL WAL/SHM sidecars that may materialize after writes.
+    writeFileSync(`${dbPath}-wal`, 'wal-bytes');
+    writeFileSync(`${dbPath}-shm`, 'shm-bytes');
+
+    expect(existsSync(dbPath)).toBe(true);
+    expect(existsSync(`${dbPath}-wal`)).toBe(true);
+    expect(existsSync(`${dbPath}-shm`)).toBe(true);
+
+    await e2e.cleanup();
+
+    expect(existsSync(e2e.dir)).toBe(false);
+  });
+
+  it('sequential createE2EApp() calls produce distinct run directories', async () => {
+    const a = await createE2EApp();
+    orphans.push(a.dir);
+    const b = await createE2EApp();
+    orphans.push(b.dir);
+
+    expect(a.dir).not.toBe(b.dir);
+    expect(existsSync(a.dir)).toBe(true);
+    expect(existsSync(b.dir)).toBe(true);
+
+    await a.cleanup();
+    await b.cleanup();
+
+    expect(existsSync(a.dir)).toBe(false);
+    expect(existsSync(b.dir)).toBe(false);
+  });
+
+  it('removes the run directory when the process is interrupted by SIGINT', () => {
+    // Spawn a child that boots createE2EApp, prints its dir, then SIGINTs
+    // itself. The module-level signal handler must purge the dir before the
+    // child exits, leaving nothing behind for the parent to observe.
+    const fixture = resolve(__dirname, 'e2e-helpers-abnormal-exit.fixture.ts');
+    const result = spawnSync(process.execPath, ['--import', 'tsx', fixture], {
+      encoding: 'utf-8',
+      timeout: 30_000,
+    });
+
+    // Extract the dir the child reported on its first stdout line.
+    const firstLine = result.stdout.split('\n').find((l) => l.startsWith('{'));
+    expect(firstLine, `child stdout missing dir payload:\n${result.stdout}\n---stderr---\n${result.stderr}`).toBeTruthy();
+    const { dir } = JSON.parse(firstLine!) as { dir: string };
+    orphans.push(dir); // Defensive in case the signal handler missed it.
+
+    expect(dir.startsWith(join(tmpdir(), 'narratorr-e2e-'))).toBe(true);
+    expect(existsSync(dir)).toBe(false);
+  }, 30_000);
+});

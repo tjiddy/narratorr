@@ -11,8 +11,7 @@ import { createServices, registerRoutes, type Services } from '../routes/index.j
 import { clearImportAdapters } from '../services/import-adapters/registry.js';
 import { tmpdir } from 'os';
 import { join } from 'path';
-import { randomBytes } from 'crypto';
-import { unlink } from 'fs/promises';
+import { mkdtempSync, rmSync } from 'fs';
 import { expect } from 'vitest';
 import { initializeKey } from '../utils/secret-codec.js';
 
@@ -20,7 +19,40 @@ export interface E2EApp {
   app: ReturnType<typeof Fastify> & { withTypeProvider: () => unknown };
   db: Db;
   services: Services;
+  /**
+   * Per-run temp directory containing the libSQL DB file and its -wal/-shm sidecars.
+   * Removed atomically by cleanup(); exposed for tests that need to inspect it.
+   */
+  dir: string;
   cleanup: () => Promise<void>;
+}
+
+const activeRunDirs = new Set<string>();
+let signalHandlersRegistered = false;
+
+function purgeActiveDirs() {
+  for (const dir of activeRunDirs) {
+    try {
+      rmSync(dir, { recursive: true, force: true });
+    } catch {
+      // Best-effort — process is exiting.
+    }
+  }
+  activeRunDirs.clear();
+}
+
+function registerSignalHandlersOnce() {
+  if (signalHandlersRegistered) return;
+  signalHandlersRegistered = true;
+  process.on('exit', purgeActiveDirs);
+  process.on('SIGINT', () => {
+    purgeActiveDirs();
+    process.exit(130);
+  });
+  process.on('SIGTERM', () => {
+    purgeActiveDirs();
+    process.exit(143);
+  });
 }
 
 /**
@@ -28,10 +60,24 @@ export interface E2EApp {
  * Runs migrations, creates real services, registers all routes.
  * Returns the app instance + cleanup function to tear down.
  *
+ * Each call creates a per-run directory under `os.tmpdir()` prefixed
+ * `narratorr-e2e-` that holds the DB file and its WAL/SHM sidecars.
+ * cleanup() removes the directory atomically via a single recursive
+ * `rmSync`. An abnormal exit (SIGINT/SIGTERM/process exit) triggers
+ * a best-effort purge of any still-active run directories registered
+ * at module load.
+ *
+ * Leftovers from an uncaught crash can be purged in bulk:
+ *   find $TMPDIR -maxdepth 1 -name 'narratorr-e2e-*' -exec rm -rf {} +
+ *
  * No static files, no background jobs, no CORS — pure API testing.
  */
 export async function createE2EApp(): Promise<E2EApp> {
-  const dbFile = join(tmpdir(), `narratorr-e2e-${randomBytes(8).toString('hex')}.db`);
+  registerSignalHandlersOnce();
+
+  const dir = mkdtempSync(join(tmpdir(), 'narratorr-e2e-'));
+  activeRunDirs.add(dir);
+  const dbFile = join(dir, 'narratorr.db');
 
   await runMigrations(dbFile);
   const db = createDb(dbFile);
@@ -54,17 +100,14 @@ export async function createE2EApp(): Promise<E2EApp> {
 
   const cleanup = async () => {
     await app.close();
-    try {
-      await unlink(dbFile);
-      // libSQL may create WAL/SHM files
-      await unlink(`${dbFile}-wal`).catch(() => {});
-      await unlink(`${dbFile}-shm`).catch(() => {});
-    } catch {
-      // temp file may already be gone
-    }
+    // Surface rmSync failures on the happy path so tests can distinguish
+    // success from masked failure. Best-effort swallowing is reserved for
+    // the signal-handler branch above.
+    rmSync(dir, { recursive: true, force: true });
+    activeRunDirs.delete(dir);
   };
 
-  return { app: app as unknown as E2EApp['app'], db, services, cleanup };
+  return { app: app as unknown as E2EApp['app'], db, services, dir, cleanup };
 }
 
 /**
