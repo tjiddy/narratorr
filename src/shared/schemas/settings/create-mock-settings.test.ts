@@ -20,10 +20,9 @@ describe('createMockSettings', () => {
     });
 
     it('single-field override preserves all sibling defaults in the same category', () => {
-      const settings = createMockSettings({ processing: { enabled: true } });
-      expect(settings.processing.enabled).toBe(true);
+      const settings = createMockSettings({ processing: { ffmpegPath: '/usr/bin/ffmpeg' } });
+      expect(settings.processing.ffmpegPath).toBe('/usr/bin/ffmpeg');
       // All other processing fields should remain at defaults
-      expect(settings.processing.ffmpegPath).toBe(DEFAULT_SETTINGS.processing.ffmpegPath);
       expect(settings.processing.outputFormat).toBe(DEFAULT_SETTINGS.processing.outputFormat);
       expect(settings.processing.bitrate).toBe(DEFAULT_SETTINGS.processing.bitrate);
       expect(settings.processing.keepOriginalBitrate).toBe(DEFAULT_SETTINGS.processing.keepOriginalBitrate);
@@ -60,11 +59,6 @@ describe('createMockSettings', () => {
       expect(settings.import.minFreeSpaceGB).toBe(0);
     });
 
-    it('preserves falsy-but-valid values: enabled: false', () => {
-      const settings = createMockSettings({ processing: { enabled: false } });
-      expect(settings.processing.enabled).toBe(false);
-    });
-
     it('preserves falsy-but-valid values: empty string proxyUrl', () => {
       const settings = createMockSettings({ network: { proxyUrl: '' } });
       expect(settings.network.proxyUrl).toBe('');
@@ -77,7 +71,6 @@ describe('createMockSettings', () => {
 
     it('override with all fields for a category returns exact override values', () => {
       const customProcessing = {
-        enabled: true,
         ffmpegPath: '/custom/ffmpeg',
         outputFormat: 'mp3' as const,
         keepOriginalBitrate: true,
@@ -95,17 +88,15 @@ describe('createMockSettings', () => {
   describe('schema validation consistency', () => {
     it('factory output satisfies all category Zod schemas', () => {
       const settings = createMockSettings({
-        processing: { enabled: true, ffmpegPath: '/usr/bin/ffmpeg' },
+        processing: { ffmpegPath: '/usr/bin/ffmpeg' },
       });
       for (const category of SETTINGS_CATEGORIES) {
         expect(() => CATEGORY_SCHEMAS[category].parse(settings[category])).not.toThrow();
       }
     });
 
-    it('factory defaults are internally consistent for processing superrefine', () => {
+    it('factory defaults have an empty ffmpegPath', () => {
       const settings = createMockSettings();
-      // Default: enabled=false, so ffmpegPath can be empty — this should be valid
-      expect(settings.processing.enabled).toBe(false);
       expect(settings.processing.ffmpegPath).toBe('');
     });
   });
@@ -137,7 +128,7 @@ describe('createMockSettings', () => {
   describe('returns a fresh copy', () => {
     it('does not mutate DEFAULT_SETTINGS when overrides are provided', () => {
       const before = JSON.stringify(DEFAULT_SETTINGS);
-      const settings = createMockSettings({ processing: { enabled: true } });
+      const settings = createMockSettings({ processing: { ffmpegPath: '/usr/bin/ffmpeg' } });
       settings.processing.bitrate = 999;
       expect(JSON.stringify(DEFAULT_SETTINGS)).toBe(before);
     });
@@ -145,7 +136,7 @@ describe('createMockSettings', () => {
     it('does not mutate DEFAULT_SETTINGS when no overrides are provided', () => {
       const before = JSON.stringify(DEFAULT_SETTINGS);
       const settings = createMockSettings();
-      settings.processing.enabled = true;
+      settings.processing.ffmpegPath = '/usr/bin/ffmpeg';
       settings.processing.bitrate = 999;
       expect(JSON.stringify(DEFAULT_SETTINGS)).toBe(before);
     });
@@ -153,8 +144,8 @@ describe('createMockSettings', () => {
     it('returns independent copies on successive calls', () => {
       const a = createMockSettings();
       const b = createMockSettings();
-      a.processing.enabled = true;
-      expect(b.processing.enabled).toBe(false);
+      a.processing.ffmpegPath = '/custom';
+      expect(b.processing.ffmpegPath).toBe('');
     });
   });
 });

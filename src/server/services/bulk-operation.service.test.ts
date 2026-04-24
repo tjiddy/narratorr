@@ -80,7 +80,7 @@ function createService(opts?: {
   const bookService = opts?.bookService ?? makeBookService();
   const settingsService = createMockSettingsService({
     library: { path: '/library', folderFormat: '{author}/{title}', fileFormat: '' },
-    processing: { ffmpegPath: '/usr/bin/ffmpeg', outputFormat: 'm4b' as const, bitrate: 128, mergeBehavior: 'always' as const, enabled: true, keepOriginalBitrate: false, maxConcurrentProcessing: 2, postProcessingScript: '', postProcessingScriptTimeout: 300 },
+    processing: { ffmpegPath: '/usr/bin/ffmpeg', outputFormat: 'm4b' as const, bitrate: 128, mergeBehavior: 'always' as const, keepOriginalBitrate: false, maxConcurrentProcessing: 2, postProcessingScript: '', postProcessingScriptTimeout: 300 },
     ...opts?.settingsOverrides,
   });
   const service = new BulkOperationService(
@@ -342,7 +342,7 @@ describe('BulkOperationService — pre-flight validation', () => {
   it('startConvertJob throws FFMPEG_NOT_CONFIGURED when ffmpegPath is empty', async () => {
     const { service } = createService({
       settingsOverrides: {
-        processing: { ffmpegPath: '', outputFormat: 'm4b' as const, bitrate: 128, mergeBehavior: 'always' as const, enabled: true, keepOriginalBitrate: false, maxConcurrentProcessing: 2, postProcessingScript: '', postProcessingScriptTimeout: 300 },
+        processing: { ffmpegPath: '', outputFormat: 'm4b' as const, bitrate: 128, mergeBehavior: 'always' as const, keepOriginalBitrate: false, maxConcurrentProcessing: 2, postProcessingScript: '', postProcessingScriptTimeout: 300 },
       },
     });
     await expect(service.startConvertJob()).rejects.toThrow(expect.objectContaining({ code: 'FFMPEG_NOT_CONFIGURED' }));

@@ -106,27 +106,17 @@ describe('settings routes', () => {
     it('saves processing settings with valid ffmpeg path', async () => {
       const updated = {
         ...mockSettings,
-        processing: { enabled: true, ffmpegPath: '/usr/bin/ffmpeg', outputFormat: 'm4b', bitrate: 128, mergeBehavior: 'multi-file-only' },
+        processing: { ffmpegPath: '/usr/bin/ffmpeg', outputFormat: 'm4b', bitrate: 128, mergeBehavior: 'multi-file-only' },
       };
       (services.settings.update as Mock).mockResolvedValue(updated);
 
       const res = await app.inject({
         method: 'PUT',
         url: '/api/settings',
-        payload: { processing: { enabled: true, ffmpegPath: '/usr/bin/ffmpeg' } },
+        payload: { processing: { ffmpegPath: '/usr/bin/ffmpeg' } },
       });
 
       expect(res.statusCode).toBe(200);
-    });
-
-    it('rejects save when processing enabled with empty ffmpeg path', async () => {
-      const res = await app.inject({
-        method: 'PUT',
-        url: '/api/settings',
-        payload: { processing: { enabled: true, ffmpegPath: '' } },
-      });
-
-      expect(res.statusCode).toBe(400);
     });
   });
 

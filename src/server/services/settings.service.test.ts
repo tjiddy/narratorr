@@ -440,7 +440,7 @@ describe('SettingsService.bootstrapProcessingDefaults', () => {
     _resetKey();
   });
 
-  it('writes processing.enabled=false and detected ffmpegPath when no processing row exists and detectFfmpegPath returns a path', async () => {
+  it('writes detected ffmpegPath plus other defaults (no enabled key) when no processing row exists and detectFfmpegPath returns a path', async () => {
     // No existing processing row
     db.select.mockReturnValue(mockDbChain([]));
     const detectFfmpegPath = vi.fn().mockResolvedValue('/usr/bin/ffmpeg');
@@ -450,12 +450,16 @@ describe('SettingsService.bootstrapProcessingDefaults', () => {
     expect(detectFfmpegPath).toHaveBeenCalled();
     expect(db.insert).toHaveBeenCalled();
     const insertCall = db.insert.mock.results[0].value;
-    expect(insertCall.values).toHaveBeenCalledWith(
-      expect.objectContaining({
-        key: 'processing',
-        value: expect.objectContaining({ enabled: false, ffmpegPath: '/usr/bin/ffmpeg' }),
-      }),
-    );
+    const [call] = insertCall.values.mock.calls as Array<[{ key: string; value: Record<string, unknown> }]>;
+    expect(call[0].key).toBe('processing');
+    expect(call[0].value).toMatchObject({
+      ffmpegPath: '/usr/bin/ffmpeg',
+      outputFormat: 'm4b',
+      bitrate: 128,
+      mergeBehavior: 'multi-file-only',
+      maxConcurrentProcessing: 2,
+    });
+    expect(call[0].value).not.toHaveProperty('enabled');
   });
 
   it('writes nothing when no processing row exists and detectFfmpegPath returns null', async () => {
@@ -469,7 +473,7 @@ describe('SettingsService.bootstrapProcessingDefaults', () => {
   });
 
   it('does not call detectFfmpegPath when processing row already exists', async () => {
-    db.select.mockReturnValue(mockDbChain([{ key: 'processing', value: { enabled: false, ffmpegPath: '' } }]));
+    db.select.mockReturnValue(mockDbChain([{ key: 'processing', value: { ffmpegPath: '' } }]));
     const detectFfmpegPath = vi.fn().mockResolvedValue('/usr/bin/ffmpeg');
 
     await service.bootstrapProcessingDefaults(detectFfmpegPath);
@@ -482,13 +486,23 @@ describe('SettingsService.bootstrapProcessingDefaults', () => {
     // First call: no row
     db.select.mockReturnValueOnce(mockDbChain([]));
     // After first insert, second call finds the row
-    db.select.mockReturnValueOnce(mockDbChain([{ key: 'processing', value: { enabled: false, ffmpegPath: '/usr/bin/ffmpeg' } }]));
+    db.select.mockReturnValueOnce(mockDbChain([{ key: 'processing', value: { ffmpegPath: '/usr/bin/ffmpeg' } }]));
     const detectFfmpegPath = vi.fn().mockResolvedValue('/usr/bin/ffmpeg');
 
     await service.bootstrapProcessingDefaults(detectFfmpegPath);
     await service.bootstrapProcessingDefaults(detectFfmpegPath);
 
     expect(detectFfmpegPath).toHaveBeenCalledTimes(1);
+  });
+
+  it('forward-compat: historical row with enabled=true returns parsed object without enabled key', async () => {
+    // Simulate a pre-migration DB row that still has `enabled`
+    db.select.mockReturnValue(mockDbChain([{ key: 'processing', value: { enabled: true, ffmpegPath: '/ffmpeg' } }]));
+
+    const result = await service.get('processing');
+
+    expect(result.ffmpegPath).toBe('/ffmpeg');
+    expect(result).not.toHaveProperty('enabled');
   });
 });
 

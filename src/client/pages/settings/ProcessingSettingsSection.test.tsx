@@ -30,8 +30,8 @@ const mockToast = toast as unknown as {
 };
 
 const defaultMockSettings = createMockSettings();
-const enabledProcessingSettings = createMockSettings({
-  processing: { enabled: true, ffmpegPath: '/usr/bin/ffmpeg', outputFormat: 'm4b', keepOriginalBitrate: false, bitrate: 128, mergeBehavior: 'multi-file-only', maxConcurrentProcessing: 2, postProcessingScript: '', postProcessingScriptTimeout: 300 },
+const configuredProcessingSettings = createMockSettings({
+  processing: { ffmpegPath: '/usr/bin/ffmpeg', outputFormat: 'm4b', keepOriginalBitrate: false, bitrate: 128, mergeBehavior: 'multi-file-only', maxConcurrentProcessing: 2, postProcessingScript: '', postProcessingScriptTimeout: 300 },
 });
 
 describe('ProcessingSettingsSection', () => {
@@ -40,13 +40,12 @@ describe('ProcessingSettingsSection', () => {
     mockApi.getSettings.mockResolvedValue(defaultMockSettings);
   });
 
-  it('renders all processing fields when processing is enabled', async () => {
-    mockApi.getSettings.mockResolvedValue(enabledProcessingSettings);
+  it('renders all processing fields', async () => {
+    mockApi.getSettings.mockResolvedValue(configuredProcessingSettings);
     renderWithProviders(<ProcessingSettingsSection />);
 
     await waitFor(() => {
       expect(screen.getByText('Post Processing')).toBeInTheDocument();
-      expect(screen.getByLabelText('Enable Post Processing')).toBeInTheDocument();
       expect(screen.getByLabelText('ffmpeg Path')).toBeInTheDocument();
       expect(screen.getByLabelText('Output Format')).toBeInTheDocument();
       expect(screen.getByLabelText('Target Bitrate (kbps)')).toBeInTheDocument();
@@ -55,67 +54,25 @@ describe('ProcessingSettingsSection', () => {
     });
   });
 
-  it('does not render processing child fields when processing is disabled', async () => {
+  it('renders Tag Embedding section', async () => {
     renderWithProviders(<ProcessingSettingsSection />);
 
     await waitFor(() => {
-      expect(screen.getByLabelText('Enable Post Processing')).toBeInTheDocument();
+      expect(screen.getByLabelText('Tag Embedding')).toBeInTheDocument();
     });
-
-    expect(screen.queryByLabelText('ffmpeg Path')).not.toBeInTheDocument();
-    expect(screen.queryByLabelText('Output Format')).not.toBeInTheDocument();
-    expect(screen.queryByLabelText('Target Bitrate (kbps)')).not.toBeInTheDocument();
-    expect(screen.queryByLabelText('Keep original')).not.toBeInTheDocument();
-    expect(screen.queryByLabelText('Merge Behavior')).not.toBeInTheDocument();
   });
 
-  it('keeps Tag Embedding section visible when processing is disabled', async () => {
+  it('renders Custom Script section', async () => {
     renderWithProviders(<ProcessingSettingsSection />);
 
     await waitFor(() => {
-      expect(screen.getByLabelText('Enable Post Processing')).toBeInTheDocument();
-    });
-
-    expect(screen.getByLabelText('Tag Embedding')).toBeInTheDocument();
-  });
-
-  it('keeps Custom Script section visible when processing is disabled', async () => {
-    renderWithProviders(<ProcessingSettingsSection />);
-
-    await waitFor(() => {
-      expect(screen.getByLabelText('Enable Post Processing')).toBeInTheDocument();
-    });
-
-    expect(screen.getByLabelText('Post-Processing Script')).toBeInTheDocument();
-  });
-
-  it('renders processing child fields when processing toggle is turned on', async () => {
-    const user = userEvent.setup();
-    renderWithProviders(<ProcessingSettingsSection />);
-
-    await waitFor(() => {
-      expect(screen.getByLabelText('Enable Post Processing')).toBeInTheDocument();
-    });
-
-    await user.click(screen.getByLabelText('Enable Post Processing'));
-
-    await waitFor(() => {
-      expect(screen.getByLabelText('ffmpeg Path')).toBeInTheDocument();
-      expect(screen.getByLabelText('Output Format')).toBeInTheDocument();
-      expect(screen.getByLabelText('Target Bitrate (kbps)')).toBeInTheDocument();
-      expect(screen.getByLabelText('Keep original')).toBeInTheDocument();
-      expect(screen.getByLabelText('Merge Behavior')).toBeInTheDocument();
+      expect(screen.getByLabelText('Post-Processing Script')).toBeInTheDocument();
     });
   });
 
   it('output format, merge behavior, and tag mode selects use shared SelectWithChevron contract', async () => {
     const user = userEvent.setup();
     renderWithProviders(<ProcessingSettingsSection />);
-
-    await waitFor(() => {
-      expect(screen.getByLabelText('Enable Post Processing')).toBeInTheDocument();
-    });
-    await user.click(screen.getByLabelText('Enable Post Processing'));
 
     await waitFor(() => {
       expect(screen.getByLabelText('Output Format')).toBeInTheDocument();
@@ -139,7 +96,7 @@ describe('ProcessingSettingsSection', () => {
 
   it('disables bitrate input when "Keep original" is checked', async () => {
     const user = userEvent.setup();
-    mockApi.getSettings.mockResolvedValue(enabledProcessingSettings);
+    mockApi.getSettings.mockResolvedValue(configuredProcessingSettings);
     renderWithProviders(<ProcessingSettingsSection />);
 
     await waitFor(() => {
@@ -156,7 +113,7 @@ describe('ProcessingSettingsSection', () => {
 
   it('shows ffmpeg version on successful probe', async () => {
     const user = userEvent.setup();
-    mockApi.getSettings.mockResolvedValue(enabledProcessingSettings);
+    mockApi.getSettings.mockResolvedValue(configuredProcessingSettings);
     mockApi.probeFfmpeg.mockResolvedValue({ version: '6.1.1' });
     renderWithProviders(<ProcessingSettingsSection />);
 
@@ -175,7 +132,7 @@ describe('ProcessingSettingsSection', () => {
   it('shows error toast on ffmpeg probe failure', async () => {
     const user = userEvent.setup();
     mockApi.getSettings.mockResolvedValue(createMockSettings({
-      processing: { enabled: true, ffmpegPath: '/bad/path', outputFormat: 'm4b', keepOriginalBitrate: false, bitrate: 128, mergeBehavior: 'multi-file-only', maxConcurrentProcessing: 2, postProcessingScript: '', postProcessingScriptTimeout: 300 },
+      processing: { ffmpegPath: '/bad/path', outputFormat: 'm4b', keepOriginalBitrate: false, bitrate: 128, mergeBehavior: 'multi-file-only', maxConcurrentProcessing: 2, postProcessingScript: '', postProcessingScriptTimeout: 300 },
     }));
     mockApi.probeFfmpeg.mockRejectedValue(new Error('spawn ENOENT'));
     renderWithProviders(<ProcessingSettingsSection />);
@@ -194,7 +151,7 @@ describe('ProcessingSettingsSection', () => {
   it('shows stringified feedback and toast when ffmpeg probe rejects a non-Error value', async () => {
     const user = userEvent.setup();
     mockApi.getSettings.mockResolvedValue(createMockSettings({
-      processing: { enabled: true, ffmpegPath: '/bad/path', outputFormat: 'm4b', keepOriginalBitrate: false, bitrate: 128, mergeBehavior: 'multi-file-only', maxConcurrentProcessing: 2, postProcessingScript: '', postProcessingScriptTimeout: 300 },
+      processing: { ffmpegPath: '/bad/path', outputFormat: 'm4b', keepOriginalBitrate: false, bitrate: 128, mergeBehavior: 'multi-file-only', maxConcurrentProcessing: 2, postProcessingScript: '', postProcessingScriptTimeout: 300 },
     }));
     mockApi.probeFfmpeg.mockRejectedValue('string-rejection');
     renderWithProviders(<ProcessingSettingsSection />);
@@ -239,7 +196,7 @@ describe('ProcessingSettingsSection', () => {
   });
 
   it('renders max concurrent jobs field', async () => {
-    mockApi.getSettings.mockResolvedValue(enabledProcessingSettings);
+    mockApi.getSettings.mockResolvedValue(configuredProcessingSettings);
     renderWithProviders(<ProcessingSettingsSection />);
 
     await waitFor(() => {
@@ -249,7 +206,7 @@ describe('ProcessingSettingsSection', () => {
   });
 
   it('bitrate, postProcessingScriptTimeout, and maxConcurrentProcessing inputs use integer step', async () => {
-    mockApi.getSettings.mockResolvedValue(enabledProcessingSettings);
+    mockApi.getSettings.mockResolvedValue(configuredProcessingSettings);
     renderWithProviders(<ProcessingSettingsSection />);
 
     await waitFor(() => {
@@ -261,19 +218,9 @@ describe('ProcessingSettingsSection', () => {
     expect(screen.getByLabelText('Max Concurrent Jobs').getAttribute('step')).toBe('1');
   });
 
-  it('does not render max concurrent jobs when processing is disabled', async () => {
-    renderWithProviders(<ProcessingSettingsSection />);
-
-    await waitFor(() => {
-      expect(screen.getByLabelText('Enable Post Processing')).toBeInTheDocument();
-    });
-
-    expect(screen.queryByLabelText('Max Concurrent Jobs')).not.toBeInTheDocument();
-  });
-
   it('shows mp3 chapter warning when mp3 format selected', async () => {
     const user = userEvent.setup();
-    mockApi.getSettings.mockResolvedValue(enabledProcessingSettings);
+    mockApi.getSettings.mockResolvedValue(configuredProcessingSettings);
     renderWithProviders(<ProcessingSettingsSection />);
 
     await waitFor(() => {
@@ -288,8 +235,8 @@ describe('ProcessingSettingsSection', () => {
   });
 
   it('sends processing and tagging categories on save', async () => {
-    mockApi.getSettings.mockResolvedValue(enabledProcessingSettings);
-    mockApi.updateSettings.mockResolvedValue(enabledProcessingSettings);
+    mockApi.getSettings.mockResolvedValue(configuredProcessingSettings);
+    mockApi.updateSettings.mockResolvedValue(configuredProcessingSettings);
     const user = userEvent.setup();
     renderWithProviders(<ProcessingSettingsSection />);
 
@@ -305,7 +252,6 @@ describe('ProcessingSettingsSection', () => {
     await waitFor(() => {
       expect(mockApi.updateSettings).toHaveBeenCalledWith({
         processing: {
-          enabled: true,
           ffmpegPath: '/usr/bin/ffmpeg',
           outputFormat: 'm4b',
           keepOriginalBitrate: false,
@@ -322,31 +268,6 @@ describe('ProcessingSettingsSection', () => {
         },
       });
     });
-  });
-
-  it('blocks submit when processing enabled with empty ffmpegPath', async () => {
-    const user = userEvent.setup();
-    mockApi.getSettings.mockResolvedValue(defaultMockSettings);
-    renderWithProviders(<ProcessingSettingsSection />);
-
-    await waitFor(() => {
-      expect(screen.getByLabelText('Enable Post Processing')).toBeInTheDocument();
-    });
-
-    // Enable processing (ffmpegPath is still empty)
-    await user.click(screen.getByLabelText('Enable Post Processing'));
-
-    await waitFor(() => {
-      expect(screen.getByLabelText('ffmpeg Path')).toBeInTheDocument();
-    });
-
-    // Submit without filling ffmpegPath
-    await act(async () => {
-      fireEvent.submit(screen.getByRole('button', { name: /save/i }).closest('form')!);
-    });
-
-    expect(screen.getByText(/ffmpeg path is required when processing is enabled/i)).toBeInTheDocument();
-    expect(mockApi.updateSettings).not.toHaveBeenCalled();
   });
 
   describe('post-processing script', () => {
@@ -392,7 +313,7 @@ describe('ProcessingSettingsSection', () => {
     it('shows validation error when timeout is cleared with script path present', async () => {
       const user = userEvent.setup();
       const settingsWithScript = createMockSettings({
-        processing: { enabled: false, ffmpegPath: '', outputFormat: 'm4b', keepOriginalBitrate: false, bitrate: 128, mergeBehavior: 'multi-file-only', maxConcurrentProcessing: 2, postProcessingScript: '/scripts/post.sh', postProcessingScriptTimeout: 60 },
+        processing: { ffmpegPath: '', outputFormat: 'm4b', keepOriginalBitrate: false, bitrate: 128, mergeBehavior: 'multi-file-only', maxConcurrentProcessing: 2, postProcessingScript: '/scripts/post.sh', postProcessingScriptTimeout: 60 },
       });
       mockApi.getSettings.mockResolvedValue(settingsWithScript);
       renderWithProviders(<ProcessingSettingsSection />);
@@ -414,13 +335,13 @@ describe('ProcessingSettingsSection', () => {
   });
 
   it('shows success toast on save', async () => {
-    mockApi.getSettings.mockResolvedValue(enabledProcessingSettings);
-    mockApi.updateSettings.mockResolvedValue(enabledProcessingSettings);
+    mockApi.getSettings.mockResolvedValue(configuredProcessingSettings);
+    mockApi.updateSettings.mockResolvedValue(configuredProcessingSettings);
     const user = userEvent.setup();
     renderWithProviders(<ProcessingSettingsSection />);
 
     await waitFor(() => {
-      expect(screen.getByLabelText('Enable Post Processing')).toBeInTheDocument();
+      expect(screen.getByLabelText('Tag Embedding')).toBeInTheDocument();
     });
 
     // Make dirty
@@ -433,13 +354,13 @@ describe('ProcessingSettingsSection', () => {
   });
 
   it('shows error toast on save failure', async () => {
-    mockApi.getSettings.mockResolvedValue(enabledProcessingSettings);
+    mockApi.getSettings.mockResolvedValue(configuredProcessingSettings);
     mockApi.updateSettings.mockRejectedValue(new Error('Server error'));
     const user = userEvent.setup();
     renderWithProviders(<ProcessingSettingsSection />);
 
     await waitFor(() => {
-      expect(screen.getByLabelText('Enable Post Processing')).toBeInTheDocument();
+      expect(screen.getByLabelText('Tag Embedding')).toBeInTheDocument();
     });
 
     await user.click(screen.getByLabelText('Tag Embedding'));
@@ -452,7 +373,7 @@ describe('ProcessingSettingsSection', () => {
 
   it('shows reduced opacity on bitrate input when "Keep original" is checked', async () => {
     const user = userEvent.setup();
-    mockApi.getSettings.mockResolvedValue(enabledProcessingSettings);
+    mockApi.getSettings.mockResolvedValue(configuredProcessingSettings);
     renderWithProviders(<ProcessingSettingsSection />);
 
     await waitFor(() => {
@@ -470,7 +391,7 @@ describe('ProcessingSettingsSection', () => {
   it('re-enables bitrate input when "Keep original" is unchecked', async () => {
     const user = userEvent.setup();
     mockApi.getSettings.mockResolvedValue(
-      createMockSettings({ processing: { enabled: true, ffmpegPath: '/usr/bin/ffmpeg', outputFormat: 'm4b', keepOriginalBitrate: true, bitrate: 128, mergeBehavior: 'multi-file-only', maxConcurrentProcessing: 2, postProcessingScript: '', postProcessingScriptTimeout: 300 } })
+      createMockSettings({ processing: { ffmpegPath: '/usr/bin/ffmpeg', outputFormat: 'm4b', keepOriginalBitrate: true, bitrate: 128, mergeBehavior: 'multi-file-only', maxConcurrentProcessing: 2, postProcessingScript: '', postProcessingScriptTimeout: 300 } })
     );
     renderWithProviders(<ProcessingSettingsSection />);
 
@@ -489,7 +410,7 @@ describe('ProcessingSettingsSection', () => {
     it('accepts postProcessingScriptTimeout of exactly 1 (min boundary)', async () => {
       const user = userEvent.setup();
       const settingsWithScript = createMockSettings({
-        processing: { enabled: false, ffmpegPath: '', outputFormat: 'm4b', keepOriginalBitrate: false, bitrate: 128, mergeBehavior: 'multi-file-only', maxConcurrentProcessing: 2, postProcessingScript: '/scripts/post.sh', postProcessingScriptTimeout: 60 },
+        processing: { ffmpegPath: '', outputFormat: 'm4b', keepOriginalBitrate: false, bitrate: 128, mergeBehavior: 'multi-file-only', maxConcurrentProcessing: 2, postProcessingScript: '/scripts/post.sh', postProcessingScriptTimeout: 60 },
       });
       mockApi.getSettings.mockResolvedValue(settingsWithScript);
       mockApi.updateSettings.mockResolvedValue(settingsWithScript);
@@ -522,7 +443,7 @@ describe('ProcessingSettingsSection', () => {
     it('rejects postProcessingScriptTimeout of 0 (below min)', async () => {
       const user = userEvent.setup();
       const settingsWithScript = createMockSettings({
-        processing: { enabled: false, ffmpegPath: '', outputFormat: 'm4b', keepOriginalBitrate: false, bitrate: 128, mergeBehavior: 'multi-file-only', maxConcurrentProcessing: 2, postProcessingScript: '/scripts/post.sh', postProcessingScriptTimeout: 60 },
+        processing: { ffmpegPath: '', outputFormat: 'm4b', keepOriginalBitrate: false, bitrate: 128, mergeBehavior: 'multi-file-only', maxConcurrentProcessing: 2, postProcessingScript: '/scripts/post.sh', postProcessingScriptTimeout: 60 },
       });
       mockApi.getSettings.mockResolvedValue(settingsWithScript);
       renderWithProviders(<ProcessingSettingsSection />);
@@ -547,7 +468,7 @@ describe('ProcessingSettingsSection', () => {
     it('rejects decimal postProcessingScriptTimeout (non-integer)', async () => {
       const user = userEvent.setup();
       const settingsWithScript = createMockSettings({
-        processing: { enabled: false, ffmpegPath: '', outputFormat: 'm4b', keepOriginalBitrate: false, bitrate: 128, mergeBehavior: 'multi-file-only', maxConcurrentProcessing: 2, postProcessingScript: '/scripts/post.sh', postProcessingScriptTimeout: 60 },
+        processing: { ffmpegPath: '', outputFormat: 'm4b', keepOriginalBitrate: false, bitrate: 128, mergeBehavior: 'multi-file-only', maxConcurrentProcessing: 2, postProcessingScript: '/scripts/post.sh', postProcessingScriptTimeout: 60 },
       });
       mockApi.getSettings.mockResolvedValue(settingsWithScript);
       renderWithProviders(<ProcessingSettingsSection />);
@@ -572,7 +493,7 @@ describe('ProcessingSettingsSection', () => {
     it('handles NaN postProcessingScriptTimeout when script is empty — no validation error', async () => {
       const user = userEvent.setup();
       const settingsWithTimeout = createMockSettings({
-        processing: { enabled: false, ffmpegPath: '', outputFormat: 'm4b', keepOriginalBitrate: false, bitrate: 128, mergeBehavior: 'multi-file-only', maxConcurrentProcessing: 2, postProcessingScript: '', postProcessingScriptTimeout: 60 },
+        processing: { ffmpegPath: '', outputFormat: 'm4b', keepOriginalBitrate: false, bitrate: 128, mergeBehavior: 'multi-file-only', maxConcurrentProcessing: 2, postProcessingScript: '', postProcessingScriptTimeout: 60 },
       });
       mockApi.getSettings.mockResolvedValue(settingsWithTimeout);
       mockApi.updateSettings.mockResolvedValue(settingsWithTimeout);
@@ -605,7 +526,7 @@ describe('ProcessingSettingsSection', () => {
     it('handles NaN postProcessingScriptTimeout when script is set — validation error fires', async () => {
       const user = userEvent.setup();
       const settingsWithScript = createMockSettings({
-        processing: { enabled: false, ffmpegPath: '', outputFormat: 'm4b', keepOriginalBitrate: false, bitrate: 128, mergeBehavior: 'multi-file-only', maxConcurrentProcessing: 2, postProcessingScript: '/scripts/post.sh', postProcessingScriptTimeout: 60 },
+        processing: { ffmpegPath: '', outputFormat: 'm4b', keepOriginalBitrate: false, bitrate: 128, mergeBehavior: 'multi-file-only', maxConcurrentProcessing: 2, postProcessingScript: '/scripts/post.sh', postProcessingScriptTimeout: 60 },
       });
       mockApi.getSettings.mockResolvedValue(settingsWithScript);
       renderWithProviders(<ProcessingSettingsSection />);
@@ -630,7 +551,7 @@ describe('ProcessingSettingsSection', () => {
     it('save payload includes both processing and tagging categories', async () => {
       const user = userEvent.setup();
       const settings = createMockSettings({
-        processing: { enabled: true, ffmpegPath: '/usr/bin/ffmpeg', outputFormat: 'm4b', keepOriginalBitrate: false, bitrate: 128, mergeBehavior: 'multi-file-only', maxConcurrentProcessing: 2, postProcessingScript: '', postProcessingScriptTimeout: 300 },
+        processing: { ffmpegPath: '/usr/bin/ffmpeg', outputFormat: 'm4b', keepOriginalBitrate: false, bitrate: 128, mergeBehavior: 'multi-file-only', maxConcurrentProcessing: 2, postProcessingScript: '', postProcessingScriptTimeout: 300 },
         tagging: { enabled: false, mode: 'populate_missing', embedCover: true },
       });
       mockApi.getSettings.mockResolvedValue(settings);
@@ -638,7 +559,7 @@ describe('ProcessingSettingsSection', () => {
       renderWithProviders(<ProcessingSettingsSection />);
 
       await waitFor(() => {
-        expect(screen.getByLabelText('Enable Post Processing')).toBeInTheDocument();
+        expect(screen.getByLabelText('Tag Embedding')).toBeInTheDocument();
       });
 
       // Toggle tagging to make dirty
@@ -649,58 +570,15 @@ describe('ProcessingSettingsSection', () => {
         const call = mockApi.updateSettings.mock.calls[0][0];
         expect(call).toHaveProperty('processing');
         expect(call).toHaveProperty('tagging');
-        expect(call.processing).toMatchObject({ enabled: true, ffmpegPath: '/usr/bin/ffmpeg' });
+        expect(call.processing).toMatchObject({ ffmpegPath: '/usr/bin/ffmpeg' });
         // Tag Embedding was toggled: enabled false → true, embedCover stays true
         expect(call.tagging).toMatchObject({ enabled: true, mode: 'populate_missing', embedCover: true });
-      });
-    });
-
-    it('tagging toggle state survives processing validation failure and correction', async () => {
-      const user = userEvent.setup();
-      mockApi.getSettings.mockResolvedValue(defaultMockSettings);
-      mockApi.updateSettings.mockResolvedValue(defaultMockSettings);
-      renderWithProviders(<ProcessingSettingsSection />);
-
-      await waitFor(() => {
-        expect(screen.getByLabelText('Enable Post Processing')).toBeInTheDocument();
-      });
-
-      // Toggle tagging on
-      await user.click(screen.getByLabelText('Tag Embedding'));
-
-      // Enable processing without ffmpegPath → validation error
-      await user.click(screen.getByLabelText('Enable Post Processing'));
-
-      await act(async () => {
-        fireEvent.submit(screen.getByRole('button', { name: /save/i }).closest('form')!);
-      });
-
-      expect(screen.getByText('ffmpeg path is required when processing is enabled')).toBeInTheDocument();
-      expect(mockApi.updateSettings).not.toHaveBeenCalled();
-
-      // Fix the validation error
-      const ffmpegInput = screen.getByLabelText('ffmpeg Path');
-      await user.type(ffmpegInput, '/usr/bin/ffmpeg');
-
-      await act(async () => {
-        fireEvent.submit(screen.getByRole('button', { name: /save/i }).closest('form')!);
-      });
-
-      await waitFor(() => {
-        expect(mockApi.updateSettings).toHaveBeenCalledWith(
-          expect.objectContaining({
-            tagging: expect.objectContaining({
-              // Tag Embedding was toggled on before the validation failure
-              enabled: true,
-            }),
-          }),
-        );
       });
     });
   });
 
   it('renders Keep Original toggle as a compact hidden-checkbox slider (sr-only peer pattern)', async () => {
-    mockApi.getSettings.mockResolvedValue(enabledProcessingSettings);
+    mockApi.getSettings.mockResolvedValue(configuredProcessingSettings);
     renderWithProviders(<ProcessingSettingsSection />);
 
     await waitFor(() => {

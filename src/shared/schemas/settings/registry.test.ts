@@ -103,7 +103,6 @@ describe('settingsRegistry', () => {
 
     it('processing defaults have all expected values', () => {
       expect(DEFAULT_SETTINGS.processing).toEqual({
-        enabled: false,
         ffmpegPath: '',
         outputFormat: 'm4b',
         keepOriginalBitrate: false,
@@ -381,11 +380,11 @@ describe('settingsRegistry', () => {
       expect(result.success).toBe(true);
     });
 
-    it('updateSettingsSchema rejects processing enabled with empty ffmpegPath', () => {
+    it('updateSettingsSchema accepts processing update with empty ffmpegPath (no enable-dependent rejection)', () => {
       const result = updateSettingsSchema.safeParse({
-        processing: { enabled: true, ffmpegPath: '' },
+        processing: { ffmpegPath: '' },
       });
-      expect(result.success).toBe(false);
+      expect(result.success).toBe(true);
     });
   });
 
@@ -399,18 +398,6 @@ describe('settingsRegistry', () => {
       const data = { ...DEFAULT_SETTINGS, library: { ...DEFAULT_SETTINGS.library, path: '' } };
       const result = updateSettingsFormSchema.safeParse(data);
       expect(result.success).toBe(false);
-    });
-
-    it('form schema processing superRefine: enabled true with empty ffmpegPath produces error', () => {
-      const data = { ...DEFAULT_SETTINGS, processing: { ...DEFAULT_SETTINGS.processing, enabled: true, ffmpegPath: '' } };
-      const result = updateSettingsFormSchema.safeParse(data);
-      expect(result.success).toBe(false);
-    });
-
-    it('form schema processing superRefine: enabled false with empty ffmpegPath passes', () => {
-      const data = { ...DEFAULT_SETTINGS, processing: { ...DEFAULT_SETTINGS.processing, enabled: false, ffmpegPath: '' } };
-      const result = updateSettingsFormSchema.safeParse(data);
-      expect(result.success).toBe(true);
     });
 
     it('form schema accepts NaN timeout when script path is empty', () => {
@@ -471,15 +458,6 @@ describe('settingsRegistry', () => {
   });
 
   describe('edge cases', () => {
-    it('falsy defaults preserved: processing.enabled false', () => {
-      expect(DEFAULT_SETTINGS.processing.enabled).toBe(false);
-      const result = appSettingsSchema.safeParse(DEFAULT_SETTINGS);
-      expect(result.success).toBe(true);
-      if (result.success) {
-        expect((result.data as AppSettings).processing.enabled).toBe(false);
-      }
-    });
-
     it('zero defaults preserved: quality.grabFloor 0', () => {
       expect(DEFAULT_SETTINGS.quality.grabFloor).toBe(0);
       const result = appSettingsSchema.safeParse(DEFAULT_SETTINGS);
@@ -525,7 +503,7 @@ describe('settingsRegistry', () => {
 
     it('form schema requires fields even when base schema provides defaults', () => {
       // processing has multiple .default() fields. Form schema should require all of them.
-      const data = { ...DEFAULT_SETTINGS, processing: { enabled: true } as never };
+      const data = { ...DEFAULT_SETTINGS, processing: { ffmpegPath: '/usr/bin/ffmpeg' } as never };
       const result = updateSettingsFormSchema.safeParse(data);
       expect(result.success).toBe(false);
     });
