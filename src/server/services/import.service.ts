@@ -31,6 +31,22 @@ export interface ImportProgressCallbacks {
   emitProgress?: (phase: ImportJobPhase, progress: number, byteCounter?: { current: number; total: number }) => void;
 }
 
+async function notifyPhase(callbacks: ImportProgressCallbacks | undefined, phase: ImportJobPhase): Promise<void> {
+  if (callbacks?.setPhase) await callbacks.setPhase(phase);
+}
+
+function bindCopyProgress(callbacks?: ImportProgressCallbacks) {
+  const emit = callbacks?.emitProgress;
+  if (!emit) return undefined;
+  return (ratio: number, byteCounter: { current: number; total: number }) => emit('copying', ratio, byteCounter);
+}
+
+function bindRenameProgress(callbacks?: ImportProgressCallbacks) {
+  const emit = callbacks?.emitProgress;
+  if (!emit) return undefined;
+  return (current: number, total: number) => emit('renaming', total > 0 ? current / total : 1, { current, total });
+}
+
 /** Lightweight context for orchestrator side-effect dispatch. */
 export interface ImportContext {
   downloadId: number;
@@ -122,21 +138,17 @@ export class ImportService {
       this.log.debug({ downloadId, bookTitle: book.title, fileCount, sourceSize: sourceStats.size }, 'Validated source');
       const diskSpace = await checkDiskSpace({ sourcePath, sourceStats, libraryPath: librarySettings.path, minFreeSpaceGB: importSettings.minFreeSpaceGB });
       this.log.debug({ downloadId, bookTitle: book.title, freeGB: diskSpace.freeGB, requiredGB: diskSpace.requiredGB }, 'Disk space check passed');
-      await callbacks?.setPhase?.('copying');
+      await notifyPhase(callbacks, 'copying');
       await copyToLibrary({
         sourcePath, targetPath, sourceStats, log: this.log,
-        onProgress: callbacks?.emitProgress
-          ? (ratio, byteCounter) => callbacks.emitProgress!('copying', ratio, byteCounter)
-          : undefined,
+        onProgress: bindCopyProgress(callbacks),
       });
 
       if (librarySettings.fileFormat) {
-        await callbacks?.setPhase?.('renaming');
+        await notifyPhase(callbacks, 'renaming');
         await renameFilesWithTemplate(
           targetPath, librarySettings.fileFormat, book, authorName, this.log, namingOptions,
-          callbacks?.emitProgress
-            ? (current, total) => callbacks.emitProgress!('renaming', total > 0 ? current / total : 1, { current, total })
-            : undefined,
+          bindRenameProgress(callbacks),
         );
       }
       const targetSize = await verifyCopy({ targetPath, sourcePath });
@@ -149,7 +161,7 @@ export class ImportService {
       });
 
       const ffprobePath = resolveFfprobePathFromSettings(processingSettings?.ffmpegPath);
-      await callbacks?.setPhase?.('fetching_metadata');
+      await notifyPhase(callbacks, 'fetching_metadata');
       await this.enrichAfterImport(book.id, targetPath!, book, ffprobePath);
 
       this.log.info({ downloadId, bookId: book.id, bookTitle: book.title, targetPath, fileCount, totalSize: targetSize, elapsedMs: Date.now() - startMs }, 'Import completed successfully');
