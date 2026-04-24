@@ -248,6 +248,19 @@ describe('ProcessingSettingsSection', () => {
     });
   });
 
+  it('bitrate, postProcessingScriptTimeout, and maxConcurrentProcessing inputs use integer step', async () => {
+    mockApi.getSettings.mockResolvedValue(enabledProcessingSettings);
+    renderWithProviders(<ProcessingSettingsSection />);
+
+    await waitFor(() => {
+      expect(screen.getByLabelText('Target Bitrate (kbps)')).toBeInTheDocument();
+    });
+
+    expect(screen.getByLabelText('Target Bitrate (kbps)').getAttribute('step')).toBe('1');
+    expect(screen.getByLabelText('Script Timeout (seconds)').getAttribute('step')).toBe('1');
+    expect(screen.getByLabelText('Max Concurrent Jobs').getAttribute('step')).toBe('1');
+  });
+
   it('does not render max concurrent jobs when processing is disabled', async () => {
     renderWithProviders(<ProcessingSettingsSection />);
 

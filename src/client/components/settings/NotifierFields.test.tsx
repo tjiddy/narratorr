@@ -82,6 +82,16 @@ describe('NotifierFields', () => {
     expect(path).toHaveValue('/opt/notify.sh');
   });
 
+  it('script timeout input uses integer step', () => {
+    render(<FieldWrapper type="script" />);
+    expect(screen.getByLabelText('Timeout (seconds)').getAttribute('step')).toBe('1');
+  });
+
+  it('email SMTP port input uses integer step', () => {
+    render(<FieldWrapper type="email" />);
+    expect(screen.getByLabelText('SMTP Port').getAttribute('step')).toBe('1');
+  });
+
   it('renders email fields with SMTP inputs', () => {
     render(<FieldWrapper type="email" />);
     expect(screen.getByText('SMTP Host')).toBeInTheDocument();

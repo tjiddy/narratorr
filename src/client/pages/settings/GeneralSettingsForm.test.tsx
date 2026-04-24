@@ -46,6 +46,15 @@ describe('GeneralSettingsForm', () => {
     });
   });
 
+  it('housekeepingRetentionDays input uses integer step', async () => {
+    renderWithProviders(<GeneralSettingsForm />);
+
+    await waitFor(() => {
+      expect(screen.getByLabelText('Event History Retention (days)')).toBeInTheDocument();
+    });
+    expect(screen.getByLabelText('Event History Retention (days)').getAttribute('step')).toBe('1');
+  });
+
   it('log level select uses shared SelectWithChevron contract', async () => {
     renderWithProviders(<GeneralSettingsForm />);
     await waitFor(() => {

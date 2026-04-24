@@ -43,6 +43,7 @@ export function BackupScheduleForm() {
               className={errorInputClass(!!errors.backupIntervalMinutes)}
               min={60}
               max={43200}
+              step={1}
             />
             {errors.backupIntervalMinutes && (
               <p className="text-sm text-destructive mt-1">{errors.backupIntervalMinutes.message}</p>
@@ -60,6 +61,7 @@ export function BackupScheduleForm() {
               className={errorInputClass(!!errors.backupRetention)}
               min={1}
               max={100}
+              step={1}
             />
             {errors.backupRetention && (
               <p className="text-sm text-destructive mt-1">{errors.backupRetention.message}</p>

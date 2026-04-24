@@ -70,7 +70,7 @@ export function ScriptFields({ register, errors }: NotifierFieldProps) {
       </div>
       <div>
         <label htmlFor="notifierTimeout" className="block text-sm font-medium mb-2">Timeout (seconds)</label>
-        <input id="notifierTimeout" type="number" {...register('settings.timeout', { valueAsNumber: true })} min={1} max={300} className={inputClass} />
+        <input id="notifierTimeout" type="number" {...register('settings.timeout', { valueAsNumber: true })} min={1} max={300} step={1} className={inputClass} />
       </div>
     </>
   );
@@ -86,7 +86,7 @@ export function EmailFields({ register, errors }: NotifierFieldProps) {
       </div>
       <div>
         <label htmlFor="notifierSmtpPort" className="block text-sm font-medium mb-2">SMTP Port</label>
-        <input id="notifierSmtpPort" type="number" {...register('settings.smtpPort', { valueAsNumber: true })} className={inputClass} placeholder="587" />
+        <input id="notifierSmtpPort" type="number" {...register('settings.smtpPort', { valueAsNumber: true })} step={1} className={inputClass} placeholder="587" />
       </div>
       <div>
         <label htmlFor="notifierSmtpUser" className="block text-sm font-medium mb-2">Username</label>

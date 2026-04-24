@@ -51,6 +51,7 @@ export function ImportSettingsSection() {
             disabled={!deleteAfterImport}
             className={`${errorInputClass(!!errors.minSeedTime)} disabled:cursor-not-allowed disabled:opacity-50`}
             min={0}
+            step={1}
             placeholder="60"
           />
           {errors.minSeedTime && (
@@ -101,7 +102,7 @@ export function ImportSettingsSection() {
             {...register('minFreeSpaceGB', { valueAsNumber: true })}
             className={errorInputClass(!!errors.minFreeSpaceGB)}
             min={0}
-            step={1}
+            step="any"
             placeholder="5"
           />
           {errors.minFreeSpaceGB && (

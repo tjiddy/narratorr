@@ -29,6 +29,7 @@ export function AbbFields({ register, errors }: Pick<IndexerFieldsProps, 'regist
           {...register('settings.pageLimit', { valueAsNumber: true })}
           min={1}
           max={10}
+          step={1}
           className={`w-full px-4 py-3 bg-background border rounded-xl focus-ring focus:border-transparent transition-all ${
             errors.settings?.pageLimit ? 'border-destructive' : 'border-border'
           }`}

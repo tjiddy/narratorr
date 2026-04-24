@@ -84,6 +84,24 @@ describe('ImportSettingsSection', () => {
     });
   });
 
+  it('minimum free space input accepts decimal values', async () => {
+    renderWithProviders(<ImportSettingsSection />);
+
+    await waitFor(() => {
+      expect(screen.getByLabelText('Minimum Free Space (GB)')).toBeInTheDocument();
+    });
+    expect(screen.getByLabelText('Minimum Free Space (GB)')).toHaveAttribute('step', 'any');
+  });
+
+  it('minimum seed time input uses integer step', async () => {
+    renderWithProviders(<ImportSettingsSection />);
+
+    await waitFor(() => {
+      expect(screen.getByLabelText('Minimum Seed Time (minutes)')).toBeInTheDocument();
+    });
+    expect(screen.getByLabelText('Minimum Seed Time (minutes)')).toHaveAttribute('step', '1');
+  });
+
   it('allows changing the minimum seed time', async () => {
     const enabledSettings = createMockSettings({
       import: { deleteAfterImport: true, minSeedTime: 60, minSeedRatio: 0, minFreeSpaceGB: 5, redownloadFailed: true },

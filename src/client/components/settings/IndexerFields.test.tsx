@@ -54,6 +54,11 @@ describe('IndexerFields', () => {
     expect(hostname).toHaveValue('test.com');
   });
 
+  it('abb page limit input uses integer step', () => {
+    renderWithProviders(<FieldWrapper type="abb" />);
+    expect(screen.getByLabelText('Page Limit').getAttribute('step')).toBe('1');
+  });
+
   it('renders API URL and API Key for torznab type and accepts input', async () => {
     const user = userEvent.setup();
     renderWithProviders(<FieldWrapper type="torznab" />);

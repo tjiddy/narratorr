@@ -59,6 +59,7 @@ export function DiscoverySettingsSection() {
             type="number"
             {...register('intervalHours', { valueAsNumber: true })}
             className={`mt-1 text-sm ${errorInputClass(!!errors.intervalHours)}`}
+            step={1}
           />
           {errors.intervalHours && (
             <p className="text-xs text-destructive mt-1">{errors.intervalHours.message}</p>
@@ -75,6 +76,7 @@ export function DiscoverySettingsSection() {
             type="number"
             {...register('maxSuggestionsPerAuthor', { valueAsNumber: true })}
             className={`mt-1 text-sm ${errorInputClass(!!errors.maxSuggestionsPerAuthor)}`}
+            step={1}
           />
           {errors.maxSuggestionsPerAuthor && (
             <p className="text-xs text-destructive mt-1">{errors.maxSuggestionsPerAuthor.message}</p>
@@ -94,6 +96,7 @@ export function DiscoverySettingsSection() {
             type="number"
             {...register('expiryDays', { valueAsNumber: true })}
             className={`mt-1 text-sm ${errorInputClass(!!errors.expiryDays)}`}
+            step={1}
           />
           {errors.expiryDays && (
             <p className="text-xs text-destructive mt-1">{errors.expiryDays.message}</p>
@@ -113,6 +116,7 @@ export function DiscoverySettingsSection() {
             type="number"
             {...register('snoozeDays', { valueAsNumber: true })}
             className={`mt-1 text-sm ${errorInputClass(!!errors.snoozeDays)}`}
+            step={1}
           />
           {errors.snoozeDays && (
             <p className="text-xs text-destructive mt-1">{errors.snoozeDays.message}</p>
