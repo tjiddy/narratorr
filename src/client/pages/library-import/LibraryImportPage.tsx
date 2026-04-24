@@ -118,7 +118,7 @@ export function LibraryImportPage() {
           <div>
             <p className="font-medium mb-1">All caught up</p>
             <p className="text-sm text-muted-foreground">
-              Your library is up to date — all detected folders are already registered.
+              Your library is up to date — all detected folders are already imported.
             </p>
           </div>
         </div>
@@ -202,8 +202,8 @@ export function LibraryImportPage() {
               disabled={!!matchJobError}
               registerLabel={
                 registerMutation.isPending
-                  ? 'Registering...'
-                  : `Register ${selectedCount} book${selectedCount !== 1 ? 's' : ''}`
+                  ? 'Importing...'
+                  : `Import ${selectedCount} book${selectedCount !== 1 ? 's' : ''}`
               }
             />
           </div>

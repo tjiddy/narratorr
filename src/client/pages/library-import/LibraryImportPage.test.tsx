@@ -83,7 +83,7 @@ describe('LibraryImportPage (#133)', () => {
     await waitFor(() => {
       expect(screen.getByText(/all caught up/i)).toBeInTheDocument();
     });
-    expect(screen.getByText(/already registered/i)).toBeInTheDocument();
+    expect(screen.getByText(/already imported/i)).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /retry/i })).not.toBeInTheDocument();
   });
 
@@ -132,7 +132,7 @@ describe('LibraryImportPage (#133)', () => {
     expect(mockApi.startMatchJob).toHaveBeenCalledTimes(2);
   });
 
-  it('match-job failure: inline error shown and Register button disabled', async () => {
+  it('match-job failure: inline error shown and Import button disabled', async () => {
     mockApi.startMatchJob.mockRejectedValue(new Error('match server unavailable'));
     mockApi.scanDirectory.mockResolvedValue({
       discoveries: [
@@ -149,8 +149,8 @@ describe('LibraryImportPage (#133)', () => {
     expect(screen.getByText(/match server unavailable/i)).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /retry matching/i })).toBeInTheDocument();
 
-    // Register button must be disabled when matchJobError is set
-    const registerBtn = screen.getByRole('button', { name: /register/i });
+    // Import button must be disabled when matchJobError is set
+    const registerBtn = screen.getByRole('button', { name: /import/i });
     expect(registerBtn).toBeDisabled();
   });
 
@@ -234,7 +234,7 @@ describe('LibraryImportPage (#133)', () => {
     await waitFor(() => {
       expect(screen.getByText('New Book')).toBeInTheDocument();
     });
-    expect(screen.queryByText(/all caught up|up to date|already registered/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/all caught up|up to date|already imported/i)).not.toBeInTheDocument();
   });
 
   // AC4: card index map wiring (#141)
@@ -357,8 +357,8 @@ describe('LibraryImportPage (#133)', () => {
     });
   });
 
-  describe('register button states (#201)', () => {
-    it('register button shows "Register N book(s)" with correct selectedCount', async () => {
+  describe('import button states (#201)', () => {
+    it('import button shows "Import N book(s)" with correct selectedCount', async () => {
       mockApi.startMatchJob.mockRejectedValue(new Error('skip'));
       mockApi.scanDirectory.mockResolvedValue({
         discoveries: [
@@ -374,11 +374,11 @@ describe('LibraryImportPage (#133)', () => {
         expect(screen.getByText('Book 1')).toBeInTheDocument();
       });
 
-      // Both books selected by default → "Register 2 books"
-      expect(screen.getByRole('button', { name: /register 2 books/i })).toBeInTheDocument();
+      // Both books selected by default → "Import 2 books"
+      expect(screen.getByRole('button', { name: /import 2 books/i })).toBeInTheDocument();
     });
 
-    it('register button disabled when selectedCount === 0, shows "Register 0 books"', async () => {
+    it('import button disabled when selectedCount === 0, shows "Import 0 books"', async () => {
       mockApi.startMatchJob.mockRejectedValue(new Error('skip'));
       mockApi.scanDirectory.mockResolvedValue({
         discoveries: [
@@ -397,12 +397,12 @@ describe('LibraryImportPage (#133)', () => {
       await userEvent.click(screen.getByRole('button', { name: /deselect all/i }));
 
       await waitFor(() => {
-        const registerBtn = screen.getByRole('button', { name: /register 0 books/i });
+        const registerBtn = screen.getByRole('button', { name: /import 0 books/i });
         expect(registerBtn).toBeDisabled();
       });
     });
 
-    it('register button disabled when selectedUnmatchedCount > 0 with title showing unmatched count', async () => {
+    it('import button disabled when selectedUnmatchedCount > 0 with title showing unmatched count', async () => {
       vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] });
 
       mockApi.scanDirectory.mockResolvedValue({
@@ -437,7 +437,7 @@ describe('LibraryImportPage (#133)', () => {
 
       // Now: selectedCount=1 AND selectedUnmatchedCount=1 → button disabled with title
       await waitFor(() => {
-        const registerBtn = screen.getByRole('button', { name: /register 1 book$/i });
+        const registerBtn = screen.getByRole('button', { name: /import 1 book$/i });
         expect(registerBtn).toBeDisabled();
         expect(registerBtn).toHaveAttribute('title', '1 selected book needs a match');
       });
@@ -445,7 +445,7 @@ describe('LibraryImportPage (#133)', () => {
       vi.useRealTimers();
     });
 
-    it('register button shows "Registering..." when registerMutation.isPending', async () => {
+    it('import button shows "Importing..." when registerMutation.isPending', async () => {
       vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] });
 
       // confirmImport never resolves (keeps isPending=true)
@@ -471,21 +471,21 @@ describe('LibraryImportPage (#133)', () => {
       await act(async () => { vi.advanceTimersByTime(2000); });
 
       await waitFor(() => {
-        expect(screen.getByRole('button', { name: /register/i })).not.toBeDisabled();
+        expect(screen.getByRole('button', { name: /import/i })).not.toBeDisabled();
       });
 
-      await userEvent.click(screen.getByRole('button', { name: /register 1 book$/i }));
+      await userEvent.click(screen.getByRole('button', { name: /import 1 book$/i }));
 
       await waitFor(() => {
-        expect(screen.getByText(/registering\.\.\./i)).toBeInTheDocument();
+        expect(screen.getByText(/importing\.\.\./i)).toBeInTheDocument();
       });
 
       vi.useRealTimers();
     });
   });
 
-  describe('manual edit → register flow (#201)', () => {
-    it('edited metadata persists through register confirm call', async () => {
+  describe('manual edit → import flow (#201)', () => {
+    it('edited metadata persists through import confirm call', async () => {
       vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] });
 
       mockApi.confirmImport.mockResolvedValue({ accepted: 1 });
@@ -533,8 +533,8 @@ describe('LibraryImportPage (#133)', () => {
         expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
       });
 
-      // Click register
-      await userEvent.click(screen.getByRole('button', { name: /register/i }));
+      // Click import
+      await userEvent.click(screen.getByRole('button', { name: /import/i }));
 
       // Verify the confirmImport was called with the edited metadata
       await waitFor(() => {
@@ -737,7 +737,7 @@ describe('LibraryImportPage (#133)', () => {
       vi.useRealTimers();
     });
 
-    it('Register button enabled after poll resolves with completed job', async () => {
+    it('Import button enabled after poll resolves with completed job', async () => {
       mockApi.confirmImport.mockResolvedValue({ accepted: 1 });
       // Completed match job — polling returns 'completed' immediately so isMatching=false
       mockApi.getMatchJob.mockResolvedValue({ id: 'job-1', status: 'completed', total: 1, matched: 1, results: [] });
@@ -758,10 +758,10 @@ describe('LibraryImportPage (#133)', () => {
       await act(async () => { vi.advanceTimersByTime(2000); });
 
       await waitFor(() => {
-        expect(screen.getByRole('button', { name: /register/i })).not.toBeDisabled();
+        expect(screen.getByRole('button', { name: /import/i })).not.toBeDisabled();
       });
 
-      await userEvent.click(screen.getByRole('button', { name: /register/i }));
+      await userEvent.click(screen.getByRole('button', { name: /import/i }));
 
       await waitFor(() => {
         expect(mockApi.confirmImport).toHaveBeenCalled();

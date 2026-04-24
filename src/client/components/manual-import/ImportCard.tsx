@@ -135,7 +135,7 @@ export function ImportCard({ row, onToggle, onEdit, lockDuplicates, relativePath
       </div>
 
       {/* Badge: "Already in library" for DB duplicates, "Duplicate in scan" for within-scan, confidence badge otherwise */}
-      <div className="w-24 shrink-0 flex justify-center">
+      <div className="w-32 shrink-0 flex justify-center">
         {isWithinScanDuplicate ? (
           <Badge variant="muted">Duplicate in scan</Badge>
         ) : isDuplicate ? (
