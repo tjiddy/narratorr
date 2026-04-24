@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import type { FastifyBaseLogger } from 'fastify';
 import type { Dirent } from 'node:fs';
+import { basename } from 'node:path';
 import { renameFilesWithTemplate } from './paths.js';
 import type { RenameableBook } from './paths.js';
 
@@ -151,6 +152,104 @@ describe('renameFilesWithTemplate', () => {
         expect.objectContaining({ error: expect.anything() }),
         expect.stringMatching(/onProgress callback threw/),
       );
+    });
+  });
+
+  describe('rollback', () => {
+    it('undoes completed renames in reverse order when a mid-sequence rename fails', async () => {
+      const { readdir, rename } = await import('node:fs/promises');
+      vi.mocked(readdir).mockResolvedValue([
+        makeDirent('a.mp3', true),
+        makeDirent('b.mp3', true),
+        makeDirent('c.mp3', true),
+      ] as never);
+
+      const forwardError = Object.assign(new Error('EACCES'), { code: 'EACCES' });
+      let callCount = 0;
+      vi.mocked(rename).mockImplementation(async () => {
+        callCount++;
+        if (callCount === 3) throw forwardError;
+      });
+
+      await expect(
+        renameFilesWithTemplate('/target', '{title}', book, 'Author', log),
+      ).rejects.toBe(forwardError);
+
+      // 3 forward attempts (last one throws) + 2 rollback calls for the 2 completed renames
+      const calls = vi.mocked(rename).mock.calls;
+      expect(calls).toHaveLength(5);
+
+      // The forward calls map the original filenames to template-rendered names.
+      // Capture the actual (from, to) the production code emitted so the rollback
+      // assertions don't have to re-derive the template.
+      const forward1 = { from: calls[0][0] as string, to: calls[0][1] as string };
+      const forward2 = { from: calls[1][0] as string, to: calls[1][1] as string };
+
+      // Rollback calls swap from/to of the completed renames, in reverse order.
+      // Completed-rename #2 is undone first, then #1.
+      expect(calls[3][0]).toBe(forward2.to);
+      expect(calls[3][1]).toBe(forward2.from);
+      expect(calls[4][0]).toBe(forward1.to);
+      expect(calls[4][1]).toBe(forward1.from);
+    });
+
+    it('continues rolling back remaining completed renames when one rollback rejects', async () => {
+      const { readdir, rename } = await import('node:fs/promises');
+      vi.mocked(readdir).mockResolvedValue([
+        makeDirent('a.mp3', true),
+        makeDirent('b.mp3', true),
+        makeDirent('c.mp3', true),
+      ] as never);
+
+      const forwardError = Object.assign(new Error('ENOSPC'), { code: 'ENOSPC' });
+      const rollbackError = new Error('rollback failed');
+
+      // Forward calls 1 & 2 succeed, forward call 3 throws (forwardError).
+      // Then rollback runs in reverse: rollback for completed #2 (call 4) throws,
+      // rollback for completed #1 (call 5) succeeds. The loop must NOT short-circuit
+      // after the first rollback throw.
+      let callCount = 0;
+      vi.mocked(rename).mockImplementation(async () => {
+        callCount++;
+        if (callCount === 3) throw forwardError;
+        if (callCount === 4) throw rollbackError;
+      });
+
+      await expect(
+        renameFilesWithTemplate('/target', '{title}', book, 'Author', log),
+      ).rejects.toBe(forwardError);
+
+      // Both rollback attempts must have run
+      expect(vi.mocked(rename)).toHaveBeenCalledTimes(5);
+
+      // log.error called for the forward failure (serialized) and the rollback failure (raw)
+      const errorCalls = vi.mocked(log.error).mock.calls;
+      const forwardLog = errorCalls.find(c => {
+        const arg = c[0] as Record<string, unknown> | undefined;
+        return arg !== undefined && 'completed' in arg && 'total' in arg;
+      });
+      const rollbackLog = errorCalls.find(c => {
+        const arg = c[0] as Record<string, unknown> | undefined;
+        return arg !== undefined && 'rollbackError' in arg;
+      });
+
+      expect(forwardLog).toBeDefined();
+      expect(forwardLog![0]).toMatchObject({
+        error: expect.objectContaining({ message: 'ENOSPC', type: 'Error' }),
+        completed: 2,
+        total: 3,
+      });
+
+      expect(rollbackLog).toBeDefined();
+      // Rollback log uses the raw `{ rollbackError, file }` shape per paths.ts:137.
+      // `file` is the basename of the rendered name from completed-rename #2 — the
+      // rollback that failed. Derive it from the corresponding forward call (#2)
+      // so the assertion stays correct if the template render changes.
+      const completedTwoRenderedFile = basename(vi.mocked(rename).mock.calls[1][1] as string);
+      expect(rollbackLog![0]).toMatchObject({
+        rollbackError,
+        file: completedTwoRenderedFile,
+      });
     });
   });
 });
