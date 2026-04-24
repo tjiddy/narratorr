@@ -5,6 +5,9 @@ import type { FastifyBaseLogger } from 'fastify';
 import { ImportQueueWorker } from './import-queue-worker.js';
 import { registerImportAdapter, clearImportAdapters } from './import-adapters/registry.js';
 import type { ImportAdapter, ImportJob } from './import-adapters/types.js';
+import { AutoImportAdapter } from './import-adapters/auto.js';
+import type { ImportOrchestrator } from './import-orchestrator.js';
+import type { ImportProgressCallbacks } from './import.service.js';
 
 function createMockLogger(): FastifyBaseLogger {
   return {
@@ -859,17 +862,21 @@ describe('ImportQueueWorker', () => {
       const mockBroadcaster = { emit: vi.fn() };
       const workerWithBroadcaster = new ImportQueueWorker(inject<Db>(mockDb.db), log, mockBroadcaster as never);
 
-      // Adapter simulates the full auto sequence that the real AutoImportAdapter drives
-      const adapter: ImportAdapter = {
-        type: 'auto',
-        async process(_job: ImportJob, ctx) {
-          await ctx.setPhase('analyzing');
-          await ctx.setPhase('copying');
-          await ctx.setPhase('renaming');
-          await ctx.setPhase('fetching_metadata');
-        },
-      };
-      registerImportAdapter(adapter);
+      // Orchestrator stub stands in for the real copy/rename/enrich pipeline —
+      // it exercises the callback bag the adapter forwards, so removing the
+      // forwarding in auto.ts would break this test. Orchestrator → service
+      // → helper forwarding is verified at those layers' own unit tests.
+      let receivedCallbacks: ImportProgressCallbacks | undefined;
+      const orchestratorStub = inject<ImportOrchestrator>({
+        importDownload: vi.fn().mockImplementation(async (_id: number, callbacks?: ImportProgressCallbacks) => {
+          receivedCallbacks = callbacks;
+          await callbacks?.setPhase?.('copying');
+          await callbacks?.setPhase?.('renaming');
+          await callbacks?.setPhase?.('fetching_metadata');
+          return { downloadId: 99, bookId: 202, targetPath: '/lib/book', fileCount: 1, totalSize: 1000 };
+        }),
+      });
+      registerImportAdapter(new AutoImportAdapter(orchestratorStub));
 
       setupAutoJob({ id: 101, bookId: 202, type: 'auto', status: 'processing', metadata: '{"downloadId":99}', phaseHistory: null });
 
@@ -884,6 +891,16 @@ describe('ImportQueueWorker', () => {
       await workerWithBroadcaster.start();
       await new Promise(r => setTimeout(r, 100));
       await workerWithBroadcaster.stop();
+
+      // The adapter must have forwarded the context's callback bag to the orchestrator —
+      // otherwise the orchestrator stub could not invoke setPhase, and the history
+      // would stop at 'analyzing'.
+      expect(orchestratorStub.importDownload).toHaveBeenCalledWith(99, expect.objectContaining({
+        setPhase: expect.any(Function),
+        emitProgress: expect.any(Function),
+      }));
+      expect(receivedCallbacks?.setPhase).toBeDefined();
+      expect(receivedCallbacks?.emitProgress).toBeDefined();
 
       // Final completion update carries the canonical phaseHistory snapshot
       const completionUpdate = updateSets.find(s => s.status === 'completed' && s.phaseHistory);
@@ -901,15 +918,16 @@ describe('ImportQueueWorker', () => {
       const mockBroadcaster = { emit: vi.fn() };
       const workerWithBroadcaster = new ImportQueueWorker(inject<Db>(mockDb.db), log, mockBroadcaster as never);
 
-      const adapter: ImportAdapter = {
-        type: 'auto',
-        async process(_job: ImportJob, ctx) {
-          await ctx.setPhase('analyzing');
-          await ctx.setPhase('copying');
+      // Stubbed orchestrator models a mid-copy failure — requires the adapter to
+      // forward callbacks so setPhase('copying') lands in phaseHistory before
+      // the pipeline throws.
+      const orchestratorStub = inject<ImportOrchestrator>({
+        importDownload: vi.fn().mockImplementation(async (_id: number, callbacks?: ImportProgressCallbacks) => {
+          await callbacks?.setPhase?.('copying');
           throw new Error('ENOSPC: disk full');
-        },
-      };
-      registerImportAdapter(adapter);
+        }),
+      });
+      registerImportAdapter(new AutoImportAdapter(orchestratorStub));
 
       setupAutoJob({ id: 202, bookId: 303, type: 'auto', status: 'processing', metadata: '{"downloadId":77}', phaseHistory: null });
 

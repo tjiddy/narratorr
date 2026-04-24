@@ -60,10 +60,20 @@ vi.mock('../utils/paths.js', async (importOriginal) => {
   };
 });
 
+// Spy on import-steps — passthrough to real implementation so existing unit tests still work
+vi.mock('../utils/import-steps.js', async (importOriginal) => {
+  const actual = await importOriginal() as Record<string, unknown>;
+  return {
+    ...actual,
+    copyToLibrary: vi.fn().mockImplementation(actual.copyToLibrary as (...args: unknown[]) => unknown),
+  };
+});
+
 import { mkdir, cp, stat, readdir, writeFile, rename, rm, statfs } from 'node:fs/promises';
 import { scanAudioDirectory } from '../../core/utils/audio-scanner.js';
 import { enrichBookFromAudio } from './enrichment-utils.js';
 import { renameFilesWithTemplate } from '../utils/paths.js';
+import { copyToLibrary } from '../utils/import-steps.js';
 
 import { createMockDbBook, createMockDbAuthor } from '../__tests__/factories.js';
 
@@ -992,6 +1002,91 @@ describe('ImportService', () => {
       const result = await service.importDownload(1);
       expect(result.downloadId).toBe(1);
       expect(result.bookId).toBe(1);
+    });
+
+    it('forwards copy progress to emitProgress tagged as copying with byteCounter', async () => {
+      const settingsGet = settingsService.get as ReturnType<typeof vi.fn>;
+      settingsGet.mockImplementation((key: string) => {
+        if (key === 'library') return Promise.resolve({ path: '/audiobooks', folderFormat: '{author}/{title}', fileFormat: '' });
+        if (key === 'import') return Promise.resolve({ deleteAfterImport: false, minSeedTime: 0, minSeedRatio: 0, minFreeSpaceGB: 0 });
+        if (key === 'processing') return Promise.resolve({});
+        return Promise.resolve({});
+      });
+
+      db.select.mockReturnValueOnce(mockDbChain([mockDownload]));
+      db.update.mockReturnValue(mockDbChain());
+
+      // Override copyToLibrary to invoke the service-provided onProgress deterministically
+      vi.mocked(copyToLibrary).mockImplementationOnce(async (args) => {
+        args.onProgress?.(0.5, { current: 500, total: 1000 });
+        args.onProgress?.(1, { current: 1000, total: 1000 });
+      });
+
+      const emitProgress = vi.fn();
+      await service.importDownload(1, { emitProgress });
+
+      // Service-level wrapper must tag with phase 'copying' and pass the byteCounter through unchanged
+      expect(emitProgress).toHaveBeenCalledWith('copying', 0.5, { current: 500, total: 1000 });
+      expect(emitProgress).toHaveBeenCalledWith('copying', 1, { current: 1000, total: 1000 });
+    });
+
+    it('forwards rename progress to emitProgress tagged as renaming with byteCounter and derived ratio', async () => {
+      const settingsGet = settingsService.get as ReturnType<typeof vi.fn>;
+      settingsGet.mockImplementation((key: string) => {
+        if (key === 'library') return Promise.resolve({ path: '/audiobooks', folderFormat: '{author}/{title}', fileFormat: '{author} - {title}' });
+        if (key === 'import') return Promise.resolve({ deleteAfterImport: false, minSeedTime: 0, minSeedRatio: 0, minFreeSpaceGB: 0 });
+        if (key === 'processing') return Promise.resolve({});
+        return Promise.resolve({});
+      });
+
+      db.select.mockReturnValueOnce(mockDbChain([mockDownload]));
+      db.update.mockReturnValue(mockDbChain());
+
+      // Skip real copy — we only care about the rename-progress wiring here
+      vi.mocked(copyToLibrary).mockImplementationOnce(async () => {});
+      // Override renameFilesWithTemplate to invoke its onProgress callback (arg index 6) with known counts
+      vi.mocked(renameFilesWithTemplate).mockImplementationOnce(async (...args: unknown[]) => {
+        const onProgress = args[6] as ((current: number, total: number) => void) | undefined;
+        onProgress?.(1, 2);
+        onProgress?.(2, 2);
+        return 2;
+      });
+
+      const emitProgress = vi.fn();
+      await service.importDownload(1, { emitProgress });
+
+      // Service-level wrapper must tag with phase 'renaming' and translate (current,total) → ratio + byteCounter
+      expect(emitProgress).toHaveBeenCalledWith('renaming', 0.5, { current: 1, total: 2 });
+      expect(emitProgress).toHaveBeenCalledWith('renaming', 1, { current: 2, total: 2 });
+    });
+
+    it('passes an onProgress function into copyToLibrary only when emitProgress is provided', async () => {
+      const settingsGet = settingsService.get as ReturnType<typeof vi.fn>;
+      settingsGet.mockImplementation((key: string) => {
+        if (key === 'library') return Promise.resolve({ path: '/audiobooks', folderFormat: '{author}/{title}', fileFormat: '' });
+        if (key === 'import') return Promise.resolve({ deleteAfterImport: false, minSeedTime: 0, minSeedRatio: 0, minFreeSpaceGB: 0 });
+        if (key === 'processing') return Promise.resolve({});
+        return Promise.resolve({});
+      });
+
+      db.select.mockReturnValueOnce(mockDbChain([mockDownload]));
+      db.update.mockReturnValue(mockDbChain());
+
+      // Without callbacks, copyToLibrary should receive onProgress: undefined
+      await service.importDownload(1);
+      const withoutCallbackArgs = vi.mocked(copyToLibrary).mock.calls[0][0];
+      expect(withoutCallbackArgs.onProgress).toBeUndefined();
+
+      // With emitProgress, copyToLibrary should receive a function
+      vi.mocked(copyToLibrary).mockClear();
+      db.select.mockReturnValueOnce(mockDbChain([mockDownload]));
+      db.update.mockReturnValue(mockDbChain());
+      vi.mocked(copyToLibrary).mockImplementationOnce(async () => {});
+
+      const emitProgress = vi.fn();
+      await service.importDownload(1, { emitProgress });
+      const withCallbackArgs = vi.mocked(copyToLibrary).mock.calls[0][0];
+      expect(typeof withCallbackArgs.onProgress).toBe('function');
     });
   });
 
