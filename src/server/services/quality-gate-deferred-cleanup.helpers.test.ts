@@ -41,8 +41,9 @@ describe('cleanupDeferredRejections', () => {
 
   it('warns and returns early without fetching candidates when settings.get rejects', async () => {
     const settingsError = new Error('settings db unavailable');
+    const settingsGet = vi.fn().mockRejectedValue(settingsError);
     const settingsService = inject<SettingsService>({
-      get: vi.fn().mockRejectedValue(settingsError),
+      get: settingsGet,
       getAll: vi.fn(),
       set: vi.fn(),
       patch: vi.fn(),
@@ -57,6 +58,8 @@ describe('cleanupDeferredRejections', () => {
 
     await expect(cleanupDeferredRejections(deps)).resolves.toBeUndefined();
 
+    // Helper must read the 'import' settings category specifically (AC contract)
+    expect(settingsGet).toHaveBeenCalledWith('import');
     expect(getDeferredCleanupCandidates).not.toHaveBeenCalled();
     expect(deps.log.warn).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -71,13 +74,17 @@ describe('cleanupDeferredRejections', () => {
 
   it('proceeds to fetch candidates when settings.get resolves', async () => {
     const getDeferredCleanupCandidates = vi.fn().mockResolvedValue([]);
+    const settingsService = createMockSettingsService();
 
     const deps = createDeps({
+      settingsService,
       qualityGateService: { getDeferredCleanupCandidates },
     });
 
     await expect(cleanupDeferredRejections(deps)).resolves.toBeUndefined();
 
+    // Helper must read the 'import' settings category specifically (AC contract)
+    expect(settingsService.get).toHaveBeenCalledWith('import');
     expect(getDeferredCleanupCandidates).toHaveBeenCalledTimes(1);
     // No settings-failure warning was logged on the success path
     const warnCalls = vi.mocked(deps.log.warn).mock.calls;

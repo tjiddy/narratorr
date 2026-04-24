@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import type { FastifyBaseLogger } from 'fastify';
 import type { Dirent } from 'node:fs';
+import { basename } from 'node:path';
 import { renameFilesWithTemplate } from './paths.js';
 import type { RenameableBook } from './paths.js';
 
@@ -240,9 +241,14 @@ describe('renameFilesWithTemplate', () => {
       });
 
       expect(rollbackLog).toBeDefined();
-      // Rollback log uses the raw shape per paths.ts:137 — assert the raw Error reference
+      // Rollback log uses the raw `{ rollbackError, file }` shape per paths.ts:137.
+      // `file` is the basename of the rendered name from completed-rename #2 — the
+      // rollback that failed. Derive it from the corresponding forward call (#2)
+      // so the assertion stays correct if the template render changes.
+      const completedTwoRenderedFile = basename(vi.mocked(rename).mock.calls[1][1] as string);
       expect(rollbackLog![0]).toMatchObject({
         rollbackError,
+        file: completedTwoRenderedFile,
       });
     });
   });
