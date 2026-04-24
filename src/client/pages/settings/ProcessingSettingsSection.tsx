@@ -109,6 +109,7 @@ function CustomScriptSection({ register, errors }: Pick<UseFormReturn<Processing
           registration={register('postProcessingScriptTimeout', { setValueAs: (v: string) => { const n = Number(v); return v === '' || Number.isNaN(n) ? undefined : n; } })}
           error={errors.postProcessingScriptTimeout}
           min={1}
+          step={1}
           placeholder="300"
           hint="Maximum time in seconds before the script is killed. Default: 300 (5 minutes)."
         />
@@ -258,6 +259,7 @@ export function ProcessingSettingsSection() {
               className={`${errorInputClass(!!errors.bitrate)} disabled:cursor-not-allowed disabled:opacity-50`}
               min={32}
               max={512}
+              step={1}
               placeholder="128"
             />
             {errors.bitrate && !keepOriginalBitrate && (
@@ -291,6 +293,7 @@ export function ProcessingSettingsSection() {
             registration={register('maxConcurrentProcessing', { valueAsNumber: true })}
             error={errors.maxConcurrentProcessing}
             min={1}
+            step={1}
             placeholder="2"
             hint="Maximum number of imports that can run simultaneously. Higher values use more CPU and disk I/O."
           />

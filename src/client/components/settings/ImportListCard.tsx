@@ -236,7 +236,7 @@ function ImportListForm({
 
       <div>
         <label htmlFor="il-syncInterval" className="block text-sm font-medium mb-1">Sync Interval (minutes)</label>
-        <input id="il-syncInterval" type="number" value={syncInterval} onChange={(e) => setSyncInterval(Number(e.target.value))} min={5} className={inputClass} />
+        <input id="il-syncInterval" type="number" value={syncInterval} onChange={(e) => setSyncInterval(Number(e.target.value))} min={5} step={1} className={inputClass} />
       </div>
 
       <ProviderSettings type={type} settings={settings} onChange={setSettings} />

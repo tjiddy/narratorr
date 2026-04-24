@@ -89,6 +89,7 @@ export function SearchSettingsSection() {
             className={inputClass(!!errors.searchIntervalMinutes)}
             min={5}
             max={1440}
+            step={1}
             placeholder="360"
           />
           {errors.searchIntervalMinutes && (
@@ -106,6 +107,7 @@ export function SearchSettingsSection() {
             className={inputClass(!!errors.blacklistTtlDays)}
             min={1}
             max={365}
+            step={1}
             placeholder="7"
           />
           {errors.blacklistTtlDays && (
@@ -162,6 +164,7 @@ export function SearchSettingsSection() {
               className={inputClass(!!errors.rssIntervalMinutes)}
               min={5}
               max={1440}
+              step={1}
               placeholder="30"
             />
             {errors.rssIntervalMinutes && (

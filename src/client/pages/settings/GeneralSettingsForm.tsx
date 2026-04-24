@@ -39,6 +39,7 @@ export function GeneralSettingsForm() {
             type="number"
             min={1}
             max={365}
+            step={1}
             {...register('housekeepingRetentionDays', { valueAsNumber: true })}
             className={errorInputClass(!!errors.housekeepingRetentionDays)}
           />

@@ -89,7 +89,7 @@ export function DownloadClientFields({ selectedType, register, errors, clientId,
         {isEdit && (
           <div>
             <label htmlFor="clientPriority" className="block text-sm font-medium mb-2">Priority</label>
-            <input id="clientPriority" type="number" {...register('priority', { valueAsNumber: true })} className={inputClass} />
+            <input id="clientPriority" type="number" step={1} {...register('priority', { valueAsNumber: true })} className={inputClass} />
             <p className="text-sm text-muted-foreground mt-1">Lower = preferred (1-100)</p>
           </div>
         )}
