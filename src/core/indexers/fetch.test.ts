@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import { http, HttpResponse } from 'msw';
 import { useMswServer } from '../__tests__/msw/server.js';
+import { getErrorMessage } from '../../shared/error-message.js';
 import { fetchWithProxy } from './fetch.js';
 
 const TARGET_URL = 'https://indexer.test/api?q=test';
@@ -328,7 +329,7 @@ describe('fetchWithProxy', () => {
       try {
         await fetchWithProxy({ url: TARGET_URL, proxyUrl: PROXY_URL });
       } catch (error: unknown) {
-        expect(error instanceof Error ? error.message : '').toMatch(/^FlareSolverr/);
+        expect(getErrorMessage(error)).toMatch(/^FlareSolverr/);
       }
     });
   });
