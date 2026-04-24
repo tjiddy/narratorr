@@ -384,6 +384,19 @@ describe('DiscoverySettingsSection', () => {
     expect(payload.discovery).not.toHaveProperty('weightMultipliers');
   });
 
+  it('renders each number input with step="1"', async () => {
+    renderWithProviders(<DiscoverySettingsSection />);
+
+    await waitFor(() => {
+      expect(screen.getByLabelText(/refresh interval/i)).toBeInTheDocument();
+    });
+
+    expect(screen.getByLabelText(/refresh interval/i).getAttribute('step')).toBe('1');
+    expect(screen.getByLabelText(/max suggestions per author/i).getAttribute('step')).toBe('1');
+    expect(screen.getByLabelText(/suggestion expiry/i).getAttribute('step')).toBe('1');
+    expect(screen.getByLabelText(/default snooze duration/i).getAttribute('step')).toBe('1');
+  });
+
   it('#514 shows destructive border on each invalid numeric input', async () => {
     const user = userEvent.setup();
 

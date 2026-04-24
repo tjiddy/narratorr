@@ -45,6 +45,17 @@ describe('BackupScheduleForm', () => {
     });
   });
 
+  it('both backup number inputs use integer step', async () => {
+    renderWithProviders(<BackupScheduleForm />);
+
+    await waitFor(() => {
+      expect(screen.getByLabelText(/backup interval/i)).toBeInTheDocument();
+    });
+
+    expect(screen.getByLabelText(/backup interval/i).getAttribute('step')).toBe('1');
+    expect(screen.getByLabelText(/backup retention/i).getAttribute('step')).toBe('1');
+  });
+
   it('hides save button when form is clean', async () => {
     renderWithProviders(<BackupScheduleForm />);
 

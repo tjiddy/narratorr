@@ -164,6 +164,14 @@ describe('ImportListCard', () => {
       expect(screen.getByLabelText('Server URL')).toBeInTheDocument();
     });
 
+    it('sync interval input uses integer step', () => {
+      renderWithProviders(
+        <ImportListCard mode="create" onSubmit={noop} />
+      );
+
+      expect(screen.getByLabelText('Sync Interval (minutes)').getAttribute('step')).toBe('1');
+    });
+
     it('Test Connection calls onFormTest with current form data', async () => {
       const user = userEvent.setup();
       const onFormTest = vi.fn();

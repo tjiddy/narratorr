@@ -519,4 +519,10 @@ describe('DownloadClientFields', () => {
     const portInput = screen.getByLabelText('Port');
     expect(portInput).toHaveAttribute('step', '1');
   });
+
+  it('priority input has step=1 attribute in edit mode', () => {
+    render(<FieldWrapper type="qbittorrent" isEdit />);
+    const priorityInput = screen.getByLabelText('Priority');
+    expect(priorityInput).toHaveAttribute('step', '1');
+  });
 });

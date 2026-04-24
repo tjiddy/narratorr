@@ -122,6 +122,18 @@ describe('SearchSettingsSection', () => {
     });
   });
 
+  it('renders each number input with step="1"', async () => {
+    renderWithProviders(<SearchSettingsSection />);
+
+    await waitFor(() => {
+      expect(screen.getByLabelText('Search Interval (minutes)')).toBeInTheDocument();
+    });
+
+    expect(screen.getByLabelText('Search Interval (minutes)').getAttribute('step')).toBe('1');
+    expect(screen.getByLabelText('Blacklist TTL (days)').getAttribute('step')).toBe('1');
+    expect(screen.getByLabelText('RSS Interval (minutes)').getAttribute('step')).toBe('1');
+  });
+
   it('sends search and rss categories on save', async () => {
     mockApi.updateSettings.mockResolvedValue(mockSettings);
     const user = userEvent.setup();
