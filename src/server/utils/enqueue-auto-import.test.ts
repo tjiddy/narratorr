@@ -41,7 +41,7 @@ describe('enqueueAutoImport', () => {
     nudge.mockClear();
   });
 
-  it('creates import_jobs row with type=auto, sets download to processing_queued, nudges worker', async () => {
+  it('creates import_jobs row with type=auto and nudges worker', async () => {
     const db = createMockDb();
     const result = await enqueueAutoImport(db as never, 99, 42, nudge, log);
 
@@ -55,9 +55,8 @@ describe('enqueueAutoImport', () => {
       phase: 'queued',
       metadata: JSON.stringify({ downloadId: 99 }),
     }));
-    // download status updated
-    expect(db.update).toHaveBeenCalled();
-    expect(db._updateChain.set).toHaveBeenCalledWith({ status: 'processing_queued' });
+    // download status is no longer mutated from this helper
+    expect(db.update).not.toHaveBeenCalled();
     // worker nudged
     expect(nudge).toHaveBeenCalled();
   });

@@ -144,7 +144,7 @@ export async function activityRoutes(app: FastifyInstance, downloadService: Down
       request.log.info({ id }, 'Download approved');
       const result = await qualityGateOrchestrator.approve(id);
 
-      // Enqueue auto import job — sets download to processing_queued, nudges worker
+      // Enqueue auto import job — creates import_jobs row, nudges worker
       if (result.bookId) {
         await enqueueAutoImport(db, id, result.bookId, nudgeImportWorker, request.log);
       }

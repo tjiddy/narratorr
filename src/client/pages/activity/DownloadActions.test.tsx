@@ -180,7 +180,7 @@ describe('DownloadActions', () => {
       },
     );
 
-    it.each(['pending_review', 'downloading', 'queued', 'paused', 'checking', 'processing_queued', 'importing'] as const)(
+    it.each(['pending_review', 'downloading', 'queued', 'paused', 'checking', 'importing'] as const)(
       'does not render delete button for %s status',
       (status) => {
         const download = createMockDownload({ status });

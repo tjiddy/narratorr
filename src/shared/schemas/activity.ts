@@ -11,7 +11,6 @@ export const DOWNLOAD_STATUSES = [
   'completed',
   'checking',
   'pending_review',
-  'processing_queued',
   'importing',
   'imported',
   'failed',

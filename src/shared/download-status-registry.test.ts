@@ -38,7 +38,7 @@ describe('download-status-registry', () => {
   });
 
   describe('isInProgressStatus', () => {
-    it.each(['queued', 'downloading', 'paused', 'checking', 'pending_review', 'processing_queued', 'importing'] as const)(
+    it.each(['queued', 'downloading', 'paused', 'checking', 'pending_review', 'importing'] as const)(
       'returns true for %s',
       (status) => {
         expect(isInProgressStatus(status)).toBe(true);
@@ -66,7 +66,7 @@ describe('download-status-registry', () => {
       },
     );
 
-    it.each(['queued', 'downloading', 'paused', 'checking', 'pending_review', 'processing_queued', 'importing'] as const)(
+    it.each(['queued', 'downloading', 'paused', 'checking', 'pending_review', 'importing'] as const)(
       'returns false for %s',
       (status) => {
         expect(isTerminalStatus(status)).toBe(false);
@@ -80,11 +80,11 @@ describe('download-status-registry', () => {
   });
 
   describe('getInProgressStatuses', () => {
-    it('returns all 7 in-progress statuses', () => {
+    it('returns all 6 in-progress statuses', () => {
       const statuses = getInProgressStatuses();
-      expect(statuses).toHaveLength(7);
+      expect(statuses).toHaveLength(6);
       expect(statuses).toEqual(
-        expect.arrayContaining(['queued', 'downloading', 'paused', 'checking', 'pending_review', 'processing_queued', 'importing']),
+        expect.arrayContaining(['queued', 'downloading', 'paused', 'checking', 'pending_review', 'importing']),
       );
     });
   });
@@ -114,37 +114,6 @@ describe('download-status-registry', () => {
       const completed = getCompletedStatuses();
       expect(completed).toContain('completed');
       expect(completed).toContain('imported');
-    });
-  });
-
-  describe('processing_queued status', () => {
-    it('processing_queued is classified as inProgress', () => {
-      expect(DOWNLOAD_STATUS_REGISTRY.processing_queued.category).toBe('inProgress');
-    });
-
-    it('getInProgressStatuses includes processing_queued', () => {
-      expect(getInProgressStatuses()).toContain('processing_queued');
-    });
-
-    it('getCompletedStatuses does NOT include processing_queued', () => {
-      expect(getCompletedStatuses()).not.toContain('processing_queued');
-    });
-
-    it('isInProgressStatus returns true for processing_queued', () => {
-      expect(isInProgressStatus('processing_queued')).toBe(true);
-    });
-
-    it('isTerminalStatus returns false for processing_queued', () => {
-      expect(isTerminalStatus('processing_queued')).toBe(false);
-    });
-
-    it('processing_queued has label, icon, color metadata', () => {
-      const meta = DOWNLOAD_STATUS_REGISTRY.processing_queued;
-      expect(meta.label).toBe('Processing Queued');
-      expect(meta.icon).toBeTruthy();
-      expect(meta.color).toBeTruthy();
-      expect(meta.bgColor).toBeTruthy();
-      expect(meta.textColor).toBeTruthy();
     });
   });
 
@@ -180,7 +149,7 @@ describe('download-status-registry', () => {
 
     it('does not include internal pipeline statuses', () => {
       const statuses = getClientPolledStatuses();
-      for (const s of ['checking', 'pending_review', 'processing_queued', 'importing', 'completed', 'imported', 'failed'] as const) {
+      for (const s of ['checking', 'pending_review', 'importing', 'completed', 'imported', 'failed'] as const) {
         expect(statuses).not.toContain(s);
       }
     });
@@ -211,9 +180,8 @@ describe('download-status-registry', () => {
       );
     });
 
-    it('excludes processing_queued and importing (import-pipeline statuses)', () => {
+    it('excludes importing (import-pipeline status)', () => {
       const replaceable = getReplaceableStatuses();
-      expect(replaceable).not.toContain('processing_queued');
       expect(replaceable).not.toContain('importing');
     });
   });
