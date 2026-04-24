@@ -78,6 +78,15 @@ describe('createE2EApp harness', () => {
       timeout: 30_000,
     });
 
+    // Verify the child actually completed via the installed SIGINT handler
+    // rather than the parent's timeout fallback. spawnSync surfaces a
+    // timeout kill as `result.error` plus a non-null `signal`; our handler
+    // returns exit code 130 after purging dirs, so a clean run must show
+    // status === 130 and signal === null.
+    expect(result.error, `child spawn error (likely timeout):\n${String(result.error)}\nstdout:\n${result.stdout}\nstderr:\n${result.stderr}`).toBeUndefined();
+    expect(result.signal, `child was killed by external signal instead of handling SIGINT itself:\nstderr:\n${result.stderr}`).toBeNull();
+    expect(result.status, `child exited with wrong code — handler must exit(130):\nstderr:\n${result.stderr}`).toBe(130);
+
     // Extract the dir the child reported on its first stdout line.
     const firstLine = result.stdout.split('\n').find((l) => l.startsWith('{'));
     expect(firstLine, `child stdout missing dir payload:\n${result.stdout}\n---stderr---\n${result.stderr}`).toBeTruthy();
