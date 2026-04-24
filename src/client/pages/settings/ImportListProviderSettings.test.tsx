@@ -199,6 +199,37 @@ describe('ProviderSettings', () => {
       });
     });
 
+    it('restores the fetch button to enabled "Fetch Libraries" after a rejected in-flight call', async () => {
+      let rejectFetch!: (reason: Error) => void;
+      const pending = new Promise<{ libraries: Array<{ id: string; name: string }> }>((_, reject) => {
+        rejectFetch = reject;
+      });
+      (api.fetchAbsLibraries as Mock).mockReturnValue(pending);
+      const user = userEvent.setup();
+      render(
+        <ProviderSettings
+          type="abs"
+          settings={{ serverUrl: 'http://abs.local', apiKey: 'k' }}
+          onChange={vi.fn()}
+        />,
+      );
+
+      await user.click(screen.getByRole('button', { name: 'Fetch Libraries' }));
+
+      await waitFor(() => {
+        expect(screen.getByRole('button', { name: 'Fetching...' })).toBeDisabled();
+      });
+
+      await act(async () => {
+        rejectFetch(new Error('network'));
+      });
+
+      await waitFor(() => {
+        expect(screen.getByRole('button', { name: 'Fetch Libraries' })).not.toBeDisabled();
+      });
+      expect(screen.getByText('Failed to fetch libraries')).toBeInTheDocument();
+    });
+
     it('typing into Server URL fires onChange with the merged settings object', async () => {
       const spy = vi.fn();
       const user = userEvent.setup();
