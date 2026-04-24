@@ -99,6 +99,24 @@ describe('FormField', () => {
     expect(input.getAttribute('max')).toBe('10');
   });
 
+  it('passes step attribute to number inputs', () => {
+    render(
+      <FormField id="test" label="Count" registration={mockRegistration} type="number" step={1} />,
+    );
+
+    const input = screen.getByLabelText('Count');
+    expect(input.getAttribute('step')).toBe('1');
+  });
+
+  it('defaults step to "any" when step is not provided', () => {
+    render(
+      <FormField id="test" label="Count" registration={mockRegistration} type="number" />,
+    );
+
+    const input = screen.getByLabelText('Count');
+    expect(input.getAttribute('step')).toBe('any');
+  });
+
   it('renders ReactNode hint content', () => {
     render(
       <FormField

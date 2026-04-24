@@ -14,6 +14,7 @@ interface FormFieldProps {
   disabled?: boolean;
   min?: number;
   max?: number;
+  step?: number | string;
   className?: string;
   hint?: ReactNode;
 }
@@ -29,6 +30,7 @@ export function FormField({
   disabled,
   min,
   max,
+  step = 'any',
   className,
   hint,
 }: FormFieldProps) {
@@ -43,6 +45,7 @@ export function FormField({
         disabled={disabled}
         min={min}
         max={max}
+        step={step}
         className={`${baseInputClass} ${error ? 'border-destructive' : 'border-border'} ${readOnly ? 'opacity-60 cursor-not-allowed' : ''} ${disabled ? 'disabled:cursor-not-allowed' : ''} ${className ?? ''}`}
         placeholder={placeholder}
       />
