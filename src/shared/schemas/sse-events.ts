@@ -64,8 +64,8 @@ export const grabStartedPayload = z.object({
 });
 
 export const importCompletePayload = z.object({
-  download_id: z.number(),
-  book_id: z.number(),
+  download_id: z.number().nullable(),
+  book_id: z.number().nullable(),
   book_title: z.string(),
   job_id: z.number().optional(),
   elapsed_ms: z.number().optional(),
@@ -73,7 +73,7 @@ export const importCompletePayload = z.object({
 
 export const importPhaseChangePayload = z.object({
   job_id: z.number(),
-  book_id: z.number(),
+  book_id: z.number().nullable(),
   book_title: z.string(),
   from: z.string(),
   to: z.string(),
@@ -81,7 +81,7 @@ export const importPhaseChangePayload = z.object({
 
 export const importProgressPayload = z.object({
   job_id: z.number(),
-  book_id: z.number(),
+  book_id: z.number().nullable(),
   book_title: z.string(),
   phase: z.string(),
   progress: z.number(),
@@ -93,7 +93,7 @@ export const importProgressPayload = z.object({
 
 export const importFailedPayload = z.object({
   job_id: z.number(),
-  book_id: z.number(),
+  book_id: z.number().nullable(),
   book_title: z.string(),
   phase: z.string(),
   error_message: z.string(),

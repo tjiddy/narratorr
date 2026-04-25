@@ -475,3 +475,39 @@ describe('#637 import progress — SSE event schemas', () => {
     });
   });
 });
+
+// ============================================================================
+// #707 — Nullable book_id / download_id in import event payloads
+// ============================================================================
+
+describe('#707 nullable book_id / download_id in import event payloads', () => {
+  it('importPhaseChangePayload accepts null book_id', () => {
+    const valid = { job_id: 1, book_id: null, book_title: 'Test', from: 'queued', to: 'analyzing' };
+    expect(importPhaseChangePayload.parse(valid)).toEqual(valid);
+  });
+
+  it('importPhaseChangePayload still accepts numeric book_id', () => {
+    const valid = { job_id: 1, book_id: 42, book_title: 'Test', from: 'queued', to: 'analyzing' };
+    expect(importPhaseChangePayload.parse(valid)).toEqual(valid);
+  });
+
+  it('importProgressPayload accepts null book_id', () => {
+    const valid = { job_id: 1, book_id: null, book_title: 'Test', phase: 'copying', progress: 0.5 };
+    expect(importProgressPayload.parse(valid)).toEqual(valid);
+  });
+
+  it('importFailedPayload accepts null book_id', () => {
+    const valid = { job_id: 1, book_id: null, book_title: 'Test', phase: 'copying', error_message: 'fail' };
+    expect(importFailedPayload.parse(valid)).toEqual(valid);
+  });
+
+  it('importCompletePayload accepts null book_id and null download_id', () => {
+    const valid = { download_id: null, book_id: null, book_title: 'Test', job_id: 5, elapsed_ms: 1000 };
+    expect(importCompletePayload.parse(valid)).toEqual(valid);
+  });
+
+  it('importCompletePayload still accepts numeric ids (orchestrator path)', () => {
+    const valid = { download_id: 7, book_id: 42, book_title: 'Test' };
+    expect(importCompletePayload.parse(valid)).toEqual(valid);
+  });
+});

@@ -226,13 +226,13 @@ export class ImportQueueWorker {
         // Emit SSE event
         safeEmit(this.broadcaster, 'import_phase_change', {
           job_id: job.id,
-          book_id: job.bookId ?? 0,
+          book_id: job.bookId,
           book_title: this.extractTitle(job.metadata),
           from: previousPhase,
           to: phase,
         }, this.log);
       },
-      emitProgress: this.createThrottledProgressEmitter(job.id, job.bookId ?? 0, this.extractTitle(job.metadata)),
+      emitProgress: this.createThrottledProgressEmitter(job.id, job.bookId, this.extractTitle(job.metadata)),
     };
 
     const startTime = Date.now();
@@ -275,8 +275,8 @@ export class ImportQueueWorker {
 
       const elapsedMs = Date.now() - startTime;
       safeEmit(this.broadcaster, 'import_complete', {
-        download_id: 0,
-        book_id: bookId ?? 0,
+        download_id: null,
+        book_id: bookId,
         book_title: bookTitle,
         job_id: jobId,
         elapsed_ms: elapsedMs,
@@ -326,7 +326,7 @@ export class ImportQueueWorker {
 
     safeEmit(this.broadcaster, 'import_failed', {
       job_id: jobId,
-      book_id: bookId ?? 0,
+      book_id: bookId,
       book_title: bookTitle,
       phase: currentPhase,
       error_message: errorMessage,
@@ -346,7 +346,7 @@ export class ImportQueueWorker {
   /** Create a throttled progress emitter for a specific job. */
   private createThrottledProgressEmitter(
     jobId: number,
-    bookId: number,
+    bookId: number | null,
     bookTitle: string,
   ): ImportAdapterContext['emitProgress'] {
     let lastEmitTime = 0;

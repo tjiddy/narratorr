@@ -952,6 +952,139 @@ describe('ImportQueueWorker', () => {
     });
   });
 
+  // ===========================================================================
+  // #707 — Nullable book_id / download_id in SSE payloads
+  // ===========================================================================
+
+  describe('#707 nullable book_id propagation in SSE payloads', () => {
+    function setupNullBookIdJob(adapter: ImportAdapter) {
+      registerImportAdapter(adapter);
+      let selectCallCount = 0;
+      mockDb.db.select = vi.fn().mockImplementation(() => {
+        selectCallCount++;
+        if (selectCallCount === 1) return { from: vi.fn().mockReturnThis(), where: vi.fn().mockResolvedValue([]) };
+        if (selectCallCount === 2) return { from: vi.fn().mockReturnThis(), where: vi.fn().mockReturnThis(), orderBy: vi.fn().mockReturnThis(), limit: vi.fn().mockResolvedValue([{ id: 11 }]) };
+        if (selectCallCount === 3) return { from: vi.fn().mockReturnThis(), where: vi.fn().mockReturnThis(), limit: vi.fn().mockResolvedValue([{ id: 11, bookId: null, type: 'manual', status: 'processing', metadata: '{"title":"Orphan"}', phaseHistory: null }]) };
+        return { from: vi.fn().mockReturnThis(), where: vi.fn().mockReturnThis(), orderBy: vi.fn().mockReturnThis(), limit: vi.fn().mockResolvedValue([]) };
+      });
+      mockDb.db.update = vi.fn().mockImplementation(() => ({
+        set: vi.fn().mockReturnValue({ where: vi.fn().mockResolvedValue({ rowsAffected: 1 }) }),
+      }));
+    }
+
+    it('emits null (not 0) for book_id on phase_change, progress, and complete when job.bookId is null', async () => {
+      const emitSpy = vi.fn();
+      const mockBroadcaster = { emit: emitSpy };
+      const workerWithBroadcaster = new ImportQueueWorker(inject<Db>(mockDb.db), log, mockBroadcaster as never);
+
+      setupNullBookIdJob({
+        type: 'manual',
+        async process(_job: ImportJob, ctx) {
+          await ctx.setPhase('analyzing');
+          ctx.emitProgress('analyzing', 0.25);
+        },
+      });
+
+      await workerWithBroadcaster.start();
+      await new Promise(r => setTimeout(r, 100));
+      await workerWithBroadcaster.stop();
+
+      const phaseChangeCall = emitSpy.mock.calls.find(c => c[0] === 'import_phase_change');
+      expect(phaseChangeCall).toBeDefined();
+      expect(phaseChangeCall![1].book_id).toBeNull();
+      expect(phaseChangeCall![1].book_id).not.toBe(0);
+
+      const progressCall = emitSpy.mock.calls.find(c => c[0] === 'import_progress');
+      expect(progressCall).toBeDefined();
+      expect(progressCall![1].book_id).toBeNull();
+      expect(progressCall![1].book_id).not.toBe(0);
+
+      const completeCall = emitSpy.mock.calls.find(c => c[0] === 'import_complete');
+      expect(completeCall).toBeDefined();
+      expect(completeCall![1].book_id).toBeNull();
+      expect(completeCall![1].download_id).toBeNull();
+      expect(completeCall![1].book_id).not.toBe(0);
+      expect(completeCall![1].download_id).not.toBe(0);
+    });
+
+    it('emits null (not 0) for book_id on import_failed when job.bookId is null', async () => {
+      const emitSpy = vi.fn();
+      const mockBroadcaster = { emit: emitSpy };
+      const workerWithBroadcaster = new ImportQueueWorker(inject<Db>(mockDb.db), log, mockBroadcaster as never);
+
+      setupNullBookIdJob({
+        type: 'manual',
+        async process() { throw new Error('boom'); },
+      });
+
+      await workerWithBroadcaster.start();
+      await new Promise(r => setTimeout(r, 100));
+      await workerWithBroadcaster.stop();
+
+      const failedCall = emitSpy.mock.calls.find(c => c[0] === 'import_failed');
+      expect(failedCall).toBeDefined();
+      expect(failedCall![1].book_id).toBeNull();
+      expect(failedCall![1].book_id).not.toBe(0);
+    });
+
+    it('boot recovery still uses null comparison (not sentinel) — orphan with null bookId skips books update', async () => {
+      // Re-asserts AC #3: internal DB-facing guard at import-queue-worker.ts:103
+      // continues to compare against null after the sentinel removal at the SSE boundary.
+      const orphanRows = [{ id: 77, bookId: null }];
+
+      let selectCallCount = 0;
+      mockDb.db.select = vi.fn().mockImplementation(() => {
+        selectCallCount++;
+        if (selectCallCount === 1) return { from: vi.fn().mockReturnThis(), where: vi.fn().mockResolvedValue(orphanRows) };
+        return { from: vi.fn().mockReturnThis(), where: vi.fn().mockReturnThis(), orderBy: vi.fn().mockReturnThis(), limit: vi.fn().mockResolvedValue([]) };
+      });
+
+      const txUpdate = vi.fn().mockImplementation(() => ({
+        set: vi.fn().mockReturnValue({ where: vi.fn().mockResolvedValue({ rowsAffected: 1 }) }),
+      }));
+      mockDb.db.transaction = vi.fn().mockImplementation(async (cb: (tx: unknown) => Promise<unknown>) => cb({ update: txUpdate }));
+
+      await worker.start();
+      await new Promise(r => setTimeout(r, 50));
+
+      // tx.update was called exactly once (importJobs only) — no books update because bookId is null
+      expect(txUpdate).toHaveBeenCalledTimes(1);
+    });
+
+    it('markJobFailed still uses null comparison (not sentinel) — failed job with null bookId skips books update', async () => {
+      // Re-asserts AC #3: internal DB-facing guard at markJobFailed continues to
+      // compare against null after the sentinel removal at the SSE boundary.
+      const emitSpy = vi.fn();
+      const mockBroadcaster = { emit: emitSpy };
+      const workerWithBroadcaster = new ImportQueueWorker(inject<Db>(mockDb.db), log, mockBroadcaster as never);
+
+      setupNullBookIdJob({
+        type: 'manual',
+        async process() { throw new Error('boom'); },
+      });
+
+      const updateSets: Record<string, unknown>[] = [];
+      mockDb.db.update = vi.fn().mockImplementation(() => ({
+        set: vi.fn().mockImplementation((payload: Record<string, unknown>) => {
+          updateSets.push(payload);
+          return { where: vi.fn().mockResolvedValue({ rowsAffected: 1 }) };
+        }),
+      }));
+
+      await workerWithBroadcaster.start();
+      await new Promise(r => setTimeout(r, 100));
+      await workerWithBroadcaster.stop();
+
+      // No books update should have happened — only job-status updates (claim + failed)
+      const booksFailedUpdate = updateSets.find(s => s.status === 'failed' && !('phase' in s) && !('lastError' in s));
+      expect(booksFailedUpdate).toBeUndefined();
+
+      // Job failed update DID happen
+      const jobFailedUpdate = updateSets.find(s => s.status === 'failed' && s.phase === 'failed');
+      expect(jobFailedUpdate).toBeDefined();
+    });
+  });
+
   describe('nudge', () => {
     it('nudge wakes idle worker', async () => {
       let selectCallCount = 0;
