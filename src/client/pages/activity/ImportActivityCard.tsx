@@ -111,6 +111,7 @@ export function ImportActivityCard({ job }: ImportActivityCardProps) {
   const isCompleted = job.status === 'completed';
   const isFailed = job.status === 'failed';
   const phaseHistory: PhaseHistoryEntry[] = job.phaseHistory ?? [];
+  const activeIdx = phaseHistory.findIndex(p => p.completedAt === undefined);
   const coverUrl = job.book.coverUrl ? resolveCoverUrl(job.book.coverUrl, job.updatedAt) : null;
 
   return (
@@ -157,10 +158,15 @@ export function ImportActivityCard({ job }: ImportActivityCardProps) {
             const progress = phaseMatches ? job._progress : undefined;
             const byteCounter = phaseMatches ? job._byteCounter : undefined;
             if (isDone && idx < phaseHistory.length - 1) {
+              const isLeadingActive = activeIdx >= 0 && idx === activeIdx - 1;
+              const segmentClass = isLeadingActive
+                ? 'absolute left-[7px] w-px bg-gradient-to-b from-amber-500/20 to-amber-500/70'
+                : 'absolute left-[7px] w-px bg-success/40';
               return (
                 <div key={entry.phase}>
                   <div
-                    className="absolute left-[7px] w-px bg-success/40"
+                    className={segmentClass}
+                    data-active-leading={isLeadingActive ? 'true' : undefined}
                     style={{
                       top: `${(idx / phaseHistory.length) * 100}%`,
                       height: `${(1 / phaseHistory.length) * 100}%`,
