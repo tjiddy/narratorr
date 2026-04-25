@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { mkdtemp, writeFile, mkdir, readFile, rm } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { streamCopyWithProgress } from './import-orchestration.helpers.js';
+import { streamCopyWithProgress } from './streaming-copy.helpers.js';
 
 describe('streamCopyWithProgress', () => {
   let srcDir: string;
