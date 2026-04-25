@@ -440,6 +440,15 @@ describe('ImportQueueWorker', () => {
     });
   });
 
+  // #635 spec asked for a "concurrent claim race" test. No dedicated test was
+  // added because the contract it cared about is already covered. Production
+  // wires one ImportQueueWorker, so cross-worker races are not possible today.
+  // Within the worker, drain() can be invoked concurrently from initial-start,
+  // the nudge listener, and the safety-net poll (no reentrancy guard) — but
+  // the atomic CAS UPDATE in drainOne() reduces the contract to a lost-race
+  // retry, which is exercised by the "drainOne CAS claim — returns true on
+  // lost race" test above. If multi-worker support or a reentrancy guard for
+  // drain() is added later, this assumption needs to be revisited.
   describe('drain loop', () => {
     it('failure of one job does NOT stop drain of subsequent jobs', async () => {
       const processedIds: number[] = [];
