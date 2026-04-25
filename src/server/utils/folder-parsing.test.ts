@@ -48,6 +48,80 @@ describe('folder-parsing (extracted from library-scan.service)', () => {
       expect(result.title).toBe('Title');
       expect(result.series).toBe('Series');
     });
+
+    describe('2-part with all-numeric date-like title (issue #701)', () => {
+      it('Stephen King/11-22-63 → title=11-22-63, author=Stephen King, no series', () => {
+        expect(parseFolderStructure(['Stephen King', '11-22-63'])).toEqual({
+          title: '11-22-63', author: 'Stephen King', series: null,
+        });
+      });
+
+      it('Author/11.22.63 → title=11.22.63, no series', () => {
+        expect(parseFolderStructure(['Author', '11.22.63'])).toEqual({
+          title: '11.22.63', author: 'Author', series: null,
+        });
+      });
+
+      it('Author/1.5 → title=1.5, no series', () => {
+        expect(parseFolderStructure(['Author', '1.5'])).toEqual({
+          title: '1.5', author: 'Author', series: null,
+        });
+      });
+
+      it('Author/Catch-22 (alpha present) keeps original parsing — guard does not fire', () => {
+        const result = parseFolderStructure(['Author', 'Catch-22']);
+        expect(result.author).toBe('Author');
+        expect(result.title).toBe('Catch-22');
+        expect(result.series).toBeNull();
+      });
+
+      it('Author/1Q84 (alpha present) keeps original parsing', () => {
+        const result = parseFolderStructure(['Author', '1Q84']);
+        expect(result.title).toBe('1Q84');
+      });
+
+      it('Author/100 Years of Solitude (alpha present) keeps original parsing', () => {
+        const result = parseFolderStructure(['Author', '100 Years of Solitude']);
+        expect(result.title).toBe('100 Years of Solitude');
+      });
+
+      it('Author/2001 (single number, not multi-segment) keeps original parsing', () => {
+        const result = parseFolderStructure(['Author', '2001']);
+        // Single 4-digit year — guard's {1,2} requires at least one separator,
+        // so '2001' alone doesn't trigger; falls through to bare-year strip.
+        expect(result.title).toBe('2001');
+      });
+
+      it('Author/Series - 1 - Title (real series pattern) still parses with series', () => {
+        const result = parseFolderStructure(['Author', 'Series - 1 - Title']);
+        expect(result.author).toBe('Author');
+        expect(result.series).toBe('Series');
+        expect(result.title).toBe('Title');
+      });
+    });
+
+    describe('3+-part with all-numeric date-like title (issue #701, F1)', () => {
+      it('Author/Series/11.22.63 → title=11.22.63 (3+-part path runs cleanName, which must short-circuit)', () => {
+        const result = parseFolderStructure(['Author', 'Series', '11.22.63']);
+        expect(result.author).toBe('Author');
+        expect(result.series).toBe('Series');
+        expect(result.title).toBe('11.22.63');
+      });
+
+      it('Author/Series/11-22-63 → title=11-22-63', () => {
+        const result = parseFolderStructure(['Author', 'Series', '11-22-63']);
+        expect(result.author).toBe('Author');
+        expect(result.series).toBe('Series');
+        expect(result.title).toBe('11-22-63');
+      });
+
+      it('Author/SubDir/Series/11.22.63 (4-part) still preserves dot-separated title', () => {
+        const result = parseFolderStructure(['Author', 'SubDir', 'Series', '11.22.63']);
+        expect(result.author).toBe('Author');
+        expect(result.series).toBe('Series');
+        expect(result.title).toBe('11.22.63');
+      });
+    });
   });
 
   describe('parseSingleFolder (via parseFolderStructure with 1 part)', () => {
@@ -89,6 +163,40 @@ describe('folder-parsing (extracted from library-scan.service)', () => {
     it('returns title only when no pattern matches', () => {
       const result = parseFolderStructure(['JustATitle']);
       expect(result).toEqual({ title: 'JustATitle', author: null, series: null });
+    });
+
+    describe('all-numeric date-like inputs (issue #701)', () => {
+      it('1-part 11-22-63 keeps full value as title', () => {
+        expect(parseFolderStructure(['11-22-63'])).toEqual({
+          title: '11-22-63', author: null, series: null,
+        });
+      });
+
+      it('1-part 11.22.63 keeps full value as title', () => {
+        expect(parseFolderStructure(['11.22.63'])).toEqual({
+          title: '11.22.63', author: null, series: null,
+        });
+      });
+
+      it('1-part 1.5 keeps full value as title', () => {
+        expect(parseFolderStructure(['1.5'])).toEqual({
+          title: '1.5', author: null, series: null,
+        });
+      });
+
+      it('1-part Foundation - 02 - Second Foundation still parses as series/title (guard scoped)', () => {
+        const result = parseFolderStructure(['Foundation - 02 - Second Foundation']);
+        expect(result.series).toBe('Foundation');
+        expect(result.title).toBe('Second Foundation');
+        expect(result.author).toBeNull();
+      });
+
+      it('1-part Author - Real Title still parses as author/title', () => {
+        const result = parseFolderStructure(['Author - Real Title']);
+        expect(result.author).toBe('Author');
+        expect(result.title).toBe('Real Title');
+        expect(result.series).toBeNull();
+      });
     });
   });
 
@@ -158,6 +266,32 @@ describe('folder-parsing (extracted from library-scan.service)', () => {
     it('preserves non-codec bracket tags like [GA]', () => {
       expect(cleanName('Title [GA]')).toBe('Title [GA]');
     });
+
+    describe('all-numeric date-like inputs (issue #701)', () => {
+      it('preserves dash-separated date-like input like 11-22-63', () => {
+        expect(cleanName('11-22-63')).toBe('11-22-63');
+      });
+
+      it('preserves two-segment numeric input like 1-5', () => {
+        expect(cleanName('1-5')).toBe('1-5');
+      });
+
+      it('preserves dot-separated date-like input like 11.22.63 (would be mangled to "11 22 63" by normalizeFolderName)', () => {
+        expect(cleanName('11.22.63')).toBe('11.22.63');
+      });
+
+      it('preserves decimal numeric input like 1.5 (would be mangled to "1 5" by normalizeFolderName)', () => {
+        expect(cleanName('1.5')).toBe('1.5');
+      });
+
+      it('still strips leading-numeric prefix from alpha-bearing titles like 01 - The First Chapter', () => {
+        expect(cleanName('01 - The First Chapter')).toBe('The First Chapter');
+      });
+
+      it('still strips leading-numeric prefix from 6.5 - Title', () => {
+        expect(cleanName('6.5 - Edgedancer')).toBe('Edgedancer');
+      });
+    });
   });
 
   describe('cleanNameWithTrace', () => {
@@ -208,6 +342,31 @@ describe('folder-parsing (extracted from library-scan.service)', () => {
         const trace = cleanNameWithTrace(input);
         expect(trace.result).toBe(cleanName(input));
       }
+    });
+
+    describe('all-numeric date-like inputs (issue #701)', () => {
+      it('every step is a no-op for 11-22-63', () => {
+        const trace = cleanNameWithTrace('11-22-63');
+        expect(trace.steps).toHaveLength(10);
+        for (const step of trace.steps) {
+          expect(step.output).toBe('11-22-63');
+        }
+        expect(trace.result).toBe('11-22-63');
+      });
+
+      it('every step is a no-op for 11.22.63 (normalize would otherwise turn dots to spaces)', () => {
+        const trace = cleanNameWithTrace('11.22.63');
+        expect(trace.steps).toHaveLength(10);
+        for (const step of trace.steps) {
+          expect(step.output).toBe('11.22.63');
+        }
+        expect(trace.result).toBe('11.22.63');
+      });
+
+      it('trace result matches cleanName for 11-22-63 and 11.22.63', () => {
+        expect(cleanNameWithTrace('11-22-63').result).toBe(cleanName('11-22-63'));
+        expect(cleanNameWithTrace('11.22.63').result).toBe(cleanName('11.22.63'));
+      });
     });
   });
 
@@ -331,6 +490,41 @@ describe('folder-parsing (extracted from library-scan.service)', () => {
       expect(result.title).toBe('Title MP3');
     });
 
+    describe('all-numeric date-like inputs (issue #701)', () => {
+      it('1-part raw 11-22-63 keeps full value as title', () => {
+        const result = parseFolderStructureRaw(['11-22-63']);
+        expect(result.title).toBe('11-22-63');
+        expect(result.author).toBeNull();
+        expect(result.series).toBeNull();
+      });
+
+      it('1-part raw 11.22.63 keeps full value as title', () => {
+        const result = parseFolderStructureRaw(['11.22.63']);
+        expect(result.title).toBe('11.22.63');
+        expect(result.series).toBeNull();
+      });
+
+      it('2-part raw Stephen King/11-22-63 → raw title=11-22-63, no series', () => {
+        const result = parseFolderStructureRaw(['Stephen King', '11-22-63']);
+        expect(result.author).toBe('Stephen King');
+        expect(result.title).toBe('11-22-63');
+        expect(result.series).toBeNull();
+      });
+
+      it('2-part raw Author/1.5 → raw title=1.5, no series', () => {
+        const result = parseFolderStructureRaw(['Author', '1.5']);
+        expect(result.author).toBe('Author');
+        expect(result.title).toBe('1.5');
+        expect(result.series).toBeNull();
+      });
+
+      it('2-part raw Author/Series - 1 - Title (real series) still split into series/title', () => {
+        const result = parseFolderStructureRaw(['Author', 'Series - 1 - Title']);
+        expect(result.series).toBe('Series');
+        expect(result.title).toBe('Title');
+      });
+    });
+
     it('stays branch-aligned with cleaned parser for all patterns', () => {
       const cases: string[][] = [
         [],
@@ -341,8 +535,10 @@ describe('folder-parsing (extracted from library-scan.service)', () => {
         ['Series - 1 - Title'],
         ['JustATitle'],
         ['01 - Title'],
+        ['11-22-63'],
         ['Author', 'Title'],
         ['Author', 'Series - 1 - Title'],
+        ['Author', '11-22-63'],
         ['Author', 'Series', 'Title'],
         ['A', 'B', 'C', 'D'],
       ];
