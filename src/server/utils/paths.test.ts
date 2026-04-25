@@ -125,6 +125,23 @@ describe('renameFilesWithTemplate', () => {
       expect(onProgress).toHaveBeenNthCalledWith(2, 2, 3);
     });
 
+    it('does not invoke onProgress when the target directory contains no audio files', async () => {
+      // Proves the early-return at paths.ts:72 — when readdir yields nothing
+      // recognized as an audio file, the helper resolves 0 without touching the callback.
+      const { readdir, rename } = await import('node:fs/promises');
+      vi.mocked(readdir).mockResolvedValue([
+        makeDirent('cover.jpg', true),
+        makeDirent('notes.txt', true),
+      ] as never);
+
+      const onProgress = vi.fn();
+      const renamedCount = await renameFilesWithTemplate('/target', '{title}', book, 'Author', log, undefined, onProgress);
+
+      expect(renamedCount).toBe(0);
+      expect(onProgress).not.toHaveBeenCalled();
+      expect(vi.mocked(rename)).not.toHaveBeenCalled();
+    });
+
     it('swallows errors thrown inside onProgress and continues renaming', async () => {
       // Callback failures (e.g. SSE broadcaster throwing) must never trigger a
       // rollback of successfully-renamed files. The rename loop catches the
