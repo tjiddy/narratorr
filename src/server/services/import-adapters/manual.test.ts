@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import type { Dirent } from 'node:fs';
 import { inject, createMockSettingsService } from '../../__tests__/helpers.js';
 import type { Db } from '../../../db/index.js';
 import type { FastifyBaseLogger } from 'fastify';
@@ -11,6 +12,12 @@ import type { ImportPipelineDeps } from '../import-orchestration.helpers.js';
 import type { ImportAdapterContext, ImportJob, ManualImportJobPayload } from './types.js';
 import { ManualImportAdapter } from './manual.js';
 
+// Boundary choice: this file mocks fs primitives + streamCopyWithProgress + getAudioPathSize,
+// NOT copyToLibrary / renameFilesWithTemplate. Real copyToLibrary and renameFilesWithTemplate
+// run against these lower mocks, so a regression at the adapter↔helper seam (wrong source/target
+// path, missing callback, broken rollback) surfaces here. streamCopyWithProgress is mocked rather
+// than the underlying stream primitives because its dedicated test exercises real streams.
+
 vi.mock('../enrichment-orchestration.helpers.js', async () => ({
   ...(await vi.importActual('../enrichment-orchestration.helpers.js')),
   orchestrateBookEnrichment: vi.fn().mockResolvedValue({ audioEnriched: true }),
@@ -20,18 +27,26 @@ vi.mock('../library-scan.helpers.js', () => ({
   getAudioStats: vi.fn().mockResolvedValue({ fileCount: 3, totalSize: 100_000 }),
 }));
 
-vi.mock('../import-orchestration.helpers.js', async () => ({
-  ...(await vi.importActual('../import-orchestration.helpers.js')),
-  copyToLibrary: vi.fn().mockResolvedValue('/library/Author/Title'),
+vi.mock('../streaming-copy.helpers.js', () => ({
+  streamCopyWithProgress: vi.fn(),
+}));
+
+vi.mock('../../utils/import-helpers.js', async () => ({
+  ...(await vi.importActual('../../utils/import-helpers.js')),
+  getAudioPathSize: vi.fn(),
+}));
+
+vi.mock('node:fs/promises', async () => ({
+  ...(await vi.importActual('node:fs/promises')),
+  mkdir: vi.fn(),
+  rm: vi.fn(),
+  rename: vi.fn(),
+  readdir: vi.fn(),
+  cp: vi.fn(),
 }));
 
 vi.mock('../../utils/safe-emit.js', () => ({
   safeEmit: vi.fn(),
-}));
-
-vi.mock('../../utils/paths.js', async () => ({
-  ...(await vi.importActual('../../utils/paths.js')),
-  renameFilesWithTemplate: vi.fn().mockResolvedValue(3),
 }));
 
 function createMockLogger(): FastifyBaseLogger {
@@ -40,6 +55,10 @@ function createMockLogger(): FastifyBaseLogger {
     trace: vi.fn(), fatal: vi.fn(), child: vi.fn().mockReturnThis(),
     level: 'info', silent: vi.fn(),
   } as unknown as FastifyBaseLogger;
+}
+
+function makeDirent(name: string, isFile: boolean): Dirent {
+  return { name, isFile: () => isFile, isDirectory: () => !isFile } as Dirent;
 }
 
 function createMockDb() {
@@ -82,6 +101,10 @@ function makeJob(overrides: Partial<ImportJob> = {}): ImportJob {
   };
 }
 
+// Default settings (path:'/library', folderFormat:'{author}/{title}') + payload (title:'Test Book',
+// authorName:'Author') yield this target path via buildTargetPath.
+const TARGET_PATH = '/library/Author/Test Book';
+
 describe('ManualImportAdapter', () => {
   let adapter: ManualImportAdapter;
   let deps: ImportPipelineDeps;
@@ -92,9 +115,22 @@ describe('ManualImportAdapter', () => {
   let setPhase: ReturnType<typeof vi.fn>;
 
   beforeEach(async () => {
-    const { renameFilesWithTemplate } = await import('../../utils/paths.js');
-    vi.mocked(renameFilesWithTemplate).mockClear();
-    vi.mocked(renameFilesWithTemplate).mockResolvedValue(3);
+    vi.clearAllMocks();
+
+    const fs = await import('node:fs/promises');
+    vi.mocked(fs.mkdir).mockResolvedValue(undefined as never);
+    vi.mocked(fs.rm).mockResolvedValue(undefined);
+    vi.mocked(fs.rename).mockResolvedValue(undefined);
+    vi.mocked(fs.readdir).mockResolvedValue([] as never);
+    vi.mocked(fs.cp).mockResolvedValue(undefined);
+
+    const { streamCopyWithProgress } = await import('../streaming-copy.helpers.js');
+    vi.mocked(streamCopyWithProgress).mockResolvedValue(undefined);
+
+    const { getAudioPathSize } = await import('../../utils/import-helpers.js');
+    // Source/target return equal sizes so target/source >= 0.99 verification passes.
+    vi.mocked(getAudioPathSize).mockResolvedValue(100);
+
     mockDb = createMockDb();
     mockEventHistory = { create: vi.fn().mockResolvedValue({}) };
     mockBroadcaster = { emit: vi.fn() };
@@ -133,17 +169,64 @@ describe('ManualImportAdapter', () => {
       const job = makeJob();
       await adapter.process(job, ctx);
 
-      // setPhase called with analyzing, copying, fetching_metadata
       const phases = setPhase.mock.calls.map((c: unknown[]) => c[0]);
       expect(phases).toContain('analyzing');
       expect(phases).toContain('copying');
       expect(phases).toContain('fetching_metadata');
 
-      // Event history recorded
       expect(mockEventHistory.create).toHaveBeenCalled();
     });
 
-    it('pointer mode: metadata mode is undefined — skips copy phase', async () => {
+    it('mode=copy: calls fs.mkdir(target, { recursive: true }) before streamCopyWithProgress', async () => {
+      const fs = await import('node:fs/promises');
+      const { streamCopyWithProgress } = await import('../streaming-copy.helpers.js');
+
+      const callOrder: string[] = [];
+      vi.mocked(fs.mkdir).mockImplementationOnce(async (...args: unknown[]) => {
+        callOrder.push(`mkdir:${String(args[0])}`);
+        return undefined as never;
+      });
+      vi.mocked(streamCopyWithProgress).mockImplementationOnce(async () => {
+        callOrder.push('streamCopy');
+      });
+
+      const job = makeJob();
+      await adapter.process(job, ctx);
+
+      expect(vi.mocked(fs.mkdir)).toHaveBeenCalledWith(TARGET_PATH, { recursive: true });
+      expect(callOrder).toEqual([`mkdir:${TARGET_PATH}`, 'streamCopy']);
+    });
+
+    it('mode=copy: invokes streamCopyWithProgress with (payload.path, target, callback)', async () => {
+      const { streamCopyWithProgress } = await import('../streaming-copy.helpers.js');
+
+      const job = makeJob();
+      await adapter.process(job, ctx);
+
+      expect(vi.mocked(streamCopyWithProgress)).toHaveBeenCalledTimes(1);
+      expect(vi.mocked(streamCopyWithProgress)).toHaveBeenCalledWith(
+        '/audiobooks/Author/Title',
+        TARGET_PATH,
+        expect.any(Function),
+      );
+    });
+
+    it('mode=move: calls fs.rm on source after copy verification', async () => {
+      const fs = await import('node:fs/promises');
+
+      const payload: ManualImportJobPayload = {
+        path: '/audiobooks/Author/Title', title: 'Test Book', authorName: 'Author', mode: 'move',
+      };
+      const job = makeJob({ metadata: JSON.stringify(payload) });
+      await adapter.process(job, ctx);
+
+      expect(vi.mocked(fs.rm)).toHaveBeenCalledWith('/audiobooks/Author/Title', { recursive: true });
+    });
+
+    it('pointer mode: metadata mode is undefined — skips copy phase and streamCopyWithProgress', async () => {
+      const fs = await import('node:fs/promises');
+      const { streamCopyWithProgress } = await import('../streaming-copy.helpers.js');
+
       const payload: ManualImportJobPayload = {
         path: '/audiobooks/Author/Title',
         title: 'Test Book',
@@ -158,15 +241,26 @@ describe('ManualImportAdapter', () => {
       expect(phases).toContain('analyzing');
       expect(phases).not.toContain('copying');
       expect(phases).toContain('fetching_metadata');
+      expect(vi.mocked(streamCopyWithProgress)).not.toHaveBeenCalled();
+      expect(vi.mocked(fs.mkdir)).not.toHaveBeenCalledWith(TARGET_PATH, expect.anything());
     });
 
-    it('throws when bookId is null', async () => {
+    it('throws when bookId is null (before any fs primitive or streamCopyWithProgress call)', async () => {
+      const fs = await import('node:fs/promises');
+      const { streamCopyWithProgress } = await import('../streaming-copy.helpers.js');
+
       const job = makeJob({ bookId: null });
 
       await expect(adapter.process(job, ctx)).rejects.toThrow('ManualImportAdapter requires a bookId');
+      expect(vi.mocked(streamCopyWithProgress)).not.toHaveBeenCalled();
+      expect(vi.mocked(fs.mkdir)).not.toHaveBeenCalled();
+      expect(vi.mocked(fs.rename)).not.toHaveBeenCalled();
     });
 
-    it('throws when book row not found (deleted after queuing)', async () => {
+    it('throws when book row not found — before any fs primitive or streamCopyWithProgress call', async () => {
+      const fs = await import('node:fs/promises');
+      const { streamCopyWithProgress } = await import('../streaming-copy.helpers.js');
+
       mockDb.select = vi.fn().mockReturnValue({
         from: vi.fn().mockReturnThis(),
         where: vi.fn().mockReturnThis(),
@@ -176,15 +270,38 @@ describe('ManualImportAdapter', () => {
 
       const job = makeJob();
       await expect(adapter.process(job, ctx)).rejects.toThrow('Book 42 not found');
+      expect(vi.mocked(streamCopyWithProgress)).not.toHaveBeenCalled();
+      expect(vi.mocked(fs.mkdir)).not.toHaveBeenCalled();
     });
 
     it('hydrates ManualImportJobPayload from job.metadata JSON including mode', async () => {
-      const { copyToLibrary } = await import('../import-orchestration.helpers.js');
+      const { streamCopyWithProgress } = await import('../streaming-copy.helpers.js');
       const job = makeJob();
       await adapter.process(job, ctx);
 
-      // copyToLibrary should have been called (mode='copy')
-      expect(vi.mocked(copyToLibrary)).toHaveBeenCalled();
+      // mode='copy' → streamCopyWithProgress should run
+      expect(vi.mocked(streamCopyWithProgress)).toHaveBeenCalled();
+    });
+
+    it('onProgress wiring during copy: forwards captured callback values to ctx.emitProgress', async () => {
+      const { streamCopyWithProgress } = await import('../streaming-copy.helpers.js');
+
+      vi.mocked(streamCopyWithProgress).mockImplementationOnce(async (_src, _dest, onProgress) => {
+        onProgress(0.25, { current: 25, total: 100 });
+        onProgress(0.5, { current: 50, total: 100 });
+        onProgress(1.0, { current: 100, total: 100 });
+      });
+
+      const job = makeJob();
+      await adapter.process(job, ctx);
+
+      const copyingCalls = (ctx.emitProgress as ReturnType<typeof vi.fn>).mock.calls
+        .filter((c: unknown[]) => c[0] === 'copying');
+      expect(copyingCalls).toEqual([
+        ['copying', 0.25, { current: 25, total: 100 }],
+        ['copying', 0.5, { current: 50, total: 100 }],
+        ['copying', 1.0, { current: 100, total: 100 }],
+      ]);
     });
 
     describe('renaming phase (#650)', () => {
@@ -204,7 +321,13 @@ describe('ManualImportAdapter', () => {
         });
       }
 
+      async function mockReaddirAudioFiles(names: string[]) {
+        const fs = await import('node:fs/promises');
+        vi.mocked(fs.readdir).mockResolvedValue(names.map(n => makeDirent(n, true)) as never);
+      }
+
       it('mode=copy + fileFormat set: calls setPhase in order [analyzing, copying, renaming, fetching_metadata]', async () => {
+        await mockReaddirAudioFiles(['a.mp3']);
         const settingsSvc = makeRenameSettingsService('{title}');
         deps.settingsService = inject<SettingsService>(settingsSvc);
         deps.bookService = makeBookServiceWithNarrators([]);
@@ -217,7 +340,8 @@ describe('ManualImportAdapter', () => {
         expect(phases).toEqual(['analyzing', 'copying', 'renaming', 'fetching_metadata']);
       });
 
-      it('mode=copy + fileFormat set: reads settingsService.get(library) exactly once for copy+rename snapshot', async () => {
+      it('mode=copy + fileFormat set: adapter snapshots settingsService.get(library) once for rename (copyToLibrary fetches its own)', async () => {
+        await mockReaddirAudioFiles(['a.mp3']);
         const settingsSvc = makeRenameSettingsService('{title}');
         deps.settingsService = inject<SettingsService>(settingsSvc);
         deps.bookService = makeBookServiceWithNarrators([]);
@@ -226,57 +350,45 @@ describe('ManualImportAdapter', () => {
         const job = makeJob();
         await adapter.process(job, ctx);
 
+        // Adapter takes one snapshot it passes to renameIfConfigured; real copyToLibrary
+        // fetches independently. Total of 2 — a regression that adds a second adapter
+        // fetch for rename would push this to 3.
         const libraryCalls = (settingsSvc.get as ReturnType<typeof vi.fn>).mock.calls
           .filter((c: unknown[]) => c[0] === 'library');
-        expect(libraryCalls).toHaveLength(1);
+        expect(libraryCalls).toHaveLength(2);
       });
 
-      it('mode=copy + fileFormat set: calls renameFilesWithTemplate with correct args', async () => {
-        const { renameFilesWithTemplate } = await import('../../utils/paths.js');
-        const settingsSvc = makeRenameSettingsService('{title}');
-        deps.settingsService = inject<SettingsService>(settingsSvc);
-        deps.bookService = makeBookServiceWithNarrators([{ id: 1, name: 'Jane Narrator', asin: null }]);
-        adapter = new ManualImportAdapter(deps);
-
-        const job = makeJob();
-        await adapter.process(job, ctx);
-
-        expect(vi.mocked(renameFilesWithTemplate)).toHaveBeenCalledWith(
-          '/library/Author/Title', // finalPath from copyToLibrary mock
-          '{title}',
-          expect.objectContaining({
-            title: 'Test Book',
-            narrators: [{ name: 'Jane Narrator' }],
-          }),
-          'Author', // payload.authorName
-          expect.anything(), // log
-          expect.anything(), // namingOptions
-          expect.any(Function), // onProgress
-        );
-      });
-
-      it('onProgress wiring: invokes the captured callback once per rename and emits proportional renaming progress (3 renames)', async () => {
-        const { renameFilesWithTemplate } = await import('../../utils/paths.js');
+      it('mode=copy + fileFormat=\'{title}\' + 3 audio files: fs.rename called 3 times with (target/oldName, target/newName)', async () => {
+        const fs = await import('node:fs/promises');
+        await mockReaddirAudioFiles(['a.mp3', 'b.mp3', 'c.mp3']);
         const settingsSvc = makeRenameSettingsService('{title}');
         deps.settingsService = inject<SettingsService>(settingsSvc);
         deps.bookService = makeBookServiceWithNarrators([]);
         adapter = new ManualImportAdapter(deps);
 
-        // Drive the captured callback (positional arg index 6) with 1-indexed (current,total) tuples
-        // matching the real paths.ts contract: one call per successful rename, total constant.
-        vi.mocked(renameFilesWithTemplate).mockImplementationOnce(async (...args: unknown[]) => {
-          const onProgress = args[6] as ((current: number, total: number) => void) | undefined;
-          onProgress?.(1, 3);
-          onProgress?.(2, 3);
-          onProgress?.(3, 3);
-          return 3;
-        });
+        const job = makeJob();
+        await adapter.process(job, ctx);
+
+        // 3 forward renames; collisions on '{title}' → 'Test Book', 'Test Book (2)', 'Test Book (3)'.
+        expect(vi.mocked(fs.rename)).toHaveBeenCalledTimes(3);
+        expect(vi.mocked(fs.rename)).toHaveBeenNthCalledWith(1,
+          `${TARGET_PATH}/a.mp3`, `${TARGET_PATH}/Test Book.mp3`);
+        expect(vi.mocked(fs.rename)).toHaveBeenNthCalledWith(2,
+          `${TARGET_PATH}/b.mp3`, `${TARGET_PATH}/Test Book (2).mp3`);
+        expect(vi.mocked(fs.rename)).toHaveBeenNthCalledWith(3,
+          `${TARGET_PATH}/c.mp3`, `${TARGET_PATH}/Test Book (3).mp3`);
+      });
+
+      it('onProgress wiring: 3 renames emit proportional renaming progress through real helper', async () => {
+        await mockReaddirAudioFiles(['a.mp3', 'b.mp3', 'c.mp3']);
+        const settingsSvc = makeRenameSettingsService('{title}');
+        deps.settingsService = inject<SettingsService>(settingsSvc);
+        deps.bookService = makeBookServiceWithNarrators([]);
+        adapter = new ManualImportAdapter(deps);
 
         const job = makeJob();
         await adapter.process(job, ctx);
 
-        // Adapter must wrap the callback so it forwards to ctx.emitProgress with phase 'renaming',
-        // translating (current,total) → (current/total ratio, { current, total } counter).
         const renamingCalls = (ctx.emitProgress as ReturnType<typeof vi.fn>).mock.calls
           .filter((c: unknown[]) => c[0] === 'renaming');
         expect(renamingCalls).toHaveLength(3);
@@ -286,17 +398,11 @@ describe('ManualImportAdapter', () => {
       });
 
       it('onProgress wiring: single-rename edge case emits exactly one (1, 1) renaming progress event', async () => {
-        const { renameFilesWithTemplate } = await import('../../utils/paths.js');
+        await mockReaddirAudioFiles(['original.mp3']);
         const settingsSvc = makeRenameSettingsService('{title}');
         deps.settingsService = inject<SettingsService>(settingsSvc);
         deps.bookService = makeBookServiceWithNarrators([]);
         adapter = new ManualImportAdapter(deps);
-
-        vi.mocked(renameFilesWithTemplate).mockImplementationOnce(async (...args: unknown[]) => {
-          const onProgress = args[6] as ((current: number, total: number) => void) | undefined;
-          onProgress?.(1, 1);
-          return 1;
-        });
 
         const job = makeJob();
         await adapter.process(job, ctx);
@@ -307,26 +413,26 @@ describe('ManualImportAdapter', () => {
         expect(renamingCalls[0]).toEqual(['renaming', 1, { current: 1, total: 1 }]);
       });
 
-      it('onProgress wiring: zero-rename case at mock boundary emits no renaming progress events', async () => {
-        const { renameFilesWithTemplate } = await import('../../utils/paths.js');
+      it('zero audio files in target dir: no fs.rename calls, no renaming progress events', async () => {
+        const fs = await import('node:fs/promises');
+        // Non-audio entries only — paths.ts:72 short-circuit returns 0.
+        await mockReaddirAudioFiles([]);
         const settingsSvc = makeRenameSettingsService('{title}');
         deps.settingsService = inject<SettingsService>(settingsSvc);
         deps.bookService = makeBookServiceWithNarrators([]);
         adapter = new ManualImportAdapter(deps);
 
-        // Helper reports zero work and never invokes the callback (mirrors the
-        // audioFiles.length === 0 short-circuit at paths.ts:72).
-        vi.mocked(renameFilesWithTemplate).mockImplementationOnce(async () => 0);
-
         const job = makeJob();
         await adapter.process(job, ctx);
 
+        expect(vi.mocked(fs.rename)).not.toHaveBeenCalled();
         const renamingCalls = (ctx.emitProgress as ReturnType<typeof vi.fn>).mock.calls
           .filter((c: unknown[]) => c[0] === 'renaming');
         expect(renamingCalls).toHaveLength(0);
       });
 
       it('mode=move + fileFormat set: includes renaming in setPhase sequence', async () => {
+        await mockReaddirAudioFiles(['a.mp3']);
         const settingsSvc = makeRenameSettingsService('{title}');
         deps.settingsService = inject<SettingsService>(settingsSvc);
         deps.bookService = makeBookServiceWithNarrators([]);
@@ -340,19 +446,19 @@ describe('ManualImportAdapter', () => {
         expect(phases).toContain('renaming');
       });
 
-      it('mode=copy + fileFormat empty (defensive): does NOT call setPhase(renaming) or renameFilesWithTemplate', async () => {
-        const { renameFilesWithTemplate } = await import('../../utils/paths.js');
+      it('mode=copy + fileFormat empty (defensive): does NOT call setPhase(renaming) or fs.rename', async () => {
+        const fs = await import('node:fs/promises');
         // fileFormat already '' in default beforeEach setup
         const job = makeJob();
         await adapter.process(job, ctx);
 
         const phases = setPhase.mock.calls.map((c: unknown[]) => c[0]);
         expect(phases).not.toContain('renaming');
-        expect(vi.mocked(renameFilesWithTemplate)).not.toHaveBeenCalled();
+        expect(vi.mocked(fs.rename)).not.toHaveBeenCalled();
       });
 
-      it('mode=copy + fileFormat whitespace only (defensive): does NOT call setPhase(renaming) or renameFilesWithTemplate', async () => {
-        const { renameFilesWithTemplate } = await import('../../utils/paths.js');
+      it('mode=copy + fileFormat whitespace only (defensive): does NOT call setPhase(renaming) or fs.rename', async () => {
+        const fs = await import('node:fs/promises');
         const settingsSvc = makeRenameSettingsService('   ');
         deps.settingsService = inject<SettingsService>(settingsSvc);
         adapter = new ManualImportAdapter(deps);
@@ -362,11 +468,11 @@ describe('ManualImportAdapter', () => {
 
         const phases = setPhase.mock.calls.map((c: unknown[]) => c[0]);
         expect(phases).not.toContain('renaming');
-        expect(vi.mocked(renameFilesWithTemplate)).not.toHaveBeenCalled();
+        expect(vi.mocked(fs.rename)).not.toHaveBeenCalled();
       });
 
-      it('mode=undefined (pointer/Library Import) + fileFormat set: does NOT call setPhase(renaming) or renameFilesWithTemplate', async () => {
-        const { renameFilesWithTemplate } = await import('../../utils/paths.js');
+      it('mode=undefined (pointer/Library Import) + fileFormat set: does NOT call setPhase(renaming) or fs.rename', async () => {
+        const fs = await import('node:fs/promises');
         const settingsSvc = makeRenameSettingsService('{title}');
         deps.settingsService = inject<SettingsService>(settingsSvc);
         adapter = new ManualImportAdapter(deps);
@@ -377,13 +483,50 @@ describe('ManualImportAdapter', () => {
 
         const phases = setPhase.mock.calls.map((c: unknown[]) => c[0]);
         expect(phases).not.toContain('renaming');
-        expect(vi.mocked(renameFilesWithTemplate)).not.toHaveBeenCalled();
+        expect(vi.mocked(fs.rename)).not.toHaveBeenCalled();
+      });
+
+      it('rename rollback: Nth fs.rename rejects, helper rewinds completed renames in reverse', async () => {
+        const fs = await import('node:fs/promises');
+        await mockReaddirAudioFiles(['a.mp3', 'b.mp3', 'c.mp3']);
+        // Forward renames produce: a→Test Book, b→Test Book (2), c→Test Book (3).
+        // Rollback after 3rd fails: reverses b→Test Book (2) and a→Test Book (only the completed pair).
+        vi.mocked(fs.rename)
+          .mockResolvedValueOnce(undefined) // a.mp3 → Test Book.mp3
+          .mockResolvedValueOnce(undefined) // b.mp3 → Test Book (2).mp3
+          .mockRejectedValueOnce(new Error('ENOSPC')) // c.mp3 → Test Book (3).mp3 fails
+          .mockResolvedValueOnce(undefined) // rollback: Test Book (2).mp3 → b.mp3
+          .mockResolvedValueOnce(undefined); // rollback: Test Book.mp3 → a.mp3
+
+        const settingsSvc = makeRenameSettingsService('{title}');
+        deps.settingsService = inject<SettingsService>(settingsSvc);
+        deps.bookService = makeBookServiceWithNarrators([]);
+        adapter = new ManualImportAdapter(deps);
+
+        const job = makeJob();
+        await expect(adapter.process(job, ctx)).rejects.toThrow('ENOSPC');
+
+        // 3 forward + 2 rollback = 5 total
+        expect(vi.mocked(fs.rename)).toHaveBeenCalledTimes(5);
+        // Forward calls
+        expect(vi.mocked(fs.rename)).toHaveBeenNthCalledWith(1,
+          `${TARGET_PATH}/a.mp3`, `${TARGET_PATH}/Test Book.mp3`);
+        expect(vi.mocked(fs.rename)).toHaveBeenNthCalledWith(2,
+          `${TARGET_PATH}/b.mp3`, `${TARGET_PATH}/Test Book (2).mp3`);
+        expect(vi.mocked(fs.rename)).toHaveBeenNthCalledWith(3,
+          `${TARGET_PATH}/c.mp3`, `${TARGET_PATH}/Test Book (3).mp3`);
+        // Rollback calls (reverse order, swapped from/to)
+        expect(vi.mocked(fs.rename)).toHaveBeenNthCalledWith(4,
+          `${TARGET_PATH}/Test Book (2).mp3`, `${TARGET_PATH}/b.mp3`);
+        expect(vi.mocked(fs.rename)).toHaveBeenNthCalledWith(5,
+          `${TARGET_PATH}/Test Book.mp3`, `${TARGET_PATH}/a.mp3`);
       });
 
       it('mode=copy + fileFormat set + renameFilesWithTemplate throws: adapter catches, marks failed, re-throws', async () => {
-        const { renameFilesWithTemplate } = await import('../../utils/paths.js');
+        const fs = await import('node:fs/promises');
         const { safeEmit } = await import('../../utils/safe-emit.js');
-        vi.mocked(renameFilesWithTemplate).mockRejectedValueOnce(new Error('ENOSPC'));
+        await mockReaddirAudioFiles(['a.mp3']);
+        vi.mocked(fs.rename).mockRejectedValueOnce(new Error('ENOSPC'));
         const settingsSvc = makeRenameSettingsService('{title}');
         deps.settingsService = inject<SettingsService>(settingsSvc);
         deps.bookService = makeBookServiceWithNarrators([]);
@@ -403,8 +546,9 @@ describe('ManualImportAdapter', () => {
         }));
       });
 
-      it('mode=copy + fileFormat set + bookService.getById returns narrators: RenameableBook.narrators populated', async () => {
-        const { renameFilesWithTemplate } = await import('../../utils/paths.js');
+      it('mode=copy + fileFormat=\'{narrator}\' + bookService.getById returns narrators: rendered filename uses primary narrator', async () => {
+        const fs = await import('node:fs/promises');
+        await mockReaddirAudioFiles(['a.mp3']);
         const settingsSvc = makeRenameSettingsService('{narrator}');
         deps.settingsService = inject<SettingsService>(settingsSvc);
         deps.bookService = makeBookServiceWithNarrators([
@@ -416,17 +560,15 @@ describe('ManualImportAdapter', () => {
         const job = makeJob();
         await adapter.process(job, ctx);
 
-        expect(vi.mocked(renameFilesWithTemplate)).toHaveBeenCalledWith(
-          expect.anything(), '{narrator}',
-          expect.objectContaining({
-            narrators: [{ name: 'Jane Narrator' }, { name: 'John Reader' }],
-          }),
-          expect.anything(), expect.anything(), expect.anything(), expect.any(Function),
+        expect(vi.mocked(fs.rename)).toHaveBeenCalledWith(
+          `${TARGET_PATH}/a.mp3`,
+          `${TARGET_PATH}/Jane Narrator.mp3`,
         );
       });
 
-      it('mode=copy + fileFormat set + bookService.getById returns empty narrators: rename proceeds with null', async () => {
-        const { renameFilesWithTemplate } = await import('../../utils/paths.js');
+      it('mode=copy + fileFormat set + bookService.getById returns null narrators: rename proceeds using bookRow fallbacks', async () => {
+        const fs = await import('node:fs/promises');
+        await mockReaddirAudioFiles(['a.mp3']);
         const settingsSvc = makeRenameSettingsService('{title}');
         deps.settingsService = inject<SettingsService>(settingsSvc);
         deps.bookService = inject<BookService>({
@@ -438,23 +580,22 @@ describe('ManualImportAdapter', () => {
         const job = makeJob();
         await adapter.process(job, ctx);
 
-        expect(vi.mocked(renameFilesWithTemplate)).toHaveBeenCalledWith(
-          expect.anything(), '{title}',
-          expect.objectContaining({ narrators: null }),
-          expect.anything(), expect.anything(), expect.anything(), expect.any(Function),
+        expect(deps.bookService.getById).toHaveBeenCalledWith(42);
+        expect(vi.mocked(fs.rename)).toHaveBeenCalledWith(
+          `${TARGET_PATH}/a.mp3`,
+          `${TARGET_PATH}/Test Book.mp3`,
         );
       });
     });
 
-    it('emits book_status_change SSE and records import_failed event on failure (#636 F2)', async () => {
+    it('emits book_status_change SSE and records import_failed event on copy failure (#636 F2)', async () => {
       const { safeEmit } = await import('../../utils/safe-emit.js');
-      const { copyToLibrary } = await import('../import-orchestration.helpers.js');
-      vi.mocked(copyToLibrary).mockRejectedValueOnce(new Error('Disk full'));
+      const { streamCopyWithProgress } = await import('../streaming-copy.helpers.js');
+      vi.mocked(streamCopyWithProgress).mockRejectedValueOnce(new Error('Disk full'));
 
       const job = makeJob();
       await expect(adapter.process(job, ctx)).rejects.toThrow('Disk full');
 
-      // Failure SSE emitted
       expect(vi.mocked(safeEmit)).toHaveBeenCalledWith(
         mockBroadcaster,
         'book_status_change',
@@ -462,7 +603,6 @@ describe('ManualImportAdapter', () => {
         expect.anything(),
       );
 
-      // Failure event recorded with error payload for UI display
       expect(mockEventHistory.create).toHaveBeenCalledWith(expect.objectContaining({
         eventType: 'import_failed',
         bookId: 42,
@@ -473,8 +613,8 @@ describe('ManualImportAdapter', () => {
     });
 
     it('failure path: forwards narratorName from payload.metadata.narrators[0] (#672)', async () => {
-      const { copyToLibrary } = await import('../import-orchestration.helpers.js');
-      vi.mocked(copyToLibrary).mockRejectedValueOnce(new Error('Disk full'));
+      const { streamCopyWithProgress } = await import('../streaming-copy.helpers.js');
+      vi.mocked(streamCopyWithProgress).mockRejectedValueOnce(new Error('Disk full'));
 
       const payload: ManualImportJobPayload = {
         path: '/audiobooks/Author/Title',
@@ -501,8 +641,8 @@ describe('ManualImportAdapter', () => {
     });
 
     it('failure path: narratorName is null when payload.metadata is undefined (#672)', async () => {
-      const { copyToLibrary } = await import('../import-orchestration.helpers.js');
-      vi.mocked(copyToLibrary).mockRejectedValueOnce(new Error('Disk full'));
+      const { streamCopyWithProgress } = await import('../streaming-copy.helpers.js');
+      vi.mocked(streamCopyWithProgress).mockRejectedValueOnce(new Error('Disk full'));
 
       const payload: ManualImportJobPayload = {
         path: '/audiobooks/Author/Title',
