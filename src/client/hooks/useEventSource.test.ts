@@ -7,7 +7,12 @@ import { useEventSource, useSSEConnected } from './useEventSource';
 import { useMergeProgress, useMergeActivityCards, setMergeProgress, _resetForTesting as resetMergeStore } from './useMergeProgress';
 import { handleSearchEvent } from './useSearchProgress';
 import { queryKeys } from '@/lib/queryKeys';
-import { sseEventTypeSchema } from '../../shared/schemas.js';
+import {
+  CACHE_INVALIDATION_MATRIX,
+  type CacheInvalidationRule,
+  type SSEEventType,
+  sseEventTypeSchema,
+} from '../../shared/schemas.js';
 
 vi.mock('./useSearchProgress', () => ({
   handleSearchEvent: vi.fn(),
@@ -1421,5 +1426,201 @@ describe('#514 useEventSource type safety', () => {
     const schemaOptions = [...sseEventTypeSchema.options];
 
     expect(registeredTypes.sort()).toEqual(schemaOptions.sort());
+  });
+});
+
+// ============================================================================
+// #706 — CACHE_INVALIDATION_MATRIX runtime semantics
+// ============================================================================
+
+describe('#706 CACHE_INVALIDATION_MATRIX runtime semantics', () => {
+  // Independent literal — flipping any matrix value without updating this fails the
+  // top-level equality check AND the per-event behavioral assertions (closes the
+  // self-reference loophole where a test driven by the matrix can't catch a flip).
+  const EXPECTED_RULES: Record<SSEEventType, CacheInvalidationRule> = {
+    download_progress: { activity: 'patch' },
+    download_status_change: { activity: 'invalidate', activityCounts: 'invalidate' },
+    book_status_change: { books: 'invalidate' },
+    grab_started: { activity: 'invalidate', activityCounts: 'invalidate', eventHistory: 'invalidate' },
+    import_complete: { activity: 'invalidate', activityCounts: 'invalidate', books: 'invalidate', eventHistory: 'invalidate', importJobs: 'invalidate' },
+    import_phase_change: { importJobs: 'invalidate' },
+    import_progress: { importJobs: 'patch' },
+    import_failed: { importJobs: 'invalidate', books: 'invalidate', eventHistory: 'invalidate' },
+    review_needed: { activity: 'invalidate', activityCounts: 'invalidate' },
+    merge_complete: { activity: 'invalidate', activityCounts: 'invalidate', books: 'invalidate', eventHistory: 'invalidate' },
+    merge_started: { eventHistory: 'invalidate' },
+    merge_progress: {},
+    merge_failed: { eventHistory: 'invalidate', books: 'invalidate' },
+    merge_queued: {},
+    merge_queue_updated: {},
+    search_started: {},
+    search_indexer_complete: {},
+    search_indexer_error: {},
+    search_grabbed: {},
+    search_complete: {},
+  };
+
+  // Minimal valid payloads — only fields the consumer reads.
+  const PAYLOADS: Record<SSEEventType, Record<string, unknown>> = {
+    download_progress: { download_id: 7, book_id: 42, percentage: 0.5, speed: 1024, eta: 30 },
+    download_status_change: { download_id: 7, book_id: 42, old_status: 'downloading', new_status: 'completed' },
+    book_status_change: { book_id: 42, old_status: 'wanted', new_status: 'downloaded' },
+    grab_started: { download_id: 7, book_id: 42, book_title: 'Test', release_title: 'Release' },
+    import_complete: { download_id: 7, book_id: 42, book_title: 'Test', job_id: 1, elapsed_ms: 1000 },
+    import_phase_change: { job_id: 1, book_id: 42, book_title: 'Test', from: 'analyzing', to: 'copying' },
+    import_progress: { job_id: 1, book_id: 42, book_title: 'Test', phase: 'copying', progress: 0.5, byte_counter: { current: 1, total: 2 } },
+    import_failed: { job_id: 1, book_id: 42, book_title: 'Test', phase: 'copying', error_message: 'fail' },
+    review_needed: { download_id: 7, book_id: 42, book_title: 'Test' },
+    merge_complete: { book_id: 42, book_title: 'Test', success: true, message: 'msg' },
+    merge_started: { book_id: 42, book_title: 'Test' },
+    merge_progress: { book_id: 42, book_title: 'Test', phase: 'staging', percentage: 0.5 },
+    merge_failed: { book_id: 42, book_title: 'Test', error: 'err', reason: 'error' },
+    merge_queued: { book_id: 42, book_title: 'Test', position: 1 },
+    merge_queue_updated: { book_id: 42, book_title: 'Test', position: 1 },
+    search_started: { book_id: 42, book_title: 'Test', indexers: [] },
+    search_indexer_complete: { book_id: 42, indexer_id: 1, indexer_name: 'X', results_found: 0, elapsed_ms: 1 },
+    search_indexer_error: { book_id: 42, indexer_id: 1, indexer_name: 'X', error: 'e', elapsed_ms: 1 },
+    search_grabbed: { book_id: 42, release_title: 'r', indexer_name: 'X' },
+    search_complete: { book_id: 42, total_results: 0, outcome: 'no_results' },
+  };
+
+  it('CACHE_INVALIDATION_MATRIX deep-equals the independent EXPECTED_RULES fixture', () => {
+    expect(CACHE_INVALIDATION_MATRIX).toEqual(EXPECTED_RULES);
+  });
+
+  it('CACHE_INVALIDATION_MATRIX keys cover every sseEventTypeSchema option', () => {
+    expect(Object.keys(CACHE_INVALIDATION_MATRIX).sort()).toEqual([...sseEventTypeSchema.options].sort());
+  });
+
+  function assertActivityPatch(type: SSEEventType, payload: Record<string, unknown>) {
+    const { wrapper, queryClient } = createWrapper();
+    queryClient.setQueryData(queryKeys.activity(), {
+      data: [{ id: payload.download_id, progress: 0, downloadSpeed: null }],
+      total: 1,
+    });
+    renderHook(() => useEventSource('key'), { wrapper });
+    const invalidateSpy = vi.spyOn(queryClient, 'invalidateQueries');
+    const es = MockEventSource.instances[0];
+    act(() => {
+      es.simulateOpen();
+      es.simulateEvent(type, payload);
+    });
+    const cached = queryClient.getQueryData(queryKeys.activity()) as { data: Record<string, unknown>[]; total: number };
+    expect(cached.data[0]).toMatchObject({
+      id: payload.download_id,
+      progress: payload.percentage,
+      downloadSpeed: payload.speed,
+    });
+    expect(invalidateSpy).not.toHaveBeenCalledWith({ queryKey: ['activity'] });
+    expect(invalidateSpy).not.toHaveBeenCalledWith({ queryKey: queryKeys.activityCounts() });
+  }
+
+  function assertImportJobsPatch(type: SSEEventType, payload: Record<string, unknown>) {
+    const { wrapper, queryClient } = createWrapper();
+    queryClient.setQueryData(queryKeys.importJobs(), [
+      { id: payload.job_id, bookId: payload.book_id, status: 'processing', phase: 'queued' },
+    ]);
+    renderHook(() => useEventSource('key'), { wrapper });
+    const invalidateSpy = vi.spyOn(queryClient, 'invalidateQueries');
+    const es = MockEventSource.instances[0];
+    act(() => {
+      es.simulateOpen();
+      es.simulateEvent(type, payload);
+    });
+    const cached = queryClient.getQueryData(queryKeys.importJobs()) as Record<string, unknown>[];
+    expect(cached[0]).toMatchObject({
+      id: payload.job_id,
+      _progress: payload.progress,
+      _byteCounter: payload.byte_counter,
+      _progressPhase: payload.phase,
+    });
+    expect(invalidateSpy).not.toHaveBeenCalledWith({ queryKey: ['importJobs'] });
+  }
+
+  function assertNoOp(type: SSEEventType, payload: Record<string, unknown>) {
+    const { wrapper, queryClient } = createWrapper();
+    renderHook(() => useEventSource('key'), { wrapper });
+    const invalidateSpy = vi.spyOn(queryClient, 'invalidateQueries');
+    const setSpy = vi.spyOn(queryClient, 'setQueryData');
+    const es = MockEventSource.instances[0];
+    act(() => {
+      es.simulateOpen();
+      es.simulateEvent(type, payload);
+    });
+    const trackedKeys: readonly (readonly unknown[])[] = [
+      ['activity'],
+      queryKeys.activityCounts(),
+      ['books'],
+      queryKeys.eventHistory.root(),
+      ['importJobs'],
+    ];
+    for (const key of trackedKeys) {
+      expect(invalidateSpy).not.toHaveBeenCalledWith({ queryKey: key });
+      expect(setSpy).not.toHaveBeenCalledWith(key, expect.anything());
+    }
+  }
+
+  function assertInvalidate(type: SSEEventType, payload: Record<string, unknown>, rule: CacheInvalidationRule) {
+    const { wrapper, queryClient } = createWrapper();
+    renderHook(() => useEventSource('key'), { wrapper });
+    const invalidateSpy = vi.spyOn(queryClient, 'invalidateQueries');
+    const es = MockEventSource.instances[0];
+    act(() => {
+      es.simulateOpen();
+      es.simulateEvent(type, payload);
+    });
+
+    if (rule.activity === 'invalidate') {
+      expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: ['activity'] });
+    }
+    if (rule.activityCounts) {
+      expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: queryKeys.activityCounts() });
+    }
+    if (rule.books) {
+      expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: ['books'] });
+      if (typeof payload.book_id === 'number') {
+        expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: queryKeys.book(payload.book_id) });
+      }
+    }
+    if (rule.eventHistory) {
+      expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: queryKeys.eventHistory.root() });
+    }
+    if (rule.importJobs === 'invalidate') {
+      expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: ['importJobs'] });
+    }
+  }
+
+  it.each(Object.keys(EXPECTED_RULES) as SSEEventType[])(
+    'matrix runtime semantics: %s',
+    (type) => {
+      const rule = EXPECTED_RULES[type];
+      const payload = PAYLOADS[type];
+
+      if (rule.activity === 'patch') {
+        assertActivityPatch(type, payload);
+        return;
+      }
+      if (rule.importJobs === 'patch') {
+        assertImportJobsPatch(type, payload);
+        return;
+      }
+      if (Object.keys(rule).length === 0) {
+        assertNoOp(type, payload);
+        return;
+      }
+      assertInvalidate(type, payload, rule);
+    },
+  );
+
+  // Documentation test for MockEventSource — NOT a substitute for the matrix-completeness
+  // assertion above. useEventSource only registers listeners for sseEventTypeSchema.options,
+  // so dispatching an unknown event type is a silent no-op at the harness layer.
+  it('MockEventSource.simulateEvent for an unregistered type reaches no listener', () => {
+    const { wrapper } = createWrapper();
+    renderHook(() => useEventSource('key'), { wrapper });
+    const es = MockEventSource.instances[0];
+    expect(() => es.simulateEvent('not_in_matrix', {})).not.toThrow();
+    const registered = [...(es as unknown as { listeners: Map<string, unknown[]> }).listeners.keys()];
+    expect(registered).not.toContain('not_in_matrix');
   });
 });
