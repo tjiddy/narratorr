@@ -1570,6 +1570,7 @@ describe('#706 CACHE_INVALIDATION_MATRIX runtime semantics', () => {
       es.simulateEvent(type, payload);
     });
 
+    // Positive assertions: each declared family is invalidated with the consumer's exact call shape.
     if (rule.activity === 'invalidate') {
       expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: ['activity'] });
     }
@@ -1587,6 +1588,26 @@ describe('#706 CACHE_INVALIDATION_MATRIX runtime semantics', () => {
     }
     if (rule.importJobs === 'invalidate') {
       expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: ['importJobs'] });
+    }
+
+    // Negative assertions: tracked families absent from the rule must NOT be invalidated.
+    if (!rule.activity) {
+      expect(invalidateSpy).not.toHaveBeenCalledWith({ queryKey: ['activity'] });
+    }
+    if (!rule.activityCounts) {
+      expect(invalidateSpy).not.toHaveBeenCalledWith({ queryKey: queryKeys.activityCounts() });
+    }
+    if (!rule.books) {
+      expect(invalidateSpy).not.toHaveBeenCalledWith({ queryKey: ['books'] });
+      if (typeof payload.book_id === 'number') {
+        expect(invalidateSpy).not.toHaveBeenCalledWith({ queryKey: queryKeys.book(payload.book_id) });
+      }
+    }
+    if (!rule.eventHistory) {
+      expect(invalidateSpy).not.toHaveBeenCalledWith({ queryKey: queryKeys.eventHistory.root() });
+    }
+    if (!rule.importJobs) {
+      expect(invalidateSpy).not.toHaveBeenCalledWith({ queryKey: ['importJobs'] });
     }
   }
 
