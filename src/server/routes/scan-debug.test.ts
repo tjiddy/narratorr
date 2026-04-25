@@ -608,4 +608,41 @@ describe('POST /api/library/scan-debug', () => {
       expect(body.search.directLookup).toBeNull();
     });
   });
+
+  describe('all-numeric date-like titles (issue #701)', () => {
+    it('Stephen King/11-22-63 preserves date-like title through parsing/cleaning into search', async () => {
+      (services.metadata.searchBooks as ReturnType<typeof vi.fn>).mockResolvedValue([]);
+      (services.book.findDuplicate as ReturnType<typeof vi.fn>).mockResolvedValue(null);
+
+      const res = await app.inject({
+        method: 'POST',
+        url: '/api/library/scan-debug',
+        payload: { folderName: 'Stephen King/11-22-63' },
+      });
+
+      const body = JSON.parse(res.payload);
+      expect(res.statusCode).toBe(200);
+      expect(body.parsing.raw.title).toBe('11-22-63');
+      expect(body.parsing.raw.series).toBeNull();
+      expect(body.cleaning.title.result).toBe('11-22-63');
+      expect(body.search.initialQuery).toBe('11-22-63 Stephen King');
+    });
+
+    it('Asimov/Foundation - 02 - Second Foundation (real series) still splits into series/title', async () => {
+      (services.metadata.searchBooks as ReturnType<typeof vi.fn>).mockResolvedValue([]);
+      (services.book.findDuplicate as ReturnType<typeof vi.fn>).mockResolvedValue(null);
+
+      const res = await app.inject({
+        method: 'POST',
+        url: '/api/library/scan-debug',
+        payload: { folderName: 'Asimov/Foundation - 02 - Second Foundation' },
+      });
+
+      const body = JSON.parse(res.payload);
+      expect(res.statusCode).toBe(200);
+      expect(body.parsing.raw.series).toBe('Foundation');
+      expect(body.parsing.raw.title).toBe('Second Foundation');
+      expect(body.search.initialQuery).toBe('Second Foundation Asimov');
+    });
+  });
 });

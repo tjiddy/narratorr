@@ -28,6 +28,19 @@ const NARRATOR_PAREN_REGEX = /\s*\((?!(?:19|20)\d{2}\))(\S+(?:\s+\S+){0,2})\)\s*
 /** Matches an Audible ASIN in brackets: B0 + 8 alphanumeric chars (case-insensitive). Non-global. */
 const ASIN_REGEX = /\[B0[A-Z0-9]{8}\]/i;
 
+/**
+ * Matches inputs that are entirely numeric segments separated by dash, en-dash,
+ * dot, or slash (e.g. '11-22-63', '11.22.63', '1-5', '1.5').
+ * Used to short-circuit Series–NN–Title matching and the leading-numeric strip,
+ * which would otherwise mangle date-like or numeric titles.
+ */
+const ALL_NUMERIC_SEGMENTS_REGEX = /^\d+(?:[-–./]\d+){1,2}$/;
+
+/** True when the input is two or three digit-only segments joined by `-`, `–`, `.`, or `/`. */
+function isAllNumericSegments(input: string): boolean {
+  return ALL_NUMERIC_SEGMENTS_REGEX.test(input);
+}
+
 // ─── Trace Types ────────────────────────────────────────────────────
 
 export interface CleanNameStep {
@@ -55,11 +68,15 @@ export function normalizeFolderName(name: string): string {
 export function cleanName(name: string): string {
   // Strip leading number prefixes (track/series position):
   //   '01 - Title', '01. Title', '01.- Title', '6.5 - Title', '6.5 – Title'
-  // Decimal positions checked first so '6.5' isn't split into '6.' + '5'
-  const stripped = name
-    .replace(/^\d+\.\d+\s*[–-]\s*/, '')          // decimal + dash: '6.5 - ', '6.5 – '
-    .replace(/^\d+[.\s]*[–-]\s*/, '')             // integer + dash: '01 - ', '01.- '
-    .replace(/^\d+\.(?!\d)\s*/, '');              // integer + dot (not decimal): '01. '
+  // Decimal positions checked first so '6.5' isn't split into '6.' + '5'.
+  // Skip when the entire input is numeric segments — the strip would mangle
+  // date-like titles like '11-22-63'.
+  const stripped = isAllNumericSegments(name)
+    ? name
+    : name
+        .replace(/^\d+\.\d+\s*[–-]\s*/, '')          // decimal + dash: '6.5 - ', '6.5 – '
+        .replace(/^\d+[.\s]*[–-]\s*/, '')             // integer + dash: '01 - ', '01.- '
+        .replace(/^\d+\.(?!\d)\s*/, '');              // integer + dot (not decimal): '01. '
 
   // Strip series markers (", Book 01", ", Vol 3", ", Volume 12") before dedup
   const withoutSeries = stripped.replace(SERIES_MARKER_REGEX, '');
@@ -111,11 +128,14 @@ export function cleanNameWithTrace(name: string): CleanNameTraceResult {
   const steps: CleanNameStep[] = [];
   let current = name;
 
-  // Step 1: leadingNumeric
-  current = current
-    .replace(/^\d+\.\d+\s*[–-]\s*/, '')
-    .replace(/^\d+[.\s]*[–-]\s*/, '')
-    .replace(/^\d+\.(?!\d)\s*/, '');
+  // Step 1: leadingNumeric — skip when entire input is numeric segments
+  // (e.g. '11-22-63'), so date-like titles aren't truncated.
+  if (!isAllNumericSegments(current)) {
+    current = current
+      .replace(/^\d+\.\d+\s*[–-]\s*/, '')
+      .replace(/^\d+[.\s]*[–-]\s*/, '')
+      .replace(/^\d+\.(?!\d)\s*/, '');
+  }
   steps.push({ name: 'leadingNumeric', output: current });
 
   // Step 2: seriesMarker
@@ -211,6 +231,12 @@ function parseSingleFolder(folder: string): {
   // Use cleaned input for pattern matching; fall back to original if cleaned is empty
   const input = cleaned || folder;
 
+  // Guard: all-numeric date-like inputs ('11-22-63', '1.5') are titles, not
+  // Series–NN–Title — short-circuit before pattern matching.
+  if (isAllNumericSegments(input)) {
+    return { title: input, author: null, series: null, asin };
+  }
+
   // Pattern: "Series – NN – Title" or "Series - NN - Title"
   const seriesNumberMatch = input.match(SERIES_NUMBER_TITLE_REGEX);
   if (seriesNumberMatch) {
@@ -302,6 +328,14 @@ export function parseFolderStructure(parts: string[]): {
   if (parts.length === 2) {
     const { asin, cleaned } = extractASIN(parts[1]);
     const titleSegment = cleaned || parts[1];
+    if (isAllNumericSegments(titleSegment)) {
+      return {
+        title: titleSegment,
+        author: cleanName(parts[0]),
+        series: null,
+        asin,
+      };
+    }
     const seriesMatch = titleSegment.match(SERIES_NUMBER_TITLE_REGEX);
     if (seriesMatch) {
       return {
@@ -353,6 +387,9 @@ export function parseFolderStructureRaw(parts: string[]): {
   if (parts.length === 2) {
     const { asin, cleaned } = extractASIN(parts[1]);
     const titleSegment = cleaned || parts[1];
+    if (isAllNumericSegments(titleSegment)) {
+      return { title: titleSegment, author: parts[0], series: null, asin };
+    }
     const seriesMatch = titleSegment.match(SERIES_NUMBER_TITLE_REGEX);
     if (seriesMatch) {
       return { title: seriesMatch[2], author: parts[0], series: seriesMatch[1], asin };
@@ -378,6 +415,10 @@ function parseSingleFolderRaw(folder: string): {
 } {
   const { asin, cleaned } = extractASIN(folder);
   const input = cleaned || folder;
+
+  if (isAllNumericSegments(input)) {
+    return { title: input, author: null, series: null, asin };
+  }
 
   const seriesNumberMatch = input.match(SERIES_NUMBER_TITLE_REGEX);
   if (seriesNumberMatch) {
