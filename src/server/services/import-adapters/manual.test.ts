@@ -255,6 +255,77 @@ describe('ManualImportAdapter', () => {
         );
       });
 
+      it('onProgress wiring: invokes the captured callback once per rename and emits proportional renaming progress (3 renames)', async () => {
+        const { renameFilesWithTemplate } = await import('../../utils/paths.js');
+        const settingsSvc = makeRenameSettingsService('{title}');
+        deps.settingsService = inject<SettingsService>(settingsSvc);
+        deps.bookService = makeBookServiceWithNarrators([]);
+        adapter = new ManualImportAdapter(deps);
+
+        // Drive the captured callback (positional arg index 6) with 1-indexed (current,total) tuples
+        // matching the real paths.ts contract: one call per successful rename, total constant.
+        vi.mocked(renameFilesWithTemplate).mockImplementationOnce(async (...args: unknown[]) => {
+          const onProgress = args[6] as ((current: number, total: number) => void) | undefined;
+          onProgress?.(1, 3);
+          onProgress?.(2, 3);
+          onProgress?.(3, 3);
+          return 3;
+        });
+
+        const job = makeJob();
+        await adapter.process(job, ctx);
+
+        // Adapter must wrap the callback so it forwards to ctx.emitProgress with phase 'renaming',
+        // translating (current,total) → (current/total ratio, { current, total } counter).
+        const renamingCalls = (ctx.emitProgress as ReturnType<typeof vi.fn>).mock.calls
+          .filter((c: unknown[]) => c[0] === 'renaming');
+        expect(renamingCalls).toHaveLength(3);
+        expect(renamingCalls[0]).toEqual(['renaming', 1 / 3, { current: 1, total: 3 }]);
+        expect(renamingCalls[1]).toEqual(['renaming', 2 / 3, { current: 2, total: 3 }]);
+        expect(renamingCalls[2]).toEqual(['renaming', 1, { current: 3, total: 3 }]);
+      });
+
+      it('onProgress wiring: single-rename edge case emits exactly one (1, 1) renaming progress event', async () => {
+        const { renameFilesWithTemplate } = await import('../../utils/paths.js');
+        const settingsSvc = makeRenameSettingsService('{title}');
+        deps.settingsService = inject<SettingsService>(settingsSvc);
+        deps.bookService = makeBookServiceWithNarrators([]);
+        adapter = new ManualImportAdapter(deps);
+
+        vi.mocked(renameFilesWithTemplate).mockImplementationOnce(async (...args: unknown[]) => {
+          const onProgress = args[6] as ((current: number, total: number) => void) | undefined;
+          onProgress?.(1, 1);
+          return 1;
+        });
+
+        const job = makeJob();
+        await adapter.process(job, ctx);
+
+        const renamingCalls = (ctx.emitProgress as ReturnType<typeof vi.fn>).mock.calls
+          .filter((c: unknown[]) => c[0] === 'renaming');
+        expect(renamingCalls).toHaveLength(1);
+        expect(renamingCalls[0]).toEqual(['renaming', 1, { current: 1, total: 1 }]);
+      });
+
+      it('onProgress wiring: zero-rename case at mock boundary emits no renaming progress events', async () => {
+        const { renameFilesWithTemplate } = await import('../../utils/paths.js');
+        const settingsSvc = makeRenameSettingsService('{title}');
+        deps.settingsService = inject<SettingsService>(settingsSvc);
+        deps.bookService = makeBookServiceWithNarrators([]);
+        adapter = new ManualImportAdapter(deps);
+
+        // Helper reports zero work and never invokes the callback (mirrors the
+        // audioFiles.length === 0 short-circuit at paths.ts:72).
+        vi.mocked(renameFilesWithTemplate).mockImplementationOnce(async () => 0);
+
+        const job = makeJob();
+        await adapter.process(job, ctx);
+
+        const renamingCalls = (ctx.emitProgress as ReturnType<typeof vi.fn>).mock.calls
+          .filter((c: unknown[]) => c[0] === 'renaming');
+        expect(renamingCalls).toHaveLength(0);
+      });
+
       it('mode=move + fileFormat set: includes renaming in setPhase sequence', async () => {
         const settingsSvc = makeRenameSettingsService('{title}');
         deps.settingsService = inject<SettingsService>(settingsSvc);
