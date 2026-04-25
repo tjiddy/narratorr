@@ -194,6 +194,69 @@ describe('ImportActivityCard', () => {
     });
   });
 
+  describe('amber-gradient leading connector (#710)', () => {
+    it('applies amber-gradient class to the segment immediately preceding the active phase row', () => {
+      const job = makeJob({
+        phaseHistory: [
+          { phase: 'analyzing', startedAt: 1000, completedAt: 1500 },
+          { phase: 'copying', startedAt: 1500, completedAt: 2000 },
+          { phase: 'renaming', startedAt: 2000 },
+        ],
+      });
+      const { container } = renderWithProviders(<ImportActivityCard job={job} />);
+
+      const leading = container.querySelector('[data-active-leading="true"]');
+      expect(leading).not.toBeNull();
+      expect(leading?.className).toContain('bg-gradient-to-b');
+      expect(leading?.className).toContain('from-amber-500');
+      expect(leading?.className).toContain('to-amber-500');
+    });
+
+    it('keeps earlier completed segments on the flat success-tone style (only one gradient segment exists)', () => {
+      const job = makeJob({
+        phaseHistory: [
+          { phase: 'analyzing', startedAt: 1000, completedAt: 1500 },
+          { phase: 'copying', startedAt: 1500, completedAt: 2000 },
+          { phase: 'renaming', startedAt: 2000 },
+        ],
+      });
+      const { container } = renderWithProviders(<ImportActivityCard job={job} />);
+
+      const gradientSegments = container.querySelectorAll('[data-active-leading="true"]');
+      expect(gradientSegments).toHaveLength(1);
+
+      const flatSuccessSegments = container.querySelectorAll('.bg-success\\/40');
+      expect(flatSuccessSegments.length).toBeGreaterThanOrEqual(1);
+    });
+
+    it('does not render the gradient class when no phase is active (all done)', () => {
+      const job = makeJob({
+        status: 'completed',
+        phaseHistory: [
+          { phase: 'analyzing', startedAt: 1000, completedAt: 1500 },
+          { phase: 'copying', startedAt: 1500, completedAt: 2000 },
+          { phase: 'renaming', startedAt: 2000, completedAt: 2500 },
+        ],
+      });
+      const { container } = renderWithProviders(<ImportActivityCard job={job} />);
+
+      expect(container.querySelector('[data-active-leading="true"]')).toBeNull();
+      expect(container.querySelector('[class*="from-amber-500"]')).toBeNull();
+    });
+
+    it('omits the gradient when the active phase is first in the list (no preceding segment to highlight)', () => {
+      const job = makeJob({
+        phase: 'analyzing',
+        phaseHistory: [
+          { phase: 'analyzing', startedAt: 1000 },
+        ],
+      });
+      const { container } = renderWithProviders(<ImportActivityCard job={job} />);
+
+      expect(container.querySelector('[data-active-leading="true"]')).toBeNull();
+    });
+  });
+
   describe('accessibility', () => {
     it('phase status communicated via aria-label', () => {
       const job = makeJob();
