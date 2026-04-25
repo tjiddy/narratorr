@@ -99,6 +99,29 @@ describe('folder-parsing (extracted from library-scan.service)', () => {
         expect(result.title).toBe('Title');
       });
     });
+
+    describe('3+-part with all-numeric date-like title (issue #701, F1)', () => {
+      it('Author/Series/11.22.63 → title=11.22.63 (3+-part path runs cleanName, which must short-circuit)', () => {
+        const result = parseFolderStructure(['Author', 'Series', '11.22.63']);
+        expect(result.author).toBe('Author');
+        expect(result.series).toBe('Series');
+        expect(result.title).toBe('11.22.63');
+      });
+
+      it('Author/Series/11-22-63 → title=11-22-63', () => {
+        const result = parseFolderStructure(['Author', 'Series', '11-22-63']);
+        expect(result.author).toBe('Author');
+        expect(result.series).toBe('Series');
+        expect(result.title).toBe('11-22-63');
+      });
+
+      it('Author/SubDir/Series/11.22.63 (4-part) still preserves dot-separated title', () => {
+        const result = parseFolderStructure(['Author', 'SubDir', 'Series', '11.22.63']);
+        expect(result.author).toBe('Author');
+        expect(result.series).toBe('Series');
+        expect(result.title).toBe('11.22.63');
+      });
+    });
   });
 
   describe('parseSingleFolder (via parseFolderStructure with 1 part)', () => {
@@ -253,6 +276,14 @@ describe('folder-parsing (extracted from library-scan.service)', () => {
         expect(cleanName('1-5')).toBe('1-5');
       });
 
+      it('preserves dot-separated date-like input like 11.22.63 (would be mangled to "11 22 63" by normalizeFolderName)', () => {
+        expect(cleanName('11.22.63')).toBe('11.22.63');
+      });
+
+      it('preserves decimal numeric input like 1.5 (would be mangled to "1 5" by normalizeFolderName)', () => {
+        expect(cleanName('1.5')).toBe('1.5');
+      });
+
       it('still strips leading-numeric prefix from alpha-bearing titles like 01 - The First Chapter', () => {
         expect(cleanName('01 - The First Chapter')).toBe('The First Chapter');
       });
@@ -314,15 +345,27 @@ describe('folder-parsing (extracted from library-scan.service)', () => {
     });
 
     describe('all-numeric date-like inputs (issue #701)', () => {
-      it('leadingNumeric step is a no-op for 11-22-63', () => {
+      it('every step is a no-op for 11-22-63', () => {
         const trace = cleanNameWithTrace('11-22-63');
-        expect(trace.steps[0].name).toBe('leadingNumeric');
-        expect(trace.steps[0].output).toBe('11-22-63');
+        expect(trace.steps).toHaveLength(10);
+        for (const step of trace.steps) {
+          expect(step.output).toBe('11-22-63');
+        }
         expect(trace.result).toBe('11-22-63');
       });
 
-      it('trace result matches cleanName for 11-22-63', () => {
+      it('every step is a no-op for 11.22.63 (normalize would otherwise turn dots to spaces)', () => {
+        const trace = cleanNameWithTrace('11.22.63');
+        expect(trace.steps).toHaveLength(10);
+        for (const step of trace.steps) {
+          expect(step.output).toBe('11.22.63');
+        }
+        expect(trace.result).toBe('11.22.63');
+      });
+
+      it('trace result matches cleanName for 11-22-63 and 11.22.63', () => {
         expect(cleanNameWithTrace('11-22-63').result).toBe(cleanName('11-22-63'));
+        expect(cleanNameWithTrace('11.22.63').result).toBe(cleanName('11.22.63'));
       });
     });
   });

@@ -644,5 +644,23 @@ describe('POST /api/library/scan-debug', () => {
       expect(body.parsing.raw.title).toBe('Second Foundation');
       expect(body.search.initialQuery).toBe('Second Foundation Asimov');
     });
+
+    it('3+-part Stephen King/Dates/11.22.63 preserves dot-separated title through cleaning into search (PR #702 F1)', async () => {
+      (services.metadata.searchBooks as ReturnType<typeof vi.fn>).mockResolvedValue([]);
+      (services.book.findDuplicate as ReturnType<typeof vi.fn>).mockResolvedValue(null);
+
+      const res = await app.inject({
+        method: 'POST',
+        url: '/api/library/scan-debug',
+        payload: { folderName: 'Stephen King/Dates/11.22.63' },
+      });
+
+      const body = JSON.parse(res.payload);
+      expect(res.statusCode).toBe(200);
+      expect(body.parsing.raw.title).toBe('11.22.63');
+      expect(body.parsing.raw.series).toBe('Dates');
+      expect(body.cleaning.title.result).toBe('11.22.63');
+      expect(body.search.initialQuery).toBe('11.22.63 Stephen King');
+    });
   });
 });

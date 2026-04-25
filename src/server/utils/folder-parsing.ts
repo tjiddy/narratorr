@@ -66,17 +66,20 @@ export function normalizeFolderName(name: string): string {
 }
 
 export function cleanName(name: string): string {
+  // All-numeric segment inputs ('11-22-63', '11.22.63', '1.5') are date-like
+  // titles. Return unchanged — every step downstream would corrupt them: the
+  // leading-numeric strip eats the first segment, normalizeFolderName turns
+  // dots into spaces, and the bare-year strip can drop a trailing 4-digit
+  // segment. One early return covers all of these.
+  if (isAllNumericSegments(name)) return name;
+
   // Strip leading number prefixes (track/series position):
   //   '01 - Title', '01. Title', '01.- Title', '6.5 - Title', '6.5 – Title'
   // Decimal positions checked first so '6.5' isn't split into '6.' + '5'.
-  // Skip when the entire input is numeric segments — the strip would mangle
-  // date-like titles like '11-22-63'.
-  const stripped = isAllNumericSegments(name)
-    ? name
-    : name
-        .replace(/^\d+\.\d+\s*[–-]\s*/, '')          // decimal + dash: '6.5 - ', '6.5 – '
-        .replace(/^\d+[.\s]*[–-]\s*/, '')             // integer + dash: '01 - ', '01.- '
-        .replace(/^\d+\.(?!\d)\s*/, '');              // integer + dot (not decimal): '01. '
+  const stripped = name
+    .replace(/^\d+\.\d+\s*[–-]\s*/, '')          // decimal + dash: '6.5 - ', '6.5 – '
+    .replace(/^\d+[.\s]*[–-]\s*/, '')             // integer + dash: '01 - ', '01.- '
+    .replace(/^\d+\.(?!\d)\s*/, '');              // integer + dot (not decimal): '01. '
 
   // Strip series markers (", Book 01", ", Vol 3", ", Volume 12") before dedup
   const withoutSeries = stripped.replace(SERIES_MARKER_REGEX, '');
@@ -125,17 +128,25 @@ export function cleanName(name: string): string {
  * Guarantees trace stays in sync with cleanName() by sharing the same logic.
  */
 export function cleanNameWithTrace(name: string): CleanNameTraceResult {
+  // Mirror cleanName's all-numeric short-circuit: every step is a no-op so
+  // consumers still see the full 10-step trace shape.
+  if (isAllNumericSegments(name)) {
+    const steps: CleanNameStep[] = [
+      'leadingNumeric', 'seriesMarker', 'normalize',
+      'yearParenStrip', 'yearBracketStrip', 'yearBareStrip',
+      'emptyParenStrip', 'emptyBracketStrip', 'narratorParen', 'dedup',
+    ].map(stepName => ({ name: stepName, output: name }));
+    return { input: name, steps, result: name };
+  }
+
   const steps: CleanNameStep[] = [];
   let current = name;
 
-  // Step 1: leadingNumeric — skip when entire input is numeric segments
-  // (e.g. '11-22-63'), so date-like titles aren't truncated.
-  if (!isAllNumericSegments(current)) {
-    current = current
-      .replace(/^\d+\.\d+\s*[–-]\s*/, '')
-      .replace(/^\d+[.\s]*[–-]\s*/, '')
-      .replace(/^\d+\.(?!\d)\s*/, '');
-  }
+  // Step 1: leadingNumeric
+  current = current
+    .replace(/^\d+\.\d+\s*[–-]\s*/, '')
+    .replace(/^\d+[.\s]*[–-]\s*/, '')
+    .replace(/^\d+\.(?!\d)\s*/, '');
   steps.push({ name: 'leadingNumeric', output: current });
 
   // Step 2: seriesMarker
