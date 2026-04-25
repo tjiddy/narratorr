@@ -1328,6 +1328,89 @@ describe('#637 import SSE cache/toast behaviors', () => {
   });
 });
 
+// ============================================================================
+// #707 — Nullable book_id in import event payloads
+// ============================================================================
+
+describe('#707 nullable book_id in import event payloads', () => {
+  it('import_complete with null book_id does not invalidate per-book key but still invalidates books list', () => {
+    const { wrapper, queryClient } = createWrapper();
+    const invalidateSpy = vi.spyOn(queryClient, 'invalidateQueries');
+
+    renderHook(() => useEventSource('key'), { wrapper });
+    const es = MockEventSource.instances[0];
+
+    act(() => {
+      es.simulateOpen();
+      es.simulateEvent('import_complete', {
+        download_id: null, book_id: null, book_title: 'Done Book', job_id: 1, elapsed_ms: 5000,
+      });
+    });
+
+    // No runtime error and per-book key NOT invalidated (book_id is null)
+    expect(invalidateSpy).not.toHaveBeenCalledWith({ queryKey: queryKeys.book(0) });
+    // But the books list invalidation still fires
+    expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: queryKeys.books() });
+  });
+
+  it('import_phase_change with null book_id does not throw and still invalidates importJobs', () => {
+    const { wrapper, queryClient } = createWrapper();
+    const invalidateSpy = vi.spyOn(queryClient, 'invalidateQueries');
+
+    renderHook(() => useEventSource('key'), { wrapper });
+    const es = MockEventSource.instances[0];
+
+    act(() => {
+      es.simulateOpen();
+      es.simulateEvent('import_phase_change', {
+        job_id: 1, book_id: null, book_title: 'Test', from: 'analyzing', to: 'copying',
+      });
+    });
+
+    expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: ['importJobs'] });
+  });
+
+  it('import_progress patches the matching job by job_id even when book_id is null', () => {
+    const { wrapper, queryClient } = createWrapper();
+
+    queryClient.setQueryData(queryKeys.importJobs(), [
+      { id: 1, bookId: null, status: 'processing', phase: 'copying' },
+    ]);
+
+    renderHook(() => useEventSource('key'), { wrapper });
+    const es = MockEventSource.instances[0];
+
+    act(() => {
+      es.simulateOpen();
+      es.simulateEvent('import_progress', {
+        job_id: 1, book_id: null, book_title: 'Test', phase: 'copying', progress: 0.5,
+      });
+    });
+
+    const cached = queryClient.getQueryData(queryKeys.importJobs()) as Record<string, unknown>[];
+    expect(cached[0]).toMatchObject({ id: 1, _progress: 0.5, _progressPhase: 'copying' });
+  });
+
+  it('import_failed with null book_id does not throw and still shows error toast + invalidations', () => {
+    const { wrapper, queryClient } = createWrapper();
+    const invalidateSpy = vi.spyOn(queryClient, 'invalidateQueries');
+
+    renderHook(() => useEventSource('key'), { wrapper });
+    const es = MockEventSource.instances[0];
+
+    act(() => {
+      es.simulateOpen();
+      es.simulateEvent('import_failed', {
+        job_id: 1, book_id: null, book_title: 'Failed Book', phase: 'copying', error_message: 'fail',
+      });
+    });
+
+    expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: ['importJobs'] });
+    expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: queryKeys.books() });
+    expect(toast.error).toHaveBeenCalledWith(expect.stringContaining('Failed Book'), expect.any(Object));
+  });
+});
+
 describe('#514 useEventSource type safety', () => {
   it('event type list is derived from sseEventTypeSchema.options (single source of truth)', () => {
     const { wrapper } = createWrapper();
