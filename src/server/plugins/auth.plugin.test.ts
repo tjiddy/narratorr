@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeAll, afterAll, vi, afterEach } from 'vitest';
-import Fastify, { type FastifyInstance } from 'fastify';
+import Fastify, { type FastifyInstance, type FastifyServerOptions } from 'fastify';
 import cookie from '@fastify/cookie';
 import authPlugin from './auth.js';
 import type { AuthService } from '../services/auth.service.js';
@@ -27,13 +27,16 @@ function createMockAuthService(overrides: Partial<Record<keyof AuthService, unkn
   } as unknown as AuthService;
 }
 
-async function createApp(authService: AuthService): Promise<FastifyInstance> {
-  const app = Fastify({ logger: false });
+async function createApp(
+  authService: AuthService,
+  fastifyOpts: FastifyServerOptions = {},
+): Promise<FastifyInstance> {
+  const app = Fastify({ logger: false, ...fastifyOpts });
   await app.register(cookie);
   await app.register(authPlugin, { authService });
 
   // Test routes behind auth
-  app.get('/api/test', async () => ({ ok: true }));
+  app.get('/api/test', async (request) => ({ ok: true, ip: request.ip }));
   app.put('/api/system/update/dismiss', async () => ({ ok: true }));
   app.post('/api/library/scan-debug', async () => ({ ok: true }));
 
@@ -440,6 +443,106 @@ describe('auth middleware', () => {
       expect(res.statusCode).toBe(401);
 
       await testApp.close();
+    });
+  });
+
+  describe('local bypass with trustProxy', () => {
+    function createBypassService(): AuthService {
+      return createMockAuthService({
+        getStatus: vi.fn().mockResolvedValue({ mode: 'forms', hasUser: true, localBypass: true }),
+      });
+    }
+
+    it('trustProxy: false (default), private socket peer, no XFF → bypass triggers', async () => {
+      const app = await createApp(createBypassService());
+      try {
+        const res = await app.inject({
+          method: 'GET',
+          url: '/api/test',
+          remoteAddress: '127.0.0.1',
+        });
+        expect(res.statusCode).toBe(200);
+      } finally {
+        await app.close();
+      }
+    });
+
+    it('trustProxy: false (baseline), private socket peer, public XFF → bypass triggers (XFF ignored)', async () => {
+      const app = await createApp(createBypassService());
+      try {
+        const res = await app.inject({
+          method: 'GET',
+          url: '/api/test',
+          remoteAddress: '10.0.0.5',
+          headers: { 'x-forwarded-for': '203.0.113.42' },
+        });
+        expect(res.statusCode).toBe(200);
+      } finally {
+        await app.close();
+      }
+    });
+
+    it('trustProxy: ["10.0.0.0/8"], private socket peer, no XFF → bypass triggers (proxy IP itself private)', async () => {
+      const app = await createApp(createBypassService(), { trustProxy: ['10.0.0.0/8'] });
+      try {
+        const res = await app.inject({
+          method: 'GET',
+          url: '/api/test',
+          remoteAddress: '10.0.0.5',
+        });
+        expect(res.statusCode).toBe(200);
+        expect(JSON.parse(res.payload).ip).toBe('10.0.0.5');
+      } finally {
+        await app.close();
+      }
+    });
+
+    it('trustProxy: ["10.0.0.0/8"], single trusted proxy, public client → bypass does NOT trigger', async () => {
+      const app = await createApp(createBypassService(), { trustProxy: ['10.0.0.0/8'] });
+      try {
+        const res = await app.inject({
+          method: 'GET',
+          url: '/api/test',
+          remoteAddress: '10.0.0.5',
+          headers: { 'x-forwarded-for': '203.0.113.42' },
+        });
+        expect(res.statusCode).toBe(401);
+      } finally {
+        await app.close();
+      }
+    });
+
+    it('chained proxies, fully trusted → bypass does NOT trigger; request.ip resolves to public client', async () => {
+      const app = await createApp(createBypassService(), {
+        trustProxy: ['10.0.0.0/8', '192.168.0.0/16'],
+      });
+      try {
+        const res = await app.inject({
+          method: 'GET',
+          url: '/api/test',
+          remoteAddress: '10.0.0.5',
+          headers: { 'x-forwarded-for': '203.0.113.42, 192.168.1.1' },
+        });
+        expect(res.statusCode).toBe(401);
+      } finally {
+        await app.close();
+      }
+    });
+
+    it('chained proxies, intermediate hop NOT trusted → request.ip falls back to private hop and bypass triggers', async () => {
+      const app = await createApp(createBypassService(), { trustProxy: ['10.0.0.0/8'] });
+      try {
+        const res = await app.inject({
+          method: 'GET',
+          url: '/api/test',
+          remoteAddress: '10.0.0.5',
+          headers: { 'x-forwarded-for': '203.0.113.42, 192.168.1.1' },
+        });
+        expect(res.statusCode).toBe(200);
+        expect(JSON.parse(res.payload).ip).toBe('192.168.1.1');
+      } finally {
+        await app.close();
+      }
     });
   });
 

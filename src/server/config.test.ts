@@ -193,6 +193,38 @@ describe('config', () => {
     });
   });
 
+  describe('trustedProxies', () => {
+    it('is false when TRUSTED_PROXIES is not set', async () => {
+      delete process.env.TRUSTED_PROXIES;
+      const config = await loadConfig();
+      expect(config.trustedProxies).toBe(false);
+    });
+
+    it('is false when TRUSTED_PROXIES is empty string', async () => {
+      process.env.TRUSTED_PROXIES = '';
+      const config = await loadConfig();
+      expect(config.trustedProxies).toBe(false);
+    });
+
+    it('is false when TRUSTED_PROXIES is whitespace and empty entries', async () => {
+      process.env.TRUSTED_PROXIES = '  ,  ,';
+      const config = await loadConfig();
+      expect(config.trustedProxies).toBe(false);
+    });
+
+    it('parses single CIDR', async () => {
+      process.env.TRUSTED_PROXIES = '10.0.0.0/8';
+      const config = await loadConfig();
+      expect(config.trustedProxies).toEqual(['10.0.0.0/8']);
+    });
+
+    it('parses comma-separated list with whitespace trimmed', async () => {
+      process.env.TRUSTED_PROXIES = '10.0.0.0/8, 192.168.0.0/16, loopback';
+      const config = await loadConfig();
+      expect(config.trustedProxies).toEqual(['10.0.0.0/8', '192.168.0.0/16', 'loopback']);
+    });
+  });
+
   describe('authBypass', () => {
     it('is false when AUTH_BYPASS is not set', async () => {
       delete process.env.AUTH_BYPASS;

@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeAll, afterAll, beforeEach, vi, type Mock } from 'vitest';
-import Fastify from 'fastify';
+import Fastify, { type FastifyServerOptions } from 'fastify';
 import cookie from '@fastify/cookie';
 import {
   serializerCompiler,
@@ -21,8 +21,11 @@ import { config } from '../config.js';
 import { UserExistsError, AuthConfigError, IncorrectPasswordError, NoCredentialsError } from '../services/auth.service.js';
 
 /** Creates a test app with @fastify/cookie + auth routes + a hook that sets request.user. */
-async function createAuthTestApp(services: Services) {
-  const app = Fastify({ logger: false }).withTypeProvider<ZodTypeProvider>();
+async function createAuthTestApp(
+  services: Services,
+  fastifyOpts: FastifyServerOptions = {},
+) {
+  const app = Fastify({ logger: false, ...fastifyOpts }).withTypeProvider<ZodTypeProvider>();
   app.setValidatorCompiler(validatorCompiler);
   app.setSerializerCompiler(serializerCompiler);
 
@@ -495,6 +498,47 @@ describe('auth routes', () => {
       const body = JSON.parse(res.payload);
       expect(body.envBypass).toBe(false);
       expect(body.bypassActive).toBe(false);
+    });
+  });
+
+  describe('GET /api/auth/status — bypassActive with trustProxy', () => {
+    it('with trustProxy + private socket peer + public XFF → bypassActive: false', async () => {
+      const trustedServices = createMockServices();
+      const trustedApp = await createAuthTestApp(trustedServices, { trustProxy: ['10.0.0.0/8'] });
+      try {
+        (trustedServices.auth.getStatus as Mock).mockResolvedValue({
+          mode: 'forms', hasUser: true, localBypass: true,
+        });
+        const res = await trustedApp.inject({
+          method: 'GET',
+          url: '/api/auth/status',
+          remoteAddress: '10.0.0.5',
+          headers: { 'x-forwarded-for': '203.0.113.42' },
+        });
+        expect(res.statusCode).toBe(200);
+        expect(JSON.parse(res.payload).bypassActive).toBe(false);
+      } finally {
+        await trustedApp.close();
+      }
+    });
+
+    it('with trustProxy + private socket peer + no XFF → bypassActive: true', async () => {
+      const trustedServices = createMockServices();
+      const trustedApp = await createAuthTestApp(trustedServices, { trustProxy: ['10.0.0.0/8'] });
+      try {
+        (trustedServices.auth.getStatus as Mock).mockResolvedValue({
+          mode: 'forms', hasUser: true, localBypass: true,
+        });
+        const res = await trustedApp.inject({
+          method: 'GET',
+          url: '/api/auth/status',
+          remoteAddress: '10.0.0.5',
+        });
+        expect(res.statusCode).toBe(200);
+        expect(JSON.parse(res.payload).bypassActive).toBe(true);
+      } finally {
+        await trustedApp.close();
+      }
     });
   });
 
