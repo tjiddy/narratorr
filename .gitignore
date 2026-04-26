@@ -66,3 +66,4 @@ temp/
 # Skills: ignore everything by default; add `!.claude/skills/<name>/` lines to ship specific skills
 .claude/skills/*
 
+scripts/
