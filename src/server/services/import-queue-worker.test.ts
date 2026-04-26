@@ -6,8 +6,11 @@ import { ImportQueueWorker } from './import-queue-worker.js';
 import { registerImportAdapter, clearImportAdapters } from './import-adapters/registry.js';
 import type { ImportAdapter, ImportJob } from './import-adapters/types.js';
 import { AutoImportAdapter } from './import-adapters/auto.js';
+import { ManualImportAdapter } from './import-adapters/manual.js';
 import type { ImportOrchestrator } from './import-orchestrator.js';
 import type { ImportProgressCallbacks } from './import.service.js';
+import type { ImportPipelineDeps } from './import-orchestration.helpers.js';
+import { importFailedPayload } from '../../shared/schemas/sse-events.js';
 
 function createMockLogger(): FastifyBaseLogger {
   return {
@@ -1091,6 +1094,146 @@ describe('ImportQueueWorker', () => {
       // Job failed update DID happen
       const jobFailedUpdate = updateSets.find(s => s.status === 'failed' && s.phase === 'failed');
       expect(jobFailedUpdate).toBeDefined();
+    });
+  });
+
+  // ===========================================================================
+  // #717 — Adapter contract regression: real adapters reject null bookId
+  //
+  // Companion to #707 (which tested the SSE-emission boundary with a no-op
+  // adapter). These tests register the real ManualImportAdapter and
+  // AutoImportAdapter and drive the worker end-to-end with a null-bookId job,
+  // verifying the adapter's typed-error reject path AND the SSE payload shape.
+  // The pair guards against:
+  //   (a) a regression that re-introduces `?? 0` upstream of adapter dispatch
+  //       — the adapter would no longer see null and would not throw the
+  //       contract error, failing the error_message assertion.
+  //   (b) a regression that re-introduces `?? 0` in the SSE payload —
+  //       book_id would emit as 0 instead of null, failing that assertion.
+  // ===========================================================================
+
+  describe('#717 real adapters reject null bookId end-to-end', () => {
+    /**
+     * Wires the same selects as setupNullBookIdJob — boot recovery (empty),
+     * candidate select (id 11), full row fetch (bookId:null) — but accepts a
+     * caller-supplied job type and metadata so we can exercise either real
+     * adapter through the same dispatch path used in production.
+     */
+    function setupNullBookIdRealAdapter(adapter: ImportAdapter, jobType: 'manual' | 'auto', metadataJson: string) {
+      registerImportAdapter(adapter);
+      let selectCallCount = 0;
+      mockDb.db.select = vi.fn().mockImplementation(() => {
+        selectCallCount++;
+        if (selectCallCount === 1) return { from: vi.fn().mockReturnThis(), where: vi.fn().mockResolvedValue([]) };
+        if (selectCallCount === 2) return { from: vi.fn().mockReturnThis(), where: vi.fn().mockReturnThis(), orderBy: vi.fn().mockReturnThis(), limit: vi.fn().mockResolvedValue([{ id: 11 }]) };
+        if (selectCallCount === 3) return { from: vi.fn().mockReturnThis(), where: vi.fn().mockReturnThis(), limit: vi.fn().mockResolvedValue([{ id: 11, bookId: null, type: jobType, status: 'processing', metadata: metadataJson, phaseHistory: null }]) };
+        return { from: vi.fn().mockReturnThis(), where: vi.fn().mockReturnThis(), orderBy: vi.fn().mockReturnThis(), limit: vi.fn().mockResolvedValue([]) };
+      });
+      mockDb.db.update = vi.fn().mockImplementation(() => ({
+        set: vi.fn().mockReturnValue({ where: vi.fn().mockResolvedValue({ rowsAffected: 1 }) }),
+      }));
+    }
+
+    it('ManualImportAdapter throws "requires a bookId" and worker emits import_failed with book_id:null', async () => {
+      const emitSpy = vi.fn();
+      const mockBroadcaster = { emit: emitSpy };
+      const workerWithBroadcaster = new ImportQueueWorker(inject<Db>(mockDb.db), log, mockBroadcaster as never);
+
+      // Real ManualImportAdapter — null guard at manual.ts:34-36 throws before
+      // any deps method is touched, so the deps stubs need only satisfy the
+      // constructor type. We track each stub method to assert the throw
+      // happened before reaching DB/service work.
+      const bookServiceGetById = vi.fn();
+      const settingsServiceGet = vi.fn();
+      const eventHistoryCreate = vi.fn();
+      const deps = inject<ImportPipelineDeps>({
+        db: mockDb.db, log,
+        bookService: { getById: bookServiceGetById },
+        settingsService: { get: settingsServiceGet },
+        eventHistory: { create: eventHistoryCreate },
+        enrichmentDeps: {},
+        broadcaster: mockBroadcaster as never,
+      });
+      const realAdapter = new ManualImportAdapter(deps);
+
+      setupNullBookIdRealAdapter(realAdapter, 'manual', '{"title":"Orphan Manual"}');
+
+      await workerWithBroadcaster.start();
+      await new Promise(r => setTimeout(r, 100));
+      await workerWithBroadcaster.stop();
+
+      // AC #2 — adapter threw a typed error with the contract message.
+      const failedCall = emitSpy.mock.calls.find(c => c[0] === 'import_failed');
+      expect(failedCall).toBeDefined();
+      const payload = failedCall![1];
+      expect(payload.error_message).toContain('requires a bookId');
+
+      // AC #3 — payload validates against the SSE schema; book_id is null,
+      // every other contract field is populated (no unexpected nulls).
+      const parsed = importFailedPayload.safeParse(payload);
+      expect(parsed.success).toBe(true);
+      expect(payload.book_id).toBeNull();
+      expect(payload.book_id).not.toBe(0);
+      expect(payload.job_id).toBe(11);
+      expect(payload.book_title).toBe('Orphan Manual');
+      expect(payload.phase).toBeTypeOf('string');
+      expect(payload.phase.length).toBeGreaterThan(0);
+      expect(payload.error_message).toBeTypeOf('string');
+      expect(payload.error_message.length).toBeGreaterThan(0);
+
+      // AC #4 — the throw fired before any FK lookup against books or any
+      // service call. If `?? 0` were re-introduced upstream, bookId would be
+      // 0 and the adapter would proceed to bookService/db.select(books).
+      expect(bookServiceGetById).not.toHaveBeenCalled();
+      expect(settingsServiceGet).not.toHaveBeenCalled();
+      // Total selects: 1 boot recovery + 1 candidate + 1 row fetch + 1 next
+      // drain iteration (empty). Any 5th select means the adapter reached
+      // its own books query — the regression we're guarding against.
+      expect(mockDb.db.select.mock.calls.length).toBeLessThanOrEqual(4);
+    });
+
+    it('AutoImportAdapter throws "requires a bookId" and worker emits import_failed with book_id:null', async () => {
+      const emitSpy = vi.fn();
+      const mockBroadcaster = { emit: emitSpy };
+      const workerWithBroadcaster = new ImportQueueWorker(inject<Db>(mockDb.db), log, mockBroadcaster as never);
+
+      // Real AutoImportAdapter — null guard at auto.ts:12-15 throws before
+      // importDownload is invoked. The stub records calls so we can assert
+      // the orchestrator was never reached.
+      const orchestratorStub = inject<ImportOrchestrator>({
+        importDownload: vi.fn(),
+      });
+      const realAdapter = new AutoImportAdapter(orchestratorStub);
+
+      setupNullBookIdRealAdapter(realAdapter, 'auto', '{"title":"Orphan Auto","downloadId":42}');
+
+      await workerWithBroadcaster.start();
+      await new Promise(r => setTimeout(r, 100));
+      await workerWithBroadcaster.stop();
+
+      // AC #4 — the null guard fires before any orchestrator work; if `?? 0`
+      // were re-introduced upstream, this stub would have been invoked.
+      expect(orchestratorStub.importDownload).not.toHaveBeenCalled();
+
+      // AC #2 — adapter threw the contract error; worker routed through
+      // markJobFailed and emitted import_failed.
+      const failedCall = emitSpy.mock.calls.find(c => c[0] === 'import_failed');
+      expect(failedCall).toBeDefined();
+      const payload = failedCall![1];
+      expect(payload.error_message).toContain('requires a bookId');
+
+      // AC #3 — schema-conformant payload with book_id:null and every other
+      // field populated.
+      const parsed = importFailedPayload.safeParse(payload);
+      expect(parsed.success).toBe(true);
+      expect(payload.book_id).toBeNull();
+      expect(payload.book_id).not.toBe(0);
+      expect(payload.job_id).toBe(11);
+      expect(payload.book_title).toBe('Orphan Auto');
+      expect(payload.phase).toBeTypeOf('string');
+      expect(payload.phase.length).toBeGreaterThan(0);
+      expect(payload.error_message).toBeTypeOf('string');
+      expect(payload.error_message.length).toBeGreaterThan(0);
     });
   });
 
