@@ -8,6 +8,7 @@ import { RetagError } from '../services/tagging.service.js';
 import { MergeError } from '../services/merge.service.js';
 import { DuplicateDownloadError } from '../services/download.service.js';
 import { BookRejectionError } from '../services/book-rejection.service.js';
+import { BookPathOutsideLibraryError } from '../services/book.service.js';
 import { readdir, readFile, stat } from 'node:fs/promises';
 import { createReadStream } from 'node:fs';
 import { Readable } from 'node:stream';
@@ -923,6 +924,22 @@ describe('books routes', () => {
 
       expect(res.statusCode).toBe(500);
       expect(JSON.parse(res.payload).error).toBe('Failed to delete book files from disk');
+      expect(services.download.getActiveByBookId).not.toHaveBeenCalled();
+      expect(services.book.delete).not.toHaveBeenCalled();
+    });
+
+    it('returns 400 and preserves DB record when book path is outside library root', async () => {
+      const bookWithPath = { ...mockBook, path: '/tmp/external' };
+      (services.book.getById as Mock).mockResolvedValue(bookWithPath);
+      (services.settings.get as Mock).mockResolvedValue({ path: '/audiobooks' });
+      (services.book.deleteBookFiles as Mock).mockRejectedValue(
+        new BookPathOutsideLibraryError('/tmp/external', '/audiobooks'),
+      );
+
+      const res = await app.inject({ method: 'DELETE', url: '/api/books/1?deleteFiles=true' });
+
+      expect(res.statusCode).toBe(400);
+      expect(JSON.parse(res.payload).error).toContain('library root');
       expect(services.download.getActiveByBookId).not.toHaveBeenCalled();
       expect(services.book.delete).not.toHaveBeenCalled();
     });

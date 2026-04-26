@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach, type Mock } from 'vitest';
 import { createMockDb, createMockLogger, inject, mockDbChain } from '../__tests__/helpers.js';
 import { createMockDbBook } from '../__tests__/factories.js';
 import { BookRejectionService, BookRejectionError } from './book-rejection.service.js';
+import { BookPathOutsideLibraryError } from './book.service.js';
 import type { BookService } from './book.service.js';
 import type { BlacklistService } from './blacklist.service.js';
 import type { SettingsService } from './settings.service.js';
@@ -174,6 +175,20 @@ describe('BookRejectionService', () => {
 
       // DB update still happens
       expect(db.update).toHaveBeenCalled();
+    });
+
+    it('rethrows BookPathOutsideLibraryError without swallowing it', async () => {
+      const { service, bookService, db, eventHistory } = createService();
+      (bookService.getById as Mock).mockResolvedValue(importedBook);
+      const securityError = new BookPathOutsideLibraryError('/tmp/external', '/audiobooks');
+      (bookService.deleteBookFiles as Mock).mockRejectedValue(securityError);
+
+      await expect(service.rejectAsWrongRelease(42)).rejects.toBe(securityError);
+
+      // DB reset (step 2) ran before the file deletion attempt
+      expect(db.update).toHaveBeenCalled();
+      // Event recording (step 4) is skipped because the rethrow short-circuits the method
+      expect(eventHistory.create).not.toHaveBeenCalled();
     });
 
     it('skips file deletion when book path is null', async () => {
