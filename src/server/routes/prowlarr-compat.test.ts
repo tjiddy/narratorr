@@ -548,6 +548,86 @@ describe('Prowlarr-compatible API v1 routes', () => {
     });
   });
 
+  describe('apiKey masking on GET responses (security)', () => {
+    it('GET /api/v1/indexer/:id returns sentinel for apiKey, not plaintext', async () => {
+      (services.indexer.getById as Mock).mockResolvedValue(mockTorznabIndexer);
+
+      const res = await app.inject({ method: 'GET', url: '/api/v1/indexer/1' });
+
+      expect(res.statusCode).toBe(200);
+      const payload = JSON.parse(res.payload);
+      const apiKeyField = payload.fields.find((f: { name: string }) => f.name === 'apiKey');
+      expect(apiKeyField).toBeDefined();
+      expect(apiKeyField.value).toBe('********');
+      expect(apiKeyField.value).not.toBe('abc123');
+    });
+
+    it('GET /api/v1/indexer masks apiKey on every row', async () => {
+      (services.indexer.getAll as Mock).mockResolvedValue([mockTorznabIndexer, mockNewznabIndexer]);
+
+      const res = await app.inject({ method: 'GET', url: '/api/v1/indexer' });
+
+      expect(res.statusCode).toBe(200);
+      const payload = JSON.parse(res.payload);
+      for (const row of payload) {
+        const apiKeyField = row.fields.find((f: { name: string }) => f.name === 'apiKey');
+        expect(apiKeyField.value).toBe('********');
+      }
+      // Sanity: the response body must not contain either plaintext key anywhere.
+      expect(res.payload).not.toContain('abc123');
+      expect(res.payload).not.toContain('xyz789');
+    });
+
+    it('non-secret fields like baseUrl pass through unmasked', async () => {
+      (services.indexer.getById as Mock).mockResolvedValue(mockTorznabIndexer);
+
+      const res = await app.inject({ method: 'GET', url: '/api/v1/indexer/1' });
+
+      const payload = JSON.parse(res.payload);
+      const baseUrlField = payload.fields.find((f: { name: string }) => f.name === 'baseUrl');
+      expect(baseUrlField.value).toBe('http://prowlarr:9696/1/');
+    });
+
+    it('returns empty string (not sentinel) when apiKey is missing', async () => {
+      const indexerWithoutKey = {
+        ...mockTorznabIndexer,
+        settings: { ...mockTorznabIndexer.settings, apiKey: '' },
+      };
+      (services.indexer.getById as Mock).mockResolvedValue(indexerWithoutKey);
+
+      const res = await app.inject({ method: 'GET', url: '/api/v1/indexer/1' });
+
+      const payload = JSON.parse(res.payload);
+      const apiKeyField = payload.fields.find((f: { name: string }) => f.name === 'apiKey');
+      expect(apiKeyField.value).toBe('');
+    });
+
+    it('sentinel value sent on PUT flows to IndexerService.update unchanged (sentinel passthrough is service-layer concern)', async () => {
+      (services.indexer.update as Mock).mockResolvedValue(mockTorznabIndexer);
+
+      await app.inject({
+        method: 'PUT',
+        url: '/api/v1/indexer/1',
+        payload: {
+          ...validTorznabBody,
+          fields: [
+            { name: 'baseUrl', value: 'http://prowlarr:9696/1/', type: 'textbox' },
+            { name: 'apiKey', value: '********', type: 'textbox' },
+          ],
+        },
+      });
+
+      expect(services.indexer.update).toHaveBeenCalledWith(
+        1,
+        expect.objectContaining({
+          settings: expect.objectContaining({ apiKey: '********' }),
+        }),
+      );
+      // IndexerService.update is responsible for resolveSentinelFields against the
+      // existing encrypted DB row before persisting (see indexer.service.ts lines 61-68).
+    });
+  });
+
   describe('PUT /api/v1/indexer/:id (AC3, AC5)', () => {
     it('updates indexer and returns 200 with Readarr-format response', async () => {
       (services.indexer.update as Mock).mockResolvedValue(mockTorznabIndexer);
@@ -736,7 +816,7 @@ describe('Prowlarr-compatible API v1 routes', () => {
       expect(baseUrlField.value).toBe('http://prowlarr:9696/1/');
     });
 
-    it('round-trips: POST with fields → GET returns same field values', async () => {
+    it('round-trips: POST with fields → GET returns same field values (apiKey masked)', async () => {
       (services.indexer.createOrUpsertProwlarr as Mock).mockResolvedValue({
         row: mockTorznabIndexer,
         upserted: false,
@@ -757,7 +837,9 @@ describe('Prowlarr-compatible API v1 routes', () => {
       const baseUrl = payload.fields.find((f: { name: string }) => f.name === 'baseUrl');
       const apiKey = payload.fields.find((f: { name: string }) => f.name === 'apiKey');
       expect(baseUrl.value).toBe('http://prowlarr:9696/1/');
-      expect(apiKey.value).toBe('abc123');
+      // apiKey is intentionally masked on GET responses; plaintext never leaves the server.
+      // Sentinel passthrough on PUT/POST preserves the stored value.
+      expect(apiKey.value).toBe('********');
     });
 
     it('stores and echoes back unknown/extra field names', async () => {

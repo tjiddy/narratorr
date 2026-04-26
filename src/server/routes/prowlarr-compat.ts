@@ -1,5 +1,6 @@
 import type { FastifyInstance } from 'fastify';
 import type { IndexerService } from '../services/indexer.service.js';
+import { maskFields } from '../utils/secret-codec.js';
 import { getVersion } from '../utils/version.js';
 
 // ── Types ──
@@ -96,24 +97,31 @@ export function fromReadarrFields(fields: ReadarrField[]): Record<string, unknow
   return settings;
 }
 
-/** Convert Narratorr internal settings + type to Readarr Fields[] */
+/** Convert Narratorr internal settings + type to Readarr Fields[].
+ *  Secret fields (apiKey, mamId, flareSolverrUrl) are masked with the sentinel
+ *  before emission so plaintext credentials never leave the server. The standard
+ *  CRUD path applies the same masking via secretEntity in registerCrudRoutes;
+ *  this function preserves that invariant for the Prowlarr-compat surface.
+ *  Sentinel passthrough on PUT/POST is handled by IndexerService.update via
+ *  resolveSentinelFields. */
 export function toReadarrFields(settings: Record<string, unknown>): ReadarrField[] {
+  const masked = maskFields('indexer', { ...settings });
   const fields: ReadarrField[] = [];
 
   // baseUrl ↔ apiUrl mapping
-  fields.push({ name: 'baseUrl', value: settings.apiUrl ?? '', type: 'textbox', advanced: false });
+  fields.push({ name: 'baseUrl', value: masked.apiUrl ?? '', type: 'textbox', advanced: false });
   fields.push({ name: 'apiPath', value: '/api', type: 'textbox', advanced: true });
-  fields.push({ name: 'apiKey', value: settings.apiKey ?? '', type: 'textbox', advanced: false });
-  fields.push({ name: 'categories', value: settings.categories ?? FIELD_DEFAULTS.categories, type: 'tag', advanced: false });
-  fields.push({ name: 'minimumSeeders', value: settings.minimumSeeders ?? FIELD_DEFAULTS.minimumSeeders, type: 'number', advanced: true });
-  fields.push({ name: 'seedCriteria.seedRatio', value: settings['seedCriteria.seedRatio'] ?? FIELD_DEFAULTS['seedCriteria.seedRatio'], type: 'number', advanced: true });
-  fields.push({ name: 'seedCriteria.seedTime', value: settings['seedCriteria.seedTime'] ?? FIELD_DEFAULTS['seedCriteria.seedTime'], type: 'number', advanced: true });
+  fields.push({ name: 'apiKey', value: masked.apiKey ?? '', type: 'textbox', advanced: false });
+  fields.push({ name: 'categories', value: masked.categories ?? FIELD_DEFAULTS.categories, type: 'tag', advanced: false });
+  fields.push({ name: 'minimumSeeders', value: masked.minimumSeeders ?? FIELD_DEFAULTS.minimumSeeders, type: 'number', advanced: true });
+  fields.push({ name: 'seedCriteria.seedRatio', value: masked['seedCriteria.seedRatio'] ?? FIELD_DEFAULTS['seedCriteria.seedRatio'], type: 'number', advanced: true });
+  fields.push({ name: 'seedCriteria.seedTime', value: masked['seedCriteria.seedTime'] ?? FIELD_DEFAULTS['seedCriteria.seedTime'], type: 'number', advanced: true });
 
   // Echo back any unknown fields stored in settings
   const knownKeys = new Set(['apiUrl', 'apiKey', 'categories', 'minimumSeeders', 'seedCriteria.seedRatio', 'seedCriteria.seedTime',
     // Internal-only keys not echoed as fields
     'hostname', 'pageLimit', 'flareSolverrUrl', 'useProxy', 'proxyUrl']);
-  for (const [key, value] of Object.entries(settings)) {
+  for (const [key, value] of Object.entries(masked)) {
     if (!knownKeys.has(key)) {
       fields.push({ name: key, value, type: 'textbox', advanced: true });
     }
