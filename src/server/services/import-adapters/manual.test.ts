@@ -61,6 +61,10 @@ function makeDirent(name: string, isFile: boolean): Dirent {
   return { name, isFile: () => isFile, isDirectory: () => !isFile } as Dirent;
 }
 
+// path.join produces backslashes on Windows; normalize captured rename args to POSIX before
+// comparing against forward-slash literals so these assertions work on both platforms.
+const normPath = (p: unknown): string => String(p).split('\\').join('/');
+
 function createMockDb() {
   const setMock = vi.fn().mockReturnThis();
   const chain = {
@@ -371,12 +375,13 @@ describe('ManualImportAdapter', () => {
 
         // 3 forward renames; collisions on '{title}' → 'Test Book', 'Test Book (2)', 'Test Book (3)'.
         expect(vi.mocked(fs.rename)).toHaveBeenCalledTimes(3);
-        expect(vi.mocked(fs.rename)).toHaveBeenNthCalledWith(1,
-          `${TARGET_PATH}/a.mp3`, `${TARGET_PATH}/Test Book.mp3`);
-        expect(vi.mocked(fs.rename)).toHaveBeenNthCalledWith(2,
-          `${TARGET_PATH}/b.mp3`, `${TARGET_PATH}/Test Book (2).mp3`);
-        expect(vi.mocked(fs.rename)).toHaveBeenNthCalledWith(3,
-          `${TARGET_PATH}/c.mp3`, `${TARGET_PATH}/Test Book (3).mp3`);
+        const calls = vi.mocked(fs.rename).mock.calls;
+        expect(calls[0].map(normPath)).toEqual(
+          [`${TARGET_PATH}/a.mp3`, `${TARGET_PATH}/Test Book.mp3`]);
+        expect(calls[1].map(normPath)).toEqual(
+          [`${TARGET_PATH}/b.mp3`, `${TARGET_PATH}/Test Book (2).mp3`]);
+        expect(calls[2].map(normPath)).toEqual(
+          [`${TARGET_PATH}/c.mp3`, `${TARGET_PATH}/Test Book (3).mp3`]);
       });
 
       it('onProgress wiring: 3 renames emit proportional renaming progress through real helper', async () => {
@@ -508,18 +513,19 @@ describe('ManualImportAdapter', () => {
 
         // 3 forward + 2 rollback = 5 total
         expect(vi.mocked(fs.rename)).toHaveBeenCalledTimes(5);
+        const calls = vi.mocked(fs.rename).mock.calls;
         // Forward calls
-        expect(vi.mocked(fs.rename)).toHaveBeenNthCalledWith(1,
-          `${TARGET_PATH}/a.mp3`, `${TARGET_PATH}/Test Book.mp3`);
-        expect(vi.mocked(fs.rename)).toHaveBeenNthCalledWith(2,
-          `${TARGET_PATH}/b.mp3`, `${TARGET_PATH}/Test Book (2).mp3`);
-        expect(vi.mocked(fs.rename)).toHaveBeenNthCalledWith(3,
-          `${TARGET_PATH}/c.mp3`, `${TARGET_PATH}/Test Book (3).mp3`);
+        expect(calls[0].map(normPath)).toEqual(
+          [`${TARGET_PATH}/a.mp3`, `${TARGET_PATH}/Test Book.mp3`]);
+        expect(calls[1].map(normPath)).toEqual(
+          [`${TARGET_PATH}/b.mp3`, `${TARGET_PATH}/Test Book (2).mp3`]);
+        expect(calls[2].map(normPath)).toEqual(
+          [`${TARGET_PATH}/c.mp3`, `${TARGET_PATH}/Test Book (3).mp3`]);
         // Rollback calls (reverse order, swapped from/to)
-        expect(vi.mocked(fs.rename)).toHaveBeenNthCalledWith(4,
-          `${TARGET_PATH}/Test Book (2).mp3`, `${TARGET_PATH}/b.mp3`);
-        expect(vi.mocked(fs.rename)).toHaveBeenNthCalledWith(5,
-          `${TARGET_PATH}/Test Book.mp3`, `${TARGET_PATH}/a.mp3`);
+        expect(calls[3].map(normPath)).toEqual(
+          [`${TARGET_PATH}/Test Book (2).mp3`, `${TARGET_PATH}/b.mp3`]);
+        expect(calls[4].map(normPath)).toEqual(
+          [`${TARGET_PATH}/Test Book.mp3`, `${TARGET_PATH}/a.mp3`]);
       });
 
       it('mode=copy + fileFormat set + renameFilesWithTemplate throws: adapter catches, marks failed, re-throws', async () => {
@@ -560,10 +566,9 @@ describe('ManualImportAdapter', () => {
         const job = makeJob();
         await adapter.process(job, ctx);
 
-        expect(vi.mocked(fs.rename)).toHaveBeenCalledWith(
-          `${TARGET_PATH}/a.mp3`,
-          `${TARGET_PATH}/Jane Narrator.mp3`,
-        );
+        expect(vi.mocked(fs.rename)).toHaveBeenCalledTimes(1);
+        expect(vi.mocked(fs.rename).mock.calls[0].map(normPath)).toEqual(
+          [`${TARGET_PATH}/a.mp3`, `${TARGET_PATH}/Jane Narrator.mp3`]);
       });
 
       it('mode=copy + fileFormat set + bookService.getById returns null narrators: rename proceeds using bookRow fallbacks', async () => {
@@ -581,10 +586,9 @@ describe('ManualImportAdapter', () => {
         await adapter.process(job, ctx);
 
         expect(deps.bookService.getById).toHaveBeenCalledWith(42);
-        expect(vi.mocked(fs.rename)).toHaveBeenCalledWith(
-          `${TARGET_PATH}/a.mp3`,
-          `${TARGET_PATH}/Test Book.mp3`,
-        );
+        expect(vi.mocked(fs.rename)).toHaveBeenCalledTimes(1);
+        expect(vi.mocked(fs.rename).mock.calls[0].map(normPath)).toEqual(
+          [`${TARGET_PATH}/a.mp3`, `${TARGET_PATH}/Test Book.mp3`]);
       });
     });
 
