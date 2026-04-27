@@ -33,6 +33,13 @@ const envSchema = z.object({
     .string()
     .default('*/30 * * * * *')
     .transform((v) => v || '*/30 * * * * *'),
+  TRUSTED_PROXIES: z
+    .string()
+    .optional()
+    .transform((v) => {
+      const parts = (v ?? '').split(',').map((s) => s.trim()).filter(Boolean);
+      return parts.length === 0 ? false : parts;
+    }),
 });
 
 const parsed = envSchema.safeParse(process.env);
@@ -58,4 +65,5 @@ export const config = {
   authBypass: parsed.data.AUTH_BYPASS,
   urlBase: parsed.data.URL_BASE,
   monitorIntervalCron: parsed.data.MONITOR_INTERVAL_CRON,
+  trustedProxies: parsed.data.TRUSTED_PROXIES,
 };

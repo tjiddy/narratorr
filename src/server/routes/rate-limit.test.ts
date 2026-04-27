@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeAll, afterAll, vi, afterEach } from 'vitest';
-import Fastify, { type FastifyInstance } from 'fastify';
+import Fastify, { type FastifyInstance, type FastifyServerOptions } from 'fastify';
 import cookie from '@fastify/cookie';
 import rateLimit from '@fastify/rate-limit';
 import {
@@ -18,8 +18,11 @@ const TEST_WINDOW_MS = 200;
  * Creates a rate-limit test app with a very short time window.
  * Separate from the main auth test app to avoid counter leakage.
  */
-async function createRateLimitTestApp(services: Services) {
-  const app = Fastify({ logger: false }).withTypeProvider<ZodTypeProvider>();
+async function createRateLimitTestApp(
+  services: Services,
+  fastifyOpts: FastifyServerOptions = {},
+) {
+  const app = Fastify({ logger: false, ...fastifyOpts }).withTypeProvider<ZodTypeProvider>();
   app.setValidatorCompiler(validatorCompiler);
   app.setSerializerCompiler(serializerCompiler);
 
@@ -179,6 +182,82 @@ describe('rate limiting', () => {
         remoteAddress: '10.0.0.31',
       });
       expect(freeRes.statusCode).not.toBe(429);
+    });
+  });
+
+  describe('trustProxy keying', () => {
+    it('with trustProxy configured, different XFF values get independent buckets (no cross-client leak)', async () => {
+      const trustProxyServices = createMockServices();
+      const trustProxyApp = await createRateLimitTestApp(trustProxyServices, {
+        trustProxy: ['10.0.0.0/8'],
+      });
+      try {
+        const socketPeer = '10.0.0.99';
+
+        // Exhaust limit for client A (XFF: 203.0.113.1)
+        for (let i = 0; i < 5; i++) {
+          await trustProxyApp.inject({
+            method: 'POST',
+            url: '/api/auth/login',
+            payload: { username: 'admin', password: 'wrong' },
+            remoteAddress: socketPeer,
+            headers: { 'x-forwarded-for': '203.0.113.1' },
+          });
+        }
+
+        // Client A should be limited
+        const limitedRes = await trustProxyApp.inject({
+          method: 'POST',
+          url: '/api/auth/login',
+          payload: { username: 'admin', password: 'wrong' },
+          remoteAddress: socketPeer,
+          headers: { 'x-forwarded-for': '203.0.113.1' },
+        });
+        expect(limitedRes.statusCode).toBe(429);
+
+        // Client B (different XFF, same socket peer) should still be free
+        const freeRes = await trustProxyApp.inject({
+          method: 'POST',
+          url: '/api/auth/login',
+          payload: { username: 'admin', password: 'wrong' },
+          remoteAddress: socketPeer,
+          headers: { 'x-forwarded-for': '203.0.113.2' },
+        });
+        expect(freeRes.statusCode).not.toBe(429);
+      } finally {
+        await trustProxyApp.close();
+      }
+    });
+
+    it('without trustProxy (baseline), different XFF values share one bucket per socket peer', async () => {
+      const baselineServices = createMockServices();
+      const baselineApp = await createRateLimitTestApp(baselineServices);
+      try {
+        const socketPeer = '10.0.0.98';
+
+        // Exhaust limit through XFF A
+        for (let i = 0; i < 5; i++) {
+          await baselineApp.inject({
+            method: 'POST',
+            url: '/api/auth/login',
+            payload: { username: 'admin', password: 'wrong' },
+            remoteAddress: socketPeer,
+            headers: { 'x-forwarded-for': '203.0.113.10' },
+          });
+        }
+
+        // Different XFF, same socket peer → still limited (bucket shared)
+        const stillLimitedRes = await baselineApp.inject({
+          method: 'POST',
+          url: '/api/auth/login',
+          payload: { username: 'admin', password: 'wrong' },
+          remoteAddress: socketPeer,
+          headers: { 'x-forwarded-for': '203.0.113.11' },
+        });
+        expect(stillLimitedRes.statusCode).toBe(429);
+      } finally {
+        await baselineApp.close();
+      }
     });
   });
 

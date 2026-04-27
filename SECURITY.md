@@ -81,6 +81,27 @@ A CSP `script-src` `eval()` violation may appear in the browser console. First-p
 
 When enabled, requests from private IP ranges (10.x, 172.16-31.x, 192.168.x, localhost) skip authentication. This is **off by default** and must be explicitly enabled in settings. This exists for convenience in isolated home lab environments but is not recommended for networks with untrusted devices.
 
+### Reverse-proxy deployments — `TRUSTED_PROXIES`
+
+Behind a reverse proxy on a private subnet (the standard Docker pattern), the socket peer Fastify sees is the proxy itself, not the original client. Without configuration, `request.ip` resolves to the proxy IP — so every external request looks local, and local-bypass auth (and per-IP rate limiting) collapses to a single shared bucket. **This is unsafe whenever local-bypass is enabled and the app sits behind any proxy.**
+
+Set the `TRUSTED_PROXIES` env var to a comma-separated list of every IP/CIDR in the proxy chain so Fastify can resolve the real client IP from `X-Forwarded-For`. Examples:
+
+```bash
+# Single proxy on a private subnet
+TRUSTED_PROXIES=10.0.0.0/8
+
+# Multiple subnets / a list of explicit proxies
+TRUSTED_PROXIES=10.0.0.0/8,192.168.0.0/16,172.16.0.0/12
+
+# proxy-addr keyword (also: linklocal, uniquelocal)
+TRUSTED_PROXIES=loopback
+```
+
+When unset (default), Fastify ignores `X-Forwarded-For` and `request.ip` is the socket peer — preserving today's behavior for direct-exposure deploys.
+
+**Critical:** list **every** proxy in the chain. `@fastify/proxy-addr` walks `X-Forwarded-For` right-to-left, returning the first address that is NOT in the trust list. If any intermediate hop is untrusted, `request.ip` falls back to that intermediate hop — and in a Docker/private-subnet deploy that hop is itself likely a private IP, which re-enables local-bypass for external clients. Trust the entire chain or none of it.
+
 ## Filesystem Access
 
 The `/api/filesystem/browse` endpoint allows authenticated users to browse the host filesystem. This is intentional — users need to select library paths, download directories, and other filesystem locations during setup and configuration.

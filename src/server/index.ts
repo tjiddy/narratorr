@@ -46,6 +46,7 @@ async function main() {
   const app = Fastify({
     logger: buildLoggerConfig(),
     disableRequestLogging: true,
+    trustProxy: config.trustedProxies,
   }).withTypeProvider<ZodTypeProvider>();
 
   // Request logging at trace level (Fastify defaults to info which is too noisy)
