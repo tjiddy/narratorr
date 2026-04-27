@@ -1,7 +1,8 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, type Mock } from 'vitest';
 import { inject } from '../__tests__/helpers.js';
 import type { FastifyBaseLogger } from 'fastify';
 import type { Db } from '../../db/index.js';
+import { MAX_COVER_SIZE } from '../../shared/constants.js';
 
 vi.mock('node:fs/promises', () => ({
   writeFile: vi.fn().mockResolvedValue(undefined),
@@ -10,11 +11,19 @@ vi.mock('node:fs/promises', () => ({
   unlink: vi.fn().mockResolvedValue(undefined),
 }));
 
+vi.mock('node:dns/promises', () => ({
+  lookup: vi.fn(),
+}));
+
 const mockFetch = vi.fn();
 vi.stubGlobal('fetch', mockFetch);
 
 import { writeFile, rename, readdir, unlink } from 'node:fs/promises';
+import { lookup as dnsLookup } from 'node:dns/promises';
 import { downloadRemoteCover, isRemoteCoverUrl } from './cover-download.js';
+
+// dns.lookup is overloaded; cast to a permissive Mock so resolved arrays type-check.
+const mockedDnsLookup = vi.mocked(dnsLookup) as unknown as Mock;
 
 function createMockLogger() {
   return inject<FastifyBaseLogger>({
@@ -40,11 +49,23 @@ function createMockDb() {
   };
 }
 
-function createImageResponse(contentType = 'image/jpeg', body = Buffer.from('fake-image-data')) {
+function createImageResponse(contentType = 'image/jpeg', body: BodyInit = Buffer.from('fake-image-data')) {
   return new Response(body, {
     status: 200,
     headers: { 'content-type': contentType },
   });
+}
+
+function createRedirectResponse(location: string, status = 302) {
+  return new Response(null, {
+    status,
+    headers: { location },
+  });
+}
+
+/** Default to a public IP so most tests proceed past the SSRF gate. */
+function mockPublicDns() {
+  mockedDnsLookup.mockResolvedValue([{ address: '93.184.216.34', family: 4 }]);
 }
 
 describe('downloadRemoteCover', () => {
@@ -53,8 +74,12 @@ describe('downloadRemoteCover', () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    // mockReset clears queued mockResolvedValueOnce responses; clearAllMocks alone leaves them.
+    mockFetch.mockReset();
+    mockedDnsLookup.mockReset();
     mockDb = createMockDb();
     log = createMockLogger();
+    mockPublicDns();
   });
 
   it('downloads image and saves to {bookPath}/cover.{ext} with atomic write', async () => {
@@ -66,11 +91,9 @@ describe('downloadRemoteCover', () => {
     );
 
     expect(result).toBe(true);
-    // Temp file written first (atomic write)
     const writePath = String(vi.mocked(writeFile).mock.calls[0][0]).split('\\').join('/');
     expect(writePath).toContain('/books/test/');
     expect(vi.mocked(writeFile).mock.calls[0][1]).toBeInstanceOf(Buffer);
-    // Renamed to final location
     const renameDest = String(vi.mocked(rename).mock.calls[0][1]).split('\\').join('/');
     expect(renameDest).toBe('/books/test/cover.jpg');
   });
@@ -187,17 +210,27 @@ describe('downloadRemoteCover', () => {
     expect(writeFile).not.toHaveBeenCalled();
   });
 
-  it('follows redirects (uses native fetch with redirect: follow)', async () => {
-    mockFetch.mockResolvedValue(createImageResponse());
+  it('uses manual redirects and walks one 302 → 200 hop successfully', async () => {
+    mockFetch
+      .mockResolvedValueOnce(createRedirectResponse('https://cdn.example.com/final.jpg'))
+      .mockResolvedValueOnce(createImageResponse('image/jpeg'));
 
-    await downloadRemoteCover(
+    const result = await downloadRemoteCover(
       1, '/books/test', 'https://cdn.example.com/cover.jpg',
       inject<Db>(mockDb), log,
     );
 
-    expect(mockFetch).toHaveBeenCalledWith(
+    expect(result).toBe(true);
+    expect(mockFetch).toHaveBeenCalledTimes(2);
+    expect(mockFetch).toHaveBeenNthCalledWith(
+      1,
       'https://cdn.example.com/cover.jpg',
-      expect.objectContaining({ redirect: 'follow' }),
+      expect.objectContaining({ redirect: 'manual' }),
+    );
+    expect(mockFetch).toHaveBeenNthCalledWith(
+      2,
+      'https://cdn.example.com/final.jpg',
+      expect.objectContaining({ redirect: 'manual' }),
     );
   });
 
@@ -251,9 +284,227 @@ describe('downloadRemoteCover', () => {
       inject<Db>(mockDb), log,
     );
 
-    // rename() overwrites target atomically — no unlink() before rename()
     expect(rename).toHaveBeenCalled();
     expect(vi.mocked(writeFile)).toHaveBeenCalledTimes(1);
+  });
+
+  describe('SSRF refusals', () => {
+    it.each([
+      { name: 'private IPv4 192.168.1.1', address: '192.168.1.1', family: 4 },
+      { name: 'loopback 127.0.0.1', address: '127.0.0.1', family: 4 },
+      { name: 'AWS metadata 169.254.169.254', address: '169.254.169.254', family: 4 },
+      { name: 'IPv4 unspecified 0.0.0.0', address: '0.0.0.0', family: 4 },
+      { name: 'IPv6 unspecified ::', address: '::', family: 6 },
+      { name: 'IPv6 ULA fd00::1', address: 'fd00::1', family: 6 },
+      { name: 'IPv4-mapped ::ffff:192.168.1.1', address: '::ffff:192.168.1.1', family: 6 },
+    ])('refuses URL whose lookup returns $name', async ({ address, family }) => {
+      mockedDnsLookup.mockReset();
+      mockedDnsLookup.mockResolvedValueOnce([{ address, family }]);
+
+      const result = await downloadRemoteCover(
+        1, '/books/test', 'https://attacker.example.com/cover.jpg',
+        inject<Db>(mockDb), log,
+      );
+
+      expect(result).toBe(false);
+      expect(mockFetch).not.toHaveBeenCalled();
+      expect(writeFile).not.toHaveBeenCalled();
+      expect(mockDb.update).not.toHaveBeenCalled();
+      expect((log.warn as ReturnType<typeof vi.fn>)).toHaveBeenCalledWith(
+        expect.objectContaining({
+          bookId: 1,
+          error: expect.objectContaining({ message: expect.stringMatching(/Refused/) }),
+        }),
+        expect.stringContaining('Failed to download'),
+      );
+    });
+
+    it('refuses mixed-answer DNS where any answer is private', async () => {
+      mockedDnsLookup.mockReset();
+      mockedDnsLookup.mockResolvedValueOnce([
+        { address: '1.2.3.4', family: 4 },
+        { address: '192.168.1.1', family: 4 },
+      ]);
+
+      const result = await downloadRemoteCover(
+        1, '/books/test', 'https://rebind.example.com/cover.jpg',
+        inject<Db>(mockDb), log,
+      );
+
+      expect(result).toBe(false);
+      expect(mockFetch).not.toHaveBeenCalled();
+    });
+
+    it.each([
+      'http://[::1]/cover.jpg',
+      'http://[fd00::1]/cover.jpg',
+      'http://[fe80::1]/cover.jpg',
+      'http://[::]/cover.jpg',
+    ])('refuses bracketed IPv6 literal URL %s without doing DNS', async (url) => {
+      const result = await downloadRemoteCover(
+        1, '/books/test', url,
+        inject<Db>(mockDb), log,
+      );
+
+      expect(result).toBe(false);
+      expect(mockedDnsLookup).not.toHaveBeenCalled();
+      expect(mockFetch).not.toHaveBeenCalled();
+      expect(writeFile).not.toHaveBeenCalled();
+    });
+
+    it('refuses metadata.google.internal hostname pre-check (no DNS lookup)', async () => {
+      const result = await downloadRemoteCover(
+        1, '/books/test', 'https://metadata.google.internal/computeMetadata/v1/',
+        inject<Db>(mockDb), log,
+      );
+
+      expect(result).toBe(false);
+      expect(mockedDnsLookup).not.toHaveBeenCalled();
+      expect(mockFetch).not.toHaveBeenCalled();
+    });
+
+    it('refuses redirect chain whose 2nd hop resolves to a private IP', async () => {
+      mockedDnsLookup.mockReset();
+      mockedDnsLookup
+        .mockResolvedValueOnce([{ address: '93.184.216.34', family: 4 }])
+        .mockResolvedValueOnce([{ address: '192.168.1.1', family: 4 }]);
+
+      mockFetch.mockResolvedValueOnce(createRedirectResponse('https://internal.attacker.example/admin'));
+
+      const result = await downloadRemoteCover(
+        1, '/books/test', 'https://cdn.example.com/cover.jpg',
+        inject<Db>(mockDb), log,
+      );
+
+      expect(result).toBe(false);
+      expect(mockFetch).toHaveBeenCalledTimes(1);
+      expect(writeFile).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('size cap', () => {
+    it('refuses when Content-Length header exceeds MAX_COVER_SIZE without reading body', async () => {
+      const tooBig = MAX_COVER_SIZE + 1;
+      // Stub the body so we can assert getReader() was NEVER called — that's
+      // the actual "body read" boundary AC7 protects. cancel() is allowed
+      // (used to drain the connection without consuming bytes).
+      const cancelSpy = vi.fn().mockResolvedValue(undefined);
+      const getReaderSpy = vi.fn(() => {
+        throw new Error('getReader() must not be called when Content-Length exceeds the cap');
+      });
+      const fakeBody = {
+        cancel: cancelSpy,
+        getReader: getReaderSpy,
+      };
+      const response = new Response('placeholder', {
+        status: 200,
+        headers: {
+          'content-type': 'image/jpeg',
+          'content-length': String(tooBig),
+        },
+      });
+      Object.defineProperty(response, 'body', { configurable: true, get: () => fakeBody });
+      mockFetch.mockResolvedValue(response);
+
+      const result = await downloadRemoteCover(
+        1, '/books/test', 'https://cdn.example.com/huge.jpg',
+        inject<Db>(mockDb), log,
+      );
+
+      expect(result).toBe(false);
+      expect(getReaderSpy).not.toHaveBeenCalled();
+      expect(cancelSpy).toHaveBeenCalled();
+      expect(writeFile).not.toHaveBeenCalled();
+      expect(mockDb.update).not.toHaveBeenCalled();
+    });
+
+    it('refuses when streamed body exceeds MAX_COVER_SIZE mid-flight and cancels the reader (server lies about Content-Length)', async () => {
+      // Spy directly on reader.cancel to assert AC7's required cancellation
+      // contract. Wrapping response.body lets us mock the reader the service
+      // sees without depending on whether the host stream wrapper forwards
+      // `getReader().cancel()` to a custom underlying-source `cancel` callback.
+      const cancelSpy = vi.fn().mockResolvedValue(undefined);
+      const fakeReader = {
+        read: vi.fn()
+          .mockResolvedValueOnce({ done: false, value: new Uint8Array(MAX_COVER_SIZE + 1) })
+          .mockResolvedValue({ done: true, value: undefined }),
+        cancel: cancelSpy,
+      };
+      const fakeBody = { getReader: () => fakeReader };
+
+      const response = new Response('placeholder', {
+        status: 200,
+        headers: { 'content-type': 'image/jpeg' },
+      });
+      Object.defineProperty(response, 'body', { configurable: true, get: () => fakeBody });
+      mockFetch.mockResolvedValue(response);
+
+      const result = await downloadRemoteCover(
+        1, '/books/test', 'https://cdn.example.com/cover.jpg',
+        inject<Db>(mockDb), log,
+      );
+
+      expect(result).toBe(false);
+      expect(cancelSpy).toHaveBeenCalled();
+      expect(writeFile).not.toHaveBeenCalled();
+      expect(mockDb.update).not.toHaveBeenCalled();
+    });
+
+    it('accepts Content-Length within MAX_COVER_SIZE', async () => {
+      const small = Buffer.from('fake-image-data');
+      const response = new Response(small, {
+        status: 200,
+        headers: {
+          'content-type': 'image/jpeg',
+          'content-length': String(small.byteLength),
+        },
+      });
+      mockFetch.mockResolvedValue(response);
+
+      const result = await downloadRemoteCover(
+        1, '/books/test', 'https://cdn.example.com/cover.jpg',
+        inject<Db>(mockDb), log,
+      );
+
+      expect(result).toBe(true);
+    });
+  });
+
+  describe('redirect handling', () => {
+    it('refuses chain of 6 hops (exceeds MAX_REDIRECTS=5)', async () => {
+      mockedDnsLookup.mockReset();
+      // 6 lookups will be needed (one per hop until limit exceeded)
+      for (let i = 0; i < 7; i++) {
+        mockedDnsLookup.mockResolvedValueOnce([{ address: '93.184.216.34', family: 4 }]);
+      }
+      for (let i = 0; i < 6; i++) {
+        mockFetch.mockResolvedValueOnce(createRedirectResponse(`https://cdn${i + 2}.example.com/cover.jpg`));
+      }
+      mockFetch.mockResolvedValueOnce(createImageResponse('image/jpeg'));
+
+      const result = await downloadRemoteCover(
+        1, '/books/test', 'https://cdn1.example.com/cover.jpg',
+        inject<Db>(mockDb), log,
+      );
+
+      expect(result).toBe(false);
+      expect(writeFile).not.toHaveBeenCalled();
+    });
+
+    it('detects redirect loop A → B → A', async () => {
+      mockFetch
+        .mockResolvedValueOnce(createRedirectResponse('https://b.example.com/cover.jpg'))
+        .mockResolvedValueOnce(createRedirectResponse('https://a.example.com/cover.jpg'))
+        .mockResolvedValueOnce(createRedirectResponse('https://b.example.com/cover.jpg'));
+
+      const result = await downloadRemoteCover(
+        1, '/books/test', 'https://a.example.com/cover.jpg',
+        inject<Db>(mockDb), log,
+      );
+
+      expect(result).toBe(false);
+      expect(writeFile).not.toHaveBeenCalled();
+    });
   });
 
   describe('URL sanitization in logs', () => {
@@ -393,7 +644,6 @@ describe('downloadRemoteCover', () => {
       inject<Db>(mockDb), log,
     );
 
-    // Should remove stale cover.png (different extension) but not cover.jpg (target) or non-cover files
     const unlinkPath = String(vi.mocked(unlink).mock.calls[0][0]).split('\\').join('/');
     expect(unlinkPath).toBe('/books/test/cover.png');
     expect(unlink).toHaveBeenCalledTimes(1);
@@ -408,7 +658,6 @@ describe('downloadRemoteCover', () => {
     );
 
     const tempPath = vi.mocked(writeFile).mock.calls[0][0] as string;
-    // Temp filename should contain a UUID, not just the bookId
     expect(tempPath).toMatch(/\.cover-download-[0-9a-f-]+\.tmp$/);
     expect(tempPath).not.toContain(`-${42}.tmp`);
   });
@@ -426,6 +675,20 @@ describe('downloadRemoteCover', () => {
       expect.objectContaining({
         signal: expect.any(AbortSignal),
       }),
+    );
+  });
+
+  it('passes a dispatcher option to fetch (SSRF-safe agent)', async () => {
+    mockFetch.mockResolvedValue(createImageResponse());
+
+    await downloadRemoteCover(
+      1, '/books/test', 'https://cdn.example.com/cover.jpg',
+      inject<Db>(mockDb), log,
+    );
+
+    expect(mockFetch).toHaveBeenCalledWith(
+      expect.any(String),
+      expect.objectContaining({ dispatcher: expect.anything() }),
     );
   });
 });
