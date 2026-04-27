@@ -385,22 +385,25 @@ describe('downloadRemoteCover', () => {
   describe('size cap', () => {
     it('refuses when Content-Length header exceeds MAX_COVER_SIZE without reading body', async () => {
       const tooBig = MAX_COVER_SIZE + 1;
-      const bodyReadSpy = vi.fn();
-      const response = new Response('x', {
+      // Stub the body so we can assert getReader() was NEVER called — that's
+      // the actual "body read" boundary AC7 protects. cancel() is allowed
+      // (used to drain the connection without consuming bytes).
+      const cancelSpy = vi.fn().mockResolvedValue(undefined);
+      const getReaderSpy = vi.fn(() => {
+        throw new Error('getReader() must not be called when Content-Length exceeds the cap');
+      });
+      const fakeBody = {
+        cancel: cancelSpy,
+        getReader: getReaderSpy,
+      };
+      const response = new Response('placeholder', {
         status: 200,
         headers: {
           'content-type': 'image/jpeg',
           'content-length': String(tooBig),
         },
       });
-      // Spy on body cancel to confirm we drain rather than read
-      const originalBody = response.body;
-      Object.defineProperty(response, 'body', {
-        get() {
-          bodyReadSpy();
-          return originalBody;
-        },
-      });
+      Object.defineProperty(response, 'body', { configurable: true, get: () => fakeBody });
       mockFetch.mockResolvedValue(response);
 
       const result = await downloadRemoteCover(
@@ -409,6 +412,8 @@ describe('downloadRemoteCover', () => {
       );
 
       expect(result).toBe(false);
+      expect(getReaderSpy).not.toHaveBeenCalled();
+      expect(cancelSpy).toHaveBeenCalled();
       expect(writeFile).not.toHaveBeenCalled();
       expect(mockDb.update).not.toHaveBeenCalled();
     });
