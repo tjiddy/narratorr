@@ -27,15 +27,19 @@ const BLOCKED_HOSTNAMES = new Set<string>([
 const IPV4_PATTERN = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/;
 const IPV4_MAPPED_PATTERN = /^::ffff:(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})$/i;
 
-export class BlockedFetchAddressError extends Error {
-  constructor(message: string) {
-    super(message);
-    this.name = 'BlockedFetchAddressError';
-  }
-}
-
 export function isBlockedHostname(hostname: string): boolean {
   return BLOCKED_HOSTNAMES.has(hostname.toLowerCase());
+}
+
+/**
+ * `new URL('http://[::1]/').hostname` returns `[::1]` (with brackets) in Node.
+ * Strip the brackets so the unbracketed checks match.
+ */
+export function normalizeHostname(hostname: string): string {
+  if (hostname.length >= 2 && hostname.startsWith('[') && hostname.endsWith(']')) {
+    return hostname.slice(1, -1);
+  }
+  return hostname;
 }
 
 export function isIpLiteral(hostname: string): boolean {
@@ -81,43 +85,67 @@ function isBlockedIpv6(ip: string): boolean {
  * `connect.lookup` hook (defense against DNS rebinding).
  */
 export async function resolveAndValidate(hostname: string): Promise<string[]> {
-  if (isBlockedHostname(hostname)) {
-    throw new BlockedFetchAddressError(`Refused: hostname ${hostname} is in the blocked cloud-metadata list`);
+  const normalized = normalizeHostname(hostname);
+  if (isBlockedHostname(normalized)) {
+    throw new Error(`Refused: hostname ${normalized} is in the blocked cloud-metadata list`);
   }
-  if (isIpLiteral(hostname)) {
-    if (isBlockedFetchAddress(hostname)) {
-      throw new BlockedFetchAddressError(`Refused: address ${hostname} is in the blocked range`);
+  if (isIpLiteral(normalized)) {
+    if (isBlockedFetchAddress(normalized)) {
+      throw new Error(`Refused: address ${normalized} is in the blocked range`);
     }
-    return [hostname];
+    return [normalized];
   }
-  const answers = await dnsLookup(hostname, { all: true, family: 0 });
+  const answers = await dnsLookup(normalized, { all: true, family: 0 });
   if (answers.length === 0) {
-    throw new BlockedFetchAddressError(`Refused: DNS returned no answers for ${hostname}`);
+    throw new Error(`Refused: DNS returned no answers for ${normalized}`);
   }
   for (const answer of answers) {
     if (isBlockedFetchAddress(answer.address)) {
-      throw new BlockedFetchAddressError(
-        `Refused: hostname ${hostname} resolves to blocked address ${answer.address}`,
+      throw new Error(
+        `Refused: hostname ${normalized} resolves to blocked address ${answer.address}`,
       );
     }
   }
   return answers.map((a) => a.address);
 }
 
-const validatingLookup: LookupFunction = (hostname, _options, callback) => {
-  if (isBlockedHostname(hostname)) {
+/**
+ * Socket-bound DNS validation for the undici Agent's connect path. Resolves
+ * every A/AAAA answer for the destination hostname, refuses if any answer
+ * fails the block policy, and returns one of the validated answers to the
+ * connecting socket. This binds validation to the same resolution the socket
+ * connects to, defeating DNS rebinding.
+ *
+ * Exported so its rebinding-protection behavior is directly testable —
+ * fetch-stubbed service tests can't exercise the dispatcher path.
+ */
+export const validatingLookup: LookupFunction = (hostname, _options, callback) => {
+  const normalized = normalizeHostname(hostname);
+  if (isBlockedHostname(normalized)) {
     callback(
-      new BlockedFetchAddressError(`Refused: hostname ${hostname} is in the blocked cloud-metadata list`) as unknown as NodeJS.ErrnoException,
+      new Error(`Refused: hostname ${normalized} is in the blocked cloud-metadata list`) as NodeJS.ErrnoException,
       '',
       0,
     );
     return;
   }
-  dnsLookup(hostname, { all: true, family: 0 })
+  if (isIpLiteral(normalized)) {
+    if (isBlockedFetchAddress(normalized)) {
+      callback(
+        new Error(`Refused: address ${normalized} is in the blocked range`) as NodeJS.ErrnoException,
+        '',
+        0,
+      );
+      return;
+    }
+    callback(null, normalized, normalized.includes(':') ? 6 : 4);
+    return;
+  }
+  dnsLookup(normalized, { all: true, family: 0 })
     .then((answers) => {
       if (answers.length === 0) {
         callback(
-          new BlockedFetchAddressError(`Refused: DNS returned no answers for ${hostname}`) as unknown as NodeJS.ErrnoException,
+          new Error(`Refused: DNS returned no answers for ${normalized}`) as NodeJS.ErrnoException,
           '',
           0,
         );
@@ -126,9 +154,9 @@ const validatingLookup: LookupFunction = (hostname, _options, callback) => {
       for (const answer of answers) {
         if (isBlockedFetchAddress(answer.address)) {
           callback(
-            new BlockedFetchAddressError(
-              `Refused: hostname ${hostname} resolves to blocked address ${answer.address}`,
-            ) as unknown as NodeJS.ErrnoException,
+            new Error(
+              `Refused: hostname ${normalized} resolves to blocked address ${answer.address}`,
+            ) as NodeJS.ErrnoException,
             '',
             0,
           );

@@ -9,8 +9,9 @@ import {
   isBlockedFetchAddress,
   isBlockedHostname,
   isIpLiteral,
+  normalizeHostname,
   resolveAndValidate,
-  BlockedFetchAddressError,
+  validatingLookup,
 } from './blocked-fetch-address.js';
 
 // dns.lookup is overloaded; the all:true variant returns an array. Cast to a
@@ -107,6 +108,20 @@ describe('isBlockedFetchAddress', () => {
   });
 });
 
+describe('normalizeHostname', () => {
+  it('strips surrounding brackets from IPv6 literal hostnames', () => {
+    expect(normalizeHostname('[::1]')).toBe('::1');
+    expect(normalizeHostname('[fd00::1]')).toBe('fd00::1');
+    expect(normalizeHostname('[fe80::1]')).toBe('fe80::1');
+  });
+
+  it('returns hostnames without brackets unchanged', () => {
+    expect(normalizeHostname('cdn.example.com')).toBe('cdn.example.com');
+    expect(normalizeHostname('192.168.1.1')).toBe('192.168.1.1');
+    expect(normalizeHostname('::1')).toBe('::1');
+  });
+});
+
 describe('isBlockedHostname', () => {
   it('blocks metadata.google.internal', () => {
     expect(isBlockedHostname('metadata.google.internal')).toBe(true);
@@ -148,12 +163,12 @@ describe('resolveAndValidate', () => {
   });
 
   it('throws on blocked IP literal without doing lookup', async () => {
-    await expect(resolveAndValidate('192.168.1.1')).rejects.toBeInstanceOf(BlockedFetchAddressError);
+    await expect(resolveAndValidate('192.168.1.1')).rejects.toThrow(/Refused/);
     expect(mockedLookup).not.toHaveBeenCalled();
   });
 
   it('throws on blocked hostname without doing lookup', async () => {
-    await expect(resolveAndValidate('metadata.google.internal')).rejects.toBeInstanceOf(BlockedFetchAddressError);
+    await expect(resolveAndValidate('metadata.google.internal')).rejects.toThrow(/Refused/);
     expect(mockedLookup).not.toHaveBeenCalled();
   });
 
@@ -168,7 +183,7 @@ describe('resolveAndValidate', () => {
 
   it('throws when any answer is blocked (single private answer)', async () => {
     mockedLookup.mockResolvedValueOnce([{ address: '192.168.1.1', family: 4 }]);
-    await expect(resolveAndValidate('rebind.example.com')).rejects.toBeInstanceOf(BlockedFetchAddressError);
+    await expect(resolveAndValidate('rebind.example.com')).rejects.toThrow(/Refused/);
   });
 
   it('throws on mixed answers where any is blocked (multi-answer DNS)', async () => {
@@ -176,11 +191,132 @@ describe('resolveAndValidate', () => {
       { address: '1.2.3.4', family: 4 },
       { address: '192.168.1.1', family: 4 },
     ]);
-    await expect(resolveAndValidate('mixed.example.com')).rejects.toBeInstanceOf(BlockedFetchAddressError);
+    await expect(resolveAndValidate('mixed.example.com')).rejects.toThrow(/Refused/);
   });
 
   it('throws when DNS returns zero answers', async () => {
     mockedLookup.mockResolvedValueOnce([]);
-    await expect(resolveAndValidate('empty.example.com')).rejects.toBeInstanceOf(BlockedFetchAddressError);
+    await expect(resolveAndValidate('empty.example.com')).rejects.toThrow(/Refused/);
+  });
+
+  describe('bracketed IPv6 URL hostnames (URL.hostname returns [::1])', () => {
+    it('throws on [::1] (loopback IPv6 in bracketed URL form)', async () => {
+      await expect(resolveAndValidate('[::1]')).rejects.toThrow(/Refused/);
+      expect(mockedLookup).not.toHaveBeenCalled();
+    });
+
+    it('throws on [fd00::1] (ULA in bracketed URL form)', async () => {
+      await expect(resolveAndValidate('[fd00::1]')).rejects.toThrow(/Refused/);
+      expect(mockedLookup).not.toHaveBeenCalled();
+    });
+
+    it('throws on [fe80::1] (link-local in bracketed URL form)', async () => {
+      await expect(resolveAndValidate('[fe80::1]')).rejects.toThrow(/Refused/);
+      expect(mockedLookup).not.toHaveBeenCalled();
+    });
+
+    it('throws on [::] (unspecified in bracketed URL form)', async () => {
+      await expect(resolveAndValidate('[::]')).rejects.toThrow(/Refused/);
+      expect(mockedLookup).not.toHaveBeenCalled();
+    });
+
+    it('accepts a public IPv6 in bracketed URL form', async () => {
+      const result = await resolveAndValidate('[2606:4700:4700::1111]');
+      expect(result).toEqual(['2606:4700:4700::1111']);
+      expect(mockedLookup).not.toHaveBeenCalled();
+    });
+  });
+});
+
+/**
+ * Direct tests for the dispatcher's connect.lookup hook (AC1's socket-bound
+ * validation). Service tests stub global fetch and never exercise this path,
+ * so the rebinding-protection contract is verified here.
+ */
+describe('validatingLookup (socket-bound dispatcher hook)', () => {
+  function callLookup(hostname: string): Promise<{ err: unknown; address: unknown; family: unknown }> {
+    return new Promise((resolve) => {
+      validatingLookup(hostname, {}, (err, address, family) => {
+        resolve({ err, address, family });
+      });
+    });
+  }
+
+  beforeEach(() => {
+    mockedLookup.mockReset();
+  });
+
+  it('returns the first public address when DNS answers are all public', async () => {
+    mockedLookup.mockResolvedValueOnce([
+      { address: '93.184.216.34', family: 4 },
+      { address: '1.1.1.1', family: 4 },
+    ]);
+    const { err, address, family } = await callLookup('cdn.example.com');
+    expect(err).toBeNull();
+    expect(address).toBe('93.184.216.34');
+    expect(family).toBe(4);
+  });
+
+  it('rejects via callback when DNS returns a single private answer', async () => {
+    mockedLookup.mockResolvedValueOnce([{ address: '192.168.1.1', family: 4 }]);
+    const { err, address } = await callLookup('attacker.example.com');
+    expect(err).toBeInstanceOf(Error);
+    expect((err as Error).message).toMatch(/Refused/);
+    expect(address).toBe('');
+  });
+
+  it('rejects mixed-answer DNS at socket time (any private answer fails)', async () => {
+    mockedLookup.mockResolvedValueOnce([
+      { address: '1.2.3.4', family: 4 },
+      { address: '192.168.1.1', family: 4 },
+    ]);
+    const { err } = await callLookup('rebind.example.com');
+    expect(err).toBeInstanceOf(Error);
+    expect((err as Error).message).toMatch(/Refused/);
+  });
+
+  it('rejects loopback IPv6 at socket time', async () => {
+    mockedLookup.mockResolvedValueOnce([{ address: '::1', family: 6 }]);
+    const { err } = await callLookup('loopback.example.com');
+    expect(err).toBeInstanceOf(Error);
+  });
+
+  it('rejects link-local IPv4 (AWS metadata) at socket time', async () => {
+    mockedLookup.mockResolvedValueOnce([{ address: '169.254.169.254', family: 4 }]);
+    const { err } = await callLookup('rebind.example.com');
+    expect(err).toBeInstanceOf(Error);
+  });
+
+  it('rejects metadata.google.internal hostname pre-check without doing DNS', async () => {
+    const { err } = await callLookup('metadata.google.internal');
+    expect(err).toBeInstanceOf(Error);
+    expect(mockedLookup).not.toHaveBeenCalled();
+  });
+
+  it('rejects bracketed IPv6 literal hostname (e.g. [::1]) at socket time', async () => {
+    const { err } = await callLookup('[::1]');
+    expect(err).toBeInstanceOf(Error);
+    expect(mockedLookup).not.toHaveBeenCalled();
+  });
+
+  it('returns IP literal directly without DNS lookup when public', async () => {
+    const { err, address } = await callLookup('8.8.8.8');
+    expect(err).toBeNull();
+    expect(address).toBe('8.8.8.8');
+    expect(mockedLookup).not.toHaveBeenCalled();
+  });
+
+  it('rejects when DNS returns zero answers', async () => {
+    mockedLookup.mockResolvedValueOnce([]);
+    const { err } = await callLookup('empty.example.com');
+    expect(err).toBeInstanceOf(Error);
+  });
+
+  it('propagates DNS errors via callback', async () => {
+    const dnsErr = new Error('ENOTFOUND') as NodeJS.ErrnoException;
+    dnsErr.code = 'ENOTFOUND';
+    mockedLookup.mockRejectedValueOnce(dnsErr);
+    const { err } = await callLookup('missing.example.com');
+    expect(err).toBe(dnsErr);
   });
 });

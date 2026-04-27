@@ -311,8 +311,11 @@ describe('downloadRemoteCover', () => {
       expect(writeFile).not.toHaveBeenCalled();
       expect(mockDb.update).not.toHaveBeenCalled();
       expect((log.warn as ReturnType<typeof vi.fn>)).toHaveBeenCalledWith(
-        expect.objectContaining({ bookId: 1 }),
-        expect.stringContaining('SSRF'),
+        expect.objectContaining({
+          bookId: 1,
+          error: expect.objectContaining({ message: expect.stringMatching(/Refused/) }),
+        }),
+        expect.stringContaining('Failed to download'),
       );
     });
 
@@ -330,6 +333,23 @@ describe('downloadRemoteCover', () => {
 
       expect(result).toBe(false);
       expect(mockFetch).not.toHaveBeenCalled();
+    });
+
+    it.each([
+      'http://[::1]/cover.jpg',
+      'http://[fd00::1]/cover.jpg',
+      'http://[fe80::1]/cover.jpg',
+      'http://[::]/cover.jpg',
+    ])('refuses bracketed IPv6 literal URL %s without doing DNS', async (url) => {
+      const result = await downloadRemoteCover(
+        1, '/books/test', url,
+        inject<Db>(mockDb), log,
+      );
+
+      expect(result).toBe(false);
+      expect(mockedDnsLookup).not.toHaveBeenCalled();
+      expect(mockFetch).not.toHaveBeenCalled();
+      expect(writeFile).not.toHaveBeenCalled();
     });
 
     it('refuses metadata.google.internal hostname pre-check (no DNS lookup)', async () => {
@@ -393,26 +413,25 @@ describe('downloadRemoteCover', () => {
       expect(mockDb.update).not.toHaveBeenCalled();
     });
 
-    it('refuses when streamed body exceeds MAX_COVER_SIZE mid-flight (server lies about Content-Length)', async () => {
-      // Yield 11 chunks of 1 MB each — exceeds 10 MB cap on the 11th chunk
-      const chunkSize = 1024 * 1024;
-      const totalChunks = 11;
-      let chunkIndex = 0;
-      const stream = new ReadableStream<Uint8Array>({
-        pull(controller) {
-          if (chunkIndex >= totalChunks) {
-            controller.close();
-            return;
-          }
-          chunkIndex++;
-          controller.enqueue(new Uint8Array(chunkSize));
-        },
-      });
+    it('refuses when streamed body exceeds MAX_COVER_SIZE mid-flight and cancels the reader (server lies about Content-Length)', async () => {
+      // Spy directly on reader.cancel to assert AC7's required cancellation
+      // contract. Wrapping response.body lets us mock the reader the service
+      // sees without depending on whether the host stream wrapper forwards
+      // `getReader().cancel()` to a custom underlying-source `cancel` callback.
+      const cancelSpy = vi.fn().mockResolvedValue(undefined);
+      const fakeReader = {
+        read: vi.fn()
+          .mockResolvedValueOnce({ done: false, value: new Uint8Array(MAX_COVER_SIZE + 1) })
+          .mockResolvedValue({ done: true, value: undefined }),
+        cancel: cancelSpy,
+      };
+      const fakeBody = { getReader: () => fakeReader };
 
-      const response = new Response(stream, {
+      const response = new Response('placeholder', {
         status: 200,
         headers: { 'content-type': 'image/jpeg' },
       });
+      Object.defineProperty(response, 'body', { configurable: true, get: () => fakeBody });
       mockFetch.mockResolvedValue(response);
 
       const result = await downloadRemoteCover(
@@ -421,6 +440,7 @@ describe('downloadRemoteCover', () => {
       );
 
       expect(result).toBe(false);
+      expect(cancelSpy).toHaveBeenCalled();
       expect(writeFile).not.toHaveBeenCalled();
       expect(mockDb.update).not.toHaveBeenCalled();
     });

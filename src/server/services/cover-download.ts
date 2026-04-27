@@ -14,7 +14,6 @@ import { sanitizeLogUrl } from '../utils/sanitize-log-url.js';
 import {
   createSsrfSafeDispatcher,
   resolveAndValidate,
-  BlockedFetchAddressError,
 } from '../utils/blocked-fetch-address.js';
 
 const MAX_REDIRECTS = 5;
@@ -210,10 +209,6 @@ export async function downloadRemoteCover(
     log.info({ bookId, path: finalPath }, 'Remote cover downloaded and saved locally');
     return true;
   } catch (error: unknown) {
-    if (error instanceof BlockedFetchAddressError) {
-      log.warn({ bookId, url: sanitizeLogUrl(remoteUrl), reason: error.message }, 'Remote cover download refused by SSRF policy');
-      return false;
-    }
     log.warn({ error: serializeError(error), bookId, url: sanitizeLogUrl(remoteUrl) }, 'Failed to download remote cover');
     return false;
   }
