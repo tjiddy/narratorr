@@ -72,9 +72,9 @@ describe('sanitizedEnv', () => {
   });
 
   it('returns only allowlisted keys when called with no extras', () => {
-    process.env.PATH = '/usr/bin';
-    process.env.HOME = '/home/user';
-    process.env.NARRATORR_SECRET_KEY = 'secret';
+    // Isolate process.env so the assertion does not depend on which other
+    // allowlisted keys (LANG, TZ, TMPDIR, etc.) the CI runner happens to set.
+    process.env = { PATH: '/usr/bin', HOME: '/home/user', NARRATORR_SECRET_KEY: 'secret' };
 
     const env = sanitizedEnv();
 
