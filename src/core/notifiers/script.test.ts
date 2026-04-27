@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { ScriptNotifier } from './script.js';
 import type { EventPayload } from './types.js';
 
@@ -14,6 +14,38 @@ const mockExecFile = vi.mocked(execFile);
 describe('ScriptNotifier', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+  });
+
+  describe('security: env allowlist (#729)', () => {
+    beforeEach(() => {
+      process.env.NARRATORR_SECRET_KEY = 'sentinel-must-not-leak';
+    });
+
+    afterEach(() => {
+      delete process.env.NARRATORR_SECRET_KEY;
+    });
+
+    it('does not leak NARRATORR_SECRET_KEY into spawned script env', async () => {
+      mockExecFile.mockImplementation((_file, _opts, callback) => {
+        const cb = callback as (...args: unknown[]) => void;
+        cb(null, '', '');
+        return {} as ReturnType<typeof execFile>;
+      });
+
+      const notifier = new ScriptNotifier({ path: '/scripts/notify.sh' });
+      await notifier.send('on_grab', {
+        event: 'on_grab',
+        book: { title: 'Dune', author: 'Frank Herbert' },
+      });
+
+      const callArgs = mockExecFile.mock.calls[0];
+      const env = (callArgs[1] as unknown as { env: Record<string, string> }).env;
+
+      expect(env).not.toHaveProperty('NARRATORR_SECRET_KEY');
+      expect(env.NARRATORR_EVENT).toBe('on_grab');
+      expect(env.NARRATORR_BOOK_TITLE).toBe('Dune');
+      expect(env.NARRATORR_BOOK_AUTHOR).toBe('Frank Herbert');
+    });
   });
 
   it('executes script with correct environment variables', async () => {
