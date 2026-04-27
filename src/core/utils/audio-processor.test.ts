@@ -272,6 +272,9 @@ describe('processAudioFiles', () => {
 
   it('re-encodes single file when extension matches but bitrate differs', async () => {
     setupConvertFile();
+    mockReadChapterSources.mockResolvedValue([
+      { filePath: join('/lib/book', 'book.mp3'), title: 'Ch 1', trackNumber: 1 },
+    ]);
     mockSpawnSuccess();
 
     const config: ProcessingConfig = { ...defaultConfig, outputFormat: 'mp3', bitrate: 64 };
@@ -281,11 +284,49 @@ describe('processAudioFiles', () => {
       expect(result.outputFiles).toEqual([join('/lib/book', 'book.mp3')]);
     }
     expect(mockSpawn).toHaveBeenCalled();
-    expect(mockUnlink).toHaveBeenCalledWith(join('/lib/book', 'book.mp3'));
     expect(mockRename).toHaveBeenCalledWith(
       join('/lib/book', 'book_tmp.mp3'),
       join('/lib/book', 'book.mp3'),
     );
+    // Original must NOT be unlinked on the same-file path — rename atomically replaces it.
+    expect(mockUnlink).not.toHaveBeenCalledWith(join('/lib/book', 'book.mp3'));
+  });
+
+  it('same-file conversion: rename failure surfaces as failure result, original untouched', async () => {
+    setupConvertFile();
+    mockReadChapterSources.mockResolvedValue([
+      { filePath: join('/lib/book', 'book.mp3'), title: 'Ch 1', trackNumber: 1 },
+    ]);
+    mockSpawnSuccess();
+    mockRename.mockRejectedValueOnce(new Error('EACCES: permission denied'));
+
+    const config: ProcessingConfig = { ...defaultConfig, outputFormat: 'mp3', bitrate: 64 };
+    const result = await processAudioFiles('/lib/book', config, defaultContext);
+
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      expect(result.error).toContain('EACCES');
+    }
+    // Original file must remain on disk — never unlinked.
+    expect(mockUnlink).not.toHaveBeenCalledWith(join('/lib/book', 'book.mp3'));
+  });
+
+  it('non-sameFile conversion still unlinks the original after a successful encode', async () => {
+    setupConvertFile();
+    mockReadChapterSources.mockResolvedValue([
+      { filePath: join('/lib/book', 'book.mp3'), title: 'Ch 1', trackNumber: 1 },
+    ]);
+    mockSpawnSuccess();
+
+    // outputFormat 'm4b' with input 'book.mp3' → outputPath differs from filePath (non-sameFile branch).
+    const result = await processAudioFiles('/lib/book', defaultConfig, defaultContext);
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.outputFiles).toEqual([join('/lib/book', 'book.m4b')]);
+    }
+    expect(mockUnlink).toHaveBeenCalledWith(join('/lib/book', 'book.mp3'));
+    // Non-sameFile path does NOT use a temp + rename — writes directly to outputPath.
+    expect(mockRename).not.toHaveBeenCalled();
   });
 
   it('omits -b:a flag when bitrate is undefined (keep original)', async () => {

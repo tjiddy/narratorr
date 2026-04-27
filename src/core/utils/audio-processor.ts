@@ -386,7 +386,9 @@ async function convertFiles(
 
       await spawnFfmpeg(config.ffmpegPath, args, { onStderr: callbacks?.onStderr, signal });
 
-      if (sameFile) { await unlink(filePath); await rename(writePath, outputPath); }
+      // rename() atomically replaces outputPath. Don't unlink first — that creates a data-loss
+      // window if the rename fails. CLAUDE.md gotcha: "rename() is atomic — just rename over the target."
+      if (sameFile) { await rename(writePath, outputPath); }
       else { await unlink(filePath); }
 
       results.push(outputPath);
