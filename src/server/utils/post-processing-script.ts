@@ -1,6 +1,7 @@
 import { execFile } from 'node:child_process';
 import { access } from 'node:fs/promises';
 import type { FastifyBaseLogger } from 'fastify';
+import { sanitizedEnv } from '../../core/utils/sanitized-env.js';
 import { getErrorMessage } from './error-message.js';
 import { serializeError } from './serialize-error.js';
 
@@ -39,13 +40,12 @@ export async function runPostProcessingScript(args: PostProcessingScriptArgs): P
     return { success: false, warning };
   }
 
-  const env: Record<string, string> = {
-    ...process.env as Record<string, string>,
+  const env = sanitizedEnv({
     NARRATORR_BOOK_TITLE: bookTitle,
     NARRATORR_BOOK_AUTHOR: bookAuthor ?? '',
     NARRATORR_IMPORT_PATH: audiobookPath,
     NARRATORR_IMPORT_FILE_COUNT: fileCount.toString(),
-  };
+  });
 
   return new Promise((resolve) => {
     execFile(scriptPath, [audiobookPath], { timeout: timeoutSeconds * 1000, env }, (error, _stdout, stderr) => {

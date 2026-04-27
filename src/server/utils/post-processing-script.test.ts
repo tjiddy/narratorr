@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import type { FastifyBaseLogger } from 'fastify';
 
 // Mock node:child_process
@@ -214,6 +214,29 @@ describe('runPostProcessingScript', () => {
 
       expect(result.success).toBe(true);
       expect(result.warning).toBeUndefined();
+    });
+  });
+
+  describe('security: env allowlist (#729)', () => {
+    beforeEach(() => {
+      process.env.NARRATORR_SECRET_KEY = 'sentinel-must-not-leak';
+    });
+
+    afterEach(() => {
+      delete process.env.NARRATORR_SECRET_KEY;
+    });
+
+    it('does not leak NARRATORR_SECRET_KEY into spawned script env', async () => {
+      setupExecFileSuccess();
+      await runPostProcessingScript(defaultArgs);
+
+      const opts = mockExecFile.mock.calls[0][2] as { env: Record<string, string> };
+
+      expect(opts.env).not.toHaveProperty('NARRATORR_SECRET_KEY');
+      expect(opts.env.NARRATORR_BOOK_TITLE).toBe('The Way of Kings');
+      expect(opts.env.NARRATORR_BOOK_AUTHOR).toBe('Brandon Sanderson');
+      expect(opts.env.NARRATORR_IMPORT_PATH).toBe('/library/Author/Title');
+      expect(opts.env.NARRATORR_IMPORT_FILE_COUNT).toBe('12');
     });
   });
 });

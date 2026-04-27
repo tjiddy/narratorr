@@ -1,4 +1,5 @@
 import { execFile } from 'node:child_process';
+import { sanitizedEnv } from '../utils/sanitized-env.js';
 import type { NotifierAdapter, NotificationEvent, EventPayload } from './types.js';
 
 export interface ScriptConfig {
@@ -57,12 +58,12 @@ export class ScriptNotifier implements NotifierAdapter {
 
   async send(event: NotificationEvent, payload: EventPayload): Promise<{ success: boolean; message?: string }> {
     const timeoutMs = (this.config.timeout ?? 30) * 1000;
-    const env = payloadToEnv(event, payload);
+    const env = sanitizedEnv(payloadToEnv(event, payload));
 
     return new Promise((resolve) => {
       const child = execFile(this.config.path, {
         timeout: timeoutMs,
-        env: { ...process.env, ...env },
+        env,
       }, (error, _stdout, stderr) => {
         if (error) {
           if (error.killed) {

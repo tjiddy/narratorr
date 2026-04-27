@@ -102,6 +102,24 @@ When unset (default), Fastify ignores `X-Forwarded-For` and `request.ip` is the 
 
 **Critical:** list **every** proxy in the chain. `@fastify/proxy-addr` walks `X-Forwarded-For` right-to-left, returning the first address that is NOT in the trust list. If any intermediate hop is untrusted, `request.ip` falls back to that intermediate hop — and in a Docker/private-subnet deploy that hop is itself likely a private IP, which re-enables local-bypass for external clients. Trust the entire chain or none of it.
 
+## User-Configured Scripts
+
+Two features execute user-configured scripts on the server: the **script notifier** (notification events) and the **post-processing script** (after a successful import). Both spawn a child process via `execFile` (no shell) with an **explicit env-var allowlist** — `process.env` is NOT spread into the child.
+
+The encryption-at-rest design assumes `NARRATORR_SECRET_KEY` is never reachable from user-controlled code. Spreading the parent process's environment would have made it trivially exfiltratable from any settings-write surface (e.g. `echo $NARRATORR_SECRET_KEY > /tmp/exfil` in a configured notifier script). The allowlist closes that gap; only generic shell-environment keys flow through.
+
+**Allowlisted keys** that user scripts can rely on:
+
+| Key | Purpose |
+|-----|---------|
+| `PATH` | Binary resolution |
+| `HOME` | User home directory (some tools require this) |
+| `TMPDIR`, `TEMP`, `TMP` | Tempfile locations |
+| `LANG`, `LC_ALL`, `LC_CTYPE` | Locale |
+| `TZ` | Timezone |
+
+In addition, scripts receive the call-site-specific `NARRATORR_*` extras documented in the script notifier and post-processing settings (e.g. `NARRATORR_EVENT`, `NARRATORR_BOOK_TITLE`, `NARRATORR_IMPORT_PATH`). All other parent-process environment variables — including `NARRATORR_SECRET_KEY`, `DATABASE_URL`, and any other deployment secrets — are stripped before the child process is spawned. The allowlist lives at `src/core/utils/sanitized-env.ts`; expand it explicitly if a future script need surfaces.
+
 ## Filesystem Access
 
 The `/api/filesystem/browse` endpoint allows authenticated users to browse the host filesystem. This is intentional — users need to select library paths, download directories, and other filesystem locations during setup and configuration.
