@@ -1,4 +1,4 @@
-import { eq, inArray, and, or, gt, lte, desc, count as countFn } from 'drizzle-orm';
+import { eq, inArray, and, or, gt, lte, desc, count as countFn, sql } from 'drizzle-orm';
 import type { Db } from '../../db/index.js';
 import type { FastifyBaseLogger } from 'fastify';
 import { blacklist } from '../../db/schema.js';
@@ -45,22 +45,51 @@ export class BlacklistService {
       throw new Error('Blacklist entry requires at least one identifier (infoHash or guid)');
     }
 
-    const values = { ...data };
+    // Normalize every optional field so the upsert SET clause writes deterministic values.
+    // Drizzle drops `undefined` from SET, which would let stale row values leak through on conflict.
+    const normalized = {
+      bookId: data.bookId ?? null,
+      infoHash: data.infoHash ?? null,
+      guid: data.guid ?? null,
+      title: data.title,
+      reason: data.reason,
+      note: data.note ?? null,
+      blacklistType: data.blacklistType ?? 'permanent',
+      expiresAt: data.expiresAt ?? null,
+    };
 
-    // Auto-fill expiresAt for temporary entries from TTL setting
-    if (values.blacklistType === 'temporary' && !values.expiresAt && this.settingsService) {
+    if (normalized.blacklistType === 'temporary' && !normalized.expiresAt && this.settingsService) {
       const searchSettings = await this.settingsService.get('search');
       const ttlDays = searchSettings.blacklistTtlDays ?? 7;
-      values.expiresAt = new Date(Date.now() + ttlDays * 24 * 60 * 60 * 1000);
+      normalized.expiresAt = new Date(Date.now() + ttlDays * 24 * 60 * 60 * 1000);
+    }
+    if (normalized.blacklistType !== 'temporary') {
+      normalized.expiresAt = null;
     }
 
-    // Ensure permanent entries have no expiresAt
-    if (values.blacklistType !== 'temporary') {
-      values.expiresAt = null;
-    }
+    const conflict = normalized.infoHash
+      ? { target: blacklist.infoHash, targetWhere: sql`info_hash IS NOT NULL` }
+      : { target: blacklist.guid, targetWhere: sql`guid IS NOT NULL` };
 
-    const result = await this.db.insert(blacklist).values(values).returning();
-    this.log.info({ title: data.title, infoHash: data.infoHash, guid: data.guid, blacklistType: values.blacklistType ?? 'permanent' }, 'Added to blacklist');
+    const result = await this.db
+      .insert(blacklist)
+      .values(normalized)
+      .onConflictDoUpdate({
+        ...conflict,
+        set: {
+          bookId: normalized.bookId,
+          infoHash: normalized.infoHash,
+          guid: normalized.guid,
+          title: normalized.title,
+          reason: normalized.reason,
+          note: normalized.note,
+          blacklistType: normalized.blacklistType,
+          expiresAt: normalized.expiresAt,
+          blacklistedAt: new Date(),
+        },
+      })
+      .returning();
+    this.log.info({ title: data.title, infoHash: data.infoHash, guid: data.guid, blacklistType: normalized.blacklistType }, 'Added to blacklist');
     return result[0];
   }
 

@@ -268,6 +268,32 @@ describe('EventHistoryService', () => {
       expect(blacklistService.create).toHaveBeenCalled();
       expect(bookService.updateStatus).not.toHaveBeenCalled();
     });
+
+    it('survives a blacklist creation failure — logs warning, still reverts book and resolves', async () => {
+      const event = createMockDbBookEvent({ downloadId: 5 });
+      const download = { id: 5, infoHash: 'abc123', title: 'Bad Release' };
+
+      db.select
+        .mockReturnValueOnce(mockDbChain([event]))
+        .mockReturnValueOnce(mockDbChain([download]));
+
+      blacklistService.create.mockRejectedValueOnce(
+        new Error('UNIQUE constraint failed: idx_blacklist_guid_unique'),
+      );
+
+      const result = await service.markFailed(1);
+
+      expect(result).toEqual({ success: true });
+      expect(log.warn).toHaveBeenCalledWith(
+        expect.objectContaining({
+          eventId: 1,
+          downloadId: 5,
+          error: expect.objectContaining({ message: expect.stringContaining('UNIQUE') }),
+        }),
+        'Mark-failed blacklist creation failed — proceeding with book revert',
+      );
+      expect(bookService.updateStatus).toHaveBeenCalledWith(1, 'wanted');
+    });
   });
 
   describe('markFailed search trigger', () => {
@@ -341,6 +367,49 @@ describe('EventHistoryService', () => {
       // No retrySearchDeps set on service — should succeed without triggering search
       const result = await service.markFailed(1);
       expect(result).toEqual({ success: true });
+    });
+
+    it('still dispatches retry-search after blacklist creation failure', async () => {
+      const event = createMockDbBookEvent({ downloadId: 5, bookId: 42 });
+      const download = { id: 5, infoHash: 'abc123', title: 'Test' };
+
+      db.select
+        .mockReturnValueOnce(mockDbChain([event]))
+        .mockReturnValueOnce(mockDbChain([download]));
+
+      // Force the catch path in markFailed
+      blacklistService.create.mockRejectedValueOnce(
+        new Error('UNIQUE constraint failed: idx_blacklist_guid_unique'),
+      );
+
+      const { RetryBudget } = await import('./retry-budget.js');
+      const mockSearchAll = vi.fn().mockResolvedValue([]);
+      service.setRetrySearchDeps({
+        indexerService: { searchAll: mockSearchAll },
+        downloadService: { grab: vi.fn() },
+        blacklistService: { getBlacklistedHashes: vi.fn().mockResolvedValue(new Set()), getBlacklistedIdentifiers: vi.fn().mockResolvedValue({ blacklistedHashes: new Set(), blacklistedGuids: new Set() }) },
+        bookService: { getById: vi.fn().mockResolvedValue({ id: 42, title: 'Test', duration: 3600, author: { name: 'Author' } }) },
+        settingsService: createMockSettingsService(),
+        retryBudget: new RetryBudget(),
+        log: createMockLogger(),
+      } as never);
+
+      const result = await service.markFailed(1);
+
+      expect(result).toEqual({ success: true });
+      expect(blacklistService.create).toHaveBeenCalled();
+      expect(bookService.updateStatus).toHaveBeenCalledWith(42, 'wanted');
+      expect(log.warn).toHaveBeenCalledWith(
+        expect.objectContaining({
+          eventId: 1,
+          error: expect.objectContaining({ message: expect.stringContaining('UNIQUE') }),
+        }),
+        'Mark-failed blacklist creation failed — proceeding with book revert',
+      );
+      // Retry-search dispatched despite blacklist failure
+      await vi.waitFor(() => {
+        expect(mockSearchAll).toHaveBeenCalled();
+      });
     });
 
     it('logs canonical serialized warning when retrySearch promise itself rejects', async () => {
