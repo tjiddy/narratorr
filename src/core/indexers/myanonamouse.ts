@@ -100,6 +100,27 @@ export class MyAnonamouseIndexer implements IndexerAdapter {
   }
 
   async search(query: string, options?: SearchOptions): Promise<SearchResult[]> {
+    const url = this.buildSearchUrl(query, options);
+    const body = await this.fetchWithCookie(url, options?.signal);
+    const response = this.parseSearchBody(body);
+
+    // "Nothing returned, out of ..." is an empty-result message, not an error
+    if (response.error && response.error.startsWith('Nothing returned')) {
+      return [];
+    }
+
+    if (response.error) {
+      throw new IndexerError(this.name, `MAM search error: ${response.error}`);
+    }
+
+    if (!response.data) {
+      return [];
+    }
+
+    return this.buildResults(response.data, options?.signal);
+  }
+
+  private buildSearchUrl(query: string, options?: SearchOptions): string {
     const params = new URLSearchParams({
       'tor[text]': query,
       'tor[srchIn][title]': 'true',
@@ -117,10 +138,10 @@ export class MyAnonamouseIndexer implements IndexerAdapter {
       params.set(`tor[browse_lang][${i}]`, String(langIds[i]));
     }
 
-    const url = `${this.baseUrl}/tor/js/loadSearchJSONbasic.php?${params.toString()}`;
-    const body = await this.fetchWithCookie(url, options?.signal);
+    return `${this.baseUrl}/tor/js/loadSearchJSONbasic.php?${params.toString()}`;
+  }
 
-    // Check for auth failure in response body
+  private parseSearchBody(body: string): z.infer<typeof mamSearchResponseSchema> {
     if (body.includes('Error, you are not signed in')) {
       throw new IndexerAuthError(this.name, 'Authentication failed — check your MAM ID');
     }
@@ -140,22 +161,7 @@ export class MyAnonamouseIndexer implements IndexerAdapter {
         { cause: parsed.error },
       );
     }
-    const response = parsed.data;
-
-    // "Nothing returned, out of ..." is an empty-result message, not an error
-    if (response.error && response.error.startsWith('Nothing returned')) {
-      return [];
-    }
-
-    if (response.error) {
-      throw new IndexerError(this.name, `MAM search error: ${response.error}`);
-    }
-
-    if (!response.data) {
-      return [];
-    }
-
-    return this.buildResults(response.data, options?.signal);
+    return parsed.data;
   }
 
   private async buildResults(data: MAMSearchResult[], signal?: AbortSignal): Promise<SearchResult[]> {
@@ -173,15 +179,15 @@ export class MyAnonamouseIndexer implements IndexerAdapter {
 
       results.push({
         title: item.title,
-        author: parseDoubleEncodedNames(item.author_info),
-        narrator: parseDoubleEncodedNames(item.narrator_info),
+        author: parseDoubleEncodedNames(item.author_info ?? undefined),
+        narrator: parseDoubleEncodedNames(item.narrator_info ?? undefined),
         protocol: 'torrent',
         guid: item.id != null ? String(item.id) : undefined,
         downloadUrl,
-        size: this.parseSize(item.size),
+        size: this.parseSize(item.size ?? undefined),
         seeders: item.seeders ?? undefined,
         leechers: item.leechers ?? undefined,
-        language: normalizeLanguage(item.lang_code),
+        language: normalizeLanguage(item.lang_code ?? undefined),
         indexer: this.name,
         isFreeleech: isFreeleech || undefined,
         isVipOnly: isVipOnly || undefined,

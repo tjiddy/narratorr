@@ -1,5 +1,5 @@
 import { dirname, basename } from 'node:path';
-import { z } from 'zod';
+import type { z } from 'zod';
 import type {
   DownloadClientAdapter,
   DownloadItemInfo,
@@ -14,6 +14,8 @@ import { getErrorMessage } from '../../shared/error-message.js';
 import {
   sabnzbdQueueResponseSchema,
   sabnzbdHistoryResponseSchema,
+} from './schemas.js';
+import type {
   sabnzbdQueueSlotSchema,
   sabnzbdHistorySlotSchema,
 } from './schemas.js';

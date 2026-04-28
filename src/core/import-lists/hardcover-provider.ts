@@ -93,6 +93,20 @@ export class HardcoverProvider implements ImportListProvider {
   }
 
   async fetchItems(): Promise<ImportListItem[]> {
+    const data = await this.executeQuery();
+
+    if (data.errors?.length) {
+      throw new ImportListError(this.name, `Hardcover GraphQL error: ${data.errors[0].message}`);
+    }
+
+    const books = this.listType === 'shelf'
+      ? (data.data?.user_book_reads ?? []).map((r) => r.book)
+      : (data.data?.trending_books ?? []);
+
+    return books.map(mapBook).filter((item): item is ImportListItem => item !== null);
+  }
+
+  private async executeQuery(): Promise<z.infer<typeof hardcoverResponseSchema>> {
     const useShelf = this.listType === 'shelf' && this.shelfId !== undefined;
     const query = useShelf ? SHELF_QUERY : TRENDING_QUERY;
     const variables = useShelf ? { shelfId: this.shelfId } : undefined;
@@ -119,17 +133,7 @@ export class HardcoverProvider implements ImportListProvider {
         { cause: parsed.error },
       );
     }
-    const data = parsed.data;
-
-    if (data.errors?.length) {
-      throw new ImportListError(this.name, `Hardcover GraphQL error: ${data.errors[0].message}`);
-    }
-
-    const books = this.listType === 'shelf'
-      ? (data.data?.user_book_reads ?? []).map((r) => r.book)
-      : (data.data?.trending_books ?? []);
-
-    return books.map(mapBook).filter((item): item is ImportListItem => item !== null);
+    return parsed.data;
   }
 
   async test(): Promise<{ success: boolean; message?: string }> {
