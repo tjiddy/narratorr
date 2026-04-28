@@ -1,15 +1,37 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { useQuery } from '@tanstack/react-query';
+import { z } from 'zod';
 import { queryKeys } from '@/lib/queryKeys';
 import { api } from '@/lib/api';
 import { URL_BASE } from '@/lib/api/client';
 import type { SearchResponse, SearchContext } from '@/lib/api/search';
-import type {
-  SearchStartEvent,
-  IndexerCompleteEvent,
-  IndexerErrorEvent,
-  IndexerCancelledEvent,
+import {
+  searchStartEventSchema,
+  indexerCompleteEventSchema,
+  indexerErrorEventSchema,
+  indexerCancelledEventSchema,
+  searchResponseSchema,
 } from '../../shared/schemas/search-stream.js';
+
+function safeParseEvent<T extends z.ZodTypeAny>(
+  type: string,
+  event: MessageEvent,
+  schema: T,
+): z.infer<T> | null {
+  let raw: unknown;
+  try {
+    raw = JSON.parse(event.data);
+  } catch (err) {
+    console.warn(`SSE ${type}: invalid JSON`, err);
+    return null;
+  }
+  const result = schema.safeParse(raw);
+  if (!result.success) {
+    console.warn(`SSE ${type}: schema validation failed`, result.error);
+    return null;
+  }
+  return result.data;
+}
 
 // ============================================================================
 // Types
@@ -117,57 +139,58 @@ export function useSearchStream(
     esRef.current = es;
 
     es.addEventListener('search-start', (event: MessageEvent) => {
-      try {
-        const data = JSON.parse(event.data) as SearchStartEvent;
-        setSessionId(data.sessionId);
-        setIndexers(data.indexers.map(idx => ({
-          id: idx.id,
-          name: idx.name,
-          status: 'pending' as IndexerStatus,
-        })));
-      } catch { /* malformed event */ }
+      const data = safeParseEvent('search-start', event, searchStartEventSchema);
+      if (!data) return;
+      setSessionId(data.sessionId);
+      setIndexers(data.indexers.map(idx => ({
+        id: idx.id,
+        name: idx.name,
+        status: 'pending' as IndexerStatus,
+      })));
     });
 
     es.addEventListener('indexer-complete', (event: MessageEvent) => {
-      try {
-        const data = JSON.parse(event.data) as IndexerCompleteEvent;
-        setIndexers(prev => prev.map(idx =>
-          idx.id === data.indexerId
-            ? { ...idx, status: 'complete' as IndexerStatus, resultCount: data.resultCount, elapsedMs: data.elapsedMs }
-            : idx,
-        ));
-      } catch { /* malformed event */ }
+      const data = safeParseEvent('indexer-complete', event, indexerCompleteEventSchema);
+      if (!data) return;
+      setIndexers(prev => prev.map(idx =>
+        idx.id === data.indexerId
+          ? { ...idx, status: 'complete' as IndexerStatus, resultCount: data.resultCount, elapsedMs: data.elapsedMs }
+          : idx,
+      ));
     });
 
     es.addEventListener('indexer-error', (event: MessageEvent) => {
-      try {
-        const data = JSON.parse(event.data) as IndexerErrorEvent;
-        setIndexers(prev => prev.map(idx =>
-          idx.id === data.indexerId
-            ? { ...idx, status: 'error' as IndexerStatus, error: data.error, elapsedMs: data.elapsedMs }
-            : idx,
-        ));
-      } catch { /* malformed event */ }
+      const data = safeParseEvent('indexer-error', event, indexerErrorEventSchema);
+      if (!data) return;
+      setIndexers(prev => prev.map(idx =>
+        idx.id === data.indexerId
+          ? { ...idx, status: 'error' as IndexerStatus, error: data.error, elapsedMs: data.elapsedMs }
+          : idx,
+      ));
     });
 
     es.addEventListener('indexer-cancelled', (event: MessageEvent) => {
-      try {
-        const data = JSON.parse(event.data) as IndexerCancelledEvent;
-        setIndexers(prev => prev.map(idx =>
-          idx.id === data.indexerId
-            ? { ...idx, status: 'cancelled' as IndexerStatus }
-            : idx,
-        ));
-      } catch { /* malformed event */ }
+      const data = safeParseEvent('indexer-cancelled', event, indexerCancelledEventSchema);
+      if (!data) return;
+      setIndexers(prev => prev.map(idx =>
+        idx.id === data.indexerId
+          ? { ...idx, status: 'cancelled' as IndexerStatus }
+          : idx,
+      ));
     });
 
     es.addEventListener('search-complete', (event: MessageEvent) => {
-      try {
-        const data = JSON.parse(event.data) as SearchResponse;
+      const data = safeParseEvent('search-complete', event, searchResponseSchema);
+      if (!data) {
         clearFinalizingTimeout();
-        setResults(data);
-        setPhase('results');
-      } catch { /* malformed event */ }
+        setError('Search ended with malformed payload');
+        setPhase('idle');
+        es.close();
+        return;
+      }
+      clearFinalizingTimeout();
+      setResults(data as SearchResponse);
+      setPhase('results');
       es.close();
     });
 

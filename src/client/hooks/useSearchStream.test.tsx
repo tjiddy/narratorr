@@ -45,6 +45,13 @@ class MockEventSource {
       handler(new MessageEvent(type, { data: JSON.stringify(data) }));
     }
   }
+
+  emitRaw(type: string, rawData: string) {
+    const handlers = this.listeners.get(type) ?? [];
+    for (const handler of handlers) {
+      handler(new MessageEvent(type, { data: rawData }));
+    }
+  }
 }
 
 function createWrapper() {
@@ -177,7 +184,7 @@ describe('useSearchStream', () => {
 
     const es = MockEventSource.instances[0];
     const mockResponse = {
-      results: [{ title: 'Book', indexer: 'ABB' }],
+      results: [{ title: 'Book', indexer: 'ABB', protocol: 'torrent' as const }],
       durationUnknown: false,
       unsupportedResults: { count: 0, titles: [] },
     };
@@ -527,6 +534,285 @@ describe('useSearchStream', () => {
 
       expect(result.current.state.error).toBe('Search connection failed');
       expect(result.current.state.phase).toBe('idle');
+    });
+  });
+
+  describe('SSE payload validation', () => {
+    /**
+     * Helper to start the hook with a primed search-start event so handlers
+     * have an indexer list to mutate. Returns the rendered hook + EventSource.
+     */
+    async function startWithSession() {
+      const { result } = renderHook(() => useSearchStream('test query'), { wrapper: createWrapper() });
+      await waitForAuth(result);
+      act(() => { result.current.actions.start(); });
+      const es = MockEventSource.instances[MockEventSource.instances.length - 1];
+      act(() => {
+        es.emit('search-start', {
+          sessionId: 'session-123',
+          indexers: [{ id: 1, name: 'ABB' }, { id: 2, name: 'MAM' }],
+        });
+      });
+      return { result, es };
+    }
+
+    it('search-start: malformed JSON leaves state unchanged and warns', async () => {
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+      const { result } = renderHook(() => useSearchStream('test query'), { wrapper: createWrapper() });
+      await waitForAuth(result);
+      act(() => { result.current.actions.start(); });
+      const es = MockEventSource.instances[0];
+
+      act(() => { es.emitRaw('search-start', 'not-json'); });
+
+      expect(result.current.state.sessionId).toBeNull();
+      expect(result.current.state.indexers).toEqual([]);
+      expect(warn).toHaveBeenCalledTimes(1);
+      expect(warn.mock.calls[0][0]).toContain('search-start');
+    });
+
+    it('search-start: missing required field leaves state unchanged and warns', async () => {
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+      const { result } = renderHook(() => useSearchStream('test query'), { wrapper: createWrapper() });
+      await waitForAuth(result);
+      act(() => { result.current.actions.start(); });
+      const es = MockEventSource.instances[0];
+
+      // Missing indexers field
+      act(() => { es.emit('search-start', { sessionId: 'abc' }); });
+
+      expect(result.current.state.sessionId).toBeNull();
+      expect(result.current.state.indexers).toEqual([]);
+      expect(warn).toHaveBeenCalledTimes(1);
+      expect(warn.mock.calls[0][0]).toContain('search-start');
+    });
+
+    it('search-start: extra unknown fields are tolerated (Zod default permissive)', async () => {
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+      const { result } = renderHook(() => useSearchStream('test query'), { wrapper: createWrapper() });
+      await waitForAuth(result);
+      act(() => { result.current.actions.start(); });
+      const es = MockEventSource.instances[0];
+
+      act(() => {
+        es.emit('search-start', {
+          sessionId: 'session-123',
+          indexers: [{ id: 1, name: 'ABB' }],
+          unknown: 'extra-field',
+        });
+      });
+
+      expect(result.current.state.sessionId).toBe('session-123');
+      expect(result.current.state.indexers).toHaveLength(1);
+      expect(warn).not.toHaveBeenCalled();
+    });
+
+    it('indexer-complete: malformed JSON leaves state unchanged and warns', async () => {
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+      const { result, es } = await startWithSession();
+
+      act(() => { es.emitRaw('indexer-complete', '<<not-json>>'); });
+
+      expect(result.current.state.indexers[0].status).toBe('pending');
+      expect(warn).toHaveBeenCalledTimes(1);
+      expect(warn.mock.calls[0][0]).toContain('indexer-complete');
+    });
+
+    it('indexer-complete: wrong-type indexerId leaves state unchanged and warns', async () => {
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+      const { result, es } = await startWithSession();
+
+      act(() => {
+        es.emit('indexer-complete', { indexerId: 'not-a-number', name: 'x', resultCount: 5, elapsedMs: 100 });
+      });
+
+      expect(result.current.state.indexers[0].status).toBe('pending');
+      expect(result.current.state.indexers[1].status).toBe('pending');
+      expect(warn).toHaveBeenCalledTimes(1);
+      expect(warn.mock.calls[0][0]).toContain('indexer-complete');
+    });
+
+    it('indexer-complete: well-formed payload updates the matching row', async () => {
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+      const { result, es } = await startWithSession();
+
+      act(() => {
+        es.emit('indexer-complete', { indexerId: 1, name: 'ABB', resultCount: 7, elapsedMs: 250 });
+      });
+
+      expect(result.current.state.indexers[0]).toEqual({
+        id: 1, name: 'ABB', status: 'complete', resultCount: 7, elapsedMs: 250,
+      });
+      expect(warn).not.toHaveBeenCalled();
+    });
+
+    it('indexer-error: malformed JSON leaves state unchanged and warns', async () => {
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+      const { result, es } = await startWithSession();
+
+      act(() => { es.emitRaw('indexer-error', 'invalid'); });
+
+      expect(result.current.state.indexers[0].status).toBe('pending');
+      expect(warn).toHaveBeenCalledTimes(1);
+      expect(warn.mock.calls[0][0]).toContain('indexer-error');
+    });
+
+    it('indexer-error: missing required field leaves state unchanged and warns', async () => {
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+      const { result, es } = await startWithSession();
+
+      // Missing `error` field
+      act(() => {
+        es.emit('indexer-error', { indexerId: 1, name: 'ABB', elapsedMs: 100 });
+      });
+
+      expect(result.current.state.indexers[0].status).toBe('pending');
+      expect(warn).toHaveBeenCalledTimes(1);
+      expect(warn.mock.calls[0][0]).toContain('indexer-error');
+    });
+
+    it('indexer-error: well-formed payload updates the matching row', async () => {
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+      const { result, es } = await startWithSession();
+
+      act(() => {
+        es.emit('indexer-error', { indexerId: 2, name: 'MAM', error: 'Boom', elapsedMs: 50 });
+      });
+
+      expect(result.current.state.indexers[1].status).toBe('error');
+      expect(result.current.state.indexers[1].error).toBe('Boom');
+      expect(warn).not.toHaveBeenCalled();
+    });
+
+    it('indexer-cancelled: malformed JSON leaves state unchanged and warns', async () => {
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+      const { result, es } = await startWithSession();
+
+      act(() => { es.emitRaw('indexer-cancelled', '###'); });
+
+      expect(result.current.state.indexers[0].status).toBe('pending');
+      expect(warn).toHaveBeenCalledTimes(1);
+      expect(warn.mock.calls[0][0]).toContain('indexer-cancelled');
+    });
+
+    it('indexer-cancelled: schema mismatch leaves state unchanged and warns', async () => {
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+      const { result, es } = await startWithSession();
+
+      // indexerId as string violates schema
+      act(() => {
+        es.emit('indexer-cancelled', { indexerId: '1', name: 'ABB' });
+      });
+
+      expect(result.current.state.indexers[0].status).toBe('pending');
+      expect(warn).toHaveBeenCalledTimes(1);
+      expect(warn.mock.calls[0][0]).toContain('indexer-cancelled');
+    });
+
+    it('indexer-cancelled: well-formed payload updates the matching row', async () => {
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+      const { result, es } = await startWithSession();
+
+      act(() => { es.emit('indexer-cancelled', { indexerId: 1, name: 'ABB' }); });
+
+      expect(result.current.state.indexers[0].status).toBe('cancelled');
+      expect(warn).not.toHaveBeenCalled();
+    });
+
+    it('search-complete: well-formed payload sets results and closes stream', async () => {
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+      const { result, es } = await startWithSession();
+
+      const payload = {
+        results: [{ title: 'Book', indexer: 'ABB', protocol: 'torrent' as const }],
+        durationUnknown: false,
+        unsupportedResults: { count: 0, titles: [] },
+      };
+      act(() => { es.emit('search-complete', payload); });
+
+      expect(result.current.state.phase).toBe('results');
+      expect(result.current.state.results).toEqual(payload);
+      expect(es.closed).toBe(true);
+      expect(warn).not.toHaveBeenCalled();
+    });
+
+    it('search-complete: malformed JSON closes stream, clears timeout, and surfaces error (AC5)', async () => {
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+      const { result } = renderHook(
+        () => useSearchStream('test query', undefined, { finalizingTimeoutMs: 200 }),
+        { wrapper: createWrapper() },
+      );
+      await waitForAuth(result);
+      act(() => { result.current.actions.start(); });
+      const es = MockEventSource.instances[0];
+      act(() => {
+        es.emit('search-start', { sessionId: 'session-123', indexers: [{ id: 1, name: 'ABB' }] });
+      });
+      act(() => { result.current.actions.showResults(); });
+
+      act(() => { es.emitRaw('search-complete', 'not-json'); });
+
+      expect(es.closed).toBe(true);
+      expect(result.current.state.phase).toBe('idle');
+      expect(result.current.state.error).toBeTruthy();
+      expect(result.current.state.error).not.toBe('');
+      expect(warn).toHaveBeenCalledTimes(1);
+      expect(warn.mock.calls[0][0]).toContain('search-complete');
+
+      // Verify the finalizing timeout was cleared — the late timeout callback
+      // would otherwise overwrite our error to 'Search timed out…'.
+      const errorBefore = result.current.state.error;
+      await new Promise(r => setTimeout(r, 300));
+      expect(result.current.state.error).toBe(errorBefore);
+    });
+
+    it('search-complete: schema mismatch closes stream, clears timeout, and surfaces error (AC5)', async () => {
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+      const { result } = renderHook(
+        () => useSearchStream('test query', undefined, { finalizingTimeoutMs: 200 }),
+        { wrapper: createWrapper() },
+      );
+      await waitForAuth(result);
+      act(() => { result.current.actions.start(); });
+      const es = MockEventSource.instances[0];
+      act(() => {
+        es.emit('search-start', { sessionId: 'session-123', indexers: [{ id: 1, name: 'ABB' }] });
+      });
+      act(() => { result.current.actions.showResults(); });
+
+      // Missing `protocol` field on the result violates searchResultSchema
+      act(() => {
+        es.emit('search-complete', {
+          results: [{ title: 'Book', indexer: 'ABB' }],
+          durationUnknown: false,
+          unsupportedResults: { count: 0, titles: [] },
+        });
+      });
+
+      expect(es.closed).toBe(true);
+      expect(result.current.state.phase).toBe('idle');
+      expect(result.current.state.error).toBeTruthy();
+      expect(result.current.state.error).not.toBe('');
+      expect(warn).toHaveBeenCalledTimes(1);
+      expect(warn.mock.calls[0][0]).toContain('search-complete');
+
+      const errorBefore = result.current.state.error;
+      await new Promise(r => setTimeout(r, 300));
+      expect(result.current.state.error).toBe(errorBefore);
+    });
+
+    it('indexer-complete for unknown indexerId is a no-op (referential validation is not the schema\'s job)', async () => {
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+      const { result, es } = await startWithSession();
+
+      // 999 is not in the original session indexers — schema passes, no row matches
+      act(() => {
+        es.emit('indexer-complete', { indexerId: 999, name: 'Phantom', resultCount: 5, elapsedMs: 100 });
+      });
+
+      expect(result.current.state.indexers[0].status).toBe('pending');
+      expect(result.current.state.indexers[1].status).toBe('pending');
+      expect(warn).not.toHaveBeenCalled();
     });
   });
 });
