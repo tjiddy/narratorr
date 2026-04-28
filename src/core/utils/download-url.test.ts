@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { DownloadUrl, extractInfoHashFromTorrent, base32ToHex } from './download-url.js';
+import { DownloadUrl, extractInfoHashFromTorrent } from './download-url.js';
 import type { DownloadArtifact } from './download-url.js';
+import { base32ToHex } from './base32.js';
 import { createHash } from 'node:crypto';
 
 // ── Fixtures ──────────────────────────────────────────────────────────
@@ -527,20 +528,5 @@ describe('resolve() — nzb-bytes data URI', () => {
     expect(artifact.type).toBe('torrent-bytes');
     const tb = artifact as Extract<DownloadArtifact, { type: 'torrent-bytes' }>;
     expect(tb.infoHash).toBe(expectedHash);
-  });
-});
-
-describe('base32ToHex', () => {
-  it('converts base32-encoded hash to hex', () => {
-    // "JBSWY3DPEHPK3PXP" → "48656c6c6f21deadbeef" (Hello!...)
-    // AAAA = 20 bits = 5 hex digits: 00000
-    const result = base32ToHex('AAAA');
-    expect(result).toBe('00000');
-  });
-
-  it('handles uppercase and lowercase base32 input', () => {
-    const upper = base32ToHex('JBSWY3DP');
-    const lower = base32ToHex('jbswy3dp');
-    expect(upper).toBe(lower);
   });
 });
