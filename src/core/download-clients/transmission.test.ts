@@ -1,7 +1,9 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import { http, HttpResponse } from 'msw';
 import { useMswServer } from '../__tests__/msw/server.js';
+import { ZodError } from 'zod';
 import { TransmissionClient } from './transmission.js';
+import { DownloadClientError } from './errors.js';
 import type { DownloadArtifact } from './types.js';
 
 
@@ -484,11 +486,10 @@ describe('TransmissionClient', () => {
   });
 
   describe('edge cases — null/malformed responses', () => {
-    it('handles null torrents in response', async () => {
+    it('throws DownloadClientError when torrents is null (not an array)', async () => {
       server.use(rpcHandler('torrent-get', { torrents: null }));
 
-      const result = await client.getDownload('abc123');
-      expect(result).toBeNull();
+      await expect(client.getDownload('abc123')).rejects.toThrow(/Transmission returned unexpected torrent data/);
     });
 
     it('handles negative ETA values (no estimate)', async () => {
@@ -621,6 +622,61 @@ describe('TransmissionClient', () => {
 
       const result = await client.getDownload('abc123def456');
       expect(result!.status).toBe('completed');
+    });
+  });
+
+  describe('schema validation', () => {
+    it('throws DownloadClientError with ZodError cause when torrents is a string', async () => {
+      server.use(rpcHandler('torrent-get', { torrents: 'not-an-array' as unknown as object }));
+
+      const err = await client.getDownload('abc123').catch((e: unknown) => e);
+      expect(err).toBeInstanceOf(DownloadClientError);
+      expect((err as DownloadClientError).cause).toBeInstanceOf(ZodError);
+    });
+
+    it('throws DownloadClientError when torrent item is missing hashString (mapTorrent field)', async () => {
+      const { hashString: _, ...torrentMissingHash } = mockTorrent;
+      server.use(rpcHandler('torrent-get', { torrents: [torrentMissingHash] }));
+
+      const err = await client.getDownload('abc123').catch((e: unknown) => e);
+      expect(err).toBeInstanceOf(DownloadClientError);
+      expect((err as DownloadClientError).cause).toBeInstanceOf(ZodError);
+    });
+
+    it('throws DownloadClientError when torrent item is missing leftUntilDone (mapStatus field)', async () => {
+      const { leftUntilDone: _, ...torrentMissingLeft } = mockTorrent;
+      server.use(rpcHandler('torrent-get', { torrents: [torrentMissingLeft] }));
+
+      const err = await client.getDownload('abc123').catch((e: unknown) => e);
+      expect(err).toBeInstanceOf(DownloadClientError);
+      expect((err as DownloadClientError).cause).toBeInstanceOf(ZodError);
+    });
+
+    it('preserves cause from envelope-level result: error response', async () => {
+      // result: "error" passes the envelope schema but triggers the explicit error branch.
+      server.use(http.post(RPC_URL, () => HttpResponse.json({ result: 'session-broken' }, {
+        headers: { 'X-Transmission-Session-Id': SESSION_ID },
+      })));
+
+      await expect(client.getDownload('abc123')).rejects.toThrow(DownloadClientError);
+    });
+
+    it('passes through unknown extra fields and still maps successfully', async () => {
+      server.use(rpcHandler('torrent-get', {
+        torrents: [{ ...mockTorrent, futureField: 'unknown', anotherNew: 42 }],
+      }));
+
+      const result = await client.getDownload('abc123def456');
+      expect(result?.id).toBe('abc123def456');
+    });
+
+    it('test() returns success: false when version-get response is malformed', async () => {
+      server.use(http.post(RPC_URL, () => HttpResponse.json({ result: 'not-success-not-error', extra: null }, {
+        headers: { 'X-Transmission-Session-Id': SESSION_ID },
+      })));
+
+      const result = await client.test();
+      expect(result.success).toBe(false);
     });
   });
 });

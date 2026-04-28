@@ -2,6 +2,7 @@ import { describe, it, expect, vi } from 'vitest';
 import { http, HttpResponse } from 'msw';
 import { useMswServer } from '../__tests__/msw/server.js';
 import { HardcoverProvider } from './hardcover-provider.js';
+import { ImportListError } from './errors.js';
 
 const GQL_URL = 'https://api.hardcover.app/v1/graphql';
 
@@ -153,6 +154,49 @@ describe('HardcoverProvider', () => {
       expect(result.message).toBe('Connection failed: network-string-error');
 
       vi.unstubAllGlobals();
+    });
+  });
+
+  describe('schema validation', () => {
+    it('throws ImportListError with ZodError cause when errors is a string (not array)', async () => {
+      server.use(
+        http.post(GQL_URL, () => HttpResponse.json({ data: null, errors: 'not-an-array' })),
+      );
+
+      const provider = new HardcoverProvider({ apiKey: 'test-key', listType: 'trending' });
+      const err = await provider.fetchItems().catch((e: unknown) => e);
+      expect(err).toBeInstanceOf(ImportListError);
+      const zod = await import('zod');
+      expect((err as ImportListError).cause).toBeInstanceOf(zod.ZodError);
+    });
+
+    it('treats { data: null, errors: null } as a successful empty list (passthrough handles nullish)', async () => {
+      // data is .optional() so null fails — but `errors: null` also fails.
+      server.use(
+        http.post(GQL_URL, () => HttpResponse.json({ data: null, errors: null })),
+      );
+
+      const provider = new HardcoverProvider({ apiKey: 'test-key', listType: 'trending' });
+      const err = await provider.fetchItems().catch((e: unknown) => e);
+      expect(err).toBeInstanceOf(ImportListError);
+    });
+
+    it('passes through unknown extra fields and still maps successfully', async () => {
+      server.use(
+        http.post(GQL_URL, () => HttpResponse.json({
+          data: {
+            trending_books: [
+              { title: 'X', new_field: 'unknown', contributions: [], identifiers: [] },
+            ],
+          },
+          envelope_extra: 'unknown',
+        })),
+      );
+
+      const provider = new HardcoverProvider({ apiKey: 'test-key', listType: 'trending' });
+      const items = await provider.fetchItems();
+      expect(items).toHaveLength(1);
+      expect(items[0].title).toBe('X');
     });
   });
 });

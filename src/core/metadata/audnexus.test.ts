@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach } from 'vitest';
 import { http, HttpResponse, delay } from 'msw';
 import { useMswServer } from '../__tests__/msw/server.js';
 import { AudnexusProvider } from './audnexus.js';
-import { RateLimitError, TransientError } from './errors.js';
+import { MetadataError, RateLimitError, TransientError } from './errors.js';
 
 describe('AudnexusProvider', () => {
   const server = useMswServer();
@@ -593,6 +593,39 @@ describe('AudnexusProvider', () => {
 
       await provider.getAuthor('B001H6UJO8');
       expect(capturedUrl).toContain('?region=us');
+    });
+  });
+
+  describe('schema validation', () => {
+    it('throws MetadataError with ZodError cause when response is non-object', async () => {
+      server.use(
+        http.get('https://api.audnex.us/books/:asin', () => HttpResponse.json('not-an-object')),
+      );
+
+      const err = await provider.getBook('B0030DL4GK').catch((e: unknown) => e);
+      expect(err).toBeInstanceOf(MetadataError);
+      const zod = await import('zod');
+      expect((err as MetadataError).cause).toBeInstanceOf(zod.ZodError);
+    });
+
+    it('throws MetadataError when authors is non-array', async () => {
+      server.use(
+        http.get('https://api.audnex.us/books/:asin', () => HttpResponse.json({ asin: 'X', authors: 'broken' })),
+      );
+
+      const err = await provider.getBook('X').catch((e: unknown) => e);
+      expect(err).toBeInstanceOf(MetadataError);
+    });
+
+    it('passes through unknown extra fields and still maps successfully', async () => {
+      server.use(
+        http.get('https://api.audnex.us/books/:asin', () => HttpResponse.json({
+          asin: 'X', title: 'T', authors: [{ name: 'A' }], futureField: 'unknown',
+        })),
+      );
+
+      const book = await provider.getBook('X');
+      expect(book?.title).toBe('T');
     });
   });
 });

@@ -20,29 +20,29 @@ const DEFAULT_BASE_URL = 'https://www.myanonamouse.net';
 import { INDEXER_TIMEOUT_MS } from '../utils/constants.js';
 
 const mamSearchResultSchema = z.object({
-  id: z.number().optional(),
-  title: z.string().optional(),
-  author_info: z.string().optional(),
-  narrator_info: z.string().optional(),
-  series_info: z.string().optional(),
-  lang_code: z.string().optional(),
-  size: z.union([z.string(), z.number()]).optional(),
-  seeders: z.number().optional(),
-  leechers: z.number().optional(),
-  free: z.boolean().optional(),
-  fl_vip: z.boolean().optional(),
-  vip: z.boolean().optional(),
-  personal_freeleech: z.boolean().optional(),
+  id: z.number().nullish(),
+  title: z.string().nullish(),
+  author_info: z.string().nullish(),
+  narrator_info: z.string().nullish(),
+  series_info: z.string().nullish(),
+  lang_code: z.string().nullish(),
+  size: z.union([z.string(), z.number()]).nullish(),
+  seeders: z.number().nullish(),
+  leechers: z.number().nullish(),
+  free: z.boolean().nullish(),
+  fl_vip: z.boolean().nullish(),
+  vip: z.boolean().nullish(),
+  personal_freeleech: z.boolean().nullish(),
 }).passthrough();
 
 const mamSearchResponseSchema = z.object({
-  error: z.string().optional(),
-  data: z.array(mamSearchResultSchema).optional(),
+  error: z.string().nullish(),
+  data: z.array(mamSearchResultSchema).nullish(),
 }).passthrough();
 
 const mamUserStatusSchema = z.object({
-  username: z.string().optional(),
-  classname: z.string().optional(),
+  username: z.string().nullish(),
+  classname: z.string().nullish(),
 }).passthrough();
 
 type MAMSearchResult = z.infer<typeof mamSearchResultSchema>;

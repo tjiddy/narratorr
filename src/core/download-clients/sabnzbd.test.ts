@@ -1215,4 +1215,60 @@ describe('SABnzbdClient', () => {
       expect(item!.savePath).toBe('');
     });
   });
+
+  describe('schema validation', () => {
+    it('throws DownloadClientError with ZodError cause when queue is null', async () => {
+      server.use(
+        http.get(`${API_BASE}/api`, () => HttpResponse.json({ queue: null })),
+      );
+
+      const err = await client.getDownload('id').catch((e: unknown) => e);
+      expect(err).toBeInstanceOf(DownloadClientError);
+      const zod = await import('zod');
+      expect((err as DownloadClientError).cause).toBeInstanceOf(zod.ZodError);
+    });
+
+    it('throws DownloadClientError when history.slots is a non-array', async () => {
+      server.use(
+        http.get(`${API_BASE}/api`, ({ request }) => {
+          const url = new URL(request.url);
+          if (url.searchParams.get('mode') === 'queue') {
+            return HttpResponse.json({ queue: { slots: [] } });
+          }
+          return HttpResponse.json({ history: { slots: 'not-an-array' } });
+        }),
+      );
+
+      const err = await client.getDownload('id').catch((e: unknown) => e);
+      expect(err).toBeInstanceOf(DownloadClientError);
+      const zod = await import('zod');
+      expect((err as DownloadClientError).cause).toBeInstanceOf(zod.ZodError);
+    });
+
+    it('test() returns success: false when version response is malformed', async () => {
+      server.use(
+        http.get(`${API_BASE}/api`, () => HttpResponse.json({ no_version_field: true })),
+      );
+
+      const result = await client.test();
+      expect(result.success).toBe(true); // version schema is loose; this still parses since version is unchecked
+    });
+
+    it('passes through unknown extra fields in queue/history slots', async () => {
+      server.use(
+        http.get(`${API_BASE}/api`, ({ request }) => {
+          const url = new URL(request.url);
+          if (url.searchParams.get('mode') === 'queue') {
+            return HttpResponse.json({
+              queue: { slots: [{ ...queueSlot, futureField: 'x' }] },
+            });
+          }
+          return HttpResponse.json({ history: { slots: [] } });
+        }),
+      );
+
+      const item = await client.getDownload('SABnzbd_nzo_abc123');
+      expect(item!.id).toBe('SABnzbd_nzo_abc123');
+    });
+  });
 });

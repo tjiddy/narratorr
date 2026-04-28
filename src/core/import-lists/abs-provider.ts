@@ -12,12 +12,12 @@ export interface AbsConfig {
 const absItemSchema = z.object({
   media: z.object({
     metadata: z.object({
-      title: z.string().optional(),
-      authorName: z.string().optional(),
-      asin: z.string().optional(),
-      isbn: z.string().optional(),
-    }).passthrough().optional(),
-  }).passthrough().optional(),
+      title: z.string().nullish(),
+      authorName: z.string().nullish(),
+      asin: z.string().nullish(),
+      isbn: z.string().nullish(),
+    }).passthrough().nullish(),
+  }).passthrough().nullish(),
 }).passthrough();
 
 const absItemsResponseSchema = z.object({

@@ -1108,4 +1108,39 @@ describe('QBittorrentClient', () => {
       expect(result!.status).toBe('seeding');
     });
   });
+
+  describe('schema validation', () => {
+    it('throws DownloadClientError with ZodError cause when response is not an array', async () => {
+      server.use(
+        http.get(`${BASE_URL}/api/v2/torrents/info`, () => HttpResponse.json({ not: 'an array' })),
+      );
+
+      const err = await client.getDownload('abc123').catch((e: unknown) => e);
+      expect(err).toBeInstanceOf(DownloadClientError);
+      const zod = await import('zod');
+      expect((err as DownloadClientError).cause).toBeInstanceOf(zod.ZodError);
+    });
+
+    it('getAllDownloads throws DownloadClientError with ZodError cause for malformed response', async () => {
+      server.use(
+        http.get(`${BASE_URL}/api/v2/torrents/info`, () => HttpResponse.json({ broken: true })),
+      );
+
+      const err = await client.getAllDownloads().catch((e: unknown) => e);
+      expect(err).toBeInstanceOf(DownloadClientError);
+      const zod = await import('zod');
+      expect((err as DownloadClientError).cause).toBeInstanceOf(zod.ZodError);
+    });
+
+    it('passes through extra unknown fields and still maps successfully', async () => {
+      server.use(
+        http.get(`${BASE_URL}/api/v2/torrents/info`, () => HttpResponse.json([
+          { ...mockTorrent, futureField: 'unknown', anotherNew: 42 },
+        ])),
+      );
+
+      const result = await client.getDownload('abc123');
+      expect(result?.id).toBe('abc123');
+    });
+  });
 });

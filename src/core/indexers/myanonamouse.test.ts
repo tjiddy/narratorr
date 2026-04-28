@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { http, HttpResponse } from 'msw';
 import { useMswServer } from '../__tests__/msw/server.js';
 import { MyAnonamouseIndexer } from './myanonamouse.js';
-import { IndexerAuthError, ProxyError } from './errors.js';
+import { IndexerAuthError, IndexerError, ProxyError } from './errors.js';
 import { filterByLanguage } from '../utils/filters.js';
 
 const MAM_BASE = 'https://mam.test';
@@ -1663,6 +1663,72 @@ describe('MyAnonamouseIndexer', () => {
       expect(params.get('tor[browse_lang][0]')).toBe('4'); // Spanish = 4
       const langKeys = [...params.keys()].filter(k => k.includes('browse_lang'));
       expect(langKeys).toHaveLength(1);
+    });
+  });
+
+  describe('schema validation', () => {
+    it('search() throws IndexerError with ZodError cause when data is an object (not array)', async () => {
+      server.use(
+        http.get(`${MAM_BASE}/tor/js/loadSearchJSONbasic.php`, () =>
+          HttpResponse.json({ data: { foo: 'bar' } })),
+      );
+
+      const err = await indexer.search('test').catch((e: unknown) => e);
+      expect(err).toBeInstanceOf(IndexerError);
+      const zod = await import('zod');
+      expect((err as IndexerError).cause).toBeInstanceOf(zod.ZodError);
+    });
+
+    it('search() throws IndexerError on invalid JSON body', async () => {
+      server.use(
+        http.get(`${MAM_BASE}/tor/js/loadSearchJSONbasic.php`, () =>
+          new HttpResponse('not-json', { status: 200, headers: { 'Content-Type': 'text/plain' } })),
+      );
+
+      const err = await indexer.search('test').catch((e: unknown) => e);
+      expect(err).toBeInstanceOf(IndexerError);
+    });
+
+    it('test() returns success: false when classname is a number', async () => {
+      server.use(
+        http.get(`${MAM_BASE}/jsonLoad.php`, () => HttpResponse.json({ username: 'u', classname: 42 })),
+      );
+
+      const result = await indexer.test();
+      expect(result.success).toBe(false);
+      expect(result.message).toMatch(/unexpected user-status response/);
+    });
+
+    it('refreshStatus() returns null when body is not JSON', async () => {
+      server.use(
+        http.get(`${MAM_BASE}/jsonLoad.php`, () => new HttpResponse('not-json', {
+          status: 200, headers: { 'Content-Type': 'text/plain' },
+        })),
+      );
+
+      const result = await indexer.refreshStatus();
+      expect(result).toBeNull();
+    });
+
+    it('refreshStatus() returns null when classname is missing', async () => {
+      server.use(
+        http.get(`${MAM_BASE}/jsonLoad.php`, () => HttpResponse.json({ username: 'u' })),
+      );
+
+      const result = await indexer.refreshStatus();
+      expect(result).toBeNull();
+    });
+
+    it('passes through unknown extra fields in search results', async () => {
+      server.use(
+        http.get(`${MAM_BASE}/tor/js/loadSearchJSONbasic.php`, () =>
+          HttpResponse.json({ data: [makeResult({ futureField: 'unknown' })] })),
+      );
+      stubTorrentDownload(server);
+
+      const results = await indexer.search('test');
+      expect(results).toHaveLength(1);
+      expect(results[0].title).toBe('The Way of Kings');
     });
   });
 });

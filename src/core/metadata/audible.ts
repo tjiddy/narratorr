@@ -43,25 +43,25 @@ const IMAGE_SIZES = '500,1024';
 // Raw-response schemas at the wrapper layer — fail at the boundary on HTML
 // interstitials, rate-limit pages, or shape changes instead of mid-mapping.
 const audibleProductSchema = z.object({
-  asin: z.string().optional(),
-  title: z.string().optional(),
-  subtitle: z.string().optional(),
-  authors: z.array(z.object({ asin: z.string().optional(), name: z.string() }).passthrough()).optional(),
-  narrators: z.array(z.object({ name: z.string() }).passthrough()).optional(),
-  publisher_name: z.string().optional(),
-  publisher_summary: z.string().optional(),
-  merchandising_summary: z.string().optional(),
-  release_date: z.string().optional(),
-  issue_date: z.string().optional(),
-  runtime_length_min: z.number().optional(),
-  language: z.string().optional(),
-  product_images: z.record(z.string(), z.string()).optional(),
+  asin: z.string().nullish(),
+  title: z.string().nullish(),
+  subtitle: z.string().nullish(),
+  authors: z.array(z.object({ asin: z.string().nullish(), name: z.string() }).passthrough()).nullish(),
+  narrators: z.array(z.object({ name: z.string() }).passthrough()).nullish(),
+  publisher_name: z.string().nullish(),
+  publisher_summary: z.string().nullish(),
+  merchandising_summary: z.string().nullish(),
+  release_date: z.string().nullish(),
+  issue_date: z.string().nullish(),
+  runtime_length_min: z.number().nullish(),
+  language: z.string().nullish(),
+  product_images: z.record(z.string(), z.string()).nullish(),
   series: z.array(z.object({
-    asin: z.string().optional(),
-    sequence: z.string().optional(),
-    title: z.string().optional(),
-  }).passthrough()).optional(),
-  format_type: z.string().optional(),
+    asin: z.string().nullish(),
+    sequence: z.string().nullish(),
+    title: z.string().nullish(),
+  }).passthrough()).nullish(),
+  format_type: z.string().nullish(),
 }).passthrough();
 
 const audibleProductsResponseSchema = z.object({
