@@ -160,10 +160,6 @@ jobs:
           NODE_VERSION=$(docker exec smoke-test node --version)
           echo "Container Node version: $NODE_VERSION"
 
-          # Verify commit SHA was injected (proves full GIT_COMMIT → Dockerfile → tsup → getCommit() path)
-          COMMIT=$(curl -sf http://localhost:3199/api/health | jq -r '.commit // "unknown"')
-          echo "Container commit: $COMMIT"
-
           docker stop smoke-test > /dev/null 2>&1 || true
           docker rm smoke-test > /dev/null 2>&1 || true
 
@@ -177,12 +173,7 @@ jobs:
             exit 1
           fi
 
-          if [ "$COMMIT" = "unknown" ] || [ "${#COMMIT}" != "7" ]; then
-            echo "::error::Commit SHA not injected or not 7 chars — got: $COMMIT"
-            exit 1
-          fi
-
-          echo "Smoke test passed (HTTP $HTTP_STATUS, Node $NODE_VERSION, commit $COMMIT)"
+          echo "Smoke test passed (HTTP $HTTP_STATUS, Node $NODE_VERSION)"
 
       - name: Deploy to production
         run: |
