@@ -4,7 +4,7 @@ import { getErrorMessage } from '../../shared/error-message.js';
 export interface HardcoverConfig {
   apiKey: string;
   listType: 'trending' | 'shelf';
-  shelfId?: string;
+  shelfId?: number;
 }
 
 const GRAPHQL_URL = 'https://api.hardcover.app/v1/graphql';
@@ -24,24 +24,22 @@ const TRENDING_QUERY = `
   }
 `;
 
-function shelfQuery(shelfId: string) {
-  return `
-    query ShelfBooks {
-      user_book_reads(where: { status_id: { _eq: ${shelfId} } }, limit: 100) {
-        book {
-          title
-          contributions {
-            author { name }
-          }
-          identifiers {
-            source { name }
-            value
-          }
+const SHELF_QUERY = `
+  query ShelfBooks($shelfId: bigint!) {
+    user_book_reads(where: { status_id: { _eq: $shelfId } }, limit: 100) {
+      book {
+        title
+        contributions {
+          author { name }
+        }
+        identifiers {
+          source { name }
+          value
         }
       }
     }
-  `;
-}
+  }
+`;
 
 interface HardcoverBook {
   title?: string;
@@ -69,7 +67,7 @@ export class HardcoverProvider implements ImportListProvider {
 
   private apiKey: string;
   private listType: 'trending' | 'shelf';
-  private shelfId?: string;
+  private shelfId?: number;
 
   constructor(config: HardcoverConfig) {
     this.apiKey = config.apiKey;
@@ -78,9 +76,9 @@ export class HardcoverProvider implements ImportListProvider {
   }
 
   async fetchItems(): Promise<ImportListItem[]> {
-    const query = this.listType === 'shelf' && this.shelfId
-      ? shelfQuery(this.shelfId)
-      : TRENDING_QUERY;
+    const useShelf = this.listType === 'shelf' && this.shelfId !== undefined;
+    const query = useShelf ? SHELF_QUERY : TRENDING_QUERY;
+    const variables = useShelf ? { shelfId: this.shelfId } : undefined;
 
     const res = await fetch(GRAPHQL_URL, {
       method: 'POST',
@@ -88,7 +86,7 @@ export class HardcoverProvider implements ImportListProvider {
         'Content-Type': 'application/json',
         Authorization: `Bearer ${this.apiKey}`,
       },
-      body: JSON.stringify({ query }),
+      body: JSON.stringify(variables ? { query, variables } : { query }),
     });
 
     if (!res.ok) {

@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   createImportListFormSchema,
   createImportListSchema,
+  hardcoverSettingsSchema,
   previewImportListSchema,
   updateImportListSchema,
 } from './import-list.js';
@@ -170,6 +171,61 @@ describe('previewImportListSchema — typed settings validation', () => {
       type: 'abs', settings: { apiKey: 'key' },
     });
     expect(result.success).toBe(false);
+  });
+});
+
+// #732 — Hardcover shelfId numeric tightening (parameterize GraphQL injection fix)
+describe('hardcoverSettingsSchema — numeric shelfId (#732)', () => {
+  it('rejects non-numeric shelfId', () => {
+    const result = hardcoverSettingsSchema.safeParse({ apiKey: 'k', listType: 'shelf', shelfId: 'not-a-number' });
+    expect(result.success).toBe(false);
+  });
+
+  it('coerces numeric string shelfId to number', () => {
+    const result = hardcoverSettingsSchema.safeParse({ apiKey: 'k', listType: 'shelf', shelfId: '42' });
+    expect(result.success).toBe(true);
+    if (result.success) expect(result.data.shelfId).toBe(42);
+  });
+
+  it('rejects zero shelfId', () => {
+    const result = hardcoverSettingsSchema.safeParse({ apiKey: 'k', listType: 'shelf', shelfId: 0 });
+    expect(result.success).toBe(false);
+  });
+
+  it('rejects negative shelfId', () => {
+    const result = hardcoverSettingsSchema.safeParse({ apiKey: 'k', listType: 'shelf', shelfId: -1 });
+    expect(result.success).toBe(false);
+  });
+
+  it('still requires shelfId via superRefine when listType is shelf', () => {
+    const result = hardcoverSettingsSchema.safeParse({ apiKey: 'k', listType: 'shelf' });
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      expect(result.error.issues).toContainEqual(
+        expect.objectContaining({ path: ['shelfId'] }),
+      );
+    }
+  });
+
+  it('rejects GraphQL injection payload at the schema layer', () => {
+    const injection = '1 } } ) { id email } #';
+    const result = hardcoverSettingsSchema.safeParse({ apiKey: 'k', listType: 'shelf', shelfId: injection });
+    expect(result.success).toBe(false);
+  });
+
+  it('parses default trending settings cleanly without shelfId', () => {
+    const result = hardcoverSettingsSchema.safeParse({ apiKey: 'k', listType: 'trending' });
+    expect(result.success).toBe(true);
+  });
+
+  it('coerces numeric string shelfId end-to-end through createImportListSchema', () => {
+    const result = createImportListSchema.safeParse({
+      name: 'x', type: 'hardcover', settings: { apiKey: 'k', listType: 'shelf', shelfId: '42' },
+    });
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect((result.data.settings as { shelfId?: number }).shelfId).toBe(42);
+    }
   });
 });
 

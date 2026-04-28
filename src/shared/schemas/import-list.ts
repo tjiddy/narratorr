@@ -23,9 +23,9 @@ export const nytSettingsSchema = z.object({
 export const hardcoverSettingsSchema = z.object({
   apiKey: z.string().trim().min(1),
   listType: z.enum(['trending', 'shelf']).optional(),
-  shelfId: z.string().trim().optional(),
+  shelfId: z.coerce.number().int().positive().optional(),
 }).strict().superRefine((data, ctx) => {
-  if (data.listType === 'shelf' && !data.shelfId) {
+  if (data.listType === 'shelf' && data.shelfId === undefined) {
     ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['shelfId'], message: 'Shelf ID is required when list type is "shelf"' });
   }
 });
@@ -116,7 +116,7 @@ export const createImportListFormSchema = z.object({
     // NYT
     list: z.string().optional(),
     // Hardcover
-    shelfId: z.string().optional(),
+    shelfId: z.number().int().positive().optional(),
     listType: z.enum(['trending', 'shelf']).optional(),
   }),
 }).superRefine((data, ctx) => {

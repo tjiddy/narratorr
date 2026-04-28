@@ -60,9 +60,98 @@ describe('ImportListService', () => {
       const db = createMockDb();
       service = new ImportListService(inject<Db>(db), mockLog);
 
-      const result = await service.testConfig({ type: 'nyt', settings: {} });
+      const result = await service.testConfig({ type: 'nyt', settings: { apiKey: 'key' } });
       expect(result.success).toBe(false);
       expect(result.message).toBe('Bad config');
+    });
+  });
+
+  // #732 — Saved-row validation + Hardcover shelfId numeric tightening
+  describe('Hardcover shelfId saved-row parsing (#732)', () => {
+    function makeHardcoverList(settings: Record<string, unknown>) {
+      return {
+        id: 1, name: 'My Shelf', type: 'hardcover', enabled: true,
+        settings,
+        syncIntervalMinutes: 1440, lastRunAt: null, nextRunAt: new Date(Date.now() - 60_000),
+        lastSyncError: null, createdAt: new Date(),
+      };
+    }
+
+    it('test(id) coerces saved numeric-string shelfId and constructs provider with number', async () => {
+      const mockProvider = { test: vi.fn().mockResolvedValue({ success: true }), fetchItems: vi.fn() };
+      mockFactories.hardcover.mockReturnValue(mockProvider);
+
+      const db = createMockDb();
+      db.select.mockReturnValue(mockDbChain([makeHardcoverList({ apiKey: 'k', listType: 'shelf', shelfId: '42' })]));
+      service = new ImportListService(inject<Db>(db), mockLog);
+
+      const result = await service.test(1);
+      expect(result.success).toBe(true);
+      expect(mockFactories.hardcover).toHaveBeenCalledWith(
+        expect.objectContaining({ apiKey: 'k', listType: 'shelf', shelfId: 42 }),
+      );
+    });
+
+    it('test(id) rejects saved row with non-numeric shelfId without invoking provider factory', async () => {
+      mockFactories.hardcover.mockClear();
+      const db = createMockDb();
+      db.select.mockReturnValue(mockDbChain([makeHardcoverList({ apiKey: 'k', listType: 'shelf', shelfId: 'junk' })]));
+      service = new ImportListService(inject<Db>(db), mockLog);
+
+      const result = await service.test(1);
+      expect(result.success).toBe(false);
+      expect(result.message).toBeTruthy();
+      expect(mockFactories.hardcover).not.toHaveBeenCalled();
+    });
+
+    it('legacy default compatibility: trending row with shelfId === "" parses successfully', async () => {
+      const mockProvider = { test: vi.fn().mockResolvedValue({ success: true }), fetchItems: vi.fn().mockResolvedValue([]) };
+      mockFactories.hardcover.mockReturnValue(mockProvider);
+
+      const db = createMockDb();
+      const legacyRow = makeHardcoverList({ apiKey: 'k', listType: 'trending', shelfId: '' });
+      db.select.mockReturnValue(mockDbChain([legacyRow]));
+      const updateChain = mockDbChain([]);
+      db.update.mockReturnValue(updateChain);
+
+      service = new ImportListService(inject<Db>(db), mockLog);
+
+      const testResult = await service.test(1);
+      expect(testResult.success).toBe(true);
+      // Legacy `''` is normalized away before parse, so the parsed object omits shelfId entirely.
+      const factoryArg = mockFactories.hardcover.mock.calls[0]?.[0] as Record<string, unknown>;
+      expect(factoryArg).toEqual({ apiKey: 'k', listType: 'trending' });
+
+      // syncDueLists also tolerates the legacy default — no validation error persisted
+      await service.syncDueLists();
+      const setCall = updateChain.set.mock.calls[0]?.[0] as Record<string, unknown> | undefined;
+      expect(setCall?.lastSyncError).toBeNull();
+    });
+
+    it('syncDueLists records lastSyncError when saved shelfId fails validation', async () => {
+      mockFactories.hardcover.mockClear();
+      const db = createMockDb();
+      db.select.mockReturnValue(mockDbChain([makeHardcoverList({ apiKey: 'k', listType: 'shelf', shelfId: '1 } }' })]));
+      const updateChain = mockDbChain([]);
+      db.update.mockReturnValue(updateChain);
+
+      service = new ImportListService(inject<Db>(db), mockLog);
+      await service.syncDueLists();
+
+      const setCall = updateChain.set.mock.calls[0]?.[0] as Record<string, unknown> | undefined;
+      expect(setCall?.lastSyncError).toBeTruthy();
+      expect(mockFactories.hardcover).not.toHaveBeenCalled();
+    });
+
+    it('preview rejects invalid Hardcover shelfId without invoking provider factory (AC6)', async () => {
+      mockFactories.hardcover.mockClear();
+      const db = createMockDb();
+      service = new ImportListService(inject<Db>(db), mockLog);
+
+      await expect(
+        service.preview({ type: 'hardcover', settings: { apiKey: 'k', listType: 'shelf', shelfId: 'junk' } }),
+      ).rejects.toThrow();
+      expect(mockFactories.hardcover).not.toHaveBeenCalled();
     });
   });
 

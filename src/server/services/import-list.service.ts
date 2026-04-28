@@ -8,13 +8,28 @@ import type { MetadataService } from './metadata.service.js';
 import { encryptFields, decryptFields, resolveSentinelFields, getKey } from '../utils/secret-codec.js';
 import { getErrorMessage } from '../utils/error-message.js';
 import { findOrCreateAuthor } from '../utils/find-or-create-person.js';
-import type { ImportListSettings } from '../../shared/schemas/import-list.js';
+import type { ImportListType } from '../../shared/import-list-registry.js';
+import { importListSettingsSchemas, type ImportListSettings } from '../../shared/schemas/import-list.js';
 
 /** Milliseconds per minute — used for sync interval calculations. */
 const MS_PER_MINUTE = 60_000;
 
 type ImportListRow = typeof importLists.$inferSelect;
 type NewImportList = typeof importLists.$inferInsert;
+
+/**
+ * Parse a saved settings JSON blob through the per-type Zod schema.
+ *
+ * Normalizes legacy blank values that pre-date the type tightening (e.g. Hardcover
+ * `shelfId: ''` from the old default) so existing rows continue to work after upgrade.
+ */
+function parseSettingsForType(type: string, settings: Record<string, unknown>): ImportListSettings {
+  const schema = importListSettingsSchemas[type as ImportListType];
+  if (!schema) throw new Error(`Unknown provider type: ${type}`);
+  const normalized = { ...settings };
+  if (type === 'hardcover' && normalized.shelfId === '') delete normalized.shelfId;
+  return schema.parse(normalized) as ImportListSettings;
+}
 
 export class ImportListService {
   constructor(
@@ -83,7 +98,8 @@ export class ImportListService {
     try {
       const factory = IMPORT_LIST_ADAPTER_FACTORIES[data.type as keyof typeof IMPORT_LIST_ADAPTER_FACTORIES];
       if (!factory) return { success: false, message: `Unknown provider type: ${data.type}` };
-      const provider = factory(data.settings as ImportListSettings);
+      const parsed = parseSettingsForType(data.type, data.settings);
+      const provider = factory(parsed);
       return await provider.test();
     } catch (error: unknown) {
       return { success: false, message: getErrorMessage(error) };
@@ -99,7 +115,8 @@ export class ImportListService {
   async preview(data: { type: string; settings: Record<string, unknown> }): Promise<{ items: ImportListItem[]; total: number }> {
     const factory = IMPORT_LIST_ADAPTER_FACTORIES[data.type as keyof typeof IMPORT_LIST_ADAPTER_FACTORIES];
     if (!factory) throw new Error(`Unknown provider type: ${data.type}`);
-    const provider = factory(data.settings as ImportListSettings);
+    const parsed = parseSettingsForType(data.type, data.settings);
+    const provider = factory(parsed);
     const allItems = await provider.fetchItems();
     return { items: allItems.slice(0, 10), total: allItems.length };
   }
@@ -141,7 +158,8 @@ export class ImportListService {
     const factory = IMPORT_LIST_ADAPTER_FACTORIES[decrypted.type as keyof typeof IMPORT_LIST_ADAPTER_FACTORIES];
     if (!factory) throw new Error(`Unknown provider type: ${decrypted.type}`);
 
-    const provider = factory(decrypted.settings as ImportListSettings);
+    const parsed = parseSettingsForType(decrypted.type, decrypted.settings as Record<string, unknown>);
+    const provider = factory(parsed);
     const items = await provider.fetchItems();
 
     this.log.info({ id: list.id, name: list.name, itemCount: items.length }, 'Fetched items from provider');

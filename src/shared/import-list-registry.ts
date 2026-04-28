@@ -27,7 +27,7 @@ export const IMPORT_LIST_REGISTRY: Record<string, ImportListTypeMetadata> = {
   },
   hardcover: {
     label: 'Hardcover',
-    defaultSettings: { apiKey: '', listType: 'trending', shelfId: '' },
+    defaultSettings: { apiKey: '', listType: 'trending' },
     requiredFields: [
       { path: 'apiKey', message: 'API key is required' },
     ],

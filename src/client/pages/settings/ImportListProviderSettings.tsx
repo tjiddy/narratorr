@@ -157,9 +157,17 @@ function HardcoverSettings({ settings, onChange }: SettingsProps) {
           <label htmlFor="hc-shelfId" className="block text-sm font-medium mb-1">Shelf ID</label>
           <input
             id="hc-shelfId"
-            type="text"
-            value={(settings.shelfId as string) ?? ''}
-            onChange={(e) => onChange({ ...settings, shelfId: e.target.value })}
+            type="number"
+            min={1}
+            step={1}
+            value={(settings.shelfId as number | undefined) ?? ''}
+            onChange={(e) => {
+              const next = { ...settings };
+              const n = e.target.valueAsNumber;
+              if (Number.isFinite(n)) next.shelfId = n;
+              else delete next.shelfId;
+              onChange(next);
+            }}
             className={inputClass}
             placeholder="Your Hardcover shelf ID"
           />
