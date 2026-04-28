@@ -142,6 +142,17 @@ describe('ImportListService', () => {
       expect(setCall?.lastSyncError).toBeTruthy();
       expect(mockFactories.hardcover).not.toHaveBeenCalled();
     });
+
+    it('preview rejects invalid Hardcover shelfId without invoking provider factory (AC6)', async () => {
+      mockFactories.hardcover.mockClear();
+      const db = createMockDb();
+      service = new ImportListService(inject<Db>(db), mockLog);
+
+      await expect(
+        service.preview({ type: 'hardcover', settings: { apiKey: 'k', listType: 'shelf', shelfId: 'junk' } }),
+      ).rejects.toThrow();
+      expect(mockFactories.hardcover).not.toHaveBeenCalled();
+    });
   });
 
   describe('preview', () => {
