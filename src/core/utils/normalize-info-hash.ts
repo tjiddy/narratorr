@@ -1,4 +1,4 @@
-import { base32ToHex } from './download-url.js';
+import { base32ToHex } from './base32.js';
 
 export function normalizeInfoHash(infoHash: string): string {
   return infoHash.length === 32

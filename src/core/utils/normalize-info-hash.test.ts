@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { normalizeInfoHash } from './normalize-info-hash.js';
-import { base32ToHex } from './download-url.js';
+import { base32ToHex } from './base32.js';
 
 const KNOWN_BASE32_HASH = 'CZTQQ3JBFHCAACQ43HMZJGA3DFGE2UCR';
 const KNOWN_HEX_HASH = 'a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0';
