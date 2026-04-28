@@ -34,16 +34,21 @@ export interface SystemInfo {
 export interface SystemStatus {
   version: string;
   status: string;
-  timestamp: string;
-  update?: {
-    latestVersion: string;
-    releaseUrl: string;
-    dismissed: boolean;
-  };
+}
+
+export interface UpdateInfo {
+  latestVersion: string;
+  releaseUrl: string;
+  dismissed: boolean;
+}
+
+export interface UpdateStatus {
+  update: UpdateInfo | null;
 }
 
 export const systemApi = {
   getSystemStatus: () => fetchApi<SystemStatus>('/system/status'),
+  getUpdateStatus: () => fetchApi<UpdateStatus>('/system/update-status'),
   dismissUpdate: (version: string) =>
     fetchApi<{ ok: true }>('/system/update/dismiss', {
       method: 'PUT',

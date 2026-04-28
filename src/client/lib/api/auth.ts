@@ -3,10 +3,13 @@ import { fetchApi } from './client.js';
 
 export interface AuthStatus {
   mode: AuthMode;
+  authenticated: boolean;
+}
+
+export interface AuthAdminStatus {
   hasUser: boolean;
   username?: string;
   localBypass: boolean;
-  authenticated: boolean;
   bypassActive: boolean;
   envBypass: boolean;
 }
@@ -19,6 +22,8 @@ export interface AuthConfig {
 
 export const authApi = {
   getAuthStatus: () => fetchApi<AuthStatus>('/auth/status'),
+
+  getAuthAdminStatus: () => fetchApi<AuthAdminStatus>('/auth/admin-status'),
 
   authLogin: (username: string, password: string) =>
     fetchApi<{ success: boolean }>('/auth/login', {

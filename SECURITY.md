@@ -15,21 +15,32 @@ Narratorr supports three authentication modes:
 ### Protected Endpoints
 
 All `/api/*` routes require authentication when an auth mode is enabled. Public endpoints are limited to:
-- `/api/health` — Kubernetes/Docker health probe (returns only UP/DOWN status, no internal details)
-- `/api/system/status` — App version only
-- `/api/auth/status` — Auth mode and authenticated flag
+- `/api/health` — Kubernetes/Docker health probe; returns exactly `{ status: 'ok' }` (HTTP 200) on success and `{ status: 'error' }` (HTTP 503) on DB failure. No version, commit, timestamp, or error message is included in the response — failures are logged server-side via `request.log.warn` instead.
+- `/api/system/status` — Returns exactly `{ version, status }`. Update info (whether a newer release is available) lives behind authentication at `/api/system/update-status`.
+- `/api/auth/status` — Returns exactly `{ mode, authenticated }`. Admin/deployment fields (`hasUser`, `username`, `localBypass`, `bypassActive`, `envBypass`) live behind authentication at `/api/auth/admin-status`.
 - `/api/auth/login` — Login endpoint
 - `/api/auth/logout` — Logout endpoint
 - `/api/auth/setup` — First-time credential setup (only available when no user exists)
 
-No configuration data, library paths, credentials, or internal state is exposed on unauthenticated endpoints.
+Unauthenticated error responses use `{ error: 'Internal server error' }` with no commit SHA, stack, or internal error message. No configuration data, library paths, credentials, or internal state is exposed on unauthenticated endpoints.
 
 ### Rate Limiting
 
 Authentication endpoints are rate-limited to prevent brute-force attacks:
 - **Login:** 5 attempts per 15-minute window per IP
+- **Setup:** 3 requests per 15-minute window per IP
+- **API key regenerate:** 5 requests per hour per IP
+- **Filesystem browse:** 60 requests per minute per IP — caps the rate at which an authenticated client (or an XSS in basic-auth mode) can sweep the host filesystem.
 - Returns HTTP 429 with `Retry-After` header when limit is exceeded
 - Window resets automatically after the time period expires
+
+### Dev-mode CORS
+
+In production, CORS is restricted to the operator-configured `CORS_ORIGIN`. In development, the allowlist is fixed to `http://localhost:5173` (Vite dev server) and `http://localhost:3000` (Fastify self-origin); any other origin is rejected. This avoids reflecting arbitrary origins with credentials, which would let any malicious page visited during local dev read authenticated responses from `localhost`.
+
+### AUTH_BYPASS warning
+
+When `AUTH_BYPASS=true` is combined with an existing user account, the server emits a `warn`-level log line at boot. AUTH_BYPASS disables authentication globally, so any client reaching the server can wipe credentials via `DELETE /api/auth/credentials` — the warning is meant to make this state visible in startup output.
 
 ## Credential Storage
 
@@ -38,6 +49,9 @@ Authentication endpoints are rate-limited to prevent brute-force attacks:
 - Password comparison uses `crypto.timingSafeEqual` to prevent timing attacks
 - The session secret is generated at initialization via `crypto.randomBytes(32)` and never exposed to the client
 
+### API Keys
+- API key validation hashes both the stored key and the supplied key with SHA-256 before `crypto.timingSafeEqual`. The fixed-length hash compare means key length is never disclosed via timing — an early length-mismatch return would leak length information to an attacker probing different inputs.
+
 ### Third-Party Credentials (Encryption at Rest)
 All sensitive configuration values (API keys, passwords, proxy URLs) are encrypted at rest in the database using **AES-256-GCM**:
 
@@ -45,7 +59,7 @@ All sensitive configuration values (API keys, passwords, proxy URLs) are encrypt
 - **Key management:** 32-byte encryption key loaded from (in priority order):
   1. `NARRATORR_SECRET_KEY` environment variable
   2. `secret.key` file in the config directory (auto-generated on first run with `0600` permissions)
-- **Encrypted entities:** Indexer API keys, download client passwords/API keys, Prowlarr API keys, import list API keys, proxy URLs, session secrets, notifier secrets (webhook URLs/headers, Discord/Slack webhook URLs, Telegram bot tokens, SMTP passwords, Pushover/Gotify tokens)
+- **Encrypted entities:** Indexer API keys + indexer base URLs (`apiUrl` may embed `user:pass@host` credentials for Prowlarr-managed indexers), download client passwords/API keys, Prowlarr API keys, import list API keys, proxy URLs, session secrets, notifier secrets (webhook URLs/headers, Discord/Slack webhook URLs, Telegram bot tokens, SMTP passwords, Pushover/Gotify tokens)
 - **Sentinel pattern:** API responses mask secrets with `********`. Updates that include the sentinel value preserve the existing encrypted value (no re-encryption of unchanged secrets)
 - **Storage format:** `$ENC$<base64(iv + authTag + ciphertext)>` — encrypted values are distinguishable from plaintext
 

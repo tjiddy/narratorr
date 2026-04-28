@@ -102,10 +102,11 @@ describe('IndexerService', () => {
     it('preserves existing encrypted secret fields when sentinel values are submitted', async () => {
       const { encrypt } = await import('../utils/secret-codec.js');
       const encryptedApiKey = encrypt('real-api-key', TEST_KEY);
+      const encryptedApiUrl = encrypt('http://user:pw@prowlarr:9696/1/', TEST_KEY);
       const encryptedFlareSolverrUrl = encrypt('http://flaresolverr:8191', TEST_KEY);
       const existingRow = {
         ...mockIndexer,
-        settings: { apiKey: encryptedApiKey, hostname: 'old-host', flareSolverrUrl: encryptedFlareSolverrUrl },
+        settings: { apiKey: encryptedApiKey, apiUrl: encryptedApiUrl, hostname: 'old-host', flareSolverrUrl: encryptedFlareSolverrUrl },
       };
 
       // Sentinel lookup returns existing row
@@ -114,14 +115,32 @@ describe('IndexerService', () => {
       db.update.mockReturnValue(updateChain);
 
       await service.update(1, {
-        settings: { apiKey: '********', hostname: 'new-host', flareSolverrUrl: '********' },
+        settings: { apiKey: '********', apiUrl: '********', hostname: 'new-host', flareSolverrUrl: '********' },
       });
 
       const setArg = (updateChain as { set: ReturnType<typeof vi.fn> }).set.mock.calls[0][0] as { settings: Record<string, unknown> };
       expect(setArg.settings.hostname).toBe('new-host');
       // Secret fields must be exactly the stored ciphertext, not re-encrypted sentinels
       expect(setArg.settings.apiKey).toBe(encryptedApiKey);
+      expect(setArg.settings.apiUrl).toBe(encryptedApiUrl);
       expect(setArg.settings.flareSolverrUrl).toBe(encryptedFlareSolverrUrl);
+    });
+
+    it('encrypts a freshly-supplied apiUrl on create (#742)', async () => {
+      const insertChain = mockDbChain([mockIndexer]);
+      db.insert.mockReturnValue(insertChain);
+
+      await service.create({
+        name: 'Tracker',
+        type: 'torznab',
+        enabled: true,
+        priority: 50,
+        settings: { apiUrl: 'http://user:pw@host/1/', apiKey: 'plain' },
+      });
+
+      const valuesArg = (insertChain as { values: ReturnType<typeof vi.fn> }).values.mock.calls[0][0] as { settings: Record<string, string> };
+      expect(isEncrypted(valuesArg.settings.apiUrl)).toBe(true);
+      expect(isEncrypted(valuesArg.settings.apiKey)).toBe(true);
     });
   });
 
@@ -1128,8 +1147,8 @@ describe('IndexerService', () => {
         });
 
         const setPayload = (updateChain.set as ReturnType<typeof vi.fn>).mock.calls[0][0];
-        // Prowlarr-managed settings keys are updated (secret fields are encrypted)
-        expect(setPayload.settings.apiUrl).toBe('http://new/');
+        // Prowlarr-managed secret settings are encrypted (apiUrl + apiKey, #742)
+        expect(isEncrypted(setPayload.settings.apiUrl)).toBe(true);
         expect(isEncrypted(setPayload.settings.apiKey)).toBe(true);
         // Local-only settings keys are preserved from existing row (secret fields encrypted)
         expect(isEncrypted(setPayload.settings.flareSolverrUrl)).toBe(true);

@@ -31,7 +31,7 @@ export type SecretEntity =
 //   email:    smtpPass               pushover: pushoverToken
 //   gotify:   gotifyToken            (script/ntfy: no secrets in current schema)
 const SECRET_FIELDS: Record<SecretEntity, readonly string[]> = {
-  indexer: ['apiKey', 'flareSolverrUrl', 'mamId'],
+  indexer: ['apiKey', 'apiUrl', 'flareSolverrUrl', 'mamId'],
   downloadClient: ['password', 'apiKey'],
   prowlarr: ['apiKey'],
   auth: ['sessionSecret', 'apiKey'],

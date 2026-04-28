@@ -1,4 +1,4 @@
-import { randomBytes, randomUUID, scrypt, timingSafeEqual, createHmac } from 'node:crypto';
+import { randomBytes, randomUUID, scrypt, timingSafeEqual, createHmac, createHash } from 'node:crypto';
 import { eq } from 'drizzle-orm';
 import type { Db } from '../../db/index.js';
 import type { FastifyBaseLogger } from 'fastify';
@@ -261,8 +261,11 @@ export class AuthService {
 
   async validateApiKey(key: string): Promise<boolean> {
     const config = await this.getAuthConfig();
-    if (config.apiKey.length !== key.length) return false;
-    return timingSafeEqual(Buffer.from(config.apiKey), Buffer.from(key));
+    // SHA-256 both sides to a fixed length — avoids leaking key length via early
+    // length-mismatch return. Buffers are always 32 bytes so timingSafeEqual is safe.
+    const expectedHash = createHash('sha256').update(config.apiKey).digest();
+    const providedHash = createHash('sha256').update(key).digest();
+    return timingSafeEqual(expectedHash, providedHash);
   }
 
   async regenerateApiKey(): Promise<string> {

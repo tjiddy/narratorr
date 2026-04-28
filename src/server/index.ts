@@ -31,6 +31,7 @@ import { registerStaticAndSpa, listenWithRetry } from './server-utils.js';
 import { applyPendingRestore } from './services/backup.service.js';
 import { loadEncryptionKey, initializeKey } from './utils/secret-codec.js';
 import { migrateSecretsToEncrypted } from './utils/secret-migration.js';
+import { warnIfAuthBypassWithUser } from './boot-warnings.js';
 
 function buildLoggerConfig(): boolean | { transport: { target: string; options: Record<string, unknown> } } {
   if (!config.isDev) return true;
@@ -63,9 +64,12 @@ async function main() {
   app.setValidatorCompiler(validatorCompiler);
   app.setSerializerCompiler(serializerCompiler);
 
-  // CORS
+  // CORS — dev uses an explicit allowlist (vite client + server self-origin); prod uses configured origin.
+  // Reflecting any origin (`origin: true`) with credentials would let any malicious page visited during
+  // local dev read authenticated responses from localhost.
+  const devCorsOrigins = ['http://localhost:5173', 'http://localhost:3000'];
   await app.register(cors, {
-    origin: config.isDev ? true : config.corsOrigin,
+    origin: config.isDev ? devCorsOrigins : config.corsOrigin,
     credentials: true,
   });
 
@@ -117,6 +121,9 @@ async function main() {
 
   // Initialize auth and register cookie/auth plugins
   await services.auth.initialize();
+
+  // Loud boot warning when AUTH_BYPASS is on with a real user account (#742).
+  await warnIfAuthBypassWithUser(config.authBypass, services.auth, app.log);
   await app.register(cookie);
   await app.register(authPlugin, { authService: services.auth, urlBase: config.urlBase });
   await app.register(errorHandlerPlugin);

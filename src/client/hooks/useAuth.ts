@@ -18,9 +18,20 @@ export interface AuthState {
 export function useAuth(): AuthState {
   const queryClient = useQueryClient();
 
-  const { data, isLoading } = useQuery({
+  const { data: status, isLoading } = useQuery({
     queryKey: queryKeys.auth.status(),
     queryFn: api.getAuthStatus,
+    staleTime: 30_000,
+    retry: 1,
+  });
+
+  // Admin-only fields (#742) live behind authentication. Only fetch once the public
+  // status reports authenticated, so pre-login mounts (login page, layout) do not 401.
+  const isAuthenticated = status?.authenticated ?? false;
+  const { data: adminStatus } = useQuery({
+    queryKey: queryKeys.auth.adminStatus(),
+    queryFn: api.getAuthAdminStatus,
+    enabled: isAuthenticated,
     staleTime: 30_000,
     retry: 1,
   });
@@ -28,20 +39,16 @@ export function useAuth(): AuthState {
   const logout = useCallback(async () => {
     await api.authLogout();
     queryClient.setQueryData(queryKeys.auth.status(), undefined);
-    // Force refetch to get updated status
+    queryClient.setQueryData(queryKeys.auth.adminStatus(), undefined);
     await queryClient.invalidateQueries({ queryKey: queryKeys.auth.status() });
     window.location.href = `${URL_BASE}/login`;
   }, [queryClient]);
 
-  // Server-determined authentication state:
-  // 'none' mode → always true, 'basic' → always true, 'forms' → based on session cookie validity
-  const isAuthenticated = data?.authenticated ?? false;
-
   return {
-    mode: data?.mode ?? 'none',
-    hasUser: data?.hasUser ?? false,
-    localBypass: data?.localBypass ?? false,
-    bypassActive: data?.bypassActive ?? false,
+    mode: status?.mode ?? 'none',
+    hasUser: adminStatus?.hasUser ?? false,
+    localBypass: adminStatus?.localBypass ?? false,
+    bypassActive: adminStatus?.bypassActive ?? false,
     isAuthenticated,
     isLoading,
     logout,

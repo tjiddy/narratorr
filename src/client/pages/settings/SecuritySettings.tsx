@@ -30,8 +30,8 @@ export function SecuritySettings() {
   });
 
   const { data: authStatus } = useQuery({
-    queryKey: queryKeys.auth.status(),
-    queryFn: api.getAuthStatus,
+    queryKey: queryKeys.auth.adminStatus(),
+    queryFn: api.getAuthAdminStatus,
   });
 
   if (isLoading || !authConfig) {
@@ -73,7 +73,7 @@ function AuthModeSection({
 
   const mutation = useMutationWithToast({
     mutationFn: (newMode: AuthMode) => api.updateAuthConfig({ mode: newMode }),
-    queryKey: [queryKeys.auth.config(), queryKeys.auth.status()],
+    queryKey: [queryKeys.auth.config(), queryKeys.auth.status(), queryKeys.auth.adminStatus()],
     successMessage: 'Authentication mode updated',
     errorMessage: (err) => err instanceof ApiError ? err.message : 'Failed to update auth mode',
     onSuccess: () => { setShowConfirm(false); setPendingMode(null); },
@@ -152,7 +152,7 @@ function AuthModeSection({
 function LocalBypassSection({ localBypass }: { localBypass: boolean }) {
   const mutation = useMutationWithToast({
     mutationFn: (enabled: boolean) => api.updateAuthConfig({ localBypass: enabled }),
-    queryKey: [queryKeys.auth.config(), queryKeys.auth.status()],
+    queryKey: [queryKeys.auth.config(), queryKeys.auth.status(), queryKeys.auth.adminStatus()],
     successMessage: 'Local bypass setting updated',
     errorMessage: 'Failed to update local bypass',
   });

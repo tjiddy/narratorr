@@ -578,14 +578,27 @@ describe('Prowlarr-compatible API v1 routes', () => {
       expect(res.payload).not.toContain('xyz789');
     });
 
-    it('non-secret fields like baseUrl pass through unmasked', async () => {
+    it('non-secret fields (categories) pass through unmasked', async () => {
+      (services.indexer.getById as Mock).mockResolvedValue(mockTorznabIndexer);
+
+      const res = await app.inject({ method: 'GET', url: '/api/v1/indexer/1' });
+
+      const payload = JSON.parse(res.payload);
+      const categoriesField = payload.fields.find((f: { name: string }) => f.name === 'categories');
+      expect(categoriesField.value).toEqual([3030]);
+    });
+
+    it('GET /api/v1/indexer/:id masks baseUrl when apiUrl is set (#742)', async () => {
+      // apiUrl is a secret field — it may embed user:pass credentials.
       (services.indexer.getById as Mock).mockResolvedValue(mockTorznabIndexer);
 
       const res = await app.inject({ method: 'GET', url: '/api/v1/indexer/1' });
 
       const payload = JSON.parse(res.payload);
       const baseUrlField = payload.fields.find((f: { name: string }) => f.name === 'baseUrl');
-      expect(baseUrlField.value).toBe('http://prowlarr:9696/1/');
+      expect(baseUrlField.value).toBe('********');
+      // The plaintext URL must never appear anywhere in the response.
+      expect(res.payload).not.toContain('http://prowlarr:9696/1/');
     });
 
     it('returns empty string (not sentinel) when apiKey is missing', async () => {
@@ -808,17 +821,19 @@ describe('Prowlarr-compatible API v1 routes', () => {
       );
     });
 
-    it('maps internal apiUrl back to baseUrl field on read', async () => {
+    it('maps internal apiUrl back to baseUrl field on read (masked — #742)', async () => {
       (services.indexer.getById as Mock).mockResolvedValue(mockTorznabIndexer);
 
       const res = await app.inject({ method: 'GET', url: '/api/v1/indexer/1' });
 
       const payload = JSON.parse(res.payload);
       const baseUrlField = payload.fields.find((f: { name: string }) => f.name === 'baseUrl');
-      expect(baseUrlField.value).toBe('http://prowlarr:9696/1/');
+      // apiUrl is now a secret field — the Readarr-compat baseUrl response is masked
+      // so embedded credentials (user:pass@host) never echo back unmasked.
+      expect(baseUrlField.value).toBe('********');
     });
 
-    it('round-trips: POST with fields → GET returns same field values (apiKey masked)', async () => {
+    it('round-trips: POST with fields → GET returns same field values (baseUrl + apiKey masked)', async () => {
       (services.indexer.createOrUpsertProwlarr as Mock).mockResolvedValue({
         row: mockTorznabIndexer,
         upserted: false,
@@ -838,9 +853,9 @@ describe('Prowlarr-compatible API v1 routes', () => {
 
       const baseUrl = payload.fields.find((f: { name: string }) => f.name === 'baseUrl');
       const apiKey = payload.fields.find((f: { name: string }) => f.name === 'apiKey');
-      expect(baseUrl.value).toBe('http://prowlarr:9696/1/');
-      // apiKey is intentionally masked on GET responses; plaintext never leaves the server.
+      // Both are intentionally masked on GET responses; plaintext never leaves the server.
       // Sentinel passthrough on PUT/POST preserves the stored value.
+      expect(baseUrl.value).toBe('********');
       expect(apiKey.value).toBe('********');
     });
 
