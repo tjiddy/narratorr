@@ -2,9 +2,25 @@ export class IndexerAuthError extends Error {
   constructor(
     public readonly indexerName: string,
     message?: string,
+    options?: ErrorOptions,
   ) {
-    super(message || `Authentication failed for indexer: ${indexerName}`);
+    super(message || `Authentication failed for indexer: ${indexerName}`, options);
     this.name = 'IndexerAuthError';
+  }
+}
+
+/**
+ * Thrown for indexer response shape mismatches and other non-auth indexer failures.
+ * Distinct from IndexerAuthError (auth-specific) and ProxyError (proxy transport).
+ */
+export class IndexerError extends Error {
+  constructor(
+    public readonly indexerName: string,
+    message?: string,
+    options?: ErrorOptions,
+  ) {
+    super(message || `Indexer error: ${indexerName}`, options);
+    this.name = 'IndexerError';
   }
 }
 
@@ -13,8 +29,8 @@ export class IndexerAuthError extends Error {
  * NOT thrown for upstream indexer HTTP errors that happen to travel through a proxy.
  */
 export class ProxyError extends Error {
-  constructor(message: string) {
-    super(message);
+  constructor(message: string, options?: ErrorOptions) {
+    super(message, options);
     this.name = 'ProxyError';
   }
 }
