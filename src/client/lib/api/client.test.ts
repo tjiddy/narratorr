@@ -136,6 +136,36 @@ describe('fetchApi', () => {
 
     expect((fetch as ReturnType<typeof vi.fn>).mock.calls[0][1].credentials).toBe('include');
   });
+
+  describe('X-Requested-With header (CSRF)', () => {
+    for (const method of ['GET', 'POST', 'PUT', 'DELETE', 'PATCH'] as const) {
+      it(`${method} request includes X-Requested-With: XMLHttpRequest`, async () => {
+        globalThis.fetch = vi.fn().mockResolvedValue({
+          ok: true,
+          json: () => Promise.resolve({}),
+        });
+
+        const opts: RequestInit = method === 'GET' ? {} : { method, body: JSON.stringify({ x: 1 }) };
+        await fetchApi('/test', opts);
+
+        const headers = (fetch as ReturnType<typeof vi.fn>).mock.calls[0][1].headers;
+        expect(headers['X-Requested-With']).toBe('XMLHttpRequest');
+      });
+    }
+
+    it('caller-supplied headers override defaults but X-Requested-With is preserved when not overridden', async () => {
+      globalThis.fetch = vi.fn().mockResolvedValue({
+        ok: true,
+        json: () => Promise.resolve({}),
+      });
+
+      await fetchApi('/test', { headers: { 'X-Custom': 'yes' } });
+
+      const headers = (fetch as ReturnType<typeof vi.fn>).mock.calls[0][1].headers;
+      expect(headers['X-Requested-With']).toBe('XMLHttpRequest');
+      expect(headers['X-Custom']).toBe('yes');
+    });
+  });
 });
 
 describe('fetchApi with URL_BASE', () => {

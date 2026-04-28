@@ -24,6 +24,7 @@ export class ApiError extends Error {
 
 export async function fetchApi<T>(path: string, options?: RequestInit): Promise<T> {
   const headers: Record<string, string> = {
+    'X-Requested-With': 'XMLHttpRequest',
     ...(options?.headers as Record<string, string>),
   };
 

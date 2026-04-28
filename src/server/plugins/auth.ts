@@ -12,9 +12,13 @@ export interface AuthPluginOptions {
 const BASE_PUBLIC_ROUTES = [
   '/api/auth/status',
   '/api/auth/login',
+  '/api/auth/logout',
   '/api/health',
   '/api/system/status',
 ];
+
+/** Methods that don't require CSRF protection. */
+const SAFE_METHODS = new Set(['GET', 'HEAD', 'OPTIONS']);
 
 /**
  * Private IP ranges for local network bypass.
@@ -172,7 +176,12 @@ async function authPlugin(app: FastifyInstance, opts: AuthPluginOptions) {
     }
 
     // API key auth — works in all modes
-    if (await tryApiKey(request, reply, authService)) return;
+    if (await tryApiKey(request, reply, authService)) {
+      // tryApiKey may have set request.user (success) or sent 401 (failure).
+      // CSRF check is skipped either way: api-key clients are exempt (AC5),
+      // and on 401 the reply has already been sent.
+      return;
+    }
 
     // Get auth status for mode + bypass checks
     const status = await authService.getStatus();
@@ -185,7 +194,17 @@ async function authPlugin(app: FastifyInstance, opts: AuthPluginOptions) {
     }
 
     if (status.mode === 'none') return;
-    if (status.mode === 'basic') { await handleBasicAuth(request, reply, authService); return; }
+    if (status.mode === 'basic') {
+      await handleBasicAuth(request, reply, authService);
+      // Apply CSRF protection only after successful basic-auth (request.user populated).
+      // Unauthenticated requests already received the 401 + WWW-Authenticate challenge.
+      if (!request.user) return;
+      if (SAFE_METHODS.has(request.method)) return;
+      if (request.headers['x-requested-with'] !== 'XMLHttpRequest') {
+        reply.status(403).send({ error: 'CSRF protection: missing X-Requested-With header' });
+      }
+      return;
+    }
     if (status.mode === 'forms') { await handleFormsAuth(request, reply, authService); return; }
 
     reply.status(401).send({ error: 'Authentication required' });

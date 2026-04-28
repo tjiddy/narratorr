@@ -70,7 +70,7 @@ describe('backupsApi', () => {
       vi.stubGlobal('fetch', mockFetch);
     });
 
-    it('sends FormData with credentials', async () => {
+    it('sends FormData with credentials and X-Requested-With CSRF header', async () => {
       const validationResult = { valid: true, details: {} };
       mockFetch.mockResolvedValue({
         ok: true,
@@ -86,7 +86,7 @@ describe('backupsApi', () => {
       expect(options.method).toBe('POST');
       expect(options.body).toBeInstanceOf(FormData);
       expect(options.credentials).toBe('include');
-      expect(options.headers).toBeUndefined();
+      expect(options.headers).toEqual({ 'X-Requested-With': 'XMLHttpRequest' });
     });
 
     it('throws ApiError on non-ok response', async () => {

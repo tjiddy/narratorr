@@ -23,6 +23,7 @@ import { UpdateBanner } from '@/components/layout/UpdateBanner';
 import { WelcomeModal } from '@/components/WelcomeModal';
 
 const BANNER_DISMISSED_KEY = 'narratorr:auth-banner-dismissed';
+const BASIC_AUTH_BANNER_DISMISSED_KEY = 'narratorr.basic-auth-csrf-nag.dismissed';
 
 type NavItem = { to: string; label: string; icon: React.ComponentType<{ className?: string }> };
 
@@ -76,6 +77,15 @@ export function Layout() {
     localStorage.setItem(BANNER_DISMISSED_KEY, 'true');
   }
 
+  const [basicAuthBannerDismissed, setBasicAuthBannerDismissed] = useState(
+    () => localStorage.getItem(BASIC_AUTH_BANNER_DISMISSED_KEY) === 'true',
+  );
+
+  function dismissBasicAuthBanner() {
+    setBasicAuthBannerDismissed(true);
+    localStorage.setItem(BASIC_AUTH_BANNER_DISMISSED_KEY, 'true');
+  }
+
   return (
     <div className="min-h-screen flex flex-col gradient-bg noise-overlay">
       <SSEProvider />
@@ -108,6 +118,43 @@ export function Layout() {
               onClick={dismissBanner}
               className="shrink-0 p-1.5 rounded-lg text-amber-600 dark:text-amber-400 hover:bg-amber-500/20 transition-colors"
               aria-label="Dismiss auth warning"
+            >
+              <XIcon className="w-4 h-4" />
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Basic-auth CSRF Nag Banner */}
+      {mode === 'basic' && !basicAuthBannerDismissed && (
+        <div className="bg-amber-500/15 border-b border-amber-500/30 animate-fade-in">
+          <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-2.5 flex items-center justify-between gap-4">
+            <div className="flex items-center gap-2.5 text-sm text-amber-700 dark:text-amber-300">
+              <AlertTriangleIcon className="w-4 h-4 shrink-0" />
+              <span>
+                Basic authentication is enabled. For browser sessions,{' '}
+                <Link
+                  to="/settings/security"
+                  className="underline underline-offset-2 font-medium hover:text-amber-800 dark:hover:text-amber-200 transition-colors"
+                >
+                  switch to Forms auth
+                </Link>{' '}
+                — see{' '}
+                <a
+                  href="https://github.com/narratorr/narratorr/blob/main/SECURITY.md#csrf-protection"
+                  target="_blank"
+                  rel="noreferrer"
+                  className="underline underline-offset-2 font-medium hover:text-amber-800 dark:hover:text-amber-200 transition-colors"
+                >
+                  SECURITY.md
+                </a>
+                .
+              </span>
+            </div>
+            <button
+              onClick={dismissBasicAuthBanner}
+              className="shrink-0 p-1.5 rounded-lg text-amber-600 dark:text-amber-400 hover:bg-amber-500/20 transition-colors"
+              aria-label="Dismiss basic-auth warning"
             >
               <XIcon className="w-4 h-4" />
             </button>

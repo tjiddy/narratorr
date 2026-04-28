@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeAll, afterAll, beforeEach, vi, type Mock } from 'vitest';
-import Fastify, { type FastifyServerOptions } from 'fastify';
+import Fastify, { type FastifyInstance, type FastifyServerOptions } from 'fastify';
 import cookie from '@fastify/cookie';
 import {
   serializerCompiler,
@@ -10,6 +10,8 @@ import { createMockServices, resetMockServices } from '../__tests__/helpers.js';
 import type { Services } from './index.js';
 import { authRoutes } from './auth.js';
 import { settingsRoutes } from './settings.js';
+import authPlugin from '../plugins/auth.js';
+import type { AuthService } from '../services/auth.service.js';
 
 vi.mock('../config.js', () => ({
   config: {
@@ -619,6 +621,86 @@ describe('auth routes', () => {
         (config as { isDev: boolean }).isDev = true;
         await prodApp.close();
       }
+    });
+  });
+
+  describe('CSRF protection — basic-auth mode', () => {
+    let csrfApp: FastifyInstance;
+    let csrfServices: Services;
+    const basicAuthHeader = `Basic ${Buffer.from('admin:password123').toString('base64')}`;
+
+    beforeAll(async () => {
+      csrfServices = createMockServices();
+      const authSvc = csrfServices.auth as unknown as Record<string, Mock>;
+      authSvc.getStatus = vi.fn().mockResolvedValue({ mode: 'basic', hasUser: true, localBypass: false });
+      authSvc.verifyCredentials = vi.fn().mockResolvedValue({ username: 'admin' });
+      authSvc.validateApiKey = vi.fn().mockResolvedValue(false);
+
+      csrfApp = Fastify({ logger: false }).withTypeProvider<ZodTypeProvider>();
+      csrfApp.setValidatorCompiler(validatorCompiler);
+      csrfApp.setSerializerCompiler(serializerCompiler);
+      await csrfApp.register(cookie);
+      const { errorHandlerPlugin } = await import('../plugins/error-handler.js');
+      await csrfApp.register(errorHandlerPlugin);
+      await csrfApp.register(authPlugin, { authService: csrfServices.auth as unknown as AuthService });
+      await authRoutes(csrfApp, csrfServices.auth as Parameters<typeof authRoutes>[1]);
+      await csrfApp.ready();
+    });
+
+    afterAll(async () => { await csrfApp.close(); });
+
+    it('PUT /api/auth/config without X-Requested-With → 403', async () => {
+      const res = await csrfApp.inject({
+        method: 'PUT',
+        url: '/api/auth/config',
+        headers: { authorization: basicAuthHeader },
+        payload: { mode: 'forms' },
+      });
+      expect(res.statusCode).toBe(403);
+      expect(JSON.parse(res.payload).error).toMatch(/CSRF/);
+    });
+
+    it('POST /api/auth/api-key/regenerate without X-Requested-With → 403', async () => {
+      const res = await csrfApp.inject({
+        method: 'POST',
+        url: '/api/auth/api-key/regenerate',
+        headers: { authorization: basicAuthHeader },
+      });
+      expect(res.statusCode).toBe(403);
+      expect(JSON.parse(res.payload).error).toMatch(/CSRF/);
+    });
+
+    it('POST /api/auth/api-key/regenerate with X-Requested-With reaches the handler', async () => {
+      (csrfServices.auth.regenerateApiKey as Mock).mockResolvedValue('new-key-xyz');
+      const res = await csrfApp.inject({
+        method: 'POST',
+        url: '/api/auth/api-key/regenerate',
+        headers: {
+          authorization: basicAuthHeader,
+          'x-requested-with': 'XMLHttpRequest',
+        },
+      });
+      expect(res.statusCode).toBe(200);
+      expect(JSON.parse(res.payload)).toEqual({ apiKey: 'new-key-xyz' });
+    });
+
+    it('POST /api/auth/login (public) without X-Requested-With reaches handler — public route exempt', async () => {
+      (csrfServices.auth.verifyCredentials as Mock).mockResolvedValue({ username: 'admin' });
+      const res = await csrfApp.inject({
+        method: 'POST',
+        url: '/api/auth/login',
+        payload: { username: 'admin', password: 'password123' },
+      });
+      // Reaches handler — login route is public.
+      expect(res.statusCode).toBe(200);
+    });
+
+    it('POST /api/auth/logout (public) without X-Requested-With reaches handler — verifies logout in BASE_PUBLIC_ROUTES', async () => {
+      const res = await csrfApp.inject({
+        method: 'POST',
+        url: '/api/auth/logout',
+      });
+      expect(res.statusCode).toBe(200);
     });
   });
 

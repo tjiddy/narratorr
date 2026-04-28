@@ -296,6 +296,170 @@ describe('auth middleware', () => {
     });
   });
 
+  describe('mode: basic — CSRF protection', () => {
+    let app: FastifyInstance;
+    let authService: AuthService;
+
+    beforeAll(async () => {
+      authService = createMockAuthService({
+        getStatus: vi.fn().mockResolvedValue({ mode: 'basic', hasUser: true, localBypass: false }),
+        validateApiKey: vi.fn().mockResolvedValue(true),
+      });
+      app = await createApp(authService);
+    });
+
+    afterAll(async () => { await app.close(); });
+
+    afterEach(() => {
+      (authService.verifyCredentials as ReturnType<typeof vi.fn>).mockReset();
+    });
+
+    function basicAuthHeader() {
+      const encoded = Buffer.from('admin:password123').toString('base64');
+      return `Basic ${encoded}`;
+    }
+
+    it('authenticated POST without X-Requested-With → 403 { error: /CSRF/ }', async () => {
+      (authService.verifyCredentials as ReturnType<typeof vi.fn>).mockResolvedValue({ username: 'admin' });
+
+      const res = await app.inject({
+        method: 'POST',
+        url: '/api/library/scan-debug',
+        headers: { authorization: basicAuthHeader() },
+      });
+
+      expect(res.statusCode).toBe(403);
+      expect(JSON.parse(res.payload).error).toMatch(/CSRF/);
+    });
+
+    it('authenticated POST with X-Requested-With: XMLHttpRequest → reaches handler', async () => {
+      (authService.verifyCredentials as ReturnType<typeof vi.fn>).mockResolvedValue({ username: 'admin' });
+
+      const res = await app.inject({
+        method: 'POST',
+        url: '/api/library/scan-debug',
+        headers: {
+          authorization: basicAuthHeader(),
+          'x-requested-with': 'XMLHttpRequest',
+        },
+      });
+
+      expect(res.statusCode).toBe(200);
+    });
+
+    it('authenticated PUT without X-Requested-With → 403', async () => {
+      (authService.verifyCredentials as ReturnType<typeof vi.fn>).mockResolvedValue({ username: 'admin' });
+
+      const res = await app.inject({
+        method: 'PUT',
+        url: '/api/system/update/dismiss',
+        headers: { authorization: basicAuthHeader() },
+        payload: { version: '1.0.0' },
+      });
+
+      expect(res.statusCode).toBe(403);
+      expect(JSON.parse(res.payload).error).toMatch(/CSRF/);
+    });
+
+    it('GET requests are exempt (safe method)', async () => {
+      (authService.verifyCredentials as ReturnType<typeof vi.fn>).mockResolvedValue({ username: 'admin' });
+
+      const res = await app.inject({
+        method: 'GET',
+        url: '/api/test',
+        headers: { authorization: basicAuthHeader() },
+      });
+
+      expect(res.statusCode).toBe(200);
+    });
+
+    it('unauthenticated POST returns 401 + WWW-Authenticate (CSRF check does NOT preempt the auth challenge)', async () => {
+      const res = await app.inject({
+        method: 'POST',
+        url: '/api/library/scan-debug',
+      });
+
+      expect(res.statusCode).toBe(401);
+      expect(res.headers['www-authenticate']).toBe('Basic realm="Narratorr"');
+    });
+
+    it('valid X-Api-Key + POST without X-Requested-With → 200 (api-key bypass)', async () => {
+      const res = await app.inject({
+        method: 'POST',
+        url: '/api/library/scan-debug',
+        headers: { 'x-api-key': 'valid-key' },
+      });
+
+      expect(res.statusCode).toBe(200);
+    });
+
+    it('public route (POST /api/auth/login) is exempt — no CSRF check', async () => {
+      const res = await app.inject({
+        method: 'POST',
+        url: '/api/auth/login',
+      });
+      // Route doesn't exist on the test app, so 404 — but NOT 403/401
+      expect(res.statusCode).not.toBe(401);
+      expect(res.statusCode).not.toBe(403);
+    });
+
+    it('public route (POST /api/auth/logout) is exempt — no CSRF check (logout is in BASE_PUBLIC_ROUTES)', async () => {
+      const res = await app.inject({
+        method: 'POST',
+        url: '/api/auth/logout',
+      });
+      expect(res.statusCode).not.toBe(401);
+      expect(res.statusCode).not.toBe(403);
+    });
+  });
+
+  describe('mode: forms — no CSRF requirement', () => {
+    let app: FastifyInstance;
+    let authService: AuthService;
+
+    beforeAll(async () => {
+      authService = createMockAuthService({
+        getStatus: vi.fn().mockResolvedValue({ mode: 'forms', hasUser: true, localBypass: false }),
+      });
+      app = await createApp(authService);
+    });
+
+    afterAll(async () => { await app.close(); });
+
+    it('authenticated POST without X-Requested-With → 200', async () => {
+      (authService.verifySessionCookie as ReturnType<typeof vi.fn>).mockReturnValue({
+        payload: { username: 'admin', issuedAt: Date.now(), expiresAt: Date.now() + 1000000 },
+        shouldRenew: false,
+      });
+
+      const res = await app.inject({
+        method: 'POST',
+        url: '/api/library/scan-debug',
+        cookies: { narratorr_session: 'valid-cookie-value' },
+      });
+
+      expect(res.statusCode).toBe(200);
+    });
+  });
+
+  describe('mode: none — no CSRF requirement', () => {
+    let app: FastifyInstance;
+
+    beforeAll(async () => {
+      const authService = createMockAuthService({
+        getStatus: vi.fn().mockResolvedValue({ mode: 'none', hasUser: false, localBypass: false }),
+      });
+      app = await createApp(authService);
+    });
+
+    afterAll(async () => { await app.close(); });
+
+    it('POST without X-Requested-With → 200', async () => {
+      const res = await app.inject({ method: 'POST', url: '/api/library/scan-debug' });
+      expect(res.statusCode).toBe(200);
+    });
+  });
+
   describe('mode: forms', () => {
     let app: FastifyInstance;
     let authService: AuthService;
