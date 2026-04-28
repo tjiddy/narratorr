@@ -744,7 +744,7 @@ describe('Prowlarr-compatible API v1 routes', () => {
       expect(payload.detailedDescription).toBeDefined();
     });
 
-    it('returns 400 with (missing) message when implementation is undefined', async () => {
+    it('returns 400 with standard validation envelope when implementation is missing (Zod path)', async () => {
       const res = await app.inject({
         method: 'POST',
         url: '/api/v1/indexer/test',
@@ -758,8 +758,10 @@ describe('Prowlarr-compatible API v1 routes', () => {
 
       expect(res.statusCode).toBe(400);
       const payload = JSON.parse(res.payload);
-      expect(payload.message).toContain('(missing)');
-      expect(payload.isWarning).toBe(false);
+      expect(payload.statusCode).toBe(400);
+      expect(payload.error).toBe('Bad Request');
+      expect(typeof payload.message).toBe('string');
+      expect(payload.message.length).toBeGreaterThan(0);
       expect(services.indexer.testConfig).not.toHaveBeenCalled();
     });
 
@@ -936,6 +938,190 @@ describe('Prowlarr-compatible API v1 routes', () => {
       const seedTime = payload.fields.find((f: { name: string }) => f.name === 'seedCriteria.seedTime');
       expect(seedRatio.value).toBeNull();
       expect(seedTime.value).toBeNull();
+    });
+  });
+
+  describe('Zod schema validation (AC10)', () => {
+    function expectStandardEnvelope(res: { statusCode: number; payload: string }) {
+      expect(res.statusCode).toBe(400);
+      const payload = JSON.parse(res.payload);
+      expect(payload.statusCode).toBe(400);
+      expect(payload.error).toBe('Bad Request');
+      expect(typeof payload.message).toBe('string');
+      expect(payload.message.length).toBeGreaterThan(0);
+    }
+
+    it('POST: priority as a non-numeric string → 400 standard envelope', async () => {
+      const res = await app.inject({
+        method: 'POST',
+        url: '/api/v1/indexer',
+        payload: { ...validTorznabBody, priority: 'high' },
+      });
+      expectStandardEnvelope(res);
+      expect(services.indexer.createOrUpsertProwlarr).not.toHaveBeenCalled();
+    });
+
+    it('POST: priority above the 0–100 ceiling → 400 standard envelope', async () => {
+      const res = await app.inject({
+        method: 'POST',
+        url: '/api/v1/indexer',
+        payload: { ...validTorznabBody, priority: 150 },
+      });
+      expectStandardEnvelope(res);
+      expect(services.indexer.createOrUpsertProwlarr).not.toHaveBeenCalled();
+    });
+
+    it('POST: extra unknown top-level key (randomKey) → 400 standard envelope (.strict())', async () => {
+      const res = await app.inject({
+        method: 'POST',
+        url: '/api/v1/indexer',
+        payload: { ...validTorznabBody, randomKey: 'x' },
+      });
+      expectStandardEnvelope(res);
+      expect(services.indexer.createOrUpsertProwlarr).not.toHaveBeenCalled();
+    });
+
+    it('POST: missing fields entirely → 400 standard envelope (no longer 500)', async () => {
+      const { fields: _drop, ...rest } = validTorznabBody;
+      void _drop;
+      const res = await app.inject({
+        method: 'POST',
+        url: '/api/v1/indexer',
+        payload: rest,
+      });
+      expectStandardEnvelope(res);
+      expect(services.indexer.createOrUpsertProwlarr).not.toHaveBeenCalled();
+    });
+
+    it('POST: fields as a non-array → 400 standard envelope', async () => {
+      const res = await app.inject({
+        method: 'POST',
+        url: '/api/v1/indexer',
+        payload: { ...validTorznabBody, fields: 'not-an-array' },
+      });
+      expectStandardEnvelope(res);
+      expect(services.indexer.createOrUpsertProwlarr).not.toHaveBeenCalled();
+    });
+
+    it('PUT: malformed fields[].value (object) → 400 standard envelope', async () => {
+      const res = await app.inject({
+        method: 'PUT',
+        url: '/api/v1/indexer/1',
+        payload: {
+          ...validTorznabBody,
+          fields: [
+            { name: 'baseUrl', value: { nested: 'object' }, type: 'textbox' },
+            { name: 'apiKey', value: 'k', type: 'textbox' },
+          ],
+        },
+      });
+      expectStandardEnvelope(res);
+      expect(services.indexer.update).not.toHaveBeenCalled();
+    });
+
+    it('POST /test: missing implementation → 400 standard envelope (Zod path)', async () => {
+      const res = await app.inject({
+        method: 'POST',
+        url: '/api/v1/indexer/test',
+        payload: {
+          fields: [
+            { name: 'baseUrl', value: 'http://localhost:9696/1/', type: 'textbox' },
+            { name: 'apiKey', value: 'key', type: 'textbox' },
+          ],
+        },
+      });
+      expectStandardEnvelope(res);
+      expect(services.indexer.testConfig).not.toHaveBeenCalled();
+    });
+
+    it('POST /test: full validTorznabBody shape → existing pass path (full schema reused)', async () => {
+      (services.indexer.testConfig as Mock).mockResolvedValue({ success: true, message: 'OK' });
+
+      const res = await app.inject({
+        method: 'POST',
+        url: '/api/v1/indexer/test',
+        payload: validTorznabBody,
+      });
+
+      expect(res.statusCode).toBe(200);
+      expect(JSON.parse(res.payload)).toEqual({});
+    });
+
+    it('POST: full validTorznabBody including enableAutomaticSearch/enableInteractiveSearch → 201 (.strict() compat regression)', async () => {
+      (services.indexer.createOrUpsertProwlarr as Mock).mockResolvedValue({
+        row: mockTorznabIndexer,
+        upserted: false,
+      });
+
+      const res = await app.inject({
+        method: 'POST',
+        url: '/api/v1/indexer',
+        payload: validTorznabBody,
+      });
+
+      expect(res.statusCode).toBe(201);
+    });
+  });
+
+  describe('Domain checks for non-string baseUrl/apiKey values (AC11)', () => {
+    it('POST: baseUrl.value as a number → 400 with handler { message } envelope (not 500)', async () => {
+      const res = await app.inject({
+        method: 'POST',
+        url: '/api/v1/indexer',
+        payload: {
+          ...validTorznabBody,
+          fields: [
+            { name: 'baseUrl', value: 123, type: 'textbox' },
+            { name: 'apiKey', value: 'k', type: 'textbox' },
+          ],
+        },
+      });
+
+      expect(res.statusCode).toBe(400);
+      const payload = JSON.parse(res.payload);
+      expect(payload.message).toContain('baseUrl');
+      expect(payload.statusCode).toBeUndefined();
+      expect(services.indexer.createOrUpsertProwlarr).not.toHaveBeenCalled();
+    });
+
+    it('POST: apiKey.value as a boolean → 400 with handler { message } envelope', async () => {
+      const res = await app.inject({
+        method: 'POST',
+        url: '/api/v1/indexer',
+        payload: {
+          ...validTorznabBody,
+          fields: [
+            { name: 'baseUrl', value: 'http://prowlarr:9696/1/', type: 'textbox' },
+            { name: 'apiKey', value: true, type: 'textbox' },
+          ],
+        },
+      });
+
+      expect(res.statusCode).toBe(400);
+      const payload = JSON.parse(res.payload);
+      expect(payload.message).toContain('apiKey');
+      expect(payload.statusCode).toBeUndefined();
+      expect(services.indexer.createOrUpsertProwlarr).not.toHaveBeenCalled();
+    });
+
+    it('PUT: baseUrl.value as an array → 400 with handler { message } envelope (not 500 from matchAll)', async () => {
+      const res = await app.inject({
+        method: 'PUT',
+        url: '/api/v1/indexer/1',
+        payload: {
+          ...validTorznabBody,
+          fields: [
+            { name: 'baseUrl', value: ['x'], type: 'textbox' },
+            { name: 'apiKey', value: 'k', type: 'textbox' },
+          ],
+        },
+      });
+
+      expect(res.statusCode).toBe(400);
+      const payload = JSON.parse(res.payload);
+      expect(payload.message).toContain('baseUrl');
+      expect(payload.statusCode).toBeUndefined();
+      expect(services.indexer.update).not.toHaveBeenCalled();
     });
   });
 });
