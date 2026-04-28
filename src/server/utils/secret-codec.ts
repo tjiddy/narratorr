@@ -20,8 +20,16 @@ export type SecretEntity =
   | 'prowlarr'
   | 'auth'
   | 'network'
-  | 'importList';
+  | 'importList'
+  | 'notifier';
 
+// Notifier secret fields are flat across all subtypes (encryptFields skips
+// missing fields harmlessly). When adding a new notifier subtype with a secret
+// field, append it here. Contributors per subtype:
+//   webhook:  url, headers           discord:  webhookUrl
+//   slack:    webhookUrl             telegram: botToken
+//   email:    smtpPass               pushover: pushoverToken
+//   gotify:   gotifyToken            (script/ntfy: no secrets in current schema)
 const SECRET_FIELDS: Record<SecretEntity, readonly string[]> = {
   indexer: ['apiKey', 'flareSolverrUrl', 'mamId'],
   downloadClient: ['password', 'apiKey'],
@@ -29,6 +37,7 @@ const SECRET_FIELDS: Record<SecretEntity, readonly string[]> = {
   auth: ['sessionSecret', 'apiKey'],
   network: ['proxyUrl'],
   importList: ['apiKey'],
+  notifier: ['url', 'webhookUrl', 'botToken', 'smtpPass', 'pushoverToken', 'gotifyToken', 'headers'],
 };
 
 // ─── Low-level encrypt / decrypt ─────────────────────────────────────────────
@@ -87,7 +96,7 @@ export function resolveSentinelFields(
 
 // ─── Field-level operations ──────────────────────────────────────────────────
 
-function getSecretFieldNames(entity: SecretEntity): readonly string[] {
+export function getSecretFieldNames(entity: SecretEntity): readonly string[] {
   return SECRET_FIELDS[entity] ?? [];
 }
 

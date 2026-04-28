@@ -1,8 +1,11 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { NotifierService } from './notifier.service.js';
 import { mockDbChain, createMockDb, createMockLogger } from '../__tests__/helpers.js';
+import { initializeKey, _resetKey, encrypt, isEncrypted } from '../utils/secret-codec.js';
 
 import { createMockDbNotifier } from '../__tests__/factories.js';
+
+const TEST_KEY = Buffer.from('a'.repeat(64), 'hex');
 
 const mockWebhookNotifier = createMockDbNotifier();
 
@@ -20,9 +23,14 @@ describe('NotifierService', () => {
   let service: NotifierService;
 
   beforeEach(() => {
+    initializeKey(TEST_KEY);
     db = createMockDb();
     log = createMockLogger();
     service = new NotifierService(db as never, log as never);
+  });
+
+  afterEach(() => {
+    _resetKey();
   });
 
   describe('getAll', () => {
@@ -374,6 +382,247 @@ describe('NotifierService', () => {
       expect(result.message).toBe('DNS resolution failed');
 
       fetchSpy.mockRestore();
+    });
+  });
+
+  // ── #731 Encrypt and mask notifier secrets ─────────────────────────────
+  describe('#731 encryption — create', () => {
+    it('encrypts secret fields before insert (webhook url + headers)', async () => {
+      const insertChain = mockDbChain([createMockDbNotifier()]);
+      db.insert.mockReturnValue(insertChain);
+
+      await service.create({
+        name: 'Hook',
+        type: 'webhook',
+        enabled: true,
+        events: ['on_grab'],
+        settings: { url: 'https://hook.example.com', headers: '{"Authorization":"Bearer x"}' },
+      });
+
+      const valuesArg = (insertChain as { values: ReturnType<typeof vi.fn> }).values.mock.calls[0][0] as { settings: Record<string, unknown> };
+      expect(isEncrypted(valuesArg.settings.url as string)).toBe(true);
+      expect(isEncrypted(valuesArg.settings.headers as string)).toBe(true);
+    });
+
+    it('encrypts telegram botToken', async () => {
+      const insertChain = mockDbChain([createMockDbNotifier({ type: 'telegram', settings: {} })]);
+      db.insert.mockReturnValue(insertChain);
+
+      await service.create({
+        name: 'TG',
+        type: 'telegram',
+        enabled: true,
+        events: ['on_grab'],
+        settings: { botToken: '12:abc', chatId: '-100' },
+      });
+
+      const valuesArg = (insertChain as { values: ReturnType<typeof vi.fn> }).values.mock.calls[0][0] as { settings: Record<string, unknown> };
+      expect(isEncrypted(valuesArg.settings.botToken as string)).toBe(true);
+      expect(valuesArg.settings.chatId).toBe('-100');
+    });
+
+    it('encrypts email smtpPass', async () => {
+      const insertChain = mockDbChain([createMockDbNotifier({ type: 'email', settings: {} })]);
+      db.insert.mockReturnValue(insertChain);
+
+      await service.create({
+        name: 'Email',
+        type: 'email',
+        enabled: true,
+        events: ['on_grab'],
+        settings: { smtpHost: 'smtp.test', smtpPass: 'pw', fromAddress: 'a@b.c', toAddress: 'c@d.e' },
+      });
+
+      const valuesArg = (insertChain as { values: ReturnType<typeof vi.fn> }).values.mock.calls[0][0] as { settings: Record<string, unknown> };
+      expect(isEncrypted(valuesArg.settings.smtpPass as string)).toBe(true);
+      expect(valuesArg.settings.smtpHost).toBe('smtp.test');
+    });
+
+    it('returns decrypted row from create', async () => {
+      const encrypted = encrypt('https://hook.example.com', TEST_KEY);
+      db.insert.mockReturnValue(mockDbChain([
+        createMockDbNotifier({ settings: { url: encrypted } }),
+      ]));
+
+      const result = await service.create({
+        name: 'X', type: 'webhook', enabled: true, events: ['on_grab'],
+        settings: { url: 'https://hook.example.com' },
+      });
+
+      expect(result.settings).toMatchObject({ url: 'https://hook.example.com' });
+    });
+  });
+
+  describe('#731 encryption — getAll / getById decryption', () => {
+    it('getAll returns decrypted settings', async () => {
+      const enc = encrypt('https://hook.example.com', TEST_KEY);
+      db.select.mockReturnValue(mockDbChain([createMockDbNotifier({ settings: { url: enc } })]));
+
+      const rows = await service.getAll();
+      expect(rows[0].settings).toMatchObject({ url: 'https://hook.example.com' });
+    });
+
+    it('getById returns decrypted settings', async () => {
+      const enc = encrypt('123:abc', TEST_KEY);
+      db.select.mockReturnValue(mockDbChain([createMockDbNotifier({ type: 'telegram', settings: { botToken: enc, chatId: '1' } })]));
+
+      const row = await service.getById(1);
+      expect(row?.settings).toMatchObject({ botToken: '123:abc', chatId: '1' });
+    });
+  });
+
+  describe('#731 encryption — update sentinel preservation (AC9)', () => {
+    it('PUT with ******** sentinel preserves stored ciphertext byte-for-byte', async () => {
+      const encryptedUrl = encrypt('https://real.hook/path', TEST_KEY);
+      const existing = createMockDbNotifier({ settings: { url: encryptedUrl, method: 'POST' } });
+
+      db.select.mockReturnValue(mockDbChain([existing]));
+      const updateChain = mockDbChain([existing]);
+      db.update.mockReturnValue(updateChain);
+
+      await service.update(1, {
+        type: 'webhook',
+        settings: { url: '********', method: 'PUT' },
+      });
+
+      const setArg = (updateChain as { set: ReturnType<typeof vi.fn> }).set.mock.calls[0][0] as { settings: Record<string, unknown> };
+      // Exact byte-for-byte match — same IV, auth tag, ciphertext
+      expect(setArg.settings.url).toBe(encryptedUrl);
+      expect(setArg.settings.method).toBe('PUT');
+    });
+
+    it('PUT with new real value re-encrypts', async () => {
+      const oldEnc = encrypt('old-token', TEST_KEY);
+      const existing = createMockDbNotifier({ type: 'telegram', settings: { botToken: oldEnc, chatId: '1' } });
+
+      db.select.mockReturnValue(mockDbChain([existing]));
+      const updateChain = mockDbChain([existing]);
+      db.update.mockReturnValue(updateChain);
+
+      await service.update(1, {
+        type: 'telegram',
+        settings: { botToken: 'new-token', chatId: '1' },
+      });
+
+      const setArg = (updateChain as { set: ReturnType<typeof vi.fn> }).set.mock.calls[0][0] as { settings: Record<string, unknown> };
+      expect(isEncrypted(setArg.settings.botToken as string)).toBe(true);
+      expect(setArg.settings.botToken).not.toBe(oldEnc);
+    });
+  });
+
+  describe('#731 encryption — notify decrypts before adapter (AC4)', () => {
+    it('notify() decrypts webhook url so adapter sees plaintext', async () => {
+      const enc = encrypt('https://real.hook.example.com', TEST_KEY);
+      const notifier = createMockDbNotifier({
+        events: ['on_grab'],
+        settings: { url: enc, method: 'POST' },
+      });
+      db.select.mockReturnValue(mockDbChain([notifier]));
+
+      const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response('ok', { status: 200 }));
+
+      await service.notify('on_grab', { event: 'on_grab' });
+
+      expect(fetchSpy).toHaveBeenCalledWith(
+        'https://real.hook.example.com',
+        expect.objectContaining({ method: 'POST' }),
+      );
+      fetchSpy.mockRestore();
+    });
+
+    it('notify() decrypts telegram botToken so adapter sees plaintext', async () => {
+      const enc = encrypt('123:secret-token', TEST_KEY);
+      const notifier = createMockDbNotifier({
+        type: 'telegram',
+        events: ['on_grab'],
+        settings: { botToken: enc, chatId: '-100' },
+      });
+      db.select.mockReturnValue(mockDbChain([notifier]));
+
+      const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+        new Response(JSON.stringify({ ok: true }), { status: 200, headers: { 'content-type': 'application/json' } }),
+      );
+
+      await service.notify('on_grab', { event: 'on_grab', book: { title: 'X' } });
+
+      // The Telegram adapter encodes the bot token in the URL path
+      const callUrl = fetchSpy.mock.calls[0][0] as string;
+      expect(callUrl).toContain('123:secret-token');
+      expect(callUrl).not.toContain('$ENC$');
+      fetchSpy.mockRestore();
+    });
+  });
+
+  describe('#731 encryption — testConfig sentinel resolution (AC5)', () => {
+    it('with id and ******** sentinel: resolves against decrypted saved settings', async () => {
+      const enc = encrypt('https://real.hook.example.com', TEST_KEY);
+      db.select.mockReturnValue(mockDbChain([
+        createMockDbNotifier({ id: 5, settings: { url: enc, method: 'POST' } }),
+      ]));
+
+      const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response('ok', { status: 200 }));
+
+      const result = await service.testConfig({
+        type: 'webhook',
+        settings: { url: '********', method: 'POST' },
+        id: 5,
+      });
+
+      expect(result.success).toBe(true);
+      expect(fetchSpy).toHaveBeenCalledWith(
+        'https://real.hook.example.com',
+        expect.anything(),
+      );
+      fetchSpy.mockRestore();
+    });
+
+    it('with id and a non-sentinel value: uses incoming value as-is', async () => {
+      db.select.mockReturnValue(mockDbChain([
+        createMockDbNotifier({ id: 5, settings: { url: 'https://old.hook' } }),
+      ]));
+
+      const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response('ok', { status: 200 }));
+
+      await service.testConfig({
+        type: 'webhook',
+        settings: { url: 'https://new.hook', method: 'POST' },
+        id: 5,
+      });
+
+      expect(fetchSpy).toHaveBeenCalledWith(
+        'https://new.hook',
+        expect.anything(),
+      );
+      fetchSpy.mockRestore();
+    });
+
+    it('without id (create-mode): incoming value used directly, no DB lookup', async () => {
+      const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response('ok', { status: 200 }));
+
+      await service.testConfig({
+        type: 'webhook',
+        settings: { url: 'https://example.com/hook' },
+      });
+
+      expect(db.select).not.toHaveBeenCalled();
+      expect(fetchSpy).toHaveBeenCalledWith(
+        'https://example.com/hook',
+        expect.anything(),
+      );
+      fetchSpy.mockRestore();
+    });
+
+    it('with id but notifier not found: returns failure', async () => {
+      db.select.mockReturnValue(mockDbChain([]));
+
+      const result = await service.testConfig({
+        type: 'webhook',
+        settings: { url: '********' },
+        id: 999,
+      });
+
+      expect(result.success).toBe(false);
+      expect(result.message).toContain('not found');
     });
   });
 

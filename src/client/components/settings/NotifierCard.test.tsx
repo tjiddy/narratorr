@@ -394,6 +394,48 @@ describe('NotifierCard — edit mode', () => {
     expect(failureCb).not.toBeChecked();
   });
 
+  it('#731 in edit mode, clicking Test posts the editing notifier id alongside form data', async () => {
+    const onFormTest = vi.fn();
+    const user = userEvent.setup();
+
+    renderWithProviders(
+      <NotifierCard
+        notifier={mockNotifier}
+        mode="edit"
+        onSubmit={vi.fn()}
+        onFormTest={onFormTest}
+      />,
+    );
+
+    await user.click(screen.getByText('Test').closest('button')!);
+
+    expect(onFormTest).toHaveBeenCalledWith(
+      expect.objectContaining({ id: mockNotifier.id, type: mockNotifier.type }),
+    );
+  });
+
+  it('#731 in create mode, clicking Test posts no id', async () => {
+    const onFormTest = vi.fn();
+    const user = userEvent.setup();
+
+    renderWithProviders(
+      <NotifierCard
+        mode="create"
+        onSubmit={vi.fn()}
+        onFormTest={onFormTest}
+      />,
+    );
+
+    // Fill all required webhook fields so the form passes validation and reaches onFormTest
+    await user.type(screen.getByPlaceholderText('My Webhook'), 'New Notifier');
+    await user.type(screen.getByPlaceholderText('https://example.com/webhook'), 'https://hook.example.com');
+    await user.click(screen.getByText('Test').closest('button')!);
+
+    expect(onFormTest).toHaveBeenCalled();
+    const callArg = onFormTest.mock.calls[0][0];
+    expect('id' in callArg).toBe(false);
+  });
+
   it('hydrates edit form with registry defaults for missing settings fields', () => {
     const notifierWithSparseSettings = createMockNotifier({
       id: 10,

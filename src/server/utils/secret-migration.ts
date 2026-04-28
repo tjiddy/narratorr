@@ -1,8 +1,8 @@
 import { eq } from 'drizzle-orm';
 import type { Db } from '../../db/index.js';
 import type { FastifyBaseLogger } from 'fastify';
-import { indexers, downloadClients, settings } from '../../db/schema.js';
-import { isEncrypted, encryptFields, type SecretEntity } from './secret-codec.js';
+import { indexers, downloadClients, notifiers, settings } from '../../db/schema.js';
+import { isEncrypted, encryptFields, getSecretFieldNames, type SecretEntity } from './secret-codec.js';
 
 /** Settings categories that contain secret fields. */
 const SECRET_SETTINGS_CATEGORIES: { key: string; entity: SecretEntity }[] = [
@@ -13,16 +13,7 @@ const SECRET_SETTINGS_CATEGORIES: { key: string; entity: SecretEntity }[] = [
 
 /** Check if a settings object has any plaintext (non-encrypted) secret fields. */
 function hasPlaintextSecrets(entity: SecretEntity, obj: Record<string, unknown>): boolean {
-  const FIELD_MAP: Record<SecretEntity, readonly string[]> = {
-    indexer: ['apiKey', 'flareSolverrUrl', 'mamId'],
-    downloadClient: ['password', 'apiKey'],
-    prowlarr: ['apiKey'],
-    auth: ['sessionSecret', 'apiKey'],
-    network: ['proxyUrl'],
-    importList: ['apiKey'],
-  };
-  const fields = FIELD_MAP[entity] ?? [];
-  for (const field of fields) {
+  for (const field of getSecretFieldNames(entity)) {
     const value = obj[field];
     if (typeof value === 'string' && value.length > 0 && !isEncrypted(value)) {
       return true;
@@ -62,7 +53,17 @@ export async function migrateSecretsToEncrypted(
     migratedCount++;
   }
 
-  // 3. Settings rows (prowlarr, auth, network)
+  // 3. Notifiers
+  const allNotifiers = await db.select().from(notifiers);
+  for (const row of allNotifiers) {
+    const s = (row.settings ?? {}) as Record<string, unknown>;
+    if (!hasPlaintextSecrets('notifier', s)) continue;
+    const encrypted = encryptFields('notifier', { ...s }, key);
+    await db.update(notifiers).set({ settings: encrypted }).where(eq(notifiers.id, row.id));
+    migratedCount++;
+  }
+
+  // 4. Settings rows (prowlarr, auth, network)
   const allSettings = await db.select().from(settings);
   for (const category of SECRET_SETTINGS_CATEGORIES) {
     const row = allSettings.find((r) => r.key === category.key);

@@ -542,6 +542,15 @@ describe('notifiersApi', () => {
       body: JSON.stringify(data),
     }));
   });
+
+  it('#731 testNotifierConfig → POST /notifiers/test preserves optional id in body', async () => {
+    const data = { name: 'Edited', type: 'webhook' as const, enabled: true, events: ['on_grab'], settings: { url: '********' }, id: 5 };
+    await notifiersApi.testNotifierConfig(data);
+    expect(mockFetchApi).toHaveBeenCalledWith('/notifiers/test', expect.objectContaining({
+      method: 'POST',
+      body: JSON.stringify(data),
+    }));
+  });
 });
 
 

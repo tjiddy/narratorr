@@ -10,6 +10,7 @@ import {
 } from '../../core/index.js';
 import { getErrorMessage } from '../utils/error-message.js';
 import type { NotifierSettings } from '../../shared/schemas/notifier.js';
+import { encryptFields, decryptFields, resolveSentinelFields, getKey } from '../utils/secret-codec.js';
 import { serializeError } from '../utils/serialize-error.js';
 
 
@@ -19,30 +20,56 @@ type NewNotifier = typeof notifiers.$inferInsert;
 export class NotifierService {
   constructor(private db: Db, private log: FastifyBaseLogger) {}
 
+  // Any path that reads notifier rows for adapter construction MUST run them
+  // through decryptRow first — adapters need plaintext to fire real requests.
+  // notify() reads enabled rows directly; test(id) and testConfig(id) route
+  // through getById which decrypts.
+  private decryptRow(row: NotifierRow): NotifierRow {
+    if (!row.settings) return row;
+    const s = { ...(row.settings as Record<string, unknown>) };
+    return { ...row, settings: decryptFields('notifier', s, getKey()) };
+  }
+
   async getAll(): Promise<NotifierRow[]> {
-    return this.db.select().from(notifiers);
+    const rows = await this.db.select().from(notifiers);
+    return rows.map((r) => this.decryptRow(r));
   }
 
   async getById(id: number): Promise<NotifierRow | null> {
     const results = await this.db.select().from(notifiers).where(eq(notifiers.id, id)).limit(1);
-    return results[0] || null;
+    const row = results[0] || null;
+    return row ? this.decryptRow(row) : null;
   }
 
   async create(data: Omit<NewNotifier, 'id' | 'createdAt'>): Promise<NotifierRow> {
-    const result = await this.db.insert(notifiers).values(data).returning();
+    const toInsert = { ...data };
+    if (toInsert.settings) {
+      toInsert.settings = encryptFields('notifier', { ...(toInsert.settings as Record<string, unknown>) }, getKey());
+    }
+    const result = await this.db.insert(notifiers).values(toInsert).returning();
     this.log.info({ name: data.name, type: data.type }, 'Notifier created');
-    return result[0];
+    return this.decryptRow(result[0]);
   }
 
   async update(id: number, data: Partial<NewNotifier>): Promise<NotifierRow | null> {
+    const toUpdate = { ...data };
+    if (toUpdate.settings) {
+      const settings = { ...(toUpdate.settings as Record<string, unknown>) };
+      const existing = await this.db.select().from(notifiers).where(eq(notifiers.id, id)).limit(1);
+      // Resolve sentinels against RAW (encrypted) existing settings — encryptFields
+      // skips $ENC$-prefixed values, so unchanged secrets retain their stored bytes.
+      resolveSentinelFields(settings, (existing[0]?.settings ?? {}) as Record<string, unknown>);
+      toUpdate.settings = encryptFields('notifier', settings, getKey());
+    }
     const result = await this.db
       .update(notifiers)
-      .set(data)
+      .set(toUpdate)
       .where(eq(notifiers.id, id))
       .returning();
 
     this.log.info({ id }, 'Notifier updated');
-    return result[0] || null;
+    const row = result[0] || null;
+    return row ? this.decryptRow(row) : null;
   }
 
   async delete(id: number): Promise<boolean> {
@@ -79,7 +106,7 @@ export class NotifierService {
     await Promise.allSettled(
       matching.map(async (notifier) => {
         try {
-          const adapter = this.createAdapter(notifier);
+          const adapter = this.createAdapter(this.decryptRow(notifier));
           const result = await adapter.send(event, payload);
           if (!result.success) {
             this.log.warn({ notifier: notifier.name, notifierType: notifier.type, event, message: result.message }, 'Notification failed');
@@ -110,11 +137,23 @@ export class NotifierService {
     }
   }
 
-  async testConfig(data: { type: string; settings: Record<string, unknown> }): Promise<{ success: boolean; message?: string }> {
+  async testConfig(data: { type: string; settings: Record<string, unknown>; id?: number }): Promise<{ success: boolean; message?: string }> {
     try {
+      // When editing an existing notifier, resolve sentinel values against
+      // the DECRYPTED saved settings — the adapter test needs real plaintext.
+      let resolvedSettings = data.settings;
+      if (data.id != null) {
+        const existing = await this.getById(data.id);
+        if (!existing) {
+          return { success: false, message: 'Notifier not found' };
+        }
+        resolvedSettings = { ...data.settings };
+        resolveSentinelFields(resolvedSettings, (existing.settings ?? {}) as Record<string, unknown>);
+      }
+
       const fakeRow = {
         id: 0, name: '', type: data.type, enabled: true,
-        events: ['on_grab'], settings: data.settings, createdAt: new Date(),
+        events: ['on_grab'], settings: resolvedSettings, createdAt: new Date(),
       } as NotifierRow;
       const adapter = this.createAdapter(fakeRow);
       return await adapter.test();

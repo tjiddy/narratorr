@@ -30,7 +30,7 @@ export const notifiersApi = {
     fetchApi<{ success: boolean }>(`/notifiers/${id}`, { method: 'DELETE' }),
   testNotifier: (id: number) =>
     fetchApi<TestResult>(`/notifiers/${id}/test`, { method: 'POST' }),
-  testNotifierConfig: (data: Omit<Notifier, 'id' | 'createdAt'>) =>
+  testNotifierConfig: (data: Omit<Notifier, 'id' | 'createdAt'> & { id?: number }) =>
     fetchApi<TestResult>('/notifiers/test', {
       method: 'POST',
       body: JSON.stringify(data),
