@@ -1,7 +1,7 @@
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import type { IndexerService } from '../services/indexer.service.js';
-import { maskFields } from '../utils/secret-codec.js';
+import { maskFields, isSentinel } from '../utils/secret-codec.js';
 import { getVersion } from '../utils/version.js';
 
 // ── Types ──
@@ -336,7 +336,19 @@ function registerIndexerRoutes(app: FastifyInstance, indexerService: IndexerServ
       const domainError = validateReadarrDomain(body);
       if (domainError) return reply.status(400).send({ message: domainError });
 
-      const { mapping, settings, sourceIndexerId } = parseReadarrBody(body);
+      const { mapping, settings, sourceIndexerId: derivedSourceIndexerId } = parseReadarrBody(body);
+
+      // When the client re-submits the masked baseUrl sentinel (apiUrl is now a
+      // secret field, #742), the derived sourceIndexerId is null because the
+      // sentinel has no numeric path segment. Preserve the existing row's
+      // sourceIndexerId so the row keeps its Prowlarr identity and stays
+      // upsert-targetable on subsequent syncs.
+      let sourceIndexerId = derivedSourceIndexerId;
+      if (typeof settings.apiUrl === 'string' && isSentinel(settings.apiUrl)) {
+        const existing = await indexerService.getById(id);
+        if (existing) sourceIndexerId = existing.sourceIndexerId;
+      }
+
       const updated = await indexerService.update(id, {
         name: body.name ?? body.implementation,
         type: mapping.type,

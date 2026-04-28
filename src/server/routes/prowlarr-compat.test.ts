@@ -695,6 +695,60 @@ describe('Prowlarr-compatible API v1 routes', () => {
 
       expect(res.statusCode).toBe(200);
     });
+
+    it('preserves existing sourceIndexerId when baseUrl is the masked sentinel (#742 F1)', async () => {
+      // Existing prowlarr-sourced row with sourceIndexerId=1
+      (services.indexer.getById as Mock).mockResolvedValue(mockTorznabIndexer);
+      (services.indexer.update as Mock).mockResolvedValue(mockTorznabIndexer);
+
+      const res = await app.inject({
+        method: 'PUT',
+        url: '/api/v1/indexer/1',
+        payload: {
+          ...validTorznabBody,
+          fields: [
+            // Client re-submits the masked baseUrl unchanged. The derived
+            // sourceIndexerId would be null (no numeric segment in the
+            // sentinel), but the route must preserve the stored 1.
+            { name: 'baseUrl', value: '********', type: 'textbox' },
+            { name: 'apiKey', value: '********', type: 'textbox' },
+          ],
+        },
+      });
+
+      expect(res.statusCode).toBe(200);
+      expect(services.indexer.getById).toHaveBeenCalledWith(1);
+      expect(services.indexer.update).toHaveBeenCalledWith(
+        1,
+        expect.objectContaining({
+          source: 'prowlarr',
+          sourceIndexerId: 1,
+        }),
+      );
+    });
+
+    it('still derives sourceIndexerId from a fresh baseUrl when the client sends a real URL', async () => {
+      (services.indexer.update as Mock).mockResolvedValue(mockTorznabIndexer);
+
+      const res = await app.inject({
+        method: 'PUT',
+        url: '/api/v1/indexer/1',
+        payload: {
+          ...validTorznabBody,
+          fields: [
+            { name: 'baseUrl', value: 'http://prowlarr:9696/42/', type: 'textbox' },
+            { name: 'apiKey', value: 'newkey', type: 'textbox' },
+          ],
+        },
+      });
+
+      expect(res.statusCode).toBe(200);
+      expect(services.indexer.getById).not.toHaveBeenCalled();
+      expect(services.indexer.update).toHaveBeenCalledWith(
+        1,
+        expect.objectContaining({ sourceIndexerId: 42 }),
+      );
+    });
   });
 
   describe('DELETE /api/v1/indexer/:id (AC3)', () => {
