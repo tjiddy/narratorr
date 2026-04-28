@@ -1881,22 +1881,19 @@ describe('QualityGateOrchestrator', () => {
       return { orchestrator, log, qualityGateService };
     }
 
-    it('processOneDownload() auto-import path raises wire error when called before wire()', async () => {
-      const { orchestrator, log, qualityGateService } = makeUnwiredOrchestrator();
+    // F2 (#797 review) — required-wiring contract surfaces, doesn't get swallowed.
+    it('processOneDownload() imported path surfaces ServiceWireError instead of converting to pending_review', async () => {
+      const { orchestrator, qualityGateService } = makeUnwiredOrchestrator();
 
-      // The processDownload mock returns action='imported', so the auto-import
-      // path runs and requires wired nudgeImportWorker. The error is caught
-      // by the outer try/catch which logs it and sets pending_review — proving
-      // the wire-required dispatch threw rather than silently no-op'ing.
-      await orchestrator.processOneDownload(1);
+      // processDownload mock returns action='imported', so the auto-import
+      // path runs and requires wired nudgeImportWorker. The error must NOT
+      // be swallowed by the recoverable processing catch — it must propagate
+      // out of processOneDownload so the composition-root bug is visible.
+      await expect(orchestrator.processOneDownload(1)).rejects.toThrow(/QualityGateOrchestrator used before wire/);
 
-      expect(log.error).toHaveBeenCalledWith(
-        expect.objectContaining({
-          error: expect.objectContaining({ message: expect.stringMatching(/QualityGateOrchestrator used before wire/) }),
-        }),
-        'Quality gate error',
-      );
-      expect(qualityGateService.setStatus).toHaveBeenCalledWith(baseDownload.id, 'pending_review');
+      // Critical: setStatus('pending_review') must NOT be called — that is
+      // the recoverable-error fallback and would mask the wiring bug.
+      expect(qualityGateService.setStatus).not.toHaveBeenCalledWith(baseDownload.id, 'pending_review');
     });
 
     it('wire() called twice throws ServiceWireError', () => {

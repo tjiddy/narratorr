@@ -186,6 +186,12 @@ export class EventHistoryService {
       throw new EventHistoryServiceError('Associated download not found', 'DOWNLOAD_NOT_FOUND');
     }
 
+    // Fail-fast: if we will need retrySearchDeps later (event has bookId),
+    // verify wire() was called BEFORE we mutate any state. Without this guard,
+    // an unwired service would blacklist + revert book status and only then
+    // throw ServiceWireError, leaving a partial mark-failed operation behind.
+    const retrySearchDeps = event.bookId ? this.wired.require().retrySearchDeps : null;
+
     // Blacklist the release if infoHash present; skip for Usenet (no infoHash).
     // Catch failures so book status revert and retry-search dispatch still run.
     if (download.infoHash) {
@@ -213,9 +219,10 @@ export class EventHistoryService {
 
     this.log.info({ eventId, downloadId: event.downloadId, bookId: event.bookId }, 'Event marked as failed');
 
-    // Trigger book-scoped retry search (fire-and-forget) — does NOT reset global retry budget
-    if (event.bookId) {
-      const { retrySearchDeps } = this.wired.require();
+    // Trigger book-scoped retry search (fire-and-forget) — does NOT reset global retry budget.
+    // retrySearchDeps was resolved up-front (fail-fast) so a missing wire could not have
+    // produced any partial side effects above.
+    if (event.bookId && retrySearchDeps) {
       retrySearch(event.bookId, retrySearchDeps)
         .catch((err) => this.log.warn({ error: serializeError(err) }, 'Mark-as-failed retry search failed'));
     }

@@ -394,6 +394,26 @@ describe('EventHistoryService', () => {
       await expect(unwiredService.markFailed(1)).rejects.toThrow(/EventHistoryService used before wire/);
     });
 
+    // ── F1 (#797 review) — fail-fast contract: no partial side effects ──
+    it('unwired markFailed() with bookId fails BEFORE blacklist or book-status side effects', async () => {
+      const event = createMockDbBookEvent({ downloadId: 5, bookId: 42 });
+      const download = { id: 5, infoHash: 'abc123', title: 'Test' };
+
+      db.select
+        .mockReturnValueOnce(mockDbChain([event]))
+        .mockReturnValueOnce(mockDbChain([download]));
+
+      const unwiredService = freshService();
+
+      await expect(unwiredService.markFailed(1)).rejects.toThrow(/EventHistoryService used before wire/);
+
+      // Critical contract: ServiceWireError must surface BEFORE the mutating
+      // blacklist + book-status calls so an unwired service never leaves a
+      // partial mark-failed operation behind.
+      expect(blacklistService.create).not.toHaveBeenCalled();
+      expect(bookService.updateStatus).not.toHaveBeenCalled();
+    });
+
     it('still dispatches retry-search after blacklist creation failure', async () => {
       const event = createMockDbBookEvent({ downloadId: 5, bookId: 42 });
       const download = { id: 5, infoHash: 'abc123', title: 'Test' };

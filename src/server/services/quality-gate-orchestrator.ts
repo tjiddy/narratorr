@@ -28,7 +28,7 @@ import { isTorrentRemovalDeferred } from '../utils/seed-helpers.js';
 import { cleanupDeferredRejections as cleanupDeferred } from './quality-gate-deferred-cleanup.helpers.js';
 import { serializeError } from '../utils/serialize-error.js';
 import { enqueueAutoImport } from '../utils/enqueue-auto-import.js';
-import { WireOnce } from './wire-helpers.js';
+import { WireOnce, ServiceWireError } from './wire-helpers.js';
 
 type BookRow = typeof books.$inferSelect;
 
@@ -175,6 +175,10 @@ export class QualityGateOrchestrator {
         await enqueueAutoImport(this.db, downloadId, row.book.id, nudgeImportWorker, this.log);
       }
     } catch (error: unknown) {
+      // Required-wiring contract (#739): a missing nudgeImportWorker is a
+      // composition-root bug, not a recoverable processing failure. Surface
+      // it instead of converting to pending_review like other errors.
+      if (error instanceof ServiceWireError) throw error;
       this.log.error({ error: serializeError(error), downloadId: row.download.id }, 'Quality gate error');
       await this.qualityGateService.setStatus(row.download.id, 'pending_review');
       // Revert book from importing → downloading if it was promoted before the error
