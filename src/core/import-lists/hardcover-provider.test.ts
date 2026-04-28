@@ -155,6 +155,63 @@ describe('HardcoverProvider', () => {
 
       vi.unstubAllGlobals();
     });
+
+    it('returns failure for 2xx with GraphQL errors instead of data', async () => {
+      server.use(
+        http.post(GQL_URL, () => HttpResponse.json({
+          errors: [{ message: 'Field "_typename" does not exist' }],
+        })),
+      );
+
+      const provider = new HardcoverProvider({ apiKey: 'test-key', listType: 'trending' });
+      const result = await provider.test();
+      expect(result.success).toBe(false);
+      expect(result.message).toMatch(/GraphQL error.*Field/);
+    });
+
+    it('returns failure for 2xx with both data and errors null', async () => {
+      server.use(
+        http.post(GQL_URL, () => HttpResponse.json({ data: null, errors: null })),
+      );
+
+      const provider = new HardcoverProvider({ apiKey: 'test-key', listType: 'trending' });
+      const result = await provider.test();
+      expect(result.success).toBe(false);
+      expect(result.message).toMatch(/no data\.__typename field/i);
+    });
+
+    it('returns failure for 2xx with data but missing __typename', async () => {
+      server.use(
+        http.post(GQL_URL, () => HttpResponse.json({ data: { other_field: 'x' } })),
+      );
+
+      const provider = new HardcoverProvider({ apiKey: 'test-key', listType: 'trending' });
+      const result = await provider.test();
+      expect(result.success).toBe(false);
+      expect(result.message).toMatch(/validation failed/i);
+    });
+
+    it('returns failure for 2xx with malformed body shape (string instead of object)', async () => {
+      server.use(
+        http.post(GQL_URL, () => HttpResponse.json('html-interstitial')),
+      );
+
+      const provider = new HardcoverProvider({ apiKey: 'test-key', listType: 'trending' });
+      const result = await provider.test();
+      expect(result.success).toBe(false);
+      expect(result.message).toMatch(/validation failed/i);
+    });
+
+    it('returns failure for 2xx with errors as wrong type (string)', async () => {
+      server.use(
+        http.post(GQL_URL, () => HttpResponse.json({ data: { __typename: 'query_root' }, errors: 'not-an-array' })),
+      );
+
+      const provider = new HardcoverProvider({ apiKey: 'test-key', listType: 'trending' });
+      const result = await provider.test();
+      expect(result.success).toBe(false);
+      expect(result.message).toMatch(/validation failed/i);
+    });
   });
 
   describe('schema validation', () => {

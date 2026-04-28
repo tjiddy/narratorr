@@ -64,6 +64,14 @@ const hardcoverResponseSchema = z.object({
   errors: z.array(z.object({ message: z.string() }).passthrough()).optional(),
 }).passthrough();
 
+// Probe response for `test()`: `{ __typename }` should return a `data` object
+// with a `__typename` string. Schema is intentionally loose — `errors` can also
+// be present with a string-message array.
+const hardcoverProbeResponseSchema = z.object({
+  data: z.object({ __typename: z.string() }).passthrough().nullish(),
+  errors: z.array(z.object({ message: z.string() }).passthrough()).nullish(),
+}).passthrough();
+
 function mapBook(book: HardcoverBook): ImportListItem | null {
   if (!book.title) return null;
   const author = book.contributions?.[0]?.author?.name || undefined;
@@ -153,6 +161,22 @@ export class HardcoverProvider implements ImportListProvider {
 
       if (!res.ok) {
         return { success: false, message: `API returned ${res.status}: ${res.statusText}` };
+      }
+
+      const raw: unknown = await res.json();
+      const parsed = hardcoverProbeResponseSchema.safeParse(raw);
+      if (!parsed.success) {
+        return {
+          success: false,
+          message: `Validation failed: ${parsed.error.issues[0]?.message ?? 'unknown'}`,
+        };
+      }
+      const data = parsed.data;
+      if (data.errors?.length) {
+        return { success: false, message: `Hardcover GraphQL error: ${data.errors[0].message}` };
+      }
+      if (!data.data?.__typename) {
+        return { success: false, message: 'Hardcover probe returned no data.__typename field' };
       }
 
       return { success: true };
