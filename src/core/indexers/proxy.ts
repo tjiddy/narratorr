@@ -5,6 +5,7 @@
  * FlareSolverr uses its own API and is handled in fetch.ts.
  */
 
+import { z } from 'zod';
 import { ProxyAgent } from 'undici';
 import { SocksProxyAgent } from 'socks-proxy-agent';
 import { ProxyError } from './errors.js';
@@ -13,6 +14,10 @@ import { mapNetworkError } from '../utils/map-network-error.js';
 
 import { INDEXER_TIMEOUT_MS } from '../utils/constants.js';
 const IPIFY_URL = 'https://api.ipify.org?format=json';
+
+const ipifyResponseSchema = z.object({
+  ip: z.string(),
+}).passthrough();
 
 type ProxyDispatcher = ProxyAgent | SocksProxyAgent;
 
@@ -105,11 +110,20 @@ export async function fetchWithProxyAgent(
 export async function resolveProxyIp(proxyUrl: string): Promise<string> {
   try {
     const body = await fetchWithProxyAgent(IPIFY_URL, { proxyUrl, timeoutMs: 15_000 });
-    const data = JSON.parse(body) as { ip?: string };
-    if (!data.ip) {
-      throw new ProxyError('IP lookup returned empty response');
+    let raw: unknown;
+    try {
+      raw = JSON.parse(body);
+    } catch (err) {
+      throw new ProxyError('IP lookup returned non-JSON response', { cause: err instanceof Error ? err : undefined });
     }
-    return data.ip;
+    const parsed = ipifyResponseSchema.safeParse(raw);
+    if (!parsed.success) {
+      throw new ProxyError(
+        `IP lookup returned unexpected response: ${parsed.error.issues[0]?.message ?? 'unknown'}`,
+        { cause: parsed.error },
+      );
+    }
+    return parsed.data.ip;
   } catch (error: unknown) {
     if (error instanceof ProxyError) throw error;
     const msg = getErrorMessage(error);

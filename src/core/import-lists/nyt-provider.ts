@@ -1,4 +1,6 @@
+import { z } from 'zod';
 import type { ImportListProvider, ImportListItem } from './types.js';
+import { ImportListError } from './errors.js';
 import { getErrorMessage } from '../../shared/error-message.js';
 
 export interface NytConfig {
@@ -6,18 +8,18 @@ export interface NytConfig {
   list: string; // e.g., 'audio-fiction', 'audio-nonfiction'
 }
 
-interface NytBook {
-  title?: string;
-  author?: string;
-  primary_isbn13?: string;
-  primary_isbn10?: string;
-}
+const nytBookSchema = z.object({
+  title: z.string().optional(),
+  author: z.string().optional(),
+  primary_isbn13: z.string().optional(),
+  primary_isbn10: z.string().optional(),
+}).passthrough();
 
-interface NytResponse {
-  results?: {
-    books?: NytBook[];
-  };
-}
+const nytResponseSchema = z.object({
+  results: z.object({
+    books: z.array(nytBookSchema),
+  }).passthrough(),
+}).passthrough();
 
 export class NytProvider implements ImportListProvider {
   readonly type = 'nyt';
@@ -36,15 +38,23 @@ export class NytProvider implements ImportListProvider {
     const res = await fetch(url);
 
     if (res.status === 429) {
-      throw new Error('NYT API rate limit exceeded');
+      throw new ImportListError(this.name, 'NYT API rate limit exceeded');
     }
 
     if (!res.ok) {
-      throw new Error(`NYT API returned ${res.status}: ${res.statusText}`);
+      throw new ImportListError(this.name, `NYT API returned ${res.status}: ${res.statusText}`);
     }
 
-    const data = await res.json() as NytResponse;
-    const books = data.results?.books ?? [];
+    const raw: unknown = await res.json();
+    const parsed = nytResponseSchema.safeParse(raw);
+    if (!parsed.success) {
+      throw new ImportListError(
+        this.name,
+        `NYT returned unexpected response: ${parsed.error.issues[0]?.message ?? 'unknown'}`,
+        { cause: parsed.error },
+      );
+    }
+    const books = parsed.data.results.books;
 
     const items: ImportListItem[] = [];
     for (const book of books) {
@@ -69,6 +79,12 @@ export class NytProvider implements ImportListProvider {
 
       if (!res.ok) {
         return { success: false, message: `API returned ${res.status}: ${res.statusText}` };
+      }
+
+      const raw: unknown = await res.json();
+      const parsed = nytResponseSchema.safeParse(raw);
+      if (!parsed.success) {
+        return { success: false, message: `Validation failed: ${parsed.error.issues[0]?.message ?? 'unknown'}` };
       }
 
       return { success: true };

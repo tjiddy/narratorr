@@ -1,5 +1,6 @@
+import { z } from 'zod';
 import { BookMetadataSchema, AuthorMetadataSchema, SeriesMetadataSchema } from './schemas.js';
-import { RateLimitError, TransientError } from './errors.js';
+import { MetadataError, RateLimitError, TransientError } from './errors.js';
 import { REGION_LANGUAGES } from './region-languages.js';
 import { AUDIBLE_TIMEOUT_MS } from '../utils/constants.js';
 import { fetchWithTimeout } from '../utils/fetch-with-timeout.js';
@@ -38,6 +39,38 @@ const REQUEST_TIMEOUT_MS = AUDIBLE_TIMEOUT_MS;
 const MAX_RESULTS = 10;
 const RESPONSE_GROUPS = 'contributors,product_desc,media,product_extended_attrs,series';
 const IMAGE_SIZES = '500,1024';
+
+// Raw-response schemas at the wrapper layer — fail at the boundary on HTML
+// interstitials, rate-limit pages, or shape changes instead of mid-mapping.
+const audibleProductSchema = z.object({
+  asin: z.string().optional(),
+  title: z.string().optional(),
+  subtitle: z.string().optional(),
+  authors: z.array(z.object({ asin: z.string().optional(), name: z.string() }).passthrough()).optional(),
+  narrators: z.array(z.object({ name: z.string() }).passthrough()).optional(),
+  publisher_name: z.string().optional(),
+  publisher_summary: z.string().optional(),
+  merchandising_summary: z.string().optional(),
+  release_date: z.string().optional(),
+  issue_date: z.string().optional(),
+  runtime_length_min: z.number().optional(),
+  language: z.string().optional(),
+  product_images: z.record(z.string(), z.string()).optional(),
+  series: z.array(z.object({
+    asin: z.string().optional(),
+    sequence: z.string().optional(),
+    title: z.string().optional(),
+  }).passthrough()).optional(),
+  format_type: z.string().optional(),
+}).passthrough();
+
+const audibleProductsResponseSchema = z.object({
+  products: z.array(audibleProductSchema).optional(),
+}).passthrough();
+
+const audibleProductDetailResponseSchema = z.object({
+  product: audibleProductSchema.optional(),
+}).passthrough();
 
 export class AudibleProvider implements MetadataSearchProvider {
   readonly name: string;
@@ -153,8 +186,9 @@ export class AudibleProvider implements MetadataSearchProvider {
         response_groups: RESPONSE_GROUPS,
         image_sizes: IMAGE_SIZES,
       });
-      const data = await this.request<{ products?: AudibleProduct[] }>(
+      const data = await this.request(
         `${this.baseUrl}/1.0/catalog/products?${params}`,
+        audibleProductsResponseSchema,
       );
       if (data && Array.isArray(data.products)) {
         return { success: true, message: `Connected to Audible (${this.name})` };
@@ -170,17 +204,17 @@ export class AudibleProvider implements MetadataSearchProvider {
 
   private async fetchProducts(params: URLSearchParams): Promise<AudibleProduct[]> {
     const url = `${this.baseUrl}/1.0/catalog/products?${params}`;
-    const data = await this.request<{ products?: AudibleProduct[] }>(url);
-    return data?.products ?? [];
+    const data = await this.request(url, audibleProductsResponseSchema);
+    return (data?.products ?? []) as AudibleProduct[];
   }
 
   private async fetchProduct(asin: string, params: URLSearchParams): Promise<AudibleProduct | null> {
     const url = `${this.baseUrl}/1.0/catalog/products/${asin}?${params}`;
-    const data = await this.request<{ product?: AudibleProduct }>(url);
-    return data?.product ?? null;
+    const data = await this.request(url, audibleProductDetailResponseSchema);
+    return (data?.product ?? null) as AudibleProduct | null;
   }
 
-  private async request<T>(url: string): Promise<T | null> {
+  private async request<S extends z.ZodTypeAny>(url: string, schema: S): Promise<z.infer<S> | null> {
     try {
       const res = await fetchWithTimeout(url, {}, REQUEST_TIMEOUT_MS);
       if (res.status === 429) {
@@ -192,10 +226,20 @@ export class AudibleProvider implements MetadataSearchProvider {
         throw new TransientError(this.name, `HTTP ${res.status} ${res.statusText}`);
       }
       if (!res.ok) return null;
-      return (await res.json()) as T;
+      const raw: unknown = await res.json();
+      const parsed = schema.safeParse(raw);
+      if (!parsed.success) {
+        throw new MetadataError(
+          this.name,
+          `Audible returned unexpected response: ${parsed.error.issues[0]?.message ?? 'unknown'}`,
+          { cause: parsed.error },
+        );
+      }
+      return parsed.data;
     } catch (error: unknown) {
       if (error instanceof RateLimitError) throw error;
       if (error instanceof TransientError) throw error;
+      if (error instanceof MetadataError) throw error;
       throw new TransientError(this.name, getErrorMessage(error));
     }
   }

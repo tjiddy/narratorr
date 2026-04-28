@@ -1,4 +1,6 @@
+import { z } from 'zod';
 import type { ImportListProvider, ImportListItem } from './types.js';
+import { ImportListError } from './errors.js';
 import { getErrorMessage } from '../../shared/error-message.js';
 
 export interface AbsConfig {
@@ -6,6 +8,28 @@ export interface AbsConfig {
   apiKey: string;
   libraryId: string;
 }
+
+const absItemSchema = z.object({
+  media: z.object({
+    metadata: z.object({
+      title: z.string().optional(),
+      authorName: z.string().optional(),
+      asin: z.string().optional(),
+      isbn: z.string().optional(),
+    }).passthrough().optional(),
+  }).passthrough().optional(),
+}).passthrough();
+
+const absItemsResponseSchema = z.object({
+  results: z.array(absItemSchema),
+}).passthrough();
+
+const absLibrariesResponseSchema = z.object({
+  libraries: z.array(z.object({
+    id: z.string(),
+    name: z.string(),
+  }).passthrough()),
+}).passthrough();
 
 export class AbsProvider implements ImportListProvider {
   readonly type = 'abs';
@@ -28,14 +52,21 @@ export class AbsProvider implements ImportListProvider {
     });
 
     if (!res.ok) {
-      throw new Error(`ABS API returned ${res.status}: ${res.statusText}`);
+      throw new ImportListError(this.name, `ABS API returned ${res.status}: ${res.statusText}`);
     }
 
-    const data = await res.json() as { results?: Array<{ media?: { metadata?: { title?: string; authorName?: string; asin?: string; isbn?: string } } }> };
-    const results = data.results ?? [];
+    const raw: unknown = await res.json();
+    const parsed = absItemsResponseSchema.safeParse(raw);
+    if (!parsed.success) {
+      throw new ImportListError(
+        this.name,
+        `Audiobookshelf returned unexpected response: ${parsed.error.issues[0]?.message ?? 'unknown'}`,
+        { cause: parsed.error },
+      );
+    }
 
     const items: ImportListItem[] = [];
-    for (const item of results) {
+    for (const item of parsed.data.results) {
       const meta = item.media?.metadata;
       if (!meta?.title) continue;
       items.push({
@@ -59,8 +90,15 @@ export class AbsProvider implements ImportListProvider {
         return { success: false, message: `API returned ${res.status}: ${res.statusText}` };
       }
 
-      const data = await res.json() as { libraries?: Array<{ id: string; name: string }> };
-      const libraries = data.libraries ?? [];
+      const raw: unknown = await res.json();
+      const parsed = absLibrariesResponseSchema.safeParse(raw);
+      if (!parsed.success) {
+        return {
+          success: false,
+          message: `Validation failed: ${parsed.error.issues[0]?.message ?? 'unknown'}`,
+        };
+      }
+      const libraries = parsed.data.libraries;
       const found = libraries.some((lib) => lib.id === this.libraryId);
 
       if (!found) {

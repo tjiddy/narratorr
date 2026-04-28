@@ -1,5 +1,6 @@
+import { z } from 'zod';
 import type { IndexerAdapter, SearchOptions, SearchResult } from './types.js';
-import { IndexerAuthError, ProxyError } from './errors.js';
+import { IndexerAuthError, IndexerError, ProxyError } from './errors.js';
 import { createProxyAgent, resolveProxyIp } from './proxy.js';
 import { normalizeLanguage } from '../utils/language-codes.js';
 import { MAM_LANGUAGES } from '../../shared/indexer-registry.js';
@@ -18,26 +19,33 @@ export interface MAMConfig {
 const DEFAULT_BASE_URL = 'https://www.myanonamouse.net';
 import { INDEXER_TIMEOUT_MS } from '../utils/constants.js';
 
-interface MAMSearchResponse {
-  error?: string;
-  data?: MAMSearchResult[];
-}
+const mamSearchResultSchema = z.object({
+  id: z.number().optional(),
+  title: z.string().optional(),
+  author_info: z.string().optional(),
+  narrator_info: z.string().optional(),
+  series_info: z.string().optional(),
+  lang_code: z.string().optional(),
+  size: z.union([z.string(), z.number()]).optional(),
+  seeders: z.number().optional(),
+  leechers: z.number().optional(),
+  free: z.boolean().optional(),
+  fl_vip: z.boolean().optional(),
+  vip: z.boolean().optional(),
+  personal_freeleech: z.boolean().optional(),
+}).passthrough();
 
-interface MAMSearchResult {
-  id?: number;
-  title?: string;
-  author_info?: string;
-  narrator_info?: string;
-  series_info?: string;
-  lang_code?: string;
-  size?: string | number;
-  seeders?: number;
-  leechers?: number;
-  free?: boolean;
-  fl_vip?: boolean;
-  vip?: boolean;
-  personal_freeleech?: boolean;
-}
+const mamSearchResponseSchema = z.object({
+  error: z.string().optional(),
+  data: z.array(mamSearchResultSchema).optional(),
+}).passthrough();
+
+const mamUserStatusSchema = z.object({
+  username: z.string().optional(),
+  classname: z.string().optional(),
+}).passthrough();
+
+type MAMSearchResult = z.infer<typeof mamSearchResultSchema>;
 
 /**
  * Parse a double-encoded JSON field from MAM responses.
@@ -117,12 +125,22 @@ export class MyAnonamouseIndexer implements IndexerAdapter {
       throw new IndexerAuthError(this.name, 'Authentication failed — check your MAM ID');
     }
 
-    let response: MAMSearchResponse;
+    let raw: unknown;
     try {
-      response = JSON.parse(body) as MAMSearchResponse;
-    } catch {
-      throw new Error('MAM returned invalid JSON response');
+      raw = JSON.parse(body);
+    } catch (err) {
+      throw new IndexerError(this.name, 'MAM returned invalid JSON response', { cause: err instanceof Error ? err : undefined });
     }
+
+    const parsed = mamSearchResponseSchema.safeParse(raw);
+    if (!parsed.success) {
+      throw new IndexerError(
+        this.name,
+        `MAM returned unexpected search response: ${parsed.error.issues[0]?.message ?? 'unknown'}`,
+        { cause: parsed.error },
+      );
+    }
+    const response = parsed.data;
 
     // "Nothing returned, out of ..." is an empty-result message, not an error
     if (response.error && response.error.startsWith('Nothing returned')) {
@@ -130,10 +148,10 @@ export class MyAnonamouseIndexer implements IndexerAdapter {
     }
 
     if (response.error) {
-      throw new Error(`MAM search error: ${response.error}`);
+      throw new IndexerError(this.name, `MAM search error: ${response.error}`);
     }
 
-    if (!response.data || !Array.isArray(response.data)) {
+    if (!response.data) {
       return [];
     }
 
@@ -181,12 +199,22 @@ export class MyAnonamouseIndexer implements IndexerAdapter {
         return { success: false, message: 'Authentication failed — check your MAM ID' };
       }
 
-      let data: { username?: string; classname?: string };
+      let raw: unknown;
       try {
-        data = JSON.parse(body) as { username?: string; classname?: string };
-      } catch {
-        return { success: false, message: 'MAM returned invalid response' };
+        raw = JSON.parse(body);
+      } catch (err) {
+        throw new IndexerError(this.name, 'MAM returned invalid JSON response', { cause: err instanceof Error ? err : undefined });
       }
+
+      const parsed = mamUserStatusSchema.safeParse(raw);
+      if (!parsed.success) {
+        throw new IndexerError(
+          this.name,
+          `MAM returned unexpected user-status response: ${parsed.error.issues[0]?.message ?? 'unknown'}`,
+          { cause: parsed.error },
+        );
+      }
+      const data = parsed.data;
 
       if (data.username) {
         const isVip = data.classname === 'VIP' || data.classname === 'Elite VIP';
@@ -212,6 +240,9 @@ export class MyAnonamouseIndexer implements IndexerAdapter {
       if (error instanceof IndexerAuthError) {
         return { success: false, message: error.message };
       }
+      if (error instanceof IndexerError) {
+        return { success: false, message: error.message };
+      }
       return {
         success: false,
         message: getErrorMessage(error),
@@ -220,23 +251,40 @@ export class MyAnonamouseIndexer implements IndexerAdapter {
   }
 
   async refreshStatus(): Promise<{ isVip: boolean; classname: string } | null> {
-    const body = await this.fetchWithCookie(`${this.baseUrl}/jsonLoad.php`);
-
-    let data: { username?: string; classname?: string };
     try {
-      data = JSON.parse(body) as { username?: string; classname?: string };
-    } catch {
-      return null;
+      const body = await this.fetchWithCookie(`${this.baseUrl}/jsonLoad.php`);
+
+      let raw: unknown;
+      try {
+        raw = JSON.parse(body);
+      } catch (err) {
+        throw new IndexerError(this.name, 'MAM returned invalid JSON response', { cause: err instanceof Error ? err : undefined });
+      }
+
+      const parsed = mamUserStatusSchema.safeParse(raw);
+      if (!parsed.success) {
+        throw new IndexerError(
+          this.name,
+          `MAM returned unexpected user-status response: ${parsed.error.issues[0]?.message ?? 'unknown'}`,
+          { cause: parsed.error },
+        );
+      }
+      const data = parsed.data;
+
+      if (!data.classname) {
+        return null;
+      }
+
+      const isVip = data.classname === 'VIP' || data.classname === 'Elite VIP';
+      this.isVip = isVip;
+
+      return { isVip, classname: data.classname };
+    } catch (error: unknown) {
+      if (error instanceof IndexerError) {
+        return null;
+      }
+      throw error;
     }
-
-    if (!data.classname) {
-      return null;
-    }
-
-    const isVip = data.classname === 'VIP' || data.classname === 'Elite VIP';
-    this.isVip = isVip;
-
-    return { isVip, classname: data.classname };
   }
 
   /**

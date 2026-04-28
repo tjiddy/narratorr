@@ -1,4 +1,6 @@
+import { z } from 'zod';
 import type { ImportListProvider, ImportListItem } from './types.js';
+import { ImportListError } from './errors.js';
 import { getErrorMessage } from '../../shared/error-message.js';
 
 export interface HardcoverConfig {
@@ -41,11 +43,26 @@ const SHELF_QUERY = `
   }
 `;
 
-interface HardcoverBook {
-  title?: string;
-  contributions?: Array<{ author?: { name?: string } }>;
-  identifiers?: Array<{ source?: { name?: string }; value?: string }>;
-}
+const hardcoverBookSchema = z.object({
+  title: z.string().optional(),
+  contributions: z.array(z.object({
+    author: z.object({ name: z.string().optional() }).passthrough().optional(),
+  }).passthrough()).optional(),
+  identifiers: z.array(z.object({
+    source: z.object({ name: z.string().optional() }).passthrough().optional(),
+    value: z.string().optional(),
+  }).passthrough()).optional(),
+}).passthrough();
+
+type HardcoverBook = z.infer<typeof hardcoverBookSchema>;
+
+const hardcoverResponseSchema = z.object({
+  data: z.object({
+    trending_books: z.array(hardcoverBookSchema).optional(),
+    user_book_reads: z.array(z.object({ book: hardcoverBookSchema }).passthrough()).optional(),
+  }).passthrough().optional(),
+  errors: z.array(z.object({ message: z.string() }).passthrough()).optional(),
+}).passthrough();
 
 function mapBook(book: HardcoverBook): ImportListItem | null {
   if (!book.title) return null;
@@ -90,19 +107,22 @@ export class HardcoverProvider implements ImportListProvider {
     });
 
     if (!res.ok) {
-      throw new Error(`Hardcover API returned ${res.status}: ${res.statusText}`);
+      throw new ImportListError(this.name, `Hardcover API returned ${res.status}: ${res.statusText}`);
     }
 
-    const data = await res.json() as {
-      data?: {
-        trending_books?: HardcoverBook[];
-        user_book_reads?: Array<{ book: HardcoverBook }>;
-      };
-      errors?: Array<{ message: string }>;
-    };
+    const raw: unknown = await res.json();
+    const parsed = hardcoverResponseSchema.safeParse(raw);
+    if (!parsed.success) {
+      throw new ImportListError(
+        this.name,
+        `Hardcover returned unexpected response: ${parsed.error.issues[0]?.message ?? 'unknown'}`,
+        { cause: parsed.error },
+      );
+    }
+    const data = parsed.data;
 
     if (data.errors?.length) {
-      throw new Error(`Hardcover GraphQL error: ${data.errors[0].message}`);
+      throw new ImportListError(this.name, `Hardcover GraphQL error: ${data.errors[0].message}`);
     }
 
     const books = this.listType === 'shelf'
