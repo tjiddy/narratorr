@@ -6,6 +6,7 @@ import { type BlacklistService } from './blacklist.service.js';
 import { type BookService } from './book.service.js';
 import { actionableEventTypes, type EventType, type EventSource } from '../../shared/schemas/event-history.js';
 import { retrySearch, type RetrySearchDeps } from './retry-search.js';
+import { WireOnce } from './wire-helpers.js';
 import { serializeError } from '../utils/serialize-error.js';
 
 
@@ -32,8 +33,12 @@ export interface CreateEventInput {
   reason?: Record<string, unknown> | null;
 }
 
+export interface EventHistoryServiceWireDeps {
+  retrySearchDeps: RetrySearchDeps;
+}
+
 export class EventHistoryService {
-  private retrySearchDeps?: RetrySearchDeps;
+  private wired = new WireOnce<EventHistoryServiceWireDeps>('EventHistoryService');
 
   constructor(
     private db: Db,
@@ -42,9 +47,9 @@ export class EventHistoryService {
     private bookService: BookService,
   ) {}
 
-  /** Set retry search dependencies (called after service graph construction). */
-  setRetrySearchDeps(deps: RetrySearchDeps): void {
-    this.retrySearchDeps = deps;
+  /** Wire cyclic / late-bound deps after construction. Call once during composition. */
+  wire(deps: EventHistoryServiceWireDeps): void {
+    this.wired.set(deps);
   }
 
   async create(input: CreateEventInput): Promise<BookEventRow> {
@@ -209,8 +214,9 @@ export class EventHistoryService {
     this.log.info({ eventId, downloadId: event.downloadId, bookId: event.bookId }, 'Event marked as failed');
 
     // Trigger book-scoped retry search (fire-and-forget) — does NOT reset global retry budget
-    if (event.bookId && this.retrySearchDeps) {
-      retrySearch(event.bookId, this.retrySearchDeps)
+    if (event.bookId) {
+      const { retrySearchDeps } = this.wired.require();
+      retrySearch(event.bookId, retrySearchDeps)
         .catch((err) => this.log.warn({ error: serializeError(err) }, 'Mark-as-failed retry search failed'));
     }
 

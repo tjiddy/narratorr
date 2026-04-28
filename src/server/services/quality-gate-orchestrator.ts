@@ -28,10 +28,17 @@ import { isTorrentRemovalDeferred } from '../utils/seed-helpers.js';
 import { cleanupDeferredRejections as cleanupDeferred } from './quality-gate-deferred-cleanup.helpers.js';
 import { serializeError } from '../utils/serialize-error.js';
 import { enqueueAutoImport } from '../utils/enqueue-auto-import.js';
+import { WireOnce } from './wire-helpers.js';
 
 type BookRow = typeof books.$inferSelect;
 
+export interface QualityGateOrchestratorWireDeps {
+  nudgeImportWorker: () => void;
+}
+
 export class QualityGateOrchestrator {
+  private wired = new WireOnce<QualityGateOrchestratorWireDeps>('QualityGateOrchestrator');
+
   constructor(
     private qualityGateService: QualityGateService,
     private db: Db,
@@ -43,8 +50,12 @@ export class QualityGateOrchestrator {
     private remotePathMappingService?: RemotePathMappingService,
     private retrySearchDeps?: RetrySearchDeps,
     private settingsService?: SettingsService,
-    private nudgeImportWorker?: () => void,
   ) {}
+
+  /** Wire cyclic / late-bound deps after construction. Call once during composition. */
+  wire(deps: QualityGateOrchestratorWireDeps): void {
+    this.wired.set(deps);
+  }
 
   /**
    * Process all completed downloads through the quality gate.
@@ -160,7 +171,8 @@ export class QualityGateOrchestrator {
       const decision = await this.qualityGateService.processDownload(row.download, row.book, scanResult);
       await this.dispatchSideEffects(decision.action, row.download, row.book, decision.reason, decision.statusTransition);
       if (decision.action === 'imported' && row.book) {
-        await enqueueAutoImport(this.db, downloadId, row.book.id, this.nudgeImportWorker ?? (() => {}), this.log);
+        const { nudgeImportWorker } = this.wired.require();
+        await enqueueAutoImport(this.db, downloadId, row.book.id, nudgeImportWorker, this.log);
       }
     } catch (error: unknown) {
       this.log.error({ error: serializeError(error), downloadId: row.download.id }, 'Quality gate error');

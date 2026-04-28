@@ -18,13 +18,18 @@ import { blacklistAndRetrySearch } from '../utils/rejection-helpers.js';
 import { serializeError } from '../utils/serialize-error.js';
 import type { Db } from '../../db/index.js';
 import { enqueueAutoImport } from '../utils/enqueue-auto-import.js';
+import { WireOnce } from './wire-helpers.js';
 
+
+export interface ImportOrchestratorWireDeps {
+  db: Db;
+  blacklistService: BlacklistService;
+  retrySearchDeps: RetrySearchDeps;
+  nudgeImportWorker: () => void;
+}
 
 export class ImportOrchestrator {
-  private blacklistService?: BlacklistService;
-  private retrySearchDeps?: RetrySearchDeps;
-  private db?: Db;
-  private nudgeImportWorker?: () => void;
+  private wired = new WireOnce<ImportOrchestratorWireDeps>('ImportOrchestrator');
 
   constructor(
     private importService: ImportService,
@@ -36,16 +41,9 @@ export class ImportOrchestrator {
     private broadcaster?: EventBroadcasterService,
   ) {}
 
-  /** Inject blacklist dependencies after construction (setter pattern — avoids constructor reordering). */
-  setBlacklistDeps(blacklistService: BlacklistService, retrySearchDeps: RetrySearchDeps): void {
-    this.blacklistService = blacklistService;
-    this.retrySearchDeps = retrySearchDeps;
-  }
-
-  /** Inject queue dependencies after construction (setter pattern — worker created after orchestrator). */
-  setQueueDeps(db: Db, nudge: () => void): void {
-    this.db = db;
-    this.nudgeImportWorker = nudge;
+  /** Wire cyclic / late-bound deps after construction. Call once during composition. */
+  wire(deps: ImportOrchestratorWireDeps): void {
+    this.wired.set(deps);
   }
 
   /**
@@ -82,10 +80,7 @@ export class ImportOrchestrator {
    * The serial ImportQueueWorker drains from the queue.
    */
   async processCompletedDownloads(): Promise<number> {
-    if (!this.db) {
-      this.log.warn('processCompletedDownloads called without queue deps — skipping');
-      return 0;
-    }
+    const { db, nudgeImportWorker } = this.wired.require();
 
     const admittedDownloads = await this.importService.getEligibleDownloads();
 
@@ -95,7 +90,7 @@ export class ImportOrchestrator {
     for (const download of admittedDownloads) {
       try {
         const created = await enqueueAutoImport(
-          this.db, download.id, download.bookId, this.nudgeImportWorker ?? (() => {}), this.log,
+          db, download.id, download.bookId, nudgeImportWorker, this.log,
         );
         if (created) enqueued++;
       } catch (error: unknown) {
@@ -157,7 +152,8 @@ export class ImportOrchestrator {
     recordImportFailedEvent({ eventHistory: this.eventHistory, bookId: ctx.bookId, bookTitle: ctx.bookTitle, authorName: ctx.authorName, downloadId: ctx.downloadId, source: 'auto', error, log: this.log });
 
     // #504 — Blacklist content failures and trigger re-search
-    if (isContentFailure(error) && this.blacklistService) {
+    if (isContentFailure(error)) {
+      const { blacklistService, retrySearchDeps } = this.wired.require();
       blacklistAndRetrySearch({
         identifiers: {
           infoHash: ctx.infoHash ?? undefined,
@@ -168,8 +164,8 @@ export class ImportOrchestrator {
         reason: 'bad_quality',
         blacklistType: 'temporary',
         book: { id: ctx.bookId },
-        blacklistService: this.blacklistService,
-        retrySearchDeps: this.retrySearchDeps,
+        blacklistService,
+        retrySearchDeps,
         settingsService: this.settingsService,
         log: this.log,
       }).catch((blacklistError: unknown) => {

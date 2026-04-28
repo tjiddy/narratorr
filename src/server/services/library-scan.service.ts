@@ -19,6 +19,7 @@ import { searchWithSwapRetry } from '../utils/search-helpers.js';
 import { parseFolderStructure } from '../utils/folder-parsing.js';
 import type { DiscoveredBook } from '../../shared/schemas/library-scan.js';
 import { serializeError } from '../utils/serialize-error.js';
+import { WireOnce } from './wire-helpers.js';
 
 
 export type { DiscoveredBook };
@@ -60,9 +61,13 @@ export interface RescanResult {
   restored: number;
 }
 
+export interface LibraryScanServiceWireDeps {
+  nudgeImportWorker: () => void;
+}
+
 export class LibraryScanService {
   private scanning = false;
-  private nudgeWorker?: () => void;
+  private wired = new WireOnce<LibraryScanServiceWireDeps>('LibraryScanService');
 
   constructor(
     private db: Db,
@@ -74,9 +79,9 @@ export class LibraryScanService {
     private eventBroadcaster?: EventBroadcasterService,
   ) {}
 
-  /** Inject the import queue worker's nudge function (setter pattern for late binding). */
-  setNudgeWorker(nudge: () => void): void {
-    this.nudgeWorker = nudge;
+  /** Wire cyclic / late-bound deps after construction. Call once during composition. */
+  wire(deps: LibraryScanServiceWireDeps): void {
+    this.wired.set(deps);
   }
 
   private get enrichmentDeps(): EnrichmentDeps {
@@ -300,7 +305,8 @@ export class LibraryScanService {
   }
 
   async confirmImport(items: ImportConfirmItem[], mode?: ImportMode): Promise<{ accepted: number }> {
-    return confirmImportHelper(items, this.importDeps, mode, this.nudgeWorker);
+    const { nudgeImportWorker } = this.wired.require();
+    return confirmImportHelper(items, this.importDeps, mode, nudgeImportWorker);
   }
 
   /**

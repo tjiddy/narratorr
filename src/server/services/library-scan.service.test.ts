@@ -295,6 +295,10 @@ describe('LibraryScanService', () => {
       log,
       inject<EventHistoryService>(mockEventHistoryService),
     );
+    // Wire the required-wiring nudgeImportWorker dep so confirmImport doesn't
+    // throw ServiceWireError. Tests that exercise the unwired contract
+    // construct a separate unwired service.
+    service.wire({ nudgeImportWorker: vi.fn() });
   });
 
   describe('importSingleBook', () => {
@@ -2412,6 +2416,7 @@ describe('buildBookCreatePayload multi-author (issue #79)', () => {
       { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn(), trace: vi.fn(), fatal: vi.fn(), child: vi.fn().mockReturnThis(), level: 'info', silent: vi.fn() } as never,
       { create: vi.fn().mockResolvedValue({}) } as never,
     );
+    service.wire({ nudgeImportWorker: vi.fn() });
   });
 
   it('with meta.authors = [{name:"A"},{name:"B"}] passes both to bookService.create', async () => {
@@ -3487,4 +3492,35 @@ describe('scanDirectory() — within-scan duplicate detection (#342)', () => {
     });
   });
 
+});
+
+// ── #739 — required-wiring contract for LibraryScanService ────────────
+describe('LibraryScanService — required-wiring contract', () => {
+  it('confirmImport() throws ServiceWireError when called before wire()', async () => {
+    const settings = createMockSettingsService({ library: { path: '/library' } });
+    const unwired = new LibraryScanService(
+      inject<Db>(createMockDb()),
+      inject<BookService>({ findDuplicate: vi.fn(), create: vi.fn() }),
+      inject<MetadataService>({ searchBooks: vi.fn(), getBook: vi.fn(), enrichBook: vi.fn() }),
+      inject<SettingsService>(settings),
+      inject<FastifyBaseLogger>(createMockLogger()),
+      inject<EventHistoryService>({ create: vi.fn() }),
+    );
+
+    await expect(unwired.confirmImport([{ path: '/x', title: 'X' }])).rejects.toThrow(/LibraryScanService used before wire/);
+  });
+
+  it('wire() called twice throws ServiceWireError', () => {
+    const settings = createMockSettingsService({ library: { path: '/library' } });
+    const svc = new LibraryScanService(
+      inject<Db>(createMockDb()),
+      inject<BookService>({ findDuplicate: vi.fn(), create: vi.fn() }),
+      inject<MetadataService>({ searchBooks: vi.fn(), getBook: vi.fn(), enrichBook: vi.fn() }),
+      inject<SettingsService>(settings),
+      inject<FastifyBaseLogger>(createMockLogger()),
+      inject<EventHistoryService>({ create: vi.fn() }),
+    );
+    svc.wire({ nudgeImportWorker: vi.fn() });
+    expect(() => svc.wire({ nudgeImportWorker: vi.fn() })).toThrow(/LibraryScanService\.wire\(\) called more than once/);
+  });
 });
