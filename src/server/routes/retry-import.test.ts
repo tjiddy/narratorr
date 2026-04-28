@@ -2,165 +2,91 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import Fastify from 'fastify';
 import { serializerCompiler, validatorCompiler, type ZodTypeProvider } from 'fastify-type-provider-zod';
 import { inject } from '../__tests__/helpers.js';
-import type { Db } from '../../db/index.js';
-import type { ImportQueueWorker } from '../services/import-queue-worker.js';
+import type { BookService, RetryImportResult } from '../services/book.service.js';
 import { retryImportRoute } from './retry-import.js';
 
-async function createApp(db: Db, worker: ImportQueueWorker) {
+interface MockBookService {
+  retryImport: ReturnType<typeof vi.fn>;
+  getRetryAvailability: ReturnType<typeof vi.fn>;
+}
+
+async function createApp(bookService: MockBookService, nudge: () => void = () => undefined) {
   const app = Fastify({ logger: false }).withTypeProvider<ZodTypeProvider>();
   app.setValidatorCompiler(validatorCompiler);
   app.setSerializerCompiler(serializerCompiler);
   await app.register(async (scoped) => {
-    await retryImportRoute(scoped as unknown as typeof app, db, worker);
+    await retryImportRoute(scoped as unknown as typeof app, inject<BookService>(bookService), nudge);
   });
   return app;
 }
 
 describe('POST /api/books/:id/retry-import', () => {
-  let mockWorker: { nudge: ReturnType<typeof vi.fn> };
-
-  // Helper to build a mock DB with configurable select results
-  function buildMockDb(opts: {
-    book?: { id: number; status: string } | null;
-    activeJob?: { id: number } | null;
-    failedJob?: Record<string, unknown> | null;
-    insertReturning?: { id: number };
-  }) {
-    let selectCallCount = 0;
-    const db = {
-      select: vi.fn().mockImplementation(() => {
-        selectCallCount++;
-        const results = selectCallCount === 1
-          ? (opts.book ? [opts.book] : [])
-          : selectCallCount === 2
-            ? (opts.activeJob ? [opts.activeJob] : [])
-            : (opts.failedJob ? [opts.failedJob] : []);
-        return {
-          from: vi.fn().mockReturnThis(),
-          where: vi.fn().mockReturnThis(),
-          orderBy: vi.fn().mockReturnThis(),
-          limit: vi.fn().mockResolvedValue(results),
-        };
-      }),
-      insert: vi.fn().mockReturnValue({
-        values: vi.fn().mockReturnValue({
-          returning: vi.fn().mockResolvedValue([opts.insertReturning ?? { id: 99 }]),
-        }),
-      }),
-      update: vi.fn().mockReturnValue({
-        set: vi.fn().mockReturnValue({
-          where: vi.fn().mockResolvedValue({ rowsAffected: 1 }),
-        }),
-      }),
-    };
-    return db;
-  }
+  let bookService: MockBookService;
+  let nudge: () => void;
 
   beforeEach(() => {
-    mockWorker = { nudge: vi.fn() };
+    bookService = {
+      retryImport: vi.fn(),
+      getRetryAvailability: vi.fn(),
+    };
+    nudge = vi.fn();
   });
 
-  it('inserts new pending import_jobs row with same metadata when book has failed import job', async () => {
-    const db = buildMockDb({
-      book: { id: 1, status: 'failed' },
-      activeJob: null,
-      failedJob: { id: 10, bookId: 1, type: 'manual', metadata: '{"title":"Test","path":"/a","mode":"copy"}' },
-      insertReturning: { id: 20 },
-    });
-    const app = await createApp(inject<Db>(db), inject<ImportQueueWorker>(mockWorker));
+  it('returns 202 with jobId on success and forwards nudge callback', async () => {
+    bookService.retryImport.mockResolvedValueOnce({ jobId: 20 } satisfies RetryImportResult);
+    const app = await createApp(bookService, nudge);
 
     const res = await app.inject({ method: 'POST', url: '/api/books/1/retry-import' });
 
     expect(res.statusCode).toBe(202);
     expect(JSON.parse(res.payload)).toEqual({ jobId: 20 });
-    expect(db.insert).toHaveBeenCalled();
+    expect(bookService.retryImport).toHaveBeenCalledWith(1, nudge);
   });
 
-  it('nudges import queue worker', async () => {
-    const db = buildMockDb({
-      book: { id: 1, status: 'failed' },
-      failedJob: { id: 10, bookId: 1, type: 'manual', metadata: '{}' },
-    });
-    const app = await createApp(inject<Db>(db), inject<ImportQueueWorker>(mockWorker));
-
-    await app.inject({ method: 'POST', url: '/api/books/1/retry-import' });
-
-    expect(mockWorker.nudge).toHaveBeenCalledTimes(1);
-  });
-
-  it('sets books.status to importing', async () => {
-    const db = buildMockDb({
-      book: { id: 1, status: 'failed' },
-      failedJob: { id: 10, bookId: 1, type: 'manual', metadata: '{}' },
-    });
-    const app = await createApp(inject<Db>(db), inject<ImportQueueWorker>(mockWorker));
-
-    await app.inject({ method: 'POST', url: '/api/books/1/retry-import' });
-
-    expect(db.update).toHaveBeenCalled();
-  });
-
-  it('returns 400 when no failed import job exists for the book', async () => {
-    const db = buildMockDb({
-      book: { id: 1, status: 'imported' },
-      failedJob: null,
-    });
-    const app = await createApp(inject<Db>(db), inject<ImportQueueWorker>(mockWorker));
-
-    const res = await app.inject({ method: 'POST', url: '/api/books/1/retry-import' });
-
-    expect(res.statusCode).toBe(400);
-    expect(JSON.parse(res.payload)).toEqual({ error: 'No failed import job found for this book' });
-  });
-
-  it('returns 409 when book is already importing', async () => {
-    const db = buildMockDb({
-      book: { id: 1, status: 'importing' },
-    });
-    const app = await createApp(inject<Db>(db), inject<ImportQueueWorker>(mockWorker));
-
-    const res = await app.inject({ method: 'POST', url: '/api/books/1/retry-import' });
-
-    expect(res.statusCode).toBe(409);
-    expect(JSON.parse(res.payload)).toEqual({ error: 'Import already in progress' });
-  });
-
-  it('returns 409 when active processing job exists', async () => {
-    const db = buildMockDb({
-      book: { id: 1, status: 'failed' },
-      activeJob: { id: 5 },
-    });
-    const app = await createApp(inject<Db>(db), inject<ImportQueueWorker>(mockWorker));
-
-    const res = await app.inject({ method: 'POST', url: '/api/books/1/retry-import' });
-
-    expect(res.statusCode).toBe(409);
-    expect(JSON.parse(res.payload)).toEqual({ error: 'Import already in progress' });
-  });
-
-  it('returns 404 when book does not exist', async () => {
-    const db = buildMockDb({ book: null });
-    const app = await createApp(inject<Db>(db), inject<ImportQueueWorker>(mockWorker));
+  it('returns 404 when service reports book not found', async () => {
+    bookService.retryImport.mockResolvedValueOnce({ error: 'Book not found', status: 404 });
+    const app = await createApp(bookService, nudge);
 
     const res = await app.inject({ method: 'POST', url: '/api/books/999/retry-import' });
 
     expect(res.statusCode).toBe(404);
     expect(JSON.parse(res.payload)).toEqual({ error: 'Book not found' });
   });
+
+  it('returns 409 when service reports active import', async () => {
+    bookService.retryImport.mockResolvedValueOnce({ error: 'Import already in progress', status: 409 });
+    const app = await createApp(bookService, nudge);
+
+    const res = await app.inject({ method: 'POST', url: '/api/books/1/retry-import' });
+
+    expect(res.statusCode).toBe(409);
+    expect(JSON.parse(res.payload)).toEqual({ error: 'Import already in progress' });
+  });
+
+  it('returns 400 when service reports no failed job', async () => {
+    bookService.retryImport.mockResolvedValueOnce({ error: 'No failed import job found for this book', status: 400 });
+    const app = await createApp(bookService, nudge);
+
+    const res = await app.inject({ method: 'POST', url: '/api/books/1/retry-import' });
+
+    expect(res.statusCode).toBe(400);
+    expect(JSON.parse(res.payload)).toEqual({ error: 'No failed import job found for this book' });
+  });
 });
 
 describe('GET /api/books/:id/retry-import', () => {
-  it('returns available true when a failed import job exists', async () => {
-    const db = {
-      select: vi.fn().mockReturnValue({
-        from: vi.fn().mockReturnThis(),
-        where: vi.fn().mockReturnThis(),
-        limit: vi.fn().mockResolvedValue([{ id: 10 }]),
-      }),
-      update: vi.fn().mockReturnValue({ set: vi.fn().mockReturnValue({ where: vi.fn().mockResolvedValue({}) }) }),
-      insert: vi.fn().mockReturnValue({ values: vi.fn().mockReturnValue({ returning: vi.fn().mockResolvedValue([]) }) }),
+  let bookService: MockBookService;
+
+  beforeEach(() => {
+    bookService = {
+      retryImport: vi.fn(),
+      getRetryAvailability: vi.fn(),
     };
-    const app = await createApp(inject<Db>(db), inject<ImportQueueWorker>({ nudge: vi.fn() }));
+  });
+
+  it('maps retryable=true to available=true', async () => {
+    bookService.getRetryAvailability.mockResolvedValueOnce({ retryable: true, lastFailedJobId: 10 });
+    const app = await createApp(bookService, vi.fn());
 
     const res = await app.inject({ method: 'GET', url: '/api/books/1/retry-import' });
 
@@ -168,21 +94,22 @@ describe('GET /api/books/:id/retry-import', () => {
     expect(JSON.parse(res.payload)).toEqual({ available: true });
   });
 
-  it('returns available false when no failed import job exists', async () => {
-    const db = {
-      select: vi.fn().mockReturnValue({
-        from: vi.fn().mockReturnThis(),
-        where: vi.fn().mockReturnThis(),
-        limit: vi.fn().mockResolvedValue([]),
-      }),
-      update: vi.fn().mockReturnValue({ set: vi.fn().mockReturnValue({ where: vi.fn().mockResolvedValue({}) }) }),
-      insert: vi.fn().mockReturnValue({ values: vi.fn().mockReturnValue({ returning: vi.fn().mockResolvedValue([]) }) }),
-    };
-    const app = await createApp(inject<Db>(db), inject<ImportQueueWorker>({ nudge: vi.fn() }));
+  it('maps retryable=false to available=false', async () => {
+    bookService.getRetryAvailability.mockResolvedValueOnce({ retryable: false });
+    const app = await createApp(bookService, vi.fn());
 
     const res = await app.inject({ method: 'GET', url: '/api/books/1/retry-import' });
 
     expect(res.statusCode).toBe(200);
     expect(JSON.parse(res.payload)).toEqual({ available: false });
+  });
+
+  it('does not leak lastFailedJobId in HTTP response', async () => {
+    bookService.getRetryAvailability.mockResolvedValueOnce({ retryable: true, lastFailedJobId: 42 });
+    const app = await createApp(bookService, vi.fn());
+
+    const res = await app.inject({ method: 'GET', url: '/api/books/1/retry-import' });
+
+    expect(Object.keys(JSON.parse(res.payload))).toEqual(['available']);
   });
 });
