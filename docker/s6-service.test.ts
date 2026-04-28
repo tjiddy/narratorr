@@ -35,7 +35,12 @@ describe('s6-overlay service definition', () => {
 
     it('run script starts dist/server/index.js', () => {
       const content = fs.readFileSync(path.join(serviceDir, 'run'), 'utf-8');
-      expect(content).toContain('node dist/server/index.js');
+      expect(content).toMatch(/node\s.*dist\/server\/index\.js/);
+    });
+
+    it('run script enables source maps so production stack traces map to TS source', () => {
+      const content = fs.readFileSync(path.join(serviceDir, 'run'), 'utf-8');
+      expect(content).toContain('--enable-source-maps');
     });
 
     it('run script uses s6-setuidgid abc for LSIO user model', () => {

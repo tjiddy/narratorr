@@ -5,4 +5,4 @@ cd /app || exit 1
 
 exec \
     s6-setuidgid abc \
-    node dist/server/index.js
+    node --enable-source-maps dist/server/index.js

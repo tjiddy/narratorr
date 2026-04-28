@@ -1,8 +1,37 @@
 import dotenv from 'dotenv';
+import os from 'os';
 import path from 'path';
 import fs from 'fs';
 import { fileURLToPath } from 'url';
 import { serializeError } from './utils/serialize-error.js';
+
+// Synchronous crash logging — registered at module load so it catches errors
+// during the import phase too. Bypasses Pino's async buffer (sonic-boom) which
+// drops logs queued just before process.exit(). Format mirrors Pino's JSON
+// shape so existing log tooling parses these uniformly.
+function logCrash(msg: string, err: unknown): void {
+  try {
+    const line = JSON.stringify({
+      level: 60,
+      time: Date.now(),
+      pid: process.pid,
+      hostname: os.hostname(),
+      error: serializeError(err),
+      msg,
+    });
+    process.stderr.write(line + '\n');
+  } catch {
+    /* last-resort: stderr write failed, nothing else we can do */
+  }
+}
+process.on('uncaughtException', (err) => {
+  logCrash('Uncaught exception — process will exit', err);
+  process.exit(1);
+});
+process.on('unhandledRejection', (reason) => {
+  logCrash('Unhandled promise rejection — process will exit', reason);
+  process.exit(1);
+});
 
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -156,15 +185,6 @@ async function main() {
   };
   process.on('SIGTERM', shutdown);
   process.on('SIGINT', shutdown);
-
-  // Crash logging — captures unhandled errors that would otherwise be silent
-  process.on('uncaughtException', (err) => {
-    app.log.fatal({ err }, 'Uncaught exception — process will exit');
-    process.exit(1);
-  });
-  process.on('unhandledRejection', (reason) => {
-    app.log.error({ reason }, 'Unhandled promise rejection');
-  });
 
   await listenWithRetry(app, config.port);
 
