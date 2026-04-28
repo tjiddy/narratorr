@@ -181,6 +181,77 @@ describe('Layout', () => {
     });
   });
 
+  describe('basic-auth CSRF nag banner', () => {
+    it('renders for mode === "basic" with Forms-auth and SECURITY.md links', () => {
+      mockCounts(0);
+      mockAuth('basic');
+      renderWithProviders(<Layout />);
+
+      expect(screen.getByText(/basic authentication is enabled/i)).toBeInTheDocument();
+
+      const formsLink = screen.getByRole('link', { name: /switch to forms auth/i });
+      expect(formsLink).toHaveAttribute('href', '/settings/security');
+
+      const securityLink = screen.getByRole('link', { name: /security\.md/i });
+      // Must point at this repository, not a placeholder org
+      expect(securityLink).toHaveAttribute(
+        'href',
+        'https://github.com/tjiddy/narratorr/blob/main/SECURITY.md#csrf-protection',
+      );
+    });
+
+    it('hidden for mode === "none" (none-auth banner shows instead)', () => {
+      mockCounts(0);
+      mockAuth('none');
+      renderWithProviders(<Layout />);
+
+      expect(screen.queryByText(/basic authentication is enabled/i)).not.toBeInTheDocument();
+    });
+
+    it('hidden for mode === "forms"', () => {
+      mockCounts(0);
+      mockAuth('forms');
+      renderWithProviders(<Layout />);
+
+      expect(screen.queryByText(/basic authentication is enabled/i)).not.toBeInTheDocument();
+    });
+
+    it('dismiss banner → hidden, persists on reload (localStorage stable key)', async () => {
+      mockCounts(0);
+      mockAuth('basic');
+      const user = userEvent.setup();
+
+      const { unmount } = renderWithProviders(<Layout />);
+      expect(screen.getByText(/basic authentication is enabled/i)).toBeInTheDocument();
+
+      const dismissButton = screen.getByLabelText('Dismiss basic-auth warning');
+      await user.click(dismissButton);
+
+      expect(screen.queryByText(/basic authentication is enabled/i)).not.toBeInTheDocument();
+      expect(localStorage.getItem('narratorr.basic-auth-csrf-nag.dismissed')).toBe('true');
+
+      // Re-render — banner stays dismissed
+      unmount();
+      renderWithProviders(<Layout />);
+      expect(screen.queryByText(/basic authentication is enabled/i)).not.toBeInTheDocument();
+    });
+
+    it('dismissal of the basic-auth banner does NOT also dismiss the none-auth banner', async () => {
+      mockCounts(0);
+      mockAuth('basic');
+      const user = userEvent.setup();
+
+      const { unmount } = renderWithProviders(<Layout />);
+      await user.click(screen.getByLabelText('Dismiss basic-auth warning'));
+      unmount();
+
+      // Switch to none-auth — its dismissal flag uses a different storage key, so the banner shows
+      mockAuth('none');
+      renderWithProviders(<Layout />);
+      expect(screen.getByText(/authentication is disabled/i)).toBeInTheDocument();
+    });
+  });
+
   describe('health indicator wiring', () => {
     it('renders HealthIndicator in the navbar when health is in error state', async () => {
       mockCounts(0);

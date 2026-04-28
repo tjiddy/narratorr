@@ -78,7 +78,7 @@ function BasicAuthCsrfBanner({ onDismiss }: { onDismiss: () => void }) {
             </Link>{' '}
             — see{' '}
             <a
-              href="https://github.com/narratorr/narratorr/blob/main/SECURITY.md#csrf-protection"
+              href="https://github.com/tjiddy/narratorr/blob/main/SECURITY.md#csrf-protection"
               target="_blank"
               rel="noreferrer"
               className="underline underline-offset-2 font-medium hover:text-amber-800 dark:hover:text-amber-200 transition-colors"

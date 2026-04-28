@@ -912,6 +912,7 @@ describe('POST /api/system/restore', () => {
       const { default: cookie } = await import('@fastify/cookie');
       const { default: authPlugin } = await import('../plugins/auth.js');
       const { systemRoutes } = await import('./system.js');
+      const { bookFilesRoute } = await import('./book-files.js');
 
       csrfServices = createMockServices();
       const authSvc = csrfServices.auth as unknown as Record<string, Mock>;
@@ -931,6 +932,7 @@ describe('POST /api/system/restore', () => {
       await csrfApp.register(authPlugin, { authService: csrfServices.auth as any });
       const mockDb = inject<Db>({ run: vi.fn().mockResolvedValue(undefined) });
       await systemRoutes(csrfApp, csrfServices, mockDb);
+      await bookFilesRoute(csrfApp, csrfServices.book);
       await csrfApp.ready();
     });
 
@@ -974,6 +976,39 @@ describe('POST /api/system/restore', () => {
       expect(res.statusCode).toBe(403);
       expect(JSON.parse(res.payload).error).toMatch(/CSRF/);
       expect(csrfServices.backup.processRestoreUpload as Mock).not.toHaveBeenCalled();
+    });
+
+    it('POST /api/books/:id/cover (multipart) without X-Requested-With → 403, upload handler NOT invoked', async () => {
+      const res = await csrfApp.inject({
+        method: 'POST',
+        url: '/api/books/42/cover',
+        payload: '--boundary\r\nContent-Disposition: form-data; name="file"; filename="cover.jpg"\r\nContent-Type: image/jpeg\r\n\r\nfake-jpeg-bytes\r\n--boundary--',
+        headers: {
+          'content-type': 'multipart/form-data; boundary=boundary',
+          authorization: basicAuthHeader,
+        },
+      });
+      expect(res.statusCode).toBe(403);
+      expect(JSON.parse(res.payload).error).toMatch(/CSRF/);
+      // Cover upload handler delegates to bookService.uploadCover — proves the body
+      // was rejected by the gate before the route handler consumed it.
+      expect(csrfServices.book.uploadCover as Mock).not.toHaveBeenCalled();
+    });
+
+    it('POST /api/books/:id/cover (multipart) with X-Requested-With → reaches handler', async () => {
+      (csrfServices.book.uploadCover as Mock).mockResolvedValue({ id: 42, title: 'Book' });
+      const res = await csrfApp.inject({
+        method: 'POST',
+        url: '/api/books/42/cover',
+        payload: '--boundary\r\nContent-Disposition: form-data; name="file"; filename="cover.jpg"\r\nContent-Type: image/jpeg\r\n\r\nfake-jpeg-bytes\r\n--boundary--',
+        headers: {
+          'content-type': 'multipart/form-data; boundary=boundary',
+          authorization: basicAuthHeader,
+          'x-requested-with': 'XMLHttpRequest',
+        },
+      });
+      expect(res.statusCode).not.toBe(403);
+      expect(csrfServices.book.uploadCover as Mock).toHaveBeenCalled();
     });
 
     it('unauthenticated POST → 401 + WWW-Authenticate (CSRF check does not preempt auth challenge)', async () => {

@@ -373,6 +373,35 @@ describe('auth middleware', () => {
       expect(res.statusCode).toBe(200);
     });
 
+    it('HEAD requests are exempt (safe method) — no CSRF gate, reaches handler', async () => {
+      (authService.verifyCredentials as ReturnType<typeof vi.fn>).mockResolvedValue({ username: 'admin' });
+
+      const res = await app.inject({
+        method: 'HEAD',
+        url: '/api/test',
+        headers: { authorization: basicAuthHeader() },
+      });
+
+      // Fastify auto-creates HEAD routes for GET handlers — verifies the auth plugin doesn't 403 on HEAD.
+      expect(res.statusCode).toBe(200);
+      expect(res.statusCode).not.toBe(403);
+    });
+
+    it('OPTIONS requests are exempt (safe method / CORS preflight) — no CSRF gate', async () => {
+      (authService.verifyCredentials as ReturnType<typeof vi.fn>).mockResolvedValue({ username: 'admin' });
+
+      const res = await app.inject({
+        method: 'OPTIONS',
+        url: '/api/test',
+        headers: { authorization: basicAuthHeader() },
+      });
+
+      // No OPTIONS handler is registered on the test app and no CORS plugin is wired in,
+      // so Fastify returns 404. The contract under test is that the CSRF gate does NOT
+      // turn this into a 403 — preflight requests must pass the auth plugin unblocked.
+      expect(res.statusCode).not.toBe(403);
+    });
+
     it('unauthenticated POST returns 401 + WWW-Authenticate (CSRF check does NOT preempt the auth challenge)', async () => {
       const res = await app.inject({
         method: 'POST',
