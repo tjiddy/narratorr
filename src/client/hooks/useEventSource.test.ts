@@ -71,6 +71,14 @@ class MockEventSource {
       handler(event);
     }
   }
+
+  simulateRawEvent(type: string, rawData: string) {
+    const handlers = this.listeners.get(type) || [];
+    const event = new MessageEvent(type, { data: rawData });
+    for (const handler of handlers) {
+      handler(event);
+    }
+  }
 }
 
 // Install mock
@@ -411,7 +419,7 @@ describe('useEventSource', () => {
 
       act(() => {
         es.simulateOpen();
-        es.simulateEvent('merge_complete', { book_id: 42, book_title: 'My Book', success: true });
+        es.simulateEvent('merge_complete', { book_id: 42, book_title: 'My Book', success: true, message: 'done' });
       });
 
       expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: queryKeys.activity() });
@@ -1464,7 +1472,7 @@ describe('#706 CACHE_INVALIDATION_MATRIX runtime semantics', () => {
   const PAYLOADS: Record<SSEEventType, Record<string, unknown>> = {
     download_progress: { download_id: 7, book_id: 42, percentage: 0.5, speed: 1024, eta: 30 },
     download_status_change: { download_id: 7, book_id: 42, old_status: 'downloading', new_status: 'completed' },
-    book_status_change: { book_id: 42, old_status: 'wanted', new_status: 'downloaded' },
+    book_status_change: { book_id: 42, old_status: 'wanted', new_status: 'imported' },
     grab_started: { download_id: 7, book_id: 42, book_title: 'Test', release_title: 'Release' },
     import_complete: { download_id: 7, book_id: 42, book_title: 'Test', job_id: 1, elapsed_ms: 1000 },
     import_phase_change: { job_id: 1, book_id: 42, book_title: 'Test', from: 'analyzing', to: 'copying' },
@@ -1643,5 +1651,198 @@ describe('#706 CACHE_INVALIDATION_MATRIX runtime semantics', () => {
     expect(() => es.simulateEvent('not_in_matrix', {})).not.toThrow();
     const registered = [...(es as unknown as { listeners: Map<string, unknown[]> }).listeners.keys()];
     expect(registered).not.toContain('not_in_matrix');
+  });
+});
+
+// ============================================================================
+// #722 — Wave 2.5: Zod schema validation of incoming SSE messages
+// ============================================================================
+
+describe('#722 SSE schema validation', () => {
+  let warnSpy: ReturnType<typeof vi.spyOn>;
+
+  beforeEach(() => {
+    warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => { /* noop */ });
+  });
+
+  afterEach(() => {
+    warnSpy.mockRestore();
+  });
+
+  it('drops malformed JSON without crashing the hook or invoking the consumer', () => {
+    const { wrapper, queryClient } = createWrapper();
+    const invalidateSpy = vi.spyOn(queryClient, 'invalidateQueries');
+
+    renderHook(() => useEventSource('key'), { wrapper });
+    const es = MockEventSource.instances[0];
+
+    act(() => {
+      es.simulateOpen();
+      es.simulateRawEvent('merge_complete', 'not-json');
+    });
+
+    expect(warnSpy).toHaveBeenCalledWith(
+      expect.stringContaining('SSE merge_complete: invalid JSON'),
+      expect.any(Error),
+    );
+    expect(invalidateSpy).not.toHaveBeenCalledWith({ queryKey: queryKeys.activity() });
+  });
+
+  it('continues to process subsequent valid events after a malformed-JSON event', () => {
+    const { wrapper, queryClient } = createWrapper();
+    const invalidateSpy = vi.spyOn(queryClient, 'invalidateQueries');
+
+    renderHook(() => useEventSource('key'), { wrapper });
+    const es = MockEventSource.instances[0];
+
+    act(() => {
+      es.simulateOpen();
+      es.simulateRawEvent('merge_complete', '{not valid json');
+      es.simulateEvent('merge_complete', { book_id: 1, book_title: 'Book', success: true, message: 'ok' });
+    });
+
+    expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: queryKeys.books() });
+  });
+
+  it('rejects import_progress with malformed byte_counter (missing required current field)', () => {
+    const { wrapper, queryClient } = createWrapper();
+    const invalidateSpy = vi.spyOn(queryClient, 'invalidateQueries');
+    queryClient.setQueryData(queryKeys.importJobs(), [
+      { id: 1, bookId: 42, status: 'processing', phase: 'copying' },
+    ]);
+
+    renderHook(() => useEventSource('key'), { wrapper });
+    const es = MockEventSource.instances[0];
+
+    act(() => {
+      es.simulateOpen();
+      es.simulateEvent('import_progress', {
+        job_id: 1,
+        book_id: 42,
+        book_title: 'Test',
+        phase: 'copying',
+        progress: 0.5,
+        byte_counter: { total: 123 },
+      });
+    });
+
+    expect(warnSpy).toHaveBeenCalledWith(
+      expect.stringContaining('SSE import_progress: schema validation failed'),
+      expect.any(Object),
+    );
+    const cached = queryClient.getQueryData(queryKeys.importJobs()) as Record<string, unknown>[];
+    expect(cached[0]).not.toHaveProperty('_progress');
+    expect(invalidateSpy).not.toHaveBeenCalledWith({ queryKey: ['importJobs'] });
+  });
+
+  it('rejects merge_complete missing required message field', () => {
+    const { wrapper, queryClient } = createWrapper();
+    const invalidateSpy = vi.spyOn(queryClient, 'invalidateQueries');
+
+    renderHook(() => useEventSource('key'), { wrapper });
+    const es = MockEventSource.instances[0];
+
+    act(() => {
+      es.simulateOpen();
+      es.simulateEvent('merge_complete', { book_id: 42, book_title: 'My Book', success: true });
+    });
+
+    expect(warnSpy).toHaveBeenCalledWith(
+      expect.stringContaining('SSE merge_complete: schema validation failed'),
+      expect.any(Object),
+    );
+    expect(invalidateSpy).not.toHaveBeenCalledWith({ queryKey: queryKeys.books() });
+    expect(toast.success).not.toHaveBeenCalled();
+  });
+
+  it('rejects download_progress with wrong type for percentage (string instead of number)', () => {
+    const { wrapper, queryClient } = createWrapper();
+    const queueKey = ['activity', { section: 'queue', limit: 50, offset: 0 }];
+    queryClient.setQueryData(queueKey, {
+      data: [{ id: 1, bookId: 2, title: 'Book', progress: 0.1, status: 'downloading' }],
+      total: 1,
+    });
+
+    renderHook(() => useEventSource('key'), { wrapper });
+    const es = MockEventSource.instances[0];
+
+    act(() => {
+      es.simulateOpen();
+      es.simulateEvent('download_progress', { download_id: 1, book_id: 2, percentage: '0.5', speed: null, eta: null });
+    });
+
+    expect(warnSpy).toHaveBeenCalledWith(
+      expect.stringContaining('SSE download_progress: schema validation failed'),
+      expect.any(Object),
+    );
+    const cached = queryClient.getQueryData<{ data: { id: number; progress: number }[] }>(queueKey);
+    expect(cached!.data[0].progress).toBe(0.1);
+  });
+
+  it('accepts import_progress with book_id: null (nullable per schema)', () => {
+    const { wrapper, queryClient } = createWrapper();
+    queryClient.setQueryData(queryKeys.importJobs(), [
+      { id: 1, bookId: null, status: 'processing', phase: 'copying' },
+    ]);
+
+    renderHook(() => useEventSource('key'), { wrapper });
+    const es = MockEventSource.instances[0];
+
+    act(() => {
+      es.simulateOpen();
+      es.simulateEvent('import_progress', {
+        job_id: 1,
+        book_id: null,
+        book_title: 'Test',
+        phase: 'copying',
+        progress: 0.5,
+      });
+    });
+
+    expect(warnSpy).not.toHaveBeenCalled();
+    const cached = queryClient.getQueryData(queryKeys.importJobs()) as Record<string, unknown>[];
+    expect(cached[0]).toMatchObject({ id: 1, _progress: 0.5, _progressPhase: 'copying' });
+  });
+
+  it('processes a fully-valid import_progress event end-to-end (happy path)', () => {
+    const { wrapper, queryClient } = createWrapper();
+    queryClient.setQueryData(queryKeys.importJobs(), [
+      { id: 1, bookId: 42, status: 'processing', phase: 'copying' },
+    ]);
+
+    renderHook(() => useEventSource('key'), { wrapper });
+    const es = MockEventSource.instances[0];
+
+    act(() => {
+      es.simulateOpen();
+      es.simulateEvent('import_progress', {
+        job_id: 1,
+        book_id: 42,
+        book_title: 'Test',
+        phase: 'copying',
+        progress: 0.75,
+        byte_counter: { current: 7500, total: 10000 },
+      });
+    });
+
+    expect(warnSpy).not.toHaveBeenCalled();
+    const cached = queryClient.getQueryData(queryKeys.importJobs()) as Record<string, unknown>[];
+    expect(cached[0]).toMatchObject({
+      id: 1,
+      _progress: 0.75,
+      _byteCounter: { current: 7500, total: 10000 },
+      _progressPhase: 'copying',
+    });
+  });
+});
+
+// ============================================================================
+// #722 — SSE_PARSERS registry completeness
+// ============================================================================
+
+describe('#722 SSE_PARSERS registry completeness', () => {
+  it('SSE_PARSERS keys cover every sseEventTypeSchema option (compile-time enforced via SSEParserMap)', async () => {
+    const { SSE_PARSERS } = await import('@/lib/sse/safe-parse-event');
+    expect(Object.keys(SSE_PARSERS).sort()).toEqual([...sseEventTypeSchema.options].sort());
   });
 });

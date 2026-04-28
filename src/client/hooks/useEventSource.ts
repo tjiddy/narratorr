@@ -14,6 +14,7 @@ import {
 } from '../../shared/schemas.js';
 import { setMergeProgress } from './useMergeProgress.js';
 import { handleSearchEvent } from './useSearchProgress.js';
+import { safeParseSseEvent } from '@/lib/sse/safe-parse-event';
 
 // ============================================================================
 // Reactive SSE connection state (F3)
@@ -204,12 +205,9 @@ export function useEventSource(apiKey: string | null) {
 
     for (const type of eventTypes) {
       es.addEventListener(type, (event: MessageEvent) => {
-        try {
-          const data = JSON.parse(event.data);
-          handleEvent(type, data);
-        } catch {
-          // Malformed event — ignore
-        }
+        const parsed = safeParseSseEvent(type, event);
+        if (parsed === null) return;
+        handleEvent(type, parsed);
       });
     }
 

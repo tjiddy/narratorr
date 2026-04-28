@@ -1,9 +1,9 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import type { z } from 'zod';
 import { queryKeys } from '@/lib/queryKeys';
 import { api } from '@/lib/api';
 import { URL_BASE } from '@/lib/api/client';
+import { safeParseEvent } from '@/lib/sse/safe-parse-event';
 import type { SearchResponse, SearchContext } from '@/lib/api/search';
 import {
   searchStartEventSchema,
@@ -12,26 +12,6 @@ import {
   indexerCancelledEventSchema,
   searchResponseSchema,
 } from '../../shared/schemas/search-stream.js';
-
-function safeParseEvent<T extends z.ZodTypeAny>(
-  type: string,
-  event: MessageEvent,
-  schema: T,
-): z.infer<T> | null {
-  let raw: unknown;
-  try {
-    raw = JSON.parse(event.data);
-  } catch (err) {
-    console.warn(`SSE ${type}: invalid JSON`, err);
-    return null;
-  }
-  const result = schema.safeParse(raw);
-  if (!result.success) {
-    console.warn(`SSE ${type}: schema validation failed`, result.error);
-    return null;
-  }
-  return result.data;
-}
 
 // ============================================================================
 // Types
