@@ -740,6 +740,28 @@ describe('auth routes', () => {
     });
   });
 
+  describe('cookie Max-Age contract', () => {
+    it('login Set-Cookie contains Max-Age=604800 (7-day session)', async () => {
+      (services.auth.verifyCredentials as Mock).mockResolvedValue({ username: 'admin' });
+      (services.auth.getSessionSecret as Mock).mockResolvedValue('test-secret');
+      (services.auth.createSessionCookie as Mock).mockReturnValue('signed-cookie-value');
+
+      const res = await app.inject({
+        method: 'POST',
+        url: '/api/auth/login',
+        payload: { username: 'admin', password: 'password123' },
+      });
+      expect(res.statusCode).toBe(200);
+      expect(String(res.headers['set-cookie'])).toContain('Max-Age=604800');
+    });
+
+    it('logout Set-Cookie does NOT contain Max-Age=604800 (clears, does not extend)', async () => {
+      const res = await app.inject({ method: 'POST', url: '/api/auth/logout' });
+      expect(res.statusCode).toBe(200);
+      expect(String(res.headers['set-cookie'])).not.toContain('Max-Age=604800');
+    });
+  });
+
   describe('settings isolation', () => {
     it('GET /api/settings does NOT include any auth config', async () => {
       (services.settings.getAll as Mock).mockResolvedValue({

@@ -450,6 +450,38 @@ describe('auth middleware', () => {
         await app.close();
       }
     });
+
+    it('dev + trusted proxy + X-Forwarded-Proto: https → renewal cookie has no Secure', async () => {
+      // isDev=true (default in mock); even if a trusted proxy reports HTTPS, dev mode short-circuits Secure to false.
+      const app = await createApp(makeRenewingAuthService(), { trustProxy: true });
+      try {
+        const res = await app.inject({
+          method: 'GET',
+          url: '/api/test',
+          cookies: { narratorr_session: 'old-cookie' },
+          headers: { 'x-forwarded-proto': 'https' },
+        });
+        expect(res.statusCode).toBe(200);
+        expect(String(res.headers['set-cookie'])).not.toContain('Secure');
+      } finally {
+        await app.close();
+      }
+    });
+
+    it('renewal Set-Cookie contains Max-Age=604800 (7-day persistent session)', async () => {
+      const app = await createApp(makeRenewingAuthService());
+      try {
+        const res = await app.inject({
+          method: 'GET',
+          url: '/api/test',
+          cookies: { narratorr_session: 'old-cookie' },
+        });
+        expect(res.statusCode).toBe(200);
+        expect(String(res.headers['set-cookie'])).toContain('Max-Age=604800');
+      } finally {
+        await app.close();
+      }
+    });
   });
 
   describe('AUTH_BYPASS', () => {
