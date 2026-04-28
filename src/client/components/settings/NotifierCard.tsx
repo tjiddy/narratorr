@@ -131,6 +131,16 @@ export function NotifierCard(props: NotifierCardProps) {
     );
   }
 
+  // In edit mode, include the notifier id so the server can resolve masked
+  // sentinel values against saved decrypted settings before running the test.
+  const handleFormTest = (data: CreateNotifierFormData) => {
+    if (notifier?.id) {
+      onFormTest({ ...data, id: notifier.id } as CreateNotifierFormData);
+    } else {
+      onFormTest(data);
+    }
+  };
+
   return (
     <NotifierCardForm
       form={form}
@@ -138,7 +148,7 @@ export function NotifierCard(props: NotifierCardProps) {
       selectedType={selectedType}
       watchedEvents={watchedEvents}
       onSubmit={onSubmit}
-      onFormTest={onFormTest}
+      onFormTest={handleFormTest}
       onCancel={onCancel}
       isPending={isPending}
       testingForm={testingForm}

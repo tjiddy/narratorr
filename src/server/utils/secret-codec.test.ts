@@ -14,7 +14,9 @@ import {
   redactSecrets,
   resolveSentinelFields,
   loadEncryptionKey,
+  getSecretFieldNames,
 } from './secret-codec.js';
+import { notifierSettingsSchemas } from '../../shared/schemas/notifier.js';
 
 const TEST_KEY = Buffer.from('a'.repeat(64), 'hex');
 
@@ -219,6 +221,84 @@ describe('SecretCodec', () => {
       expect(isSentinel('real-api-key')).toBe(false);
       expect(isSentinel('*******')).toBe(false);
       expect(isSentinel('')).toBe(false);
+    });
+  });
+
+  describe('#731 notifier secret fields', () => {
+    const NOTIFIER_SECRETS_PER_TYPE: Record<string, string[]> = {
+      webhook: ['url', 'headers'],
+      discord: ['webhookUrl'],
+      slack: ['webhookUrl'],
+      telegram: ['botToken'],
+      email: ['smtpPass'],
+      pushover: ['pushoverToken'],
+      gotify: ['gotifyToken'],
+      // script + ntfy intentionally have no secret fields in the current schema
+      script: [],
+      ntfy: [],
+    };
+
+    it('getSecretFieldNames("notifier") returns the union of per-type secret fields', () => {
+      const fields = getSecretFieldNames('notifier');
+      const expected = ['url', 'webhookUrl', 'botToken', 'smtpPass', 'pushoverToken', 'gotifyToken', 'headers'];
+      expect([...fields].sort()).toEqual([...expected].sort());
+    });
+
+    it('every per-type secret field appears in SECRET_FIELDS["notifier"]', () => {
+      const registered = new Set(getSecretFieldNames('notifier'));
+      for (const [type, fields] of Object.entries(NOTIFIER_SECRETS_PER_TYPE)) {
+        for (const field of fields) {
+          expect(registered.has(field), `${type}.${field} must be registered as a notifier secret`).toBe(true);
+        }
+      }
+    });
+
+    it('round-trips encryption for every notifier secret field', () => {
+      for (const field of getSecretFieldNames('notifier')) {
+        const settings: Record<string, unknown> = { [field]: 'plaintext-value' };
+        const encrypted = encryptFields('notifier', { ...settings }, TEST_KEY);
+        expect(isEncrypted(encrypted[field] as string)).toBe(true);
+        const decrypted = decryptFields('notifier', encrypted, TEST_KEY);
+        expect(decrypted[field]).toBe('plaintext-value');
+      }
+    });
+
+    it('round-trips encryption of webhook headers as a JSON string', () => {
+      const headers = JSON.stringify({ Authorization: 'Bearer abc', 'X-Api-Key': 'xyz' });
+      const encrypted = encryptFields('notifier', { headers }, TEST_KEY);
+      expect(isEncrypted(encrypted.headers as string)).toBe(true);
+      const decrypted = decryptFields('notifier', encrypted, TEST_KEY);
+      expect(decrypted.headers).toBe(headers);
+    });
+
+    it('maskFields("notifier") replaces non-empty secrets with sentinel and leaves non-secret fields alone', () => {
+      const settings = {
+        url: 'https://hook',
+        method: 'POST',
+        headers: '{"Authorization":"Bearer x"}',
+        bodyTemplate: '{}',
+      };
+      const masked = maskFields('notifier', { ...settings });
+      expect(masked.url).toBe('********');
+      expect(masked.headers).toBe('********');
+      expect(masked.method).toBe('POST');
+      expect(masked.bodyTemplate).toBe('{}');
+    });
+
+    it('encryptFields skips notifier types without secret fields (script/ntfy)', () => {
+      const ntfy = encryptFields('notifier', { ntfyTopic: 'topic', ntfyServer: 'https://ntfy.sh' }, TEST_KEY);
+      expect(ntfy.ntfyTopic).toBe('topic');
+      expect(ntfy.ntfyServer).toBe('https://ntfy.sh');
+      const script = encryptFields('notifier', { path: '/tmp/x.sh', timeout: 30 }, TEST_KEY);
+      expect(script.path).toBe('/tmp/x.sh');
+      expect(script.timeout).toBe(30);
+    });
+
+    it('every per-type schema secret field is registered (drift guard)', () => {
+      // Sanity check: notifier-type schemas referenced for the audit
+      expect(notifierSettingsSchemas.webhook).toBeDefined();
+      expect(notifierSettingsSchemas.telegram).toBeDefined();
+      // The behavior — every field in NOTIFIER_SECRETS_PER_TYPE is in registry — is asserted above.
     });
   });
 

@@ -208,6 +208,7 @@ describe('notifiers routes', () => {
 
       expect(res.statusCode).toBe(201);
       const body = res.json();
+      // Response masks the smtpPass secret; non-secret fields pass through.
       expect(body).toMatchObject({
         name: 'Email Notifier',
         type: 'email',
@@ -215,7 +216,7 @@ describe('notifiers routes', () => {
           smtpHost: 'smtp.example.com',
           smtpPort: 587,
           smtpUser: 'user@example.com',
-          smtpPass: 'secret',
+          smtpPass: '********',
           smtpTls: true,
           fromAddress: 'noreply@example.com',
           toAddress: 'admin@example.com',
@@ -270,11 +271,12 @@ describe('notifiers routes', () => {
 
       expect(res.statusCode).toBe(201);
       const body = res.json();
+      // Response masks the botToken secret; non-secret fields pass through.
       expect(body).toMatchObject({
         name: 'Telegram Notifier',
         type: 'telegram',
         settings: {
-          botToken: '123456:ABC-DEF',
+          botToken: '********',
           chatId: '987654321',
         },
       });
@@ -414,6 +416,139 @@ describe('notifiers routes', () => {
 
       expect(res.statusCode).toBe(500);
       expect(res.json()).toEqual({ error: 'Internal server error' });
+    });
+  });
+
+  describe('#731 secret masking in API responses', () => {
+    it('GET /api/notifiers masks every notifier secret field', async () => {
+      const fullySecretWebhook = {
+        id: 10,
+        name: 'Webhook',
+        type: 'webhook' as const,
+        enabled: true,
+        events: ['on_grab'],
+        settings: {
+          url: 'https://hook.example.com/path?token=zzz',
+          method: 'POST',
+          headers: '{"Authorization":"Bearer xyz"}',
+          bodyTemplate: '{}',
+        } as Record<string, unknown>,
+        createdAt: new Date(),
+      };
+      vi.mocked(services.notifier.getAll).mockResolvedValue([fullySecretWebhook]);
+
+      const res = await app.inject({ method: 'GET', url: '/api/notifiers' });
+      expect(res.statusCode).toBe(200);
+      const body = res.json();
+      expect(body[0].settings).toMatchObject({
+        url: '********',
+        headers: '********',
+        method: 'POST',
+        bodyTemplate: '{}',
+      });
+    });
+
+    it('GET /api/notifiers/:id masks secrets per-type', async () => {
+      const cases: Array<[string, Record<string, unknown>, string[]]> = [
+        ['discord', { webhookUrl: 'https://discord.com/api/webhooks/1/x', includeCover: true }, ['webhookUrl']],
+        ['slack', { webhookUrl: 'https://hooks.slack.com/x' }, ['webhookUrl']],
+        ['telegram', { botToken: '1:abc', chatId: '-100' }, ['botToken']],
+        ['email', { smtpHost: 's', smtpPass: 'pw', fromAddress: 'a@b.c', toAddress: 'c@d.e' }, ['smtpPass']],
+        ['pushover', { pushoverToken: 'tok', pushoverUser: 'u' }, ['pushoverToken']],
+        ['gotify', { gotifyUrl: 'https://gotify.test', gotifyToken: 'tok' }, ['gotifyToken']],
+      ];
+
+      for (const [type, settings, secretKeys] of cases) {
+        vi.mocked(services.notifier.getById).mockResolvedValue({
+          id: 1, name: type, type, enabled: true, events: ['on_grab'],
+          settings, createdAt: new Date(),
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        } as any);
+        const res = await app.inject({ method: 'GET', url: '/api/notifiers/1' });
+        expect(res.statusCode).toBe(200);
+        const body = res.json();
+        for (const key of secretKeys) {
+          expect(body.settings[key]).toBe('********');
+        }
+      }
+    });
+
+    it('PUT /api/notifiers/:id with ******** sentinel passes through to service unchanged', async () => {
+      vi.mocked(services.notifier.update).mockResolvedValue({
+        ...mockNotifier,
+        settings: { url: 'https://real.hook' },
+      });
+
+      const res = await app.inject({
+        method: 'PUT',
+        url: '/api/notifiers/1',
+        payload: {
+          type: 'webhook',
+          settings: { url: '********', method: 'POST' },
+        },
+      });
+
+      expect(res.statusCode).toBe(200);
+      // Response is masked
+      expect(res.json().settings.url).toBe('********');
+      // Service receives the sentinel; the service is responsible for resolving it.
+      expect(services.notifier.update).toHaveBeenCalledWith(
+        1,
+        expect.objectContaining({
+          settings: expect.objectContaining({ url: '********' }),
+        }),
+      );
+    });
+  });
+
+  describe('#731 POST /api/notifiers/test (with id)', () => {
+    it('forwards optional id to testConfig for sentinel resolution', async () => {
+      vi.mocked(services.notifier.testConfig).mockResolvedValue({ success: true });
+
+      const res = await app.inject({
+        method: 'POST',
+        url: '/api/notifiers/test',
+        payload: {
+          name: 'Edited',
+          type: 'webhook',
+          enabled: true,
+          events: ['on_grab'],
+          settings: { url: '********', method: 'POST' },
+          id: 7,
+        },
+      });
+
+      expect(res.statusCode).toBe(200);
+      expect(services.notifier.testConfig).toHaveBeenCalledWith(
+        expect.objectContaining({
+          type: 'webhook',
+          settings: expect.objectContaining({ url: '********' }),
+          id: 7,
+        }),
+      );
+    });
+
+    it('without id (add-flow) does not forward id to service', async () => {
+      vi.mocked(services.notifier.testConfig).mockResolvedValue({ success: true });
+
+      const res = await app.inject({
+        method: 'POST',
+        url: '/api/notifiers/test',
+        payload: {
+          name: 'New',
+          type: 'webhook',
+          enabled: true,
+          events: ['on_grab'],
+          settings: { url: 'https://new.hook' },
+        },
+      });
+
+      expect(res.statusCode).toBe(200);
+      expect(services.notifier.testConfig).toHaveBeenCalledWith(
+        expect.objectContaining({ type: 'webhook' }),
+      );
+      const callArg = vi.mocked(services.notifier.testConfig).mock.calls[0][0];
+      expect('id' in callArg).toBe(false);
     });
   });
 

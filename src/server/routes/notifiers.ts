@@ -10,5 +10,6 @@ export async function notifiersRoutes(app: FastifyInstance, notifierService: Not
     service: notifierService,
     createSchema: createNotifierSchema,
     updateSchema: updateNotifierSchema,
+    secretEntity: 'notifier',
   });
 }

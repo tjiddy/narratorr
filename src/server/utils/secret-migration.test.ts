@@ -28,6 +28,7 @@ describe('Secret Migration', () => {
       ]));
       db.select.mockReturnValueOnce(mockDbChain([]));
       db.select.mockReturnValueOnce(mockDbChain([]));
+      db.select.mockReturnValueOnce(mockDbChain([]));
       db.update.mockReturnValue(mockDbChain());
 
       await migrateSecretsToEncrypted(inject<Db>(db), TEST_KEY, inject<FastifyBaseLogger>(log));
@@ -48,6 +49,7 @@ describe('Secret Migration', () => {
       ]));
       db.select.mockReturnValueOnce(mockDbChain([]));
       db.select.mockReturnValueOnce(mockDbChain([]));
+      db.select.mockReturnValueOnce(mockDbChain([]));
       db.update.mockReturnValue(mockDbChain());
 
       await migrateSecretsToEncrypted(inject<Db>(db), TEST_KEY, inject<FastifyBaseLogger>(log));
@@ -59,6 +61,7 @@ describe('Secret Migration', () => {
       db.select.mockReturnValueOnce(mockDbChain([
         { id: 1, settings: { apiKey: 'key', flareSolverrUrl: 'http://flare:8191', hostname: 'h.com' } },
       ]));
+      db.select.mockReturnValueOnce(mockDbChain([]));
       db.select.mockReturnValueOnce(mockDbChain([]));
       db.select.mockReturnValueOnce(mockDbChain([]));
       db.update.mockReturnValue(mockDbChain());
@@ -78,6 +81,7 @@ describe('Secret Migration', () => {
         { id: 1, settings: { password: 'pass', apiKey: 'key', host: 'localhost' } },
       ]));
       db.select.mockReturnValueOnce(mockDbChain([]));
+      db.select.mockReturnValueOnce(mockDbChain([]));
       db.update.mockReturnValue(mockDbChain());
 
       await migrateSecretsToEncrypted(inject<Db>(db), TEST_KEY, inject<FastifyBaseLogger>(log));
@@ -90,6 +94,7 @@ describe('Secret Migration', () => {
     });
 
     it('encrypts network proxy URL', async () => {
+      db.select.mockReturnValueOnce(mockDbChain([]));
       db.select.mockReturnValueOnce(mockDbChain([]));
       db.select.mockReturnValueOnce(mockDbChain([]));
       db.select.mockReturnValueOnce(mockDbChain([
@@ -105,6 +110,7 @@ describe('Secret Migration', () => {
     it('encrypts prowlarr config apiKey', async () => {
       db.select.mockReturnValueOnce(mockDbChain([]));
       db.select.mockReturnValueOnce(mockDbChain([]));
+      db.select.mockReturnValueOnce(mockDbChain([]));
       db.select.mockReturnValueOnce(mockDbChain([
         createSettingsRow('prowlarr', { url: 'http://prowlarr', apiKey: 'prowlarr-key' }),
       ]));
@@ -116,6 +122,7 @@ describe('Secret Migration', () => {
     });
 
     it('encrypts auth sessionSecret + apiKey', async () => {
+      db.select.mockReturnValueOnce(mockDbChain([]));
       db.select.mockReturnValueOnce(mockDbChain([]));
       db.select.mockReturnValueOnce(mockDbChain([]));
       db.select.mockReturnValueOnce(mockDbChain([
@@ -135,6 +142,7 @@ describe('Secret Migration', () => {
       ]));
       db.select.mockReturnValueOnce(mockDbChain([]));
       db.select.mockReturnValueOnce(mockDbChain([]));
+      db.select.mockReturnValueOnce(mockDbChain([]));
 
       await migrateSecretsToEncrypted(inject<Db>(db), TEST_KEY, inject<FastifyBaseLogger>(log));
 
@@ -147,6 +155,7 @@ describe('Secret Migration', () => {
         { id: 2, settings: {} },
         { id: 3, settings: { apiKey: null } },
       ]));
+      db.select.mockReturnValueOnce(mockDbChain([]));
       db.select.mockReturnValueOnce(mockDbChain([]));
       db.select.mockReturnValueOnce(mockDbChain([]));
 
@@ -163,6 +172,7 @@ describe('Secret Migration', () => {
         { id: 1, settings: { password: 'secret-pass-value' } },
       ]));
       db.select.mockReturnValueOnce(mockDbChain([]));
+      db.select.mockReturnValueOnce(mockDbChain([]));
       db.update.mockReturnValue(mockDbChain());
 
       await migrateSecretsToEncrypted(inject<Db>(db), TEST_KEY, inject<FastifyBaseLogger>(log));
@@ -171,6 +181,70 @@ describe('Secret Migration', () => {
       expect(allLogOutput).not.toContain('secret-key-value');
       expect(allLogOutput).not.toContain('secret-pass-value');
       expect((log.info as Mock).mock.calls.length).toBeGreaterThan(0);
+    });
+
+    it('#731 encrypts notifier webhook url + headers', async () => {
+      db.select.mockReturnValueOnce(mockDbChain([]));
+      db.select.mockReturnValueOnce(mockDbChain([]));
+      db.select.mockReturnValueOnce(mockDbChain([
+        { id: 1, settings: { url: 'https://hook.example.com', headers: '{"Authorization":"Bearer x"}', method: 'POST' } },
+      ]));
+      db.select.mockReturnValueOnce(mockDbChain([]));
+      db.update.mockReturnValue(mockDbChain());
+
+      await migrateSecretsToEncrypted(inject<Db>(db), TEST_KEY, inject<FastifyBaseLogger>(log));
+
+      const setCalls = db.update.mock.results[0].value.set.mock.calls;
+      const settings = setCalls[0][0].settings;
+      expect(isEncrypted(settings.url)).toBe(true);
+      expect(isEncrypted(settings.headers)).toBe(true);
+      expect(settings.method).toBe('POST');
+    });
+
+    it('#731 encrypts notifier secrets across multiple types', async () => {
+      db.select.mockReturnValueOnce(mockDbChain([]));
+      db.select.mockReturnValueOnce(mockDbChain([]));
+      db.select.mockReturnValueOnce(mockDbChain([
+        { id: 1, settings: { webhookUrl: 'https://discord.com/api/webhooks/1/xyz' } },
+        { id: 2, settings: { botToken: '123:secret', chatId: '-100' } },
+        { id: 3, settings: { smtpHost: 'smtp.test', smtpPass: 'pw', fromAddress: 'a@b.c', toAddress: 'c@d.e' } },
+      ]));
+      db.select.mockReturnValueOnce(mockDbChain([]));
+      db.update.mockReturnValue(mockDbChain());
+
+      await migrateSecretsToEncrypted(inject<Db>(db), TEST_KEY, inject<FastifyBaseLogger>(log));
+
+      expect(db.update).toHaveBeenCalledTimes(3);
+    });
+
+    it('#731 idempotent — skips notifier rows already in $ENC$ form', async () => {
+      const enc = encrypt('https://hook', TEST_KEY);
+      db.select.mockReturnValueOnce(mockDbChain([]));
+      db.select.mockReturnValueOnce(mockDbChain([]));
+      db.select.mockReturnValueOnce(mockDbChain([
+        { id: 1, settings: { url: enc, method: 'POST' } },
+      ]));
+      db.select.mockReturnValueOnce(mockDbChain([]));
+
+      await migrateSecretsToEncrypted(inject<Db>(db), TEST_KEY, inject<FastifyBaseLogger>(log));
+
+      expect(db.update).not.toHaveBeenCalled();
+    });
+
+    it('#731 mixed plaintext + encrypted notifiers — only plaintext re-encrypted', async () => {
+      const enc = encrypt('https://already-encrypted', TEST_KEY);
+      db.select.mockReturnValueOnce(mockDbChain([]));
+      db.select.mockReturnValueOnce(mockDbChain([]));
+      db.select.mockReturnValueOnce(mockDbChain([
+        { id: 1, settings: { url: enc } },
+        { id: 2, settings: { url: 'https://still-plaintext' } },
+      ]));
+      db.select.mockReturnValueOnce(mockDbChain([]));
+      db.update.mockReturnValue(mockDbChain());
+
+      await migrateSecretsToEncrypted(inject<Db>(db), TEST_KEY, inject<FastifyBaseLogger>(log));
+
+      expect(db.update).toHaveBeenCalledTimes(1);
     });
   });
 });
