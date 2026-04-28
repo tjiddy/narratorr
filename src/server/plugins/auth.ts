@@ -21,6 +21,19 @@ const BASE_PUBLIC_ROUTES = [
 const SAFE_METHODS = new Set(['GET', 'HEAD', 'OPTIONS']);
 
 /**
+ * Enforce CSRF protection for authenticated basic-auth requests.
+ * Browsers replay cached `Authorization: Basic` credentials cross-origin, so we require
+ * `X-Requested-With: XMLHttpRequest` on state-changing methods. Browsers cannot set this
+ * header cross-origin without a CORS preflight, blocking classic form-submit CSRF.
+ */
+function enforceCsrf(request: FastifyRequest, reply: FastifyReply): void {
+  if (SAFE_METHODS.has(request.method)) return;
+  if (request.headers['x-requested-with'] !== 'XMLHttpRequest') {
+    reply.status(403).send({ error: 'CSRF protection: missing X-Requested-With header' });
+  }
+}
+
+/**
  * Private IP ranges for local network bypass.
  * 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16, 127.0.0.0/8, ::1, fe80::/10
  */
@@ -198,11 +211,7 @@ async function authPlugin(app: FastifyInstance, opts: AuthPluginOptions) {
       await handleBasicAuth(request, reply, authService);
       // Apply CSRF protection only after successful basic-auth (request.user populated).
       // Unauthenticated requests already received the 401 + WWW-Authenticate challenge.
-      if (!request.user) return;
-      if (SAFE_METHODS.has(request.method)) return;
-      if (request.headers['x-requested-with'] !== 'XMLHttpRequest') {
-        reply.status(403).send({ error: 'CSRF protection: missing X-Requested-With header' });
-      }
+      if (request.user) enforceCsrf(request, reply);
       return;
     }
     if (status.mode === 'forms') { await handleFormsAuth(request, reply, authService); return; }
