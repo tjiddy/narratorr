@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { RateLimitError, TransientError } from './errors.js';
+import { MetadataError, RateLimitError, TransientError } from './errors.js';
 
 describe('RateLimitError', () => {
   it('constructs with correct properties', () => {
@@ -44,5 +44,33 @@ describe('TransientError', () => {
 
     expect(error).toBeInstanceOf(Error);
     expect(error).toBeInstanceOf(TransientError);
+  });
+});
+
+describe('MetadataError', () => {
+  it('is base class with provider field and extends Error', () => {
+    const error = new MetadataError('Audible', 'shape mismatch');
+    expect(error).toBeInstanceOf(Error);
+    expect(error).toBeInstanceOf(MetadataError);
+    expect(error.provider).toBe('Audible');
+    expect(error.message).toBe('shape mismatch');
+  });
+
+  it('sets name property to class name for serialization', () => {
+    const error = new MetadataError('Audnexus', 'test');
+    expect(error.name).toBe('MetadataError');
+  });
+
+  it('constructed with { cause } preserves .cause', () => {
+    const cause = new Error('zod validation failed');
+    const error = new MetadataError('Audible', 'wrapper message', { cause });
+    expect(error.cause).toBe(cause);
+    expect(error.message).toBe('wrapper message');
+    expect(error.provider).toBe('Audible');
+  });
+
+  it('constructed without options has undefined .cause', () => {
+    const error = new MetadataError('Audnexus', 'test');
+    expect(error.cause).toBeUndefined();
   });
 });

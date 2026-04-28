@@ -600,4 +600,44 @@ describe('DelugeClient', () => {
       expect(result!.status).toBe('downloading');
     });
   });
+
+  describe('schema validation', () => {
+    it('throws DownloadClientError when RPC envelope has neither result nor error', async () => {
+      server.use(http.post(`${BASE_URL}/json`, async ({ request }) => {
+        const body = await request.json() as { method: string };
+        if (body.method === 'auth.login') {
+          return HttpResponse.json({ id: 1, result: true, error: null });
+        }
+        // Malformed envelope: no `result` property at all and no error
+        return HttpResponse.json({ id: 2 });
+      }));
+
+      const err = await client.getAllDownloads().catch((e: unknown) => e);
+      expect(err).toBeInstanceOf(DownloadClientError);
+      const zod = await import('zod');
+      expect((err as DownloadClientError).cause).toBeInstanceOf(zod.ZodError);
+    });
+
+    it('throws DownloadClientError when torrent-status response is missing required keys', async () => {
+      server.use(rpcHandler({
+        'auth.login': () => true,
+        'core.get_torrent_status': () => ({ name: 'half', state: 'Downloading' }),
+      }));
+
+      const err = await client.getDownload('abc123def456').catch((e: unknown) => e);
+      expect(err).toBeInstanceOf(DownloadClientError);
+      const zod = await import('zod');
+      expect((err as DownloadClientError).cause).toBeInstanceOf(zod.ZodError);
+    });
+
+    it('passes through unknown extra fields in torrent-status', async () => {
+      server.use(rpcHandler({
+        'auth.login': () => true,
+        'core.get_torrent_status': () => ({ ...mockTorrentStatus, futureField: 'x' }),
+      }));
+
+      const result = await client.getDownload('abc123def456');
+      expect(result?.id).toBe('abc123def456');
+    });
+  });
 });

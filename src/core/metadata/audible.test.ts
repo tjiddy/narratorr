@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { http, HttpResponse, delay } from 'msw';
 import { useMswServer } from '../__tests__/msw/server.js';
 import { AudibleProvider } from './audible.js';
-import { RateLimitError, TransientError } from './errors.js';
+import { MetadataError, RateLimitError, TransientError } from './errors.js';
 
 describe('AudibleProvider', () => {
   const server = useMswServer();
@@ -951,6 +951,65 @@ describe('AudibleProvider', () => {
       expect(book).not.toBeNull();
       expect(capturedUrl).toBeDefined();
       expect(capturedUrl!.origin).toBe(fakeBase);
+    });
+  });
+
+  describe('schema validation', () => {
+    it('throws MetadataError with ZodError cause when response is HTML/non-object', async () => {
+      server.use(
+        http.get('https://api.audible.com/1.0/catalog/products', () =>
+          HttpResponse.json('not an object'),
+        ),
+      );
+
+      const err = await provider.searchBooks('test').catch((e: unknown) => e);
+      expect(err).toBeInstanceOf(MetadataError);
+      const zod = await import('zod');
+      expect((err as MetadataError).cause).toBeInstanceOf(zod.ZodError);
+    });
+
+    it('throws MetadataError when products is non-array', async () => {
+      server.use(
+        http.get('https://api.audible.com/1.0/catalog/products', () =>
+          HttpResponse.json({ products: 'not-an-array' }),
+        ),
+      );
+
+      const err = await provider.searchBooks('test').catch((e: unknown) => e);
+      expect(err).toBeInstanceOf(MetadataError);
+    });
+
+    it('test() returns success: false when response is malformed', async () => {
+      server.use(
+        http.get('https://api.audible.com/1.0/catalog/products', () =>
+          HttpResponse.json('html-interstitial'),
+        ),
+      );
+
+      const result = await provider.test();
+      expect(result.success).toBe(false);
+      expect(result.message).toMatch(/unexpected response|interstitial|invalid/i);
+    });
+
+    it('passes through unknown extra fields and still maps successfully', async () => {
+      server.use(
+        http.get('https://api.audible.com/1.0/catalog/products', () =>
+          HttpResponse.json({
+            products: [
+              {
+                asin: 'B000NEW',
+                title: 'Future Book',
+                authors: [{ name: 'Author' }],
+                authors_extra: 'unknown',
+                future_field: 42,
+              },
+            ],
+          }),
+        ),
+      );
+
+      const { books } = await provider.searchBooks('q');
+      expect(books[0]?.asin).toBe('B000NEW');
     });
   });
 });

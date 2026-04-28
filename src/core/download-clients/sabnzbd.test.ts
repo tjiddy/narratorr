@@ -301,6 +301,45 @@ describe('SABnzbdClient', () => {
         client.addDownload({ type: 'magnet-uri', uri: 'magnet:?xt=urn:btih:abc123', infoHash: 'abc123' }),
       ).rejects.toThrow('only supports usenet artifacts');
     });
+
+    it('throws DownloadClientError with ZodError cause when nzo_ids is a string instead of array', async () => {
+      server.use(
+        http.get(`${API_BASE}/api`, () => HttpResponse.json({ status: true, nzo_ids: 'abc' })),
+      );
+
+      const err = await client
+        .addDownload(nzbUrl('https://indexer.test/getnzb/abc.nzb'))
+        .catch((e: unknown) => e);
+      expect(err).toBeInstanceOf(DownloadClientError);
+      const zod = await import('zod');
+      expect((err as DownloadClientError).cause).toBeInstanceOf(zod.ZodError);
+    });
+
+    it('throws DownloadClientError with ZodError cause when add response is missing status field', async () => {
+      server.use(
+        http.get(`${API_BASE}/api`, () => HttpResponse.json({ nzo_ids: ['SABnzbd_nzo_x'] })),
+      );
+
+      const err = await client
+        .addDownload(nzbUrl('https://indexer.test/getnzb/abc.nzb'))
+        .catch((e: unknown) => e);
+      expect(err).toBeInstanceOf(DownloadClientError);
+      const zod = await import('zod');
+      expect((err as DownloadClientError).cause).toBeInstanceOf(zod.ZodError);
+    });
+
+    it('throws DownloadClientError with ZodError cause when addlocalfile response is malformed', async () => {
+      server.use(
+        http.post(`${API_BASE}/api`, () => HttpResponse.json({ status: 'not-a-bool', nzo_ids: [] })),
+      );
+
+      const err = await client
+        .addDownload({ type: 'nzb-bytes', data: Buffer.from('fake-nzb') })
+        .catch((e: unknown) => e);
+      expect(err).toBeInstanceOf(DownloadClientError);
+      const zod = await import('zod');
+      expect((err as DownloadClientError).cause).toBeInstanceOf(zod.ZodError);
+    });
   });
 
   describe('getDownload', () => {
@@ -929,7 +968,9 @@ describe('SABnzbdClient', () => {
       expect(categories).toEqual([]);
     });
 
-    it('returns empty array when categories field is missing', async () => {
+    it('throws DownloadClientError with ZodError cause when categories field is missing', async () => {
+      // Behavior change from #743: a malformed get_cats response (missing
+      // `categories`) is a boundary failure, not a graceful empty list.
       server.use(
         http.get(`${API_BASE}/api`, ({ request }) => {
           const url = new URL(request.url);
@@ -940,8 +981,27 @@ describe('SABnzbdClient', () => {
         }),
       );
 
-      const categories = await client.getCategories();
-      expect(categories).toEqual([]);
+      const err = await client.getCategories().catch((e: unknown) => e);
+      expect(err).toBeInstanceOf(DownloadClientError);
+      const zod = await import('zod');
+      expect((err as DownloadClientError).cause).toBeInstanceOf(zod.ZodError);
+    });
+
+    it('throws DownloadClientError with ZodError cause when categories is a non-array', async () => {
+      server.use(
+        http.get(`${API_BASE}/api`, ({ request }) => {
+          const url = new URL(request.url);
+          if (url.searchParams.get('mode') === 'get_cats') {
+            return HttpResponse.json({ categories: 'not-an-array' });
+          }
+          return HttpResponse.json({});
+        }),
+      );
+
+      const err = await client.getCategories().catch((e: unknown) => e);
+      expect(err).toBeInstanceOf(DownloadClientError);
+      const zod = await import('zod');
+      expect((err as DownloadClientError).cause).toBeInstanceOf(zod.ZodError);
     });
 
     it('throws DownloadClientAuthError on auth failure (HTTP 401)', async () => {
@@ -1213,6 +1273,73 @@ describe('SABnzbdClient', () => {
 
       const item = await client.getDownload('SABnzbd_nzo_abc123');
       expect(item!.savePath).toBe('');
+    });
+  });
+
+  describe('schema validation', () => {
+    it('throws DownloadClientError with ZodError cause when queue is null', async () => {
+      server.use(
+        http.get(`${API_BASE}/api`, () => HttpResponse.json({ queue: null })),
+      );
+
+      const err = await client.getDownload('id').catch((e: unknown) => e);
+      expect(err).toBeInstanceOf(DownloadClientError);
+      const zod = await import('zod');
+      expect((err as DownloadClientError).cause).toBeInstanceOf(zod.ZodError);
+    });
+
+    it('throws DownloadClientError when history.slots is a non-array', async () => {
+      server.use(
+        http.get(`${API_BASE}/api`, ({ request }) => {
+          const url = new URL(request.url);
+          if (url.searchParams.get('mode') === 'queue') {
+            return HttpResponse.json({ queue: { slots: [] } });
+          }
+          return HttpResponse.json({ history: { slots: 'not-an-array' } });
+        }),
+      );
+
+      const err = await client.getDownload('id').catch((e: unknown) => e);
+      expect(err).toBeInstanceOf(DownloadClientError);
+      const zod = await import('zod');
+      expect((err as DownloadClientError).cause).toBeInstanceOf(zod.ZodError);
+    });
+
+    it('test() returns success: false when version response is malformed (missing field)', async () => {
+      server.use(
+        http.get(`${API_BASE}/api`, () => HttpResponse.json({ no_version_field: true })),
+      );
+
+      const result = await client.test();
+      expect(result.success).toBe(false);
+      expect(result.message).toMatch(/unexpected version response/);
+    });
+
+    it('test() returns success: false when version field is wrong type', async () => {
+      server.use(
+        http.get(`${API_BASE}/api`, () => HttpResponse.json({ version: 42 })),
+      );
+
+      const result = await client.test();
+      expect(result.success).toBe(false);
+      expect(result.message).toMatch(/unexpected version response/);
+    });
+
+    it('passes through unknown extra fields in queue/history slots', async () => {
+      server.use(
+        http.get(`${API_BASE}/api`, ({ request }) => {
+          const url = new URL(request.url);
+          if (url.searchParams.get('mode') === 'queue') {
+            return HttpResponse.json({
+              queue: { slots: [{ ...queueSlot, futureField: 'x' }] },
+            });
+          }
+          return HttpResponse.json({ history: { slots: [] } });
+        }),
+      );
+
+      const item = await client.getDownload('SABnzbd_nzo_abc123');
+      expect(item!.id).toBe('SABnzbd_nzo_abc123');
     });
   });
 });

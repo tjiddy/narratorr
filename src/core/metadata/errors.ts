@@ -17,3 +17,19 @@ export class TransientError extends Error {
     this.name = 'TransientError';
   }
 }
+
+/**
+ * Thrown when a metadata provider returns a response whose shape does not match the
+ * expected schema (HTML interstitial, rate-limit page, upstream API change, etc.).
+ * Not retryable — distinct from TransientError/RateLimitError.
+ */
+export class MetadataError extends Error {
+  constructor(
+    public readonly provider: string,
+    message: string,
+    options?: ErrorOptions,
+  ) {
+    super(message, options);
+    this.name = 'MetadataError';
+  }
+}

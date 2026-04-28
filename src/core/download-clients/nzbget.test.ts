@@ -1044,4 +1044,57 @@ describe('NZBGetClient', () => {
       expect(item!.status).toBe('completed');
     });
   });
+
+  describe('schema validation', () => {
+    it('throws DownloadClientError with ZodError cause when listgroups returns malformed item', async () => {
+      server.use(
+        rpcHandler({
+          listgroups: () => [{ NZBID: 'not-a-number' }],
+          history: () => [],
+        }),
+      );
+
+      const err = await client.getDownload('1').catch((e: unknown) => e);
+      expect(err).toBeInstanceOf(DownloadClientError);
+      const zod = await import('zod');
+      expect((err as DownloadClientError).cause).toBeInstanceOf(zod.ZodError);
+    });
+
+    it('throws DownloadClientError with ZodError cause when history returns malformed item', async () => {
+      server.use(
+        rpcHandler({
+          listgroups: () => [],
+          history: () => [{ wrong_field: 'x' }],
+        }),
+      );
+
+      const err = await client.getDownload('1').catch((e: unknown) => e);
+      expect(err).toBeInstanceOf(DownloadClientError);
+      const zod = await import('zod');
+      expect((err as DownloadClientError).cause).toBeInstanceOf(zod.ZodError);
+    });
+
+    it('preserves cause on the existing RPC envelope safeParse failure', async () => {
+      server.use(
+        http.post(RPC_URL, () => HttpResponse.json('not-an-object')),
+      );
+
+      const err = await client.getAllDownloads().catch((e: unknown) => e);
+      expect(err).toBeInstanceOf(DownloadClientError);
+      const zod = await import('zod');
+      expect((err as DownloadClientError).cause).toBeInstanceOf(zod.ZodError);
+    });
+
+    it('passes through unknown extra fields in groups/history', async () => {
+      server.use(
+        rpcHandler({
+          listgroups: () => [{ ...activeGroup, futureField: 'x' }],
+          history: () => [],
+        }),
+      );
+
+      const item = await client.getDownload('123');
+      expect(item?.id).toBe('123');
+    });
+  });
 });

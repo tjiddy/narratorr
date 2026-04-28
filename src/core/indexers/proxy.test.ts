@@ -211,10 +211,32 @@ describe('resolveProxyIp', () => {
     await expect(resolveProxyIp('http://proxy:8080')).rejects.toThrow(ProxyError);
   });
 
-  it('throws ProxyError on empty IP response', async () => {
+  it('throws ProxyError when IP field is missing from response', async () => {
     vi.spyOn(globalThis, 'fetch').mockResolvedValue(
       new Response(JSON.stringify({}), { status: 200 }),
     );
-    await expect(resolveProxyIp('http://proxy:8080')).rejects.toThrow('IP lookup returned empty response');
+    await expect(resolveProxyIp('http://proxy:8080')).rejects.toThrow(/IP lookup returned unexpected response/);
+  });
+
+  it('throws ProxyError when ip is a number (wrong type)', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      new Response(JSON.stringify({ ip: 12345 }), { status: 200 }),
+    );
+    await expect(resolveProxyIp('http://proxy:8080')).rejects.toThrow(ProxyError);
+  });
+
+  it('throws ProxyError on non-JSON ipify response (cause is the JSON SyntaxError)', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      new Response('not-json', { status: 200 }),
+    );
+    await expect(resolveProxyIp('http://proxy:8080')).rejects.toThrow(ProxyError);
+  });
+
+  it('passes through unknown extra fields and still extracts ip', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      new Response(JSON.stringify({ ip: '1.2.3.4', extra_field: 'unknown' }), { status: 200 }),
+    );
+    const ip = await resolveProxyIp('http://proxy:8080');
+    expect(ip).toBe('1.2.3.4');
   });
 });

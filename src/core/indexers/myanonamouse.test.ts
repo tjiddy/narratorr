@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { http, HttpResponse } from 'msw';
 import { useMswServer } from '../__tests__/msw/server.js';
 import { MyAnonamouseIndexer } from './myanonamouse.js';
-import { IndexerAuthError, ProxyError } from './errors.js';
+import { IndexerAuthError, IndexerError, ProxyError } from './errors.js';
 import { filterByLanguage } from '../utils/filters.js';
 
 const MAM_BASE = 'https://mam.test';
@@ -444,15 +444,17 @@ describe('MyAnonamouseIndexer', () => {
       expect(results).toEqual([]);
     });
 
-    it('returns empty array when MAM returns no data field', async () => {
+    it('throws IndexerError when MAM returns neither data nor error field', async () => {
+      // Behavior change from #743: a response with no `data` and no `error`
+      // is malformed (HTML interstitial, rate-limit page, shape change) and
+      // must fail at the boundary instead of silently returning [].
       server.use(
         http.get(`${MAM_BASE}/tor/js/loadSearchJSONbasic.php`, () => {
           return HttpResponse.json({});
         }),
       );
 
-      const results = await indexer.search('test');
-      expect(results).toEqual([]);
+      await expect(indexer.search('test')).rejects.toThrow(IndexerError);
     });
   });
 
@@ -1663,6 +1665,94 @@ describe('MyAnonamouseIndexer', () => {
       expect(params.get('tor[browse_lang][0]')).toBe('4'); // Spanish = 4
       const langKeys = [...params.keys()].filter(k => k.includes('browse_lang'));
       expect(langKeys).toHaveLength(1);
+    });
+  });
+
+  describe('schema validation', () => {
+    it('search() throws IndexerError with ZodError cause when data is an object (not array)', async () => {
+      server.use(
+        http.get(`${MAM_BASE}/tor/js/loadSearchJSONbasic.php`, () =>
+          HttpResponse.json({ data: { foo: 'bar' } })),
+      );
+
+      const err = await indexer.search('test').catch((e: unknown) => e);
+      expect(err).toBeInstanceOf(IndexerError);
+      const zod = await import('zod');
+      expect((err as IndexerError).cause).toBeInstanceOf(zod.ZodError);
+    });
+
+    it('search() throws IndexerError with ZodError cause when both data and error are missing', async () => {
+      server.use(
+        http.get(`${MAM_BASE}/tor/js/loadSearchJSONbasic.php`, () =>
+          HttpResponse.json({})),
+      );
+
+      const err = await indexer.search('test').catch((e: unknown) => e);
+      expect(err).toBeInstanceOf(IndexerError);
+      const zod = await import('zod');
+      expect((err as IndexerError).cause).toBeInstanceOf(zod.ZodError);
+    });
+
+    it('search() still treats {error: "Nothing returned, ..."} as legitimate empty result (not a validation failure)', async () => {
+      server.use(
+        http.get(`${MAM_BASE}/tor/js/loadSearchJSONbasic.php`, () =>
+          HttpResponse.json({ error: 'Nothing returned, out of 0 hits' })),
+      );
+
+      const results = await indexer.search('no-results-query');
+      expect(results).toEqual([]);
+    });
+
+    it('search() throws IndexerError on invalid JSON body', async () => {
+      server.use(
+        http.get(`${MAM_BASE}/tor/js/loadSearchJSONbasic.php`, () =>
+          new HttpResponse('not-json', { status: 200, headers: { 'Content-Type': 'text/plain' } })),
+      );
+
+      const err = await indexer.search('test').catch((e: unknown) => e);
+      expect(err).toBeInstanceOf(IndexerError);
+    });
+
+    it('test() returns success: false when classname is a number', async () => {
+      server.use(
+        http.get(`${MAM_BASE}/jsonLoad.php`, () => HttpResponse.json({ username: 'u', classname: 42 })),
+      );
+
+      const result = await indexer.test();
+      expect(result.success).toBe(false);
+      expect(result.message).toMatch(/unexpected user-status response/);
+    });
+
+    it('refreshStatus() returns null when body is not JSON', async () => {
+      server.use(
+        http.get(`${MAM_BASE}/jsonLoad.php`, () => new HttpResponse('not-json', {
+          status: 200, headers: { 'Content-Type': 'text/plain' },
+        })),
+      );
+
+      const result = await indexer.refreshStatus();
+      expect(result).toBeNull();
+    });
+
+    it('refreshStatus() returns null when classname is missing', async () => {
+      server.use(
+        http.get(`${MAM_BASE}/jsonLoad.php`, () => HttpResponse.json({ username: 'u' })),
+      );
+
+      const result = await indexer.refreshStatus();
+      expect(result).toBeNull();
+    });
+
+    it('passes through unknown extra fields in search results', async () => {
+      server.use(
+        http.get(`${MAM_BASE}/tor/js/loadSearchJSONbasic.php`, () =>
+          HttpResponse.json({ data: [makeResult({ futureField: 'unknown' })] })),
+      );
+      stubTorrentDownload(server);
+
+      const results = await indexer.search('test');
+      expect(results).toHaveLength(1);
+      expect(results[0].title).toBe('The Way of Kings');
     });
   });
 });

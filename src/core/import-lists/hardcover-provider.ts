@@ -1,4 +1,6 @@
+import { z } from 'zod';
 import type { ImportListProvider, ImportListItem } from './types.js';
+import { ImportListError } from './errors.js';
 import { getErrorMessage } from '../../shared/error-message.js';
 
 export interface HardcoverConfig {
@@ -41,11 +43,34 @@ const SHELF_QUERY = `
   }
 `;
 
-interface HardcoverBook {
-  title?: string;
-  contributions?: Array<{ author?: { name?: string } }>;
-  identifiers?: Array<{ source?: { name?: string }; value?: string }>;
-}
+const hardcoverBookSchema = z.object({
+  title: z.string().optional(),
+  contributions: z.array(z.object({
+    author: z.object({ name: z.string().optional() }).passthrough().optional(),
+  }).passthrough()).optional(),
+  identifiers: z.array(z.object({
+    source: z.object({ name: z.string().optional() }).passthrough().optional(),
+    value: z.string().optional(),
+  }).passthrough()).optional(),
+}).passthrough();
+
+type HardcoverBook = z.infer<typeof hardcoverBookSchema>;
+
+const hardcoverResponseSchema = z.object({
+  data: z.object({
+    trending_books: z.array(hardcoverBookSchema).optional(),
+    user_book_reads: z.array(z.object({ book: hardcoverBookSchema }).passthrough()).optional(),
+  }).passthrough().optional(),
+  errors: z.array(z.object({ message: z.string() }).passthrough()).optional(),
+}).passthrough();
+
+// Probe response for `test()`: `{ __typename }` should return a `data` object
+// with a `__typename` string. Schema is intentionally loose — `errors` can also
+// be present with a string-message array.
+const hardcoverProbeResponseSchema = z.object({
+  data: z.object({ __typename: z.string() }).passthrough().nullish(),
+  errors: z.array(z.object({ message: z.string() }).passthrough()).nullish(),
+}).passthrough();
 
 function mapBook(book: HardcoverBook): ImportListItem | null {
   if (!book.title) return null;
@@ -76,6 +101,20 @@ export class HardcoverProvider implements ImportListProvider {
   }
 
   async fetchItems(): Promise<ImportListItem[]> {
+    const data = await this.executeQuery();
+
+    if (data.errors?.length) {
+      throw new ImportListError(this.name, `Hardcover GraphQL error: ${data.errors[0].message}`);
+    }
+
+    const books = this.listType === 'shelf'
+      ? (data.data?.user_book_reads ?? []).map((r) => r.book)
+      : (data.data?.trending_books ?? []);
+
+    return books.map(mapBook).filter((item): item is ImportListItem => item !== null);
+  }
+
+  private async executeQuery(): Promise<z.infer<typeof hardcoverResponseSchema>> {
     const useShelf = this.listType === 'shelf' && this.shelfId !== undefined;
     const query = useShelf ? SHELF_QUERY : TRENDING_QUERY;
     const variables = useShelf ? { shelfId: this.shelfId } : undefined;
@@ -90,26 +129,19 @@ export class HardcoverProvider implements ImportListProvider {
     });
 
     if (!res.ok) {
-      throw new Error(`Hardcover API returned ${res.status}: ${res.statusText}`);
+      throw new ImportListError(this.name, `Hardcover API returned ${res.status}: ${res.statusText}`);
     }
 
-    const data = await res.json() as {
-      data?: {
-        trending_books?: HardcoverBook[];
-        user_book_reads?: Array<{ book: HardcoverBook }>;
-      };
-      errors?: Array<{ message: string }>;
-    };
-
-    if (data.errors?.length) {
-      throw new Error(`Hardcover GraphQL error: ${data.errors[0].message}`);
+    const raw: unknown = await res.json();
+    const parsed = hardcoverResponseSchema.safeParse(raw);
+    if (!parsed.success) {
+      throw new ImportListError(
+        this.name,
+        `Hardcover returned unexpected response: ${parsed.error.issues[0]?.message ?? 'unknown'}`,
+        { cause: parsed.error },
+      );
     }
-
-    const books = this.listType === 'shelf'
-      ? (data.data?.user_book_reads ?? []).map((r) => r.book)
-      : (data.data?.trending_books ?? []);
-
-    return books.map(mapBook).filter((item): item is ImportListItem => item !== null);
+    return parsed.data;
   }
 
   async test(): Promise<{ success: boolean; message?: string }> {
@@ -129,6 +161,22 @@ export class HardcoverProvider implements ImportListProvider {
 
       if (!res.ok) {
         return { success: false, message: `API returned ${res.status}: ${res.statusText}` };
+      }
+
+      const raw: unknown = await res.json();
+      const parsed = hardcoverProbeResponseSchema.safeParse(raw);
+      if (!parsed.success) {
+        return {
+          success: false,
+          message: `Validation failed: ${parsed.error.issues[0]?.message ?? 'unknown'}`,
+        };
+      }
+      const data = parsed.data;
+      if (data.errors?.length) {
+        return { success: false, message: `Hardcover GraphQL error: ${data.errors[0].message}` };
+      }
+      if (!data.data?.__typename) {
+        return { success: false, message: 'Hardcover probe returned no data.__typename field' };
       }
 
       return { success: true };

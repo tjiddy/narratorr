@@ -2,6 +2,7 @@ import { describe, it, expect, vi } from 'vitest';
 import { http, HttpResponse } from 'msw';
 import { useMswServer } from '../__tests__/msw/server.js';
 import { AbsProvider } from './abs-provider.js';
+import { ImportListError } from './errors.js';
 
 const ABS_BASE = 'https://abs.test';
 
@@ -40,7 +41,7 @@ describe('AbsProvider', () => {
       expect(items).toEqual([]);
     });
 
-    it('skips items with null/empty title', async () => {
+    it('skips items with null/empty title (tolerated by schema, mapping skips)', async () => {
       server.use(
         http.get(`${ABS_BASE}/api/libraries/lib-1/items`, () => HttpResponse.json({
           results: [
@@ -116,6 +117,86 @@ describe('AbsProvider', () => {
       expect(result.message).toBe('Connection failed: network-string-error');
 
       vi.unstubAllGlobals();
+    });
+  });
+
+  describe('schema validation', () => {
+    it('throws ImportListError with ZodError cause when results is not an array', async () => {
+      server.use(
+        http.get(`${ABS_BASE}/api/libraries/lib-1/items`, () => HttpResponse.json({ results: 'broken' })),
+      );
+
+      const provider = new AbsProvider({ serverUrl: ABS_BASE, apiKey: 'test-key', libraryId: 'lib-1' });
+      const err = await provider.fetchItems().catch((e: unknown) => e);
+      expect(err).toBeInstanceOf(ImportListError);
+      const zod = await import('zod');
+      expect((err as ImportListError).cause).toBeInstanceOf(zod.ZodError);
+    });
+
+    it('throws ImportListError with ZodError cause when item.media is null (boundary failure)', async () => {
+      server.use(
+        http.get(`${ABS_BASE}/api/libraries/lib-1/items`, () => HttpResponse.json({
+          results: [{ media: null }],
+        })),
+      );
+
+      const provider = new AbsProvider({ serverUrl: ABS_BASE, apiKey: 'test-key', libraryId: 'lib-1' });
+      const err = await provider.fetchItems().catch((e: unknown) => e);
+      expect(err).toBeInstanceOf(ImportListError);
+      const zod = await import('zod');
+      expect((err as ImportListError).cause).toBeInstanceOf(zod.ZodError);
+    });
+
+    it('throws ImportListError with ZodError cause when item.media.metadata is null', async () => {
+      server.use(
+        http.get(`${ABS_BASE}/api/libraries/lib-1/items`, () => HttpResponse.json({
+          results: [{ media: { metadata: null } }],
+        })),
+      );
+
+      const provider = new AbsProvider({ serverUrl: ABS_BASE, apiKey: 'test-key', libraryId: 'lib-1' });
+      const err = await provider.fetchItems().catch((e: unknown) => e);
+      expect(err).toBeInstanceOf(ImportListError);
+      const zod = await import('zod');
+      expect((err as ImportListError).cause).toBeInstanceOf(zod.ZodError);
+    });
+
+    it('test() returns success: false when libraries is missing', async () => {
+      server.use(
+        http.get(`${ABS_BASE}/api/libraries`, () => HttpResponse.json({})),
+      );
+
+      const provider = new AbsProvider({ serverUrl: ABS_BASE, apiKey: 'test-key', libraryId: 'lib-1' });
+      const result = await provider.test();
+      expect(result.success).toBe(false);
+      expect(result.message).toMatch(/validation failed/i);
+    });
+
+    it('test() returns success: false when libraries is non-array', async () => {
+      server.use(
+        http.get(`${ABS_BASE}/api/libraries`, () => HttpResponse.json({ libraries: 'broken' })),
+      );
+
+      const provider = new AbsProvider({ serverUrl: ABS_BASE, apiKey: 'test-key', libraryId: 'lib-1' });
+      const result = await provider.test();
+      expect(result.success).toBe(false);
+      expect(result.message).toMatch(/validation failed/i);
+    });
+
+    it('passes through unknown extra fields and still maps successfully', async () => {
+      server.use(
+        http.get(`${ABS_BASE}/api/libraries/lib-1/items`, () => HttpResponse.json({
+          results: [
+            { media: { metadata: { title: 'Book', authorName: 'A', new_field: 'unknown' } }, future_field: 1 },
+          ],
+          envelope_extra: 'unknown',
+        })),
+      );
+
+      const provider = new AbsProvider({ serverUrl: ABS_BASE, apiKey: 'test-key', libraryId: 'lib-1' });
+      const items = await provider.fetchItems();
+      expect(items).toHaveLength(1);
+      expect(items[0].title).toBe('Book');
     });
   });
 });

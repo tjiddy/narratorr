@@ -2,6 +2,7 @@ import { describe, it, expect, vi } from 'vitest';
 import { http, HttpResponse } from 'msw';
 import { useMswServer } from '../__tests__/msw/server.js';
 import { HardcoverProvider } from './hardcover-provider.js';
+import { ImportListError } from './errors.js';
 
 const GQL_URL = 'https://api.hardcover.app/v1/graphql';
 
@@ -153,6 +154,106 @@ describe('HardcoverProvider', () => {
       expect(result.message).toBe('Connection failed: network-string-error');
 
       vi.unstubAllGlobals();
+    });
+
+    it('returns failure for 2xx with GraphQL errors instead of data', async () => {
+      server.use(
+        http.post(GQL_URL, () => HttpResponse.json({
+          errors: [{ message: 'Field "_typename" does not exist' }],
+        })),
+      );
+
+      const provider = new HardcoverProvider({ apiKey: 'test-key', listType: 'trending' });
+      const result = await provider.test();
+      expect(result.success).toBe(false);
+      expect(result.message).toMatch(/GraphQL error.*Field/);
+    });
+
+    it('returns failure for 2xx with both data and errors null', async () => {
+      server.use(
+        http.post(GQL_URL, () => HttpResponse.json({ data: null, errors: null })),
+      );
+
+      const provider = new HardcoverProvider({ apiKey: 'test-key', listType: 'trending' });
+      const result = await provider.test();
+      expect(result.success).toBe(false);
+      expect(result.message).toMatch(/no data\.__typename field/i);
+    });
+
+    it('returns failure for 2xx with data but missing __typename', async () => {
+      server.use(
+        http.post(GQL_URL, () => HttpResponse.json({ data: { other_field: 'x' } })),
+      );
+
+      const provider = new HardcoverProvider({ apiKey: 'test-key', listType: 'trending' });
+      const result = await provider.test();
+      expect(result.success).toBe(false);
+      expect(result.message).toMatch(/validation failed/i);
+    });
+
+    it('returns failure for 2xx with malformed body shape (string instead of object)', async () => {
+      server.use(
+        http.post(GQL_URL, () => HttpResponse.json('html-interstitial')),
+      );
+
+      const provider = new HardcoverProvider({ apiKey: 'test-key', listType: 'trending' });
+      const result = await provider.test();
+      expect(result.success).toBe(false);
+      expect(result.message).toMatch(/validation failed/i);
+    });
+
+    it('returns failure for 2xx with errors as wrong type (string)', async () => {
+      server.use(
+        http.post(GQL_URL, () => HttpResponse.json({ data: { __typename: 'query_root' }, errors: 'not-an-array' })),
+      );
+
+      const provider = new HardcoverProvider({ apiKey: 'test-key', listType: 'trending' });
+      const result = await provider.test();
+      expect(result.success).toBe(false);
+      expect(result.message).toMatch(/validation failed/i);
+    });
+  });
+
+  describe('schema validation', () => {
+    it('throws ImportListError with ZodError cause when errors is a string (not array)', async () => {
+      server.use(
+        http.post(GQL_URL, () => HttpResponse.json({ data: null, errors: 'not-an-array' })),
+      );
+
+      const provider = new HardcoverProvider({ apiKey: 'test-key', listType: 'trending' });
+      const err = await provider.fetchItems().catch((e: unknown) => e);
+      expect(err).toBeInstanceOf(ImportListError);
+      const zod = await import('zod');
+      expect((err as ImportListError).cause).toBeInstanceOf(zod.ZodError);
+    });
+
+    it('treats { data: null, errors: null } as a successful empty list (passthrough handles nullish)', async () => {
+      // data is .optional() so null fails — but `errors: null` also fails.
+      server.use(
+        http.post(GQL_URL, () => HttpResponse.json({ data: null, errors: null })),
+      );
+
+      const provider = new HardcoverProvider({ apiKey: 'test-key', listType: 'trending' });
+      const err = await provider.fetchItems().catch((e: unknown) => e);
+      expect(err).toBeInstanceOf(ImportListError);
+    });
+
+    it('passes through unknown extra fields and still maps successfully', async () => {
+      server.use(
+        http.post(GQL_URL, () => HttpResponse.json({
+          data: {
+            trending_books: [
+              { title: 'X', new_field: 'unknown', contributions: [], identifiers: [] },
+            ],
+          },
+          envelope_extra: 'unknown',
+        })),
+      );
+
+      const provider = new HardcoverProvider({ apiKey: 'test-key', listType: 'trending' });
+      const items = await provider.fetchItems();
+      expect(items).toHaveLength(1);
+      expect(items[0].title).toBe('X');
     });
   });
 });

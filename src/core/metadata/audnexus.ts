@@ -1,5 +1,6 @@
+import { z } from 'zod';
 import { BookMetadataSchema, AuthorMetadataSchema } from './schemas.js';
-import { RateLimitError, TransientError } from './errors.js';
+import { MetadataError, RateLimitError, TransientError } from './errors.js';
 import { normalizeGenres } from './genres.js';
 import { AUDNEXUS_TIMEOUT_MS } from '../utils/constants.js';
 import { fetchWithTimeout } from '../utils/fetch-with-timeout.js';
@@ -17,6 +18,41 @@ export interface AudnexusConfig {
 const BASE_URL = 'https://api.audnex.us';
 const REQUEST_TIMEOUT_MS = AUDNEXUS_TIMEOUT_MS;
 
+// Raw-response schemas at the wrapper layer — fail at the boundary on HTML
+// interstitials, rate-limit pages, or shape changes instead of mid-mapping.
+const audnexusSeriesRefSchema = z.object({
+  name: z.string().optional(),
+  position: z.string().optional(),
+  asin: z.string().optional(),
+}).passthrough();
+
+const audnexusBookSchema = z.object({
+  asin: z.string().optional(),
+  isbn: z.string().optional(),
+  title: z.string().optional(),
+  subtitle: z.string().optional(),
+  authors: z.array(z.object({ name: z.string().optional(), asin: z.string().optional() }).passthrough()).optional(),
+  narrators: z.array(z.object({ name: z.string().optional() }).passthrough()).optional(),
+  seriesPrimary: audnexusSeriesRefSchema.optional(),
+  seriesSecondary: audnexusSeriesRefSchema.optional(),
+  summary: z.string().optional(),
+  description: z.string().optional(),
+  publisherName: z.string().optional(),
+  releaseDate: z.string().optional(),
+  language: z.string().optional(),
+  image: z.string().optional(),
+  runtimeLengthMin: z.number().optional(),
+  genres: z.array(z.object({ name: z.string().optional(), type: z.string().optional() }).passthrough()).optional(),
+}).passthrough();
+
+const audnexusAuthorSchema = z.object({
+  asin: z.string().optional(),
+  name: z.string().optional(),
+  description: z.string().optional(),
+  image: z.string().optional(),
+  genres: z.array(z.object({ name: z.string().optional() }).passthrough()).optional(),
+}).passthrough();
+
 export class AudnexusProvider implements MetadataEnrichmentProvider {
   readonly name = 'Audnexus';
   readonly type = 'audnexus';
@@ -28,30 +64,32 @@ export class AudnexusProvider implements MetadataEnrichmentProvider {
   }
 
   async getBook(id: string): Promise<BookMetadata | null> {
-    const data = await this.fetchJson<AudnexusBookDetail>(
+    const data = await this.fetchJson(
       `/books/${encodeURIComponent(id)}?region=${this.region}`,
+      audnexusBookSchema,
     );
 
     if (!data) return null;
 
-    const mapped = mapBook(data);
+    const mapped = mapBook(data as AudnexusBookDetail);
     const result = BookMetadataSchema.safeParse(mapped);
     return result.success ? result.data : null;
   }
 
   async getAuthor(id: string): Promise<AuthorMetadata | null> {
-    const data = await this.fetchJson<AudnexusAuthorDetail>(
+    const data = await this.fetchJson(
       `/authors/${encodeURIComponent(id)}?region=${this.region}`,
+      audnexusAuthorSchema,
     );
 
     if (!data) return null;
 
-    const mapped = mapAuthor(data);
+    const mapped = mapAuthor(data as AudnexusAuthorDetail);
     const result = AuthorMetadataSchema.safeParse(mapped);
     return result.success ? result.data : null;
   }
 
-  private async fetchJson<T>(path: string): Promise<T | null> {
+  private async fetchJson<S extends z.ZodTypeAny>(path: string, schema: S): Promise<z.infer<S> | null> {
     try {
       const response = await fetchWithTimeout(`${BASE_URL}${path}`, {}, REQUEST_TIMEOUT_MS);
       if (response.status === 429) {
@@ -63,10 +101,20 @@ export class AudnexusProvider implements MetadataEnrichmentProvider {
         throw new TransientError('Audnexus', `HTTP ${response.status} ${response.statusText}`);
       }
       if (!response.ok) return null;
-      return (await response.json()) as T;
+      const raw: unknown = await response.json();
+      const parsed = schema.safeParse(raw);
+      if (!parsed.success) {
+        throw new MetadataError(
+          'Audnexus',
+          `Audnexus returned unexpected response: ${parsed.error.issues[0]?.message ?? 'unknown'}`,
+          { cause: parsed.error },
+        );
+      }
+      return parsed.data;
     } catch (error: unknown) {
       if (error instanceof RateLimitError) throw error;
       if (error instanceof TransientError) throw error;
+      if (error instanceof MetadataError) throw error;
       throw new TransientError('Audnexus', getErrorMessage(error));
     }
   }
