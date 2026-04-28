@@ -252,7 +252,7 @@ const routeRegistry: RouteFactory[] = [
   (app, s) => bookPreviewRoute(app, s.book),
   (app, s) => searchRoutes(app, s.indexer, s.downloadOrchestrator, s.blacklist, s.settings),
   (app, s, db) => activityRoutes(app, s.download, s.downloadOrchestrator, s.qualityGate, s.qualityGateOrchestrator, db, () => s.importQueueWorker.nudge()),
-  (app, _s, db) => importJobsRoutes(app, db),
+  (app, s) => importJobsRoutes(app, s.book),
   (app, s) => indexersRoutes(app, s.indexer),
   (app, s) => downloadClientsRoutes(app, s.downloadClient),
   (app, s) => settingsRoutes(app, s.settings, s.indexer, s.healthCheck),
@@ -276,7 +276,7 @@ const routeRegistry: RouteFactory[] = [
     taskRegistry: s.taskRegistry,
   }),
   (app, s) => bulkOperationsRoutes(app, s.bulkOperation),
-  (app, s, db) => retryImportRoute(app, db, s.importQueueWorker),
+  (app, s) => retryImportRoute(app, s.book, () => s.importQueueWorker.nudge()),
 ];
 
 export { routeRegistry };
