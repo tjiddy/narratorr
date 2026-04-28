@@ -54,7 +54,12 @@ export async function refreshScanBook(
   const processingSettings = await settingsService.get('processing');
   const ffprobePath = resolveFfprobePathFromSettings(processingSettings?.ffmpegPath);
 
-  const scanResult = await scanAudioDirectory(book.path, { skipCover: true, ffprobePath, log });
+  const scanResult = await scanAudioDirectory(book.path, {
+    skipCover: true,
+    ffprobePath,
+    onWarn: (msg, payload) => log.warn(payload, msg),
+    onDebug: (msg, payload) => log.debug(payload, msg),
+  });
   if (!scanResult) {
     throw new RefreshScanError('NO_AUDIO_FILES', 'No audio files found in book directory');
   }

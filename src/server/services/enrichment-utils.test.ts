@@ -219,7 +219,7 @@ describe('enrichBookFromAudio', () => {
     expect(writeFile).not.toHaveBeenCalled();
   });
 
-  it('forwards ffprobePath and log to scanAudioDirectory when provided', async () => {
+  it('forwards ffprobePath and diagnostic callbacks to scanAudioDirectory when provided', async () => {
     vi.mocked(scanAudioDirectory).mockResolvedValue({
       codec: 'mp3', bitrate: 128000, sampleRate: 44100, channels: 2,
       bitrateMode: 'cbr' as const, fileFormat: 'MPEG', fileCount: 1,
@@ -232,7 +232,18 @@ describe('enrichBookFromAudio', () => {
       inject<Db>(mockDb), log, undefined, '/usr/bin/ffprobe',
     );
 
-    expect(scanAudioDirectory).toHaveBeenCalledWith('/books/test', { ffprobePath: '/usr/bin/ffprobe', log });
+    expect(scanAudioDirectory).toHaveBeenCalledWith('/books/test', {
+      ffprobePath: '/usr/bin/ffprobe',
+      onWarn: expect.any(Function),
+      onDebug: expect.any(Function),
+    });
+
+    // onWarn forwards to log.warn(payload, msg); onDebug forwards to log.debug(payload, msg).
+    const options = vi.mocked(scanAudioDirectory).mock.calls[0][1]!;
+    options.onWarn!('warn-msg', { warnPayload: 1 });
+    expect(log.warn).toHaveBeenCalledWith({ warnPayload: 1 }, 'warn-msg');
+    options.onDebug!('debug-msg', { debugPayload: 2 });
+    expect(log.debug).toHaveBeenCalledWith({ debugPayload: 2 }, 'debug-msg');
   });
 
   it('passes ffprobePath as undefined to scanAudioDirectory when not provided', async () => {
@@ -248,7 +259,17 @@ describe('enrichBookFromAudio', () => {
       inject<Db>(mockDb), log,
     );
 
-    expect(scanAudioDirectory).toHaveBeenCalledWith('/books/test', { ffprobePath: undefined, log });
+    expect(scanAudioDirectory).toHaveBeenCalledWith('/books/test', {
+      ffprobePath: undefined,
+      onWarn: expect.any(Function),
+      onDebug: expect.any(Function),
+    });
+
+    const options = vi.mocked(scanAudioDirectory).mock.calls[0][1]!;
+    options.onWarn!('warn-msg', { warnPayload: 1 });
+    expect(log.warn).toHaveBeenCalledWith({ warnPayload: 1 }, 'warn-msg');
+    options.onDebug!('debug-msg', { debugPayload: 2 });
+    expect(log.debug).toHaveBeenCalledWith({ debugPayload: 2 }, 'debug-msg');
   });
 
   it('returns error info when scan throws', async () => {

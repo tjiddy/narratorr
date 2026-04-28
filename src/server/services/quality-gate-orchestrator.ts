@@ -84,7 +84,12 @@ export class QualityGateOrchestrator {
         // Probe audio files
         let scanResult;
         try {
-          scanResult = await scanAudioDirectory(savePath, { skipCover: true, ffprobePath, log: this.log });
+          scanResult = await scanAudioDirectory(savePath, {
+            skipCover: true,
+            ffprobePath,
+            onWarn: (msg, payload) => this.log.warn(payload, msg),
+            onDebug: (msg, payload) => this.log.debug(payload, msg),
+          });
         } catch (error: unknown) {
           this.log.error({ error: serializeError(error), downloadId: row.download.id }, 'Quality gate: scan failed');
           await this.holdForProbeFailure(row.download, row.book, 'probe_failed', error);
@@ -139,7 +144,12 @@ export class QualityGateOrchestrator {
       }
       let scanResult;
       try {
-        scanResult = await scanAudioDirectory(savePath, { skipCover: true, ffprobePath: ffprobePath2, log: this.log });
+        scanResult = await scanAudioDirectory(savePath, {
+          skipCover: true,
+          ffprobePath: ffprobePath2,
+          onWarn: (msg, payload) => this.log.warn(payload, msg),
+          onDebug: (msg, payload) => this.log.debug(payload, msg),
+        });
       } catch (error: unknown) {
         this.log.error({ error: serializeError(error), downloadId: row.download.id }, 'Quality gate: scan failed');
         await this.holdForProbeFailure(row.download, row.book, 'probe_failed', error);

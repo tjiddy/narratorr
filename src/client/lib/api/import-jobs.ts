@@ -1,5 +1,5 @@
 import { fetchApi } from './client.js';
-import type { PhaseHistoryEntry } from '../../../server/services/import-queue-worker.js';
+import type { PhaseHistoryEntry } from '../../../shared/schemas/import-job.js';
 
 export interface ImportJobBook {
   title: string;

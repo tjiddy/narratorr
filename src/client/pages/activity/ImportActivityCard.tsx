@@ -2,7 +2,7 @@ import { CheckIcon, LoadingSpinner, HeadphonesIcon, XIcon } from '@/components/i
 import { resolveCoverUrl } from '@/lib/url-utils.js';
 import { formatBytes } from '@/lib/api';
 import type { ImportJobWithBook } from '@/lib/api/import-jobs';
-import type { PhaseHistoryEntry } from '../../../server/services/import-queue-worker.js';
+import type { PhaseHistoryEntry } from '../../../shared/schemas/import-job.js';
 
 const PHASE_LABELS: Record<string, string> = {
   analyzing: 'Analyzing',

@@ -336,4 +336,17 @@ describe('refreshScanBook', () => {
       expect.objectContaining({ ffprobePath: '/usr/bin/ffprobe' }),
     );
   });
+
+  // Diagnostic callback wiring — onWarn → log.warn(payload, msg); onDebug → log.debug(payload, msg)
+  it('forwards onWarn/onDebug callbacks to the injected logger', async () => {
+    await refreshScanBook(1, mockBookService, mockSettingsService, log);
+    const options = vi.mocked(scanAudioDirectory).mock.calls[0][1]!;
+    expect(options.onWarn).toEqual(expect.any(Function));
+    expect(options.onDebug).toEqual(expect.any(Function));
+
+    options.onWarn!('warn-msg', { warnPayload: 1 });
+    expect(log.warn).toHaveBeenCalledWith({ warnPayload: 1 }, 'warn-msg');
+    options.onDebug!('debug-msg', { debugPayload: 2 });
+    expect(log.debug).toHaveBeenCalledWith({ debugPayload: 2 }, 'debug-msg');
+  });
 });

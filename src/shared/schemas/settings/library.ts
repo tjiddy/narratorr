@@ -1,5 +1,15 @@
 import { z } from 'zod';
-import { FOLDER_ALLOWED_TOKENS, FILE_ALLOWED_TOKENS, TOKEN_PATTERN_SOURCE } from '../../../core/utils/naming.js';
+import {
+  FOLDER_ALLOWED_TOKENS,
+  FILE_ALLOWED_TOKENS,
+  TOKEN_PATTERN_SOURCE,
+  namingSeparatorValues,
+  namingCaseValues,
+  type NamingSeparator,
+  type NamingCase,
+} from '../../naming-constants.js';
+
+export { namingSeparatorValues, namingCaseValues, type NamingSeparator, type NamingCase };
 
 export const FOLDER_FORMAT_ALLOWED_TOKENS = [...FOLDER_ALLOWED_TOKENS];
 export const FILE_FORMAT_ALLOWED_TOKENS = [...FILE_ALLOWED_TOKENS];
@@ -82,12 +92,8 @@ export const fileFormatSchema = z.string().default('{author} - {title}').refine(
   (val) => validateTokens(val, FILE_ALLOWED_TOKENS), { message: FILE_TOKEN_MSG },
 );
 
-export const namingSeparatorValues = ['space', 'period', 'underscore', 'dash'] as const;
-export type NamingSeparator = (typeof namingSeparatorValues)[number];
 export const namingSeparatorSchema = z.enum(namingSeparatorValues).default('space');
 
-export const namingCaseValues = ['default', 'lower', 'upper', 'title'] as const;
-export type NamingCase = (typeof namingCaseValues)[number];
 export const namingCaseSchema = z.enum(namingCaseValues).default('default');
 
 export const librarySettingsSchema = z.object({

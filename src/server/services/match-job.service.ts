@@ -173,7 +173,12 @@ class MatchJob {
       let duration: number | undefined;
       try {
         const ffprobePath = await this.resolveFfprobePath();
-        const audioResult = await scanAudioDirectory(book.path, { skipCover: true, ffprobePath, log: this.log });
+        const audioResult = await scanAudioDirectory(book.path, {
+          skipCover: true,
+          ffprobePath,
+          onWarn: (msg, payload) => this.log.warn(payload, msg),
+          onDebug: (msg, payload) => this.log.debug(payload, msg),
+        });
         if (audioResult && audioResult.totalDuration > 0) {
           // Convert seconds → minutes to match Audible's runtime_length_min
           duration = Math.round(audioResult.totalDuration / 60);

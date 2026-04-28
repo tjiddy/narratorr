@@ -152,7 +152,11 @@ describe('MergeService', () => {
       );
 
       // scanAudioDirectory called on staging for verification with derived ffprobe path
-      expect(scanAudioDirectory).toHaveBeenCalledWith(STAGING_DIR, { ffprobePath: '/usr/bin/ffprobe', log: expect.anything() });
+      expect(scanAudioDirectory).toHaveBeenCalledWith(STAGING_DIR, {
+        ffprobePath: '/usr/bin/ffprobe',
+        onWarn: expect.any(Function),
+        onDebug: expect.any(Function),
+      });
 
       // M4B moved from staging to book.path
       expect(rename).toHaveBeenCalledWith(
@@ -166,6 +170,23 @@ describe('MergeService', () => {
 
       // Staging dir cleaned
       expect(rm).toHaveBeenCalledWith(STAGING_DIR, { recursive: true, force: true });
+    });
+
+    it('forwards onWarn/onDebug to MergeService log via scanAudioDirectory verify', async () => {
+      setupHappyPath();
+      const { service, log } = createService();
+
+      await service.enqueueMerge(42);
+      await settle();
+
+      const options = (scanAudioDirectory as Mock).mock.calls[0][1] as Parameters<typeof scanAudioDirectory>[1];
+      expect(options?.onWarn).toEqual(expect.any(Function));
+      expect(options?.onDebug).toEqual(expect.any(Function));
+
+      options!.onWarn!('warn-msg', { warnPayload: 1 });
+      expect(log.warn).toHaveBeenCalledWith({ warnPayload: 1 }, 'warn-msg');
+      options!.onDebug!('debug-msg', { debugPayload: 2 });
+      expect(log.debug).toHaveBeenCalledWith({ debugPayload: 2 }, 'debug-msg');
     });
 
     it('forwards sourceBitrateKbps from book.audioBitrate to processAudioFiles', async () => {
