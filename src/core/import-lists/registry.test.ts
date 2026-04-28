@@ -72,26 +72,26 @@ describe('Import List IMPORT_LIST_ADAPTER_FACTORIES', () => {
     });
 
     it('hardcover factory uses trending default when listType is undefined', () => {
-      IMPORT_LIST_ADAPTER_FACTORIES.hardcover({ apiKey: 'key', listType: undefined, shelfId: '' });
+      IMPORT_LIST_ADAPTER_FACTORIES.hardcover({ apiKey: 'key', listType: undefined, shelfId: undefined });
       expect(HardcoverProvider).toHaveBeenCalledWith({ apiKey: 'key', listType: 'trending', shelfId: undefined });
     });
 
-    it('hardcover factory passes through explicit shelf listType with shelfId', () => {
-      IMPORT_LIST_ADAPTER_FACTORIES.hardcover({ apiKey: 'key', listType: 'shelf', shelfId: 'shelf-123' });
-      expect(HardcoverProvider).toHaveBeenCalledWith({ apiKey: 'key', listType: 'shelf', shelfId: 'shelf-123' });
+    it('hardcover factory passes through explicit shelf listType with numeric shelfId', () => {
+      IMPORT_LIST_ADAPTER_FACTORIES.hardcover({ apiKey: 'key', listType: 'shelf', shelfId: 123 });
+      expect(HardcoverProvider).toHaveBeenCalledWith({ apiKey: 'key', listType: 'shelf', shelfId: 123 });
     });
 
-    it('hardcover factory coerces empty shelfId to undefined', () => {
-      IMPORT_LIST_ADAPTER_FACTORIES.hardcover({ apiKey: 'key', listType: 'trending', shelfId: '' });
+    it('hardcover factory passes undefined shelfId through unchanged', () => {
+      IMPORT_LIST_ADAPTER_FACTORIES.hardcover({ apiKey: 'key', listType: 'trending', shelfId: undefined });
       expect(HardcoverProvider).toHaveBeenCalledWith(
         expect.objectContaining({ shelfId: undefined }),
       );
     });
 
-    it('hardcover factory passes through explicit shelfId', () => {
-      IMPORT_LIST_ADAPTER_FACTORIES.hardcover({ apiKey: 'key', listType: 'shelf', shelfId: 'my-shelf' });
+    it('hardcover factory passes through explicit numeric shelfId', () => {
+      IMPORT_LIST_ADAPTER_FACTORIES.hardcover({ apiKey: 'key', listType: 'shelf', shelfId: 42 });
       expect(HardcoverProvider).toHaveBeenCalledWith(
-        expect.objectContaining({ shelfId: 'my-shelf' }),
+        expect.objectContaining({ shelfId: 42 }),
       );
     });
   });

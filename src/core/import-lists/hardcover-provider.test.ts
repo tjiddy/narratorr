@@ -54,11 +54,49 @@ describe('HardcoverProvider', () => {
         })),
       );
 
-      const provider = new HardcoverProvider({ apiKey: 'test-key', listType: 'shelf', shelfId: '2' });
+      const provider = new HardcoverProvider({ apiKey: 'test-key', listType: 'shelf', shelfId: 2 });
       const items = await provider.fetchItems();
 
       expect(items).toHaveLength(1);
       expect(items[0]).toEqual({ title: 'Project Hail Mary', author: 'Andy Weir', asin: undefined, isbn: '9780593135204' });
+    });
+
+    // #732 — shelfId must be sent as GraphQL variable, never spliced into the query string
+    it('sends shelfId via GraphQL variables, not interpolated into the query', async () => {
+      let capturedBody: { query: string; variables?: Record<string, unknown> } | null = null;
+      server.use(
+        http.post(GQL_URL, async ({ request }) => {
+          capturedBody = await request.json() as typeof capturedBody;
+          return HttpResponse.json({ data: { user_book_reads: [] } });
+        }),
+      );
+
+      const provider = new HardcoverProvider({ apiKey: 'test-key', listType: 'shelf', shelfId: 123 });
+      await provider.fetchItems();
+
+      expect(capturedBody).not.toBeNull();
+      expect(capturedBody!.variables).toEqual({ shelfId: 123 });
+      expect(capturedBody!.query).toContain('$shelfId');
+      expect(capturedBody!.query).not.toContain('123');
+    });
+
+    it('does not send shelf query when listType is trending', async () => {
+      let capturedBody: { query: string; variables?: Record<string, unknown> } | null = null;
+      server.use(
+        http.post(GQL_URL, async ({ request }) => {
+          capturedBody = await request.json() as typeof capturedBody;
+          return HttpResponse.json({ data: { trending_books: [] } });
+        }),
+      );
+
+      const provider = new HardcoverProvider({ apiKey: 'test-key', listType: 'trending' });
+      const items = await provider.fetchItems();
+
+      expect(items).toEqual([]);
+      expect(capturedBody).not.toBeNull();
+      expect(capturedBody!.query).toContain('trending_books');
+      expect(capturedBody!.query).not.toContain('user_book_reads');
+      expect(capturedBody!.variables).toBeUndefined();
     });
 
     it('returns empty array when no items', async () => {

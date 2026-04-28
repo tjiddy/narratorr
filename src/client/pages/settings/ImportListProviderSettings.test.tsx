@@ -325,5 +325,45 @@ describe('ProviderSettings', () => {
 
       expect(spy).toHaveBeenCalledWith(expect.objectContaining({ listType: 'shelf' }));
     });
+
+    // #732 — Shelf ID is a numeric input; blank maps to undefined, digits to number
+    it('Shelf ID input is type="number" and writes a number to settings on input', async () => {
+      const spy = vi.fn();
+      const user = userEvent.setup();
+      render(
+        <StatefulProvider
+          type="hardcover"
+          initial={{ apiKey: 'k', listType: 'shelf' }}
+          onChangeSpy={spy}
+        />,
+      );
+
+      const input = screen.getByLabelText('Shelf ID') as HTMLInputElement;
+      expect(input.type).toBe('number');
+
+      await user.type(input, '42');
+
+      const lastCall = spy.mock.calls.at(-1)?.[0] as Record<string, unknown>;
+      expect(lastCall.shelfId).toBe(42);
+      expect(typeof lastCall.shelfId).toBe('number');
+    });
+
+    it('clearing the Shelf ID input removes shelfId from settings (undefined)', async () => {
+      const spy = vi.fn();
+      const user = userEvent.setup();
+      render(
+        <StatefulProvider
+          type="hardcover"
+          initial={{ apiKey: 'k', listType: 'shelf', shelfId: 42 }}
+          onChangeSpy={spy}
+        />,
+      );
+
+      const input = screen.getByLabelText('Shelf ID') as HTMLInputElement;
+      await user.clear(input);
+
+      const lastCall = spy.mock.calls.at(-1)?.[0] as Record<string, unknown>;
+      expect('shelfId' in lastCall).toBe(false);
+    });
   });
 });

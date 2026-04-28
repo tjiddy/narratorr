@@ -18,7 +18,7 @@ const TYPED_FACTORIES: { [K in ImportListType]: (settings: ImportListSettingsMap
   hardcover: (s) => new HardcoverProvider({
     apiKey: s.apiKey,
     listType: s.listType || 'trending',
-    shelfId: s.shelfId || undefined,
+    shelfId: s.shelfId,
   }),
 };
 
