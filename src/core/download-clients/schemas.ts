@@ -23,6 +23,17 @@ export const qbTorrentSchema = z.object({
 
 export const qbTorrentsResponseSchema = z.array(qbTorrentSchema);
 
+// qBittorrent /api/v2/torrents/categories returns an object map keyed by
+// category name. Inner shape is loose — only the outer record structure is
+// enforced; missing/wrong-typed inner fields don't matter for getCategories().
+export const qbCategoriesResponseSchema = z.record(
+  z.string(),
+  z.object({
+    name: z.string().optional(),
+    savePath: z.string().optional(),
+  }).passthrough(),
+);
+
 // Transmission RPC response schema
 export const transmissionRpcResponseSchema = z.object({
   result: z.string(),
@@ -91,6 +102,15 @@ export const sabnzbdHistoryResponseSchema = z.object({
 
 export const sabnzbdVersionResponseSchema = z.object({
   version: z.string(),
+}).passthrough();
+
+export const sabnzbdAddResponseSchema = z.object({
+  status: z.boolean(),
+  nzo_ids: z.array(z.string()),
+}).passthrough();
+
+export const sabnzbdCategoriesResponseSchema = z.object({
+  categories: z.array(z.string()),
 }).passthrough();
 
 // Deluge RPC envelope. result/error semantics — at least one of them must

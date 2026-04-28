@@ -1,6 +1,6 @@
 import { basename, dirname, relative } from 'node:path';
 import { type DownloadClientAdapter, type DownloadItemInfo, type AddDownloadOptions, type DownloadArtifact, type DownloadProtocol, ETA_UPPER_BOUND_SEC } from './types.js';
-import { qbTorrentsResponseSchema } from './schemas.js';
+import { qbCategoriesResponseSchema, qbTorrentsResponseSchema } from './schemas.js';
 import { fetchWithTimeout } from '../utils/fetch-with-timeout.js';
 import { DEFAULT_REQUEST_TIMEOUT_MS } from '../utils/constants.js';
 import { DownloadClientAuthError, DownloadClientError } from './errors.js';
@@ -298,8 +298,16 @@ export class QBittorrentClient implements DownloadClientAdapter {
   }
 
   async getCategories(): Promise<string[]> {
-    const categories = await this.request<Record<string, { name: string; savePath: string }>>('/api/v2/torrents/categories');
-    return Object.keys(categories || {});
+    const raw = await this.request<unknown>('/api/v2/torrents/categories');
+    const parsed = qbCategoriesResponseSchema.safeParse(raw);
+    if (!parsed.success) {
+      throw new DownloadClientError(
+        this.name,
+        `qBittorrent returned unexpected categories response: ${parsed.error.issues[0]?.message ?? 'unknown'}`,
+        { cause: parsed.error },
+      );
+    }
+    return Object.keys(parsed.data);
   }
 
   async test(): Promise<{ success: boolean; message?: string }> {

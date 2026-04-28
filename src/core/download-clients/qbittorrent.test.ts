@@ -717,7 +717,9 @@ describe('QBittorrentClient', () => {
       expect(categories).toEqual([]);
     });
 
-    it('returns empty array when API returns null', async () => {
+    it('throws DownloadClientError with ZodError cause when API returns empty body', async () => {
+      // Behavior change from #743: an empty body is a boundary failure, not
+      // a graceful empty category list.
       server.use(
         http.get(`${BASE_URL}/api/v2/torrents/categories`, () => {
           return new HttpResponse('', {
@@ -726,8 +728,10 @@ describe('QBittorrentClient', () => {
         }),
       );
 
-      const categories = await client.getCategories();
-      expect(categories).toEqual([]);
+      const err = await client.getCategories().catch((e: unknown) => e);
+      expect(err).toBeInstanceOf(DownloadClientError);
+      const zod = await import('zod');
+      expect((err as DownloadClientError).cause).toBeInstanceOf(zod.ZodError);
     });
 
     it('throws DownloadClientAuthError on auth failure (403 after retry)', async () => {
@@ -762,6 +766,28 @@ describe('QBittorrentClient', () => {
       const error = await client.getCategories().catch((e: unknown) => e);
       expect(error).toBeInstanceOf(DownloadClientError);
       expect((error as DownloadClientError).message).toContain('didn\'t respond as expected');
+    });
+
+    it('throws DownloadClientError with ZodError cause when categories is a string instead of object', async () => {
+      server.use(
+        http.get(`${BASE_URL}/api/v2/torrents/categories`, () => HttpResponse.json('not-an-object')),
+      );
+
+      const err = await client.getCategories().catch((e: unknown) => e);
+      expect(err).toBeInstanceOf(DownloadClientError);
+      const zod = await import('zod');
+      expect((err as DownloadClientError).cause).toBeInstanceOf(zod.ZodError);
+    });
+
+    it('passes through unknown extra fields in category entries and still maps successfully', async () => {
+      server.use(
+        http.get(`${BASE_URL}/api/v2/torrents/categories`, () => HttpResponse.json({
+          audiobooks: { name: 'audiobooks', savePath: '/x', futureField: 'unknown' },
+        })),
+      );
+
+      const categories = await client.getCategories();
+      expect(categories).toEqual(['audiobooks']);
     });
 
     it('throws DownloadClientTimeoutError on request timeout', async () => {
