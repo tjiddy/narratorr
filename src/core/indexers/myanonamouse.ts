@@ -47,6 +47,10 @@ const mamUserStatusSchema = z.object({
 
 type MAMSearchResult = z.infer<typeof mamSearchResultSchema>;
 
+function orUndef<T>(value: T | null | undefined): T | undefined {
+  return value ?? undefined;
+}
+
 /**
  * Parse a double-encoded JSON field from MAM responses.
  * Fields like author_info are JSON strings containing JSON objects.
@@ -174,27 +178,31 @@ export class MyAnonamouseIndexer implements IndexerAdapter {
         downloadUrl = await this.fetchTorrentAsDataUri(item.id, signal);
       }
 
-      const isFreeleech = item.free || item.personal_freeleech || (item.fl_vip && this.isVip);
-      const isVipOnly = item.vip;
-
-      results.push({
-        title: item.title,
-        author: parseDoubleEncodedNames(item.author_info ?? undefined),
-        narrator: parseDoubleEncodedNames(item.narrator_info ?? undefined),
-        protocol: 'torrent',
-        guid: item.id != null ? String(item.id) : undefined,
-        downloadUrl,
-        size: this.parseSize(item.size ?? undefined),
-        seeders: item.seeders ?? undefined,
-        leechers: item.leechers ?? undefined,
-        language: normalizeLanguage(item.lang_code ?? undefined),
-        indexer: this.name,
-        isFreeleech: isFreeleech || undefined,
-        isVipOnly: isVipOnly || undefined,
-      });
+      results.push(this.mapItem(item, downloadUrl));
     }
 
     return results;
+  }
+
+  private mapItem(item: MAMSearchResult, downloadUrl: string | undefined): SearchResult {
+    const isFreeleech = item.free || item.personal_freeleech || (item.fl_vip && this.isVip);
+    const isVipOnly = item.vip;
+
+    return {
+      title: item.title!,
+      author: parseDoubleEncodedNames(orUndef(item.author_info)),
+      narrator: parseDoubleEncodedNames(orUndef(item.narrator_info)),
+      protocol: 'torrent',
+      guid: item.id != null ? String(item.id) : undefined,
+      downloadUrl,
+      size: this.parseSize(orUndef(item.size)),
+      seeders: orUndef(item.seeders),
+      leechers: orUndef(item.leechers),
+      language: normalizeLanguage(orUndef(item.lang_code)),
+      indexer: this.name,
+      isFreeleech: isFreeleech || undefined,
+      isVipOnly: isVipOnly || undefined,
+    };
   }
 
   async test(): Promise<{ success: boolean; message?: string; ip?: string; warning?: string; metadata?: Record<string, unknown> }> {
