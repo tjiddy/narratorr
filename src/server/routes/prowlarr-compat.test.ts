@@ -1019,6 +1019,32 @@ describe('Prowlarr-compatible API v1 routes', () => {
       expect(services.indexer.update).not.toHaveBeenCalled();
     });
 
+    it('POST: whitespace-only implementation → 400 standard envelope (.trim().min(1))', async () => {
+      const res = await app.inject({
+        method: 'POST',
+        url: '/api/v1/indexer',
+        payload: { ...validTorznabBody, implementation: '   ' },
+      });
+      expectStandardEnvelope(res);
+      expect(services.indexer.createOrUpsertProwlarr).not.toHaveBeenCalled();
+    });
+
+    it('POST: whitespace-only field name → 400 standard envelope (.trim().min(1))', async () => {
+      const res = await app.inject({
+        method: 'POST',
+        url: '/api/v1/indexer',
+        payload: {
+          ...validTorznabBody,
+          fields: [
+            { name: '   ', value: 'http://prowlarr:9696/1/', type: 'textbox' },
+            { name: 'apiKey', value: 'k', type: 'textbox' },
+          ],
+        },
+      });
+      expectStandardEnvelope(res);
+      expect(services.indexer.createOrUpsertProwlarr).not.toHaveBeenCalled();
+    });
+
     it('POST /test: missing implementation → 400 standard envelope (Zod path)', async () => {
       const res = await app.inject({
         method: 'POST',

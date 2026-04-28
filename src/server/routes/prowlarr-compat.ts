@@ -16,7 +16,7 @@ interface ReadarrField {
 // ── Request body schema (Readarr-compatible echo surface) ──
 
 const readarrFieldSchema = z.object({
-  name: z.string().min(1),
+  name: z.string().trim().min(1),
   value: z.union([
     z.string(),
     z.number(),
@@ -32,7 +32,7 @@ const readarrBodySchema = z.object({
   // Identification / echo fields
   id: z.number().int().optional(),
   name: z.string().optional(),
-  implementation: z.string().min(1),
+  implementation: z.string().trim().min(1),
   implementationName: z.string().optional(),
   configContract: z.string().optional(),
   infoLink: z.string().optional(),
