@@ -2,20 +2,20 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { inject } from '../__tests__/helpers.js';
 import Fastify from 'fastify';
 import { serializerCompiler, validatorCompiler, type ZodTypeProvider } from 'fastify-type-provider-zod';
-import type { BookService, ImportJobListing } from '../services/book.service.js';
+import type { BookImportService, ImportJobListing } from '../services/book-import.service.js';
 import { importJobsRoutes } from './import-jobs.js';
 
-interface MockBookService {
+interface MockBookImportService {
   listImportJobs: ReturnType<typeof vi.fn>;
 }
 
-async function createApp(bookService: MockBookService) {
+async function createApp(bookImportService: MockBookImportService) {
   const app = Fastify({ logger: false }).withTypeProvider<ZodTypeProvider>();
   app.setValidatorCompiler(validatorCompiler);
   app.setSerializerCompiler(serializerCompiler);
   const { errorHandlerPlugin } = await import('../plugins/error-handler.js');
   await app.register(errorHandlerPlugin);
-  await importJobsRoutes(app, inject<BookService>(bookService));
+  await importJobsRoutes(app, inject<BookImportService>(bookImportService));
   return app;
 }
 
@@ -38,15 +38,15 @@ const baseListing: ImportJobListing = {
 };
 
 describe('GET /api/import-jobs', () => {
-  let bookService: MockBookService;
+  let bookImportService: MockBookImportService;
 
   beforeEach(() => {
-    bookService = { listImportJobs: vi.fn() };
+    bookImportService = { listImportJobs: vi.fn() };
   });
 
   it('returns the service result unchanged', async () => {
-    bookService.listImportJobs.mockResolvedValueOnce([baseListing]);
-    const app = await createApp(bookService);
+    bookImportService.listImportJobs.mockResolvedValueOnce([baseListing]);
+    const app = await createApp(bookImportService);
 
     const res = await app.inject({ method: 'GET', url: '/api/import-jobs' });
 
@@ -57,12 +57,12 @@ describe('GET /api/import-jobs', () => {
     expect(body[0].book.coverUrl).toBe('/covers/42.jpg');
     expect(body[0].book.primaryAuthorName).toBe('Brandon Sanderson');
     expect(body[0].phaseHistory).toEqual([{ phase: 'analyzing', startedAt: 1000, completedAt: 2000 }]);
-    expect(bookService.listImportJobs).toHaveBeenCalledWith({ status: undefined });
+    expect(bookImportService.listImportJobs).toHaveBeenCalledWith({ status: undefined });
   });
 
   it('returns empty array when service returns no rows', async () => {
-    bookService.listImportJobs.mockResolvedValueOnce([]);
-    const app = await createApp(bookService);
+    bookImportService.listImportJobs.mockResolvedValueOnce([]);
+    const app = await createApp(bookImportService);
 
     const res = await app.inject({ method: 'GET', url: '/api/import-jobs' });
 
@@ -71,40 +71,40 @@ describe('GET /api/import-jobs', () => {
   });
 
   it('parses single status into typed array', async () => {
-    bookService.listImportJobs.mockResolvedValueOnce([]);
-    const app = await createApp(bookService);
+    bookImportService.listImportJobs.mockResolvedValueOnce([]);
+    const app = await createApp(bookImportService);
 
     await app.inject({ method: 'GET', url: '/api/import-jobs?status=processing' });
 
-    expect(bookService.listImportJobs).toHaveBeenCalledWith({ status: ['processing'] });
+    expect(bookImportService.listImportJobs).toHaveBeenCalledWith({ status: ['processing'] });
   });
 
   it('parses comma-separated statuses into typed array', async () => {
-    bookService.listImportJobs.mockResolvedValueOnce([]);
-    const app = await createApp(bookService);
+    bookImportService.listImportJobs.mockResolvedValueOnce([]);
+    const app = await createApp(bookImportService);
 
     await app.inject({ method: 'GET', url: '/api/import-jobs?status=processing,failed' });
 
-    expect(bookService.listImportJobs).toHaveBeenCalledWith({ status: ['processing', 'failed'] });
+    expect(bookImportService.listImportJobs).toHaveBeenCalledWith({ status: ['processing', 'failed'] });
   });
 
   it('returns 400 when status contains an invalid value', async () => {
-    bookService.listImportJobs.mockResolvedValueOnce([]);
-    const app = await createApp(bookService);
+    bookImportService.listImportJobs.mockResolvedValueOnce([]);
+    const app = await createApp(bookImportService);
 
     const res = await app.inject({ method: 'GET', url: '/api/import-jobs?status=bogus' });
 
     expect(res.statusCode).toBe(400);
-    expect(bookService.listImportJobs).not.toHaveBeenCalled();
+    expect(bookImportService.listImportJobs).not.toHaveBeenCalled();
   });
 
   it('returns 400 when status mixes valid and invalid values', async () => {
-    bookService.listImportJobs.mockResolvedValueOnce([]);
-    const app = await createApp(bookService);
+    bookImportService.listImportJobs.mockResolvedValueOnce([]);
+    const app = await createApp(bookImportService);
 
     const res = await app.inject({ method: 'GET', url: '/api/import-jobs?status=processing,bogus' });
 
     expect(res.statusCode).toBe(400);
-    expect(bookService.listImportJobs).not.toHaveBeenCalled();
+    expect(bookImportService.listImportJobs).not.toHaveBeenCalled();
   });
 });

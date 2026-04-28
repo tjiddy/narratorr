@@ -3,6 +3,7 @@ export { AuthService, type AuthConfig, type AuthStatus, type AuthPublicConfig } 
 export { IndexerService } from './indexer.service.js';
 export { DownloadClientService } from './download-client.service.js';
 export { BookService, type BookWithAuthor } from './book.service.js';
+export { BookImportService, type ImportJobListing, type RetryImportResult } from './book-import.service.js';
 export { BookListService, type BookListOptions, type BookStats } from './book-list.service.js';
 export { DownloadService, type DownloadWithBook, type RetryResult } from './download.service.js';
 export { DownloadOrchestrator } from './download-orchestrator.js';

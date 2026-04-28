@@ -1,6 +1,6 @@
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
-import type { BookService } from '../services/book.service.js';
+import type { BookImportService } from '../services/book-import.service.js';
 import { importJobStatusSchema, type ImportJobStatus } from '../../shared/schemas/import-job.js';
 
 const importJobsQuerySchema = z.object({
@@ -24,10 +24,10 @@ const importJobsQuerySchema = z.object({
 
 type ImportJobsQuery = z.infer<typeof importJobsQuerySchema>;
 
-export async function importJobsRoutes(app: FastifyInstance, bookService: BookService) {
+export async function importJobsRoutes(app: FastifyInstance, bookImportService: BookImportService) {
   app.get<{ Querystring: ImportJobsQuery }>(
     '/api/import-jobs',
     { schema: { querystring: importJobsQuerySchema } },
-    async (request) => bookService.listImportJobs({ status: request.query.status }),
+    async (request) => bookImportService.listImportJobs({ status: request.query.status }),
   );
 }

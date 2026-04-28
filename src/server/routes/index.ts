@@ -7,6 +7,7 @@ import {
   IndexerService,
   DownloadClientService,
   BookService,
+  BookImportService,
   BookListService,
   DownloadService,
   MetadataService,
@@ -76,6 +77,7 @@ export interface Services {
   indexer: IndexerService;
   downloadClient: DownloadClientService;
   book: BookService;
+  bookImport: BookImportService;
   bookList: BookListService;
   download: DownloadService;
   downloadOrchestrator: DownloadOrchestrator;
@@ -117,6 +119,7 @@ export const SERVICE_KEYS = Object.keys({
   indexer: true,
   downloadClient: true,
   book: true,
+  bookImport: true,
   bookList: true,
   download: true,
   downloadOrchestrator: true,
@@ -165,6 +168,7 @@ export async function createServices(db: Db, log: FastifyBaseLogger): Promise<Se
   // EventBroadcaster and EventHistoryService created early so they can be injected into lifecycle services
   const eventBroadcaster = new EventBroadcasterService(log);
   const book = new BookService(db, log, metadata);
+  const bookImport = new BookImportService(db, log);
   const bookList = new BookListService(db);
   const eventHistory = new EventHistoryService(db, log, blacklistService, book);
 
@@ -226,7 +230,7 @@ export async function createServices(db: Db, log: FastifyBaseLogger): Promise<Se
   registerImportAdapter(new ManualImportAdapter(libraryScan.importDeps));
   registerImportAdapter(new AutoImportAdapter(importOrchestrator));
 
-  return { settings, auth, indexer, downloadClient, book, bookList, download, downloadOrchestrator, metadata, import: importService, importOrchestrator, libraryScan, matchJob, notifier, blacklist: blacklistService, remotePathMapping, rename: renameService, merge: mergeService, eventHistory, tagging: taggingService, qualityGate: qualityGateService, qualityGateOrchestrator, retryBudget, eventBroadcaster, backup, healthCheck, taskRegistry, importList, discovery, bulkOperation, bookRejection, importQueueWorker, retrySearchDeps };
+  return { settings, auth, indexer, downloadClient, book, bookImport, bookList, download, downloadOrchestrator, metadata, import: importService, importOrchestrator, libraryScan, matchJob, notifier, blacklist: blacklistService, remotePathMapping, rename: renameService, merge: mergeService, eventHistory, tagging: taggingService, qualityGate: qualityGateService, qualityGateOrchestrator, retryBudget, eventBroadcaster, backup, healthCheck, taskRegistry, importList, discovery, bulkOperation, bookRejection, importQueueWorker, retrySearchDeps };
 }
 
 type RouteFactory = (app: FastifyInstance, services: Services, db: Db) => Promise<void>;
@@ -252,7 +256,7 @@ const routeRegistry: RouteFactory[] = [
   (app, s) => bookPreviewRoute(app, s.book),
   (app, s) => searchRoutes(app, s.indexer, s.downloadOrchestrator, s.blacklist, s.settings),
   (app, s, db) => activityRoutes(app, s.download, s.downloadOrchestrator, s.qualityGate, s.qualityGateOrchestrator, db, () => s.importQueueWorker.nudge()),
-  (app, s) => importJobsRoutes(app, s.book),
+  (app, s) => importJobsRoutes(app, s.bookImport),
   (app, s) => indexersRoutes(app, s.indexer),
   (app, s) => downloadClientsRoutes(app, s.downloadClient),
   (app, s) => settingsRoutes(app, s.settings, s.indexer, s.healthCheck),
@@ -276,7 +280,7 @@ const routeRegistry: RouteFactory[] = [
     taskRegistry: s.taskRegistry,
   }),
   (app, s) => bulkOperationsRoutes(app, s.bulkOperation),
-  (app, s) => retryImportRoute(app, s.book, () => s.importQueueWorker.nudge()),
+  (app, s) => retryImportRoute(app, s.bookImport, () => s.importQueueWorker.nudge()),
 ];
 
 export { routeRegistry };

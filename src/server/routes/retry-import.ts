@@ -1,6 +1,6 @@
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
-import type { BookService } from '../services/book.service.js';
+import type { BookImportService } from '../services/book-import.service.js';
 
 const paramsSchema = z.object({
   id: z.coerce.number().int().positive(),
@@ -8,14 +8,14 @@ const paramsSchema = z.object({
 
 export async function retryImportRoute(
   app: FastifyInstance,
-  bookService: BookService,
+  bookImportService: BookImportService,
   nudgeImportWorker: () => void,
 ): Promise<void> {
   app.get<{ Params: z.infer<typeof paramsSchema> }>(
     '/api/books/:id/retry-import',
     { schema: { params: paramsSchema } },
     async (request) => {
-      const result = await bookService.getRetryAvailability(request.params.id);
+      const result = await bookImportService.getRetryAvailability(request.params.id);
       return { available: result.retryable };
     },
   );
@@ -24,7 +24,7 @@ export async function retryImportRoute(
     '/api/books/:id/retry-import',
     { schema: { params: paramsSchema } },
     async (request, reply) => {
-      const result = await bookService.retryImport(request.params.id, nudgeImportWorker);
+      const result = await bookImportService.retryImport(request.params.id, nudgeImportWorker);
       if ('error' in result) {
         return reply.status(result.status).send({ error: result.error });
       }
