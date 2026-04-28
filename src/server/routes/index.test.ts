@@ -18,6 +18,7 @@ vi.mock('../services', () => ({
   IndexerService: vi.fn(),
   DownloadClientService: vi.fn(),
   BookService: vi.fn(),
+  BookImportService: vi.fn(),
   BookListService: vi.fn(),
 
   DownloadService: vi.fn().mockImplementation(function(this: Record<string, unknown>) { this.wire = vi.fn(); }),
