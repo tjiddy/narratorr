@@ -133,6 +133,34 @@ describe('AbsProvider', () => {
       expect((err as ImportListError).cause).toBeInstanceOf(zod.ZodError);
     });
 
+    it('throws ImportListError with ZodError cause when item.media is null (boundary failure)', async () => {
+      server.use(
+        http.get(`${ABS_BASE}/api/libraries/lib-1/items`, () => HttpResponse.json({
+          results: [{ media: null }],
+        })),
+      );
+
+      const provider = new AbsProvider({ serverUrl: ABS_BASE, apiKey: 'test-key', libraryId: 'lib-1' });
+      const err = await provider.fetchItems().catch((e: unknown) => e);
+      expect(err).toBeInstanceOf(ImportListError);
+      const zod = await import('zod');
+      expect((err as ImportListError).cause).toBeInstanceOf(zod.ZodError);
+    });
+
+    it('throws ImportListError with ZodError cause when item.media.metadata is null', async () => {
+      server.use(
+        http.get(`${ABS_BASE}/api/libraries/lib-1/items`, () => HttpResponse.json({
+          results: [{ media: { metadata: null } }],
+        })),
+      );
+
+      const provider = new AbsProvider({ serverUrl: ABS_BASE, apiKey: 'test-key', libraryId: 'lib-1' });
+      const err = await provider.fetchItems().catch((e: unknown) => e);
+      expect(err).toBeInstanceOf(ImportListError);
+      const zod = await import('zod');
+      expect((err as ImportListError).cause).toBeInstanceOf(zod.ZodError);
+    });
+
     it('test() returns success: false when libraries is missing', async () => {
       server.use(
         http.get(`${ABS_BASE}/api/libraries`, () => HttpResponse.json({})),

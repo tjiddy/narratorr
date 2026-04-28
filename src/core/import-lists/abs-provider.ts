@@ -9,6 +9,11 @@ export interface AbsConfig {
   libraryId: string;
 }
 
+// `media` and `metadata` envelopes must be present; null/missing for either is a
+// boundary failure (the issue's behavior-change note explicitly tightens
+// `media: null` from "skip the row" to "fail validation"). Inner string fields
+// can still be null — those are tolerated so legitimately untitled items map to
+// "no title" and are skipped at the mapper level.
 const absItemSchema = z.object({
   media: z.object({
     metadata: z.object({
@@ -16,8 +21,8 @@ const absItemSchema = z.object({
       authorName: z.string().nullish(),
       asin: z.string().nullish(),
       isbn: z.string().nullish(),
-    }).passthrough().nullish(),
-  }).passthrough().nullish(),
+    }).passthrough(),
+  }).passthrough(),
 }).passthrough();
 
 const absItemsResponseSchema = z.object({
