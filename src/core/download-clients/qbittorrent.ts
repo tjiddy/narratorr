@@ -235,8 +235,9 @@ export class QBittorrentClient implements DownloadClientAdapter {
       `/api/v2/torrents/info?hashes=${hash.toLowerCase()}`
     );
 
-    if (!raw) return null;
-
+    // Pass `raw` through safeParse unconditionally — empty body / non-JSON body
+    // surface as undefined here and must fail validation with a ZodError cause
+    // rather than silently looking like "no torrents".
     const parsed = qbTorrentsResponseSchema.safeParse(raw);
     if (!parsed.success) {
       throw new DownloadClientError(
@@ -254,8 +255,9 @@ export class QBittorrentClient implements DownloadClientAdapter {
     const params = category ? `?category=${encodeURIComponent(category)}` : '';
     const raw = await this.request<unknown>(`/api/v2/torrents/info${params}`);
 
-    if (!raw) return [];
-
+    // Pass `raw` through safeParse unconditionally — empty body / non-JSON body
+    // surface as undefined here and must fail validation with a ZodError cause
+    // rather than silently looking like "no torrents".
     const parsed = qbTorrentsResponseSchema.safeParse(raw);
     if (!parsed.success) {
       throw new DownloadClientError(

@@ -127,16 +127,19 @@ describe('QBittorrentClient', () => {
       expect(callCount).toBe(2);
     });
 
-    it('returns undefined for non-JSON success response (e.g. Ok.)', async () => {
+    it('throws DownloadClientError with ZodError cause for non-JSON success response (e.g. Ok.)', async () => {
       server.use(
         http.get(`${BASE_URL}/api/v2/torrents/info`, () => {
           return new HttpResponse('Ok.');
         }),
       );
 
-      // getDownload calls request() which returns undefined, then checks if (!raw) return null
-      const result = await client.getDownload('abc123');
-      expect(result).toBeNull();
+      // After #743: non-JSON bodies must surface as a typed validation failure
+      // at the boundary, not silently coerce to "no torrents".
+      const err = await client.getDownload('abc123').catch((e: unknown) => e);
+      expect(err).toBeInstanceOf(DownloadClientError);
+      const zod = await import('zod');
+      expect((err as DownloadClientError).cause).toBeInstanceOf(zod.ZodError);
     });
 
     it('throws DownloadClientError for HTML response from proxy interception', async () => {
@@ -981,7 +984,7 @@ describe('QBittorrentClient', () => {
       expect((error as DownloadClientError).message).toContain('didn\'t respond as expected');
     });
 
-    it('handles whitespace-only response body without HTML content-type as undefined', async () => {
+    it('throws DownloadClientError with ZodError cause for whitespace-only body (non-JSON, non-HTML)', async () => {
       server.use(
         http.get(`${BASE_URL}/api/v2/torrents/info`, () => {
           return new HttpResponse('   ', {
@@ -990,11 +993,13 @@ describe('QBittorrentClient', () => {
         }),
       );
 
-      const result = await client.getDownload('abc123');
-      expect(result).toBeNull();
+      const err = await client.getDownload('abc123').catch((e: unknown) => e);
+      expect(err).toBeInstanceOf(DownloadClientError);
+      const zod = await import('zod');
+      expect((err as DownloadClientError).cause).toBeInstanceOf(zod.ZodError);
     });
 
-    it('handles null response from getAllDownloads', async () => {
+    it('throws DownloadClientError with ZodError cause for empty body in getAllDownloads', async () => {
       server.use(
         http.get(`${BASE_URL}/api/v2/torrents/info`, () => {
           return new HttpResponse('', {
@@ -1003,8 +1008,10 @@ describe('QBittorrentClient', () => {
         }),
       );
 
-      const results = await client.getAllDownloads();
-      expect(results).toEqual([]);
+      const err = await client.getAllDownloads().catch((e: unknown) => e);
+      expect(err).toBeInstanceOf(DownloadClientError);
+      const zod = await import('zod');
+      expect((err as DownloadClientError).cause).toBeInstanceOf(zod.ZodError);
     });
 
     it('handles completion_on = 0 as not completed', async () => {
