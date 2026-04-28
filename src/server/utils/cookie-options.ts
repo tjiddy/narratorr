@@ -1,5 +1,5 @@
 import { type FastifyRequest } from 'fastify';
-import { config } from '../config.js';
+import type { config } from '../config.js';
 
 type CookieAppConfig = Pick<typeof config, 'isDev' | 'urlBase'>;
 
