@@ -133,6 +133,13 @@ export class QualityGateOrchestrator {
     const [ffprobePath2, row] = await Promise.all([this.resolveFfprobePath(), this.qualityGateService.getCompletedDownloadById(downloadId)]);
     if (!row) { this.log.warn({ downloadId }, 'Quality gate: processOneDownload — download not found or not completed'); return; }
     if (!row.download.externalId || !row.download.bookId) { this.log.debug({ id: row.download.id }, 'Quality gate: skipping download without externalId or bookId'); return; }
+
+    // Required-wiring fail-fast (#739): the imported-decision branch needs
+    // nudgeImportWorker. Verify wire() was called BEFORE any mutating state
+    // transition (atomicClaim, book-status promotion, SSE) so an unwired
+    // orchestrator never leaves partial state behind.
+    const { nudgeImportWorker } = this.wired.require();
+
     const claimed = await this.qualityGateService.atomicClaim(row.download.id);
     if (!claimed) { this.log.debug({ id: row.download.id }, 'Quality gate: already claimed by another cycle'); return; }
 
@@ -171,13 +178,12 @@ export class QualityGateOrchestrator {
       const decision = await this.qualityGateService.processDownload(row.download, row.book, scanResult);
       await this.dispatchSideEffects(decision.action, row.download, row.book, decision.reason, decision.statusTransition);
       if (decision.action === 'imported' && row.book) {
-        const { nudgeImportWorker } = this.wired.require();
         await enqueueAutoImport(this.db, downloadId, row.book.id, nudgeImportWorker, this.log);
       }
     } catch (error: unknown) {
-      // Required-wiring contract (#739): a missing nudgeImportWorker is a
-      // composition-root bug, not a recoverable processing failure. Surface
-      // it instead of converting to pending_review like other errors.
+      // Defense-in-depth for the required-wiring contract (#739): in case any
+      // future code inside the try block also reads wired deps, surface
+      // ServiceWireError instead of converting to pending_review.
       if (error instanceof ServiceWireError) throw error;
       this.log.error({ error: serializeError(error), downloadId: row.download.id }, 'Quality gate error');
       await this.qualityGateService.setStatus(row.download.id, 'pending_review');

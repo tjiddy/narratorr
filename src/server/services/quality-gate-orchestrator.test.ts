@@ -1878,7 +1878,7 @@ describe('QualityGateOrchestrator', () => {
         inject<EventBroadcasterService>(broadcaster),
         inject<BlacklistService>(blacklistService),
       );
-      return { orchestrator, log, qualityGateService };
+      return { orchestrator, log, qualityGateService, broadcaster, db };
     }
 
     // F2 (#797 review) — required-wiring contract surfaces, doesn't get swallowed.
@@ -1894,6 +1894,22 @@ describe('QualityGateOrchestrator', () => {
       // Critical: setStatus('pending_review') must NOT be called — that is
       // the recoverable-error fallback and would mask the wiring bug.
       expect(qualityGateService.setStatus).not.toHaveBeenCalledWith(baseDownload.id, 'pending_review');
+    });
+
+    // F4 (#797 review) — fail-fast contract: no state transitions before wire check.
+    it('processOneDownload() unwired path fails BEFORE atomicClaim and book status promotion', async () => {
+      const { orchestrator, qualityGateService, broadcaster, db } = makeUnwiredOrchestrator();
+
+      await expect(orchestrator.processOneDownload(1)).rejects.toThrow(/QualityGateOrchestrator used before wire/);
+
+      // Critical fail-fast assertions: every state-changing call that
+      // sequentially follows the wire-check must not have happened.
+      expect(qualityGateService.atomicClaim).not.toHaveBeenCalled();
+      // Book status promotion (db.update on books) must not have run.
+      expect(db.update).not.toHaveBeenCalled();
+      // SSE notifications about the (non-existent) state transitions must
+      // not have been emitted either.
+      expect(broadcaster.emit).not.toHaveBeenCalled();
     });
 
     it('wire() called twice throws ServiceWireError', () => {
