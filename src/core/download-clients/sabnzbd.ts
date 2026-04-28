@@ -15,6 +15,8 @@ import {
   sabnzbdQueueResponseSchema,
   sabnzbdHistoryResponseSchema,
   sabnzbdVersionResponseSchema,
+  sabnzbdAddResponseSchema,
+  sabnzbdCategoriesResponseSchema,
 } from './schemas.js';
 import type {
   sabnzbdQueueSlotSchema,
@@ -94,12 +96,9 @@ export class SABnzbdClient implements DownloadClientAdapter {
       params.priority = '-1'; // SABnzbd: -1 = paused
     }
 
-    const response = await this.request<{
-      status: boolean;
-      nzo_ids: string[];
-    }>(params);
+    const response = this.parseAddResponse(await this.request<unknown>(params));
 
-    if (!response.status || !response.nzo_ids?.length) {
+    if (!response.status || !response.nzo_ids.length) {
       throw new DownloadClientError(this.name, 'SABnzbd failed to add download');
     }
 
@@ -133,16 +132,28 @@ export class SABnzbdClient implements DownloadClientAdapter {
       'upload.nzb',
     );
 
-    const result = await this.fetchApi<{ status: boolean; nzo_ids: string[] }>(url.toString(), {
+    const result = this.parseAddResponse(await this.fetchApi<unknown>(url.toString(), {
       method: 'POST',
       body: formData,
-    });
+    }));
 
-    if (!result.status || !result.nzo_ids?.length) {
+    if (!result.status || !result.nzo_ids.length) {
       throw new DownloadClientError(this.name, 'SABnzbd failed to add download');
     }
 
     return result.nzo_ids[0];
+  }
+
+  private parseAddResponse(raw: unknown): z.infer<typeof sabnzbdAddResponseSchema> {
+    const parsed = sabnzbdAddResponseSchema.safeParse(raw);
+    if (!parsed.success) {
+      throw new DownloadClientError(
+        this.name,
+        `SABnzbd returned unexpected add response: ${parsed.error.issues[0]?.message ?? 'unknown'}`,
+        { cause: parsed.error },
+      );
+    }
+    return parsed.data;
   }
 
   async getDownload(id: string): Promise<DownloadItemInfo | null> {
@@ -262,10 +273,16 @@ export class SABnzbdClient implements DownloadClientAdapter {
   }
 
   async getCategories(): Promise<string[]> {
-    const response = await this.request<{ categories: string[] }>({
-      mode: 'get_cats',
-    });
-    return (response.categories ?? []).filter((c) => c !== '*');
+    const raw = await this.request<unknown>({ mode: 'get_cats' });
+    const parsed = sabnzbdCategoriesResponseSchema.safeParse(raw);
+    if (!parsed.success) {
+      throw new DownloadClientError(
+        this.name,
+        `SABnzbd returned unexpected categories response: ${parsed.error.issues[0]?.message ?? 'unknown'}`,
+        { cause: parsed.error },
+      );
+    }
+    return parsed.data.categories.filter((c) => c !== '*');
   }
 
   async test(): Promise<{ success: boolean; message?: string }> {
