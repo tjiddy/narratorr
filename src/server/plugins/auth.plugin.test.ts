@@ -442,6 +442,59 @@ describe('auth middleware', () => {
     });
   });
 
+  describe('mode: basic — CORS preflight (browser OPTIONS)', () => {
+    // Production registers @fastify/cors BEFORE authPlugin (see src/server/index.ts:67-121),
+    // so a real browser preflight (OPTIONS + Origin + Access-Control-Request-Method,
+    // *no* Authorization header) is intercepted by the cors plugin and never reaches the
+    // auth dispatch hook. This test wires up that exact plugin order to prove the
+    // preflight does NOT regress to 401 + WWW-Authenticate.
+    let app: FastifyInstance;
+    let authService: AuthService;
+
+    beforeAll(async () => {
+      authService = createMockAuthService({
+        getStatus: vi.fn().mockResolvedValue({ mode: 'basic', hasUser: true, localBypass: false }),
+      });
+
+      app = Fastify({ logger: false });
+      const { default: cors } = await import('@fastify/cors');
+      // Production order: CORS first, cookie, then auth plugin.
+      await app.register(cors, { origin: true, credentials: true });
+      await app.register(cookie);
+      await app.register(authPlugin, { authService });
+
+      // POST /api/books — destination of a hypothetical cross-origin mutation;
+      // the preflight is OPTIONS to this same route.
+      app.post('/api/books', async () => ({ ok: true }));
+      app.get('/api/books', async () => ({ ok: true }));
+
+      await app.ready();
+    });
+
+    afterAll(async () => { await app.close(); });
+
+    it('cross-origin OPTIONS preflight (no Authorization, with Origin + Access-Control-Request-Method) → 204, NOT 401, NOT 403', async () => {
+      const res = await app.inject({
+        method: 'OPTIONS',
+        url: '/api/books',
+        headers: {
+          origin: 'http://example.com',
+          'access-control-request-method': 'POST',
+          'access-control-request-headers': 'x-requested-with,content-type',
+        },
+      });
+
+      // @fastify/cors short-circuits the preflight with 204 before authPlugin runs.
+      // The auth plugin must NOT 401 (no Basic challenge on a preflight) and must NOT 403
+      // (no CSRF gate on a preflight). Both would break real cross-origin mutations.
+      expect(res.statusCode).toBe(204);
+      expect(res.statusCode).not.toBe(401);
+      expect(res.statusCode).not.toBe(403);
+      expect(res.headers['www-authenticate']).toBeUndefined();
+      expect(res.headers['access-control-allow-origin']).toBeDefined();
+    });
+  });
+
   describe('mode: forms — no CSRF requirement', () => {
     let app: FastifyInstance;
     let authService: AuthService;
