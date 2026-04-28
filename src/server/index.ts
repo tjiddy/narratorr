@@ -33,6 +33,46 @@ process.on('unhandledRejection', (reason) => {
   process.exit(1);
 });
 
+// Log every process exit (including external process.exit() calls) so silent
+// terminations surface in the logs. Synchronous stderr.write so output flushes
+// before Node actually leaves.
+process.on('exit', (code) => {
+  try {
+    process.stderr.write(JSON.stringify({
+      level: 60,
+      time: Date.now(),
+      pid: process.pid,
+      hostname: os.hostname(),
+      code,
+      msg: 'process exit event',
+    }) + '\n');
+  } catch {
+    /* stderr unavailable */
+  }
+});
+
+// Wrap process.exit to capture call site of any code that hard-exits the process.
+// Some libraries (especially older CLI-style ones or broken native modules) call
+// process.exit() directly on errors, bypassing JS exception handlers AND Node's
+// --report-* writers. This wrapper logs who's calling exit and with what code.
+const __originalExit = process.exit.bind(process);
+process.exit = ((code?: number): never => {
+  try {
+    process.stderr.write(JSON.stringify({
+      level: 60,
+      time: Date.now(),
+      pid: process.pid,
+      hostname: os.hostname(),
+      code: code ?? 0,
+      stack: new Error('process.exit called').stack,
+      msg: 'process.exit() invoked — capturing caller',
+    }) + '\n');
+  } catch {
+    /* stderr unavailable */
+  }
+  return __originalExit(code);
+}) as typeof process.exit;
+
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
