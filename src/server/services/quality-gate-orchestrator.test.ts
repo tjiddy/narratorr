@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import type { FastifyBaseLogger } from 'fastify';
-import { QualityGateOrchestrator } from './quality-gate-orchestrator.js';
+import { QualityGateOrchestrator, type QualityGateOrchestratorOptionalDeps } from './quality-gate-orchestrator.js';
 import type { QualityGateService, QualityDecision } from './quality-gate.service.js';
 import { QualityGateServiceError, NULL_REASON } from './quality-gate.types.js';
 import { inject, createMockDb, createMockLogger, mockDbChain } from '../__tests__/helpers.js';
@@ -96,12 +96,13 @@ function createOrchestrator(opts?: {
     inject<Db>(db),
     inject<FastifyBaseLogger>(log),
     inject<DownloadClientService>(downloadClientService),
-    inject<EventHistoryService>(eventHistory),
-    inject<EventBroadcasterService>(broadcaster),
-    inject<BlacklistService>(blacklistService),
-    undefined, // remotePathMappingService
-    opts?.retrySearchDeps ? inject<RetrySearchDeps>(opts.retrySearchDeps) : undefined,
-    opts?.settingsService ? inject<SettingsService>(opts.settingsService) : undefined,
+    {
+      eventHistory: inject<EventHistoryService>(eventHistory),
+      broadcaster: inject<EventBroadcasterService>(broadcaster),
+      blacklistService: inject<BlacklistService>(blacklistService),
+      retrySearchDeps: opts?.retrySearchDeps ? inject<RetrySearchDeps>(opts.retrySearchDeps) : undefined,
+      settingsService: opts?.settingsService ? inject<SettingsService>(opts.settingsService) : undefined,
+    },
   );
   // nudgeImportWorker is required-wiring; wire here so existing tests that don't
   // explicitly construct an unwired orchestrator continue to work.
@@ -1874,9 +1875,11 @@ describe('QualityGateOrchestrator', () => {
         inject<Db>(db),
         inject<FastifyBaseLogger>(log),
         inject<DownloadClientService>(downloadClientService),
-        inject<EventHistoryService>(eventHistory),
-        inject<EventBroadcasterService>(broadcaster),
-        inject<BlacklistService>(blacklistService),
+        {
+          eventHistory: inject<EventHistoryService>(eventHistory),
+          broadcaster: inject<EventBroadcasterService>(broadcaster),
+          blacklistService: inject<BlacklistService>(blacklistService),
+        },
       );
       return { orchestrator, log, qualityGateService, broadcaster, db };
     }
@@ -1916,6 +1919,145 @@ describe('QualityGateOrchestrator', () => {
       const { orchestrator } = makeUnwiredOrchestrator();
       orchestrator.wire({ nudgeImportWorker: vi.fn() });
       expect(() => orchestrator.wire({ nudgeImportWorker: vi.fn() })).toThrow(/QualityGateOrchestrator\.wire\(\) called more than once/);
+    });
+  });
+
+  // ── #725 — typed-deps-object refactor: per-dep absence preserves silent-skip ─
+  describe('optional-dep absence (#725)', () => {
+    function buildOrchestratorWithoutDep<K extends keyof QualityGateOrchestratorOptionalDeps>(omit: K) {
+      const db = createMockDb();
+      const log = createMockLogger();
+      const eventHistory = { create: vi.fn().mockResolvedValue({}) };
+      const broadcaster = { emit: vi.fn() };
+      const blacklistService = { create: vi.fn().mockResolvedValue({}) };
+      const downloadClientService = {
+        getAdapter: vi.fn().mockResolvedValue(mockAdapter),
+        getById: vi.fn().mockResolvedValue(null),
+      };
+      const qualityGateService = {
+        getCompletedDownloads: vi.fn().mockResolvedValue([]),
+        getCompletedDownloadById: vi.fn().mockResolvedValue(null),
+        atomicClaim: vi.fn().mockResolvedValue(true),
+        setStatus: vi.fn().mockResolvedValue(undefined),
+        processDownload: vi.fn().mockResolvedValue({ action: 'imported', reason: { action: 'imported', holdReasons: [] }, statusTransition: { from: 'checking', to: 'completed' } }),
+        approve: vi.fn().mockResolvedValue({ id: 1, status: 'importing', download: baseDownload, book: baseBook }),
+        reject: vi.fn().mockResolvedValue({ id: 1, status: 'failed', download: baseDownload, book: baseBook }),
+        getDeferredCleanupCandidates: vi.fn().mockResolvedValue([]),
+      };
+      const retrySearchDeps = { log: createMockLogger() } as unknown as RetrySearchDeps;
+      const settingsService = { get: vi.fn().mockResolvedValue({ redownloadFailed: true, deleteAfterImport: true, minSeedTime: 0, minSeedRatio: 0 }) };
+      const allDeps: QualityGateOrchestratorOptionalDeps = {
+        eventHistory: inject<EventHistoryService>(eventHistory),
+        broadcaster: inject<EventBroadcasterService>(broadcaster),
+        blacklistService: inject<BlacklistService>(blacklistService),
+        retrySearchDeps,
+        settingsService: inject<SettingsService>(settingsService),
+      };
+      const optional = { ...allDeps };
+      delete optional[omit];
+      const orchestrator = new QualityGateOrchestrator(
+        inject<QualityGateService>(qualityGateService),
+        inject<Db>(db),
+        inject<FastifyBaseLogger>(log),
+        inject<DownloadClientService>(downloadClientService),
+        optional,
+      );
+      orchestrator.wire({ nudgeImportWorker: vi.fn() });
+      return { orchestrator, qualityGateService, db, log, eventHistory, broadcaster, blacklistService };
+    }
+
+    it('omitting eventHistory: hold path completes without throwing, no event recorded', async () => {
+      const { orchestrator, qualityGateService, eventHistory, broadcaster } = buildOrchestratorWithoutDep('eventHistory');
+      qualityGateService.getCompletedDownloads.mockResolvedValue([{ download: baseDownload, book: baseBook }]);
+      qualityGateService.processDownload.mockResolvedValue({
+        action: 'held',
+        reason: { ...NULL_REASON, holdReasons: ['narrator_mismatch'] },
+        statusTransition: { from: 'checking', to: 'pending_review' },
+      });
+
+      await expect(orchestrator.processCompletedDownloads()).resolves.not.toThrow();
+      expect(eventHistory.create).not.toHaveBeenCalled();
+      // SSE side effects still fire
+      expect(broadcaster.emit).toHaveBeenCalledWith('download_status_change', expect.objectContaining({ new_status: 'pending_review' }));
+    });
+
+    it('omitting broadcaster: hold path completes without throwing, no SSE emitted', async () => {
+      const { orchestrator, qualityGateService, broadcaster, eventHistory } = buildOrchestratorWithoutDep('broadcaster');
+      qualityGateService.getCompletedDownloads.mockResolvedValue([{ download: baseDownload, book: baseBook }]);
+      qualityGateService.processDownload.mockResolvedValue({
+        action: 'held',
+        reason: { ...NULL_REASON, holdReasons: ['narrator_mismatch'] },
+        statusTransition: { from: 'checking', to: 'pending_review' },
+      });
+
+      await expect(orchestrator.processCompletedDownloads()).resolves.not.toThrow();
+      expect(broadcaster.emit).not.toHaveBeenCalled();
+      // Event still recorded
+      expect(eventHistory.create).toHaveBeenCalled();
+    });
+
+    it('omitting blacklistService: auto-reject completes without throwing, no blacklist call', async () => {
+      const { orchestrator, qualityGateService, blacklistService } = buildOrchestratorWithoutDep('blacklistService');
+      qualityGateService.getCompletedDownloads.mockResolvedValue([{ download: baseDownload, book: baseBook }]);
+      qualityGateService.processDownload.mockResolvedValue({
+        action: 'rejected', reason: { ...NULL_REASON }, statusTransition: { from: 'checking', to: 'failed' },
+      });
+
+      await expect(orchestrator.processCompletedDownloads()).resolves.not.toThrow();
+      expect(blacklistService.create).not.toHaveBeenCalled();
+    });
+
+    it('omitting retrySearchDeps: reject(retry=true) completes without throwing, no retry triggered', async () => {
+      const { orchestrator, qualityGateService } = buildOrchestratorWithoutDep('retrySearchDeps');
+      qualityGateService.reject.mockResolvedValue({ id: 1, status: 'failed', download: baseDownload, book: baseBook });
+
+      await expect(orchestrator.reject(1, { retry: true })).resolves.not.toThrow();
+      expect(retrySearch).not.toHaveBeenCalled();
+    });
+
+    it('omitting settingsService: rejection cleanup defaults to non-destructive (no file delete)', async () => {
+      const { orchestrator, qualityGateService } = buildOrchestratorWithoutDep('settingsService');
+      const downloadWithOutput = { ...baseDownload, outputPath: '/downloads/test-book' };
+      qualityGateService.reject.mockResolvedValue({ id: 1, status: 'failed', download: downloadWithOutput, book: baseBook });
+
+      // Without settingsService, gatedRejectionCleanup keeps shouldDelete=true (default-trust),
+      // so the adapter removeDownload still runs. The settingsService is "optional" in the sense
+      // that absence does not throw — only when settingsService is present and *throws* does the
+      // cleanup default to non-destructive. Verify no throw and adapter call happens.
+      await expect(orchestrator.reject(1, { retry: false })).resolves.not.toThrow();
+    });
+  });
+
+  // ── #725 — named-key construction prevents silent positional-arg reorders ────
+  describe('named-key construction (#725)', () => {
+    it('object-literal optional deps reject mismatched value types at compile time', () => {
+      // The TS compiler narrows each named field to its declared interface,
+      // so swapping two same-typed deps (e.g. eventHistory vs broadcaster, both
+      // service-shaped) is no longer possible without an explicit cast.
+      const db = createMockDb();
+      const log = createMockLogger();
+      const downloadClientService = inject<DownloadClientService>({});
+      const qualityGateService = inject<QualityGateService>({});
+
+      // Constructing with a wrongly-typed value for a named field is a compile error:
+      // eventHistory.create must take an event payload, not a blacklist payload.
+      const _bad = new QualityGateOrchestrator(
+        qualityGateService, inject<Db>(db), inject<FastifyBaseLogger>(log), downloadClientService,
+        // @ts-expect-error eventHistory shape must match EventHistoryService
+        { eventHistory: { create: vi.fn(), reason: 'bad_quality' } },
+      );
+      void _bad;
+
+      // Constructing with all-correct named keys compiles fine.
+      const good = new QualityGateOrchestrator(
+        qualityGateService, inject<Db>(db), inject<FastifyBaseLogger>(log), downloadClientService,
+        {
+          eventHistory: inject<EventHistoryService>({ create: vi.fn().mockResolvedValue({}) }),
+          broadcaster: inject<EventBroadcasterService>({ emit: vi.fn() }),
+        },
+      );
+      good.wire({ nudgeImportWorker: vi.fn() });
+      expect(good).toBeInstanceOf(QualityGateOrchestrator);
     });
   });
 

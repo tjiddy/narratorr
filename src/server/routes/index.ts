@@ -214,7 +214,14 @@ export async function createServices(db: Db, log: FastifyBaseLogger): Promise<Se
   // Construct remaining cyclic-dep services (worker created before QGO/wire phase)
   const importQueueWorker = new ImportQueueWorker(db, log, eventBroadcaster);
   const nudgeImportWorker = (): void => importQueueWorker.nudge();
-  const qualityGateOrchestrator = new QualityGateOrchestrator(qualityGateService, db, log, downloadClient, eventHistory, eventBroadcaster, blacklistService, remotePathMapping, retrySearchDeps, settings);
+  const qualityGateOrchestrator = new QualityGateOrchestrator(qualityGateService, db, log, downloadClient, {
+    eventHistory,
+    broadcaster: eventBroadcaster,
+    blacklistService,
+    remotePathMappingService: remotePathMapping,
+    retrySearchDeps,
+    settingsService: settings,
+  });
   const bookRejection = new BookRejectionService(db, log, book, blacklistService, settings, eventHistory, retrySearchDeps);
 
   // Phase 2: wire required cyclic deps now that every instance exists.
