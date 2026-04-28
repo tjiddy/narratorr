@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { z } from 'zod';
+import type { z } from 'zod';
 import { queryKeys } from '@/lib/queryKeys';
 import { api } from '@/lib/api';
 import { URL_BASE } from '@/lib/api/client';
