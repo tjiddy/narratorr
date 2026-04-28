@@ -1,4 +1,5 @@
 import { dirname, basename } from 'node:path';
+import { z } from 'zod';
 import type {
   DownloadClientAdapter,
   DownloadItemInfo,
@@ -10,6 +11,12 @@ import { fetchWithTimeout } from '../utils/fetch-with-timeout.js';
 import { DEFAULT_REQUEST_TIMEOUT_MS } from '../utils/constants.js';
 import { DownloadClientAuthError, DownloadClientError, DownloadClientTimeoutError, isTimeoutError } from './errors.js';
 import { getErrorMessage } from '../../shared/error-message.js';
+import {
+  sabnzbdQueueResponseSchema,
+  sabnzbdHistoryResponseSchema,
+  sabnzbdQueueSlotSchema,
+  sabnzbdHistorySlotSchema,
+} from './schemas.js';
 
 const SABNZBD_LIST_LIMIT = '1000';
 
@@ -42,42 +49,8 @@ export interface SABnzbdConfig {
   useSsl: boolean;
 }
 
-interface SABnzbdQueueSlot {
-  nzo_id: string;
-  filename: string;
-  status: string;
-  mb: string;
-  mbleft: string;
-  percentage: string;
-  timeleft: string;
-  kbpersec?: string;
-  cat: string;
-  storage?: string;
-}
-
-interface SABnzbdHistorySlot {
-  nzo_id: string;
-  name: string;
-  status: string;
-  bytes: number;
-  download_time: number;
-  completed: number; // unix timestamp
-  category: string;
-  storage: string;
-  fail_message: string;
-}
-
-interface SABnzbdQueueResponse {
-  queue: {
-    slots: SABnzbdQueueSlot[];
-  };
-}
-
-interface SABnzbdHistoryResponse {
-  history: {
-    slots: SABnzbdHistorySlot[];
-  };
-}
+type SABnzbdQueueSlot = z.infer<typeof sabnzbdQueueSlotSchema>;
+type SABnzbdHistorySlot = z.infer<typeof sabnzbdHistorySlotSchema>;
 
 export class SABnzbdClient implements DownloadClientAdapter {
   readonly type = 'sabnzbd';
@@ -171,10 +144,10 @@ export class SABnzbdClient implements DownloadClientAdapter {
 
   async getDownload(id: string): Promise<DownloadItemInfo | null> {
     // Check queue first
-    const queueResponse = await this.request<SABnzbdQueueResponse>({
+    const queueResponse = this.parseQueueResponse(await this.request<unknown>({
       mode: 'queue',
       limit: SABNZBD_LIST_LIMIT,
-    });
+    }));
 
     const queueSlot = queueResponse.queue.slots.find(
       (s) => s.nzo_id === id,
@@ -184,10 +157,10 @@ export class SABnzbdClient implements DownloadClientAdapter {
     }
 
     // Check history
-    const historyResponse = await this.request<SABnzbdHistoryResponse>({
+    const historyResponse = this.parseHistoryResponse(await this.request<unknown>({
       mode: 'history',
       limit: SABNZBD_LIST_LIMIT,
-    });
+    }));
 
     const historySlot = historyResponse.history.slots.find(
       (s) => s.nzo_id === id,
@@ -216,10 +189,12 @@ export class SABnzbdClient implements DownloadClientAdapter {
       historyParams.cat = category;
     }
 
-    const [queueResponse, historyResponse] = await Promise.all([
-      this.request<SABnzbdQueueResponse>(queueParams),
-      this.request<SABnzbdHistoryResponse>(historyParams),
+    const [rawQueue, rawHistory] = await Promise.all([
+      this.request<unknown>(queueParams),
+      this.request<unknown>(historyParams),
     ]);
+    const queueResponse = this.parseQueueResponse(rawQueue);
+    const historyResponse = this.parseHistoryResponse(rawHistory);
 
     const items: DownloadItemInfo[] = [];
 
@@ -231,6 +206,30 @@ export class SABnzbdClient implements DownloadClientAdapter {
     }
 
     return items;
+  }
+
+  private parseQueueResponse(raw: unknown): z.infer<typeof sabnzbdQueueResponseSchema> {
+    const parsed = sabnzbdQueueResponseSchema.safeParse(raw);
+    if (!parsed.success) {
+      throw new DownloadClientError(
+        this.name,
+        `SABnzbd returned unexpected queue response: ${parsed.error.issues[0]?.message ?? 'unknown'}`,
+        { cause: parsed.error },
+      );
+    }
+    return parsed.data;
+  }
+
+  private parseHistoryResponse(raw: unknown): z.infer<typeof sabnzbdHistoryResponseSchema> {
+    const parsed = sabnzbdHistoryResponseSchema.safeParse(raw);
+    if (!parsed.success) {
+      throw new DownloadClientError(
+        this.name,
+        `SABnzbd returned unexpected history response: ${parsed.error.issues[0]?.message ?? 'unknown'}`,
+        { cause: parsed.error },
+      );
+    }
+    return parsed.data;
   }
 
   async pauseDownload(id: string): Promise<void> {

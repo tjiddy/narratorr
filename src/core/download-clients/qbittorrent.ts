@@ -239,7 +239,11 @@ export class QBittorrentClient implements DownloadClientAdapter {
 
     const parsed = qbTorrentsResponseSchema.safeParse(raw);
     if (!parsed.success) {
-      throw new DownloadClientError(this.name, `qBittorrent returned unexpected torrent data: ${parsed.error.issues[0]?.message ?? 'unknown'}`);
+      throw new DownloadClientError(
+        this.name,
+        `qBittorrent returned unexpected torrent data: ${parsed.error.issues[0]?.message ?? 'unknown'}`,
+        { cause: parsed.error },
+      );
     }
 
     if (parsed.data.length === 0) return null;
@@ -254,7 +258,11 @@ export class QBittorrentClient implements DownloadClientAdapter {
 
     const parsed = qbTorrentsResponseSchema.safeParse(raw);
     if (!parsed.success) {
-      throw new DownloadClientError(this.name, `qBittorrent returned unexpected torrent data: ${parsed.error.issues[0]?.message ?? 'unknown'}`);
+      throw new DownloadClientError(
+        this.name,
+        `qBittorrent returned unexpected torrent data: ${parsed.error.issues[0]?.message ?? 'unknown'}`,
+        { cause: parsed.error },
+      );
     }
 
     return parsed.data.map((t) => this.mapItem(t as QBTorrent));

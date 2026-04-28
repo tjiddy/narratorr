@@ -88,7 +88,7 @@ export class NZBGetClient implements DownloadClientAdapter {
 
     // Check active groups first
     const rawGroups = await this.rpc<unknown[]>('listgroups');
-    const groups = z.array(nzbgetGroupSchema).parse(rawGroups ?? []);
+    const groups = this.parseGroups(rawGroups);
     const group = groups.find((g) => g.NZBID === nzbId);
     if (group) {
       return this.mapGroup(group);
@@ -96,7 +96,7 @@ export class NZBGetClient implements DownloadClientAdapter {
 
     // Check history
     const rawHistory = await this.rpc<unknown[]>('history', [false]);
-    const history = z.array(nzbgetHistorySchema).parse(rawHistory ?? []);
+    const history = this.parseHistory(rawHistory);
     const histItem = history.find((h) => h.NZBID === nzbId);
     if (histItem) {
       return this.mapHistoryItem(histItem);
@@ -111,8 +111,8 @@ export class NZBGetClient implements DownloadClientAdapter {
       this.rpc<unknown[]>('history', [false]),
     ]);
 
-    const groups = z.array(nzbgetGroupSchema).parse(rawGroups ?? []);
-    const history = z.array(nzbgetHistorySchema).parse(rawHistory ?? []);
+    const groups = this.parseGroups(rawGroups);
+    const history = this.parseHistory(rawHistory);
 
     const items: DownloadItemInfo[] = [];
 
@@ -201,7 +201,11 @@ export class NZBGetClient implements DownloadClientAdapter {
     const parsed = nzbgetRpcResponseSchema.safeParse(json);
 
     if (!parsed.success) {
-      throw new DownloadClientError(this.name, `NZBGet returned unexpected response: ${parsed.error.message}`);
+      throw new DownloadClientError(
+        this.name,
+        `NZBGet returned unexpected response: ${parsed.error.message}`,
+        { cause: parsed.error },
+      );
     }
 
     if (parsed.data.error) {
@@ -211,6 +215,30 @@ export class NZBGetClient implements DownloadClientAdapter {
     }
 
     return parsed.data.result as T;
+  }
+
+  private parseGroups(raw: unknown): NZBGetGroup[] {
+    const parsed = z.array(nzbgetGroupSchema).safeParse(raw ?? []);
+    if (!parsed.success) {
+      throw new DownloadClientError(
+        this.name,
+        `NZBGet returned unexpected listgroups response: ${parsed.error.issues[0]?.message ?? 'unknown'}`,
+        { cause: parsed.error },
+      );
+    }
+    return parsed.data;
+  }
+
+  private parseHistory(raw: unknown): NZBGetHistoryItem[] {
+    const parsed = z.array(nzbgetHistorySchema).safeParse(raw ?? []);
+    if (!parsed.success) {
+      throw new DownloadClientError(
+        this.name,
+        `NZBGet returned unexpected history response: ${parsed.error.issues[0]?.message ?? 'unknown'}`,
+        { cause: parsed.error },
+      );
+    }
+    return parsed.data;
   }
 
   private mapGroup(group: NZBGetGroup): DownloadItemInfo {

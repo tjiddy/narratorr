@@ -1,5 +1,6 @@
+import { z } from 'zod';
 import type { DownloadClientAdapter, DownloadItemInfo, AddDownloadOptions, DownloadArtifact, DownloadProtocol } from './types.js';
-import { transmissionRpcResponseSchema } from './schemas.js';
+import { transmissionRpcResponseSchema, transmissionTorrentsArraySchema, transmissionTorrentSchema } from './schemas.js';
 import { fetchWithTimeout } from '../utils/fetch-with-timeout.js';
 import { DEFAULT_REQUEST_TIMEOUT_MS } from '../utils/constants.js';
 import { DownloadClientAuthError, DownloadClientError } from './errors.js';
@@ -33,24 +34,7 @@ const TORRENT_FIELDS = [
   'leftUntilDone',
 ] as const;
 
-interface TransmissionTorrent {
-  hashString: string;
-  name: string;
-  status: number;
-  percentDone: number;
-  totalSize: number;
-  downloadedEver: number;
-  uploadedEver: number;
-  uploadRatio: number;
-  peersSendingToUs: number;
-  peersGettingFromUs: number;
-  eta: number;
-  downloadDir: string;
-  addedDate: number;
-  doneDate: number;
-  errorString: string;
-  leftUntilDone: number;
-}
+type TransmissionTorrent = z.infer<typeof transmissionTorrentSchema>;
 
 interface RpcResponse {
   result: string;
@@ -111,7 +95,7 @@ export class TransmissionClient implements DownloadClientAdapter {
       fields: [...TORRENT_FIELDS],
     });
 
-    const torrents = (response.arguments?.torrents || []) as TransmissionTorrent[];
+    const torrents = this.parseTorrents(response.arguments?.torrents);
     if (torrents.length === 0) {
       return null;
     }
@@ -124,7 +108,7 @@ export class TransmissionClient implements DownloadClientAdapter {
       fields: [...TORRENT_FIELDS],
     });
 
-    const torrents = (response.arguments?.torrents || []) as TransmissionTorrent[];
+    const torrents = this.parseTorrents(response.arguments?.torrents);
     const mapped = torrents.map((t) => this.mapTorrent(t));
 
     if (category) {
@@ -132,6 +116,19 @@ export class TransmissionClient implements DownloadClientAdapter {
     }
 
     return mapped;
+  }
+
+  private parseTorrents(raw: unknown): TransmissionTorrent[] {
+    if (raw === undefined) return [];
+    const parsed = transmissionTorrentsArraySchema.safeParse(raw);
+    if (!parsed.success) {
+      throw new DownloadClientError(
+        this.name,
+        `Transmission returned unexpected torrent data: ${parsed.error.issues[0]?.message ?? 'unknown'}`,
+        { cause: parsed.error },
+      );
+    }
+    return parsed.data;
   }
 
   async pauseDownload(id: string): Promise<void> {
@@ -208,7 +205,11 @@ export class TransmissionClient implements DownloadClientAdapter {
         const raw = await response.json();
         const parsed = transmissionRpcResponseSchema.safeParse(raw);
         if (!parsed.success) {
-          throw new DownloadClientError(this.name, `Transmission returned unexpected response: ${parsed.error.issues[0]?.message ?? 'unknown'}`);
+          throw new DownloadClientError(
+            this.name,
+            `Transmission returned unexpected response: ${parsed.error.issues[0]?.message ?? 'unknown'}`,
+            { cause: parsed.error },
+          );
         }
         const data = parsed.data as RpcResponse;
 

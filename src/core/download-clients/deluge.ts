@@ -1,9 +1,15 @@
+import { z } from 'zod';
 import { type DownloadClientAdapter, type DownloadItemInfo, type AddDownloadOptions, type DownloadArtifact, type DownloadProtocol, ETA_UPPER_BOUND_SEC } from './types.js';
 import { fetchWithTimeout } from '../utils/fetch-with-timeout.js';
 import { DEFAULT_REQUEST_TIMEOUT_MS } from '../utils/constants.js';
 import { DownloadClientAuthError, DownloadClientError } from './errors.js';
 import { requestWithRetry } from './retry.js';
 import { getErrorMessage } from '../../shared/error-message.js';
+import {
+  delugeRpcResponseSchema,
+  delugeTorrentStatusSchema,
+  delugeTorrentsStatusMapSchema,
+} from './schemas.js';
 
 export interface DelugeConfig {
   host: string;
@@ -13,30 +19,7 @@ export interface DelugeConfig {
   onWarn?: (msg: string) => void;
 }
 
-interface DelugeRpcResponse {
-  id: number;
-  result: unknown;
-  error: { message: string; code: number } | null;
-}
-
-interface DelugeTorrentStatus {
-  hash: string;
-  name: string;
-  state: string;
-  progress: number;
-  total_size: number;
-  total_done: number;
-  total_uploaded: number;
-  ratio: number;
-  num_seeds: number;
-  num_peers: number;
-  eta: number;
-  download_rate?: number;
-  save_path: string;
-  time_added: number;
-  label?: string;
-  is_finished: boolean;
-}
+type DelugeTorrentStatus = z.infer<typeof delugeTorrentStatusSchema>;
 
 const TORRENT_STATUS_KEYS = [
   'hash', 'name', 'state', 'progress', 'total_size',
@@ -93,12 +76,22 @@ export class DelugeClient implements DownloadClientAdapter {
           throw new DownloadClientError(this.name, `Deluge request failed: HTTP ${response.status}`);
         }
 
-        let data: DelugeRpcResponse;
+        let raw: unknown;
         try {
-          data = await response.json() as DelugeRpcResponse;
+          raw = await response.json();
         } catch {
           throw new DownloadClientError(this.name, 'Connection failed: server didn\'t respond as expected. Check host, port, SSL settings, and any reverse proxy that may be intercepting requests.');
         }
+
+        const parsed = delugeRpcResponseSchema.safeParse(raw);
+        if (!parsed.success) {
+          throw new DownloadClientError(
+            this.name,
+            `Deluge returned unexpected response: ${parsed.error.issues[0]?.message ?? 'unknown'}`,
+            { cause: parsed.error },
+          );
+        }
+        const data = parsed.data;
 
         if (data.error) {
           if (data.error.code === 1) {
@@ -136,12 +129,22 @@ export class DelugeClient implements DownloadClientAdapter {
       throw new DownloadClientError(this.name, `Deluge login failed: HTTP ${response.status}`);
     }
 
-    let data: DelugeRpcResponse;
+    let raw: unknown;
     try {
-      data = await response.json() as DelugeRpcResponse;
+      raw = await response.json();
     } catch {
       throw new DownloadClientError(this.name, 'Connection failed: server didn\'t respond as expected. Check host, port, SSL settings, and any reverse proxy that may be intercepting requests.');
     }
+
+    const parsed = delugeRpcResponseSchema.safeParse(raw);
+    if (!parsed.success) {
+      throw new DownloadClientError(
+        this.name,
+        `Deluge returned unexpected login response: ${parsed.error.issues[0]?.message ?? 'unknown'}`,
+        { cause: parsed.error },
+      );
+    }
+    const data = parsed.data;
 
     if (data.error) {
       throw new DownloadClientAuthError(this.name, `Deluge login error: ${data.error.message}`);
@@ -205,13 +208,21 @@ export class DelugeClient implements DownloadClientAdapter {
   }
 
   async getDownload(id: string): Promise<DownloadItemInfo | null> {
-    const result = await this.rpc('core.get_torrent_status', [id, TORRENT_STATUS_KEYS]) as Record<string, unknown> | null;
+    const result = await this.rpc('core.get_torrent_status', [id, TORRENT_STATUS_KEYS]);
 
-    if (!result || Object.keys(result).length === 0) {
+    if (!result || (typeof result === 'object' && Object.keys(result).length === 0)) {
       return null;
     }
 
-    return this.mapTorrent(id, result as unknown as DelugeTorrentStatus);
+    const parsed = delugeTorrentStatusSchema.safeParse(result);
+    if (!parsed.success) {
+      throw new DownloadClientError(
+        this.name,
+        `Deluge returned unexpected torrent-status response: ${parsed.error.issues[0]?.message ?? 'unknown'}`,
+        { cause: parsed.error },
+      );
+    }
+    return this.mapTorrent(id, parsed.data);
   }
 
   async getAllDownloads(category?: string): Promise<DownloadItemInfo[]> {
@@ -220,12 +231,21 @@ export class DelugeClient implements DownloadClientAdapter {
       filterDict.label = category;
     }
 
-    const result = await this.rpc('core.get_torrents_status', [filterDict, TORRENT_STATUS_KEYS]) as Record<string, Record<string, unknown>> | null;
+    const result = await this.rpc('core.get_torrents_status', [filterDict, TORRENT_STATUS_KEYS]);
 
     if (!result) return [];
 
-    return Object.entries(result).map(([hash, torrent]) =>
-      this.mapTorrent(hash, torrent as unknown as DelugeTorrentStatus)
+    const parsed = delugeTorrentsStatusMapSchema.safeParse(result);
+    if (!parsed.success) {
+      throw new DownloadClientError(
+        this.name,
+        `Deluge returned unexpected torrents-status response: ${parsed.error.issues[0]?.message ?? 'unknown'}`,
+        { cause: parsed.error },
+      );
+    }
+
+    return Object.entries(parsed.data).map(([hash, torrent]) =>
+      this.mapTorrent(hash, torrent),
     );
   }
 
