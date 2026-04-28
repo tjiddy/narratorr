@@ -344,7 +344,7 @@ describe('auth middleware', () => {
       expect(res.statusCode).toBe(401);
     });
 
-    it('cookie >50% TTL triggers re-set (sliding expiry)', async () => {
+    it('cookie >50% TTL triggers re-set (sliding expiry) — dev mode never includes Secure', async () => {
       (authService.verifySessionCookie as ReturnType<typeof vi.fn>).mockReturnValue({
         payload: { username: 'admin', issuedAt: Date.now() - 4 * 24 * 60 * 60 * 1000, expiresAt: Date.now() + 3 * 24 * 60 * 60 * 1000 },
         shouldRenew: true,
@@ -363,6 +363,92 @@ describe('auth middleware', () => {
       expect(String(setCookie)).toContain('HttpOnly');
       expect(String(setCookie)).toContain('SameSite=Lax');
       expect(String(setCookie)).not.toContain('Secure');
+      expect(String(setCookie)).toContain('Path=/');
+    });
+  });
+
+  describe('mode: forms — sliding renewal cookie security matrix', () => {
+    function makeRenewingAuthService() {
+      return createMockAuthService({
+        getStatus: vi.fn().mockResolvedValue({ mode: 'forms', hasUser: true, localBypass: false }),
+        verifySessionCookie: vi.fn().mockReturnValue({
+          payload: { username: 'admin', issuedAt: Date.now() - 4 * 24 * 60 * 60 * 1000, expiresAt: Date.now() + 3 * 24 * 60 * 60 * 1000 },
+          shouldRenew: true,
+        }),
+        createSessionCookie: vi.fn().mockReturnValue('renewed-cookie-value'),
+      });
+    }
+
+    afterEach(() => {
+      (config as { isDev: boolean }).isDev = true;
+      delete (config as { urlBase?: string }).urlBase;
+    });
+
+    it('production + trusted proxy + X-Forwarded-Proto: https → renewal cookie has Secure', async () => {
+      (config as { isDev: boolean }).isDev = false;
+      const app = await createApp(makeRenewingAuthService(), { trustProxy: true });
+      try {
+        const res = await app.inject({
+          method: 'GET',
+          url: '/api/test',
+          cookies: { narratorr_session: 'old-cookie' },
+          headers: { 'x-forwarded-proto': 'https' },
+        });
+        expect(res.statusCode).toBe(200);
+        expect(String(res.headers['set-cookie'])).toContain('Secure');
+      } finally {
+        await app.close();
+      }
+    });
+
+    it('production + trusted proxy + X-Forwarded-Proto: http → renewal cookie has no Secure', async () => {
+      (config as { isDev: boolean }).isDev = false;
+      const app = await createApp(makeRenewingAuthService(), { trustProxy: true });
+      try {
+        const res = await app.inject({
+          method: 'GET',
+          url: '/api/test',
+          cookies: { narratorr_session: 'old-cookie' },
+          headers: { 'x-forwarded-proto': 'http' },
+        });
+        expect(res.statusCode).toBe(200);
+        expect(String(res.headers['set-cookie'])).not.toContain('Secure');
+      } finally {
+        await app.close();
+      }
+    });
+
+    it('production + no trusted proxy → renewal cookie has no Secure (forwarded headers ignored)', async () => {
+      (config as { isDev: boolean }).isDev = false;
+      const app = await createApp(makeRenewingAuthService());
+      try {
+        const res = await app.inject({
+          method: 'GET',
+          url: '/api/test',
+          cookies: { narratorr_session: 'old-cookie' },
+          headers: { 'x-forwarded-proto': 'https' },
+        });
+        expect(res.statusCode).toBe(200);
+        expect(String(res.headers['set-cookie'])).not.toContain('Secure');
+      } finally {
+        await app.close();
+      }
+    });
+
+    it('URL_BASE=/narratorr → renewal cookie uses Path=/narratorr', async () => {
+      (config as { urlBase?: string }).urlBase = '/narratorr';
+      const app = await createApp(makeRenewingAuthService());
+      try {
+        const res = await app.inject({
+          method: 'GET',
+          url: '/api/test',
+          cookies: { narratorr_session: 'old-cookie' },
+        });
+        expect(res.statusCode).toBe(200);
+        expect(String(res.headers['set-cookie'])).toContain('Path=/narratorr');
+      } finally {
+        await app.close();
+      }
     });
   });
 

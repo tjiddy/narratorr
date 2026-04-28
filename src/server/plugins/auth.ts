@@ -2,6 +2,9 @@ import fp from 'fastify-plugin';
 import type { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
 import type { AuthService } from '../services/auth.service.js';
 import { config } from '../config.js';
+import { sessionCookieOptions } from '../utils/cookie-options.js';
+
+const SESSION_MAX_AGE_S = 7 * 24 * 60 * 60;
 
 export interface AuthPluginOptions {
   authService: AuthService;
@@ -125,11 +128,8 @@ async function handleFormsAuth(
   if (result.shouldRenew) {
     const newCookie = authService.createSessionCookie(result.payload.username, secret);
     reply.setCookie('narratorr_session', newCookie, {
-      httpOnly: true,
-      sameSite: 'lax',
-      secure: false,
-      path: '/',
-      maxAge: 7 * 24 * 60 * 60,
+      ...sessionCookieOptions(config, request),
+      maxAge: SESSION_MAX_AGE_S,
     });
     request.log.debug({ username: result.payload.username }, 'Auth: session cookie renewed (sliding expiry)');
   }

@@ -211,30 +211,32 @@ describe('auth routes', () => {
       expect(logoutCookie).not.toContain('Secure');
     });
 
-    it('login and logout cookies never include Secure flag (reverse proxies handle TLS)', async () => {
-      // Switch to production mode — Secure should still NOT be set
-      (config as { isDev: boolean }).isDev = false;
-
-      const prodServices = createMockServices();
-      const prodApp = await createAuthTestApp(prodServices);
+    it('login and logout cookies do not include Secure flag in dev mode', async () => {
+      // isDev=true (default) — Secure must never be set even with trustProxy + X-Forwarded-Proto: https
+      const devServices = createMockServices();
+      const devApp = await createAuthTestApp(devServices, { trustProxy: true });
 
       try {
-        (prodServices.auth.verifyCredentials as Mock).mockResolvedValue({ username: 'admin' });
-        (prodServices.auth.getSessionSecret as Mock).mockResolvedValue('test-secret');
-        (prodServices.auth.createSessionCookie as Mock).mockReturnValue('signed-cookie');
+        (devServices.auth.verifyCredentials as Mock).mockResolvedValue({ username: 'admin' });
+        (devServices.auth.getSessionSecret as Mock).mockResolvedValue('test-secret');
+        (devServices.auth.createSessionCookie as Mock).mockReturnValue('signed-cookie');
 
-        const loginRes = await prodApp.inject({
+        const loginRes = await devApp.inject({
           method: 'POST',
           url: '/api/auth/login',
           payload: { username: 'admin', password: 'pass' },
+          headers: { 'x-forwarded-proto': 'https' },
         });
         expect(String(loginRes.headers['set-cookie'])).not.toContain('Secure');
 
-        const logoutRes = await prodApp.inject({ method: 'POST', url: '/api/auth/logout' });
+        const logoutRes = await devApp.inject({
+          method: 'POST',
+          url: '/api/auth/logout',
+          headers: { 'x-forwarded-proto': 'https' },
+        });
         expect(String(logoutRes.headers['set-cookie'])).not.toContain('Secure');
       } finally {
-        (config as { isDev: boolean }).isDev = true;
-        await prodApp.close();
+        await devApp.close();
       }
     });
   });
@@ -586,39 +588,155 @@ describe('auth routes', () => {
     });
   });
 
-  describe('POST /api/auth/login — cookie security (production mode)', () => {
-    it('login Set-Cookie does NOT contain Secure flag in production mode', async () => {
+  describe('cookie security matrix — Secure flag', () => {
+    function loginPayload() {
+      return { username: 'admin', password: 'pass' };
+    }
+
+    async function setupProdApp(trustProxy: boolean) {
       (config as { isDev: boolean }).isDev = false;
       const prodServices = createMockServices();
-      const prodApp = await createAuthTestApp(prodServices);
+      const prodApp = await createAuthTestApp(prodServices, trustProxy ? { trustProxy: true } : {});
+      (prodServices.auth.verifyCredentials as Mock).mockResolvedValue({ username: 'admin' });
+      (prodServices.auth.getSessionSecret as Mock).mockResolvedValue('secret');
+      (prodServices.auth.createSessionCookie as Mock).mockReturnValue('cookie-val');
+      return { prodApp, prodServices };
+    }
+
+    it('production + trusted proxy + X-Forwarded-Proto: https → Secure on login and logout', async () => {
+      const { prodApp } = await setupProdApp(true);
       try {
-        (prodServices.auth.verifyCredentials as Mock).mockResolvedValue({ username: 'admin' });
-        (prodServices.auth.getSessionSecret as Mock).mockResolvedValue('secret');
-        (prodServices.auth.createSessionCookie as Mock).mockReturnValue('cookie-val');
-        const res = await prodApp.inject({
-          method: 'POST', url: '/api/auth/login',
-          payload: { username: 'admin', password: 'pass' },
+        const loginRes = await prodApp.inject({
+          method: 'POST',
+          url: '/api/auth/login',
+          payload: loginPayload(),
+          headers: { 'x-forwarded-proto': 'https' },
         });
-        expect(res.statusCode).toBe(200);
-        expect(String(res.headers['set-cookie'])).not.toContain('Secure');
+        expect(loginRes.statusCode).toBe(200);
+        expect(String(loginRes.headers['set-cookie'])).toContain('Secure');
+
+        const logoutRes = await prodApp.inject({
+          method: 'POST',
+          url: '/api/auth/logout',
+          headers: { 'x-forwarded-proto': 'https' },
+        });
+        expect(logoutRes.statusCode).toBe(200);
+        expect(String(logoutRes.headers['set-cookie'])).toContain('Secure');
       } finally {
         (config as { isDev: boolean }).isDev = true;
         await prodApp.close();
       }
     });
 
-    it('logout Set-Cookie does NOT contain Secure flag in production mode', async () => {
-      (config as { isDev: boolean }).isDev = false;
-      const prodServices = createMockServices();
-      const prodApp = await createAuthTestApp(prodServices);
+    it('production + trusted proxy + X-Forwarded-Proto: http → no Secure on login and logout', async () => {
+      const { prodApp } = await setupProdApp(true);
       try {
-        const res = await prodApp.inject({ method: 'POST', url: '/api/auth/logout' });
-        expect(res.statusCode).toBe(200);
-        expect(String(res.headers['set-cookie'])).not.toContain('Secure');
+        const loginRes = await prodApp.inject({
+          method: 'POST',
+          url: '/api/auth/login',
+          payload: loginPayload(),
+          headers: { 'x-forwarded-proto': 'http' },
+        });
+        expect(loginRes.statusCode).toBe(200);
+        expect(String(loginRes.headers['set-cookie'])).not.toContain('Secure');
+
+        const logoutRes = await prodApp.inject({
+          method: 'POST',
+          url: '/api/auth/logout',
+          headers: { 'x-forwarded-proto': 'http' },
+        });
+        expect(logoutRes.statusCode).toBe(200);
+        expect(String(logoutRes.headers['set-cookie'])).not.toContain('Secure');
       } finally {
         (config as { isDev: boolean }).isDev = true;
         await prodApp.close();
       }
+    });
+
+    it('production + no trusted proxy → no Secure (forwarded headers ignored)', async () => {
+      const { prodApp } = await setupProdApp(false);
+      try {
+        const loginRes = await prodApp.inject({
+          method: 'POST',
+          url: '/api/auth/login',
+          payload: loginPayload(),
+          headers: { 'x-forwarded-proto': 'https' },
+        });
+        expect(loginRes.statusCode).toBe(200);
+        expect(String(loginRes.headers['set-cookie'])).not.toContain('Secure');
+
+        const logoutRes = await prodApp.inject({
+          method: 'POST',
+          url: '/api/auth/logout',
+          headers: { 'x-forwarded-proto': 'https' },
+        });
+        expect(logoutRes.statusCode).toBe(200);
+        expect(String(logoutRes.headers['set-cookie'])).not.toContain('Secure');
+      } finally {
+        (config as { isDev: boolean }).isDev = true;
+        await prodApp.close();
+      }
+    });
+
+    it('dev mode → never Secure regardless of X-Forwarded-Proto', async () => {
+      const devServices = createMockServices();
+      const devApp = await createAuthTestApp(devServices, { trustProxy: true });
+      (devServices.auth.verifyCredentials as Mock).mockResolvedValue({ username: 'admin' });
+      (devServices.auth.getSessionSecret as Mock).mockResolvedValue('secret');
+      (devServices.auth.createSessionCookie as Mock).mockReturnValue('cookie-val');
+      try {
+        const loginRes = await devApp.inject({
+          method: 'POST',
+          url: '/api/auth/login',
+          payload: loginPayload(),
+          headers: { 'x-forwarded-proto': 'https' },
+        });
+        expect(String(loginRes.headers['set-cookie'])).not.toContain('Secure');
+
+        const logoutRes = await devApp.inject({
+          method: 'POST',
+          url: '/api/auth/logout',
+          headers: { 'x-forwarded-proto': 'https' },
+        });
+        expect(String(logoutRes.headers['set-cookie'])).not.toContain('Secure');
+      } finally {
+        await devApp.close();
+      }
+    });
+  });
+
+  describe('cookie path — URL_BASE awareness', () => {
+    it('URL_BASE=/narratorr → login and logout Set-Cookie use Path=/narratorr', async () => {
+      (config as { urlBase?: string }).urlBase = '/narratorr';
+      const urlBaseServices = createMockServices();
+      const urlBaseApp = await createAuthTestApp(urlBaseServices);
+      try {
+        (urlBaseServices.auth.verifyCredentials as Mock).mockResolvedValue({ username: 'admin' });
+        (urlBaseServices.auth.getSessionSecret as Mock).mockResolvedValue('secret');
+        (urlBaseServices.auth.createSessionCookie as Mock).mockReturnValue('cookie-val');
+
+        const loginRes = await urlBaseApp.inject({
+          method: 'POST',
+          url: '/api/auth/login',
+          payload: { username: 'admin', password: 'pass' },
+        });
+        expect(loginRes.statusCode).toBe(200);
+        expect(String(loginRes.headers['set-cookie'])).toContain('Path=/narratorr');
+
+        const logoutRes = await urlBaseApp.inject({ method: 'POST', url: '/api/auth/logout' });
+        expect(logoutRes.statusCode).toBe(200);
+        expect(String(logoutRes.headers['set-cookie'])).toContain('Path=/narratorr');
+      } finally {
+        delete (config as { urlBase?: string }).urlBase;
+        await urlBaseApp.close();
+      }
+    });
+
+    it('URL_BASE unset → Set-Cookie uses Path=/', async () => {
+      // Default config mock has no urlBase; helper falls back to '/'.
+      const res = await app.inject({ method: 'POST', url: '/api/auth/logout' });
+      expect(String(res.headers['set-cookie'])).toContain('Path=/');
+      expect(String(res.headers['set-cookie'])).not.toContain('Path=/narratorr');
     });
   });
 
