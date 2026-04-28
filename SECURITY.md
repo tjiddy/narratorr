@@ -10,7 +10,7 @@ Narratorr supports three authentication modes:
 
 - **None** — No authentication (default on first run). Suitable for isolated environments.
 - **Basic** — HTTP Basic Auth. Browser prompts for credentials on each session.
-- **Forms** — Cookie-based session auth with a login page. Sessions are HMAC-SHA256 signed with a server-generated secret, `httpOnly`, `sameSite: lax`, and `secure` in production. TTL is 7 days with sliding renewal.
+- **Forms** — Cookie-based session auth with a login page. Sessions are HMAC-SHA256 signed with a server-generated secret, `httpOnly`, `sameSite: lax`, and conditionally `secure` (set when `NODE_ENV=production` AND the request is detected as HTTPS via `request.protocol === 'https'`; this requires `TRUSTED_PROXIES` to be configured so Fastify can read `X-Forwarded-Proto` from a TLS-terminating reverse proxy). The cookie `Path` honors `URL_BASE` when the app is mounted under a sub-path. TTL is 7 days with sliding renewal.
 
 ### Protected Endpoints
 

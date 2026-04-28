@@ -5,6 +5,9 @@ import { loginSchema, setupCredentialsSchema, changePasswordSchema, updateAuthCo
 import { config } from '../config.js';
 import { isPrivateIp } from '../plugins/auth.js';
 import { serializeError } from '../utils/serialize-error.js';
+import { sessionCookieOptions } from '../utils/cookie-options.js';
+
+const SESSION_MAX_AGE_S = 7 * 24 * 60 * 60;
 
 
 export async function authRoutes(app: FastifyInstance, authService: AuthService) {
@@ -77,11 +80,8 @@ export async function authRoutes(app: FastifyInstance, authService: AuthService)
       const cookie = authService.createSessionCookie(username, secret);
 
       reply.setCookie('narratorr_session', cookie, {
-        httpOnly: true,
-        sameSite: 'lax',
-        secure: false,
-        path: '/',
-        maxAge: 7 * 24 * 60 * 60, // 7 days
+        ...sessionCookieOptions(config, request),
+        maxAge: SESSION_MAX_AGE_S,
       });
 
       request.log.info({ username }, 'User logged in');
@@ -90,13 +90,8 @@ export async function authRoutes(app: FastifyInstance, authService: AuthService)
   );
 
   // POST /api/auth/logout — public, clears cookie
-  app.post('/api/auth/logout', async (_request, reply) => {
-    reply.clearCookie('narratorr_session', {
-      httpOnly: true,
-      sameSite: 'lax',
-      secure: false,
-      path: '/',
-    });
+  app.post('/api/auth/logout', async (request, reply) => {
+    reply.clearCookie('narratorr_session', sessionCookieOptions(config, request));
     return { success: true };
   });
 
