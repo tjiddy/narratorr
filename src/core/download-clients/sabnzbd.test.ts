@@ -1245,13 +1245,24 @@ describe('SABnzbdClient', () => {
       expect((err as DownloadClientError).cause).toBeInstanceOf(zod.ZodError);
     });
 
-    it('test() returns success: false when version response is malformed', async () => {
+    it('test() returns success: false when version response is malformed (missing field)', async () => {
       server.use(
         http.get(`${API_BASE}/api`, () => HttpResponse.json({ no_version_field: true })),
       );
 
       const result = await client.test();
-      expect(result.success).toBe(true); // version schema is loose; this still parses since version is unchecked
+      expect(result.success).toBe(false);
+      expect(result.message).toMatch(/unexpected version response/);
+    });
+
+    it('test() returns success: false when version field is wrong type', async () => {
+      server.use(
+        http.get(`${API_BASE}/api`, () => HttpResponse.json({ version: 42 })),
+      );
+
+      const result = await client.test();
+      expect(result.success).toBe(false);
+      expect(result.message).toMatch(/unexpected version response/);
     });
 
     it('passes through unknown extra fields in queue/history slots', async () => {

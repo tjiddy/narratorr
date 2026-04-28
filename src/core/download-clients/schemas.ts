@@ -89,6 +89,10 @@ export const sabnzbdHistoryResponseSchema = z.object({
   }).passthrough(),
 }).passthrough();
 
+export const sabnzbdVersionResponseSchema = z.object({
+  version: z.string(),
+}).passthrough();
+
 // Deluge RPC envelope. result/error semantics — at least one of them must
 // be present, but result may legitimately be `null` (e.g. label.set_torrent
 // returning success-with-no-payload). Use a refine instead of asserting both.

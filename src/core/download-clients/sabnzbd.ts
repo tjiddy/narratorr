@@ -14,6 +14,7 @@ import { getErrorMessage } from '../../shared/error-message.js';
 import {
   sabnzbdQueueResponseSchema,
   sabnzbdHistoryResponseSchema,
+  sabnzbdVersionResponseSchema,
 } from './schemas.js';
 import type {
   sabnzbdQueueSlotSchema,
@@ -269,13 +270,18 @@ export class SABnzbdClient implements DownloadClientAdapter {
 
   async test(): Promise<{ success: boolean; message?: string }> {
     try {
-      const response = await this.request<{ version: string }>({
-        mode: 'version',
-      });
-
+      const raw = await this.request<unknown>({ mode: 'version' });
+      const parsed = sabnzbdVersionResponseSchema.safeParse(raw);
+      if (!parsed.success) {
+        throw new DownloadClientError(
+          this.name,
+          `SABnzbd returned unexpected version response: ${parsed.error.issues[0]?.message ?? 'unknown'}`,
+          { cause: parsed.error },
+        );
+      }
       return {
         success: true,
-        message: `SABnzbd ${response.version}`,
+        message: `SABnzbd ${parsed.data.version}`,
       };
     } catch (error: unknown) {
       return {
