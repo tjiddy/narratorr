@@ -94,14 +94,31 @@ describe('SecretCodec', () => {
   });
 
   describe('encryptFields / decryptFields', () => {
-    it('encryptFields indexer encrypts only apiKey, flareSolverrUrl, mamId', () => {
-      const settings = { apiKey: 'my-key', hostname: 'example.com', flareSolverrUrl: 'http://flare', mamId: '12345', pageLimit: 100 };
+    it('encryptFields indexer encrypts apiKey, apiUrl, flareSolverrUrl, mamId', () => {
+      const settings = { apiKey: 'my-key', apiUrl: 'http://user:pw@host/', hostname: 'example.com', flareSolverrUrl: 'http://flare', mamId: '12345', pageLimit: 100 };
       const encrypted = encryptFields('indexer', { ...settings }, TEST_KEY);
       expect(isEncrypted(encrypted.apiKey as string)).toBe(true);
+      expect(isEncrypted(encrypted.apiUrl as string)).toBe(true);
       expect(isEncrypted(encrypted.flareSolverrUrl as string)).toBe(true);
       expect(isEncrypted(encrypted.mamId as string)).toBe(true);
       expect(encrypted.hostname).toBe('example.com');
       expect(encrypted.pageLimit).toBe(100);
+    });
+
+    it('encryptFields/decryptFields round-trips indexer apiUrl with embedded credentials (#742)', () => {
+      const original = { apiUrl: 'http://user:pw@prowlarr:9696/1/', apiKey: 'k', hostname: 'host' };
+      const encrypted = encryptFields('indexer', { ...original }, TEST_KEY);
+      expect(isEncrypted(encrypted.apiUrl as string)).toBe(true);
+      const decrypted = decryptFields('indexer', encrypted, TEST_KEY);
+      expect(decrypted.apiUrl).toBe('http://user:pw@prowlarr:9696/1/');
+    });
+
+    it('maskFields("indexer") masks apiUrl when set to non-empty value (#742)', () => {
+      const settings = { apiUrl: 'http://user:pw@host:9696/', apiKey: 'k', hostname: 'host' };
+      const masked = maskFields('indexer', { ...settings });
+      expect(masked.apiUrl).toBe('********');
+      expect(masked.apiKey).toBe('********');
+      expect(masked.hostname).toBe('host');
     });
 
     it('encryptFields downloadClient encrypts only password, apiKey', () => {

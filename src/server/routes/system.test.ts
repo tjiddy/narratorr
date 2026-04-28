@@ -47,32 +47,38 @@ describe('system routes', () => {
     for (const s of Object.values(logSpies)) s.mockClear();
   });
 
-  describe('GET /api/system/status', () => {
-    it('returns 200 with version, status, and valid ISO timestamp', async () => {
-      vi.mocked(getUpdateStatus).mockReturnValue(undefined);
+  describe('GET /api/system/status (#742 — minimal public payload)', () => {
+    it('returns exactly { version, status }', async () => {
       const res = await app.inject({ method: 'GET', url: '/api/system/status' });
 
       expect(res.statusCode).toBe(200);
 
       const payload = JSON.parse(res.payload);
-      expect(payload.version).toBe('0.1.0');
-      expect(payload.status).toBe('ok');
-      expect(payload.timestamp).toBeDefined();
-
-      // Verify timestamp is a valid ISO string
-      const timestamp = new Date(payload.timestamp);
-      expect(timestamp.toISOString()).toBe(payload.timestamp);
+      expect(payload).toEqual({ version: '0.1.0', status: 'ok' });
+      expect(Object.keys(payload).sort()).toEqual(['status', 'version']);
     });
 
-    it('omits update field when no update available', async () => {
-      vi.mocked(getUpdateStatus).mockReturnValue(undefined);
+    it('does not include timestamp or update fields', async () => {
       const res = await app.inject({ method: 'GET', url: '/api/system/status' });
 
       const payload = JSON.parse(res.payload);
-      expect(payload.update).toBeUndefined();
+      expect(payload).not.toHaveProperty('timestamp');
+      expect(payload).not.toHaveProperty('update');
+    });
+  });
+
+  describe('GET /api/system/update-status (#742 — authenticated update info)', () => {
+    it('returns { update: null } when no update available', async () => {
+      vi.mocked(getUpdateStatus).mockReturnValue(undefined);
+      (services.settings.get as Mock).mockResolvedValue(DEFAULT_SETTINGS.system);
+      const res = await app.inject({ method: 'GET', url: '/api/system/update-status' });
+
+      expect(res.statusCode).toBe(200);
+      const payload = JSON.parse(res.payload);
+      expect(payload).toEqual({ update: null });
     });
 
-    it('includes update field when newer version available and not dismissed', async () => {
+    it('returns { update } when newer version available and not dismissed', async () => {
       vi.mocked(getUpdateStatus).mockReturnValue({
         latestVersion: '0.2.0',
         releaseUrl: 'https://github.com/releases/v0.2.0',
@@ -80,8 +86,9 @@ describe('system routes', () => {
       });
       (services.settings.get as Mock).mockResolvedValue(DEFAULT_SETTINGS.system);
 
-      const res = await app.inject({ method: 'GET', url: '/api/system/status' });
+      const res = await app.inject({ method: 'GET', url: '/api/system/update-status' });
 
+      expect(res.statusCode).toBe(200);
       const payload = JSON.parse(res.payload);
       expect(payload.update).toEqual({
         latestVersion: '0.2.0',
@@ -91,7 +98,7 @@ describe('system routes', () => {
       expect(getUpdateStatus).toHaveBeenCalledWith('');
     });
 
-    it('includes update with dismissed: true when version dismissed', async () => {
+    it('returns dismissed: true update info when version is dismissed', async () => {
       vi.mocked(getUpdateStatus).mockReturnValue({
         latestVersion: '0.2.0',
         releaseUrl: 'https://github.com/releases/v0.2.0',
@@ -102,7 +109,7 @@ describe('system routes', () => {
         dismissedUpdateVersion: '0.2.0',
       });
 
-      const res = await app.inject({ method: 'GET', url: '/api/system/status' });
+      const res = await app.inject({ method: 'GET', url: '/api/system/update-status' });
 
       const payload = JSON.parse(res.payload);
       expect(payload.update.dismissed).toBe(true);
@@ -136,37 +143,26 @@ describe('system routes', () => {
     });
   });
 
-  describe('GET /api/health', () => {
-    it('returns 200 with status and valid ISO timestamp when DB probe succeeds', async () => {
+  describe('GET /api/health (#742 — minimal public payload)', () => {
+    it('returns 200 with exactly { status: "ok" } when DB probe succeeds', async () => {
       const res = await app.inject({ method: 'GET', url: '/api/health' });
 
       expect(res.statusCode).toBe(200);
 
       const payload = JSON.parse(res.payload);
-      expect(payload.status).toBe('ok');
-      expect(payload.timestamp).toBeDefined();
-
-      // Verify timestamp is a valid ISO string
-      const timestamp = new Date(payload.timestamp);
-      expect(timestamp.toISOString()).toBe(payload.timestamp);
+      expect(payload).toEqual({ status: 'ok' });
+      expect(Object.keys(payload)).toEqual(['status']);
     });
 
-    it('includes version and commit fields in 200 response', async () => {
-      const res = await app.inject({ method: 'GET', url: '/api/health' });
-      expect(res.statusCode).toBe(200);
-      const payload = JSON.parse(res.payload);
-      expect(payload.version).toBe('0.1.0');
-      expect(payload.commit).toBe('testsha99');
-    });
-
-    it('commit field reflects getCommit() value, not a hardcoded string', async () => {
+    it('does not include version, commit, timestamp on 200', async () => {
       const res = await app.inject({ method: 'GET', url: '/api/health' });
       const payload = JSON.parse(res.payload);
-      // getCommit() is mocked to return 'testsha99' — proves dynamic read, not hardcoded
-      expect(payload.commit).toBe('testsha99');
+      expect(payload).not.toHaveProperty('version');
+      expect(payload).not.toHaveProperty('commit');
+      expect(payload).not.toHaveProperty('timestamp');
     });
 
-    it('includes version and commit fields in 503 error response', async () => {
+    it('returns 503 with exactly { status: "error" } when DB probe fails', async () => {
       const failingDb = inject<Db>({ run: vi.fn().mockRejectedValue(new Error('SQLITE_CANTOPEN')) });
       const failServices = createMockServices();
       const failApp = await createTestApp(failServices, failingDb);
@@ -174,13 +170,16 @@ describe('system routes', () => {
       const res = await failApp.inject({ method: 'GET', url: '/api/health' });
       expect(res.statusCode).toBe(503);
       const payload = JSON.parse(res.payload);
-      expect(payload.version).toBe('0.1.0');
-      expect(payload.commit).toBe('testsha99');
+      expect(payload).toEqual({ status: 'error' });
+      expect(payload).not.toHaveProperty('error');
+      expect(payload).not.toHaveProperty('version');
+      expect(payload).not.toHaveProperty('commit');
+      expect(payload).not.toHaveProperty('timestamp');
 
       await failApp.close();
     });
 
-    it('returns 503 with error and logs canonical serialized warning when DB probe fails', async () => {
+    it('still logs canonical serialized warning when DB probe fails (server-side, not echoed)', async () => {
       const failingDb = inject<Db>({ run: vi.fn().mockRejectedValue(new Error('SQLITE_CANTOPEN')) });
       const failServices = createMockServices();
       const failApp = await createTestApp(failServices, failingDb);
@@ -189,17 +188,10 @@ describe('system routes', () => {
       const res = await failApp.inject({ method: 'GET', url: '/api/health' });
 
       expect(res.statusCode).toBe(503);
-
-      const payload = JSON.parse(res.payload);
-      expect(payload.status).toBe('error');
-      expect(payload.error).toBe('SQLITE_CANTOPEN');
-      expect(payload.timestamp).toBeDefined();
       expect(failSpies.warn).toHaveBeenCalledWith(
         expect.objectContaining({ error: expect.objectContaining({ message: 'SQLITE_CANTOPEN', type: 'Error' }) }),
         'Health check DB probe failed',
       );
-      const timestamp = new Date(payload.timestamp);
-      expect(timestamp.toISOString()).toBe(payload.timestamp);
 
       failRestore();
       await failApp.close();

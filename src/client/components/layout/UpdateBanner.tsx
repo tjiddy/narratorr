@@ -7,8 +7,8 @@ export function UpdateBanner() {
   const queryClient = useQueryClient();
 
   const { data: status } = useQuery({
-    queryKey: queryKeys.systemStatus(),
-    queryFn: api.getSystemStatus,
+    queryKey: queryKeys.updateStatus(),
+    queryFn: api.getUpdateStatus,
     refetchInterval: 60 * 60 * 1000, // re-check hourly
     retry: false,
   });
@@ -16,7 +16,7 @@ export function UpdateBanner() {
   const dismiss = useMutation({
     mutationFn: (version: string) => api.dismissUpdate(version),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: queryKeys.systemStatus() });
+      queryClient.invalidateQueries({ queryKey: queryKeys.updateStatus() });
     },
   });
 

@@ -19,6 +19,7 @@ vi.mock('@/lib/api', () => ({
   api: {
     getHealthSummary: vi.fn().mockResolvedValue({ state: 'healthy' }),
     getSystemStatus: vi.fn(),
+    getUpdateStatus: vi.fn().mockResolvedValue({ update: null }),
     dismissUpdate: vi.fn(),
     getSettings: vi.fn(),
     updateSettings: vi.fn(),
@@ -386,10 +387,7 @@ describe('Layout', () => {
     it('renders update banner in the shell when API reports an available update', async () => {
       mockCounts(0);
       mockAuth('forms');
-      vi.mocked(api.getSystemStatus).mockResolvedValue({
-        version: '0.1.0',
-        status: 'ok',
-        timestamp: new Date().toISOString(),
+      vi.mocked(api.getUpdateStatus).mockResolvedValue({
         update: {
           latestVersion: '0.2.0',
           releaseUrl: 'https://github.com/releases/v0.2.0',

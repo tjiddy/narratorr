@@ -13,7 +13,10 @@ const browseQuerySchema = z.object({
 export async function filesystemRoutes(app: FastifyInstance): Promise<void> {
   app.get<{ Querystring: z.infer<typeof browseQuerySchema> }>(
     '/api/filesystem/browse',
-    { schema: { querystring: browseQuerySchema } },
+    {
+      schema: { querystring: browseQuerySchema },
+      config: { rateLimit: { max: 60, timeWindow: '1 minute' } },
+    },
     async (request, reply) => {
       const { path: rawPath } = request.query;
       const targetPath = resolve(rawPath ?? '/');

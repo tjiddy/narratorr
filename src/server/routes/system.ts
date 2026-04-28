@@ -6,7 +6,7 @@ import { runSearchJob, searchAllWanted } from '../jobs/search.js';
 import { runRssJob } from '../jobs/rss.js';
 import { runBackupJob } from '../jobs/backup.js';
 import { healthRoutes } from './health-routes.js';
-import { getVersion, getCommit } from '../utils/version.js';
+import { getVersion } from '../utils/version.js';
 import { getUpdateStatus } from '../jobs/version-check.js';
 import { getErrorMessage } from '../utils/error-message.js';
 import { RestoreUploadError } from '../services/backup.service.js';
@@ -16,39 +16,32 @@ import { serializeError } from '../utils/serialize-error.js';
 
 
 export async function systemRoutes(app: FastifyInstance, services: Services, db: Db) {
-  // GET /api/system/status
+  // GET /api/system/status — public, minimal payload (#742): { version, status }.
+  // Update info moved to authenticated GET /api/system/update-status.
   app.get('/api/system/status', async () => {
-    const systemSettings = await services.settings.get('system');
-    const dismissedVersion = systemSettings?.dismissedUpdateVersion ?? '';
-    const update = getUpdateStatus(dismissedVersion);
-
     return {
       version: getVersion(),
       status: 'ok',
-      timestamp: new Date().toISOString(),
-      ...(update ? { update } : {}),
     };
   });
 
-  // GET /api/health — DB-aware health probe for Docker/k8s/load balancers
+  // GET /api/system/update-status — protected, returns dashboard update info.
+  app.get('/api/system/update-status', async () => {
+    const systemSettings = await services.settings.get('system');
+    const dismissedVersion = systemSettings?.dismissedUpdateVersion ?? '';
+    const update = getUpdateStatus(dismissedVersion);
+    return { update: update ?? null };
+  });
+
+  // GET /api/health — DB-aware health probe for Docker/k8s/load balancers.
+  // Public, intentionally minimal — UP/DOWN only, no version/commit/error fields.
   app.get('/api/health', async (request, reply) => {
     try {
       await db.run(sql`SELECT 1`);
-      return {
-        status: 'ok',
-        timestamp: new Date().toISOString(),
-        version: getVersion(),
-        commit: getCommit(),
-      };
+      return { status: 'ok' };
     } catch (error: unknown) {
       request.log.warn({ error: serializeError(error) }, 'Health check DB probe failed');
-      return reply.status(503).send({
-        status: 'error',
-        timestamp: new Date().toISOString(),
-        version: getVersion(),
-        commit: getCommit(),
-        error: getErrorMessage(error),
-      });
+      return reply.status(503).send({ status: 'error' });
     }
   });
 

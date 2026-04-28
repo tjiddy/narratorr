@@ -7,6 +7,7 @@ import { useAuth } from './useAuth';
 vi.mock('@/lib/api', () => ({
   api: {
     getAuthStatus: vi.fn(),
+    getAuthAdminStatus: vi.fn(),
     authLogout: vi.fn(),
   },
 }));
@@ -26,7 +27,6 @@ describe('useAuth', () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
-    // Mock window.location for redirect assertion
     Object.defineProperty(window, 'location', {
       writable: true,
       value: { ...originalLocation, href: 'http://localhost/' },
@@ -42,53 +42,68 @@ describe('useAuth', () => {
     vi.resetModules();
   });
 
-  it('exposes bypassActive from auth status', async () => {
-    vi.mocked(api.getAuthStatus).mockResolvedValue({
-      mode: 'forms',
+  it('exposes bypassActive from authenticated admin status', async () => {
+    vi.mocked(api.getAuthStatus).mockResolvedValue({ mode: 'forms', authenticated: true });
+    vi.mocked(api.getAuthAdminStatus).mockResolvedValue({
       hasUser: true,
       localBypass: false,
-      authenticated: false,
       bypassActive: true,
       envBypass: false,
     });
 
     const { result } = renderHook(() => useAuth(), { wrapper: createWrapper() });
-    await waitFor(() => expect(result.current.isLoading).toBe(false));
-    expect(result.current.bypassActive).toBe(true);
+    await waitFor(() => expect(result.current.bypassActive).toBe(true));
   });
 
   it('defaults bypassActive to false while loading', () => {
     vi.mocked(api.getAuthStatus).mockReturnValue(new Promise(() => {}));
+    vi.mocked(api.getAuthAdminStatus).mockReturnValue(new Promise(() => {}));
     const { result } = renderHook(() => useAuth(), { wrapper: createWrapper() });
     expect(result.current.bypassActive).toBe(false);
   });
 
-  it('returns auth status from API', async () => {
-    vi.mocked(api.getAuthStatus).mockResolvedValue({
-      mode: 'forms',
+  it('returns combined auth state from public + admin endpoints', async () => {
+    vi.mocked(api.getAuthStatus).mockResolvedValue({ mode: 'forms', authenticated: true });
+    vi.mocked(api.getAuthAdminStatus).mockResolvedValue({
       hasUser: true,
       localBypass: false,
-      authenticated: true,
       bypassActive: false,
       envBypass: false,
     });
 
-    const { result } = renderHook(() => useAuth(), {
-      wrapper: createWrapper(),
-    });
+    const { result } = renderHook(() => useAuth(), { wrapper: createWrapper() });
 
-    await waitFor(() => {
-      expect(result.current.isLoading).toBe(false);
-    });
+    await waitFor(() => expect(result.current.isLoading).toBe(false));
+    await waitFor(() => expect(result.current.hasUser).toBe(true));
 
     expect(result.current.mode).toBe('forms');
-    expect(result.current.hasUser).toBe(true);
     expect(result.current.localBypass).toBe(false);
     expect(result.current.isAuthenticated).toBe(true);
   });
 
+  it('does not query admin status when unauthenticated (forms mode pre-login)', async () => {
+    vi.mocked(api.getAuthStatus).mockResolvedValue({ mode: 'forms', authenticated: false });
+    vi.mocked(api.getAuthAdminStatus).mockResolvedValue({
+      hasUser: true,
+      localBypass: false,
+      bypassActive: false,
+      envBypass: false,
+    });
+
+    const { result } = renderHook(() => useAuth(), { wrapper: createWrapper() });
+
+    await waitFor(() => expect(result.current.isLoading).toBe(false));
+    expect(result.current.isAuthenticated).toBe(false);
+    expect(api.getAuthAdminStatus).not.toHaveBeenCalled();
+    // Admin-only fields default to safe values when not yet authenticated.
+    expect(result.current.hasUser).toBe(false);
+    expect(result.current.localBypass).toBe(false);
+    expect(result.current.bypassActive).toBe(false);
+  });
+
   it('defaults to safe values while loading', () => {
     vi.mocked(api.getAuthStatus).mockReturnValue(new Promise(() => {}));
+    vi.mocked(api.getAuthAdminStatus).mockReturnValue(new Promise(() => {}));
 
     const { result } = renderHook(() => useAuth(), {
       wrapper: createWrapper(),
@@ -101,24 +116,15 @@ describe('useAuth', () => {
   });
 
   it('authLogout calls API, invalidates auth cache, and redirects to /login', async () => {
-    // First call (mount) returns authenticated, second call (post-invalidation) returns unauthenticated
     vi.mocked(api.getAuthStatus)
-      .mockResolvedValueOnce({
-        mode: 'forms',
-        hasUser: true,
-        localBypass: false,
-        authenticated: true,
-        bypassActive: false,
-        envBypass: false,
-      })
-      .mockResolvedValue({
-        mode: 'forms',
-        hasUser: true,
-        localBypass: false,
-        authenticated: false,
-        bypassActive: false,
-        envBypass: false,
-      });
+      .mockResolvedValueOnce({ mode: 'forms', authenticated: true })
+      .mockResolvedValue({ mode: 'forms', authenticated: false });
+    vi.mocked(api.getAuthAdminStatus).mockResolvedValue({
+      hasUser: true,
+      localBypass: false,
+      bypassActive: false,
+      envBypass: false,
+    });
     vi.mocked(api.authLogout).mockResolvedValue(undefined as never);
 
     const queryClient = new QueryClient({
@@ -133,7 +139,6 @@ describe('useAuth', () => {
       expect(result.current.isLoading).toBe(false);
     });
 
-    // Auth status should be cached before authLogout
     expect(queryClient.getQueryData(['auth', 'status'])).toBeTruthy();
 
     await act(async () => {
@@ -141,34 +146,24 @@ describe('useAuth', () => {
     });
 
     expect(api.authLogout).toHaveBeenCalled();
-    // invalidateQueries triggers a refetch — getAuthStatus called again with post-authLogout state
     expect(api.getAuthStatus).toHaveBeenCalledTimes(2);
-    // Cache now reflects unauthenticated state (from the refetch after invalidation)
     const cachedStatus = queryClient.getQueryData(['auth', 'status']) as { authenticated: boolean } | undefined;
     expect(cachedStatus?.authenticated).toBe(false);
     expect(window.location.href).toBe('/login');
   });
 
   it('authLogout redirects to {URL_BASE}/login when URL_BASE is set', async () => {
-    // Set URL_BASE before re-importing the hook
     window.__NARRATORR_URL_BASE__ = '/narratorr';
     vi.resetModules();
 
-    // Re-import with the new URL_BASE value
     const { useAuth: useAuthWithBase } = await import('./useAuth');
     const freshApi = (await import('@/lib/api')).api;
-    vi.mocked(freshApi.getAuthStatus).mockResolvedValueOnce({
-      mode: 'forms',
+    vi.mocked(freshApi.getAuthStatus)
+      .mockResolvedValueOnce({ mode: 'forms', authenticated: true })
+      .mockResolvedValue({ mode: 'forms', authenticated: false });
+    vi.mocked(freshApi.getAuthAdminStatus).mockResolvedValue({
       hasUser: true,
       localBypass: false,
-      authenticated: true,
-      bypassActive: false,
-      envBypass: false,
-    }).mockResolvedValue({
-      mode: 'forms',
-      hasUser: true,
-      localBypass: false,
-      authenticated: false,
       bypassActive: false,
       envBypass: false,
     });

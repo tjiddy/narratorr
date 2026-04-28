@@ -11,8 +11,9 @@ const SESSION_MAX_AGE_S = 7 * 24 * 60 * 60;
 
 
 export async function authRoutes(app: FastifyInstance, authService: AuthService) {
-  // GET /api/auth/status — public, no secrets
-  // Also checks session cookie to include `authenticated` and `bypassActive` flags for the frontend
+  // GET /api/auth/status — public, minimal payload (#742): only { mode, authenticated }.
+  // Admin-only fields (hasUser, username, localBypass, bypassActive, envBypass) live on
+  // GET /api/auth/admin-status to avoid leaking deployment state on the unauthenticated surface.
   app.get('/api/auth/status', async (request) => {
     try {
       const status = await authService.getStatus();
@@ -30,16 +31,25 @@ export async function authRoutes(app: FastifyInstance, authService: AuthService)
         }
       }
 
-      // Request-scoped bypass: true when AUTH_BYPASS env var is set OR local network bypass applies
-      const bypassActive = config.authBypass || (status.localBypass && isPrivateIp(request.ip));
-      // env-only bypass: true only when AUTH_BYPASS env var is set (not local network bypass)
-      const envBypass = Boolean(config.authBypass);
-
-      return { ...status, authenticated, bypassActive, envBypass };
+      return { mode: status.mode, authenticated };
     } catch (error: unknown) {
       request.log.error({ error: serializeError(error) }, 'Failed to fetch auth status');
       throw error;
     }
+  });
+
+  // GET /api/auth/admin-status — protected, exposes admin/deployment fields previously on /status.
+  app.get('/api/auth/admin-status', async (request) => {
+    const status = await authService.getStatus();
+    const bypassActive = config.authBypass || (status.localBypass && isPrivateIp(request.ip));
+    const envBypass = Boolean(config.authBypass);
+    return {
+      hasUser: status.hasUser,
+      username: status.username,
+      localBypass: status.localBypass,
+      bypassActive,
+      envBypass,
+    };
   });
 
   // DELETE /api/auth/credentials — only allowed when AUTH_BYPASS is active

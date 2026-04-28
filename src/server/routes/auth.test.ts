@@ -65,8 +65,8 @@ describe('auth routes', () => {
     resetMockServices(services);
   });
 
-  describe('GET /api/auth/status', () => {
-    it('returns { mode, hasUser, localBypass, authenticated } for none mode', async () => {
+  describe('GET /api/auth/status (#742 — minimal public payload)', () => {
+    it('returns exactly { mode, authenticated } for none mode', async () => {
       (services.auth.getStatus as Mock).mockResolvedValue({
         mode: 'none',
         hasUser: false,
@@ -77,7 +77,27 @@ describe('auth routes', () => {
 
       expect(res.statusCode).toBe(200);
       const body = JSON.parse(res.payload);
-      expect(body).toEqual({ mode: 'none', hasUser: false, localBypass: false, authenticated: true, bypassActive: false, envBypass: false });
+      expect(body).toEqual({ mode: 'none', authenticated: true });
+      expect(Object.keys(body).sort()).toEqual(['authenticated', 'mode']);
+    });
+
+    it('omits hasUser, username, localBypass, bypassActive, envBypass on every response', async () => {
+      (services.auth.getStatus as Mock).mockResolvedValue({
+        mode: 'forms',
+        hasUser: true,
+        username: 'admin',
+        localBypass: true,
+      });
+
+      const res = await app.inject({ method: 'GET', url: '/api/auth/status' });
+
+      expect(res.statusCode).toBe(200);
+      const body = JSON.parse(res.payload);
+      expect(body).not.toHaveProperty('hasUser');
+      expect(body).not.toHaveProperty('username');
+      expect(body).not.toHaveProperty('localBypass');
+      expect(body).not.toHaveProperty('bypassActive');
+      expect(body).not.toHaveProperty('envBypass');
     });
 
     it('returns authenticated: false for forms mode without session cookie', async () => {
@@ -113,6 +133,50 @@ describe('auth routes', () => {
       const body = JSON.parse(res.payload);
       expect(body.authenticated).toBe(true);
       expect(services.auth.verifySessionCookie).toHaveBeenCalledWith('valid-cookie-value', 'test-secret');
+    });
+  });
+
+  describe('GET /api/auth/admin-status (#742 — authenticated admin surface)', () => {
+    it('returns hasUser, username, localBypass, bypassActive, envBypass', async () => {
+      (services.auth.getStatus as Mock).mockResolvedValue({
+        mode: 'forms',
+        hasUser: true,
+        username: 'admin',
+        localBypass: false,
+      });
+
+      const res = await app.inject({ method: 'GET', url: '/api/auth/admin-status' });
+
+      expect(res.statusCode).toBe(200);
+      const body = JSON.parse(res.payload);
+      expect(body.hasUser).toBe(true);
+      expect(body.username).toBe('admin');
+      expect(body.localBypass).toBe(false);
+      expect(body.bypassActive).toBe(false);
+      expect(body.envBypass).toBe(false);
+    });
+
+    it('reports envBypass: true and bypassActive: true when AUTH_BYPASS env var is active', async () => {
+      (config as Record<string, unknown>).authBypass = true;
+      (services.auth.getStatus as Mock).mockResolvedValue({ mode: 'none', hasUser: false, localBypass: false });
+      try {
+        const res = await app.inject({ method: 'GET', url: '/api/auth/admin-status' });
+        expect(res.statusCode).toBe(200);
+        const body = JSON.parse(res.payload);
+        expect(body.envBypass).toBe(true);
+        expect(body.bypassActive).toBe(true);
+      } finally {
+        (config as Record<string, unknown>).authBypass = false;
+      }
+    });
+
+    it('reports bypassActive: true for private IP when localBypass enabled', async () => {
+      (services.auth.getStatus as Mock).mockResolvedValue({ mode: 'forms', hasUser: true, localBypass: true });
+      const res = await app.inject({ method: 'GET', url: '/api/auth/admin-status', remoteAddress: '192.168.1.5' });
+      expect(res.statusCode).toBe(200);
+      const body = JSON.parse(res.payload);
+      expect(body.bypassActive).toBe(true);
+      expect(body.envBypass).toBe(false);
     });
   });
 
@@ -429,83 +493,7 @@ describe('auth routes', () => {
     });
   });
 
-  describe('GET /api/auth/status — bypassActive field', () => {
-    it('returns bypassActive: true when AUTH_BYPASS env var is set', async () => {
-      (config as Record<string, unknown>).authBypass = true;
-      (services.auth.getStatus as Mock).mockResolvedValue({ mode: 'none', hasUser: false, localBypass: false });
-      try {
-        const res = await app.inject({ method: 'GET', url: '/api/auth/status' });
-        expect(res.statusCode).toBe(200);
-        expect(JSON.parse(res.payload).bypassActive).toBe(true);
-      } finally {
-        (config as Record<string, unknown>).authBypass = false;
-      }
-    });
-
-    it('returns bypassActive: false when AUTH_BYPASS is not set and request is from public IP', async () => {
-      (services.auth.getStatus as Mock).mockResolvedValue({ mode: 'none', hasUser: false, localBypass: false });
-      const res = await app.inject({ method: 'GET', url: '/api/auth/status', remoteAddress: '8.8.8.8' });
-      expect(res.statusCode).toBe(200);
-      expect(JSON.parse(res.payload).bypassActive).toBe(false);
-    });
-
-    it('returns bypassActive: true when localBypass=true and request is from private IP', async () => {
-      (services.auth.getStatus as Mock).mockResolvedValue({ mode: 'forms', hasUser: true, localBypass: true });
-      const res = await app.inject({ method: 'GET', url: '/api/auth/status', remoteAddress: '192.168.1.5' });
-      expect(res.statusCode).toBe(200);
-      expect(JSON.parse(res.payload).bypassActive).toBe(true);
-    });
-
-    it('returns bypassActive: false when localBypass=true but request is from public IP', async () => {
-      (services.auth.getStatus as Mock).mockResolvedValue({ mode: 'forms', hasUser: true, localBypass: true });
-      const res = await app.inject({ method: 'GET', url: '/api/auth/status', remoteAddress: '8.8.8.8' });
-      expect(res.statusCode).toBe(200);
-      expect(JSON.parse(res.payload).bypassActive).toBe(false);
-    });
-
-    it('returns bypassActive: false when localBypass=false and request is from private IP', async () => {
-      (services.auth.getStatus as Mock).mockResolvedValue({ mode: 'forms', hasUser: true, localBypass: false });
-      const res = await app.inject({ method: 'GET', url: '/api/auth/status', remoteAddress: '192.168.1.5' });
-      expect(res.statusCode).toBe(200);
-      expect(JSON.parse(res.payload).bypassActive).toBe(false);
-    });
-  });
-
-  describe('GET /api/auth/status — envBypass field', () => {
-    it('returns envBypass: true and bypassActive: true when AUTH_BYPASS=true', async () => {
-      (config as Record<string, unknown>).authBypass = true;
-      (services.auth.getStatus as Mock).mockResolvedValue({ mode: 'none', hasUser: false, localBypass: false });
-      try {
-        const res = await app.inject({ method: 'GET', url: '/api/auth/status' });
-        expect(res.statusCode).toBe(200);
-        const body = JSON.parse(res.payload);
-        expect(body.envBypass).toBe(true);
-        expect(body.bypassActive).toBe(true);
-      } finally {
-        (config as Record<string, unknown>).authBypass = false;
-      }
-    });
-
-    it('returns envBypass: false and bypassActive: true when localBypass=true and request from private IP', async () => {
-      (services.auth.getStatus as Mock).mockResolvedValue({ mode: 'forms', hasUser: true, localBypass: true });
-      const res = await app.inject({ method: 'GET', url: '/api/auth/status', remoteAddress: '192.168.1.5' });
-      expect(res.statusCode).toBe(200);
-      const body = JSON.parse(res.payload);
-      expect(body.envBypass).toBe(false);
-      expect(body.bypassActive).toBe(true);
-    });
-
-    it('returns envBypass: false and bypassActive: false when localBypass=true and request from public IP', async () => {
-      (services.auth.getStatus as Mock).mockResolvedValue({ mode: 'forms', hasUser: true, localBypass: true });
-      const res = await app.inject({ method: 'GET', url: '/api/auth/status', remoteAddress: '8.8.8.8' });
-      expect(res.statusCode).toBe(200);
-      const body = JSON.parse(res.payload);
-      expect(body.envBypass).toBe(false);
-      expect(body.bypassActive).toBe(false);
-    });
-  });
-
-  describe('GET /api/auth/status — bypassActive with trustProxy', () => {
+  describe('GET /api/auth/admin-status — bypassActive with trustProxy', () => {
     it('with trustProxy + private socket peer + public XFF → bypassActive: false', async () => {
       const trustedServices = createMockServices();
       const trustedApp = await createAuthTestApp(trustedServices, { trustProxy: ['10.0.0.0/8'] });
@@ -515,7 +503,7 @@ describe('auth routes', () => {
         });
         const res = await trustedApp.inject({
           method: 'GET',
-          url: '/api/auth/status',
+          url: '/api/auth/admin-status',
           remoteAddress: '10.0.0.5',
           headers: { 'x-forwarded-for': '203.0.113.42' },
         });
@@ -535,7 +523,7 @@ describe('auth routes', () => {
         });
         const res = await trustedApp.inject({
           method: 'GET',
-          url: '/api/auth/status',
+          url: '/api/auth/admin-status',
           remoteAddress: '10.0.0.5',
         });
         expect(res.statusCode).toBe(200);

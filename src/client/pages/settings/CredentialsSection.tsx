@@ -17,7 +17,7 @@ function SetupForm() {
 
   const mutation = useMutationWithToast({
     mutationFn: () => api.authSetup(username, password),
-    queryKey: queryKeys.auth.status(),
+    queryKey: [queryKeys.auth.status(), queryKeys.auth.adminStatus()],
     successMessage: 'Credentials created',
     errorMessage: (err) => err instanceof ApiError ? err.message : 'Failed to create credentials',
     onSuccess: () => { setUsername(''); setPassword(''); setConfirmPassword(''); setError(''); },
@@ -66,7 +66,7 @@ function ChangePasswordForm({ currentUsername, showRemoveButton, onRemove, isRem
 
   const mutation = useMutationWithToast({
     mutationFn: () => api.authChangePassword(currentPassword, newPassword, editUsername !== currentUsername ? editUsername : undefined),
-    queryKey: queryKeys.auth.status(),
+    queryKey: [queryKeys.auth.status(), queryKeys.auth.adminStatus()],
     successMessage: 'Credentials updated',
     errorMessage: (err) => err instanceof ApiError ? err.message : 'Failed to change password',
     onSuccess: () => { setCurrentPassword(''); setNewPassword(''); setConfirmNewPassword(''); setError(''); },
@@ -128,7 +128,7 @@ export function CredentialsSection({
 }) {
   const deleteMutation = useMutationWithToast({
     mutationFn: () => api.authDeleteCredentials(),
-    queryKey: queryKeys.auth.status(),
+    queryKey: [queryKeys.auth.status(), queryKeys.auth.adminStatus()],
     successMessage: 'Credentials removed',
     errorMessage: (err) => err instanceof ApiError ? err.message : 'Failed to remove credentials',
   });

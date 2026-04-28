@@ -100,6 +100,11 @@ describe('authApi', () => {
     expect(mockFetchApi).toHaveBeenCalledWith('/auth/status');
   });
 
+  it('getAuthAdminStatus → GET /auth/admin-status', async () => {
+    await authApi.getAuthAdminStatus();
+    expect(mockFetchApi).toHaveBeenCalledWith('/auth/admin-status');
+  });
+
   it('authLogin → POST /auth/login with credentials', async () => {
     await authApi.authLogin('admin', 'pass123');
     expect(mockFetchApi).toHaveBeenCalledWith('/auth/login', expect.objectContaining({
@@ -667,6 +672,11 @@ describe('systemApi', () => {
   it('getStatus → GET /system/status', async () => {
     await systemApi.getSystemStatus();
     expect(mockFetchApi).toHaveBeenCalledWith('/system/status');
+  });
+
+  it('getUpdateStatus → GET /system/update-status', async () => {
+    await systemApi.getUpdateStatus();
+    expect(mockFetchApi).toHaveBeenCalledWith('/system/update-status');
   });
 
   it('triggerSearch → POST /system/tasks/search', async () => {

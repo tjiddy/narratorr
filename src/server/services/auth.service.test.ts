@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { createHmac, timingSafeEqual } from 'node:crypto';
+import { createHash, createHmac, timingSafeEqual } from 'node:crypto';
 
 vi.mock('node:crypto', async (importOriginal) => {
   const actual = await importOriginal();
@@ -255,7 +255,7 @@ describe('AuthService', () => {
       expect(await service.validateApiKey('wrong-key')).toBe(false);
     });
 
-    it('calls timingSafeEqual with Buffer args for correct key', async () => {
+    it('calls timingSafeEqual with SHA-256 hash buffers for correct key', async () => {
       const authConfig = { mode: 'none', apiKey: 'test-key-123', sessionSecret: 'secret', localBypass: false };
       db.select.mockReturnValue(mockDbChain([{ key: 'auth', value: authConfig }]));
       vi.mocked(timingSafeEqual).mockClear();
@@ -263,10 +263,8 @@ describe('AuthService', () => {
       const result = await service.validateApiKey('test-key-123');
 
       expect(result).toBe(true);
-      expect(timingSafeEqual).toHaveBeenCalledWith(
-        Buffer.from('test-key-123'),
-        Buffer.from('test-key-123'),
-      );
+      const expectedHash = createHash('sha256').update('test-key-123').digest();
+      expect(timingSafeEqual).toHaveBeenCalledWith(expectedHash, expectedHash);
     });
 
     it('calls timingSafeEqual for wrong key of same length (not short-circuited)', async () => {
@@ -277,13 +275,12 @@ describe('AuthService', () => {
       const result = await service.validateApiKey('wrong-key-00');
 
       expect(result).toBe(false);
-      expect(timingSafeEqual).toHaveBeenCalledWith(
-        Buffer.from('test-key-123'),
-        Buffer.from('wrong-key-00'),
-      );
+      const expectedHash = createHash('sha256').update('test-key-123').digest();
+      const providedHash = createHash('sha256').update('wrong-key-00').digest();
+      expect(timingSafeEqual).toHaveBeenCalledWith(expectedHash, providedHash);
     });
 
-    it('returns false without calling timingSafeEqual for wrong key of different length', async () => {
+    it('still calls timingSafeEqual for wrong key of different length (no length leak)', async () => {
       const authConfig = { mode: 'none', apiKey: 'test-key-123', sessionSecret: 'secret', localBypass: false };
       db.select.mockReturnValue(mockDbChain([{ key: 'auth', value: authConfig }]));
       vi.mocked(timingSafeEqual).mockClear();
@@ -291,10 +288,14 @@ describe('AuthService', () => {
       const result = await service.validateApiKey('short');
 
       expect(result).toBe(false);
-      expect(timingSafeEqual).not.toHaveBeenCalled();
+      // SHA-256-then-compare: must invoke timingSafeEqual on every call regardless of input length.
+      expect(timingSafeEqual).toHaveBeenCalledTimes(1);
+      const expectedHash = createHash('sha256').update('test-key-123').digest();
+      const providedHash = createHash('sha256').update('short').digest();
+      expect(timingSafeEqual).toHaveBeenCalledWith(expectedHash, providedHash);
     });
 
-    it('returns false without throwing for empty string key', async () => {
+    it('returns false but still calls timingSafeEqual for empty string key', async () => {
       const authConfig = { mode: 'none', apiKey: 'test-key-123', sessionSecret: 'secret', localBypass: false };
       db.select.mockReturnValue(mockDbChain([{ key: 'auth', value: authConfig }]));
       vi.mocked(timingSafeEqual).mockClear();
@@ -302,7 +303,7 @@ describe('AuthService', () => {
       const result = await service.validateApiKey('');
 
       expect(result).toBe(false);
-      expect(timingSafeEqual).not.toHaveBeenCalled();
+      expect(timingSafeEqual).toHaveBeenCalledTimes(1);
     });
   });
 

@@ -88,6 +88,47 @@ describe('auth middleware', () => {
       }
     });
 
+    it('new authenticated admin/update endpoints (#742) are NOT public — return 401 without auth', async () => {
+      // /api/auth/admin-status and /api/system/update-status were carved out of
+      // the public auth/system status payloads so admin/deployment fields no
+      // longer leak on unauthenticated requests. They must be protected at the
+      // plugin layer just like any other /api/* route.
+      const protectedRoutes = [
+        { method: 'GET' as const, url: '/api/auth/admin-status' },
+        { method: 'GET' as const, url: '/api/system/update-status' },
+      ];
+      for (const { method, url } of protectedRoutes) {
+        const res = await app.inject({ method, url });
+        expect(res.statusCode, `${method} ${url} should be 401`).toBe(401);
+      }
+    });
+
+    it('new authenticated admin/update endpoints accept valid X-Api-Key (#742)', async () => {
+      // Sanity check: the protected routes are denied to unauthenticated callers
+      // but pass through with a valid API key. Confirms the routes themselves are
+      // not in the public allowlist (they would otherwise return non-401 even
+      // without the key) and confirms the auth plugin lets API-key auth through.
+      const apiKeyService = createMockAuthService({
+        getStatus: vi.fn().mockResolvedValue({ mode: 'forms', hasUser: true, localBypass: false }),
+        validateApiKey: vi.fn().mockResolvedValue(true),
+      });
+      const apiKeyApp = await createApp(apiKeyService);
+      try {
+        for (const url of ['/api/auth/admin-status', '/api/system/update-status']) {
+          const res = await apiKeyApp.inject({
+            method: 'GET',
+            url,
+            headers: { 'x-api-key': 'valid-key' },
+          });
+          // Routes are not registered on this test app — passing through the auth
+          // plugin will produce 404, but importantly NOT 401.
+          expect(res.statusCode, `GET ${url} should not be 401`).not.toBe(401);
+        }
+      } finally {
+        await apiKeyApp.close();
+      }
+    });
+
     it('non-API routes (no /api/ prefix) are never intercepted by auth middleware', async () => {
       const res = await app.inject({ method: 'GET', url: '/healthcheck' });
       expect(res.statusCode).toBe(200);

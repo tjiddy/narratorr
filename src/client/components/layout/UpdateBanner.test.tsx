@@ -6,7 +6,7 @@ import { UpdateBanner } from '@/components/layout/UpdateBanner';
 
 vi.mock('@/lib/api', () => ({
   api: {
-    getSystemStatus: vi.fn(),
+    getUpdateStatus: vi.fn(),
     dismissUpdate: vi.fn(),
   },
 }));
@@ -19,10 +19,7 @@ describe('UpdateBanner', () => {
   });
 
   it('renders banner when update present and dismissed: false', async () => {
-    vi.mocked(api.getSystemStatus).mockResolvedValue({
-      version: '0.1.0',
-      status: 'ok',
-      timestamp: new Date().toISOString(),
+    vi.mocked(api.getUpdateStatus).mockResolvedValue({
       update: {
         latestVersion: '0.2.0',
         releaseUrl: 'https://github.com/releases/v0.2.0',
@@ -39,10 +36,7 @@ describe('UpdateBanner', () => {
   });
 
   it('shows version number and clickable release notes link', async () => {
-    vi.mocked(api.getSystemStatus).mockResolvedValue({
-      version: '0.1.0',
-      status: 'ok',
-      timestamp: new Date().toISOString(),
+    vi.mocked(api.getUpdateStatus).mockResolvedValue({
       update: {
         latestVersion: '0.2.0',
         releaseUrl: 'https://github.com/releases/v0.2.0',
@@ -58,26 +52,19 @@ describe('UpdateBanner', () => {
     });
   });
 
-  it('hidden when no update field in status response', async () => {
-    vi.mocked(api.getSystemStatus).mockResolvedValue({
-      version: '0.1.0',
-      status: 'ok',
-      timestamp: new Date().toISOString(),
-    });
+  it('hidden when update is null', async () => {
+    vi.mocked(api.getUpdateStatus).mockResolvedValue({ update: null });
 
     renderWithProviders(<UpdateBanner />);
 
     await waitFor(() => {
-      expect(vi.mocked(api.getSystemStatus)).toHaveBeenCalled();
+      expect(vi.mocked(api.getUpdateStatus)).toHaveBeenCalled();
     });
     expect(screen.queryByText(/update available/i)).not.toBeInTheDocument();
   });
 
   it('hidden when update present but dismissed: true', async () => {
-    vi.mocked(api.getSystemStatus).mockResolvedValue({
-      version: '0.1.0',
-      status: 'ok',
-      timestamp: new Date().toISOString(),
+    vi.mocked(api.getUpdateStatus).mockResolvedValue({
       update: {
         latestVersion: '0.2.0',
         releaseUrl: 'https://github.com/releases/v0.2.0',
@@ -88,16 +75,13 @@ describe('UpdateBanner', () => {
     renderWithProviders(<UpdateBanner />);
 
     await waitFor(() => {
-      expect(vi.mocked(api.getSystemStatus)).toHaveBeenCalled();
+      expect(vi.mocked(api.getUpdateStatus)).toHaveBeenCalled();
     });
     expect(screen.queryByText(/update available/i)).not.toBeInTheDocument();
   });
 
   it('dismiss button calls PUT /api/system/update/dismiss with the version', async () => {
-    vi.mocked(api.getSystemStatus).mockResolvedValue({
-      version: '0.1.0',
-      status: 'ok',
-      timestamp: new Date().toISOString(),
+    vi.mocked(api.getUpdateStatus).mockResolvedValue({
       update: {
         latestVersion: '0.2.0',
         releaseUrl: 'https://github.com/releases/v0.2.0',
@@ -122,14 +106,10 @@ describe('UpdateBanner', () => {
 
   it('banner disappears after successful dismiss via query invalidation', async () => {
     let callCount = 0;
-    vi.mocked(api.getSystemStatus).mockImplementation(() => {
+    vi.mocked(api.getUpdateStatus).mockImplementation(() => {
       callCount++;
-      // First call: update available; subsequent calls: dismissed
       if (callCount === 1) {
         return Promise.resolve({
-          version: '0.1.0',
-          status: 'ok',
-          timestamp: new Date().toISOString(),
           update: {
             latestVersion: '0.2.0',
             releaseUrl: 'https://github.com/releases/v0.2.0',
@@ -138,9 +118,6 @@ describe('UpdateBanner', () => {
         });
       }
       return Promise.resolve({
-        version: '0.1.0',
-        status: 'ok',
-        timestamp: new Date().toISOString(),
         update: {
           latestVersion: '0.2.0',
           releaseUrl: 'https://github.com/releases/v0.2.0',
@@ -152,23 +129,20 @@ describe('UpdateBanner', () => {
 
     renderWithProviders(<UpdateBanner />);
 
-    // Banner should appear
     await waitFor(() => {
       expect(screen.getByText(/update available/i)).toBeInTheDocument();
     });
 
-    // Dismiss
     await userEvent.click(screen.getByLabelText(/dismiss update/i));
 
-    // After dismiss succeeds, query invalidation triggers refetch with dismissed: true → banner gone
     await waitFor(() => {
       expect(screen.queryByText(/update available/i)).not.toBeInTheDocument();
     });
   });
 
   it('does not render during API loading state (no flash)', () => {
-    vi.mocked(api.getSystemStatus).mockImplementation(
-      () => new Promise(() => {}), // never resolves
+    vi.mocked(api.getUpdateStatus).mockImplementation(
+      () => new Promise(() => {}),
     );
 
     renderWithProviders(<UpdateBanner />);
@@ -177,11 +151,10 @@ describe('UpdateBanner', () => {
   });
 
   it('does not render on API error (no false positive)', async () => {
-    vi.mocked(api.getSystemStatus).mockRejectedValue(new Error('network error'));
+    vi.mocked(api.getUpdateStatus).mockRejectedValue(new Error('network error'));
 
     renderWithProviders(<UpdateBanner />);
 
-    // Wait for query to settle
     await new Promise(r => setTimeout(r, 50));
     expect(screen.queryByText(/update available/i)).not.toBeInTheDocument();
   });
