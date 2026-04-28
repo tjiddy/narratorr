@@ -36,6 +36,15 @@ export interface QualityGateOrchestratorWireDeps {
   nudgeImportWorker: () => void;
 }
 
+export interface QualityGateOrchestratorOptionalDeps {
+  eventHistory?: EventHistoryService;
+  broadcaster?: EventBroadcasterService;
+  blacklistService?: BlacklistService;
+  remotePathMappingService?: RemotePathMappingService;
+  retrySearchDeps?: RetrySearchDeps;
+  settingsService?: SettingsService;
+}
+
 export class QualityGateOrchestrator {
   private wired = new WireOnce<QualityGateOrchestratorWireDeps>('QualityGateOrchestrator');
 
@@ -44,12 +53,7 @@ export class QualityGateOrchestrator {
     private db: Db,
     private log: FastifyBaseLogger,
     private downloadClientService: DownloadClientService,
-    private eventHistory?: EventHistoryService,
-    private broadcaster?: EventBroadcasterService,
-    private blacklistService?: BlacklistService,
-    private remotePathMappingService?: RemotePathMappingService,
-    private retrySearchDeps?: RetrySearchDeps,
-    private settingsService?: SettingsService,
+    private optional: QualityGateOrchestratorOptionalDeps = {},
   ) {}
 
   /** Wire cyclic / late-bound deps after construction. Call once during composition. */
@@ -79,13 +83,13 @@ export class QualityGateOrchestrator {
 
         // SSE: download_status_change (completed → checking)
         if (row.book) {
-          safeEmit(this.broadcaster, 'download_status_change', { download_id: row.download.id, book_id: row.book.id, old_status: 'completed', new_status: 'checking' }, this.log);
+          safeEmit(this.optional.broadcaster, 'download_status_change', { download_id: row.download.id, book_id: row.book.id, old_status: 'completed', new_status: 'checking' }, this.log);
         }
 
         // Resolve save path
         let savePath: string;
         try {
-          ({ resolvedPath: savePath } = await resolveSavePath(row.download, this.downloadClientService, this.remotePathMappingService));
+          ({ resolvedPath: savePath } = await resolveSavePath(row.download, this.downloadClientService, this.optional.remotePathMappingService));
         } catch (error: unknown) {
           this.log.error({ error: serializeError(error), downloadId: row.download.id }, 'Quality gate: failed to resolve save path');
           await this.holdForProbeFailure(row.download, row.book, 'probe_failed', error);
@@ -146,15 +150,15 @@ export class QualityGateOrchestrator {
     // Promote book status to 'importing' (taking over from removed handleBookStatusOnCompletion)
     if (row.book) {
       await this.db.update(books).set({ status: 'importing' }).where(eq(books.id, row.book.id));
-      safeEmit(this.broadcaster, 'book_status_change', { book_id: row.book.id, old_status: row.book.status as BookStatus, new_status: 'importing' as BookStatus }, this.log);
-      safeEmit(this.broadcaster, 'download_status_change', { download_id: row.download.id, book_id: row.book.id, old_status: 'completed', new_status: 'checking' }, this.log);
+      safeEmit(this.optional.broadcaster, 'book_status_change', { book_id: row.book.id, old_status: row.book.status as BookStatus, new_status: 'importing' as BookStatus }, this.log);
+      safeEmit(this.optional.broadcaster, 'download_status_change', { download_id: row.download.id, book_id: row.book.id, old_status: 'completed', new_status: 'checking' }, this.log);
       (row.book as { status: string }).status = 'importing'; // Update in-memory so revert guards work
     }
 
     try {
       let savePath: string;
       try {
-        ({ resolvedPath: savePath } = await resolveSavePath(row.download, this.downloadClientService, this.remotePathMappingService));
+        ({ resolvedPath: savePath } = await resolveSavePath(row.download, this.downloadClientService, this.optional.remotePathMappingService));
       } catch (error: unknown) {
         this.log.error({ error: serializeError(error), downloadId: row.download.id }, 'Quality gate: failed to resolve save path');
         await this.holdForProbeFailure(row.download, row.book, 'probe_failed', error);
@@ -190,7 +194,7 @@ export class QualityGateOrchestrator {
       // Revert book from importing → downloading if it was promoted before the error
       if (row.book && row.book.status === 'importing') {
         await this.db.update(books).set({ status: 'downloading' }).where(eq(books.id, row.book.id));
-        safeEmit(this.broadcaster, 'book_status_change', { book_id: row.book.id, old_status: 'importing' as BookStatus, new_status: 'downloading' as BookStatus }, this.log);
+        safeEmit(this.optional.broadcaster, 'book_status_change', { book_id: row.book.id, old_status: 'importing' as BookStatus, new_status: 'downloading' as BookStatus }, this.log);
       }
       const probeError = getErrorMessage(error);
       this.recordDecision(row.download, row.book, { ...NULL_REASON, probeFailure: true, probeError, holdReasons: ['unhandled_error'] });
@@ -201,7 +205,7 @@ export class QualityGateOrchestrator {
     return cleanupDeferred({
       qualityGateService: this.qualityGateService,
       downloadClientService: this.downloadClientService,
-      settingsService: this.settingsService,
+      settingsService: this.optional.settingsService,
       db: this.db,
       log: this.log,
     });
@@ -216,7 +220,7 @@ export class QualityGateOrchestrator {
 
     // Side effects — fire-and-forget
     if (result.book) {
-      safeEmit(this.broadcaster, 'download_status_change', {
+      safeEmit(this.optional.broadcaster, 'download_status_change', {
         download_id: downloadId, book_id: result.book.id,
         old_status: 'pending_review', new_status: 'importing',
       }, this.log);
@@ -238,7 +242,7 @@ export class QualityGateOrchestrator {
     return { id: result.id, status: result.status };
   }
 
-  private async resolveFfprobePath(): Promise<string | undefined> { const s = await this.settingsService?.get('processing'); return resolveFfprobePathFromSettings(s?.ffmpegPath); }
+  private async resolveFfprobePath(): Promise<string | undefined> { const s = await this.optional.settingsService?.get('processing'); return resolveFfprobePathFromSettings(s?.ffmpegPath); }
   /** Hold for probe failure: set pending_review + SSE + event recording. */
   private async holdForProbeFailure(
     download: DownloadRow,
@@ -250,12 +254,12 @@ export class QualityGateOrchestrator {
 
     // SSE: download_status_change (checking → pending_review) + review_needed
     if (book) {
-      safeEmit(this.broadcaster, 'download_status_change', { download_id: download.id, book_id: book.id, old_status: 'checking', new_status: 'pending_review' }, this.log);
-      safeEmit(this.broadcaster, 'review_needed', { download_id: download.id, book_id: book.id, book_title: book.title }, this.log);
+      safeEmit(this.optional.broadcaster, 'download_status_change', { download_id: download.id, book_id: book.id, old_status: 'checking', new_status: 'pending_review' }, this.log);
+      safeEmit(this.optional.broadcaster, 'review_needed', { download_id: download.id, book_id: book.id, book_title: book.title }, this.log);
       // Revert book from importing → downloading (monitor pre-promoted on completion)
       if (book.status === 'importing') {
         await this.db.update(books).set({ status: 'downloading' }).where(eq(books.id, book.id));
-        safeEmit(this.broadcaster, 'book_status_change', { book_id: book.id, old_status: 'importing' as BookStatus, new_status: 'downloading' as BookStatus }, this.log);
+        safeEmit(this.optional.broadcaster, 'book_status_change', { book_id: book.id, old_status: 'importing' as BookStatus, new_status: 'downloading' as BookStatus }, this.log);
       }
     }
 
@@ -275,18 +279,18 @@ export class QualityGateOrchestrator {
   ): Promise<void> {
     if (action === 'held') {
       if (book) {
-        safeEmit(this.broadcaster, 'download_status_change', { download_id: download.id, book_id: book.id, old_status: statusTransition.from as DownloadStatus, new_status: statusTransition.to as DownloadStatus }, this.log);
-        safeEmit(this.broadcaster, 'review_needed', { download_id: download.id, book_id: book.id, book_title: book.title }, this.log);
+        safeEmit(this.optional.broadcaster, 'download_status_change', { download_id: download.id, book_id: book.id, old_status: statusTransition.from as DownloadStatus, new_status: statusTransition.to as DownloadStatus }, this.log);
+        safeEmit(this.optional.broadcaster, 'review_needed', { download_id: download.id, book_id: book.id, book_title: book.title }, this.log);
         // Revert book from importing → downloading (monitor pre-promoted on completion)
         if (book.status === 'importing') {
           await this.db.update(books).set({ status: 'downloading' }).where(eq(books.id, book.id));
-          safeEmit(this.broadcaster, 'book_status_change', { book_id: book.id, old_status: 'importing' as BookStatus, new_status: 'downloading' as BookStatus }, this.log);
+          safeEmit(this.optional.broadcaster, 'book_status_change', { book_id: book.id, old_status: 'importing' as BookStatus, new_status: 'downloading' as BookStatus }, this.log);
         }
       }
       this.recordDecision(download, book, reason);
     } else if (action === 'imported') {
       if (book) {
-        safeEmit(this.broadcaster, 'download_status_change', { download_id: download.id, book_id: book.id, old_status: statusTransition.from as DownloadStatus, new_status: statusTransition.to as DownloadStatus }, this.log);
+        safeEmit(this.optional.broadcaster, 'download_status_change', { download_id: download.id, book_id: book.id, old_status: statusTransition.from as DownloadStatus, new_status: statusTransition.to as DownloadStatus }, this.log);
       }
     } else if (action === 'rejected') {
       await this.performRejectionCleanup(download, book, statusTransition.from as DownloadStatus, true);
@@ -305,9 +309,9 @@ export class QualityGateOrchestrator {
         },
         reason: 'bad_quality',
         book,
-        blacklistService: this.blacklistService,
-        retrySearchDeps: this.retrySearchDeps,
-        settingsService: this.settingsService,
+        blacklistService: this.optional.blacklistService,
+        retrySearchDeps: this.optional.retrySearchDeps,
+        settingsService: this.optional.settingsService,
         log: this.log,
         overrideRetry: true,
       });
@@ -318,8 +322,8 @@ export class QualityGateOrchestrator {
     // Recover book status — errors propagate to caller (manual reject → 500, auto-reject → outer catch → pending_review)
     if (book) {
       const revertStatus = await revertBookStatus(this.db, book);
-      safeEmit(this.broadcaster, 'download_status_change', { download_id: download.id, book_id: book.id, old_status: oldStatus, new_status: 'failed' }, this.log);
-      safeEmit(this.broadcaster, 'book_status_change', { book_id: book.id, old_status: book.status as BookStatus, new_status: revertStatus as BookStatus }, this.log);
+      safeEmit(this.optional.broadcaster, 'download_status_change', { download_id: download.id, book_id: book.id, old_status: oldStatus, new_status: 'failed' }, this.log);
+      safeEmit(this.optional.broadcaster, 'book_status_change', { book_id: book.id, old_status: book.status as BookStatus, new_status: revertStatus as BookStatus }, this.log);
     }
   }
 
@@ -328,8 +332,8 @@ export class QualityGateOrchestrator {
     let shouldDelete = true;
     let importSettings = { minSeedTime: 0, minSeedRatio: 0 };
     try {
-      if (this.settingsService) {
-        const settings = await this.settingsService.get('import');
+      if (this.optional.settingsService) {
+        const settings = await this.optional.settingsService.get('import');
         shouldDelete = settings.deleteAfterImport;
         importSettings = { minSeedTime: settings.minSeedTime, minSeedRatio: settings.minSeedRatio };
       }
@@ -401,9 +405,9 @@ export class QualityGateOrchestrator {
 
   /** Fire-and-forget event recording — swallows errors to avoid breaking the caller. */
   private recordDecision(download: DownloadRow, book: BookRow | null, reason: QualityDecisionReason): void {
-    if (!book || !this.eventHistory) return;
+    if (!book || !this.optional.eventHistory) return;
 
-    this.eventHistory.create({
+    this.optional.eventHistory.create({
       bookId: book.id,
       bookTitle: book.title,
       downloadId: download.id,
