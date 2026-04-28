@@ -23,6 +23,82 @@ import { UpdateBanner } from '@/components/layout/UpdateBanner';
 import { WelcomeModal } from '@/components/WelcomeModal';
 
 const BANNER_DISMISSED_KEY = 'narratorr:auth-banner-dismissed';
+const BASIC_AUTH_BANNER_DISMISSED_KEY = 'narratorr.basic-auth-csrf-nag.dismissed';
+
+function useDismissibleFlag(storageKey: string) {
+  const [dismissed, setDismissed] = useState(() => localStorage.getItem(storageKey) === 'true');
+  function dismiss() {
+    setDismissed(true);
+    localStorage.setItem(storageKey, 'true');
+  }
+  return [dismissed, dismiss] as const;
+}
+
+function NoAuthBanner({ onDismiss }: { onDismiss: () => void }) {
+  return (
+    <div className="bg-amber-500/15 border-b border-amber-500/30 animate-fade-in">
+      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-2.5 flex items-center justify-between gap-4">
+        <div className="flex items-center gap-2.5 text-sm text-amber-700 dark:text-amber-300">
+          <AlertTriangleIcon className="w-4 h-4 shrink-0" />
+          <span>
+            Authentication is disabled.{' '}
+            <Link
+              to="/settings/security"
+              className="underline underline-offset-2 font-medium hover:text-amber-800 dark:hover:text-amber-200 transition-colors"
+            >
+              Configure it in Settings &gt; Security
+            </Link>
+          </span>
+        </div>
+        <button
+          onClick={onDismiss}
+          className="shrink-0 p-1.5 rounded-lg text-amber-600 dark:text-amber-400 hover:bg-amber-500/20 transition-colors"
+          aria-label="Dismiss auth warning"
+        >
+          <XIcon className="w-4 h-4" />
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function BasicAuthCsrfBanner({ onDismiss }: { onDismiss: () => void }) {
+  return (
+    <div className="bg-amber-500/15 border-b border-amber-500/30 animate-fade-in">
+      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-2.5 flex items-center justify-between gap-4">
+        <div className="flex items-center gap-2.5 text-sm text-amber-700 dark:text-amber-300">
+          <AlertTriangleIcon className="w-4 h-4 shrink-0" />
+          <span>
+            Basic authentication is enabled. For browser sessions,{' '}
+            <Link
+              to="/settings/security"
+              className="underline underline-offset-2 font-medium hover:text-amber-800 dark:hover:text-amber-200 transition-colors"
+            >
+              switch to Forms auth
+            </Link>{' '}
+            — see{' '}
+            <a
+              href="https://github.com/tjiddy/narratorr/blob/main/SECURITY.md#csrf-protection"
+              target="_blank"
+              rel="noreferrer"
+              className="underline underline-offset-2 font-medium hover:text-amber-800 dark:hover:text-amber-200 transition-colors"
+            >
+              SECURITY.md
+            </a>
+            .
+          </span>
+        </div>
+        <button
+          onClick={onDismiss}
+          className="shrink-0 p-1.5 rounded-lg text-amber-600 dark:text-amber-400 hover:bg-amber-500/20 transition-colors"
+          aria-label="Dismiss basic-auth warning"
+        >
+          <XIcon className="w-4 h-4" />
+        </button>
+      </div>
+    </div>
+  );
+}
 
 type NavItem = { to: string; label: string; icon: React.ComponentType<{ className?: string }> };
 
@@ -67,14 +143,8 @@ export function Layout() {
     return [...baseNavItems, ...postDiscoverNavItems];
   }, [settings?.discovery?.enabled]);
 
-  const [bannerDismissed, setBannerDismissed] = useState(
-    () => localStorage.getItem(BANNER_DISMISSED_KEY) === 'true',
-  );
-
-  function dismissBanner() {
-    setBannerDismissed(true);
-    localStorage.setItem(BANNER_DISMISSED_KEY, 'true');
-  }
+  const [bannerDismissed, dismissBanner] = useDismissibleFlag(BANNER_DISMISSED_KEY);
+  const [basicAuthBannerDismissed, dismissBasicAuthBanner] = useDismissibleFlag(BASIC_AUTH_BANNER_DISMISSED_KEY);
 
   return (
     <div className="min-h-screen flex flex-col gradient-bg noise-overlay">
@@ -88,32 +158,8 @@ export function Layout() {
       {/* Update Banner */}
       <UpdateBanner />
 
-      {/* Auth Warning Banner */}
-      {mode === 'none' && !bannerDismissed && (
-        <div className="bg-amber-500/15 border-b border-amber-500/30 animate-fade-in">
-          <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-2.5 flex items-center justify-between gap-4">
-            <div className="flex items-center gap-2.5 text-sm text-amber-700 dark:text-amber-300">
-              <AlertTriangleIcon className="w-4 h-4 shrink-0" />
-              <span>
-                Authentication is disabled.{' '}
-                <Link
-                  to="/settings/security"
-                  className="underline underline-offset-2 font-medium hover:text-amber-800 dark:hover:text-amber-200 transition-colors"
-                >
-                  Configure it in Settings &gt; Security
-                </Link>
-              </span>
-            </div>
-            <button
-              onClick={dismissBanner}
-              className="shrink-0 p-1.5 rounded-lg text-amber-600 dark:text-amber-400 hover:bg-amber-500/20 transition-colors"
-              aria-label="Dismiss auth warning"
-            >
-              <XIcon className="w-4 h-4" />
-            </button>
-          </div>
-        </div>
-      )}
+      {mode === 'none' && !bannerDismissed && <NoAuthBanner onDismiss={dismissBanner} />}
+      {mode === 'basic' && !basicAuthBannerDismissed && <BasicAuthCsrfBanner onDismiss={dismissBasicAuthBanner} />}
 
       {/* Header */}
       <header className="sticky top-0 z-10 backdrop-blur-xl bg-background/80 border-b border-border/50">

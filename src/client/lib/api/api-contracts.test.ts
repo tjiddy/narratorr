@@ -296,8 +296,8 @@ describe('booksApi', () => {
     // Verify FormData body (not JSON)
     const callArgs = fetchSpy.mock.calls[0][1] as RequestInit;
     expect(callArgs.body).toBeInstanceOf(FormData);
-    // Should NOT set Content-Type header (browser handles multipart boundary)
-    expect(callArgs.headers).toBeUndefined();
+    // Should set the X-Requested-With CSRF header but NOT Content-Type (browser sets the multipart boundary)
+    expect(callArgs.headers).toEqual({ 'X-Requested-With': 'XMLHttpRequest' });
     expect(result).toEqual({ id: 7, coverUrl: '/api/books/7/cover' });
 
     fetchSpy.mockRestore();

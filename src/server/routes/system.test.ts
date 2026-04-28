@@ -902,4 +902,134 @@ describe('POST /api/system/restore', () => {
       await fsp.rm(tmpDir, { recursive: true }).catch(() => {});
     });
   });
+
+  describe('CSRF protection — basic-auth mode', () => {
+    let csrfApp: Awaited<ReturnType<typeof Fastify>>;
+    let csrfServices: Services;
+    const basicAuthHeader = `Basic ${Buffer.from('admin:password123').toString('base64')}`;
+
+    beforeAll(async () => {
+      const { default: cookie } = await import('@fastify/cookie');
+      const { default: authPlugin } = await import('../plugins/auth.js');
+      const { systemRoutes } = await import('./system.js');
+      const { bookFilesRoute } = await import('./book-files.js');
+
+      csrfServices = createMockServices();
+      const authSvc = csrfServices.auth as unknown as Record<string, Mock>;
+      authSvc.getStatus = vi.fn().mockResolvedValue({ mode: 'basic', hasUser: true, localBypass: false });
+      authSvc.verifyCredentials = vi.fn().mockResolvedValue({ username: 'admin' });
+      authSvc.validateApiKey = vi.fn().mockResolvedValue(false);
+
+      csrfApp = Fastify({ logger: false }).withTypeProvider<ZodTypeProvider>();
+      csrfApp.setValidatorCompiler(validatorCompiler);
+      csrfApp.setSerializerCompiler(serializerCompiler);
+      await csrfApp.register(cookie);
+      await csrfApp.register(multipart);
+      const { errorHandlerPlugin } = await import('../plugins/error-handler.js');
+      await csrfApp.register(errorHandlerPlugin);
+      // Cast service shape for plugin parameter
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      await csrfApp.register(authPlugin, { authService: csrfServices.auth as any });
+      const mockDb = inject<Db>({ run: vi.fn().mockResolvedValue(undefined) });
+      await systemRoutes(csrfApp, csrfServices, mockDb);
+      await bookFilesRoute(csrfApp, csrfServices.book);
+      await csrfApp.ready();
+    });
+
+    afterAll(async () => { await csrfApp.close(); });
+
+    it('POST /api/system/tasks/search without X-Requested-With → 403', async () => {
+      const res = await csrfApp.inject({
+        method: 'POST',
+        url: '/api/system/tasks/search',
+        headers: { authorization: basicAuthHeader },
+      });
+      expect(res.statusCode).toBe(403);
+      expect(JSON.parse(res.payload).error).toMatch(/CSRF/);
+    });
+
+    it('POST /api/system/tasks/search with X-Requested-With → reaches handler', async () => {
+      const res = await csrfApp.inject({
+        method: 'POST',
+        url: '/api/system/tasks/search',
+        headers: {
+          authorization: basicAuthHeader,
+          'x-requested-with': 'XMLHttpRequest',
+        },
+      });
+      // The handler may run a search job that returns various results; either way,
+      // the request must NOT be 403 — that proves the CSRF gate let it through.
+      expect(res.statusCode).not.toBe(403);
+      expect(res.statusCode).not.toBe(401);
+    });
+
+    it('POST /api/system/restore (multipart) without X-Requested-With → 403, body NOT consumed', async () => {
+      const res = await csrfApp.inject({
+        method: 'POST',
+        url: '/api/system/restore',
+        payload: '--boundary\r\nContent-Disposition: form-data; name="file"; filename="backup.zip"\r\nContent-Type: application/zip\r\n\r\nfake-zip-data\r\n--boundary--',
+        headers: {
+          'content-type': 'multipart/form-data; boundary=boundary',
+          authorization: basicAuthHeader,
+        },
+      });
+      expect(res.statusCode).toBe(403);
+      expect(JSON.parse(res.payload).error).toMatch(/CSRF/);
+      expect(csrfServices.backup.processRestoreUpload as Mock).not.toHaveBeenCalled();
+    });
+
+    it('POST /api/books/:id/cover (multipart) without X-Requested-With → 403, upload handler NOT invoked', async () => {
+      const res = await csrfApp.inject({
+        method: 'POST',
+        url: '/api/books/42/cover',
+        payload: '--boundary\r\nContent-Disposition: form-data; name="file"; filename="cover.jpg"\r\nContent-Type: image/jpeg\r\n\r\nfake-jpeg-bytes\r\n--boundary--',
+        headers: {
+          'content-type': 'multipart/form-data; boundary=boundary',
+          authorization: basicAuthHeader,
+        },
+      });
+      expect(res.statusCode).toBe(403);
+      expect(JSON.parse(res.payload).error).toMatch(/CSRF/);
+      // Cover upload handler delegates to bookService.uploadCover — proves the body
+      // was rejected by the gate before the route handler consumed it.
+      expect(csrfServices.book.uploadCover as Mock).not.toHaveBeenCalled();
+    });
+
+    it('POST /api/books/:id/cover (multipart) with X-Requested-With → reaches handler', async () => {
+      (csrfServices.book.uploadCover as Mock).mockResolvedValue({ id: 42, title: 'Book' });
+      const res = await csrfApp.inject({
+        method: 'POST',
+        url: '/api/books/42/cover',
+        payload: '--boundary\r\nContent-Disposition: form-data; name="file"; filename="cover.jpg"\r\nContent-Type: image/jpeg\r\n\r\nfake-jpeg-bytes\r\n--boundary--',
+        headers: {
+          'content-type': 'multipart/form-data; boundary=boundary',
+          authorization: basicAuthHeader,
+          'x-requested-with': 'XMLHttpRequest',
+        },
+      });
+      expect(res.statusCode).not.toBe(403);
+      expect(csrfServices.book.uploadCover as Mock).toHaveBeenCalled();
+    });
+
+    it('unauthenticated POST → 401 + WWW-Authenticate (CSRF check does not preempt auth challenge)', async () => {
+      const res = await csrfApp.inject({
+        method: 'POST',
+        url: '/api/system/tasks/search',
+      });
+      expect(res.statusCode).toBe(401);
+      expect(res.headers['www-authenticate']).toBe('Basic realm="Narratorr"');
+    });
+
+    it('valid X-Api-Key + POST without X-Requested-With → not blocked by CSRF', async () => {
+      (csrfServices.auth.validateApiKey as Mock).mockResolvedValue(true);
+      const res = await csrfApp.inject({
+        method: 'POST',
+        url: '/api/system/tasks/search',
+        headers: { 'x-api-key': 'valid-key' },
+      });
+      // Should NOT be 403 (CSRF) — api-key clients are exempt
+      expect(res.statusCode).not.toBe(403);
+      (csrfServices.auth.validateApiKey as Mock).mockResolvedValue(false);
+    });
+  });
 });

@@ -24,6 +24,16 @@ All `/api/*` routes require authentication when an auth mode is enabled. Public 
 
 No configuration data, library paths, credentials, or internal state is exposed on unauthenticated endpoints.
 
+### CSRF protection
+
+Cross-site request forgery defenses depend on the active auth mode:
+
+- **Forms-auth** — protected by `SameSite=lax` session cookies. Browsers do not attach the cookie to cross-site state-changing requests, so no extra header is required.
+- **Basic-auth** — browsers replay cached `Authorization: Basic` credentials on any same-origin request, including those triggered by a malicious third-party site. To close this gap, the server requires an `X-Requested-With: XMLHttpRequest` header on every state-changing request (POST/PUT/PATCH/DELETE) once Basic credentials have been verified. Requests without the header return `403 { "error": "CSRF protection: missing X-Requested-With header" }`. Browsers cannot set this header cross-origin without triggering a CORS preflight, so classic form-submit and image-tag CSRF vectors are blocked. Same-origin XHR/fetch from the legitimate UI sets the header automatically. CLI users on basic-auth must add `-H 'X-Requested-With: XMLHttpRequest'` for mutating routes — or, preferred, use the `X-Api-Key` header, which is exempt from the CSRF check (machine clients have no ambient browser credentials). Read-only methods (`GET`/`HEAD`/`OPTIONS`) and the public auth endpoints (`/api/auth/login`, `/api/auth/logout`, `/api/auth/setup`, `/api/auth/status`, `/api/health`, `/api/system/status`) are exempt.
+- **None-auth** — no CSRF defense by design. The mode disables authentication entirely and is intended for isolated environments only.
+
+For browser-based usage, **forms-auth is recommended over basic-auth**. The UI displays a dismissible banner suggesting the switch when basic-auth is active.
+
 ### Rate Limiting
 
 Authentication endpoints are rate-limited to prevent brute-force attacks:
