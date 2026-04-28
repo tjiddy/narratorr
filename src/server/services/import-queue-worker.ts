@@ -5,7 +5,7 @@ import { importJobs, books } from '../../db/schema.js';
 import { eq, and } from 'drizzle-orm';
 import { getImportAdapter } from './import-adapters/registry.js';
 import type { ImportAdapterContext } from './import-adapters/types.js';
-import type { ImportJobPhase } from '../../shared/schemas/import-job.js';
+import type { ImportJobPhase, PhaseHistoryEntry } from '../../shared/schemas/import-job.js';
 import { serializeError } from '../utils/serialize-error.js';
 import { getRowsAffected } from '../utils/db-helpers.js';
 import { safeEmit } from '../utils/safe-emit.js';
@@ -14,12 +14,6 @@ import type { EventBroadcasterService } from './event-broadcaster.service.js';
 
 const SAFETY_POLL_INTERVAL_MS = 30_000;
 const PROGRESS_THROTTLE_MS = 250;
-
-export interface PhaseHistoryEntry {
-  phase: string;
-  startedAt: number;
-  completedAt?: number;
-}
 
 export class ImportQueueWorker {
   private readonly db: Db;

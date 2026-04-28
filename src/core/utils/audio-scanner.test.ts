@@ -487,17 +487,13 @@ describe('scanAudioDirectory', () => {
         mockStat.mockResolvedValue({ isFile: () => false, isDirectory: () => true, size: 50_000_000 } as never);
       }
 
-      const mockLog = {
-        debug: vi.fn(),
-        warn: vi.fn(),
-        info: vi.fn(),
-        error: vi.fn(),
-        fatal: vi.fn(),
-        trace: vi.fn(),
-        child: vi.fn(),
-        silent: vi.fn(),
-        level: 'debug',
-      };
+      const onWarn = vi.fn();
+      const onDebug = vi.fn();
+
+      beforeEach(() => {
+        onWarn.mockReset();
+        onDebug.mockReset();
+      });
 
       it('uses ffprobe duration instead of music-metadata when ffprobePath is provided', async () => {
         setupSingleFile();
@@ -515,12 +511,12 @@ describe('scanAudioDirectory', () => {
         mockParseFile.mockResolvedValue(makeMetadata({ format: { codec: 'AAC', bitrate: 128000, sampleRate: 44100, numberOfChannels: 2, duration: 1800 } }) as never);
         mockExecFileError(new Error('ffprobe failed'));
 
-        const result = await scanAudioDirectory('/audiobooks/test', { ffprobePath: FFPROBE_PATH, log: mockLog as never });
+        const result = await scanAudioDirectory('/audiobooks/test', { ffprobePath: FFPROBE_PATH, onWarn, onDebug });
 
         expect(result!.totalDuration).toBe(1800);
-        expect(mockLog.debug).toHaveBeenCalledWith(
-          expect.objectContaining({ filePath: expect.any(String) }),
+        expect(onDebug).toHaveBeenCalledWith(
           expect.stringContaining('ffprobe failed'),
+          expect.objectContaining({ filePath: expect.any(String) }),
         );
       });
 
@@ -570,32 +566,33 @@ describe('scanAudioDirectory', () => {
         expect(result!.totalDuration).toBe(6000); // 1000 + 2000 + 3000
       });
 
-      it('logs warning via options.log when ffprobe and music-metadata differ by >10%', async () => {
+      it('invokes onWarn when ffprobe and music-metadata differ by >10%', async () => {
         setupSingleFile();
         // music-metadata: 1000, ffprobe: 2000 → 100% diff, well above 10%
         mockParseFile.mockResolvedValue(makeMetadata({ format: { codec: 'AAC', bitrate: 128000, sampleRate: 44100, numberOfChannels: 2, duration: 1000 } }) as never);
         mockExecFileSuccess(JSON.stringify({ format: { duration: '2000.0' } }));
 
-        await scanAudioDirectory('/audiobooks/test', { ffprobePath: FFPROBE_PATH, log: mockLog as never });
+        await scanAudioDirectory('/audiobooks/test', { ffprobePath: FFPROBE_PATH, onWarn, onDebug });
 
-        expect(mockLog.warn).toHaveBeenCalledWith(
+        expect(onWarn).toHaveBeenCalledWith(
+          expect.stringContaining('duration mismatch'),
           expect.objectContaining({
+            filePath: expect.any(String),
             ffprobeDuration: 2000,
             metadataDuration: 1000,
           }),
-          expect.stringContaining('duration mismatch'),
         );
       });
 
-      it('does not log warning when ffprobe and music-metadata differ by ≤10%', async () => {
+      it('does not invoke onWarn when ffprobe and music-metadata differ by ≤10%', async () => {
         setupSingleFile();
         // music-metadata: 1000, ffprobe: 1050 → 5% diff
         mockParseFile.mockResolvedValue(makeMetadata({ format: { codec: 'AAC', bitrate: 128000, sampleRate: 44100, numberOfChannels: 2, duration: 1000 } }) as never);
         mockExecFileSuccess(JSON.stringify({ format: { duration: '1050.0' } }));
 
-        await scanAudioDirectory('/audiobooks/test', { ffprobePath: FFPROBE_PATH, log: mockLog as never });
+        await scanAudioDirectory('/audiobooks/test', { ffprobePath: FFPROBE_PATH, onWarn, onDebug });
 
-        expect(mockLog.warn).not.toHaveBeenCalled();
+        expect(onWarn).not.toHaveBeenCalled();
       });
 
       it('contributes 0 to totalDuration when music-metadata duration is undefined AND ffprobe fails', async () => {
@@ -608,12 +605,12 @@ describe('scanAudioDirectory', () => {
         expect(result!.totalDuration).toBe(0);
       });
 
-      it('does not crash when options.log is not provided', async () => {
+      it('does not crash when onWarn/onDebug callbacks are not provided', async () => {
         setupSingleFile();
         mockParseFile.mockResolvedValue(makeMetadata({ format: { codec: 'AAC', bitrate: 128000, sampleRate: 44100, numberOfChannels: 2, duration: 1000 } }) as never);
         mockExecFileError(new Error('ffprobe failed'));
 
-        // Should not throw — no log provided, fallback works silently
+        // Should not throw — no callbacks provided, optional-chaining preserved
         const result = await scanAudioDirectory('/audiobooks/test', { ffprobePath: FFPROBE_PATH });
 
         expect(result!.totalDuration).toBe(1000);

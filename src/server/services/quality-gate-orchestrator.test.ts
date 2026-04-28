@@ -253,7 +253,7 @@ describe('QualityGateOrchestrator', () => {
       expect(qualityGateService.setStatus).not.toHaveBeenCalledWith(1, 'pending_review');
     });
 
-    it('passes derived ffprobePath and log to scanAudioDirectory when ffmpegPath is configured', async () => {
+    it('passes derived ffprobePath and diagnostic callbacks to scanAudioDirectory when ffmpegPath is configured', async () => {
       const settingsService = inject<SettingsService>({
         get: vi.fn().mockResolvedValue({ ffmpegPath: '/usr/bin/ffmpeg' }),
       });
@@ -264,7 +264,7 @@ describe('QualityGateOrchestrator', () => {
 
       expect(scanAudioDirectory).toHaveBeenCalledWith(
         '/downloads/test',
-        { skipCover: true, ffprobePath: '/usr/bin/ffprobe', log: expect.anything() },
+        { skipCover: true, ffprobePath: '/usr/bin/ffprobe', onWarn: expect.any(Function), onDebug: expect.any(Function) },
       );
     });
 
@@ -276,7 +276,7 @@ describe('QualityGateOrchestrator', () => {
 
       expect(scanAudioDirectory).toHaveBeenCalledWith(
         '/downloads/test',
-        { skipCover: true, ffprobePath: undefined, log: expect.anything() },
+        { skipCover: true, ffprobePath: undefined, onWarn: expect.any(Function), onDebug: expect.any(Function) },
       );
     });
 
@@ -1826,7 +1826,7 @@ describe('QualityGateOrchestrator', () => {
 
       expect(scanAudioDirectory).toHaveBeenCalledWith(
         '/downloads/test',
-        { skipCover: true, ffprobePath: '/usr/bin/ffprobe', log: expect.anything() },
+        { skipCover: true, ffprobePath: '/usr/bin/ffprobe', onWarn: expect.any(Function), onDebug: expect.any(Function) },
       );
     });
   });

@@ -2,9 +2,8 @@ import type { FastifyInstance } from 'fastify';
 import type { Db } from '../../db/index.js';
 import { importJobs, books, bookAuthors, authors } from '../../db/schema.js';
 import { eq, and, inArray, type SQL } from 'drizzle-orm';
-import type { ImportJobStatus } from '../../shared/schemas/import-job.js';
+import type { ImportJobStatus, PhaseHistoryEntry } from '../../shared/schemas/import-job.js';
 import { z } from 'zod';
-import type { PhaseHistoryEntry } from '../services/import-queue-worker.js';
 
 const importJobsQuerySchema = z.object({
   status: z.string().optional(),

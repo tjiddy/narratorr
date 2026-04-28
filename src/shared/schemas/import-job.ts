@@ -23,3 +23,9 @@ export const IMPORT_JOB_PHASES = [
 ] as const;
 export const importJobPhaseSchema = z.enum(IMPORT_JOB_PHASES);
 export type ImportJobPhase = z.infer<typeof importJobPhaseSchema>;
+
+export interface PhaseHistoryEntry {
+  phase: ImportJobPhase;
+  startedAt: number;
+  completedAt?: number;
+}

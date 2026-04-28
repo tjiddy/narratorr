@@ -1,19 +1,18 @@
-import type { NamingSeparator, NamingCase } from '../../shared/schemas/settings/library.js';
+import {
+  type NamingSeparator,
+  type NamingCase,
+  FOLDER_ALLOWED_TOKENS,
+  FILE_ALLOWED_TOKENS,
+  TOKEN_PATTERN_SOURCE,
+} from '../../shared/naming-constants.js';
 
-/**
- * Token grammar:
- * - `{name}` — simple replacement
- * - `{name:digits}` — zero-padded
- * - `{name?text}` — conditional suffix
- * - `{name:digits?text}` — padded + suffix
- * - `{text?name}` — conditional prefix (when text is not a known token)
- * - `{text?name:digits}` — prefix + padded
- * - `{text?name?text}` — prefix + suffix
- *
- * Disambiguation: suffix-first precedence. See `disambiguateTokenMatch()`.
- * Groups: (1) optional prefix, (2) token candidate, (3) pad spec, (4) optional suffix.
- */
-export const TOKEN_PATTERN_SOURCE = String.raw`\{(?:([^}?]*?)\?)?(\w+)(?::(\d+))?(?:\?([^}]*))?\}`;
+export {
+  TOKEN_PATTERN_SOURCE,
+  FOLDER_ALLOWED_TOKENS,
+  FILE_ALLOWED_TOKENS,
+  type NamingSeparator,
+  type NamingCase,
+};
 
 export interface NamingOptions {
   separator?: NamingSeparator;
@@ -66,23 +65,8 @@ function isNumericFormatted(padSpec: string | undefined, raw: string | number | 
   return padSpec !== undefined && raw !== undefined && raw !== null && !isNaN(Number(raw));
 }
 
-/** Allowed token names for folder naming templates. */
-export const FOLDER_ALLOWED_TOKENS = [
-  'author', 'authorLastFirst',
-  'title', 'titleSort',
-  'series', 'seriesPosition',
-  'year',
-  'narrator', 'narratorLastFirst',
-] as const;
-
 /** Backward-compatible alias. */
 export const ALLOWED_TOKENS = FOLDER_ALLOWED_TOKENS;
-
-/** File-specific tokens (trackNumber, trackTotal, partName) plus all folder tokens. */
-export const FILE_ALLOWED_TOKENS = [
-  ...FOLDER_ALLOWED_TOKENS,
-  'trackNumber', 'trackTotal', 'partName',
-] as const;
 
 export type TokenName = (typeof FOLDER_ALLOWED_TOKENS)[number];
 export type FileTokenName = (typeof FILE_ALLOWED_TOKENS)[number];

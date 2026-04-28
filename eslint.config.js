@@ -86,6 +86,40 @@ export default tseslint.config(
     },
   },
 
+  // Layering guards — keep client/server/core/shared boundaries enforceable.
+  // Tests are intentionally excluded: shared/schemas/*.test.ts uses cross-layer
+  // type-only consumer-alignment imports (e.g. search-stream.test.ts), and
+  // service unit tests under src/server/ legitimately import from src/core/.
+  {
+    files: ['**/src/client/**/*.{ts,tsx}'],
+    ignores: ['**/*.test.ts', '**/*.test.tsx'],
+    rules: {
+      'no-restricted-imports': ['error', {
+        patterns: ['**/server/**', '**/server/*'],
+        paths: [{ name: 'fastify', message: 'fastify must not be imported from client code.' }],
+      }],
+    },
+  },
+  {
+    files: ['**/src/shared/**/*.ts'],
+    ignores: ['**/*.test.ts'],
+    rules: {
+      'no-restricted-imports': ['error', {
+        patterns: ['**/core/**', '**/core/*', '**/server/**', '**/server/*'],
+      }],
+    },
+  },
+  {
+    files: ['**/src/core/**/*.ts'],
+    ignores: ['**/*.test.ts'],
+    rules: {
+      'no-restricted-imports': ['error', {
+        patterns: ['**/server/**', '**/server/*'],
+        paths: [{ name: 'fastify', message: 'core adapters must not import fastify; throw errors or return failures and let the calling service log.' }],
+      }],
+    },
+  },
+
   // Custom rules for all files
   {
     rules: {

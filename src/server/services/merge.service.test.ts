@@ -152,7 +152,11 @@ describe('MergeService', () => {
       );
 
       // scanAudioDirectory called on staging for verification with derived ffprobe path
-      expect(scanAudioDirectory).toHaveBeenCalledWith(STAGING_DIR, { ffprobePath: '/usr/bin/ffprobe', log: expect.anything() });
+      expect(scanAudioDirectory).toHaveBeenCalledWith(STAGING_DIR, {
+        ffprobePath: '/usr/bin/ffprobe',
+        onWarn: expect.any(Function),
+        onDebug: expect.any(Function),
+      });
 
       // M4B moved from staging to book.path
       expect(rename).toHaveBeenCalledWith(

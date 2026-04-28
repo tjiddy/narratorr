@@ -727,7 +727,7 @@ describe('MatchJobService', () => {
       );
     });
 
-    it('passes derived ffprobePath and log to scanAudioDirectory when ffmpegPath is configured', async () => {
+    it('passes derived ffprobePath and diagnostic callbacks to scanAudioDirectory when ffmpegPath is configured', async () => {
       (settingsService.get as ReturnType<typeof vi.fn>).mockResolvedValue({ ffmpegPath: '/usr/bin/ffmpeg' });
       (scanAudioDirectory as ReturnType<typeof vi.fn>).mockResolvedValue({ totalDuration: 3600 });
       (metadataService.searchBooks as ReturnType<typeof vi.fn>).mockResolvedValue([
@@ -740,7 +740,7 @@ describe('MatchJobService', () => {
       expect(settingsService.get).toHaveBeenCalledWith('processing');
       expect(scanAudioDirectory).toHaveBeenCalledWith(
         sampleCandidate.path,
-        { skipCover: true, ffprobePath: '/usr/bin/ffprobe', log: expect.anything() },
+        { skipCover: true, ffprobePath: '/usr/bin/ffprobe', onWarn: expect.any(Function), onDebug: expect.any(Function) },
       );
     });
 
@@ -756,7 +756,7 @@ describe('MatchJobService', () => {
 
       expect(scanAudioDirectory).toHaveBeenCalledWith(
         sampleCandidate.path,
-        { skipCover: true, ffprobePath: undefined, log: expect.anything() },
+        { skipCover: true, ffprobePath: undefined, onWarn: expect.any(Function), onDebug: expect.any(Function) },
       );
     });
 
@@ -772,7 +772,7 @@ describe('MatchJobService', () => {
 
       expect(scanAudioDirectory).toHaveBeenCalledWith(
         sampleCandidate.path,
-        { skipCover: true, ffprobePath: undefined, log: expect.anything() },
+        { skipCover: true, ffprobePath: undefined, onWarn: expect.any(Function), onDebug: expect.any(Function) },
       );
     });
   });

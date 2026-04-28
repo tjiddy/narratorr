@@ -39,7 +39,11 @@ export async function enrichBookFromAudio(
   ffprobePath?: string,
 ): Promise<EnrichmentResult> {
   try {
-    const scanResult = await scanAudioDirectory(targetPath, { ffprobePath, log });
+    const scanResult = await scanAudioDirectory(targetPath, {
+      ffprobePath,
+      onWarn: (msg, payload) => log.warn(payload, msg),
+      onDebug: (msg, payload) => log.debug(payload, msg),
+    });
     if (!scanResult) {
       log.debug({ bookId, targetPath }, 'No audio metadata extracted');
       return { enriched: false };

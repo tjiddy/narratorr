@@ -3,7 +3,7 @@ import { screen } from '@testing-library/react';
 import { renderWithProviders } from '@/__tests__/helpers';
 import { ActiveTabSection } from './ActiveTabSection';
 import type { ActiveTabSectionProps } from './ActiveTabSection';
-import type { Download } from '@/lib/api';
+import type { Download, ImportJobWithBook } from '@/lib/api';
 
 function mockMutation(overrides: Partial<{ mutate: ReturnType<typeof vi.fn>; isPending: boolean; variables: unknown }> = {}) {
   return {
@@ -136,8 +136,8 @@ describe('ActiveTabSection', () => {
 
   describe('#637 import jobs integration', () => {
     it('renders ImportActivityCard for processing import jobs', () => {
-      const importJobs = [{
-        id: 1, bookId: 42, type: 'manual' as const, status: 'processing' as const, phase: 'copying',
+      const importJobs: ImportJobWithBook[] = [{
+        id: 1, bookId: 42, type: 'manual', status: 'processing', phase: 'copying',
         phaseHistory: [{ phase: 'analyzing', startedAt: 1000, completedAt: 2000 }, { phase: 'copying', startedAt: 2000 }],
         createdAt: '2025-01-01T00:00:00Z', updatedAt: '2025-01-01T00:00:00Z',
         startedAt: '2025-01-01T00:00:00Z', completedAt: null,
@@ -148,8 +148,8 @@ describe('ActiveTabSection', () => {
     });
 
     it('renders queued subsection with ImportQueuedRow components', () => {
-      const importJobs = [{
-        id: 2, bookId: 43, type: 'manual' as const, status: 'pending' as const, phase: 'queued',
+      const importJobs: ImportJobWithBook[] = [{
+        id: 2, bookId: 43, type: 'manual', status: 'pending', phase: 'queued',
         phaseHistory: [],
         createdAt: '2025-01-01T00:00:00Z', updatedAt: '2025-01-01T00:00:00Z',
         startedAt: null, completedAt: null,
@@ -161,9 +161,9 @@ describe('ActiveTabSection', () => {
     });
 
     it('shows "Queued · N waiting" section header', () => {
-      const importJobs = [
-        { id: 1, bookId: 41, type: 'manual' as const, status: 'pending' as const, phase: 'queued', phaseHistory: [], createdAt: '2025-01-01T00:00:00Z', updatedAt: '2025-01-01T00:00:00Z', startedAt: null, completedAt: null, book: { title: 'Q1', coverUrl: null, primaryAuthorName: null } },
-        { id: 2, bookId: 42, type: 'manual' as const, status: 'pending' as const, phase: 'queued', phaseHistory: [], createdAt: '2025-01-01T00:00:00Z', updatedAt: '2025-01-01T00:00:00Z', startedAt: null, completedAt: null, book: { title: 'Q2', coverUrl: null, primaryAuthorName: null } },
+      const importJobs: ImportJobWithBook[] = [
+        { id: 1, bookId: 41, type: 'manual', status: 'pending', phase: 'queued', phaseHistory: [], createdAt: '2025-01-01T00:00:00Z', updatedAt: '2025-01-01T00:00:00Z', startedAt: null, completedAt: null, book: { title: 'Q1', coverUrl: null, primaryAuthorName: null } },
+        { id: 2, bookId: 42, type: 'manual', status: 'pending', phase: 'queued', phaseHistory: [], createdAt: '2025-01-01T00:00:00Z', updatedAt: '2025-01-01T00:00:00Z', startedAt: null, completedAt: null, book: { title: 'Q2', coverUrl: null, primaryAuthorName: null } },
       ];
       renderWithProviders(<ActiveTabSection {...defaultProps({ importJobs })} />);
       expect(screen.getByText(/2 waiting/)).toBeInTheDocument();
@@ -175,25 +175,25 @@ describe('ActiveTabSection', () => {
     });
 
     it('sorts processing imports by updatedAt descending and queued by createdAt ascending', () => {
-      const importJobs = [
+      const importJobs: ImportJobWithBook[] = [
         // Intentionally out of order: older update first
-        { id: 1, bookId: 41, type: 'manual' as const, status: 'processing' as const, phase: 'copying',
+        { id: 1, bookId: 41, type: 'manual', status: 'processing', phase: 'copying',
           phaseHistory: [{ phase: 'copying', startedAt: 1000 }],
           createdAt: '2025-01-01T00:00:00Z', updatedAt: '2025-01-01T01:00:00Z',
           startedAt: '2025-01-01T00:00:00Z', completedAt: null,
           book: { title: 'Older Processing', coverUrl: null, primaryAuthorName: null } },
-        { id: 2, bookId: 42, type: 'manual' as const, status: 'processing' as const, phase: 'analyzing',
+        { id: 2, bookId: 42, type: 'manual', status: 'processing', phase: 'analyzing',
           phaseHistory: [{ phase: 'analyzing', startedAt: 2000 }],
           createdAt: '2025-01-01T00:00:00Z', updatedAt: '2025-01-01T02:00:00Z',
           startedAt: '2025-01-01T00:00:00Z', completedAt: null,
           book: { title: 'Newer Processing', coverUrl: null, primaryAuthorName: null } },
         // Queued: newer created first (should render second)
-        { id: 3, bookId: 43, type: 'manual' as const, status: 'pending' as const, phase: 'queued',
+        { id: 3, bookId: 43, type: 'manual', status: 'pending', phase: 'queued',
           phaseHistory: [],
           createdAt: '2025-01-01T02:00:00Z', updatedAt: '2025-01-01T02:00:00Z',
           startedAt: null, completedAt: null,
           book: { title: 'Newer Queued', coverUrl: null, primaryAuthorName: null } },
-        { id: 4, bookId: 44, type: 'manual' as const, status: 'pending' as const, phase: 'queued',
+        { id: 4, bookId: 44, type: 'manual', status: 'pending', phase: 'queued',
           phaseHistory: [],
           createdAt: '2025-01-01T01:00:00Z', updatedAt: '2025-01-01T01:00:00Z',
           startedAt: null, completedAt: null,
