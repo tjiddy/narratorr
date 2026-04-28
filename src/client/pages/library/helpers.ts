@@ -1,4 +1,4 @@
-import { toSortTitle } from '@core/utils/index.js';
+import { resolveBookQualityInputs, toSortTitle } from '@core/utils/index.js';
 import type { BookWithAuthor } from '@/lib/api';
 
 export type StatusFilter = 'all' | 'wanted' | 'downloading' | 'imported' | 'failed' | 'missing';
@@ -50,14 +50,12 @@ export function extractNarrators(narrator: string | null | undefined): string[] 
   return unique;
 }
 
-/** Compute MB per hour from size (bytes) and duration (seconds). */
+/** Compute MB per hour from size (bytes) and duration. Delegates unit handling to resolveBookQualityInputs (audioDuration in seconds, duration in minutes). */
 export function computeMbPerHour(book: BookWithAuthor): number | null {
-  const duration = book.audioDuration ?? book.duration;
-  if (!duration || duration <= 0) return null;
-  const size = book.audioTotalSize ?? book.size;
-  if (!size) return null;
-  const mb = size / (1024 * 1024);
-  const hours = duration / 3600;
+  const { sizeBytes, durationSeconds } = resolveBookQualityInputs(book);
+  if (!sizeBytes || !durationSeconds) return null;
+  const mb = sizeBytes / (1024 * 1024);
+  const hours = durationSeconds / 3600;
   return mb / hours;
 }
 

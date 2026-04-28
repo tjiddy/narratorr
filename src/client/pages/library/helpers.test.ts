@@ -490,6 +490,41 @@ describe('computeMbPerHour (#282)', () => {
     const book = makeBook({ audioTotalSize: 100 * 1024 * 1024, audioDuration: 0 });
     expect(computeMbPerHour(book)).toBeNull();
   });
+
+  // #735 — audioDuration is in seconds, duration is in minutes; without unit
+  // conversion the minutes-only path inflates results 60x.
+  it('handles minutes-only duration via *60 conversion', () => {
+    // 600 min = 10 hr; 360 MiB / 10 hr = 36 MB/hr
+    const book = makeBook({ audioDuration: null, duration: 600, audioTotalSize: 360 * 1024 * 1024, size: null });
+    expect(computeMbPerHour(book)).toBeCloseTo(36, 1);
+  });
+
+  it('prefers audioDuration when both audioDuration and duration are populated', () => {
+    // audioDuration: 36000s = 10hr; duration field is ignored
+    const book = makeBook({ audioDuration: 36000, duration: 600, audioTotalSize: 360 * 1024 * 1024, size: null });
+    expect(computeMbPerHour(book)).toBeCloseTo(36, 1);
+  });
+
+  it('falls back to size when audioTotalSize is null and audioDuration is set', () => {
+    const book = makeBook({ audioDuration: 36000, duration: null, audioTotalSize: null, size: 360 * 1024 * 1024 });
+    expect(computeMbPerHour(book)).toBeCloseTo(36, 1);
+  });
+
+  it('falls through to duration when audioDuration is 0', () => {
+    // audioDuration: 0 should NOT short-circuit; falls through to duration (600 min = 10 hr)
+    const book = makeBook({ audioDuration: 0, duration: 600, audioTotalSize: 360 * 1024 * 1024, size: null });
+    expect(computeMbPerHour(book)).toBeCloseTo(36, 1);
+  });
+
+  it('returns null when both duration sources are null/zero', () => {
+    const book = makeBook({ audioDuration: 0, duration: null, audioTotalSize: 360 * 1024 * 1024 });
+    expect(computeMbPerHour(book)).toBeNull();
+  });
+
+  it('returns null when both duration sources are null', () => {
+    const book = makeBook({ audioDuration: null, duration: null, audioTotalSize: 360 * 1024 * 1024 });
+    expect(computeMbPerHour(book)).toBeNull();
+  });
 });
 
 // #287 — compareNullable descending null-last fix
