@@ -180,6 +180,28 @@ describe('startJobs', () => {
     );
   });
 
+  // F3 (#797 review) — job-path retryDeps must reuse the createServices() instances.
+  it('monitor callback retryDeps reuses services.retrySearchDeps and services.blacklist (single-instance contract)', async () => {
+    const { monitorDownloads } = await import('./monitor.js');
+    const { startJobs } = await import('./index.js');
+    startJobs(injectHelper<Db>(db), services, log);
+
+    const cronCalls = vi.mocked(cron.schedule).mock.calls;
+    const monitorCall = cronCalls.find(([expr]) => expr === '*/30 * * * * *');
+    expect(monitorCall).toBeDefined();
+    const cronCallback = monitorCall![1] as () => Promise<void>;
+    await cronCallback();
+
+    // The retryDeps object passed to monitorDownloads (5th arg) must contain
+    // the SAME instances that createServices wired into the service graph.
+    // Recreating RetrySearchDeps locally inside startJobs (the pre-fix bug)
+    // would produce a new object and fail this identity check.
+    const callArgs = vi.mocked(monitorDownloads).mock.calls[0];
+    const retryDepsArg = callArgs[4] as { blacklistService: unknown; retrySearchDeps: unknown };
+    expect(retryDepsArg.blacklistService).toBe(services.blacklist);
+    expect(retryDepsArg.retrySearchDeps).toBe(services.retrySearchDeps);
+  });
+
   describe('scheduleCron error handling (#448 item 9)', () => {
     it('logs error when cron job callback throws', async () => {
       // Make the monitor job's callback throw by making monitorDownloads reject

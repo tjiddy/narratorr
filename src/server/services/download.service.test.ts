@@ -1047,12 +1047,12 @@ describe('DownloadService', () => {
       );
     });
 
-    it('throws when retrySearchDeps not configured', async () => {
+    it('throws ServiceWireError when retry() invoked before wire() (required-wiring contract)', async () => {
       const failedDownload = { ...mockDownload, status: 'failed' as const };
       db.select.mockReturnValue(
         mockDbChain([{ download: failedDownload, book: mockBook }]),
       );
-      await expect(service.retry(1)).rejects.toThrow('not configured');
+      await expect(service.retry(1)).rejects.toThrow(/DownloadService used before wire/);
     });
 
     describe('with retrySearchDeps', () => {
@@ -1084,7 +1084,7 @@ describe('DownloadService', () => {
           log: retryLog,
         };
         retryService = new DownloadService(inject<Db>(db), clientService, inject<FastifyBaseLogger>(createMockLogger()));
-        retryService.setRetrySearchDeps(mockRetryDeps as never);
+        retryService.wire({ retrySearchDeps: mockRetryDeps as never });
       });
 
       it('returns retried and deletes old record on successful retry', async () => {
@@ -1184,7 +1184,7 @@ describe('DownloadService', () => {
 
         const retryLogLocal = createMockLogger();
         const svc = new DownloadService(inject<Db>(db), clientService, inject<FastifyBaseLogger>(retryLogLocal));
-        svc.setRetrySearchDeps(mockRetryDeps as never);
+        svc.wire({ retrySearchDeps: mockRetryDeps as never });
 
         const result = await svc.retry(1);
 
@@ -1896,6 +1896,16 @@ describe('DownloadService', () => {
         expect.objectContaining({ externalId: 'ext-123', clientName: 'qBit', bookId: 1 }),
         'Download sent to client',
       );
+    });
+  });
+
+  // ── #739 — required-wiring contract ────────────────────────────────────
+  describe('required-wiring contract', () => {
+    it('wire() called twice throws ServiceWireError', () => {
+      const svc = new DownloadService(inject<Db>(db), clientService, inject<FastifyBaseLogger>(createMockLogger()));
+      const deps = { retrySearchDeps: {} as never };
+      svc.wire(deps);
+      expect(() => svc.wire(deps)).toThrow(/DownloadService\.wire\(\) called more than once/);
     });
   });
 });

@@ -35,6 +35,19 @@ describe('EventHistoryService', () => {
     );
   });
 
+  // Helper for tests that need to wire with custom deps. Returns a fresh
+  // (unwired) EventHistoryService backed by the same shared mocks (`db`,
+  // `log`, `blacklistService`, `bookService`) so assertions on those mocks
+  // still work.
+  function freshService(): EventHistoryService {
+    return new EventHistoryService(
+      inject<Db>(db),
+      inject<FastifyBaseLogger>(log),
+      inject<BlacklistService>(blacklistService),
+      inject<BookService>(bookService),
+    );
+  }
+
   describe('create', () => {
     it('inserts an event and returns the row', async () => {
       const mockEvent = createMockDbBookEvent();
@@ -176,6 +189,13 @@ describe('EventHistoryService', () => {
   });
 
   describe('markFailed', () => {
+    beforeEach(() => {
+      // Default-wire so the retry-search dispatch (events with bookId) works.
+      // The unwired-contract case is exercised by a dedicated test in the
+      // `markFailed search trigger` block.
+      service.wire({ retrySearchDeps: { log: createMockLogger() } as never });
+    });
+
     it('blacklists release and reverts book to wanted', async () => {
       const event = createMockDbBookEvent({ downloadId: 5 });
       const download = { id: 5, infoHash: 'abc123', title: 'The Way of Kings [MP3]' };
@@ -307,7 +327,8 @@ describe('EventHistoryService', () => {
 
       const { RetryBudget } = await import('./retry-budget.js');
       const mockSearchAll = vi.fn().mockResolvedValue([]);
-      service.setRetrySearchDeps({
+      const fresh = freshService();
+      fresh.wire({ retrySearchDeps: {
         indexerService: { searchAll: mockSearchAll },
         downloadService: { grab: vi.fn() },
         blacklistService: { getBlacklistedHashes: vi.fn().mockResolvedValue(new Set()), getBlacklistedIdentifiers: vi.fn().mockResolvedValue({ blacklistedHashes: new Set(), blacklistedGuids: new Set() }) },
@@ -315,9 +336,9 @@ describe('EventHistoryService', () => {
         settingsService: createMockSettingsService(),
         retryBudget: new RetryBudget(),
         log: createMockLogger(),
-      } as never);
+      } } as never);
 
-      const result = await service.markFailed(1);
+      const result = await fresh.markFailed(1);
 
       expect(result).toEqual({ success: true });
       // Verify the retry search was actually triggered (fire-and-forget)
@@ -337,7 +358,8 @@ describe('EventHistoryService', () => {
       // Set retrySearchDeps that will cause retrySearch to fail
       const { RetryBudget } = await import('./retry-budget.js');
       const mockSearchAll = vi.fn().mockRejectedValue(new Error('Indexer down'));
-      service.setRetrySearchDeps({
+      const fresh = freshService();
+      fresh.wire({ retrySearchDeps: {
         indexerService: { searchAll: mockSearchAll },
         downloadService: { grab: vi.fn() },
         blacklistService: { getBlacklistedHashes: vi.fn().mockResolvedValue(new Set()), getBlacklistedIdentifiers: vi.fn().mockResolvedValue({ blacklistedHashes: new Set(), blacklistedGuids: new Set() }) },
@@ -345,10 +367,10 @@ describe('EventHistoryService', () => {
         settingsService: createMockSettingsService(),
         retryBudget: new RetryBudget(),
         log: createMockLogger(),
-      } as never);
+      } } as never);
 
       // markFailed should succeed — search failure is caught inside retrySearch (returns retry_error)
-      const result = await service.markFailed(1);
+      const result = await fresh.markFailed(1);
       expect(result).toEqual({ success: true });
       // Verify the search was attempted even though it failed
       await vi.waitFor(() => {
@@ -356,7 +378,7 @@ describe('EventHistoryService', () => {
       });
     });
 
-    it('does not trigger search when no retrySearchDeps', async () => {
+    it('throws ServiceWireError when markFailed dispatches retry-search before wire() (required-wiring contract)', async () => {
       const event = createMockDbBookEvent({ downloadId: 5, bookId: 42 });
       const download = { id: 5, infoHash: 'abc123', title: 'Test' };
 
@@ -364,9 +386,32 @@ describe('EventHistoryService', () => {
         .mockReturnValueOnce(mockDbChain([event]))
         .mockReturnValueOnce(mockDbChain([download]));
 
-      // No retrySearchDeps set on service — should succeed without triggering search
-      const result = await service.markFailed(1);
-      expect(result).toEqual({ success: true });
+      // Use a fresh, unwired EventHistoryService — the parent `service` is
+      // not wired in this describe block.
+      const unwiredService = freshService();
+
+      // markFailed reaches the retry-search dispatch (event has bookId) and must throw.
+      await expect(unwiredService.markFailed(1)).rejects.toThrow(/EventHistoryService used before wire/);
+    });
+
+    // ── F1 (#797 review) — fail-fast contract: no partial side effects ──
+    it('unwired markFailed() with bookId fails BEFORE blacklist or book-status side effects', async () => {
+      const event = createMockDbBookEvent({ downloadId: 5, bookId: 42 });
+      const download = { id: 5, infoHash: 'abc123', title: 'Test' };
+
+      db.select
+        .mockReturnValueOnce(mockDbChain([event]))
+        .mockReturnValueOnce(mockDbChain([download]));
+
+      const unwiredService = freshService();
+
+      await expect(unwiredService.markFailed(1)).rejects.toThrow(/EventHistoryService used before wire/);
+
+      // Critical contract: ServiceWireError must surface BEFORE the mutating
+      // blacklist + book-status calls so an unwired service never leaves a
+      // partial mark-failed operation behind.
+      expect(blacklistService.create).not.toHaveBeenCalled();
+      expect(bookService.updateStatus).not.toHaveBeenCalled();
     });
 
     it('still dispatches retry-search after blacklist creation failure', async () => {
@@ -384,7 +429,8 @@ describe('EventHistoryService', () => {
 
       const { RetryBudget } = await import('./retry-budget.js');
       const mockSearchAll = vi.fn().mockResolvedValue([]);
-      service.setRetrySearchDeps({
+      const fresh = freshService();
+      fresh.wire({ retrySearchDeps: {
         indexerService: { searchAll: mockSearchAll },
         downloadService: { grab: vi.fn() },
         blacklistService: { getBlacklistedHashes: vi.fn().mockResolvedValue(new Set()), getBlacklistedIdentifiers: vi.fn().mockResolvedValue({ blacklistedHashes: new Set(), blacklistedGuids: new Set() }) },
@@ -392,9 +438,9 @@ describe('EventHistoryService', () => {
         settingsService: createMockSettingsService(),
         retryBudget: new RetryBudget(),
         log: createMockLogger(),
-      } as never);
+      } } as never);
 
-      const result = await service.markFailed(1);
+      const result = await fresh.markFailed(1);
 
       expect(result).toEqual({ success: true });
       expect(blacklistService.create).toHaveBeenCalled();
@@ -424,7 +470,8 @@ describe('EventHistoryService', () => {
       vi.mocked(retrySearch).mockRejectedValueOnce(new Error('retry search exploded'));
 
       const { RetryBudget } = await import('./retry-budget.js');
-      service.setRetrySearchDeps({
+      const fresh = freshService();
+      fresh.wire({ retrySearchDeps: {
         indexerService: { searchAll: vi.fn() },
         downloadService: { grab: vi.fn() },
         blacklistService: { getBlacklistedHashes: vi.fn().mockResolvedValue(new Set()), getBlacklistedIdentifiers: vi.fn().mockResolvedValue({ blacklistedHashes: new Set(), blacklistedGuids: new Set() }) },
@@ -432,9 +479,9 @@ describe('EventHistoryService', () => {
         settingsService: createMockSettingsService(),
         retryBudget: new RetryBudget(),
         log: createMockLogger(),
-      } as never);
+      } } as never);
 
-      const result = await service.markFailed(1);
+      const result = await fresh.markFailed(1);
       expect(result).toEqual({ success: true });
 
       await vi.waitFor(() => {

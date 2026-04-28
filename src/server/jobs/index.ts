@@ -5,7 +5,6 @@ import { downloads } from '../../db/schema.js';
 import type { FastifyBaseLogger } from 'fastify';
 import type { Services } from '../routes/index.js';
 import type { TaskRegistry } from '../services/task-registry.js';
-import { createRetrySearchDeps } from '../services/retry-search.js';
 import { MONITOR_CRON_INTERVAL } from './constants.js';
 import { monitorDownloads } from './monitor.js';
 import { runEnrichment } from './enrichment.js';
@@ -35,14 +34,11 @@ interface TimeoutJob {
 type JobEntry = CronJob | TimeoutJob;
 
 export function startJobs(db: Db, services: Services, log: FastifyBaseLogger) {
-  const retrySearchDeps = createRetrySearchDeps(
-    { indexer: services.indexer, downloadOrchestrator: services.downloadOrchestrator, blacklist: services.blacklist, book: services.book, settings: services.settings, retryBudget: services.retryBudget },
-    log,
-  );
-
+  // RetrySearchDeps is constructed once in createServices() and exposed on the
+  // Services bag so jobs and the composition root share the same instance.
   const retryDeps = {
     blacklistService: services.blacklist,
-    retrySearchDeps,
+    retrySearchDeps: services.retrySearchDeps,
   };
 
   /** Job registry — adding a new job requires one entry here. */

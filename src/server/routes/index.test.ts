@@ -10,7 +10,8 @@ import type { Services } from './index.js';
 // ---------------------------------------------------------------------------
 
 // All service constructors mocked as bare vi.fn() (returns empty object when called with new).
-// DownloadService and EventHistoryService need setRetrySearchDeps; use regular-function constructors.
+// Required-wiring services expose a wire() spy so the composition root tests can assert
+// the new wire(deps) contract instead of the legacy setter-injection shape.
 vi.mock('../services', () => ({
   SettingsService: vi.fn(),  // configured per test
   AuthService: vi.fn(),
@@ -19,14 +20,14 @@ vi.mock('../services', () => ({
   BookService: vi.fn(),
   BookListService: vi.fn(),
 
-  DownloadService: vi.fn().mockImplementation(function(this: Record<string, unknown>) { this.setRetrySearchDeps = vi.fn(); }),
+  DownloadService: vi.fn().mockImplementation(function(this: Record<string, unknown>) { this.wire = vi.fn(); }),
   MetadataService: vi.fn(),
   NotifierService: vi.fn(),
   BlacklistService: vi.fn(),
   RemotePathMappingService: vi.fn(),
   RenameService: vi.fn(),
 
-  EventHistoryService: vi.fn().mockImplementation(function(this: Record<string, unknown>) { this.setRetrySearchDeps = vi.fn(); }),
+  EventHistoryService: vi.fn().mockImplementation(function(this: Record<string, unknown>) { this.wire = vi.fn(); }),
   TaggingService: vi.fn(),
   QualityGateService: vi.fn(),
   RetryBudget: vi.fn(),
@@ -34,14 +35,16 @@ vi.mock('../services', () => ({
 }));
 vi.mock('../services/import.service.js', () => ({ ImportService: vi.fn() }));
 vi.mock('../services/import-orchestrator.js', () => ({
-  ImportOrchestrator: vi.fn().mockImplementation(function(this: Record<string, unknown>) { this.setBlacklistDeps = vi.fn(); this.setQueueDeps = vi.fn(); }),
+  ImportOrchestrator: vi.fn().mockImplementation(function(this: Record<string, unknown>) { this.wire = vi.fn(); }),
 }));
 vi.mock('../services/download-orchestrator.js', () => ({ DownloadOrchestrator: vi.fn() }));
-vi.mock('../services/quality-gate-orchestrator.js', () => ({ QualityGateOrchestrator: vi.fn() }));
+vi.mock('../services/quality-gate-orchestrator.js', () => ({
+  QualityGateOrchestrator: vi.fn().mockImplementation(function(this: Record<string, unknown>) { this.wire = vi.fn(); }),
+}));
 vi.mock('../services/import-list.service.js', () => ({ ImportListService: vi.fn() }));
 vi.mock('../services/library-scan.service.js', () => ({
   LibraryScanService: vi.fn().mockImplementation(function(this: Record<string, unknown>) {
-    this.setNudgeWorker = vi.fn();
+    this.wire = vi.fn();
     this.importDeps = {};
   }),
 }));
@@ -58,6 +61,7 @@ vi.mock('../services/import-adapters/registry.js', () => ({
   clearImportAdapters: vi.fn(),
 }));
 vi.mock('../services/import-adapters/manual.js', () => ({ ManualImportAdapter: vi.fn() }));
+vi.mock('../services/import-adapters/auto.js', () => ({ AutoImportAdapter: vi.fn() }));
 vi.mock('./retry-import.js', () => ({ retryImportRoute: vi.fn() }));
 vi.mock('../config.js', () => ({ config: { configPath: '/tmp/config', dbPath: '/tmp/db.sqlite' } }));
 vi.mock('../../core/utils/audio-processor.js', () => ({ detectFfmpegPath: vi.fn(), probeFfmpeg: vi.fn() }));
@@ -214,10 +218,12 @@ describe('createServices', () => {
     expect(mockBootstrap).toHaveBeenCalledWith(detectFfmpegPath);
   });
 
-  // #504 — setBlacklistDeps wiring
-  it('wires importOrchestrator.setBlacklistDeps with blacklistService and retrySearchDeps', async () => {
-    const { SettingsService, BlacklistService } = await import('../services/index.js');
+  // #739 (originally #504) — required-wiring contract via wire(deps) instead of setter injection
+  it('calls wire() once on each required-wiring service with the correct cyclic deps', async () => {
+    const { SettingsService, BlacklistService, DownloadService, EventHistoryService } = await import('../services/index.js');
     const { ImportOrchestrator } = await import('../services/import-orchestrator.js');
+    const { LibraryScanService } = await import('../services/library-scan.service.js');
+    const { QualityGateOrchestrator } = await import('../services/quality-gate-orchestrator.js');
     const { createRetrySearchDeps } = await import('../services/retry-search.js');
 
     vi.mocked(SettingsService).mockImplementation(function(this: Record<string, unknown>) {
@@ -235,15 +241,31 @@ describe('createServices', () => {
 
     await createServices(db, log);
 
-    const orchestratorInstances = vi.mocked(ImportOrchestrator).mock.instances;
-    expect(orchestratorInstances).toHaveLength(1);
-    const instance = orchestratorInstances[0] as unknown as Record<string, ReturnType<typeof vi.fn>>;
-    expect(instance.setBlacklistDeps).toHaveBeenCalledOnce();
-    // Verify the actual arguments: BlacklistService instance + retrySearchDeps return value
-    const [blacklistArg, retryDepsArg] = instance.setBlacklistDeps.mock.calls[0];
-    expect(blacklistArg).toBeInstanceOf(BlacklistService);
     const retrySearchDepsResult = vi.mocked(createRetrySearchDeps).mock.results[0].value;
-    expect(retryDepsArg).toBe(retrySearchDepsResult);
+
+    const downloadInstance = vi.mocked(DownloadService).mock.instances[0] as unknown as { wire: ReturnType<typeof vi.fn> };
+    expect(downloadInstance.wire).toHaveBeenCalledOnce();
+    expect(downloadInstance.wire).toHaveBeenCalledWith({ retrySearchDeps: retrySearchDepsResult });
+
+    const eventHistoryInstance = vi.mocked(EventHistoryService).mock.instances[0] as unknown as { wire: ReturnType<typeof vi.fn> };
+    expect(eventHistoryInstance.wire).toHaveBeenCalledOnce();
+    expect(eventHistoryInstance.wire).toHaveBeenCalledWith({ retrySearchDeps: retrySearchDepsResult });
+
+    const importOrchestratorInstance = vi.mocked(ImportOrchestrator).mock.instances[0] as unknown as { wire: ReturnType<typeof vi.fn> };
+    expect(importOrchestratorInstance.wire).toHaveBeenCalledOnce();
+    const importWireArg = importOrchestratorInstance.wire.mock.calls[0][0];
+    expect(importWireArg.db).toBe(db);
+    expect(importWireArg.blacklistService).toBeInstanceOf(BlacklistService);
+    expect(importWireArg.retrySearchDeps).toBe(retrySearchDepsResult);
+    expect(typeof importWireArg.nudgeImportWorker).toBe('function');
+
+    const libraryScanInstance = vi.mocked(LibraryScanService).mock.instances[0] as unknown as { wire: ReturnType<typeof vi.fn> };
+    expect(libraryScanInstance.wire).toHaveBeenCalledOnce();
+    expect(typeof libraryScanInstance.wire.mock.calls[0][0].nudgeImportWorker).toBe('function');
+
+    const qgoInstance = vi.mocked(QualityGateOrchestrator).mock.instances[0] as unknown as { wire: ReturnType<typeof vi.fn> };
+    expect(qgoInstance.wire).toHaveBeenCalledOnce();
+    expect(typeof qgoInstance.wire.mock.calls[0][0].nudgeImportWorker).toBe('function');
   });
 
   // #618 — EventBroadcasterService wired into LibraryScanService

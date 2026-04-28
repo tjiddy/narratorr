@@ -102,8 +102,10 @@ function createOrchestrator(opts?: {
     undefined, // remotePathMappingService
     opts?.retrySearchDeps ? inject<RetrySearchDeps>(opts.retrySearchDeps) : undefined,
     opts?.settingsService ? inject<SettingsService>(opts.settingsService) : undefined,
-    vi.fn<() => void>(), // nudgeImportWorker
   );
+  // nudgeImportWorker is required-wiring; wire here so existing tests that don't
+  // explicitly construct an unwired orchestrator continue to work.
+  orchestrator.wire({ nudgeImportWorker: vi.fn() });
 
   return { orchestrator, qualityGateService, db, log, eventHistory, broadcaster, blacklistService, downloadClientService, importOrchestrator, importService };
 }
@@ -1842,6 +1844,78 @@ describe('QualityGateOrchestrator', () => {
       expect(log.warn).toHaveBeenCalledWith({ warnPayload: 1 }, 'warn-msg');
       options.onDebug!('debug-msg', { debugPayload: 2 });
       expect(log.debug).toHaveBeenCalledWith({ debugPayload: 2 }, 'debug-msg');
+    });
+  });
+
+  // ── #739 — required-wiring contract ────────────────────────────────────
+  describe('required-wiring contract', () => {
+    function makeUnwiredOrchestrator() {
+      const db = createMockDb();
+      const log = createMockLogger();
+      const eventHistory = { create: vi.fn().mockResolvedValue({}) };
+      const broadcaster = { emit: vi.fn() };
+      const blacklistService = { create: vi.fn().mockResolvedValue({}) };
+      const downloadClientService = {
+        getAdapter: vi.fn().mockResolvedValue(mockAdapter),
+        getById: vi.fn().mockResolvedValue(null),
+      };
+      const qualityGateService = {
+        getCompletedDownloads: vi.fn().mockResolvedValue([]),
+        getCompletedDownloadById: vi.fn().mockResolvedValue({ download: baseDownload, book: baseBook }),
+        atomicClaim: vi.fn().mockResolvedValue(true),
+        setStatus: vi.fn().mockResolvedValue(undefined),
+        processDownload: vi.fn().mockResolvedValue({ action: 'imported', reason: { action: 'imported', holdReasons: [] }, statusTransition: { from: 'checking', to: 'completed' } }),
+        approve: vi.fn(),
+        reject: vi.fn(),
+        getDeferredCleanupCandidates: vi.fn().mockResolvedValue([]),
+      };
+      const orchestrator = new QualityGateOrchestrator(
+        inject<QualityGateService>(qualityGateService),
+        inject<Db>(db),
+        inject<FastifyBaseLogger>(log),
+        inject<DownloadClientService>(downloadClientService),
+        inject<EventHistoryService>(eventHistory),
+        inject<EventBroadcasterService>(broadcaster),
+        inject<BlacklistService>(blacklistService),
+      );
+      return { orchestrator, log, qualityGateService, broadcaster, db };
+    }
+
+    // F2 (#797 review) — required-wiring contract surfaces, doesn't get swallowed.
+    it('processOneDownload() imported path surfaces ServiceWireError instead of converting to pending_review', async () => {
+      const { orchestrator, qualityGateService } = makeUnwiredOrchestrator();
+
+      // processDownload mock returns action='imported', so the auto-import
+      // path runs and requires wired nudgeImportWorker. The error must NOT
+      // be swallowed by the recoverable processing catch — it must propagate
+      // out of processOneDownload so the composition-root bug is visible.
+      await expect(orchestrator.processOneDownload(1)).rejects.toThrow(/QualityGateOrchestrator used before wire/);
+
+      // Critical: setStatus('pending_review') must NOT be called — that is
+      // the recoverable-error fallback and would mask the wiring bug.
+      expect(qualityGateService.setStatus).not.toHaveBeenCalledWith(baseDownload.id, 'pending_review');
+    });
+
+    // F4 (#797 review) — fail-fast contract: no state transitions before wire check.
+    it('processOneDownload() unwired path fails BEFORE atomicClaim and book status promotion', async () => {
+      const { orchestrator, qualityGateService, broadcaster, db } = makeUnwiredOrchestrator();
+
+      await expect(orchestrator.processOneDownload(1)).rejects.toThrow(/QualityGateOrchestrator used before wire/);
+
+      // Critical fail-fast assertions: every state-changing call that
+      // sequentially follows the wire-check must not have happened.
+      expect(qualityGateService.atomicClaim).not.toHaveBeenCalled();
+      // Book status promotion (db.update on books) must not have run.
+      expect(db.update).not.toHaveBeenCalled();
+      // SSE notifications about the (non-existent) state transitions must
+      // not have been emitted either.
+      expect(broadcaster.emit).not.toHaveBeenCalled();
+    });
+
+    it('wire() called twice throws ServiceWireError', () => {
+      const { orchestrator } = makeUnwiredOrchestrator();
+      orchestrator.wire({ nudgeImportWorker: vi.fn() });
+      expect(() => orchestrator.wire({ nudgeImportWorker: vi.fn() })).toThrow(/QualityGateOrchestrator\.wire\(\) called more than once/);
     });
   });
 

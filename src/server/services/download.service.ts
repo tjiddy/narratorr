@@ -11,6 +11,7 @@ import { type DownloadClientService } from './download-client.service.js';
 import { sanitizeLogUrl } from '../utils/sanitize-log-url.js';
 import { type CreateEventInput } from './event-history.service.js';
 import { retrySearch, type RetrySearchDeps } from './retry-search.js';
+import { WireOnce } from './wire-helpers.js';
 
 import type { DownloadRow } from './types.js';
 import { serializeError } from '../utils/serialize-error.js';
@@ -48,8 +49,12 @@ export class DuplicateDownloadError extends Error {
   }
 }
 
+export interface DownloadServiceWireDeps {
+  retrySearchDeps: RetrySearchDeps;
+}
+
 export class DownloadService {
-  private retrySearchDeps?: RetrySearchDeps;
+  private wired = new WireOnce<DownloadServiceWireDeps>('DownloadService');
 
   constructor(
     private db: Db,
@@ -57,9 +62,9 @@ export class DownloadService {
     private log: FastifyBaseLogger,
   ) {}
 
-  /** Set retry search dependencies (called after service graph construction). */
-  setRetrySearchDeps(deps: RetrySearchDeps): void {
-    this.retrySearchDeps = deps;
+  /** Wire cyclic / late-bound deps after construction. Call once during composition. */
+  wire(deps: DownloadServiceWireDeps): void {
+    this.wired.set(deps);
   }
 
   async getAll(
@@ -389,14 +394,12 @@ export class DownloadService {
     if (download.status !== 'failed') throw new DownloadError(`Download ${id} is not in failed state`, 'INVALID_STATUS');
     if (!download.bookId) throw new DownloadError(`Download ${id} has no book linked`, 'NO_BOOK_LINKED');
 
-    if (!this.retrySearchDeps) {
-      throw new Error('Retry search dependencies not configured');
-    }
+    const { retrySearchDeps } = this.wired.require();
 
     // Reset retry counter for this book (manual retry = new cycle)
-    this.retrySearchDeps.retryBudget.reset(download.bookId);
+    retrySearchDeps.retryBudget.reset(download.bookId);
 
-    const result = await retrySearch(download.bookId, this.retrySearchDeps);
+    const result = await retrySearch(download.bookId, retrySearchDeps);
 
     switch (result.outcome) {
       case 'retried': {

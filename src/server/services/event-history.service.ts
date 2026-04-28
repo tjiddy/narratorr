@@ -6,6 +6,7 @@ import { type BlacklistService } from './blacklist.service.js';
 import { type BookService } from './book.service.js';
 import { actionableEventTypes, type EventType, type EventSource } from '../../shared/schemas/event-history.js';
 import { retrySearch, type RetrySearchDeps } from './retry-search.js';
+import { WireOnce } from './wire-helpers.js';
 import { serializeError } from '../utils/serialize-error.js';
 
 
@@ -32,8 +33,12 @@ export interface CreateEventInput {
   reason?: Record<string, unknown> | null;
 }
 
+export interface EventHistoryServiceWireDeps {
+  retrySearchDeps: RetrySearchDeps;
+}
+
 export class EventHistoryService {
-  private retrySearchDeps?: RetrySearchDeps;
+  private wired = new WireOnce<EventHistoryServiceWireDeps>('EventHistoryService');
 
   constructor(
     private db: Db,
@@ -42,9 +47,9 @@ export class EventHistoryService {
     private bookService: BookService,
   ) {}
 
-  /** Set retry search dependencies (called after service graph construction). */
-  setRetrySearchDeps(deps: RetrySearchDeps): void {
-    this.retrySearchDeps = deps;
+  /** Wire cyclic / late-bound deps after construction. Call once during composition. */
+  wire(deps: EventHistoryServiceWireDeps): void {
+    this.wired.set(deps);
   }
 
   async create(input: CreateEventInput): Promise<BookEventRow> {
@@ -181,6 +186,12 @@ export class EventHistoryService {
       throw new EventHistoryServiceError('Associated download not found', 'DOWNLOAD_NOT_FOUND');
     }
 
+    // Fail-fast: if we will need retrySearchDeps later (event has bookId),
+    // verify wire() was called BEFORE we mutate any state. Without this guard,
+    // an unwired service would blacklist + revert book status and only then
+    // throw ServiceWireError, leaving a partial mark-failed operation behind.
+    const retrySearchDeps = event.bookId ? this.wired.require().retrySearchDeps : null;
+
     // Blacklist the release if infoHash present; skip for Usenet (no infoHash).
     // Catch failures so book status revert and retry-search dispatch still run.
     if (download.infoHash) {
@@ -208,9 +219,11 @@ export class EventHistoryService {
 
     this.log.info({ eventId, downloadId: event.downloadId, bookId: event.bookId }, 'Event marked as failed');
 
-    // Trigger book-scoped retry search (fire-and-forget) — does NOT reset global retry budget
-    if (event.bookId && this.retrySearchDeps) {
-      retrySearch(event.bookId, this.retrySearchDeps)
+    // Trigger book-scoped retry search (fire-and-forget) — does NOT reset global retry budget.
+    // retrySearchDeps was resolved up-front (fail-fast) so a missing wire could not have
+    // produced any partial side effects above.
+    if (event.bookId && retrySearchDeps) {
+      retrySearch(event.bookId, retrySearchDeps)
         .catch((err) => this.log.warn({ error: serializeError(err) }, 'Mark-as-failed retry search failed'));
     }
 

@@ -110,6 +110,17 @@ describe('ImportOrchestrator', () => {
     broadcaster = inject<EventBroadcasterService>({ emit: vi.fn() });
 
     orchestrator = new ImportOrchestrator(importService, settingsService, log, notifier, tagging, eventHistory, broadcaster);
+
+    // Default wire — most tests need wired deps. Tests that exercise the unwired
+    // contract construct their own orchestrator and skip the wire() call.
+    const defaultBlacklistService = inject<BlacklistService>({ create: vi.fn().mockResolvedValue({}) });
+    const defaultRetrySearchDeps = { log: createMockLogger() } as unknown as RetrySearchDeps;
+    orchestrator.wire({
+      db: {} as never,
+      blacklistService: defaultBlacklistService,
+      retrySearchDeps: defaultRetrySearchDeps,
+      nudgeImportWorker: vi.fn(),
+    });
   });
 
   describe('importDownload — success path', () => {
@@ -286,7 +297,8 @@ describe('ImportOrchestrator', () => {
 
   describe('processCompletedDownloads — batch enqueue (#636)', () => {
     beforeEach(() => {
-      orchestrator.setQueueDeps({} as never, vi.fn());
+      // Orchestrator is already wired in the parent beforeEach with default
+      // db + nudgeImportWorker; just reset the enqueue mock for these cases.
       vi.mocked(enqueueAutoImport).mockResolvedValue(true);
     });
 
@@ -348,7 +360,15 @@ describe('ImportOrchestrator', () => {
     beforeEach(() => {
       blacklistService = inject<BlacklistService>({ create: vi.fn().mockResolvedValue({}) });
       retrySearchDeps = { log: createMockLogger() } as unknown as RetrySearchDeps;
-      orchestrator.setBlacklistDeps(blacklistService, retrySearchDeps);
+      // Re-construct + wire so this scope's blacklistService/retrySearchDeps
+      // (the ones the assertions reference) are the wired instances.
+      orchestrator = new ImportOrchestrator(importService, settingsService, log, notifier, tagging, eventHistory, broadcaster);
+      orchestrator.wire({
+        db: {} as never,
+        blacklistService,
+        retrySearchDeps,
+        nudgeImportWorker: vi.fn(),
+      });
     });
 
     it('content failure triggers blacklistAndRetrySearch with correct identifiers, reason, blacklistType, and retry-gating deps', async () => {
@@ -414,20 +434,6 @@ describe('ImportOrchestrator', () => {
       expect(blacklistAndRetrySearch).not.toHaveBeenCalled();
     });
 
-    it('content failure with missing blacklistService still fires SSE/notification/event', async () => {
-      orchestrator.setBlacklistDeps(undefined as unknown as BlacklistService, retrySearchDeps);
-      const contentError = new Error('No audio files found in /path');
-      (importService.importDownload as ReturnType<typeof vi.fn>).mockRejectedValue(contentError);
-
-      await expect(orchestrator.importDownload(1)).rejects.toThrow();
-
-      // Blacklist not called (no service), but SSE/notification/event still fire
-      expect(blacklistAndRetrySearch).not.toHaveBeenCalled();
-      expect(emitImportFailure).toHaveBeenCalled();
-      expect(notifyImportFailure).toHaveBeenCalled();
-      expect(recordImportFailedEvent).toHaveBeenCalled();
-    });
-
     it('blacklist call failure does not suppress original import error and logs warning', async () => {
       const blacklistError = new Error('DB blacklist error');
       vi.mocked(blacklistAndRetrySearch).mockRejectedValueOnce(blacklistError);
@@ -453,6 +459,42 @@ describe('ImportOrchestrator', () => {
       await expect(orchestrator.importDownload(1)).rejects.toThrow();
 
       expect(blacklistAndRetrySearch).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  // ── #739 — required-wiring contract ────────────────────────────────────
+  describe('required-wiring contract', () => {
+    function makeUnwiredOrchestrator(): ImportOrchestrator {
+      return new ImportOrchestrator(importService, settingsService, log, notifier, tagging, eventHistory, broadcaster);
+    }
+
+    it('processCompletedDownloads() throws ServiceWireError when called before wire()', async () => {
+      const unwired = makeUnwiredOrchestrator();
+      (importService.getEligibleDownloads as ReturnType<typeof vi.fn>).mockResolvedValue([{ id: 1, bookId: 10 }]);
+
+      await expect(unwired.processCompletedDownloads()).rejects.toThrow(/ImportOrchestrator used before wire/);
+    });
+
+    it('importDownload() content-failure path throws ServiceWireError when called before wire()', async () => {
+      const unwired = makeUnwiredOrchestrator();
+      const contentError = new Error('No audio files found in /path');
+      (importService.importDownload as ReturnType<typeof vi.fn>).mockRejectedValue(contentError);
+
+      // The throw happens inside dispatchFailureSideEffects; it replaces the
+      // original error because the dispatch is synchronous in the catch handler.
+      await expect(unwired.importDownload(1)).rejects.toThrow(/ImportOrchestrator used before wire/);
+    });
+
+    it('wire() called twice throws ServiceWireError', () => {
+      const unwired = makeUnwiredOrchestrator();
+      const wireDeps = {
+        db: {} as never,
+        blacklistService: inject<BlacklistService>({ create: vi.fn().mockResolvedValue({}) }),
+        retrySearchDeps: { log: createMockLogger() } as unknown as RetrySearchDeps,
+        nudgeImportWorker: vi.fn(),
+      };
+      unwired.wire(wireDeps);
+      expect(() => unwired.wire(wireDeps)).toThrow(/ImportOrchestrator\.wire\(\) called more than once/);
     });
   });
 });

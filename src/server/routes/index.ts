@@ -63,7 +63,7 @@ import { discoverRoutes } from './discover.js';
 import { bulkOperationsRoutes } from './bulk-operations.js';
 import { EventBroadcasterService } from '../services/event-broadcaster.service.js';
 import { BookRejectionService } from '../services/book-rejection.service.js';
-import { createRetrySearchDeps } from '../services/retry-search.js';
+import { createRetrySearchDeps, type RetrySearchDeps } from '../services/retry-search.js';
 import { ImportQueueWorker } from '../services/import-queue-worker.js';
 import { registerImportAdapter } from '../services/import-adapters/registry.js';
 import { ManualImportAdapter } from '../services/import-adapters/manual.js';
@@ -103,6 +103,7 @@ export interface Services {
   bulkOperation: BulkOperationService;
   bookRejection: BookRejectionService;
   importQueueWorker: ImportQueueWorker;
+  retrySearchDeps: RetrySearchDeps;
 }
 
 /**
@@ -143,6 +144,7 @@ export const SERVICE_KEYS = Object.keys({
   bulkOperation: true,
   bookRejection: true,
   importQueueWorker: true,
+  retrySearchDeps: true,
 } satisfies Record<keyof Services, true>) as (keyof Services)[];
 
 export async function createServices(db: Db, log: FastifyBaseLogger): Promise<Services> {
@@ -199,28 +201,32 @@ export async function createServices(db: Db, log: FastifyBaseLogger): Promise<Se
     { fsAccess: fsp.access, fsStatfs: fsp.statfs, probeFfmpeg, resolveProxyIp },
   );
 
-  // Wire retry search dependencies into services that need them
+  // Build retry-search deps bag now that all required services exist
   const retrySearchDeps = createRetrySearchDeps(
     { indexer, downloadOrchestrator, blacklist: blacklistService, book, settings, retryBudget },
     log,
   );
-  download.setRetrySearchDeps(retrySearchDeps);
-  eventHistory.setRetrySearchDeps(retrySearchDeps);
-  importOrchestrator.setBlacklistDeps(blacklistService, retrySearchDeps);
 
-  // Import queue worker + adapter registration (before QGO — it needs the nudge callback)
+  // Construct remaining cyclic-dep services (worker created before QGO/wire phase)
   const importQueueWorker = new ImportQueueWorker(db, log, eventBroadcaster);
-  importOrchestrator.setQueueDeps(db, () => importQueueWorker.nudge());
-  const manualAdapter = new ManualImportAdapter(libraryScan.importDeps);
-  const autoAdapter = new AutoImportAdapter(importOrchestrator);
-  registerImportAdapter(manualAdapter);
-  registerImportAdapter(autoAdapter);
-  libraryScan.setNudgeWorker(() => importQueueWorker.nudge());
-
-  const qualityGateOrchestrator = new QualityGateOrchestrator(qualityGateService, db, log, downloadClient, eventHistory, eventBroadcaster, blacklistService, remotePathMapping, retrySearchDeps, settings, () => importQueueWorker.nudge());
+  const nudgeImportWorker = (): void => importQueueWorker.nudge();
+  const qualityGateOrchestrator = new QualityGateOrchestrator(qualityGateService, db, log, downloadClient, eventHistory, eventBroadcaster, blacklistService, remotePathMapping, retrySearchDeps, settings);
   const bookRejection = new BookRejectionService(db, log, book, blacklistService, settings, eventHistory, retrySearchDeps);
 
-  return { settings, auth, indexer, downloadClient, book, bookList, download, downloadOrchestrator, metadata, import: importService, importOrchestrator, libraryScan, matchJob, notifier, blacklist: blacklistService, remotePathMapping, rename: renameService, merge: mergeService, eventHistory, tagging: taggingService, qualityGate: qualityGateService, qualityGateOrchestrator, retryBudget, eventBroadcaster, backup, healthCheck, taskRegistry, importList, discovery, bulkOperation, bookRejection, importQueueWorker };
+  // Phase 2: wire required cyclic deps now that every instance exists.
+  // Each service throws ServiceWireError if methods using these deps are
+  // invoked before wire(), or if wire() is called more than once.
+  download.wire({ retrySearchDeps });
+  eventHistory.wire({ retrySearchDeps });
+  importOrchestrator.wire({ db, blacklistService, retrySearchDeps, nudgeImportWorker });
+  libraryScan.wire({ nudgeImportWorker });
+  qualityGateOrchestrator.wire({ nudgeImportWorker });
+
+  // Register import adapters after libraryScan/importOrchestrator are fully wired
+  registerImportAdapter(new ManualImportAdapter(libraryScan.importDeps));
+  registerImportAdapter(new AutoImportAdapter(importOrchestrator));
+
+  return { settings, auth, indexer, downloadClient, book, bookList, download, downloadOrchestrator, metadata, import: importService, importOrchestrator, libraryScan, matchJob, notifier, blacklist: blacklistService, remotePathMapping, rename: renameService, merge: mergeService, eventHistory, tagging: taggingService, qualityGate: qualityGateService, qualityGateOrchestrator, retryBudget, eventBroadcaster, backup, healthCheck, taskRegistry, importList, discovery, bulkOperation, bookRejection, importQueueWorker, retrySearchDeps };
 }
 
 type RouteFactory = (app: FastifyInstance, services: Services, db: Db) => Promise<void>;
