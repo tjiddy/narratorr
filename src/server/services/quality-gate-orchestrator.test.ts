@@ -257,7 +257,7 @@ describe('QualityGateOrchestrator', () => {
       const settingsService = inject<SettingsService>({
         get: vi.fn().mockResolvedValue({ ffmpegPath: '/usr/bin/ffmpeg' }),
       });
-      const { orchestrator, qualityGateService } = createOrchestrator({ settingsService });
+      const { orchestrator, qualityGateService, log } = createOrchestrator({ settingsService });
       qualityGateService.getCompletedDownloads.mockResolvedValue([{ download: baseDownload, book: baseBook }]);
 
       await orchestrator.processCompletedDownloads();
@@ -266,6 +266,13 @@ describe('QualityGateOrchestrator', () => {
         '/downloads/test',
         { skipCover: true, ffprobePath: '/usr/bin/ffprobe', onWarn: expect.any(Function), onDebug: expect.any(Function) },
       );
+
+      // Diagnostic callback wiring — onWarn → log.warn(payload, msg); onDebug → log.debug(payload, msg)
+      const options = vi.mocked(scanAudioDirectory).mock.calls[0][1]!;
+      options.onWarn!('warn-msg', { warnPayload: 1 });
+      expect(log.warn).toHaveBeenCalledWith({ warnPayload: 1 }, 'warn-msg');
+      options.onDebug!('debug-msg', { debugPayload: 2 });
+      expect(log.debug).toHaveBeenCalledWith({ debugPayload: 2 }, 'debug-msg');
     });
 
     it('passes ffprobePath as undefined when settingsService has no ffmpegPath', async () => {
@@ -1819,7 +1826,7 @@ describe('QualityGateOrchestrator', () => {
       const settingsService = inject<SettingsService>({
         get: vi.fn().mockResolvedValue({ ffmpegPath: '/usr/bin/ffmpeg' }),
       });
-      const { orchestrator, qualityGateService } = createOrchestrator({ settingsService });
+      const { orchestrator, qualityGateService, log } = createOrchestrator({ settingsService });
       qualityGateService.getCompletedDownloadById.mockResolvedValue({ download: completedDownload, book: { ...downloadingBook } });
 
       await orchestrator.processOneDownload(1);
@@ -1828,6 +1835,13 @@ describe('QualityGateOrchestrator', () => {
         '/downloads/test',
         { skipCover: true, ffprobePath: '/usr/bin/ffprobe', onWarn: expect.any(Function), onDebug: expect.any(Function) },
       );
+
+      // Diagnostic callback wiring — onWarn → log.warn(payload, msg); onDebug → log.debug(payload, msg)
+      const options = vi.mocked(scanAudioDirectory).mock.calls[0][1]!;
+      options.onWarn!('warn-msg', { warnPayload: 1 });
+      expect(log.warn).toHaveBeenCalledWith({ warnPayload: 1 }, 'warn-msg');
+      options.onDebug!('debug-msg', { debugPayload: 2 });
+      expect(log.debug).toHaveBeenCalledWith({ debugPayload: 2 }, 'debug-msg');
     });
   });
 

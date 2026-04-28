@@ -237,6 +237,13 @@ describe('enrichBookFromAudio', () => {
       onWarn: expect.any(Function),
       onDebug: expect.any(Function),
     });
+
+    // onWarn forwards to log.warn(payload, msg); onDebug forwards to log.debug(payload, msg).
+    const options = vi.mocked(scanAudioDirectory).mock.calls[0][1]!;
+    options.onWarn!('warn-msg', { warnPayload: 1 });
+    expect(log.warn).toHaveBeenCalledWith({ warnPayload: 1 }, 'warn-msg');
+    options.onDebug!('debug-msg', { debugPayload: 2 });
+    expect(log.debug).toHaveBeenCalledWith({ debugPayload: 2 }, 'debug-msg');
   });
 
   it('passes ffprobePath as undefined to scanAudioDirectory when not provided', async () => {
@@ -257,6 +264,12 @@ describe('enrichBookFromAudio', () => {
       onWarn: expect.any(Function),
       onDebug: expect.any(Function),
     });
+
+    const options = vi.mocked(scanAudioDirectory).mock.calls[0][1]!;
+    options.onWarn!('warn-msg', { warnPayload: 1 });
+    expect(log.warn).toHaveBeenCalledWith({ warnPayload: 1 }, 'warn-msg');
+    options.onDebug!('debug-msg', { debugPayload: 2 });
+    expect(log.debug).toHaveBeenCalledWith({ debugPayload: 2 }, 'debug-msg');
   });
 
   it('returns error info when scan throws', async () => {

@@ -105,7 +105,7 @@ export default tseslint.config(
     ignores: ['**/*.test.ts'],
     rules: {
       'no-restricted-imports': ['error', {
-        patterns: ['**/core/**', '**/core/*', '**/server/**', '**/server/*'],
+        patterns: ['**/core/**', '**/core/*', '**/server/**', '**/server/*', '@core/**', '@core/*'],
       }],
     },
   },

@@ -742,6 +742,13 @@ describe('MatchJobService', () => {
         sampleCandidate.path,
         { skipCover: true, ffprobePath: '/usr/bin/ffprobe', onWarn: expect.any(Function), onDebug: expect.any(Function) },
       );
+
+      // Diagnostic callback wiring — onWarn → log.warn(payload, msg); onDebug → log.debug(payload, msg)
+      const options = vi.mocked(scanAudioDirectory).mock.calls[0][1]!;
+      options.onWarn!('warn-msg', { warnPayload: 1 });
+      expect(log.warn).toHaveBeenCalledWith({ warnPayload: 1 }, 'warn-msg');
+      options.onDebug!('debug-msg', { debugPayload: 2 });
+      expect(log.debug).toHaveBeenCalledWith({ debugPayload: 2 }, 'debug-msg');
     });
 
     it('passes ffprobePath as undefined when ffmpegPath is empty', async () => {
