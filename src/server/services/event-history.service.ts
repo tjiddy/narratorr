@@ -181,14 +181,22 @@ export class EventHistoryService {
       throw new EventHistoryServiceError('Associated download not found', 'DOWNLOAD_NOT_FOUND');
     }
 
-    // Blacklist the release if infoHash present; skip for Usenet (no infoHash)
+    // Blacklist the release if infoHash present; skip for Usenet (no infoHash).
+    // Catch failures so book status revert and retry-search dispatch still run.
     if (download.infoHash) {
-      await this.blacklistService.create({
-        infoHash: download.infoHash,
-        title: download.title,
-        bookId: event.bookId ?? undefined,
-        reason: 'bad_quality',
-      });
+      try {
+        await this.blacklistService.create({
+          infoHash: download.infoHash,
+          title: download.title,
+          bookId: event.bookId ?? undefined,
+          reason: 'bad_quality',
+        });
+      } catch (error: unknown) {
+        this.log.warn(
+          { eventId, downloadId: event.downloadId, error: serializeError(error) },
+          'Mark-failed blacklist creation failed — proceeding with book revert',
+        );
+      }
     } else {
       this.log.debug({ downloadId: download.id }, 'Skipping blacklist — no infoHash (Usenet download)');
     }

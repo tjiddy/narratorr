@@ -1,8 +1,12 @@
-import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { eq, or, gt, and, lte, inArray } from 'drizzle-orm';
+import { mkdtempSync, rmSync } from 'fs';
+import { tmpdir } from 'os';
+import { join } from 'path';
 import { BlacklistService } from './blacklist.service.js';
-import { blacklist } from '../../db/schema.js';
-import { createMockDb, createMockLogger, mockDbChain, createMockSettingsService } from '../__tests__/helpers.js';
+import { blacklist, books } from '../../db/schema.js';
+import { createDb, runMigrations, type Db } from '../../db/index.js';
+import { createMockDb, createMockLogger, inject, mockDbChain, createMockSettingsService } from '../__tests__/helpers.js';
 
 vi.mock('drizzle-orm', async (importOriginal) => {
   // eslint-disable-next-line @typescript-eslint/consistent-type-imports
@@ -699,5 +703,249 @@ describe('BlacklistService', () => {
       // Should not return guids — only hashes
       expect(result.has('guid1')).toBe(false);
     });
+  });
+
+  // ===== #736 — upsert call shape and normalization =====
+
+  describe('create — upsert call shape', () => {
+    it('dispatches conflict to info_hash when infoHash is populated', async () => {
+      const chain = mockDbChain([mockEntry]);
+      db.insert.mockReturnValue(chain);
+      await service.create({ infoHash: 'abc', title: 'T', reason: 'spam' });
+
+      const onConflict = chain.onConflictDoUpdate as ReturnType<typeof vi.fn>;
+      expect(onConflict).toHaveBeenCalledTimes(1);
+      const config = onConflict.mock.calls[0][0];
+      expect(config.target).toBe(blacklist.infoHash);
+      expect(config.targetWhere).toBeDefined();
+      // set clause includes blacklistedAt refresh and every normalized column
+      expect(config.set.blacklistedAt).toBeInstanceOf(Date);
+      expect(config.set).toHaveProperty('infoHash', 'abc');
+      expect(config.set).toHaveProperty('guid', null);
+      expect(config.set).toHaveProperty('bookId', null);
+      expect(config.set).toHaveProperty('note', null);
+      expect(config.set).toHaveProperty('blacklistType', 'permanent');
+      expect(config.set).toHaveProperty('expiresAt', null);
+    });
+
+    it('dispatches conflict to guid when only guid is populated', async () => {
+      const chain = mockDbChain([{ ...mockEntry, infoHash: null, guid: 'g' }]);
+      db.insert.mockReturnValue(chain);
+      await service.create({ guid: 'g', title: 'T', reason: 'spam' });
+
+      const onConflict = chain.onConflictDoUpdate as ReturnType<typeof vi.fn>;
+      const config = onConflict.mock.calls[0][0];
+      expect(config.target).toBe(blacklist.guid);
+      expect(config.targetWhere).toBeDefined();
+      expect(config.set).toHaveProperty('guid', 'g');
+      expect(config.set).toHaveProperty('infoHash', null);
+    });
+
+    it('prefers info_hash conflict target when both identifiers are populated', async () => {
+      const chain = mockDbChain([{ ...mockEntry, infoHash: 'h', guid: 'g' }]);
+      db.insert.mockReturnValue(chain);
+      await service.create({ infoHash: 'h', guid: 'g', title: 'T', reason: 'spam' });
+
+      const config = (chain.onConflictDoUpdate as ReturnType<typeof vi.fn>).mock.calls[0][0];
+      expect(config.target).toBe(blacklist.infoHash);
+      expect(config.set.infoHash).toBe('h');
+      expect(config.set.guid).toBe('g');
+    });
+
+    it('normalizes omitted optional fields to null/permanent in values payload', async () => {
+      const chain = mockDbChain([mockEntry]);
+      db.insert.mockReturnValue(chain);
+      await service.create({ infoHash: 'abc', title: 'T', reason: 'spam' });
+
+      const valuesPayload = (chain.values as ReturnType<typeof vi.fn>).mock.calls[0][0];
+      expect(valuesPayload).toEqual({
+        bookId: null,
+        infoHash: 'abc',
+        guid: null,
+        title: 'T',
+        reason: 'spam',
+        note: null,
+        blacklistType: 'permanent',
+        expiresAt: null,
+      });
+    });
+
+    it('normalizes the conflict-update set payload identically to values', async () => {
+      const chain = mockDbChain([mockEntry]);
+      db.insert.mockReturnValue(chain);
+      await service.create({ infoHash: 'abc', title: 'T', reason: 'spam', bookId: 5 });
+
+      const setPayload = (chain.onConflictDoUpdate as ReturnType<typeof vi.fn>).mock.calls[0][0].set;
+      // Every optional field is explicit in SET so omitted inputs don't leak stale values
+      expect(setPayload).toMatchObject({
+        bookId: 5,
+        infoHash: 'abc',
+        guid: null,
+        title: 'T',
+        reason: 'spam',
+        note: null,
+        blacklistType: 'permanent',
+        expiresAt: null,
+      });
+    });
+  });
+});
+
+// ===== #736 — integration tests against real libsql DB =====
+
+describe('BlacklistService — upsert integration (real libsql)', () => {
+  let dir: string;
+  let db: Db;
+  let service: BlacklistService;
+  const log = createMockLogger();
+
+  beforeEach(async () => {
+    dir = mkdtempSync(join(tmpdir(), 'blacklist-upsert-'));
+    const dbFile = join(dir, 'narratorr.db');
+    await runMigrations(dbFile);
+    db = createDb(dbFile);
+    service = new BlacklistService(db, inject(log));
+  });
+
+  afterEach(() => {
+    db.$client.close();
+    try {
+      rmSync(dir, { recursive: true, force: true });
+    } catch {
+      // libsql may keep the file handle on Windows — best effort
+    }
+  });
+
+  async function allRows() {
+    return db.select().from(blacklist).orderBy(blacklist.id);
+  }
+
+  it('hash-only second call upserts in place — single row, latest values', async () => {
+    await service.create({ infoHash: 'abc', title: 'A', reason: 'spam' });
+    await new Promise((r) => setTimeout(r, 10));
+    await service.create({ infoHash: 'abc', title: 'A', reason: 'wrong_content', note: 'updated' });
+
+    const rows = await allRows();
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({
+      infoHash: 'abc',
+      reason: 'wrong_content',
+      note: 'updated',
+    });
+  });
+
+  it('guid-only second call upserts in place', async () => {
+    await service.create({ guid: 'xyz', title: 'B', reason: 'spam' });
+    await service.create({ guid: 'xyz', title: 'B2', reason: 'wrong_content' });
+
+    const rows = await allRows();
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({ guid: 'xyz', title: 'B2', reason: 'wrong_content' });
+  });
+
+  it('AC6a — hash matches existing row, new guid unowned: row is upserted with new guid', async () => {
+    await service.create({ infoHash: 'h1', guid: 'g1', title: 'A', reason: 'spam' });
+    await service.create({ infoHash: 'h1', guid: 'g2', title: 'A2', reason: 'wrong_content' });
+
+    const rows = await allRows();
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({ infoHash: 'h1', guid: 'g2', title: 'A2' });
+  });
+
+  it('AC6b — novel hash but guid collides with another row: rejects with UNIQUE error, no rows modified', async () => {
+    await service.create({ infoHash: 'h1', guid: 'g1', title: 'A', reason: 'spam' });
+
+    const error = await service
+      .create({ infoHash: 'h2', guid: 'g1', title: 'B', reason: 'spam' })
+      .catch((e: unknown) => e);
+    expect(error).toBeInstanceOf(Error);
+    // libsql wraps the SQLite error inside `cause` with the constraint name
+    const cause = (error as Error & { cause?: { message?: string } }).cause;
+    expect(cause?.message).toMatch(/UNIQUE constraint failed.*(?:guid|idx_blacklist_guid_unique)/);
+
+    const rows = await allRows();
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({ infoHash: 'h1', guid: 'g1', title: 'A' });
+  });
+
+  it('AC6c — hash matches one row, guid matches a different row: rejects with UNIQUE error, BOTH rows unchanged', async () => {
+    await service.create({ infoHash: 'h1', guid: 'g1', title: 'First', reason: 'spam' });
+    await service.create({ infoHash: 'h2', guid: 'g2', title: 'Second', reason: 'spam' });
+
+    const error = await service
+      .create({ infoHash: 'h1', guid: 'g2', title: 'Merged', reason: 'wrong_content' })
+      .catch((e: unknown) => e);
+    expect(error).toBeInstanceOf(Error);
+    const cause = (error as Error & { cause?: { message?: string } }).cause;
+    expect(cause?.message).toMatch(/UNIQUE constraint failed.*(?:guid|idx_blacklist_guid_unique)/);
+
+    const rows = await allRows();
+    expect(rows).toHaveLength(2);
+    expect(rows[0]).toMatchObject({ infoHash: 'h1', guid: 'g1', title: 'First', reason: 'spam' });
+    expect(rows[1]).toMatchObject({ infoHash: 'h2', guid: 'g2', title: 'Second', reason: 'spam' });
+  });
+
+  it('omitted optional fields normalize to null/permanent on conflict (no stale leak)', async () => {
+    const settingsService = createMockSettingsService();
+    const svcWithSettings = new BlacklistService(db, inject(log), settingsService);
+
+    // Seed a book so the bookId FK in the first call is valid
+    const [seeded] = await db.insert(books).values({ title: 'Seed Book' }).returning();
+
+    await svcWithSettings.create({
+      infoHash: 'abc',
+      title: 'A',
+      bookId: seeded.id,
+      note: 'first',
+      blacklistType: 'temporary',
+      reason: 'spam',
+    });
+    // Second call omits bookId, note, blacklistType, guid — should clear them
+    await svcWithSettings.create({ infoHash: 'abc', title: 'A2', reason: 'spam' });
+
+    const rows = await allRows();
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({
+      infoHash: 'abc',
+      title: 'A2',
+      bookId: null,
+      note: null,
+      blacklistType: 'permanent',
+      expiresAt: null,
+      guid: null,
+    });
+  });
+
+  it('TTL resets to null on conflict when blacklistType flips to permanent', async () => {
+    const settingsService = createMockSettingsService();
+    const svcWithSettings = new BlacklistService(db, inject(log), settingsService);
+
+    await svcWithSettings.create({
+      infoHash: 'abc',
+      title: 'A',
+      reason: 'spam',
+      blacklistType: 'temporary',
+    });
+
+    let rows = await allRows();
+    expect(rows[0].expiresAt).toBeInstanceOf(Date);
+
+    await svcWithSettings.create({
+      infoHash: 'abc',
+      title: 'A',
+      reason: 'spam',
+      blacklistType: 'permanent',
+    });
+
+    rows = await allRows();
+    expect(rows).toHaveLength(1);
+    expect(rows[0].expiresAt).toBeNull();
+    expect(rows[0].blacklistType).toBe('permanent');
+  });
+
+  it('rejects when neither identifier is provided', async () => {
+    await expect(
+      service.create({ title: 'X', reason: 'spam' }),
+    ).rejects.toThrow('Blacklist entry requires at least one identifier');
   });
 });

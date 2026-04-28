@@ -268,6 +268,32 @@ describe('EventHistoryService', () => {
       expect(blacklistService.create).toHaveBeenCalled();
       expect(bookService.updateStatus).not.toHaveBeenCalled();
     });
+
+    it('survives a blacklist creation failure — logs warning, still reverts book and resolves', async () => {
+      const event = createMockDbBookEvent({ downloadId: 5 });
+      const download = { id: 5, infoHash: 'abc123', title: 'Bad Release' };
+
+      db.select
+        .mockReturnValueOnce(mockDbChain([event]))
+        .mockReturnValueOnce(mockDbChain([download]));
+
+      blacklistService.create.mockRejectedValueOnce(
+        new Error('UNIQUE constraint failed: idx_blacklist_guid_unique'),
+      );
+
+      const result = await service.markFailed(1);
+
+      expect(result).toEqual({ success: true });
+      expect(log.warn).toHaveBeenCalledWith(
+        expect.objectContaining({
+          eventId: 1,
+          downloadId: 5,
+          error: expect.objectContaining({ message: expect.stringContaining('UNIQUE') }),
+        }),
+        'Mark-failed blacklist creation failed — proceeding with book revert',
+      );
+      expect(bookService.updateStatus).toHaveBeenCalledWith(1, 'wanted');
+    });
   });
 
   describe('markFailed search trigger', () => {

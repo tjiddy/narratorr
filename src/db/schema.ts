@@ -278,8 +278,8 @@ export const blacklist = sqliteTable('blacklist', {
     .notNull()
     .default(sql`(unixepoch())`),
 }, (table) => [
-  index('idx_blacklist_info_hash').on(table.infoHash),
-  index('idx_blacklist_guid').on(table.guid),
+  uniqueIndex('idx_blacklist_info_hash_unique').on(table.infoHash).where(sql`info_hash IS NOT NULL`),
+  uniqueIndex('idx_blacklist_guid_unique').on(table.guid).where(sql`guid IS NOT NULL`),
   index('idx_blacklist_book_id').on(table.bookId),
 ]);
 
