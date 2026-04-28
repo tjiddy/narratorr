@@ -1,4 +1,5 @@
 import type { FastifyInstance } from 'fastify';
+import { z } from 'zod';
 import type { IndexerService } from '../services/indexer.service.js';
 import { maskFields } from '../utils/secret-codec.js';
 import { getVersion } from '../utils/version.js';
@@ -11,6 +12,45 @@ interface ReadarrField {
   type: string;
   advanced?: boolean;
 }
+
+// ── Request body schema (Readarr-compatible echo surface) ──
+
+const readarrFieldSchema = z.object({
+  name: z.string().trim().min(1),
+  value: z.union([
+    z.string(),
+    z.number(),
+    z.boolean(),
+    z.null(),
+    z.array(z.union([z.string(), z.number()])),
+  ]).optional(),
+  type: z.string().optional(),
+  advanced: z.boolean().optional(),
+});
+
+const readarrBodySchema = z.object({
+  // Identification / echo fields
+  id: z.number().int().optional(),
+  name: z.string().optional(),
+  implementation: z.string().trim().min(1),
+  implementationName: z.string().optional(),
+  configContract: z.string().optional(),
+  infoLink: z.string().optional(),
+  // Flags
+  enableRss: z.boolean().optional(),
+  enableAutomaticSearch: z.boolean().optional(),
+  enableInteractiveSearch: z.boolean().optional(),
+  supportsRss: z.boolean().optional(),
+  supportsSearch: z.boolean().optional(),
+  // Other Readarr surface
+  protocol: z.string().optional(),
+  priority: z.number().int().min(0).max(100).optional(),
+  downloadClientId: z.number().int().optional(),
+  tags: z.array(z.number().int()).optional(),
+  fields: z.array(readarrFieldSchema),
+}).strict();
+
+type ReadarrBody = z.infer<typeof readarrBodySchema>;
 
 interface ReadarrIndexer {
   id: number;
@@ -82,7 +122,7 @@ export function extractSourceIndexerId(baseUrl: string): number | null {
 }
 
 /** Convert Readarr Fields[] to Narratorr internal settings */
-export function fromReadarrFields(fields: ReadarrField[]): Record<string, unknown> {
+export function fromReadarrFields(fields: ReadonlyArray<{ name: string; value?: unknown }>): Record<string, unknown> {
   const settings: Record<string, unknown> = {};
   for (const field of fields) {
     if (field.name === 'baseUrl') {
@@ -155,20 +195,29 @@ function toReadarrIndexer(row: IndexerRow): ReadarrIndexer {
   };
 }
 
-/** Validate Readarr-format indexer request body. Returns error message or null. */
-function validateReadarrBody(body: { implementation?: string; fields?: ReadarrField[] }): string | null {
-  if (!body.implementation || !IMPL_MAP[body.implementation]) {
-    return `Unsupported implementation type: ${body.implementation ?? '(missing)'}. Supported: ${Object.keys(IMPL_MAP).join(', ')}`;
+/**
+ * Domain validation for create/update bodies, run after Zod parsing inside the
+ * route handler. Mirrors the legacy `validateReadarrBody` contract — returns
+ * `{ message }` via the route handler instead of the global validation envelope.
+ *
+ * Why a string check (not just truthy): readarrFieldSchema.value is polymorphic
+ * (string | number | boolean | null | (string|number)[]) for compat with
+ * arbitrary Readarr fields. A non-string `baseUrl.value` would otherwise reach
+ * `extractSourceIndexerId` (`pathname.matchAll` on a non-string throws TypeError)
+ * and the Torznab/Newznab adapters require `apiKey: string`.
+ */
+function validateReadarrDomain(body: ReadarrBody): string | null {
+  if (!IMPL_MAP[body.implementation]) {
+    return `Unsupported implementation type: ${body.implementation}. Supported: ${Object.keys(IMPL_MAP).join(', ')}`;
   }
 
-  const fields = body.fields ?? [];
-  const baseUrl = fields.find(f => f.name === 'baseUrl');
-  if (!baseUrl || !baseUrl.value || (typeof baseUrl.value === 'string' && baseUrl.value.trim() === '')) {
+  const baseUrl = body.fields.find(f => f.name === 'baseUrl');
+  if (!baseUrl || typeof baseUrl.value !== 'string' || baseUrl.value.trim() === '') {
     return 'Missing required field: baseUrl';
   }
 
-  const apiKey = fields.find(f => f.name === 'apiKey');
-  if (!apiKey || !apiKey.value || (typeof apiKey.value === 'string' && apiKey.value.trim() === '')) {
+  const apiKey = body.fields.find(f => f.name === 'apiKey');
+  if (!apiKey || typeof apiKey.value !== 'string' || apiKey.value.trim() === '') {
     return 'Missing required field: apiKey';
   }
 
@@ -182,13 +231,11 @@ const appStartTime = new Date().toISOString();
 
 // ── Helpers ──
 
-type ReadarrBody = { name?: string; implementation?: string; fields?: ReadarrField[]; priority?: number; enableRss?: boolean };
-
-/** Parse and validate a Readarr request body, returning settings with defaults applied */
+/** Parse a Readarr request body, returning settings with defaults applied */
 function parseReadarrBody(body: ReadarrBody) {
-  const impl = body.implementation!;
+  const impl = body.implementation;
   const mapping = IMPL_MAP[impl]!;
-  const settings = fromReadarrFields(body.fields ?? []);
+  const settings = fromReadarrFields(body.fields);
   const baseUrl = (settings.apiUrl as string) ?? '';
   const sourceIndexerId = extractSourceIndexerId(baseUrl);
 
@@ -254,16 +301,17 @@ function registerIndexerRoutes(app: FastifyInstance, indexerService: IndexerServ
     return toReadarrIndexer(row as IndexerRow);
   });
 
-  app.post<{ Body: Record<string, unknown>; Querystring: { forceSave?: string } }>(
+  app.post<{ Body: ReadarrBody; Querystring: { forceSave?: string } }>(
     '/api/v1/indexer',
+    { schema: { body: readarrBodySchema } },
     async (request, reply) => {
-      const body = request.body as ReadarrBody;
-      const validationError = validateReadarrBody(body);
-      if (validationError) return reply.status(400).send({ message: validationError });
+      const body = request.body;
+      const domainError = validateReadarrDomain(body);
+      if (domainError) return reply.status(400).send({ message: domainError });
 
       const { mapping, settings, sourceIndexerId } = parseReadarrBody(body);
       const result = await indexerService.createOrUpsertProwlarr({
-        name: body.name ?? body.implementation!,
+        name: body.name ?? body.implementation,
         type: mapping.type,
         enabled: body.enableRss ?? true,
         priority: body.priority ?? 50,
@@ -277,19 +325,20 @@ function registerIndexerRoutes(app: FastifyInstance, indexerService: IndexerServ
     },
   );
 
-  app.put<{ Params: { id: string }; Body: Record<string, unknown> }>(
+  app.put<{ Params: { id: string }; Body: ReadarrBody }>(
     '/api/v1/indexer/:id',
+    { schema: { body: readarrBodySchema } },
     async (request, reply) => {
       const id = parseInt(request.params.id, 10);
       if (isNaN(id)) return reply.status(404).send({ message: 'Indexer not found' });
 
-      const body = request.body as ReadarrBody;
-      const validationError = validateReadarrBody(body);
-      if (validationError) return reply.status(400).send({ message: validationError });
+      const body = request.body;
+      const domainError = validateReadarrDomain(body);
+      if (domainError) return reply.status(400).send({ message: domainError });
 
       const { mapping, settings, sourceIndexerId } = parseReadarrBody(body);
       const updated = await indexerService.update(id, {
-        name: body.name ?? body.implementation!,
+        name: body.name ?? body.implementation,
         type: mapping.type,
         enabled: body.enableRss ?? true,
         priority: body.priority ?? 50,
@@ -313,28 +362,32 @@ function registerIndexerRoutes(app: FastifyInstance, indexerService: IndexerServ
     return reply.status(200).send({});
   });
 
-  app.post<{ Body: Record<string, unknown> }>('/api/v1/indexer/test', async (request, reply) => {
-    const body = request.body as { implementation?: string; fields?: ReadarrField[] };
-    const impl = body.implementation;
-    if (!impl || !IMPL_MAP[impl]) {
+  app.post<{ Body: ReadarrBody }>(
+    '/api/v1/indexer/test',
+    { schema: { body: readarrBodySchema } },
+    async (request, reply) => {
+      const body = request.body;
+      const impl = body.implementation;
+      if (!IMPL_MAP[impl]) {
+        return reply.status(400).send({
+          isWarning: false,
+          message: `Unsupported implementation: ${impl}`,
+          detailedDescription: 'Only Torznab and Newznab are supported.',
+        });
+      }
+
+      const mapping = IMPL_MAP[impl]!;
+      const settings = fromReadarrFields(body.fields);
+      const result = await indexerService.testConfig({ type: mapping.type, settings });
+
+      if (result.success) return reply.status(200).send({});
       return reply.status(400).send({
         isWarning: false,
-        message: `Unsupported implementation: ${impl ?? '(missing)'}`,
-        detailedDescription: 'Only Torznab and Newznab are supported.',
+        message: result.message ?? 'Connection test failed',
+        detailedDescription: result.message ?? 'Could not connect to the indexer.',
       });
-    }
-
-    const mapping = IMPL_MAP[impl]!;
-    const settings = fromReadarrFields(body.fields ?? []);
-    const result = await indexerService.testConfig({ type: mapping.type, settings });
-
-    if (result.success) return reply.status(200).send({});
-    return reply.status(400).send({
-      isWarning: false,
-      message: result.message ?? 'Connection test failed',
-      detailedDescription: result.message ?? 'Could not connect to the indexer.',
-    });
-  });
+    },
+  );
 }
 
 export async function prowlarrCompatRoutes(app: FastifyInstance, indexerService: IndexerService) {
