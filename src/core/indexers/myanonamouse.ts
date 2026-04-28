@@ -35,10 +35,17 @@ const mamSearchResultSchema = z.object({
   personal_freeleech: z.boolean().nullish(),
 }).passthrough();
 
+// MAM search responses always carry either `data` (results array, possibly empty)
+// or `error` (a message). A response with neither is malformed (e.g. HTML
+// interstitial, rate-limit page, upstream API change) and must fail validation
+// rather than silently producing an empty result list.
 const mamSearchResponseSchema = z.object({
   error: z.string().nullish(),
   data: z.array(mamSearchResultSchema).nullish(),
-}).passthrough();
+}).passthrough().refine(
+  (d) => d.error != null || d.data != null,
+  { message: 'MAM search response missing both "data" and "error" fields' },
+);
 
 const mamUserStatusSchema = z.object({
   username: z.string().nullish(),

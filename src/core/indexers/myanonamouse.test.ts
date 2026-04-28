@@ -444,15 +444,17 @@ describe('MyAnonamouseIndexer', () => {
       expect(results).toEqual([]);
     });
 
-    it('returns empty array when MAM returns no data field', async () => {
+    it('throws IndexerError when MAM returns neither data nor error field', async () => {
+      // Behavior change from #743: a response with no `data` and no `error`
+      // is malformed (HTML interstitial, rate-limit page, shape change) and
+      // must fail at the boundary instead of silently returning [].
       server.use(
         http.get(`${MAM_BASE}/tor/js/loadSearchJSONbasic.php`, () => {
           return HttpResponse.json({});
         }),
       );
 
-      const results = await indexer.search('test');
-      expect(results).toEqual([]);
+      await expect(indexer.search('test')).rejects.toThrow(IndexerError);
     });
   });
 
@@ -1677,6 +1679,28 @@ describe('MyAnonamouseIndexer', () => {
       expect(err).toBeInstanceOf(IndexerError);
       const zod = await import('zod');
       expect((err as IndexerError).cause).toBeInstanceOf(zod.ZodError);
+    });
+
+    it('search() throws IndexerError with ZodError cause when both data and error are missing', async () => {
+      server.use(
+        http.get(`${MAM_BASE}/tor/js/loadSearchJSONbasic.php`, () =>
+          HttpResponse.json({})),
+      );
+
+      const err = await indexer.search('test').catch((e: unknown) => e);
+      expect(err).toBeInstanceOf(IndexerError);
+      const zod = await import('zod');
+      expect((err as IndexerError).cause).toBeInstanceOf(zod.ZodError);
+    });
+
+    it('search() still treats {error: "Nothing returned, ..."} as legitimate empty result (not a validation failure)', async () => {
+      server.use(
+        http.get(`${MAM_BASE}/tor/js/loadSearchJSONbasic.php`, () =>
+          HttpResponse.json({ error: 'Nothing returned, out of 0 hits' })),
+      );
+
+      const results = await indexer.search('no-results-query');
+      expect(results).toEqual([]);
     });
 
     it('search() throws IndexerError on invalid JSON body', async () => {
