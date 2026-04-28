@@ -35,12 +35,21 @@ describe('s6-overlay service definition', () => {
 
     it('run script starts dist/server/index.js', () => {
       const content = fs.readFileSync(path.join(serviceDir, 'run'), 'utf-8');
-      expect(content).toMatch(/node\s.*dist\/server\/index\.js/);
+      // node and the entry point may be on separate lines via shell continuation
+      expect(content).toContain('node');
+      expect(content).toContain('dist/server/index.js');
     });
 
     it('run script enables source maps so production stack traces map to TS source', () => {
       const content = fs.readFileSync(path.join(serviceDir, 'run'), 'utf-8');
       expect(content).toContain('--enable-source-maps');
+    });
+
+    it('run script enables Node crash reporting for diagnosing native faults', () => {
+      const content = fs.readFileSync(path.join(serviceDir, 'run'), 'utf-8');
+      expect(content).toContain('--report-on-fatalerror');
+      expect(content).toContain('--report-uncaught-exception');
+      expect(content).toContain('--report-directory=/config/crash-reports');
     });
 
     it('run script uses s6-setuidgid abc for LSIO user model', () => {

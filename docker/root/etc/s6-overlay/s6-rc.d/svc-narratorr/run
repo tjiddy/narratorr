@@ -3,6 +3,15 @@
 
 cd /app || exit 1
 
+# Ensure crash-report directory exists and is writable by the app user.
+# Node's --report-* flags require a pre-existing writable directory.
+s6-setuidgid abc mkdir -p /config/crash-reports
+
 exec \
     s6-setuidgid abc \
-    node --enable-source-maps dist/server/index.js
+    node \
+        --enable-source-maps \
+        --report-on-fatalerror \
+        --report-uncaught-exception \
+        --report-directory=/config/crash-reports \
+        dist/server/index.js
