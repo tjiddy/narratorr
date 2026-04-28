@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { eq, or, gt, and, lte, inArray } from 'drizzle-orm';
-import { mkdtempSync, rmSync } from 'fs';
+import { createClient } from '@libsql/client';
+import { mkdtempSync, readFileSync, rmSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
 import { BlacklistService } from './blacklist.service.js';
@@ -947,5 +948,118 @@ describe('BlacklistService — upsert integration (real libsql)', () => {
     await expect(
       service.create({ title: 'X', reason: 'spam' }),
     ).rejects.toThrow('Blacklist entry requires at least one identifier');
+  });
+});
+
+// ===== #736 — migration dedupe regression =====
+
+describe('blacklist migration 0001 — sequential dedupe', () => {
+  let dir: string;
+  let dbFile: string;
+  let client: ReturnType<typeof createClient>;
+
+  // Strip drizzle's "--> statement-breakpoint" markers and run the SQL in one
+  // multi-statement call, matching how drizzle's migrator executes it.
+  async function applyMigrationFile(relPath: string) {
+    const sql = readFileSync(join(process.cwd(), relPath), 'utf-8')
+      .replace(/-->\s*statement-breakpoint/g, '');
+    await client.executeMultiple(sql);
+  }
+
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), 'blacklist-migration-'));
+    dbFile = join(dir, 'narratorr.db');
+    client = createClient({ url: `file:${dbFile}` });
+  });
+
+  afterEach(() => {
+    client.close();
+    try {
+      rmSync(dir, { recursive: true, force: true });
+    } catch {
+      // libsql may keep file handles on Windows
+    }
+  });
+
+  it('keeps a single survivor when 5 rows share the same info_hash', async () => {
+    await applyMigrationFile('drizzle/0000_slimy_johnny_storm.sql');
+
+    // Seed 5 rows sharing info_hash='h1' with distinct guids
+    for (let i = 1; i <= 5; i++) {
+      await client.execute({
+        sql: 'INSERT INTO blacklist (info_hash, guid, title, reason) VALUES (?, ?, ?, ?)',
+        args: ['h1', `g${i}`, `Title ${i}`, 'spam'],
+      });
+    }
+
+    await applyMigrationFile('drizzle/0001_flashy_doctor_strange.sql');
+
+    const result = await client.execute('SELECT id, info_hash, guid FROM blacklist ORDER BY id');
+    expect(result.rows).toHaveLength(1);
+    expect(result.rows[0]).toMatchObject({ info_hash: 'h1', guid: 'g5' });
+
+    // Both partial unique indexes are in place
+    const indexes = await client.execute(
+      `SELECT name FROM sqlite_master WHERE type='index' AND tbl_name='blacklist'`,
+    );
+    const names = indexes.rows.map((r) => r.name as string);
+    expect(names).toContain('idx_blacklist_info_hash_unique');
+    expect(names).toContain('idx_blacklist_guid_unique');
+    expect(names).not.toContain('idx_blacklist_info_hash');
+    expect(names).not.toContain('idx_blacklist_guid');
+  });
+
+  it('overlapping duplicate components — pass 1 keeps id=2 and id=3, pass 2 keeps id=3', async () => {
+    await applyMigrationFile('drizzle/0000_slimy_johnny_storm.sql');
+
+    // Seed the documented overlap: {id:1,h:h1,g:g1}, {id:2,h:h1,g:g2}, {id:3,h:h2,g:g2}
+    // Pass 1 (max id per info_hash): h1 → keep id=2, drop id=1; h2 → keep id=3 → survivors {2,3}
+    // Pass 2 (max id per guid among survivors): g2 → keep id=3, drop id=2 → final {3}
+    await client.execute({
+      sql: 'INSERT INTO blacklist (id, info_hash, guid, title, reason) VALUES (?, ?, ?, ?, ?)',
+      args: [1, 'h1', 'g1', 'A', 'spam'],
+    });
+    await client.execute({
+      sql: 'INSERT INTO blacklist (id, info_hash, guid, title, reason) VALUES (?, ?, ?, ?, ?)',
+      args: [2, 'h1', 'g2', 'B', 'spam'],
+    });
+    await client.execute({
+      sql: 'INSERT INTO blacklist (id, info_hash, guid, title, reason) VALUES (?, ?, ?, ?, ?)',
+      args: [3, 'h2', 'g2', 'C', 'spam'],
+    });
+
+    await applyMigrationFile('drizzle/0001_flashy_doctor_strange.sql');
+
+    const result = await client.execute('SELECT id, info_hash, guid FROM blacklist ORDER BY id');
+    expect(result.rows).toHaveLength(1);
+    expect(result.rows[0]).toMatchObject({ id: 3, info_hash: 'h2', guid: 'g2' });
+  });
+
+  it('preserves rows with NULL identifiers and rows whose identifiers are uniquely shaped', async () => {
+    await applyMigrationFile('drizzle/0000_slimy_johnny_storm.sql');
+
+    // Both NULL identifiers (allowed pre-migration) — should NOT be touched by either DELETE pass
+    await client.execute({
+      sql: 'INSERT INTO blacklist (id, info_hash, guid, title, reason) VALUES (?, ?, ?, ?, ?)',
+      args: [1, null, null, 'orphan-1', 'spam'],
+    });
+    await client.execute({
+      sql: 'INSERT INTO blacklist (id, info_hash, guid, title, reason) VALUES (?, ?, ?, ?, ?)',
+      args: [2, null, null, 'orphan-2', 'spam'],
+    });
+    // Unique non-duplicate row
+    await client.execute({
+      sql: 'INSERT INTO blacklist (id, info_hash, guid, title, reason) VALUES (?, ?, ?, ?, ?)',
+      args: [3, 'unique-h', 'unique-g', 'lone', 'spam'],
+    });
+
+    await applyMigrationFile('drizzle/0001_flashy_doctor_strange.sql');
+
+    const result = await client.execute('SELECT id, info_hash, guid FROM blacklist ORDER BY id');
+    expect(result.rows).toHaveLength(3);
+    // NULL/NULL rows survive — partial unique index doesn't constrain NULLs
+    expect(result.rows[0]).toMatchObject({ id: 1, info_hash: null, guid: null });
+    expect(result.rows[1]).toMatchObject({ id: 2, info_hash: null, guid: null });
+    expect(result.rows[2]).toMatchObject({ id: 3, info_hash: 'unique-h', guid: 'unique-g' });
   });
 });
