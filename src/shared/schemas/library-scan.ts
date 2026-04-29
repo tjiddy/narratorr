@@ -7,10 +7,6 @@ import { z } from 'zod';
 export const importModeSchema = z.enum(['copy', 'move']);
 export type ImportMode = z.infer<typeof importModeSchema>;
 
-export const scanSingleBodySchema = z.object({
-  path: z.string().trim().min(1, 'path is required'),
-});
-
 export const scanDirectoryBodySchema = z.object({
   path: z.string().trim().min(1, 'path is required'),
 });
@@ -49,10 +45,6 @@ export const importConfirmItemSchema = z.object({
   metadata: z.unknown().optional(),
   // When true, bypasses the title+author safety-net duplicate check in confirmImport()
   forceImport: z.boolean().optional(),
-});
-
-export const importSingleBodySchema = importConfirmItemSchema.extend({
-  mode: importModeSchema.optional(),
 });
 
 export const importConfirmBodySchema = z.object({

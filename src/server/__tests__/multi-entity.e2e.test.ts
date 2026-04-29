@@ -161,13 +161,10 @@ describe('Multi-entity E2E', () => {
       }),
     );
 
-    const searchRes = await e2e.app.inject({
-      method: 'GET',
-      url: '/api/search?q=Brandon+Sanderson',
-    });
-
-    expect(searchRes.statusCode).toBe(200);
-    const results = searchRes.json().results;
+    // GET /api/search retired in Wave 11.2 (#755). SSE /api/search/stream is
+    // the active surface; aggregation across indexers is covered at the
+    // service layer via indexer.service. Exercise the service directly here.
+    const results = await e2e.services.indexer.searchAll('Brandon Sanderson');
     // Should have results from both indexers
     expect(results.length).toBeGreaterThanOrEqual(2);
 

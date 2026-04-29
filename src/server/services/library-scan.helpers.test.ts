@@ -6,7 +6,6 @@ import type { FastifyBaseLogger } from 'fastify';
 import { inject } from '../__tests__/helpers.js';
 import {
   buildDiscoveredBook,
-  findAudioLeafFolders,
   getAudioStats,
 } from './library-scan.helpers.js';
 
@@ -181,79 +180,3 @@ describe('getAudioStats', () => {
   });
 });
 
-describe('findAudioLeafFolders', () => {
-  let root: string;
-  let log: ReturnType<typeof createMockLog>;
-
-  beforeEach(async () => {
-    root = await mkdtemp(join(tmpdir(), 'library-scan-helpers-leaf-'));
-    log = createMockLog();
-  });
-
-  afterEach(async () => {
-    await rm(root, { recursive: true, force: true });
-  });
-
-  it('returns empty array for empty directory', async () => {
-    const result = await findAudioLeafFolders(root, inject<FastifyBaseLogger>(log));
-    expect(result).toEqual([]);
-  });
-
-  it('returns root when audio files live at the top level', async () => {
-    await writeFile(join(root, 'book.m4b'), Buffer.alloc(0));
-
-    const result = await findAudioLeafFolders(root, inject<FastifyBaseLogger>(log));
-    expect(result).toEqual([root]);
-  });
-
-  it('returns deepest directories when audio is nested', async () => {
-    const author = join(root, 'Author');
-    const bookA = join(author, 'Book A');
-    const bookB = join(author, 'Book B');
-    await mkdir(bookA, { recursive: true });
-    await mkdir(bookB, { recursive: true });
-    await writeFile(join(bookA, 'a.m4b'), Buffer.alloc(0));
-    await writeFile(join(bookB, 'b.mp3'), Buffer.alloc(0));
-
-    const result = await findAudioLeafFolders(root, inject<FastifyBaseLogger>(log));
-    expect(result.sort()).toEqual([bookA, bookB].sort());
-  });
-
-  it('skips hidden directories starting with a dot', async () => {
-    const visible = join(root, 'Visible');
-    const hidden = join(root, '.hidden');
-    await mkdir(visible);
-    await mkdir(hidden);
-    await writeFile(join(visible, 'a.m4b'), Buffer.alloc(0));
-    await writeFile(join(hidden, 'b.m4b'), Buffer.alloc(0));
-
-    const result = await findAudioLeafFolders(root, inject<FastifyBaseLogger>(log));
-    expect(result).toEqual([visible]);
-  });
-
-  it('silently skips symlinks-to-directory (Dirent#isDirectory returns false for symlinks; helper does not lstat or readlink, so symlink-following requires a deliberate contract change)', async () => {
-    // Pin: under readdir(..., { withFileTypes: true }), a symlink-to-directory
-    // reports isDirectory() === false and isFile() === false. findAudioLeafFolders
-    // only descends entries where isDirectory() returns true, so symlinks are
-    // ignored regardless of whether their target contains audio. A future
-    // implementer who wants symlink-following must explicitly add an lstat /
-    // readlink branch — this test exists to flag that change.
-    const realBook = join(root, 'Real Book');
-    await mkdir(realBook);
-    await writeFile(join(realBook, 'audio.m4b'), Buffer.alloc(0));
-
-    // Out-of-tree directory whose audio should NOT be discovered via the symlink.
-    const externalDir = join(root, '..', `library-scan-external-leaf-${Date.now()}`);
-    await mkdir(externalDir);
-    await writeFile(join(externalDir, 'phantom.m4b'), Buffer.alloc(0));
-
-    try {
-      await symlink(externalDir, join(root, 'linked'));
-
-      const result = await findAudioLeafFolders(root, inject<FastifyBaseLogger>(log));
-      expect(result).toEqual([realBook]);
-    } finally {
-      await rm(externalDir, { recursive: true, force: true });
-    }
-  });
-});

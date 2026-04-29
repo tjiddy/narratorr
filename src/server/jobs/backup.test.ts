@@ -1,9 +1,7 @@
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { runBackupJob, startBackupJob } from './backup.js';
+import { describe, it, expect, vi } from 'vitest';
+import { runBackupJob } from './backup.js';
 import type { BackupService } from '../services/backup.service.js';
-import type { SettingsService } from '../services/index.js';
 import type { FastifyBaseLogger } from 'fastify';
-import { createMockSettingsService } from '../__tests__/helpers.js';
 
 function createMockLog(): FastifyBaseLogger {
   return {
@@ -59,106 +57,3 @@ describe('runBackupJob', () => {
   });
 });
 
-describe('startBackupJob', () => {
-  beforeEach(() => {
-    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
-  });
-
-  afterEach(() => {
-    vi.useRealTimers();
-  });
-
-  it('reads interval from settings and schedules setTimeout', async () => {
-    const mockSettings = createMockSettingsService({ system: { backupIntervalMinutes: 60 } });
-    const mockBackup = {} as unknown as BackupService;
-    const log = createMockLog();
-
-    startBackupJob(mockSettings, mockBackup, log);
-
-    // Let the async scheduleNext() resolve
-    await vi.advanceTimersByTimeAsync(0);
-
-    expect(mockSettings.get).toHaveBeenCalledWith('system');
-    expect(vi.getTimerCount()).toBe(1);
-  });
-
-  it('retries in 5 minutes when settings read fails and logs canonical serialized error', async () => {
-    const mockSettings = {
-      get: vi.fn().mockRejectedValue(new Error('db error')),
-    } as unknown as SettingsService;
-    const mockBackup = {} as unknown as BackupService;
-    const log = createMockLog();
-
-    startBackupJob(mockSettings, mockBackup, log);
-
-    // Let the async scheduleNext() reject and hit the catch branch
-    await vi.advanceTimersByTimeAsync(0);
-
-    expect(vi.getTimerCount()).toBe(1);
-    expect(log.error).toHaveBeenCalledWith(
-      expect.objectContaining({ error: expect.objectContaining({ message: 'db error', type: 'Error' }) }),
-      'Failed to read backup interval, retrying in 5 minutes',
-    );
-  });
-
-  it('logs canonical serialized error via runBackupJob on scheduled timer fire', async () => {
-    // runBackupJob swallows all errors internally, so the outer setTimeout-level
-    // `Backup job error` catch is unreachable in normal flow. This test confirms
-    // that scheduled timer fires produce a canonical-shape log from the inner
-    // runBackupJob catch when the injected service is broken.
-    const throwingService = {
-      create: vi.fn().mockRejectedValue(new Error('disk full on timer fire')),
-      prune: vi.fn(),
-    } as unknown as BackupService;
-    const mockSettings = createMockSettingsService({ system: { backupIntervalMinutes: 60 } });
-    const log = createMockLog();
-
-    startBackupJob(mockSettings, throwingService, log);
-
-    await vi.advanceTimersByTimeAsync(0);
-    await vi.advanceTimersByTimeAsync(60 * 60 * 1000);
-
-    expect(log.error).toHaveBeenCalledWith(
-      expect.objectContaining({ error: expect.objectContaining({ message: 'disk full on timer fire', type: 'Error' }) }),
-      'Backup job failed',
-    );
-  });
-
-  it('fires the timer callback, runs backup job, and recursively reschedules', async () => {
-    const mockSettings = createMockSettingsService({ system: { backupIntervalMinutes: 60 } });
-    const mockBackup = {
-      create: vi.fn().mockResolvedValue({ filename: 'test.zip', timestamp: '2026-01-01', size: 1024 }),
-      prune: vi.fn().mockResolvedValue(0),
-    } as unknown as BackupService;
-    const log = createMockLog();
-
-    startBackupJob(mockSettings, mockBackup, log);
-
-    // Let scheduleNext() resolve and schedule the initial timer
-    await vi.advanceTimersByTimeAsync(0);
-    expect(mockSettings.get).toHaveBeenCalledTimes(1);
-
-    // Fire the timer (60 min = 3600000ms) — this runs the backup job
-    await vi.advanceTimersByTimeAsync(60 * 60 * 1000);
-
-    // The job should have run
-    expect(mockBackup.create).toHaveBeenCalled();
-    expect(mockBackup.prune).toHaveBeenCalled();
-
-    // scheduleNext should have re-read settings for the next cycle
-    expect(mockSettings.get).toHaveBeenCalledTimes(2);
-
-    // A new timer should be scheduled for the next cycle
-    expect(vi.getTimerCount()).toBe(1);
-  });
-
-  it('logs startup message', () => {
-    const mockSettings = createMockSettingsService({ system: { backupIntervalMinutes: 60 } });
-    const mockBackup = {} as unknown as BackupService;
-    const log = createMockLog();
-
-    startBackupJob(mockSettings, mockBackup, log);
-
-    expect(log.info).toHaveBeenCalledWith('Backup job scheduler started');
-  });
-});

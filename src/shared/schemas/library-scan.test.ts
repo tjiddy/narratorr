@@ -4,21 +4,7 @@ import {
   jobIdParamSchema,
   matchCandidateSchema,
   scanDirectoryBodySchema,
-  scanSingleBodySchema,
 } from './library-scan.js';
-
-describe('scanSingleBodySchema — trim behavior', () => {
-  it('rejects whitespace-only path', () => {
-    const result = scanSingleBodySchema.safeParse({ path: '   ' });
-    expect(result.success).toBe(false);
-  });
-
-  it('trims leading/trailing spaces from path', () => {
-    const result = scanSingleBodySchema.safeParse({ path: '  /books/file.mp3  ' });
-    expect(result.success).toBe(true);
-    if (result.success) expect(result.data.path).toBe('/books/file.mp3');
-  });
-});
 
 describe('scanDirectoryBodySchema — trim behavior', () => {
   it('rejects whitespace-only path', () => {

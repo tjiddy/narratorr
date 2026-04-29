@@ -11,7 +11,7 @@ vi.mock('node-cron', () => ({ default: { schedule: vi.fn() } }));
 // Mock job modules — only the run functions are used now
 vi.mock('./monitor.js', () => ({ monitorDownloads: vi.fn() }));
 vi.mock('./enrichment.js', () => ({ runEnrichment: vi.fn() }));
-vi.mock('./search.js', () => ({ runSearchJob: vi.fn() }));
+vi.mock('./search.js', () => ({ runSearchJob: vi.fn(), runUpgradeSearchJob: vi.fn() }));
 vi.mock('./rss.js', () => ({ runRssJob: vi.fn() }));
 vi.mock('./backup.js', () => ({ runBackupJob: vi.fn() }));
 vi.mock('./version-check.js', () => ({ checkForUpdate: vi.fn() }));
@@ -68,6 +68,7 @@ describe('startJobs', () => {
     expect(names).toContain('enrichment');
     expect(names).toContain('import-maintenance');
     expect(names).toContain('search');
+    expect(names).toContain('upgrade-search');
     expect(names).toContain('rss');
     expect(names).toContain('backup');
     expect(names).toContain('housekeeping');
@@ -135,6 +136,64 @@ describe('startJobs', () => {
     await services.taskRegistry.executeTracked('enrichment');
 
     expect(runEnrichment).toHaveBeenCalledWith(db, services.metadata, services.book, log);
+  });
+
+  // #755 Wave 11.2 — upgrade-search wired into the registry as a `timeout` job
+  // sharing the search.intervalMinutes cadence with the regular search job.
+  describe('upgrade-search task (#755)', () => {
+    it('registers upgrade-search as a timeout job', async () => {
+      const { startJobs } = await import('./index.js');
+      startJobs(injectHelper<Db>(db), services, log);
+
+      await new Promise((resolve) => setTimeout(resolve, 10));
+
+      const tasks = services.taskRegistry.getAll();
+      const entry = tasks.find((t) => t.name === 'upgrade-search');
+      expect(entry).toBeDefined();
+      expect(entry!.type).toBe('timeout');
+    });
+
+    it('callback invokes runUpgradeSearchJob with services.settings, services.book, services.indexer, services.downloadOrchestrator, log', async () => {
+      const { runUpgradeSearchJob } = await import('./search.js');
+      const { startJobs } = await import('./index.js');
+      startJobs(injectHelper<Db>(db), services, log);
+
+      await services.taskRegistry.executeTracked('upgrade-search');
+
+      expect(runUpgradeSearchJob).toHaveBeenCalledWith(
+        services.settings,
+        services.book,
+        services.indexer,
+        services.downloadOrchestrator,
+        log,
+      );
+    });
+
+    it('reads cadence from search.intervalMinutes (shared with the search job)', async () => {
+      (services.settings.get as ReturnType<typeof vi.fn>).mockImplementation(async (category: string) => {
+        if (category === 'search') return { intervalMinutes: 17 };
+        if (category === 'rss') return { intervalMinutes: 30 };
+        if (category === 'system') return { backupIntervalMinutes: 60 };
+        if (category === 'discovery') return { intervalHours: 24 };
+        if (category === 'general') return { housekeepingRetentionDays: 90 };
+        return {};
+      });
+
+      const setTimeoutSpy = vi.spyOn(globalThis, 'setTimeout');
+
+      const { startJobs } = await import('./index.js');
+      startJobs(injectHelper<Db>(db), services, log);
+
+      const expectedMs = 17 * 60 * 1000;
+      // Both `search` and `upgrade-search` schedule with this delay; assert at
+      // least two scheduling calls land on it (search + upgrade-search).
+      await vi.waitFor(() => {
+        const matches = setTimeoutSpy.mock.calls.filter(([, delay]) => delay === expectedMs);
+        expect(matches.length).toBeGreaterThanOrEqual(2);
+      });
+
+      setTimeoutSpy.mockRestore();
+    });
   });
 
   it('schedules discovery timeout loop using intervalHours * 60 from discovery settings', async () => {

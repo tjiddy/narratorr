@@ -21,14 +21,6 @@ export interface SearchResponse {
 }
 
 export const searchApi = {
-  searchBooks: (query: string, context?: SearchContext) => {
-    const params = new URLSearchParams({ q: query });
-    if (context?.author) params.set('author', context.author);
-    if (context?.title) params.set('title', context.title);
-    if (context?.bookDuration) params.set('bookDuration', String(context.bookDuration));
-    return fetchApi<SearchResponse>(`/search?${params.toString()}`);
-  },
-
   cancelSearchIndexer: (sessionId: string, indexerId: number) =>
     fetchApi<{ cancelled: boolean }>(`/search/stream/${sessionId}/cancel/${indexerId}`, {
       method: 'POST',

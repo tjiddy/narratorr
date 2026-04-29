@@ -4,11 +4,6 @@ import type { BookMetadata } from './books.js';
 export type { DiscoveredBook, DuplicateReason, ImportMode } from '../../../shared/schemas/library-scan.js';
 import type { DiscoveredBook, ImportMode } from '../../../shared/schemas/library-scan.js';
 
-export interface SingleBookResult {
-  book: DiscoveredBook;
-  metadata: BookMetadata | null;
-}
-
 export interface ImportConfirmItem {
   path: string;
   title: string;
@@ -19,13 +14,6 @@ export interface ImportConfirmItem {
   metadata?: BookMetadata;
   /** When true, bypasses the server-side title+author safety-net duplicate check */
   forceImport?: boolean;
-}
-
-export interface ImportSingleResult {
-  imported: boolean;
-  bookId?: number;
-  enriched: boolean;
-  error?: string;
 }
 
 export interface ScanResult {
@@ -71,16 +59,6 @@ export interface MatchJobStatus {
 export const libraryScanApi = {
   rescanLibrary: () =>
     fetchApi<RescanResult>('/library/rescan', { method: 'POST' }),
-  scanSingleBook: (path: string) =>
-    fetchApi<SingleBookResult>('/library/import/scan-single', {
-      method: 'POST',
-      body: JSON.stringify({ path }),
-    }),
-  importSingleBook: (item: ImportConfirmItem & { mode?: ImportMode }) =>
-    fetchApi<ImportSingleResult>('/library/import/single', {
-      method: 'POST',
-      body: JSON.stringify(item),
-    }),
   scanDirectory: (path: string) =>
     fetchApi<ScanResult>('/library/import/scan', {
       method: 'POST',

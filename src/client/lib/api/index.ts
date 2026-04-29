@@ -9,14 +9,14 @@ export type { Notifier } from './notifiers.js';
 export type { BlacklistEntry } from './blacklist.js';
 export type { Settings, TestResult, FfmpegProbeResult, ProxyTestResult } from './settings.js';
 export type { AuthStatus, AuthConfig } from './auth.js';
-export type { DiscoveredBook, ScanResult, SingleBookResult, ImportConfirmItem, ImportSingleResult, ImportResult, ImportMode, Confidence, MatchCandidate, MatchResult, MatchJobStatus, RescanResult } from './library-scan.js';
+export type { DiscoveredBook, ScanResult, ImportConfirmItem, ImportResult, ImportMode, Confidence, MatchCandidate, MatchResult, MatchJobStatus, RescanResult } from './library-scan.js';
 export type { BrowseResult } from './filesystem.js';
 export type { RemotePathMapping } from './remote-path-mappings.js';
 export type { BookEvent, EventHistoryParams } from './event-history.js';
 export type { BackupMetadata, RestoreValidation, BackupJobResult } from './backups.js';
 export type { HealthState, HealthCheckResult, HealthSummary, TaskMetadata, SystemInfo, SystemStatus } from './system.js';
 export type { ImportList, ImportListItem, ImportListPreview } from './import-lists.js';
-export type { SuggestionRow, DiscoverStats, MarkAddedResult, RefreshResult } from './discover.js';
+export type { SuggestionRow, MarkAddedResult, RefreshResult } from './discover.js';
 export type { BulkOpType, BulkJobStatus, RenameCount } from './bulk-operations.js';
 export type { ImportJobWithBook, ImportJobBook, ImportJobsParams } from './import-jobs.js';
 

@@ -19,7 +19,6 @@ vi.mock('@/lib/api', async () => {
       deleteBook: vi.fn(),
       deleteMissingBooks: vi.fn(),
       rescanLibrary: vi.fn(),
-      searchBooks: vi.fn(),
       searchGrab: vi.fn(),
       searchAllWanted: vi.fn(),
       searchBook: vi.fn(),
@@ -723,7 +722,6 @@ describe('LibraryPage', () => {
 
   it('opens search releases modal when Search Releases is clicked', async () => {
     mockLibraryData(mockBooks);
-    vi.mocked(api.searchBooks).mockResolvedValue({ results: [], durationUnknown: false, unsupportedResults: { count: 0, titles: [] } });
     const user = userEvent.setup();
 
     renderWithProviders(<LibraryPage />);
@@ -2046,7 +2044,6 @@ describe('LibraryPage — card menu observable behavior (#183)', () => {
 
   it('opens releases modal and closes menu when Search Releases is clicked', async () => {
     mockLibraryData(mockBooks);
-    vi.mocked(api.searchBooks).mockResolvedValue({ results: [], durationUnknown: false, unsupportedResults: { count: 0, titles: [] } });
     const user = userEvent.setup();
 
     renderWithProviders(<LibraryPage />);
@@ -2179,7 +2176,6 @@ describe('LibraryPage — card menu observable behavior (#183)', () => {
 
   it('does not navigate when a menu item is clicked', async () => {
     mockLibraryData(mockBooks);
-    vi.mocked(api.searchBooks).mockResolvedValue({ results: [], durationUnknown: false, unsupportedResults: { count: 0, titles: [] } });
     mockNavigate.mockClear();
     const user = userEvent.setup();
 

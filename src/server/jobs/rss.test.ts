@@ -1,6 +1,6 @@
-import { describe, it, expect, beforeEach, afterEach, vi, type Mock } from 'vitest';
+import { describe, it, expect, beforeEach, vi, type Mock } from 'vitest';
 import { createMockLogger, inject, createMockSettingsService } from '../__tests__/helpers.js';
-import { runRssJob, startRssJob } from './rss.js';
+import { runRssJob } from './rss.js';
 import type { FastifyBaseLogger } from 'fastify';
 import type { BookService } from '../services/book.service.js';
 import type { BookListService } from '../services/book-list.service.js';
@@ -589,66 +589,11 @@ describe('runRssJob', () => {
   });
 });
 
-describe('startRssJob', () => {
+describe('rss tests — GUID blacklist filtering', () => {
   let log: ReturnType<typeof createMockLogger>;
 
   beforeEach(() => {
-    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
     log = createMockLogger();
-  });
-
-  afterEach(() => {
-    vi.useRealTimers();
-  });
-
-  it('schedules next run using intervalMinutes from settings', async () => {
-    const settings = createMockSettingsService({ rss: { enabled: false, intervalMinutes: 15 } });
-    const { bookList, book } = createMockBookServices();
-    const indexer = createMockIndexerService();
-    const download = createMockDownloadOrchestrator();
-    const blacklist = createMockBlacklistService();
-
-    startRssJob(settings, bookList, book, indexer, download, blacklist, inject<FastifyBaseLogger>(log));
-
-    // scheduleNext reads settings then sets a setTimeout
-    await vi.advanceTimersByTimeAsync(0);
-
-    expect(settings.get).toHaveBeenCalledWith('rss');
-    // After intervalMinutes elapses, runRssJob should be called
-    expect(log.info).toHaveBeenCalledWith('RSS sync job scheduler started');
-
-    // Advance past the 15-minute interval
-    await vi.advanceTimersByTimeAsync(15 * 60 * 1000);
-
-    // runRssJob was called (it reads settings again internally)
-    expect((settings.get as Mock).mock.calls.length).toBeGreaterThanOrEqual(2);
-  });
-
-  it('retries in 5 minutes when settings read fails', async () => {
-    const settings = createMockSettingsService({ rss: { enabled: true } });
-    (settings.get as Mock).mockRejectedValueOnce(new Error('DB connection lost'));
-    // Second call succeeds (for the retry)
-    (settings.get as Mock).mockResolvedValueOnce({ enabled: false, intervalMinutes: 30 });
-    const { bookList, book } = createMockBookServices();
-    const indexer = createMockIndexerService();
-    const download = createMockDownloadOrchestrator();
-    const blacklist = createMockBlacklistService();
-
-    startRssJob(settings, bookList, book, indexer, download, blacklist, inject<FastifyBaseLogger>(log));
-
-    // Let the first scheduleNext run and fail
-    await vi.advanceTimersByTimeAsync(0);
-
-    expect(log.error).toHaveBeenCalledWith(
-      expect.objectContaining({ error: expect.objectContaining({ message: 'DB connection lost', type: 'Error' }) }),
-      'Failed to read RSS interval, retrying in 5 minutes',
-    );
-
-    // Advance 5 minutes for the retry
-    await vi.advanceTimersByTimeAsync(5 * 60 * 1000);
-
-    // The retry should have read settings again
-    expect((settings.get as Mock).mock.calls.length).toBeGreaterThanOrEqual(2);
   });
 
   // ===== #248 — GUID blacklist filtering in RSS =====

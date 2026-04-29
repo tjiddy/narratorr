@@ -1,5 +1,3 @@
-import cron from 'node-cron';
-import { MONITOR_CRON_INTERVAL } from './constants.js';
 import { eq, inArray, and, ne } from 'drizzle-orm';
 import type { Db } from '../../db/index.js';
 import type { FastifyBaseLogger } from 'fastify';
@@ -25,27 +23,6 @@ import { serializeError } from '../utils/serialize-error.js';
 export interface MonitorRetryDeps {
   blacklistService: BlacklistService;
   retrySearchDeps: RetrySearchDeps;
-}
-
-export function startMonitorJob(
-  db: Db,
-  downloadClientService: DownloadClientService,
-  notifierService: NotifierService,
-  log: FastifyBaseLogger,
-  retryDeps?: MonitorRetryDeps,
-  broadcaster?: EventBroadcasterService,
-  remotePathMappingService?: RemotePathMappingService,
-) {
-  // Run every 30 seconds
-  cron.schedule(MONITOR_CRON_INTERVAL, async () => {
-    try {
-      await monitorDownloads(db, downloadClientService, notifierService, log, retryDeps, broadcaster, remotePathMappingService);
-    } catch (error: unknown) {
-      log.error({ error: serializeError(error) }, 'Monitor job error');
-    }
-  });
-
-  log.info('Download monitor job started (every 30 seconds)');
 }
 
 export async function monitorDownloads(

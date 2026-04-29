@@ -176,209 +176,24 @@ describe('library-scan routes', () => {
     });
   });
 
-  describe('POST /api/library/import/scan-single', () => {
-    it('returns scan result for a single book folder', async () => {
-      const mockResult = {
-        parsedTitle: 'The Great Gatsby',
-        parsedAuthor: 'F. Scott Fitzgerald',
-        match: { title: 'The Great Gatsby', asin: 'B123' },
-      };
-
-      (services.libraryScan.scanSingleBook as ReturnType<typeof vi.fn>)
-        .mockResolvedValue(mockResult);
-
+  // Wave 11.2 (#755) — single-book scan/import routes retired
+  describe('removed routes', () => {
+    it('POST /api/library/import/scan-single returns 404', async () => {
       const res = await app.inject({
         method: 'POST',
         url: '/api/library/import/scan-single',
-        payload: { path: '/audiobooks/Fitzgerald/The Great Gatsby' },
+        payload: { path: '/audiobooks/Anywhere' },
       });
-
-      expect(res.statusCode).toBe(200);
-      const body = JSON.parse(res.payload);
-      expect(body.parsedTitle).toBe('The Great Gatsby');
-      expect(body.match.asin).toBe('B123');
-      expect(services.libraryScan.scanSingleBook).toHaveBeenCalledWith(
-        '/audiobooks/Fitzgerald/The Great Gatsby',
-      );
+      expect(res.statusCode).toBe(404);
     });
 
-    it('returns 400 when path is missing', async () => {
-      const res = await app.inject({
-        method: 'POST',
-        url: '/api/library/import/scan-single',
-        payload: {},
-      });
-
-      expect(res.statusCode).toBe(400);
-    });
-
-    it('returns 400 when path is not a string', async () => {
-      const res = await app.inject({
-        method: 'POST',
-        url: '/api/library/import/scan-single',
-        payload: { path: 123 },
-      });
-
-      expect(res.statusCode).toBe(400);
-    });
-
-    it('returns 400 on scan error with error message', async () => {
-      (services.libraryScan.scanSingleBook as ReturnType<typeof vi.fn>)
-        .mockRejectedValue(new Error('Folder not found'));
-
-      const res = await app.inject({
-        method: 'POST',
-        url: '/api/library/import/scan-single',
-        payload: { path: '/nonexistent/path' },
-      });
-
-      expect(res.statusCode).toBe(400);
-      const body = JSON.parse(res.payload);
-      expect(body.error).toContain('Folder not found');
-    });
-
-    it('returns stringified value when non-Error is thrown', async () => {
-      (services.libraryScan.scanSingleBook as ReturnType<typeof vi.fn>)
-        .mockRejectedValue('unexpected');
-
-      const res = await app.inject({
-        method: 'POST',
-        url: '/api/library/import/scan-single',
-        payload: { path: '/some/path' },
-      });
-
-      expect(res.statusCode).toBe(400);
-      const body = JSON.parse(res.payload);
-      expect(body.error).toBe('unexpected');
-    });
-  });
-
-  describe('POST /api/library/import/single', () => {
-    it('imports a single book successfully', async () => {
-      const mockResult = { id: 1, title: 'Test Book', path: '/lib/Test Book' };
-
-      (services.libraryScan.importSingleBook as ReturnType<typeof vi.fn>)
-        .mockResolvedValue(mockResult);
-
+    it('POST /api/library/import/single returns 404', async () => {
       const res = await app.inject({
         method: 'POST',
         url: '/api/library/import/single',
-        payload: {
-          path: '/audiobooks/Author/Test Book',
-          title: 'Test Book',
-          authorName: 'Author',
-        },
+        payload: { path: '/audiobooks/Anywhere', title: 'X' },
       });
-
-      expect(res.statusCode).toBe(200);
-      const body = JSON.parse(res.payload);
-      expect(body.id).toBe(1);
-      expect(body.title).toBe('Test Book');
-    });
-
-    it('passes mode and metadata to importSingleBook', async () => {
-      (services.libraryScan.importSingleBook as ReturnType<typeof vi.fn>)
-        .mockResolvedValue({ id: 2 });
-
-      const metadata = { asin: 'B123', description: 'A book' };
-      const res = await app.inject({
-        method: 'POST',
-        url: '/api/library/import/single',
-        payload: {
-          path: '/audiobooks/Book',
-          title: 'Book',
-          authorName: 'Author',
-          mode: 'move',
-          metadata,
-        },
-      });
-
-      expect(res.statusCode).toBe(200);
-      // metadata is separated from item, mode is passed as third arg
-      expect(services.libraryScan.importSingleBook).toHaveBeenCalledWith(
-        { path: '/audiobooks/Book', title: 'Book', authorName: 'Author' },
-        metadata,
-        'move',
-      );
-    });
-
-    it('passes undefined metadata when not provided', async () => {
-      (services.libraryScan.importSingleBook as ReturnType<typeof vi.fn>)
-        .mockResolvedValue({ id: 3 });
-
-      await app.inject({
-        method: 'POST',
-        url: '/api/library/import/single',
-        payload: {
-          path: '/audiobooks/Book',
-          title: 'Book',
-          authorName: 'Author',
-        },
-      });
-
-      expect(services.libraryScan.importSingleBook).toHaveBeenCalledWith(
-        { path: '/audiobooks/Book', title: 'Book', authorName: 'Author' },
-        undefined,
-        undefined,
-      );
-    });
-
-    it('returns 400 when path is missing', async () => {
-      const res = await app.inject({
-        method: 'POST',
-        url: '/api/library/import/single',
-        payload: { title: 'Book' },
-      });
-
-      expect(res.statusCode).toBe(400);
-    });
-
-    it('returns 400 when title is missing', async () => {
-      const res = await app.inject({
-        method: 'POST',
-        url: '/api/library/import/single',
-        payload: { path: '/audiobooks/Book' },
-      });
-
-      expect(res.statusCode).toBe(400);
-    });
-
-    it('returns 500 on import error', async () => {
-      (services.libraryScan.importSingleBook as ReturnType<typeof vi.fn>)
-        .mockRejectedValue(new Error('Disk full'));
-
-      const res = await app.inject({
-        method: 'POST',
-        url: '/api/library/import/single',
-        payload: {
-          path: '/audiobooks/Book',
-          title: 'Book',
-          authorName: 'Author',
-        },
-      });
-
-      expect(res.statusCode).toBe(500);
-      const body = JSON.parse(res.payload);
-      expect(body.error).toContain('Disk full');
-    });
-
-    it('returns stringified value when non-Error is thrown', async () => {
-      (services.libraryScan.importSingleBook as ReturnType<typeof vi.fn>)
-        .mockRejectedValue(42);
-
-      const res = await app.inject({
-        method: 'POST',
-        url: '/api/library/import/single',
-        payload: {
-          path: '/audiobooks/Book',
-          title: 'Book',
-          authorName: 'Author',
-        },
-      });
-
-      expect(res.statusCode).toBe(500);
-      const body = JSON.parse(res.payload);
-      expect(body.error).toBe('42');
+      expect(res.statusCode).toBe(404);
     });
   });
 

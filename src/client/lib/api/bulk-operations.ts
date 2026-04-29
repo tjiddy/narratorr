@@ -23,9 +23,6 @@ export const bulkOperationsApi = {
   getBulkRetagCount: () =>
     fetchApi<{ total: number }>('/books/bulk/retag/count'),
 
-  getBulkConvertCount: () =>
-    fetchApi<{ total: number }>('/books/bulk/convert/count'),
-
   getActiveBulkJob: () =>
     fetchApi<BulkJobStatus | null>('/books/bulk/active'),
 

@@ -1,17 +1,11 @@
 import { type FastifyInstance } from 'fastify';
-import { type IndexerService } from '../services';
 import { type DownloadOrchestrator } from '../services/download-orchestrator.js';
-import { type BlacklistService } from '../services';
-import { type SettingsService } from '../services';
 import { getErrorMessage } from '../utils/error-message.js';
 import { sanitizeLogUrl } from '../utils/sanitize-log-url.js';
 import { DuplicateDownloadError } from '../services/download.service.js';
 import { DownloadClientError } from '../../core/download-clients/errors.js';
-import { postProcessSearchResults } from '../services/search-pipeline.js';
 import {
-  searchQuerySchema,
   grabSchema,
-  type SearchQuery,
   type GrabInput,
 } from '../../shared/schemas.js';
 import { serializeError } from '../utils/serialize-error.js';
@@ -19,34 +13,8 @@ import { serializeError } from '../utils/serialize-error.js';
 
 export async function searchRoutes(
   app: FastifyInstance,
-  indexerService: IndexerService,
   downloadOrchestrator: DownloadOrchestrator,
-  blacklistService: BlacklistService,
-  settingsService: SettingsService,
 ) {
-  // GET /api/search
-  app.get<{ Querystring: SearchQuery }>(
-    '/api/search',
-    {
-      schema: {
-        querystring: searchQuerySchema,
-      },
-    },
-    async (request, reply) => {
-      const { q, limit, author, title, bookDuration } = request.query;
-
-      // Reject invalid bookDuration (transformed to null by schema)
-      if (bookDuration === null) {
-        return reply.status(400).send({ error: 'bookDuration must be a positive number' });
-      }
-
-      request.log.debug({ q, author, title, bookDuration }, 'Search request');
-      const allResults = await indexerService.searchAll(q, { limit, author, title });
-
-      return postProcessSearchResults(allResults, bookDuration, blacklistService, settingsService, request.log);
-    }
-  );
-
   // POST /api/search/grab
   app.post<{ Body: GrabInput }>(
     '/api/search/grab',

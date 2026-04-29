@@ -194,13 +194,20 @@ describe('Discover Routes', () => {
     });
   });
 
-  describe('GET /api/discover/stats', () => {
-    it('returns counts by reason type', async () => {
-      (services.discovery.getStats as Mock).mockResolvedValueOnce({ author: 5, series: 2, genre: 3 });
-
+  // Wave 11.2 (#755) — GET /api/discover/stats and POST /api/discover/suggestions/:id/snooze retired
+  describe('removed routes', () => {
+    it('GET /api/discover/stats returns 404', async () => {
       const res = await app.inject({ method: 'GET', url: '/api/discover/stats' });
-      expect(res.statusCode).toBe(200);
-      expect(JSON.parse(res.payload)).toEqual({ author: 5, series: 2, genre: 3 });
+      expect(res.statusCode).toBe(404);
+    });
+
+    it('POST /api/discover/suggestions/:id/snooze returns 404', async () => {
+      const res = await app.inject({
+        method: 'POST',
+        url: '/api/discover/suggestions/1/snooze',
+        payload: { durationDays: 7 },
+      });
+      expect(res.statusCode).toBe(404);
     });
   });
 
@@ -219,86 +226,6 @@ describe('Discover Routes', () => {
       const res = await app.inject({ method: 'GET', url: '/api/discover/suggestions?reason=author&author=Sanderson' });
       expect(res.statusCode).toBe(200);
       expect(services.discovery.getSuggestions).toHaveBeenCalledWith({ reason: 'author', author: 'Sanderson' });
-    });
-  });
-
-  // --- #408: Snooze route ---
-
-  describe('POST /api/discover/suggestions/:id/snooze', () => {
-    it('returns 200 with updated SuggestionRow including snoozeUntil', async () => {
-      const snoozeUntil = new Date(Date.now() + 7 * 86400000);
-      (services.discovery.snoozeSuggestion as Mock).mockResolvedValueOnce(
-        mockSuggestionRow({ id: 1, asin: 'B001', status: 'pending', snoozeUntil }),
-      );
-
-      const res = await app.inject({
-        method: 'POST',
-        url: '/api/discover/suggestions/1/snooze',
-        payload: { durationDays: 7 },
-      });
-      expect(res.statusCode).toBe(200);
-      const body = JSON.parse(res.payload);
-      expect(body.status).toBe('pending');
-      expect(body.snoozeUntil).toBeDefined();
-      expect(services.discovery.snoozeSuggestion).toHaveBeenCalledWith(1, 7);
-    });
-
-    it('returns 400 for invalid body (missing durationDays)', async () => {
-      const res = await app.inject({
-        method: 'POST',
-        url: '/api/discover/suggestions/1/snooze',
-        payload: {},
-      });
-      expect(res.statusCode).toBe(400);
-    });
-
-    it('returns 400 for non-integer durationDays (float)', async () => {
-      const res = await app.inject({
-        method: 'POST',
-        url: '/api/discover/suggestions/1/snooze',
-        payload: { durationDays: 2.5 },
-      });
-      expect(res.statusCode).toBe(400);
-    });
-
-    it('returns 400 for durationDays < 1', async () => {
-      const res = await app.inject({
-        method: 'POST',
-        url: '/api/discover/suggestions/1/snooze',
-        payload: { durationDays: 0 },
-      });
-      expect(res.statusCode).toBe(400);
-    });
-
-    it('returns 400 for durationDays > 365', async () => {
-      const res = await app.inject({
-        method: 'POST',
-        url: '/api/discover/suggestions/1/snooze',
-        payload: { durationDays: 400 },
-      });
-      expect(res.statusCode).toBe(400);
-    });
-
-    it('returns 404 for non-existent suggestion ID', async () => {
-      (services.discovery.snoozeSuggestion as Mock).mockResolvedValueOnce(null);
-
-      const res = await app.inject({
-        method: 'POST',
-        url: '/api/discover/suggestions/999/snooze',
-        payload: { durationDays: 7 },
-      });
-      expect(res.statusCode).toBe(404);
-    });
-
-    it('returns 409 for suggestion not in pending status', async () => {
-      (services.discovery.snoozeSuggestion as Mock).mockResolvedValueOnce('conflict');
-
-      const res = await app.inject({
-        method: 'POST',
-        url: '/api/discover/suggestions/1/snooze',
-        payload: { durationDays: 7 },
-      });
-      expect(res.statusCode).toBe(409);
     });
   });
 

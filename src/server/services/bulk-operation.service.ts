@@ -121,19 +121,6 @@ export class BulkOperationService {
     return { total: Number(result[0]?.count ?? 0) };
   }
 
-  async countConvertEligible(): Promise<{ total: number }> {
-    const result = await this.db
-      .select({ count: sql<number>`count(*)` })
-      .from(books)
-      .where(
-        and(
-          eq(books.status, 'imported'),
-          or(isNull(books.audioFileFormat), sql`LOWER(${books.audioFileFormat}) != 'm4b'`),
-        ),
-      );
-    return { total: Number(result[0]?.count ?? 0) };
-  }
-
   async startRenameJob(): Promise<string> {
     this.assertNoActiveJob();
     const librarySettings = await this.settingsService.get('library');

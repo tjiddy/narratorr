@@ -8,19 +8,7 @@ import type { RetryBudget } from '../services/retry-budget.js';
 import type { EventBroadcasterService } from '../services/event-broadcaster.service.js';
 import type { EventHistoryService } from '../services/event-history.service.js';
 import { createMockDbBook } from '../__tests__/factories.js';
-
-let cronCallback: (() => Promise<void>) | null = null;
-
-vi.mock('node-cron', () => ({
-  default: {
-    schedule: vi.fn((_expression: string, cb: () => Promise<void>) => {
-      cronCallback = cb;
-    }),
-  },
-}));
-
-// Must import after vi.mock so the mock is in place
-const { startMonitorJob, monitorDownloads } = await import('./monitor.js');
+import { monitorDownloads } from './monitor.js';
 
 describe('monitor job', () => {
   let db: ReturnType<typeof createMockDb>;
@@ -35,15 +23,15 @@ describe('monitor job', () => {
     adapter = { getDownload: vi.fn() };
     downloadClientService = { getAdapter: vi.fn().mockResolvedValue(adapter) };
     notifierService = { notify: vi.fn().mockResolvedValue(undefined) };
-    cronCallback = null;
-
-    // Register the cron callback
-    startMonitorJob(inject<Db>(db), inject<DownloadClientService>(downloadClientService), inject<NotifierService>(notifierService), inject<FastifyBaseLogger>(log));
   });
 
   async function runMonitor() {
-    expect(cronCallback).not.toBeNull();
-    await cronCallback!();
+    await monitorDownloads(
+      inject<Db>(db),
+      inject<DownloadClientService>(downloadClientService),
+      inject<NotifierService>(notifierService),
+      inject<FastifyBaseLogger>(log),
+    );
   }
 
   it('does nothing when no active downloads', async () => {

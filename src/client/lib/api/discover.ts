@@ -1,10 +1,8 @@
-import type { SuggestionReason, SuggestionRowResponse } from '../../../shared/schemas/discovery.js';
+import type { SuggestionRowResponse } from '../../../shared/schemas/discovery.js';
 import { fetchApi } from './client.js';
 
 /** @deprecated Use SuggestionRowResponse directly — alias preserved for existing consumers. */
 export type SuggestionRow = SuggestionRowResponse;
-
-export type DiscoverStats = Partial<Record<SuggestionReason, number>>;
 
 export interface MarkAddedResult {
   suggestion: SuggestionRowResponse;
@@ -30,18 +28,8 @@ export const discoverApi = {
       method: 'POST',
     }),
 
-  snoozeDiscoverSuggestion: (id: number, durationDays: number) =>
-    fetchApi<SuggestionRowResponse>(`/discover/suggestions/${id}/snooze`, {
-      method: 'POST',
-      body: JSON.stringify({ durationDays }),
-      headers: { 'Content-Type': 'application/json' },
-    }),
-
   refreshDiscover: () =>
     fetchApi<RefreshResult>('/discover/refresh', {
       method: 'POST',
     }),
-
-  getDiscoverStats: () =>
-    fetchApi<DiscoverStats>('/discover/stats'),
 };
