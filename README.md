@@ -80,7 +80,7 @@ See the **[documentation](https://docs.narratorr.dev)** for detailed configurati
 | Package Manager | pnpm |
 | Backend | Node.js 24, Fastify 5 |
 | Database | SQLite (libSQL) + Drizzle ORM |
-| Frontend | React 18 + Vite |
+| Frontend | React 19 + Vite 7 |
 | Data Fetching | TanStack Query |
 | Styling | Tailwind CSS |
 | Deployment | Docker (linuxserver.io base) |

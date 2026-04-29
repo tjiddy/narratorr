@@ -89,6 +89,6 @@ Initial public release. Full audiobook acquisition and organization pipeline.
 
 ### Tech Stack
 - Node.js 24, Fastify 5, Drizzle ORM + libSQL
-- React 18, Vite, TanStack Query, Tailwind CSS
+- React 19, Vite 7, TanStack Query, Tailwind CSS
 - TypeScript strict mode throughout
 - 5,700+ automated tests across 312 test files

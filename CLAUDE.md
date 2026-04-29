@@ -6,7 +6,7 @@ Narratorr is a self-hosted audiobook management application ("*arr for audiobook
 
 ## Tech Stack
 
-pnpm | Node.js 24+ | Fastify 5 | Drizzle ORM + libSQL | React 18 + Vite 6 | TanStack Query | Tailwind CSS | Docker
+pnpm | Node.js 24+ | Fastify 5 | Drizzle ORM + libSQL | React 19 + Vite 7 | TanStack Query | Tailwind CSS | Docker
 
 ## Project Structure
 
