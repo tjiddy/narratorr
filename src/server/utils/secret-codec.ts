@@ -114,16 +114,6 @@ const PER_TYPE_SETTINGS_MAPS: Partial<Record<SecretEntity, Record<string, z.ZodT
   importList: importListSettingsSchemas,
 };
 
-function isStrictObject(schema: z.ZodObject<z.ZodRawShape>): boolean {
-  const def = (schema as unknown as { _zod: { def: { catchall?: { _zod?: { def?: { type?: string } } } } } })._zod.def;
-  return def.catchall?._zod?.def?.type === 'never';
-}
-
-function getObjectChecks(schema: z.ZodObject<z.ZodRawShape>): unknown[] {
-  const def = (schema as unknown as { _zod: { def: { checks?: unknown[] } } })._zod.def;
-  return def.checks ?? [];
-}
-
 function loosenSettingsSchema(
   schema: z.ZodTypeAny,
   secretFields: readonly string[],
@@ -131,18 +121,18 @@ function loosenSettingsSchema(
   if (!(schema instanceof z.ZodObject)) return schema;
   const obj = schema as z.ZodObject<z.ZodRawShape>;
   const shape = obj.shape as Record<string, z.ZodTypeAny>;
-  const newShape: Record<string, z.ZodTypeAny> = {};
-  for (const [key, field] of Object.entries(shape)) {
-    newShape[key] = secretFields.includes(key)
-      ? z.union([z.literal(SENTINEL), field as z.ZodTypeAny])
-      : field;
+  const overrides: Record<string, z.ZodTypeAny> = {};
+  for (const field of secretFields) {
+    const original = shape[field];
+    if (!original) continue;
+    overrides[field] = z.union([z.literal(SENTINEL), original]);
   }
-  let rebuilt: z.ZodObject<z.ZodRawShape> = z.object(newShape);
-  if (isStrictObject(obj)) rebuilt = rebuilt.strict();
-  for (const check of getObjectChecks(obj)) {
-    rebuilt = rebuilt.check(check as Parameters<typeof rebuilt.check>[0]);
-  }
-  return rebuilt;
+  if (Object.keys(overrides).length === 0) return schema;
+  // safeExtend is the public API for overriding keys on objects that may carry
+  // chained refinements (e.g. Hardcover's listType/shelfId rule). It preserves
+  // strict mode and refinement checks; .extend() throws when overwriting keys
+  // on schemas with refinements.
+  return obj.safeExtend(overrides);
 }
 
 /**

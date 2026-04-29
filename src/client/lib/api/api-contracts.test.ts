@@ -389,6 +389,25 @@ describe('downloadClientsApi', () => {
     }));
   });
 
+  // F2 — contract proves testClientConfig accepts and forwards optional id (#827)
+  it('testClientConfig → POST /download-clients/test serializes optional id field', async () => {
+    const data = {
+      name: 'Test',
+      type: 'qbittorrent' as const,
+      enabled: true,
+      priority: 50,
+      settings: { host: 'localhost', password: '********' },
+      id: 42,
+    };
+    await downloadClientsApi.testClientConfig(data);
+    expect(mockFetchApi).toHaveBeenCalledWith('/download-clients/test', expect.objectContaining({
+      method: 'POST',
+      body: JSON.stringify(data),
+    }));
+    const body = mockFetchApi.mock.calls.at(-1)?.[1]?.body as string;
+    expect(JSON.parse(body)).toMatchObject({ id: 42 });
+  });
+
   it('getClientCategories → POST /download-clients/:id/categories', async () => {
     await downloadClientsApi.getClientCategories(4);
     expect(mockFetchApi).toHaveBeenCalledWith('/download-clients/4/categories', expect.objectContaining({ method: 'POST' }));

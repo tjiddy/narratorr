@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeAll, afterAll, beforeEach, type Mock } from 'vitest';
-import { createTestApp, createMockServices, resetMockServices } from '../__tests__/helpers.js';
+import { createTestApp, createMockServices, installMockAppLog, resetMockServices } from '../__tests__/helpers.js';
 import { createMockSettings } from '../../shared/schemas/settings/create-mock-settings.js';
 import { DEFAULT_SETTINGS } from '../../shared/schemas/settings/registry.js';
 import type { Services } from './index.js';
@@ -9,18 +9,25 @@ const mockSettings = createMockSettings();
 describe('settings routes', () => {
   let app: Awaited<ReturnType<typeof createTestApp>>;
   let services: Services;
+  let logSpies: ReturnType<typeof installMockAppLog>['spies'];
+  let restoreLog: () => void;
 
   beforeAll(async () => {
     services = createMockServices();
     app = await createTestApp(services);
+    const installed = installMockAppLog(app);
+    logSpies = installed.spies;
+    restoreLog = installed.restore;
   });
 
   afterAll(async () => {
+    restoreLog();
     await app.close();
   });
 
   beforeEach(() => {
     resetMockServices(services);
+    for (const s of Object.values(logSpies)) s.mockClear();
   });
 
   describe('GET /api/settings', () => {
@@ -391,6 +398,52 @@ describe('settings routes', () => {
         expect(body.ip).toBe('1.2.3.4');
         expect(services.healthCheck.probeProxy).toHaveBeenCalledWith('http://real:cred@host:9191');
         expect(services.healthCheck.probeProxy).not.toHaveBeenCalledWith('********');
+      });
+
+      // F1 — success log emits the resolved + redacted URL, not the sentinel
+      it('success log emits the resolved redacted URL, not the sentinel', async () => {
+        (services.settings.get as Mock).mockResolvedValue({ proxyUrl: 'http://real:cred@host:9191' });
+        (services.healthCheck.probeProxy as Mock).mockResolvedValue('1.2.3.4');
+
+        await app.inject({
+          method: 'POST',
+          url: '/api/settings/test-proxy',
+          payload: { proxyUrl: '********' },
+        });
+
+        expect(logSpies.info).toHaveBeenCalledWith(
+          expect.objectContaining({ ip: '1.2.3.4', proxyUrl: 'http://***:***@host:9191/' }),
+          'Proxy test successful',
+        );
+        const infoCalls = logSpies.info.mock.calls as unknown[][];
+        const sentinelLog = infoCalls.find((call) => {
+          const meta = call[0] as { proxyUrl?: string };
+          return meta?.proxyUrl === '********';
+        });
+        expect(sentinelLog).toBeUndefined();
+      });
+
+      // F1 — failure log emits the resolved + redacted URL, not the sentinel
+      it('failure log emits the resolved redacted URL, not the sentinel', async () => {
+        (services.settings.get as Mock).mockResolvedValue({ proxyUrl: 'http://real:cred@host:9191' });
+        (services.healthCheck.probeProxy as Mock).mockRejectedValue(new Error('ECONNREFUSED'));
+
+        await app.inject({
+          method: 'POST',
+          url: '/api/settings/test-proxy',
+          payload: { proxyUrl: '********' },
+        });
+
+        expect(logSpies.warn).toHaveBeenCalledWith(
+          expect.objectContaining({ proxyUrl: 'http://***:***@host:9191/' }),
+          'Proxy test failed',
+        );
+        const warnCalls = logSpies.warn.mock.calls as unknown[][];
+        const sentinelLog = warnCalls.find((call) => {
+          const meta = call[0] as { proxyUrl?: string };
+          return meta?.proxyUrl === '********';
+        });
+        expect(sentinelLog).toBeUndefined();
       });
 
       it('returns 400 when sentinel sent but no saved proxy URL', async () => {
