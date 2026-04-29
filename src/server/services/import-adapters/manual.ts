@@ -13,6 +13,7 @@ import type { RenameableBook } from '../../utils/paths.js';
 import { toNamingOptions } from '../../../core/utils/naming.js';
 import { safeEmit } from '../../utils/safe-emit.js';
 import { recordImportFailedEvent } from '../../utils/import-side-effects.js';
+import { serializeError } from '../../utils/serialize-error.js';
 
 function parseManualPayload(jobId: number, raw: string): ManualImportJobPayload {
   let parsedJson: unknown;
@@ -93,7 +94,7 @@ export class ManualImportAdapter implements ImportAdapter {
       safeEmit(broadcaster, 'book_status_change', { book_id: bookId, old_status: 'importing' as BookStatus, new_status: 'imported' as BookStatus }, log);
 
       eventHistory.create(buildImportedEventPayload(bookId, payload, extracted.narratorName, resolve(finalPath), mode))
-        .catch((err: unknown) => log.warn({ err }, 'Failed to record manual import event'));
+        .catch((err: unknown) => log.warn({ error: serializeError(err) }, 'Failed to record manual import event'));
     } catch (error: unknown) {
       this.dispatchFailureSideEffects(error, bookId, payload, log);
       throw error;
