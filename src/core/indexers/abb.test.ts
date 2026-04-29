@@ -483,27 +483,26 @@ describe('AudioBookBayIndexer', () => {
 
   describe('AbortSignal threading', () => {
     it('forwards signal to search page fetch and detail page fetch', async () => {
-      const capturedSignals: (AbortSignal | undefined)[] = [];
-      const fetchSpy = vi.spyOn(globalThis, 'fetch').mockImplementation(async (url, init) => {
-        capturedSignals.push(init?.signal ?? undefined);
-        const urlStr = typeof url === 'string' ? url : url.toString();
-        if (urlStr.includes('/audio-books/')) {
-          return new Response(detailHtml, { headers: { 'Content-Type': 'text/html' } });
-        }
-        return new Response(searchHtml, { headers: { 'Content-Type': 'text/html' } });
-      });
+      const capturedSignals: AbortSignal[] = [];
+      server.use(
+        http.get(`${ABB_BASE}/`, ({ request }) => {
+          capturedSignals.push(request.signal);
+          return new HttpResponse(searchHtml, { headers: { 'Content-Type': 'text/html' } });
+        }),
+        http.get(`${ABB_BASE}/audio-books/:slug/`, ({ request }) => {
+          capturedSignals.push(request.signal);
+          return new HttpResponse(detailHtml, { headers: { 'Content-Type': 'text/html' } });
+        }),
+      );
 
       const controller = new AbortController();
       await indexer.search('test', { signal: controller.signal });
 
       // At least one fetch call should have a signal linked to the caller
       expect(capturedSignals.length).toBeGreaterThan(0);
-      expect(capturedSignals.every(s => s !== undefined)).toBe(true);
-      // Verify caller abort propagates
+      // Verify caller abort propagates through AbortSignal.any composition
       controller.abort();
-      expect(capturedSignals[0]!.aborted).toBe(true);
-
-      fetchSpy.mockRestore();
+      expect(capturedSignals[0].aborted).toBe(true);
     });
   });
 
@@ -521,8 +520,75 @@ describe('AudioBookBayIndexer', () => {
       vi.spyOn(proxiedIndexer as any, 'delay').mockResolvedValue(undefined);
     });
 
-    it('routes search through proxy when proxyUrl is set', async () => {
+    it('search rethrows ProxyError when fetch connection fails', async () => {
+      server.use(
+        http.get(`${ABB_BASE}/`, () => HttpResponse.error()),
+      );
+
+      await expect(proxiedIndexer.search('test')).rejects.toThrow(ProxyError);
+    });
+
+    it('search returns empty results for non-proxy errors', async () => {
+      // Direct (non-proxied) indexer: fetch failures map to plain Error, not ProxyError,
+      // so abb.search() catches and returns [] instead of rethrowing.
+      const directIndexer = new AudioBookBayIndexer({
+        hostname: ABB_HOST,
+        pageLimit: 1,
+      });
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      vi.spyOn(directIndexer as any, 'delay').mockResolvedValue(undefined);
+
+      server.use(
+        http.get(`${ABB_BASE}/`, () => HttpResponse.error()),
+      );
+
+      const results = await directIndexer.search('test');
+      expect(results).toEqual([]);
+    });
+
+    it('test with proxy returns success with exit IP', async () => {
+      server.use(
+        http.get(`${ABB_BASE}/`, () =>
+          new HttpResponse('<html>ok</html>', {
+            status: 200,
+            headers: { 'Content-Type': 'text/html' },
+          }),
+        ),
+        http.get('https://api.ipify.org', () => HttpResponse.json({ ip: '1.2.3.4' })),
+      );
+
+      const result = await proxiedIndexer.test();
+      expect(result.success).toBe(true);
+      expect(result.ip).toBe('1.2.3.4');
+      expect(result.message).toContain('via proxy');
+    });
+  });
+
+  describe('proxy dispatcher option (fetch-spy exception)', () => {
+    // MSW intercepts at the request layer and cannot observe undici-specific
+    // fetch options like `dispatcher` (`src/core/indexers/proxy.ts:67-73`
+    // sets `dispatcher` directly on the RequestInit object). The only way to
+    // assert that the indexer wires its proxy agent into fetch options is to
+    // spy on `globalThis.fetch` and inspect the captured init argument.
+    // Every other proxy scenario in this file routes through MSW; this is the
+    // sole remaining fetch-spy.
+    const PROXY_URL = 'http://proxy.test:8080';
+    let proxiedIndexer: AudioBookBayIndexer;
+
+    beforeEach(() => {
+      proxiedIndexer = new AudioBookBayIndexer({
+        hostname: ABB_HOST,
+        pageLimit: 1,
+        proxyUrl: PROXY_URL,
+      });
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      vi.spyOn(proxiedIndexer as any, 'delay').mockResolvedValue(undefined);
+    });
+
+    it('passes a dispatcher fetch option when constructed with proxyUrl', async () => {
       let callCount = 0;
+      // MSW cannot observe the undici-specific `dispatcher` fetch option — see
+      // describe-block comment. This spy is the documented exception.
       const fetchSpy = vi.spyOn(globalThis, 'fetch').mockImplementation(async () => {
         callCount++;
         if (callCount === 1) {
@@ -531,7 +597,6 @@ describe('AudioBookBayIndexer', () => {
             headers: { 'Content-Type': 'text/html' },
           });
         }
-        // All subsequent calls are detail page fetches
         return new Response(detailHtml, {
           status: 200,
           headers: { 'Content-Type': 'text/html' },
@@ -542,63 +607,9 @@ describe('AudioBookBayIndexer', () => {
 
       expect(results.length).toBeGreaterThan(0);
       expect(results[0].indexer).toBe('AudioBookBay');
-      // Verify fetch was called with a dispatcher (proxy agent)
       expect(fetchSpy).toHaveBeenCalled();
       const callArgs = fetchSpy.mock.calls[0];
       expect((callArgs[1] as Record<string, unknown>).dispatcher).toBeDefined();
-
-      fetchSpy.mockRestore();
-    });
-
-    it('search rethrows ProxyError', async () => {
-      const fetchSpy = vi.spyOn(globalThis, 'fetch').mockRejectedValueOnce(
-        new Error('connect ECONNREFUSED'),
-      );
-
-      await expect(proxiedIndexer.search('test')).rejects.toThrow(ProxyError);
-
-      fetchSpy.mockRestore();
-    });
-
-    it('search returns empty results for non-proxy errors', async () => {
-      // Create a non-proxied indexer so errors are NOT wrapped as ProxyError
-      const directIndexer = new AudioBookBayIndexer({
-        hostname: ABB_HOST,
-        pageLimit: 1,
-      });
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      vi.spyOn(directIndexer as any, 'delay').mockResolvedValue(undefined);
-
-      const fetchSpy = vi.spyOn(globalThis, 'fetch').mockRejectedValueOnce(
-        new Error('some random error'),
-      );
-
-      const results = await directIndexer.search('test');
-      expect(results).toEqual([]);
-
-      fetchSpy.mockRestore();
-    });
-
-    it('test with proxy returns success with exit IP', async () => {
-      const ipifyResponse = JSON.stringify({ ip: '1.2.3.4' });
-      const fetchSpy = vi.spyOn(globalThis, 'fetch')
-        .mockResolvedValueOnce(
-          new Response('<html>ok</html>', {
-            status: 200,
-            headers: { 'Content-Type': 'text/html' },
-          }),
-        )
-        .mockResolvedValueOnce(
-          new Response(ipifyResponse, {
-            status: 200,
-            headers: { 'Content-Type': 'application/json' },
-          }),
-        );
-
-      const result = await proxiedIndexer.test();
-      expect(result.success).toBe(true);
-      expect(result.ip).toBe('1.2.3.4');
-      expect(result.message).toContain('via proxy');
 
       fetchSpy.mockRestore();
     });

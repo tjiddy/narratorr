@@ -12,7 +12,7 @@ const API_URL = `https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`;
 
 const server = setupServer();
 
-beforeAll(() => server.listen());
+beforeAll(() => server.listen({ onUnhandledRequest: 'error' }));
 afterEach(() => server.resetHandlers());
 afterAll(() => server.close());
 

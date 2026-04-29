@@ -8,7 +8,7 @@ const WEBHOOK_URL = 'https://discord.com/api/webhooks/123/abc';
 
 const server = setupServer();
 
-beforeAll(() => server.listen());
+beforeAll(() => server.listen({ onUnhandledRequest: 'error' }));
 afterEach(() => server.resetHandlers());
 afterAll(() => server.close());
 
