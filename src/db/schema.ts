@@ -18,10 +18,6 @@ export const authors = sqliteTable('authors', {
   name: text('name').notNull(),
   slug: text('slug').notNull().unique(),
   asin: text('asin'),
-  imageUrl: text('image_url'),
-  bio: text('bio'),
-  monitored: integer('monitored', { mode: 'boolean' }).notNull().default(false),
-  lastCheckedAt: integer('last_checked_at', { mode: 'timestamp' }),
   createdAt: integer('created_at', { mode: 'timestamp' })
     .notNull()
     .default(sql`(unixepoch())`),

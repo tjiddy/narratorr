@@ -315,7 +315,7 @@ describe('BookService', () => {
 
   describe('create() junction table CRUD', () => {
     it('inserts bookAuthors junction rows with correct positions for multiple authors', async () => {
-      const author2 = { id: 2, name: 'Second Author', slug: 'second-author', asin: null, imageUrl: null, bio: null, monitored: false, lastCheckedAt: null, createdAt: new Date(), updatedAt: new Date() };
+      const author2 = { id: 2, name: 'Second Author', slug: 'second-author', asin: null, createdAt: new Date(), updatedAt: new Date() };
 
       db.select
         .mockReturnValueOnce(mockDbChain([mockAuthor]))   // findOrCreate author[0] — found

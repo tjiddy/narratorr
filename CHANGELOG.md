@@ -8,6 +8,7 @@ Initial public release. Full audiobook acquisition and organization pipeline.
 
 ### Breaking Changes
 - **Flatten-on-download removed.** Auto-import no longer runs audio processing (ffmpeg merge/convert) on downloaded books. Imports now complete in seconds instead of minutes. Users who relied on `processing.enabled` for automatic transcoding should configure `postProcessingScript` in Settings → Post Processing → Custom Script as the replacement path.
+- **Unused `authors` columns dropped.** Migration `0002_dizzy_captain_cross.sql` removes `image_url`, `bio`, `monitored`, and `last_checked_at` from the `authors` table — none were ever read or written by production code. Author image and biography continue to be sourced live from audnexus on the author detail page; no UI regression.
 
 ### Core Pipeline
 - Search indexers (Torznab, Newznab, MyAnonamouse) for audiobooks
