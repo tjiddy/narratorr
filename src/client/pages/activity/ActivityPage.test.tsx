@@ -55,6 +55,14 @@ vi.mock('@/hooks/usePagination', async () => {
   };
 });
 
+vi.mock('@/hooks/useEventSource', async () => {
+  const actual = await vi.importActual<typeof import('@/hooks/useEventSource')>('@/hooks/useEventSource');
+  return {
+    ...actual,
+    useSSEConnected: vi.fn(() => false),
+  };
+});
+
 vi.mock('@/lib/api', async () => {
   const actual = await vi.importActual('@/lib/api');
   return {
@@ -78,6 +86,7 @@ vi.mock('@/lib/api', async () => {
 });
 
 import { api } from '@/lib/api';
+import { useSSEConnected } from '@/hooks/useEventSource';
 
 const makeDownload = (overrides: Partial<Download> = {}): Download => ({
   id: 1,
@@ -1349,6 +1358,99 @@ describe('#637 Activity page URL state', () => {
       expect(api.getEventHistory).toHaveBeenCalledWith(
         expect.objectContaining({ eventType: 'import_failed' }),
       );
+    });
+  });
+});
+
+// ============================================================================
+// #748 — ActivityPage importJobs polling gates on SSE connection
+// ============================================================================
+
+describe('#748 importJobs SSE refetch gating', () => {
+  // Toggle setInterval/clearInterval only to keep TanStack Query's internal
+  // setTimeout machinery alive. See CLAUDE.md "vi.useFakeTimers() breaks TanStack Query".
+  beforeEach(() => {
+    vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] });
+    vi.mocked(api.getActivity).mockResolvedValue({ data: [], total: 0 });
+    vi.mocked(api.getEventHistory).mockResolvedValue({ data: [], total: 0 });
+    vi.mocked(api.getImportJobs).mockResolvedValue([]);
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it('does not refetch importJobs on the 5s interval when SSE is connected', async () => {
+    vi.mocked(useSSEConnected).mockReturnValue(true);
+
+    renderWithProviders(<ActivityPage />);
+
+    // Initial fetch settles
+    await waitFor(() => {
+      expect(api.getImportJobs).toHaveBeenCalledTimes(1);
+    });
+
+    // Advance well past the 5s polling interval
+    await act(async () => { vi.advanceTimersByTime(6000); });
+
+    // No additional refetches — SSE-connected disables polling
+    expect(api.getImportJobs).toHaveBeenCalledTimes(1);
+  });
+
+  it('refetches importJobs every 5s when SSE is disconnected', async () => {
+    vi.mocked(useSSEConnected).mockReturnValue(false);
+
+    renderWithProviders(<ActivityPage />);
+
+    await waitFor(() => {
+      expect(api.getImportJobs).toHaveBeenCalledTimes(1);
+    });
+
+    // Advance past the 5s interval — polling should fire one refetch
+    await act(async () => { vi.advanceTimersByTime(6000); });
+
+    await waitFor(() => {
+      expect(api.getImportJobs).toHaveBeenCalledTimes(2);
+    });
+  });
+
+  it('resumes polling when SSE flips from connected to disconnected', async () => {
+    vi.mocked(useSSEConnected).mockReturnValue(true);
+
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    });
+    const { rerender } = render(
+      <QueryClientProvider client={queryClient}>
+        <MemoryRouter>
+          <ActivityPage />
+        </MemoryRouter>
+      </QueryClientProvider>,
+    );
+
+    await waitFor(() => {
+      expect(api.getImportJobs).toHaveBeenCalledTimes(1);
+    });
+
+    // SSE connected — no polling
+    await act(async () => { vi.advanceTimersByTime(6000); });
+    expect(api.getImportJobs).toHaveBeenCalledTimes(1);
+
+    // SSE drops — re-render with the wrapper preserved so the new mock value
+    // takes effect when ActivityPage re-renders
+    vi.mocked(useSSEConnected).mockReturnValue(false);
+    rerender(
+      <QueryClientProvider client={queryClient}>
+        <MemoryRouter>
+          <ActivityPage />
+        </MemoryRouter>
+      </QueryClientProvider>,
+    );
+
+    // Polling fallback resumes
+    await act(async () => { vi.advanceTimersByTime(6000); });
+    await waitFor(() => {
+      expect(api.getImportJobs.mock.calls.length).toBeGreaterThanOrEqual(2);
     });
   });
 });

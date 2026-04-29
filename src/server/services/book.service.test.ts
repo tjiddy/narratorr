@@ -961,6 +961,86 @@ describe('BookService batch-load (N+1 fix)', () => {
     expect(results[0].narrators).toEqual([mockNarrator]);
   });
 
+  it('getMonitoredBooks() with 0 monitored books returns [] and skips author/narrator queries', async () => {
+    db.select.mockReturnValueOnce(mockDbChain([]));
+
+    const results = await service.getMonitoredBooks();
+
+    expect(results).toEqual([]);
+    expect(db.select).toHaveBeenCalledTimes(1);
+  });
+
+  it('getMonitoredBooks() with exactly 900 books issues a single chunked author/narrator query each', async () => {
+    const bookRows = Array.from({ length: 900 }, (_, i) => createMockDbBook({ id: i + 1 }));
+    const authorRows = bookRows.map((b) => ({ bookId: b.id, author: mockAuthor, position: 0 }));
+    const narratorRows = bookRows.map((b) => ({ bookId: b.id, narrator: mockNarrator, position: 0 }));
+
+    db.select
+      .mockReturnValueOnce(mockDbChain(bookRows))
+      .mockReturnValueOnce(mockDbChain(authorRows))
+      .mockReturnValueOnce(mockDbChain(narratorRows));
+
+    const results = await service.getMonitoredBooks();
+
+    // 1 books query + 1 author chunk + 1 narrator chunk = 3 selects (no second chunk)
+    expect(db.select).toHaveBeenCalledTimes(3);
+    expect(results).toHaveLength(900);
+    expect(results[0].authors).toEqual([mockAuthor]);
+    expect(results[0].narrators).toEqual([mockNarrator]);
+  });
+
+  it('getMonitoredBooks() with 901 books issues two chunked queries each for authors and narrators', async () => {
+    const bookRows = Array.from({ length: 901 }, (_, i) => createMockDbBook({ id: i + 1 }));
+    const firstAuthorChunk = bookRows.slice(0, 900).map((b) => ({ bookId: b.id, author: mockAuthor, position: 0 }));
+    const secondAuthorChunk = bookRows.slice(900).map((b) => ({ bookId: b.id, author: mockAuthor, position: 0 }));
+    const firstNarratorChunk = bookRows.slice(0, 900).map((b) => ({ bookId: b.id, narrator: mockNarrator, position: 0 }));
+    const secondNarratorChunk = bookRows.slice(900).map((b) => ({ bookId: b.id, narrator: mockNarrator, position: 0 }));
+
+    db.select
+      .mockReturnValueOnce(mockDbChain(bookRows))
+      .mockReturnValueOnce(mockDbChain(firstAuthorChunk))
+      .mockReturnValueOnce(mockDbChain(secondAuthorChunk))
+      .mockReturnValueOnce(mockDbChain(firstNarratorChunk))
+      .mockReturnValueOnce(mockDbChain(secondNarratorChunk));
+
+    const results = await service.getMonitoredBooks();
+
+    // 1 books query + 2 author chunks + 2 narrator chunks = 5 selects
+    expect(db.select).toHaveBeenCalledTimes(5);
+    expect(results).toHaveLength(901);
+    // No duplicates: book #1 has exactly one author/narrator from the first chunk
+    expect(results[0].authors).toEqual([mockAuthor]);
+    expect(results[0].narrators).toEqual([mockNarrator]);
+    // Book #901 (in the second chunk) is also populated
+    expect(results[900].authors).toEqual([mockAuthor]);
+    expect(results[900].narrators).toEqual([mockNarrator]);
+  });
+
+  it('getMonitoredBooks() with 1500 books chunks into 2 author + 2 narrator queries and merges all rows', async () => {
+    const bookRows = Array.from({ length: 1500 }, (_, i) => createMockDbBook({ id: i + 1 }));
+    const firstAuthorChunk = bookRows.slice(0, 900).map((b) => ({ bookId: b.id, author: mockAuthor, position: 0 }));
+    const secondAuthorChunk = bookRows.slice(900).map((b) => ({ bookId: b.id, author: mockAuthor, position: 0 }));
+    const firstNarratorChunk = bookRows.slice(0, 900).map((b) => ({ bookId: b.id, narrator: mockNarrator, position: 0 }));
+    const secondNarratorChunk = bookRows.slice(900).map((b) => ({ bookId: b.id, narrator: mockNarrator, position: 0 }));
+
+    db.select
+      .mockReturnValueOnce(mockDbChain(bookRows))
+      .mockReturnValueOnce(mockDbChain(firstAuthorChunk))
+      .mockReturnValueOnce(mockDbChain(secondAuthorChunk))
+      .mockReturnValueOnce(mockDbChain(firstNarratorChunk))
+      .mockReturnValueOnce(mockDbChain(secondNarratorChunk));
+
+    const results = await service.getMonitoredBooks();
+
+    expect(db.select).toHaveBeenCalledTimes(5);
+    expect(results).toHaveLength(1500);
+    // Every book has its author/narrator populated — proves chunk results merged correctly
+    for (const r of results) {
+      expect(r.authors).toEqual([mockAuthor]);
+      expect(r.narrators).toEqual([mockNarrator]);
+    }
+  });
+
 });
 
 describe('BookService.syncAuthors / syncNarrators', () => {
