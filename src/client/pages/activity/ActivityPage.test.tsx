@@ -56,6 +56,7 @@ vi.mock('@/hooks/usePagination', async () => {
 });
 
 vi.mock('@/hooks/useEventSource', async () => {
+  // eslint-disable-next-line @typescript-eslint/consistent-type-imports -- vi.mock requires dynamic import
   const actual = await vi.importActual<typeof import('@/hooks/useEventSource')>('@/hooks/useEventSource');
   return {
     ...actual,
