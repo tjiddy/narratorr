@@ -1450,7 +1450,7 @@ describe('#748 importJobs SSE refetch gating', () => {
     // Polling fallback resumes
     await act(async () => { vi.advanceTimersByTime(6000); });
     await waitFor(() => {
-      expect(api.getImportJobs.mock.calls.length).toBeGreaterThanOrEqual(2);
+      expect(vi.mocked(api.getImportJobs).mock.calls.length).toBeGreaterThanOrEqual(2);
     });
   });
 });
