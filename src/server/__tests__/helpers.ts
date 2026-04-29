@@ -8,7 +8,7 @@ import { vi, type Mock } from 'vitest';
 import type { Db } from '../../db/index.js';
 import { registerRoutes, SERVICE_KEYS, type Services } from '../routes/index.js';
 import { RetryBudget } from '../services/retry-budget.js';
-import { createMockSettings, type DeepPartial } from '../../shared/schemas/settings/create-mock-settings.js';
+import { createMockSettings, type DeepPartial } from '../../shared/schemas/settings/create-mock-settings.fixtures.js';
 import type { AppSettings, SettingsCategory } from '../../shared/schemas/settings/registry.js';
 import type { SettingsService } from '../services/settings.service.js';
 
