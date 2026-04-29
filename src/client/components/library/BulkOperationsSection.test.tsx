@@ -3,6 +3,8 @@ import { screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { renderWithProviders } from '../../__tests__/helpers.js';
 import { BulkOperationsSection } from './BulkOperationsSection.js';
+import { useBulkOperation } from '../../hooks/useBulkOperation.js';
+import type { BulkOpType } from '@/lib/api';
 import { api } from '@/lib/api';
 import { toast } from 'sonner';
 
@@ -11,17 +13,9 @@ vi.mock('sonner', () => ({
 }));
 
 const mockStartJob = vi.fn();
-const mockIsRunning = { current: false };
-const mockJobType = { current: null as string | null };
-const mockProgress = { current: { completed: 0, total: 0, failures: 0 } };
 
 vi.mock('../../hooks/useBulkOperation.js', () => ({
-  useBulkOperation: () => ({
-    isRunning: mockIsRunning.current,
-    jobType: mockJobType.current,
-    progress: mockProgress.current,
-    startJob: mockStartJob,
-  }),
+  useBulkOperation: vi.fn(),
 }));
 
 vi.mock('react-router-dom', async () => {
@@ -36,14 +30,17 @@ vi.mock('@/lib/api', () => ({
   },
 }));
 
-function setup(overrides?: { isRunning?: boolean; jobType?: string | null; completed?: number; total?: number; failures?: number }) {
-  mockIsRunning.current = overrides?.isRunning ?? false;
-  mockJobType.current = overrides?.jobType ?? null;
-  mockProgress.current = {
-    completed: overrides?.completed ?? 0,
-    total: overrides?.total ?? 0,
-    failures: overrides?.failures ?? 0,
-  };
+function setup(overrides?: { isRunning?: boolean; jobType?: BulkOpType | null; completed?: number; total?: number; failures?: number }) {
+  vi.mocked(useBulkOperation).mockReturnValue({
+    isRunning: overrides?.isRunning ?? false,
+    jobType: overrides?.jobType ?? null,
+    progress: {
+      completed: overrides?.completed ?? 0,
+      total: overrides?.total ?? 0,
+      failures: overrides?.failures ?? 0,
+    },
+    startJob: mockStartJob,
+  });
   (api.getBulkRenameCount as ReturnType<typeof vi.fn>).mockResolvedValue({ mismatched: 5, alreadyMatching: 10 });
   (api.getBulkRetagCount as ReturnType<typeof vi.fn>).mockResolvedValue({ total: 15 });
   return renderWithProviders(<BulkOperationsSection />);
@@ -122,9 +119,6 @@ describe('BulkOperationsSection', () => {
 
   // Progress
   it('after confirming rename, button shows Renaming... N/total with spinner and is disabled', async () => {
-    mockIsRunning.current = true;
-    mockJobType.current = 'rename';
-    mockProgress.current = { completed: 3, total: 10, failures: 0 };
     setup({ isRunning: true, jobType: 'rename', completed: 3, total: 10 });
     const btn = screen.getByRole('button', { name: /renaming/i });
     expect(btn).toBeDisabled();
