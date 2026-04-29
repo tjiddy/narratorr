@@ -9,8 +9,6 @@ export interface Author {
   name: string;
   slug: string;
   asin?: string | null;
-  imageUrl?: string | null;
-  bio?: string | null;
 }
 
 export interface Narrator {
