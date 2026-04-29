@@ -11,14 +11,12 @@ import type { MetadataService } from './metadata.service.js';
 import type { SettingsService } from './settings.service.js';
 import type { BookMetadata } from '../../core/metadata/index.js';
 import { type EnrichmentDeps } from './enrichment-orchestration.helpers.js';
-import { importSingleBook as importSingleBookHelper, confirmImport as confirmImportHelper, type ImportPipelineDeps } from './import-orchestration.helpers.js';
-import { findAudioLeafFolders, getAudioStats, buildDiscoveredBook } from './library-scan.helpers.js';
+import { confirmImport as confirmImportHelper, type ImportPipelineDeps } from './import-orchestration.helpers.js';
+import { buildDiscoveredBook } from './library-scan.helpers.js';
 import type { EventHistoryService } from './event-history.service.js';
 import type { EventBroadcasterService } from './event-broadcaster.service.js';
-import { searchWithSwapRetry } from '../utils/search-helpers.js';
 import { parseFolderStructure } from '../utils/folder-parsing.js';
 import type { DiscoveredBook } from '../../shared/schemas/library-scan.js';
-import { serializeError } from '../utils/serialize-error.js';
 import { WireOnce } from './wire-helpers.js';
 
 
@@ -36,18 +34,6 @@ export interface ImportConfirmItem {
   metadata?: BookMetadata;
   /** When true, bypasses the title+author safety-net duplicate check */
   forceImport?: boolean;
-}
-
-export interface SingleBookResult {
-  book: DiscoveredBook;
-  metadata: BookMetadata | null;
-}
-
-export interface ImportSingleResult {
-  imported: boolean;
-  bookId?: number;
-  enriched: boolean;
-  error?: string;
 }
 
 export interface ScanResult {
@@ -261,111 +247,9 @@ export class LibraryScanService {
     };
   }
 
-  /**
-   * Scan a single book folder — validates it contains exactly one audiobook,
-   * parses folder structure, and looks up metadata providers.
-   */
-  async scanSingleBook(folderPath: string): Promise<SingleBookResult> {
-    this.log.info({ folderPath }, 'Scanning single book folder');
-
-    const leafFolders = await findAudioLeafFolders(folderPath, this.log);
-
-    if (leafFolders.length === 0) {
-      throw new Error('No audio files found in this folder');
-    }
-
-    if (leafFolders.length > 1) {
-      throw new Error(
-        `This folder contains ${leafFolders.length} audiobooks. Use Library Import for bulk imports.`,
-      );
-    }
-
-    const bookPath = leafFolders[0];
-    const relativePath = relative(folderPath, bookPath);
-    const parts = relativePath ? relativePath.split(/[/\\]/).filter(Boolean) : [];
-
-    // If parts is empty (audio files are directly in the given folder),
-    // try parsing the folder name itself
-    const parsed = parts.length > 0
-      ? parseFolderStructure(parts)
-      : parseFolderStructure([folderPath.split(/[/\\]/).filter(Boolean).pop() || 'Unknown']);
-
-    const { fileCount, totalSize } = await getAudioStats(bookPath, this.log);
-
-    const book = buildDiscoveredBook(bookPath, parsed, fileCount, totalSize, false);
-
-    // Look up metadata providers
-    const metadata = await this.lookupMetadata(parsed.title, parsed.author || undefined, parsed.asin);
-
-    return { book, metadata };
-  }
-
-  async importSingleBook(item: ImportConfirmItem, metadata?: BookMetadata | null, mode?: ImportMode): Promise<ImportSingleResult> {
-    return importSingleBookHelper(item, this.importDeps, (t, a) => this.lookupMetadata(t, a), metadata, mode);
-  }
-
   async confirmImport(items: ImportConfirmItem[], mode?: ImportMode): Promise<{ accepted: number }> {
     const { nudgeImportWorker } = this.wired.require();
     return confirmImportHelper(items, this.importDeps, mode, nudgeImportWorker);
-  }
-
-  /**
-   * Search metadata providers for a book by title + author.
-   * Returns the best match or null if no confident match found.
-   */
-  async lookupMetadata(title: string, authorName?: string, asin?: string): Promise<BookMetadata | null> {
-    // Direct ASIN lookup — skip keyword search when we have an ASIN
-    if (asin) {
-      try {
-        const direct = await this.metadataService.getBook(asin);
-        if (direct) {
-          this.log.info({ asin, title: direct.title }, 'Direct ASIN lookup succeeded');
-          return direct;
-        }
-        this.log.debug({ asin }, 'Direct ASIN lookup returned null — falling back to keyword search');
-      } catch (error: unknown) {
-        this.log.warn({ error: serializeError(error), asin }, 'Direct ASIN lookup failed — falling back to keyword search');
-      }
-    }
-
-    try {
-      const results = await searchWithSwapRetry({
-        searchFn: (q) => this.metadataService.searchBooks(q),
-        title,
-        author: authorName || undefined,
-        log: this.log,
-      });
-      this.log.debug({ title, authorName, resultCount: results.length }, 'Metadata search completed');
-      if (results.length === 0) {
-        return null;
-      }
-
-      // Take the top result — providers return by relevance
-      let match = results[0];
-
-      // Search results lack edition-level data (ASIN, narrators).
-      // If we have a providerId, fetch full detail to get those fields.
-      if (match.providerId && !match.asin) {
-        try {
-          const detail = await this.metadataService.getBook(match.providerId);
-          if (detail) {
-            this.log.debug({ providerId: match.providerId, asin: detail.asin }, 'Fetched full book detail for ASIN');
-            match = { ...match, ...detail, title: match.title };
-          }
-        } catch (error: unknown) {
-          this.log.warn({ error: serializeError(error), providerId: match.providerId }, 'Failed to fetch book detail — using search result');
-        }
-      }
-
-      this.log.info(
-        { title, matchedTitle: match.title, asin: match.asin, providerId: match.providerId },
-        'Metadata match found for imported book',
-      );
-      return match;
-    } catch (error: unknown) {
-      this.log.warn({ error: serializeError(error), title }, 'Metadata lookup failed during import');
-      return null;
-    }
   }
 
 }

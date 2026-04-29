@@ -461,23 +461,6 @@ describe('libraryScanApi', () => {
     expect(mockFetchApi).toHaveBeenCalledWith('/library/rescan', expect.objectContaining({ method: 'POST' }));
   });
 
-  it('scanSingleBook → POST /library/import/scan-single with path', async () => {
-    await libraryScanApi.scanSingleBook('/audio/book');
-    expect(mockFetchApi).toHaveBeenCalledWith('/library/import/scan-single', expect.objectContaining({
-      method: 'POST',
-      body: JSON.stringify({ path: '/audio/book' }),
-    }));
-  });
-
-  it('importSingleBook → POST /library/import/single with item', async () => {
-    const item = { path: '/audio/book', title: 'Book', authorName: 'Author' };
-    await libraryScanApi.importSingleBook(item);
-    expect(mockFetchApi).toHaveBeenCalledWith('/library/import/single', expect.objectContaining({
-      method: 'POST',
-      body: JSON.stringify(item),
-    }));
-  });
-
   it('scanDirectory → POST /library/import/scan with path', async () => {
     await libraryScanApi.scanDirectory('/audio');
     expect(mockFetchApi).toHaveBeenCalledWith('/library/import/scan', expect.objectContaining({

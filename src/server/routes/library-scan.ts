@@ -10,10 +10,8 @@ import { parseFolderStructure, parseFolderStructureRaw, cleanNameWithTrace } fro
 import { searchWithSwapRetryTrace } from '../utils/search-helpers.js';
 import { type z } from 'zod';
 import {
-  scanSingleBodySchema,
   scanDirectoryBodySchema,
   scanResultSchema,
-  importSingleBodySchema,
   importConfirmBodySchema,
   matchStartBodySchema,
   jobIdParamSchema,
@@ -24,9 +22,7 @@ import {
 import { serializeError } from '../utils/serialize-error.js';
 
 
-type ScanSingleBody = z.infer<typeof scanSingleBodySchema>;
 type ScanDirectoryBody = z.infer<typeof scanDirectoryBodySchema>;
-type ImportSingleBody = z.infer<typeof importSingleBodySchema>;
 type ImportConfirmBody = z.infer<typeof importConfirmBodySchema>;
 type MatchStartBody = z.infer<typeof matchStartBodySchema>;
 type JobIdParam = z.infer<typeof jobIdParamSchema>;
@@ -53,48 +49,6 @@ export async function libraryScanRoutes(
   bookService: BookService,
   metadataService: MetadataService,
 ): Promise<void> {
-  // Scan a single book folder — returns parsed metadata + provider match
-  app.post<{ Body: ScanSingleBody }>(
-    '/api/library/import/scan-single',
-    { schema: { body: scanSingleBodySchema } },
-    async (request, reply) => {
-      const { path } = request.body;
-
-      request.log.info({ path }, 'Scanning single book folder');
-
-      try {
-        const result = await libraryScan.scanSingleBook(path);
-        return result;
-      } catch (error: unknown) {
-        request.log.warn({ error: serializeError(error), path }, 'Single book scan failed');
-        return reply.status(400).send({
-          error: getErrorMessage(error),
-        });
-      }
-    },
-  );
-
-  // Import a single book with metadata
-  app.post<{ Body: ImportSingleBody }>(
-    '/api/library/import/single',
-    { schema: { body: importSingleBodySchema } },
-    async (request, reply) => {
-      const { mode, metadata, ...importItem } = request.body;
-
-      request.log.info({ title: importItem.title, path: importItem.path, mode }, 'Importing single book');
-
-      try {
-        const result = await libraryScan.importSingleBook(importItem, metadata as ImportConfirmItem['metadata'], mode);
-        return result;
-      } catch (error: unknown) {
-        request.log.error({ error: serializeError(error) }, 'Single book import failed');
-        return reply.status(500).send({
-          error: getErrorMessage(error),
-        });
-      }
-    },
-  );
-
   // Rescan library — verify book paths exist on disk
   app.post('/api/library/rescan', async (request, reply) => {
     request.log.info('Starting library rescan');

@@ -1,26 +1,23 @@
 /**
- * Single-book import pipeline — copies/moves audio to library, enriches metadata,
- * and creates the book record. Extracted for consistency with quality-gate helpers.
+ * Bulk import pipeline — accepts user-confirmed items and queues them for the
+ * import worker. Extracted for consistency with quality-gate helpers.
  */
 import { mkdir, cp, rm } from 'node:fs/promises';
 import { relative, resolve, isAbsolute } from 'node:path';
 import { streamCopyWithProgress } from './streaming-copy.helpers.js';
 import type { Db } from '../../db/index.js';
 import type { FastifyBaseLogger } from 'fastify';
-import { books, importJobs } from '../../db/schema.js';
-import { eq } from 'drizzle-orm';
+import { importJobs } from '../../db/schema.js';
 import type { BookService } from './book.service.js';
 import type { SettingsService } from './settings.service.js';
 import type { BookMetadata } from '../../core/metadata/index.js';
 import { buildTargetPath, getAudioPathSize } from '../utils/import-helpers.js';
 import { toNamingOptions } from '../../core/utils/naming.js';
-import { orchestrateBookEnrichment, buildBookCreatePayload, buildEnrichmentBookInput, buildAudnexusConfig, buildImportedEventPayload, type EnrichmentDeps } from './enrichment-orchestration.helpers.js';
-import { getAudioStats } from './library-scan.helpers.js';
+import { buildBookCreatePayload, type EnrichmentDeps } from './enrichment-orchestration.helpers.js';
 import type { EventHistoryService } from './event-history.service.js';
 import type { EventBroadcasterService } from './event-broadcaster.service.js';
 import { snapshotBookForEvent } from '../utils/event-helpers.js';
-import { recordImportFailedEvent } from '../utils/import-side-effects.js';
-import type { ImportConfirmItem, ImportMode, ImportSingleResult } from './library-scan.service.js';
+import type { ImportConfirmItem, ImportMode } from './library-scan.service.js';
 import { serializeError } from '../utils/serialize-error.js';
 import type { ManualImportJobPayload } from './import-adapters/types.js';
 
@@ -35,95 +32,6 @@ export interface ImportPipelineDeps {
   eventHistory: EventHistoryService;
   enrichmentDeps: EnrichmentDeps;
   broadcaster?: EventBroadcasterService;
-}
-
-export async function importSingleBook(
-  item: ImportConfirmItem,
-  deps: ImportPipelineDeps,
-  lookupMetadata: (title: string, authorName?: string) => Promise<BookMetadata | null>,
-  metadata?: BookMetadata | null,
-  mode?: ImportMode,
-): Promise<ImportSingleResult> {
-  const { log, bookService, eventHistory } = deps;
-
-  const existing = await bookService.findDuplicate(item.title, item.authorName ? [{ name: item.authorName }] : undefined);
-  if (existing) {
-    log.debug({ title: item.title }, 'Skipping duplicate during import');
-    return { imported: false, enriched: false, error: 'duplicate' };
-  }
-
-  const meta = metadata !== undefined ? metadata : await lookupMetadata(item.title, item.authorName);
-
-  let book: Awaited<ReturnType<typeof bookService.create>>;
-  try {
-    book = await bookService.create(buildBookCreatePayload(item, meta, 'imported'));
-  } catch (error: unknown) {
-    recordImportFailedEvent({
-      eventHistory,
-      bookId: null,
-      bookTitle: item.title,
-      authorName: item.authorName ?? null,
-      narratorName: meta?.narrators?.[0] ?? null,
-      downloadId: null,
-      source: 'manual',
-      error,
-      log,
-    });
-    throw error;
-  }
-
-  eventHistory.create({
-    bookId: book.id,
-    ...snapshotBookForEvent(book),
-    eventType: 'book_added',
-    source: 'manual',
-  }).catch(err => log.warn({ error: serializeError(err) }, 'Failed to record book_added event'));
-
-  try {
-    const enriched = await enrichImportedBook(item, book, meta, deps, mode);
-    return { imported: true, bookId: book.id, enriched };
-  } catch (error: unknown) {
-    recordImportFailedEvent({
-      eventHistory,
-      bookId: book.id,
-      bookTitle: item.title,
-      authorName: item.authorName ?? null,
-      narratorName: meta?.narrators?.[0] ?? null,
-      downloadId: null,
-      source: 'manual',
-      error,
-      log,
-    });
-    throw error;
-  }
-}
-
-async function enrichImportedBook(
-  item: ImportConfirmItem,
-  book: { id: number; narrators?: Array<{ name: string }> | null; duration?: number | null; coverUrl?: string | null; genres?: string[] | null },
-  meta: BookMetadata | null,
-  deps: ImportPipelineDeps,
-  mode?: ImportMode,
-): Promise<boolean> {
-  const { db, log, eventHistory, enrichmentDeps } = deps;
-
-  let finalPath = item.path;
-  if (mode) {
-    finalPath = await copyToLibrary(item, meta, mode, deps);
-  }
-
-  const stats = await getAudioStats(finalPath, log);
-  await db.update(books).set({ path: finalPath, size: stats.totalSize, updatedAt: new Date() }).where(eq(books.id, book.id));
-
-  const { audioEnriched } = await orchestrateBookEnrichment(
-    book.id, finalPath, buildEnrichmentBookInput(book), enrichmentDeps, buildAudnexusConfig(item, meta, book),
-  );
-
-  eventHistory.create(buildImportedEventPayload(book.id, item, meta?.narrators?.[0] ?? null, resolve(finalPath), mode))
-    .catch(err => log.warn({ error: serializeError(err) }, 'Failed to record manual import event'));
-
-  log.info({ bookId: book.id, title: item.title, enriched: audioEnriched, mode: mode ?? 'pointer' }, 'Single book imported');
-  return audioEnriched;
 }
 
 // eslint-disable-next-line complexity -- copy/move pipeline with verification and retry logic
