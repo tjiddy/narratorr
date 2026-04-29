@@ -18,7 +18,7 @@ vi.mock('@/lib/api', () => ({
 describe('useMatchJob', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    vi.useFakeTimers();
+    vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] });
     // Default: cancelMatchJob always returns a resolved promise (needed for cleanup effect)
     mockCancelMatchJob.mockResolvedValue({ cancelled: true });
   });

@@ -38,7 +38,7 @@ function createCapturingWrapper(route = '/library') {
 describe('useLibraryFilters', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    vi.useFakeTimers({ shouldAdvanceTime: true });
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'], shouldAdvanceTime: true });
   });
 
   afterEach(() => {
@@ -360,7 +360,7 @@ describe('grouped return shape (REACT-1 refactor)', () => {
 });
 
 describe('useLibraryFilters — URL param initialization', () => {
-  beforeEach(() => { vi.useFakeTimers({ shouldAdvanceTime: true }); });
+  beforeEach(() => { vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'], shouldAdvanceTime: true }); });
   afterEach(() => { vi.useRealTimers(); });
 
   it('initializes statusFilter from ?status=wanted', () => {
@@ -483,7 +483,7 @@ describe('useLibraryFilters — URL param initialization', () => {
 
 describe('useLibraryFilters — URL param sync on state change', () => {
   beforeEach(() => {
-    vi.useFakeTimers({ shouldAdvanceTime: true });
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'], shouldAdvanceTime: true });
     urlRef.current = '';
   });
   afterEach(() => { vi.useRealTimers(); });
@@ -587,7 +587,7 @@ describe('useLibraryFilters — URL param sync on state change', () => {
 
 describe('useLibraryFilters — URL debounce sync', () => {
   beforeEach(() => {
-    vi.useFakeTimers({ shouldAdvanceTime: true });
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'], shouldAdvanceTime: true });
     urlRef.current = '';
   });
   afterEach(() => { vi.useRealTimers(); });
@@ -613,7 +613,7 @@ describe('useLibraryFilters — URL debounce sync', () => {
 });
 
 describe('useLibraryFilters — clearAllFilters updated behavior', () => {
-  beforeEach(() => { vi.useFakeTimers({ shouldAdvanceTime: true }); });
+  beforeEach(() => { vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'], shouldAdvanceTime: true }); });
   afterEach(() => { vi.useRealTimers(); });
 
   it('resets sortField to createdAt', () => {
@@ -659,7 +659,7 @@ describe('useLibraryFilters — clearAllFilters updated behavior', () => {
 
 describe('useLibraryFilters — filter interactions with URL', () => {
   beforeEach(() => {
-    vi.useFakeTimers({ shouldAdvanceTime: true });
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'], shouldAdvanceTime: true });
     urlRef.current = '';
   });
   afterEach(() => { vi.useRealTimers(); });

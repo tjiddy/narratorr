@@ -69,7 +69,7 @@ describe('useFolderHistory — localStorage validation', () => {
 
 describe('useFolderHistory — addRecent', () => {
   it('adds a new path to recent folders with current ISO timestamp', () => {
-    vi.useFakeTimers();
+    vi.useFakeTimers({ toFake: ['Date'] });
     vi.setSystemTime(new Date('2026-03-05T12:00:00.000Z'));
     const { result } = renderHook(() => useFolderHistory());
     act(() => { result.current.addRecent('/audiobooks'); });
@@ -78,7 +78,7 @@ describe('useFolderHistory — addRecent', () => {
   });
 
   it('moves an existing path to top of recents with updated timestamp, no duplicate', () => {
-    vi.useFakeTimers();
+    vi.useFakeTimers({ toFake: ['Date'] });
     localStorage.setItem(RECENT_KEY, JSON.stringify([
       makeEntry('/audiobooks', '2026-01-01T00:00:00.000Z'),
       makeEntry('/podcasts', '2026-01-02T00:00:00.000Z'),
@@ -93,7 +93,7 @@ describe('useFolderHistory — addRecent', () => {
   });
 
   it('evicts the oldest lastUsedAt entry when cap of 15 is exceeded', () => {
-    vi.useFakeTimers();
+    vi.useFakeTimers({ toFake: ['Date'] });
     const existing: FolderEntry[] = Array.from({ length: 15 }, (_, i) => ({
       path: `/folder${i}`,
       lastUsedAt: new Date(2026, 0, i + 1).toISOString(),
@@ -109,7 +109,7 @@ describe('useFolderHistory — addRecent', () => {
   });
 
   it('adds a favorited path to recents (scan history is orthogonal to favorites)', () => {
-    vi.useFakeTimers();
+    vi.useFakeTimers({ toFake: ['Date'] });
     localStorage.setItem(FAV_KEY, JSON.stringify([makeEntry('/audiobooks', '2026-01-01T00:00:00.000Z')]));
     vi.setSystemTime(new Date('2026-03-05T12:00:00.000Z'));
     const { result } = renderHook(() => useFolderHistory());

@@ -2202,7 +2202,7 @@ describe('LibraryPage — card menu observable behavior (#183)', () => {
 
 describe('LibraryPage — import polling smoke test (#183)', () => {
   it('triggers polling interval when books have importing status', async () => {
-    vi.useFakeTimers({ shouldAdvanceTime: true });
+    vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'], shouldAdvanceTime: true });
 
     const importingBooks = [
       createMockBook({ id: 1, status: 'importing' }),

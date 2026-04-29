@@ -174,7 +174,7 @@ describe('MatchJobService', () => {
 
   describe('TTL cleanup', () => {
     it('removes job after TTL expires', async () => {
-      vi.useFakeTimers();
+      vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
       try {
         const meta = makeBookMetadata({ providerId: undefined });
         (metadataService.searchBooks as ReturnType<typeof vi.fn>).mockResolvedValue([meta]);
@@ -203,7 +203,7 @@ describe('MatchJobService', () => {
     });
 
     it('job is still accessible before TTL expires', async () => {
-      vi.useFakeTimers();
+      vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
       try {
         (metadataService.searchBooks as ReturnType<typeof vi.fn>).mockResolvedValue([]);
 

@@ -593,7 +593,7 @@ describe('startRssJob', () => {
   let log: ReturnType<typeof createMockLogger>;
 
   beforeEach(() => {
-    vi.useFakeTimers();
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
     log = createMockLogger();
   });
 
