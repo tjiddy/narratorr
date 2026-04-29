@@ -16,7 +16,8 @@ describe('INDEXER_REGISTRY', () => {
 
     it('indexing with a non-IndexerType key is a type error', () => {
       // @ts-expect-error — 'unknown' is not in IndexerType
-      INDEXER_REGISTRY['unknown'];
+      const probe = INDEXER_REGISTRY['unknown'];
+      expect(probe).toBeUndefined();
     });
   });
 

@@ -16,7 +16,8 @@ describe('DOWNLOAD_CLIENT_REGISTRY', () => {
 
     it('indexing with a non-DownloadClientType key is a type error', () => {
       // @ts-expect-error — 'unknown' is not in DownloadClientType
-      DOWNLOAD_CLIENT_REGISTRY['unknown'];
+      const probe = DOWNLOAD_CLIENT_REGISTRY['unknown'];
+      expect(probe).toBeUndefined();
     });
   });
 

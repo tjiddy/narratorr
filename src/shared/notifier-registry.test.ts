@@ -16,7 +16,8 @@ describe('NOTIFIER_REGISTRY', () => {
 
     it('indexing with a non-NotifierType key is a type error', () => {
       // @ts-expect-error — 'unknown' is not in NotifierType
-      NOTIFIER_REGISTRY['unknown'];
+      const probe = NOTIFIER_REGISTRY['unknown'];
+      expect(probe).toBeUndefined();
     });
   });
 

@@ -16,7 +16,8 @@ describe('IMPORT_LIST_REGISTRY', () => {
 
     it('indexing with a non-ImportListType key is a type error', () => {
       // @ts-expect-error — 'unknown' is not in ImportListType
-      IMPORT_LIST_REGISTRY['unknown'];
+      const probe = IMPORT_LIST_REGISTRY['unknown'];
+      expect(probe).toBeUndefined();
     });
   });
 
