@@ -2,7 +2,6 @@ import { describe, it, expect } from 'vitest';
 import { execFileSync } from 'child_process';
 import fs from 'fs';
 import path from 'path';
-import os from 'os';
 import { fileURLToPath } from 'url';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -19,20 +18,15 @@ const dockerfile = path.join(__dirname, '..', 'Dockerfile');
  */
 
 function expandHealthcheckUrl(urlBase: string | undefined): string {
-  const tmpScript = path.join(os.tmpdir(), `healthcheck-test-${Date.now()}-${Math.random().toString(36).slice(2)}.sh`);
   const lines = [
-    '#!/bin/bash',
     urlBase !== undefined ? `URL_BASE="${urlBase}"` : '',
     `echo "http://localhost:3000\${URL_BASE:-}/api/health"`,
   ];
 
-  fs.writeFileSync(tmpScript, lines.join('\n'), { mode: 0o755 });
-
-  try {
-    return execFileSync('bash', [tmpScript], { encoding: 'utf-8' }).trim();
-  } finally {
-    try { fs.unlinkSync(tmpScript); } catch { /* ignore */ }
-  }
+  return execFileSync('bash', ['-s'], {
+    encoding: 'utf-8',
+    input: lines.join('\n'),
+  }).trim();
 }
 
 describe('Docker HEALTHCHECK URL_BASE expansion', () => {
