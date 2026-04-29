@@ -1,10 +1,18 @@
 import { randomBytes, randomUUID, scrypt, timingSafeEqual, createHmac, createHash } from 'node:crypto';
+import { z } from 'zod';
 import { eq } from 'drizzle-orm';
 import type { Db } from '../../db/index.js';
 import type { FastifyBaseLogger } from 'fastify';
 import { settings, users } from '../../db/schema.js';
-import type { AuthMode } from '../../shared/schemas.js';
+import { authModeSchema, type AuthMode } from '../../shared/schemas.js';
 import { encryptFields, decryptFields, getKey } from '../utils/secret-codec.js';
+
+const authConfigSchema = z.object({
+  mode: authModeSchema,
+  apiKey: z.string(),
+  sessionSecret: z.string(),
+  localBypass: z.boolean(),
+});
 
 export interface AuthConfig {
   mode: AuthMode;
@@ -97,7 +105,7 @@ export class AuthService {
       throw new Error('Auth settings not initialized — call initialize() first');
     }
     const raw = result[0].value as Record<string, unknown>;
-    return decryptFields('auth', { ...raw }, getKey()) as unknown as AuthConfig;
+    return authConfigSchema.parse(decryptFields('auth', { ...raw }, getKey()));
   }
 
   private async setAuthConfig(config: AuthConfig): Promise<void> {
