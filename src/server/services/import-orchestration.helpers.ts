@@ -77,7 +77,7 @@ export async function importSingleBook(
     ...snapshotBookForEvent(book),
     eventType: 'book_added',
     source: 'manual',
-  }).catch(err => log.warn({ err }, 'Failed to record book_added event'));
+  }).catch(err => log.warn({ error: serializeError(err) }, 'Failed to record book_added event'));
 
   try {
     const enriched = await enrichImportedBook(item, book, meta, deps, mode);
@@ -120,7 +120,7 @@ async function enrichImportedBook(
   );
 
   eventHistory.create(buildImportedEventPayload(book.id, item, meta?.narrators?.[0] ?? null, resolve(finalPath), mode))
-    .catch(err => log.warn({ err }, 'Failed to record manual import event'));
+    .catch(err => log.warn({ error: serializeError(err) }, 'Failed to record manual import event'));
 
   log.info({ bookId: book.id, title: item.title, enriched: audioEnriched, mode: mode ?? 'pointer' }, 'Single book imported');
   return audioEnriched;
@@ -238,7 +238,7 @@ export async function confirmImport(
         ...snapshotBookForEvent(book),
         eventType: 'book_added',
         source: 'manual',
-      }).catch(err => log.warn({ err }, 'Failed to record book_added event'));
+      }).catch(err => log.warn({ error: serializeError(err) }, 'Failed to record book_added event'));
 
       accepted.push({ bookId: book.id, item });
     } catch (error: unknown) {

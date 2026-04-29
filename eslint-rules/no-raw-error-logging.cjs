@@ -132,7 +132,10 @@ function buildImportFixes(fixer, context) {
 }
 
 /**
- * Case 1: Object-key raw — `log.error({ error: <catchBinding> }, '…')`.
+ * Case 1: Object-key raw — `log.error({ error: <catchBinding> }, '…')` or
+ * `log.error({ err: <catchBinding> }, '…')` (Pino's stdSerializers handle `err`
+ * for true Error instances, but the rule normalizes both keys to the canonical
+ * `error: serializeError(...)` shape so codebase-wide grep stays consistent).
  */
 function checkObjectArg(node, firstArg, context) {
   for (const prop of firstArg.properties) {
@@ -144,7 +147,7 @@ function checkObjectArg(node, firstArg, context) {
         : prop.key.type === 'Literal'
           ? String(prop.key.value)
           : null;
-    if (keyName !== 'error') continue;
+    if (keyName !== 'error' && keyName !== 'err') continue;
 
     const value = prop.value;
     if (value.type !== 'Identifier') continue;

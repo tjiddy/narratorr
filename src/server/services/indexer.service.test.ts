@@ -1384,9 +1384,23 @@ describe('IndexerService', () => {
         .mockResolvedValueOnce(goodAdapter as never);
 
       await svc.searchAll('test');
-      expect(log.warn).toHaveBeenCalledWith(
-        expect.objectContaining({ err: failError, indexer: mockIndexer.name }),
-        expect.stringContaining('Error searching indexer'),
+
+      const errorCall = vi.mocked(log.warn).mock.calls.find(
+        ([, msg]) => typeof msg === 'string' && msg.includes('Error searching indexer'),
+      );
+      expect(errorCall).toBeDefined();
+      const [payload] = errorCall as [Record<string, unknown>, string];
+      expect(payload.indexer).toBe(mockIndexer.name);
+      // `error` must be the serialized plain object, NOT the original Error instance —
+      // covers the manual MemberExpression migration at indexer.service.ts:397 that lint cannot enforce.
+      expect(payload.error).not.toBe(failError);
+      expect(payload.error).not.toBeInstanceOf(Error);
+      expect(payload.error).toEqual(
+        expect.objectContaining({
+          message: failError.message,
+          type: 'Error',
+          stack: expect.any(String),
+        }),
       );
     });
 

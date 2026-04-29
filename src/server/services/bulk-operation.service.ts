@@ -421,7 +421,7 @@ class BulkJob {
 
   start(): void {
     this.run().catch(err => {
-      this.log.error({ err, jobId: this.id }, 'Bulk job failed unexpectedly');
+      this.log.error({ error: serializeError(err), jobId: this.id }, 'Bulk job failed unexpectedly');
       this._status = 'completed';
       this.onComplete();
     });

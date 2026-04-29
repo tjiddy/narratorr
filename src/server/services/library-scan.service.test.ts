@@ -2007,7 +2007,9 @@ describe('LibraryScanService', () => {
       expect(result).toEqual({ imported: true, bookId: 1, enriched: true });
       await new Promise(resolve => setTimeout(resolve, 0));
       expect(log.warn).toHaveBeenCalledWith(
-        expect.objectContaining({ err: expect.any(Error) }),
+        expect.objectContaining({
+          error: expect.objectContaining({ message: expect.any(String) }),
+        }),
         expect.stringContaining('Failed to record'),
       );
     });

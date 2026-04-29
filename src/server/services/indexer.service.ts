@@ -265,7 +265,7 @@ export class IndexerService {
     try {
       status = await adapter.refreshStatus();
     } catch (error: unknown) {
-      this.log.debug({ indexer: indexer.name, err: error }, 'Pre-search status refresh failed, proceeding with stored status');
+      this.log.debug({ indexer: indexer.name, error: serializeError(error) }, 'Pre-search status refresh failed, proceeding with stored status');
       return { skip: false };
     }
 
@@ -394,7 +394,7 @@ export class IndexerService {
       if (settlement.status === 'fulfilled') {
         results.push(...settlement.value);
       } else {
-        this.log.warn({ indexer: enabledIndexers[i].name, query, err: settlement.reason }, 'Error searching indexer');
+        this.log.warn({ indexer: enabledIndexers[i].name, query, error: serializeError(settlement.reason) }, 'Error searching indexer');
       }
     }
 
@@ -467,7 +467,7 @@ export class IndexerService {
             return;
           }
           const message = getErrorMessage(error);
-          this.log.warn({ indexer: indexer.name, query, err: error }, 'Error searching indexer');
+          this.log.warn({ indexer: indexer.name, query, error: serializeError(error) }, 'Error searching indexer');
           callbacks.onError(indexer.id, indexer.name, message, elapsedMs);
         }
       }),

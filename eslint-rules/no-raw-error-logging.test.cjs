@@ -63,6 +63,21 @@ ruleTester.run('no-raw-error-logging', rule, {
         }
       `,
     },
+    // `err:` key wrapped with serializeError — already canonical-equivalent, must pass
+    {
+      code: `
+        try { foo(); } catch (err) {
+          log.error({ err: serializeError(err) }, 'failed');
+        }
+      `,
+    },
+    // `err:` key with an unrelated non-catch identifier — must not flag
+    {
+      code: `
+        const someUnrelatedNonCatchVar = { code: 1 };
+        log.warn({ err: someUnrelatedNonCatchVar }, 'msg');
+      `,
+    },
   ],
 
   invalid: [
@@ -393,6 +408,83 @@ try { foo(); } catch (err) {
 
 try { foo(); } catch (err) {
           request.log.error({ error: serializeError(err) }, 'failed');
+        }
+      `,
+      errors: [{ messageId: 'rawError' }],
+    },
+
+    // ── Case 1 (extension): `err:` key from catch binding ─────────────────
+
+    // Shorthand `{ err }` from catch binding — normalizes to `error:`
+    {
+      code: `
+        try { foo(); } catch (err) {
+          log.error({ err }, 'failed');
+        }
+      `,
+      output: `
+        import { serializeError } from '../utils/serialize-error.js';
+
+try { foo(); } catch (err) {
+          log.error({ error: serializeError(err) }, 'failed');
+        }
+      `,
+      errors: [{ messageId: 'rawError' }],
+    },
+    // Explicit `err: <catchBinding>` with mixed fields
+    {
+      code: `
+        try { foo(); } catch (error) {
+          log.warn({ err: error, ctx: 1 }, 'msg');
+        }
+      `,
+      output: `
+        import { serializeError } from '../utils/serialize-error.js';
+
+try { foo(); } catch (error) {
+          log.warn({ error: serializeError(error), ctx: 1 }, 'msg');
+        }
+      `,
+      errors: [{ messageId: 'rawError' }],
+    },
+    // `.catch` callback shorthand `{ err }`
+    {
+      code: `
+        p.catch(err => log.warn({ err }, 'msg'));
+      `,
+      output: `
+        import { serializeError } from '../utils/serialize-error.js';
+
+p.catch(err => log.warn({ error: serializeError(err) }, 'msg'));
+      `,
+      errors: [{ messageId: 'rawError' }],
+    },
+    // Non-first shorthand position via spread — `{ ...other, err }`
+    {
+      code: `
+        const other = { ctx: 1 };
+        p.catch(err => log.error({ ...other, err }, 'msg'));
+      `,
+      output: `
+        import { serializeError } from '../utils/serialize-error.js';
+
+const other = { ctx: 1 };
+        p.catch(err => log.error({ ...other, error: serializeError(err) }, 'msg'));
+      `,
+      errors: [{ messageId: 'rawError' }],
+    },
+    // `this.log` receiver with `err: <alias>` and mixed fields
+    {
+      code: `
+        try { foo(); } catch (e) {
+          this.log.error({ err: e, jobId: 7 }, 'msg');
+        }
+      `,
+      output: `
+        import { serializeError } from '../utils/serialize-error.js';
+
+try { foo(); } catch (e) {
+          this.log.error({ error: serializeError(e), jobId: 7 }, 'msg');
         }
       `,
       errors: [{ messageId: 'rawError' }],

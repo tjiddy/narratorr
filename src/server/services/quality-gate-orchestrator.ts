@@ -415,7 +415,7 @@ export class QualityGateOrchestrator {
       source: 'auto',
       reason: { ...reason },
     }).catch((err: unknown) => {
-      this.log.warn({ downloadId: download.id, err }, 'Quality gate: failed to record decision event');
+      this.log.warn({ downloadId: download.id, error: serializeError(err) }, 'Quality gate: failed to record decision event');
     });
   }
 
