@@ -10,7 +10,7 @@ const API_URL = 'https://api.pushover.net/1/messages.json';
 
 const server = setupServer();
 
-beforeAll(() => server.listen());
+beforeAll(() => server.listen({ onUnhandledRequest: 'error' }));
 afterEach(() => server.resetHandlers());
 afterAll(() => server.close());
 
