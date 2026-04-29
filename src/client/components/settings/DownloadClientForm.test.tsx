@@ -177,9 +177,62 @@ describe('DownloadClientForm (#201)', () => {
             type: 'qbittorrent',
             settings: expect.objectContaining({ host: 'testhost' }),
           }),
-          expect.anything(), // react-hook-form event
         );
       });
+    });
+
+    // #827 — edit mode injects client.id so the server can resolve sentinel secret fields
+    it('edit-mode test button injects client.id into onFormTest payload', async () => {
+      const onFormTest = vi.fn();
+      const user = userEvent.setup();
+      const client = createMockDownloadClient({
+        id: 42,
+        name: 'My Saved Client',
+        type: 'qbittorrent',
+        settings: { host: 'h', port: 8080, username: 'admin', password: 'pass', useSsl: false },
+      });
+
+      renderWithProviders(
+        <DownloadClientForm
+          client={client}
+          mode="edit"
+          onSubmit={vi.fn()}
+          onFormTest={onFormTest}
+        />,
+      );
+
+      await user.click(screen.getByRole('button', { name: /test/i }));
+
+      await waitFor(() => {
+        expect(onFormTest).toHaveBeenCalledWith(
+          expect.objectContaining({ id: 42 }),
+        );
+      });
+    });
+
+    // #827 — create mode does NOT include id (no saved row to resolve against)
+    it('create-mode test button does NOT include id in onFormTest payload', async () => {
+      const onFormTest = vi.fn();
+      const user = userEvent.setup();
+
+      renderWithProviders(
+        <DownloadClientForm
+          mode="create"
+          onSubmit={vi.fn()}
+          onFormTest={onFormTest}
+        />,
+      );
+
+      await user.type(screen.getByPlaceholderText('qBittorrent'), 'New Client');
+      await user.type(screen.getByPlaceholderText('localhost'), 'h');
+
+      await user.click(screen.getByRole('button', { name: /test/i }));
+
+      await waitFor(() => {
+        expect(onFormTest).toHaveBeenCalled();
+      });
+      const arg = onFormTest.mock.calls[0][0] as Record<string, unknown>;
+      expect(arg).not.toHaveProperty('id');
     });
   });
 

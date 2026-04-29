@@ -373,6 +373,87 @@ describe('settings routes', () => {
 
       expect(res.statusCode).toBe(400);
     });
+
+    describe('sentinel passthrough (#827)', () => {
+      it('resolves sentinel against saved proxy URL when set', async () => {
+        (services.settings.get as Mock).mockResolvedValue({ proxyUrl: 'http://real:cred@host:9191' });
+        (services.healthCheck.probeProxy as Mock).mockResolvedValue('1.2.3.4');
+
+        const res = await app.inject({
+          method: 'POST',
+          url: '/api/settings/test-proxy',
+          payload: { proxyUrl: '********' },
+        });
+
+        expect(res.statusCode).toBe(200);
+        const body = JSON.parse(res.payload);
+        expect(body.success).toBe(true);
+        expect(body.ip).toBe('1.2.3.4');
+        expect(services.healthCheck.probeProxy).toHaveBeenCalledWith('http://real:cred@host:9191');
+        expect(services.healthCheck.probeProxy).not.toHaveBeenCalledWith('********');
+      });
+
+      it('returns 400 when sentinel sent but no saved proxy URL', async () => {
+        (services.settings.get as Mock).mockResolvedValue({ proxyUrl: null });
+
+        const res = await app.inject({
+          method: 'POST',
+          url: '/api/settings/test-proxy',
+          payload: { proxyUrl: '********' },
+        });
+
+        expect(res.statusCode).toBe(400);
+        expect(JSON.parse(res.payload).error).toBe('No saved proxy URL to test');
+        expect(services.healthCheck.probeProxy).not.toHaveBeenCalled();
+      });
+
+      it('returns 400 when sentinel sent and network settings missing entirely', async () => {
+        (services.settings.get as Mock).mockResolvedValue(undefined);
+
+        const res = await app.inject({
+          method: 'POST',
+          url: '/api/settings/test-proxy',
+          payload: { proxyUrl: '********' },
+        });
+
+        expect(res.statusCode).toBe(400);
+        expect(JSON.parse(res.payload).error).toBe('No saved proxy URL to test');
+        expect(services.healthCheck.probeProxy).not.toHaveBeenCalled();
+      });
+
+      it('passes through real URL untouched (regression)', async () => {
+        (services.healthCheck.probeProxy as Mock).mockResolvedValue('1.2.3.4');
+
+        const res = await app.inject({
+          method: 'POST',
+          url: '/api/settings/test-proxy',
+          payload: { proxyUrl: 'http://user:pass@host:9191' },
+        });
+
+        expect(res.statusCode).toBe(200);
+        expect(services.healthCheck.probeProxy).toHaveBeenCalledWith('http://user:pass@host:9191');
+      });
+
+      it('still rejects malformed URLs', async () => {
+        const res = await app.inject({
+          method: 'POST',
+          url: '/api/settings/test-proxy',
+          payload: { proxyUrl: 'not-a-url' },
+        });
+
+        expect(res.statusCode).toBe(400);
+      });
+
+      it('still rejects empty string', async () => {
+        const res = await app.inject({
+          method: 'POST',
+          url: '/api/settings/test-proxy',
+          payload: { proxyUrl: '' },
+        });
+
+        expect(res.statusCode).toBe(400);
+      });
+    });
   });
 
   describe('inline schema trim behavior', () => {

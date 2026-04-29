@@ -278,6 +278,29 @@ describe('download-clients routes', () => {
 
       expect(res.statusCode).toBe(400);
     });
+
+    // #827 — sentinel-laden body + valid id reaches the service (no schema 400)
+    it('accepts sentinel in password with id and forwards to testConfig', async () => {
+      (services.downloadClient.testConfig as Mock).mockResolvedValue({ success: true });
+
+      const res = await app.inject({
+        method: 'POST',
+        url: '/api/download-clients/test',
+        payload: {
+          name: 'qb-edit',
+          type: 'qbittorrent',
+          enabled: true,
+          priority: 50,
+          settings: { host: 'h', port: 8080, password: '********' },
+          id: 7,
+        },
+      });
+
+      expect(res.statusCode).toBe(200);
+      expect(services.downloadClient.testConfig).toHaveBeenCalledWith(
+        expect.objectContaining({ id: 7 }),
+      );
+    });
   });
 
   describe('POST /api/download-clients/categories', () => {

@@ -556,6 +556,88 @@ describe('DownloadClientService', () => {
     });
   });
 
+  describe('testConfig sentinel resolution (#827)', () => {
+    it('with id, replaces sentinel password with saved (decrypted) value before adapter creation', async () => {
+      const encryptedPassword = encrypt('real-password', TEST_KEY);
+      const existingRow = {
+        ...mockClient,
+        id: 1,
+        type: 'qbittorrent' as const,
+        settings: { host: 'h', port: 8080, password: encryptedPassword },
+      };
+      db.select.mockReturnValue(mockDbChain([existingRow]));
+
+      const mockAdapter = { test: vi.fn().mockResolvedValue({ success: true }) };
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const spy = vi.spyOn(service as any, 'createAdapter').mockReturnValue(mockAdapter as never);
+
+      const result = await service.testConfig({
+        type: 'qbittorrent',
+        settings: { host: 'h', port: 8080, password: '********' },
+        id: 1,
+      });
+
+      expect(result.success).toBe(true);
+      const adapterCallArg = spy.mock.calls[0][0] as { settings: Record<string, unknown> };
+      expect(adapterCallArg.settings.password).toBe('real-password');
+    });
+
+    it('with id, resolves multiple secret fields (apiKey + password)', async () => {
+      const encryptedApiKey = encrypt('real-api-key', TEST_KEY);
+      const encryptedPassword = encrypt('real-pw', TEST_KEY);
+      const existingRow = {
+        ...mockClient,
+        id: 1,
+        type: 'qbittorrent' as const,
+        settings: { host: 'h', port: 8080, apiKey: encryptedApiKey, password: encryptedPassword },
+      };
+      db.select.mockReturnValue(mockDbChain([existingRow]));
+
+      const mockAdapter = { test: vi.fn().mockResolvedValue({ success: true }) };
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const spy = vi.spyOn(service as any, 'createAdapter').mockReturnValue(mockAdapter as never);
+
+      await service.testConfig({
+        type: 'qbittorrent',
+        settings: { host: 'h', port: 8080, apiKey: '********', password: '********' },
+        id: 1,
+      });
+
+      const adapterCallArg = spy.mock.calls[0][0] as { settings: Record<string, unknown> };
+      expect(adapterCallArg.settings.apiKey).toBe('real-api-key');
+      expect(adapterCallArg.settings.password).toBe('real-pw');
+    });
+
+    it('without id, passes settings literally (no resolution)', async () => {
+      const mockAdapter = { test: vi.fn().mockResolvedValue({ success: false, message: 'invalid' }) };
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const spy = vi.spyOn(service as any, 'createAdapter').mockReturnValue(mockAdapter as never);
+
+      await service.testConfig({
+        type: 'qbittorrent',
+        settings: { host: 'h', port: 8080, password: '********' },
+      });
+
+      const adapterCallArg = spy.mock.calls[0][0] as { settings: Record<string, unknown> };
+      expect(adapterCallArg.settings.password).toBe('********');
+    });
+
+    it('with id for missing row returns Download client not found (no adapter created)', async () => {
+      db.select.mockReturnValue(mockDbChain([]));
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const spy = vi.spyOn(service as any, 'createAdapter');
+
+      const result = await service.testConfig({
+        type: 'qbittorrent',
+        settings: { host: 'h', port: 8080, password: '********' },
+        id: 999,
+      });
+
+      expect(result).toEqual({ success: false, message: 'Download client not found' });
+      expect(spy).not.toHaveBeenCalled();
+    });
+  });
+
   describe('getAdapter edge cases', () => {
     it('returns null when results.find returns undefined (client not in DB)', async () => {
       db.select.mockReturnValue(mockDbChain([]));

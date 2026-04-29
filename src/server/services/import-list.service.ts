@@ -94,11 +94,23 @@ export class ImportListService {
     return true;
   }
 
-  async testConfig(data: { type: string; settings: Record<string, unknown> }): Promise<{ success: boolean; message?: string }> {
+  async testConfig(data: { type: string; settings: Record<string, unknown>; id?: number }): Promise<{ success: boolean; message?: string }> {
     try {
       const factory = IMPORT_LIST_ADAPTER_FACTORIES[data.type as keyof typeof IMPORT_LIST_ADAPTER_FACTORIES];
       if (!factory) return { success: false, message: `Unknown provider type: ${data.type}` };
-      const parsed = parseSettingsForType(data.type, data.settings);
+
+      // When editing an existing list, resolve sentinel values against saved settings
+      let resolvedSettings = data.settings;
+      if (data.id != null) {
+        const existing = await this.getById(data.id);
+        if (!existing) {
+          return { success: false, message: 'Import list not found' };
+        }
+        resolvedSettings = { ...data.settings };
+        resolveSentinelFields(resolvedSettings, (existing.settings ?? {}) as Record<string, unknown>);
+      }
+
+      const parsed = parseSettingsForType(data.type, resolvedSettings);
       const provider = factory(parsed);
       return await provider.test();
     } catch (error: unknown) {

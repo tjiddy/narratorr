@@ -170,6 +170,29 @@ describe('notifiers routes', () => {
       expect(res.statusCode).toBe(200);
       expect(res.json()).toEqual({ success: true });
     });
+
+    // #827 — sentinel-laden body + valid id reaches the service (no schema 400)
+    it('accepts sentinel in webhookUrl with id and forwards to testConfig', async () => {
+      vi.mocked(services.notifier.testConfig).mockResolvedValue({ success: true });
+
+      const res = await app.inject({
+        method: 'POST',
+        url: '/api/notifiers/test',
+        payload: {
+          name: 'discord-edit',
+          type: 'discord',
+          enabled: true,
+          events: ['on_grab'],
+          settings: { webhookUrl: '********' },
+          id: 5,
+        },
+      });
+
+      expect(res.statusCode).toBe(200);
+      expect(services.notifier.testConfig).toHaveBeenCalledWith(
+        expect.objectContaining({ id: 5 }),
+      );
+    });
   });
 
   describe('POST /api/notifiers (email)', () => {
