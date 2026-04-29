@@ -8,7 +8,7 @@ interface FieldConfig {
   apiKey: boolean;
 }
 
-interface DownloadClientTypeMetadata extends RegistryEntry<CreateDownloadClientFormData['settings']> {
+export interface DownloadClientTypeMetadata extends RegistryEntry<CreateDownloadClientFormData['settings']> {
   fieldConfig: FieldConfig;
   supportsCategories: boolean;
   protocol: 'torrent' | 'usenet' | 'per-instance';
@@ -17,7 +17,7 @@ interface DownloadClientTypeMetadata extends RegistryEntry<CreateDownloadClientF
 export const DOWNLOAD_CLIENT_TYPES = ['qbittorrent', 'transmission', 'sabnzbd', 'nzbget', 'deluge', 'blackhole'] as const;
 export type DownloadClientType = typeof DOWNLOAD_CLIENT_TYPES[number];
 
-export const DOWNLOAD_CLIENT_REGISTRY: Record<string, DownloadClientTypeMetadata> = {
+export const DOWNLOAD_CLIENT_REGISTRY = {
   qbittorrent: {
     label: 'qBittorrent',
     defaultSettings: { host: '', port: 8080, username: '', password: '', useSsl: false, category: '' },
@@ -107,7 +107,7 @@ export const DOWNLOAD_CLIENT_REGISTRY: Record<string, DownloadClientTypeMetadata
       { path: 'protocol', message: 'Protocol is required' },
     ],
     fieldConfig: { username: false, password: false, useSsl: false, apiKey: false },
-    viewSubtitle: () => 'blackhole',
+    viewSubtitle: (_s: Record<string, unknown>) => 'blackhole',
     supportsCategories: false,
     protocol: 'per-instance',
   },

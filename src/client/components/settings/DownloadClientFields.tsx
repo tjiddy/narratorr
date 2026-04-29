@@ -1,14 +1,14 @@
 import { useRef } from 'react';
 import type { UseFormRegister, FieldErrors, UseFormSetValue, UseFormGetValues } from 'react-hook-form';
 import type { CreateDownloadClientFormData } from '../../../shared/schemas.js';
-import { DOWNLOAD_CLIENT_REGISTRY } from '../../../shared/download-client-registry.js';
+import { DOWNLOAD_CLIENT_REGISTRY, type DownloadClientType } from '../../../shared/download-client-registry.js';
 import { RefreshIcon } from '../icons';
 import { ToolbarDropdown } from '../ToolbarDropdown';
 import { useFetchCategories } from './useFetchCategories';
 import { inputClass, errorInputClass } from './formStyles';
 
 interface DownloadClientFieldsProps {
-  selectedType: string;
+  selectedType: DownloadClientType;
   register: UseFormRegister<CreateDownloadClientFormData>;
   errors: FieldErrors<CreateDownloadClientFormData>;
   clientId?: number;
@@ -21,7 +21,7 @@ interface DownloadClientFieldsProps {
 
 // eslint-disable-next-line complexity -- conditional fields per client type are inherently branchy
 export function DownloadClientFields({ selectedType, register, errors, clientId, setValue, getValues, isDirty, isEdit, inModal }: DownloadClientFieldsProps) {
-  const meta = DOWNLOAD_CLIENT_REGISTRY[selectedType] || DOWNLOAD_CLIENT_REGISTRY.qbittorrent;
+  const meta = DOWNLOAD_CLIENT_REGISTRY[selectedType] ?? DOWNLOAD_CLIENT_REGISTRY.qbittorrent;
   const fields = meta.fieldConfig;
   const supportsCategories = meta.supportsCategories;
   const categoryInputRef = useRef<HTMLDivElement>(null);

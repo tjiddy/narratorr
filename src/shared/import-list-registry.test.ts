@@ -1,9 +1,24 @@
-import { describe, it, expect } from 'vitest';
-import { IMPORT_LIST_REGISTRY, IMPORT_LIST_TYPES } from './import-list-registry.js';
+import { describe, it, expect, expectTypeOf } from 'vitest';
+import { IMPORT_LIST_REGISTRY, IMPORT_LIST_TYPES, type ImportListType, type ImportListTypeMetadata } from './import-list-registry.js';
 import { importListTypeSchema } from './schemas/import-list.js';
 
 describe('IMPORT_LIST_REGISTRY', () => {
   const types = importListTypeSchema.options;
+
+  describe('type narrowing', () => {
+    it('keys are narrowed to ImportListType — no string index signature', () => {
+      expectTypeOf<keyof typeof IMPORT_LIST_REGISTRY>().toEqualTypeOf<ImportListType>();
+    });
+
+    it('each entry is structurally an ImportListTypeMetadata', () => {
+      expectTypeOf<(typeof IMPORT_LIST_REGISTRY)[ImportListType]>().toExtend<ImportListTypeMetadata>();
+    });
+
+    it('indexing with a non-ImportListType key is a type error', () => {
+      // @ts-expect-error — 'unknown' is not in ImportListType
+      IMPORT_LIST_REGISTRY['unknown'];
+    });
+  });
 
   describe('schema-registry alignment', () => {
     it('has an entry for every importListTypeSchema value', () => {

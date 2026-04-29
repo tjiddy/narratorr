@@ -1,9 +1,24 @@
-import { describe, it, expect } from 'vitest';
-import { DOWNLOAD_CLIENT_REGISTRY } from './download-client-registry.js';
+import { describe, it, expect, expectTypeOf } from 'vitest';
+import { DOWNLOAD_CLIENT_REGISTRY, type DownloadClientType, type DownloadClientTypeMetadata } from './download-client-registry.js';
 import { downloadClientTypeSchema } from './schemas/download-client.js';
 
 describe('DOWNLOAD_CLIENT_REGISTRY', () => {
   const types = downloadClientTypeSchema.options;
+
+  describe('type narrowing', () => {
+    it('keys are narrowed to DownloadClientType — no string index signature', () => {
+      expectTypeOf<keyof typeof DOWNLOAD_CLIENT_REGISTRY>().toEqualTypeOf<DownloadClientType>();
+    });
+
+    it('each entry is structurally a DownloadClientTypeMetadata', () => {
+      expectTypeOf<(typeof DOWNLOAD_CLIENT_REGISTRY)[DownloadClientType]>().toExtend<DownloadClientTypeMetadata>();
+    });
+
+    it('indexing with a non-DownloadClientType key is a type error', () => {
+      // @ts-expect-error — 'unknown' is not in DownloadClientType
+      DOWNLOAD_CLIENT_REGISTRY['unknown'];
+    });
+  });
 
   describe('invariants', () => {
     it('has an entry for every download client type in the Zod enum', () => {
@@ -45,7 +60,8 @@ describe('DOWNLOAD_CLIENT_REGISTRY', () => {
 
   describe('viewSubtitle', () => {
     it('returns host:port for standard client types', () => {
-      for (const type of ['qbittorrent', 'transmission', 'sabnzbd', 'nzbget', 'deluge']) {
+      const types = ['qbittorrent', 'transmission', 'sabnzbd', 'nzbget', 'deluge'] as const;
+      for (const type of types) {
         const subtitle = DOWNLOAD_CLIENT_REGISTRY[type].viewSubtitle({ host: 'myhost', port: 9000 });
         expect(subtitle).toBe('myhost:9000');
       }
