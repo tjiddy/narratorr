@@ -32,7 +32,7 @@ function createWrapper(route = '/library') {
 
 describe('useLibraryFilters — replace semantics (mocked setSearchParams)', () => {
   beforeEach(() => {
-    vi.useFakeTimers({ shouldAdvanceTime: true });
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'], shouldAdvanceTime: true });
     mockSetSearchParams.mockClear();
   });
   afterEach(() => {

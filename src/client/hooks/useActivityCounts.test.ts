@@ -73,7 +73,7 @@ describe('useActivityCounts', () => {
   });
 
   it('disables polling when SSE is connected', async () => {
-    vi.useFakeTimers({ shouldAdvanceTime: true });
+    vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'], shouldAdvanceTime: true });
     try {
       vi.mocked(useSSEConnected).mockReturnValue(true);
       vi.mocked(api.getActivityCounts).mockResolvedValue({ active: 2, completed: 1 });
@@ -98,7 +98,7 @@ describe('useActivityCounts', () => {
   });
 
   it('enables polling when SSE disconnects', async () => {
-    vi.useFakeTimers({ shouldAdvanceTime: true });
+    vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'], shouldAdvanceTime: true });
     try {
       vi.mocked(useSSEConnected).mockReturnValue(true);
       vi.mocked(api.getActivityCounts).mockResolvedValue({ active: 1, completed: 0 });

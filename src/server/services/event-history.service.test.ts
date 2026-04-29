@@ -531,7 +531,7 @@ describe('EventHistoryService', () => {
       db.delete.mockReturnValue(chain);
 
       const fakeNow = new Date('2026-03-10T00:00:00Z').getTime();
-      vi.useFakeTimers({ now: fakeNow });
+      vi.useFakeTimers({ toFake: ['Date'], now: fakeNow });
 
       try {
         await service.pruneOlderThan(30);

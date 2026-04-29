@@ -57,7 +57,7 @@ function makeCompletedJob(overrides?: Partial<BulkJobStatus>): BulkJobStatus {
 describe('useBulkOperation', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    vi.useFakeTimers();
+    vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] });
     mockGetActiveBulkJob.mockResolvedValue(null);
     mockGetBulkJob.mockResolvedValue(makeRunningJob());
     mockStartBulkRename.mockResolvedValue({ jobId: 'job-1' });

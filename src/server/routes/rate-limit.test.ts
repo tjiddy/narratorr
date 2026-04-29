@@ -366,7 +366,7 @@ describe('rate limiting', () => {
     });
 
     it('allows requests again after time window expires', async () => {
-      vi.useFakeTimers();
+      vi.useFakeTimers({ toFake: ['Date'] });
 
       // Create a separate app with a very short time window for recovery testing
       const recoveryApp = Fastify({ logger: false }).withTypeProvider<ZodTypeProvider>();

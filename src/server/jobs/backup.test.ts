@@ -61,7 +61,7 @@ describe('runBackupJob', () => {
 
 describe('startBackupJob', () => {
   beforeEach(() => {
-    vi.useFakeTimers();
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
   });
 
   afterEach(() => {

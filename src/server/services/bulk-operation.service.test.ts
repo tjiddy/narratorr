@@ -633,7 +633,7 @@ describe('BulkOperationService — convert batch', () => {
 
 describe('TTL cleanup', () => {
   it('removes job from the jobs map after TTL expires', async () => {
-    vi.useFakeTimers();
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
     try {
       const { service, db } = createService();
       // Return empty list — rename job completes immediately with 0 items
@@ -659,7 +659,7 @@ describe('TTL cleanup', () => {
   });
 
   it('job remains accessible before TTL expires', async () => {
-    vi.useFakeTimers();
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
     try {
       const { service, db } = createService();
       db.select.mockReturnValueOnce(mockDbChain([]));
