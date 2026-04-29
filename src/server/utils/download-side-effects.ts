@@ -40,9 +40,9 @@ export interface EmitBookStatusChangeOnGrabArgs {
 /** Emit book_status_change SSE for a grab (wanted → downloading or missing). */
 export function emitBookStatusChangeOnGrab(args: EmitBookStatusChangeOnGrabArgs): void {
   const { broadcaster, bookId, isHandoff, log } = args;
-  const newStatus = isHandoff ? 'missing' as const : 'downloading' as const;
+  const newStatus = isHandoff ? 'missing' : 'downloading';
   safeEmit(broadcaster, 'book_status_change', {
-    book_id: bookId, old_status: 'wanted' as BookStatus, new_status: newStatus as BookStatus,
+    book_id: bookId, old_status: 'wanted', new_status: newStatus,
   }, log);
 }
 

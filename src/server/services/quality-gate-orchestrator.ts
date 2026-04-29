@@ -8,7 +8,7 @@ import type { DownloadClientService } from './download-client.service.js';
 import type { RemotePathMappingService } from './remote-path-mapping.service.js';
 import { safeEmit } from '../utils/safe-emit.js';
 import type { DownloadStatus } from '../../shared/schemas/activity.js';
-import type { BookStatus } from '../../shared/schemas/book.js';
+import type { BookStatus, EnrichmentStatus } from '../../shared/schemas/book.js';
 import type { DownloadRow } from './types.js';
 import type { QualityDecisionReason } from './quality-gate.types.js';
 import { NULL_REASON } from './quality-gate.types.js';
@@ -30,7 +30,13 @@ import { serializeError } from '../utils/serialize-error.js';
 import { enqueueAutoImport } from '../utils/enqueue-auto-import.js';
 import { WireOnce, ServiceWireError } from './wire-helpers.js';
 
-type BookRow = typeof books.$inferSelect;
+// Drizzle's $inferSelect widens enum columns to bare `string` (CLAUDE.md gotcha).
+// Re-narrow the status / enrichmentStatus columns so SSE event emitters can consume
+// `book.status` directly without re-asserting `as BookStatus`.
+type BookRow = Omit<typeof books.$inferSelect, 'status' | 'enrichmentStatus'> & {
+  status: BookStatus;
+  enrichmentStatus: EnrichmentStatus;
+};
 
 export interface QualityGateOrchestratorWireDeps {
   nudgeImportWorker: () => void;
@@ -150,9 +156,9 @@ export class QualityGateOrchestrator {
     // Promote book status to 'importing' (taking over from removed handleBookStatusOnCompletion)
     if (row.book) {
       await this.db.update(books).set({ status: 'importing' }).where(eq(books.id, row.book.id));
-      safeEmit(this.optional.broadcaster, 'book_status_change', { book_id: row.book.id, old_status: row.book.status as BookStatus, new_status: 'importing' as BookStatus }, this.log);
+      safeEmit(this.optional.broadcaster, 'book_status_change', { book_id: row.book.id, old_status: row.book.status, new_status: 'importing' }, this.log);
       safeEmit(this.optional.broadcaster, 'download_status_change', { download_id: row.download.id, book_id: row.book.id, old_status: 'completed', new_status: 'checking' }, this.log);
-      (row.book as { status: string }).status = 'importing'; // Update in-memory so revert guards work
+      row.book.status = 'importing'; // Update in-memory so revert guards work
     }
 
     try {
@@ -194,7 +200,7 @@ export class QualityGateOrchestrator {
       // Revert book from importing → downloading if it was promoted before the error
       if (row.book && row.book.status === 'importing') {
         await this.db.update(books).set({ status: 'downloading' }).where(eq(books.id, row.book.id));
-        safeEmit(this.optional.broadcaster, 'book_status_change', { book_id: row.book.id, old_status: 'importing' as BookStatus, new_status: 'downloading' as BookStatus }, this.log);
+        safeEmit(this.optional.broadcaster, 'book_status_change', { book_id: row.book.id, old_status: 'importing', new_status: 'downloading' }, this.log);
       }
       const probeError = getErrorMessage(error);
       this.recordDecision(row.download, row.book, { ...NULL_REASON, probeFailure: true, probeError, holdReasons: ['unhandled_error'] });
@@ -259,7 +265,7 @@ export class QualityGateOrchestrator {
       // Revert book from importing → downloading (monitor pre-promoted on completion)
       if (book.status === 'importing') {
         await this.db.update(books).set({ status: 'downloading' }).where(eq(books.id, book.id));
-        safeEmit(this.optional.broadcaster, 'book_status_change', { book_id: book.id, old_status: 'importing' as BookStatus, new_status: 'downloading' as BookStatus }, this.log);
+        safeEmit(this.optional.broadcaster, 'book_status_change', { book_id: book.id, old_status: 'importing', new_status: 'downloading' }, this.log);
       }
     }
 
@@ -284,7 +290,7 @@ export class QualityGateOrchestrator {
         // Revert book from importing → downloading (monitor pre-promoted on completion)
         if (book.status === 'importing') {
           await this.db.update(books).set({ status: 'downloading' }).where(eq(books.id, book.id));
-          safeEmit(this.optional.broadcaster, 'book_status_change', { book_id: book.id, old_status: 'importing' as BookStatus, new_status: 'downloading' as BookStatus }, this.log);
+          safeEmit(this.optional.broadcaster, 'book_status_change', { book_id: book.id, old_status: 'importing', new_status: 'downloading' }, this.log);
         }
       }
       this.recordDecision(download, book, reason);
@@ -323,7 +329,7 @@ export class QualityGateOrchestrator {
     if (book) {
       const revertStatus = await revertBookStatus(this.db, book);
       safeEmit(this.optional.broadcaster, 'download_status_change', { download_id: download.id, book_id: book.id, old_status: oldStatus, new_status: 'failed' }, this.log);
-      safeEmit(this.optional.broadcaster, 'book_status_change', { book_id: book.id, old_status: book.status as BookStatus, new_status: revertStatus as BookStatus }, this.log);
+      safeEmit(this.optional.broadcaster, 'book_status_change', { book_id: book.id, old_status: book.status, new_status: revertStatus }, this.log);
     }
   }
 

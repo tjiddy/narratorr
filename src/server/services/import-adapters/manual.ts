@@ -1,7 +1,6 @@
 import { resolve } from 'node:path';
 import { eq } from 'drizzle-orm';
 import { books } from '../../../db/schema.js';
-import type { BookStatus } from '../../../shared/schemas/book.js';
 import { manualImportJobPayloadSchema, type ImportAdapter, type ImportAdapterContext, type ImportJob, type ManualImportJobPayload } from './types.js';
 import type { ImportPipelineDeps } from '../import-orchestration.helpers.js';
 import type { AppSettings } from '../../../shared/schemas/settings/registry.js';
@@ -91,7 +90,7 @@ export class ManualImportAdapter implements ImportAdapter {
       );
 
       await db.update(books).set({ status: 'imported', updatedAt: new Date() }).where(eq(books.id, bookId));
-      safeEmit(broadcaster, 'book_status_change', { book_id: bookId, old_status: 'importing' as BookStatus, new_status: 'imported' as BookStatus }, log);
+      safeEmit(broadcaster, 'book_status_change', { book_id: bookId, old_status: 'importing', new_status: 'imported' }, log);
 
       eventHistory.create(buildImportedEventPayload(bookId, payload, extracted.narratorName, resolve(finalPath), mode))
         .catch((err: unknown) => log.warn({ error: serializeError(err) }, 'Failed to record manual import event'));
@@ -106,7 +105,7 @@ export class ManualImportAdapter implements ImportAdapter {
   ): void {
     const { eventHistory, broadcaster } = this.deps;
     // Failure side effects — emit SSE and record event before re-throwing (worker marks job/book as failed)
-    safeEmit(broadcaster, 'book_status_change', { book_id: bookId, old_status: 'importing' as BookStatus, new_status: 'failed' as BookStatus }, log);
+    safeEmit(broadcaster, 'book_status_change', { book_id: bookId, old_status: 'importing', new_status: 'failed' }, log);
     recordImportFailedEvent({
       eventHistory,
       bookId,
