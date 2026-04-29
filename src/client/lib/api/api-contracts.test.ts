@@ -596,21 +596,6 @@ describe('remotePathMappingsApi', () => {
 });
 
 describe('searchApi', () => {
-  it('searchBooks → GET /search?q=... with query', async () => {
-    await searchApi.searchBooks('tolkien');
-    expect(mockFetchApi).toHaveBeenCalledWith('/search?q=tolkien');
-  });
-
-  it('searchBooks with context → GET /search?q=...&author=...&title=...', async () => {
-    await searchApi.searchBooks('hobbit', { author: 'Tolkien', title: 'The Hobbit' });
-    expect(mockFetchApi).toHaveBeenCalledWith(expect.stringContaining('/search?'));
-    const url = mockFetchApi.mock.calls[0][0] as string;
-    const params = new URLSearchParams(url.split('?')[1]);
-    expect(params.get('q')).toBe('hobbit');
-    expect(params.get('author')).toBe('Tolkien');
-    expect(params.get('title')).toBe('The Hobbit');
-  });
-
   it('searchGrab → POST /search/grab with params', async () => {
     const params = { downloadUrl: 'https://example.com/dl', title: 'Book', protocol: 'torrent' as const, bookId: 1 };
     await searchApi.searchGrab(params);
@@ -779,13 +764,6 @@ describe('response pass-through', () => {
     const data = [{ id: 1, remotePath: '/r', localPath: '/l' }];
     mockFetchApi.mockResolvedValue(data);
     const result = await remotePathMappingsApi.getRemotePathMappings();
-    expect(result).toBe(data);
-  });
-
-  it('searchApi.searchBooks returns fetchApi response', async () => {
-    const data = { results: [], durationUnknown: false, unsupportedResults: { count: 0, titles: [] } };
-    mockFetchApi.mockResolvedValue(data);
-    const result = await searchApi.searchBooks('test');
     expect(result).toBe(data);
   });
 

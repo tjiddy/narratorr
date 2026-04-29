@@ -185,14 +185,15 @@ describe('Error recovery E2E', () => {
       }),
     );
 
-    const searchRes = await e2e.app.inject({
-      method: 'GET',
-      url: '/api/search?q=Brandon+Sanderson',
-    });
-
-    // Search completes with results from the working indexer
-    expect(searchRes.statusCode).toBe(200);
-    const results = searchRes.json().results;
+    // GET /api/search was retired in Wave 11.2 (#755) in favor of SSE
+    // /api/search/stream. SSE stream parsing requires app.listen() + fetch,
+    // which doesn't compose with the inject()-based e2e harness; the SSE route
+    // and indexer-error event behavior are covered by search-stream-filtering
+    // route tests and indexer.service tests ("continues searching when one
+    // indexer errors"). The remaining concern at the e2e level is that BOTH
+    // indexer HTTP endpoints are reachable through the indexer service, so we
+    // exercise the service directly here.
+    const results = await e2e.services.indexer.searchAll('Brandon Sanderson');
     expect(results.length).toBeGreaterThan(0);
   });
 
