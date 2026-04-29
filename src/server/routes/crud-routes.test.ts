@@ -171,4 +171,65 @@ describe('crud-routes shared error paths', () => {
       expect(res.json()).toEqual({ error: 'Internal server error' });
     });
   });
+
+  describe('POST /api/notifiers/test — sentinel-aware schema (#827)', () => {
+    it('accepts sentinel in registered secret field with id and forwards id to service', async () => {
+      (services.notifier.testConfig as Mock).mockResolvedValue({ success: true });
+
+      const res = await app.inject({
+        method: 'POST',
+        url: '/api/notifiers/test',
+        payload: {
+          name: 'pushover-edit',
+          type: 'pushover',
+          enabled: true,
+          events: ['on_grab'],
+          settings: { pushoverToken: '********', pushoverUser: 'u' },
+          id: 7,
+        },
+      });
+
+      expect(res.statusCode).toBe(200);
+      expect(services.notifier.testConfig).toHaveBeenCalledWith(
+        expect.objectContaining({
+          type: 'pushover',
+          settings: expect.objectContaining({ pushoverToken: '********' }),
+          id: 7,
+        }),
+      );
+    });
+
+    it('accepts sentinel without id (no server-side guard)', async () => {
+      (services.notifier.testConfig as Mock).mockResolvedValue({ success: false, message: 'whatever' });
+
+      const res = await app.inject({
+        method: 'POST',
+        url: '/api/notifiers/test',
+        payload: {
+          name: 'pushover',
+          type: 'pushover',
+          enabled: true,
+          events: ['on_grab'],
+          settings: { pushoverToken: '********', pushoverUser: 'u' },
+        },
+      });
+
+      expect(res.statusCode).toBe(200);
+    });
+
+    it('still rejects missing required name (strictness preserved)', async () => {
+      const res = await app.inject({
+        method: 'POST',
+        url: '/api/notifiers/test',
+        payload: {
+          type: 'pushover',
+          enabled: true,
+          events: ['on_grab'],
+          settings: { pushoverToken: '********', pushoverUser: 'u' },
+        },
+      });
+
+      expect(res.statusCode).toBe(400);
+    });
+  });
 });

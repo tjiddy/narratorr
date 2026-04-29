@@ -1,6 +1,11 @@
 import { createCipheriv, createDecipheriv, randomBytes } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
+import { z } from 'zod';
+import { indexerSettingsSchemas } from '../../shared/schemas/indexer.js';
+import { downloadClientSettingsSchemas } from '../../shared/schemas/download-client.js';
+import { notifierSettingsSchemas } from '../../shared/schemas/notifier.js';
+import { importListSettingsSchemas } from '../../shared/schemas/import-list.js';
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
@@ -98,6 +103,84 @@ export function resolveSentinelFields(
 
 export function getSecretFieldNames(entity: SecretEntity): readonly string[] {
   return SECRET_FIELDS[entity] ?? [];
+}
+
+// ─── Test-mode schema (sentinel-aware) ───────────────────────────────────────
+
+const PER_TYPE_SETTINGS_MAPS: Partial<Record<SecretEntity, Record<string, z.ZodTypeAny>>> = {
+  indexer: indexerSettingsSchemas,
+  downloadClient: downloadClientSettingsSchemas,
+  notifier: notifierSettingsSchemas,
+  importList: importListSettingsSchemas,
+};
+
+function loosenSettingsSchema(
+  schema: z.ZodTypeAny,
+  secretFields: readonly string[],
+): z.ZodTypeAny {
+  if (!(schema instanceof z.ZodObject)) return schema;
+  const obj = schema as z.ZodObject<z.ZodRawShape>;
+  const shape = obj.shape as Record<string, z.ZodTypeAny>;
+  const overrides: Record<string, z.ZodTypeAny> = {};
+  for (const field of secretFields) {
+    const original = shape[field];
+    if (!original) continue;
+    overrides[field] = z.union([z.literal(SENTINEL), original]);
+  }
+  if (Object.keys(overrides).length === 0) return schema;
+  // safeExtend is the public API for overriding keys on objects that may carry
+  // chained refinements (e.g. Hardcover's listType/shelfId rule). It preserves
+  // strict mode and refinement checks; .extend() throws when overwriting keys
+  // on schemas with refinements.
+  return obj.safeExtend(overrides);
+}
+
+/**
+ * Build a sentinel-aware test-mode schema for a CRUD entity's `/test` endpoint.
+ *
+ * Loosens the per-type settings schemas so each registered secret field
+ * accepts either the sentinel `'********'` or its original validator. Outer
+ * fields (name/type/priority/etc.) keep their strict validators. Adds an
+ * optional `id` field for resolving sentinels against saved settings.
+ *
+ * Per-entity validation is rebuilt from the per-type settings map (not
+ * introspected from the create schema's superRefine), so adapter-specific
+ * validators like Hardcover's listType/shelfId rule are preserved on the
+ * loosened secret field.
+ */
+export function makeTestSchema<S extends z.ZodTypeAny>(
+  createSchema: S,
+  secretEntity: SecretEntity,
+): z.ZodTypeAny {
+  if (!(createSchema instanceof z.ZodObject)) return createSchema;
+  const outer = createSchema as z.ZodObject<z.ZodRawShape>;
+  const withId = outer.extend({ id: z.number().int().positive().optional() });
+
+  const settingsMap = PER_TYPE_SETTINGS_MAPS[secretEntity];
+  const secretFields = getSecretFieldNames(secretEntity);
+  if (!settingsMap) return withId;
+
+  const perTypeMap: Record<string, z.ZodTypeAny> = {};
+  for (const [type, schema] of Object.entries(settingsMap)) {
+    perTypeMap[type] = secretFields.length === 0
+      ? schema
+      : loosenSettingsSchema(schema, secretFields);
+  }
+
+  return withId.superRefine((data, ctx) => {
+    const obj = data as { type?: string; settings?: Record<string, unknown> };
+    if (typeof obj.type !== 'string' || !obj.settings) return;
+    const schema = perTypeMap[obj.type];
+    if (!schema) return;
+    const result = schema.safeParse(obj.settings);
+    if (!result.success) {
+      for (const issue of result.error.issues) {
+        ctx.addIssue({ ...issue, path: ['settings', ...issue.path] });
+      }
+      return;
+    }
+    obj.settings = result.data as Record<string, unknown>;
+  });
 }
 
 export function encryptFields(

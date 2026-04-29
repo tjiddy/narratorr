@@ -32,7 +32,7 @@ export const downloadClientsApi = {
     fetchApi<{ success: boolean }>(`/download-clients/${id}`, { method: 'DELETE' }),
   testClient: (id: number) =>
     fetchApi<TestResult>(`/download-clients/${id}/test`, { method: 'POST' }),
-  testClientConfig: (data: Omit<DownloadClient, 'id' | 'createdAt'>) =>
+  testClientConfig: (data: Omit<DownloadClient, 'id' | 'createdAt'> & { id?: number }) =>
     fetchApi<TestResult>('/download-clients/test', {
       method: 'POST',
       body: JSON.stringify(data),

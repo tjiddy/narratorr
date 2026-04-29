@@ -64,6 +64,65 @@ describe('ImportListService', () => {
       expect(result.success).toBe(false);
       expect(result.message).toBe('Bad config');
     });
+
+    describe('sentinel resolution (#827)', () => {
+      it('with id, replaces sentinel apiKey with saved (decrypted) value before factory call', async () => {
+        const mockProvider = { test: vi.fn().mockResolvedValue({ success: true }), fetchItems: vi.fn() };
+        mockFactories.abs.mockReturnValue(mockProvider);
+
+        const encryptedApiKey = encrypt('real-api-key', getKey());
+        const db = createMockDb();
+        db.select.mockReturnValue(mockDbChain([{
+          id: 1, name: 'Existing', type: 'abs', enabled: true,
+          settings: { serverUrl: 'http://abs.local', apiKey: encryptedApiKey, libraryId: 'lib-1' },
+          syncIntervalMinutes: 1440, lastRunAt: null, nextRunAt: null,
+          lastSyncError: null, createdAt: new Date(),
+        }]));
+        service = new ImportListService(inject<Db>(db), mockLog);
+
+        const result = await service.testConfig({
+          type: 'abs',
+          settings: { serverUrl: 'http://abs.local', apiKey: '********', libraryId: 'lib-1' },
+          id: 1,
+        });
+
+        expect(result).toEqual({ success: true });
+        expect(mockFactories.abs).toHaveBeenCalledWith(
+          expect.objectContaining({ apiKey: 'real-api-key' }),
+        );
+      });
+
+      it('without id, passes sentinel literally to provider (no resolution)', async () => {
+        const mockProvider = { test: vi.fn().mockResolvedValue({ success: false }), fetchItems: vi.fn() };
+        mockFactories.abs.mockReturnValue(mockProvider);
+        const db = createMockDb();
+        service = new ImportListService(inject<Db>(db), mockLog);
+
+        await service.testConfig({
+          type: 'abs',
+          settings: { serverUrl: 'http://abs.local', apiKey: '********', libraryId: 'lib-1' },
+        });
+
+        expect(mockFactories.abs).toHaveBeenCalledWith(
+          expect.objectContaining({ apiKey: '********' }),
+        );
+      });
+
+      it('with id for missing row returns Import list not found and skips provider factory', async () => {
+        const db = createMockDb();
+        db.select.mockReturnValue(mockDbChain([]));
+        service = new ImportListService(inject<Db>(db), mockLog);
+
+        const result = await service.testConfig({
+          type: 'abs',
+          settings: { serverUrl: 'http://abs.local', apiKey: '********', libraryId: 'lib-1' },
+          id: 999,
+        });
+
+        expect(result).toEqual({ success: false, message: 'Import list not found' });
+        expect(mockFactories.abs).not.toHaveBeenCalled();
+      });
+    });
   });
 
   // #732 — Saved-row validation + Hardcover shelfId numeric tightening

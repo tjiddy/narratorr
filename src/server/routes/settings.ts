@@ -46,6 +46,7 @@ const ffmpegProbeSchema = z.object({
 
 const testProxySchema = z.object({
   proxyUrl: z.string().trim().min(1, 'Proxy URL is required').refine((val) => {
+    if (isSentinel(val)) return true;
     try {
       const url = new URL(val);
       return ['http:', 'https:', 'socks5:'].includes(url.protocol);
@@ -147,14 +148,24 @@ export async function settingsRoutes(
       },
     },
     async (request, reply) => {
+      let { proxyUrl } = request.body;
+      if (isSentinel(proxyUrl)) {
+        const network = await settingsService.get('network');
+        const saved = network && typeof network === 'object'
+          ? (network as { proxyUrl?: string | null }).proxyUrl
+          : null;
+        if (!saved) {
+          return reply.status(400).send({ error: 'No saved proxy URL to test' });
+        }
+        proxyUrl = saved;
+      }
       try {
-        const { proxyUrl } = request.body;
         const ip = await healthCheckService!.probeProxy(proxyUrl);
         request.log.info({ ip, proxyUrl: redactProxyUrl(proxyUrl) }, 'Proxy test successful');
         return { success: true, ip };
       } catch (error: unknown) {
         const message = getErrorMessage(error);
-        request.log.warn({ error: serializeError(error), proxyUrl: redactProxyUrl(request.body.proxyUrl) }, 'Proxy test failed');
+        request.log.warn({ error: serializeError(error), proxyUrl: redactProxyUrl(proxyUrl) }, 'Proxy test failed');
         return reply.status(200).send({ success: false, message });
       }
     }

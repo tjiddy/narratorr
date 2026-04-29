@@ -324,6 +324,29 @@ describe('indexers routes', () => {
 
       expect(res.statusCode).toBe(400);
     });
+
+    // #827 — sentinel-laden body + valid id reaches the service (no schema 400)
+    it('accepts sentinel in mamId with id and forwards to testConfig', async () => {
+      (services.indexer.testConfig as Mock).mockResolvedValue({ success: true });
+
+      const res = await app.inject({
+        method: 'POST',
+        url: '/api/indexers/test',
+        payload: {
+          name: 'mam-edit',
+          type: 'myanonamouse',
+          enabled: true,
+          priority: 50,
+          settings: { mamId: '********' },
+          id: 3,
+        },
+      });
+
+      expect(res.statusCode).toBe(200);
+      expect(services.indexer.testConfig).toHaveBeenCalledWith(
+        expect.objectContaining({ id: 3 }),
+      );
+    });
   });
 
   describe('POST /api/indexers/:id/test', () => {

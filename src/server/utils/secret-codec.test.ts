@@ -15,8 +15,13 @@ import {
   resolveSentinelFields,
   loadEncryptionKey,
   getSecretFieldNames,
+  makeTestSchema,
 } from './secret-codec.js';
 import { notifierSettingsSchemas } from '../../shared/schemas/notifier.js';
+import { createIndexerSchema } from '../../shared/schemas/indexer.js';
+import { createNotifierSchema } from '../../shared/schemas/notifier.js';
+import { createDownloadClientSchema } from '../../shared/schemas/download-client.js';
+import { createImportListSchema } from '../../shared/schemas/import-list.js';
 
 const TEST_KEY = Buffer.from('a'.repeat(64), 'hex');
 
@@ -375,6 +380,144 @@ describe('resolveSentinelFields', () => {
     // No existing record to look up — sentinel stays as undefined
     expect(result.apiKey).toBeUndefined();
     expect(result.hostname).toBe('new.com');
+  });
+});
+
+describe('makeTestSchema', () => {
+  describe('indexer', () => {
+    const schema = makeTestSchema(createIndexerSchema, 'indexer');
+    const valid = { name: 'idx', type: 'myanonamouse', enabled: true, priority: 50, settings: { mamId: '********' } };
+
+    it('accepts sentinel for registered secret field (mamId)', () => {
+      expect(schema.safeParse(valid).success).toBe(true);
+    });
+
+    it('accepts sentinel for newznab apiKey/apiUrl', () => {
+      const r = schema.safeParse({
+        name: 'n', type: 'newznab', enabled: true, priority: 50,
+        settings: { apiUrl: '********', apiKey: '********' },
+      });
+      expect(r.success).toBe(true);
+    });
+
+    it('accepts real value for registered secret field', () => {
+      const r = schema.safeParse({ ...valid, settings: { mamId: 'real-cookie-value' } });
+      expect(r.success).toBe(true);
+    });
+
+    it('rejects empty string for required secret field (.min(1) still applies for non-sentinel)', () => {
+      const r = schema.safeParse({ ...valid, settings: { mamId: '' } });
+      expect(r.success).toBe(false);
+    });
+
+    it('rejects missing required name', () => {
+      const r = schema.safeParse({ type: 'myanonamouse', enabled: true, priority: 50, settings: { mamId: '********' } });
+      expect(r.success).toBe(false);
+    });
+
+    it('rejects priority out of range (200)', () => {
+      const r = schema.safeParse({ ...valid, priority: 200 });
+      expect(r.success).toBe(false);
+    });
+
+    it('rejects unknown type discriminator', () => {
+      const r = schema.safeParse({ ...valid, type: 'unknown' });
+      expect(r.success).toBe(false);
+    });
+
+    it('rejects per-type mismatch (newznab with mamId only)', () => {
+      const r = schema.safeParse({
+        name: 'n', type: 'newznab', enabled: true, priority: 50,
+        settings: { mamId: 'x' },
+      });
+      expect(r.success).toBe(false);
+    });
+
+    it('rejects unknown key in strict per-type schema (bogusKey on myanonamouse)', () => {
+      const r = schema.safeParse({
+        name: 'n', type: 'myanonamouse', enabled: true, priority: 50,
+        settings: { mamId: '********', bogusKey: 'x' },
+      });
+      expect(r.success).toBe(false);
+    });
+
+    it('accepts optional id field', () => {
+      const r = schema.safeParse({ ...valid, id: 7 });
+      expect(r.success).toBe(true);
+      if (r.success) {
+        expect((r.data as { id?: number }).id).toBe(7);
+      }
+    });
+
+    it('rejects negative id', () => {
+      const r = schema.safeParse({ ...valid, id: -1 });
+      expect(r.success).toBe(false);
+    });
+  });
+
+  describe('cross-entity isolation', () => {
+    it('notifier schema does not loosen mamId (not a notifier secret)', () => {
+      const schema = makeTestSchema(createNotifierSchema, 'notifier');
+      const r = schema.safeParse({
+        name: 'n', type: 'webhook', enabled: true, events: ['on_grab'],
+        settings: { url: 'http://x', mamId: '********' },
+      });
+      expect(r.success).toBe(false);
+    });
+
+    it('notifier schema accepts sentinel for url (registered notifier secret)', () => {
+      const schema = makeTestSchema(createNotifierSchema, 'notifier');
+      const r = schema.safeParse({
+        name: 'n', type: 'webhook', enabled: true, events: ['on_grab'],
+        settings: { url: '********' },
+      });
+      expect(r.success).toBe(true);
+    });
+  });
+
+  describe('downloadClient', () => {
+    const schema = makeTestSchema(createDownloadClientSchema, 'downloadClient');
+
+    it('accepts sentinel for password and apiKey', () => {
+      const qb = schema.safeParse({
+        name: 'qb', type: 'qbittorrent', enabled: true, priority: 50,
+        settings: { host: 'h', port: 8080, password: '********' },
+      });
+      expect(qb.success).toBe(true);
+      const sab = schema.safeParse({
+        name: 'sab', type: 'sabnzbd', enabled: true, priority: 50,
+        settings: { host: 'h', port: 8080, apiKey: '********' },
+      });
+      expect(sab.success).toBe(true);
+    });
+
+    it('rejects empty apiKey for sabnzbd (min(1) holds for non-sentinel)', () => {
+      const r = schema.safeParse({
+        name: 'sab', type: 'sabnzbd', enabled: true, priority: 50,
+        settings: { host: 'h', port: 8080, apiKey: '' },
+      });
+      expect(r.success).toBe(false);
+    });
+  });
+
+  describe('importList', () => {
+    const schema = makeTestSchema(createImportListSchema, 'importList');
+
+    it('accepts sentinel for apiKey on abs', () => {
+      const r = schema.safeParse({
+        name: 'abs', type: 'abs', enabled: true, syncIntervalMinutes: 1440,
+        settings: { serverUrl: 'http://abs', apiKey: '********', libraryId: 'lib-1' },
+      });
+      expect(r.success).toBe(true);
+    });
+
+    it('preserves hardcover listType/shelfId rule when apiKey loosened', () => {
+      const r = schema.safeParse({
+        name: 'hc', type: 'hardcover', enabled: true, syncIntervalMinutes: 1440,
+        settings: { apiKey: '********', listType: 'shelf' },
+      });
+      expect(r.success).toBe(false);
+    });
   });
 });
 

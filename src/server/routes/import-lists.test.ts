@@ -204,6 +204,29 @@ describe('import-lists routes', () => {
       expect(res.statusCode).toBe(200);
       expect(res.json()).toEqual({ success: true });
     });
+
+    // #827 — sentinel-laden body + valid id reaches the service (no schema 400)
+    it('accepts sentinel in apiKey with id and forwards to testConfig', async () => {
+      (services.importList.testConfig as Mock).mockResolvedValue({ success: true });
+
+      const res = await app.inject({
+        method: 'POST',
+        url: '/api/import-lists/test',
+        payload: {
+          name: 'abs-edit',
+          type: 'abs',
+          enabled: true,
+          syncIntervalMinutes: 1440,
+          settings: { serverUrl: 'http://abs.local', apiKey: '********', libraryId: 'lib-1' },
+          id: 11,
+        },
+      });
+
+      expect(res.statusCode).toBe(200);
+      expect(services.importList.testConfig).toHaveBeenCalledWith(
+        expect.objectContaining({ id: 11 }),
+      );
+    });
   });
 
   describe('POST /api/import-lists/:id/test', () => {

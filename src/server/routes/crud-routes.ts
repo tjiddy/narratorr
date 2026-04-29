@@ -1,7 +1,7 @@
 import { type FastifyInstance } from 'fastify';
-import { z, type ZodTypeAny } from 'zod';
+import { type z, type ZodTypeAny } from 'zod';
 import { idParamSchema } from '../../shared/schemas.js';
-import { maskFields, type SecretEntity } from '../utils/secret-codec.js';
+import { makeTestSchema, maskFields, type SecretEntity } from '../utils/secret-codec.js';
 import { getErrorMessage } from '../utils/error-message.js';
 import { serializeError } from '../utils/serialize-error.js';
 
@@ -113,10 +113,8 @@ export async function registerCrudRoutes(
     },
   );
 
-  // POST /api/<resource>/test — extend body schema with optional id for sentinel resolution
-  const testSchema = (createSchema instanceof z.ZodObject)
-    ? createSchema.extend({ id: z.number().int().positive().optional() })
-    : createSchema;
+  // POST /api/<resource>/test — sentinel-aware schema with optional id
+  const testSchema = secretEntity ? makeTestSchema(createSchema, secretEntity) : createSchema;
   app.post<{ Body: { type: string; settings: Record<string, unknown>; id?: number } }>(
     `${basePath}/test`,
     { schema: { body: testSchema } },

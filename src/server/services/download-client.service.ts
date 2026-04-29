@@ -179,10 +179,22 @@ export class DownloadClientService {
     return factory(settings, { onWarn: (msg: string) => this.log.warn(msg) });
   }
 
-  async testConfig(data: { type: string; settings: Record<string, unknown> }): Promise<{ success: boolean; message?: string }> {
+  async testConfig(data: { type: string; settings: Record<string, unknown>; id?: number }): Promise<{ success: boolean; message?: string }> {
     try {
       this.log.debug({ type: data.type, host: data.settings.host, port: data.settings.port, useSsl: data.settings.useSsl }, 'Testing download client config');
-      const fakeRow = { id: 0, name: '', type: data.type, enabled: true, priority: 0, settings: data.settings, createdAt: new Date() } as DownloadClientRow;
+
+      // When editing an existing client, resolve sentinel values against saved settings
+      let resolvedSettings = data.settings;
+      if (data.id != null) {
+        const existing = await this.getById(data.id);
+        if (!existing) {
+          return { success: false, message: 'Download client not found' };
+        }
+        resolvedSettings = { ...data.settings };
+        resolveSentinelFields(resolvedSettings, (existing.settings ?? {}) as Record<string, unknown>);
+      }
+
+      const fakeRow = { id: 0, name: '', type: data.type, enabled: true, priority: 0, settings: resolvedSettings, createdAt: new Date() } as DownloadClientRow;
       const adapter = this.createAdapter(fakeRow);
       const result = await adapter.test();
       this.log.debug({ type: data.type, success: result.success, message: result.message }, 'Download client config test result');
