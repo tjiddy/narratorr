@@ -102,7 +102,7 @@ describe('ToggleSwitch', () => {
   });
 
   describe('RHF integration', () => {
-    it('works with forwardRef — register() spread attaches ref and onChange correctly', async () => {
+    it('register() spread attaches ref and onChange correctly', async () => {
       render(<RHFWrapper />);
       const input = screen.getByRole('checkbox');
       expect(input).not.toBeChecked();

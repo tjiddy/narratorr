@@ -346,7 +346,7 @@ describe('SelectWithChevron', () => {
       expect(label).not.toHaveClass('mb-2');
     });
 
-    it('forwardRef works in compact variant', () => {
+    it('ref prop works in compact variant', () => {
       const ref = { current: null as HTMLSelectElement | null };
       render(
         <SelectWithChevron id="test" variant="compact" label="Test" ref={ref}>

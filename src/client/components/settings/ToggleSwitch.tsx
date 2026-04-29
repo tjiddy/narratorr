@@ -1,9 +1,10 @@
-import { forwardRef } from 'react';
+import type { Ref } from 'react';
 
 type ToggleSwitchSize = 'full' | 'compact';
 
 interface ToggleSwitchProps extends Omit<React.InputHTMLAttributes<HTMLInputElement>, 'size'> {
   size?: ToggleSwitchSize;
+  ref?: Ref<HTMLInputElement>;
 }
 
 const sizeStyles = {
@@ -17,23 +18,21 @@ const sizeStyles = {
   },
 } as const;
 
-export const ToggleSwitch = forwardRef<HTMLInputElement, ToggleSwitchProps>(
-  function ToggleSwitch({ size = 'full', className, disabled, ...inputProps }, ref) {
-    const s = sizeStyles[size];
+export function ToggleSwitch({ size = 'full', className, disabled, ref, ...inputProps }: ToggleSwitchProps) {
+  const s = sizeStyles[size];
 
-    return (
-      <>
-        <input
-          type="checkbox"
-          ref={ref}
-          disabled={disabled}
-          className={`sr-only peer${className ? ` ${className}` : ''}`}
-          {...inputProps}
-        />
-        <div
-          className={`${s.track} bg-muted rounded-full peer peer-checked:bg-primary transition-colors peer-focus-visible:ring-2 peer-focus-visible:ring-primary after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full ${s.thumb} after:transition-all${disabled ? ' opacity-50 cursor-not-allowed' : ''}`}
-        />
-      </>
-    );
-  }
-);
+  return (
+    <>
+      <input
+        type="checkbox"
+        ref={ref}
+        disabled={disabled}
+        className={`sr-only peer${className ? ` ${className}` : ''}`}
+        {...inputProps}
+      />
+      <div
+        className={`${s.track} bg-muted rounded-full peer peer-checked:bg-primary transition-colors peer-focus-visible:ring-2 peer-focus-visible:ring-primary after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full ${s.thumb} after:transition-all${disabled ? ' opacity-50 cursor-not-allowed' : ''}`}
+      />
+    </>
+  );
+}

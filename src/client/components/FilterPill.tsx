@@ -1,4 +1,4 @@
-import { forwardRef, type ReactNode } from 'react';
+import type { ReactNode, Ref } from 'react';
 
 type FilterPillVariant = 'primary' | 'toolbar';
 
@@ -20,26 +20,35 @@ export interface FilterPillProps {
   variant?: FilterPillVariant;
   className?: string;
   children?: ReactNode;
+  ref?: Ref<HTMLButtonElement>;
   'aria-label'?: string;
   'aria-pressed'?: boolean;
 }
 
-export const FilterPill = forwardRef<HTMLButtonElement, FilterPillProps>(
-  function FilterPill({ label, active, onClick, variant = 'primary', className = '', children, 'aria-label': ariaLabel, 'aria-pressed': ariaPressed }, ref) {
-    const classes = variantClasses[variant];
-    return (
-      <button
-        ref={ref}
-        type="button"
-        onClick={onClick}
-        aria-label={ariaLabel}
-        aria-pressed={ariaPressed}
-        className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-all duration-200 ${
-          active ? classes.active : classes.inactive
-        } ${className}`}
-      >
-        {children ?? label}
-      </button>
-    );
-  }
-);
+export function FilterPill({
+  label,
+  active,
+  onClick,
+  variant = 'primary',
+  className = '',
+  children,
+  ref,
+  'aria-label': ariaLabel,
+  'aria-pressed': ariaPressed,
+}: FilterPillProps) {
+  const classes = variantClasses[variant];
+  return (
+    <button
+      ref={ref}
+      type="button"
+      onClick={onClick}
+      aria-label={ariaLabel}
+      aria-pressed={ariaPressed}
+      className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-all duration-200 ${
+        active ? classes.active : classes.inactive
+      } ${className}`}
+    >
+      {children ?? label}
+    </button>
+  );
+}
