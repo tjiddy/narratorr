@@ -10,6 +10,7 @@ import type { Db } from '../../db/index.js';
 import { createTestApp, createMockServices, installMockAppLog, resetMockServices, inject } from '../__tests__/helpers.js';
 import { DEFAULT_SETTINGS } from '../../shared/schemas/settings/registry.js';
 import { registerRoutes, type Services } from './index.js';
+import { TaskRegistry, TaskRegistryError } from '../services/task-registry.js';
 
 vi.mock('../utils/version.js', () => ({
   getVersion: () => '0.1.0',
@@ -45,6 +46,12 @@ describe('system routes', () => {
   beforeEach(() => {
     resetMockServices(services);
     for (const s of Object.values(logSpies)) s.mockClear();
+    // After reset, default runExclusive to invoke its callback (call-through) so tests
+    // exercising the underlying job behavior don't need to opt in. Tests asserting the
+    // 409 busy path override per-call with mockRejectedValueOnce(new TaskRegistryError).
+    (services.taskRegistry.runExclusive as Mock).mockImplementation(
+      (_name: string, fn: () => Promise<unknown>) => fn(),
+    );
   });
 
   describe('GET /api/system/status (#742 — minimal public payload)', () => {
@@ -330,6 +337,98 @@ describe('system routes', () => {
       expect(res.statusCode).toBe(200);
       const payload = JSON.parse(res.payload);
       expect(payload.created).toBe(true);
+    });
+  });
+
+  // #746 — manual triggers route through TaskRegistry concurrency guard
+  describe('manual task trigger concurrency (TaskRegistry-guarded)', () => {
+    const cases = [
+      { url: '/api/system/tasks/search', task: 'search' },
+      { url: '/api/system/tasks/search-all-wanted', task: 'search' },
+      { url: '/api/system/tasks/rss', task: 'rss' },
+      { url: '/api/system/backups/create', task: 'backup' },
+    ] as const;
+
+    for (const { url, task } of cases) {
+      it(`POST ${url} returns 409 when registry throws ALREADY_RUNNING (lock '${task}')`, async () => {
+        (services.taskRegistry.runExclusive as Mock).mockImplementationOnce((name: string) => {
+          throw new TaskRegistryError(`Task "${name}" is already running`, 'ALREADY_RUNNING');
+        });
+
+        const res = await app.inject({ method: 'POST', url });
+
+        expect(res.statusCode).toBe(409);
+        expect(JSON.parse(res.payload)).toEqual({ error: `Task "${task}" is already running` });
+      });
+    }
+
+    it("POST /api/system/tasks/search-all-wanted invokes runExclusive with the 'search' lock (shared, not distinct)", async () => {
+      (services.settings.get as Mock).mockImplementation((cat: string) =>
+        Promise.resolve(DEFAULT_SETTINGS[cat as keyof typeof DEFAULT_SETTINGS]),
+      );
+      (services.bookList.getAll as Mock).mockResolvedValue({ data: [], total: 0 });
+
+      const res = await app.inject({ method: 'POST', url: '/api/system/tasks/search-all-wanted' });
+
+      expect(res.statusCode).toBe(200);
+      expect(services.taskRegistry.runExclusive as Mock).toHaveBeenCalledWith('search', expect.any(Function));
+    });
+  });
+
+  // #746 — exercises the real TaskRegistry, not the proxy mock, to validate AC4 + AC7.
+  describe('TaskRegistry concurrency end-to-end (real registry)', () => {
+    let realRegistry: TaskRegistry;
+    let realApp: Awaited<ReturnType<typeof createTestApp>>;
+    let realServices: Services;
+
+    beforeAll(async () => {
+      realServices = createMockServices();
+      realRegistry = new TaskRegistry();
+      // Replace the proxy-mocked taskRegistry with a real instance.
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      (realServices as any).taskRegistry = realRegistry;
+      realApp = await createTestApp(realServices);
+    });
+
+    afterAll(async () => {
+      await realApp.close();
+    });
+
+    it('manual-first → scheduled-second: executeTracked silently skips while runExclusive holds the lock (AC4)', async () => {
+      const trackedFn = vi.fn().mockResolvedValue(undefined);
+      realRegistry.register('search', 'timeout', trackedFn);
+
+      let release: (v: unknown) => void;
+      const held = new Promise((resolve) => { release = resolve; });
+
+      // Start a manual run that holds the lock until we release it.
+      const manualRun = realRegistry.runExclusive('search', () => held);
+
+      // While the manual run holds the lock, the scheduled tick must skip silently —
+      // no throw, and the registered fn is never invoked.
+      await expect(realRegistry.executeTracked('search')).resolves.toBeUndefined();
+      expect(trackedFn).not.toHaveBeenCalled();
+
+      release!('done');
+      await manualRun;
+    });
+
+    it('successful manual run updates lastRun via runExclusive side effect (AC7)', async () => {
+      realRegistry.register('rss', 'timeout', vi.fn().mockResolvedValue(undefined));
+      (realServices.settings.get as Mock).mockImplementation((cat: string) =>
+        Promise.resolve(DEFAULT_SETTINGS[cat as keyof typeof DEFAULT_SETTINGS]),
+      );
+      (realServices.bookList.getAll as Mock).mockResolvedValue({ data: [], total: 0 });
+
+      const before = realRegistry.getAll().find((t) => t.name === 'rss');
+      expect(before?.lastRun).toBeNull();
+
+      const res = await realApp.inject({ method: 'POST', url: '/api/system/tasks/rss' });
+      expect(res.statusCode).toBe(200);
+
+      const after = realRegistry.getAll().find((t) => t.name === 'rss');
+      expect(after?.lastRun).not.toBeNull();
+      expect(new Date(after!.lastRun!).getTime()).toBeGreaterThan(0);
     });
   });
 
