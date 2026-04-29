@@ -39,35 +39,6 @@ vi.mock('sonner', () => ({
   },
 }));
 
-vi.mock('@core/utils/index.js', () => ({
-  TOKEN_PATTERN_SOURCE: String.raw`\{(?:([^}?]*?)\?)?(\w+)(?::(\d+))?(?:\?([^}]*))?\}`,
-  renderTemplate: (template: string) => template.replace('{author}', 'Author').replace('{title}', 'Title'),
-  renderFilename: (template: string) => template.replace('{author}', 'Author').replace('{title}', 'Title'),
-  toLastFirst: (name: string) => name,
-  toSortTitle: (title: string) => title,
-  ALLOWED_TOKENS: ['author', 'authorLastFirst', 'title', 'titleSort', 'series', 'seriesPosition', 'year', 'narrator', 'narratorLastFirst'],
-  FOLDER_ALLOWED_TOKENS: ['author', 'authorLastFirst', 'title', 'titleSort', 'series', 'seriesPosition', 'year', 'narrator', 'narratorLastFirst'],
-  FILE_ALLOWED_TOKENS: ['author', 'authorLastFirst', 'title', 'titleSort', 'series', 'seriesPosition', 'year', 'narrator', 'narratorLastFirst', 'trackNumber', 'trackTotal', 'partName'],
-  NAMING_PRESETS: [
-    { id: 'standard', name: 'Standard', folderFormat: '{author}/{title}', fileFormat: '{author} - {title}' },
-    { id: 'audiobookshelf', name: 'Audiobookshelf', folderFormat: '{author}/{series?/}{title}', fileFormat: '{title}' },
-    { id: 'plex', name: 'Plex', folderFormat: '{author}/{series?/}{year? - }{title}', fileFormat: '{title}{ - pt?trackNumber:00}' },
-    { id: 'last-first', name: 'Last, First', folderFormat: '{authorLastFirst}/{titleSort}', fileFormat: '{authorLastFirst} - {titleSort}' },
-  ],
-  FOLDER_TOKEN_GROUPS: [
-    { label: 'Author', tokens: ['author', 'authorLastFirst'] },
-    { label: 'Title', tokens: ['title', 'titleSort'] },
-    { label: 'Series', tokens: ['series', 'seriesPosition'] },
-    { label: 'Narrator', tokens: ['narrator', 'narratorLastFirst'] },
-    { label: 'Metadata', tokens: ['year'] },
-  ],
-  FILE_ONLY_TOKEN_GROUP: { label: 'File-specific', tokens: ['trackNumber', 'trackTotal', 'partName'] },
-  detectPreset: (folder: string, file: string) => {
-    if (folder === '{author}/{title}' && file === '{author} - {title}') return 'standard';
-    return 'custom';
-  },
-}));
-
 import { api } from '@/lib/api';
 import { toast } from 'sonner';
 import { createMockSettings, createMockIndexer, createMockDownloadClient } from '@/__tests__/factories';
@@ -521,18 +492,29 @@ describe('SettingsPage - Folder format token chips and preview', () => {
     expect(screen.getAllByText('{year}').length).toBeGreaterThanOrEqual(1);
   });
 
-  it('shows live preview with sample data', async () => {
+  it('shows live preview with sample data rendered through real renderTemplate/renderFilename', async () => {
     renderSettingsPage('/settings');
 
     await waitFor(() => {
       expect(screen.getByRole('heading', { name: 'File Naming' })).toBeInTheDocument();
     });
 
-    // Preview shows both with-series and without-series examples
-    await waitFor(() => {
-      expect(screen.getAllByText('With series').length).toBeGreaterThan(0);
-      expect(screen.getAllByText('Without series').length).toBeGreaterThan(0);
-    });
+    // The folder format default is {author}/{title}; SAMPLE_TOKENS uses Brandon Sanderson + The Way of Kings.
+    // The file format default is "{author} - {title}".
+    const folderPreviews = await screen.findAllByTestId('preview-with-series');
+    const folderTexts = folderPreviews.map((el) => el.textContent);
+    expect(folderTexts).toEqual(expect.arrayContaining([
+      expect.stringContaining('Brandon Sanderson/The Way of Kings'),
+      expect.stringContaining('Brandon Sanderson - The Way of Kings'),
+    ]));
+
+    // SAMPLE_TOKENS_NO_SERIES uses Andy Weir + Project Hail Mary
+    const noSeriesPreviews = await screen.findAllByTestId('preview-without-series');
+    const noSeriesTexts = noSeriesPreviews.map((el) => el.textContent);
+    expect(noSeriesTexts).toEqual(expect.arrayContaining([
+      expect.stringContaining('Andy Weir/Project Hail Mary'),
+      expect.stringContaining('Andy Weir - Project Hail Mary'),
+    ]));
   });
 
   it('clicking a token chip inserts it into the input', async () => {

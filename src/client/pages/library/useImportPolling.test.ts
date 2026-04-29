@@ -63,7 +63,7 @@ function makeBook(overrides: Partial<BookWithAuthor> = {}): BookWithAuthor {
 
 describe('useImportPolling', () => {
   beforeEach(() => {
-    vi.useFakeTimers();
+    vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] });
     vi.clearAllMocks();
   });
 
@@ -130,17 +130,18 @@ describe('useImportPolling', () => {
   });
 
   it('sets up polling interval when books are importing', () => {
+    vi.mocked(useSSEConnected).mockReturnValue(false);
     const importingBooks = [makeBook({ id: 1, status: 'importing' })];
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const invalidateSpy = vi.spyOn(queryClient, 'invalidateQueries');
 
     renderHook(() => useImportPolling(importingBooks), {
-      wrapper: createWrapper(),
+      wrapper: ({ children }) => createElement(QueryClientProvider, { client: queryClient }, children),
     });
 
-    // Should set an interval for 3s polling
-    act(() => {
-      vi.advanceTimersByTime(3000);
-    });
-    // No error thrown means the interval is running fine
+    // First tick of the 3s interval should invalidate the books query
+    act(() => { vi.advanceTimersByTime(3000); });
+    expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: ['books'] });
   });
 
   it('does NOT start polling when SSE is connected and imports are active (#488)', () => {

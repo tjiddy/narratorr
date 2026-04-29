@@ -1,31 +1,22 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { createMockLogger } from '../__tests__/helpers.js';
 import type { FastifyBaseLogger } from 'fastify';
+import type * as versionModule from '../utils/version.js';
 
 // Mock global fetch
 const mockFetch = vi.fn();
 vi.stubGlobal('fetch', mockFetch);
 
-// Mock getVersion and getCommit
-vi.mock('../utils/version.js', () => ({
-  getVersion: () => '0.1.0',
-  getCommit: () => 'unknown',
-  isNewerVersion: (current: string, latest: string) => {
-    const parse = (v: string) => {
-      const match = v.replace(/^v/, '').match(/^(\d+)\.(\d+)\.(\d+)$/);
-      if (!match) return null;
-      return [Number(match[1]), Number(match[2]), Number(match[3])] as const;
-    };
-    const c = parse(current);
-    const l = parse(latest);
-    if (!c || !l) return false;
-    for (let i = 0; i < 3; i++) {
-      if (l[i] > c[i]) return true;
-      if (l[i] < c[i]) return false;
-    }
-    return false;
-  },
-}));
+// Mock getVersion/getCommit only — keep the real isNewerVersion so this test
+// validates production semver comparison (not a re-implementation of it).
+vi.mock('../utils/version.js', async () => {
+  const actual = await vi.importActual<typeof versionModule>('../utils/version.js');
+  return {
+    ...actual,
+    getVersion: () => '0.1.0',
+    getCommit: () => 'unknown',
+  };
+});
 
 const { checkForUpdate, getUpdateStatus, _resetUpdateCache } = await import('./version-check.js');
 
@@ -189,6 +180,30 @@ describe('version check job', () => {
       await runCheck();
 
       expect(getUpdateStatus('')).toBeUndefined();
+    });
+  });
+
+  describe('real semver comparison drives job behavior', () => {
+    // These fixtures exercise the boundary cases handled by the real isNewerVersion:
+    // it returns false for non-strict-X.Y.Z inputs (incl. prereleases, partial versions),
+    // and only flags ascending major/minor/patch as newer.
+    it.each([
+      { current: '0.1.0', latest: 'v0.1.1', expectsUpdate: true, label: 'patch bump' },
+      { current: '0.1.0', latest: 'v1.0.0', expectsUpdate: true, label: 'major bump' },
+      { current: '0.1.0', latest: 'v0.1.0', expectsUpdate: false, label: 'identical version' },
+      { current: '0.1.0', latest: 'v0.0.9', expectsUpdate: false, label: 'rollback' },
+      { current: '0.1.0', latest: 'v0.2.0-rc1', expectsUpdate: false, label: 'prerelease tag (real fn returns false for non-strict semver)' },
+      { current: '0.1.0', latest: 'v0.2', expectsUpdate: false, label: 'partial version (real fn returns false for non-strict semver)' },
+    ])('$label: $current vs $latest → update=$expectsUpdate', async ({ latest, expectsUpdate }) => {
+      mockFetch.mockResolvedValue(makeGitHubRelease(latest, `https://github.com/releases/${latest}`));
+      await runCheck();
+      const status = getUpdateStatus('');
+      if (expectsUpdate) {
+        expect(status).toBeDefined();
+        expect(status?.latestVersion).toBe(latest.replace(/^v/, ''));
+      } else {
+        expect(status).toBeUndefined();
+      }
     });
   });
 

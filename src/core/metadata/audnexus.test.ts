@@ -52,18 +52,15 @@ describe('AudnexusProvider', () => {
       expect(book).toBeNull();
     });
 
-    it('returns null on malformed response', async () => {
+    it('throws MetadataError on malformed response that violates the raw schema', async () => {
       server.use(
         http.get('https://api.audnex.us/books/:asin', () => {
-          // Missing required 'title' → schema validation fails
-          return HttpResponse.json({ asin: 'B0030DL4GK' });
+          // runtimeLengthMin must be a number; supplying a string violates audnexusBookSchema.
+          return HttpResponse.json({ asin: 'B0030DL4GK', runtimeLengthMin: 'oops' });
         }),
       );
 
-      const book = await provider.getBook('B0030DL4GK');
-      // mapBook returns title: '' but authors: [] → BookMetadataSchema should still pass
-      // Actually let's check what happens
-      expect(book).not.toBeNull();
+      await expect(provider.getBook('B0030DL4GK')).rejects.toThrow(MetadataError);
     });
 
     it('returns null when ASIN not available in region', async () => {
