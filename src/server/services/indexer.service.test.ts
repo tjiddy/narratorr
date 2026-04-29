@@ -1385,7 +1385,10 @@ describe('IndexerService', () => {
 
       await svc.searchAll('test');
       expect(log.warn).toHaveBeenCalledWith(
-        expect.objectContaining({ err: failError, indexer: mockIndexer.name }),
+        expect.objectContaining({
+          error: expect.objectContaining({ message: failError.message }),
+          indexer: mockIndexer.name,
+        }),
         expect.stringContaining('Error searching indexer'),
       );
     });
