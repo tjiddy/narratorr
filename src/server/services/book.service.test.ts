@@ -1,9 +1,22 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { createMockDb, createMockLogger, inject, mockDbChain } from '../__tests__/helpers.js';
 import { createMockDbBook, createMockDbAuthor } from '../__tests__/factories.js';
+
+// Mock inArray to capture the chunk argument so chunking tests can assert
+// each chunk is bounded ≤ 900 IDs (SQLite 999-bind-limit guard). Other
+// drizzle-orm helpers (eq, and, sql, notExists, ...) pass through unchanged.
+vi.mock('drizzle-orm', async () => {
+  // eslint-disable-next-line @typescript-eslint/consistent-type-imports -- vi.mock requires dynamic import
+  const actual = await vi.importActual<typeof import('drizzle-orm')>('drizzle-orm');
+  return {
+    ...actual,
+    inArray: vi.fn(actual.inArray),
+  };
+});
+
 import { BookService, CoverUploadError, BookPathOutsideLibraryError } from './book.service.js';
-import { eq } from 'drizzle-orm';
-import { authors, books, bookAuthors } from '../../db/schema.js';
+import { eq, inArray } from 'drizzle-orm';
+import { authors, books, bookAuthors, bookNarrators } from '../../db/schema.js';
 import type { FastifyBaseLogger } from 'fastify';
 import type { Db, DbOrTx } from '../../db/index.js';
 import type { MetadataService } from './metadata.service.js';
@@ -925,7 +938,19 @@ describe('BookService batch-load (N+1 fix)', () => {
   beforeEach(() => {
     db = createMockDb();
     service = new BookService(inject<Db>(db), inject<FastifyBaseLogger>(createMockLogger()));
+    // Reset captured calls on the inArray spy so each test asserts only its own chunks.
+    vi.mocked(inArray).mockClear();
   });
+
+  /** Extract the integer bookIds passed to every `inArray(<column>, ids)` call
+   *  whose column resolves to bookAuthors.bookId or bookNarrators.bookId. The
+   *  first call argument is the Drizzle column object (referential identity);
+   *  the second is the array of IDs we want to verify is bounded ≤ 900. */
+  function inArrayCallsFor(column: unknown): number[][] {
+    return vi.mocked(inArray).mock.calls
+      .filter((call) => call[0] === column)
+      .map((call) => call[1] as number[]);
+  }
 
   it('getMonitoredBooks() with 3 monitored books issues exactly 3 DB queries total', async () => {
     const book1 = createMockDbBook({ id: 1 });
@@ -974,6 +999,7 @@ describe('BookService batch-load (N+1 fix)', () => {
     const bookRows = Array.from({ length: 900 }, (_, i) => createMockDbBook({ id: i + 1 }));
     const authorRows = bookRows.map((b) => ({ bookId: b.id, author: mockAuthor, position: 0 }));
     const narratorRows = bookRows.map((b) => ({ bookId: b.id, narrator: mockNarrator, position: 0 }));
+    const expectedIds = bookRows.map((b) => b.id);
 
     db.select
       .mockReturnValueOnce(mockDbChain(bookRows))
@@ -987,21 +1013,33 @@ describe('BookService batch-load (N+1 fix)', () => {
     expect(results).toHaveLength(900);
     expect(results[0].authors).toEqual([mockAuthor]);
     expect(results[0].narrators).toEqual([mockNarrator]);
+
+    // The single chunk for each side targets the right column with all 900 IDs (≤ 900).
+    const authorChunks = inArrayCallsFor(bookAuthors.bookId);
+    const narratorChunks = inArrayCallsFor(bookNarrators.bookId);
+    expect(authorChunks).toHaveLength(1);
+    expect(narratorChunks).toHaveLength(1);
+    expect(authorChunks[0]).toEqual(expectedIds);
+    expect(narratorChunks[0]).toEqual(expectedIds);
+    expect(authorChunks[0].length).toBeLessThanOrEqual(900);
+    expect(narratorChunks[0].length).toBeLessThanOrEqual(900);
   });
 
-  it('getMonitoredBooks() with 901 books issues two chunked queries each for authors and narrators', async () => {
+  it('getMonitoredBooks() with 901 books splits authors/narrators into bounded chunks of 900 + 1', async () => {
     const bookRows = Array.from({ length: 901 }, (_, i) => createMockDbBook({ id: i + 1 }));
-    const firstAuthorChunk = bookRows.slice(0, 900).map((b) => ({ bookId: b.id, author: mockAuthor, position: 0 }));
-    const secondAuthorChunk = bookRows.slice(900).map((b) => ({ bookId: b.id, author: mockAuthor, position: 0 }));
-    const firstNarratorChunk = bookRows.slice(0, 900).map((b) => ({ bookId: b.id, narrator: mockNarrator, position: 0 }));
-    const secondNarratorChunk = bookRows.slice(900).map((b) => ({ bookId: b.id, narrator: mockNarrator, position: 0 }));
+    const expectedFirstChunk = bookRows.slice(0, 900).map((b) => b.id);
+    const expectedSecondChunk = bookRows.slice(900).map((b) => b.id);
+    const firstAuthorRows = bookRows.slice(0, 900).map((b) => ({ bookId: b.id, author: mockAuthor, position: 0 }));
+    const secondAuthorRows = bookRows.slice(900).map((b) => ({ bookId: b.id, author: mockAuthor, position: 0 }));
+    const firstNarratorRows = bookRows.slice(0, 900).map((b) => ({ bookId: b.id, narrator: mockNarrator, position: 0 }));
+    const secondNarratorRows = bookRows.slice(900).map((b) => ({ bookId: b.id, narrator: mockNarrator, position: 0 }));
 
     db.select
       .mockReturnValueOnce(mockDbChain(bookRows))
-      .mockReturnValueOnce(mockDbChain(firstAuthorChunk))
-      .mockReturnValueOnce(mockDbChain(secondAuthorChunk))
-      .mockReturnValueOnce(mockDbChain(firstNarratorChunk))
-      .mockReturnValueOnce(mockDbChain(secondNarratorChunk));
+      .mockReturnValueOnce(mockDbChain(firstAuthorRows))
+      .mockReturnValueOnce(mockDbChain(secondAuthorRows))
+      .mockReturnValueOnce(mockDbChain(firstNarratorRows))
+      .mockReturnValueOnce(mockDbChain(secondNarratorRows));
 
     const results = await service.getMonitoredBooks();
 
@@ -1014,21 +1052,38 @@ describe('BookService batch-load (N+1 fix)', () => {
     // Book #901 (in the second chunk) is also populated
     expect(results[900].authors).toEqual([mockAuthor]);
     expect(results[900].narrators).toEqual([mockNarrator]);
+
+    // Bounded inArray inputs: each chunk ≤ 900, partial final chunk is exactly 1.
+    const authorChunks = inArrayCallsFor(bookAuthors.bookId);
+    const narratorChunks = inArrayCallsFor(bookNarrators.bookId);
+    expect(authorChunks).toHaveLength(2);
+    expect(narratorChunks).toHaveLength(2);
+    for (const chunk of [...authorChunks, ...narratorChunks]) {
+      expect(chunk.length).toBeLessThanOrEqual(900);
+    }
+    expect(authorChunks[0]).toEqual(expectedFirstChunk);
+    expect(authorChunks[1]).toEqual(expectedSecondChunk);
+    expect(narratorChunks[0]).toEqual(expectedFirstChunk);
+    expect(narratorChunks[1]).toEqual(expectedSecondChunk);
+    expect(authorChunks[1].length).toBe(1);
+    expect(narratorChunks[1].length).toBe(1);
   });
 
-  it('getMonitoredBooks() with 1500 books chunks into 2 author + 2 narrator queries and merges all rows', async () => {
+  it('getMonitoredBooks() with 1500 books splits authors/narrators into bounded chunks of 900 + 600', async () => {
     const bookRows = Array.from({ length: 1500 }, (_, i) => createMockDbBook({ id: i + 1 }));
-    const firstAuthorChunk = bookRows.slice(0, 900).map((b) => ({ bookId: b.id, author: mockAuthor, position: 0 }));
-    const secondAuthorChunk = bookRows.slice(900).map((b) => ({ bookId: b.id, author: mockAuthor, position: 0 }));
-    const firstNarratorChunk = bookRows.slice(0, 900).map((b) => ({ bookId: b.id, narrator: mockNarrator, position: 0 }));
-    const secondNarratorChunk = bookRows.slice(900).map((b) => ({ bookId: b.id, narrator: mockNarrator, position: 0 }));
+    const expectedFirstChunk = bookRows.slice(0, 900).map((b) => b.id);
+    const expectedSecondChunk = bookRows.slice(900).map((b) => b.id);
+    const firstAuthorRows = bookRows.slice(0, 900).map((b) => ({ bookId: b.id, author: mockAuthor, position: 0 }));
+    const secondAuthorRows = bookRows.slice(900).map((b) => ({ bookId: b.id, author: mockAuthor, position: 0 }));
+    const firstNarratorRows = bookRows.slice(0, 900).map((b) => ({ bookId: b.id, narrator: mockNarrator, position: 0 }));
+    const secondNarratorRows = bookRows.slice(900).map((b) => ({ bookId: b.id, narrator: mockNarrator, position: 0 }));
 
     db.select
       .mockReturnValueOnce(mockDbChain(bookRows))
-      .mockReturnValueOnce(mockDbChain(firstAuthorChunk))
-      .mockReturnValueOnce(mockDbChain(secondAuthorChunk))
-      .mockReturnValueOnce(mockDbChain(firstNarratorChunk))
-      .mockReturnValueOnce(mockDbChain(secondNarratorChunk));
+      .mockReturnValueOnce(mockDbChain(firstAuthorRows))
+      .mockReturnValueOnce(mockDbChain(secondAuthorRows))
+      .mockReturnValueOnce(mockDbChain(firstNarratorRows))
+      .mockReturnValueOnce(mockDbChain(secondNarratorRows));
 
     const results = await service.getMonitoredBooks();
 
@@ -1039,6 +1094,23 @@ describe('BookService batch-load (N+1 fix)', () => {
       expect(r.authors).toEqual([mockAuthor]);
       expect(r.narrators).toEqual([mockNarrator]);
     }
+
+    // Bounded inArray inputs: 900 + 600 split, no chunk exceeds 900 IDs.
+    const authorChunks = inArrayCallsFor(bookAuthors.bookId);
+    const narratorChunks = inArrayCallsFor(bookNarrators.bookId);
+    expect(authorChunks).toHaveLength(2);
+    expect(narratorChunks).toHaveLength(2);
+    for (const chunk of [...authorChunks, ...narratorChunks]) {
+      expect(chunk.length).toBeLessThanOrEqual(900);
+    }
+    expect(authorChunks[0]).toEqual(expectedFirstChunk);
+    expect(authorChunks[1]).toEqual(expectedSecondChunk);
+    expect(narratorChunks[0]).toEqual(expectedFirstChunk);
+    expect(narratorChunks[1]).toEqual(expectedSecondChunk);
+    expect(authorChunks[0].length).toBe(900);
+    expect(authorChunks[1].length).toBe(600);
+    expect(narratorChunks[0].length).toBe(900);
+    expect(narratorChunks[1].length).toBe(600);
   });
 
 });
