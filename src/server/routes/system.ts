@@ -47,45 +47,49 @@ export async function systemRoutes(app: FastifyInstance, services: Services, db:
 
   // POST /api/system/tasks/search — manually trigger a search cycle
   app.post('/api/system/tasks/search', async (request) => {
-    const result = await runSearchJob(
-      services.settings,
-      services.bookList,
-      services.indexer,
-      services.downloadOrchestrator,
-      request.log,
-      services.blacklist,
-      services.retryBudget,
-      services.eventBroadcaster,
+    return services.taskRegistry.runExclusive('search', () =>
+      runSearchJob(
+        services.settings,
+        services.bookList,
+        services.indexer,
+        services.downloadOrchestrator,
+        request.log,
+        services.blacklist,
+        services.retryBudget,
+        services.eventBroadcaster,
+      ),
     );
-    return result;
   });
 
   // POST /api/system/tasks/search-all-wanted — search all wanted books
+  // Shares the 'search' lock with the scheduled search job (same underlying contention).
   app.post('/api/system/tasks/search-all-wanted', async (request) => {
-    const result = await searchAllWanted(
-      services.settings,
-      services.bookList,
-      services.indexer,
-      services.downloadOrchestrator,
-      request.log,
-      services.blacklist,
-      services.eventBroadcaster,
+    return services.taskRegistry.runExclusive('search', () =>
+      searchAllWanted(
+        services.settings,
+        services.bookList,
+        services.indexer,
+        services.downloadOrchestrator,
+        request.log,
+        services.blacklist,
+        services.eventBroadcaster,
+      ),
     );
-    return result;
   });
 
   // POST /api/system/tasks/rss — manually trigger an RSS sync cycle
   app.post('/api/system/tasks/rss', async (request) => {
-    const result = await runRssJob(
-      services.settings,
-      services.bookList,
-      services.book,
-      services.indexer,
-      services.downloadOrchestrator,
-      services.blacklist,
-      request.log,
+    return services.taskRegistry.runExclusive('rss', () =>
+      runRssJob(
+        services.settings,
+        services.bookList,
+        services.book,
+        services.indexer,
+        services.downloadOrchestrator,
+        services.blacklist,
+        request.log,
+      ),
     );
-    return result;
   });
 
   // GET /api/system/backups — list all backups
@@ -95,7 +99,9 @@ export async function systemRoutes(app: FastifyInstance, services: Services, db:
 
   // POST /api/system/backups/create — manually trigger a backup
   app.post('/api/system/backups/create', async (request) => {
-    return runBackupJob(services.backup, request.log);
+    return services.taskRegistry.runExclusive('backup', () =>
+      runBackupJob(services.backup, request.log),
+    );
   });
 
   // GET /api/system/backups/:filename/download — download a backup file
