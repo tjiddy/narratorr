@@ -428,6 +428,7 @@ describe('settings routes', () => {
         network: { proxyUrl: 'http://proxy.example.com:8080' },
       };
       (services.settings.update as Mock).mockResolvedValue(updated);
+      (services.settings.get as Mock).mockResolvedValue({ proxyUrl: '' });
 
       const res = await app.inject({
         method: 'PUT',
@@ -462,6 +463,7 @@ describe('settings routes', () => {
         network: { proxyUrl: '' },
       };
       (services.settings.update as Mock).mockResolvedValue(updated);
+      (services.settings.get as Mock).mockResolvedValue({ proxyUrl: 'http://old:8080' });
 
       const res = await app.inject({
         method: 'PUT',

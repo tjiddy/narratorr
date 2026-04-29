@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
-import { mockDbChain } from './helpers.js';
+import { mockDbChain, createMockServices, resetMockServices } from './helpers.js';
 
 describe('mockDbChain', () => {
   describe('core chain behavior', () => {
@@ -200,5 +200,63 @@ describe('mockDbChain', () => {
       expect(first).toBe(data);
       expect(second).toBe(data);
     });
+  });
+});
+
+describe('createMockServices / resetMockServices — canonical default contract', () => {
+  // The Proxy auto-stubs every accessed method at runtime, but TypeScript narrows the
+  // service to its production interface. Cast through unknown so we can drive the
+  // generic methodName -> Promise contract without depending on a specific signature.
+  type AnyMock = ReturnType<typeof vi.fn>;
+  const asMock = (fn: unknown): AnyMock => fn as AnyMock;
+  const callAsync = (fn: unknown): Promise<unknown> => (fn as () => Promise<unknown>)();
+
+  it('unconfigured service method rejects with a descriptive error when awaited', async () => {
+    const services = createMockServices();
+    await expect(callAsync(services.book.getById)).rejects.toThrow(
+      /mock not configured: book\.getById/,
+    );
+  });
+
+  it('explicit mockResolvedValue overrides the rejecting default', async () => {
+    const services = createMockServices();
+    asMock(services.book.getById).mockResolvedValue({ id: 1, title: 'Test' });
+
+    const result = await callAsync(services.book.getById);
+    expect(result).toEqual({ id: 1, title: 'Test' });
+  });
+
+  it('resetMockServices restores the rejecting default after a successful override', async () => {
+    const services = createMockServices();
+    const fn = asMock(services.book.getById);
+    fn.mockResolvedValue({ id: 7 });
+
+    // Sanity: override is in effect
+    await expect(callAsync(services.book.getById)).resolves.toEqual({ id: 7 });
+
+    resetMockServices(services);
+
+    // Default restored
+    await expect(callAsync(services.book.getById)).rejects.toThrow(
+      /mock not configured: book\.getById/,
+    );
+
+    // Post-reset reconfiguration still works
+    fn.mockResolvedValue({ id: 99 });
+    await expect(callAsync(services.book.getById)).resolves.toEqual({ id: 99 });
+  });
+
+  it('fire-and-forget .catch chain swallows the default rejection without leaking', async () => {
+    const services = createMockServices();
+    const caught: unknown[] = [];
+    // Simulate a fire-and-forget production chain like
+    // `notifier.notify(...).catch(noop)`. The notifier proxy returns a vi.fn at runtime
+    // for any property access, regardless of NotifierService's strict signature.
+    await callAsync(services.notifier.notify).catch((err: unknown) => {
+      caught.push(err);
+    });
+    expect(caught).toHaveLength(1);
+    expect(caught[0]).toBeInstanceOf(Error);
+    expect((caught[0] as Error).message).toMatch(/mock not configured: notifier\.notify/);
   });
 });
