@@ -644,6 +644,34 @@ describe('ManualImportAdapter', () => {
       }));
     });
 
+    it('throws descriptive error with JSON parse cause when metadata is unparseable', async () => {
+      const job = makeJob({ id: 7, metadata: '{' });
+
+      try {
+        await adapter.process(job, ctx);
+        expect.fail('expected adapter.process to throw');
+      } catch (err) {
+        expect(err).toBeInstanceOf(Error);
+        expect((err as Error).message).toContain('Invalid manual import payload for job 7');
+        expect((err as Error).message).toContain('malformed JSON');
+        expect((err as Error).cause).toBeInstanceOf(SyntaxError);
+      }
+    });
+
+    it('throws descriptive error with Zod cause when metadata shape mismatches (missing path)', async () => {
+      const job = makeJob({ id: 11, metadata: JSON.stringify({ title: 'Missing Path' }) });
+
+      try {
+        await adapter.process(job, ctx);
+        expect.fail('expected adapter.process to throw');
+      } catch (err) {
+        expect(err).toBeInstanceOf(Error);
+        expect((err as Error).message).toContain('Invalid manual import payload for job 11');
+        expect((err as Error).message).toContain('shape mismatch');
+        expect((err as Error).cause).toBeDefined();
+      }
+    });
+
     it('failure path: narratorName is null when payload.metadata is undefined (#672)', async () => {
       const { streamCopyWithProgress } = await import('../streaming-copy.helpers.js');
       vi.mocked(streamCopyWithProgress).mockRejectedValueOnce(new Error('Disk full'));

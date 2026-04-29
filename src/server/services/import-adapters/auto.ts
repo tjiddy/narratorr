@@ -1,5 +1,19 @@
-import type { ImportAdapter, ImportAdapterContext, ImportJob, AutoImportJobPayload } from './types.js';
+import { autoImportJobPayloadSchema, type ImportAdapter, type ImportAdapterContext, type ImportJob, type AutoImportJobPayload } from './types.js';
 import type { ImportOrchestrator } from '../import-orchestrator.js';
+
+function parseAutoPayload(jobId: number, raw: string): AutoImportJobPayload {
+  let parsedJson: unknown;
+  try {
+    parsedJson = JSON.parse(raw);
+  } catch (err) {
+    throw new Error(`Invalid auto import payload for job ${jobId}: malformed JSON`, { cause: err });
+  }
+  const result = autoImportJobPayloadSchema.safeParse(parsedJson);
+  if (!result.success) {
+    throw new Error(`Invalid auto import payload for job ${jobId}: shape mismatch`, { cause: result.error });
+  }
+  return result.data;
+}
 
 export class AutoImportAdapter implements ImportAdapter {
   readonly type = 'auto' as const;
@@ -14,16 +28,7 @@ export class AutoImportAdapter implements ImportAdapter {
       throw new Error('AutoImportAdapter requires a bookId on the job');
     }
 
-    let payload: AutoImportJobPayload;
-    try {
-      payload = JSON.parse(job.metadata);
-    } catch {
-      throw new Error('AutoImportAdapter: malformed metadata JSON');
-    }
-
-    if (typeof payload.downloadId !== 'number') {
-      throw new Error('AutoImportAdapter: downloadId missing from metadata');
-    }
+    const payload: AutoImportJobPayload = parseAutoPayload(job.id, job.metadata);
 
     log.info({ bookId, downloadId: payload.downloadId }, 'Processing auto import');
 

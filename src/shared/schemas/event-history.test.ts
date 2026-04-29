@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { eventTypeSchema, eventHistoryQuerySchema } from './event-history.js';
+import { eventTypeSchema, eventHistoryQuerySchema, eventSourceSchema } from './event-history.js';
 
 describe('eventHistoryQuerySchema — comma-separated eventType', () => {
   it('accepts single valid event type and returns one-element array', () => {
@@ -74,5 +74,17 @@ describe('eventTypeSchema', () => {
 
   it('rejects typo book_addedd', () => {
     expect(() => eventTypeSchema.parse('book_addedd')).toThrow();
+  });
+});
+
+describe('eventSourceSchema', () => {
+  it('accepts every persisted source value', () => {
+    for (const source of ['manual', 'rss', 'scheduled', 'auto', 'import_list']) {
+      expect(eventSourceSchema.safeParse(source).success).toBe(true);
+    }
+  });
+
+  it('rejects unknown source values', () => {
+    expect(eventSourceSchema.safeParse('bogus').success).toBe(false);
   });
 });

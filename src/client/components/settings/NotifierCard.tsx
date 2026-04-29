@@ -66,7 +66,7 @@ export function NotifierCard(props: NotifierCardProps) {
           name: notifier.name,
           type: notifier.type as CreateNotifierFormData['type'],
           enabled: notifier.enabled,
-          events: notifier.events as CreateNotifierFormData['events'],
+          events: notifier.events,
           settings: settingsFromNotifier(notifier),
         }
       : defaultValues,
@@ -82,7 +82,7 @@ export function NotifierCard(props: NotifierCardProps) {
         name: notifier.name,
         type: notifier.type as CreateNotifierFormData['type'],
         enabled: notifier.enabled,
-        events: notifier.events as CreateNotifierFormData['events'],
+        events: notifier.events,
         settings: settingsFromNotifier(notifier),
       });
     } else if (mode === 'create') {
@@ -125,7 +125,7 @@ export function NotifierCard(props: NotifierCardProps) {
         animationDelay={animationDelay}
       >
         <p className="text-xs text-muted-foreground mt-1">
-          Events: {(notifier.events as string[]).map((e) => EVENT_LABELS[e] || e).join(', ')}
+          Events: {notifier.events.map((e) => EVENT_LABELS[e] || e).join(', ')}
         </p>
       </SettingsCardShell>
     );

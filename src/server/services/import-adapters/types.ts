@@ -1,7 +1,9 @@
+import { z } from 'zod';
 import type { FastifyBaseLogger } from 'fastify';
 import type { Db } from '../../../db/index.js';
 import type { ImportJobType, ImportJobPhase } from '../../../shared/schemas/import-job.js';
-import type { ImportConfirmItem, ImportMode } from '../library-scan.service.js';
+import { importConfirmItemSchema, importModeSchema } from '../../../shared/schemas/library-scan.js';
+import type { BookMetadata } from '../../../core/metadata/index.js';
 import type { importJobs } from '../../../db/schema.js';
 
 /** Row shape returned by querying the import_jobs table. */
@@ -25,18 +27,24 @@ export interface ImportAdapter {
 
 /**
  * Persisted payload for manual import jobs.
- * Superset of ImportConfirmItem — adds the optional mode so the worker
- * can replay the import with the correct filesystem behavior.
- * When mode is omitted from the JSON, the adapter treats it as pointer mode.
+ * Reuses `importConfirmItemSchema` for runtime shape and overrides the `metadata` field
+ * with `z.custom<BookMetadata>().optional()` — a TYPE-only override (no extra runtime
+ * validation, identical to z.unknown() at the safeParse boundary) so downstream callers
+ * retain typed access to `metadata.narrators` etc. without `as` casts. Tightening
+ * runtime validation of `metadata` is intentionally out of scope.
  */
-export interface ManualImportJobPayload extends ImportConfirmItem {
-  mode?: ImportMode;
-}
+export const manualImportJobPayloadSchema = importConfirmItemSchema.extend({
+  metadata: z.custom<BookMetadata>().optional(),
+  mode: importModeSchema.optional(),
+});
 
 /**
  * Persisted payload for auto import jobs.
  * Stores the download ID — the adapter hydrates the full context from the DB at processing time.
  */
-export interface AutoImportJobPayload {
-  downloadId: number;
-}
+export const autoImportJobPayloadSchema = z.object({
+  downloadId: z.number(),
+});
+
+export type ManualImportJobPayload = z.infer<typeof manualImportJobPayloadSchema>;
+export type AutoImportJobPayload = z.infer<typeof autoImportJobPayloadSchema>;

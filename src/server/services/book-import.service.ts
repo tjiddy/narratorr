@@ -8,6 +8,7 @@ import type {
   ImportJobPhase,
   PhaseHistoryEntry,
 } from '../../shared/schemas/import-job.js';
+import { parsePhaseHistory } from '../utils/parse-phase-history.js';
 
 export interface ImportJobListing {
   id: number;
@@ -137,9 +138,7 @@ export class BookImportService {
       type: row.job.type,
       status: row.job.status,
       phase: row.job.phase,
-      phaseHistory: row.job.phaseHistory
-        ? (JSON.parse(row.job.phaseHistory) as PhaseHistoryEntry[])
-        : [],
+      phaseHistory: parsePhaseHistory(row.job.phaseHistory, this.log, row.job.id),
       createdAt: row.job.createdAt,
       updatedAt: row.job.updatedAt,
       startedAt: row.job.startedAt,

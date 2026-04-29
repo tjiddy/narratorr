@@ -2,7 +2,7 @@ import { resolve } from 'node:path';
 import { eq } from 'drizzle-orm';
 import { books } from '../../../db/schema.js';
 import type { BookStatus } from '../../../shared/schemas/book.js';
-import type { ImportAdapter, ImportAdapterContext, ImportJob, ManualImportJobPayload } from './types.js';
+import { manualImportJobPayloadSchema, type ImportAdapter, type ImportAdapterContext, type ImportJob, type ManualImportJobPayload } from './types.js';
 import type { ImportPipelineDeps } from '../import-orchestration.helpers.js';
 import type { AppSettings } from '../../../shared/schemas/settings/registry.js';
 import { copyToLibrary } from '../import-orchestration.helpers.js';
@@ -13,6 +13,20 @@ import type { RenameableBook } from '../../utils/paths.js';
 import { toNamingOptions } from '../../../core/utils/naming.js';
 import { safeEmit } from '../../utils/safe-emit.js';
 import { recordImportFailedEvent } from '../../utils/import-side-effects.js';
+
+function parseManualPayload(jobId: number, raw: string): ManualImportJobPayload {
+  let parsedJson: unknown;
+  try {
+    parsedJson = JSON.parse(raw);
+  } catch (err) {
+    throw new Error(`Invalid manual import payload for job ${jobId}: malformed JSON`, { cause: err });
+  }
+  const result = manualImportJobPayloadSchema.safeParse(parsedJson);
+  if (!result.success) {
+    throw new Error(`Invalid manual import payload for job ${jobId}: shape mismatch`, { cause: result.error });
+  }
+  return result.data;
+}
 
 export class ManualImportAdapter implements ImportAdapter {
   readonly type = 'manual' as const;
@@ -27,7 +41,7 @@ export class ManualImportAdapter implements ImportAdapter {
     const { db, log } = ctx;
     const { eventHistory, enrichmentDeps, broadcaster } = this.deps;
 
-    const payload: ManualImportJobPayload = JSON.parse(job.metadata);
+    const payload: ManualImportJobPayload = parseManualPayload(job.id, job.metadata);
     const mode = payload.mode; // undefined = pointer mode
     const bookId = job.bookId;
 

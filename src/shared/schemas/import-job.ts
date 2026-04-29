@@ -24,8 +24,10 @@ export const IMPORT_JOB_PHASES = [
 export const importJobPhaseSchema = z.enum(IMPORT_JOB_PHASES);
 export type ImportJobPhase = z.infer<typeof importJobPhaseSchema>;
 
-export interface PhaseHistoryEntry {
-  phase: ImportJobPhase;
-  startedAt: number;
-  completedAt?: number;
-}
+export const phaseHistoryEntrySchema = z.object({
+  phase: importJobPhaseSchema,
+  startedAt: z.number(),
+  completedAt: z.number().optional(),
+});
+export const phaseHistorySchema = z.array(phaseHistoryEntrySchema);
+export type PhaseHistoryEntry = z.infer<typeof phaseHistoryEntrySchema>;

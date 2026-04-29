@@ -1156,7 +1156,7 @@ describe('ImportQueueWorker', () => {
       });
       const realAdapter = new ManualImportAdapter(deps);
 
-      setupNullBookIdRealAdapter(realAdapter, 'manual', '{"title":"Orphan Manual"}');
+      setupNullBookIdRealAdapter(realAdapter, 'manual', '{"path":"/audiobooks/Orphan","title":"Orphan Manual"}');
 
       await workerWithBroadcaster.start();
       await new Promise(r => setTimeout(r, 100));

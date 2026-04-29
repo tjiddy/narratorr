@@ -81,4 +81,51 @@ describe('enqueueAutoImport', () => {
     expect(db.insert).toHaveBeenCalled();
     expect(nudge).toHaveBeenCalled();
   });
+
+  it('skips a corrupt unrelated job (malformed JSON), warns, and still inserts the new job', async () => {
+    const existing = [
+      { id: 5, metadata: '{' },                                     // unparseable JSON
+      { id: 6, metadata: JSON.stringify({ downloadId: 77 }) },     // valid but different
+    ];
+    const db = createMockDb(existing);
+    const result = await enqueueAutoImport(db as never, 99, 42, nudge, log);
+
+    expect(result).toBe(true);
+    expect(log.warn).toHaveBeenCalledWith(
+      expect.objectContaining({ existingJobId: 5, error: expect.any(Object) }),
+      expect.stringContaining('unparseable'),
+    );
+    expect(db.insert).toHaveBeenCalled();
+    expect(nudge).toHaveBeenCalled();
+  });
+
+  it('skips a corrupt unrelated job (wrong-shape JSON), warns, and still inserts the new job', async () => {
+    const existing = [
+      { id: 7, metadata: JSON.stringify({ notDownloadId: 'bogus' }) }, // valid JSON, wrong shape
+      { id: 8, metadata: JSON.stringify({ downloadId: 77 }) },
+    ];
+    const db = createMockDb(existing);
+    const result = await enqueueAutoImport(db as never, 99, 42, nudge, log);
+
+    expect(result).toBe(true);
+    expect(log.warn).toHaveBeenCalledWith(
+      expect.objectContaining({ existingJobId: 7, error: expect.any(Object) }),
+      expect.stringContaining('malformed'),
+    );
+    expect(db.insert).toHaveBeenCalled();
+    expect(nudge).toHaveBeenCalled();
+  });
+
+  it('still detects a duplicate when a corrupt row precedes the matching row', async () => {
+    const existing = [
+      { id: 9, metadata: '{' },                                    // corrupt — must skip + continue
+      { id: 10, metadata: JSON.stringify({ downloadId: 99 }) },   // matching duplicate
+    ];
+    const db = createMockDb(existing);
+    const result = await enqueueAutoImport(db as never, 99, 42, nudge, log);
+
+    expect(result).toBe(false);
+    expect(db.insert).not.toHaveBeenCalled();
+    expect(nudge).not.toHaveBeenCalled();
+  });
 });

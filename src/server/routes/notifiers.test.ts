@@ -1,13 +1,14 @@
 import { describe, it, expect, vi, beforeAll, afterAll, beforeEach } from 'vitest';
 import { createTestApp, createMockServices, resetMockServices } from '../__tests__/helpers.js';
 import type { Services } from './index.js';
+import type { NotificationEvent } from '../../shared/notification-events.js';
 
 const mockNotifier = {
   id: 1,
   name: 'Test Webhook',
   type: 'webhook' as const,
   enabled: true,
-  events: ['on_grab', 'on_import'],
+  events: ['on_grab', 'on_import'] as NotificationEvent[],
   settings: { url: 'https://example.com/hook' } as Record<string, unknown>,
   createdAt: new Date(),
 };
@@ -188,7 +189,7 @@ describe('notifiers routes', () => {
         name: 'Email Notifier',
         type: 'email' as const,
         enabled: true,
-        events: ['on_grab'],
+        events: ['on_grab'] as NotificationEvent[],
         settings: emailSettings as Record<string, unknown>,
         createdAt: new Date(),
       };
@@ -251,7 +252,7 @@ describe('notifiers routes', () => {
         name: 'Telegram Notifier',
         type: 'telegram' as const,
         enabled: true,
-        events: ['on_import'],
+        events: ['on_import'] as NotificationEvent[],
         settings: telegramSettings as Record<string, unknown>,
         createdAt: new Date(),
       };
@@ -426,7 +427,7 @@ describe('notifiers routes', () => {
         name: 'Webhook',
         type: 'webhook' as const,
         enabled: true,
-        events: ['on_grab'],
+        events: ['on_grab'] as NotificationEvent[],
         settings: {
           url: 'https://hook.example.com/path?token=zzz',
           method: 'POST',

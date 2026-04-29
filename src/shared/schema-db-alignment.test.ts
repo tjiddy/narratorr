@@ -6,13 +6,14 @@ import { downloadClientTypeSchema } from './schemas/download-client.js';
 import { notifierTypeSchema } from './schemas/notifier.js';
 import { importListTypeSchema } from './schemas/import-list.js';
 import { downloadStatusSchema, DOWNLOAD_STATUSES } from './schemas/activity.js';
+import { eventSourceSchema } from './schemas/event-history.js';
 import { INDEXER_REGISTRY, INDEXER_TYPES } from './indexer-registry.js';
 import { DOWNLOAD_CLIENT_REGISTRY, DOWNLOAD_CLIENT_TYPES } from './download-client-registry.js';
 import { NOTIFIER_REGISTRY, NOTIFIER_TYPES } from './notifier-registry.js';
 import { IMPORT_LIST_REGISTRY, IMPORT_LIST_TYPES } from './import-list-registry.js';
 import { blacklistReasonSchema, BLACKLIST_REASONS } from './schemas/blacklist.js';
 import { suggestionReasonSchema, SUGGESTION_REASONS } from './schemas/discovery.js';
-import { blacklist, books, indexers, downloadClients, notifiers, importLists, downloads, suggestions } from '../db/schema.js';
+import { blacklist, books, indexers, downloadClients, notifiers, importLists, downloads, suggestions, bookEvents } from '../db/schema.js';
 
 describe('schema-DB alignment', () => {
   describe('adapter type enums derive from registries', () => {
@@ -92,6 +93,10 @@ describe('schema-DB alignment', () => {
 
     it('suggestions.reason DB column enum matches SUGGESTION_REASONS', () => {
       expect([...suggestions.reason.enumValues].sort()).toEqual([...SUGGESTION_REASONS].sort());
+    });
+
+    it('bookEvents.source DB column enum matches eventSourceSchema.options', () => {
+      expect([...bookEvents.source.enumValues].sort()).toEqual([...eventSourceSchema.options].sort());
     });
   });
 
