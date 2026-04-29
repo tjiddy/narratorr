@@ -5,8 +5,8 @@ function parseAutoPayload(jobId: number, raw: string): AutoImportJobPayload {
   let parsedJson: unknown;
   try {
     parsedJson = JSON.parse(raw);
-  } catch (err) {
-    throw new Error(`Invalid auto import payload for job ${jobId}: malformed JSON`, { cause: err });
+  } catch (error: unknown) {
+    throw new Error(`Invalid auto import payload for job ${jobId}: malformed JSON`, { cause: error });
   }
   const result = autoImportJobPayloadSchema.safeParse(parsedJson);
   if (!result.success) {

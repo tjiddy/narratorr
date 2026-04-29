@@ -650,7 +650,7 @@ describe('ManualImportAdapter', () => {
       try {
         await adapter.process(job, ctx);
         expect.fail('expected adapter.process to throw');
-      } catch (err) {
+      } catch (err: unknown) {
         expect(err).toBeInstanceOf(Error);
         expect((err as Error).message).toContain('Invalid manual import payload for job 7');
         expect((err as Error).message).toContain('malformed JSON');
@@ -664,7 +664,7 @@ describe('ManualImportAdapter', () => {
       try {
         await adapter.process(job, ctx);
         expect.fail('expected adapter.process to throw');
-      } catch (err) {
+      } catch (err: unknown) {
         expect(err).toBeInstanceOf(Error);
         expect((err as Error).message).toContain('Invalid manual import payload for job 11');
         expect((err as Error).message).toContain('shape mismatch');

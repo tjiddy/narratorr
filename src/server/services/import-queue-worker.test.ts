@@ -634,6 +634,108 @@ describe('ImportQueueWorker', () => {
       expect(history[0].completedAt).toBeUndefined();
     });
 
+    it('#745 worker hydration: malformed persisted phaseHistory does not strand the job — falls back to [], warns, and completion proceeds', async () => {
+      // F1 regression guard: if the worker hydration line reverts to a bare
+      // JSON.parse(), this test fails because (a) JSON.parse('not-json') throws
+      // before the adapter dispatches, so the completion update is never made,
+      // and (b) no warn is logged. The whole point of the parsePhaseHistory
+      // fallback is that one corrupt row cannot strand a claimed job.
+      const mockBroadcaster = { emit: vi.fn() };
+      const workerWithBroadcaster = new ImportQueueWorker(inject<Db>(mockDb.db), log, mockBroadcaster as never);
+
+      const adapter: ImportAdapter = {
+        type: 'manual',
+        async process(_job: ImportJob, ctx) {
+          await ctx.setPhase('analyzing');
+        },
+      };
+      registerImportAdapter(adapter);
+
+      let selectCallCount = 0;
+      mockDb.db.select = vi.fn().mockImplementation(() => {
+        selectCallCount++;
+        if (selectCallCount === 1) return { from: vi.fn().mockReturnThis(), where: vi.fn().mockResolvedValue([]) };
+        if (selectCallCount === 2) return { from: vi.fn().mockReturnThis(), where: vi.fn().mockReturnThis(), orderBy: vi.fn().mockReturnThis(), limit: vi.fn().mockResolvedValue([{ id: 42 }]) };
+        if (selectCallCount === 3) return { from: vi.fn().mockReturnThis(), where: vi.fn().mockReturnThis(), limit: vi.fn().mockResolvedValue([{ id: 42, bookId: 100, type: 'manual', status: 'processing', metadata: '{"title":"Corrupt History"}', phaseHistory: 'not-json' }]) };
+        return { from: vi.fn().mockReturnThis(), where: vi.fn().mockReturnThis(), orderBy: vi.fn().mockReturnThis(), limit: vi.fn().mockResolvedValue([]) };
+      });
+
+      const updateSets: Record<string, unknown>[] = [];
+      mockDb.db.update = vi.fn().mockImplementation(() => ({
+        set: vi.fn().mockImplementation((payload: Record<string, unknown>) => {
+          updateSets.push(payload);
+          return { where: vi.fn().mockResolvedValue({ rowsAffected: 1 }) };
+        }),
+      }));
+
+      await workerWithBroadcaster.start();
+      await new Promise(r => setTimeout(r, 100));
+      await workerWithBroadcaster.stop();
+
+      // Warn was emitted by parsePhaseHistory for the malformed JSON.
+      expect(log.warn).toHaveBeenCalledWith(
+        expect.objectContaining({ jobId: 42, error: expect.any(Object) }),
+        expect.stringContaining('Unparseable phaseHistory'),
+      );
+
+      // Job was NOT stranded — completion update fired with status 'completed'.
+      const completionUpdate = updateSets.find(s => s.status === 'completed' && s.phaseHistory);
+      expect(completionUpdate).toBeDefined();
+
+      // The corrupt history was discarded (length 1 = only the freshly
+      // appended 'analyzing' phase, not 1+ residual entries from the bad row).
+      const history = JSON.parse(completionUpdate!.phaseHistory as string) as Array<{ phase: string; startedAt: number; completedAt?: number }>;
+      expect(history).toHaveLength(1);
+      expect(history[0].phase).toBe('analyzing');
+    });
+
+    it('#745 worker hydration: wrong-shape persisted phaseHistory falls back to [] with warn', async () => {
+      // F1 regression guard (companion): valid JSON but shape mismatch must
+      // also be caught by safeParse, not propagate as an uncaught throw.
+      const mockBroadcaster = { emit: vi.fn() };
+      const workerWithBroadcaster = new ImportQueueWorker(inject<Db>(mockDb.db), log, mockBroadcaster as never);
+
+      const adapter: ImportAdapter = {
+        type: 'manual',
+        async process(_job: ImportJob, ctx) {
+          await ctx.setPhase('analyzing');
+        },
+      };
+      registerImportAdapter(adapter);
+
+      let selectCallCount = 0;
+      mockDb.db.select = vi.fn().mockImplementation(() => {
+        selectCallCount++;
+        if (selectCallCount === 1) return { from: vi.fn().mockReturnThis(), where: vi.fn().mockResolvedValue([]) };
+        if (selectCallCount === 2) return { from: vi.fn().mockReturnThis(), where: vi.fn().mockReturnThis(), orderBy: vi.fn().mockReturnThis(), limit: vi.fn().mockResolvedValue([{ id: 43 }]) };
+        if (selectCallCount === 3) return { from: vi.fn().mockReturnThis(), where: vi.fn().mockReturnThis(), limit: vi.fn().mockResolvedValue([{ id: 43, bookId: 101, type: 'manual', status: 'processing', metadata: '{"title":"Wrong Shape"}', phaseHistory: '[{"foo":"bar"}]' }]) };
+        return { from: vi.fn().mockReturnThis(), where: vi.fn().mockReturnThis(), orderBy: vi.fn().mockReturnThis(), limit: vi.fn().mockResolvedValue([]) };
+      });
+
+      const updateSets: Record<string, unknown>[] = [];
+      mockDb.db.update = vi.fn().mockImplementation(() => ({
+        set: vi.fn().mockImplementation((payload: Record<string, unknown>) => {
+          updateSets.push(payload);
+          return { where: vi.fn().mockResolvedValue({ rowsAffected: 1 }) };
+        }),
+      }));
+
+      await workerWithBroadcaster.start();
+      await new Promise(r => setTimeout(r, 100));
+      await workerWithBroadcaster.stop();
+
+      expect(log.warn).toHaveBeenCalledWith(
+        expect.objectContaining({ jobId: 43, error: expect.any(Object) }),
+        expect.stringContaining('Malformed phaseHistory'),
+      );
+
+      const completionUpdate = updateSets.find(s => s.status === 'completed' && s.phaseHistory);
+      expect(completionUpdate).toBeDefined();
+      const history = JSON.parse(completionUpdate!.phaseHistory as string) as Array<{ phase: string; startedAt: number; completedAt?: number }>;
+      expect(history).toHaveLength(1);
+      expect(history[0].phase).toBe('analyzing');
+    });
+
     it('job completion closes the current phaseHistory entry', async () => {
       const mockBroadcaster = { emit: vi.fn() };
       const workerWithBroadcaster = new ImportQueueWorker(inject<Db>(mockDb.db), log, mockBroadcaster as never);

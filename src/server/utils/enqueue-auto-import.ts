@@ -31,8 +31,8 @@ export async function enqueueAutoImport(
     let parsedJson: unknown;
     try {
       parsedJson = JSON.parse(job.metadata);
-    } catch (err) {
-      log.warn({ existingJobId: job.id, error: serializeError(err) }, 'Skipping auto job with unparseable metadata during duplicate scan');
+    } catch (error: unknown) {
+      log.warn({ existingJobId: job.id, error: serializeError(error) }, 'Skipping auto job with unparseable metadata during duplicate scan');
       continue;
     }
     const result = autoImportJobPayloadSchema.safeParse(parsedJson);

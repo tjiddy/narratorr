@@ -16,8 +16,8 @@ export function parsePhaseHistory(
   let parsedJson: unknown;
   try {
     parsedJson = JSON.parse(raw);
-  } catch (err) {
-    log.warn({ jobId, error: serializeError(err) }, 'Unparseable phaseHistory JSON; treating as empty');
+  } catch (error: unknown) {
+    log.warn({ jobId, error: serializeError(error) }, 'Unparseable phaseHistory JSON; treating as empty');
     return [];
   }
   const result = phaseHistorySchema.safeParse(parsedJson);

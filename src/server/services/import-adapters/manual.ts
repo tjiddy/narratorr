@@ -18,8 +18,8 @@ function parseManualPayload(jobId: number, raw: string): ManualImportJobPayload 
   let parsedJson: unknown;
   try {
     parsedJson = JSON.parse(raw);
-  } catch (err) {
-    throw new Error(`Invalid manual import payload for job ${jobId}: malformed JSON`, { cause: err });
+  } catch (error: unknown) {
+    throw new Error(`Invalid manual import payload for job ${jobId}: malformed JSON`, { cause: error });
   }
   const result = manualImportJobPayloadSchema.safeParse(parsedJson);
   if (!result.success) {
