@@ -1,7 +1,7 @@
 import { eq, and, like, desc, asc, sql, count as countFn, inArray, or, getTableColumns, type SQL } from 'drizzle-orm';
 import type { Db } from '../../db/index.js';
 import { books, authors, narrators, bookAuthors, bookNarrators, importLists } from '../../db/schema.js';
-import type { BookSortField, BookSortDirection } from '../../shared/schemas/book.js';
+import type { BookSortField, BookSortDirection, BookStatus } from '../../shared/schemas/book.js';
 import type { BookWithAuthor } from './book.service.js';
 
 type BookRow = typeof books.$inferSelect;
@@ -47,7 +47,7 @@ export class BookListService {
 
   // eslint-disable-next-line complexity -- batch-load pipeline for author/narrator/importList joins
   async getAll(
-    status?: string,
+    status?: BookStatus,
     pagination?: { limit?: number; offset?: number },
     options?: BookListOptions,
   ): Promise<{ data: BookWithAuthor[]; total: number }> {
@@ -60,7 +60,7 @@ export class BookListService {
       if (mapped) {
         conditions.push(inArray(books.status, mapped));
       } else {
-        conditions.push(eq(books.status, status as BookRow['status']));
+        conditions.push(eq(books.status, status));
       }
     }
 

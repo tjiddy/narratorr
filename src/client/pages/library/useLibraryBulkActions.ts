@@ -2,6 +2,7 @@ import { useState, useCallback, useMemo } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import { api, type BookWithAuthor, type SingleBookSearchResult } from '@/lib/api';
+import type { BookStatus } from '../../../shared/schemas.js';
 import { queryKeys } from '@/lib/queryKeys';
 import { getErrorMessage } from '@/lib/error-message.js';
 
@@ -99,9 +100,9 @@ export function useLibraryBulkActions(visibleBooks: BookWithAuthor[]) {
   });
 
   const bulkSetStatusMutation = useMutation({
-    mutationFn: async ({ status, label }: { status: string; label: string }) => {
+    mutationFn: async ({ status, label }: { status: BookStatus; label: string }) => {
       const results = await Promise.allSettled(
-        selectedBooks.map((b) => api.updateBook(b.id, { status } as Record<string, unknown>)),
+        selectedBooks.map((b) => api.updateBook(b.id, { status })),
       );
       const succeeded = results.filter((r) => r.status === 'fulfilled').length;
       return { succeeded, total: results.length, label };

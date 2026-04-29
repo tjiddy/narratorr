@@ -149,7 +149,7 @@ describe('useLibraryBook', () => {
     const mockBook = createMockBook({
       id: 42,
       title: 'Another Book',
-      status: 'monitored',
+      status: 'wanted',
       path: '/library/another-book',
       size: 1024000,
       authors: [{ id: 2, name: 'Another Author', slug: 'another-author' }],

@@ -1,4 +1,4 @@
-import type { EnrichmentStatus } from '../../../shared/schemas.js';
+import type { BookStatus, EnrichmentStatus } from '../../../shared/schemas.js';
 import type { BookMetadata, AuthorMetadata, MetadataSearchResults } from '../../../core/metadata/types.js';
 import { fetchApi, URL_BASE, ApiError } from './client.js';
 
@@ -33,7 +33,7 @@ export interface BookWithAuthor {
   duration?: number | null;
   publishedDate?: string | null;
   genres?: string[] | null;
-  status: string;
+  status: BookStatus;
   path?: string | null;
   size?: number | null;
   enrichmentStatus?: EnrichmentStatus | null;
@@ -94,7 +94,7 @@ export interface UpdateBookPayload {
   narrators?: string[];
   description?: string;
   coverUrl?: string;
-  status?: string;
+  status?: BookStatus;
   seriesName?: string | null;
   seriesPosition?: number | null;
   monitorForUpgrades?: boolean;
@@ -144,7 +144,7 @@ export type SingleBookSearchResult =
   | { result: 'skipped'; reason: string };
 
 export interface BookListParams {
-  status?: string;
+  status?: BookStatus;
   search?: string;
   sortField?: string;
   sortDirection?: 'asc' | 'desc';

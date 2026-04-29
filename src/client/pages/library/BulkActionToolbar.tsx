@@ -2,6 +2,7 @@ import { useState, useRef } from 'react';
 import { TrashIcon, SearchIcon, ChevronDownIcon } from '@/components/icons';
 import { DeleteBookModal } from '@/components/DeleteBookModal';
 import { useClickOutside } from '@/hooks/useClickOutside';
+import type { BookStatus } from '../../../shared/schemas.js';
 
 export function BulkActionToolbar({
   selectedCount,
@@ -19,7 +20,7 @@ export function BulkActionToolbar({
   isDeleting: boolean;
   onSearch: () => void;
   isSearching: boolean;
-  onSetStatus: (status: string, label: string) => void;
+  onSetStatus: (status: BookStatus, label: string) => void;
   isSettingStatus: boolean;
   hasPath: boolean;
   fileCount: number;
