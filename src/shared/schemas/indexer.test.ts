@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
-import { createIndexerFormSchema, createIndexerSchema, updateIndexerSchema } from './indexer.js';
+import { createIndexerFormSchema, createIndexerSchema, updateIndexerSchema, mamSettingsSchema } from './indexer.js';
+import { coerceSearchType } from '../indexer-registry.js';
 
 describe('createIndexerFormSchema — flareSolverrUrl validation', () => {
   const baseData = {
@@ -676,5 +677,45 @@ describe('updateIndexerSchema — type required when settings present', () => {
         expect.objectContaining({ path: ['type'], message: 'Type is required when settings are provided' }),
       );
     }
+  });
+});
+
+describe('#744 — mamSearchTypeServerSchema strict numeric bounds', () => {
+  const mamBase = { mamId: 'id1' };
+
+  it('rejects numeric searchType > 3', () => {
+    const result = mamSettingsSchema.safeParse({ ...mamBase, searchType: 99 });
+    expect(result.success).toBe(false);
+  });
+
+  it('rejects numeric searchType < 0', () => {
+    const result = mamSettingsSchema.safeParse({ ...mamBase, searchType: -1 });
+    expect(result.success).toBe(false);
+  });
+
+  it('parses searchType: 2 to "fl"', () => {
+    const result = mamSettingsSchema.safeParse({ ...mamBase, searchType: 2 });
+    expect(result.success).toBe(true);
+    if (result.success) expect(result.data.searchType).toBe('fl');
+  });
+
+  it('parses searchType: "fl-VIP" to "fl-VIP"', () => {
+    const result = mamSettingsSchema.safeParse({ ...mamBase, searchType: 'fl-VIP' });
+    expect(result.success).toBe(true);
+    if (result.success) expect(result.data.searchType).toBe('fl-VIP');
+  });
+});
+
+describe('#744 — coerceSearchType remains lenient for persisted/UI data', () => {
+  it('coerces 99 to "active" (unchanged)', () => {
+    expect(coerceSearchType(99)).toBe('active');
+  });
+
+  it('passes through "fl-VIP"', () => {
+    expect(coerceSearchType('fl-VIP')).toBe('fl-VIP');
+  });
+
+  it('returns "active" for undefined', () => {
+    expect(coerceSearchType(undefined)).toBe('active');
   });
 });

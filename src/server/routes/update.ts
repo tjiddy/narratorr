@@ -1,14 +1,20 @@
 import type { FastifyInstance } from 'fastify';
+import { z } from 'zod';
 import type { SettingsService } from '../services/settings.service.js';
+
+const dismissBodySchema = z.object({
+  version: z.string().trim().min(1),
+}).strict();
 
 export async function updateRoutes(app: FastifyInstance, settings: SettingsService) {
   // PUT /api/system/update/dismiss
-  app.put<{ Body: { version: string } }>('/api/system/update/dismiss', async (request, reply) => {
-    const { version } = request.body ?? {};
-    if (!version || typeof version !== 'string') {
-      return reply.status(400).send({ error: 'version is required' });
-    }
-    await settings.patch('system', { dismissedUpdateVersion: version });
-    return { ok: true };
-  });
+  app.put<{ Body: z.infer<typeof dismissBodySchema> }>(
+    '/api/system/update/dismiss',
+    { schema: { body: dismissBodySchema } },
+    async (request) => {
+      const { version } = request.body;
+      await settings.patch('system', { dismissedUpdateVersion: version });
+      return { ok: true };
+    },
+  );
 }

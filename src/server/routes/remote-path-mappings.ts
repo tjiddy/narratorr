@@ -1,5 +1,5 @@
 import { type FastifyInstance } from 'fastify';
-import { type z } from 'zod';
+import { z } from 'zod';
 import { type RemotePathMappingService } from '../services/remote-path-mapping.service.js';
 import { createRemotePathMappingSchema, updateRemotePathMappingSchema, idParamSchema, type CreateRemotePathMappingInput, type UpdateRemotePathMappingInput } from '../../shared/schemas.js';
 import { getErrorMessage } from '../utils/error-message.js';
@@ -8,20 +8,22 @@ import { serializeError } from '../utils/serialize-error.js';
 
 type IdParam = z.infer<typeof idParamSchema>;
 
+const listQuerySchema = z.object({
+  downloadClientId: z.coerce.number().int().positive().optional(),
+});
+
 export async function remotePathMappingRoutes(
   app: FastifyInstance,
   remotePathMappingService: RemotePathMappingService,
 ) {
   // GET /api/remote-path-mappings — list all, optionally filter by downloadClientId
-  app.get<{ Querystring: { downloadClientId?: string } }>(
+  app.get<{ Querystring: z.infer<typeof listQuerySchema> }>(
     '/api/remote-path-mappings',
+    { schema: { querystring: listQuerySchema } },
     async (request) => {
       const { downloadClientId } = request.query;
-      if (downloadClientId) {
-        const id = parseInt(downloadClientId, 10);
-        if (!isNaN(id)) {
-          return remotePathMappingService.getByClientId(id);
-        }
+      if (downloadClientId !== undefined) {
+        return remotePathMappingService.getByClientId(downloadClientId);
       }
       return remotePathMappingService.getAll();
     },
