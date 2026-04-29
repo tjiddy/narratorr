@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { createMockSettings } from './create-mock-settings.js';
+import { createMockSettings } from './create-mock-settings.fixtures.js';
 import { DEFAULT_SETTINGS, CATEGORY_SCHEMAS, SETTINGS_CATEGORIES } from './registry.js';
 
 describe('createMockSettings', () => {

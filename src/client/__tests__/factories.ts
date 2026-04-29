@@ -4,7 +4,7 @@ import type { DownloadClient } from '../lib/api/download-clients.js';
 import type { Indexer } from '../lib/api/indexers.js';
 import type { Notifier } from '../lib/api/notifiers.js';
 import type { Settings } from '../lib/api/settings.js';
-import { createMockSettings as _createMockSettings, type DeepPartial } from '../../shared/schemas/settings/create-mock-settings.js';
+import { createMockSettings as _createMockSettings, type DeepPartial } from '../../shared/schemas/settings/create-mock-settings.fixtures.js';
 import type { RemotePathMapping } from '../lib/api/remote-path-mappings.js';
 
 let nextId = 1;

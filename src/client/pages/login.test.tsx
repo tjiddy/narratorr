@@ -66,7 +66,7 @@ describe('LoginPage', () => {
   });
 
   // Theme selection logic (localStorage + matchMedia → dark class on <html>) is tested in
-  // src/client/lib/theme-bootstrap.test.ts where the bootstrap function can be exercised directly.
+  // src/client/lib/inline-bootstrap.test.ts where the production inline IIFE is exercised directly.
 
   it('submit disables button while pending', async () => {
     // Make login hang until we resolve it

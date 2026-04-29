@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeAll, afterAll, beforeEach, type Mock } from 'vitest';
 import { createTestApp, createMockServices, installMockAppLog, resetMockServices } from '../__tests__/helpers.js';
-import { createMockSettings } from '../../shared/schemas/settings/create-mock-settings.js';
+import { createMockSettings } from '../../shared/schemas/settings/create-mock-settings.fixtures.js';
 import { DEFAULT_SETTINGS } from '../../shared/schemas/settings/registry.js';
 import type { Services } from './index.js';
 
