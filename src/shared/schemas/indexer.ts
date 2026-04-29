@@ -22,9 +22,9 @@ export const torznabSettingsSchema = z.object(apiKeySettingsFields).strict();
 
 const mamSearchTypeServerSchema = z.union([
   z.enum(['all', 'active', 'fl', 'fl-VIP', 'VIP', 'nVIP']),
-  z.number().transform((n): MamSearchType => {
+  z.number().int().min(0).max(3).transform((n): MamSearchType => {
     const map: Record<number, MamSearchType> = { 0: 'all', 1: 'active', 2: 'fl', 3: 'fl-VIP' };
-    return map[n] ?? 'active';
+    return map[n]!;
   }),
 ]);
 

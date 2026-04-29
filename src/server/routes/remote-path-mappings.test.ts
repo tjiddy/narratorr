@@ -39,24 +39,35 @@ describe('remote-path-mappings routes', () => {
       expect(JSON.parse(res.payload)).toHaveLength(1);
     });
 
-    it('falls back to getAll when downloadClientId query param is non-numeric (NaN)', async () => {
-      (services.remotePathMapping.getAll as Mock).mockResolvedValue([mockMapping]);
-
+    it('returns 400 when downloadClientId query param is non-numeric', async () => {
       const res = await app.inject({ method: 'GET', url: '/api/remote-path-mappings?downloadClientId=abc' });
 
-      expect(res.statusCode).toBe(200);
-      expect(JSON.parse(res.payload)).toHaveLength(1);
-      expect(services.remotePathMapping.getAll).toHaveBeenCalled();
+      expect(res.statusCode).toBe(400);
+      expect(services.remotePathMapping.getAll).not.toHaveBeenCalled();
+      expect(services.remotePathMapping.getByClientId).not.toHaveBeenCalled();
+    });
+
+    it('returns 400 when downloadClientId is decimal (no longer silently truncated)', async () => {
+      const res = await app.inject({ method: 'GET', url: '/api/remote-path-mappings?downloadClientId=3.14' });
+
+      expect(res.statusCode).toBe(400);
+      expect(services.remotePathMapping.getByClientId).not.toHaveBeenCalled();
+    });
+
+    it('returns 400 when downloadClientId is negative', async () => {
+      const res = await app.inject({ method: 'GET', url: '/api/remote-path-mappings?downloadClientId=-1' });
+
+      expect(res.statusCode).toBe(400);
       expect(services.remotePathMapping.getByClientId).not.toHaveBeenCalled();
     });
 
     it('filters by downloadClientId query param', async () => {
       (services.remotePathMapping.getByClientId as Mock).mockResolvedValue([mockMapping]);
 
-      const res = await app.inject({ method: 'GET', url: '/api/remote-path-mappings?downloadClientId=1' });
+      const res = await app.inject({ method: 'GET', url: '/api/remote-path-mappings?downloadClientId=5' });
 
       expect(res.statusCode).toBe(200);
-      expect(services.remotePathMapping.getByClientId).toHaveBeenCalledWith(1);
+      expect(services.remotePathMapping.getByClientId).toHaveBeenCalledWith(5);
     });
   });
 

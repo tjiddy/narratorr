@@ -6,7 +6,24 @@ import { z } from 'zod';
 
 export const searchQuerySchema = z.object({
   q: z.string().min(2, 'Query must be at least 2 characters').max(500),
-  limit: z.string().optional().transform((val) => (val ? parseInt(val, 10) : 50)),
+  // `?limit=` (empty string) and an omitted `limit` both default to 50.
+  // `z.coerce.number()` would coerce '' to 0 and reject it; explicit transform
+  // preserves the empty-string default while rejecting NaN/decimal/out-of-range.
+  limit: z
+    .string()
+    .optional()
+    .transform((val, ctx): number => {
+      if (val === undefined || val === '') return 50;
+      const n = Number(val);
+      if (!Number.isInteger(n) || n < 1 || n > 500) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: 'limit must be an integer between 1 and 500',
+        });
+        return z.NEVER;
+      }
+      return n;
+    }),
   author: z.string().max(200).optional(),
   title: z.string().max(500).optional(),
   bookDuration: z.string().optional().transform((val) => {

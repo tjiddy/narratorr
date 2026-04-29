@@ -141,6 +141,17 @@ describe('system routes', () => {
 
       expect(res.statusCode).toBe(400);
     });
+
+    it('returns 400 when version is whitespace-only', async () => {
+      const res = await app.inject({
+        method: 'PUT',
+        url: '/api/system/update/dismiss',
+        payload: { version: '   ' },
+      });
+
+      expect(res.statusCode).toBe(400);
+      expect(services.settings.patch as Mock).not.toHaveBeenCalled();
+    });
   });
 
   describe('GET /api/health (#742 — minimal public payload)', () => {

@@ -20,6 +20,37 @@ describe('searchQuerySchema', () => {
     if (result.success) expect(result.data.limit).toBe(50);
   });
 
+  it('rejects non-numeric limit string', () => {
+    const result = searchQuerySchema.safeParse({ q: 'test', limit: 'abc' });
+    expect(result.success).toBe(false);
+  });
+
+  it('rejects negative limit', () => {
+    const result = searchQuerySchema.safeParse({ q: 'test', limit: '-1' });
+    expect(result.success).toBe(false);
+  });
+
+  it('rejects zero limit', () => {
+    const result = searchQuerySchema.safeParse({ q: 'test', limit: '0' });
+    expect(result.success).toBe(false);
+  });
+
+  it('rejects decimal limit', () => {
+    const result = searchQuerySchema.safeParse({ q: 'test', limit: '99.5' });
+    expect(result.success).toBe(false);
+  });
+
+  it('rejects limit above 500 ceiling', () => {
+    const result = searchQuerySchema.safeParse({ q: 'test', limit: '999999' });
+    expect(result.success).toBe(false);
+  });
+
+  it('accepts limit at the 500 ceiling', () => {
+    const result = searchQuerySchema.safeParse({ q: 'test', limit: '500' });
+    expect(result.success).toBe(true);
+    if (result.success) expect(result.data.limit).toBe(500);
+  });
+
   it('rejects query shorter than 2 characters', () => {
     const result = searchQuerySchema.safeParse({ q: 'a' });
     expect(result.success).toBe(false);

@@ -1,10 +1,15 @@
 import { type FastifyInstance } from 'fastify';
+import { z } from 'zod';
 import type { ImportListService } from '../services/import-list.service.js';
 import { createImportListSchema, updateImportListSchema, previewImportListSchema } from '../../shared/schemas.js';
 import { registerCrudRoutes } from './crud-routes.js';
 import { getErrorMessage } from '../utils/error-message.js';
 import { serializeError } from '../utils/serialize-error.js';
 
+const absLibrariesBodySchema = z.object({
+  serverUrl: z.string().trim().url(),
+  apiKey: z.string().trim().min(1),
+}).strict();
 
 export async function importListsRoutes(app: FastifyInstance, importListService: ImportListService) {
   await registerCrudRoutes(app, {
@@ -17,13 +22,11 @@ export async function importListsRoutes(app: FastifyInstance, importListService:
   });
 
   // POST /api/import-lists/abs/libraries — fetch ABS libraries for selection
-  app.post<{ Body: { serverUrl: string; apiKey: string } }>(
+  app.post<{ Body: z.infer<typeof absLibrariesBodySchema> }>(
     '/api/import-lists/abs/libraries',
+    { schema: { body: absLibrariesBodySchema } },
     async (request, reply) => {
       const { serverUrl, apiKey } = request.body;
-      if (!serverUrl || !apiKey) {
-        return reply.status(400).send({ error: 'serverUrl and apiKey are required' });
-      }
       try {
         const url = `${serverUrl.replace(/\/+$/, '')}/api/libraries`;
         const res = await fetch(url, {

@@ -240,7 +240,7 @@ describe('import-lists routes', () => {
       vi.restoreAllMocks();
     });
 
-    it('returns 400 when serverUrl or apiKey is missing', async () => {
+    it('returns 400 when apiKey is missing', async () => {
       const res = await app.inject({
         method: 'POST',
         url: '/api/import-lists/abs/libraries',
@@ -248,7 +248,26 @@ describe('import-lists routes', () => {
       });
 
       expect(res.statusCode).toBe(400);
-      expect(res.json().error).toContain('serverUrl and apiKey are required');
+    });
+
+    it('returns 400 when serverUrl is empty', async () => {
+      const res = await app.inject({
+        method: 'POST',
+        url: '/api/import-lists/abs/libraries',
+        payload: { serverUrl: '', apiKey: 'k' },
+      });
+
+      expect(res.statusCode).toBe(400);
+    });
+
+    it('returns 400 when serverUrl is not a URL', async () => {
+      const res = await app.inject({
+        method: 'POST',
+        url: '/api/import-lists/abs/libraries',
+        payload: { serverUrl: 'not-a-url', apiKey: 'k' },
+      });
+
+      expect(res.statusCode).toBe(400);
     });
 
     it('returns 502 when ABS API returns non-OK status', async () => {
