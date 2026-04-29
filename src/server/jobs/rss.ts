@@ -211,38 +211,3 @@ export async function runRssJob(
   return { polled, matched, grabbed };
 }
 
-/**
- * Start the RSS sync job with a dynamic interval.
- * Reads intervalMinutes from settings each cycle, so changes take effect without restart.
- */
-export function startRssJob(
-  settingsService: SettingsService,
-  bookListService: BookListService,
-  bookService: BookService,
-  indexerService: IndexerService,
-  downloadOrchestrator: DownloadOrchestrator,
-  blacklistService: BlacklistService,
-  log: FastifyBaseLogger,
-): void {
-  async function scheduleNext() {
-    try {
-      const rssSettings = await settingsService.get('rss');
-      const intervalMs = rssSettings.intervalMinutes * 60 * 1000;
-
-      setTimeout(async () => {
-        try {
-          await runRssJob(settingsService, bookListService, bookService, indexerService, downloadOrchestrator, blacklistService, log);
-        } catch (error: unknown) {
-          log.error({ error: serializeError(error) }, 'RSS sync job error');
-        }
-        scheduleNext();
-      }, intervalMs);
-    } catch (error: unknown) {
-      log.error({ error: serializeError(error) }, 'Failed to read RSS interval, retrying in 5 minutes');
-      setTimeout(scheduleNext, 5 * 60 * 1000);
-    }
-  }
-
-  scheduleNext();
-  log.info('RSS sync job scheduler started');
-}

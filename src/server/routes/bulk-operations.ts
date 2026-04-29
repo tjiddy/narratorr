@@ -21,10 +21,6 @@ export async function bulkOperationsRoutes(
     return bulkOperationService.countRetagEligible();
   });
 
-  app.get('/api/books/bulk/convert/count', async () => {
-    return bulkOperationService.countConvertEligible();
-  });
-
   // Active job discovery
   app.get('/api/books/bulk/active', async () => {
     return bulkOperationService.getActiveJob();

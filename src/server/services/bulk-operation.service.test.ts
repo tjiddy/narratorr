@@ -135,24 +135,6 @@ describe('BulkOperationService — countRetagEligible', () => {
   });
 });
 
-describe('BulkOperationService — countConvertEligible', () => {
-  beforeEach(() => { vi.resetAllMocks(); });
-
-  it('returns total of non-M4B eligible books', async () => {
-    const { service, db } = createService();
-    db.select.mockReturnValueOnce(mockDbChain([{ count: 3 }]));
-    const result = await service.countConvertEligible();
-    expect(result).toEqual({ total: 3 });
-  });
-
-  it('returns 0 when all books are already M4B', async () => {
-    const { service, db } = createService();
-    db.select.mockReturnValueOnce(mockDbChain([{ count: 0 }]));
-    const result = await service.countConvertEligible();
-    expect(result).toEqual({ total: 0 });
-  });
-});
-
 describe('BulkOperationService — countRenameEligible', () => {
   beforeEach(() => { vi.resetAllMocks(); });
 

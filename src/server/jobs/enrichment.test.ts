@@ -6,10 +6,7 @@ import type { Db } from '../../db/index.js';
 import type { MetadataService } from '../services/metadata.service.js';
 import type { BookService } from '../services/book.service.js';
 
-vi.mock('node-cron', () => ({ default: { schedule: vi.fn() } }));
-
-import cron from 'node-cron';
-import { runEnrichment, startEnrichmentJob } from './enrichment.js';
+import { runEnrichment } from './enrichment.js';
 
 describe('enrichment job', () => {
   let db: ReturnType<typeof createMockDb>;
@@ -928,33 +925,4 @@ describe('enrichment job', () => {
     });
   });
 
-  describe('startEnrichmentJob cron callback', () => {
-    it('logs canonical serialized error when runEnrichment rejects', async () => {
-      vi.mocked(cron.schedule).mockClear();
-
-      // Make the first db.select reject so runEnrichment's top-level await throws
-      const failure = new Error('db offline');
-      db.select.mockImplementation(() => {
-        throw failure;
-      });
-
-      startEnrichmentJob(
-        inject<Db>(db),
-        inject<MetadataService>(metadataService),
-        inject<BookService>(bookService),
-        inject<FastifyBaseLogger>(log),
-      );
-
-      const scheduleCall = vi.mocked(cron.schedule).mock.calls.find(([expr]) => expr === '*/5 * * * *');
-      expect(scheduleCall).toBeDefined();
-      const cronCallback = scheduleCall![1] as () => Promise<void>;
-
-      await cronCallback();
-
-      expect(log.error).toHaveBeenCalledWith(
-        expect.objectContaining({ error: expect.objectContaining({ message: 'db offline', type: 'Error' }) }),
-        'Enrichment job error',
-      );
-    });
-  });
 });

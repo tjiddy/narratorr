@@ -16,7 +16,7 @@ export type { BookEvent, EventHistoryParams } from './event-history.js';
 export type { BackupMetadata, RestoreValidation, BackupJobResult } from './backups.js';
 export type { HealthState, HealthCheckResult, HealthSummary, TaskMetadata, SystemInfo, SystemStatus } from './system.js';
 export type { ImportList, ImportListItem, ImportListPreview } from './import-lists.js';
-export type { SuggestionRow, DiscoverStats, MarkAddedResult, RefreshResult } from './discover.js';
+export type { SuggestionRow, MarkAddedResult, RefreshResult } from './discover.js';
 export type { BulkOpType, BulkJobStatus, RenameCount } from './bulk-operations.js';
 export type { ImportJobWithBook, ImportJobBook, ImportJobsParams } from './import-jobs.js';
 

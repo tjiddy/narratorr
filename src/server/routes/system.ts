@@ -45,7 +45,11 @@ export async function systemRoutes(app: FastifyInstance, services: Services, db:
     }
   });
 
-  // POST /api/system/tasks/search — manually trigger a search cycle
+  // POST /api/system/tasks/search — manually trigger a search cycle.
+  // Preserved for external API compatibility — do not remove without external API review.
+  // The generic POST /api/system/tasks/:name/run replaces this for new integrations,
+  // but external scripts may still target this dedicated path. See SECURITY.md
+  // ("Public-compatibility API surfaces") for the full list of preserved endpoints.
   app.post('/api/system/tasks/search', async (request) => {
     return services.taskRegistry.runExclusive('search', () =>
       runSearchJob(

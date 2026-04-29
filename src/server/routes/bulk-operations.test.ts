@@ -6,7 +6,6 @@ function makeBulkService(overrides?: Record<string, unknown>) {
   return {
     countRenameEligible: vi.fn().mockResolvedValue({ mismatched: 3, alreadyMatching: 2 }),
     countRetagEligible: vi.fn().mockResolvedValue({ total: 5 }),
-    countConvertEligible: vi.fn().mockResolvedValue({ total: 4 }),
     getActiveJob: vi.fn().mockReturnValue(null),
     startRenameJob: vi.fn().mockResolvedValue('job-uuid-1'),
     startRetagJob: vi.fn().mockResolvedValue('job-uuid-2'),
@@ -55,29 +54,13 @@ describe('GET /api/books/bulk/retag/count', () => {
   });
 });
 
-describe('GET /api/books/bulk/convert/count', () => {
-  beforeEach(() => {
-    vi.resetAllMocks();
-  });
-
-  it('returns 200 { total } including books with null audioFileFormat', async () => {
+// Wave 11.2 (#755) — GET /api/books/bulk/convert/count retired
+describe('GET /api/books/bulk/convert/count (removed)', () => {
+  it('returns 404', async () => {
     const services = createMockServices({ bulkOperation: makeBulkService() });
     const app = await createTestApp(services);
     const resp = await app.inject({ method: 'GET', url: '/api/books/bulk/convert/count' });
-    expect(resp.statusCode).toBe(200);
-    expect(resp.json()).toEqual({ total: 4 });
-  });
-
-  it('excludes books with uppercase M4B', async () => {
-    // Counting logic is in the service — route just returns what the service returns
-    const bulkOperation = makeBulkService({
-      countConvertEligible: vi.fn().mockResolvedValue({ total: 0 }),
-    });
-    const services = createMockServices({ bulkOperation });
-    const app = await createTestApp(services);
-    const resp = await app.inject({ method: 'GET', url: '/api/books/bulk/convert/count' });
-    expect(resp.statusCode).toBe(200);
-    expect(resp.json()).toEqual({ total: 0 });
+    expect(resp.statusCode).toBe(404);
   });
 });
 

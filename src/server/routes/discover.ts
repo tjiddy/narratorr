@@ -98,25 +98,6 @@ export async function discoverRoutes(app: FastifyInstance, deps: DiscoverRouteDe
     },
   );
 
-  // POST /api/discover/suggestions/:id/snooze
-  const snoozeBodySchema = z.object({ durationDays: z.number().int().min(1).max(365) });
-  type SnoozeBody = z.infer<typeof snoozeBodySchema>;
-
-  app.post<{ Params: IdParam; Body: SnoozeBody }>(
-    '/api/discover/suggestions/:id/snooze',
-    { schema: { params: idParamSchema, body: snoozeBodySchema } },
-    async (request, reply) => {
-      const result = await discoveryService.snoozeSuggestion(request.params.id, request.body.durationDays);
-      if (result === null) {
-        return reply.status(404).send({ error: 'Suggestion not found' });
-      }
-      if (result === 'conflict') {
-        return reply.status(409).send({ error: 'Suggestion is not in pending status' });
-      }
-      return toSuggestionResponse(result);
-    },
-  );
-
   // POST /api/discover/refresh
   app.post('/api/discover/refresh', async (_request, reply) => {
     const settings = await settingsService.get('discovery');
@@ -124,10 +105,5 @@ export async function discoverRoutes(app: FastifyInstance, deps: DiscoverRouteDe
       return reply.status(409).send({ error: 'Discovery is disabled' });
     }
     return taskRegistry.runExclusive('discovery', () => discoveryService.refreshSuggestions());
-  });
-
-  // GET /api/discover/stats
-  app.get('/api/discover/stats', async () => {
-    return discoveryService.getStats();
   });
 }

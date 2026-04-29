@@ -1,4 +1,3 @@
-import cron from 'node-cron';
 import { eq, and, isNotNull, or, sql } from 'drizzle-orm';
 import type { Db } from '../../db/index.js';
 import type { FastifyBaseLogger } from 'fastify';
@@ -7,7 +6,6 @@ import { RateLimitError } from '../../core/index.js';
 import { findOrCreateNarrator } from '../utils/find-or-create-person.js';
 import type { MetadataService } from '../services/metadata.service.js';
 import type { BookService } from '../services/book.service.js';
-import { serializeError } from '../utils/serialize-error.js';
 
 
 const BATCH_LIMIT = 5;
@@ -78,18 +76,6 @@ function buildMetadataUpdates(
   Object.assign(updates, fillSeriesFields(book, result.series));
 
   return { updates, filledDuration, filledTitle, filledDescription };
-}
-
-export function startEnrichmentJob(db: Db, metadataService: MetadataService, bookService: BookService, log: FastifyBaseLogger) {
-  cron.schedule('*/5 * * * *', async () => {
-    try {
-      await runEnrichment(db, metadataService, bookService, log);
-    } catch (error: unknown) {
-      log.error({ error: serializeError(error) }, 'Enrichment job error');
-    }
-  });
-
-  log.info('Enrichment job started (every 5 minutes)');
 }
 
 // eslint-disable-next-line complexity -- linear enrichment pipeline with null guards per category

@@ -174,6 +174,14 @@ Connection test endpoints return upstream API error messages to the authenticate
 
 Generic error responses for unauthenticated or unexpected errors use `{ error: 'Internal server error' }` with no stack traces or internal details.
 
+## Public-compatibility API surfaces
+
+A handful of endpoints have no in-tree caller but are preserved as a stable contract for external integrations (scripts, dashboards, CI helpers). They are kept intentionally — do not remove them without an external API review.
+
+| Endpoint | Rationale |
+|----------|-----------|
+| `POST /api/system/tasks/search` | Manual trigger for the scheduled search cycle. The generic `POST /api/system/tasks/:name/run` is the preferred surface for new integrations, but legacy automations may target this dedicated path. Removed in code review only. |
+
 ## Reporting Security Issues
 
 If you discover a security vulnerability, please report it privately rather than opening a public issue. Contact the maintainer directly or use GitHub's private vulnerability reporting feature.

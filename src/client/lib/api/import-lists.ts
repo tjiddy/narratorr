@@ -35,7 +35,6 @@ export interface AbsLibrary {
 
 export const importListsApi = {
   getImportLists: () => fetchApi<ImportList[]>('/import-lists'),
-  getImportList: (id: number) => fetchApi<ImportList>(`/import-lists/${id}`),
   createImportList: (data: ImportListInput) =>
     fetchApi<ImportList>('/import-lists', {
       method: 'POST',

@@ -16,7 +16,6 @@ vi.mock('@/lib/api', () => ({
     markDiscoverSuggestionAdded: vi.fn(),
     dismissDiscoverSuggestion: vi.fn(),
     refreshDiscover: vi.fn(),
-    getDiscoverStats: vi.fn(),
     getBookStats: vi.fn(),
     getSettings: vi.fn(),
   },
@@ -34,7 +33,6 @@ const mockApi = api as unknown as {
   markDiscoverSuggestionAdded: ReturnType<typeof vi.fn>;
   dismissDiscoverSuggestion: ReturnType<typeof vi.fn>;
   refreshDiscover: ReturnType<typeof vi.fn>;
-  getDiscoverStats: ReturnType<typeof vi.fn>;
   getBookStats: ReturnType<typeof vi.fn>;
   getSettings: ReturnType<typeof vi.fn>;
 };
@@ -105,7 +103,6 @@ function makeSettings(overrides?: { languages?: string[]; rejectWords?: string }
 
 beforeEach(() => {
   vi.resetAllMocks();
-  mockApi.getDiscoverStats.mockResolvedValue({});
   mockApi.getSettings.mockResolvedValue(makeSettings());
 });
 
