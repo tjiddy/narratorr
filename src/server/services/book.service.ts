@@ -3,6 +3,7 @@ import { isAbsolute, normalize, relative, resolve } from 'node:path';
 import { cleanEmptyParents } from '../utils/paths.js';
 import { uploadBookCover, CoverUploadError } from './cover-upload.js';
 import { SUPPORTED_COVER_MIMES } from '../utils/mime.js';
+import { chunkArray } from '../utils/batch.js';
 import { eq, and, sql, inArray, notExists } from 'drizzle-orm';
 import type { Db, DbOrTx } from '../../db/index.js';
 import type { FastifyBaseLogger } from 'fastify';
@@ -362,23 +363,32 @@ export class BookService {
     return this.batchLoadAuthorsNarrators(rows);
   }
 
-  /** Batch-load authors and narrators for a list of book rows (3 queries total regardless of row count). */
+  /** Batch-load authors and narrators for a list of book rows. Author and narrator
+   *  lookups are chunked in batches of 900 IDs to stay under SQLite's 999 bind-param limit. */
   private async batchLoadAuthorsNarrators(bookRows: BookRow[]): Promise<BookWithAuthor[]> {
     if (bookRows.length === 0) return [];
 
     const bookIds = bookRows.map((r) => r.id);
 
-    const authorResults = await this.db
-      .select({ bookId: bookAuthors.bookId, author: authors, position: bookAuthors.position })
-      .from(bookAuthors)
-      .innerJoin(authors, eq(bookAuthors.authorId, authors.id))
-      .where(inArray(bookAuthors.bookId, bookIds));
+    const authorResults: Array<{ bookId: number; author: AuthorRow; position: number }> = [];
+    for (const chunk of chunkArray(bookIds, 900)) {
+      const rows = await this.db
+        .select({ bookId: bookAuthors.bookId, author: authors, position: bookAuthors.position })
+        .from(bookAuthors)
+        .innerJoin(authors, eq(bookAuthors.authorId, authors.id))
+        .where(inArray(bookAuthors.bookId, chunk));
+      authorResults.push(...rows);
+    }
 
-    const narratorResults = await this.db
-      .select({ bookId: bookNarrators.bookId, narrator: narrators, position: bookNarrators.position })
-      .from(bookNarrators)
-      .innerJoin(narrators, eq(bookNarrators.narratorId, narrators.id))
-      .where(inArray(bookNarrators.bookId, bookIds));
+    const narratorResults: Array<{ bookId: number; narrator: NarratorRow; position: number }> = [];
+    for (const chunk of chunkArray(bookIds, 900)) {
+      const rows = await this.db
+        .select({ bookId: bookNarrators.bookId, narrator: narrators, position: bookNarrators.position })
+        .from(bookNarrators)
+        .innerJoin(narrators, eq(bookNarrators.narratorId, narrators.id))
+        .where(inArray(bookNarrators.bookId, chunk));
+      narratorResults.push(...rows);
+    }
 
     const authorsMap = new Map<number, Array<{ author: AuthorRow; position: number }>>();
     for (const r of authorResults) {

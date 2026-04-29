@@ -18,6 +18,7 @@ import { usePagination } from '@/hooks/usePagination';
 import { useQuery } from '@tanstack/react-query';
 import { api } from '@/lib/api';
 import { queryKeys } from '@/lib/queryKeys';
+import { useSSEConnected } from '@/hooks/useEventSource';
 import { getErrorMessage } from '@/lib/error-message.js';
 import { DEFAULT_LIMITS } from '../../../shared/schemas/common.js';
 
@@ -38,10 +39,11 @@ export function ActivityPage() {
   const searchCards = useSearchProgress();
   const { isLoading } = status;
 
+  const sseConnected = useSSEConnected();
   const importJobsQuery = useQuery({
     queryKey: queryKeys.importJobs(),
     queryFn: () => api.getImportJobs(),
-    refetchInterval: 5000,
+    refetchInterval: sseConnected ? false : 5000,
   });
   const importJobs = importJobsQuery.data ?? [];
   const { cancelMutation, retryMutation, approveMutation, rejectMutation } = mutations;
