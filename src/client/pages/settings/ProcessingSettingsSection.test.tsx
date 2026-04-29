@@ -406,7 +406,7 @@ describe('ProcessingSettingsSection', () => {
     });
   });
 
-  describe('schema preprocess and boundary values', () => {
+  describe('setValueAs NaN coercion and boundary values', () => {
     it('accepts postProcessingScriptTimeout of exactly 1 (min boundary)', async () => {
       const user = userEvent.setup();
       const settingsWithScript = createMockSettings({
@@ -503,7 +503,8 @@ describe('ProcessingSettingsSection', () => {
         expect(screen.getByLabelText('Script Timeout (seconds)')).toHaveValue(60);
       });
 
-      // Clear the timeout — valueAsNumber produces NaN, preprocess converts to undefined
+      // Clear the timeout — register's setValueAs at the form layer coerces NaN to undefined
+      // before the schema sees it. The shared processingFormSchema no longer has z.preprocess.
       const timeoutInput = screen.getByLabelText('Script Timeout (seconds)');
       await user.clear(timeoutInput);
 

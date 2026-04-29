@@ -400,13 +400,13 @@ describe('settingsRegistry', () => {
       expect(result.success).toBe(false);
     });
 
-    it('form schema accepts NaN timeout when script path is empty', () => {
+    it('form schema rejects NaN timeout when script path is empty (NaN-to-undefined coercion lives at the form layer, not the shared schema)', () => {
       const data = {
         ...DEFAULT_SETTINGS,
         processing: { ...DEFAULT_SETTINGS.processing, postProcessingScript: '', postProcessingScriptTimeout: Number.NaN },
       };
       const result = updateSettingsFormSchema.safeParse(data);
-      expect(result.success).toBe(true);
+      expect(result.success).toBe(false);
     });
 
     it('form schema rejects NaN timeout when script path is non-empty', () => {
@@ -489,6 +489,12 @@ describe('settingsRegistry', () => {
         const schemaParsed = schema.parse({});
         expect(schemaParsed, `${key} schema defaults should match registry defaults`).toEqual(defaults);
       }
+    });
+
+    it('library: defaulted fields match registry defaults (with path seeded)', () => {
+      const seed = { path: '/seed' };
+      const schemaParsed = settingsRegistry.library.schema.parse(seed);
+      expect(schemaParsed).toEqual({ ...DEFAULT_SETTINGS.library, ...seed });
     });
   });
 
