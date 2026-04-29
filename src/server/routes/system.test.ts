@@ -126,6 +126,7 @@ describe('system routes', () => {
 
   describe('PUT /api/system/update/dismiss', () => {
     it('writes dismissedUpdateVersion to system settings via patch', async () => {
+      (services.settings.patch as Mock).mockResolvedValue(undefined);
       const res = await app.inject({
         method: 'PUT',
         url: '/api/system/update/dismiss',

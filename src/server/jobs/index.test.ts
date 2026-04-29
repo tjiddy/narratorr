@@ -44,6 +44,15 @@ describe('startJobs', () => {
     });
     // Default: startup recovery finds no stuck downloads
     db.update.mockReturnValue(mockDbChain([]));
+
+    // Startup recovery + import-maintenance cron both await these batch service methods.
+    // The mock helper rejects unconfigured methods by default — explicitly resolve them
+    // here so the recovery / cron paths complete normally and the assertions can
+    // observe call counts/ordering instead of unhandled rejections.
+    (services.qualityGateOrchestrator.processCompletedDownloads as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
+    (services.importOrchestrator.processCompletedDownloads as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
+    (services.qualityGateOrchestrator.cleanupDeferredRejections as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
+    (services.import.cleanupDeferredImports as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
   });
 
   it('registers all jobs with the task registry', async () => {

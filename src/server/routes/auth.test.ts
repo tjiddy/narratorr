@@ -537,6 +537,7 @@ describe('auth routes', () => {
   describe('DELETE /api/auth/credentials', () => {
     it('returns 200 and deletes user when AUTH_BYPASS is active', async () => {
       (config as Record<string, unknown>).authBypass = true;
+      (services.auth.deleteCredentials as Mock).mockResolvedValue(undefined);
       try {
         const res = await app.inject({ method: 'DELETE', url: '/api/auth/credentials' });
         expect(res.statusCode).toBe(200);
@@ -814,6 +815,8 @@ describe('auth routes', () => {
 
     it('POST /api/auth/login (public) without X-Requested-With reaches handler — public route exempt', async () => {
       (csrfServices.auth.verifyCredentials as Mock).mockResolvedValue({ username: 'admin' });
+      (csrfServices.auth.getSessionSecret as Mock).mockResolvedValue('test-secret');
+      (csrfServices.auth.createSessionCookie as Mock).mockReturnValue('cookie-value');
       const res = await csrfApp.inject({
         method: 'POST',
         url: '/api/auth/login',

@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { mkdtemp, writeFile, mkdir, readFile, rm } from 'node:fs/promises';
+import { mkdtemp, writeFile, mkdir, readFile, readdir, rm } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { streamCopyWithProgress } from './streaming-copy.helpers.js';
@@ -63,14 +63,18 @@ describe('streamCopyWithProgress', () => {
     expect(lastCall[1]).toMatchObject({ current: 4096, total: 4096 });
   });
 
-  it('handles empty directory (0 bytes total) without error', async () => {
+  it('handles empty directory (0 bytes total) without firing progress and without writing files', async () => {
     // srcDir is empty
     const onProgress = vi.fn();
 
     await streamCopyWithProgress(srcDir, destDir, onProgress);
 
-    // Should not throw, progress may or may not be called
-    expect(true).toBe(true);
+    // No files were copied — onProgress is only invoked from the byte-counter Transform,
+    // which only runs when there's a file to stream.
+    expect(onProgress).not.toHaveBeenCalled();
+    // Destination directory remains empty.
+    const destEntries = await readdir(destDir);
+    expect(destEntries).toEqual([]);
   });
 
   it('fires onProgress multiple times with increasing byte counts for a large single file', async () => {

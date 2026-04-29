@@ -848,6 +848,12 @@ describe('books routes', () => {
   });
 
   describe('DELETE /api/books/:id', () => {
+    beforeEach(() => {
+      // The DELETE route always calls bookService.getById before any branching.
+      // Tests that don't exercise the deleteFiles=true path can leave the book undefined.
+      (services.book.getById as Mock).mockResolvedValue(undefined);
+    });
+
     it('deletes book and returns success', async () => {
       (services.download.getActiveByBookId as Mock).mockResolvedValue([]);
       (services.book.delete as Mock).mockResolvedValue(true);
@@ -1327,6 +1333,12 @@ describe('books routes', () => {
   describe('POST /api/books/:id/search (#282)', () => {
     const qualitySettings = { grabFloor: 0, minSeeders: 0, protocolPreference: 'none' };
 
+    beforeEach(() => {
+      // Default: grab() resolves successfully so the happy-path tests below see result='grabbed'.
+      // Tests that need rejection override with mockRejectedValueOnce/mockRejectedValue.
+      (services.downloadOrchestrator.grab as Mock).mockResolvedValue(undefined);
+    });
+
     it('returns result: grabbed with title when best result found and grabbed', async () => {
       (services.book.getById as Mock).mockResolvedValue(mockBook);
       (services.settings.get as Mock).mockResolvedValue(qualitySettings);
@@ -1611,6 +1623,7 @@ describe('books routes', () => {
         { id: 10, bookId: 1, status: 'downloading' },
         { id: 11, bookId: 1, status: 'queued' },
       ];
+      (services.book.getById as Mock).mockResolvedValue(undefined);
       (services.download.getActiveByBookId as Mock).mockResolvedValue(activeDownloads);
       (services.downloadOrchestrator.cancel as Mock)
         .mockRejectedValueOnce(new Error('cancel failed'))
@@ -2603,6 +2616,7 @@ describe('#514 books route — missing blacklistService guard', () => {
   });
 
   it('does not trigger search when blacklistService is absent even with searchImmediately', async () => {
+    (services.book.findDuplicate as Mock).mockResolvedValue(null);
     (services.book.create as Mock).mockResolvedValueOnce({ ...mockBook, status: 'wanted' });
 
     const res = await app.inject({

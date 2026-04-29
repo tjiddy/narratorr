@@ -182,9 +182,17 @@ export function createMockLogger(): Record<string, Mock | string> {
  * Uses Proxy to auto-create stubs on access — adding new service methods requires no changes here.
  * Accepts partial overrides to customize specific services.
  *
- * All auto-created stubs default to `mockResolvedValue(undefined)` since service
- * methods are async. This prevents `undefined.catch is not a function` on
- * fire-and-forget calls like `notifier.notify(...).catch(...)`.
+ * **Canonical default for unconfigured methods:** every auto-created stub is
+ * `vi.fn().mockRejectedValue(new Error('mock not configured: <service>.<method>'))`.
+ * Rejected promises remain thenable, so fire-and-forget chains like
+ * `notifier.notify(...).catch(noop)` keep working — the .catch handler swallows
+ * the rejection. But any test that `await`s an unconfigured method surfaces the
+ * descriptive error loudly, instead of getting a silent `undefined` that masks
+ * a missing setup.
+ *
+ * Tests that need a successful return continue to set up `mockResolvedValue(...)`
+ * (or any other override) explicitly. `resetMockServices` re-applies the same
+ * canonical default — both helpers must stay in lockstep on this contract.
  */
 export function createMockServices(overrides?: Partial<Record<keyof Services, Record<string, unknown>>>): Services {
   const services: Record<string, unknown> = {};
@@ -193,7 +201,9 @@ export function createMockServices(overrides?: Partial<Record<keyof Services, Re
       get(target, prop) {
         if (prop in target) return target[prop];
         if (typeof prop === 'symbol') return undefined;
-        const fn = vi.fn().mockResolvedValue(undefined);
+        const fn = vi.fn().mockRejectedValue(
+          new Error(`mock not configured: ${name}.${prop}`),
+        );
         target[prop] = fn;
         return fn;
       },
@@ -210,16 +220,19 @@ export function createMockServices(overrides?: Partial<Record<keyof Services, Re
  * Resets all vi.fn() stubs on every service in a Services object.
  * Replaces the identical `beforeEach` loop duplicated across route tests.
  *
- * After resetting, re-applies `mockResolvedValue(undefined)` so stubs always
- * return promises (matching `createMockServices` behavior).
+ * **Canonical default after reset:** matches `createMockServices` —
+ * `mockRejectedValue(new Error('mock not configured: <service>.<method>'))`.
+ * Rejected promises remain thenable so fire-and-forget chains keep working;
+ * tests that await an un-reconfigured method see a loud descriptive error
+ * instead of a silent `undefined`.
  */
 export function resetMockServices(services: Services) {
-  for (const svc of Object.values(services)) {
-    for (const fn of Object.values(svc as Record<string, unknown>)) {
+  for (const [serviceName, svc] of Object.entries(services)) {
+    for (const [methodName, fn] of Object.entries(svc as Record<string, unknown>)) {
       if (typeof fn === 'function' && 'mockReset' in fn) {
-        const mock = fn as unknown as { mockReset: () => void; mockResolvedValue: (v: unknown) => void };
+        const mock = fn as unknown as { mockReset: () => void; mockRejectedValue: (v: unknown) => void };
         mock.mockReset();
-        mock.mockResolvedValue(undefined);
+        mock.mockRejectedValue(new Error(`mock not configured: ${serviceName}.${methodName}`));
       }
     }
   }

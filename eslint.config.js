@@ -6,6 +6,7 @@ import globals from 'globals';
 import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
 const noRawErrorLogging = require('./eslint-rules/no-raw-error-logging.cjs');
+const noTautologicalExpect = require('./eslint-rules/no-tautological-expect.cjs');
 
 export default tseslint.config(
   // Ignore patterns
@@ -153,13 +154,18 @@ export default tseslint.config(
     },
   },
 
-  // Test files - relax rules that don't add value in tests
+  // Test files - relax rules that don't add value in tests, but enforce
+  // anti-hollow-assertion sweep rule (catches `expect(true).toBe(true)` etc.)
   {
     files: ['**/*.test.ts', '**/*.test.tsx'],
+    plugins: {
+      'narratorr': { rules: { 'no-tautological-expect': noTautologicalExpect } },
+    },
     rules: {
       'max-lines': 'off',
       'max-lines-per-function': 'off',
       'complexity': 'off',
+      'narratorr/no-tautological-expect': 'error',
     },
   }
 );

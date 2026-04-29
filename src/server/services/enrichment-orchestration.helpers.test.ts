@@ -132,13 +132,14 @@ describe('orchestrateBookEnrichment', () => {
       ).rejects.toThrow('Audio scan failed');
     });
 
-    it('does not emit events — no calls to eventHistory', async () => {
-      // orchestrateBookEnrichment has no access to eventHistory — callers own events
-      // This test verifies the function signature doesn't accept eventHistory
+    it('does not emit events — eventHistory is not part of EnrichmentDeps', async () => {
+      // orchestrateBookEnrichment has no access to eventHistory — callers own events.
       await orchestrateBookEnrichment(42, '/path', { narrators: null, duration: null, coverUrl: null, existingGenres: null }, deps, { primaryAsin: null });
 
-      // If we got here without error, the function doesn't require or use eventHistory
-      expect(true).toBe(true);
+      // The deps passed in (which the test built from createMockDeps) must not carry an eventHistory,
+      // and orchestrateBookEnrichment must not have synthesized a call against one.
+      expect('eventHistory' in deps).toBe(false);
+      expect(Object.keys(deps).sort()).toEqual(['bookService', 'db', 'log', 'metadataService', 'settingsService']);
     });
   });
 });
