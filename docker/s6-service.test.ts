@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { execFileSync } from 'child_process';
+import { execFileSync, spawnSync } from 'child_process';
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
@@ -59,6 +59,48 @@ describe('s6-overlay service definition', () => {
       expect(content).toContain('s6 finish');
       expect(content).toContain('exitCode');
       expect(content).toContain('signalNumber');
+    });
+
+    it.skipIf(process.platform === 'win32')(
+      'finish script logs clean-exit JSON when no signal arg given',
+      () => {
+        const finishPath = path.join(serviceDir, 'finish');
+        const result = spawnSync('bash', [finishPath, '0', ''], {
+          encoding: 'utf-8',
+          timeout: 5000,
+        });
+        expect(result.status).toBe(0);
+        const parsed = JSON.parse(result.stderr.trim());
+        expect(parsed.level).toBe(60);
+        expect(parsed.exitCode).toBe(0);
+        expect(parsed.signalNumber).toBeUndefined();
+        expect(parsed.msg).toContain('exited');
+        expect(parsed.msg).not.toContain('killed');
+      },
+    );
+
+    it.skipIf(process.platform === 'win32')(
+      'finish script logs killed-by-signal JSON when signal number given',
+      () => {
+        const finishPath = path.join(serviceDir, 'finish');
+        const result = spawnSync('bash', [finishPath, '256', '11'], {
+          encoding: 'utf-8',
+          timeout: 5000,
+        });
+        expect(result.status).toBe(0);
+        const parsed = JSON.parse(result.stderr.trim());
+        expect(parsed.level).toBe(60);
+        expect(parsed.exitCode).toBe(256);
+        expect(parsed.signalNumber).toBe(11);
+        expect(parsed.msg).toContain('killed by signal');
+      },
+    );
+
+    it('finish script is committed with executable permissions', () => {
+      const finishGitPath = 'docker/root/etc/s6-overlay/s6-rc.d/svc-narratorr/finish';
+      const output = execFileSync('git', ['ls-tree', 'HEAD', '--', finishGitPath], { encoding: 'utf-8' });
+      // Git tracks executable files as mode 100755 — without it, s6 won't run the finish hook
+      expect(output).toMatch(/^100755\s/);
     });
 
     it('run script uses s6-setuidgid abc for LSIO user model', () => {

@@ -4,26 +4,11 @@ import path from 'path';
 import fs from 'fs';
 import { fileURLToPath } from 'url';
 import { serializeError } from './utils/serialize-error.js';
+import { logCrash } from './utils/crash-logger.js';
 
-// Synchronous crash logging — registered at module load so it catches errors
-// during the import phase too. Bypasses Pino's async buffer (sonic-boom) which
-// drops logs queued just before process.exit(). Format mirrors Pino's JSON
-// shape so existing log tooling parses these uniformly.
-function logCrash(msg: string, err: unknown): void {
-  try {
-    const line = JSON.stringify({
-      level: 60,
-      time: Date.now(),
-      pid: process.pid,
-      hostname: os.hostname(),
-      error: serializeError(err),
-      msg,
-    });
-    process.stderr.write(line + '\n');
-  } catch {
-    /* last-resort: stderr write failed, nothing else we can do */
-  }
-}
+// Crash handlers registered at module load so they catch errors during the
+// import phase too. logCrash bypasses Pino's async buffer (sonic-boom) so
+// fatal logs flush before process.exit() actually terminates.
 process.on('uncaughtException', (err) => {
   logCrash('Uncaught exception — process will exit', err);
   process.exit(1);
