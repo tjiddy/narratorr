@@ -195,6 +195,26 @@ describe('BookImportService', () => {
       expect(rows[0].phaseHistory).toEqual([]);
     });
 
+    it('falls back to empty phaseHistory when JSON is unparseable (does not 500)', async () => {
+      db.select.mockReturnValueOnce(
+        mockDbChain([makeRow({ phaseHistory: 'not-json' })]),
+      );
+
+      const rows = await service.listImportJobs();
+
+      expect(rows[0].phaseHistory).toEqual([]);
+    });
+
+    it('falls back to empty phaseHistory when shape is wrong (does not 500)', async () => {
+      db.select.mockReturnValueOnce(
+        mockDbChain([makeRow({ phaseHistory: JSON.stringify([{ foo: 'bar' }]) })]),
+      );
+
+      const rows = await service.listImportJobs();
+
+      expect(rows[0].phaseHistory).toEqual([]);
+    });
+
     it('falls back to "Unknown" / null when book row is null (orphan job)', async () => {
       db.select.mockReturnValueOnce(
         mockDbChain([makeRow({ bookTitle: null, coverUrl: null, author: null })]),

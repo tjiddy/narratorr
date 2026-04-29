@@ -16,7 +16,7 @@ export const eventTypeSchema = z.enum([
 
 export type EventType = z.infer<typeof eventTypeSchema>;
 
-export const eventSourceSchema = z.enum(['manual', 'rss', 'scheduled', 'auto']);
+export const eventSourceSchema = z.enum(['manual', 'rss', 'scheduled', 'auto', 'import_list']);
 
 export type EventSource = z.infer<typeof eventSourceSchema>;
 

@@ -9,6 +9,7 @@ import { DOWNLOAD_CLIENT_TYPES } from '../shared/download-client-registry';
 import { NOTIFIER_TYPES } from '../shared/notifier-registry';
 import { IMPORT_LIST_TYPES } from '../shared/import-list-registry';
 import { IMPORT_JOB_TYPES, IMPORT_JOB_STATUSES, IMPORT_JOB_PHASES } from '../shared/schemas/import-job';
+import type { NotificationEvent } from '../shared/notification-events';
 
 // ============ LIBRARY ============
 
@@ -165,7 +166,7 @@ export const notifiers = sqliteTable('notifiers', {
   name: text('name').notNull(),
   type: text('type', { enum: NOTIFIER_TYPES }).notNull(),
   enabled: integer('enabled', { mode: 'boolean' }).notNull().default(true),
-  events: text('events', { mode: 'json' }).notNull().$type<string[]>(),
+  events: text('events', { mode: 'json' }).notNull().$type<NotificationEvent[]>(),
   settings: text('settings', { mode: 'json' }).notNull().$type<Record<string, unknown>>(),
   createdAt: integer('created_at', { mode: 'timestamp' })
     .notNull()

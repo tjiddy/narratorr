@@ -2,7 +2,8 @@ import { eq, and, inArray } from 'drizzle-orm';
 import type { Db } from '../../db/index.js';
 import type { FastifyBaseLogger } from 'fastify';
 import { importJobs } from '../../db/schema.js';
-import type { AutoImportJobPayload } from '../services/import-adapters/types.js';
+import { autoImportJobPayloadSchema, type AutoImportJobPayload } from '../services/import-adapters/types.js';
+import { serializeError } from './serialize-error.js';
 
 /**
  * Shared helper: create an auto import_jobs row and nudge the worker.
@@ -27,14 +28,21 @@ export async function enqueueAutoImport(
     ));
 
   for (const job of existingJobs) {
+    let parsedJson: unknown;
     try {
-      const payload: AutoImportJobPayload = JSON.parse(job.metadata);
-      if (payload.downloadId === downloadId) {
-        log.debug({ downloadId, existingJobId: job.id }, 'Auto import job already exists for download — skipping');
-        return false;
-      }
-    } catch {
-      // Malformed metadata — skip
+      parsedJson = JSON.parse(job.metadata);
+    } catch (error: unknown) {
+      log.warn({ existingJobId: job.id, error: serializeError(error) }, 'Skipping auto job with unparseable metadata during duplicate scan');
+      continue;
+    }
+    const result = autoImportJobPayloadSchema.safeParse(parsedJson);
+    if (!result.success) {
+      log.warn({ existingJobId: job.id, error: serializeError(result.error) }, 'Skipping auto job with malformed metadata shape during duplicate scan');
+      continue;
+    }
+    if (result.data.downloadId === downloadId) {
+      log.debug({ downloadId, existingJobId: job.id }, 'Auto import job already exists for download — skipping');
+      return false;
     }
   }
 

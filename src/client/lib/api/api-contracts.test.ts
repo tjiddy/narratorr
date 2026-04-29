@@ -33,6 +33,7 @@ import { filesystemApi } from './filesystem.js';
 import { indexersApi } from './indexers.js';
 import { libraryScanApi } from './library-scan.js';
 import { notifiersApi } from './notifiers.js';
+import type { NotificationEvent } from '../../../shared/notification-events.js';
 import { remotePathMappingsApi } from './remote-path-mappings.js';
 import { searchApi } from './search.js';
 import { settingsApi } from './settings.js';
@@ -521,7 +522,7 @@ describe('notifiersApi', () => {
   });
 
   it('createNotifier → POST /notifiers with data', async () => {
-    const data = { name: 'Discord', type: 'discord' as const, enabled: true, events: ['on_grab'], settings: {} };
+    const data = { name: 'Discord', type: 'discord' as const, enabled: true, events: ['on_grab'] as NotificationEvent[], settings: {} };
     await notifiersApi.createNotifier(data);
     expect(mockFetchApi).toHaveBeenCalledWith('/notifiers', expect.objectContaining({
       method: 'POST',
@@ -549,7 +550,7 @@ describe('notifiersApi', () => {
   });
 
   it('#731 testNotifierConfig → POST /notifiers/test preserves optional id in body', async () => {
-    const data = { name: 'Edited', type: 'webhook' as const, enabled: true, events: ['on_grab'], settings: { url: '********' }, id: 5 };
+    const data = { name: 'Edited', type: 'webhook' as const, enabled: true, events: ['on_grab'] as NotificationEvent[], settings: { url: '********' }, id: 5 };
     await notifiersApi.testNotifierConfig(data);
     expect(mockFetchApi).toHaveBeenCalledWith('/notifiers/test', expect.objectContaining({
       method: 'POST',

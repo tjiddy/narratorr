@@ -8,6 +8,7 @@ import type { ImportAdapterContext } from './import-adapters/types.js';
 import type { ImportJobPhase, PhaseHistoryEntry } from '../../shared/schemas/import-job.js';
 import { serializeError } from '../utils/serialize-error.js';
 import { getRowsAffected } from '../utils/db-helpers.js';
+import { parsePhaseHistory } from '../utils/parse-phase-history.js';
 import { safeEmit } from '../utils/safe-emit.js';
 import type { EventBroadcasterService } from './event-broadcaster.service.js';
 
@@ -188,7 +189,7 @@ export class ImportQueueWorker {
     }
 
     // Build phase history from persisted state
-    const phaseHistory: PhaseHistoryEntry[] = job.phaseHistory ? JSON.parse(job.phaseHistory) : [];
+    const phaseHistory: PhaseHistoryEntry[] = parsePhaseHistory(job.phaseHistory, this.log, job.id);
     let currentPhase = job.phase ?? 'queued';
 
     // Build adapter context with enhanced setPhase

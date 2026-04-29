@@ -1,6 +1,7 @@
 import { fetchApi } from './client.js';
 import { type TestResult } from './settings.js';
 import type { notifierTypeSchema } from '../../../shared/schemas.js';
+import type { NotificationEvent } from '../../../shared/notification-events.js';
 
 type NotifierType = (typeof notifierTypeSchema)['options'][number];
 
@@ -9,7 +10,7 @@ export interface Notifier {
   name: string;
   type: NotifierType;
   enabled: boolean;
-  events: string[];
+  events: NotificationEvent[];
   settings: Record<string, unknown>;
   createdAt: string;
 }

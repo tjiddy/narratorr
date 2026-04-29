@@ -90,10 +90,32 @@ describe('AutoImportAdapter', () => {
       await expect(adapter.process(job, ctx)).rejects.toThrow('AutoImportAdapter requires a bookId');
     });
 
-    it('throws descriptive error when downloadId is missing from metadata', async () => {
-      const job = makeJob({ metadata: JSON.stringify({}) });
+    it('throws descriptive error with Zod cause when metadata shape mismatches', async () => {
+      const job = makeJob({ id: 7, metadata: JSON.stringify({}) });
 
-      await expect(adapter.process(job, ctx)).rejects.toThrow('downloadId missing from metadata');
+      try {
+        await adapter.process(job, ctx);
+        expect.fail('expected adapter.process to throw');
+      } catch (err: unknown) {
+        expect(err).toBeInstanceOf(Error);
+        expect((err as Error).message).toContain('Invalid auto import payload for job 7');
+        expect((err as Error).message).toContain('shape mismatch');
+        expect((err as Error).cause).toBeDefined();
+      }
+    });
+
+    it('throws descriptive error with JSON parse cause when metadata is unparseable', async () => {
+      const job = makeJob({ id: 11, metadata: '{' });
+
+      try {
+        await adapter.process(job, ctx);
+        expect.fail('expected adapter.process to throw');
+      } catch (err: unknown) {
+        expect(err).toBeInstanceOf(Error);
+        expect((err as Error).message).toContain('Invalid auto import payload for job 11');
+        expect((err as Error).message).toContain('malformed JSON');
+        expect((err as Error).cause).toBeInstanceOf(SyntaxError);
+      }
     });
 
     it('propagates error from ImportOrchestrator.importDownload()', async () => {
