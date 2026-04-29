@@ -7,9 +7,12 @@ import { slugify } from '../../shared/utils.js';
 type PersonTable = typeof authors | typeof narrators;
 
 /**
- * Core find-or-create-by-slug algorithm. Handles concurrent creation
- * via try/catch retry on unique constraint violation.
+ * Shared find-or-create-by-slug algorithm. Handles concurrent creation
+ * via try/catch retry on unique constraint violation. The caller supplies
+ * a typed insert closure so each table's insert path keeps Drizzle's
+ * inferred shape.
  *
+ * @param insert - Closure that performs the typed insert and returns the inserted rows.
  * @param onFound - Optional callback invoked when an existing row is found (initial or retry).
  *                  Use for side effects like ASIN backfill.
  * @returns The row's ID (never null — throws on failure).
@@ -20,8 +23,8 @@ async function findOrCreateBySlug(
   entityLabel: string,
   name: string,
   slug: string,
-  values: Record<string, unknown>,
-  onFound?: (db: DbOrTx, row: { id: number }) => Promise<void>,
+  insert: () => Promise<{ id: number }[]>,
+  onFound?: (db: DbOrTx, row: { id: number; asin: string | null } | { id: number }) => Promise<void>,
 ): Promise<number> {
   const existing = await db.select().from(table).where(eq(table.slug, slug)).limit(1);
 
@@ -31,8 +34,7 @@ async function findOrCreateBySlug(
   }
 
   try {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const inserted = await db.insert(table as any).values(values as any).returning() as { id: number }[];
+    const inserted = await insert();
     return inserted[0].id;
   } catch (_error: unknown) {
     const retry = await db.select().from(table).where(eq(table.slug, slug)).limit(1);
@@ -58,14 +60,14 @@ export async function findOrCreateAuthor(db: DbOrTx, name: string, asin?: string
     'author',
     name,
     slug,
-    { name, slug, asin },
+    () => db.insert(authors).values({ name, slug, asin }).returning({ id: authors.id }),
     asin
       ? async (dbHandle, row) => {
-            const full = row as { id: number; asin: string | null };
-            if (!full.asin) {
-              await dbHandle.update(authors).set({ asin }).where(eq(authors.id, full.id));
-            }
+          const full = row as { id: number; asin: string | null };
+          if (!full.asin) {
+            await dbHandle.update(authors).set({ asin }).where(eq(authors.id, full.id));
           }
+        }
       : undefined,
   );
 }
@@ -77,5 +79,12 @@ export async function findOrCreateAuthor(db: DbOrTx, name: string, asin?: string
  */
 export async function findOrCreateNarrator(db: DbOrTx, name: string): Promise<number> {
   const slug = slugify(name);
-  return findOrCreateBySlug(db, narrators, 'narrator', name, slug, { name, slug });
+  return findOrCreateBySlug(
+    db,
+    narrators,
+    'narrator',
+    name,
+    slug,
+    () => db.insert(narrators).values({ name, slug }).returning({ id: narrators.id }),
+  );
 }

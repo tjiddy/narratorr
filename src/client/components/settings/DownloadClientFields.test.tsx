@@ -4,6 +4,7 @@ import userEvent from '@testing-library/user-event';
 import { useForm } from 'react-hook-form';
 import { DownloadClientFields } from './DownloadClientFields';
 import type { CreateDownloadClientFormData } from '../../../shared/schemas.js';
+import type { DownloadClientType } from '../../../shared/download-client-registry.js';
 
 vi.mock('@/lib/api/download-clients', () => ({
   downloadClientsApi: {
@@ -20,7 +21,7 @@ function FieldWrapper({ type, clientId, dirty, isEdit, inModal }: { type: string
   });
   return (
     <DownloadClientFields
-      selectedType={type}
+      selectedType={type as DownloadClientType}
       register={register}
       errors={errors}
       clientId={clientId}

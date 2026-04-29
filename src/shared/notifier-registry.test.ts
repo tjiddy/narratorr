@@ -1,9 +1,25 @@
-import { describe, it, expect } from 'vitest';
-import { NOTIFIER_REGISTRY, NOTIFIER_TYPES } from './notifier-registry.js';
+import { describe, it, expect, expectTypeOf } from 'vitest';
+import { NOTIFIER_REGISTRY, NOTIFIER_TYPES, type NotifierType, type NotifierTypeMetadata } from './notifier-registry.js';
 import { notifierTypeSchema } from './schemas/notifier.js';
 
 describe('NOTIFIER_REGISTRY', () => {
   const types = notifierTypeSchema.options;
+
+  describe('type narrowing', () => {
+    it('keys are narrowed to NotifierType — no string index signature', () => {
+      expectTypeOf<keyof typeof NOTIFIER_REGISTRY>().toEqualTypeOf<NotifierType>();
+    });
+
+    it('each entry is structurally a NotifierTypeMetadata', () => {
+      expectTypeOf<(typeof NOTIFIER_REGISTRY)[NotifierType]>().toExtend<NotifierTypeMetadata>();
+    });
+
+    it('indexing with a non-NotifierType key is a type error', () => {
+      // @ts-expect-error — 'unknown' is not in NotifierType
+      const probe = NOTIFIER_REGISTRY['unknown'];
+      expect(probe).toBeUndefined();
+    });
+  });
 
   describe('schema-registry alignment', () => {
     it('has an entry for every notifierTypeSchema value', () => {

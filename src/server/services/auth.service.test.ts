@@ -236,6 +236,23 @@ describe('AuthService', () => {
     });
   });
 
+  describe('decrypted blob validation', () => {
+    it('throws when the decrypted blob is missing required fields', async () => {
+      // Persisted blob lacks apiKey/sessionSecret/localBypass — mimics a tampered or migrated DB row
+      const malformed = { mode: 'none' };
+      db.select.mockReturnValue(mockDbChain([{ key: 'auth', value: malformed }]));
+
+      await expect(service.getStatus()).rejects.toThrow();
+    });
+
+    it('throws when the decrypted blob has wrong field types', async () => {
+      const wrongTypes = { mode: 'none', apiKey: 123, sessionSecret: 'secret', localBypass: 'no' };
+      db.select.mockReturnValue(mockDbChain([{ key: 'auth', value: wrongTypes }]));
+
+      await expect(service.getStatus()).rejects.toThrow();
+    });
+  });
+
   describe('API key', () => {
     it('regenerateApiKey returns a new key, persists it', async () => {
       const authConfig = { mode: 'none', apiKey: 'old-key', sessionSecret: 'secret', localBypass: false };
@@ -402,7 +419,7 @@ describe('AuthService', () => {
     it('getSessionSecret returns sessionSecret from auth config', async () => {
       // Mock getAuthConfig to return auth settings with a plain sessionSecret
       db.select.mockReturnValue(
-        mockDbChain([{ key: 'auth', value: { mode: 'none', apiKey: 'key', sessionSecret: 'my-secret' } }]),
+        mockDbChain([{ key: 'auth', value: { mode: 'none', apiKey: 'key', sessionSecret: 'my-secret', localBypass: false } }]),
       );
 
       const result = await service.getSessionSecret();

@@ -4,9 +4,9 @@ import type { RegistryEntry } from './registry-types.js';
 export const IMPORT_LIST_TYPES = ['abs', 'nyt', 'hardcover'] as const;
 export type ImportListType = typeof IMPORT_LIST_TYPES[number];
 
-type ImportListTypeMetadata = RegistryEntry<CreateImportListFormData['settings']>;
+export type ImportListTypeMetadata = RegistryEntry<CreateImportListFormData['settings']>;
 
-export const IMPORT_LIST_REGISTRY: Record<string, ImportListTypeMetadata> = {
+export const IMPORT_LIST_REGISTRY = {
   abs: {
     label: 'Audiobookshelf',
     defaultSettings: { serverUrl: '', apiKey: '', libraryId: '' },

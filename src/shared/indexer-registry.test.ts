@@ -1,9 +1,25 @@
-import { describe, it, expect } from 'vitest';
-import { INDEXER_REGISTRY, MAM_LANGUAGES, MAM_SEARCH_TYPES, coerceSearchType } from './indexer-registry.js';
+import { describe, it, expect, expectTypeOf } from 'vitest';
+import { INDEXER_REGISTRY, MAM_LANGUAGES, MAM_SEARCH_TYPES, coerceSearchType, type IndexerType, type IndexerTypeMetadata } from './indexer-registry.js';
 import { indexerTypeSchema } from './schemas/indexer.js';
 
 describe('INDEXER_REGISTRY', () => {
   const types = indexerTypeSchema.options;
+
+  describe('type narrowing', () => {
+    it('keys are narrowed to IndexerType — no string index signature', () => {
+      expectTypeOf<keyof typeof INDEXER_REGISTRY>().toEqualTypeOf<IndexerType>();
+    });
+
+    it('each entry is structurally an IndexerTypeMetadata', () => {
+      expectTypeOf<(typeof INDEXER_REGISTRY)[IndexerType]>().toExtend<IndexerTypeMetadata>();
+    });
+
+    it('indexing with a non-IndexerType key is a type error', () => {
+      // @ts-expect-error — 'unknown' is not in IndexerType
+      const probe = INDEXER_REGISTRY['unknown'];
+      expect(probe).toBeUndefined();
+    });
+  });
 
   describe('invariants', () => {
     it('has an entry for every indexer type in the Zod enum', () => {

@@ -52,9 +52,9 @@ export function coerceSearchType(value: unknown): MamSearchType {
 }
 export type IndexerType = typeof INDEXER_TYPES[number];
 
-type IndexerTypeMetadata = RegistryEntry<CreateIndexerFormData['settings']>;
+export type IndexerTypeMetadata = RegistryEntry<CreateIndexerFormData['settings']>;
 
-export const INDEXER_REGISTRY: Record<string, IndexerTypeMetadata> = {
+export const INDEXER_REGISTRY = {
   newznab: {
     label: 'Newznab',
     defaultSettings: { apiUrl: '', apiKey: '', flareSolverrUrl: '', useProxy: false },

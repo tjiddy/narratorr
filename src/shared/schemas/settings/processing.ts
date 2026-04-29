@@ -17,10 +17,10 @@ export const processingSettingsSchema = z.object({
   postProcessingScriptTimeout: z.number().int().min(1).default(300),
 });
 
-// Form schema: timeout accepts NaN (from cleared input) as undefined;
-// conditional validation lives in the composed superRefine in registry.ts.
-const nanToUndefined = (v: unknown) => (typeof v === 'number' && Number.isNaN(v) ? undefined : v);
-
+// Form schema: NaN-to-undefined coercion for cleared numeric inputs lives at
+// the form layer via setValueAs (see ProcessingSettingsSection). Conditional
+// validation (script path → timeout required) lives in the composed
+// superRefine in registry.ts.
 export const processingFormSchema = z.object({
   ffmpegPath: z.string(),
   outputFormat: outputFormatSchema,
@@ -29,5 +29,5 @@ export const processingFormSchema = z.object({
   mergeBehavior: mergeBehaviorSchema,
   maxConcurrentProcessing: z.number().int().min(1),
   postProcessingScript: z.string(),
-  postProcessingScriptTimeout: z.preprocess(nanToUndefined, z.number().int().min(1).optional()),
+  postProcessingScriptTimeout: z.number().int().min(1).optional(),
 });
