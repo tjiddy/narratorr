@@ -17,7 +17,7 @@ function createMockDeps(): ImmediateSearchDeps {
       get: vi.fn()
         .mockResolvedValueOnce({ grabFloor: 0 }) // quality
         .mockResolvedValueOnce({ languages: ['english'] }) // metadata
-        .mockResolvedValueOnce({ searchPriority: 'narrator' }), // search
+        .mockResolvedValueOnce({ searchPriority: 'accuracy' }), // search
     } as never,
     blacklistService: {} as never,
     eventBroadcaster: {} as never,
@@ -45,7 +45,7 @@ describe('triggerImmediateSearch', () => {
     expect(deps.settingsService.get).toHaveBeenCalledWith('quality');
     expect(deps.settingsService.get).toHaveBeenCalledWith('metadata');
     expect(deps.settingsService.get).toHaveBeenCalledWith('search');
-    expect(buildNarratorPriority).toHaveBeenCalledWith('narrator', [{ name: 'Narrator' }]);
+    expect(buildNarratorPriority).toHaveBeenCalledWith('accuracy', [{ name: 'Narrator' }]);
   });
 
   it('logs warning and does not throw when settings fetch fails', async () => {

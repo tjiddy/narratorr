@@ -11,7 +11,6 @@ export const queryKeys = {
   bookFiles: (id: number) => ['books', id, 'files'] as const,
   activity: (params?: ActivityListParams) => params ? ['activity', params] as const : ['activity'] as const,
   activityCounts: () => ['activity', 'counts'] as const,
-  search: (q: string) => ['search', q] as const,
   metadata: {
     search: (q: string) => ['metadata', 'search', q] as const,
     author: (id: string) => ['metadata', 'author', id] as const,
