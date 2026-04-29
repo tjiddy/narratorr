@@ -76,8 +76,8 @@ export interface EmitDownloadStatusChangeArgs {
   broadcaster: EventBroadcasterService | undefined;
   downloadId: number;
   bookId: number;
-  oldStatus: string;
-  newStatus: string;
+  oldStatus: DownloadStatus;
+  newStatus: DownloadStatus;
   log: FastifyBaseLogger;
 }
 
@@ -85,7 +85,7 @@ export interface EmitDownloadStatusChangeArgs {
 export function emitDownloadStatusChange(args: EmitDownloadStatusChangeArgs): void {
   const { broadcaster, downloadId, bookId, oldStatus, newStatus, log } = args;
   safeEmit(broadcaster, 'download_status_change', {
-    download_id: downloadId, book_id: bookId, old_status: oldStatus as DownloadStatus, new_status: newStatus as DownloadStatus,
+    download_id: downloadId, book_id: bookId, old_status: oldStatus, new_status: newStatus,
   }, log);
 }
 
@@ -94,8 +94,8 @@ export function emitDownloadStatusChange(args: EmitDownloadStatusChangeArgs): vo
 export interface EmitBookStatusChangeArgs {
   broadcaster: EventBroadcasterService | undefined;
   bookId: number;
-  oldStatus: string;
-  newStatus: string;
+  oldStatus: BookStatus;
+  newStatus: BookStatus;
   log: FastifyBaseLogger;
 }
 
@@ -103,7 +103,7 @@ export interface EmitBookStatusChangeArgs {
 export function emitBookStatusChange(args: EmitBookStatusChangeArgs): void {
   const { broadcaster, bookId, oldStatus, newStatus, log } = args;
   safeEmit(broadcaster, 'book_status_change', {
-    book_id: bookId, old_status: oldStatus as BookStatus, new_status: newStatus as BookStatus,
+    book_id: bookId, old_status: oldStatus, new_status: newStatus,
   }, log);
 }
 
