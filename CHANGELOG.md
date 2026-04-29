@@ -9,6 +9,11 @@ Initial public release. Full audiobook acquisition and organization pipeline.
 ### Breaking Changes
 - **Flatten-on-download removed.** Auto-import no longer runs audio processing (ffmpeg merge/convert) on downloaded books. Imports now complete in seconds instead of minutes. Users who relied on `processing.enabled` for automatic transcoding should configure `postProcessingScript` in Settings → Post Processing → Custom Script as the replacement path.
 - **Unused `authors` columns dropped.** Migration `0002_dizzy_captain_cross.sql` removes `image_url`, `bio`, `monitored`, and `last_checked_at` from the `authors` table — none were ever read or written by production code. Author image and biography continue to be sourced live from audnexus on the author detail page; no UI regression.
+- **Vestigial REST endpoints retired (Wave 11.2, #755).** Endpoints with no UI consumer have been removed; integrations should migrate to the active surfaces listed below. `POST /api/system/tasks/search` is preserved for external API compatibility (see `SECURITY.md` → "Public-compatibility API surfaces"). Removed routes:
+    - `GET /api/search` — superseded by SSE `GET /api/search/stream` (`POST /api/search/grab` continues to be active).
+    - `POST /api/library/import/scan-single` and `POST /api/library/import/single` — single-book scan/import flows had no production caller.
+    - `GET /api/discover/stats` and `POST /api/discover/suggestions/:id/snooze` — service-layer snooze/resurfacing logic remains active; only the unused HTTP wrappers were removed.
+    - `GET /api/books/bulk/convert/count` — Bulk Operations UI never consumed this count; the start-convert and active-job endpoints continue to be active.
 
 ### Core Pipeline
 - Search indexers (Torznab, Newznab, MyAnonamouse) for audiobooks
