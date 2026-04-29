@@ -8,6 +8,7 @@ import { LibraryBookCard } from './LibraryBookCard';
 import { createMockBook } from '@/__tests__/factories';
 import * as ImageErrorModule from '@/hooks/useImageError';
 import { api } from '@/lib/api';
+import type { BookStatus } from '../../../shared/schemas.js';
 
 vi.mock('@/lib/api', () => ({
   api: {
@@ -205,7 +206,7 @@ describe('LibraryBookCard', () => {
     });
 
     it('falls back to wanted style for unknown status', () => {
-      const book = createMockBook({ status: 'bogus_status' as string });
+      const book = createMockBook({ status: 'bogus_status' as unknown as BookStatus });
       renderWithProviders(<LibraryBookCard {...defaultProps({ book })} />);
       expect(screen.getByTestId('status-bar').className).toContain('bg-stone');
     });
@@ -213,7 +214,7 @@ describe('LibraryBookCard', () => {
 
   describe('no left-border accent', () => {
     it('does not apply left-border accent class for any status', () => {
-      const statuses = ['wanted', 'downloading', 'imported', 'missing', 'failed', 'searching', 'importing'];
+      const statuses: BookStatus[] = ['wanted', 'downloading', 'imported', 'missing', 'failed', 'searching', 'importing'];
       for (const status of statuses) {
         const book = createMockBook({ status });
         const { container, unmount } = renderWithProviders(<LibraryBookCard {...defaultProps({ book })} />);

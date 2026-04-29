@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { mergeBookData } from './helpers.js';
 import { bookStatusConfig } from '@/lib/status';
 import { createMockBook } from '@/__tests__/factories';
+import type { BookStatus } from '../../../shared/schemas.js';
 
 describe('mergeBookData', () => {
   describe('status palette flow-through', () => {
@@ -54,7 +55,7 @@ describe('mergeBookData', () => {
     });
 
     it('falls back to wanted config for unknown status string', () => {
-      const book = createMockBook({ status: 'nonexistent' as string });
+      const book = createMockBook({ status: 'nonexistent' as unknown as BookStatus });
       const result = mergeBookData(book);
       expect(result.statusDotClass).toBe(bookStatusConfig.wanted.dotClass);
       expect(result.statusBarClass).toBe(bookStatusConfig.wanted.barClass);

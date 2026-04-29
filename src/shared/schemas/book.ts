@@ -19,7 +19,7 @@ export const bookSortDirectionSchema = z.enum(['asc', 'desc']);
 export type BookSortDirection = z.infer<typeof bookSortDirectionSchema>;
 
 export const bookListQuerySchema = z.object({
-  status: z.string().optional(),
+  status: bookStatusSchema.optional(),
   search: z.string().optional(),
   sortField: bookSortFieldSchema.optional(),
   sortDirection: bookSortDirectionSchema.optional(),

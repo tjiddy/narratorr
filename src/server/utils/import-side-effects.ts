@@ -31,7 +31,7 @@ export function emitDownloadImporting(args: EmitDownloadImportingArgs): void {
 export interface EmitBookImportingArgs {
   broadcaster: EventBroadcasterService | undefined;
   bookId: number;
-  bookStatus: string;
+  bookStatus: BookStatus;
   log: FastifyBaseLogger;
 }
 
@@ -39,7 +39,7 @@ export interface EmitBookImportingArgs {
 export function emitBookImporting(args: EmitBookImportingArgs): void {
   const { broadcaster, bookId, bookStatus, log } = args;
   if (bookStatus === 'importing') return;
-  safeEmit(broadcaster, 'book_status_change', { book_id: bookId, old_status: bookStatus as BookStatus, new_status: 'importing' as BookStatus }, log);
+  safeEmit(broadcaster, 'book_status_change', { book_id: bookId, old_status: bookStatus, new_status: 'importing' }, log);
 }
 
 // ── emitImportSuccess ───────────────────────────────────────────────────
@@ -55,8 +55,8 @@ export interface EmitImportSuccessArgs {
 /** Emit SSE events for successful import. Each emit is independent so a failure in one doesn't skip the rest. */
 export function emitImportSuccess(args: EmitImportSuccessArgs): void {
   const { broadcaster, downloadId, bookId, bookTitle, log } = args;
-  safeEmit(broadcaster, 'download_status_change', { download_id: downloadId, book_id: bookId, old_status: 'importing' as DownloadStatus, new_status: 'imported' as DownloadStatus }, log);
-  safeEmit(broadcaster, 'book_status_change', { book_id: bookId, old_status: 'importing' as BookStatus, new_status: 'imported' as BookStatus }, log);
+  safeEmit(broadcaster, 'download_status_change', { download_id: downloadId, book_id: bookId, old_status: 'importing', new_status: 'imported' }, log);
+  safeEmit(broadcaster, 'book_status_change', { book_id: bookId, old_status: 'importing', new_status: 'imported' }, log);
   safeEmit(broadcaster, 'import_complete', { download_id: downloadId, book_id: bookId, book_title: bookTitle }, log);
 }
 
@@ -123,15 +123,15 @@ export interface EmitImportFailureArgs {
   broadcaster: EventBroadcasterService | undefined;
   downloadId: number;
   bookId: number;
-  revertedBookStatus: string;
+  revertedBookStatus: BookStatus;
   log: FastifyBaseLogger;
 }
 
 /** Emit SSE events for a failed import. Each emit is independent so a failure in one doesn't skip the rest. */
 export function emitImportFailure(args: EmitImportFailureArgs): void {
   const { broadcaster, downloadId, bookId, revertedBookStatus, log } = args;
-  safeEmit(broadcaster, 'download_status_change', { download_id: downloadId, book_id: bookId, old_status: 'importing' as DownloadStatus, new_status: 'failed' as DownloadStatus }, log);
-  safeEmit(broadcaster, 'book_status_change', { book_id: bookId, old_status: 'importing' as BookStatus, new_status: revertedBookStatus as BookStatus }, log);
+  safeEmit(broadcaster, 'download_status_change', { download_id: downloadId, book_id: bookId, old_status: 'importing', new_status: 'failed' }, log);
+  safeEmit(broadcaster, 'book_status_change', { book_id: bookId, old_status: 'importing', new_status: revertedBookStatus }, log);
 }
 
 export interface NotifyImportFailureArgs {

@@ -88,7 +88,7 @@ export class DownloadOrchestrator {
     if (!download) return false;
 
     const oldStatus = download.status as DownloadStatus;
-    const oldBookStatus = (download.book?.status ?? 'downloading') as BookStatus;
+    const oldBookStatus: BookStatus = download.book?.status ?? 'downloading';
 
     // Core cancel
     const cancelled = await this.downloadService.cancel(id);

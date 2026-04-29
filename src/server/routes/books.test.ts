@@ -138,6 +138,33 @@ describe('books routes', () => {
       const res = await app.inject({ method: 'GET', url: '/api/books?limit=abc' });
       expect(res.statusCode).toBe(400);
     });
+
+    it('rejects ?status=archived (non-enum value) with Fastify validation envelope', async () => {
+      const res = await app.inject({ method: 'GET', url: '/api/books?status=archived' });
+      expect(res.statusCode).toBe(400);
+      const body = JSON.parse(res.payload);
+      expect(body).toMatchObject({ statusCode: 400, error: 'Bad Request' });
+      expect(typeof body.message).toBe('string');
+      expect(body.message).toMatch(/status/);
+      expect(body.message).toMatch(/wanted/);
+    });
+
+    it('rejects arbitrary ?status=foo with Fastify validation envelope', async () => {
+      const res = await app.inject({ method: 'GET', url: '/api/books?status=foo' });
+      expect(res.statusCode).toBe(400);
+      const body = JSON.parse(res.payload);
+      expect(body).toMatchObject({ statusCode: 400, error: 'Bad Request' });
+      expect(typeof body.message).toBe('string');
+    });
+
+    it('returns unfiltered list when status is omitted', async () => {
+      (services.bookList.getAll as Mock).mockResolvedValue({ data: [mockBook], total: 1 });
+
+      const res = await app.inject({ method: 'GET', url: '/api/books' });
+
+      expect(res.statusCode).toBe(200);
+      expect(services.bookList.getAll).toHaveBeenCalledWith(undefined, { limit: 100, offset: undefined }, { slim: true, search: undefined, sortField: undefined, sortDirection: undefined });
+    });
   });
 
   describe('GET /api/books/:id', () => {
