@@ -5,8 +5,8 @@ import { FormField } from './FormField';
 import { SettingsFormActions } from './SettingsFormActions';
 import { SelectWithChevron } from './SelectWithChevron';
 import { NotifierFields } from './NotifierFields';
-import { NOTIFIER_REGISTRY } from '../../../shared/notifier-registry.js';
-import { EVENT_LABELS } from '../../../shared/notification-events.js';
+import { NOTIFIER_REGISTRY, type NotifierType } from '../../../shared/notifier-registry.js';
+import { EVENT_LABELS, type NotificationEvent } from '../../../shared/notification-events.js';
 import {
   notifierTypeSchema,
   notificationEventSchema,
@@ -16,15 +16,15 @@ import {
 interface NotifierCardFormProps {
   form: UseFormReturn<CreateNotifierFormData>;
   isEdit: boolean;
-  selectedType: string;
-  watchedEvents: string[];
+  selectedType: NotifierType;
+  watchedEvents: NotificationEvent[];
   onSubmit: (data: CreateNotifierFormData) => void;
   onFormTest: (data: CreateNotifierFormData) => void;
   onCancel?: () => void;
   isPending?: boolean;
   testingForm?: boolean;
   formTestResult?: TestResult | null;
-  onEventToggle: (event: string) => void;
+  onEventToggle: (event: NotificationEvent) => void;
 }
 
 export function NotifierCardForm(props: NotifierCardFormProps) {

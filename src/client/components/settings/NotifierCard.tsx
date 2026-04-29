@@ -6,7 +6,7 @@ import type { Notifier, TestResult } from '@/lib/api';
 import { SettingsCardShell, type IdTestResult } from './SettingsCardShell';
 import { NotifierCardForm } from './NotifierCardForm';
 import { NOTIFIER_REGISTRY, NOTIFIER_TYPES } from '../../../shared/notifier-registry.js';
-import { EVENT_LABELS } from '../../../shared/notification-events.js';
+import { EVENT_LABELS, type NotificationEvent } from '../../../shared/notification-events.js';
 import {
   createNotifierFormSchema,
   type CreateNotifierFormData,
@@ -32,9 +32,8 @@ interface NotifierCardProps {
 function settingsFromNotifier(notifier: Notifier): CreateNotifierFormData['settings'] {
   const meta = NOTIFIER_REGISTRY[notifier.type];
   const defaults = meta?.defaultSettings ?? {};
-  const saved = notifier.settings as Record<string, unknown>;
   const result: Record<string, unknown> = { ...defaults };
-  for (const [key, val] of Object.entries(saved)) {
+  for (const [key, val] of Object.entries(notifier.settings)) {
     if (val != null) result[key] = val;
   }
   return result as CreateNotifierFormData['settings'];
@@ -43,7 +42,7 @@ function settingsFromNotifier(notifier: Notifier): CreateNotifierFormData['setti
 function viewSubtitle(notifier: Notifier): string {
   const meta = NOTIFIER_REGISTRY[notifier.type];
   if (!meta) return notifier.type;
-  return meta.viewSubtitle(notifier.settings as Record<string, unknown>);
+  return meta.viewSubtitle(notifier.settings);
 }
 
 const defaultValues: CreateNotifierFormData = {
@@ -64,7 +63,7 @@ export function NotifierCard(props: NotifierCardProps) {
     defaultValues: notifier
       ? {
           name: notifier.name,
-          type: notifier.type as CreateNotifierFormData['type'],
+          type: notifier.type,
           enabled: notifier.enabled,
           events: notifier.events,
           settings: settingsFromNotifier(notifier),
@@ -80,7 +79,7 @@ export function NotifierCard(props: NotifierCardProps) {
     if (mode === 'edit' && notifier) {
       reset({
         name: notifier.name,
-        type: notifier.type as CreateNotifierFormData['type'],
+        type: notifier.type,
         enabled: notifier.enabled,
         events: notifier.events,
         settings: settingsFromNotifier(notifier),
@@ -97,12 +96,12 @@ export function NotifierCard(props: NotifierCardProps) {
     }
   }, [selectedType, mode, setValue]);
 
-  const handleEventToggle = (event: string) => {
+  const handleEventToggle = (event: NotificationEvent) => {
     const current = getValues('events') || [];
-    if (current.includes(event as CreateNotifierFormData['events'][number])) {
-      setValue('events', current.filter((e) => e !== event) as CreateNotifierFormData['events'], { shouldValidate: true });
+    if (current.includes(event)) {
+      setValue('events', current.filter((e) => e !== event), { shouldValidate: true });
     } else {
-      setValue('events', [...current, event] as CreateNotifierFormData['events'], { shouldValidate: true });
+      setValue('events', [...current, event], { shouldValidate: true });
     }
   };
 
