@@ -52,6 +52,15 @@ describe('s6-overlay service definition', () => {
       expect(content).toContain('--report-directory=/config/crash-reports');
     });
 
+    it('finish script exists and logs node exit code/signal for sub-JS crash diagnosis', () => {
+      const finishPath = path.join(serviceDir, 'finish');
+      expect(fs.existsSync(finishPath)).toBe(true);
+      const content = fs.readFileSync(finishPath, 'utf-8');
+      expect(content).toContain('s6 finish');
+      expect(content).toContain('exitCode');
+      expect(content).toContain('signalNumber');
+    });
+
     it('run script uses s6-setuidgid abc for LSIO user model', () => {
       const content = fs.readFileSync(path.join(serviceDir, 'run'), 'utf-8');
       expect(content).toContain('s6-setuidgid abc');

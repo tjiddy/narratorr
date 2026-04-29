@@ -1,0 +1,35 @@
+#!/usr/bin/with-contenv bash
+# shellcheck shell=bash
+#
+# s6 finish script — runs when supervised svc-narratorr (Node) terminates.
+# Surfaces the exit code and signal number so silent crashes that bypass
+# every JS/Node-internal hook (Plan A handlers, --report-* writers, the
+# process.exit/exit-event wrap) are still recorded in container logs.
+#
+# s6-supervise hands the script:
+#   $1 = exit code (255 if killed by signal, or 256 in some s6 versions)
+#   $2 = signal number (only meaningful when $1 indicates signal-kill)
+#
+# Common exit codes to interpret:
+#   0   = clean exit  — process.exit(0) or native _exit(0)
+#   1   = error exit  — process.exit(1) or uncaught propagated to top
+#   137 = SIGKILL     — kernel killed (OOM or external kill -9)
+#   139 = SIGSEGV     — segfault in native code
+#   134 = SIGABRT     — abort() from native code or V8 fatal
+#   143 = SIGTERM     — graceful shutdown signal
+#
+# Output goes to stderr in a Pino-shaped JSON line so it interleaves cleanly
+# with the rest of the container logs.
+
+EXIT_CODE="${1:-unknown}"
+SIGNAL_NUM="${2:-}"
+EPOCH_MS=$(($(date +%s) * 1000))
+HOST=$(hostname)
+
+if [ -n "$SIGNAL_NUM" ] && [ "$SIGNAL_NUM" != "0" ]; then
+  printf '{"level":60,"time":%s,"hostname":"%s","exitCode":%s,"signalNumber":%s,"msg":"s6 finish: supervised node killed by signal"}\n' \
+    "$EPOCH_MS" "$HOST" "$EXIT_CODE" "$SIGNAL_NUM" >&2
+else
+  printf '{"level":60,"time":%s,"hostname":"%s","exitCode":%s,"msg":"s6 finish: supervised node exited"}\n' \
+    "$EPOCH_MS" "$HOST" "$EXIT_CODE" >&2
+fi
