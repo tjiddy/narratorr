@@ -3,8 +3,8 @@ import type { Db } from '../../db/index.js';
 import { books, authors, narrators, bookAuthors, bookNarrators, importLists } from '../../db/schema.js';
 import type { BookSortField, BookSortDirection, BookStatus } from '../../shared/schemas/book.js';
 import type { BookWithAuthor } from './book.service.js';
+import type { BookRow } from './types.js';
 
-type BookRow = typeof books.$inferSelect;
 type AuthorRow = typeof authors.$inferSelect;
 type NarratorRow = typeof narrators.$inferSelect;
 
@@ -22,7 +22,7 @@ export interface BookListOptions {
 }
 
 /** Tab-model status → actual DB status values */
-const TAB_STATUS_MAP: Record<string, BookRow['status'][]> = {
+const TAB_STATUS_MAP: Partial<Record<BookStatus, BookStatus[]>> = {
   downloading: ['searching', 'downloading'],
   imported: ['importing', 'imported'],
 };

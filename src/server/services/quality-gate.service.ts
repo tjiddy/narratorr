@@ -3,19 +3,13 @@ import type { Db } from '../../db/index.js';
 import type { FastifyBaseLogger } from 'fastify';
 import { downloads, books, bookEvents, bookNarrators, narrators } from '../../db/schema.js';
 
-import type { DownloadRow } from './types.js';
-import type { BookStatus, EnrichmentStatus } from '../../shared/schemas/book.js';
+import type { BookRow, DownloadRow } from './types.js';
 import { buildQualityAssessment } from './quality-gate.helpers.js';
 import { QualityGateServiceError, NULL_REASON } from './quality-gate.types.js';
 import type { QualityDecisionReason } from './quality-gate.types.js';
 
 export { QualityGateServiceError, type QualityDecisionReason } from './quality-gate.types.js';
 
-// $inferSelect widens enum columns to bare `string` (CLAUDE.md gotcha) — re-narrow.
-type BookRow = Omit<typeof books.$inferSelect, 'status' | 'enrichmentStatus'> & {
-  status: BookStatus;
-  enrichmentStatus: EnrichmentStatus;
-};
 type BookWithNarrators = BookRow & { narrators?: Array<{ name: string }> };
 
 export type QualityDecision = {

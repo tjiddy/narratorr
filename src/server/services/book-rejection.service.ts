@@ -12,9 +12,7 @@ import { blacklistAndRetrySearch } from '../utils/rejection-helpers.js';
 import { preserveBookCover } from '../utils/cover-cache.js';
 import { config } from '../config.js';
 import { serializeError } from '../utils/serialize-error.js';
-
-
-type BookRow = typeof books.$inferSelect;
+import type { BookRow } from './types.js';
 
 export class BookRejectionService {
   constructor(
