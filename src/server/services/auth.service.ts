@@ -313,14 +313,11 @@ export class AuthService {
     const [payloadB64, signature] = parts;
     const expectedSig = createHmac('sha256', secret).update(payloadB64).digest('base64url');
 
-    // Timing-safe comparison for signatures
-    if (signature.length !== expectedSig.length) {
-      this.log.debug('Auth: cookie signature length mismatch');
-      return null;
-    }
-    const sigBuf = Buffer.from(signature);
-    const expectedBuf = Buffer.from(expectedSig);
-    if (!timingSafeEqual(sigBuf, expectedBuf)) {
+    // SHA-256 both sides to a fixed length — avoids leaking signature length via early
+    // length-mismatch return. Buffers are always 32 bytes so timingSafeEqual is safe.
+    const sigHash = createHash('sha256').update(signature).digest();
+    const expectedHash = createHash('sha256').update(expectedSig).digest();
+    if (!timingSafeEqual(sigHash, expectedHash)) {
       this.log.debug('Auth: cookie signature mismatch');
       return null;
     }
