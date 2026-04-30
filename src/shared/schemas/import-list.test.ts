@@ -287,6 +287,37 @@ describe('absSettingsSchema libraryId (#786)', () => {
   });
 });
 
+// #786 — Form-schema libraryId regex coverage (F1)
+describe('createImportListFormSchema libraryId (#786)', () => {
+  const validForm = {
+    name: 'My ABS',
+    type: 'abs' as const,
+    enabled: true,
+    syncIntervalMinutes: 1440,
+  };
+
+  it('rejects path-injection libraryId in ABS form settings', () => {
+    const result = createImportListFormSchema.safeParse({
+      ...validForm,
+      settings: { serverUrl: 'http://abs.local', apiKey: 'key', libraryId: '../../../etc/passwd' },
+    });
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      expect(result.error.issues).toContainEqual(
+        expect.objectContaining({ path: ['settings', 'libraryId'] }),
+      );
+    }
+  });
+
+  it('accepts canonical ABS libraryId in form settings', () => {
+    const result = createImportListFormSchema.safeParse({
+      ...validForm,
+      settings: { serverUrl: 'http://abs.local', apiKey: 'key', libraryId: 'lib_o78uaoeuh78h6' },
+    });
+    expect(result.success).toBe(true);
+  });
+});
+
 describe('updateImportListSchema — type required when settings present', () => {
   it('accepts update with settings + type', () => {
     const result = updateImportListSchema.safeParse({
