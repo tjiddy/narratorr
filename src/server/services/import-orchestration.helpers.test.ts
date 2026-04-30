@@ -3,6 +3,7 @@ import { inject, createMockSettingsService } from '../__tests__/helpers.js';
 import type { FastifyBaseLogger } from 'fastify';
 import type { Db } from '../../db/index.js';
 import type { BookService } from './book.service.js';
+import type { BookImportService } from './book-import.service.js';
 import type { SettingsService } from './settings.service.js';
 import type { EventHistoryService } from './event-history.service.js';
 import type { EventBroadcasterService } from './event-broadcaster.service.js';
@@ -25,6 +26,7 @@ function createMockLogger(): FastifyBaseLogger {
 describe('confirmImport — import_jobs creation (#635)', () => {
   let deps: ImportPipelineDeps;
   let mockBookService: { findDuplicate: ReturnType<typeof vi.fn>; create: ReturnType<typeof vi.fn> };
+  let mockBookImportService: { enqueue: ReturnType<typeof vi.fn> };
   let mockEventHistory: { create: ReturnType<typeof vi.fn> };
   let insertValues: ReturnType<typeof vi.fn>;
   let nudgeWorker: () => void;
@@ -51,6 +53,10 @@ describe('confirmImport — import_jobs creation (#635)', () => {
         id: 1, title: data.title, status: 'importing',
       })),
     };
+    let nextJobId = 100;
+    mockBookImportService = {
+      enqueue: vi.fn().mockImplementation(async () => ({ jobId: nextJobId++ })),
+    };
     mockEventHistory = { create: vi.fn().mockResolvedValue({}) };
     nudgeWorker = vi.fn() as unknown as () => void;
 
@@ -61,6 +67,7 @@ describe('confirmImport — import_jobs creation (#635)', () => {
       db: inject<Db>(db),
       log,
       bookService: inject<BookService>(mockBookService),
+      bookImportService: inject<BookImportService>(mockBookImportService),
       settingsService: inject<SettingsService>(mockSettingsService),
       eventHistory: inject<EventHistoryService>(mockEventHistory),
       enrichmentDeps: {
@@ -86,16 +93,14 @@ describe('confirmImport — import_jobs creation (#635)', () => {
 
     expect(result).toEqual({ accepted: 1 });
     expect(mockBookService.create).toHaveBeenCalledTimes(1);
-    expect(insertValues).toHaveBeenCalledWith(expect.objectContaining({
+    expect(mockBookImportService.enqueue).toHaveBeenCalledWith(expect.objectContaining({
       bookId: 42,
       type: 'manual',
-      status: 'pending',
-      phase: 'queued',
     }));
 
     // Verify metadata contains mode
-    const insertCall = insertValues.mock.calls[0][0];
-    const metadata = JSON.parse(insertCall.metadata);
+    const enqueueCall = mockBookImportService.enqueue.mock.calls[0][0];
+    const metadata = JSON.parse(enqueueCall.metadata);
     expect(metadata.mode).toBe('copy');
     expect(metadata.title).toBe('Test');
     expect(metadata.authorName).toBe('Author');
@@ -111,8 +116,8 @@ describe('confirmImport — import_jobs creation (#635)', () => {
       nudgeWorker,
     );
 
-    const insertCall = insertValues.mock.calls[0][0];
-    const metadata = JSON.parse(insertCall.metadata);
+    const enqueueCall = mockBookImportService.enqueue.mock.calls[0][0];
+    const metadata = JSON.parse(enqueueCall.metadata);
     expect(metadata.mode).toBeUndefined();
   });
 
@@ -153,7 +158,7 @@ describe('confirmImport — import_jobs creation (#635)', () => {
     );
 
     // Just verify it didn't throw
-    expect(insertValues).toHaveBeenCalled();
+    expect(mockBookImportService.enqueue).toHaveBeenCalled();
   });
 
   it('skips duplicates without creating import_jobs row', async () => {
@@ -167,7 +172,7 @@ describe('confirmImport — import_jobs creation (#635)', () => {
     );
 
     expect(result).toEqual({ accepted: 0 });
-    expect(insertValues).not.toHaveBeenCalled();
+    expect(mockBookImportService.enqueue).not.toHaveBeenCalled();
   });
 
   it('logs serialized error shape when bookService.create throws (#621)', async () => {
@@ -209,8 +214,38 @@ describe('confirmImport — import_jobs creation (#635)', () => {
     );
 
     expect(result).toEqual({ accepted: 2 });
-    expect(insertValues).toHaveBeenCalledTimes(2);
+    expect(mockBookImportService.enqueue).toHaveBeenCalledTimes(2);
     expect(nudgeWorker).toHaveBeenCalledTimes(1); // Nudge once, not per item
+  });
+
+  it('skips item from accepted when enqueue returns active-job-exists conflict', async () => {
+    mockBookService.create
+      .mockResolvedValueOnce({ id: 50, title: 'BookA', status: 'importing' })
+      .mockResolvedValueOnce({ id: 51, title: 'BookB', status: 'importing' });
+    mockBookImportService.enqueue
+      .mockResolvedValueOnce({ jobId: 200 })
+      .mockResolvedValueOnce({ error: 'active-job-exists', status: 409 });
+
+    const result = await confirmImport(
+      [
+        { path: '/a', title: 'BookA' },
+        { path: '/b', title: 'BookB' },
+      ],
+      deps,
+      'copy',
+      nudgeWorker,
+    );
+
+    // Only the non-conflict item is counted
+    expect(result).toEqual({ accepted: 1 });
+    expect(mockBookImportService.enqueue).toHaveBeenCalledTimes(2);
+    // Conflict surfaced as warn log including the title
+    expect(deps.log.warn).toHaveBeenCalledWith(
+      expect.objectContaining({ bookId: 51, title: 'BookB' }),
+      expect.stringContaining('active job already exists'),
+    );
+    // Nudge still fires once because at least one item was accepted
+    expect(nudgeWorker).toHaveBeenCalledTimes(1);
   });
 
   it('records book_added event for each accepted item', async () => {

@@ -4,6 +4,7 @@ import { inject, createMockSettingsService } from '../../__tests__/helpers.js';
 import type { Db } from '../../../db/index.js';
 import type { FastifyBaseLogger } from 'fastify';
 import type { BookService } from '../book.service.js';
+import type { BookImportService } from '../book-import.service.js';
 import type { SettingsService } from '../settings.service.js';
 import type { EventHistoryService } from '../event-history.service.js';
 import type { EventBroadcasterService } from '../event-broadcaster.service.js';
@@ -145,6 +146,7 @@ describe('ManualImportAdapter', () => {
       db: inject<Db>(mockDb),
       log,
       bookService: inject<BookService>({ findDuplicate: vi.fn(), create: vi.fn(), getById: vi.fn().mockResolvedValue(null) }),
+      bookImportService: inject<BookImportService>({ enqueue: vi.fn().mockResolvedValue({ jobId: 1 }) }),
       settingsService: inject<SettingsService>(mockSettingsService),
       eventHistory: inject<EventHistoryService>(mockEventHistory),
       enrichmentDeps: {

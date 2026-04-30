@@ -106,7 +106,7 @@ function createOrchestrator(opts?: {
   );
   // nudgeImportWorker is required-wiring; wire here so existing tests that don't
   // explicitly construct an unwired orchestrator continue to work.
-  orchestrator.wire({ nudgeImportWorker: vi.fn() });
+  orchestrator.wire({ nudgeImportWorker: vi.fn(), bookImportService: {} as never });
 
   return { orchestrator, qualityGateService, db, log, eventHistory, broadcaster, blacklistService, downloadClientService, importOrchestrator, importService };
 }
@@ -1917,8 +1917,8 @@ describe('QualityGateOrchestrator', () => {
 
     it('wire() called twice throws ServiceWireError', () => {
       const { orchestrator } = makeUnwiredOrchestrator();
-      orchestrator.wire({ nudgeImportWorker: vi.fn() });
-      expect(() => orchestrator.wire({ nudgeImportWorker: vi.fn() })).toThrow(/QualityGateOrchestrator\.wire\(\) called more than once/);
+      orchestrator.wire({ nudgeImportWorker: vi.fn(), bookImportService: {} as never });
+      expect(() => orchestrator.wire({ nudgeImportWorker: vi.fn(), bookImportService: {} as never })).toThrow(/QualityGateOrchestrator\.wire\(\) called more than once/);
     });
   });
 
@@ -1962,7 +1962,7 @@ describe('QualityGateOrchestrator', () => {
         inject<DownloadClientService>(downloadClientService),
         optional,
       );
-      orchestrator.wire({ nudgeImportWorker: vi.fn() });
+      orchestrator.wire({ nudgeImportWorker: vi.fn(), bookImportService: {} as never });
       return { orchestrator, qualityGateService, db, log, eventHistory, broadcaster, blacklistService };
     }
 
@@ -2056,7 +2056,7 @@ describe('QualityGateOrchestrator', () => {
           broadcaster: inject<EventBroadcasterService>({ emit: vi.fn() }),
         },
       );
-      good.wire({ nudgeImportWorker: vi.fn() });
+      good.wire({ nudgeImportWorker: vi.fn(), bookImportService: {} as never });
       expect(good).toBeInstanceOf(QualityGateOrchestrator);
     });
   });

@@ -343,6 +343,18 @@ describe('activity routes', () => {
       expect(enqueueAutoImport).not.toHaveBeenCalled();
     });
 
+    it('returns approve result unchanged on enqueue conflict (no 4xx/5xx) (#747)', async () => {
+      (services.qualityGateOrchestrator.approve as Mock).mockResolvedValue({ id: 1, status: 'importing', bookId: 1 });
+      // Simulate a benign idempotency outcome — another path already enqueued.
+      vi.mocked(enqueueAutoImport).mockResolvedValueOnce(false);
+
+      const res = await app.inject({ method: 'POST', url: '/api/activity/1/approve' });
+
+      expect(res.statusCode).toBe(200);
+      expect(JSON.parse(res.payload)).toEqual({ id: 1, status: 'importing', bookId: 1 });
+      expect(enqueueAutoImport).toHaveBeenCalledTimes(1);
+    });
+
     it('returns 409 when download is not in pending_review status', async () => {
       (services.qualityGateOrchestrator.approve as Mock).mockRejectedValue(new QualityGateServiceError('Download is not pending review', 'INVALID_STATUS'));
 

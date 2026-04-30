@@ -41,22 +41,38 @@ describe('BookImportService', () => {
       expect(db.insert).not.toHaveBeenCalled();
     });
 
-    it('returns 409 when an active processing import_jobs row exists', async () => {
+    it('returns active-job-exists 409 when an active processing import_jobs row exists', async () => {
+      const failedJob = { id: 5, bookId: 1, type: 'manual', metadata: '{}' };
       db.select
-        .mockReturnValueOnce(mockDbChain([{ id: 1, status: 'failed' }]))
-        .mockReturnValueOnce(mockDbChain([{ id: 7 }]));
+        .mockReturnValueOnce(mockDbChain([{ id: 1, status: 'failed' }])) // book lookup
+        .mockReturnValueOnce(mockDbChain([failedJob]))                    // failed-job lookup
+        .mockReturnValueOnce(mockDbChain([{ id: 7 }]));                   // in-tx active-job pre-check
 
       const result = await service.retryImport(1, nudge);
 
-      expect(result).toEqual({ error: 'Import already in progress', status: 409 });
+      expect(result).toEqual({ error: 'active-job-exists', status: 409 });
       expect(nudge).not.toHaveBeenCalled();
+      expect(db.insert).not.toHaveBeenCalled();
+    });
+
+    it('returns active-job-exists 409 when an active PENDING import_jobs row exists (#747 bug fix)', async () => {
+      // Pre-fix code only checked 'processing' — this test asserts that an
+      // already-queued retry (status='pending') is now correctly detected.
+      const failedJob = { id: 5, bookId: 1, type: 'manual', metadata: '{}' };
+      db.select
+        .mockReturnValueOnce(mockDbChain([{ id: 1, status: 'failed' }]))
+        .mockReturnValueOnce(mockDbChain([failedJob]))
+        .mockReturnValueOnce(mockDbChain([{ id: 9 }])); // pending active job present
+
+      const result = await service.retryImport(1, nudge);
+
+      expect(result).toEqual({ error: 'active-job-exists', status: 409 });
       expect(db.insert).not.toHaveBeenCalled();
     });
 
     it('returns 400 when no failed import job exists', async () => {
       db.select
         .mockReturnValueOnce(mockDbChain([{ id: 1, status: 'wanted' }]))
-        .mockReturnValueOnce(mockDbChain([]))
         .mockReturnValueOnce(mockDbChain([]));
 
       const result = await service.retryImport(1, nudge);
@@ -75,9 +91,9 @@ describe('BookImportService', () => {
         metadata: '{"path":"/a","mode":"copy"}',
       };
       db.select
-        .mockReturnValueOnce(mockDbChain([{ id: 1, status: 'failed' }]))
-        .mockReturnValueOnce(mockDbChain([]))
-        .mockReturnValueOnce(mockDbChain([failedJob]));
+        .mockReturnValueOnce(mockDbChain([{ id: 1, status: 'failed' }])) // book
+        .mockReturnValueOnce(mockDbChain([failedJob]))                    // failed
+        .mockReturnValueOnce(mockDbChain([]));                            // in-tx active
       db.insert.mockReturnValueOnce(mockDbChain([{ id: 99 }]));
       db.update.mockReturnValueOnce(mockDbChain([]));
 
@@ -106,9 +122,9 @@ describe('BookImportService', () => {
         { id: 10, bookId: 1, type: 'manual', metadata: '{}' },
       ]);
       db.select
-        .mockReturnValueOnce(mockDbChain([{ id: 1, status: 'failed' }]))
-        .mockReturnValueOnce(mockDbChain([]))
-        .mockReturnValueOnce(failedJobChain);
+        .mockReturnValueOnce(mockDbChain([{ id: 1, status: 'failed' }])) // book
+        .mockReturnValueOnce(failedJobChain)                              // failed
+        .mockReturnValueOnce(mockDbChain([]));                            // in-tx active
       db.insert.mockReturnValueOnce(mockDbChain([{ id: 99 }]));
       db.update.mockReturnValueOnce(mockDbChain([]));
 
@@ -116,6 +132,76 @@ describe('BookImportService', () => {
 
       expect(failedJobChain.orderBy).toHaveBeenCalledTimes(1);
       expect(failedJobChain.orderBy.mock.calls[0]).toHaveLength(2);
+    });
+  });
+
+  describe('enqueue', () => {
+    it('returns jobId on success when no active row exists', async () => {
+      db.select.mockReturnValueOnce(mockDbChain([])); // in-tx pre-check
+      db.insert.mockReturnValueOnce(mockDbChain([{ id: 77 }]));
+
+      const result = await service.enqueue({
+        bookId: 5,
+        type: 'auto',
+        metadata: '{"downloadId":1}',
+      });
+
+      expect(result).toEqual({ jobId: 77 });
+      const insertCall = db.insert.mock.results[0].value;
+      expect(insertCall.values).toHaveBeenCalledWith({
+        bookId: 5,
+        type: 'auto',
+        status: 'pending',
+        phase: 'queued',
+        metadata: '{"downloadId":1}',
+      });
+    });
+
+    it('returns active-job-exists when in-tx pre-check finds an active row', async () => {
+      db.select.mockReturnValueOnce(mockDbChain([{ id: 12 }])); // active row found
+
+      const result = await service.enqueue({
+        bookId: 5,
+        type: 'auto',
+        metadata: '{"downloadId":1}',
+      });
+
+      expect(result).toEqual({ error: 'active-job-exists', status: 409 });
+      expect(db.insert).not.toHaveBeenCalled();
+    });
+
+    it('catches UNIQUE-constraint backstop matching index-name form and returns 409', async () => {
+      db.select.mockReturnValueOnce(mockDbChain([])); // pre-check sees no row (TOCTOU window)
+      const indexErr = Object.assign(new Error('libsql failure'), {
+        cause: { message: 'UNIQUE constraint failed: idx_import_jobs_book_active' },
+      });
+      db.insert.mockReturnValueOnce(mockDbChain([], { error: indexErr }));
+
+      const result = await service.enqueue({ bookId: 5, type: 'auto', metadata: '{}' });
+
+      expect(result).toEqual({ error: 'active-job-exists', status: 409 });
+    });
+
+    it('catches UNIQUE-constraint backstop matching column-message form and returns 409', async () => {
+      db.select.mockReturnValueOnce(mockDbChain([]));
+      const colErr = Object.assign(new Error('libsql failure'), {
+        cause: { message: 'UNIQUE constraint failed: import_jobs.book_id' },
+      });
+      db.insert.mockReturnValueOnce(mockDbChain([], { error: colErr }));
+
+      const result = await service.enqueue({ bookId: 5, type: 'auto', metadata: '{}' });
+
+      expect(result).toEqual({ error: 'active-job-exists', status: 409 });
+    });
+
+    it('rethrows unrelated errors (does not silently map to active-job-exists)', async () => {
+      db.select.mockReturnValueOnce(mockDbChain([]));
+      const unrelated = new Error('disk I/O error');
+      db.insert.mockReturnValueOnce(mockDbChain([], { error: unrelated }));
+
+      await expect(
+        service.enqueue({ bookId: 5, type: 'auto', metadata: '{}' }),
+      ).rejects.toThrow('disk I/O error');
     });
   });
 
