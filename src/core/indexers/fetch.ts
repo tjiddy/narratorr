@@ -129,34 +129,38 @@ async function fetchViaProxy(
       throw new Error(`FlareSolverr proxy HTTP error ${response.status}`);
     }
 
-    let raw: unknown;
-    try {
-      raw = await response.json();
-    } catch {
-      throw new Error('FlareSolverr returned invalid response (not JSON)');
-    }
-
-    const parsed = flareSolverrResponseSchema.safeParse(raw);
-    if (!parsed.success) {
-      throw new Error(
-        `FlareSolverr returned unexpected response shape: ${parsed.error.issues[0]?.message ?? 'unknown'}`,
-        { cause: parsed.error },
-      );
-    }
-    const data: FlareSolverrResponse = parsed.data;
-
-    if (data.status !== 'ok') {
-      throw new Error(
-        `FlareSolverr error: ${data.message || 'unknown error'}`,
-      );
-    }
-
-    if (!data.solution?.response) {
-      throw new Error('FlareSolverr returned empty response');
-    }
-
-    return data.solution.response;
+    return await parseFlareSolverrResponse(response);
   } finally {
     clearTimeout(timeoutId);
   }
+}
+
+async function parseFlareSolverrResponse(response: Response): Promise<string> {
+  let raw: unknown;
+  try {
+    raw = await response.json();
+  } catch {
+    throw new Error('FlareSolverr returned invalid response (not JSON)');
+  }
+
+  const parsed = flareSolverrResponseSchema.safeParse(raw);
+  if (!parsed.success) {
+    throw new Error(
+      `FlareSolverr returned unexpected response shape: ${parsed.error.issues[0]?.message ?? 'unknown'}`,
+      { cause: parsed.error },
+    );
+  }
+  const data: FlareSolverrResponse = parsed.data;
+
+  if (data.status !== 'ok') {
+    throw new Error(
+      `FlareSolverr error: ${data.message || 'unknown error'}`,
+    );
+  }
+
+  if (!data.solution?.response) {
+    throw new Error('FlareSolverr returned empty response');
+  }
+
+  return data.solution.response;
 }
