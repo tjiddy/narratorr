@@ -4,6 +4,7 @@ import { transmissionRpcResponseSchema, transmissionTorrentsArraySchema } from '
 import type { transmissionTorrentSchema } from './schemas.js';
 import { fetchWithTimeout } from '../utils/fetch-with-timeout.js';
 import { DEFAULT_REQUEST_TIMEOUT_MS } from '../utils/constants.js';
+import { RESPONSE_CAP_DOWNLOAD_CLIENT_RPC } from '../utils/response-caps.js';
 import { DownloadClientAuthError, DownloadClientError } from './errors.js';
 import { requestWithRetry } from './retry.js';
 import { getErrorMessage } from '../../shared/error-message.js';
@@ -182,6 +183,8 @@ export class TransmissionClient implements DownloadClientAdapter {
             'X-Transmission-Session-Id': this.sessionId,
           },
           body: JSON.stringify({ method, arguments: args }),
+          allowPrivateNetwork: true,
+          maxBodyBytes: RESPONSE_CAP_DOWNLOAD_CLIENT_RPC,
         }, DEFAULT_REQUEST_TIMEOUT_MS);
 
         if (response.status === 409) {

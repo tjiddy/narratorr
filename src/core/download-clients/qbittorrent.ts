@@ -3,6 +3,7 @@ import { type DownloadClientAdapter, type DownloadItemInfo, type AddDownloadOpti
 import { qbCategoriesResponseSchema, qbTorrentsResponseSchema } from './schemas.js';
 import { fetchWithTimeout } from '../utils/fetch-with-timeout.js';
 import { DEFAULT_REQUEST_TIMEOUT_MS } from '../utils/constants.js';
+import { RESPONSE_CAP_DOWNLOAD_CLIENT_RPC } from '../utils/response-caps.js';
 import { DownloadClientAuthError, DownloadClientError } from './errors.js';
 import { requestWithRetry } from './retry.js';
 import { getErrorMessage } from '../../shared/error-message.js';
@@ -73,6 +74,8 @@ export class QBittorrentClient implements DownloadClientAdapter {
         username: this.config.username,
         password: this.config.password,
       }),
+      allowPrivateNetwork: true,
+      maxBodyBytes: RESPONSE_CAP_DOWNLOAD_CLIENT_RPC,
     }, DEFAULT_REQUEST_TIMEOUT_MS);
 
     if (!response.ok) {
@@ -112,6 +115,8 @@ export class QBittorrentClient implements DownloadClientAdapter {
             Cookie: this.cookie!,
             Referer: this.baseUrl,
           },
+          allowPrivateNetwork: true,
+          maxBodyBytes: RESPONSE_CAP_DOWNLOAD_CLIENT_RPC,
         }, DEFAULT_REQUEST_TIMEOUT_MS);
 
         if (response.status === 403) {
@@ -206,6 +211,8 @@ export class QBittorrentClient implements DownloadClientAdapter {
             Referer: this.baseUrl,
           },
           body: formData,
+          allowPrivateNetwork: true,
+          maxBodyBytes: RESPONSE_CAP_DOWNLOAD_CLIENT_RPC,
         }, DEFAULT_REQUEST_TIMEOUT_MS);
 
         if (response.status === 403) {
@@ -318,6 +325,8 @@ export class QBittorrentClient implements DownloadClientAdapter {
           Cookie: this.cookie!,
           Referer: this.baseUrl,
         },
+        allowPrivateNetwork: true,
+        maxBodyBytes: RESPONSE_CAP_DOWNLOAD_CLIENT_RPC,
       }, DEFAULT_REQUEST_TIMEOUT_MS);
       if (!response.ok) {
         throw new Error(`Request failed: HTTP ${response.status} /api/v2/app/version`);

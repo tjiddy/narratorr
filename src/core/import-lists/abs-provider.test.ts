@@ -1,8 +1,21 @@
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect, vi, beforeEach, type Mock } from 'vitest';
 import { http, HttpResponse } from 'msw';
+
+vi.mock('node:dns/promises', () => ({
+  lookup: vi.fn(),
+}));
+
+import { lookup as dnsLookup } from 'node:dns/promises';
 import { useMswServer } from '../__tests__/msw/server.js';
 import { AbsProvider } from './abs-provider.js';
 import { ImportListError } from './errors.js';
+
+const mockedDnsLookup = vi.mocked(dnsLookup) as unknown as Mock;
+
+beforeEach(() => {
+  mockedDnsLookup.mockReset();
+  mockedDnsLookup.mockResolvedValue([{ address: '93.184.216.34', family: 4 }]);
+});
 
 const ABS_BASE = 'https://abs.test';
 

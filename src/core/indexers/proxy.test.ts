@@ -1,8 +1,24 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, type Mock } from 'vitest';
+
+vi.mock('node:dns/promises', () => ({
+  lookup: vi.fn(),
+}));
+
+import { lookup as dnsLookup } from 'node:dns/promises';
 import { ProxyError, isProxyRelatedError, IndexerAuthError } from './errors.js';
 import { createProxyAgent, fetchWithProxyAgent, resolveProxyIp } from './proxy.js';
 import { ProxyAgent } from 'undici';
 import { SocksProxyAgent } from 'socks-proxy-agent';
+import { SsrfRefusedError } from '../utils/blocked-fetch-address.js';
+
+const mockedDnsLookup = vi.mocked(dnsLookup) as unknown as Mock;
+
+beforeEach(() => {
+  vi.restoreAllMocks();
+  mockedDnsLookup.mockReset();
+  // Default DNS to a public IP so target preflight succeeds in most tests.
+  mockedDnsLookup.mockResolvedValue([{ address: '93.184.216.34', family: 4 }]);
+});
 
 describe('ProxyError', () => {
   it('is instanceof Error', () => {
@@ -155,6 +171,47 @@ describe('fetchWithProxyAgent', () => {
       proxyUrl: 'http://proxy:8080',
     });
     expect(result).toBe('<xml>data</xml>');
+  });
+});
+
+describe('fetchWithProxyAgent — SSRF preflight (#769)', () => {
+  it('refuses target IP literal in private range (no proxy)', async () => {
+    const fetchSpy = vi.spyOn(globalThis, 'fetch');
+    await expect(fetchWithProxyAgent('http://192.168.1.1/feed')).rejects.toBeInstanceOf(
+      SsrfRefusedError,
+    );
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  it('refuses target IP literal in private range even when proxy is set', async () => {
+    // Proxy hop is trusted; target hostname is the SSRF concern.
+    const fetchSpy = vi.spyOn(globalThis, 'fetch');
+    await expect(
+      fetchWithProxyAgent('http://192.168.1.1/feed', { proxyUrl: 'http://1.2.3.4:8080' }),
+    ).rejects.toBeInstanceOf(SsrfRefusedError);
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  it('refuses metadata.google.internal target', async () => {
+    const fetchSpy = vi.spyOn(globalThis, 'fetch');
+    await expect(
+      fetchWithProxyAgent('http://metadata.google.internal/'),
+    ).rejects.toBeInstanceOf(SsrfRefusedError);
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+});
+
+describe('fetchWithProxyAgent — body cap', () => {
+  it('returns the full body verbatim under the cap (Promise<string>)', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      new Response('<rss>data</rss>', {
+        status: 200,
+        headers: { 'content-type': 'application/xml; charset=utf-8' },
+      }),
+    );
+    const result = await fetchWithProxyAgent('https://indexer.example.com/api');
+    expect(typeof result).toBe('string');
+    expect(result).toBe('<rss>data</rss>');
   });
 });
 

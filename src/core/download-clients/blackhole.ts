@@ -1,8 +1,9 @@
 import { writeFile, access, constants } from 'node:fs/promises';
 import { join } from 'node:path';
 import type { DownloadClientAdapter, DownloadItemInfo, DownloadArtifact, DownloadProtocol } from './types.js';
-import { fetchWithTimeout } from '../utils/fetch-with-timeout.js';
+import { fetchFollowingRedirects } from '../utils/fetch-following-redirects.js';
 import { HTTP_DOWNLOAD_TIMEOUT_MS } from '../utils/constants.js';
+import { RESPONSE_CAP_DOWNLOAD_ARTIFACT } from '../utils/response-caps.js';
 import { DownloadClientError, DownloadClientTimeoutError, isTimeoutError } from './errors.js';
 import { getErrorMessage } from '../../shared/error-message.js';
 
@@ -45,18 +46,25 @@ export class BlackholeClient implements DownloadClientAdapter {
       return null;
     }
 
-    // nzb-url — fetch the URL and write the bytes
-    let response: Response;
+    // nzb-url — fetch the URL and write the bytes. Uses a redirect-following
+    // hardened helper because Newznab/Torznab `getnzb` endpoints commonly issue
+    // 302 → final NZB artifact; the default `fetchWithTimeout` rejects 3xx.
+    let buffer: Buffer;
+    let status: number;
     try {
-      response = await fetchWithTimeout(artifact.url, {}, HTTP_DOWNLOAD_TIMEOUT_MS);
+      const result = await fetchFollowingRedirects(artifact.url, {
+        maxBodyBytes: RESPONSE_CAP_DOWNLOAD_ARTIFACT,
+        timeoutMs: HTTP_DOWNLOAD_TIMEOUT_MS,
+      });
+      buffer = result.buffer;
+      status = result.status;
     } catch (error: unknown) {
       if (isTimeoutError(error)) throw new DownloadClientTimeoutError(this.name, (error as Error).message);
       throw new DownloadClientError(this.name, getErrorMessage(error));
     }
-    if (!response.ok) {
-      throw new DownloadClientError(this.name, `Failed to download file: HTTP ${response.status}`);
+    if (status < 200 || status >= 300) {
+      throw new DownloadClientError(this.name, `Failed to download file: HTTP ${status}`);
     }
-    const buffer = Buffer.from(await response.arrayBuffer());
     const filePath = join(this.config.watchDir, `download-${timestamp}.nzb`);
     await writeFile(filePath, buffer);
 

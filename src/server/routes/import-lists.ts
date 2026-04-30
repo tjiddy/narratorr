@@ -7,6 +7,9 @@ import { getErrorMessage } from '../utils/error-message.js';
 import { serializeError } from '../utils/serialize-error.js';
 import { makeTestSchema } from '../utils/secret-codec.js';
 import { resolveSentinelSettings } from '../utils/sentinel-resolver.js';
+import { fetchWithTimeout } from '../../core/utils/fetch-with-timeout.js';
+import { RESPONSE_CAP_ABS } from '../../core/utils/response-caps.js';
+import { INDEXER_TIMEOUT_MS } from '../../core/utils/constants.js';
 
 const SENTINEL = '********';
 
@@ -55,9 +58,14 @@ export async function importListsRoutes(app: FastifyInstance, importListService:
       const resolvedServerUrl = resolution.settings.serverUrl as string;
       try {
         const url = `${resolvedServerUrl.replace(/\/+$/, '')}/api/libraries`;
-        const res = await fetch(url, {
-          headers: { Authorization: `Bearer ${resolvedApiKey}` },
-        });
+        const res = await fetchWithTimeout(
+          url,
+          {
+            headers: { Authorization: `Bearer ${resolvedApiKey}` },
+            maxBodyBytes: RESPONSE_CAP_ABS,
+          },
+          INDEXER_TIMEOUT_MS,
+        );
         if (!res.ok) {
           return await reply.status(502).send({ error: `ABS API returned ${res.status}` });
         }

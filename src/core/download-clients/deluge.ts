@@ -2,6 +2,7 @@ import type { z } from 'zod';
 import { type DownloadClientAdapter, type DownloadItemInfo, type AddDownloadOptions, type DownloadArtifact, type DownloadProtocol, ETA_UPPER_BOUND_SEC } from './types.js';
 import { fetchWithTimeout } from '../utils/fetch-with-timeout.js';
 import { DEFAULT_REQUEST_TIMEOUT_MS } from '../utils/constants.js';
+import { RESPONSE_CAP_DOWNLOAD_CLIENT_RPC } from '../utils/response-caps.js';
 import { DownloadClientAuthError, DownloadClientError } from './errors.js';
 import { requestWithRetry } from './retry.js';
 import { getErrorMessage } from '../../shared/error-message.js';
@@ -65,6 +66,8 @@ export class DelugeClient implements DownloadClientAdapter {
           method: 'POST',
           headers,
           body: JSON.stringify({ method, params, id }),
+          allowPrivateNetwork: true,
+          maxBodyBytes: RESPONSE_CAP_DOWNLOAD_CLIENT_RPC,
         }, DEFAULT_REQUEST_TIMEOUT_MS);
 
         if (response.status === 401 || response.status === 403) {
@@ -123,6 +126,8 @@ export class DelugeClient implements DownloadClientAdapter {
         params: [this.config.password],
         id: ++this.requestId,
       }),
+      allowPrivateNetwork: true,
+      maxBodyBytes: RESPONSE_CAP_DOWNLOAD_CLIENT_RPC,
     }, DEFAULT_REQUEST_TIMEOUT_MS);
 
     if (!response.ok) {

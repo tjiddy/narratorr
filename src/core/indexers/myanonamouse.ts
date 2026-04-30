@@ -6,6 +6,13 @@ import { normalizeLanguage } from '../utils/language-codes.js';
 import { MAM_LANGUAGES } from '../../shared/indexer-registry.js';
 import { getErrorMessage } from '../../shared/error-message.js';
 import { normalizeBaseUrl } from '../../shared/normalize-base-url.js';
+import {
+  createSsrfSafeDispatcher,
+  resolveAndValidate,
+  SsrfRefusedError,
+} from '../utils/blocked-fetch-address.js';
+import { readBodyWithCap } from '../utils/read-body-with-cap.js';
+import { RESPONSE_CAP_INDEXER } from '../utils/response-caps.js';
 
 export interface MAMConfig {
   mamId: string;
@@ -313,30 +320,36 @@ export class MyAnonamouseIndexer implements IndexerAdapter {
    * Throws on HTTP 403 with an auth-specific error message.
    */
   private async fetchWithCookie(url: string, callerSignal?: AbortSignal): Promise<string> {
+    // Pre-flight target host — refuses cloud-metadata names and blocked IPs.
+    // When no proxy is set, also use a socket-validating dispatcher (DNS
+    // rebinding defense). When a proxy is set, only the pre-flight runs;
+    // the proxy hop is trusted user config.
+    const target = new URL(url);
+    await resolveAndValidate(target.hostname);
+
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), INDEXER_TIMEOUT_MS);
     const signal = callerSignal
       ? AbortSignal.any([controller.signal, callerSignal])
       : controller.signal;
-    const dispatcher = createProxyAgent(this.proxyUrl);
+    const proxyDispatcher = createProxyAgent(this.proxyUrl);
+    const dispatcher = proxyDispatcher ?? createSsrfSafeDispatcher();
 
     try {
-      const fetchOptions: RequestInit & { dispatcher?: unknown } = {
+      const fetchOptions: RequestInit & { dispatcher: unknown } = {
         headers: {
           Cookie: `mam_id=${this.mamId}`,
         },
         signal,
+        dispatcher,
       };
-
-      if (dispatcher) {
-        (fetchOptions as Record<string, unknown>).dispatcher = dispatcher;
-      }
 
       let response: Response;
       try {
         response = await fetch(url, fetchOptions);
       } catch (error: unknown) {
-        if (dispatcher) {
+        if (error instanceof SsrfRefusedError) throw error;
+        if (proxyDispatcher) {
           if (error instanceof DOMException && error.name === 'AbortError') {
             throw new ProxyError(`Proxy timed out after ${Math.round(INDEXER_TIMEOUT_MS / 1000)}s`);
           }
@@ -347,7 +360,8 @@ export class MyAnonamouseIndexer implements IndexerAdapter {
       }
 
       if (response.status === 403) {
-        const body = await response.text();
+        const buffer = await readBodyWithCap(response, RESPONSE_CAP_INDEXER);
+        const body = buffer.toString('utf-8');
         const match = body.match(/<br \/>\s*(.+)/);
         const detail = match?.[1]?.trim();
         throw new IndexerAuthError(
@@ -357,10 +371,12 @@ export class MyAnonamouseIndexer implements IndexerAdapter {
       }
 
       if (!response.ok) {
+        await response.body?.cancel().catch(() => { /* best-effort */ });
         throw new Error(`HTTP ${response.status}: ${response.statusText}`);
       }
 
-      return await response.text();
+      const buffer = await readBodyWithCap(response, RESPONSE_CAP_INDEXER);
+      return buffer.toString('utf-8');
     } finally {
       clearTimeout(timeoutId);
     }
@@ -419,31 +435,33 @@ export class MyAnonamouseIndexer implements IndexerAdapter {
    */
   private async fetchTorrentAsDataUri(torrentId: number, callerSignal?: AbortSignal): Promise<string | undefined> {
     const url = `${this.baseUrl}/tor/download.php?tid=${torrentId}`;
+    const target = new URL(url);
+    await resolveAndValidate(target.hostname);
+
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), INDEXER_TIMEOUT_MS);
     const signal = callerSignal
       ? AbortSignal.any([controller.signal, callerSignal])
       : controller.signal;
-    const dispatcher = createProxyAgent(this.proxyUrl);
+    const proxyDispatcher = createProxyAgent(this.proxyUrl);
+    const dispatcher = proxyDispatcher ?? createSsrfSafeDispatcher();
 
     try {
-      const fetchOptions: RequestInit & { dispatcher?: unknown } = {
+      const fetchOptions: RequestInit & { dispatcher: unknown } = {
         headers: {
           Cookie: `mam_id=${this.mamId}`,
         },
         signal,
+        dispatcher,
       };
-
-      if (dispatcher) {
-        (fetchOptions as Record<string, unknown>).dispatcher = dispatcher;
-      }
 
       let response: Response;
       try {
         response = await fetch(url, fetchOptions);
       } catch (error: unknown) {
+        if (error instanceof SsrfRefusedError) throw error;
         // Proxy errors must propagate — not be swallowed as undefined
-        if (dispatcher) {
+        if (proxyDispatcher) {
           if (error instanceof DOMException && error.name === 'AbortError') {
             throw new ProxyError(`Proxy timed out after ${Math.round(INDEXER_TIMEOUT_MS / 1000)}s`);
           }
@@ -454,16 +472,16 @@ export class MyAnonamouseIndexer implements IndexerAdapter {
       }
 
       if (!response.ok) {
+        await response.body?.cancel().catch(() => { /* best-effort */ });
         return undefined;
       }
 
-      const buffer = Buffer.from(await response.arrayBuffer());
+      const buffer = await readBodyWithCap(response, RESPONSE_CAP_INDEXER);
       return `data:application/x-bittorrent;base64,${buffer.toString('base64')}`;
     } catch (error: unknown) {
-      // ProxyError must propagate up — not be swallowed
-      if (error instanceof ProxyError) {
-        throw error;
-      }
+      // ProxyError and SsrfRefusedError must propagate up — not be swallowed
+      if (error instanceof ProxyError) throw error;
+      if (error instanceof SsrfRefusedError) throw error;
       return undefined;
     } finally {
       clearTimeout(timeoutId);

@@ -2,6 +2,9 @@ import { z } from 'zod';
 import type { ImportListProvider, ImportListItem } from './types.js';
 import { ImportListError } from './errors.js';
 import { getErrorMessage } from '../../shared/error-message.js';
+import { fetchWithTimeout } from '../utils/fetch-with-timeout.js';
+import { RESPONSE_CAP_ABS } from '../utils/response-caps.js';
+import { INDEXER_TIMEOUT_MS } from '../utils/constants.js';
 
 export interface AbsConfig {
   serverUrl: string;
@@ -52,9 +55,14 @@ export class AbsProvider implements ImportListProvider {
 
   async fetchItems(): Promise<ImportListItem[]> {
     const url = `${this.serverUrl}/api/libraries/${encodeURIComponent(this.libraryId)}/items`;
-    const res = await fetch(url, {
-      headers: { Authorization: `Bearer ${this.apiKey}` },
-    });
+    const res = await fetchWithTimeout(
+      url,
+      {
+        headers: { Authorization: `Bearer ${this.apiKey}` },
+        maxBodyBytes: RESPONSE_CAP_ABS,
+      },
+      INDEXER_TIMEOUT_MS,
+    );
 
     if (!res.ok) {
       throw new ImportListError(this.name, `ABS API returned ${res.status}: ${res.statusText}`);
@@ -87,9 +95,14 @@ export class AbsProvider implements ImportListProvider {
   async test(): Promise<{ success: boolean; message?: string }> {
     try {
       const url = `${this.serverUrl}/api/libraries`;
-      const res = await fetch(url, {
-        headers: { Authorization: `Bearer ${this.apiKey}` },
-      });
+      const res = await fetchWithTimeout(
+        url,
+        {
+          headers: { Authorization: `Bearer ${this.apiKey}` },
+          maxBodyBytes: RESPONSE_CAP_ABS,
+        },
+        INDEXER_TIMEOUT_MS,
+      );
 
       if (!res.ok) {
         return { success: false, message: `API returned ${res.status}: ${res.statusText}` };

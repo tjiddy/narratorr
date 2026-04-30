@@ -4,6 +4,7 @@ import { MetadataError, RateLimitError, TransientError } from './errors.js';
 import { normalizeGenres } from './genres.js';
 import { AUDNEXUS_TIMEOUT_MS } from '../utils/constants.js';
 import { fetchWithTimeout } from '../utils/fetch-with-timeout.js';
+import { RESPONSE_CAP_METADATA } from '../utils/response-caps.js';
 import { getErrorMessage } from '../../shared/error-message.js';
 import type {
   MetadataEnrichmentProvider,
@@ -91,7 +92,7 @@ export class AudnexusProvider implements MetadataEnrichmentProvider {
 
   private async fetchJson<S extends z.ZodTypeAny>(path: string, schema: S): Promise<z.infer<S> | null> {
     try {
-      const response = await fetchWithTimeout(`${BASE_URL}${path}`, {}, REQUEST_TIMEOUT_MS);
+      const response = await fetchWithTimeout(`${BASE_URL}${path}`, { maxBodyBytes: RESPONSE_CAP_METADATA }, REQUEST_TIMEOUT_MS);
       if (response.status === 429) {
         const retryAfter = response.headers.get('Retry-After');
         const waitMs = retryAfter ? parseInt(retryAfter, 10) * 1000 : 60_000;

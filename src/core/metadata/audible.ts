@@ -4,6 +4,7 @@ import { MetadataError, RateLimitError, TransientError } from './errors.js';
 import { REGION_LANGUAGES } from './region-languages.js';
 import { AUDIBLE_TIMEOUT_MS } from '../utils/constants.js';
 import { fetchWithTimeout } from '../utils/fetch-with-timeout.js';
+import { RESPONSE_CAP_METADATA } from '../utils/response-caps.js';
 import { getErrorMessage } from '../../shared/error-message.js';
 import type {
   MetadataSearchProvider,
@@ -216,7 +217,7 @@ export class AudibleProvider implements MetadataSearchProvider {
 
   private async request<S extends z.ZodTypeAny>(url: string, schema: S): Promise<z.infer<S> | null> {
     try {
-      const res = await fetchWithTimeout(url, {}, REQUEST_TIMEOUT_MS);
+      const res = await fetchWithTimeout(url, { maxBodyBytes: RESPONSE_CAP_METADATA }, REQUEST_TIMEOUT_MS);
       if (res.status === 429) {
         const retryAfter = res.headers.get('Retry-After');
         const waitMs = retryAfter ? parseInt(retryAfter, 10) * 1000 : DEFAULT_RATE_LIMIT_WAIT_MS;

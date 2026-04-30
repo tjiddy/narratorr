@@ -8,6 +8,7 @@ import type {
 } from './types.js';
 import { fetchWithTimeout } from '../utils/fetch-with-timeout.js';
 import { DEFAULT_REQUEST_TIMEOUT_MS } from '../utils/constants.js';
+import { RESPONSE_CAP_DOWNLOAD_CLIENT_RPC } from '../utils/response-caps.js';
 import { DownloadClientAuthError, DownloadClientError, DownloadClientTimeoutError, isTimeoutError } from './errors.js';
 import { getErrorMessage } from '../../shared/error-message.js';
 
@@ -178,6 +179,8 @@ export class NZBGetClient implements DownloadClientAdapter {
           method,
           params,
         }),
+        allowPrivateNetwork: true,
+        maxBodyBytes: RESPONSE_CAP_DOWNLOAD_CLIENT_RPC,
       }, DEFAULT_REQUEST_TIMEOUT_MS);
     } catch (error: unknown) {
       if (isTimeoutError(error)) throw new DownloadClientTimeoutError(this.name, (error as Error).message);

@@ -1,8 +1,16 @@
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach, type Mock } from 'vitest';
+
+vi.mock('node:dns/promises', () => ({
+  lookup: vi.fn(),
+}));
+
+import { lookup as dnsLookup } from 'node:dns/promises';
 import { DownloadUrl, extractInfoHashFromTorrent } from './download-url.js';
 import type { DownloadArtifact } from './download-url.js';
 import { base32ToHex } from './base32.js';
 import { createHash } from 'node:crypto';
+
+const mockedDnsLookup = vi.mocked(dnsLookup) as unknown as Mock;
 
 // ── Fixtures ──────────────────────────────────────────────────────────
 const KNOWN_HEX_HASH = 'aabbccddee00112233445566778899aabbccddee';
@@ -32,6 +40,9 @@ beforeEach(() => {
   // restoreAllMocks doesn't clear manual vi.fn() call history
   mockFetch.mockClear();
   vi.stubGlobal('fetch', mockFetch);
+  // Default DNS to a public IP so tests proceed past the SSRF gate.
+  mockedDnsLookup.mockReset();
+  mockedDnsLookup.mockResolvedValue([{ address: '93.184.216.34', family: 4 }]);
 });
 
 afterEach(() => {

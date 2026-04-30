@@ -7,6 +7,8 @@ import { isProxyRelatedError } from './errors.js';
 import { fetchWithProxyAgent, resolveProxyIp } from './proxy.js';
 import { getErrorMessage } from '../../shared/error-message.js';
 import { INDEXER_TIMEOUT_MS } from '../utils/constants.js';
+import { fetchWithTimeout } from '../utils/fetch-with-timeout.js';
+import { RESPONSE_CAP_INDEXER } from '../utils/response-caps.js';
 
 export interface ABBConfig {
   hostname: string; // e.g., 'audiobookbay.lu'
@@ -328,17 +330,18 @@ export class AudioBookBayIndexer implements IndexerAdapter {
   }
 
   private async testDirect(): Promise<{ success: boolean; message?: string }> {
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), INDEXER_TIMEOUT_MS);
-
     try {
-      const response = await fetch(this.baseUrl, {
-        method: 'HEAD',
-        headers: {
-          'User-Agent': this.getNextUserAgent(),
+      const response = await fetchWithTimeout(
+        this.baseUrl,
+        {
+          method: 'HEAD',
+          headers: {
+            'User-Agent': this.getNextUserAgent(),
+          },
+          maxBodyBytes: RESPONSE_CAP_INDEXER,
         },
-        signal: controller.signal,
-      });
+        INDEXER_TIMEOUT_MS,
+      );
 
       if (response.ok || response.status === 405) {
         // 405 Method Not Allowed is okay for HEAD requests
@@ -354,8 +357,6 @@ export class AudioBookBayIndexer implements IndexerAdapter {
         success: false,
         message: getErrorMessage(error),
       };
-    } finally {
-      clearTimeout(timeoutId);
     }
   }
 

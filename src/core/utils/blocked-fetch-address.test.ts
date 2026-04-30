@@ -11,6 +11,7 @@ import {
   isIpLiteral,
   normalizeHostname,
   resolveAndValidate,
+  SsrfRefusedError,
   validatingLookup,
 } from './blocked-fetch-address.js';
 
@@ -186,13 +187,14 @@ describe('resolveAndValidate', () => {
     expect(mockedLookup).not.toHaveBeenCalled();
   });
 
-  it('throws on blocked IP literal without doing lookup', async () => {
+  it('throws SsrfRefusedError on blocked IP literal without doing lookup', async () => {
+    await expect(resolveAndValidate('192.168.1.1')).rejects.toBeInstanceOf(SsrfRefusedError);
     await expect(resolveAndValidate('192.168.1.1')).rejects.toThrow(/Refused/);
     expect(mockedLookup).not.toHaveBeenCalled();
   });
 
-  it('throws on blocked hostname without doing lookup', async () => {
-    await expect(resolveAndValidate('metadata.google.internal')).rejects.toThrow(/Refused/);
+  it('throws SsrfRefusedError on blocked hostname without doing lookup', async () => {
+    await expect(resolveAndValidate('metadata.google.internal')).rejects.toBeInstanceOf(SsrfRefusedError);
     expect(mockedLookup).not.toHaveBeenCalled();
   });
 
@@ -205,9 +207,9 @@ describe('resolveAndValidate', () => {
     expect(result).toEqual(['93.184.216.34', '2606:2800:220:1::1']);
   });
 
-  it('throws when any answer is blocked (single private answer)', async () => {
+  it('throws SsrfRefusedError when any answer is blocked (single private answer)', async () => {
     mockedLookup.mockResolvedValueOnce([{ address: '192.168.1.1', family: 4 }]);
-    await expect(resolveAndValidate('rebind.example.com')).rejects.toThrow(/Refused/);
+    await expect(resolveAndValidate('rebind.example.com')).rejects.toBeInstanceOf(SsrfRefusedError);
   });
 
   it('throws on mixed answers where any is blocked (multi-answer DNS)', async () => {

@@ -2,7 +2,8 @@ import type { FastifyBaseLogger } from 'fastify';
 import type { SearchResult } from '../../core/indexers/types.js';
 import { normalizeLanguage } from '../../core/utils/language-codes.js';
 import { detectLanguageFromNewsgroup, detectLanguageFromNzbName, parseNzbGroups, parseNzbName, parseNzbFileSubject } from '../../core/utils/detect-usenet-language.js';
-import { fetchWithTimeout } from '../../core/utils/fetch-with-timeout.js';
+import { fetchFollowingRedirects } from '../../core/utils/fetch-following-redirects.js';
+import { RESPONSE_CAP_DOWNLOAD_ARTIFACT } from '../../core/utils/response-caps.js';
 import { Semaphore } from './semaphore.js';
 import { getErrorMessage } from './error-message.js';
 import { sanitizeLogUrl } from './sanitize-log-url.js';
@@ -59,15 +60,20 @@ export async function enrichUsenetLanguages(
     await semaphore.acquire();
     nzbFetched++;
     try {
-      const response = await fetchWithTimeout(result.downloadUrl!, {}, NZB_FETCH_TIMEOUT_MS);
-      if (!response.ok) {
+      // Redirect-following hardened helper: NZB getnzb endpoints commonly 302
+      // to the final artifact, and the default fetch-with-timeout rejects 3xx.
+      const { buffer, status } = await fetchFollowingRedirects(result.downloadUrl!, {
+        maxBodyBytes: RESPONSE_CAP_DOWNLOAD_ARTIFACT,
+        timeoutMs: NZB_FETCH_TIMEOUT_MS,
+      });
+      if (status < 200 || status >= 300) {
         logger.warn(
-          { title: result.title, status: response.status, url: sanitizeLogUrl(result.downloadUrl!) },
+          { title: result.title, status, url: sanitizeLogUrl(result.downloadUrl!) },
           'NZB fetch failed with non-OK status',
         );
         return;
       }
-      const xml = await response.text();
+      const xml = buffer.toString('utf-8');
 
       // Extract NZB name (meta tag first, file subject as fallback)
       result.nzbName = parseNzbName(xml) || parseNzbFileSubject(xml) || undefined;

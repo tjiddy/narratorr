@@ -8,6 +8,16 @@
 import { z } from 'zod';
 
 import { mapNetworkError } from '../utils/map-network-error.js';
+import {
+  createSsrfSafeDispatcher,
+  resolveAndValidate,
+  SsrfRefusedError,
+} from '../utils/blocked-fetch-address.js';
+import { readBodyWithCap } from '../utils/read-body-with-cap.js';
+import {
+  RESPONSE_CAP_FLARESOLVERR,
+  RESPONSE_CAP_INDEXER,
+} from '../utils/response-caps.js';
 
 import { INDEXER_TIMEOUT_MS, PROXY_TIMEOUT_MS } from '../utils/constants.js';
 import { normalizeBaseUrl } from '../../shared/normalize-base-url.js';
@@ -18,6 +28,7 @@ const flareSolverrResponseSchema = z.object({
   solution: z.object({
     response: z.string().optional(),
     status: z.number().optional(),
+    url: z.string().optional(),
   }).passthrough().optional(),
 }).passthrough();
 
@@ -56,6 +67,13 @@ async function fetchDirect(
   timeoutMs: number,
   callerSignal?: AbortSignal,
 ): Promise<string> {
+  // Pre-flight + socket-bound dispatcher prevent SSRF / DNS rebinding for
+  // direct (non-FlareSolverr) indexer paths. Returns string to preserve the
+  // existing caller contract (Newznab/Torznab/ABB consume it as text).
+  const target = new URL(url);
+  await resolveAndValidate(target.hostname);
+  const dispatcher = createSsrfSafeDispatcher();
+
   const controller = new AbortController();
   const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
   const signal = callerSignal
@@ -68,16 +86,20 @@ async function fetchDirect(
       response = await fetch(url, {
         headers,
         signal,
-      });
+        dispatcher,
+      } as RequestInit & { dispatcher: unknown });
     } catch (error: unknown) {
+      if (error instanceof SsrfRefusedError) throw error;
       throw mapNetworkError(error);
     }
 
     if (!response.ok) {
+      await response.body?.cancel().catch(() => { /* best-effort */ });
       throw new Error(`HTTP ${response.status}: ${response.statusText}`);
     }
 
-    return await response.text();
+    const buffer = await readBodyWithCap(response, RESPONSE_CAP_INDEXER);
+    return decodeBody(buffer, response.headers.get('content-type'));
   } finally {
     clearTimeout(timeoutId);
   }
@@ -90,6 +112,18 @@ async function fetchViaProxy(
   timeoutMs: number,
   callerSignal?: AbortSignal,
 ): Promise<string> {
+  // FlareSolverr-specific contract:
+  //   - The user-configured proxyUrl (FlareSolverr endpoint) is NOT pre-flighted
+  //     and NOT routed through the SSRF-safe dispatcher — local/Docker
+  //     deployments (127.0.0.1, RFC 1918, *.local) are the standard config.
+  //   - The targetUrl placed in the FlareSolverr request body IS validated —
+  //     FlareSolverr fetches it on our behalf, so failing to gate the target
+  //     leaves SSRF intact.
+  //   - Redirects emitted inside the FlareSolverr envelope (solution.url) are
+  //     not auto-followed by our code; we log and return the body verbatim.
+  const target = new URL(targetUrl);
+  await resolveAndValidate(target.hostname);
+
   const controller = new AbortController();
   const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
   const signal = callerSignal
@@ -126,6 +160,9 @@ async function fetchViaProxy(
     }
 
     if (!response.ok) {
+      // Best-effort drain — fire-and-forget so a slow body stream cannot
+      // wedge the error path past the timeout.
+      void response.body?.cancel().catch(() => { /* best-effort */ });
       throw new Error(`FlareSolverr proxy HTTP error ${response.status}`);
     }
 
@@ -136,9 +173,12 @@ async function fetchViaProxy(
 }
 
 async function parseFlareSolverrResponse(response: Response): Promise<string> {
+  // Cap the envelope BEFORE JSON.parse, since FlareSolverr nests the target
+  // body inside the envelope. Wrapper-internal cap; callers do not pass it.
+  const buffer = await readBodyWithCap(response, RESPONSE_CAP_FLARESOLVERR);
   let raw: unknown;
   try {
-    raw = await response.json();
+    raw = JSON.parse(buffer.toString('utf-8'));
   } catch {
     throw new Error('FlareSolverr returned invalid response (not JSON)');
   }
@@ -163,4 +203,19 @@ async function parseFlareSolverrResponse(response: Response): Promise<string> {
   }
 
   return data.solution.response;
+}
+
+function decodeBody(buffer: Buffer, contentType: string | null): string {
+  const charset = parseCharset(contentType);
+  try {
+    return new TextDecoder(charset).decode(buffer);
+  } catch {
+    return buffer.toString('utf-8');
+  }
+}
+
+function parseCharset(contentType: string | null): string {
+  if (!contentType) return 'utf-8';
+  const match = contentType.match(/charset=([^;]+)/i);
+  return match ? match[1].trim().toLowerCase() : 'utf-8';
 }

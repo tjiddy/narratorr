@@ -22,6 +22,18 @@ import { lookup as dnsLookup } from 'node:dns/promises';
 import { Agent } from 'undici';
 import type { LookupFunction } from 'node:net';
 
+/**
+ * Thrown when a destination is refused by the SSRF block policy. Lets callers
+ * distinguish policy refusals from network/timeout failures so notifier UIs,
+ * settings tests, etc. can surface the difference.
+ */
+export class SsrfRefusedError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'SsrfRefusedError';
+  }
+}
+
 const BLOCKED_HOSTNAMES = new Set<string>([
   'metadata.google.internal',
 ]);
@@ -81,8 +93,9 @@ function isBlockedIpv6(ip: string): boolean {
 
 /**
  * Resolve a hostname (or accept an IP literal) and validate every answer
- * against the SSRF block policy. Throws if the hostname is in the cloud-metadata
- * allowlist, the IP literal is blocked, or any DNS answer is blocked.
+ * against the SSRF block policy. Throws `SsrfRefusedError` if the hostname is
+ * in the cloud-metadata allowlist, the IP literal is blocked, or any DNS answer
+ * is blocked.
  *
  * Used both as a pre-flight check before invoking fetch (early refusal +
  * testability via `vi.mock('node:dns/promises')`) and inside the dispatcher's
@@ -91,21 +104,21 @@ function isBlockedIpv6(ip: string): boolean {
 export async function resolveAndValidate(hostname: string): Promise<string[]> {
   const normalized = normalizeHostname(hostname);
   if (isBlockedHostname(normalized)) {
-    throw new Error(`Refused: hostname ${normalized} is in the blocked cloud-metadata list`);
+    throw new SsrfRefusedError(`Refused: hostname ${normalized} is in the blocked cloud-metadata list`);
   }
   if (isIpLiteral(normalized)) {
     if (isBlockedFetchAddress(normalized)) {
-      throw new Error(`Refused: address ${normalized} is in the blocked range`);
+      throw new SsrfRefusedError(`Refused: address ${normalized} is in the blocked range`);
     }
     return [normalized];
   }
   const answers = await dnsLookup(normalized, { all: true, family: 0 });
   if (answers.length === 0) {
-    throw new Error(`Refused: DNS returned no answers for ${normalized}`);
+    throw new SsrfRefusedError(`Refused: DNS returned no answers for ${normalized}`);
   }
   for (const answer of answers) {
     if (isBlockedFetchAddress(answer.address)) {
-      throw new Error(
+      throw new SsrfRefusedError(
         `Refused: hostname ${normalized} resolves to blocked address ${answer.address}`,
       );
     }
@@ -127,7 +140,7 @@ export const validatingLookup: LookupFunction = (hostname, _options, callback) =
   const normalized = normalizeHostname(hostname);
   if (isBlockedHostname(normalized)) {
     callback(
-      new Error(`Refused: hostname ${normalized} is in the blocked cloud-metadata list`) as NodeJS.ErrnoException,
+      new SsrfRefusedError(`Refused: hostname ${normalized} is in the blocked cloud-metadata list`) as NodeJS.ErrnoException,
       '',
       0,
     );
@@ -136,7 +149,7 @@ export const validatingLookup: LookupFunction = (hostname, _options, callback) =
   if (isIpLiteral(normalized)) {
     if (isBlockedFetchAddress(normalized)) {
       callback(
-        new Error(`Refused: address ${normalized} is in the blocked range`) as NodeJS.ErrnoException,
+        new SsrfRefusedError(`Refused: address ${normalized} is in the blocked range`) as NodeJS.ErrnoException,
         '',
         0,
       );
@@ -149,7 +162,7 @@ export const validatingLookup: LookupFunction = (hostname, _options, callback) =
     .then((answers) => {
       if (answers.length === 0) {
         callback(
-          new Error(`Refused: DNS returned no answers for ${normalized}`) as NodeJS.ErrnoException,
+          new SsrfRefusedError(`Refused: DNS returned no answers for ${normalized}`) as NodeJS.ErrnoException,
           '',
           0,
         );
@@ -158,7 +171,7 @@ export const validatingLookup: LookupFunction = (hostname, _options, callback) =
       for (const answer of answers) {
         if (isBlockedFetchAddress(answer.address)) {
           callback(
-            new Error(
+            new SsrfRefusedError(
               `Refused: hostname ${normalized} resolves to blocked address ${answer.address}`,
             ) as NodeJS.ErrnoException,
             '',

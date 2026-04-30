@@ -1,9 +1,24 @@
-import { describe, it, expect, vi, afterEach } from 'vitest';
+import { describe, it, expect, vi, afterEach, beforeEach, type Mock } from 'vitest';
 import { http, HttpResponse } from 'msw';
 import { ZodError } from 'zod';
+
+vi.mock('node:dns/promises', () => ({
+  lookup: vi.fn(),
+}));
+
+import { lookup as dnsLookup } from 'node:dns/promises';
 import { useMswServer } from '../__tests__/msw/server.js';
 import { getErrorMessage } from '../../shared/error-message.js';
 import { fetchWithProxy } from './fetch.js';
+import { SsrfRefusedError } from '../utils/blocked-fetch-address.js';
+
+const mockedDnsLookup = vi.mocked(dnsLookup) as unknown as Mock;
+
+beforeEach(() => {
+  mockedDnsLookup.mockReset();
+  // Default DNS to a public IP so target preflight succeeds.
+  mockedDnsLookup.mockResolvedValue([{ address: '93.184.216.34', family: 4 }]);
+});
 
 const TARGET_URL = 'https://indexer.test/api?q=test';
 const PROXY_URL = 'http://flaresolverr.test:8191';
@@ -485,6 +500,50 @@ describe('fetchWithProxy', () => {
 
       const result = await fetchWithProxy({ url: TARGET_URL });
       expect(result).toBe('ok');
+    });
+  });
+
+  describe('SSRF preflight (#769)', () => {
+    it('refuses target IP literal in private range (direct path)', async () => {
+      await expect(
+        fetchWithProxy({ url: 'http://192.168.1.1/feed' }),
+      ).rejects.toBeInstanceOf(SsrfRefusedError);
+    });
+
+    it('refuses metadata.google.internal target (direct path)', async () => {
+      await expect(
+        fetchWithProxy({ url: 'http://metadata.google.internal/' }),
+      ).rejects.toBeInstanceOf(SsrfRefusedError);
+    });
+
+    it('FlareSolverr path: target is preflighted', async () => {
+      await expect(
+        fetchWithProxy({
+          url: 'http://169.254.169.254/',
+          proxyUrl: 'http://flaresolverr.local:8191',
+        }),
+      ).rejects.toBeInstanceOf(SsrfRefusedError);
+    });
+
+    it('FlareSolverr path: private/CGNAT proxyUrl is accepted (not validated)', async () => {
+      // The FlareSolverr endpoint is allowed to be private, but the target
+      // hostname must still be public — when both conditions hold, the request
+      // proceeds. We don't need a full happy-path here; just assert that we do
+      // NOT get an SsrfRefusedError when only the proxy is private.
+      mockedDnsLookup.mockResolvedValueOnce([{ address: '1.2.3.4', family: 4 }]);
+      server.use(
+        http.post('http://flaresolverr.local:8191/v1', () => {
+          return HttpResponse.json({
+            status: 'ok',
+            solution: { response: '<rss/>', status: 200 },
+          });
+        }),
+      );
+      const result = await fetchWithProxy({
+        url: 'https://indexer.test/api',
+        proxyUrl: 'http://flaresolverr.local:8191',
+      });
+      expect(result).toBe('<rss/>');
     });
   });
 });

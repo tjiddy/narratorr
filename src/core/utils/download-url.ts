@@ -2,6 +2,13 @@ import { createHash } from 'node:crypto';
 import { parseInfoHash } from './magnet.js';
 import { normalizeInfoHash } from './normalize-info-hash.js';
 import { HTTP_DOWNLOAD_TIMEOUT_MS } from './constants.js';
+import {
+  createSsrfSafeDispatcher,
+  resolveAndValidate,
+  SsrfRefusedError,
+} from './blocked-fetch-address.js';
+import { readBodyWithCap } from './read-body-with-cap.js';
+import { RESPONSE_CAP_DOWNLOAD_ARTIFACT } from './response-caps.js';
 
 // ── Types ─────────────────────────────────────────────────────────────
 export type DownloadArtifact =
@@ -86,6 +93,9 @@ export class DownloadUrl {
   private async resolveHttp(url: string): Promise<DownloadArtifact> {
     const visited = new Set<string>();
     let currentUrl = url;
+    // Single dispatcher reused across hops — each new socket re-runs the
+    // SSRF lookup, so per-hop revalidation is automatic.
+    const dispatcher = createSsrfSafeDispatcher();
 
     for (let hop = 0; hop <= MAX_REDIRECTS; hop++) {
       if (visited.has(currentUrl)) {
@@ -93,7 +103,7 @@ export class DownloadUrl {
       }
       visited.add(currentUrl);
 
-      const response = await fetchDownload(currentUrl);
+      const response = await fetchDownload(currentUrl, dispatcher);
 
       // Handle redirects
       if (response.status >= 300 && response.status < 400) {
@@ -106,6 +116,7 @@ export class DownloadUrl {
       }
 
       if (!response.ok) {
+        await response.body?.cancel().catch(() => { /* best-effort */ });
         throw new Error(`Download failed: HTTP ${response.status}`);
       }
 
@@ -118,13 +129,20 @@ export class DownloadUrl {
 
 // ── HTTP helpers ──────────────────────────────────────────────────────
 
-async function fetchDownload(url: string): Promise<Response> {
+async function fetchDownload(url: string, dispatcher: unknown): Promise<Response> {
   try {
+    // Per-hop SSRF preflight — each redirect gets independently validated
+    // before the socket is opened. The dispatcher then re-validates at socket
+    // time (DNS rebinding defense).
+    const target = new URL(url);
+    await resolveAndValidate(target.hostname);
     return await fetch(url, {
       redirect: 'manual',
       signal: AbortSignal.timeout(HTTP_DOWNLOAD_TIMEOUT_MS),
-    });
+      dispatcher,
+    } as RequestInit & { dispatcher: unknown });
   } catch (error: unknown) {
+    if (error instanceof SsrfRefusedError) throw error;
     throw sanitizeNetworkError(error);
   }
 }
@@ -161,7 +179,7 @@ function handleRedirect(response: Response, currentUrl: string): RedirectResult 
 }
 
 async function processResponseBody(response: Response): Promise<DownloadArtifact> {
-  const buffer = Buffer.from(await response.arrayBuffer());
+  const buffer = await readBodyWithCap(response, RESPONSE_CAP_DOWNLOAD_ARTIFACT);
 
   if (buffer.length === 0) {
     throw new Error('Download failed: server returned empty response');

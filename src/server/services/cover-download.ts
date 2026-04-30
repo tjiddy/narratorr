@@ -14,7 +14,8 @@ import { sanitizeLogUrl } from '../utils/sanitize-log-url.js';
 import {
   createSsrfSafeDispatcher,
   resolveAndValidate,
-} from '../utils/blocked-fetch-address.js';
+} from '../../core/utils/blocked-fetch-address.js';
+import { readBodyWithCap } from '../../core/utils/read-body-with-cap.js';
 
 const MAX_REDIRECTS = 5;
 
@@ -101,45 +102,6 @@ async function followWithRevalidation(startUrl: string, dispatcher: unknown): Pr
 }
 
 /**
- * Read response body with a streamed size cap. Aborts and throws if the body
- * exceeds MAX_COVER_SIZE — even when the server lies about Content-Length.
- */
-async function readBodyWithCap(response: Response): Promise<Buffer> {
-  const contentLength = response.headers.get('content-length');
-  if (contentLength !== null) {
-    const declared = Number.parseInt(contentLength, 10);
-    if (Number.isFinite(declared) && declared > MAX_COVER_SIZE) {
-      // Drain so the connection can be reused/released
-      await response.body?.cancel().catch(() => { /* best-effort */ });
-      throw new Error(`Content-Length ${declared} exceeds MAX_COVER_SIZE ${MAX_COVER_SIZE}`);
-    }
-  }
-
-  if (!response.body) {
-    return Buffer.alloc(0);
-  }
-
-  const reader = response.body.getReader();
-  const chunks: Uint8Array[] = [];
-  let total = 0;
-
-  for (;;) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    if (value) {
-      total += value.byteLength;
-      if (total > MAX_COVER_SIZE) {
-        await reader.cancel().catch(() => { /* best-effort */ });
-        throw new Error(`Streamed body exceeded MAX_COVER_SIZE ${MAX_COVER_SIZE}`);
-      }
-      chunks.push(value);
-    }
-  }
-
-  return Buffer.concat(chunks);
-}
-
-/**
  * Download a remote cover image and save it locally using the existing
  * cover contract: `{bookPath}/cover.{ext}` + coverUrl → `/api/books/{id}/cover`.
  *
@@ -182,7 +144,7 @@ export async function downloadRemoteCover(
       return false;
     }
 
-    const buffer = await readBodyWithCap(response);
+    const buffer = await readBodyWithCap(response, MAX_COVER_SIZE);
     const ext = contentTypeToExt(contentType);
     const finalPath = join(bookPath, `cover.${ext}`);
     const tempPath = join(bookPath, `.cover-download-${randomUUID()}.tmp`);
