@@ -48,6 +48,7 @@ import {
   recordImportFailedEvent,
   handleImportFailure,
   isContentFailure,
+  cleanupOldBookPath,
 } from './import-steps.js';
 
 function createMockLog(): FastifyBaseLogger {
@@ -448,6 +449,88 @@ describe('recordImportEvent', () => {
       downloadId: 10, bookPath: null, targetPath: '/lib/book', fileCount: 1, totalSize: 100, log,
     });
     expect(catchFn).toHaveBeenCalledWith(expect.any(Function));
+  });
+});
+
+// ── cleanupOldBookPath ──────────────────────────────────────────────────
+
+describe('cleanupOldBookPath', () => {
+  it('rm()s and logs info on the in-library happy path', async () => {
+    const log = createMockLog();
+    await cleanupOldBookPath({
+      bookPath: '/library/Author/OldTitle',
+      targetPath: '/library/Author/NewTitle',
+      libraryRoot: '/library',
+      log,
+    });
+    expect(rm).toHaveBeenCalledWith('/library/Author/OldTitle', { recursive: true, force: true });
+    expect(log.info).toHaveBeenCalledWith(
+      expect.objectContaining({ oldPath: '/library/Author/OldTitle', newPath: '/library/Author/NewTitle' }),
+      expect.stringMatching(/Deleted old book files/i),
+    );
+  });
+
+  it('skips rm() and logs error-level when bookPath is outside libraryRoot', async () => {
+    const log = createMockLog();
+    await cleanupOldBookPath({
+      bookPath: '/tmp/external',
+      targetPath: '/library/Author/NewTitle',
+      libraryRoot: '/library',
+      log,
+    });
+    expect(rm).not.toHaveBeenCalled();
+    expect(log.error).toHaveBeenCalledWith(
+      expect.objectContaining({ bookPath: '/tmp/external', libraryRoot: '/library' }),
+      expect.stringMatching(/outside library root/i),
+    );
+  });
+
+  it('does not throw on PathOutsideLibraryError — upgrade flow continues', async () => {
+    const log = createMockLog();
+    await expect(cleanupOldBookPath({
+      bookPath: '/tmp/external',
+      targetPath: '/library/Author/NewTitle',
+      libraryRoot: '/library',
+      log,
+    })).resolves.toBeUndefined();
+  });
+
+  it('skips rm() when bookPath is null', async () => {
+    const log = createMockLog();
+    await cleanupOldBookPath({
+      bookPath: null,
+      targetPath: '/library/Author/NewTitle',
+      libraryRoot: '/library',
+      log,
+    });
+    expect(rm).not.toHaveBeenCalled();
+  });
+
+  it('skips rm() when targetPath equals bookPath', async () => {
+    const log = createMockLog();
+    await cleanupOldBookPath({
+      bookPath: '/library/Author/Title',
+      targetPath: '/library/Author/Title',
+      libraryRoot: '/library',
+      log,
+    });
+    expect(rm).not.toHaveBeenCalled();
+  });
+
+  it('swallows generic rm errors as warn (preserves existing nonfatal contract)', async () => {
+    const log = createMockLog();
+    vi.mocked(rm).mockRejectedValueOnce(Object.assign(new Error('ENOENT'), { code: 'ENOENT' }));
+    await cleanupOldBookPath({
+      bookPath: '/library/Author/OldTitle',
+      targetPath: '/library/Author/NewTitle',
+      libraryRoot: '/library',
+      log,
+    });
+    expect(log.warn).toHaveBeenCalledWith(
+      expect.objectContaining({ oldPath: '/library/Author/OldTitle' }),
+      expect.stringMatching(/Failed to delete old book files/i),
+    );
+    expect(log.error).not.toHaveBeenCalled();
   });
 });
 

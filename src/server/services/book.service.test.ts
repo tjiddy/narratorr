@@ -14,7 +14,8 @@ vi.mock('drizzle-orm', async () => {
   };
 });
 
-import { BookService, CoverUploadError, BookPathOutsideLibraryError } from './book.service.js';
+import { BookService, CoverUploadError } from './book.service.js';
+import { PathOutsideLibraryError } from '../utils/paths.js';
 import { eq, inArray } from 'drizzle-orm';
 import { authors, books, bookAuthors, bookNarrators } from '../../db/schema.js';
 import type { FastifyBaseLogger } from 'fastify';
@@ -790,43 +791,43 @@ describe('BookService', () => {
       expect(readdir).toHaveBeenCalled();
     });
 
-    it('throws BookPathOutsideLibraryError when bookPath is outside libraryRoot', async () => {
+    it('throws PathOutsideLibraryError when bookPath is outside libraryRoot', async () => {
       await expect(
         service.deleteBookFiles('/tmp/external', '/library'),
-      ).rejects.toBeInstanceOf(BookPathOutsideLibraryError);
+      ).rejects.toBeInstanceOf(PathOutsideLibraryError);
 
       expect(rm).not.toHaveBeenCalled();
       expect(readdir).not.toHaveBeenCalled();
     });
 
-    it('throws BookPathOutsideLibraryError when bookPath equals libraryRoot', async () => {
+    it('throws PathOutsideLibraryError when bookPath equals libraryRoot', async () => {
       await expect(
         service.deleteBookFiles('/library', '/library'),
-      ).rejects.toBeInstanceOf(BookPathOutsideLibraryError);
+      ).rejects.toBeInstanceOf(PathOutsideLibraryError);
 
       expect(rm).not.toHaveBeenCalled();
     });
 
-    it('throws BookPathOutsideLibraryError when bookPath equals libraryRoot with trailing slash', async () => {
+    it('throws PathOutsideLibraryError when bookPath equals libraryRoot with trailing slash', async () => {
       await expect(
         service.deleteBookFiles('/library/', '/library'),
-      ).rejects.toBeInstanceOf(BookPathOutsideLibraryError);
+      ).rejects.toBeInstanceOf(PathOutsideLibraryError);
 
       expect(rm).not.toHaveBeenCalled();
     });
 
-    it('throws BookPathOutsideLibraryError on double-dot escape', async () => {
+    it('throws PathOutsideLibraryError on double-dot escape', async () => {
       await expect(
         service.deleteBookFiles('/library/../etc/passwd', '/library'),
-      ).rejects.toBeInstanceOf(BookPathOutsideLibraryError);
+      ).rejects.toBeInstanceOf(PathOutsideLibraryError);
 
       expect(rm).not.toHaveBeenCalled();
     });
 
-    it('throws BookPathOutsideLibraryError for sibling-prefix attack (/library2)', async () => {
+    it('throws PathOutsideLibraryError for sibling-prefix attack (/library2)', async () => {
       await expect(
         service.deleteBookFiles('/library2/Author/Title', '/library'),
-      ).rejects.toBeInstanceOf(BookPathOutsideLibraryError);
+      ).rejects.toBeInstanceOf(PathOutsideLibraryError);
 
       expect(rm).not.toHaveBeenCalled();
     });
@@ -841,11 +842,11 @@ describe('BookService', () => {
         caught = err;
       }
 
-      expect(caught).toBeInstanceOf(BookPathOutsideLibraryError);
-      expect((caught as BookPathOutsideLibraryError).name).toBe('BookPathOutsideLibraryError');
-      expect((caught as BookPathOutsideLibraryError).code).toBe('PATH_OUTSIDE_LIBRARY');
-      expect((caught as BookPathOutsideLibraryError).bookPath).toBe('/tmp/external');
-      expect((caught as BookPathOutsideLibraryError).libraryRoot).toBe('/library');
+      expect(caught).toBeInstanceOf(PathOutsideLibraryError);
+      expect((caught as PathOutsideLibraryError).name).toBe('PathOutsideLibraryError');
+      expect((caught as PathOutsideLibraryError).code).toBe('PATH_OUTSIDE_LIBRARY');
+      expect((caught as PathOutsideLibraryError).bookPath).toBe('/tmp/external');
+      expect((caught as PathOutsideLibraryError).libraryRoot).toBe('/library');
       expect(log.warn).toHaveBeenCalled();
     });
   });

@@ -2,7 +2,8 @@ import { eq } from 'drizzle-orm';
 import type { FastifyBaseLogger } from 'fastify';
 import type { Db } from '../../db/index.js';
 import { books } from '../../db/schema.js';
-import { BookPathOutsideLibraryError, type BookService } from './book.service.js';
+import type { BookService } from './book.service.js';
+import { PathOutsideLibraryError } from '../utils/paths.js';
 import type { BlacklistService } from './blacklist.service.js';
 import type { SettingsService } from './settings.service.js';
 import type { EventHistoryService } from './event-history.service.js';
@@ -84,7 +85,7 @@ export class BookRejectionService {
         const librarySettings = await this.settingsService.get('library');
         await this.bookService.deleteBookFiles(book.path, librarySettings.path);
       } catch (error: unknown) {
-        if (error instanceof BookPathOutsideLibraryError) throw error;
+        if (error instanceof PathOutsideLibraryError) throw error;
         this.log.warn({ bookId, path: book.path, error: serializeError(error) }, 'Wrong release: failed to delete book files (continuing)');
       }
     }

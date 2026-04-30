@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import type { FastifyBaseLogger } from 'fastify';
 import type { Dirent } from 'node:fs';
 import { basename } from 'node:path';
-import { renameFilesWithTemplate } from './paths.js';
+import { renameFilesWithTemplate, assertPathInsideLibrary, PathOutsideLibraryError } from './paths.js';
 import type { RenameableBook } from './paths.js';
 
 vi.mock('node:fs/promises', async () => ({
@@ -31,6 +31,48 @@ const book: RenameableBook = {
   narrators: [{ name: 'Jane Narrator' }],
   publishedDate: '2024-01-15',
 };
+
+describe('assertPathInsideLibrary', () => {
+  it('returns void for in-library descendant path', () => {
+    expect(() => assertPathInsideLibrary('/library/Author/Title', '/library')).not.toThrow();
+  });
+
+  it('throws PathOutsideLibraryError for path outside library', () => {
+    expect(() => assertPathInsideLibrary('/tmp/external', '/library')).toThrow(PathOutsideLibraryError);
+  });
+
+  it('throws when bookPath equals libraryRoot', () => {
+    expect(() => assertPathInsideLibrary('/library', '/library')).toThrow(PathOutsideLibraryError);
+  });
+
+  it('throws when bookPath equals libraryRoot with trailing slash', () => {
+    expect(() => assertPathInsideLibrary('/library/', '/library')).toThrow(PathOutsideLibraryError);
+  });
+
+  it('throws on `..` escape', () => {
+    expect(() => assertPathInsideLibrary('/library/../etc/passwd', '/library')).toThrow(PathOutsideLibraryError);
+  });
+
+  it('throws on sibling-prefix attack (/library2 vs /library)', () => {
+    expect(() => assertPathInsideLibrary('/library2/Author/Title', '/library')).toThrow(PathOutsideLibraryError);
+  });
+
+  it('attaches stable name, code, and properties to the error', () => {
+    let caught: unknown;
+    try {
+      assertPathInsideLibrary('/tmp/external', '/library');
+    } catch (err) {
+      caught = err;
+    }
+    expect(caught).toBeInstanceOf(Error);
+    expect(caught).toBeInstanceOf(PathOutsideLibraryError);
+    expect((caught as PathOutsideLibraryError).name).toBe('PathOutsideLibraryError');
+    expect((caught as PathOutsideLibraryError).code).toBe('PATH_OUTSIDE_LIBRARY');
+    expect((caught as PathOutsideLibraryError).bookPath).toBe('/tmp/external');
+    expect((caught as PathOutsideLibraryError).libraryRoot).toBe('/library');
+    expect((caught as PathOutsideLibraryError).message).toBe('Path "/tmp/external" is not inside library root "/library"');
+  });
+});
 
 describe('renameFilesWithTemplate', () => {
   let log: FastifyBaseLogger;

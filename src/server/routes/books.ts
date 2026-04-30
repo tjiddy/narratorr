@@ -3,7 +3,7 @@ import { cleanCoverCache } from '../utils/cover-cache.js';
 import { snapshotBookForEvent } from '../utils/event-helpers.js';
 import { config } from '../config.js';
 import type { BookService, BookListService, DownloadService, SettingsService, RenameService, EventHistoryService, TaggingService, IndexerService } from '../services/index.js';
-import { BookPathOutsideLibraryError } from '../services/book.service.js';
+import { PathOutsideLibraryError } from '../utils/paths.js';
 import type { DownloadOrchestrator } from '../services/download-orchestrator.js';
 import type { MergeService } from '../services/merge.service.js';
 import type { BookRejectionService } from '../services/book-rejection.service.js';
@@ -71,7 +71,7 @@ app.delete<{ Params: IdParam; Querystring: DeleteBookQuery }>(
           const librarySettings = await deps.settingsService.get('library');
           await deps.bookService.deleteBookFiles(book.path, librarySettings.path);
         } catch (error: unknown) {
-          if (error instanceof BookPathOutsideLibraryError) {
+          if (error instanceof PathOutsideLibraryError) {
             request.log.warn({ bookId: id, error: serializeError(error) }, 'Refused book file deletion: path outside library root');
             return reply.status(400).send({ error: error.message });
           }
