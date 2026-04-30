@@ -118,6 +118,44 @@ describe('useFetchCategories', () => {
       expect(result.current.fetching).toBe(false);
     });
 
+    // #844 — id forwarding for sentinel resolution
+    it('forwards clientId as id when editing an existing client (isDirty=true)', async () => {
+      (downloadClientsApi.getClientCategoriesFromConfig as ReturnType<typeof vi.fn>).mockResolvedValue({
+        categories: ['audiobooks'],
+      });
+
+      const { result } = renderHook(
+        (props) => useFetchCategories(props),
+        { initialProps: makeOptions({ clientId: 7, isDirty: true }) },
+      );
+
+      await act(async () => {
+        await result.current.fetchCategories();
+      });
+
+      expect(downloadClientsApi.getClientCategoriesFromConfig).toHaveBeenCalledWith(
+        expect.objectContaining({ id: 7 }),
+      );
+    });
+
+    it('omits id on the create-mode path (no clientId)', async () => {
+      (downloadClientsApi.getClientCategoriesFromConfig as ReturnType<typeof vi.fn>).mockResolvedValue({
+        categories: ['audiobooks'],
+      });
+
+      const { result } = renderHook(
+        (props) => useFetchCategories(props),
+        { initialProps: makeOptions() },
+      );
+
+      await act(async () => {
+        await result.current.fetchCategories();
+      });
+
+      const call = (downloadClientsApi.getClientCategoriesFromConfig as ReturnType<typeof vi.fn>).mock.calls[0][0];
+      expect(call).not.toHaveProperty('id');
+    });
+
     it('clears previously fetched categories when selectedType changes', async () => {
       (downloadClientsApi.getClientCategories as ReturnType<typeof vi.fn>).mockResolvedValue({
         categories: ['tv', 'movies', 'audiobooks'],

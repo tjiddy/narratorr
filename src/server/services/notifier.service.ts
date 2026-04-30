@@ -10,7 +10,7 @@ import {
 } from '../../core/index.js';
 import { getErrorMessage } from '../utils/error-message.js';
 import type { NotifierSettings } from '../../shared/schemas/notifier.js';
-import { encryptFields, decryptFields, resolveSentinelFields, getKey } from '../utils/secret-codec.js';
+import { encryptFields, decryptFields, resolveSentinelFields, getKey, getSecretFieldNames } from '../utils/secret-codec.js';
 import { serializeError } from '../utils/serialize-error.js';
 
 
@@ -58,7 +58,7 @@ export class NotifierService {
       const existing = await this.db.select().from(notifiers).where(eq(notifiers.id, id)).limit(1);
       // Resolve sentinels against RAW (encrypted) existing settings — encryptFields
       // skips $ENC$-prefixed values, so unchanged secrets retain their stored bytes.
-      resolveSentinelFields(settings, (existing[0]?.settings ?? {}) as Record<string, unknown>);
+      resolveSentinelFields(settings, (existing[0]?.settings ?? {}) as Record<string, unknown>, getSecretFieldNames('notifier'));
       toUpdate.settings = encryptFields('notifier', settings, getKey());
     }
     const result = await this.db
@@ -148,7 +148,7 @@ export class NotifierService {
           return { success: false, message: 'Notifier not found' };
         }
         resolvedSettings = { ...data.settings };
-        resolveSentinelFields(resolvedSettings, (existing.settings ?? {}) as Record<string, unknown>);
+        resolveSentinelFields(resolvedSettings, (existing.settings ?? {}) as Record<string, unknown>, getSecretFieldNames('notifier'));
       }
 
       const fakeRow = {

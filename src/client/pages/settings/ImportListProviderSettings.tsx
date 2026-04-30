@@ -6,9 +6,12 @@ import { compactInputClass as inputClass, btnSecondary } from '@/components/sett
 interface SettingsProps {
   settings: Record<string, unknown>;
   onChange: (settings: Record<string, unknown>) => void;
+  /** id of the import list being edited, if any — forwarded so the route can
+   *  resolve a masked apiKey against the persisted record. */
+  editingId?: number;
 }
 
-function AbsSettings({ settings, onChange }: SettingsProps) {
+function AbsSettings({ settings, onChange, editingId }: SettingsProps) {
   const [libraries, setLibraries] = useState<Array<{ id: string; name: string }>>([]);
   const [fetchError, setFetchError] = useState('');
   const [fetching, setFetching] = useState(false);
@@ -23,7 +26,11 @@ function AbsSettings({ settings, onChange }: SettingsProps) {
     setFetching(true);
     setFetchError('');
     try {
-      const result = await api.fetchAbsLibraries({ serverUrl, apiKey });
+      const result = await api.fetchAbsLibraries({
+        serverUrl,
+        apiKey,
+        ...(editingId !== undefined ? { id: editingId } : {}),
+      });
       setLibraries(result.libraries);
       if (result.libraries.length === 0) setFetchError('No libraries found');
     } catch {
@@ -181,13 +188,15 @@ export function ProviderSettings({
   type,
   settings,
   onChange,
+  editingId,
 }: {
   type: string;
   settings: Record<string, unknown>;
   onChange: (settings: Record<string, unknown>) => void;
+  editingId?: number;
 }) {
   switch (type) {
-    case 'abs': return <AbsSettings settings={settings} onChange={onChange} />;
+    case 'abs': return <AbsSettings settings={settings} onChange={onChange} editingId={editingId} />;
     case 'nyt': return <NytSettings settings={settings} onChange={onChange} />;
     case 'hardcover': return <HardcoverSettings settings={settings} onChange={onChange} />;
     default: return null;

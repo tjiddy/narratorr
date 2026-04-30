@@ -82,17 +82,34 @@ export function isSentinel(value: string): boolean {
 
 // ─── Sentinel Passthrough ────────────────────────────────────────────────────
 
+/** Thrown by `resolveSentinelFields` when a sentinel appears on a key that
+ *  is not in the entity's secret-field allowlist. Callers (services or route
+ *  preflight) translate this into HTTP 400. */
+export class SentinelOnNonSecretFieldError extends Error {
+  constructor(public readonly field: string) {
+    super(`Sentinel value is not allowed on non-secret field: ${field}`);
+    this.name = 'SentinelOnNonSecretFieldError';
+  }
+}
+
 /**
  * Replace sentinel values ('********') in `incoming` with the corresponding
- * values from `existing`. Non-sentinel values pass through unchanged.
- * Mutates and returns `incoming`.
+ * values from `existing`, scoped to the given secret-field allowlist. A
+ * sentinel on any key NOT in `allowlist` throws `SentinelOnNonSecretFieldError`
+ * — callers must handle or surface that as HTTP 400. Non-sentinel values pass
+ * through unchanged. Mutates and returns `incoming`.
  */
 export function resolveSentinelFields(
   incoming: Record<string, unknown>,
   existing: Record<string, unknown> | null | undefined,
+  allowlist: readonly string[],
 ): Record<string, unknown> {
+  const allowed = new Set(allowlist);
   for (const [key, value] of Object.entries(incoming)) {
     if (typeof value === 'string' && isSentinel(value)) {
+      if (!allowed.has(key)) {
+        throw new SentinelOnNonSecretFieldError(key);
+      }
       incoming[key] = existing?.[key];
     }
   }

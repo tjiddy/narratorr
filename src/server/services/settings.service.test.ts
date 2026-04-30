@@ -182,6 +182,19 @@ describe('SettingsService', () => {
       const storedValue = chain.values.mock.calls[0][0].value;
       expect(storedValue.proxyUrl).toBe(existingEncrypted);
     });
+
+    // #844 — entity-aware allowlist on resolveSentinelFields. The only field
+    // in the network allowlist is proxyUrl; any other sentinel must throw.
+    it('set("network") rejects sentinel on non-secret key rather than substituting it', async () => {
+      // Existing record happens to have a value at the bogus key — still must
+      // throw, never silently substitute.
+      db.select.mockReturnValue(mockDbChain([{ key: 'network', value: { proxyUrl: 'real', stranger: 'persisted' } }]));
+      db.insert.mockReturnValue(mockDbChain());
+
+      await expect(
+        service.set('network', { proxyUrl: 'real', stranger: '********' } as never),
+      ).rejects.toThrow(/non-secret field: stranger/);
+    });
   });
 
   describe('update deep-merge', () => {

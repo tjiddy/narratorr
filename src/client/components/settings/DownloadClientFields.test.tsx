@@ -233,8 +233,10 @@ describe('DownloadClientFields', () => {
 
       await waitFor(() => {
         const payload = (downloadClientsApi.getClientCategoriesFromConfig as ReturnType<typeof vi.fn>).mock.calls[0][0];
-        // Verify exact top-level keys — no extra fields leak into the payload
-        expect(Object.keys(payload).sort()).toEqual(['enabled', 'name', 'priority', 'settings', 'type']);
+        // Verify exact top-level keys — `id` is forwarded in edit mode (#844)
+        // so the route can resolve masked secrets against the persisted client.
+        expect(Object.keys(payload).sort()).toEqual(['enabled', 'id', 'name', 'priority', 'settings', 'type']);
+        expect(payload.id).toBe(1);
         expect(payload.name).toBe('Test');
         expect(payload.type).toBe('qbittorrent');
         expect(payload.enabled).toBe(true);

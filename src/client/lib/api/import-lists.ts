@@ -54,12 +54,12 @@ export const importListsApi = {
       method: 'POST',
       body: JSON.stringify(data),
     }),
-  previewImportList: (data: ImportListInput) =>
+  previewImportList: (data: ImportListInput & { id?: number }) =>
     fetchApi<ImportListPreview>('/import-lists/preview', {
       method: 'POST',
       body: JSON.stringify(data),
     }),
-  fetchAbsLibraries: (data: { serverUrl: string; apiKey: string }) =>
+  fetchAbsLibraries: (data: { serverUrl: string; apiKey: string; id?: number }) =>
     fetchApi<{ libraries: AbsLibrary[] }>('/import-lists/abs/libraries', {
       method: 'POST',
       body: JSON.stringify(data),

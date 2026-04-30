@@ -5,7 +5,7 @@ import { importLists, books, bookEvents, bookAuthors } from '../../db/schema.js'
 import { IMPORT_LIST_ADAPTER_FACTORIES } from '../../core/import-lists/index.js';
 import type { ImportListItem } from '../../core/import-lists/index.js';
 import type { MetadataService } from './metadata.service.js';
-import { encryptFields, decryptFields, resolveSentinelFields, getKey } from '../utils/secret-codec.js';
+import { encryptFields, decryptFields, resolveSentinelFields, getKey, getSecretFieldNames } from '../utils/secret-codec.js';
 import { getErrorMessage } from '../utils/error-message.js';
 import { findOrCreateAuthor } from '../utils/find-or-create-person.js';
 import type { ImportListType } from '../../shared/import-list-registry.js';
@@ -73,7 +73,7 @@ export class ImportListService {
     if (toUpdate.settings) {
       const settings = { ...(toUpdate.settings as Record<string, unknown>) };
       const existing = await this.db.select().from(importLists).where(eq(importLists.id, id)).limit(1);
-      resolveSentinelFields(settings, (existing[0]?.settings ?? {}) as Record<string, unknown>);
+      resolveSentinelFields(settings, (existing[0]?.settings ?? {}) as Record<string, unknown>, getSecretFieldNames('importList'));
       toUpdate.settings = encryptFields('importList', settings, getKey());
     }
     const result = await this.db
@@ -107,7 +107,7 @@ export class ImportListService {
           return { success: false, message: 'Import list not found' };
         }
         resolvedSettings = { ...data.settings };
-        resolveSentinelFields(resolvedSettings, (existing.settings ?? {}) as Record<string, unknown>);
+        resolveSentinelFields(resolvedSettings, (existing.settings ?? {}) as Record<string, unknown>, getSecretFieldNames('importList'));
       }
 
       const parsed = parseSettingsForType(data.type, resolvedSettings);

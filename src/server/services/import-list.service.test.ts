@@ -362,6 +362,25 @@ describe('ImportListService', () => {
       );
     });
 
+    // #844 — entity-aware allowlist on resolveSentinelFields
+    it('update rejects sentinel on a non-secret field rather than silently substituting it', async () => {
+      const db = createMockDb();
+      const existingRow = {
+        id: 1, name: 'Test', type: 'abs', enabled: true,
+        settings: { serverUrl: 'http://persisted.local', apiKey: 'real', libraryId: 'lib-1' },
+      };
+      db.select.mockReturnValue(mockDbChain([existingRow]));
+      db.update.mockReturnValue(mockDbChain([existingRow]));
+      service = new ImportListService(inject<Db>(db), mockLog);
+
+      // serverUrl is NOT in the importList secret allowlist — must throw.
+      await expect(
+        service.update(1, {
+          settings: { serverUrl: '********', apiKey: 'still-real', libraryId: 'lib-1' },
+        }),
+      ).rejects.toThrow(/non-secret field: serverUrl/);
+    });
+
     it('delete removes row from DB', async () => {
       const db = createMockDb();
       db.select.mockReturnValue(mockDbChain([{ id: 1, name: 'Test', type: 'abs', settings: {}, enabled: true }]));

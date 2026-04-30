@@ -3,6 +3,8 @@ import { type z } from 'zod';
 import { type DownloadClientService } from '../services';
 import { createDownloadClientSchema, updateDownloadClientSchema, idParamSchema, type CreateDownloadClientInput } from '../../shared/schemas.js';
 import { registerCrudRoutes } from './crud-routes.js';
+import { makeTestSchema } from '../utils/secret-codec.js';
+import { resolveSentinelSettings } from '../utils/sentinel-resolver.js';
 
 type IdParam = z.infer<typeof idParamSchema>;
 
@@ -20,14 +22,30 @@ export async function downloadClientsRoutes(
   });
 
   // POST /api/download-clients/categories — fetch categories from unsaved config
-  app.post<{ Body: CreateDownloadClientInput }>(
+  // Sentinel-aware: edit-mode forms send masked secrets + id so the route can
+  // resolve against the persisted record before dispatching to the adapter.
+  const categoriesSchema = makeTestSchema(createDownloadClientSchema, 'downloadClient');
+  app.post<{ Body: CreateDownloadClientInput & { id?: number } }>(
     '/api/download-clients/categories',
-    { schema: { body: createDownloadClientSchema } },
-    async (request) => {
+    { schema: { body: categoriesSchema } },
+    async (request, reply) => {
       const data = request.body;
+      const resolution = await resolveSentinelSettings({
+        entity: 'downloadClient',
+        incoming: { ...data.settings },
+        id: data.id,
+        loadExisting: async () => {
+          const row = await downloadClientService.getById(data.id!);
+          return row ? (row.settings as Record<string, unknown>) : null;
+        },
+        notFoundMessage: 'Download client not found',
+      });
+      if (!resolution.ok) {
+        return reply.status(resolution.status).send({ error: resolution.message });
+      }
       const result = await downloadClientService.getCategoriesFromConfig({
         type: data.type,
-        settings: data.settings,
+        settings: resolution.settings,
       });
       if (result.error) {
         request.log.warn({ type: data.type, error: result.error }, 'Category fetch from config failed');

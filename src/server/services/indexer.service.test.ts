@@ -126,6 +126,41 @@ describe('IndexerService', () => {
       expect(setArg.settings.flareSolverrUrl).toBe(encryptedFlareSolverrUrl);
     });
 
+    // #844 — entity-aware allowlist on resolveSentinelFields
+    it('rejects sentinel on a non-secret field rather than silently substituting it', async () => {
+      const existingRow = {
+        ...mockIndexer,
+        settings: { apiKey: 'real-key', hostname: 'persisted-host' },
+      };
+      db.select.mockReturnValue(mockDbChain([existingRow]));
+      db.update.mockReturnValue(mockDbChain([existingRow]));
+
+      // hostname is NOT in the indexer secret allowlist — must throw, not be
+      // silently overwritten with the persisted value.
+      await expect(
+        service.update(1, {
+          settings: { hostname: '********', apiKey: 'still-real' },
+        }),
+      ).rejects.toThrow(/non-secret field: hostname/);
+    });
+
+    it('testConfig surfaces a typed error for sentinel on a non-secret field', async () => {
+      const existingRow = {
+        ...mockIndexer,
+        settings: { hostname: 'persisted', apiKey: 'real-key' },
+      };
+      db.select.mockReturnValue(mockDbChain([existingRow]));
+
+      const result = await service.testConfig({
+        type: 'abb',
+        settings: { hostname: '********' },
+        id: 1,
+      });
+
+      expect(result.success).toBe(false);
+      expect(result.message).toMatch(/non-secret field: hostname/);
+    });
+
     it('encrypts a freshly-supplied apiUrl on create (#742)', async () => {
       const insertChain = mockDbChain([mockIndexer]);
       db.insert.mockReturnValue(insertChain);

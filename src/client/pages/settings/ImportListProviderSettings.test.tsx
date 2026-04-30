@@ -132,6 +132,47 @@ describe('ProviderSettings', () => {
       expect(screen.getByRole('option', { name: 'Podcasts' })).toHaveAttribute('value', 'lib-2');
     });
 
+    // #844 — id forwarding for sentinel resolution
+    it('forwards editingId to fetchAbsLibraries when editing an existing list', async () => {
+      (api.fetchAbsLibraries as Mock).mockResolvedValue({ libraries: [] });
+      const user = userEvent.setup();
+      render(
+        <ProviderSettings
+          type="abs"
+          settings={{ serverUrl: 'http://abs.local', apiKey: '********' }}
+          onChange={vi.fn()}
+          editingId={42}
+        />,
+      );
+
+      await user.click(screen.getByRole('button', { name: 'Fetch Libraries' }));
+
+      await waitFor(() => expect(api.fetchAbsLibraries).toHaveBeenCalled());
+      expect(api.fetchAbsLibraries).toHaveBeenCalledWith({
+        serverUrl: 'http://abs.local',
+        apiKey: '********',
+        id: 42,
+      });
+    });
+
+    it('omits id when not editing (editingId undefined)', async () => {
+      (api.fetchAbsLibraries as Mock).mockResolvedValue({ libraries: [] });
+      const user = userEvent.setup();
+      render(
+        <ProviderSettings
+          type="abs"
+          settings={{ serverUrl: 'http://abs.local', apiKey: 'k' }}
+          onChange={vi.fn()}
+        />,
+      );
+
+      await user.click(screen.getByRole('button', { name: 'Fetch Libraries' }));
+
+      await waitFor(() => expect(api.fetchAbsLibraries).toHaveBeenCalled());
+      const call = (api.fetchAbsLibraries as Mock).mock.calls[0][0];
+      expect(call).not.toHaveProperty('id');
+    });
+
     it('shows "No libraries found" when the fetch resolves with an empty libraries array', async () => {
       (api.fetchAbsLibraries as Mock).mockResolvedValue({ libraries: [] });
       const user = userEvent.setup();
