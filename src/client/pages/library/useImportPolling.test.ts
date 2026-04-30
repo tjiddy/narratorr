@@ -213,22 +213,27 @@ describe('useImportPolling', () => {
   });
 
   it('cleans up interval when no books are importing', () => {
+    vi.mocked(useSSEConnected).mockReturnValue(false);
     const importingBooks = [makeBook({ id: 1, status: 'importing' })];
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const invalidateSpy = vi.spyOn(queryClient, 'invalidateQueries');
 
     const { rerender } = renderHook(
       ({ books }) => useImportPolling(books),
       {
-        wrapper: createWrapper(),
+        wrapper: ({ children }) => createElement(QueryClientProvider, { client: queryClient }, children),
         initialProps: { books: importingBooks },
       },
     );
 
-    // No more importing
+    // No more importing — should clear the interval
     rerender({ books: [makeBook({ id: 1, status: 'imported' })] });
 
-    // Advancing time shouldn't cause issues (interval cleaned up)
+    // If cleanup failed, the 3s interval would fire during this advance
     act(() => {
       vi.advanceTimersByTime(10000);
     });
+
+    expect(invalidateSpy).not.toHaveBeenCalled();
   });
 });
