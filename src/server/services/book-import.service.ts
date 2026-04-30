@@ -48,7 +48,7 @@ export type EnqueueImportResult =
 // either depending on whether the conflict is detected via the named index or
 // the underlying column unique check (pattern from blacklist.service.test.ts).
 const ACTIVE_JOB_UNIQUE_VIOLATION =
-  /UNIQUE constraint failed.*(?:idx_import_jobs_book_active|import_jobs\.book_id|book_id)/;
+  /UNIQUE constraint failed.*(?:idx_import_jobs_book_active|import_jobs\.book_id)/;
 
 function isActiveJobUniqueViolation(error: unknown): boolean {
   if (!(error instanceof Error)) return false;

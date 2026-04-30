@@ -204,6 +204,21 @@ describe('BookImportService', () => {
       ).rejects.toThrow('disk I/O error');
     });
 
+    it('does NOT classify bare-column book_id violations from other tables as active-job conflicts', async () => {
+      // A UNIQUE violation surfaced from another table that happens to have a
+      // `book_id` column (e.g. book_authors, book_narrators, blacklist) must
+      // propagate as a 500-class error, not be swallowed as 409 active-job.
+      db.select.mockReturnValueOnce(mockDbChain([]));
+      const otherTableErr = Object.assign(new Error('libsql failure'), {
+        cause: { message: 'UNIQUE constraint failed: book_id' },
+      });
+      db.insert.mockReturnValueOnce(mockDbChain([], { error: otherTableErr }));
+
+      await expect(
+        service.enqueue({ bookId: 5, type: 'auto', metadata: '{}' }),
+      ).rejects.toThrow('libsql failure');
+    });
+
     it('wraps active-job pre-check + insert in db.transaction (TOCTOU guard, AC4) (F1)', async () => {
       // Independent of select/insert assertions — this test specifically
       // protects the transaction boundary. If a refactor removed

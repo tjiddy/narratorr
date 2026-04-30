@@ -183,7 +183,7 @@ describe('BookImportService — enqueue (#747 integration with real libsql)', ()
       .catch((e: unknown) => e);
     expect(indexError).toBeInstanceOf(Error);
     const cause = (indexError as Error & { cause?: { message?: string } }).cause;
-    expect(cause?.message).toMatch(/UNIQUE constraint failed.*(?:idx_import_jobs_book_active|import_jobs\.book_id|book_id)/);
+    expect(cause?.message).toMatch(/UNIQUE constraint failed.*(?:idx_import_jobs_book_active|import_jobs\.book_id)/);
 
     const activeRows = await db
       .select()
