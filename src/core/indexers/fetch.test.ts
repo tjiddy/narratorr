@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import { http, HttpResponse } from 'msw';
+import { ZodError } from 'zod';
 import { useMswServer } from '../__tests__/msw/server.js';
 import { getErrorMessage } from '../../shared/error-message.js';
 import { fetchWithProxy } from './fetch.js';
@@ -365,6 +366,27 @@ describe('fetchWithProxy', () => {
         await expect(
           fetchWithProxy({ url: TARGET_URL, proxyUrl: PROXY_URL }),
         ).rejects.toThrow(/^FlareSolverr returned unexpected response shape/);
+      });
+
+      it('attaches the original ZodError as cause on parse failure', async () => {
+        server.use(
+          http.post(`${PROXY_URL}/v1`, () => {
+            return HttpResponse.json({ status: 123 });
+          }),
+        );
+
+        let captured: unknown;
+        try {
+          await fetchWithProxy({ url: TARGET_URL, proxyUrl: PROXY_URL });
+        } catch (err) {
+          captured = err;
+        }
+
+        expect(captured).toBeInstanceOf(Error);
+        expect(getErrorMessage(captured)).toMatch(/^FlareSolverr returned unexpected response shape/);
+        const cause = (captured as Error).cause;
+        expect(cause).toBeInstanceOf(ZodError);
+        expect((cause as ZodError).issues.length).toBeGreaterThan(0);
       });
 
       it('passes through extra unknown fields without rejecting', async () => {
