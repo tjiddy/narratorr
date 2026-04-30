@@ -5,10 +5,23 @@
  * (POST {proxyUrl}/v1 with cmd: "request.get"). When absent, uses direct fetch.
  */
 
+import { z } from 'zod';
+
 import { mapNetworkError } from '../utils/map-network-error.js';
 
 import { INDEXER_TIMEOUT_MS, PROXY_TIMEOUT_MS } from '../utils/constants.js';
 import { normalizeBaseUrl } from '../../shared/normalize-base-url.js';
+
+const flareSolverrResponseSchema = z.object({
+  status: z.string(),
+  message: z.string().optional(),
+  solution: z.object({
+    response: z.string().optional(),
+    status: z.number().optional(),
+  }).passthrough().optional(),
+}).passthrough();
+
+type FlareSolverrResponse = z.infer<typeof flareSolverrResponseSchema>;
 
 export interface FetchWithProxyOptions {
   url: string;
@@ -16,15 +29,6 @@ export interface FetchWithProxyOptions {
   timeoutMs?: number;
   proxyUrl?: string;
   signal?: AbortSignal;
-}
-
-interface FlareSolverrResponse {
-  status: string;
-  message?: string;
-  solution?: {
-    response?: string;
-    status?: number;
-  };
 }
 
 /**
@@ -125,25 +129,38 @@ async function fetchViaProxy(
       throw new Error(`FlareSolverr proxy HTTP error ${response.status}`);
     }
 
-    let data: FlareSolverrResponse;
-    try {
-      data = await response.json() as FlareSolverrResponse;
-    } catch {
-      throw new Error('FlareSolverr returned invalid response (not JSON)');
-    }
-
-    if (data.status !== 'ok') {
-      throw new Error(
-        `FlareSolverr error: ${data.message || 'unknown error'}`,
-      );
-    }
-
-    if (!data.solution?.response) {
-      throw new Error('FlareSolverr returned empty response');
-    }
-
-    return data.solution.response;
+    return await parseFlareSolverrResponse(response);
   } finally {
     clearTimeout(timeoutId);
   }
+}
+
+async function parseFlareSolverrResponse(response: Response): Promise<string> {
+  let raw: unknown;
+  try {
+    raw = await response.json();
+  } catch {
+    throw new Error('FlareSolverr returned invalid response (not JSON)');
+  }
+
+  const parsed = flareSolverrResponseSchema.safeParse(raw);
+  if (!parsed.success) {
+    throw new Error(
+      `FlareSolverr returned unexpected response shape: ${parsed.error.issues[0]?.message ?? 'unknown'}`,
+      { cause: parsed.error },
+    );
+  }
+  const data: FlareSolverrResponse = parsed.data;
+
+  if (data.status !== 'ok') {
+    throw new Error(
+      `FlareSolverr error: ${data.message || 'unknown error'}`,
+    );
+  }
+
+  if (!data.solution?.response) {
+    throw new Error('FlareSolverr returned empty response');
+  }
+
+  return data.solution.response;
 }
