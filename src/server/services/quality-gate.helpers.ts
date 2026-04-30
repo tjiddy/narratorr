@@ -1,10 +1,9 @@
-import type { books } from '../../db/schema.js';
 import { resolveBookQualityInputs } from '../../core/utils/quality.js';
 import { tokenizeNarrators, normalizeNarrator } from '../../core/utils/similarity.js';
 import type { QualityDecisionReason } from './quality-gate.types.js';
 import { DURATION_TOLERANCE } from './quality-gate.types.js';
+import type { BookRow } from './types.js';
 
-type BookRow = typeof books.$inferSelect;
 type BookWithNarrators = BookRow & { narrators?: Array<{ name: string }> };
 
 interface ScanResult {

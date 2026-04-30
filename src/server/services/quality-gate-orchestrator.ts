@@ -8,8 +8,7 @@ import type { DownloadClientService } from './download-client.service.js';
 import type { RemotePathMappingService } from './remote-path-mapping.service.js';
 import { safeEmit } from '../utils/safe-emit.js';
 import type { DownloadStatus } from '../../shared/schemas/activity.js';
-import type { BookStatus, EnrichmentStatus } from '../../shared/schemas/book.js';
-import type { DownloadRow } from './types.js';
+import type { BookRow, DownloadRow } from './types.js';
 import type { QualityDecisionReason } from './quality-gate.types.js';
 import { NULL_REASON } from './quality-gate.types.js';
 import { books } from '../../db/schema.js';
@@ -30,14 +29,6 @@ import { serializeError } from '../utils/serialize-error.js';
 import { enqueueAutoImport } from '../utils/enqueue-auto-import.js';
 import type { BookImportService } from './book-import.service.js';
 import { WireOnce, ServiceWireError } from './wire-helpers.js';
-
-// Drizzle's $inferSelect widens enum columns to bare `string` (CLAUDE.md gotcha).
-// Re-narrow the status / enrichmentStatus columns so SSE event emitters can consume
-// `book.status` directly without re-asserting `as BookStatus`.
-type BookRow = Omit<typeof books.$inferSelect, 'status' | 'enrichmentStatus'> & {
-  status: BookStatus;
-  enrichmentStatus: EnrichmentStatus;
-};
 
 export interface QualityGateOrchestratorWireDeps {
   nudgeImportWorker: () => void;

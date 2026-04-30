@@ -7,22 +7,14 @@ import { DownloadUrl } from '../../core/utils/download-url.js';
 import type { DownloadArtifact } from '../../core/download-clients/types.js';
 import { getInProgressStatuses, getTerminalStatuses, getCompletedStatuses, isTerminalStatus, getReplaceableStatuses } from '../../shared/download-status-registry.js';
 import type { DownloadStatus } from '../../shared/schemas/activity.js';
-import type { BookStatus, EnrichmentStatus } from '../../shared/schemas/book.js';
 import { type DownloadClientService } from './download-client.service.js';
 import { sanitizeLogUrl } from '../utils/sanitize-log-url.js';
 import { type CreateEventInput } from './event-history.service.js';
 import { retrySearch, type RetrySearchDeps } from './retry-search.js';
 import { WireOnce } from './wire-helpers.js';
 
-import type { DownloadRow } from './types.js';
+import type { BookRow, DownloadRow } from './types.js';
 import { serializeError } from '../utils/serialize-error.js';
-
-
-// $inferSelect widens enum columns to bare `string` (CLAUDE.md gotcha) — re-narrow.
-type BookRow = Omit<typeof books.$inferSelect, 'status' | 'enrichmentStatus'> & {
-  status: BookStatus;
-  enrichmentStatus: EnrichmentStatus;
-};
 
 export interface DownloadWithBook extends DownloadRow {
   book?: BookRow;

@@ -8,12 +8,12 @@ import { collectSortedAudioFiles } from '../../core/utils/collect-audio-files.js
 import { DISC_FOLDER_PATTERN, parseTitledDiscFolder } from '../../core/utils/book-discovery.js';
 import type { NamingOptions } from '../../core/utils/naming.js';
 
-import type { books, authors } from '../../db/schema.js';
+import type { authors } from '../../db/schema.js';
 
 /** Minimum ratio of target/source file size for copy verification to pass. */
 export const COPY_VERIFICATION_THRESHOLD = 0.99;
 
-export type BookRow = typeof books.$inferSelect;
+export type { BookRow } from '../services/types.js';
 export type AuthorRow = typeof authors.$inferSelect;
 
 export interface ImportResult {

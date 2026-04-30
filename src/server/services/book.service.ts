@@ -11,11 +11,11 @@ import { slugify, findUnmatchedGenres } from '../../core/index.js';
 import { findOrCreateAuthor, findOrCreateNarrator } from '../utils/find-or-create-person.js';
 import { type MetadataService } from './metadata.service.js';
 import { serializeError } from '../utils/serialize-error.js';
+import type { BookRow } from './types.js';
 
 
 export { CoverUploadError } from './cover-upload.js';
 
-type BookRow = typeof books.$inferSelect;
 type NewBook = typeof books.$inferInsert;
 type AuthorRow = typeof authors.$inferSelect;
 type NarratorRow = typeof narrators.$inferSelect;
