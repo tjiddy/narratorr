@@ -433,14 +433,14 @@ describe('AuthService', () => {
       await expect(service.getSessionSecret()).rejects.toThrow('Auth settings not initialized');
     });
 
-    it('verifySessionCookie returns null and logs debug when signature length does not match expected', () => {
+    it('verifySessionCookie returns null, invokes timingSafeEqual, and logs generic mismatch for wrong-length signature', () => {
       // Build a cookie with a valid payload but a signature of wrong length
       const payloadB64 = Buffer.from(JSON.stringify({
         username: 'admin',
         issuedAt: Date.now(),
         expiresAt: Date.now() + 7 * 24 * 60 * 60 * 1000,
       })).toString('base64url');
-      // Real signature would be ~43 chars; use a short one to trigger length mismatch
+      // Real signature would be ~43 chars; use a short one that previously triggered length-leak short-circuit
       const shortSig = 'short';
       const cookie = `${payloadB64}.${shortSig}`;
 
@@ -453,9 +453,34 @@ describe('AuthService', () => {
       const result = logService.verifySessionCookie(cookie, secret);
 
       expect(result).toBeNull();
-      expect(log.debug).toHaveBeenCalledWith('Auth: cookie signature length mismatch');
-      // timingSafeEqual should NOT have been called (early return before it)
-      expect(timingSafeEqual).not.toHaveBeenCalled();
+      // Generic mismatch message — length-mismatch path is gone after #809
+      expect(log.debug).toHaveBeenCalledWith('Auth: cookie signature mismatch');
+      // timingSafeEqual MUST be called even for wrong-length sigs (no length leak)
+      expect(timingSafeEqual).toHaveBeenCalledTimes(1);
+      // Both args are SHA-256 digests (32 bytes)
+      const expectedSig = createHmac('sha256', secret).update(payloadB64).digest('base64url');
+      const expectedHash = createHash('sha256').update(expectedSig).digest();
+      const providedHash = createHash('sha256').update(shortSig).digest();
+      expect(timingSafeEqual).toHaveBeenCalledWith(providedHash, expectedHash);
+    });
+
+    it('verifySessionCookie still calls timingSafeEqual for both short and long bogus signatures (no length leak)', () => {
+      const payloadB64 = Buffer.from(JSON.stringify({
+        username: 'admin',
+        issuedAt: Date.now(),
+        expiresAt: Date.now() + 7 * 24 * 60 * 60 * 1000,
+      })).toString('base64url');
+
+      // Short bogus sig
+      vi.mocked(timingSafeEqual).mockClear();
+      expect(service.verifySessionCookie(`${payloadB64}.x`, secret)).toBeNull();
+      expect(timingSafeEqual).toHaveBeenCalledTimes(1);
+
+      // Long bogus sig
+      vi.mocked(timingSafeEqual).mockClear();
+      const longSig = 'a'.repeat(200);
+      expect(service.verifySessionCookie(`${payloadB64}.${longSig}`, secret)).toBeNull();
+      expect(timingSafeEqual).toHaveBeenCalledTimes(1);
     });
 
     it('sliding expiry: cookie >50% through TTL flagged for renewal', () => {
