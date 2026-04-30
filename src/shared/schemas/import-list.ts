@@ -9,10 +9,13 @@ export const importListTypeSchema = z.enum(IMPORT_LIST_TYPES);
 
 // ── Per-adapter settings schemas (strict — rejects unknown fields) ──────────
 
+const ABS_LIBRARY_ID_REGEX = /^[A-Za-z0-9_-]+$/;
+const ABS_LIBRARY_ID_MESSAGE = 'Library ID must contain only letters, numbers, underscores, and hyphens';
+
 export const absSettingsSchema = z.object({
   serverUrl: z.string().trim().min(1),
   apiKey: z.string().trim().min(1),
-  libraryId: z.string().trim().min(1),
+  libraryId: z.string().trim().min(1).regex(ABS_LIBRARY_ID_REGEX, ABS_LIBRARY_ID_MESSAGE),
 }).strict();
 
 export const nytSettingsSchema = z.object({
@@ -112,7 +115,7 @@ export const createImportListFormSchema = z.object({
     // ABS
     serverUrl: z.string().optional(),
     apiKey: z.string().optional(),
-    libraryId: z.string().optional(),
+    libraryId: z.string().regex(ABS_LIBRARY_ID_REGEX, ABS_LIBRARY_ID_MESSAGE).optional(),
     // NYT
     list: z.string().optional(),
     // Hardcover

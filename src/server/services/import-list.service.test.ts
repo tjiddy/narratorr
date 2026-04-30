@@ -214,6 +214,56 @@ describe('ImportListService', () => {
     });
   });
 
+  // #786 — ABS libraryId URL-path injection tightening
+  describe('ABS libraryId saved-row parsing (#786)', () => {
+    function makeAbsList(settings: Record<string, unknown>) {
+      return {
+        id: 1, name: 'My ABS', type: 'abs', enabled: true,
+        settings,
+        syncIntervalMinutes: 1440, lastRunAt: null, nextRunAt: new Date(Date.now() - 60_000),
+        lastSyncError: null, createdAt: new Date(),
+      };
+    }
+
+    it('test(id) rejects saved row with path-injection libraryId without invoking provider factory', async () => {
+      mockFactories.abs.mockClear();
+      const db = createMockDb();
+      db.select.mockReturnValue(mockDbChain([makeAbsList({ serverUrl: 'http://abs.local', apiKey: 'k', libraryId: 'lib/../x' })]));
+      service = new ImportListService(inject<Db>(db), mockLog);
+
+      const result = await service.test(1);
+      expect(result.success).toBe(false);
+      expect(result.message).toBeTruthy();
+      expect(mockFactories.abs).not.toHaveBeenCalled();
+    });
+
+    it('syncDueLists records lastSyncError when saved libraryId fails validation', async () => {
+      mockFactories.abs.mockClear();
+      const db = createMockDb();
+      db.select.mockReturnValue(mockDbChain([makeAbsList({ serverUrl: 'http://abs.local', apiKey: 'k', libraryId: 'lib/../x' })]));
+      const updateChain = mockDbChain([]);
+      db.update.mockReturnValue(updateChain);
+
+      service = new ImportListService(inject<Db>(db), mockLog);
+      await service.syncDueLists();
+
+      const setCall = updateChain.set.mock.calls[0]?.[0] as Record<string, unknown> | undefined;
+      expect(setCall?.lastSyncError).toBeTruthy();
+      expect(mockFactories.abs).not.toHaveBeenCalled();
+    });
+
+    it('preview rejects invalid ABS libraryId without invoking provider factory', async () => {
+      mockFactories.abs.mockClear();
+      const db = createMockDb();
+      service = new ImportListService(inject<Db>(db), mockLog);
+
+      await expect(
+        service.preview({ type: 'abs', settings: { serverUrl: 'http://abs.local', apiKey: 'k', libraryId: 'lib/../x' } }),
+      ).rejects.toThrow();
+      expect(mockFactories.abs).not.toHaveBeenCalled();
+    });
+  });
+
   describe('preview', () => {
     it('returns first 10 items capped with total count', async () => {
       const items = Array.from({ length: 15 }, (_, i) => ({ title: `Book ${i}` }));

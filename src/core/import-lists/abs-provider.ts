@@ -51,7 +51,7 @@ export class AbsProvider implements ImportListProvider {
   }
 
   async fetchItems(): Promise<ImportListItem[]> {
-    const url = `${this.serverUrl}/api/libraries/${this.libraryId}/items`;
+    const url = `${this.serverUrl}/api/libraries/${encodeURIComponent(this.libraryId)}/items`;
     const res = await fetch(url, {
       headers: { Authorization: `Bearer ${this.apiKey}` },
     });
