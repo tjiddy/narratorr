@@ -1,9 +1,21 @@
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach, type Mock } from 'vitest';
+vi.mock('node:dns/promises', () => ({
+  lookup: vi.fn(),
+}));
 import { NotifierService } from './notifier.service.js';
 import { mockDbChain, createMockDb, createMockLogger } from '../__tests__/helpers.js';
 import { initializeKey, _resetKey, encrypt, isEncrypted } from '../utils/secret-codec.js';
 
 import { createMockDbNotifier } from '../__tests__/factories.js';
+import { lookup as dnsLookup } from 'node:dns/promises';
+
+const mockedDnsLookup = vi.mocked(dnsLookup) as unknown as Mock;
+
+beforeEach(() => {
+  mockedDnsLookup.mockReset();
+  // Default DNS to a public IP so SSRF preflight passes for all tests.
+  mockedDnsLookup.mockResolvedValue([{ address: '93.184.216.34', family: 4 }]);
+});
 
 const TEST_KEY = Buffer.from('a'.repeat(64), 'hex');
 

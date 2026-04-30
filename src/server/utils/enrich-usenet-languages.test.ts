@@ -1,4 +1,7 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, type Mock } from 'vitest';
+vi.mock('node:dns/promises', () => ({
+  lookup: vi.fn(),
+}));
 import type { FastifyBaseLogger } from 'fastify';
 import type { SearchResult } from '../../core/indexers/types.js';
 import { enrichUsenetLanguages } from './enrich-usenet-languages.js';
@@ -8,7 +11,16 @@ vi.mock('../../core/utils/fetch-with-timeout.js', () => ({
 }));
 
 import { fetchWithTimeout } from '../../core/utils/fetch-with-timeout.js';
+import { lookup as dnsLookup } from 'node:dns/promises';
 const mockFetchWithTimeout = vi.mocked(fetchWithTimeout);
+
+const mockedDnsLookup = vi.mocked(dnsLookup) as unknown as Mock;
+
+beforeEach(() => {
+  mockedDnsLookup.mockReset();
+  // Default DNS to a public IP so SSRF preflight passes for all tests.
+  mockedDnsLookup.mockResolvedValue([{ address: '93.184.216.34', family: 4 }]);
+});
 
 function createMockLogger(): FastifyBaseLogger {
   return {
@@ -84,7 +96,7 @@ describe('enrichUsenetLanguages', () => {
 
       await enrichUsenetLanguages(results, logger);
 
-      expect(mockFetchWithTimeout).toHaveBeenCalledWith('http://nzb.test/1', {}, 5000);
+      expect(mockFetchWithTimeout).toHaveBeenCalledWith('http://nzb.test/1', expect.objectContaining({ maxBodyBytes: expect.any(Number) }), 5000);
       expect(results[0].nzbName).toBe('Stephen King-H?rbuch-Pack.part01.rar');
       expect(results[0].language).toBe('german');
     });
@@ -108,7 +120,7 @@ describe('enrichUsenetLanguages', () => {
 
       expect(results[0].language).toBe('french');
       expect(mockFetchWithTimeout).toHaveBeenCalledTimes(1);
-      expect(mockFetchWithTimeout).toHaveBeenCalledWith('http://nzb.test/1', {}, 5000);
+      expect(mockFetchWithTimeout).toHaveBeenCalledWith('http://nzb.test/1', expect.objectContaining({ maxBodyBytes: expect.any(Number) }), 5000);
     });
   });
 

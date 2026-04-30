@@ -1,16 +1,28 @@
-import { describe, it, expect, vi, beforeAll, afterAll, afterEach } from 'vitest';
+import { describe, it, expect, vi, beforeAll, afterAll, afterEach, beforeEach, type Mock } from 'vitest';
+vi.mock('node:dns/promises', () => ({
+  lookup: vi.fn(),
+}));
 import { setupServer } from 'msw/node';
 import { http, HttpResponse } from 'msw';
 import { NtfyNotifier } from './ntfy.js';
 import type { EventPayload } from './types.js';
 
 import * as fetchModule from '../utils/fetch-with-timeout.js';
+import { lookup as dnsLookup } from 'node:dns/promises';
+
+const mockedDnsLookup = vi.mocked(dnsLookup) as unknown as Mock;
 
 const server = setupServer();
 
 beforeAll(() => server.listen({ onUnhandledRequest: 'error' }));
 afterEach(() => server.resetHandlers());
 afterAll(() => server.close());
+
+beforeEach(() => {
+  mockedDnsLookup.mockReset();
+  // Default DNS to a public IP so SSRF preflight passes for all tests.
+  mockedDnsLookup.mockResolvedValue([{ address: '93.184.216.34', family: 4 }]);
+});
 
 describe('NtfyNotifier', () => {
   it('sends to default ntfy.sh server', async () => {

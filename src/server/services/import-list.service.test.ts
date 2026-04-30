@@ -1,4 +1,7 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, type Mock } from 'vitest';
+vi.mock('node:dns/promises', () => ({
+  lookup: vi.fn(),
+}));
 import type { FastifyBaseLogger } from 'fastify';
 import type { Db } from '../../db/index.js';
 import { ImportListService } from './import-list.service.js';
@@ -18,6 +21,16 @@ vi.mock('../../core/import-lists/index.js', () => ({
 
 const { IMPORT_LIST_ADAPTER_FACTORIES } = await import('../../core/import-lists/index.js');
 const mockFactories = IMPORT_LIST_ADAPTER_FACTORIES as Record<string, ReturnType<typeof vi.fn>>;
+
+import { lookup as dnsLookup } from 'node:dns/promises';
+
+const mockedDnsLookup = vi.mocked(dnsLookup) as unknown as Mock;
+
+beforeEach(() => {
+  mockedDnsLookup.mockReset();
+  // Default DNS to a public IP so SSRF preflight passes for all tests.
+  mockedDnsLookup.mockResolvedValue([{ address: '93.184.216.34', family: 4 }]);
+});
 
 const mockLog = createMockLogger() as unknown as FastifyBaseLogger;
 

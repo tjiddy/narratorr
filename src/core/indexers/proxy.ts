@@ -117,11 +117,11 @@ export async function fetchWithProxyAgent(
         // (e.g., 407 Proxy Authentication Required, 502 Bad Gateway from proxy)
         const proxyStatusCodes = [407, 502, 503];
         if (proxyStatusCodes.includes(response.status)) {
-          await response.body?.cancel().catch(() => { /* best-effort */ });
+    void response.body?.cancel().catch(() => { /* best-effort */ });
           throw new ProxyError(`Proxy HTTP error ${response.status}: ${response.statusText}`);
         }
       }
-      await response.body?.cancel().catch(() => { /* best-effort */ });
+void response.body?.cancel().catch(() => { /* best-effort */ });
       throw new Error(`HTTP ${response.status}: ${response.statusText}`);
     }
 

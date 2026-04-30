@@ -1,6 +1,18 @@
 import { describe, it, expect, beforeAll, afterAll, beforeEach, vi, type Mock } from 'vitest';
+vi.mock('node:dns/promises', () => ({
+  lookup: vi.fn(),
+}));
 import { createTestApp, createMockServices, installMockAppLog, resetMockServices } from '../__tests__/helpers.js';
 import type { Services } from './index.js';
+import { lookup as dnsLookup } from 'node:dns/promises';
+
+const mockedDnsLookup = vi.mocked(dnsLookup) as unknown as Mock;
+
+beforeEach(() => {
+  mockedDnsLookup.mockReset();
+  // Default DNS to a public IP so SSRF preflight passes for all tests.
+  mockedDnsLookup.mockResolvedValue([{ address: '93.184.216.34', family: 4 }]);
+});
 
 const validImportList = {
   name: 'My ABS List',
@@ -243,10 +255,12 @@ describe('import-lists routes', () => {
   describe('POST /api/import-lists/abs/libraries', () => {
     it('returns libraries from ABS API', async () => {
       const mockLibraries = [{ id: 'lib-1', name: 'Audiobooks' }, { id: 'lib-2', name: 'Podcasts' }];
-      vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce({
-        ok: true,
-        json: async () => ({ libraries: mockLibraries }),
-      } as Response);
+      vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(
+        new Response(JSON.stringify({ libraries: mockLibraries }), {
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+        }),
+      );
 
       const res = await app.inject({
         method: 'POST',
@@ -294,10 +308,9 @@ describe('import-lists routes', () => {
     });
 
     it('returns 502 when ABS API returns non-OK status', async () => {
-      vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce({
-        ok: false,
-        status: 401,
-      } as Response);
+      vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(
+        new Response(null, { status: 401 }),
+      );
 
       const res = await app.inject({
         method: 'POST',
@@ -331,10 +344,12 @@ describe('import-lists routes', () => {
         ...savedList,
         settings: { serverUrl: 'http://abs.local', apiKey: 'real-abs-key', libraryId: 'lib-1' },
       });
-      vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce({
-        ok: true,
-        json: async () => ({ libraries: [] }),
-      } as Response);
+      vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(
+        new Response(JSON.stringify({ libraries: [] }), {
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+        }),
+      );
 
       const res = await app.inject({
         method: 'POST',

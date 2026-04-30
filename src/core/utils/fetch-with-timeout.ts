@@ -88,14 +88,18 @@ export async function fetchWithTimeout(
   }
 
   // Cap and reconstruct so callers' .text()/.json()/.arrayBuffer() still work.
-  // Copy into a fresh ArrayBuffer — Buffer/Uint8Array hit `BodyInit` strictness
-  // in @types/node 24, but ArrayBuffer is unambiguous.
+  // The Response constructor rejects 204/205/304 with a non-null body, so use
+  // null for those. Otherwise copy into a fresh ArrayBuffer — Buffer/Uint8Array
+  // hit `BodyInit` strictness in @types/node 24, but ArrayBuffer is unambiguous.
   const buffer = await readBodyWithCap(response, maxBodyBytes);
-  const arrayBuffer = buffer.buffer.slice(
-    buffer.byteOffset,
-    buffer.byteOffset + buffer.byteLength,
-  ) as ArrayBuffer;
-  return new Response(arrayBuffer, {
+  const NULL_BODY_STATUSES = new Set([101, 103, 204, 205, 304]);
+  const body: BodyInit | null = NULL_BODY_STATUSES.has(response.status)
+    ? null
+    : (buffer.buffer.slice(
+        buffer.byteOffset,
+        buffer.byteOffset + buffer.byteLength,
+      ) as ArrayBuffer);
+  return new Response(body, {
     status: response.status,
     statusText: response.statusText,
     headers: response.headers,

@@ -1,7 +1,6 @@
 import type { NotifierAdapter, NotificationEvent, EventPayload } from './types.js';
 import { fetchWithTimeout } from '../utils/fetch-with-timeout.js';
 import { NOTIFIER_TIMEOUT_MS } from '../utils/constants.js';
-import { getErrorMessage } from '../../shared/error-message.js';
 
 export interface WebhookConfig {
   url: string;
@@ -59,21 +58,17 @@ export class WebhookNotifier implements NotifierAdapter {
       body = JSON.stringify(payload);
     }
 
-    try {
-      const response = await fetchWithTimeout(
-        this.config.url,
-        { method, headers, body },
-        NOTIFIER_TIMEOUT_MS,
-      );
+    const response = await fetchWithTimeout(
+      this.config.url,
+      { method, headers, body },
+      NOTIFIER_TIMEOUT_MS,
+    );
 
-      if (!response.ok) {
-        return { success: false, message: `HTTP ${response.status}: ${response.statusText}` };
-      }
-
-      return { success: true };
-    } catch (error: unknown) {
-      return { success: false, message: getErrorMessage(error) };
+    if (!response.ok) {
+      return { success: false, message: `HTTP ${response.status}: ${response.statusText}` };
     }
+
+    return { success: true };
   }
 
   async test(): Promise<{ success: boolean; message?: string }> {

@@ -27,17 +27,29 @@ export async function readBodyWithCap(response: Response, maxBytes: number): Pro
   const chunks: Uint8Array[] = [];
   let total = 0;
 
-  for (;;) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    if (value) {
-      total += value.byteLength;
-      if (total > maxBytes) {
-        await reader.cancel().catch(() => { /* best-effort */ });
-        throw new Error(`Streamed body exceeded cap of ${maxBytes} bytes`);
+  // Stream errors mid-read (broken connection, server crash) surface as a
+  // partial read — return what we have. Cap-exceeded is treated separately
+  // and ALWAYS throws, since exceeding the cap is the security-relevant case
+  // we must not silently allow.
+  try {
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      if (value) {
+        total += value.byteLength;
+        if (total > maxBytes) {
+          await reader.cancel().catch(() => { /* best-effort */ });
+          throw new Error(`Streamed body exceeded cap of ${maxBytes} bytes`);
+        }
+        chunks.push(value);
       }
-      chunks.push(value);
     }
+  } catch (error: unknown) {
+    if (error instanceof Error && /exceeded cap/.test(error.message)) {
+      throw error;
+    }
+    // Broken-stream error — return what we read so the caller sees a Response
+    // with a (possibly empty) body and can still inspect status/headers.
   }
 
   return Buffer.concat(chunks);

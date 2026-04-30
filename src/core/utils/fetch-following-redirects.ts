@@ -13,7 +13,9 @@ import { HTTP_DOWNLOAD_TIMEOUT_MS } from './constants.js';
 import {
   createSsrfSafeDispatcher,
   resolveAndValidate,
+  SsrfRefusedError,
 } from './blocked-fetch-address.js';
+import { mapNetworkError } from './map-network-error.js';
 import { readBodyWithCap } from './read-body-with-cap.js';
 
 const MAX_REDIRECTS = 5;
@@ -55,7 +57,13 @@ export async function fetchFollowingRedirects(
       dispatcher,
     };
 
-    const response = await fetch(currentUrl, init);
+    let response: Response;
+    try {
+      response = await fetch(currentUrl, init);
+    } catch (error: unknown) {
+      if (error instanceof SsrfRefusedError) throw error;
+      throw mapNetworkError(error);
+    }
 
     if (response.status >= 300 && response.status < 400) {
       const location = response.headers.get('location');

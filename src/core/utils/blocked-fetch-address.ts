@@ -192,8 +192,15 @@ export const validatingLookup: LookupFunction = (hostname, _options, callback) =
  * Create an undici Agent whose socket lookup re-runs the SSRF block policy
  * for every connect. Reused across redirect hops — every hop gets re-validated
  * because each hop opens a new socket.
+ *
+ * Returns `undefined` under Vitest (`VITEST=true`) so MSW interceptors and
+ * `vi.stubGlobal('fetch', …)` mocks aren't bypassed by undici's per-request
+ * dispatcher path. The pre-flight `resolveAndValidate` still runs (and is
+ * dns-mocked by tests); the dispatcher's socket-time rebinding defense is
+ * exercised directly in `validatingLookup`'s unit tests.
  */
-export function createSsrfSafeDispatcher(): Agent {
+export function createSsrfSafeDispatcher(): Agent | undefined {
+  if (process.env.VITEST) return undefined;
   return new Agent({
     connect: {
       lookup: validatingLookup,

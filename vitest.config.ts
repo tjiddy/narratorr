@@ -34,6 +34,7 @@ export default defineConfig({
         test: {
           name: 'server',
           environment: 'node',
+          setupFiles: ['src/server/__tests__/setup.ts'],
           include: [
             'src/server/**/*.test.ts',
             'src/shared/**/*.test.ts',

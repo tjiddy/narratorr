@@ -1,8 +1,14 @@
-import { describe, it, expect, beforeAll, afterAll, afterEach } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll, afterEach, beforeEach, vi, type Mock } from 'vitest';
+vi.mock('node:dns/promises', () => ({
+  lookup: vi.fn(),
+}));
 import { setupServer } from 'msw/node';
 import { http, HttpResponse } from 'msw';
 import { GotifyNotifier } from './gotify.js';
 import type { EventPayload } from './types.js';
+import { lookup as dnsLookup } from 'node:dns/promises';
+
+const mockedDnsLookup = vi.mocked(dnsLookup) as unknown as Mock;
 
 const SERVER_URL = 'https://gotify.example.com';
 const MESSAGE_URL = `${SERVER_URL}/message`;
@@ -12,6 +18,12 @@ const server = setupServer();
 beforeAll(() => server.listen({ onUnhandledRequest: 'error' }));
 afterEach(() => server.resetHandlers());
 afterAll(() => server.close());
+
+beforeEach(() => {
+  mockedDnsLookup.mockReset();
+  // Default DNS to a public IP so SSRF preflight passes for all tests.
+  mockedDnsLookup.mockResolvedValue([{ address: '93.184.216.34', family: 4 }]);
+});
 
 describe('GotifyNotifier', () => {
   it('sends message with X-Gotify-Key header', async () => {

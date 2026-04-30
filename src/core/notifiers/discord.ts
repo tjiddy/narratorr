@@ -2,7 +2,6 @@ import type { NotifierAdapter, NotificationEvent, EventPayload } from './types.j
 import { EVENT_TITLES } from '../../shared/notification-events.js';
 import { fetchWithTimeout } from '../utils/fetch-with-timeout.js';
 import { NOTIFIER_TIMEOUT_MS } from '../utils/constants.js';
-import { getErrorMessage } from '../../shared/error-message.js';
 
 export interface DiscordConfig {
   webhookUrl: string;
@@ -96,26 +95,22 @@ export class DiscordNotifier implements NotifierAdapter {
   async send(event: NotificationEvent, payload: EventPayload): Promise<{ success: boolean; message?: string }> {
     const embed = buildEmbed(event, payload, this.config.includeCover ?? true);
 
-    try {
-      const response = await fetchWithTimeout(
-        this.config.webhookUrl,
-        {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ embeds: [embed] }),
-        },
-        NOTIFIER_TIMEOUT_MS,
-      );
+    const response = await fetchWithTimeout(
+      this.config.webhookUrl,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ embeds: [embed] }),
+      },
+      NOTIFIER_TIMEOUT_MS,
+    );
 
-      if (!response.ok) {
-        const text = await response.text().catch(() => '');
-        return { success: false, message: `Discord error ${response.status}: ${text}` };
-      }
-
-      return { success: true };
-    } catch (error: unknown) {
-      return { success: false, message: getErrorMessage(error) };
+    if (!response.ok) {
+      const text = await response.text().catch(() => '');
+      return { success: false, message: `Discord error ${response.status}: ${text}` };
     }
+
+    return { success: true };
   }
 
   async test(): Promise<{ success: boolean; message?: string }> {

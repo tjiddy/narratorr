@@ -679,17 +679,27 @@ describe('downloadRemoteCover', () => {
   });
 
   it('passes a dispatcher option to fetch (SSRF-safe agent)', async () => {
-    mockFetch.mockResolvedValue(createImageResponse());
+    // Re-enable the production dispatcher path despite VITEST=true.
+    // The dispatcher is normally suppressed under Vitest so MSW interceptors
+    // and vi.stubGlobal('fetch', …) mocks aren't bypassed; here we explicitly
+    // verify cover-download attaches one in production.
+    const originalVitest = process.env.VITEST;
+    delete process.env.VITEST;
+    try {
+      mockFetch.mockResolvedValue(createImageResponse());
 
-    await downloadRemoteCover(
-      1, '/books/test', 'https://cdn.example.com/cover.jpg',
-      inject<Db>(mockDb), log,
-    );
+      await downloadRemoteCover(
+        1, '/books/test', 'https://cdn.example.com/cover.jpg',
+        inject<Db>(mockDb), log,
+      );
 
-    expect(mockFetch).toHaveBeenCalledWith(
-      expect.any(String),
-      expect.objectContaining({ dispatcher: expect.anything() }),
-    );
+      expect(mockFetch).toHaveBeenCalledWith(
+        expect.any(String),
+        expect.objectContaining({ dispatcher: expect.anything() }),
+      );
+    } finally {
+      if (originalVitest !== undefined) process.env.VITEST = originalVitest;
+    }
   });
 });
 
