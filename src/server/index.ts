@@ -1,8 +1,6 @@
-import dotenv from 'dotenv';
 import os from 'os';
 import path from 'path';
 import fs from 'fs';
-import { fileURLToPath } from 'url';
 import { serializeError } from './utils/serialize-error.js';
 import { logCrash } from './utils/crash-logger.js';
 
@@ -59,10 +57,9 @@ process.exit = ((code?: number): never => {
 }) as typeof process.exit;
 
 
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
-
-// Load .env from repo root (2 levels up: server/ → src/ → root)
-dotenv.config({ path: path.resolve(__dirname, '../../.env') });
+// Load .env from repo root if present. Production Docker doesn't ship one —
+// env vars come from compose/Portainer — so silently skip when missing.
+try { process.loadEnvFile('.env'); } catch { /* no .env file (expected in production) */ }
 
 import Fastify from 'fastify';
 import cors from '@fastify/cors';
