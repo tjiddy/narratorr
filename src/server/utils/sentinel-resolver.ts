@@ -71,10 +71,10 @@ export async function resolveSentinelSettings(
     const resolved = { ...incoming };
     resolveSentinelFields(resolved, existing, allowlist);
     return { ok: true, settings: resolved };
-  } catch (e) {
-    if (e instanceof SentinelOnNonSecretFieldError) {
-      return { ok: false, status: 400, message: e.message };
+  } catch (error: unknown) {
+    if (error instanceof SentinelOnNonSecretFieldError) {
+      return { ok: false, status: 400, message: error.message };
     }
-    throw e;
+    throw error;
   }
 }

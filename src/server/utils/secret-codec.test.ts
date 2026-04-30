@@ -397,11 +397,11 @@ describe('resolveSentinelFields', () => {
     try {
       resolveSentinelFields(incoming, {}, indexerAllow);
       throw new Error('expected throw');
-    } catch (e) {
-      expect(e).toBeInstanceOf(SentinelOnNonSecretFieldError);
-      if (e instanceof SentinelOnNonSecretFieldError) {
-        expect(e.field).toBe('hostname');
-        expect(e.message).toContain('hostname');
+    } catch (error: unknown) {
+      expect(error).toBeInstanceOf(SentinelOnNonSecretFieldError);
+      if (error instanceof SentinelOnNonSecretFieldError) {
+        expect(error.field).toBe('hostname');
+        expect(error.message).toContain('hostname');
       }
     }
   });
