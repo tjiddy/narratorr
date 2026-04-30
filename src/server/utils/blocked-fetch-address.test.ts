@@ -41,6 +41,22 @@ describe('isBlockedFetchAddress', () => {
     });
 
     it.each([
+      '100.64.0.0',
+      '100.64.0.1',
+      '100.100.50.50',
+      '100.127.255.255',
+    ])('blocks CGNAT %s', (ip) => {
+      expect(isBlockedFetchAddress(ip)).toBe(true);
+    });
+
+    it.each([
+      '100.63.255.255',
+      '100.128.0.0',
+    ])('does not block CGNAT-adjacent %s', (ip) => {
+      expect(isBlockedFetchAddress(ip)).toBe(false);
+    });
+
+    it.each([
       '8.8.8.8',
       '1.1.1.1',
       '172.15.255.255',
@@ -70,6 +86,10 @@ describe('isBlockedFetchAddress', () => {
       expect(isBlockedFetchAddress(ip)).toBe(true);
     });
 
+    it.each(['ff00::', 'ff02::1', 'ff05::101', 'ff0e::1', 'FF02::1'])('blocks multicast %s', (ip) => {
+      expect(isBlockedFetchAddress(ip)).toBe(true);
+    });
+
     it.each(['2001:db8::1', '2606:4700:4700::1111', '::ffff:8.8.8.8'])('does not block public IPv6 %s', (ip) => {
       expect(isBlockedFetchAddress(ip)).toBe(false);
     });
@@ -90,6 +110,10 @@ describe('isBlockedFetchAddress', () => {
 
     it('blocks ::ffff:0.0.0.0', () => {
       expect(isBlockedFetchAddress('::ffff:0.0.0.0')).toBe(true);
+    });
+
+    it('blocks ::ffff:100.64.0.1 (CGNAT)', () => {
+      expect(isBlockedFetchAddress('::ffff:100.64.0.1')).toBe(true);
     });
 
     it('does not block ::ffff:8.8.8.8', () => {
