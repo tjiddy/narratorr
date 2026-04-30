@@ -131,7 +131,10 @@ describe('getAudioStats', () => {
     expect(result.totalSize).toBe(70);
   });
 
-  it('logs warn and continues with partial results when a subdirectory cannot be read', async () => {
+  it.skipIf(process.platform === 'win32')('logs warn and continues with partial results when a subdirectory cannot be read', async () => {
+    // Windows ignores chmod permission bits (uses ACLs instead), so this test
+    // can't make a directory unreadable via the same mechanism. CI runs Linux
+    // where the test exercises the real path.
     await writeFile(join(root, 'good.m4b'), Buffer.alloc(100));
     const denied = join(root, 'denied');
     await mkdir(denied);
@@ -153,7 +156,9 @@ describe('getAudioStats', () => {
     }
   });
 
-  it('silently ignores symlink entries (Dirent#isFile / #isDirectory both false for symlinks under withFileTypes)', async () => {
+  it.skipIf(process.platform === 'win32')('silently ignores symlink entries (Dirent#isFile / #isDirectory both false for symlinks under withFileTypes)', async () => {
+    // Windows requires admin or Developer Mode to call fs.symlink(). CI runs
+    // on Linux where the test exercises the real path.
     // readdir(..., { withFileTypes: true }) returns Dirents whose isFile()
     // and isDirectory() both return false for symlinks. The helper only
     // handles real files and directories, so symlinks of any kind are
