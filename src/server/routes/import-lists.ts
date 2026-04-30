@@ -5,10 +5,21 @@ import { createImportListSchema, updateImportListSchema, previewImportListSchema
 import { registerCrudRoutes } from './crud-routes.js';
 import { getErrorMessage } from '../utils/error-message.js';
 import { serializeError } from '../utils/serialize-error.js';
+import { makeTestSchema } from '../utils/secret-codec.js';
+import { resolveSentinelSettings } from '../utils/sentinel-resolver.js';
 
+const SENTINEL = '********';
+
+// `apiKey` accepts the masked sentinel so edit-mode forms can re-submit
+// without re-entering the saved key. The route preflight resolves it against
+// the persisted record before forwarding to ABS. `serverUrl` also unions the
+// sentinel — not because we resolve it (it's not a secret), but so the
+// resolver consistently rejects sentinel-on-non-secret with HTTP 400 instead
+// of letting Zod's URL validator emit a less-specific 400.
 const absLibrariesBodySchema = z.object({
-  serverUrl: z.string().trim().url(),
-  apiKey: z.string().trim().min(1),
+  serverUrl: z.union([z.literal(SENTINEL), z.string().trim().url()]),
+  apiKey: z.union([z.literal(SENTINEL), z.string().trim().min(1)]),
+  id: z.number().int().positive().optional(),
 }).strict();
 
 export async function importListsRoutes(app: FastifyInstance, importListService: ImportListService) {
@@ -26,11 +37,26 @@ export async function importListsRoutes(app: FastifyInstance, importListService:
     '/api/import-lists/abs/libraries',
     { schema: { body: absLibrariesBodySchema } },
     async (request, reply) => {
-      const { serverUrl, apiKey } = request.body;
+      const { serverUrl, apiKey, id } = request.body;
+      const resolution = await resolveSentinelSettings({
+        entity: 'importList',
+        incoming: { serverUrl, apiKey },
+        id,
+        loadExisting: async () => {
+          const row = await importListService.getById(id!);
+          return row ? (row.settings as Record<string, unknown>) : null;
+        },
+        notFoundMessage: 'Import list not found',
+      });
+      if (!resolution.ok) {
+        return reply.status(resolution.status).send({ error: resolution.message });
+      }
+      const resolvedApiKey = resolution.settings.apiKey as string;
+      const resolvedServerUrl = resolution.settings.serverUrl as string;
       try {
-        const url = `${serverUrl.replace(/\/+$/, '')}/api/libraries`;
+        const url = `${resolvedServerUrl.replace(/\/+$/, '')}/api/libraries`;
         const res = await fetch(url, {
-          headers: { Authorization: `Bearer ${apiKey}` },
+          headers: { Authorization: `Bearer ${resolvedApiKey}` },
         });
         if (!res.ok) {
           return await reply.status(502).send({ error: `ABS API returned ${res.status}` });
@@ -46,13 +72,29 @@ export async function importListsRoutes(app: FastifyInstance, importListService:
   );
 
   // POST /api/import-lists/preview — preview items from unsaved config
-  app.post<{ Body: { type: string; settings: Record<string, unknown> } }>(
+  // Sentinel-aware: edit-mode forms send masked apiKey + id so the route can
+  // resolve against the persisted record before dispatching to the provider.
+  const previewSchema = makeTestSchema(previewImportListSchema, 'importList');
+  app.post<{ Body: { type: string; settings: Record<string, unknown>; id?: number } }>(
     '/api/import-lists/preview',
-    { schema: { body: previewImportListSchema } },
+    { schema: { body: previewSchema } },
     async (request, reply) => {
+      const { type, settings, id } = request.body;
+      const resolution = await resolveSentinelSettings({
+        entity: 'importList',
+        incoming: { ...settings },
+        id,
+        loadExisting: async () => {
+          const row = await importListService.getById(id!);
+          return row ? (row.settings as Record<string, unknown>) : null;
+        },
+        notFoundMessage: 'Import list not found',
+      });
+      if (!resolution.ok) {
+        return reply.status(resolution.status).send({ error: resolution.message });
+      }
       try {
-        const { type, settings } = request.body;
-        const result = await importListService.preview({ type, settings: settings as Record<string, unknown> });
+        const result = await importListService.preview({ type, settings: resolution.settings });
         return result;
       } catch (error: unknown) {
         request.log.error({ error: serializeError(error) }, 'Import list preview failed');

@@ -353,6 +353,130 @@ describe('download-clients routes', () => {
       expect(body.categories).toEqual([]);
       expect(body.error).toBe('Connection refused');
     });
+
+    // ===== #844 — sentinel resolution =====
+
+    it('resolves sentinel apiKey against persisted client and dispatches plaintext (sabnzbd)', async () => {
+      (services.downloadClient.getById as Mock).mockResolvedValue({
+        ...mockClient,
+        type: 'sabnzbd',
+        settings: { host: 'h', port: 8080, apiKey: 'real-sab-key' },
+      });
+      (services.downloadClient.getCategoriesFromConfig as Mock).mockResolvedValue({ categories: ['cat'] });
+
+      const res = await app.inject({
+        method: 'POST',
+        url: '/api/download-clients/categories',
+        payload: {
+          name: 'sab', type: 'sabnzbd', enabled: true, priority: 50,
+          settings: { host: 'h', port: 8080, apiKey: '********' },
+          id: 1,
+        },
+      });
+
+      expect(res.statusCode).toBe(200);
+      expect(services.downloadClient.getCategoriesFromConfig).toHaveBeenCalledWith(
+        expect.objectContaining({
+          type: 'sabnzbd',
+          settings: expect.objectContaining({ apiKey: 'real-sab-key' }),
+        }),
+      );
+    });
+
+    it('resolves sentinel password against persisted client (qbittorrent)', async () => {
+      (services.downloadClient.getById as Mock).mockResolvedValue({
+        ...mockClient,
+        settings: { host: 'h', port: 8080, password: 'real-pw' },
+      });
+      (services.downloadClient.getCategoriesFromConfig as Mock).mockResolvedValue({ categories: [] });
+
+      const res = await app.inject({
+        method: 'POST',
+        url: '/api/download-clients/categories',
+        payload: {
+          name: 'qb', type: 'qbittorrent', enabled: true, priority: 50,
+          settings: { host: 'h', port: 8080, password: '********' },
+          id: 1,
+        },
+      });
+
+      expect(res.statusCode).toBe(200);
+      expect(services.downloadClient.getCategoriesFromConfig).toHaveBeenCalledWith(
+        expect.objectContaining({
+          settings: expect.objectContaining({ password: 'real-pw' }),
+        }),
+      );
+    });
+
+    it('returns 400 when sentinel apiKey is sent without id', async () => {
+      const res = await app.inject({
+        method: 'POST',
+        url: '/api/download-clients/categories',
+        payload: {
+          name: 'sab', type: 'sabnzbd', enabled: true, priority: 50,
+          settings: { host: 'h', port: 8080, apiKey: '********' },
+        },
+      });
+
+      expect(res.statusCode).toBe(400);
+      expect(JSON.parse(res.payload).error).toContain('id is required');
+      expect(services.downloadClient.getCategoriesFromConfig).not.toHaveBeenCalled();
+    });
+
+    it('returns 404 when sentinel apiKey + id but client not found', async () => {
+      (services.downloadClient.getById as Mock).mockResolvedValue(null);
+
+      const res = await app.inject({
+        method: 'POST',
+        url: '/api/download-clients/categories',
+        payload: {
+          name: 'sab', type: 'sabnzbd', enabled: true, priority: 50,
+          settings: { host: 'h', port: 8080, apiKey: '********' },
+          id: 999,
+        },
+      });
+
+      expect(res.statusCode).toBe(404);
+      expect(JSON.parse(res.payload).error).toBe('Download client not found');
+      expect(services.downloadClient.getCategoriesFromConfig).not.toHaveBeenCalled();
+    });
+
+    it('plaintext credentials bypass resolution and dispatch unchanged (no id required)', async () => {
+      (services.downloadClient.getCategoriesFromConfig as Mock).mockResolvedValue({ categories: ['c'] });
+
+      const res = await app.inject({
+        method: 'POST',
+        url: '/api/download-clients/categories',
+        payload: {
+          name: 'sab', type: 'sabnzbd', enabled: true, priority: 50,
+          settings: { host: 'h', port: 8080, apiKey: 'real-key' },
+        },
+      });
+
+      expect(res.statusCode).toBe(200);
+      expect(services.downloadClient.getCategoriesFromConfig).toHaveBeenCalledWith(
+        expect.objectContaining({
+          settings: expect.objectContaining({ apiKey: 'real-key' }),
+        }),
+      );
+      expect(services.downloadClient.getById).not.toHaveBeenCalled();
+    });
+
+    it('returns 400 for sentinel on non-secret field (qbittorrent settings.host)', async () => {
+      const res = await app.inject({
+        method: 'POST',
+        url: '/api/download-clients/categories',
+        payload: {
+          name: 'qb', type: 'qbittorrent', enabled: true, priority: 50,
+          settings: { host: '********', port: 8080, password: 'real-pw' },
+          id: 1,
+        },
+      });
+
+      expect(res.statusCode).toBe(400);
+      expect(JSON.parse(res.payload).error).toContain('non-secret field: host');
+      expect(services.downloadClient.getCategoriesFromConfig).not.toHaveBeenCalled();
+    });
   });
 
   describe('POST /api/download-clients/:id/categories', () => {

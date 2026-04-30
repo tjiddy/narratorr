@@ -323,6 +323,71 @@ describe('import-lists routes', () => {
       expect(res.json().error).toContain('Connection failed: ECONNREFUSED');
       vi.restoreAllMocks();
     });
+
+    // ===== #844 — sentinel resolution =====
+
+    it('resolves sentinel apiKey against persisted list and forwards plaintext to ABS', async () => {
+      (services.importList.getById as Mock).mockResolvedValue({
+        ...savedList,
+        settings: { serverUrl: 'http://abs.local', apiKey: 'real-abs-key', libraryId: 'lib-1' },
+      });
+      vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ libraries: [] }),
+      } as Response);
+
+      const res = await app.inject({
+        method: 'POST',
+        url: '/api/import-lists/abs/libraries',
+        payload: { serverUrl: 'http://abs.local', apiKey: '********', id: 1 },
+      });
+
+      expect(res.statusCode).toBe(200);
+      expect(globalThis.fetch).toHaveBeenCalledWith(
+        'http://abs.local/api/libraries',
+        expect.objectContaining({ headers: { Authorization: 'Bearer real-abs-key' } }),
+      );
+      // Sentinel literal must never reach ABS
+      const fetchCall = (globalThis.fetch as unknown as Mock).mock.calls[0];
+      const headers = (fetchCall?.[1] as RequestInit).headers as Record<string, string>;
+      expect(headers.Authorization).not.toContain('********');
+      vi.restoreAllMocks();
+    });
+
+    it('returns 400 when sentinel apiKey is sent without id', async () => {
+      const res = await app.inject({
+        method: 'POST',
+        url: '/api/import-lists/abs/libraries',
+        payload: { serverUrl: 'http://abs.local', apiKey: '********' },
+      });
+
+      expect(res.statusCode).toBe(400);
+      expect(res.json().error).toContain('id is required');
+    });
+
+    it('returns 404 when sentinel apiKey + id but list not found', async () => {
+      (services.importList.getById as Mock).mockResolvedValue(null);
+
+      const res = await app.inject({
+        method: 'POST',
+        url: '/api/import-lists/abs/libraries',
+        payload: { serverUrl: 'http://abs.local', apiKey: '********', id: 999 },
+      });
+
+      expect(res.statusCode).toBe(404);
+      expect(res.json().error).toBe('Import list not found');
+    });
+
+    it('returns 400 for sentinel on non-secret field (top-level serverUrl)', async () => {
+      const res = await app.inject({
+        method: 'POST',
+        url: '/api/import-lists/abs/libraries',
+        payload: { serverUrl: '********', apiKey: 'real-key', id: 1 },
+      });
+
+      expect(res.statusCode).toBe(400);
+      expect(res.json().error).toContain('non-secret field: serverUrl');
+    });
   });
 
   describe('POST /api/import-lists/preview', () => {
@@ -382,6 +447,116 @@ describe('import-lists routes', () => {
 
       expect(res.statusCode).toBe(400);
       expect(res.json().message).toContain('settings/apiKey');
+      expect(services.importList.preview).not.toHaveBeenCalled();
+    });
+
+    // ===== #844 — sentinel resolution =====
+
+    it('resolves sentinel apiKey against persisted list and dispatches plaintext (abs)', async () => {
+      (services.importList.getById as Mock).mockResolvedValue({
+        ...savedList,
+        settings: { serverUrl: 'http://abs.local', apiKey: 'real-abs-key', libraryId: 'lib-1' },
+      });
+      (services.importList.preview as Mock).mockResolvedValue({ items: [], total: 0 });
+
+      const res = await app.inject({
+        method: 'POST',
+        url: '/api/import-lists/preview',
+        payload: {
+          type: 'abs',
+          settings: { serverUrl: 'http://abs.local', apiKey: '********', libraryId: 'lib-1' },
+          id: 1,
+        },
+      });
+
+      expect(res.statusCode).toBe(200);
+      expect(services.importList.preview).toHaveBeenCalledWith({
+        type: 'abs',
+        settings: expect.objectContaining({ apiKey: 'real-abs-key' }),
+      });
+    });
+
+    it('returns 400 when sentinel apiKey is sent without id', async () => {
+      const res = await app.inject({
+        method: 'POST',
+        url: '/api/import-lists/preview',
+        payload: {
+          type: 'abs',
+          settings: { serverUrl: 'http://abs.local', apiKey: '********', libraryId: 'lib-1' },
+        },
+      });
+
+      expect(res.statusCode).toBe(400);
+      expect(res.json().error).toContain('id is required');
+      expect(services.importList.preview).not.toHaveBeenCalled();
+    });
+
+    it('returns 404 when sentinel apiKey + id but list not found', async () => {
+      (services.importList.getById as Mock).mockResolvedValue(null);
+
+      const res = await app.inject({
+        method: 'POST',
+        url: '/api/import-lists/preview',
+        payload: {
+          type: 'abs',
+          settings: { serverUrl: 'http://abs.local', apiKey: '********', libraryId: 'lib-1' },
+          id: 999,
+        },
+      });
+
+      expect(res.statusCode).toBe(404);
+      expect(res.json().error).toBe('Import list not found');
+      expect(services.importList.preview).not.toHaveBeenCalled();
+    });
+
+    it('plaintext apiKey bypasses resolution and dispatches unchanged (no id required)', async () => {
+      (services.importList.preview as Mock).mockResolvedValue({ items: [], total: 0 });
+
+      const res = await app.inject({
+        method: 'POST',
+        url: '/api/import-lists/preview',
+        payload: {
+          type: 'abs',
+          settings: { serverUrl: 'http://abs.local', apiKey: 'plaintext-key', libraryId: 'lib-1' },
+        },
+      });
+
+      expect(res.statusCode).toBe(200);
+      expect(services.importList.preview).toHaveBeenCalledWith({
+        type: 'abs',
+        settings: expect.objectContaining({ apiKey: 'plaintext-key' }),
+      });
+      expect(services.importList.getById).not.toHaveBeenCalled();
+    });
+
+    it('returns 400 for sentinel on non-secret field (settings.serverUrl)', async () => {
+      const res = await app.inject({
+        method: 'POST',
+        url: '/api/import-lists/preview',
+        payload: {
+          type: 'abs',
+          settings: { serverUrl: '********', apiKey: 'real', libraryId: 'lib-1' },
+          id: 1,
+        },
+      });
+
+      expect(res.statusCode).toBe(400);
+      expect(res.json().error).toContain('non-secret field: serverUrl');
+      expect(services.importList.preview).not.toHaveBeenCalled();
+    });
+
+    it('preserves per-type refinement after schema loosening (hardcover listType=shelf without shelfId → 400)', async () => {
+      const res = await app.inject({
+        method: 'POST',
+        url: '/api/import-lists/preview',
+        payload: {
+          type: 'hardcover',
+          settings: { apiKey: '********', listType: 'shelf' },
+          id: 2,
+        },
+      });
+
+      expect(res.statusCode).toBe(400);
       expect(services.importList.preview).not.toHaveBeenCalled();
     });
   });
