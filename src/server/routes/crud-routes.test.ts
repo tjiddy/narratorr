@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeAll, afterAll, beforeEach, type Mock } from 'vitest';
 import { createTestApp, createMockServices, resetMockServices } from '../__tests__/helpers.js';
 import type { Services } from './index.js';
+import { SentinelOnNonSecretFieldError } from '../utils/secret-codec.js';
 
 /**
  * Tests shared CRUD error paths from registerCrudRoutes once (via notifiers).
@@ -114,6 +115,51 @@ describe('crud-routes shared error paths', () => {
 
       expect(res.statusCode).toBe(500);
       expect(res.json()).toEqual({ error: 'Internal server error' });
+    });
+
+    it('returns 400 when service throws SentinelOnNonSecretFieldError', async () => {
+      (services.notifier.update as Mock).mockRejectedValue(new SentinelOnNonSecretFieldError('url'));
+
+      const res = await app.inject({
+        method: 'PUT',
+        url: '/api/notifiers/1',
+        payload: {
+          name: 'Webhook',
+          type: 'webhook',
+          enabled: true,
+          events: ['on_grab'],
+          settings: { url: '********' },
+        },
+      });
+
+      expect(res.statusCode).toBe(400);
+      expect(JSON.parse(res.payload).error).toContain('non-secret field: url');
+    });
+
+    it('still returns 200 when service resolves successfully (sentinel on allowlisted secret field)', async () => {
+      const updated = {
+        id: 1,
+        name: 'Webhook',
+        type: 'webhook',
+        enabled: true,
+        events: ['on_grab'],
+        settings: { url: 'https://example.com/hook' },
+      };
+      (services.notifier.update as Mock).mockResolvedValue(updated);
+
+      const res = await app.inject({
+        method: 'PUT',
+        url: '/api/notifiers/1',
+        payload: {
+          name: 'Webhook',
+          type: 'webhook',
+          enabled: true,
+          events: ['on_grab'],
+          settings: { url: '********' },
+        },
+      });
+
+      expect(res.statusCode).toBe(200);
     });
   });
 
