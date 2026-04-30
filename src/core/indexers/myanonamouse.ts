@@ -381,7 +381,7 @@ export class MyAnonamouseIndexer implements IndexerAdapter {
     const nameToId = new Map(MAM_LANGUAGES.map((l) => [l.label.toLowerCase(), l.id]));
     return languages
       .map((name) => nameToId.get(name.toLowerCase()))
-      .filter((id): id is number => id !== undefined);
+      .filter((id) => id !== undefined);
   }
 
   /**

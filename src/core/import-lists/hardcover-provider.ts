@@ -111,7 +111,7 @@ export class HardcoverProvider implements ImportListProvider {
       ? (data.data?.user_book_reads ?? []).map((r) => r.book)
       : (data.data?.trending_books ?? []);
 
-    return books.map(mapBook).filter((item): item is ImportListItem => item !== null);
+    return books.map(mapBook).filter((item) => item !== null);
   }
 
   private async executeQuery(): Promise<z.infer<typeof hardcoverResponseSchema>> {

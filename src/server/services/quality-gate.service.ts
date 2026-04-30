@@ -43,7 +43,7 @@ export class QualityGateService {
 
     if (rows.length === 0) return rows;
 
-    const bookIds = rows.map(r => r.book?.id).filter((id): id is number => id != null);
+    const bookIds = rows.map(r => r.book?.id).filter((id) => id != null);
     const narratorRows = bookIds.length > 0
       ? await this.db
           .select({ bookId: bookNarrators.bookId, name: narrators.name })
