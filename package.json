@@ -87,11 +87,15 @@
     "vite": "^8.0.10",
     "vitest": "^4.1.5"
   },
-  "packageManager": "pnpm@9.15.0",
+  "packageManager": "pnpm@10.33.2",
   "engines": {
     "node": ">=24.10.0"
   },
   "pnpm": {
+    "onlyBuiltDependencies": [
+      "esbuild",
+      "msw"
+    ],
     "overrides": {
       "minimatch@>=9.0.0 <9.0.9": "9.0.9",
       "minimatch@>=5.0.0 <5.1.8": "5.1.8",
