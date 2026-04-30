@@ -115,7 +115,7 @@ export const createImportListFormSchema = z.object({
     // ABS
     serverUrl: z.string().optional(),
     apiKey: z.string().optional(),
-    libraryId: z.string().regex(ABS_LIBRARY_ID_REGEX, ABS_LIBRARY_ID_MESSAGE).optional(),
+    libraryId: z.string().trim().regex(ABS_LIBRARY_ID_REGEX, ABS_LIBRARY_ID_MESSAGE).optional(),
     // NYT
     list: z.string().optional(),
     // Hardcover

@@ -316,6 +316,17 @@ describe('createImportListFormSchema libraryId (#786)', () => {
     });
     expect(result.success).toBe(true);
   });
+
+  it('trims surrounding whitespace on ABS libraryId before regex validation', () => {
+    const result = createImportListFormSchema.safeParse({
+      ...validForm,
+      settings: { serverUrl: 'http://abs.local', apiKey: 'key', libraryId: '  lib-1  ' },
+    });
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.settings.libraryId).toBe('lib-1');
+    }
+  });
 });
 
 describe('updateImportListSchema — type required when settings present', () => {

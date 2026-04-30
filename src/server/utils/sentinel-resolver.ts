@@ -67,6 +67,11 @@ export async function resolveSentinelSettings(
     return { ok: false, status: 404, message: notFoundMessage };
   }
 
+  // Belt-and-suspenders: the non-secret pre-check at L48-55 already filters
+  // sentinels on disallowed keys, so resolveSentinelFields shouldn't throw
+  // SentinelOnNonSecretFieldError here. Catch is retained in case a future
+  // change to existing-record shape (or allowlist drift between getSecretFieldNames
+  // and resolveSentinelFields) reintroduces the throw path.
   try {
     const resolved = { ...incoming };
     resolveSentinelFields(resolved, existing, allowlist);
