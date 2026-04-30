@@ -14,6 +14,7 @@ import { BookRejectionError } from '../services/book-rejection.service.js';
 import { RefreshScanError } from '../services/refresh-scan.service.js';
 import { CoverUploadError } from '../services/cover-upload.js';
 import { DownloadClientError, DownloadClientAuthError, DownloadClientTimeoutError } from '../../core/download-clients/errors.js';
+import { SentinelOnNonSecretFieldError } from '../utils/secret-codec.js';
 
 // ---------------------------------------------------------------------------
 // Error → HTTP status registry
@@ -45,6 +46,7 @@ const ERROR_REGISTRY = new Map<new (...args: any[]) => Error, ErrorEntry>([
   [DownloadClientAuthError, { type: 'flat', status: 401 }],
   [DownloadClientTimeoutError, { type: 'flat', status: 504 }],
   [DownloadClientError, { type: 'flat', status: 502 }],
+  [SentinelOnNonSecretFieldError, { type: 'flat', status: 400 }],
 ]);
 
 /** Maps typed error codes to HTTP status codes. */
