@@ -6,10 +6,12 @@
  *
  * Rules implemented here:
  *   - RFC 1918 (10/8, 172.16/12, 192.168/16)
+ *   - CGNAT (100.64/10 — RFC 6598; AWS Lambda VPC NAT)
  *   - Loopback (127/8, ::1)
  *   - Link-local (169.254/16 — covers AWS/Alibaba metadata; fe80::/10)
  *   - Unspecified (0.0.0.0, ::)
  *   - IPv6 unique-local (fc00::/7, covers fd00::/8)
+ *   - IPv6 multicast (ff00::/8)
  *   - IPv4-mapped IPv6 forms of any blocked IPv4 address (e.g., ::ffff:169.254.169.254)
  *
  * Plus a hostname allowlist for known cloud-metadata names that resolve to
@@ -65,6 +67,7 @@ function isBlockedIpv4(ip: string): boolean {
   if (ip.startsWith('169.254.')) return true;
   if (ip.startsWith('192.168.')) return true;
   if (/^172\.(1[6-9]|2\d|3[0-1])\./.test(ip)) return true;
+  if (/^100\.(6[4-9]|[7-9]\d|1[01]\d|12[0-7])\./.test(ip)) return true;
   return false;
 }
 
@@ -72,6 +75,7 @@ function isBlockedIpv6(ip: string): boolean {
   if (ip === '::' || ip === '::1') return true;
   if (/^fe[89ab][0-9a-f]?:/i.test(ip)) return true;
   if (/^f[cd][0-9a-f]{0,2}:/i.test(ip)) return true;
+  if (ip.startsWith('ff')) return true;
   return false;
 }
 
