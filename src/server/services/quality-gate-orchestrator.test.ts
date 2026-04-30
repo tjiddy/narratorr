@@ -1685,6 +1685,32 @@ describe('QualityGateOrchestrator', () => {
       );
     });
 
+    it('treats enqueueAutoImport=false as a benign idempotency outcome (#747 F2)', async () => {
+      // AC7 / Proposed Fix §4 row "QGO": when the post-`dispatchSideEffects`
+      // enqueue returns conflict (another path already enqueued), QGO must
+      // log+continue — NOT throw, NOT transition the download to
+      // `pending_review`. A regression that mistakenly treats the conflict as
+      // an error would call `setStatus(downloadId, 'pending_review')` from
+      // the outer catch handler.
+      const { orchestrator, qualityGateService } = createOrchestrator();
+      qualityGateService.getCompletedDownloadById.mockResolvedValue({ download: completedDownload, book: { ...downloadingBook } });
+      // Decision is 'imported' (default mock) so the helper IS reached;
+      // simulate a benign idempotency conflict at that call site.
+      vi.mocked(enqueueAutoImport).mockResolvedValueOnce(false);
+
+      await expect(orchestrator.processOneDownload(1)).resolves.toBeUndefined();
+
+      // Helper was actually invoked (proves we reached the imported branch).
+      expect(enqueueAutoImport).toHaveBeenCalledWith(
+        expect.anything(), 1, 1, expect.any(Function), expect.anything(),
+      );
+      // Critical: no transition to pending_review on conflict.
+      expect(qualityGateService.setStatus).not.toHaveBeenCalledWith(
+        expect.anything(),
+        'pending_review',
+      );
+    });
+
     it('holds for review and reverts book status to downloading', async () => {
       const { orchestrator, qualityGateService, db, broadcaster } = createOrchestrator();
       qualityGateService.getCompletedDownloadById.mockResolvedValue({ download: completedDownload, book: { ...downloadingBook } });

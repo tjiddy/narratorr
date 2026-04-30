@@ -203,6 +203,57 @@ describe('BookImportService', () => {
         service.enqueue({ bookId: 5, type: 'auto', metadata: '{}' }),
       ).rejects.toThrow('disk I/O error');
     });
+
+    it('wraps active-job pre-check + insert in db.transaction (TOCTOU guard, AC4) (F1)', async () => {
+      // Independent of select/insert assertions — this test specifically
+      // protects the transaction boundary. If a refactor removed
+      // `this.db.transaction(...)` and inlined the same select/insert calls,
+      // the other enqueue tests would still pass; this one would fail.
+      db.select.mockReturnValueOnce(mockDbChain([])); // in-tx pre-check
+      db.insert.mockReturnValueOnce(mockDbChain([{ id: 50 }]));
+
+      const result = await service.enqueue({ bookId: 5, type: 'auto', metadata: '{}' });
+
+      expect(result).toEqual({ jobId: 50 });
+      // The transaction MUST be invoked exactly once and its callback MUST
+      // own the select+insert pair so the active-job check and the insert
+      // share a single atomic visibility window.
+      expect(db.transaction).toHaveBeenCalledTimes(1);
+      const txCallback = db.transaction.mock.calls[0][0] as (tx: typeof db) => Promise<unknown>;
+      expect(typeof txCallback).toBe('function');
+
+      // Verify the callback semantics: invoking it with a fresh tx-shaped mock
+      // routes BOTH the select pre-check AND the insert to that same handle —
+      // proving the two reads/writes are inside the same transaction context.
+      const txSelect = vi.fn().mockReturnValue(mockDbChain([]));
+      const txInsert = vi.fn().mockReturnValue(mockDbChain([{ id: 51 }]));
+      const txMock = { select: txSelect, insert: txInsert };
+      const cbResult = await txCallback(txMock as never);
+      expect(txSelect).toHaveBeenCalledTimes(1); // active-job pre-check on tx handle
+      expect(txInsert).toHaveBeenCalledTimes(1); // insert on tx handle
+      expect(cbResult).toEqual({ jobId: 51 });
+    });
+
+    it('skips insert when pre-check inside the transaction finds an active row (TOCTOU guard) (F1)', async () => {
+      // Companion to the boundary test above — verifies the in-tx pre-check
+      // result short-circuits the insert call so a duplicate is never even
+      // attempted. Together with the boundary test, these protect the AC4
+      // contract: the check and the insert must atomically agree.
+      const txCallback = vi.fn();
+      db.transaction.mockImplementationOnce(async (cb: (tx: typeof db) => Promise<unknown>) => {
+        txCallback.mockImplementation(cb);
+        return cb(db);
+      });
+
+      db.select.mockReturnValueOnce(mockDbChain([{ id: 12 }])); // active row exists in-tx
+
+      const result = await service.enqueue({ bookId: 5, type: 'auto', metadata: '{}' });
+
+      expect(result).toEqual({ error: 'active-job-exists', status: 409 });
+      expect(db.transaction).toHaveBeenCalledTimes(1);
+      // Critical: insert never even attempted when pre-check sees an active row.
+      expect(db.insert).not.toHaveBeenCalled();
+    });
   });
 
   describe('getRetryAvailability', () => {
