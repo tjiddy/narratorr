@@ -190,7 +190,10 @@ function ImportListForm({
   async function handlePreview() {
     setPreviewing(true);
     setPreviewItems(null);
-    const result = await api.previewImportList(formData).catch(() => null);
+    // Forward initial.id when editing an existing list so the route can
+    // resolve a masked apiKey against the persisted record.
+    const payload = initial ? { ...formData, id: initial.id } : formData;
+    const result = await api.previewImportList(payload).catch(() => null);
     if (result) { setPreviewItems(result.items); setPreviewTotal(result.total); }
     else toast.error('Preview failed — check your settings');
     setPreviewing(false);
@@ -239,7 +242,7 @@ function ImportListForm({
         <input id="il-syncInterval" type="number" value={syncInterval} onChange={(e) => setSyncInterval(Number(e.target.value))} min={5} step={1} className={inputClass} />
       </div>
 
-      <ProviderSettings type={type} settings={settings} onChange={setSettings} />
+      <ProviderSettings type={type} settings={settings} onChange={setSettings} editingId={initial?.id} />
 
       <ImportListFormToolbar
         isTesting={isTesting}

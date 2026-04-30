@@ -39,7 +39,7 @@ export const downloadClientsApi = {
     }),
   getClientCategories: (id: number) =>
     fetchApi<CategoriesResult>(`/download-clients/${id}/categories`, { method: 'POST' }),
-  getClientCategoriesFromConfig: (data: Omit<DownloadClient, 'id' | 'createdAt'>) =>
+  getClientCategoriesFromConfig: (data: Omit<DownloadClient, 'id' | 'createdAt'> & { id?: number }) =>
     fetchApi<CategoriesResult>('/download-clients/categories', {
       method: 'POST',
       body: JSON.stringify(data),

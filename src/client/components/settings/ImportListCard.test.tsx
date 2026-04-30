@@ -274,6 +274,19 @@ describe('ImportListCard', () => {
       expect(screen.getByText('Showing 1 of 5 items')).toBeInTheDocument();
     });
 
+    // #844 — id forwarding for sentinel resolution
+    it('Preview Items omits id on the create-mode path', async () => {
+      const user = userEvent.setup();
+      (api.previewImportList as Mock).mockResolvedValue({ items: [], total: 0 });
+      renderWithProviders(<ImportListCard mode="create" onSubmit={noop} />);
+
+      await user.click(screen.getByRole('button', { name: /Preview Items/ }));
+
+      await waitFor(() => expect(api.previewImportList).toHaveBeenCalled());
+      const call = (api.previewImportList as Mock).mock.calls[0][0];
+      expect(call).not.toHaveProperty('id');
+    });
+
     it('Preview Items shows error toast on failure', async () => {
       const user = userEvent.setup();
       (api.previewImportList as Mock).mockRejectedValue(new Error('fail'));
@@ -385,6 +398,22 @@ describe('ImportListCard', () => {
         name: 'Updated List',
         type: 'abs',
       }));
+    });
+
+    // #844 — id forwarding for sentinel resolution
+    it('Preview Items forwards initial.id when editing an existing list', async () => {
+      const user = userEvent.setup();
+      (api.previewImportList as Mock).mockResolvedValue({ items: [], total: 0 });
+      renderWithProviders(
+        <ImportListCard list={mockList} mode="edit" onSubmit={noop} />
+      );
+
+      await user.click(screen.getByRole('button', { name: /Preview Items/ }));
+
+      await waitFor(() => expect(api.previewImportList).toHaveBeenCalled());
+      expect(api.previewImportList).toHaveBeenCalledWith(
+        expect.objectContaining({ id: 1, type: 'abs' }),
+      );
     });
   });
 });
