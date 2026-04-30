@@ -52,7 +52,7 @@
     "react-router-dom": "^7.14.2",
     "socks-proxy-agent": "^10.0.0",
     "sonner": "^2.0.7",
-    "undici": "^7.24.4",
+    "undici": "^8.1.0",
     "unzipper": "^0.12.3",
     "zod": "^4.4.1"
   },
@@ -69,7 +69,7 @@
     "@types/react": "^19.2.14",
     "@types/react-dom": "^19.2.3",
     "@types/unzipper": "^0.10.11",
-    "@vitejs/plugin-react": "^5.1.4",
+    "@vitejs/plugin-react": "^6.0.1",
     "@vitest/coverage-v8": "^4.1.5",
     "concurrently": "^9.2.1",
     "drizzle-kit": "^0.31.10",
@@ -84,7 +84,7 @@
     "tsx": "^4.21.0",
     "typescript": "^5.9.3",
     "typescript-eslint": "^8.59.1",
-    "vite": "^7.3.1",
+    "vite": "^8.0.10",
     "vitest": "^4.1.5"
   },
   "packageManager": "pnpm@9.15.0",

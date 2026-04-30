@@ -17,7 +17,7 @@ export default defineConfig({
   build: {
     outDir: '../../dist/client',
     emptyOutDir: true,
-    rollupOptions: {
+    rolldownOptions: {
       output: {
         manualChunks,
       },
@@ -25,6 +25,7 @@ export default defineConfig({
   },
   server: {
     port: 5173,
+    forwardConsole: true,
     proxy: {
       '/api': {
         target: 'http://localhost:3000',
