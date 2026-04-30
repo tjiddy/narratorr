@@ -695,4 +695,41 @@ describe('AudioBookBayIndexer', () => {
       expect(results[0].guid).toBe(results[0].infoHash);
     });
   });
+
+  // ===== #877 F9 — ABB testDirect SSRF refusal + cap =====
+
+  describe('testDirect hardening (#877 F9)', () => {
+    it.each([
+      '192.168.1.10',
+      '127.0.0.1',
+      '10.0.0.5',
+      '169.254.169.254',
+      'metadata.google.internal',
+    ])('refuses test() against private/metadata hostname %s before fetch', async (hostname) => {
+      const fetchSpy = vi.spyOn(globalThis, 'fetch');
+
+      const blocked = new (await import('./abb.js')).AudioBookBayIndexer({ hostname, pageLimit: 1 });
+      const result = await blocked.test();
+
+      expect(result.success).toBe(false);
+      expect(result.message).toMatch(/Refused/);
+      expect(fetchSpy).not.toHaveBeenCalled();
+      fetchSpy.mockRestore();
+    });
+
+    it('rejects test() when response Content-Length exceeds RESPONSE_CAP_INDEXER (10 MiB)', async () => {
+      const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(
+        new Response('truncated-body', {
+          status: 200,
+          headers: { 'content-length': String(10 * 1024 * 1024 + 1) },
+        }),
+      );
+
+      const result = await indexer.test();
+
+      expect(result.success).toBe(false);
+      expect(result.message).toMatch(/cap/i);
+      fetchSpy.mockRestore();
+    });
+  });
 });

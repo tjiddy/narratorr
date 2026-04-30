@@ -230,4 +230,58 @@ describe('AbsProvider', () => {
       expect(items[0].title).toBe('Book');
     });
   });
+
+  describe('SSRF hardening + RESPONSE_CAP_ABS (#877 F5)', () => {
+    it.each([
+      'http://192.168.1.10:13378',
+      'http://127.0.0.1:13378',
+      'http://10.0.0.5:13378',
+      'http://169.254.169.254:13378',
+      'http://[::1]:13378',
+      'http://metadata.google.internal:13378',
+    ])('fetchItems(): refuses serverUrl targeting %s before fetch', async (serverUrl) => {
+      let fetchInvoked = false;
+      server.use(
+        http.get(/.*/, () => {
+          fetchInvoked = true;
+          return HttpResponse.json({ results: [] });
+        }),
+      );
+
+      const provider = new AbsProvider({ serverUrl, apiKey: 'k', libraryId: 'lib-1' });
+      await expect(provider.fetchItems()).rejects.toThrow(/Refused/);
+      expect(fetchInvoked).toBe(false);
+    });
+
+    it('test(): refuses serverUrl targeting a private host and surfaces failure', async () => {
+      let fetchInvoked = false;
+      server.use(
+        http.get(/.*/, () => {
+          fetchInvoked = true;
+          return HttpResponse.json({ libraries: [] });
+        }),
+      );
+
+      const provider = new AbsProvider({ serverUrl: 'http://192.168.1.10:13378', apiKey: 'k', libraryId: 'lib-1' });
+      const result = await provider.test();
+      expect(result.success).toBe(false);
+      expect(result.message).toMatch(/Refused/);
+      expect(fetchInvoked).toBe(false);
+    });
+
+    it('fetchItems(): rejects when response Content-Length exceeds RESPONSE_CAP_ABS (5 MiB)', async () => {
+      // Stub fetch directly — MSW normalizes Content-Length away. The cap
+      // precheck inside readBodyWithCap fires before the body is read.
+      const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+        new Response('truncated-body', {
+          status: 200,
+          headers: { 'content-length': String(5 * 1024 * 1024 + 1) },
+        }),
+      );
+
+      const provider = new AbsProvider({ serverUrl: ABS_BASE, apiKey: 'k', libraryId: 'lib-1' });
+      await expect(provider.fetchItems()).rejects.toThrow(/cap/i);
+      fetchSpy.mockRestore();
+    });
+  });
 });

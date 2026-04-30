@@ -82,6 +82,34 @@ describe('readBodyWithCap', () => {
     });
   });
 
+  describe('reader errors (#877 F1)', () => {
+    it('propagates non-cap reader.read() errors instead of returning a partial buffer', async () => {
+      const partialChunk = new Uint8Array(10);
+      const stream = new ReadableStream({
+        start(controller) {
+          controller.enqueue(partialChunk);
+          // Then error mid-read — broken connection / server crash.
+          controller.error(new Error('socket closed unexpectedly'));
+        },
+      });
+      const response = new Response(stream, { status: 200 });
+      // MUST throw — never silently return the truncated 10-byte buffer as a
+      // "successful" partial response, which would let an attacker truncate
+      // security-sensitive payloads.
+      await expect(readBodyWithCap(response, SMALL_CAP)).rejects.toThrow(/socket closed/);
+    });
+
+    it('does not swallow a generic read failure into an empty buffer', async () => {
+      const stream = new ReadableStream({
+        pull(controller) {
+          controller.error(new Error('reader-side failure'));
+        },
+      });
+      const response = new Response(stream, { status: 200 });
+      await expect(readBodyWithCap(response, SMALL_CAP)).rejects.toThrow(/reader-side failure/);
+    });
+  });
+
   describe('under-cap happy path', () => {
     it('returns the full body as a Buffer with bytes intact', async () => {
       const payload = Buffer.from('hello world');

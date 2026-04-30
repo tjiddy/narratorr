@@ -216,4 +216,58 @@ describe('DiscordNotifier', () => {
     const body = capturedBody as { embeds: { title: string }[] };
     expect(body.embeds[0].title).toBe('Release Grabbed');
   });
+
+  describe('SSRF hardening + RESPONSE_CAP_NOTIFIER (#877 F4)', () => {
+    it.each([
+      'http://192.168.1.1/discord',
+      'http://127.0.0.1:8080/discord',
+      'http://169.254.169.254/discord',
+      'http://10.0.0.5/discord',
+      'http://[::1]/discord',
+      'http://metadata.google.internal/discord',
+    ])('refuses user-configured Discord webhookUrl targeting %s before fetch', async (url) => {
+      let fetchInvoked = false;
+      server.use(
+        http.post(/.*/, () => {
+          fetchInvoked = true;
+          return new HttpResponse(null, { status: 204 });
+        }),
+      );
+
+      const notifier = new DiscordNotifier({ webhookUrl: url });
+      await expect(notifier.send('on_grab', { event: 'on_grab' })).rejects.toThrow(/Refused/);
+      expect(fetchInvoked).toBe(false);
+    });
+
+    it('refuses when DNS for a public-looking Discord webhookUrl resolves to a private address', async () => {
+      mockedDnsLookup.mockReset();
+      mockedDnsLookup.mockResolvedValueOnce([{ address: '10.0.0.1', family: 4 }]);
+
+      let fetchInvoked = false;
+      server.use(
+        http.post(/.*/, () => {
+          fetchInvoked = true;
+          return new HttpResponse(null, { status: 204 });
+        }),
+      );
+
+      const notifier = new DiscordNotifier({ webhookUrl: 'https://rebind.example.com/discord' });
+      await expect(notifier.send('on_grab', { event: 'on_grab' })).rejects.toThrow(/Refused/);
+      expect(fetchInvoked).toBe(false);
+    });
+
+    it('rejects when response Content-Length exceeds RESPONSE_CAP_NOTIFIER (64 KiB)', async () => {
+      // Stub fetch directly — MSW would normalize Content-Length away.
+      const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+        new Response('truncated-body', {
+          status: 200,
+          headers: { 'content-length': String(64 * 1024 + 1) },
+        }),
+      );
+
+      const notifier = new DiscordNotifier({ webhookUrl: WEBHOOK_URL });
+      await expect(notifier.send('on_grab', { event: 'on_grab' })).rejects.toThrow(/cap/i);
+      fetchSpy.mockRestore();
+    });
+  });
 });

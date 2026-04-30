@@ -403,6 +403,65 @@ describe('import-lists routes', () => {
       expect(res.statusCode).toBe(400);
       expect(res.json().error).toContain('non-secret field: serverUrl');
     });
+
+    // ===== #877 F6 — SSRF refusal mapping + RESPONSE_CAP_ABS at the route boundary =====
+
+    it.each([
+      'http://192.168.1.10:13378',
+      'http://10.0.0.5:13378',
+      'http://169.254.169.254',
+      'http://[::1]:13378',
+      'http://metadata.google.internal',
+    ])('returns 502 with refusal message when serverUrl targets %s (no fetch)', async (serverUrl) => {
+      const fetchSpy = vi.spyOn(globalThis, 'fetch');
+
+      const res = await app.inject({
+        method: 'POST',
+        url: '/api/import-lists/abs/libraries',
+        payload: { serverUrl, apiKey: 'k' },
+      });
+
+      expect(res.statusCode).toBe(502);
+      expect(res.json().error).toMatch(/Refused/);
+      expect(fetchSpy).not.toHaveBeenCalled();
+      fetchSpy.mockRestore();
+    });
+
+    it('returns 502 when DNS for a public-looking serverUrl resolves to a private address (rebinding)', async () => {
+      mockedDnsLookup.mockReset();
+      mockedDnsLookup.mockResolvedValueOnce([{ address: '192.168.1.1', family: 4 }]);
+      const fetchSpy = vi.spyOn(globalThis, 'fetch');
+
+      const res = await app.inject({
+        method: 'POST',
+        url: '/api/import-lists/abs/libraries',
+        payload: { serverUrl: 'http://abs-rebind.example.com', apiKey: 'k' },
+      });
+
+      expect(res.statusCode).toBe(502);
+      expect(res.json().error).toMatch(/Refused/);
+      expect(fetchSpy).not.toHaveBeenCalled();
+      fetchSpy.mockRestore();
+    });
+
+    it('returns 502 when ABS response Content-Length exceeds RESPONSE_CAP_ABS (5 MiB)', async () => {
+      const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(
+        new Response('truncated-body', {
+          status: 200,
+          headers: { 'content-length': String(5 * 1024 * 1024 + 1) },
+        }),
+      );
+
+      const res = await app.inject({
+        method: 'POST',
+        url: '/api/import-lists/abs/libraries',
+        payload: { serverUrl: 'http://abs.local', apiKey: 'k' },
+      });
+
+      expect(res.statusCode).toBe(502);
+      expect(res.json().error).toMatch(/cap/i);
+      fetchSpy.mockRestore();
+    });
   });
 
   describe('POST /api/import-lists/preview', () => {

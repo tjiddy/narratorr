@@ -179,7 +179,10 @@ describe('TelegramNotifier', () => {
     spy.mockRestore();
   });
 
-  it('falls back to empty string when response.text() rejects', async () => {
+  it('returns failure with the underlying error when upstream stream breaks (#877 F1)', async () => {
+    // Hardened fetchWithTimeout reads the body in the wrapper and propagates
+    // any non-cap read failure rather than returning a partial buffer. The
+    // notifier surfaces the wrapper's error message to the caller.
     server.use(
       http.post(API_URL, () => {
         const body = new ReadableStream({
@@ -195,7 +198,7 @@ describe('TelegramNotifier', () => {
     const result = await notifier.send('on_grab', { event: 'on_grab' });
 
     expect(result.success).toBe(false);
-    expect(result.message).toBe('HTTP 500: ');
+    expect(result.message).toContain('stream broken');
   });
 
   it('returns error message for non-timeout network error', async () => {

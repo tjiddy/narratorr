@@ -478,6 +478,62 @@ describe('DownloadUrl', () => {
       expect((error as Error).message).toMatch(/^Download failed:/);
     });
   });
+
+  // ===== #877 F10 — DownloadUrl SSRF preflight + per-hop revalidation + cap =====
+
+  describe('resolve() — SSRF refusal & cap (#877 F10)', () => {
+    it.each([
+      'http://192.168.1.1/file.torrent',
+      'http://127.0.0.1:8080/file.torrent',
+      'http://10.0.0.5/file.torrent',
+      'http://169.254.169.254/file.torrent',
+      'http://[::1]/file.torrent',
+      'http://metadata.google.internal/file.torrent',
+    ])('refuses initial private/metadata target %s before fetch', async (url) => {
+      const dl = new DownloadUrl(url, 'torrent');
+      await expect(dl.resolve()).rejects.toThrow(/Refused/);
+      expect(mockFetch).not.toHaveBeenCalled();
+    });
+
+    it('refuses when DNS for a public-looking initial URL resolves to a private address', async () => {
+      mockedDnsLookup.mockReset();
+      mockedDnsLookup.mockResolvedValueOnce([{ address: '192.168.1.1', family: 4 }]);
+
+      const dl = new DownloadUrl('https://rebind.example.com/file.torrent', 'torrent');
+      await expect(dl.resolve()).rejects.toThrow(/Refused/);
+      expect(mockFetch).not.toHaveBeenCalled();
+    });
+
+    it('refuses on the second redirect hop when the Location resolves to a private address', async () => {
+      // First hop public, second hop redirect Location is private.
+      mockedDnsLookup.mockReset();
+      mockedDnsLookup
+        .mockResolvedValueOnce([{ address: '1.2.3.4', family: 4 }])
+        .mockResolvedValueOnce([{ address: '192.168.1.1', family: 4 }]);
+
+      mockFetch.mockResolvedValueOnce(
+        new Response(null, {
+          status: 302,
+          headers: { Location: 'https://internal.example.com/secret.torrent' },
+        }),
+      );
+
+      const dl = new DownloadUrl('https://indexer.example.com/getnzb?id=1', 'torrent');
+      await expect(dl.resolve()).rejects.toThrow(/Refused/);
+    });
+
+    it('rejects when downloaded artifact Content-Length exceeds RESPONSE_CAP_DOWNLOAD_ARTIFACT (8 MiB)', async () => {
+      mockFetch.mockResolvedValueOnce(
+        new Response('truncated-body', {
+          status: 200,
+          headers: { 'content-length': String(8 * 1024 * 1024 + 1) },
+        }),
+      );
+
+      const dl = new DownloadUrl('https://indexer.example.com/getnzb?id=1', 'torrent');
+      await expect(dl.resolve()).rejects.toThrow(/cap/i);
+    });
+  });
 });
 
 describe('extractInfoHashFromTorrent', () => {

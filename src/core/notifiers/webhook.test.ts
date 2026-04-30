@@ -196,4 +196,62 @@ describe('WebhookNotifier', () => {
       book: { title: 'Test Book' },
     });
   });
+
+  describe('SSRF hardening + RESPONSE_CAP_NOTIFIER (#877 F3)', () => {
+    it.each([
+      'http://192.168.1.1/hook',
+      'http://127.0.0.1:8080/hook',
+      'http://169.254.169.254/hook',
+      'http://10.0.0.5/hook',
+      'http://[::1]/hook',
+      'http://metadata.google.internal/hook',
+    ])('refuses user-configured webhook URL targeting %s before fetch', async (url) => {
+      let fetchInvoked = false;
+      server.use(
+        http.post(/.*/, () => {
+          fetchInvoked = true;
+          return HttpResponse.json({ ok: true });
+        }),
+      );
+
+      const notifier = new WebhookNotifier({ url });
+
+      await expect(notifier.send('on_grab', { event: 'on_grab' })).rejects.toThrow(/Refused/);
+      expect(fetchInvoked).toBe(false);
+    });
+
+    it('refuses when DNS for a public-looking hostname resolves to a private address (rebinding)', async () => {
+      mockedDnsLookup.mockReset();
+      mockedDnsLookup.mockResolvedValueOnce([{ address: '192.168.1.1', family: 4 }]);
+
+      let fetchInvoked = false;
+      server.use(
+        http.post(/.*/, () => {
+          fetchInvoked = true;
+          return HttpResponse.json({ ok: true });
+        }),
+      );
+
+      const notifier = new WebhookNotifier({ url: 'https://rebind.example.com/hook' });
+      await expect(notifier.send('on_grab', { event: 'on_grab' })).rejects.toThrow(/Refused/);
+      expect(fetchInvoked).toBe(false);
+    });
+
+    it('rejects when response Content-Length exceeds RESPONSE_CAP_NOTIFIER (64 KiB)', async () => {
+      // Stub fetch directly — MSW would normalize the Content-Length away,
+      // and a 64 KiB body would otherwise round-trip through the interceptor.
+      // The Content-Length precheck inside readBodyWithCap fires before the
+      // body is read.
+      const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+        new Response('truncated-body', {
+          status: 200,
+          headers: { 'content-length': String(64 * 1024 + 1) },
+        }),
+      );
+
+      const notifier = new WebhookNotifier({ url: 'https://example.com/hook' });
+      await expect(notifier.send('on_grab', { event: 'on_grab' })).rejects.toThrow(/cap/i);
+      fetchSpy.mockRestore();
+    });
+  });
 });

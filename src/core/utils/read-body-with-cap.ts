@@ -27,29 +27,23 @@ export async function readBodyWithCap(response: Response, maxBytes: number): Pro
   const chunks: Uint8Array[] = [];
   let total = 0;
 
-  // Stream errors mid-read (broken connection, server crash) surface as a
-  // partial read — return what we have. Cap-exceeded is treated separately
-  // and ALWAYS throws, since exceeding the cap is the security-relevant case
-  // we must not silently allow.
-  try {
-    for (;;) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      if (value) {
-        total += value.byteLength;
-        if (total > maxBytes) {
-          await reader.cancel().catch(() => { /* best-effort */ });
-          throw new Error(`Streamed body exceeded cap of ${maxBytes} bytes`);
-        }
-        chunks.push(value);
+  // The full body is returned only after a clean read. Both cap-exceeded AND
+  // any other reader error (broken connection, server crash, malformed chunk)
+  // propagate as a thrown error — callers must never see a partial body that
+  // looks like a successful response. Truncated security-sensitive payloads
+  // (NZB/torrent/XML/JSON/metadata) silently treated as success would be a
+  // dangerous failure mode (#877 F1).
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    if (value) {
+      total += value.byteLength;
+      if (total > maxBytes) {
+        await reader.cancel().catch(() => { /* best-effort */ });
+        throw new Error(`Streamed body exceeded cap of ${maxBytes} bytes`);
       }
+      chunks.push(value);
     }
-  } catch (error: unknown) {
-    if (error instanceof Error && /exceeded cap/.test(error.message)) {
-      throw error;
-    }
-    // Broken-stream error — return what we read so the caller sees a Response
-    // with a (possibly empty) body and can still inspect status/headers.
   }
 
   return Buffer.concat(chunks);
