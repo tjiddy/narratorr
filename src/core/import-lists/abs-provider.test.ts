@@ -57,6 +57,24 @@ describe('AbsProvider', () => {
       expect(items[0].title).toBe('Valid Book');
     });
 
+    it('encodes libraryId in URL path (#786)', async () => {
+      const fetchMock = vi.fn().mockResolvedValue(
+        new Response(JSON.stringify({ results: [] }), { status: 200, headers: { 'content-type': 'application/json' } }),
+      );
+      vi.stubGlobal('fetch', fetchMock);
+
+      // Bypass schema validation — schema rejects this in production
+      const provider = new AbsProvider({ serverUrl: ABS_BASE, apiKey: 'test-key', libraryId: 'lib/1' });
+      await provider.fetchItems();
+
+      expect(fetchMock).toHaveBeenCalledWith(
+        `${ABS_BASE}/api/libraries/lib%2F1/items`,
+        expect.anything(),
+      );
+
+      vi.unstubAllGlobals();
+    });
+
     it('throws on HTTP error', async () => {
       server.use(
         http.get(`${ABS_BASE}/api/libraries/lib-1/items`, () => new HttpResponse(null, { status: 500, statusText: 'Internal Server Error' })),
