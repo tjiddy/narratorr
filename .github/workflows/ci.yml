@@ -116,6 +116,10 @@ jobs:
         if: steps.playwright-cache.outputs.cache-hit != 'true'
         run: pnpm exec playwright install chromium
 
+      - name: Drop broken Microsoft apt sources
+        run: |
+          sudo rm -f /etc/apt/sources.list.d/microsoft-prod.list /etc/apt/sources.list.d/azure-cli.list
+
       - name: Install Playwright system deps
         run: pnpm exec playwright install-deps chromium
 
