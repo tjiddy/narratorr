@@ -16,13 +16,13 @@ import {
 } from '../utils/import-steps.js';
 import { blacklistAndRetrySearch } from '../utils/rejection-helpers.js';
 import { serializeError } from '../utils/serialize-error.js';
-import type { Db } from '../../db/index.js';
 import { enqueueAutoImport } from '../utils/enqueue-auto-import.js';
+import type { BookImportService } from './book-import.service.js';
 import { WireOnce } from './wire-helpers.js';
 
 
 export interface ImportOrchestratorWireDeps {
-  db: Db;
+  bookImportService: BookImportService;
   blacklistService: BlacklistService;
   retrySearchDeps: RetrySearchDeps;
   nudgeImportWorker: () => void;
@@ -80,7 +80,7 @@ export class ImportOrchestrator {
    * The serial ImportQueueWorker drains from the queue.
    */
   async processCompletedDownloads(): Promise<number> {
-    const { db, nudgeImportWorker } = this.wired.require();
+    const { bookImportService, nudgeImportWorker } = this.wired.require();
 
     const admittedDownloads = await this.importService.getEligibleDownloads();
 
@@ -89,10 +89,18 @@ export class ImportOrchestrator {
     let enqueued = 0;
     for (const download of admittedDownloads) {
       try {
+        // enqueueAutoImport returns false on conflict — expected race outcome
+        // in batch processing, not a failure. Counter only increments when
+        // a row was actually created; conflict is logged at debug level inside
+        // the helper, NOT warn (downgraded to avoid noise per #747).
         const created = await enqueueAutoImport(
-          db, download.id, download.bookId, nudgeImportWorker, this.log,
+          bookImportService, download.id, download.bookId, nudgeImportWorker, this.log,
         );
-        if (created) enqueued++;
+        if (created) {
+          enqueued++;
+        } else {
+          this.log.debug({ downloadId: download.id, bookId: download.bookId }, 'Auto import skipped — active job conflict');
+        }
       } catch (error: unknown) {
         this.log.warn({ downloadId: download.id, error: serializeError(error) }, 'Failed to enqueue auto import — continuing');
       }

@@ -7,8 +7,8 @@ import { relative, resolve, isAbsolute } from 'node:path';
 import { streamCopyWithProgress } from './streaming-copy.helpers.js';
 import type { Db } from '../../db/index.js';
 import type { FastifyBaseLogger } from 'fastify';
-import { importJobs } from '../../db/schema.js';
 import type { BookService } from './book.service.js';
+import type { BookImportService } from './book-import.service.js';
 import type { SettingsService } from './settings.service.js';
 import type { BookMetadata } from '../../core/metadata/index.js';
 import { buildTargetPath, getAudioPathSize } from '../utils/import-helpers.js';
@@ -28,6 +28,7 @@ export interface ImportPipelineDeps {
   db: Db;
   log: FastifyBaseLogger;
   bookService: BookService;
+  bookImportService: BookImportService;
   settingsService: SettingsService;
   eventHistory: EventHistoryService;
   enrichmentDeps: EnrichmentDeps;
@@ -99,7 +100,7 @@ export async function confirmImport(
   mode?: ImportMode,
   nudgeWorker?: () => void,
 ): Promise<{ accepted: number }> {
-  const { db, log, bookService, eventHistory } = deps;
+  const { log, bookService, bookImportService, eventHistory } = deps;
 
   log.info({ count: items.length, mode: mode ?? 'pointer' }, 'Accepting library import');
 
@@ -133,13 +134,18 @@ export async function confirmImport(
         payload.mode = mode;
       }
 
-      await db.insert(importJobs).values({
+      const enqueued = await bookImportService.enqueue({
         bookId: book.id,
         type: 'manual',
-        status: 'pending',
-        phase: 'queued',
         metadata: JSON.stringify(payload),
       });
+
+      if ('error' in enqueued) {
+        // Rare: the placeholder bookId already has an active job. Skip this
+        // item from `accepted` so the caller's count reflects reality.
+        log.warn({ bookId: book.id, title: item.title }, 'Manual import skipped — active job already exists for book');
+        continue;
+      }
 
       eventHistory.create({
         bookId: book.id,

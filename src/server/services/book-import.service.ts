@@ -30,13 +30,87 @@ export interface ImportJobListing {
 
 export type RetryImportResult =
   | { jobId: number }
+  | { error: 'active-job-exists'; status: 409 }
   | { error: string; status: 404 | 409 | 400 };
+
+export interface EnqueueImportInput {
+  bookId: number;
+  type: ImportJobType;
+  metadata: string;
+  phase?: ImportJobPhase;
+}
+
+export type EnqueueImportResult =
+  | { jobId: number }
+  | { error: 'active-job-exists'; status: 409 };
+
+// Both the index-name and column-message forms are matched — SQLite surfaces
+// either depending on whether the conflict is detected via the named index or
+// the underlying column unique check (pattern from blacklist.service.test.ts).
+const ACTIVE_JOB_UNIQUE_VIOLATION =
+  /UNIQUE constraint failed.*(?:idx_import_jobs_book_active|import_jobs\.book_id|book_id)/;
+
+function isActiveJobUniqueViolation(error: unknown): boolean {
+  if (!(error instanceof Error)) return false;
+  const causeMsg = (error as Error & { cause?: { message?: string } }).cause?.message ?? '';
+  if (ACTIVE_JOB_UNIQUE_VIOLATION.test(causeMsg)) return true;
+  return ACTIVE_JOB_UNIQUE_VIOLATION.test(error.message ?? '');
+}
 
 export class BookImportService {
   constructor(
     private db: Db,
     private log: FastifyBaseLogger,
   ) {}
+
+  /**
+   * Centralized active-job check + insert. All three insert sites (retry, auto, manual)
+   * route through here so the transactional logic lives in exactly one place.
+   *
+   * Returns `{ jobId }` on success or `{ error: 'active-job-exists', status: 409 }`
+   * when an active job already exists for the same bookId — either detected by
+   * the in-tx pre-check or caught from the partial unique-index defensive backstop.
+   */
+  async enqueue(input: EnqueueImportInput): Promise<EnqueueImportResult> {
+    try {
+      return await this.db.transaction(async (tx) => {
+        const [existing] = await tx
+          .select({ id: importJobs.id })
+          .from(importJobs)
+          .where(and(
+            eq(importJobs.bookId, input.bookId),
+            inArray(importJobs.status, ['pending', 'processing']),
+          ))
+          .limit(1);
+
+        if (existing) {
+          return { error: 'active-job-exists' as const, status: 409 as const };
+        }
+
+        const [newJob] = await tx
+          .insert(importJobs)
+          .values({
+            bookId: input.bookId,
+            type: input.type,
+            status: 'pending',
+            phase: input.phase ?? 'queued',
+            metadata: input.metadata,
+          })
+          .returning({ id: importJobs.id });
+
+        return { jobId: newJob.id };
+      });
+    } catch (error: unknown) {
+      if (isActiveJobUniqueViolation(error)) {
+        this.log.info(
+          { bookId: input.bookId, type: input.type },
+          'Active import job unique-index conflict (defensive backstop)',
+        );
+        return { error: 'active-job-exists', status: 409 };
+      }
+      throw error;
+    }
+  }
 
   async retryImport(
     bookId: number,
@@ -53,14 +127,6 @@ export class BookImportService {
       return { error: 'Import already in progress', status: 409 };
     }
 
-    const [activeJob] = await this.db
-      .select({ id: importJobs.id })
-      .from(importJobs)
-      .where(and(eq(importJobs.bookId, bookId), eq(importJobs.status, 'processing')))
-      .limit(1);
-
-    if (activeJob) return { error: 'Import already in progress', status: 409 };
-
     const [failedJob] = await this.db
       .select()
       .from(importJobs)
@@ -70,16 +136,15 @@ export class BookImportService {
 
     if (!failedJob) return { error: 'No failed import job found for this book', status: 400 };
 
-    const [newJob] = await this.db
-      .insert(importJobs)
-      .values({
-        bookId,
-        type: failedJob.type,
-        status: 'pending',
-        phase: 'queued',
-        metadata: failedJob.metadata,
-      })
-      .returning({ id: importJobs.id });
+    const enqueued = await this.enqueue({
+      bookId,
+      type: failedJob.type,
+      metadata: failedJob.metadata,
+    });
+
+    if ('error' in enqueued) {
+      return enqueued;
+    }
 
     await this.db
       .update(books)
@@ -89,11 +154,11 @@ export class BookImportService {
     nudgeImportWorker();
 
     this.log.info(
-      { bookId, jobId: newJob.id, originalJobId: failedJob.id },
+      { bookId, jobId: enqueued.jobId, originalJobId: failedJob.id },
       'Retry import job created',
     );
 
-    return { jobId: newJob.id };
+    return { jobId: enqueued.jobId };
   }
 
   async getRetryAvailability(

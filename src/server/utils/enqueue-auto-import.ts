@@ -1,63 +1,40 @@
-import { eq, and, inArray } from 'drizzle-orm';
-import type { Db } from '../../db/index.js';
 import type { FastifyBaseLogger } from 'fastify';
-import { importJobs } from '../../db/schema.js';
-import { autoImportJobPayloadSchema, type AutoImportJobPayload } from '../services/import-adapters/types.js';
-import { serializeError } from './serialize-error.js';
+import type { BookImportService } from '../services/book-import.service.js';
+import type { AutoImportJobPayload } from '../services/import-adapters/types.js';
 
 /**
- * Shared helper: create an auto import_jobs row and nudge the worker.
- * Called by all 3 auto-import entrypoints (quality gate, approve route, batch cron).
- * Includes duplicate protection — skips if a pending/processing auto job already exists for this download.
- * Returns true if a job was created, false if skipped (duplicate).
+ * Thin wrapper around BookImportService.enqueue for the 'auto' job type.
+ * The transactional check + insert lives in BookImportService.enqueue;
+ * this helper formats the payload and reports back as a boolean for
+ * legacy callers that only need created/skipped semantics.
+ *
+ * Returns true if a job was created, false if an active job already exists
+ * for the bookId (the partial unique index `idx_import_jobs_book_active`
+ * permits exactly one pending/processing row per non-null book_id).
  */
 export async function enqueueAutoImport(
-  db: Db,
+  bookImportService: BookImportService,
   downloadId: number,
   bookId: number,
   nudge: () => void,
   log: FastifyBaseLogger,
 ): Promise<boolean> {
-  // Duplicate protection: check for existing pending/processing auto jobs
-  const existingJobs = await db
-    .select({ id: importJobs.id, metadata: importJobs.metadata })
-    .from(importJobs)
-    .where(and(
-      eq(importJobs.type, 'auto'),
-      inArray(importJobs.status, ['pending', 'processing']),
-    ));
-
-  for (const job of existingJobs) {
-    let parsedJson: unknown;
-    try {
-      parsedJson = JSON.parse(job.metadata);
-    } catch (error: unknown) {
-      log.warn({ existingJobId: job.id, error: serializeError(error) }, 'Skipping auto job with unparseable metadata during duplicate scan');
-      continue;
-    }
-    const result = autoImportJobPayloadSchema.safeParse(parsedJson);
-    if (!result.success) {
-      log.warn({ existingJobId: job.id, error: serializeError(result.error) }, 'Skipping auto job with malformed metadata shape during duplicate scan');
-      continue;
-    }
-    if (result.data.downloadId === downloadId) {
-      log.debug({ downloadId, existingJobId: job.id }, 'Auto import job already exists for download — skipping');
-      return false;
-    }
-  }
-
   const payload: AutoImportJobPayload = { downloadId };
-
-  await db.insert(importJobs).values({
+  const result = await bookImportService.enqueue({
     bookId,
     type: 'auto',
-    status: 'pending',
-    phase: 'queued',
     metadata: JSON.stringify(payload),
   });
 
-  log.info({ downloadId, bookId }, 'Auto import job enqueued');
-  nudge();
+  if ('error' in result) {
+    log.info(
+      { downloadId, bookId },
+      'Auto import job already enqueued for book — skipping',
+    );
+    return false;
+  }
 
+  log.info({ downloadId, bookId, jobId: result.jobId }, 'Auto import job enqueued');
+  nudge();
   return true;
 }

@@ -7,6 +7,7 @@ import { eq, inArray, and } from 'drizzle-orm';
 import { slugify } from '../../core/utils/parse.js';
 import { discoverBooks } from '../../core/utils/book-discovery.js';
 import type { BookService } from './book.service.js';
+import type { BookImportService } from './book-import.service.js';
 import type { MetadataService } from './metadata.service.js';
 import type { SettingsService } from './settings.service.js';
 import type { BookMetadata } from '../../core/metadata/index.js';
@@ -58,6 +59,7 @@ export class LibraryScanService {
   constructor(
     private db: Db,
     private bookService: BookService,
+    private bookImportService: BookImportService,
     private metadataService: MetadataService,
     private settingsService: SettingsService,
     private log: FastifyBaseLogger,
@@ -75,7 +77,7 @@ export class LibraryScanService {
   }
 
   get importDeps(): ImportPipelineDeps {
-    return { db: this.db, log: this.log, bookService: this.bookService, settingsService: this.settingsService, eventHistory: this.eventHistory, enrichmentDeps: this.enrichmentDeps, broadcaster: this.eventBroadcaster };
+    return { db: this.db, log: this.log, bookService: this.bookService, bookImportService: this.bookImportService, settingsService: this.settingsService, eventHistory: this.eventHistory, enrichmentDeps: this.enrichmentDeps, broadcaster: this.eventBroadcaster };
   }
 
   /**
