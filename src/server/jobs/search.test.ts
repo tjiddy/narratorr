@@ -271,7 +271,36 @@ describe('runSearchJob', () => {
     expect(result.searched).toBe(1);
     expect(result.grabbed).toBe(0);
     expect(log.warn).toHaveBeenCalledWith(
-      expect.objectContaining({ bookId: 1 }),
+      expect.objectContaining({
+        bookId: 1,
+        error: expect.objectContaining({
+          message: 'No download client configured',
+          type: 'Error',
+          stack: expect.any(String),
+        }),
+      }),
+      'Search failed for book',
+    );
+  });
+
+  it('serializes non-Error grab rejections at the grab_error log site (#852)', async () => {
+    const wantedBooks = [{ id: 1, title: 'Book One', authors: [{ name: 'Author A' }] }];
+    const searchResults = [mockResult(10, 'magnet:?xt=urn:btih:aaa')];
+    const settings = createMockSettingsService({ search: { enabled: true, intervalMinutes: 60 } });
+    const bookList = createMockBookListService(wantedBooks);
+    const indexer = createMockIndexerService(searchResults);
+    const download = createMockDownloadOrchestrator();
+
+    // Bare-string rejection — would serialize to {} via Pino without serializeError wrapping
+    vi.mocked(download.grab).mockRejectedValueOnce('string error');
+
+    await runSearchJob(settings, bookList, indexer, download, inject<FastifyBaseLogger>(log), createMockBlacklistService());
+
+    expect(log.warn).toHaveBeenCalledWith(
+      expect.objectContaining({
+        bookId: 1,
+        error: { message: 'string error', type: 'string' },
+      }),
       'Search failed for book',
     );
   });
@@ -1068,6 +1097,14 @@ describe('searchAllWanted', () => {
 
     expect(result.skipped).toBe(0);
     expect(result.errors).toBe(1);
+    // #852 — non-Error rejections must be wrapped via serializeError before logging
+    expect(log.warn).toHaveBeenCalledWith(
+      expect.objectContaining({
+        bookId: 1,
+        error: { message: 'some string error', type: 'string' },
+      }),
+      'Grab failed for book',
+    );
   });
 
   // ===== #386 — metadata.languages wiring =====
@@ -1167,8 +1204,16 @@ describe('searchAllWanted', () => {
 
     // Search succeeded but grab failed — searched is counted, errors incremented
     expect(result).toEqual({ searched: 1, grabbed: 0, skipped: 0, errors: 1 });
+    // #852 — Error rejections must be wrapped via serializeError, producing { message, type, stack }
     expect(log.warn).toHaveBeenCalledWith(
-      expect.objectContaining({ bookId: 1 }),
+      expect.objectContaining({
+        bookId: 1,
+        error: expect.objectContaining({
+          message: 'No download client configured',
+          type: 'Error',
+          stack: expect.any(String),
+        }),
+      }),
       'Grab failed for book',
     );
   });

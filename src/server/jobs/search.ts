@@ -69,7 +69,7 @@ export async function runSearchJob(
       searched++;
       if (result.result === 'grabbed') grabbed++;
       if (result.result === 'grab_error') {
-        log.warn({ error: result.error, bookId: book.id, title: book.title }, 'Search failed for book');
+        log.warn({ error: serializeError(result.error), bookId: book.id, title: book.title }, 'Search failed for book');
       }
     } catch (error: unknown) {
       log.warn({ error: serializeError(error), bookId: book.id, title: book.title }, 'Search failed for book');
@@ -119,7 +119,7 @@ export async function searchAllWanted(
       else if (result.result === 'skipped') skipped++;
       else if (result.result === 'grab_error') {
         errors++;
-        log.warn({ error: result.error, bookId: book.id, title: book.title }, 'Grab failed for book');
+        log.warn({ error: serializeError(result.error), bookId: book.id, title: book.title }, 'Grab failed for book');
       }
     } catch (error: unknown) {
       errors++;
