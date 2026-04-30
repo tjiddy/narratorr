@@ -178,7 +178,7 @@ export async function createServices(db: Db, log: FastifyBaseLogger): Promise<Se
   const taggingService = new TaggingService(db, settings, log, book);
   const importService = new ImportService(db, downloadClient, settings, log, remotePathMapping, book);
   const importOrchestrator = new ImportOrchestrator(importService, settings, log, notifier, taggingService, eventHistory, eventBroadcaster);
-  const libraryScan = new LibraryScanService(db, book, metadata, settings, log, eventHistory, eventBroadcaster);
+  const libraryScan = new LibraryScanService(db, book, bookImport, metadata, settings, log, eventHistory, eventBroadcaster);
   const matchJob = new MatchJobService(metadata, log, settings);
 
   const qualityGateService = new QualityGateService(db, log);
@@ -229,9 +229,9 @@ export async function createServices(db: Db, log: FastifyBaseLogger): Promise<Se
   // invoked before wire(), or if wire() is called more than once.
   download.wire({ retrySearchDeps });
   eventHistory.wire({ retrySearchDeps });
-  importOrchestrator.wire({ db, blacklistService, retrySearchDeps, nudgeImportWorker });
+  importOrchestrator.wire({ bookImportService: bookImport, blacklistService, retrySearchDeps, nudgeImportWorker });
   libraryScan.wire({ nudgeImportWorker });
-  qualityGateOrchestrator.wire({ nudgeImportWorker });
+  qualityGateOrchestrator.wire({ nudgeImportWorker, bookImportService: bookImport });
 
   // Register import adapters after libraryScan/importOrchestrator are fully wired
   registerImportAdapter(new ManualImportAdapter(libraryScan.importDeps));
@@ -262,7 +262,7 @@ const routeRegistry: RouteFactory[] = [
   (app, s) => bookFilesRoute(app, s.book),
   (app, s) => bookPreviewRoute(app, s.book),
   (app, s) => searchRoutes(app, s.downloadOrchestrator),
-  (app, s, db) => activityRoutes(app, s.download, s.downloadOrchestrator, s.qualityGate, s.qualityGateOrchestrator, db, () => s.importQueueWorker.nudge()),
+  (app, s) => activityRoutes(app, s.download, s.downloadOrchestrator, s.qualityGate, s.qualityGateOrchestrator, s.bookImport, () => s.importQueueWorker.nudge()),
   (app, s) => importJobsRoutes(app, s.bookImport),
   (app, s) => indexersRoutes(app, s.indexer),
   (app, s) => downloadClientsRoutes(app, s.downloadClient),

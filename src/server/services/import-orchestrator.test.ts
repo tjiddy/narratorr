@@ -116,7 +116,7 @@ describe('ImportOrchestrator', () => {
     const defaultBlacklistService = inject<BlacklistService>({ create: vi.fn().mockResolvedValue({}) });
     const defaultRetrySearchDeps = { log: createMockLogger() } as unknown as RetrySearchDeps;
     orchestrator.wire({
-      db: {} as never,
+      bookImportService: {} as never,
       blacklistService: defaultBlacklistService,
       retrySearchDeps: defaultRetrySearchDeps,
       nudgeImportWorker: vi.fn(),
@@ -338,6 +338,34 @@ describe('ImportOrchestrator', () => {
       );
     });
 
+    it('treats enqueue conflict as created=false (no warn, debug log, count not incremented) (#747)', async () => {
+      (importService.getEligibleDownloads as ReturnType<typeof vi.fn>).mockResolvedValue([
+        { id: 1, bookId: 10 }, { id: 2, bookId: 20 }, { id: 3, bookId: 30 },
+      ]);
+      vi.mocked(enqueueAutoImport)
+        .mockResolvedValueOnce(true)   // 1: created
+        .mockResolvedValueOnce(false)  // 2: conflict
+        .mockResolvedValueOnce(false); // 3: conflict
+
+      const count = await orchestrator.processCompletedDownloads();
+
+      // Only the non-conflict count is reflected
+      expect(count).toBe(1);
+      // Conflicts logged at debug level — the underlying helper's "skipping" info
+      // log fires only when enqueue actually returns conflict (mock here returns
+      // the boolean directly, so we assert on the orchestrator's debug log only).
+      expect(log.debug).toHaveBeenCalledWith(
+        expect.objectContaining({ downloadId: 2 }),
+        expect.stringContaining('conflict'),
+      );
+      expect(log.debug).toHaveBeenCalledWith(
+        expect.objectContaining({ downloadId: 3 }),
+        expect.stringContaining('conflict'),
+      );
+      // No warn log fired because conflict is not a failure
+      expect(log.warn).not.toHaveBeenCalled();
+    });
+
     it('logs batch summary with total and enqueued count', async () => {
       (importService.getEligibleDownloads as ReturnType<typeof vi.fn>).mockResolvedValue([
         { id: 1, bookId: 10 },
@@ -364,7 +392,7 @@ describe('ImportOrchestrator', () => {
       // (the ones the assertions reference) are the wired instances.
       orchestrator = new ImportOrchestrator(importService, settingsService, log, notifier, tagging, eventHistory, broadcaster);
       orchestrator.wire({
-        db: {} as never,
+        bookImportService: {} as never,
         blacklistService,
         retrySearchDeps,
         nudgeImportWorker: vi.fn(),
@@ -488,7 +516,7 @@ describe('ImportOrchestrator', () => {
     it('wire() called twice throws ServiceWireError', () => {
       const unwired = makeUnwiredOrchestrator();
       const wireDeps = {
-        db: {} as never,
+        bookImportService: {} as never,
         blacklistService: inject<BlacklistService>({ create: vi.fn().mockResolvedValue({}) }),
         retrySearchDeps: { log: createMockLogger() } as unknown as RetrySearchDeps,
         nudgeImportWorker: vi.fn(),

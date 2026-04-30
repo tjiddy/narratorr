@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import type { FastifyBaseLogger } from 'fastify';
+import type { BookImportService, EnqueueImportResult } from '../services/book-import.service.js';
 import { enqueueAutoImport } from './enqueue-auto-import.js';
 
 function createMockLogger(): FastifyBaseLogger {
@@ -10,29 +11,13 @@ function createMockLogger(): FastifyBaseLogger {
   } as unknown as FastifyBaseLogger;
 }
 
-function createMockDb(existingJobs: Array<{ id: number; metadata: string }> = []) {
-  const insertChain = {
-    values: vi.fn().mockResolvedValue(undefined),
-  };
-  const updateChain = {
-    set: vi.fn().mockReturnThis(),
-    where: vi.fn().mockResolvedValue({ rowsAffected: 1 }),
-  };
-  const selectChain = {
-    from: vi.fn().mockReturnThis(),
-    where: vi.fn().mockResolvedValue(existingJobs),
-  };
+function createMockBookImportService(result: EnqueueImportResult) {
   return {
-    select: vi.fn().mockReturnValue(selectChain),
-    insert: vi.fn().mockReturnValue(insertChain),
-    update: vi.fn().mockReturnValue(updateChain),
-    _insertChain: insertChain,
-    _updateChain: updateChain,
-    _selectChain: selectChain,
+    enqueue: vi.fn().mockResolvedValue(result),
   };
 }
 
-describe('enqueueAutoImport', () => {
+describe('enqueueAutoImport (thin wrapper around BookImportService.enqueue)', () => {
   let log: FastifyBaseLogger;
   const nudge = vi.fn((): void => {});
 
@@ -41,91 +26,41 @@ describe('enqueueAutoImport', () => {
     nudge.mockClear();
   });
 
-  it('creates import_jobs row with type=auto and nudges worker', async () => {
-    const db = createMockDb();
-    const result = await enqueueAutoImport(db as never, 99, 42, nudge, log);
+  it('delegates to BookImportService.enqueue with type=auto and downloadId metadata', async () => {
+    const svc = createMockBookImportService({ jobId: 42 });
+
+    const result = await enqueueAutoImport(svc as unknown as BookImportService, 99, 1, nudge, log);
 
     expect(result).toBe(true);
-    // insert called with correct payload
-    expect(db.insert).toHaveBeenCalled();
-    expect(db._insertChain.values).toHaveBeenCalledWith(expect.objectContaining({
-      bookId: 42,
+    expect(svc.enqueue).toHaveBeenCalledWith({
+      bookId: 1,
       type: 'auto',
-      status: 'pending',
-      phase: 'queued',
       metadata: JSON.stringify({ downloadId: 99 }),
-    }));
-    // download status is no longer mutated from this helper
-    expect(db.update).not.toHaveBeenCalled();
-    // worker nudged
-    expect(nudge).toHaveBeenCalled();
+    });
+    expect(nudge).toHaveBeenCalledTimes(1);
   });
 
-  it('skips duplicate — returns false when pending job already exists for same downloadId', async () => {
-    const existing = [{ id: 5, metadata: JSON.stringify({ downloadId: 99 }) }];
-    const db = createMockDb(existing);
-    const result = await enqueueAutoImport(db as never, 99, 42, nudge, log);
+  it('returns false and skips nudge when enqueue reports active-job-exists', async () => {
+    const svc = createMockBookImportService({ error: 'active-job-exists', status: 409 });
+
+    const result = await enqueueAutoImport(svc as unknown as BookImportService, 99, 1, nudge, log);
 
     expect(result).toBe(false);
-    // Should NOT insert or update
-    expect(db.insert).not.toHaveBeenCalled();
     expect(nudge).not.toHaveBeenCalled();
-  });
-
-  it('allows job creation when existing job is for a different downloadId', async () => {
-    const existing = [{ id: 5, metadata: JSON.stringify({ downloadId: 77 }) }];
-    const db = createMockDb(existing);
-    const result = await enqueueAutoImport(db as never, 99, 42, nudge, log);
-
-    expect(result).toBe(true);
-    expect(db.insert).toHaveBeenCalled();
-    expect(nudge).toHaveBeenCalled();
-  });
-
-  it('skips a corrupt unrelated job (malformed JSON), warns, and still inserts the new job', async () => {
-    const existing = [
-      { id: 5, metadata: '{' },                                     // unparseable JSON
-      { id: 6, metadata: JSON.stringify({ downloadId: 77 }) },     // valid but different
-    ];
-    const db = createMockDb(existing);
-    const result = await enqueueAutoImport(db as never, 99, 42, nudge, log);
-
-    expect(result).toBe(true);
-    expect(log.warn).toHaveBeenCalledWith(
-      expect.objectContaining({ existingJobId: 5, error: expect.any(Object) }),
-      expect.stringContaining('unparseable'),
+    expect(log.info).toHaveBeenCalledWith(
+      expect.objectContaining({ downloadId: 99, bookId: 1 }),
+      expect.stringContaining('skipping'),
     );
-    expect(db.insert).toHaveBeenCalled();
-    expect(nudge).toHaveBeenCalled();
   });
 
-  it('skips a corrupt unrelated job (wrong-shape JSON), warns, and still inserts the new job', async () => {
-    const existing = [
-      { id: 7, metadata: JSON.stringify({ notDownloadId: 'bogus' }) }, // valid JSON, wrong shape
-      { id: 8, metadata: JSON.stringify({ downloadId: 77 }) },
-    ];
-    const db = createMockDb(existing);
-    const result = await enqueueAutoImport(db as never, 99, 42, nudge, log);
+  it('does not catch unexpected errors from enqueue', async () => {
+    const svc = {
+      enqueue: vi.fn().mockRejectedValue(new Error('disk I/O error')),
+    };
 
-    expect(result).toBe(true);
-    expect(log.warn).toHaveBeenCalledWith(
-      expect.objectContaining({ existingJobId: 7, error: expect.any(Object) }),
-      expect.stringContaining('malformed'),
-    );
-    expect(db.insert).toHaveBeenCalled();
-    expect(nudge).toHaveBeenCalled();
-  });
-
-  it('still detects a duplicate when a corrupt row precedes the matching row', async () => {
-    const existing = [
-      { id: 9, metadata: '{' },                                    // corrupt — must skip + continue
-      { id: 10, metadata: JSON.stringify({ downloadId: 99 }) },   // matching duplicate
-    ];
-    const db = createMockDb(existing);
-    const result = await enqueueAutoImport(db as never, 99, 42, nudge, log);
-
-    expect(result).toBe(false);
-    expect(db.insert).not.toHaveBeenCalled();
+    await expect(
+      enqueueAutoImport(svc as unknown as BookImportService, 99, 1, nudge, log),
+    ).rejects.toThrow('disk I/O error');
     expect(nudge).not.toHaveBeenCalled();
   });
 });

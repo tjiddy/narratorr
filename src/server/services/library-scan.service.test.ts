@@ -3,6 +3,7 @@ import { inject, createMockDb, mockDbChain, createMockSettingsService } from '..
 import type { FastifyBaseLogger } from 'fastify';
 import type { Db } from '../../db/index.js';
 import type { BookService } from './book.service.js';
+import type { BookImportService } from './book-import.service.js';
 import type { MetadataService } from './metadata.service.js';
 import type { SettingsService } from './settings.service.js';
 import type { EventHistoryService } from './event-history.service.js';
@@ -248,6 +249,7 @@ describe('LibraryScanService', () => {
   };
   let log: ReturnType<typeof createMockLogger>;
   let mockEventHistoryService: { create: ReturnType<typeof vi.fn> };
+  let mockBookImportService: { enqueue: ReturnType<typeof vi.fn> };
 
   beforeEach(() => {
     vi.clearAllMocks();
@@ -282,6 +284,10 @@ describe('LibraryScanService', () => {
     mockEventHistoryService = {
       create: vi.fn().mockResolvedValue({}),
     };
+    let nextJobId = 100;
+    mockBookImportService = {
+      enqueue: vi.fn().mockImplementation(async () => ({ jobId: nextJobId++ })),
+    };
     log = createMockLogger();
     const mockSettingsService = createMockSettingsService({
       library: { path: '/library' },
@@ -289,6 +295,7 @@ describe('LibraryScanService', () => {
     service = new LibraryScanService(
       inject<Db>(mockDb),
       inject<BookService>(mockBookService),
+      inject<BookImportService>(mockBookImportService),
       inject<MetadataService>(mockMetadataService),
       inject<SettingsService>(mockSettingsService),
       log,
@@ -466,13 +473,6 @@ describe('LibraryScanService', () => {
   // ============================================================================
 
   describe('confirmImport — import_jobs creation (#635)', () => {
-    let insertValues: ReturnType<typeof vi.fn>;
-
-    beforeEach(() => {
-      insertValues = vi.fn().mockResolvedValue(undefined);
-      (mockDb as Record<string, ReturnType<typeof vi.fn>>).insert = vi.fn().mockReturnValue({ values: insertValues });
-    });
-
     it('creates import_jobs row for each accepted item with mode in metadata', async () => {
       mockBookService.create.mockResolvedValueOnce({ id: 42, title: 'Test', status: 'importing' });
 
@@ -481,13 +481,11 @@ describe('LibraryScanService', () => {
       ], 'copy');
 
       expect(result).toEqual({ accepted: 1 });
-      expect(insertValues).toHaveBeenCalledWith(expect.objectContaining({
+      expect(mockBookImportService.enqueue).toHaveBeenCalledWith(expect.objectContaining({
         bookId: 42,
         type: 'manual',
-        status: 'pending',
-        phase: 'queued',
       }));
-      const metadata = JSON.parse(insertValues.mock.calls[0][0].metadata);
+      const metadata = JSON.parse(mockBookImportService.enqueue.mock.calls[0][0].metadata);
       expect(metadata.mode).toBe('copy');
     });
 
@@ -502,7 +500,7 @@ describe('LibraryScanService', () => {
       ]);
 
       expect(result).toEqual({ accepted: 2 });
-      expect(insertValues).toHaveBeenCalledTimes(2);
+      expect(mockBookImportService.enqueue).toHaveBeenCalledTimes(2);
     });
 
     it('does not create import_jobs row for duplicate-skipped items', async () => {
@@ -513,7 +511,7 @@ describe('LibraryScanService', () => {
       ]);
 
       expect(result).toEqual({ accepted: 0 });
-      expect(insertValues).not.toHaveBeenCalled();
+      expect(mockBookImportService.enqueue).not.toHaveBeenCalled();
     });
 
     it('records book_added eventHistory for each accepted item', async () => {
@@ -535,7 +533,7 @@ describe('LibraryScanService', () => {
         { path: '/a', title: 'Ptr' },
       ]); // no mode = pointer
 
-      const metadata = JSON.parse(insertValues.mock.calls[0][0].metadata);
+      const metadata = JSON.parse(mockBookImportService.enqueue.mock.calls[0][0].metadata);
       expect(metadata.mode).toBeUndefined();
     });
   });
@@ -1061,6 +1059,7 @@ describe('LibraryScanService', () => {
       const svc = new LibraryScanService(
         inject<Db>(mockDb),
         inject<BookService>(mockBookService),
+        inject<BookImportService>({ enqueue: vi.fn().mockResolvedValue({ jobId: 1 }) }),
         inject<MetadataService>(mockMetadataService),
         inject<SettingsService>(emptyPathSettings),
         log,
@@ -1213,6 +1212,7 @@ describe('buildBookCreatePayload multi-author (issue #79)', () => {
     service = new LibraryScanService(
       db as never,
       mockBookService as never,
+      { enqueue: vi.fn().mockResolvedValue({ jobId: 1 }) } as never,
       { searchBooks: vi.fn().mockResolvedValue([]), getBook: vi.fn().mockResolvedValue(null), enrichBook: vi.fn().mockResolvedValue(null) } as never,
       settings as never,
       { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn(), trace: vi.fn(), fatal: vi.fn(), child: vi.fn().mockReturnThis(), level: 'info', silent: vi.fn() } as never,
@@ -1301,6 +1301,7 @@ describe('scanDirectory() — duplicateReason field (#133)', () => {
     service = new LibraryScanService(
       inject<Db>(mockDb),
       inject<BookService>({ findDuplicate: vi.fn().mockResolvedValue(null), create: vi.fn().mockResolvedValue({ id: 1 }), update: vi.fn().mockResolvedValue({ id: 1 }) }),
+      inject<BookImportService>({ enqueue: vi.fn().mockResolvedValue({ jobId: 1 }) }),
       inject<MetadataService>({ searchBooks: vi.fn(), getBook: vi.fn(), enrichBook: vi.fn() }),
       inject<SettingsService>(mockSettingsService),
       inject<FastifyBaseLogger>({ info: vi.fn(), debug: vi.fn(), warn: vi.fn(), error: vi.fn(), child: vi.fn(), silent: vi.fn() }),
@@ -1424,6 +1425,7 @@ describe('scanDirectory() — duplicateReason field (#133)', () => {
       const rescanService = new LibraryScanService(
         inject<Db>(Object.assign(rescanDb, chainMethods)),
         inject<BookService>({ findDuplicate: vi.fn(), create: vi.fn(), update: vi.fn() }),
+        inject<BookImportService>({ enqueue: vi.fn().mockResolvedValue({ jobId: 1 }) }),
         inject<MetadataService>({ searchBooks: vi.fn(), getBook: vi.fn(), enrichBook: vi.fn() }),
         inject<SettingsService>(createMockSettingsService({ library: { path: '/audiobooks' } })),
         inject<FastifyBaseLogger>(mockLog),
@@ -1894,6 +1896,7 @@ describe('scanDirectory() — within-scan duplicate detection (#342)', () => {
     service = new LibraryScanService(
       inject<Db>(mockDb),
       inject<BookService>({ findDuplicate: vi.fn().mockResolvedValue(null), create: vi.fn().mockResolvedValue({ id: 1 }), update: vi.fn().mockResolvedValue({ id: 1 }) }),
+      inject<BookImportService>({ enqueue: vi.fn().mockResolvedValue({ jobId: 1 }) }),
       inject<MetadataService>({ searchBooks: vi.fn(), getBook: vi.fn(), enrichBook: vi.fn() }),
       inject<SettingsService>(mockSettingsService),
       inject<FastifyBaseLogger>({ info: vi.fn(), debug: vi.fn(), warn: vi.fn(), error: vi.fn(), child: vi.fn(), silent: vi.fn() }),
@@ -2303,6 +2306,7 @@ describe('LibraryScanService — required-wiring contract', () => {
     const unwired = new LibraryScanService(
       inject<Db>(createMockDb()),
       inject<BookService>({ findDuplicate: vi.fn(), create: vi.fn() }),
+      inject<BookImportService>({ enqueue: vi.fn().mockResolvedValue({ jobId: 1 }) }),
       inject<MetadataService>({ searchBooks: vi.fn(), getBook: vi.fn(), enrichBook: vi.fn() }),
       inject<SettingsService>(settings),
       inject<FastifyBaseLogger>(createMockLogger()),
@@ -2317,6 +2321,7 @@ describe('LibraryScanService — required-wiring contract', () => {
     const svc = new LibraryScanService(
       inject<Db>(createMockDb()),
       inject<BookService>({ findDuplicate: vi.fn(), create: vi.fn() }),
+      inject<BookImportService>({ enqueue: vi.fn().mockResolvedValue({ jobId: 1 }) }),
       inject<MetadataService>({ searchBooks: vi.fn(), getBook: vi.fn(), enrichBook: vi.fn() }),
       inject<SettingsService>(settings),
       inject<FastifyBaseLogger>(createMockLogger()),

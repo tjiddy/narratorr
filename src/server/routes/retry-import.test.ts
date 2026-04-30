@@ -53,7 +53,7 @@ describe('POST /api/books/:id/retry-import', () => {
     expect(JSON.parse(res.payload)).toEqual({ error: 'Book not found' });
   });
 
-  it('returns 409 when service reports active import', async () => {
+  it('returns 409 when service reports active import (book.status=importing case)', async () => {
     bookImportService.retryImport.mockResolvedValueOnce({ error: 'Import already in progress', status: 409 });
     const app = await createApp(bookImportService, nudge);
 
@@ -61,6 +61,16 @@ describe('POST /api/books/:id/retry-import', () => {
 
     expect(res.statusCode).toBe(409);
     expect(JSON.parse(res.payload)).toEqual({ error: 'Import already in progress' });
+  });
+
+  it('returns 409 with active-job-exists body when service reports enqueue conflict (#747)', async () => {
+    bookImportService.retryImport.mockResolvedValueOnce({ error: 'active-job-exists', status: 409 } satisfies RetryImportResult);
+    const app = await createApp(bookImportService, nudge);
+
+    const res = await app.inject({ method: 'POST', url: '/api/books/1/retry-import' });
+
+    expect(res.statusCode).toBe(409);
+    expect(JSON.parse(res.payload)).toEqual({ error: 'active-job-exists' });
   });
 
   it('returns 400 when service reports no failed job', async () => {

@@ -28,6 +28,7 @@ import { isTorrentRemovalDeferred } from '../utils/seed-helpers.js';
 import { cleanupDeferredRejections as cleanupDeferred } from './quality-gate-deferred-cleanup.helpers.js';
 import { serializeError } from '../utils/serialize-error.js';
 import { enqueueAutoImport } from '../utils/enqueue-auto-import.js';
+import type { BookImportService } from './book-import.service.js';
 import { WireOnce, ServiceWireError } from './wire-helpers.js';
 
 // Drizzle's $inferSelect widens enum columns to bare `string` (CLAUDE.md gotcha).
@@ -40,6 +41,7 @@ type BookRow = Omit<typeof books.$inferSelect, 'status' | 'enrichmentStatus'> & 
 
 export interface QualityGateOrchestratorWireDeps {
   nudgeImportWorker: () => void;
+  bookImportService: BookImportService;
 }
 
 export interface QualityGateOrchestratorOptionalDeps {
@@ -148,7 +150,7 @@ export class QualityGateOrchestrator {
     // nudgeImportWorker. Verify wire() was called BEFORE any mutating state
     // transition (atomicClaim, book-status promotion, SSE) so an unwired
     // orchestrator never leaves partial state behind.
-    const { nudgeImportWorker } = this.wired.require();
+    const { nudgeImportWorker, bookImportService } = this.wired.require();
 
     const claimed = await this.qualityGateService.atomicClaim(row.download.id);
     if (!claimed) { this.log.debug({ id: row.download.id }, 'Quality gate: already claimed by another cycle'); return; }
@@ -188,7 +190,10 @@ export class QualityGateOrchestrator {
       const decision = await this.qualityGateService.processDownload(row.download, row.book, scanResult);
       await this.dispatchSideEffects(decision.action, row.download, row.book, decision.reason, decision.statusTransition);
       if (decision.action === 'imported' && row.book) {
-        await enqueueAutoImport(this.db, downloadId, row.book.id, nudgeImportWorker, this.log);
+        // Best-effort fire-and-forget: enqueueAutoImport returns false on conflict
+        // (already logged inside the helper). Do not throw, do not transition the
+        // gate decision back to pending_review — another path already enqueued.
+        await enqueueAutoImport(bookImportService, downloadId, row.book.id, nudgeImportWorker, this.log);
       }
     } catch (error: unknown) {
       // Defense-in-depth for the required-wiring contract (#739): in case any

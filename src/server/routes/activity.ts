@@ -3,7 +3,7 @@ import type { DownloadService } from '../services';
 import type { DownloadOrchestrator } from '../services/download-orchestrator.js';
 import type { QualityGateService } from '../services/quality-gate.service.js';
 import type { QualityGateOrchestrator } from '../services/quality-gate-orchestrator.js';
-import type { Db } from '../../db/index.js';
+import type { BookImportService } from '../services/book-import.service.js';
 import { idParamSchema, paginationParamsSchema, DEFAULT_LIMITS } from '../../shared/schemas.js';
 import { z } from 'zod';
 import { enqueueAutoImport } from '../utils/enqueue-auto-import.js';
@@ -18,7 +18,7 @@ const activityListQuerySchema = z.object({
 
 type ActivityListQuery = z.infer<typeof activityListQuerySchema>;
 
-export async function activityRoutes(app: FastifyInstance, downloadService: DownloadService, downloadOrchestrator: DownloadOrchestrator, qualityGateService: QualityGateService, qualityGateOrchestrator: QualityGateOrchestrator, db: Db, nudgeImportWorker: () => void) {
+export async function activityRoutes(app: FastifyInstance, downloadService: DownloadService, downloadOrchestrator: DownloadOrchestrator, qualityGateService: QualityGateService, qualityGateOrchestrator: QualityGateOrchestrator, bookImportService: BookImportService, nudgeImportWorker: () => void) {
   // GET /api/activity
   app.get<{ Querystring: ActivityListQuery }>(
     '/api/activity',
@@ -144,9 +144,12 @@ export async function activityRoutes(app: FastifyInstance, downloadService: Down
       request.log.info({ id }, 'Download approved');
       const result = await qualityGateOrchestrator.approve(id);
 
-      // Enqueue auto import job — creates import_jobs row, nudges worker
+      // Enqueue auto import job — creates import_jobs row, nudges worker.
+      // Conflict (active job already exists) is a benign idempotency outcome:
+      // log info and return the approve result unchanged. Do NOT surface 409 —
+      // the user-visible approve action itself succeeded.
       if (result.bookId) {
-        await enqueueAutoImport(db, id, result.bookId, nudgeImportWorker, request.log);
+        await enqueueAutoImport(bookImportService, id, result.bookId, nudgeImportWorker, request.log);
       }
 
       return result;

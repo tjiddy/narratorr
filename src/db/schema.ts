@@ -360,6 +360,9 @@ export const importJobs = sqliteTable('import_jobs', {
   completedAt: integer('completed_at', { mode: 'timestamp' }),
 }, (table) => [
   index('idx_import_jobs_status_created').on(table.status, table.createdAt),
+  uniqueIndex('idx_import_jobs_book_active')
+    .on(table.bookId)
+    .where(sql`status IN ('pending', 'processing')`),
 ]);
 
 // ============ SETTINGS ============
