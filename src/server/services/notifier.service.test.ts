@@ -508,6 +508,35 @@ describe('NotifierService', () => {
       expect(isEncrypted(setArg.settings.botToken as string)).toBe(true);
       expect(setArg.settings.botToken).not.toBe(oldEnc);
     });
+
+    // #844 — entity-aware allowlist on resolveSentinelFields
+    it('update rejects sentinel on a non-secret field rather than silently substituting it', async () => {
+      const existing = createMockDbNotifier({ type: 'webhook', settings: { url: 'https://hook', method: 'POST' } });
+      db.select.mockReturnValue(mockDbChain([existing]));
+      db.update.mockReturnValue(mockDbChain([existing]));
+
+      // method is NOT in the notifier secret allowlist — must throw.
+      await expect(
+        service.update(1, {
+          type: 'webhook',
+          settings: { url: 'https://hook', method: '********' },
+        }),
+      ).rejects.toThrow(/non-secret field: method/);
+    });
+
+    it('testConfig surfaces a typed error for sentinel on a non-secret field', async () => {
+      const existing = createMockDbNotifier({ type: 'webhook', settings: { url: 'https://hook', method: 'POST' } });
+      db.select.mockReturnValue(mockDbChain([existing]));
+
+      const result = await service.testConfig({
+        type: 'webhook',
+        settings: { url: 'https://hook', method: '********' },
+        id: 1,
+      });
+
+      expect(result.success).toBe(false);
+      expect(result.message).toMatch(/non-secret field: method/);
+    });
   });
 
   describe('#731 encryption — notify decrypts before adapter (AC4)', () => {

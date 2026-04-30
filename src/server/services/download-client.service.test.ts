@@ -203,6 +203,24 @@ describe('DownloadClientService', () => {
       expect(setArg.settings.password).toBe(encryptedPassword);
       expect(setArg.settings.apiKey).toBe(encryptedApiKey);
     });
+
+    // #844 — entity-aware allowlist on resolveSentinelFields
+    it('rejects sentinel on a non-secret field rather than silently substituting it', async () => {
+      const existingRow = {
+        ...mockClient,
+        settings: { host: 'persisted-host', port: 8080, password: 'real' },
+      };
+      db.select.mockReturnValue(mockDbChain([existingRow]));
+      db.update.mockReturnValue(mockDbChain([existingRow]));
+
+      // host is NOT in the downloadClient secret allowlist — must throw, not
+      // be silently overwritten with the persisted value.
+      await expect(
+        service.update(1, {
+          settings: { host: '********', port: 8080, password: 'still-real' },
+        }),
+      ).rejects.toThrow(/non-secret field: host/);
+    });
   });
 
   describe('delete', () => {

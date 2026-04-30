@@ -13,6 +13,7 @@ import {
   maskFields,
   redactSecrets,
   resolveSentinelFields,
+  SentinelOnNonSecretFieldError,
   loadEncryptionKey,
   getSecretFieldNames,
   makeTestSchema,
@@ -342,10 +343,12 @@ describe('SecretCodec', () => {
 });
 
 describe('resolveSentinelFields', () => {
+  const indexerAllow = getSecretFieldNames('indexer');
+
   it('replaces sentinel values with existing encrypted values', () => {
     const incoming = { apiKey: '********', hostname: 'example.com' };
     const existing = { apiKey: '$ENC$encrypted-key', hostname: 'old.com' };
-    const result = resolveSentinelFields(incoming, existing);
+    const result = resolveSentinelFields(incoming, existing, indexerAllow);
     expect(result.apiKey).toBe('$ENC$encrypted-key');
     expect(result.hostname).toBe('example.com');
   });
@@ -353,7 +356,7 @@ describe('resolveSentinelFields', () => {
   it('passes through non-sentinel values unchanged', () => {
     const incoming = { apiKey: 'new-real-key', hostname: 'new.com' };
     const existing = { apiKey: '$ENC$old-key', hostname: 'old.com' };
-    const result = resolveSentinelFields(incoming, existing);
+    const result = resolveSentinelFields(incoming, existing, indexerAllow);
     expect(result.apiKey).toBe('new-real-key');
     expect(result.hostname).toBe('new.com');
   });
@@ -361,14 +364,14 @@ describe('resolveSentinelFields', () => {
   it('handles empty incoming settings object', () => {
     const incoming = {};
     const existing = { apiKey: '$ENC$old-key' };
-    const result = resolveSentinelFields(incoming, existing);
+    const result = resolveSentinelFields(incoming, existing, indexerAllow);
     expect(result).toEqual({});
   });
 
   it('handles fields present in incoming but missing in existing', () => {
     const incoming = { apiKey: '********', newField: 'value' };
     const existing = { hostname: 'old.com' };
-    const result = resolveSentinelFields(incoming, existing);
+    const result = resolveSentinelFields(incoming, existing, indexerAllow);
     // apiKey sentinel has no match in existing — keeps undefined (existing value)
     expect(result.apiKey).toBeUndefined();
     expect(result.newField).toBe('value');
@@ -376,10 +379,60 @@ describe('resolveSentinelFields', () => {
 
   it('handles null/undefined existing record', () => {
     const incoming = { apiKey: '********', hostname: 'new.com' };
-    const result = resolveSentinelFields(incoming, null);
+    const result = resolveSentinelFields(incoming, null, indexerAllow);
     // No existing record to look up — sentinel stays as undefined
     expect(result.apiKey).toBeUndefined();
     expect(result.hostname).toBe('new.com');
+  });
+
+  it('throws SentinelOnNonSecretFieldError when sentinel lands on non-allowlisted key', () => {
+    const incoming = { hostname: '********', apiKey: 'real' };
+    const existing = { hostname: 'old.com', apiKey: 'old-key' };
+    expect(() => resolveSentinelFields(incoming, existing, indexerAllow))
+      .toThrow(SentinelOnNonSecretFieldError);
+  });
+
+  it('typed error carries the offending field name', () => {
+    const incoming = { hostname: '********' };
+    try {
+      resolveSentinelFields(incoming, {}, indexerAllow);
+      throw new Error('expected throw');
+    } catch (e) {
+      expect(e).toBeInstanceOf(SentinelOnNonSecretFieldError);
+      if (e instanceof SentinelOnNonSecretFieldError) {
+        expect(e.field).toBe('hostname');
+        expect(e.message).toContain('hostname');
+      }
+    }
+  });
+
+  it('replaces multiple allowlisted sentinels in a single pass', () => {
+    const dlAllow = getSecretFieldNames('downloadClient');
+    const incoming = { apiKey: '********', password: '********', host: 'h' };
+    const existing = { apiKey: 'real-key', password: 'real-pw', host: 'old' };
+    const result = resolveSentinelFields(incoming, existing, dlAllow);
+    expect(result.apiKey).toBe('real-key');
+    expect(result.password).toBe('real-pw');
+    expect(result.host).toBe('h');
+  });
+
+  it('treats different allowlists for different entities (downloadClient host is non-secret)', () => {
+    const dlAllow = getSecretFieldNames('downloadClient');
+    const incoming = { host: '********' };
+    expect(() => resolveSentinelFields(incoming, { host: 'old' }, dlAllow))
+      .toThrow(SentinelOnNonSecretFieldError);
+  });
+
+  it('treats different allowlists for different entities (network proxyUrl is the only secret)', () => {
+    const networkAllow = getSecretFieldNames('network');
+    expect(networkAllow).toEqual(['proxyUrl']);
+    const incoming = { proxyUrl: '********', someOther: 'plaintext' };
+    const result = resolveSentinelFields(incoming, { proxyUrl: 'http://proxy', someOther: 'old' }, networkAllow);
+    expect(result.proxyUrl).toBe('http://proxy');
+    expect(result.someOther).toBe('plaintext');
+
+    expect(() => resolveSentinelFields({ someOther: '********' }, { someOther: 'old' }, networkAllow))
+      .toThrow(SentinelOnNonSecretFieldError);
   });
 });
 

@@ -12,7 +12,7 @@ import {
   type SearchOptions,
 } from '../../core/index.js';
 import type { SettingsService } from './settings.service.js';
-import { encryptFields, decryptFields, resolveSentinelFields, getKey } from '../utils/secret-codec.js';
+import { encryptFields, decryptFields, resolveSentinelFields, getKey, getSecretFieldNames } from '../utils/secret-codec.js';
 import type { IndexerSettings } from '../../shared/schemas/indexer.js';
 import { AdapterCache } from '../utils/adapter-cache.js';
 import { getErrorMessage } from '../utils/error-message.js';
@@ -63,7 +63,7 @@ export class IndexerService {
     if (toUpdate.settings) {
       const settings = { ...(toUpdate.settings as Record<string, unknown>) };
       const existing = await this.db.select().from(indexers).where(eq(indexers.id, id)).limit(1);
-      resolveSentinelFields(settings, (existing[0]?.settings ?? {}) as Record<string, unknown>);
+      resolveSentinelFields(settings, (existing[0]?.settings ?? {}) as Record<string, unknown>, getSecretFieldNames('indexer'));
       toUpdate.settings = encryptFields('indexer', settings, getKey());
     }
     const result = await this.db
@@ -197,7 +197,7 @@ export class IndexerService {
           return { success: false, message: 'Indexer not found' };
         }
         resolvedSettings = { ...data.settings };
-        resolveSentinelFields(resolvedSettings, (existing.settings ?? {}) as Record<string, unknown>);
+        resolveSentinelFields(resolvedSettings, (existing.settings ?? {}) as Record<string, unknown>, getSecretFieldNames('indexer'));
       }
 
       const proxyUrl = await this.getProxyUrl();

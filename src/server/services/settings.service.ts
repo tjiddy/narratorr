@@ -12,7 +12,7 @@ import {
 } from '../../shared/schemas.js';
 import { normalizeLanguage } from '../../core/utils/language-codes.js';
 import { CANONICAL_LANGUAGES } from '../../shared/language-constants.js';
-import { encryptFields, decryptFields, resolveSentinelFields, getKey, type SecretEntity } from '../utils/secret-codec.js';
+import { encryptFields, decryptFields, resolveSentinelFields, getKey, getSecretFieldNames, type SecretEntity } from '../utils/secret-codec.js';
 import { serializeError } from '../utils/serialize-error.js';
 
 
@@ -117,7 +117,7 @@ export class SettingsService {
     if (entity && dbValue && typeof dbValue === 'object') {
       const incoming = { ...(dbValue as Record<string, unknown>) };
       const existing = await this.db.select().from(settings).where(eq(settings.key, key)).limit(1);
-      resolveSentinelFields(incoming, (existing[0]?.value ?? {}) as Record<string, unknown>);
+      resolveSentinelFields(incoming, (existing[0]?.value ?? {}) as Record<string, unknown>, getSecretFieldNames(entity));
       dbValue = encryptFields(entity, incoming, getKey());
     }
 

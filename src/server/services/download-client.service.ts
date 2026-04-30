@@ -8,7 +8,7 @@ import {
   type DownloadProtocol,
 } from '../../core/index.js';
 import { DOWNLOAD_CLIENT_REGISTRY } from '../../shared/download-client-registry.js';
-import { encryptFields, decryptFields, resolveSentinelFields, getKey } from '../utils/secret-codec.js';
+import { encryptFields, decryptFields, resolveSentinelFields, getKey, getSecretFieldNames } from '../utils/secret-codec.js';
 import { AdapterCache } from '../utils/adapter-cache.js';
 import { getErrorMessage } from '../utils/error-message.js';
 import type { DownloadClientSettings } from '../../shared/schemas/download-client.js';
@@ -122,7 +122,7 @@ export class DownloadClientService {
     if (toUpdate.settings) {
       const settings = { ...(toUpdate.settings as Record<string, unknown>) };
       const existing = await this.db.select().from(downloadClients).where(eq(downloadClients.id, id)).limit(1);
-      resolveSentinelFields(settings, (existing[0]?.settings ?? {}) as Record<string, unknown>);
+      resolveSentinelFields(settings, (existing[0]?.settings ?? {}) as Record<string, unknown>, getSecretFieldNames('downloadClient'));
       toUpdate.settings = encryptFields('downloadClient', settings, getKey());
     }
     const result = await this.db
@@ -191,7 +191,7 @@ export class DownloadClientService {
           return { success: false, message: 'Download client not found' };
         }
         resolvedSettings = { ...data.settings };
-        resolveSentinelFields(resolvedSettings, (existing.settings ?? {}) as Record<string, unknown>);
+        resolveSentinelFields(resolvedSettings, (existing.settings ?? {}) as Record<string, unknown>, getSecretFieldNames('downloadClient'));
       }
 
       const fakeRow = { id: 0, name: '', type: data.type, enabled: true, priority: 0, settings: resolvedSettings, createdAt: new Date() } as DownloadClientRow;
