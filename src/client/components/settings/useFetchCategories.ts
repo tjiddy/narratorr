@@ -17,11 +17,15 @@ export function useFetchCategories({ selectedType, clientId, isDirty, getValues 
   const [error, setError] = useState<string | null>(null);
   const [showDropdown, setShowDropdown] = useState(false);
 
-  // Clear state when type changes
+  // Clear state when type changes. The React 19 idiom would be a render-time
+  // reset or key-based remount on the consumer; tracking that as follow-up
+  // debt rather than refactoring inside the ESLint 10 bump PR.
   useEffect(() => {
+    /* eslint-disable react-hooks/set-state-in-effect */
     setCategories([]);
     setError(null);
     setShowDropdown(false);
+    /* eslint-enable react-hooks/set-state-in-effect */
   }, [selectedType]);
 
   const fetchCategories = useCallback(async () => {

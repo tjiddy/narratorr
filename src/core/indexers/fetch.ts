@@ -116,9 +116,9 @@ async function fetchViaProxy(
     } catch (error: unknown) {
       // Network-level failure reaching the proxy itself
       if (error instanceof DOMException && error.name === 'AbortError') {
-        throw new Error(`FlareSolverr proxy timed out after ${Math.round(timeoutMs / 1000)}s`);
+        throw new Error(`FlareSolverr proxy timed out after ${Math.round(timeoutMs / 1000)}s`, { cause: error });
       }
-      throw new Error(`FlareSolverr proxy unreachable at ${proxyUrl}`);
+      throw new Error(`FlareSolverr proxy unreachable at ${proxyUrl}`, { cause: error });
     }
 
     if (!response.ok) {

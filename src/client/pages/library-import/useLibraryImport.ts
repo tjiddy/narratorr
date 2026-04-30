@@ -29,13 +29,19 @@ export function useLibraryImport() {
   const [emptyResult, setEmptyResult] = useState(false);
   const [rows, setRows] = useState<ImportRow[]>([]);
   const [editIndex, setEditIndex] = useState<number | null>(null);
-  const [hasLibraryPath, setHasLibraryPath] = useState<boolean>(true);
 
   // Settings query to get library path
   const { data: settings, isError: settingsError } = useQuery({
     queryKey: queryKeys.settings(),
     queryFn: api.getSettings,
   });
+
+  // Derived from settings — no need for separate state. While loading we
+  // assume a path exists so the UI doesn't flicker the "no library path"
+  // message before the query resolves.
+  const hasLibraryPath = settings === undefined && !settingsError
+    ? true
+    : !!settings?.library.path;
 
   // Book identifiers for slug-duplicate recheck
   const { data: bookIdentifiers } = useQuery({
@@ -135,7 +141,7 @@ export function useLibraryImport() {
     },
   });
 
-  // Auto-scan on mount once settings are loaded
+  // Auto-scan on mount once settings are loaded and we have a library path.
   const didScanRef = useRef(false);
   useEffect(() => {
     if (didScanRef.current) return;
@@ -144,13 +150,9 @@ export function useLibraryImport() {
     if (settings === undefined && !settingsError) return;
 
     const libraryPath = settings?.library.path ?? '';
-    if (!libraryPath) {
-      setHasLibraryPath(false);
-      return;
-    }
+    if (!libraryPath) return;
 
     didScanRef.current = true;
-    setHasLibraryPath(true);
     scanMutation.mutate(libraryPath);
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [settings, settingsError]);

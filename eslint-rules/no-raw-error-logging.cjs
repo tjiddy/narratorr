@@ -116,7 +116,7 @@ function buildImportFixes(fixer, context) {
   const text = sourceCode.getText();
   if (text.includes('serializeError')) return [];
 
-  const importPath = computeImportPath(context.filename || context.getFilename());
+  const importPath = computeImportPath(context.filename);
   const importText = `import { serializeError } from '${importPath}';\n`;
 
   const program = sourceCode.ast;

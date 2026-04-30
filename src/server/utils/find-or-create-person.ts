@@ -36,13 +36,13 @@ async function findOrCreateBySlug(
   try {
     const inserted = await insert();
     return inserted[0].id;
-  } catch (_error: unknown) {
+  } catch (error: unknown) {
     const retry = await db.select().from(table).where(eq(table.slug, slug)).limit(1);
     if (retry.length > 0) {
       if (onFound) await onFound(db, retry[0]);
       return retry[0].id;
     }
-    throw new Error(`Failed to find or create ${entityLabel}: ${name}`);
+    throw new Error(`Failed to find or create ${entityLabel}: ${name}`, { cause: error });
   }
 }
 

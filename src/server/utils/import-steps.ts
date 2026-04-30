@@ -76,9 +76,9 @@ export async function validateSource(
         ? (await remotePathMappingService.getByClientId(downloadClientId)).length > 0
         : false;
       if (hasMapping) {
-        throw new Error(`Path not found: ${savePath} (mapped from download client). Check your remote path mapping configuration.`);
+        throw new Error(`Path not found: ${savePath} (mapped from download client). Check your remote path mapping configuration.`, { cause: statError });
       } else {
-        throw new Error(`Path not found: ${savePath}. If the download client runs in Docker or on a remote machine, add a Remote Path Mapping in Settings > Download Clients.`);
+        throw new Error(`Path not found: ${savePath}. If the download client runs in Docker or on a remote machine, add a Remote Path Mapping in Settings > Download Clients.`, { cause: statError });
       }
     }
     throw statError;
@@ -125,7 +125,7 @@ export async function checkDiskSpace(args: CheckDiskSpaceArgs): Promise<DiskSpac
     const fsStats = await statfs(libraryPath);
     freeBytes = Number(fsStats.bavail) * Number(fsStats.bsize);
   } catch (statfsError: unknown) {
-    throw new Error(`Disk space check failed: ${getErrorMessage(statfsError)}`);
+    throw new Error(`Disk space check failed: ${getErrorMessage(statfsError)}`, { cause: statfsError });
   }
 
   const freeGB = Math.round((freeBytes / 1024 ** 3) * 10) / 10;

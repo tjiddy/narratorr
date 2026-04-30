@@ -208,7 +208,7 @@ export class MetadataService {
   private async filterBooksByLanguage(books: BookMetadata[]): Promise<BookMetadata[]> {
     if (!this.settingsService) return books;
 
-    let languages: readonly string[] = [];
+    let languages: readonly string[];
     try {
       const metadata = await this.settingsService.get('metadata');
       languages = metadata.languages;
@@ -223,8 +223,8 @@ export class MetadataService {
   private async filterAuthorBooks(books: BookMetadata[]): Promise<BookMetadata[]> {
     if (!this.settingsService) return books;
 
-    let rejectWords = '';
-    let languages: readonly string[] = [];
+    let rejectWords: string;
+    let languages: readonly string[];
     try {
       const [quality, metadata] = await Promise.all([
         this.settingsService.get('quality'),
