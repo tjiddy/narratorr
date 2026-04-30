@@ -1,4 +1,5 @@
 import { vi } from 'vitest';
+import type * as DnsPromises from 'node:dns/promises';
 
 /**
  * Global DNS mock for all server-side tests.
@@ -14,7 +15,7 @@ import { vi } from 'vitest';
  *   vi.mocked(dnsLookup as any).mockResolvedValueOnce([{ address: '192.168.1.1', family: 4 }]);
  */
 vi.mock('node:dns/promises', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('node:dns/promises')>();
+  const actual = await importOriginal<typeof DnsPromises>();
   return {
     ...actual,
     lookup: vi.fn().mockImplementation(async (..._args: unknown[]) => {
