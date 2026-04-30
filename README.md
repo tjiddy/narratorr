@@ -16,7 +16,7 @@ Narratorr is a self-hosted audiobook acquisition and organization application. S
 - **Audio Processing** — Optional FFmpeg-based conversion, merging, ID3 tag embedding, and cover art embedding.
 - **Notifications** — Discord, Slack, Telegram, Pushover, Gotify, Ntfy, email, and generic webhooks.
 - **Import Lists** — Sync wanted books from external sources.
-- **Security** — Forms or Basic auth, rate-limited login, AES-256-GCM credential encryption at rest, CSP with nonce-based script execution.
+- **Security** — Forms or Basic auth with CSRF defenses, rate-limited login, AES-256-GCM credential encryption at rest, CSP with nonce-based script execution, SSRF protection on attacker-influenced fetches, library-root ancestry checks on filesystem mutations.
 - **Docker** — Multi-arch images (amd64/arm64) with linuxserver.io base and s6-overlay.
 
 ## Quick Start
@@ -59,7 +59,7 @@ pnpm install
 pnpm dev
 ```
 
-Requires Node.js 24+ and pnpm 9+. The dev server starts on `http://localhost:3000` (API) and `http://localhost:5173` (Vite).
+Requires Node.js 24+ and pnpm 10+. The dev server starts on `http://localhost:3000` (API) and `http://localhost:5173` (Vite).
 
 ## Configuration
 
@@ -80,7 +80,7 @@ See the **[documentation](https://docs.narratorr.dev)** for detailed configurati
 | Package Manager | pnpm |
 | Backend | Node.js 24, Fastify 5 |
 | Database | SQLite (libSQL) + Drizzle ORM |
-| Frontend | React 19 + Vite 7 |
+| Frontend | React 19 + Vite 8 |
 | Data Fetching | TanStack Query |
 | Styling | Tailwind CSS |
 | Deployment | Docker (linuxserver.io base) |

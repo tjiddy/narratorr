@@ -150,23 +150,42 @@ The `/api/filesystem/browse` endpoint allows authenticated users to browse the h
 
 **Design decision:** Narratorr is a single-user self-hosted application. The authenticated user is the server operator. Restricting filesystem browsing would prevent legitimate configuration workflows without meaningful security benefit. This matches the pattern used by other *arr applications.
 
+## Outbound Fetch (SSRF Protection)
+
+The cover-download endpoint follows attacker-influenced URLs (cover art may come from an indexer response or a manually-pasted release URL). To prevent server-side request forgery against the host's metadata service or LAN-internal services, the fetch path goes through `src/server/utils/blocked-fetch-address.ts` (a custom Undici DNS lookup function that rejects unsafe destinations before the connection is made).
+
+**Blocked destinations:**
+- RFC 1918 private networks (10/8, 172.16/12, 192.168/16)
+- RFC 6598 CGNAT (100.64/10 — AWS Lambda VPC NAT range)
+- Loopback (127/8, ::1)
+- Link-local (169.254/16 — covers AWS/GCE/Alibaba metadata services; fe80::/10)
+- IPv6 unique-local (fc00::/7, fd00::/8)
+- IPv6 multicast (ff00::/8)
+- Unspecified addresses (0.0.0.0, ::)
+- IPv4-mapped IPv6 forms (e.g., `::ffff:169.254.169.254`)
+- Hostname allowlist for known metadata names (e.g., `metadata.google.internal`) as a belt-and-suspenders check on top of the IP filter
+
+**DNS rebinding mitigation:** the lookup function runs once per request and the connection is made to the resolved IP. A malicious DNS server that returns a public IP on first lookup and a private IP on a second cannot bypass the check.
+
+**Response controls** (cover-download):
+- Response size capped — truncation triggers an error before memory exhaustion
+- Redirect limit caps redirect chains and prevents external→internal pivots
+- AbortSignal timeout enforced
+
+**Coverage scope:** SSRF blocking currently wraps the cover-download path. Outbound fetches in indexer adapters, download-client adapters, metadata providers, and the webhook notifier do not yet share this control surface — a sweep to extend coverage is tracked in the open issue queue. Until that lands, those paths fetch only operator-configured URLs, which is a meaningful trust boundary but not full defense-in-depth against a compromised upstream.
+
 ## Input Validation
 
-- All API inputs are validated with **Zod schemas** before processing
+- All API inputs are validated with **Zod schemas** before processing — including persisted JSON columns (`phaseHistory`, manual-import metadata) on read, and external API responses from download clients, metadata providers, and import-list sources
 - The application uses **Drizzle ORM** with parameterized queries — no raw SQL with string interpolation
-- Path traversal prevention uses `path.relative()` with `..` prefix checks (not `startsWith()`)
+- **Path ancestry validation** for filesystem operations that could escape the configured library root uses `path.relative(root, candidate)` with `..`-prefix and self-resolve checks (not `startsWith()`, which would let `/library2/...` pass when root is `/library`). The canonical helper is `assertPathInsideLibrary` in `src/server/utils/paths.ts`, which throws `PathOutsideLibraryError` on escape; consumers include `cleanupOldBookPath`, `cleanEmptyParents`, and library-scan filtering — book-deletion `rm()` is gated on this check so a corrupt or attacker-influenced book record cannot escape the library root
 - Streaming parser errors are mapped to 4xx responses by checking error messages, not blanket 500
 
 ## Dependencies
 
-Dependency vulnerabilities are tracked via `pnpm audit`. Current findings as of 2026-03-18:
+Dependency vulnerabilities are tracked via `pnpm audit`. As of 2026-04-30 (v747.04 — dependency modernization sweep), `pnpm audit` reports **zero vulnerabilities** at any severity. The earlier transitive `esbuild` (drizzle-kit, dev-only) and `file-type` (music-metadata) findings have been resolved.
 
-| Package | Severity | Source | Impact |
-|---------|----------|--------|--------|
-| `esbuild` | Moderate | `drizzle-kit` (dev only) | Dev server CORS — not in production |
-| `file-type` | Moderate | `music-metadata` | ZIP bomb DoS — only processes local audio files, no remote attack vector |
-
-No high or critical vulnerabilities. Both findings are in transitive dependencies awaiting upstream patches and do not affect production runtime security.
+Supply-chain hardening: `pnpm` 10's lifecycle scripts are restricted via `pnpm.onlyBuiltDependencies` in `package.json`, which limits postinstall script execution to an explicit allowlist. Re-run `pnpm audit` after dependency changes; new findings are filed and tracked in the issue queue.
 
 ## Error Message Exposure
 

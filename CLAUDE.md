@@ -6,7 +6,7 @@ Narratorr is a self-hosted audiobook management application ("*arr for audiobook
 
 ## Tech Stack
 
-pnpm | Node.js 24+ | Fastify 5 | Drizzle ORM + libSQL | React 19 + Vite 7 | TanStack Query | Tailwind CSS | Docker
+pnpm | Node.js 24+ | Fastify 5 | Drizzle ORM + libSQL | React 19 + Vite 8 | TanStack Query | Tailwind CSS | Docker
 
 ## Project Structure
 
@@ -55,7 +55,7 @@ Uses Fastify's built-in Pino logger. Use `FastifyBaseLogger` from `fastify` for 
 
 ## Security
 
-See `SECURITY.md` for full model. Filesystem browsing is intentionally unrestricted (single-user self-hosted app). All `/api/*` routes require auth except health/status/auth endpoints. Passwords use scrypt with timing-safe comparison. Never use `startsWith()` for path ancestry checks — use `path.relative()` and verify the result doesn't start with `..`. Redact credentials from proxy URLs before logging. Normalize sentinel values *before* comparison, not after. Allow sentinel passthrough at schema level for validated secret fields.
+See `SECURITY.md` for full model. Filesystem browsing is intentionally unrestricted (single-user self-hosted app). All `/api/*` routes require auth except health/status/auth endpoints. Passwords use scrypt with timing-safe comparison; API-key validation hashes both sides and uses fixed-length `timingSafeEqual` (no early length-mismatch return — that would leak length via timing). Never use `startsWith()` for path ancestry checks — use `path.relative()` and verify the result doesn't start with `..`. Redact credentials from proxy URLs before logging. Normalize sentinel values *before* comparison, not after. Allow sentinel passthrough at schema level for validated secret fields. Outbound fetches to attacker-influenced URLs (cover art, indexer-supplied links) must go through `src/server/utils/blocked-fetch-address.ts` — see `cover-download.ts` for the dual-resolution + Undici-lookup pattern that prevents SSRF and DNS rebinding. Never spread `process.env` into spawned child processes — use the explicit allowlist in `src/core/utils/sanitized-env.ts` so `NARRATORR_SECRET_KEY` and other secrets don't leak into user-configured scripts.
 
 ## Gotchas
 
