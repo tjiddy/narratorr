@@ -1,11 +1,35 @@
 import { readdir, rename, rmdir } from 'node:fs/promises';
-import { join, extname, basename, dirname, normalize, resolve, relative } from 'node:path';
+import { join, extname, basename, dirname, normalize, resolve, relative, isAbsolute } from 'node:path';
 import type { FastifyBaseLogger } from 'fastify';
 import { renderFilename, toLastFirst, toSortTitle, AUDIO_EXTENSIONS } from '../../core/utils/index.js';
 import type { NamingOptions } from '../../core/utils/naming.js';
 import { extractYear } from './import-helpers.js';
 import { serializeError } from './serialize-error.js';
 
+
+export class PathOutsideLibraryError extends Error {
+  readonly code = 'PATH_OUTSIDE_LIBRARY' as const;
+  constructor(
+    public readonly bookPath: string,
+    public readonly libraryRoot: string,
+  ) {
+    super(`Path "${bookPath}" is not inside library root "${libraryRoot}"`);
+    this.name = 'PathOutsideLibraryError';
+  }
+}
+
+/**
+ * Throw `PathOutsideLibraryError` unless `bookPath` is a true descendant of `libraryRoot`.
+ * Rejects equality, `..` escapes, sibling-prefix attacks, and (on Windows) cross-drive paths.
+ */
+export function assertPathInsideLibrary(bookPath: string, libraryRoot: string): void {
+  const normalizedRoot = normalize(resolve(libraryRoot));
+  const normalizedBook = normalize(resolve(bookPath));
+  const rel = relative(normalizedRoot, normalizedBook);
+  if (rel === '' || rel.startsWith('..') || isAbsolute(rel)) {
+    throw new PathOutsideLibraryError(bookPath, libraryRoot);
+  }
+}
 
 /** Minimal book shape required by renameFilesWithTemplate. */
 export interface RenameableBook {

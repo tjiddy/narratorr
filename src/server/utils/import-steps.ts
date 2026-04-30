@@ -31,6 +31,7 @@ import {
 } from './import-helpers.js';
 import { runPostProcessingScript } from './post-processing-script.js';
 import { revertBookStatus } from './book-status.js';
+import { assertPathInsideLibrary, PathOutsideLibraryError } from './paths.js';
 
 // ── isContentFailure ────────────────────────────────────────────────────
 
@@ -205,13 +206,23 @@ export async function verifyCopy(args: VerifyCopyArgs): Promise<number> {
 export interface CleanupOldBookPathArgs {
   bookPath: string | null;
   targetPath: string;
+  libraryRoot: string;
   log: FastifyBaseLogger;
 }
 
 /** Delete old book files when upgrading (book already had a different path). Awaited, nonfatal. */
 export async function cleanupOldBookPath(args: CleanupOldBookPathArgs): Promise<void> {
-  const { bookPath, targetPath, log } = args;
+  const { bookPath, targetPath, libraryRoot, log } = args;
   if (!bookPath || normalize(targetPath) === normalize(bookPath)) return;
+  try {
+    assertPathInsideLibrary(bookPath, libraryRoot);
+  } catch (gateError: unknown) {
+    if (gateError instanceof PathOutsideLibraryError) {
+      log.error({ bookPath, libraryRoot }, 'Refusing to delete old book path outside library root — leaving foreign path untouched');
+      return;
+    }
+    throw gateError;
+  }
   try {
     await rm(bookPath, { recursive: true, force: true });
     log.info({ oldPath: bookPath, newPath: targetPath }, 'Deleted old book files during upgrade');
@@ -311,7 +322,9 @@ export interface HandleImportFailureArgs {
 export async function handleImportFailure(args: HandleImportFailureArgs): Promise<never> {
   const { error, targetPath, db, downloadId, book, log, elapsedMs } = args;
 
-  // Clean up copied files
+  // Clean up copied files. `targetPath` is always derived from librarySettings.path
+  // via buildTargetPath() at the single call site (import.service.ts) — never sourced
+  // from a DB field — so no ancestry check is needed here. Audited 2026-04-30 (#759).
   if (targetPath) {
     await rm(targetPath, { recursive: true, force: true })
       .catch((rmError) => log.warn({ error: serializeError(rmError), targetPath }, 'Failed to clean up target path after import failure'));

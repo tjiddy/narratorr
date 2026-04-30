@@ -8,7 +8,7 @@ import { RetagError } from '../services/tagging.service.js';
 import { MergeError } from '../services/merge.service.js';
 import { DuplicateDownloadError } from '../services/download.service.js';
 import { BookRejectionError } from '../services/book-rejection.service.js';
-import { BookPathOutsideLibraryError } from '../services/book.service.js';
+import { PathOutsideLibraryError } from '../utils/paths.js';
 import { readdir, readFile, stat } from 'node:fs/promises';
 import { createReadStream } from 'node:fs';
 import { Readable } from 'node:stream';
@@ -966,7 +966,7 @@ describe('books routes', () => {
       (services.book.getById as Mock).mockResolvedValue(bookWithPath);
       (services.settings.get as Mock).mockResolvedValue({ path: '/audiobooks' });
       (services.book.deleteBookFiles as Mock).mockRejectedValue(
-        new BookPathOutsideLibraryError('/tmp/external', '/audiobooks'),
+        new PathOutsideLibraryError('/tmp/external', '/audiobooks'),
       );
 
       const res = await app.inject({ method: 'DELETE', url: '/api/books/1?deleteFiles=true' });

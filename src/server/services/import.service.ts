@@ -154,7 +154,7 @@ export class ImportService {
       }
       const targetSize = await verifyCopy({ targetPath, sourcePath });
       this.log.debug({ downloadId, bookTitle: book.title, sourceSize: sourceStats.size, targetSize }, 'Copy verified');
-      await cleanupOldBookPath({ bookPath: book.path, targetPath, log: this.log });
+      await cleanupOldBookPath({ bookPath: book.path, targetPath, libraryRoot: librarySettings.path, log: this.log });
 
       await this.db.transaction(async (tx) => {
         await tx.update(books).set({ status: 'imported', path: targetPath, size: targetSize, lastGrabGuid: download.guid ?? null, lastGrabInfoHash: download.infoHash ?? null, updatedAt: new Date() }).where(eq(books.id, book.id));

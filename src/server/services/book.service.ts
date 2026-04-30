@@ -1,6 +1,5 @@
 import { rm } from 'node:fs/promises';
-import { isAbsolute, normalize, relative, resolve } from 'node:path';
-import { cleanEmptyParents } from '../utils/paths.js';
+import { assertPathInsideLibrary, cleanEmptyParents, PathOutsideLibraryError } from '../utils/paths.js';
 import { uploadBookCover, CoverUploadError } from './cover-upload.js';
 import { SUPPORTED_COVER_MIMES } from '../utils/mime.js';
 import { chunkArray } from '../utils/batch.js';
@@ -15,17 +14,6 @@ import { serializeError } from '../utils/serialize-error.js';
 
 
 export { CoverUploadError } from './cover-upload.js';
-
-export class BookPathOutsideLibraryError extends Error {
-  readonly code = 'PATH_OUTSIDE_LIBRARY' as const;
-  constructor(
-    public readonly bookPath: string,
-    public readonly libraryRoot: string,
-  ) {
-    super(`Book path "${bookPath}" is not inside library root "${libraryRoot}"`);
-    this.name = 'BookPathOutsideLibraryError';
-  }
-}
 
 type BookRow = typeof books.$inferSelect;
 type NewBook = typeof books.$inferInsert;
@@ -315,12 +303,13 @@ export class BookService {
    * Throws on failure so the caller can abort the deletion flow.
    */
   async deleteBookFiles(bookPath: string, libraryRoot: string): Promise<void> {
-    const normalizedRoot = normalize(resolve(libraryRoot));
-    const normalizedBook = normalize(resolve(bookPath));
-    const rel = relative(normalizedRoot, normalizedBook);
-    if (rel === '' || rel.startsWith('..') || isAbsolute(rel)) {
-      this.log.warn({ bookPath, libraryRoot }, 'Refusing to delete book path outside library root');
-      throw new BookPathOutsideLibraryError(bookPath, libraryRoot);
+    try {
+      assertPathInsideLibrary(bookPath, libraryRoot);
+    } catch (error: unknown) {
+      if (error instanceof PathOutsideLibraryError) {
+        this.log.warn({ bookPath, libraryRoot }, 'Refusing to delete book path outside library root');
+      }
+      throw error;
     }
 
     await rm(bookPath, { recursive: true, force: true });
