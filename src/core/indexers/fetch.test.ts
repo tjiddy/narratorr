@@ -318,6 +318,72 @@ describe('fetchWithProxy', () => {
       ).rejects.toThrow('FlareSolverr proxy unreachable');
     });
 
+    describe('schema validation (#813)', () => {
+      it('throws when status is not a string', async () => {
+        server.use(
+          http.post(`${PROXY_URL}/v1`, () => {
+            return HttpResponse.json({ status: 123 });
+          }),
+        );
+
+        await expect(
+          fetchWithProxy({ url: TARGET_URL, proxyUrl: PROXY_URL }),
+        ).rejects.toThrow(/^FlareSolverr returned unexpected response shape/);
+      });
+
+      it('throws when solution.response is not a string', async () => {
+        server.use(
+          http.post(`${PROXY_URL}/v1`, () => {
+            return HttpResponse.json({ status: 'ok', solution: { response: 42 } });
+          }),
+        );
+
+        await expect(
+          fetchWithProxy({ url: TARGET_URL, proxyUrl: PROXY_URL }),
+        ).rejects.toThrow(/^FlareSolverr returned unexpected response shape/);
+      });
+
+      it('throws when payload is empty object (no status)', async () => {
+        server.use(
+          http.post(`${PROXY_URL}/v1`, () => {
+            return HttpResponse.json({});
+          }),
+        );
+
+        await expect(
+          fetchWithProxy({ url: TARGET_URL, proxyUrl: PROXY_URL }),
+        ).rejects.toThrow(/^FlareSolverr returned unexpected response shape/);
+      });
+
+      it('throws when payload is a top-level array', async () => {
+        server.use(
+          http.post(`${PROXY_URL}/v1`, () => {
+            return HttpResponse.json([]);
+          }),
+        );
+
+        await expect(
+          fetchWithProxy({ url: TARGET_URL, proxyUrl: PROXY_URL }),
+        ).rejects.toThrow(/^FlareSolverr returned unexpected response shape/);
+      });
+
+      it('passes through extra unknown fields without rejecting', async () => {
+        server.use(
+          http.post(`${PROXY_URL}/v1`, () => {
+            return HttpResponse.json({
+              status: 'ok',
+              solution: { response: 'html', status: 200 },
+              version: '3.3.21',
+              startTimestamp: 123,
+            });
+          }),
+        );
+
+        const result = await fetchWithProxy({ url: TARGET_URL, proxyUrl: PROXY_URL });
+        expect(result).toBe('html');
+      });
+    });
+
     it('all proxy error messages start with "FlareSolverr"', async () => {
       // Error status
       server.use(
