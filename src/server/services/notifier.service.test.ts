@@ -398,9 +398,9 @@ describe('NotifierService', () => {
 
         expect(result.success).toBe(true);
 
-        const debugCalls = log.debug.mock.calls;
-        const entryIdx = debugCalls.findIndex((c) => c[1] === 'Testing notifier config');
-        const exitIdx = debugCalls.findIndex((c) => c[1] === 'Notifier config test result');
+        const debugCalls = (log.debug as ReturnType<typeof vi.fn>).mock.calls;
+        const entryIdx = debugCalls.findIndex((c: unknown[]) => c[1] === 'Testing notifier config');
+        const exitIdx = debugCalls.findIndex((c: unknown[]) => c[1] === 'Notifier config test result');
         expect(entryIdx).toBeGreaterThanOrEqual(0);
         expect(exitIdx).toBeGreaterThan(entryIdx);
         expect(debugCalls[entryIdx][0]).toEqual({ type: 'webhook' });
@@ -476,7 +476,7 @@ describe('NotifierService', () => {
         });
 
         const SECRETS = ['url', 'webhookUrl', 'botToken', 'smtpPass', 'pushoverToken', 'gotifyToken', 'headers'];
-        for (const call of log.debug.mock.calls) {
+        for (const call of (log.debug as ReturnType<typeof vi.fn>).mock.calls) {
           if (call[1] !== 'Testing notifier config' && call[1] !== 'Notifier config test result') continue;
           const payload = call[0] as Record<string, unknown>;
           for (const field of SECRETS) {
