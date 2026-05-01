@@ -139,6 +139,8 @@ export class NotifierService {
 
   async testConfig(data: { type: string; settings: Record<string, unknown>; id?: number }): Promise<{ success: boolean; message?: string }> {
     try {
+      this.log.debug({ type: data.type }, 'Testing notifier config');
+
       // When editing an existing notifier, resolve sentinel values against
       // the DECRYPTED saved settings — the adapter test needs real plaintext.
       let resolvedSettings = data.settings;
@@ -156,7 +158,9 @@ export class NotifierService {
         events: ['on_grab'], settings: resolvedSettings, createdAt: new Date(),
       } as NotifierRow;
       const adapter = this.createAdapter(fakeRow);
-      return await adapter.test();
+      const result = await adapter.test();
+      this.log.debug({ type: data.type, success: result.success, message: result.message }, 'Notifier config test result');
+      return result;
     } catch (error: unknown) {
       return {
         success: false,

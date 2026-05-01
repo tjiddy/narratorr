@@ -383,6 +383,110 @@ describe('NotifierService', () => {
 
       fetchSpy.mockRestore();
     });
+
+    // ── #782 log parity with IndexerService.testConfig ─────────────────────
+    describe('debug logging parity with indexer.testConfig (#782)', () => {
+      it('emits entry + exit debug logs in order on success', async () => {
+        const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+          new Response('ok', { status: 200 }),
+        );
+
+        const result = await service.testConfig({
+          type: 'webhook',
+          settings: { url: 'https://example.com/hook' },
+        });
+
+        expect(result.success).toBe(true);
+
+        const debugCalls = log.debug.mock.calls;
+        const entryIdx = debugCalls.findIndex((c) => c[1] === 'Testing notifier config');
+        const exitIdx = debugCalls.findIndex((c) => c[1] === 'Notifier config test result');
+        expect(entryIdx).toBeGreaterThanOrEqual(0);
+        expect(exitIdx).toBeGreaterThan(entryIdx);
+        expect(debugCalls[entryIdx][0]).toEqual({ type: 'webhook' });
+        expect(debugCalls[exitIdx][0]).toEqual({ type: 'webhook', success: true, message: undefined });
+
+        fetchSpy.mockRestore();
+      });
+
+      it('exit log carries adapter failure message', async () => {
+        const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+          new Response('nope', { status: 401, statusText: 'Unauthorized' }),
+        );
+
+        const result = await service.testConfig({
+          type: 'webhook',
+          settings: { url: 'https://example.com/hook' },
+        });
+
+        expect(result.success).toBe(false);
+        expect(log.debug).toHaveBeenCalledWith(
+          expect.objectContaining({ type: 'webhook', success: false, message: result.message }),
+          'Notifier config test result',
+        );
+
+        fetchSpy.mockRestore();
+      });
+
+      it('does not emit exit log on Notifier-not-found early return', async () => {
+        db.select.mockReturnValue(mockDbChain([]));
+
+        await service.testConfig({
+          type: 'webhook',
+          settings: { url: '********' },
+          id: 999,
+        });
+
+        expect(log.debug).toHaveBeenCalledWith({ type: 'webhook' }, 'Testing notifier config');
+        expect(log.debug).not.toHaveBeenCalledWith(
+          expect.anything(),
+          'Notifier config test result',
+        );
+      });
+
+      it('does not emit either debug log when adapter creation throws', async () => {
+        await service.testConfig({
+          type: 'unknown',
+          settings: {},
+        });
+
+        // Entry log fires (inside try, before throw) but exit log must not.
+        expect(log.debug).not.toHaveBeenCalledWith(
+          expect.anything(),
+          'Notifier config test result',
+        );
+      });
+
+      it('debug payloads contain no secret fields', async () => {
+        const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+          new Response('ok', { status: 200 }),
+        );
+
+        await service.testConfig({
+          type: 'webhook',
+          settings: {
+            url: 'https://example.com/hook',
+            webhookUrl: 'https://example.com/hook',
+            botToken: 'secret',
+            smtpPass: 'pw',
+            pushoverToken: 'tok',
+            gotifyToken: 'tok',
+            headers: '{"Authorization":"Bearer x"}',
+          },
+        });
+
+        const SECRETS = ['url', 'webhookUrl', 'botToken', 'smtpPass', 'pushoverToken', 'gotifyToken', 'headers'];
+        for (const call of log.debug.mock.calls) {
+          if (call[1] !== 'Testing notifier config' && call[1] !== 'Notifier config test result') continue;
+          const payload = call[0] as Record<string, unknown>;
+          for (const field of SECRETS) {
+            expect(payload).not.toHaveProperty(field);
+          }
+        }
+
+        fetchSpy.mockRestore();
+      });
+    });
   });
 
   // ── #731 Encrypt and mask notifier secrets ─────────────────────────────
