@@ -340,6 +340,32 @@ describe('SecretCodec', () => {
       ).toEqual([]);
     });
 
+    it('heuristic against real notifier schemas flags exactly today\'s 7 secret fields with subtype mappings', () => {
+      // Locks in the heuristic's positive output — without this, removing one of
+      // the exact-name regex alternatives (`url`, `webhookUrl`, `headers`) would
+      // not surface in any other test on this file, because those fields are
+      // already registered (drift guard would still return empty) and the
+      // false-positive fixture only exercises non-matching names.
+      const flagged = findSecretShapedNotifierFields(notifierSettingsSchemas);
+      const sortKey = (a: { type: string; field: string }) => `${a.type}.${a.field}`;
+      const sorted = [...flagged].sort((a, b) => sortKey(a).localeCompare(sortKey(b)));
+      expect(sorted).toEqual([
+        { type: 'discord', field: 'webhookUrl' },
+        { type: 'email', field: 'smtpPass' },
+        { type: 'gotify', field: 'gotifyToken' },
+        { type: 'pushover', field: 'pushoverToken' },
+        { type: 'slack', field: 'webhookUrl' },
+        { type: 'telegram', field: 'botToken' },
+        { type: 'webhook', field: 'headers' },
+        { type: 'webhook', field: 'url' },
+      ]);
+      // And confirm the heuristic doesn't pull in any of the documented non-secret fields.
+      const flaggedFields = new Set(flagged.map(({ field }) => field));
+      for (const nonSecret of ['gotifyUrl', 'ntfyServer', 'pushoverUser', 'chatId', 'smtpHost', 'smtpUser', 'fromAddress', 'toAddress', 'ntfyTopic', 'path', 'method', 'bodyTemplate']) {
+        expect(flaggedFields.has(nonSecret), `${nonSecret} should not be flagged as secret-shaped`).toBe(false);
+      }
+    });
+
     it('drift guard helper flags secret-shaped fields missing from the registered set', () => {
       const fakeSchemas = {
         fakeType: z.object({ secretToken: z.string() }).strict(),
