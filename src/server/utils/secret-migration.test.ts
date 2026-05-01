@@ -1,10 +1,21 @@
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach, vi } from 'vitest';
 import type { Mock } from 'vitest';
+import { eq } from 'drizzle-orm';
 import { createMockDb, mockDbChain, createMockLogger, inject } from '../__tests__/helpers.js';
 import type { Db } from '../../db/index.js';
 import type { FastifyBaseLogger } from 'fastify';
+import { indexers } from '../../db/schema.js';
 import { encrypt, isEncrypted } from './secret-codec.js';
 import { migrateSecretsToEncrypted } from './secret-migration.js';
+
+vi.mock('drizzle-orm', async (importOriginal) => {
+  // eslint-disable-next-line @typescript-eslint/consistent-type-imports
+  const actual = await importOriginal<typeof import('drizzle-orm')>();
+  return {
+    ...actual,
+    eq: vi.fn(actual.eq),
+  };
+});
 
 const TEST_KEY = Buffer.from('a'.repeat(64), 'hex');
 
@@ -19,6 +30,7 @@ describe('Secret Migration', () => {
   beforeEach(() => {
     db = createMockDb();
     log = createMockLogger();
+    vi.mocked(eq).mockClear();
   });
 
   describe('migrateSecretsToEncrypted', () => {
@@ -245,6 +257,116 @@ describe('Secret Migration', () => {
       await migrateSecretsToEncrypted(inject<Db>(db), TEST_KEY, inject<FastifyBaseLogger>(log));
 
       expect(db.update).toHaveBeenCalledTimes(1);
+    });
+
+    it('#811 encrypts plaintext apiUrl alone in indexer settings', async () => {
+      db.select.mockReturnValueOnce(mockDbChain([
+        { id: 1, settings: { apiUrl: 'http://example.com/api' } },
+      ]));
+      db.select.mockReturnValueOnce(mockDbChain([]));
+      db.select.mockReturnValueOnce(mockDbChain([]));
+      db.select.mockReturnValueOnce(mockDbChain([]));
+      db.update.mockReturnValue(mockDbChain());
+
+      await migrateSecretsToEncrypted(inject<Db>(db), TEST_KEY, inject<FastifyBaseLogger>(log));
+
+      expect(db.update).toHaveBeenCalledTimes(1);
+      const setCalls = db.update.mock.results[0].value.set.mock.calls;
+      const updatedSettings = setCalls[0][0].settings;
+      expect(isEncrypted(updatedSettings.apiUrl)).toBe(true);
+
+      expect(db.update.mock.results[0].value.where).toHaveBeenCalledTimes(1);
+      expect(eq).toHaveBeenCalledWith(indexers.id, 1);
+    });
+
+    it('#811 encrypts both apiKey and apiUrl in the same indexer', async () => {
+      db.select.mockReturnValueOnce(mockDbChain([
+        { id: 1, settings: { apiKey: 'plain-key', apiUrl: 'http://example.com/api' } },
+      ]));
+      db.select.mockReturnValueOnce(mockDbChain([]));
+      db.select.mockReturnValueOnce(mockDbChain([]));
+      db.select.mockReturnValueOnce(mockDbChain([]));
+      db.update.mockReturnValue(mockDbChain());
+
+      await migrateSecretsToEncrypted(inject<Db>(db), TEST_KEY, inject<FastifyBaseLogger>(log));
+
+      const setCalls = db.update.mock.results[0].value.set.mock.calls;
+      const updatedSettings = setCalls[0][0].settings;
+      expect(isEncrypted(updatedSettings.apiKey)).toBe(true);
+      expect(isEncrypted(updatedSettings.apiUrl)).toBe(true);
+    });
+
+    it('#811 idempotent — already-encrypted apiUrl is not re-encrypted', async () => {
+      const alreadyEncrypted = encrypt('http://example.com/api', TEST_KEY);
+      db.select.mockReturnValueOnce(mockDbChain([
+        { id: 1, settings: { apiUrl: alreadyEncrypted } },
+      ]));
+      db.select.mockReturnValueOnce(mockDbChain([]));
+      db.select.mockReturnValueOnce(mockDbChain([]));
+      db.select.mockReturnValueOnce(mockDbChain([]));
+
+      await migrateSecretsToEncrypted(inject<Db>(db), TEST_KEY, inject<FastifyBaseLogger>(log));
+
+      expect(db.update).not.toHaveBeenCalled();
+    });
+
+    it('#811 indexer with no registered secret fields does not trigger update', async () => {
+      db.select.mockReturnValueOnce(mockDbChain([
+        { id: 1, settings: { hostname: 'example.com' } },
+      ]));
+      db.select.mockReturnValueOnce(mockDbChain([]));
+      db.select.mockReturnValueOnce(mockDbChain([]));
+      db.select.mockReturnValueOnce(mockDbChain([]));
+
+      await expect(
+        migrateSecretsToEncrypted(inject<Db>(db), TEST_KEY, inject<FastifyBaseLogger>(log)),
+      ).resolves.not.toThrow();
+
+      expect(db.update).not.toHaveBeenCalled();
+    });
+
+    it('#811 sibling plaintext secret without apiUrl does not synthesize apiUrl', async () => {
+      db.select.mockReturnValueOnce(mockDbChain([
+        { id: 1, settings: { mamId: 'plain', hostname: 'mam.example.com' } },
+      ]));
+      db.select.mockReturnValueOnce(mockDbChain([]));
+      db.select.mockReturnValueOnce(mockDbChain([]));
+      db.select.mockReturnValueOnce(mockDbChain([]));
+      db.update.mockReturnValue(mockDbChain());
+
+      await migrateSecretsToEncrypted(inject<Db>(db), TEST_KEY, inject<FastifyBaseLogger>(log));
+
+      expect(db.update).toHaveBeenCalledTimes(1);
+      const setCalls = db.update.mock.results[0].value.set.mock.calls;
+      const updatedSettings = setCalls[0][0].settings;
+      expect(isEncrypted(updatedSettings.mamId)).toBe(true);
+      expect('apiUrl' in updatedSettings).toBe(false);
+    });
+
+    it('#811 mixed roster — only the plaintext apiUrl row is updated', async () => {
+      const alreadyEncrypted = encrypt('http://b.com/api', TEST_KEY);
+      db.select.mockReturnValueOnce(mockDbChain([
+        { id: 1, settings: { apiUrl: 'http://a.com/api' } },
+        { id: 2, settings: { apiUrl: alreadyEncrypted } },
+        { id: 3, settings: { hostname: 'c.com' } },
+      ]));
+      db.select.mockReturnValueOnce(mockDbChain([]));
+      db.select.mockReturnValueOnce(mockDbChain([]));
+      db.select.mockReturnValueOnce(mockDbChain([]));
+      db.update.mockReturnValue(mockDbChain());
+
+      await migrateSecretsToEncrypted(inject<Db>(db), TEST_KEY, inject<FastifyBaseLogger>(log));
+
+      expect(db.update).toHaveBeenCalledTimes(1);
+      const setCalls = db.update.mock.results[0].value.set.mock.calls;
+      const updatedSettings = setCalls[0][0].settings;
+      expect(isEncrypted(updatedSettings.apiUrl)).toBe(true);
+
+      expect(db.update.mock.results[0].value.where).toHaveBeenCalledTimes(1);
+      expect(eq).toHaveBeenCalledTimes(1);
+      expect(eq).toHaveBeenCalledWith(indexers.id, 1);
+      expect(eq).not.toHaveBeenCalledWith(indexers.id, 2);
+      expect(eq).not.toHaveBeenCalledWith(indexers.id, 3);
     });
   });
 });
