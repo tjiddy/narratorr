@@ -1,10 +1,20 @@
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach, vi } from 'vitest';
 import type { Mock } from 'vitest';
+import { eq } from 'drizzle-orm';
 import { createMockDb, mockDbChain, createMockLogger, inject } from '../__tests__/helpers.js';
 import type { Db } from '../../db/index.js';
 import type { FastifyBaseLogger } from 'fastify';
+import { indexers } from '../../db/schema.js';
 import { encrypt, isEncrypted } from './secret-codec.js';
 import { migrateSecretsToEncrypted } from './secret-migration.js';
+
+vi.mock('drizzle-orm', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('drizzle-orm')>();
+  return {
+    ...actual,
+    eq: vi.fn(actual.eq),
+  };
+});
 
 const TEST_KEY = Buffer.from('a'.repeat(64), 'hex');
 
@@ -19,6 +29,7 @@ describe('Secret Migration', () => {
   beforeEach(() => {
     db = createMockDb();
     log = createMockLogger();
+    vi.mocked(eq).mockClear();
   });
 
   describe('migrateSecretsToEncrypted', () => {
@@ -262,6 +273,9 @@ describe('Secret Migration', () => {
       const setCalls = db.update.mock.results[0].value.set.mock.calls;
       const updatedSettings = setCalls[0][0].settings;
       expect(isEncrypted(updatedSettings.apiUrl)).toBe(true);
+
+      expect(db.update.mock.results[0].value.where).toHaveBeenCalledTimes(1);
+      expect(eq).toHaveBeenCalledWith(indexers.id, 1);
     });
 
     it('#811 encrypts both apiKey and apiUrl in the same indexer', async () => {
@@ -346,6 +360,12 @@ describe('Secret Migration', () => {
       const setCalls = db.update.mock.results[0].value.set.mock.calls;
       const updatedSettings = setCalls[0][0].settings;
       expect(isEncrypted(updatedSettings.apiUrl)).toBe(true);
+
+      expect(db.update.mock.results[0].value.where).toHaveBeenCalledTimes(1);
+      expect(eq).toHaveBeenCalledTimes(1);
+      expect(eq).toHaveBeenCalledWith(indexers.id, 1);
+      expect(eq).not.toHaveBeenCalledWith(indexers.id, 2);
+      expect(eq).not.toHaveBeenCalledWith(indexers.id, 3);
     });
   });
 });
