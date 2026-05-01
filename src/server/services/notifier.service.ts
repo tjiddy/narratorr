@@ -11,6 +11,7 @@ import {
 import { getErrorMessage } from '../utils/error-message.js';
 import type { NotifierSettings } from '../../shared/schemas/notifier.js';
 import { encryptFields, decryptFields, resolveSentinelFields, getKey, getSecretFieldNames } from '../utils/secret-codec.js';
+import { AdapterCache } from '../utils/adapter-cache.js';
 import { serializeError } from '../utils/serialize-error.js';
 
 
@@ -18,12 +19,13 @@ type NotifierRow = typeof notifiers.$inferSelect;
 type NewNotifier = typeof notifiers.$inferInsert;
 
 export class NotifierService {
+  private adapters = new AdapterCache<NotifierAdapter>();
+
   constructor(private db: Db, private log: FastifyBaseLogger) {}
 
   // Any path that reads notifier rows for adapter construction MUST run them
   // through decryptRow first — adapters need plaintext to fire real requests.
-  // notify() reads enabled rows directly; test(id) and testConfig(id) route
-  // through getById which decrypts.
+  // getAdapter() decrypts on cache miss; getById() decrypts on read.
   private decryptRow(row: NotifierRow): NotifierRow {
     if (!row.settings) return row;
     const s = { ...(row.settings as Record<string, unknown>) };
@@ -67,6 +69,7 @@ export class NotifierService {
       .where(eq(notifiers.id, id))
       .returning();
 
+    this.adapters.delete(id);
     this.log.info({ id }, 'Notifier updated');
     const row = result[0] || null;
     return row ? this.decryptRow(row) : null;
@@ -77,6 +80,7 @@ export class NotifierService {
     if (!existing) return false;
 
     await this.db.delete(notifiers).where(eq(notifiers.id, id));
+    this.adapters.delete(id);
     this.log.info({ id }, 'Notifier deleted');
     return true;
   }
@@ -106,7 +110,7 @@ export class NotifierService {
     await Promise.allSettled(
       matching.map(async (notifier) => {
         try {
-          const adapter = this.createAdapter(this.decryptRow(notifier));
+          const adapter = this.getAdapter(notifier);
           const result = await adapter.send(event, payload);
           if (!result.success) {
             this.log.warn({ notifier: notifier.name, notifierType: notifier.type, event, message: result.message }, 'Notification failed');
@@ -127,7 +131,7 @@ export class NotifierService {
     }
 
     try {
-      const adapter = this.createAdapter(notifier);
+      const adapter = this.getAdapter(notifier);
       return await adapter.test();
     } catch (error: unknown) {
       return {
@@ -169,6 +173,23 @@ export class NotifierService {
     }
   }
 
+  /**
+   * Resolve a cached adapter for the notifier, lazily creating + caching on
+   * miss. Accepts either a raw row from the DB or one already decrypted —
+   * decryptRow is idempotent on plaintext values.
+   */
+  getAdapter(notifier: NotifierRow): NotifierAdapter {
+    let adapter = this.adapters.get(notifier.id);
+
+    if (!adapter) {
+      const decrypted = this.decryptRow(notifier);
+      adapter = this.createAdapter(decrypted);
+      this.adapters.set(notifier.id, adapter);
+    }
+
+    return adapter;
+  }
+
   private createAdapter(notifier: NotifierRow): NotifierAdapter {
     const factory = ADAPTER_FACTORIES[notifier.type as keyof typeof ADAPTER_FACTORIES];
     if (!factory) throw new Error(`Unknown notifier type: ${notifier.type}`);
@@ -186,5 +207,9 @@ export class NotifierService {
     }
 
     return factory(settings);
+  }
+
+  clearAdapterCache(): void {
+    this.adapters.clear();
   }
 }
