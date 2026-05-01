@@ -19,7 +19,7 @@ interface NotifierCardProps {
   onCancel?: () => void;
   onDelete?: () => void;
   onSubmit: (data: CreateNotifierFormData) => void;
-  onFormTest: (data: CreateNotifierFormData) => void;
+  onFormTest: (data: CreateNotifierFormData & { id?: number }) => void;
   onTest?: (id: number) => void;
   isPending?: boolean;
   testingId?: number | null;
@@ -134,7 +134,7 @@ export function NotifierCard(props: NotifierCardProps) {
   // sentinel values against saved decrypted settings before running the test.
   const handleFormTest = (data: CreateNotifierFormData) => {
     if (notifier?.id) {
-      onFormTest({ ...data, id: notifier.id } as CreateNotifierFormData);
+      onFormTest({ ...data, id: notifier.id });
     } else {
       onFormTest(data);
     }
