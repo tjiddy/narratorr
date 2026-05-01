@@ -72,6 +72,8 @@ const audibleProductDetailResponseSchema = z.object({
   product: audibleProductSchema.optional(),
 }).passthrough();
 
+type AudibleProduct = z.infer<typeof audibleProductSchema>;
+
 export class AudibleProvider implements MetadataSearchProvider {
   readonly name: string;
   readonly type = 'audible';
@@ -205,13 +207,13 @@ export class AudibleProvider implements MetadataSearchProvider {
   private async fetchProducts(params: URLSearchParams): Promise<AudibleProduct[]> {
     const url = `${this.baseUrl}/1.0/catalog/products?${params}`;
     const data = await this.request(url, audibleProductsResponseSchema);
-    return (data?.products ?? []) as AudibleProduct[];
+    return data?.products ?? [];
   }
 
   private async fetchProduct(asin: string, params: URLSearchParams): Promise<AudibleProduct | null> {
     const url = `${this.baseUrl}/1.0/catalog/products/${asin}?${params}`;
     const data = await this.request(url, audibleProductDetailResponseSchema);
-    return (data?.product ?? null) as AudibleProduct | null;
+    return data?.product ?? null;
   }
 
   private async request<S extends z.ZodTypeAny>(url: string, schema: S): Promise<z.infer<S> | null> {
@@ -243,32 +245,6 @@ export class AudibleProvider implements MetadataSearchProvider {
       throw new TransientError(this.name, getErrorMessage(error));
     }
   }
-}
-
-// ---------------------------------------------------------------------------
-// Internal response shapes
-// ---------------------------------------------------------------------------
-
-interface AudibleProduct {
-  asin?: string;
-  title?: string;
-  subtitle?: string;
-  authors?: Array<{ asin?: string; name: string }>;
-  narrators?: Array<{ name: string }>;
-  publisher_name?: string;
-  publisher_summary?: string;
-  merchandising_summary?: string;
-  release_date?: string;
-  issue_date?: string;
-  runtime_length_min?: number;
-  language?: string;
-  product_images?: Record<string, string>;
-  series?: Array<{
-    asin?: string;
-    sequence?: string;
-    title?: string;
-  }>;
-  format_type?: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -322,14 +298,14 @@ function mapProduct(product: AudibleProduct): Record<string, unknown> {
 }
 
 /** Parse series position from Audible's sequence string (e.g. "2", "1.5", "Book 3"). */
-function parseSeriesPosition(sequence?: string): number | undefined {
+function parseSeriesPosition(sequence?: string | null): number | undefined {
   if (!sequence) return undefined;
   const match = sequence.match(/(\d+(?:\.\d+)?)/);
   return match ? parseFloat(match[1]) : undefined;
 }
 
 /** Extract the best cover URL from product_images (prefer largest). */
-function extractCoverUrl(images?: Record<string, string>): string | undefined {
+function extractCoverUrl(images?: Record<string, string> | null): string | undefined {
   if (!images) return undefined;
   // Keys are size numbers like "500", "1024" — pick the largest
   const sizes = Object.keys(images)
@@ -340,7 +316,7 @@ function extractCoverUrl(images?: Record<string, string>): string | undefined {
 }
 
 /** Clean HTML — keep safe structural/formatting tags, strip everything else. */
-function cleanHtml(html?: string): string | undefined {
+function cleanHtml(html?: string | null): string | undefined {
   if (!html) return undefined;
   const ALLOWED_TAGS = new Set(['p', 'br', 'b', 'strong', 'i', 'em', 'ul', 'ol', 'li']);
   const cleaned = html
