@@ -467,6 +467,80 @@ describe('downloadRemoteCover', () => {
       );
 
       expect(result).toBe(true);
+      expect((log.warn as ReturnType<typeof vi.fn>)).not.toHaveBeenCalled();
+    });
+
+    it('does not warn when Content-Length header is absent', async () => {
+      mockFetch.mockResolvedValue(createImageResponse('image/jpeg'));
+
+      const result = await downloadRemoteCover(
+        1, '/books/test', 'https://cdn.example.com/cover.jpg',
+        inject<Db>(mockDb), log,
+      );
+
+      expect(result).toBe(true);
+      expect((log.warn as ReturnType<typeof vi.fn>)).not.toHaveBeenCalled();
+    });
+
+    describe('malformed Content-Length', () => {
+      it.each([
+        { name: 'non-numeric', value: 'abc' },
+        { name: 'negative', value: '-100' },
+        { name: 'zero', value: '0' },
+        { name: 'multi-value RFC violation', value: '100, 200' },
+      ])('warns and continues streaming on $name header', async ({ value }) => {
+        const body = Buffer.from('fake-image-data');
+        const response = new Response(body, {
+          status: 200,
+          headers: {
+            'content-type': 'image/jpeg',
+            'content-length': value,
+          },
+        });
+        mockFetch.mockResolvedValue(response);
+
+        const result = await downloadRemoteCover(
+          7, '/books/test', 'https://cdn.example.com/cover.jpg',
+          inject<Db>(mockDb), log,
+        );
+
+        expect(result).toBe(true);
+        expect((log.warn as ReturnType<typeof vi.fn>)).toHaveBeenCalledWith(
+          expect.objectContaining({
+            bookId: 7,
+            url: 'https://cdn.example.com/cover.jpg',
+            contentLength: value,
+          }),
+          expect.stringContaining('malformed Content-Length'),
+        );
+        expect(writeFile).toHaveBeenCalledTimes(1);
+      });
+
+      it('logs the sanitized URL, not the raw URL with credentials', async () => {
+        const body = Buffer.from('fake-image-data');
+        const response = new Response(body, {
+          status: 200,
+          headers: {
+            'content-type': 'image/jpeg',
+            'content-length': 'abc',
+          },
+        });
+        mockFetch.mockResolvedValue(response);
+
+        await downloadRemoteCover(
+          1, '/books/test', 'https://user:secret@cdn.example.com/cover.jpg',
+          inject<Db>(mockDb), log,
+        );
+
+        const warnCalls = (log.warn as ReturnType<typeof vi.fn>).mock.calls;
+        const malformedCall = warnCalls.find(([, msg]) =>
+          typeof msg === 'string' && msg.includes('malformed Content-Length'),
+        );
+        expect(malformedCall).toBeDefined();
+        const payload = malformedCall![0] as { url: string };
+        expect(payload.url).not.toContain('secret');
+        expect(payload.url).not.toContain('user:');
+      });
     });
   });
 

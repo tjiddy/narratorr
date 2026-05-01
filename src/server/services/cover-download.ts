@@ -101,20 +101,39 @@ async function followWithRevalidation(startUrl: string, dispatcher: unknown): Pr
 }
 
 /**
+ * Pre-check Content-Length: warn on malformed values, throw on over-cap.
+ * No-op when the header is absent or valid within cap; the streaming cap in
+ * `readBodyWithCap` continues to backstop bodies from servers that lie.
+ */
+async function inspectContentLength(
+  response: Response,
+  context: { bookId: number; remoteUrl: string; log: FastifyBaseLogger },
+): Promise<void> {
+  const contentLength = response.headers.get('content-length');
+  if (contentLength === null) return;
+
+  const declared = Number.parseInt(contentLength, 10);
+  const malformed = !Number.isFinite(declared) || declared <= 0 || contentLength.includes(',');
+
+  if (malformed) {
+    context.log.warn(
+      { bookId: context.bookId, url: sanitizeLogUrl(context.remoteUrl), contentLength },
+      'Cover download upstream sent malformed Content-Length; relying on streaming cap',
+    );
+    return;
+  }
+
+  if (declared > MAX_COVER_SIZE) {
+    await response.body?.cancel().catch(() => { /* best-effort */ });
+    throw new Error(`Content-Length ${declared} exceeds MAX_COVER_SIZE ${MAX_COVER_SIZE}`);
+  }
+}
+
+/**
  * Read response body with a streamed size cap. Aborts and throws if the body
  * exceeds MAX_COVER_SIZE — even when the server lies about Content-Length.
  */
 async function readBodyWithCap(response: Response): Promise<Buffer> {
-  const contentLength = response.headers.get('content-length');
-  if (contentLength !== null) {
-    const declared = Number.parseInt(contentLength, 10);
-    if (Number.isFinite(declared) && declared > MAX_COVER_SIZE) {
-      // Drain so the connection can be reused/released
-      await response.body?.cancel().catch(() => { /* best-effort */ });
-      throw new Error(`Content-Length ${declared} exceeds MAX_COVER_SIZE ${MAX_COVER_SIZE}`);
-    }
-  }
-
   if (!response.body) {
     return Buffer.alloc(0);
   }
@@ -182,6 +201,7 @@ export async function downloadRemoteCover(
       return false;
     }
 
+    await inspectContentLength(response, { bookId, remoteUrl, log });
     const buffer = await readBodyWithCap(response);
     const ext = contentTypeToExt(contentType);
     const finalPath = join(bookPath, `cover.${ext}`);
