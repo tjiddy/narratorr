@@ -7,6 +7,7 @@ vi.mock('node:dns/promises', () => ({
 import { lookup as dnsLookup } from 'node:dns/promises';
 import { ProxyAgent } from 'undici';
 import {
+  fetchWithOptionalDispatcher,
   fetchWithTimeout,
   isBlockedFetchAddress,
   isBlockedHostname,
@@ -16,6 +17,7 @@ import {
   undiciFetch,
   validatingLookup,
 } from './network-service.js';
+import { Agent as UndiciAgent } from 'undici';
 
 // dns.lookup is overloaded; the all:true variant returns an array. Cast to a
 // permissive Mock so resolved-value typing accepts arrays.
@@ -595,5 +597,50 @@ describe('undiciFetch + dispatcher (regression: dual-undici instance lineage)', 
     expect(code).not.toBe('UND_ERR_INVALID_ARG');
 
     await dispatcher.close();
+  });
+});
+
+/**
+ * Routing contract for `fetchWithOptionalDispatcher`. Together with the
+ * dispatcher-routing tests in `proxy.dispatcher-routing.test.ts` and
+ * `myanonamouse.dispatcher-routing.test.ts` (which prove the indexer call
+ * sites pass the dispatcher into this helper), this asserts the production
+ * fix from the undici 7→8 cover-download regression: dispatcher-attached
+ * calls MUST go through `undiciFetch` so the package-instance Dispatcher
+ * shape matches.
+ *
+ * The negative `expect(globalThis.fetch).not.toHaveBeenCalled()` assertion
+ * is what protects the fix — a regression that swaps the helper back to
+ * always-`globalThis.fetch` would fail this test.
+ */
+describe('fetchWithOptionalDispatcher (call-site routing contract)', () => {
+  it('routes through undiciFetch (NOT globalThis.fetch) when dispatcher is set', async () => {
+    const fetchSpy = vi.spyOn(globalThis, 'fetch');
+    const dispatcher = new UndiciAgent({ connect: { lookup: () => { /* never called */ } } });
+
+    // Trigger an unreachable host so the call fails fast — we don't care
+    // about the result, only that `globalThis.fetch` was NOT used.
+    await fetchWithOptionalDispatcher('http://127.0.0.1:1/', {
+      dispatcher,
+      signal: AbortSignal.timeout(500),
+    }).catch(() => { /* expected */ });
+
+    expect(fetchSpy).not.toHaveBeenCalled();
+    await dispatcher.close();
+    vi.restoreAllMocks();
+  });
+
+  it('routes through globalThis.fetch (NOT undiciFetch) when dispatcher is undefined', async () => {
+    const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      new Response('ok', { status: 200 }),
+    );
+
+    const response = await fetchWithOptionalDispatcher('http://example.com/', {
+      signal: AbortSignal.timeout(500),
+    });
+
+    expect(fetchSpy).toHaveBeenCalledOnce();
+    expect(response.status).toBe(200);
+    vi.restoreAllMocks();
   });
 });

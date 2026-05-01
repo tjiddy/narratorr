@@ -5,13 +5,13 @@ import { resolve } from 'node:path';
 import { useMswServer } from '../__tests__/msw/server.js';
 import type * as NetworkServiceModule from '../utils/network-service.js';
 
-// Route undiciFetch through globalThis.fetch so MSW handlers and
-// `vi.spyOn(globalThis, 'fetch')` continue to intercept the proxy path.
+// Route fetchWithOptionalDispatcher through globalThis.fetch so MSW handlers
+// and `vi.spyOn(globalThis, 'fetch')` continue to intercept the proxy path.
 vi.mock('../utils/network-service.js', async (importActual) => {
   const actual = await importActual<typeof NetworkServiceModule>();
   return {
     ...actual,
-    undiciFetch: ((...args: Parameters<typeof globalThis.fetch>) => globalThis.fetch(...args)) as unknown as typeof actual.undiciFetch,
+    fetchWithOptionalDispatcher: ((url, options) => globalThis.fetch(url, options as RequestInit)) as typeof actual.fetchWithOptionalDispatcher,
   };
 });
 

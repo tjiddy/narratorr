@@ -2,15 +2,17 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { ProxyError, isProxyRelatedError, IndexerAuthError } from './errors.js';
 import type * as NetworkServiceModule from '../utils/network-service.js';
 
-// Route undiciFetch through globalThis.fetch in tests so existing MSW handlers
-// and `vi.spyOn(globalThis, 'fetch')` continue to intercept the proxy path.
-// Production still uses the real undici fetch — the dispatcher-class lineage
-// regression is covered separately in network-service.test.ts.
+// Route fetchWithOptionalDispatcher through globalThis.fetch in tests so
+// existing MSW handlers and `vi.spyOn(globalThis, 'fetch')` continue to
+// intercept the proxy path. Production still uses the real helper (which
+// routes through undici's fetch when a dispatcher is attached) — the
+// call-site contract is asserted in proxy.dispatcher-routing.test.ts and
+// the helper's routing is asserted in network-service.test.ts.
 vi.mock('../utils/network-service.js', async (importActual) => {
   const actual = await importActual<typeof NetworkServiceModule>();
   return {
     ...actual,
-    undiciFetch: ((...args: Parameters<typeof globalThis.fetch>) => globalThis.fetch(...args)) as unknown as typeof actual.undiciFetch,
+    fetchWithOptionalDispatcher: ((url, options) => globalThis.fetch(url, options as RequestInit)) as typeof actual.fetchWithOptionalDispatcher,
   };
 });
 

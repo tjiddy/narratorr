@@ -11,7 +11,7 @@ import { SocksProxyAgent } from 'socks-proxy-agent';
 import { ProxyError } from './errors.js';
 import { getErrorMessage, getErrorMessageWithCause } from '../../shared/error-message.js';
 import { mapNetworkError } from '../utils/map-network-error.js';
-import { undiciFetch } from '../utils/network-service.js';
+import { fetchWithOptionalDispatcher, type DispatcherFetchInit } from '../utils/network-service.js';
 
 import { INDEXER_TIMEOUT_MS } from '../utils/constants.js';
 const IPIFY_URL = 'https://api.ipify.org?format=json';
@@ -65,24 +65,15 @@ export async function fetchWithProxyAgent(
     : controller.signal;
 
   try {
-    const fetchOptions: RequestInit & { dispatcher?: unknown } = {
+    const fetchOptions: DispatcherFetchInit = {
       headers,
       signal,
+      dispatcher,
     };
-
-    if (dispatcher) {
-      (fetchOptions as Record<string, unknown>).dispatcher = dispatcher;
-    }
-
-    // When a dispatcher is attached, route through undici's fetch (same package
-    // instance as the dispatcher) — Node 24 + undici 8 reject mismatched
-    // Dispatcher class identities with UND_ERR_INVALID_ARG. Without a
-    // dispatcher, stay on globalThis.fetch so MSW-based tests intercept.
-    const fetchImpl = (dispatcher ? undiciFetch : fetch) as typeof undiciFetch;
 
     let response: Response;
     try {
-      response = await fetchImpl(url, fetchOptions as Parameters<typeof fetchImpl>[1]) as unknown as Response;
+      response = await fetchWithOptionalDispatcher(url, fetchOptions);
     } catch (error: unknown) {
       if (!dispatcher) throw mapNetworkError(error); // Direct fetch — map network errors
       if (error instanceof DOMException && error.name === 'AbortError') {

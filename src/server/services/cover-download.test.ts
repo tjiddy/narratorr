@@ -16,13 +16,16 @@ vi.mock('node:dns/promises', () => ({
   lookup: vi.fn(),
 }));
 
-// Route undiciFetch through globalThis.fetch in tests so the existing
-// `vi.stubGlobal('fetch', mockFetch)` continues to intercept the proxy path.
+// Route fetchWithOptionalDispatcher through globalThis.fetch so the existing
+// `vi.stubGlobal('fetch', mockFetch)` continues to intercept the cover-download
+// hop. Production routes through undici's fetch when a dispatcher is attached
+// — the helper's routing is asserted in network-service.test.ts and the call
+// site is exercised end-to-end in cover-download.e2e.test.ts.
 vi.mock('../../core/utils/network-service.js', async (importActual) => {
   const actual = await importActual<typeof NetworkServiceModule>();
   return {
     ...actual,
-    undiciFetch: ((...args: Parameters<typeof globalThis.fetch>) => globalThis.fetch(...args)) as unknown as typeof actual.undiciFetch,
+    fetchWithOptionalDispatcher: ((url, options) => globalThis.fetch(url, options as RequestInit)) as typeof actual.fetchWithOptionalDispatcher,
   };
 });
 

@@ -2,7 +2,7 @@ import { z } from 'zod';
 import type { IndexerAdapter, SearchOptions, SearchResult } from './types.js';
 import { IndexerAuthError, IndexerError, ProxyError } from './errors.js';
 import { createProxyAgent, resolveProxyIp } from './proxy.js';
-import { undiciFetch } from '../utils/network-service.js';
+import { fetchWithOptionalDispatcher, type DispatcherFetchInit } from '../utils/network-service.js';
 import { normalizeLanguage } from '../utils/language-codes.js';
 import { MAM_LANGUAGES } from '../../shared/indexer-registry.js';
 import { getErrorMessage, getErrorMessageWithCause } from '../../shared/error-message.js';
@@ -322,24 +322,17 @@ export class MyAnonamouseIndexer implements IndexerAdapter {
     const dispatcher = createProxyAgent(this.proxyUrl);
 
     try {
-      const fetchOptions: RequestInit & { dispatcher?: unknown } = {
+      const fetchOptions: DispatcherFetchInit = {
         headers: {
           Cookie: `mam_id=${this.mamId}`,
         },
         signal,
+        dispatcher,
       };
-
-      if (dispatcher) {
-        (fetchOptions as Record<string, unknown>).dispatcher = dispatcher;
-      }
-
-      // Use undici's fetch when a proxy dispatcher is attached so the package
-      // instance matches; otherwise stay on globalThis.fetch so MSW intercepts.
-      const fetchImpl = (dispatcher ? undiciFetch : fetch) as typeof undiciFetch;
 
       let response: Response;
       try {
-        response = await fetchImpl(url, fetchOptions as Parameters<typeof fetchImpl>[1]) as unknown as Response;
+        response = await fetchWithOptionalDispatcher(url, fetchOptions);
       } catch (error: unknown) {
         if (dispatcher) {
           if (error instanceof DOMException && error.name === 'AbortError') {
@@ -432,23 +425,17 @@ export class MyAnonamouseIndexer implements IndexerAdapter {
     const dispatcher = createProxyAgent(this.proxyUrl);
 
     try {
-      const fetchOptions: RequestInit & { dispatcher?: unknown } = {
+      const fetchOptions: DispatcherFetchInit = {
         headers: {
           Cookie: `mam_id=${this.mamId}`,
         },
         signal,
+        dispatcher,
       };
-
-      if (dispatcher) {
-        (fetchOptions as Record<string, unknown>).dispatcher = dispatcher;
-      }
-
-      // Same dual-undici fix as fetchWithCookie above.
-      const fetchImpl = (dispatcher ? undiciFetch : fetch) as typeof undiciFetch;
 
       let response: Response;
       try {
-        response = await fetchImpl(url, fetchOptions as Parameters<typeof fetchImpl>[1]) as unknown as Response;
+        response = await fetchWithOptionalDispatcher(url, fetchOptions);
       } catch (error: unknown) {
         // Proxy errors must propagate — not be swallowed as undefined
         if (dispatcher) {

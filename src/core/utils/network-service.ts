@@ -45,6 +45,40 @@ import { mapNetworkError } from './map-network-error.js';
 export const undiciFetch = undiciFetchImpl;
 
 /**
+ * RequestInit + the npm-undici-only `dispatcher` slot. Production callers use
+ * this shape so the dispatcher is part of the contract (not bag-of-unknowns).
+ */
+export type DispatcherFetchInit = RequestInit & { dispatcher?: unknown };
+
+/**
+ * Single fetch entry point that picks the right `fetch` for the dispatcher
+ * shape and isolates the npm-undici ↔ globalThis Response type juggling to
+ * one well-commented line, instead of forcing `as unknown as Response` casts
+ * at every call site (TS-2).
+ *
+ * - With `dispatcher`: routes through `undiciFetch` so the Dispatcher class
+ *   identity matches (Node 24 + undici 8 reject mismatches with
+ *   `UND_ERR_INVALID_ARG`).
+ * - Without `dispatcher`: routes through `globalThis.fetch` so MSW-based test
+ *   interception keeps working.
+ *
+ * The unavoidable cross-package `Response` type bridge lives here because the
+ * runtime shapes (status, headers, body) are identical — only the TS type
+ * declarations diverge between the dom lib and undici's package types.
+ */
+export async function fetchWithOptionalDispatcher(
+  url: string | URL,
+  options: DispatcherFetchInit,
+): Promise<Response> {
+  if (options.dispatcher !== undefined) {
+    const undiciResponse = await undiciFetch(url, options as Parameters<typeof undiciFetch>[1]);
+    return undiciResponse as unknown as Response;
+  }
+  // No dispatcher: undefined dispatcher slot is OK to pass through to fetch.
+  return await fetch(url, options);
+}
+
+/**
  * Fetch with an automatic timeout via AbortSignal.timeout().
  * Replaces manual AbortController + setTimeout boilerplate.
  *
