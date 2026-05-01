@@ -1,6 +1,6 @@
 import type { z } from 'zod';
 import type { DownloadClientAdapter, DownloadItemInfo, AddDownloadOptions, DownloadArtifact, DownloadProtocol } from './types.js';
-import { transmissionRpcResponseSchema, transmissionTorrentsArraySchema } from './schemas.js';
+import { transmissionRpcResponseSchema, transmissionSessionGetSchema, transmissionTorrentsArraySchema } from './schemas.js';
 import type { transmissionTorrentSchema } from './schemas.js';
 import { fetchWithTimeout } from '../utils/fetch-with-timeout.js';
 import { DEFAULT_REQUEST_TIMEOUT_MS } from '../utils/constants.js';
@@ -154,7 +154,15 @@ export class TransmissionClient implements DownloadClientAdapter {
   async test(): Promise<{ success: boolean; message?: string }> {
     try {
       const response = await this.rpc('session-get', {});
-      const version = response.arguments?.version as string | undefined;
+      const parsed = transmissionSessionGetSchema.safeParse(response.arguments ?? {});
+      if (!parsed.success) {
+        throw new DownloadClientError(
+          this.name,
+          `Transmission returned unexpected session-get response: ${parsed.error.issues[0]?.message ?? 'unknown'}`,
+          { cause: parsed.error },
+        );
+      }
+      const { version } = parsed.data;
       return {
         success: true,
         message: version ? `Transmission ${version}` : `Connected to ${this.name}`,

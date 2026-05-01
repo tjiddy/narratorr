@@ -144,6 +144,22 @@ describe('TransmissionClient', () => {
       expect(result.message).toContain('Transmission');
     });
 
+    it('returns failure when session-get version is non-string (number)', async () => {
+      server.use(rpcHandler('session-get', { version: 123 }));
+
+      const result = await client.test();
+      expect(result.success).toBe(false);
+      expect(result.message).toContain('unexpected session-get response');
+    });
+
+    it('returns failure when session-get version is null (z.string().optional() rejects null)', async () => {
+      server.use(rpcHandler('session-get', { version: null }));
+
+      const result = await client.test();
+      expect(result.success).toBe(false);
+      expect(result.message).toContain('unexpected session-get response');
+    });
+
     it('returns failure on connection error', async () => {
       server.use(
         http.post(RPC_URL, () => {

@@ -62,6 +62,11 @@ export const transmissionTorrentSchema = z.object({
 
 export const transmissionTorrentsArraySchema = z.array(transmissionTorrentSchema);
 
+// Transmission session-get response — only `version` is read by test().
+export const transmissionSessionGetSchema = z.object({
+  version: z.string().optional(),
+}).passthrough();
+
 // SABnzbd queue/history response schemas — match only fields the code reads.
 export const sabnzbdQueueSlotSchema = z.object({
   nzo_id: z.string(),
