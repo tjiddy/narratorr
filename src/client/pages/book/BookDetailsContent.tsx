@@ -52,9 +52,9 @@ export function BookDetailsContent({ libraryBook, merged }: {
             </div>
           )}
 
-          {hasPath && <FileList bookId={libraryBook.id} />}
-
           {hasPath && <BookLocationSection path={libraryBook.path!} />}
+
+          {hasPath && <FileList bookId={libraryBook.id} />}
         </div>
       )}
     </div>
