@@ -55,4 +55,20 @@ describe('BookDetailsContent — Location section wiring', () => {
 
     expect(screen.queryByRole('heading', { name: /^location$/i })).not.toBeInTheDocument();
   });
+
+  it('renders the Location section before the Files section in document order', () => {
+    renderWithProviders(
+      <BookDetailsContent
+        libraryBook={makeBook({ status: 'imported', path: '/library/book/story.m4b' })}
+        merged={{}}
+      />,
+    );
+
+    const locationHeading = screen.getByRole('heading', { name: /^location$/i });
+    const filesButton = screen.getByRole('button', { name: /^files \(/i });
+
+    expect(
+      locationHeading.compareDocumentPosition(filesButton) & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+  });
 });
