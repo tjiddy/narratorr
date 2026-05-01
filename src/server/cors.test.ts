@@ -103,8 +103,9 @@ describe('CORS dev-mode allowlist (#742)', () => {
     expect(opts.credentials).toBe(true);
   });
 
-  it('buildCorsOptions(prod) returns the configured origin', () => {
+  it('buildCorsOptions(prod) returns the configured origin with credentials enabled', () => {
     const opts = buildCorsOptions({ isDev: false, corsOrigin: 'https://app.example.com' });
     expect(opts.origin).toBe('https://app.example.com');
+    expect(opts.credentials).toBe(true);
   });
 });
