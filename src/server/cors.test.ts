@@ -1,15 +1,11 @@
 import { describe, it, expect } from 'vitest';
 import Fastify, { type FastifyInstance } from 'fastify';
 import cors from '@fastify/cors';
-
-const DEV_CORS_ORIGINS = ['http://localhost:5173', 'http://localhost:3000'];
+import { DEV_CORS_ORIGINS, buildCorsOptions } from './cors-config.js';
 
 async function createCorsTestApp(isDev: boolean, prodOrigin = 'https://app.example.com'): Promise<FastifyInstance> {
   const app = Fastify({ logger: false });
-  await app.register(cors, {
-    origin: isDev ? DEV_CORS_ORIGINS : prodOrigin,
-    credentials: true,
-  });
+  await app.register(cors, buildCorsOptions({ isDev, corsOrigin: prodOrigin }));
   app.get('/api/ping', async () => ({ ok: true }));
   await app.ready();
   return app;
@@ -93,5 +89,22 @@ describe('CORS dev-mode allowlist (#742)', () => {
     } finally {
       await app.close();
     }
+  });
+
+  it('exports the canonical dev allowlist', () => {
+    expect(DEV_CORS_ORIGINS).toEqual(['http://localhost:5173', 'http://localhost:3000']);
+  });
+
+  it('buildCorsOptions(dev) returns the dev allowlist, never true', () => {
+    const opts = buildCorsOptions({ isDev: true, corsOrigin: 'https://app.example.com' });
+    expect(opts.origin).toBe(DEV_CORS_ORIGINS);
+    expect(Array.isArray(opts.origin)).toBe(true);
+    expect(opts.origin).not.toBe(true);
+    expect(opts.credentials).toBe(true);
+  });
+
+  it('buildCorsOptions(prod) returns the configured origin', () => {
+    const opts = buildCorsOptions({ isDev: false, corsOrigin: 'https://app.example.com' });
+    expect(opts.origin).toBe('https://app.example.com');
   });
 });

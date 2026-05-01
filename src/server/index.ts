@@ -63,6 +63,7 @@ try { process.loadEnvFile('.env'); } catch { /* no .env file (expected in produc
 
 import Fastify from 'fastify';
 import cors from '@fastify/cors';
+import { buildCorsOptions } from './cors-config.js';
 import cookie from '@fastify/cookie';
 import rateLimit from '@fastify/rate-limit';
 import {
@@ -118,11 +119,7 @@ async function main() {
   // CORS — dev uses an explicit allowlist (vite client + server self-origin); prod uses configured origin.
   // Reflecting any origin (`origin: true`) with credentials would let any malicious page visited during
   // local dev read authenticated responses from localhost.
-  const devCorsOrigins = ['http://localhost:5173', 'http://localhost:3000'];
-  await app.register(cors, {
-    origin: config.isDev ? devCorsOrigins : config.corsOrigin,
-    credentials: true,
-  });
+  await app.register(cors, buildCorsOptions(config));
 
   // Security headers
   await registerSecurityPlugins(app, config.isDev);
