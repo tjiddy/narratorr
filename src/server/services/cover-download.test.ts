@@ -3,6 +3,7 @@ import { inject } from '../__tests__/helpers.js';
 import type { FastifyBaseLogger } from 'fastify';
 import type { Db } from '../../db/index.js';
 import { MAX_COVER_SIZE } from '../../shared/constants.js';
+import type * as NetworkServiceModule from '../../core/utils/network-service.js';
 
 vi.mock('node:fs/promises', () => ({
   writeFile: vi.fn().mockResolvedValue(undefined),
@@ -14,6 +15,19 @@ vi.mock('node:fs/promises', () => ({
 vi.mock('node:dns/promises', () => ({
   lookup: vi.fn(),
 }));
+
+// Route fetchWithOptionalDispatcher through globalThis.fetch so the existing
+// `vi.stubGlobal('fetch', mockFetch)` continues to intercept the cover-download
+// hop. Production routes through undici's fetch when a dispatcher is attached
+// — the helper's routing is asserted in network-service.test.ts and the call
+// site is exercised end-to-end in cover-download.e2e.test.ts.
+vi.mock('../../core/utils/network-service.js', async (importActual) => {
+  const actual = await importActual<typeof NetworkServiceModule>();
+  return {
+    ...actual,
+    fetchWithOptionalDispatcher: ((url, options) => globalThis.fetch(url, options as RequestInit)) as typeof actual.fetchWithOptionalDispatcher,
+  };
+});
 
 const mockFetch = vi.fn();
 vi.stubGlobal('fetch', mockFetch);

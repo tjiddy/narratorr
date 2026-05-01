@@ -1,7 +1,7 @@
 import type { NotifierAdapter, NotificationEvent, EventPayload } from './types.js';
 import { formatEventMessage } from './types.js';
 import { EVENT_TITLES } from '../../shared/notification-events.js';
-import { fetchWithTimeout } from '../utils/fetch-with-timeout.js';
+import { fetchWithTimeout } from '../utils/network-service.js';
 import { NOTIFIER_TIMEOUT_MS } from '../utils/constants.js';
 import { getErrorMessage } from '../../shared/error-message.js';
 

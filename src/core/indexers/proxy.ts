@@ -9,8 +9,9 @@ import { z } from 'zod';
 import { ProxyAgent } from 'undici';
 import { SocksProxyAgent } from 'socks-proxy-agent';
 import { ProxyError } from './errors.js';
-import { getErrorMessage } from '../../shared/error-message.js';
+import { getErrorMessage, getErrorMessageWithCause } from '../../shared/error-message.js';
 import { mapNetworkError } from '../utils/map-network-error.js';
+import { fetchWithOptionalDispatcher, type DispatcherFetchInit } from '../utils/network-service.js';
 
 import { INDEXER_TIMEOUT_MS } from '../utils/constants.js';
 const IPIFY_URL = 'https://api.ipify.org?format=json';
@@ -64,24 +65,21 @@ export async function fetchWithProxyAgent(
     : controller.signal;
 
   try {
-    const fetchOptions: RequestInit & { dispatcher?: unknown } = {
+    const fetchOptions: DispatcherFetchInit = {
       headers,
       signal,
+      dispatcher,
     };
-
-    if (dispatcher) {
-      (fetchOptions as Record<string, unknown>).dispatcher = dispatcher;
-    }
 
     let response: Response;
     try {
-      response = await fetch(url, fetchOptions);
+      response = await fetchWithOptionalDispatcher(url, fetchOptions);
     } catch (error: unknown) {
       if (!dispatcher) throw mapNetworkError(error); // Direct fetch — map network errors
       if (error instanceof DOMException && error.name === 'AbortError') {
         throw new ProxyError(`Proxy timed out after ${Math.round(timeoutMs / 1000)}s`);
       }
-      const msg = getErrorMessage(error);
+      const msg = getErrorMessageWithCause(error);
       throw new ProxyError(`Proxy connection failed: ${msg}`);
     }
 

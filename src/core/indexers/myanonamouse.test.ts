@@ -1,6 +1,20 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { http, HttpResponse } from 'msw';
 import { useMswServer } from '../__tests__/msw/server.js';
+import type * as NetworkServiceModule from '../utils/network-service.js';
+
+// Route fetchWithOptionalDispatcher through globalThis.fetch in tests so
+// MSW handlers and `vi.spyOn(globalThis, 'fetch')` continue to intercept
+// the proxy path. Call-site contract is asserted in
+// myanonamouse.dispatcher-routing.test.ts.
+vi.mock('../utils/network-service.js', async (importActual) => {
+  const actual = await importActual<typeof NetworkServiceModule>();
+  return {
+    ...actual,
+    fetchWithOptionalDispatcher: ((url, options) => globalThis.fetch(url, options as RequestInit)) as typeof actual.fetchWithOptionalDispatcher,
+  };
+});
+
 import { MyAnonamouseIndexer } from './myanonamouse.js';
 import { IndexerAuthError, IndexerError, ProxyError } from './errors.js';
 import { filterByLanguage } from '../utils/filters.js';

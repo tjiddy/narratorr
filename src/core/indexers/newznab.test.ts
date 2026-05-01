@@ -3,6 +3,18 @@ import { http, HttpResponse } from 'msw';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { useMswServer } from '../__tests__/msw/server.js';
+import type * as NetworkServiceModule from '../utils/network-service.js';
+
+// Route fetchWithOptionalDispatcher through globalThis.fetch so MSW handlers
+// and `vi.spyOn(globalThis, 'fetch')` continue to intercept the proxy path.
+vi.mock('../utils/network-service.js', async (importActual) => {
+  const actual = await importActual<typeof NetworkServiceModule>();
+  return {
+    ...actual,
+    fetchWithOptionalDispatcher: ((url, options) => globalThis.fetch(url, options as RequestInit)) as typeof actual.fetchWithOptionalDispatcher,
+  };
+});
+
 import { NewznabIndexer } from './newznab.js';
 import { ProxyError } from './errors.js';
 

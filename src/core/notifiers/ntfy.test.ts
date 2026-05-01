@@ -4,7 +4,7 @@ import { http, HttpResponse } from 'msw';
 import { NtfyNotifier } from './ntfy.js';
 import type { EventPayload } from './types.js';
 
-import * as fetchModule from '../utils/fetch-with-timeout.js';
+import * as fetchModule from '../utils/network-service.js';
 
 const server = setupServer();
 

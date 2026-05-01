@@ -1,22 +1,220 @@
-import { describe, it, expect, vi, beforeEach, type Mock } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach, type Mock } from 'vitest';
 
 vi.mock('node:dns/promises', () => ({
   lookup: vi.fn(),
 }));
 
 import { lookup as dnsLookup } from 'node:dns/promises';
+import { ProxyAgent } from 'undici';
 import {
+  fetchWithOptionalDispatcher,
+  fetchWithTimeout,
   isBlockedFetchAddress,
   isBlockedHostname,
   isIpLiteral,
   normalizeHostname,
   resolveAndValidate,
+  undiciFetch,
   validatingLookup,
-} from './blocked-fetch-address.js';
+} from './network-service.js';
+import { Agent as UndiciAgent } from 'undici';
 
 // dns.lookup is overloaded; the all:true variant returns an array. Cast to a
 // permissive Mock so resolved-value typing accepts arrays.
 const mockedLookup = vi.mocked(dnsLookup) as unknown as Mock;
+
+describe('fetchWithTimeout', () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it('returns response for successful fetch within timeout', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      new Response('ok', { status: 200 }),
+    );
+
+    const response = await fetchWithTimeout('https://example.com', {}, 5000);
+    expect(response.status).toBe(200);
+    expect(await response.text()).toBe('ok');
+  });
+
+  it('passes through request options (method, headers, body)', async () => {
+    const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      new Response('ok', { status: 200 }),
+    );
+
+    await fetchWithTimeout(
+      'https://example.com/api',
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: '{"key":"value"}',
+      },
+      5000,
+    );
+
+    expect(fetchSpy).toHaveBeenCalledWith(
+      'https://example.com/api',
+      expect.objectContaining({
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: '{"key":"value"}',
+      }),
+    );
+  });
+
+  it('attaches an abort signal to the fetch call', async () => {
+    const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      new Response('ok', { status: 200 }),
+    );
+
+    await fetchWithTimeout('https://example.com', {}, 3000);
+
+    const calledOptions = fetchSpy.mock.calls[0][1] as RequestInit;
+    expect(calledOptions.signal).toBeDefined();
+  });
+
+  it('uses custom timeout value', async () => {
+    const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      new Response('ok', { status: 200 }),
+    );
+
+    await fetchWithTimeout('https://example.com', {}, 7500);
+
+    // Signal should exist with the timeout
+    const calledOptions = fetchSpy.mock.calls[0][1] as RequestInit;
+    expect(calledOptions.signal).toBeDefined();
+  });
+
+  describe('redirect detection', () => {
+    it('throws descriptive error on 302 response with Location header', async () => {
+      vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+        new Response(null, {
+          status: 302,
+          headers: { Location: 'https://auth.example.com/login' },
+        }),
+      );
+
+      await expect(fetchWithTimeout('https://example.com', {}, 5000)).rejects.toThrow(
+        'https://auth.example.com/login',
+      );
+      await expect(fetchWithTimeout('https://example.com', {}, 5000)).rejects.toThrow(
+        /auth proxy/i,
+      );
+      await expect(fetchWithTimeout('https://example.com', {}, 5000)).rejects.toThrow(
+        /internal address|whitelist/i,
+      );
+    });
+
+    it('throws descriptive error on all 3xx status codes (301, 303, 307, 308)', async () => {
+      for (const status of [301, 303, 307, 308]) {
+        vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+          new Response(null, {
+            status,
+            headers: { Location: 'https://auth.example.com/login' },
+          }),
+        );
+        await expect(fetchWithTimeout('https://example.com', {}, 5000)).rejects.toThrow(
+          'https://auth.example.com/login',
+        );
+      }
+    });
+
+    it('throws descriptive error on 3xx with no Location header without crashing', async () => {
+      vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+        new Response(null, { status: 302 }),
+      );
+
+      await expect(fetchWithTimeout('https://example.com', {}, 5000)).rejects.toThrow(
+        /redirect/i,
+      );
+    });
+
+    it('throws graceful error on 3xx with empty Location header', async () => {
+      vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+        new Response(null, {
+          status: 302,
+          headers: { Location: '' },
+        }),
+      );
+
+      await expect(fetchWithTimeout('https://example.com', {}, 5000)).rejects.toThrow(
+        /redirect/i,
+      );
+    });
+
+    it('returns response normally for 2xx — redirect detection does not interfere', async () => {
+      vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+        new Response('ok', { status: 200 }),
+      );
+
+      const response = await fetchWithTimeout('https://example.com', {}, 5000);
+      expect(response.status).toBe(200);
+    });
+
+    it('returns response normally for 4xx/5xx — redirect detection does not interfere', async () => {
+      for (const status of [400, 401, 404, 500, 503]) {
+        vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+          new Response(null, { status }),
+        );
+        const response = await fetchWithTimeout('https://example.com', {}, 5000);
+        expect(response.status).toBe(status);
+      }
+    });
+
+    it('uses redirect: manual option so fetch does not follow redirects automatically', async () => {
+      const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+        new Response('ok', { status: 200 }),
+      );
+
+      await fetchWithTimeout('https://example.com', {}, 5000);
+
+      expect(fetchSpy).toHaveBeenCalledWith(
+        'https://example.com',
+        expect.objectContaining({ redirect: 'manual' }),
+      );
+    });
+  });
+
+  describe('network error mapping (#227)', () => {
+    it('maps ECONNREFUSED to actionable message with port', async () => {
+      const cause = Object.assign(new Error('connect ECONNREFUSED 127.0.0.1:9999'), { code: 'ECONNREFUSED' });
+      vi.spyOn(globalThis, 'fetch').mockRejectedValue(
+        Object.assign(new TypeError('fetch failed'), { cause }),
+      );
+      await expect(fetchWithTimeout('https://example.com', {}, 5000)).rejects.toThrow(/connection refused/i);
+      await expect(fetchWithTimeout('https://example.com', {}, 5000)).rejects.toThrow(/9999/);
+    });
+
+    it('maps ENOTFOUND to actionable message with hostname', async () => {
+      const cause = Object.assign(new Error('getaddrinfo ENOTFOUND badhost.example'), { code: 'ENOTFOUND' });
+      vi.spyOn(globalThis, 'fetch').mockRejectedValue(
+        Object.assign(new TypeError('fetch failed'), { cause }),
+      );
+      await expect(fetchWithTimeout('https://example.com', {}, 5000)).rejects.toThrow(/dns/i);
+      await expect(fetchWithTimeout('https://example.com', {}, 5000)).rejects.toThrow(/badhost\.example/);
+    });
+
+    it('maps TimeoutError (AbortSignal.timeout) to actionable message', async () => {
+      vi.spyOn(globalThis, 'fetch').mockRejectedValue(
+        new DOMException('The operation was aborted due to timeout', 'TimeoutError'),
+      );
+      await expect(fetchWithTimeout('https://example.com', {}, 5000)).rejects.toThrow(/timed out/i);
+    });
+
+    it('maps AbortError (manual abort) to actionable message', async () => {
+      vi.spyOn(globalThis, 'fetch').mockRejectedValue(
+        new DOMException('The operation was aborted', 'AbortError'),
+      );
+      await expect(fetchWithTimeout('https://example.com', {}, 5000)).rejects.toThrow(/timed out/i);
+    });
+
+    it('passes through non-network errors unchanged', async () => {
+      vi.spyOn(globalThis, 'fetch').mockRejectedValue(new Error('Some other error'));
+      await expect(fetchWithTimeout('https://example.com', {}, 5000)).rejects.toThrow('Some other error');
+    });
+  });
+});
 
 describe('isBlockedFetchAddress', () => {
   describe('IPv4 ranges', () => {
@@ -361,5 +559,88 @@ describe('validatingLookup (socket-bound dispatcher hook)', () => {
     expect(second.family).toBe(0);
 
     expect(mockedLookup).toHaveBeenCalledTimes(2);
+  });
+});
+
+/**
+ * Regression: undici 8 tightened dispatcher type validation and rejects
+ * dispatchers built from the npm `undici` package when passed to Node 24's
+ * bundled `globalThis.fetch` (different `Dispatcher` class identity), throwing
+ * `UND_ERR_INVALID_ARG: invalid onRequestStart method`. `undiciFetch` (also
+ * imported from the npm `undici` package) accepts the same package's
+ * dispatchers without that mismatch. This test instantiates a real `ProxyAgent`
+ * pointed at an unreachable address and asserts the dispatcher is *used*
+ * (i.e. the call fails with a connection-shaped error from the dispatcher,
+ * not a type-validation error before the dispatcher ran).
+ */
+describe('undiciFetch + dispatcher (regression: dual-undici instance lineage)', () => {
+  it('passes a ProxyAgent dispatcher through without UND_ERR_INVALID_ARG', async () => {
+    const dispatcher = new ProxyAgent('http://127.0.0.1:1/');
+    const fetchOptions: RequestInit & { dispatcher?: unknown } = {
+      dispatcher,
+      signal: AbortSignal.timeout(2000),
+    };
+
+    const error = await undiciFetch(
+      'http://example.invalid/',
+      fetchOptions as Parameters<typeof undiciFetch>[1],
+    ).catch((e: unknown) => e);
+
+    // Must be a thrown error of some kind — fetching through an unreachable
+    // proxy can't succeed.
+    expect(error).toBeInstanceOf(Error);
+    // The exact failure shape varies (AbortError, fetch failed, etc.) — what
+    // matters is it is NOT the dispatcher-shape mismatch that broke prod.
+    const message = (error as Error).message ?? '';
+    expect(message).not.toMatch(/invalid onRequestStart method/);
+    const code = (error as { cause?: { code?: string } }).cause?.code;
+    expect(code).not.toBe('UND_ERR_INVALID_ARG');
+
+    await dispatcher.close();
+  });
+});
+
+/**
+ * Routing contract for `fetchWithOptionalDispatcher`. Together with the
+ * dispatcher-routing tests in `proxy.dispatcher-routing.test.ts` and
+ * `myanonamouse.dispatcher-routing.test.ts` (which prove the indexer call
+ * sites pass the dispatcher into this helper), this asserts the production
+ * fix from the undici 7→8 cover-download regression: dispatcher-attached
+ * calls MUST go through `undiciFetch` so the package-instance Dispatcher
+ * shape matches.
+ *
+ * The negative `expect(globalThis.fetch).not.toHaveBeenCalled()` assertion
+ * is what protects the fix — a regression that swaps the helper back to
+ * always-`globalThis.fetch` would fail this test.
+ */
+describe('fetchWithOptionalDispatcher (call-site routing contract)', () => {
+  it('routes through undiciFetch (NOT globalThis.fetch) when dispatcher is set', async () => {
+    const fetchSpy = vi.spyOn(globalThis, 'fetch');
+    const dispatcher = new UndiciAgent({ connect: { lookup: () => { /* never called */ } } });
+
+    // Trigger an unreachable host so the call fails fast — we don't care
+    // about the result, only that `globalThis.fetch` was NOT used.
+    await fetchWithOptionalDispatcher('http://127.0.0.1:1/', {
+      dispatcher,
+      signal: AbortSignal.timeout(500),
+    }).catch(() => { /* expected */ });
+
+    expect(fetchSpy).not.toHaveBeenCalled();
+    await dispatcher.close();
+    vi.restoreAllMocks();
+  });
+
+  it('routes through globalThis.fetch (NOT undiciFetch) when dispatcher is undefined', async () => {
+    const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      new Response('ok', { status: 200 }),
+    );
+
+    const response = await fetchWithOptionalDispatcher('http://example.com/', {
+      signal: AbortSignal.timeout(500),
+    });
+
+    expect(fetchSpy).toHaveBeenCalledOnce();
+    expect(response.status).toBe(200);
+    vi.restoreAllMocks();
   });
 });

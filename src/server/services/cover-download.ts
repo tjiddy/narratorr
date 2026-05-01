@@ -13,8 +13,10 @@ import { serializeError } from '../utils/serialize-error.js';
 import { sanitizeLogUrl } from '../utils/sanitize-log-url.js';
 import {
   createSsrfSafeDispatcher,
+  fetchWithOptionalDispatcher,
   resolveAndValidate,
-} from '../utils/blocked-fetch-address.js';
+  type DispatcherFetchInit,
+} from '../../core/utils/network-service.js';
 
 const MAX_REDIRECTS = 5;
 
@@ -53,13 +55,13 @@ async function fetchOneHop(url: string, dispatcher: unknown): Promise<HopResult>
   const parsed = new URL(url);
   await resolveAndValidate(parsed.hostname);
 
-  const fetchOptions: RequestInit & { dispatcher?: unknown } = {
+  const fetchOptions: DispatcherFetchInit = {
     redirect: 'manual',
     signal: AbortSignal.timeout(HTTP_DOWNLOAD_TIMEOUT_MS),
     dispatcher,
   };
 
-  const response = await fetch(url, fetchOptions);
+  const response = await fetchWithOptionalDispatcher(url, fetchOptions);
 
   if (response.status >= 300 && response.status < 400) {
     const location = response.headers.get('location');

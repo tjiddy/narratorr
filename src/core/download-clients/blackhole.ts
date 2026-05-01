@@ -1,7 +1,7 @@
 import { writeFile, access, constants } from 'node:fs/promises';
 import { join } from 'node:path';
 import type { DownloadClientAdapter, DownloadItemInfo, DownloadArtifact, DownloadProtocol } from './types.js';
-import { fetchWithTimeout } from '../utils/fetch-with-timeout.js';
+import { fetchWithTimeout } from '../utils/network-service.js';
 import { HTTP_DOWNLOAD_TIMEOUT_MS } from '../utils/constants.js';
 import { DownloadClientError, DownloadClientTimeoutError, isTimeoutError } from './errors.js';
 import { getErrorMessage } from '../../shared/error-message.js';

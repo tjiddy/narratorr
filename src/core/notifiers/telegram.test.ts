@@ -4,7 +4,7 @@ import { http, HttpResponse } from 'msw';
 import { TelegramNotifier } from './telegram.js';
 import type { EventPayload } from './types.js';
 
-import * as fetchModule from '../utils/fetch-with-timeout.js';
+import * as fetchModule from '../utils/network-service.js';
 
 const BOT_TOKEN = '123456:ABC-DEF';
 const CHAT_ID = '-1001234567890';

@@ -7,7 +7,7 @@ import type {
   DownloadArtifact,
   DownloadProtocol,
 } from './types.js';
-import { fetchWithTimeout } from '../utils/fetch-with-timeout.js';
+import { fetchWithTimeout } from '../utils/network-service.js';
 import { DEFAULT_REQUEST_TIMEOUT_MS } from '../utils/constants.js';
 import { DownloadClientAuthError, DownloadClientError, DownloadClientTimeoutError, isTimeoutError } from './errors.js';
 import { getErrorMessage } from '../../shared/error-message.js';

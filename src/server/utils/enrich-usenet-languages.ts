@@ -2,7 +2,7 @@ import type { FastifyBaseLogger } from 'fastify';
 import type { SearchResult } from '../../core/indexers/types.js';
 import { normalizeLanguage } from '../../core/utils/language-codes.js';
 import { detectLanguageFromNewsgroup, detectLanguageFromNzbName, parseNzbGroups, parseNzbName, parseNzbFileSubject } from '../../core/utils/detect-usenet-language.js';
-import { fetchWithTimeout } from '../../core/utils/fetch-with-timeout.js';
+import { fetchWithTimeout } from '../../core/utils/network-service.js';
 import { Semaphore } from './semaphore.js';
 import { getErrorMessage } from './error-message.js';
 import { sanitizeLogUrl } from './sanitize-log-url.js';

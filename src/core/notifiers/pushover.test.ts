@@ -4,7 +4,7 @@ import { http, HttpResponse } from 'msw';
 import { PushoverNotifier } from './pushover.js';
 import type { EventPayload } from './types.js';
 
-import * as fetchModule from '../utils/fetch-with-timeout.js';
+import * as fetchModule from '../utils/network-service.js';
 
 const API_URL = 'https://api.pushover.net/1/messages.json';
 
