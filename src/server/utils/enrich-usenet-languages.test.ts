@@ -1,10 +1,11 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import type { FastifyBaseLogger } from 'fastify';
 import type { SearchResult } from '../../core/indexers/types.js';
+import type * as NetworkServiceModule from '../../core/utils/network-service.js';
 import { enrichUsenetLanguages } from './enrich-usenet-languages.js';
 
 vi.mock('../../core/utils/network-service.js', async (importActual) => {
-  const actual = await importActual<typeof import('../../core/utils/network-service.js')>();
+  const actual = await importActual<typeof NetworkServiceModule>();
   return { ...actual, fetchWithTimeout: vi.fn() };
 });
 
