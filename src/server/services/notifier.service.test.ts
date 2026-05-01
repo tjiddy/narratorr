@@ -847,8 +847,9 @@ describe('NotifierService', () => {
       await service.delete(1);
 
       // Direct getAdapter call — if cache were still populated it would return
-      // the prior adapter without invoking the factory.
-      service.getAdapter(mockWebhookNotifier);
+      // the prior adapter without invoking the factory. (Factory mock loosens
+      // the enum-typed events column, so cast through never for the call.)
+      service.getAdapter(mockWebhookNotifier as never);
       expect(factorySpy).toHaveBeenCalledTimes(2);
       factorySpy.mockRestore();
     });
