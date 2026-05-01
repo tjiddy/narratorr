@@ -216,14 +216,57 @@ describe('searchAndGrabForBook', () => {
     const genericError = new Error('Connection refused');
     vi.mocked(downloadService.grab).mockRejectedValue(genericError);
     const result = await searchAndGrabForBook(book, indexerService, downloadService, defaultQualitySettings, log, blacklistService);
-    expect(result).toEqual({ result: 'grab_error', error: genericError });
+    expect(result.result).toBe('grab_error');
+    if (result.result !== 'grab_error') return;
+    // #863 — Error instances must be returned by reference (no wrapping).
+    expect(result.error).toBe(genericError);
   });
 
   it('returns grab_error for non-duplicate grab errors', async () => {
     const grabError = new Error('Connection refused');
     vi.mocked(downloadService.grab).mockRejectedValue(grabError);
     const result = await searchAndGrabForBook(book, indexerService, downloadService, defaultQualitySettings, log, blacklistService);
-    expect(result).toEqual({ result: 'grab_error', error: grabError });
+    expect(result.result).toBe('grab_error');
+    if (result.result !== 'grab_error') return;
+    // #863 — Error instances must be returned by reference (no wrapping).
+    expect(result.error).toBe(grabError);
+  });
+
+  // #863 — non-Error grab rejections are normalized to Error at tryGrab catch
+  it('wraps string grab rejection into Error with the string as message', async () => {
+    vi.mocked(downloadService.grab).mockRejectedValue('connection failed');
+    const result = await searchAndGrabForBook(book, indexerService, downloadService, defaultQualitySettings, log, blacklistService);
+    expect(result.result).toBe('grab_error');
+    if (result.result !== 'grab_error') return;
+    expect(result.error).toBeInstanceOf(Error);
+    expect(result.error.message).toBe('connection failed');
+  });
+
+  it('wraps plain-object grab rejection into Error with message "[object Object]"', async () => {
+    vi.mocked(downloadService.grab).mockRejectedValue({ msg: 'oops' });
+    const result = await searchAndGrabForBook(book, indexerService, downloadService, defaultQualitySettings, log, blacklistService);
+    expect(result.result).toBe('grab_error');
+    if (result.result !== 'grab_error') return;
+    expect(result.error).toBeInstanceOf(Error);
+    expect(result.error.message).toBe('[object Object]');
+  });
+
+  it('wraps null grab rejection into Error with message "null"', async () => {
+    vi.mocked(downloadService.grab).mockRejectedValue(null);
+    const result = await searchAndGrabForBook(book, indexerService, downloadService, defaultQualitySettings, log, blacklistService);
+    expect(result.result).toBe('grab_error');
+    if (result.result !== 'grab_error') return;
+    expect(result.error).toBeInstanceOf(Error);
+    expect(result.error.message).toBe('null');
+  });
+
+  it('wraps undefined grab rejection into Error with message "undefined"', async () => {
+    vi.mocked(downloadService.grab).mockRejectedValue(undefined);
+    const result = await searchAndGrabForBook(book, indexerService, downloadService, defaultQualitySettings, log, blacklistService);
+    expect(result.result).toBe('grab_error');
+    if (result.result !== 'grab_error') return;
+    expect(result.error).toBeInstanceOf(Error);
+    expect(result.error.message).toBe('undefined');
   });
 
   it('handles book with duration: null', async () => {

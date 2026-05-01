@@ -299,7 +299,7 @@ describe('runSearchJob', () => {
     expect(log.warn).toHaveBeenCalledWith(
       expect.objectContaining({
         bookId: 1,
-        error: { message: 'string error', type: 'string' },
+        error: expect.objectContaining({ message: 'string error', type: 'Error', stack: expect.any(String) }),
       }),
       'Search failed for book',
     );
@@ -1097,11 +1097,13 @@ describe('searchAllWanted', () => {
 
     expect(result.skipped).toBe(0);
     expect(result.errors).toBe(1);
-    // #852 — non-Error rejections must be wrapped via serializeError before logging
+    // #852 — non-Error rejections must be wrapped via serializeError before logging.
+    // #863 — tryGrab now normalizes non-Error rejections to Error at catch, so the
+    // serialized shape is `type: 'Error'` with a real stack instead of `type: 'string'`.
     expect(log.warn).toHaveBeenCalledWith(
       expect.objectContaining({
         bookId: 1,
-        error: { message: 'some string error', type: 'string' },
+        error: expect.objectContaining({ message: 'some string error', type: 'Error', stack: expect.any(String) }),
       }),
       'Grab failed for book',
     );
