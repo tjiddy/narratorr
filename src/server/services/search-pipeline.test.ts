@@ -216,14 +216,20 @@ describe('searchAndGrabForBook', () => {
     const genericError = new Error('Connection refused');
     vi.mocked(downloadService.grab).mockRejectedValue(genericError);
     const result = await searchAndGrabForBook(book, indexerService, downloadService, defaultQualitySettings, log, blacklistService);
-    expect(result).toEqual({ result: 'grab_error', error: genericError });
+    expect(result.result).toBe('grab_error');
+    if (result.result !== 'grab_error') return;
+    // #863 — Error instances must be returned by reference (no wrapping).
+    expect(result.error).toBe(genericError);
   });
 
   it('returns grab_error for non-duplicate grab errors', async () => {
     const grabError = new Error('Connection refused');
     vi.mocked(downloadService.grab).mockRejectedValue(grabError);
     const result = await searchAndGrabForBook(book, indexerService, downloadService, defaultQualitySettings, log, blacklistService);
-    expect(result).toEqual({ result: 'grab_error', error: grabError });
+    expect(result.result).toBe('grab_error');
+    if (result.result !== 'grab_error') return;
+    // #863 — Error instances must be returned by reference (no wrapping).
+    expect(result.error).toBe(grabError);
   });
 
   // #863 — non-Error grab rejections are normalized to Error at tryGrab catch
