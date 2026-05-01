@@ -667,11 +667,6 @@ describe('systemApi', () => {
     expect(mockFetchApi).toHaveBeenCalledWith('/system/update-status');
   });
 
-  it('triggerSearch → POST /system/tasks/search', async () => {
-    await systemApi.triggerSearch();
-    expect(mockFetchApi).toHaveBeenCalledWith('/system/tasks/search', expect.objectContaining({ method: 'POST' }));
-  });
-
   it('searchAllWanted → POST /system/tasks/search-all-wanted', async () => {
     await systemApi.searchAllWanted();
     expect(mockFetchApi).toHaveBeenCalledWith('/system/tasks/search-all-wanted', expect.objectContaining({ method: 'POST' }));

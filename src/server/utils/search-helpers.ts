@@ -15,7 +15,7 @@ type SearchFn = (query: string, options?: SearchOptions) => Promise<BookMetadata
  * retries the search with title and author swapped. This handles cases where folder
  * names have author and title in the wrong order.
  *
- * Used by both lookupMetadata() and matchSingleBook() to share one retry contract.
+ * Used by matchSingleBook() to retry on zero results.
  */
 export async function searchWithSwapRetry(args: {
   searchFn: SearchFn;

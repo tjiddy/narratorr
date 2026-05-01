@@ -54,8 +54,6 @@ export const systemApi = {
       method: 'PUT',
       body: JSON.stringify({ version }),
     }),
-  triggerSearch: () =>
-    fetchApi<{ searched: number; grabbed: number }>('/system/tasks/search', { method: 'POST' }),
   searchAllWanted: () =>
     fetchApi<{ searched: number; grabbed: number; skipped: number; errors: number }>(
       '/system/tasks/search-all-wanted',
