@@ -1,10 +1,22 @@
 /**
- * SSRF block policy for outbound fetches that follow attacker-influenced URLs
- * (cover-download, etc.). Distinct from auth's `isPrivateIp` — that helper
- * answers "is this client on the LAN, allow auth bypass?", which is intentionally
- * narrower than "is this destination unsafe to fetch?".
+ * Canonical home for outbound-network helpers. Consolidates timeout/redirect
+ * detection (fetchWithTimeout) and SSRF-block enforcement (block-policy
+ * predicates + DNS-rebinding-resistant dispatcher) plus the single undici
+ * `fetch` export used by callers that attach a `dispatcher` option.
  *
- * Rules implemented here:
+ * Why the dual-undici export matters:
+ * Node 24's bundled fetch and the `undici` npm package both expose a
+ * `Dispatcher` class, but they are *different classes* — a dispatcher built
+ * with `import { ProxyAgent } from 'undici'` does NOT pass the bundled
+ * fetch's instanceof/shape checks (undici 8 tightened this). Passing such
+ * a dispatcher to `globalThis.fetch` fails with `UND_ERR_INVALID_ARG`
+ * (`invalid onRequestStart method`). The fix: import `fetch` from `undici`
+ * and use that whenever a `dispatcher` is in play, so both sides come from
+ * the same package version.
+ *
+ * SSRF block policy (resolveAndValidate / validatingLookup / createSsrfSafeDispatcher)
+ * is the SSRF-block contract used by attacker-influenced fetches (cover art,
+ * indexer-supplied URLs). Rules:
  *   - RFC 1918 (10/8, 172.16/12, 192.168/16)
  *   - CGNAT (100.64/10 — RFC 6598; AWS Lambda VPC NAT)
  *   - Loopback (127/8, ::1)
@@ -13,14 +25,63 @@
  *   - IPv6 unique-local (fc00::/7, covers fd00::/8)
  *   - IPv6 multicast (ff00::/8)
  *   - IPv4-mapped IPv6 forms of any blocked IPv4 address (e.g., ::ffff:169.254.169.254)
+ *   - Hostname allowlist for known cloud-metadata names (belt-and-suspenders).
  *
- * Plus a hostname allowlist for known cloud-metadata names that resolve to
- * link-local addresses (belt-and-suspenders on top of the IP check).
+ * Distinct from auth's `isPrivateIp` — that helper answers "is this client
+ * on the LAN, allow auth bypass?", which is intentionally narrower than
+ * "is this destination unsafe to fetch?".
  */
 
 import { lookup as dnsLookup } from 'node:dns/promises';
-import { Agent } from 'undici';
+import { Agent, fetch as undiciFetchImpl } from 'undici';
 import type { LookupFunction } from 'node:net';
+import { mapNetworkError } from './map-network-error.js';
+
+/**
+ * Re-export of undici's `fetch`. Callers attaching a `dispatcher` MUST use
+ * this binding (not `globalThis.fetch`) so both fetch and dispatcher come
+ * from the same `undici` package instance.
+ */
+export const undiciFetch = undiciFetchImpl;
+
+/**
+ * Fetch with an automatic timeout via AbortSignal.timeout().
+ * Replaces manual AbortController + setTimeout boilerplate.
+ *
+ * 3xx responses are detected and thrown as descriptive Errors before returning
+ * to callers. All download-client and notifier test() paths surface error.message
+ * via their existing try/catch, so no caller changes are needed.
+ *
+ * Network-level errors (ECONNREFUSED, ENOTFOUND, timeouts) are mapped to
+ * actionable messages via mapNetworkError.
+ */
+export async function fetchWithTimeout(
+  url: string | URL,
+  options: RequestInit,
+  timeoutMs: number,
+): Promise<Response> {
+  let response: Response;
+  try {
+    response = await fetch(url, {
+      ...options,
+      redirect: 'manual',
+      signal: AbortSignal.timeout(timeoutMs),
+    });
+  } catch (error: unknown) {
+    throw mapNetworkError(error);
+  }
+
+  if (response.status >= 300 && response.status < 400) {
+    const location = response.headers.get('Location');
+    const target = location ? `to ${location} ` : '';
+    throw new Error(
+      `Server redirected ${target}— an auth proxy may be intercepting requests. ` +
+        `Use the service's internal address or whitelist this endpoint in your proxy config.`,
+    );
+  }
+
+  return response;
+}
 
 const BLOCKED_HOSTNAMES = new Set<string>([
   'metadata.google.internal',

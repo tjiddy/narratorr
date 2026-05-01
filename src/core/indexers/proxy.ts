@@ -9,8 +9,9 @@ import { z } from 'zod';
 import { ProxyAgent } from 'undici';
 import { SocksProxyAgent } from 'socks-proxy-agent';
 import { ProxyError } from './errors.js';
-import { getErrorMessage } from '../../shared/error-message.js';
+import { getErrorMessage, getErrorMessageWithCause } from '../../shared/error-message.js';
 import { mapNetworkError } from '../utils/map-network-error.js';
+import { undiciFetch } from '../utils/network-service.js';
 
 import { INDEXER_TIMEOUT_MS } from '../utils/constants.js';
 const IPIFY_URL = 'https://api.ipify.org?format=json';
@@ -73,15 +74,21 @@ export async function fetchWithProxyAgent(
       (fetchOptions as Record<string, unknown>).dispatcher = dispatcher;
     }
 
+    // When a dispatcher is attached, route through undici's fetch (same package
+    // instance as the dispatcher) — Node 24 + undici 8 reject mismatched
+    // Dispatcher class identities with UND_ERR_INVALID_ARG. Without a
+    // dispatcher, stay on globalThis.fetch so MSW-based tests intercept.
+    const fetchImpl = (dispatcher ? undiciFetch : fetch) as typeof undiciFetch;
+
     let response: Response;
     try {
-      response = await fetch(url, fetchOptions);
+      response = await fetchImpl(url, fetchOptions as Parameters<typeof fetchImpl>[1]) as unknown as Response;
     } catch (error: unknown) {
       if (!dispatcher) throw mapNetworkError(error); // Direct fetch — map network errors
       if (error instanceof DOMException && error.name === 'AbortError') {
         throw new ProxyError(`Proxy timed out after ${Math.round(timeoutMs / 1000)}s`);
       }
-      const msg = getErrorMessage(error);
+      const msg = getErrorMessageWithCause(error);
       throw new ProxyError(`Proxy connection failed: ${msg}`);
     }
 

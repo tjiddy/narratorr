@@ -3,7 +3,7 @@ import { BookMetadataSchema, AuthorMetadataSchema, SeriesMetadataSchema } from '
 import { MetadataError, RateLimitError, TransientError } from './errors.js';
 import { REGION_LANGUAGES } from './region-languages.js';
 import { AUDIBLE_TIMEOUT_MS } from '../utils/constants.js';
-import { fetchWithTimeout } from '../utils/fetch-with-timeout.js';
+import { fetchWithTimeout } from '../utils/network-service.js';
 import { getErrorMessage } from '../../shared/error-message.js';
 import type {
   MetadataSearchProvider,

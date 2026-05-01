@@ -152,7 +152,7 @@ The `/api/filesystem/browse` endpoint allows authenticated users to browse the h
 
 ## Outbound Fetch (SSRF Protection)
 
-The cover-download endpoint follows attacker-influenced URLs (cover art may come from an indexer response or a manually-pasted release URL). To prevent server-side request forgery against the host's metadata service or LAN-internal services, the fetch path goes through `src/server/utils/blocked-fetch-address.ts` (a custom Undici DNS lookup function that rejects unsafe destinations before the connection is made).
+The cover-download endpoint follows attacker-influenced URLs (cover art may come from an indexer response or a manually-pasted release URL). To prevent server-side request forgery against the host's metadata service or LAN-internal services, the fetch path goes through the SSRF helpers in `src/core/utils/network-service.ts` (a custom Undici DNS lookup function that rejects unsafe destinations before the connection is made).
 
 **Blocked destinations:**
 - RFC 1918 private networks (10/8, 172.16/12, 192.168/16)

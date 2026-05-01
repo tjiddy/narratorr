@@ -1,6 +1,19 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { http, HttpResponse } from 'msw';
 import { useMswServer } from '../__tests__/msw/server.js';
+import type * as NetworkServiceModule from '../utils/network-service.js';
+
+// Route undiciFetch through globalThis.fetch in tests so MSW handlers and
+// `vi.spyOn(globalThis, 'fetch')` continue to intercept the proxy path —
+// MSW patches globalThis.fetch only, not the npm undici package's fetch.
+vi.mock('../utils/network-service.js', async (importActual) => {
+  const actual = await importActual<typeof NetworkServiceModule>();
+  return {
+    ...actual,
+    undiciFetch: ((...args: Parameters<typeof globalThis.fetch>) => globalThis.fetch(...args)) as unknown as typeof actual.undiciFetch,
+  };
+});
+
 import { MyAnonamouseIndexer } from './myanonamouse.js';
 import { IndexerAuthError, IndexerError, ProxyError } from './errors.js';
 import { filterByLanguage } from '../utils/filters.js';

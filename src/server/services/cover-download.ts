@@ -14,7 +14,8 @@ import { sanitizeLogUrl } from '../utils/sanitize-log-url.js';
 import {
   createSsrfSafeDispatcher,
   resolveAndValidate,
-} from '../utils/blocked-fetch-address.js';
+  undiciFetch,
+} from '../../core/utils/network-service.js';
 
 const MAX_REDIRECTS = 5;
 
@@ -59,7 +60,7 @@ async function fetchOneHop(url: string, dispatcher: unknown): Promise<HopResult>
     dispatcher,
   };
 
-  const response = await fetch(url, fetchOptions);
+  const response = await undiciFetch(url, fetchOptions as Parameters<typeof undiciFetch>[1]) as unknown as Response;
 
   if (response.status >= 300 && response.status < 400) {
     const location = response.headers.get('location');

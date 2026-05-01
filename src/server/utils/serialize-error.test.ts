@@ -31,6 +31,33 @@ describe('serializeError', () => {
     });
   });
 
+  describe('Error.code', () => {
+    it('captures string .code on Node/undici errors (e.g. ENOTFOUND, UND_ERR_INVALID_ARG)', () => {
+      const err = Object.assign(new Error('getaddrinfo ENOTFOUND host'), { code: 'ENOTFOUND' });
+      const result = serializeError(err);
+      expect(result.code).toBe('ENOTFOUND');
+    });
+
+    it('captures .code from a nested cause (the diagnostic we missed before)', () => {
+      const cause = Object.assign(new Error('invalid onRequestStart method'), { code: 'UND_ERR_INVALID_ARG' });
+      const outer = new TypeError('fetch failed', { cause });
+      const result = serializeError(outer);
+      expect(result.cause?.code).toBe('UND_ERR_INVALID_ARG');
+      expect(result.cause?.message).toBe('invalid onRequestStart method');
+    });
+
+    it('omits .code when the error has none', () => {
+      const result = serializeError(new Error('plain'));
+      expect(result.code).toBeUndefined();
+    });
+
+    it('omits .code when it is not a string', () => {
+      const err = Object.assign(new Error('weird'), { code: 42 });
+      const result = serializeError(err);
+      expect(result.code).toBeUndefined();
+    });
+  });
+
   describe('Error.cause chain', () => {
     it('serializes single .cause recursively', () => {
       const inner = new Error('root cause');

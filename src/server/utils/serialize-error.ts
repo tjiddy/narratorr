@@ -3,6 +3,7 @@ export interface SerializedError {
   message: string;
   stack?: string;
   type: string;
+  code?: string;
   cause?: SerializedError;
 }
 
@@ -35,6 +36,14 @@ function serialize(err: unknown, seen: Set<unknown>, depth: number): SerializedE
     stack: err.stack,
     type: err.constructor.name,
   };
+
+  // Surface .code (undici/Node errors carry the diagnostic here:
+  // UND_ERR_INVALID_ARG, ENOTFOUND, ECONNREFUSED). Without this, log readers
+  // saw `fetch failed` with no actionable hint.
+  const code = (err as { code?: unknown }).code;
+  if (typeof code === 'string') {
+    result.code = code;
+  }
 
   if (err.cause !== undefined && depth < MAX_CAUSE_DEPTH && !seen.has(err.cause)) {
     seen.add(err.cause);

@@ -1,11 +1,11 @@
-import { describe, it, expect, vi, beforeAll, afterAll, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { createServer, type Server, type IncomingMessage, type ServerResponse } from 'node:http';
 import type { AddressInfo, LookupFunction } from 'node:net';
-import { Agent, fetch as undiciFetch } from 'undici';
+import { Agent } from 'undici';
 import type { FastifyBaseLogger } from 'fastify';
 import { inject } from '../__tests__/helpers.js';
 import type { Db } from '../../db/index.js';
-import type * as BlockedFetchModule from '../utils/blocked-fetch-address.js';
+import type * as NetworkServiceModule from '../../core/utils/network-service.js';
 
 vi.mock('node:fs/promises', () => ({
   writeFile: vi.fn().mockResolvedValue(undefined),
@@ -14,12 +14,12 @@ vi.mock('node:fs/promises', () => ({
   unlink: vi.fn().mockResolvedValue(undefined),
 }));
 
-vi.mock('../utils/blocked-fetch-address.js', async (importActual) => {
-  const actual = await importActual<typeof BlockedFetchModule>();
+vi.mock('../../core/utils/network-service.js', async (importActual) => {
+  const actual = await importActual<typeof NetworkServiceModule>();
   return { ...actual, createSsrfSafeDispatcher: vi.fn(), resolveAndValidate: vi.fn() };
 });
 
-import { createSsrfSafeDispatcher, resolveAndValidate } from '../utils/blocked-fetch-address.js';
+import { createSsrfSafeDispatcher, resolveAndValidate } from '../../core/utils/network-service.js';
 import { downloadRemoteCover } from './cover-download.js';
 
 function createMockLogger() {
@@ -75,18 +75,6 @@ describe('downloadRemoteCover (real-HTTP e2e — DNS rebinding revalidation)', (
   let log: FastifyBaseLogger;
   let lookupCalls: string[];
   let lookupBehaviors: LookupBehavior[];
-
-  beforeAll(() => {
-    // Node 24's bundled fetch rejects externally-constructed undici@8.1.0 Agents
-    // before lookup runs. Routing globalThis.fetch through undici's own fetch
-    // (same package version as the test Agent) eliminates that mismatch — real
-    // HTTP transport is still used.
-    vi.stubGlobal('fetch', undiciFetch);
-  });
-
-  afterAll(() => {
-    vi.unstubAllGlobals();
-  });
 
   beforeEach(async () => {
     requestCount = 0;

@@ -2,7 +2,7 @@ import type { z } from 'zod';
 import type { DownloadClientAdapter, DownloadItemInfo, AddDownloadOptions, DownloadArtifact, DownloadProtocol } from './types.js';
 import { transmissionRpcResponseSchema, transmissionSessionGetSchema, transmissionTorrentsArraySchema } from './schemas.js';
 import type { transmissionTorrentSchema } from './schemas.js';
-import { fetchWithTimeout } from '../utils/fetch-with-timeout.js';
+import { fetchWithTimeout } from '../utils/network-service.js';
 import { DEFAULT_REQUEST_TIMEOUT_MS } from '../utils/constants.js';
 import { DownloadClientAuthError, DownloadClientError } from './errors.js';
 import { requestWithRetry } from './retry.js';

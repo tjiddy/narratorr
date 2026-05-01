@@ -3,6 +3,7 @@ import { inject } from '../__tests__/helpers.js';
 import type { FastifyBaseLogger } from 'fastify';
 import type { Db } from '../../db/index.js';
 import { MAX_COVER_SIZE } from '../../shared/constants.js';
+import type * as NetworkServiceModule from '../../core/utils/network-service.js';
 
 vi.mock('node:fs/promises', () => ({
   writeFile: vi.fn().mockResolvedValue(undefined),
@@ -14,6 +15,16 @@ vi.mock('node:fs/promises', () => ({
 vi.mock('node:dns/promises', () => ({
   lookup: vi.fn(),
 }));
+
+// Route undiciFetch through globalThis.fetch in tests so the existing
+// `vi.stubGlobal('fetch', mockFetch)` continues to intercept the proxy path.
+vi.mock('../../core/utils/network-service.js', async (importActual) => {
+  const actual = await importActual<typeof NetworkServiceModule>();
+  return {
+    ...actual,
+    undiciFetch: ((...args: Parameters<typeof globalThis.fetch>) => globalThis.fetch(...args)) as unknown as typeof actual.undiciFetch,
+  };
+});
 
 const mockFetch = vi.fn();
 vi.stubGlobal('fetch', mockFetch);

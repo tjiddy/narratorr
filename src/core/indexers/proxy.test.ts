@@ -1,5 +1,19 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { ProxyError, isProxyRelatedError, IndexerAuthError } from './errors.js';
+import type * as NetworkServiceModule from '../utils/network-service.js';
+
+// Route undiciFetch through globalThis.fetch in tests so existing MSW handlers
+// and `vi.spyOn(globalThis, 'fetch')` continue to intercept the proxy path.
+// Production still uses the real undici fetch — the dispatcher-class lineage
+// regression is covered separately in network-service.test.ts.
+vi.mock('../utils/network-service.js', async (importActual) => {
+  const actual = await importActual<typeof NetworkServiceModule>();
+  return {
+    ...actual,
+    undiciFetch: ((...args: Parameters<typeof globalThis.fetch>) => globalThis.fetch(...args)) as unknown as typeof actual.undiciFetch,
+  };
+});
+
 import { createProxyAgent, fetchWithProxyAgent, resolveProxyIp } from './proxy.js';
 import { ProxyAgent } from 'undici';
 import { SocksProxyAgent } from 'socks-proxy-agent';
@@ -155,6 +169,17 @@ describe('fetchWithProxyAgent', () => {
       proxyUrl: 'http://proxy:8080',
     });
     expect(result).toBe('<xml>data</xml>');
+  });
+
+  it('surfaces error.cause on dispatcher failures (debuggability after undici upgrades)', async () => {
+    const cause = Object.assign(new Error('invalid onRequestStart method'), { code: 'UND_ERR_INVALID_ARG' });
+    vi.spyOn(globalThis, 'fetch').mockRejectedValue(
+      Object.assign(new TypeError('fetch failed'), { cause }),
+    );
+
+    await expect(
+      fetchWithProxyAgent('https://example.com', { proxyUrl: 'http://proxy:8080' }),
+    ).rejects.toThrow(/invalid onRequestStart method/);
   });
 });
 

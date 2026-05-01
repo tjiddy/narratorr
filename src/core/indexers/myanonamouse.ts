@@ -2,9 +2,10 @@ import { z } from 'zod';
 import type { IndexerAdapter, SearchOptions, SearchResult } from './types.js';
 import { IndexerAuthError, IndexerError, ProxyError } from './errors.js';
 import { createProxyAgent, resolveProxyIp } from './proxy.js';
+import { undiciFetch } from '../utils/network-service.js';
 import { normalizeLanguage } from '../utils/language-codes.js';
 import { MAM_LANGUAGES } from '../../shared/indexer-registry.js';
-import { getErrorMessage } from '../../shared/error-message.js';
+import { getErrorMessage, getErrorMessageWithCause } from '../../shared/error-message.js';
 import { normalizeBaseUrl } from '../../shared/normalize-base-url.js';
 
 export interface MAMConfig {
@@ -332,15 +333,19 @@ export class MyAnonamouseIndexer implements IndexerAdapter {
         (fetchOptions as Record<string, unknown>).dispatcher = dispatcher;
       }
 
+      // Use undici's fetch when a proxy dispatcher is attached so the package
+      // instance matches; otherwise stay on globalThis.fetch so MSW intercepts.
+      const fetchImpl = (dispatcher ? undiciFetch : fetch) as typeof undiciFetch;
+
       let response: Response;
       try {
-        response = await fetch(url, fetchOptions);
+        response = await fetchImpl(url, fetchOptions as Parameters<typeof fetchImpl>[1]) as unknown as Response;
       } catch (error: unknown) {
         if (dispatcher) {
           if (error instanceof DOMException && error.name === 'AbortError') {
             throw new ProxyError(`Proxy timed out after ${Math.round(INDEXER_TIMEOUT_MS / 1000)}s`);
           }
-          const msg = getErrorMessage(error);
+          const msg = getErrorMessageWithCause(error);
           throw new ProxyError(`Proxy connection failed: ${msg}`);
         }
         throw error;
@@ -438,16 +443,19 @@ export class MyAnonamouseIndexer implements IndexerAdapter {
         (fetchOptions as Record<string, unknown>).dispatcher = dispatcher;
       }
 
+      // Same dual-undici fix as fetchWithCookie above.
+      const fetchImpl = (dispatcher ? undiciFetch : fetch) as typeof undiciFetch;
+
       let response: Response;
       try {
-        response = await fetch(url, fetchOptions);
+        response = await fetchImpl(url, fetchOptions as Parameters<typeof fetchImpl>[1]) as unknown as Response;
       } catch (error: unknown) {
         // Proxy errors must propagate — not be swallowed as undefined
         if (dispatcher) {
           if (error instanceof DOMException && error.name === 'AbortError') {
             throw new ProxyError(`Proxy timed out after ${Math.round(INDEXER_TIMEOUT_MS / 1000)}s`);
           }
-          const msg = getErrorMessage(error);
+          const msg = getErrorMessageWithCause(error);
           throw new ProxyError(`Proxy connection failed: ${msg}`);
         }
         throw error;
