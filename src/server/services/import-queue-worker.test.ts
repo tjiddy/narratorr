@@ -840,7 +840,7 @@ describe('ImportQueueWorker', () => {
         selectCallCount++;
         if (selectCallCount === 1) return { from: vi.fn().mockReturnThis(), where: vi.fn().mockResolvedValue([]) };
         if (selectCallCount === 2) return { from: vi.fn().mockReturnThis(), where: vi.fn().mockReturnThis(), orderBy: vi.fn().mockReturnThis(), limit: vi.fn().mockResolvedValue([{ id: 5 }]) };
-        if (selectCallCount === 3) return { from: vi.fn().mockReturnThis(), where: vi.fn().mockReturnThis(), limit: vi.fn().mockResolvedValue([{ id: 5, bookId: 50, type: 'manual', status: 'processing', metadata: '{"title":"My Book"}', phaseHistory: null }]) };
+        if (selectCallCount === 3) return { from: vi.fn().mockReturnThis(), where: vi.fn().mockReturnThis(), limit: vi.fn().mockResolvedValue([{ id: 5, bookId: 50, type: 'manual', status: 'processing', metadata: '{"path":"/lib/MyBook","title":"My Book"}', phaseHistory: null }]) };
         return { from: vi.fn().mockReturnThis(), where: vi.fn().mockReturnThis(), orderBy: vi.fn().mockReturnThis(), limit: vi.fn().mockResolvedValue([]) };
       });
 
@@ -880,7 +880,7 @@ describe('ImportQueueWorker', () => {
         selectCallCount++;
         if (selectCallCount === 1) return { from: vi.fn().mockReturnThis(), where: vi.fn().mockResolvedValue([]) };
         if (selectCallCount === 2) return { from: vi.fn().mockReturnThis(), where: vi.fn().mockReturnThis(), orderBy: vi.fn().mockReturnThis(), limit: vi.fn().mockResolvedValue([{ id: 7 }]) };
-        if (selectCallCount === 3) return { from: vi.fn().mockReturnThis(), where: vi.fn().mockReturnThis(), limit: vi.fn().mockResolvedValue([{ id: 7, bookId: 70, type: 'manual', status: 'processing', phase: 'copying', metadata: '{"title":"Failed Book"}', phaseHistory: null }]) };
+        if (selectCallCount === 3) return { from: vi.fn().mockReturnThis(), where: vi.fn().mockReturnThis(), limit: vi.fn().mockResolvedValue([{ id: 7, bookId: 70, type: 'manual', status: 'processing', phase: 'copying', metadata: '{"path":"/lib/Failed","title":"Failed Book"}', phaseHistory: null }]) };
         return { from: vi.fn().mockReturnThis(), where: vi.fn().mockReturnThis(), orderBy: vi.fn().mockReturnThis(), limit: vi.fn().mockResolvedValue([]) };
       });
 
@@ -1331,11 +1331,183 @@ describe('ImportQueueWorker', () => {
       expect(payload.book_id).toBeNull();
       expect(payload.book_id).not.toBe(0);
       expect(payload.job_id).toBe(11);
-      expect(payload.book_title).toBe('Orphan Auto');
+      // #836 — auto schema has no `title` field, so the stray "Orphan Auto"
+      // in legacy metadata is ignored. extractTitle returns 'Unknown' for
+      // every auto job regardless of metadata contents.
+      expect(payload.book_title).toBe('Unknown');
       expect(payload.phase).toBeTypeOf('string');
       expect(payload.phase.length).toBeGreaterThan(0);
       expect(payload.error_message).toBeTypeOf('string');
       expect(payload.error_message.length).toBeGreaterThan(0);
+    });
+  });
+
+  // ===========================================================================
+  // #836 — extractTitle uses Zod schemas with a type discriminator
+  //
+  // Guards the contract that:
+  //   (a) manual jobs validate metadata against `manualImportJobPayloadSchema`
+  //       so a non-string `title` (number, object, array, null) cannot leak
+  //       into SSE payloads as `book_title`.
+  //   (b) auto jobs unconditionally return 'Unknown' — `autoImportJobPayloadSchema`
+  //       has no `title` field, so a stray title in legacy auto metadata
+  //       must NOT surface as `book_title`.
+  //   (c) the function never throws for any malformed input.
+  // ===========================================================================
+  describe('#836 extractTitle', () => {
+    type WithExtractTitle = {
+      extractTitle(metadata: string, type: 'manual' | 'auto'): string;
+    };
+    function getExtractTitle(): (metadata: string, type: 'manual' | 'auto') => string {
+      const w = worker as unknown as WithExtractTitle;
+      return w.extractTitle.bind(w);
+    }
+
+    describe('manual jobs', () => {
+      it('returns the validated title from a valid manual payload', () => {
+        const fn = getExtractTitle();
+        expect(fn('{"path":"/lib/Book","title":"My Book"}', 'manual')).toBe('My Book');
+      });
+
+      it("returns 'Unknown' when title is a number", () => {
+        const fn = getExtractTitle();
+        expect(fn('{"path":"/lib/Book","title":42}', 'manual')).toBe('Unknown');
+      });
+
+      it("returns 'Unknown' when title is an object", () => {
+        const fn = getExtractTitle();
+        expect(fn('{"path":"/lib/Book","title":{}}', 'manual')).toBe('Unknown');
+      });
+
+      it("returns 'Unknown' when title is an array", () => {
+        const fn = getExtractTitle();
+        expect(fn('{"path":"/lib/Book","title":[1,2,3]}', 'manual')).toBe('Unknown');
+      });
+
+      it("returns 'Unknown' when title is null", () => {
+        const fn = getExtractTitle();
+        expect(fn('{"path":"/lib/Book","title":null}', 'manual')).toBe('Unknown');
+      });
+
+      it("returns 'Unknown' when title is missing", () => {
+        const fn = getExtractTitle();
+        expect(fn('{}', 'manual')).toBe('Unknown');
+      });
+
+      it("returns 'Unknown' for malformed JSON (does not throw)", () => {
+        const fn = getExtractTitle();
+        expect(() => fn('not json', 'manual')).not.toThrow();
+        expect(fn('not json', 'manual')).toBe('Unknown');
+      });
+
+      it("returns 'Unknown' for the literal string 'null' (does not throw TypeError)", () => {
+        const fn = getExtractTitle();
+        // JSON.parse('null') === null; reaching .title would throw — schema rejects null.
+        expect(() => fn('null', 'manual')).not.toThrow();
+        expect(fn('null', 'manual')).toBe('Unknown');
+      });
+    });
+
+    describe('auto jobs', () => {
+      it("returns 'Unknown' for a canonical auto payload (no title field)", () => {
+        const fn = getExtractTitle();
+        expect(fn('{"downloadId":123}', 'auto')).toBe('Unknown');
+      });
+
+      it("returns 'Unknown' even when legacy auto metadata carries a stray title", () => {
+        const fn = getExtractTitle();
+        // Auto schema has no title field — the stray key must be ignored.
+        expect(fn('{"title":"X","downloadId":42}', 'auto')).toBe('Unknown');
+      });
+    });
+
+    // Call-site coverage for the three SSE paths that pass `job.type` into
+    // extractTitle but had no `book_title` assertion before this PR. Pinning
+    // each event's `book_title` against an auto job carrying a stray legacy
+    // `title` guards against a regression that hard-codes `'manual'` (or
+    // forgets to thread `job.type`) at any of these call sites — the helper
+    // unit tests above would still pass under that regression, but these
+    // worker-level tests would catch it because the event would leak the
+    // stray title instead of emitting 'Unknown'.
+    describe('call-site book_title coverage on auto stray-title metadata', () => {
+      // Includes BOTH `path` and `title` so the metadata would parse as a
+      // valid manual payload — meaning a regression that hard-codes
+      // `'manual'` at any of the three call sites below would extract
+      // 'Stray Auto' instead of 'Unknown'. The discriminator-driven
+      // implementation must reach the auto branch and short-circuit to
+      // 'Unknown' regardless of the parseable title.
+      const STRAY_TITLE_METADATA = '{"path":"/lib/Stray","title":"Stray Auto","downloadId":42}';
+
+      function setupAutoJobRow(metadata: string, opts: { id: number; bookId: number | null }) {
+        let selectCallCount = 0;
+        mockDb.db.select = vi.fn().mockImplementation(() => {
+          selectCallCount++;
+          if (selectCallCount === 1) return { from: vi.fn().mockReturnThis(), where: vi.fn().mockResolvedValue([]) };
+          if (selectCallCount === 2) return { from: vi.fn().mockReturnThis(), where: vi.fn().mockReturnThis(), orderBy: vi.fn().mockReturnThis(), limit: vi.fn().mockResolvedValue([{ id: opts.id }]) };
+          if (selectCallCount === 3) return { from: vi.fn().mockReturnThis(), where: vi.fn().mockReturnThis(), limit: vi.fn().mockResolvedValue([{ id: opts.id, bookId: opts.bookId, type: 'auto', status: 'processing', metadata, phaseHistory: null }]) };
+          return { from: vi.fn().mockReturnThis(), where: vi.fn().mockReturnThis(), orderBy: vi.fn().mockReturnThis(), limit: vi.fn().mockResolvedValue([]) };
+        });
+        mockDb.db.update = vi.fn().mockImplementation(() => ({
+          set: vi.fn().mockReturnValue({ where: vi.fn().mockResolvedValue({ rowsAffected: 1 }) }),
+        }));
+      }
+
+      it('import_phase_change emits book_title:"Unknown" (call site at import-queue-worker.ts:226)', async () => {
+        const emitSpy = vi.fn();
+        const w = new ImportQueueWorker(inject<Db>(mockDb.db), log, { emit: emitSpy } as never);
+        registerImportAdapter({
+          type: 'auto',
+          async process(_job: ImportJob, ctx) { await ctx.setPhase('analyzing'); },
+        });
+        setupAutoJobRow(STRAY_TITLE_METADATA, { id: 200, bookId: 300 });
+
+        await w.start();
+        await new Promise(r => setTimeout(r, 100));
+        await w.stop();
+
+        const phaseChange = emitSpy.mock.calls.find(c => c[0] === 'import_phase_change');
+        expect(phaseChange).toBeDefined();
+        expect(phaseChange![1].book_title).toBe('Unknown');
+        expect(phaseChange![1].book_title).not.toBe('Stray Auto');
+      });
+
+      it('import_progress emits book_title:"Unknown" (call site at import-queue-worker.ts:231)', async () => {
+        const emitSpy = vi.fn();
+        const w = new ImportQueueWorker(inject<Db>(mockDb.db), log, { emit: emitSpy } as never);
+        registerImportAdapter({
+          type: 'auto',
+          async process(_job: ImportJob, ctx) { ctx.emitProgress('analyzing', 0.5); },
+        });
+        setupAutoJobRow(STRAY_TITLE_METADATA, { id: 201, bookId: 301 });
+
+        await w.start();
+        await new Promise(r => setTimeout(r, 100));
+        await w.stop();
+
+        const progress = emitSpy.mock.calls.find(c => c[0] === 'import_progress');
+        expect(progress).toBeDefined();
+        expect(progress![1].book_title).toBe('Unknown');
+        expect(progress![1].book_title).not.toBe('Stray Auto');
+      });
+
+      it('import_failed on unknown-adapter path emits book_title:"Unknown" (call site at import-queue-worker.ts:188)', async () => {
+        const emitSpy = vi.fn();
+        const w = new ImportQueueWorker(inject<Db>(mockDb.db), log, { emit: emitSpy } as never);
+        // Intentionally do NOT register an auto adapter — drives the worker
+        // through the `if (!adapter)` branch where extractTitle's title
+        // leakage would surface in the failure event.
+        setupAutoJobRow(STRAY_TITLE_METADATA, { id: 202, bookId: 302 });
+
+        await w.start();
+        await new Promise(r => setTimeout(r, 100));
+        await w.stop();
+
+        const failed = emitSpy.mock.calls.find(c => c[0] === 'import_failed');
+        expect(failed).toBeDefined();
+        expect(failed![1].book_title).toBe('Unknown');
+        expect(failed![1].book_title).not.toBe('Stray Auto');
+        expect(failed![1].error_message).toContain('No import adapter registered for type "auto"');
+      });
     });
   });
 
