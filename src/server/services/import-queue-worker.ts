@@ -5,7 +5,8 @@ import { importJobs, books } from '../../db/schema.js';
 import { eq, and } from 'drizzle-orm';
 import { getImportAdapter } from './import-adapters/registry.js';
 import type { ImportAdapterContext } from './import-adapters/types.js';
-import type { ImportJobPhase, PhaseHistoryEntry } from '../../shared/schemas/import-job.js';
+import { manualImportJobPayloadSchema } from './import-adapters/types.js';
+import type { ImportJobPhase, ImportJobType, PhaseHistoryEntry } from '../../shared/schemas/import-job.js';
 import { serializeError } from '../utils/serialize-error.js';
 import { getRowsAffected } from '../utils/db-helpers.js';
 import { parsePhaseHistory } from '../utils/parse-phase-history.js';
@@ -184,7 +185,7 @@ export class ImportQueueWorker {
     const adapter = getImportAdapter(job.type);
     if (!adapter) {
       this.log.error({ jobId: job.id, type: job.type }, 'No import adapter registered for job type');
-      await this.markJobFailed(job.id, job.bookId, job.phase ?? 'queued', this.extractTitle(job.metadata), JSON.stringify({ message: `No import adapter registered for type "${job.type}"`, type: 'UnknownAdapterType' }));
+      await this.markJobFailed(job.id, job.bookId, job.phase ?? 'queued', this.extractTitle(job.metadata, job.type), JSON.stringify({ message: `No import adapter registered for type "${job.type}"`, type: 'UnknownAdapterType' }));
       return true;
     }
 
@@ -222,12 +223,12 @@ export class ImportQueueWorker {
         safeEmit(this.broadcaster, 'import_phase_change', {
           job_id: job.id,
           book_id: job.bookId,
-          book_title: this.extractTitle(job.metadata),
+          book_title: this.extractTitle(job.metadata, job.type),
           from: previousPhase,
           to: phase,
         }, this.log);
       },
-      emitProgress: this.createThrottledProgressEmitter(job.id, job.bookId, this.extractTitle(job.metadata)),
+      emitProgress: this.createThrottledProgressEmitter(job.id, job.bookId, this.extractTitle(job.metadata, job.type)),
     };
 
     const startTime = Date.now();
@@ -247,7 +248,7 @@ export class ImportQueueWorker {
     phaseHistory: PhaseHistoryEntry[],
     startTime: number,
   ): Promise<void> {
-    const bookTitle = this.extractTitle(job.metadata);
+    const bookTitle = this.extractTitle(job.metadata, job.type);
     try {
       await adapter.process(job, ctx);
 
@@ -328,14 +329,24 @@ export class ImportQueueWorker {
     }, this.log);
   }
 
-  /** Extract book title from job metadata JSON. */
-  private extractTitle(metadata: string): string {
+  /**
+   * Extract book title from job metadata JSON.
+   * Auto jobs have no title field — always returns 'Unknown'. Manual jobs are
+   * validated against `manualImportJobPayloadSchema` so a non-string `title`
+   * cannot leak into SSE payloads. Never throws.
+   */
+  private extractTitle(metadata: string, type: ImportJobType): string {
+    if (type !== 'manual') return 'Unknown';
+
+    let parsed: unknown;
     try {
-      const parsed = JSON.parse(metadata);
-      return parsed.title ?? 'Unknown';
+      parsed = JSON.parse(metadata);
     } catch {
       return 'Unknown';
     }
+
+    const result = manualImportJobPayloadSchema.safeParse(parsed);
+    return result.success ? result.data.title : 'Unknown';
   }
 
   /** Create a throttled progress emitter for a specific job. */
