@@ -3,6 +3,7 @@ import { randomBytes } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
+import { z } from 'zod';
 import {
   encrypt,
   decrypt,
@@ -19,6 +20,40 @@ import {
   makeTestSchema,
 } from './secret-codec.js';
 import { notifierSettingsSchemas } from '../../shared/schemas/notifier.js';
+
+// Heuristic for detecting secret-shaped notifier field names. Today's 7
+// registered notifier secrets all match: `url`, `webhookUrl`, `headers`,
+// `*Token` (botToken / pushoverToken / gotifyToken), `*Pass` (smtpPass).
+// Non-secret notifier fields (gotifyUrl, ntfyServer, smtpHost, pushoverUser,
+// chatId, fromAddress, toAddress, ntfyTopic, path, method, bodyTemplate, etc.)
+// do NOT match — the `^url$` and `^webhookUrl$` alternatives are anchored, so
+// `gotifyUrl` / `ntfyServer` slip past, and `*Pass` / `*Token` only catch the
+// suffix shape. There is no false-positive denylist today; add one only when
+// a non-secret field genuinely matches this heuristic.
+const NOTIFIER_SECRET_NAME_HEURISTIC = /^(url|webhookUrl|headers|.*Token|.*Pass)$/;
+
+function findSecretShapedNotifierFields(
+  schemas: Record<string, z.ZodTypeAny>,
+): Array<{ type: string; field: string }> {
+  const found: Array<{ type: string; field: string }> = [];
+  for (const [type, schema] of Object.entries(schemas)) {
+    if (!(schema instanceof z.ZodObject)) continue;
+    const shape = (schema as z.ZodObject<z.ZodRawShape>).shape;
+    for (const field of Object.keys(shape)) {
+      if (NOTIFIER_SECRET_NAME_HEURISTIC.test(field)) {
+        found.push({ type, field });
+      }
+    }
+  }
+  return found;
+}
+
+function findUnregisteredNotifierSecrets(
+  schemas: Record<string, z.ZodTypeAny>,
+  registered: ReadonlySet<string>,
+): Array<{ type: string; field: string }> {
+  return findSecretShapedNotifierFields(schemas).filter(({ field }) => !registered.has(field));
+}
 import { createIndexerSchema } from '../../shared/schemas/indexer.js';
 import { createNotifierSchema } from '../../shared/schemas/notifier.js';
 import { createDownloadClientSchema } from '../../shared/schemas/download-client.js';
@@ -248,32 +283,10 @@ describe('SecretCodec', () => {
   });
 
   describe('#731 notifier secret fields', () => {
-    const NOTIFIER_SECRETS_PER_TYPE: Record<string, string[]> = {
-      webhook: ['url', 'headers'],
-      discord: ['webhookUrl'],
-      slack: ['webhookUrl'],
-      telegram: ['botToken'],
-      email: ['smtpPass'],
-      pushover: ['pushoverToken'],
-      gotify: ['gotifyToken'],
-      // script + ntfy intentionally have no secret fields in the current schema
-      script: [],
-      ntfy: [],
-    };
-
     it('getSecretFieldNames("notifier") returns the union of per-type secret fields', () => {
       const fields = getSecretFieldNames('notifier');
       const expected = ['url', 'webhookUrl', 'botToken', 'smtpPass', 'pushoverToken', 'gotifyToken', 'headers'];
       expect([...fields].sort()).toEqual([...expected].sort());
-    });
-
-    it('every per-type secret field appears in SECRET_FIELDS["notifier"]', () => {
-      const registered = new Set(getSecretFieldNames('notifier'));
-      for (const [type, fields] of Object.entries(NOTIFIER_SECRETS_PER_TYPE)) {
-        for (const field of fields) {
-          expect(registered.has(field), `${type}.${field} must be registered as a notifier secret`).toBe(true);
-        }
-      }
     });
 
     it('round-trips encryption for every notifier secret field', () => {
@@ -318,10 +331,68 @@ describe('SecretCodec', () => {
     });
 
     it('every per-type schema secret field is registered (drift guard)', () => {
-      // Sanity check: notifier-type schemas referenced for the audit
-      expect(notifierSettingsSchemas.webhook).toBeDefined();
-      expect(notifierSettingsSchemas.telegram).toBeDefined();
-      // The behavior — every field in NOTIFIER_SECRETS_PER_TYPE is in registry — is asserted above.
+      const registered = new Set(getSecretFieldNames('notifier'));
+      const unregistered = findUnregisteredNotifierSecrets(notifierSettingsSchemas, registered);
+      const detail = unregistered.map(({ type, field }) => `${type}.${field}`).join(', ');
+      expect(
+        unregistered,
+        `Notifier subtypes contain secret-shaped fields not in SECRET_FIELDS["notifier"]: ${detail}`,
+      ).toEqual([]);
+    });
+
+    it('heuristic against real notifier schemas flags exactly today\'s 7 secret fields with subtype mappings', () => {
+      // Locks in the heuristic's positive output — without this, removing one of
+      // the exact-name regex alternatives (`url`, `webhookUrl`, `headers`) would
+      // not surface in any other test on this file, because those fields are
+      // already registered (drift guard would still return empty) and the
+      // false-positive fixture only exercises non-matching names.
+      const flagged = findSecretShapedNotifierFields(notifierSettingsSchemas);
+      const sortKey = (a: { type: string; field: string }) => `${a.type}.${a.field}`;
+      const sorted = [...flagged].sort((a, b) => sortKey(a).localeCompare(sortKey(b)));
+      expect(sorted).toEqual([
+        { type: 'discord', field: 'webhookUrl' },
+        { type: 'email', field: 'smtpPass' },
+        { type: 'gotify', field: 'gotifyToken' },
+        { type: 'pushover', field: 'pushoverToken' },
+        { type: 'slack', field: 'webhookUrl' },
+        { type: 'telegram', field: 'botToken' },
+        { type: 'webhook', field: 'headers' },
+        { type: 'webhook', field: 'url' },
+      ]);
+      // And confirm the heuristic doesn't pull in any of the documented non-secret fields.
+      const flaggedFields = new Set(flagged.map(({ field }) => field));
+      for (const nonSecret of ['gotifyUrl', 'ntfyServer', 'pushoverUser', 'chatId', 'smtpHost', 'smtpUser', 'fromAddress', 'toAddress', 'ntfyTopic', 'path', 'method', 'bodyTemplate']) {
+        expect(flaggedFields.has(nonSecret), `${nonSecret} should not be flagged as secret-shaped`).toBe(false);
+      }
+    });
+
+    it('drift guard helper flags secret-shaped fields missing from the registered set', () => {
+      const fakeSchemas = {
+        fakeType: z.object({ secretToken: z.string() }).strict(),
+      };
+      const unregistered = findUnregisteredNotifierSecrets(fakeSchemas, new Set());
+      expect(unregistered).toEqual([{ type: 'fakeType', field: 'secretToken' }]);
+    });
+
+    it('drift guard helper flags multiple secret-shaped fields and names each subtype', () => {
+      const fakeSchemas = {
+        typeA: z.object({ apiToken: z.string(), name: z.string() }).strict(),
+        typeB: z.object({ apiPass: z.string() }).strict(),
+      };
+      const unregistered = findUnregisteredNotifierSecrets(fakeSchemas, new Set());
+      expect(unregistered).toEqual(expect.arrayContaining([
+        { type: 'typeA', field: 'apiToken' },
+        { type: 'typeB', field: 'apiPass' },
+      ]));
+      expect(unregistered).toHaveLength(2);
+    });
+
+    it('drift guard helper does not flag non-secret-shaped fields like gotifyUrl/ntfyServer', () => {
+      const fakeSchemas = {
+        fakeType: z.object({ gotifyUrl: z.string(), ntfyServer: z.string() }).strict(),
+      };
+      const unregistered = findUnregisteredNotifierSecrets(fakeSchemas, new Set());
+      expect(unregistered).toEqual([]);
     });
   });
 
