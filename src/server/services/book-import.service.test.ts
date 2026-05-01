@@ -1,6 +1,8 @@
 import { describe, it, expect, beforeEach, vi, type Mock } from 'vitest';
+import { desc } from 'drizzle-orm';
 import { createMockDb, createMockLogger, inject, mockDbChain } from '../__tests__/helpers.js';
 import { BookImportService } from './book-import.service.js';
+import { importJobs } from '../../db/schema.js';
 import type { Db } from '../../db/index.js';
 import type { FastifyBaseLogger } from 'fastify';
 
@@ -131,7 +133,10 @@ describe('BookImportService', () => {
       await service.retryImport(1, nudge);
 
       expect(failedJobChain.orderBy).toHaveBeenCalledTimes(1);
-      expect(failedJobChain.orderBy.mock.calls[0]).toHaveLength(2);
+      expect(failedJobChain.orderBy).toHaveBeenCalledWith(
+        desc(importJobs.createdAt),
+        desc(importJobs.id),
+      );
     });
   });
 
