@@ -541,6 +541,41 @@ describe('downloadRemoteCover', () => {
         expect(payload.url).not.toContain('secret');
         expect(payload.url).not.toContain('user:');
       });
+
+      it('streaming cap still rejects when malformed Content-Length is paired with an oversized body', async () => {
+        const cancelSpy = vi.fn().mockResolvedValue(undefined);
+        const fakeReader = {
+          read: vi.fn()
+            .mockResolvedValueOnce({ done: false, value: new Uint8Array(MAX_COVER_SIZE + 1) })
+            .mockResolvedValue({ done: true, value: undefined }),
+          cancel: cancelSpy,
+        };
+        const fakeBody = { getReader: () => fakeReader };
+
+        const response = new Response('placeholder', {
+          status: 200,
+          headers: {
+            'content-type': 'image/jpeg',
+            'content-length': 'abc',
+          },
+        });
+        Object.defineProperty(response, 'body', { configurable: true, get: () => fakeBody });
+        mockFetch.mockResolvedValue(response);
+
+        const result = await downloadRemoteCover(
+          1, '/books/test', 'https://cdn.example.com/cover.jpg',
+          inject<Db>(mockDb), log,
+        );
+
+        expect(result).toBe(false);
+        expect((log.warn as ReturnType<typeof vi.fn>)).toHaveBeenCalledWith(
+          expect.objectContaining({ contentLength: 'abc' }),
+          expect.stringContaining('malformed Content-Length'),
+        );
+        expect(cancelSpy).toHaveBeenCalled();
+        expect(writeFile).not.toHaveBeenCalled();
+        expect(mockDb.update).not.toHaveBeenCalled();
+      });
     });
   });
 
