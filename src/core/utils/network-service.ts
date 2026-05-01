@@ -75,7 +75,7 @@ export async function fetchWithOptionalDispatcher(
     return undiciResponse as unknown as Response;
   }
   // No dispatcher: undefined dispatcher slot is OK to pass through to fetch.
-  return await fetch(url, options);
+  return fetch(url, options);
 }
 
 /**
