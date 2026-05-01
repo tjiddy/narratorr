@@ -2,8 +2,7 @@ import { rm } from 'node:fs/promises';
 import { assertPathInsideLibrary, cleanEmptyParents, PathOutsideLibraryError } from '../utils/paths.js';
 import { uploadBookCover, CoverUploadError } from './cover-upload.js';
 import { SUPPORTED_COVER_MIMES } from '../utils/mime.js';
-import { chunkArray } from '../utils/batch.js';
-import { eq, and, sql, inArray, notExists } from 'drizzle-orm';
+import { eq, and, sql, notExists } from 'drizzle-orm';
 import type { Db, DbOrTx } from '../../db/index.js';
 import type { FastifyBaseLogger } from 'fastify';
 import { books, authors, narrators, bookAuthors, bookNarrators, unmatchedGenres, importLists } from '../../db/schema.js';
@@ -11,6 +10,7 @@ import { slugify, findUnmatchedGenres } from '../../core/index.js';
 import { findOrCreateAuthor, findOrCreateNarrator } from '../utils/find-or-create-person.js';
 import { type MetadataService } from './metadata.service.js';
 import { serializeError } from '../utils/serialize-error.js';
+import { batchLoadAuthorsNarrators } from './book-batch-load.helpers.js';
 import type { BookRow } from './types.js';
 
 
@@ -349,60 +349,8 @@ export class BookService {
       .from(books)
       .where(and(eq(books.monitorForUpgrades, true), eq(books.status, 'imported')));
 
-    return this.batchLoadAuthorsNarrators(rows);
+    return batchLoadAuthorsNarrators(this.db, rows);
   }
-
-  /** Batch-load authors and narrators for a list of book rows. Author and narrator
-   *  lookups are chunked in batches of 900 IDs to stay under SQLite's 999 bind-param limit. */
-  private async batchLoadAuthorsNarrators(bookRows: BookRow[]): Promise<BookWithAuthor[]> {
-    if (bookRows.length === 0) return [];
-
-    const bookIds = bookRows.map((r) => r.id);
-
-    const authorResults: Array<{ bookId: number; author: AuthorRow; position: number }> = [];
-    for (const chunk of chunkArray(bookIds, 900)) {
-      const rows = await this.db
-        .select({ bookId: bookAuthors.bookId, author: authors, position: bookAuthors.position })
-        .from(bookAuthors)
-        .innerJoin(authors, eq(bookAuthors.authorId, authors.id))
-        .where(inArray(bookAuthors.bookId, chunk));
-      authorResults.push(...rows);
-    }
-
-    const narratorResults: Array<{ bookId: number; narrator: NarratorRow; position: number }> = [];
-    for (const chunk of chunkArray(bookIds, 900)) {
-      const rows = await this.db
-        .select({ bookId: bookNarrators.bookId, narrator: narrators, position: bookNarrators.position })
-        .from(bookNarrators)
-        .innerJoin(narrators, eq(bookNarrators.narratorId, narrators.id))
-        .where(inArray(bookNarrators.bookId, chunk));
-      narratorResults.push(...rows);
-    }
-
-    const authorsMap = new Map<number, Array<{ author: AuthorRow; position: number }>>();
-    for (const r of authorResults) {
-      if (!authorsMap.has(r.bookId)) authorsMap.set(r.bookId, []);
-      authorsMap.get(r.bookId)!.push({ author: r.author, position: r.position });
-    }
-
-    const narratorsMap = new Map<number, Array<{ narrator: NarratorRow; position: number }>>();
-    for (const r of narratorResults) {
-      if (!narratorsMap.has(r.bookId)) narratorsMap.set(r.bookId, []);
-      narratorsMap.get(r.bookId)!.push({ narrator: r.narrator, position: r.position });
-    }
-
-    return bookRows.map((book) => ({
-      ...book,
-      importListName: null,
-      authors: (authorsMap.get(book.id) ?? [])
-        .sort((a, b) => a.position - b.position)
-        .map((r) => r.author),
-      narrators: (narratorsMap.get(book.id) ?? [])
-        .sort((a, b) => a.position - b.position)
-        .map((r) => r.narrator),
-    }));
-  }
-
 
   /** Fire-and-forget: track genres not in the synonym/known lists for future analysis */
   private async trackUnmatchedGenres(genres: string[] | undefined): Promise<void> {
