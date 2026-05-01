@@ -11,6 +11,7 @@ import type { BlacklistService } from './blacklist.service.js';
 import type { SettingsService } from './settings.service.js';
 import type { EventBroadcasterService } from './event-broadcaster.service.js';
 import { safeEmit } from '../utils/safe-emit.js';
+import { ensureError } from '../utils/ensure-error.js';
 import { buildGrabPayload } from './grab-payload.js';
 import { parseWordList } from '../../shared/parse-word-list.js';
 import { BYTES_PER_GB } from '../../shared/constants.js';
@@ -198,7 +199,7 @@ export type SingleBookSearchResult =
   | { result: 'grabbed'; title: string }
   | { result: 'no_results' }
   | { result: 'skipped'; reason: string }
-  | { result: 'grab_error'; error: unknown };
+  | { result: 'grab_error'; error: Error };
 
 /** Attempt to grab the best result and return the search outcome. */
 async function tryGrab(
@@ -218,7 +219,7 @@ async function tryGrab(
       log.debug({ bookId: book.id, title: book.title }, 'Skipping grab — book already has active download');
       return { result: 'skipped', reason: 'already_has_active_download' };
     }
-    return { result: 'grab_error', error: grabError };
+    return { result: 'grab_error', error: ensureError(grabError) };
   }
 }
 
