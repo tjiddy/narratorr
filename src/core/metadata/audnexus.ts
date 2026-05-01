@@ -53,6 +53,9 @@ const audnexusAuthorSchema = z.object({
   genres: z.array(z.object({ name: z.string().optional() }).passthrough()).optional(),
 }).passthrough();
 
+type AudnexusBookDetail = z.infer<typeof audnexusBookSchema>;
+type AudnexusAuthorDetail = z.infer<typeof audnexusAuthorSchema>;
+
 export class AudnexusProvider implements MetadataEnrichmentProvider {
   readonly name = 'Audnexus';
   readonly type = 'audnexus';
@@ -71,7 +74,7 @@ export class AudnexusProvider implements MetadataEnrichmentProvider {
 
     if (!data) return null;
 
-    const mapped = mapBook(data as AudnexusBookDetail);
+    const mapped = mapBook(data);
     const result = BookMetadataSchema.safeParse(mapped);
     return result.success ? result.data : null;
   }
@@ -84,7 +87,7 @@ export class AudnexusProvider implements MetadataEnrichmentProvider {
 
     if (!data) return null;
 
-    const mapped = mapAuthor(data as AudnexusAuthorDetail);
+    const mapped = mapAuthor(data);
     const result = AuthorMetadataSchema.safeParse(mapped);
     return result.success ? result.data : null;
   }
@@ -121,49 +124,10 @@ export class AudnexusProvider implements MetadataEnrichmentProvider {
 }
 
 // ---------------------------------------------------------------------------
-// Audnexus API response shapes (internal, not exported)
-// ---------------------------------------------------------------------------
-
-interface AudnexusAuthorSearchResult {
-  asin?: string;
-  name?: string;
-  description?: string;
-  image?: string;
-  genres?: Array<{ name?: string }>;
-}
-
-type AudnexusAuthorDetail = AudnexusAuthorSearchResult;
-
-interface AudnexusSeriesRef {
-  name?: string;
-  position?: string;
-  asin?: string;
-}
-
-interface AudnexusBookDetail {
-  asin?: string;
-  isbn?: string;
-  title?: string;
-  subtitle?: string;
-  authors?: Array<{ name?: string; asin?: string }>;
-  narrators?: Array<{ name?: string }>;
-  seriesPrimary?: AudnexusSeriesRef;
-  seriesSecondary?: AudnexusSeriesRef;
-  summary?: string;
-  description?: string;
-  publisherName?: string;
-  releaseDate?: string;
-  language?: string;
-  image?: string;
-  runtimeLengthMin?: number;
-  genres?: Array<{ name?: string; type?: string }>;
-}
-
-// ---------------------------------------------------------------------------
 // Mapping helpers
 // ---------------------------------------------------------------------------
 
-function mapAuthor(d: AudnexusAuthorSearchResult): Record<string, unknown> {
+function mapAuthor(d: AudnexusAuthorDetail): Record<string, unknown> {
   return {
     asin: d.asin,
     name: d.name ?? '',
