@@ -352,11 +352,13 @@ describe('validatingLookup (socket-bound dispatcher hook)', () => {
     const first = await callLookup('rebind.test');
     expect(first.err).toBeNull();
     expect(first.address).toBe('93.184.216.34');
+    expect(first.family).toBe(4);
 
     const second = await callLookup('rebind.test');
     expect(second.err).toBeInstanceOf(Error);
     expect((second.err as Error).message).toMatch(/Refused.*resolves to blocked address 192\.168\.1\.1/);
     expect(second.address).toBe('');
+    expect(second.family).toBe(0);
 
     expect(mockedLookup).toHaveBeenCalledTimes(2);
   });
