@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { NotifierService } from './notifier.service.js';
 import { mockDbChain, createMockDb, createMockLogger } from '../__tests__/helpers.js';
 import { initializeKey, _resetKey, encrypt, isEncrypted } from '../utils/secret-codec.js';
+import { ADAPTER_FACTORIES, type NotifierAdapter } from '../../core/index.js';
 
 import { createMockDbNotifier } from '../__tests__/factories.js';
 
@@ -756,6 +757,170 @@ describe('NotifierService', () => {
 
       expect(result.success).toBe(false);
       expect(result.message).toContain('not found');
+    });
+  });
+
+  // ── #781 Adapter caching ────────────────────────────────────────────────
+  describe('#781 adapter caching', () => {
+    function makeStubAdapter(): NotifierAdapter & { send: ReturnType<typeof vi.fn>; test: ReturnType<typeof vi.fn> } {
+      return {
+        type: 'webhook',
+        send: vi.fn().mockResolvedValue({ success: true }),
+        test: vi.fn().mockResolvedValue({ success: true }),
+      };
+    }
+
+    it('builds adapter once across multiple notify() calls for the same notifier', async () => {
+      db.select.mockReturnValue(mockDbChain([mockWebhookNotifier]));
+      const adapter = makeStubAdapter();
+      const factorySpy = vi.spyOn(ADAPTER_FACTORIES, 'webhook').mockReturnValue(adapter);
+
+      await service.notify('on_grab', { event: 'on_grab' });
+      await service.notify('on_grab', { event: 'on_grab' });
+      await service.notify('on_grab', { event: 'on_grab' });
+
+      expect(factorySpy).toHaveBeenCalledTimes(1);
+      expect(adapter.send).toHaveBeenCalledTimes(3);
+      factorySpy.mockRestore();
+    });
+
+    it('caches a separate adapter per notifier id', async () => {
+      const n1 = createMockDbNotifier({ id: 1, name: 'W1', events: ['on_grab'] });
+      const n2 = createMockDbNotifier({ id: 2, name: 'W2', events: ['on_grab'] });
+      db.select.mockReturnValue(mockDbChain([n1, n2]));
+
+      const factorySpy = vi.spyOn(ADAPTER_FACTORIES, 'webhook').mockImplementation(() => makeStubAdapter());
+
+      await service.notify('on_grab', { event: 'on_grab' });
+      expect(factorySpy).toHaveBeenCalledTimes(2);
+
+      await service.notify('on_grab', { event: 'on_grab' });
+      expect(factorySpy).toHaveBeenCalledTimes(2);
+      factorySpy.mockRestore();
+    });
+
+    it('update() invalidates the cache and the next call sees fresh decrypted settings', async () => {
+      const original = createMockDbNotifier({ id: 1, settings: { url: 'https://old.hook' } });
+      db.select.mockReturnValue(mockDbChain([original]));
+      const factorySpy = vi.spyOn(ADAPTER_FACTORIES, 'webhook').mockImplementation(() => makeStubAdapter());
+
+      await service.notify('on_grab', { event: 'on_grab' });
+      expect(factorySpy).toHaveBeenCalledTimes(1);
+      expect(factorySpy.mock.calls[0][0]).toMatchObject({ url: 'https://old.hook' });
+
+      const updated = createMockDbNotifier({ id: 1, settings: { url: 'https://new.hook' } });
+      db.update.mockReturnValue(mockDbChain([updated]));
+      await service.update(1, { settings: { url: 'https://new.hook' } });
+
+      // Subsequent notify reads the updated row from the DB.
+      db.select.mockReturnValue(mockDbChain([updated]));
+      await service.notify('on_grab', { event: 'on_grab' });
+
+      expect(factorySpy).toHaveBeenCalledTimes(2);
+      expect(factorySpy.mock.calls[1][0]).toMatchObject({ url: 'https://new.hook' });
+      factorySpy.mockRestore();
+    });
+
+    it('update() with no settings change still invalidates the cached adapter', async () => {
+      db.select.mockReturnValue(mockDbChain([mockWebhookNotifier]));
+      const factorySpy = vi.spyOn(ADAPTER_FACTORIES, 'webhook').mockImplementation(() => makeStubAdapter());
+
+      await service.notify('on_grab', { event: 'on_grab' });
+      expect(factorySpy).toHaveBeenCalledTimes(1);
+
+      db.update.mockReturnValue(mockDbChain([{ ...mockWebhookNotifier, name: 'Renamed' }]));
+      await service.update(1, { name: 'Renamed' });
+
+      await service.notify('on_grab', { event: 'on_grab' });
+      expect(factorySpy).toHaveBeenCalledTimes(2);
+      factorySpy.mockRestore();
+    });
+
+    it('delete() invalidates the cached adapter', async () => {
+      db.select.mockReturnValue(mockDbChain([mockWebhookNotifier]));
+      const factorySpy = vi.spyOn(ADAPTER_FACTORIES, 'webhook').mockImplementation(() => makeStubAdapter());
+
+      await service.notify('on_grab', { event: 'on_grab' });
+      expect(factorySpy).toHaveBeenCalledTimes(1);
+
+      db.delete.mockReturnValue(mockDbChain());
+      await service.delete(1);
+
+      // Direct getAdapter call — if cache were still populated it would return
+      // the prior adapter without invoking the factory.
+      service.getAdapter(mockWebhookNotifier);
+      expect(factorySpy).toHaveBeenCalledTimes(2);
+      factorySpy.mockRestore();
+    });
+
+    it('test(id) reuses the cached adapter warmed by notify()', async () => {
+      db.select.mockReturnValue(mockDbChain([mockWebhookNotifier]));
+      const adapter = makeStubAdapter();
+      const factorySpy = vi.spyOn(ADAPTER_FACTORIES, 'webhook').mockReturnValue(adapter);
+
+      await service.notify('on_grab', { event: 'on_grab' });
+      const result = await service.test(1);
+
+      expect(result.success).toBe(true);
+      expect(factorySpy).toHaveBeenCalledTimes(1);
+      expect(adapter.test).toHaveBeenCalledTimes(1);
+      factorySpy.mockRestore();
+    });
+
+    it('testConfig() builds an ad-hoc adapter and does not touch the cache', async () => {
+      db.select.mockReturnValue(mockDbChain([mockWebhookNotifier]));
+      const cachedAdapter = makeStubAdapter();
+      const factorySpy = vi.spyOn(ADAPTER_FACTORIES, 'webhook')
+        .mockReturnValueOnce(cachedAdapter)
+        .mockReturnValueOnce(makeStubAdapter());
+
+      await service.notify('on_grab', { event: 'on_grab' });
+      expect(factorySpy).toHaveBeenCalledTimes(1);
+
+      await service.testConfig({
+        type: 'webhook',
+        settings: { url: 'https://probe.example.com/hook' },
+      });
+      expect(factorySpy).toHaveBeenCalledTimes(2);
+
+      // Cached adapter is still in place — next notify reuses it, no new factory call.
+      await service.notify('on_grab', { event: 'on_grab' });
+      expect(factorySpy).toHaveBeenCalledTimes(2);
+      expect(cachedAdapter.send).toHaveBeenCalledTimes(2);
+      factorySpy.mockRestore();
+    });
+
+    it('factory throw is swallowed by notify() and does not poison the cache', async () => {
+      db.select.mockReturnValue(mockDbChain([mockWebhookNotifier]));
+      const goodAdapter = makeStubAdapter();
+      const factorySpy = vi.spyOn(ADAPTER_FACTORIES, 'webhook')
+        .mockImplementationOnce(() => { throw new Error('factory boom'); })
+        .mockImplementationOnce(() => goodAdapter);
+
+      // First notify: factory throws, Promise.allSettled catches, no rejection bubbles up.
+      await expect(service.notify('on_grab', { event: 'on_grab' })).resolves.toBeUndefined();
+      expect(factorySpy).toHaveBeenCalledTimes(1);
+
+      // Second notify: factory is retried, succeeds, adapter is cached and used.
+      await service.notify('on_grab', { event: 'on_grab' });
+      expect(factorySpy).toHaveBeenCalledTimes(2);
+      expect(goodAdapter.send).toHaveBeenCalledTimes(1);
+      factorySpy.mockRestore();
+    });
+
+    it('clearAdapterCache() drops every cached adapter', async () => {
+      const n1 = createMockDbNotifier({ id: 1, name: 'W1', events: ['on_grab'] });
+      const n2 = createMockDbNotifier({ id: 2, name: 'W2', events: ['on_grab'] });
+      db.select.mockReturnValue(mockDbChain([n1, n2]));
+      const factorySpy = vi.spyOn(ADAPTER_FACTORIES, 'webhook').mockImplementation(() => makeStubAdapter());
+
+      await service.notify('on_grab', { event: 'on_grab' });
+      expect(factorySpy).toHaveBeenCalledTimes(2);
+
+      service.clearAdapterCache();
+      await service.notify('on_grab', { event: 'on_grab' });
+      expect(factorySpy).toHaveBeenCalledTimes(4);
+      factorySpy.mockRestore();
     });
   });
 
