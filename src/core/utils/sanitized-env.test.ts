@@ -71,6 +71,33 @@ describe('sanitizedEnv', () => {
     expect(env.PATH).toBe('/custom/bin');
   });
 
+  it('skips extras whose value is undefined', () => {
+    const env = sanitizedEnv({
+      FOO: 'bar',
+      BAZ: undefined as unknown as string | undefined,
+    });
+
+    expect(env.FOO).toBe('bar');
+    expect(env).not.toHaveProperty('BAZ');
+  });
+
+  it('includes defined extras alongside allowlisted keys and omits undefined extras', () => {
+    process.env = { PATH: '/usr/bin', HOME: '/home/user' };
+
+    const env = sanitizedEnv({
+      NARRATORR_EVENT: 'on_grab',
+      NARRATORR_BOOK_AUTHOR: undefined,
+      NARRATORR_BOOK_TITLE: 'Dune',
+    });
+
+    expect(Object.keys(env).sort()).toEqual([
+      'HOME',
+      'NARRATORR_BOOK_TITLE',
+      'NARRATORR_EVENT',
+      'PATH',
+    ]);
+  });
+
   it('returns only allowlisted keys when called with no extras', () => {
     // Isolate process.env so the assertion does not depend on which other
     // allowlisted keys (LANG, TZ, TMPDIR, etc.) the CI runner happens to set.

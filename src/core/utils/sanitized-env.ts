@@ -15,11 +15,16 @@ const SAFE_ENV_KEYS = new Set([
   'TZ',
 ]);
 
-export function sanitizedEnv(extras: Record<string, string> = {}): NodeJS.ProcessEnv {
-  const safe: NodeJS.ProcessEnv = {};
+export function sanitizedEnv(
+  extras: Record<string, string | undefined> = {},
+): Record<string, string> {
+  const safe: Record<string, string> = {};
   for (const key of SAFE_ENV_KEYS) {
     const value = process.env[key];
     if (value !== undefined) safe[key] = value;
   }
-  return { ...safe, ...extras };
+  for (const [key, value] of Object.entries(extras)) {
+    if (value !== undefined) safe[key] = value;
+  }
+  return safe;
 }
