@@ -5,6 +5,7 @@ import { Agent, fetch as undiciFetch } from 'undici';
 import type { FastifyBaseLogger } from 'fastify';
 import { inject } from '../__tests__/helpers.js';
 import type { Db } from '../../db/index.js';
+import type * as BlockedFetchModule from '../utils/blocked-fetch-address.js';
 
 vi.mock('node:fs/promises', () => ({
   writeFile: vi.fn().mockResolvedValue(undefined),
@@ -14,7 +15,7 @@ vi.mock('node:fs/promises', () => ({
 }));
 
 vi.mock('../utils/blocked-fetch-address.js', async (importActual) => {
-  const actual = await importActual<typeof import('../utils/blocked-fetch-address.js')>();
+  const actual = await importActual<typeof BlockedFetchModule>();
   return { ...actual, createSsrfSafeDispatcher: vi.fn(), resolveAndValidate: vi.fn() };
 });
 
