@@ -57,10 +57,14 @@ export async function fetchMultipart<T>(
   body: FormData,
   options?: Omit<RequestInit, 'body' | 'method'> & { method?: 'POST' | 'PUT' | 'PATCH' },
 ): Promise<T> {
-  const headers: Record<string, string> = {
-    'X-Requested-With': 'XMLHttpRequest',
-    ...(options?.headers as Record<string, string>),
-  };
+  // Normalize via Headers so all HeadersInit shapes (Headers, tuple arrays, plain objects)
+  // are merged correctly. Defaults are seeded first; caller headers overwrite them.
+  const headers = new Headers({ 'X-Requested-With': 'XMLHttpRequest' });
+  if (options?.headers) {
+    new Headers(options.headers).forEach((value, key) => {
+      headers.set(key, value);
+    });
+  }
 
   const response = await fetch(`${API_BASE}${path}`, {
     ...options,

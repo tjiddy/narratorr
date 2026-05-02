@@ -228,7 +228,7 @@ describe('fetchMultipart', () => {
     expect(options.method).toBe('POST');
     expect(options.body).toBe(formData);
     expect(options.credentials).toBe('include');
-    expect(options.headers['X-Requested-With']).toBe('XMLHttpRequest');
+    expect((options.headers as Headers).get('X-Requested-With')).toBe('XMLHttpRequest');
   });
 
   it('does NOT set Content-Type (browser auto-sets multipart boundary)', async () => {
@@ -241,11 +241,11 @@ describe('fetchMultipart', () => {
     formData.append('file', new File(['x'], 'x.bin'));
     await fetchMultipart('/upload', formData);
 
-    const headers = (fetch as ReturnType<typeof vi.fn>).mock.calls[0][1].headers;
-    expect(headers['Content-Type']).toBeUndefined();
+    const headers = (fetch as ReturnType<typeof vi.fn>).mock.calls[0][1].headers as Headers;
+    expect(headers.get('Content-Type')).toBeNull();
   });
 
-  it('merges caller headers; caller-supplied X-Requested-With overrides default', async () => {
+  it('merges caller plain-object headers; caller-supplied X-Requested-With overrides default', async () => {
     globalThis.fetch = vi.fn().mockResolvedValue({
       ok: true,
       json: () => Promise.resolve({}),
@@ -256,9 +256,41 @@ describe('fetchMultipart', () => {
       headers: { 'X-Requested-With': 'CustomValue', 'X-Custom': 'yes' },
     });
 
-    const headers = (fetch as ReturnType<typeof vi.fn>).mock.calls[0][1].headers;
-    expect(headers['X-Requested-With']).toBe('CustomValue');
-    expect(headers['X-Custom']).toBe('yes');
+    const headers = (fetch as ReturnType<typeof vi.fn>).mock.calls[0][1].headers as Headers;
+    expect(headers.get('X-Requested-With')).toBe('CustomValue');
+    expect(headers.get('X-Custom')).toBe('yes');
+  });
+
+  it('merges caller Headers instance; caller-supplied X-Requested-With overrides default', async () => {
+    globalThis.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      json: () => Promise.resolve({}),
+    });
+
+    const formData = new FormData();
+    await fetchMultipart('/upload', formData, {
+      headers: new Headers({ 'X-Requested-With': 'HeadersOverride', 'X-Custom': 'from-headers' }),
+    });
+
+    const headers = (fetch as ReturnType<typeof vi.fn>).mock.calls[0][1].headers as Headers;
+    expect(headers.get('X-Requested-With')).toBe('HeadersOverride');
+    expect(headers.get('X-Custom')).toBe('from-headers');
+  });
+
+  it('merges caller tuple-array headers; caller-supplied X-Requested-With overrides default', async () => {
+    globalThis.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      json: () => Promise.resolve({}),
+    });
+
+    const formData = new FormData();
+    await fetchMultipart('/upload', formData, {
+      headers: [['X-Requested-With', 'TupleOverride'], ['X-Custom', 'from-tuple']],
+    });
+
+    const headers = (fetch as ReturnType<typeof vi.fn>).mock.calls[0][1].headers as Headers;
+    expect(headers.get('X-Requested-With')).toBe('TupleOverride');
+    expect(headers.get('X-Custom')).toBe('from-tuple');
   });
 
   it('returns parsed JSON body typed as T on 2xx', async () => {
