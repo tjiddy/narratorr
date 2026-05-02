@@ -909,6 +909,25 @@ describe('NotifierService', () => {
       factorySpy.mockRestore();
     });
 
+    it('logs "Notification error" via service-level catch when the adapter factory throws', async () => {
+      db.select.mockReturnValue(mockDbChain([mockWebhookNotifier]));
+      const factorySpy = vi.spyOn(ADAPTER_FACTORIES, 'webhook')
+        .mockImplementationOnce(() => { throw new Error('factory boom'); });
+
+      await service.notify('on_grab', { event: 'on_grab' });
+
+      expect(log.warn).toHaveBeenCalledWith(
+        expect.objectContaining({
+          notifier: 'Test Webhook',
+          notifierType: 'webhook',
+          event: 'on_grab',
+          error: expect.objectContaining({ message: 'factory boom', type: 'Error' }),
+        }),
+        'Notification error',
+      );
+      factorySpy.mockRestore();
+    });
+
     it('clearAdapterCache() drops every cached adapter', async () => {
       const n1 = createMockDbNotifier({ id: 1, name: 'W1', events: ['on_grab'] });
       const n2 = createMockDbNotifier({ id: 2, name: 'W2', events: ['on_grab'] });
