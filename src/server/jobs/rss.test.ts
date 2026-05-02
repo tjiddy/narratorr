@@ -1051,4 +1051,103 @@ describe('#502 runRssJob — enrichment before filtering', () => {
     expect(result.grabbed).toBe(1);
     expect(download.grab).toHaveBeenCalledTimes(1);
   });
+
+  // ── #932 F2 — Caller-level logging assertions for the RSS path ──────────
+  describe('caller-level debug logging (#932 F2)', () => {
+    it('emits the blacklist drop log when an RSS item is filtered by the blacklist', async () => {
+      const wantedBooks = [makeWantedBook(1, 'The Way of Kings', 'Brandon Sanderson')];
+      const rssResults = [
+        makeResult('The Way of Kings', 'Brandon Sanderson', { infoHash: 'badhash1' }),
+      ];
+      const settings = createMockSettingsService({ rss: { enabled: true } });
+      const { bookList, book } = createMockBookServices(wantedBooks);
+      const indexer = createMockIndexerService(rssResults);
+      const download = createMockDownloadOrchestrator();
+      const blacklist = createMockBlacklistService(new Set(['badhash1']));
+
+      await runRssJob(settings, bookList, book, indexer, download, blacklist, inject<FastifyBaseLogger>(log));
+
+      expect(log.debug).toHaveBeenCalledWith(
+        expect.objectContaining({ reason: 'blacklist-match', matchedRule: 'hash' }),
+        'Blacklisted result dropped',
+      );
+    });
+
+    it('emits the multi-part drop log with matchedPattern when RSS item is rejected', async () => {
+      const wantedBooks = [makeWantedBook(1, 'Test Book', 'Author')];
+      const rssResults = [
+        makeResult('Test Book', 'Author', { protocol: 'usenet' as const, downloadUrl: 'http://nzb.test/100' }),
+      ];
+      const settings = createMockSettingsService({ rss: { enabled: true } });
+      const { bookList, book } = createMockBookServices(wantedBooks);
+      const indexer = createMockIndexerService(rssResults);
+      const download = createMockDownloadOrchestrator();
+      const blacklist = createMockBlacklistService();
+
+      mockEnrichUsenet.mockImplementation(async (results) => {
+        for (const r of results) r.nzbName = 'Test Book (07 of 30).rar';
+      });
+
+      await runRssJob(settings, bookList, book, indexer, download, blacklist, inject<FastifyBaseLogger>(log));
+
+      expect(log.debug).toHaveBeenCalledWith(
+        expect.objectContaining({
+          reason: 'multi-part-detected',
+          matchedPattern: expect.any(String),
+        }),
+        'Multi-part Usenet result rejected',
+      );
+    });
+
+    it('emits the language-undetermined passed log when RSS rejects on language', async () => {
+      const wantedBooks = [makeWantedBook(1, 'Test Book', 'Author')];
+      const rssResults = [
+        makeResult('Test Book', 'Author', { language: undefined }),
+      ];
+      const settings = createMockSettingsService({
+        rss: { enabled: true },
+        metadata: { languages: ['english'] },
+      });
+      const { bookList, book } = createMockBookServices(wantedBooks);
+      const indexer = createMockIndexerService(rssResults);
+      const download = createMockDownloadOrchestrator();
+      const blacklist = createMockBlacklistService();
+
+      await runRssJob(settings, bookList, book, indexer, download, blacklist, inject<FastifyBaseLogger>(log));
+
+      expect(log.debug).toHaveBeenCalledWith(
+        expect.objectContaining({ reason: 'language-undetermined', dropped: false }),
+        'Language filter passed undetected result',
+      );
+    });
+
+    it('emits a quality filter drop log when RSS reject-words filter rejects an item', async () => {
+      const wantedBooks = [makeWantedBook(1, 'Test Book M4B', 'Author')];
+      const rssResults = [
+        makeResult('Test Book M4B BANNED', 'Author'),
+      ];
+      const settings = createMockSettingsService({
+        rss: { enabled: true },
+        quality: {
+          grabFloor: 0,
+          minSeeders: 0,
+          protocolPreference: 'none',
+          rejectWords: 'banned',
+          requiredWords: '',
+          maxDownloadSize: 0,
+        },
+      });
+      const { bookList, book } = createMockBookServices(wantedBooks);
+      const indexer = createMockIndexerService(rssResults);
+      const download = createMockDownloadOrchestrator();
+      const blacklist = createMockBlacklistService();
+
+      await runRssJob(settings, bookList, book, indexer, download, blacklist, inject<FastifyBaseLogger>(log));
+
+      expect(log.debug).toHaveBeenCalledWith(
+        expect.objectContaining({ reason: 'reject-word-match', matchedWord: 'banned' }),
+        'Quality filter dropped result',
+      );
+    });
+  });
 });

@@ -354,6 +354,28 @@ describe('TorznabIndexer', () => {
       expect(response.httpStatus).toBe(200);
       expect(response.debugTrace.some((t) => t.reason === 'kept' && t.rawTitleBytes)).toBe(true);
     });
+
+    it('records dropped:no-url for items without enclosure/link/infoHash (#932 F4)', async () => {
+      const xml = `<?xml version="1.0" encoding="UTF-8"?>
+<rss xmlns:torznab="http://torznab.com/schemas/2015/feed" version="2.0">
+  <channel>
+    <item>
+      <title>Sample Without Any URL</title>
+      <guid>no-url-tor</guid>
+    </item>
+  </channel>
+</rss>`;
+      server.use(
+        http.get(`${API_BASE}/api`, () => {
+          return new HttpResponse(xml, { headers: { 'Content-Type': 'application/xml' } });
+        }),
+      );
+
+      const response = await indexer.search('test');
+      expect(response.results).toEqual([]);
+      expect(response.parseStats.dropped.noUrl).toBe(1);
+      expect(response.debugTrace.some((t) => t.reason === 'dropped:no-url')).toBe(true);
+    });
   });
 
   describe('test', () => {

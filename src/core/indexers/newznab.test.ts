@@ -300,6 +300,28 @@ describe('NewznabIndexer', () => {
       expect(keptTrace?.rawTitleBytes).toMatch(/^[0-9a-f]+$/);
     });
 
+    it('records dropped:no-url in debugTrace and parseStats for items without enclosure or link (#932 F4)', async () => {
+      const xml = `<?xml version="1.0" encoding="UTF-8"?>
+<rss xmlns:newznab="http://www.newznab.com/DTD/2010/feeds/attributes/" version="2.0">
+  <channel>
+    <item>
+      <title>Released But Unavailable</title>
+      <guid>no-url-1</guid>
+    </item>
+  </channel>
+</rss>`;
+      server.use(
+        http.get(`${API_BASE}/api`, () => {
+          return new HttpResponse(xml, { headers: { 'Content-Type': 'application/xml' } });
+        }),
+      );
+
+      const response = await indexer.search('test');
+      expect(response.results).toEqual([]);
+      expect(response.parseStats.dropped.noUrl).toBe(1);
+      expect(response.debugTrace.some((t) => t.reason === 'dropped:no-url')).toBe(true);
+    });
+
     it('records dropped:empty-title in debugTrace for items missing titles', async () => {
       const xml = `<?xml version="1.0" encoding="UTF-8"?>
 <rss xmlns:newznab="http://www.newznab.com/DTD/2010/feeds/attributes/" version="2.0">

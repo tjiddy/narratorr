@@ -128,10 +128,33 @@ describe('debug-log secret sweep (#932 AC7)', () => {
   it('serializeError redacts URLs in messages so error-logging callers stay safe', () => {
     const err = new Error('upstream rejected: GET https://nzbgeek.info/api?apikey=ABC&q=fairy — 500');
     const serialized = serializeError(err);
-    // Assertion is on .message — that's the field callers log via `error: serializeError(error)`.
-    // .stack contains the literal source line and is debugging-only; AC7 doesn't redact stacks.
+    // Assertion is on .message AND .stack — Error.stack starts with the message
+    // line, so leaving it unredacted leaks secrets via error.stack on every
+    // caller that logs serializeError(error). The whole serialized payload must
+    // be free of secret-shaped URL params.
     expect(serialized.message).toContain('https://nzbgeek.info/api');
     expect(serialized.message).not.toContain('ABC');
     expect(serialized.message).not.toContain('apikey');
+    expect(serialized.stack).toBeDefined();
+    expect(serialized.stack).not.toContain('ABC');
+    expect(serialized.stack).not.toContain('apikey');
+  });
+
+  it('serializeError redacts URLs in nested cause stacks too', () => {
+    const cause = new Error('downstream rejected: GET https://mam.test/api?session=ZZZ&mam_id=YYY');
+    const outer = new Error('wrapped', { cause });
+    const serialized = serializeError(outer);
+    expect(serialized.cause?.stack).toBeDefined();
+    expect(serialized.cause?.stack).not.toContain('ZZZ');
+    expect(serialized.cause?.stack).not.toContain('YYY');
+    expect(serialized.cause?.stack).not.toMatch(/session|mam_id/);
+  });
+
+  it('full serialized payload (JSON-stringified) contains no secret-shaped query params', () => {
+    const err = new Error('fetch failed: GET https://nzbgeek.info/api?apikey=SECRET-LEAKER&q=test');
+    const serialized = serializeError(err);
+    const fullJson = JSON.stringify(serialized);
+    expect(fullJson).not.toContain('SECRET-LEAKER');
+    expect(fullJson).not.toMatch(/apikey=/);
   });
 });

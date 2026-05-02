@@ -23,6 +23,19 @@ function redactUrlsInMessage(message: string): string {
 }
 
 /**
+ * Redact URLs in a stack trace. JavaScript's `Error.stack` always includes the
+ * original message as its first line, so an undici-style fetch failure carries
+ * the secret-bearing URL into the stack even after we redact `.message`. AC7
+ * forbids that surface, so we apply the same scrubber to stack contents
+ * (call-site frames also occasionally contain URLs in `at` lines, e.g. from
+ * dynamic-import paths in module URLs — covered by the same pattern).
+ */
+function redactUrlsInStack(stack: string | undefined): string | undefined {
+  if (!stack) return stack;
+  return stack.replace(URL_IN_MESSAGE_RE, (match) => sanitizeLogUrl(match));
+}
+
+/**
  * Serializes an unknown caught value into a Pino-safe object.
  *
  * Pino's built-in serializers only handle the `err` key with actual Error instances.
@@ -50,7 +63,7 @@ function serialize(err: unknown, seen: Set<unknown>, depth: number): SerializedE
 
   const result: SerializedError = {
     message: redactUrlsInMessage(err.message),
-    stack: err.stack,
+    stack: redactUrlsInStack(err.stack),
     type: err.constructor.name,
   };
 

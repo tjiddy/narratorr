@@ -158,34 +158,19 @@ export class NewznabIndexer implements IndexerAdapter {
         $item.find('link').first().text().trim() ||
         undefined;
 
-      // Details URL from <guid> or <comments>; also store raw guid for blacklisting
-      const detailsUrl =
-        guidText ||
-        $item.find('comments').text().trim() ||
-        undefined;
+      if (!downloadUrl) {
+        dropped.noUrl++;
+        debugTrace.push({
+          source: 'item',
+          reason: 'dropped:no-url',
+          rawTitle: title,
+          rawTitleBytes: rawTitleBytesHex(title),
+          guid: guidText,
+        });
+        return; // continue
+      }
 
-      // Parse newznab:attr elements for metadata
-      const attrs = this.parseNewznabAttrs($item, $);
-
-      const size =
-        attrs.size != null
-          ? Number(attrs.size)
-          : Number($item.find('enclosure').attr('length')) || undefined;
-
-      const grabsNum = attrs.grabs != null ? Number(attrs.grabs) : undefined;
-
-      results.push({
-        title,
-        protocol: 'usenet',
-        downloadUrl,
-        detailsUrl,
-        guid: guidText,
-        size: size || undefined,
-        grabs: grabsNum != null && !Number.isNaN(grabsNum) ? grabsNum : undefined,
-        language: normalizeLanguage(attrs.language),
-        newsgroup: attrs.group || undefined,
-        indexer: this.name,
-      });
+      results.push(this.buildKeptResult($item, $, title, downloadUrl, guidText));
       debugTrace.push({
         source: 'item',
         reason: 'kept',
@@ -199,6 +184,41 @@ export class NewznabIndexer implements IndexerAdapter {
       results,
       parseStats: { itemsObserved, kept: results.length, dropped },
       debugTrace,
+    };
+  }
+
+  private buildKeptResult(
+    $item: ReturnType<cheerio.CheerioAPI>,
+    $: cheerio.CheerioAPI,
+    title: string,
+    downloadUrl: string,
+    guidText: string | undefined,
+  ): SearchResult {
+    const detailsUrl =
+      guidText ||
+      $item.find('comments').text().trim() ||
+      undefined;
+
+    const attrs = this.parseNewznabAttrs($item, $);
+
+    const size =
+      attrs.size != null
+        ? Number(attrs.size)
+        : Number($item.find('enclosure').attr('length')) || undefined;
+
+    const grabsNum = attrs.grabs != null ? Number(attrs.grabs) : undefined;
+
+    return {
+      title,
+      protocol: 'usenet',
+      downloadUrl,
+      detailsUrl,
+      guid: guidText,
+      size: size || undefined,
+      grabs: grabsNum != null && !Number.isNaN(grabsNum) ? grabsNum : undefined,
+      language: normalizeLanguage(attrs.language),
+      newsgroup: attrs.group || undefined,
+      indexer: this.name,
     };
   }
 

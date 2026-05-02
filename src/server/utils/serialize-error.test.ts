@@ -216,6 +216,14 @@ describe('serializeError', () => {
       expect(result.message).not.toContain('apikey');
     });
 
+    it('also redacts the secret-bearing URL from err.stack (Error.stack always echoes message line)', () => {
+      const err = new Error('fetch failed: GET https://example.com/api?apikey=secret123&q=foo');
+      const result = serializeError(err);
+      expect(result.stack).toBeDefined();
+      expect(result.stack).not.toContain('secret123');
+      expect(result.stack).not.toContain('apikey');
+    });
+
     it('redacts URLs in nested cause messages', () => {
       const cause = new Error('upstream rejected: https://mam.test/jsonLoad.php?session=abc&token=def&mam_id=ghi');
       const outer = new Error('wrapped', { cause });

@@ -229,7 +229,7 @@ describe('MyAnonamouseIndexer', () => {
       expect(capturedDownloadCookie).toBe('mam_id=test-mam-id');
     });
 
-    it('keeps result with downloadUrl undefined when torrent fetch fails', async () => {
+    it('drops result and records noUrl when torrent fetch fails (#932 AC1: no-url rows excluded from kept set)', async () => {
       server.use(
         http.get(`${MAM_BASE}/tor/js/loadSearchJSONbasic.php`, () => {
           return HttpResponse.json({ data: [makeResult()] });
@@ -239,10 +239,10 @@ describe('MyAnonamouseIndexer', () => {
         }),
       );
 
-      const { results } = await indexer.search('test');
-      expect(results.length).toBe(1);
-      expect(results[0].downloadUrl).toBeUndefined();
-      expect(results[0].title).toBe('The Way of Kings');
+      const response = await indexer.search('test');
+      expect(response.results).toEqual([]);
+      expect(response.parseStats.dropped.noUrl).toBe(1);
+      expect(response.debugTrace.some((t) => t.reason === 'dropped:no-url')).toBe(true);
     });
 
     it('does not call console.warn when torrent fetch fails (#229)', async () => {
@@ -334,15 +334,16 @@ describe('MyAnonamouseIndexer', () => {
       expect(results[0].size).toBeUndefined();
     });
 
-    it('sets downloadUrl undefined when result has no torrent ID', async () => {
+    it('drops rows with no torrent ID (no-url drop, #932 AC1)', async () => {
       server.use(
         http.get(`${MAM_BASE}/tor/js/loadSearchJSONbasic.php`, () => {
           return HttpResponse.json({ data: [makeResult({ id: undefined })] });
         }),
       );
 
-      const { results } = await indexer.search('test');
-      expect(results[0].downloadUrl).toBeUndefined();
+      const response = await indexer.search('test');
+      expect(response.results).toEqual([]);
+      expect(response.parseStats.dropped.noUrl).toBe(1);
     });
 
     it('populates guid from torrent id', async () => {
@@ -363,31 +364,34 @@ describe('MyAnonamouseIndexer', () => {
           return HttpResponse.json({ data: [makeResult({ id: 0 })] });
         }),
       );
+      stubTorrentDownload(server);
 
       const { results } = await indexer.search('test');
       expect(results[0].guid).toBe('0');
     });
 
-    it('sets guid undefined when torrent id is null', async () => {
+    it('drops row when torrent id is null — no torrent download URL is producible (#932 F4)', async () => {
       server.use(
         http.get(`${MAM_BASE}/tor/js/loadSearchJSONbasic.php`, () => {
           return HttpResponse.json({ data: [makeResult({ id: null })] });
         }),
       );
 
-      const { results } = await indexer.search('test');
-      expect(results[0].guid).toBeUndefined();
+      const response = await indexer.search('test');
+      expect(response.results).toEqual([]);
+      expect(response.parseStats.dropped.noUrl).toBe(1);
     });
 
-    it('sets guid undefined when torrent id is undefined', async () => {
+    it('drops row when torrent id is undefined — no torrent download URL is producible (#932 F4)', async () => {
       server.use(
         http.get(`${MAM_BASE}/tor/js/loadSearchJSONbasic.php`, () => {
           return HttpResponse.json({ data: [makeResult({ id: undefined })] });
         }),
       );
 
-      const { results } = await indexer.search('test');
-      expect(results[0].guid).toBeUndefined();
+      const response = await indexer.search('test');
+      expect(response.results).toEqual([]);
+      expect(response.parseStats.dropped.noUrl).toBe(1);
     });
 
     it('populates guid for large torrent id without truncation', async () => {
@@ -421,17 +425,16 @@ describe('MyAnonamouseIndexer', () => {
       expect(results[1].guid).toBe('222');
     });
 
-    it('produces valid search result without guid when id is missing', async () => {
+    it('drops row entirely when id is missing — no torrent download URL can be produced (#932 F4)', async () => {
       server.use(
         http.get(`${MAM_BASE}/tor/js/loadSearchJSONbasic.php`, () => {
           return HttpResponse.json({ data: [makeResult({ id: undefined })] });
         }),
       );
 
-      const { results } = await indexer.search('test');
-      expect(results).toHaveLength(1);
-      expect(results[0].title).toBe('The Way of Kings');
-      expect(results[0].guid).toBeUndefined();
+      const response = await indexer.search('test');
+      expect(response.results).toEqual([]);
+      expect(response.parseStats.dropped.noUrl).toBe(1);
     });
   });
 
@@ -907,8 +910,9 @@ describe('MyAnonamouseIndexer', () => {
       fetchSpy.mockRestore();
     });
 
-    it('fetchTorrentAsDataUri returns undefined for non-proxy errors', async () => {
-      // Non-proxied indexer: errors in torrent fetch are swallowed to undefined
+    it('fetchTorrentAsDataUri returns undefined for non-proxy errors and the row is dropped (#932 F4)', async () => {
+      // Non-proxied indexer: errors in torrent fetch are swallowed to undefined,
+      // which the new no-url drop contract surfaces as parseStats.dropped.noUrl.
       const directIndexer = new MyAnonamouseIndexer({
         mamId: 'test-mam-id',
         baseUrl: MAM_BASE,
@@ -929,9 +933,9 @@ describe('MyAnonamouseIndexer', () => {
           new Error('some network error'),
         );
 
-      const { results } = await directIndexer.search('test');
-      expect(results.length).toBe(1);
-      expect(results[0].downloadUrl).toBeUndefined();
+      const response = await directIndexer.search('test');
+      expect(response.results).toEqual([]);
+      expect(response.parseStats.dropped.noUrl).toBe(1);
 
       fetchSpy.mockRestore();
     });

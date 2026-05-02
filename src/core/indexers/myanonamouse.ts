@@ -189,6 +189,18 @@ export class MyAnonamouseIndexer implements IndexerAdapter {
         downloadUrl = await this.fetchTorrentAsDataUri(item.id, signal);
       }
 
+      if (!downloadUrl) {
+        dropped.noUrl++;
+        debugTrace.push({
+          source: 'row',
+          reason: 'dropped:no-url',
+          rawTitle: item.title,
+          rawTitleBytes: rawTitleBytesHex(item.title),
+          guid,
+        });
+        continue;
+      }
+
       results.push(this.mapItem(item, downloadUrl));
       debugTrace.push({
         source: 'row',

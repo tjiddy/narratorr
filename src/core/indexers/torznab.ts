@@ -166,6 +166,18 @@ export class TorznabIndexer implements IndexerAdapter {
         downloadUrl = buildMagnetUri(infoHash, title);
       }
 
+      if (!downloadUrl) {
+        dropped.noUrl++;
+        debugTrace.push({
+          source: 'item',
+          reason: 'dropped:no-url',
+          rawTitle: title,
+          rawTitleBytes: rawTitleBytesHex(title),
+          guid: guidText,
+        });
+        return; // continue
+      }
+
       const detailsUrl =
         guidText ||
         $item.find('comments').text().trim() ||
