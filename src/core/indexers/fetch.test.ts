@@ -404,6 +404,21 @@ describe('fetchWithProxy', () => {
         const result = await fetchWithProxy({ url: TARGET_URL, proxyUrl: PROXY_URL });
         expect(result).toBe('html');
       });
+
+      it('accepts null for nullish fields (message, solution.status)', async () => {
+        server.use(
+          http.post(`${PROXY_URL}/v1`, () => {
+            return HttpResponse.json({
+              status: 'ok',
+              message: null,
+              solution: { response: 'proxied-html', status: null },
+            });
+          }),
+        );
+
+        const result = await fetchWithProxy({ url: TARGET_URL, proxyUrl: PROXY_URL });
+        expect(result).toBe('proxied-html');
+      });
     });
 
     it('all proxy error messages start with "FlareSolverr"', async () => {

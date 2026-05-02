@@ -184,5 +184,22 @@ describe('NytProvider', () => {
       const items = await provider.fetchItems();
       expect(items).toEqual([{ title: 'X', author: 'Y', isbn: undefined }]);
     });
+
+    it('accepts null for nullish leaf fields (author, primary_isbn13, primary_isbn10)', async () => {
+      server.use(
+        http.get(`${NYT_BASE}/svc/books/v3/lists/current/audio-fiction.json`, () =>
+          HttpResponse.json({
+            results: {
+              books: [
+                { title: 'Standalone', author: null, primary_isbn13: null, primary_isbn10: null },
+              ],
+            },
+          })),
+      );
+
+      const provider = new NytProvider({ apiKey: 'test-key', list: 'audio-fiction' });
+      const items = await provider.fetchItems();
+      expect(items).toEqual([{ title: 'Standalone', author: undefined, isbn: undefined }]);
+    });
   });
 });

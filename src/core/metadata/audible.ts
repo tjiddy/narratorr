@@ -65,11 +65,11 @@ const audibleProductSchema = z.object({
 }).passthrough();
 
 const audibleProductsResponseSchema = z.object({
-  products: z.array(audibleProductSchema).optional(),
+  products: z.array(audibleProductSchema).nullish(),
 }).passthrough();
 
 const audibleProductDetailResponseSchema = z.object({
-  product: audibleProductSchema.optional(),
+  product: audibleProductSchema.nullish(),
 }).passthrough();
 
 type AudibleProduct = z.infer<typeof audibleProductSchema>;

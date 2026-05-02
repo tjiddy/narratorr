@@ -46,24 +46,24 @@ const SHELF_QUERY = `
 `;
 
 const hardcoverBookSchema = z.object({
-  title: z.string().optional(),
+  title: z.string().nullish(),
   contributions: z.array(z.object({
-    author: z.object({ name: z.string().optional() }).passthrough().optional(),
-  }).passthrough()).optional(),
+    author: z.object({ name: z.string().nullish() }).passthrough().nullish(),
+  }).passthrough()).nullish(),
   identifiers: z.array(z.object({
-    source: z.object({ name: z.string().optional() }).passthrough().optional(),
-    value: z.string().optional(),
-  }).passthrough()).optional(),
+    source: z.object({ name: z.string().nullish() }).passthrough().nullish(),
+    value: z.string().nullish(),
+  }).passthrough()).nullish(),
 }).passthrough();
 
 type HardcoverBook = z.infer<typeof hardcoverBookSchema>;
 
 const hardcoverResponseSchema = z.object({
   data: z.object({
-    trending_books: z.array(hardcoverBookSchema).optional(),
-    user_book_reads: z.array(z.object({ book: hardcoverBookSchema }).passthrough()).optional(),
-  }).passthrough().optional(),
-  errors: z.array(z.object({ message: z.string() }).passthrough()).optional(),
+    trending_books: z.array(hardcoverBookSchema).nullish(),
+    user_book_reads: z.array(z.object({ book: hardcoverBookSchema }).passthrough()).nullish(),
+  }).passthrough().nullish(),
+  errors: z.array(z.object({ message: z.string() }).passthrough()).nullish(),
 }).passthrough();
 
 // Probe response for `test()`: `{ __typename }` should return a `data` object

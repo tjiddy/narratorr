@@ -1011,5 +1011,28 @@ describe('AudibleProvider', () => {
       const { books } = await provider.searchBooks('q');
       expect(books[0]?.asin).toBe('B000NEW');
     });
+
+    it('searchBooks accepts null for the products wrapper', async () => {
+      server.use(
+        http.get('https://api.audible.com/1.0/catalog/products', () =>
+          HttpResponse.json({ products: null }),
+        ),
+      );
+
+      const { books, rawCount } = await provider.searchBooks('q');
+      expect(books).toEqual([]);
+      expect(rawCount).toBe(0);
+    });
+
+    it('getBook accepts null for the product wrapper', async () => {
+      server.use(
+        http.get('https://api.audible.com/1.0/catalog/products/:asin', () =>
+          HttpResponse.json({ product: null }),
+        ),
+      );
+
+      const book = await provider.getBook('B000NULL');
+      expect(book).toBeNull();
+    });
   });
 });
