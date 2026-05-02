@@ -1910,7 +1910,7 @@ describe('QualityGateOrchestrator', () => {
       return { orchestrator, log, qualityGateService, broadcaster, db };
     }
 
-    // F2 (#797 review) — required-wiring contract surfaces, doesn't get swallowed.
+    // required-wiring contract surfaces, doesn't get swallowed.
     it('processOneDownload() imported path surfaces ServiceWireError instead of converting to pending_review', async () => {
       const { orchestrator, qualityGateService } = makeUnwiredOrchestrator();
 
@@ -1925,7 +1925,7 @@ describe('QualityGateOrchestrator', () => {
       expect(qualityGateService.setStatus).not.toHaveBeenCalledWith(baseDownload.id, 'pending_review');
     });
 
-    // F4 (#797 review) — fail-fast contract: no state transitions before wire check.
+    // fail-fast contract: no state transitions before wire check.
     it('processOneDownload() unwired path fails BEFORE atomicClaim and book status promotion', async () => {
       const { orchestrator, qualityGateService, broadcaster, db } = makeUnwiredOrchestrator();
 

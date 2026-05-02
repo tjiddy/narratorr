@@ -394,7 +394,7 @@ describe('EventHistoryService', () => {
       await expect(unwiredService.markFailed(1)).rejects.toThrow(/EventHistoryService used before wire/);
     });
 
-    // ── F1 (#797 review) — fail-fast contract: no partial side effects ──
+    // ── fail-fast contract: no partial side effects ──
     it('unwired markFailed() with bookId fails BEFORE blacklist or book-status side effects', async () => {
       const event = createMockDbBookEvent({ downloadId: 5, bookId: 42 });
       const download = { id: 5, infoHash: 'abc123', title: 'Test' };
