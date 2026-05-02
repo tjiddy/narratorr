@@ -13,6 +13,7 @@ import type {
 import type { BookStatus, EnrichmentStatus } from '../../shared/schemas/book.js';
 import type { DownloadStatus } from '../../shared/schemas/activity.js';
 import type { BlacklistReason, BlacklistType } from '../../shared/schemas/blacklist.js';
+import type { DownloadProtocol } from '../../core/indexers/types.js';
 import type { DownloadClientType } from '../../shared/download-client-registry.js';
 import type { EventSource, EventType } from '../../shared/schemas/event-history.js';
 import type {
@@ -36,7 +37,7 @@ export type BookRow = Omit<typeof books.$inferSelect, 'status' | 'enrichmentStat
 
 export type DownloadRow = Omit<typeof downloads.$inferSelect, 'status' | 'protocol'> & {
   status: DownloadStatus;
-  protocol: 'torrent' | 'usenet';
+  protocol: DownloadProtocol;
 };
 
 export type IndexerRow = Omit<typeof indexers.$inferSelect, 'type'> & {

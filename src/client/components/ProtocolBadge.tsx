@@ -1,3 +1,5 @@
+import type { DownloadProtocol } from '../../core/indexers/types.js';
+
 const protocolConfig = {
   torrent: {
     label: 'Torrent',
@@ -9,7 +11,7 @@ const protocolConfig = {
   },
 } as const;
 
-export function ProtocolBadge({ protocol }: { protocol: 'torrent' | 'usenet' }) {
+export function ProtocolBadge({ protocol }: { protocol: DownloadProtocol }) {
   const config = protocolConfig[protocol];
   return (
     <span
