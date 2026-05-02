@@ -78,6 +78,77 @@ ruleTester.run('no-raw-error-logging', rule, {
         log.warn({ err: someUnrelatedNonCatchVar }, 'msg');
       `,
     },
+
+    // ── MemberExpression negative cases (root is not a catch binding) ─────
+
+    // `result.error` where `result` is a typed result-union, not a catch binding
+    {
+      code: `
+        async function run() {
+          const result = await fn();
+          if (result.error) log.warn({ error: result.error }, 'msg');
+        }
+      `,
+    },
+    // `refresh.error` from an awaited service call — not a catch binding
+    {
+      code: `
+        async function run() {
+          const refresh = await this.preSearchRefresh();
+          log.warn({ error: refresh.error }, 'msg');
+        }
+      `,
+    },
+    // Computed segment at the root — out of scope
+    {
+      code: `
+        const key = 'foo';
+        try { foo(); } catch (error) {
+          log.error({ error: error[key] }, 'msg');
+        }
+      `,
+    },
+    // Computed segment in the chain (root computed) — out of scope
+    {
+      code: `
+        const key = 'foo';
+        try { foo(); } catch (error) {
+          log.error({ error: error[key].message }, 'msg');
+        }
+      `,
+    },
+    // Computed segment in the outermost level — out of scope
+    {
+      code: `
+        const key = 'foo';
+        try { foo(); } catch (error) {
+          log.error({ error: error.cause[key] }, 'msg');
+        }
+      `,
+    },
+    // Call-result base — out of scope
+    {
+      code: `
+        function getError() { return { foo: 1 }; }
+        try { foo(); } catch (error) {
+          log.error({ error: getError().foo }, 'msg');
+        }
+      `,
+    },
+    // Already wrapped with serializeError — value is a CallExpression, not MemberExpression
+    {
+      code: `
+        try { foo(); } catch (error) {
+          log.error({ error: serializeError(error.cause) }, 'msg');
+        }
+      `,
+    },
+    // Plain string literal value — no identifier at all
+    {
+      code: `
+        log.warn({ error: 'plain string' }, 'msg');
+      `,
+    },
   ],
 
   invalid: [
@@ -485,6 +556,85 @@ const other = { ctx: 1 };
 
 try { foo(); } catch (e) {
           this.log.error({ error: serializeError(e), jobId: 7 }, 'msg');
+        }
+      `,
+      errors: [{ messageId: 'rawError' }],
+    },
+
+    // ── Case 1 (extension): MemberExpression value from catch binding ─────
+
+    // Synthetic catch-root regression fixture — closes the blind spot from #862
+    {
+      code: `
+        try { foo(); } catch (error) {
+          log.warn({ error: error.cause }, 'msg');
+        }
+      `,
+      output: `
+        import { serializeError } from '../utils/serialize-error.js';
+
+try { foo(); } catch (error) {
+          log.warn({ error: serializeError(error.cause) }, 'msg');
+        }
+      `,
+      errors: [{ messageId: 'rawError' }],
+    },
+    // Nested dot chain — `error.cause.message`
+    {
+      code: `
+        try { foo(); } catch (error) {
+          log.error({ error: error.cause.message }, 'msg');
+        }
+      `,
+      output: `
+        import { serializeError } from '../utils/serialize-error.js';
+
+try { foo(); } catch (error) {
+          log.error({ error: serializeError(error.cause.message) }, 'msg');
+        }
+      `,
+      errors: [{ messageId: 'rawError' }],
+    },
+    // `.catch` callback parameter with MemberExpression — `err.message`
+    {
+      code: `
+        someAsync().catch(err => log.warn({ error: err.message }, 'msg'));
+      `,
+      output: `
+        import { serializeError } from '../utils/serialize-error.js';
+
+someAsync().catch(err => log.warn({ error: serializeError(err.message) }, 'msg'));
+      `,
+      errors: [{ messageId: 'rawError' }],
+    },
+    // Literal property key `'error'` with MemberExpression value
+    {
+      code: `
+        try { foo(); } catch (error) {
+          log.error({ 'error': error.cause }, 'msg');
+        }
+      `,
+      output: `
+        import { serializeError } from '../utils/serialize-error.js';
+
+try { foo(); } catch (error) {
+          log.error({ error: serializeError(error.cause) }, 'msg');
+        }
+      `,
+      errors: [{ messageId: 'rawError' }],
+    },
+    // `err:` alias key with MemberExpression value — normalizes key to `error:`
+    {
+      code: `
+        try { foo(); } catch (error) {
+          log.warn({ err: error.cause, ctx: 1 }, 'msg');
+        }
+      `,
+      output: `
+        import { serializeError } from '../utils/serialize-error.js';
+
+try { foo(); } catch (error) {
+          log.warn({ error: serializeError(error.cause), ctx: 1 }, 'msg');
         }
       `,
       errors: [{ messageId: 'rawError' }],
