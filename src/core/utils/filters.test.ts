@@ -187,9 +187,9 @@ describe('filterMultiPartUsenet', () => {
       const { rejectedTitles } = filterMultiPartUsenet(results);
       expect(rejectedTitles).toHaveLength(2);
       expect(rejectedTitles[0]).toMatchObject({ title: 'hp02.Harry Potter "28" of "30" yEnc' });
-      expect(rejectedTitles[0].matchedPattern).toBeDefined();
+      expect(rejectedTitles[0]!.matchedPattern).toBeDefined();
       expect(rejectedTitles[1]).toMatchObject({ title: 'Book 08 of 30' });
-      expect(rejectedTitles[1].matchedPattern).toBeDefined();
+      expect(rejectedTitles[1]!.matchedPattern).toBeDefined();
     });
 
     it('returns empty rejected array when nothing is filtered', () => {

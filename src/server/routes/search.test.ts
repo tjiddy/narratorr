@@ -47,7 +47,7 @@ describe('filterAndRankResults', () => {
     ];
     const { results: filtered } = filterAndRankResults(results, ONE_HOUR, { grabFloor: 0, minSeeders: 5, protocolPreference: 'none' });
     expect(filtered).toHaveLength(1);
-    expect(filtered[0].title).toBe('High Seeds');
+    expect(filtered[0]!.title).toBe('High Seeds');
   });
 
   it('does NOT filter usenet results by minSeeders', () => {
@@ -57,7 +57,7 @@ describe('filterAndRankResults', () => {
     ];
     const { results: filtered } = filterAndRankResults(results, ONE_HOUR, { grabFloor: 0, minSeeders: 5, protocolPreference: 'none' });
     expect(filtered).toHaveLength(1);
-    expect(filtered[0].title).toBe('Usenet Result');
+    expect(filtered[0]!.title).toBe('Usenet Result');
   });
 
   it('filters results below grabFloor MB/hr (when duration known)', () => {
@@ -68,7 +68,7 @@ describe('filterAndRankResults', () => {
     ];
     const { results: filtered } = filterAndRankResults(results, ONE_HOUR, { grabFloor: 150, minSeeders: 0, protocolPreference: 'none' });
     expect(filtered).toHaveLength(1);
-    expect(filtered[0].title).toBe('High Quality');
+    expect(filtered[0]!.title).toBe('High Quality');
   });
 
   it('passes through results with no size (cannot calculate) even when grabFloor is set', () => {
@@ -77,7 +77,7 @@ describe('filterAndRankResults', () => {
     ];
     const { results: filtered } = filterAndRankResults(results, ONE_HOUR, { grabFloor: 150, minSeeders: 0, protocolPreference: 'none' });
     expect(filtered).toHaveLength(1);
-    expect(filtered[0].title).toBe('No Size');
+    expect(filtered[0]!.title).toBe('No Size');
   });
 
   it('skips grabFloor filtering when duration is unknown', () => {
@@ -95,8 +95,8 @@ describe('filterAndRankResults', () => {
       makeResult({ matchScore: 0.9, title: 'High Score', seeders: 1 }),
     ];
     const { results: sorted } = filterAndRankResults(results, ONE_HOUR, { grabFloor: 0, minSeeders: 0, protocolPreference: 'none' });
-    expect(sorted[0].title).toBe('High Score');
-    expect(sorted[1].title).toBe('Low Score');
+    expect(sorted[0]!.title).toBe('High Score');
+    expect(sorted[1]!.title).toBe('Low Score');
   });
 
   it('sorts by MB/hr desc when matchScore is similar (and duration known)', () => {
@@ -106,8 +106,8 @@ describe('filterAndRankResults', () => {
     ];
     const { results: sorted } = filterAndRankResults(results, ONE_HOUR, { grabFloor: 0, minSeeders: 0, protocolPreference: 'none' });
     // Score diff is 0.05 (<= 0.1), so MB/hr wins. Large = 500 MB/hr > Small = 100 MB/hr
-    expect(sorted[0].title).toBe('Large');
-    expect(sorted[1].title).toBe('Small');
+    expect(sorted[0]!.title).toBe('Large');
+    expect(sorted[1]!.title).toBe('Small');
   });
 
   it('sorts by protocol preference when MB/hr is equal', () => {
@@ -116,8 +116,8 @@ describe('filterAndRankResults', () => {
       makeResult({ matchScore: 0.8, size: 200 * 1024 * 1024, protocol: 'usenet', title: 'Usenet' }),
     ];
     const { results: sorted } = filterAndRankResults(results, ONE_HOUR, { grabFloor: 0, minSeeders: 0, protocolPreference: 'usenet' });
-    expect(sorted[0].title).toBe('Usenet');
-    expect(sorted[1].title).toBe('Torrent');
+    expect(sorted[0]!.title).toBe('Usenet');
+    expect(sorted[1]!.title).toBe('Torrent');
   });
 
   it('sorts by seeders as final tiebreaker', () => {
@@ -126,8 +126,8 @@ describe('filterAndRankResults', () => {
       makeResult({ matchScore: 0.8, size: 200 * 1024 * 1024, seeders: 50, title: 'Many Seeds' }),
     ];
     const { results: sorted } = filterAndRankResults(results, ONE_HOUR, { grabFloor: 0, minSeeders: 0, protocolPreference: 'none' });
-    expect(sorted[0].title).toBe('Many Seeds');
-    expect(sorted[1].title).toBe('Few Seeds');
+    expect(sorted[0]!.title).toBe('Many Seeds');
+    expect(sorted[1]!.title).toBe('Few Seeds');
   });
 
   it('returns empty array when all results filtered out', () => {
@@ -166,7 +166,7 @@ describe('filterAndRankResults', () => {
       ];
       const { results: filtered } = filterAndRankResults(results, ONE_HOUR, { grabFloor: 0, minSeeders: 0, protocolPreference: 'none', rejectWords: 'German, Abridged', requiredWords: '' });
       expect(filtered).toHaveLength(1);
-      expect(filtered[0].title).toBe('Normal Audiobook');
+      expect(filtered[0]!.title).toBe('Normal Audiobook');
     });
 
     it('does NOT exclude when no reject words match', () => {
@@ -269,7 +269,7 @@ describe('filterAndRankResults', () => {
       ];
       const { results: filtered } = filterAndRankResults(results, ONE_HOUR, { grabFloor: 0, minSeeders: 0, protocolPreference: 'none', rejectWords: 'German', requiredWords: '' });
       expect(filtered).toHaveLength(1);
-      expect(filtered[0].title).toBe('Normal Low Score');
+      expect(filtered[0]!.title).toBe('Normal Low Score');
     });
 
     it('result with high matchScore but containing a reject word is still excluded', () => {
@@ -279,7 +279,7 @@ describe('filterAndRankResults', () => {
       ];
       const { results: filtered } = filterAndRankResults(results, ONE_HOUR, { grabFloor: 0, minSeeders: 0, protocolPreference: 'none', rejectWords: 'German', requiredWords: '' });
       expect(filtered).toHaveLength(1);
-      expect(filtered[0].title).toBe('Decent Match');
+      expect(filtered[0]!.title).toBe('Decent Match');
     });
   });
 });
@@ -572,7 +572,7 @@ describe('search routes', () => {
         },
       });
 
-      const callArg = (services.downloadOrchestrator.grab as Mock).mock.calls[0][0] as Record<string, unknown>;
+      const callArg = (services.downloadOrchestrator.grab as Mock).mock.calls[0]![0] as Record<string, unknown>;
       expect(callArg.guid).toBeUndefined();
     });
   });

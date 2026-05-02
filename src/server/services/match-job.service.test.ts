@@ -275,9 +275,9 @@ describe('MatchJobService', () => {
       await waitForJob(service, id);
 
       const result = service.getJob(id)!.results[0];
-      expect(result.confidence).toBe('none');
-      expect(result.bestMatch).toBeNull();
-      expect(result.alternatives).toEqual([]);
+      expect(result!.confidence).toBe('none');
+      expect(result!.bestMatch).toBeNull();
+      expect(result!.alternatives).toEqual([]);
     });
 
     it('returns high confidence for single search result', async () => {
@@ -292,9 +292,9 @@ describe('MatchJobService', () => {
       await waitForJob(service, id);
 
       const result = service.getJob(id)!.results[0];
-      expect(result.confidence).toBe('high');
-      expect(result.bestMatch).toBeTruthy();
-      expect(result.alternatives).toEqual([]);
+      expect(result!.confidence).toBe('high');
+      expect(result!.bestMatch).toBeTruthy();
+      expect(result!.alternatives).toEqual([]);
     });
 
     it('returns medium confidence for multiple results without duration data', async () => {
@@ -308,9 +308,9 @@ describe('MatchJobService', () => {
       await waitForJob(service, id);
 
       const result = service.getJob(id)!.results[0];
-      expect(result.confidence).toBe('medium');
-      expect(result.bestMatch).toEqual(results[0]);
-      expect(result.alternatives).toEqual([results[1]]);
+      expect(result!.confidence).toBe('medium');
+      expect(result!.bestMatch).toEqual(results[0]);
+      expect(result!.alternatives).toEqual([results[1]]);
     });
 
     it('returns medium confidence when no audio duration available and multiple results', async () => {
@@ -326,7 +326,7 @@ describe('MatchJobService', () => {
       await waitForJob(service, id);
 
       const result = service.getJob(id)!.results[0];
-      expect(result.confidence).toBe('medium');
+      expect(result!.confidence).toBe('medium');
     });
 
     it('considers all search results, not just the first few (DCC regression)', async () => {
@@ -359,8 +359,8 @@ describe('MatchJobService', () => {
       await waitForJob(service, id);
 
       const result = service.getJob(id)!.results[0];
-      expect(result.bestMatch!.title).toBe('Dungeon Crawler Carl');
-      expect(result.confidence).not.toBe('none');
+      expect(result!.bestMatch!.title).toBe('Dungeon Crawler Carl');
+      expect(result!.confidence).not.toBe('none');
     });
   });
 
@@ -384,9 +384,9 @@ describe('MatchJobService', () => {
       await waitForJob(service, id);
 
       const result = service.getJob(id)!.results[0];
-      expect(result.confidence).toBe('high');
-      expect(result.bestMatch!.title).toBe('The Way of Kings');
-      expect(result.alternatives).toHaveLength(1);
+      expect(result!.confidence).toBe('high');
+      expect(result!.bestMatch!.title).toBe('The Way of Kings');
+      expect(result!.alternatives).toHaveLength(1);
     });
 
     it('stays medium confidence when best match duration exceeds strict 5% threshold (low score)', async () => {
@@ -415,8 +415,8 @@ describe('MatchJobService', () => {
       await waitForJob(service, id);
 
       const result = service.getJob(id)!.results[0];
-      expect(result.confidence).toBe('medium');
-      expect(result.bestMatch!.title).toBe('Doctor Sleep: A Novel');
+      expect(result!.confidence).toBe('medium');
+      expect(result!.bestMatch!.title).toBe('Doctor Sleep: A Novel');
     });
 
     it('preserves similarity-ranked order — duration does not override winner', async () => {
@@ -440,7 +440,7 @@ describe('MatchJobService', () => {
 
       const result = service.getJob(id)!.results[0];
       // Similarity winner is bestMatch, not duration winner
-      expect(result.bestMatch!.title).toBe('The Way of Kings');
+      expect(result!.bestMatch!.title).toBe('The Way of Kings');
     });
 
     it('includes all results in alternatives after similarity-ranked bestMatch', async () => {
@@ -463,9 +463,9 @@ describe('MatchJobService', () => {
       await waitForJob(service, id);
 
       const result = service.getJob(id)!.results[0];
-      expect(result.bestMatch!.title).toBe('The Way of Kings');
-      expect(result.alternatives).toHaveLength(1);
-      expect(result.alternatives[0].title).toBe('The Way of Kings Companion');
+      expect(result!.bestMatch!.title).toBe('The Way of Kings');
+      expect(result!.alternatives).toHaveLength(1);
+      expect(result!.alternatives[0]!.title).toBe('The Way of Kings Companion');
     });
 
     it('converts audio seconds to minutes for duration confidence', async () => {
@@ -489,8 +489,8 @@ describe('MatchJobService', () => {
 
       const result = service.getJob(id)!.results[0];
       // Duration of top similarity result matches → high confidence
-      expect(result.confidence).toBe('high');
-      expect(result.bestMatch!.title).toBe('The Way of Kings');
+      expect(result!.confidence).toBe('high');
+      expect(result!.bestMatch!.title).toBe('The Way of Kings');
     });
 
     it('skips duration disambiguation when audio scan returns zero duration', async () => {
@@ -509,8 +509,8 @@ describe('MatchJobService', () => {
       await waitForJob(service, id);
 
       const result = service.getJob(id)!.results[0];
-      expect(result.confidence).toBe('medium');
-      expect(result.bestMatch!.title).toBe('The Way of Kings');
+      expect(result!.confidence).toBe('medium');
+      expect(result!.bestMatch!.title).toBe('The Way of Kings');
     });
 
     it('falls through to medium when all detailed results have no duration', async () => {
@@ -529,8 +529,8 @@ describe('MatchJobService', () => {
       await waitForJob(service, id);
 
       const result = service.getJob(id)!.results[0];
-      expect(result.confidence).toBe('medium');
-      expect(result.bestMatch!.title).toBe('The Way of Kings');
+      expect(result!.confidence).toBe('medium');
+      expect(result!.bestMatch!.title).toBe('The Way of Kings');
     });
   });
 
@@ -610,8 +610,8 @@ describe('MatchJobService', () => {
       await waitForJob(service, id);
 
       const result = service.getJob(id)!.results[0];
-      expect(result.confidence).toBe('high');
-      expect(result.bestMatch!.title).toBe('The Way of Kings');
+      expect(result!.confidence).toBe('high');
+      expect(result!.bestMatch!.title).toBe('The Way of Kings');
     });
 
     it('falls back to search result when detail fetch returns null', async () => {
@@ -623,7 +623,7 @@ describe('MatchJobService', () => {
       await waitForJob(service, id);
 
       const result = service.getJob(id)!.results[0];
-      expect(result.bestMatch!.title).toBe('Null Detail');
+      expect(result!.bestMatch!.title).toBe('Null Detail');
     });
 
     it('fetches details for all search results', async () => {
@@ -655,8 +655,8 @@ describe('MatchJobService', () => {
       await waitForJob(service, id);
 
       const result = service.getJob(id)!.results[0];
-      expect(result.bestMatch!.title).toBe('Original Title');
-      expect(result.bestMatch!.asin).toBe('B001');
+      expect(result!.bestMatch!.title).toBe('Original Title');
+      expect(result!.bestMatch!.asin).toBe('B001');
     });
   });
 
@@ -670,9 +670,9 @@ describe('MatchJobService', () => {
       await waitForJob(service, id);
 
       const result = service.getJob(id)!.results[0];
-      expect(result.confidence).toBe('none');
-      expect(result.bestMatch).toBeNull();
-      expect(result.error).toBe('Network failure');
+      expect(result!.confidence).toBe('none');
+      expect(result!.bestMatch).toBeNull();
+      expect(result!.error).toBe('Network failure');
     });
 
     it('returns stringified value for non-Error thrown values', async () => {
@@ -682,7 +682,7 @@ describe('MatchJobService', () => {
       await waitForJob(service, id);
 
       const result = service.getJob(id)!.results[0];
-      expect(result.error).toBe('string error');
+      expect(result!.error).toBe('string error');
     });
 
     it('continues matching other books when one fails', async () => {
@@ -720,7 +720,7 @@ describe('MatchJobService', () => {
       await waitForJob(service, id);
 
       const result = service.getJob(id)!.results[0];
-      expect(result.confidence).toBe('high');
+      expect(result!.confidence).toBe('high');
       expect(log.debug).toHaveBeenCalledWith(
         expect.objectContaining({ path: sampleCandidate.path }),
         'Audio scan failed \u2014 proceeding without duration',
@@ -744,7 +744,7 @@ describe('MatchJobService', () => {
       );
 
       // Diagnostic callback wiring — onWarn → log.warn(payload, msg); onDebug → log.debug(payload, msg)
-      const options = vi.mocked(scanAudioDirectory).mock.calls[0][1]!;
+      const options = vi.mocked(scanAudioDirectory).mock.calls[0]![1]!;
       options.onWarn!('warn-msg', { warnPayload: 1 });
       expect(log.warn).toHaveBeenCalledWith({ warnPayload: 1 }, 'warn-msg');
       options.onDebug!('debug-msg', { debugPayload: 2 });
@@ -869,7 +869,7 @@ describe('MatchJobService', () => {
 
       const result = service.getJob(id)!.results[0];
       // Fixed: "within 5%" is inclusive (<=), so exact 5% gets high confidence
-      expect(result.confidence).toBe('high');
+      expect(result!.confidence).toBe('high');
     });
 
     it('handles just under 5% threshold as high confidence', async () => {
@@ -891,7 +891,7 @@ describe('MatchJobService', () => {
       await waitForJob(service, id);
 
       const result = service.getJob(id)!.results[0];
-      expect(result.confidence).toBe('high');
+      expect(result!.confidence).toBe('high');
     });
 
     it('handles book with empty string title', async () => {
@@ -901,7 +901,7 @@ describe('MatchJobService', () => {
       await waitForJob(service, id);
 
       const result = service.getJob(id)!.results[0];
-      expect(result.confidence).toBe('none');
+      expect(result!.confidence).toBe('none');
       expect(metadataService.searchBooks).toHaveBeenCalledWith('', {
         title: '',
         author: undefined,
@@ -989,7 +989,7 @@ describe('MatchJobService', () => {
       await waitForJob(service, id);
 
       const result = service.getJob(id)!.results[0];
-      expect(result.confidence).toBe('high');
+      expect(result!.confidence).toBe('high');
     });
 
     it('high combined score (1.0) + duration at exactly 15% boundary → confidence high (inclusive)', async () => {
@@ -1011,7 +1011,7 @@ describe('MatchJobService', () => {
       await waitForJob(service, id);
 
       const result = service.getJob(id)!.results[0];
-      expect(result.confidence).toBe('high');
+      expect(result!.confidence).toBe('high');
     });
 
     it('high combined score (1.0) + duration at 16% → confidence medium', async () => {
@@ -1033,7 +1033,7 @@ describe('MatchJobService', () => {
       await waitForJob(service, id);
 
       const result = service.getJob(id)!.results[0];
-      expect(result.confidence).toBe('medium');
+      expect(result!.confidence).toBe('medium');
     });
 
     it('low combined score (0.8) + duration within 5% → confidence high (existing behavior)', async () => {
@@ -1063,7 +1063,7 @@ describe('MatchJobService', () => {
       await waitForJob(service, id);
 
       const result = service.getJob(id)!.results[0];
-      expect(result.confidence).toBe('high');
+      expect(result!.confidence).toBe('high');
     });
 
     it('low combined score + duration at 6% → confidence medium (strict threshold applies)', async () => {
@@ -1091,7 +1091,7 @@ describe('MatchJobService', () => {
       await waitForJob(service, id);
 
       const result = service.getJob(id)!.results[0];
-      expect(result.confidence).toBe('medium');
+      expect(result!.confidence).toBe('medium');
     });
 
     it('perfect title + mismatched author (combined ≈ 0.6) + 10% duration → medium', async () => {
@@ -1121,7 +1121,7 @@ describe('MatchJobService', () => {
 
       const result = service.getJob(id)!.results[0];
       // Score ≈ 0.6 (title 1.0 * 0.6 + author ~0.0 * 0.4), strict 5% applies → 10% exceeds → medium
-      expect(result.confidence).toBe('medium');
+      expect(result!.confidence).toBe('medium');
     });
   });
 
@@ -1172,7 +1172,7 @@ describe('MatchJobService', () => {
 
       const result = service.getJob(id)!.results[0];
       // Re-ranking puts "The Way of Kings" first due to higher score
-      expect(result.bestMatch!.title).toBe('The Way of Kings');
+      expect(result!.bestMatch!.title).toBe('The Way of Kings');
     });
 
     it('title similarity < 50% on top result sets confidence to none', async () => {
@@ -1185,8 +1185,8 @@ describe('MatchJobService', () => {
       await waitForJob(service, id);
 
       const result = service.getJob(id)!.results[0];
-      expect(result.confidence).toBe('none');
-      expect(result.bestMatch!.title).toBe('Totally Different Book');
+      expect(result!.confidence).toBe('none');
+      expect(result!.bestMatch!.title).toBe('Totally Different Book');
     });
 
     it('title similarity exactly 50% sets confidence to medium (boundary)', async () => {
@@ -1204,7 +1204,7 @@ describe('MatchJobService', () => {
 
       const result = service.getJob(id)!.results[0];
       // With similar titles, confidence should be medium (not none)
-      expect(result.confidence).toBe('medium');
+      expect(result!.confidence).toBe('medium');
     });
 
     it('title similarity > 50% with author match gives medium or high confidence', async () => {
@@ -1218,7 +1218,7 @@ describe('MatchJobService', () => {
       await waitForJob(service, id);
 
       const result = service.getJob(id)!.results[0];
-      expect(['medium', 'high']).toContain(result.confidence);
+      expect(['medium', 'high']).toContain(result!.confidence);
     });
 
     it('duration still promotes to high when ≤ 5% threshold with scoring', async () => {
@@ -1240,7 +1240,7 @@ describe('MatchJobService', () => {
       await waitForJob(service, id);
 
       const result = service.getJob(id)!.results[0];
-      expect(result.confidence).toBe('high');
+      expect(result!.confidence).toBe('high');
     });
 
     it('low title score with duration match still returns none if title < 50%', async () => {
@@ -1262,7 +1262,7 @@ describe('MatchJobService', () => {
       await waitForJob(service, id);
 
       const result = service.getJob(id)!.results[0];
-      expect(result.confidence).toBe('none');
+      expect(result!.confidence).toBe('none');
     });
 
     it('similarity winner stays bestMatch even when worse-scoring result has closer duration', async () => {
@@ -1287,9 +1287,9 @@ describe('MatchJobService', () => {
 
       const result = service.getJob(id)!.results[0];
       // Similarity winner remains bestMatch — duration does NOT override selection
-      expect(result.bestMatch!.title).toBe('The Way of Kings');
+      expect(result!.bestMatch!.title).toBe('The Way of Kings');
       // Duration of bestMatch (900 vs 600) is 50% off → medium confidence
-      expect(result.confidence).toBe('medium');
+      expect(result!.confidence).toBe('medium');
     });
   });
 
@@ -1312,7 +1312,7 @@ describe('MatchJobService', () => {
 
       const result = service.getJob(id)!.results[0];
       // Year tiebreaker prefers the 2010 match
-      expect(result.bestMatch!.publishedDate).toBe('2010-08-31');
+      expect(result!.bestMatch!.publishedDate).toBe('2010-08-31');
     });
 
     it('extracts year from parenthesized year in path', async () => {
@@ -1332,7 +1332,7 @@ describe('MatchJobService', () => {
       await waitForJob(service, id);
 
       const result = service.getJob(id)!.results[0];
-      expect(result.bestMatch!.publishedDate).toBe('2010-08-31');
+      expect(result!.bestMatch!.publishedDate).toBe('2010-08-31');
     });
 
     it('no year in path — tiebreaker skipped, uses score ordering', async () => {
@@ -1353,7 +1353,7 @@ describe('MatchJobService', () => {
 
       const result = service.getJob(id)!.results[0];
       // Without year, first result by score (they're equal, so order preserved)
-      expect(result.bestMatch!.publishedDate).toBe('2010-01-01');
+      expect(result!.bestMatch!.publishedDate).toBe('2010-01-01');
     });
 
     it('different scores — higher score wins regardless of year', async () => {
@@ -1374,7 +1374,7 @@ describe('MatchJobService', () => {
 
       const result = service.getJob(id)!.results[0];
       // Higher score wins even though year matches the other result
-      expect(result.bestMatch!.title).toBe('The Way of Kings');
+      expect(result!.bestMatch!.title).toBe('The Way of Kings');
     });
   });
 
@@ -1430,12 +1430,12 @@ describe('MatchJobService', () => {
         await waitForJob(service, id);
 
         const result = service.getJob(id)!.results[0];
-        expect(result.confidence).toBe('medium');
-        expect(result.reason).toBeDefined();
-        expect(result.reason).toContain('Duration mismatch');
+        expect(result!.confidence).toBe('medium');
+        expect(result!.reason).toBeDefined();
+        expect(result!.reason).toContain('Duration mismatch');
         // 600 min = 10.0 hrs scanned; 650 min = 10.8 hrs expected
-        expect(result.reason).toContain('10.0');
-        expect(result.reason).toContain('10.8');
+        expect(result!.reason).toContain('10.0');
+        expect(result!.reason).toContain('10.8');
       });
 
       it('duration exceeds relaxed threshold (>15%) with score ≥ 0.95 → reason includes "Duration mismatch" with both values', async () => {
@@ -1456,12 +1456,12 @@ describe('MatchJobService', () => {
         await waitForJob(service, id);
 
         const result = service.getJob(id)!.results[0];
-        expect(result.confidence).toBe('medium');
-        expect(result.reason).toBeDefined();
-        expect(result.reason).toContain('Duration mismatch');
+        expect(result!.confidence).toBe('medium');
+        expect(result!.reason).toBeDefined();
+        expect(result!.reason).toContain('Duration mismatch');
         // 600 min = 10.0 hrs scanned; 696 min = 11.6 hrs expected
-        expect(result.reason).toContain('10.0');
-        expect(result.reason).toContain('11.6');
+        expect(result!.reason).toContain('10.0');
+        expect(result!.reason).toContain('11.6');
       });
 
       it('multiple results with no duration data (scanned duration null) → reason is "Multiple results — no duration data to disambiguate"', async () => {
@@ -1479,8 +1479,8 @@ describe('MatchJobService', () => {
         await waitForJob(service, id);
 
         const result = service.getJob(id)!.results[0];
-        expect(result.confidence).toBe('medium');
-        expect(result.reason).toBe('Multiple results — no duration data to disambiguate');
+        expect(result!.confidence).toBe('medium');
+        expect(result!.reason).toBe('Multiple results — no duration data to disambiguate');
       });
 
       it('multiple results with zero scanned duration → reason uses no-duration-data path, not "0.0hrs"', async () => {
@@ -1501,9 +1501,9 @@ describe('MatchJobService', () => {
         await waitForJob(service, id);
 
         const result = service.getJob(id)!.results[0];
-        expect(result.confidence).toBe('medium');
-        expect(result.reason).toBe('Multiple results — no duration data to disambiguate');
-        expect(result.reason).not.toContain('0.0');
+        expect(result!.confidence).toBe('medium');
+        expect(result!.reason).toBe('Multiple results — no duration data to disambiguate');
+        expect(result!.reason).not.toContain('0.0');
       });
 
       it('multiple results, top result lacks duration but scanned duration exists → reason is "Best match missing duration — cannot verify"', async () => {
@@ -1525,8 +1525,8 @@ describe('MatchJobService', () => {
         await waitForJob(service, id);
 
         const result = service.getJob(id)!.results[0];
-        expect(result.confidence).toBe('medium');
-        expect(result.reason).toBe('Best match missing duration — cannot verify');
+        expect(result!.confidence).toBe('medium');
+        expect(result!.reason).toBe('Best match missing duration — cannot verify');
       });
 
       it('duration just over strict threshold (5.1%) with score < 0.95 → medium confidence with duration-mismatch reason', async () => {
@@ -1552,8 +1552,8 @@ describe('MatchJobService', () => {
         await waitForJob(service, id);
 
         const result = service.getJob(id)!.results[0];
-        expect(result.confidence).toBe('medium');
-        expect(result.reason).toContain('Duration mismatch');
+        expect(result!.confidence).toBe('medium');
+        expect(result!.reason).toContain('Duration mismatch');
       });
 
       it('duration just over relaxed threshold (15.1%) with score ≥ 0.95 → medium confidence with duration-mismatch reason', async () => {
@@ -1574,8 +1574,8 @@ describe('MatchJobService', () => {
         await waitForJob(service, id);
 
         const result = service.getJob(id)!.results[0];
-        expect(result.confidence).toBe('medium');
-        expect(result.reason).toContain('Duration mismatch');
+        expect(result!.confidence).toBe('medium');
+        expect(result!.reason).toContain('Duration mismatch');
       });
     });
 
@@ -1589,8 +1589,8 @@ describe('MatchJobService', () => {
         await waitForJob(service, id);
 
         const result = service.getJob(id)!.results[0];
-        expect(result.confidence).toBe('high');
-        expect(result.reason).toBeUndefined();
+        expect(result!.confidence).toBe('high');
+        expect(result!.reason).toBeUndefined();
       });
 
       it('no search results (none confidence) → reason is undefined', async () => {
@@ -1600,8 +1600,8 @@ describe('MatchJobService', () => {
         await waitForJob(service, id);
 
         const result = service.getJob(id)!.results[0];
-        expect(result.confidence).toBe('none');
-        expect(result.reason).toBeUndefined();
+        expect(result!.confidence).toBe('none');
+        expect(result!.reason).toBeUndefined();
       });
 
       it('title similarity below 50% floor (none confidence) → reason is undefined', async () => {
@@ -1618,8 +1618,8 @@ describe('MatchJobService', () => {
         await waitForJob(service, id);
 
         const result = service.getJob(id)!.results[0];
-        expect(result.confidence).toBe('none');
-        expect(result.reason).toBeUndefined();
+        expect(result!.confidence).toBe('none');
+        expect(result!.reason).toBeUndefined();
       });
 
       it('error during matching (none confidence with error field) → reason is undefined', async () => {
@@ -1629,9 +1629,9 @@ describe('MatchJobService', () => {
         await waitForJob(service, id);
 
         const result = service.getJob(id)!.results[0];
-        expect(result.confidence).toBe('none');
-        expect(result.error).toBe('API failure');
-        expect(result.reason).toBeUndefined();
+        expect(result!.confidence).toBe('none');
+        expect(result!.error).toBe('API failure');
+        expect(result!.reason).toBeUndefined();
       });
 
       it('duration at exactly 5.0% strict threshold (inclusive <=) → high confidence, no reason', async () => {
@@ -1652,8 +1652,8 @@ describe('MatchJobService', () => {
         await waitForJob(service, id);
 
         const result = service.getJob(id)!.results[0];
-        expect(result.confidence).toBe('high');
-        expect(result.reason).toBeUndefined();
+        expect(result!.confidence).toBe('high');
+        expect(result!.reason).toBeUndefined();
       });
 
       it('duration at exactly 15.0% relaxed threshold with high score (inclusive <=) → high confidence, no reason', async () => {
@@ -1674,8 +1674,8 @@ describe('MatchJobService', () => {
         await waitForJob(service, id);
 
         const result = service.getJob(id)!.results[0];
-        expect(result.confidence).toBe('high');
-        expect(result.reason).toBeUndefined();
+        expect(result!.confidence).toBe('high');
+        expect(result!.reason).toBeUndefined();
       });
     });
 
@@ -1698,9 +1698,9 @@ describe('MatchJobService', () => {
         await waitForJob(service, id);
 
         const result = service.getJob(id)!.results[0];
-        expect(result.confidence).toBe('medium');
-        expect(result.reason).toContain('37.1');
-        expect(result.reason).toContain('45.5');
+        expect(result!.confidence).toBe('medium');
+        expect(result!.reason).toContain('37.1');
+        expect(result!.reason).toContain('45.5');
       });
     });
   });
@@ -1719,7 +1719,7 @@ describe('MatchJobService', () => {
 
       const result = service.getJob(id)!.results[0];
       expect(metadataService.searchBooks).toHaveBeenCalledTimes(1);
-      expect(result.confidence).not.toBe('none');
+      expect(result!.confidence).not.toBe('none');
     });
 
     it('retries with swapped author/title on zero results', async () => {
@@ -1763,7 +1763,7 @@ describe('MatchJobService', () => {
 
       expect(metadataService.searchBooks).toHaveBeenCalledTimes(1);
       const result = service.getJob(id)!.results[0];
-      expect(result.confidence).toBe('none');
+      expect(result!.confidence).toBe('none');
     });
 
     it('returns none confidence when both searches return empty', async () => {
@@ -1776,7 +1776,7 @@ describe('MatchJobService', () => {
 
       expect(metadataService.searchBooks).toHaveBeenCalledTimes(2);
       const result = service.getJob(id)!.results[0];
-      expect(result.confidence).toBe('none');
+      expect(result!.confidence).toBe('none');
     });
 
     it('swap retry error does not crash job', async () => {
@@ -1815,8 +1815,8 @@ describe('MatchJobService', () => {
       await waitForJob(service, id);
 
       const result = service.getJob(id)!.results[0];
-      expect(result.confidence).not.toBe('none');
-      expect(result.bestMatch?.title).toBe('To Kill a Mockingbird');
+      expect(result!.confidence).not.toBe('none');
+      expect(result!.bestMatch?.title).toBe('To Kill a Mockingbird');
     });
 
     it('ranks correct candidate #1 when swap retry returns multiple results for misparsed folder', async () => {
@@ -1835,8 +1835,8 @@ describe('MatchJobService', () => {
 
       const result = service.getJob(id)!.results[0];
       // Correct book should be bestMatch because ranking uses swapped context
-      expect(result.bestMatch?.title).toBe('To Kill a Mockingbird');
-      expect(result.confidence).not.toBe('none');
+      expect(result!.bestMatch?.title).toBe('To Kill a Mockingbird');
+      expect(result!.confidence).not.toBe('none');
     });
 
     it('returns high confidence for single-result swap retry with misparsed folder', async () => {
@@ -1860,8 +1860,8 @@ describe('MatchJobService', () => {
       await waitForJob(service, id);
 
       const result = service.getJob(id)!.results[0];
-      expect(result.confidence).toBe('high');
-      expect(result.bestMatch?.title).toBe('The Correspondent');
+      expect(result!.confidence).toBe('high');
+      expect(result!.bestMatch?.title).toBe('The Correspondent');
     });
 
     it('returns medium confidence for multi-result swap retry with misparsed folder (no duration)', async () => {
@@ -1886,8 +1886,8 @@ describe('MatchJobService', () => {
 
       const result = service.getJob(id)!.results[0];
       // Multiple results, no duration → medium confidence
-      expect(result.confidence).toBe('medium');
-      expect(result.bestMatch?.title).toBe('Hyperion');
+      expect(result!.confidence).toBe('medium');
+      expect(result!.bestMatch?.title).toBe('Hyperion');
     });
 
     it('uses original context for ranking and similarity when no swap retry occurs', async () => {
@@ -1905,8 +1905,8 @@ describe('MatchJobService', () => {
       const result = service.getJob(id)!.results[0];
       // searchBooks called once (no swap)
       expect(metadataService.searchBooks).toHaveBeenCalledTimes(1);
-      expect(result.confidence).toBe('high');
-      expect(result.bestMatch?.title).toBe('The Way of Kings');
+      expect(result!.confidence).toBe('high');
+      expect(result!.bestMatch?.title).toBe('The Way of Kings');
     });
 
     it('uses original context when author is absent (no swap possible)', async () => {
@@ -1927,7 +1927,7 @@ describe('MatchJobService', () => {
 
       const result = service.getJob(id)!.results[0];
       expect(metadataService.searchBooks).toHaveBeenCalledTimes(1);
-      expect(result.confidence).toBe('high');
+      expect(result!.confidence).toBe('high');
     });
 
     it('accepts match when swapped-context title matches exactly', async () => {
@@ -1955,7 +1955,7 @@ describe('MatchJobService', () => {
       const result = service.getJob(id)!.results[0];
       // Swapped context title = "Boundary Title", result title = "Boundary Title" → 1.0 similarity
       // This is above floor, so should be accepted
-      expect(result.confidence).not.toBe('none');
+      expect(result!.confidence).not.toBe('none');
     });
 
     it('rejects match when swapped-context similarity is below floor', async () => {
@@ -1982,7 +1982,7 @@ describe('MatchJobService', () => {
       // Swapped context title = "Gamma Delta" vs result "Completely Unrelated Book" → low similarity
       // Original title = "Alpha Beta" vs result → also low similarity
       // Both below floor → none confidence
-      expect(result.confidence).toBe('none');
+      expect(result!.confidence).toBe('none');
     });
 
     it('falls back to original context when swap fires but book.author is undefined', async () => {
@@ -2002,7 +2002,7 @@ describe('MatchJobService', () => {
       const result = service.getJob(id)!.results[0];
       // No author → swap never fires → no results → none confidence
       expect(metadataService.searchBooks).toHaveBeenCalledTimes(1);
-      expect(result.confidence).toBe('none');
+      expect(result!.confidence).toBe('none');
     });
 
     it('returns none confidence when diceCoefficient returns 0 for both title and author comparisons', async () => {
@@ -2027,7 +2027,7 @@ describe('MatchJobService', () => {
       const result = service.getJob(id)!.results[0];
       // Swapped context title = "BBBB" vs "ZZZZ YYYY" → 0
       // Original title = "AAAA" vs "ZZZZ YYYY" → 0
-      expect(result.confidence).toBe('none');
+      expect(result!.confidence).toBe('none');
     });
   });
 });

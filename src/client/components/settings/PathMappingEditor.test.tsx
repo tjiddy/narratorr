@@ -42,7 +42,7 @@ describe('PathMappingEditor', () => {
     renderWithProviders(<PathMappingEditor mappings={mappings} onChange={onChange} />);
 
     const removeButtons = screen.getAllByRole('button', { name: /remove/i });
-    await user.click(removeButtons[0]);
+    await user.click(removeButtons[0]!);
 
     expect(onChange).toHaveBeenCalledWith([
       { remotePath: '/remote/b', localPath: '/local/b' },

@@ -225,7 +225,7 @@ describe('AudnexusProvider', () => {
       const book = await provider.getBook('B000TEST');
       expect(book).not.toBeNull();
       // parseFloat('prologue') = NaN, || undefined → undefined
-      expect(book!.series![0].position).toBeUndefined();
+      expect(book!.series![0]!.position).toBeUndefined();
     });
 
     it('handles empty string narrator names (filtered out)', async () => {
@@ -269,10 +269,10 @@ describe('AudnexusProvider', () => {
 
       const book = await provider.getBook('B000TEST');
       expect(book!.series).toHaveLength(2);
-      expect(book!.series![0].name).toBe('Main Series');
-      expect(book!.series![0].position).toBe(1);
-      expect(book!.series![1].name).toBe('Shared Universe');
-      expect(book!.series![1].position).toBe(5);
+      expect(book!.series![0]!.name).toBe('Main Series');
+      expect(book!.series![0]!.position).toBe(1);
+      expect(book!.series![1]!.name).toBe('Shared Universe');
+      expect(book!.series![1]!.position).toBe(5);
     });
 
     it('handles author with empty image string', async () => {

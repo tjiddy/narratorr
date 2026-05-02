@@ -118,7 +118,7 @@ describe('LibrarySettingsSection', () => {
         );
       });
       // Verify only library.path was sent (not naming fields)
-      const callArg = mockApi.updateSettings.mock.calls[0][0];
+      const callArg = mockApi.updateSettings.mock.calls[0]![0];
       expect(callArg.library).toHaveProperty('path');
       expect(callArg.library).not.toHaveProperty('folderFormat');
     });
@@ -325,7 +325,7 @@ describe('LibrarySettingsSection', () => {
         expect(screen.getAllByText('audiobooks').length).toBeGreaterThan(0);
       });
       const dirEntries = screen.getAllByText('audiobooks');
-      await user.click(dirEntries[dirEntries.length - 1]);
+      await user.click(dirEntries[dirEntries.length - 1]!);
       // Browse selection updates path field (exact value depends on directory nav)
       await waitFor(() => {
         const pathInput = screen.getByPlaceholderText('/audiobooks') as HTMLInputElement;

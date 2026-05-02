@@ -46,7 +46,7 @@ describe('Secret Migration', () => {
       await migrateSecretsToEncrypted(inject<Db>(db), TEST_KEY, inject<FastifyBaseLogger>(log));
 
       expect(db.update).toHaveBeenCalled();
-      const setCalls = db.update.mock.results[0].value.set.mock.calls;
+      const setCalls = db.update.mock.results[0]!.value.set.mock.calls;
       expect(setCalls.length).toBeGreaterThan(0);
       const updatedSettings = setCalls[0][0].settings;
       expect(isEncrypted(updatedSettings.apiKey)).toBe(true);
@@ -80,7 +80,7 @@ describe('Secret Migration', () => {
 
       await migrateSecretsToEncrypted(inject<Db>(db), TEST_KEY, inject<FastifyBaseLogger>(log));
 
-      const setCalls = db.update.mock.results[0].value.set.mock.calls;
+      const setCalls = db.update.mock.results[0]!.value.set.mock.calls;
       const settings = setCalls[0][0].settings;
       expect(isEncrypted(settings.apiKey)).toBe(true);
       expect(isEncrypted(settings.flareSolverrUrl)).toBe(true);
@@ -98,7 +98,7 @@ describe('Secret Migration', () => {
 
       await migrateSecretsToEncrypted(inject<Db>(db), TEST_KEY, inject<FastifyBaseLogger>(log));
 
-      const setCalls = db.update.mock.results[0].value.set.mock.calls;
+      const setCalls = db.update.mock.results[0]!.value.set.mock.calls;
       const settings = setCalls[0][0].settings;
       expect(isEncrypted(settings.password)).toBe(true);
       expect(isEncrypted(settings.apiKey)).toBe(true);
@@ -206,7 +206,7 @@ describe('Secret Migration', () => {
 
       await migrateSecretsToEncrypted(inject<Db>(db), TEST_KEY, inject<FastifyBaseLogger>(log));
 
-      const setCalls = db.update.mock.results[0].value.set.mock.calls;
+      const setCalls = db.update.mock.results[0]!.value.set.mock.calls;
       const settings = setCalls[0][0].settings;
       expect(isEncrypted(settings.url)).toBe(true);
       expect(isEncrypted(settings.headers)).toBe(true);
@@ -271,11 +271,11 @@ describe('Secret Migration', () => {
       await migrateSecretsToEncrypted(inject<Db>(db), TEST_KEY, inject<FastifyBaseLogger>(log));
 
       expect(db.update).toHaveBeenCalledTimes(1);
-      const setCalls = db.update.mock.results[0].value.set.mock.calls;
+      const setCalls = db.update.mock.results[0]!.value.set.mock.calls;
       const updatedSettings = setCalls[0][0].settings;
       expect(isEncrypted(updatedSettings.apiUrl)).toBe(true);
 
-      expect(db.update.mock.results[0].value.where).toHaveBeenCalledTimes(1);
+      expect(db.update.mock.results[0]!.value.where).toHaveBeenCalledTimes(1);
       expect(eq).toHaveBeenCalledWith(indexers.id, 1);
     });
 
@@ -290,7 +290,7 @@ describe('Secret Migration', () => {
 
       await migrateSecretsToEncrypted(inject<Db>(db), TEST_KEY, inject<FastifyBaseLogger>(log));
 
-      const setCalls = db.update.mock.results[0].value.set.mock.calls;
+      const setCalls = db.update.mock.results[0]!.value.set.mock.calls;
       const updatedSettings = setCalls[0][0].settings;
       expect(isEncrypted(updatedSettings.apiKey)).toBe(true);
       expect(isEncrypted(updatedSettings.apiUrl)).toBe(true);
@@ -337,7 +337,7 @@ describe('Secret Migration', () => {
       await migrateSecretsToEncrypted(inject<Db>(db), TEST_KEY, inject<FastifyBaseLogger>(log));
 
       expect(db.update).toHaveBeenCalledTimes(1);
-      const setCalls = db.update.mock.results[0].value.set.mock.calls;
+      const setCalls = db.update.mock.results[0]!.value.set.mock.calls;
       const updatedSettings = setCalls[0][0].settings;
       expect(isEncrypted(updatedSettings.mamId)).toBe(true);
       expect('apiUrl' in updatedSettings).toBe(false);
@@ -358,11 +358,11 @@ describe('Secret Migration', () => {
       await migrateSecretsToEncrypted(inject<Db>(db), TEST_KEY, inject<FastifyBaseLogger>(log));
 
       expect(db.update).toHaveBeenCalledTimes(1);
-      const setCalls = db.update.mock.results[0].value.set.mock.calls;
+      const setCalls = db.update.mock.results[0]!.value.set.mock.calls;
       const updatedSettings = setCalls[0][0].settings;
       expect(isEncrypted(updatedSettings.apiUrl)).toBe(true);
 
-      expect(db.update.mock.results[0].value.where).toHaveBeenCalledTimes(1);
+      expect(db.update.mock.results[0]!.value.where).toHaveBeenCalledTimes(1);
       expect(eq).toHaveBeenCalledTimes(1);
       expect(eq).toHaveBeenCalledWith(indexers.id, 1);
       expect(eq).not.toHaveBeenCalledWith(indexers.id, 2);

@@ -49,7 +49,7 @@ describe('streamCopyWithProgress', () => {
     expect(onProgress).toHaveBeenCalled();
     // Final call should be at or near 1.0
     const lastCall = onProgress.mock.calls[onProgress.mock.calls.length - 1];
-    expect(lastCall[0]).toBeCloseTo(1.0, 1);
+    expect(lastCall![0]).toBeCloseTo(1.0, 1);
   });
 
   it('reports byte_counter with current and total', async () => {
@@ -60,7 +60,7 @@ describe('streamCopyWithProgress', () => {
 
     expect(onProgress).toHaveBeenCalled();
     const lastCall = onProgress.mock.calls[onProgress.mock.calls.length - 1];
-    expect(lastCall[1]).toMatchObject({ current: 4096, total: 4096 });
+    expect(lastCall![1]).toMatchObject({ current: 4096, total: 4096 });
   });
 
   it('handles empty directory (0 bytes total) without firing progress and without writing files', async () => {
@@ -91,7 +91,7 @@ describe('streamCopyWithProgress', () => {
     // Each call should have increasing current byte counts
     const byteCounts = onProgress.mock.calls.map((call: unknown[]) => (call[1] as { current: number }).current);
     for (let i = 1; i < byteCounts.length; i++) {
-      expect(byteCounts[i]).toBeGreaterThan(byteCounts[i - 1]);
+      expect(byteCounts[i]).toBeGreaterThan(byteCounts[i - 1]!);
     }
 
     // Final call should reach the total

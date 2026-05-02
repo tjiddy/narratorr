@@ -223,7 +223,7 @@ describe('IndexerCard — create mode', () => {
     await user.click(screen.getByText('Add Indexer'));
 
     expect(onSubmit).toHaveBeenCalled();
-    expect(onSubmit.mock.calls[0][0]).toMatchObject({
+    expect(onSubmit.mock.calls[0]![0]).toMatchObject({
       name: 'Test Indexer',
       type: 'newznab',
       settings: expect.objectContaining({ apiUrl: 'example.com', apiKey: 'test-key' }),
@@ -270,7 +270,7 @@ describe('IndexerCard — create mode', () => {
     await waitFor(() => {
       expect(onFormTest).toHaveBeenCalled();
     });
-    expect(onFormTest.mock.calls[0][0]).not.toHaveProperty('id');
+    expect(onFormTest.mock.calls[0]![0]).not.toHaveProperty('id');
   });
 
   it('shows form test result', () => {
@@ -661,7 +661,7 @@ describe('IndexerCard — Prowlarr-managed indicators (AC8)', () => {
       await waitFor(() => {
         expect(onSubmit).toHaveBeenCalled();
       });
-      expect(onSubmit.mock.calls[0][0]).toMatchObject({
+      expect(onSubmit.mock.calls[0]![0]).toMatchObject({
         name: 'My MAM',
         type: 'myanonamouse',
         settings: expect.objectContaining({
@@ -718,7 +718,7 @@ describe('IndexerCard — Prowlarr-managed indicators (AC8)', () => {
       await waitFor(() => {
         expect(onSubmit).toHaveBeenCalled();
       });
-      expect(onSubmit.mock.calls[0][0].settings).toHaveProperty('isVip', true);
+      expect(onSubmit.mock.calls[0]![0].settings).toHaveProperty('isVip', true);
     });
 
     it('#339 hydrates mamStatus badge from persisted isVip and mamUsername on edit form open', () => {
@@ -821,7 +821,7 @@ describe('IndexerCard — Prowlarr-managed indicators (AC8)', () => {
       await waitFor(() => {
         expect(onSubmit).toHaveBeenCalled();
       });
-      expect(onSubmit.mock.calls[0][0].settings).toHaveProperty('mamUsername', 'SavedUser');
+      expect(onSubmit.mock.calls[0]![0].settings).toHaveProperty('mamUsername', 'SavedUser');
     });
 
     it('#339 explicit Test button success updates mamStatus badge from formTestResult.metadata', () => {
@@ -905,7 +905,7 @@ describe('IndexerCard — Prowlarr-managed indicators (AC8)', () => {
       await waitFor(() => {
         expect(onFormTest).toHaveBeenCalled();
       });
-      expect(onFormTest.mock.calls[0][0]).toHaveProperty('id', 21);
+      expect(onFormTest.mock.calls[0]![0]).toHaveProperty('id', 21);
     });
 
     it('renders language hint for MAM indexer with empty searchLanguages', () => {
@@ -1077,7 +1077,7 @@ describe('IndexerCard — Prowlarr-managed indicators (AC8)', () => {
         expect(onFormTest).toHaveBeenCalled();
       });
 
-      const payloadSettings = onFormTest.mock.calls[0][0].settings as Record<string, unknown>;
+      const payloadSettings = onFormTest.mock.calls[0]![0].settings as Record<string, unknown>;
 
       // Foreign keys (not in MAM defaults, not in stored settings) MUST NOT leak
       expect(payloadSettings).not.toHaveProperty('hostname');
@@ -1117,7 +1117,7 @@ describe('IndexerCard — Prowlarr-managed indicators (AC8)', () => {
         expect(onFormTest).toHaveBeenCalled();
       });
 
-      const payloadSettings = onFormTest.mock.calls[0][0].settings as Record<string, unknown>;
+      const payloadSettings = onFormTest.mock.calls[0]![0].settings as Record<string, unknown>;
 
       // Foreign keys for torznab MUST NOT leak
       expect(payloadSettings).not.toHaveProperty('hostname');
@@ -1161,7 +1161,7 @@ describe('IndexerCard — Prowlarr-managed indicators (AC8)', () => {
         expect(onFormTest).toHaveBeenCalled();
       });
 
-      const payloadSettings = onFormTest.mock.calls[0][0].settings as Record<string, unknown>;
+      const payloadSettings = onFormTest.mock.calls[0]![0].settings as Record<string, unknown>;
       expect(payloadSettings.searchType).toBe('active');
     });
   });

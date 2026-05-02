@@ -99,7 +99,7 @@ describe('confirmImport — import_jobs creation (#635)', () => {
     }));
 
     // Verify metadata contains mode
-    const enqueueCall = mockBookImportService.enqueue.mock.calls[0][0];
+    const enqueueCall = mockBookImportService.enqueue.mock.calls[0]![0];
     const metadata = JSON.parse(enqueueCall.metadata);
     expect(metadata.mode).toBe('copy');
     expect(metadata.title).toBe('Test');
@@ -116,7 +116,7 @@ describe('confirmImport — import_jobs creation (#635)', () => {
       nudgeWorker,
     );
 
-    const enqueueCall = mockBookImportService.enqueue.mock.calls[0][0];
+    const enqueueCall = mockBookImportService.enqueue.mock.calls[0]![0];
     const metadata = JSON.parse(enqueueCall.metadata);
     expect(metadata.mode).toBeUndefined();
   });

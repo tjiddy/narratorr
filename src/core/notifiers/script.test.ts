@@ -39,7 +39,7 @@ describe('ScriptNotifier', () => {
       });
 
       const callArgs = mockExecFile.mock.calls[0];
-      const env = (callArgs[1] as unknown as { env: Record<string, string> }).env;
+      const env = (callArgs![1] as unknown as { env: Record<string, string> }).env;
 
       expect(env).not.toHaveProperty('NARRATORR_SECRET_KEY');
       expect(env.NARRATORR_EVENT).toBe('on_grab');
@@ -453,7 +453,7 @@ describe('ScriptNotifier', () => {
     await notifier.send('on_grab', { event: 'on_grab' });
 
     const callArgs = mockExecFile.mock.calls[0];
-    const env = (callArgs[1] as unknown as { env: Record<string, string> }).env;
+    const env = (callArgs![1] as unknown as { env: Record<string, string> }).env;
 
     expect(env.NARRATORR_EVENT).toBe('on_grab');
     expect(env).not.toHaveProperty('NARRATORR_BOOK_TITLE');
@@ -480,7 +480,7 @@ describe('ScriptNotifier', () => {
     });
 
     const callArgs = mockExecFile.mock.calls[0];
-    const env = (callArgs[1] as unknown as { env: Record<string, string> }).env;
+    const env = (callArgs![1] as unknown as { env: Record<string, string> }).env;
 
     expect(env.NARRATORR_BOOK_TITLE).toBe('Dune');
     expect(env).not.toHaveProperty('NARRATORR_BOOK_AUTHOR');

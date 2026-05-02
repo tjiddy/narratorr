@@ -73,8 +73,8 @@ describe('DownloadService', () => {
 
       const result = await service.getAll();
       expect(result.data).toHaveLength(1);
-      expect(result.data[0].title).toBe('The Way of Kings');
-      expect(result.data[0].book?.title).toBe('The Way of Kings');
+      expect(result.data[0]!.title).toBe('The Way of Kings');
+      expect(result.data[0]!.book?.title).toBe('The Way of Kings');
       expect(result.total).toBe(1);
     });
 
@@ -93,7 +93,7 @@ describe('DownloadService', () => {
         .mockReturnValueOnce(mockDbChain([{ download: mockDownload, book: null }]));
 
       const result = await service.getAll();
-      expect(result.data[0].book).toBeUndefined();
+      expect(result.data[0]!.book).toBeUndefined();
     });
 
     it('applies limit and offset when provided', async () => {
@@ -216,7 +216,7 @@ describe('DownloadService', () => {
 
       const result = await service.getActiveByBookId(1);
       expect(result).toHaveLength(1);
-      expect(result[0].bookId).toBe(1);
+      expect(result[0]!.bookId).toBe(1);
     });
 
     it('returns empty array when no active downloads for book', async () => {
@@ -418,7 +418,7 @@ describe('DownloadService', () => {
         indexerId: 42,
       });
 
-      const insertValues = db.insert.mock.results[0].value.values.mock.calls[0][0];
+      const insertValues = db.insert.mock.results[0]!.value.values.mock.calls[0][0];
       expect(insertValues.indexerId).toBe(42);
     });
 
@@ -863,7 +863,7 @@ describe('DownloadService', () => {
         title: 'MAM Torrent',
       });
 
-      const insertValues = db.insert.mock.results[0].value.values.mock.calls[0][0];
+      const insertValues = db.insert.mock.results[0]!.value.values.mock.calls[0][0];
       expect(insertValues.infoHash).toBe(expectedHash);
     });
 
@@ -887,7 +887,7 @@ describe('DownloadService', () => {
         protocol: 'usenet',
       });
 
-      const insertValues = db.insert.mock.results[0].value.values.mock.calls[0][0];
+      const insertValues = db.insert.mock.results[0]!.value.values.mock.calls[0][0];
       expect(insertValues.infoHash).toBeNull();
     });
 
@@ -923,7 +923,7 @@ describe('DownloadService', () => {
         expect.objectContaining({ downloadUrl: expect.stringContaining('data:application/x-bittorrent') }),
         expect.any(String),
       );
-      const debugCall = (log.debug as ReturnType<typeof vi.fn>).mock.calls[0][0] as Record<string, unknown>;
+      const debugCall = (log.debug as ReturnType<typeof vi.fn>).mock.calls[0]![0] as Record<string, unknown>;
       expect(debugCall.downloadUrl).not.toContain(torrentContent.toString('base64'));
     });
 
@@ -950,7 +950,7 @@ describe('DownloadService', () => {
         protocol: 'usenet',
       });
 
-      const debugCall = (log.debug as ReturnType<typeof vi.fn>).mock.calls[0][0] as Record<string, unknown>;
+      const debugCall = (log.debug as ReturnType<typeof vi.fn>).mock.calls[0]![0] as Record<string, unknown>;
       expect(debugCall.downloadUrl).toBe('https://indexer.example.com/api/v1/download/12345');
       expect(debugCall.downloadUrl).not.toContain('SECRETKEY123');
     });
@@ -977,7 +977,7 @@ describe('DownloadService', () => {
         title: 'Test Magnet',
       });
 
-      const debugCall = (log.debug as ReturnType<typeof vi.fn>).mock.calls[0][0] as Record<string, unknown>;
+      const debugCall = (log.debug as ReturnType<typeof vi.fn>).mock.calls[0]![0] as Record<string, unknown>;
       expect(debugCall.downloadUrl).toBe('magnet:[aaf4c61ddcc5e8a2dabede0f3b482cd9aea9434d]');
       expect(debugCall.downloadUrl).not.toContain('tracker.example.com');
     });
@@ -1281,7 +1281,7 @@ describe('DownloadService', () => {
       expect(chain.set).toHaveBeenCalledWith(
         expect.objectContaining({ progress: 1.0, status: 'completed' }),
       );
-      const setArgs = (chain.set as Mock).mock.calls[0][0] as Record<string, unknown>;
+      const setArgs = (chain.set as Mock).mock.calls[0]![0] as Record<string, unknown>;
       expect(setArgs.completedAt).toBeInstanceOf(Date);
     });
 
@@ -1293,7 +1293,7 @@ describe('DownloadService', () => {
 
       await service.updateProgress(1, 0.5);
 
-      const setArgs = (chain.set as Mock).mock.calls[0][0] as Record<string, unknown>;
+      const setArgs = (chain.set as Mock).mock.calls[0]![0] as Record<string, unknown>;
       expect(setArgs.progressUpdatedAt).toBeInstanceOf(Date);
     });
 
@@ -1305,7 +1305,7 @@ describe('DownloadService', () => {
 
       await service.updateProgress(1, 0.5);
 
-      const setArgs = (chain.set as Mock).mock.calls[0][0] as Record<string, unknown>;
+      const setArgs = (chain.set as Mock).mock.calls[0]![0] as Record<string, unknown>;
       expect(setArgs).not.toHaveProperty('progressUpdatedAt');
     });
   });
@@ -1602,7 +1602,7 @@ describe('DownloadService', () => {
       // Assert the import_jobs lookup encodes the exact contract:
       //   bookId = <input> AND type = 'auto' AND status IN ('pending', 'processing')
       expect(importJobsChain.where).toHaveBeenCalledOnce();
-      const whereArg = (importJobsChain.where as Mock).mock.calls[0][0];
+      const whereArg = (importJobsChain.where as Mock).mock.calls[0]![0];
       const { sql, params } = toSQL(whereArg);
       expect(sql).toContain('"book_id" = ?');
       expect(sql).toContain('"type" = ?');
@@ -1628,7 +1628,7 @@ describe('DownloadService', () => {
 
       // Predicate contract includes both 'pending' and 'processing' statuses and
       // binds the caller's bookId — not a different or unbounded book.
-      const whereArg = (importJobsChain.where as Mock).mock.calls[0][0];
+      const whereArg = (importJobsChain.where as Mock).mock.calls[0]![0];
       const { sql, params } = toSQL(whereArg);
       expect(sql).toMatch(/"status" in \(\?, \?\)/i);
       expect(params).toEqual([42, 'auto', 'pending', 'processing']);
@@ -1657,7 +1657,7 @@ describe('DownloadService', () => {
       // Even on the pass-through path, the import_jobs probe must have been
       // scoped to the correct predicates — a broader query would pass this
       // test today but leak false negatives in production.
-      const whereArg = (importJobsChain.where as Mock).mock.calls[0][0];
+      const whereArg = (importJobsChain.where as Mock).mock.calls[0]![0];
       const { sql, params } = toSQL(whereArg);
       expect(sql).toContain('"book_id" = ?');
       expect(sql).toContain('"type" = ?');
@@ -1779,7 +1779,7 @@ describe('DownloadService', () => {
           .mockReturnValueOnce(mockDbChain([{ download: mockDownload, book: mockBook, indexer: mockIndexer }]));
 
         const result = await service.getAll();
-        expect(result.data[0].indexerName).toBe('AudioBookBay');
+        expect(result.data[0]!.indexerName).toBe('AudioBookBay');
       });
 
       it('returns null indexerName for downloads whose indexer was deleted (null FK)', async () => {
@@ -1788,7 +1788,7 @@ describe('DownloadService', () => {
           .mockReturnValueOnce(mockDbChain([{ download: mockDownloadNoIndexer, book: mockBook, indexer: null }]));
 
         const result = await service.getAll();
-        expect(result.data[0].indexerName).toBeNull();
+        expect(result.data[0]!.indexerName).toBeNull();
       });
 
       it('handles mixed batch: some downloads with indexer, some without', async () => {
@@ -1800,8 +1800,8 @@ describe('DownloadService', () => {
           ]));
 
         const result = await service.getAll();
-        expect(result.data[0].indexerName).toBe('AudioBookBay');
-        expect(result.data[1].indexerName).toBeNull();
+        expect(result.data[0]!.indexerName).toBe('AudioBookBay');
+        expect(result.data[1]!.indexerName).toBeNull();
       });
     });
 
@@ -1832,7 +1832,7 @@ describe('DownloadService', () => {
         );
 
         const result = await service.getActive();
-        expect(result[0].indexerName).toBe('AudioBookBay');
+        expect(result[0]!.indexerName).toBe('AudioBookBay');
       });
 
       it('returns null indexerName for deleted-indexer case', async () => {
@@ -1841,7 +1841,7 @@ describe('DownloadService', () => {
         );
 
         const result = await service.getActive();
-        expect(result[0].indexerName).toBeNull();
+        expect(result[0]!.indexerName).toBeNull();
       });
     });
 
@@ -1852,7 +1852,7 @@ describe('DownloadService', () => {
         );
 
         const result = await service.getActiveByBookId(1);
-        expect(result[0].indexerName).toBe('AudioBookBay');
+        expect(result[0]!.indexerName).toBe('AudioBookBay');
       });
 
       it('returns null indexerName for deleted-indexer case', async () => {
@@ -1861,7 +1861,7 @@ describe('DownloadService', () => {
         );
 
         const result = await service.getActiveByBookId(1);
-        expect(result[0].indexerName).toBeNull();
+        expect(result[0]!.indexerName).toBeNull();
       });
     });
   });

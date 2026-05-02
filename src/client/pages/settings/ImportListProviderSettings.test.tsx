@@ -169,7 +169,7 @@ describe('ProviderSettings', () => {
       await user.click(screen.getByRole('button', { name: 'Fetch Libraries' }));
 
       await waitFor(() => expect(api.fetchAbsLibraries).toHaveBeenCalled());
-      const call = (api.fetchAbsLibraries as Mock).mock.calls[0][0];
+      const call = (api.fetchAbsLibraries as Mock).mock.calls[0]![0];
       expect(call).not.toHaveProperty('id');
     });
 

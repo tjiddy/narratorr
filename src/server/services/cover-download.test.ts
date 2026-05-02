@@ -143,10 +143,10 @@ describe('downloadRemoteCover', () => {
     );
 
     expect(result).toBe(true);
-    const writePath = String(vi.mocked(writeFile).mock.calls[0][0]).split('\\').join('/');
+    const writePath = String(vi.mocked(writeFile).mock.calls[0]![0]).split('\\').join('/');
     expect(writePath).toContain('/books/test/');
-    expect(vi.mocked(writeFile).mock.calls[0][1]).toBeInstanceOf(Buffer);
-    const renameDest = String(vi.mocked(rename).mock.calls[0][1]).split('\\').join('/');
+    expect(vi.mocked(writeFile).mock.calls[0]![1]).toBeInstanceOf(Buffer);
+    const renameDest = String(vi.mocked(rename).mock.calls[0]![1]).split('\\').join('/');
     expect(renameDest).toBe('/books/test/cover.jpg');
   });
 
@@ -158,7 +158,7 @@ describe('downloadRemoteCover', () => {
       inject<Db>(mockDb), log,
     );
 
-    const setCall = mockDb.update.mock.results[0].value.set;
+    const setCall = mockDb.update.mock.results[0]!.value.set;
     expect(setCall).toHaveBeenCalledWith(
       expect.objectContaining({
         coverUrl: '/api/books/42/cover',
@@ -294,7 +294,7 @@ describe('downloadRemoteCover', () => {
       inject<Db>(mockDb), log,
     );
 
-    const renameDest = String(vi.mocked(rename).mock.calls[0][1]).split('\\').join('/');
+    const renameDest = String(vi.mocked(rename).mock.calls[0]![1]).split('\\').join('/');
     expect(renameDest).toBe('/books/test/cover.png');
   });
 
@@ -309,7 +309,7 @@ describe('downloadRemoteCover', () => {
       inject<Db>(mockDb), log,
     );
 
-    const renameDest = String(vi.mocked(rename).mock.calls[0][1]).split('\\').join('/');
+    const renameDest = String(vi.mocked(rename).mock.calls[0]![1]).split('\\').join('/');
     expect(renameDest).toBe('/books/test/cover.png');
   });
 
@@ -324,7 +324,7 @@ describe('downloadRemoteCover', () => {
       inject<Db>(mockDb), log,
     );
 
-    const renameDest = String(vi.mocked(rename).mock.calls[0][1]).split('\\').join('/');
+    const renameDest = String(vi.mocked(rename).mock.calls[0]![1]).split('\\').join('/');
     expect(renameDest).toBe('/books/test/cover.jpg');
   });
 
@@ -805,7 +805,7 @@ describe('downloadRemoteCover', () => {
       inject<Db>(mockDb), log,
     );
 
-    const unlinkPath = String(vi.mocked(unlink).mock.calls[0][0]).split('\\').join('/');
+    const unlinkPath = String(vi.mocked(unlink).mock.calls[0]![0]).split('\\').join('/');
     expect(unlinkPath).toBe('/books/test/cover.png');
     expect(unlink).toHaveBeenCalledTimes(1);
   });
@@ -818,7 +818,7 @@ describe('downloadRemoteCover', () => {
       inject<Db>(mockDb), log,
     );
 
-    const tempPath = vi.mocked(writeFile).mock.calls[0][0] as string;
+    const tempPath = vi.mocked(writeFile).mock.calls[0]![0] as string;
     expect(tempPath).toMatch(/\.cover-download-[0-9a-f-]+\.tmp$/);
     expect(tempPath).not.toContain(`-${42}.tmp`);
   });

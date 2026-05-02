@@ -124,15 +124,15 @@ describe('SearchResults', () => {
       renderResults({ searchTerm: 'fantasy', results: resultsWithBoth });
       const panel = screen.getByRole('tabpanel');
       const tabs = screen.getAllByRole('tab');
-      expect(panel).toHaveAttribute('aria-labelledby', tabs[0].id);
+      expect(panel).toHaveAttribute('aria-labelledby', tabs[0]!.id);
     });
 
     it('tab buttons have non-empty ids for ARIA linkage', () => {
       renderResults({ searchTerm: 'fantasy', results: resultsWithBoth });
       const tabs = screen.getAllByRole('tab');
-      expect(tabs[0].id).toBeTruthy();
-      expect(tabs[1].id).toBeTruthy();
-      expect(tabs[0].id).not.toBe(tabs[1].id);
+      expect(tabs[0]!.id).toBeTruthy();
+      expect(tabs[1]!.id).toBeTruthy();
+      expect(tabs[0]!.id).not.toBe(tabs[1]!.id);
     });
 
     it('switching to Authors swaps tabpanel linkage to Authors tab', async () => {
@@ -140,7 +140,7 @@ describe('SearchResults', () => {
       renderResults({ searchTerm: 'fantasy', results: resultsWithBoth });
       const tabs = screen.getAllByRole('tab');
 
-      await user.click(tabs[1]);
+      await user.click(tabs[1]!);
 
       const panel = screen.getByRole('tabpanel');
       expect(panel).toHaveAttribute('aria-labelledby', 'tab-authors');
@@ -151,7 +151,7 @@ describe('SearchResults', () => {
       renderResults({ searchTerm: 'fantasy', results: resultsWithBoth });
       const tabs = screen.getAllByRole('tab');
 
-      tabs[0].focus();
+      tabs[0]!.focus();
       await user.keyboard('{ArrowRight}');
 
       expect(tabs[1]).toHaveAttribute('aria-selected', 'true');
@@ -167,8 +167,8 @@ describe('SearchResults', () => {
       const tabs = screen.getAllByRole('tab');
 
       // Switch to Authors first
-      await user.click(tabs[1]);
-      tabs[1].focus();
+      await user.click(tabs[1]!);
+      tabs[1]!.focus();
       await user.keyboard('{ArrowLeft}');
 
       expect(tabs[0]).toHaveAttribute('aria-selected', 'true');
@@ -184,15 +184,15 @@ describe('SearchResults', () => {
       const tabs = screen.getAllByRole('tab');
 
       // Right on last (Authors) → wraps to first (Books)
-      await user.click(tabs[1]);
-      tabs[1].focus();
+      await user.click(tabs[1]!);
+      tabs[1]!.focus();
       await user.keyboard('{ArrowRight}');
       expect(tabs[0]).toHaveAttribute('aria-selected', 'true');
       expect(document.activeElement).toBe(tabs[0]);
       expect(screen.getByRole('tabpanel')).toHaveAttribute('aria-labelledby', 'tab-books');
 
       // Left on first (Books) → wraps to last (Authors)
-      tabs[0].focus();
+      tabs[0]!.focus();
       await user.keyboard('{ArrowLeft}');
       expect(tabs[1]).toHaveAttribute('aria-selected', 'true');
       expect(document.activeElement).toBe(tabs[1]);

@@ -118,7 +118,7 @@ describe('Modal', () => {
         </>,
       );
       const backdrops = screen.getAllByTestId('modal-backdrop');
-      await user.click(backdrops[1]);
+      await user.click(backdrops[1]!);
       expect(innerClose).toHaveBeenCalledOnce();
       expect(outerClose).not.toHaveBeenCalled();
     });

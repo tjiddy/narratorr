@@ -29,7 +29,7 @@ describe('DownloadClientService', () => {
 
       const result = await service.getAll();
       expect(result).toHaveLength(1);
-      expect(result[0].name).toBe('qBittorrent');
+      expect(result[0]!.name).toBe('qBittorrent');
     });
   });
 
@@ -197,7 +197,7 @@ describe('DownloadClientService', () => {
       });
 
       // The .set() call should have preserved the exact stored encrypted values
-      const setArg = (updateChain as { set: ReturnType<typeof vi.fn> }).set.mock.calls[0][0] as { settings: Record<string, unknown> };
+      const setArg = (updateChain as { set: ReturnType<typeof vi.fn> }).set.mock.calls[0]![0] as { settings: Record<string, unknown> };
       expect(setArg.settings.host).toBe('new-host');
       expect(setArg.settings.port).toBe(9090);
       expect(setArg.settings.password).toBe(encryptedPassword);
@@ -596,7 +596,7 @@ describe('DownloadClientService', () => {
       });
 
       expect(result.success).toBe(true);
-      const adapterCallArg = spy.mock.calls[0][0] as { settings: Record<string, unknown> };
+      const adapterCallArg = spy.mock.calls[0]![0] as { settings: Record<string, unknown> };
       expect(adapterCallArg.settings.password).toBe('real-password');
     });
 
@@ -621,7 +621,7 @@ describe('DownloadClientService', () => {
         id: 1,
       });
 
-      const adapterCallArg = spy.mock.calls[0][0] as { settings: Record<string, unknown> };
+      const adapterCallArg = spy.mock.calls[0]![0] as { settings: Record<string, unknown> };
       expect(adapterCallArg.settings.apiKey).toBe('real-api-key');
       expect(adapterCallArg.settings.password).toBe('real-pw');
     });
@@ -636,7 +636,7 @@ describe('DownloadClientService', () => {
         settings: { host: 'h', port: 8080, password: '********' },
       });
 
-      const adapterCallArg = spy.mock.calls[0][0] as { settings: Record<string, unknown> };
+      const adapterCallArg = spy.mock.calls[0]![0] as { settings: Record<string, unknown> };
       expect(adapterCallArg.settings.password).toBe('********');
     });
 

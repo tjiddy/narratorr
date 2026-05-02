@@ -31,7 +31,7 @@ const realEnrichBookFromAudio = vi.hoisted(() => {
 
 vi.mock('./enrichment-utils.js', async (importOriginal) => {
   const actual = await importOriginal() as Record<string, (...args: unknown[]) => Promise<unknown>>;
-  realEnrichBookFromAudio.setReal(actual.enrichBookFromAudio);
+  realEnrichBookFromAudio.setReal(actual.enrichBookFromAudio!);
   return {
     enrichBookFromAudio: vi.fn().mockImplementation((...args: unknown[]) => realEnrichBookFromAudio.call(...args)),
   };
@@ -512,8 +512,8 @@ describe('ImportService', () => {
 
       expect(writeFile).toHaveBeenCalled();
       const writeCall = vi.mocked(writeFile).mock.calls[0];
-      expect(writeCall[0]).toMatch(/cover\.png$/);
-      expect(writeCall[1]).toBe(coverData);
+      expect(writeCall![0]).toMatch(/cover\.png$/);
+      expect(writeCall![1]).toBe(coverData);
 
       const enrichmentCall = getEnrichmentUpdate();
       expect(enrichmentCall!.coverUrl).toBe('/api/books/1/cover');
@@ -1074,7 +1074,7 @@ describe('ImportService', () => {
 
       // Without callbacks, copyToLibrary should receive onProgress: undefined
       await service.importDownload(1);
-      const withoutCallbackArgs = vi.mocked(copyToLibrary).mock.calls[0][0];
+      const withoutCallbackArgs = vi.mocked(copyToLibrary).mock.calls[0]![0];
       expect(withoutCallbackArgs.onProgress).toBeUndefined();
 
       // With emitProgress, copyToLibrary should receive a function
@@ -1085,7 +1085,7 @@ describe('ImportService', () => {
 
       const emitProgress = vi.fn();
       await service.importDownload(1, { emitProgress });
-      const withCallbackArgs = vi.mocked(copyToLibrary).mock.calls[0][0];
+      const withCallbackArgs = vi.mocked(copyToLibrary).mock.calls[0]![0];
       expect(typeof withCallbackArgs.onProgress).toBe('function');
     });
   });
@@ -1156,13 +1156,13 @@ describe('ImportService', () => {
       const result = await serviceWithMappings.importDownload(1);
 
       // stat should receive the mapped path, not the original /downloads/ path
-      const statPath = statMock.mock.calls[0][0] as string;
+      const statPath = statMock.mock.calls[0]![0] as string;
       expect(statPath).toMatch(/^C:[/\\]library[/\\]/);
       expect(statPath).not.toMatch(/^\/downloads\//);
 
       // cp should also receive the mapped source path
       const cpMock = vi.mocked(cp);
-      const cpSource = cpMock.mock.calls[0][0] as string;
+      const cpSource = cpMock.mock.calls[0]![0] as string;
       expect(cpSource).toMatch(/^C:[/\\]library[/\\]/);
 
       expect(result.downloadId).toBe(1);

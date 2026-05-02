@@ -75,8 +75,8 @@ describe('groupBooksBySeries', () => {
 
       const { series, standalone } = groupBooksBySeries(books);
       expect(series).toHaveLength(1);
-      expect(series[0].name).toBe('Mistborn');
-      expect(series[0].books).toHaveLength(2);
+      expect(series[0]!.name).toBe('Mistborn');
+      expect(series[0]!.books).toHaveLength(2);
       expect(standalone).toHaveLength(1);
     });
 
@@ -88,7 +88,7 @@ describe('groupBooksBySeries', () => {
       ];
 
       const { series } = groupBooksBySeries(books);
-      expect(series[0].books.map((b) => b.title)).toEqual(['First', 'Second', 'Third']);
+      expect(series[0]!.books.map((b) => b.title)).toEqual(['First', 'Second', 'Third']);
     });
 
     it('returns empty series and standalone for empty input', () => {

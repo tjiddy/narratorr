@@ -408,9 +408,9 @@ describe('Job lifecycle E2E', () => {
     await monitorDownloads(e2e.db, e2e.services.downloadClient, e2e.services.notifier, e2e.app.log);
 
     // Verify download is completed with timestamp
-    const [updated] = await e2e.db.select().from(downloads).where(eq(downloads.id, dl.id));
-    expect(updated.status).toBe('completed');
-    expect(updated.completedAt).toBeTruthy();
+    const [updated] = await e2e.db.select().from(downloads).where(eq(downloads.id, dl!.id));
+    expect(updated!.status).toBe('completed');
+    expect(updated!.completedAt).toBeTruthy();
 
     // Book stays 'downloading' — promotion to 'importing' now happens in processOneDownload
     // (fire-and-forget from monitor), not directly in the monitor. Without a QG orchestrator
@@ -441,6 +441,6 @@ describe('Job lifecycle E2E', () => {
 
     // Download should be imported too
     const [dl] = await e2e.db.select().from(downloads).where(eq(downloads.id, downloadId));
-    expect(dl.status).toBe('imported');
+    expect(dl!.status).toBe('imported');
   });
 });

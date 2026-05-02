@@ -58,8 +58,8 @@ describe('sortBooks', () => {
     ];
 
     const sorted = sortBooks(books, 'author', 'asc');
-    expect(sorted[0].authors[0]?.name).toBe('Abercrombie');
-    expect(sorted[1].authors[0]?.name).toBe('Sanderson');
+    expect(sorted[0]!.authors[0]?.name).toBe('Abercrombie');
+    expect(sorted[1]!.authors[0]?.name).toBe('Sanderson');
   });
 
   it('sorts by createdAt', () => {
@@ -87,8 +87,8 @@ describe('collapseSeries', () => {
 
     const collapsed = collapseSeries(books, 'createdAt', 'desc');
     expect(collapsed).toHaveLength(1);
-    expect(collapsed[0].id).toBe(1);
-    expect(collapsed[0].collapsedCount).toBe(2);
+    expect(collapsed[0]!.id).toBe(1);
+    expect(collapsed[0]!.collapsedCount).toBe(2);
   });
 
   it('passes standalone books (no seriesName) through unchanged', () => {
@@ -116,7 +116,7 @@ describe('collapseSeries', () => {
 
     const collapsed = collapseSeries(books, 'createdAt', 'desc');
     expect(collapsed).toHaveLength(1);
-    expect(collapsed[0].collapsedCount).toBe(4);
+    expect(collapsed[0]!.collapsedCount).toBe(4);
   });
 
   it('falls back to first by current sort order when no book has seriesPosition', () => {
@@ -128,8 +128,8 @@ describe('collapseSeries', () => {
     // Sort by title asc — Alpha comes first
     const collapsed = collapseSeries(books, 'title', 'asc');
     expect(collapsed).toHaveLength(1);
-    expect(collapsed[0].title).toBe('Alpha');
-    expect(collapsed[0].collapsedCount).toBe(1);
+    expect(collapsed[0]!.title).toBe('Alpha');
+    expect(collapsed[0]!.collapsedCount).toBe(1);
   });
 
   it('only operates on input set — does not include books outside the input', () => {
@@ -141,8 +141,8 @@ describe('collapseSeries', () => {
 
     const collapsed = collapseSeries(filteredBooks, 'createdAt', 'desc');
     expect(collapsed).toHaveLength(1);
-    expect(collapsed[0].id).toBe(2); // lowest position in filtered set
-    expect(collapsed[0].collapsedCount).toBe(1); // only 1 other book in filtered set
+    expect(collapsed[0]!.id).toBe(2); // lowest position in filtered set
+    expect(collapsed[0]!.collapsedCount).toBe(1); // only 1 other book in filtered set
   });
 
   it('handles multiple series correctly', () => {
@@ -709,8 +709,8 @@ describe('collapseSeries — nullable field re-sort (#365)', () => {
 
     const collapsed = collapseSeries(books, 'narrator', 'asc');
     // Alice (non-null) sorts before null-narrator standalone
-    expect(collapsed[0].title).toBe('Book A');
-    expect(collapsed[1].title).toBe('Book C');
+    expect(collapsed[0]!.title).toBe('Book A');
+    expect(collapsed[1]!.title).toBe('Book C');
   });
 });
 
@@ -726,6 +726,6 @@ describe('collapseSeries — descending nullable fallback (#287)', () => {
     // Should pick id=2 (Alice) as representative, not id=1 (null narrator)
     const collapsed = collapseSeries(books, 'narrator', 'desc');
     expect(collapsed).toHaveLength(1);
-    expect(collapsed[0].id).toBe(2);
+    expect(collapsed[0]!.id).toBe(2);
   });
 });

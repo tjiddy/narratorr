@@ -47,7 +47,7 @@ describe('fetchWithProxyAgent — dispatcher-routing regression (F1)', () => {
     });
 
     expect(mockHelper).toHaveBeenCalledOnce();
-    const init = mockHelper.mock.calls[0][1] as { dispatcher?: unknown };
+    const init = mockHelper.mock.calls[0]![1] as { dispatcher?: unknown };
     expect(init.dispatcher).toBeDefined();
   });
 
@@ -59,7 +59,7 @@ describe('fetchWithProxyAgent — dispatcher-routing regression (F1)', () => {
     await fetchWithProxyAgent('https://example.com');
 
     expect(mockHelper).toHaveBeenCalledOnce();
-    const init = mockHelper.mock.calls[0][1] as { dispatcher?: unknown };
+    const init = mockHelper.mock.calls[0]![1] as { dispatcher?: unknown };
     expect(init.dispatcher).toBeUndefined();
   });
 });

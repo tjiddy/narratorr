@@ -163,7 +163,7 @@ describe('blacklistAndRetrySearch', () => {
       const req = makeRequest();
       await blacklistAndRetrySearch(req);
 
-      const callArg = (req.blacklistService!.create as ReturnType<typeof vi.fn>).mock.calls[0][0];
+      const callArg = (req.blacklistService!.create as ReturnType<typeof vi.fn>).mock.calls[0]![0];
       expect(callArg).not.toHaveProperty('blacklistType');
     });
   });

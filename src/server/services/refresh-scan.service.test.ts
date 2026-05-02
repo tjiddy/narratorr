@@ -218,7 +218,7 @@ describe('refreshScanBook', () => {
   it('does not update narrator when tagNarrator is absent from scan result', async () => {
     vi.mocked(scanAudioDirectory).mockResolvedValue(makeScanResult()); // no tagNarrator
     await refreshScanBook(1, mockBookService, mockSettingsService, log);
-    const updateArg = vi.mocked(mockBookService.update).mock.calls[0][1];
+    const updateArg = vi.mocked(mockBookService.update).mock.calls[0]![1];
     expect(updateArg).not.toHaveProperty('narrators');
   });
 
@@ -239,7 +239,7 @@ describe('refreshScanBook', () => {
   // Preserved fields
   it('does not include title, author, series, description, coverUrl, genres in DB update', async () => {
     await refreshScanBook(1, mockBookService, mockSettingsService, log);
-    const updateArg = vi.mocked(mockBookService.update).mock.calls[0][1];
+    const updateArg = vi.mocked(mockBookService.update).mock.calls[0]![1];
     expect(updateArg).not.toHaveProperty('title');
     expect(updateArg).not.toHaveProperty('description');
     expect(updateArg).not.toHaveProperty('coverUrl');
@@ -340,7 +340,7 @@ describe('refreshScanBook', () => {
   // Diagnostic callback wiring — onWarn → log.warn(payload, msg); onDebug → log.debug(payload, msg)
   it('forwards onWarn/onDebug callbacks to the injected logger', async () => {
     await refreshScanBook(1, mockBookService, mockSettingsService, log);
-    const options = vi.mocked(scanAudioDirectory).mock.calls[0][1]!;
+    const options = vi.mocked(scanAudioDirectory).mock.calls[0]![1]!;
     expect(options.onWarn).toEqual(expect.any(Function));
     expect(options.onDebug).toEqual(expect.any(Function));
 

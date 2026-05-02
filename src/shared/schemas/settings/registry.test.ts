@@ -738,6 +738,7 @@ describe('settingsRegistry', () => {
       expect(result.success).toBe(true);
       if (result.success) {
         const general = (result.data as Record<string, Record<string, unknown>>).general;
+        // PHASE 1 SKIPPED — needs human review
         expect(Object.keys(general)).toHaveLength(0);
       }
     });

@@ -182,13 +182,13 @@ describe('applyClientFilters', () => {
   it('filters by series', () => {
     const result = applyClientFilters(books, { ...defaultFilters, seriesFilter: 'Series X' });
     expect(result).toHaveLength(1);
-    expect(result[0].seriesName).toBe('Series X');
+    expect(result[0]!.seriesName).toBe('Series X');
   });
 
   it('filters by narrator', () => {
     const result = applyClientFilters(books, { ...defaultFilters, narratorFilter: 'Michael Kramer' });
     expect(result).toHaveLength(1);
-    expect(result[0].id).toBe(1);
+    expect(result[0]!.id).toBe(1);
   });
 
   it('collapse series groups books', () => {
@@ -216,7 +216,7 @@ describe('applyClientFilters — many-to-many author/narrator (#71)', () => {
       authorFilter: 'Author B', seriesFilter: '', narratorFilter: '', collapseSeriesEnabled: false, sortField: 'createdAt' as const, sortDirection: 'desc' as const,
     });
     expect(result).toHaveLength(1);
-    expect(result[0].id).toBe(10);
+    expect(result[0]!.id).toBe(10);
   });
 
   it('narrator filter matches when narrator is ANY of book.narrators (not just first)', () => {
@@ -232,7 +232,7 @@ describe('applyClientFilters — many-to-many author/narrator (#71)', () => {
       authorFilter: '', seriesFilter: '', narratorFilter: 'Kate Reading', collapseSeriesEnabled: false, sortField: 'createdAt' as const, sortDirection: 'desc' as const,
     });
     expect(result).toHaveLength(1);
-    expect(result[0].id).toBe(11);
+    expect(result[0]!.id).toBe(11);
   });
 
   it('author filter does not match book where no author matches', () => {

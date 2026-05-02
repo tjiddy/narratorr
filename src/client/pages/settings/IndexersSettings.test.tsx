@@ -103,7 +103,7 @@ describe('IndexersSettings', () => {
       expect(api.createIndexer).toHaveBeenCalled();
     });
     await waitFor(() => {
-      expect((api.createIndexer as Mock).mock.calls[0][0]).toMatchObject({
+      expect((api.createIndexer as Mock).mock.calls[0]![0]).toMatchObject({
         name: 'New Indexer',
         type: 'newznab',
         settings: expect.objectContaining({ apiUrl: 'https://example.com/api' }),
@@ -239,7 +239,7 @@ describe('IndexersSettings', () => {
     await waitForListLoad('My ABB');
 
     const testButtons = screen.getAllByText('Test').map((el) => el.closest('button')!);
-    await user.click(testButtons[0]);
+    await user.click(testButtons[0]!);
 
     await waitFor(() => {
       expect(api.testIndexer).toHaveBeenCalledWith(1);
@@ -264,7 +264,7 @@ describe('IndexersSettings', () => {
       await waitForListLoad('My ABB');
 
       const editButtons = screen.getAllByText('Edit').map((el) => el.closest('button')!);
-      await user.click(editButtons[0]);
+      await user.click(editButtons[0]!);
 
       expect(screen.getByTestId('modal-backdrop')).toBeInTheDocument();
       expect(screen.getByText('Edit Indexer')).toBeInTheDocument();

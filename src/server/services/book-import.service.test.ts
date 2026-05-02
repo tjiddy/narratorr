@@ -103,7 +103,7 @@ describe('BookImportService', () => {
 
       expect(result).toEqual({ jobId: 99 });
       expect(db.insert).toHaveBeenCalled();
-      const insertCall = db.insert.mock.results[0].value;
+      const insertCall = db.insert.mock.results[0]!.value;
       expect(insertCall.values).toHaveBeenCalledWith({
         bookId: 1,
         type: 'manual',
@@ -112,7 +112,7 @@ describe('BookImportService', () => {
         metadata: '{"path":"/a","mode":"copy"}',
       });
       expect(db.update).toHaveBeenCalled();
-      const updateCall = db.update.mock.results[0].value;
+      const updateCall = db.update.mock.results[0]!.value;
       expect(updateCall.set).toHaveBeenCalledWith(
         expect.objectContaining({ status: 'importing' }),
       );
@@ -152,7 +152,7 @@ describe('BookImportService', () => {
       });
 
       expect(result).toEqual({ jobId: 77 });
-      const insertCall = db.insert.mock.results[0].value;
+      const insertCall = db.insert.mock.results[0]!.value;
       expect(insertCall.values).toHaveBeenCalledWith({
         bookId: 5,
         type: 'auto',
@@ -239,7 +239,7 @@ describe('BookImportService', () => {
       // own the select+insert pair so the active-job check and the insert
       // share a single atomic visibility window.
       expect(db.transaction).toHaveBeenCalledTimes(1);
-      const txCallback = db.transaction.mock.calls[0][0] as (tx: typeof db) => Promise<unknown>;
+      const txCallback = db.transaction.mock.calls[0]![0] as (tx: typeof db) => Promise<unknown>;
       expect(typeof txCallback).toBe('function');
 
       // Verify the callback semantics: invoking it with a fresh tx-shaped mock
@@ -326,7 +326,7 @@ describe('BookImportService', () => {
       const rows = await service.listImportJobs();
 
       expect(rows).toHaveLength(1);
-      expect(rows[0].book).toEqual({
+      expect(rows[0]!.book).toEqual({
         title: 'My Book',
         coverUrl: '/c.jpg',
         primaryAuthorName: 'Sanderson',
@@ -341,7 +341,7 @@ describe('BookImportService', () => {
 
       const rows = await service.listImportJobs();
 
-      expect(rows[0].phaseHistory).toEqual(history);
+      expect(rows[0]!.phaseHistory).toEqual(history);
     });
 
     it('returns empty phaseHistory when column is null', async () => {
@@ -349,7 +349,7 @@ describe('BookImportService', () => {
 
       const rows = await service.listImportJobs();
 
-      expect(rows[0].phaseHistory).toEqual([]);
+      expect(rows[0]!.phaseHistory).toEqual([]);
     });
 
     it('falls back to empty phaseHistory when JSON is unparseable (does not 500)', async () => {
@@ -359,7 +359,7 @@ describe('BookImportService', () => {
 
       const rows = await service.listImportJobs();
 
-      expect(rows[0].phaseHistory).toEqual([]);
+      expect(rows[0]!.phaseHistory).toEqual([]);
     });
 
     it('falls back to empty phaseHistory when shape is wrong (does not 500)', async () => {
@@ -369,7 +369,7 @@ describe('BookImportService', () => {
 
       const rows = await service.listImportJobs();
 
-      expect(rows[0].phaseHistory).toEqual([]);
+      expect(rows[0]!.phaseHistory).toEqual([]);
     });
 
     it('falls back to "Unknown" / null when book row is null (orphan job)', async () => {
@@ -379,7 +379,7 @@ describe('BookImportService', () => {
 
       const rows = await service.listImportJobs();
 
-      expect(rows[0].book).toEqual({
+      expect(rows[0]!.book).toEqual({
         title: 'Unknown',
         coverUrl: null,
         primaryAuthorName: null,

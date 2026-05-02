@@ -60,11 +60,11 @@ describe('NewznabIndexer', () => {
       const { results } = await indexer.search('Brandon Sanderson');
 
       expect(results).toHaveLength(3);
-      expect(results[0].title).toBe(
+      expect(results[0]!.title).toBe(
         'The Way of Kings - Brandon Sanderson (Unabridged)',
       );
-      expect(results[0].protocol).toBe('usenet');
-      expect(results[0].indexer).toBe('indexer.test');
+      expect(results[0]!.protocol).toBe('usenet');
+      expect(results[0]!.indexer).toBe('indexer.test');
     });
 
     it('extracts download URL from enclosure', async () => {
@@ -78,7 +78,7 @@ describe('NewznabIndexer', () => {
 
       const { results } = await indexer.search('Brandon Sanderson');
 
-      expect(results[0].downloadUrl).toBe(
+      expect(results[0]!.downloadUrl).toBe(
         'https://indexer.test/getnzb/abc123.nzb?i=1&r=testapikey',
       );
     });
@@ -94,8 +94,8 @@ describe('NewznabIndexer', () => {
 
       const { results } = await indexer.search('Brandon Sanderson');
 
-      expect(results[0].size).toBe(1073741824); // 1 GB
-      expect(results[1].size).toBe(2147483648); // 2 GB
+      expect(results[0]!.size).toBe(1073741824); // 1 GB
+      expect(results[1]!.size).toBe(2147483648); // 2 GB
     });
 
     it('extracts grabs from newznab:attr', async () => {
@@ -109,8 +109,8 @@ describe('NewznabIndexer', () => {
 
       const { results } = await indexer.search('Brandon Sanderson');
 
-      expect(results[0].grabs).toBe(42);
-      expect(results[1].grabs).toBe(18);
+      expect(results[0]!.grabs).toBe(42);
+      expect(results[1]!.grabs).toBe(18);
     });
 
     it('extracts details URL from guid', async () => {
@@ -124,7 +124,7 @@ describe('NewznabIndexer', () => {
 
       const { results } = await indexer.search('Brandon Sanderson');
 
-      expect(results[0].detailsUrl).toBe('https://indexer.test/details/abc123');
+      expect(results[0]!.detailsUrl).toBe('https://indexer.test/details/abc123');
     });
 
     it('extracts guid from <guid> element', async () => {
@@ -138,9 +138,9 @@ describe('NewznabIndexer', () => {
 
       const { results } = await indexer.search('Brandon Sanderson');
 
-      expect(results[0].guid).toBe('https://indexer.test/details/abc123');
-      expect(results[1].guid).toBe('https://indexer.test/details/def456');
-      expect(results[2].guid).toBe('https://indexer.test/details/ghi789');
+      expect(results[0]!.guid).toBe('https://indexer.test/details/abc123');
+      expect(results[1]!.guid).toBe('https://indexer.test/details/def456');
+      expect(results[2]!.guid).toBe('https://indexer.test/details/ghi789');
     });
 
     it('returns undefined guid when <guid> element is missing', async () => {
@@ -162,7 +162,7 @@ describe('NewznabIndexer', () => {
 
       const { results } = await indexer.search('test');
       expect(results).toHaveLength(1);
-      expect(results[0].guid).toBeUndefined();
+      expect(results[0]!.guid).toBeUndefined();
     });
 
     it('respects limit option', async () => {
@@ -517,7 +517,7 @@ describe('NewznabIndexer', () => {
       const { results } = await indexer.search('test');
       expect(results).toHaveLength(1);
       // Number('notanumber') = NaN, size || undefined = undefined
-      expect(results[0].size).toBeUndefined();
+      expect(results[0]!.size).toBeUndefined();
     });
 
     it('handles NaN grabs from invalid attr value', async () => {
@@ -540,7 +540,7 @@ describe('NewznabIndexer', () => {
 
       const { results } = await indexer.search('test');
       expect(results).toHaveLength(1);
-      expect(results[0].grabs).toBeUndefined();
+      expect(results[0]!.grabs).toBeUndefined();
     });
 
     it('skips items with empty title', async () => {
@@ -566,7 +566,7 @@ describe('NewznabIndexer', () => {
 
       const { results } = await indexer.search('test');
       expect(results).toHaveLength(1);
-      expect(results[0].title).toBe('Valid Title');
+      expect(results[0]!.title).toBe('Valid Title');
     });
 
     it('falls back to enclosure length when no size attr', async () => {
@@ -587,7 +587,7 @@ describe('NewznabIndexer', () => {
       );
 
       const { results } = await indexer.search('test');
-      expect(results[0].size).toBe(5000000);
+      expect(results[0]!.size).toBe(5000000);
     });
 
     it('uses usenet protocol for all results', async () => {
@@ -608,7 +608,7 @@ describe('NewznabIndexer', () => {
       );
 
       const { results } = await indexer.search('test');
-      expect(results[0].protocol).toBe('usenet');
+      expect(results[0]!.protocol).toBe('usenet');
     });
 
     it('strips trailing slashes from apiUrl', () => {
@@ -643,11 +643,11 @@ describe('NewznabIndexer', () => {
       const { results } = await proxiedIndexer.search('Brandon Sanderson');
 
       expect(results).toHaveLength(3);
-      expect(results[0].title).toBe('The Way of Kings - Brandon Sanderson (Unabridged)');
+      expect(results[0]!.title).toBe('The Way of Kings - Brandon Sanderson (Unabridged)');
       // Verify fetch was called with a dispatcher (proxy agent)
       expect(fetchSpy).toHaveBeenCalledOnce();
       const callArgs = fetchSpy.mock.calls[0];
-      expect((callArgs[1] as Record<string, unknown>).dispatcher).toBeDefined();
+      expect((callArgs![1] as Record<string, unknown>).dispatcher).toBeDefined();
 
       fetchSpy.mockRestore();
     });
@@ -756,7 +756,7 @@ describe('NewznabIndexer', () => {
       ));
 
       const { results } = await indexer.search('test');
-      expect(results[0].language).toBe('english');
+      expect(results[0]!.language).toBe('english');
     });
 
     it('extracts newsgroup from newznab:attr into SearchResult.newsgroup', async () => {
@@ -773,7 +773,7 @@ describe('NewznabIndexer', () => {
       ));
 
       const { results } = await indexer.search('test');
-      expect(results[0].newsgroup).toBe('alt.binaries.audiobooks');
+      expect(results[0]!.newsgroup).toBe('alt.binaries.audiobooks');
     });
 
     it('normalizes language code to lowercase full name (e.g. ENG → english)', async () => {
@@ -790,7 +790,7 @@ describe('NewznabIndexer', () => {
       ));
 
       const { results } = await indexer.search('test');
-      expect(results[0].language).toBe('german');
+      expect(results[0]!.language).toBe('german');
     });
 
     it('returns undefined language when language attr is missing', async () => {
@@ -799,7 +799,7 @@ describe('NewznabIndexer', () => {
       ));
 
       const { results } = await indexer.search('test');
-      expect(results[0].language).toBeUndefined();
+      expect(results[0]!.language).toBeUndefined();
     });
 
     it('returns undefined newsgroup when group attr is missing', async () => {
@@ -808,7 +808,7 @@ describe('NewznabIndexer', () => {
       ));
 
       const { results } = await indexer.search('test');
-      expect(results[0].newsgroup).toBeUndefined();
+      expect(results[0]!.newsgroup).toBeUndefined();
     });
 
     it('handles non-numeric grabs value gracefully', async () => {
@@ -825,7 +825,7 @@ describe('NewznabIndexer', () => {
       ));
 
       const { results } = await indexer.search('test');
-      expect(results[0].grabs).toBeUndefined();
+      expect(results[0]!.grabs).toBeUndefined();
     });
 
     it('handles grabs value of "0" as 0 not undefined', async () => {
@@ -842,7 +842,7 @@ describe('NewznabIndexer', () => {
       ));
 
       const { results } = await indexer.search('test');
-      expect(results[0].grabs).toBe(0);
+      expect(results[0]!.grabs).toBe(0);
     });
   });
 });

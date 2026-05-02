@@ -23,7 +23,7 @@ describe('Download Client ADAPTER_FACTORIES', () => {
 
     it('each factory returns an object satisfying the DownloadClientAdapter interface', () => {
       for (const type of types) {
-        const adapter = ADAPTER_FACTORIES[type](configs[type]);
+        const adapter = ADAPTER_FACTORIES[type](configs[type]!);
         expect(adapter).toHaveProperty('type');
         expect(adapter).toHaveProperty('name');
         expect(adapter).toHaveProperty('protocol');
@@ -39,37 +39,37 @@ describe('Download Client ADAPTER_FACTORIES', () => {
 
   describe('factory config extraction', () => {
     it('qbittorrent factory extracts host, port, username, password, useSsl', () => {
-      const adapter = ADAPTER_FACTORIES.qbittorrent(configs.qbittorrent);
+      const adapter = ADAPTER_FACTORIES.qbittorrent(configs.qbittorrent!);
       expect(adapter.type).toBe('qbittorrent');
       expect(adapter.protocol).toBe('torrent');
     });
 
     it('sabnzbd factory extracts host, port, apiKey, useSsl', () => {
-      const adapter = ADAPTER_FACTORIES.sabnzbd(configs.sabnzbd);
+      const adapter = ADAPTER_FACTORIES.sabnzbd(configs.sabnzbd!);
       expect(adapter.type).toBe('sabnzbd');
       expect(adapter.protocol).toBe('usenet');
     });
 
     it('nzbget factory extracts host, port, username, password, useSsl', () => {
-      const adapter = ADAPTER_FACTORIES.nzbget(configs.nzbget);
+      const adapter = ADAPTER_FACTORIES.nzbget(configs.nzbget!);
       expect(adapter.type).toBe('nzbget');
       expect(adapter.protocol).toBe('usenet');
     });
 
     it('transmission factory extracts host, port, username, password, useSsl', () => {
-      const adapter = ADAPTER_FACTORIES.transmission(configs.transmission);
+      const adapter = ADAPTER_FACTORIES.transmission(configs.transmission!);
       expect(adapter.type).toBe('transmission');
       expect(adapter.protocol).toBe('torrent');
     });
 
     it('deluge factory extracts host, port, password, useSsl', () => {
-      const adapter = ADAPTER_FACTORIES.deluge(configs.deluge);
+      const adapter = ADAPTER_FACTORIES.deluge(configs.deluge!);
       expect(adapter.type).toBe('deluge');
       expect(adapter.protocol).toBe('torrent');
     });
 
     it('blackhole factory extracts watchDir, protocol', () => {
-      const adapter = ADAPTER_FACTORIES.blackhole(configs.blackhole);
+      const adapter = ADAPTER_FACTORIES.blackhole(configs.blackhole!);
       expect(adapter.type).toBe('blackhole');
     });
   });

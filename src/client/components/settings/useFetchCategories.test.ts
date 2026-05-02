@@ -153,7 +153,7 @@ describe('useFetchCategories', () => {
         await result.current.fetchCategories();
       });
 
-      const call = (downloadClientsApi.getClientCategoriesFromConfig as ReturnType<typeof vi.fn>).mock.calls[0][0];
+      const call = (downloadClientsApi.getClientCategoriesFromConfig as ReturnType<typeof vi.fn>).mock.calls[0]![0];
       expect(call).not.toHaveProperty('id');
     });
 

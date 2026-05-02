@@ -81,7 +81,7 @@ describe('AutoImportAdapter', () => {
       // setPhase should be called before importDownload
       const setPhaseOrder = setPhase.mock.invocationCallOrder[0];
       const importOrder = mockOrchestrator.importDownload.mock.invocationCallOrder[0];
-      expect(setPhaseOrder).toBeLessThan(importOrder);
+      expect(setPhaseOrder).toBeLessThan(importOrder!);
     });
 
     it('throws when bookId is null on the job', async () => {

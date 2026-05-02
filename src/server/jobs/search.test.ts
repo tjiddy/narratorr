@@ -135,8 +135,8 @@ describe('runSearchJob', () => {
 
     expect(result.searched).toBe(2);
     expect(indexer.searchAll).toHaveBeenCalledTimes(2);
-    expect(vi.mocked(indexer.searchAll).mock.calls[0][0]).toBe('Book One Author A');
-    expect(vi.mocked(indexer.searchAll).mock.calls[1][0]).toBe('Book Two Author B');
+    expect(vi.mocked(indexer.searchAll).mock.calls[0]![0]).toBe('Book One Author A');
+    expect(vi.mocked(indexer.searchAll).mock.calls[1]![0]).toBe('Book Two Author B');
   });
 
   it('grabs best result when search finds matches', async () => {
@@ -226,7 +226,7 @@ describe('runSearchJob', () => {
 
     expect(result.searched).toBe(1);
     // Query should just be the title without author
-    expect(vi.mocked(indexer.searchAll).mock.calls[0][0]).toBe('Anonymous Work');
+    expect(vi.mocked(indexer.searchAll).mock.calls[0]![0]).toBe('Anonymous Work');
   });
 
   it('skips grab when book already has active download', async () => {
@@ -916,8 +916,8 @@ describe('searchAllWanted', () => {
 
     expect(result.searched).toBe(2);
     expect(indexer.searchAll).toHaveBeenCalledTimes(2);
-    expect(vi.mocked(indexer.searchAll).mock.calls[0][0]).toBe('Book One Author A');
-    expect(vi.mocked(indexer.searchAll).mock.calls[1][0]).toBe('Book Two Author B');
+    expect(vi.mocked(indexer.searchAll).mock.calls[0]![0]).toBe('Book One Author A');
+    expect(vi.mocked(indexer.searchAll).mock.calls[1]![0]).toBe('Book Two Author B');
   });
 
   it('grabs the best ranked result per book', async () => {
@@ -1112,7 +1112,7 @@ describe('searchAllWanted', () => {
 
     await searchAllWanted(settings, bookList, indexer, download, inject<FastifyBaseLogger>(log), createMockBlacklistService());
 
-    expect(vi.mocked(indexer.searchAll).mock.calls[0][0]).toBe('Anonymous Work');
+    expect(vi.mocked(indexer.searchAll).mock.calls[0]![0]).toBe('Anonymous Work');
   });
 
   it('mixed success/failure: accurate partial counts', async () => {

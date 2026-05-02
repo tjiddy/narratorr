@@ -174,7 +174,7 @@ describe('DownloadClientCard — create mode', () => {
     await user.click(screen.getByText('Add Client'));
 
     expect(onSubmit).toHaveBeenCalled();
-    expect(onSubmit.mock.calls[0][0]).toMatchObject({
+    expect(onSubmit.mock.calls[0]![0]).toMatchObject({
       name: 'Test Client',
       type: 'qbittorrent',
       settings: expect.objectContaining({ host: 'myhost' }),

@@ -26,8 +26,8 @@ describe('BookListService', () => {
 
       const result = await service.getAll();
       expect(result.data).toHaveLength(1);
-      expect(result.data[0].title).toBe('The Way of Kings');
-      expect(result.data[0].authors[0]?.name).toBe('Brandon Sanderson');
+      expect(result.data[0]!.title).toBe('The Way of Kings');
+      expect(result.data[0]!.authors[0]?.name).toBe('Brandon Sanderson');
       expect(result.total).toBe(1);
     });
 
@@ -48,7 +48,7 @@ describe('BookListService', () => {
         .mockReturnValueOnce(mockDbChain([]));
 
       const result = await service.getAll();
-      expect(result.data[0].authors).toEqual([]);
+      expect(result.data[0]!.authors).toEqual([]);
     });
 
     it('populates importListName via left join', async () => {
@@ -59,7 +59,7 @@ describe('BookListService', () => {
         .mockReturnValueOnce(mockDbChain([]));
 
       const result = await service.getAll();
-      expect(result.data[0].importListName).toBe('My Import List');
+      expect(result.data[0]!.importListName).toBe('My Import List');
     });
 
     it('applies limit and offset when provided', async () => {
@@ -111,7 +111,7 @@ describe('BookListService', () => {
       await service.getAll(undefined, undefined, { slim: true });
 
       // Second db.select call is the data query (first is count)
-      const selectArg = db.select.mock.calls[1][0];
+      const selectArg = db.select.mock.calls[1]![0];
       const bookColumns = selectArg.book;
       expect(bookColumns).not.toHaveProperty('description');
       expect(bookColumns).not.toHaveProperty('genres');
@@ -130,7 +130,7 @@ describe('BookListService', () => {
 
       await service.getAll(undefined, undefined, { slim: false });
 
-      const selectArg = db.select.mock.calls[1][0];
+      const selectArg = db.select.mock.calls[1]![0];
       const bookColumns = selectArg.book;
       expect(bookColumns).toHaveProperty('description');
       expect(bookColumns).toHaveProperty('genres');
@@ -301,7 +301,7 @@ describe('BookListService', () => {
 
         await service.getAll(undefined, undefined, { sortField, sortDirection: 'asc' });
         const args = (dataChain.orderBy as Mock).mock.calls[0];
-        expect(args.length).toBeGreaterThanOrEqual(2);
+        expect(args!.length).toBeGreaterThanOrEqual(2);
       }
     });
   });
@@ -340,11 +340,11 @@ describe('BookListService', () => {
       const args = (dataChain.orderBy as Mock).mock.calls[0];
       expect(args).toHaveLength(5);
       // Clause 3 (index 2): position null-flag is conditional on seriesName
-      expect(clauseContains(args[2], 'series_name')).toBe(true);
+      expect(clauseContains(args![2], 'series_name')).toBe(true);
       // Clause 4 (index 3): seriesPosition is always ascending
-      expect(getClauseDirection(args[3])).toBe('asc');
+      expect(getClauseDirection(args![3])).toBe('asc');
       // Clause 5 (index 4): id tiebreaker matches sort direction (asc)
-      expect(getClauseDirection(args[4])).toBe('asc');
+      expect(getClauseDirection(args![4])).toBe('asc');
     });
 
     it('series sort desc produces 5 clauses with position always ascending and id direction-matched', async () => {
@@ -357,11 +357,11 @@ describe('BookListService', () => {
       const args = (dataChain.orderBy as Mock).mock.calls[0];
       expect(args).toHaveLength(5);
       // Clause 3 (index 2): position null-flag is conditional on seriesName
-      expect(clauseContains(args[2], 'series_name')).toBe(true);
+      expect(clauseContains(args![2], 'series_name')).toBe(true);
       // Clause 4 (index 3): seriesPosition is always ascending even for desc sort
-      expect(getClauseDirection(args[3])).toBe('asc');
+      expect(getClauseDirection(args![3])).toBe('asc');
       // Clause 5 (index 4): id tiebreaker matches sort direction (desc)
-      expect(getClauseDirection(args[4])).toBe('desc');
+      expect(getClauseDirection(args![4])).toBe('desc');
     });
   });
 
@@ -384,7 +384,7 @@ describe('BookListService', () => {
       ]));
 
       const result = await service.getIdentifiers();
-      expect(result[0].authorName).toBeNull();
+      expect(result[0]!.authorName).toBeNull();
     });
 
     it('returns null asin for books without ASIN', async () => {
@@ -393,7 +393,7 @@ describe('BookListService', () => {
       ]));
 
       const result = await service.getIdentifiers();
-      expect(result[0].asin).toBeNull();
+      expect(result[0]!.asin).toBeNull();
     });
 
     it('returns empty array for empty library', async () => {
@@ -546,7 +546,7 @@ describe('BookListService — many-to-many authors/narrators stats and sorting (
       await service.getAll(undefined, undefined, { sortField: 'narrator', sortDirection: 'asc' });
       expect(dataChain.orderBy).toHaveBeenCalledTimes(1);
       const args = (dataChain.orderBy as Mock).mock.calls[0];
-      expect(args.length).toBeGreaterThanOrEqual(3);  // null-sort + name-sort + id-sort
+      expect(args!.length).toBeGreaterThanOrEqual(3);  // null-sort + name-sort + id-sort
     });
 
     it('sort by author uses position=0 entry (first author by metadata order)', async () => {
@@ -560,7 +560,7 @@ describe('BookListService — many-to-many authors/narrators stats and sorting (
       await service.getAll(undefined, undefined, { sortField: 'author', sortDirection: 'asc' });
       expect(dataChain.orderBy).toHaveBeenCalledTimes(1);
       const args = (dataChain.orderBy as Mock).mock.calls[0];
-      expect(args.length).toBeGreaterThanOrEqual(3);  // null-sort + name-sort + id-sort
+      expect(args!.length).toBeGreaterThanOrEqual(3);  // null-sort + name-sort + id-sort
     });
   });
 });
@@ -596,7 +596,7 @@ describe('getIdentifiers() — authorSlug field (#133)', () => {
 
     const result = await service.getIdentifiers();
 
-    expect(result[0].authorSlug).toBeNull();
+    expect(result[0]!.authorSlug).toBeNull();
   });
 
   it('author slug matches slugify contract: J.K. Rowling → jk-rowling', async () => {
@@ -606,6 +606,6 @@ describe('getIdentifiers() — authorSlug field (#133)', () => {
 
     const result = await service.getIdentifiers();
 
-    expect(result[0].authorSlug).toBe('jk-rowling');
+    expect(result[0]!.authorSlug).toBe('jk-rowling');
   });
 });

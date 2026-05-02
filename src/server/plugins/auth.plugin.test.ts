@@ -182,7 +182,7 @@ describe('auth middleware', () => {
       // validateApiKey should NOT have been called with an array
       const calls = (authService.validateApiKey as ReturnType<typeof vi.fn>).mock.calls;
       if (calls.length > 0) {
-        expect(typeof calls[0][0]).toBe('string');
+        expect(typeof calls[0]![0]).toBe('string');
       }
     });
 

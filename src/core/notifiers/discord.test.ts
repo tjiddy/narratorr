@@ -35,11 +35,11 @@ describe('DiscordNotifier', () => {
     expect(result.success).toBe(true);
     const body = capturedBody as { embeds: { title: string; color: number; fields: { name: string; value: string }[]; thumbnail?: { url: string } }[] };
     expect(body.embeds).toHaveLength(1);
-    expect(body.embeds[0].title).toBe('Release Grabbed');
-    expect(body.embeds[0].color).toBe(0x3498db);
-    expect(body.embeds[0].thumbnail).toEqual({ url: 'https://img.example.com/dune.jpg' });
+    expect(body.embeds[0]!.title).toBe('Release Grabbed');
+    expect(body.embeds[0]!.color).toBe(0x3498db);
+    expect(body.embeds[0]!.thumbnail).toEqual({ url: 'https://img.example.com/dune.jpg' });
 
-    const fieldNames = body.embeds[0].fields.map((f) => f.name);
+    const fieldNames = body.embeds[0]!.fields.map((f) => f.name);
     expect(fieldNames).toContain('Book');
     expect(fieldNames).toContain('Author');
     expect(fieldNames).toContain('Indexer');
@@ -64,8 +64,8 @@ describe('DiscordNotifier', () => {
 
     expect(result.success).toBe(true);
     const body = capturedBody as { embeds: { title: string; fields: { name: string; value: string }[] }[] };
-    expect(body.embeds[0].title).toBe('Import Complete');
-    const fieldNames = body.embeds[0].fields.map((f) => f.name);
+    expect(body.embeds[0]!.title).toBe('Import Complete');
+    const fieldNames = body.embeds[0]!.fields.map((f) => f.name);
     expect(fieldNames).toContain('Library Path');
     expect(fieldNames).toContain('Files');
   });
@@ -89,9 +89,9 @@ describe('DiscordNotifier', () => {
 
     expect(result.success).toBe(true);
     const body = capturedBody as { embeds: { title: string; color: number; fields: { name: string; value: string }[] }[] };
-    expect(body.embeds[0].title).toBe('Failure');
-    expect(body.embeds[0].color).toBe(0xe74c3c);
-    const errorField = body.embeds[0].fields.find((f) => f.name === 'Error');
+    expect(body.embeds[0]!.title).toBe('Failure');
+    expect(body.embeds[0]!.color).toBe(0xe74c3c);
+    const errorField = body.embeds[0]!.fields.find((f) => f.name === 'Error');
     expect(errorField?.value).toBe('No audio files found');
   });
 
@@ -112,7 +112,7 @@ describe('DiscordNotifier', () => {
     });
 
     const body = capturedBody as { embeds: { thumbnail?: unknown }[] };
-    expect(body.embeds[0].thumbnail).toBeUndefined();
+    expect(body.embeds[0]!.thumbnail).toBeUndefined();
   });
 
   it('returns failure on Discord error', async () => {
@@ -175,10 +175,10 @@ describe('DiscordNotifier', () => {
 
     expect(result.success).toBe(true);
     const body = capturedBody as { embeds: { title: string; color: number; fields: { name: string; value: string }[] }[] };
-    expect(body.embeds[0].title).toBe('Quality Upgrade');
-    expect(body.embeds[0].color).toBe(0x9b59b6);
-    const prevField = body.embeds[0].fields.find((f) => f.name === 'Previous');
-    const newField = body.embeds[0].fields.find((f) => f.name === 'New');
+    expect(body.embeds[0]!.title).toBe('Quality Upgrade');
+    expect(body.embeds[0]!.color).toBe(0x9b59b6);
+    const prevField = body.embeds[0]!.fields.find((f) => f.name === 'Previous');
+    const newField = body.embeds[0]!.fields.find((f) => f.name === 'New');
     expect(prevField?.value).toContain('32.5 MB/hr');
     expect(prevField?.value).toContain('MP3');
     expect(newField?.value).toContain('58.1 MB/hr');
@@ -203,11 +203,11 @@ describe('DiscordNotifier', () => {
 
     expect(result.success).toBe(true);
     const body = capturedBody as { embeds: { title: string; color: number; fields: { name: string; value: string }[] }[] };
-    expect(body.embeds[0].title).toBe('Health Issue');
-    expect(body.embeds[0].color).toBe(0xe67e22);
-    const checkField = body.embeds[0].fields.find((f) => f.name === 'Check');
-    const stateField = body.embeds[0].fields.find((f) => f.name === 'State');
-    const detailField = body.embeds[0].fields.find((f) => f.name === 'Detail');
+    expect(body.embeds[0]!.title).toBe('Health Issue');
+    expect(body.embeds[0]!.color).toBe(0xe67e22);
+    const checkField = body.embeds[0]!.fields.find((f) => f.name === 'Check');
+    const stateField = body.embeds[0]!.fields.find((f) => f.name === 'State');
+    const detailField = body.embeds[0]!.fields.find((f) => f.name === 'Detail');
     expect(checkField?.value).toBe('indexer:NZBGeek');
     expect(stateField?.value).toContain('healthy');
     expect(stateField?.value).toContain('error');
@@ -229,6 +229,6 @@ describe('DiscordNotifier', () => {
 
     expect(result.success).toBe(true);
     const body = capturedBody as { embeds: { title: string }[] };
-    expect(body.embeds[0].title).toBe('Release Grabbed');
+    expect(body.embeds[0]!.title).toBe('Release Grabbed');
   });
 });

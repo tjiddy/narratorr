@@ -90,7 +90,7 @@ describe('RemotePathMappingsSubsection', () => {
       expect(api.createRemotePathMapping).toHaveBeenCalled();
     });
     await waitFor(() => {
-      expect((api.createRemotePathMapping as Mock).mock.calls[0][0]).toMatchObject({
+      expect((api.createRemotePathMapping as Mock).mock.calls[0]![0]).toMatchObject({
         downloadClientId: 5,
         remotePath: '/downloads/complete/',
         localPath: 'C:\\downloads\\',
@@ -205,7 +205,7 @@ describe('RemotePathMappingsSubsection', () => {
     await user.click(within(dialog).getByRole('button', { name: 'Delete' }));
 
     await waitFor(() => {
-      expect((api.deleteRemotePathMapping as Mock).mock.calls[0][0]).toBe(1);
+      expect((api.deleteRemotePathMapping as Mock).mock.calls[0]![0]).toBe(1);
     });
     await waitFor(() => {
       expect(toast.success).toHaveBeenCalledWith('Path mapping removed');

@@ -78,7 +78,7 @@ describe('GET /api/events', () => {
     expect(onClose).toHaveBeenCalledWith('close', expect.any(Function));
 
     // Simulate close
-    const closeHandler = onClose.mock.calls[0][1] as () => void;
+    const closeHandler = onClose.mock.calls[0]![1] as () => void;
     closeHandler();
     expect(broadcaster.clientCount).toBe(0);
   });

@@ -12,7 +12,7 @@ describe('idParamSchema', () => {
     const result = idParamSchema.safeParse({ id: 'abc' });
     expect(result.success).toBe(false);
     if (!result.success) {
-      expect(result.error.issues[0].message).toBe('Invalid ID');
+      expect(result.error.issues[0]!.message).toBe('Invalid ID');
     }
   });
 
@@ -25,7 +25,7 @@ describe('idParamSchema', () => {
     const result = idParamSchema.safeParse({ id: '0' });
     expect(result.success).toBe(false);
     if (!result.success) {
-      expect(result.error.issues[0].message).toBe('Invalid ID');
+      expect(result.error.issues[0]!.message).toBe('Invalid ID');
     }
   });
 
@@ -33,7 +33,7 @@ describe('idParamSchema', () => {
     const result = idParamSchema.safeParse({ id: '-5' });
     expect(result.success).toBe(false);
     if (!result.success) {
-      expect(result.error.issues[0].message).toBe('Invalid ID');
+      expect(result.error.issues[0]!.message).toBe('Invalid ID');
     }
   });
 

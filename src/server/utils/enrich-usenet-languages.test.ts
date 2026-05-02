@@ -61,7 +61,7 @@ describe('enrichUsenetLanguages', () => {
 
       await enrichUsenetLanguages(results, logger);
 
-      expect(results[0].language).toBe('german');
+      expect(results[0]!.language).toBe('german');
       expect(mockFetchWithSsrfRedirect).not.toHaveBeenCalled();
     });
 
@@ -72,7 +72,7 @@ describe('enrichUsenetLanguages', () => {
 
       await enrichUsenetLanguages(results, logger);
 
-      expect(results[0].language).toBe('german');
+      expect(results[0]!.language).toBe('german');
     });
 
     it('falls through to NZB fetch for generic newsgroup (alt.binaries.audiobooks) and populates nzbName', async () => {
@@ -97,8 +97,8 @@ describe('enrichUsenetLanguages', () => {
         'http://nzb.test/1',
         expect.objectContaining({ dispatcher: mockDispatcher, timeoutMs: 5000 }),
       );
-      expect(results[0].nzbName).toBe('Stephen King-H?rbuch-Pack.part01.rar');
-      expect(results[0].language).toBe('german');
+      expect(results[0]!.nzbName).toBe('Stephen King-H?rbuch-Pack.part01.rar');
+      expect(results[0]!.language).toBe('german');
     });
 
     it('fetches NZB when newsgroup is absent and downloadUrl is present', async () => {
@@ -118,7 +118,7 @@ describe('enrichUsenetLanguages', () => {
 
       await enrichUsenetLanguages(results, logger);
 
-      expect(results[0].language).toBe('french');
+      expect(results[0]!.language).toBe('french');
       expect(mockFetchWithSsrfRedirect).toHaveBeenCalledTimes(1);
       expect(mockFetchWithSsrfRedirect).toHaveBeenCalledWith(
         'http://nzb.test/1',
@@ -145,7 +145,7 @@ describe('enrichUsenetLanguages', () => {
 
       await enrichUsenetLanguages(results, logger);
 
-      expect(results[0].language).toBe('german');
+      expect(results[0]!.language).toBe('german');
     });
 
     it('skips results that already have language set', async () => {
@@ -155,7 +155,7 @@ describe('enrichUsenetLanguages', () => {
 
       await enrichUsenetLanguages(results, logger);
 
-      expect(results[0].language).toBe('english');
+      expect(results[0]!.language).toBe('english');
       expect(mockFetchWithSsrfRedirect).not.toHaveBeenCalled();
     });
 
@@ -166,7 +166,7 @@ describe('enrichUsenetLanguages', () => {
 
       await enrichUsenetLanguages(results, logger);
 
-      expect(results[0].language).toBeUndefined();
+      expect(results[0]!.language).toBeUndefined();
       expect(mockFetchWithSsrfRedirect).not.toHaveBeenCalled();
     });
 
@@ -177,7 +177,7 @@ describe('enrichUsenetLanguages', () => {
 
       await enrichUsenetLanguages(results, logger);
 
-      expect(results[0].language).toBeUndefined();
+      expect(results[0]!.language).toBeUndefined();
       expect(mockFetchWithSsrfRedirect).not.toHaveBeenCalled();
     });
 
@@ -192,7 +192,7 @@ describe('enrichUsenetLanguages', () => {
 
       await enrichUsenetLanguages(results, logger);
 
-      expect(results[0].language).toBeUndefined();
+      expect(results[0]!.language).toBeUndefined();
       expect(logger.warn).toHaveBeenCalledWith(
         expect.objectContaining({ title: 'Test Book', status: 404 }),
         expect.any(String),
@@ -208,7 +208,7 @@ describe('enrichUsenetLanguages', () => {
 
       await enrichUsenetLanguages(results, logger);
 
-      expect(results[0].language).toBeUndefined();
+      expect(results[0]!.language).toBeUndefined();
       expect(logger.warn).toHaveBeenCalledWith(
         expect.objectContaining({
           title: 'Test Book',
@@ -229,7 +229,7 @@ describe('enrichUsenetLanguages', () => {
 
       await enrichUsenetLanguages(results, logger);
 
-      expect(results[0].language).toBeUndefined();
+      expect(results[0]!.language).toBeUndefined();
     });
 
     it('leaves language undefined for NZB with only generic groups', async () => {
@@ -249,7 +249,7 @@ describe('enrichUsenetLanguages', () => {
 
       await enrichUsenetLanguages(results, logger);
 
-      expect(results[0].language).toBeUndefined();
+      expect(results[0]!.language).toBeUndefined();
     });
 
     it('sets language to "german" for NZB with german.hoerbuecher group', async () => {
@@ -269,7 +269,7 @@ describe('enrichUsenetLanguages', () => {
 
       await enrichUsenetLanguages(results, logger);
 
-      expect(results[0].language).toBe('german');
+      expect(results[0]!.language).toBe('german');
     });
 
     it('normalizes detected language through normalizeLanguage()', async () => {
@@ -279,7 +279,7 @@ describe('enrichUsenetLanguages', () => {
 
       await enrichUsenetLanguages(results, logger);
 
-      expect(results[0].language).toBe('french');
+      expect(results[0]!.language).toBe('french');
     });
   });
 
@@ -353,8 +353,8 @@ describe('enrichUsenetLanguages', () => {
 
       await enrichUsenetLanguages(results, logger);
 
-      expect(results[0].language).toBeUndefined();
-      expect(results[1].language).toBe('german');
+      expect(results[0]!.language).toBeUndefined();
+      expect(results[1]!.language).toBe('german');
     });
 
     it('NZB parsing failure on one result does not affect other results', async () => {
@@ -375,8 +375,8 @@ describe('enrichUsenetLanguages', () => {
 
       await enrichUsenetLanguages(results, logger);
 
-      expect(results[0].language).toBeUndefined();
-      expect(results[1].language).toBe('german');
+      expect(results[0]!.language).toBeUndefined();
+      expect(results[1]!.language).toBe('german');
     });
   });
 
@@ -507,8 +507,8 @@ describe('enrichUsenetLanguages', () => {
       await enrichUsenetLanguages(results, logger);
 
       expect(mockFetchWithSsrfRedirect).not.toHaveBeenCalled();
-      expect(results[0].language).toBe('english');
-      expect(results[1].language).toBe('french');
+      expect(results[0]!.language).toBe('english');
+      expect(results[1]!.language).toBe('french');
     });
   });
 
@@ -536,7 +536,7 @@ describe('enrichUsenetLanguages', () => {
 
       await enrichUsenetLanguages(results, logger);
 
-      expect(results[0].nzbName).toBe('Stephen King-Pack.rar');
+      expect(results[0]!.nzbName).toBe('Stephen King-Pack.rar');
     });
 
     it('sets nzbName even when no language detected from it', async () => {
@@ -547,8 +547,8 @@ describe('enrichUsenetLanguages', () => {
 
       await enrichUsenetLanguages(results, logger);
 
-      expect(results[0].nzbName).toBe('Stephen King - The Stand MP3');
-      expect(results[0].language).toBeUndefined();
+      expect(results[0]!.nzbName).toBe('Stephen King - The Stand MP3');
+      expect(results[0]!.language).toBeUndefined();
     });
 
     it('does not set nzbName on torrent results', async () => {
@@ -556,7 +556,7 @@ describe('enrichUsenetLanguages', () => {
 
       await enrichUsenetLanguages(results, logger);
 
-      expect(results[0].nzbName).toBeUndefined();
+      expect(results[0]!.nzbName).toBeUndefined();
       expect(mockFetchWithSsrfRedirect).not.toHaveBeenCalled();
     });
 
@@ -568,8 +568,8 @@ describe('enrichUsenetLanguages', () => {
 
       await enrichUsenetLanguages(results, logger);
 
-      expect(results[0].language).toBe('german');
-      expect(results[0].nzbName).toBe('Stephen King-Hörbuch-Pack.rar');
+      expect(results[0]!.language).toBe('german');
+      expect(results[0]!.nzbName).toBe('Stephen King-Hörbuch-Pack.rar');
     });
 
     it('newsgroup-based detection takes priority over NZB name detection', async () => {
@@ -581,7 +581,7 @@ describe('enrichUsenetLanguages', () => {
       await enrichUsenetLanguages(results, logger);
 
       // Group says german, NZB name says dutch — group wins
-      expect(results[0].language).toBe('german');
+      expect(results[0]!.language).toBe('german');
     });
 
     it('uses file subject as fallback when <meta type="name"> is absent', async () => {
@@ -592,7 +592,7 @@ describe('enrichUsenetLanguages', () => {
 
       await enrichUsenetLanguages(results, logger);
 
-      expect(results[0].nzbName).toBe('File Subject Fallback');
+      expect(results[0]!.nzbName).toBe('File Subject Fallback');
     });
 
     it('does not overwrite existing result.language with NZB name detection', async () => {
@@ -600,7 +600,7 @@ describe('enrichUsenetLanguages', () => {
 
       await enrichUsenetLanguages(results, logger);
 
-      expect(results[0].language).toBe('english');
+      expect(results[0]!.language).toBe('english');
       expect(mockFetchWithSsrfRedirect).not.toHaveBeenCalled();
     });
 
@@ -610,7 +610,7 @@ describe('enrichUsenetLanguages', () => {
 
       await enrichUsenetLanguages(results, logger);
 
-      expect(results[0].nzbName).toBeUndefined();
+      expect(results[0]!.nzbName).toBeUndefined();
     });
 
     it('does not fetch when downloadUrl is empty string', async () => {
@@ -618,7 +618,7 @@ describe('enrichUsenetLanguages', () => {
 
       await enrichUsenetLanguages(results, logger);
 
-      expect(results[0].nzbName).toBeUndefined();
+      expect(results[0]!.nzbName).toBeUndefined();
       expect(mockFetchWithSsrfRedirect).not.toHaveBeenCalled();
     });
   });
@@ -640,7 +640,7 @@ describe('enrichUsenetLanguages', () => {
         }),
         expect.any(String),
       );
-      const warnCall = (logger.warn as ReturnType<typeof vi.fn>).mock.calls[0][0] as Record<string, unknown>;
+      const warnCall = (logger.warn as ReturnType<typeof vi.fn>).mock.calls[0]![0] as Record<string, unknown>;
       expect(warnCall.url).not.toContain('SECRET');
     });
 
@@ -660,7 +660,7 @@ describe('enrichUsenetLanguages', () => {
         }),
         expect.any(String),
       );
-      const warnCall = (logger.warn as ReturnType<typeof vi.fn>).mock.calls[0][0] as Record<string, unknown>;
+      const warnCall = (logger.warn as ReturnType<typeof vi.fn>).mock.calls[0]![0] as Record<string, unknown>;
       expect(warnCall.url).not.toContain('SECRET');
     });
   });
@@ -701,7 +701,7 @@ describe('enrichUsenetLanguages', () => {
 
       await enrichUsenetLanguages(results, logger);
 
-      expect(results[0].language).toBeUndefined();
+      expect(results[0]!.language).toBeUndefined();
       expect(mockDispatcher.close).toHaveBeenCalledTimes(1);
     });
 
@@ -719,7 +719,7 @@ describe('enrichUsenetLanguages', () => {
 
       await enrichUsenetLanguages(results, logger);
 
-      expect(results[0].language).toBeUndefined();
+      expect(results[0]!.language).toBeUndefined();
       expect(mockDispatcher.close).toHaveBeenCalledTimes(1);
     });
 
@@ -813,8 +813,8 @@ describe('enrichUsenetLanguages', () => {
 
       await enrichUsenetLanguages(results, logger);
 
-      expect(results[0].language).toBeUndefined();
-      const warnCall = (logger.warn as ReturnType<typeof vi.fn>).mock.calls[0][0] as Record<string, unknown>;
+      expect(results[0]!.language).toBeUndefined();
+      const warnCall = (logger.warn as ReturnType<typeof vi.fn>).mock.calls[0]![0] as Record<string, unknown>;
       expect(warnCall.url).toBe('https://indexer.example.com/nzb/12345');
       expect(warnCall.url).not.toContain('SECRET');
     });

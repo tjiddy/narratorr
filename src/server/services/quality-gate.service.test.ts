@@ -71,7 +71,7 @@ describe('QualityGateService', () => {
       const result = await service.getCompletedDownloads();
 
       expect(result).toEqual(expected);
-      const chain = db.select.mock.results[0].value;
+      const chain = db.select.mock.results[0]!.value;
       expect(chain.where).toHaveBeenCalledWith(
         and(eq(downloads.status, 'completed'), isNotNull(downloads.externalId)),
       );
@@ -99,7 +99,7 @@ describe('QualityGateService', () => {
       expect(result).not.toBeNull();
       expect(result!.download).toEqual(baseDownload);
       expect(result!.book).toEqual({ ...baseBook, narrators: [{ name: 'John Smith' }] });
-      const chain = db.select.mock.results[0].value;
+      const chain = db.select.mock.results[0]!.value;
       expect(chain.where).toHaveBeenCalledWith(
         and(eq(downloads.id, 1), eq(downloads.status, 'completed')),
       );
@@ -1032,7 +1032,7 @@ describe('Quality gate — narrator array comparison (#71)', () => {
       const result = await service.getDeferredCleanupCandidates();
 
       expect(result).toEqual([deferredDownload]);
-      const chain = db.select.mock.results[0].value;
+      const chain = db.select.mock.results[0]!.value;
       expect(chain.where).toHaveBeenCalledWith(isNotNull(downloads.pendingCleanup));
     });
 
@@ -1043,7 +1043,7 @@ describe('Quality gate — narrator array comparison (#71)', () => {
       const result = await service.getDeferredCleanupCandidates();
 
       expect(result).toEqual([]);
-      const chain = db.select.mock.results[0].value;
+      const chain = db.select.mock.results[0]!.value;
       expect(chain.where).toHaveBeenCalledWith(isNotNull(downloads.pendingCleanup));
     });
   });

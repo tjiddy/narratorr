@@ -74,9 +74,9 @@ describe('BookService', () => {
       expect(result).not.toBeNull();
       expect(result!.title).toBe('The Way of Kings');
       expect(result!.authors).toHaveLength(1);
-      expect(result!.authors[0].name).toBe('Brandon Sanderson');
+      expect(result!.authors[0]!.name).toBe('Brandon Sanderson');
       expect(result!.narrators).toHaveLength(1);
-      expect(result!.narrators[0].name).toBe('Michael Kramer');
+      expect(result!.narrators[0]!.name).toBe('Michael Kramer');
     });
 
     it('returns null when not found', async () => {
@@ -106,8 +106,8 @@ describe('BookService', () => {
 
       const result = await service.getById(1);
       // Authors should be in position order: 0 first
-      expect(result!.authors[0].name).toBe('Brandon Sanderson');
-      expect(result!.authors[1].name).toBe('Second Author');
+      expect(result!.authors[0]!.name).toBe('Brandon Sanderson');
+      expect(result!.authors[1]!.name).toBe('Second Author');
     });
   });
 
@@ -256,7 +256,7 @@ describe('BookService', () => {
 
       const outerWhere = outerChain.where as Mock;
       expect(outerWhere).toHaveBeenCalledTimes(1);
-      const predicate = outerWhere.mock.calls[0][0];
+      const predicate = outerWhere.mock.calls[0]![0];
 
       // 1. Outer predicate contains eq(books.title, title) — title column reference present
       expect(findColumn(predicate, 'books', 'title')).toBe(true);
@@ -273,7 +273,7 @@ describe('BookService', () => {
       // 5. Subquery where() is eq(bookAuthors.bookId, books.id) — single equality with both operands
       const subqueryWhere = subqueryChain.where as Mock;
       expect(subqueryWhere).toHaveBeenCalledTimes(1);
-      const subPredicate = subqueryWhere.mock.calls[0][0];
+      const subPredicate = subqueryWhere.mock.calls[0]![0];
       // eq() produces a flat SQL: [StringChunk(''), Column(book_id), StringChunk(' = '), Column(id), StringChunk('')]
       const chunks = subPredicate.queryChunks;
       expect(chunks).toHaveLength(5);
@@ -385,7 +385,7 @@ describe('BookService', () => {
       });
 
       expect(result.narrators).toHaveLength(1);
-      expect(result.narrators[0].name).toBe('Michael Kramer');
+      expect(result.narrators[0]!.name).toBe('Michael Kramer');
     });
 
     it('retries narrator find-or-create on unique constraint collision', async () => {
@@ -410,7 +410,7 @@ describe('BookService', () => {
         narrators: ['Michael Kramer'],
       });
 
-      expect(result.narrators[0].name).toBe('Michael Kramer');
+      expect(result.narrators[0]!.name).toBe('Michael Kramer');
     });
 
     it('deduplicates authors with identical slugs within a single create payload', async () => {
@@ -986,8 +986,8 @@ describe('BookService batch-load (N+1 fix)', () => {
     const results = await service.getMonitoredBooks();
 
     expect(results).toHaveLength(1);
-    expect(results[0].authors).toEqual([mockAuthor]);
-    expect(results[0].narrators).toEqual([mockNarrator]);
+    expect(results[0]!.authors).toEqual([mockAuthor]);
+    expect(results[0]!.narrators).toEqual([mockNarrator]);
   });
 
   it('getMonitoredBooks() with 0 monitored books returns [] and skips author/narrator queries', async () => {
@@ -1015,8 +1015,8 @@ describe('BookService batch-load (N+1 fix)', () => {
     // 1 books query + 1 author chunk + 1 narrator chunk = 3 selects (no second chunk)
     expect(db.select).toHaveBeenCalledTimes(3);
     expect(results).toHaveLength(900);
-    expect(results[0].authors).toEqual([mockAuthor]);
-    expect(results[0].narrators).toEqual([mockNarrator]);
+    expect(results[0]!.authors).toEqual([mockAuthor]);
+    expect(results[0]!.narrators).toEqual([mockNarrator]);
 
     // The single chunk for each side targets the right column with all 900 IDs (≤ 900).
     const authorChunks = inArrayCallsFor(bookAuthors.bookId);
@@ -1025,8 +1025,8 @@ describe('BookService batch-load (N+1 fix)', () => {
     expect(narratorChunks).toHaveLength(1);
     expect(authorChunks[0]).toEqual(expectedIds);
     expect(narratorChunks[0]).toEqual(expectedIds);
-    expect(authorChunks[0].length).toBeLessThanOrEqual(900);
-    expect(narratorChunks[0].length).toBeLessThanOrEqual(900);
+    expect(authorChunks[0]!.length).toBeLessThanOrEqual(900);
+    expect(narratorChunks[0]!.length).toBeLessThanOrEqual(900);
   });
 
   it('getMonitoredBooks() with 901 books splits authors/narrators into bounded chunks of 900 + 1', async () => {
@@ -1051,11 +1051,11 @@ describe('BookService batch-load (N+1 fix)', () => {
     expect(db.select).toHaveBeenCalledTimes(5);
     expect(results).toHaveLength(901);
     // No duplicates: book #1 has exactly one author/narrator from the first chunk
-    expect(results[0].authors).toEqual([mockAuthor]);
-    expect(results[0].narrators).toEqual([mockNarrator]);
+    expect(results[0]!.authors).toEqual([mockAuthor]);
+    expect(results[0]!.narrators).toEqual([mockNarrator]);
     // Book #901 (in the second chunk) is also populated
-    expect(results[900].authors).toEqual([mockAuthor]);
-    expect(results[900].narrators).toEqual([mockNarrator]);
+    expect(results[900]!.authors).toEqual([mockAuthor]);
+    expect(results[900]!.narrators).toEqual([mockNarrator]);
 
     // Bounded inArray inputs: each chunk ≤ 900, partial final chunk is exactly 1.
     const authorChunks = inArrayCallsFor(bookAuthors.bookId);
@@ -1069,8 +1069,8 @@ describe('BookService batch-load (N+1 fix)', () => {
     expect(authorChunks[1]).toEqual(expectedSecondChunk);
     expect(narratorChunks[0]).toEqual(expectedFirstChunk);
     expect(narratorChunks[1]).toEqual(expectedSecondChunk);
-    expect(authorChunks[1].length).toBe(1);
-    expect(narratorChunks[1].length).toBe(1);
+    expect(authorChunks[1]!.length).toBe(1);
+    expect(narratorChunks[1]!.length).toBe(1);
   });
 
   it('getMonitoredBooks() with 1500 books splits authors/narrators into bounded chunks of 900 + 600', async () => {
@@ -1111,10 +1111,10 @@ describe('BookService batch-load (N+1 fix)', () => {
     expect(authorChunks[1]).toEqual(expectedSecondChunk);
     expect(narratorChunks[0]).toEqual(expectedFirstChunk);
     expect(narratorChunks[1]).toEqual(expectedSecondChunk);
-    expect(authorChunks[0].length).toBe(900);
-    expect(authorChunks[1].length).toBe(600);
-    expect(narratorChunks[0].length).toBe(900);
-    expect(narratorChunks[1].length).toBe(600);
+    expect(authorChunks[0]!.length).toBe(900);
+    expect(authorChunks[1]!.length).toBe(600);
+    expect(narratorChunks[0]!.length).toBe(900);
+    expect(narratorChunks[1]!.length).toBe(600);
   });
 
 });
@@ -1433,12 +1433,12 @@ describe('BookService — transaction atomicity (#214)', () => {
 
       // Assert update targets the correct author row
       expect(tx.update).toHaveBeenCalledTimes(1);
-      const updateChain = tx.update.mock.results[0].value;
+      const updateChain = tx.update.mock.results[0]!.value;
       expect(updateChain.set).toHaveBeenCalledWith({ asin: 'B001IGFHW6' });
       expect(updateChain.where).toHaveBeenCalledWith(eq(authors.id, 5));
 
       // Assert junction insert uses the existing author ID (not a new one)
-      const junctionChain = tx.insert.mock.results[0].value;
+      const junctionChain = tx.insert.mock.results[0]!.value;
       expect(junctionChain.values).toHaveBeenCalledWith({ bookId: 10, authorId: 5, position: 0 });
     });
 
@@ -1494,12 +1494,12 @@ describe('BookService — transaction atomicity (#214)', () => {
 
       // Assert update targets the correct author row
       expect(tx.update).toHaveBeenCalledTimes(1);
-      const updateChain = tx.update.mock.results[0].value;
+      const updateChain = tx.update.mock.results[0]!.value;
       expect(updateChain.set).toHaveBeenCalledWith({ asin: 'B001IGFHW6' });
       expect(updateChain.where).toHaveBeenCalledWith(eq(authors.id, 5));
 
       // Assert junction insert uses the retried author ID
-      const junctionChain = tx.insert.mock.results[1].value;  // [0] is the failed author insert
+      const junctionChain = tx.insert.mock.results[1]!.value;  // [0] is the failed author insert
       expect(junctionChain.values).toHaveBeenCalledWith({ bookId: 10, authorId: 5, position: 0 });
     });
 
@@ -1696,7 +1696,7 @@ describe('BookService — transaction atomicity (#214)', () => {
       await service.uploadCover(1, testBuffer, 'image/jpeg');
 
       expect(db.update).toHaveBeenCalled();
-      const setCall = db.update.mock.results[0].value.set;
+      const setCall = db.update.mock.results[0]!.value.set;
       expect(setCall).toHaveBeenCalledWith(expect.objectContaining({
         coverUrl: '/api/books/1/cover',
       }));

@@ -90,7 +90,7 @@ describe('AddBookPopover', () => {
     });
 
     // Uncheck searchImmediately
-    await user.click(screen.getAllByRole('checkbox')[0]);
+    await user.click(screen.getAllByRole('checkbox')[0]!);
 
     await user.click(screen.getByRole('button', { name: /add to library/i }));
 
@@ -140,7 +140,7 @@ describe('AddBookPopover', () => {
     });
 
     // Uncheck monitorForUpgrades only (index 1)
-    await user.click(screen.getAllByRole('checkbox')[1]);
+    await user.click(screen.getAllByRole('checkbox')[1]!);
 
     await user.click(screen.getByRole('button', { name: /add to library/i }));
 
@@ -212,7 +212,7 @@ describe('AddBookPopover', () => {
     await waitFor(() => {
       expect(screen.getAllByRole('checkbox')[0]).toBeChecked();
     });
-    await user.click(screen.getAllByRole('checkbox')[0]); // uncheck searchImmediately
+    await user.click(screen.getAllByRole('checkbox')[0]!); // uncheck searchImmediately
     await user.click(screen.getByRole('button', { name: /add to library/i }));
 
     await waitFor(() => {
@@ -271,7 +271,7 @@ describe('AddBookPopover', () => {
       });
 
       // Click a checkbox inside the portaled panel
-      await user.click(screen.getAllByRole('checkbox')[0]);
+      await user.click(screen.getAllByRole('checkbox')[0]!);
 
       // Popover should still be open
       expect(screen.getByText('Search immediately')).toBeInTheDocument();

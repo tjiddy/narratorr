@@ -51,7 +51,7 @@ describe('TaskRegistry', () => {
     it('returns null nextRun for timeout-based jobs without setNextRun', () => {
       registry.register('search', 'timeout', vi.fn());
       const [task] = registry.getAll();
-      expect(task.nextRun).toBeNull();
+      expect(task!.nextRun).toBeNull();
     });
 
     it('returns setNextRun value for timeout-based jobs when set', () => {
@@ -59,14 +59,14 @@ describe('TaskRegistry', () => {
       const next = new Date('2026-03-10T20:00:00Z');
       registry.setNextRun('search', next);
       const [task] = registry.getAll();
-      expect(task.nextRun).toBe(next.toISOString());
+      expect(task!.nextRun).toBe(next.toISOString());
     });
 
     it('estimates nextRun correctly for 6-part second-based cron expressions', () => {
       registry.register('monitor', 'cron', vi.fn(), '*/30 * * * * *');
       const [task] = registry.getAll();
       // Should produce a time within 30 seconds from now (not 30 minutes)
-      const nextRun = new Date(task.nextRun!);
+      const nextRun = new Date(task!.nextRun!);
       const diffMs = nextRun.getTime() - Date.now();
       expect(diffMs).toBeLessThanOrEqual(30 * 1000);
     });
@@ -80,7 +80,7 @@ describe('TaskRegistry', () => {
       await registry.runTask('test-job');
 
       const [task] = registry.getAll();
-      expect(task.lastRun).not.toBeNull();
+      expect(task!.lastRun).not.toBeNull();
     });
 
     it('sets running to true during execution and false after success', async () => {
@@ -89,11 +89,11 @@ describe('TaskRegistry', () => {
       registry.register('test-job', 'cron', fn, '*/5 * * * *');
 
       const runPromise = registry.runTask('test-job');
-      expect(registry.getAll()[0].running).toBe(true);
+      expect(registry.getAll()[0]!.running).toBe(true);
 
       resolveExecution!();
       await runPromise;
-      expect(registry.getAll()[0].running).toBe(false);
+      expect(registry.getAll()[0]!.running).toBe(false);
     });
 
     it('sets running to false after failure', async () => {
@@ -101,7 +101,7 @@ describe('TaskRegistry', () => {
       registry.register('test-job', 'cron', fn, '*/5 * * * *');
 
       await expect(registry.runTask('test-job')).rejects.toThrow('boom');
-      expect(registry.getAll()[0].running).toBe(false);
+      expect(registry.getAll()[0]!.running).toBe(false);
     });
   });
 
@@ -112,14 +112,14 @@ describe('TaskRegistry', () => {
       registry.register('monitor', 'cron', fn, '*/30 * * * * *');
 
       const promise = registry.executeTracked('monitor');
-      expect(registry.getAll()[0].running).toBe(true);
+      expect(registry.getAll()[0]!.running).toBe(true);
 
       resolveExecution!();
       await promise;
 
       const [task] = registry.getAll();
-      expect(task.running).toBe(false);
-      expect(task.lastRun).not.toBeNull();
+      expect(task!.running).toBe(false);
+      expect(task!.lastRun).not.toBeNull();
       expect(fn).toHaveBeenCalledOnce();
     });
 
@@ -147,7 +147,7 @@ describe('TaskRegistry', () => {
       registry.register('monitor', 'cron', fn, '*/30 * * * * *');
 
       await expect(registry.executeTracked('monitor')).rejects.toThrow('boom');
-      expect(registry.getAll()[0].running).toBe(false);
+      expect(registry.getAll()[0]!.running).toBe(false);
     });
   });
 
@@ -156,7 +156,7 @@ describe('TaskRegistry', () => {
       registry.register('search', 'timeout', vi.fn());
       const next = new Date('2026-03-10T21:00:00Z');
       registry.setNextRun('search', next);
-      expect(registry.getAll()[0].nextRun).toBe(next.toISOString());
+      expect(registry.getAll()[0]!.nextRun).toBe(next.toISOString());
     });
 
     it('is a no-op for unknown task names', () => {
@@ -176,12 +176,12 @@ describe('TaskRegistry', () => {
       registry.register('discovery', 'timeout', vi.fn());
 
       const promise = registry.runExclusive('discovery', () => new Promise<string>((r) => { resolveExecution = r; }));
-      expect(registry.getAll()[0].running).toBe(true);
+      expect(registry.getAll()[0]!.running).toBe(true);
 
       resolveExecution!('done');
       await promise;
-      expect(registry.getAll()[0].running).toBe(false);
-      expect(registry.getAll()[0].lastRun).not.toBeNull();
+      expect(registry.getAll()[0]!.running).toBe(false);
+      expect(registry.getAll()[0]!.lastRun).not.toBeNull();
     });
 
     it('throws when task is already running (same guard as runTask)', async () => {
@@ -203,7 +203,7 @@ describe('TaskRegistry', () => {
     it('clears running flag on failure', async () => {
       registry.register('discovery', 'timeout', vi.fn());
       await expect(registry.runExclusive('discovery', async () => { throw new Error('boom'); })).rejects.toThrow('boom');
-      expect(registry.getAll()[0].running).toBe(false);
+      expect(registry.getAll()[0]!.running).toBe(false);
     });
 
     it('does not call the registered fn — only the provided fn', async () => {

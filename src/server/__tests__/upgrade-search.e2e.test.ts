@@ -54,7 +54,7 @@ describe('Upgrade-search eligibility — DB-backed selector (#755)', () => {
         ...overrides,
       })
       .returning({ id: books.id });
-    return row.id;
+    return row!.id;
   }
 
   it('runUpgradeSearchJob picks up books with monitorForUpgrades=true AND status=imported via the real selector', async () => {

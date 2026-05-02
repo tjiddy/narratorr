@@ -3,6 +3,7 @@ import { bookStatusConfig } from './status.js';
 import type { BookStatusStyle } from './status.js';
 
 // Verify the interface is exported (compile-time check — if this import fails, the test file won't compile)
+// PHASE 1 SKIPPED — needs human review
 const _typeCheck: BookStatusStyle = bookStatusConfig.wanted;
 void _typeCheck;
 
@@ -22,14 +23,15 @@ describe('bookStatusConfig', () => {
       expect(entry).toHaveProperty('dotClass');
       expect(entry).toHaveProperty('textClass');
       expect(entry).toHaveProperty('barClass');
-      expect(typeof entry.label).toBe('string');
-      expect(typeof entry.dotClass).toBe('string');
-      expect(typeof entry.textClass).toBe('string');
-      expect(typeof entry.barClass).toBe('string');
+      expect(typeof entry!.label).toBe('string');
+      expect(typeof entry!.dotClass).toBe('string');
+      expect(typeof entry!.textClass).toBe('string');
+      expect(typeof entry!.barClass).toBe('string');
     }
   });
 
   it('wanted uses stone palette', () => {
+    // PHASE 1 SKIPPED — needs human review
     const { dotClass, textClass, barClass } = bookStatusConfig.wanted;
     expect(dotClass).toContain('stone');
     expect(textClass).toContain('stone');
@@ -37,6 +39,7 @@ describe('bookStatusConfig', () => {
   });
 
   it('searching uses sky palette', () => {
+    // PHASE 1 SKIPPED — needs human review
     const { dotClass, textClass, barClass } = bookStatusConfig.searching;
     expect(dotClass).toContain('sky');
     expect(textClass).toContain('sky');
@@ -44,6 +47,7 @@ describe('bookStatusConfig', () => {
   });
 
   it('downloading uses violet palette', () => {
+    // PHASE 1 SKIPPED — needs human review
     const { dotClass, textClass, barClass } = bookStatusConfig.downloading;
     expect(dotClass).toContain('violet');
     expect(textClass).toContain('violet');
@@ -51,6 +55,7 @@ describe('bookStatusConfig', () => {
   });
 
   it('importing uses amber palette', () => {
+    // PHASE 1 SKIPPED — needs human review
     const { dotClass, textClass, barClass } = bookStatusConfig.importing;
     expect(dotClass).toContain('amber');
     expect(textClass).toContain('amber');
@@ -58,6 +63,7 @@ describe('bookStatusConfig', () => {
   });
 
   it('imported uses emerald palette', () => {
+    // PHASE 1 SKIPPED — needs human review
     const { dotClass, textClass, barClass } = bookStatusConfig.imported;
     expect(dotClass).toContain('emerald');
     expect(textClass).toContain('emerald');
@@ -65,6 +71,7 @@ describe('bookStatusConfig', () => {
   });
 
   it('missing uses rose palette', () => {
+    // PHASE 1 SKIPPED — needs human review
     const { dotClass, textClass, barClass } = bookStatusConfig.missing;
     expect(dotClass).toContain('rose');
     expect(textClass).toContain('rose');
@@ -72,6 +79,7 @@ describe('bookStatusConfig', () => {
   });
 
   it('failed uses rose palette', () => {
+    // PHASE 1 SKIPPED — needs human review
     const { dotClass, textClass, barClass } = bookStatusConfig.failed;
     expect(dotClass).toContain('rose');
     expect(textClass).toContain('rose');
@@ -79,28 +87,28 @@ describe('bookStatusConfig', () => {
   });
 
   it('active statuses have shimmer in barClass', () => {
-    expect(bookStatusConfig.searching.barClass).toContain('status-bar-shimmer');
-    expect(bookStatusConfig.downloading.barClass).toContain('status-bar-shimmer');
-    expect(bookStatusConfig.importing.barClass).toContain('status-bar-shimmer');
+    expect(bookStatusConfig.searching!.barClass).toContain('status-bar-shimmer');
+    expect(bookStatusConfig.downloading!.barClass).toContain('status-bar-shimmer');
+    expect(bookStatusConfig.importing!.barClass).toContain('status-bar-shimmer');
   });
 
   it('static statuses do not have shimmer in barClass', () => {
-    expect(bookStatusConfig.wanted.barClass).not.toContain('status-bar-shimmer');
-    expect(bookStatusConfig.imported.barClass).not.toContain('status-bar-shimmer');
-    expect(bookStatusConfig.missing.barClass).not.toContain('status-bar-shimmer');
-    expect(bookStatusConfig.failed.barClass).not.toContain('status-bar-shimmer');
+    expect(bookStatusConfig.wanted!.barClass).not.toContain('status-bar-shimmer');
+    expect(bookStatusConfig.imported!.barClass).not.toContain('status-bar-shimmer');
+    expect(bookStatusConfig.missing!.barClass).not.toContain('status-bar-shimmer');
+    expect(bookStatusConfig.failed!.barClass).not.toContain('status-bar-shimmer');
   });
 
   it('active statuses have animate-pulse in dotClass', () => {
-    expect(bookStatusConfig.searching.dotClass).toContain('animate-pulse');
-    expect(bookStatusConfig.downloading.dotClass).toContain('animate-pulse');
-    expect(bookStatusConfig.importing.dotClass).toContain('animate-pulse');
+    expect(bookStatusConfig.searching!.dotClass).toContain('animate-pulse');
+    expect(bookStatusConfig.downloading!.dotClass).toContain('animate-pulse');
+    expect(bookStatusConfig.importing!.dotClass).toContain('animate-pulse');
   });
 
   it('static statuses do not have animate-pulse in dotClass', () => {
-    expect(bookStatusConfig.wanted.dotClass).not.toContain('animate-pulse');
-    expect(bookStatusConfig.imported.dotClass).not.toContain('animate-pulse');
-    expect(bookStatusConfig.missing.dotClass).not.toContain('animate-pulse');
-    expect(bookStatusConfig.failed.dotClass).not.toContain('animate-pulse');
+    expect(bookStatusConfig.wanted!.dotClass).not.toContain('animate-pulse');
+    expect(bookStatusConfig.imported!.dotClass).not.toContain('animate-pulse');
+    expect(bookStatusConfig.missing!.dotClass).not.toContain('animate-pulse');
+    expect(bookStatusConfig.failed!.dotClass).not.toContain('animate-pulse');
   });
 });

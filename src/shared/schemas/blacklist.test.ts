@@ -133,7 +133,7 @@ describe('BLACKLIST_REASONS canonical tuple', () => {
     for (const reason of BLACKLIST_REASONS) {
       expect(labelKeys).toContain(reason);
       expect(typeof REASON_LABELS[reason]).toBe('string');
-      expect(REASON_LABELS[reason].length).toBeGreaterThan(0);
+      expect(REASON_LABELS[reason]!.length).toBeGreaterThan(0);
     }
   });
 

@@ -99,7 +99,7 @@ describe('useSearchStream', () => {
 
     expect(result.current.state.phase).toBe('searching');
     expect(MockEventSource.instances).toHaveLength(1);
-    const url = MockEventSource.instances[0].url;
+    const url = MockEventSource.instances[0]!.url;
     expect(url).toContain('q=test+query');
     expect(url).toContain('title=Test');
     expect(url).toContain('author=Author');
@@ -115,7 +115,7 @@ describe('useSearchStream', () => {
 
     const es = MockEventSource.instances[0];
     act(() => {
-      es.emit('search-start', {
+      es!.emit('search-start', {
         sessionId: 'session-123',
         indexers: [{ id: 1, name: 'ABB' }, { id: 2, name: 'MAM' }],
       });
@@ -137,20 +137,20 @@ describe('useSearchStream', () => {
 
     const es = MockEventSource.instances[0];
     act(() => {
-      es.emit('search-start', {
+      es!.emit('search-start', {
         sessionId: 'session-123',
         indexers: [{ id: 1, name: 'ABB' }, { id: 2, name: 'MAM' }],
       });
     });
 
     act(() => {
-      es.emit('indexer-complete', { indexerId: 1, name: 'ABB', resultCount: 5, elapsedMs: 200 });
+      es!.emit('indexer-complete', { indexerId: 1, name: 'ABB', resultCount: 5, elapsedMs: 200 });
     });
 
     expect(result.current.state.indexers[0]).toEqual({
       id: 1, name: 'ABB', status: 'complete', resultCount: 5, elapsedMs: 200,
     });
-    expect(result.current.state.indexers[1].status).toBe('pending');
+    expect(result.current.state.indexers[1]!.status).toBe('pending');
   });
 
   it('updates indexer status to error on indexer-error event', async () => {
@@ -163,15 +163,15 @@ describe('useSearchStream', () => {
 
     const es = MockEventSource.instances[0];
     act(() => {
-      es.emit('search-start', {
+      es!.emit('search-start', {
         sessionId: 'session-123',
         indexers: [{ id: 1, name: 'ABB' }],
       });
-      es.emit('indexer-error', { indexerId: 1, name: 'ABB', error: 'Timeout', elapsedMs: 30000 });
+      es!.emit('indexer-error', { indexerId: 1, name: 'ABB', error: 'Timeout', elapsedMs: 30000 });
     });
 
-    expect(result.current.state.indexers[0].status).toBe('error');
-    expect(result.current.state.indexers[0].error).toBe('Timeout');
+    expect(result.current.state.indexers[0]!.status).toBe('error');
+    expect(result.current.state.indexers[0]!.error).toBe('Timeout');
   });
 
   it('returns search results on search-complete and sets phase to results', async () => {
@@ -190,12 +190,12 @@ describe('useSearchStream', () => {
     };
 
     act(() => {
-      es.emit('search-complete', mockResponse);
+      es!.emit('search-complete', mockResponse);
     });
 
     expect(result.current.state.phase).toBe('results');
     expect(result.current.state.results).toEqual(mockResponse);
-    expect(es.closed).toBe(true);
+    expect(es!.closed).toBe(true);
   });
 
   it('sends POST to cancel endpoint with correct sessionId and indexerId', async () => {
@@ -208,7 +208,7 @@ describe('useSearchStream', () => {
 
     const es = MockEventSource.instances[0];
     act(() => {
-      es.emit('search-start', {
+      es!.emit('search-start', {
         sessionId: 'session-123',
         indexers: [{ id: 1, name: 'ABB' }, { id: 2, name: 'MAM' }],
       });
@@ -219,7 +219,7 @@ describe('useSearchStream', () => {
     });
 
     expect(api.cancelSearchIndexer).toHaveBeenCalledWith('session-123', 1);
-    expect(result.current.state.indexers[0].status).toBe('cancelled');
+    expect(result.current.state.indexers[0]!.status).toBe('cancelled');
   });
 
   it('optimistically sets cancelled status on cancel', async () => {
@@ -232,7 +232,7 @@ describe('useSearchStream', () => {
 
     const es = MockEventSource.instances[0];
     act(() => {
-      es.emit('search-start', {
+      es!.emit('search-start', {
         sessionId: 'session-123',
         indexers: [{ id: 1, name: 'ABB' }, { id: 2, name: 'MAM' }],
       });
@@ -243,9 +243,9 @@ describe('useSearchStream', () => {
     });
 
     // Optimistically marked as cancelled
-    expect(result.current.state.indexers[0].status).toBe('cancelled');
+    expect(result.current.state.indexers[0]!.status).toBe('cancelled');
     // Other indexer unchanged
-    expect(result.current.state.indexers[1].status).toBe('pending');
+    expect(result.current.state.indexers[1]!.status).toBe('pending');
   });
 
   it('hasResults returns true when any indexer has resultCount > 0', async () => {
@@ -258,7 +258,7 @@ describe('useSearchStream', () => {
 
     const es = MockEventSource.instances[0];
     act(() => {
-      es.emit('search-start', {
+      es!.emit('search-start', {
         sessionId: 'session-123',
         indexers: [{ id: 1, name: 'ABB' }, { id: 2, name: 'MAM' }],
       });
@@ -267,7 +267,7 @@ describe('useSearchStream', () => {
     expect(result.current.state.hasResults).toBe(false);
 
     act(() => {
-      es.emit('indexer-complete', { indexerId: 1, name: 'ABB', resultCount: 3, elapsedMs: 100 });
+      es!.emit('indexer-complete', { indexerId: 1, name: 'ABB', resultCount: 3, elapsedMs: 100 });
     });
 
     expect(result.current.state.hasResults).toBe(true);
@@ -283,11 +283,11 @@ describe('useSearchStream', () => {
 
     const es = MockEventSource.instances[0];
     act(() => {
-      es.emit('search-start', {
+      es!.emit('search-start', {
         sessionId: 'session-123',
         indexers: [{ id: 1, name: 'ABB' }],
       });
-      es.emit('indexer-complete', { indexerId: 1, name: 'ABB', resultCount: 0, elapsedMs: 100 });
+      es!.emit('indexer-complete', { indexerId: 1, name: 'ABB', resultCount: 0, elapsedMs: 100 });
     });
 
     expect(result.current.state.hasResults).toBe(false);
@@ -303,7 +303,7 @@ describe('useSearchStream', () => {
 
     const es = MockEventSource.instances[0];
     act(() => {
-      es.onerror?.(new Event('error'));
+      es!.onerror?.(new Event('error'));
     });
 
     expect(result.current.state.error).toBe('Search connection failed');
@@ -319,10 +319,10 @@ describe('useSearchStream', () => {
     });
 
     const es = MockEventSource.instances[0];
-    expect(es.closed).toBe(false);
+    expect(es!.closed).toBe(false);
 
     unmount();
-    expect(es.closed).toBe(true);
+    expect(es!.closed).toBe(true);
   });
 
   it('showResults() transitions to Phase 2 immediately and cancels pending indexers', async () => {
@@ -335,11 +335,11 @@ describe('useSearchStream', () => {
 
     const es = MockEventSource.instances[0];
     act(() => {
-      es.emit('search-start', {
+      es!.emit('search-start', {
         sessionId: 'session-123',
         indexers: [{ id: 1, name: 'ABB' }, { id: 2, name: 'MAM' }],
       });
-      es.emit('indexer-complete', { indexerId: 1, name: 'ABB', resultCount: 5, elapsedMs: 200 });
+      es!.emit('indexer-complete', { indexerId: 1, name: 'ABB', resultCount: 5, elapsedMs: 200 });
     });
 
     act(() => {
@@ -349,7 +349,7 @@ describe('useSearchStream', () => {
     // Phase transitions to results IMMEDIATELY — doesn't wait for search-complete
     expect(result.current.state.phase).toBe('results');
     // Pending indexer was cancelled
-    expect(result.current.state.indexers[1].status).toBe('cancelled');
+    expect(result.current.state.indexers[1]!.status).toBe('cancelled');
     expect(api.cancelSearchIndexer).toHaveBeenCalledWith('session-123', 2);
   });
 
@@ -363,20 +363,20 @@ describe('useSearchStream', () => {
 
     const es = MockEventSource.instances[0];
     act(() => {
-      es.emit('search-start', {
+      es!.emit('search-start', {
         sessionId: 'session-123',
         indexers: [{ id: 1, name: 'ABB' }, { id: 2, name: 'MAM' }, { id: 3, name: 'Newznab' }],
       });
     });
 
     act(() => {
-      es.emit('indexer-cancelled', { indexerId: 2, name: 'MAM' });
+      es!.emit('indexer-cancelled', { indexerId: 2, name: 'MAM' });
     });
 
     // Only indexer 2 is cancelled
-    expect(result.current.state.indexers[0].status).toBe('pending');
-    expect(result.current.state.indexers[1].status).toBe('cancelled');
-    expect(result.current.state.indexers[2].status).toBe('pending');
+    expect(result.current.state.indexers[0]!.status).toBe('pending');
+    expect(result.current.state.indexers[1]!.status).toBe('cancelled');
+    expect(result.current.state.indexers[2]!.status).toBe('pending');
   });
 
   it('does not open EventSource when auth config is not yet loaded', () => {
@@ -404,7 +404,7 @@ describe('useSearchStream', () => {
 
     const es = MockEventSource.instances[0];
     act(() => {
-      es.emit('search-start', {
+      es!.emit('search-start', {
         sessionId: 'session-123',
         indexers: [{ id: 1, name: 'ABB' }],
       });
@@ -417,7 +417,7 @@ describe('useSearchStream', () => {
     expect(result.current.state.phase).toBe('idle');
     expect(result.current.state.sessionId).toBeNull();
     expect(result.current.state.indexers).toEqual([]);
-    expect(es.closed).toBe(true);
+    expect(es!.closed).toBe(true);
   });
 
   describe('AC2 — finalizing timeout', () => {
@@ -432,7 +432,7 @@ describe('useSearchStream', () => {
 
       const es = MockEventSource.instances[0];
       act(() => {
-        es.emit('search-start', {
+        es!.emit('search-start', {
           sessionId: 'session-123',
           indexers: [{ id: 1, name: 'ABB' }],
         });
@@ -460,14 +460,14 @@ describe('useSearchStream', () => {
 
       const es = MockEventSource.instances[0];
       act(() => {
-        es.emit('search-start', { sessionId: 'session-123', indexers: [{ id: 1, name: 'ABB' }] });
+        es!.emit('search-start', { sessionId: 'session-123', indexers: [{ id: 1, name: 'ABB' }] });
       });
 
       act(() => { result.current.actions.showResults(); });
 
       // search-complete arrives before timeout
       act(() => {
-        es.emit('search-complete', { results: [], durationUnknown: false, unsupportedResults: { count: 0, titles: [] } });
+        es!.emit('search-complete', { results: [], durationUnknown: false, unsupportedResults: { count: 0, titles: [] } });
       });
 
       expect(result.current.state.results).not.toBeNull();
@@ -491,7 +491,7 @@ describe('useSearchStream', () => {
 
       const es = MockEventSource.instances[0];
       act(() => {
-        es.emit('search-start', { sessionId: 'session-123', indexers: [{ id: 1, name: 'ABB' }] });
+        es!.emit('search-start', { sessionId: 'session-123', indexers: [{ id: 1, name: 'ABB' }] });
       });
 
       act(() => { result.current.actions.showResults(); });
@@ -521,7 +521,7 @@ describe('useSearchStream', () => {
 
       const es = MockEventSource.instances[0];
       act(() => {
-        es.emit('search-start', { sessionId: 'session-123', indexers: [{ id: 1, name: 'ABB' }] });
+        es!.emit('search-start', { sessionId: 'session-123', indexers: [{ id: 1, name: 'ABB' }] });
       });
 
       act(() => { result.current.actions.showResults(); });
@@ -529,7 +529,7 @@ describe('useSearchStream', () => {
 
       // SSE connection drops while finalizing
       act(() => {
-        if (es.onerror) es.onerror(new Event('error'));
+        if (es!.onerror) es!.onerror(new Event('error'));
       });
 
       expect(result.current.state.error).toBe('Search connection failed');
@@ -548,7 +548,7 @@ describe('useSearchStream', () => {
       act(() => { result.current.actions.start(); });
       const es = MockEventSource.instances[MockEventSource.instances.length - 1];
       act(() => {
-        es.emit('search-start', {
+        es!.emit('search-start', {
           sessionId: 'session-123',
           indexers: [{ id: 1, name: 'ABB' }, { id: 2, name: 'MAM' }],
         });
@@ -563,12 +563,12 @@ describe('useSearchStream', () => {
       act(() => { result.current.actions.start(); });
       const es = MockEventSource.instances[0];
 
-      act(() => { es.emitRaw('search-start', 'not-json'); });
+      act(() => { es!.emitRaw('search-start', 'not-json'); });
 
       expect(result.current.state.sessionId).toBeNull();
       expect(result.current.state.indexers).toEqual([]);
       expect(warn).toHaveBeenCalledTimes(1);
-      expect(warn.mock.calls[0][0]).toContain('search-start');
+      expect(warn.mock.calls[0]![0]).toContain('search-start');
     });
 
     it('search-start: missing required field leaves state unchanged and warns', async () => {
@@ -579,12 +579,12 @@ describe('useSearchStream', () => {
       const es = MockEventSource.instances[0];
 
       // Missing indexers field
-      act(() => { es.emit('search-start', { sessionId: 'abc' }); });
+      act(() => { es!.emit('search-start', { sessionId: 'abc' }); });
 
       expect(result.current.state.sessionId).toBeNull();
       expect(result.current.state.indexers).toEqual([]);
       expect(warn).toHaveBeenCalledTimes(1);
-      expect(warn.mock.calls[0][0]).toContain('search-start');
+      expect(warn.mock.calls[0]![0]).toContain('search-start');
     });
 
     it('search-start: extra unknown fields are tolerated (Zod default permissive)', async () => {
@@ -595,7 +595,7 @@ describe('useSearchStream', () => {
       const es = MockEventSource.instances[0];
 
       act(() => {
-        es.emit('search-start', {
+        es!.emit('search-start', {
           sessionId: 'session-123',
           indexers: [{ id: 1, name: 'ABB' }],
           unknown: 'extra-field',
@@ -611,11 +611,11 @@ describe('useSearchStream', () => {
       const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
       const { result, es } = await startWithSession();
 
-      act(() => { es.emitRaw('indexer-complete', '<<not-json>>'); });
+      act(() => { es!.emitRaw('indexer-complete', '<<not-json>>'); });
 
-      expect(result.current.state.indexers[0].status).toBe('pending');
+      expect(result.current.state.indexers[0]!.status).toBe('pending');
       expect(warn).toHaveBeenCalledTimes(1);
-      expect(warn.mock.calls[0][0]).toContain('indexer-complete');
+      expect(warn.mock.calls[0]![0]).toContain('indexer-complete');
     });
 
     it('indexer-complete: wrong-type indexerId leaves state unchanged and warns', async () => {
@@ -623,13 +623,13 @@ describe('useSearchStream', () => {
       const { result, es } = await startWithSession();
 
       act(() => {
-        es.emit('indexer-complete', { indexerId: 'not-a-number', name: 'x', resultCount: 5, elapsedMs: 100 });
+        es!.emit('indexer-complete', { indexerId: 'not-a-number', name: 'x', resultCount: 5, elapsedMs: 100 });
       });
 
-      expect(result.current.state.indexers[0].status).toBe('pending');
-      expect(result.current.state.indexers[1].status).toBe('pending');
+      expect(result.current.state.indexers[0]!.status).toBe('pending');
+      expect(result.current.state.indexers[1]!.status).toBe('pending');
       expect(warn).toHaveBeenCalledTimes(1);
-      expect(warn.mock.calls[0][0]).toContain('indexer-complete');
+      expect(warn.mock.calls[0]![0]).toContain('indexer-complete');
     });
 
     it('indexer-complete: well-formed payload updates the matching row', async () => {
@@ -637,7 +637,7 @@ describe('useSearchStream', () => {
       const { result, es } = await startWithSession();
 
       act(() => {
-        es.emit('indexer-complete', { indexerId: 1, name: 'ABB', resultCount: 7, elapsedMs: 250 });
+        es!.emit('indexer-complete', { indexerId: 1, name: 'ABB', resultCount: 7, elapsedMs: 250 });
       });
 
       expect(result.current.state.indexers[0]).toEqual({
@@ -650,11 +650,11 @@ describe('useSearchStream', () => {
       const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
       const { result, es } = await startWithSession();
 
-      act(() => { es.emitRaw('indexer-error', 'invalid'); });
+      act(() => { es!.emitRaw('indexer-error', 'invalid'); });
 
-      expect(result.current.state.indexers[0].status).toBe('pending');
+      expect(result.current.state.indexers[0]!.status).toBe('pending');
       expect(warn).toHaveBeenCalledTimes(1);
-      expect(warn.mock.calls[0][0]).toContain('indexer-error');
+      expect(warn.mock.calls[0]![0]).toContain('indexer-error');
     });
 
     it('indexer-error: missing required field leaves state unchanged and warns', async () => {
@@ -663,12 +663,12 @@ describe('useSearchStream', () => {
 
       // Missing `error` field
       act(() => {
-        es.emit('indexer-error', { indexerId: 1, name: 'ABB', elapsedMs: 100 });
+        es!.emit('indexer-error', { indexerId: 1, name: 'ABB', elapsedMs: 100 });
       });
 
-      expect(result.current.state.indexers[0].status).toBe('pending');
+      expect(result.current.state.indexers[0]!.status).toBe('pending');
       expect(warn).toHaveBeenCalledTimes(1);
-      expect(warn.mock.calls[0][0]).toContain('indexer-error');
+      expect(warn.mock.calls[0]![0]).toContain('indexer-error');
     });
 
     it('indexer-error: well-formed payload updates the matching row', async () => {
@@ -676,11 +676,11 @@ describe('useSearchStream', () => {
       const { result, es } = await startWithSession();
 
       act(() => {
-        es.emit('indexer-error', { indexerId: 2, name: 'MAM', error: 'Boom', elapsedMs: 50 });
+        es!.emit('indexer-error', { indexerId: 2, name: 'MAM', error: 'Boom', elapsedMs: 50 });
       });
 
-      expect(result.current.state.indexers[1].status).toBe('error');
-      expect(result.current.state.indexers[1].error).toBe('Boom');
+      expect(result.current.state.indexers[1]!.status).toBe('error');
+      expect(result.current.state.indexers[1]!.error).toBe('Boom');
       expect(warn).not.toHaveBeenCalled();
     });
 
@@ -688,11 +688,11 @@ describe('useSearchStream', () => {
       const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
       const { result, es } = await startWithSession();
 
-      act(() => { es.emitRaw('indexer-cancelled', '###'); });
+      act(() => { es!.emitRaw('indexer-cancelled', '###'); });
 
-      expect(result.current.state.indexers[0].status).toBe('pending');
+      expect(result.current.state.indexers[0]!.status).toBe('pending');
       expect(warn).toHaveBeenCalledTimes(1);
-      expect(warn.mock.calls[0][0]).toContain('indexer-cancelled');
+      expect(warn.mock.calls[0]![0]).toContain('indexer-cancelled');
     });
 
     it('indexer-cancelled: schema mismatch leaves state unchanged and warns', async () => {
@@ -701,21 +701,21 @@ describe('useSearchStream', () => {
 
       // indexerId as string violates schema
       act(() => {
-        es.emit('indexer-cancelled', { indexerId: '1', name: 'ABB' });
+        es!.emit('indexer-cancelled', { indexerId: '1', name: 'ABB' });
       });
 
-      expect(result.current.state.indexers[0].status).toBe('pending');
+      expect(result.current.state.indexers[0]!.status).toBe('pending');
       expect(warn).toHaveBeenCalledTimes(1);
-      expect(warn.mock.calls[0][0]).toContain('indexer-cancelled');
+      expect(warn.mock.calls[0]![0]).toContain('indexer-cancelled');
     });
 
     it('indexer-cancelled: well-formed payload updates the matching row', async () => {
       const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
       const { result, es } = await startWithSession();
 
-      act(() => { es.emit('indexer-cancelled', { indexerId: 1, name: 'ABB' }); });
+      act(() => { es!.emit('indexer-cancelled', { indexerId: 1, name: 'ABB' }); });
 
-      expect(result.current.state.indexers[0].status).toBe('cancelled');
+      expect(result.current.state.indexers[0]!.status).toBe('cancelled');
       expect(warn).not.toHaveBeenCalled();
     });
 
@@ -728,11 +728,11 @@ describe('useSearchStream', () => {
         durationUnknown: false,
         unsupportedResults: { count: 0, titles: [] },
       };
-      act(() => { es.emit('search-complete', payload); });
+      act(() => { es!.emit('search-complete', payload); });
 
       expect(result.current.state.phase).toBe('results');
       expect(result.current.state.results).toEqual(payload);
-      expect(es.closed).toBe(true);
+      expect(es!.closed).toBe(true);
       expect(warn).not.toHaveBeenCalled();
     });
 
@@ -746,18 +746,18 @@ describe('useSearchStream', () => {
       act(() => { result.current.actions.start(); });
       const es = MockEventSource.instances[0];
       act(() => {
-        es.emit('search-start', { sessionId: 'session-123', indexers: [{ id: 1, name: 'ABB' }] });
+        es!.emit('search-start', { sessionId: 'session-123', indexers: [{ id: 1, name: 'ABB' }] });
       });
       act(() => { result.current.actions.showResults(); });
 
-      act(() => { es.emitRaw('search-complete', 'not-json'); });
+      act(() => { es!.emitRaw('search-complete', 'not-json'); });
 
-      expect(es.closed).toBe(true);
+      expect(es!.closed).toBe(true);
       expect(result.current.state.phase).toBe('idle');
       expect(result.current.state.error).toBeTruthy();
       expect(result.current.state.error).not.toBe('');
       expect(warn).toHaveBeenCalledTimes(1);
-      expect(warn.mock.calls[0][0]).toContain('search-complete');
+      expect(warn.mock.calls[0]![0]).toContain('search-complete');
 
       // Verify the finalizing timeout was cleared — the late timeout callback
       // would otherwise overwrite our error to 'Search timed out…'.
@@ -776,25 +776,25 @@ describe('useSearchStream', () => {
       act(() => { result.current.actions.start(); });
       const es = MockEventSource.instances[0];
       act(() => {
-        es.emit('search-start', { sessionId: 'session-123', indexers: [{ id: 1, name: 'ABB' }] });
+        es!.emit('search-start', { sessionId: 'session-123', indexers: [{ id: 1, name: 'ABB' }] });
       });
       act(() => { result.current.actions.showResults(); });
 
       // Missing `protocol` field on the result violates searchResultSchema
       act(() => {
-        es.emit('search-complete', {
+        es!.emit('search-complete', {
           results: [{ title: 'Book', indexer: 'ABB' }],
           durationUnknown: false,
           unsupportedResults: { count: 0, titles: [] },
         });
       });
 
-      expect(es.closed).toBe(true);
+      expect(es!.closed).toBe(true);
       expect(result.current.state.phase).toBe('idle');
       expect(result.current.state.error).toBeTruthy();
       expect(result.current.state.error).not.toBe('');
       expect(warn).toHaveBeenCalledTimes(1);
-      expect(warn.mock.calls[0][0]).toContain('search-complete');
+      expect(warn.mock.calls[0]![0]).toContain('search-complete');
 
       const errorBefore = result.current.state.error;
       await new Promise(r => setTimeout(r, 300));
@@ -807,11 +807,11 @@ describe('useSearchStream', () => {
 
       // 999 is not in the original session indexers — schema passes, no row matches
       act(() => {
-        es.emit('indexer-complete', { indexerId: 999, name: 'Phantom', resultCount: 5, elapsedMs: 100 });
+        es!.emit('indexer-complete', { indexerId: 999, name: 'Phantom', resultCount: 5, elapsedMs: 100 });
       });
 
-      expect(result.current.state.indexers[0].status).toBe('pending');
-      expect(result.current.state.indexers[1].status).toBe('pending');
+      expect(result.current.state.indexers[0]!.status).toBe('pending');
+      expect(result.current.state.indexers[1]!.status).toBe('pending');
       expect(warn).not.toHaveBeenCalled();
     });
   });

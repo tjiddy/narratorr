@@ -121,7 +121,7 @@ describe('renameFilesWithTemplate', () => {
 
       // Verify monotonically increasing current
       for (let i = 1; i < calls.length; i++) {
-        expect(calls[i][0]).toBeGreaterThan(calls[i - 1][0]);
+        expect(calls[i]![0]).toBeGreaterThan(calls[i - 1]![0]);
       }
       // Verify constant total
       const totals = calls.map(c => c[1]);
@@ -241,15 +241,15 @@ describe('renameFilesWithTemplate', () => {
       // The forward calls map the original filenames to template-rendered names.
       // Capture the actual (from, to) the production code emitted so the rollback
       // assertions don't have to re-derive the template.
-      const forward1 = { from: calls[0][0] as string, to: calls[0][1] as string };
-      const forward2 = { from: calls[1][0] as string, to: calls[1][1] as string };
+      const forward1 = { from: calls[0]![0] as string, to: calls[0]![1] as string };
+      const forward2 = { from: calls[1]![0] as string, to: calls[1]![1] as string };
 
       // Rollback calls swap from/to of the completed renames, in reverse order.
       // Completed-rename #2 is undone first, then #1.
-      expect(calls[3][0]).toBe(forward2.to);
-      expect(calls[3][1]).toBe(forward2.from);
-      expect(calls[4][0]).toBe(forward1.to);
-      expect(calls[4][1]).toBe(forward1.from);
+      expect(calls[3]![0]).toBe(forward2.to);
+      expect(calls[3]![1]).toBe(forward2.from);
+      expect(calls[4]![0]).toBe(forward1.to);
+      expect(calls[4]![1]).toBe(forward1.from);
     });
 
     it('continues rolling back remaining completed renames when one rollback rejects', async () => {
@@ -304,7 +304,7 @@ describe('renameFilesWithTemplate', () => {
       // `file` is the basename of the rendered name from completed-rename #2 — the
       // rollback that failed. Derive it from the corresponding forward call (#2)
       // so the assertion stays correct if the template render changes.
-      const completedTwoRenderedFile = basename(vi.mocked(rename).mock.calls[1][1] as string);
+      const completedTwoRenderedFile = basename(vi.mocked(rename).mock.calls[1]![1] as string);
       expect(rollbackLog![0]).toMatchObject({
         rollbackError,
         file: completedTwoRenderedFile,

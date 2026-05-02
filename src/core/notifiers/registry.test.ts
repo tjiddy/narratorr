@@ -26,7 +26,7 @@ describe('Notifier ADAPTER_FACTORIES', () => {
 
     it('each factory returns an object satisfying the NotifierAdapter interface', () => {
       for (const type of types) {
-        const adapter = ADAPTER_FACTORIES[type](configs[type]);
+        const adapter = ADAPTER_FACTORIES[type](configs[type]!);
         expect(adapter).toHaveProperty('type');
         expect(adapter.send).toBeTypeOf('function');
         expect(adapter.test).toBeTypeOf('function');

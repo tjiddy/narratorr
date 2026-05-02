@@ -158,11 +158,11 @@ describe('DiscoveryService', () => {
 
       const signals = await service.analyzeLibrary();
       expect(signals.seriesGaps).toHaveLength(1);
-      expect(signals.seriesGaps[0].seriesName).toBe('Stormlight');
-      expect(signals.seriesGaps[0].missingPositions).toContain(3);
-      expect(signals.seriesGaps[0].missingPositions).not.toContain(5);
-      expect(signals.seriesGaps[0].nextPosition).toBe(5);
-      expect(signals.seriesGaps[0].maxOwned).toBe(4);
+      expect(signals.seriesGaps[0]!.seriesName).toBe('Stormlight');
+      expect(signals.seriesGaps[0]!.missingPositions).toContain(3);
+      expect(signals.seriesGaps[0]!.missingPositions).not.toContain(5);
+      expect(signals.seriesGaps[0]!.nextPosition).toBe(5);
+      expect(signals.seriesGaps[0]!.maxOwned).toBe(4);
     });
 
     it('handles null seriesPosition gracefully', async () => {
@@ -625,9 +625,9 @@ describe('DiscoveryService', () => {
       expect(result).toEqual(mockData);
 
       // Verify the WHERE predicate encodes: status = 'pending' AND (snoozeUntil IS NULL OR snoozeUntil <= ?)
-      const chain = db.select.mock.results[0].value;
+      const chain = db.select.mock.results[0]!.value;
       expect(chain.where).toHaveBeenCalled();
-      const whereArg = (chain.where as ReturnType<typeof vi.fn>).mock.calls[0][0];
+      const whereArg = (chain.where as ReturnType<typeof vi.fn>).mock.calls[0]![0];
       const sql = toSQL(whereArg);
       expect(sql).toContain('"status" = ?');
       expect(sql).toContain('"snooze_until" is null');
@@ -739,7 +739,7 @@ describe('DiscoveryService', () => {
       // Expiry delete should be called with status='pending' AND createdAt < cutoff (strict lt, not lte)
       expect(db.delete).toHaveBeenCalled();
       expect(deleteChain.where).toHaveBeenCalled();
-      const whereArg = (deleteChain.where as ReturnType<typeof vi.fn>).mock.calls[0][0];
+      const whereArg = (deleteChain.where as ReturnType<typeof vi.fn>).mock.calls[0]![0];
       const sql = toSQL(whereArg);
       // Must have status = 'pending' guard for race safety
       expect(sql).toContain('"status" = ?');
@@ -902,7 +902,7 @@ describe('DiscoveryService', () => {
         }),
       );
       // Verify reason/reasonContext are NOT in the set payload (preserved by omission)
-      const setPayload = (updateChain.set as ReturnType<typeof vi.fn>).mock.calls[0][0] as Record<string, unknown>;
+      const setPayload = (updateChain.set as ReturnType<typeof vi.fn>).mock.calls[0]![0] as Record<string, unknown>;
       expect(setPayload).not.toHaveProperty('reason');
       expect(setPayload).not.toHaveProperty('reasonContext');
       // Score should use real scoring: author weight (40) * strength (0.6) = 24, clamped 0-100
@@ -948,7 +948,7 @@ describe('DiscoveryService', () => {
       await service.refreshSuggestions();
 
       // Score should use narrator weight (20) * narrator strength (4/5 = 0.8) = 16
-      const setPayload = (updateChain.set as ReturnType<typeof vi.fn>).mock.calls[0][0] as Record<string, unknown>;
+      const setPayload = (updateChain.set as ReturnType<typeof vi.fn>).mock.calls[0]![0] as Record<string, unknown>;
       expect(setPayload.score).toBe(16);
       expect(setPayload.snoozeUntil).toBeNull();
       // reason/reasonContext preserved by omission
@@ -994,7 +994,7 @@ describe('DiscoveryService', () => {
           snoozeUntil: null,
         }),
       );
-      const setPayload = (updateChain.set as ReturnType<typeof vi.fn>).mock.calls[0][0] as Record<string, unknown>;
+      const setPayload = (updateChain.set as ReturnType<typeof vi.fn>).mock.calls[0]![0] as Record<string, unknown>;
       // diversity weight = 15, strength = 0.3 → base score = 4.5
       expect(setPayload.score).toBe(4.5);
       expect(setPayload.snoozeUntil).toBeNull();
@@ -1523,7 +1523,7 @@ describe('DiscoveryService', () => {
 
       // Verify the where predicate uses inArray for ['dismissed', 'added'] only
       expect(chain.where).toHaveBeenCalled();
-      const whereArg = (chain.where as ReturnType<typeof vi.fn>).mock.calls[0][0];
+      const whereArg = (chain.where as ReturnType<typeof vi.fn>).mock.calls[0]![0];
       const sql = toSQL(whereArg);
       expect(sql).toContain('"status" in (?, ?)');
 
@@ -1839,9 +1839,9 @@ describe('DiscoveryService', () => {
 
       // Verify db.update was called for the resurfaced row with a reduced score
       expect(db.update).toHaveBeenCalled();
-      const updateChain = db.update.mock.results[0].value;
+      const updateChain = db.update.mock.results[0]!.value;
       expect(updateChain.set).toHaveBeenCalled();
-      const setArg = (updateChain.set as ReturnType<typeof vi.fn>).mock.calls[0][0];
+      const setArg = (updateChain.set as ReturnType<typeof vi.fn>).mock.calls[0]![0];
 
       // With author multiplier 0.80 and default strength 0.5:
       // score = SIGNAL_WEIGHTS.author * 0.80 * 0.5 = 40 * 0.80 * 0.5 = 16
@@ -2201,10 +2201,10 @@ describe('DiscoveryService', () => {
 
         // Only position 1 should be tracked; null position book is skipped
         expect(signals.seriesGaps).toHaveLength(1);
-        expect(signals.seriesGaps[0].maxOwned).toBe(1);
+        expect(signals.seriesGaps[0]!.maxOwned).toBe(1);
         // No gaps — only continuation at nextPosition
-        expect(signals.seriesGaps[0].missingPositions).toEqual([]);
-        expect(signals.seriesGaps[0].nextPosition).toBe(2);
+        expect(signals.seriesGaps[0]!.missingPositions).toEqual([]);
+        expect(signals.seriesGaps[0]!.nextPosition).toBe(2);
       });
 
       it('accepts fractional positions — [1.5, 2.5] yields no gaps, nextPosition = 3.5', async () => {

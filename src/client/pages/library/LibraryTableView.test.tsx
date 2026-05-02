@@ -90,7 +90,7 @@ describe('LibraryTableView', () => {
       const rows = screen.getAllByRole('row');
       // First row is header, second is data
       const dataRow = rows[1];
-      const cells = within(dataRow).getAllByRole('cell');
+      const cells = within(dataRow!).getAllByRole('cell');
 
       // Status cell (index 1, after checkbox)
       expect(cells[1]).toHaveTextContent('imported');
@@ -103,7 +103,7 @@ describe('LibraryTableView', () => {
       // Series cell
       expect(cells[5]).toHaveTextContent('Cosmere #1');
       // Date Added cell — formatted via toLocaleDateString, timezone may shift the day
-      expect(cells[6].textContent).toMatch(/Jun.*1[45].*2024/);
+      expect(cells[6]!.textContent).toMatch(/Jun.*1[45].*2024/);
       // Quality cell (MB/hr): 500 MB / 10 hours = 50 MB/hr
       expect(cells[7]).toHaveTextContent('50 MB/hr');
       // Size cell
@@ -117,7 +117,7 @@ describe('LibraryTableView', () => {
       renderTable({ books: [book] });
 
       const rows = screen.getAllByRole('row');
-      const cells = within(rows[1]).getAllByRole('cell');
+      const cells = within(rows[1]!).getAllByRole('cell');
       expect(cells[4]).toHaveTextContent('—');
     });
 
@@ -126,7 +126,7 @@ describe('LibraryTableView', () => {
       renderTable({ books: [book] });
 
       const rows = screen.getAllByRole('row');
-      const cells = within(rows[1]).getAllByRole('cell');
+      const cells = within(rows[1]!).getAllByRole('cell');
       expect(cells[5]).toHaveTextContent('—');
     });
 
@@ -135,7 +135,7 @@ describe('LibraryTableView', () => {
       renderTable({ books: [book] });
 
       const rows = screen.getAllByRole('row');
-      const cells = within(rows[1]).getAllByRole('cell');
+      const cells = within(rows[1]!).getAllByRole('cell');
       expect(cells[7]).toHaveTextContent('—');
     });
 
@@ -144,7 +144,7 @@ describe('LibraryTableView', () => {
       renderTable({ books: [book] });
 
       const rows = screen.getAllByRole('row');
-      const cells = within(rows[1]).getAllByRole('cell');
+      const cells = within(rows[1]!).getAllByRole('cell');
       expect(cells[9]).toHaveTextContent('—');
     });
 
@@ -153,7 +153,7 @@ describe('LibraryTableView', () => {
       renderTable({ books: [book] });
 
       const rows = screen.getAllByRole('row');
-      const cells = within(rows[1]).getAllByRole('cell');
+      const cells = within(rows[1]!).getAllByRole('cell');
       expect(cells[8]).toHaveTextContent('—');
     });
 
@@ -165,7 +165,7 @@ describe('LibraryTableView', () => {
       renderTable({ books: [book] });
 
       const rows = screen.getAllByRole('row');
-      const cells = within(rows[1]).getAllByRole('cell');
+      const cells = within(rows[1]!).getAllByRole('cell');
       expect(cells[8]).toHaveTextContent('200 MB');
     });
 
@@ -178,7 +178,7 @@ describe('LibraryTableView', () => {
       renderTable({ books: [book] });
 
       const rows = screen.getAllByRole('row');
-      const cells = within(rows[1]).getAllByRole('cell');
+      const cells = within(rows[1]!).getAllByRole('cell');
       expect(cells[7]).toHaveTextContent('205 MB/hr');
     });
 
@@ -191,7 +191,7 @@ describe('LibraryTableView', () => {
       renderTable({ books: [book] });
 
       const rows = screen.getAllByRole('row');
-      const cells = within(rows[1]).getAllByRole('cell');
+      const cells = within(rows[1]!).getAllByRole('cell');
       // computeMbPerHour returns null when duration <= 0, so dash is shown
       expect(cells[7]).toHaveTextContent('—');
     });

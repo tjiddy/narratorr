@@ -231,7 +231,7 @@ describe('DownloadClientForm (#201)', () => {
       await waitFor(() => {
         expect(onFormTest).toHaveBeenCalled();
       });
-      const arg = onFormTest.mock.calls[0][0] as Record<string, unknown>;
+      const arg = onFormTest.mock.calls[0]![0] as Record<string, unknown>;
       expect(arg).not.toHaveProperty('id');
     });
   });
@@ -429,7 +429,7 @@ describe('DownloadClientForm (#201)', () => {
         expect(onFormTest).toHaveBeenCalled();
       });
 
-      const payloadSettings = onFormTest.mock.calls[0][0].settings as Record<string, unknown>;
+      const payloadSettings = onFormTest.mock.calls[0]![0].settings as Record<string, unknown>;
 
       // Foreign keys for qBittorrent MUST NOT leak (useSsl is allowed by qBittorrent schema)
       expect(payloadSettings).not.toHaveProperty('apiKey');
@@ -467,7 +467,7 @@ describe('DownloadClientForm (#201)', () => {
         expect(onFormTest).toHaveBeenCalled();
       });
 
-      const payloadSettings = onFormTest.mock.calls[0][0].settings as Record<string, unknown>;
+      const payloadSettings = onFormTest.mock.calls[0]![0].settings as Record<string, unknown>;
 
       // Foreign keys for SABnzbd MUST NOT leak (useSsl and apiKey are allowed)
       expect(payloadSettings).not.toHaveProperty('username');

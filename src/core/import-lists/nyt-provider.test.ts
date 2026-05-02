@@ -44,7 +44,7 @@ describe('NytProvider', () => {
       const provider = new NytProvider({ apiKey: 'test-key', list: 'audio-nonfiction' });
       const items = await provider.fetchItems();
       expect(items).toHaveLength(1);
-      expect(items[0].title).toBe('Greenlights');
+      expect(items[0]!.title).toBe('Greenlights');
     });
 
     it('returns empty array when no items', async () => {

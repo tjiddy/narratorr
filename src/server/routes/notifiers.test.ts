@@ -571,7 +571,7 @@ describe('notifiers routes', () => {
       expect(services.notifier.testConfig).toHaveBeenCalledWith(
         expect.objectContaining({ type: 'webhook' }),
       );
-      const callArg = vi.mocked(services.notifier.testConfig).mock.calls[0][0];
+      const callArg = vi.mocked(services.notifier.testConfig).mock.calls[0]![0];
       expect('id' in callArg).toBe(false);
     });
   });

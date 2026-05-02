@@ -69,7 +69,7 @@ describe('fetchApi', () => {
       body: JSON.stringify({ title: 'New Book' }),
     });
 
-    const headers = (fetch as ReturnType<typeof vi.fn>).mock.calls[0][1].headers;
+    const headers = (fetch as ReturnType<typeof vi.fn>).mock.calls[0]![1].headers;
     expect(headers['Content-Type']).toBe('application/json');
   });
 
@@ -81,7 +81,7 @@ describe('fetchApi', () => {
 
     await fetchApi('/books');
 
-    const headers = (fetch as ReturnType<typeof vi.fn>).mock.calls[0][1].headers;
+    const headers = (fetch as ReturnType<typeof vi.fn>).mock.calls[0]![1].headers;
     expect(headers['Content-Type']).toBeUndefined();
   });
 
@@ -134,7 +134,7 @@ describe('fetchApi', () => {
 
     await fetchApi('/test');
 
-    expect((fetch as ReturnType<typeof vi.fn>).mock.calls[0][1].credentials).toBe('include');
+    expect((fetch as ReturnType<typeof vi.fn>).mock.calls[0]![1].credentials).toBe('include');
   });
 
   describe('X-Requested-With header (CSRF)', () => {
@@ -148,7 +148,7 @@ describe('fetchApi', () => {
         const opts: RequestInit = method === 'GET' ? {} : { method, body: JSON.stringify({ x: 1 }) };
         await fetchApi('/test', opts);
 
-        const headers = (fetch as ReturnType<typeof vi.fn>).mock.calls[0][1].headers;
+        const headers = (fetch as ReturnType<typeof vi.fn>).mock.calls[0]![1].headers;
         expect(headers['X-Requested-With']).toBe('XMLHttpRequest');
       });
     }
@@ -161,7 +161,7 @@ describe('fetchApi', () => {
 
       await fetchApi('/test', { headers: { 'X-Custom': 'yes' } });
 
-      const headers = (fetch as ReturnType<typeof vi.fn>).mock.calls[0][1].headers;
+      const headers = (fetch as ReturnType<typeof vi.fn>).mock.calls[0]![1].headers;
       expect(headers['X-Requested-With']).toBe('XMLHttpRequest');
       expect(headers['X-Custom']).toBe('yes');
     });
@@ -241,7 +241,7 @@ describe('fetchMultipart', () => {
     formData.append('file', new File(['x'], 'x.bin'));
     await fetchMultipart('/upload', formData);
 
-    const headers = (fetch as ReturnType<typeof vi.fn>).mock.calls[0][1].headers as Headers;
+    const headers = (fetch as ReturnType<typeof vi.fn>).mock.calls[0]![1].headers as Headers;
     expect(headers.get('Content-Type')).toBeNull();
   });
 
@@ -256,7 +256,7 @@ describe('fetchMultipart', () => {
       headers: { 'X-Requested-With': 'CustomValue', 'X-Custom': 'yes' },
     });
 
-    const headers = (fetch as ReturnType<typeof vi.fn>).mock.calls[0][1].headers as Headers;
+    const headers = (fetch as ReturnType<typeof vi.fn>).mock.calls[0]![1].headers as Headers;
     expect(headers.get('X-Requested-With')).toBe('CustomValue');
     expect(headers.get('X-Custom')).toBe('yes');
   });
@@ -272,7 +272,7 @@ describe('fetchMultipart', () => {
       headers: new Headers({ 'X-Requested-With': 'HeadersOverride', 'X-Custom': 'from-headers' }),
     });
 
-    const headers = (fetch as ReturnType<typeof vi.fn>).mock.calls[0][1].headers as Headers;
+    const headers = (fetch as ReturnType<typeof vi.fn>).mock.calls[0]![1].headers as Headers;
     expect(headers.get('X-Requested-With')).toBe('HeadersOverride');
     expect(headers.get('X-Custom')).toBe('from-headers');
   });
@@ -288,7 +288,7 @@ describe('fetchMultipart', () => {
       headers: [['X-Requested-With', 'TupleOverride'], ['X-Custom', 'from-tuple']],
     });
 
-    const headers = (fetch as ReturnType<typeof vi.fn>).mock.calls[0][1].headers as Headers;
+    const headers = (fetch as ReturnType<typeof vi.fn>).mock.calls[0]![1].headers as Headers;
     expect(headers.get('X-Requested-With')).toBe('TupleOverride');
     expect(headers.get('X-Custom')).toBe('from-tuple');
   });

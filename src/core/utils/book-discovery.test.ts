@@ -142,8 +142,8 @@ describe('discoverBooks', () => {
 
     const result = await discoverBooks('/audiobooks');
     expect(result).toHaveLength(1);
-    expect(result[0].audioFileCount).toBe(1);
-    expect(result[0].totalSize).toBe(100);
+    expect(result[0]!.audioFileCount).toBe(1);
+    expect(result[0]!.totalSize).toBe(100);
   });
 
   // ---- All recognized audio extensions ----
@@ -158,7 +158,7 @@ describe('discoverBooks', () => {
 
       const result = await discoverBooks('/audiobooks');
       expect(result).toHaveLength(1);
-      expect(result[0].audioFileCount).toBe(1);
+      expect(result[0]!.audioFileCount).toBe(1);
     },
   );
 
@@ -180,8 +180,8 @@ describe('discoverBooks', () => {
 
     const result = await discoverBooks('/audiobooks');
     expect(result).toHaveLength(1);
-    expect(result[0].audioFileCount).toBe(1);
-    expect(result[0].totalSize).toBe(5000);
+    expect(result[0]!.audioFileCount).toBe(1);
+    expect(result[0]!.totalSize).toBe(5000);
   });
 
   // ---- Folder structure parsing (folderParts) ----
@@ -197,7 +197,7 @@ describe('discoverBooks', () => {
 
     const result = await discoverBooks('/audiobooks');
     expect(result).toHaveLength(1);
-    expect(result[0].folderParts).toEqual(['Brandon Sanderson', 'Mistborn']);
+    expect(result[0]!.folderParts).toEqual(['Brandon Sanderson', 'Mistborn']);
   });
 
   it('parses Author/Series/Book structure into folderParts', async () => {
@@ -212,7 +212,7 @@ describe('discoverBooks', () => {
 
     const result = await discoverBooks('/audiobooks');
     expect(result).toHaveLength(1);
-    expect(result[0].folderParts).toEqual(['Joe Abercrombie', 'First Law', 'The Blade Itself']);
+    expect(result[0]!.folderParts).toEqual(['Joe Abercrombie', 'First Law', 'The Blade Itself']);
   });
 
   it('uses root basename as folderParts when audio is in root directory itself', async () => {
@@ -224,7 +224,7 @@ describe('discoverBooks', () => {
 
     const result = await discoverBooks('/audiobooks');
     expect(result).toHaveLength(1);
-    expect(result[0].folderParts).toEqual(['audiobooks']);
+    expect(result[0]!.folderParts).toEqual(['audiobooks']);
   });
 
   // ---- Disc folder merging ----
@@ -249,10 +249,10 @@ describe('discoverBooks', () => {
 
       const result = await discoverBooks('/audiobooks');
       expect(result).toHaveLength(1);
-      expect(result[0].path).toBe('/audiobooks/Long Book');
-      expect(result[0].audioFileCount).toBe(4);
-      expect(result[0].totalSize).toBe(11_000);
-      expect(result[0].folderParts).toEqual(['Long Book']);
+      expect(result[0]!.path).toBe('/audiobooks/Long Book');
+      expect(result[0]!.audioFileCount).toBe(4);
+      expect(result[0]!.totalSize).toBe(11_000);
+      expect(result[0]!.folderParts).toEqual(['Long Book']);
     });
 
     it('merges "Disc 1" / "Disc 2" (with space)', async () => {
@@ -268,8 +268,8 @@ describe('discoverBooks', () => {
 
       const result = await discoverBooks('/audiobooks');
       expect(result).toHaveLength(1);
-      expect(result[0].path).toBe('/audiobooks/Book');
-      expect(result[0].audioFileCount).toBe(2);
+      expect(result[0]!.path).toBe('/audiobooks/Book');
+      expect(result[0]!.audioFileCount).toBe(2);
     });
 
     it('merges "Disk 01" / "Disk 02" variant', async () => {
@@ -285,7 +285,7 @@ describe('discoverBooks', () => {
 
       const result = await discoverBooks('/audiobooks');
       expect(result).toHaveLength(1);
-      expect(result[0].path).toBe('/audiobooks/Book');
+      expect(result[0]!.path).toBe('/audiobooks/Book');
     });
 
     it('merges case-insensitive disc names (DISC 1, disc 2)', async () => {
@@ -301,7 +301,7 @@ describe('discoverBooks', () => {
 
       const result = await discoverBooks('/audiobooks');
       expect(result).toHaveLength(1);
-      expect(result[0].path).toBe('/audiobooks/Book');
+      expect(result[0]!.path).toBe('/audiobooks/Book');
     });
 
     it('merges "Disc1" / "Disc2" (no space)', async () => {
@@ -317,7 +317,7 @@ describe('discoverBooks', () => {
 
       const result = await discoverBooks('/audiobooks');
       expect(result).toHaveLength(1);
-      expect(result[0].path).toBe('/audiobooks/Book');
+      expect(result[0]!.path).toBe('/audiobooks/Book');
     });
 
     it('handles three-digit disc numbers (CD001, CD002)', async () => {
@@ -333,7 +333,7 @@ describe('discoverBooks', () => {
 
       const result = await discoverBooks('/audiobooks');
       expect(result).toHaveLength(1);
-      expect(result[0].path).toBe('/audiobooks/Book');
+      expect(result[0]!.path).toBe('/audiobooks/Book');
     });
 
     it('does NOT merge if only one disc folder', async () => {
@@ -348,7 +348,7 @@ describe('discoverBooks', () => {
       const result = await discoverBooks('/audiobooks');
       // Should discover CD1 as a standalone book folder, not merge
       expect(result).toHaveLength(1);
-      expect(result[0].path).toBe('/audiobooks/Book/CD1');
+      expect(result[0]!.path).toBe('/audiobooks/Book/CD1');
     });
 
     it('does NOT merge folders that do not match disc pattern', async () => {
@@ -438,7 +438,7 @@ describe('discoverBooks', () => {
 
       const result = await discoverBooks('/audiobooks');
       // If merged, we get 1 result at parent. If not, we get 2 separate.
-      return result.length === 1 && result[0].path === '/audiobooks/Book';
+      return result.length === 1 && result[0]!.path === '/audiobooks/Book';
     }
 
     it.each(['CD1', 'CD 1', 'cd1', 'cd 1', 'CD 01', 'CD 001'])(
@@ -499,9 +499,9 @@ describe('discoverBooks', () => {
     const result = await discoverBooks('/audiobooks');
     // Parent has audio, subfolder has no audio -> leaf
     expect(result).toHaveLength(1);
-    expect(result[0].path).toBe('/audiobooks/Book');
-    expect(result[0].audioFileCount).toBe(1);
-    expect(result[0].totalSize).toBe(5000);
+    expect(result[0]!.path).toBe('/audiobooks/Book');
+    expect(result[0]!.audioFileCount).toBe(1);
+    expect(result[0]!.totalSize).toBe(5000);
   });
 
   // ---- Multiple books at same level ----
@@ -540,8 +540,8 @@ describe('discoverBooks', () => {
 
     const result = await discoverBooks('/audiobooks');
     expect(result).toHaveLength(2);
-    expect(result[0].folderParts).toEqual(['Author', 'Series', 'Book 1']);
-    expect(result[1].folderParts).toEqual(['Author', 'Series', 'Book 2']);
+    expect(result[0]!.folderParts).toEqual(['Author', 'Series', 'Book 1']);
+    expect(result[1]!.folderParts).toEqual(['Author', 'Series', 'Book 2']);
   });
 
   // ---- Empty subdirectory (no audio anywhere) ----
@@ -558,7 +558,7 @@ describe('discoverBooks', () => {
 
     const result = await discoverBooks('/audiobooks');
     expect(result).toHaveLength(1);
-    expect(result[0].folderParts).toEqual(['has-audio']);
+    expect(result[0]!.folderParts).toEqual(['has-audio']);
   });
 
   // ---- Stat failure on a file ----
@@ -588,8 +588,8 @@ describe('discoverBooks', () => {
 
     const result = await discoverBooks('/audiobooks');
     expect(result).toHaveLength(1);
-    expect(result[0].audioFileCount).toBe(1);
-    expect(result[0].totalSize).toBe(2000);
+    expect(result[0]!.audioFileCount).toBe(1);
+    expect(result[0]!.totalSize).toBe(2000);
   });
 
   // ---- Logger integration ----
@@ -672,9 +672,9 @@ describe('discoverBooks', () => {
 
     const result = await discoverBooks('/audiobooks');
     expect(result).toHaveLength(1);
-    expect(result[0].path).toBe('/audiobooks/Book');
-    expect(result[0].audioFileCount).toBe(3);
-    expect(result[0].totalSize).toBe(600);
+    expect(result[0]!.path).toBe('/audiobooks/Book');
+    expect(result[0]!.audioFileCount).toBe(3);
+    expect(result[0]!.totalSize).toBe(600);
   });
 
   // ---- Non-disc children alongside disc merge ----
@@ -735,7 +735,7 @@ describe('discoverBooks', () => {
 
     const result = await discoverBooks('/audiobooks');
     expect(result).toHaveLength(1);
-    expect(result[0].audioFileCount).toBe(2);
+    expect(result[0]!.audioFileCount).toBe(2);
   });
 
   // ---- totalSize aggregation ----
@@ -752,7 +752,7 @@ describe('discoverBooks', () => {
     });
 
     const result = await discoverBooks('/audiobooks');
-    expect(result[0].totalSize).toBe(10);
+    expect(result[0]!.totalSize).toBe(10);
   });
 
   it('handles rootPath that is a substring of deeper path segments', async () => {
@@ -765,7 +765,7 @@ describe('discoverBooks', () => {
     const result = await discoverBooks('/ab');
     expect(result).toHaveLength(1);
     // path.relative('/ab', '/ab/ab/book') = 'ab/book' — correct
-    expect(result[0].folderParts).toEqual(['ab', 'book']);
+    expect(result[0]!.folderParts).toEqual(['ab', 'book']);
   });
 
   // ---- Mixed-content folders (loose audio + audio subfolders) ----
@@ -784,9 +784,9 @@ describe('discoverBooks', () => {
 
       const result = await discoverBooks('/audiobooks');
       expect(result).toHaveLength(1);
-      expect(result[0].path).toBe('/audiobooks/Author/Book1');
-      expect(result[0].audioFileCount).toBe(1);
-      expect(result[0].totalSize).toBe(5000);
+      expect(result[0]!.path).toBe('/audiobooks/Author/Book1');
+      expect(result[0]!.audioFileCount).toBe(1);
+      expect(result[0]!.totalSize).toBe(5000);
     });
 
     it('nested folder with loose audio + book subfolders discovers books and skips loose file', async () => {
@@ -820,7 +820,7 @@ describe('discoverBooks', () => {
 
       const result = await discoverBooks('/audiobooks');
       expect(result).toHaveLength(1);
-      expect(result[0].path).toBe('/audiobooks/Author/Series/Book1');
+      expect(result[0]!.path).toBe('/audiobooks/Author/Series/Book1');
     });
 
     it('single loose audio file + audio subfolders still skips the single file', async () => {
@@ -834,8 +834,8 @@ describe('discoverBooks', () => {
 
       const result = await discoverBooks('/audiobooks');
       expect(result).toHaveLength(1);
-      expect(result[0].path).toBe('/audiobooks/Book');
-      expect(result[0].totalSize).toBe(5000);
+      expect(result[0]!.path).toBe('/audiobooks/Book');
+      expect(result[0]!.totalSize).toBe(5000);
     });
 
     it('loose audio files + exactly one audio subfolder discovers subfolder and skips loose files', async () => {
@@ -849,7 +849,7 @@ describe('discoverBooks', () => {
 
       const result = await discoverBooks('/audiobooks');
       expect(result).toHaveLength(1);
-      expect(result[0].path).toBe('/audiobooks/OnlyBook');
+      expect(result[0]!.path).toBe('/audiobooks/OnlyBook');
     });
 
     it('loose audio files + non-audio-only subfolders treated as single book (leaf)', async () => {
@@ -864,8 +864,8 @@ describe('discoverBooks', () => {
       const result = await discoverBooks('/audiobooks');
       // No audio children, so hasOwnAudio + no audioChildren = leaf
       expect(result).toHaveLength(1);
-      expect(result[0].path).toBe('/audiobooks');
-      expect(result[0].audioFileCount).toBe(1);
+      expect(result[0]!.path).toBe('/audiobooks');
+      expect(result[0]!.audioFileCount).toBe(1);
     });
 
     it('no audio files and no audio children returns empty', async () => {
@@ -894,9 +894,9 @@ describe('discoverBooks', () => {
 
       const result = await discoverBooks('/audiobooks');
       expect(result).toHaveLength(1);
-      expect(result[0].path).toBe('/audiobooks/Book');
-      expect(result[0].audioFileCount).toBe(2); // Only disc tracks, not loose
-      expect(result[0].totalSize).toBe(500); // 200 + 300, not 100
+      expect(result[0]!.path).toBe('/audiobooks/Book');
+      expect(result[0]!.audioFileCount).toBe(2); // Only disc tracks, not loose
+      expect(result[0]!.totalSize).toBe(500); // 200 + 300, not 100
     });
 
     it('loose audio + disc subfolders + non-disc immediateAudioChild prevents disc merge, recurses all', async () => {
@@ -966,9 +966,9 @@ describe('discoverBooks', () => {
 
       const result = await discoverBooks('/audiobooks');
       expect(result).toHaveLength(1);
-      expect(result[0].path).toBe('/audiobooks/Book');
-      expect(result[0].audioFileCount).toBe(2); // Only disc tracks, not loose
-      expect(result[0].totalSize).toBe(500); // 200 + 300, not 100
+      expect(result[0]!.path).toBe('/audiobooks/Book');
+      expect(result[0]!.audioFileCount).toBe(2); // Only disc tracks, not loose
+      expect(result[0]!.totalSize).toBe(500); // 200 + 300, not 100
     });
   });
 
@@ -1045,9 +1045,9 @@ describe('discoverBooks', () => {
 
       const result = await discoverBooks('/downloads/The Name of the Wind by Patrick Rothfuss');
       expect(result).toHaveLength(1);
-      expect(result[0].folderParts).toEqual(['The Name of the Wind by Patrick Rothfuss']);
-      expect(result[0].audioFileCount).toBe(2);
-      expect(result[0].totalSize).toBe(11000);
+      expect(result[0]!.folderParts).toEqual(['The Name of the Wind by Patrick Rothfuss']);
+      expect(result[0]!.audioFileCount).toBe(2);
+      expect(result[0]!.totalSize).toBe(11000);
     });
 
     it('uses root folder basename for single m4b file at root', async () => {
@@ -1059,7 +1059,7 @@ describe('discoverBooks', () => {
 
       const result = await discoverBooks('/downloads/My Audiobook');
       expect(result).toHaveLength(1);
-      expect(result[0].folderParts).toEqual(['My Audiobook']);
+      expect(result[0]!.folderParts).toEqual(['My Audiobook']);
     });
 
     it('still discovers child folders when root has subfolders with audio', async () => {
@@ -1074,8 +1074,8 @@ describe('discoverBooks', () => {
 
       const result = await discoverBooks('/downloads/collection');
       expect(result).toHaveLength(2);
-      expect(result[0].folderParts).toEqual(['Book One']);
-      expect(result[1].folderParts).toEqual(['Book Two']);
+      expect(result[0]!.folderParts).toEqual(['Book One']);
+      expect(result[1]!.folderParts).toEqual(['Book Two']);
     });
   });
 
@@ -1187,8 +1187,8 @@ describe('discoverBooks', () => {
 
         const result = await discoverBooks('/audiobooks');
         expect(result).toHaveLength(1);
-        expect(result[0].path).toBe('/audiobooks');
-        expect(result[0].audioFileCount).toBe(3);
+        expect(result[0]!.path).toBe('/audiobooks');
+        expect(result[0]!.audioFileCount).toBe(3);
       });
 
       it('merges N-of-M sibling folders into single book entry', async () => {
@@ -1205,8 +1205,8 @@ describe('discoverBooks', () => {
 
         const result = await discoverBooks('/audiobooks');
         expect(result).toHaveLength(1);
-        expect(result[0].path).toBe('/audiobooks');
-        expect(result[0].audioFileCount).toBe(3);
+        expect(result[0]!.path).toBe('/audiobooks');
+        expect(result[0]!.audioFileCount).toBe(3);
       });
 
       it('does not merge siblings with different title prefixes', async () => {
@@ -1252,7 +1252,7 @@ describe('discoverBooks', () => {
 
         const result = await discoverBooks('/audiobooks');
         expect(result).toHaveLength(1);
-        expect(result[0].path).toBe('/audiobooks');
+        expect(result[0]!.path).toBe('/audiobooks');
       });
 
       it('does not merge single titled-disc folder (requires ≥2)', async () => {
@@ -1266,7 +1266,7 @@ describe('discoverBooks', () => {
         const result = await discoverBooks('/audiobooks');
         expect(result).toHaveLength(1);
         // Should be the child folder, not the parent (no merge)
-        expect(result[0].path).toBe('/audiobooks/BookTitle (Disc 01)');
+        expect(result[0]!.path).toBe('/audiobooks/BookTitle (Disc 01)');
       });
 
       it('merges exactly 2 titled-disc siblings', async () => {
@@ -1281,9 +1281,9 @@ describe('discoverBooks', () => {
 
         const result = await discoverBooks('/audiobooks');
         expect(result).toHaveLength(1);
-        expect(result[0].path).toBe('/audiobooks');
-        expect(result[0].audioFileCount).toBe(2);
-        expect(result[0].totalSize).toBe(3500);
+        expect(result[0]!.path).toBe('/audiobooks');
+        expect(result[0]!.audioFileCount).toBe(2);
+        expect(result[0]!.totalSize).toBe(3500);
       });
     });
   });

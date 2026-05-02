@@ -117,7 +117,7 @@ describe('WelcomeModal', () => {
     const user = userEvent.setup();
     render(<WelcomeModal isOpen onDismiss={onDismiss} />);
     const links = screen.getAllByRole('link');
-    act(() => links[0].focus());
+    act(() => links[0]!.focus());
     expect(document.activeElement).toBe(links[0]);
     await user.keyboard('{Shift>}{Tab}{/Shift}');
     expect(document.activeElement).toBe(screen.getByRole('button', { name: /get started/i }));
@@ -366,7 +366,7 @@ describe('WelcomeModal', () => {
     const user = userEvent.setup();
     render(<WelcomeModal isOpen onDismiss={onDismiss} />);
     const links = screen.getAllByRole('link');
-    act(() => links[links.length - 1].focus());
+    act(() => links[links.length - 1]!.focus());
     await user.keyboard('{Tab}');
     expect(document.activeElement).toBe(screen.getByRole('button', { name: /get started/i }));
   });
@@ -385,7 +385,7 @@ describe('WelcomeModal', () => {
     const user = userEvent.setup();
     render(<WelcomeModal isOpen onDismiss={onDismiss} />);
     const links = screen.getAllByRole('link');
-    act(() => links[0].focus());
+    act(() => links[0]!.focus());
     await user.keyboard('{Enter}');
     expect(onDismiss).not.toHaveBeenCalled();
   });

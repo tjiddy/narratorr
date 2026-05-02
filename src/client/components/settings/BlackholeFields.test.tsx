@@ -55,8 +55,8 @@ describe('BlackholeFields', () => {
     const select = screen.getByLabelText('Protocol') as HTMLSelectElement;
     expect(select).toBeInTheDocument();
     expect(select.options).toHaveLength(2);
-    expect(select.options[0].value).toBe('torrent');
-    expect(select.options[1].value).toBe('usenet');
+    expect(select.options[0]!.value).toBe('torrent');
+    expect(select.options[1]!.value).toBe('usenet');
   });
 
   it('allows changing protocol selection', async () => {

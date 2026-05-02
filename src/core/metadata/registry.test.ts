@@ -7,14 +7,14 @@ describe('METADATA_SEARCH_PROVIDER_FACTORIES', () => {
     const factory = METADATA_SEARCH_PROVIDER_FACTORIES.audible;
     expect(factory).toBeDefined();
 
-    const provider = factory({ region: 'us' });
+    const provider = factory!({ region: 'us' });
     expect(provider).toBeInstanceOf(AudibleProvider);
     expect(provider.name).toContain('Audible');
     expect(provider.type).toBe('audible');
   });
 
   it('passes region config to AudibleProvider factory', () => {
-    const provider = METADATA_SEARCH_PROVIDER_FACTORIES.audible({ region: 'uk' });
+    const provider = METADATA_SEARCH_PROVIDER_FACTORIES.audible!({ region: 'uk' });
     expect(provider.name).toBe('Audible.co.uk');
   });
 
@@ -25,17 +25,17 @@ describe('METADATA_SEARCH_PROVIDER_FACTORIES', () => {
 
   describe('region coercion branches', () => {
     it('defaults to US behavior when region config is missing', () => {
-      const provider = METADATA_SEARCH_PROVIDER_FACTORIES.audible({});
+      const provider = METADATA_SEARCH_PROVIDER_FACTORIES.audible!({});
       expect(provider.name).toBe('Audible.com');
     });
 
     it('defaults to US behavior when region is empty string', () => {
-      const provider = METADATA_SEARCH_PROVIDER_FACTORIES.audible({ region: '' });
+      const provider = METADATA_SEARCH_PROVIDER_FACTORIES.audible!({ region: '' });
       expect(provider.name).toBe('Audible.com');
     });
 
     it('passes through explicit region to provider', () => {
-      const provider = METADATA_SEARCH_PROVIDER_FACTORIES.audible({ region: 'uk' });
+      const provider = METADATA_SEARCH_PROVIDER_FACTORIES.audible!({ region: 'uk' });
       expect(provider.name).toBe('Audible.co.uk');
     });
   });

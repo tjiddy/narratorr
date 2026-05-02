@@ -420,7 +420,7 @@ describe('BlacklistService', () => {
       expect(settingsService.get).toHaveBeenCalledWith('search');
 
       // Assert the actual values payload includes computed expiresAt
-      const valuesPayload = (chain.values as ReturnType<typeof vi.fn>).mock.calls[0][0];
+      const valuesPayload = (chain.values as ReturnType<typeof vi.fn>).mock.calls[0]![0];
       expect(valuesPayload.blacklistType).toBe('temporary');
       expect(valuesPayload.expiresAt).toBeInstanceOf(Date);
       // TTL is 7 days — verify expiresAt is approximately 7 days from now
@@ -442,7 +442,7 @@ describe('BlacklistService', () => {
       expect(result).toEqual(expect.objectContaining({ blacklistType: 'permanent', expiresAt: null }));
 
       // Assert the values payload explicitly nullifies expiresAt for permanent entries
-      const valuesPayload = (chain.values as ReturnType<typeof vi.fn>).mock.calls[0][0];
+      const valuesPayload = (chain.values as ReturnType<typeof vi.fn>).mock.calls[0]![0];
       expect(valuesPayload.blacklistType).toBe('permanent');
       expect(valuesPayload.expiresAt).toBeNull();
     });
@@ -463,7 +463,7 @@ describe('BlacklistService', () => {
       );
 
       // Assert the values payload nullifies expiresAt when no blacklistType specified
-      const valuesPayload = (chain.values as ReturnType<typeof vi.fn>).mock.calls[0][0];
+      const valuesPayload = (chain.values as ReturnType<typeof vi.fn>).mock.calls[0]![0];
       expect(valuesPayload.expiresAt).toBeNull();
     });
   });
@@ -487,7 +487,7 @@ describe('BlacklistService', () => {
       );
 
       // Assert the actual update payload nullifies expiresAt
-      const setPayload = (updateChain.set as ReturnType<typeof vi.fn>).mock.calls[0][0];
+      const setPayload = (updateChain.set as ReturnType<typeof vi.fn>).mock.calls[0]![0];
       expect(setPayload).toEqual({ blacklistType: 'permanent', expiresAt: null });
     });
 
@@ -506,7 +506,7 @@ describe('BlacklistService', () => {
       expect(settingsService.get).toHaveBeenCalledWith('search');
 
       // Assert the actual update payload includes computed expiresAt from TTL
-      const setPayload = (updateChain.set as ReturnType<typeof vi.fn>).mock.calls[0][0];
+      const setPayload = (updateChain.set as ReturnType<typeof vi.fn>).mock.calls[0]![0];
       expect(setPayload.blacklistType).toBe('temporary');
       expect(setPayload.expiresAt).toBeInstanceOf(Date);
       const expectedExpiry = Date.now() + 7 * 24 * 60 * 60 * 1000;
@@ -716,7 +716,7 @@ describe('BlacklistService', () => {
 
       const onConflict = chain.onConflictDoUpdate as ReturnType<typeof vi.fn>;
       expect(onConflict).toHaveBeenCalledTimes(1);
-      const config = onConflict.mock.calls[0][0];
+      const config = onConflict.mock.calls[0]![0];
       expect(config.target).toBe(blacklist.infoHash);
       expect(config.targetWhere).toBeDefined();
       // set clause includes blacklistedAt refresh and every normalized column
@@ -735,7 +735,7 @@ describe('BlacklistService', () => {
       await service.create({ guid: 'g', title: 'T', reason: 'spam' });
 
       const onConflict = chain.onConflictDoUpdate as ReturnType<typeof vi.fn>;
-      const config = onConflict.mock.calls[0][0];
+      const config = onConflict.mock.calls[0]![0];
       expect(config.target).toBe(blacklist.guid);
       expect(config.targetWhere).toBeDefined();
       expect(config.set).toHaveProperty('guid', 'g');
@@ -747,7 +747,7 @@ describe('BlacklistService', () => {
       db.insert.mockReturnValue(chain);
       await service.create({ infoHash: 'h', guid: 'g', title: 'T', reason: 'spam' });
 
-      const config = (chain.onConflictDoUpdate as ReturnType<typeof vi.fn>).mock.calls[0][0];
+      const config = (chain.onConflictDoUpdate as ReturnType<typeof vi.fn>).mock.calls[0]![0];
       expect(config.target).toBe(blacklist.infoHash);
       expect(config.set.infoHash).toBe('h');
       expect(config.set.guid).toBe('g');
@@ -758,7 +758,7 @@ describe('BlacklistService', () => {
       db.insert.mockReturnValue(chain);
       await service.create({ infoHash: 'abc', title: 'T', reason: 'spam' });
 
-      const valuesPayload = (chain.values as ReturnType<typeof vi.fn>).mock.calls[0][0];
+      const valuesPayload = (chain.values as ReturnType<typeof vi.fn>).mock.calls[0]![0];
       expect(valuesPayload).toEqual({
         bookId: null,
         infoHash: 'abc',
@@ -776,7 +776,7 @@ describe('BlacklistService', () => {
       db.insert.mockReturnValue(chain);
       await service.create({ infoHash: 'abc', title: 'T', reason: 'spam', bookId: 5 });
 
-      const setPayload = (chain.onConflictDoUpdate as ReturnType<typeof vi.fn>).mock.calls[0][0].set;
+      const setPayload = (chain.onConflictDoUpdate as ReturnType<typeof vi.fn>).mock.calls[0]![0].set;
       // Every optional field is explicit in SET so omitted inputs don't leak stale values
       expect(setPayload).toMatchObject({
         bookId: 5,
@@ -896,7 +896,7 @@ describe('BlacklistService — upsert integration (real libsql)', () => {
     await svcWithSettings.create({
       infoHash: 'abc',
       title: 'A',
-      bookId: seeded.id,
+      bookId: seeded!.id,
       note: 'first',
       blacklistType: 'temporary',
       reason: 'spam',
@@ -929,7 +929,7 @@ describe('BlacklistService — upsert integration (real libsql)', () => {
     });
 
     let rows = await allRows();
-    expect(rows[0].expiresAt).toBeInstanceOf(Date);
+    expect(rows[0]!.expiresAt).toBeInstanceOf(Date);
 
     await svcWithSettings.create({
       infoHash: 'abc',
@@ -940,8 +940,8 @@ describe('BlacklistService — upsert integration (real libsql)', () => {
 
     rows = await allRows();
     expect(rows).toHaveLength(1);
-    expect(rows[0].expiresAt).toBeNull();
-    expect(rows[0].blacklistType).toBe('permanent');
+    expect(rows[0]!.expiresAt).toBeNull();
+    expect(rows[0]!.blacklistType).toBe('permanent');
   });
 
   it('rejects when neither identifier is provided', async () => {

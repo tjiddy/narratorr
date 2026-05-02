@@ -117,7 +117,7 @@ describe('BooksTabContent', () => {
     ];
     renderBooksTab(books, 'A Court of Thorns and Roses');
     const cards = screen.getAllByText(/A Court of Thorns and Roses/);
-    expect(cards[0].textContent).toBe('A Court of Thorns and Roses');
+    expect(cards[0]!.textContent).toBe('A Court of Thorns and Roses');
   });
 
   it('exact title match is case-insensitive', () => {
@@ -127,7 +127,7 @@ describe('BooksTabContent', () => {
     ];
     renderBooksTab(books, 'the shining');
     const cards = screen.getAllByText(/The Shining|Other Book/);
-    expect(cards[0].textContent).toBe('The Shining');
+    expect(cards[0]!.textContent).toBe('The Shining');
   });
 
   it('preserves API order when no exact match exists', () => {
@@ -137,8 +137,8 @@ describe('BooksTabContent', () => {
     ];
     renderBooksTab(books, 'something else');
     const cards = screen.getAllByText(/Book [AB]/);
-    expect(cards[0].textContent).toBe('Book B');
-    expect(cards[1].textContent).toBe('Book A');
+    expect(cards[0]!.textContent).toBe('Book B');
+    expect(cards[1]!.textContent).toBe('Book A');
   });
 });
 

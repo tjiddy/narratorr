@@ -46,11 +46,11 @@ describe('preserveBookCover', () => {
 
     await preserveBookCover('/library/Author/Book', 42, '/config', log);
 
-    const mkdirPath = String(vi.mocked(mkdir).mock.calls[0][0]).split('\\').join('/');
+    const mkdirPath = String(vi.mocked(mkdir).mock.calls[0]![0]).split('\\').join('/');
     expect(mkdirPath).toBe('/config/covers/42');
-    expect(vi.mocked(mkdir).mock.calls[0][1]).toEqual({ recursive: true });
-    const copySrc = String(vi.mocked(copyFile).mock.calls[0][0]).split('\\').join('/');
-    const copyDst = String(vi.mocked(copyFile).mock.calls[0][1]).split('\\').join('/');
+    expect(vi.mocked(mkdir).mock.calls[0]![1]).toEqual({ recursive: true });
+    const copySrc = String(vi.mocked(copyFile).mock.calls[0]![0]).split('\\').join('/');
+    const copyDst = String(vi.mocked(copyFile).mock.calls[0]![1]).split('\\').join('/');
     expect(copySrc).toBe('/library/Author/Book/cover.jpg');
     expect(copyDst).toBe('/config/covers/42/cover.jpg');
   });
@@ -62,8 +62,8 @@ describe('preserveBookCover', () => {
 
     await preserveBookCover('/library/Author/Book', 42, '/config', log);
 
-    const copySrc = String(vi.mocked(copyFile).mock.calls[0][0]).split('\\').join('/');
-    const copyDst = String(vi.mocked(copyFile).mock.calls[0][1]).split('\\').join('/');
+    const copySrc = String(vi.mocked(copyFile).mock.calls[0]![0]).split('\\').join('/');
+    const copyDst = String(vi.mocked(copyFile).mock.calls[0]![1]).split('\\').join('/');
     expect(copySrc).toBe('/library/Author/Book/cover.png');
     expect(copyDst).toBe('/config/covers/42/cover.png');
   });
@@ -84,7 +84,7 @@ describe('preserveBookCover', () => {
 
     await preserveBookCover('/library/Author/Book', 42, '/config', log);
 
-    const mkdirPath = String(vi.mocked(mkdir).mock.calls[0][0]).split('\\').join('/');
+    const mkdirPath = String(vi.mocked(mkdir).mock.calls[0]![0]).split('\\').join('/');
     expect(mkdirPath).toBe('/config/covers/42');
   });
 
@@ -112,10 +112,10 @@ describe('preserveBookCover', () => {
     await preserveBookCover('/library/Author/Book', 42, '/config', log);
 
     // Should remove the stale cover.jpg before copying cover.png
-    const unlinkPath = String(vi.mocked(unlink).mock.calls[0][0]).split('\\').join('/');
+    const unlinkPath = String(vi.mocked(unlink).mock.calls[0]![0]).split('\\').join('/');
     expect(unlinkPath).toBe('/config/covers/42/cover.jpg');
-    const copySrc = String(vi.mocked(copyFile).mock.calls[0][0]).split('\\').join('/');
-    const copyDst = String(vi.mocked(copyFile).mock.calls[0][1]).split('\\').join('/');
+    const copySrc = String(vi.mocked(copyFile).mock.calls[0]![0]).split('\\').join('/');
+    const copyDst = String(vi.mocked(copyFile).mock.calls[0]![1]).split('\\').join('/');
     expect(copySrc).toBe('/library/Author/Book/cover.png');
     expect(copyDst).toBe('/config/covers/42/cover.png');
   });
@@ -168,9 +168,9 @@ describe('cleanCoverCache', () => {
 
     await cleanCoverCache(42, '/config', log);
 
-    const rmPath = String(vi.mocked(rm).mock.calls[0][0]).split('\\').join('/');
+    const rmPath = String(vi.mocked(rm).mock.calls[0]![0]).split('\\').join('/');
     expect(rmPath).toBe('/config/covers/42');
-    expect(vi.mocked(rm).mock.calls[0][1]).toEqual({ recursive: true, force: true });
+    expect(vi.mocked(rm).mock.calls[0]![1]).toEqual({ recursive: true, force: true });
   });
 
   it('does nothing when no cache entry exists (idempotent, no error)', async () => {
@@ -179,9 +179,9 @@ describe('cleanCoverCache', () => {
     // force: true means rm won't throw for missing dirs
     await cleanCoverCache(999, '/config', log);
 
-    const rmPath = String(vi.mocked(rm).mock.calls[0][0]).split('\\').join('/');
+    const rmPath = String(vi.mocked(rm).mock.calls[0]![0]).split('\\').join('/');
     expect(rmPath).toBe('/config/covers/999');
-    expect(vi.mocked(rm).mock.calls[0][1]).toEqual({ recursive: true, force: true });
+    expect(vi.mocked(rm).mock.calls[0]![1]).toEqual({ recursive: true, force: true });
   });
 
   it('returns without error when rm fails (best-effort, logs warn)', async () => {

@@ -486,7 +486,7 @@ describe('DownloadOrchestrator', () => {
 
     it('omits replaceExisting when not provided (backward-compatible)', async () => {
       await orchestrator.grab({ downloadUrl: 'magnet:?xt=abc', title: 'Test', bookId: 2 });
-      const callArg = (downloadService.grab as ReturnType<typeof vi.fn>).mock.calls[0][0] as Record<string, unknown>;
+      const callArg = (downloadService.grab as ReturnType<typeof vi.fn>).mock.calls[0]![0] as Record<string, unknown>;
       expect(callArg.replaceExisting).toBeUndefined();
     });
 
@@ -501,7 +501,7 @@ describe('DownloadOrchestrator', () => {
 
     it('omits guid when not provided (backward compatible)', async () => {
       await orchestrator.grab({ downloadUrl: 'magnet:?xt=abc', title: 'Test', bookId: 2 });
-      const callArg = (downloadService.grab as ReturnType<typeof vi.fn>).mock.calls[0][0] as Record<string, unknown>;
+      const callArg = (downloadService.grab as ReturnType<typeof vi.fn>).mock.calls[0]![0] as Record<string, unknown>;
       expect(callArg.guid).toBeUndefined();
     });
   });

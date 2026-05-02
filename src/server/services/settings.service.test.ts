@@ -142,8 +142,8 @@ describe('SettingsService', () => {
       await service.set('network', { proxyUrl: 'http://user:pass@proxy:8080' });
 
       // The value passed to insert().values() should have encrypted proxyUrl
-      const chain = db.insert.mock.results[0].value as { values: { mock: { calls: Array<Array<{ value: Record<string, unknown> }>> } } };
-      const storedValue = chain.values.mock.calls[0][0].value;
+      const chain = db.insert.mock.results[0]!.value as { values: { mock: { calls: Array<Array<{ value: Record<string, unknown> }>> } } };
+      const storedValue = chain.values.mock.calls[0]![0]!.value;
       expect(isEncrypted(storedValue.proxyUrl as string)).toBe(true);
     });
 
@@ -178,8 +178,8 @@ describe('SettingsService', () => {
       await service.set('network', { proxyUrl: '********' });
 
       // The stored value should keep the original encrypted proxyUrl, not literal '********'
-      const chain = db.insert.mock.results[0].value as { values: { mock: { calls: Array<Array<{ value: Record<string, unknown> }>> } } };
-      const storedValue = chain.values.mock.calls[0][0].value;
+      const chain = db.insert.mock.results[0]!.value as { values: { mock: { calls: Array<Array<{ value: Record<string, unknown> }>> } } };
+      const storedValue = chain.values.mock.calls[0]![0]!.value;
       expect(storedValue.proxyUrl).toBe(existingEncrypted);
     });
 
@@ -210,8 +210,8 @@ describe('SettingsService', () => {
       await service.update({ search: { intervalMinutes: 120 } });
 
       // The stored value should have merged: intervalMinutes changed, others preserved
-      const chain = db.insert.mock.results[0].value as { values: { mock: { calls: Array<Array<{ value: unknown }>> } } };
-      const storedValue = chain.values.mock.calls[0][0].value as Record<string, unknown>;
+      const chain = db.insert.mock.results[0]!.value as { values: { mock: { calls: Array<Array<{ value: unknown }>> } } };
+      const storedValue = chain.values.mock.calls[0]![0]!.value as Record<string, unknown>;
       expect(storedValue).toEqual({ intervalMinutes: 120, enabled: true, blacklistTtlDays: 7, searchPriority: 'quality' });
     });
 
@@ -225,8 +225,8 @@ describe('SettingsService', () => {
 
       await service.update({ quality: { minSeeders: 5 } });
 
-      const chain = db.insert.mock.results[0].value as { values: { mock: { calls: Array<Array<{ value: unknown }>> } } };
-      const storedValue = chain.values.mock.calls[0][0].value as Record<string, unknown>;
+      const chain = db.insert.mock.results[0]!.value as { values: { mock: { calls: Array<Array<{ value: unknown }>> } } };
+      const storedValue = chain.values.mock.calls[0]![0]!.value as Record<string, unknown>;
       expect(storedValue).toMatchObject({ grabFloor: 10, protocolPreference: 'none', minSeeders: 5 });
     });
 
@@ -240,8 +240,8 @@ describe('SettingsService', () => {
 
       await service.update({ quality: { maxDownloadSize: 10 } });
 
-      const chain = db.insert.mock.results[0].value as { values: { mock: { calls: Array<Array<{ value: unknown }>> } } };
-      const storedValue = chain.values.mock.calls[0][0].value as Record<string, unknown>;
+      const chain = db.insert.mock.results[0]!.value as { values: { mock: { calls: Array<Array<{ value: unknown }>> } } };
+      const storedValue = chain.values.mock.calls[0]![0]!.value as Record<string, unknown>;
       expect(storedValue).toMatchObject({ grabFloor: 10, protocolPreference: 'none', minSeeders: 3, maxDownloadSize: 10 });
     });
 
@@ -255,8 +255,8 @@ describe('SettingsService', () => {
 
       await service.update({ search: full });
 
-      const chain = db.insert.mock.results[0].value as { values: { mock: { calls: Array<Array<{ value: unknown }>> } } };
-      const storedValue = chain.values.mock.calls[0][0].value as Record<string, unknown>;
+      const chain = db.insert.mock.results[0]!.value as { values: { mock: { calls: Array<Array<{ value: unknown }>> } } };
+      const storedValue = chain.values.mock.calls[0]![0]!.value as Record<string, unknown>;
       expect(storedValue).toEqual(full);
     });
 
@@ -285,8 +285,8 @@ describe('SettingsService', () => {
 
       const result = await service.patch('search', { enabled: false });
 
-      const chain = db.insert.mock.results[0].value as { values: { mock: { calls: Array<Array<{ value: unknown }>> } } };
-      const storedValue = chain.values.mock.calls[0][0].value as Record<string, unknown>;
+      const chain = db.insert.mock.results[0]!.value as { values: { mock: { calls: Array<Array<{ value: unknown }>> } } };
+      const storedValue = chain.values.mock.calls[0]![0]!.value as Record<string, unknown>;
       expect(storedValue).toEqual({ intervalMinutes: 360, enabled: false, blacklistTtlDays: 7, searchPriority: 'quality' });
       expect(result).toEqual({ intervalMinutes: 360, enabled: false, blacklistTtlDays: 7, searchPriority: 'quality' });
     });
@@ -300,8 +300,8 @@ describe('SettingsService', () => {
 
       const result = await service.patch('import', { minFreeSpaceGB: 10 });
 
-      const chain = db.insert.mock.results[0].value as { values: { mock: { calls: Array<Array<{ value: unknown }>> } } };
-      const storedValue = chain.values.mock.calls[0][0].value as Record<string, unknown>;
+      const chain = db.insert.mock.results[0]!.value as { values: { mock: { calls: Array<Array<{ value: unknown }>> } } };
+      const storedValue = chain.values.mock.calls[0]![0]!.value as Record<string, unknown>;
       expect(storedValue).toEqual({ deleteAfterImport: true, minSeedTime: 120, minSeedRatio: 0, minFreeSpaceGB: 10, redownloadFailed: true });
       expect(result).toEqual({ deleteAfterImport: true, minSeedTime: 120, minSeedRatio: 0, minFreeSpaceGB: 10, redownloadFailed: true });
     });
@@ -315,8 +315,8 @@ describe('SettingsService', () => {
 
       const result = await service.patch('import', { minFreeSpaceGB: 0 });
 
-      const chain = db.insert.mock.results[0].value as { values: { mock: { calls: Array<Array<{ value: unknown }>> } } };
-      const storedValue = chain.values.mock.calls[0][0].value as Record<string, unknown>;
+      const chain = db.insert.mock.results[0]!.value as { values: { mock: { calls: Array<Array<{ value: unknown }>> } } };
+      const storedValue = chain.values.mock.calls[0]![0]!.value as Record<string, unknown>;
       expect(storedValue.minFreeSpaceGB).toBe(0);
       expect(result.minFreeSpaceGB).toBe(0);
     });
@@ -330,8 +330,8 @@ describe('SettingsService', () => {
 
       const result = await service.patch('search', { enabled: false });
 
-      const chain = db.insert.mock.results[0].value as { values: { mock: { calls: Array<Array<{ value: unknown }>> } } };
-      const storedValue = chain.values.mock.calls[0][0].value as Record<string, unknown>;
+      const chain = db.insert.mock.results[0]!.value as { values: { mock: { calls: Array<Array<{ value: unknown }>> } } };
+      const storedValue = chain.values.mock.calls[0]![0]!.value as Record<string, unknown>;
       expect(storedValue.enabled).toBe(false);
       expect(result.enabled).toBe(false);
     });
@@ -355,8 +355,8 @@ describe('SettingsService', () => {
 
       const result = await service.patch('search', { enabled: false });
 
-      const chain = db.insert.mock.results[0].value as { values: { mock: { calls: Array<Array<{ value: unknown }>> } } };
-      const storedValue = chain.values.mock.calls[0][0].value as Record<string, unknown>;
+      const chain = db.insert.mock.results[0]!.value as { values: { mock: { calls: Array<Array<{ value: unknown }>> } } };
+      const storedValue = chain.values.mock.calls[0]![0]!.value as Record<string, unknown>;
       expect(storedValue).toEqual({ intervalMinutes: 360, enabled: false, blacklistTtlDays: 7, searchPriority: 'quality' });
       expect(result).toEqual({ intervalMinutes: 360, enabled: false, blacklistTtlDays: 7, searchPriority: 'quality' });
     });
@@ -371,8 +371,8 @@ describe('SettingsService', () => {
 
       await service.patch('network', { proxyUrl: '********' });
 
-      const chain = db.insert.mock.results[0].value as { values: { mock: { calls: Array<Array<{ value: Record<string, unknown> }>> } } };
-      const storedValue = chain.values.mock.calls[0][0].value;
+      const chain = db.insert.mock.results[0]!.value as { values: { mock: { calls: Array<Array<{ value: Record<string, unknown> }>> } } };
+      const storedValue = chain.values.mock.calls[0]![0]!.value;
       expect(storedValue.proxyUrl).toBe(existingEncrypted);
     });
   });
@@ -389,8 +389,8 @@ describe('SettingsService', () => {
       const input: UpdateSettingsInput = { search: { enabled: false } };
       await service.update(input);
 
-      const chain = db.insert.mock.results[0].value as { values: { mock: { calls: Array<Array<{ value: unknown }>> } } };
-      const storedValue = chain.values.mock.calls[0][0].value as Record<string, unknown>;
+      const chain = db.insert.mock.results[0]!.value as { values: { mock: { calls: Array<Array<{ value: unknown }>> } } };
+      const storedValue = chain.values.mock.calls[0]![0]!.value as Record<string, unknown>;
       expect(storedValue).toEqual({ intervalMinutes: 360, enabled: false, blacklistTtlDays: 7, searchPriority: 'quality' });
     });
 
@@ -413,8 +413,8 @@ describe('SettingsService', () => {
       const input: UpdateSettingsInput = { general: { logLevel: 'debug' } };
       await service.update(input);
 
-      const chain = db.insert.mock.results[0].value as { values: { mock: { calls: Array<Array<{ value: unknown }>> } } };
-      const storedValue = chain.values.mock.calls[0][0].value as Record<string, unknown>;
+      const chain = db.insert.mock.results[0]!.value as { values: { mock: { calls: Array<Array<{ value: unknown }>> } } };
+      const storedValue = chain.values.mock.calls[0]![0]!.value as Record<string, unknown>;
       expect(storedValue).toEqual({ logLevel: 'debug', housekeepingRetentionDays: 90, welcomeSeen: true });
     });
 
@@ -429,8 +429,8 @@ describe('SettingsService', () => {
       const input: UpdateSettingsInput = { general: { welcomeSeen: false } };
       await service.update(input);
 
-      const chain = db.insert.mock.results[0].value as { values: { mock: { calls: Array<Array<{ value: unknown }>> } } };
-      const storedValue = chain.values.mock.calls[0][0].value as Record<string, unknown>;
+      const chain = db.insert.mock.results[0]!.value as { values: { mock: { calls: Array<Array<{ value: unknown }>> } } };
+      const storedValue = chain.values.mock.calls[0]![0]!.value as Record<string, unknown>;
       expect(storedValue.welcomeSeen).toBe(false);
       // Other fields preserved
       expect(storedValue.logLevel).toBe('info');
@@ -462,17 +462,17 @@ describe('SettingsService.bootstrapProcessingDefaults', () => {
 
     expect(detectFfmpegPath).toHaveBeenCalled();
     expect(db.insert).toHaveBeenCalled();
-    const insertCall = db.insert.mock.results[0].value;
+    const insertCall = db.insert.mock.results[0]!.value;
     const [call] = insertCall.values.mock.calls as Array<[{ key: string; value: Record<string, unknown> }]>;
-    expect(call[0].key).toBe('processing');
-    expect(call[0].value).toMatchObject({
+    expect(call![0].key).toBe('processing');
+    expect(call![0].value).toMatchObject({
       ffmpegPath: '/usr/bin/ffmpeg',
       outputFormat: 'm4b',
       bitrate: 128,
       mergeBehavior: 'multi-file-only',
       maxConcurrentProcessing: 2,
     });
-    expect(call[0].value).not.toHaveProperty('enabled');
+    expect(call![0].value).not.toHaveProperty('enabled');
   });
 
   it('writes nothing when no processing row exists and detectFfmpegPath returns null', async () => {

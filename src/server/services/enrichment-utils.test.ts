@@ -71,7 +71,7 @@ describe('enrichBookFromAudio', () => {
     );
 
     expect(result.enriched).toBe(true);
-    const setCall = mockDb.update.mock.results[0].value.set;
+    const setCall = mockDb.update.mock.results[0]!.value.set;
     expect(setCall).toHaveBeenCalledWith(
       expect.objectContaining({
         audioCodec: 'mp3',
@@ -129,7 +129,7 @@ describe('enrichBookFromAudio', () => {
 
     expect(mockBookService.update).toHaveBeenCalledWith(1, { narrators: ['Tim Gerard Reynolds'] });
     // narrator NOT in db.update (goes through junction table instead)
-    const setCall = mockDb.update.mock.results[0].value.set;
+    const setCall = mockDb.update.mock.results[0]!.value.set;
     expect(setCall).toHaveBeenCalledWith(expect.not.objectContaining({ narrator: expect.anything() }));
   });
 
@@ -187,7 +187,7 @@ describe('enrichBookFromAudio', () => {
     );
 
     expect(writeFile).toHaveBeenCalledWith(expect.stringContaining('cover.jpg'), expect.any(Buffer));
-    const setCall = mockDb.update.mock.results[0].value.set;
+    const setCall = mockDb.update.mock.results[0]!.value.set;
     expect(setCall).toHaveBeenCalledWith(
       expect.objectContaining({ coverUrl: '/api/books/42/cover' }),
     );
@@ -239,7 +239,7 @@ describe('enrichBookFromAudio', () => {
     });
 
     // onWarn forwards to log.warn(payload, msg); onDebug forwards to log.debug(payload, msg).
-    const options = vi.mocked(scanAudioDirectory).mock.calls[0][1]!;
+    const options = vi.mocked(scanAudioDirectory).mock.calls[0]![1]!;
     options.onWarn!('warn-msg', { warnPayload: 1 });
     expect(log.warn).toHaveBeenCalledWith({ warnPayload: 1 }, 'warn-msg');
     options.onDebug!('debug-msg', { debugPayload: 2 });
@@ -265,7 +265,7 @@ describe('enrichBookFromAudio', () => {
       onDebug: expect.any(Function),
     });
 
-    const options = vi.mocked(scanAudioDirectory).mock.calls[0][1]!;
+    const options = vi.mocked(scanAudioDirectory).mock.calls[0]![1]!;
     options.onWarn!('warn-msg', { warnPayload: 1 });
     expect(log.warn).toHaveBeenCalledWith({ warnPayload: 1 }, 'warn-msg');
     options.onDebug!('debug-msg', { debugPayload: 2 });

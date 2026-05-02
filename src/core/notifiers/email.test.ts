@@ -92,7 +92,7 @@ describe('EmailNotifier', () => {
 
     await notifier.send('on_upgrade', payload);
 
-    const sentText = mockSendMail.mock.calls[0][0].text as string;
+    const sentText = mockSendMail.mock.calls[0]![0].text as string;
     expect(sentText).toContain('32.5 MB/hr');
     expect(sentText).toContain('58.1 MB/hr');
     expect(sentText).toContain('MP3');
@@ -108,7 +108,7 @@ describe('EmailNotifier', () => {
 
     await notifier.send('on_health_issue', payload);
 
-    const sentText = mockSendMail.mock.calls[0][0].text as string;
+    const sentText = mockSendMail.mock.calls[0]![0].text as string;
     expect(sentText).toContain('indexer:NZBGeek');
     expect(sentText).toContain('healthy');
     expect(sentText).toContain('error');

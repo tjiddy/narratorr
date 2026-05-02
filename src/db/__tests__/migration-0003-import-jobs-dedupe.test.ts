@@ -96,8 +96,8 @@ describe('migration 0003 — dedupe pass for #747', () => {
 
     const active = await allActive();
     expect(active).toHaveLength(1);
-    expect(active[0].book_id).toBe(1);
-    expect(active[0].created_at).toBe(2000);
+    expect(active[0]!.book_id).toBe(1);
+    expect(active[0]!.created_at).toBe(2000);
 
     const all = await allRows();
     const losers = all.filter((r) => r.status === 'failed');
@@ -155,7 +155,7 @@ describe('migration 0003 — dedupe pass for #747', () => {
 
     const book1Active = active.filter((r) => r.book_id === 1);
     expect(book1Active).toHaveLength(1);
-    expect(book1Active[0].created_at).toBe(2000);
+    expect(book1Active[0]!.created_at).toBe(2000);
 
     const book2Active = active.filter((r) => r.book_id === 2);
     expect(book2Active).toHaveLength(1);
@@ -167,7 +167,7 @@ describe('migration 0003 — dedupe pass for #747', () => {
     // 1 loser from book 1 (the older pending) flipped to failed.
     const dedupeLosers = all.filter((r) => r.last_error?.includes('Superseded'));
     expect(dedupeLosers).toHaveLength(1);
-    expect(dedupeLosers[0].book_id).toBe(1);
+    expect(dedupeLosers[0]!.book_id).toBe(1);
   });
 
   it('post-migration: unique index prevents new duplicate inserts for the same book_id', async () => {

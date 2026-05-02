@@ -62,7 +62,7 @@ describe('AudioBookBayIndexer', () => {
       const { results } = await indexer.search('Brandon Sanderson');
 
       expect(results.length).toBeGreaterThan(0);
-      expect(results[0].indexer).toBe('AudioBookBay');
+      expect(results[0]!.indexer).toBe('AudioBookBay');
     });
 
     it('extracts info hash from detail page', async () => {
@@ -81,8 +81,8 @@ describe('AudioBookBayIndexer', () => {
 
       const { results } = await indexer.search('Brandon Sanderson');
 
-      expect(results[0].infoHash).toBe('a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0');
-      expect(results[0].downloadUrl).toContain('magnet:?');
+      expect(results[0]!.infoHash).toBe('a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0');
+      expect(results[0]!.downloadUrl).toContain('magnet:?');
     });
 
     it('extracts size, seeders, leechers from detail page', async () => {
@@ -102,9 +102,9 @@ describe('AudioBookBayIndexer', () => {
       const { results } = await indexer.search('Brandon Sanderson');
 
       // 1.23 GB
-      expect(results[0].size).toBeGreaterThan(1_000_000_000);
-      expect(results[0].seeders).toBe(42);
-      expect(results[0].leechers).toBe(5);
+      expect(results[0]!.size).toBeGreaterThan(1_000_000_000);
+      expect(results[0]!.seeders).toBe(42);
+      expect(results[0]!.leechers).toBe(5);
     });
 
     it('returns empty array when no results found', async () => {
@@ -402,7 +402,7 @@ describe('AudioBookBayIndexer', () => {
       const { results } = await indexer.search('test');
       expect(results.length).toBeGreaterThan(0);
       // "N/A" won't match the /Seeders?[:\s]*(\d+)/ regex, so seeders stays undefined
-      expect(results[0].seeders).toBeUndefined();
+      expect(results[0]!.seeders).toBeUndefined();
     });
 
     it('handles NaN size from malformed size text', async () => {
@@ -429,7 +429,7 @@ describe('AudioBookBayIndexer', () => {
       const { results } = await indexer.search('test');
       expect(results.length).toBeGreaterThan(0);
       // "unknown" won't match Size regex, so size stays undefined
-      expect(results[0].size).toBeUndefined();
+      expect(results[0]!.size).toBeUndefined();
     });
 
     it('handles detail page with hash only in body text (fallback regex)', async () => {
@@ -454,7 +454,7 @@ describe('AudioBookBayIndexer', () => {
 
       const { results } = await indexer.search('test');
       expect(results.length).toBeGreaterThan(0);
-      expect(results[0].infoHash).toBe('a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0');
+      expect(results[0]!.infoHash).toBe('a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0');
     });
 
     it('handles MB size parsing', async () => {
@@ -481,7 +481,7 @@ describe('AudioBookBayIndexer', () => {
       const { results } = await indexer.search('test');
       expect(results.length).toBeGreaterThan(0);
       // 500 MB = 500 * 1024 * 1024 = 524288000
-      expect(results[0].size).toBe(524288000);
+      expect(results[0]!.size).toBe(524288000);
     });
 
     it('extracts author and narrator from detail page text', async () => {
@@ -509,8 +509,8 @@ describe('AudioBookBayIndexer', () => {
 
       const { results } = await indexer.search('test');
       expect(results.length).toBeGreaterThan(0);
-      expect(results[0].author).toBe('Brandon Sanderson');
-      expect(results[0].narrator).toBe('Michael Kramer');
+      expect(results[0]!.author).toBe('Brandon Sanderson');
+      expect(results[0]!.narrator).toBe('Michael Kramer');
     });
   });
 
@@ -535,7 +535,7 @@ describe('AudioBookBayIndexer', () => {
       expect(capturedSignals.length).toBeGreaterThan(0);
       // Verify caller abort propagates through AbortSignal.any composition
       controller.abort();
-      expect(capturedSignals[0].aborted).toBe(true);
+      expect(capturedSignals[0]!.aborted).toBe(true);
     });
   });
 
@@ -639,10 +639,10 @@ describe('AudioBookBayIndexer', () => {
       const { results } = await proxiedIndexer.search('Brandon Sanderson');
 
       expect(results.length).toBeGreaterThan(0);
-      expect(results[0].indexer).toBe('AudioBookBay');
+      expect(results[0]!.indexer).toBe('AudioBookBay');
       expect(fetchSpy).toHaveBeenCalled();
       const callArgs = fetchSpy.mock.calls[0];
-      expect((callArgs[1] as Record<string, unknown>).dispatcher).toBeDefined();
+      expect((callArgs![1] as Record<string, unknown>).dispatcher).toBeDefined();
 
       fetchSpy.mockRestore();
     });
@@ -666,8 +666,8 @@ describe('AudioBookBayIndexer', () => {
       const { results } = await indexer.search('Brandon Sanderson');
 
       expect(results.length).toBeGreaterThan(0);
-      expect(results[0].guid).toBe(results[0].infoHash);
-      expect(results[0].guid).toBe('a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0');
+      expect(results[0]!.guid).toBe(results[0]!.infoHash);
+      expect(results[0]!.guid).toBe('a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0');
     });
 
     it('guid is a lowercase 40-char hex string on returned results', async () => {
@@ -686,7 +686,7 @@ describe('AudioBookBayIndexer', () => {
 
       const { results } = await indexer.search('Brandon Sanderson');
 
-      expect(results[0].guid).toMatch(/^[a-f0-9]{40}$/);
+      expect(results[0]!.guid).toMatch(/^[a-f0-9]{40}$/);
     });
 
     it('detail page with hash in body text (fallback regex) populates guid', async () => {
@@ -712,8 +712,8 @@ describe('AudioBookBayIndexer', () => {
       const { results } = await indexer.search('test');
 
       expect(results.length).toBeGreaterThan(0);
-      expect(results[0].guid).toBe('a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0');
-      expect(results[0].guid).toBe(results[0].infoHash);
+      expect(results[0]!.guid).toBe('a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0');
+      expect(results[0]!.guid).toBe(results[0]!.infoHash);
     });
   });
 });

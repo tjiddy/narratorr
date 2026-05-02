@@ -153,7 +153,7 @@ describe('BlacklistSettings', () => {
 
     // Click delete on first entry
     const deleteButtons = screen.getAllByLabelText(/Remove .* from blacklist/);
-    await user.click(deleteButtons[0]);
+    await user.click(deleteButtons[0]!);
 
     // Confirm modal should appear
     expect(screen.getByText(/Remove "Bad Release \[Unabridged\]" from the blacklist/)).toBeInTheDocument();
@@ -164,7 +164,7 @@ describe('BlacklistSettings', () => {
 
     await waitFor(() => {
       expect(api.removeFromBlacklist).toHaveBeenCalled();
-      expect(vi.mocked(api.removeFromBlacklist).mock.calls[0][0]).toBe(1);
+      expect(vi.mocked(api.removeFromBlacklist).mock.calls[0]![0]).toBe(1);
     });
   });
 
@@ -336,7 +336,7 @@ describe('BlacklistSettings', () => {
         },
       ];
       vi.mocked(api.getBlacklist).mockResolvedValue({ data: entries, total: entries.length });
-      vi.mocked(api.toggleBlacklistType).mockResolvedValue({ ...entries[0], blacklistType: 'permanent', expiresAt: null });
+      vi.mocked(api.toggleBlacklistType).mockResolvedValue({ ...entries[0]!, blacklistType: 'permanent', expiresAt: null });
       const user = userEvent.setup();
 
       renderWithProviders(<BlacklistSettings />);
@@ -359,7 +359,7 @@ describe('BlacklistSettings', () => {
     it('toggle button switches permanent entry to temporary and UI updates', async () => {
       const { toast } = await import('sonner');
       vi.mocked(api.getBlacklist).mockResolvedValue({ data: mockEntries, total: mockEntries.length });
-      vi.mocked(api.toggleBlacklistType).mockResolvedValue({ ...mockEntries[0], blacklistType: 'temporary' });
+      vi.mocked(api.toggleBlacklistType).mockResolvedValue({ ...mockEntries[0]!, blacklistType: 'temporary' });
       const user = userEvent.setup();
 
       renderWithProviders(<BlacklistSettings />);
@@ -369,7 +369,7 @@ describe('BlacklistSettings', () => {
       });
 
       const toggleButtons = screen.getAllByRole('button', { name: /Toggle .* to temporary/ });
-      await user.click(toggleButtons[0]);
+      await user.click(toggleButtons[0]!);
 
       await waitFor(() => {
         expect(api.toggleBlacklistType).toHaveBeenCalledWith(1, 'temporary');
@@ -384,7 +384,7 @@ describe('BlacklistSettings', () => {
       const invalidateSpy = vi.spyOn(queryClient, 'invalidateQueries');
 
       vi.mocked(api.getBlacklist).mockResolvedValue({ data: mockEntries, total: mockEntries.length });
-      vi.mocked(api.toggleBlacklistType).mockResolvedValue({ ...mockEntries[0], blacklistType: 'temporary' });
+      vi.mocked(api.toggleBlacklistType).mockResolvedValue({ ...mockEntries[0]!, blacklistType: 'temporary' });
       const user = userEvent.setup();
 
       render(
@@ -398,7 +398,7 @@ describe('BlacklistSettings', () => {
       });
 
       const toggleButtons = screen.getAllByRole('button', { name: /Toggle .* to temporary/ });
-      await user.click(toggleButtons[0]);
+      await user.click(toggleButtons[0]!);
 
       await waitFor(() => {
         expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: ['blacklist'] });
@@ -418,7 +418,7 @@ describe('BlacklistSettings', () => {
       });
 
       const toggleButtons = screen.getAllByRole('button', { name: /Toggle .* to temporary/ });
-      await user.click(toggleButtons[0]);
+      await user.click(toggleButtons[0]!);
 
       await waitFor(() => {
         expect(toast.error).toHaveBeenCalledWith('Failed to update blacklist entry');

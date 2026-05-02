@@ -16,7 +16,7 @@ describe('warnIfAuthBypassWithUser (#742)', () => {
     await warnIfAuthBypassWithUser(true, makeAuth(true), log);
 
     expect(log.warn).toHaveBeenCalledTimes(1);
-    const message = (log.warn as unknown as { mock: { calls: unknown[][] } }).mock.calls[0][0] as string;
+    const message = (log.warn as unknown as { mock: { calls: unknown[][] } }).mock.calls[0]![0] as string;
     expect(message).toContain('AUTH_BYPASS');
     expect(message).toMatch(/disabled/i);
   });

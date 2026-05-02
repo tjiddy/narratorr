@@ -381,8 +381,8 @@ describe('TransmissionClient', () => {
 
       const results = await client.getAllDownloads();
       expect(results).toHaveLength(2);
-      expect(results[0].id).toBe('abc123def456');
-      expect(results[1].id).toBe('def789');
+      expect(results[0]!.id).toBe('abc123def456');
+      expect(results[1]!.id).toBe('def789');
     });
 
     it('filters by category via downloadDir', async () => {
@@ -392,7 +392,7 @@ describe('TransmissionClient', () => {
 
       const results = await client.getAllDownloads('audiobooks');
       expect(results).toHaveLength(1);
-      expect(results[0].id).toBe('abc123def456');
+      expect(results[0]!.id).toBe('abc123def456');
     });
   });
 

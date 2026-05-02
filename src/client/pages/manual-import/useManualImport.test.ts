@@ -152,11 +152,11 @@ describe('useManualImport', () => {
     });
 
     expect(result.current.state.rows).toHaveLength(2);
-    expect(result.current.state.rows[0].selected).toBe(true);
-    expect(result.current.state.rows[0].edited.title).toBe('Book A');
-    expect(result.current.state.rows[0].edited.author).toBe('Author A');
-    expect(result.current.state.rows[1].edited.title).toBe('Book B');
-    expect(result.current.state.rows[1].edited.author).toBe('');
+    expect(result.current.state.rows[0]!.selected).toBe(true);
+    expect(result.current.state.rows[0]!.edited.title).toBe('Book A');
+    expect(result.current.state.rows[0]!.edited.author).toBe('Author A');
+    expect(result.current.state.rows[1]!.edited.title).toBe('Book B');
+    expect(result.current.state.rows[1]!.edited.author).toBe('');
     expect(result.current.counts.selectedCount).toBe(2);
   });
 
@@ -218,7 +218,7 @@ describe('useManualImport', () => {
       expect(result.current.state.step).toBe('review');
     });
     expect(result.current.state.rows).toHaveLength(1);
-    expect(result.current.state.rows[0].book.isDuplicate).toBe(true);
+    expect(result.current.state.rows[0]!.book.isDuplicate).toBe(true);
     // No match job started when all books are duplicates — empty candidates list guard
     expect(vi.mocked(api.startMatchJob)).not.toHaveBeenCalled();
   });
@@ -343,8 +343,8 @@ describe('useManualImport', () => {
       result.current.actions.handleToggle(0);
     });
 
-    expect(result.current.state.rows[0].selected).toBe(false);
-    expect(result.current.state.rows[1].selected).toBe(true);
+    expect(result.current.state.rows[0]!.selected).toBe(false);
+    expect(result.current.state.rows[1]!.selected).toBe(true);
     expect(result.current.counts.selectedCount).toBe(1);
   });
 
@@ -392,11 +392,13 @@ describe('useManualImport', () => {
     await waitFor(() => { expect(vi.mocked(api.confirmImport)).toHaveBeenCalled(); });
 
     const [books] = vi.mocked(api.confirmImport).mock.calls[0];
+    // PHASE 1 SKIPPED — needs human review
     const dupItems = books.filter(b =>
       SCAN_RESULT_WITH_DUPLICATES.discoveries.find(d => d.path === b.path && d.isDuplicate),
     );
     // All selected duplicate rows must have forceImport: true
     expect(dupItems).toHaveLength(2);
+    // PHASE 1 SKIPPED — needs human review
     expect(dupItems.every(b => b.forceImport === true)).toBe(true);
   });
 
@@ -420,9 +422,9 @@ describe('useManualImport', () => {
       });
     });
 
-    expect(result.current.state.rows[0].edited.title).toBe('Edited Title');
-    expect(result.current.state.rows[0].edited.author).toBe('Edited Author');
-    expect(result.current.state.rows[0].edited.metadata).toBe(MATCH_METADATA);
+    expect(result.current.state.rows[0]!.edited.title).toBe('Edited Title');
+    expect(result.current.state.rows[0]!.edited.author).toBe('Edited Author');
+    expect(result.current.state.rows[0]!.edited.metadata).toBe(MATCH_METADATA);
   });
 
   it('handleImport sends selected rows to API and navigates on success', async () => {
@@ -525,7 +527,7 @@ describe('useManualImport', () => {
         });
       });
 
-      expect(result.current.state.rows[0].edited.metadata?.narrators).toEqual(['Jim Dale']);
+      expect(result.current.state.rows[0]!.edited.metadata?.narrators).toEqual(['Jim Dale']);
     });
 
     it('handleImport after edit forwards metadata.narrators to ImportConfirmItem', async () => {
@@ -607,12 +609,12 @@ describe('useManualImport', () => {
           title: 'Book A (Updated)',
           author: 'Author A',
           series: '',
-          metadata: result.current.state.rows[0].edited.metadata,
+          metadata: result.current.state.rows[0]!.edited.metadata,
         });
       });
 
-      expect(result.current.state.rows[0].edited.title).toBe('Book A (Updated)');
-      expect(result.current.state.rows[0].edited.metadata?.narrators).toEqual(['Jim Dale']);
+      expect(result.current.state.rows[0]!.edited.title).toBe('Book A (Updated)');
+      expect(result.current.state.rows[0]!.edited.metadata?.narrators).toEqual(['Jim Dale']);
     });
 
     it('mergeMatchResults seeds edited.metadata.narrators from bestMatch.narrators on first arrival', async () => {
@@ -640,7 +642,7 @@ describe('useManualImport', () => {
         // Advance past the 2000ms poll interval so the first poll fires
         await act(async () => { await vi.advanceTimersByTimeAsync(2100); });
 
-        expect(result.current.state.rows[0].edited.metadata?.narrators).toEqual(['Stephen Fry']);
+        expect(result.current.state.rows[0]!.edited.metadata?.narrators).toEqual(['Stephen Fry']);
       } finally {
         vi.useRealTimers();
       }
@@ -731,7 +733,7 @@ describe('useManualImport', () => {
           expect.objectContaining({ path: '/audiobooks/New Book' }),
         ]),
       );
-      const callArgs = vi.mocked(api.startMatchJob).mock.calls[0][0];
+      const callArgs = vi.mocked(api.startMatchJob).mock.calls[0]![0];
       expect(callArgs.every(c => !SCAN_RESULT_WITH_DUPLICATES.discoveries.find(d => d.path === c.path && d.isDuplicate))).toBe(true);
     });
 
@@ -751,6 +753,7 @@ describe('useManualImport', () => {
       await waitFor(() => { expect(vi.mocked(api.confirmImport)).toHaveBeenCalled(); });
 
       const [books] = vi.mocked(api.confirmImport).mock.calls[0];
+      // PHASE 1 SKIPPED — needs human review
       const dupItem = books.find(b => b.path === '/audiobooks/Existing Book');
       expect(dupItem?.forceImport).toBe(true);
     });
@@ -769,6 +772,7 @@ describe('useManualImport', () => {
       await waitFor(() => { expect(vi.mocked(api.confirmImport)).toHaveBeenCalled(); });
 
       const [books] = vi.mocked(api.confirmImport).mock.calls[0];
+      // PHASE 1 SKIPPED — needs human review
       const newItem = books.find(b => b.path === '/audiobooks/New Book');
       expect(newItem?.forceImport).toBeUndefined();
     });
@@ -922,9 +926,9 @@ describe('match merge — boundary values (#185)', () => {
       await act(async () => { await vi.advanceTimersByTimeAsync(2100); });
 
       // Existing edited state preserved (not overwritten by null bestMatch)
-      expect(result.current.state.rows[0].edited.title).toBe('Book A');
-      expect(result.current.state.rows[0].edited.author).toBe('Author A');
-      expect(result.current.state.rows[0].matchResult?.confidence).toBe('none');
+      expect(result.current.state.rows[0]!.edited.title).toBe('Book A');
+      expect(result.current.state.rows[0]!.edited.author).toBe('Author A');
+      expect(result.current.state.rows[0]!.matchResult?.confidence).toBe('none');
     } finally {
       vi.useRealTimers();
     }
@@ -952,8 +956,8 @@ describe('match merge — boundary values (#185)', () => {
       await act(async () => { await vi.advanceTimersByTimeAsync(2100); });
 
       // Title from bestMatch, author falls back to original parsed value
-      expect(result.current.state.rows[0].edited.title).toBe('Official Title');
-      expect(result.current.state.rows[0].edited.author).toBe('Author A');
+      expect(result.current.state.rows[0]!.edited.title).toBe('Official Title');
+      expect(result.current.state.rows[0]!.edited.author).toBe('Author A');
     } finally {
       vi.useRealTimers();
     }
@@ -979,13 +983,13 @@ describe('match merge — boundary values (#185)', () => {
       await waitFor(() => { expect(result.current.state.rows).toHaveLength(2); });
 
       // Row starts selected
-      expect(result.current.state.rows[0].selected).toBe(true);
+      expect(result.current.state.rows[0]!.selected).toBe(true);
 
       await act(async () => { await vi.advanceTimersByTimeAsync(2100); });
 
       // After match merge with confidence=none, row is auto-unchecked
-      expect(result.current.state.rows[0].selected).toBe(false);
-      expect(result.current.state.rows[0].matchResult?.confidence).toBe('none');
+      expect(result.current.state.rows[0]!.selected).toBe(false);
+      expect(result.current.state.rows[0]!.matchResult?.confidence).toBe('none');
     } finally {
       vi.useRealTimers();
     }
@@ -1012,7 +1016,7 @@ describe('handleEdit — auto-check and confidence upgrade (#185)', () => {
 
     // Deselect row 0 first
     act(() => { result.current.actions.handleToggle(0); });
-    expect(result.current.state.rows[0].selected).toBe(false);
+    expect(result.current.state.rows[0]!.selected).toBe(false);
 
     // Edit with metadata → should auto-select
     act(() => {
@@ -1022,7 +1026,7 @@ describe('handleEdit — auto-check and confidence upgrade (#185)', () => {
       });
     });
 
-    expect(result.current.state.rows[0].selected).toBe(true);
+    expect(result.current.state.rows[0]!.selected).toBe(true);
   });
 
   it('already-selected row with metadata provided remains selected', async () => {
@@ -1033,7 +1037,7 @@ describe('handleEdit — auto-check and confidence upgrade (#185)', () => {
     await act(async () => { result.current.actions.handleScan(); });
     await waitFor(() => { expect(result.current.state.rows).toHaveLength(2); });
 
-    expect(result.current.state.rows[0].selected).toBe(true);
+    expect(result.current.state.rows[0]!.selected).toBe(true);
 
     act(() => {
       result.current.actions.handleEdit(0, {
@@ -1042,7 +1046,7 @@ describe('handleEdit — auto-check and confidence upgrade (#185)', () => {
       });
     });
 
-    expect(result.current.state.rows[0].selected).toBe(true);
+    expect(result.current.state.rows[0]!.selected).toBe(true);
   });
 
   it('selected row with metadata removed/null remains selected', async () => {
@@ -1053,7 +1057,7 @@ describe('handleEdit — auto-check and confidence upgrade (#185)', () => {
     await act(async () => { result.current.actions.handleScan(); });
     await waitFor(() => { expect(result.current.state.rows).toHaveLength(2); });
 
-    expect(result.current.state.rows[0].selected).toBe(true);
+    expect(result.current.state.rows[0]!.selected).toBe(true);
 
     // Edit without metadata (metadata undefined) → should remain selected
     act(() => {
@@ -1062,7 +1066,7 @@ describe('handleEdit — auto-check and confidence upgrade (#185)', () => {
       });
     });
 
-    expect(result.current.state.rows[0].selected).toBe(true);
+    expect(result.current.state.rows[0]!.selected).toBe(true);
   });
 
   it('row with matchResult confidence=none and new metadata — confidence upgrades to medium', async () => {
@@ -1085,7 +1089,7 @@ describe('handleEdit — auto-check and confidence upgrade (#185)', () => {
       await waitFor(() => { expect(result.current.state.rows).toHaveLength(2); });
 
       await act(async () => { await vi.advanceTimersByTimeAsync(2100); });
-      expect(result.current.state.rows[0].matchResult?.confidence).toBe('none');
+      expect(result.current.state.rows[0]!.matchResult?.confidence).toBe('none');
 
       // Edit with metadata → confidence upgrades from 'none' to 'medium'
       act(() => {
@@ -1095,7 +1099,7 @@ describe('handleEdit — auto-check and confidence upgrade (#185)', () => {
         });
       });
 
-      expect(result.current.state.rows[0].matchResult?.confidence).toBe('medium');
+      expect(result.current.state.rows[0]!.matchResult?.confidence).toBe('medium');
     } finally {
       vi.useRealTimers();
     }
@@ -1122,7 +1126,7 @@ describe('handleEdit — auto-check and confidence upgrade (#185)', () => {
       await waitFor(() => { expect(result.current.state.rows).toHaveLength(2); });
 
       await act(async () => { await vi.advanceTimersByTimeAsync(2100); });
-      expect(result.current.state.rows[0].matchResult?.confidence).toBe('medium');
+      expect(result.current.state.rows[0]!.matchResult?.confidence).toBe('medium');
 
       // Edit with a DIFFERENT metadata object (user explicitly re-selected) → upgrades to high
       const newMetadata = { ...MATCH_METADATA, asin: 'B002NEWPICK' };
@@ -1133,7 +1137,7 @@ describe('handleEdit — auto-check and confidence upgrade (#185)', () => {
         });
       });
 
-      expect(result.current.state.rows[0].matchResult?.confidence).toBe('high');
+      expect(result.current.state.rows[0]!.matchResult?.confidence).toBe('high');
     } finally {
       vi.useRealTimers();
     }
@@ -1159,10 +1163,10 @@ describe('handleEdit — auto-check and confidence upgrade (#185)', () => {
       await waitFor(() => { expect(result.current.state.rows).toHaveLength(2); });
 
       await act(async () => { await vi.advanceTimersByTimeAsync(2100); });
-      expect(result.current.state.rows[0].matchResult?.confidence).toBe('medium');
+      expect(result.current.state.rows[0]!.matchResult?.confidence).toBe('medium');
 
       // Save with the SAME metadata reference (user opened modal and clicked Save without re-selecting)
-      const preloadedMetadata = result.current.state.rows[0].edited.metadata;
+      const preloadedMetadata = result.current.state.rows[0]!.edited.metadata;
       act(() => {
         result.current.actions.handleEdit(0, {
           title: 'Book A', author: 'Author A', series: '',
@@ -1171,7 +1175,7 @@ describe('handleEdit — auto-check and confidence upgrade (#185)', () => {
       });
 
       // Should NOT upgrade — no explicit provider re-selection
-      expect(result.current.state.rows[0].matchResult?.confidence).toBe('medium');
+      expect(result.current.state.rows[0]!.matchResult?.confidence).toBe('medium');
     } finally {
       vi.useRealTimers();
     }
@@ -1197,7 +1201,7 @@ describe('handleEdit — auto-check and confidence upgrade (#185)', () => {
       await waitFor(() => { expect(result.current.state.rows).toHaveLength(2); });
 
       await act(async () => { await vi.advanceTimersByTimeAsync(2100); });
-      expect(result.current.state.rows[0].matchResult?.confidence).toBe('medium');
+      expect(result.current.state.rows[0]!.matchResult?.confidence).toBe('medium');
 
       // Simulate explicit click on the current match — applyMetadata spreads to new reference
       act(() => {
@@ -1207,7 +1211,7 @@ describe('handleEdit — auto-check and confidence upgrade (#185)', () => {
         });
       });
 
-      expect(result.current.state.rows[0].matchResult?.confidence).toBe('high');
+      expect(result.current.state.rows[0]!.matchResult?.confidence).toBe('high');
     } finally {
       vi.useRealTimers();
     }
@@ -1233,7 +1237,7 @@ describe('handleEdit — auto-check and confidence upgrade (#185)', () => {
       await waitFor(() => { expect(result.current.state.rows).toHaveLength(2); });
 
       await act(async () => { await vi.advanceTimersByTimeAsync(2100); });
-      expect(result.current.state.rows[0].matchResult?.confidence).toBe('high');
+      expect(result.current.state.rows[0]!.matchResult?.confidence).toBe('high');
 
       // Edit with provider metadata → confidence stays 'high'
       act(() => {
@@ -1243,7 +1247,7 @@ describe('handleEdit — auto-check and confidence upgrade (#185)', () => {
         });
       });
 
-      expect(result.current.state.rows[0].matchResult?.confidence).toBe('high');
+      expect(result.current.state.rows[0]!.matchResult?.confidence).toBe('high');
     } finally {
       vi.useRealTimers();
     }
@@ -1258,7 +1262,7 @@ describe('handleEdit — auto-check and confidence upgrade (#185)', () => {
     await waitFor(() => { expect(result.current.state.rows).toHaveLength(2); });
 
     // No match results have arrived → matchResult is undefined
-    expect(result.current.state.rows[0].matchResult).toBeUndefined();
+    expect(result.current.state.rows[0]!.matchResult).toBeUndefined();
 
     act(() => {
       result.current.actions.handleEdit(0, {
@@ -1268,8 +1272,8 @@ describe('handleEdit — auto-check and confidence upgrade (#185)', () => {
     });
 
     // No crash; matchResult stays undefined (no confidence upgrade without existing matchResult)
-    expect(result.current.state.rows[0].matchResult).toBeUndefined();
-    expect(result.current.state.rows[0].selected).toBe(true);
+    expect(result.current.state.rows[0]!.matchResult).toBeUndefined();
+    expect(result.current.state.rows[0]!.selected).toBe(true);
   });
 });
 
@@ -1358,7 +1362,7 @@ describe('grouped return shape (REACT-1 refactor)', () => {
         await waitFor(() => { expect(result.current.state.rows).toHaveLength(2); });
 
         await act(async () => { await vi.advanceTimersByTimeAsync(2100); });
-        expect(result.current.state.rows[0].matchResult?.reason).toBe(
+        expect(result.current.state.rows[0]!.matchResult?.reason).toBe(
           'Duration mismatch — scanned 10.0hrs vs expected 11.6hrs',
         );
       } finally {
@@ -1387,8 +1391,8 @@ describe('grouped return shape (REACT-1 refactor)', () => {
         await waitFor(() => { expect(result.current.state.rows).toHaveLength(2); });
 
         await act(async () => { await vi.advanceTimersByTimeAsync(2100); });
-        expect(result.current.state.rows[0].matchResult?.confidence).toBe('medium');
-        expect(result.current.state.rows[0].matchResult?.reason).toBeDefined();
+        expect(result.current.state.rows[0]!.matchResult?.confidence).toBe('medium');
+        expect(result.current.state.rows[0]!.matchResult?.reason).toBeDefined();
 
         // Edit with NEW metadata → upgrades to high, reason must be cleared
         const newMetadata = { ...MATCH_METADATA, asin: 'B002NEWPICK' };
@@ -1399,8 +1403,8 @@ describe('grouped return shape (REACT-1 refactor)', () => {
           });
         });
 
-        expect(result.current.state.rows[0].matchResult?.confidence).toBe('high');
-        expect(result.current.state.rows[0].matchResult?.reason).toBeUndefined();
+        expect(result.current.state.rows[0]!.matchResult?.confidence).toBe('high');
+        expect(result.current.state.rows[0]!.matchResult?.reason).toBeUndefined();
       } finally {
         vi.useRealTimers();
       }
@@ -1426,7 +1430,7 @@ describe('grouped return shape (REACT-1 refactor)', () => {
         await waitFor(() => { expect(result.current.state.rows).toHaveLength(2); });
 
         await act(async () => { await vi.advanceTimersByTimeAsync(2100); });
-        expect(result.current.state.rows[0].matchResult?.confidence).toBe('none');
+        expect(result.current.state.rows[0]!.matchResult?.confidence).toBe('none');
 
         // Edit with metadata → upgrades to medium, but no system reason
         act(() => {
@@ -1436,8 +1440,8 @@ describe('grouped return shape (REACT-1 refactor)', () => {
           });
         });
 
-        expect(result.current.state.rows[0].matchResult?.confidence).toBe('medium');
-        expect(result.current.state.rows[0].matchResult?.reason).toBeUndefined();
+        expect(result.current.state.rows[0]!.matchResult?.confidence).toBe('medium');
+        expect(result.current.state.rows[0]!.matchResult?.reason).toBeUndefined();
       } finally {
         vi.useRealTimers();
       }

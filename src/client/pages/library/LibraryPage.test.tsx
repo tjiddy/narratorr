@@ -370,7 +370,7 @@ describe('LibraryPage', () => {
 
     // Hover to reveal menu button, then click it
     const menuButtons = screen.getAllByLabelText('Book options');
-    await user.click(menuButtons[0]);
+    await user.click(menuButtons[0]!);
 
     await waitFor(() => {
       expect(screen.getByText('Search Releases')).toBeInTheDocument();
@@ -391,7 +391,7 @@ describe('LibraryPage', () => {
 
     // Open context menu and click remove
     const menuButtons = screen.getAllByLabelText('Book options');
-    await user.click(menuButtons[0]);
+    await user.click(menuButtons[0]!);
     await user.click(screen.getByText('Remove from Library'));
 
     // Confirm modal should appear with the warning message
@@ -406,9 +406,9 @@ describe('LibraryPage', () => {
 
     // Default sort is createdAt desc, so first book shown is id=4 (Words of Radiance)
     await waitFor(() => {
-      expect(vi.mocked(api.deleteBook).mock.calls[0][0]).toBe(4);
+      expect(vi.mocked(api.deleteBook).mock.calls[0]![0]).toBe(4);
       // Without checking the box, deleteFiles should not be passed
-      expect(vi.mocked(api.deleteBook).mock.calls[0][1]).toBeUndefined();
+      expect(vi.mocked(api.deleteBook).mock.calls[0]![1]).toBeUndefined();
     });
   });
 
@@ -434,7 +434,7 @@ describe('LibraryPage', () => {
     });
 
     const menuButtons = screen.getAllByLabelText('Book options');
-    await user.click(menuButtons[0]);
+    await user.click(menuButtons[0]!);
     await user.click(screen.getByText('Remove from Library'));
 
     // Checkbox should be visible for book with path
@@ -468,7 +468,7 @@ describe('LibraryPage', () => {
     });
 
     const menuButtons = screen.getAllByLabelText('Book options');
-    await user.click(menuButtons[0]);
+    await user.click(menuButtons[0]!);
     await user.click(screen.getByText('Remove from Library'));
 
     await waitFor(() => {
@@ -499,7 +499,7 @@ describe('LibraryPage', () => {
     });
 
     const menuButtons = screen.getAllByLabelText('Book options');
-    await user.click(menuButtons[0]);
+    await user.click(menuButtons[0]!);
     await user.click(screen.getByText('Remove from Library'));
 
     await user.click(screen.getByLabelText('Delete files from disk'));
@@ -524,7 +524,7 @@ describe('LibraryPage', () => {
 
     // Open context menu and click remove
     const menuButtons = screen.getAllByLabelText('Book options');
-    await user.click(menuButtons[0]);
+    await user.click(menuButtons[0]!);
     await user.click(screen.getByText('Remove from Library'));
 
     // Cancel
@@ -731,7 +731,7 @@ describe('LibraryPage', () => {
     });
 
     const menuButtons = screen.getAllByLabelText('Book options');
-    await user.click(menuButtons[0]);
+    await user.click(menuButtons[0]!);
     await user.click(screen.getByText('Search Releases'));
 
     // Modal should open — default sort is createdAt desc, so first card is "Words of Radiance"
@@ -753,7 +753,7 @@ describe('LibraryPage', () => {
 
     // Open context menu and click remove
     const menuButtons = screen.getAllByLabelText('Book options');
-    await user.click(menuButtons[0]);
+    await user.click(menuButtons[0]!);
     await user.click(screen.getByText('Remove from Library'));
 
     // Confirm modal should appear
@@ -1904,7 +1904,7 @@ describe('LibraryPage — bulk action toolbar page-level wiring (#183)', () => {
 
   it('bulk set status to Wanted fires updateBook and shows toast with Wanted label', async () => {
     mockLibraryData(booksWithPaths);
-    vi.mocked(api.updateBook).mockResolvedValue(booksWithPaths[0]);
+    vi.mocked(api.updateBook).mockResolvedValue(booksWithPaths[0]!);
     const user = userEvent.setup();
 
     renderWithProviders(<LibraryPage />);
@@ -1939,7 +1939,7 @@ describe('LibraryPage — bulk action toolbar page-level wiring (#183)', () => {
 
   it('bulk set status to Owned fires updateBook and shows toast with Owned label', async () => {
     mockLibraryData(booksWithPaths);
-    vi.mocked(api.updateBook).mockResolvedValue(booksWithPaths[0]);
+    vi.mocked(api.updateBook).mockResolvedValue(booksWithPaths[0]!);
     const user = userEvent.setup();
 
     renderWithProviders(<LibraryPage />);
@@ -1986,7 +1986,7 @@ describe('LibraryPage — card menu observable behavior (#183)', () => {
     await waitForLibraryLoad();
 
     const optionsButtons = screen.getAllByLabelText('Book options');
-    await user.click(optionsButtons[0]);
+    await user.click(optionsButtons[0]!);
 
     await waitFor(() => {
       expect(screen.getByRole('menu')).toBeInTheDocument();
@@ -2003,13 +2003,13 @@ describe('LibraryPage — card menu observable behavior (#183)', () => {
     await waitForLibraryLoad();
 
     const optionsButtons = screen.getAllByLabelText('Book options');
-    await user.click(optionsButtons[0]);
+    await user.click(optionsButtons[0]!);
 
     await waitFor(() => {
       expect(screen.getByRole('menu')).toBeInTheDocument();
     });
 
-    await user.click(optionsButtons[0]);
+    await user.click(optionsButtons[0]!);
 
     await waitFor(() => {
       expect(screen.queryByRole('menu')).not.toBeInTheDocument();
@@ -2025,13 +2025,13 @@ describe('LibraryPage — card menu observable behavior (#183)', () => {
     await waitForLibraryLoad();
 
     const optionsButtons = screen.getAllByLabelText('Book options');
-    await user.click(optionsButtons[0]);
+    await user.click(optionsButtons[0]!);
 
     await waitFor(() => {
       expect(optionsButtons[0]).toHaveAttribute('aria-expanded', 'true');
     });
 
-    await user.click(optionsButtons[1]);
+    await user.click(optionsButtons[1]!);
 
     await waitFor(() => {
       // First button's menu closed, second button's menu opened
@@ -2051,7 +2051,7 @@ describe('LibraryPage — card menu observable behavior (#183)', () => {
     await waitForLibraryLoad();
 
     const optionsButtons = screen.getAllByLabelText('Book options');
-    await user.click(optionsButtons[0]);
+    await user.click(optionsButtons[0]!);
 
     await waitFor(() => {
       expect(screen.getByRole('menuitem', { name: /search releases/i })).toBeInTheDocument();
@@ -2077,7 +2077,7 @@ describe('LibraryPage — card menu observable behavior (#183)', () => {
     await waitForLibraryLoad();
 
     const optionsButtons = screen.getAllByLabelText('Book options');
-    await user.click(optionsButtons[0]);
+    await user.click(optionsButtons[0]!);
 
     await waitFor(() => {
       expect(screen.getByRole('menuitem', { name: /remove from library/i })).toBeInTheDocument();
@@ -2104,7 +2104,7 @@ describe('LibraryPage — card menu observable behavior (#183)', () => {
 
     // Click the first book card (role="link" with tabIndex=0)
     const bookCards = screen.getAllByRole('link').filter(el => el.getAttribute('tabindex') === '0');
-    await user.click(bookCards[0]);
+    await user.click(bookCards[0]!);
 
     // Default sort is createdAt desc, so the first rendered card is id=4 (Words of Radiance, Jan 4)
     expect(mockNavigate).toHaveBeenCalledWith('/books/4');
@@ -2119,7 +2119,7 @@ describe('LibraryPage — card menu observable behavior (#183)', () => {
     await waitForLibraryLoad();
 
     const optionsButtons = screen.getAllByLabelText('Book options');
-    await user.click(optionsButtons[0]);
+    await user.click(optionsButtons[0]!);
 
     await waitFor(() => {
       expect(screen.getByRole('menu')).toBeInTheDocument();
@@ -2142,7 +2142,7 @@ describe('LibraryPage — card menu observable behavior (#183)', () => {
     await waitForLibraryLoad();
 
     const optionsButtons = screen.getAllByLabelText('Book options');
-    await user.click(optionsButtons[0]);
+    await user.click(optionsButtons[0]!);
 
     await waitFor(() => {
       expect(screen.getByRole('menu')).toBeInTheDocument();
@@ -2165,7 +2165,7 @@ describe('LibraryPage — card menu observable behavior (#183)', () => {
     await waitForLibraryLoad();
 
     const optionsButtons = screen.getAllByLabelText('Book options');
-    await user.click(optionsButtons[0]);
+    await user.click(optionsButtons[0]!);
 
     await waitFor(() => {
       expect(screen.getByRole('menu')).toBeInTheDocument();
@@ -2184,7 +2184,7 @@ describe('LibraryPage — card menu observable behavior (#183)', () => {
     await waitForLibraryLoad();
 
     const optionsButtons = screen.getAllByLabelText('Book options');
-    await user.click(optionsButtons[0]);
+    await user.click(optionsButtons[0]!);
 
     await waitFor(() => {
       expect(screen.getByRole('menuitem', { name: /search releases/i })).toBeInTheDocument();

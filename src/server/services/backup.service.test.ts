@@ -88,8 +88,8 @@ describe('BackupService', () => {
 
       expect(result).toHaveLength(2);
       // Most recent first
-      expect(result[0].filename).toBe(file2);
-      expect(result[1].filename).toBe(file1);
+      expect(result[0]!.filename).toBe(file2);
+      expect(result[1]!.filename).toBe(file1);
     });
 
     it('excludes backups with size=0 from list', async () => {
@@ -103,7 +103,7 @@ describe('BackupService', () => {
       const result = await service.list();
 
       expect(result).toHaveLength(1);
-      expect(result[0].filename).toBe('narratorr-backup-20260102T000000000Z.zip');
+      expect(result[0]!.filename).toBe('narratorr-backup-20260102T000000000Z.zip');
     });
 
     it('ignores non-backup files', async () => {
@@ -166,7 +166,7 @@ describe('BackupService', () => {
       await service.create();
 
       // The VACUUM INTO SQL should have the single quote doubled
-      const sqlArg = mockExecute.mock.calls[0][0] as string;
+      const sqlArg = mockExecute.mock.calls[0]![0] as string;
       expect(sqlArg).toContain("it''s-a-path");
       expect(sqlArg).not.toMatch(/it's-a-path/);
 
@@ -180,7 +180,7 @@ describe('BackupService', () => {
 
       await service.create();
 
-      const sqlArg = mockExecute.mock.calls[0][0] as string;
+      const sqlArg = mockExecute.mock.calls[0]![0] as string;
       // Path should start with configPath and contain backup-temp- prefix
       expect(sqlArg).toContain(configPath.replace(/'/g, "''"));
       expect(sqlArg).toContain('backup-temp-');

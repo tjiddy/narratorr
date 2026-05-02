@@ -202,7 +202,7 @@ describe('tagFile', () => {
     // Verify ffmpeg was called with args that do NOT contain artist (already exists)
     // but DO contain album and title (which were empty)
     const { execFile } = await import('node:child_process');
-    const callArgs = (execFile as unknown as Mock).mock.calls[0][1] as string[];
+    const callArgs = (execFile as unknown as Mock).mock.calls[0]![1] as string[];
     expect(callArgs).not.toContain('artist=New Author');
     expect(callArgs).toContain('album=New Book');
     expect(callArgs).toContain('title=Title');
@@ -332,7 +332,7 @@ describe('tagFile', () => {
     expect(result.status).toBe('tagged');
 
     const { execFile } = await import('node:child_process');
-    const callArgs = (execFile as unknown as Mock).mock.calls[0][1] as string[];
+    const callArgs = (execFile as unknown as Mock).mock.calls[0]![1] as string[];
     expect(callArgs).toContain('/books/cover.jpg');
     expect(callArgs).toContain('-disposition:v');
   });
@@ -353,7 +353,7 @@ describe('tagFile', () => {
 
     expect(result.status).toBe('tagged');
     const { execFile } = await import('node:child_process');
-    const callArgs = (execFile as unknown as Mock).mock.calls[0][1] as string[];
+    const callArgs = (execFile as unknown as Mock).mock.calls[0]![1] as string[];
     expect(callArgs).toContain('/books/cover.jpg');
   });
 
@@ -601,7 +601,7 @@ describe('TaggingService', () => {
       // Verify no track metadata was passed to ffmpeg
       const { execFile } = await import('node:child_process');
       const calls = (execFile as unknown as Mock).mock.calls;
-      const args = calls[0][1] as string[];
+      const args = calls[0]![1] as string[];
       expect(args.join(' ')).not.toContain('track=');
     });
 
@@ -703,7 +703,7 @@ describe('TaggingService — multi-value serialization (#71, #79)', () => {
 
     const calls = (execFile as unknown as Mock).mock.calls;
     expect(calls.length).toBeGreaterThan(0);
-    const args = calls[0][1] as string[];
+    const args = calls[0]![1] as string[];
     const artistArg = args.find((a, i) => args[i - 1] === '-metadata' && a.startsWith('artist='));
     expect(artistArg).toBe('artist=Brandon Sanderson, Robert Jordan');
   });
@@ -715,7 +715,7 @@ describe('TaggingService — multi-value serialization (#71, #79)', () => {
 
     await service.retagBook(1);
 
-    const args = (execFile as unknown as Mock).mock.calls[0][1] as string[];
+    const args = (execFile as unknown as Mock).mock.calls[0]![1] as string[];
     const composerArg = args.find((a, i) => args[i - 1] === '-metadata' && a.startsWith('composer='));
     expect(composerArg).toBe('composer=Kate Reading, Michael Kramer');
   });
@@ -727,7 +727,7 @@ describe('TaggingService — multi-value serialization (#71, #79)', () => {
 
     await service.retagBook(1);
 
-    const args = (execFile as unknown as Mock).mock.calls[0][1] as string[];
+    const args = (execFile as unknown as Mock).mock.calls[0]![1] as string[];
     const composerArg = args.find((a, i) => args[i - 1] === '-metadata' && a.startsWith('composer='));
     expect(composerArg).toBe('composer=Michael Kramer');
   });
@@ -777,7 +777,7 @@ describe('TaggingService.retagBook() via BookService.getById() (issue #79)', () 
 
     await service.retagBook(7);
 
-    const args = (execFile as unknown as Mock).mock.calls[0][1] as string[];
+    const args = (execFile as unknown as Mock).mock.calls[0]![1] as string[];
     expect(args).toContain('artist=Frank Herbert');
     expect(args).toContain('composer=Scott Brick');
   });

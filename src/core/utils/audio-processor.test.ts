@@ -338,7 +338,7 @@ describe('processAudioFiles', () => {
     expect(result.success).toBe(true);
 
     // spawn should be called — check args
-    const spawnArgs = mockSpawn.mock.calls[0][1] as string[];
+    const spawnArgs = mockSpawn.mock.calls[0]![1] as string[];
     expect(spawnArgs).not.toContain('-b:a');
     expect(spawnArgs).toContain('-c:a');
   });
@@ -599,7 +599,7 @@ describe('bitrate capping — sourceBitrateKbps', () => {
     const config: ProcessingConfig = { ...defaultConfig, bitrate: 128, sourceBitrateKbps: 64 };
     await processAudioFiles('/lib/book', config, defaultContext);
 
-    const spawnArgs = mockSpawn.mock.calls[0][1] as string[];
+    const spawnArgs = mockSpawn.mock.calls[0]![1] as string[];
     const bitrateIdx = spawnArgs.indexOf('-b:a');
     expect(bitrateIdx).toBeGreaterThan(-1);
     expect(spawnArgs[bitrateIdx + 1]).toBe('64k');
@@ -613,7 +613,7 @@ describe('bitrate capping — sourceBitrateKbps', () => {
     const config: ProcessingConfig = { ...defaultConfig, bitrate: 128, sourceBitrateKbps: 64, mergeBehavior: 'always' };
     await processAudioFiles('/lib/book', config, defaultContext);
 
-    const spawnArgs = mockSpawn.mock.calls[0][1] as string[];
+    const spawnArgs = mockSpawn.mock.calls[0]![1] as string[];
     const bitrateIdx = spawnArgs.indexOf('-b:a');
     expect(bitrateIdx).toBeGreaterThan(-1);
     expect(spawnArgs[bitrateIdx + 1]).toBe('64k');
@@ -623,7 +623,7 @@ describe('bitrate capping — sourceBitrateKbps', () => {
     const config: ProcessingConfig = { ...defaultConfig, bitrate: 64, sourceBitrateKbps: 128 };
     await processAudioFiles('/lib/book', config, defaultContext);
 
-    const spawnArgs = mockSpawn.mock.calls[0][1] as string[];
+    const spawnArgs = mockSpawn.mock.calls[0]![1] as string[];
     const bitrateIdx = spawnArgs.indexOf('-b:a');
     expect(bitrateIdx).toBeGreaterThan(-1);
     expect(spawnArgs[bitrateIdx + 1]).toBe('64k');
@@ -633,7 +633,7 @@ describe('bitrate capping — sourceBitrateKbps', () => {
     const config: ProcessingConfig = { ...defaultConfig, bitrate: 128, sourceBitrateKbps: 128 };
     await processAudioFiles('/lib/book', config, defaultContext);
 
-    const spawnArgs = mockSpawn.mock.calls[0][1] as string[];
+    const spawnArgs = mockSpawn.mock.calls[0]![1] as string[];
     const bitrateIdx = spawnArgs.indexOf('-b:a');
     expect(bitrateIdx).toBeGreaterThan(-1);
     expect(spawnArgs[bitrateIdx + 1]).toBe('128k');
@@ -643,7 +643,7 @@ describe('bitrate capping — sourceBitrateKbps', () => {
     const config: ProcessingConfig = { ...defaultConfig, bitrate: 128 };
     await processAudioFiles('/lib/book', config, defaultContext);
 
-    const spawnArgs = mockSpawn.mock.calls[0][1] as string[];
+    const spawnArgs = mockSpawn.mock.calls[0]![1] as string[];
     const bitrateIdx = spawnArgs.indexOf('-b:a');
     expect(bitrateIdx).toBeGreaterThan(-1);
     expect(spawnArgs[bitrateIdx + 1]).toBe('128k');
@@ -653,7 +653,7 @@ describe('bitrate capping — sourceBitrateKbps', () => {
     const config: ProcessingConfig = { ...defaultConfig, bitrate: undefined, sourceBitrateKbps: 64 };
     await processAudioFiles('/lib/book', config, defaultContext);
 
-    const spawnArgs = mockSpawn.mock.calls[0][1] as string[];
+    const spawnArgs = mockSpawn.mock.calls[0]![1] as string[];
     expect(spawnArgs).not.toContain('-b:a');
   });
 });
@@ -670,7 +670,7 @@ describe('#257 merge observability — audio-processor', () => {
 
       await processAudioFiles('/lib/book', { ...defaultConfig, mergeBehavior: 'always' }, defaultContext);
 
-      const spawnArgs = mockSpawn.mock.calls[0][1] as string[];
+      const spawnArgs = mockSpawn.mock.calls[0]![1] as string[];
       const idx = spawnArgs.indexOf('-max_muxing_queue_size');
       expect(idx).toBeGreaterThan(-1);
       expect(spawnArgs[idx + 1]).toBe('4096');
@@ -682,7 +682,7 @@ describe('#257 merge observability — audio-processor', () => {
 
       await processAudioFiles('/lib/book', { ...defaultConfig, mergeBehavior: 'always' }, defaultContext);
 
-      const spawnArgs = mockSpawn.mock.calls[0][1] as string[];
+      const spawnArgs = mockSpawn.mock.calls[0]![1] as string[];
       const idx = spawnArgs.indexOf('-progress');
       expect(idx).toBeGreaterThan(-1);
       expect(spawnArgs[idx + 1]).toBe('pipe:1');
@@ -696,7 +696,7 @@ describe('#257 merge observability — audio-processor', () => {
 
       // spawn called once for ffmpeg merge, execFile only for ffprobe
       expect(mockSpawn).toHaveBeenCalledTimes(1);
-      expect(mockSpawn.mock.calls[0][0]).toBe('/usr/bin/ffmpeg');
+      expect(mockSpawn.mock.calls[0]![0]).toBe('/usr/bin/ffmpeg');
       // execFile calls should all be ffprobe (duration probing)
       for (const call of mockExecFile.mock.calls) {
         expect(call[0]).toContain('ffprobe');
@@ -711,7 +711,7 @@ describe('#257 merge observability — audio-processor', () => {
 
       await processAudioFiles('/lib/book', defaultConfig, defaultContext);
 
-      const spawnArgs = mockSpawn.mock.calls[0][1] as string[];
+      const spawnArgs = mockSpawn.mock.calls[0]![1] as string[];
       expect(spawnArgs).toContain('-max_muxing_queue_size');
       const idx = spawnArgs.indexOf('-max_muxing_queue_size');
       expect(spawnArgs[idx + 1]).toBe('4096');
@@ -724,7 +724,7 @@ describe('#257 merge observability — audio-processor', () => {
       await processAudioFiles('/lib/book', defaultConfig, defaultContext);
 
       expect(mockSpawn).toHaveBeenCalledTimes(1);
-      expect(mockSpawn.mock.calls[0][0]).toBe('/usr/bin/ffmpeg');
+      expect(mockSpawn.mock.calls[0]![0]).toBe('/usr/bin/ffmpeg');
     });
   });
 
@@ -903,7 +903,7 @@ describe('#424 stream mapping — unconditional -vn flag', () => {
 
     await processAudioFiles('/lib/book', { ...defaultConfig, mergeBehavior: 'always' }, defaultContext);
 
-    const spawnArgs = mockSpawn.mock.calls[0][1] as string[];
+    const spawnArgs = mockSpawn.mock.calls[0]![1] as string[];
     expect(spawnArgs).toContain('-vn');
   });
 
@@ -913,7 +913,7 @@ describe('#424 stream mapping — unconditional -vn flag', () => {
 
     await processAudioFiles('/lib/book', defaultConfig, defaultContext);
 
-    const spawnArgs = mockSpawn.mock.calls[0][1] as string[];
+    const spawnArgs = mockSpawn.mock.calls[0]![1] as string[];
     expect(spawnArgs).toContain('-vn');
   });
 
@@ -924,7 +924,7 @@ describe('#424 stream mapping — unconditional -vn flag', () => {
 
     await processAudioFiles('/lib/book', defaultConfig, defaultContext);
 
-    const spawnArgs = mockSpawn.mock.calls[0][1] as string[];
+    const spawnArgs = mockSpawn.mock.calls[0]![1] as string[];
     expect(spawnArgs).toContain('-vn');
   });
 });
@@ -936,7 +936,7 @@ describe('#424 convertFiles — progress output', () => {
 
     await processAudioFiles('/lib/book', defaultConfig, defaultContext);
 
-    const spawnArgs = mockSpawn.mock.calls[0][1] as string[];
+    const spawnArgs = mockSpawn.mock.calls[0]![1] as string[];
     const idx = spawnArgs.indexOf('-progress');
     expect(idx).toBeGreaterThan(-1);
     expect(spawnArgs[idx + 1]).toBe('pipe:1');
@@ -1069,6 +1069,7 @@ function mockExecFileWithStreams(fileStreamMap: Record<string, number>) {
     // Detect if this is a stream-detection ffprobe call (has -show_entries stream=codec_type)
     if (execArgs?.includes('stream=codec_type')) {
       const filePath = execArgs[execArgs.length - 1];
+      // PHASE 1 SKIPPED — needs human review
       const videoCount = fileStreamMap[filePath] ?? 0;
       const lines = ['audio'];
       for (let i = 0; i < videoCount; i++) lines.push('video');
@@ -1109,7 +1110,7 @@ describe('#424 cover art detection and extraction', () => {
     expect(spawnCallCount).toBe(3);
 
     // First spawn call should be cover extraction
-    const extractArgs = mockSpawn.mock.calls[0][1] as string[];
+    const extractArgs = mockSpawn.mock.calls[0]![1] as string[];
     expect(extractArgs).toContain('-an');
     expect(extractArgs).toContain('-vcodec');
     expect(extractArgs).toContain('copy');
@@ -1135,7 +1136,7 @@ describe('#424 cover art detection and extraction', () => {
     expect(result.success).toBe(true);
 
     // First spawn call = extraction, should reference second file
-    const extractArgs = mockSpawn.mock.calls[0][1] as string[];
+    const extractArgs = mockSpawn.mock.calls[0]![1] as string[];
     expect(extractArgs).toContain('/lib/book/02.mp3');
     expect(extractArgs).toContain('-an');
   });
@@ -1178,7 +1179,7 @@ describe('#424 cover art detection and extraction', () => {
       '/lib/book', { ...defaultConfig, mergeBehavior: 'always' }, defaultContext,
     );
 
-    const extractArgs = mockSpawn.mock.calls[0][1] as string[];
+    const extractArgs = mockSpawn.mock.calls[0]![1] as string[];
     expect(extractArgs).toEqual(expect.arrayContaining(['-y', '-i', '/lib/book/01.mp3', '-an', '-vcodec', 'copy']));
   });
 
@@ -1318,7 +1319,7 @@ describe('#424 cover art reattach (M4B only)', () => {
 
     // Third spawn call = reattach
     expect(mockSpawn).toHaveBeenCalledTimes(3);
-    const reattachArgs = mockSpawn.mock.calls[2][1] as string[];
+    const reattachArgs = mockSpawn.mock.calls[2]![1] as string[];
     expect(reattachArgs).toContain('-disposition:v:0');
     expect(reattachArgs).toContain('attached_pic');
     expect(reattachArgs).toContain('-c');
@@ -1342,7 +1343,7 @@ describe('#424 cover art reattach (M4B only)', () => {
       '/lib/book', { ...defaultConfig, mergeBehavior: 'always' }, defaultContext,
     );
 
-    const reattachArgs = mockSpawn.mock.calls[2][1] as string[];
+    const reattachArgs = mockSpawn.mock.calls[2]![1] as string[];
     const cIdx = reattachArgs.indexOf('-c');
     expect(cIdx).toBeGreaterThan(-1);
     expect(reattachArgs[cIdx + 1]).toBe('copy');

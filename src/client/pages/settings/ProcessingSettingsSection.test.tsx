@@ -302,7 +302,7 @@ describe('ProcessingSettingsSection', () => {
       await waitFor(() => {
         expect(mockApi.updateSettings).toHaveBeenCalled();
       });
-      expect(mockApi.updateSettings.mock.calls[0][0]).toMatchObject({
+      expect(mockApi.updateSettings.mock.calls[0]![0]).toMatchObject({
         processing: expect.objectContaining({
           postProcessingScript: '/scripts/post.sh',
           postProcessingScriptTimeout: 60,
@@ -568,7 +568,7 @@ describe('ProcessingSettingsSection', () => {
       fireEvent.submit(screen.getByRole('button', { name: /save/i }).closest('form')!);
 
       await waitFor(() => {
-        const call = mockApi.updateSettings.mock.calls[0][0];
+        const call = mockApi.updateSettings.mock.calls[0]![0];
         expect(call).toHaveProperty('processing');
         expect(call).toHaveProperty('tagging');
         expect(call.processing).toMatchObject({ ffmpegPath: '/usr/bin/ffmpeg' });

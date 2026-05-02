@@ -546,7 +546,7 @@ describe('EventHistoryService', () => {
       // The predicate passed to where() is lt(bookEvents.createdAt, cutoff)
       // Drizzle comparison operators produce SQL objects with queryChunks:
       //   [StringChunk(''), Column, StringChunk(' < '), Param(value), StringChunk('')]
-      const predicate = whereFn.mock.calls[0][0];
+      const predicate = whereFn.mock.calls[0]![0];
       const chunks = predicate.queryChunks;
 
       // Must use strict less-than (lt), not less-than-or-equal (lte)
@@ -617,7 +617,7 @@ describe('EventHistoryService', () => {
       // Verify the where predicate targets bookEvents.eventType with eq()
       const whereFn = chain.where as ReturnType<typeof vi.fn>;
       expect(whereFn).toHaveBeenCalledTimes(1);
-      const predicate = whereFn.mock.calls[0][0];
+      const predicate = whereFn.mock.calls[0]![0];
       const chunks = predicate.queryChunks;
       // Drizzle eq() produces: [StringChunk(''), Column, StringChunk(' = '), Param(value), StringChunk('')]
       const operatorChunk = chunks[2];
@@ -645,8 +645,8 @@ describe('EventHistoryService', () => {
       expect(result.data).toHaveLength(1);
 
       // Verify eq() was used (= operator)
-      const whereFn = db.select.mock.results[1].value.from.mock.results[0].value.where as ReturnType<typeof vi.fn>;
-      const predicate = whereFn.mock.calls[0][0];
+      const whereFn = db.select.mock.results[1]!.value.from.mock.results[0].value.where as ReturnType<typeof vi.fn>;
+      const predicate = whereFn.mock.calls[0]![0];
       const operatorChunk = predicate.queryChunks[2];
       expect(operatorChunk.value[0]).toBe(' = ');
     });
@@ -663,8 +663,8 @@ describe('EventHistoryService', () => {
       expect(result.data).toHaveLength(2);
 
       // Verify inArray() was used (IN operator)
-      const whereFn = db.select.mock.results[1].value.from.mock.results[0].value.where as ReturnType<typeof vi.fn>;
-      const predicate = whereFn.mock.calls[0][0];
+      const whereFn = db.select.mock.results[1]!.value.from.mock.results[0].value.where as ReturnType<typeof vi.fn>;
+      const predicate = whereFn.mock.calls[0]![0];
       const operatorChunk = predicate.queryChunks[2];
       expect(operatorChunk.value[0]).toBe(' in ');
     });
@@ -698,7 +698,7 @@ describe('EventHistoryService', () => {
 
       // Verify eq() was used (= operator)
       const whereFn = chain.where as ReturnType<typeof vi.fn>;
-      const predicate = whereFn.mock.calls[0][0];
+      const predicate = whereFn.mock.calls[0]![0];
       const operatorChunk = predicate.queryChunks[2];
       expect(operatorChunk.value[0]).toBe(' = ');
     });
@@ -715,7 +715,7 @@ describe('EventHistoryService', () => {
 
       // Verify inArray() was used (IN operator)
       const whereFn = chain.where as ReturnType<typeof vi.fn>;
-      const predicate = whereFn.mock.calls[0][0];
+      const predicate = whereFn.mock.calls[0]![0];
       const operatorChunk = predicate.queryChunks[2];
       expect(operatorChunk.value[0]).toBe(' in ');
     });
@@ -746,8 +746,8 @@ describe('EventHistoryService', () => {
 
       const result = await service.getAll({ search: 'Deleted' });
       expect(result.data).toHaveLength(1);
-      expect(result.data[0].bookTitle).toBe('Deleted Book');
-      expect(result.data[0].bookId).toBeNull();
+      expect(result.data[0]!.bookTitle).toBe('Deleted Book');
+      expect(result.data[0]!.bookId).toBeNull();
     });
   });
 });

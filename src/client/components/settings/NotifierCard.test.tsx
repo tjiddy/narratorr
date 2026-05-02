@@ -183,7 +183,7 @@ describe('NotifierCard — create mode', () => {
     );
 
     const typeSelect = screen.getAllByRole('combobox')[0];
-    await user.selectOptions(typeSelect, 'discord');
+    await user.selectOptions(typeSelect!, 'discord');
 
     expect(screen.getByPlaceholderText('https://discord.com/api/webhooks/...')).toBeInTheDocument();
     expect(screen.getByText('Include Cover Image')).toBeInTheDocument();
@@ -202,7 +202,7 @@ describe('NotifierCard — create mode', () => {
     );
 
     const typeSelect = screen.getAllByRole('combobox')[0];
-    await user.selectOptions(typeSelect, 'script');
+    await user.selectOptions(typeSelect!, 'script');
 
     expect(screen.getByPlaceholderText('/path/to/script.sh')).toBeInTheDocument();
     expect(screen.getByText('Timeout (seconds)')).toBeInTheDocument();
@@ -215,7 +215,7 @@ describe('NotifierCard — create mode', () => {
     );
 
     const typeSelect = screen.getAllByRole('combobox')[0];
-    await user.selectOptions(typeSelect, 'email');
+    await user.selectOptions(typeSelect!, 'email');
 
     expect(screen.getByPlaceholderText('smtp.gmail.com')).toBeInTheDocument();
     expect(screen.getByText('From Address')).toBeInTheDocument();
@@ -278,7 +278,7 @@ describe('NotifierCard — create mode', () => {
     await user.click(screen.getByText('Add Notifier'));
 
     expect(onSubmit).toHaveBeenCalled();
-    expect(onSubmit.mock.calls[0][0]).toMatchObject({
+    expect(onSubmit.mock.calls[0]![0]).toMatchObject({
       name: 'Test Notifier',
       type: 'webhook',
       settings: expect.objectContaining({ url: 'https://hook.example.com' }),
@@ -432,7 +432,7 @@ describe('NotifierCard — edit mode', () => {
     await user.click(screen.getByText('Test').closest('button')!);
 
     expect(onFormTest).toHaveBeenCalled();
-    const callArg = onFormTest.mock.calls[0][0];
+    const callArg = onFormTest.mock.calls[0]![0];
     expect('id' in callArg).toBe(false);
   });
 

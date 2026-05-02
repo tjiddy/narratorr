@@ -73,7 +73,7 @@ describe('useActivity', () => {
     });
 
     expect(result.current.state.queue).toHaveLength(1);
-    expect(result.current.state.queue[0].id).toBe(1);
+    expect(result.current.state.queue[0]!.id).toBe(1);
     expect(result.current.state.queueTotal).toBe(1);
   });
 
@@ -107,7 +107,7 @@ describe('useActivity', () => {
     await waitFor(() => {
       expect(api.cancelDownload).toHaveBeenCalled();
     });
-    expect(vi.mocked(api.cancelDownload).mock.calls[0][0]).toBe(42);
+    expect(vi.mocked(api.cancelDownload).mock.calls[0]![0]).toBe(42);
   });
 
   it('retry mutation calls api and invalidates queries', async () => {
@@ -129,7 +129,7 @@ describe('useActivity', () => {
     await waitFor(() => {
       expect(api.retryDownload).toHaveBeenCalled();
     });
-    expect(vi.mocked(api.retryDownload).mock.calls[0][0]).toBe(42);
+    expect(vi.mocked(api.retryDownload).mock.calls[0]![0]).toBe(42);
   });
 
   it('approve mutation calls api and invalidates queries', async () => {
@@ -151,7 +151,7 @@ describe('useActivity', () => {
     await waitFor(() => {
       expect(api.approveDownload).toHaveBeenCalled();
     });
-    expect(vi.mocked(api.approveDownload).mock.calls[0][0]).toBe(42);
+    expect(vi.mocked(api.approveDownload).mock.calls[0]![0]).toBe(42);
   });
 
   it('reject mutation with retry=false calls api.rejectDownload(id, { retry: false }) and invalidates on success', async () => {
