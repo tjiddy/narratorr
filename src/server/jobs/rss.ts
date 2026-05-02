@@ -93,7 +93,7 @@ export async function runRssJob(
     return { polled, matched: 0, grabbed: 0 };
   }
 
-  const filtered = await filterBlacklistedResults(allResults, blacklistService);
+  const filtered = await filterBlacklistedResults(allResults, blacklistService, log);
 
   // Match each feed item to the best candidate book
   // Collect all matching items per book so we can rank the full set after filtering
@@ -143,7 +143,10 @@ export async function runRssJob(
     await enrichUsenetLanguages(bookResults, log);
 
     // Filter multi-part Usenet posts (after enrichment so nzbName is available)
-    const { filtered: afterMultipart } = filterMultiPartUsenet(bookResults);
+    const { filtered: afterMultipart, rejectedTitles: rssMultipartRejections } = filterMultiPartUsenet(bookResults);
+    for (const r of rssMultipartRejections) {
+      log.debug({ title: r.title, reason: 'multi-part-detected', matchedPattern: r.matchedPattern }, 'Multi-part Usenet result rejected');
+    }
 
     // Apply filter pipeline to all items for this book, then pick best-ranked
     const duration = candidate.duration
@@ -160,7 +163,7 @@ export async function runRssJob(
       languages: metadataSettings.languages,
       narratorPriority,
       maxDownloadSize: qualitySettings.maxDownloadSize,
-    });
+    }, log);
     if (ranked.length < rssInputCount) {
       log.debug({ inputCount: rssInputCount, outputCount: ranked.length }, 'Quality gate filtering applied');
     }

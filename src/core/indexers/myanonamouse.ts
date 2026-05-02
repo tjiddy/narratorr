@@ -1,5 +1,12 @@
 import { z } from 'zod';
-import type { IndexerAdapter, SearchOptions, SearchResult } from './types.js';
+import {
+  rawTitleBytesHex,
+  type IndexerAdapter,
+  type IndexerParseTrace,
+  type IndexerSearchResponse,
+  type SearchOptions,
+  type SearchResult,
+} from './types.js';
 import { IndexerAuthError, IndexerError, ProxyError } from './errors.js';
 import { createProxyAgent, resolveProxyIp } from './proxy.js';
 import { fetchWithOptionalDispatcher, type DispatcherFetchInit } from '../utils/network-service.js';
@@ -7,6 +14,7 @@ import { normalizeLanguage } from '../utils/language-codes.js';
 import { MAM_LANGUAGES } from '../../shared/indexer-registry.js';
 import { getErrorMessage, getErrorMessageWithCause } from '../../shared/error-message.js';
 import { normalizeBaseUrl } from '../../shared/normalize-base-url.js';
+import { parseDoubleEncodedNames, parseMamSize } from './mam-helpers.js';
 
 export interface MAMConfig {
   mamId: string;
@@ -59,38 +67,6 @@ function orUndef<T>(value: T | null | undefined): T | undefined {
   return value ?? undefined;
 }
 
-/**
- * Parse a double-encoded JSON field from MAM responses.
- * Fields like author_info are JSON strings containing JSON objects.
- * e.g. "{\"123\": \"Brandon Sanderson\"}" → "Brandon Sanderson"
- * Returns undefined on any parse failure.
- */
-function parseDoubleEncodedNames(raw: string | undefined): string | undefined {
-  if (!raw) return undefined;
-
-  try {
-    const firstParse: unknown = JSON.parse(raw);
-    if (typeof firstParse !== 'string') {
-      // Already an object from single parse — extract values
-      if (firstParse && typeof firstParse === 'object') {
-        const values = Object.values(firstParse as Record<string, string>);
-        return values.length > 0 ? values.join(', ') : undefined;
-      }
-      return undefined;
-    }
-
-    // Second parse: the string should be a JSON object
-    const secondParse: unknown = JSON.parse(firstParse);
-    if (secondParse && typeof secondParse === 'object') {
-      const values = Object.values(secondParse as Record<string, string>);
-      return values.length > 0 ? values.join(', ') : undefined;
-    }
-    return undefined;
-  } catch {
-    return undefined;
-  }
-}
-
 export class MyAnonamouseIndexer implements IndexerAdapter {
   readonly type = 'myanonamouse';
   readonly name: string;
@@ -111,14 +87,20 @@ export class MyAnonamouseIndexer implements IndexerAdapter {
     this.name = name || 'MyAnonamouse';
   }
 
-  async search(query: string, options?: SearchOptions): Promise<SearchResult[]> {
+  async search(query: string, options?: SearchOptions): Promise<IndexerSearchResponse> {
     const url = this.buildSearchUrl(query, options);
-    const body = await this.fetchWithCookie(url, options?.signal);
-    const response = this.parseSearchBody(body);
+    const fetched = await this.fetchWithCookieMeta(url, options?.signal);
+    const response = this.parseSearchBody(fetched.body);
 
     // "Nothing returned, out of ..." is an empty-result message, not an error
     if (response.error && response.error.startsWith('Nothing returned')) {
-      return [];
+      return {
+        results: [],
+        parseStats: { itemsObserved: 0, kept: 0, dropped: { emptyTitle: 0, noUrl: 0, other: 0 } },
+        debugTrace: [],
+        requestUrl: url,
+        httpStatus: fetched.httpStatus,
+      };
     }
 
     if (response.error) {
@@ -126,10 +108,23 @@ export class MyAnonamouseIndexer implements IndexerAdapter {
     }
 
     if (!response.data) {
-      return [];
+      return {
+        results: [],
+        parseStats: { itemsObserved: 0, kept: 0, dropped: { emptyTitle: 0, noUrl: 0, other: 0 } },
+        debugTrace: [],
+        requestUrl: url,
+        httpStatus: fetched.httpStatus,
+      };
     }
 
-    return this.buildResults(response.data, options?.signal);
+    const built = await this.buildResults(response.data, options?.signal);
+    return {
+      results: built.results,
+      parseStats: built.parseStats,
+      debugTrace: built.debugTrace,
+      requestUrl: url,
+      httpStatus: fetched.httpStatus,
+    };
   }
 
   private buildSearchUrl(query: string, options?: SearchOptions): string {
@@ -176,20 +171,51 @@ export class MyAnonamouseIndexer implements IndexerAdapter {
     return parsed.data;
   }
 
-  private async buildResults(data: MAMSearchResult[], signal?: AbortSignal): Promise<SearchResult[]> {
+  private async buildResults(data: MAMSearchResult[], signal?: AbortSignal): Promise<{ results: SearchResult[]; parseStats: IndexerSearchResponse['parseStats']; debugTrace: IndexerParseTrace[] }> {
     const results: SearchResult[] = [];
+    const debugTrace: IndexerParseTrace[] = [];
+    const dropped = { emptyTitle: 0, noUrl: 0, other: 0 };
+
     for (const item of data) {
-      if (!item.title) continue;
+      const guid = item.id != null ? String(item.id) : undefined;
+      if (!item.title) {
+        dropped.emptyTitle++;
+        debugTrace.push({ source: 'row', reason: 'dropped:empty-title', guid });
+        continue;
+      }
 
       let downloadUrl: string | undefined;
       if (item.id != null) {
         downloadUrl = await this.fetchTorrentAsDataUri(item.id, signal);
       }
 
+      if (!downloadUrl) {
+        dropped.noUrl++;
+        debugTrace.push({
+          source: 'row',
+          reason: 'dropped:no-url',
+          rawTitle: item.title,
+          rawTitleBytes: rawTitleBytesHex(item.title),
+          guid,
+        });
+        continue;
+      }
+
       results.push(this.mapItem(item, downloadUrl));
+      debugTrace.push({
+        source: 'row',
+        reason: 'kept',
+        rawTitle: item.title,
+        rawTitleBytes: rawTitleBytesHex(item.title),
+        guid,
+      });
     }
 
-    return results;
+    return {
+      results,
+      parseStats: { itemsObserved: data.length, kept: results.length, dropped },
+      debugTrace,
+    };
   }
 
   private mapItem(item: MAMSearchResult, downloadUrl: string | undefined): SearchResult {
@@ -203,7 +229,7 @@ export class MyAnonamouseIndexer implements IndexerAdapter {
       protocol: 'torrent',
       guid: item.id != null ? String(item.id) : undefined,
       downloadUrl,
-      size: this.parseSize(orUndef(item.size)),
+      size: parseMamSize(orUndef(item.size)),
       seeders: orUndef(item.seeders),
       leechers: orUndef(item.leechers),
       language: normalizeLanguage(orUndef(item.lang_code)),
@@ -314,6 +340,11 @@ export class MyAnonamouseIndexer implements IndexerAdapter {
    * Throws on HTTP 403 with an auth-specific error message.
    */
   private async fetchWithCookie(url: string, callerSignal?: AbortSignal): Promise<string> {
+    const { body } = await this.fetchWithCookieMeta(url, callerSignal);
+    return body;
+  }
+
+  private async fetchWithCookieMeta(url: string, callerSignal?: AbortSignal): Promise<{ body: string; httpStatus: number }> {
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), INDEXER_TIMEOUT_MS);
     const signal = callerSignal
@@ -358,7 +389,8 @@ export class MyAnonamouseIndexer implements IndexerAdapter {
         throw new Error(`HTTP ${response.status}: ${response.statusText}`);
       }
 
-      return await response.text();
+      const body = await response.text();
+      return { body, httpStatus: response.status };
     } finally {
       clearTimeout(timeoutId);
     }
@@ -382,34 +414,6 @@ export class MyAnonamouseIndexer implements IndexerAdapter {
       .filter((id) => id !== undefined);
   }
 
-  /**
-   * Parse a MAM size field (e.g. "881.8 MiB", "1.1 GiB") into bytes.
-   * Returns undefined for zero, unparseable strings, or unknown units.
-   * Numeric values pass through unchanged (future-proofing).
-   * Illustrative captured MAM values: "881.8 MiB", "1.1 GiB", "830.0 MiB".
-   */
-  private parseSize(raw: string | number | undefined): number | undefined {
-    if (raw === undefined || raw === null) return undefined;
-    if (typeof raw === 'number') return raw || undefined;
-
-    const parts = raw.trim().split(' ');
-    if (parts.length !== 2) return undefined;
-
-    const num = parseFloat(parts[0]);
-    if (!num || !isFinite(num)) return undefined;
-
-    const multipliers: Record<string, number> = {
-      KIB: 1024,
-      MIB: 1024 * 1024,
-      GIB: 1024 * 1024 * 1024,
-      TIB: 1024 * 1024 * 1024 * 1024,
-    };
-
-    const multiplier = multipliers[parts[1].toUpperCase()];
-    if (!multiplier) return undefined;
-
-    return Math.round(num * multiplier);
-  }
 
   /**
    * Fetch .torrent file bytes and encode as a data: URI.

@@ -90,7 +90,7 @@ export async function retrySearch(
       return { outcome: 'no_candidates' };
     }
 
-    const filteredResults = await filterBlacklistedResults(rawResults, blacklistService);
+    const filteredResults = await filterBlacklistedResults(rawResults, blacklistService, log);
 
     // Enrich Usenet results before filtering
     await enrichUsenetLanguages(filteredResults, log);
@@ -110,7 +110,7 @@ export async function retrySearch(
       languages: metadataSettings.languages,
       narratorPriority,
       maxDownloadSize: qualitySettings.maxDownloadSize,
-    });
+    }, log);
     if (results.length < retryInputCount) {
       log.debug({ inputCount: retryInputCount, outputCount: results.length }, 'Quality gate filtering applied');
     }

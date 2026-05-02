@@ -623,4 +623,51 @@ describe('#502 retrySearch — enrichment before filtering', () => {
     expect(result.outcome).toBe('no_candidates');
     expect(deps.downloadOrchestrator.grab).not.toHaveBeenCalled();
   });
+
+  // ── #932 F3 — Caller-level logging assertions for retry-search ──────────
+  describe('caller-level debug logging (#932 F3)', () => {
+    it('emits the blacklist drop log when retrySearch filters a blacklisted candidate', async () => {
+      const log = createMockLogger();
+      const deps = createDeps({
+        indexerService: inject<IndexerService>({
+          searchAll: vi.fn().mockResolvedValue([{ ...mockSearchResult, infoHash: 'badhash' }]),
+        }),
+        blacklistService: inject<BlacklistService>({
+          getBlacklistedHashes: vi.fn().mockResolvedValue(new Set<string>(['badhash'])),
+          getBlacklistedIdentifiers: vi.fn().mockResolvedValue({
+            blacklistedHashes: new Set(['badhash']),
+            blacklistedGuids: new Set<string>(),
+          }),
+        }),
+        log: inject<FastifyBaseLogger>(log),
+      });
+
+      await retrySearch(1, deps);
+
+      expect(log.debug).toHaveBeenCalledWith(
+        expect.objectContaining({ reason: 'blacklist-match', matchedRule: 'hash' }),
+        'Blacklisted result dropped',
+      );
+    });
+
+    it('emits a quality filter drop log when retrySearch reject-words filter rejects an item', async () => {
+      const log = createMockLogger();
+      const deps = createDeps({
+        indexerService: inject<IndexerService>({
+          searchAll: vi.fn().mockResolvedValue([{ ...mockSearchResult, title: 'The Way of Kings BANNED' }]),
+        }),
+        settingsService: createMockSettingsService({
+          quality: { grabFloor: 0, minSeeders: 0, protocolPreference: 'none', rejectWords: 'banned', requiredWords: '', maxDownloadSize: 0 },
+        }),
+        log: inject<FastifyBaseLogger>(log),
+      });
+
+      await retrySearch(1, deps);
+
+      expect(log.debug).toHaveBeenCalledWith(
+        expect.objectContaining({ reason: 'reject-word-match', matchedWord: 'banned' }),
+        'Quality filter dropped result',
+      );
+    });
+  });
 });

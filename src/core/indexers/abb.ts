@@ -1,5 +1,12 @@
 import * as cheerio from 'cheerio';
-import type { IndexerAdapter, SearchResult, SearchOptions } from './types.js';
+import {
+  rawTitleBytesHex,
+  type IndexerAdapter,
+  type IndexerParseTrace,
+  type IndexerSearchResponse,
+  type SearchOptions,
+  type SearchResult,
+} from './types.js';
 import { buildMagnetUri } from '../utils';
 import { normalizeBaseUrl } from '../../shared/normalize-base-url.js';
 import { fetchWithProxy } from './fetch.js';
@@ -37,11 +44,17 @@ export class AudioBookBayIndexer implements IndexerAdapter {
     this.proxyUrl = config.proxyUrl;
   }
 
-  async search(query: string, options?: SearchOptions): Promise<SearchResult[]> {
+  async search(query: string, options?: SearchOptions): Promise<IndexerSearchResponse> {
     const results: SearchResult[] = [];
+    const debugTrace: IndexerParseTrace[] = [];
+    const dropped = { emptyTitle: 0, noUrl: 0, other: 0 };
+    let itemsObserved = 0;
     const encodedQuery = encodeURIComponent(query.toLowerCase()).replace(/%20/g, '+');
     const limit = options?.limit || 50;
     const pageLimit = this.config.pageLimit || 2;
+
+    let firstPageRequestUrl: string | undefined;
+    let firstPageHttpStatus: number | undefined;
 
     for (let page = 1; page <= pageLimit; page++) {
       const url = page === 1
@@ -49,15 +62,30 @@ export class AudioBookBayIndexer implements IndexerAdapter {
         : `${this.baseUrl}/page/${page}/?s=${encodedQuery}&tt=1`;
 
       try {
-        const html = await this.fetchPage(url, options?.signal);
-        const pageResults = this.parseSearchPage(html);
+        const fetched = await this.fetchPage(url, options?.signal);
+        if (page === 1) {
+          firstPageRequestUrl = fetched.requestUrl;
+          firstPageHttpStatus = fetched.httpStatus;
+        }
+        const parsed = this.parseSearchPage(fetched.body);
+        itemsObserved += parsed.observed;
+        dropped.emptyTitle += parsed.droppedEmptyTitle;
+        debugTrace.push(...parsed.debugTrace);
 
-        if (pageResults.length === 0) {
+        if (parsed.results.length === 0) {
           break;
         }
 
-        const done = await this.enrichAndCollect(pageResults, results, limit, options?.signal);
-        if (done) return results;
+        const done = await this.enrichAndCollect(parsed.results, results, debugTrace, dropped, limit, options?.signal);
+        if (done) {
+          return {
+            results,
+            parseStats: { itemsObserved, kept: results.length, dropped },
+            debugTrace,
+            requestUrl: firstPageRequestUrl,
+            httpStatus: firstPageHttpStatus,
+          };
+        }
       } catch (error: unknown) {
         if (isProxyRelatedError(error)) {
           throw error;
@@ -66,19 +94,30 @@ export class AudioBookBayIndexer implements IndexerAdapter {
       }
     }
 
-    return results;
+    return {
+      results,
+      parseStats: { itemsObserved, kept: results.length, dropped },
+      debugTrace,
+      requestUrl: firstPageRequestUrl,
+      httpStatus: firstPageHttpStatus,
+    };
   }
 
   /** Fetch detail pages, enrich results, and collect those with download URLs. Returns true when limit reached. */
   private async enrichAndCollect(
-    pageResults: SearchResult[], results: SearchResult[], limit: number, signal?: AbortSignal,
+    pageResults: SearchResult[],
+    results: SearchResult[],
+    debugTrace: IndexerParseTrace[],
+    dropped: { emptyTitle: number; noUrl: number; other: number },
+    limit: number,
+    signal?: AbortSignal,
   ): Promise<boolean> {
     for (const result of pageResults) {
       if (result.detailsUrl) {
         try {
           await this.delay(500);
-          const detailHtml = await this.fetchPage(result.detailsUrl, signal);
-          const details = this.parseDetailPage(detailHtml);
+          const detail = await this.fetchPage(result.detailsUrl, signal);
+          const details = this.parseDetailPage(detail.body);
           Object.assign(result, details);
         } catch (error: unknown) {
           if (isProxyRelatedError(error)) {
@@ -89,6 +128,21 @@ export class AudioBookBayIndexer implements IndexerAdapter {
 
       if (result.downloadUrl) {
         results.push(result);
+        debugTrace.push({
+          source: 'row',
+          reason: 'kept',
+          rawTitle: result.title,
+          rawTitleBytes: rawTitleBytesHex(result.title),
+          guid: result.guid,
+        });
+      } else {
+        dropped.noUrl++;
+        debugTrace.push({
+          source: 'row',
+          reason: 'dropped:no-url',
+          rawTitle: result.title,
+          rawTitleBytes: rawTitleBytesHex(result.title),
+        });
       }
 
       if (results.length >= limit) {
@@ -98,7 +152,7 @@ export class AudioBookBayIndexer implements IndexerAdapter {
     return false;
   }
 
-  private async fetchPage(url: string, signal?: AbortSignal): Promise<string> {
+  private async fetchPage(url: string, signal?: AbortSignal) {
     const headers = {
       'User-Agent': this.getNextUserAgent(),
       Accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
@@ -116,9 +170,11 @@ export class AudioBookBayIndexer implements IndexerAdapter {
     return fetchWithProxyAgent(url, { proxyUrl: this.proxyUrl, headers, signal });
   }
 
-  private parseSearchPage(html: string): SearchResult[] {
+  private parseSearchPage(html: string): { results: SearchResult[]; observed: number; droppedEmptyTitle: number; debugTrace: IndexerParseTrace[] } {
     const $ = cheerio.load(html);
     const results: SearchResult[] = [];
+    const debugTrace: IndexerParseTrace[] = [];
+    let droppedEmptyTitle = 0;
 
     // AudioBookBay uses various structures, try multiple selectors
     const postSelectors = [
@@ -156,7 +212,11 @@ export class AudioBookBayIndexer implements IndexerAdapter {
       const title = titleEl.text().trim();
       let detailsUrl = titleEl.attr('href');
 
-      if (!title || !detailsUrl) return;
+      if (!title || !detailsUrl) {
+        droppedEmptyTitle++;
+        debugTrace.push({ source: 'row', reason: 'dropped:empty-title' });
+        return;
+      }
 
       // Ensure absolute URL
       if (detailsUrl && !detailsUrl.startsWith('http')) {
@@ -183,7 +243,7 @@ export class AudioBookBayIndexer implements IndexerAdapter {
       });
     });
 
-    return results;
+    return { results, observed: posts.length, droppedEmptyTitle, debugTrace };
   }
 
   // eslint-disable-next-line complexity -- HTML scraping with optional element extraction

@@ -59,7 +59,7 @@ describe('AudioBookBayIndexer', () => {
         }),
       );
 
-      const results = await indexer.search('Brandon Sanderson');
+      const { results } = await indexer.search('Brandon Sanderson');
 
       expect(results.length).toBeGreaterThan(0);
       expect(results[0].indexer).toBe('AudioBookBay');
@@ -79,7 +79,7 @@ describe('AudioBookBayIndexer', () => {
         }),
       );
 
-      const results = await indexer.search('Brandon Sanderson');
+      const { results } = await indexer.search('Brandon Sanderson');
 
       expect(results[0].infoHash).toBe('a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0');
       expect(results[0].downloadUrl).toContain('magnet:?');
@@ -99,7 +99,7 @@ describe('AudioBookBayIndexer', () => {
         }),
       );
 
-      const results = await indexer.search('Brandon Sanderson');
+      const { results } = await indexer.search('Brandon Sanderson');
 
       // 1.23 GB
       expect(results[0].size).toBeGreaterThan(1_000_000_000);
@@ -116,7 +116,7 @@ describe('AudioBookBayIndexer', () => {
         }),
       );
 
-      const results = await indexer.search('nonexistent book');
+      const { results } = await indexer.search('nonexistent book');
       expect(results).toEqual([]);
     });
 
@@ -142,7 +142,7 @@ describe('AudioBookBayIndexer', () => {
         }),
       );
 
-      const results = await indexer.search('test');
+      const { results } = await indexer.search('test');
       expect(results).toEqual([]);
     });
 
@@ -160,7 +160,7 @@ describe('AudioBookBayIndexer', () => {
         }),
       );
 
-      const results = await indexer.search('Brandon Sanderson', { limit: 1 });
+      const { results } = await indexer.search('Brandon Sanderson', { limit: 1 });
       expect(results).toHaveLength(1);
     });
 
@@ -171,7 +171,7 @@ describe('AudioBookBayIndexer', () => {
         }),
       );
 
-      const results = await indexer.search('test');
+      const { results } = await indexer.search('test');
       expect(results).toEqual([]);
     });
 
@@ -188,8 +188,29 @@ describe('AudioBookBayIndexer', () => {
       );
 
       // Should not throw, just skip results without magnet URIs
-      const results = await indexer.search('test');
+      const { results } = await indexer.search('test');
       expect(results).toEqual([]);
+    });
+  });
+
+  describe('parse trace shape (#932 AC1)', () => {
+    it('populates parseStats and per-row debugTrace including search-page transport metadata', async () => {
+      server.use(
+        http.get(`${ABB_BASE}/`, () => {
+          return new HttpResponse(searchHtml, { headers: { 'Content-Type': 'text/html' } });
+        }),
+        http.get(`${ABB_BASE}/audio-books/:slug/`, () => {
+          return new HttpResponse(detailHtml, { headers: { 'Content-Type': 'text/html' } });
+        }),
+      );
+
+      const response = await indexer.search('Brandon Sanderson');
+
+      expect(response.requestUrl).toBeDefined();
+      expect(response.requestUrl).toContain(ABB_BASE);
+      expect(response.httpStatus).toBe(200);
+      expect(response.parseStats.kept).toBe(response.results.length);
+      expect(response.debugTrace.some((t) => t.reason === 'kept' && t.rawTitleBytes)).toBe(true);
     });
   });
 
@@ -275,7 +296,7 @@ describe('AudioBookBayIndexer', () => {
         }),
       );
 
-      const results = await proxiedIndexer.search('Brandon Sanderson');
+      const { results } = await proxiedIndexer.search('Brandon Sanderson');
 
       expect(searchCaptured).toBe(true);
       expect(results.length).toBeGreaterThan(0);
@@ -378,7 +399,7 @@ describe('AudioBookBayIndexer', () => {
         }),
       );
 
-      const results = await indexer.search('test');
+      const { results } = await indexer.search('test');
       expect(results.length).toBeGreaterThan(0);
       // "N/A" won't match the /Seeders?[:\s]*(\d+)/ regex, so seeders stays undefined
       expect(results[0].seeders).toBeUndefined();
@@ -405,7 +426,7 @@ describe('AudioBookBayIndexer', () => {
         }),
       );
 
-      const results = await indexer.search('test');
+      const { results } = await indexer.search('test');
       expect(results.length).toBeGreaterThan(0);
       // "unknown" won't match Size regex, so size stays undefined
       expect(results[0].size).toBeUndefined();
@@ -431,7 +452,7 @@ describe('AudioBookBayIndexer', () => {
         }),
       );
 
-      const results = await indexer.search('test');
+      const { results } = await indexer.search('test');
       expect(results.length).toBeGreaterThan(0);
       expect(results[0].infoHash).toBe('a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0');
     });
@@ -457,7 +478,7 @@ describe('AudioBookBayIndexer', () => {
         }),
       );
 
-      const results = await indexer.search('test');
+      const { results } = await indexer.search('test');
       expect(results.length).toBeGreaterThan(0);
       // 500 MB = 500 * 1024 * 1024 = 524288000
       expect(results[0].size).toBe(524288000);
@@ -486,7 +507,7 @@ describe('AudioBookBayIndexer', () => {
         }),
       );
 
-      const results = await indexer.search('test');
+      const { results } = await indexer.search('test');
       expect(results.length).toBeGreaterThan(0);
       expect(results[0].author).toBe('Brandon Sanderson');
       expect(results[0].narrator).toBe('Michael Kramer');
@@ -554,7 +575,7 @@ describe('AudioBookBayIndexer', () => {
         http.get(`${ABB_BASE}/`, () => HttpResponse.error()),
       );
 
-      const results = await directIndexer.search('test');
+      const { results } = await directIndexer.search('test');
       expect(results).toEqual([]);
     });
 
@@ -615,7 +636,7 @@ describe('AudioBookBayIndexer', () => {
         });
       });
 
-      const results = await proxiedIndexer.search('Brandon Sanderson');
+      const { results } = await proxiedIndexer.search('Brandon Sanderson');
 
       expect(results.length).toBeGreaterThan(0);
       expect(results[0].indexer).toBe('AudioBookBay');
@@ -642,7 +663,7 @@ describe('AudioBookBayIndexer', () => {
         }),
       );
 
-      const results = await indexer.search('Brandon Sanderson');
+      const { results } = await indexer.search('Brandon Sanderson');
 
       expect(results.length).toBeGreaterThan(0);
       expect(results[0].guid).toBe(results[0].infoHash);
@@ -663,7 +684,7 @@ describe('AudioBookBayIndexer', () => {
         }),
       );
 
-      const results = await indexer.search('Brandon Sanderson');
+      const { results } = await indexer.search('Brandon Sanderson');
 
       expect(results[0].guid).toMatch(/^[a-f0-9]{40}$/);
     });
@@ -688,7 +709,7 @@ describe('AudioBookBayIndexer', () => {
         }),
       );
 
-      const results = await indexer.search('test');
+      const { results } = await indexer.search('test');
 
       expect(results.length).toBeGreaterThan(0);
       expect(results[0].guid).toBe('a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0');

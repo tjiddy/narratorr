@@ -51,11 +51,17 @@ export interface SearchFilterOptions {
  * Apply quality filtering and canonical ranking to search results.
  * Filters by word lists, MB/hr grab floor, and min seeders, then sorts by
  * canonical order: matchScore gate → narrator match → MB/hr → protocol preference → language → indexer priority → grabs → seeders.
+ *
+ * When `log` is provided, emits a debug log per dropped result at each gate
+ * (reject-word, required-word, ebook-only, min-seeders, grab-floor, max-size,
+ * language-mismatch). The "language-undetermined passed" line is critical for
+ * diagnosing results that survive solely because we couldn't detect a language.
  */
 export function filterAndRankResults(
   results: SearchResult[],
   bookDuration: number | undefined,
   options: SearchFilterOptions,
+  log?: FastifyBaseLogger,
 ): { results: SearchResult[]; durationUnknown: boolean } {
   const { grabFloor, minSeeders, protocolPreference, rejectWords, requiredWords, languages, narratorPriority, maxDownloadSize } = options;
   const durationUnknown = !bookDuration || bookDuration <= 0;
@@ -67,7 +73,12 @@ export function filterAndRankResults(
   if (rejectList.length > 0) {
     filtered = filtered.filter((r) => {
       const sourceTitle = (r.nzbName || r.rawTitle || r.title).toLowerCase();
-      return !rejectList.some((word) => sourceTitle.includes(word));
+      const matched = rejectList.find((word) => sourceTitle.includes(word));
+      if (matched) {
+        log?.debug({ title: r.title, dropped: true, reason: 'reject-word-match', matchedWord: matched }, 'Quality filter dropped result');
+        return false;
+      }
+      return true;
     });
   }
 
@@ -76,7 +87,9 @@ export function filterAndRankResults(
   if (requiredList.length > 0) {
     filtered = filtered.filter((r) => {
       const sourceTitle = (r.nzbName || r.rawTitle || r.title).toLowerCase();
-      return requiredList.some((word) => sourceTitle.includes(word));
+      if (requiredList.some((word) => sourceTitle.includes(word))) return true;
+      log?.debug({ title: r.title, dropped: true, reason: 'required-word-missing' }, 'Quality filter dropped result');
+      return false;
     });
   }
 
@@ -91,7 +104,9 @@ export function filterAndRankResults(
     if (!EBOOK_FORMAT_RE.test(sourceTitle)) return true;
     // Check all available title fields for audio keywords — ebook and audio markers
     // may be split across fields (e.g., nzbName=EPUB, rawTitle=MP3).
-    return [r.nzbName, r.rawTitle, r.title].some((t) => t && AUDIO_FORMAT_RE.test(t));
+    if ([r.nzbName, r.rawTitle, r.title].some((t) => t && AUDIO_FORMAT_RE.test(t))) return true;
+    log?.debug({ title: r.title, dropped: true, reason: 'ebook-only-format' }, 'Quality filter dropped result');
+    return false;
   });
 
   // Apply min seeders filter (torrent only)
@@ -99,7 +114,9 @@ export function filterAndRankResults(
     filtered = filtered.filter((r) => {
       if (r.protocol !== 'torrent') return true;
       if (r.seeders === undefined || r.seeders === null) return true; // Unknown ≠ zero
-      return r.seeders >= minSeeders;
+      if (r.seeders >= minSeeders) return true;
+      log?.debug({ title: r.title, seeders: r.seeders, minSeeders, dropped: true, reason: 'below-min-seeders' }, 'Quality filter dropped result');
+      return false;
     });
   }
 
@@ -109,21 +126,35 @@ export function filterAndRankResults(
       if (!r.size || r.size <= 0) return true; // can't calculate, pass through
       const quality = calculateQuality(r.size, bookDuration!);
       if (!quality) return true; // can't calculate, pass through
-      return quality.mbPerHour >= grabFloor;
+      if (quality.mbPerHour >= grabFloor) return true;
+      log?.debug({ title: r.title, mbPerHour: quality.mbPerHour, grabFloor, dropped: true, reason: 'below-grab-floor' }, 'Quality filter dropped result');
+      return false;
     });
   }
 
   // Apply max download size filter (protocol-agnostic, duration-independent)
   if (maxDownloadSize && maxDownloadSize > 0) {
+    const maxBytes = maxDownloadSize * BYTES_PER_GB;
     filtered = filtered.filter((r) => {
       if (!r.size || r.size <= 0) return true; // unknown size → pass through
-      return r.size <= maxDownloadSize * BYTES_PER_GB;
+      if (r.size <= maxBytes) return true;
+      log?.debug({ title: r.title, sizeBytes: r.size, maxBytes, dropped: true, reason: 'over-max-size' }, 'Quality filter dropped result');
+      return false;
     });
   }
 
   // Language filtering: exclude results with explicit non-matching language
   const langs = languages ?? [];
-  filtered = filterByLanguage(filtered, langs);
+  const langPartition = filterByLanguage(filtered, langs);
+  if (log) {
+    for (const r of langPartition.dropped) {
+      log.debug({ title: r.title, detectedLanguage: r.language, allowedLanguages: langs, dropped: true, reason: 'language-mismatch' }, 'Language filter dropped result');
+    }
+    for (const r of langPartition.passedUndetermined) {
+      log.debug({ title: r.title, allowedLanguages: langs, dropped: false, reason: 'language-undetermined' }, 'Language filter passed undetected result');
+    }
+  }
+  filtered = langPartition.kept;
 
   // Canonical ranking
   filtered.sort((a, b) => canonicalCompare(a, b, bookDuration, durationUnknown, protocolPreference, langs, narratorPriority));
@@ -134,19 +165,34 @@ export function filterAndRankResults(
 /**
  * Filter out blacklisted releases by infoHash and/or guid.
  * Skips the blacklist lookup entirely when no identifiers are present.
+ *
+ * When `log` is provided, every dropped result emits a debug log line so
+ * operators can see why a candidate was rejected by the blacklist gate.
  */
 export async function filterBlacklistedResults(
   results: SearchResult[],
   blacklistService: BlacklistService,
+  log?: FastifyBaseLogger,
 ): Promise<SearchResult[]> {
   const hashes = results.map(r => r.infoHash).filter((h): h is string => !!h);
   const guids = results.map(r => r.guid).filter((g): g is string => !!g);
   if (hashes.length === 0 && guids.length === 0) return results;
   const { blacklistedHashes, blacklistedGuids } = await blacklistService.getBlacklistedIdentifiers(hashes, guids);
-  return results.filter(r =>
-    (!r.infoHash || !blacklistedHashes.has(r.infoHash)) &&
-    (!r.guid || !blacklistedGuids.has(r.guid)),
-  );
+  return results.filter(r => {
+    const hashMatch = r.infoHash ? blacklistedHashes.has(r.infoHash) : false;
+    const guidMatch = r.guid ? blacklistedGuids.has(r.guid) : false;
+    if (hashMatch || guidMatch) {
+      log?.debug({
+        title: r.title,
+        guid: r.guid,
+        indexer: r.indexer,
+        reason: 'blacklist-match',
+        matchedRule: hashMatch ? 'hash' : 'guid',
+      }, 'Blacklisted result dropped');
+      return false;
+    }
+    return true;
+  });
 }
 
 /**
@@ -165,13 +211,16 @@ export async function postProcessSearchResults(
   durationUnknown: boolean;
   unsupportedResults: { count: number; titles: string[] };
 }> {
-  const filteredResults = await filterBlacklistedResults(allResults, blacklistService);
+  const filteredResults = await filterBlacklistedResults(allResults, blacklistService, logger);
 
   // Enrich Usenet results with language from newsgroup metadata
   await enrichUsenetLanguages(filteredResults, logger);
 
   // Filter multi-part Usenet posts (after enrichment so nzbName is available)
-  const { filtered: results, rejectedTitles: unsupportedTitles } = filterMultiPartUsenet(filteredResults);
+  const { filtered: results, rejectedTitles: unsupportedRejections } = filterMultiPartUsenet(filteredResults);
+  for (const r of unsupportedRejections) {
+    logger.debug({ title: r.title, reason: 'multi-part-detected', matchedPattern: r.matchedPattern }, 'Multi-part Usenet result rejected');
+  }
 
   // Quality filtering and ranking
   const qualitySettings = await settingsService.get('quality');
@@ -185,9 +234,12 @@ export async function postProcessSearchResults(
     requiredWords: qualitySettings.requiredWords,
     languages: metadataSettings.languages,
     maxDownloadSize: qualitySettings.maxDownloadSize,
-  });
+  }, logger);
   if (ranked.results.length < inputCount) logger.debug({ inputCount, outputCount: ranked.results.length }, 'Quality gate filtering applied');
 
+  // Preserve the legacy `unsupportedResults: { count, titles }` API surface — extract
+  // titles only; matchedPattern stays internal to logging.
+  const unsupportedTitles = unsupportedRejections.map((r) => r.title);
   return {
     results: ranked.results,
     durationUnknown: ranked.durationUnknown,
@@ -274,7 +326,7 @@ async function searchWithBroadcaster(
 
   log.info({ bookId: book.id, title: book.title, resultCount: rawResults.length }, 'Search results found');
 
-  const afterBlacklist = await filterBlacklistedResults(rawResults, blacklistService);
+  const afterBlacklist = await filterBlacklistedResults(rawResults, blacklistService, log);
   if (afterBlacklist.length === 0) {
     log.debug({ bookId: book.id, title: book.title }, 'All results blacklisted');
     safeEmit(broadcaster, 'search_complete', { book_id: book.id, total_results: totalResults, outcome: 'no_results' }, log);
@@ -284,7 +336,7 @@ async function searchWithBroadcaster(
   await enrichUsenetLanguages(afterBlacklist, log);
 
   const broadcasterInputCount = afterBlacklist.length;
-  const { results } = filterAndRankResults(afterBlacklist, book.duration ?? undefined, qualitySettings);
+  const { results } = filterAndRankResults(afterBlacklist, book.duration ?? undefined, qualitySettings, log);
   if (results.length < broadcasterInputCount) log.debug({ inputCount: broadcasterInputCount, outputCount: results.length }, 'Quality gate filtering applied');
 
   const best = results.find((r) => r.downloadUrl);
@@ -338,7 +390,7 @@ export async function searchAndGrabForBook(
 
   log.info({ bookId: book.id, title: book.title, resultCount: rawResults.length }, 'Search results found');
 
-  const afterBlacklist = await filterBlacklistedResults(rawResults, blacklistService);
+  const afterBlacklist = await filterBlacklistedResults(rawResults, blacklistService, log);
   if (afterBlacklist.length === 0) {
     log.debug({ bookId: book.id, title: book.title }, 'All results blacklisted');
     return { result: 'no_results' };
@@ -347,7 +399,7 @@ export async function searchAndGrabForBook(
   await enrichUsenetLanguages(afterBlacklist, log);
 
   const grabInputCount = afterBlacklist.length;
-  const { results } = filterAndRankResults(afterBlacklist, book.duration ?? undefined, qualitySettings);
+  const { results } = filterAndRankResults(afterBlacklist, book.duration ?? undefined, qualitySettings, log);
   if (results.length < grabInputCount) log.debug({ inputCount: grabInputCount, outputCount: results.length }, 'Quality gate filtering applied');
 
   const best = results.find((r) => r.downloadUrl);

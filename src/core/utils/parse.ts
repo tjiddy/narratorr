@@ -284,6 +284,8 @@ export interface MultiPartResult {
   match: boolean;
   part?: number;
   total?: number;
+  /** Source of the regex that matched (when match is true). Used for diagnostic logging. */
+  pattern?: string;
 }
 
 const MULTI_PART_PATTERNS = [
@@ -300,7 +302,12 @@ export function isMultiPartUsenetPost(title: string): MultiPartResult {
   for (const pattern of MULTI_PART_PATTERNS) {
     const match = title.match(pattern);
     if (match) {
-      return { match: true, part: parseInt(match[1], 10), total: parseInt(match[2], 10) };
+      return {
+        match: true,
+        part: parseInt(match[1], 10),
+        total: parseInt(match[2], 10),
+        pattern: pattern.source,
+      };
     }
   }
   return { match: false };

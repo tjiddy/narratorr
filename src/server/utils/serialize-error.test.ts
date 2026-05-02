@@ -207,6 +207,49 @@ describe('serializeError', () => {
     });
   });
 
+  describe('URL redaction (#932)', () => {
+    it('strips secret-shaped query params from a URL embedded in err.message', () => {
+      const err = new Error('fetch failed: GET https://example.com/api?apikey=secret123&q=foo');
+      const result = serializeError(err);
+      expect(result.message).toContain('https://example.com/api');
+      expect(result.message).not.toContain('secret123');
+      expect(result.message).not.toContain('apikey');
+    });
+
+    it('also redacts the secret-bearing URL from err.stack (Error.stack always echoes message line)', () => {
+      const err = new Error('fetch failed: GET https://example.com/api?apikey=secret123&q=foo');
+      const result = serializeError(err);
+      expect(result.stack).toBeDefined();
+      expect(result.stack).not.toContain('secret123');
+      expect(result.stack).not.toContain('apikey');
+    });
+
+    it('redacts URLs in nested cause messages', () => {
+      const cause = new Error('upstream rejected: https://mam.test/jsonLoad.php?session=abc&token=def&mam_id=ghi');
+      const outer = new Error('wrapped', { cause });
+      const result = serializeError(outer);
+      const causeMsg = result.cause!.message;
+      expect(causeMsg).toContain('https://mam.test/jsonLoad.php');
+      expect(causeMsg).not.toMatch(/abc|def|ghi|session|token|mam_id/);
+    });
+
+    it('collapses magnet URIs in messages to magnet:[infoHash]', () => {
+      const infoHash = 'a'.repeat(40);
+      const err = new Error(`grab failed: magnet:?xt=urn:btih:${infoHash}&tr=https://tracker/announce?passkey=secret`);
+      const result = serializeError(err);
+      expect(result.message).toContain(`magnet:[${infoHash}]`);
+      expect(result.message).not.toContain('passkey');
+    });
+
+    it('preserves prose around the URL after redaction', () => {
+      const err = new Error('Newznab API failed at https://nzbgeek.info/api?apikey=ABC&q=x — retry later');
+      const result = serializeError(err);
+      expect(result.message).toMatch(/^Newznab API failed at https:\/\/nzbgeek\.info\/api/);
+      expect(result.message).toContain('— retry later');
+      expect(result.message).not.toContain('ABC');
+    });
+  });
+
   describe('never-throw guarantee', () => {
     it('returns a result for any input — never throws', () => {
       const inputs: unknown[] = [

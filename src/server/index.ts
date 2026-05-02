@@ -85,13 +85,16 @@ import { loadEncryptionKey, initializeKey } from './utils/secret-codec.js';
 import { migrateSecretsToEncrypted } from './utils/secret-migration.js';
 import { warnIfAuthBypassWithUser } from './boot-warnings.js';
 
-function buildLoggerConfig(): boolean | { transport: { target: string; options: Record<string, unknown> } } {
-  if (!config.isDev) return true;
+function buildLoggerConfig(): { level: string } | { level: string; transport: { target: string; options: Record<string, unknown> } } {
+  if (!config.isDev) return { level: config.logLevel };
   try {
     import.meta.resolve('pino-pretty');
-    return { transport: { target: 'pino-pretty', options: { translateTime: 'HH:MM:ss', ignore: 'pid,hostname' } } };
+    return {
+      level: config.logLevel,
+      transport: { target: 'pino-pretty', options: { translateTime: 'HH:MM:ss', ignore: 'pid,hostname' } },
+    };
   } catch {
-    return true;
+    return { level: config.logLevel };
   }
 }
 

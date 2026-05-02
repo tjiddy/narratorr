@@ -837,6 +837,62 @@ describe('runUpgradeSearchJob', () => {
       expect.objectContaining({ downloadUrl: 'magnet:?xt=urn:btih:quality' }),
     );
   });
+
+  // ── #932 F3 — Caller-level logging assertions for runUpgradeSearchJob ───
+  describe('caller-level debug logging (#932 F3)', () => {
+    it('emits a quality filter drop log when reject-words rejects an upgrade candidate', async () => {
+      const book = makeMonitoredBook();
+      const settings = createMockSettingsService({
+        search: { enabled: true, intervalMinutes: 60 },
+        quality: { grabFloor: 0, minSeeders: 0, protocolPreference: 'none', rejectWords: 'banned', requiredWords: '', maxDownloadSize: 0 },
+      });
+      const books = createMockBookService([book]);
+      const result: SearchResult = {
+        title: 'Some Upgrade BANNED',
+        protocol: 'torrent',
+        indexer: 'test',
+        seeders: 10,
+        size: 500 * 1024 * 1024,
+        downloadUrl: 'magnet:?xt=urn:btih:up1',
+      };
+      const indexer = createMockIndexerService([result]);
+      const download = createMockDownloadOrchestrator();
+
+      await runUpgradeSearchJob(settings, books, indexer, download, inject<FastifyBaseLogger>(log));
+
+      expect(log.debug).toHaveBeenCalledWith(
+        expect.objectContaining({ reason: 'reject-word-match', matchedWord: 'banned' }),
+        'Quality filter dropped result',
+      );
+    });
+
+    it('emits the language-undetermined passed log when upgrade search filters undetected-language candidate', async () => {
+      const book = makeMonitoredBook();
+      const settings = createMockSettingsService({
+        search: { enabled: true, intervalMinutes: 60 },
+        metadata: { languages: ['english'] },
+      });
+      const books = createMockBookService([book]);
+      const result: SearchResult = {
+        title: 'Mystery Upgrade',
+        protocol: 'torrent',
+        indexer: 'test',
+        seeders: 10,
+        size: 500 * 1024 * 1024,
+        downloadUrl: 'magnet:?xt=urn:btih:up2',
+        language: undefined,
+      };
+      const indexer = createMockIndexerService([result]);
+      const download = createMockDownloadOrchestrator();
+
+      await runUpgradeSearchJob(settings, books, indexer, download, inject<FastifyBaseLogger>(log));
+
+      expect(log.debug).toHaveBeenCalledWith(
+        expect.objectContaining({ reason: 'language-undetermined', dropped: false }),
+        'Language filter passed undetected result',
+      );
+    });
+  });
 });
 
 describe('searchAllWanted', () => {

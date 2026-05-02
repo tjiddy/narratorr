@@ -90,7 +90,9 @@ describe('fetchWithProxyAgent', () => {
       new Response('hello', { status: 200 }),
     );
     const result = await fetchWithProxyAgent('https://example.com');
-    expect(result).toBe('hello');
+    expect(result.body).toBe('hello');
+    expect(result.requestUrl).toBe('https://example.com');
+    expect(result.httpStatus).toBe(200);
     expect(mockFetch).toHaveBeenCalledOnce();
   });
 
@@ -170,7 +172,9 @@ describe('fetchWithProxyAgent', () => {
     const result = await fetchWithProxyAgent('https://indexer.com/api', {
       proxyUrl: 'http://proxy:8080',
     });
-    expect(result).toBe('<xml>data</xml>');
+    expect(result.body).toBe('<xml>data</xml>');
+    expect(result.requestUrl).toBe('https://indexer.com/api');
+    expect(result.httpStatus).toBe(200);
   });
 
   it('surfaces error.cause on dispatcher failures (debuggability after undici upgrades)', async () => {
@@ -207,7 +211,7 @@ describe('fetchWithProxyAgent — AbortSignal threading', () => {
     vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response('ok'));
 
     const result = await fetchWithProxyAgent('https://example.com');
-    expect(result).toBe('ok');
+    expect(result.body).toBe('ok');
 
     vi.restoreAllMocks();
   });

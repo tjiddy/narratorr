@@ -17,6 +17,8 @@ import type { IndexerSettings } from '../../shared/schemas/indexer.js';
 import { AdapterCache } from '../utils/adapter-cache.js';
 import { getErrorMessage } from '../utils/error-message.js';
 import { serializeError } from '../utils/serialize-error.js';
+import { logIndexerSearchTrace } from './indexer-search-trace.js';
+import { preSearchRefresh } from './indexer-pre-search-refresh.js';
 import type { IndexerRow } from './types.js';
 
 
@@ -249,54 +251,8 @@ export class IndexerService {
     }
   }
 
-  /**
-   * Pre-search status refresh for adapters that support it (e.g., MAM).
-   * Returns { skip: true, error } if the indexer should be skipped (Mouse class).
-   */
-  private async preSearchRefresh(
-    adapter: IndexerAdapter,
-    indexer: IndexerRow,
-  ): Promise<{ skip: boolean; error?: string }> {
-    if (!adapter.refreshStatus) {
-      return { skip: false };
-    }
-
-    let status: { isVip: boolean; classname: string } | null;
-    try {
-      status = await adapter.refreshStatus();
-    } catch (error: unknown) {
-      this.log.debug({ indexer: indexer.name, error: serializeError(error) }, 'Pre-search status refresh failed, proceeding with stored status');
-      return { skip: false };
-    }
-
-    if (!status) {
-      return { skip: false };
-    }
-
-    // Mouse class — block search
-    if (status.classname === 'Mouse') {
-      try {
-        const existingSettings = (indexer.settings ?? {}) as Record<string, unknown>;
-        await this.update(indexer.id, { settings: { ...existingSettings, isVip: status.isVip, classname: status.classname } });
-        this.log.info({ id: indexer.id, classname: status.classname }, 'Persisted Mouse status from pre-search refresh');
-      } catch (error: unknown) {
-        this.log.warn({ id: indexer.id, error: serializeError(error) }, 'Failed to persist status from pre-search refresh');
-      }
-      return { skip: true, error: 'Searches disabled — Mouse class' };
-    }
-
-    // Class changed — persist updated status
-    const existingSettings = (indexer.settings ?? {}) as Record<string, unknown>;
-    if (existingSettings.isVip !== status.isVip || existingSettings.classname !== status.classname) {
-      try {
-        await this.update(indexer.id, { settings: { ...existingSettings, isVip: status.isVip, classname: status.classname } });
-        this.log.info({ id: indexer.id, isVip: status.isVip, classname: status.classname }, 'Persisted class change from pre-search refresh');
-      } catch (error: unknown) {
-        this.log.warn({ id: indexer.id, error: serializeError(error) }, 'Failed to persist class change from pre-search refresh');
-      }
-    }
-
-    return { skip: false };
+  private preSearchRefreshDeps() {
+    return { log: this.log, update: (id: number, data: { settings: Record<string, unknown> }) => this.update(id, data) };
   }
 
   /** Parse release names to extract author/title for results that don't already have them */
@@ -332,8 +288,9 @@ export class IndexerService {
   /** Poll a single indexer with empty query (RSS feed). Returns results with parsed release names. */
   async pollRss(indexer: IndexerRow): Promise<SearchResult[]> {
     const adapter = await this.getAdapter(indexer);
-    const raw = await adapter.search('');
-    const results = raw.map(r => ({ ...r, indexerId: indexer.id, indexerPriority: indexer.priority }));
+    const response = await adapter.search('');
+    logIndexerSearchTrace(this.log, indexer, response);
+    const results = response.results.map(r => ({ ...r, indexerId: indexer.id, indexerPriority: indexer.priority }));
     this.parseReleaseNames(results, indexer.name);
     return results;
   }
@@ -371,32 +328,37 @@ export class IndexerService {
 
     const settlements = await Promise.allSettled(
       enabledIndexers.map(async (indexer) => {
-        const indexerStartMs = Date.now();
         const adapter = await this.getAdapter(indexer);
 
-        const refresh = await this.preSearchRefresh(adapter, indexer);
+        const refresh = await preSearchRefresh(adapter, indexer, this.preSearchRefreshDeps());
         if (refresh.skip) {
           this.log.warn({ indexer: indexer.name, error: refresh.error }, 'Indexer skipped by pre-search refresh');
           throw new Error(refresh.error ?? 'Indexer skipped');
         }
 
-        const indexerResults = await adapter.search(query, searchOptions);
-        this.log.debug({ indexer: indexer.name, resultCount: indexerResults.length, elapsedMs: Date.now() - indexerStartMs }, 'Indexer search completed');
-        const mapped = indexerResults.map(r => ({ ...r, indexerId: indexer.id, indexerPriority: indexer.priority }));
+        const response = await adapter.search(query, searchOptions);
+        logIndexerSearchTrace(this.log, indexer, response);
+        const mapped = response.results.map(r => ({ ...r, indexerId: indexer.id, indexerPriority: indexer.priority }));
         this.parseReleaseNames(mapped, indexer.name);
         return mapped;
       }),
     );
 
+    const perIndexerCounts: Record<string, number> = {};
     const results: SearchResult[] = [];
     for (let i = 0; i < settlements.length; i++) {
       const settlement = settlements[i];
+      const name = enabledIndexers[i].name;
       if (settlement.status === 'fulfilled') {
+        perIndexerCounts[name] = settlement.value.length;
         results.push(...settlement.value);
       } else {
-        this.log.warn({ indexer: enabledIndexers[i].name, query, error: serializeError(settlement.reason) }, 'Error searching indexer');
+        perIndexerCounts[name] = 0;
+        this.log.warn({ indexer: name, query, error: serializeError(settlement.reason) }, 'Error searching indexer');
       }
     }
+
+    this.log.debug({ query, indexerCount: enabledIndexers.length, perIndexerCounts }, 'Search aggregated across indexers');
 
     // Score results against search context when title is provided
     if (options?.title) {
@@ -445,16 +407,17 @@ export class IndexerService {
         try {
           const adapter = await this.getAdapter(indexer);
 
-          const refresh = await this.preSearchRefresh(adapter, indexer);
+          const refresh = await preSearchRefresh(adapter, indexer, this.preSearchRefreshDeps());
           if (refresh.skip) {
             const elapsedMs = Date.now() - indexerStartMs;
             callbacks.onError(indexer.id, indexer.name, refresh.error ?? 'Indexer skipped', elapsedMs);
             return;
           }
 
-          const indexerResults = await adapter.search(query, { ...searchOptions, signal });
+          const response = await adapter.search(query, { ...searchOptions, signal });
+          logIndexerSearchTrace(this.log, indexer, response);
           const elapsedMs = Date.now() - indexerStartMs;
-          const mapped = indexerResults.map(r => ({ ...r, indexerId: indexer.id, indexerPriority: indexer.priority }));
+          const mapped = response.results.map(r => ({ ...r, indexerId: indexer.id, indexerPriority: indexer.priority }));
           this.parseReleaseNames(mapped, indexer.name);
           perIndexerResults.set(indexer.id, mapped);
           callbacks.onComplete(indexer.id, indexer.name, mapped.length, elapsedMs);
@@ -475,9 +438,13 @@ export class IndexerService {
 
     // Aggregate results from non-cancelled indexers
     const results: SearchResult[] = [];
-    for (const indexerResults of perIndexerResults.values()) {
+    const perIndexerCounts: Record<string, number> = {};
+    for (const indexer of enabledIndexers) {
+      const indexerResults = perIndexerResults.get(indexer.id) ?? [];
+      perIndexerCounts[indexer.name] = indexerResults.length;
       results.push(...indexerResults);
     }
+    this.log.debug({ query, indexerCount: enabledIndexers.length, perIndexerCounts }, 'Search aggregated across indexers');
 
     // Score results
     if (options?.title) {

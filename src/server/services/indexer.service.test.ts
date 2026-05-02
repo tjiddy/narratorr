@@ -4,11 +4,25 @@ import { createMockDbIndexer } from '../__tests__/factories.js';
 import { IndexerService } from './indexer.service.js';
 import type { FastifyBaseLogger } from 'fastify';
 import type { Db } from '../../db/index.js';
+import type { SearchResult } from '../../core/index.js';
 import type { SettingsService } from './settings.service.js';
 import { initializeKey, _resetKey, isEncrypted } from '../utils/secret-codec.js';
 
 const TEST_KEY = Buffer.from('a'.repeat(64), 'hex');
 const mockIndexer = createMockDbIndexer();
+
+/** Wraps a SearchResult[] into the IndexerSearchResponse shape that adapter.search now returns. */
+function searchResponse(results: Partial<SearchResult>[]): {
+  results: SearchResult[];
+  parseStats: { itemsObserved: number; kept: number; dropped: { emptyTitle: number; noUrl: number; other: number } };
+  debugTrace: never[];
+} {
+  return {
+    results: results as SearchResult[],
+    parseStats: { itemsObserved: results.length, kept: results.length, dropped: { emptyTitle: 0, noUrl: 0, other: 0 } },
+    debugTrace: [],
+  };
+}
 
 describe('IndexerService', () => {
   let db: ReturnType<typeof createMockDb>;
@@ -426,9 +440,9 @@ describe('IndexerService', () => {
       const mockAdapter = {
         type: 'torznab',
         name: 'Torznab',
-        search: vi.fn().mockResolvedValue([
+        search: vi.fn().mockResolvedValue(searchResponse([
           { title: 'Brandon Sanderson - The Way of Kings', indexer: 'Torznab', protocol: 'torrent' },
-        ]),
+        ])),
         test: vi.fn(),
       };
       vi.spyOn(service, 'getAdapter').mockResolvedValue(mockAdapter as never);
@@ -444,7 +458,7 @@ describe('IndexerService', () => {
     it('returns empty array when feed has no items', async () => {
       const newznabIndexer = createMockDbIndexer({ id: 1, name: 'Newznab', type: 'newznab', settings: { apiUrl: 'https://nzb.test', apiKey: 'key' } });
       const mockAdapter = {
-        search: vi.fn().mockResolvedValue([]),
+        search: vi.fn().mockResolvedValue(searchResponse([])),
         test: vi.fn(),
       };
       vi.spyOn(service, 'getAdapter').mockResolvedValue(mockAdapter as never);
@@ -458,9 +472,9 @@ describe('IndexerService', () => {
       const mockAdapter = {
         type: 'torznab',
         name: 'Torznab',
-        search: vi.fn().mockResolvedValue([
+        search: vi.fn().mockResolvedValue(searchResponse([
           { title: 'Brandon Sanderson - The Way of Kings', indexer: 'Torznab', protocol: 'torrent' },
-        ]),
+        ])),
         test: vi.fn(),
       };
       vi.spyOn(service, 'getAdapter').mockResolvedValue(mockAdapter as never);
@@ -476,11 +490,11 @@ describe('IndexerService', () => {
       const mockAdapter = {
         type: 'torznab',
         name: 'Torznab',
-        search: vi.fn().mockResolvedValue([
+        search: vi.fn().mockResolvedValue(searchResponse([
           { title: 'Author A - Book One', indexer: 'Torznab', protocol: 'torrent' },
           { title: 'Author B - Book Two', indexer: 'Torznab', protocol: 'torrent' },
           { title: 'Author C - Book Three', indexer: 'Torznab', protocol: 'torrent' },
-        ]),
+        ])),
         test: vi.fn(),
       };
       vi.spyOn(service, 'getAdapter').mockResolvedValue(mockAdapter as never);
@@ -511,7 +525,7 @@ describe('IndexerService', () => {
       const mockAdapter = {
         type: 'abb',
         name: 'AudioBookBay',
-        search: vi.fn().mockResolvedValue([mockResult]),
+        search: vi.fn().mockResolvedValue(searchResponse([mockResult])),
         test: vi.fn(),
       };
 
@@ -534,7 +548,7 @@ describe('IndexerService', () => {
       const mockAdapter = {
         type: 'abb',
         name: 'AudioBookBay',
-        search: vi.fn().mockResolvedValue([mockResult]),
+        search: vi.fn().mockResolvedValue(searchResponse([mockResult])),
         test: vi.fn(),
       };
       vi.spyOn(service, 'getAdapter').mockResolvedValue(mockAdapter as never);
@@ -552,7 +566,7 @@ describe('IndexerService', () => {
         test: vi.fn(),
       };
       const goodAdapter = {
-        search: vi.fn().mockResolvedValue([{ title: 'Book', indexer: 'Indexer2' }]),
+        search: vi.fn().mockResolvedValue(searchResponse([{ title: 'Book', indexer: 'Indexer2' }])),
         test: vi.fn(),
       };
 
@@ -598,10 +612,10 @@ describe('IndexerService', () => {
       db.select.mockReturnValue(mockDbChain([mockIndexer, indexer2]));
 
       const goodAdapter = {
-        search: vi.fn().mockResolvedValue([
+        search: vi.fn().mockResolvedValue(searchResponse([
           { title: 'Book A', indexer: 'ABB' },
           { title: 'Book B', indexer: 'ABB' },
-        ]),
+        ])),
         test: vi.fn(),
       };
       const errorAdapter = {
@@ -624,9 +638,9 @@ describe('IndexerService', () => {
     it('populates author and title from parsed release name on torznab results', async () => {
       db.select.mockReturnValue(mockDbChain([mockIndexer]));
       const mockAdapter = {
-        search: vi.fn().mockResolvedValue([
+        search: vi.fn().mockResolvedValue(searchResponse([
           { title: 'Brandon Sanderson - The Way of Kings', indexer: 'Torznab', protocol: 'torrent' },
-        ]),
+        ])),
         test: vi.fn(),
       };
       vi.spyOn(service, 'getAdapter').mockResolvedValue(mockAdapter as never);
@@ -639,9 +653,9 @@ describe('IndexerService', () => {
     it('sets rawTitle to original indexer title before parsing', async () => {
       db.select.mockReturnValue(mockDbChain([mockIndexer]));
       const mockAdapter = {
-        search: vi.fn().mockResolvedValue([
+        search: vi.fn().mockResolvedValue(searchResponse([
           { title: 'Brandon Sanderson - The Way of Kings', indexer: 'Torznab', protocol: 'torrent' },
-        ]),
+        ])),
         test: vi.fn(),
       };
       vi.spyOn(service, 'getAdapter').mockResolvedValue(mockAdapter as never);
@@ -653,9 +667,9 @@ describe('IndexerService', () => {
     it('does not overwrite author when adapter already set it (ABB case)', async () => {
       db.select.mockReturnValue(mockDbChain([mockIndexer]));
       const mockAdapter = {
-        search: vi.fn().mockResolvedValue([
+        search: vi.fn().mockResolvedValue(searchResponse([
           { title: 'The Way of Kings', author: 'Brandon Sanderson', indexer: 'ABB', protocol: 'torrent' },
-        ]),
+        ])),
         test: vi.fn(),
       };
       vi.spyOn(service, 'getAdapter').mockResolvedValue(mockAdapter as never);
@@ -668,9 +682,9 @@ describe('IndexerService', () => {
     it('uses cleaned title even when parsing extracts no author', async () => {
       db.select.mockReturnValue(mockDbChain([mockIndexer]));
       const mockAdapter = {
-        search: vi.fn().mockResolvedValue([
+        search: vi.fn().mockResolvedValue(searchResponse([
           { title: 'Some Random Title', indexer: 'Torznab', protocol: 'torrent' },
-        ]),
+        ])),
         test: vi.fn(),
       };
       vi.spyOn(service, 'getAdapter').mockResolvedValue(mockAdapter as never);
@@ -685,9 +699,9 @@ describe('IndexerService', () => {
     it('sets rawTitle and cleans title when parser strips noise without extracting author', async () => {
       db.select.mockReturnValue(mockDbChain([mockIndexer]));
       const mockAdapter = {
-        search: vi.fn().mockResolvedValue([
+        search: vi.fn().mockResolvedValue(searchResponse([
           { title: 'Some Random Title [MP3] [ENG]', indexer: 'Torznab', protocol: 'torrent' },
-        ]),
+        ])),
         test: vi.fn(),
       };
       vi.spyOn(service, 'getAdapter').mockResolvedValue(mockAdapter as never);
@@ -703,9 +717,9 @@ describe('IndexerService', () => {
       const svc = new IndexerService(inject<Db>(db), inject<FastifyBaseLogger>(log));
       db.select.mockReturnValue(mockDbChain([mockIndexer]));
       const mockAdapter = {
-        search: vi.fn().mockResolvedValue([
+        search: vi.fn().mockResolvedValue(searchResponse([
           { title: 'Some Random Title', indexer: 'Torznab', protocol: 'torrent' },
-        ]),
+        ])),
         test: vi.fn(),
       };
       vi.spyOn(svc, 'getAdapter').mockResolvedValue(mockAdapter as never);
@@ -722,9 +736,9 @@ describe('IndexerService', () => {
     it('sets matchScore on results when title context is provided', async () => {
       db.select.mockReturnValue(mockDbChain([mockIndexer]));
       const mockAdapter = {
-        search: vi.fn().mockResolvedValue([
+        search: vi.fn().mockResolvedValue(searchResponse([
           { title: 'Brandon Sanderson - The Way of Kings', indexer: 'Torznab', protocol: 'torrent' },
-        ]),
+        ])),
         test: vi.fn(),
       };
       vi.spyOn(service, 'getAdapter').mockResolvedValue(mockAdapter as never);
@@ -737,10 +751,10 @@ describe('IndexerService', () => {
     it('sorts results by matchScore descending when context is provided', async () => {
       db.select.mockReturnValue(mockDbChain([mockIndexer]));
       const mockAdapter = {
-        search: vi.fn().mockResolvedValue([
+        search: vi.fn().mockResolvedValue(searchResponse([
           { title: 'Completely Wrong Book', indexer: 'Torznab', protocol: 'torrent' },
           { title: 'Brandon Sanderson - The Way of Kings', indexer: 'Torznab', protocol: 'torrent' },
-        ]),
+        ])),
         test: vi.fn(),
       };
       vi.spyOn(service, 'getAdapter').mockResolvedValue(mockAdapter as never);
@@ -752,10 +766,10 @@ describe('IndexerService', () => {
     it('does not score or sort when no context is provided', async () => {
       db.select.mockReturnValue(mockDbChain([mockIndexer]));
       const mockAdapter = {
-        search: vi.fn().mockResolvedValue([
+        search: vi.fn().mockResolvedValue(searchResponse([
           { title: 'Book B', indexer: 'Torznab', protocol: 'torrent' },
           { title: 'Book A', indexer: 'Torznab', protocol: 'torrent' },
-        ]),
+        ])),
         test: vi.fn(),
       };
       vi.spyOn(service, 'getAdapter').mockResolvedValue(mockAdapter as never);
@@ -830,7 +844,7 @@ describe('IndexerService', () => {
         test: vi.fn(),
       };
       const goodAdapter = {
-        search: vi.fn().mockResolvedValue([{ title: 'Found Book', indexer: 'Indexer2', protocol: 'torrent' }]),
+        search: vi.fn().mockResolvedValue(searchResponse([{ title: 'Found Book', indexer: 'Indexer2', protocol: 'torrent' }])),
         test: vi.fn(),
       };
 
@@ -977,7 +991,7 @@ describe('IndexerService', () => {
       const mockAdapter = {
         type: 'abb',
         name: 'AudioBookBay',
-        search: vi.fn().mockResolvedValue([{ title: 'Proxied Book', indexer: 'ABB', protocol: 'torrent' }]),
+        search: vi.fn().mockResolvedValue(searchResponse([{ title: 'Proxied Book', indexer: 'ABB', protocol: 'torrent' }])),
         test: vi.fn(),
       };
       // Spy on createAdapter to verify proxyUrl is passed, but return our mock adapter
@@ -1006,7 +1020,7 @@ describe('IndexerService', () => {
         test: vi.fn(),
       };
       const goodAdapter = {
-        search: vi.fn().mockResolvedValue([{ title: 'Good Book', indexer: 'Indexer2', protocol: 'torrent' }]),
+        search: vi.fn().mockResolvedValue(searchResponse([{ title: 'Good Book', indexer: 'Indexer2', protocol: 'torrent' }])),
         test: vi.fn(),
       };
 
@@ -1258,19 +1272,23 @@ describe('IndexerService', () => {
 
   // ── #229 Observability — logging improvements ───────────────────────────
   describe('logging improvements (#229)', () => {
-    it('per-indexer search logs { indexer, resultCount, elapsedMs } at debug', async () => {
+    it('per-indexer search emits the canonical "Indexer search complete" summary with parse stats', async () => {
       const log = createMockLogger();
       const svc = new IndexerService(inject<Db>(db), inject<FastifyBaseLogger>(log));
       const mockResult = { title: 'Book', indexer: 'AudioBookBay', protocol: 'torrent' as const, downloadUrl: 'magnet:?xt=urn:btih:abc' };
-      const mockAdapter = { type: 'abb', name: 'AudioBookBay', search: vi.fn().mockResolvedValue([mockResult]), test: vi.fn() };
+      const mockAdapter = { type: 'abb', name: 'AudioBookBay', search: vi.fn().mockResolvedValue(searchResponse([mockResult])), test: vi.fn() };
       db.select.mockReturnValue(mockDbChain([mockIndexer]));
       vi.spyOn(svc, 'getAdapter').mockResolvedValue(mockAdapter as never);
 
       await svc.searchAll('test');
 
       expect(log.debug).toHaveBeenCalledWith(
-        expect.objectContaining({ indexer: 'AudioBookBay', resultCount: 1, elapsedMs: expect.any(Number) }),
-        'Indexer search completed',
+        expect.objectContaining({ indexer: 'AudioBookBay', type: 'abb', itemsObserved: 1, kept: 1 }),
+        'Indexer search complete',
+      );
+      expect(log.debug).toHaveBeenCalledWith(
+        expect.objectContaining({ query: 'test', indexerCount: 1, perIndexerCounts: { AudioBookBay: 1 } }),
+        'Search aggregated across indexers',
       );
     });
 
@@ -1293,7 +1311,7 @@ describe('IndexerService', () => {
       const log = createMockLogger();
       const svc = new IndexerService(inject<Db>(db), inject<FastifyBaseLogger>(log));
       const unparseable = { title: 'Some Random Title Without Author Delimiter', indexer: 'AudioBookBay', protocol: 'torrent' as const, downloadUrl: 'magnet:?xt=urn:btih:abc' };
-      const mockAdapter = { type: 'abb', name: 'AudioBookBay', search: vi.fn().mockResolvedValue([unparseable]), test: vi.fn() };
+      const mockAdapter = { type: 'abb', name: 'AudioBookBay', search: vi.fn().mockResolvedValue(searchResponse([unparseable])), test: vi.fn() };
       db.select.mockReturnValue(mockDbChain([mockIndexer]));
       vi.spyOn(svc, 'getAdapter').mockResolvedValue(mockAdapter as never);
 
@@ -1310,7 +1328,7 @@ describe('IndexerService', () => {
       const svc = new IndexerService(inject<Db>(db), inject<FastifyBaseLogger>(log));
       const torznabIndexer = createMockDbIndexer({ id: 1, name: 'Torznab', type: 'torznab', settings: { apiUrl: 'https://tracker.test', apiKey: 'key' } });
       const unparseable = { title: 'UnparseableTitle', indexer: 'Torznab', protocol: 'torrent' as const, downloadUrl: 'magnet:?xt=urn:btih:abc' };
-      const mockAdapter = { type: 'torznab', name: 'Torznab', search: vi.fn().mockResolvedValue([unparseable]), test: vi.fn() };
+      const mockAdapter = { type: 'torznab', name: 'Torznab', search: vi.fn().mockResolvedValue(searchResponse([unparseable])), test: vi.fn() };
       vi.spyOn(svc, 'getAdapter').mockResolvedValue(mockAdapter as never);
 
       await svc.pollRss(torznabIndexer);
@@ -1329,8 +1347,8 @@ describe('IndexerService', () => {
 
       // Adapter1 blocks on a deferred promise — if execution is sequential,
       // adapter2.search will never be called until adapter1 resolves.
-      let resolveAdapter1!: (value: unknown[]) => void;
-      const adapter1Promise = new Promise<unknown[]>((resolve) => { resolveAdapter1 = resolve; });
+      let resolveAdapter1!: (value: unknown) => void;
+      const adapter1Promise = new Promise<unknown>((resolve) => { resolveAdapter1 = resolve; });
 
       const adapter1 = {
         search: vi.fn().mockReturnValue(adapter1Promise),
@@ -1340,7 +1358,7 @@ describe('IndexerService', () => {
         search: vi.fn().mockImplementation(async () => {
           // Assert adapter1.search was already called but NOT yet resolved
           expect(adapter1.search).toHaveBeenCalledTimes(1);
-          return [{ title: 'Book2', indexer: 'Indexer2' }];
+          return searchResponse([{ title: 'Book2', indexer: 'Indexer2' }]);
         }),
         test: vi.fn(),
       };
@@ -1358,7 +1376,7 @@ describe('IndexerService', () => {
       expect(adapter2.search).toHaveBeenCalledTimes(1);
 
       // Now resolve adapter1 so searchAll can complete
-      resolveAdapter1([{ title: 'Book1', indexer: 'ABB' }]);
+      resolveAdapter1(searchResponse([{ title: 'Book1', indexer: 'ABB' }]));
       const results = await searchPromise;
       expect(results).toHaveLength(2);
     });
@@ -1372,7 +1390,7 @@ describe('IndexerService', () => {
         test: vi.fn(),
       };
       const goodAdapter = {
-        search: vi.fn().mockResolvedValue([{ title: 'Book', indexer: 'Indexer2' }]),
+        search: vi.fn().mockResolvedValue(searchResponse([{ title: 'Book', indexer: 'Indexer2' }])),
         test: vi.fn(),
       };
 
@@ -1406,7 +1424,7 @@ describe('IndexerService', () => {
 
       const failError = new Error('Connection refused');
       const errorAdapter = { search: vi.fn().mockRejectedValue(failError), test: vi.fn() };
-      const goodAdapter = { search: vi.fn().mockResolvedValue([]), test: vi.fn() };
+      const goodAdapter = { search: vi.fn().mockResolvedValue(searchResponse([])), test: vi.fn() };
 
       vi.spyOn(service, 'getAdapter')
         .mockResolvedValueOnce(errorAdapter as never)
@@ -1444,11 +1462,11 @@ describe('IndexerService', () => {
       db.select.mockReturnValue(mockDbChain([mockIndexer, indexer2]));
 
       const adapter1 = {
-        search: vi.fn().mockResolvedValue([{ title: 'Wrong Book', indexer: 'ABB' }]),
+        search: vi.fn().mockResolvedValue(searchResponse([{ title: 'Wrong Book', indexer: 'ABB' }])),
         test: vi.fn(),
       };
       const adapter2 = {
-        search: vi.fn().mockResolvedValue([{ title: 'The Way of Kings', indexer: 'Indexer2', author: 'Sanderson' }]),
+        search: vi.fn().mockResolvedValue(searchResponse([{ title: 'The Way of Kings', indexer: 'Indexer2', author: 'Sanderson' }])),
         test: vi.fn(),
       };
 
@@ -1465,7 +1483,7 @@ describe('IndexerService', () => {
       db.select.mockReturnValue(mockDbChain([mockIndexer]));
 
       const adapter = {
-        search: vi.fn().mockResolvedValue([{ title: 'Book', indexer: 'ABB' }]),
+        search: vi.fn().mockResolvedValue(searchResponse([{ title: 'Book', indexer: 'ABB' }])),
         test: vi.fn(),
       };
       vi.spyOn(service, 'getAdapter').mockResolvedValue(adapter as never);
@@ -1482,8 +1500,8 @@ describe('IndexerService', () => {
     it('calls onComplete for each successful indexer', async () => {
       db.select.mockReturnValue(mockDbChain([mockIndexer, mockIndexer2]));
 
-      const adapter1 = { search: vi.fn().mockResolvedValue([{ title: 'Book1', indexer: 'ABB' }]), test: vi.fn() };
-      const adapter2 = { search: vi.fn().mockResolvedValue([{ title: 'Book2', indexer: 'MAM' }]), test: vi.fn() };
+      const adapter1 = { search: vi.fn().mockResolvedValue(searchResponse([{ title: 'Book1', indexer: 'ABB' }])), test: vi.fn() };
+      const adapter2 = { search: vi.fn().mockResolvedValue(searchResponse([{ title: 'Book2', indexer: 'MAM' }])), test: vi.fn() };
       let callCount = 0;
       vi.spyOn(service, 'getAdapter').mockImplementation(async () => {
         callCount++;
@@ -1510,7 +1528,7 @@ describe('IndexerService', () => {
       db.select.mockReturnValue(mockDbChain([mockIndexer, mockIndexer2]));
 
       const adapter1 = { search: vi.fn().mockRejectedValue(new Error('Timeout')), test: vi.fn() };
-      const adapter2 = { search: vi.fn().mockResolvedValue([{ title: 'Book2', indexer: 'MAM' }]), test: vi.fn() };
+      const adapter2 = { search: vi.fn().mockResolvedValue(searchResponse([{ title: 'Book2', indexer: 'MAM' }])), test: vi.fn() };
       let callCount = 0;
       vi.spyOn(service, 'getAdapter').mockImplementation(async () => {
         callCount++;
@@ -1558,9 +1576,9 @@ describe('IndexerService', () => {
       db.select.mockReturnValue(mockDbChain([mockIndexer]));
 
       const adapter = {
-        search: vi.fn().mockResolvedValue([
+        search: vi.fn().mockResolvedValue(searchResponse([
           { title: 'The Way of Kings', author: 'Brandon Sanderson', indexer: 'ABB' },
-        ]),
+        ])),
         test: vi.fn(),
       };
       vi.spyOn(service, 'getAdapter').mockResolvedValue(adapter as never);
@@ -1606,7 +1624,7 @@ describe('IndexerService', () => {
       const mockAdapter = {
         type: 'myanonamouse', name: 'MAM',
         refreshStatus: vi.fn().mockResolvedValue({ isVip: false, classname: 'Mouse' }),
-        search: vi.fn().mockResolvedValue([]),
+        search: vi.fn().mockResolvedValue(searchResponse([])),
         test: vi.fn(),
       };
       vi.spyOn(service, 'getAdapter').mockResolvedValue(mockAdapter as never);
@@ -1622,7 +1640,7 @@ describe('IndexerService', () => {
       const mockAdapter = {
         type: 'myanonamouse', name: 'MAM',
         refreshStatus: vi.fn().mockRejectedValue(new Error('Network error')),
-        search: vi.fn().mockResolvedValue([{ title: 'Book', indexer: 'MAM', protocol: 'torrent' as const }]),
+        search: vi.fn().mockResolvedValue(searchResponse([{ title: 'Book', indexer: 'MAM', protocol: 'torrent' as const }])),
         test: vi.fn(),
       };
       vi.spyOn(service, 'getAdapter').mockResolvedValue(mockAdapter as never);
@@ -1636,7 +1654,7 @@ describe('IndexerService', () => {
       const mockAdapter = {
         type: 'myanonamouse', name: 'MAM',
         refreshStatus: vi.fn().mockResolvedValue(null),
-        search: vi.fn().mockResolvedValue([{ title: 'Book', indexer: 'MAM', protocol: 'torrent' as const }]),
+        search: vi.fn().mockResolvedValue(searchResponse([{ title: 'Book', indexer: 'MAM', protocol: 'torrent' as const }])),
         test: vi.fn(),
       };
       vi.spyOn(service, 'getAdapter').mockResolvedValue(mockAdapter as never);
@@ -1649,7 +1667,7 @@ describe('IndexerService', () => {
       db.select.mockReturnValue(mockDbChain([mockIndexer]));
       const mockAdapter = {
         type: 'abb', name: 'ABB',
-        search: vi.fn().mockResolvedValue([{ title: 'Book', indexer: 'ABB', protocol: 'torrent' as const }]),
+        search: vi.fn().mockResolvedValue(searchResponse([{ title: 'Book', indexer: 'ABB', protocol: 'torrent' as const }])),
         test: vi.fn(),
       };
       vi.spyOn(service, 'getAdapter').mockResolvedValue(mockAdapter as never);
@@ -1663,7 +1681,7 @@ describe('IndexerService', () => {
       const mockAdapter = {
         type: 'myanonamouse', name: 'MAM',
         refreshStatus: vi.fn().mockResolvedValue({ isVip: false, classname: 'Power User' }),
-        search: vi.fn().mockResolvedValue([{ title: 'Book', indexer: 'MAM', protocol: 'torrent' as const }]),
+        search: vi.fn().mockResolvedValue(searchResponse([{ title: 'Book', indexer: 'MAM', protocol: 'torrent' as const }])),
         test: vi.fn(),
       };
       vi.spyOn(service, 'getAdapter').mockResolvedValue(mockAdapter as never);
@@ -1681,7 +1699,7 @@ describe('IndexerService', () => {
       const mockAdapter = {
         type: 'myanonamouse', name: 'MAM',
         refreshStatus: vi.fn().mockResolvedValue({ isVip: true, classname: 'VIP' }),
-        search: vi.fn().mockResolvedValue([{ title: 'Book', indexer: 'MAM', protocol: 'torrent' as const }]),
+        search: vi.fn().mockResolvedValue(searchResponse([{ title: 'Book', indexer: 'MAM', protocol: 'torrent' as const }])),
         test: vi.fn(),
       };
       vi.spyOn(service, 'getAdapter').mockResolvedValue(mockAdapter as never);
@@ -1703,7 +1721,7 @@ describe('IndexerService', () => {
       };
       const abbAdapter = {
         type: 'abb', name: 'ABB',
-        search: vi.fn().mockResolvedValue([{ title: 'Book', indexer: 'ABB', protocol: 'torrent' as const }]),
+        search: vi.fn().mockResolvedValue(searchResponse([{ title: 'Book', indexer: 'ABB', protocol: 'torrent' as const }])),
         test: vi.fn(),
       };
       vi.spyOn(service, 'getAdapter')
@@ -1753,7 +1771,7 @@ describe('IndexerService', () => {
       };
       const abbAdapter = {
         type: 'abb', name: 'ABB',
-        search: vi.fn().mockResolvedValue([{ title: 'Book', indexer: 'ABB', protocol: 'torrent' as const }]),
+        search: vi.fn().mockResolvedValue(searchResponse([{ title: 'Book', indexer: 'ABB', protocol: 'torrent' as const }])),
         test: vi.fn(),
       };
       vi.spyOn(service, 'getAdapter')
@@ -1821,7 +1839,7 @@ describe('IndexerService', () => {
       const mockAdapter = {
         type: 'abb',
         name: 'AudioBookBay',
-        search: vi.fn().mockResolvedValue([]),
+        search: vi.fn().mockResolvedValue(searchResponse([])),
         test: vi.fn(),
       };
       vi.spyOn(langService, 'getAdapter').mockResolvedValue(mockAdapter as never);
@@ -1840,7 +1858,7 @@ describe('IndexerService', () => {
       const mockAdapter = {
         type: 'abb',
         name: 'AudioBookBay',
-        search: vi.fn().mockResolvedValue([]),
+        search: vi.fn().mockResolvedValue(searchResponse([])),
         test: vi.fn(),
       };
       vi.spyOn(langService, 'getAdapter').mockResolvedValue(mockAdapter as never);
@@ -1872,7 +1890,7 @@ describe('IndexerService', () => {
       const mockAdapter = {
         type: 'abb',
         name: 'AudioBookBay',
-        search: vi.fn().mockResolvedValue([]),
+        search: vi.fn().mockResolvedValue(searchResponse([])),
         test: vi.fn(),
       };
       vi.spyOn(langService, 'getAdapter').mockResolvedValue(mockAdapter as never);
@@ -1895,7 +1913,7 @@ describe('IndexerService', () => {
       const mockAdapter = {
         type: 'abb',
         name: 'AudioBookBay',
-        search: vi.fn().mockResolvedValue([]),
+        search: vi.fn().mockResolvedValue(searchResponse([])),
         test: vi.fn(),
       };
       vi.spyOn(langService, 'getAdapter').mockResolvedValue(mockAdapter as never);
@@ -1943,9 +1961,9 @@ describe('IndexerService', () => {
       const mockAdapter = {
         type: 'abb',
         name: 'AudioBookBay',
-        search: vi.fn().mockResolvedValue([
+        search: vi.fn().mockResolvedValue(searchResponse([
           { title: 'Book One', indexer: 'AudioBookBay', protocol: 'torrent' },
-        ]),
+        ])),
         test: vi.fn(),
       };
       vi.spyOn(service, 'getAdapter').mockResolvedValue(mockAdapter as never);
@@ -1958,9 +1976,9 @@ describe('IndexerService', () => {
       const streamIndexer = createMockDbIndexer({ id: 3, priority: 25 });
       db.select.mockReturnValue(mockDbChain([streamIndexer]));
       const mockAdapter = {
-        search: vi.fn().mockResolvedValue([
+        search: vi.fn().mockResolvedValue(searchResponse([
           { title: 'Book One', indexer: 'ABB', protocol: 'torrent' },
-        ]),
+        ])),
         test: vi.fn(),
       };
       vi.spyOn(service, 'getAdapter').mockResolvedValue(mockAdapter as never);
@@ -1979,9 +1997,9 @@ describe('IndexerService', () => {
       const mockAdapter = {
         type: 'torznab',
         name: 'Torznab',
-        search: vi.fn().mockResolvedValue([
+        search: vi.fn().mockResolvedValue(searchResponse([
           { title: 'Author A - Book One', indexer: 'Torznab', protocol: 'torrent' },
-        ]),
+        ])),
         test: vi.fn(),
       };
       vi.spyOn(service, 'getAdapter').mockResolvedValue(mockAdapter as never);
@@ -1996,9 +2014,9 @@ describe('IndexerService', () => {
       const mockAdapter = {
         type: 'abb',
         name: 'AudioBookBay',
-        search: vi.fn().mockResolvedValue([
+        search: vi.fn().mockResolvedValue(searchResponse([
           { title: 'Book One', indexer: 'AudioBookBay', protocol: 'torrent' },
-        ]),
+        ])),
         test: vi.fn(),
       };
       vi.spyOn(service, 'getAdapter').mockResolvedValue(mockAdapter as never);

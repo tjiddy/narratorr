@@ -217,7 +217,7 @@ export class MetadataService {
       return books;
     }
 
-    return filterByLanguage(books, languages);
+    return filterByLanguage(books, languages).kept;
   }
 
   private async filterAuthorBooks(books: BookMetadata[]): Promise<BookMetadata[]> {
@@ -247,7 +247,7 @@ export class MetadataService {
       });
     }
 
-    filtered = filterByLanguage(filtered, languages);
+    filtered = filterByLanguage(filtered, languages).kept;
 
     return filtered;
   }

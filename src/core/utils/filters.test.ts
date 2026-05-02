@@ -49,28 +49,37 @@ describe('matchesLanguageFilter', () => {
 // --- filterByLanguage ---
 
 describe('filterByLanguage', () => {
-  it('returns all items when allowedLanguages is empty', () => {
+  it('returns all items as kept when allowedLanguages is empty (no filter)', () => {
     const items = [{ language: 'english' }, { language: 'french' }, { language: undefined }];
-    expect(filterByLanguage(items, [])).toEqual(items);
+    const result = filterByLanguage(items, []);
+    expect(result.kept).toEqual(items);
+    expect(result.dropped).toEqual([]);
+    expect(result.passedUndetermined).toEqual([]);
   });
 
   it('passes through items with undefined language', () => {
     const items = [{ language: undefined }, { language: 'english' }];
     const result = filterByLanguage(items, ['english']);
-    expect(result).toHaveLength(2);
+    expect(result.kept).toHaveLength(2);
+    expect(result.passedUndetermined).toEqual([{ language: undefined }]);
   });
 
   it('passes through items with matching language', () => {
     const items = [{ language: 'english' }];
-    expect(filterByLanguage(items, ['english'])).toEqual(items);
+    const result = filterByLanguage(items, ['english']);
+    expect(result.kept).toEqual(items);
+    expect(result.dropped).toEqual([]);
+    expect(result.passedUndetermined).toEqual([]);
   });
 
-  it('filters out items with non-matching language', () => {
+  it('filters out items with non-matching language and reports them in dropped', () => {
     const items = [{ language: 'german' }];
-    expect(filterByLanguage(items, ['english'])).toEqual([]);
+    const result = filterByLanguage(items, ['english']);
+    expect(result.kept).toEqual([]);
+    expect(result.dropped).toEqual(items);
   });
 
-  it('handles mixed items — keeps matching and undefined, removes non-matching', () => {
+  it('handles mixed items — partitions matching, undefined, and non-matching', () => {
     const items = [
       { language: 'english', id: 1 },
       { language: 'german', id: 2 },
@@ -78,11 +87,13 @@ describe('filterByLanguage', () => {
       { language: 'french', id: 4 },
     ];
     const result = filterByLanguage(items, ['english', 'french']);
-    expect(result).toEqual([
+    expect(result.kept).toEqual([
       { language: 'english', id: 1 },
       { language: undefined, id: 3 },
       { language: 'french', id: 4 },
     ]);
+    expect(result.dropped).toEqual([{ language: 'german', id: 2 }]);
+    expect(result.passedUndetermined).toEqual([{ language: undefined, id: 3 }]);
   });
 });
 
@@ -167,17 +178,18 @@ describe('filterMultiPartUsenet', () => {
   });
 
   describe('rejected titles tracking', () => {
-    it('collects rejected source titles in the returned array', () => {
+    it('collects rejected source titles plus the matched-pattern source in the returned array', () => {
       const results = [
         makeUsenetResult({ title: 'Clean Title' }),
         makeUsenetResult({ nzbName: 'hp02.Harry Potter "28" of "30" yEnc', title: 'HP' }),
         makeUsenetResult({ rawTitle: 'Book 08 of 30', title: 'Book' }),
       ];
       const { rejectedTitles } = filterMultiPartUsenet(results);
-      expect(rejectedTitles).toEqual([
-        'hp02.Harry Potter "28" of "30" yEnc',
-        'Book 08 of 30',
-      ]);
+      expect(rejectedTitles).toHaveLength(2);
+      expect(rejectedTitles[0]).toMatchObject({ title: 'hp02.Harry Potter "28" of "30" yEnc' });
+      expect(rejectedTitles[0].matchedPattern).toBeDefined();
+      expect(rejectedTitles[1]).toMatchObject({ title: 'Book 08 of 30' });
+      expect(rejectedTitles[1].matchedPattern).toBeDefined();
     });
 
     it('returns empty rejected array when nothing is filtered', () => {
