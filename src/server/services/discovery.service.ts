@@ -9,6 +9,7 @@ import { serializeError } from '../utils/serialize-error.js';
 import type { MetadataService } from './metadata.service.js';
 import type { SettingsService } from './settings.service.js';
 import type { SuggestionReason } from '../../shared/schemas/discovery.js';
+import type { SuggestionRow } from './types.js';
 import { extractSignals } from './discovery-signals.js';
 import { computeWeightMultipliers, DEFAULT_MULTIPLIERS, type DismissalStats, type WeightMultipliers } from './discovery-weights.js';
 import {
@@ -21,8 +22,6 @@ export { DIVERSITY_GENRES, type ScoredCandidate } from './discovery-candidates.j
 // ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
-
-type SuggestionRow = typeof suggestions.$inferSelect;
 
 export type { SuggestionReason };
 

@@ -10,11 +10,11 @@ import { getErrorMessage } from '../utils/error-message.js';
 import { findOrCreateAuthor } from '../utils/find-or-create-person.js';
 import type { ImportListType } from '../../shared/import-list-registry.js';
 import { importListSettingsSchemas, type ImportListSettings } from '../../shared/schemas/import-list.js';
+import type { ImportListRow } from './types.js';
 
 /** Milliseconds per minute — used for sync interval calculations. */
 const MS_PER_MINUTE = 60_000;
 
-type ImportListRow = typeof importLists.$inferSelect;
 type NewImportList = typeof importLists.$inferInsert;
 
 /**

@@ -248,7 +248,7 @@ export class QualityGateService {
     const DOWNLOAD_CHUNK = 999;
     const EVENT_CHUNK = 998;
 
-    const allDownloads: Array<typeof downloads.$inferSelect> = [];
+    const allDownloads: Array<DownloadRow> = [];
     for (let i = 0; i < downloadIds.length; i += DOWNLOAD_CHUNK) {
       const chunk = downloadIds.slice(i, i + DOWNLOAD_CHUNK);
       const rows = await this.db

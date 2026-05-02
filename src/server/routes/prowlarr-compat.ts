@@ -1,6 +1,8 @@
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import type { IndexerService } from '../services/indexer.service.js';
+import type { IndexerRow } from '../services/types.js';
+import type { IndexerType } from '../../shared/indexer-registry.js';
 import { maskFields, isSentinel } from '../utils/secret-codec.js';
 import { getVersion } from '../utils/version.js';
 
@@ -71,18 +73,6 @@ interface ReadarrIndexer {
   fields: ReadarrField[];
 }
 
-type IndexerRow = {
-  id: number;
-  name: string;
-  type: string;
-  enabled: boolean;
-  priority: number;
-  settings: Record<string, unknown>;
-  source: string | null;
-  sourceIndexerId: number | null;
-  createdAt: Date;
-};
-
 // ── Field defaults ──
 
 const FIELD_DEFAULTS: Record<string, unknown> = {
@@ -94,8 +84,6 @@ const FIELD_DEFAULTS: Record<string, unknown> = {
 };
 
 // ── Implementation → protocol/contract mapping ──
-
-type IndexerType = 'abb' | 'torznab' | 'newznab' | 'myanonamouse';
 
 const IMPL_MAP: Record<string, { protocol: string; configContract: string; type: IndexerType }> = {
   Torznab: { protocol: 'torrent', configContract: 'TorznabSettings', type: 'torznab' },
@@ -290,7 +278,7 @@ function registerIndexerRoutes(app: FastifyInstance, indexerService: IndexerServ
 
   app.get('/api/v1/indexer', async () => {
     const all = await indexerService.getAll();
-    return all.map(row => toReadarrIndexer(row as IndexerRow));
+    return all.map(row => toReadarrIndexer(row));
   });
 
   app.get<{ Params: { id: string } }>('/api/v1/indexer/:id', async (request, reply) => {
@@ -298,7 +286,7 @@ function registerIndexerRoutes(app: FastifyInstance, indexerService: IndexerServ
     if (isNaN(id)) return reply.status(404).send({ message: 'Indexer not found' });
     const row = await indexerService.getById(id);
     if (!row) return reply.status(404).send({ message: 'Indexer not found' });
-    return toReadarrIndexer(row as IndexerRow);
+    return toReadarrIndexer(row);
   });
 
   app.post<{ Body: ReadarrBody; Querystring: { forceSave?: string } }>(
@@ -321,7 +309,7 @@ function registerIndexerRoutes(app: FastifyInstance, indexerService: IndexerServ
 
       const statusCode = 201;
       request.log.info({ id: result.row.id, sourceIndexerId, upserted: result.upserted }, 'Prowlarr indexer created/upserted');
-      return reply.status(statusCode).send(toReadarrIndexer(result.row as IndexerRow));
+      return reply.status(statusCode).send(toReadarrIndexer(result.row));
     },
   );
 
@@ -361,7 +349,7 @@ function registerIndexerRoutes(app: FastifyInstance, indexerService: IndexerServ
 
       if (!updated) return reply.status(404).send({ message: 'Indexer not found' });
       request.log.info({ id }, 'Prowlarr indexer updated');
-      return toReadarrIndexer(updated as IndexerRow);
+      return toReadarrIndexer(updated);
     },
   );
 

@@ -3,8 +3,8 @@ import type { Db } from '../../db/index.js';
 import type { FastifyBaseLogger } from 'fastify';
 import { blacklist } from '../../db/schema.js';
 import type { SettingsService } from './settings.service.js';
+import type { BlacklistRow } from './types.js';
 
-type BlacklistRow = typeof blacklist.$inferSelect;
 type NewBlacklist = typeof blacklist.$inferInsert;
 
 export class BlacklistService {
