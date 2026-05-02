@@ -152,7 +152,11 @@ The `/api/filesystem/browse` endpoint allows authenticated users to browse the h
 
 ## Outbound Fetch (SSRF Protection)
 
-The cover-download endpoint follows attacker-influenced URLs (cover art may come from an indexer response or a manually-pasted release URL). To prevent server-side request forgery against the host's metadata service or LAN-internal services, the fetch path goes through the SSRF helpers in `src/core/utils/network-service.ts` (a custom Undici DNS lookup function that rejects unsafe destinations before the connection is made).
+Three outbound code paths follow attacker-influenced URLs and route through the SSRF helpers in `src/core/utils/network-service.ts` (a custom Undici DNS lookup function that rejects unsafe destinations before the connection is made):
+
+- **Cover-download** — cover art URLs from indexer responses or manually-pasted release URLs (`src/server/services/cover-download.ts`)
+- **Torrent / NZB download** — download URLs from indexer search results, including 302 redirects to magnet links (`src/core/utils/download-url.ts`)
+- **NZB content fetch** — NZB URLs from indexer XML during language enrichment, including 302 redirects to CDN-hosted content (`src/server/utils/enrich-usenet-languages.ts`)
 
 **Blocked destinations:**
 - RFC 1918 private networks (10/8, 172.16/12, 192.168/16)
@@ -165,14 +169,14 @@ The cover-download endpoint follows attacker-influenced URLs (cover art may come
 - IPv4-mapped IPv6 forms (e.g., `::ffff:169.254.169.254`)
 - Hostname allowlist for known metadata names (e.g., `metadata.google.internal`) as a belt-and-suspenders check on top of the IP filter
 
-**DNS rebinding mitigation:** the lookup function runs once per request and the connection is made to the resolved IP. A malicious DNS server that returns a public IP on first lookup and a private IP on a second cannot bypass the check.
+**DNS rebinding mitigation:** the lookup function runs once per request and the connection is made to the resolved IP. A malicious DNS server that returns a public IP on first lookup and a private IP on a second cannot bypass the check. Per-redirect-hop revalidation re-runs the policy on each socket open, so 302→internal pivots are also caught.
 
 **Response controls** (cover-download):
 - Response size capped — truncation triggers an error before memory exhaustion
 - Redirect limit caps redirect chains and prevents external→internal pivots
 - AbortSignal timeout enforced
 
-**Coverage scope:** SSRF blocking currently wraps the cover-download path. Outbound fetches in indexer adapters, download-client adapters, metadata providers, and the webhook notifier do not yet share this control surface — a sweep to extend coverage is tracked in the open issue queue. Until that lands, those paths fetch only operator-configured URLs, which is a meaningful trust boundary but not full defense-in-depth against a compromised upstream.
+**Coverage scope:** SSRF address-blocking is intentionally scoped to attacker-influenced URLs. Operator-configured fetch destinations — indexer apiUrl, download-client host, notifier webhook URL, import-list source, metadata provider — are NOT address-blocked, by design. Self-hosted *arr deployments legitimately point at private-IP services (Prowlarr in Docker compose, qBittorrent on LAN, self-hosted Apprise instance). The trust boundary for those paths is "the operator configured this URL"; extending the block policy would break legitimate setups. See `CLAUDE.md` security section and closed issues #769 / #877 / #885 for the design rationale.
 
 ## Input Validation
 
