@@ -276,15 +276,6 @@ export class DiscoveryService {
     return this.db.select().from(suggestions).where(and(...conds)).orderBy(desc(suggestions.score));
   }
 
-  async snoozeSuggestion(id: number, durationDays: number): Promise<SuggestionRow | 'conflict' | null> {
-    const rows = await this.db.select().from(suggestions).where(eq(suggestions.id, id)).limit(1);
-    if (rows.length === 0) return null;
-    if (rows[0].status !== 'pending') return 'conflict';
-    const snoozeUntil = new Date(Date.now() + durationDays * 86400000);
-    await this.db.update(suggestions).set({ snoozeUntil }).where(eq(suggestions.id, id));
-    return { ...rows[0], snoozeUntil };
-  }
-
   async dismissSuggestion(id: number): Promise<SuggestionRow | null> {
     const rows = await this.db.select().from(suggestions).where(eq(suggestions.id, id)).limit(1);
     if (rows.length === 0) return null;
@@ -345,13 +336,6 @@ export class DiscoveryService {
     for (const [reason, { dismissed, added }] of counts) {
       stats[reason as SuggestionReason] = { dismissed, added, total: dismissed + added };
     }
-    return stats;
-  }
-
-  async getStats(): Promise<Record<string, number>> {
-    const rows = await this.db.select({ reason: suggestions.reason, count: sql<number>`count(*)` }).from(suggestions).where(eq(suggestions.status, 'pending')).groupBy(suggestions.reason);
-    const stats: Record<string, number> = {};
-    for (const r of rows) stats[r.reason] = Number(r.count);
     return stats;
   }
 
