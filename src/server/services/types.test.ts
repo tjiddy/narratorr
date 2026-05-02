@@ -92,5 +92,9 @@ describe('canonical row type narrowing', () => {
     // @ts-expect-error — 'queued' is not a valid ImportJobStatus
     const badImportJobStatus: Pick<ImportJobRow, 'status'> = { status: 'queued' };
     void badImportJobStatus;
+
+    // @ts-expect-error — 'extracting' is not a valid ImportJobPhase
+    const badImportJobPhase: Pick<ImportJobRow, 'phase'> = { phase: 'extracting' };
+    void badImportJobPhase;
   });
 });
