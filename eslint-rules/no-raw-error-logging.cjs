@@ -150,14 +150,37 @@ function checkObjectArg(node, firstArg, context) {
     if (keyName !== 'error' && keyName !== 'err') continue;
 
     const value = prop.value;
-    if (value.type !== 'Identifier') continue;
-    if (!isErrorSource(value, context)) continue;
+    let traceTarget;
+    let valueText;
+    if (value.type === 'Identifier') {
+      traceTarget = value;
+      valueText = value.name;
+    } else if (value.type === 'MemberExpression') {
+      // Walk through dot-access (computed === false) only, to a root Identifier.
+      // Bail on any computed segment (`obj[k]`) or non-Identifier root (calls,
+      // literals, etc.) — those are out of scope for catch-tracing.
+      let cursor = value;
+      let bail = false;
+      while (cursor.type === 'MemberExpression') {
+        if (cursor.computed) {
+          bail = true;
+          break;
+        }
+        cursor = cursor.object;
+      }
+      if (bail || cursor.type !== 'Identifier') continue;
+      traceTarget = cursor;
+      valueText = context.sourceCode.getText(value);
+    } else {
+      continue;
+    }
+    if (!isErrorSource(traceTarget, context)) continue;
 
     context.report({
       node: prop,
       messageId: 'rawError',
       fix(fixer) {
-        const fixText = `error: serializeError(${value.name})`;
+        const fixText = `error: serializeError(${valueText})`;
         return [fixer.replaceText(prop, fixText), ...buildImportFixes(fixer, context)];
       },
     });
