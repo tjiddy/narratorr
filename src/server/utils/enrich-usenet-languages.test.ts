@@ -690,7 +690,9 @@ describe('enrichUsenetLanguages', () => {
     });
 
     it('closes the dispatcher even when the helper throws (SSRF refusal path)', async () => {
-      mockFetchWithSsrfRedirect.mockRejectedValueOnce(new Error('Refused: hostname x resolves to blocked address 192.168.1.1'));
+      mockFetchWithSsrfRedirect.mockRejectedValueOnce(
+        new Error('Refused: hostname x resolved to 1 address(es); blocked address 192.168.1.1 is in the blocked range'),
+      );
 
       const results = [makeResult({ protocol: 'usenet', downloadUrl: 'http://nzb.test/1' })];
 
@@ -720,7 +722,9 @@ describe('enrichUsenetLanguages', () => {
 
     it('private-IP redirect refusal logs sanitized warning and returns no-languages', async () => {
       mockFetchWithSsrfRedirect.mockRejectedValueOnce(
-        new Error('Refused: hostname rebind.example.com resolves to blocked address 192.168.1.1'),
+        new Error(
+          'Refused: hostname rebind.example.com resolved to 1 address(es); blocked address 192.168.1.1 is in the blocked range',
+        ),
       );
 
       const results = [makeResult({

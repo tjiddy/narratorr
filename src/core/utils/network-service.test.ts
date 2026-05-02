@@ -419,6 +419,17 @@ describe('resolveAndValidate', () => {
     await expect(resolveAndValidate('mixed.example.com')).rejects.toThrow(/Refused/);
   });
 
+  it('error message includes total answer count and blocked address (multi-answer DNS)', async () => {
+    mockedLookup.mockResolvedValueOnce([
+      { address: '1.2.3.4', family: 4 },
+      { address: '5.6.7.8', family: 4 },
+      { address: '192.168.1.1', family: 4 },
+    ]);
+    await expect(resolveAndValidate('mixed.example.com')).rejects.toThrow(
+      /^Refused:.*resolved to 3 address\(es\); blocked address 192\.168\.1\.1/,
+    );
+  });
+
   it('throws when DNS returns zero answers', async () => {
     mockedLookup.mockResolvedValueOnce([]);
     await expect(resolveAndValidate('empty.example.com')).rejects.toThrow(/Refused/);
@@ -500,6 +511,19 @@ describe('validatingLookup (socket-bound dispatcher hook)', () => {
     expect((err as Error).message).toMatch(/Refused/);
   });
 
+  it('error message includes total answer count and blocked address (multi-answer DNS)', async () => {
+    mockedLookup.mockResolvedValueOnce([
+      { address: '1.2.3.4', family: 4 },
+      { address: '5.6.7.8', family: 4 },
+      { address: '192.168.1.1', family: 4 },
+    ]);
+    const { err } = await callLookup('mixed.example.com');
+    expect(err).toBeInstanceOf(Error);
+    expect((err as Error).message).toMatch(
+      /^Refused:.*resolved to 3 address\(es\); blocked address 192\.168\.1\.1/,
+    );
+  });
+
   it('rejects loopback IPv6 at socket time', async () => {
     mockedLookup.mockResolvedValueOnce([{ address: '::1', family: 6 }]);
     const { err } = await callLookup('loopback.example.com');
@@ -557,7 +581,9 @@ describe('validatingLookup (socket-bound dispatcher hook)', () => {
 
     const second = await callLookup('rebind.test');
     expect(second.err).toBeInstanceOf(Error);
-    expect((second.err as Error).message).toMatch(/Refused.*resolves to blocked address 192\.168\.1\.1/);
+    expect((second.err as Error).message).toMatch(
+      /Refused.*resolved to 1 address\(es\); blocked address 192\.168\.1\.1/,
+    );
     expect(second.address).toBe('');
     expect(second.family).toBe(0);
 
