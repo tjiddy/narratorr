@@ -101,7 +101,7 @@ export class DownloadUrl {
       if (error instanceof UnsupportedRedirectSchemeError && error.location.startsWith('magnet:')) {
         const infoHash = parseInfoHash(error.location);
         if (!infoHash) {
-          throw new Error('Download failed: redirect to magnet URI with no info hash');
+          throw new Error('Download failed: redirect to magnet URI with no info hash', { cause: error });
         }
         return { type: 'magnet-uri', uri: error.location, infoHash: normalizeInfoHash(infoHash) };
       }
