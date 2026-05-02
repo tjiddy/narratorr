@@ -14,7 +14,7 @@ import {
   indexerTypeSchema,
   type CreateIndexerFormData,
 } from '../../../shared/schemas.js';
-import {INDEXER_REGISTRY, INDEXER_TYPES} from '../../../shared/indexer-registry.js';
+import {INDEXER_REGISTRY, INDEXER_TYPES, coerceSearchType} from '../../../shared/indexer-registry.js';
 
 const IMPLEMENTED_TYPES = Object.keys(INDEXER_REGISTRY);
 
@@ -41,6 +41,10 @@ function settingsFromIndexer(indexer: Indexer): CreateIndexerFormData['settings'
   const result: Record<string, unknown> = { ...defaults };
   for (const [key, val] of Object.entries(indexer.settings)) {
     if (val != null) result[key] = val;
+  }
+  // Form schema's searchType is a string enum; legacy persisted MAM values may be numeric (0..3).
+  if (indexer.type === 'myanonamouse' && result.searchType !== undefined) {
+    result.searchType = coerceSearchType(result.searchType);
   }
   return result as CreateIndexerFormData['settings'];
 }

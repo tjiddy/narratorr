@@ -1134,5 +1134,35 @@ describe('IndexerCard — Prowlarr-managed indicators (AC8)', () => {
       expect(payloadSettings).toHaveProperty('apiUrl', 'https://torznab.example.com/api');
       expect(payloadSettings).toHaveProperty('apiKey', 'tk');
     });
+
+    it('coerces legacy numeric MAM searchType to its string equivalent for the form enum', async () => {
+      const onFormTest = vi.fn();
+      const user = userEvent.setup();
+      const mamIndexer: Indexer = createMockIndexer({
+        id: 102,
+        name: 'MAM Legacy SearchType',
+        type: 'myanonamouse',
+        // Legacy persisted value: 1 → 'active'. Form schema rejects numeric searchType.
+        settings: { mamId: 'm', baseUrl: '', searchLanguages: [1], searchType: 1 as unknown as string },
+      });
+
+      renderWithProviders(
+        <IndexerCard
+          indexer={mamIndexer}
+          mode="edit"
+          onSubmit={vi.fn()}
+          onFormTest={onFormTest}
+        />,
+      );
+
+      await user.click(screen.getByText('Test'));
+
+      await waitFor(() => {
+        expect(onFormTest).toHaveBeenCalled();
+      });
+
+      const payloadSettings = onFormTest.mock.calls[0][0].settings as Record<string, unknown>;
+      expect(payloadSettings.searchType).toBe('active');
+    });
   });
 });
