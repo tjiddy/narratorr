@@ -156,6 +156,18 @@ describe('HardcoverProvider', () => {
       vi.unstubAllGlobals();
     });
 
+    it('maps AbortSignal.timeout DOMException to "Connection failed: Request timed out"', async () => {
+      vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new DOMException('aborted', 'TimeoutError')));
+
+      const provider = new HardcoverProvider({ apiKey: 'test-key', listType: 'trending' });
+      const result = await provider.test();
+
+      expect(result.success).toBe(false);
+      expect(result.message).toBe('Connection failed: Request timed out');
+
+      vi.unstubAllGlobals();
+    });
+
     it('returns failure for 2xx with GraphQL errors instead of data', async () => {
       server.use(
         http.post(GQL_URL, () => HttpResponse.json({
@@ -211,6 +223,17 @@ describe('HardcoverProvider', () => {
       const result = await provider.test();
       expect(result.success).toBe(false);
       expect(result.message).toMatch(/validation failed/i);
+    });
+  });
+
+  describe('timeout helper', () => {
+    it('fetchItems propagates "Request timed out" when fetch aborts via AbortSignal.timeout', async () => {
+      vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new DOMException('aborted', 'TimeoutError')));
+
+      const provider = new HardcoverProvider({ apiKey: 'test-key', listType: 'trending' });
+      await expect(provider.fetchItems()).rejects.toThrow('Request timed out');
+
+      vi.unstubAllGlobals();
     });
   });
 

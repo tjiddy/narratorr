@@ -2,6 +2,8 @@ import { z } from 'zod';
 import type { ImportListProvider, ImportListItem } from './types.js';
 import { ImportListError } from './errors.js';
 import { getErrorMessage } from '../../shared/error-message.js';
+import { fetchWithTimeout } from '../utils/network-service.js';
+import { IMPORT_LIST_TIMEOUT_MS } from '../utils/constants.js';
 
 export interface NytConfig {
   apiKey: string;
@@ -35,7 +37,7 @@ export class NytProvider implements ImportListProvider {
 
   async fetchItems(): Promise<ImportListItem[]> {
     const url = `https://api.nytimes.com/svc/books/v3/lists/current/${this.list}.json?api-key=${this.apiKey}`;
-    const res = await fetch(url);
+    const res = await fetchWithTimeout(url, {}, IMPORT_LIST_TIMEOUT_MS);
 
     if (res.status === 429) {
       throw new ImportListError(this.name, 'NYT API rate limit exceeded');
@@ -71,7 +73,7 @@ export class NytProvider implements ImportListProvider {
   async test(): Promise<{ success: boolean; message?: string }> {
     try {
       const url = `https://api.nytimes.com/svc/books/v3/lists/current/${this.list}.json?api-key=${this.apiKey}`;
-      const res = await fetch(url);
+      const res = await fetchWithTimeout(url, {}, IMPORT_LIST_TIMEOUT_MS);
 
       if (res.status === 401 || res.status === 403) {
         return { success: false, message: 'Invalid API key' };

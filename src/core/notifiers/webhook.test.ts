@@ -165,6 +165,34 @@ describe('WebhookNotifier', () => {
     expect(result.message).toContain('500');
   });
 
+  it('preserves the exact "HTTP <status>: <statusText>" non-2xx message shape', async () => {
+    server.use(
+      http.post('https://example.com/hook', () =>
+        new HttpResponse(null, { status: 503, statusText: 'Service Unavailable' })),
+    );
+
+    const notifier = new WebhookNotifier({ url: 'https://example.com/hook' });
+    const result = await notifier.send('on_grab', { event: 'on_grab' });
+
+    expect(result.success).toBe(false);
+    expect(result.message).toBe('HTTP 503: Service Unavailable');
+  });
+
+  it('returns timeout error on slow response', async () => {
+    server.use(
+      http.post('https://example.com/hook', async () => {
+        await new Promise((r) => setTimeout(r, 15_000));
+        return HttpResponse.json({ ok: true });
+      }),
+    );
+
+    const notifier = new WebhookNotifier({ url: 'https://example.com/hook' });
+    const result = await notifier.send('on_grab', { event: 'on_grab' });
+
+    expect(result.success).toBe(false);
+    expect(result.message).toBe('Request timed out');
+  }, 15_000);
+
   it('test() sends a test notification', async () => {
     let capturedBody: unknown;
 

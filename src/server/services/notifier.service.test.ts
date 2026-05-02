@@ -158,7 +158,7 @@ describe('NotifierService', () => {
 
       expect(log.warn).toHaveBeenCalledWith(
         expect.objectContaining({ notifier: 'Test Webhook' }),
-        'Notification error',
+        'Notification failed',
       );
 
       fetchSpy.mockRestore();
@@ -230,15 +230,15 @@ describe('NotifierService', () => {
       expect(log.warn).toHaveBeenCalledTimes(3);
       expect(log.warn).toHaveBeenCalledWith(
         expect.objectContaining({ notifier: 'Webhook 1' }),
-        'Notification error',
+        'Notification failed',
       );
       expect(log.warn).toHaveBeenCalledWith(
         expect.objectContaining({ notifier: 'Webhook 2' }),
-        'Notification error',
+        'Notification failed',
       );
       expect(log.warn).toHaveBeenCalledWith(
         expect.objectContaining({ notifier: 'Webhook 3' }),
-        'Notification error',
+        'Notification failed',
       );
       fetchSpy.mockRestore();
     });
