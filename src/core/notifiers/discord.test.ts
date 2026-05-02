@@ -129,6 +129,33 @@ describe('DiscordNotifier', () => {
     expect(result.message).toContain('401');
   });
 
+  it('preserves the exact "Discord error <status>: <body>" non-2xx message shape', async () => {
+    server.use(
+      http.post(WEBHOOK_URL, () => HttpResponse.text('rate limited', { status: 429 })),
+    );
+
+    const notifier = new DiscordNotifier({ webhookUrl: WEBHOOK_URL });
+    const result = await notifier.send('on_grab', { event: 'on_grab' });
+
+    expect(result.success).toBe(false);
+    expect(result.message).toBe('Discord error 429: rate limited');
+  });
+
+  it('returns timeout error on slow response', async () => {
+    server.use(
+      http.post(WEBHOOK_URL, async () => {
+        await new Promise((r) => setTimeout(r, 15_000));
+        return new HttpResponse(null, { status: 204 });
+      }),
+    );
+
+    const notifier = new DiscordNotifier({ webhookUrl: WEBHOOK_URL });
+    const result = await notifier.send('on_grab', { event: 'on_grab' });
+
+    expect(result.success).toBe(false);
+    expect(result.message).toBe('Request timed out');
+  }, 15_000);
+
   it('sends embed for on_upgrade with quality fields', async () => {
     let capturedBody: unknown;
 

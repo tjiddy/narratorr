@@ -136,6 +136,29 @@ describe('AbsProvider', () => {
 
       vi.unstubAllGlobals();
     });
+
+    it('maps AbortSignal.timeout DOMException to "Connection failed: Request timed out"', async () => {
+      vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new DOMException('aborted', 'TimeoutError')));
+
+      const provider = new AbsProvider({ serverUrl: ABS_BASE, apiKey: 'test-key', libraryId: 'lib-1' });
+      const result = await provider.test();
+
+      expect(result.success).toBe(false);
+      expect(result.message).toBe('Connection failed: Request timed out');
+
+      vi.unstubAllGlobals();
+    });
+  });
+
+  describe('timeout helper', () => {
+    it('fetchItems propagates "Request timed out" when fetch aborts via AbortSignal.timeout', async () => {
+      vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new DOMException('aborted', 'TimeoutError')));
+
+      const provider = new AbsProvider({ serverUrl: ABS_BASE, apiKey: 'test-key', libraryId: 'lib-1' });
+      await expect(provider.fetchItems()).rejects.toThrow('Request timed out');
+
+      vi.unstubAllGlobals();
+    });
   });
 
   describe('schema validation', () => {
