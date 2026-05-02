@@ -887,6 +887,29 @@ describe('downloadRemoteCover', () => {
 
       expect(dispatcherCloseSpy).toHaveBeenCalledTimes(1);
     });
+
+    it('closes the dispatcher when readBodyWithCap throws on oversized body', async () => {
+      const fakeReader = {
+        read: vi.fn()
+          .mockResolvedValueOnce({ done: false, value: new Uint8Array(MAX_COVER_SIZE + 1) })
+          .mockResolvedValue({ done: true, value: undefined }),
+        cancel: vi.fn().mockResolvedValue(undefined),
+      };
+      const fakeBody = { getReader: () => fakeReader };
+      const response = new Response('placeholder', {
+        status: 200,
+        headers: { 'content-type': 'image/jpeg' },
+      });
+      Object.defineProperty(response, 'body', { configurable: true, get: () => fakeBody });
+      mockFetch.mockResolvedValue(response);
+
+      await downloadRemoteCover(
+        1, '/books/test', 'https://cdn.example.com/cover.jpg',
+        inject<Db>(mockDb), log,
+      );
+
+      expect(dispatcherCloseSpy).toHaveBeenCalledTimes(1);
+    });
   });
 });
 
