@@ -14,7 +14,7 @@ import {
   indexerTypeSchema,
   type CreateIndexerFormData,
 } from '../../../shared/schemas.js';
-import {INDEXER_REGISTRY, coerceSearchType, INDEXER_TYPES} from '../../../shared/indexer-registry.js';
+import {INDEXER_REGISTRY, INDEXER_TYPES} from '../../../shared/indexer-registry.js';
 
 const IMPLEMENTED_TYPES = Object.keys(INDEXER_REGISTRY);
 
@@ -36,22 +36,13 @@ interface IndexerCardProps {
 }
 
 function settingsFromIndexer(indexer: Indexer): CreateIndexerFormData['settings'] {
-  const s = indexer.settings as Record<string, unknown>;
-  return {
-    hostname: (s.hostname as string) || '',
-    pageLimit: (s.pageLimit as number) || 2,
-    apiUrl: (s.apiUrl as string) || '',
-    apiKey: (s.apiKey as string) || '',
-    flareSolverrUrl: (s.flareSolverrUrl as string) || '',
-    mamId: (s.mamId as string) || '',
-    baseUrl: (s.baseUrl as string) || '',
-    useProxy: (s.useProxy as boolean) || false,
-    searchLanguages: (s.searchLanguages as number[]) ?? [1],
-    searchType: coerceSearchType(s.searchType),
-    isVip: s.isVip as boolean | undefined,
-    mamUsername: (s.mamUsername as string) || undefined,
-    classname: (s.classname as string) || undefined,
-  };
+  const meta = INDEXER_REGISTRY[indexer.type];
+  const defaults = meta?.defaultSettings ?? {};
+  const result: Record<string, unknown> = { ...defaults };
+  for (const [key, val] of Object.entries(indexer.settings)) {
+    if (val != null) result[key] = val;
+  }
+  return result as CreateIndexerFormData['settings'];
 }
 
 const defaultValues: CreateIndexerFormData = {
