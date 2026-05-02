@@ -248,7 +248,7 @@ describe('startJobs', () => {
     );
   });
 
-  // F3 (#797 review) — job-path retryDeps must reuse the createServices() instances.
+  // job-path retryDeps must reuse the createServices() instances.
   it('monitor callback retryDeps reuses services.retrySearchDeps and services.blacklist (single-instance contract)', async () => {
     const { monitorDownloads } = await import('./monitor.js');
     const { startJobs } = await import('./index.js');
