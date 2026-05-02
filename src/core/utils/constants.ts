@@ -10,6 +10,9 @@ export const PROXY_TIMEOUT_MS = 60_000;
 /** Request timeout for notifier adapters (ms). */
 export const NOTIFIER_TIMEOUT_MS = 10_000;
 
+/** Request timeout for import-list provider adapters (ms). */
+export const IMPORT_LIST_TIMEOUT_MS = 30_000;
+
 /** Request timeout for Audible metadata API (ms). */
 export const AUDIBLE_TIMEOUT_MS = 10_000;
 

@@ -4,6 +4,7 @@ import {
   INDEXER_TIMEOUT_MS,
   PROXY_TIMEOUT_MS,
   NOTIFIER_TIMEOUT_MS,
+  IMPORT_LIST_TIMEOUT_MS,
   AUDIBLE_TIMEOUT_MS,
   AUDNEXUS_TIMEOUT_MS,
   HTTP_DOWNLOAD_TIMEOUT_MS,
@@ -24,6 +25,10 @@ describe('timeout constants', () => {
 
   it('NOTIFIER_TIMEOUT_MS is 10_000 (10s)', () => {
     expect(NOTIFIER_TIMEOUT_MS).toBe(10_000);
+  });
+
+  it('IMPORT_LIST_TIMEOUT_MS is 30_000 (30s)', () => {
+    expect(IMPORT_LIST_TIMEOUT_MS).toBe(30_000);
   });
 
   it('AUDIBLE_TIMEOUT_MS is 10_000 (10s)', () => {

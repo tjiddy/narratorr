@@ -2,6 +2,8 @@ import { z } from 'zod';
 import type { ImportListProvider, ImportListItem } from './types.js';
 import { ImportListError } from './errors.js';
 import { getErrorMessage } from '../../shared/error-message.js';
+import { fetchWithTimeout } from '../utils/network-service.js';
+import { IMPORT_LIST_TIMEOUT_MS } from '../utils/constants.js';
 
 export interface HardcoverConfig {
   apiKey: string;
@@ -119,14 +121,14 @@ export class HardcoverProvider implements ImportListProvider {
     const query = useShelf ? SHELF_QUERY : TRENDING_QUERY;
     const variables = useShelf ? { shelfId: this.shelfId } : undefined;
 
-    const res = await fetch(GRAPHQL_URL, {
+    const res = await fetchWithTimeout(GRAPHQL_URL, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
         Authorization: `Bearer ${this.apiKey}`,
       },
       body: JSON.stringify(variables ? { query, variables } : { query }),
-    });
+    }, IMPORT_LIST_TIMEOUT_MS);
 
     if (!res.ok) {
       throw new ImportListError(this.name, `Hardcover API returned ${res.status}: ${res.statusText}`);
@@ -146,14 +148,14 @@ export class HardcoverProvider implements ImportListProvider {
 
   async test(): Promise<{ success: boolean; message?: string }> {
     try {
-      const res = await fetch(GRAPHQL_URL, {
+      const res = await fetchWithTimeout(GRAPHQL_URL, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
           Authorization: `Bearer ${this.apiKey}`,
         },
         body: JSON.stringify({ query: '{ __typename }' }),
-      });
+      }, IMPORT_LIST_TIMEOUT_MS);
 
       if (res.status === 401 || res.status === 403) {
         return { success: false, message: 'Invalid API key' };
