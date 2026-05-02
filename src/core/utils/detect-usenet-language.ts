@@ -67,11 +67,23 @@ export function parseNzbFileSubject(xml: string): string | undefined {
 
 /**
  * Title-level language tokens for NZB release names.
- * Patterns match common representations including mangled umlauts (? replacing ö/ü).
+ *
+ * Umlaut/accent handling: real-world NZBs exhibit three character-mangling forms
+ * for the same source word. Patterns must accept all three:
+ *   1. Proper UTF-8:           Ungekürzt, Hörbuch
+ *   2. ASCII digraph fallback: Ungekuerzt (German "ue" rule)
+ *   3. Naked-drop:             Ungekrzt   (some indexers strip non-ASCII bytes during NZB generation)
+ *
+ * Pattern shape `[üu]?(?:e?)` accepts ü or u or nothing, then optionally e — covers all three.
+ *
+ * Older patterns use `[öo?]` / `[üu?]` (with literal `?`) — that's the mojibake-placeholder form
+ * from a different mangling era. Don't unify; the two shapes target different mangling sources.
  */
 const NZB_NAME_LANGUAGE_PATTERNS: Array<{ pattern: RegExp; language: string }> = [
   { pattern: /h[öo?]rb[üu?]cher/i, language: 'german' },
   { pattern: /h[öo?]rbuch/i, language: 'german' },
+  { pattern: /ungek[üu]?(?:e?)rzt/i, language: 'german' },  // Ungekürzt / Ungekuerzt / Ungekrzt
+  { pattern: /gek[üu]?(?:e?)rzt/i, language: 'german' },    // Gekürzt / Gekuerzt / Gekrzt
   { pattern: /luisterboek/i, language: 'dutch' },
 ];
 

@@ -246,6 +246,24 @@ describe('detectLanguageFromNzbName', () => {
     expect(detectLanguageFromNzbName('Sammlung Horbucher 2024')).toBe('german');
   });
 
+  it('detects ungekürzt (proper UTF-8) as german', () => {
+    expect(detectLanguageFromNzbName('Stephen King — Fairy Tale (Ungekürzt)')).toBe('german');
+  });
+
+  it('detects ungekuerzt (German "ue" digraph fallback) as german', () => {
+    expect(detectLanguageFromNzbName('Stephen King — Fairy Tale (Ungekuerzt)')).toBe('german');
+  });
+
+  it('detects ungekrzt (naked-drop, NZBgeek-stripped form) as german — Fairy Tale UAT case', () => {
+    expect(detectLanguageFromNzbName('Stephen.King-Fairy.Tale.(Ungekrzt)')).toBe('german');
+  });
+
+  it('detects gekürzt and its mangled forms as german', () => {
+    expect(detectLanguageFromNzbName('Some Title (Gekürzt)')).toBe('german');
+    expect(detectLanguageFromNzbName('Some Title (Gekuerzt)')).toBe('german');
+    expect(detectLanguageFromNzbName('Some Title (Gekrzt)')).toBe('german');
+  });
+
   it('detects luisterboek as dutch', () => {
     expect(detectLanguageFromNzbName('Boek Luisterboek NL.rar')).toBe('dutch');
   });
