@@ -48,14 +48,119 @@ export interface SearchFilterOptions {
 }
 
 /**
+ * Per-gate verdict: `keep: true` passes the result through, `keep: false`
+ * drops it and contributes `logFields` to the per-drop debug log payload.
+ */
+type GateVerdict = { keep: true } | { keep: false; logFields?: Record<string, unknown> };
+
+/**
+ * A single quality-filter gate. `enabled: false` short-circuits — the gate's
+ * evaluator is never called, so disabled gates pay nothing per result and
+ * cannot accidentally log under their `reason`. Each gate's evaluator is a
+ * closure that captures only its own per-gate values (e.g., `maxBytes` for
+ * over-max-size, the per-result `mbPerHour` for grab-floor) so disabled-gate
+ * inputs cannot leak into other gates' log payloads.
+ */
+type Gate = {
+  reason: string;
+  enabled: boolean;
+  evaluate: (r: SearchResult) => GateVerdict;
+};
+
+// Ebook-only format detection: exclude results that contain ebook keywords
+// (AZW3, EPUB, PDF, MOBI) but no audio keywords (M4B, MP3, FLAC, AAC, OGG).
+// Mixed-format results are kept. Use lookahead/lookbehind instead of \b because
+// JS treats _ as a word char, which would miss scene-style titles like "Dune_EPUB".
+const EBOOK_FORMAT_RE = /(?<![a-zA-Z\d])(azw3|epub|pdf|mobi)(?![a-zA-Z\d])/i;
+const AUDIO_FORMAT_RE = /(?<![a-zA-Z\d])(m4b|mp3|flac|aac|ogg)(?![a-zA-Z\d])/i;
+
+function buildQualityGates(
+  bookDuration: number | undefined,
+  durationUnknown: boolean,
+  options: SearchFilterOptions,
+): Gate[] {
+  const { grabFloor, minSeeders, rejectWords, requiredWords, maxDownloadSize } = options;
+  const rejectList = parseWordList(rejectWords);
+  const requiredList = parseWordList(requiredWords);
+  const maxBytes = maxDownloadSize && maxDownloadSize > 0 ? maxDownloadSize * BYTES_PER_GB : 0;
+
+  return [
+    {
+      reason: 'reject-word-match',
+      enabled: rejectList.length > 0,
+      evaluate: (r) => {
+        const sourceTitle = (r.nzbName || r.rawTitle || r.title).toLowerCase();
+        const matched = rejectList.find((word) => sourceTitle.includes(word));
+        return matched ? { keep: false, logFields: { matchedWord: matched } } : { keep: true };
+      },
+    },
+    {
+      reason: 'required-word-missing',
+      enabled: requiredList.length > 0,
+      evaluate: (r) => {
+        const sourceTitle = (r.nzbName || r.rawTitle || r.title).toLowerCase();
+        return requiredList.some((word) => sourceTitle.includes(word)) ? { keep: true } : { keep: false };
+      },
+    },
+    {
+      reason: 'ebook-only-format',
+      enabled: true,
+      evaluate: (r) => {
+        const sourceTitle = r.nzbName || r.rawTitle || r.title;
+        if (!EBOOK_FORMAT_RE.test(sourceTitle)) return { keep: true };
+        // Check all available title fields for audio keywords — ebook and audio markers
+        // may be split across fields (e.g., nzbName=EPUB, rawTitle=MP3).
+        if ([r.nzbName, r.rawTitle, r.title].some((t) => t && AUDIO_FORMAT_RE.test(t))) return { keep: true };
+        return { keep: false };
+      },
+    },
+    {
+      reason: 'below-min-seeders',
+      enabled: minSeeders > 0,
+      evaluate: (r) => {
+        if (r.protocol !== 'torrent') return { keep: true };
+        if (r.seeders === undefined || r.seeders === null) return { keep: true }; // Unknown ≠ zero
+        if (r.seeders >= minSeeders) return { keep: true };
+        return { keep: false, logFields: { seeders: r.seeders, minSeeders } };
+      },
+    },
+    {
+      reason: 'below-grab-floor',
+      enabled: !durationUnknown && grabFloor > 0,
+      evaluate: (r) => {
+        if (!r.size || r.size <= 0) return { keep: true };
+        const quality = calculateQuality(r.size, bookDuration!);
+        if (!quality) return { keep: true };
+        if (quality.mbPerHour >= grabFloor) return { keep: true };
+        return { keep: false, logFields: { mbPerHour: quality.mbPerHour, grabFloor } };
+      },
+    },
+    {
+      reason: 'over-max-size',
+      enabled: maxBytes > 0,
+      evaluate: (r) => {
+        if (!r.size || r.size <= 0) return { keep: true };
+        if (r.size <= maxBytes) return { keep: true };
+        return { keep: false, logFields: { sizeBytes: r.size, maxBytes } };
+      },
+    },
+  ];
+}
+
+/**
  * Apply quality filtering and canonical ranking to search results.
  * Filters by word lists, MB/hr grab floor, and min seeders, then sorts by
  * canonical order: matchScore gate → narrator match → MB/hr → protocol preference → language → indexer priority → grabs → seeders.
  *
+ * Quality gates run sequentially (gate N sees the output of gate N-1) in
+ * canonical order: reject-word → required-word → ebook-only → min-seeders →
+ * grab-floor → max-size. Language partitioning runs after the gate array
+ * because it emits two log branches (mismatch dropped + undetermined passed)
+ * that don't fit the keep/drop shape.
+ *
  * When `log` is provided, emits a debug log per dropped result at each gate
- * (reject-word, required-word, ebook-only, min-seeders, grab-floor, max-size,
- * language-mismatch). The "language-undetermined passed" line is critical for
- * diagnosing results that survive solely because we couldn't detect a language.
+ * and the critical "language-undetermined passed" line for results that
+ * survive solely because we couldn't detect a language.
  */
 export function filterAndRankResults(
   results: SearchResult[],
@@ -63,82 +168,17 @@ export function filterAndRankResults(
   options: SearchFilterOptions,
   log?: FastifyBaseLogger,
 ): { results: SearchResult[]; durationUnknown: boolean } {
-  const { grabFloor, minSeeders, protocolPreference, rejectWords, requiredWords, languages, narratorPriority, maxDownloadSize } = options;
+  const { protocolPreference, languages, narratorPriority } = options;
   const durationUnknown = !bookDuration || bookDuration <= 0;
 
+  const gates = buildQualityGates(bookDuration, durationUnknown, options);
   let filtered = results;
-
-  // Apply reject word filtering (before ranking)
-  const rejectList = parseWordList(rejectWords);
-  if (rejectList.length > 0) {
+  for (const gate of gates) {
+    if (!gate.enabled) continue;
     filtered = filtered.filter((r) => {
-      const sourceTitle = (r.nzbName || r.rawTitle || r.title).toLowerCase();
-      const matched = rejectList.find((word) => sourceTitle.includes(word));
-      if (matched) {
-        log?.debug({ title: r.title, dropped: true, reason: 'reject-word-match', matchedWord: matched }, 'Quality filter dropped result');
-        return false;
-      }
-      return true;
-    });
-  }
-
-  // Apply required word filtering (before ranking)
-  const requiredList = parseWordList(requiredWords);
-  if (requiredList.length > 0) {
-    filtered = filtered.filter((r) => {
-      const sourceTitle = (r.nzbName || r.rawTitle || r.title).toLowerCase();
-      if (requiredList.some((word) => sourceTitle.includes(word))) return true;
-      log?.debug({ title: r.title, dropped: true, reason: 'required-word-missing' }, 'Quality filter dropped result');
-      return false;
-    });
-  }
-
-  // Ebook-only format filter: exclude results that contain ebook keywords (AZW3, EPUB, PDF, MOBI)
-  // but no audio keywords (M4B, MP3, FLAC, AAC, OGG). Mixed-format results are kept.
-  // Use lookahead/lookbehind instead of \b because JS treats _ as a word char,
-  // which would miss scene-style titles like "Dune_EPUB".
-  const EBOOK_FORMAT_RE = /(?<![a-zA-Z\d])(azw3|epub|pdf|mobi)(?![a-zA-Z\d])/i;
-  const AUDIO_FORMAT_RE = /(?<![a-zA-Z\d])(m4b|mp3|flac|aac|ogg)(?![a-zA-Z\d])/i;
-  filtered = filtered.filter((r) => {
-    const sourceTitle = r.nzbName || r.rawTitle || r.title;
-    if (!EBOOK_FORMAT_RE.test(sourceTitle)) return true;
-    // Check all available title fields for audio keywords — ebook and audio markers
-    // may be split across fields (e.g., nzbName=EPUB, rawTitle=MP3).
-    if ([r.nzbName, r.rawTitle, r.title].some((t) => t && AUDIO_FORMAT_RE.test(t))) return true;
-    log?.debug({ title: r.title, dropped: true, reason: 'ebook-only-format' }, 'Quality filter dropped result');
-    return false;
-  });
-
-  // Apply min seeders filter (torrent only)
-  if (minSeeders > 0) {
-    filtered = filtered.filter((r) => {
-      if (r.protocol !== 'torrent') return true;
-      if (r.seeders === undefined || r.seeders === null) return true; // Unknown ≠ zero
-      if (r.seeders >= minSeeders) return true;
-      log?.debug({ title: r.title, seeders: r.seeders, minSeeders, dropped: true, reason: 'below-min-seeders' }, 'Quality filter dropped result');
-      return false;
-    });
-  }
-
-  // Apply grab floor filter (only when duration is known)
-  if (!durationUnknown && grabFloor > 0) {
-    filtered = filtered.filter((r) => {
-      if (!r.size || r.size <= 0) return true; // can't calculate, pass through
-      const quality = calculateQuality(r.size, bookDuration!);
-      if (!quality) return true; // can't calculate, pass through
-      if (quality.mbPerHour >= grabFloor) return true;
-      log?.debug({ title: r.title, mbPerHour: quality.mbPerHour, grabFloor, dropped: true, reason: 'below-grab-floor' }, 'Quality filter dropped result');
-      return false;
-    });
-  }
-
-  // Apply max download size filter (protocol-agnostic, duration-independent)
-  if (maxDownloadSize && maxDownloadSize > 0) {
-    const maxBytes = maxDownloadSize * BYTES_PER_GB;
-    filtered = filtered.filter((r) => {
-      if (!r.size || r.size <= 0) return true; // unknown size → pass through
-      if (r.size <= maxBytes) return true;
-      log?.debug({ title: r.title, sizeBytes: r.size, maxBytes, dropped: true, reason: 'over-max-size' }, 'Quality filter dropped result');
+      const verdict = gate.evaluate(r);
+      if (verdict.keep) return true;
+      log?.debug({ title: r.title, ...verdict.logFields, dropped: true, reason: gate.reason }, 'Quality filter dropped result');
       return false;
     });
   }

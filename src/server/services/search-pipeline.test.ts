@@ -850,6 +850,211 @@ describe('filterAndRankResults — language filtering', () => {
 });
 
 // ============================================================================
+// #945 — gate-array refactor: order, short-circuit, closure-scoped variables
+// ============================================================================
+
+describe('filterAndRankResults — gate ordering (#945)', () => {
+  it('result failing reject-word AND min-seeders is logged only under reject-word (earlier gate wins)', () => {
+    const log = createMockLogger();
+    // Result has the reject word AND too few seeders; reject-word runs first
+    // and removes it before min-seeders sees it.
+    filterAndRankResults(
+      [makeResult({ title: 'BANNED Book', protocol: 'torrent', seeders: 0 })],
+      undefined,
+      { grabFloor: 0, minSeeders: 5, protocolPreference: 'none', rejectWords: 'banned' },
+      log,
+    );
+    const debugCalls = vi.mocked(log.debug).mock.calls;
+    const rejectCalls = debugCalls.filter(c => (c[0] as Record<string, unknown>)?.reason === 'reject-word-match');
+    const seederCalls = debugCalls.filter(c => (c[0] as Record<string, unknown>)?.reason === 'below-min-seeders');
+    expect(rejectCalls).toHaveLength(1);
+    expect(seederCalls).toHaveLength(0);
+  });
+
+  it('preserves canonical gate order: reject-word → required-word → ebook-only → min-seeders → grab-floor → max-size', () => {
+    // Each result is uniquely-failable by one earlier gate AND a later gate;
+    // assert each is logged only by the earlier gate.
+    const log = createMockLogger();
+    const rejectAndRequired = makeResult({ title: 'BANNED extra', protocol: 'torrent', seeders: 10 });
+    const requiredAndEbook = makeResult({ title: 'Plain EPUB only', protocol: 'torrent', seeders: 10 });
+    const ebookAndSeeders = makeResult({ title: 'audiobook EPUB only', protocol: 'torrent', seeders: 0 });
+    filterAndRankResults(
+      [rejectAndRequired, requiredAndEbook, ebookAndSeeders],
+      undefined,
+      { grabFloor: 0, minSeeders: 5, protocolPreference: 'none', rejectWords: 'banned', requiredWords: 'audiobook' },
+      log,
+    );
+    const calls = vi.mocked(log.debug).mock.calls;
+    const reasonsByTitle = new Map<string, string[]>();
+    for (const [arg] of calls) {
+      const payload = arg as Record<string, unknown>;
+      const t = payload.title as string;
+      const reasons = reasonsByTitle.get(t) ?? [];
+      reasons.push(payload.reason as string);
+      reasonsByTitle.set(t, reasons);
+    }
+    expect(reasonsByTitle.get('BANNED extra')).toEqual(['reject-word-match']);
+    expect(reasonsByTitle.get('Plain EPUB only')).toEqual(['required-word-missing']);
+    expect(reasonsByTitle.get('audiobook EPUB only')).toEqual(['ebook-only-format']);
+  });
+});
+
+describe('filterAndRankResults — disabled-gate short-circuit (#945)', () => {
+  it('reject-word gate does not fire when rejectWords is empty', () => {
+    const log = createMockLogger();
+    filterAndRankResults(
+      [makeResult({ title: 'Anything goes' })],
+      undefined,
+      { grabFloor: 0, minSeeders: 0, protocolPreference: 'none', rejectWords: '' },
+      log,
+    );
+    expect(log.debug).not.toHaveBeenCalledWith(
+      expect.objectContaining({ reason: 'reject-word-match' }),
+      expect.any(String),
+    );
+  });
+
+  it('reject-word gate does not fire when rejectWords is undefined', () => {
+    const log = createMockLogger();
+    filterAndRankResults(
+      [makeResult({ title: 'Anything goes' })],
+      undefined,
+      { grabFloor: 0, minSeeders: 0, protocolPreference: 'none', rejectWords: undefined },
+      log,
+    );
+    expect(log.debug).not.toHaveBeenCalledWith(
+      expect.objectContaining({ reason: 'reject-word-match' }),
+      expect.any(String),
+    );
+  });
+
+  it('required-word gate does not fire when requiredWords is empty', () => {
+    const log = createMockLogger();
+    // No required words means everything passes — even a result that would
+    // otherwise be missing the required term.
+    const { results } = filterAndRankResults(
+      [makeResult({ title: 'Plain title' })],
+      undefined,
+      { grabFloor: 0, minSeeders: 0, protocolPreference: 'none', requiredWords: '' },
+      log,
+    );
+    expect(results).toHaveLength(1);
+    expect(log.debug).not.toHaveBeenCalledWith(
+      expect.objectContaining({ reason: 'required-word-missing' }),
+      expect.any(String),
+    );
+  });
+
+  it('max-size gate does not fire when maxDownloadSize is 0', () => {
+    const log = createMockLogger();
+    filterAndRankResults(
+      [makeResult({ size: 100 * GB })],
+      undefined,
+      { grabFloor: 0, minSeeders: 0, protocolPreference: 'none', maxDownloadSize: 0 },
+      log,
+    );
+    expect(log.debug).not.toHaveBeenCalledWith(
+      expect.objectContaining({ reason: 'over-max-size' }),
+      expect.any(String),
+    );
+  });
+
+  it('max-size gate does not fire when maxDownloadSize is undefined', () => {
+    const log = createMockLogger();
+    filterAndRankResults(
+      [makeResult({ size: 100 * GB })],
+      undefined,
+      { grabFloor: 0, minSeeders: 0, protocolPreference: 'none', maxDownloadSize: undefined },
+      log,
+    );
+    expect(log.debug).not.toHaveBeenCalledWith(
+      expect.objectContaining({ reason: 'over-max-size' }),
+      expect.any(String),
+    );
+  });
+
+  it('language gate does not fire when languages is empty', () => {
+    const log = createMockLogger();
+    filterAndRankResults(
+      [makeResult({ title: 'Mystery Book', language: undefined })],
+      undefined,
+      { grabFloor: 0, minSeeders: 0, protocolPreference: 'none', languages: [] },
+      log,
+    );
+    expect(log.debug).not.toHaveBeenCalledWith(
+      expect.objectContaining({ reason: 'language-mismatch' }),
+      expect.any(String),
+    );
+    expect(log.debug).not.toHaveBeenCalledWith(
+      expect.objectContaining({ reason: 'language-undetermined' }),
+      expect.any(String),
+    );
+  });
+});
+
+describe('filterAndRankResults — closure-scoped gate variables (#945)', () => {
+  it('grab-floor drop log carries the per-result mbPerHour, not a hoisted/shared value', () => {
+    const log = createMockLogger();
+    // Two results with different sizes both fail grab-floor — each must log
+    // its own mbPerHour, not a value mixed in from another gate's scope.
+    const small = makeResult({ title: 'Small', size: 50 * 1024 * 1024 });   // 50 MB → 50 MB/hr
+    const tiny = makeResult({ title: 'Tiny', size: 10 * 1024 * 1024 });     // 10 MB → 10 MB/hr
+    filterAndRankResults(
+      [small, tiny],
+      3600,
+      { grabFloor: 100, minSeeders: 0, protocolPreference: 'none' },
+      log,
+    );
+    expect(log.debug).toHaveBeenCalledWith(
+      expect.objectContaining({ title: 'Small', reason: 'below-grab-floor', mbPerHour: 50, grabFloor: 100 }),
+      'Quality filter dropped result',
+    );
+    expect(log.debug).toHaveBeenCalledWith(
+      expect.objectContaining({ title: 'Tiny', reason: 'below-grab-floor', mbPerHour: 10, grabFloor: 100 }),
+      'Quality filter dropped result',
+    );
+  });
+
+  it('max-size drop log carries the correctly-converted maxBytes (GB → bytes)', () => {
+    const log = createMockLogger();
+    filterAndRankResults(
+      [makeResult({ title: 'Huge', size: 10 * GB })],
+      undefined,
+      { grabFloor: 0, minSeeders: 0, protocolPreference: 'none', maxDownloadSize: 5 },
+      log,
+    );
+    expect(log.debug).toHaveBeenCalledWith(
+      expect.objectContaining({
+        title: 'Huge',
+        reason: 'over-max-size',
+        sizeBytes: 10 * GB,
+        maxBytes: 5 * GB,
+      }),
+      'Quality filter dropped result',
+    );
+  });
+
+  it('min-seeders drop log carries the per-result seeders count and the configured minSeeders', () => {
+    const log = createMockLogger();
+    filterAndRankResults(
+      [makeResult({ title: 'LowSeed', protocol: 'torrent', seeders: 1 })],
+      undefined,
+      { grabFloor: 0, minSeeders: 5, protocolPreference: 'none' },
+      log,
+    );
+    expect(log.debug).toHaveBeenCalledWith(
+      expect.objectContaining({
+        title: 'LowSeed',
+        reason: 'below-min-seeders',
+        seeders: 1,
+        minSeeders: 5,
+      }),
+      'Quality filter dropped result',
+    );
+  });
+});
+
+// ============================================================================
 // #392 — Search progress SSE emission via broadcaster
 // ============================================================================
 
