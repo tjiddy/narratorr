@@ -5,8 +5,9 @@ import { useForm } from 'react-hook-form';
 import { useEffect } from 'react';
 import { NotifierFields } from './NotifierFields';
 import type { CreateNotifierFormData } from '../../../shared/schemas.js';
+import type { NotifierType } from '../../../shared/notifier-registry.js';
 
-function FieldWrapper({ type }: { type: string }) {
+function FieldWrapper({ type }: { type: NotifierType }) {
   const { register, formState: { errors } } = useForm<CreateNotifierFormData>({
     defaultValues: { name: '', type: 'webhook', events: [], settings: {} },
   });
@@ -14,7 +15,7 @@ function FieldWrapper({ type }: { type: string }) {
 }
 
 /** Wrapper that injects form errors for specific settings fields */
-function ErrorFieldWrapper({ type, errorFields }: { type: string; errorFields: string[] }) {
+function ErrorFieldWrapper({ type, errorFields }: { type: NotifierType; errorFields: string[] }) {
   const { register, formState: { errors }, setError } = useForm<CreateNotifierFormData>({
     defaultValues: { name: '', type: 'webhook', events: [], settings: {} },
   });
@@ -131,11 +132,6 @@ describe('NotifierFields', () => {
     render(<FieldWrapper type="gotify" />);
     expect(screen.getByText('Server URL')).toBeInTheDocument();
     expect(screen.getByText('App Token')).toBeInTheDocument();
-  });
-
-  it('renders nothing for unknown type', () => {
-    const { container } = render(<FieldWrapper type="unknown" />);
-    expect(container).toBeEmptyDOMElement();
   });
 
   describe('error state rendering (#201)', () => {

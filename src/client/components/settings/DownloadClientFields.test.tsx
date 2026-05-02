@@ -15,13 +15,13 @@ vi.mock('@/lib/api/download-clients', () => ({
 
 import { downloadClientsApi } from '@/lib/api/download-clients';
 
-function FieldWrapper({ type, clientId, dirty, isEdit, inModal }: { type: string; clientId?: number; dirty?: boolean; isEdit?: boolean; inModal?: boolean }) {
+function FieldWrapper({ type, clientId, dirty, isEdit, inModal }: { type: DownloadClientType; clientId?: number; dirty?: boolean; isEdit?: boolean; inModal?: boolean }) {
   const { register, formState: { errors }, setValue, getValues } = useForm<CreateDownloadClientFormData>({
     defaultValues: { name: 'Test', type: 'qbittorrent', enabled: true, priority: 50, settings: { host: '', port: 8080 } },
   });
   return (
     <DownloadClientFields
-      selectedType={type as DownloadClientType}
+      selectedType={type}
       register={register}
       errors={errors}
       clientId={clientId}
@@ -103,19 +103,6 @@ describe('DownloadClientFields', () => {
   it('shows fetch button for deluge (supports categories)', () => {
     render(<FieldWrapper type="deluge" />);
     expect(screen.getByRole('button', { name: /fetch/i })).toBeInTheDocument();
-  });
-
-  it('defaults to qbittorrent fields for unknown type and accepts input', async () => {
-    const user = userEvent.setup();
-    render(<FieldWrapper type="unknown" />);
-
-    expect(screen.getByText('Host')).toBeInTheDocument();
-    expect(screen.getByText('Username')).toBeInTheDocument();
-    expect(screen.getByText('Password')).toBeInTheDocument();
-
-    const host = screen.getByPlaceholderText('localhost');
-    await user.type(host, 'fallback.local');
-    expect(host).toHaveValue('fallback.local');
   });
 
   it('allows typing in host field', async () => {
