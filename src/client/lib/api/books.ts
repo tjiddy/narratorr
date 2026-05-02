@@ -1,6 +1,6 @@
 import type { BookStatus, EnrichmentStatus } from '../../../shared/schemas.js';
 import type { BookMetadata, AuthorMetadata, MetadataSearchResults } from '../../../core/metadata/types.js';
-import { fetchApi, URL_BASE, ApiError } from './client.js';
+import { fetchApi, fetchMultipart } from './client.js';
 
 export type { BookMetadata, AuthorMetadata, MetadataSearchResults };
 
@@ -224,22 +224,9 @@ export const booksApi = {
     fetchApi<{ jobId: number }>(`/books/${id}/retry-import`, { method: 'POST' }),
   checkRetryImportAvailable: (id: number) =>
     fetchApi<{ available: boolean }>(`/books/${id}/retry-import`),
-  uploadBookCover: async (id: number, file: File): Promise<BookWithAuthor> => {
+  uploadBookCover: (id: number, file: File): Promise<BookWithAuthor> => {
     const formData = new FormData();
     formData.append('file', file);
-
-    const response = await fetch(`${URL_BASE}/api/books/${id}/cover`, {
-      method: 'POST',
-      body: formData,
-      credentials: 'include',
-      headers: { 'X-Requested-With': 'XMLHttpRequest' },
-    });
-
-    if (!response.ok) {
-      const error = await response.json().catch(() => ({ error: `HTTP ${response.status}` }));
-      throw new ApiError(response.status, error);
-    }
-
-    return response.json();
+    return fetchMultipart<BookWithAuthor>(`/books/${id}/cover`, formData);
   },
 };

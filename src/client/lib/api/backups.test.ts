@@ -3,6 +3,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 vi.mock('./client.js', () => ({
   URL_BASE: '',
   fetchApi: vi.fn(),
+  fetchMultipart: vi.fn(),
   ApiError: class ApiError extends Error {
     status: number;
     body: unknown;
@@ -15,11 +16,12 @@ vi.mock('./client.js', () => ({
 }));
 
 import { backupsApi } from './backups.js';
-import { ApiError } from './client.js';
+import { ApiError, fetchApi, fetchMultipart } from './client.js';
 
 describe('backupsApi', () => {
   beforeEach(() => {
-    vi.restoreAllMocks();
+    vi.mocked(fetchApi).mockReset();
+    vi.mocked(fetchMultipart).mockReset();
   });
 
   describe('getBackupDownloadUrl', () => {
@@ -36,26 +38,22 @@ describe('backupsApi', () => {
 
   describe('restoreBackupDirect', () => {
     it('calls fetchApi with encoded filename and POST method', async () => {
-      const { fetchApi } = await import('./client.js');
-      const mockFetchApi = vi.mocked(fetchApi);
-      mockFetchApi.mockResolvedValue({ valid: true, backupMigrationCount: 2, appMigrationCount: 3 });
+      vi.mocked(fetchApi).mockResolvedValue({ valid: true, backupMigrationCount: 2, appMigrationCount: 3 });
 
       await backupsApi.restoreBackupDirect('file with spaces.zip');
 
-      expect(mockFetchApi).toHaveBeenCalledWith(
+      expect(fetchApi).toHaveBeenCalledWith(
         '/system/backups/file%20with%20spaces.zip/restore',
         { method: 'POST' },
       );
     });
 
     it('encodes special characters in filename', async () => {
-      const { fetchApi } = await import('./client.js');
-      const mockFetchApi = vi.mocked(fetchApi);
-      mockFetchApi.mockResolvedValue({ valid: true, backupMigrationCount: 1, appMigrationCount: 1 });
+      vi.mocked(fetchApi).mockResolvedValue({ valid: true, backupMigrationCount: 1, appMigrationCount: 1 });
 
       await backupsApi.restoreBackupDirect('backup#1?v=2.zip');
 
-      expect(mockFetchApi).toHaveBeenCalledWith(
+      expect(fetchApi).toHaveBeenCalledWith(
         '/system/backups/backup%231%3Fv%3D2.zip/restore',
         { method: 'POST' },
       );
@@ -63,38 +61,22 @@ describe('backupsApi', () => {
   });
 
   describe('uploadRestore', () => {
-    let mockFetch: ReturnType<typeof vi.fn>;
-
-    beforeEach(() => {
-      mockFetch = vi.fn();
-      vi.stubGlobal('fetch', mockFetch);
-    });
-
-    it('sends FormData with credentials and X-Requested-With CSRF header', async () => {
+    it('calls fetchMultipart with /system/restore and FormData payload', async () => {
       const validationResult = { valid: true, details: {} };
-      mockFetch.mockResolvedValue({
-        ok: true,
-        json: () => Promise.resolve(validationResult),
-      });
+      vi.mocked(fetchMultipart).mockResolvedValue(validationResult);
 
       const file = new File(['data'], 'backup.zip', { type: 'application/zip' });
       await backupsApi.uploadRestore(file);
 
-      expect(mockFetch).toHaveBeenCalledOnce();
-      const [url, options] = mockFetch.mock.calls[0];
-      expect(url).toBe('/api/system/restore');
-      expect(options.method).toBe('POST');
-      expect(options.body).toBeInstanceOf(FormData);
-      expect(options.credentials).toBe('include');
-      expect(options.headers).toEqual({ 'X-Requested-With': 'XMLHttpRequest' });
+      expect(fetchMultipart).toHaveBeenCalledOnce();
+      const [path, body] = vi.mocked(fetchMultipart).mock.calls[0];
+      expect(path).toBe('/system/restore');
+      expect(body).toBeInstanceOf(FormData);
+      expect((body as FormData).get('file')).toBe(file);
     });
 
-    it('throws ApiError on non-ok response', async () => {
-      mockFetch.mockResolvedValue({
-        ok: false,
-        status: 400,
-        json: () => Promise.resolve({ error: 'Bad file' }),
-      });
+    it('throws ApiError when fetchMultipart rejects', async () => {
+      vi.mocked(fetchMultipart).mockRejectedValue(new ApiError(400, { error: 'Bad file' }));
 
       const file = new File(['bad'], 'bad.zip', { type: 'application/zip' });
       await expect(backupsApi.uploadRestore(file)).rejects.toThrow(ApiError);
@@ -106,15 +88,12 @@ describe('backupsApi', () => {
 
     it('returns parsed JSON on success', async () => {
       const validationResult = { valid: true, tables: ['books', 'authors'], rowCount: 42 };
-      mockFetch.mockResolvedValue({
-        ok: true,
-        json: () => Promise.resolve(validationResult),
-      });
+      vi.mocked(fetchMultipart).mockResolvedValue(validationResult);
 
       const file = new File(['data'], 'backup.zip', { type: 'application/zip' });
       const result = await backupsApi.uploadRestore(file);
 
-      expect(result).toEqual(validationResult);
+      expect(result).toBe(validationResult);
     });
   });
 });

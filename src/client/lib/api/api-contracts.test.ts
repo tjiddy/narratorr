@@ -8,9 +8,11 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 const mockFetchApi = vi.fn().mockResolvedValue({});
+const mockFetchMultipart = vi.fn().mockResolvedValue({});
 
 vi.mock('./client.js', () => ({
   fetchApi: (...args: unknown[]) => mockFetchApi(...args),
+  fetchMultipart: (...args: unknown[]) => mockFetchMultipart(...args),
   URL_BASE: '',
   ApiError: class ApiError extends Error {
     status: number;
@@ -43,6 +45,8 @@ import { systemApi } from './system.js';
 beforeEach(() => {
   mockFetchApi.mockClear();
   mockFetchApi.mockResolvedValue({});
+  mockFetchMultipart.mockClear();
+  mockFetchMultipart.mockResolvedValue({});
 });
 
 describe('activityApi', () => {
@@ -285,42 +289,25 @@ describe('booksApi', () => {
     expect(mockFetchApi).toHaveBeenCalledWith('/books/8/rename', expect.objectContaining({ method: 'POST' }));
   });
 
-  it('uploadBookCover → POST /api/books/:id/cover with FormData and credentials', async () => {
-    const mockResponse = { ok: true, json: () => Promise.resolve({ id: 7, coverUrl: '/api/books/7/cover' }) };
-    const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue(mockResponse as Response);
+  it('uploadBookCover → fetchMultipart(/books/:id/cover, FormData)', async () => {
+    mockFetchMultipart.mockResolvedValue({ id: 7, coverUrl: '/api/books/7/cover' });
 
     const file = new File(['img'], 'cover.jpg', { type: 'image/jpeg' });
     const result = await booksApi.uploadBookCover(7, file);
 
-    expect(fetchSpy).toHaveBeenCalledWith(
-      expect.stringContaining('/api/books/7/cover'),
-      expect.objectContaining({
-        method: 'POST',
-        credentials: 'include',
-      }),
-    );
-    // Verify FormData body (not JSON)
-    const callArgs = fetchSpy.mock.calls[0][1] as RequestInit;
-    expect(callArgs.body).toBeInstanceOf(FormData);
-    // Should set the X-Requested-With CSRF header but NOT Content-Type (browser sets the multipart boundary)
-    expect(callArgs.headers).toEqual({ 'X-Requested-With': 'XMLHttpRequest' });
+    expect(mockFetchMultipart).toHaveBeenCalledOnce();
+    const [path, body] = mockFetchMultipart.mock.calls[0];
+    expect(path).toBe('/books/7/cover');
+    expect(body).toBeInstanceOf(FormData);
+    expect((body as FormData).get('file')).toBe(file);
     expect(result).toEqual({ id: 7, coverUrl: '/api/books/7/cover' });
-
-    fetchSpy.mockRestore();
   });
 
-  it('uploadBookCover throws ApiError on non-OK response', async () => {
-    const mockResponse = {
-      ok: false,
-      status: 400,
-      json: () => Promise.resolve({ error: 'Only JPG, PNG, and WebP images are supported' }),
-    };
-    const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue(mockResponse as Response);
+  it('uploadBookCover surfaces errors thrown by fetchMultipart', async () => {
+    mockFetchMultipart.mockRejectedValue(new Error('Only JPG, PNG, and WebP images are supported'));
 
     const file = new File(['img'], 'cover.gif', { type: 'image/gif' });
     await expect(booksApi.uploadBookCover(1, file)).rejects.toThrow('Only JPG, PNG, and WebP images are supported');
-
-    fetchSpy.mockRestore();
   });
 
   it('mergeBookToM4b → POST /books/:id/merge-to-m4b', async () => {
