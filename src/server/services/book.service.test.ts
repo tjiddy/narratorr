@@ -847,7 +847,10 @@ describe('BookService', () => {
       expect((caught as PathOutsideLibraryError).code).toBe('PATH_OUTSIDE_LIBRARY');
       expect((caught as PathOutsideLibraryError).bookPath).toBe('/tmp/external');
       expect((caught as PathOutsideLibraryError).libraryRoot).toBe('/library');
-      expect(log.warn).toHaveBeenCalled();
+      expect(log.warn).toHaveBeenCalledWith(
+        expect.objectContaining({ bookPath: '/tmp/external', libraryRoot: '/library' }),
+        expect.stringContaining('outside library root'),
+      );
     });
   });
 
