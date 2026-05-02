@@ -10,6 +10,7 @@ import type { SettingsService } from './settings.service.js';
 import type { RemotePathMappingService } from './remote-path-mapping.service.js';
 import type { BookService, BookWithAuthor } from './book.service.js';
 import type { BookStatus } from '../../shared/schemas/book.js';
+import type { DownloadStatus } from '../../shared/schemas/activity.js';
 import { resolveSavePath } from '../utils/download-path.js';
 import { buildTargetPath } from '../utils/import-helpers.js';
 import { toNamingOptions } from '../../core/utils/naming.js';
@@ -52,7 +53,7 @@ function bindRenameProgress(callbacks?: ImportProgressCallbacks) {
 export interface ImportContext {
   downloadId: number;
   downloadTitle: string;
-  downloadStatus: string;
+  downloadStatus: DownloadStatus;
   bookId: number;
   bookTitle: string;
   bookStatus: BookStatus;

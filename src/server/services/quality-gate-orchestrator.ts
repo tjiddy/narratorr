@@ -1,6 +1,6 @@
 import type { FastifyBaseLogger } from 'fastify';
 import type { Db } from '../../db/index.js';
-import type { QualityGateService } from './quality-gate.service.js';
+import type { QualityGateService, QualityDecision } from './quality-gate.service.js';
 import type { EventHistoryService } from './event-history.service.js';
 import type { EventBroadcasterService } from './event-broadcaster.service.js';
 import type { BlacklistService } from './blacklist.service.js';
@@ -277,11 +277,11 @@ export class QualityGateOrchestrator {
     download: DownloadRow,
     book: BookRow | null,
     reason: QualityDecisionReason,
-    statusTransition: { from: string; to: string },
+    statusTransition: QualityDecision['statusTransition'],
   ): Promise<void> {
     if (action === 'held') {
       if (book) {
-        safeEmit(this.optional.broadcaster, 'download_status_change', { download_id: download.id, book_id: book.id, old_status: statusTransition.from as DownloadStatus, new_status: statusTransition.to as DownloadStatus }, this.log);
+        safeEmit(this.optional.broadcaster, 'download_status_change', { download_id: download.id, book_id: book.id, old_status: statusTransition.from, new_status: statusTransition.to }, this.log);
         safeEmit(this.optional.broadcaster, 'review_needed', { download_id: download.id, book_id: book.id, book_title: book.title }, this.log);
         // Revert book from importing → downloading (monitor pre-promoted on completion)
         if (book.status === 'importing') {
@@ -292,10 +292,10 @@ export class QualityGateOrchestrator {
       this.recordDecision(download, book, reason);
     } else if (action === 'imported') {
       if (book) {
-        safeEmit(this.optional.broadcaster, 'download_status_change', { download_id: download.id, book_id: book.id, old_status: statusTransition.from as DownloadStatus, new_status: statusTransition.to as DownloadStatus }, this.log);
+        safeEmit(this.optional.broadcaster, 'download_status_change', { download_id: download.id, book_id: book.id, old_status: statusTransition.from, new_status: statusTransition.to }, this.log);
       }
     } else if (action === 'rejected') {
-      await this.performRejectionCleanup(download, book, statusTransition.from as DownloadStatus, true);
+      await this.performRejectionCleanup(download, book, statusTransition.from, true);
     }
   }
 

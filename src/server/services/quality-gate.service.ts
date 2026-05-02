@@ -4,6 +4,7 @@ import type { FastifyBaseLogger } from 'fastify';
 import { downloads, books, bookEvents, bookNarrators, narrators } from '../../db/schema.js';
 
 import type { BookRow, DownloadRow } from './types.js';
+import type { DownloadStatus } from '../../shared/schemas/activity.js';
 import { buildQualityAssessment } from './quality-gate.helpers.js';
 import { QualityGateServiceError, NULL_REASON } from './quality-gate.types.js';
 import type { QualityDecisionReason } from './quality-gate.types.js';
@@ -15,7 +16,7 @@ type BookWithNarrators = BookRow & { narrators?: Array<{ name: string }> };
 export type QualityDecision = {
   action: 'imported' | 'rejected' | 'held';
   reason: QualityDecisionReason;
-  statusTransition: { from: string; to: string };
+  statusTransition: { from: DownloadStatus; to: DownloadStatus };
 };
 
 export class QualityGateService {

@@ -204,7 +204,7 @@ async function resolveOutputPath(
 function emitProgressEvents(
   download: DownloadRow,
   progress: number,
-  newStatus: string,
+  newStatus: DownloadStatus,
   downloadSpeed: number | undefined,
   broadcaster: EventBroadcasterService | undefined,
   log: FastifyBaseLogger,
@@ -212,7 +212,7 @@ function emitProgressEvents(
   if (!download.bookId) return;
   safeEmit(broadcaster, 'download_progress', { download_id: download.id, book_id: download.bookId, percentage: progress, speed: downloadSpeed ?? null, eta: null }, log);
   if (download.status !== newStatus) {
-    safeEmit(broadcaster, 'download_status_change', { download_id: download.id, book_id: download.bookId, old_status: download.status as DownloadStatus, new_status: newStatus as DownloadStatus }, log);
+    safeEmit(broadcaster, 'download_status_change', { download_id: download.id, book_id: download.bookId, old_status: download.status, new_status: newStatus }, log);
   }
 }
 

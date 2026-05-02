@@ -87,7 +87,7 @@ export class DownloadOrchestrator {
     const download = await this.downloadService.getById(id);
     if (!download) return false;
 
-    const oldStatus = download.status as DownloadStatus;
+    const oldStatus = download.status;
     const oldBookStatus: BookStatus = download.book?.status ?? 'downloading';
 
     // Core cancel
