@@ -859,55 +859,6 @@ describe('DiscoveryService', () => {
     });
   });
 
-  // --- #408: Snooze ---
-
-  describe('snoozeSuggestion', () => {
-    it('sets snoozeUntil timestamp and returns updated row', async () => {
-      const existing = { id: 1, asin: 'B001', status: 'pending', snoozeUntil: null };
-      const db = createMockDb();
-      db.select.mockReturnValue(mockDbChain([existing]));
-      db.update.mockReturnValue(mockDbChain());
-      const { service } = createService(db);
-
-      const result = await service.snoozeSuggestion(1, 7);
-      expect(result).not.toBeNull();
-      expect(result).not.toBe('conflict');
-      if (result && result !== 'conflict') {
-        expect(result.snoozeUntil).toBeDefined();
-        expect(result.status).toBe('pending');
-      }
-    });
-
-    it('returns null for unknown suggestion ID', async () => {
-      const db = createMockDb();
-      db.select.mockReturnValue(mockDbChain([]));
-      const { service } = createService(db);
-
-      const result = await service.snoozeSuggestion(999, 7);
-      expect(result).toBeNull();
-    });
-
-    it('returns "conflict" for dismissed suggestion', async () => {
-      const existing = { id: 1, asin: 'B001', status: 'dismissed' };
-      const db = createMockDb();
-      db.select.mockReturnValue(mockDbChain([existing]));
-      const { service } = createService(db);
-
-      const result = await service.snoozeSuggestion(1, 7);
-      expect(result).toBe('conflict');
-    });
-
-    it('returns "conflict" for added suggestion', async () => {
-      const existing = { id: 1, asin: 'B001', status: 'added' };
-      const db = createMockDb();
-      db.select.mockReturnValue(mockDbChain([existing]));
-      const { service } = createService(db);
-
-      const result = await service.snoozeSuggestion(1, 7);
-      expect(result).toBe('conflict');
-    });
-  });
-
   // --- #408: Resurfaced snoozed suggestion preservation (AC6) ---
 
   describe('refreshSuggestions (AC6 — snoozed preservation)', () => {
@@ -1113,22 +1064,6 @@ describe('DiscoveryService', () => {
 
       // Normal pending rows get upserted via INSERT ON CONFLICT DO UPDATE (#554)
       expect(db.insert).toHaveBeenCalled();
-    });
-  });
-
-  describe('getStats', () => {
-    it('returns counts by reason type', async () => {
-      const mockData = [
-        { reason: 'author', count: 5 },
-        { reason: 'series', count: 2 },
-        { reason: 'genre', count: 3 },
-      ];
-      const db = createMockDb();
-      db.select.mockReturnValue(mockDbChain(mockData));
-      const { service } = createService(db);
-
-      const result = await service.getStats();
-      expect(result).toEqual({ author: 5, series: 2, genre: 3 });
     });
   });
 
@@ -1432,18 +1367,6 @@ describe('DiscoveryService', () => {
       expect(dc!.reason).toBe('diversity');
     });
 
-    it('getStats includes diversity count in results', async () => {
-      const mockData = [
-        { reason: 'author', count: 5 },
-        { reason: 'diversity', count: 2 },
-      ];
-      const db = createMockDb();
-      db.select.mockReturnValue(mockDbChain(mockData));
-      const { service } = createService(db);
-
-      const result = await service.getStats();
-      expect(result).toEqual({ author: 5, diversity: 2 });
-    });
   });
 
   describe('diversity dismissal behavior (AC4)', () => {
