@@ -48,7 +48,7 @@ export function DownloadClientForm({ client, mode, onCancel, onSubmit, onFormTes
   } = useForm<CreateDownloadClientFormData>({
     resolver: zodResolver(createDownloadClientFormSchema),
     defaultValues: client
-      ? { name: client.name, type: client.type as CreateDownloadClientFormData['type'], enabled: client.enabled, priority: client.priority, settings: settingsFromClient(client) }
+      ? { name: client.name, type: client.type, enabled: client.enabled, priority: client.priority, settings: settingsFromClient(client) }
       : defaultValues,
   });
 
@@ -57,7 +57,7 @@ export function DownloadClientForm({ client, mode, onCancel, onSubmit, onFormTes
 
   useEffect(() => {
     if (isEdit && client) {
-      reset({ name: client.name, type: client.type as CreateDownloadClientFormData['type'], enabled: client.enabled, priority: client.priority, settings: settingsFromClient(client) });
+      reset({ name: client.name, type: client.type, enabled: client.enabled, priority: client.priority, settings: settingsFromClient(client) });
     } else if (!isEdit) {
       reset(defaultValues);
     }
