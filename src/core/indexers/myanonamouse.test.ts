@@ -89,7 +89,7 @@ describe('MyAnonamouseIndexer', () => {
       );
       stubTorrentDownload(server);
 
-      const results = await indexer.search('Brandon Sanderson');
+      const { results } = await indexer.search('Brandon Sanderson');
 
       expect(results.length).toBe(1);
       expect(results[0].title).toBe('The Way of Kings');
@@ -107,7 +107,7 @@ describe('MyAnonamouseIndexer', () => {
       );
       stubTorrentDownload(server);
 
-      const results = await indexer.search('test');
+      const { results } = await indexer.search('test');
       expect(results[0].author).toBe('Brandon Sanderson');
     });
 
@@ -119,7 +119,7 @@ describe('MyAnonamouseIndexer', () => {
       );
       stubTorrentDownload(server);
 
-      const results = await indexer.search('test');
+      const { results } = await indexer.search('test');
       expect(results[0].narrator).toBe('Michael Kramer');
     });
 
@@ -133,7 +133,7 @@ describe('MyAnonamouseIndexer', () => {
       );
       stubTorrentDownload(server);
 
-      const results = await indexer.search('test');
+      const { results } = await indexer.search('test');
       expect(results[0].author).toBe('Author A, Author B');
     });
 
@@ -145,7 +145,7 @@ describe('MyAnonamouseIndexer', () => {
       );
       stubTorrentDownload(server);
 
-      const results = await indexer.search('test');
+      const { results } = await indexer.search('test');
       expect(results[0].protocol).toBe('torrent');
     });
 
@@ -162,7 +162,7 @@ describe('MyAnonamouseIndexer', () => {
         }),
       );
 
-      const results = await indexer.search('test');
+      const { results } = await indexer.search('test');
       expect(results[0].downloadUrl).toBe(
         `data:application/x-bittorrent;base64,${torrentBytes.toString('base64')}`,
       );
@@ -178,7 +178,7 @@ describe('MyAnonamouseIndexer', () => {
       );
       stubTorrentDownload(server);
 
-      const results = await indexer.search('test');
+      const { results } = await indexer.search('test');
       expect(results[0]).not.toHaveProperty('series');
     });
   });
@@ -239,7 +239,7 @@ describe('MyAnonamouseIndexer', () => {
         }),
       );
 
-      const results = await indexer.search('test');
+      const { results } = await indexer.search('test');
       expect(results.length).toBe(1);
       expect(results[0].downloadUrl).toBeUndefined();
       expect(results[0].title).toBe('The Way of Kings');
@@ -271,7 +271,7 @@ describe('MyAnonamouseIndexer', () => {
       );
       stubTorrentDownload(server);
 
-      const results = await indexer.search('test');
+      const { results } = await indexer.search('test');
       expect(results[0].author).toBeUndefined();
     });
 
@@ -283,7 +283,7 @@ describe('MyAnonamouseIndexer', () => {
       );
       stubTorrentDownload(server);
 
-      const results = await indexer.search('test');
+      const { results } = await indexer.search('test');
       expect(results[0].author).toBeUndefined();
     });
 
@@ -295,7 +295,7 @@ describe('MyAnonamouseIndexer', () => {
       );
       stubTorrentDownload(server);
 
-      const results = await indexer.search('test');
+      const { results } = await indexer.search('test');
       expect(results[0].author).toBeUndefined();
     });
 
@@ -307,7 +307,7 @@ describe('MyAnonamouseIndexer', () => {
       );
       stubTorrentDownload(server);
 
-      const results = await indexer.search('test');
+      const { results } = await indexer.search('test');
       expect(results[0].narrator).toBeUndefined();
     });
 
@@ -318,7 +318,7 @@ describe('MyAnonamouseIndexer', () => {
         }),
       );
 
-      const results = await indexer.search('test');
+      const { results } = await indexer.search('test');
       expect(results.length).toBe(0);
     });
 
@@ -330,7 +330,7 @@ describe('MyAnonamouseIndexer', () => {
       );
       stubTorrentDownload(server);
 
-      const results = await indexer.search('test');
+      const { results } = await indexer.search('test');
       expect(results[0].size).toBeUndefined();
     });
 
@@ -341,7 +341,7 @@ describe('MyAnonamouseIndexer', () => {
         }),
       );
 
-      const results = await indexer.search('test');
+      const { results } = await indexer.search('test');
       expect(results[0].downloadUrl).toBeUndefined();
     });
 
@@ -353,7 +353,7 @@ describe('MyAnonamouseIndexer', () => {
       );
       stubTorrentDownload(server);
 
-      const results = await indexer.search('test');
+      const { results } = await indexer.search('test');
       expect(results[0].guid).toBe('720129');
     });
 
@@ -364,7 +364,7 @@ describe('MyAnonamouseIndexer', () => {
         }),
       );
 
-      const results = await indexer.search('test');
+      const { results } = await indexer.search('test');
       expect(results[0].guid).toBe('0');
     });
 
@@ -375,7 +375,7 @@ describe('MyAnonamouseIndexer', () => {
         }),
       );
 
-      const results = await indexer.search('test');
+      const { results } = await indexer.search('test');
       expect(results[0].guid).toBeUndefined();
     });
 
@@ -386,7 +386,7 @@ describe('MyAnonamouseIndexer', () => {
         }),
       );
 
-      const results = await indexer.search('test');
+      const { results } = await indexer.search('test');
       expect(results[0].guid).toBeUndefined();
     });
 
@@ -398,7 +398,7 @@ describe('MyAnonamouseIndexer', () => {
       );
       stubTorrentDownload(server);
 
-      const results = await indexer.search('test');
+      const { results } = await indexer.search('test');
       expect(results[0].guid).toBe('9999999');
     });
 
@@ -415,7 +415,7 @@ describe('MyAnonamouseIndexer', () => {
       );
       stubTorrentDownload(server);
 
-      const results = await indexer.search('test');
+      const { results } = await indexer.search('test');
       expect(results).toHaveLength(2);
       expect(results[0].guid).toBe('111');
       expect(results[1].guid).toBe('222');
@@ -428,10 +428,44 @@ describe('MyAnonamouseIndexer', () => {
         }),
       );
 
-      const results = await indexer.search('test');
+      const { results } = await indexer.search('test');
       expect(results).toHaveLength(1);
       expect(results[0].title).toBe('The Way of Kings');
       expect(results[0].guid).toBeUndefined();
+    });
+  });
+
+  describe('parse trace shape (#932 AC1)', () => {
+    it('populates parseStats and per-row debugTrace including transport metadata', async () => {
+      server.use(
+        http.get(`${MAM_BASE}/tor/js/loadSearchJSONbasic.php`, () => {
+          return HttpResponse.json({ data: [makeResult()] });
+        }),
+      );
+      stubTorrentDownload(server);
+
+      const response = await indexer.search('Brandon Sanderson');
+
+      expect(response.parseStats.itemsObserved).toBe(1);
+      expect(response.parseStats.kept).toBe(1);
+      expect(response.requestUrl).toContain('loadSearchJSONbasic.php');
+      expect(response.httpStatus).toBe(200);
+      const trace = response.debugTrace.find((t) => t.reason === 'kept');
+      expect(trace?.rawTitleBytes).toMatch(/^[0-9a-f]+$/);
+      expect(trace?.source).toBe('row');
+    });
+
+    it('records dropped:empty-title for rows missing titles', async () => {
+      server.use(
+        http.get(`${MAM_BASE}/tor/js/loadSearchJSONbasic.php`, () => {
+          return HttpResponse.json({ data: [{ id: 1, title: '' }, makeResult({ id: 2 })] });
+        }),
+      );
+      stubTorrentDownload(server);
+
+      const response = await indexer.search('test');
+      expect(response.parseStats.dropped.emptyTitle).toBe(1);
+      expect(response.debugTrace.some((t) => t.reason === 'dropped:empty-title')).toBe(true);
     });
   });
 
@@ -443,7 +477,7 @@ describe('MyAnonamouseIndexer', () => {
         }),
       );
 
-      const results = await indexer.search('nonexistent book');
+      const { results } = await indexer.search('nonexistent book');
       expect(results).toEqual([]);
     });
 
@@ -454,7 +488,7 @@ describe('MyAnonamouseIndexer', () => {
         }),
       );
 
-      const results = await indexer.search('test');
+      const { results } = await indexer.search('test');
       expect(results).toEqual([]);
     });
 
@@ -612,7 +646,7 @@ describe('MyAnonamouseIndexer', () => {
       );
       stubTorrentDownload(server);
 
-      const results = await indexer.search('test');
+      const { results } = await indexer.search('test');
       expect(results[0].size).toBe(924634317);
     });
 
@@ -624,7 +658,7 @@ describe('MyAnonamouseIndexer', () => {
       );
       stubTorrentDownload(server);
 
-      const results = await indexer.search('test');
+      const { results } = await indexer.search('test');
       expect(results[0].size).toBe(1181116006);
     });
 
@@ -636,7 +670,7 @@ describe('MyAnonamouseIndexer', () => {
       );
       stubTorrentDownload(server);
 
-      const results = await indexer.search('test');
+      const { results } = await indexer.search('test');
       expect(results[0].size).toBe(524288);
     });
 
@@ -648,7 +682,7 @@ describe('MyAnonamouseIndexer', () => {
       );
       stubTorrentDownload(server);
 
-      const results = await indexer.search('test');
+      const { results } = await indexer.search('test');
       expect(results[0].size).toBe(1649267441664);
     });
 
@@ -660,7 +694,7 @@ describe('MyAnonamouseIndexer', () => {
       );
       stubTorrentDownload(server);
 
-      const results = await indexer.search('test');
+      const { results } = await indexer.search('test');
       expect(results[0].size).toBeUndefined();
     });
 
@@ -672,7 +706,7 @@ describe('MyAnonamouseIndexer', () => {
       );
       stubTorrentDownload(server);
 
-      const results = await indexer.search('test');
+      const { results } = await indexer.search('test');
       expect(results[0].size).toBeUndefined();
     });
 
@@ -684,7 +718,7 @@ describe('MyAnonamouseIndexer', () => {
       );
       stubTorrentDownload(server);
 
-      const results = await indexer.search('test');
+      const { results } = await indexer.search('test');
       expect(results[0].size).toBeUndefined();
     });
 
@@ -696,7 +730,7 @@ describe('MyAnonamouseIndexer', () => {
       );
       stubTorrentDownload(server);
 
-      const results = await indexer.search('test');
+      const { results } = await indexer.search('test');
       expect(results[0].size).toBeUndefined();
     });
 
@@ -708,7 +742,7 @@ describe('MyAnonamouseIndexer', () => {
       );
       stubTorrentDownload(server);
 
-      const results = await indexer.search('test');
+      const { results } = await indexer.search('test');
       expect(results[0].size).toBe(1073741824);
     });
 
@@ -721,7 +755,7 @@ describe('MyAnonamouseIndexer', () => {
       );
       stubTorrentDownload(server);
 
-      const results = await indexer.search('test');
+      const { results } = await indexer.search('test');
       const sizeBytes = results[0].size;
       expect(typeof sizeBytes).toBe('number');
       expect(Number.isNaN(sizeBytes)).toBe(false);
@@ -794,7 +828,7 @@ describe('MyAnonamouseIndexer', () => {
           }),
         );
 
-      const results = await proxiedIndexer.search('Brandon Sanderson');
+      const { results } = await proxiedIndexer.search('Brandon Sanderson');
 
       expect(results.length).toBe(1);
       expect(results[0].title).toBe('The Way of Kings');
@@ -895,7 +929,7 @@ describe('MyAnonamouseIndexer', () => {
           new Error('some network error'),
         );
 
-      const results = await directIndexer.search('test');
+      const { results } = await directIndexer.search('test');
       expect(results.length).toBe(1);
       expect(results[0].downloadUrl).toBeUndefined();
 
@@ -935,7 +969,7 @@ describe('MyAnonamouseIndexer', () => {
       );
       stubTorrentDownload(server);
 
-      const results = await indexer.search('test');
+      const { results } = await indexer.search('test');
       expect(results[0].language).toBe('english');
     });
 
@@ -947,7 +981,7 @@ describe('MyAnonamouseIndexer', () => {
       );
       stubTorrentDownload(server);
 
-      const results = await indexer.search('test');
+      const { results } = await indexer.search('test');
       expect(results[0].language).toBeUndefined();
     });
 
@@ -959,7 +993,7 @@ describe('MyAnonamouseIndexer', () => {
       );
       stubTorrentDownload(server);
 
-      const results = await indexer.search('test');
+      const { results } = await indexer.search('test');
       expect(results[0].language).toBe('xyz');
     });
 
@@ -971,7 +1005,7 @@ describe('MyAnonamouseIndexer', () => {
       );
       stubTorrentDownload(server);
 
-      const results = await indexer.search('test');
+      const { results } = await indexer.search('test');
       expect(results[0].language).toBe('english');
     });
 
@@ -993,7 +1027,7 @@ describe('MyAnonamouseIndexer', () => {
       stubTorrentDownload(server);
 
       const parsed = await indexer.search('test');
-      const surviving = filterByLanguage(parsed, ['english']);
+      const surviving = filterByLanguage(parsed.results, ['english']).kept;
 
       expect(surviving).toHaveLength(1);
       expect(surviving[0].title).toBe('English Book');
@@ -1277,7 +1311,7 @@ describe('MyAnonamouseIndexer', () => {
         }),
       );
       stubTorrentDownload(server);
-      const results = await indexer.search('test');
+      const { results } = await indexer.search('test');
       expect(results[0].isFreeleech).toBe(true);
     });
 
@@ -1288,7 +1322,7 @@ describe('MyAnonamouseIndexer', () => {
         }),
       );
       stubTorrentDownload(server);
-      const results = await indexer.search('test');
+      const { results } = await indexer.search('test');
       expect(results[0].isFreeleech).toBe(true);
     });
 
@@ -1300,7 +1334,7 @@ describe('MyAnonamouseIndexer', () => {
         }),
       );
       stubTorrentDownload(server);
-      const results = await vipIndexer.search('test');
+      const { results } = await vipIndexer.search('test');
       expect(results[0].isFreeleech).toBe(true);
     });
 
@@ -1312,7 +1346,7 @@ describe('MyAnonamouseIndexer', () => {
         }),
       );
       stubTorrentDownload(server);
-      const results = await nonVipIndexer.search('test');
+      const { results } = await nonVipIndexer.search('test');
       expect(results[0].isFreeleech).toBeUndefined();
     });
 
@@ -1323,7 +1357,7 @@ describe('MyAnonamouseIndexer', () => {
         }),
       );
       stubTorrentDownload(server);
-      const results = await indexer.search('test');
+      const { results } = await indexer.search('test');
       expect(results[0].isVipOnly).toBe(true);
     });
 
@@ -1334,7 +1368,7 @@ describe('MyAnonamouseIndexer', () => {
         }),
       );
       stubTorrentDownload(server);
-      const results = await indexer.search('test');
+      const { results } = await indexer.search('test');
       expect(results[0].isFreeleech).toBeUndefined();
       expect(results[0].isVipOnly).toBeUndefined();
     });
@@ -1346,7 +1380,7 @@ describe('MyAnonamouseIndexer', () => {
         }),
       );
       stubTorrentDownload(server);
-      const results = await indexer.search('test');
+      const { results } = await indexer.search('test');
       expect(results[0].isFreeleech).toBe(true);
       expect(results[0].isVipOnly).toBe(true);
     });
@@ -1358,7 +1392,7 @@ describe('MyAnonamouseIndexer', () => {
         }),
       );
       stubTorrentDownload(server);
-      const results = await indexer.search('test');
+      const { results } = await indexer.search('test');
       expect(results).toHaveLength(1);
       expect(results[0].isFreeleech).toBeUndefined();
       expect(results[0].isVipOnly).toBeUndefined();
@@ -1713,7 +1747,7 @@ describe('MyAnonamouseIndexer', () => {
           HttpResponse.json({ error: 'Nothing returned, out of 0 hits' })),
       );
 
-      const results = await indexer.search('no-results-query');
+      const { results } = await indexer.search('no-results-query');
       expect(results).toEqual([]);
     });
 
@@ -1764,7 +1798,7 @@ describe('MyAnonamouseIndexer', () => {
       );
       stubTorrentDownload(server);
 
-      const results = await indexer.search('test');
+      const { results } = await indexer.search('test');
       expect(results).toHaveLength(1);
       expect(results[0].title).toBe('The Way of Kings');
     });

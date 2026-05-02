@@ -210,7 +210,10 @@ describe('enrichUsenetLanguages', () => {
 
       expect(results[0].language).toBeUndefined();
       expect(logger.warn).toHaveBeenCalledWith(
-        expect.objectContaining({ title: 'Test Book', error: 'The operation was aborted' }),
+        expect.objectContaining({
+          title: 'Test Book',
+          error: expect.objectContaining({ message: 'The operation was aborted' }),
+        }),
         expect.any(String),
       );
     });
@@ -718,6 +721,82 @@ describe('enrichUsenetLanguages', () => {
 
       expect(results[0].language).toBeUndefined();
       expect(mockDispatcher.close).toHaveBeenCalledTimes(1);
+    });
+
+    it('emits debug trace lines per result + per detection attempt (AC4 #932)', async () => {
+      const nzbXml = `<nzb xmlns="http://www.newzbin.com/DTD/2003/nzb">
+        <head><meta type="name">Stephen King-Hoerbuch.part01.rar</meta></head>
+        <file poster="test" date="1" subject="Stephen King.German.M4B">
+          <groups>
+            <group>alt.binaries.audiobooks</group>
+            <group>alt.binaries.sounds.mp3.german.hoerbuecher</group>
+          </groups>
+          <segments><segment bytes="100" number="1">id@example</segment></segments>
+        </file>
+      </nzb>`;
+      mockFetchWithSsrfRedirect.mockResolvedValueOnce(
+        new Response(nzbXml, { status: 200 }),
+      );
+
+      const results = [
+        makeResult({ protocol: 'usenet', downloadUrl: 'http://nzb.test/1' }),
+      ];
+
+      await enrichUsenetLanguages(results, logger);
+
+      // Phase-1 input log
+      expect(logger.debug).toHaveBeenCalledWith(
+        expect.objectContaining({ title: 'Test Book', protocol: 'usenet', hasNewsgroup: false, hasDownloadUrl: true }),
+        'Enrichment phase-1 input',
+      );
+      // Phase-2 fetch + parse
+      expect(logger.debug).toHaveBeenCalledWith(
+        expect.objectContaining({ title: 'Test Book', url: expect.any(String) }),
+        'Phase-2: fetching NZB',
+      );
+      expect(logger.debug).toHaveBeenCalledWith(
+        expect.objectContaining({ title: 'Test Book', groupCount: 2 }),
+        'Phase-2: NZB parsed',
+      );
+      // Per-pattern detection attempt with explicit signal naming
+      expect(logger.debug).toHaveBeenCalledWith(
+        expect.objectContaining({ title: 'Test Book', signal: 'newsgroup-token', testedAgainst: expect.any(String) }),
+        'Detection attempt',
+      );
+      // Final outcome
+      expect(logger.debug).toHaveBeenCalledWith(
+        expect.objectContaining({ title: 'Test Book', finalLanguage: 'german', source: 'newsgroup' }),
+        'Phase-2: enrichment complete',
+      );
+    });
+
+    it('emits the "nzb-name-pattern" detection attempt log when newsgroup signals fail (Fairy Tale negative case)', async () => {
+      const nzbXml = `<nzb xmlns="http://www.newzbin.com/DTD/2003/nzb">
+        <head><meta type="name">Stephen King Fairy Tale (Ungekrzt) German</meta></head>
+        <file poster="t" date="1" subject="Stephen King.M4B">
+          <groups><group>alt.binaries.audiobooks</group></groups>
+          <segments><segment bytes="100" number="1">id@example</segment></segments>
+        </file>
+      </nzb>`;
+      mockFetchWithSsrfRedirect.mockResolvedValueOnce(
+        new Response(nzbXml, { status: 200 }),
+      );
+      const results = [
+        makeResult({ protocol: 'usenet', downloadUrl: 'http://nzb.test/1' }),
+      ];
+
+      await enrichUsenetLanguages(results, logger);
+
+      // The newsgroup-token attempt against alt.binaries.audiobooks must log matched: null
+      expect(logger.debug).toHaveBeenCalledWith(
+        expect.objectContaining({ signal: 'newsgroup-token', testedAgainst: 'alt.binaries.audiobooks', matched: null }),
+        'Detection attempt',
+      );
+      // The nzb-name-pattern fallback must also log
+      expect(logger.debug).toHaveBeenCalledWith(
+        expect.objectContaining({ signal: 'nzb-name-pattern' }),
+        'Detection attempt',
+      );
     });
 
     it('private-IP redirect refusal logs sanitized warning and returns no-languages', async () => {

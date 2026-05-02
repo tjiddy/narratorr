@@ -1,5 +1,12 @@
 import * as cheerio from 'cheerio';
-import type { IndexerAdapter, SearchResult, SearchOptions } from './types.js';
+import {
+  rawTitleBytesHex,
+  type IndexerAdapter,
+  type IndexerParseTrace,
+  type IndexerSearchResponse,
+  type SearchOptions,
+  type SearchResult,
+} from './types.js';
 import { buildMagnetUri } from '../utils/magnet.js';
 import { fetchWithProxy } from './fetch.js';
 import { fetchWithProxyAgent, resolveProxyIp } from './proxy.js';
@@ -33,7 +40,7 @@ export class TorznabIndexer implements IndexerAdapter {
     this.name = name || new URL(config.apiUrl).hostname;
   }
 
-  async search(query: string, options?: SearchOptions): Promise<SearchResult[]> {
+  async search(query: string, options?: SearchOptions): Promise<IndexerSearchResponse> {
     const limit = options?.limit ?? 100;
     const params = new URLSearchParams({
       t: 'search',
@@ -52,8 +59,15 @@ export class TorznabIndexer implements IndexerAdapter {
 
     // All errors (fetch, parse, proxy) bubble up to IndexerService.searchAll()
     // which catches and logs warnings per-indexer, then continues with remaining indexers
-    const xml = await this.fetchXml(url, options?.signal);
-    return this.parseSearchResults(xml, limit);
+    const fetched = await this.fetchXml(url, options?.signal);
+    const parsed = this.parseSearchResults(fetched.body, limit);
+    return {
+      results: parsed.results,
+      parseStats: parsed.parseStats,
+      debugTrace: parsed.debugTrace,
+      requestUrl: fetched.requestUrl,
+      httpStatus: fetched.httpStatus,
+    };
   }
 
   async test(): Promise<{ success: boolean; message?: string; ip?: string }> {
@@ -64,7 +78,7 @@ export class TorznabIndexer implements IndexerAdapter {
     const url = `${this.apiUrl}/api?${params.toString()}`;
 
     try {
-      const xml = await this.fetchXml(url);
+      const { body: xml } = await this.fetchXml(url);
       const $ = cheerio.load(xml, { xmlMode: true });
       const serverTitle = $('server').attr('title') || $('caps server').attr('title');
 
@@ -89,7 +103,7 @@ export class TorznabIndexer implements IndexerAdapter {
     }
   }
 
-  private async fetchXml(url: string, signal?: AbortSignal): Promise<string> {
+  private async fetchXml(url: string, signal?: AbortSignal) {
     // FlareSolverr takes precedence over standard proxy
     if (this.flareSolverrUrl) {
       return fetchWithProxy({
@@ -107,7 +121,7 @@ export class TorznabIndexer implements IndexerAdapter {
     });
   }
 
-  private parseSearchResults(xml: string, limit: number): SearchResult[] {
+  private parseSearchResults(xml: string, limit: number): { results: SearchResult[]; parseStats: IndexerSearchResponse['parseStats']; debugTrace: IndexerParseTrace[] } {
     const $ = cheerio.load(xml, { xmlMode: true });
 
     // Validate RSS structure — invalid/non-RSS payloads must throw, not silently return []
@@ -120,14 +134,23 @@ export class TorznabIndexer implements IndexerAdapter {
     }
 
     const results: SearchResult[] = [];
+    const debugTrace: IndexerParseTrace[] = [];
+    const dropped = { emptyTitle: 0, noUrl: 0, other: 0 };
+    let itemsObserved = 0;
 
     // eslint-disable-next-line complexity -- XML item parsing with optional attribute extraction
     $('item').each((_, element) => {
+      itemsObserved++;
       if (results.length >= limit) return false; // break
 
       const $item = $(element);
       const title = $item.find('title').first().text().trim();
-      if (!title) return; // continue
+      const guidText = $item.find('guid').text().trim() || undefined;
+      if (!title) {
+        dropped.emptyTitle++;
+        debugTrace.push({ source: 'item', reason: 'dropped:empty-title', guid: guidText });
+        return; // continue
+      }
 
       const attrs = this.parseNewznabAttrs($item, $);
 
@@ -143,7 +166,6 @@ export class TorznabIndexer implements IndexerAdapter {
         downloadUrl = buildMagnetUri(infoHash, title);
       }
 
-      const guidText = $item.find('guid').text().trim() || undefined;
       const detailsUrl =
         guidText ||
         $item.find('comments').text().trim() ||
@@ -170,9 +192,20 @@ export class TorznabIndexer implements IndexerAdapter {
         language: normalizeLanguage(attrs.language),
         indexer: this.name,
       });
+      debugTrace.push({
+        source: 'item',
+        reason: 'kept',
+        rawTitle: title,
+        rawTitleBytes: rawTitleBytesHex(title),
+        guid: guidText,
+      });
     });
 
-    return results;
+    return {
+      results,
+      parseStats: { itemsObserved, kept: results.length, dropped },
+      debugTrace,
+    };
   }
 
   private parseNewznabAttrs(

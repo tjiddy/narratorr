@@ -7,6 +7,7 @@ import {
   parseAudiobookTitle,
   scoreResult,
   type IndexerAdapter,
+  type IndexerSearchResponse,
   type IndexerTestResult,
   type SearchResult,
   type SearchOptions,
@@ -17,6 +18,7 @@ import type { IndexerSettings } from '../../shared/schemas/indexer.js';
 import { AdapterCache } from '../utils/adapter-cache.js';
 import { getErrorMessage } from '../utils/error-message.js';
 import { serializeError } from '../utils/serialize-error.js';
+import { sanitizeLogUrl } from '../utils/sanitize-log-url.js';
 import type { IndexerRow } from './types.js';
 
 
@@ -299,6 +301,36 @@ export class IndexerService {
     return { skip: false };
   }
 
+  /**
+   * Emit the per-indexer "Indexer search complete" summary and one debug
+   * line per dropped item. This is the AC2 trace point — every search call
+   * site must call this so `grep 'Indexer search complete'` returns a
+   * homogeneous stream regardless of which call path produced the search.
+   */
+  private logIndexerSearchTrace(indexer: IndexerRow, response: IndexerSearchResponse): void {
+    this.log.debug({
+      indexer: indexer.name,
+      type: indexer.type,
+      ...(response.requestUrl ? { url: sanitizeLogUrl(response.requestUrl) } : {}),
+      ...(response.httpStatus !== undefined ? { httpStatus: response.httpStatus } : {}),
+      itemsObserved: response.parseStats.itemsObserved,
+      kept: response.parseStats.kept,
+      dropped: response.parseStats.dropped,
+    }, 'Indexer search complete');
+
+    for (const trace of response.debugTrace) {
+      if (trace.reason !== 'kept') {
+        this.log.debug({
+          indexer: indexer.name,
+          reason: trace.reason,
+          rawTitle: trace.rawTitle,
+          rawTitleBytes: trace.rawTitleBytes,
+          guid: trace.guid,
+        }, 'Indexer dropped item');
+      }
+    }
+  }
+
   /** Parse release names to extract author/title for results that don't already have them */
   private parseReleaseNames(results: SearchResult[], indexerName?: string): void {
     for (const result of results) {
@@ -332,8 +364,9 @@ export class IndexerService {
   /** Poll a single indexer with empty query (RSS feed). Returns results with parsed release names. */
   async pollRss(indexer: IndexerRow): Promise<SearchResult[]> {
     const adapter = await this.getAdapter(indexer);
-    const raw = await adapter.search('');
-    const results = raw.map(r => ({ ...r, indexerId: indexer.id, indexerPriority: indexer.priority }));
+    const response = await adapter.search('');
+    this.logIndexerSearchTrace(indexer, response);
+    const results = response.results.map(r => ({ ...r, indexerId: indexer.id, indexerPriority: indexer.priority }));
     this.parseReleaseNames(results, indexer.name);
     return results;
   }
@@ -371,7 +404,6 @@ export class IndexerService {
 
     const settlements = await Promise.allSettled(
       enabledIndexers.map(async (indexer) => {
-        const indexerStartMs = Date.now();
         const adapter = await this.getAdapter(indexer);
 
         const refresh = await this.preSearchRefresh(adapter, indexer);
@@ -380,23 +412,29 @@ export class IndexerService {
           throw new Error(refresh.error ?? 'Indexer skipped');
         }
 
-        const indexerResults = await adapter.search(query, searchOptions);
-        this.log.debug({ indexer: indexer.name, resultCount: indexerResults.length, elapsedMs: Date.now() - indexerStartMs }, 'Indexer search completed');
-        const mapped = indexerResults.map(r => ({ ...r, indexerId: indexer.id, indexerPriority: indexer.priority }));
+        const response = await adapter.search(query, searchOptions);
+        this.logIndexerSearchTrace(indexer, response);
+        const mapped = response.results.map(r => ({ ...r, indexerId: indexer.id, indexerPriority: indexer.priority }));
         this.parseReleaseNames(mapped, indexer.name);
         return mapped;
       }),
     );
 
+    const perIndexerCounts: Record<string, number> = {};
     const results: SearchResult[] = [];
     for (let i = 0; i < settlements.length; i++) {
       const settlement = settlements[i];
+      const name = enabledIndexers[i].name;
       if (settlement.status === 'fulfilled') {
+        perIndexerCounts[name] = settlement.value.length;
         results.push(...settlement.value);
       } else {
-        this.log.warn({ indexer: enabledIndexers[i].name, query, error: serializeError(settlement.reason) }, 'Error searching indexer');
+        perIndexerCounts[name] = 0;
+        this.log.warn({ indexer: name, query, error: serializeError(settlement.reason) }, 'Error searching indexer');
       }
     }
+
+    this.log.debug({ query, indexerCount: enabledIndexers.length, perIndexerCounts }, 'Search aggregated across indexers');
 
     // Score results against search context when title is provided
     if (options?.title) {
@@ -452,9 +490,10 @@ export class IndexerService {
             return;
           }
 
-          const indexerResults = await adapter.search(query, { ...searchOptions, signal });
+          const response = await adapter.search(query, { ...searchOptions, signal });
+          this.logIndexerSearchTrace(indexer, response);
           const elapsedMs = Date.now() - indexerStartMs;
-          const mapped = indexerResults.map(r => ({ ...r, indexerId: indexer.id, indexerPriority: indexer.priority }));
+          const mapped = response.results.map(r => ({ ...r, indexerId: indexer.id, indexerPriority: indexer.priority }));
           this.parseReleaseNames(mapped, indexer.name);
           perIndexerResults.set(indexer.id, mapped);
           callbacks.onComplete(indexer.id, indexer.name, mapped.length, elapsedMs);
@@ -475,9 +514,13 @@ export class IndexerService {
 
     // Aggregate results from non-cancelled indexers
     const results: SearchResult[] = [];
-    for (const indexerResults of perIndexerResults.values()) {
+    const perIndexerCounts: Record<string, number> = {};
+    for (const indexer of enabledIndexers) {
+      const indexerResults = perIndexerResults.get(indexer.id) ?? [];
+      perIndexerCounts[indexer.name] = indexerResults.length;
       results.push(...indexerResults);
     }
+    this.log.debug({ query, indexerCount: enabledIndexers.length, perIndexerCounts }, 'Search aggregated across indexers');
 
     // Score results
     if (options?.title) {

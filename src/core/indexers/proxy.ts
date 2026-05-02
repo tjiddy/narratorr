@@ -12,6 +12,7 @@ import { ProxyError } from './errors.js';
 import { getErrorMessage, getErrorMessageWithCause } from '../../shared/error-message.js';
 import { mapNetworkError } from '../utils/map-network-error.js';
 import { fetchWithOptionalDispatcher, type DispatcherFetchInit } from '../utils/network-service.js';
+import type { FetchResult } from './fetch.js';
 
 import { INDEXER_TIMEOUT_MS } from '../utils/constants.js';
 const IPIFY_URL = 'https://api.ipify.org?format=json';
@@ -54,7 +55,7 @@ export async function fetchWithProxyAgent(
     timeoutMs?: number;
     signal?: AbortSignal;
   } = {},
-): Promise<string> {
+): Promise<FetchResult> {
   const { proxyUrl, headers, timeoutMs = INDEXER_TIMEOUT_MS } = options;
   const dispatcher = createProxyAgent(proxyUrl);
 
@@ -95,7 +96,8 @@ export async function fetchWithProxyAgent(
       throw new Error(`HTTP ${response.status}: ${response.statusText}`);
     }
 
-    return await response.text();
+    const body = await response.text();
+    return { body, requestUrl: url, httpStatus: response.status };
   } finally {
     clearTimeout(timeoutId);
   }
@@ -107,7 +109,7 @@ export async function fetchWithProxyAgent(
  */
 export async function resolveProxyIp(proxyUrl: string): Promise<string> {
   try {
-    const body = await fetchWithProxyAgent(IPIFY_URL, { proxyUrl, timeoutMs: 15_000 });
+    const { body } = await fetchWithProxyAgent(IPIFY_URL, { proxyUrl, timeoutMs: 15_000 });
     let raw: unknown;
     try {
       raw = JSON.parse(body);

@@ -32,6 +32,18 @@ export interface FetchWithProxyOptions {
 }
 
 /**
+ * Body + transport metadata. `requestUrl` is the URL actually fetched (target
+ * URL for direct/proxy-agent paths; FlareSolverr also returns the target URL).
+ * `httpStatus` is the upstream HTTP status (FlareSolverr's solution.status when
+ * available, otherwise the proxy HTTP response status).
+ */
+export interface FetchResult {
+  body: string;
+  requestUrl: string;
+  httpStatus: number;
+}
+
+/**
  * Fetch a URL, optionally routing through a FlareSolverr-compatible proxy.
  *
  * - Direct: standard fetch() with AbortController timeout
@@ -40,7 +52,7 @@ export interface FetchWithProxyOptions {
  * All proxy errors throw with descriptive messages that distinguish proxy
  * failures from indexer failures. Direct fetch errors throw as-is.
  */
-export async function fetchWithProxy(options: FetchWithProxyOptions): Promise<string> {
+export async function fetchWithProxy(options: FetchWithProxyOptions): Promise<FetchResult> {
   const { url, headers, proxyUrl } = options;
 
   if (proxyUrl) {
@@ -55,7 +67,7 @@ async function fetchDirect(
   headers: Record<string, string> | undefined,
   timeoutMs: number,
   callerSignal?: AbortSignal,
-): Promise<string> {
+): Promise<FetchResult> {
   const controller = new AbortController();
   const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
   const signal = callerSignal
@@ -77,7 +89,8 @@ async function fetchDirect(
       throw new Error(`HTTP ${response.status}: ${response.statusText}`);
     }
 
-    return await response.text();
+    const body = await response.text();
+    return { body, requestUrl: url, httpStatus: response.status };
   } finally {
     clearTimeout(timeoutId);
   }
@@ -89,7 +102,7 @@ async function fetchViaProxy(
   proxyUrl: string,
   timeoutMs: number,
   callerSignal?: AbortSignal,
-): Promise<string> {
+): Promise<FetchResult> {
   const controller = new AbortController();
   const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
   const signal = callerSignal
@@ -129,13 +142,14 @@ async function fetchViaProxy(
       throw new Error(`FlareSolverr proxy HTTP error ${response.status}`);
     }
 
-    return await parseFlareSolverrResponse(response);
+    const parsedBody = await parseFlareSolverrResponse(response);
+    return { body: parsedBody.body, requestUrl: targetUrl, httpStatus: parsedBody.upstreamStatus };
   } finally {
     clearTimeout(timeoutId);
   }
 }
 
-async function parseFlareSolverrResponse(response: Response): Promise<string> {
+async function parseFlareSolverrResponse(response: Response): Promise<{ body: string; upstreamStatus: number }> {
   let raw: unknown;
   try {
     raw = await response.json();
@@ -162,5 +176,8 @@ async function parseFlareSolverrResponse(response: Response): Promise<string> {
     throw new Error('FlareSolverr returned empty response');
   }
 
-  return data.solution.response;
+  return {
+    body: data.solution.response,
+    upstreamStatus: data.solution.status ?? response.status,
+  };
 }

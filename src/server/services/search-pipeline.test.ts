@@ -393,6 +393,64 @@ describe('filterAndRankResults — ebook format filtering', () => {
     expect(results).toHaveLength(1);
   });
 
+  describe('debug-level drop logging (AC6)', () => {
+    it('emits per-drop debug log for ebook-only filter when logger is provided', () => {
+      const log = createMockLogger();
+      filterAndRankResults(
+        [makeResult({ title: 'Dune EPUB' })],
+        base.bookDuration,
+        { grabFloor: base.grabFloor, minSeeders: base.minSeeders, protocolPreference: base.protocolPreference },
+        log,
+      );
+      expect(log.debug).toHaveBeenCalledWith(
+        expect.objectContaining({ title: 'Dune EPUB', dropped: true, reason: 'ebook-only-format' }),
+        'Quality filter dropped result',
+      );
+    });
+
+    it('emits per-drop debug log for reject-word filter with the matched word', () => {
+      const log = createMockLogger();
+      filterAndRankResults(
+        [makeResult({ title: 'Dune Audiobook M4B BANNED' })],
+        base.bookDuration,
+        { grabFloor: base.grabFloor, minSeeders: base.minSeeders, protocolPreference: base.protocolPreference, rejectWords: 'banned' },
+        log,
+      );
+      expect(log.debug).toHaveBeenCalledWith(
+        expect.objectContaining({ reason: 'reject-word-match', matchedWord: 'banned' }),
+        'Quality filter dropped result',
+      );
+    });
+
+    it('emits the "language-undetermined passed" log line for results with no detected language (AC6 critical case)', () => {
+      const log = createMockLogger();
+      filterAndRankResults(
+        [makeResult({ title: 'Mystery Book M4B', language: undefined })],
+        base.bookDuration,
+        { grabFloor: base.grabFloor, minSeeders: base.minSeeders, protocolPreference: base.protocolPreference, languages: ['english'] },
+        log,
+      );
+      expect(log.debug).toHaveBeenCalledWith(
+        expect.objectContaining({ title: 'Mystery Book M4B', reason: 'language-undetermined', dropped: false }),
+        'Language filter passed undetected result',
+      );
+    });
+
+    it('emits language-mismatch debug log for explicit non-matching language', () => {
+      const log = createMockLogger();
+      filterAndRankResults(
+        [makeResult({ title: 'German Book M4B', language: 'german' })],
+        base.bookDuration,
+        { grabFloor: base.grabFloor, minSeeders: base.minSeeders, protocolPreference: base.protocolPreference, languages: ['english'] },
+        log,
+      );
+      expect(log.debug).toHaveBeenCalledWith(
+        expect.objectContaining({ title: 'German Book M4B', reason: 'language-mismatch', dropped: true }),
+        'Language filter dropped result',
+      );
+    });
+  });
+
   // #520 — nzbName fallback chain for ebook filter
   it('filters result when nzbName contains ebook keyword but rawTitle/title do not', () => {
     const { results } = filterAndRankResults(
@@ -1231,6 +1289,34 @@ describe('filterBlacklistedResults', () => {
     const results = [makeResult({ infoHash: 'hash1', guid: 'guid1' })];
     const filtered = await filterBlacklistedResults(results, blacklistService);
     expect(filtered).toHaveLength(1);
+  });
+
+  it('emits a per-drop debug log when a logger is provided (AC3)', async () => {
+    vi.mocked(blacklistService.getBlacklistedIdentifiers).mockResolvedValue({
+      blacklistedHashes: new Set(['hash1']),
+      blacklistedGuids: new Set(),
+    });
+    const results = [makeResult({ infoHash: 'hash1', guid: 'guid1', title: 'Filtered Book' })];
+    const log = createMockLogger();
+    await filterBlacklistedResults(results, blacklistService, log);
+    expect(log.debug).toHaveBeenCalledWith(
+      expect.objectContaining({ title: 'Filtered Book', reason: 'blacklist-match', matchedRule: 'hash' }),
+      'Blacklisted result dropped',
+    );
+  });
+
+  it('reports matchedRule "guid" when only guid is blacklisted (AC3)', async () => {
+    vi.mocked(blacklistService.getBlacklistedIdentifiers).mockResolvedValue({
+      blacklistedHashes: new Set(),
+      blacklistedGuids: new Set(['guid1']),
+    });
+    const results = [makeResult({ guid: 'guid1', title: 'Filtered Book' })];
+    const log = createMockLogger();
+    await filterBlacklistedResults(results, blacklistService, log);
+    expect(log.debug).toHaveBeenCalledWith(
+      expect.objectContaining({ title: 'Filtered Book', matchedRule: 'guid' }),
+      'Blacklisted result dropped',
+    );
   });
 });
 

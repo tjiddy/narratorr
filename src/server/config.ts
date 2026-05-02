@@ -40,6 +40,12 @@ const envSchema = z.object({
       const parts = (v ?? '').split(',').map((s) => s.trim()).filter(Boolean);
       return parts.length === 0 ? false : parts;
     }),
+  // Initial Pino log level applied at boot. Persisted general.logLevel from
+  // the database overrides this once the server is up; the env var is the
+  // pre-boot default and the only path operators have without DB access.
+  LOG_LEVEL: z
+    .enum(['fatal', 'error', 'warn', 'info', 'debug', 'trace', 'silent'])
+    .default('info'),
 });
 
 const parsed = envSchema.safeParse(process.env);
@@ -66,4 +72,5 @@ export const config = {
   urlBase: parsed.data.URL_BASE,
   monitorIntervalCron: parsed.data.MONITOR_INTERVAL_CRON,
   trustedProxies: parsed.data.TRUSTED_PROXIES,
+  logLevel: parsed.data.LOG_LEVEL,
 };

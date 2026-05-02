@@ -4,7 +4,7 @@ import { normalizeLanguage } from '../../core/utils/language-codes.js';
 import { detectLanguageFromNewsgroup, detectLanguageFromNzbName, parseNzbGroups, parseNzbName, parseNzbFileSubject } from '../../core/utils/detect-usenet-language.js';
 import { createSsrfSafeDispatcher, fetchWithSsrfRedirect } from '../../core/utils/network-service.js';
 import { Semaphore } from './semaphore.js';
-import { getErrorMessage } from './error-message.js';
+import { serializeError } from './serialize-error.js';
 import { sanitizeLogUrl } from './sanitize-log-url.js';
 
 const NZB_FETCH_CONCURRENCY = 5;
@@ -37,18 +37,33 @@ export async function enrichUsenetLanguages(
   // when newsgroup is generic (no language token found) so nzbName is still populated.
   const needsFetch: SearchResult[] = [];
   for (const result of usenetResults) {
+    logger.debug({
+      title: result.title,
+      hasLanguage: !!result.language,
+      protocol: result.protocol,
+      hasNewsgroup: !!result.newsgroup,
+      hasDownloadUrl: !!result.downloadUrl,
+    }, 'Enrichment phase-1 input');
+
     if (result.newsgroup) {
       const lang = normalizeLanguage(detectLanguageFromNewsgroup(result.newsgroup));
       if (lang) {
         result.language = lang;
         languagesDetected++;
+        logger.debug({ title: result.title, newsgroup: result.newsgroup, detectedLanguage: lang }, 'Phase-1: language detected from existing newsgroup');
       } else if (result.downloadUrl) {
         // Generic newsgroup (e.g., alt.binaries.audiobooks) — fall through to NZB fetch
         // so nzbName is populated for reject/required word filtering and name-based language detection
+        logger.debug({ title: result.title, newsgroup: result.newsgroup }, 'Phase-1: newsgroup generic, falling through to NZB fetch');
         needsFetch.push(result);
+      } else {
+        logger.debug({ title: result.title, reason: 'no-download-url' }, 'Phase-1: skipped, cannot fetch');
       }
     } else if (result.downloadUrl) {
+      logger.debug({ title: result.title }, 'Phase-1: no newsgroup, falling through to NZB fetch');
       needsFetch.push(result);
+    } else {
+      logger.debug({ title: result.title, reason: 'no-download-url' }, 'Phase-1: skipped, cannot fetch');
     }
   }
 
@@ -59,14 +74,21 @@ export async function enrichUsenetLanguages(
     await semaphore.acquire();
     nzbFetched++;
     const dispatcher = createSsrfSafeDispatcher();
+    const safeUrl = sanitizeLogUrl(result.downloadUrl!);
     try {
+      logger.debug({ title: result.title, url: safeUrl }, 'Phase-2: fetching NZB');
       const response = await fetchWithSsrfRedirect(result.downloadUrl!, {
         dispatcher,
         timeoutMs: NZB_FETCH_TIMEOUT_MS,
       });
+      logger.debug({
+        title: result.title,
+        status: response.status,
+        contentLength: response.headers.get('content-length'),
+      }, 'Phase-2: NZB response received');
       if (!response.ok) {
         logger.warn(
-          { title: result.title, status: response.status, url: sanitizeLogUrl(result.downloadUrl!) },
+          { title: result.title, status: response.status, url: safeUrl },
           'NZB fetch failed with non-OK status',
         );
         return;
@@ -75,16 +97,29 @@ export async function enrichUsenetLanguages(
 
       // Extract NZB name (meta tag first, file subject as fallback)
       result.nzbName = parseNzbName(xml) || parseNzbFileSubject(xml) || undefined;
+      const groups = parseNzbGroups(xml);
+
+      // Capture only the specific fields we need — never log the full XML body
+      // (NZBs commonly carry <meta type="password"> RAR/par2 archive passwords).
+      logger.debug({
+        title: result.title,
+        groupCount: groups.length,
+        groups,
+        parsedNzbName: parseNzbName(xml) || null,
+        fileSubject: result.nzbName,
+      }, 'Phase-2: NZB parsed');
 
       // Detect language from newsgroups first
-      const groups = parseNzbGroups(xml);
       let langDetected = false;
+      let source: 'newsgroup' | 'name' | 'unresolved' = 'unresolved';
       for (const group of groups) {
         const lang = normalizeLanguage(detectLanguageFromNewsgroup(group));
+        logger.debug({ title: result.title, signal: 'newsgroup-token', testedAgainst: group, matched: lang ?? null }, 'Detection attempt');
         if (lang) {
           result.language = lang;
           languagesDetected++;
           langDetected = true;
+          source = 'newsgroup';
           break;
         }
       }
@@ -92,14 +127,22 @@ export async function enrichUsenetLanguages(
       // Fall back to NZB name for language detection
       if (!langDetected) {
         const nameLang = normalizeLanguage(detectLanguageFromNzbName(result.nzbName));
+        logger.debug({ title: result.title, signal: 'nzb-name-pattern', testedAgainst: result.nzbName, matched: nameLang ?? null }, 'Detection attempt');
         if (nameLang) {
           result.language = nameLang;
           languagesDetected++;
+          source = 'name';
         }
       }
+
+      logger.debug({
+        title: result.title,
+        finalLanguage: result.language ?? null,
+        source,
+      }, 'Phase-2: enrichment complete');
     } catch (error: unknown) {
       logger.warn(
-        { title: result.title, url: sanitizeLogUrl(result.downloadUrl!), error: getErrorMessage(error) },
+        { title: result.title, url: safeUrl, error: serializeError(error) },
         'NZB fetch failed',
       );
     } finally {

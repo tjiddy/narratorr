@@ -1,5 +1,12 @@
 import { z } from 'zod';
-import type { IndexerAdapter, SearchOptions, SearchResult } from './types.js';
+import {
+  rawTitleBytesHex,
+  type IndexerAdapter,
+  type IndexerParseTrace,
+  type IndexerSearchResponse,
+  type SearchOptions,
+  type SearchResult,
+} from './types.js';
 import { IndexerAuthError, IndexerError, ProxyError } from './errors.js';
 import { createProxyAgent, resolveProxyIp } from './proxy.js';
 import { fetchWithOptionalDispatcher, type DispatcherFetchInit } from '../utils/network-service.js';
@@ -111,14 +118,20 @@ export class MyAnonamouseIndexer implements IndexerAdapter {
     this.name = name || 'MyAnonamouse';
   }
 
-  async search(query: string, options?: SearchOptions): Promise<SearchResult[]> {
+  async search(query: string, options?: SearchOptions): Promise<IndexerSearchResponse> {
     const url = this.buildSearchUrl(query, options);
-    const body = await this.fetchWithCookie(url, options?.signal);
-    const response = this.parseSearchBody(body);
+    const fetched = await this.fetchWithCookieMeta(url, options?.signal);
+    const response = this.parseSearchBody(fetched.body);
 
     // "Nothing returned, out of ..." is an empty-result message, not an error
     if (response.error && response.error.startsWith('Nothing returned')) {
-      return [];
+      return {
+        results: [],
+        parseStats: { itemsObserved: 0, kept: 0, dropped: { emptyTitle: 0, noUrl: 0, other: 0 } },
+        debugTrace: [],
+        requestUrl: url,
+        httpStatus: fetched.httpStatus,
+      };
     }
 
     if (response.error) {
@@ -126,10 +139,23 @@ export class MyAnonamouseIndexer implements IndexerAdapter {
     }
 
     if (!response.data) {
-      return [];
+      return {
+        results: [],
+        parseStats: { itemsObserved: 0, kept: 0, dropped: { emptyTitle: 0, noUrl: 0, other: 0 } },
+        debugTrace: [],
+        requestUrl: url,
+        httpStatus: fetched.httpStatus,
+      };
     }
 
-    return this.buildResults(response.data, options?.signal);
+    const built = await this.buildResults(response.data, options?.signal);
+    return {
+      results: built.results,
+      parseStats: built.parseStats,
+      debugTrace: built.debugTrace,
+      requestUrl: url,
+      httpStatus: fetched.httpStatus,
+    };
   }
 
   private buildSearchUrl(query: string, options?: SearchOptions): string {
@@ -176,10 +202,18 @@ export class MyAnonamouseIndexer implements IndexerAdapter {
     return parsed.data;
   }
 
-  private async buildResults(data: MAMSearchResult[], signal?: AbortSignal): Promise<SearchResult[]> {
+  private async buildResults(data: MAMSearchResult[], signal?: AbortSignal): Promise<{ results: SearchResult[]; parseStats: IndexerSearchResponse['parseStats']; debugTrace: IndexerParseTrace[] }> {
     const results: SearchResult[] = [];
+    const debugTrace: IndexerParseTrace[] = [];
+    const dropped = { emptyTitle: 0, noUrl: 0, other: 0 };
+
     for (const item of data) {
-      if (!item.title) continue;
+      const guid = item.id != null ? String(item.id) : undefined;
+      if (!item.title) {
+        dropped.emptyTitle++;
+        debugTrace.push({ source: 'row', reason: 'dropped:empty-title', guid });
+        continue;
+      }
 
       let downloadUrl: string | undefined;
       if (item.id != null) {
@@ -187,9 +221,20 @@ export class MyAnonamouseIndexer implements IndexerAdapter {
       }
 
       results.push(this.mapItem(item, downloadUrl));
+      debugTrace.push({
+        source: 'row',
+        reason: 'kept',
+        rawTitle: item.title,
+        rawTitleBytes: rawTitleBytesHex(item.title),
+        guid,
+      });
     }
 
-    return results;
+    return {
+      results,
+      parseStats: { itemsObserved: data.length, kept: results.length, dropped },
+      debugTrace,
+    };
   }
 
   private mapItem(item: MAMSearchResult, downloadUrl: string | undefined): SearchResult {
@@ -314,6 +359,11 @@ export class MyAnonamouseIndexer implements IndexerAdapter {
    * Throws on HTTP 403 with an auth-specific error message.
    */
   private async fetchWithCookie(url: string, callerSignal?: AbortSignal): Promise<string> {
+    const { body } = await this.fetchWithCookieMeta(url, callerSignal);
+    return body;
+  }
+
+  private async fetchWithCookieMeta(url: string, callerSignal?: AbortSignal): Promise<{ body: string; httpStatus: number }> {
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), INDEXER_TIMEOUT_MS);
     const signal = callerSignal
@@ -358,7 +408,8 @@ export class MyAnonamouseIndexer implements IndexerAdapter {
         throw new Error(`HTTP ${response.status}: ${response.statusText}`);
       }
 
-      return await response.text();
+      const body = await response.text();
+      return { body, httpStatus: response.status };
     } finally {
       clearTimeout(timeoutId);
     }

@@ -225,6 +225,31 @@ describe('config', () => {
     });
   });
 
+  describe('LOG_LEVEL', () => {
+    it('defaults to info when LOG_LEVEL is not set', async () => {
+      delete process.env.LOG_LEVEL;
+      const config = await loadConfig();
+      expect(config.logLevel).toBe('info');
+    });
+
+    it('accepts valid pino level "debug"', async () => {
+      process.env.LOG_LEVEL = 'debug';
+      const config = await loadConfig();
+      expect(config.logLevel).toBe('debug');
+    });
+
+    it('accepts valid pino level "trace"', async () => {
+      process.env.LOG_LEVEL = 'trace';
+      const config = await loadConfig();
+      expect(config.logLevel).toBe('trace');
+    });
+
+    it('rejects an invalid LOG_LEVEL value', async () => {
+      process.env.LOG_LEVEL = 'verbose';
+      await expect(loadConfig()).rejects.toThrow();
+    });
+  });
+
   describe('authBypass', () => {
     it('is false when AUTH_BYPASS is not set', async () => {
       delete process.env.AUTH_BYPASS;

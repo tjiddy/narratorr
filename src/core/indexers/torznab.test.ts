@@ -57,7 +57,7 @@ describe('TorznabIndexer', () => {
         }),
       );
 
-      const results = await indexer.search('Brandon Sanderson');
+      const { results } = await indexer.search('Brandon Sanderson');
 
       expect(results).toHaveLength(3);
       expect(results[0].title).toBe(
@@ -76,7 +76,7 @@ describe('TorznabIndexer', () => {
         }),
       );
 
-      const results = await indexer.search('Brandon Sanderson');
+      const { results } = await indexer.search('Brandon Sanderson');
 
       expect(results[0].downloadUrl).toBe(
         'https://tracker.test/download/abc123.torrent',
@@ -92,7 +92,7 @@ describe('TorznabIndexer', () => {
         }),
       );
 
-      const results = await indexer.search('Brandon Sanderson');
+      const { results } = await indexer.search('Brandon Sanderson');
 
       expect(results[0].seeders).toBe(15);
       expect(results[0].leechers).toBe(3);
@@ -109,7 +109,7 @@ describe('TorznabIndexer', () => {
         }),
       );
 
-      const results = await indexer.search('Brandon Sanderson');
+      const { results } = await indexer.search('Brandon Sanderson');
 
       expect(results[0].infoHash).toBe('aaf4c61ddcc5e8a2dabede0f3b482cd9aea9434d');
       expect(results[1].infoHash).toBe('b1d5781111d84f7b3fe45a0852e59758cd7a87e5');
@@ -124,7 +124,7 @@ describe('TorznabIndexer', () => {
         }),
       );
 
-      const results = await indexer.search('Brandon Sanderson');
+      const { results } = await indexer.search('Brandon Sanderson');
 
       expect(results[0].size).toBe(1073741824);
       expect(results[1].size).toBe(2147483648);
@@ -139,7 +139,7 @@ describe('TorznabIndexer', () => {
         }),
       );
 
-      const results = await indexer.search('Brandon Sanderson');
+      const { results } = await indexer.search('Brandon Sanderson');
 
       expect(results[0].grabs).toBe(42);
       expect(results[1].grabs).toBe(18);
@@ -154,7 +154,7 @@ describe('TorznabIndexer', () => {
         }),
       );
 
-      const results = await indexer.search('Brandon Sanderson');
+      const { results } = await indexer.search('Brandon Sanderson');
 
       // Third item has no enclosure or link, only infoHash
       expect(results[2].downloadUrl).toContain('magnet:?');
@@ -171,7 +171,7 @@ describe('TorznabIndexer', () => {
         }),
       );
 
-      const results = await indexer.search('Brandon Sanderson');
+      const { results } = await indexer.search('Brandon Sanderson');
 
       expect(results[0].detailsUrl).toBe('https://tracker.test/details/abc123');
     });
@@ -185,7 +185,7 @@ describe('TorznabIndexer', () => {
         }),
       );
 
-      const results = await indexer.search('Brandon Sanderson');
+      const { results } = await indexer.search('Brandon Sanderson');
 
       expect(results[0].guid).toBe('https://tracker.test/details/abc123');
       expect(results[1].guid).toBe('https://tracker.test/details/def456');
@@ -209,7 +209,7 @@ describe('TorznabIndexer', () => {
         }),
       );
 
-      const results = await indexer.search('test');
+      const { results } = await indexer.search('test');
       expect(results).toHaveLength(1);
       expect(results[0].guid).toBeUndefined();
     });
@@ -223,7 +223,7 @@ describe('TorznabIndexer', () => {
         }),
       );
 
-      const results = await indexer.search('Brandon Sanderson', { limit: 1 });
+      const { results } = await indexer.search('Brandon Sanderson', { limit: 1 });
 
       expect(results).toHaveLength(1);
     });
@@ -298,7 +298,7 @@ describe('TorznabIndexer', () => {
         }),
       );
 
-      const results = await indexer.search('nonexistent');
+      const { results } = await indexer.search('nonexistent');
       expect(results).toEqual([]);
     });
 
@@ -326,6 +326,33 @@ describe('TorznabIndexer', () => {
       );
 
       await expect(indexer.search('test')).rejects.toThrow('Torznab API error: Incorrect user credentials');
+    });
+  });
+
+  describe('parse trace shape (#932 AC1)', () => {
+    it('populates parseStats and transport metadata for Torznab adapters', async () => {
+      const xml = `<?xml version="1.0" encoding="UTF-8"?>
+<rss xmlns:torznab="http://torznab.com/schemas/2015/feed" version="2.0">
+  <channel>
+    <item>
+      <title>Sample Audiobook FLAC 2024</title>
+      <guid>https://tracker.test/details/abc</guid>
+      <enclosure url="magnet:?xt=urn:btih:aaf4c61ddcc5e8a2dabede0f3b482cd9aea9434d" length="100000" />
+      <torznab:attr name="seeders" value="5" />
+    </item>
+  </channel>
+</rss>`;
+      server.use(
+        http.get(`${API_BASE}/api`, () => {
+          return new HttpResponse(xml, { headers: { 'Content-Type': 'application/xml' } });
+        }),
+      );
+
+      const response = await indexer.search('test');
+      expect(response.parseStats.itemsObserved).toBeGreaterThanOrEqual(1);
+      expect(response.requestUrl).toContain(`${API_BASE}/api`);
+      expect(response.httpStatus).toBe(200);
+      expect(response.debugTrace.some((t) => t.reason === 'kept' && t.rawTitleBytes)).toBe(true);
     });
   });
 
@@ -408,7 +435,7 @@ describe('TorznabIndexer', () => {
         }),
       );
 
-      const results = await proxiedIndexer.search('Brandon Sanderson');
+      const { results } = await proxiedIndexer.search('Brandon Sanderson');
 
       expect(capturedBody.cmd).toBe('request.get');
       expect(capturedBody.url).toContain(`${API_BASE}/api`);
@@ -495,7 +522,7 @@ describe('TorznabIndexer', () => {
         }),
       );
 
-      const results = await indexer.search('test');
+      const { results } = await indexer.search('test');
       expect(results).toHaveLength(1);
       // Number('notanumber') = NaN, size || undefined = undefined
       expect(results[0].size).toBeUndefined();
@@ -521,7 +548,7 @@ describe('TorznabIndexer', () => {
         }),
       );
 
-      const results = await indexer.search('test');
+      const { results } = await indexer.search('test');
       expect(results).toHaveLength(1);
       // Number('abc') = NaN — seeders/leechers pass through as NaN, grabs returns undefined
       expect(results[0].seeders).toBeNaN();
@@ -547,7 +574,7 @@ describe('TorznabIndexer', () => {
         }),
       );
 
-      const results = await indexer.search('test');
+      const { results } = await indexer.search('test');
       expect(results).toHaveLength(1);
       // '' || undefined → undefined
       expect(results[0].infoHash).toBeUndefined();
@@ -574,7 +601,7 @@ describe('TorznabIndexer', () => {
         }),
       );
 
-      const results = await indexer.search('test');
+      const { results } = await indexer.search('test');
       expect(results).toHaveLength(1);
       expect(results[0].title).toBe('Valid Title');
     });
@@ -596,7 +623,7 @@ describe('TorznabIndexer', () => {
         }),
       );
 
-      const results = await indexer.search('test');
+      const { results } = await indexer.search('test');
       expect(results[0].size).toBe(5000000);
     });
 
@@ -629,7 +656,7 @@ describe('TorznabIndexer', () => {
         }),
       );
 
-      const results = await proxiedIndexer.search('Brandon Sanderson');
+      const { results } = await proxiedIndexer.search('Brandon Sanderson');
 
       expect(results).toHaveLength(3);
       expect(results[0].title).toBe('The Way of Kings - Brandon Sanderson (Unabridged)');
@@ -742,7 +769,7 @@ describe('TorznabIndexer', () => {
         new HttpResponse(xml, { headers: { 'Content-Type': 'application/rss+xml' } }),
       ));
 
-      const results = await indexer.search('test');
+      const { results } = await indexer.search('test');
       expect(results[0].language).toBe('french');
     });
 
@@ -760,7 +787,7 @@ describe('TorznabIndexer', () => {
         new HttpResponse(xml, { headers: { 'Content-Type': 'application/rss+xml' } }),
       ));
 
-      const results = await indexer.search('test');
+      const { results } = await indexer.search('test');
       expect(results[0].language).toBe('german');
     });
 
@@ -769,7 +796,7 @@ describe('TorznabIndexer', () => {
         new HttpResponse(searchXml, { headers: { 'Content-Type': 'application/rss+xml' } }),
       ));
 
-      const results = await indexer.search('test');
+      const { results } = await indexer.search('test');
       expect(results[0].language).toBeUndefined();
     });
   });

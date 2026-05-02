@@ -57,7 +57,7 @@ describe('NewznabIndexer', () => {
         }),
       );
 
-      const results = await indexer.search('Brandon Sanderson');
+      const { results } = await indexer.search('Brandon Sanderson');
 
       expect(results).toHaveLength(3);
       expect(results[0].title).toBe(
@@ -76,7 +76,7 @@ describe('NewznabIndexer', () => {
         }),
       );
 
-      const results = await indexer.search('Brandon Sanderson');
+      const { results } = await indexer.search('Brandon Sanderson');
 
       expect(results[0].downloadUrl).toBe(
         'https://indexer.test/getnzb/abc123.nzb?i=1&r=testapikey',
@@ -92,7 +92,7 @@ describe('NewznabIndexer', () => {
         }),
       );
 
-      const results = await indexer.search('Brandon Sanderson');
+      const { results } = await indexer.search('Brandon Sanderson');
 
       expect(results[0].size).toBe(1073741824); // 1 GB
       expect(results[1].size).toBe(2147483648); // 2 GB
@@ -107,7 +107,7 @@ describe('NewznabIndexer', () => {
         }),
       );
 
-      const results = await indexer.search('Brandon Sanderson');
+      const { results } = await indexer.search('Brandon Sanderson');
 
       expect(results[0].grabs).toBe(42);
       expect(results[1].grabs).toBe(18);
@@ -122,7 +122,7 @@ describe('NewznabIndexer', () => {
         }),
       );
 
-      const results = await indexer.search('Brandon Sanderson');
+      const { results } = await indexer.search('Brandon Sanderson');
 
       expect(results[0].detailsUrl).toBe('https://indexer.test/details/abc123');
     });
@@ -136,7 +136,7 @@ describe('NewznabIndexer', () => {
         }),
       );
 
-      const results = await indexer.search('Brandon Sanderson');
+      const { results } = await indexer.search('Brandon Sanderson');
 
       expect(results[0].guid).toBe('https://indexer.test/details/abc123');
       expect(results[1].guid).toBe('https://indexer.test/details/def456');
@@ -160,7 +160,7 @@ describe('NewznabIndexer', () => {
         }),
       );
 
-      const results = await indexer.search('test');
+      const { results } = await indexer.search('test');
       expect(results).toHaveLength(1);
       expect(results[0].guid).toBeUndefined();
     });
@@ -174,7 +174,7 @@ describe('NewznabIndexer', () => {
         }),
       );
 
-      const results = await indexer.search('Brandon Sanderson', { limit: 1 });
+      const { results } = await indexer.search('Brandon Sanderson', { limit: 1 });
 
       expect(results).toHaveLength(1);
     });
@@ -249,7 +249,7 @@ describe('NewznabIndexer', () => {
         }),
       );
 
-      const results = await indexer.search('nonexistent');
+      const { results } = await indexer.search('nonexistent');
       expect(results).toEqual([]);
     });
 
@@ -277,6 +277,53 @@ describe('NewznabIndexer', () => {
       );
 
       await expect(indexer.search('test')).rejects.toThrow('Newznab API error: Incorrect user credentials');
+    });
+  });
+
+  describe('parse trace shape (#932 AC1)', () => {
+    it('populates parseStats and per-item debugTrace including transport metadata', async () => {
+      server.use(
+        http.get(`${API_BASE}/api`, () => {
+          return new HttpResponse(searchXml, { headers: { 'Content-Type': 'application/rss+xml' } });
+        }),
+      );
+
+      const response = await indexer.search('Brandon Sanderson');
+
+      expect(response.parseStats.itemsObserved).toBeGreaterThanOrEqual(response.results.length);
+      expect(response.parseStats.kept).toBe(response.results.length);
+      expect(response.requestUrl).toBeDefined();
+      expect(response.requestUrl).toContain(`${API_BASE}/api`);
+      expect(response.httpStatus).toBe(200);
+      expect(response.debugTrace.length).toBeGreaterThan(0);
+      const keptTrace = response.debugTrace.find((t) => t.reason === 'kept');
+      expect(keptTrace?.rawTitleBytes).toMatch(/^[0-9a-f]+$/);
+    });
+
+    it('records dropped:empty-title in debugTrace for items missing titles', async () => {
+      const xml = `<?xml version="1.0" encoding="UTF-8"?>
+<rss xmlns:newznab="http://www.newznab.com/DTD/2010/feeds/attributes/" version="2.0">
+  <channel>
+    <item>
+      <title></title>
+      <guid>empty-1</guid>
+    </item>
+    <item>
+      <title>Real Book</title>
+      <guid>real-1</guid>
+      <enclosure url="https://nzbgeek.info/nzb/real-1" />
+    </item>
+  </channel>
+</rss>`;
+      server.use(
+        http.get(`${API_BASE}/api`, () => {
+          return new HttpResponse(xml, { headers: { 'Content-Type': 'application/xml' } });
+        }),
+      );
+
+      const response = await indexer.search('test');
+      expect(response.parseStats.dropped.emptyTitle).toBe(1);
+      expect(response.debugTrace.some((t) => t.reason === 'dropped:empty-title')).toBe(true);
     });
   });
 
@@ -359,7 +406,7 @@ describe('NewznabIndexer', () => {
         }),
       );
 
-      const results = await proxiedIndexer.search('test');
+      const { results } = await proxiedIndexer.search('test');
 
       expect(capturedBody.cmd).toBe('request.get');
       expect(capturedBody.url).toContain(`${API_BASE}/api`);
@@ -445,7 +492,7 @@ describe('NewznabIndexer', () => {
         }),
       );
 
-      const results = await indexer.search('test');
+      const { results } = await indexer.search('test');
       expect(results).toHaveLength(1);
       // Number('notanumber') = NaN, size || undefined = undefined
       expect(results[0].size).toBeUndefined();
@@ -469,7 +516,7 @@ describe('NewznabIndexer', () => {
         }),
       );
 
-      const results = await indexer.search('test');
+      const { results } = await indexer.search('test');
       expect(results).toHaveLength(1);
       expect(results[0].grabs).toBeUndefined();
     });
@@ -495,7 +542,7 @@ describe('NewznabIndexer', () => {
         }),
       );
 
-      const results = await indexer.search('test');
+      const { results } = await indexer.search('test');
       expect(results).toHaveLength(1);
       expect(results[0].title).toBe('Valid Title');
     });
@@ -517,7 +564,7 @@ describe('NewznabIndexer', () => {
         }),
       );
 
-      const results = await indexer.search('test');
+      const { results } = await indexer.search('test');
       expect(results[0].size).toBe(5000000);
     });
 
@@ -538,7 +585,7 @@ describe('NewznabIndexer', () => {
         }),
       );
 
-      const results = await indexer.search('test');
+      const { results } = await indexer.search('test');
       expect(results[0].protocol).toBe('usenet');
     });
 
@@ -571,7 +618,7 @@ describe('NewznabIndexer', () => {
         }),
       );
 
-      const results = await proxiedIndexer.search('Brandon Sanderson');
+      const { results } = await proxiedIndexer.search('Brandon Sanderson');
 
       expect(results).toHaveLength(3);
       expect(results[0].title).toBe('The Way of Kings - Brandon Sanderson (Unabridged)');
@@ -686,7 +733,7 @@ describe('NewznabIndexer', () => {
         new HttpResponse(xml, { headers: { 'Content-Type': 'application/rss+xml' } }),
       ));
 
-      const results = await indexer.search('test');
+      const { results } = await indexer.search('test');
       expect(results[0].language).toBe('english');
     });
 
@@ -703,7 +750,7 @@ describe('NewznabIndexer', () => {
         new HttpResponse(xml, { headers: { 'Content-Type': 'application/rss+xml' } }),
       ));
 
-      const results = await indexer.search('test');
+      const { results } = await indexer.search('test');
       expect(results[0].newsgroup).toBe('alt.binaries.audiobooks');
     });
 
@@ -720,7 +767,7 @@ describe('NewznabIndexer', () => {
         new HttpResponse(xml, { headers: { 'Content-Type': 'application/rss+xml' } }),
       ));
 
-      const results = await indexer.search('test');
+      const { results } = await indexer.search('test');
       expect(results[0].language).toBe('german');
     });
 
@@ -729,7 +776,7 @@ describe('NewznabIndexer', () => {
         new HttpResponse(searchXml, { headers: { 'Content-Type': 'application/rss+xml' } }),
       ));
 
-      const results = await indexer.search('test');
+      const { results } = await indexer.search('test');
       expect(results[0].language).toBeUndefined();
     });
 
@@ -738,7 +785,7 @@ describe('NewznabIndexer', () => {
         new HttpResponse(searchXml, { headers: { 'Content-Type': 'application/rss+xml' } }),
       ));
 
-      const results = await indexer.search('test');
+      const { results } = await indexer.search('test');
       expect(results[0].newsgroup).toBeUndefined();
     });
 
@@ -755,7 +802,7 @@ describe('NewznabIndexer', () => {
         new HttpResponse(xml, { headers: { 'Content-Type': 'application/rss+xml' } }),
       ));
 
-      const results = await indexer.search('test');
+      const { results } = await indexer.search('test');
       expect(results[0].grabs).toBeUndefined();
     });
 
@@ -772,7 +819,7 @@ describe('NewznabIndexer', () => {
         new HttpResponse(xml, { headers: { 'Content-Type': 'application/rss+xml' } }),
       ));
 
-      const results = await indexer.search('test');
+      const { results } = await indexer.search('test');
       expect(results[0].grabs).toBe(0);
     });
   });

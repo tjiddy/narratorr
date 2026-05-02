@@ -195,7 +195,7 @@ export async function runUpgradeSearchJob(
         languages: metadataSettings.languages,
         narratorPriority,
         maxDownloadSize: qualitySettings.maxDownloadSize,
-      });
+      }, log);
       if (results.length < searchInputCount) {
         log.debug({ inputCount: searchInputCount, outputCount: results.length }, 'Quality gate filtering applied');
       }

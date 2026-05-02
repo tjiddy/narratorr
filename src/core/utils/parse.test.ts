@@ -405,27 +405,28 @@ describe('formatBytes', () => {
 describe('isMultiPartUsenetPost', () => {
   it('detects quoted pattern "28" of "30"', () => {
     const result = isMultiPartUsenetPost('hp02.Harry Potter "28" of "30" yEnc');
-    expect(result).toEqual({ match: true, part: 28, total: 30 });
+    expect(result).toMatchObject({ match: true, part: 28, total: 30 });
+    expect(result.pattern).toBeDefined();
   });
 
   it('detects "01" of "01" as match with total=1', () => {
     const result = isMultiPartUsenetPost('My Audiobook "01" of "01" yEnc');
-    expect(result).toEqual({ match: true, part: 1, total: 1 });
+    expect(result).toMatchObject({ match: true, part: 1, total: 1 });
   });
 
   it('detects "1" of "1" as match with total=1', () => {
     const result = isMultiPartUsenetPost('Some Book "1" of "1"');
-    expect(result).toEqual({ match: true, part: 1, total: 1 });
+    expect(result).toMatchObject({ match: true, part: 1, total: 1 });
   });
 
   it('detects unquoted pattern 08 of 30', () => {
     const result = isMultiPartUsenetPost('hp02.The Chamber of Secrets 08 of 30');
-    expect(result).toEqual({ match: true, part: 8, total: 30 });
+    expect(result).toMatchObject({ match: true, part: 8, total: 30 });
   });
 
   it('detects parenthesized slash pattern (8/30)', () => {
     const result = isMultiPartUsenetPost('Harry Potter Chapter 8 (8/30)');
-    expect(result).toEqual({ match: true, part: 8, total: 30 });
+    expect(result).toMatchObject({ match: true, part: 8, total: 30 });
   });
 
   it('returns no match for regular title', () => {
@@ -436,22 +437,27 @@ describe('isMultiPartUsenetPost', () => {
   it('matches pattern embedded in longer NZB title', () => {
     const title = 'hp02.Harry Potter and "hp02.The Chamber of Secrets - 16 - The Chamber of Secrets.mp3" by J.K.Rowling "28" of "30" yEnc';
     const result = isMultiPartUsenetPost(title);
-    expect(result).toEqual({ match: true, part: 28, total: 30 });
+    expect(result).toMatchObject({ match: true, part: 28, total: 30 });
   });
 
   it('handles spacing variants in quoted pattern', () => {
     const result = isMultiPartUsenetPost('Book "3"of"10"');
-    expect(result).toEqual({ match: true, part: 3, total: 10 });
+    expect(result).toMatchObject({ match: true, part: 3, total: 10 });
   });
 
   it('handles spacing in slash pattern', () => {
     const result = isMultiPartUsenetPost('Book (3 / 10)');
-    expect(result).toEqual({ match: true, part: 3, total: 10 });
+    expect(result).toMatchObject({ match: true, part: 3, total: 10 });
   });
 
   it('prefers quoted pattern over unquoted', () => {
     // Title with both quoted and unquoted — quoted wins (first pattern)
     const result = isMultiPartUsenetPost('Part 1 of 1 and "5" of "10"');
-    expect(result).toEqual({ match: true, part: 5, total: 10 });
+    expect(result).toMatchObject({ match: true, part: 5, total: 10 });
+  });
+
+  it('reports the source of the matched pattern in the result', () => {
+    const result = isMultiPartUsenetPost('Book "5" of "10"');
+    expect(result.pattern).toContain('"');
   });
 });

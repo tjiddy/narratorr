@@ -22,7 +22,9 @@ describe('fetchWithProxy', () => {
       );
 
       const result = await fetchWithProxy({ url: TARGET_URL });
-      expect(result).toBe('<xml>data</xml>');
+      expect(result.body).toBe('<xml>data</xml>');
+      expect(result.requestUrl).toBe(TARGET_URL);
+      expect(result.httpStatus).toBe(200);
     });
 
     it('passes headers to direct request', async () => {
@@ -104,7 +106,7 @@ describe('fetchWithProxy', () => {
       );
 
       const result = await fetchWithProxy({ url: TARGET_URL });
-      expect(result).toBe('ok');
+      expect(result.body).toBe('ok');
     });
   });
 
@@ -126,7 +128,9 @@ describe('fetchWithProxy', () => {
         proxyUrl: PROXY_URL,
       });
 
-      expect(result).toBe('<html>proxied</html>');
+      expect(result.body).toBe('<html>proxied</html>');
+      expect(result.requestUrl).toBe(TARGET_URL);
+      expect(result.httpStatus).toBe(200);
       expect(capturedBody.cmd).toBe('request.get');
       expect(capturedBody.url).toBe(TARGET_URL);
       expect(capturedBody.maxTimeout).toBe(60000);
@@ -402,7 +406,7 @@ describe('fetchWithProxy', () => {
         );
 
         const result = await fetchWithProxy({ url: TARGET_URL, proxyUrl: PROXY_URL });
-        expect(result).toBe('html');
+        expect(result.body).toBe('html');
       });
 
       it('accepts null for nullish fields (message, solution.status)', async () => {
@@ -417,7 +421,7 @@ describe('fetchWithProxy', () => {
         );
 
         const result = await fetchWithProxy({ url: TARGET_URL, proxyUrl: PROXY_URL });
-        expect(result).toBe('proxied-html');
+        expect(result.body).toBe('proxied-html');
       });
     });
 
@@ -499,7 +503,35 @@ describe('fetchWithProxy', () => {
       );
 
       const result = await fetchWithProxy({ url: TARGET_URL });
-      expect(result).toBe('ok');
+      expect(result.body).toBe('ok');
+    });
+  });
+
+  describe('FetchResult metadata', () => {
+    it('uses the FlareSolverr solution.status as httpStatus when available', async () => {
+      server.use(
+        http.post(`${PROXY_URL}/v1`, () => {
+          return HttpResponse.json({
+            status: 'ok',
+            solution: { response: '<html>via proxy</html>', status: 503 },
+          });
+        }),
+      );
+
+      const result = await fetchWithProxy({ url: TARGET_URL, proxyUrl: PROXY_URL });
+      expect(result.body).toBe('<html>via proxy</html>');
+      expect(result.requestUrl).toBe(TARGET_URL);
+      expect(result.httpStatus).toBe(503);
+    });
+
+    it('returns requestUrl matching the target URL even when redirects happen at the transport layer', async () => {
+      server.use(
+        http.get('https://indexer.test/api', () => {
+          return new HttpResponse('ok', { status: 200 });
+        }),
+      );
+      const result = await fetchWithProxy({ url: TARGET_URL });
+      expect(result.requestUrl).toBe(TARGET_URL);
     });
   });
 });
