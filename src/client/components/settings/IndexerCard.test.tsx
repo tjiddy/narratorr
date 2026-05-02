@@ -1042,4 +1042,127 @@ describe('IndexerCard — Prowlarr-managed indicators (AC8)', () => {
       expect(input).toHaveAttribute('step', '1');
     });
   });
+
+  describe('#908 — settingsFromIndexer registry overlay (no foreign-type leak)', () => {
+    it('MAM edit Test payload contains no non-MAM keys and round-trips persisted MAM-specific keys', async () => {
+      const onFormTest = vi.fn();
+      const user = userEvent.setup();
+      const mamIndexer: Indexer = createMockIndexer({
+        id: 100,
+        name: 'MAM No Leak',
+        type: 'myanonamouse',
+        settings: {
+          mamId: 'mam-secret',
+          baseUrl: 'https://mam.example.com',
+          searchLanguages: [1, 36],
+          searchType: 'active',
+          isVip: true,
+          mamUsername: 'mamuser',
+          classname: 'VIP',
+        },
+      });
+
+      renderWithProviders(
+        <IndexerCard
+          indexer={mamIndexer}
+          mode="edit"
+          onSubmit={vi.fn()}
+          onFormTest={onFormTest}
+        />,
+      );
+
+      await user.click(screen.getByText('Test'));
+
+      await waitFor(() => {
+        expect(onFormTest).toHaveBeenCalled();
+      });
+
+      const payloadSettings = onFormTest.mock.calls[0][0].settings as Record<string, unknown>;
+
+      // Foreign keys (not in MAM defaults, not in stored settings) MUST NOT leak
+      expect(payloadSettings).not.toHaveProperty('hostname');
+      expect(payloadSettings).not.toHaveProperty('pageLimit');
+      expect(payloadSettings).not.toHaveProperty('apiUrl');
+      expect(payloadSettings).not.toHaveProperty('apiKey');
+
+      // Persisted MAM-specific keys MUST round-trip
+      expect(payloadSettings).toHaveProperty('mamId', 'mam-secret');
+      expect(payloadSettings).toHaveProperty('isVip', true);
+      expect(payloadSettings).toHaveProperty('classname', 'VIP');
+      expect(payloadSettings).toHaveProperty('mamUsername', 'mamuser');
+    });
+
+    it('Torznab edit Test payload contains no MAM/ABB keys', async () => {
+      const onFormTest = vi.fn();
+      const user = userEvent.setup();
+      const torznabIndexer: Indexer = createMockIndexer({
+        id: 101,
+        name: 'Torznab No Leak',
+        type: 'torznab',
+        settings: { apiUrl: 'https://torznab.example.com/api', apiKey: 'tk' },
+      });
+
+      renderWithProviders(
+        <IndexerCard
+          indexer={torznabIndexer}
+          mode="edit"
+          onSubmit={vi.fn()}
+          onFormTest={onFormTest}
+        />,
+      );
+
+      await user.click(screen.getByText('Test'));
+
+      await waitFor(() => {
+        expect(onFormTest).toHaveBeenCalled();
+      });
+
+      const payloadSettings = onFormTest.mock.calls[0][0].settings as Record<string, unknown>;
+
+      // Foreign keys for torznab MUST NOT leak
+      expect(payloadSettings).not.toHaveProperty('hostname');
+      expect(payloadSettings).not.toHaveProperty('pageLimit');
+      expect(payloadSettings).not.toHaveProperty('mamId');
+      expect(payloadSettings).not.toHaveProperty('baseUrl');
+      expect(payloadSettings).not.toHaveProperty('searchLanguages');
+      expect(payloadSettings).not.toHaveProperty('searchType');
+      expect(payloadSettings).not.toHaveProperty('isVip');
+      expect(payloadSettings).not.toHaveProperty('mamUsername');
+      expect(payloadSettings).not.toHaveProperty('classname');
+
+      // Stored Torznab keys MUST round-trip
+      expect(payloadSettings).toHaveProperty('apiUrl', 'https://torznab.example.com/api');
+      expect(payloadSettings).toHaveProperty('apiKey', 'tk');
+    });
+
+    it('coerces legacy numeric MAM searchType to its string equivalent for the form enum', async () => {
+      const onFormTest = vi.fn();
+      const user = userEvent.setup();
+      const mamIndexer: Indexer = createMockIndexer({
+        id: 102,
+        name: 'MAM Legacy SearchType',
+        type: 'myanonamouse',
+        // Legacy persisted value: 1 → 'active'. Form schema rejects numeric searchType.
+        settings: { mamId: 'm', baseUrl: '', searchLanguages: [1], searchType: 1 as unknown as string },
+      });
+
+      renderWithProviders(
+        <IndexerCard
+          indexer={mamIndexer}
+          mode="edit"
+          onSubmit={vi.fn()}
+          onFormTest={onFormTest}
+        />,
+      );
+
+      await user.click(screen.getByText('Test'));
+
+      await waitFor(() => {
+        expect(onFormTest).toHaveBeenCalled();
+      });
+
+      const payloadSettings = onFormTest.mock.calls[0][0].settings as Record<string, unknown>;
+      expect(payloadSettings.searchType).toBe('active');
+    });
+  });
 });

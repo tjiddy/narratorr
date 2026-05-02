@@ -402,4 +402,82 @@ describe('DownloadClientForm (#201)', () => {
       expect(screen.queryByText('Download Root')).not.toBeInTheDocument();
     });
   });
+
+  describe('#908 — settingsFromClient registry overlay (no foreign-type leak)', () => {
+    it('qBittorrent edit Test payload contains no SABnzbd/blackhole keys', async () => {
+      const onFormTest = vi.fn();
+      const user = userEvent.setup();
+      const client = createMockDownloadClient({
+        id: 200,
+        name: 'qb No Leak',
+        type: 'qbittorrent',
+        settings: { host: 'qb.local', port: 8080, username: 'admin', password: 'pw', useSsl: false, category: 'audiobooks' },
+      });
+
+      renderWithProviders(
+        <DownloadClientForm
+          client={client}
+          mode="edit"
+          onSubmit={vi.fn()}
+          onFormTest={onFormTest}
+        />,
+      );
+
+      await user.click(screen.getByRole('button', { name: /test/i }));
+
+      await waitFor(() => {
+        expect(onFormTest).toHaveBeenCalled();
+      });
+
+      const payloadSettings = onFormTest.mock.calls[0][0].settings as Record<string, unknown>;
+
+      // Foreign keys for qBittorrent MUST NOT leak (useSsl is allowed by qBittorrent schema)
+      expect(payloadSettings).not.toHaveProperty('apiKey');
+      expect(payloadSettings).not.toHaveProperty('watchDir');
+      expect(payloadSettings).not.toHaveProperty('protocol');
+
+      // Stored qBittorrent keys MUST round-trip
+      expect(payloadSettings).toHaveProperty('host', 'qb.local');
+      expect(payloadSettings).toHaveProperty('port', 8080);
+      expect(payloadSettings).toHaveProperty('username', 'admin');
+    });
+
+    it('SABnzbd edit Test payload contains no torrent-client/blackhole keys', async () => {
+      const onFormTest = vi.fn();
+      const user = userEvent.setup();
+      const client = createMockDownloadClient({
+        id: 201,
+        name: 'sab No Leak',
+        type: 'sabnzbd',
+        settings: { host: 'sab.local', port: 8080, apiKey: 'sab-key', category: 'books' },
+      });
+
+      renderWithProviders(
+        <DownloadClientForm
+          client={client}
+          mode="edit"
+          onSubmit={vi.fn()}
+          onFormTest={onFormTest}
+        />,
+      );
+
+      await user.click(screen.getByRole('button', { name: /test/i }));
+
+      await waitFor(() => {
+        expect(onFormTest).toHaveBeenCalled();
+      });
+
+      const payloadSettings = onFormTest.mock.calls[0][0].settings as Record<string, unknown>;
+
+      // Foreign keys for SABnzbd MUST NOT leak (useSsl and apiKey are allowed)
+      expect(payloadSettings).not.toHaveProperty('username');
+      expect(payloadSettings).not.toHaveProperty('password');
+      expect(payloadSettings).not.toHaveProperty('watchDir');
+      expect(payloadSettings).not.toHaveProperty('protocol');
+
+      // Stored SABnzbd keys MUST round-trip
+      expect(payloadSettings).toHaveProperty('host', 'sab.local');
+      expect(payloadSettings).toHaveProperty('apiKey', 'sab-key');
+    });
+  });
 });

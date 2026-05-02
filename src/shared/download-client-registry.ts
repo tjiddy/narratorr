@@ -115,18 +115,13 @@ export const DOWNLOAD_CLIENT_REGISTRY = {
 
 /** Normalize raw DB settings into typed form settings */
 export function settingsFromClient(
-  client: { settings: unknown },
+  client: { type: DownloadClientType; settings: unknown },
 ): CreateDownloadClientFormData['settings'] {
-  const s = client.settings as Record<string, unknown>;
-  return {
-    host: (s.host as string) || '',
-    port: (s.port as number) || 8080,
-    username: (s.username as string) || '',
-    password: (s.password as string) || '',
-    useSsl: (s.useSsl as boolean) || false,
-    apiKey: (s.apiKey as string) || '',
-    category: (s.category as string) || '',
-    watchDir: (s.watchDir as string) || '',
-    protocol: (s.protocol as 'torrent' | 'usenet') || 'torrent',
-  };
+  const meta = DOWNLOAD_CLIENT_REGISTRY[client.type];
+  const defaults = meta?.defaultSettings ?? {};
+  const result: Record<string, unknown> = { ...defaults };
+  for (const [key, val] of Object.entries(client.settings as Record<string, unknown>)) {
+    if (val != null) result[key] = val;
+  }
+  return result as CreateDownloadClientFormData['settings'];
 }
