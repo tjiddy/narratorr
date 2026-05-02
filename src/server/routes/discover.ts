@@ -3,9 +3,7 @@ import { z } from 'zod';
 import { suggestionReasonSchema, type SuggestionRowResponse } from '../../shared/schemas/discovery.js';
 import type { DiscoveryService, SettingsService } from '../services/index.js';
 import type { TaskRegistry } from '../services/task-registry.js';
-import type { suggestions } from '../../db/schema.js';
-
-type SuggestionRow = typeof suggestions.$inferSelect;
+import type { SuggestionRow } from '../services/types.js';
 
 /** Maps a DB suggestion row to the API response contract. */
 function toSuggestionResponse(row: SuggestionRow): SuggestionRowResponse {
@@ -23,10 +21,10 @@ function toSuggestionResponse(row: SuggestionRow): SuggestionRowResponse {
     genres: row.genres,
     seriesName: row.seriesName,
     seriesPosition: row.seriesPosition,
-    reason: row.reason as SuggestionRowResponse['reason'],
+    reason: row.reason,
     reasonContext: row.reasonContext,
     score: row.score,
-    status: row.status as SuggestionRowResponse['status'],
+    status: row.status,
     refreshedAt: row.refreshedAt.toISOString(),
     dismissedAt: row.dismissedAt?.toISOString() ?? null,
     snoozeUntil: row.snoozeUntil?.toISOString() ?? null,

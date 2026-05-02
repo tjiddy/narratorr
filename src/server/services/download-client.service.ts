@@ -13,9 +13,9 @@ import { AdapterCache } from '../utils/adapter-cache.js';
 import { getErrorMessage } from '../utils/error-message.js';
 import type { DownloadClientSettings } from '../../shared/schemas/download-client.js';
 import { serializeError } from '../utils/serialize-error.js';
+import type { DownloadClientRow } from './types.js';
 
 
-type DownloadClientRow = typeof downloadClients.$inferSelect;
 type NewDownloadClient = typeof downloadClients.$inferInsert;
 
 export class DownloadClientService {

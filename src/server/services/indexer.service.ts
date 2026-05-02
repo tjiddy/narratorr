@@ -17,9 +17,9 @@ import type { IndexerSettings } from '../../shared/schemas/indexer.js';
 import { AdapterCache } from '../utils/adapter-cache.js';
 import { getErrorMessage } from '../utils/error-message.js';
 import { serializeError } from '../utils/serialize-error.js';
+import type { IndexerRow } from './types.js';
 
 
-type IndexerRow = typeof indexers.$inferSelect;
 type NewIndexer = typeof indexers.$inferInsert;
 
 export class IndexerService {

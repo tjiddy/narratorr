@@ -4,10 +4,10 @@ import type { Db } from '../../../db/index.js';
 import type { ImportJobType, ImportJobPhase } from '../../../shared/schemas/import-job.js';
 import { importConfirmItemSchema, importModeSchema } from '../../../shared/schemas/library-scan.js';
 import type { BookMetadata } from '../../../core/metadata/index.js';
-import type { importJobs } from '../../../db/schema.js';
+import type { ImportJobRow } from '../types.js';
 
 /** Row shape returned by querying the import_jobs table. */
-export type ImportJob = typeof importJobs.$inferSelect;
+export type ImportJob = ImportJobRow;
 
 /** Context passed to every adapter's process() method. */
 export interface ImportAdapterContext {

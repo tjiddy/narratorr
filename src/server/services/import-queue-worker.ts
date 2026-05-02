@@ -6,6 +6,7 @@ import { eq, and } from 'drizzle-orm';
 import { getImportAdapter } from './import-adapters/registry.js';
 import type { ImportAdapterContext } from './import-adapters/types.js';
 import { manualImportJobPayloadSchema } from './import-adapters/types.js';
+import type { ImportJobRow } from './types.js';
 import type { ImportJobPhase, ImportJobType, PhaseHistoryEntry } from '../../shared/schemas/import-job.js';
 import { serializeError } from '../utils/serialize-error.js';
 import { getRowsAffected } from '../utils/db-helpers.js';
@@ -242,8 +243,8 @@ export class ImportQueueWorker {
   private async processJob(
     jobId: number,
     bookId: number | null,
-    adapter: { process: (job: typeof importJobs.$inferSelect, ctx: ImportAdapterContext) => Promise<void> },
-    job: typeof importJobs.$inferSelect,
+    adapter: { process: (job: ImportJobRow, ctx: ImportAdapterContext) => Promise<void> },
+    job: ImportJobRow,
     ctx: ImportAdapterContext,
     phaseHistory: PhaseHistoryEntry[],
     startTime: number,

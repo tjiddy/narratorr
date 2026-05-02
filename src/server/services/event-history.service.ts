@@ -8,9 +8,7 @@ import { actionableEventTypes, type EventType, type EventSource } from '../../sh
 import { retrySearch, type RetrySearchDeps } from './retry-search.js';
 import { WireOnce } from './wire-helpers.js';
 import { serializeError } from '../utils/serialize-error.js';
-
-
-type BookEventRow = typeof bookEvents.$inferSelect;
+import type { BookEventRow } from './types.js';
 
 export class EventHistoryServiceError extends Error {
   constructor(

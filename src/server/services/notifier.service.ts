@@ -13,9 +13,9 @@ import type { NotifierSettings } from '../../shared/schemas/notifier.js';
 import { encryptFields, decryptFields, resolveSentinelFields, getKey, getSecretFieldNames } from '../utils/secret-codec.js';
 import { AdapterCache } from '../utils/adapter-cache.js';
 import { serializeError } from '../utils/serialize-error.js';
+import type { NotifierRow } from './types.js';
 
 
-type NotifierRow = typeof notifiers.$inferSelect;
 type NewNotifier = typeof notifiers.$inferInsert;
 
 export class NotifierService {
