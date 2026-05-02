@@ -137,29 +137,37 @@ function mapAuthor(d: AudnexusAuthorDetail): Record<string, unknown> {
   };
 }
 
-function mapBook(d: AudnexusBookDetail): Record<string, unknown> {
-  // Collect series from seriesPrimary/seriesSecondary
-  const series: Array<{ name: string; position?: number; asin?: string }> = [];
+function mapSeriesRefs(
+  d: AudnexusBookDetail,
+): Array<{ name: string; position?: number; asin?: string }> | undefined {
+  const out: Array<{ name: string; position?: number; asin?: string }> = [];
   for (const ref of [d.seriesPrimary, d.seriesSecondary]) {
     if (ref?.name) {
-      series.push({
+      out.push({
         name: ref.name,
         position: ref.position != null ? parseFloat(ref.position) || undefined : undefined,
         asin: ref.asin ?? undefined,
       });
     }
   }
+  return out.length > 0 ? out : undefined;
+}
 
+function mapBookAuthors(d: AudnexusBookDetail): Array<{ name: string; asin?: string }> {
+  return (d.authors ?? []).map((a) => ({
+    name: a.name ?? '',
+    asin: a.asin ?? undefined,
+  }));
+}
+
+function mapBook(d: AudnexusBookDetail): Record<string, unknown> {
   return {
     asin: d.asin ?? undefined,
     title: d.title ?? '',
     subtitle: d.subtitle ?? undefined,
-    authors: (d.authors ?? []).map((a) => ({
-      name: a.name ?? '',
-      asin: a.asin ?? undefined,
-    })),
+    authors: mapBookAuthors(d),
     narrators: d.narrators?.map((n) => n.name).filter((n): n is string => Boolean(n)),
-    series: series.length > 0 ? series : undefined,
+    series: mapSeriesRefs(d),
     description: d.summary || d.description || undefined,
     publisher: d.publisherName ?? undefined,
     publishedDate: d.releaseDate ?? undefined,
