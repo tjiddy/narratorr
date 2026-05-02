@@ -887,6 +887,36 @@ describe('downloadRemoteCover', () => {
 
       expect(dispatcherCloseSpy).toHaveBeenCalledTimes(1);
     });
+
+    it('closes the dispatcher when readBodyWithCap throws on oversized body', async () => {
+      const cancelSpy = vi.fn().mockResolvedValue(undefined);
+      const readSpy = vi.fn()
+        .mockResolvedValueOnce({ done: false, value: new Uint8Array(MAX_COVER_SIZE + 1) })
+        .mockResolvedValue({ done: true, value: undefined });
+      const fakeReader = { read: readSpy, cancel: cancelSpy };
+      const fakeBody = { getReader: () => fakeReader };
+      const response = new Response('placeholder', {
+        status: 200,
+        headers: { 'content-type': 'image/jpeg' },
+      });
+      Object.defineProperty(response, 'body', { configurable: true, get: () => fakeBody });
+      mockFetch.mockResolvedValue(response);
+
+      const result = await downloadRemoteCover(
+        1, '/books/test', 'https://cdn.example.com/cover.jpg',
+        inject<Db>(mockDb), log,
+      );
+
+      // Prove the body-read failure path was taken — without these, the
+      // dispatcher-close assertion alone passes on any path that reaches the
+      // `finally` block (e.g. an early helper failure that skips body read).
+      expect(result).toBe(false);
+      expect(readSpy).toHaveBeenCalled();
+      expect(cancelSpy).toHaveBeenCalled();
+      expect(writeFile).not.toHaveBeenCalled();
+      expect(mockDb.update).not.toHaveBeenCalled();
+      expect(dispatcherCloseSpy).toHaveBeenCalledTimes(1);
+    });
   });
 });
 
