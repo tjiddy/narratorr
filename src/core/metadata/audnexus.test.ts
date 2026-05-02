@@ -624,5 +624,52 @@ describe('AudnexusProvider', () => {
       const book = await provider.getBook('X');
       expect(book?.title).toBe('T');
     });
+
+    it('getBook accepts null for nullish fields (subtitle, isbn, image, runtimeLengthMin)', async () => {
+      server.use(
+        http.get('https://api.audnex.us/books/:asin', () => HttpResponse.json({
+          asin: 'B0030DL4GK',
+          isbn: null,
+          title: 'Null-Field Book',
+          subtitle: null,
+          authors: [{ name: 'Author', asin: null }],
+          narrators: null,
+          seriesPrimary: null,
+          seriesSecondary: null,
+          summary: null,
+          description: null,
+          publisherName: null,
+          releaseDate: null,
+          language: null,
+          image: null,
+          runtimeLengthMin: null,
+          genres: null,
+        })),
+      );
+
+      const book = await provider.getBook('B0030DL4GK');
+      expect(book).not.toBeNull();
+      expect(book!.title).toBe('Null-Field Book');
+      expect(book!.subtitle).toBeUndefined();
+      expect(book!.coverUrl).toBeUndefined();
+      expect(book!.duration).toBeUndefined();
+    });
+
+    it('getAuthor accepts null for nullish fields (description, image, genres)', async () => {
+      server.use(
+        http.get('https://api.audnex.us/authors/:asin', () => HttpResponse.json({
+          asin: 'B001H6UJO8',
+          name: 'Null-Field Author',
+          description: null,
+          image: null,
+          genres: null,
+        })),
+      );
+
+      const author = await provider.getAuthor('B001H6UJO8');
+      expect(author).not.toBeNull();
+      expect(author!.name).toBe('Null-Field Author');
+      expect(author!.imageUrl).toBeUndefined();
+    });
   });
 });

@@ -11,10 +11,10 @@ export interface NytConfig {
 }
 
 const nytBookSchema = z.object({
-  title: z.string().optional(),
-  author: z.string().optional(),
-  primary_isbn13: z.string().optional(),
-  primary_isbn10: z.string().optional(),
+  title: z.string().nullish(),
+  author: z.string().nullish(),
+  primary_isbn13: z.string().nullish(),
+  primary_isbn10: z.string().nullish(),
 }).passthrough();
 
 const nytResponseSchema = z.object({

@@ -21,36 +21,36 @@ const REQUEST_TIMEOUT_MS = AUDNEXUS_TIMEOUT_MS;
 // Raw-response schemas at the wrapper layer — fail at the boundary on HTML
 // interstitials, rate-limit pages, or shape changes instead of mid-mapping.
 const audnexusSeriesRefSchema = z.object({
-  name: z.string().optional(),
-  position: z.string().optional(),
-  asin: z.string().optional(),
+  name: z.string().nullish(),
+  position: z.string().nullish(),
+  asin: z.string().nullish(),
 }).passthrough();
 
 const audnexusBookSchema = z.object({
-  asin: z.string().optional(),
-  isbn: z.string().optional(),
-  title: z.string().optional(),
-  subtitle: z.string().optional(),
-  authors: z.array(z.object({ name: z.string().optional(), asin: z.string().optional() }).passthrough()).optional(),
-  narrators: z.array(z.object({ name: z.string().optional() }).passthrough()).optional(),
-  seriesPrimary: audnexusSeriesRefSchema.optional(),
-  seriesSecondary: audnexusSeriesRefSchema.optional(),
-  summary: z.string().optional(),
-  description: z.string().optional(),
-  publisherName: z.string().optional(),
-  releaseDate: z.string().optional(),
-  language: z.string().optional(),
-  image: z.string().optional(),
-  runtimeLengthMin: z.number().optional(),
-  genres: z.array(z.object({ name: z.string().optional(), type: z.string().optional() }).passthrough()).optional(),
+  asin: z.string().nullish(),
+  isbn: z.string().nullish(),
+  title: z.string().nullish(),
+  subtitle: z.string().nullish(),
+  authors: z.array(z.object({ name: z.string().nullish(), asin: z.string().nullish() }).passthrough()).nullish(),
+  narrators: z.array(z.object({ name: z.string().nullish() }).passthrough()).nullish(),
+  seriesPrimary: audnexusSeriesRefSchema.nullish(),
+  seriesSecondary: audnexusSeriesRefSchema.nullish(),
+  summary: z.string().nullish(),
+  description: z.string().nullish(),
+  publisherName: z.string().nullish(),
+  releaseDate: z.string().nullish(),
+  language: z.string().nullish(),
+  image: z.string().nullish(),
+  runtimeLengthMin: z.number().nullish(),
+  genres: z.array(z.object({ name: z.string().nullish(), type: z.string().nullish() }).passthrough()).nullish(),
 }).passthrough();
 
 const audnexusAuthorSchema = z.object({
-  asin: z.string().optional(),
-  name: z.string().optional(),
-  description: z.string().optional(),
-  image: z.string().optional(),
-  genres: z.array(z.object({ name: z.string().optional() }).passthrough()).optional(),
+  asin: z.string().nullish(),
+  name: z.string().nullish(),
+  description: z.string().nullish(),
+  image: z.string().nullish(),
+  genres: z.array(z.object({ name: z.string().nullish() }).passthrough()).nullish(),
 }).passthrough();
 
 type AudnexusBookDetail = z.infer<typeof audnexusBookSchema>;
@@ -129,43 +129,51 @@ export class AudnexusProvider implements MetadataEnrichmentProvider {
 
 function mapAuthor(d: AudnexusAuthorDetail): Record<string, unknown> {
   return {
-    asin: d.asin,
+    asin: d.asin ?? undefined,
     name: d.name ?? '',
-    description: d.description,
+    description: d.description ?? undefined,
     imageUrl: d.image || undefined,
     genres: normalizeGenres(d.genres?.map((g) => g.name).filter((n): n is string => Boolean(n))),
   };
 }
 
-function mapBook(d: AudnexusBookDetail): Record<string, unknown> {
-  // Collect series from seriesPrimary/seriesSecondary
-  const series: Array<{ name: string; position?: number; asin?: string }> = [];
+function mapSeriesRefs(
+  d: AudnexusBookDetail,
+): Array<{ name: string; position?: number; asin?: string }> | undefined {
+  const out: Array<{ name: string; position?: number; asin?: string }> = [];
   for (const ref of [d.seriesPrimary, d.seriesSecondary]) {
     if (ref?.name) {
-      series.push({
+      out.push({
         name: ref.name,
         position: ref.position != null ? parseFloat(ref.position) || undefined : undefined,
-        asin: ref.asin,
+        asin: ref.asin ?? undefined,
       });
     }
   }
+  return out.length > 0 ? out : undefined;
+}
 
+function mapBookAuthors(d: AudnexusBookDetail): Array<{ name: string; asin?: string }> {
+  return (d.authors ?? []).map((a) => ({
+    name: a.name ?? '',
+    asin: a.asin ?? undefined,
+  }));
+}
+
+function mapBook(d: AudnexusBookDetail): Record<string, unknown> {
   return {
-    asin: d.asin,
+    asin: d.asin ?? undefined,
     title: d.title ?? '',
-    subtitle: d.subtitle,
-    authors: (d.authors ?? []).map((a) => ({
-      name: a.name ?? '',
-      asin: a.asin,
-    })),
-    narrators: d.narrators?.map((n) => n.name).filter(Boolean),
-    series: series.length > 0 ? series : undefined,
-    description: d.summary || d.description,
-    publisher: d.publisherName,
-    publishedDate: d.releaseDate,
-    language: d.language,
+    subtitle: d.subtitle ?? undefined,
+    authors: mapBookAuthors(d),
+    narrators: d.narrators?.map((n) => n.name).filter((n): n is string => Boolean(n)),
+    series: mapSeriesRefs(d),
+    description: d.summary || d.description || undefined,
+    publisher: d.publisherName ?? undefined,
+    publishedDate: d.releaseDate ?? undefined,
+    language: d.language ?? undefined,
     coverUrl: d.image || undefined,
-    duration: d.runtimeLengthMin,
+    duration: d.runtimeLengthMin ?? undefined,
     genres: normalizeGenres(d.genres?.map((g) => g.name).filter((n): n is string => Boolean(n))),
   };
 }

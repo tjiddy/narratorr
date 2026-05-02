@@ -251,14 +251,31 @@ describe('HardcoverProvider', () => {
     });
 
     it('treats { data: null, errors: null } as a successful empty list (passthrough handles nullish)', async () => {
-      // data is .optional() so null fails — but `errors: null` also fails.
       server.use(
         http.post(GQL_URL, () => HttpResponse.json({ data: null, errors: null })),
       );
 
       const provider = new HardcoverProvider({ apiKey: 'test-key', listType: 'trending' });
-      const err = await provider.fetchItems().catch((e: unknown) => e);
-      expect(err).toBeInstanceOf(ImportListError);
+      const items = await provider.fetchItems();
+      expect(items).toEqual([]);
+    });
+
+    it('accepts null for nullish inner fields (title, contributions, identifiers)', async () => {
+      server.use(
+        http.post(GQL_URL, () => HttpResponse.json({
+          data: {
+            trending_books: [
+              { title: null, contributions: null, identifiers: null },
+              { title: 'Real Title', contributions: [], identifiers: [] },
+            ],
+          },
+        })),
+      );
+
+      const provider = new HardcoverProvider({ apiKey: 'test-key', listType: 'trending' });
+      const items = await provider.fetchItems();
+      expect(items).toHaveLength(1);
+      expect(items[0].title).toBe('Real Title');
     });
 
     it('passes through unknown extra fields and still maps successfully', async () => {

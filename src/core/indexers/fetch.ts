@@ -14,11 +14,11 @@ import { normalizeBaseUrl } from '../../shared/normalize-base-url.js';
 
 const flareSolverrResponseSchema = z.object({
   status: z.string(),
-  message: z.string().optional(),
+  message: z.string().nullish(),
   solution: z.object({
-    response: z.string().optional(),
-    status: z.number().optional(),
-  }).passthrough().optional(),
+    response: z.string().nullish(),
+    status: z.number().nullish(),
+  }).passthrough().nullish(),
 }).passthrough();
 
 type FlareSolverrResponse = z.infer<typeof flareSolverrResponseSchema>;
