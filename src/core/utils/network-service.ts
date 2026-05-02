@@ -202,7 +202,7 @@ export async function resolveAndValidate(hostname: string): Promise<string[]> {
   for (const answer of answers) {
     if (isBlockedFetchAddress(answer.address)) {
       throw new Error(
-        `Refused: hostname ${normalized} resolves to blocked address ${answer.address}`,
+        `Refused: hostname ${normalized} resolved to ${answers.length} address(es); blocked address ${answer.address} is in the blocked range`,
       );
     }
   }
@@ -255,7 +255,7 @@ export const validatingLookup: LookupFunction = (hostname, _options, callback) =
         if (isBlockedFetchAddress(answer.address)) {
           callback(
             new Error(
-              `Refused: hostname ${normalized} resolves to blocked address ${answer.address}`,
+              `Refused: hostname ${normalized} resolved to ${answers.length} address(es); blocked address ${answer.address} is in the blocked range`,
             ) as NodeJS.ErrnoException,
             '',
             0,

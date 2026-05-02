@@ -134,7 +134,9 @@ describe('downloadRemoteCover (real-HTTP e2e — DNS rebinding revalidation)', (
 
     lookupBehaviors.push(
       successBehavior('127.0.0.1', 4),
-      rejectBehavior('Refused: hostname rebind.test resolves to blocked address 192.168.1.1'),
+      rejectBehavior(
+        'Refused: hostname rebind.test resolved to 1 address(es); blocked address 192.168.1.1 is in the blocked range',
+      ),
     );
 
     const result = await downloadRemoteCover(
@@ -155,7 +157,9 @@ describe('downloadRemoteCover (real-HTTP e2e — DNS rebinding revalidation)', (
         error: expect.objectContaining({
           message: 'fetch failed',
           cause: expect.objectContaining({
-            message: expect.stringMatching(/Refused.*resolves to blocked address/),
+            message: expect.stringMatching(
+              /^Refused:.*resolved to \d+ address\(es\); blocked address [^\s]+/,
+            ),
           }),
         }),
       }),
