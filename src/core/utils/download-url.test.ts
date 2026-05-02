@@ -506,6 +506,61 @@ describe('DownloadUrl', () => {
       expect((error as Error).message).not.toContain('SECRET');
       expect((error as Error).message).not.toContain('https://');
     });
+
+    describe('dispatcher cleanup', () => {
+      it('closes the dispatcher on successful HTTP torrent download', async () => {
+        const { buffer } = fakeTorrentBuffer();
+        mockFetch.mockResolvedValueOnce(mockResponse(buffer, {
+          status: 200,
+          headers: { 'Content-Type': 'application/x-bittorrent' },
+        }));
+
+        const dl = new DownloadUrl('https://indexer.example.com/dl/12345', 'torrent');
+        await dl.resolve();
+
+        expect(dispatcherCloseSpy).toHaveBeenCalledTimes(1);
+      });
+
+      it('closes the dispatcher on magnet-redirect resolution', async () => {
+        mockFetch.mockResolvedValueOnce(
+          new Response(null, { status: 301, headers: { Location: buildMagnetUri(KNOWN_HEX_HASH) } }),
+        );
+
+        const dl = new DownloadUrl('https://indexer.example.com/dl/12345', 'torrent');
+        await dl.resolve();
+
+        expect(dispatcherCloseSpy).toHaveBeenCalledTimes(1);
+      });
+
+      it('closes the dispatcher when fetch rejects', async () => {
+        mockFetch.mockRejectedValueOnce(new TypeError('fetch failed'));
+
+        const dl = new DownloadUrl('https://indexer.example.com/dl/12345', 'torrent');
+        await dl.resolve().catch(() => { /* expected */ });
+
+        expect(dispatcherCloseSpy).toHaveBeenCalledTimes(1);
+      });
+
+      it('closes the dispatcher when SSRF refusal occurs at hop 0', async () => {
+        mockedDnsLookup.mockReset();
+        mockedDnsLookup.mockResolvedValueOnce([{ address: '10.0.0.5', family: 4 }]);
+
+        const dl = new DownloadUrl('https://internal.example.com/dl/12345', 'torrent');
+        await dl.resolve().catch(() => { /* expected */ });
+
+        expect(dispatcherCloseSpy).toHaveBeenCalledTimes(1);
+        expect(mockFetch).not.toHaveBeenCalled();
+      });
+
+      it('closes the dispatcher when response is non-OK (HTTP 404)', async () => {
+        mockFetch.mockResolvedValueOnce(mockResponse('Not Found', { status: 404 }));
+
+        const dl = new DownloadUrl('https://indexer.example.com/dl/12345', 'torrent');
+        await dl.resolve().catch(() => { /* expected */ });
+
+        expect(dispatcherCloseSpy).toHaveBeenCalledTimes(1);
+      });
+    });
   });
 
   describe('resolve() — error security', () => {

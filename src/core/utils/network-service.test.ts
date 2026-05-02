@@ -780,12 +780,59 @@ describe('fetchWithSsrfRedirect', () => {
     expect(cancelSpy).toHaveBeenCalled();
   });
 
-  it('attaches AbortSignal.timeout via opts.timeoutMs', async () => {
-    const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response('', { status: 200 }));
+  it('passes opts.timeoutMs to AbortSignal.timeout per hop', async () => {
+    const timeoutSpy = vi.spyOn(AbortSignal, 'timeout');
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response('', { status: 200 }));
 
     await fetchWithSsrfRedirect('https://cdn.example.com/file', { timeoutMs: 1234 });
-    const calledOptions = fetchSpy.mock.calls[0][1] as RequestInit;
-    expect(calledOptions.signal).toBeDefined();
+
+    expect(timeoutSpy).toHaveBeenCalledWith(1234);
+  });
+
+  it('defaults to HTTP_DOWNLOAD_TIMEOUT_MS (30_000) when opts.timeoutMs is omitted', async () => {
+    const timeoutSpy = vi.spyOn(AbortSignal, 'timeout');
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response('', { status: 200 }));
+
+    await fetchWithSsrfRedirect('https://cdn.example.com/file');
+
+    expect(timeoutSpy).toHaveBeenCalledWith(30_000);
+  });
+
+  it('re-arms AbortSignal.timeout(opts.timeoutMs) on each hop of a redirect chain', async () => {
+    const timeoutSpy = vi.spyOn(AbortSignal, 'timeout');
+    vi.spyOn(globalThis, 'fetch')
+      .mockResolvedValueOnce(makeRedirect('https://cdn.example.com/final'))
+      .mockResolvedValueOnce(new Response('done', { status: 200 }));
+
+    await fetchWithSsrfRedirect('https://cdn.example.com/start', { timeoutMs: 7777 });
+
+    const callsWithTimeout = timeoutSpy.mock.calls.filter(([ms]) => ms === 7777);
+    expect(callsWithTimeout).toHaveLength(2);
+  });
+
+  it('rejects with a timeout-shaped error when the per-hop timeout fires (controlled firing)', async () => {
+    // Stub fetch to return a Promise that never resolves on its own — only
+    // the AbortSignal can settle it. This proves the helper actually wires the
+    // AbortSignal.timeout-driven signal into the fetch call.
+    vi.spyOn(globalThis, 'fetch').mockImplementation((_url, init) => {
+      return new Promise<Response>((_resolve, reject) => {
+        const signal = (init as RequestInit | undefined)?.signal;
+        if (!signal) {
+          reject(new Error('test setup: no signal attached to fetch'));
+          return;
+        }
+        signal.addEventListener('abort', () => {
+          // Mirror the real fetch behavior: reject with a TimeoutError DOMException
+          reject(new DOMException('The operation was aborted due to timeout', 'TimeoutError'));
+        });
+      });
+    });
+
+    const error = await fetchWithSsrfRedirect('https://cdn.example.com/file', { timeoutMs: 25 })
+      .catch((e: unknown) => e);
+
+    expect(error).toBeInstanceOf(DOMException);
+    expect((error as DOMException).name).toBe('TimeoutError');
   });
 
   it('routes through undiciFetch when a dispatcher is supplied', async () => {
