@@ -36,6 +36,10 @@ import { lookup as dnsLookup } from 'node:dns/promises';
 import { Agent, fetch as undiciFetchImpl } from 'undici';
 import type { LookupFunction } from 'node:net';
 import { mapNetworkError } from './map-network-error.js';
+
+// Re-export so callers have a single import surface for outbound-network helpers
+// (the implementation stays in map-network-error.ts to keep its dedicated tests isolated).
+export { mapNetworkError } from './map-network-error.js';
 import { HTTP_DOWNLOAD_TIMEOUT_MS } from './constants.js';
 
 /**
