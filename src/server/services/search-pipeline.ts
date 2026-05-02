@@ -57,7 +57,6 @@ export interface SearchFilterOptions {
  * language-mismatch). The "language-undetermined passed" line is critical for
  * diagnosing results that survive solely because we couldn't detect a language.
  */
-// eslint-disable-next-line complexity -- per-gate filtering + per-drop logging shares one pipeline
 export function filterAndRankResults(
   results: SearchResult[],
   bookDuration: number | undefined,
