@@ -1,8 +1,66 @@
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach, type Mock } from 'vitest';
+import type * as NetworkServiceModule from './network-service.js';
+
+vi.mock('node:dns/promises', () => ({
+  lookup: vi.fn(),
+}));
+
+const dispatcherCloseSpy = vi.fn().mockResolvedValue(undefined);
+
+// Override `fetchWithSsrfRedirect` with a `globalThis.fetch`-based walker so
+// the existing `vi.stubGlobal('fetch', mockFetch)` continues to intercept
+// download hops. Production routes through undici's fetch when a dispatcher
+// is attached — the helper's routing is asserted in network-service.test.ts.
+//
+// createSsrfSafeDispatcher is stubbed so we can spy on dispatcher.close()
+// without standing up a real undici Agent in unit tests.
+vi.mock('./network-service.js', async (importActual) => {
+  const actual = await importActual<typeof NetworkServiceModule>();
+  const MAX = 5;
+  const fetchWithSsrfRedirect: typeof actual.fetchWithSsrfRedirect = async (startUrl, opts = {}) => {
+    const visited = new Set<string>();
+    let cur = startUrl;
+    const maxHops = opts.maxHops ?? MAX;
+    for (let hop = 0; hop <= maxHops; hop++) {
+      if (visited.has(cur)) throw new Error('Redirect loop detected');
+      visited.add(cur);
+      const parsed = new URL(cur);
+      await actual.resolveAndValidate(parsed.hostname);
+      const response = await globalThis.fetch(cur, {
+        redirect: 'manual',
+        signal: AbortSignal.timeout(opts.timeoutMs ?? 30_000),
+        dispatcher: opts.dispatcher,
+      } as RequestInit);
+      if (response.status < 300 || response.status >= 400) return response;
+      const location = response.headers.get('location');
+      if (!location) {
+        await response.body?.cancel().catch(() => { /* best-effort */ });
+        throw new Error('Redirect with no Location header');
+      }
+      const nextHref = new URL(location, cur).href;
+      if (!nextHref.startsWith('http://') && !nextHref.startsWith('https://')) {
+        await response.body?.cancel().catch(() => { /* best-effort */ });
+        throw new actual.UnsupportedRedirectSchemeError(nextHref, parsed);
+      }
+      await response.body?.cancel().catch(() => { /* best-effort */ });
+      cur = nextHref;
+    }
+    throw new Error('Too many redirects');
+  };
+  return {
+    ...actual,
+    fetchWithSsrfRedirect,
+    createSsrfSafeDispatcher: (() => ({ close: dispatcherCloseSpy })) as unknown as typeof actual.createSsrfSafeDispatcher,
+  };
+});
+
+import { lookup as dnsLookup } from 'node:dns/promises';
 import { DownloadUrl, extractInfoHashFromTorrent } from './download-url.js';
 import type { DownloadArtifact } from './download-url.js';
 import { base32ToHex } from './base32.js';
 import { createHash } from 'node:crypto';
+
+const mockedDnsLookup = vi.mocked(dnsLookup) as unknown as Mock;
 
 // ── Fixtures ──────────────────────────────────────────────────────────
 const KNOWN_HEX_HASH = 'aabbccddee00112233445566778899aabbccddee';
@@ -31,6 +89,10 @@ const mockFetch = vi.fn<(url: string | URL | Request, init?: RequestInit) => Pro
 beforeEach(() => {
   // restoreAllMocks doesn't clear manual vi.fn() call history
   mockFetch.mockClear();
+  mockedDnsLookup.mockReset();
+  dispatcherCloseSpy.mockClear();
+  // Default every host to a public IP so the SSRF pre-flight gate is open.
+  mockedDnsLookup.mockResolvedValue([{ address: '93.184.216.34', family: 4 }]);
   vi.stubGlobal('fetch', mockFetch);
 });
 
@@ -353,6 +415,151 @@ describe('DownloadUrl', () => {
 
       const dl = new DownloadUrl('https://indexer.example.com/dl/12345', 'torrent');
       await expect(dl.resolve()).rejects.toThrow(/too many redirects/i);
+    });
+  });
+
+  describe('SSRF closure (#904)', () => {
+    it('refuses redirect chain whose 2nd hop resolves to a private IP', async () => {
+      mockedDnsLookup.mockReset();
+      mockedDnsLookup
+        .mockResolvedValueOnce([{ address: '93.184.216.34', family: 4 }])
+        .mockResolvedValueOnce([{ address: '192.168.1.1', family: 4 }]);
+
+      mockFetch.mockResolvedValueOnce(
+        new Response(null, { status: 302, headers: { Location: 'https://internal.attacker.example/admin' } }),
+      );
+
+      const dl = new DownloadUrl('https://indexer.example.com/dl/secret-passkey-123', 'torrent');
+      const error = await dl.resolve().catch((e: Error) => e);
+
+      expect(error).toBeInstanceOf(Error);
+      expect((error as Error).message).toMatch(/^Download failed:/);
+      expect((error as Error).message).not.toContain('secret-passkey');
+      expect((error as Error).message).not.toContain('https://');
+      expect(mockFetch).toHaveBeenCalledTimes(1);
+    });
+
+    it('refuses startUrl whose hostname resolves to a private IP', async () => {
+      mockedDnsLookup.mockReset();
+      mockedDnsLookup.mockResolvedValueOnce([{ address: '10.0.0.5', family: 4 }]);
+
+      const dl = new DownloadUrl('https://internal.example.com/dl/secret-passkey-123', 'torrent');
+      const error = await dl.resolve().catch((e: Error) => e);
+
+      expect(error).toBeInstanceOf(Error);
+      expect((error as Error).message).toMatch(/^Download failed:/);
+      expect((error as Error).message).not.toContain('secret-passkey');
+      expect(mockFetch).not.toHaveBeenCalled();
+    });
+
+    it('preserves magnet-redirect-at-hop-N artifact (no regression)', async () => {
+      const magnetUri = buildMagnetUri(KNOWN_HEX_HASH);
+
+      mockFetch
+        .mockResolvedValueOnce(
+          new Response(null, { status: 302, headers: { Location: 'https://hop2.example.com/dl' } }),
+        )
+        .mockResolvedValueOnce(
+          new Response(null, { status: 302, headers: { Location: magnetUri } }),
+        );
+
+      const dl = new DownloadUrl('https://indexer.example.com/dl/12345', 'torrent');
+      const artifact = await dl.resolve();
+
+      expect(artifact.type).toBe('magnet-uri');
+      expect((artifact as Extract<DownloadArtifact, { type: 'magnet-uri' }>).infoHash).toBe(KNOWN_HEX_HASH);
+    });
+
+    it('passes a dispatcher option to fetch (SSRF-safe agent)', async () => {
+      const { buffer } = fakeTorrentBuffer();
+      mockFetch.mockResolvedValueOnce(mockResponse(buffer, {
+        status: 200,
+        headers: { 'Content-Type': 'application/x-bittorrent' },
+      }));
+
+      const dl = new DownloadUrl('https://indexer.example.com/dl/12345', 'torrent');
+      await dl.resolve();
+
+      expect(mockFetch).toHaveBeenCalledWith(
+        expect.any(String),
+        expect.objectContaining({ dispatcher: expect.anything() }),
+      );
+    });
+
+    it('helper-thrown errors are sanitized (no raw URL with credentials in message)', async () => {
+      // 6 hops to trigger "Too many redirects"
+      for (let i = 0; i < 6; i++) {
+        mockFetch.mockResolvedValueOnce(
+          new Response(null, {
+            status: 302,
+            headers: { Location: `https://hop${i}.example.com/path?apikey=SECRET${i}` },
+          }),
+        );
+      }
+
+      const dl = new DownloadUrl('https://indexer.example.com/dl/secret-passkey-123', 'torrent');
+      const error = await dl.resolve().catch((e: Error) => e);
+
+      expect(error).toBeInstanceOf(Error);
+      expect((error as Error).message).toMatch(/^Download failed:/);
+      expect((error as Error).message).toMatch(/too many redirects/i);
+      expect((error as Error).message).not.toContain('SECRET');
+      expect((error as Error).message).not.toContain('https://');
+    });
+
+    describe('dispatcher cleanup', () => {
+      it('closes the dispatcher on successful HTTP torrent download', async () => {
+        const { buffer } = fakeTorrentBuffer();
+        mockFetch.mockResolvedValueOnce(mockResponse(buffer, {
+          status: 200,
+          headers: { 'Content-Type': 'application/x-bittorrent' },
+        }));
+
+        const dl = new DownloadUrl('https://indexer.example.com/dl/12345', 'torrent');
+        await dl.resolve();
+
+        expect(dispatcherCloseSpy).toHaveBeenCalledTimes(1);
+      });
+
+      it('closes the dispatcher on magnet-redirect resolution', async () => {
+        mockFetch.mockResolvedValueOnce(
+          new Response(null, { status: 301, headers: { Location: buildMagnetUri(KNOWN_HEX_HASH) } }),
+        );
+
+        const dl = new DownloadUrl('https://indexer.example.com/dl/12345', 'torrent');
+        await dl.resolve();
+
+        expect(dispatcherCloseSpy).toHaveBeenCalledTimes(1);
+      });
+
+      it('closes the dispatcher when fetch rejects', async () => {
+        mockFetch.mockRejectedValueOnce(new TypeError('fetch failed'));
+
+        const dl = new DownloadUrl('https://indexer.example.com/dl/12345', 'torrent');
+        await dl.resolve().catch(() => { /* expected */ });
+
+        expect(dispatcherCloseSpy).toHaveBeenCalledTimes(1);
+      });
+
+      it('closes the dispatcher when SSRF refusal occurs at hop 0', async () => {
+        mockedDnsLookup.mockReset();
+        mockedDnsLookup.mockResolvedValueOnce([{ address: '10.0.0.5', family: 4 }]);
+
+        const dl = new DownloadUrl('https://internal.example.com/dl/12345', 'torrent');
+        await dl.resolve().catch(() => { /* expected */ });
+
+        expect(dispatcherCloseSpy).toHaveBeenCalledTimes(1);
+        expect(mockFetch).not.toHaveBeenCalled();
+      });
+
+      it('closes the dispatcher when response is non-OK (HTTP 404)', async () => {
+        mockFetch.mockResolvedValueOnce(mockResponse('Not Found', { status: 404 }));
+
+        const dl = new DownloadUrl('https://indexer.example.com/dl/12345', 'torrent');
+        await dl.resolve().catch(() => { /* expected */ });
+
+        expect(dispatcherCloseSpy).toHaveBeenCalledTimes(1);
+      });
     });
   });
 

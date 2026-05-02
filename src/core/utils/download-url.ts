@@ -1,7 +1,11 @@
 import { createHash } from 'node:crypto';
 import { parseInfoHash } from './magnet.js';
 import { normalizeInfoHash } from './normalize-info-hash.js';
-import { HTTP_DOWNLOAD_TIMEOUT_MS } from './constants.js';
+import {
+  createSsrfSafeDispatcher,
+  fetchWithSsrfRedirect,
+  UnsupportedRedirectSchemeError,
+} from './network-service.js';
 
 // ── Types ─────────────────────────────────────────────────────────────
 export type DownloadArtifact =
@@ -15,7 +19,6 @@ export type DownloadProtocol = 'torrent' | 'usenet';
 // ── Constants ─────────────────────────────────────────────────────────
 const DATA_TORRENT_URI_PREFIX = 'data:application/x-bittorrent;base64,';
 const DATA_NZB_URI_PREFIX = 'data:application/x-nzb;base64,';
-const MAX_REDIRECTS = 5;
 
 // ── DownloadUrl value object ──────────────────────────────────────────
 export class DownloadUrl {
@@ -84,81 +87,32 @@ export class DownloadUrl {
   }
 
   private async resolveHttp(url: string): Promise<DownloadArtifact> {
-    const visited = new Set<string>();
-    let currentUrl = url;
-
-    for (let hop = 0; hop <= MAX_REDIRECTS; hop++) {
-      if (visited.has(currentUrl)) {
-        throw new Error('Download failed: redirect loop detected');
-      }
-      visited.add(currentUrl);
-
-      const response = await fetchDownload(currentUrl);
-
-      // Handle redirects
-      if (response.status >= 300 && response.status < 400) {
-        const result = handleRedirect(response, currentUrl);
-        if (result.type === 'follow') {
-          currentUrl = result.url;
-          continue;
-        }
-        return result.artifact;
-      }
+    const dispatcher = createSsrfSafeDispatcher();
+    try {
+      const response = await fetchWithSsrfRedirect(url, { dispatcher });
 
       if (!response.ok) {
+        await response.body?.cancel().catch(() => { /* best-effort */ });
         throw new Error(`Download failed: HTTP ${response.status}`);
       }
 
-      return processResponseBody(response);
+      return await processResponseBody(response);
+    } catch (error: unknown) {
+      if (error instanceof UnsupportedRedirectSchemeError && error.location.startsWith('magnet:')) {
+        const infoHash = parseInfoHash(error.location);
+        if (!infoHash) {
+          throw new Error('Download failed: redirect to magnet URI with no info hash', { cause: error });
+        }
+        return { type: 'magnet-uri', uri: error.location, infoHash: normalizeInfoHash(infoHash) };
+      }
+      throw sanitizeNetworkError(error);
+    } finally {
+      await dispatcher.close().catch(() => { /* best-effort cleanup */ });
     }
-
-    throw new Error('Download failed: too many redirects');
   }
 }
 
 // ── HTTP helpers ──────────────────────────────────────────────────────
-
-async function fetchDownload(url: string): Promise<Response> {
-  try {
-    return await fetch(url, {
-      redirect: 'manual',
-      signal: AbortSignal.timeout(HTTP_DOWNLOAD_TIMEOUT_MS),
-    });
-  } catch (error: unknown) {
-    throw sanitizeNetworkError(error);
-  }
-}
-
-type RedirectResult =
-  | { type: 'follow'; url: string }
-  | { type: 'resolved'; artifact: DownloadArtifact };
-
-function handleRedirect(response: Response, currentUrl: string): RedirectResult {
-  const location = response.headers.get('Location');
-  if (!location) {
-    throw new Error('Download failed: server returned redirect with no location header');
-  }
-
-  if (location.startsWith('magnet:')) {
-    const infoHash = parseInfoHash(location);
-    if (!infoHash) {
-      throw new Error('Download failed: redirect to magnet URI with no info hash');
-    }
-    return { type: 'resolved', artifact: { type: 'magnet-uri', uri: location, infoHash: normalizeInfoHash(infoHash) } };
-  }
-
-  // Resolve relative Location headers against the current URL
-  try {
-    const resolved = new URL(location, currentUrl).href;
-    if (resolved.startsWith('http://') || resolved.startsWith('https://')) {
-      return { type: 'follow', url: resolved };
-    }
-  } catch {
-    // Invalid URL — fall through to unsupported scheme error
-  }
-
-  throw new Error(`Download failed: redirect to unsupported scheme (${location.split(':')[0]}:)`);
-}
 
 async function processResponseBody(response: Response): Promise<DownloadArtifact> {
   const buffer = Buffer.from(await response.arrayBuffer());

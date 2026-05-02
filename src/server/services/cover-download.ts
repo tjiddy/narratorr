@@ -6,19 +6,14 @@ import type { Db } from '../../db/index.js';
 import type { FastifyBaseLogger } from 'fastify';
 import { books } from '../../db/schema.js';
 import { COVER_FILE_REGEX } from '../../core/utils/cover-regex.js';
-import { HTTP_DOWNLOAD_TIMEOUT_MS } from '../../core/utils/constants.js';
 import { MAX_COVER_SIZE } from '../../shared/constants.js';
 import { mimeToExt } from '../../shared/mime.js';
 import { serializeError } from '../utils/serialize-error.js';
 import { sanitizeLogUrl } from '../utils/sanitize-log-url.js';
 import {
   createSsrfSafeDispatcher,
-  fetchWithOptionalDispatcher,
-  resolveAndValidate,
-  type DispatcherFetchInit,
+  fetchWithSsrfRedirect,
 } from '../../core/utils/network-service.js';
-
-const MAX_REDIRECTS = 5;
 
 /** Check whether a coverUrl points to a remote HTTP(S) resource. */
 export function isRemoteCoverUrl(url: string | null | undefined): boolean {
@@ -36,70 +31,6 @@ function contentTypeToExt(contentType: string | null): string {
 /** Check if content-type indicates an image. */
 function isImageContentType(contentType: string | null): boolean {
   return contentType?.startsWith('image/') === true;
-}
-
-/**
- * Result of a single hop: either a follow (redirect with validated next URL)
- * or a final response whose body is safe to stream.
- */
-type HopResult =
-  | { type: 'follow'; nextUrl: string }
-  | { type: 'final'; response: Response };
-
-/**
- * Single hop with SSRF + dispatcher + per-hop revalidation. Pre-validates the
- * URL's hostname/IP literal against the block policy before connecting; the
- * dispatcher re-validates the resolved IP at socket time (DNS rebinding defense).
- */
-async function fetchOneHop(url: string, dispatcher: unknown): Promise<HopResult> {
-  const parsed = new URL(url);
-  await resolveAndValidate(parsed.hostname);
-
-  const fetchOptions: DispatcherFetchInit = {
-    redirect: 'manual',
-    signal: AbortSignal.timeout(HTTP_DOWNLOAD_TIMEOUT_MS),
-    dispatcher,
-  };
-
-  const response = await fetchWithOptionalDispatcher(url, fetchOptions);
-
-  if (response.status >= 300 && response.status < 400) {
-    const location = response.headers.get('location');
-    if (!location) {
-      throw new Error('Redirect with no location header');
-    }
-    const nextUrl = new URL(location, url).href;
-    if (!nextUrl.startsWith('http://') && !nextUrl.startsWith('https://')) {
-      throw new Error(`Redirect to unsupported scheme: ${nextUrl.split(':')[0]}:`);
-    }
-    // Drain the redirect body so the socket can be released
-    await response.body?.cancel().catch(() => { /* best-effort */ });
-    return { type: 'follow', nextUrl };
-  }
-
-  return { type: 'final', response };
-}
-
-/**
- * Walk redirects with per-hop validation, returning the final non-redirect Response.
- * Throws on >MAX_REDIRECTS, redirect loops, or any blocked hop.
- */
-async function followWithRevalidation(startUrl: string, dispatcher: unknown): Promise<Response> {
-  const visited = new Set<string>();
-  let currentUrl = startUrl;
-
-  for (let hop = 0; hop <= MAX_REDIRECTS; hop++) {
-    if (visited.has(currentUrl)) {
-      throw new Error('Redirect loop detected');
-    }
-    visited.add(currentUrl);
-
-    const result = await fetchOneHop(currentUrl, dispatcher);
-    if (result.type === 'final') return result.response;
-    currentUrl = result.nextUrl;
-  }
-
-  throw new Error('Too many redirects');
 }
 
 /**
@@ -188,7 +119,7 @@ export async function downloadRemoteCover(
   const dispatcher = createSsrfSafeDispatcher();
 
   try {
-    const response = await followWithRevalidation(remoteUrl, dispatcher);
+    const response = await fetchWithSsrfRedirect(remoteUrl, { dispatcher });
 
     if (!response.ok) {
       log.warn({ bookId, status: response.status, url: sanitizeLogUrl(remoteUrl) }, 'Remote cover download returned non-OK status');
@@ -233,5 +164,7 @@ export async function downloadRemoteCover(
   } catch (error: unknown) {
     log.warn({ error: serializeError(error), bookId, url: sanitizeLogUrl(remoteUrl) }, 'Failed to download remote cover');
     return false;
+  } finally {
+    await dispatcher.close().catch(() => { /* best-effort cleanup */ });
   }
 }

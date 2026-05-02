@@ -36,6 +36,7 @@ import { lookup as dnsLookup } from 'node:dns/promises';
 import { Agent, fetch as undiciFetchImpl } from 'undici';
 import type { LookupFunction } from 'node:net';
 import { mapNetworkError } from './map-network-error.js';
+import { HTTP_DOWNLOAD_TIMEOUT_MS } from './constants.js';
 
 /**
  * Re-export of undici's `fetch`. Callers attaching a `dispatcher` MUST use
@@ -281,4 +282,91 @@ export function createSsrfSafeDispatcher(): Agent {
       lookup: validatingLookup,
     },
   });
+}
+
+/** Default redirect-walk hop cap shared by all SSRF-aware redirect callers. */
+export const MAX_REDIRECTS = 5;
+
+/**
+ * Thrown by fetchWithSsrfRedirect when a 3xx Location header points at a scheme
+ * other than http(s). Carries the resolved location and the URL whose response
+ * carried it so call sites that want to handle a particular scheme (e.g. magnet:
+ * from a torrent indexer) can `instanceof`-check and react.
+ */
+export class UnsupportedRedirectSchemeError extends Error {
+  readonly location: string;
+  readonly fromUrl: URL;
+
+  constructor(location: string, fromUrl: URL) {
+    super(`Redirect to unsupported scheme: ${location.split(':')[0]}:`);
+    this.name = 'UnsupportedRedirectSchemeError';
+    this.location = location;
+    this.fromUrl = fromUrl;
+  }
+}
+
+export interface FetchWithSsrfRedirectOptions {
+  dispatcher?: unknown;
+  timeoutMs?: number;
+  maxHops?: number;
+}
+
+/**
+ * Walk redirects with per-hop SSRF revalidation, returning the final non-redirect
+ * Response. The helper does not create or close dispatchers — that lifecycle is
+ * the caller's responsibility (so the same dispatcher gets reused across hops
+ * and is closed after the response body is consumed).
+ *
+ * - Pre-flight DNS validation on every hop (resolveAndValidate); when a dispatcher
+ *   is supplied it re-validates at socket time too (validatingLookup).
+ * - Redirect-response bodies are cancelled so undici sockets release.
+ * - Throws UnsupportedRedirectSchemeError when a 3xx Location is not http(s);
+ *   the helper does not interpret per-site artifacts (e.g. magnet:).
+ */
+export async function fetchWithSsrfRedirect(
+  startUrl: string,
+  opts: FetchWithSsrfRedirectOptions = {},
+): Promise<Response> {
+  const { dispatcher, timeoutMs = HTTP_DOWNLOAD_TIMEOUT_MS, maxHops = MAX_REDIRECTS } = opts;
+  const visited = new Set<string>();
+  let currentUrl = startUrl;
+
+  for (let hop = 0; hop <= maxHops; hop++) {
+    if (visited.has(currentUrl)) {
+      throw new Error('Redirect loop detected');
+    }
+    visited.add(currentUrl);
+
+    const parsed = new URL(currentUrl);
+    await resolveAndValidate(parsed.hostname);
+
+    const fetchOptions: DispatcherFetchInit = {
+      redirect: 'manual',
+      signal: AbortSignal.timeout(timeoutMs),
+      dispatcher,
+    };
+
+    const response = await fetchWithOptionalDispatcher(currentUrl, fetchOptions);
+
+    if (response.status < 300 || response.status >= 400) {
+      return response;
+    }
+
+    const location = response.headers.get('location');
+    if (!location) {
+      await response.body?.cancel().catch(() => { /* best-effort */ });
+      throw new Error('Redirect with no Location header');
+    }
+
+    const nextHref = new URL(location, currentUrl).href;
+    if (!nextHref.startsWith('http://') && !nextHref.startsWith('https://')) {
+      await response.body?.cancel().catch(() => { /* best-effort */ });
+      throw new UnsupportedRedirectSchemeError(nextHref, parsed);
+    }
+
+    await response.body?.cancel().catch(() => { /* best-effort */ });
+    currentUrl = nextHref;
+  }
+
+  throw new Error('Too many redirects');
 }

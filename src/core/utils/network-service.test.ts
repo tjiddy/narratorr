@@ -8,13 +8,16 @@ import { lookup as dnsLookup } from 'node:dns/promises';
 import { ProxyAgent } from 'undici';
 import {
   fetchWithOptionalDispatcher,
+  fetchWithSsrfRedirect,
   fetchWithTimeout,
   isBlockedFetchAddress,
   isBlockedHostname,
   isIpLiteral,
+  MAX_REDIRECTS,
   normalizeHostname,
   resolveAndValidate,
   undiciFetch,
+  UnsupportedRedirectSchemeError,
   validatingLookup,
 } from './network-service.js';
 import { Agent as UndiciAgent } from 'undici';
@@ -642,5 +645,215 @@ describe('fetchWithOptionalDispatcher (call-site routing contract)', () => {
     expect(fetchSpy).toHaveBeenCalledOnce();
     expect(response.status).toBe(200);
     vi.restoreAllMocks();
+  });
+});
+
+describe('fetchWithSsrfRedirect', () => {
+  beforeEach(() => {
+    mockedLookup.mockReset();
+    // default: every host resolves to a public IP
+    mockedLookup.mockResolvedValue([{ address: '93.184.216.34', family: 4 }]);
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  function makeRedirect(location: string, status = 302): Response {
+    const cancel = vi.fn().mockResolvedValue(undefined);
+    const response = new Response(null, { status, headers: location ? { Location: location } : {} });
+    Object.defineProperty(response, 'body', {
+      configurable: true,
+      get: () => ({ cancel }),
+    });
+    (response as unknown as { __cancelSpy: typeof cancel }).__cancelSpy = cancel;
+    return response;
+  }
+
+  it('returns directly on first-hop 200 (no redirect walk)', async () => {
+    const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      new Response('hello', { status: 200 }),
+    );
+
+    const response = await fetchWithSsrfRedirect('https://cdn.example.com/file');
+    expect(response.status).toBe(200);
+    expect(await response.text()).toBe('hello');
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([301, 302, 303, 307, 308])('follows %d redirect to a final 200', async (status) => {
+    const fetchSpy = vi.spyOn(globalThis, 'fetch')
+      .mockResolvedValueOnce(makeRedirect('https://cdn.example.com/final', status))
+      .mockResolvedValueOnce(new Response('done', { status: 200 }));
+
+    const response = await fetchWithSsrfRedirect('https://cdn.example.com/start');
+    expect(response.status).toBe(200);
+    expect(await response.text()).toBe('done');
+    expect(fetchSpy).toHaveBeenCalledTimes(2);
+    expect(fetchSpy).toHaveBeenNthCalledWith(2, 'https://cdn.example.com/final', expect.objectContaining({ redirect: 'manual' }));
+  });
+
+  it('resolves a relative Location against the current URL', async () => {
+    const fetchSpy = vi.spyOn(globalThis, 'fetch')
+      .mockResolvedValueOnce(makeRedirect('/file.bin'))
+      .mockResolvedValueOnce(new Response('ok', { status: 200 }));
+
+    await fetchWithSsrfRedirect('https://cdn.example.com/path/start');
+    expect(fetchSpy).toHaveBeenNthCalledWith(2, 'https://cdn.example.com/file.bin', expect.any(Object));
+  });
+
+  it('detects redirect loop A → B → A', async () => {
+    vi.spyOn(globalThis, 'fetch')
+      .mockResolvedValueOnce(makeRedirect('https://b.example.com/'))
+      .mockResolvedValueOnce(makeRedirect('https://a.example.com/'));
+
+    await expect(fetchWithSsrfRedirect('https://a.example.com/')).rejects.toThrow(/Redirect loop detected/);
+  });
+
+  it('throws on hop-cap exceeded (default MAX_REDIRECTS=5)', async () => {
+    const fetchSpy = vi.spyOn(globalThis, 'fetch');
+    for (let i = 0; i < 6; i++) {
+      fetchSpy.mockResolvedValueOnce(makeRedirect(`https://hop${i}.example.com/`));
+    }
+
+    await expect(fetchWithSsrfRedirect('https://start.example.com/')).rejects.toThrow(/Too many redirects/);
+    expect(fetchSpy).toHaveBeenCalledTimes(MAX_REDIRECTS + 1);
+  });
+
+  it('honours a custom maxHops', async () => {
+    const fetchSpy = vi.spyOn(globalThis, 'fetch')
+      .mockResolvedValueOnce(makeRedirect('https://b.example.com/'))
+      .mockResolvedValueOnce(makeRedirect('https://c.example.com/'));
+
+    await expect(fetchWithSsrfRedirect('https://a.example.com/', { maxHops: 1 })).rejects.toThrow(/Too many redirects/);
+    expect(fetchSpy).toHaveBeenCalledTimes(2);
+  });
+
+  it('pre-flight resolveAndValidate refuses a private-IP startUrl at hop 0', async () => {
+    const fetchSpy = vi.spyOn(globalThis, 'fetch');
+
+    await expect(fetchWithSsrfRedirect('https://192.168.1.1/cover.jpg')).rejects.toThrow(/Refused/);
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  it('pre-flight resolveAndValidate refuses when DNS rebinds to a private IP on hop N', async () => {
+    mockedLookup.mockReset();
+    mockedLookup
+      .mockResolvedValueOnce([{ address: '93.184.216.34', family: 4 }])
+      .mockResolvedValueOnce([{ address: '192.168.1.1', family: 4 }]);
+
+    const fetchSpy = vi.spyOn(globalThis, 'fetch')
+      .mockResolvedValueOnce(makeRedirect('https://rebind.example.com/admin'));
+
+    await expect(fetchWithSsrfRedirect('https://cdn.example.com/path')).rejects.toThrow(/Refused/);
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it.each(['magnet:?xt=urn:btih:abc', 'file:///etc/passwd', 'gopher://host/', 'data:text/plain,hi'])(
+    'throws UnsupportedRedirectSchemeError on Location %s',
+    async (target) => {
+      vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(makeRedirect(target));
+
+      const error = await fetchWithSsrfRedirect('https://torrent.example.com/dl/1').catch((e: unknown) => e);
+
+      expect(error).toBeInstanceOf(UnsupportedRedirectSchemeError);
+      const ure = error as UnsupportedRedirectSchemeError;
+      expect(ure.fromUrl.href).toBe('https://torrent.example.com/dl/1');
+      expect(ure.location.split(':')[0]).toBe(target.split(':')[0]);
+    },
+  );
+
+  it('throws on missing Location at 3xx', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(makeRedirect(''));
+
+    await expect(fetchWithSsrfRedirect('https://cdn.example.com/')).rejects.toThrow(/Location/i);
+  });
+
+  it('drains redirect-response bodies via cancel()', async () => {
+    const redirect = makeRedirect('https://cdn.example.com/final');
+    const cancelSpy = (redirect as unknown as { __cancelSpy: ReturnType<typeof vi.fn> }).__cancelSpy;
+    vi.spyOn(globalThis, 'fetch')
+      .mockResolvedValueOnce(redirect)
+      .mockResolvedValueOnce(new Response('done', { status: 200 }));
+
+    await fetchWithSsrfRedirect('https://cdn.example.com/start');
+    expect(cancelSpy).toHaveBeenCalled();
+  });
+
+  it('passes opts.timeoutMs to AbortSignal.timeout per hop', async () => {
+    const timeoutSpy = vi.spyOn(AbortSignal, 'timeout');
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response('', { status: 200 }));
+
+    await fetchWithSsrfRedirect('https://cdn.example.com/file', { timeoutMs: 1234 });
+
+    expect(timeoutSpy).toHaveBeenCalledWith(1234);
+  });
+
+  it('defaults to HTTP_DOWNLOAD_TIMEOUT_MS (30_000) when opts.timeoutMs is omitted', async () => {
+    const timeoutSpy = vi.spyOn(AbortSignal, 'timeout');
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response('', { status: 200 }));
+
+    await fetchWithSsrfRedirect('https://cdn.example.com/file');
+
+    expect(timeoutSpy).toHaveBeenCalledWith(30_000);
+  });
+
+  it('re-arms AbortSignal.timeout(opts.timeoutMs) on each hop of a redirect chain', async () => {
+    const timeoutSpy = vi.spyOn(AbortSignal, 'timeout');
+    vi.spyOn(globalThis, 'fetch')
+      .mockResolvedValueOnce(makeRedirect('https://cdn.example.com/final'))
+      .mockResolvedValueOnce(new Response('done', { status: 200 }));
+
+    await fetchWithSsrfRedirect('https://cdn.example.com/start', { timeoutMs: 7777 });
+
+    const callsWithTimeout = timeoutSpy.mock.calls.filter(([ms]) => ms === 7777);
+    expect(callsWithTimeout).toHaveLength(2);
+  });
+
+  it('rejects with a timeout-shaped error when the per-hop timeout fires (controlled firing)', async () => {
+    // Stub fetch to return a Promise that never resolves on its own — only
+    // the AbortSignal can settle it. This proves the helper actually wires the
+    // AbortSignal.timeout-driven signal into the fetch call.
+    vi.spyOn(globalThis, 'fetch').mockImplementation((_url, init) => {
+      return new Promise<Response>((_resolve, reject) => {
+        const signal = (init as RequestInit | undefined)?.signal;
+        if (!signal) {
+          reject(new Error('test setup: no signal attached to fetch'));
+          return;
+        }
+        signal.addEventListener('abort', () => {
+          // Mirror the real fetch behavior: reject with a TimeoutError DOMException
+          reject(new DOMException('The operation was aborted due to timeout', 'TimeoutError'));
+        });
+      });
+    });
+
+    const error = await fetchWithSsrfRedirect('https://cdn.example.com/file', { timeoutMs: 25 })
+      .catch((e: unknown) => e);
+
+    expect(error).toBeInstanceOf(DOMException);
+    expect((error as DOMException).name).toBe('TimeoutError');
+  });
+
+  it('routes through undiciFetch when a dispatcher is supplied', async () => {
+    const fetchSpy = vi.spyOn(globalThis, 'fetch');
+    const dispatcher = new UndiciAgent({ connect: { lookup: validatingLookup } });
+
+    // Hit an unreachable port so the dispatcher's connect path is exercised
+    // but the call fails fast — we only care that globalThis.fetch was NOT used.
+    await fetchWithSsrfRedirect('http://127.0.0.1:1/', {
+      dispatcher,
+      timeoutMs: 500,
+    }).catch(() => { /* expected */ });
+
+    expect(fetchSpy).not.toHaveBeenCalled();
+    await dispatcher.close();
+  });
+
+  it('routes through globalThis.fetch when no dispatcher is supplied', async () => {
+    const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response('ok', { status: 200 }));
+
+    await fetchWithSsrfRedirect('https://cdn.example.com/file');
+    expect(fetchSpy).toHaveBeenCalledOnce();
   });
 });

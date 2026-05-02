@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach, type Mock } from 'vitest';
 import { createServer, type Server, type IncomingMessage, type ServerResponse } from 'node:http';
 import type { AddressInfo, LookupFunction } from 'node:net';
 import { Agent } from 'undici';
@@ -14,13 +14,21 @@ vi.mock('node:fs/promises', () => ({
   unlink: vi.fn().mockResolvedValue(undefined),
 }));
 
+// Mock dnsLookup at the OS boundary so the pre-flight resolveAndValidate inside
+// fetchWithSsrfRedirect (same module as resolveAndValidate, so module-export
+// mocks bypass the internal callsite) sees test-controlled answers.
+vi.mock('node:dns/promises', () => ({ lookup: vi.fn() }));
+
 vi.mock('../../core/utils/network-service.js', async (importActual) => {
   const actual = await importActual<typeof NetworkServiceModule>();
-  return { ...actual, createSsrfSafeDispatcher: vi.fn(), resolveAndValidate: vi.fn() };
+  return { ...actual, createSsrfSafeDispatcher: vi.fn() };
 });
 
-import { createSsrfSafeDispatcher, resolveAndValidate } from '../../core/utils/network-service.js';
+import { lookup as dnsLookup } from 'node:dns/promises';
+import { createSsrfSafeDispatcher } from '../../core/utils/network-service.js';
 import { downloadRemoteCover } from './cover-download.js';
+
+const mockedDnsLookup = vi.mocked(dnsLookup) as unknown as Mock;
 
 function createMockLogger() {
   return inject<FastifyBaseLogger>({
@@ -80,6 +88,7 @@ describe('downloadRemoteCover (real-HTTP e2e — DNS rebinding revalidation)', (
     requestCount = 0;
     lookupCalls = [];
     lookupBehaviors = [];
+    mockedDnsLookup.mockReset();
 
     server = createServer((req, res) => serverHandler(req, res));
     await new Promise<void>((resolve) => server.listen({ port: 0, host: '127.0.0.1' }, resolve));
@@ -116,9 +125,12 @@ describe('downloadRemoteCover (real-HTTP e2e — DNS rebinding revalidation)', (
       res.end();
     };
 
-    vi.mocked(resolveAndValidate)
-      .mockResolvedValueOnce(['127.0.0.1'])
-      .mockResolvedValueOnce(['93.184.216.34']);
+    // Pre-flight resolveAndValidate (run inside fetchWithSsrfRedirect) sees
+    // public answers via the mocked OS lookup. The dispatcher's connect.lookup
+    // (testLookup) is the rebinding-defense seam under test.
+    mockedDnsLookup
+      .mockResolvedValueOnce([{ address: '93.184.216.34', family: 4 }])
+      .mockResolvedValueOnce([{ address: '93.184.216.34', family: 4 }]);
 
     lookupBehaviors.push(
       successBehavior('127.0.0.1', 4),
@@ -136,7 +148,7 @@ describe('downloadRemoteCover (real-HTTP e2e — DNS rebinding revalidation)', (
     expect(result).toBe(false);
     expect(lookupCalls).toEqual(['origin.test', 'rebind.test']);
     expect(requestCount).toBe(1);
-    expect(vi.mocked(resolveAndValidate)).toHaveBeenCalledTimes(2);
+    expect(mockedDnsLookup).toHaveBeenCalledTimes(2);
     expect(mockDb.update).not.toHaveBeenCalled();
     expect(log.warn).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -167,9 +179,9 @@ describe('downloadRemoteCover (real-HTTP e2e — DNS rebinding revalidation)', (
       res.end(body);
     };
 
-    vi.mocked(resolveAndValidate)
-      .mockResolvedValueOnce(['127.0.0.1'])
-      .mockResolvedValueOnce(['127.0.0.1']);
+    mockedDnsLookup
+      .mockResolvedValueOnce([{ address: '93.184.216.34', family: 4 }])
+      .mockResolvedValueOnce([{ address: '93.184.216.34', family: 4 }]);
 
     lookupBehaviors.push(
       successBehavior('127.0.0.1', 4),

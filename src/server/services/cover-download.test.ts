@@ -16,16 +16,53 @@ vi.mock('node:dns/promises', () => ({
   lookup: vi.fn(),
 }));
 
-// Route fetchWithOptionalDispatcher through globalThis.fetch so the existing
-// `vi.stubGlobal('fetch', mockFetch)` continues to intercept the cover-download
-// hop. Production routes through undici's fetch when a dispatcher is attached
-// — the helper's routing is asserted in network-service.test.ts and the call
-// site is exercised end-to-end in cover-download.e2e.test.ts.
+const dispatcherCloseSpy = vi.fn().mockResolvedValue(undefined);
+
+// Override `fetchWithSsrfRedirect` with a `globalThis.fetch`-based walker so
+// the existing `vi.stubGlobal('fetch', mockFetch)` continues to intercept the
+// cover-download hop. Production routes through undici's fetch when a dispatcher
+// is attached — the helper's routing is asserted in network-service.test.ts
+// and exercised end-to-end in cover-download.e2e.test.ts.
+//
+// `createSsrfSafeDispatcher` is also stubbed so the dispatcher.close() call in
+// downloadRemoteCover hits a spy instead of a real Agent.
 vi.mock('../../core/utils/network-service.js', async (importActual) => {
   const actual = await importActual<typeof NetworkServiceModule>();
+  const MAX = 5;
+  const fetchWithSsrfRedirect: typeof actual.fetchWithSsrfRedirect = async (startUrl, opts = {}) => {
+    const visited = new Set<string>();
+    let cur = startUrl;
+    const maxHops = opts.maxHops ?? MAX;
+    for (let hop = 0; hop <= maxHops; hop++) {
+      if (visited.has(cur)) throw new Error('Redirect loop detected');
+      visited.add(cur);
+      const parsed = new URL(cur);
+      await actual.resolveAndValidate(parsed.hostname);
+      const response = await globalThis.fetch(cur, {
+        redirect: 'manual',
+        signal: AbortSignal.timeout(opts.timeoutMs ?? 30_000),
+        dispatcher: opts.dispatcher,
+      } as RequestInit);
+      if (response.status < 300 || response.status >= 400) return response;
+      const location = response.headers.get('location');
+      if (!location) {
+        await response.body?.cancel().catch(() => { /* best-effort */ });
+        throw new Error('Redirect with no Location header');
+      }
+      const nextHref = new URL(location, cur).href;
+      if (!nextHref.startsWith('http://') && !nextHref.startsWith('https://')) {
+        await response.body?.cancel().catch(() => { /* best-effort */ });
+        throw new actual.UnsupportedRedirectSchemeError(nextHref, parsed);
+      }
+      await response.body?.cancel().catch(() => { /* best-effort */ });
+      cur = nextHref;
+    }
+    throw new Error('Too many redirects');
+  };
   return {
     ...actual,
-    fetchWithOptionalDispatcher: ((url, options) => globalThis.fetch(url, options as RequestInit)) as typeof actual.fetchWithOptionalDispatcher,
+    fetchWithSsrfRedirect,
+    createSsrfSafeDispatcher: (() => ({ close: dispatcherCloseSpy })) as unknown as typeof actual.createSsrfSafeDispatcher,
   };
 });
 
@@ -91,6 +128,7 @@ describe('downloadRemoteCover', () => {
     // mockReset clears queued mockResolvedValueOnce responses; clearAllMocks alone leaves them.
     mockFetch.mockReset();
     mockedDnsLookup.mockReset();
+    dispatcherCloseSpy.mockClear();
     mockDb = createMockDb();
     log = createMockLogger();
     mockPublicDns();
@@ -813,6 +851,42 @@ describe('downloadRemoteCover', () => {
       expect.any(String),
       expect.objectContaining({ dispatcher: expect.anything() }),
     );
+  });
+
+  describe('dispatcher cleanup (#904)', () => {
+    it('closes the dispatcher after a successful download', async () => {
+      mockFetch.mockResolvedValue(createImageResponse());
+
+      await downloadRemoteCover(
+        1, '/books/test', 'https://cdn.example.com/cover.jpg',
+        inject<Db>(mockDb), log,
+      );
+
+      expect(dispatcherCloseSpy).toHaveBeenCalledTimes(1);
+    });
+
+    it('closes the dispatcher when fetch rejects', async () => {
+      mockFetch.mockRejectedValue(new Error('Network error'));
+
+      await downloadRemoteCover(
+        1, '/books/test', 'https://cdn.example.com/cover.jpg',
+        inject<Db>(mockDb), log,
+      );
+
+      expect(dispatcherCloseSpy).toHaveBeenCalledTimes(1);
+    });
+
+    it('closes the dispatcher when SSRF refusal occurs at hop 0', async () => {
+      mockedDnsLookup.mockReset();
+      mockedDnsLookup.mockResolvedValueOnce([{ address: '192.168.1.1', family: 4 }]);
+
+      await downloadRemoteCover(
+        1, '/books/test', 'https://attacker.example.com/cover.jpg',
+        inject<Db>(mockDb), log,
+      );
+
+      expect(dispatcherCloseSpy).toHaveBeenCalledTimes(1);
+    });
   });
 });
 
