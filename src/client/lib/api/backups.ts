@@ -1,4 +1,4 @@
-import { fetchApi, URL_BASE, ApiError } from './client.js';
+import { fetchApi, fetchMultipart, URL_BASE } from './client.js';
 
 export interface BackupMetadata {
   filename: string;
@@ -18,32 +18,18 @@ export interface BackupJobResult {
   pruned: number;
 }
 
-const API_BASE = `${URL_BASE}/api`;
-
 export const backupsApi = {
   getBackups: () => fetchApi<BackupMetadata[]>('/system/backups'),
 
   createBackup: () => fetchApi<BackupJobResult>('/system/backups/create', { method: 'POST' }),
 
-  getBackupDownloadUrl: (filename: string) => `${API_BASE}/system/backups/${encodeURIComponent(filename)}/download`,
+  getBackupDownloadUrl: (filename: string) =>
+    `${URL_BASE}/api/system/backups/${encodeURIComponent(filename)}/download`,
 
-  uploadRestore: async (file: File): Promise<RestoreValidation> => {
+  uploadRestore: (file: File): Promise<RestoreValidation> => {
     const formData = new FormData();
     formData.append('file', file);
-
-    const response = await fetch(`${API_BASE}/system/restore`, {
-      method: 'POST',
-      body: formData,
-      credentials: 'include',
-      headers: { 'X-Requested-With': 'XMLHttpRequest' },
-    });
-
-    if (!response.ok) {
-      const error = await response.json().catch(() => ({ error: `HTTP ${response.status}` }));
-      throw new ApiError(response.status, error);
-    }
-
-    return response.json();
+    return fetchMultipart<RestoreValidation>('/system/restore', formData);
   },
 
   restoreBackupDirect: (filename: string) =>

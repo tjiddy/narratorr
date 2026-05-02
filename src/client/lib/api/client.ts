@@ -22,6 +22,15 @@ export class ApiError extends Error {
   }
 }
 
+async function throwIfNotOk(response: Response): Promise<void> {
+  if (response.ok) return;
+  const error = await response.json().catch((parseError) => {
+    console.warn('Failed to parse error response body:', parseError);
+    return { error: `HTTP ${response.status}` };
+  });
+  throw new ApiError(response.status, error);
+}
+
 export async function fetchApi<T>(path: string, options?: RequestInit): Promise<T> {
   const headers: Record<string, string> = {
     'X-Requested-With': 'XMLHttpRequest',
@@ -39,13 +48,28 @@ export async function fetchApi<T>(path: string, options?: RequestInit): Promise<
     credentials: 'include',
   });
 
-  if (!response.ok) {
-    const error = await response.json().catch((parseError) => {
-      console.warn('Failed to parse error response body:', parseError);
-      return { error: `HTTP ${response.status}` };
-    });
-    throw new ApiError(response.status, error);
-  }
+  await throwIfNotOk(response);
+  return response.json();
+}
 
+export async function fetchMultipart<T>(
+  path: string,
+  body: FormData,
+  options?: Omit<RequestInit, 'body' | 'method'> & { method?: 'POST' | 'PUT' | 'PATCH' },
+): Promise<T> {
+  const headers: Record<string, string> = {
+    'X-Requested-With': 'XMLHttpRequest',
+    ...(options?.headers as Record<string, string>),
+  };
+
+  const response = await fetch(`${API_BASE}${path}`, {
+    ...options,
+    method: options?.method ?? 'POST',
+    body,
+    headers,
+    credentials: 'include',
+  });
+
+  await throwIfNotOk(response);
   return response.json();
 }
