@@ -560,6 +560,23 @@ try { foo(); } catch (e) {
       `,
       errors: [{ messageId: 'rawError' }],
     },
+    // Literal property key `'err'` from catch binding — locks in the
+    // `Literal` branch of checkObjectArg's keyName resolution
+    {
+      code: `
+        try { foo(); } catch (err) {
+          log.error({ 'err': err }, 'msg');
+        }
+      `,
+      output: `
+        import { serializeError } from '../utils/serialize-error.js';
+
+try { foo(); } catch (err) {
+          log.error({ error: serializeError(err) }, 'msg');
+        }
+      `,
+      errors: [{ messageId: 'rawError' }],
+    },
 
     // ── Case 1 (extension): MemberExpression value from catch binding ─────
 
