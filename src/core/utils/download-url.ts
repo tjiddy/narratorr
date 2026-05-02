@@ -4,6 +4,7 @@ import { normalizeInfoHash } from './normalize-info-hash.js';
 import {
   createSsrfSafeDispatcher,
   fetchWithSsrfRedirect,
+  mapNetworkError,
   UnsupportedRedirectSchemeError,
 } from './network-service.js';
 
@@ -201,30 +202,7 @@ function isHtmlResponse(response: Response, buffer: Buffer): boolean {
 
 /** Sanitize network errors to never include the raw URL (passkey/token safety). */
 function sanitizeNetworkError(error: unknown): Error {
-  if (error instanceof DOMException && error.name === 'TimeoutError') {
-    return new Error('Download failed: request timed out');
-  }
-
-  if (error instanceof Error) {
-    // Undici wraps DNS/connection failures as TypeError('fetch failed') with the real error on .cause
-    const cause = (error as Error & { cause?: NodeJS.ErrnoException }).cause;
-    const code = cause?.code ?? (error as NodeJS.ErrnoException).code;
-
-    if (code === 'ENOTFOUND') {
-      return new Error('Download failed: could not resolve hostname');
-    }
-    if (code === 'ECONNREFUSED') {
-      return new Error('Download failed: connection refused');
-    }
-    if (code === 'ETIMEDOUT' || code === 'UND_ERR_CONNECT_TIMEOUT') {
-      return new Error('Download failed: connection timed out');
-    }
-    if (code === 'ECONNRESET') {
-      return new Error('Download failed: connection reset');
-    }
-    const sanitized = error.message.replace(/https?:\/\/\S+/gi, '[redacted-url]');
-    return new Error(`Download failed: ${sanitized}`);
-  }
-
-  return new Error('Download failed: unknown network error');
+  const mapped = mapNetworkError(error);
+  const sanitized = mapped.message.replace(/https?:\/\/\S+/gi, '[redacted-url]');
+  return new Error(`Download failed: ${sanitized}`);
 }

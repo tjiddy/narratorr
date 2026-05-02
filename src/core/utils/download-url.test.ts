@@ -608,13 +608,13 @@ describe('DownloadUrl', () => {
       const dl = new DownloadUrl(secretUrl, 'torrent');
       const error = await dl.resolve().catch((e: Error) => e);
       expect(error).toBeInstanceOf(Error);
-      expect((error as Error).message).toBe('Download failed: could not resolve hostname');
+      expect((error as Error).message).toBe('Download failed: DNS resolution failed for indexer.example.com');
       expect((error as Error).message).not.toContain('secret-passkey');
     });
 
     it('unwraps undici TypeError("fetch failed") with ECONNREFUSED on cause', async () => {
       const secretUrl = 'https://indexer.example.com/dl/secret-passkey-12345';
-      const cause = new Error('connect ECONNREFUSED') as NodeJS.ErrnoException;
+      const cause = new Error('connect ECONNREFUSED 127.0.0.1:8080') as NodeJS.ErrnoException;
       cause.code = 'ECONNREFUSED';
       const err = new TypeError('fetch failed', { cause });
       mockFetch.mockRejectedValueOnce(err);
@@ -622,7 +622,39 @@ describe('DownloadUrl', () => {
       const dl = new DownloadUrl(secretUrl, 'torrent');
       const error = await dl.resolve().catch((e: Error) => e);
       expect(error).toBeInstanceOf(Error);
-      expect((error as Error).message).toBe('Download failed: connection refused');
+      expect((error as Error).message).toBe('Download failed: Connection refused on port 8080');
+    });
+
+    it('maps UND_ERR_HEADERS_TIMEOUT via cause to descriptive message', async () => {
+      const secretUrl = 'https://indexer.example.com/dl/secret-passkey-12345';
+      const cause = Object.assign(new Error('Headers Timeout Error'), { code: 'UND_ERR_HEADERS_TIMEOUT' });
+      const err = new TypeError('fetch failed', { cause });
+      mockFetch.mockRejectedValueOnce(err);
+
+      const dl = new DownloadUrl(secretUrl, 'torrent');
+      const error = await dl.resolve().catch((e: Error) => e);
+      expect(error).toBeInstanceOf(Error);
+      expect((error as Error).message).toBe('Download failed: Server stopped responding before sending headers');
+    });
+
+    it('DOMException AbortError maps to "Download failed: Request timed out"', async () => {
+      const secretUrl = 'https://indexer.example.com/dl/secret-passkey-12345';
+      mockFetch.mockRejectedValueOnce(new DOMException('The operation was aborted', 'AbortError'));
+
+      const dl = new DownloadUrl(secretUrl, 'torrent');
+      const error = await dl.resolve().catch((e: Error) => e);
+      expect(error).toBeInstanceOf(Error);
+      expect((error as Error).message).toBe('Download failed: Request timed out');
+    });
+
+    it('non-Error rejected value falls back to stringified message', async () => {
+      const secretUrl = 'https://indexer.example.com/dl/secret-passkey-12345';
+      mockFetch.mockRejectedValueOnce('oops');
+
+      const dl = new DownloadUrl(secretUrl, 'torrent');
+      const error = await dl.resolve().catch((e: Error) => e);
+      expect(error).toBeInstanceOf(Error);
+      expect((error as Error).message).toBe('Download failed: oops');
     });
 
     // #541 — sanitizeNetworkError URL redaction for non-undici errors
@@ -671,6 +703,24 @@ describe('DownloadUrl', () => {
       const error = await dl.resolve().catch((e: Error) => e);
       expect(error).toBeInstanceOf(Error);
       expect((error as Error).message).not.toContain('https://');
+      expect((error as Error).message).toMatch(/^Download failed:/);
+    });
+
+    // AC #5 — URL redaction still applies on the unmapped-cause fallthrough path
+    it('redacts URL inside undici cause message for unknown codes', async () => {
+      const secretUrl = 'https://indexer.example.com/dl/secret-passkey-12345';
+      const cause = Object.assign(
+        new Error('something failed at https://indexer.example.com/dl/secret-passkey-12345'),
+        { code: 'UND_ERR_UNKNOWN' },
+      );
+      const err = new TypeError('fetch failed', { cause });
+      mockFetch.mockRejectedValueOnce(err);
+
+      const dl = new DownloadUrl(secretUrl, 'torrent');
+      const error = await dl.resolve().catch((e: Error) => e);
+      expect(error).toBeInstanceOf(Error);
+      expect((error as Error).message).not.toContain('https://');
+      expect((error as Error).message).not.toContain('secret-passkey');
       expect((error as Error).message).toMatch(/^Download failed:/);
     });
   });
