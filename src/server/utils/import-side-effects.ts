@@ -16,14 +16,14 @@ export interface EmitDownloadImportingArgs {
   broadcaster: EventBroadcasterService | undefined;
   downloadId: number;
   bookId: number;
-  downloadStatus: string;
+  downloadStatus: DownloadStatus;
   log: FastifyBaseLogger;
 }
 
 /** Emit SSE download_status_change for the importing transition. */
 export function emitDownloadImporting(args: EmitDownloadImportingArgs): void {
   const { broadcaster, downloadId, bookId, downloadStatus, log } = args;
-  safeEmit(broadcaster, 'download_status_change', { download_id: downloadId, book_id: bookId, old_status: downloadStatus as DownloadStatus, new_status: 'importing' as DownloadStatus }, log);
+  safeEmit(broadcaster, 'download_status_change', { download_id: downloadId, book_id: bookId, old_status: downloadStatus, new_status: 'importing' }, log);
 }
 
 // ── emitBookImporting ───────────────────────────────────────────────────
