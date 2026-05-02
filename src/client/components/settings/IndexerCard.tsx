@@ -107,7 +107,7 @@ export function IndexerCard(props: IndexerCardProps) {
     defaultValues: indexer
       ? {
           name: indexer.name,
-          type: indexer.type as CreateIndexerFormData['type'],
+          type: indexer.type,
           enabled: indexer.enabled,
           priority: indexer.priority,
           settings: settingsFromIndexer(indexer),
@@ -122,7 +122,7 @@ export function IndexerCard(props: IndexerCardProps) {
     if (mode === 'edit' && indexer) {
       reset({
         name: indexer.name,
-        type: indexer.type as CreateIndexerFormData['type'],
+        type: indexer.type,
         enabled: indexer.enabled,
         priority: indexer.priority,
         settings: settingsFromIndexer(indexer),
