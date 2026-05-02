@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto';
+import type { DownloadProtocol } from '../indexers/types.js';
 import { parseInfoHash } from './magnet.js';
 import { normalizeInfoHash } from './normalize-info-hash.js';
 import {
@@ -14,8 +15,6 @@ export type DownloadArtifact =
   | { type: 'magnet-uri'; uri: string; infoHash: string }
   | { type: 'nzb-url'; url: string }
   | { type: 'nzb-bytes'; data: Buffer };
-
-export type DownloadProtocol = 'torrent' | 'usenet';
 
 // ── Constants ─────────────────────────────────────────────────────────
 const DATA_TORRENT_URI_PREFIX = 'data:application/x-bittorrent;base64,';

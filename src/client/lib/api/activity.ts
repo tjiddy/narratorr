@@ -1,4 +1,5 @@
 import { fetchApi } from './client.js';
+import type { DownloadProtocol } from '../../../core/indexers/types.js';
 import type { DownloadStatus } from '../../../shared/schemas.js';
 
 export interface Download {
@@ -8,7 +9,7 @@ export interface Download {
   indexerName: string | null;
   downloadClientId?: number;
   title: string;
-  protocol: 'torrent' | 'usenet';
+  protocol: DownloadProtocol;
   infoHash?: string;
   downloadUrl?: string;
   size?: number;
