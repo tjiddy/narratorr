@@ -4,13 +4,20 @@ import type { SearchResult } from '../../core/indexers/types.js';
 import type * as NetworkServiceModule from '../../core/utils/network-service.js';
 import { enrichUsenetLanguages } from './enrich-usenet-languages.js';
 
+const mockDispatcher = { close: vi.fn().mockResolvedValue(undefined) };
+
 vi.mock('../../core/utils/network-service.js', async (importActual) => {
   const actual = await importActual<typeof NetworkServiceModule>();
-  return { ...actual, fetchWithTimeout: vi.fn() };
+  return {
+    ...actual,
+    fetchWithSsrfRedirect: vi.fn(),
+    createSsrfSafeDispatcher: vi.fn(() => mockDispatcher),
+  };
 });
 
-import { fetchWithTimeout } from '../../core/utils/network-service.js';
-const mockFetchWithTimeout = vi.mocked(fetchWithTimeout);
+import { fetchWithSsrfRedirect, createSsrfSafeDispatcher } from '../../core/utils/network-service.js';
+const mockFetchWithSsrfRedirect = vi.mocked(fetchWithSsrfRedirect);
+const mockCreateSsrfSafeDispatcher = vi.mocked(createSsrfSafeDispatcher);
 
 function createMockLogger(): FastifyBaseLogger {
   return {
@@ -43,7 +50,7 @@ describe('enrichUsenetLanguages', () => {
 
   beforeEach(() => {
     logger = createMockLogger();
-    mockFetchWithTimeout.mockReset();
+    mockFetchWithSsrfRedirect.mockReset();
   });
 
   describe('newsgroup short-circuit', () => {
@@ -55,7 +62,7 @@ describe('enrichUsenetLanguages', () => {
       await enrichUsenetLanguages(results, logger);
 
       expect(results[0].language).toBe('german');
-      expect(mockFetchWithTimeout).not.toHaveBeenCalled();
+      expect(mockFetchWithSsrfRedirect).not.toHaveBeenCalled();
     });
 
     it('sets language to "german" from newsgroup alt.binaries.german.hoerbuecher without fetch', async () => {
@@ -76,7 +83,7 @@ describe('enrichUsenetLanguages', () => {
           <segments><segment bytes="100" number="1">id@example</segment></segments>
         </file>
       </nzb>`;
-      mockFetchWithTimeout.mockResolvedValueOnce(
+      mockFetchWithSsrfRedirect.mockResolvedValueOnce(
         new Response(nzbXml, { status: 200 }),
       );
 
@@ -86,7 +93,10 @@ describe('enrichUsenetLanguages', () => {
 
       await enrichUsenetLanguages(results, logger);
 
-      expect(mockFetchWithTimeout).toHaveBeenCalledWith('http://nzb.test/1', {}, 5000);
+      expect(mockFetchWithSsrfRedirect).toHaveBeenCalledWith(
+        'http://nzb.test/1',
+        expect.objectContaining({ dispatcher: mockDispatcher, timeoutMs: 5000 }),
+      );
       expect(results[0].nzbName).toBe('Stephen King-H?rbuch-Pack.part01.rar');
       expect(results[0].language).toBe('german');
     });
@@ -98,7 +108,7 @@ describe('enrichUsenetLanguages', () => {
           <segments><segment bytes="100" number="1">id@example</segment></segments>
         </file>
       </nzb>`;
-      mockFetchWithTimeout.mockResolvedValueOnce(
+      mockFetchWithSsrfRedirect.mockResolvedValueOnce(
         new Response(nzbXml, { status: 200 }),
       );
 
@@ -109,8 +119,11 @@ describe('enrichUsenetLanguages', () => {
       await enrichUsenetLanguages(results, logger);
 
       expect(results[0].language).toBe('french');
-      expect(mockFetchWithTimeout).toHaveBeenCalledTimes(1);
-      expect(mockFetchWithTimeout).toHaveBeenCalledWith('http://nzb.test/1', {}, 5000);
+      expect(mockFetchWithSsrfRedirect).toHaveBeenCalledTimes(1);
+      expect(mockFetchWithSsrfRedirect).toHaveBeenCalledWith(
+        'http://nzb.test/1',
+        expect.objectContaining({ dispatcher: mockDispatcher, timeoutMs: 5000 }),
+      );
     });
   });
 
@@ -122,7 +135,7 @@ describe('enrichUsenetLanguages', () => {
           <segments><segment bytes="100" number="1">id@example</segment></segments>
         </file>
       </nzb>`;
-      mockFetchWithTimeout.mockResolvedValueOnce(
+      mockFetchWithSsrfRedirect.mockResolvedValueOnce(
         new Response(nzbXml, { status: 200 }),
       );
 
@@ -143,7 +156,7 @@ describe('enrichUsenetLanguages', () => {
       await enrichUsenetLanguages(results, logger);
 
       expect(results[0].language).toBe('english');
-      expect(mockFetchWithTimeout).not.toHaveBeenCalled();
+      expect(mockFetchWithSsrfRedirect).not.toHaveBeenCalled();
     });
 
     it('skips results without downloadUrl', async () => {
@@ -154,7 +167,7 @@ describe('enrichUsenetLanguages', () => {
       await enrichUsenetLanguages(results, logger);
 
       expect(results[0].language).toBeUndefined();
-      expect(mockFetchWithTimeout).not.toHaveBeenCalled();
+      expect(mockFetchWithSsrfRedirect).not.toHaveBeenCalled();
     });
 
     it('skips torrent results regardless of language state', async () => {
@@ -165,11 +178,11 @@ describe('enrichUsenetLanguages', () => {
       await enrichUsenetLanguages(results, logger);
 
       expect(results[0].language).toBeUndefined();
-      expect(mockFetchWithTimeout).not.toHaveBeenCalled();
+      expect(mockFetchWithSsrfRedirect).not.toHaveBeenCalled();
     });
 
     it('leaves language undefined when NZB fetch returns 404', async () => {
-      mockFetchWithTimeout.mockResolvedValueOnce(
+      mockFetchWithSsrfRedirect.mockResolvedValueOnce(
         new Response('Not Found', { status: 404 }),
       );
 
@@ -187,7 +200,7 @@ describe('enrichUsenetLanguages', () => {
     });
 
     it('leaves language undefined when NZB fetch times out', async () => {
-      mockFetchWithTimeout.mockRejectedValueOnce(new Error('The operation was aborted'));
+      mockFetchWithSsrfRedirect.mockRejectedValueOnce(new Error('The operation was aborted'));
 
       const results = [
         makeResult({ protocol: 'usenet', downloadUrl: 'http://nzb.test/1' }),
@@ -203,7 +216,7 @@ describe('enrichUsenetLanguages', () => {
     });
 
     it('leaves language undefined when NZB contains invalid XML', async () => {
-      mockFetchWithTimeout.mockResolvedValueOnce(
+      mockFetchWithSsrfRedirect.mockResolvedValueOnce(
         new Response('not xml <><><', { status: 200 }),
       );
 
@@ -223,7 +236,7 @@ describe('enrichUsenetLanguages', () => {
           <segments><segment bytes="100" number="1">id@example</segment></segments>
         </file>
       </nzb>`;
-      mockFetchWithTimeout.mockResolvedValueOnce(
+      mockFetchWithSsrfRedirect.mockResolvedValueOnce(
         new Response(nzbXml, { status: 200 }),
       );
 
@@ -243,7 +256,7 @@ describe('enrichUsenetLanguages', () => {
           <segments><segment bytes="100" number="1">id@example</segment></segments>
         </file>
       </nzb>`;
-      mockFetchWithTimeout.mockResolvedValueOnce(
+      mockFetchWithSsrfRedirect.mockResolvedValueOnce(
         new Response(nzbXml, { status: 200 }),
       );
 
@@ -270,7 +283,7 @@ describe('enrichUsenetLanguages', () => {
   describe('concurrency and parallelism', () => {
     it('runs NZB fetches in parallel up to concurrency limit', async () => {
       let fetchCount = 0;
-      mockFetchWithTimeout.mockImplementation(async () => {
+      mockFetchWithSsrfRedirect.mockImplementation(async () => {
         fetchCount++;
         await new Promise(r => setTimeout(r, 10));
         return new Response(`<nzb xmlns="http://www.newzbin.com/DTD/2003/nzb">
@@ -294,7 +307,7 @@ describe('enrichUsenetLanguages', () => {
     it('queues excess fetches beyond concurrency limit', async () => {
       let concurrent = 0;
       let maxConcurrent = 0;
-      mockFetchWithTimeout.mockImplementation(async () => {
+      mockFetchWithSsrfRedirect.mockImplementation(async () => {
         concurrent++;
         maxConcurrent = Math.max(maxConcurrent, concurrent);
         await new Promise(r => setTimeout(r, 20));
@@ -326,7 +339,7 @@ describe('enrichUsenetLanguages', () => {
           <segments><segment bytes="1" number="1">id@e</segment></segments>
         </file>
       </nzb>`;
-      mockFetchWithTimeout
+      mockFetchWithSsrfRedirect
         .mockRejectedValueOnce(new Error('Network failure'))
         .mockResolvedValueOnce(new Response(germanNzb, { status: 200 }));
 
@@ -348,7 +361,7 @@ describe('enrichUsenetLanguages', () => {
           <segments><segment bytes="1" number="1">id@e</segment></segments>
         </file>
       </nzb>`;
-      mockFetchWithTimeout
+      mockFetchWithSsrfRedirect
         .mockResolvedValueOnce(new Response('garbage xml <><><', { status: 200 }))
         .mockResolvedValueOnce(new Response(germanNzb, { status: 200 }));
 
@@ -372,7 +385,7 @@ describe('enrichUsenetLanguages', () => {
           <segments><segment bytes="1" number="1">id@e</segment></segments>
         </file>
       </nzb>`;
-      mockFetchWithTimeout.mockResolvedValueOnce(
+      mockFetchWithSsrfRedirect.mockResolvedValueOnce(
         new Response(nzbXml, { status: 200 }),
       );
 
@@ -410,7 +423,7 @@ describe('enrichUsenetLanguages', () => {
     });
 
     it('logs correct counts when all NZB fetches fail', async () => {
-      mockFetchWithTimeout.mockRejectedValue(new Error('fail'));
+      mockFetchWithSsrfRedirect.mockRejectedValue(new Error('fail'));
 
       const results = [
         makeResult({ protocol: 'usenet', downloadUrl: 'http://nzb.test/1' }),
@@ -436,7 +449,7 @@ describe('enrichUsenetLanguages', () => {
           <segments><segment bytes="1" number="1">id@e</segment></segments>
         </file>
       </nzb>`;
-      mockFetchWithTimeout
+      mockFetchWithSsrfRedirect
         .mockRejectedValueOnce(new Error('fail'))
         .mockResolvedValueOnce(new Response(germanNzb, { status: 200 }));
 
@@ -458,7 +471,7 @@ describe('enrichUsenetLanguages', () => {
     });
 
     it('emits warning per individual NZB fetch failure with result identifier', async () => {
-      mockFetchWithTimeout.mockRejectedValueOnce(new Error('timeout'));
+      mockFetchWithSsrfRedirect.mockRejectedValueOnce(new Error('timeout'));
 
       const results = [
         makeResult({ protocol: 'usenet', downloadUrl: 'http://nzb.test/1', title: 'My Audiobook' }),
@@ -479,7 +492,7 @@ describe('enrichUsenetLanguages', () => {
 
       await enrichUsenetLanguages(results, logger);
 
-      expect(mockFetchWithTimeout).not.toHaveBeenCalled();
+      expect(mockFetchWithSsrfRedirect).not.toHaveBeenCalled();
     });
 
     it('skips all results when all already have language', async () => {
@@ -490,7 +503,7 @@ describe('enrichUsenetLanguages', () => {
 
       await enrichUsenetLanguages(results, logger);
 
-      expect(mockFetchWithTimeout).not.toHaveBeenCalled();
+      expect(mockFetchWithSsrfRedirect).not.toHaveBeenCalled();
       expect(results[0].language).toBe('english');
       expect(results[1].language).toBe('french');
     });
@@ -513,7 +526,7 @@ describe('enrichUsenetLanguages', () => {
     </nzb>`;
 
     it('sets nzbName on result from <meta type="name"> when NZB is fetched', async () => {
-      mockFetchWithTimeout.mockResolvedValueOnce(
+      mockFetchWithSsrfRedirect.mockResolvedValueOnce(
         new Response(nzbWithName('Stephen King-Pack.rar'), { status: 200 }),
       );
       const results = [makeResult({ protocol: 'usenet', downloadUrl: 'http://nzb.test/1' })];
@@ -524,7 +537,7 @@ describe('enrichUsenetLanguages', () => {
     });
 
     it('sets nzbName even when no language detected from it', async () => {
-      mockFetchWithTimeout.mockResolvedValueOnce(
+      mockFetchWithSsrfRedirect.mockResolvedValueOnce(
         new Response(nzbWithName('Stephen King - The Stand MP3'), { status: 200 }),
       );
       const results = [makeResult({ protocol: 'usenet', downloadUrl: 'http://nzb.test/1' })];
@@ -541,11 +554,11 @@ describe('enrichUsenetLanguages', () => {
       await enrichUsenetLanguages(results, logger);
 
       expect(results[0].nzbName).toBeUndefined();
-      expect(mockFetchWithTimeout).not.toHaveBeenCalled();
+      expect(mockFetchWithSsrfRedirect).not.toHaveBeenCalled();
     });
 
     it('detects language from NZB name when newsgroup detection finds nothing', async () => {
-      mockFetchWithTimeout.mockResolvedValueOnce(
+      mockFetchWithSsrfRedirect.mockResolvedValueOnce(
         new Response(nzbWithName('Stephen King-Hörbuch-Pack.rar'), { status: 200 }),
       );
       const results = [makeResult({ protocol: 'usenet', downloadUrl: 'http://nzb.test/1' })];
@@ -557,7 +570,7 @@ describe('enrichUsenetLanguages', () => {
     });
 
     it('newsgroup-based detection takes priority over NZB name detection', async () => {
-      mockFetchWithTimeout.mockResolvedValueOnce(
+      mockFetchWithSsrfRedirect.mockResolvedValueOnce(
         new Response(nzbWithName('Luisterboek NL.rar', 'alt.binaries.german'), { status: 200 }),
       );
       const results = [makeResult({ protocol: 'usenet', downloadUrl: 'http://nzb.test/1' })];
@@ -569,7 +582,7 @@ describe('enrichUsenetLanguages', () => {
     });
 
     it('uses file subject as fallback when <meta type="name"> is absent', async () => {
-      mockFetchWithTimeout.mockResolvedValueOnce(
+      mockFetchWithSsrfRedirect.mockResolvedValueOnce(
         new Response(nzbWithoutName(), { status: 200 }),
       );
       const results = [makeResult({ protocol: 'usenet', downloadUrl: 'http://nzb.test/1' })];
@@ -585,11 +598,11 @@ describe('enrichUsenetLanguages', () => {
       await enrichUsenetLanguages(results, logger);
 
       expect(results[0].language).toBe('english');
-      expect(mockFetchWithTimeout).not.toHaveBeenCalled();
+      expect(mockFetchWithSsrfRedirect).not.toHaveBeenCalled();
     });
 
     it('does not set nzbName when fetch fails', async () => {
-      mockFetchWithTimeout.mockRejectedValueOnce(new Error('timeout'));
+      mockFetchWithSsrfRedirect.mockRejectedValueOnce(new Error('timeout'));
       const results = [makeResult({ protocol: 'usenet', downloadUrl: 'http://nzb.test/1' })];
 
       await enrichUsenetLanguages(results, logger);
@@ -603,7 +616,7 @@ describe('enrichUsenetLanguages', () => {
       await enrichUsenetLanguages(results, logger);
 
       expect(results[0].nzbName).toBeUndefined();
-      expect(mockFetchWithTimeout).not.toHaveBeenCalled();
+      expect(mockFetchWithSsrfRedirect).not.toHaveBeenCalled();
     });
   });
 
@@ -614,7 +627,7 @@ describe('enrichUsenetLanguages', () => {
         downloadUrl: 'https://indexer.example.com/nzb/12345?apikey=SECRET',
       })];
 
-      mockFetchWithTimeout.mockResolvedValue(new Response('', { status: 403 }));
+      mockFetchWithSsrfRedirect.mockResolvedValue(new Response('', { status: 403 }));
 
       await enrichUsenetLanguages(results, logger);
 
@@ -634,7 +647,7 @@ describe('enrichUsenetLanguages', () => {
         downloadUrl: 'https://indexer.example.com/nzb/12345?apikey=SECRET',
       })];
 
-      mockFetchWithTimeout.mockRejectedValue(new Error('Network error'));
+      mockFetchWithSsrfRedirect.mockRejectedValue(new Error('Network error'));
 
       await enrichUsenetLanguages(results, logger);
 
@@ -645,6 +658,81 @@ describe('enrichUsenetLanguages', () => {
         expect.any(String),
       );
       const warnCall = (logger.warn as ReturnType<typeof vi.fn>).mock.calls[0][0] as Record<string, unknown>;
+      expect(warnCall.url).not.toContain('SECRET');
+    });
+  });
+
+  describe('SSRF closure (#904)', () => {
+    beforeEach(() => {
+      mockCreateSsrfSafeDispatcher.mockClear();
+      mockDispatcher.close.mockClear();
+    });
+
+    it('creates an SSRF-safe dispatcher, passes it to the helper, and closes it on success', async () => {
+      const nzbXml = `<nzb xmlns="http://www.newzbin.com/DTD/2003/nzb">
+        <file poster="t" date="1" subject="t">
+          <groups><group>alt.binaries.german</group></groups>
+          <segments><segment bytes="1" number="1">id@e</segment></segments>
+        </file>
+      </nzb>`;
+      mockFetchWithSsrfRedirect.mockResolvedValueOnce(new Response(nzbXml, { status: 200 }));
+
+      const results = [makeResult({ protocol: 'usenet', downloadUrl: 'http://nzb.test/1' })];
+
+      await enrichUsenetLanguages(results, logger);
+
+      expect(mockCreateSsrfSafeDispatcher).toHaveBeenCalledTimes(1);
+      expect(mockFetchWithSsrfRedirect).toHaveBeenCalledWith(
+        'http://nzb.test/1',
+        expect.objectContaining({ dispatcher: mockDispatcher, timeoutMs: 5000 }),
+      );
+      expect(mockDispatcher.close).toHaveBeenCalledTimes(1);
+    });
+
+    it('closes the dispatcher even when the helper throws (SSRF refusal path)', async () => {
+      mockFetchWithSsrfRedirect.mockRejectedValueOnce(new Error('Refused: hostname x resolves to blocked address 192.168.1.1'));
+
+      const results = [makeResult({ protocol: 'usenet', downloadUrl: 'http://nzb.test/1' })];
+
+      await enrichUsenetLanguages(results, logger);
+
+      expect(results[0].language).toBeUndefined();
+      expect(mockDispatcher.close).toHaveBeenCalledTimes(1);
+    });
+
+    it('redirect to HTML auth-proxy login page returns no-languages without throwing', async () => {
+      // Helper now follows the 302 instead of throwing — the response body is
+      // an HTML login page. Parser fails to extract groups, no language set.
+      mockFetchWithSsrfRedirect.mockResolvedValueOnce(
+        new Response('<html><body>Login</body></html>', {
+          status: 200,
+          headers: { 'content-type': 'text/html' },
+        }),
+      );
+
+      const results = [makeResult({ protocol: 'usenet', downloadUrl: 'http://nzb.test/1' })];
+
+      await enrichUsenetLanguages(results, logger);
+
+      expect(results[0].language).toBeUndefined();
+      expect(mockDispatcher.close).toHaveBeenCalledTimes(1);
+    });
+
+    it('private-IP redirect refusal logs sanitized warning and returns no-languages', async () => {
+      mockFetchWithSsrfRedirect.mockRejectedValueOnce(
+        new Error('Refused: hostname rebind.example.com resolves to blocked address 192.168.1.1'),
+      );
+
+      const results = [makeResult({
+        protocol: 'usenet',
+        downloadUrl: 'https://indexer.example.com/nzb/12345?apikey=SECRET',
+      })];
+
+      await enrichUsenetLanguages(results, logger);
+
+      expect(results[0].language).toBeUndefined();
+      const warnCall = (logger.warn as ReturnType<typeof vi.fn>).mock.calls[0][0] as Record<string, unknown>;
+      expect(warnCall.url).toBe('https://indexer.example.com/nzb/12345');
       expect(warnCall.url).not.toContain('SECRET');
     });
   });

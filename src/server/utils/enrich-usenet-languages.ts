@@ -2,7 +2,7 @@ import type { FastifyBaseLogger } from 'fastify';
 import type { SearchResult } from '../../core/indexers/types.js';
 import { normalizeLanguage } from '../../core/utils/language-codes.js';
 import { detectLanguageFromNewsgroup, detectLanguageFromNzbName, parseNzbGroups, parseNzbName, parseNzbFileSubject } from '../../core/utils/detect-usenet-language.js';
-import { fetchWithTimeout } from '../../core/utils/network-service.js';
+import { createSsrfSafeDispatcher, fetchWithSsrfRedirect } from '../../core/utils/network-service.js';
 import { Semaphore } from './semaphore.js';
 import { getErrorMessage } from './error-message.js';
 import { sanitizeLogUrl } from './sanitize-log-url.js';
@@ -58,8 +58,12 @@ export async function enrichUsenetLanguages(
   async function fetchAndEnrich(result: SearchResult): Promise<void> {
     await semaphore.acquire();
     nzbFetched++;
+    const dispatcher = createSsrfSafeDispatcher();
     try {
-      const response = await fetchWithTimeout(result.downloadUrl!, {}, NZB_FETCH_TIMEOUT_MS);
+      const response = await fetchWithSsrfRedirect(result.downloadUrl!, {
+        dispatcher,
+        timeoutMs: NZB_FETCH_TIMEOUT_MS,
+      });
       if (!response.ok) {
         logger.warn(
           { title: result.title, status: response.status, url: sanitizeLogUrl(result.downloadUrl!) },
@@ -99,6 +103,7 @@ export async function enrichUsenetLanguages(
         'NZB fetch failed',
       );
     } finally {
+      await dispatcher.close().catch(() => { /* best-effort cleanup */ });
       semaphore.release();
     }
   }
