@@ -1,10 +1,11 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { screen, render, waitFor } from '@testing-library/react';
+import { screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { useForm } from 'react-hook-form';
 import { IndexerFields } from './IndexerFields';
 import { renderWithProviders } from '@/__tests__/helpers';
 import type { CreateIndexerFormData } from '../../../shared/schemas.js';
+import type { IndexerType } from '../../../shared/indexer-registry.js';
 import type { Mock } from 'vitest';
 
 vi.mock('@/lib/api', () => ({
@@ -16,7 +17,7 @@ vi.mock('@/lib/api', () => ({
 
 import { api } from '@/lib/api';
 
-function FieldWrapper({ type }: { type: string }) {
+function FieldWrapper({ type }: { type: IndexerType }) {
   const { register, formState: { errors } } = useForm<CreateIndexerFormData>({
     defaultValues: { name: '', type: 'abb', settings: {} },
   });
@@ -30,7 +31,7 @@ function FieldWrapperWithWatch({ type, defaultUseProxy = false }: { type: Create
   return <IndexerFields selectedType={type} register={register} errors={errors} watch={watch} />;
 }
 
-function ProwlarrManagedWrapper({ type }: { type: string }) {
+function ProwlarrManagedWrapper({ type }: { type: IndexerType }) {
   const { register, formState: { errors } } = useForm<CreateIndexerFormData>({
     defaultValues: { name: '', type: 'torznab', settings: { apiUrl: 'https://prowlarr.local/api', apiKey: 'secret-key' } },
   });
@@ -89,11 +90,6 @@ describe('IndexerFields', () => {
     const baseUrlInput = screen.getByPlaceholderText('https://www.myanonamouse.net');
     await user.type(baseUrlInput, 'https://custom.mam.net');
     expect(baseUrlInput).toHaveValue('https://custom.mam.net');
-  });
-
-  it('renders nothing for unknown type', () => {
-    const { container } = render(<FieldWrapper type="unknown" />);
-    expect(container).toBeEmptyDOMElement();
   });
 
   describe('prowlarrManaged prop (#201)', () => {

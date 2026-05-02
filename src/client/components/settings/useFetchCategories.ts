@@ -1,11 +1,12 @@
 import { useState, useEffect, useCallback } from 'react';
 import type { UseFormGetValues } from 'react-hook-form';
 import type { CreateDownloadClientFormData } from '../../../shared/schemas.js';
+import type { DownloadClientType } from '../../../shared/download-client-registry.js';
 import { downloadClientsApi, type CategoriesResult } from '@/lib/api/download-clients';
 import { getErrorMessage } from '@/lib/error-message.js';
 
 interface UseFetchCategoriesOptions {
-  selectedType: string;
+  selectedType: DownloadClientType;
   clientId?: number;
   isDirty?: boolean;
   getValues: UseFormGetValues<CreateDownloadClientFormData>;
