@@ -328,7 +328,8 @@ describe('DownloadActivityCard', () => {
     });
 
     it('renders without indexer name when indexerName is undefined', () => {
-      const { container } = renderWithProviders(<DownloadActivityCard download={createMockDownload({})} />);
+      const { indexerName: _indexerName, ...download } = createMockDownload({});
+      const { container } = renderWithProviders(<DownloadActivityCard download={download as Download} />);
       // no indexer span — just verify no crash and no extra text
       expect(container).toBeInTheDocument();
     });
@@ -583,7 +584,8 @@ describe('DownloadActivityCard', () => {
     });
 
     it('renders title as plain text when bookId is undefined', () => {
-      renderWithProviders(<DownloadActivityCard download={createMockDownload({ title: 'No Book' })} />);
+      const { bookId: _bookId, ...download } = createMockDownload({ title: 'No Book' });
+      renderWithProviders(<DownloadActivityCard download={download as Download} />);
       expect(screen.getByText('No Book')).toBeInTheDocument();
       expect(screen.queryByRole('link', { name: 'No Book' })).not.toBeInTheDocument();
     });
@@ -624,8 +626,9 @@ describe('DownloadActivityCard', () => {
     });
 
     it('does not render timestamp when completedAt is undefined', () => {
+      const { completedAt: _completedAt, ...download } = createMockDownload({});
       renderWithProviders(
-        <DownloadActivityCard download={createMockDownload({})} compact />,
+        <DownloadActivityCard download={download as Download} compact />,
       );
       expect(screen.queryByText(/·.*ago/)).not.toBeInTheDocument();
     });

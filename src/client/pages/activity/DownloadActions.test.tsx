@@ -3,6 +3,7 @@ import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { DownloadActions } from './DownloadActions';
 import { createMockDownload } from '@/__tests__/factories';
+import type { Download } from '@/lib/api';
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -53,8 +54,8 @@ describe('DownloadActions', () => {
     });
 
     it('does not show retry button when bookId is undefined (defensive: missing field)', () => {
-      const download = createMockDownload({ status: 'failed' });
-      render(<DownloadActions download={download} onRetry={vi.fn()} />);
+      const { bookId: _bookId, ...download } = createMockDownload({ status: 'failed' });
+      render(<DownloadActions download={download as Download} onRetry={vi.fn()} />);
 
       expect(screen.queryByText('Retry')).not.toBeInTheDocument();
     });
