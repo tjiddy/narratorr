@@ -97,8 +97,8 @@ export async function applyAudnexusEnrichment(
 async function applyEnrichmentData(
   bookId: number,
   asin: string,
-  data: { duration?: number; narrators?: string[]; genres?: string[] },
-  opts: { primaryAsin?: string | null; existingNarrator?: string | null; existingDuration?: number | null; existingGenres?: string[] | null },
+  data: { duration?: number | undefined; narrators?: string[] | undefined; genres?: string[] | undefined },
+  opts: { primaryAsin?: string | null | undefined; existingNarrator?: string | null | undefined; existingDuration?: number | null | undefined; existingGenres?: string[] | null | undefined },
   deps: Pick<EnrichmentDeps, 'db' | 'log' | 'bookService'>,
 ): Promise<void> {
   const updates: Partial<{ enrichmentStatus: EnrichmentStatus; asin: string; duration: number; updatedAt: Date }> = {
@@ -124,11 +124,11 @@ async function applyEnrichmentData(
 export interface ImportConfirmItem {
   path: string;
   title: string;
-  authorName?: string | null;
-  seriesName?: string | null;
-  asin?: string | null;
-  coverUrl?: string | null;
-  metadata?: BookMetadata | null;
+  authorName?: string | null | undefined;
+  seriesName?: string | null | undefined;
+  asin?: string | null | undefined;
+  coverUrl?: string | null | undefined;
+  metadata?: BookMetadata | null | undefined;
 }
 
 // ─── Enrichment input builders ──────────────────────────────────────────

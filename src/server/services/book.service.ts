@@ -127,11 +127,11 @@ export class BookService {
    * Deduplicates by slug within the payload, find-or-creates each author.
    * Called by create() and update().
    */
-  async syncAuthors(tx: DbOrTx, bookId: number, authorList: { name: string; asin?: string }[]): Promise<void> {
+  async syncAuthors(tx: DbOrTx, bookId: number, authorList: { name: string; asin?: string | undefined }[]): Promise<void> {
     await tx.delete(bookAuthors).where(eq(bookAuthors.bookId, bookId));
 
     const seenSlugs = new Set<string>();
-    const uniqueAuthors: { name: string; asin?: string }[] = [];
+    const uniqueAuthors: { name: string; asin?: string | undefined }[] = [];
     for (const a of authorList) {
       const slug = slugify(a.name);
       if (!seenSlugs.has(slug)) {
@@ -241,7 +241,7 @@ export class BookService {
     return this.getById(bookId) as Promise<BookWithAuthor>;
   }
 
-  async update(id: number, data: Partial<NewBook> & { narrators?: string[] | undefined; authors?: { name: string; asin?: string | undefined }[] | undefined }): Promise<BookWithAuthor | null> {
+  async update(id: number, data: { [K in keyof NewBook]?: NewBook[K] | undefined } & { narrators?: string[] | undefined; authors?: { name: string; asin?: string | undefined }[] | undefined }): Promise<BookWithAuthor | null> {
     const { narrators: narratorNames, authors: authorList, ...bookData } = data;
 
     const updated = await this.db.transaction(async (tx) => {

@@ -264,15 +264,15 @@ export class DownloadService {
   async grab(params: {
     downloadUrl: string;
     title: string;
-    protocol?: DownloadProtocol;
-    bookId?: number;
-    indexerId?: number;
-    size?: number;
-    seeders?: number;
-    guid?: string;
-    skipDuplicateCheck?: boolean;
-    replaceExisting?: boolean;
-    source?: CreateEventInput['source'];
+    protocol?: DownloadProtocol | undefined;
+    bookId?: number | undefined;
+    indexerId?: number | undefined;
+    size?: number | undefined;
+    seeders?: number | undefined;
+    guid?: string | undefined;
+    skipDuplicateCheck?: boolean | undefined;
+    replaceExisting?: boolean | undefined;
+    source?: CreateEventInput['source'] | undefined;
   }): Promise<DownloadWithBook> {
     if (params.bookId && !params.skipDuplicateCheck) {
       await this.checkDuplicateDownloads(params.bookId, params.replaceExisting);

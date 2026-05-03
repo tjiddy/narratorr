@@ -77,7 +77,7 @@ export async function monitorDownloads(
 
 import type { DownloadRow } from '../services/types.js';
 
-type DownloadItem = { progress: number; status: 'downloading' | 'seeding' | 'paused' | 'completed' | 'error'; savePath: string; name: string; size: number; errorMessage?: string; downloadSpeed?: number };
+type DownloadItem = { progress: number; status: 'downloading' | 'seeding' | 'paused' | 'completed' | 'error'; savePath: string; name: string; size: number; errorMessage?: string | undefined; downloadSpeed?: number | undefined };
 
 /** Handle a download that has been removed from the client externally. */
 async function handleMissingItem(

@@ -94,7 +94,7 @@ export class ImportListService {
     return true;
   }
 
-  async testConfig(data: { type: string; settings: Record<string, unknown>; id?: number }): Promise<{ success: boolean; message?: string }> {
+  async testConfig(data: { type: string; settings: Record<string, unknown>; id?: number }): Promise<{ success: boolean; message?: string | undefined }> {
     try {
       const factory = IMPORT_LIST_ADAPTER_FACTORIES[data.type as keyof typeof IMPORT_LIST_ADAPTER_FACTORIES];
       if (!factory) return { success: false, message: `Unknown provider type: ${data.type}` };
@@ -118,7 +118,7 @@ export class ImportListService {
     }
   }
 
-  async test(id: number): Promise<{ success: boolean; message?: string }> {
+  async test(id: number): Promise<{ success: boolean; message?: string | undefined }> {
     const list = await this.getById(id);
     if (!list) return { success: false, message: 'Import list not found' };
     return this.testConfig({ type: list.type, settings: list.settings as Record<string, unknown> });

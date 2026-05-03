@@ -25,7 +25,7 @@ export function SettingsLayout() {
                 <NavLink
                   key={to}
                   to={to}
-                  end={item.end}
+                  {...(item.end !== undefined && { end: item.end })}
                   className={`
                     flex items-center gap-3 px-4 py-3 rounded-xl whitespace-nowrap
                     transition-all duration-200

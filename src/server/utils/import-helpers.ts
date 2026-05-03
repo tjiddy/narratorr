@@ -37,10 +37,10 @@ export function buildTargetPath(
   folderFormat: string,
   book: {
     title: string;
-    seriesName?: string | null;
-    seriesPosition?: number | null;
-    narrators?: Array<{ name: string }> | null;
-    publishedDate?: string | null;
+    seriesName?: string | null | undefined;
+    seriesPosition?: number | null | undefined;
+    narrators?: Array<{ name: string }> | null | undefined;
+    publishedDate?: string | null | undefined;
   },
   authorName: string | null,
   options?: NamingOptions,

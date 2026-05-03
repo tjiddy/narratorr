@@ -270,11 +270,11 @@ export class TaggingService {
     bookPath: string,
     metadata: {
       title: string;
-      authorName?: string | null;
-      narrator?: string | null;
-      seriesName?: string | null;
-      seriesPosition?: number | null;
-      coverUrl?: string | null;
+      authorName?: string | null | undefined;
+      narrator?: string | null | undefined;
+      seriesName?: string | null | undefined;
+      seriesPosition?: number | null | undefined;
+      coverUrl?: string | null | undefined;
     },
     ffmpegPath: string,
     mode: TagMode,
