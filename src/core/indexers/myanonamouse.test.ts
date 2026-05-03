@@ -1401,6 +1401,52 @@ describe('MyAnonamouseIndexer', () => {
       expect(results[0]!.isFreeleech).toBeUndefined();
       expect(results[0]!.isVipOnly).toBeUndefined();
     });
+
+    it('#954 — sets isFreeleech: true when result has free: 1 (numeric)', async () => {
+      server.use(
+        http.get(`${MAM_BASE}/tor/js/loadSearchJSONbasic.php`, () => {
+          return HttpResponse.json({ data: [makeResult({ free: 1 })] });
+        }),
+      );
+      stubTorrentDownload(server);
+      const { results } = await indexer.search('test');
+      expect(results[0]!.isFreeleech).toBe(true);
+    });
+
+    it('#954 — does not set isFreeleech when result has free: 0 (numeric)', async () => {
+      server.use(
+        http.get(`${MAM_BASE}/tor/js/loadSearchJSONbasic.php`, () => {
+          return HttpResponse.json({ data: [makeResult({ free: 0, personal_freeleech: 0, fl_vip: 0 })] });
+        }),
+      );
+      stubTorrentDownload(server);
+      const { results } = await indexer.search('test');
+      expect(results[0]!.isFreeleech).toBeUndefined();
+    });
+
+    it('#954 — sets isVipOnly: true when result has vip: 1 (numeric)', async () => {
+      server.use(
+        http.get(`${MAM_BASE}/tor/js/loadSearchJSONbasic.php`, () => {
+          return HttpResponse.json({ data: [makeResult({ vip: 1 })] });
+        }),
+      );
+      stubTorrentDownload(server);
+      const { results } = await indexer.search('test');
+      expect(results[0]!.isVipOnly).toBe(true);
+    });
+
+    it('#954 — full numeric-flag row (canonical wire shape) parses without error', async () => {
+      server.use(
+        http.get(`${MAM_BASE}/tor/js/loadSearchJSONbasic.php`, () => {
+          return HttpResponse.json({ data: [makeResult({ free: 0, fl_vip: 1, vip: 0, personal_freeleech: 0 })] });
+        }),
+      );
+      stubTorrentDownload(server);
+      const { results } = await indexer.search('test');
+      expect(results).toHaveLength(1);
+      expect(results[0]!.isFreeleech).toBeUndefined();
+      expect(results[0]!.isVipOnly).toBeUndefined();
+    });
   });
 
   describe('#363 — searchType string values and auto-select', () => {
@@ -1806,5 +1852,40 @@ describe('MyAnonamouseIndexer', () => {
       expect(results).toHaveLength(1);
       expect(results[0]!.title).toBe('The Way of Kings');
     });
+
+    // #954 — MAM emits boolean flag fields as 0/1 integers on the wire.
+    // Schema must accept numeric 0/1, boolean true/false, null, and missing.
+    describe.each(['free', 'fl_vip', 'vip', 'personal_freeleech'] as const)(
+      '#954 — numeric/boolean coercion for %s',
+      (field) => {
+        it.each([
+          ['numeric 0', 0],
+          ['numeric 1', 1],
+          ['boolean true', true],
+          ['boolean false', false],
+          ['null', null],
+        ])('accepts %s', async (_label, value) => {
+          server.use(
+            http.get(`${MAM_BASE}/tor/js/loadSearchJSONbasic.php`, () =>
+              HttpResponse.json({ data: [makeResult({ [field]: value })] })),
+          );
+          stubTorrentDownload(server);
+
+          const { results } = await indexer.search('test');
+          expect(results).toHaveLength(1);
+        });
+
+        it('accepts missing (field omitted entirely)', async () => {
+          server.use(
+            http.get(`${MAM_BASE}/tor/js/loadSearchJSONbasic.php`, () =>
+              HttpResponse.json({ data: [makeResult()] })),
+          );
+          stubTorrentDownload(server);
+
+          const { results } = await indexer.search('test');
+          expect(results).toHaveLength(1);
+        });
+      },
+    );
   });
 });

@@ -28,6 +28,11 @@ export interface MAMConfig {
 const DEFAULT_BASE_URL = 'https://www.myanonamouse.net';
 import { INDEXER_TIMEOUT_MS } from '../utils/constants.js';
 
+// MAM (and many PHP-backend APIs) emit boolean flag fields as 0/1 integers
+// rather than JSON booleans. Accept both shapes and normalize to boolean.
+const numericBoolean = z.union([z.boolean(), z.number()])
+  .transform((v) => (typeof v === 'number' ? v !== 0 : v));
+
 const mamSearchResultSchema = z.object({
   id: z.number().nullish(),
   title: z.string().nullish(),
@@ -38,10 +43,10 @@ const mamSearchResultSchema = z.object({
   size: z.union([z.string(), z.number()]).nullish(),
   seeders: z.number().nullish(),
   leechers: z.number().nullish(),
-  free: z.boolean().nullish(),
-  fl_vip: z.boolean().nullish(),
-  vip: z.boolean().nullish(),
-  personal_freeleech: z.boolean().nullish(),
+  free: numericBoolean.nullish(),
+  fl_vip: numericBoolean.nullish(),
+  vip: numericBoolean.nullish(),
+  personal_freeleech: numericBoolean.nullish(),
 }).passthrough();
 
 // MAM search responses always carry either `data` (results array, possibly empty)
