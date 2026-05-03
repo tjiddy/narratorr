@@ -77,7 +77,7 @@ describe('recordImportFailedEvent', () => {
       reason: { error: 'copy failed' },
     });
     // narratorName should NOT be present on the payload when not passed
-    expect(createMock.mock.calls[0][0]).not.toHaveProperty('narratorName');
+    expect(createMock.mock.calls[0]![0]).not.toHaveProperty('narratorName');
   });
 
   it('manual source with narratorName: forwards both', () => {

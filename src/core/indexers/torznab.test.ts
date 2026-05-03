@@ -60,11 +60,11 @@ describe('TorznabIndexer', () => {
       const { results } = await indexer.search('Brandon Sanderson');
 
       expect(results).toHaveLength(3);
-      expect(results[0].title).toBe(
+      expect(results[0]!.title).toBe(
         'The Way of Kings - Brandon Sanderson (Unabridged)',
       );
-      expect(results[0].protocol).toBe('torrent');
-      expect(results[0].indexer).toBe('tracker.test');
+      expect(results[0]!.protocol).toBe('torrent');
+      expect(results[0]!.indexer).toBe('tracker.test');
     });
 
     it('extracts download URL from enclosure', async () => {
@@ -78,7 +78,7 @@ describe('TorznabIndexer', () => {
 
       const { results } = await indexer.search('Brandon Sanderson');
 
-      expect(results[0].downloadUrl).toBe(
+      expect(results[0]!.downloadUrl).toBe(
         'https://tracker.test/download/abc123.torrent',
       );
     });
@@ -94,10 +94,10 @@ describe('TorznabIndexer', () => {
 
       const { results } = await indexer.search('Brandon Sanderson');
 
-      expect(results[0].seeders).toBe(15);
-      expect(results[0].leechers).toBe(3);
-      expect(results[1].seeders).toBe(8);
-      expect(results[1].leechers).toBe(1);
+      expect(results[0]!.seeders).toBe(15);
+      expect(results[0]!.leechers).toBe(3);
+      expect(results[1]!.seeders).toBe(8);
+      expect(results[1]!.leechers).toBe(1);
     });
 
     it('extracts infoHash from torznab:attr', async () => {
@@ -111,8 +111,8 @@ describe('TorznabIndexer', () => {
 
       const { results } = await indexer.search('Brandon Sanderson');
 
-      expect(results[0].infoHash).toBe('aaf4c61ddcc5e8a2dabede0f3b482cd9aea9434d');
-      expect(results[1].infoHash).toBe('b1d5781111d84f7b3fe45a0852e59758cd7a87e5');
+      expect(results[0]!.infoHash).toBe('aaf4c61ddcc5e8a2dabede0f3b482cd9aea9434d');
+      expect(results[1]!.infoHash).toBe('b1d5781111d84f7b3fe45a0852e59758cd7a87e5');
     });
 
     it('extracts size from torznab:attr', async () => {
@@ -126,8 +126,8 @@ describe('TorznabIndexer', () => {
 
       const { results } = await indexer.search('Brandon Sanderson');
 
-      expect(results[0].size).toBe(1073741824);
-      expect(results[1].size).toBe(2147483648);
+      expect(results[0]!.size).toBe(1073741824);
+      expect(results[1]!.size).toBe(2147483648);
     });
 
     it('extracts grabs from torznab:attr', async () => {
@@ -141,8 +141,8 @@ describe('TorznabIndexer', () => {
 
       const { results } = await indexer.search('Brandon Sanderson');
 
-      expect(results[0].grabs).toBe(42);
-      expect(results[1].grabs).toBe(18);
+      expect(results[0]!.grabs).toBe(42);
+      expect(results[1]!.grabs).toBe(18);
     });
 
     it('builds magnet URI when no download URL but infoHash present', async () => {
@@ -157,9 +157,9 @@ describe('TorznabIndexer', () => {
       const { results } = await indexer.search('Brandon Sanderson');
 
       // Third item has no enclosure or link, only infoHash
-      expect(results[2].downloadUrl).toContain('magnet:?');
-      expect(results[2].downloadUrl).toContain('da4b9237bacccdf19c0760cab7aec4a8359010b0');
-      expect(results[2].infoHash).toBe('da4b9237bacccdf19c0760cab7aec4a8359010b0');
+      expect(results[2]!.downloadUrl).toContain('magnet:?');
+      expect(results[2]!.downloadUrl).toContain('da4b9237bacccdf19c0760cab7aec4a8359010b0');
+      expect(results[2]!.infoHash).toBe('da4b9237bacccdf19c0760cab7aec4a8359010b0');
     });
 
     it('extracts details URL from guid', async () => {
@@ -173,7 +173,7 @@ describe('TorznabIndexer', () => {
 
       const { results } = await indexer.search('Brandon Sanderson');
 
-      expect(results[0].detailsUrl).toBe('https://tracker.test/details/abc123');
+      expect(results[0]!.detailsUrl).toBe('https://tracker.test/details/abc123');
     });
 
     it('extracts guid from <guid> element', async () => {
@@ -187,9 +187,9 @@ describe('TorznabIndexer', () => {
 
       const { results } = await indexer.search('Brandon Sanderson');
 
-      expect(results[0].guid).toBe('https://tracker.test/details/abc123');
-      expect(results[1].guid).toBe('https://tracker.test/details/def456');
-      expect(results[2].guid).toBe('https://tracker.test/details/ghi789');
+      expect(results[0]!.guid).toBe('https://tracker.test/details/abc123');
+      expect(results[1]!.guid).toBe('https://tracker.test/details/def456');
+      expect(results[2]!.guid).toBe('https://tracker.test/details/ghi789');
     });
 
     it('returns undefined guid when <guid> element is missing', async () => {
@@ -211,7 +211,7 @@ describe('TorznabIndexer', () => {
 
       const { results } = await indexer.search('test');
       expect(results).toHaveLength(1);
-      expect(results[0].guid).toBeUndefined();
+      expect(results[0]!.guid).toBeUndefined();
     });
 
     it('respects limit option', async () => {
@@ -547,7 +547,7 @@ describe('TorznabIndexer', () => {
       const { results } = await indexer.search('test');
       expect(results).toHaveLength(1);
       // Number('notanumber') = NaN, size || undefined = undefined
-      expect(results[0].size).toBeUndefined();
+      expect(results[0]!.size).toBeUndefined();
     });
 
     it('handles NaN seeders/leechers/grabs from invalid attr values', async () => {
@@ -573,9 +573,9 @@ describe('TorznabIndexer', () => {
       const { results } = await indexer.search('test');
       expect(results).toHaveLength(1);
       // Number('abc') = NaN — seeders/leechers pass through as NaN, grabs returns undefined
-      expect(results[0].seeders).toBeNaN();
-      expect(results[0].leechers).toBeNaN();
-      expect(results[0].grabs).toBeUndefined();
+      expect(results[0]!.seeders).toBeNaN();
+      expect(results[0]!.leechers).toBeNaN();
+      expect(results[0]!.grabs).toBeUndefined();
     });
 
     it('handles empty string infohash → undefined', async () => {
@@ -599,7 +599,7 @@ describe('TorznabIndexer', () => {
       const { results } = await indexer.search('test');
       expect(results).toHaveLength(1);
       // '' || undefined → undefined
-      expect(results[0].infoHash).toBeUndefined();
+      expect(results[0]!.infoHash).toBeUndefined();
     });
 
     it('skips items with empty title', async () => {
@@ -625,7 +625,7 @@ describe('TorznabIndexer', () => {
 
       const { results } = await indexer.search('test');
       expect(results).toHaveLength(1);
-      expect(results[0].title).toBe('Valid Title');
+      expect(results[0]!.title).toBe('Valid Title');
     });
 
     it('falls back to enclosure length when no size attr', async () => {
@@ -646,7 +646,7 @@ describe('TorznabIndexer', () => {
       );
 
       const { results } = await indexer.search('test');
-      expect(results[0].size).toBe(5000000);
+      expect(results[0]!.size).toBe(5000000);
     });
 
     it('strips trailing slashes from apiUrl', () => {
@@ -681,11 +681,11 @@ describe('TorznabIndexer', () => {
       const { results } = await proxiedIndexer.search('Brandon Sanderson');
 
       expect(results).toHaveLength(3);
-      expect(results[0].title).toBe('The Way of Kings - Brandon Sanderson (Unabridged)');
+      expect(results[0]!.title).toBe('The Way of Kings - Brandon Sanderson (Unabridged)');
       // Verify fetch was called with a dispatcher (proxy agent)
       expect(fetchSpy).toHaveBeenCalledOnce();
       const callArgs = fetchSpy.mock.calls[0];
-      expect((callArgs[1] as Record<string, unknown>).dispatcher).toBeDefined();
+      expect((callArgs![1] as Record<string, unknown>).dispatcher).toBeDefined();
 
       fetchSpy.mockRestore();
     });
@@ -792,7 +792,7 @@ describe('TorznabIndexer', () => {
       ));
 
       const { results } = await indexer.search('test');
-      expect(results[0].language).toBe('french');
+      expect(results[0]!.language).toBe('french');
     });
 
     it('normalizes language code to lowercase full name', async () => {
@@ -810,7 +810,7 @@ describe('TorznabIndexer', () => {
       ));
 
       const { results } = await indexer.search('test');
-      expect(results[0].language).toBe('german');
+      expect(results[0]!.language).toBe('german');
     });
 
     it('returns undefined language when language attr is missing', async () => {
@@ -819,7 +819,7 @@ describe('TorznabIndexer', () => {
       ));
 
       const { results } = await indexer.search('test');
-      expect(results[0].language).toBeUndefined();
+      expect(results[0]!.language).toBeUndefined();
     });
   });
 });

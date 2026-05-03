@@ -352,7 +352,7 @@ describe('DiscoverPage', () => {
 
       // Click Add to open popover, then confirm
       const addButtons = screen.getAllByRole('button', { name: /^add book$/i });
-      await userEvent.click(addButtons[0]);
+      await userEvent.click(addButtons[0]!);
       await userEvent.click(screen.getByRole('button', { name: /add to library/i }));
 
       // Card stays visible (no optimistic remove)
@@ -588,7 +588,7 @@ describe('DiscoverPage', () => {
 
       // Click Add to open popover, then confirm
       const addButtons = screen.getAllByRole('button', { name: /^add book$/i });
-      await userEvent.click(addButtons[0]);
+      await userEvent.click(addButtons[0]!);
       await userEvent.click(screen.getByRole('button', { name: /add to library/i }));
 
       // Card should still be visible with checkmark state

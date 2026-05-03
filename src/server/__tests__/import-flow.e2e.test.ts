@@ -176,7 +176,7 @@ describe('Import flow E2E', () => {
 
     // Download record: status transitioned to imported
     const [dl] = await e2e.db.select().from(downloads).where(eq(downloads.id, downloadId));
-    expect(dl.status).toBe('imported');
+    expect(dl!.status).toBe('imported');
   });
 
   it('fires on_import webhook notification with correct payload', async () => {
@@ -197,7 +197,7 @@ describe('Import flow E2E', () => {
     await waitForRequests(captured, 1);
 
     expect(captured).toHaveLength(1);
-    const payload = captured[0].body as Record<string, unknown>;
+    const payload = captured[0]!.body as Record<string, unknown>;
     expect(payload.event).toBe('on_import');
     expect(payload.book).toEqual(expect.objectContaining({ title: 'Notification Test Book' }));
     expect(payload.import).toEqual(expect.objectContaining({
@@ -221,8 +221,8 @@ describe('Import flow E2E', () => {
 
     // Download status → failed with error message
     const [dl] = await e2e.db.select().from(downloads).where(eq(downloads.id, downloadId));
-    expect(dl.status).toBe('failed');
-    expect(dl.errorMessage).toBeTruthy();
+    expect(dl!.status).toBe('failed');
+    expect(dl!.errorMessage).toBeTruthy();
 
     // Book status recovered — no path so reverts to 'wanted'
     const bookRes = await e2e.app.inject({ method: 'GET', url: `/api/books/${bookId}` });
@@ -230,7 +230,7 @@ describe('Import flow E2E', () => {
 
     // on_failure notification fired
     await waitForRequests(captured, 1);
-    const payload = captured[0].body as Record<string, unknown>;
+    const payload = captured[0]!.body as Record<string, unknown>;
     expect(payload.event).toBe('on_failure');
     expect(payload.error).toEqual(expect.objectContaining({ stage: 'import' }));
   });

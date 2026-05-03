@@ -296,6 +296,7 @@ describe('booksApi', () => {
     const result = await booksApi.uploadBookCover(7, file);
 
     expect(mockFetchMultipart).toHaveBeenCalledOnce();
+    // PHASE 1 SKIPPED — needs human review
     const [path, body] = mockFetchMultipart.mock.calls[0];
     expect(path).toBe('/books/7/cover');
     expect(body).toBeInstanceOf(FormData);
@@ -787,7 +788,7 @@ describe('response pass-through', () => {
     it('omits replaceExisting from body when undefined (not serialized as null)', async () => {
       const params = { downloadUrl: 'magnet:?xt=urn:btih:abc', title: 'Book', bookId: 1 };
       await searchApi.searchGrab(params);
-      const callBody = JSON.parse(mockFetchApi.mock.calls[0][1].body);
+      const callBody = JSON.parse(mockFetchApi.mock.calls[0]![1].body);
       expect('replaceExisting' in callBody).toBe(false);
     });
   });

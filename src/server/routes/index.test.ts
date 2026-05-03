@@ -165,7 +165,7 @@ describe('createServices', () => {
     // DownloadOrchestrator constructor should receive the BlacklistService instance as 7th arg
     const orchestratorCalls = vi.mocked(DownloadOrchestrator).mock.calls;
     expect(orchestratorCalls).toHaveLength(1);
-    const blacklistArg = orchestratorCalls[0][6];
+    const blacklistArg = orchestratorCalls[0]![6];
     expect(blacklistArg).toBeInstanceOf(BlacklistService);
   });
 
@@ -242,7 +242,7 @@ describe('createServices', () => {
 
     await createServices(db, log);
 
-    const retrySearchDepsResult = vi.mocked(createRetrySearchDeps).mock.results[0].value;
+    const retrySearchDepsResult = vi.mocked(createRetrySearchDeps).mock.results[0]!.value;
 
     const downloadInstance = vi.mocked(DownloadService).mock.instances[0] as unknown as { wire: ReturnType<typeof vi.fn> };
     expect(downloadInstance.wire).toHaveBeenCalledOnce();
@@ -254,7 +254,7 @@ describe('createServices', () => {
 
     const importOrchestratorInstance = vi.mocked(ImportOrchestrator).mock.instances[0] as unknown as { wire: ReturnType<typeof vi.fn> };
     expect(importOrchestratorInstance.wire).toHaveBeenCalledOnce();
-    const importWireArg = importOrchestratorInstance.wire.mock.calls[0][0];
+    const importWireArg = importOrchestratorInstance.wire.mock.calls[0]![0];
     expect(importWireArg.bookImportService).toBeDefined();
     expect(importWireArg.blacklistService).toBeInstanceOf(BlacklistService);
     expect(importWireArg.retrySearchDeps).toBe(retrySearchDepsResult);
@@ -262,11 +262,11 @@ describe('createServices', () => {
 
     const libraryScanInstance = vi.mocked(LibraryScanService).mock.instances[0] as unknown as { wire: ReturnType<typeof vi.fn> };
     expect(libraryScanInstance.wire).toHaveBeenCalledOnce();
-    expect(typeof libraryScanInstance.wire.mock.calls[0][0].nudgeImportWorker).toBe('function');
+    expect(typeof libraryScanInstance.wire.mock.calls[0]![0].nudgeImportWorker).toBe('function');
 
     const qgoInstance = vi.mocked(QualityGateOrchestrator).mock.instances[0] as unknown as { wire: ReturnType<typeof vi.fn> };
     expect(qgoInstance.wire).toHaveBeenCalledOnce();
-    expect(typeof qgoInstance.wire.mock.calls[0][0].nudgeImportWorker).toBe('function');
+    expect(typeof qgoInstance.wire.mock.calls[0]![0].nudgeImportWorker).toBe('function');
   });
 
   // #618 — EventBroadcasterService wired into LibraryScanService
@@ -294,7 +294,7 @@ describe('createServices', () => {
     // (signature: db, bookService, bookImportService, metadata, settings, log, eventHistory, broadcaster)
     const libraryScanCalls = vi.mocked(LibraryScanService).mock.calls;
     expect(libraryScanCalls).toHaveLength(1);
-    const broadcasterArg = libraryScanCalls[0][7];
+    const broadcasterArg = libraryScanCalls[0]![7];
     expect(broadcasterArg).toBeInstanceOf(EventBroadcasterService);
   });
 });

@@ -42,7 +42,7 @@ describe('mapBookMetadataToPayload', () => {
 
   it('includes all authors as array', () => {
     const payload = mapBookMetadataToPayload(fullBook);
-    expect(payload.authors![0].name).toBe('Brandon Sanderson');
+    expect(payload.authors![0]!.name).toBe('Brandon Sanderson');
     expect(payload.authors).toHaveLength(2);
   });
 

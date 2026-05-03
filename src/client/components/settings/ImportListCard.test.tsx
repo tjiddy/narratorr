@@ -283,7 +283,7 @@ describe('ImportListCard', () => {
       await user.click(screen.getByRole('button', { name: /Preview Items/ }));
 
       await waitFor(() => expect(api.previewImportList).toHaveBeenCalled());
-      const call = (api.previewImportList as Mock).mock.calls[0][0];
+      const call = (api.previewImportList as Mock).mock.calls[0]![0];
       expect(call).not.toHaveProperty('id');
     });
 

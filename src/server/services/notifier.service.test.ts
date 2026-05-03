@@ -404,8 +404,8 @@ describe('NotifierService', () => {
         const exitIdx = debugCalls.findIndex((c: unknown[]) => c[1] === 'Notifier config test result');
         expect(entryIdx).toBeGreaterThanOrEqual(0);
         expect(exitIdx).toBeGreaterThan(entryIdx);
-        expect(debugCalls[entryIdx][0]).toEqual({ type: 'webhook' });
-        expect(debugCalls[exitIdx][0]).toEqual({ type: 'webhook', success: true, message: undefined });
+        expect(debugCalls[entryIdx]![0]).toEqual({ type: 'webhook' });
+        expect(debugCalls[exitIdx]![0]).toEqual({ type: 'webhook', success: true, message: undefined });
 
         fetchSpy.mockRestore();
       });
@@ -504,7 +504,7 @@ describe('NotifierService', () => {
         settings: { url: 'https://hook.example.com', headers: '{"Authorization":"Bearer x"}' },
       });
 
-      const valuesArg = (insertChain as { values: ReturnType<typeof vi.fn> }).values.mock.calls[0][0] as { settings: Record<string, unknown> };
+      const valuesArg = (insertChain as { values: ReturnType<typeof vi.fn> }).values.mock.calls[0]![0] as { settings: Record<string, unknown> };
       expect(isEncrypted(valuesArg.settings.url as string)).toBe(true);
       expect(isEncrypted(valuesArg.settings.headers as string)).toBe(true);
     });
@@ -521,7 +521,7 @@ describe('NotifierService', () => {
         settings: { botToken: '12:abc', chatId: '-100' },
       });
 
-      const valuesArg = (insertChain as { values: ReturnType<typeof vi.fn> }).values.mock.calls[0][0] as { settings: Record<string, unknown> };
+      const valuesArg = (insertChain as { values: ReturnType<typeof vi.fn> }).values.mock.calls[0]![0] as { settings: Record<string, unknown> };
       expect(isEncrypted(valuesArg.settings.botToken as string)).toBe(true);
       expect(valuesArg.settings.chatId).toBe('-100');
     });
@@ -538,7 +538,7 @@ describe('NotifierService', () => {
         settings: { smtpHost: 'smtp.test', smtpPass: 'pw', fromAddress: 'a@b.c', toAddress: 'c@d.e' },
       });
 
-      const valuesArg = (insertChain as { values: ReturnType<typeof vi.fn> }).values.mock.calls[0][0] as { settings: Record<string, unknown> };
+      const valuesArg = (insertChain as { values: ReturnType<typeof vi.fn> }).values.mock.calls[0]![0] as { settings: Record<string, unknown> };
       expect(isEncrypted(valuesArg.settings.smtpPass as string)).toBe(true);
       expect(valuesArg.settings.smtpHost).toBe('smtp.test');
     });
@@ -564,7 +564,7 @@ describe('NotifierService', () => {
       db.select.mockReturnValue(mockDbChain([createMockDbNotifier({ settings: { url: enc } })]));
 
       const rows = await service.getAll();
-      expect(rows[0].settings).toMatchObject({ url: 'https://hook.example.com' });
+      expect(rows[0]!.settings).toMatchObject({ url: 'https://hook.example.com' });
     });
 
     it('getById returns decrypted settings', async () => {
@@ -590,7 +590,7 @@ describe('NotifierService', () => {
         settings: { url: '********', method: 'PUT' },
       });
 
-      const setArg = (updateChain as { set: ReturnType<typeof vi.fn> }).set.mock.calls[0][0] as { settings: Record<string, unknown> };
+      const setArg = (updateChain as { set: ReturnType<typeof vi.fn> }).set.mock.calls[0]![0] as { settings: Record<string, unknown> };
       // Exact byte-for-byte match — same IV, auth tag, ciphertext
       expect(setArg.settings.url).toBe(encryptedUrl);
       expect(setArg.settings.method).toBe('PUT');
@@ -609,7 +609,7 @@ describe('NotifierService', () => {
         settings: { botToken: 'new-token', chatId: '1' },
       });
 
-      const setArg = (updateChain as { set: ReturnType<typeof vi.fn> }).set.mock.calls[0][0] as { settings: Record<string, unknown> };
+      const setArg = (updateChain as { set: ReturnType<typeof vi.fn> }).set.mock.calls[0]![0] as { settings: Record<string, unknown> };
       expect(isEncrypted(setArg.settings.botToken as string)).toBe(true);
       expect(setArg.settings.botToken).not.toBe(oldEnc);
     });
@@ -680,7 +680,7 @@ describe('NotifierService', () => {
       await service.notify('on_grab', { event: 'on_grab', book: { title: 'X' } });
 
       // The Telegram adapter encodes the bot token in the URL path
-      const callUrl = fetchSpy.mock.calls[0][0] as string;
+      const callUrl = fetchSpy.mock.calls[0]![0] as string;
       expect(callUrl).toContain('123:secret-token');
       expect(callUrl).not.toContain('$ENC$');
       fetchSpy.mockRestore();
@@ -806,7 +806,7 @@ describe('NotifierService', () => {
 
       await service.notify('on_grab', { event: 'on_grab' });
       expect(factorySpy).toHaveBeenCalledTimes(1);
-      expect(factorySpy.mock.calls[0][0]).toMatchObject({ url: 'https://old.hook' });
+      expect(factorySpy.mock.calls[0]![0]).toMatchObject({ url: 'https://old.hook' });
 
       const updated = createMockDbNotifier({ id: 1, settings: { url: 'https://new.hook' } });
       db.update.mockReturnValue(mockDbChain([updated]));
@@ -817,7 +817,7 @@ describe('NotifierService', () => {
       await service.notify('on_grab', { event: 'on_grab' });
 
       expect(factorySpy).toHaveBeenCalledTimes(2);
-      expect(factorySpy.mock.calls[1][0]).toMatchObject({ url: 'https://new.hook' });
+      expect(factorySpy.mock.calls[1]![0]).toMatchObject({ url: 'https://new.hook' });
       factorySpy.mockRestore();
     });
 

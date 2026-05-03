@@ -124,7 +124,7 @@ describe('EventHistorySection', () => {
     renderWithProviders(<EventHistorySection />);
     await user.click(screen.getByText('Clear All'));
     const confirmButtons = screen.getAllByRole('button', { name: /Clear All/i });
-    await user.click(confirmButtons[confirmButtons.length - 1]);
+    await user.click(confirmButtons[confirmButtons.length - 1]!);
 
     expect(mockBulkDelete).toHaveBeenCalledWith(undefined);
   });
@@ -278,7 +278,7 @@ describe('EventHistorySection', () => {
       await user.click(screen.getByText('Clear Errors'));
 
       const confirmButtons = screen.getAllByRole('button', { name: /Clear Errors/i });
-      await user.click(confirmButtons[confirmButtons.length - 1]);
+      await user.click(confirmButtons[confirmButtons.length - 1]!);
 
       expect(mockBulkDelete).toHaveBeenCalledTimes(1);
       expect(mockBulkDelete).toHaveBeenCalledWith({ eventType: 'download_failed,import_failed,merge_failed' });
@@ -304,7 +304,7 @@ describe('EventHistorySection', () => {
       await user.click(screen.getByText('Clear Errors'));
 
       const confirmButtons = screen.getAllByRole('button', { name: /Clear Errors/i });
-      await user.click(confirmButtons[confirmButtons.length - 1]);
+      await user.click(confirmButtons[confirmButtons.length - 1]!);
 
       // Should be exactly one call, no onSuccess callback
       expect(mockBulkDelete).toHaveBeenCalledTimes(1);

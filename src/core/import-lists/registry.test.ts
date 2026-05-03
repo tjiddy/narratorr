@@ -45,7 +45,7 @@ describe('Import List IMPORT_LIST_ADAPTER_FACTORIES', () => {
 
     it('each factory returns an object satisfying the ImportListProvider interface', () => {
       for (const type of types) {
-        const provider = IMPORT_LIST_ADAPTER_FACTORIES[type](configs[type]);
+        const provider = IMPORT_LIST_ADAPTER_FACTORIES[type](configs[type]!);
         expect(provider).toHaveProperty('type');
         expect(provider).toHaveProperty('name');
         expect(provider.fetchItems).toBeTypeOf('function');

@@ -413,7 +413,7 @@ describe('ImportOrchestrator', () => {
       }));
 
       // F2: verify retry-gating contract — settingsService and retrySearchDeps present, no overrideRetry
-      const callArg = vi.mocked(blacklistAndRetrySearch).mock.calls[0][0];
+      const callArg = vi.mocked(blacklistAndRetrySearch).mock.calls[0]![0];
       expect(callArg.settingsService).toBe(settingsService);
       expect(callArg.retrySearchDeps).toBe(retrySearchDeps);
       expect(callArg).not.toHaveProperty('overrideRetry');
@@ -427,7 +427,7 @@ describe('ImportOrchestrator', () => {
 
       await expect(orchestrator.importDownload(1)).rejects.toThrow();
 
-      const callArg = vi.mocked(blacklistAndRetrySearch).mock.calls[0][0];
+      const callArg = vi.mocked(blacklistAndRetrySearch).mock.calls[0]![0];
       expect(callArg.identifiers.guid).toBe('usenet-guid-abc');
       expect(callArg.identifiers.infoHash).toBeUndefined();
     });

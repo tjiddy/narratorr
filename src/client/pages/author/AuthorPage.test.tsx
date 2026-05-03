@@ -251,7 +251,7 @@ describe('AuthorPage', () => {
       (btn) => btn.textContent?.includes('Add') && !btn.textContent?.includes('Add All'),
     );
     expect(addButtons.length).toBeGreaterThan(0);
-    await user.click(addButtons[0]);
+    await user.click(addButtons[0]!);
 
     // Click "Add to Library" in the popover
     const addToLibrary = await screen.findByRole('button', { name: /add to library/i });
@@ -329,7 +329,7 @@ describe('AuthorPage', () => {
 
     const addAllButtons = screen.getAllByText(/Add All/);
     // Click the first "Add All" (Mistborn comes first alphabetically, 1 book)
-    await user.click(addAllButtons[0]);
+    await user.click(addAllButtons[0]!);
 
     await waitFor(() => {
       expect(api.addBook).toHaveBeenCalled();
@@ -363,7 +363,7 @@ describe('AuthorPage', () => {
     const addButtons = screen.getAllByRole('button').filter(
       (btn) => btn.textContent?.includes('Add') && !btn.textContent?.includes('Add All'),
     );
-    await user.click(addButtons[0]);
+    await user.click(addButtons[0]!);
 
     const addToLibrary = await screen.findByRole('button', { name: /add to library/i });
     await user.click(addToLibrary);

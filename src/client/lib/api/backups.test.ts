@@ -69,6 +69,7 @@ describe('backupsApi', () => {
       await backupsApi.uploadRestore(file);
 
       expect(fetchMultipart).toHaveBeenCalledOnce();
+      // PHASE 1 SKIPPED — needs human review
       const [path, body] = vi.mocked(fetchMultipart).mock.calls[0];
       expect(path).toBe('/system/restore');
       expect(body).toBeInstanceOf(FormData);

@@ -615,7 +615,7 @@ describe('MetadataService', () => {
 
       // Audible is always available (no API key required)
       expect(minService.getProviders()).toHaveLength(1);
-      expect(minService.getProviders()[0].type).toBe('audible');
+      expect(minService.getProviders()[0]!.type).toBe('audible');
     });
   });
 

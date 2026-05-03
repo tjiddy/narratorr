@@ -421,8 +421,8 @@ describe('QBittorrentClient', () => {
 
       const results = await client.getAllDownloads();
       expect(results).toHaveLength(2);
-      expect(results[0].id).toBe('abc123');
-      expect(results[1].id).toBe('def456');
+      expect(results[0]!.id).toBe('abc123');
+      expect(results[1]!.id).toBe('def456');
     });
 
     it('passes category as query parameter', async () => {
@@ -955,10 +955,10 @@ describe('QBittorrentClient', () => {
 
       const results = await client.getAllDownloads();
       expect(results).toHaveLength(2);
-      expect(results[0].name).toBe('Correct Name');
-      expect(results[0].savePath).toBe('/downloads');
-      expect(results[1].name).toBe('Fallback Name');
-      expect(results[1].savePath).toBe('/other');
+      expect(results[0]!.name).toBe('Correct Name');
+      expect(results[0]!.savePath).toBe('/downloads');
+      expect(results[1]!.name).toBe('Fallback Name');
+      expect(results[1]!.savePath).toBe('/other');
     });
   });
 

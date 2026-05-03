@@ -123,9 +123,9 @@ describe('startJobs', () => {
     const dcOrder = (services.qualityGateOrchestrator.cleanupDeferredRejections as ReturnType<typeof vi.fn>).mock.invocationCallOrder[0];
     const diOrder = (services.import.cleanupDeferredImports as ReturnType<typeof vi.fn>).mock.invocationCallOrder[0];
     // The 2nd call of each is from import-maintenance (1st is from startup recovery)
-    expect(qgCalls[1]).toBeLessThan(ioCalls[1]);
-    expect(ioCalls[1]).toBeLessThan(dcOrder);
-    expect(dcOrder).toBeLessThan(diOrder);
+    expect(qgCalls[1]).toBeLessThan(ioCalls[1]!);
+    expect(ioCalls[1]).toBeLessThan(dcOrder!);
+    expect(dcOrder).toBeLessThan(diOrder!);
   });
 
   it('enrichment task callback passes db, metadataService, bookService, and log to runEnrichment', async () => {
@@ -265,7 +265,7 @@ describe('startJobs', () => {
     // Recreating RetrySearchDeps locally inside startJobs (the pre-fix bug)
     // would produce a new object and fail this identity check.
     const callArgs = vi.mocked(monitorDownloads).mock.calls[0];
-    const retryDepsArg = callArgs[4] as { blacklistService: unknown; retrySearchDeps: unknown };
+    const retryDepsArg = callArgs![4] as { blacklistService: unknown; retrySearchDeps: unknown };
     expect(retryDepsArg.blacklistService).toBe(services.blacklist);
     expect(retryDepsArg.retrySearchDeps).toBe(services.retrySearchDeps);
   });
@@ -392,7 +392,7 @@ describe('startJobs', () => {
 
       const qgOrder = (services.qualityGateOrchestrator.processCompletedDownloads as ReturnType<typeof vi.fn>).mock.invocationCallOrder[0];
       const ioOrder = (services.importOrchestrator.processCompletedDownloads as ReturnType<typeof vi.fn>).mock.invocationCallOrder[0];
-      expect(qgOrder).toBeLessThan(ioOrder);
+      expect(qgOrder).toBeLessThan(ioOrder!);
     });
 
     it('calls deferred cleanup methods after import batch', async () => {
@@ -453,8 +453,8 @@ describe('startJobs', () => {
       const runMock = (db as Record<string, ReturnType<typeof vi.fn>>).run;
       expect(runMock).toHaveBeenCalledTimes(1);
       // Assert the SQL argument is VACUUM (drizzle sql`VACUUM` produces queryChunks with "VACUUM")
-      const sqlArg = runMock.mock.calls[0][0] as { queryChunks: { value: string[] }[] };
-      expect(sqlArg.queryChunks[0].value[0]).toBe('VACUUM');
+      const sqlArg = runMock!.mock.calls[0]![0] as { queryChunks: { value: string[] }[] };
+      expect(sqlArg.queryChunks[0]!.value[0]).toBe('VACUUM');
       expect(services.eventHistory.pruneOlderThan).toHaveBeenCalledWith(30);
       expect(services.blacklist.deleteExpired).toHaveBeenCalledTimes(1);
       // No warnings emitted on successful housekeeping

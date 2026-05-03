@@ -22,7 +22,7 @@ describe('RemotePathMappingService', () => {
 
       const result = await service.getAll();
       expect(result).toHaveLength(1);
-      expect(result[0].remotePath).toBe('/downloads/complete/');
+      expect(result[0]!.remotePath).toBe('/downloads/complete/');
     });
   });
 
@@ -50,7 +50,7 @@ describe('RemotePathMappingService', () => {
 
       const result = await service.getByClientId(1);
       expect(result).toHaveLength(1);
-      expect(result[0].downloadClientId).toBe(1);
+      expect(result[0]!.downloadClientId).toBe(1);
     });
   });
 

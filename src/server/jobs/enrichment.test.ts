@@ -548,49 +548,49 @@ describe('enrichment job', () => {
     it('overwrites ALL CAPS title with enrichment proper case', async () => {
       setupEnrichment({ title: 'PROJECT HAIL MARY' }, { title: 'Project Hail Mary' });
       await runEnrichment(inject<Db>(db), inject<MetadataService>(metadataService), inject<BookService>(bookService), inject<FastifyBaseLogger>(log));
-      const setCall = db.update.mock.results[0].value.set.mock.calls[0][0];
+      const setCall = db.update.mock.results[0]!.value.set.mock.calls[0][0];
       expect(setCall).toHaveProperty('title', 'Project Hail Mary');
     });
 
     it('does NOT overwrite mixed-case title', async () => {
       setupEnrichment({ title: 'Project Hail Mary' }, { title: 'Project Hail Mary: A Novel' });
       await runEnrichment(inject<Db>(db), inject<MetadataService>(metadataService), inject<BookService>(bookService), inject<FastifyBaseLogger>(log));
-      const setCall = db.update.mock.results[0].value.set.mock.calls[0][0];
+      const setCall = db.update.mock.results[0]!.value.set.mock.calls[0][0];
       expect(setCall).not.toHaveProperty('title');
     });
 
     it('overwrites single-word ALL CAPS title', async () => {
       setupEnrichment({ title: 'PIRANESI' }, { title: 'Piranesi' });
       await runEnrichment(inject<Db>(db), inject<MetadataService>(metadataService), inject<BookService>(bookService), inject<FastifyBaseLogger>(log));
-      const setCall = db.update.mock.results[0].value.set.mock.calls[0][0];
+      const setCall = db.update.mock.results[0]!.value.set.mock.calls[0][0];
       expect(setCall).toHaveProperty('title', 'Piranesi');
     });
 
     it('overwrites ALL CAPS title containing numbers/punctuation', async () => {
       setupEnrichment({ title: 'DUNGEON CRAWLER CARL: BOOK 1' }, { title: 'Dungeon Crawler Carl: Book 1' });
       await runEnrichment(inject<Db>(db), inject<MetadataService>(metadataService), inject<BookService>(bookService), inject<FastifyBaseLogger>(log));
-      const setCall = db.update.mock.results[0].value.set.mock.calls[0][0];
+      const setCall = db.update.mock.results[0]!.value.set.mock.calls[0][0];
       expect(setCall).toHaveProperty('title', 'Dungeon Crawler Carl: Book 1');
     });
 
     it('does NOT change title when enrichment returns no title', async () => {
       setupEnrichment({ title: 'PROJECT HAIL MARY' }, { title: undefined });
       await runEnrichment(inject<Db>(db), inject<MetadataService>(metadataService), inject<BookService>(bookService), inject<FastifyBaseLogger>(log));
-      const setCall = db.update.mock.results[0].value.set.mock.calls[0][0];
+      const setCall = db.update.mock.results[0]!.value.set.mock.calls[0][0];
       expect(setCall).not.toHaveProperty('title');
     });
 
     it('does NOT overwrite uncased title (e.g. "12345")', async () => {
       setupEnrichment({ title: '12345' }, { title: 'Twelve Thousand' });
       await runEnrichment(inject<Db>(db), inject<MetadataService>(metadataService), inject<BookService>(bookService), inject<FastifyBaseLogger>(log));
-      const setCall = db.update.mock.results[0].value.set.mock.calls[0][0];
+      const setCall = db.update.mock.results[0]!.value.set.mock.calls[0][0];
       expect(setCall).not.toHaveProperty('title');
     });
 
     it('does NOT overwrite ALL CAPS title when enrichment returns same value', async () => {
       setupEnrichment({ title: 'PROJECT HAIL MARY' }, { title: 'PROJECT HAIL MARY' });
       await runEnrichment(inject<Db>(db), inject<MetadataService>(metadataService), inject<BookService>(bookService), inject<FastifyBaseLogger>(log));
-      const setCall = db.update.mock.results[0].value.set.mock.calls[0][0];
+      const setCall = db.update.mock.results[0]!.value.set.mock.calls[0][0];
       expect(setCall).not.toHaveProperty('title');
       expect(log.info).toHaveBeenCalledWith(
         expect.objectContaining({ filledTitle: 0 }),
@@ -615,21 +615,21 @@ describe('enrichment job', () => {
     it('fills description when currently null', async () => {
       setupEnrichment({ description: null }, { description: 'A great book' });
       await runEnrichment(inject<Db>(db), inject<MetadataService>(metadataService), inject<BookService>(bookService), inject<FastifyBaseLogger>(log));
-      const setCall = db.update.mock.results[0].value.set.mock.calls[0][0];
+      const setCall = db.update.mock.results[0]!.value.set.mock.calls[0][0];
       expect(setCall).toHaveProperty('description', 'A great book');
     });
 
     it('fills description when currently empty string', async () => {
       setupEnrichment({ description: '' }, { description: 'A great book' });
       await runEnrichment(inject<Db>(db), inject<MetadataService>(metadataService), inject<BookService>(bookService), inject<FastifyBaseLogger>(log));
-      const setCall = db.update.mock.results[0].value.set.mock.calls[0][0];
+      const setCall = db.update.mock.results[0]!.value.set.mock.calls[0][0];
       expect(setCall).toHaveProperty('description', 'A great book');
     });
 
     it('does NOT overwrite existing description', async () => {
       setupEnrichment({ description: 'Existing description' }, { description: 'New description' });
       await runEnrichment(inject<Db>(db), inject<MetadataService>(metadataService), inject<BookService>(bookService), inject<FastifyBaseLogger>(log));
-      const setCall = db.update.mock.results[0].value.set.mock.calls[0][0];
+      const setCall = db.update.mock.results[0]!.value.set.mock.calls[0][0];
       expect(setCall).not.toHaveProperty('description');
     });
   });
@@ -650,14 +650,14 @@ describe('enrichment job', () => {
     it('fills coverUrl when currently null', async () => {
       setupEnrichment({ coverUrl: null }, { coverUrl: 'https://example.com/cover.jpg' });
       await runEnrichment(inject<Db>(db), inject<MetadataService>(metadataService), inject<BookService>(bookService), inject<FastifyBaseLogger>(log));
-      const setCall = db.update.mock.results[0].value.set.mock.calls[0][0];
+      const setCall = db.update.mock.results[0]!.value.set.mock.calls[0][0];
       expect(setCall).toHaveProperty('coverUrl', 'https://example.com/cover.jpg');
     });
 
     it('does NOT overwrite existing coverUrl', async () => {
       setupEnrichment({ coverUrl: 'https://existing.com/cover.jpg' }, { coverUrl: 'https://new.com/cover.jpg' });
       await runEnrichment(inject<Db>(db), inject<MetadataService>(metadataService), inject<BookService>(bookService), inject<FastifyBaseLogger>(log));
-      const setCall = db.update.mock.results[0].value.set.mock.calls[0][0];
+      const setCall = db.update.mock.results[0]!.value.set.mock.calls[0][0];
       expect(setCall).not.toHaveProperty('coverUrl');
     });
   });
@@ -678,14 +678,14 @@ describe('enrichment job', () => {
     it('fills publishedDate when currently null', async () => {
       setupEnrichment({ publishedDate: null }, { publishedDate: '2021-05-04' });
       await runEnrichment(inject<Db>(db), inject<MetadataService>(metadataService), inject<BookService>(bookService), inject<FastifyBaseLogger>(log));
-      const setCall = db.update.mock.results[0].value.set.mock.calls[0][0];
+      const setCall = db.update.mock.results[0]!.value.set.mock.calls[0][0];
       expect(setCall).toHaveProperty('publishedDate', '2021-05-04');
     });
 
     it('does NOT overwrite existing publishedDate', async () => {
       setupEnrichment({ publishedDate: '2020-01-01' }, { publishedDate: '2021-05-04' });
       await runEnrichment(inject<Db>(db), inject<MetadataService>(metadataService), inject<BookService>(bookService), inject<FastifyBaseLogger>(log));
-      const setCall = db.update.mock.results[0].value.set.mock.calls[0][0];
+      const setCall = db.update.mock.results[0]!.value.set.mock.calls[0][0];
       expect(setCall).not.toHaveProperty('publishedDate');
     });
   });
@@ -706,7 +706,7 @@ describe('enrichment job', () => {
     it('fills seriesName and seriesPosition from series[0]', async () => {
       setupEnrichment({ seriesName: null, seriesPosition: null }, { series: [{ name: 'The Stormlight Archive', position: 1 }] });
       await runEnrichment(inject<Db>(db), inject<MetadataService>(metadataService), inject<BookService>(bookService), inject<FastifyBaseLogger>(log));
-      const setCall = db.update.mock.results[0].value.set.mock.calls[0][0];
+      const setCall = db.update.mock.results[0]!.value.set.mock.calls[0][0];
       expect(setCall).toHaveProperty('seriesName', 'The Stormlight Archive');
       expect(setCall).toHaveProperty('seriesPosition', 1);
     });
@@ -719,7 +719,7 @@ describe('enrichment job', () => {
         ],
       });
       await runEnrichment(inject<Db>(db), inject<MetadataService>(metadataService), inject<BookService>(bookService), inject<FastifyBaseLogger>(log));
-      const setCall = db.update.mock.results[0].value.set.mock.calls[0][0];
+      const setCall = db.update.mock.results[0]!.value.set.mock.calls[0][0];
       expect(setCall).toHaveProperty('seriesName', 'The Stormlight Archive');
       expect(setCall).toHaveProperty('seriesPosition', 1);
     });
@@ -727,14 +727,14 @@ describe('enrichment job', () => {
     it('does NOT overwrite existing seriesName', async () => {
       setupEnrichment({ seriesName: 'Existing Series', seriesPosition: 3 }, { series: [{ name: 'New Series', position: 1 }] });
       await runEnrichment(inject<Db>(db), inject<MetadataService>(metadataService), inject<BookService>(bookService), inject<FastifyBaseLogger>(log));
-      const setCall = db.update.mock.results[0].value.set.mock.calls[0][0];
+      const setCall = db.update.mock.results[0]!.value.set.mock.calls[0][0];
       expect(setCall).not.toHaveProperty('seriesName');
     });
 
     it('fills seriesPosition independently when seriesName exists but seriesPosition is null', async () => {
       setupEnrichment({ seriesName: 'The Stormlight Archive', seriesPosition: null }, { series: [{ name: 'The Stormlight Archive', position: 1 }] });
       await runEnrichment(inject<Db>(db), inject<MetadataService>(metadataService), inject<BookService>(bookService), inject<FastifyBaseLogger>(log));
-      const setCall = db.update.mock.results[0].value.set.mock.calls[0][0];
+      const setCall = db.update.mock.results[0]!.value.set.mock.calls[0][0];
       expect(setCall).not.toHaveProperty('seriesName');
       expect(setCall).toHaveProperty('seriesPosition', 1);
     });
@@ -742,7 +742,7 @@ describe('enrichment job', () => {
     it('does not change series when enrichment returns empty series array', async () => {
       setupEnrichment({ seriesName: null, seriesPosition: null }, { series: [] });
       await runEnrichment(inject<Db>(db), inject<MetadataService>(metadataService), inject<BookService>(bookService), inject<FastifyBaseLogger>(log));
-      const setCall = db.update.mock.results[0].value.set.mock.calls[0][0];
+      const setCall = db.update.mock.results[0]!.value.set.mock.calls[0][0];
       expect(setCall).not.toHaveProperty('seriesName');
       expect(setCall).not.toHaveProperty('seriesPosition');
     });
@@ -853,7 +853,7 @@ describe('enrichment job', () => {
 
       await runEnrichment(inject<Db>(db), inject<MetadataService>(metadataService), inject<BookService>(bookService), inject<FastifyBaseLogger>(log));
 
-      const setCall = db.update.mock.results[0].value.set.mock.calls[0][0];
+      const setCall = db.update.mock.results[0]!.value.set.mock.calls[0][0];
       expect(setCall).toHaveProperty('title', 'Project Hail Mary');
       expect(setCall).toHaveProperty('description', 'An astronaut wakes up alone');
       expect(setCall).toHaveProperty('coverUrl', 'https://example.com/cover.jpg');
@@ -877,7 +877,7 @@ describe('enrichment job', () => {
       await runEnrichment(inject<Db>(db), inject<MetadataService>(metadataService), inject<BookService>(bookService), inject<FastifyBaseLogger>(log));
 
       // The third db.select() call is the existing-fields lookup — assert its projection
-      const projectionArg = db.select.mock.calls[2][0];
+      const projectionArg = db.select.mock.calls[2]![0];
       expect(projectionArg).toHaveProperty('duration');
       expect(projectionArg).toHaveProperty('genres');
       expect(projectionArg).toHaveProperty('title');
@@ -911,7 +911,7 @@ describe('enrichment job', () => {
 
       await runEnrichment(inject<Db>(db), inject<MetadataService>(metadataService), inject<BookService>(bookService), inject<FastifyBaseLogger>(log));
 
-      const setCall = db.update.mock.results[0].value.set.mock.calls[0][0];
+      const setCall = db.update.mock.results[0]!.value.set.mock.calls[0][0];
       // Only enrichmentStatus and updatedAt should be in the update
       expect(setCall).toHaveProperty('enrichmentStatus', 'enriched');
       expect(setCall).toHaveProperty('updatedAt');

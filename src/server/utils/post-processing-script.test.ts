@@ -74,7 +74,7 @@ describe('runPostProcessingScript', () => {
       setupExecFileSuccess();
       await runPostProcessingScript(defaultArgs);
 
-      const opts = mockExecFile.mock.calls[0][2] as { env: Record<string, string> };
+      const opts = mockExecFile.mock.calls[0]![2] as { env: Record<string, string> };
       expect(opts.env.NARRATORR_BOOK_TITLE).toBe('The Way of Kings');
     });
 
@@ -82,7 +82,7 @@ describe('runPostProcessingScript', () => {
       setupExecFileSuccess();
       await runPostProcessingScript(defaultArgs);
 
-      const opts = mockExecFile.mock.calls[0][2] as { env: Record<string, string> };
+      const opts = mockExecFile.mock.calls[0]![2] as { env: Record<string, string> };
       expect(opts.env.NARRATORR_BOOK_AUTHOR).toBe('Brandon Sanderson');
     });
 
@@ -90,7 +90,7 @@ describe('runPostProcessingScript', () => {
       setupExecFileSuccess();
       await runPostProcessingScript(defaultArgs);
 
-      const opts = mockExecFile.mock.calls[0][2] as { env: Record<string, string> };
+      const opts = mockExecFile.mock.calls[0]![2] as { env: Record<string, string> };
       expect(opts.env.NARRATORR_IMPORT_PATH).toBe('/library/Author/Title');
     });
 
@@ -98,7 +98,7 @@ describe('runPostProcessingScript', () => {
       setupExecFileSuccess();
       await runPostProcessingScript(defaultArgs);
 
-      const opts = mockExecFile.mock.calls[0][2] as { env: Record<string, string> };
+      const opts = mockExecFile.mock.calls[0]![2] as { env: Record<string, string> };
       expect(opts.env.NARRATORR_IMPORT_FILE_COUNT).toBe('12');
     });
 
@@ -106,7 +106,7 @@ describe('runPostProcessingScript', () => {
       setupExecFileSuccess();
       await runPostProcessingScript({ ...defaultArgs, bookAuthor: null });
 
-      const opts = mockExecFile.mock.calls[0][2] as { env: Record<string, string> };
+      const opts = mockExecFile.mock.calls[0]![2] as { env: Record<string, string> };
       expect(opts.env.NARRATORR_BOOK_AUTHOR).toBe('');
     });
 
@@ -230,7 +230,7 @@ describe('runPostProcessingScript', () => {
       setupExecFileSuccess();
       await runPostProcessingScript(defaultArgs);
 
-      const opts = mockExecFile.mock.calls[0][2] as { env: Record<string, string> };
+      const opts = mockExecFile.mock.calls[0]![2] as { env: Record<string, string> };
 
       expect(opts.env).not.toHaveProperty('NARRATORR_SECRET_KEY');
       expect(opts.env.NARRATORR_BOOK_TITLE).toBe('The Way of Kings');

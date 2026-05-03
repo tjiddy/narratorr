@@ -38,12 +38,12 @@ const mockSettingsNoPath = createMockSettings({
 describe('LibraryImportPage (#133)', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    mockApi.getSettings.mockResolvedValue(mockSettingsWithPath);
-    mockApi.getBookIdentifiers.mockResolvedValue([]);
-    mockApi.scanDirectory.mockResolvedValue({ discoveries: [], totalFolders: 0 });
-    mockApi.startMatchJob.mockResolvedValue({ jobId: 'job-1' });
-    mockApi.getMatchJob.mockResolvedValue({ id: 'job-1', status: 'matching', total: 0, matched: 0, results: [] });
-    mockApi.cancelMatchJob.mockResolvedValue({ cancelled: true });
+    mockApi.getSettings!.mockResolvedValue(mockSettingsWithPath);
+    mockApi.getBookIdentifiers!.mockResolvedValue([]);
+    mockApi.scanDirectory!.mockResolvedValue({ discoveries: [], totalFolders: 0 });
+    mockApi.startMatchJob!.mockResolvedValue({ jobId: 'job-1' });
+    mockApi.getMatchJob!.mockResolvedValue({ id: 'job-1', status: 'matching', total: 0, matched: 0, results: [] });
+    mockApi.cancelMatchJob!.mockResolvedValue({ cancelled: true });
   });
 
   it('renders page heading', async () => {
@@ -54,7 +54,7 @@ describe('LibraryImportPage (#133)', () => {
   });
 
   it('no library path: fallback message + Settings link shown', async () => {
-    mockApi.getSettings.mockResolvedValue(mockSettingsNoPath);
+    mockApi.getSettings!.mockResolvedValue(mockSettingsNoPath);
 
     renderWithProviders(<LibraryImportPage />);
 
@@ -65,7 +65,7 @@ describe('LibraryImportPage (#133)', () => {
   });
 
   it('scan fails: inline error message shown with retry CTA', async () => {
-    mockApi.scanDirectory.mockRejectedValue(new Error('Permission denied'));
+    mockApi.scanDirectory!.mockRejectedValue(new Error('Permission denied'));
 
     renderWithProviders(<LibraryImportPage />);
 
@@ -76,7 +76,7 @@ describe('LibraryImportPage (#133)', () => {
   });
 
   it('empty scan: friendly all-caught-up message shown (not scan error)', async () => {
-    mockApi.scanDirectory.mockResolvedValue({ discoveries: [], totalFolders: 0 });
+    mockApi.scanDirectory!.mockResolvedValue({ discoveries: [], totalFolders: 0 });
 
     renderWithProviders(<LibraryImportPage />);
 
@@ -88,7 +88,7 @@ describe('LibraryImportPage (#133)', () => {
   });
 
   it('scan finds books: review list renders with book count', async () => {
-    mockApi.scanDirectory.mockResolvedValue({
+    mockApi.scanDirectory!.mockResolvedValue({
       discoveries: [
         { path: '/audiobooks/AuthorA/Book1', parsedTitle: 'Book One', parsedAuthor: 'Author A', parsedSeries: null, fileCount: 3, totalSize: 100000, isDuplicate: false },
       ],
@@ -104,11 +104,11 @@ describe('LibraryImportPage (#133)', () => {
 
   it('retry-matching button: clicking it starts a new match job and clears the error card', async () => {
     // First startMatchJob call fails; retry call succeeds
-    mockApi.startMatchJob
+    mockApi.startMatchJob!
       .mockRejectedValueOnce(new Error('transient error'))
       .mockResolvedValue({ jobId: 'job-2' });
-    mockApi.getMatchJob.mockResolvedValue({ id: 'job-2', status: 'completed', total: 1, matched: 1, results: [] });
-    mockApi.scanDirectory.mockResolvedValue({
+    mockApi.getMatchJob!.mockResolvedValue({ id: 'job-2', status: 'completed', total: 1, matched: 1, results: [] });
+    mockApi.scanDirectory!.mockResolvedValue({
       discoveries: [
         { path: '/audiobooks/AuthorA/Book1', parsedTitle: 'Book One', parsedAuthor: 'Author A', parsedSeries: null, fileCount: 1, totalSize: 50000, isDuplicate: false },
       ],
@@ -133,8 +133,8 @@ describe('LibraryImportPage (#133)', () => {
   });
 
   it('match-job failure: inline error shown and Import button disabled', async () => {
-    mockApi.startMatchJob.mockRejectedValue(new Error('match server unavailable'));
-    mockApi.scanDirectory.mockResolvedValue({
+    mockApi.startMatchJob!.mockRejectedValue(new Error('match server unavailable'));
+    mockApi.scanDirectory!.mockResolvedValue({
       discoveries: [
         { path: '/audiobooks/AuthorA/Book1', parsedTitle: 'Book One', parsedAuthor: 'Author A', parsedSeries: null, fileCount: 3, totalSize: 100000, isDuplicate: false },
       ],
@@ -155,8 +155,8 @@ describe('LibraryImportPage (#133)', () => {
   });
 
   it('existing rows hidden by default, toggle shows them', async () => {
-    mockApi.startMatchJob.mockRejectedValue(new Error('skip'));
-    mockApi.scanDirectory.mockResolvedValue({
+    mockApi.startMatchJob!.mockRejectedValue(new Error('skip'));
+    mockApi.scanDirectory!.mockResolvedValue({
       discoveries: [
         { path: '/audiobooks/AuthorA/Book1', parsedTitle: 'New Book', parsedAuthor: 'Author A', parsedSeries: null, fileCount: 1, totalSize: 50000, isDuplicate: false },
         { path: '/audiobooks/AuthorB/Book2', parsedTitle: 'Existing Book', parsedAuthor: 'Author B', parsedSeries: null, fileCount: 1, totalSize: 40000, isDuplicate: true, duplicateReason: 'path' },
@@ -185,7 +185,7 @@ describe('LibraryImportPage (#133)', () => {
 
   // AC3: friendly empty state (#141)
   it('zero discoveries: renders friendly all-caught-up message, no Retry button, no scanning spinner', async () => {
-    mockApi.scanDirectory.mockResolvedValue({ discoveries: [], totalFolders: 0 });
+    mockApi.scanDirectory!.mockResolvedValue({ discoveries: [], totalFolders: 0 });
 
     renderWithProviders(<LibraryImportPage />);
 
@@ -200,8 +200,8 @@ describe('LibraryImportPage (#133)', () => {
   });
 
   it('all-duplicate discoveries: renders friendly all-caught-up message, no scanning spinner', async () => {
-    mockApi.startMatchJob.mockRejectedValue(new Error('skip'));
-    mockApi.scanDirectory.mockResolvedValue({
+    mockApi.startMatchJob!.mockRejectedValue(new Error('skip'));
+    mockApi.scanDirectory!.mockResolvedValue({
       discoveries: [
         { path: '/audiobooks/AuthorB/Book2', parsedTitle: 'Dup Book', parsedAuthor: 'Author B', parsedSeries: null, fileCount: 1, totalSize: 40000, isDuplicate: true, duplicateReason: 'path' },
       ],
@@ -220,8 +220,8 @@ describe('LibraryImportPage (#133)', () => {
   });
 
   it('mix of new and duplicate discoveries: renders review list, no empty state', async () => {
-    mockApi.startMatchJob.mockRejectedValue(new Error('skip'));
-    mockApi.scanDirectory.mockResolvedValue({
+    mockApi.startMatchJob!.mockRejectedValue(new Error('skip'));
+    mockApi.scanDirectory!.mockResolvedValue({
       discoveries: [
         { path: '/audiobooks/AuthorA/Book1', parsedTitle: 'New Book', parsedAuthor: 'Author A', parsedSeries: null, fileCount: 1, totalSize: 50000, isDuplicate: false },
         { path: '/audiobooks/AuthorB/Book2', parsedTitle: 'Dup Book', parsedAuthor: 'Author B', parsedSeries: null, fileCount: 1, totalSize: 40000, isDuplicate: true, duplicateReason: 'path' },
@@ -242,8 +242,8 @@ describe('LibraryImportPage (#133)', () => {
     // 2 rows: index 0 is dup (hidden by default), index 1 is new book
     // When user toggles the new book (which appears first in displayedRows),
     // the underlying rows[1] must be toggled — not rows[0]
-    mockApi.startMatchJob.mockRejectedValue(new Error('skip'));
-    mockApi.scanDirectory.mockResolvedValue({
+    mockApi.startMatchJob!.mockRejectedValue(new Error('skip'));
+    mockApi.scanDirectory!.mockResolvedValue({
       discoveries: [
         { path: '/audiobooks/AuthorB/Book2', parsedTitle: 'Dup Book', parsedAuthor: 'Author B', parsedSeries: null, fileCount: 1, totalSize: 40000, isDuplicate: true, duplicateReason: 'path' },
         { path: '/audiobooks/AuthorA/Book1', parsedTitle: 'New Book', parsedAuthor: 'Author A', parsedSeries: null, fileCount: 1, totalSize: 50000, isDuplicate: false },
@@ -272,8 +272,8 @@ describe('LibraryImportPage (#133)', () => {
   it('edit metadata when duplicates hidden: correct source-array row index — modal seeded with visible row data', async () => {
     // rows[0] = dup (hidden by default), rows[1] = new book
     // Clicking the only visible Edit metadata button must open modal for rows[1] (New Book)
-    mockApi.startMatchJob.mockRejectedValue(new Error('skip'));
-    mockApi.scanDirectory.mockResolvedValue({
+    mockApi.startMatchJob!.mockRejectedValue(new Error('skip'));
+    mockApi.scanDirectory!.mockResolvedValue({
       discoveries: [
         { path: '/audiobooks/AuthorB/Book2', parsedTitle: 'Dup Book', parsedAuthor: 'Author B', parsedSeries: null, fileCount: 1, totalSize: 40000, isDuplicate: true, duplicateReason: 'path' },
         { path: '/audiobooks/AuthorA/Book1', parsedTitle: 'New Book', parsedAuthor: 'Author A', parsedSeries: null, fileCount: 1, totalSize: 50000, isDuplicate: false },
@@ -298,8 +298,8 @@ describe('LibraryImportPage (#133)', () => {
 
   describe('deselect-all (#201)', () => {
     it('deselect-all clears selection for all non-duplicate rows; duplicate rows remain unchanged', async () => {
-      mockApi.startMatchJob.mockRejectedValue(new Error('skip'));
-      mockApi.scanDirectory.mockResolvedValue({
+      mockApi.startMatchJob!.mockRejectedValue(new Error('skip'));
+      mockApi.scanDirectory!.mockResolvedValue({
         discoveries: [
           { path: '/audiobooks/A/B1', parsedTitle: 'New Book 1', parsedAuthor: 'A', parsedSeries: null, fileCount: 1, totalSize: 50000, isDuplicate: false },
           { path: '/audiobooks/A/B2', parsedTitle: 'New Book 2', parsedAuthor: 'A', parsedSeries: null, fileCount: 1, totalSize: 50000, isDuplicate: false },
@@ -328,8 +328,8 @@ describe('LibraryImportPage (#133)', () => {
     });
 
     it('select-all re-selects all non-duplicate rows after deselect-all', async () => {
-      mockApi.startMatchJob.mockRejectedValue(new Error('skip'));
-      mockApi.scanDirectory.mockResolvedValue({
+      mockApi.startMatchJob!.mockRejectedValue(new Error('skip'));
+      mockApi.scanDirectory!.mockResolvedValue({
         discoveries: [
           { path: '/audiobooks/A/B1', parsedTitle: 'Book A', parsedAuthor: 'A', parsedSeries: null, fileCount: 1, totalSize: 50000, isDuplicate: false },
           { path: '/audiobooks/A/B2', parsedTitle: 'Book B', parsedAuthor: 'A', parsedSeries: null, fileCount: 1, totalSize: 50000, isDuplicate: false },
@@ -359,8 +359,8 @@ describe('LibraryImportPage (#133)', () => {
 
   describe('import button states (#201)', () => {
     it('import button shows "Import N book(s)" with correct selectedCount', async () => {
-      mockApi.startMatchJob.mockRejectedValue(new Error('skip'));
-      mockApi.scanDirectory.mockResolvedValue({
+      mockApi.startMatchJob!.mockRejectedValue(new Error('skip'));
+      mockApi.scanDirectory!.mockResolvedValue({
         discoveries: [
           { path: '/audiobooks/A/B1', parsedTitle: 'Book 1', parsedAuthor: 'A', parsedSeries: null, fileCount: 1, totalSize: 50000, isDuplicate: false },
           { path: '/audiobooks/A/B2', parsedTitle: 'Book 2', parsedAuthor: 'A', parsedSeries: null, fileCount: 1, totalSize: 50000, isDuplicate: false },
@@ -379,8 +379,8 @@ describe('LibraryImportPage (#133)', () => {
     });
 
     it('import button disabled when selectedCount === 0, shows "Import 0 books"', async () => {
-      mockApi.startMatchJob.mockRejectedValue(new Error('skip'));
-      mockApi.scanDirectory.mockResolvedValue({
+      mockApi.startMatchJob!.mockRejectedValue(new Error('skip'));
+      mockApi.scanDirectory!.mockResolvedValue({
         discoveries: [
           { path: '/audiobooks/A/B1', parsedTitle: 'Book 1', parsedAuthor: 'A', parsedSeries: null, fileCount: 1, totalSize: 50000, isDuplicate: false },
         ],
@@ -405,14 +405,14 @@ describe('LibraryImportPage (#133)', () => {
     it('import button disabled when selectedUnmatchedCount > 0 with title showing unmatched count', async () => {
       vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] });
 
-      mockApi.scanDirectory.mockResolvedValue({
+      mockApi.scanDirectory!.mockResolvedValue({
         discoveries: [
           { path: '/audiobooks/A/B1', parsedTitle: 'NoMatch', parsedAuthor: 'A', parsedSeries: null, fileCount: 1, totalSize: 50000, isDuplicate: false },
         ],
         totalFolders: 1,
       });
       // Return completed with confidence: none
-      mockApi.getMatchJob.mockResolvedValue({
+      mockApi.getMatchJob!.mockResolvedValue({
         id: 'job-1', status: 'completed', total: 1, matched: 1,
         results: [{ path: '/audiobooks/A/B1', confidence: 'none', bestMatch: null, alternatives: [] }],
       });
@@ -449,12 +449,12 @@ describe('LibraryImportPage (#133)', () => {
       vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] });
 
       // confirmImport never resolves (keeps isPending=true)
-      mockApi.confirmImport.mockReturnValue(new Promise(() => {}));
-      mockApi.getMatchJob.mockResolvedValue({
+      mockApi.confirmImport!.mockReturnValue(new Promise(() => {}));
+      mockApi.getMatchJob!.mockResolvedValue({
         id: 'job-1', status: 'completed', total: 1, matched: 1,
         results: [{ path: '/audiobooks/A/B1', confidence: 'high', bestMatch: { title: 'Book 1', authors: [{ name: 'A' }], asin: 'B001' }, alternatives: [] }],
       });
-      mockApi.scanDirectory.mockResolvedValue({
+      mockApi.scanDirectory!.mockResolvedValue({
         discoveries: [
           { path: '/audiobooks/A/B1', parsedTitle: 'Book 1', parsedAuthor: 'A', parsedSeries: null, fileCount: 1, totalSize: 50000, isDuplicate: false },
         ],
@@ -488,12 +488,12 @@ describe('LibraryImportPage (#133)', () => {
     it('edited metadata persists through import confirm call', async () => {
       vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] });
 
-      mockApi.confirmImport.mockResolvedValue({ accepted: 1 });
-      mockApi.getMatchJob.mockResolvedValue({
+      mockApi.confirmImport!.mockResolvedValue({ accepted: 1 });
+      mockApi.getMatchJob!.mockResolvedValue({
         id: 'job-1', status: 'completed', total: 1, matched: 1,
         results: [{ path: '/audiobooks/A/B1', confidence: 'high', bestMatch: { title: 'Match Title', authors: [{ name: 'Match Author' }], asin: 'ASIN1', coverUrl: 'http://cover.jpg' }, alternatives: [] }],
       });
-      mockApi.scanDirectory.mockResolvedValue({
+      mockApi.scanDirectory!.mockResolvedValue({
         discoveries: [
           { path: '/audiobooks/A/B1', parsedTitle: 'Parsed Title', parsedAuthor: 'Parsed Author', parsedSeries: null, fileCount: 1, totalSize: 50000, isDuplicate: false },
         ],
@@ -568,9 +568,9 @@ describe('LibraryImportPage (#133)', () => {
     it('readyCount = selected + non-duplicate + high confidence', async () => {
       vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] });
 
-      mockApi.scanDirectory.mockResolvedValue(fiveBookDiscoveries);
+      mockApi.scanDirectory!.mockResolvedValue(fiveBookDiscoveries);
       // Return results for 3 of 4 non-duplicate books (B4 stays pending)
-      mockApi.getMatchJob.mockResolvedValue({
+      mockApi.getMatchJob!.mockResolvedValue({
         id: 'job-1', status: 'completed', total: 4, matched: 3,
         results: [
           { path: '/audiobooks/A/B1', confidence: 'high', bestMatch: { title: 'High Book', authors: [{ name: 'A' }], asin: 'A1' }, alternatives: [] },
@@ -598,8 +598,8 @@ describe('LibraryImportPage (#133)', () => {
     it('reviewCount = all medium confidence rows regardless of selection', async () => {
       vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] });
 
-      mockApi.scanDirectory.mockResolvedValue(fiveBookDiscoveries);
-      mockApi.getMatchJob.mockResolvedValue({
+      mockApi.scanDirectory!.mockResolvedValue(fiveBookDiscoveries);
+      mockApi.getMatchJob!.mockResolvedValue({
         id: 'job-1', status: 'completed', total: 4, matched: 3,
         results: [
           { path: '/audiobooks/A/B1', confidence: 'high', bestMatch: { title: 'High Book', authors: [{ name: 'A' }], asin: 'A1' }, alternatives: [] },
@@ -644,8 +644,8 @@ describe('LibraryImportPage (#133)', () => {
     it('noMatchCount = all none confidence rows', async () => {
       vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] });
 
-      mockApi.scanDirectory.mockResolvedValue(fiveBookDiscoveries);
-      mockApi.getMatchJob.mockResolvedValue({
+      mockApi.scanDirectory!.mockResolvedValue(fiveBookDiscoveries);
+      mockApi.getMatchJob!.mockResolvedValue({
         id: 'job-1', status: 'completed', total: 4, matched: 3,
         results: [
           { path: '/audiobooks/A/B1', confidence: 'high', bestMatch: { title: 'High Book', authors: [{ name: 'A' }], asin: 'A1' }, alternatives: [] },
@@ -674,7 +674,7 @@ describe('LibraryImportPage (#133)', () => {
       vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] });
 
       // Only 2 non-dup books, matching returns result for only 1
-      mockApi.scanDirectory.mockResolvedValue({
+      mockApi.scanDirectory!.mockResolvedValue({
         discoveries: [
           { path: '/audiobooks/A/B1', parsedTitle: 'Matched', parsedAuthor: 'A', parsedSeries: null, fileCount: 1, totalSize: 50000, isDuplicate: false },
           { path: '/audiobooks/A/B2', parsedTitle: 'Still Pending', parsedAuthor: 'A', parsedSeries: null, fileCount: 1, totalSize: 50000, isDuplicate: false },
@@ -683,7 +683,7 @@ describe('LibraryImportPage (#133)', () => {
         totalFolders: 3,
       });
       // Return 'matching' (not completed) with partial results — B2 has no result
-      mockApi.getMatchJob.mockResolvedValue({
+      mockApi.getMatchJob!.mockResolvedValue({
         id: 'job-1', status: 'matching', total: 2, matched: 1,
         results: [
           { path: '/audiobooks/A/B1', confidence: 'high', bestMatch: { title: 'Matched', authors: [{ name: 'A' }], asin: 'A1' }, alternatives: [] },
@@ -707,8 +707,8 @@ describe('LibraryImportPage (#133)', () => {
     });
 
     it('duplicateCount = all isDuplicate rows', async () => {
-      mockApi.startMatchJob.mockRejectedValue(new Error('skip'));
-      mockApi.scanDirectory.mockResolvedValue({
+      mockApi.startMatchJob!.mockRejectedValue(new Error('skip'));
+      mockApi.scanDirectory!.mockResolvedValue({
         discoveries: [
           { path: '/audiobooks/A/B1', parsedTitle: 'New', parsedAuthor: 'A', parsedSeries: null, fileCount: 1, totalSize: 50000, isDuplicate: false },
           { path: '/audiobooks/B/B2', parsedTitle: 'Dup1', parsedAuthor: 'B', parsedSeries: null, fileCount: 1, totalSize: 40000, isDuplicate: true, duplicateReason: 'path' },
@@ -738,10 +738,10 @@ describe('LibraryImportPage (#133)', () => {
     });
 
     it('Import button enabled after poll resolves with completed job', async () => {
-      mockApi.confirmImport.mockResolvedValue({ accepted: 1 });
+      mockApi.confirmImport!.mockResolvedValue({ accepted: 1 });
       // Completed match job — polling returns 'completed' immediately so isMatching=false
-      mockApi.getMatchJob.mockResolvedValue({ id: 'job-1', status: 'completed', total: 1, matched: 1, results: [] });
-      mockApi.scanDirectory.mockResolvedValue({
+      mockApi.getMatchJob!.mockResolvedValue({ id: 'job-1', status: 'completed', total: 1, matched: 1, results: [] });
+      mockApi.scanDirectory!.mockResolvedValue({
         discoveries: [
           { path: '/audiobooks/AuthorA/Book1', parsedTitle: 'Book One', parsedAuthor: 'Author A', parsedSeries: null, fileCount: 3, totalSize: 100000, isDuplicate: false },
         ],
@@ -771,7 +771,7 @@ describe('LibraryImportPage (#133)', () => {
 
   describe('relative path computation (AC1: uses segment-based pathUtils, not startsWith)', () => {
     it('passes relative portion as relativePath prop to ImportCard when book path is inside library root', async () => {
-      mockApi.scanDirectory.mockResolvedValue({
+      mockApi.scanDirectory!.mockResolvedValue({
         discoveries: [
           { path: '/audiobooks/AuthorA/Book1', parsedTitle: 'Book One', parsedAuthor: 'Author A', parsedSeries: null, fileCount: 1, totalSize: 50000, isDuplicate: false },
         ],
@@ -786,7 +786,7 @@ describe('LibraryImportPage (#133)', () => {
     });
 
     it('passes undefined as relativePath when book path is a sibling of the library root', async () => {
-      mockApi.scanDirectory.mockResolvedValue({
+      mockApi.scanDirectory!.mockResolvedValue({
         discoveries: [
           { path: '/audiobooks-old/AuthorB/Book2', parsedTitle: 'Book Two', parsedAuthor: 'Author B', parsedSeries: null, fileCount: 1, totalSize: 50000, isDuplicate: false },
         ],
@@ -805,7 +805,7 @@ describe('LibraryImportPage (#133)', () => {
       // /audiobooks/../secret/Author/Book normalizes to /secret/Author/Book (outside /audiobooks)
       // Old startsWith() bug: '/audiobooks/../secret/Author/Book'.startsWith('/audiobooks/') === true → would show '../secret/Author/Book'
       // Fixed makeRelativePath: normalizes segments → returns undefined → ImportCard falls back to 3-part shortpath
-      mockApi.scanDirectory.mockResolvedValue({
+      mockApi.scanDirectory!.mockResolvedValue({
         discoveries: [
           { path: '/audiobooks/../secret/Author/Book', parsedTitle: 'Secret Book', parsedAuthor: 'Author', parsedSeries: null, fileCount: 1, totalSize: 50000, isDuplicate: false },
         ],
@@ -823,7 +823,7 @@ describe('LibraryImportPage (#133)', () => {
     });
 
     it('passes undefined as relativePath when library root is not set in settings', async () => {
-      mockApi.getSettings.mockResolvedValue(mockSettingsNoPath);
+      mockApi.getSettings!.mockResolvedValue(mockSettingsNoPath);
 
       renderWithProviders(<LibraryImportPage />);
 
@@ -845,9 +845,9 @@ describe('LibraryImportPage (#133)', () => {
     };
 
     it('within-scan duplicates are visible by default (not hidden by showExisting toggle)', async () => {
-      mockApi.scanDirectory.mockResolvedValue(scanResultWithWithinScan);
-      mockApi.startMatchJob.mockResolvedValue({ jobId: 'job-1' });
-      mockApi.getMatchJob.mockResolvedValue({ id: 'job-1', status: 'complete', total: 2, matched: 2, results: [] });
+      mockApi.scanDirectory!.mockResolvedValue(scanResultWithWithinScan);
+      mockApi.startMatchJob!.mockResolvedValue({ jobId: 'job-1' });
+      mockApi.getMatchJob!.mockResolvedValue({ id: 'job-1', status: 'complete', total: 2, matched: 2, results: [] });
 
       renderWithProviders(<LibraryImportPage />);
 
@@ -858,9 +858,9 @@ describe('LibraryImportPage (#133)', () => {
     });
 
     it('DB duplicates (path/slug) are hidden by default behind toggle', async () => {
-      mockApi.scanDirectory.mockResolvedValue(scanResultWithWithinScan);
-      mockApi.startMatchJob.mockResolvedValue({ jobId: 'job-1' });
-      mockApi.getMatchJob.mockResolvedValue({ id: 'job-1', status: 'complete', total: 2, matched: 2, results: [] });
+      mockApi.scanDirectory!.mockResolvedValue(scanResultWithWithinScan);
+      mockApi.startMatchJob!.mockResolvedValue({ jobId: 'job-1' });
+      mockApi.getMatchJob!.mockResolvedValue({ id: 'job-1', status: 'complete', total: 2, matched: 2, results: [] });
 
       renderWithProviders(<LibraryImportPage />);
 
@@ -873,9 +873,9 @@ describe('LibraryImportPage (#133)', () => {
     });
 
     it('show existing toggle count reflects only DB duplicates, not within-scan', async () => {
-      mockApi.scanDirectory.mockResolvedValue(scanResultWithWithinScan);
-      mockApi.startMatchJob.mockResolvedValue({ jobId: 'job-1' });
-      mockApi.getMatchJob.mockResolvedValue({ id: 'job-1', status: 'complete', total: 2, matched: 2, results: [] });
+      mockApi.scanDirectory!.mockResolvedValue(scanResultWithWithinScan);
+      mockApi.startMatchJob!.mockResolvedValue({ jobId: 'job-1' });
+      mockApi.getMatchJob!.mockResolvedValue({ id: 'job-1', status: 'complete', total: 2, matched: 2, results: [] });
 
       renderWithProviders(<LibraryImportPage />);
 
@@ -886,9 +886,9 @@ describe('LibraryImportPage (#133)', () => {
     });
 
     it('N of M new selected denominator includes within-scan duplicates', async () => {
-      mockApi.scanDirectory.mockResolvedValue(scanResultWithWithinScan);
-      mockApi.startMatchJob.mockResolvedValue({ jobId: 'job-1' });
-      mockApi.getMatchJob.mockResolvedValue({ id: 'job-1', status: 'complete', total: 2, matched: 2, results: [] });
+      mockApi.scanDirectory!.mockResolvedValue(scanResultWithWithinScan);
+      mockApi.startMatchJob!.mockResolvedValue({ jobId: 'job-1' });
+      mockApi.getMatchJob!.mockResolvedValue({ id: 'job-1', status: 'complete', total: 2, matched: 2, results: [] });
 
       renderWithProviders(<LibraryImportPage />);
 

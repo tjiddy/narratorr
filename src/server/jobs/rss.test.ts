@@ -747,7 +747,7 @@ describe('rss tests — GUID blacklist filtering', () => {
 
     await runRssJob(settings, bookList, book, indexer, download, blacklist, inject<FastifyBaseLogger>(log));
 
-    const grabCall = vi.mocked(download.grab).mock.calls[0][0];
+    const grabCall = vi.mocked(download.grab).mock.calls[0]![0];
     expect(grabCall).not.toHaveProperty('indexerId');
   });
 
@@ -993,9 +993,9 @@ describe('#502 runRssJob — enrichment before filtering', () => {
     // enrichUsenetLanguages called exactly once (for the matched book's candidates)
     expect(mockEnrichUsenet).toHaveBeenCalledTimes(1);
     // The call should contain only the matched result, not the unmatched one
-    const enrichedResults = mockEnrichUsenet.mock.calls[0][0];
+    const enrichedResults = mockEnrichUsenet.mock.calls[0]![0];
     expect(enrichedResults).toHaveLength(1);
-    expect(enrichedResults[0].title).toBe('The Way of Kings');
+    expect(enrichedResults[0]!.title).toBe('The Way of Kings');
     expect(result.grabbed).toBe(1);
   });
 

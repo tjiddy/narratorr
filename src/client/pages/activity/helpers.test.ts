@@ -15,17 +15,17 @@ describe('statusConfig (derived from registry)', () => {
   it('each entry has icon component, label, color, bgColor, textColor', () => {
     for (const status of allStatuses) {
       const config = statusConfig[status];
-      expect(typeof config.icon).toBe('function');
-      expect(config.label).toBeTruthy();
-      expect(config.color).toBeTruthy();
-      expect(config.bgColor).toBeTruthy();
-      expect(config.textColor).toBeTruthy();
+      expect(typeof config!.icon).toBe('function');
+      expect(config!.label).toBeTruthy();
+      expect(config!.color).toBeTruthy();
+      expect(config!.bgColor).toBeTruthy();
+      expect(config!.textColor).toBeTruthy();
     }
   });
 
   it('preserves labels from registry', () => {
     for (const status of allStatuses) {
-      expect(statusConfig[status].label).toBe(DOWNLOAD_STATUS_REGISTRY[status].label);
+      expect(statusConfig[status]!.label).toBe(DOWNLOAD_STATUS_REGISTRY[status].label);
     }
   });
 
@@ -48,7 +48,7 @@ describe('statusConfig (derived from registry)', () => {
       const expectedName = expectedComponentNames[registryIcon];
       expect(expectedName, `unknown icon id "${registryIcon}" for status "${status}" — add it to the parity map`).toBeDefined();
       expect(
-        config.icon.name || config.icon.displayName,
+        config!.icon.name || config!.icon.displayName,
         `status "${status}" icon id "${registryIcon}" should map to ${expectedName}`,
       ).toBe(expectedName);
     }
@@ -56,9 +56,9 @@ describe('statusConfig (derived from registry)', () => {
 
   it('preserves colors from registry', () => {
     for (const status of allStatuses) {
-      expect(statusConfig[status].color).toBe(DOWNLOAD_STATUS_REGISTRY[status].color);
-      expect(statusConfig[status].bgColor).toBe(DOWNLOAD_STATUS_REGISTRY[status].bgColor);
-      expect(statusConfig[status].textColor).toBe(DOWNLOAD_STATUS_REGISTRY[status].textColor);
+      expect(statusConfig[status]!.color).toBe(DOWNLOAD_STATUS_REGISTRY[status].color);
+      expect(statusConfig[status]!.bgColor).toBe(DOWNLOAD_STATUS_REGISTRY[status].bgColor);
+      expect(statusConfig[status]!.textColor).toBe(DOWNLOAD_STATUS_REGISTRY[status].textColor);
     }
   });
 });

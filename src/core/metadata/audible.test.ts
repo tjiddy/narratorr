@@ -17,9 +17,9 @@ describe('AudibleProvider', () => {
       const { books } = await provider.searchBooks('Harry Potter Chamber of Secrets');
 
       expect(books).toHaveLength(2);
-      expect(books[0].title).toBe('Harry Potter and the Chamber of Secrets');
-      expect(books[0].asin).toBe('B017V4IWVG');
-      expect(books[0].authors).toEqual([{ name: 'J.K. Rowling', asin: 'B000AP9A6K' }]);
+      expect(books[0]!.title).toBe('Harry Potter and the Chamber of Secrets');
+      expect(books[0]!.asin).toBe('B017V4IWVG');
+      expect(books[0]!.authors).toEqual([{ name: 'J.K. Rowling', asin: 'B000AP9A6K' }]);
     });
 
     it('sends query as keywords param for title+author matching', async () => {
@@ -39,22 +39,22 @@ describe('AudibleProvider', () => {
     it('extracts narrators from search results', async () => {
       const { books } = await provider.searchBooks('Harry Potter');
 
-      expect(books[0].narrators).toEqual(['Jim Dale']);
+      expect(books[0]!.narrators).toEqual(['Jim Dale']);
       // Second result has multiple narrators (full-cast edition)
-      expect(books[1].narrators).toContain('Hugh Laurie');
-      expect(books[1].narrators!.length).toBeGreaterThan(1);
+      expect(books[1]!.narrators).toContain('Hugh Laurie');
+      expect(books[1]!.narrators!.length).toBeGreaterThan(1);
     });
 
     it('extracts duration in minutes', async () => {
       const { books } = await provider.searchBooks('Harry Potter');
 
-      expect(books[0].duration).toBe(542);
+      expect(books[0]!.duration).toBe(542);
     });
 
     it('extracts series with position', async () => {
       const { books } = await provider.searchBooks('Harry Potter');
 
-      expect(books[0].series).toEqual(
+      expect(books[0]!.series).toEqual(
         expect.arrayContaining([
           expect.objectContaining({ name: 'Harry Potter', position: 2 }),
         ]),
@@ -64,41 +64,41 @@ describe('AudibleProvider', () => {
     it('extracts cover URL from product images', async () => {
       const { books } = await provider.searchBooks('Harry Potter');
 
-      expect(books[0].coverUrl).toContain('media-amazon.com');
+      expect(books[0]!.coverUrl).toContain('media-amazon.com');
     });
 
     it('preserves safe HTML tags in description', async () => {
       const { books } = await provider.searchBooks('Harry Potter');
 
-      expect(books[0].description).toContain('<p>');
-      expect(books[0].description).toContain('<i>');
-      expect(books[0].description).toContain('Grammy Award');
+      expect(books[0]!.description).toContain('<p>');
+      expect(books[0]!.description).toContain('<i>');
+      expect(books[0]!.description).toContain('Grammy Award');
     });
 
     it('cleans "Book N" suffix from title', async () => {
       const { books } = await provider.searchBooks('Harry Potter');
 
       // Original title is "Harry Potter and the Chamber of Secrets, Book 2"
-      expect(books[0].title).toBe('Harry Potter and the Chamber of Secrets');
+      expect(books[0]!.title).toBe('Harry Potter and the Chamber of Secrets');
     });
 
     it('extracts publisher', async () => {
       const { books } = await provider.searchBooks('Harry Potter');
 
-      expect(books[0].publisher).toBe('Pottermore Publishing');
+      expect(books[0]!.publisher).toBe('Pottermore Publishing');
     });
 
     it('extracts language lowercase', async () => {
       const { books } = await provider.searchBooks('Harry Potter');
 
-      expect(books[0].language).toBe('english');
+      expect(books[0]!.language).toBe('english');
     });
 
     it('preserves full release_date in publishedDate (not truncated to year)', async () => {
       const { books } = await provider.searchBooks('Harry Potter');
 
       // Fixture has release_date: "2015-11-20" — must preserve full date for sorting
-      expect(books[0].publishedDate).toBe('2015-11-20');
+      expect(books[0]!.publishedDate).toBe('2015-11-20');
     });
 
     it('throws TransientError on API error (5xx)', async () => {
@@ -148,10 +148,10 @@ describe('AudibleProvider', () => {
 
       const { books } = await provider.searchBooks('test');
       expect(books).toHaveLength(1);
-      expect(books[0].title).toBe('Minimal Book');
-      expect(books[0].narrators).toBeUndefined();
-      expect(books[0].series).toBeUndefined();
-      expect(books[0].coverUrl).toBeUndefined();
+      expect(books[0]!.title).toBe('Minimal Book');
+      expect(books[0]!.narrators).toBeUndefined();
+      expect(books[0]!.series).toBeUndefined();
+      expect(books[0]!.coverUrl).toBeUndefined();
     });
 
     it('throws RateLimitError on 429', async () => {
@@ -254,8 +254,8 @@ describe('AudibleProvider', () => {
       const authors = await provider.searchAuthors('Harry Potter');
 
       expect(authors).toHaveLength(1);
-      expect(authors[0].name).toBe('J.K. Rowling');
-      expect(authors[0].asin).toBe('B000AP9A6K');
+      expect(authors[0]!.name).toBe('J.K. Rowling');
+      expect(authors[0]!.asin).toBe('B000AP9A6K');
     });
 
     it('deduplicates authors appearing across multiple books', async () => {
@@ -336,8 +336,8 @@ describe('AudibleProvider', () => {
 
       // Default provider uses 'us' region → preferred language is 'english'
       const { books } = await provider.searchBooks('test');
-      expect(books[0].language).toBe('english');
-      expect(books[1].language).toBe('french');
+      expect(books[0]!.language).toBe('english');
+      expect(books[1]!.language).toBe('french');
     });
   });
 
@@ -376,7 +376,7 @@ describe('AudibleProvider', () => {
       );
 
       const { books } = await provider.searchBooks('test');
-      expect(books[0].series![0].position).toBe(1.5);
+      expect(books[0]!.series![0]!.position).toBe(1.5);
     });
 
     it('handles "Book N" format in sequence', async () => {
@@ -394,7 +394,7 @@ describe('AudibleProvider', () => {
       );
 
       const { books } = await provider.searchBooks('test');
-      expect(books[0].series![0].position).toBe(3);
+      expect(books[0]!.series![0]!.position).toBe(3);
     });
 
     it('handles missing sequence', async () => {
@@ -412,7 +412,7 @@ describe('AudibleProvider', () => {
       );
 
       const { books } = await provider.searchBooks('test');
-      expect(books[0].series![0].position).toBeUndefined();
+      expect(books[0]!.series![0]!.position).toBeUndefined();
     });
   });
 
@@ -464,7 +464,7 @@ describe('AudibleProvider', () => {
       );
 
       const { books } = await provider.searchBooks('test');
-      expect(books[0].series![0].position).toBeUndefined();
+      expect(books[0]!.series![0]!.position).toBeUndefined();
     });
 
     it('handles invalid runtime_length_min (NaN)', async () => {
@@ -482,7 +482,7 @@ describe('AudibleProvider', () => {
       );
 
       const { books } = await provider.searchBooks('test');
-      expect(books[0].duration).toBeUndefined();
+      expect(books[0]!.duration).toBeUndefined();
     });
 
     it('handles runtime_length_min of 0', async () => {
@@ -501,7 +501,7 @@ describe('AudibleProvider', () => {
 
       const { books } = await provider.searchBooks('test');
       // 0 is falsy, so duration should be undefined
-      expect(books[0].duration).toBeUndefined();
+      expect(books[0]!.duration).toBeUndefined();
     });
 
     it('handles empty string Retry-After header (falls back to 60s)', async () => {
@@ -538,7 +538,7 @@ describe('AudibleProvider', () => {
 
       const { books } = await provider.searchBooks('test');
       expect(books).toHaveLength(1);
-      expect(books[0].authors).toEqual([]);
+      expect(books[0]!.authors).toEqual([]);
     });
 
     it('getBook throws TransientError on malformed JSON response', async () => {

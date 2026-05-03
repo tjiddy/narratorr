@@ -27,8 +27,8 @@ describe('parsePhaseHistory', () => {
     expect(result).toEqual([
       { phase: 'queued', startedAt: 1700000000000, completedAt: 1700000005000 },
     ]);
-    expect(typeof result[0].startedAt).toBe('number');
-    expect(typeof result[0].completedAt).toBe('number');
+    expect(typeof result[0]!.startedAt).toBe('number');
+    expect(typeof result[0]!.completedAt).toBe('number');
     expect(log.warn).not.toHaveBeenCalled();
   });
 

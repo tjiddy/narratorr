@@ -317,7 +317,7 @@ describe('searchStreamRoutes', () => {
       const session = sessionManager.get(sid)!;
 
       // Simulate client disconnect (fires before search completes)
-      const closeHandler = onClose.mock.calls[0][1] as () => void;
+      const closeHandler = onClose.mock.calls[0]![1] as () => void;
       closeHandler();
 
       // Session removed and controllers aborted by the close callback
@@ -455,7 +455,7 @@ describe('searchStreamRoutes — app.inject() integration', () => {
       expect(body).toContain('event: search-start');
       const searchStartMatch = body.match(/event: search-start\ndata: (.+)\n/);
       expect(searchStartMatch).not.toBeNull();
-      const startData = JSON.parse(searchStartMatch![1]);
+      const startData = JSON.parse(searchStartMatch![1]!);
       expect(startData.sessionId).toBeDefined();
       expect(startData.indexers).toEqual([]);
 
@@ -463,7 +463,7 @@ describe('searchStreamRoutes — app.inject() integration', () => {
       expect(body).toContain('event: search-complete');
       const searchCompleteMatch = body.match(/event: search-complete\ndata: (.+)\n/);
       expect(searchCompleteMatch).not.toBeNull();
-      const completeData = JSON.parse(searchCompleteMatch![1]);
+      const completeData = JSON.parse(searchCompleteMatch![1]!);
       expect(completeData.results).toEqual([]);
       expect(completeData).toHaveProperty('durationUnknown');
       expect(completeData).toHaveProperty('unsupportedResults');

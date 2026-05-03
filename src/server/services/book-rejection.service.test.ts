@@ -143,7 +143,7 @@ describe('BookRejectionService', () => {
       (bookService.getById as Mock).mockResolvedValue(importedBook);
       const chain = mockDbChain();
       db.update.mockReturnValue(chain);
-      (chain as Record<string, Mock>).where.mockImplementation(() => {
+      (chain as Record<string, Mock>).where!.mockImplementation(() => {
         callOrder.push('db.update');
         return Promise.resolve();
       });

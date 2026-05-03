@@ -27,7 +27,7 @@ describe('folderFormatSchema', () => {
     const result = folderFormatSchema.safeParse('{author}');
     expect(result.success).toBe(false);
     if (!result.success) {
-      expect(result.error.issues[0].message).toContain('must include {title}');
+      expect(result.error.issues[0]!.message).toContain('must include {title}');
     }
   });
 
@@ -35,7 +35,7 @@ describe('folderFormatSchema', () => {
     const result = folderFormatSchema.safeParse('{author}/{title}/{unknown}');
     expect(result.success).toBe(false);
     if (!result.success) {
-      expect(result.error.issues[0].message).toContain('Unknown token');
+      expect(result.error.issues[0]!.message).toContain('Unknown token');
     }
   });
 

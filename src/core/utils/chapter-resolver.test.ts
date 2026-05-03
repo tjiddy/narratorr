@@ -25,17 +25,17 @@ describe('chapter-resolver', () => {
       } as never);
 
       const sources = await readChapterSources(['/audio/01.mp3']);
-      expect(sources[0].title).toBe('The Beginning');
-      expect(sources[0].trackNumber).toBe(1);
-      expect(sources[0].discNumber).toBe(1);
+      expect(sources[0]!.title).toBe('The Beginning');
+      expect(sources[0]!.trackNumber).toBe(1);
+      expect(sources[0]!.discNumber).toBe(1);
     });
 
     it('handles files with no metadata gracefully', async () => {
       mockParseFile.mockRejectedValueOnce(new Error('No metadata'));
 
       const sources = await readChapterSources(['/audio/01.mp3']);
-      expect(sources[0].title).toBeUndefined();
-      expect(sources[0].trackNumber).toBeUndefined();
+      expect(sources[0]!.title).toBeUndefined();
+      expect(sources[0]!.trackNumber).toBeUndefined();
     });
 
     it('sorts by disc number then track number from ID3 tags', async () => {

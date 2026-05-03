@@ -108,7 +108,7 @@ describe('useEventSource', () => {
       renderHook(() => useEventSource('test-api-key'), { wrapper });
 
       expect(MockEventSource.instances).toHaveLength(1);
-      expect(MockEventSource.instances[0].url).toBe('/api/events?apikey=test-api-key');
+      expect(MockEventSource.instances[0]!.url).toBe('/api/events?apikey=test-api-key');
     });
 
     it('does not connect when apiKey is null', () => {
@@ -125,7 +125,7 @@ describe('useEventSource', () => {
       const es = MockEventSource.instances[0];
       unmount();
 
-      expect(es.readyState).toBe(2); // CLOSED
+      expect(es!.readyState).toBe(2); // CLOSED
     });
 
     it('invalidates all query keys on reconnect', () => {
@@ -137,8 +137,8 @@ describe('useEventSource', () => {
 
       // Simulate error then reconnect
       act(() => {
-        es.simulateError();
-        es.simulateOpen();
+        es!.simulateError();
+        es!.simulateOpen();
       });
 
       expect(invalidateSpy).toHaveBeenCalledWith();
@@ -163,15 +163,15 @@ describe('useEventSource', () => {
       const es = MockEventSource.instances[0];
 
       act(() => {
-        es.simulateOpen();
-        es.simulateEvent('download_progress', { download_id: 1, book_id: 2, percentage: 0.5, speed: null, eta: null });
+        es!.simulateOpen();
+        es!.simulateEvent('download_progress', { download_id: 1, book_id: 2, percentage: 0.5, speed: null, eta: null });
       });
 
       // Verify the data was patched correctly in the cached page
       const cached = queryClient.getQueryData<{ data: { id: number; progress: number }[]; total: number }>(queueKey);
       expect(cached!.data).toHaveLength(2);
-      expect(cached!.data[0].progress).toBe(0.5);  // patched
-      expect(cached!.data[1].progress).toBe(0.9);  // untouched
+      expect(cached!.data[0]!.progress).toBe(0.5);  // patched
+      expect(cached!.data[1]!.progress).toBe(0.9);  // untouched
     });
 
     it('patches downloadSpeed onto the cached row from the download_progress event', () => {
@@ -187,12 +187,12 @@ describe('useEventSource', () => {
       const es = MockEventSource.instances[0];
 
       act(() => {
-        es.simulateOpen();
-        es.simulateEvent('download_progress', { download_id: 1, book_id: 2, percentage: 0.5, speed: 1_048_576, eta: null });
+        es!.simulateOpen();
+        es!.simulateEvent('download_progress', { download_id: 1, book_id: 2, percentage: 0.5, speed: 1_048_576, eta: null });
       });
 
       const cached = queryClient.getQueryData<{ data: { id: number; downloadSpeed: number | null }[]; total: number }>(queueKey);
-      expect(cached!.data[0].downloadSpeed).toBe(1_048_576);
+      expect(cached!.data[0]!.downloadSpeed).toBe(1_048_576);
     });
 
     it('preserves downloadSpeed=0 (stalled) when patching — does NOT drop falsy values', () => {
@@ -208,12 +208,12 @@ describe('useEventSource', () => {
       const es = MockEventSource.instances[0];
 
       act(() => {
-        es.simulateOpen();
-        es.simulateEvent('download_progress', { download_id: 1, book_id: 2, percentage: 0.5, speed: 0, eta: null });
+        es!.simulateOpen();
+        es!.simulateEvent('download_progress', { download_id: 1, book_id: 2, percentage: 0.5, speed: 0, eta: null });
       });
 
       const cached = queryClient.getQueryData<{ data: { id: number; downloadSpeed: number | null }[]; total: number }>(queueKey);
-      expect(cached!.data[0].downloadSpeed).toBe(0);
+      expect(cached!.data[0]!.downloadSpeed).toBe(0);
     });
 
     it('stores downloadSpeed as null when the SSE payload is null', () => {
@@ -229,12 +229,12 @@ describe('useEventSource', () => {
       const es = MockEventSource.instances[0];
 
       act(() => {
-        es.simulateOpen();
-        es.simulateEvent('download_progress', { download_id: 1, book_id: 2, percentage: 0.5, speed: null, eta: null });
+        es!.simulateOpen();
+        es!.simulateEvent('download_progress', { download_id: 1, book_id: 2, percentage: 0.5, speed: null, eta: null });
       });
 
       const cached = queryClient.getQueryData<{ data: { id: number; downloadSpeed: number | null }[]; total: number }>(queueKey);
-      expect(cached!.data[0].downloadSpeed).toBeNull();
+      expect(cached!.data[0]!.downloadSpeed).toBeNull();
     });
 
     it('does not invalidate activity queries on download_progress when download is in cache', () => {
@@ -253,8 +253,8 @@ describe('useEventSource', () => {
       const es = MockEventSource.instances[0];
 
       act(() => {
-        es.simulateOpen();
-        es.simulateEvent('download_progress', { download_id: 1, book_id: 2, percentage: 0.5, speed: null, eta: null });
+        es!.simulateOpen();
+        es!.simulateEvent('download_progress', { download_id: 1, book_id: 2, percentage: 0.5, speed: null, eta: null });
       });
 
       expect(invalidateSpy).not.toHaveBeenCalledWith({ queryKey: ['activity'] });
@@ -276,8 +276,8 @@ describe('useEventSource', () => {
       const es = MockEventSource.instances[0];
 
       act(() => {
-        es.simulateOpen();
-        es.simulateEvent('download_progress', { download_id: 1, book_id: 2, percentage: 0.3, speed: null, eta: null });
+        es!.simulateOpen();
+        es!.simulateEvent('download_progress', { download_id: 1, book_id: 2, percentage: 0.3, speed: null, eta: null });
       });
 
       expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: ['activity'] });
@@ -292,8 +292,8 @@ describe('useEventSource', () => {
       const es = MockEventSource.instances[0];
 
       act(() => {
-        es.simulateOpen();
-        es.simulateEvent('download_progress', { download_id: 1, book_id: 2, percentage: 0.3, speed: null, eta: null });
+        es!.simulateOpen();
+        es!.simulateEvent('download_progress', { download_id: 1, book_id: 2, percentage: 0.3, speed: null, eta: null });
       });
 
       // #312: No page queries cached — can't "miss" from a page that isn't loaded
@@ -317,8 +317,8 @@ describe('useEventSource', () => {
       const es = MockEventSource.instances[0];
 
       act(() => {
-        es.simulateOpen();
-        es.simulateEvent('download_progress', { download_id: 1, book_id: 2, percentage: 0.5, speed: null, eta: null });
+        es!.simulateOpen();
+        es!.simulateEvent('download_progress', { download_id: 1, book_id: 2, percentage: 0.5, speed: null, eta: null });
       });
 
       // Should NOT invalidate — patched in-place instead
@@ -334,8 +334,8 @@ describe('useEventSource', () => {
       const es = MockEventSource.instances[0];
 
       act(() => {
-        es.simulateOpen();
-        es.simulateEvent('download_status_change', { download_id: 1, book_id: 2, old_status: 'downloading', new_status: 'completed' });
+        es!.simulateOpen();
+        es!.simulateEvent('download_status_change', { download_id: 1, book_id: 2, old_status: 'downloading', new_status: 'completed' });
       });
 
       expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: ['activity'] });
@@ -350,8 +350,8 @@ describe('useEventSource', () => {
       const es = MockEventSource.instances[0];
 
       act(() => {
-        es.simulateOpen();
-        es.simulateEvent('book_status_change', { book_id: 42, old_status: 'importing', new_status: 'imported' });
+        es!.simulateOpen();
+        es!.simulateEvent('book_status_change', { book_id: 42, old_status: 'importing', new_status: 'imported' });
       });
 
       expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: ['books'] });
@@ -366,8 +366,8 @@ describe('useEventSource', () => {
       const es = MockEventSource.instances[0];
 
       act(() => {
-        es.simulateOpen();
-        es.simulateEvent('grab_started', { download_id: 1, book_id: 2, book_title: 'Test', release_title: 'test.torrent' });
+        es!.simulateOpen();
+        es!.simulateEvent('grab_started', { download_id: 1, book_id: 2, book_title: 'Test', release_title: 'test.torrent' });
       });
 
       expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: queryKeys.activity() });
@@ -383,8 +383,8 @@ describe('useEventSource', () => {
       const es = MockEventSource.instances[0];
 
       act(() => {
-        es.simulateOpen();
-        es.simulateEvent('import_complete', { download_id: 1, book_id: 7, book_title: 'My Book' });
+        es!.simulateOpen();
+        es!.simulateEvent('import_complete', { download_id: 1, book_id: 7, book_title: 'My Book' });
       });
 
       expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: queryKeys.activity() });
@@ -402,8 +402,8 @@ describe('useEventSource', () => {
       const es = MockEventSource.instances[0];
 
       act(() => {
-        es.simulateOpen();
-        es.simulateEvent('review_needed', { download_id: 1, book_id: 2, book_title: 'Test' });
+        es!.simulateOpen();
+        es!.simulateEvent('review_needed', { download_id: 1, book_id: 2, book_title: 'Test' });
       });
 
       expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: ['activity'] });
@@ -418,8 +418,8 @@ describe('useEventSource', () => {
       const es = MockEventSource.instances[0];
 
       act(() => {
-        es.simulateOpen();
-        es.simulateEvent('merge_complete', { book_id: 42, book_title: 'My Book', success: true, message: 'done' });
+        es!.simulateOpen();
+        es!.simulateEvent('merge_complete', { book_id: 42, book_title: 'My Book', success: true, message: 'done' });
       });
 
       expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: queryKeys.activity() });
@@ -437,8 +437,8 @@ describe('useEventSource', () => {
       const es = MockEventSource.instances[0];
 
       act(() => {
-        es.simulateOpen();
-        es.simulateEvent('import_complete', { download_id: 1, book_id: 2, book_title: 'My Book' });
+        es!.simulateOpen();
+        es!.simulateEvent('import_complete', { download_id: 1, book_id: 2, book_title: 'My Book' });
       });
 
       expect(toast.success).toHaveBeenCalledWith('"My Book" imported successfully', { duration: 5000 });
@@ -450,8 +450,8 @@ describe('useEventSource', () => {
       const es = MockEventSource.instances[0];
 
       act(() => {
-        es.simulateOpen();
-        es.simulateEvent('grab_started', { download_id: 1, book_id: 2, book_title: 'Grabbed Book', release_title: 'test' });
+        es!.simulateOpen();
+        es!.simulateEvent('grab_started', { download_id: 1, book_id: 2, book_title: 'Grabbed Book', release_title: 'test' });
       });
 
       expect(toast.info).not.toHaveBeenCalled();
@@ -463,8 +463,8 @@ describe('useEventSource', () => {
       const es = MockEventSource.instances[0];
 
       act(() => {
-        es.simulateOpen();
-        es.simulateEvent('review_needed', { download_id: 1, book_id: 2, book_title: 'Review Me' });
+        es!.simulateOpen();
+        es!.simulateEvent('review_needed', { download_id: 1, book_id: 2, book_title: 'Review Me' });
       });
 
       expect(toast.warning).toHaveBeenCalledWith('"Review Me" needs review', { duration: 5000 });
@@ -476,8 +476,8 @@ describe('useEventSource', () => {
       const es = MockEventSource.instances[0];
 
       act(() => {
-        es.simulateOpen();
-        es.simulateEvent('download_progress', { download_id: 1, book_id: 2, percentage: 0.5, speed: null, eta: null });
+        es!.simulateOpen();
+        es!.simulateEvent('download_progress', { download_id: 1, book_id: 2, percentage: 0.5, speed: null, eta: null });
       });
 
       expect(toast.success).not.toHaveBeenCalled();
@@ -491,8 +491,8 @@ describe('useEventSource', () => {
       const es = MockEventSource.instances[0];
 
       act(() => {
-        es.simulateOpen();
-        es.simulateEvent('download_status_change', { download_id: 1, book_id: 2, old_status: 'downloading', new_status: 'completed' });
+        es!.simulateOpen();
+        es!.simulateEvent('download_status_change', { download_id: 1, book_id: 2, old_status: 'downloading', new_status: 'completed' });
       });
 
       expect(toast.success).not.toHaveBeenCalled();
@@ -506,8 +506,8 @@ describe('useEventSource', () => {
       const es = MockEventSource.instances[0];
 
       act(() => {
-        es.simulateOpen();
-        es.simulateEvent('book_status_change', { book_id: 2, old_status: 'importing', new_status: 'imported' });
+        es!.simulateOpen();
+        es!.simulateEvent('book_status_change', { book_id: 2, old_status: 'importing', new_status: 'imported' });
       });
 
       expect(toast.success).not.toHaveBeenCalled();
@@ -523,7 +523,7 @@ describe('useEventSource', () => {
       const connectedResult = renderHook(() => useSSEConnected(), { wrapper });
       const es = MockEventSource.instances[0];
 
-      act(() => es.simulateOpen());
+      act(() => es!.simulateOpen());
       expect(connectedResult.result.current).toBe(true);
     });
 
@@ -533,14 +533,14 @@ describe('useEventSource', () => {
       const connectedResult = renderHook(() => useSSEConnected(), { wrapper });
       const es = MockEventSource.instances[0];
 
-      act(() => es.simulateOpen());
+      act(() => es!.simulateOpen());
       expect(connectedResult.result.current).toBe(true);
 
-      act(() => es.simulateError());
+      act(() => es!.simulateError());
       expect(connectedResult.result.current).toBe(false);
 
       // Re-open then unmount
-      act(() => es.simulateOpen());
+      act(() => es!.simulateOpen());
       expect(connectedResult.result.current).toBe(true);
 
       unmount();
@@ -557,13 +557,13 @@ describe('useEventSource', () => {
       expect(connectedResult.result.current).toBe(false);
 
       const es = MockEventSource.instances[0];
-      act(() => es.simulateOpen());
+      act(() => es!.simulateOpen());
       expect(connectedResult.result.current).toBe(true);
 
-      act(() => es.simulateError());
+      act(() => es!.simulateError());
       expect(connectedResult.result.current).toBe(false);
 
-      act(() => es.simulateOpen());
+      act(() => es!.simulateOpen());
       expect(connectedResult.result.current).toBe(true);
 
       eventSourceResult.unmount();
@@ -586,9 +586,9 @@ describe('#257 merge observability — useEventSource', () => {
 
       renderHook(() => useEventSource('key'), { wrapper });
       const es = MockEventSource.instances[0];
-      act(() => es.simulateOpen());
+      act(() => es!.simulateOpen());
 
-      act(() => es.simulateEvent('merge_started', { book_id: 42, book_title: 'My Book' }));
+      act(() => es!.simulateEvent('merge_started', { book_id: 42, book_title: 'My Book' }));
 
       expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: ['eventHistory'] });
     });
@@ -599,9 +599,9 @@ describe('#257 merge observability — useEventSource', () => {
 
       renderHook(() => useEventSource('key'), { wrapper });
       const es = MockEventSource.instances[0];
-      act(() => es.simulateOpen());
+      act(() => es!.simulateOpen());
 
-      act(() => es.simulateEvent('merge_progress', {
+      act(() => es!.simulateEvent('merge_progress', {
         book_id: 42, book_title: 'My Book', phase: 'processing', percentage: 0.5,
       }));
 
@@ -615,9 +615,9 @@ describe('#257 merge observability — useEventSource', () => {
 
       renderHook(() => useEventSource('key'), { wrapper });
       const es = MockEventSource.instances[0];
-      act(() => es.simulateOpen());
+      act(() => es!.simulateOpen());
 
-      act(() => es.simulateEvent('merge_failed', {
+      act(() => es!.simulateEvent('merge_failed', {
         book_id: 42, book_title: 'My Book', error: 'ffmpeg crashed',
       }));
 
@@ -632,9 +632,9 @@ describe('#257 merge observability — useEventSource', () => {
 
       renderHook(() => useEventSource('key'), { wrapper });
       const es = MockEventSource.instances[0];
-      act(() => es.simulateOpen());
+      act(() => es!.simulateOpen());
 
-      act(() => es.simulateEvent('merge_started', { book_id: 42, book_title: 'My Book' }));
+      act(() => es!.simulateEvent('merge_started', { book_id: 42, book_title: 'My Book' }));
 
       expect(toast.info).toHaveBeenCalledWith('Merging "My Book"...', { duration: 5000 });
     });
@@ -644,9 +644,9 @@ describe('#257 merge observability — useEventSource', () => {
 
       renderHook(() => useEventSource('key'), { wrapper });
       const es = MockEventSource.instances[0];
-      act(() => es.simulateOpen());
+      act(() => es!.simulateOpen());
 
-      act(() => es.simulateEvent('merge_failed', {
+      act(() => es!.simulateEvent('merge_failed', {
         book_id: 42, book_title: 'My Book', error: 'ffmpeg crashed',
       }));
 
@@ -658,9 +658,9 @@ describe('#257 merge observability — useEventSource', () => {
 
       renderHook(() => useEventSource('key'), { wrapper });
       const es = MockEventSource.instances[0];
-      act(() => es.simulateOpen());
+      act(() => es!.simulateOpen());
 
-      act(() => es.simulateEvent('merge_complete', {
+      act(() => es!.simulateEvent('merge_complete', {
         book_id: 42, book_title: 'My Book', success: true,
         message: 'Merged 5 files to My Book.m4b',
       }));
@@ -699,11 +699,11 @@ describe('#257 merge observability — useEventSource', () => {
       renderHook(() => useEventSource('key'), { wrapper });
       const { result: progressResult } = renderHook(() => useMergeProgress(42));
       const es = MockEventSource.instances[0];
-      act(() => es.simulateOpen());
+      act(() => es!.simulateOpen());
 
       expect(progressResult.current).toBeNull();
 
-      act(() => es.simulateEvent('merge_started', { book_id: 42, book_title: 'My Book' }));
+      act(() => es!.simulateEvent('merge_started', { book_id: 42, book_title: 'My Book' }));
 
       expect(progressResult.current).toEqual({ phase: 'starting' });
     });
@@ -713,9 +713,9 @@ describe('#257 merge observability — useEventSource', () => {
       renderHook(() => useEventSource('key'), { wrapper });
       const { result: progressResult } = renderHook(() => useMergeProgress(42));
       const es = MockEventSource.instances[0];
-      act(() => es.simulateOpen());
+      act(() => es!.simulateOpen());
 
-      act(() => es.simulateEvent('merge_progress', {
+      act(() => es!.simulateEvent('merge_progress', {
         book_id: 42, book_title: 'My Book', phase: 'processing', percentage: 0.5,
       }));
 
@@ -727,12 +727,12 @@ describe('#257 merge observability — useEventSource', () => {
       renderHook(() => useEventSource('key'), { wrapper });
       const { result: progressResult } = renderHook(() => useMergeProgress(42));
       const es = MockEventSource.instances[0];
-      act(() => es.simulateOpen());
+      act(() => es!.simulateOpen());
 
-      act(() => es.simulateEvent('merge_started', { book_id: 42, book_title: 'My Book' }));
+      act(() => es!.simulateEvent('merge_started', { book_id: 42, book_title: 'My Book' }));
       expect(progressResult.current).not.toBeNull();
 
-      act(() => es.simulateEvent('merge_complete', {
+      act(() => es!.simulateEvent('merge_complete', {
         book_id: 42, book_title: 'My Book', success: true, message: 'done',
       }));
 
@@ -745,12 +745,12 @@ describe('#257 merge observability — useEventSource', () => {
       renderHook(() => useEventSource('key'), { wrapper });
       const { result: progressResult } = renderHook(() => useMergeProgress(42));
       const es = MockEventSource.instances[0];
-      act(() => es.simulateOpen());
+      act(() => es!.simulateOpen());
 
-      act(() => es.simulateEvent('merge_started', { book_id: 42, book_title: 'My Book' }));
+      act(() => es!.simulateEvent('merge_started', { book_id: 42, book_title: 'My Book' }));
       expect(progressResult.current).not.toBeNull();
 
-      act(() => es.simulateEvent('merge_failed', {
+      act(() => es!.simulateEvent('merge_failed', {
         book_id: 42, book_title: 'My Book', error: 'ffmpeg crashed',
       }));
 
@@ -769,9 +769,9 @@ describe('#257 merge observability — useEventSource', () => {
       renderHook(() => useEventSource('key'), { wrapper });
       const { result } = renderHook(() => useMergeActivityCards());
       const es = MockEventSource.instances[0];
-      act(() => es.simulateOpen());
+      act(() => es!.simulateOpen());
 
-      act(() => es.simulateEvent('merge_started', { book_id: 42, book_title: 'My Book' }));
+      act(() => es!.simulateEvent('merge_started', { book_id: 42, book_title: 'My Book' }));
 
       expect(result.current).toHaveLength(1);
       expect(result.current[0]).toMatchObject({ bookId: 42, bookTitle: 'My Book', phase: 'starting' });
@@ -782,9 +782,9 @@ describe('#257 merge observability — useEventSource', () => {
       renderHook(() => useEventSource('key'), { wrapper });
       const { result } = renderHook(() => useMergeActivityCards());
       const es = MockEventSource.instances[0];
-      act(() => es.simulateOpen());
+      act(() => es!.simulateOpen());
 
-      act(() => es.simulateEvent('merge_progress', {
+      act(() => es!.simulateEvent('merge_progress', {
         book_id: 42, book_title: 'My Book', phase: 'processing', percentage: 0.5,
       }));
 
@@ -796,9 +796,9 @@ describe('#257 merge observability — useEventSource', () => {
       renderHook(() => useEventSource('key'), { wrapper });
       const { result } = renderHook(() => useMergeActivityCards());
       const es = MockEventSource.instances[0];
-      act(() => es.simulateOpen());
+      act(() => es!.simulateOpen());
 
-      act(() => es.simulateEvent('merge_queued', { book_id: 42, book_title: 'My Book', position: 2 }));
+      act(() => es!.simulateEvent('merge_queued', { book_id: 42, book_title: 'My Book', position: 2 }));
 
       expect(result.current[0]).toMatchObject({ bookTitle: 'My Book', phase: 'queued', position: 2 });
     });
@@ -808,10 +808,10 @@ describe('#257 merge observability — useEventSource', () => {
       renderHook(() => useEventSource('key'), { wrapper });
       const { result } = renderHook(() => useMergeActivityCards());
       const es = MockEventSource.instances[0];
-      act(() => es.simulateOpen());
+      act(() => es!.simulateOpen());
 
-      act(() => es.simulateEvent('merge_started', { book_id: 42, book_title: 'My Book' }));
-      act(() => es.simulateEvent('merge_complete', {
+      act(() => es!.simulateEvent('merge_started', { book_id: 42, book_title: 'My Book' }));
+      act(() => es!.simulateEvent('merge_complete', {
         book_id: 42, book_title: 'My Book', success: true, message: 'Merged 3 files',
       }));
 
@@ -829,10 +829,10 @@ describe('#257 merge observability — useEventSource', () => {
       renderHook(() => useEventSource('key'), { wrapper });
       const { result } = renderHook(() => useMergeActivityCards());
       const es = MockEventSource.instances[0];
-      act(() => es.simulateOpen());
+      act(() => es!.simulateOpen());
 
-      act(() => es.simulateEvent('merge_started', { book_id: 42, book_title: 'My Book' }));
-      act(() => es.simulateEvent('merge_failed', {
+      act(() => es!.simulateEvent('merge_started', { book_id: 42, book_title: 'My Book' }));
+      act(() => es!.simulateEvent('merge_failed', {
         book_id: 42, book_title: 'My Book', error: 'ffmpeg crashed',
       }));
 
@@ -850,14 +850,14 @@ describe('#257 merge observability — useEventSource', () => {
       renderHook(() => useEventSource('key'), { wrapper });
       const { result } = renderHook(() => useMergeActivityCards());
       const es = MockEventSource.instances[0];
-      act(() => es.simulateOpen());
+      act(() => es!.simulateOpen());
 
-      act(() => es.simulateEvent('merge_complete', {
+      act(() => es!.simulateEvent('merge_complete', {
         book_id: 42, book_title: 'My Book', success: true, message: 'done',
         enrichmentWarning: 'Metadata update failed',
       }));
 
-      expect(result.current[0].enrichmentWarning).toBe('Metadata update failed');
+      expect(result.current[0]!.enrichmentWarning).toBe('Metadata update failed');
     });
   });
 });
@@ -879,8 +879,8 @@ describe('#312 cache-miss scoping — patchActivityProgress', () => {
     const es = MockEventSource.instances[0];
 
     act(() => {
-      es.simulateOpen();
-      es.simulateEvent('download_progress', { download_id: 1, book_id: 2, percentage: 0.5, speed: null, eta: null });
+      es!.simulateOpen();
+      es!.simulateEvent('download_progress', { download_id: 1, book_id: 2, percentage: 0.5, speed: null, eta: null });
     });
 
     // No queue/history pages loaded — should NOT fall back to invalidation
@@ -904,8 +904,8 @@ describe('#312 cache-miss scoping — patchActivityProgress', () => {
     const es = MockEventSource.instances[0];
 
     act(() => {
-      es.simulateOpen();
-      es.simulateEvent('download_progress', { download_id: 1, book_id: 2, percentage: 0.3, speed: null, eta: null });
+      es!.simulateOpen();
+      es!.simulateEvent('download_progress', { download_id: 1, book_id: 2, percentage: 0.3, speed: null, eta: null });
     });
 
     // Queue page IS cached but download is missing — invalidation fallback MUST fire
@@ -928,13 +928,13 @@ describe('#312 cache-miss scoping — patchActivityProgress', () => {
     const es = MockEventSource.instances[0];
 
     act(() => {
-      es.simulateOpen();
-      es.simulateEvent('download_progress', { download_id: 1, book_id: 2, percentage: 0.7, speed: null, eta: null });
+      es!.simulateOpen();
+      es!.simulateEvent('download_progress', { download_id: 1, book_id: 2, percentage: 0.7, speed: null, eta: null });
     });
 
     // Download found in cache — should patch in-place, no invalidation
     const cached = queryClient.getQueryData<{ data: { id: number; progress: number }[]; total: number }>(queueKey);
-    expect(cached!.data[0].progress).toBe(0.7);
+    expect(cached!.data[0]!.progress).toBe(0.7);
     expect(invalidateSpy).not.toHaveBeenCalledWith({ queryKey: ['activity'] });
     expect(invalidateSpy).not.toHaveBeenCalledWith({ queryKey: queryKeys.activityCounts() });
   });
@@ -956,13 +956,13 @@ describe('#312 cache-miss scoping — patchActivityProgress', () => {
     const es = MockEventSource.instances[0];
 
     act(() => {
-      es.simulateOpen();
-      es.simulateEvent('download_progress', { download_id: 1, book_id: 2, percentage: 0.6, speed: null, eta: null });
+      es!.simulateOpen();
+      es!.simulateEvent('download_progress', { download_id: 1, book_id: 2, percentage: 0.6, speed: null, eta: null });
     });
 
     // Should patch page query, skip counts query, no invalidation
     const cached = queryClient.getQueryData<{ data: { id: number; progress: number }[]; total: number }>(queueKey);
-    expect(cached!.data[0].progress).toBe(0.6);
+    expect(cached!.data[0]!.progress).toBe(0.6);
     expect(invalidateSpy).not.toHaveBeenCalledWith({ queryKey: ['activity'] });
     expect(invalidateSpy).not.toHaveBeenCalledWith({ queryKey: queryKeys.activityCounts() });
 
@@ -994,13 +994,13 @@ describe('#312 cache-miss scoping — patchActivityProgress', () => {
     const es = MockEventSource.instances[0];
 
     act(() => {
-      es.simulateOpen();
-      es.simulateEvent('download_progress', { download_id: 1, book_id: 2, percentage: 0.8, speed: null, eta: null });
+      es!.simulateOpen();
+      es!.simulateEvent('download_progress', { download_id: 1, book_id: 2, percentage: 0.8, speed: null, eta: null });
     });
 
     // Found in page 2 — patched, no invalidation
     const cached = queryClient.getQueryData<{ data: { id: number; progress: number }[]; total: number }>(page2Key);
-    expect(cached!.data[0].progress).toBe(0.8);
+    expect(cached!.data[0]!.progress).toBe(0.8);
     expect(invalidateSpy).not.toHaveBeenCalledWith({ queryKey: ['activity'] });
     expect(invalidateSpy).not.toHaveBeenCalledWith({ queryKey: queryKeys.activityCounts() });
   });
@@ -1015,10 +1015,10 @@ describe('#312 cache-miss scoping — patchActivityProgress', () => {
       renderHook(() => useEventSource('test-key'), { wrapper });
 
       const es = MockEventSource.instances[MockEventSource.instances.length - 1];
-      es.simulateOpen();
+      es!.simulateOpen();
 
       act(() => {
-        es.simulateEvent('merge_queued', { book_id: 42, book_title: 'Test Book', position: 2 });
+        es!.simulateEvent('merge_queued', { book_id: 42, book_title: 'Test Book', position: 2 });
       });
 
       const { result } = renderHook(() => useMergeProgress(42));
@@ -1037,14 +1037,14 @@ describe('#312 cache-miss scoping — patchActivityProgress', () => {
       renderHook(() => useEventSource('test-key'), { wrapper });
 
       const es = MockEventSource.instances[MockEventSource.instances.length - 1];
-      es.simulateOpen();
+      es!.simulateOpen();
 
       act(() => {
-        es.simulateEvent('merge_queued', { book_id: 42, book_title: 'Test Book', position: 3 });
+        es!.simulateEvent('merge_queued', { book_id: 42, book_title: 'Test Book', position: 3 });
       });
 
       act(() => {
-        es.simulateEvent('merge_queue_updated', { book_id: 42, book_title: 'Test Book', position: 1 });
+        es!.simulateEvent('merge_queue_updated', { book_id: 42, book_title: 'Test Book', position: 1 });
       });
 
       const { result } = renderHook(() => useMergeProgress(42));
@@ -1062,10 +1062,10 @@ describe('#312 cache-miss scoping — patchActivityProgress', () => {
       renderHook(() => useEventSource('test-key'), { wrapper });
 
       const es = MockEventSource.instances[MockEventSource.instances.length - 1];
-      es.simulateOpen();
+      es!.simulateOpen();
 
       act(() => {
-        es.simulateEvent('merge_complete', {
+        es!.simulateEvent('merge_complete', {
           book_id: 42,
           book_title: 'Test Book',
           success: true,
@@ -1087,10 +1087,10 @@ describe('#312 cache-miss scoping — patchActivityProgress', () => {
       const { wrapper } = createWrapper();
       renderHook(() => useEventSource('test-api-key'), { wrapper });
       const es = MockEventSource.instances[0];
-      es.simulateOpen();
+      es!.simulateOpen();
 
       for (const type of ['search_started', 'search_indexer_complete', 'search_indexer_error', 'search_grabbed', 'search_complete']) {
-        expect(es['listeners'].has(type)).toBe(true);
+        expect(es!['listeners'].has(type)).toBe(true);
       }
     });
 
@@ -1098,10 +1098,10 @@ describe('#312 cache-miss scoping — patchActivityProgress', () => {
       const { wrapper } = createWrapper();
       renderHook(() => useEventSource('test-api-key'), { wrapper });
       const es = MockEventSource.instances[0];
-      es.simulateOpen();
+      es!.simulateOpen();
 
       const payload = { book_id: 1, book_title: 'Test', indexers: [{ id: 10, name: 'MAM' }] };
-      es.simulateEvent('search_started', payload);
+      es!.simulateEvent('search_started', payload);
 
       expect(handleSearchEvent).toHaveBeenCalledWith('search_started', payload);
     });
@@ -1110,10 +1110,10 @@ describe('#312 cache-miss scoping — patchActivityProgress', () => {
       const { wrapper } = createWrapper();
       renderHook(() => useEventSource('test-api-key'), { wrapper });
       const es = MockEventSource.instances[0];
-      es.simulateOpen();
+      es!.simulateOpen();
 
       const payload = { book_id: 1, indexer_id: 10, indexer_name: 'MAM', results_found: 3, elapsed_ms: 1200 };
-      es.simulateEvent('search_indexer_complete', payload);
+      es!.simulateEvent('search_indexer_complete', payload);
 
       expect(handleSearchEvent).toHaveBeenCalledWith('search_indexer_complete', payload);
     });
@@ -1122,10 +1122,10 @@ describe('#312 cache-miss scoping — patchActivityProgress', () => {
       const { wrapper } = createWrapper();
       renderHook(() => useEventSource('test-api-key'), { wrapper });
       const es = MockEventSource.instances[0];
-      es.simulateOpen();
+      es!.simulateOpen();
 
       const payload = { book_id: 1, release_title: 'Best Result', indexer_name: 'MAM' };
-      es.simulateEvent('search_grabbed', payload);
+      es!.simulateEvent('search_grabbed', payload);
 
       expect(handleSearchEvent).toHaveBeenCalledWith('search_grabbed', payload);
     });
@@ -1134,10 +1134,10 @@ describe('#312 cache-miss scoping — patchActivityProgress', () => {
       const { wrapper } = createWrapper();
       renderHook(() => useEventSource('test-api-key'), { wrapper });
       const es = MockEventSource.instances[0];
-      es.simulateOpen();
+      es!.simulateOpen();
 
       const payload = { book_id: 1, total_results: 0, outcome: 'no_results' };
-      es.simulateEvent('search_complete', payload);
+      es!.simulateEvent('search_complete', payload);
 
       expect(handleSearchEvent).toHaveBeenCalledWith('search_complete', payload);
     });
@@ -1149,10 +1149,10 @@ describe('#312 cache-miss scoping — patchActivityProgress', () => {
       renderHook(() => useEventSource('key'), { wrapper });
       const { result } = renderHook(() => useMergeActivityCards());
       const es = MockEventSource.instances[0];
-      act(() => es.simulateOpen());
+      act(() => es!.simulateOpen());
 
-      act(() => es.simulateEvent('merge_started', { book_id: 42, book_title: 'My Book' }));
-      act(() => es.simulateEvent('merge_failed', {
+      act(() => es!.simulateEvent('merge_started', { book_id: 42, book_title: 'My Book' }));
+      act(() => es!.simulateEvent('merge_failed', {
         book_id: 42, book_title: 'My Book', error: 'Cancelled by user', reason: 'cancelled',
       }));
 
@@ -1169,10 +1169,10 @@ describe('#312 cache-miss scoping — patchActivityProgress', () => {
       renderHook(() => useEventSource('key'), { wrapper });
       const { result } = renderHook(() => useMergeActivityCards());
       const es = MockEventSource.instances[0];
-      act(() => es.simulateOpen());
+      act(() => es!.simulateOpen());
 
-      act(() => es.simulateEvent('merge_started', { book_id: 42, book_title: 'My Book' }));
-      act(() => es.simulateEvent('merge_failed', {
+      act(() => es!.simulateEvent('merge_started', { book_id: 42, book_title: 'My Book' }));
+      act(() => es!.simulateEvent('merge_failed', {
         book_id: 42, book_title: 'My Book', error: 'ffmpeg crashed', reason: 'error',
       }));
 
@@ -1188,9 +1188,9 @@ describe('#312 cache-miss scoping — patchActivityProgress', () => {
       const { wrapper } = createWrapper();
       renderHook(() => useEventSource('key'), { wrapper });
       const es = MockEventSource.instances[0];
-      act(() => es.simulateOpen());
+      act(() => es!.simulateOpen());
 
-      act(() => es.simulateEvent('merge_failed', {
+      act(() => es!.simulateEvent('merge_failed', {
         book_id: 42, book_title: 'My Book', error: 'Cancelled by user', reason: 'cancelled',
       }));
 
@@ -1201,9 +1201,9 @@ describe('#312 cache-miss scoping — patchActivityProgress', () => {
       const { wrapper } = createWrapper();
       renderHook(() => useEventSource('key'), { wrapper });
       const es = MockEventSource.instances[0];
-      act(() => es.simulateOpen());
+      act(() => es!.simulateOpen());
 
-      act(() => es.simulateEvent('merge_failed', {
+      act(() => es!.simulateEvent('merge_failed', {
         book_id: 42, book_title: 'My Book', error: 'ffmpeg crashed', reason: 'error',
       }));
 
@@ -1215,10 +1215,10 @@ describe('#312 cache-miss scoping — patchActivityProgress', () => {
       renderHook(() => useEventSource('key'), { wrapper });
       const { result } = renderHook(() => useMergeActivityCards());
       const es = MockEventSource.instances[0];
-      act(() => es.simulateOpen());
+      act(() => es!.simulateOpen());
 
-      act(() => es.simulateEvent('merge_started', { book_id: 42, book_title: 'My Book' }));
-      act(() => es.simulateEvent('merge_failed', {
+      act(() => es!.simulateEvent('merge_started', { book_id: 42, book_title: 'My Book' }));
+      act(() => es!.simulateEvent('merge_failed', {
         book_id: 42, book_title: 'My Book', error: 'ffmpeg crashed',
       }));
 
@@ -1249,8 +1249,8 @@ describe('#637 import SSE cache/toast behaviors', () => {
     const es = MockEventSource.instances[0];
 
     act(() => {
-      es.simulateOpen();
-      es.simulateEvent('import_progress', {
+      es!.simulateOpen();
+      es!.simulateEvent('import_progress', {
         job_id: 1, book_id: 42, book_title: 'Test', phase: 'copying', progress: 0.5,
         byte_counter: { current: 5000, total: 10000 },
       });
@@ -1276,8 +1276,8 @@ describe('#637 import SSE cache/toast behaviors', () => {
     const es = MockEventSource.instances[0];
 
     act(() => {
-      es.simulateOpen();
-      es.simulateEvent('import_progress', {
+      es!.simulateOpen();
+      es!.simulateEvent('import_progress', {
         job_id: 99, book_id: 42, book_title: 'Test', phase: 'copying', progress: 0.5,
       });
     });
@@ -1293,8 +1293,8 @@ describe('#637 import SSE cache/toast behaviors', () => {
     const es = MockEventSource.instances[0];
 
     act(() => {
-      es.simulateOpen();
-      es.simulateEvent('import_failed', {
+      es!.simulateOpen();
+      es!.simulateEvent('import_failed', {
         job_id: 1, book_id: 42, book_title: 'Failed Book', phase: 'copying', error_message: 'Copy failed',
       });
     });
@@ -1313,8 +1313,8 @@ describe('#637 import SSE cache/toast behaviors', () => {
     const es = MockEventSource.instances[0];
 
     act(() => {
-      es.simulateOpen();
-      es.simulateEvent('import_phase_change', {
+      es!.simulateOpen();
+      es!.simulateEvent('import_phase_change', {
         job_id: 1, book_id: 42, book_title: 'Test', from: 'analyzing', to: 'copying',
       });
     });
@@ -1330,8 +1330,8 @@ describe('#637 import SSE cache/toast behaviors', () => {
     const es = MockEventSource.instances[0];
 
     act(() => {
-      es.simulateOpen();
-      es.simulateEvent('import_complete', {
+      es!.simulateOpen();
+      es!.simulateEvent('import_complete', {
         download_id: 0, book_id: 42, book_title: 'Done Book', job_id: 1, elapsed_ms: 5000,
       });
     });
@@ -1354,8 +1354,8 @@ describe('#707 nullable book_id in import event payloads', () => {
     const es = MockEventSource.instances[0];
 
     act(() => {
-      es.simulateOpen();
-      es.simulateEvent('import_complete', {
+      es!.simulateOpen();
+      es!.simulateEvent('import_complete', {
         download_id: null, book_id: null, book_title: 'Done Book', job_id: 1, elapsed_ms: 5000,
       });
     });
@@ -1374,8 +1374,8 @@ describe('#707 nullable book_id in import event payloads', () => {
     const es = MockEventSource.instances[0];
 
     act(() => {
-      es.simulateOpen();
-      es.simulateEvent('import_phase_change', {
+      es!.simulateOpen();
+      es!.simulateEvent('import_phase_change', {
         job_id: 1, book_id: null, book_title: 'Test', from: 'analyzing', to: 'copying',
       });
     });
@@ -1394,8 +1394,8 @@ describe('#707 nullable book_id in import event payloads', () => {
     const es = MockEventSource.instances[0];
 
     act(() => {
-      es.simulateOpen();
-      es.simulateEvent('import_progress', {
+      es!.simulateOpen();
+      es!.simulateEvent('import_progress', {
         job_id: 1, book_id: null, book_title: 'Test', phase: 'copying', progress: 0.5,
       });
     });
@@ -1412,8 +1412,8 @@ describe('#707 nullable book_id in import event payloads', () => {
     const es = MockEventSource.instances[0];
 
     act(() => {
-      es.simulateOpen();
-      es.simulateEvent('import_failed', {
+      es!.simulateOpen();
+      es!.simulateEvent('import_failed', {
         job_id: 1, book_id: null, book_title: 'Failed Book', phase: 'copying', error_message: 'fail',
       });
     });
@@ -1510,8 +1510,8 @@ describe('#706 CACHE_INVALIDATION_MATRIX runtime semantics', () => {
     const invalidateSpy = vi.spyOn(queryClient, 'invalidateQueries');
     const es = MockEventSource.instances[0];
     act(() => {
-      es.simulateOpen();
-      es.simulateEvent(type, payload);
+      es!.simulateOpen();
+      es!.simulateEvent(type, payload);
     });
     const cached = queryClient.getQueryData(queryKeys.activity()) as { data: Record<string, unknown>[]; total: number };
     expect(cached.data[0]).toMatchObject({
@@ -1532,8 +1532,8 @@ describe('#706 CACHE_INVALIDATION_MATRIX runtime semantics', () => {
     const invalidateSpy = vi.spyOn(queryClient, 'invalidateQueries');
     const es = MockEventSource.instances[0];
     act(() => {
-      es.simulateOpen();
-      es.simulateEvent(type, payload);
+      es!.simulateOpen();
+      es!.simulateEvent(type, payload);
     });
     const cached = queryClient.getQueryData(queryKeys.importJobs()) as Record<string, unknown>[];
     expect(cached[0]).toMatchObject({
@@ -1552,8 +1552,8 @@ describe('#706 CACHE_INVALIDATION_MATRIX runtime semantics', () => {
     const setSpy = vi.spyOn(queryClient, 'setQueryData');
     const es = MockEventSource.instances[0];
     act(() => {
-      es.simulateOpen();
-      es.simulateEvent(type, payload);
+      es!.simulateOpen();
+      es!.simulateEvent(type, payload);
     });
     const trackedKeys: readonly (readonly unknown[])[] = [
       ['activity'],
@@ -1574,8 +1574,8 @@ describe('#706 CACHE_INVALIDATION_MATRIX runtime semantics', () => {
     const invalidateSpy = vi.spyOn(queryClient, 'invalidateQueries');
     const es = MockEventSource.instances[0];
     act(() => {
-      es.simulateOpen();
-      es.simulateEvent(type, payload);
+      es!.simulateOpen();
+      es!.simulateEvent(type, payload);
     });
 
     // Positive assertions: each declared family is invalidated with the consumer's exact call shape.
@@ -1648,7 +1648,7 @@ describe('#706 CACHE_INVALIDATION_MATRIX runtime semantics', () => {
     const { wrapper } = createWrapper();
     renderHook(() => useEventSource('key'), { wrapper });
     const es = MockEventSource.instances[0];
-    expect(() => es.simulateEvent('not_in_matrix', {})).not.toThrow();
+    expect(() => es!.simulateEvent('not_in_matrix', {})).not.toThrow();
     const registered = [...(es as unknown as { listeners: Map<string, unknown[]> }).listeners.keys()];
     expect(registered).not.toContain('not_in_matrix');
   });
@@ -1677,8 +1677,8 @@ describe('#722 SSE schema validation', () => {
     const es = MockEventSource.instances[0];
 
     act(() => {
-      es.simulateOpen();
-      es.simulateRawEvent('merge_complete', 'not-json');
+      es!.simulateOpen();
+      es!.simulateRawEvent('merge_complete', 'not-json');
     });
 
     expect(warnSpy).toHaveBeenCalledWith(
@@ -1696,9 +1696,9 @@ describe('#722 SSE schema validation', () => {
     const es = MockEventSource.instances[0];
 
     act(() => {
-      es.simulateOpen();
-      es.simulateRawEvent('merge_complete', '{not valid json');
-      es.simulateEvent('merge_complete', { book_id: 1, book_title: 'Book', success: true, message: 'ok' });
+      es!.simulateOpen();
+      es!.simulateRawEvent('merge_complete', '{not valid json');
+      es!.simulateEvent('merge_complete', { book_id: 1, book_title: 'Book', success: true, message: 'ok' });
     });
 
     expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: queryKeys.books() });
@@ -1715,8 +1715,8 @@ describe('#722 SSE schema validation', () => {
     const es = MockEventSource.instances[0];
 
     act(() => {
-      es.simulateOpen();
-      es.simulateEvent('import_progress', {
+      es!.simulateOpen();
+      es!.simulateEvent('import_progress', {
         job_id: 1,
         book_id: 42,
         book_title: 'Test',
@@ -1743,8 +1743,8 @@ describe('#722 SSE schema validation', () => {
     const es = MockEventSource.instances[0];
 
     act(() => {
-      es.simulateOpen();
-      es.simulateEvent('merge_complete', { book_id: 42, book_title: 'My Book', success: true });
+      es!.simulateOpen();
+      es!.simulateEvent('merge_complete', { book_id: 42, book_title: 'My Book', success: true });
     });
 
     expect(warnSpy).toHaveBeenCalledWith(
@@ -1767,8 +1767,8 @@ describe('#722 SSE schema validation', () => {
     const es = MockEventSource.instances[0];
 
     act(() => {
-      es.simulateOpen();
-      es.simulateEvent('download_progress', { download_id: 1, book_id: 2, percentage: '0.5', speed: null, eta: null });
+      es!.simulateOpen();
+      es!.simulateEvent('download_progress', { download_id: 1, book_id: 2, percentage: '0.5', speed: null, eta: null });
     });
 
     expect(warnSpy).toHaveBeenCalledWith(
@@ -1776,7 +1776,7 @@ describe('#722 SSE schema validation', () => {
       expect.any(Object),
     );
     const cached = queryClient.getQueryData<{ data: { id: number; progress: number }[] }>(queueKey);
-    expect(cached!.data[0].progress).toBe(0.1);
+    expect(cached!.data[0]!.progress).toBe(0.1);
   });
 
   it('accepts import_progress with book_id: null (nullable per schema)', () => {
@@ -1789,8 +1789,8 @@ describe('#722 SSE schema validation', () => {
     const es = MockEventSource.instances[0];
 
     act(() => {
-      es.simulateOpen();
-      es.simulateEvent('import_progress', {
+      es!.simulateOpen();
+      es!.simulateEvent('import_progress', {
         job_id: 1,
         book_id: null,
         book_title: 'Test',
@@ -1814,8 +1814,8 @@ describe('#722 SSE schema validation', () => {
     const es = MockEventSource.instances[0];
 
     act(() => {
-      es.simulateOpen();
-      es.simulateEvent('import_progress', {
+      es!.simulateOpen();
+      es!.simulateEvent('import_progress', {
         job_id: 1,
         book_id: 42,
         book_title: 'Test',

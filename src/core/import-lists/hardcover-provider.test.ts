@@ -275,7 +275,7 @@ describe('HardcoverProvider', () => {
       const provider = new HardcoverProvider({ apiKey: 'test-key', listType: 'trending' });
       const items = await provider.fetchItems();
       expect(items).toHaveLength(1);
-      expect(items[0].title).toBe('Real Title');
+      expect(items[0]!.title).toBe('Real Title');
     });
 
     it('passes through unknown extra fields and still maps successfully', async () => {
@@ -293,7 +293,7 @@ describe('HardcoverProvider', () => {
       const provider = new HardcoverProvider({ apiKey: 'test-key', listType: 'trending' });
       const items = await provider.fetchItems();
       expect(items).toHaveLength(1);
-      expect(items[0].title).toBe('X');
+      expect(items[0]!.title).toBe('X');
     });
   });
 });

@@ -74,6 +74,6 @@ describe('SSEProvider', () => {
     await waitFor(() => {
       expect(MockEventSource.instances).toHaveLength(1);
     });
-    expect(MockEventSource.instances[0].url).toContain('apikey=test-api-key');
+    expect(MockEventSource.instances[0]!.url).toContain('apikey=test-api-key');
   });
 });

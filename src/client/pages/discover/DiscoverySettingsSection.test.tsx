@@ -373,7 +373,7 @@ describe('DiscoverySettingsSection', () => {
       expect(mockApi.updateSettings).toHaveBeenCalledTimes(1);
     });
 
-    const payload = mockApi.updateSettings.mock.calls[0][0];
+    const payload = mockApi.updateSettings.mock.calls[0]![0];
     expect(payload.discovery).toEqual({
       enabled: true,
       intervalHours: 24,

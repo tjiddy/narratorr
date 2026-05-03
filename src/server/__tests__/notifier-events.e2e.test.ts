@@ -227,7 +227,7 @@ describe('Notifier event triggers E2E', () => {
 
       // Grab-only webhook should NOT have received the on_import event
       expect(grabOnlyCaptured).toHaveLength(0);
-      expect((allEventsCaptured[0].body as Record<string, unknown>).event).toBe('on_import');
+      expect((allEventsCaptured[0]!.body as Record<string, unknown>).event).toBe('on_import');
     });
 
     it('two webhooks subscribed to on_grab both receive notification', async () => {
@@ -275,7 +275,7 @@ describe('Notifier event triggers E2E', () => {
 
       await waitForRequests(captured, 1);
 
-      const payload = captured[0].body as Record<string, unknown>;
+      const payload = captured[0]!.body as Record<string, unknown>;
       expect(payload.event).toBe('on_grab');
       expect(payload.book).toEqual(expect.objectContaining({ title: 'Grab Payload Test' }));
       expect(payload.release).toEqual(expect.objectContaining({
@@ -302,7 +302,7 @@ describe('Notifier event triggers E2E', () => {
 
       await waitForRequests(captured, 1);
 
-      const payload = captured[0].body as Record<string, unknown>;
+      const payload = captured[0]!.body as Record<string, unknown>;
       expect(payload.event).toBe('on_import');
       expect(payload.book).toEqual(expect.objectContaining({
         title: 'Import Payload Test',
@@ -331,7 +331,7 @@ describe('Notifier event triggers E2E', () => {
 
       await waitForRequests(captured, 1);
 
-      const payload = captured[0].body as Record<string, unknown>;
+      const payload = captured[0]!.body as Record<string, unknown>;
       expect(payload.event).toBe('on_failure');
       expect(payload.book).toEqual(expect.objectContaining({ title: 'Failure Payload Test' }));
       expect(payload.error).toEqual(expect.objectContaining({
@@ -359,7 +359,7 @@ describe('Notifier event triggers E2E', () => {
 
       await waitForRequests(captured, 1);
 
-      const body = captured[0].body as { embeds: Record<string, unknown>[] };
+      const body = captured[0]!.body as { embeds: Record<string, unknown>[] };
       expect(body.embeds).toHaveLength(1);
 
       const embed = body.embeds[0];
@@ -370,14 +370,14 @@ describe('Notifier event triggers E2E', () => {
       }));
 
       // Fields should include Book title and Release title
-      const fields = embed.fields as { name: string; value: string }[];
+      const fields = embed!.fields as { name: string; value: string }[];
       expect(fields).toEqual(expect.arrayContaining([
         expect.objectContaining({ name: 'Book', value: 'Discord Format Test' }),
         expect.objectContaining({ name: 'Release', value: 'Discord Format Test' }),
       ]));
 
       // Timestamp should be a valid ISO 8601 string (round-trips through toISOString())
-      const ts = embed.timestamp as string;
+      const ts = embed!.timestamp as string;
       expect(typeof ts).toBe('string');
       expect(new Date(ts).toISOString()).toBe(ts);
     });

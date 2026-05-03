@@ -232,7 +232,7 @@ describe('useMergeActivityCards (list-returning hook)', () => {
       setMergeProgress(42, { bookTitle: 'Queued Book', phase: 'starting' });
     });
 
-    expect(result.current[0].bookTitle).toBe('Queued Book');
+    expect(result.current[0]!.bookTitle).toBe('Queued Book');
   });
 
   it('sets terminal state fields on merge_complete instead of clearing', () => {
@@ -345,8 +345,8 @@ describe('useMergeActivityCards (list-returning hook)', () => {
       setMergeProgress(42, { bookTitle: 'My Book', phase: 'starting' });
     });
 
-    expect(result.current[0].phase).toBe('starting');
-    expect(result.current[0].position).toBeUndefined();
+    expect(result.current[0]!.phase).toBe('starting');
+    expect(result.current[0]!.position).toBeUndefined();
   });
 
   it('supports multiple merge cards simultaneously', () => {
@@ -396,14 +396,14 @@ describe('useMergeActivityCards (list-returning hook)', () => {
       setMergeProgress(42, { bookTitle: 'My Book', phase: 'starting' });
     });
     expect(result.current).toHaveLength(1);
-    expect(result.current[0].phase).toBe('starting');
+    expect(result.current[0]!.phase).toBe('starting');
 
     // After 3s, the stale timer should NOT have fired — card still exists
     act(() => {
       vi.advanceTimersByTime(3000);
     });
     expect(result.current).toHaveLength(1);
-    expect(result.current[0].phase).toBe('starting');
+    expect(result.current[0]!.phase).toBe('starting');
   });
 
   it('includes enrichmentWarning in terminal success state', () => {
@@ -419,6 +419,6 @@ describe('useMergeActivityCards (list-returning hook)', () => {
       });
     });
 
-    expect(result.current[0].enrichmentWarning).toBe('Metadata update failed');
+    expect(result.current[0]!.enrichmentWarning).toBe('Metadata update failed');
   });
 });

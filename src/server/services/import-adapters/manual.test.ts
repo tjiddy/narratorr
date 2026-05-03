@@ -378,11 +378,11 @@ describe('ManualImportAdapter', () => {
         // 3 forward renames; collisions on '{title}' → 'Test Book', 'Test Book (2)', 'Test Book (3)'.
         expect(vi.mocked(fs.rename)).toHaveBeenCalledTimes(3);
         const calls = vi.mocked(fs.rename).mock.calls;
-        expect(calls[0].map(normPath)).toEqual(
+        expect(calls[0]!.map(normPath)).toEqual(
           [`${TARGET_PATH}/a.mp3`, `${TARGET_PATH}/Test Book.mp3`]);
-        expect(calls[1].map(normPath)).toEqual(
+        expect(calls[1]!.map(normPath)).toEqual(
           [`${TARGET_PATH}/b.mp3`, `${TARGET_PATH}/Test Book (2).mp3`]);
-        expect(calls[2].map(normPath)).toEqual(
+        expect(calls[2]!.map(normPath)).toEqual(
           [`${TARGET_PATH}/c.mp3`, `${TARGET_PATH}/Test Book (3).mp3`]);
       });
 
@@ -517,16 +517,16 @@ describe('ManualImportAdapter', () => {
         expect(vi.mocked(fs.rename)).toHaveBeenCalledTimes(5);
         const calls = vi.mocked(fs.rename).mock.calls;
         // Forward calls
-        expect(calls[0].map(normPath)).toEqual(
+        expect(calls[0]!.map(normPath)).toEqual(
           [`${TARGET_PATH}/a.mp3`, `${TARGET_PATH}/Test Book.mp3`]);
-        expect(calls[1].map(normPath)).toEqual(
+        expect(calls[1]!.map(normPath)).toEqual(
           [`${TARGET_PATH}/b.mp3`, `${TARGET_PATH}/Test Book (2).mp3`]);
-        expect(calls[2].map(normPath)).toEqual(
+        expect(calls[2]!.map(normPath)).toEqual(
           [`${TARGET_PATH}/c.mp3`, `${TARGET_PATH}/Test Book (3).mp3`]);
         // Rollback calls (reverse order, swapped from/to)
-        expect(calls[3].map(normPath)).toEqual(
+        expect(calls[3]!.map(normPath)).toEqual(
           [`${TARGET_PATH}/Test Book (2).mp3`, `${TARGET_PATH}/b.mp3`]);
-        expect(calls[4].map(normPath)).toEqual(
+        expect(calls[4]!.map(normPath)).toEqual(
           [`${TARGET_PATH}/Test Book.mp3`, `${TARGET_PATH}/a.mp3`]);
       });
 
@@ -569,7 +569,7 @@ describe('ManualImportAdapter', () => {
         await adapter.process(job, ctx);
 
         expect(vi.mocked(fs.rename)).toHaveBeenCalledTimes(1);
-        expect(vi.mocked(fs.rename).mock.calls[0].map(normPath)).toEqual(
+        expect(vi.mocked(fs.rename).mock.calls[0]!.map(normPath)).toEqual(
           [`${TARGET_PATH}/a.mp3`, `${TARGET_PATH}/Jane Narrator.mp3`]);
       });
 
@@ -589,7 +589,7 @@ describe('ManualImportAdapter', () => {
 
         expect(deps.bookService.getById).toHaveBeenCalledWith(42);
         expect(vi.mocked(fs.rename)).toHaveBeenCalledTimes(1);
-        expect(vi.mocked(fs.rename).mock.calls[0].map(normPath)).toEqual(
+        expect(vi.mocked(fs.rename).mock.calls[0]!.map(normPath)).toEqual(
           [`${TARGET_PATH}/a.mp3`, `${TARGET_PATH}/Test Book.mp3`]);
       });
     });

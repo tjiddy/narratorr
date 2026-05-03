@@ -412,7 +412,7 @@ describe('IndexerFields', () => {
       await waitFor(() => {
         expect(onSubmit).toHaveBeenCalled();
       });
-      expect(onSubmit.mock.calls[0][0].settings.isVip).toBe(true);
+      expect(onSubmit.mock.calls[0]![0].settings.isVip).toBe(true);
     });
 
     it('#339 skips detection when MAM ID is sentinel value (********)', async () => {
@@ -483,7 +483,7 @@ describe('IndexerFields', () => {
       await user.tab();
 
       await waitFor(() => {
-        const call = (api.testIndexerConfig as Mock).mock.calls[0][0];
+        const call = (api.testIndexerConfig as Mock).mock.calls[0]![0];
         expect(call.settings.useProxy).toBeFalsy();
       });
     });
@@ -525,7 +525,7 @@ describe('IndexerFields', () => {
       await waitFor(() => {
         expect(onSubmit).toHaveBeenCalled();
       });
-      expect(onSubmit.mock.calls[0][0].settings.mamUsername).toBe('DetectedUser');
+      expect(onSubmit.mock.calls[0]![0].settings.mamUsername).toBe('DetectedUser');
     });
 
     it('refresh button triggers a second detection request', async () => {
@@ -773,8 +773,8 @@ describe('IndexerFields', () => {
       await waitFor(() => {
         expect(onSubmit).toHaveBeenCalled();
       });
-      expect(onSubmit.mock.calls[0][0].settings.isVip).toBe(true);
-      expect(onSubmit.mock.calls[0][0].settings.mamUsername).toBe('NewVipUser');
+      expect(onSubmit.mock.calls[0]![0].settings.isVip).toBe(true);
+      expect(onSubmit.mock.calls[0]![0].settings.mamUsername).toBe('NewVipUser');
     });
 
     it('#361 refresh with sentinel + indexerId shows DetectionOverlay spinner during API call', async () => {

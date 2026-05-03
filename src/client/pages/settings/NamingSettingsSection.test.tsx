@@ -309,7 +309,7 @@ describe('NamingSettingsSection', () => {
       const previews = screen.getAllByTestId('preview-with-series');
       // The second preview-with-series belongs to the file format field
       expect(previews.length).toBe(2);
-      expect(previews[1].textContent).toContain('.m4b');
+      expect(previews[1]!.textContent).toContain('.m4b');
     });
 
     it('folder format preview does not show .m4b suffix', async () => {
@@ -319,7 +319,7 @@ describe('NamingSettingsSection', () => {
       });
       // The first preview-with-series belongs to the folder format field
       const previews = screen.getAllByTestId('preview-with-series');
-      expect(previews[0].textContent).not.toContain('.m4b');
+      expect(previews[0]!.textContent).not.toContain('.m4b');
     });
 
     it('preview container not rendered when format field is empty', async () => {

@@ -172,10 +172,10 @@ describe('ActivityPage pagination clamp (#93)', () => {
     // Navigate queue to page 3 via rendered Next page controls.
     // placeholderData in useActivitySection prevents data→undefined during key change,
     // so the clamp useEffect never fires spuriously and navigation succeeds.
-    await user.click(screen.getAllByRole('button', { name: /next page/i })[0]); // queue 1→2
+    await user.click(screen.getAllByRole('button', { name: /next page/i })[0]!); // queue 1→2
     await waitFor(() => expect(pageLabels()[0]).toHaveTextContent('Page 2 of 3'));
 
-    await user.click(screen.getAllByRole('button', { name: /next page/i })[0]); // queue 2→3
+    await user.click(screen.getAllByRole('button', { name: /next page/i })[0]!); // queue 2→3
     await waitFor(() => expect(pageLabels()[0]).toHaveTextContent('Page 3 of 3'));
 
     // Simulate queue total shrinking to 100 (2 pages). Update both the current page
@@ -218,7 +218,7 @@ describe('ActivityPage pagination clamp (#93)', () => {
     });
 
     // Navigate queue to page 2
-    await user.click(screen.getAllByRole('button', { name: /next page/i })[0]);
+    await user.click(screen.getAllByRole('button', { name: /next page/i })[0]!);
     await waitFor(() => expect(screen.getAllByText(/Page \d+ of \d+/)[0]).toHaveTextContent('Page 2 of 3'));
 
     // Snapshot clampToTotal call count after navigation settles.
@@ -269,9 +269,9 @@ describe('ActivityPage pagination clamp (#93)', () => {
     });
 
     // Navigate queue to page 3
-    await user.click(screen.getAllByRole('button', { name: /next page/i })[0]);
+    await user.click(screen.getAllByRole('button', { name: /next page/i })[0]!);
     await waitFor(() => expect(screen.getAllByText(/Page \d+ of \d+/)[0]).toHaveTextContent('Page 2 of 3'));
-    await user.click(screen.getAllByRole('button', { name: /next page/i })[0]);
+    await user.click(screen.getAllByRole('button', { name: /next page/i })[0]!);
     await waitFor(() => expect(screen.getAllByText(/Page \d+ of \d+/)[0]).toHaveTextContent('Page 3 of 3'));
 
     // Shrink total to 30 (≤ limit=50, so only 1 page).
@@ -329,7 +329,7 @@ describe('ActivityPage pagination clamp (#93)', () => {
     });
 
     // Navigate queue to page 2
-    await user.click(screen.getAllByRole('button', { name: /next page/i })[0]);
+    await user.click(screen.getAllByRole('button', { name: /next page/i })[0]!);
     await waitFor(() => expect(screen.getAllByText(/Page \d+ of \d+/)[0]).toHaveTextContent('Page 2 of 3'));
 
     // Shrink total to 0.
@@ -494,7 +494,7 @@ describe('ActivityPage', () => {
 
     // API was called with correct ID (TanStack Query passes extra context arg)
     await waitFor(() => {
-      expect(vi.mocked(api.cancelDownload).mock.calls[0][0]).toBe(7);
+      expect(vi.mocked(api.cancelDownload).mock.calls[0]![0]).toBe(7);
     });
   });
 
@@ -521,7 +521,7 @@ describe('ActivityPage', () => {
 
     // API was called with correct ID (TanStack Query passes extra context arg)
     await waitFor(() => {
-      expect(vi.mocked(api.retryDownload).mock.calls[0][0]).toBe(9);
+      expect(vi.mocked(api.retryDownload).mock.calls[0]![0]).toBe(9);
     });
   });
 
@@ -567,7 +567,7 @@ describe('ActivityPage', () => {
     await user.click(approveSpan.closest('button')!);
 
     await waitFor(() => {
-      expect(vi.mocked(api.approveDownload).mock.calls[0][0]).toBe(20);
+      expect(vi.mocked(api.approveDownload).mock.calls[0]![0]).toBe(20);
     });
   });
 
@@ -707,7 +707,7 @@ describe('ActivityPage', () => {
 
     // Click "Reject" on Row One
     const rejectButtons = screen.getAllByText('Reject');
-    await user.click(rejectButtons[0].closest('button')!);
+    await user.click(rejectButtons[0]!.closest('button')!);
 
     // Row One shows spinner on its Reject button
     await waitFor(() => {
@@ -812,7 +812,7 @@ describe('ActivityPage', () => {
 
       // Click retry on first card
       const retryBtns = screen.getAllByText('Retry');
-      await user.click(retryBtns[0].closest('button')!);
+      await user.click(retryBtns[0]!.closest('button')!);
 
       // Only the clicked card shows Retrying..., the other stays as Retry
       await waitFor(() => {
@@ -1020,8 +1020,8 @@ describe('#312 page-level SSE integration', () => {
 
     // Simulate SSE event for a download not in cache → triggers cache-miss invalidation → refetch
     await act(async () => {
-      es.simulateOpen();
-      es.simulateEvent('download_progress', { download_id: 5, book_id: 10, percentage: 0.3, speed: null, eta: null });
+      es!.simulateOpen();
+      es!.simulateEvent('download_progress', { download_id: 5, book_id: 10, percentage: 0.3, speed: null, eta: null });
     });
 
     // After refetch, page should show the download
@@ -1052,8 +1052,8 @@ describe('#312 page-level SSE integration', () => {
 
     // Simulate progress update via SSE — should patch cache in-place
     await act(async () => {
-      es.simulateOpen();
-      es.simulateEvent('download_progress', { download_id: 1, book_id: 2, percentage: 0.75, speed: null, eta: null });
+      es!.simulateOpen();
+      es!.simulateEvent('download_progress', { download_id: 1, book_id: 2, percentage: 0.75, speed: null, eta: null });
     });
 
     // Progress should update without a full refetch

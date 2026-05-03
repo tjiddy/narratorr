@@ -89,7 +89,7 @@ describe('DownloadClientsSettings', () => {
     await waitFor(() => {
       expect(api.createClient).toHaveBeenCalled();
     });
-    expect((api.createClient as Mock).mock.calls[0][0]).toMatchObject({
+    expect((api.createClient as Mock).mock.calls[0]![0]).toMatchObject({
       name: 'New Client',
       settings: expect.objectContaining({ host: '192.168.1.5' }),
     });
@@ -127,7 +127,7 @@ describe('DownloadClientsSettings', () => {
       expect(api.createClient).toHaveBeenCalled();
     });
     // Verify pathMappings survived the full DownloadClientsSettings → CrudSettingsPage → useCrudSettings → api.createClient chain
-    expect((api.createClient as Mock).mock.calls[0][0]).toMatchObject({
+    expect((api.createClient as Mock).mock.calls[0]![0]).toMatchObject({
       name: 'Remote Client',
       pathMappings: [{ remotePath: '/mnt/downloads', localPath: '/local/downloads' }],
     });
@@ -248,11 +248,11 @@ describe('DownloadClientsSettings', () => {
     await waitForListLoad('My qBittorrent');
 
     const testButtons = screen.getAllByText('Test').map((el) => el.closest('button')!);
-    await user.click(testButtons[0]);
+    await user.click(testButtons[0]!);
 
     await waitFor(() => {
       expect(api.testClient).toHaveBeenCalled();
-      expect((api.testClient as Mock).mock.calls[0][0]).toBe(1);
+      expect((api.testClient as Mock).mock.calls[0]![0]).toBe(1);
     });
   });
 
@@ -274,7 +274,7 @@ describe('DownloadClientsSettings', () => {
       await waitForListLoad('My qBittorrent');
 
       const editButtons = screen.getAllByText('Edit').map((el) => el.closest('button')!);
-      await user.click(editButtons[0]);
+      await user.click(editButtons[0]!);
 
       expect(screen.getByTestId('modal-backdrop')).toBeInTheDocument();
       expect(screen.getByText('Edit Download Client')).toBeInTheDocument();

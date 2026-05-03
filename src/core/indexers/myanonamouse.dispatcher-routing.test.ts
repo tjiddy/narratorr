@@ -61,9 +61,9 @@ describe('MAM dispatcher-routing regression — fetchWithCookie (F2)', () => {
     await makeProxiedIndexer().search('test');
 
     expect(mockHelper).toHaveBeenCalled();
-    const url = mockHelper.mock.calls[0][0] as string;
+    const url = mockHelper.mock.calls[0]![0] as string;
     expect(url).toContain('loadSearchJSONbasic.php');
-    const init = mockHelper.mock.calls[0][1] as { dispatcher?: unknown };
+    const init = mockHelper.mock.calls[0]![1] as { dispatcher?: unknown };
     expect(init.dispatcher).toBeDefined();
   });
 
@@ -78,7 +78,7 @@ describe('MAM dispatcher-routing regression — fetchWithCookie (F2)', () => {
     await makeDirectIndexer().search('test');
 
     expect(mockHelper).toHaveBeenCalled();
-    const init = mockHelper.mock.calls[0][1] as { dispatcher?: unknown };
+    const init = mockHelper.mock.calls[0]![1] as { dispatcher?: unknown };
     expect(init.dispatcher).toBeUndefined();
   });
 });
@@ -112,9 +112,9 @@ describe('MAM dispatcher-routing regression — fetchTorrentAsDataUri (F3)', () 
     // Two helper invocations: search + torrent download. The torrent
     // download is the second call and MUST also carry the dispatcher.
     expect(mockHelper).toHaveBeenCalledTimes(2);
-    const torrentUrl = mockHelper.mock.calls[1][0] as string;
+    const torrentUrl = mockHelper.mock.calls[1]![0] as string;
     expect(torrentUrl).toContain('/tor/download.php');
-    const torrentInit = mockHelper.mock.calls[1][1] as { dispatcher?: unknown };
+    const torrentInit = mockHelper.mock.calls[1]![1] as { dispatcher?: unknown };
     expect(torrentInit.dispatcher).toBeDefined();
   });
 });

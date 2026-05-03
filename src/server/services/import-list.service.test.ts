@@ -33,7 +33,7 @@ describe('ImportListService', () => {
   describe('testConfig', () => {
     it('calls provider test with provided config', async () => {
       const mockProvider = { test: vi.fn().mockResolvedValue({ success: true }), fetchItems: vi.fn() };
-      mockFactories.abs.mockReturnValue(mockProvider);
+      mockFactories.abs!.mockReturnValue(mockProvider);
 
       const db = createMockDb();
       service = new ImportListService(inject<Db>(db), mockLog);
@@ -56,7 +56,7 @@ describe('ImportListService', () => {
     });
 
     it('catches provider test errors', async () => {
-      mockFactories.nyt.mockImplementation(() => { throw new Error('Bad config'); });
+      mockFactories.nyt!.mockImplementation(() => { throw new Error('Bad config'); });
       const db = createMockDb();
       service = new ImportListService(inject<Db>(db), mockLog);
 
@@ -68,7 +68,7 @@ describe('ImportListService', () => {
     describe('sentinel resolution (#827)', () => {
       it('with id, replaces sentinel apiKey with saved (decrypted) value before factory call', async () => {
         const mockProvider = { test: vi.fn().mockResolvedValue({ success: true }), fetchItems: vi.fn() };
-        mockFactories.abs.mockReturnValue(mockProvider);
+        mockFactories.abs!.mockReturnValue(mockProvider);
 
         const encryptedApiKey = encrypt('real-api-key', getKey());
         const db = createMockDb();
@@ -94,7 +94,7 @@ describe('ImportListService', () => {
 
       it('without id, passes sentinel literally to provider (no resolution)', async () => {
         const mockProvider = { test: vi.fn().mockResolvedValue({ success: false }), fetchItems: vi.fn() };
-        mockFactories.abs.mockReturnValue(mockProvider);
+        mockFactories.abs!.mockReturnValue(mockProvider);
         const db = createMockDb();
         service = new ImportListService(inject<Db>(db), mockLog);
 
@@ -138,7 +138,7 @@ describe('ImportListService', () => {
 
     it('test(id) coerces saved numeric-string shelfId and constructs provider with number', async () => {
       const mockProvider = { test: vi.fn().mockResolvedValue({ success: true }), fetchItems: vi.fn() };
-      mockFactories.hardcover.mockReturnValue(mockProvider);
+      mockFactories.hardcover!.mockReturnValue(mockProvider);
 
       const db = createMockDb();
       db.select.mockReturnValue(mockDbChain([makeHardcoverList({ apiKey: 'k', listType: 'shelf', shelfId: '42' })]));
@@ -152,7 +152,7 @@ describe('ImportListService', () => {
     });
 
     it('test(id) rejects saved row with non-numeric shelfId without invoking provider factory', async () => {
-      mockFactories.hardcover.mockClear();
+      mockFactories.hardcover!.mockClear();
       const db = createMockDb();
       db.select.mockReturnValue(mockDbChain([makeHardcoverList({ apiKey: 'k', listType: 'shelf', shelfId: 'junk' })]));
       service = new ImportListService(inject<Db>(db), mockLog);
@@ -165,7 +165,7 @@ describe('ImportListService', () => {
 
     it('legacy default compatibility: trending row with shelfId === "" parses successfully', async () => {
       const mockProvider = { test: vi.fn().mockResolvedValue({ success: true }), fetchItems: vi.fn().mockResolvedValue([]) };
-      mockFactories.hardcover.mockReturnValue(mockProvider);
+      mockFactories.hardcover!.mockReturnValue(mockProvider);
 
       const db = createMockDb();
       const legacyRow = makeHardcoverList({ apiKey: 'k', listType: 'trending', shelfId: '' });
@@ -178,7 +178,7 @@ describe('ImportListService', () => {
       const testResult = await service.test(1);
       expect(testResult.success).toBe(true);
       // Legacy `''` is normalized away before parse, so the parsed object omits shelfId entirely.
-      const factoryArg = mockFactories.hardcover.mock.calls[0]?.[0] as Record<string, unknown>;
+      const factoryArg = mockFactories.hardcover!.mock.calls[0]?.[0] as Record<string, unknown>;
       expect(factoryArg).toEqual({ apiKey: 'k', listType: 'trending' });
 
       // syncDueLists also tolerates the legacy default — no validation error persisted
@@ -188,7 +188,7 @@ describe('ImportListService', () => {
     });
 
     it('syncDueLists records lastSyncError when saved shelfId fails validation', async () => {
-      mockFactories.hardcover.mockClear();
+      mockFactories.hardcover!.mockClear();
       const db = createMockDb();
       db.select.mockReturnValue(mockDbChain([makeHardcoverList({ apiKey: 'k', listType: 'shelf', shelfId: '1 } }' })]));
       const updateChain = mockDbChain([]);
@@ -203,7 +203,7 @@ describe('ImportListService', () => {
     });
 
     it('preview rejects invalid Hardcover shelfId without invoking provider factory (AC6)', async () => {
-      mockFactories.hardcover.mockClear();
+      mockFactories.hardcover!.mockClear();
       const db = createMockDb();
       service = new ImportListService(inject<Db>(db), mockLog);
 
@@ -226,7 +226,7 @@ describe('ImportListService', () => {
     }
 
     it('test(id) rejects saved row with path-injection libraryId without invoking provider factory', async () => {
-      mockFactories.abs.mockClear();
+      mockFactories.abs!.mockClear();
       const db = createMockDb();
       db.select.mockReturnValue(mockDbChain([makeAbsList({ serverUrl: 'http://abs.local', apiKey: 'k', libraryId: 'lib/../x' })]));
       service = new ImportListService(inject<Db>(db), mockLog);
@@ -238,7 +238,7 @@ describe('ImportListService', () => {
     });
 
     it('syncDueLists records lastSyncError when saved libraryId fails validation', async () => {
-      mockFactories.abs.mockClear();
+      mockFactories.abs!.mockClear();
       const db = createMockDb();
       db.select.mockReturnValue(mockDbChain([makeAbsList({ serverUrl: 'http://abs.local', apiKey: 'k', libraryId: 'lib/../x' })]));
       const updateChain = mockDbChain([]);
@@ -253,7 +253,7 @@ describe('ImportListService', () => {
     });
 
     it('preview rejects invalid ABS libraryId without invoking provider factory', async () => {
-      mockFactories.abs.mockClear();
+      mockFactories.abs!.mockClear();
       const db = createMockDb();
       service = new ImportListService(inject<Db>(db), mockLog);
 
@@ -268,7 +268,7 @@ describe('ImportListService', () => {
     it('returns first 10 items capped with total count', async () => {
       const items = Array.from({ length: 15 }, (_, i) => ({ title: `Book ${i}` }));
       const mockProvider = { fetchItems: vi.fn().mockResolvedValue(items), test: vi.fn() };
-      mockFactories.nyt.mockReturnValue(mockProvider);
+      mockFactories.nyt!.mockReturnValue(mockProvider);
 
       const db = createMockDb();
       service = new ImportListService(inject<Db>(db), mockLog);
@@ -280,7 +280,7 @@ describe('ImportListService', () => {
 
     it('returns empty items array when provider returns nothing', async () => {
       const mockProvider = { fetchItems: vi.fn().mockResolvedValue([]), test: vi.fn() };
-      mockFactories.hardcover.mockReturnValue(mockProvider);
+      mockFactories.hardcover!.mockReturnValue(mockProvider);
 
       const db = createMockDb();
       service = new ImportListService(inject<Db>(db), mockLog);
@@ -412,7 +412,7 @@ describe('ImportListService', () => {
         fetchItems: vi.fn().mockResolvedValue([{ title: 'New Book', author: 'Author' }]),
         test: vi.fn(),
       };
-      mockFactories.abs.mockReturnValue(mockProvider);
+      mockFactories.abs!.mockReturnValue(mockProvider);
 
       const db = createMockDb();
       const dueList = {
@@ -438,7 +438,7 @@ describe('ImportListService', () => {
 
     it('persists lastRunAt, nextRunAt, clears lastSyncError on success', async () => {
       const mockProvider = { fetchItems: vi.fn().mockResolvedValue([]), test: vi.fn() };
-      mockFactories.abs.mockReturnValue(mockProvider);
+      mockFactories.abs!.mockReturnValue(mockProvider);
 
       const db = createMockDb();
       const dueList = {
@@ -467,7 +467,7 @@ describe('ImportListService', () => {
 
     it('persists lastSyncError and advances nextRunAt on failure', async () => {
       const failProvider = { fetchItems: vi.fn().mockRejectedValue(new Error('Connection timeout')), test: vi.fn() };
-      mockFactories.abs.mockReturnValue(failProvider);
+      mockFactories.abs!.mockReturnValue(failProvider);
 
       const db = createMockDb();
       const dueList = {
@@ -493,7 +493,7 @@ describe('ImportListService', () => {
         fetchItems: vi.fn().mockResolvedValue([{ title: 'Import Book', author: 'Author Name' }]),
         test: vi.fn(),
       };
-      mockFactories.abs.mockReturnValue(mockProvider);
+      mockFactories.abs!.mockReturnValue(mockProvider);
 
       const db = createMockDb();
       const dueList = {
@@ -537,7 +537,7 @@ describe('ImportListService', () => {
         ]),
         test: vi.fn(),
       };
-      mockFactories.abs.mockReturnValue(mockProvider);
+      mockFactories.abs!.mockReturnValue(mockProvider);
 
       const db = createMockDb();
       const dueList = {
@@ -590,7 +590,7 @@ describe('ImportListService', () => {
           fetchItems: vi.fn().mockResolvedValue([{ title: 'My Book', author: 'Original Author', asin: 'B001' }]),
           test: vi.fn(),
         };
-        mockFactories.abs.mockReturnValue(mockProvider);
+        mockFactories.abs!.mockReturnValue(mockProvider);
 
         const db = createMockDb();
         db.select.mockReturnValueOnce(mockDbChain([dueList]));
@@ -617,7 +617,7 @@ describe('ImportListService', () => {
           fetchItems: vi.fn().mockResolvedValue([{ title: 'My Book', author: 'Author', asin: 'B002' }]),
           test: vi.fn(),
         };
-        mockFactories.abs.mockReturnValue(mockProvider);
+        mockFactories.abs!.mockReturnValue(mockProvider);
 
         const db = createMockDb();
         db.select.mockReturnValueOnce(mockDbChain([dueList]));
@@ -645,7 +645,7 @@ describe('ImportListService', () => {
           fetchItems: vi.fn().mockResolvedValue([{ title: 'Obscure Book', author: 'Nobody' }]),
           test: vi.fn(),
         };
-        mockFactories.abs.mockReturnValue(mockProvider);
+        mockFactories.abs!.mockReturnValue(mockProvider);
 
         const db = createMockDb();
         db.select.mockReturnValueOnce(mockDbChain([dueList]));
@@ -677,7 +677,7 @@ describe('ImportListService', () => {
           fetchItems: vi.fn().mockResolvedValue([{ title: 'Book With Provider', author: 'Author' }]),
           test: vi.fn(),
         };
-        mockFactories.abs.mockReturnValue(mockProvider);
+        mockFactories.abs!.mockReturnValue(mockProvider);
 
         const db = createMockDb();
         db.select.mockReturnValueOnce(mockDbChain([dueList]));
@@ -721,7 +721,7 @@ describe('ImportListService', () => {
           fetchItems: vi.fn().mockResolvedValue([{ title: 'Fallback Book', author: 'Author' }]),
           test: vi.fn(),
         };
-        mockFactories.abs.mockReturnValue(mockProvider);
+        mockFactories.abs!.mockReturnValue(mockProvider);
 
         const db = createMockDb();
         db.select.mockReturnValueOnce(mockDbChain([dueList]));
@@ -751,7 +751,7 @@ describe('ImportListService', () => {
           fetchItems: vi.fn().mockResolvedValue([{ title: 'Resilient Book', author: 'Author' }]),
           test: vi.fn(),
         };
-        mockFactories.abs.mockReturnValue(mockProvider);
+        mockFactories.abs!.mockReturnValue(mockProvider);
 
         const db = createMockDb();
         db.select.mockReturnValueOnce(mockDbChain([dueList]));
@@ -790,7 +790,7 @@ describe('ImportListService', () => {
           fetchItems: vi.fn().mockResolvedValue([{ title: 'New Book', author: 'New Author' }]),
           test: vi.fn(),
         };
-        mockFactories.abs.mockReturnValue(mockProvider);
+        mockFactories.abs!.mockReturnValue(mockProvider);
 
         const db = createMockDb();
         db.select.mockReturnValueOnce(mockDbChain([dueList]));
@@ -826,7 +826,7 @@ describe('ImportListService', () => {
           fetchItems: vi.fn().mockResolvedValue([{ title: 'Race Book', author: 'Race Author' }]),
           test: vi.fn(),
         };
-        mockFactories.abs.mockReturnValue(mockProvider);
+        mockFactories.abs!.mockReturnValue(mockProvider);
 
         const db = createMockDb();
         db.select.mockReturnValueOnce(mockDbChain([dueList]));
@@ -866,7 +866,7 @@ describe('ImportListService', () => {
           ]),
           test: vi.fn(),
         };
-        mockFactories.abs.mockReturnValue(mockProvider);
+        mockFactories.abs!.mockReturnValue(mockProvider);
 
         const db = createMockDb();
         db.select.mockReturnValueOnce(mockDbChain([dueList]));
@@ -936,7 +936,7 @@ describe('ImportListService', () => {
         ]),
         test: vi.fn(),
       };
-      mockFactories.abs.mockReturnValue(mockProvider);
+      mockFactories.abs!.mockReturnValue(mockProvider);
 
       const db = createMockDb();
       const dueList = {
@@ -999,8 +999,8 @@ describe('ImportListService', () => {
     it('isolates provider failures — one list failing does not block others', async () => {
       const failProvider = { fetchItems: vi.fn().mockRejectedValue(new Error('Provider down')), test: vi.fn() };
       const successProvider = { fetchItems: vi.fn().mockResolvedValue([]), test: vi.fn() };
-      mockFactories.abs.mockReturnValue(failProvider);
-      mockFactories.nyt.mockReturnValue(successProvider);
+      mockFactories.abs!.mockReturnValue(failProvider);
+      mockFactories.nyt!.mockReturnValue(successProvider);
 
       const db = createMockDb();
       const list1 = {

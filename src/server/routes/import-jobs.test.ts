@@ -53,10 +53,10 @@ describe('GET /api/import-jobs', () => {
     expect(res.statusCode).toBe(200);
     const body = JSON.parse(res.body) as ImportJobListing[];
     expect(body).toHaveLength(1);
-    expect(body[0].book.title).toBe('My Book');
-    expect(body[0].book.coverUrl).toBe('/covers/42.jpg');
-    expect(body[0].book.primaryAuthorName).toBe('Brandon Sanderson');
-    expect(body[0].phaseHistory).toEqual([{ phase: 'analyzing', startedAt: 1000, completedAt: 2000 }]);
+    expect(body[0]!.book.title).toBe('My Book');
+    expect(body[0]!.book.coverUrl).toBe('/covers/42.jpg');
+    expect(body[0]!.book.primaryAuthorName).toBe('Brandon Sanderson');
+    expect(body[0]!.phaseHistory).toEqual([{ phase: 'analyzing', startedAt: 1000, completedAt: 2000 }]);
     expect(bookImportService.listImportJobs).toHaveBeenCalledWith({ status: undefined });
   });
 

@@ -314,8 +314,8 @@ describe('SettingsPage - Edit indexer', () => {
 
     // Change name (first match is the text input, second is the type select)
     const nameInput = screen.getAllByDisplayValue('AudioBookBay')[0];
-    await user.clear(nameInput);
-    await user.type(nameInput, 'Updated');
+    await user.clear(nameInput!);
+    await user.type(nameInput!, 'Updated');
 
     await user.click(screen.getByText('Save Changes'));
 
@@ -409,8 +409,8 @@ describe('SettingsPage - Edit download client', () => {
 
     // First match is the text input, second is the type select
     const nameInput = screen.getAllByDisplayValue('qBittorrent')[0];
-    await user.clear(nameInput);
-    await user.type(nameInput, 'Updated');
+    await user.clear(nameInput!);
+    await user.type(nameInput!, 'Updated');
 
     await user.click(screen.getByText('Save Changes'));
 
@@ -527,7 +527,7 @@ describe('SettingsPage - Folder format token chips and preview', () => {
 
     // Open folder format token reference modal, then click {year}
     await user.click(screen.getByLabelText('Folder token reference'));
-    await user.click(screen.getAllByText('{year}')[0]);
+    await user.click(screen.getAllByText('{year}')[0]!);
 
     // The folder format input should now contain {year}
     const input = screen.getByPlaceholderText('{author}/{title}') as HTMLInputElement;

@@ -495,7 +495,7 @@ describe('CredentialsSection', () => {
 
     it('clicking Remove Credentials calls delete endpoint and invalidates auth queries and switches to setup view', async () => {
       const user = userEvent.setup();
-      mockApi.authDeleteCredentials.mockResolvedValue({ success: true });
+      mockApi.authDeleteCredentials!.mockResolvedValue({ success: true });
       const invalidateSpy = vi.spyOn(queryClient, 'invalidateQueries');
       renderWithProviders(<CredentialsSection hasUser={true} currentUsername="admin" envBypass={true} />, { queryClient });
       await user.click(screen.getByRole('button', { name: 'Remove Credentials' }));
@@ -510,7 +510,7 @@ describe('CredentialsSection', () => {
 
     it('Remove Credentials API failure shows error toast and preserves form state', async () => {
       const user = userEvent.setup();
-      mockApi.authDeleteCredentials.mockRejectedValue(new ApiError(403, { error: 'Only available when AUTH_BYPASS is active' }));
+      mockApi.authDeleteCredentials!.mockRejectedValue(new ApiError(403, { error: 'Only available when AUTH_BYPASS is active' }));
       renderWithProviders(<CredentialsSection hasUser={true} currentUsername="admin" envBypass={true} />, { queryClient });
       await user.click(screen.getByRole('button', { name: 'Remove Credentials' }));
       await waitFor(() => {

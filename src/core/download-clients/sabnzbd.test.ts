@@ -539,8 +539,8 @@ describe('SABnzbdClient', () => {
       const items = await client.getAllDownloads();
 
       expect(items).toHaveLength(2);
-      expect(items[0].id).toBe('SABnzbd_nzo_abc123');
-      expect(items[1].id).toBe('SABnzbd_nzo_def456');
+      expect(items[0]!.id).toBe('SABnzbd_nzo_abc123');
+      expect(items[1]!.id).toBe('SABnzbd_nzo_def456');
     });
 
     it('sends category filter', async () => {
@@ -674,13 +674,13 @@ describe('SABnzbdClient', () => {
       // Should call delete on both queue and history
       expect(capturedUrls).toHaveLength(2);
 
-      const queueUrl = new URL(capturedUrls[0]);
+      const queueUrl = new URL(capturedUrls[0]!);
       expect(queueUrl.searchParams.get('mode')).toBe('queue');
       expect(queueUrl.searchParams.get('name')).toBe('delete');
       expect(queueUrl.searchParams.get('value')).toBe('SABnzbd_nzo_abc123');
       expect(queueUrl.searchParams.get('del_files')).toBe('0');
 
-      const historyUrl = new URL(capturedUrls[1]);
+      const historyUrl = new URL(capturedUrls[1]!);
       expect(historyUrl.searchParams.get('mode')).toBe('history');
       expect(historyUrl.searchParams.get('name')).toBe('delete');
     });
@@ -696,7 +696,7 @@ describe('SABnzbdClient', () => {
 
       await client.removeDownload('SABnzbd_nzo_abc123', true);
 
-      const url = new URL(capturedUrls[0]);
+      const url = new URL(capturedUrls[0]!);
       expect(url.searchParams.get('del_files')).toBe('1');
     });
   });

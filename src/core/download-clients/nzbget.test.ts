@@ -208,8 +208,8 @@ describe('NZBGetClient', () => {
       const items = await client.getAllDownloads();
 
       expect(items).toHaveLength(2);
-      expect(items[0].id).toBe('123');
-      expect(items[1].id).toBe('456');
+      expect(items[0]!.id).toBe('123');
+      expect(items[1]!.id).toBe('456');
     });
 
     it('filters by category', async () => {

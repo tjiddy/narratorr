@@ -397,11 +397,11 @@ describe('SystemSettings', () => {
       });
 
       // Click first backup's restore
-      await user.click(screen.getAllByTitle('Restore backup')[0]);
+      await user.click(screen.getAllByTitle('Restore backup')[0]!);
       expect(mockApi.restoreBackupDirect).toHaveBeenCalledWith(backupEntry.filename);
 
       // Click second backup's restore while first is still pending
-      await user.click(screen.getAllByTitle('Restore backup')[1]);
+      await user.click(screen.getAllByTitle('Restore backup')[1]!);
       expect(mockApi.restoreBackupDirect).toHaveBeenCalledWith(secondBackup.filename);
 
       // Second resolves immediately — modal opens with second backup's filename

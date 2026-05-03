@@ -147,7 +147,7 @@ describe('QualitySettingsSection', () => {
     });
 
     // Verify no extra fields leak into the payload
-    const callArg = mockApi.updateSettings.mock.calls[0][0];
+    const callArg = mockApi.updateSettings.mock.calls[0]![0];
     expect(callArg.quality).not.toHaveProperty('protocolPreference');
     expect(callArg.quality).not.toHaveProperty('rejectWords');
     expect(callArg.quality).not.toHaveProperty('requiredWords');

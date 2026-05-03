@@ -245,14 +245,14 @@ describe('SearchReleasesModal', () => {
 
     // Click Grab on first result
     const grabButtons = screen.getAllByText('Grab');
-    await user.click(grabButtons[0]);
+    await user.click(grabButtons[0]!);
 
     await waitFor(() => {
       expect(api.searchGrab).toHaveBeenCalledTimes(1);
     });
 
     await waitFor(() => {
-      expect(vi.mocked(api.searchGrab).mock.calls[0][0]).toEqual(
+      expect(vi.mocked(api.searchGrab).mock.calls[0]![0]).toEqual(
         expect.objectContaining({
           downloadUrl: 'magnet:?xt=urn:btih:abc123',
           title: 'The Way of Kings [Unabridged]',
@@ -299,6 +299,7 @@ describe('SearchReleasesModal', () => {
   it('shows protocol badges on results', async () => {
     const mixedResults: SearchResult[] = [
       { ...mockResults[0], protocol: 'torrent' },
+      // PHASE 1 SKIPPED — needs human review
       { ...mockResults[1], protocol: 'usenet' },
     ];
     setStreamResults(mixedResults);
@@ -346,7 +347,7 @@ describe('SearchReleasesModal', () => {
       );
 
       await screen.findByText('The Way of Kings [Unabridged]');
-      await user.click(screen.getAllByText('Grab')[0]);
+      await user.click(screen.getAllByText('Grab')[0]!);
 
       await waitFor(() => {
         expect(screen.getByRole('dialog', { name: /replace/i })).toBeInTheDocument();
@@ -364,7 +365,7 @@ describe('SearchReleasesModal', () => {
       );
 
       await screen.findByText('The Way of Kings [Unabridged]');
-      await user.click(screen.getAllByText('Grab')[0]);
+      await user.click(screen.getAllByText('Grab')[0]!);
 
       await waitFor(() => {
         expect(screen.getByRole('dialog', { name: /replace/i })).toBeInTheDocument();
@@ -395,7 +396,7 @@ describe('SearchReleasesModal', () => {
       );
 
       await screen.findByText('The Way of Kings [Unabridged]');
-      await user.click(screen.getAllByText('Grab')[0]);
+      await user.click(screen.getAllByText('Grab')[0]!);
 
       await waitFor(() => {
         expect(screen.getByRole('dialog', { name: /replace/i })).toBeInTheDocument();
@@ -439,7 +440,7 @@ describe('SearchReleasesModal', () => {
       );
 
       await screen.findByText('The Way of Kings [Unabridged]');
-      await user.click(screen.getAllByText('Grab')[0]);
+      await user.click(screen.getAllByText('Grab')[0]!);
 
       await waitFor(() => {
         expect(screen.getByRole('dialog', { name: /replace/i })).toBeInTheDocument();
@@ -464,7 +465,7 @@ describe('SearchReleasesModal', () => {
       );
 
       await screen.findByText('The Way of Kings [Unabridged]');
-      await user.click(screen.getAllByText('Grab')[0]);
+      await user.click(screen.getAllByText('Grab')[0]!);
 
       await waitFor(() => {
         expect(screen.getByRole('dialog', { name: /replace/i })).toBeInTheDocument();
@@ -493,7 +494,7 @@ describe('SearchReleasesModal', () => {
       );
 
       await screen.findByText('The Way of Kings [Unabridged]');
-      await user.click(screen.getAllByText('Grab')[0]);
+      await user.click(screen.getAllByText('Grab')[0]!);
 
       await waitFor(() => {
         expect(screen.getByRole('dialog', { name: /replace/i })).toBeInTheDocument();
@@ -519,7 +520,7 @@ describe('SearchReleasesModal', () => {
       );
 
       await screen.findByText('The Way of Kings [Unabridged]');
-      await user.click(screen.getAllByText('Grab')[0]);
+      await user.click(screen.getAllByText('Grab')[0]!);
 
       await waitFor(() => {
         expect(toast.error).toHaveBeenCalledWith('Failed to grab: Internal server error');
@@ -562,10 +563,10 @@ describe('SearchReleasesModal', () => {
       );
 
       await screen.findByText('Project Hail Mary');
-      await user.click(screen.getAllByText('Grab')[0]);
+      await user.click(screen.getAllByText('Grab')[0]!);
 
       await waitFor(() => {
-        const callArgs = vi.mocked(api.searchGrab).mock.calls[0][0];
+        const callArgs = vi.mocked(api.searchGrab).mock.calls[0]![0];
         expect(callArgs).toEqual(expect.objectContaining({ guid: '720129' }));
       });
     });
@@ -590,10 +591,10 @@ describe('SearchReleasesModal', () => {
       );
 
       await screen.findByText('The Way of Kings [Unabridged]');
-      await user.click(screen.getAllByText('Grab')[0]);
+      await user.click(screen.getAllByText('Grab')[0]!);
 
       await waitFor(() => {
-        const callArgs = vi.mocked(api.searchGrab).mock.calls[0][0];
+        const callArgs = vi.mocked(api.searchGrab).mock.calls[0]![0];
         expect(callArgs).toEqual(expect.objectContaining({ guid: undefined }));
       });
     });
@@ -633,7 +634,7 @@ describe('SearchReleasesModal', () => {
       );
 
       await screen.findByText('Project Hail Mary');
-      await user.click(screen.getAllByText('Grab')[0]);
+      await user.click(screen.getAllByText('Grab')[0]!);
 
       await waitFor(() => {
         expect(screen.getByRole('dialog', { name: /replace/i })).toBeInTheDocument();
@@ -663,7 +664,7 @@ describe('SearchReleasesModal', () => {
     await screen.findByText('The Way of Kings [Unabridged]');
 
     const grabButtons = screen.getAllByText('Grab');
-    await user.click(grabButtons[0]);
+    await user.click(grabButtons[0]!);
 
     await waitFor(() => {
       expect(toast.error).toHaveBeenCalledWith('Failed to grab: Download client unavailable');
@@ -941,7 +942,7 @@ describe('SearchReleasesModal', () => {
     await screen.findByText('The Way of Kings [Unabridged]');
 
     const blacklistButtons = screen.getAllByText('Blacklist');
-    await user.click(blacklistButtons[0]);
+    await user.click(blacklistButtons[0]!);
 
     await waitFor(() => {
       expect(api.addToBlacklist).toHaveBeenCalledWith(
@@ -1017,7 +1018,7 @@ describe('SearchReleasesModal', () => {
     await screen.findByText('The Way of Kings [Unabridged]');
 
     const blacklistButtons = screen.getAllByText('Blacklist');
-    await user.click(blacklistButtons[0]);
+    await user.click(blacklistButtons[0]!);
 
     await waitFor(() => {
       expect(toast.error).toHaveBeenCalledWith('Failed to blacklist: Server error');
@@ -1125,7 +1126,7 @@ describe('SearchReleasesModal', () => {
 
     await screen.findByText('The Way of Kings [Unabridged]');
     const grabButtons = screen.getAllByText('Grab');
-    await user.click(grabButtons[0]);
+    await user.click(grabButtons[0]!);
 
     await waitFor(() => {
       screen.getAllByText('Grab').forEach((btn) => {
@@ -1145,7 +1146,7 @@ describe('SearchReleasesModal', () => {
 
     await screen.findByText('The Way of Kings [Unabridged]');
     const blacklistButtons = screen.getAllByText('Blacklist');
-    await user.click(blacklistButtons[0]);
+    await user.click(blacklistButtons[0]!);
 
     await waitFor(() => {
       screen.getAllByText('Blacklist').forEach((btn) => {
@@ -1181,7 +1182,7 @@ describe('SearchReleasesModal', () => {
     );
 
     await screen.findByText('The Way of Kings [Unabridged]');
-    await user.click(screen.getAllByText('Grab')[0]);
+    await user.click(screen.getAllByText('Grab')[0]!);
 
     await waitFor(() => {
       expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: queryKeys.books() });
@@ -1276,6 +1277,7 @@ describe('SearchReleasesModal unsupported results', () => {
     // Titles should now be visible
     await waitFor(() => {
       expect(screen.getByText(unsupportedTitles[0])).toBeInTheDocument();
+      // PHASE 1 SKIPPED — needs human review
       expect(screen.getByText(unsupportedTitles[1])).toBeInTheDocument();
     });
   });
@@ -1443,7 +1445,7 @@ describe('SearchReleasesModal unsupported results', () => {
       );
 
       await screen.findByText('The Way of Kings [Unabridged]');
-      await user.click(screen.getAllByText('Grab')[0]);
+      await user.click(screen.getAllByText('Grab')[0]!);
 
       // ConfirmModal appears above SearchReleasesModal
       await waitFor(() => {
@@ -1474,7 +1476,7 @@ describe('SearchReleasesModal unsupported results', () => {
       );
 
       await screen.findByText('The Way of Kings [Unabridged]');
-      await user.click(screen.getAllByText('Grab')[0]);
+      await user.click(screen.getAllByText('Grab')[0]!);
 
       await waitFor(() => {
         expect(screen.getByRole('dialog', { name: /replace/i })).toBeInTheDocument();
@@ -1483,7 +1485,7 @@ describe('SearchReleasesModal unsupported results', () => {
       // Two backdrops: SearchReleasesModal's and ConfirmModal's (ConfirmModal is second in DOM)
       const backdrops = screen.getAllByTestId('modal-backdrop');
       expect(backdrops).toHaveLength(2);
-      await user.click(backdrops[1]);
+      await user.click(backdrops[1]!);
 
       // ConfirmModal closes
       await waitFor(() => {
@@ -1807,6 +1809,7 @@ describe('SearchReleasesModal — streaming search (Phase 1/Phase 2)', () => {
   describe('language pill data flow', () => {
     it('shows language pill when result has language metadata', async () => {
       setStreamResults([
+        // PHASE 1 SKIPPED — needs human review
         {
           ...mockResults[0],
           language: 'English',
@@ -1826,6 +1829,7 @@ describe('SearchReleasesModal — streaming search (Phase 1/Phase 2)', () => {
   describe('#421 — "In library" badge wiring', () => {
     it('renders "In library" badge on result card when book lastGrabGuid matches result guid', async () => {
       setStreamResults([
+        // PHASE 1 SKIPPED — needs human review
         { ...mockResults[0], guid: 'grabbed-guid' },
       ]);
       const bookWithGrab = createMockBook({ lastGrabGuid: 'grabbed-guid', lastGrabInfoHash: null });
@@ -1848,7 +1852,7 @@ describe('SearchReleasesModal — streaming search (Phase 1/Phase 2)', () => {
       );
 
       await waitFor(() => {
-        expect(screen.getByText(mockResults[0].title)).toBeInTheDocument();
+        expect(screen.getByText(mockResults[0]!.title)).toBeInTheDocument();
       });
       expect(screen.queryByText('In library')).not.toBeInTheDocument();
     });
@@ -1856,6 +1860,7 @@ describe('SearchReleasesModal — streaming search (Phase 1/Phase 2)', () => {
     it('renders "In library" badge only on the matching result, not on others', async () => {
       setStreamResults([
         { ...mockResults[0], guid: 'match-guid' },
+        // PHASE 1 SKIPPED — needs human review
         { ...mockResults[1], guid: 'other-guid' },
       ]);
       const bookWithGrab = createMockBook({ lastGrabGuid: 'match-guid', lastGrabInfoHash: null });
@@ -1865,7 +1870,7 @@ describe('SearchReleasesModal — streaming search (Phase 1/Phase 2)', () => {
       );
 
       await waitFor(() => {
-        expect(screen.getByText(mockResults[0].title)).toBeInTheDocument();
+        expect(screen.getByText(mockResults[0]!.title)).toBeInTheDocument();
       });
       const badges = screen.getAllByText('In library');
       expect(badges).toHaveLength(1);
@@ -1874,6 +1879,7 @@ describe('SearchReleasesModal — streaming search (Phase 1/Phase 2)', () => {
     it('renders "In library" badge on result card when book lastGrabInfoHash matches result infoHash (torrent path)', async () => {
       setStreamResults([
         { ...mockResults[0], infoHash: 'abc123', guid: undefined },
+        // PHASE 1 SKIPPED — needs human review
         { ...mockResults[1], infoHash: 'other-hash', guid: undefined },
       ]);
       const bookWithHash = createMockBook({ lastGrabGuid: null, lastGrabInfoHash: 'abc123' });
@@ -1883,7 +1889,7 @@ describe('SearchReleasesModal — streaming search (Phase 1/Phase 2)', () => {
       );
 
       await waitFor(() => {
-        expect(screen.getByText(mockResults[0].title)).toBeInTheDocument();
+        expect(screen.getByText(mockResults[0]!.title)).toBeInTheDocument();
       });
       const badges = screen.getAllByText('In library');
       expect(badges).toHaveLength(1);
@@ -1955,13 +1961,13 @@ describe('SearchReleasesModal — grab payload contract (#412)', () => {
       );
 
       await screen.findByText('Full Result');
-      await user.click(screen.getAllByText('Grab')[0]);
+      await user.click(screen.getAllByText('Grab')[0]!);
 
       await waitFor(() => {
         expect(api.searchGrab).toHaveBeenCalledTimes(1);
       });
 
-      const payload = vi.mocked(api.searchGrab).mock.calls[0][0];
+      const payload = vi.mocked(api.searchGrab).mock.calls[0]![0];
 
       // Verify all grab-contract fields are present with correct values
       expect(payload).toEqual({
@@ -1996,13 +2002,13 @@ describe('SearchReleasesModal — grab payload contract (#412)', () => {
       );
 
       await screen.findByText('Full Result');
-      await user.click(screen.getAllByText('Grab')[0]);
+      await user.click(screen.getAllByText('Grab')[0]!);
 
       await waitFor(() => {
         expect(api.searchGrab).toHaveBeenCalledTimes(1);
       });
 
-      const payload = vi.mocked(api.searchGrab).mock.calls[0][0];
+      const payload = vi.mocked(api.searchGrab).mock.calls[0]![0];
       expect(payload.protocol).toBe('usenet');
       expect(payload.downloadUrl).toBe('https://nzb.example.com/dl/123');
 
@@ -2023,7 +2029,7 @@ describe('SearchReleasesModal — grab payload contract (#412)', () => {
       );
 
       await screen.findByText('Full Result');
-      await user.click(screen.getAllByText('Grab')[0]);
+      await user.click(screen.getAllByText('Grab')[0]!);
 
       await waitFor(() => {
         expect(toast.success).toHaveBeenCalledWith('Download started! Check the Activity page.');
@@ -2046,13 +2052,13 @@ describe('SearchReleasesModal — grab payload contract (#412)', () => {
       );
 
       await screen.findByText('Full Result');
-      await user.click(screen.getAllByText('Grab')[0]);
+      await user.click(screen.getAllByText('Grab')[0]!);
 
       await waitFor(() => {
         expect(api.searchGrab).toHaveBeenCalledTimes(1);
       });
 
-      const payload = vi.mocked(api.searchGrab).mock.calls[0][0];
+      const payload = vi.mocked(api.searchGrab).mock.calls[0]![0];
       const payloadKeys = Object.keys(payload);
 
       // Every key in payload should be a grab-contract key or bookId
@@ -2074,7 +2080,7 @@ describe('SearchReleasesModal — grab payload contract (#412)', () => {
       );
 
       await screen.findByText('Full Result');
-      await user.click(screen.getAllByText('Grab')[0]);
+      await user.click(screen.getAllByText('Grab')[0]!);
 
       // Confirm modal should appear (pendingReplace was captured)
       await waitFor(() => {
@@ -2097,7 +2103,7 @@ describe('SearchReleasesModal — grab payload contract (#412)', () => {
       );
 
       await screen.findByText('Full Result');
-      await user.click(screen.getAllByText('Grab')[0]);
+      await user.click(screen.getAllByText('Grab')[0]!);
 
       await waitFor(() => {
         expect(screen.getByRole('dialog', { name: /replace/i })).toBeInTheDocument();
@@ -2109,7 +2115,7 @@ describe('SearchReleasesModal — grab payload contract (#412)', () => {
         expect(api.searchGrab).toHaveBeenCalledTimes(2);
       });
 
-      const retryPayload = vi.mocked(api.searchGrab).mock.calls[1][0];
+      const retryPayload = vi.mocked(api.searchGrab).mock.calls[1]![0];
 
       // All original grab-contract fields preserved, plus replaceExisting
       expect(retryPayload).toEqual({
@@ -2136,7 +2142,7 @@ describe('SearchReleasesModal — grab payload contract (#412)', () => {
       );
 
       await screen.findByText('Full Result');
-      await user.click(screen.getAllByText('Grab')[0]);
+      await user.click(screen.getAllByText('Grab')[0]!);
 
       await waitFor(() => {
         expect(screen.getByRole('dialog', { name: /replace/i })).toBeInTheDocument();
@@ -2165,13 +2171,13 @@ describe('SearchReleasesModal — grab payload contract (#412)', () => {
       );
 
       await screen.findByText('Full Result');
-      await user.click(screen.getAllByText('Grab')[0]);
+      await user.click(screen.getAllByText('Grab')[0]!);
 
       await waitFor(() => {
         expect(api.searchGrab).toHaveBeenCalledTimes(1);
       });
 
-      const payload = vi.mocked(api.searchGrab).mock.calls[0][0];
+      const payload = vi.mocked(api.searchGrab).mock.calls[0]![0];
 
       // Every SearchResult-sourced grab-contract field is present
       for (const key of GRAB_CONTRACT_KEYS) {
@@ -2196,13 +2202,13 @@ describe('SearchReleasesModal — grab payload contract (#412)', () => {
       );
 
       await screen.findByText('Minimal Result');
-      await user.click(screen.getAllByText('Grab')[0]);
+      await user.click(screen.getAllByText('Grab')[0]!);
 
       await waitFor(() => {
         expect(api.searchGrab).toHaveBeenCalledTimes(1);
       });
 
-      const payload = vi.mocked(api.searchGrab).mock.calls[0][0];
+      const payload = vi.mocked(api.searchGrab).mock.calls[0]![0];
       expect(payload.downloadUrl).toBe('magnet:?xt=urn:btih:minimal');
       expect(payload.title).toBe('Minimal Result');
       expect(payload.protocol).toBe('torrent');
@@ -2225,13 +2231,13 @@ describe('SearchReleasesModal — grab payload contract (#412)', () => {
       );
 
       await screen.findByText('Full Result');
-      await user.click(screen.getAllByText('Grab')[0]);
+      await user.click(screen.getAllByText('Grab')[0]!);
 
       await waitFor(() => {
         expect(api.searchGrab).toHaveBeenCalledTimes(1);
       });
 
-      const payload = vi.mocked(api.searchGrab).mock.calls[0][0];
+      const payload = vi.mocked(api.searchGrab).mock.calls[0]![0];
       expect(payload.seeders).toBe(0);
     });
 
@@ -2249,13 +2255,13 @@ describe('SearchReleasesModal — grab payload contract (#412)', () => {
       );
 
       await screen.findByText('Full Result');
-      await user.click(screen.getAllByText('Grab')[0]);
+      await user.click(screen.getAllByText('Grab')[0]!);
 
       await waitFor(() => {
         expect(api.searchGrab).toHaveBeenCalledTimes(1);
       });
 
-      const payload = vi.mocked(api.searchGrab).mock.calls[0][0];
+      const payload = vi.mocked(api.searchGrab).mock.calls[0]![0];
       expect(payload.size).toBe(0);
     });
   });
@@ -2271,7 +2277,7 @@ describe('SearchReleasesModal — grab payload contract (#412)', () => {
       );
 
       await screen.findByText('Full Result');
-      await user.click(screen.getAllByText('Grab')[0]);
+      await user.click(screen.getAllByText('Grab')[0]!);
 
       await waitFor(() => {
         expect(toast.error).toHaveBeenCalledWith('Failed to grab: Network error');
@@ -2309,7 +2315,7 @@ describe('SearchReleasesModal — grab payload contract (#412)', () => {
       );
 
       await screen.findByText('Full Result');
-      await user.click(screen.getAllByText('Grab')[0]);
+      await user.click(screen.getAllByText('Grab')[0]!);
 
       // Wait for confirm modal to appear
       await waitFor(() => {

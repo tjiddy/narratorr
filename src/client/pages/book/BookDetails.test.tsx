@@ -337,7 +337,7 @@ describe('BookDetails', () => {
       await openOverflowMenu(user);
       await user.click(screen.getByRole("menuitem", { name: /Rename/ }));
       const dialog = screen.getByRole('dialog');
-      await user.click(within(dialog).getAllByRole('button')[1]);
+      await user.click(within(dialog).getAllByRole('button')[1]!);
 
       await waitFor(() => {
         expect(api.renameBook).toHaveBeenCalledWith(1);
@@ -441,7 +441,7 @@ describe('BookDetails', () => {
 
       await user.click(screen.getByRole("menuitem", { name: /Re-tag/ }));
       const dialog1 = screen.getByRole('dialog');
-      await user.click(within(dialog1).getAllByRole('button')[1]);
+      await user.click(within(dialog1).getAllByRole('button')[1]!);
 
       await waitFor(() => {
         expect(api.retagBook).toHaveBeenCalledWith(1);
@@ -468,7 +468,7 @@ describe('BookDetails', () => {
 
       await user.click(screen.getByRole("menuitem", { name: /Re-tag/ }));
       const dialog2 = screen.getByRole('dialog');
-      await user.click(within(dialog2).getAllByRole('button')[1]);
+      await user.click(within(dialog2).getAllByRole('button')[1]!);
 
       await waitFor(() => {
         expect(toast.success).toHaveBeenCalledWith('Tagged 1 file');
@@ -494,7 +494,7 @@ describe('BookDetails', () => {
 
       await user.click(screen.getByRole("menuitem", { name: /Re-tag/ }));
       const dialog3 = screen.getByRole('dialog');
-      await user.click(within(dialog3).getAllByRole('button')[1]);
+      await user.click(within(dialog3).getAllByRole('button')[1]!);
 
       await waitFor(() => {
         expect(toast.warning).toHaveBeenCalledWith('Tagged 2 files, 1 failed');
@@ -518,7 +518,7 @@ describe('BookDetails', () => {
 
       await user.click(screen.getByRole("menuitem", { name: /Re-tag/ }));
       const dialog4 = screen.getByRole('dialog');
-      await user.click(within(dialog4).getAllByRole('button')[1]);
+      await user.click(within(dialog4).getAllByRole('button')[1]!);
 
       await waitFor(() => {
         expect(toast.error).toHaveBeenCalledWith('Re-tag failed: ffmpeg is not configured');
@@ -646,7 +646,7 @@ describe('BookDetails', () => {
       renderBookDetails();
       const tabs = screen.getAllByRole('tab');
 
-      await user.click(tabs[1]);
+      await user.click(tabs[1]!);
       expect(tabs[0]).toHaveAttribute('aria-selected', 'false');
       expect(tabs[1]).toHaveAttribute('aria-selected', 'true');
     });
@@ -654,16 +654,16 @@ describe('BookDetails', () => {
     it('tab buttons have non-empty ids for ARIA linkage', () => {
       renderBookDetails();
       const tabs = screen.getAllByRole('tab');
-      expect(tabs[0].id).toBeTruthy();
-      expect(tabs[1].id).toBeTruthy();
-      expect(tabs[0].id).not.toBe(tabs[1].id);
+      expect(tabs[0]!.id).toBeTruthy();
+      expect(tabs[1]!.id).toBeTruthy();
+      expect(tabs[0]!.id).not.toBe(tabs[1]!.id);
     });
 
     it('renders tab panel with role="tabpanel" and aria-labelledby matching tab id', () => {
       renderBookDetails();
       const panel = screen.getByRole('tabpanel');
       const tabs = screen.getAllByRole('tab');
-      expect(panel).toHaveAttribute('aria-labelledby', tabs[0].id);
+      expect(panel).toHaveAttribute('aria-labelledby', tabs[0]!.id);
     });
 
     it('switching to History tab swaps tabpanel linkage to History tab', async () => {
@@ -671,7 +671,7 @@ describe('BookDetails', () => {
       renderBookDetails();
       const tabs = screen.getAllByRole('tab');
 
-      await user.click(tabs[1]);
+      await user.click(tabs[1]!);
 
       const panel = screen.getByRole('tabpanel');
       expect(panel).toHaveAttribute('aria-labelledby', 'tab-history');
@@ -682,7 +682,7 @@ describe('BookDetails', () => {
       renderBookDetails();
       const tabs = screen.getAllByRole('tab');
 
-      tabs[0].focus();
+      tabs[0]!.focus();
       await user.keyboard('{ArrowRight}');
 
       expect(tabs[1]).toHaveAttribute('aria-selected', 'true');
@@ -697,8 +697,8 @@ describe('BookDetails', () => {
       renderBookDetails();
       const tabs = screen.getAllByRole('tab');
 
-      await user.click(tabs[1]);
-      tabs[1].focus();
+      await user.click(tabs[1]!);
+      tabs[1]!.focus();
       await user.keyboard('{ArrowLeft}');
 
       expect(tabs[0]).toHaveAttribute('aria-selected', 'true');
@@ -714,15 +714,15 @@ describe('BookDetails', () => {
       const tabs = screen.getAllByRole('tab');
 
       // Right on last tab (History) → wraps to first (Details)
-      await user.click(tabs[1]);
-      tabs[1].focus();
+      await user.click(tabs[1]!);
+      tabs[1]!.focus();
       await user.keyboard('{ArrowRight}');
       expect(tabs[0]).toHaveAttribute('aria-selected', 'true');
       expect(document.activeElement).toBe(tabs[0]);
       expect(screen.getByRole('tabpanel')).toHaveAttribute('aria-labelledby', 'tab-details');
 
       // Left on first tab (Details) → wraps to last (History)
-      tabs[0].focus();
+      tabs[0]!.focus();
       await user.keyboard('{ArrowLeft}');
       expect(tabs[1]).toHaveAttribute('aria-selected', 'true');
       expect(document.activeElement).toBe(tabs[1]);
@@ -777,7 +777,7 @@ describe('BookDetails', () => {
       await openOverflowMenu(user);
       await user.click(screen.getByRole("menuitem", { name: /Rename/ }));
       const dialog = screen.getByRole('dialog');
-      await user.click(within(dialog).getAllByRole('button')[1]);
+      await user.click(within(dialog).getAllByRole('button')[1]!);
 
       await waitFor(() => {
         expect(api.renameBook).toHaveBeenCalledWith(1);
@@ -794,7 +794,7 @@ describe('BookDetails', () => {
       expect(screen.getByRole('dialog')).toBeInTheDocument();
 
       const dialog = screen.getByRole('dialog');
-      await user.click(within(dialog).getAllByRole('button')[1]);
+      await user.click(within(dialog).getAllByRole('button')[1]!);
 
       expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
     });
@@ -807,7 +807,7 @@ describe('BookDetails', () => {
       await openOverflowMenu(user);
       await user.click(screen.getByRole("menuitem", { name: /Rename/ }));
       const dialog = screen.getByRole('dialog');
-      await user.click(within(dialog).getAllByRole('button')[1]);
+      await user.click(within(dialog).getAllByRole('button')[1]!);
       // Modal is now closed — no dialog to click again
       expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
 
@@ -914,7 +914,7 @@ describe('BookDetails', () => {
       await waitFor(() => expect(screen.getByRole("menuitem", { name: /Re-tag/ })).not.toBeDisabled());
       await user.click(screen.getByRole("menuitem", { name: /Re-tag/ }));
       const dialog = screen.getByRole('dialog');
-      await user.click(within(dialog).getAllByRole('button')[1]);
+      await user.click(within(dialog).getAllByRole('button')[1]!);
 
       await waitFor(() => {
         expect(api.retagBook).toHaveBeenCalledWith(1);
@@ -933,7 +933,7 @@ describe('BookDetails', () => {
       expect(screen.getByRole('dialog')).toBeInTheDocument();
 
       const dialog = screen.getByRole('dialog');
-      await user.click(within(dialog).getAllByRole('button')[1]);
+      await user.click(within(dialog).getAllByRole('button')[1]!);
 
       expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
     });
@@ -948,7 +948,7 @@ describe('BookDetails', () => {
       await waitFor(() => expect(screen.getByRole("menuitem", { name: /Re-tag/ })).not.toBeDisabled());
       await user.click(screen.getByRole("menuitem", { name: /Re-tag/ }));
       const dialog = screen.getByRole('dialog');
-      await user.click(within(dialog).getAllByRole('button')[1]);
+      await user.click(within(dialog).getAllByRole('button')[1]!);
       expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
 
       await waitFor(() => {

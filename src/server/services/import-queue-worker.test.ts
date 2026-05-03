@@ -118,13 +118,13 @@ describe('ImportQueueWorker', () => {
       const txWrites = updateSets.filter(u => u.viaTx);
       expect(txWrites).toHaveLength(2);
 
-      const jobWrite = txWrites[0].payload;
+      const jobWrite = txWrites[0]!.payload;
       expect(jobWrite).toMatchObject({ status: 'failed', phase: 'failed' });
       const lastError = JSON.parse(jobWrite.lastError as string);
       expect(lastError.message).toBe('Interrupted by server restart');
       expect(lastError.type).toBe('ProcessRestart');
 
-      expect(txWrites[1].payload).toMatchObject({ status: 'failed' });
+      expect(txWrites[1]!.payload).toMatchObject({ status: 'failed' });
     });
 
     it('atomicity: when the books write throws, the jobs write is rolled back — no committed state for that orphan', async () => {
@@ -248,22 +248,22 @@ describe('ImportQueueWorker', () => {
 
       // A: both import_jobs and books committed with failed-state payload
       expect(aWrites).toHaveLength(2);
-      expect(aWrites[0].table).toBe('jobs');
-      expect(aWrites[0].payload).toMatchObject({
+      expect(aWrites[0]!.table).toBe('jobs');
+      expect(aWrites[0]!.payload).toMatchObject({
         status: 'failed',
         phase: 'failed',
         lastError: expect.stringContaining('ProcessRestart') as unknown as string,
       });
-      expect(aWrites[1].table).toBe('books');
-      expect(aWrites[1].payload).toMatchObject({ status: 'failed' });
+      expect(aWrites[1]!.table).toBe('books');
+      expect(aWrites[1]!.payload).toMatchObject({ status: 'failed' });
 
       // B: NOTHING committed — rollback contract held
       expect(bWrites).toEqual([]);
 
       // C: same failed-state pair as A
       expect(cWrites).toHaveLength(2);
-      expect(cWrites[0].payload).toMatchObject({ status: 'failed', phase: 'failed' });
-      expect(cWrites[1].payload).toMatchObject({ status: 'failed' });
+      expect(cWrites[0]!.payload).toMatchObject({ status: 'failed', phase: 'failed' });
+      expect(cWrites[1]!.payload).toMatchObject({ status: 'failed' });
 
       // Summary: count=3, recovered=2 (A and C), failed=1 (B)
       const logMock = log as unknown as { info: ReturnType<typeof vi.fn> };
@@ -686,7 +686,7 @@ describe('ImportQueueWorker', () => {
       // appended 'analyzing' phase, not 1+ residual entries from the bad row).
       const history = JSON.parse(completionUpdate!.phaseHistory as string) as Array<{ phase: string; startedAt: number; completedAt?: number }>;
       expect(history).toHaveLength(1);
-      expect(history[0].phase).toBe('analyzing');
+      expect(history[0]!.phase).toBe('analyzing');
     });
 
     it('#745 worker hydration: wrong-shape persisted phaseHistory falls back to [] with warn', async () => {
@@ -733,7 +733,7 @@ describe('ImportQueueWorker', () => {
       expect(completionUpdate).toBeDefined();
       const history = JSON.parse(completionUpdate!.phaseHistory as string) as Array<{ phase: string; startedAt: number; completedAt?: number }>;
       expect(history).toHaveLength(1);
-      expect(history[0].phase).toBe('analyzing');
+      expect(history[0]!.phase).toBe('analyzing');
     });
 
     it('job completion closes the current phaseHistory entry', async () => {
@@ -816,7 +816,7 @@ describe('ImportQueueWorker', () => {
       );
       expect(phaseChangeCalls.length).toBeGreaterThanOrEqual(1);
       // First phase change: queued → analyzing
-      expect(phaseChangeCalls[0][1]).toMatchObject({
+      expect(phaseChangeCalls[0]![1]).toMatchObject({
         job_id: 1,
         book_id: 10,
         from: 'queued',
@@ -856,12 +856,12 @@ describe('ImportQueueWorker', () => {
         (call: unknown[]) => call[0] === 'import_complete'
       );
       expect(completeCalls).toHaveLength(1);
-      expect(completeCalls[0][1]).toMatchObject({
+      expect(completeCalls[0]![1]).toMatchObject({
         job_id: 5,
         book_id: 50,
         book_title: 'My Book',
       });
-      expect(completeCalls[0][1].elapsed_ms).toBeTypeOf('number');
+      expect(completeCalls[0]![1].elapsed_ms).toBeTypeOf('number');
     });
 
     it('worker emits import_failed on job failure with phase and error_message', async () => {
@@ -896,7 +896,7 @@ describe('ImportQueueWorker', () => {
         (call: unknown[]) => call[0] === 'import_failed'
       );
       expect(failedCalls).toHaveLength(1);
-      expect(failedCalls[0][1]).toMatchObject({
+      expect(failedCalls[0]![1]).toMatchObject({
         job_id: 7,
         book_id: 70,
         book_title: 'Failed Book',
@@ -1061,8 +1061,8 @@ describe('ImportQueueWorker', () => {
       expect(failedUpdate).toBeDefined();
       const history = JSON.parse(failedUpdate!.phaseHistory as string) as Array<{ phase: string; startedAt: number; completedAt?: number }>;
       const lastEntry = history[history.length - 1];
-      expect(lastEntry.phase).toBe('copying');
-      expect(lastEntry.completedAt).toBeTypeOf('number');
+      expect(lastEntry!.phase).toBe('copying');
+      expect(lastEntry!.completedAt).toBeTypeOf('number');
     });
   });
 

@@ -92,11 +92,11 @@ describe('MyAnonamouseIndexer', () => {
       const { results } = await indexer.search('Brandon Sanderson');
 
       expect(results.length).toBe(1);
-      expect(results[0].title).toBe('The Way of Kings');
-      expect(results[0].size).toBe(924634317);
-      expect(results[0].seeders).toBe(42);
-      expect(results[0].leechers).toBe(3);
-      expect(results[0].indexer).toBe('MyAnonamouse');
+      expect(results[0]!.title).toBe('The Way of Kings');
+      expect(results[0]!.size).toBe(924634317);
+      expect(results[0]!.seeders).toBe(42);
+      expect(results[0]!.leechers).toBe(3);
+      expect(results[0]!.indexer).toBe('MyAnonamouse');
     });
 
     it('extracts author from double-encoded author_info field', async () => {
@@ -108,7 +108,7 @@ describe('MyAnonamouseIndexer', () => {
       stubTorrentDownload(server);
 
       const { results } = await indexer.search('test');
-      expect(results[0].author).toBe('Brandon Sanderson');
+      expect(results[0]!.author).toBe('Brandon Sanderson');
     });
 
     it('extracts narrator from double-encoded narrator_info field', async () => {
@@ -120,7 +120,7 @@ describe('MyAnonamouseIndexer', () => {
       stubTorrentDownload(server);
 
       const { results } = await indexer.search('test');
-      expect(results[0].narrator).toBe('Michael Kramer');
+      expect(results[0]!.narrator).toBe('Michael Kramer');
     });
 
     it('joins multiple authors from double-encoded field', async () => {
@@ -134,7 +134,7 @@ describe('MyAnonamouseIndexer', () => {
       stubTorrentDownload(server);
 
       const { results } = await indexer.search('test');
-      expect(results[0].author).toBe('Author A, Author B');
+      expect(results[0]!.author).toBe('Author A, Author B');
     });
 
     it('sets protocol to torrent on all results', async () => {
@@ -146,7 +146,7 @@ describe('MyAnonamouseIndexer', () => {
       stubTorrentDownload(server);
 
       const { results } = await indexer.search('test');
-      expect(results[0].protocol).toBe('torrent');
+      expect(results[0]!.protocol).toBe('torrent');
     });
 
     it('returns download URL as data:application/x-bittorrent;base64,... URI', async () => {
@@ -163,7 +163,7 @@ describe('MyAnonamouseIndexer', () => {
       );
 
       const { results } = await indexer.search('test');
-      expect(results[0].downloadUrl).toBe(
+      expect(results[0]!.downloadUrl).toBe(
         `data:application/x-bittorrent;base64,${torrentBytes.toString('base64')}`,
       );
     });
@@ -272,7 +272,7 @@ describe('MyAnonamouseIndexer', () => {
       stubTorrentDownload(server);
 
       const { results } = await indexer.search('test');
-      expect(results[0].author).toBeUndefined();
+      expect(results[0]!.author).toBeUndefined();
     });
 
     it('sets author undefined when author_info is empty object', async () => {
@@ -284,7 +284,7 @@ describe('MyAnonamouseIndexer', () => {
       stubTorrentDownload(server);
 
       const { results } = await indexer.search('test');
-      expect(results[0].author).toBeUndefined();
+      expect(results[0]!.author).toBeUndefined();
     });
 
     it('handles malformed author_info gracefully', async () => {
@@ -296,7 +296,7 @@ describe('MyAnonamouseIndexer', () => {
       stubTorrentDownload(server);
 
       const { results } = await indexer.search('test');
-      expect(results[0].author).toBeUndefined();
+      expect(results[0]!.author).toBeUndefined();
     });
 
     it('sets narrator undefined when narrator_info is missing', async () => {
@@ -308,7 +308,7 @@ describe('MyAnonamouseIndexer', () => {
       stubTorrentDownload(server);
 
       const { results } = await indexer.search('test');
-      expect(results[0].narrator).toBeUndefined();
+      expect(results[0]!.narrator).toBeUndefined();
     });
 
     it('skips result with missing title', async () => {
@@ -331,7 +331,7 @@ describe('MyAnonamouseIndexer', () => {
       stubTorrentDownload(server);
 
       const { results } = await indexer.search('test');
-      expect(results[0].size).toBeUndefined();
+      expect(results[0]!.size).toBeUndefined();
     });
 
     it('drops rows with no torrent ID (no-url drop, #932 AC1)', async () => {
@@ -355,7 +355,7 @@ describe('MyAnonamouseIndexer', () => {
       stubTorrentDownload(server);
 
       const { results } = await indexer.search('test');
-      expect(results[0].guid).toBe('720129');
+      expect(results[0]!.guid).toBe('720129');
     });
 
     it('populates guid as "0" when torrent id is 0', async () => {
@@ -367,7 +367,7 @@ describe('MyAnonamouseIndexer', () => {
       stubTorrentDownload(server);
 
       const { results } = await indexer.search('test');
-      expect(results[0].guid).toBe('0');
+      expect(results[0]!.guid).toBe('0');
     });
 
     it('drops row when torrent id is null — no torrent download URL is producible (#932 F4)', async () => {
@@ -403,7 +403,7 @@ describe('MyAnonamouseIndexer', () => {
       stubTorrentDownload(server);
 
       const { results } = await indexer.search('test');
-      expect(results[0].guid).toBe('9999999');
+      expect(results[0]!.guid).toBe('9999999');
     });
 
     it('populates distinct guids for multiple results', async () => {
@@ -421,8 +421,8 @@ describe('MyAnonamouseIndexer', () => {
 
       const { results } = await indexer.search('test');
       expect(results).toHaveLength(2);
-      expect(results[0].guid).toBe('111');
-      expect(results[1].guid).toBe('222');
+      expect(results[0]!.guid).toBe('111');
+      expect(results[1]!.guid).toBe('222');
     });
 
     it('drops row entirely when id is missing — no torrent download URL can be produced (#932 F4)', async () => {
@@ -650,7 +650,7 @@ describe('MyAnonamouseIndexer', () => {
       stubTorrentDownload(server);
 
       const { results } = await indexer.search('test');
-      expect(results[0].size).toBe(924634317);
+      expect(results[0]!.size).toBe(924634317);
     });
 
     it('parses "1.1 GiB" string size into 1181116006 bytes', async () => {
@@ -662,7 +662,7 @@ describe('MyAnonamouseIndexer', () => {
       stubTorrentDownload(server);
 
       const { results } = await indexer.search('test');
-      expect(results[0].size).toBe(1181116006);
+      expect(results[0]!.size).toBe(1181116006);
     });
 
     it('parses "512 KiB" string size into 524288 bytes', async () => {
@@ -674,7 +674,7 @@ describe('MyAnonamouseIndexer', () => {
       stubTorrentDownload(server);
 
       const { results } = await indexer.search('test');
-      expect(results[0].size).toBe(524288);
+      expect(results[0]!.size).toBe(524288);
     });
 
     it('parses "1.5 TiB" string size into 1649267441664 bytes', async () => {
@@ -686,7 +686,7 @@ describe('MyAnonamouseIndexer', () => {
       stubTorrentDownload(server);
 
       const { results } = await indexer.search('test');
-      expect(results[0].size).toBe(1649267441664);
+      expect(results[0]!.size).toBe(1649267441664);
     });
 
     it('sets size undefined when size is "0 MiB" (zero is not a useful size)', async () => {
@@ -698,7 +698,7 @@ describe('MyAnonamouseIndexer', () => {
       stubTorrentDownload(server);
 
       const { results } = await indexer.search('test');
-      expect(results[0].size).toBeUndefined();
+      expect(results[0]!.size).toBeUndefined();
     });
 
     it('sets size undefined when size string has non-numeric value ("invalid MiB")', async () => {
@@ -710,7 +710,7 @@ describe('MyAnonamouseIndexer', () => {
       stubTorrentDownload(server);
 
       const { results } = await indexer.search('test');
-      expect(results[0].size).toBeUndefined();
+      expect(results[0]!.size).toBeUndefined();
     });
 
     it('sets size undefined when size string has unknown unit ("1.5 ZZB")', async () => {
@@ -722,7 +722,7 @@ describe('MyAnonamouseIndexer', () => {
       stubTorrentDownload(server);
 
       const { results } = await indexer.search('test');
-      expect(results[0].size).toBeUndefined();
+      expect(results[0]!.size).toBeUndefined();
     });
 
     it('sets size undefined when size string has no unit ("881.8")', async () => {
@@ -734,7 +734,7 @@ describe('MyAnonamouseIndexer', () => {
       stubTorrentDownload(server);
 
       const { results } = await indexer.search('test');
-      expect(results[0].size).toBeUndefined();
+      expect(results[0]!.size).toBeUndefined();
     });
 
     it('passes numeric size through unchanged', async () => {
@@ -746,7 +746,7 @@ describe('MyAnonamouseIndexer', () => {
       stubTorrentDownload(server);
 
       const { results } = await indexer.search('test');
-      expect(results[0].size).toBe(1073741824);
+      expect(results[0]!.size).toBe(1073741824);
     });
 
     it('MAM result with string size and nonzero bookDuration produces valid numeric quality value', async () => {
@@ -759,7 +759,7 @@ describe('MyAnonamouseIndexer', () => {
       stubTorrentDownload(server);
 
       const { results } = await indexer.search('test');
-      const sizeBytes = results[0].size;
+      const sizeBytes = results[0]!.size;
       expect(typeof sizeBytes).toBe('number');
       expect(Number.isNaN(sizeBytes)).toBe(false);
       // Simulate quality calculation as SearchReleasesModal does with bookDuration
@@ -834,11 +834,11 @@ describe('MyAnonamouseIndexer', () => {
       const { results } = await proxiedIndexer.search('Brandon Sanderson');
 
       expect(results.length).toBe(1);
-      expect(results[0].title).toBe('The Way of Kings');
+      expect(results[0]!.title).toBe('The Way of Kings');
       // Verify fetch was called with a dispatcher (proxy agent)
       expect(fetchSpy).toHaveBeenCalled();
       const callArgs = fetchSpy.mock.calls[0];
-      expect((callArgs[1] as Record<string, unknown>).dispatcher).toBeDefined();
+      expect((callArgs![1] as Record<string, unknown>).dispatcher).toBeDefined();
 
       fetchSpy.mockRestore();
     });
@@ -858,7 +858,7 @@ describe('MyAnonamouseIndexer', () => {
 
       expect(fetchSpy).toHaveBeenCalledOnce();
       const callArgs = fetchSpy.mock.calls[0];
-      const headers = (callArgs[1] as Record<string, unknown>).headers as Record<string, string>;
+      const headers = (callArgs![1] as Record<string, unknown>).headers as Record<string, string>;
       expect(headers.Cookie).toBe('mam_id=test-mam-id');
 
       fetchSpy.mockRestore();
@@ -974,7 +974,7 @@ describe('MyAnonamouseIndexer', () => {
       stubTorrentDownload(server);
 
       const { results } = await indexer.search('test');
-      expect(results[0].language).toBe('english');
+      expect(results[0]!.language).toBe('english');
     });
 
     it('returns undefined language when lang_code is missing from response', async () => {
@@ -986,7 +986,7 @@ describe('MyAnonamouseIndexer', () => {
       stubTorrentDownload(server);
 
       const { results } = await indexer.search('test');
-      expect(results[0].language).toBeUndefined();
+      expect(results[0]!.language).toBeUndefined();
     });
 
     it('handles unknown lang_code by storing as-is lowercase', async () => {
@@ -998,7 +998,7 @@ describe('MyAnonamouseIndexer', () => {
       stubTorrentDownload(server);
 
       const { results } = await indexer.search('test');
-      expect(results[0].language).toBe('xyz');
+      expect(results[0]!.language).toBe('xyz');
     });
 
     it("resolves MAM numeric lang_code '1' to 'english' (#668)", async () => {
@@ -1010,7 +1010,7 @@ describe('MyAnonamouseIndexer', () => {
       stubTorrentDownload(server);
 
       const { results } = await indexer.search('test');
-      expect(results[0].language).toBe('english');
+      expect(results[0]!.language).toBe('english');
     });
 
     it("MAM result with lang_code '1' survives default languages: ['english'] filter (#668)", async () => {
@@ -1034,8 +1034,8 @@ describe('MyAnonamouseIndexer', () => {
       const surviving = filterByLanguage(parsed.results, ['english']).kept;
 
       expect(surviving).toHaveLength(1);
-      expect(surviving[0].title).toBe('English Book');
-      expect(surviving[0].language).toBe('english');
+      expect(surviving[0]!.title).toBe('English Book');
+      expect(surviving[0]!.language).toBe('english');
     });
   });
 
@@ -1316,7 +1316,7 @@ describe('MyAnonamouseIndexer', () => {
       );
       stubTorrentDownload(server);
       const { results } = await indexer.search('test');
-      expect(results[0].isFreeleech).toBe(true);
+      expect(results[0]!.isFreeleech).toBe(true);
     });
 
     it('sets isFreeleech: true when result has personal_freeleech: true', async () => {
@@ -1327,7 +1327,7 @@ describe('MyAnonamouseIndexer', () => {
       );
       stubTorrentDownload(server);
       const { results } = await indexer.search('test');
-      expect(results[0].isFreeleech).toBe(true);
+      expect(results[0]!.isFreeleech).toBe(true);
     });
 
     it('sets isFreeleech: true when result has fl_vip: true and adapter isVip is true', async () => {
@@ -1339,7 +1339,7 @@ describe('MyAnonamouseIndexer', () => {
       );
       stubTorrentDownload(server);
       const { results } = await vipIndexer.search('test');
-      expect(results[0].isFreeleech).toBe(true);
+      expect(results[0]!.isFreeleech).toBe(true);
     });
 
     it('does not set isFreeleech when fl_vip: true but adapter isVip is false', async () => {
@@ -1351,7 +1351,7 @@ describe('MyAnonamouseIndexer', () => {
       );
       stubTorrentDownload(server);
       const { results } = await nonVipIndexer.search('test');
-      expect(results[0].isFreeleech).toBeUndefined();
+      expect(results[0]!.isFreeleech).toBeUndefined();
     });
 
     it('sets isVipOnly: true when result has vip: true', async () => {
@@ -1362,7 +1362,7 @@ describe('MyAnonamouseIndexer', () => {
       );
       stubTorrentDownload(server);
       const { results } = await indexer.search('test');
-      expect(results[0].isVipOnly).toBe(true);
+      expect(results[0]!.isVipOnly).toBe(true);
     });
 
     it('does not set badge flags when all flags are absent', async () => {
@@ -1373,8 +1373,8 @@ describe('MyAnonamouseIndexer', () => {
       );
       stubTorrentDownload(server);
       const { results } = await indexer.search('test');
-      expect(results[0].isFreeleech).toBeUndefined();
-      expect(results[0].isVipOnly).toBeUndefined();
+      expect(results[0]!.isFreeleech).toBeUndefined();
+      expect(results[0]!.isVipOnly).toBeUndefined();
     });
 
     it('sets both isFreeleech and isVipOnly when free: true and vip: true', async () => {
@@ -1385,8 +1385,8 @@ describe('MyAnonamouseIndexer', () => {
       );
       stubTorrentDownload(server);
       const { results } = await indexer.search('test');
-      expect(results[0].isFreeleech).toBe(true);
-      expect(results[0].isVipOnly).toBe(true);
+      expect(results[0]!.isFreeleech).toBe(true);
+      expect(results[0]!.isVipOnly).toBe(true);
     });
 
     it('handles missing flag fields gracefully (no crash)', async () => {
@@ -1398,8 +1398,8 @@ describe('MyAnonamouseIndexer', () => {
       stubTorrentDownload(server);
       const { results } = await indexer.search('test');
       expect(results).toHaveLength(1);
-      expect(results[0].isFreeleech).toBeUndefined();
-      expect(results[0].isVipOnly).toBeUndefined();
+      expect(results[0]!.isFreeleech).toBeUndefined();
+      expect(results[0]!.isVipOnly).toBeUndefined();
     });
   });
 
@@ -1804,7 +1804,7 @@ describe('MyAnonamouseIndexer', () => {
 
       const { results } = await indexer.search('test');
       expect(results).toHaveLength(1);
-      expect(results[0].title).toBe('The Way of Kings');
+      expect(results[0]!.title).toBe('The Way of Kings');
     });
   });
 });

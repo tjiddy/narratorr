@@ -37,7 +37,7 @@ describe('AuthService', () => {
 
       expect(db.insert).toHaveBeenCalled();
       // Verify the inserted value has the expected shape
-      const insertChain = db.insert.mock.results[0].value;
+      const insertChain = db.insert.mock.results[0]!.value;
       const valuesCall = insertChain.values.mock.calls[0][0];
       expect(valuesCall.key).toBe('auth');
       const config = valuesCall.value;
@@ -66,7 +66,7 @@ describe('AuthService', () => {
       await service.createUser('admin', 'password123');
 
       expect(db.insert).toHaveBeenCalled();
-      const insertChain = db.insert.mock.results[0].value;
+      const insertChain = db.insert.mock.results[0]!.value;
       const valuesCall = insertChain.values.mock.calls[0][0];
       expect(valuesCall.username).toBe('admin');
       // Password hash should be salt:hash format
@@ -85,7 +85,7 @@ describe('AuthService', () => {
       // First create a user to get a real hash
       db.select.mockReturnValueOnce(mockDbChain([])); // createUser check
       await service.createUser('admin', 'password123');
-      const insertChain = db.insert.mock.results[0].value;
+      const insertChain = db.insert.mock.results[0]!.value;
       const storedHash = insertChain.values.mock.calls[0][0].passwordHash;
 
       // Now verify — return the stored user
@@ -98,7 +98,7 @@ describe('AuthService', () => {
       // Create user first to get real hash
       db.select.mockReturnValueOnce(mockDbChain([]));
       await service.createUser('admin', 'password123');
-      const insertChain = db.insert.mock.results[0].value;
+      const insertChain = db.insert.mock.results[0]!.value;
       const storedHash = insertChain.values.mock.calls[0][0].passwordHash;
 
       db.select.mockReturnValue(mockDbChain([{ id: 1, username: 'admin', passwordHash: storedHash }]));
@@ -121,7 +121,7 @@ describe('AuthService', () => {
 
       await service.updateLocalBypass(true);
 
-      const insertChain = db.insert.mock.results[0].value;
+      const insertChain = db.insert.mock.results[0]!.value;
       const valuesCall = insertChain.values.mock.calls[0][0];
       expect(valuesCall.key).toBe('auth');
       const stored = valuesCall.value as { mode: string; apiKey: string; sessionSecret: string; localBypass: boolean };
@@ -139,7 +139,7 @@ describe('AuthService', () => {
 
       await service.updateLocalBypass(false);
 
-      const insertChain = db.insert.mock.results[0].value;
+      const insertChain = db.insert.mock.results[0]!.value;
       const valuesCall = insertChain.values.mock.calls[0][0];
       const stored = valuesCall.value as { mode: string; apiKey: string; sessionSecret: string; localBypass: boolean };
       expect(stored.localBypass).toBe(false);
@@ -155,7 +155,7 @@ describe('AuthService', () => {
       // Create user
       db.select.mockReturnValueOnce(mockDbChain([]));
       await service.createUser('admin', 'oldpassword');
-      const insertChain = db.insert.mock.results[0].value;
+      const insertChain = db.insert.mock.results[0]!.value;
       const storedHash = insertChain.values.mock.calls[0][0].passwordHash;
 
       // changePassword calls verifyCredentials first (select), then update
@@ -169,9 +169,10 @@ describe('AuthService', () => {
       // Create a real user to obtain a valid password hash
       db.select.mockReturnValueOnce(mockDbChain([]));
       await service.createUser('admin', 'correctpass');
-      const insertChain = db.insert.mock.results[0].value;
+      const insertChain = db.insert.mock.results[0]!.value;
       const storedPasswordHash = insertChain.values.mock.calls[0][0].passwordHash as string;
       const [, hashHex] = storedPasswordHash.split(':');
+      // PHASE 1 SKIPPED — needs human review
       const expectedStoredBuf = Buffer.from(hashHex, 'hex');
 
       db.select.mockReturnValue(mockDbChain([{ id: 1, username: 'admin', passwordHash: storedPasswordHash }]));
@@ -187,9 +188,10 @@ describe('AuthService', () => {
       // Create a real user to obtain a valid password hash
       db.select.mockReturnValueOnce(mockDbChain([]));
       await service.createUser('admin', 'correctpass');
-      const insertChain = db.insert.mock.results[0].value;
+      const insertChain = db.insert.mock.results[0]!.value;
       const storedPasswordHash = insertChain.values.mock.calls[0][0].passwordHash as string;
       const [, hashHex] = storedPasswordHash.split(':');
+      // PHASE 1 SKIPPED — needs human review
       const expectedStoredBuf = Buffer.from(hashHex, 'hex');
 
       // Verify with wrong password — timingSafeEqual must still be called (not short-circuited)
@@ -205,7 +207,7 @@ describe('AuthService', () => {
       // Create user
       db.select.mockReturnValueOnce(mockDbChain([]));
       await service.createUser('admin', 'oldpassword');
-      const insertChain = db.insert.mock.results[0].value;
+      const insertChain = db.insert.mock.results[0]!.value;
       const storedHash = insertChain.values.mock.calls[0][0].passwordHash;
 
       db.select.mockReturnValue(mockDbChain([{ id: 1, username: 'admin', passwordHash: storedHash }]));
@@ -338,7 +340,7 @@ describe('AuthService', () => {
       expect(db.delete).toHaveBeenCalled();
 
       // Assert setAuthConfig was called with mode: 'none' and preserved apiKey/sessionSecret/localBypass
-      const insertChain = db.insert.mock.results[0].value;
+      const insertChain = db.insert.mock.results[0]!.value;
       const valuesCall = insertChain.values.mock.calls[0][0];
       expect(valuesCall.key).toBe('auth');
       const storedConfig = valuesCall.value as { mode: string; apiKey: string; sessionSecret: string; localBypass: boolean };
@@ -364,6 +366,7 @@ describe('AuthService', () => {
       expect(parts).toHaveLength(2);
 
       // Decode payload
+      // PHASE 1 SKIPPED — needs human review
       const payload = JSON.parse(Buffer.from(parts[0], 'base64url').toString());
       expect(payload.username).toBe('admin');
       expect(payload.issuedAt).toBeTypeOf('number');

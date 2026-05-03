@@ -947,7 +947,7 @@ describe('Prowlarr-compatible API v1 routes', () => {
         },
       });
 
-      const callArgs = (services.indexer.createOrUpsertProwlarr as Mock).mock.calls[0][0];
+      const callArgs = (services.indexer.createOrUpsertProwlarr as Mock).mock.calls[0]![0];
       // apiPath should not appear in the settings object
       expect(callArgs.settings).not.toHaveProperty('apiPath');
       // But the other fields should be present

@@ -55,8 +55,8 @@ describe('copyToLibrary onProgress wiring', () => {
     }
     // Final emission should reflect full copy
     const last = progressCalls[progressCalls.length - 1];
-    expect(last.current).toBe(1000);
-    expect(last.ratio).toBe(1);
+    expect(last!.current).toBe(1000);
+    expect(last!.ratio).toBe(1);
   });
 
   it('copy completes successfully when onProgress is omitted (no behaviour change)', async () => {
@@ -95,7 +95,7 @@ describe('copyToLibrary onProgress wiring', () => {
     });
 
     expect(progressCalls.length).toBeGreaterThan(0);
-    expect(progressCalls[progressCalls.length - 1].total).toBe(800);
-    expect(progressCalls[progressCalls.length - 1].current).toBe(800);
+    expect(progressCalls[progressCalls.length - 1]!.total).toBe(800);
+    expect(progressCalls[progressCalls.length - 1]!.current).toBe(800);
   });
 });

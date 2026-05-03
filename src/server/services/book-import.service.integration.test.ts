@@ -45,41 +45,41 @@ describe('BookImportService — enqueue (#747 integration with real libsql)', ()
     const book = await seedBook();
 
     const result = await service.enqueue({
-      bookId: book.id,
+      bookId: book!.id,
       type: 'auto',
       metadata: JSON.stringify({ downloadId: 5 }),
     });
 
     expect(result).toEqual({ jobId: expect.any(Number) });
-    const rows = await db.select().from(importJobs).where(eq(importJobs.bookId, book.id));
+    const rows = await db.select().from(importJobs).where(eq(importJobs.bookId, book!.id));
     expect(rows).toHaveLength(1);
-    expect(rows[0].status).toBe('pending');
+    expect(rows[0]!.status).toBe('pending');
   });
 
   it('returns active-job-exists when a pending row already exists for the bookId', async () => {
     const book = await seedBook();
     await db.insert(importJobs).values({
-      bookId: book.id, type: 'auto', status: 'pending', metadata: '{"downloadId":1}',
+      bookId: book!.id, type: 'auto', status: 'pending', metadata: '{"downloadId":1}',
     });
 
     const result = await service.enqueue({
-      bookId: book.id,
+      bookId: book!.id,
       type: 'auto',
       metadata: JSON.stringify({ downloadId: 2 }),
     });
 
     expect(result).toEqual({ error: 'active-job-exists', status: 409 });
-    const rows = await db.select().from(importJobs).where(eq(importJobs.bookId, book.id));
+    const rows = await db.select().from(importJobs).where(eq(importJobs.bookId, book!.id));
     expect(rows).toHaveLength(1);
   });
 
   it('returns active-job-exists when a processing row already exists for the bookId', async () => {
     const book = await seedBook();
     await db.insert(importJobs).values({
-      bookId: book.id, type: 'manual', status: 'processing', metadata: '{}',
+      bookId: book!.id, type: 'manual', status: 'processing', metadata: '{}',
     });
 
-    const result = await service.enqueue({ bookId: book.id, type: 'manual', metadata: '{}' });
+    const result = await service.enqueue({ bookId: book!.id, type: 'manual', metadata: '{}' });
 
     expect(result).toEqual({ error: 'active-job-exists', status: 409 });
   });
@@ -87,10 +87,10 @@ describe('BookImportService — enqueue (#747 integration with real libsql)', ()
   it('allows enqueue after a previous job completed (status=completed)', async () => {
     const book = await seedBook();
     await db.insert(importJobs).values({
-      bookId: book.id, type: 'auto', status: 'completed', metadata: '{}',
+      bookId: book!.id, type: 'auto', status: 'completed', metadata: '{}',
     });
 
-    const result = await service.enqueue({ bookId: book.id, type: 'auto', metadata: '{"downloadId":1}' });
+    const result = await service.enqueue({ bookId: book!.id, type: 'auto', metadata: '{"downloadId":1}' });
 
     expect(result).toEqual({ jobId: expect.any(Number) });
   });
@@ -98,10 +98,10 @@ describe('BookImportService — enqueue (#747 integration with real libsql)', ()
   it('allows enqueue after a previous job failed', async () => {
     const book = await seedBook();
     await db.insert(importJobs).values({
-      bookId: book.id, type: 'manual', status: 'failed', metadata: '{}',
+      bookId: book!.id, type: 'manual', status: 'failed', metadata: '{}',
     });
 
-    const result = await service.enqueue({ bookId: book.id, type: 'manual', metadata: '{}' });
+    const result = await service.enqueue({ bookId: book!.id, type: 'manual', metadata: '{}' });
 
     expect(result).toEqual({ jobId: expect.any(Number) });
   });
@@ -137,25 +137,25 @@ describe('BookImportService — enqueue (#747 integration with real libsql)', ()
     // the conflict result instead of inserting a duplicate.
     const book = await seedBook({ status: 'failed' });
     await db.insert(importJobs).values({
-      bookId: book.id, type: 'manual', status: 'failed', metadata: '{"path":"/x"}',
+      bookId: book!.id, type: 'manual', status: 'failed', metadata: '{"path":"/x"}',
     });
 
     const nudge = (): void => {};
-    const r1 = await service.retryImport(book.id, nudge);
+    const r1 = await service.retryImport(book!.id, nudge);
     expect(r1).toMatchObject({ jobId: expect.any(Number) });
 
     // Reset the book status back to non-importing so the retry pre-check
     // doesn't short-circuit on book.status==='importing'. The intent is
     // to reach the enqueue() branch and observe the unique-index conflict.
-    await db.update(books).set({ status: 'failed' }).where(eq(books.id, book.id));
+    await db.update(books).set({ status: 'failed' }).where(eq(books.id, book!.id));
 
-    const r2 = await service.retryImport(book.id, nudge);
+    const r2 = await service.retryImport(book!.id, nudge);
     expect(r2).toEqual({ error: 'active-job-exists', status: 409 });
 
     const activeRows = await db
       .select()
       .from(importJobs)
-      .where(and(eq(importJobs.bookId, book.id), inArray(importJobs.status, ['pending', 'processing'])));
+      .where(and(eq(importJobs.bookId, book!.id), inArray(importJobs.status, ['pending', 'processing'])));
     expect(activeRows).toHaveLength(1);
   });
 
@@ -168,7 +168,7 @@ describe('BookImportService — enqueue (#747 integration with real libsql)', ()
     // ONE pending and assert the migration's outcome on the seeded fixture
     // is preserved by the unique index check below.
     const [first] = await db.insert(importJobs).values({
-      bookId: book.id, type: 'auto', status: 'pending', metadata: '{"downloadId":1}',
+      bookId: book!.id, type: 'auto', status: 'pending', metadata: '{"downloadId":1}',
     }).returning();
 
     // Attempt to insert a second active row directly — the partial unique
@@ -178,7 +178,7 @@ describe('BookImportService — enqueue (#747 integration with real libsql)', ()
     const indexError = await db
       .insert(importJobs)
       .values({
-        bookId: book.id, type: 'auto', status: 'pending', metadata: '{"downloadId":2}',
+        bookId: book!.id, type: 'auto', status: 'pending', metadata: '{"downloadId":2}',
       })
       .catch((e: unknown) => e);
     expect(indexError).toBeInstanceOf(Error);
@@ -188,9 +188,9 @@ describe('BookImportService — enqueue (#747 integration with real libsql)', ()
     const activeRows = await db
       .select()
       .from(importJobs)
-      .where(and(eq(importJobs.bookId, book.id), inArray(importJobs.status, ['pending', 'processing'])));
+      .where(and(eq(importJobs.bookId, book!.id), inArray(importJobs.status, ['pending', 'processing'])));
     expect(activeRows).toHaveLength(1);
-    expect(activeRows[0].id).toBe(first.id);
+    expect(activeRows[0]!.id).toBe(first!.id);
   });
 
   it('partial unique index does NOT reject rows with NULL book_id (orphan coexistence)', async () => {
@@ -202,6 +202,6 @@ describe('BookImportService — enqueue (#747 integration with real libsql)', ()
     const b = await db.insert(importJobs).values({
       bookId: null, type: 'auto', status: 'pending', metadata: '{"downloadId":12}',
     }).returning();
-    expect(a[0].id).not.toBe(b[0].id);
+    expect(a[0]!.id).not.toBe(b[0]!.id);
   });
 });

@@ -44,7 +44,7 @@ describe('IndexerService', () => {
 
       const result = await service.getAll();
       expect(result).toHaveLength(1);
-      expect(result[0].name).toBe('AudioBookBay');
+      expect(result[0]!.name).toBe('AudioBookBay');
     });
   });
 
@@ -132,7 +132,7 @@ describe('IndexerService', () => {
         settings: { apiKey: '********', apiUrl: '********', hostname: 'new-host', flareSolverrUrl: '********' },
       });
 
-      const setArg = (updateChain as { set: ReturnType<typeof vi.fn> }).set.mock.calls[0][0] as { settings: Record<string, unknown> };
+      const setArg = (updateChain as { set: ReturnType<typeof vi.fn> }).set.mock.calls[0]![0] as { settings: Record<string, unknown> };
       expect(setArg.settings.hostname).toBe('new-host');
       // Secret fields must be exactly the stored ciphertext, not re-encrypted sentinels
       expect(setArg.settings.apiKey).toBe(encryptedApiKey);
@@ -187,9 +187,9 @@ describe('IndexerService', () => {
         settings: { apiUrl: 'http://user:pw@host/1/', apiKey: 'plain' },
       });
 
-      const valuesArg = (insertChain as { values: ReturnType<typeof vi.fn> }).values.mock.calls[0][0] as { settings: Record<string, string> };
-      expect(isEncrypted(valuesArg.settings.apiUrl)).toBe(true);
-      expect(isEncrypted(valuesArg.settings.apiKey)).toBe(true);
+      const valuesArg = (insertChain as { values: ReturnType<typeof vi.fn> }).values.mock.calls[0]![0] as { settings: Record<string, string> };
+      expect(isEncrypted(valuesArg.settings.apiUrl!)).toBe(true);
+      expect(isEncrypted(valuesArg.settings.apiKey!)).toBe(true);
     });
   });
 
@@ -345,7 +345,7 @@ describe('IndexerService', () => {
 
       expect(result.success).toBe(true);
       // Verify the adapter received the resolved (real) mamId, not the sentinel
-      const fakeRow = createSpy.mock.calls[0][0] as { settings: Record<string, unknown> };
+      const fakeRow = createSpy.mock.calls[0]![0] as { settings: Record<string, unknown> };
       expect(fakeRow.settings.mamId).toBe('real-mam-id');
     });
 
@@ -368,7 +368,7 @@ describe('IndexerService', () => {
       });
 
       expect(result.success).toBe(true);
-      const fakeRow = createSpy.mock.calls[0][0] as { settings: Record<string, unknown> };
+      const fakeRow = createSpy.mock.calls[0]![0] as { settings: Record<string, unknown> };
       expect(fakeRow.settings.mamId).toBe('new-mam-id');
     });
 
@@ -384,7 +384,7 @@ describe('IndexerService', () => {
 
       expect(result.success).toBe(true);
       // Without id, sentinel passes through as-is (no resolution)
-      const fakeRow = createSpy.mock.calls[0][0] as { settings: Record<string, unknown> };
+      const fakeRow = createSpy.mock.calls[0]![0] as { settings: Record<string, unknown> };
       expect(fakeRow.settings.mamId).toBe('********');
       // getById should not have been called
       expect(db.select).not.toHaveBeenCalled();
@@ -451,8 +451,8 @@ describe('IndexerService', () => {
 
       expect(mockAdapter.search).toHaveBeenCalledWith('');
       expect(results).toHaveLength(1);
-      expect(results[0].author).toBe('Brandon Sanderson');
-      expect(results[0].title).toBe('The Way of Kings');
+      expect(results[0]!.author).toBe('Brandon Sanderson');
+      expect(results[0]!.title).toBe('The Way of Kings');
     });
 
     it('returns empty array when feed has no items', async () => {
@@ -482,7 +482,7 @@ describe('IndexerService', () => {
       const results = await service.pollRss(torznabIndexer);
 
       expect(results).toHaveLength(1);
-      expect(results[0].indexerId).toBe(7);
+      expect(results[0]!.indexerId).toBe(7);
     });
 
     it('populates indexerId on multiple results (all stamped, not just first)', async () => {
@@ -534,7 +534,7 @@ describe('IndexerService', () => {
 
       const results = await service.searchAll('sanderson');
       expect(results).toHaveLength(1);
-      expect(results[0].title).toBe('The Way of Kings');
+      expect(results[0]!.title).toBe('The Way of Kings');
     });
 
     it('populates indexerId on results from the indexer row id', async () => {
@@ -554,7 +554,7 @@ describe('IndexerService', () => {
       vi.spyOn(service, 'getAdapter').mockResolvedValue(mockAdapter as never);
 
       const results = await service.searchAll('sanderson');
-      expect(results[0].indexerId).toBe(mockIndexer.id);
+      expect(results[0]!.indexerId).toBe(mockIndexer.id);
     });
 
     it('continues searching when one indexer errors', async () => {
@@ -576,7 +576,7 @@ describe('IndexerService', () => {
 
       const results = await service.searchAll('test');
       expect(results).toHaveLength(1);
-      expect(results[0].title).toBe('Book');
+      expect(results[0]!.title).toBe('Book');
     });
 
     it('returns empty array when all indexers fail', async () => {
@@ -629,8 +629,8 @@ describe('IndexerService', () => {
 
       const results = await service.searchAll('test');
       expect(results).toHaveLength(2);
-      expect(results[0].title).toBe('Book A');
-      expect(results[1].title).toBe('Book B');
+      expect(results[0]!.title).toBe('Book A');
+      expect(results[1]!.title).toBe('Book B');
     });
   });
 
@@ -646,8 +646,8 @@ describe('IndexerService', () => {
       vi.spyOn(service, 'getAdapter').mockResolvedValue(mockAdapter as never);
 
       const results = await service.searchAll('sanderson');
-      expect(results[0].author).toBe('Brandon Sanderson');
-      expect(results[0].title).toBe('The Way of Kings');
+      expect(results[0]!.author).toBe('Brandon Sanderson');
+      expect(results[0]!.title).toBe('The Way of Kings');
     });
 
     it('sets rawTitle to original indexer title before parsing', async () => {
@@ -661,7 +661,7 @@ describe('IndexerService', () => {
       vi.spyOn(service, 'getAdapter').mockResolvedValue(mockAdapter as never);
 
       const results = await service.searchAll('sanderson');
-      expect(results[0].rawTitle).toBe('Brandon Sanderson - The Way of Kings');
+      expect(results[0]!.rawTitle).toBe('Brandon Sanderson - The Way of Kings');
     });
 
     it('does not overwrite author when adapter already set it (ABB case)', async () => {
@@ -675,8 +675,8 @@ describe('IndexerService', () => {
       vi.spyOn(service, 'getAdapter').mockResolvedValue(mockAdapter as never);
 
       const results = await service.searchAll('sanderson');
-      expect(results[0].author).toBe('Brandon Sanderson');
-      expect(results[0].rawTitle).toBeUndefined();
+      expect(results[0]!.author).toBe('Brandon Sanderson');
+      expect(results[0]!.rawTitle).toBeUndefined();
     });
 
     it('uses cleaned title even when parsing extracts no author', async () => {
@@ -691,9 +691,9 @@ describe('IndexerService', () => {
 
       const results = await service.searchAll('random');
       // Title unchanged by parser, so rawTitle is not set
-      expect(results[0].title).toBe('Some Random Title');
-      expect(results[0].author).toBeUndefined();
-      expect(results[0].rawTitle).toBeUndefined();
+      expect(results[0]!.title).toBe('Some Random Title');
+      expect(results[0]!.author).toBeUndefined();
+      expect(results[0]!.rawTitle).toBeUndefined();
     });
 
     it('sets rawTitle and cleans title when parser strips noise without extracting author', async () => {
@@ -707,9 +707,9 @@ describe('IndexerService', () => {
       vi.spyOn(service, 'getAdapter').mockResolvedValue(mockAdapter as never);
 
       const results = await service.searchAll('random');
-      expect(results[0].title).toBe('Some Random Title');
-      expect(results[0].rawTitle).toBe('Some Random Title [MP3] [ENG]');
-      expect(results[0].author).toBeUndefined();
+      expect(results[0]!.title).toBe('Some Random Title');
+      expect(results[0]!.rawTitle).toBe('Some Random Title [MP3] [ENG]');
+      expect(results[0]!.author).toBeUndefined();
     });
 
     it('logs unparsed non-hash release names at debug level', async () => {
@@ -744,8 +744,8 @@ describe('IndexerService', () => {
       vi.spyOn(service, 'getAdapter').mockResolvedValue(mockAdapter as never);
 
       const results = await service.searchAll('sanderson', { title: 'The Way of Kings', author: 'Brandon Sanderson' });
-      expect(results[0].matchScore).toBeDefined();
-      expect(results[0].matchScore).toBeGreaterThan(0.5);
+      expect(results[0]!.matchScore).toBeDefined();
+      expect(results[0]!.matchScore).toBeGreaterThan(0.5);
     });
 
     it('sorts results by matchScore descending when context is provided', async () => {
@@ -760,7 +760,7 @@ describe('IndexerService', () => {
       vi.spyOn(service, 'getAdapter').mockResolvedValue(mockAdapter as never);
 
       const results = await service.searchAll('sanderson', { title: 'The Way of Kings' });
-      expect(results[0].title).toBe('The Way of Kings');
+      expect(results[0]!.title).toBe('The Way of Kings');
     });
 
     it('does not score or sort when no context is provided', async () => {
@@ -775,8 +775,8 @@ describe('IndexerService', () => {
       vi.spyOn(service, 'getAdapter').mockResolvedValue(mockAdapter as never);
 
       const results = await service.searchAll('books');
-      expect(results[0].matchScore).toBeUndefined();
-      expect(results[0].title).toBe('Book B'); // order preserved
+      expect(results[0]!.matchScore).toBeUndefined();
+      expect(results[0]!.title).toBe('Book B'); // order preserved
     });
   });
 
@@ -854,7 +854,7 @@ describe('IndexerService', () => {
 
       const results = await service.searchAll('test');
       expect(results).toHaveLength(1);
-      expect(results[0].title).toBe('Found Book');
+      expect(results[0]!.title).toBe('Found Book');
     });
 
     it('testConfig passes flareSolverrUrl through settings', async () => {
@@ -1000,7 +1000,7 @@ describe('IndexerService', () => {
 
       const results = await proxyService.searchAll('test');
       expect(results).toHaveLength(1);
-      expect(results[0].title).toBe('Proxied Book');
+      expect(results[0]!.title).toBe('Proxied Book');
       // getAdapter calls getProxyUrl which calls settingsService.get('network')
       expect(mockSettingsService.get).toHaveBeenCalledWith('network');
       expect(createSpy).toHaveBeenCalledWith(proxyIndexer, 'socks5://proxy:1080');
@@ -1030,7 +1030,7 @@ describe('IndexerService', () => {
 
       const results = await proxyService.searchAll('test');
       expect(results).toHaveLength(1);
-      expect(results[0].title).toBe('Good Book');
+      expect(results[0]!.title).toBe('Good Book');
     });
 
     it('test routes through proxy when indexer has useProxy enabled', async () => {
@@ -1161,7 +1161,7 @@ describe('IndexerService', () => {
 
         // Verify update was called and .set() payload excludes priority and enabled
         expect(db.update).toHaveBeenCalled();
-        const setPayload = (updateChain.set as ReturnType<typeof vi.fn>).mock.calls[0][0];
+        const setPayload = (updateChain.set as ReturnType<typeof vi.fn>).mock.calls[0]![0];
         expect(setPayload).not.toHaveProperty('priority');
         expect(setPayload).not.toHaveProperty('enabled');
         expect(setPayload).toHaveProperty('name', 'New Name');
@@ -1195,7 +1195,7 @@ describe('IndexerService', () => {
           sourceIndexerId: 10,
         });
 
-        const setPayload = (updateChain.set as ReturnType<typeof vi.fn>).mock.calls[0][0];
+        const setPayload = (updateChain.set as ReturnType<typeof vi.fn>).mock.calls[0]![0];
         // Prowlarr-managed secret settings are encrypted (apiUrl + apiKey, #742)
         expect(isEncrypted(setPayload.settings.apiUrl)).toBe(true);
         expect(isEncrypted(setPayload.settings.apiKey)).toBe(true);
@@ -1400,7 +1400,7 @@ describe('IndexerService', () => {
 
       const results = await service.searchAll('test');
       expect(results).toHaveLength(1);
-      expect(results[0].title).toBe('Book');
+      expect(results[0]!.title).toBe('Book');
     });
 
     it('returns empty array when all indexers reject', async () => {
@@ -1476,7 +1476,7 @@ describe('IndexerService', () => {
 
       const results = await service.searchAll('sanderson', { title: 'The Way of Kings', author: 'Sanderson' });
       // Better match should be sorted first
-      expect(results[0].title).toBe('The Way of Kings');
+      expect(results[0]!.title).toBe('The Way of Kings');
     });
 
     it('works correctly with a single enabled indexer', async () => {
@@ -1490,7 +1490,7 @@ describe('IndexerService', () => {
 
       const results = await service.searchAll('test');
       expect(results).toHaveLength(1);
-      expect(results[0].title).toBe('Book');
+      expect(results[0]!.title).toBe('Book');
     });
   });
 
@@ -1593,8 +1593,8 @@ describe('IndexerService', () => {
         { onComplete: vi.fn(), onError: vi.fn() },
       );
 
-      expect(results[0].matchScore).toBeDefined();
-      expect(results[0].matchScore).toBeGreaterThan(0);
+      expect(results[0]!.matchScore).toBeDefined();
+      expect(results[0]!.matchScore).toBeGreaterThan(0);
     });
   });
 
@@ -1925,7 +1925,7 @@ describe('IndexerService', () => {
 
       await langService.searchAllStreaming('sanderson', undefined, controllers, { onComplete, onError });
 
-      const searchCall = mockAdapter.search.mock.calls[0][1];
+      const searchCall = mockAdapter.search.mock.calls[0]![1];
       expect(searchCall.languages).toEqual(['english', 'french']);
       expect(searchCall.signal).toBe(controller.signal);
     });
@@ -1969,7 +1969,7 @@ describe('IndexerService', () => {
       vi.spyOn(service, 'getAdapter').mockResolvedValue(mockAdapter as never);
 
       const results = await service.searchAll('test');
-      expect(results[0].indexerPriority).toBe(10);
+      expect(results[0]!.indexerPriority).toBe(10);
     });
 
     it('searchAllStreaming attaches indexerPriority from the indexer record to each mapped result', async () => {
@@ -1989,7 +1989,7 @@ describe('IndexerService', () => {
       const onError = vi.fn();
 
       const results = await service.searchAllStreaming('test', undefined, controllers, { onComplete, onError });
-      expect(results[0].indexerPriority).toBe(25);
+      expect(results[0]!.indexerPriority).toBe(25);
     });
 
     it('pollRss attaches indexerPriority from the indexer record to each mapped result', async () => {
@@ -2005,7 +2005,7 @@ describe('IndexerService', () => {
       vi.spyOn(service, 'getAdapter').mockResolvedValue(mockAdapter as never);
 
       const results = await service.pollRss(rssIndexer);
-      expect(results[0].indexerPriority).toBe(75);
+      expect(results[0]!.indexerPriority).toBe(75);
     });
 
     it('indexer with default priority (50) produces results with indexerPriority: 50', async () => {
@@ -2022,7 +2022,7 @@ describe('IndexerService', () => {
       vi.spyOn(service, 'getAdapter').mockResolvedValue(mockAdapter as never);
 
       const results = await service.searchAll('test');
-      expect(results[0].indexerPriority).toBe(50);
+      expect(results[0]!.indexerPriority).toBe(50);
     });
   });
 });

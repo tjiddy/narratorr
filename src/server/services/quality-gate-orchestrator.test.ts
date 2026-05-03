@@ -271,7 +271,7 @@ describe('QualityGateOrchestrator', () => {
       );
 
       // Diagnostic callback wiring — onWarn → log.warn(payload, msg); onDebug → log.debug(payload, msg)
-      const options = vi.mocked(scanAudioDirectory).mock.calls[0][1]!;
+      const options = vi.mocked(scanAudioDirectory).mock.calls[0]![1]!;
       options.onWarn!('warn-msg', { warnPayload: 1 });
       expect(log.warn).toHaveBeenCalledWith({ warnPayload: 1 }, 'warn-msg');
       options.onDebug!('debug-msg', { debugPayload: 2 });
@@ -1866,7 +1866,7 @@ describe('QualityGateOrchestrator', () => {
       );
 
       // Diagnostic callback wiring — onWarn → log.warn(payload, msg); onDebug → log.debug(payload, msg)
-      const options = vi.mocked(scanAudioDirectory).mock.calls[0][1]!;
+      const options = vi.mocked(scanAudioDirectory).mock.calls[0]![1]!;
       options.onWarn!('warn-msg', { warnPayload: 1 });
       expect(log.warn).toHaveBeenCalledWith({ warnPayload: 1 }, 'warn-msg');
       options.onDebug!('debug-msg', { debugPayload: 2 });

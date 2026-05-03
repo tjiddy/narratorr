@@ -9,56 +9,56 @@ describe('mergeBookData', () => {
     it('returns updated dot class for wanted status', () => {
       const book = createMockBook({ status: 'wanted' });
       const result = mergeBookData(book);
-      expect(result.statusDotClass).toBe(bookStatusConfig.wanted.dotClass);
+      expect(result.statusDotClass).toBe(bookStatusConfig.wanted!.dotClass);
     });
 
     it('returns updated dot class for searching status', () => {
       const book = createMockBook({ status: 'searching' });
       const result = mergeBookData(book);
-      expect(result.statusDotClass).toBe(bookStatusConfig.searching.dotClass);
+      expect(result.statusDotClass).toBe(bookStatusConfig.searching!.dotClass);
     });
 
     it('returns updated dot class for downloading status', () => {
       const book = createMockBook({ status: 'downloading' });
       const result = mergeBookData(book);
-      expect(result.statusDotClass).toBe(bookStatusConfig.downloading.dotClass);
+      expect(result.statusDotClass).toBe(bookStatusConfig.downloading!.dotClass);
     });
 
     it('returns updated dot class for importing status', () => {
       const book = createMockBook({ status: 'importing' });
       const result = mergeBookData(book);
-      expect(result.statusDotClass).toBe(bookStatusConfig.importing.dotClass);
+      expect(result.statusDotClass).toBe(bookStatusConfig.importing!.dotClass);
     });
 
     it('returns updated dot class for imported status', () => {
       const book = createMockBook({ status: 'imported' });
       const result = mergeBookData(book);
-      expect(result.statusDotClass).toBe(bookStatusConfig.imported.dotClass);
+      expect(result.statusDotClass).toBe(bookStatusConfig.imported!.dotClass);
     });
 
     it('returns updated dot class for missing status', () => {
       const book = createMockBook({ status: 'missing' });
       const result = mergeBookData(book);
-      expect(result.statusDotClass).toBe(bookStatusConfig.missing.dotClass);
+      expect(result.statusDotClass).toBe(bookStatusConfig.missing!.dotClass);
     });
 
     it('returns updated dot class for failed status', () => {
       const book = createMockBook({ status: 'failed' });
       const result = mergeBookData(book);
-      expect(result.statusDotClass).toBe(bookStatusConfig.failed.dotClass);
+      expect(result.statusDotClass).toBe(bookStatusConfig.failed!.dotClass);
     });
 
     it('returns bar class for each status', () => {
       const book = createMockBook({ status: 'imported' });
       const result = mergeBookData(book);
-      expect(result.statusBarClass).toBe(bookStatusConfig.imported.barClass);
+      expect(result.statusBarClass).toBe(bookStatusConfig.imported!.barClass);
     });
 
     it('falls back to wanted config for unknown status string', () => {
       const book = createMockBook({ status: 'nonexistent' as unknown as BookStatus });
       const result = mergeBookData(book);
-      expect(result.statusDotClass).toBe(bookStatusConfig.wanted.dotClass);
-      expect(result.statusBarClass).toBe(bookStatusConfig.wanted.barClass);
+      expect(result.statusDotClass).toBe(bookStatusConfig.wanted!.dotClass);
+      expect(result.statusBarClass).toBe(bookStatusConfig.wanted!.barClass);
       expect(result.statusLabel).toBe('Wanted');
     });
   });

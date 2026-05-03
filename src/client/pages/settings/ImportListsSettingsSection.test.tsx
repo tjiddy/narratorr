@@ -134,7 +134,7 @@ describe('ImportListsSettings', () => {
 
     const listCard = screen.getByText('My ABS List').closest('.glass-card')!;
     const buttons = listCard.querySelectorAll('button');
-    await user.click(buttons[0]);
+    await user.click(buttons[0]!);
 
     await waitFor(() => {
       expect(api.updateImportList).toHaveBeenCalledWith(1, { enabled: false });
@@ -217,7 +217,7 @@ describe('ImportListsSettings', () => {
     const listCard = screen.getByText('My ABS List').closest('.glass-card')!;
     const buttons = listCard.querySelectorAll('button');
     const trashButton = buttons[buttons.length - 1];
-    await user.click(trashButton);
+    await user.click(trashButton!);
 
     await waitFor(() => {
       expect(screen.getByRole('dialog')).toBeInTheDocument();
@@ -229,7 +229,7 @@ describe('ImportListsSettings', () => {
     await user.click(screen.getByRole('button', { name: 'Delete' }));
 
     await waitFor(() => {
-      expect((api.deleteImportList as Mock).mock.calls[0][0]).toBe(1);
+      expect((api.deleteImportList as Mock).mock.calls[0]![0]).toBe(1);
     });
     await waitFor(() => {
       expect(toast.success).toHaveBeenCalledWith('Import list removed successfully');
@@ -247,7 +247,7 @@ describe('ImportListsSettings', () => {
 
     const listCard = screen.getByText('My ABS List').closest('.glass-card')!;
     const buttons = listCard.querySelectorAll('button');
-    await user.click(buttons[0]);
+    await user.click(buttons[0]!);
 
     await waitFor(() => {
       expect(toast.error).toHaveBeenCalledWith('Failed to toggle import list');
@@ -265,7 +265,7 @@ describe('ImportListsSettings', () => {
 
     const listCard = screen.getByText('My ABS List').closest('.glass-card')!;
     const buttons = listCard.querySelectorAll('button');
-    await user.click(buttons[buttons.length - 1]);
+    await user.click(buttons[buttons.length - 1]!);
 
     await waitFor(() => {
       expect(screen.getByRole('dialog')).toBeInTheDocument();
@@ -287,7 +287,7 @@ describe('ImportListsSettings', () => {
 
     const listCard = screen.getByText('My ABS List').closest('.glass-card')!;
     const buttons = listCard.querySelectorAll('button');
-    await user.click(buttons[buttons.length - 1]);
+    await user.click(buttons[buttons.length - 1]!);
 
     await waitFor(() => {
       expect(screen.getByRole('dialog')).toBeInTheDocument();

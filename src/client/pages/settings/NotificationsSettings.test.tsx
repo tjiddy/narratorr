@@ -98,7 +98,7 @@ describe('NotificationsSettings', () => {
     await waitFor(() => {
       expect(api.createNotifier).toHaveBeenCalled();
     });
-    expect((api.createNotifier as Mock).mock.calls[0][0]).toMatchObject({
+    expect((api.createNotifier as Mock).mock.calls[0]![0]).toMatchObject({
       name: 'New Discord',
       type: 'discord',
     });
@@ -280,11 +280,11 @@ describe('NotificationsSettings', () => {
     await waitForListLoad('My Discord');
 
     const testButtons = screen.getAllByText('Test').map((el) => el.closest('button')!);
-    await user.click(testButtons[0]);
+    await user.click(testButtons[0]!);
 
     await waitFor(() => {
       expect(api.testNotifier).toHaveBeenCalled();
-      expect((api.testNotifier as Mock).mock.calls[0][0]).toBe(1);
+      expect((api.testNotifier as Mock).mock.calls[0]![0]).toBe(1);
     });
   });
 });

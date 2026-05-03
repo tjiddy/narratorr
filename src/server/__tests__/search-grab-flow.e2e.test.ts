@@ -137,12 +137,12 @@ describe('Search → Grab flow E2E', () => {
       url: '/api/search/grab',
       payload: {
         downloadUrl: MAGNET_URI,
-        title: firstResult.title,
+        title: firstResult!.title,
         protocol: 'torrent',
         bookId,
         indexerId,
-        size: firstResult.size,
-        seeders: firstResult.seeders,
+        size: firstResult!.size,
+        seeders: firstResult!.seeders,
       },
     });
 
@@ -221,7 +221,7 @@ describe('Search → Grab flow E2E', () => {
     await waitForRequests(captured, 1);
 
     expect(captured).toHaveLength(1);
-    const payload = captured[0].body as Record<string, unknown>;
+    const payload = captured[0]!.body as Record<string, unknown>;
     expect(payload.event).toBe('on_grab');
     expect(payload.book).toEqual(expect.objectContaining({ title: 'Notification Test Book' }));
     expect(payload.release).toEqual(expect.objectContaining({

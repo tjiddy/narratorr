@@ -25,7 +25,7 @@ describe('Indexer ADAPTER_FACTORIES', () => {
         myanonamouse: { mamId: 'test-id' },
       };
       for (const type of types) {
-        const adapter = ADAPTER_FACTORIES[type](configs[type], 'TestIndexer');
+        const adapter = ADAPTER_FACTORIES[type](configs[type]!, 'TestIndexer');
         expect(adapter).toHaveProperty('type');
         expect(adapter).toHaveProperty('name');
         expect(adapter.search).toBeTypeOf('function');

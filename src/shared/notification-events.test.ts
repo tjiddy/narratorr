@@ -55,7 +55,7 @@ describe('notification-events (leaf module)', () => {
     it('every label is a non-empty string', () => {
       for (const event of NOTIFICATION_EVENTS) {
         expect(EVENT_LABELS[event]).toBeTypeOf('string');
-        expect(EVENT_LABELS[event].length).toBeGreaterThan(0);
+        expect(EVENT_LABELS[event]!.length).toBeGreaterThan(0);
       }
     });
   });

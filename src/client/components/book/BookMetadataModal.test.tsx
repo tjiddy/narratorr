@@ -214,7 +214,7 @@ describe('BookMetadataModal', () => {
         expect(onSave).toHaveBeenCalledTimes(1);
       });
       await waitFor(() => {
-        const payload = onSave.mock.calls[0][0];
+        const payload = onSave.mock.calls[0]![0];
         expect(payload.title).toBe('Changed Title');
         expect(payload).not.toHaveProperty('seriesPosition');
       });

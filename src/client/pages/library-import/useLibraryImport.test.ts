@@ -175,7 +175,7 @@ describe('useLibraryImport hook (#133)', () => {
 
     await waitFor(() => {
       const row = result.current.rows[slugDupIdx];
-      expect(row.book.isDuplicate).toBe(false);
+      expect(row!.book.isDuplicate).toBe(false);
     });
   });
 
@@ -198,7 +198,7 @@ describe('useLibraryImport hook (#133)', () => {
 
     await waitFor(() => {
       const row = result.current.rows[slugDupIdx];
-      expect(row.book.isDuplicate).toBe(false);
+      expect(row!.book.isDuplicate).toBe(false);
     });
   });
 
@@ -234,7 +234,7 @@ describe('useLibraryImport hook (#133)', () => {
     // startMatchJob called twice: initial scan + retry
     expect(mockStartMatchJob).toHaveBeenCalledTimes(2);
     // Retry call contains the non-duplicate candidate
-    const retryCandidates = mockStartMatchJob.mock.calls[1][0] as Array<{ path: string; title: string }>;
+    const retryCandidates = mockStartMatchJob.mock.calls[1]![0] as Array<{ path: string; title: string }>;
     expect(retryCandidates).toEqual(expect.arrayContaining([
       expect.objectContaining({ path: '/audiobooks/AuthorA/Book1', title: 'Book One' }),
     ]));
@@ -257,8 +257,8 @@ describe('useLibraryImport hook (#133)', () => {
 
     await waitFor(() => {
       const row = result.current.rows[pathDupIdx];
-      expect(row.book.isDuplicate).toBe(true);
-      expect(row.book.duplicateReason).toBe('path');
+      expect(row!.book.isDuplicate).toBe(true);
+      expect(row!.book.duplicateReason).toBe('path');
     });
   });
 
@@ -370,14 +370,14 @@ describe('match merge — selection behavior (#185)', () => {
     // Deselect the non-duplicate row before match results arrive
     const nonDupIdx = result.current.rows.findIndex(r => !r.book.isDuplicate);
     act(() => result.current.handleToggle(nonDupIdx));
-    expect(result.current.rows[nonDupIdx].selected).toBe(false);
+    expect(result.current.rows[nonDupIdx]!.selected).toBe(false);
 
     // Match result with high confidence merges — should NOT auto-select
     await waitFor(() => {
-      expect(result.current.rows[nonDupIdx].matchResult?.confidence).toBe('high');
+      expect(result.current.rows[nonDupIdx]!.matchResult?.confidence).toBe('high');
     }, { timeout: 5000 });
 
-    expect(result.current.rows[nonDupIdx].selected).toBe(false);
+    expect(result.current.rows[nonDupIdx]!.selected).toBe(false);
   });
 });
 
@@ -398,7 +398,7 @@ describe('handleEdit — auto-check, confidence upgrade, slug-duplicate recheck 
 
     const nonDupIdx = result.current.rows.findIndex(r => !r.book.isDuplicate);
     act(() => result.current.handleToggle(nonDupIdx));
-    expect(result.current.rows[nonDupIdx].selected).toBe(false);
+    expect(result.current.rows[nonDupIdx]!.selected).toBe(false);
 
     // Edit with metadata → auto-selects
     act(() => {
@@ -408,7 +408,7 @@ describe('handleEdit — auto-check, confidence upgrade, slug-duplicate recheck 
       });
     });
 
-    expect(result.current.rows[nonDupIdx].selected).toBe(true);
+    expect(result.current.rows[nonDupIdx]!.selected).toBe(true);
   });
 
   it('confidence upgrade from none to medium when metadata provided', async () => {
@@ -429,7 +429,7 @@ describe('handleEdit — auto-check, confidence upgrade, slug-duplicate recheck 
     const nonDupIdx = result.current.rows.findIndex(r => !r.book.isDuplicate);
 
     await waitFor(() => {
-      expect(result.current.rows[nonDupIdx].matchResult?.confidence).toBe('none');
+      expect(result.current.rows[nonDupIdx]!.matchResult?.confidence).toBe('none');
     }, { timeout: 5000 });
 
     // Edit with metadata → confidence upgrades to medium
@@ -440,7 +440,7 @@ describe('handleEdit — auto-check, confidence upgrade, slug-duplicate recheck 
       });
     });
 
-    expect(result.current.rows[nonDupIdx].matchResult?.confidence).toBe('medium');
+    expect(result.current.rows[nonDupIdx]!.matchResult?.confidence).toBe('medium');
   });
 
   // ── #335 Manual match override: medium → high ──────────────────────────
@@ -461,7 +461,7 @@ describe('handleEdit — auto-check, confidence upgrade, slug-duplicate recheck 
     const nonDupIdx = result.current.rows.findIndex(r => !r.book.isDuplicate);
 
     await waitFor(() => {
-      expect(result.current.rows[nonDupIdx].matchResult?.confidence).toBe('medium');
+      expect(result.current.rows[nonDupIdx]!.matchResult?.confidence).toBe('medium');
     }, { timeout: 5000 });
 
     // Edit with provider metadata → confidence upgrades to high
@@ -472,7 +472,7 @@ describe('handleEdit — auto-check, confidence upgrade, slug-duplicate recheck 
       });
     });
 
-    expect(result.current.rows[nonDupIdx].matchResult?.confidence).toBe('high');
+    expect(result.current.rows[nonDupIdx]!.matchResult?.confidence).toBe('high');
   });
 
   it('confidence stays high when provider metadata provided on high-confidence row', async () => {
@@ -492,7 +492,7 @@ describe('handleEdit — auto-check, confidence upgrade, slug-duplicate recheck 
     const nonDupIdx = result.current.rows.findIndex(r => !r.book.isDuplicate);
 
     await waitFor(() => {
-      expect(result.current.rows[nonDupIdx].matchResult?.confidence).toBe('high');
+      expect(result.current.rows[nonDupIdx]!.matchResult?.confidence).toBe('high');
     }, { timeout: 5000 });
 
     // Edit with provider metadata → confidence stays high
@@ -503,7 +503,7 @@ describe('handleEdit — auto-check, confidence upgrade, slug-duplicate recheck 
       });
     });
 
-    expect(result.current.rows[nonDupIdx].matchResult?.confidence).toBe('high');
+    expect(result.current.rows[nonDupIdx]!.matchResult?.confidence).toBe('high');
   });
 
   it('confidence stays medium when saved with preloaded metadata (no re-selection)', async () => {
@@ -524,11 +524,11 @@ describe('handleEdit — auto-check, confidence upgrade, slug-duplicate recheck 
     const nonDupIdx = result.current.rows.findIndex(r => !r.book.isDuplicate);
 
     await waitFor(() => {
-      expect(result.current.rows[nonDupIdx].matchResult?.confidence).toBe('medium');
+      expect(result.current.rows[nonDupIdx]!.matchResult?.confidence).toBe('medium');
     }, { timeout: 5000 });
 
     // Save with the SAME metadata reference (user opened modal without re-selecting)
-    const preloadedMetadata = result.current.rows[nonDupIdx].edited.metadata;
+    const preloadedMetadata = result.current.rows[nonDupIdx]!.edited.metadata;
     act(() => {
       result.current.handleEdit(nonDupIdx, {
         title: 'Book One', author: 'Author A', series: '',
@@ -537,7 +537,7 @@ describe('handleEdit — auto-check, confidence upgrade, slug-duplicate recheck 
     });
 
     // Should NOT upgrade — no explicit provider re-selection
-    expect(result.current.rows[nonDupIdx].matchResult?.confidence).toBe('medium');
+    expect(result.current.rows[nonDupIdx]!.matchResult?.confidence).toBe('medium');
   });
 
   it('confidence upgrade from medium to high when explicit click on SAME current match', async () => {
@@ -558,7 +558,7 @@ describe('handleEdit — auto-check, confidence upgrade, slug-duplicate recheck 
     const nonDupIdx = result.current.rows.findIndex(r => !r.book.isDuplicate);
 
     await waitFor(() => {
-      expect(result.current.rows[nonDupIdx].matchResult?.confidence).toBe('medium');
+      expect(result.current.rows[nonDupIdx]!.matchResult?.confidence).toBe('medium');
     }, { timeout: 5000 });
 
     // Simulate explicit click on the current match — applyMetadata spreads to new reference
@@ -569,7 +569,7 @@ describe('handleEdit — auto-check, confidence upgrade, slug-duplicate recheck 
       });
     });
 
-    expect(result.current.rows[nonDupIdx].matchResult?.confidence).toBe('high');
+    expect(result.current.rows[nonDupIdx]!.matchResult?.confidence).toBe('high');
   });
 
   it('slug-duplicate row: title+author still collides → stays duplicate', async () => {
@@ -587,7 +587,7 @@ describe('handleEdit — auto-check, confidence upgrade, slug-duplicate recheck 
       result.current.handleEdit(slugDupIdx, { title: 'Book Three', author: 'Author C', series: '' });
     });
 
-    expect(result.current.rows[slugDupIdx].book.isDuplicate).toBe(true);
+    expect(result.current.rows[slugDupIdx]!.book.isDuplicate).toBe(true);
   });
 
   it('slug-duplicate row: title+author no longer collides → duplicate cleared', async () => {
@@ -604,7 +604,7 @@ describe('handleEdit — auto-check, confidence upgrade, slug-duplicate recheck 
       result.current.handleEdit(slugDupIdx, { title: 'New Title', author: 'New Author', series: '' });
     });
 
-    expect(result.current.rows[slugDupIdx].book.isDuplicate).toBe(false);
+    expect(result.current.rows[slugDupIdx]!.book.isDuplicate).toBe(false);
   });
 
   it('undefined bookIdentifiers (query not yet resolved) — no crash, guard prevents recheck', async () => {
@@ -622,7 +622,7 @@ describe('handleEdit — auto-check, confidence upgrade, slug-duplicate recheck 
     });
 
     // Row stays duplicate because the guard skipped the recheck
-    expect(result.current.rows[slugDupIdx].book.isDuplicate).toBe(true);
+    expect(result.current.rows[slugDupIdx]!.book.isDuplicate).toBe(true);
   });
 
   // ── #415 Match confidence reason passthrough ────────────────────────
@@ -644,10 +644,10 @@ describe('handleEdit — auto-check, confidence upgrade, slug-duplicate recheck 
 
       const nonDupIdx = result.current.rows.findIndex(r => !r.book.isDuplicate);
       await waitFor(() => {
-        expect(result.current.rows[nonDupIdx].matchResult?.confidence).toBe('medium');
+        expect(result.current.rows[nonDupIdx]!.matchResult?.confidence).toBe('medium');
       }, { timeout: 5000 });
 
-      expect(result.current.rows[nonDupIdx].matchResult?.reason).toBe(
+      expect(result.current.rows[nonDupIdx]!.matchResult?.reason).toBe(
         'Duration mismatch — scanned 10.0hrs vs expected 11.6hrs',
       );
     });
@@ -669,9 +669,9 @@ describe('handleEdit — auto-check, confidence upgrade, slug-duplicate recheck 
 
       const nonDupIdx = result.current.rows.findIndex(r => !r.book.isDuplicate);
       await waitFor(() => {
-        expect(result.current.rows[nonDupIdx].matchResult?.confidence).toBe('medium');
+        expect(result.current.rows[nonDupIdx]!.matchResult?.confidence).toBe('medium');
       }, { timeout: 5000 });
-      expect(result.current.rows[nonDupIdx].matchResult?.reason).toBeDefined();
+      expect(result.current.rows[nonDupIdx]!.matchResult?.reason).toBeDefined();
 
       // Edit with NEW metadata → upgrades to high, reason must be cleared
       act(() => {
@@ -681,8 +681,8 @@ describe('handleEdit — auto-check, confidence upgrade, slug-duplicate recheck 
         });
       });
 
-      expect(result.current.rows[nonDupIdx].matchResult?.confidence).toBe('high');
-      expect(result.current.rows[nonDupIdx].matchResult?.reason).toBeUndefined();
+      expect(result.current.rows[nonDupIdx]!.matchResult?.confidence).toBe('high');
+      expect(result.current.rows[nonDupIdx]!.matchResult?.reason).toBeUndefined();
     });
 
     it('none → medium upgrade does not set a reason (user-initiated)', async () => {
@@ -701,7 +701,7 @@ describe('handleEdit — auto-check, confidence upgrade, slug-duplicate recheck 
 
       const nonDupIdx = result.current.rows.findIndex(r => !r.book.isDuplicate);
       await waitFor(() => {
-        expect(result.current.rows[nonDupIdx].matchResult?.confidence).toBe('none');
+        expect(result.current.rows[nonDupIdx]!.matchResult?.confidence).toBe('none');
       }, { timeout: 5000 });
 
       // Edit with metadata → upgrades to medium, but no system reason
@@ -712,8 +712,8 @@ describe('handleEdit — auto-check, confidence upgrade, slug-duplicate recheck 
         });
       });
 
-      expect(result.current.rows[nonDupIdx].matchResult?.confidence).toBe('medium');
-      expect(result.current.rows[nonDupIdx].matchResult?.reason).toBeUndefined();
+      expect(result.current.rows[nonDupIdx]!.matchResult?.confidence).toBe('medium');
+      expect(result.current.rows[nonDupIdx]!.matchResult?.reason).toBeUndefined();
     });
   });
 });
@@ -742,7 +742,7 @@ describe('retry mechanics (#185)', () => {
     // Wait for initial match results to merge (poll interval fires)
     const nonDupIdx = result.current.rows.findIndex(r => !r.book.isDuplicate);
     await waitFor(() => {
-      expect(result.current.rows[nonDupIdx].edited.title).toBe('First Match');
+      expect(result.current.rows[nonDupIdx]!.edited.title).toBe('First Match');
     }, { timeout: 5000 });
 
     // Phase 2: retry — new scan + new match with different result
@@ -759,7 +759,7 @@ describe('retry mechanics (#185)', () => {
     // Observable: post-retry result is merged from index 0, not lost to stale offset
     const retryNonDupIdx = result.current.rows.findIndex(r => !r.book.isDuplicate);
     await waitFor(() => {
-      expect(result.current.rows[retryNonDupIdx].edited.title).toBe('Retry Match');
+      expect(result.current.rows[retryNonDupIdx]!.edited.title).toBe('Retry Match');
     }, { timeout: 5000 });
   });
 
@@ -776,7 +776,7 @@ describe('retry mechanics (#185)', () => {
 
     const nonDupIdx = result.current.rows.findIndex(r => !r.book.isDuplicate);
     await waitFor(() => {
-      expect(result.current.rows[nonDupIdx].matchResult?.confidence).toBe('none');
+      expect(result.current.rows[nonDupIdx]!.matchResult?.confidence).toBe('none');
     }, { timeout: 5000 });
 
     // Phase 2: retryMatch — new match job with different result
@@ -790,9 +790,9 @@ describe('retry mechanics (#185)', () => {
 
     // Observable: post-retry result merged at index 0 — confidence upgraded and title changed
     await waitFor(() => {
-      expect(result.current.rows[nonDupIdx].matchResult?.confidence).toBe('high');
+      expect(result.current.rows[nonDupIdx]!.matchResult?.confidence).toBe('high');
     }, { timeout: 5000 });
-    expect(result.current.rows[nonDupIdx].edited.title).toBe('Better Match');
+    expect(result.current.rows[nonDupIdx]!.edited.title).toBe('Better Match');
   });
 });
 
@@ -871,7 +871,7 @@ describe('empty result edge case', () => {
 
       await waitFor(() => { expect(mockStartMatchJob).toHaveBeenCalled(); });
 
-      const candidates = mockStartMatchJob.mock.calls[0][0] as Array<{ path: string }>;
+      const candidates = mockStartMatchJob.mock.calls[0]![0] as Array<{ path: string }>;
       const paths = candidates.map((c: { path: string }) => c.path);
       expect(paths).toContain('/audiobooks/Author/Book');
       expect(paths).toContain('/audiobooks/Copy/Author/Book');
@@ -962,7 +962,7 @@ describe('empty result edge case', () => {
 
       await waitFor(() => expect(mockStartMatchJob).toHaveBeenCalledTimes(1));
 
-      const retryCandidates = mockStartMatchJob.mock.calls[0][0] as Array<{ path: string }>;
+      const retryCandidates = mockStartMatchJob.mock.calls[0]![0] as Array<{ path: string }>;
       const retryPaths = retryCandidates.map((c: { path: string }) => c.path);
       expect(retryPaths).toContain('/audiobooks/Author/Book');
       expect(retryPaths).toContain('/audiobooks/Copy/Author/Book');
@@ -1066,7 +1066,7 @@ describe('empty result edge case', () => {
 
       await waitFor(() => { expect(mockConfirmImport).toHaveBeenCalled(); });
 
-      const items = mockConfirmImport.mock.calls[0][0] as Array<{ path: string; forceImport?: boolean }>;
+      const items = mockConfirmImport.mock.calls[0]![0] as Array<{ path: string; forceImport?: boolean }>;
       const nonDup = items.find(i => i.path === '/audiobooks/Author/Book');
       const withinScanDup = items.find(i => i.path === '/audiobooks/Copy/Author/Book');
       expect(nonDup?.forceImport).toBeUndefined();

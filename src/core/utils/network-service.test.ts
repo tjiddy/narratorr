@@ -73,7 +73,7 @@ describe('fetchWithTimeout', () => {
 
     await fetchWithTimeout('https://example.com', {}, 3000);
 
-    const calledOptions = fetchSpy.mock.calls[0][1] as RequestInit;
+    const calledOptions = fetchSpy.mock.calls[0]![1] as RequestInit;
     expect(calledOptions.signal).toBeDefined();
   });
 
@@ -85,7 +85,7 @@ describe('fetchWithTimeout', () => {
     await fetchWithTimeout('https://example.com', {}, 7500);
 
     // Signal should exist with the timeout
-    const calledOptions = fetchSpy.mock.calls[0][1] as RequestInit;
+    const calledOptions = fetchSpy.mock.calls[0]![1] as RequestInit;
     expect(calledOptions.signal).toBeDefined();
   });
 

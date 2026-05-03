@@ -387,7 +387,7 @@ describe('ManualImportPage', () => {
       const dialog = screen.getByRole('dialog');
 
       // Select the Jim Dale alternative from the alternatives list
-      const jimDaleButton = within(dialog).getAllByText('Jim Dale')[0].closest('button')!;
+      const jimDaleButton = within(dialog).getAllByText('Jim Dale')[0]!.closest('button')!;
       await userEvent.click(jimDaleButton);
 
       // Save

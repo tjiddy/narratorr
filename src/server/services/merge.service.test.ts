@@ -179,7 +179,7 @@ describe('MergeService', () => {
       await service.enqueueMerge(42);
       await settle();
 
-      const options = (scanAudioDirectory as Mock).mock.calls[0][1] as Parameters<typeof scanAudioDirectory>[1];
+      const options = (scanAudioDirectory as Mock).mock.calls[0]![1] as Parameters<typeof scanAudioDirectory>[1];
       expect(options?.onWarn).toEqual(expect.any(Function));
       expect(options?.onDebug).toEqual(expect.any(Function));
 
@@ -984,8 +984,8 @@ describe('#257 merge observability — merge service', () => {
         (c: unknown[]) => typeof c[0] === 'object' && c[0] !== null && 'stderr' in (c[0] as Record<string, unknown>),
       );
       expect(stderrCalls).toHaveLength(1);
-      expect(stderrCalls[0][0]).toEqual({ stderr: 'Too many packets buffered', count: 3 });
-      expect(stderrCalls[0][1]).toContain('× 3');
+      expect(stderrCalls[0]![0]).toEqual({ stderr: 'Too many packets buffered', count: 3 });
+      expect(stderrCalls[0]![1]).toContain('× 3');
     });
 
     it('interleaved different lines each logged separately', async () => {
@@ -1004,9 +1004,9 @@ describe('#257 merge observability — merge service', () => {
         (c: unknown[]) => typeof c[0] === 'object' && c[0] !== null && 'stderr' in (c[0] as Record<string, unknown>),
       );
       expect(stderrCalls).toHaveLength(3);
-      expect(stderrCalls[0][0]).toEqual({ stderr: 'line A' });
-      expect(stderrCalls[1][0]).toEqual({ stderr: 'line B' });
-      expect(stderrCalls[2][0]).toEqual({ stderr: 'line A' });
+      expect(stderrCalls[0]![0]).toEqual({ stderr: 'line A' });
+      expect(stderrCalls[1]![0]).toEqual({ stderr: 'line B' });
+      expect(stderrCalls[2]![0]).toEqual({ stderr: 'line A' });
     });
 
     it('single occurrence logged without count suffix', async () => {
@@ -1023,8 +1023,8 @@ describe('#257 merge observability — merge service', () => {
         (c: unknown[]) => typeof c[0] === 'object' && c[0] !== null && 'stderr' in (c[0] as Record<string, unknown>),
       );
       expect(stderrCalls).toHaveLength(1);
-      expect(stderrCalls[0][0]).toEqual({ stderr: 'single line' });
-      expect(stderrCalls[0][1]).toBe('ffmpeg stderr');
+      expect(stderrCalls[0]![0]).toEqual({ stderr: 'single line' });
+      expect(stderrCalls[0]![1]).toBe('ffmpeg stderr');
     });
   });
 
@@ -1669,7 +1669,7 @@ describe('#257 merge observability — merge service', () => {
         // Check merge_failed emitted with reason cancelled
         const failedEvents = emitted.filter(e => e.event === 'merge_failed');
         expect(failedEvents.length).toBeGreaterThanOrEqual(1);
-        const lastFailed = failedEvents[failedEvents.length - 1].payload as { reason: string };
+        const lastFailed = failedEvents[failedEvents.length - 1]!.payload as { reason: string };
         expect(lastFailed.reason).toBe('cancelled');
 
         blocking.resolve();
@@ -1716,7 +1716,7 @@ describe('#257 merge observability — merge service', () => {
         // Check that merge_failed was emitted with reason 'cancelled'
         const failedEvents = emitted.filter(e => e.event === 'merge_failed');
         expect(failedEvents.length).toBeGreaterThanOrEqual(1);
-        const payload = failedEvents[failedEvents.length - 1].payload as { reason: string; error: string };
+        const payload = failedEvents[failedEvents.length - 1]!.payload as { reason: string; error: string };
         expect(payload.reason).toBe('cancelled');
       });
     });
@@ -1806,7 +1806,7 @@ describe('#257 merge observability — merge service', () => {
 
       const failedEvents = emitted.filter(e => e.event === 'merge_failed');
       expect(failedEvents).toHaveLength(1);
-      expect((failedEvents[0].payload as { reason: string }).reason).toBe('error');
+      expect((failedEvents[0]!.payload as { reason: string }).reason).toBe('error');
     });
   });
 });

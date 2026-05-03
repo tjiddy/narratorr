@@ -74,7 +74,7 @@ describe('runCoverBackfill', () => {
     await runCoverBackfill(inject<Db>(mockDb), log);
 
     expect(whereFn).toHaveBeenCalledTimes(1);
-    const predicate = whereFn.mock.calls[0][0];
+    const predicate = whereFn.mock.calls[0]![0];
 
     // Recursive Drizzle expression inspector (established pattern from book-list.service.test.ts)
     function containsSubstring(val: unknown, substring: string): boolean {

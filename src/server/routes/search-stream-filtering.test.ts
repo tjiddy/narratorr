@@ -79,7 +79,7 @@ function createMockSettingsService(qualityOverrides: Record<string, unknown> = {
 function parseSearchComplete(body: string): { results: SearchResult[]; durationUnknown: boolean; unsupportedResults: { count: number; titles: string[] } } {
   const match = body.match(/event: search-complete\ndata: (.+)\n/);
   expect(match).not.toBeNull();
-  return JSON.parse(match![1]);
+  return JSON.parse(match![1]!);
 }
 
 async function createApp(rawResults: SearchResult[], qualityOverrides: Record<string, unknown> = {}) {
@@ -125,7 +125,7 @@ describe('searchStreamRoutes — reject word filtering (real postProcessSearchRe
       const data = parseSearchComplete(body);
 
       expect(data.results).toHaveLength(1);
-      expect(data.results[0].title).toBe('English Edition');
+      expect(data.results[0]!.title).toBe('English Edition');
     });
 
     it('applies case-insensitive matching against reject words', async () => {
@@ -141,7 +141,7 @@ describe('searchStreamRoutes — reject word filtering (real postProcessSearchRe
       const data = parseSearchComplete(body);
 
       expect(data.results).toHaveLength(1);
-      expect(data.results[0].title).toBe('Clean Edition');
+      expect(data.results[0]!.title).toBe('Clean Edition');
     });
 
     it('filters by rawTitle when rawTitle is present', async () => {
@@ -157,7 +157,7 @@ describe('searchStreamRoutes — reject word filtering (real postProcessSearchRe
       const data = parseSearchComplete(body);
 
       expect(data.results).toHaveLength(1);
-      expect(data.results[0].title).toBe('Another Clean');
+      expect(data.results[0]!.title).toBe('Another Clean');
     });
 
     it('filters results matching any of multiple comma-separated reject words', async () => {
@@ -174,7 +174,7 @@ describe('searchStreamRoutes — reject word filtering (real postProcessSearchRe
       const data = parseSearchComplete(body);
 
       expect(data.results).toHaveLength(1);
-      expect(data.results[0].title).toBe('English Edition');
+      expect(data.results[0]!.title).toBe('English Edition');
     });
 
     it('filters results by substring match', async () => {
@@ -190,7 +190,7 @@ describe('searchStreamRoutes — reject word filtering (real postProcessSearchRe
       const data = parseSearchComplete(body);
 
       expect(data.results).toHaveLength(1);
-      expect(data.results[0].title).toBe('English Edition');
+      expect(data.results[0]!.title).toBe('English Edition');
     });
 
     it('returns all results unfiltered when reject words setting is empty', async () => {
@@ -238,7 +238,7 @@ describe('searchStreamRoutes — reject word filtering (real postProcessSearchRe
       const data = parseSearchComplete(body);
 
       expect(data.results).toHaveLength(1);
-      expect(data.results[0].title).toBe('English Edition');
+      expect(data.results[0]!.title).toBe('English Edition');
     });
   });
 

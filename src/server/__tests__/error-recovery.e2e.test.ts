@@ -133,8 +133,8 @@ describe('Error recovery E2E', () => {
 
     // Download status → failed with error message
     const [dl] = await e2e.db.select().from(downloads).where(eq(downloads.id, downloadId));
-    expect(dl.status).toBe('failed');
-    expect(dl.errorMessage).toBeTruthy();
+    expect(dl!.status).toBe('failed');
+    expect(dl!.errorMessage).toBeTruthy();
 
     // Book status recovered — no path so reverts to 'wanted'
     const bookRes = await e2e.app.inject({ method: 'GET', url: `/api/books/${bookId}` });
@@ -231,7 +231,7 @@ describe('Error recovery E2E', () => {
     // Working notifier still received the notification
     await waitForRequests(captured, 1);
     expect(captured).toHaveLength(1);
-    expect((captured[0].body as Record<string, unknown>).event).toBe('on_import');
+    expect((captured[0]!.body as Record<string, unknown>).event).toBe('on_import');
   });
 
   // ── Enrichment: failure leaves book intact, 1-hour retry gate ─────────
@@ -265,8 +265,8 @@ describe('Error recovery E2E', () => {
 
     // Book should be marked failed but existing data preserved
     const [bookAfterFail] = await e2e.db.select().from(books).where(eq(books.id, bookId));
-    expect(bookAfterFail.enrichmentStatus).toBe('failed');
-    expect(bookAfterFail.title).toBe('Enrichment Test Book');
+    expect(bookAfterFail!.enrichmentStatus).toBe('failed');
+    expect(bookAfterFail!.title).toBe('Enrichment Test Book');
 
     // Run enrichment again immediately — should NOT retry (updatedAt is recent)
     // Switch Audnexus to return valid data for when retry eventually fires
@@ -285,8 +285,8 @@ describe('Error recovery E2E', () => {
 
     const [bookAfterImmediate] = await e2e.db.select().from(books).where(eq(books.id, bookId));
     // Still failed — not retried because updatedAt is recent
-    expect(bookAfterImmediate.enrichmentStatus).toBe('failed');
-    expect(bookAfterImmediate.title).toBe('Enrichment Test Book');
+    expect(bookAfterImmediate!.enrichmentStatus).toBe('failed');
+    expect(bookAfterImmediate!.title).toBe('Enrichment Test Book');
 
     // Set updatedAt to 2 hours ago to simulate passage of time
     const twoHoursAgo = new Date(Date.now() - 2 * 60 * 60 * 1000);
@@ -296,6 +296,6 @@ describe('Error recovery E2E', () => {
     await runEnrichment(e2e.db, e2e.services.metadata, e2e.services.book, e2e.app.log);
 
     const [bookAfterRetry] = await e2e.db.select().from(books).where(eq(books.id, bookId));
-    expect(bookAfterRetry.enrichmentStatus).toBe('enriched');
+    expect(bookAfterRetry!.enrichmentStatus).toBe('enriched');
   });
 });

@@ -308,9 +308,9 @@ describe('folder-parsing (extracted from library-scan.service)', () => {
     it('each step reflects the actual transformation applied', () => {
       const trace = cleanNameWithTrace('01 - Title, Book 01');
       // leadingNumeric strips "01 - "
-      expect(trace.steps[0].output).toBe('Title, Book 01');
+      expect(trace.steps[0]!.output).toBe('Title, Book 01');
       // seriesMarker strips ", Book 01" (end-of-string match)
-      expect(trace.steps[1].output).toBe('Title');
+      expect(trace.steps[1]!.output).toBe('Title');
       expect(trace.result).toBe('Title');
     });
 
@@ -326,7 +326,7 @@ describe('folder-parsing (extracted from library-scan.service)', () => {
     it('no-op steps show same input/output', () => {
       const trace = cleanNameWithTrace('Clean Title');
       // leadingNumeric is a no-op for "Clean Title"
-      expect(trace.steps[0].output).toBe('Clean Title');
+      expect(trace.steps[0]!.output).toBe('Clean Title');
     });
 
     it('returns final result matching non-trace cleanName output', () => {
@@ -820,7 +820,7 @@ describe('folder-parsing (extracted from library-scan.service)', () => {
       ];
       const expected = ['Title One', 'Title Two', 'Title Three', 'Title Four', 'Title Five'];
       for (let i = 0; i < inputs.length; i++) {
-        expect(cleanName(inputs[i])).toBe(expected[i]);
+        expect(cleanName(inputs[i]!)).toBe(expected[i]);
       }
     });
 

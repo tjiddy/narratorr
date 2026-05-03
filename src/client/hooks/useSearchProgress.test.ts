@@ -26,10 +26,10 @@ describe('useSearchProgress store', () => {
         });
       });
       expect(result.current).toHaveLength(1);
-      expect(result.current[0].bookId).toBe(1);
-      expect(result.current[0].bookTitle).toBe('Test Book');
-      expect(result.current[0].indexers.get(10)).toEqual({ name: 'MAM', status: 'pending' });
-      expect(result.current[0].indexers.get(20)).toEqual({ name: 'ABB', status: 'pending' });
+      expect(result.current[0]!.bookId).toBe(1);
+      expect(result.current[0]!.bookTitle).toBe('Test Book');
+      expect(result.current[0]!.indexers.get(10)).toEqual({ name: 'MAM', status: 'pending' });
+      expect(result.current[0]!.indexers.get(20)).toEqual({ name: 'ABB', status: 'pending' });
     });
 
     it('updates individual indexer to complete state on search_indexer_complete', () => {
@@ -44,7 +44,7 @@ describe('useSearchProgress store', () => {
           book_id: 1, indexer_id: 10, indexer_name: 'MAM', results_found: 3, elapsed_ms: 1200,
         });
       });
-      expect(result.current[0].indexers.get(10)).toEqual({
+      expect(result.current[0]!.indexers.get(10)).toEqual({
         name: 'MAM', status: 'complete', resultsFound: 3, elapsedMs: 1200,
       });
     });
@@ -59,7 +59,7 @@ describe('useSearchProgress store', () => {
           book_id: 1, indexer_id: 10, indexer_name: 'MAM', error: 'timeout', elapsed_ms: 30000,
         });
       });
-      expect(result.current[0].indexers.get(10)).toEqual({
+      expect(result.current[0]!.indexers.get(10)).toEqual({
         name: 'MAM', status: 'error', error: 'timeout', elapsedMs: 30000,
       });
     });
@@ -74,8 +74,8 @@ describe('useSearchProgress store', () => {
           book_id: 1, release_title: 'Best Result', indexer_name: 'MAM',
         });
       });
-      expect(result.current[0].outcome).toBe('grabbed');
-      expect(result.current[0].grabbedFrom).toBe('MAM');
+      expect(result.current[0]!.outcome).toBe('grabbed');
+      expect(result.current[0]!.grabbedFrom).toBe('MAM');
     });
 
     it('marks outcome as no_results on search_complete with no_results', () => {
@@ -88,7 +88,7 @@ describe('useSearchProgress store', () => {
           book_id: 1, total_results: 0, outcome: 'no_results',
         });
       });
-      expect(result.current[0].outcome).toBe('no_results');
+      expect(result.current[0]!.outcome).toBe('no_results');
     });
 
     it('replaces previous entry on duplicate search_started for same book_id', () => {
@@ -102,7 +102,7 @@ describe('useSearchProgress store', () => {
         });
       });
       expect(result.current).toHaveLength(1);
-      expect(result.current[0].bookTitle).toBe('Second');
+      expect(result.current[0]!.bookTitle).toBe('Second');
     });
 
     it('handles search_indexer_complete for unknown book_id gracefully', () => {

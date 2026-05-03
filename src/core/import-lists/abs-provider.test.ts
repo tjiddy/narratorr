@@ -54,7 +54,7 @@ describe('AbsProvider', () => {
       const provider = new AbsProvider({ serverUrl: ABS_BASE, apiKey: 'test-key', libraryId: 'lib-1' });
       const items = await provider.fetchItems();
       expect(items).toHaveLength(1);
-      expect(items[0].title).toBe('Valid Book');
+      expect(items[0]!.title).toBe('Valid Book');
     });
 
     it('encodes libraryId in URL path (#786)', async () => {
@@ -237,7 +237,7 @@ describe('AbsProvider', () => {
       const provider = new AbsProvider({ serverUrl: ABS_BASE, apiKey: 'test-key', libraryId: 'lib-1' });
       const items = await provider.fetchItems();
       expect(items).toHaveLength(1);
-      expect(items[0].title).toBe('Book');
+      expect(items[0]!.title).toBe('Book');
     });
   });
 });
