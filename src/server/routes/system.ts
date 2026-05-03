@@ -55,7 +55,7 @@ export async function systemRoutes(app: FastifyInstance, services: Services, db:
       runSearchJob(
         services.settings,
         services.bookList,
-        services.indexer,
+        services.indexerSearch,
         services.downloadOrchestrator,
         request.log,
         services.blacklist,
@@ -72,7 +72,7 @@ export async function systemRoutes(app: FastifyInstance, services: Services, db:
       searchAllWanted(
         services.settings,
         services.bookList,
-        services.indexer,
+        services.indexerSearch,
         services.downloadOrchestrator,
         request.log,
         services.blacklist,
@@ -88,7 +88,7 @@ export async function systemRoutes(app: FastifyInstance, services: Services, db:
         services.settings,
         services.bookList,
         services.book,
-        services.indexer,
+        services.indexerSearch,
         services.downloadOrchestrator,
         services.blacklist,
         request.log,

@@ -11,7 +11,7 @@ import { searchAndGrabForBook, buildNarratorPriority } from '../services/search-
 
 function createMockDeps(): ImmediateSearchDeps {
   return {
-    indexerService: {} as never,
+    indexerSearchService: {} as never,
     downloadOrchestrator: {} as never,
     settingsService: {
       get: vi.fn()

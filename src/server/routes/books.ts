@@ -2,7 +2,7 @@ import type { FastifyInstance } from 'fastify';
 import { cleanCoverCache } from '../utils/cover-cache.js';
 import { snapshotBookForEvent } from '../utils/event-helpers.js';
 import { config } from '../config.js';
-import type { BookService, BookListService, DownloadService, SettingsService, RenameService, EventHistoryService, TaggingService, IndexerService } from '../services/index.js';
+import type { BookService, BookListService, DownloadService, SettingsService, RenameService, EventHistoryService, TaggingService, IndexerSearchService } from '../services/index.js';
 import { PathOutsideLibraryError } from '../utils/paths.js';
 import type { DownloadOrchestrator } from '../services/download-orchestrator.js';
 import type { MergeService } from '../services/merge.service.js';
@@ -20,7 +20,7 @@ export interface BookRouteDeps {
   mergeService: MergeService;
   taggingService: TaggingService;
   eventHistory?: EventHistoryService;
-  indexerService?: IndexerService;
+  indexerSearchService?: IndexerSearchService;
   bookRejectionService?: BookRejectionService;
   blacklistService?: BlacklistService;
   eventBroadcaster?: EventBroadcasterService;
@@ -128,7 +128,7 @@ async function registerDeleteMissingRoute(app: FastifyInstance, deps: Pick<BookR
   });
 }
 
-function registerBookSearchRoute(app: FastifyInstance, deps: Pick<BookRouteDeps, 'bookService' | 'downloadOrchestrator' | 'settingsService' | 'indexerService' | 'blacklistService' | 'eventBroadcaster'>) {
+function registerBookSearchRoute(app: FastifyInstance, deps: Pick<BookRouteDeps, 'bookService' | 'downloadOrchestrator' | 'settingsService' | 'indexerSearchService' | 'blacklistService' | 'eventBroadcaster'>) {
   app.post<{ Params: IdParam }>(
     '/api/books/:id/search',
     { schema: { params: idParamSchema } },
@@ -145,7 +145,7 @@ function registerBookSearchRoute(app: FastifyInstance, deps: Pick<BookRouteDeps,
       const narratorPriority = buildNarratorPriority(searchSettings.searchPriority, book.narrators);
       const result = await searchAndGrabForBook(
         book,
-        deps.indexerService!,
+        deps.indexerSearchService!,
         deps.downloadOrchestrator,
         { ...qualitySettings, languages: metadataSettings.languages, narratorPriority },
         request.log,
@@ -161,7 +161,7 @@ function registerBookSearchRoute(app: FastifyInstance, deps: Pick<BookRouteDeps,
 }
 
 export async function booksRoutes(app: FastifyInstance, deps: BookRouteDeps) {
-  const { bookService, bookListService, renameService, mergeService, taggingService, indexerService } = deps;
+  const { bookService, bookListService, renameService, mergeService, taggingService, indexerSearchService } = deps;
   // GET /api/books
   app.get<{ Querystring: BooksListQuery }>(
     '/api/books',
@@ -229,9 +229,9 @@ export async function booksRoutes(app: FastifyInstance, deps: BookRouteDeps) {
       request.log.info({ title: body.title }, 'Book added');
 
       // Fire-and-forget: trigger search if searchImmediately is set
-      if (body.searchImmediately && book.status === 'wanted' && indexerService && deps.blacklistService) {
+      if (body.searchImmediately && book.status === 'wanted' && indexerSearchService && deps.blacklistService) {
         const { downloadOrchestrator, settingsService, blacklistService, eventBroadcaster } = deps;
-        triggerImmediateSearch(book, { indexerService, downloadOrchestrator, settingsService, blacklistService, eventBroadcaster }, request.log);
+        triggerImmediateSearch(book, { indexerSearchService, downloadOrchestrator, settingsService, blacklistService, eventBroadcaster }, request.log);
       }
 
       return reply.status(201).send(book);
@@ -271,7 +271,7 @@ export async function booksRoutes(app: FastifyInstance, deps: BookRouteDeps) {
     },
   );
 
-  if (indexerService) {
+  if (indexerSearchService) {
     registerBookSearchRoute(app, deps);
   }
 

@@ -1,6 +1,6 @@
 import type { FastifyBaseLogger } from 'fastify';
 import { searchAndGrabForBook, buildNarratorPriority } from '../services/search-pipeline.js';
-import type { IndexerService, SettingsService } from '../services/index.js';
+import type { IndexerSearchService, SettingsService } from '../services/index.js';
 import type { DownloadOrchestrator } from '../services/download-orchestrator.js';
 import type { BlacklistService } from '../services/blacklist.service.js';
 import type { EventBroadcasterService } from '../services/event-broadcaster.service.js';
@@ -8,7 +8,7 @@ import { serializeError } from '../utils/serialize-error.js';
 
 
 export interface ImmediateSearchDeps {
-  indexerService: IndexerService;
+  indexerSearchService: IndexerSearchService;
   downloadOrchestrator: DownloadOrchestrator;
   settingsService: SettingsService;
   blacklistService: BlacklistService;
@@ -24,7 +24,7 @@ export function triggerImmediateSearch(
   Promise.all([deps.settingsService.get('quality'), deps.settingsService.get('metadata'), deps.settingsService.get('search')])
     .then(async ([qualitySettings, metadataSettings, searchSettings]) => {
       const narratorPriority = buildNarratorPriority(searchSettings.searchPriority, book.narrators);
-      await searchAndGrabForBook(book, deps.indexerService, deps.downloadOrchestrator, { ...qualitySettings, languages: metadataSettings.languages, narratorPriority }, log, deps.blacklistService, deps.eventBroadcaster);
+      await searchAndGrabForBook(book, deps.indexerSearchService, deps.downloadOrchestrator, { ...qualitySettings, languages: metadataSettings.languages, narratorPriority }, log, deps.blacklistService, deps.eventBroadcaster);
     })
     .catch((err: unknown) => {
       log.warn({ error: serializeError(err), bookId: book.id }, 'Search-immediately trigger failed');

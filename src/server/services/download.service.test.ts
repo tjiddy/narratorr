@@ -1061,7 +1061,7 @@ describe('DownloadService', () => {
       let retryService: DownloadService;
       let retryLog: ReturnType<typeof createMockLogger>;
       let mockRetryDeps: {
-        indexerService: { searchAll: ReturnType<typeof vi.fn> };
+        indexerSearchService: { searchAll: ReturnType<typeof vi.fn> };
         downloadOrchestrator: { grab: ReturnType<typeof vi.fn> };
         blacklistService: { getBlacklistedHashes: ReturnType<typeof vi.fn>; getBlacklistedIdentifiers: ReturnType<typeof vi.fn> };
         bookService: { getById: ReturnType<typeof vi.fn> };
@@ -1075,7 +1075,7 @@ describe('DownloadService', () => {
         retryBudget = new RetryBudget();
         retryLog = createMockLogger();
         mockRetryDeps = {
-          indexerService: { searchAll: vi.fn().mockResolvedValue([]) },
+          indexerSearchService: { searchAll: vi.fn().mockResolvedValue([]) },
           downloadOrchestrator: { grab: vi.fn().mockResolvedValue({ id: 99, title: 'New Download', bookId: 1, book: mockBook }) },
           blacklistService: { getBlacklistedHashes: vi.fn().mockResolvedValue(new Set()), getBlacklistedIdentifiers: vi.fn().mockResolvedValue({ blacklistedHashes: new Set(), blacklistedGuids: new Set() }) },
           bookService: { getById: vi.fn().mockResolvedValue({ id: 1, title: 'The Way of Kings', duration: 3600, author: { name: 'Sanderson' } }) },
@@ -1090,7 +1090,7 @@ describe('DownloadService', () => {
       it('returns retried and deletes old record on successful retry', async () => {
         const failedDownload = { ...mockDownload, id: 1, status: 'failed' as const };
         const searchResult = { title: 'Better Release', protocol: 'torrent', downloadUrl: 'magnet:?xt=urn:btih:00000000000000000000000000000000000000ee', infoHash: 'new123', size: 500000000, seeders: 5, indexer: 'Test' };
-        mockRetryDeps.indexerService.searchAll.mockResolvedValue([searchResult]);
+        mockRetryDeps.indexerSearchService.searchAll.mockResolvedValue([searchResult]);
 
         db.select.mockReturnValue(mockDbChain([{ download: failedDownload, book: mockBook }]));
         db.delete.mockReturnValue(mockDbChain());
@@ -1104,7 +1104,7 @@ describe('DownloadService', () => {
 
       it('returns no_candidates and updates errorMessage when no results found', async () => {
         const failedDownload = { ...mockDownload, id: 1, status: 'failed' as const };
-        mockRetryDeps.indexerService.searchAll.mockResolvedValue([]);
+        mockRetryDeps.indexerSearchService.searchAll.mockResolvedValue([]);
 
         db.select.mockReturnValue(mockDbChain([{ download: failedDownload, book: mockBook }]));
         const chain = mockDbChain();
@@ -1148,7 +1148,7 @@ describe('DownloadService', () => {
 
       it('returns retry_error and updates errorMessage when search throws', async () => {
         const failedDownload = { ...mockDownload, id: 1, status: 'failed' as const };
-        mockRetryDeps.indexerService.searchAll.mockRejectedValue(new Error('Indexer down'));
+        mockRetryDeps.indexerSearchService.searchAll.mockRejectedValue(new Error('Indexer down'));
 
         db.select.mockReturnValue(mockDbChain([{ download: failedDownload, book: mockBook }]));
         const chain = mockDbChain();
@@ -1176,7 +1176,7 @@ describe('DownloadService', () => {
       it('logs warning but still returns retried when old record deletion fails', async () => {
         const failedDownload = { ...mockDownload, id: 1, status: 'failed' as const };
         const searchResult = { title: 'Better Release', protocol: 'torrent', downloadUrl: 'magnet:?xt=urn:btih:00000000000000000000000000000000000000ee', infoHash: 'new123', size: 500000000, seeders: 5, indexer: 'Test' };
-        mockRetryDeps.indexerService.searchAll.mockResolvedValue([searchResult]);
+        mockRetryDeps.indexerSearchService.searchAll.mockResolvedValue([searchResult]);
 
         db.select.mockReturnValue(mockDbChain([{ download: failedDownload, book: mockBook }]));
         db.delete.mockImplementation(() => { throw new Error('FK constraint'); });

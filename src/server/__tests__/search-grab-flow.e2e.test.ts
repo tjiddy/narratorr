@@ -102,7 +102,7 @@ describe('Search → Grab flow E2E', () => {
     // GET /api/search retired in Wave 11.2 (#755); SSE /api/search/stream is
     // the active surface. Exercise the indexer service directly so the MSW
     // capture still verifies the outgoing query params.
-    await e2e.services.indexer.searchAll('Brandon Sanderson');
+    await e2e.services.indexerSearch.searchAll('Brandon Sanderson');
 
     expect(capturedUrl).toBeDefined();
     expect(capturedUrl!.searchParams.get('t')).toBe('search');
@@ -126,7 +126,7 @@ describe('Search → Grab flow E2E', () => {
     // GET /api/search retired in Wave 11.2 (#755). The grab path under test
     // here doesn't depend on the search route; exercise the indexer service
     // directly to obtain a search result for grab.
-    const results = await e2e.services.indexer.searchAll('Brandon Sanderson');
+    const results = await e2e.services.indexerSearch.searchAll('Brandon Sanderson');
     expect(results.length).toBeGreaterThan(0);
 
     const firstResult = results[0];

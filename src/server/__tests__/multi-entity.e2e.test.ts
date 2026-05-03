@@ -164,7 +164,7 @@ describe('Multi-entity E2E', () => {
     // GET /api/search retired in Wave 11.2 (#755). SSE /api/search/stream is
     // the active surface; aggregation across indexers is covered at the
     // service layer via indexer.service. Exercise the service directly here.
-    const results = await e2e.services.indexer.searchAll('Brandon Sanderson');
+    const results = await e2e.services.indexerSearch.searchAll('Brandon Sanderson');
     // Should have results from both indexers
     expect(results.length).toBeGreaterThanOrEqual(2);
 
@@ -342,7 +342,7 @@ describe('Job lifecycle E2E', () => {
     const result = await runSearchJob(
       e2e.services.settings,
       e2e.services.bookList,
-      e2e.services.indexer,
+      e2e.services.indexerSearch,
       e2e.services.downloadOrchestrator,
       e2e.app.log,
       e2e.services.blacklist,

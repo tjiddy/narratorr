@@ -4,7 +4,7 @@ import { runSearchJob, runUpgradeSearchJob, searchAllWanted } from './search.js'
 import type { FastifyBaseLogger } from 'fastify';
 import type { BookService } from '../services/book.service.js';
 import type { BookListService } from '../services/book-list.service.js';
-import type { IndexerService } from '../services/indexer.service.js';
+import type { IndexerSearchService } from '../services/indexer-search.service.js';
 import type { DownloadOrchestrator } from '../services/download-orchestrator.js';
 import type { BlacklistService } from '../services/blacklist.service.js';
 import type { SearchResult } from '../../core/index.js';
@@ -39,17 +39,13 @@ function createMockBookService(monitoredBooks: unknown[] = []): BookService {
   });
 }
 
-function createMockIndexerService(results: SearchResult[] = []): IndexerService {
-  return inject<IndexerService>({
+function createMockIndexerService(results: SearchResult[] = []): IndexerSearchService {
+  return inject<IndexerSearchService>({
     searchAll: vi.fn().mockResolvedValue(results),
-    getAll: vi.fn(),
-    getById: vi.fn(),
-    create: vi.fn(),
-    update: vi.fn(),
-    delete: vi.fn(),
-    getAdapter: vi.fn(),
-    test: vi.fn(),
-    testConfig: vi.fn(),
+    searchAllStreaming: vi.fn().mockResolvedValue(results),
+    getEnabledIndexers: vi.fn().mockResolvedValue([]),
+    getRssCapableIndexers: vi.fn().mockResolvedValue([]),
+    pollRss: vi.fn(),
   });
 }
 
@@ -1280,22 +1276,16 @@ describe('searchAllWanted', () => {
 // #392 — Caller wiring: broadcaster passed to searchAndGrabForBook
 // ============================================================================
 
-function createStreamingIndexerService(results: SearchResult[] = []): IndexerService {
-  return inject<IndexerService>({
+function createStreamingIndexerService(results: SearchResult[] = []): IndexerSearchService {
+  return inject<IndexerSearchService>({
     searchAll: vi.fn().mockResolvedValue(results),
     searchAllStreaming: vi.fn().mockImplementation(async (_q: string, _o: unknown, _c: Map<number, AbortController>, callbacks: { onComplete: (id: number, name: string, count: number, ms: number) => void }) => {
       callbacks.onComplete(10, 'MAM', results.length, 500);
       return results;
     }),
     getEnabledIndexers: vi.fn().mockResolvedValue([{ id: 10, name: 'MAM' }]),
-    getAll: vi.fn(),
-    getById: vi.fn(),
-    create: vi.fn(),
-    update: vi.fn(),
-    delete: vi.fn(),
-    getAdapter: vi.fn(),
-    test: vi.fn(),
-    testConfig: vi.fn(),
+    getRssCapableIndexers: vi.fn().mockResolvedValue([]),
+    pollRss: vi.fn(),
   });
 }
 

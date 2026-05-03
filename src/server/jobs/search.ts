@@ -3,7 +3,7 @@ import { calculateQuality, compareQuality, resolveBookQualityInputs } from '../.
 import type { SettingsService } from '../services/settings.service.js';
 import type { BookService } from '../services/book.service.js';
 import type { BookListService } from '../services/book-list.service.js';
-import type { IndexerService } from '../services/indexer.service.js';
+import type { IndexerSearchService } from '../services/indexer-search.service.js';
 import type { DownloadOrchestrator } from '../services/download-orchestrator.js';
 import type { RetryBudget } from '../services/retry-budget.js';
 import type { EventBroadcasterService } from '../services/event-broadcaster.service.js';
@@ -33,7 +33,7 @@ export interface SearchAllWantedResult {
 export async function runSearchJob(
   settingsService: SettingsService,
   bookListService: BookListService,
-  indexerService: IndexerService,
+  indexerSearchService: IndexerSearchService,
   downloadOrchestrator: DownloadOrchestrator,
   log: FastifyBaseLogger,
   blacklistService: BlacklistService,
@@ -65,7 +65,7 @@ export async function runSearchJob(
   for (const book of wantedBooks) {
     try {
       const narratorPriority = buildNarratorPriority(searchSettings.searchPriority, book.narrators);
-      const result = await searchAndGrabForBook(book, indexerService, downloadOrchestrator, { ...qualitySettings, languages: metadataSettings.languages, narratorPriority }, log, blacklistService, broadcaster);
+      const result = await searchAndGrabForBook(book, indexerSearchService, downloadOrchestrator, { ...qualitySettings, languages: metadataSettings.languages, narratorPriority }, log, blacklistService, broadcaster);
       searched++;
       if (result.result === 'grabbed') grabbed++;
       if (result.result === 'grab_error') {
@@ -87,7 +87,7 @@ export async function runSearchJob(
 export async function searchAllWanted(
   settingsService: SettingsService,
   bookListService: BookListService,
-  indexerService: IndexerService,
+  indexerSearchService: IndexerSearchService,
   downloadOrchestrator: DownloadOrchestrator,
   log: FastifyBaseLogger,
   blacklistService: BlacklistService,
@@ -113,7 +113,7 @@ export async function searchAllWanted(
   for (const book of wantedBooks) {
     try {
       const narratorPriority = buildNarratorPriority(searchSettings.searchPriority, book.narrators);
-      const result = await searchAndGrabForBook(book, indexerService, downloadOrchestrator, { ...qualitySettings, languages: metadataSettings.languages, narratorPriority }, log, blacklistService, broadcaster);
+      const result = await searchAndGrabForBook(book, indexerSearchService, downloadOrchestrator, { ...qualitySettings, languages: metadataSettings.languages, narratorPriority }, log, blacklistService, broadcaster);
       searched++;
       if (result.result === 'grabbed') grabbed++;
       else if (result.result === 'skipped') skipped++;
@@ -140,7 +140,7 @@ export async function searchAllWanted(
 export async function runUpgradeSearchJob(
   settingsService: SettingsService,
   bookService: BookService,
-  indexerService: IndexerService,
+  indexerSearchService: IndexerSearchService,
   downloadOrchestrator: DownloadOrchestrator,
   log: FastifyBaseLogger,
 ): Promise<SearchJobResult> {
@@ -174,7 +174,7 @@ export async function runUpgradeSearchJob(
 
     const query = buildSearchQuery(book);
     try {
-      const rawResults = await indexerService.searchAll(query, {
+      const rawResults = await indexerSearchService.searchAll(query, {
         title: book.title,
         author: book.authors?.[0]?.name,
       });

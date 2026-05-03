@@ -1,5 +1,5 @@
 import { type FastifyInstance, type FastifyRequest, type FastifyReply } from 'fastify';
-import { type IndexerService } from '../services/indexer.service.js';
+import { type IndexerSearchService } from '../services/indexer-search.service.js';
 import { type BlacklistService } from '../services/blacklist.service.js';
 import { type SettingsService } from '../services/settings.service.js';
 import { type SearchSessionManager } from '../services/search-session.js';
@@ -20,7 +20,7 @@ function writeSSE(reply: FastifyReply, event: string, data: unknown): void {
 
 export async function searchStreamRoutes(
   app: FastifyInstance,
-  indexerService: IndexerService,
+  indexerSearchService: IndexerSearchService,
   blacklistService: BlacklistService,
   settingsService: SettingsService,
   sessionManager: SearchSessionManager,
@@ -41,7 +41,7 @@ export async function searchStreamRoutes(
       }
 
       // Query enabled indexers before starting SSE stream
-      const enabledIndexers = await indexerService.getEnabledIndexers();
+      const enabledIndexers = await indexerSearchService.getEnabledIndexers();
 
       reply.raw.writeHead(200, {
         'Content-Type': 'text/event-stream',
@@ -68,7 +68,7 @@ export async function searchStreamRoutes(
 
       // Run streaming search
       try {
-        const allResults = await indexerService.searchAllStreaming(
+        const allResults = await indexerSearchService.searchAllStreaming(
           q,
           { limit, author, title },
           session.controllers,

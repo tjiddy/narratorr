@@ -4,7 +4,7 @@ import cookie from '@fastify/cookie';
 import type { FastifyReply, FastifyRequest } from 'fastify';
 import { validatorCompiler, serializerCompiler, type ZodTypeProvider } from 'fastify-type-provider-zod';
 import { SearchSessionManager } from '../services/search-session.js';
-import type { IndexerService } from '../services/indexer.service.js';
+import type { IndexerSearchService } from '../services/indexer-search.service.js';
 import type { BlacklistService } from '../services/blacklist.service.js';
 import type { SettingsService } from '../services/settings.service.js';
 import type { AuthService } from '../services/auth.service.js';
@@ -43,7 +43,7 @@ function createMockReplyAndRequest(_query = 'test+query') {
   return { reply, request, writeHead, write, hijack, onClose };
 }
 
-function createMockIndexerService(results: Array<{ indexerId: number; results: Array<Record<string, unknown>> }> = []) {
+function createMockIndexerSearchService(results: Array<{ indexerId: number; results: Array<Record<string, unknown>> }> = []) {
   return {
     getEnabledIndexers: vi.fn().mockResolvedValue([
       { id: 1, name: 'AudioBookBay' },
@@ -60,7 +60,7 @@ function createMockIndexerService(results: Array<{ indexerId: number; results: A
         return results.flatMap(r => r.results);
       },
     ),
-  } as unknown as IndexerService;
+  } as unknown as IndexerSearchService;
 }
 
 function createMockBlacklistService() {
@@ -80,7 +80,7 @@ function createMockSettingsService() {
 
 describe('searchStreamRoutes', () => {
   let sessionManager: SearchSessionManager;
-  let indexerService: ReturnType<typeof createMockIndexerService>;
+  let indexerService: ReturnType<typeof createMockIndexerSearchService>;
   let blacklistService: ReturnType<typeof createMockBlacklistService>;
   let settingsService: ReturnType<typeof createMockSettingsService>;
   let streamHandler: ((req: FastifyRequest, reply: FastifyReply) => Promise<void>) | null;
@@ -92,7 +92,7 @@ describe('searchStreamRoutes', () => {
     postProcessSpy = vi.spyOn(searchPipeline, 'postProcessSearchResults')
       .mockResolvedValue(EMPTY_POST_PROCESS_RESULT);
     sessionManager = new SearchSessionManager();
-    indexerService = createMockIndexerService();
+    indexerService = createMockIndexerSearchService();
     blacklistService = createMockBlacklistService();
     settingsService = createMockSettingsService();
     streamHandler = null;
@@ -368,7 +368,7 @@ describe('searchStreamRoutes — app.inject() integration', () => {
     const { searchStreamRoutes } = await import('./search-stream.js');
     await searchStreamRoutes(
       app,
-      createMockIndexerService(),
+      createMockIndexerSearchService(),
       createMockBlacklistService(),
       createMockSettingsService(),
       new SearchSessionManager(),
@@ -393,7 +393,7 @@ describe('searchStreamRoutes — app.inject() integration', () => {
     const { searchStreamRoutes } = await import('./search-stream.js');
     await searchStreamRoutes(
       app,
-      createMockIndexerService(),
+      createMockIndexerSearchService(),
       createMockBlacklistService(),
       createMockSettingsService(),
       sessionMgr,
@@ -417,11 +417,11 @@ describe('searchStreamRoutes — app.inject() integration', () => {
     // app.inject() hangs on hijacked SSE responses (per fastify-sse-hijack-testing learning),
     // so use app.listen(0) + real HTTP fetch to test the full Fastify stack.
     const authService = createMockAuthService(true);
-    const zeroIndexerService = {
-      ...createMockIndexerService(),
+    const zeroIndexerSearchService = {
+      ...createMockIndexerSearchService(),
       getEnabledIndexers: vi.fn().mockResolvedValue([]),
       searchAllStreaming: vi.fn().mockResolvedValue([]),
-    } as unknown as IndexerService;
+    } as unknown as IndexerSearchService;
 
     const app = Fastify({ logger: false }).withTypeProvider<ZodTypeProvider>();
     app.setValidatorCompiler(validatorCompiler);
@@ -432,7 +432,7 @@ describe('searchStreamRoutes — app.inject() integration', () => {
     const { searchStreamRoutes } = await import('./search-stream.js');
     await searchStreamRoutes(
       app,
-      zeroIndexerService,
+      zeroIndexerSearchService,
       createMockBlacklistService(),
       createMockSettingsService(),
       new SearchSessionManager(),
@@ -483,7 +483,7 @@ describe('searchStreamRoutes — app.inject() integration', () => {
     const { searchStreamRoutes } = await import('./search-stream.js');
     await searchStreamRoutes(
       app,
-      createMockIndexerService(),
+      createMockIndexerSearchService(),
       createMockBlacklistService(),
       createMockSettingsService(),
       new SearchSessionManager(),
@@ -506,7 +506,7 @@ describe('searchStreamRoutes — unmocked postProcessSearchResults', () => {
     const sessionManager = new SearchSessionManager();
     const blacklistService = createMockBlacklistService();
     const settingsService = createMockSettingsService();
-    const indexerService = createMockIndexerService();
+    const indexerService = createMockIndexerSearchService();
 
     let streamHandler: ((req: FastifyRequest, reply: FastifyReply) => Promise<void>) | null = null;
 

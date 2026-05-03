@@ -5,6 +5,7 @@ import {
   SettingsService,
   AuthService,
   IndexerService,
+  IndexerSearchService,
   DownloadClientService,
   BookService,
   BookImportService,
@@ -75,6 +76,7 @@ export interface Services {
   settings: SettingsService;
   auth: AuthService;
   indexer: IndexerService;
+  indexerSearch: IndexerSearchService;
   downloadClient: DownloadClientService;
   book: BookService;
   bookImport: BookImportService;
@@ -117,6 +119,7 @@ export const SERVICE_KEYS = Object.keys({
   settings: true,
   auth: true,
   indexer: true,
+  indexerSearch: true,
   downloadClient: true,
   book: true,
   bookImport: true,
@@ -154,6 +157,7 @@ export async function createServices(db: Db, log: FastifyBaseLogger): Promise<Se
   const settings = new SettingsService(db, log);
   const auth = new AuthService(db, log);
   const indexer = new IndexerService(db, log, settings);
+  const indexerSearch = new IndexerSearchService(db, log, indexer, settings);
   const downloadClient = new DownloadClientService(db, log);
 
   // Load metadata settings for Audible region
@@ -207,7 +211,7 @@ export async function createServices(db: Db, log: FastifyBaseLogger): Promise<Se
 
   // Build retry-search deps bag now that all required services exist
   const retrySearchDeps = createRetrySearchDeps(
-    { indexer, downloadOrchestrator, blacklist: blacklistService, book, settings, retryBudget },
+    { indexerSearch, downloadOrchestrator, blacklist: blacklistService, book, settings, retryBudget },
     log,
   );
 
@@ -237,7 +241,7 @@ export async function createServices(db: Db, log: FastifyBaseLogger): Promise<Se
   registerImportAdapter(new ManualImportAdapter(libraryScan.importDeps));
   registerImportAdapter(new AutoImportAdapter(importOrchestrator));
 
-  return { settings, auth, indexer, downloadClient, book, bookImport, bookList, download, downloadOrchestrator, metadata, import: importService, importOrchestrator, libraryScan, matchJob, notifier, blacklist: blacklistService, remotePathMapping, rename: renameService, merge: mergeService, eventHistory, tagging: taggingService, qualityGate: qualityGateService, qualityGateOrchestrator, retryBudget, eventBroadcaster, backup, healthCheck, taskRegistry, importList, discovery, bulkOperation, bookRejection, importQueueWorker, retrySearchDeps };
+  return { settings, auth, indexer, indexerSearch, downloadClient, book, bookImport, bookList, download, downloadOrchestrator, metadata, import: importService, importOrchestrator, libraryScan, matchJob, notifier, blacklist: blacklistService, remotePathMapping, rename: renameService, merge: mergeService, eventHistory, tagging: taggingService, qualityGate: qualityGateService, qualityGateOrchestrator, retryBudget, eventBroadcaster, backup, healthCheck, taskRegistry, importList, discovery, bulkOperation, bookRejection, importQueueWorker, retrySearchDeps };
 }
 
 type RouteFactory = (app: FastifyInstance, services: Services, db: Db) => Promise<void>;
@@ -254,7 +258,7 @@ const routeRegistry: RouteFactory[] = [
     mergeService: s.merge,
     taggingService: s.tagging,
     eventHistory: s.eventHistory,
-    indexerService: s.indexer,
+    indexerSearchService: s.indexerSearch,
     bookRejectionService: s.bookRejection,
     blacklistService: s.blacklist,
     eventBroadcaster: s.eventBroadcaster,
@@ -278,7 +282,7 @@ const routeRegistry: RouteFactory[] = [
   (app) => filesystemRoutes(app),
   (app, s) => eventHistoryRoutes(app, s.eventHistory),
   (app, s) => eventsRoutes(app, s.eventBroadcaster),
-  (app, s) => searchStreamRoutes(app, s.indexer, s.blacklist, s.settings, new SearchSessionManager()),
+  (app, s) => searchStreamRoutes(app, s.indexerSearch, s.blacklist, s.settings, new SearchSessionManager()),
   (app, s) => prowlarrCompatRoutes(app, s.indexer),
   (app, s) => importListsRoutes(app, s.importList),
   (app, s) => discoverRoutes(app, {

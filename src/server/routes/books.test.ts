@@ -68,10 +68,10 @@ describe('books routes', () => {
 
   /** Mock the streaming search path used when EventBroadcaster is available. */
   function mockStreamingSearch(results: Array<Record<string, unknown>>) {
-    (services.indexer.getEnabledIndexers as Mock).mockResolvedValue(
+    (services.indexerSearch.getEnabledIndexers as Mock).mockResolvedValue(
       results.map((_, i) => ({ id: i + 1, name: `indexer-${i + 1}` })),
     );
-    (services.indexer.searchAllStreaming as Mock).mockImplementation(
+    (services.indexerSearch.searchAllStreaming as Mock).mockImplementation(
       async (_q: string, _o: unknown, _c: unknown, callbacks: { onComplete: (id: number, name: string, count: number, ms: number) => void }) => {
         for (let i = 0; i < results.length; i++) {
           callbacks.onComplete(i + 1, `indexer-${i + 1}`, results.length, 100);
@@ -340,7 +340,7 @@ describe('books routes', () => {
       await new Promise(r => setTimeout(r, 50));
 
       expect(services.settings.get).toHaveBeenCalledWith('quality');
-      expect(services.indexer.searchAllStreaming).toHaveBeenCalled();
+      expect(services.indexerSearch.searchAllStreaming).toHaveBeenCalled();
       expect(services.downloadOrchestrator.grab).toHaveBeenCalled();
     });
 
@@ -495,7 +495,7 @@ describe('books routes', () => {
       });
 
       expect(res.statusCode).toBe(201);
-      expect(services.indexer.searchAllStreaming).not.toHaveBeenCalled();
+      expect(services.indexerSearch.searchAllStreaming).not.toHaveBeenCalled();
     });
 
     it('does not trigger search when searchImmediately is not provided', async () => {
@@ -509,14 +509,14 @@ describe('books routes', () => {
       });
 
       expect(res.statusCode).toBe(201);
-      expect(services.indexer.searchAllStreaming).not.toHaveBeenCalled();
+      expect(services.indexerSearch.searchAllStreaming).not.toHaveBeenCalled();
     });
 
     it('search trigger failure does not fail book creation', async () => {
       (services.book.findDuplicate as Mock).mockResolvedValue(null);
       (services.book.create as Mock).mockResolvedValue(mockBook);
       (services.settings.get as Mock).mockResolvedValue(DEFAULT_SETTINGS.quality);
-      (services.indexer.getEnabledIndexers as Mock).mockRejectedValue(new Error('Indexer down'));
+      (services.indexerSearch.getEnabledIndexers as Mock).mockRejectedValue(new Error('Indexer down'));
 
       const res = await app.inject({
         method: 'POST',
@@ -542,7 +542,7 @@ describe('books routes', () => {
       });
 
       expect(res.statusCode).toBe(201);
-      expect(services.indexer.searchAllStreaming).not.toHaveBeenCalled();
+      expect(services.indexerSearch.searchAllStreaming).not.toHaveBeenCalled();
     });
 
     // #439 — fire-and-forget search respects searchPriority narrator-accuracy mode
@@ -1421,7 +1421,7 @@ describe('books routes', () => {
     it('returns 500 when indexer search fails', async () => {
       (services.book.getById as Mock).mockResolvedValue(mockBook);
       (services.settings.get as Mock).mockResolvedValue(qualitySettings);
-      (services.indexer.getEnabledIndexers as Mock).mockRejectedValue(new Error('Indexer down'));
+      (services.indexerSearch.getEnabledIndexers as Mock).mockRejectedValue(new Error('Indexer down'));
 
       const res = await app.inject({ method: 'POST', url: '/api/books/1/search' });
 
@@ -2658,6 +2658,6 @@ describe('#514 books route — missing blacklistService guard', () => {
     await new Promise(r => setTimeout(r, 50));
 
     // If the guard were absent, triggerImmediateSearch would call searchAllStreaming
-    expect(services.indexer.searchAllStreaming).not.toHaveBeenCalled();
+    expect(services.indexerSearch.searchAllStreaming).not.toHaveBeenCalled();
   });
 });
