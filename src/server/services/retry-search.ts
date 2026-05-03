@@ -1,5 +1,5 @@
 import type { FastifyBaseLogger } from 'fastify';
-import type { IndexerService } from './indexer.service.js';
+import type { IndexerSearchService } from './indexer-search.service.js';
 import type { DownloadWithBook } from './download.service.js';
 import type { DownloadOrchestrator } from './download-orchestrator.js';
 import type { BlacklistService } from './blacklist.service.js';
@@ -20,7 +20,7 @@ export type RetryOutcome =
   | { outcome: 'retry_error'; error: string };
 
 export interface RetrySearchDeps {
-  indexerService: IndexerService;
+  indexerSearchService: IndexerSearchService;
   downloadOrchestrator: DownloadOrchestrator;
   blacklistService: BlacklistService;
   bookService: BookService;
@@ -31,7 +31,7 @@ export interface RetrySearchDeps {
 
 /** Factory to build RetrySearchDeps from a Services bag + logger. Eliminates duplication across routes and jobs. */
 export function createRetrySearchDeps(services: {
-  indexer: IndexerService;
+  indexerSearch: IndexerSearchService;
   downloadOrchestrator: DownloadOrchestrator;
   blacklist: BlacklistService;
   book: BookService;
@@ -39,7 +39,7 @@ export function createRetrySearchDeps(services: {
   retryBudget: RetryBudget;
 }, log: FastifyBaseLogger): RetrySearchDeps {
   return {
-    indexerService: services.indexer,
+    indexerSearchService: services.indexerSearch,
     downloadOrchestrator: services.downloadOrchestrator,
     blacklistService: services.blacklist,
     bookService: services.book,
@@ -62,7 +62,7 @@ export async function retrySearch(
   bookId: number,
   deps: RetrySearchDeps,
 ): Promise<RetryOutcome> {
-  const { indexerService, downloadOrchestrator, blacklistService, bookService, settingsService, retryBudget, log } = deps;
+  const { indexerSearchService, downloadOrchestrator, blacklistService, bookService, settingsService, retryBudget, log } = deps;
 
   // Check retry budget
   if (!retryBudget.hasRemaining(bookId)) {
@@ -80,7 +80,7 @@ export async function retrySearch(
     }
 
     const query = buildSearchQuery(book);
-    const rawResults = await indexerService.searchAll(query, {
+    const rawResults = await indexerSearchService.searchAll(query, {
       title: book.title,
       author: book.authors?.[0]?.name,
     });

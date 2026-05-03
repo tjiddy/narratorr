@@ -3,7 +3,7 @@ import { retrySearch, createRetrySearchDeps, type RetrySearchDeps } from './retr
 import { RetryBudget } from './retry-budget.js';
 import { createMockLogger, inject, createMockSettingsService } from '../__tests__/helpers.js';
 import { createMockDbBook, createMockDbAuthor } from '../__tests__/factories.js';
-import type { IndexerService } from './indexer.service.js';
+import type { IndexerSearchService } from './indexer-search.service.js';
 import type { DownloadOrchestrator } from './download-orchestrator.js';
 import type { DownloadWithBook } from './download.service.js';
 import type { BlacklistService } from './blacklist.service.js';
@@ -61,7 +61,7 @@ const mockDownload: DownloadWithBook = {
 
 function createDeps(overrides?: Partial<RetrySearchDeps>): RetrySearchDeps {
   return {
-    indexerService: inject<IndexerService>({
+    indexerSearchService: inject<IndexerSearchService>({
       searchAll: vi.fn().mockResolvedValue([mockSearchResult]),
     }),
     downloadOrchestrator: inject<DownloadOrchestrator>({
@@ -90,7 +90,7 @@ describe('retrySearch', () => {
     if (result.outcome === 'retried') {
       expect(result.download.id).toBe(2);
     }
-    expect(deps.indexerService.searchAll).toHaveBeenCalled();
+    expect(deps.indexerSearchService.searchAll).toHaveBeenCalled();
     expect(deps.downloadOrchestrator.grab).toHaveBeenCalledWith(
       expect.objectContaining({
         downloadUrl: 'magnet:?xt=urn:btih:def456',
@@ -109,12 +109,12 @@ describe('retrySearch', () => {
     const result = await retrySearch(1, deps);
 
     expect(result.outcome).toBe('exhausted');
-    expect(deps.indexerService.searchAll).not.toHaveBeenCalled();
+    expect(deps.indexerSearchService.searchAll).not.toHaveBeenCalled();
   });
 
   it('returns no_candidates when search returns empty results', async () => {
     const deps = createDeps({
-      indexerService: inject<IndexerService>({
+      indexerSearchService: inject<IndexerSearchService>({
         searchAll: vi.fn().mockResolvedValue([]),
       }),
     });
@@ -143,7 +143,7 @@ describe('retrySearch', () => {
     const blacklistedResult = { ...mockSearchResult, infoHash: blacklistedHash, downloadUrl: 'magnet:?xt=urn:btih:abc123' };
 
     const deps = createDeps({
-      indexerService: inject<IndexerService>({
+      indexerSearchService: inject<IndexerSearchService>({
         searchAll: vi.fn().mockResolvedValue([blacklistedResult, goodResult]),
       }),
       blacklistService: inject<BlacklistService>({
@@ -178,7 +178,7 @@ describe('retrySearch', () => {
 
   it('returns retry_error when indexer search throws', async () => {
     const deps = createDeps({
-      indexerService: inject<IndexerService>({
+      indexerSearchService: inject<IndexerSearchService>({
         searchAll: vi.fn().mockRejectedValue(new Error('Connection refused')),
       }),
     });
@@ -193,7 +193,7 @@ describe('retrySearch', () => {
 
   it('returns no_candidates when no results have downloadUrl', async () => {
     const deps = createDeps({
-      indexerService: inject<IndexerService>({
+      indexerSearchService: inject<IndexerSearchService>({
         searchAll: vi.fn().mockResolvedValue([
           { ...mockSearchResult, downloadUrl: undefined },
         ]),
@@ -207,7 +207,7 @@ describe('retrySearch', () => {
 
   it('consumes a budget attempt even when result is no_candidates', async () => {
     const deps = createDeps({
-      indexerService: inject<IndexerService>({
+      indexerSearchService: inject<IndexerSearchService>({
         searchAll: vi.fn().mockResolvedValue([]),
       }),
     });
@@ -262,7 +262,7 @@ describe('retrySearch', () => {
     });
     const deps = createDeps({
       settingsService: settings,
-      indexerService: inject<IndexerService>({
+      indexerSearchService: inject<IndexerSearchService>({
         searchAll: vi.fn().mockResolvedValue([frenchResult]),
       }),
     });
@@ -300,7 +300,7 @@ describe('retrySearch', () => {
     });
     const deps = createDeps({
       settingsService: settings,
-      indexerService: inject<IndexerService>({
+      indexerSearchService: inject<IndexerSearchService>({
         searchAll: vi.fn().mockResolvedValue([frenchResult, englishResult]),
       }),
     });
@@ -326,7 +326,7 @@ describe('retrySearch', () => {
     });
     const deps = createDeps({
       settingsService: settings,
-      indexerService: inject<IndexerService>({
+      indexerSearchService: inject<IndexerSearchService>({
         searchAll: vi.fn().mockResolvedValue([oversizedResult]),
       }),
     });
@@ -343,7 +343,7 @@ describe('retrySearch', () => {
 
   it('handles book with no active indexers (empty results)', async () => {
     const deps = createDeps({
-      indexerService: inject<IndexerService>({
+      indexerSearchService: inject<IndexerSearchService>({
         searchAll: vi.fn().mockResolvedValue([]),
       }),
     });
@@ -356,7 +356,7 @@ describe('retrySearch', () => {
 
 describe('createRetrySearchDeps', () => {
   it('maps service bag fields to RetrySearchDeps contract by reference', () => {
-    const indexer = {} as IndexerService;
+    const indexerSearch = {} as IndexerSearchService;
     const downloadOrchestrator = {} as DownloadOrchestrator;
     const blacklist = {} as BlacklistService;
     const book = {} as BookService;
@@ -365,11 +365,11 @@ describe('createRetrySearchDeps', () => {
     const log = inject<FastifyBaseLogger>(createMockLogger());
 
     const result = createRetrySearchDeps(
-      { indexer, downloadOrchestrator, blacklist, book, settings, retryBudget },
+      { indexerSearch, downloadOrchestrator, blacklist, book, settings, retryBudget },
       log,
     );
 
-    expect(result.indexerService).toBe(indexer);
+    expect(result.indexerSearchService).toBe(indexerSearch);
     expect(result.downloadOrchestrator).toBe(downloadOrchestrator);
     expect(result.blacklistService).toBe(blacklist);
     expect(result.bookService).toBe(book);
@@ -394,7 +394,7 @@ describe('retrySearch — GUID blacklist filtering', () => {
 
   it('filters out results with blacklisted guid (usenet)', async () => {
     const deps = createDeps({
-      indexerService: inject<IndexerService>({
+      indexerSearchService: inject<IndexerSearchService>({
         searchAll: vi.fn().mockResolvedValue([usenetResult]),
       }),
       blacklistService: inject<BlacklistService>({
@@ -438,7 +438,7 @@ describe('retrySearch — GUID blacklist filtering', () => {
     };
 
     const deps = createDeps({
-      indexerService: inject<IndexerService>({
+      indexerSearchService: inject<IndexerSearchService>({
         searchAll: vi.fn().mockResolvedValue([noIdentifierResult]),
       }),
     });
@@ -465,7 +465,7 @@ describe('retrySearch — GUID blacklist filtering', () => {
     };
 
     const deps = createDeps({
-      indexerService: inject<IndexerService>({
+      indexerSearchService: inject<IndexerSearchService>({
         searchAll: vi.fn().mockResolvedValue([emptyGuidResult]),
       }),
       blacklistService: inject<BlacklistService>({
@@ -485,7 +485,7 @@ describe('retrySearch — GUID blacklist filtering', () => {
 
   it('passes best.guid to grab() when available', async () => {
     const deps = createDeps({
-      indexerService: inject<IndexerService>({
+      indexerSearchService: inject<IndexerSearchService>({
         searchAll: vi.fn().mockResolvedValue([usenetResult]),
       }),
     });
@@ -517,7 +517,7 @@ describe('retrySearch — GUID blacklist filtering', () => {
 
   it('forwards indexerId from best search result to downloadOrchestrator.grab', async () => {
     const deps = createDeps({
-      indexerService: inject<IndexerService>({
+      indexerSearchService: inject<IndexerSearchService>({
         searchAll: vi.fn().mockResolvedValue([{ ...mockSearchResult, indexerId: 42 }]),
       }),
     });
@@ -551,7 +551,7 @@ describe('retrySearch — GUID blacklist filtering', () => {
       bookService: inject<BookService>({
         getById: vi.fn().mockResolvedValue(bookWithNarrators),
       }),
-      indexerService: inject<IndexerService>({
+      indexerSearchService: inject<IndexerSearchService>({
         searchAll: vi.fn().mockResolvedValue([
           { ...mockSearchResult, size: GOOD_SIZE, downloadUrl: 'magnet:?xt=urn:btih:quality', narrator: 'Someone Else', matchScore: 0.9 },
           { ...mockSearchResult, size: FAIR_SIZE, downloadUrl: 'magnet:?xt=urn:btih:narrator', narrator: 'Kevin R. Free', matchScore: 0.9 },
@@ -583,7 +583,7 @@ describe('#502 retrySearch — enrichment before filtering', () => {
       infoHash: undefined,
     };
     const deps = createDeps({
-      indexerService: inject<IndexerService>({
+      indexerSearchService: inject<IndexerSearchService>({
         searchAll: vi.fn().mockResolvedValue([usenetResult]),
       }),
     });
@@ -604,7 +604,7 @@ describe('#502 retrySearch — enrichment before filtering', () => {
       infoHash: undefined,
     };
     const deps = createDeps({
-      indexerService: inject<IndexerService>({
+      indexerSearchService: inject<IndexerSearchService>({
         searchAll: vi.fn().mockResolvedValue([usenetResult]),
       }),
       settingsService: createMockSettingsService({
@@ -629,7 +629,7 @@ describe('#502 retrySearch — enrichment before filtering', () => {
     it('emits the blacklist drop log when retrySearch filters a blacklisted candidate', async () => {
       const log = createMockLogger();
       const deps = createDeps({
-        indexerService: inject<IndexerService>({
+        indexerSearchService: inject<IndexerSearchService>({
           searchAll: vi.fn().mockResolvedValue([{ ...mockSearchResult, infoHash: 'badhash' }]),
         }),
         blacklistService: inject<BlacklistService>({
@@ -653,7 +653,7 @@ describe('#502 retrySearch — enrichment before filtering', () => {
     it('emits a quality filter drop log when retrySearch reject-words filter rejects an item', async () => {
       const log = createMockLogger();
       const deps = createDeps({
-        indexerService: inject<IndexerService>({
+        indexerSearchService: inject<IndexerSearchService>({
           searchAll: vi.fn().mockResolvedValue([{ ...mockSearchResult, title: 'The Way of Kings BANNED' }]),
         }),
         settingsService: createMockSettingsService({
