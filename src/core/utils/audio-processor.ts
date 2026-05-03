@@ -20,9 +20,9 @@ export interface ProcessingConfig {
   ffmpegPath: string;
   outputFormat: 'm4b' | 'mp3';
   /** Target bitrate in kbps. When omitted, the original bitrate is preserved (copy codec where possible). */
-  bitrate?: number;
+  bitrate?: number | undefined;
   /** Source bitrate in kbps (converted from bps at the call site). When set, effective bitrate is min(source, target) to prevent upsampling. */
-  sourceBitrateKbps?: number;
+  sourceBitrateKbps?: number | undefined;
   mergeBehavior: 'always' | 'multi-file-only' | 'never';
 }
 

@@ -22,7 +22,7 @@ import { GeneralSettingsForm } from './GeneralSettingsForm';
 
 function RestoreModal({ isOpen, restoreInfo, onConfirm, onClose }: {
   isOpen: boolean;
-  restoreInfo: { backupName: string; valid: boolean; error?: string } | null;
+  restoreInfo: { backupName: string; valid: boolean; error?: string | undefined } | null;
   onConfirm: () => void;
   onClose: () => void;
 }) {
@@ -51,9 +51,9 @@ export function SystemSettings() {
   const [restoreInfo, setRestoreInfo] = useState<{
     backupName: string;
     valid: boolean;
-    error?: string;
-    backupMigrationCount?: number;
-    appMigrationCount?: number;
+    error?: string | undefined;
+    backupMigrationCount?: number | undefined;
+    appMigrationCount?: number | undefined;
   } | null>(null);
 
   const { data: backups, isLoading } = useQuery({

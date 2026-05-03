@@ -61,7 +61,12 @@ export async function remotePathMappingRoutes(
     { schema: { params: idParamSchema, body: updateRemotePathMappingSchema } },
     async (request, reply) => {
       const { id } = request.params;
-      const item = await remotePathMappingService.update(id, request.body);
+      const body = request.body;
+      const item = await remotePathMappingService.update(id, {
+        ...(body.downloadClientId !== undefined && { downloadClientId: body.downloadClientId }),
+        ...(body.remotePath !== undefined && { remotePath: body.remotePath }),
+        ...(body.localPath !== undefined && { localPath: body.localPath }),
+      });
       if (!item) {
         return reply.status(404).send({ error: 'Remote path mapping not found' });
       }

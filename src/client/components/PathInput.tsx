@@ -5,15 +5,15 @@ import { DirectoryBrowserModal } from './DirectoryBrowserModal.js';
 
 interface PathInputProps {
   value: string;
-  onChange?: (path: string) => void;
-  registration?: UseFormRegisterReturn;
-  id?: string;
-  placeholder?: string;
-  error?: FieldError;
-  className?: string;
-  fallbackBrowsePath?: string;
-  onKeyDown?: React.KeyboardEventHandler<HTMLInputElement>;
-  autoFocus?: boolean;
+  onChange?: ((path: string) => void) | undefined;
+  registration?: UseFormRegisterReturn | undefined;
+  id?: string | undefined;
+  placeholder?: string | undefined;
+  error?: FieldError | undefined;
+  className?: string | undefined;
+  fallbackBrowsePath?: string | undefined;
+  onKeyDown?: React.KeyboardEventHandler<HTMLInputElement> | undefined;
+  autoFocus?: boolean | undefined;
 }
 
 export function PathInput({

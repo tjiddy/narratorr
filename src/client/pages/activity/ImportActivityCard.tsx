@@ -51,8 +51,8 @@ function PhaseIcon({ isDone, isCurrent }: { isDone: boolean; isCurrent: boolean 
 function PhaseRow({ entry, isLast, progress, byteCounter }: {
   entry: PhaseHistoryEntry;
   isLast: boolean;
-  progress?: number;
-  byteCounter?: { current: number; total: number };
+  progress?: number | undefined;
+  byteCounter?: { current: number; total: number } | undefined;
 }) {
   const isDone = entry.completedAt !== undefined;
   const isCurrent = !isDone && isLast;

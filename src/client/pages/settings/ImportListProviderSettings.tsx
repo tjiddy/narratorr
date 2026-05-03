@@ -8,7 +8,7 @@ interface SettingsProps {
   onChange: (settings: Record<string, unknown>) => void;
   /** id of the import list being edited, if any — forwarded so the route can
    *  resolve a masked apiKey against the persisted record. */
-  editingId?: number;
+  editingId?: number | undefined;
 }
 
 function AbsSettings({ settings, onChange, editingId }: SettingsProps) {

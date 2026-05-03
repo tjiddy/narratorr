@@ -23,14 +23,14 @@ export const LibraryBookCard = memo(function LibraryBookCard({
 }: {
   book: BookWithAuthor;
   index: number;
-  collapsedCount?: number;
+  collapsedCount?: number | undefined;
   isMenuOpen: boolean;
   onMenuToggle: (bookId: number, e: React.MouseEvent) => void;
   onMenuClose: () => void;
   onClick: (bookId: number) => void;
   onSearchReleases: (book: BookWithAuthor) => void;
   onRemove: (book: BookWithAuthor) => void;
-  onRetryImport?: (book: BookWithAuthor) => void;
+  onRetryImport?: ((book: BookWithAuthor) => void) | undefined;
 }) {
   const { hasError: imageError, onError: onImageError } = useImageError();
   const menuAreaRef = useRef<HTMLDivElement>(null);

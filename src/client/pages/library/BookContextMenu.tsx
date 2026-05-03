@@ -10,7 +10,7 @@ export function BookContextMenu({
   onSearchReleases: () => void;
   onRemove: () => void;
   onClose: () => void;
-  onRetryImport?: () => void;
+  onRetryImport?: (() => void) | undefined;
 }) {
   const menuRef = useRef<HTMLDivElement>(null);
   const [focusIndex, setFocusIndex] = useState(0);

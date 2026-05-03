@@ -32,8 +32,8 @@ export async function eventHistoryRoutes(app: FastifyInstance, eventHistoryServi
     async (request) => {
       const { eventType, search, limit, offset } = request.query;
       request.log.debug({ eventType, search, limit, offset }, 'Fetching event history');
-      const pagination = { limit: limit ?? DEFAULT_LIMITS.eventHistory, offset };
-      return eventHistoryService.getAll({ eventType, search }, pagination);
+      const pagination = { limit: limit ?? DEFAULT_LIMITS.eventHistory, ...(offset !== undefined && { offset }) };
+      return eventHistoryService.getAll({ ...(eventType !== undefined && { eventType }), ...(search !== undefined && { search }) }, pagination);
     },
   );
 

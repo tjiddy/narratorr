@@ -19,22 +19,22 @@ export interface DownloadItemInfo {
   ratio: number;
   seeders: number;
   leechers: number;
-  eta?: number; // Seconds
+  eta?: number | undefined; // Seconds
   /**
    * Current download rate in bytes/sec.
    * `undefined` means the client did not report a rate; `0` means the download is
    * active but currently stalled (zero throughput). Consumers must distinguish these.
    */
-  downloadSpeed?: number;
+  downloadSpeed?: number | undefined;
   addedAt: Date;
-  completedAt?: Date;
-  errorMessage?: string;
+  completedAt?: Date | undefined;
+  errorMessage?: string | undefined;
 }
 
 export interface AddDownloadOptions {
-  savePath?: string;
-  category?: string;
-  paused?: boolean;
+  savePath?: string | undefined;
+  category?: string | undefined;
+  paused?: boolean | undefined;
 }
 
 export interface DownloadClientAdapter {

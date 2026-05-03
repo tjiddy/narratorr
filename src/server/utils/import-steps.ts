@@ -146,7 +146,7 @@ export interface CopyToLibraryArgs {
   targetPath: string;
   sourceStats: Stats;
   log: FastifyBaseLogger;
-  onProgress?: (progress: number, byteCounter: { current: number; total: number }) => void;
+  onProgress?: ((progress: number, byteCounter: { current: number; total: number }) => void) | undefined;
 }
 
 /** Copy audio files from source to target library path. */

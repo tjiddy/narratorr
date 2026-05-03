@@ -39,7 +39,7 @@ function fillEmptyFields(book: ExistingBookFields, result: Record<string, unknow
 /** Fill series fields independently (matching library-scan.service.ts:432-433). */
 function fillSeriesFields(
   book: ExistingBookFields,
-  series: Array<{ name?: string; position?: number }> | undefined,
+  series: Array<{ name?: string | undefined; position?: number | undefined }> | undefined,
 ): Record<string, unknown> {
   const updates: Record<string, unknown> = {};
   const primary = series && series[0];

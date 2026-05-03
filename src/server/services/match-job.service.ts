@@ -357,11 +357,11 @@ function rankResults(
   detailed: BookMetadata[],
   book: MatchCandidate,
 ): { meta: BookMetadata; score: number }[] {
-  const context = { title: book.title, author: book.author };
+  const context = { title: book.title, ...(book.author !== undefined && { author: book.author }) };
   const scored = detailed.map(meta => ({
     meta,
     score: scoreResult(
-      { title: meta.title, author: meta.authors?.[0]?.name },
+      { title: meta.title, ...(meta.authors?.[0]?.name !== undefined && { author: meta.authors[0].name }) },
       context,
     ),
   }));

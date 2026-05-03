@@ -105,7 +105,7 @@ export function useManualImport({ onScanSuccess, libraryPath }: UseManualImportO
         .map(d => ({
           path: d.path,
           title: d.parsedTitle,
-          author: d.parsedAuthor || undefined,
+          ...(d.parsedAuthor && { author: d.parsedAuthor }),
         }));
       if (candidates.length > 0) {
         startMatching(candidates);

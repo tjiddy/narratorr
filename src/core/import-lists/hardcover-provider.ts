@@ -99,7 +99,7 @@ export class HardcoverProvider implements ImportListProvider {
   constructor(config: HardcoverConfig) {
     this.apiKey = config.apiKey;
     this.listType = config.listType;
-    this.shelfId = config.shelfId;
+    if (config.shelfId !== undefined) this.shelfId = config.shelfId;
   }
 
   async fetchItems(): Promise<ImportListItem[]> {

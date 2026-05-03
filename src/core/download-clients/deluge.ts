@@ -16,7 +16,7 @@ export interface DelugeConfig {
   port: number;
   password: string;
   useSsl: boolean;
-  onWarn?: (msg: string) => void;
+  onWarn?: ((msg: string) => void) | undefined;
 }
 
 type DelugeTorrentStatus = z.infer<typeof delugeTorrentStatusSchema>;

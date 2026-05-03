@@ -28,6 +28,6 @@ export async function importJobsRoutes(app: FastifyInstance, bookImportService: 
   app.get<{ Querystring: ImportJobsQuery }>(
     '/api/import-jobs',
     { schema: { querystring: importJobsQuerySchema } },
-    async (request) => bookImportService.listImportJobs({ status: request.query.status }),
+    async (request) => bookImportService.listImportJobs({ ...(request.query.status !== undefined && { status: request.query.status }) }),
   );
 }

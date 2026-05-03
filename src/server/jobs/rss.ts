@@ -110,8 +110,8 @@ export async function runRssJob(
 
     for (const candidate of candidates) {
       const score = scoreResult(
-        { title: item.title, author: item.author },
-        { title: candidate.title, author: candidate.authors?.[0]?.name },
+        { title: item.title, ...(item.author !== undefined && { author: item.author }) },
+        { title: candidate.title, ...(candidate.authors?.[0]?.name !== undefined && { author: candidate.authors[0].name }) },
       );
       if (score > bestScore) {
         bestScore = score;

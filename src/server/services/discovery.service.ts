@@ -264,7 +264,7 @@ export class DiscoveryService {
     }
   }
 
-  async getSuggestions(filters?: { reason?: SuggestionReason; author?: string }): Promise<SuggestionRow[]> {
+  async getSuggestions(filters?: { reason?: SuggestionReason | undefined; author?: string | undefined } | undefined): Promise<SuggestionRow[]> {
     const now = new Date();
     const conds = [
       eq(suggestions.status, 'pending'),

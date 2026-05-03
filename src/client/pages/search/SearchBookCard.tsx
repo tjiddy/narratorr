@@ -23,7 +23,7 @@ export function SearchBookCard({
 }: {
   book: BookMetadata;
   index: number;
-  libraryBooks?: BookWithAuthor[];
+  libraryBooks?: BookWithAuthor[] | undefined;
   queryClient: ReturnType<typeof useQueryClient>;
 }) {
   const [justAdded, setJustAdded] = useState(false);

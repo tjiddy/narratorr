@@ -24,7 +24,7 @@ export interface AuthConfig {
 export interface AuthStatus {
   mode: AuthMode;
   hasUser: boolean;
-  username?: string;
+  username?: string | undefined;
   localBypass: boolean;
 }
 
@@ -164,7 +164,7 @@ export class AuthService {
     return { mode: config.mode, apiKey: config.apiKey, localBypass: config.localBypass };
   }
 
-  async updateConfig(updates: { mode?: AuthMode; localBypass?: boolean }): Promise<AuthPublicConfig> {
+  async updateConfig(updates: { mode?: AuthMode | undefined; localBypass?: boolean | undefined }): Promise<AuthPublicConfig> {
     if (updates.mode !== undefined) {
       // updateMode has its own validation
       await this.updateMode(updates.mode);

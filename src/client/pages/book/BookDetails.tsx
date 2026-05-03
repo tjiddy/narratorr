@@ -36,7 +36,7 @@ function canShowWrongRelease(book: BookWithAuthor): boolean {
 // eslint-disable-next-line max-lines-per-function -- page orchestrator with multiple confirm modals
 export function BookDetails({ libraryBook, metadataBook }: {
   libraryBook: BookWithAuthor;
-  metadataBook?: MetadataBook | null;
+  metadataBook?: MetadataBook | null | undefined;
 }) {
   const navigate = useNavigate();
   const { modals, open, close } = useBookModals();

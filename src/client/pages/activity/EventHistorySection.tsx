@@ -48,8 +48,8 @@ export function EventHistorySection({ urlFilter, onFilterChange }: EventHistoryS
   }, [pagination]);
 
   const { events, total, isLoading, markFailedMutation, deleteMutation, bulkDeleteMutation, retryMutation } = useEventHistory({
-    eventType: eventType || undefined,
-    search: search || undefined,
+    ...(eventType && { eventType }),
+    ...(search && { search }),
     limit: pagination.limit,
     offset: pagination.offset,
   });
