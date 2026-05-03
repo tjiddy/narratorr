@@ -100,7 +100,7 @@ export class QualityGateOrchestrator {
         try {
           scanResult = await scanAudioDirectory(savePath, {
             skipCover: true,
-            ffprobePath,
+            ...(ffprobePath !== undefined && { ffprobePath }),
             onWarn: (msg, payload) => this.log.warn(payload, msg),
             onDebug: (msg, payload) => this.log.debug(payload, msg),
           });
@@ -167,7 +167,7 @@ export class QualityGateOrchestrator {
       try {
         scanResult = await scanAudioDirectory(savePath, {
           skipCover: true,
-          ffprobePath: ffprobePath2,
+          ...(ffprobePath2 !== undefined && { ffprobePath: ffprobePath2 }),
           onWarn: (msg, payload) => this.log.warn(payload, msg),
           onDebug: (msg, payload) => this.log.debug(payload, msg),
         });
@@ -304,10 +304,10 @@ export class QualityGateOrchestrator {
     if (retry) {
       await blacklistAndRetrySearch({
         identifiers: {
-          infoHash: download.infoHash ?? undefined,
-          guid: download.guid ?? undefined,
+          ...(download.infoHash != null && { infoHash: download.infoHash }),
+          ...(download.guid != null && { guid: download.guid }),
           title: download.title,
-          bookId: download.bookId ?? undefined,
+          ...(download.bookId != null && { bookId: download.bookId }),
         },
         reason: 'bad_quality',
         book,

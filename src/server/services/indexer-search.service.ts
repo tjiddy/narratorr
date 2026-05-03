@@ -139,7 +139,7 @@ export class IndexerSearchService {
       const context = { title: options.title, author: options.author };
       for (const result of results) {
         result.matchScore = scoreResult(
-          { title: result.title, author: result.author },
+          { title: result.title, ...(result.author !== undefined && { author: result.author }) },
           context,
         );
       }

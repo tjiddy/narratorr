@@ -86,7 +86,7 @@ export async function queryAuthorCandidates(deps: QueryDeps, signals: LibrarySig
       const cap = new Map<string, number>();
       ctx.queriedAuthor = name;
       filterAndScore(results, 'author', () => `New from ${name} — you have ${signals.authorAffinity.get(name)?.count ?? 0} of their books`, strength, ctx, map, cap);
-      ctx.queriedAuthor = undefined;
+      delete ctx.queriedAuthor;
     } catch (error: unknown) { deps.log.warn({ error: serializeError(error) }, `Discovery: author query failed for ${name}`); }
   }
 }

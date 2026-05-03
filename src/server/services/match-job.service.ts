@@ -195,7 +195,7 @@ class MatchJob {
         title: book.title,
         author: book.author,
         log: this.log,
-        options: { title: book.title, author: book.author },
+        options: { title: book.title, ...(book.author !== undefined && { author: book.author }) },
       });
 
       if (trace.results.length === 0) {

@@ -111,8 +111,8 @@ export function useLibraryFilters() {
 
   // Build API params from filter state (search is debounced)
   const apiParams: BookListParams = useMemo(() => ({
-    status: statusFilter === 'all' ? undefined : statusFilter,
-    search: debouncedSearch || undefined,
+    ...(statusFilter !== 'all' && { status: statusFilter }),
+    ...(debouncedSearch && { search: debouncedSearch }),
     sortField,
     sortDirection,
     limit: pagination.limit,

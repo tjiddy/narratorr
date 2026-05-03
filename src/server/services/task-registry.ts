@@ -30,7 +30,7 @@ export class TaskRegistry {
   private tasks: Map<string, RegisteredTask> = new Map();
 
   register(name: string, type: 'cron' | 'timeout', fn: () => Promise<unknown>, cronExpression?: string): void {
-    this.tasks.set(name, { name, type, fn, cronExpression, lastRun: null, nextRun: null, running: false });
+    this.tasks.set(name, { name, type, fn, ...(cronExpression !== undefined && { cronExpression }), lastRun: null, nextRun: null, running: false });
   }
 
   getAll(): TaskMetadata[] {

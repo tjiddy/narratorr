@@ -148,7 +148,7 @@ export class NewznabIndexer implements IndexerAdapter {
 
       if (!title) {
         dropped.emptyTitle++;
-        debugTrace.push({ source: 'item', reason: 'dropped:empty-title', guid: guidText });
+        debugTrace.push({ source: 'item', reason: 'dropped:empty-title', ...(guidText !== undefined && { guid: guidText }) });
         return; // continue
       }
 

@@ -78,9 +78,9 @@ export class AbsProvider implements ImportListProvider {
       if (!meta?.title) continue;
       items.push({
         title: meta.title,
-        author: meta.authorName || undefined,
-        asin: meta.asin || undefined,
-        isbn: meta.isbn || undefined,
+        ...(meta.authorName && { author: meta.authorName }),
+        ...(meta.asin && { asin: meta.asin }),
+        ...(meta.isbn && { isbn: meta.isbn }),
       });
     }
     return items;

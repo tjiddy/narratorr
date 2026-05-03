@@ -96,7 +96,8 @@ export async function enrichUsenetLanguages(
       const xml = await response.text();
 
       // Extract NZB name (meta tag first, file subject as fallback)
-      result.nzbName = parseNzbName(xml) || parseNzbFileSubject(xml) || undefined;
+      const nzbName = parseNzbName(xml) || parseNzbFileSubject(xml);
+      if (nzbName) result.nzbName = nzbName;
       const groups = parseNzbGroups(xml);
 
       // Capture only the specific fields we need — never log the full XML body

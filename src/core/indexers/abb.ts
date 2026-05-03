@@ -41,7 +41,7 @@ export class AudioBookBayIndexer implements IndexerAdapter {
   constructor(private config: ABBConfig) {
     this.baseUrl = `https://${config.hostname}`;
     this.flareSolverrUrl = normalizeBaseUrl(config.flareSolverrUrl);
-    this.proxyUrl = config.proxyUrl;
+    if (config.proxyUrl !== undefined) this.proxyUrl = config.proxyUrl;
   }
 
   async search(query: string, options?: SearchOptions): Promise<IndexerSearchResponse> {
@@ -82,8 +82,8 @@ export class AudioBookBayIndexer implements IndexerAdapter {
             results,
             parseStats: { itemsObserved, kept: results.length, dropped },
             debugTrace,
-            requestUrl: firstPageRequestUrl,
-            httpStatus: firstPageHttpStatus,
+            ...(firstPageRequestUrl !== undefined && { requestUrl: firstPageRequestUrl }),
+            ...(firstPageHttpStatus !== undefined && { httpStatus: firstPageHttpStatus }),
           };
         }
       } catch (error: unknown) {
@@ -234,11 +234,11 @@ export class AudioBookBayIndexer implements IndexerAdapter {
 
       results.push({
         title,
-        author,
-        narrator,
+        ...(author !== undefined && { author }),
+        ...(narrator !== undefined && { narrator }),
         protocol: 'torrent',
         detailsUrl,
-        coverUrl,
+        ...(coverUrl !== undefined && { coverUrl }),
         indexer: this.name,
       });
     });
@@ -425,7 +425,7 @@ export class AudioBookBayIndexer implements IndexerAdapter {
       await fetchWithProxy({
         url: this.baseUrl,
         headers: { 'User-Agent': this.getNextUserAgent() },
-        proxyUrl: this.flareSolverrUrl,
+        ...(this.flareSolverrUrl !== undefined && { proxyUrl: this.flareSolverrUrl }),
       });
       return { success: true, message: `Connected to ${this.config.hostname} via FlareSolverr` };
     } catch (error: unknown) {
@@ -439,7 +439,7 @@ export class AudioBookBayIndexer implements IndexerAdapter {
   private async testViaStandardProxy(): Promise<{ success: boolean; message?: string; ip?: string }> {
     try {
       await fetchWithProxyAgent(this.baseUrl, {
-        proxyUrl: this.proxyUrl,
+        ...(this.proxyUrl !== undefined && { proxyUrl: this.proxyUrl }),
         headers: { 'User-Agent': this.getNextUserAgent() },
       });
 

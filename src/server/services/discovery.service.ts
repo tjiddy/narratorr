@@ -84,7 +84,7 @@ export class DiscoveryService {
     const dismissedAsins = new Set(dismissedRows.map(s => s.asin));
 
     const effectiveMultipliers = multipliers ?? DEFAULT_MULTIPLIERS;
-    const ctx: CandidateContext = { languages, existingAsins, existingTitleAuthors, dismissedAsins, maxPerAuthor: settings.maxSuggestionsPerAuthor, signals, warnings, queriedAuthor: undefined, multipliers: effectiveMultipliers };
+    const ctx: CandidateContext = { languages, existingAsins, existingTitleAuthors, dismissedAsins, maxPerAuthor: settings.maxSuggestionsPerAuthor, signals, warnings, multipliers: effectiveMultipliers };
     const map = new Map<string, ScoredCandidate>();
     const deps = { metadataService: this.metadataService, log: this.log };
 

@@ -51,7 +51,7 @@ export function useAddBooksToLibrary(libraryBooks?: (BookIdentifier | BookWithAu
 
   const addBook = useCallback((book: BookMetadata, overrides?: QualityDefaults) => {
     if (!isBookAdded(book)) {
-      addBookMutation.mutate({ book, overrides });
+      addBookMutation.mutate({ book, ...(overrides !== undefined && { overrides }) });
     }
   }, [isBookAdded, addBookMutation]);
 

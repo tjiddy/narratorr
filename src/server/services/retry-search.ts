@@ -108,7 +108,7 @@ export async function retrySearch(
       rejectWords: qualitySettings.rejectWords,
       requiredWords: qualitySettings.requiredWords,
       languages: metadataSettings.languages,
-      narratorPriority,
+      ...(narratorPriority !== undefined && { narratorPriority }),
       maxDownloadSize: qualitySettings.maxDownloadSize,
     }, log);
     if (results.length < retryInputCount) {
@@ -124,7 +124,7 @@ export async function retrySearch(
 
     // Grab the best candidate
     const newDownload = await downloadOrchestrator.grab(
-      buildGrabPayload(best, book.id, { guid: best.guid, skipDuplicateCheck: true }),
+      buildGrabPayload(best, book.id, { ...(best.guid !== undefined && { guid: best.guid }), skipDuplicateCheck: true }),
     );
 
     log.info({ bookId, title: best.title, attempt }, 'Retry search grabbed candidate');

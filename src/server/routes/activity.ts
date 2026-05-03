@@ -26,7 +26,7 @@ export async function activityRoutes(app: FastifyInstance, downloadService: Down
     async (request) => {
       const { status, section, limit, offset } = request.query;
       request.log.debug({ status, section, limit, offset }, 'Fetching activity');
-      const pagination = { limit: limit ?? DEFAULT_LIMITS.activity, offset };
+      const pagination = { limit: limit ?? DEFAULT_LIMITS.activity, ...(offset !== undefined && { offset }) };
       const result = await downloadService.getAll(status, pagination, section);
 
       // Augment pending_review downloads with quality gate comparison data (batch)

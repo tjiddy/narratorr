@@ -41,8 +41,8 @@ export class QBittorrentClient implements DownloadClientAdapter {
   readonly supportsCategories = true;
 
   private baseUrl: string;
-  private cookie?: string;
-  private loginPromise?: Promise<void>;
+  private cookie?: string | undefined;
+  private loginPromise?: Promise<void> | undefined;
 
   constructor(private config: QBittorrentConfig) {
     const protocol = config.useSsl ? 'https' : 'http';

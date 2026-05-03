@@ -143,7 +143,7 @@ export function CredentialsSection({
         <SetupForm />
       ) : (
         <ChangePasswordForm
-          currentUsername={currentUsername}
+          {...(currentUsername !== undefined && { currentUsername })}
           showRemoveButton={envBypass && hasUser}
           onRemove={() => deleteMutation.mutate()}
           isRemoving={deleteMutation.isPending}

@@ -59,8 +59,8 @@ export function useManualImport({ onScanSuccess, libraryPath }: UseManualImportO
             title: match.bestMatch.title,
             author: match.bestMatch.authors?.[0]?.name ?? row.edited.author,
             series: match.bestMatch.series?.[0]?.name ?? row.edited.series,
-            coverUrl: match.bestMatch.coverUrl,
-            asin: match.bestMatch.asin,
+            ...(match.bestMatch.coverUrl !== undefined && { coverUrl: match.bestMatch.coverUrl }),
+            ...(match.bestMatch.asin !== undefined && { asin: match.bestMatch.asin }),
             metadata: match.bestMatch,
           },
         };
@@ -161,11 +161,11 @@ export function useManualImport({ onScanSuccess, libraryPath }: UseManualImportO
     const items: ImportConfirmItem[] = selected.map(r => ({
       path: r.book.path,
       title: r.edited.title,
-      authorName: r.edited.author || undefined,
-      seriesName: r.edited.series || undefined,
-      coverUrl: r.edited.coverUrl,
-      asin: r.edited.asin,
-      metadata: r.edited.metadata,
+      ...(r.edited.author && { authorName: r.edited.author }),
+      ...(r.edited.series && { seriesName: r.edited.series }),
+      ...(r.edited.coverUrl !== undefined && { coverUrl: r.edited.coverUrl }),
+      ...(r.edited.asin !== undefined && { asin: r.edited.asin }),
+      ...(r.edited.metadata !== undefined && { metadata: r.edited.metadata }),
       // Duplicate rows that user explicitly selected require force-import to bypass safety net
       ...(r.book.isDuplicate ? { forceImport: true } : {}),
     }));

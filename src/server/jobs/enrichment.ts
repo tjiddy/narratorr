@@ -52,7 +52,7 @@ function fillSeriesFields(
 /** Build the scalar updates and return fill counts for batch logging. */
 function buildMetadataUpdates(
   book: ExistingBookFields,
-  result: { title?: string | null; description?: string | null; coverUrl?: string | null; publishedDate?: string | null; duration?: number | null; series?: Array<{ name?: string; position?: number }> },
+  result: { title?: string | null | undefined; description?: string | null | undefined; coverUrl?: string | null | undefined; publishedDate?: string | null | undefined; duration?: number | null | undefined; series?: Array<{ name?: string | undefined; position?: number | undefined }> | undefined },
 ) {
   const updates: Record<string, unknown> = {};
   let filledDuration = 0;

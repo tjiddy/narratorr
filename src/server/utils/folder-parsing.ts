@@ -245,7 +245,7 @@ function parseSingleFolder(folder: string): {
   // Guard: all-numeric date-like inputs ('11-22-63', '1.5') are titles, not
   // Series–NN–Title — short-circuit before pattern matching.
   if (isAllNumericSegments(input)) {
-    return { title: input, author: null, series: null, asin };
+    return { title: input, author: null, series: null, ...(asin !== undefined && { asin }) };
   }
 
   // Pattern: "Series – NN – Title" or "Series - NN - Title"
@@ -292,7 +292,7 @@ function parseSingleFolder(folder: string): {
         title: cleanName(left),
         author: cleanName(right),
         series: null,
-        asin,
+        ...(asin !== undefined && { asin }),
       };
     }
   }
@@ -451,11 +451,11 @@ function parseSingleFolderRaw(folder: string): {
     const left = byMatch[1]!.trim();
     const right = byMatch[2]!.trim();
     if (right && !/^\d+$/.test(left)) {
-      return { title: left, author: right, series: null, asin };
+      return { title: left, author: right, series: null, ...(asin !== undefined && { asin }) };
     }
   }
 
-  return { title: cleaned ? input : folder, author: null, series: null, asin };
+  return { title: cleaned ? input : folder, author: null, series: null, ...(asin !== undefined && { asin }) };
 }
 
 /**
