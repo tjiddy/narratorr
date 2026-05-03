@@ -107,7 +107,7 @@ export class TaskRegistry {
       const now = new Date();
       // For second-based patterns (6 parts) — check BEFORE 5-part to avoid misclassification
       if (parts.length === 6) {
-        const secondPart = parts[0];
+        const secondPart = parts[0]!;
         if (secondPart.startsWith('*/')) {
           const interval = parseInt(secondPart.slice(2), 10);
           const nextSecond = Math.ceil((now.getSeconds() + 1) / interval) * interval;
@@ -120,7 +120,7 @@ export class TaskRegistry {
       }
       // For standard 5-part minute-based patterns
       if (parts.length === 5) {
-        const minutePart = parts[0];
+        const minutePart = parts[0]!;
         if (minutePart.startsWith('*/')) {
           const interval = parseInt(minutePart.slice(2), 10);
           const nextMinute = Math.ceil((now.getMinutes() + 1) / interval) * interval;

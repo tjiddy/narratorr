@@ -169,7 +169,7 @@ export async function runEnrichment(db: Db, metadataService: MetadataService, bo
         .limit(1);
 
       if (existing.length > 0) {
-        const book = existing[0];
+        const book = existing[0]!;
         const filled = buildMetadataUpdates(book, result);
         Object.assign(updates, filled.updates);
         filledDuration += filled.filledDuration;
@@ -193,7 +193,7 @@ export async function runEnrichment(db: Db, metadataService: MetadataService, bo
         if (existingNarrators.length === 0) {
           filledNarrators++;
           for (let i = 0; i < result.narrators.length; i++) {
-            const name = result.narrators[i].trim();
+            const name = result.narrators[i]!.trim();
             if (!name) continue;
             let narratorId: number | undefined;
             try {

@@ -121,8 +121,8 @@ export class IndexerSearchService {
     const perIndexerCounts: Record<string, number> = {};
     const results: SearchResult[] = [];
     for (let i = 0; i < settlements.length; i++) {
-      const settlement = settlements[i];
-      const name = enabledIndexers[i].name;
+      const settlement = settlements[i]!;
+      const name = enabledIndexers[i]!.name;
       if (settlement.status === 'fulfilled') {
         perIndexerCounts[name] = settlement.value.length;
         results.push(...settlement.value);

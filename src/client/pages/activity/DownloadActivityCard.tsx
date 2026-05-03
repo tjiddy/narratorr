@@ -264,7 +264,7 @@ export function DownloadActivityCard({
   index?: number;
   compact?: boolean;
 }) {
-  const config = statusConfig[download.status] || statusConfig.queued;
+  const config = (statusConfig[download.status] || statusConfig.queued)!;
   const StatusIcon = config.icon;
   const isPendingReview = download.status === 'pending_review';
 

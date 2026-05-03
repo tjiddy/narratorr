@@ -216,6 +216,16 @@ class MatchJob {
       // Score, re-rank, and apply year tiebreaker
       const scored = rankResults(detailed, context);
       const topScored = scored[0];
+      if (!topScored) {
+        // §6.1 — fetchDetails breaks on this.cancelled, so detailed (and thus
+        // scored) can be empty even when trace.results was non-empty. Return
+        // a clean 'none' result instead of crashing on topScored.meta.title.
+        this.log.debug(
+          { path: book.path, cancelled: this.cancelled, resultCount: trace.results.length },
+          'No scored results after ranking — cancelled mid-flight or all filtered',
+        );
+        return { path: book.path, confidence: 'none', bestMatch: null, alternatives: [] };
+      }
 
       // Title similarity floor: below 50% → confidence 'none'
       const titleSimilarity = context.title && topScored.meta.title
@@ -322,7 +332,7 @@ function resolveConfidenceFromDuration(
     return { confidence: 'medium', reason: 'Multiple results — no duration data to disambiguate' };
   }
 
-  const topResult = scored[0];
+  const topResult = scored[0]!;
   // If the top-ranked result has duration data, use it for confidence
   if (topResult.meta.duration && topResult.meta.duration > 0) {
     const distance = Math.abs(topResult.meta.duration - duration) / duration;
@@ -376,5 +386,5 @@ function rankResults(
 function parsePublishedYear(date: string | undefined): number | undefined {
   if (!date) return undefined;
   const match = date.match(/\b(\d{4})\b/);
-  return match ? parseInt(match[1], 10) : undefined;
+  return match ? parseInt(match[1]!, 10) : undefined;
 }

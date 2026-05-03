@@ -117,8 +117,8 @@ export async function seedE2ERun(options: SeedE2ERunOptions): Promise<SeededRowI
         .returning({ id: books.id });
 
       await tx.insert(bookAuthors).values({
-        bookId: bookRow.id,
-        authorId: authorRow.id,
+        bookId: bookRow!.id,
+        authorId: authorRow!.id,
         position: 0,
       });
 
@@ -154,10 +154,10 @@ export async function seedE2ERun(options: SeedE2ERunOptions): Promise<SeededRowI
       });
 
       return {
-        indexerId: indexerRow.id,
-        downloadClientId: clientRow.id,
-        authorId: authorRow.id,
-        bookId: bookRow.id,
+        indexerId: indexerRow!.id,
+        downloadClientId: clientRow!.id,
+        authorId: authorRow!.id,
+        bookId: bookRow!.id,
       };
     });
   } finally {

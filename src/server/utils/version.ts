@@ -44,8 +44,8 @@ export function isNewerVersion(current: string, latest: string): boolean {
   if (!c || !l) return false;
 
   for (let i = 0; i < 3; i++) {
-    if (l[i] > c[i]) return true;
-    if (l[i] < c[i]) return false;
+    if (l[i]! > c[i]!) return true;
+    if (l[i]! < c[i]!) return false;
   }
   return false;
 }

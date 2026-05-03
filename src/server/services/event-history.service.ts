@@ -63,7 +63,7 @@ export class EventHistoryService {
     }).returning();
 
     this.log.info({ bookId: input.bookId, eventType: input.eventType, bookTitle: input.bookTitle }, 'Event recorded');
-    return result[0];
+    return result[0]!;
   }
 
   async getAll(
@@ -75,7 +75,7 @@ export class EventHistoryService {
     if (filters?.eventType && filters.eventType.length > 0) {
       conditions.push(
         filters.eventType.length === 1
-          ? eq(bookEvents.eventType, filters.eventType[0])
+          ? eq(bookEvents.eventType, filters.eventType[0]!)
           : inArray(bookEvents.eventType, filters.eventType),
       );
     }
@@ -89,7 +89,7 @@ export class EventHistoryService {
       : undefined;
 
     // Get total count (with filters, before pagination)
-    const [{ value: total }] = await this.db
+    const [{ value: total } = { value: 0 }] = await this.db
       .select({ value: countFn() })
       .from(bookEvents)
       .where(where);
@@ -150,7 +150,7 @@ export class EventHistoryService {
     let where;
     if (filters?.eventType && filters.eventType.length > 0) {
       where = filters.eventType.length === 1
-        ? eq(bookEvents.eventType, filters.eventType[0])
+        ? eq(bookEvents.eventType, filters.eventType[0]!)
         : inArray(bookEvents.eventType, filters.eventType);
     }
     const deleted = await this.db.delete(bookEvents).where(where).returning();

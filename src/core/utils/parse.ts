@@ -46,7 +46,7 @@ function resolveInnerQuote(working: string): string {
   const innerQuoted = working.match(/"([^"]+)"/);
   if (!innerQuoted) return working;
 
-  let inner = innerQuoted[1];
+  let inner = innerQuoted[1]!;
   inner = stripFileArtifacts(inner);
   inner = inner.trim();
 
@@ -54,7 +54,7 @@ function resolveInnerQuote(working: string): string {
 
   // Try outer parenthesized text: (Author - Title) [01/21] - "..."
   const outerParenMatch = working.match(/^\(([^)]+)\)/);
-  if (outerParenMatch && /\s-\s/.test(outerParenMatch[1])) return outerParenMatch[1];
+  if (outerParenMatch && /\s-\s/.test(outerParenMatch[1]!)) return outerParenMatch[1]!;
 
   return working.replace(/"[^"]*"/, '').trim();
 }
@@ -91,14 +91,14 @@ function stripNzbPrefixes(s: string): string {
 function extractNarrator(working: string, result: ParsedTitle): string {
   const writtenMatch = working.match(/,?\s*written\s+(?:and\s+)?narrated\s+by\s+([A-Z][a-zA-ZÀ-ÿ.]+(?:\s+[A-Za-zÀ-ÿ.]+){0,4})/i);
   if (writtenMatch) {
-    result.narrator = cleanField(writtenMatch[1]);
+    result.narrator = cleanField(writtenMatch[1]!);
     result.author = result.narrator;
     return working.replace(writtenMatch[0], '').trim();
   }
 
   const narratorMatch = working.match(/[,\s-]*(?:[Nn]arrated|[Rr]ead)\s+by\s+([A-Z][a-zA-ZÀ-ÿ.]+(?:\s+[A-Za-zÀ-ÿ.]+){0,4})/);
   if (narratorMatch) {
-    result.narrator = cleanField(narratorMatch[1]);
+    result.narrator = cleanField(narratorMatch[1]!);
     working = working.replace(narratorMatch[0], '').trim();
   }
 
@@ -121,7 +121,7 @@ function extractAbridged(working: string, result: ParsedTitle): string {
 /** Extract audio format (M4B, MP3, etc.) */
 function extractFormat(working: string, result: ParsedTitle): void {
   const formatMatch = working.match(/\b(M4B|MP3|FLAC|AAC|OGG)\b/i);
-  if (formatMatch) result.format = formatMatch[1].toUpperCase();
+  if (formatMatch) result.format = formatMatch[1]!.toUpperCase();
 }
 
 /** Strip scene release suffixes and extract year from scene tags */
@@ -129,7 +129,7 @@ function stripSceneSuffix(working: string, result: ParsedTitle): string {
   const sceneMatch = working.match(/-(?:AUDiOBOOK|AUDIOBOOK|Audiobook)-(?:WEB|CD|DVD)-[A-Z]{2}-\d{4}-\w+(?:\s+iNT)?$/i);
   if (sceneMatch) {
     const sceneYear = sceneMatch[0].match(/(\d{4})/);
-    if (sceneYear) result.year = parseInt(sceneYear[1], 10);
+    if (sceneYear) result.year = parseInt(sceneYear[1]!, 10);
     working = working.slice(0, -sceneMatch[0].length).trim();
   }
 
@@ -144,7 +144,7 @@ function extractYear(working: string, result: ParsedTitle): string {
   // Bracketed years: [2010] or (2010) — always metadata
   const bracketYear = working.match(/[[(]((?:19|20)\d{2})[)\]]/);
   if (bracketYear && !result.year) {
-    result.year = parseInt(bracketYear[1], 10);
+    result.year = parseInt(bracketYear[1]!, 10);
     working = working.replace(bracketYear[0], '').trim();
   }
 
@@ -152,8 +152,8 @@ function extractYear(working: string, result: ParsedTitle): string {
   if (!result.year) {
     const yearMatch = working.match(/(?:^|[\s\-.])((19|20)\d{2})(?:[\s\-.]|$)/);
     if (yearMatch) {
-      result.year = parseInt(yearMatch[1], 10);
-      if (/[-.\s]\d{4}$/.test(working) || /\d{4}[-.\s]/.test(working.slice(working.indexOf(yearMatch[1])))) {
+      result.year = parseInt(yearMatch[1]!, 10);
+      if (/[-.\s]\d{4}$/.test(working) || /\d{4}[-.\s]/.test(working.slice(working.indexOf(yearMatch[1]!)))) {
         working = working.replace(new RegExp(`[-.\\s]*${yearMatch[1]}[-.\\s]*`), ' ').trim();
       }
     }
@@ -204,10 +204,10 @@ function matchPattern(working: string, result: ParsedTitle): ParsedTitle {
   // Pattern A: "Author's 'Series', Bk N - Title" (also handles bare "Authors Series" without apostrophe)
   const possessiveMatch = working.match(/^(.+?)(?:'s?|s(?= [^-]))\s+'?([^',]+)'?,?\s*(?:Bk|Book|Vol)\s*(\d+)\s*-\s*(.+)$/i);
   if (possessiveMatch) {
-    result.author = cleanField(possessiveMatch[1]);
-    result.series = cleanField(possessiveMatch[2]);
+    result.author = cleanField(possessiveMatch[1]!);
+    result.series = cleanField(possessiveMatch[2]!);
     result.seriesPosition = possessiveMatch[3];
-    result.title = cleanField(possessiveMatch[4]);
+    result.title = cleanField(possessiveMatch[4]!);
     return finalClean(result);
   }
 
@@ -216,12 +216,12 @@ function matchPattern(working: string, result: ParsedTitle): ParsedTitle {
     /^(.+?)\s+-\s+(.+?(?:\d+|(?:Bk|Book|Vol|Part|Day|Band|Tome)\s*\d+).*?)\s+-\s+(.+)$/i,
   );
   if (twoPartDash) {
-    result.author = cleanField(twoPartDash[1]);
-    result.title = cleanField(twoPartDash[3]);
-    const seriesPart = twoPartDash[2].trim();
+    result.author = cleanField(twoPartDash[1]!);
+    result.title = cleanField(twoPartDash[3]!);
+    const seriesPart = twoPartDash[2]!.trim();
     const seriesNum = seriesPart.match(/^(.+?)\s*(?:Bk|Book|Vol|Part|Day|Band|Tome)?\s*(\d+)\s*$/i)
       || seriesPart.match(/^(.+?)\s+(\d+)$/);
-    result.series = seriesNum ? cleanField(seriesNum[1]) : cleanField(seriesPart);
+    result.series = seriesNum ? cleanField(seriesNum[1]!) : cleanField(seriesPart);
     if (seriesNum) result.seriesPosition = seriesNum[2];
     return finalClean(result);
   }
@@ -229,10 +229,10 @@ function matchPattern(working: string, result: ParsedTitle): ParsedTitle {
   // Pattern C: "Author - Title"
   const singleDash = working.match(/^(.+?)\s+-\s+(.+)$/);
   if (singleDash) {
-    const left = cleanField(singleDash[1]);
+    const left = cleanField(singleDash[1]!);
     if (left.length > 2) {
       result.author = left;
-      result.title = cleanField(singleDash[2]);
+      result.title = cleanField(singleDash[2]!);
       return finalClean(result);
     }
   }
@@ -240,16 +240,16 @@ function matchPattern(working: string, result: ParsedTitle): ParsedTitle {
   // Pattern D: "Author-Title" (no space)
   const tightDash = working.match(/^([A-Z][a-zA-ZÀ-ÿ]+(?:\s+[A-Za-zÀ-ÿ.]+)+)-([A-Z].+)$/);
   if (tightDash) {
-    result.author = cleanField(tightDash[1]);
-    result.title = cleanField(tightDash[2]);
+    result.author = cleanField(tightDash[1]!);
+    result.title = cleanField(tightDash[2]!);
     return finalClean(result);
   }
 
   // Pattern E: "Title by Author"
   const byMatch = working.match(/^(.+)\s+[Bb]y\s+([A-Z][^,[\]()]+?)$/);
-  if (byMatch && cleanField(byMatch[2]).length > 2) {
-    result.title = cleanField(byMatch[1]);
-    result.author = cleanField(byMatch[2]);
+  if (byMatch && cleanField(byMatch[2]!).length > 2) {
+    result.title = cleanField(byMatch[1]!);
+    result.author = cleanField(byMatch[2]!);
     return finalClean(result);
   }
 
@@ -304,8 +304,8 @@ export function isMultiPartUsenetPost(title: string): MultiPartResult {
     if (match) {
       return {
         match: true,
-        part: parseInt(match[1], 10),
-        total: parseInt(match[2], 10),
+        part: parseInt(match[1]!, 10),
+        total: parseInt(match[2]!, 10),
         pattern: pattern.source,
       };
     }

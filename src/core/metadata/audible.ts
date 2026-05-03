@@ -301,7 +301,7 @@ function mapProduct(product: AudibleProduct): Record<string, unknown> {
 function parseSeriesPosition(sequence?: string | null): number | undefined {
   if (!sequence) return undefined;
   const match = sequence.match(/(\d+(?:\.\d+)?)/);
-  return match ? parseFloat(match[1]) : undefined;
+  return match ? parseFloat(match[1]!) : undefined;
 }
 
 /** Extract the best cover URL from product_images (prefer largest). */

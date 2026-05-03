@@ -101,7 +101,7 @@ export class TransmissionClient implements DownloadClientAdapter {
       return null;
     }
 
-    return this.mapTorrent(torrents[0]);
+    return this.mapTorrent(torrents[0]!);
   }
 
   async getAllDownloads(category?: string): Promise<DownloadItemInfo[]> {

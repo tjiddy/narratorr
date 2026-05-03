@@ -33,7 +33,7 @@ function parseBreadcrumbs(path: string): { label: string; path: string }[] {
   const startIndex = normalized.startsWith('/') ? 0 : 1;
   for (let i = startIndex; i < segments.length; i++) {
     accumulated = accumulated.endsWith('/') ? accumulated + segments[i] : accumulated + '/' + segments[i];
-    crumbs.push({ label: segments[i], path: accumulated });
+    crumbs.push({ label: segments[i]!, path: accumulated });
   }
 
   return crumbs;

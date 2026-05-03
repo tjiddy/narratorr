@@ -1070,8 +1070,7 @@ function mockExecFileWithStreams(fileStreamMap: Record<string, number>) {
     const execArgs = args[1] as string[];
     // Detect if this is a stream-detection ffprobe call (has -show_entries stream=codec_type)
     if (execArgs?.includes('stream=codec_type')) {
-      const filePath = execArgs[execArgs.length - 1];
-      // PHASE 1 SKIPPED — needs human review
+      const filePath = execArgs[execArgs.length - 1]!;
       const videoCount = fileStreamMap[filePath] ?? 0;
       const lines = ['audio'];
       for (let i = 0; i < videoCount; i++) lines.push('video');

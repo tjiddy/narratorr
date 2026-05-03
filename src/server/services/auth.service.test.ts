@@ -172,8 +172,7 @@ describe('AuthService', () => {
       const insertChain = db.insert.mock.results[0]!.value;
       const storedPasswordHash = insertChain.values.mock.calls[0][0].passwordHash as string;
       const [, hashHex] = storedPasswordHash.split(':');
-      // PHASE 1 SKIPPED — needs human review
-      const expectedStoredBuf = Buffer.from(hashHex, 'hex');
+      const expectedStoredBuf = Buffer.from(hashHex!, 'hex');
 
       db.select.mockReturnValue(mockDbChain([{ id: 1, username: 'admin', passwordHash: storedPasswordHash }]));
       vi.clearAllMocks();
@@ -191,8 +190,7 @@ describe('AuthService', () => {
       const insertChain = db.insert.mock.results[0]!.value;
       const storedPasswordHash = insertChain.values.mock.calls[0][0].passwordHash as string;
       const [, hashHex] = storedPasswordHash.split(':');
-      // PHASE 1 SKIPPED — needs human review
-      const expectedStoredBuf = Buffer.from(hashHex, 'hex');
+      const expectedStoredBuf = Buffer.from(hashHex!, 'hex');
 
       // Verify with wrong password — timingSafeEqual must still be called (not short-circuited)
       db.select.mockReturnValue(mockDbChain([{ id: 1, username: 'admin', passwordHash: storedPasswordHash }]));
@@ -366,8 +364,7 @@ describe('AuthService', () => {
       expect(parts).toHaveLength(2);
 
       // Decode payload
-      // PHASE 1 SKIPPED — needs human review
-      const payload = JSON.parse(Buffer.from(parts[0], 'base64url').toString());
+      const payload = JSON.parse(Buffer.from(parts[0]!, 'base64url').toString());
       expect(payload.username).toBe('admin');
       expect(payload.issuedAt).toBeTypeOf('number');
       expect(payload.expiresAt).toBeTypeOf('number');

@@ -64,7 +64,7 @@ export class BackupService {
     const client = createClient({ url: `file:${this.dbPath}` });
     try {
       const result = await client.execute('SELECT COUNT(*) as count FROM __drizzle_migrations');
-      return Number(result.rows[0].count);
+      return Number(result.rows[0]!.count);
     } catch {
       this.log.warn('Could not query app migration count, assuming 0');
       return 0;
@@ -300,12 +300,12 @@ export class BackupService {
         const tableCheck = await client.execute(
           "SELECT COUNT(*) as count FROM sqlite_master WHERE type='table' AND name='__drizzle_migrations'",
         );
-        if (Number(tableCheck.rows[0].count) === 0) {
+        if (Number(tableCheck.rows[0]!.count) === 0) {
           return { valid: false, error: 'Not a valid Narratorr database — missing migrations table' };
         }
 
         const result = await client.execute('SELECT COUNT(*) as count FROM __drizzle_migrations');
-        const backupMigrationCount = Number(result.rows[0].count);
+        const backupMigrationCount = Number(result.rows[0]!.count);
 
         if (backupMigrationCount > appMigrationCount) {
           return {

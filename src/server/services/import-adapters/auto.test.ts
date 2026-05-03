@@ -68,7 +68,7 @@ describe('AutoImportAdapter', () => {
       const job = makeJob();
       await adapter.process(job, ctx);
 
-      const [, callbacks] = mockOrchestrator.importDownload.mock.calls[0];
+      const [, callbacks] = mockOrchestrator.importDownload.mock.calls[0]!;
       expect(callbacks.setPhase).toBe(ctx.setPhase);
       expect(callbacks.emitProgress).toBe(ctx.emitProgress);
     });

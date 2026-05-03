@@ -391,14 +391,12 @@ describe('useManualImport', () => {
     await act(async () => { result.current.actions.handleImport(); });
     await waitFor(() => { expect(vi.mocked(api.confirmImport)).toHaveBeenCalled(); });
 
-    const [books] = vi.mocked(api.confirmImport).mock.calls[0];
-    // PHASE 1 SKIPPED — needs human review
+    const [books] = vi.mocked(api.confirmImport).mock.calls[0]!;
     const dupItems = books.filter(b =>
       SCAN_RESULT_WITH_DUPLICATES.discoveries.find(d => d.path === b.path && d.isDuplicate),
     );
     // All selected duplicate rows must have forceImport: true
     expect(dupItems).toHaveLength(2);
-    // PHASE 1 SKIPPED — needs human review
     expect(dupItems.every(b => b.forceImport === true)).toBe(true);
   });
 
@@ -447,10 +445,10 @@ describe('useManualImport', () => {
       expect(api.confirmImport).toHaveBeenCalled();
     });
 
-    const [items, mode] = vi.mocked(api.confirmImport).mock.calls[0];
+    const [items, mode] = vi.mocked(api.confirmImport).mock.calls[0]!;
     expect(items).toHaveLength(2);
-    expect(items[0].path).toBe('/audiobooks/Book A');
-    expect(items[0].title).toBe('Book A');
+    expect(items[0]!.path).toBe('/audiobooks/Book A');
+    expect(items[0]!.title).toBe('Book A');
     expect(mode).toBe('copy');
 
     expect(toast.success).toHaveBeenCalledWith('2 books queued for import');
@@ -553,8 +551,8 @@ describe('useManualImport', () => {
       await act(async () => { result.current.actions.handleImport(); });
       await waitFor(() => { expect(api.confirmImport).toHaveBeenCalled(); });
 
-      const [items] = vi.mocked(api.confirmImport).mock.calls[0];
-      expect(items[0].metadata?.narrators).toEqual(['Jim Dale']);
+      const [items] = vi.mocked(api.confirmImport).mock.calls[0]!;
+      expect(items[0]!.metadata?.narrators).toEqual(['Jim Dale']);
     });
 
     it('handleImport after edit forwards coverUrl to ImportConfirmItem', async () => {
@@ -580,9 +578,9 @@ describe('useManualImport', () => {
       await act(async () => { result.current.actions.handleImport(); });
       await waitFor(() => { expect(api.confirmImport).toHaveBeenCalled(); });
 
-      const [items] = vi.mocked(api.confirmImport).mock.calls[0];
-      expect(items[0].coverUrl).toBe('https://example.com/new-cover.jpg');
-      expect(items[0].metadata?.coverUrl).toBe('https://example.com/new-cover.jpg');
+      const [items] = vi.mocked(api.confirmImport).mock.calls[0]!;
+      expect(items[0]!.coverUrl).toBe('https://example.com/new-cover.jpg');
+      expect(items[0]!.metadata?.coverUrl).toBe('https://example.com/new-cover.jpg');
     });
 
     it('editing title only does not discard narrator from existing edited.metadata', async () => {
@@ -753,8 +751,7 @@ describe('useManualImport', () => {
       await act(async () => { result.current.actions.handleImport(); });
       await waitFor(() => { expect(vi.mocked(api.confirmImport)).toHaveBeenCalled(); });
 
-      const [books] = vi.mocked(api.confirmImport).mock.calls[0];
-      // PHASE 1 SKIPPED — needs human review
+      const [books] = vi.mocked(api.confirmImport).mock.calls[0]!;
       const dupItem = books.find(b => b.path === '/audiobooks/Existing Book');
       expect(dupItem?.forceImport).toBe(true);
     });
@@ -772,8 +769,7 @@ describe('useManualImport', () => {
       await act(async () => { result.current.actions.handleImport(); });
       await waitFor(() => { expect(vi.mocked(api.confirmImport)).toHaveBeenCalled(); });
 
-      const [books] = vi.mocked(api.confirmImport).mock.calls[0];
-      // PHASE 1 SKIPPED — needs human review
+      const [books] = vi.mocked(api.confirmImport).mock.calls[0]!;
       const newItem = books.find(b => b.path === '/audiobooks/New Book');
       expect(newItem?.forceImport).toBeUndefined();
     });

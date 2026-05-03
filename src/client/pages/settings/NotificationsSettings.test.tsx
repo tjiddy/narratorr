@@ -137,7 +137,7 @@ describe('NotificationsSettings', () => {
     await waitFor(() => {
       expect(api.updateNotifier).toHaveBeenCalled();
     });
-    const [id, data] = (api.updateNotifier as Mock).mock.calls[0];
+    const [id, data] = (api.updateNotifier as Mock).mock.calls[0]!;
     expect(id).toBe(1);
     expect(data).toMatchObject({ name: 'Updated' });
 

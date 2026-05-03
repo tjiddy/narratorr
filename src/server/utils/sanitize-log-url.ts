@@ -16,7 +16,7 @@ export function sanitizeLogUrl(raw: string): string {
 
   if (raw.startsWith('magnet:')) {
     const match = raw.match(/xt=urn(?::|%3A)btih(?::|%3A)([a-fA-F0-9]{40}|[a-zA-Z2-7]{32})/i);
-    return match ? `magnet:[${match[1].toLowerCase()}]` : 'magnet:[unknown]';
+    return match ? `magnet:[${match[1]!.toLowerCase()}]` : 'magnet:[unknown]';
   }
 
   try {

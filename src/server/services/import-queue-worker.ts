@@ -158,7 +158,7 @@ export class ImportQueueWorker {
 
     if (candidates.length === 0) return false;
 
-    const candidateId = candidates[0].id;
+    const candidateId = candidates[0]!.id;
 
     // Atomically claim via conditional update
     const now = new Date();
@@ -204,7 +204,7 @@ export class ImportQueueWorker {
 
         // Close previous phase entry
         if (phaseHistory.length > 0) {
-          const last = phaseHistory[phaseHistory.length - 1];
+          const last = phaseHistory[phaseHistory.length - 1]!;
           if (last.completedAt === undefined) {
             last.completedAt = nowMs;
           }
@@ -255,7 +255,7 @@ export class ImportQueueWorker {
 
       // Close current phase entry
       if (phaseHistory.length > 0) {
-        const last = phaseHistory[phaseHistory.length - 1];
+        const last = phaseHistory[phaseHistory.length - 1]!;
         if (last.completedAt === undefined) {
           last.completedAt = Date.now();
         }
@@ -284,12 +284,12 @@ export class ImportQueueWorker {
       this.log.error({ error: serializeError(error), jobId }, 'Import job failed');
       // Close the active phase entry before persisting
       if (phaseHistory.length > 0) {
-        const last = phaseHistory[phaseHistory.length - 1];
+        const last = phaseHistory[phaseHistory.length - 1]!;
         if (last.completedAt === undefined) {
           last.completedAt = Date.now();
         }
       }
-      const currentPhase = phaseHistory.length > 0 ? phaseHistory[phaseHistory.length - 1].phase : 'queued';
+      const currentPhase = phaseHistory.length > 0 ? phaseHistory[phaseHistory.length - 1]!.phase : 'queued';
       await this.markJobFailed(jobId, bookId, currentPhase, bookTitle, JSON.stringify(serializeError(error)), phaseHistory);
     }
   }

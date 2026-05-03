@@ -306,7 +306,7 @@ export class TaggingService {
     const isSingleFile = audioFiles.length === 1;
 
     for (let i = 0; i < audioFiles.length; i++) {
-      const filePath = audioFiles[i];
+      const filePath = audioFiles[i]!;
       const tags: TagMetadata = {
         artist: metadata.authorName || undefined,
         albumArtist: metadata.authorName || undefined,

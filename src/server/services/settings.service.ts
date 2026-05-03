@@ -75,7 +75,7 @@ export class SettingsService {
       return defaultVal;
     }
 
-    let raw = result[0].value;
+    let raw = result[0]!.value;
     const entity = SECRET_CATEGORIES[key];
     if (entity && raw && typeof raw === 'object') {
       raw = decryptFields(entity, { ...(raw as Record<string, unknown>) }, getKey());
@@ -179,7 +179,7 @@ export class SettingsService {
       const qualityRow = await this.db.select().from(settings).where(eq(settings.key, 'quality')).limit(1);
       if (qualityRow.length === 0) return;
 
-      const qualityBlob = { ...(qualityRow[0].value as Record<string, unknown>) };
+      const qualityBlob = { ...(qualityRow[0]!.value as Record<string, unknown>) };
       const preferredLanguage = qualityBlob.preferredLanguage;
 
       // Migrate non-empty preferredLanguage to metadata.languages

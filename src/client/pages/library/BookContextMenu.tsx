@@ -41,7 +41,7 @@ export function BookContextMenu({
       case 'Enter':
       case ' ':
         e.preventDefault();
-        actions[focusIndex]();
+        actions[focusIndex]?.();
         break;
     }
   }, [onClose, onSearchReleases, onRemove, onRetryImport, focusIndex]);

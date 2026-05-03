@@ -253,7 +253,7 @@ export async function createQBitFake(options: CreateQBitFakeOptions): Promise<QB
     if (entries.length === 0) {
       return reply.status(404).send({ error: 'no torrents have been added' });
     }
-    const latest = entries[entries.length - 1];
+    const latest = entries[entries.length - 1]!;
     const result = completeTorrentInternal(latest.hash);
     return { ok: true, torrent: result };
   });

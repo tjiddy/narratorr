@@ -56,8 +56,7 @@ describe('BackupTable', () => {
     const user = userEvent.setup();
 
     renderWithProviders(
-      // PHASE 1 SKIPPED — needs human review
-      <BackupTable backups={[mockBackups[0]]} isLoading={false} onDownload={onDownload} onRestore={vi.fn()} />,
+      <BackupTable backups={[mockBackups[0]!]} isLoading={false} onDownload={onDownload} onRestore={vi.fn()} />,
     );
 
     const downloadButton = screen.getByTitle('Download backup');
@@ -82,8 +81,7 @@ describe('BackupTable', () => {
     const user = userEvent.setup();
 
     renderWithProviders(
-      // PHASE 1 SKIPPED — needs human review
-      <BackupTable backups={[mockBackups[0]]} isLoading={false} onDownload={vi.fn()} onRestore={onRestore} />,
+      <BackupTable backups={[mockBackups[0]!]} isLoading={false} onDownload={vi.fn()} onRestore={onRestore} />,
     );
 
     const restoreButton = screen.getByTitle('Restore backup');

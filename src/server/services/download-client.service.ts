@@ -95,19 +95,19 @@ export class DownloadClientService {
     if (pathMappings.length === 0) {
       const result = await this.db.insert(downloadClients).values(toInsert).returning();
       this.log.info({ name: data.name, type: data.type }, 'Download client created');
-      return this.decryptRow(result[0]);
+      return this.decryptRow(result[0]!);
     }
 
     const result = await this.db.transaction(async (tx) => {
       const [client] = await tx.insert(downloadClients).values(toInsert).returning();
       await tx.insert(remotePathMappings).values(
         pathMappings.map((m) => ({
-          downloadClientId: client.id,
+          downloadClientId: client!.id,
           remotePath: m.remotePath,
           localPath: m.localPath,
         })),
       );
-      return client;
+      return client!;
     });
 
     this.log.info({ name: data.name, type: data.type, mappingCount: pathMappings.length }, 'Download client created with path mappings');

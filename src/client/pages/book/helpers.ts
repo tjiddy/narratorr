@@ -22,7 +22,7 @@ export function mergeBookData(libraryBook: BookWithAuthor, metadataBook?: Metada
   const seriesPosition = libraryBook.seriesPosition ?? metadataBook?.series?.[0]?.position;
   const duration = formatDurationMinutes(libraryBook.duration ?? metadataBook?.duration);
   const publisher = metadataBook?.publisher;
-  const status = bookStatusConfig[libraryBook.status] ?? bookStatusConfig.wanted;
+  const status = (bookStatusConfig[libraryBook.status] ?? bookStatusConfig.wanted)!;
   const narratorNames = (libraryBook.narrators.length > 0 ? libraryBook.narrators.map((n) => n.name).join(', ') : null) || metadataBook?.narrators?.join(', ');
 
   const metaDots: string[] = [];

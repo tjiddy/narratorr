@@ -120,7 +120,7 @@ function detectStep(sorted: number[]): number {
   if (allIntegers) return 1;
   let minDelta = Infinity;
   for (let i = 1; i < sorted.length; i++) {
-    const delta = sorted[i] - sorted[i - 1];
+    const delta = sorted[i]! - sorted[i - 1]!;
     if (delta > FP_TOLERANCE && delta < minDelta) {
       minDelta = delta;
     }
@@ -132,12 +132,12 @@ function computeSeriesGaps(seriesMap: Map<string, { authorName: string; position
   const gaps: LibrarySignals['seriesGaps'] = [];
   for (const [seriesName, { authorName, positions }] of seriesMap) {
     const sorted = [...new Set(positions)].sort((a, b) => a - b);
-    const maxOwned = sorted[sorted.length - 1];
+    const maxOwned = sorted[sorted.length - 1]!;
     const step = detectStep(sorted);
     const positionSet = new Set(sorted);
     const missing: number[] = [];
 
-    const base = sorted[0];
+    const base = sorted[0]!;
     for (let i = base + step; i <= maxOwned - FP_TOLERANCE; i += step) {
       const rounded = base + Math.round((i - base) / step) * step;
       let found = false;
@@ -159,8 +159,8 @@ function computeDurationStats(durations: number[]): LibrarySignals['durationStat
   const sorted = [...durations].sort((a, b) => a - b);
   const mid = Math.floor(sorted.length / 2);
   const median = sorted.length % 2 === 0
-    ? (sorted[mid - 1] + sorted[mid]) / 2
-    : sorted[mid];
+    ? (sorted[mid - 1]! + sorted[mid]!) / 2
+    : sorted[mid]!;
   const mean = durations.reduce((a, b) => a + b, 0) / durations.length;
   const variance = durations.reduce((sum, d) => sum + (d - mean) ** 2, 0) / durations.length;
   const stddev = Math.sqrt(variance);

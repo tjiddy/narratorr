@@ -18,7 +18,7 @@ export function StatusDropdown({
   const triggerRef = useRef<HTMLButtonElement>(null);
   const menuRef = useRef<HTMLDivElement>(null);
 
-  const currentTab = filterTabs.find((t) => t.key === statusFilter) ?? filterTabs[0];
+  const currentTab = filterTabs.find((t) => t.key === statusFilter) ?? filterTabs[0]!;
   const currentCount = statusCounts[statusFilter] ?? 0;
 
   // Focus the option at focusIndex when open, or when focusIndex changes while open
@@ -55,7 +55,7 @@ export function StatusDropdown({
       case ' ':
         e.preventDefault();
         if (focusIndex < filterTabs.length) {
-          onStatusFilterChange(filterTabs[focusIndex].key);
+          onStatusFilterChange(filterTabs[focusIndex]!.key);
           setFocusIndex(0);
           setOpen(false);
           triggerRef.current?.focus();

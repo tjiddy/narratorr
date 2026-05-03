@@ -51,7 +51,7 @@ export class IndexerService {
     }
     const result = await this.db.insert(indexers).values(toInsert).returning();
     this.log.info({ name: data.name, type: data.type }, 'Indexer created');
-    return this.decryptRow(result[0]);
+    return this.decryptRow(result[0]!);
   }
 
   async update(id: number, data: Partial<NewIndexer>): Promise<IndexerRow | null> {

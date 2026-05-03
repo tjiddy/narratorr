@@ -102,7 +102,7 @@ export class SABnzbdClient implements DownloadClientAdapter {
       throw new DownloadClientError(this.name, 'SABnzbd failed to add download');
     }
 
-    return response.nzo_ids[0];
+    return response.nzo_ids[0]!;
   }
 
   private async addDownloadFromBytes(
@@ -141,7 +141,7 @@ export class SABnzbdClient implements DownloadClientAdapter {
       throw new DownloadClientError(this.name, 'SABnzbd failed to add download');
     }
 
-    return result.nzo_ids[0];
+    return result.nzo_ids[0]!;
   }
 
   private parseAddResponse(raw: unknown): z.infer<typeof sabnzbdAddResponseSchema> {
@@ -420,7 +420,7 @@ export class SABnzbdClient implements DownloadClientAdapter {
     // SABnzbd timeleft format: "HH:MM:SS" or "0:00:00"
     const parts = timeleft.split(':').map(Number);
     if (parts.length !== 3) return undefined;
-    const seconds = parts[0] * 3600 + parts[1] * 60 + parts[2];
+    const seconds = parts[0]! * 3600 + parts[1]! * 60 + parts[2]!;
     return seconds > 0 ? seconds : undefined;
   }
 }

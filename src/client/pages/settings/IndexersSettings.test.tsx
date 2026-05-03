@@ -156,7 +156,7 @@ describe('IndexersSettings', () => {
       expect(api.updateIndexer).toHaveBeenCalled();
     });
     await waitFor(() => {
-      const [id, data] = (api.updateIndexer as Mock).mock.calls[0];
+      const [id, data] = (api.updateIndexer as Mock).mock.calls[0]!;
       expect(id).toBe(1);
       expect(data).toMatchObject({ name: 'Updated ABB' });
     });

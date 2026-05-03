@@ -14,7 +14,7 @@ export class BlacklistService {
     pagination?: { limit?: number; offset?: number },
   ): Promise<{ data: BlacklistRow[]; total: number }> {
     // Get total count
-    const [{ value: total }] = await this.db
+    const [{ value: total } = { value: 0 }] = await this.db
       .select({ value: countFn() })
       .from(blacklist);
 
@@ -90,7 +90,7 @@ export class BlacklistService {
       })
       .returning();
     this.log.info({ title: data.title, infoHash: data.infoHash, guid: data.guid, blacklistType: normalized.blacklistType }, 'Added to blacklist');
-    return result[0];
+    return result[0]!;
   }
 
   async delete(id: number): Promise<boolean> {
@@ -120,7 +120,7 @@ export class BlacklistService {
       .returning();
 
     this.log.info({ id, blacklistType, expiresAt }, 'Blacklist entry type toggled');
-    return result[0];
+    return result[0] ?? null;
   }
 
   async isBlacklisted(infoHash?: string, guid?: string): Promise<boolean> {

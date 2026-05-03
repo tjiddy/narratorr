@@ -30,7 +30,7 @@ describe('booksApi.uploadBookCover', () => {
     await booksApi.uploadBookCover(42, file);
 
     expect(fetchMultipart).toHaveBeenCalledOnce();
-    const [path, body] = vi.mocked(fetchMultipart).mock.calls[0];
+    const [path, body] = vi.mocked(fetchMultipart).mock.calls[0]!;
     expect(path).toBe('/books/42/cover');
     expect(body).toBeInstanceOf(FormData);
     expect((body as FormData).get('file')).toBe(file);

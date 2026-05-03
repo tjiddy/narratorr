@@ -21,8 +21,8 @@ export function useFocusTrap(
         e.preventDefault();
         return;
       }
-      const first = elements[0];
-      const last = elements[elements.length - 1];
+      const first = elements[0]!;
+      const last = elements[elements.length - 1]!;
       if (e.shiftKey) {
         if (document.activeElement === first) {
           e.preventDefault();

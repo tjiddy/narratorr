@@ -1,3 +1,5 @@
+import type { BookStatus } from '../../shared/schemas/book.js';
+
 export interface BookStatusStyle {
   label: string;
   dotClass: string;
@@ -5,7 +7,7 @@ export interface BookStatusStyle {
   barClass: string;
 }
 
-export const bookStatusConfig: Record<string, BookStatusStyle> = {
+export const bookStatusConfig: Record<BookStatus, BookStatusStyle> = {
   wanted: {
     label: 'Wanted',
     dotClass: 'bg-stone-400/70',

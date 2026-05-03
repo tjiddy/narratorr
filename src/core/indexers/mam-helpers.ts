@@ -48,7 +48,7 @@ export function parseMamSize(raw: string | number | undefined): number | undefin
   const parts = raw.trim().split(' ');
   if (parts.length !== 2) return undefined;
 
-  const num = parseFloat(parts[0]);
+  const num = parseFloat(parts[0]!);
   if (!num || !isFinite(num)) return undefined;
 
   const multipliers: Record<string, number> = {
@@ -58,7 +58,7 @@ export function parseMamSize(raw: string | number | undefined): number | undefin
     TIB: 1024 * 1024 * 1024 * 1024,
   };
 
-  const multiplier = multipliers[parts[1].toUpperCase()];
+  const multiplier = multipliers[parts[1]!.toUpperCase()];
   if (!multiplier) return undefined;
 
   return Math.round(num * multiplier);

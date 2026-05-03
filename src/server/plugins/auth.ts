@@ -50,7 +50,7 @@ function isPrivateIp(ip: string): boolean {
   if (ip.toLowerCase().startsWith('fe80:')) return true;
 
   const v4Mapped = ip.match(/^::ffff:(\d+\.\d+\.\d+\.\d+)$/i);
-  if (v4Mapped) return isPrivateIp(v4Mapped[1]);
+  if (v4Mapped) return isPrivateIp(v4Mapped[1]!);
 
   return false;
 }
@@ -171,7 +171,7 @@ async function authPlugin(app: FastifyInstance, opts: AuthPluginOptions) {
     // Only intercept {urlBase}/api/* routes
     if (!request.url.startsWith(apiPrefix)) return;
 
-    const routePath = request.url.split('?')[0];
+    const routePath = request.url.split('?')[0]!;
 
     // Public routes
     if (PUBLIC_ROUTES.has(routePath)) return;

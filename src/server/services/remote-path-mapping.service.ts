@@ -32,7 +32,7 @@ export class RemotePathMappingService {
   async create(data: Omit<NewRemotePathMapping, 'id' | 'createdAt' | 'updatedAt'>): Promise<RemotePathMappingRow> {
     const result = await this.db.insert(remotePathMappings).values(data).returning();
     this.log.info({ downloadClientId: data.downloadClientId, remotePath: data.remotePath }, 'Remote path mapping created');
-    return result[0];
+    return result[0]!;
   }
 
   async update(id: number, data: Partial<Omit<NewRemotePathMapping, 'id' | 'createdAt'>>): Promise<RemotePathMappingRow | null> {

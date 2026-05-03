@@ -166,7 +166,7 @@ describe('DownloadClientsSettings', () => {
     await waitFor(() => {
       expect(api.updateClient).toHaveBeenCalled();
     });
-    const [id, data] = (api.updateClient as Mock).mock.calls[0];
+    const [id, data] = (api.updateClient as Mock).mock.calls[0]!;
     expect(id).toBe(1);
     expect(data).toMatchObject({ name: 'Updated' });
 

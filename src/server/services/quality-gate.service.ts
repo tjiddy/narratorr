@@ -158,14 +158,14 @@ export class QualityGateService {
     if (result.length === 0) {
       throw new QualityGateServiceError('Download not found', 'NOT_FOUND');
     }
-    if (result[0].download.status !== 'pending_review') {
+    if (result[0]!.download.status !== 'pending_review') {
       throw new QualityGateServiceError('Download is not pending review', 'INVALID_STATUS');
     }
 
     await this.setStatus(downloadId, 'importing');
     this.log.info({ downloadId }, 'Quality gate: download approved for import');
 
-    return { id: downloadId, status: 'importing', download: result[0].download, book: result[0].book };
+    return { id: downloadId, status: 'importing', download: result[0]!.download, book: result[0]!.book };
   }
 
   /**
@@ -184,8 +184,8 @@ export class QualityGateService {
       throw new QualityGateServiceError('Download not found', 'NOT_FOUND');
     }
 
-    const download = result[0].download;
-    const book = result[0].book;
+    const download = result[0]!.download;
+    const book = result[0]!.book;
 
     if (download.status !== 'pending_review') {
       throw new QualityGateServiceError('Download is not pending review', 'INVALID_STATUS');
@@ -209,7 +209,7 @@ export class QualityGateService {
 
     if (events.length === 0) return null;
 
-    const download = events[0];
+    const download = events[0]!;
     if (!download.bookId) return null;
 
     // Find the most recent held_for_review event for this download
@@ -225,7 +225,7 @@ export class QualityGateService {
 
     if (eventResults.length === 0) return null;
 
-    const stored = (eventResults[0].reason as QualityDecisionReason | null) ?? null;
+    const stored = (eventResults[0]!.reason as QualityDecisionReason | null) ?? null;
     return stored ? { ...NULL_REASON, ...stored } : null;
   }
 

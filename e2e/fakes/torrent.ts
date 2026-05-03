@@ -55,7 +55,7 @@ export function computeInfoHash(torrentBytes: Buffer): string | null {
   let depth = 0;
   let pos = infoStart;
   while (pos < torrentBytes.length) {
-    const byte = torrentBytes[pos];
+    const byte = torrentBytes[pos]!;
     if (byte === 0x64 || byte === 0x6C) {
       depth++;
       pos++;

@@ -28,18 +28,18 @@ export function parseTitledDiscFolder(name: string): { title: string; discNumber
   // Pattern 1: "Title (Disc NN)" or "Title (Disk NN)"
   const discMatch = name.match(/^(.+?)\s*\((dis[ck])\s*(\d{1,3})\)$/i);
   if (discMatch) {
-    const title = discMatch[1].trim();
+    const title = discMatch[1]!.trim();
     // Bare disc folders like "Disc 01" would have empty title — reject
     if (!title) return null;
-    return { title, discNumber: parseInt(discMatch[3], 10) };
+    return { title, discNumber: parseInt(discMatch[3]!, 10) };
   }
 
   // Pattern 2: "Title (N of M)"
   const nOfMMatch = name.match(/^(.+?)\s*\((\d{1,3})\s+of\s+\d{1,3}\)$/i);
   if (nOfMMatch) {
-    const title = nOfMMatch[1].trim();
+    const title = nOfMMatch[1]!.trim();
     if (!title) return null;
-    return { title, discNumber: parseInt(nOfMMatch[2], 10) };
+    return { title, discNumber: parseInt(nOfMMatch[2]!, 10) };
   }
 
   return null;

@@ -24,12 +24,12 @@ function extractTokenNames(val: string, allowedTokens: ReadonlySet<string>): str
   let match: RegExpExecArray | null;
   while ((match = tokenPattern.exec(val)) !== null) {
     const candidatePrefix = match[1];
-    const candidateName = match[2];
+    const candidateName = match[2]!;
     let tokenName = candidateName;
     if (candidatePrefix) {
       const firstWordMatch = candidatePrefix.match(/\w+/);
-      if (firstWordMatch && allowedTokens.has(firstWordMatch[0])) {
-        tokenName = firstWordMatch[0];
+      if (firstWordMatch && allowedTokens.has(firstWordMatch[0]!)) {
+        tokenName = firstWordMatch[0]!;
       }
     }
     names.push(tokenName);
@@ -57,15 +57,15 @@ export function validateTokens(val: string, allowed: readonly string[]): boolean
   while ((match = tokenPattern.exec(val)) !== null) {
     // Groups: (1) optional prefix, (2) token candidate, (3) pad spec, (4) optional suffix
     const candidatePrefix = match[1];
-    const candidateName = match[2];
+    const candidateName = match[2]!;
 
     // Suffix-first disambiguation: if candidate prefix contains a known token name,
     // the real token is that word (suffix syntax). Otherwise, candidateName is the token (prefix syntax).
     let tokenName = candidateName;
     if (candidatePrefix) {
       const firstWordMatch = candidatePrefix.match(/\w+/);
-      if (firstWordMatch && allowedSet.has(firstWordMatch[0])) {
-        tokenName = firstWordMatch[0];
+      if (firstWordMatch && allowedSet.has(firstWordMatch[0]!)) {
+        tokenName = firstWordMatch[0]!;
       }
     }
 

@@ -169,5 +169,5 @@ export async function seedBookAndDownload(
     completedAt: opts.completedAt ?? new Date(Date.now() - 2 * 60 * 60 * 1000),
   }).returning();
 
-  return { bookId, downloadId: download.id };
+  return { bookId, downloadId: download!.id };
 }

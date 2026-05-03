@@ -28,7 +28,7 @@ function parseRangeHeader(rangeHeader: string, fileSize: number): { start: numbe
   const match = /bytes=(-?\d*)-(\d*)/.exec(rangeHeader);
   if (!match) return { start: -1, end: -1 };
 
-  const [, rawStart, rawEnd] = match;
+  const [, rawStart, rawEnd] = match as unknown as [string, string, string];
 
   // Suffix range: bytes=-500 (last 500 bytes)
   if (rawStart === '') {
@@ -83,7 +83,7 @@ export async function bookPreviewRoute(app: FastifyInstance, bookService: BookSe
         return reply.status(404).send({ error: 'Audio file not found' });
       }
 
-      const filename = audioFiles[0];
+      const filename = audioFiles[0]!;
       const filePath = join(book.path, filename);
 
       let fileSize: number;

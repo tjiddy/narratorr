@@ -168,7 +168,7 @@ function hashBencodeDict(torrent: Buffer, start: number): string | null {
   let depth = 0;
   let pos = start;
   do {
-    const byte = torrent[pos];
+    const byte = torrent[pos]!;
     if (byte === 0x64 || byte === 0x6C) depth++; // 'd' or 'l'
     else if (byte === 0x65) depth--; // 'e'
     else if (byte === 0x69) { // 'i' — integer, skip to closing 'e' (not a container end)

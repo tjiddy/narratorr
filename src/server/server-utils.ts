@@ -54,7 +54,7 @@ export async function registerStaticAndSpa(
 
   // SPA fallback — serve index.html for in-scope non-API routes only
   app.setNotFoundHandler((request, reply) => {
-    const urlPath = request.url.split('?')[0];
+    const urlPath = request.url.split('?')[0]!;
     const apiPrefix = urlBasePrefix ? `${urlBasePrefix}/api/` : '/api/';
 
     // Reject requests outside the URL_BASE scope

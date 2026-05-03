@@ -150,10 +150,10 @@ export function isIpLiteral(hostname: string): boolean {
 }
 
 export function isBlockedFetchAddress(ip: string): boolean {
-  const cleaned = ip.split('%')[0].toLowerCase();
+  const cleaned = ip.split('%')[0]!.toLowerCase();
 
   const mapped = cleaned.match(IPV4_MAPPED_PATTERN);
-  if (mapped) return isBlockedIpv4(mapped[1]);
+  if (mapped) return isBlockedIpv4(mapped[1]!);
 
   if (IPV4_PATTERN.test(cleaned)) return isBlockedIpv4(cleaned);
 
@@ -267,7 +267,7 @@ export const validatingLookup: LookupFunction = (hostname, _options, callback) =
           return;
         }
       }
-      const chosen = answers[0];
+      const chosen = answers[0]!;
       callback(null, chosen.address, chosen.family);
     })
     .catch((err: unknown) => {

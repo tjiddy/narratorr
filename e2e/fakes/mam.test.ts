@@ -42,10 +42,10 @@ describe('fake MAM indexer', () => {
       expect(res.status).toBe(200);
       const body = await res.json() as { data: Array<{ id: number; title: string; author_info: string }> };
       expect(body.data).toHaveLength(1);
-      expect(body.data[0].id).toBe(42);
-      expect(body.data[0].title).toBe('E2E Test Book');
+      expect(body.data[0]!.id).toBe(42);
+      expect(body.data[0]!.title).toBe('E2E Test Book');
       // author_info is double-encoded JSON — parseDoubleEncodedNames in myanonamouse.ts expects this shape.
-      expect(JSON.parse(JSON.parse(body.data[0].author_info))['1']).toBe('E2E Test Author');
+      expect(JSON.parse(JSON.parse(body.data[0]!.author_info))['1']).toBe('E2E Test Author');
     });
 
     it('returns { error: "Nothing returned..." } when no fixtures match the query', async () => {

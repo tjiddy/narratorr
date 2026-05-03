@@ -79,7 +79,7 @@ export class DownloadService {
     }
 
     // Get total count (with filters, before pagination)
-    const [{ value: total }] = await this.db
+    const [{ value: total } = { value: 0 }] = await this.db
       .select({ value: count() })
       .from(downloads)
       .where(where);
@@ -131,9 +131,9 @@ export class DownloadService {
     if (results.length === 0) return null;
 
     return {
-      ...results[0].download,
-      book: results[0].book || undefined,
-      indexerName: results[0].indexer?.name ?? null,
+      ...results[0]!.download,
+      book: results[0]!.book || undefined,
+      indexerName: results[0]!.indexer?.name ?? null,
     };
   }
 
@@ -236,12 +236,12 @@ export class DownloadService {
         }
         await this.db.update(books).set({ status: 'wanted' }).where(eq(books.id, bookId));
       } else {
-        throw new DuplicateDownloadError(`Book ${bookId} already has an active download (id: ${replaceableActive[0].id})`, 'ACTIVE_DOWNLOAD_EXISTS');
+        throw new DuplicateDownloadError(`Book ${bookId} already has an active download (id: ${replaceableActive[0]!.id})`, 'ACTIVE_DOWNLOAD_EXISTS');
       }
     } else {
       const pipelineActive = allActive.filter((dl) => !replaceableSet.has(dl.status));
       if (pipelineActive.length > 0) {
-        throw new DuplicateDownloadError(`Book ${bookId} already has an active download (id: ${pipelineActive[0].id})`, 'PIPELINE_ACTIVE');
+        throw new DuplicateDownloadError(`Book ${bookId} already has an active download (id: ${pipelineActive[0]!.id})`, 'PIPELINE_ACTIVE');
       }
 
       // Guard the window where the download is already `completed` (terminal,
@@ -256,7 +256,7 @@ export class DownloadService {
         ))
         .limit(1);
       if (pendingAutoJobs.length > 0) {
-        throw new DuplicateDownloadError(`Book ${bookId} already has an active auto import job (id: ${pendingAutoJobs[0].id})`, 'PIPELINE_ACTIVE');
+        throw new DuplicateDownloadError(`Book ${bookId} already has an active auto import job (id: ${pendingAutoJobs[0]!.id})`, 'PIPELINE_ACTIVE');
       }
     }
   }
@@ -325,7 +325,7 @@ export class DownloadService {
 
     this.log.info({ title: params.title, indexerId: params.indexerId }, 'Download initiated');
 
-    return this.getById(result[0].id) as Promise<DownloadWithBook>;
+    return this.getById(result[0]!.id) as Promise<DownloadWithBook>;
   }
 
   async updateProgress(id: number, progress: number, _bookId?: number): Promise<void> {

@@ -264,8 +264,8 @@ export async function copyAudioFiles(
   let bytesCopied = 0;
 
   for (let i = 0; i < files.length; i++) {
-    const srcPath = files[i].srcPath;
-    const destPath = join(target, files[i].name);
+    const srcPath = files[i]!.srcPath;
+    const destPath = join(target, files[i]!.name);
 
     const tracker = new Transform({
       transform(chunk: Buffer, _encoding, callback) {

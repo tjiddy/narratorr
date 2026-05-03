@@ -77,7 +77,7 @@ function compareNullable(a: string | number | null, b: string | number | null): 
   return { valueResult: (a as number) - (b as number) };
 }
 
-const fieldExtractors: Record<string, (book: BookWithAuthor) => string | number | null> = {
+const fieldExtractors: Record<SortField, (book: BookWithAuthor) => string | number | null> = {
   title: (b) => toSortTitle(b.title),
   author: (b) => b.authors?.[0]?.name ?? '',
   narrator: (b) => b.narrators?.[0]?.name ?? null,
@@ -145,7 +145,7 @@ export function collapseSeries(
     } else {
       // Fallback: first by current sort order
       const sorted = sortBooks(group, sortField, sortDirection);
-      representative = sorted[0];
+      representative = sorted[0]!;
     }
     collapsed.push({
       ...representative,

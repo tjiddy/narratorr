@@ -23,5 +23,5 @@ export function buildMagnetUri(infoHash: string, name?: string): string {
 
 export function parseInfoHash(magnetUri: string): string | null {
   const match = magnetUri.match(/xt=urn(?::|%3A)btih(?::|%3A)([a-fA-F0-9]{40}|[a-zA-Z2-7]{32})/i);
-  return match ? match[1].toLowerCase() : null;
+  return match ? match[1]!.toLowerCase() : null;
 }

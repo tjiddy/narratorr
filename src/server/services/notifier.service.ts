@@ -50,7 +50,7 @@ export class NotifierService {
     }
     const result = await this.db.insert(notifiers).values(toInsert).returning();
     this.log.info({ name: data.name, type: data.type }, 'Notifier created');
-    return this.decryptRow(result[0]);
+    return this.decryptRow(result[0]!);
   }
 
   async update(id: number, data: Partial<NewNotifier>): Promise<NotifierRow | null> {

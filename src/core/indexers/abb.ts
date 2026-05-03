@@ -334,12 +334,12 @@ export class AudioBookBayIndexer implements IndexerAdapter {
     // Try to find seeders (may not be available on ABB)
     const seedersMatch = pageText.match(/Seeders?[:\s]*(\d+)/i);
     if (seedersMatch) {
-      result.seeders = parseInt(seedersMatch[1], 10);
+      result.seeders = parseInt(seedersMatch[1]!, 10);
     }
 
     const leechersMatch = pageText.match(/Leechers?[:\s]*(\d+)/i);
     if (leechersMatch) {
-      result.leechers = parseInt(leechersMatch[1], 10);
+      result.leechers = parseInt(leechersMatch[1]!, 10);
     }
 
     return result;
@@ -350,7 +350,7 @@ export class AudioBookBayIndexer implements IndexerAdapter {
       const regex = new RegExp(`${label}\\s*([^\\n]+)`, 'i');
       const match = text.match(regex);
       if (match) {
-        return match[1].trim().replace(/^[:\s]+/, '').trim();
+        return match[1]!.trim().replace(/^[:\s]+/, '').trim();
       }
     }
     return undefined;
@@ -368,7 +368,7 @@ export class AudioBookBayIndexer implements IndexerAdapter {
   }
 
   private getNextUserAgent(): string {
-    const ua = DEFAULT_USER_AGENTS[this.userAgentIndex];
+    const ua = DEFAULT_USER_AGENTS[this.userAgentIndex]!;
     this.userAgentIndex = (this.userAgentIndex + 1) % DEFAULT_USER_AGENTS.length;
     return ua;
   }

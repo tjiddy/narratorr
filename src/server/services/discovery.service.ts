@@ -280,13 +280,13 @@ export class DiscoveryService {
     if (rows.length === 0) return null;
     const now = new Date();
     await this.db.update(suggestions).set({ status: 'dismissed', dismissedAt: now }).where(eq(suggestions.id, id));
-    return { ...rows[0], status: 'dismissed', dismissedAt: now };
+    return { ...rows[0]!, status: 'dismissed', dismissedAt: now };
   }
 
   async markSuggestionAdded(id: number): Promise<{ suggestion: SuggestionRow; alreadyAdded?: boolean; invalidStatus?: boolean } | null> {
     const rows = await this.db.select().from(suggestions).where(eq(suggestions.id, id)).limit(1);
     if (rows.length === 0) return null;
-    const row = rows[0];
+    const row = rows[0]!;
     if (row.status === 'added') return { suggestion: row, alreadyAdded: true };
     if (row.status !== 'pending') return { suggestion: row, invalidStatus: true };
 

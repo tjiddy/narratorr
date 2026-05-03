@@ -113,7 +113,7 @@ export async function renameFilesWithTemplate(
   const seen = new Set<string>();
 
   for (let i = 0; i < audioFiles.length; i++) {
-    const fileName = audioFiles[i];
+    const fileName = audioFiles[i]!;
     const ext = extname(fileName);
     const tokens = {
       ...baseTokens,

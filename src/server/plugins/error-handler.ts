@@ -55,7 +55,7 @@ function getStatusForError(error: unknown): number | null {
     if (error instanceof ErrorClass) {
       if (entry.type === 'flat') return entry.status;
       const code = (error as { code?: string }).code;
-      if (code && code in entry.codes) return entry.codes[code];
+      if (code && code in entry.codes) return entry.codes[code]!;
     }
   }
   return null;

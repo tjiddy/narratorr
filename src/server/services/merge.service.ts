@@ -96,8 +96,8 @@ export class MergeService {
 
   private async emitQueuePositionUpdates(): Promise<void> {
     for (let i = 0; i < this.queue.length; i++) {
-      const book = await this.bookService.getById(this.queue[i]);
-      if (book) this.emitQueueEvent('merge_queue_updated', this.queue[i], book.title, i + 1);
+      const book = await this.bookService.getById(this.queue[i]!);
+      if (book) this.emitQueueEvent('merge_queue_updated', this.queue[i]!, book.title, i + 1);
     }
   }
 
