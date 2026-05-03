@@ -4,7 +4,7 @@ import { canonicalCompare, type NarratorPriority } from './search-ranking.js';
 export type { NarratorPriority } from './search-ranking.js';
 import { enrichUsenetLanguages } from '../utils/enrich-usenet-languages.js';
 import type { SearchResult } from '../../core/index.js';
-import type { IndexerService } from './indexer.service.js';
+import type { IndexerSearchService } from './indexer-search.service.js';
 import type { DownloadOrchestrator } from './download-orchestrator.js';
 import { DuplicateDownloadError } from './download.service.js';
 import type { BlacklistService } from './blacklist.service.js';
@@ -317,7 +317,7 @@ async function tryGrab(
 
 async function searchWithBroadcaster(
   book: { id: number; title: string; duration?: number | null; authors?: Array<{ name: string }> | null; narrators?: Array<{ name: string }> | null },
-  indexerService: IndexerService,
+  indexerSearchService: IndexerSearchService,
   downloadOrchestrator: DownloadOrchestrator,
   qualitySettings: SearchFilterOptions,
   log: FastifyBaseLogger,
@@ -325,7 +325,7 @@ async function searchWithBroadcaster(
   broadcaster: EventBroadcasterService,
 ): Promise<SingleBookSearchResult> {
   const query = buildSearchQuery(book);
-  const enabledIndexers = await indexerService.getEnabledIndexers();
+  const enabledIndexers = await indexerSearchService.getEnabledIndexers();
   safeEmit(broadcaster, 'search_started', {
     book_id: book.id, book_title: book.title,
     indexers: enabledIndexers.map(i => ({ id: i.id, name: i.name })),
@@ -337,7 +337,7 @@ async function searchWithBroadcaster(
   }
 
   let totalResults = 0;
-  const rawResults = await indexerService.searchAllStreaming(
+  const rawResults = await indexerSearchService.searchAllStreaming(
     query,
     { title: book.title, author: book.authors?.[0]?.name },
     controllers,
@@ -406,7 +406,7 @@ async function searchWithBroadcaster(
  */
 export async function searchAndGrabForBook(
   book: { id: number; title: string; duration?: number | null; authors?: Array<{ name: string }> | null; narrators?: Array<{ name: string }> | null },
-  indexerService: IndexerService,
+  indexerSearchService: IndexerSearchService,
   downloadOrchestrator: DownloadOrchestrator,
   qualitySettings: SearchFilterOptions,
   log: FastifyBaseLogger,
@@ -414,11 +414,11 @@ export async function searchAndGrabForBook(
   broadcaster?: EventBroadcasterService,
 ): Promise<SingleBookSearchResult> {
   if (broadcaster) {
-    return searchWithBroadcaster(book, indexerService, downloadOrchestrator, qualitySettings, log, blacklistService, broadcaster);
+    return searchWithBroadcaster(book, indexerSearchService, downloadOrchestrator, qualitySettings, log, blacklistService, broadcaster);
   }
 
   const query = buildSearchQuery(book);
-  const rawResults = await indexerService.searchAll(query, {
+  const rawResults = await indexerSearchService.searchAll(query, {
     title: book.title,
     author: book.authors?.[0]?.name,
   });

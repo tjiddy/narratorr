@@ -4,7 +4,7 @@ import type { SearchResult } from '../../core/index.js';
 import type { SettingsService } from '../services/settings.service.js';
 import type { BookService, BookWithAuthor } from '../services/book.service.js';
 import type { BookListService } from '../services/book-list.service.js';
-import type { IndexerService } from '../services/indexer.service.js';
+import type { IndexerSearchService } from '../services/indexer-search.service.js';
 import type { DownloadOrchestrator } from '../services/download-orchestrator.js';
 import type { BlacklistService } from '../services/blacklist.service.js';
 import { DuplicateDownloadError } from '../services/download.service.js';
@@ -32,7 +32,7 @@ export async function runRssJob(
   settingsService: SettingsService,
   bookListService: BookListService,
   bookService: BookService,
-  indexerService: IndexerService,
+  indexerSearchService: IndexerSearchService,
   downloadOrchestrator: DownloadOrchestrator,
   blacklistService: BlacklistService,
   log: FastifyBaseLogger,
@@ -61,7 +61,7 @@ export async function runRssJob(
   }
 
   // Get RSS-capable indexers
-  const rssIndexers = await indexerService.getRssCapableIndexers();
+  const rssIndexers = await indexerSearchService.getRssCapableIndexers();
   if (rssIndexers.length === 0) {
     log.debug('No RSS-capable indexers enabled');
     return { polled: 0, matched: 0, grabbed: 0 };
@@ -75,7 +75,7 @@ export async function runRssJob(
 
   for (const indexer of rssIndexers) {
     try {
-      const results = await indexerService.pollRss(indexer);
+      const results = await indexerSearchService.pollRss(indexer);
       polled++;
       if (results.length === 0) {
         log.debug({ indexer: indexer.name }, 'RSS feed returned zero items');
