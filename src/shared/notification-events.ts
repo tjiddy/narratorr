@@ -70,7 +70,7 @@ export interface EventPayload {
     checkName: string;
     previousState: 'healthy' | 'warning' | 'error';
     currentState: 'healthy' | 'warning' | 'error';
-    message?: string;
+    message?: string | undefined;
   };
 }
 

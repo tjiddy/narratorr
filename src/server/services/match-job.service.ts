@@ -29,8 +29,8 @@ export interface MatchResult {
   confidence: Confidence;
   bestMatch: BookMetadata | null;
   alternatives: BookMetadata[];
-  error?: string;
-  reason?: string;
+  error?: string | undefined;
+  reason?: string | undefined;
 }
 
 export interface MatchJobStatus {

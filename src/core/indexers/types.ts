@@ -27,19 +27,19 @@ export interface SearchResult {
 }
 
 export interface SearchOptions {
-  limit?: number;
-  author?: string;
-  title?: string;
-  signal?: AbortSignal;
-  languages?: readonly string[];
+  limit?: number | undefined;
+  author?: string | undefined;
+  title?: string | undefined;
+  signal?: AbortSignal | undefined;
+  languages?: readonly string[] | undefined;
 }
 
 export interface IndexerTestResult {
   success: boolean;
-  message?: string;
-  ip?: string;
-  warning?: string;
-  metadata?: Record<string, unknown>;
+  message?: string | undefined;
+  ip?: string | undefined;
+  warning?: string | undefined;
+  metadata?: Record<string, unknown> | undefined;
 }
 
 /**

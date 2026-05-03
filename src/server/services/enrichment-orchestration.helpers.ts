@@ -22,11 +22,11 @@ export interface EnrichmentBookInput {
 }
 
 export interface AudnexusConfig {
-  primaryAsin?: string | null;
-  alternateAsins?: string[];
-  existingNarrator?: string | null;
-  existingDuration?: number | null;
-  existingGenres?: string[] | null;
+  primaryAsin?: string | null | undefined;
+  alternateAsins?: string[] | undefined;
+  existingNarrator?: string | null | undefined;
+  existingDuration?: number | null | undefined;
+  existingGenres?: string[] | null | undefined;
 }
 
 export interface EnrichmentDeps {

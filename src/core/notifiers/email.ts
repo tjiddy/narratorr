@@ -5,10 +5,10 @@ import { getErrorMessage } from '../../shared/error-message.js';
 
 export interface EmailConfig {
   host: string;
-  port?: number;
-  user?: string;
-  pass?: string;
-  tls?: boolean;
+  port?: number | undefined;
+  user?: string | undefined;
+  pass?: string | undefined;
+  tls?: boolean | undefined;
   from: string;
   to: string;
 }

@@ -7,7 +7,7 @@ import { getErrorMessage } from '../../shared/error-message.js';
 
 export interface NtfyConfig {
   topic: string;
-  serverUrl?: string;
+  serverUrl?: string | undefined;
 }
 
 export class NtfyNotifier implements NotifierAdapter {

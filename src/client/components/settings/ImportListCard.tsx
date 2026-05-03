@@ -108,7 +108,7 @@ function ImportListFormFooter({
 }: {
   enabled: boolean;
   onEnabledChange: (enabled: boolean) => void;
-  onCancel?: () => void;
+  onCancel?: (() => void) | undefined;
   isPending: boolean;
   submitLabel: string;
 }) {
@@ -145,15 +145,15 @@ function ImportListForm({
   testResult,
 }: {
   onSubmit: (data: ImportListFormData) => void;
-  onCancel?: () => void;
+  onCancel?: (() => void) | undefined;
   isPending: boolean;
-  initial?: ImportList;
-  onFormTest?: (data: ImportListFormData) => void;
-  onTest?: (id: number) => void;
-  testingForm?: boolean;
-  formTestResult?: TestResult | null;
-  testingId?: number | null;
-  testResult?: IdTestResult | null;
+  initial?: ImportList | undefined;
+  onFormTest?: ((data: ImportListFormData) => void) | undefined;
+  onTest?: ((id: number) => void) | undefined;
+  testingForm?: boolean | undefined;
+  formTestResult?: TestResult | null | undefined;
+  testingId?: number | null | undefined;
+  testResult?: IdTestResult | null | undefined;
 }) {
   const defaults = getDefaults(initial);
   const [type, setType] = useState<ImportListFormData['type']>(defaults.type);

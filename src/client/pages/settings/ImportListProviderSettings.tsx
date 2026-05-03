@@ -193,7 +193,7 @@ export function ProviderSettings({
   type: string;
   settings: Record<string, unknown>;
   onChange: (settings: Record<string, unknown>) => void;
-  editingId?: number;
+  editingId?: number | undefined;
 }) {
   switch (type) {
     case 'abs': return <AbsSettings settings={settings} onChange={onChange} editingId={editingId} />;

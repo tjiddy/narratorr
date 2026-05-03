@@ -36,13 +36,13 @@ export interface AudioScanResult {
 
 export interface AudioScanOptions {
   /** When true, detect cover art presence but skip buffer extraction */
-  skipCover?: boolean;
+  skipCover?: boolean | undefined;
   /** Path to ffprobe binary — when provided, duration is sourced from ffprobe instead of music-metadata */
-  ffprobePath?: string;
+  ffprobePath?: string | undefined;
   /** Diagnostic warning callback (e.g. ffprobe/music-metadata duration mismatch). Caller maps to its logger. */
-  onWarn?: (msg: string, payload?: Record<string, unknown>) => void;
+  onWarn?: ((msg: string, payload?: Record<string, unknown>) => void) | undefined;
   /** Diagnostic debug callback (e.g. ffprobe failure → music-metadata fallback). Caller maps to its logger. */
-  onDebug?: (msg: string, payload?: Record<string, unknown>) => void;
+  onDebug?: ((msg: string, payload?: Record<string, unknown>) => void) | undefined;
 }
 
 /**

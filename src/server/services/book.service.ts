@@ -67,8 +67,8 @@ export class BookService {
 
   async findDuplicate(
     title: string,
-    authorList?: { name: string; asin?: string }[],
-    asin?: string,
+    authorList?: { name: string; asin?: string | undefined }[] | undefined,
+    asin?: string | undefined,
   ): Promise<BookWithAuthor | null> {
     // Check by ASIN first if available (opportunistic)
     if (asin) {
@@ -176,20 +176,20 @@ export class BookService {
 
   async create(data: {
     title: string;
-    authors: { name: string; asin?: string }[];
-    narrators?: string[];
-    description?: string;
-    coverUrl?: string;
-    asin?: string;
-    isbn?: string;
-    seriesName?: string;
-    seriesPosition?: number;
-    duration?: number;
-    publishedDate?: string;
-    genres?: string[];
-    status?: BookRow['status'];
-    providerId?: string;
-    monitorForUpgrades?: boolean;
+    authors: { name: string; asin?: string | undefined }[];
+    narrators?: string[] | undefined;
+    description?: string | undefined;
+    coverUrl?: string | undefined;
+    asin?: string | undefined;
+    isbn?: string | undefined;
+    seriesName?: string | undefined;
+    seriesPosition?: number | undefined;
+    duration?: number | undefined;
+    publishedDate?: string | undefined;
+    genres?: string[] | undefined;
+    status?: BookRow['status'] | undefined;
+    providerId?: string | undefined;
+    monitorForUpgrades?: boolean | undefined;
   }): Promise<BookWithAuthor> {
     // Enrich with ASIN from metadata provider if missing
     let enrichedAsin = data.asin;
@@ -241,7 +241,7 @@ export class BookService {
     return this.getById(bookId) as Promise<BookWithAuthor>;
   }
 
-  async update(id: number, data: Partial<NewBook> & { narrators?: string[]; authors?: { name: string; asin?: string }[] }): Promise<BookWithAuthor | null> {
+  async update(id: number, data: Partial<NewBook> & { narrators?: string[] | undefined; authors?: { name: string; asin?: string | undefined }[] | undefined }): Promise<BookWithAuthor | null> {
     const { narrators: narratorNames, authors: authorList, ...bookData } = data;
 
     const updated = await this.db.transaction(async (tx) => {

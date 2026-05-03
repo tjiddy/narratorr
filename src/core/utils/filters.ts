@@ -22,7 +22,7 @@ export function matchesLanguageFilter(language: string | undefined, allowedLangu
  * Returns all items in `kept` (and `passedUndetermined` empty) when `allowedLanguages`
  * is empty — preserves the historical "no filter" passthrough.
  */
-export function filterByLanguage<T extends { language?: string }>(
+export function filterByLanguage<T extends { language?: string | undefined }>(
   items: T[],
   allowedLanguages: readonly string[],
 ): { kept: T[]; dropped: T[]; passedUndetermined: T[] } {
