@@ -153,7 +153,7 @@ describe('startJobs', () => {
       expect(entry!.type).toBe('timeout');
     });
 
-    it('callback invokes runUpgradeSearchJob with services.settings, services.book, services.indexer, services.downloadOrchestrator, log', async () => {
+    it('callback invokes runUpgradeSearchJob with services.settings, services.book, services.indexerSearch, services.downloadOrchestrator, log', async () => {
       const { runUpgradeSearchJob } = await import('./search.js');
       const { startJobs } = await import('./index.js');
       startJobs(injectHelper<Db>(db), services, log);
@@ -163,7 +163,7 @@ describe('startJobs', () => {
       expect(runUpgradeSearchJob).toHaveBeenCalledWith(
         services.settings,
         services.book,
-        services.indexer,
+        services.indexerSearch,
         services.downloadOrchestrator,
         log,
       );
