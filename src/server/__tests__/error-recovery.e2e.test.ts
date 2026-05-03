@@ -193,7 +193,7 @@ describe('Error recovery E2E', () => {
     // indexer errors"). The remaining concern at the e2e level is that BOTH
     // indexer HTTP endpoints are reachable through the indexer service, so we
     // exercise the service directly here.
-    const results = await e2e.services.indexer.searchAll('Brandon Sanderson');
+    const results = await e2e.services.indexerSearch.searchAll('Brandon Sanderson');
     expect(results.length).toBeGreaterThan(0);
   });
 

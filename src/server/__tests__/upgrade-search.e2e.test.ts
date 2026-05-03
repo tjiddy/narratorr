@@ -70,7 +70,7 @@ describe('Upgrade-search eligibility — DB-backed selector (#755)', () => {
       downloadUrl: 'magnet:?xt=urn:btih:upgrade',
     };
 
-    const searchAllSpy = vi.spyOn(e2e.services.indexer, 'searchAll').mockResolvedValue([higherResult]);
+    const searchAllSpy = vi.spyOn(e2e.services.indexerSearch, 'searchAll').mockResolvedValue([higherResult]);
     const grabSpy = vi
       .spyOn(e2e.services.downloadOrchestrator, 'grab')
       .mockResolvedValue({ id: 1, title: higherResult.title } as never);
@@ -78,7 +78,7 @@ describe('Upgrade-search eligibility — DB-backed selector (#755)', () => {
     const result = await runUpgradeSearchJob(
       e2e.services.settings,
       e2e.services.book,
-      e2e.services.indexer,
+      e2e.services.indexerSearch,
       e2e.services.downloadOrchestrator,
       log,
     );
@@ -96,13 +96,13 @@ describe('Upgrade-search eligibility — DB-backed selector (#755)', () => {
   it('skips books with monitorForUpgrades=false even when status=imported', async () => {
     await seedBook({ monitorForUpgrades: false });
 
-    const searchAllSpy = vi.spyOn(e2e.services.indexer, 'searchAll').mockResolvedValue([]);
+    const searchAllSpy = vi.spyOn(e2e.services.indexerSearch, 'searchAll').mockResolvedValue([]);
     const grabSpy = vi.spyOn(e2e.services.downloadOrchestrator, 'grab');
 
     const result = await runUpgradeSearchJob(
       e2e.services.settings,
       e2e.services.book,
-      e2e.services.indexer,
+      e2e.services.indexerSearch,
       e2e.services.downloadOrchestrator,
       log,
     );
@@ -116,13 +116,13 @@ describe('Upgrade-search eligibility — DB-backed selector (#755)', () => {
   it('skips books with monitorForUpgrades=true but status!=imported (e.g., wanted)', async () => {
     await seedBook({ status: 'wanted', monitorForUpgrades: true });
 
-    const searchAllSpy = vi.spyOn(e2e.services.indexer, 'searchAll').mockResolvedValue([]);
+    const searchAllSpy = vi.spyOn(e2e.services.indexerSearch, 'searchAll').mockResolvedValue([]);
     const grabSpy = vi.spyOn(e2e.services.downloadOrchestrator, 'grab');
 
     const result = await runUpgradeSearchJob(
       e2e.services.settings,
       e2e.services.book,
-      e2e.services.indexer,
+      e2e.services.indexerSearch,
       e2e.services.downloadOrchestrator,
       log,
     );

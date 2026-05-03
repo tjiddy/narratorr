@@ -16,6 +16,7 @@ vi.mock('../services', () => ({
   SettingsService: vi.fn(),  // configured per test
   AuthService: vi.fn(),
   IndexerService: vi.fn(),
+  IndexerSearchService: vi.fn(),
   DownloadClientService: vi.fn(),
   BookService: vi.fn(),
   BookImportService: vi.fn(),

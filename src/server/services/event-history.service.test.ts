@@ -329,7 +329,7 @@ describe('EventHistoryService', () => {
       const mockSearchAll = vi.fn().mockResolvedValue([]);
       const fresh = freshService();
       fresh.wire({ retrySearchDeps: {
-        indexerService: { searchAll: mockSearchAll },
+        indexerSearchService: { searchAll: mockSearchAll },
         downloadService: { grab: vi.fn() },
         blacklistService: { getBlacklistedHashes: vi.fn().mockResolvedValue(new Set()), getBlacklistedIdentifiers: vi.fn().mockResolvedValue({ blacklistedHashes: new Set(), blacklistedGuids: new Set() }) },
         bookService: { getById: vi.fn().mockResolvedValue({ id: 42, title: 'Test', duration: 3600, author: { name: 'Author' } }) },
@@ -360,7 +360,7 @@ describe('EventHistoryService', () => {
       const mockSearchAll = vi.fn().mockRejectedValue(new Error('Indexer down'));
       const fresh = freshService();
       fresh.wire({ retrySearchDeps: {
-        indexerService: { searchAll: mockSearchAll },
+        indexerSearchService: { searchAll: mockSearchAll },
         downloadService: { grab: vi.fn() },
         blacklistService: { getBlacklistedHashes: vi.fn().mockResolvedValue(new Set()), getBlacklistedIdentifiers: vi.fn().mockResolvedValue({ blacklistedHashes: new Set(), blacklistedGuids: new Set() }) },
         bookService: { getById: vi.fn().mockResolvedValue({ id: 42, title: 'Test', duration: 3600, author: { name: 'Author' } }) },
@@ -431,7 +431,7 @@ describe('EventHistoryService', () => {
       const mockSearchAll = vi.fn().mockResolvedValue([]);
       const fresh = freshService();
       fresh.wire({ retrySearchDeps: {
-        indexerService: { searchAll: mockSearchAll },
+        indexerSearchService: { searchAll: mockSearchAll },
         downloadService: { grab: vi.fn() },
         blacklistService: { getBlacklistedHashes: vi.fn().mockResolvedValue(new Set()), getBlacklistedIdentifiers: vi.fn().mockResolvedValue({ blacklistedHashes: new Set(), blacklistedGuids: new Set() }) },
         bookService: { getById: vi.fn().mockResolvedValue({ id: 42, title: 'Test', duration: 3600, author: { name: 'Author' } }) },
@@ -472,7 +472,7 @@ describe('EventHistoryService', () => {
       const { RetryBudget } = await import('./retry-budget.js');
       const fresh = freshService();
       fresh.wire({ retrySearchDeps: {
-        indexerService: { searchAll: vi.fn() },
+        indexerSearchService: { searchAll: vi.fn() },
         downloadService: { grab: vi.fn() },
         blacklistService: { getBlacklistedHashes: vi.fn().mockResolvedValue(new Set()), getBlacklistedIdentifiers: vi.fn().mockResolvedValue({ blacklistedHashes: new Set(), blacklistedGuids: new Set() }) },
         bookService: { getById: vi.fn().mockResolvedValue({ id: 42, title: 'Test', duration: 3600, author: { name: 'Author' } }) },

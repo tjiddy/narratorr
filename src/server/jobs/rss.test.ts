@@ -4,7 +4,7 @@ import { runRssJob } from './rss.js';
 import type { FastifyBaseLogger } from 'fastify';
 import type { BookService } from '../services/book.service.js';
 import type { BookListService } from '../services/book-list.service.js';
-import type { IndexerService } from '../services/indexer.service.js';
+import type { IndexerSearchService } from '../services/indexer-search.service.js';
 import type { DownloadOrchestrator } from '../services/download-orchestrator.js';
 import type { BlacklistService } from '../services/blacklist.service.js';
 import type { SearchResult } from '../../core/index.js';
@@ -46,21 +46,15 @@ function createMockBookService(monitored: unknown[] = []): BookService {
   });
 }
 
-function createMockIndexerService(rssResults: SearchResult[] = []): IndexerService {
-  return inject<IndexerService>({
+function createMockIndexerService(rssResults: SearchResult[] = []): IndexerSearchService {
+  return inject<IndexerSearchService>({
     getRssCapableIndexers: vi.fn().mockResolvedValue([
       { id: 1, name: 'TestNewznab', type: 'newznab', enabled: true, priority: 1, settings: {} },
     ]),
     pollRss: vi.fn().mockResolvedValue(rssResults),
     searchAll: vi.fn().mockResolvedValue([]),
-    getAll: vi.fn(),
-    getById: vi.fn(),
-    create: vi.fn(),
-    update: vi.fn(),
-    delete: vi.fn(),
-    getAdapter: vi.fn(),
-    test: vi.fn(),
-    testConfig: vi.fn(),
+    searchAllStreaming: vi.fn().mockResolvedValue([]),
+    getEnabledIndexers: vi.fn().mockResolvedValue([]),
   });
 }
 

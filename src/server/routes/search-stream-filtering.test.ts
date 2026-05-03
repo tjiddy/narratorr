@@ -12,7 +12,7 @@ import Fastify from 'fastify';
 import cookie from '@fastify/cookie';
 import { validatorCompiler, serializerCompiler, type ZodTypeProvider } from 'fastify-type-provider-zod';
 import { SearchSessionManager } from '../services/search-session.js';
-import type { IndexerService } from '../services/indexer.service.js';
+import type { IndexerSearchService } from '../services/indexer-search.service.js';
 import type { BlacklistService } from '../services/blacklist.service.js';
 import type { SettingsService } from '../services/settings.service.js';
 import type { AuthService } from '../services/auth.service.js';
@@ -42,7 +42,7 @@ function createMockAuthService() {
   } as unknown as AuthService;
 }
 
-function createMockIndexerService(rawResults: SearchResult[] = []) {
+function createMockIndexerSearchService(rawResults: SearchResult[] = []) {
   return {
     getEnabledIndexers: vi.fn().mockResolvedValue([{ id: 1, name: 'TestIndexer' }]),
     searchAllStreaming: vi.fn().mockImplementation(
@@ -53,7 +53,7 @@ function createMockIndexerService(rawResults: SearchResult[] = []) {
         return rawResults;
       },
     ),
-  } as unknown as IndexerService;
+  } as unknown as IndexerSearchService;
 }
 
 function createMockBlacklistService() {
@@ -91,7 +91,7 @@ async function createApp(rawResults: SearchResult[], qualityOverrides: Record<st
 
   await searchStreamRoutes(
     app,
-    createMockIndexerService(rawResults),
+    createMockIndexerSearchService(rawResults),
     createMockBlacklistService(),
     createMockSettingsService(qualityOverrides),
     new SearchSessionManager(),
@@ -257,7 +257,7 @@ describe('searchStreamRoutes — reject word filtering (real postProcessSearchRe
 
       await searchStreamRoutes(
         app,
-        createMockIndexerService([{ ...baseResult, title: 'Some Book' }]),
+        createMockIndexerSearchService([{ ...baseResult, title: 'Some Book' }]),
         createMockBlacklistService(),
         throwingSettingsService,
         new SearchSessionManager(),
