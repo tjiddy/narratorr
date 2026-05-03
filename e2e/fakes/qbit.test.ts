@@ -99,7 +99,7 @@ describe('fake qBittorrent client', () => {
       const torrent = buildTorrentBytes({ fileName: 'silent.m4b', fileLength: 14 });
       await addTorrent(cookie, torrent);
       const [t] = fake.listTorrents();
-      expect(t.save_path).toBe(downloadsPath);
+      expect(t!.save_path).toBe(downloadsPath);
     });
 
     it('honors an explicit savepath if one is supplied', async () => {
@@ -109,7 +109,7 @@ describe('fake qBittorrent client', () => {
       const torrent = buildTorrentBytes({ fileName: 'silent.m4b', fileLength: 14 });
       await addTorrent(cookie, torrent, alt);
       const [t] = fake.listTorrents();
-      expect(t.save_path).toBe(alt);
+      expect(t!.save_path).toBe(alt);
     });
 
     it('rejects requests without a valid SID cookie with HTTP 403', async () => {
@@ -123,7 +123,7 @@ describe('fake qBittorrent client', () => {
       const torrent = buildTorrentBytes({ fileName: 'silent.m4b', fileLength: 14 });
       await addTorrent(cookie, torrent);
       const [t] = fake.listTorrents();
-      expect(t.hash).toMatch(/^[0-9a-f]{40}$/);
+      expect(t!.hash).toMatch(/^[0-9a-f]{40}$/);
     });
 
     it('returns 400 when the uploaded torrent bytes are missing or malformed', async () => {
@@ -152,9 +152,9 @@ describe('fake qBittorrent client', () => {
       const res = await fetch(`${fake.url}/api/v2/torrents/info`, { headers: { Cookie: cookie } });
       const arr = await res.json() as Array<Record<string, unknown>>;
       expect(arr).toHaveLength(1);
-      expect(arr[0].state).toBe('downloading');
-      expect(arr[0].progress).toBe(0);
-      expect(arr[0].save_path).toBe(downloadsPath);
+      expect(arr[0]!.state).toBe('downloading');
+      expect(arr[0]!.progress).toBe(0);
+      expect(arr[0]!.save_path).toBe(downloadsPath);
     });
 
     it('filters results by the hashes query param', async () => {
@@ -164,13 +164,13 @@ describe('fake qBittorrent client', () => {
       const all = fake.listTorrents();
       expect(all).toHaveLength(2);
 
-      const targetHash = all[0].hash;
+      const targetHash = all[0]!.hash;
       const res = await fetch(`${fake.url}/api/v2/torrents/info?hashes=${targetHash}`, {
         headers: { Cookie: cookie },
       });
       const arr = await res.json() as Array<{ hash: string }>;
       expect(arr).toHaveLength(1);
-      expect(arr[0].hash).toBe(targetHash);
+      expect(arr[0]!.hash).toBe(targetHash);
     });
   });
 
@@ -193,13 +193,13 @@ describe('fake qBittorrent client', () => {
       const res = await fetch(`${fake.url}/__control/complete`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ hash: t.hash }),
+        body: JSON.stringify({ hash: t!.hash }),
       });
       expect(res.status).toBe(200);
 
       const [after] = fake.listTorrents();
-      expect(after.state).toBe('uploading');
-      expect(after.progress).toBe(1);
+      expect(after!.state).toBe('uploading');
+      expect(after!.progress).toBe(1);
       expect(existsSync(join(downloadsPath, 'e2e-test-book', 'silent.m4b'))).toBe(true);
     });
 
@@ -212,13 +212,13 @@ describe('fake qBittorrent client', () => {
       await fetch(`${fake.url}/__control/complete`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ hash: t.hash }),
+        body: JSON.stringify({ hash: t!.hash }),
       });
 
       const [after] = fake.listTorrents();
-      expect(after.content_path).toBeDefined();
+      expect(after!.content_path).toBeDefined();
       // mapState in qbittorrent.ts rejects content_path that isn't inside save_path via relative(save_path, content_path).
-      expect(after.content_path!.startsWith(after.save_path)).toBe(true);
+      expect(after!.content_path!.startsWith(after!.save_path)).toBe(true);
     });
 
     it('returns HTTP 404 for an unknown hash', async () => {

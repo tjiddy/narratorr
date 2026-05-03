@@ -5,6 +5,7 @@
     "moduleResolution": "bundler",
     "esModuleInterop": true,
     "strict": true,
+    "noUncheckedIndexedAccess": true,
     "useUnknownInCatchVariables": true,
     "skipLibCheck": true,
     "declaration": true,

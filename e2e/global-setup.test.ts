@@ -109,7 +109,7 @@ describe('globalSetup', () => {
     const body = await res.json() as { data?: Array<{ title: string }> };
     expect(body.data).toBeDefined();
     expect(body.data!.length).toBeGreaterThan(0);
-    expect(body.data![0].title).toMatch(/E2E Test Book/);
+    expect(body.data![0]!.title).toMatch(/E2E Test Book/);
   });
 
   it('starts the Audible fake on a configured port and registers it for teardown', async () => {
@@ -144,7 +144,7 @@ describe('globalSetup', () => {
     expect(entries[0]).toBe('E2E Manual Author - E2E Manual Import Book');
 
     // The subfolder should contain the silent.m4b fixture.
-    const bookDir = join(run.sourcePath, entries[0]);
+    const bookDir = join(run.sourcePath, entries[0]!);
     const files = readdirSync(bookDir);
     expect(files).toContain('silent.m4b');
     expect(existsSync(join(bookDir, 'silent.m4b'))).toBe(true);

@@ -298,9 +298,8 @@ describe('SearchReleasesModal', () => {
 
   it('shows protocol badges on results', async () => {
     const mixedResults: SearchResult[] = [
-      { ...mockResults[0], protocol: 'torrent' },
-      // PHASE 1 SKIPPED — needs human review
-      { ...mockResults[1], protocol: 'usenet' },
+      { ...mockResults[0]!, protocol: 'torrent' },
+      { ...mockResults[1]!, protocol: 'usenet' },
     ];
     setStreamResults(mixedResults);
 
@@ -1276,9 +1275,8 @@ describe('SearchReleasesModal unsupported results', () => {
 
     // Titles should now be visible
     await waitFor(() => {
-      expect(screen.getByText(unsupportedTitles[0])).toBeInTheDocument();
-      // PHASE 1 SKIPPED — needs human review
-      expect(screen.getByText(unsupportedTitles[1])).toBeInTheDocument();
+      expect(screen.getByText(unsupportedTitles[0]!)).toBeInTheDocument();
+      expect(screen.getByText(unsupportedTitles[1]!)).toBeInTheDocument();
     });
   });
 
@@ -1809,9 +1807,8 @@ describe('SearchReleasesModal — streaming search (Phase 1/Phase 2)', () => {
   describe('language pill data flow', () => {
     it('shows language pill when result has language metadata', async () => {
       setStreamResults([
-        // PHASE 1 SKIPPED — needs human review
         {
-          ...mockResults[0],
+          ...mockResults[0]!,
           language: 'English',
         },
       ]);
@@ -1829,8 +1826,7 @@ describe('SearchReleasesModal — streaming search (Phase 1/Phase 2)', () => {
   describe('#421 — "In library" badge wiring', () => {
     it('renders "In library" badge on result card when book lastGrabGuid matches result guid', async () => {
       setStreamResults([
-        // PHASE 1 SKIPPED — needs human review
-        { ...mockResults[0], guid: 'grabbed-guid' },
+        { ...mockResults[0]!, guid: 'grabbed-guid' },
       ]);
       const bookWithGrab = createMockBook({ lastGrabGuid: 'grabbed-guid', lastGrabInfoHash: null });
 
@@ -1859,9 +1855,8 @@ describe('SearchReleasesModal — streaming search (Phase 1/Phase 2)', () => {
 
     it('renders "In library" badge only on the matching result, not on others', async () => {
       setStreamResults([
-        { ...mockResults[0], guid: 'match-guid' },
-        // PHASE 1 SKIPPED — needs human review
-        { ...mockResults[1], guid: 'other-guid' },
+        { ...mockResults[0]!, guid: 'match-guid' },
+        { ...mockResults[1]!, guid: 'other-guid' },
       ]);
       const bookWithGrab = createMockBook({ lastGrabGuid: 'match-guid', lastGrabInfoHash: null });
 

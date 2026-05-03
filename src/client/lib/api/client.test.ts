@@ -223,7 +223,8 @@ describe('fetchMultipart', () => {
     formData.append('file', new File(['x'], 'x.jpg', { type: 'image/jpeg' }));
     await fetchMultipart('/books/1/cover', formData);
 
-    const [url, options] = (fetch as ReturnType<typeof vi.fn>).mock.calls[0];
+    expect(fetch).toHaveBeenCalledOnce();
+    const [url, options] = (fetch as ReturnType<typeof vi.fn>).mock.calls[0]!;
     expect(url).toBe('/api/books/1/cover');
     expect(options.method).toBe('POST');
     expect(options.body).toBe(formData);

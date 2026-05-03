@@ -296,8 +296,7 @@ describe('booksApi', () => {
     const result = await booksApi.uploadBookCover(7, file);
 
     expect(mockFetchMultipart).toHaveBeenCalledOnce();
-    // PHASE 1 SKIPPED — needs human review
-    const [path, body] = mockFetchMultipart.mock.calls[0];
+    const [path, body] = mockFetchMultipart.mock.calls[0]!;
     expect(path).toBe('/books/7/cover');
     expect(body).toBeInstanceOf(FormData);
     expect((body as FormData).get('file')).toBe(file);

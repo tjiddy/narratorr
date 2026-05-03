@@ -41,9 +41,9 @@ describe('seedE2ERun', () => {
     const { client, db } = openDb();
     try {
       const row = (await db.select().from(indexers).where(eq(indexers.id, ids.indexerId)))[0];
-      expect(row.type).toBe('myanonamouse');
-      expect(row.enabled).toBe(true);
-      const settings = row.settings as { baseUrl: string; mamId: string };
+      expect(row!.type).toBe('myanonamouse');
+      expect(row!.enabled).toBe(true);
+      const settings = row!.settings as { baseUrl: string; mamId: string };
       expect(settings.baseUrl).toBe('http://localhost:4100');
       expect(settings.mamId).toBe('test-mam-id');
     } finally {
@@ -59,8 +59,8 @@ describe('seedE2ERun', () => {
     const { client, db } = openDb();
     try {
       const row = (await db.select().from(downloadClients).where(eq(downloadClients.id, ids.downloadClientId)))[0];
-      expect(row.type).toBe('qbittorrent');
-      const settings = row.settings as Record<string, unknown>;
+      expect(row!.type).toBe('qbittorrent');
+      const settings = row!.settings as Record<string, unknown>;
       expect(settings.host).toBe('localhost');
       expect(settings.port).toBe(4200);
       expect(settings.useSsl).toBe(false);
@@ -79,8 +79,8 @@ describe('seedE2ERun', () => {
     const { client, db } = openDb();
     try {
       const row = (await db.select().from(authors).where(eq(authors.id, ids.authorId)))[0];
-      expect(row.name).toBe(SEED_AUTHOR_NAME);
-      expect(row.slug).toMatch(/^e2e-test-author$/);
+      expect(row!.name).toBe(SEED_AUTHOR_NAME);
+      expect(row!.slug).toMatch(/^e2e-test-author$/);
     } finally {
       client.close();
     }
@@ -94,12 +94,12 @@ describe('seedE2ERun', () => {
     const { client, db } = openDb();
     try {
       const bookRow = (await db.select().from(books).where(eq(books.id, ids.bookId)))[0];
-      expect(bookRow.title).toBe(SEED_BOOK_TITLE);
-      expect(bookRow.status).toBe('wanted');
+      expect(bookRow!.title).toBe(SEED_BOOK_TITLE);
+      expect(bookRow!.status).toBe('wanted');
 
       const link = (await db.select().from(bookAuthors).where(eq(bookAuthors.bookId, ids.bookId)))[0];
-      expect(link.authorId).toBe(ids.authorId);
-      expect(link.position).toBe(0);
+      expect(link!.authorId).toBe(ids.authorId);
+      expect(link!.position).toBe(0);
     } finally {
       client.close();
     }
@@ -114,7 +114,7 @@ describe('seedE2ERun', () => {
     try {
       const row = (await db.select().from(settings).where(eq(settings.key, 'general')))[0];
       expect(row).toBeDefined();
-      const value = row.value as Record<string, unknown>;
+      const value = row!.value as Record<string, unknown>;
       expect(value.welcomeSeen).toBe(true);
     } finally {
       client.close();
@@ -130,7 +130,7 @@ describe('seedE2ERun', () => {
     try {
       const row = (await db.select().from(settings).where(eq(settings.key, 'library')))[0];
       expect(row).toBeDefined();
-      const value = row.value as Record<string, unknown>;
+      const value = row!.value as Record<string, unknown>;
       expect(value.path).toBe('/some/absolute/library-path');
       // Folder/file formats must be valid token strings so library form validation
       // doesn't reject them if the UI ever round-trips these settings.
@@ -150,7 +150,7 @@ describe('seedE2ERun', () => {
     try {
       const row = (await db.select().from(settings).where(eq(settings.key, 'import')))[0];
       expect(row).toBeDefined();
-      const value = row.value as Record<string, unknown>;
+      const value = row!.value as Record<string, unknown>;
       // minFreeSpaceGB=0 is the early-return sentinel in checkDiskSpace
       // (src/server/utils/import-steps.ts) — without it a low-disk host trips
       // the gate and imports fail.
