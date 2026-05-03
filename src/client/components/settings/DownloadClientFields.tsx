@@ -11,12 +11,12 @@ interface DownloadClientFieldsProps {
   selectedType: DownloadClientType;
   register: UseFormRegister<CreateDownloadClientFormData>;
   errors: FieldErrors<CreateDownloadClientFormData>;
-  clientId?: number;
+  clientId?: number | undefined;
   setValue: UseFormSetValue<CreateDownloadClientFormData>;
   getValues: UseFormGetValues<CreateDownloadClientFormData>;
-  isDirty?: boolean;
-  isEdit?: boolean;
-  inModal?: boolean;
+  isDirty?: boolean | undefined;
+  isEdit?: boolean | undefined;
+  inModal?: boolean | undefined;
 }
 
 // eslint-disable-next-line complexity -- conditional fields per client type are inherently branchy

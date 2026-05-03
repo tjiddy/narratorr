@@ -67,12 +67,12 @@ function ProwlarrBadge() {
 
 function IndexerCardView({ indexer, onEdit, onTest, onDelete, testingId, testResult, animationDelay }: {
   indexer: Indexer;
-  onEdit?: () => void;
-  onTest?: (id: number) => void;
-  onDelete?: () => void;
-  testingId?: number | null;
-  testResult?: IdTestResult | null;
-  animationDelay?: string;
+  onEdit?: (() => void) | undefined;
+  onTest?: ((id: number) => void) | undefined;
+  onDelete?: (() => void) | undefined;
+  testingId?: number | null | undefined;
+  testResult?: IdTestResult | null | undefined;
+  animationDelay?: string | undefined;
 }) {
   return (
     <SettingsCardShell

@@ -4,14 +4,14 @@ export interface BookEditState {
   title: string;
   author: string;
   series: string;
-  coverUrl?: string;
-  asin?: string;
-  metadata?: BookMetadata;
+  coverUrl?: string | undefined;
+  asin?: string | undefined;
+  metadata?: BookMetadata | undefined;
 }
 
 export interface ImportRow {
   book: DiscoveredBook;
   selected: boolean;
   edited: BookEditState;
-  matchResult?: MatchResult;
+  matchResult?: MatchResult | undefined;
 }

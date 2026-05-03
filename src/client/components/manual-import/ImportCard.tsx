@@ -40,7 +40,7 @@ const confidenceLabel = {
   none: 'No Match',
 } as const;
 
-function ConfidenceBadge({ confidence, reason }: { confidence?: Confidence; reason?: string }) {
+function ConfidenceBadge({ confidence, reason }: { confidence?: Confidence | undefined; reason?: string | undefined }) {
   if (!confidence) {
     return (
       <Badge variant="muted" icon={LoadingSpinner}>

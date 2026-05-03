@@ -7,8 +7,17 @@ export function IndexerFields({ selectedType, register, errors, watch, setValue,
   if (!Component) return null;
   return (
     <>
-      <Component register={register} errors={errors} watch={watch} setValue={setValue} selectedType={selectedType} prowlarrManaged={prowlarrManaged} formTestResult={formTestResult} indexerId={indexerId} />
-      <UseProxyField register={register} watch={watch} />
+      <Component
+        register={register}
+        errors={errors}
+        selectedType={selectedType}
+        {...(watch !== undefined && { watch })}
+        {...(setValue !== undefined && { setValue })}
+        {...(prowlarrManaged !== undefined && { prowlarrManaged })}
+        {...(formTestResult !== undefined && { formTestResult })}
+        {...(indexerId !== undefined && { indexerId })}
+      />
+      <UseProxyField register={register} {...(watch !== undefined && { watch })} />
     </>
   );
 }

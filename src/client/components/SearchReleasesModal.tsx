@@ -140,8 +140,8 @@ export function SearchReleasesModal({ isOpen, book, onClose }: SearchReleasesMod
       return;
     }
     blacklistMutation.mutate({
-      infoHash: result.infoHash || undefined,
-      guid: result.guid || undefined,
+      ...(result.infoHash && { infoHash: result.infoHash }),
+      ...(result.guid && { guid: result.guid }),
       title: result.title,
       bookId: book.id,
       reason: 'other',

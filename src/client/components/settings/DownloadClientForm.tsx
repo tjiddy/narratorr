@@ -28,15 +28,15 @@ const defaultValues: CreateDownloadClientFormData = {
 };
 
 interface DownloadClientFormProps {
-  client?: DownloadClient;
+  client?: DownloadClient | undefined;
   mode: 'edit' | 'create';
-  onCancel?: () => void;
+  onCancel?: (() => void) | undefined;
   onSubmit: (data: CreateDownloadClientFormData & { pathMappings?: PathMappingEntry[] }) => void;
   onFormTest: (data: CreateDownloadClientFormData) => void;
-  isPending?: boolean;
-  testingForm?: boolean;
-  formTestResult?: TestResult | null;
-  inModal?: boolean;
+  isPending?: boolean | undefined;
+  testingForm?: boolean | undefined;
+  formTestResult?: TestResult | null | undefined;
+  inModal?: boolean | undefined;
 }
 
 export function DownloadClientForm({ client, mode, onCancel, onSubmit, onFormTest, isPending, testingForm, formTestResult, inModal }: DownloadClientFormProps) {
