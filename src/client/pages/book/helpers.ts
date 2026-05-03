@@ -3,18 +3,18 @@ import { bookStatusConfig } from '@/lib/status';
 import type { BookWithAuthor } from '@/lib/api';
 
 export interface MetadataBook {
-  subtitle?: string;
-  description?: string;
-  coverUrl?: string;
-  duration?: number;
-  genres?: string[];
-  narrators?: string[];
-  publisher?: string;
-  series?: { name: string; position?: number }[];
+  subtitle?: string | undefined;
+  description?: string | undefined;
+  coverUrl?: string | undefined;
+  duration?: number | undefined;
+  genres?: string[] | undefined;
+  narrators?: string[] | undefined;
+  publisher?: string | undefined;
+  series?: { name: string; position?: number | undefined }[] | undefined;
 }
 
 // eslint-disable-next-line complexity -- flat data coalescing across two sources, no nesting
-export function mergeBookData(libraryBook: BookWithAuthor, metadataBook?: MetadataBook | null) {
+export function mergeBookData(libraryBook: BookWithAuthor, metadataBook?: MetadataBook | null | undefined) {
   const description = libraryBook.description || metadataBook?.description;
   const coverUrl = libraryBook.coverUrl || metadataBook?.coverUrl;
   const genres = libraryBook.genres ?? metadataBook?.genres;
