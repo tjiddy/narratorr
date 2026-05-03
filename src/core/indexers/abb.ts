@@ -18,8 +18,8 @@ import { INDEXER_TIMEOUT_MS } from '../utils/constants.js';
 export interface ABBConfig {
   hostname: string; // e.g., 'audiobookbay.lu'
   pageLimit: number; // Max pages to scrape per search
-  flareSolverrUrl?: string;
-  proxyUrl?: string;
+  flareSolverrUrl?: string | undefined;
+  proxyUrl?: string | undefined;
 }
 
 const DEFAULT_USER_AGENTS = [
@@ -40,7 +40,8 @@ export class AudioBookBayIndexer implements IndexerAdapter {
 
   constructor(private config: ABBConfig) {
     this.baseUrl = `https://${config.hostname}`;
-    this.flareSolverrUrl = normalizeBaseUrl(config.flareSolverrUrl);
+    const flareSolverrUrl = normalizeBaseUrl(config.flareSolverrUrl);
+    if (flareSolverrUrl !== undefined) this.flareSolverrUrl = flareSolverrUrl;
     if (config.proxyUrl !== undefined) this.proxyUrl = config.proxyUrl;
   }
 
@@ -98,8 +99,8 @@ export class AudioBookBayIndexer implements IndexerAdapter {
       results,
       parseStats: { itemsObserved, kept: results.length, dropped },
       debugTrace,
-      requestUrl: firstPageRequestUrl,
-      httpStatus: firstPageHttpStatus,
+      ...(firstPageRequestUrl !== undefined && { requestUrl: firstPageRequestUrl }),
+      ...(firstPageHttpStatus !== undefined && { httpStatus: firstPageHttpStatus }),
     };
   }
 
@@ -128,20 +129,22 @@ export class AudioBookBayIndexer implements IndexerAdapter {
 
       if (result.downloadUrl) {
         results.push(result);
+        const keptRawTitleBytes = rawTitleBytesHex(result.title);
         debugTrace.push({
           source: 'row',
           reason: 'kept',
           rawTitle: result.title,
-          rawTitleBytes: rawTitleBytesHex(result.title),
-          guid: result.guid,
+          ...(keptRawTitleBytes !== undefined && { rawTitleBytes: keptRawTitleBytes }),
+          ...(result.guid !== undefined && { guid: result.guid }),
         });
       } else {
         dropped.noUrl++;
+        const droppedRawTitleBytes = rawTitleBytesHex(result.title);
         debugTrace.push({
           source: 'row',
           reason: 'dropped:no-url',
           rawTitle: result.title,
-          rawTitleBytes: rawTitleBytesHex(result.title),
+          ...(droppedRawTitleBytes !== undefined && { rawTitleBytes: droppedRawTitleBytes }),
         });
       }
 
@@ -164,10 +167,14 @@ export class AudioBookBayIndexer implements IndexerAdapter {
 
     // FlareSolverr takes precedence over standard proxy
     if (this.flareSolverrUrl) {
-      return fetchWithProxy({ url, headers, proxyUrl: this.flareSolverrUrl, signal });
+      return fetchWithProxy({ url, headers, proxyUrl: this.flareSolverrUrl, ...(signal !== undefined && { signal }) });
     }
 
-    return fetchWithProxyAgent(url, { proxyUrl: this.proxyUrl, headers, signal });
+    return fetchWithProxyAgent(url, {
+      headers,
+      ...(this.proxyUrl !== undefined && { proxyUrl: this.proxyUrl }),
+      ...(signal !== undefined && { signal }),
+    });
   }
 
   private parseSearchPage(html: string): { results: SearchResult[]; observed: number; droppedEmptyTitle: number; debugTrace: IndexerParseTrace[] } {
@@ -309,20 +316,22 @@ export class AudioBookBayIndexer implements IndexerAdapter {
 
     // Author
     if (!result.author) {
-      result.author = this.extractField(pageText, [
+      const author = this.extractField(pageText, [
         'Author:',
         'Written by:',
         'By:',
       ]);
+      if (author !== undefined) result.author = author;
     }
 
     // Narrator
     if (!result.narrator) {
-      result.narrator = this.extractField(pageText, [
+      const narrator = this.extractField(pageText, [
         'Narrator:',
         'Narrated by:',
         'Read by:',
       ]);
+      if (narrator !== undefined) result.narrator = narrator;
     }
 
     // Size

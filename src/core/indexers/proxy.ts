@@ -50,10 +50,10 @@ export function createProxyAgent(proxyUrl: string | undefined): ProxyDispatcher 
 export async function fetchWithProxyAgent(
   url: string,
   options: {
-    proxyUrl?: string;
-    headers?: Record<string, string>;
-    timeoutMs?: number;
-    signal?: AbortSignal;
+    proxyUrl?: string | undefined;
+    headers?: Record<string, string> | undefined;
+    timeoutMs?: number | undefined;
+    signal?: AbortSignal | undefined;
   } = {},
 ): Promise<FetchResult> {
   const { proxyUrl, headers, timeoutMs = INDEXER_TIMEOUT_MS } = options;
@@ -67,9 +67,9 @@ export async function fetchWithProxyAgent(
 
   try {
     const fetchOptions: DispatcherFetchInit = {
-      headers,
       signal,
-      dispatcher,
+      ...(headers !== undefined && { headers }),
+      ...(dispatcher !== undefined && { dispatcher }),
     };
 
     let response: Response;

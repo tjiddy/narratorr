@@ -25,10 +25,10 @@ type FlareSolverrResponse = z.infer<typeof flareSolverrResponseSchema>;
 
 export interface FetchWithProxyOptions {
   url: string;
-  headers?: Record<string, string>;
-  timeoutMs?: number;
-  proxyUrl?: string;
-  signal?: AbortSignal;
+  headers?: Record<string, string> | undefined;
+  timeoutMs?: number | undefined;
+  proxyUrl?: string | undefined;
+  signal?: AbortSignal | undefined;
 }
 
 /**
@@ -78,7 +78,7 @@ async function fetchDirect(
     let response: Response;
     try {
       response = await fetch(url, {
-        headers,
+        ...(headers !== undefined && { headers }),
         signal,
       });
     } catch (error: unknown) {

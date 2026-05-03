@@ -16,8 +16,8 @@ import { normalizeBaseUrl } from '../../shared/normalize-base-url.js';
 export interface NewznabConfig {
   apiUrl: string; // e.g., 'https://nzbgeek.info'
   apiKey: string;
-  flareSolverrUrl?: string;
-  proxyUrl?: string;
+  flareSolverrUrl?: string | undefined;
+  proxyUrl?: string | undefined;
 }
 
 const AUDIOBOOK_CATEGORY = '3030';
@@ -35,8 +35,9 @@ export class NewznabIndexer implements IndexerAdapter {
     // Normalize: strip trailing slash
     this.apiUrl = normalizeBaseUrl(config.apiUrl);
     this.apiKey = config.apiKey;
-    this.flareSolverrUrl = normalizeBaseUrl(config.flareSolverrUrl);
-    this.proxyUrl = config.proxyUrl;
+    const flareSolverrUrl = normalizeBaseUrl(config.flareSolverrUrl);
+    if (flareSolverrUrl !== undefined) this.flareSolverrUrl = flareSolverrUrl;
+    if (config.proxyUrl !== undefined) this.proxyUrl = config.proxyUrl;
     this.name = name || new URL(config.apiUrl).hostname;
   }
 
@@ -160,23 +161,25 @@ export class NewznabIndexer implements IndexerAdapter {
 
       if (!downloadUrl) {
         dropped.noUrl++;
+        const droppedRawBytes = rawTitleBytesHex(title);
         debugTrace.push({
           source: 'item',
           reason: 'dropped:no-url',
           rawTitle: title,
-          rawTitleBytes: rawTitleBytesHex(title),
-          guid: guidText,
+          ...(droppedRawBytes !== undefined && { rawTitleBytes: droppedRawBytes }),
+          ...(guidText !== undefined && { guid: guidText }),
         });
         return; // continue
       }
 
       results.push(this.buildKeptResult($item, $, title, downloadUrl, guidText));
+      const keptRawBytes = rawTitleBytesHex(title);
       debugTrace.push({
         source: 'item',
         reason: 'kept',
         rawTitle: title,
-        rawTitleBytes: rawTitleBytesHex(title),
-        guid: guidText,
+        ...(keptRawBytes !== undefined && { rawTitleBytes: keptRawBytes }),
+        ...(guidText !== undefined && { guid: guidText }),
       });
     });
 
@@ -207,18 +210,22 @@ export class NewznabIndexer implements IndexerAdapter {
         : Number($item.find('enclosure').attr('length')) || undefined;
 
     const grabsNum = attrs.grabs != null ? Number(attrs.grabs) : undefined;
+    const finalSize = size || undefined;
+    const finalGrabs = grabsNum != null && !Number.isNaN(grabsNum) ? grabsNum : undefined;
+    const language = normalizeLanguage(attrs.language);
+    const newsgroup = attrs.group || undefined;
 
     return {
       title,
       protocol: 'usenet',
       downloadUrl,
-      detailsUrl,
-      guid: guidText,
-      size: size || undefined,
-      grabs: grabsNum != null && !Number.isNaN(grabsNum) ? grabsNum : undefined,
-      language: normalizeLanguage(attrs.language),
-      newsgroup: attrs.group || undefined,
       indexer: this.name,
+      ...(detailsUrl !== undefined && { detailsUrl }),
+      ...(guidText !== undefined && { guid: guidText }),
+      ...(finalSize !== undefined && { size: finalSize }),
+      ...(finalGrabs !== undefined && { grabs: finalGrabs }),
+      ...(language !== undefined && { language }),
+      ...(newsgroup !== undefined && { newsgroup }),
     };
   }
 

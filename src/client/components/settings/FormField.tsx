@@ -7,15 +7,15 @@ interface FormFieldProps {
   id: string;
   label: string;
   registration: UseFormRegisterReturn;
-  error?: FieldError;
+  error?: FieldError | undefined;
   type?: 'text' | 'number' | 'password' | 'url';
-  placeholder?: string;
-  readOnly?: boolean;
-  disabled?: boolean;
-  min?: number;
-  max?: number;
-  step?: number | string;
-  className?: string;
+  placeholder?: string | undefined;
+  readOnly?: boolean | undefined;
+  disabled?: boolean | undefined;
+  min?: number | undefined;
+  max?: number | undefined;
+  step?: number | string | undefined;
+  className?: string | undefined;
   hint?: ReactNode;
 }
 

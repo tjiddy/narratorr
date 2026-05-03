@@ -49,8 +49,8 @@ export function ManualAddForm({ defaultTitle, onSuccess, onPendingChange }: {
       api.addBook({
         title: data.title,
         authors: data.author ? [{ name: data.author }] : [],
-        seriesName: data.seriesName || undefined,
-        seriesPosition: data.seriesPosition ? Number(data.seriesPosition) : undefined,
+        ...(data.seriesName && { seriesName: data.seriesName }),
+        ...(data.seriesPosition && { seriesPosition: Number(data.seriesPosition) }),
         searchImmediately: qualityDefaults?.searchImmediately ?? false,
         monitorForUpgrades: qualityDefaults?.monitorForUpgrades ?? false,
       }),

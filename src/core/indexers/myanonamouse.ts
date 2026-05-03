@@ -18,11 +18,11 @@ import { parseDoubleEncodedNames, parseMamSize } from './mam-helpers.js';
 
 export interface MAMConfig {
   mamId: string;
-  baseUrl?: string;
-  proxyUrl?: string;
+  baseUrl?: string | undefined;
+  proxyUrl?: string | undefined;
   searchLanguages: number[];
   searchType: string;
-  isVip?: boolean;
+  isVip?: boolean | undefined;
 }
 
 const DEFAULT_BASE_URL = 'https://www.myanonamouse.net';
@@ -196,23 +196,25 @@ export class MyAnonamouseIndexer implements IndexerAdapter {
 
       if (!downloadUrl) {
         dropped.noUrl++;
+        const droppedRawBytes = rawTitleBytesHex(item.title);
         debugTrace.push({
           source: 'row',
           reason: 'dropped:no-url',
           rawTitle: item.title,
-          rawTitleBytes: rawTitleBytesHex(item.title),
-          guid,
+          ...(droppedRawBytes !== undefined && { rawTitleBytes: droppedRawBytes }),
+          ...(guid !== undefined && { guid }),
         });
         continue;
       }
 
       results.push(this.mapItem(item, downloadUrl));
+      const keptRawBytes = rawTitleBytesHex(item.title);
       debugTrace.push({
         source: 'row',
         reason: 'kept',
         rawTitle: item.title,
-        rawTitleBytes: rawTitleBytesHex(item.title),
-        guid,
+        ...(keptRawBytes !== undefined && { rawTitleBytes: keptRawBytes }),
+        ...(guid !== undefined && { guid }),
       });
     }
 
