@@ -21,7 +21,7 @@ export type Confidence = 'high' | 'medium' | 'none';
 export interface MatchCandidate {
   path: string;
   title: string;
-  author?: string;
+  author?: string | undefined;
 }
 
 export interface MatchResult {

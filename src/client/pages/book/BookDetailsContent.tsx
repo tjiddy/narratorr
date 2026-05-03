@@ -5,8 +5,8 @@ import { BookLocationSection } from './BookLocationSection.js';
 import { FileList } from './FileList.js';
 
 interface MergedData {
-  description?: string;
-  genres?: string[];
+  description?: string | undefined;
+  genres?: string[] | undefined;
 }
 
 export function BookDetailsContent({ libraryBook, merged }: {

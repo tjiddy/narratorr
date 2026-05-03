@@ -161,10 +161,10 @@ export function buildAudnexusConfig(
 
 export function buildImportedEventPayload(
   bookId: number,
-  item: { title: string; authorName?: string | null },
+  item: { title: string; authorName?: string | null | undefined },
   narratorName: string | null,
   finalPath: string,
-  mode?: string | null,
+  mode?: string | null | undefined,
 ) {
   return {
     bookId,
@@ -199,7 +199,7 @@ export function extractImportMetadata(item: ImportConfirmItem) {
 }
 
 export function buildBackgroundAudnexusConfig(
-  item: { asin?: string | null },
+  item: { asin?: string | null | undefined },
   extracted: ReturnType<typeof extractImportMetadata>,
   existingGenres: string[] | null,
 ): AudnexusConfig {

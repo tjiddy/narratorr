@@ -12,7 +12,7 @@ interface DeleteBookModalProps {
   isOpen: boolean;
   title: string;
   message: string;
-  fileCount?: number | null;
+  fileCount?: number | null | undefined;
   hasPath: boolean;
   onConfirm: (deleteFiles: boolean) => void;
   onCancel: () => void;
