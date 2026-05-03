@@ -506,6 +506,35 @@ describe('IndexerService', () => {
         expect(result.indexerId).toBe(3);
       }
     });
+
+    it('emits the canonical "Indexer search complete" summary from pollRss', async () => {
+      const log = createMockLogger();
+      const svc = new IndexerService(inject<Db>(db), inject<FastifyBaseLogger>(log));
+      const torznabIndexer = createMockDbIndexer({
+        id: 1,
+        name: 'Torznab',
+        type: 'torznab',
+        settings: { apiUrl: 'https://tracker.test', apiKey: 'key' },
+      });
+      const mockResult = { title: 'Book', indexer: 'Torznab', protocol: 'torrent' as const, downloadUrl: 'magnet:?xt=urn:btih:abc' };
+      const mockAdapter = {
+        type: 'torznab',
+        name: 'Torznab',
+        search: vi.fn().mockResolvedValue(searchResponse([mockResult])),
+        test: vi.fn(),
+      };
+      vi.spyOn(svc, 'getAdapter').mockResolvedValue(mockAdapter as never);
+
+      await svc.pollRss(torznabIndexer);
+
+      const summaryCalls = (log.debug as ReturnType<typeof vi.fn>).mock.calls.filter(
+        ([, msg]) => msg === 'Indexer search complete',
+      );
+      expect(summaryCalls).toHaveLength(1);
+      expect(summaryCalls[0]?.[0]).toEqual(
+        expect.objectContaining({ indexer: 'Torznab', type: 'torznab', itemsObserved: 1, kept: 1 }),
+      );
+    });
   });
 
   describe('searchAll', () => {
