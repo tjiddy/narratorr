@@ -17,12 +17,12 @@ function PendingReviewActions({
   isRejectingDismiss,
   isRejectingWithSearch,
 }: {
-  onApprove?: () => void;
-  onReject?: () => void;
-  onRejectWithSearch?: () => void;
-  isApproving?: boolean;
-  isRejectingDismiss?: boolean;
-  isRejectingWithSearch?: boolean;
+  onApprove?: (() => void) | undefined;
+  onReject?: (() => void) | undefined;
+  onRejectWithSearch?: (() => void) | undefined;
+  isApproving?: boolean | undefined;
+  isRejectingDismiss?: boolean | undefined;
+  isRejectingWithSearch?: boolean | undefined;
 }) {
   const isAnyPending = isApproving || isRejectingDismiss || isRejectingWithSearch;
 
@@ -72,12 +72,12 @@ function PendingReviewDetails({
   isRejectingWithSearch,
 }: {
   download: Download;
-  onApprove?: () => void;
-  onReject?: () => void;
-  onRejectWithSearch?: () => void;
-  isApproving?: boolean;
-  isRejectingDismiss?: boolean;
-  isRejectingWithSearch?: boolean;
+  onApprove?: (() => void) | undefined;
+  onReject?: (() => void) | undefined;
+  onRejectWithSearch?: (() => void) | undefined;
+  isApproving?: boolean | undefined;
+  isRejectingDismiss?: boolean | undefined;
+  isRejectingWithSearch?: boolean | undefined;
 }) {
   const [expanded, setExpanded] = useState(!download.qualityGate ? true : false);
   const hasGate = !!download.qualityGate;
@@ -142,12 +142,12 @@ function DownloadStatusDetails({
   isRejectingWithSearch,
 }: {
   download: Download;
-  onApprove?: () => void;
-  onReject?: () => void;
-  onRejectWithSearch?: () => void;
-  isApproving?: boolean;
-  isRejectingDismiss?: boolean;
-  isRejectingWithSearch?: boolean;
+  onApprove?: (() => void) | undefined;
+  onReject?: (() => void) | undefined;
+  onRejectWithSearch?: (() => void) | undefined;
+  isApproving?: boolean | undefined;
+  isRejectingDismiss?: boolean | undefined;
+  isRejectingWithSearch?: boolean | undefined;
 }) {
   return (
     <>
@@ -248,18 +248,18 @@ export function DownloadActivityCard({
   compact = false,
 }: {
   download: Download;
-  onCancel?: () => void;
-  onRetry?: () => void;
-  onApprove?: () => void;
-  onReject?: () => void;
-  onRejectWithSearch?: () => void;
-  onDelete?: () => void;
-  isCancelling?: boolean;
-  isApproving?: boolean;
-  isRejectingDismiss?: boolean;
-  isRejectingWithSearch?: boolean;
-  isDeleting?: boolean;
-  isRetrying?: boolean;
+  onCancel?: (() => void) | undefined;
+  onRetry?: (() => void) | undefined;
+  onApprove?: (() => void) | undefined;
+  onReject?: (() => void) | undefined;
+  onRejectWithSearch?: (() => void) | undefined;
+  onDelete?: (() => void) | undefined;
+  isCancelling?: boolean | undefined;
+  isApproving?: boolean | undefined;
+  isRejectingDismiss?: boolean | undefined;
+  isRejectingWithSearch?: boolean | undefined;
+  isDeleting?: boolean | undefined;
+  isRetrying?: boolean | undefined;
   showProgress?: boolean;
   index?: number;
   compact?: boolean;

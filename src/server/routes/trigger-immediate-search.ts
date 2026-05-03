@@ -12,7 +12,7 @@ export interface ImmediateSearchDeps {
   downloadOrchestrator: DownloadOrchestrator;
   settingsService: SettingsService;
   blacklistService: BlacklistService;
-  eventBroadcaster?: EventBroadcasterService;
+  eventBroadcaster?: EventBroadcasterService | undefined;
 }
 
 /** Fire-and-forget: search indexers and grab the best result for a newly added book. */

@@ -40,11 +40,11 @@ export interface SearchFilterOptions {
   grabFloor: number;
   minSeeders: number;
   protocolPreference: string;
-  rejectWords?: string;
-  requiredWords?: string;
-  languages?: readonly string[];
-  narratorPriority?: NarratorPriority;
-  maxDownloadSize?: number;
+  rejectWords?: string | undefined;
+  requiredWords?: string | undefined;
+  languages?: readonly string[] | undefined;
+  narratorPriority?: NarratorPriority | undefined;
+  maxDownloadSize?: number | undefined;
 }
 
 /**

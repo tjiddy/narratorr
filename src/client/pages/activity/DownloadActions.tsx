@@ -17,12 +17,12 @@ export function DownloadActions({
   isRetrying,
 }: {
   download: Download;
-  onCancel?: () => void;
-  onRetry?: () => void;
-  onDelete?: () => void;
-  isCancelling?: boolean;
-  isDeleting?: boolean;
-  isRetrying?: boolean;
+  onCancel?: (() => void) | undefined;
+  onRetry?: (() => void) | undefined;
+  onDelete?: (() => void) | undefined;
+  isCancelling?: boolean | undefined;
+  isDeleting?: boolean | undefined;
+  isRetrying?: boolean | undefined;
 }) {
   const isRetryable = download.status === 'failed' && download.bookId != null;
 
