@@ -9,7 +9,7 @@ import type { EventBroadcasterService } from './event-broadcaster.service.js';
 import type { FastifyBaseLogger } from 'fastify';
 import type { SearchResult } from '../../core/index.js';
 import { BYTES_PER_GB as GB } from '../../shared/constants.js';
-import type { SearchResponsePayload } from '../../shared/schemas/search-stream.js';
+import type { SearchResponsePayload, SearchResultPayload } from '../../shared/schemas/search-stream.js';
 
 function createMockLogger(): FastifyBaseLogger {
   return {
@@ -2226,10 +2226,22 @@ describe('#533 postProcessSearchResults — multi-part filter uses nzbName after
   });
 });
 
+/**
+ * Zod's `.optional()` infers `?: T | undefined`, but the function's return type
+ * uses canonical `?: T` (strict). `TightenOptional<T>` strips the `| undefined`
+ * representation artifact so this assertion catches real key/value drift, not
+ * the Zod inference shape. Pattern shared with search-stream.test.ts.
+ */
+type TightenOptional<T> = {
+  [K in keyof T as undefined extends T[K] ? never : K]: T[K];
+} & {
+  [K in keyof T as undefined extends T[K] ? K : never]?: Exclude<T[K], undefined>;
+};
+
 describe('postProcessSearchResults — search-complete payload schema compatibility (#734 AC1)', () => {
   it('return type is structurally compatible with searchResponseSchema', () => {
-    // EOPT PHASE 1 SKIPPED — needs human review
+    type TightSearchResponse = Omit<SearchResponsePayload, 'results'> & { results: TightenOptional<SearchResultPayload>[] };
     expectTypeOf<Awaited<ReturnType<typeof postProcessSearchResults>>>()
-      .toEqualTypeOf<SearchResponsePayload>();
+      .branded.toEqualTypeOf<TightSearchResponse>();
   });
 });
