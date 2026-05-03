@@ -20,9 +20,9 @@ const sizeClasses: Record<ButtonSize, string> = {
 
 interface ButtonProps extends ButtonHTMLAttributes<HTMLButtonElement> {
   variant: ButtonVariant;
-  size?: ButtonSize;
-  icon?: ElementType;
-  loading?: boolean;
+  size?: ButtonSize | undefined;
+  icon?: ElementType | undefined;
+  loading?: boolean | undefined;
   children?: ReactNode;
 }
 

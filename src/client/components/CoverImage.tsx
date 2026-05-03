@@ -2,11 +2,11 @@ import { useState, type ReactNode } from 'react';
 import { resolveUrl } from '@/lib/url-utils';
 
 interface CoverImageProps {
-  src?: string | null;
+  src?: string | null | undefined;
   alt: string;
   fallback: ReactNode;
-  className?: string;
-  imgClassName?: string;
+  className?: string | undefined;
+  imgClassName?: string | undefined;
 }
 
 export function CoverImage({ src, alt, fallback, className = '', imgClassName }: CoverImageProps) {

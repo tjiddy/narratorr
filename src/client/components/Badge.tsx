@@ -12,9 +12,9 @@ const variantClasses: Record<BadgeVariant, string> = {
 
 interface BadgeProps {
   variant: BadgeVariant;
-  icon?: ElementType;
-  className?: string;
-  title?: string;
+  icon?: ElementType | undefined;
+  className?: string | undefined;
+  title?: string | undefined;
   children: ReactNode;
 }
 

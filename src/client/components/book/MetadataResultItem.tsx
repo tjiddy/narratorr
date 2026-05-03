@@ -8,19 +8,19 @@ import { HeadphonesIcon, CheckCircleIcon } from '@/components/icons';
 export interface MetadataResultItemProps {
   meta: BookMetadata;
   onSelect: (meta: BookMetadata) => void;
-  showNarrators?: boolean;
-  showSeries?: boolean;
-  showDuration?: boolean;
-  showLibraryBadge?: boolean;
-  libraryBooks?: (BookIdentifier | BookWithAuthor)[];
+  showNarrators?: boolean | undefined;
+  showSeries?: boolean | undefined;
+  showDuration?: boolean | undefined;
+  showLibraryBadge?: boolean | undefined;
+  libraryBooks?: (BookIdentifier | BookWithAuthor)[] | undefined;
   placeholderIcon?: ReactNode;
-  coverSize?: 'sm' | 'md';
-  className?: string;
-  dataTestId?: string;
+  coverSize?: 'sm' | 'md' | undefined;
+  className?: string | undefined;
+  dataTestId?: string | undefined;
 }
 
 function CoverImage({ coverUrl, placeholderIcon, size }: {
-  coverUrl?: string;
+  coverUrl?: string | undefined;
   placeholderIcon?: ReactNode;
   size: 'sm' | 'md';
 }) {

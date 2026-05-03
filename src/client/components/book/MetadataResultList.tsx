@@ -7,15 +7,15 @@ export interface MetadataResultListProps {
   limit: number;
   maxHeight: string;
   onSelect: (meta: BookMetadata) => void;
-  showNarrators?: boolean;
-  showSeries?: boolean;
-  showDuration?: boolean;
-  showLibraryBadge?: boolean;
-  libraryBooks?: (BookIdentifier | BookWithAuthor)[];
+  showNarrators?: boolean | undefined;
+  showSeries?: boolean | undefined;
+  showDuration?: boolean | undefined;
+  showLibraryBadge?: boolean | undefined;
+  libraryBooks?: (BookIdentifier | BookWithAuthor)[] | undefined;
   placeholderIcon?: ReactNode;
-  coverSize?: 'sm' | 'md';
-  itemClassName?: string;
-  dataTestId?: string;
+  coverSize?: 'sm' | 'md' | undefined;
+  itemClassName?: string | undefined;
+  dataTestId?: string | undefined;
 }
 
 export function MetadataResultList({

@@ -6,11 +6,11 @@ export interface IndexerFieldsProps {
   selectedType: IndexerType;
   register: UseFormRegister<CreateIndexerFormData>;
   errors: FieldErrors<CreateIndexerFormData>;
-  watch?: UseFormWatch<CreateIndexerFormData>;
-  setValue?: UseFormSetValue<CreateIndexerFormData>;
-  prowlarrManaged?: boolean;
-  formTestResult?: { success: boolean; metadata?: Record<string, unknown>; ip?: string } | null;
-  indexerId?: number;
+  watch?: UseFormWatch<CreateIndexerFormData> | undefined;
+  setValue?: UseFormSetValue<CreateIndexerFormData> | undefined;
+  prowlarrManaged?: boolean | undefined;
+  formTestResult?: { success: boolean; metadata?: Record<string, unknown>; ip?: string } | null | undefined;
+  indexerId?: number | undefined;
 }
 
-export type FieldComponent = (props: Pick<IndexerFieldsProps, 'register' | 'errors' | 'watch' | 'setValue' | 'formTestResult' | 'indexerId'> & { selectedType: IndexerType; prowlarrManaged?: boolean }) => React.JSX.Element;
+export type FieldComponent = (props: Pick<IndexerFieldsProps, 'register' | 'errors' | 'watch' | 'setValue' | 'formTestResult' | 'indexerId'> & { selectedType: IndexerType; prowlarrManaged?: boolean | undefined }) => React.JSX.Element;

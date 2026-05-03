@@ -5,8 +5,8 @@ interface TestButtonProps {
   testing: boolean;
   onClick: () => void;
   variant: 'form' | 'inline';
-  disabled?: boolean;
-  title?: string;
+  disabled?: boolean | undefined;
+  title?: string | undefined;
 }
 
 export function TestButton({ testing, onClick, variant, disabled, title }: TestButtonProps) {

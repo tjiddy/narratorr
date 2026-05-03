@@ -23,9 +23,9 @@ const manualAddSchema = z.object({
 type ManualAddFormData = z.infer<typeof manualAddSchema>;
 
 export function ManualAddForm({ defaultTitle, onSuccess, onPendingChange }: {
-  defaultTitle?: string;
-  onSuccess?: () => void;
-  onPendingChange?: (pending: boolean) => void;
+  defaultTitle?: string | undefined;
+  onSuccess?: (() => void) | undefined;
+  onPendingChange?: ((pending: boolean) => void) | undefined;
 }) {
   const queryClient = useQueryClient();
 
