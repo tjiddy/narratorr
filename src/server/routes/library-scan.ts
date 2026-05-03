@@ -252,7 +252,7 @@ async function runSearchTrace(
           swapQuery: null,
           results,
         };
-        const match: ScanDebugTrace['match'] = { status: 'matched', selected: results[0] };
+        const match: ScanDebugTrace['match'] = { status: 'matched', selected: results[0]! };
         return { search, match };
       }
       directLookup = { asin, hit: false };
@@ -280,7 +280,7 @@ async function runSearchTrace(
   };
 
   const match: ScanDebugTrace['match'] = searchResult.results.length > 0
-    ? { status: 'matched', selected: toSearchResultItem(searchResult.results[0]) }
+    ? { status: 'matched', selected: toSearchResultItem(searchResult.results[0]!) }
     : { status: 'no match', selected: null };
 
   return { search, match };

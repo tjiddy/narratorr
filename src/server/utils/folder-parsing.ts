@@ -95,7 +95,7 @@ export function cleanName(name: string): string {
   // Strip trailing narrator-style parenthetical (1-3 word name, not codec/year)
   const narratorMatch = result.match(NARRATOR_PAREN_REGEX);
   if (narratorMatch) {
-    const content = narratorMatch[1];
+    const content = narratorMatch[1]!;
     // Don't strip if content is a known codec tag (already handled, but guard against edge cases)
     if (!CODEC_TEST_REGEX.test(content)) {
       const beforeParen = result.replace(NARRATOR_PAREN_REGEX, '').trim();
@@ -108,11 +108,11 @@ export function cleanName(name: string): string {
   // and "The Hunger Games, Book 01 – The Hunger Games"
   const dashParts = result.split(/\s*[–-]\s*/);
   if (dashParts.length === 2) {
-    const left = dashParts[0]
+    const left = dashParts[0]!
       .replace(SERIES_MARKER_REGEX, '')   // strip ", Book 01" etc. from left
       .replace(/\s*\d+\s*$/, '')          // strip trailing number like "01"
       .trim();
-    const right = dashParts[1].trim();
+    const right = dashParts[1]!.trim();
     if (left.toLowerCase() === right.toLowerCase() && right) {
       result = right;
     }
@@ -184,7 +184,7 @@ export function cleanNameWithTrace(name: string): CleanNameTraceResult {
   const narratorMatch = current.match(NARRATOR_PAREN_REGEX);
   if (narratorMatch) {
     const content = narratorMatch[1];
-    if (!CODEC_TEST_REGEX.test(content)) {
+    if (!CODEC_TEST_REGEX.test(content!)) {
       const beforeParen = current.replace(NARRATOR_PAREN_REGEX, '').trim();
       if (beforeParen) current = beforeParen;
     }
@@ -194,11 +194,11 @@ export function cleanNameWithTrace(name: string): CleanNameTraceResult {
   // Step 10: dedup
   const dashParts = current.split(/\s*[–-]\s*/);
   if (dashParts.length === 2) {
-    const left = dashParts[0]
+    const left = dashParts[0]!
       .replace(SERIES_MARKER_REGEX, '')
       .replace(/\s*\d+\s*$/, '')
       .trim();
-    const right = dashParts[1].trim();
+    const right = dashParts[1]!.trim();
     if (left.toLowerCase() === right.toLowerCase() && right) {
       current = right;
     }
@@ -252,19 +252,19 @@ function parseSingleFolder(folder: string): {
   const seriesNumberMatch = input.match(SERIES_NUMBER_TITLE_REGEX);
   if (seriesNumberMatch) {
     return {
-      title: cleanName(seriesNumberMatch[2]),
+      title: cleanName(seriesNumberMatch[2]!),
       author: null,
-      series: cleanName(seriesNumberMatch[1]),
+      series: cleanName(seriesNumberMatch[1]!),
       asin,
     };
   }
 
   // Pattern: "Author - Title" (skip if left side is just a number like "01 - Title")
   const dashMatch = input.match(/^(.+?)\s*-\s*(.+)$/);
-  if (dashMatch && !/^\d+$/.test(dashMatch[1].trim())) {
+  if (dashMatch && !/^\d+$/.test(dashMatch[1]!.trim())) {
     return {
-      title: cleanName(dashMatch[2]),
-      author: cleanName(dashMatch[1]),
+      title: cleanName(dashMatch[2]!),
+      author: cleanName(dashMatch[1]!),
       series: null,
       asin,
     };
@@ -274,8 +274,8 @@ function parseSingleFolder(folder: string): {
   const parenMatch = input.match(/^(.+?)\s*[([](.+?)[)\]]$/);
   if (parenMatch) {
     return {
-      title: cleanName(parenMatch[1]),
-      author: cleanName(parenMatch[2]),
+      title: cleanName(parenMatch[1]!),
+      author: cleanName(parenMatch[2]!),
       series: null,
       asin,
     };
@@ -284,8 +284,8 @@ function parseSingleFolder(folder: string): {
   // Pattern: "Title by Author" (word-boundary, not inside words like "Standby")
   const byMatch = input.match(/^(.+?)\bby\b(.+)$/i);
   if (byMatch) {
-    const left = byMatch[1].trim();
-    const right = byMatch[2].trim();
+    const left = byMatch[1]!.trim();
+    const right = byMatch[2]!.trim();
     // Guard: left side must not be just numbers, right side must be non-empty
     if (right && !/^\d+$/.test(left)) {
       return {
@@ -330,19 +330,19 @@ export function parseFolderStructure(parts: string[]): {
 
   // Single folder: try to parse "Author - Title" or "Title (Author)"
   if (parts.length === 1) {
-    const folder = parts[0];
+    const folder = parts[0]!;
     return parseSingleFolder(folder);
   }
 
   // Two folders: Author/Title (or Author/Series – NN – Title)
   // Extract ASIN from the title segment (2-part branch bypasses parseSingleFolder)
   if (parts.length === 2) {
-    const { asin, cleaned } = extractASIN(parts[1]);
-    const titleSegment = cleaned || parts[1];
+    const { asin, cleaned } = extractASIN(parts[1]!);
+    const titleSegment = cleaned || parts[1]!;
     if (isAllNumericSegments(titleSegment)) {
       return {
         title: titleSegment,
-        author: cleanName(parts[0]),
+        author: cleanName(parts[0]!),
         series: null,
         asin,
       };
@@ -350,15 +350,15 @@ export function parseFolderStructure(parts: string[]): {
     const seriesMatch = titleSegment.match(SERIES_NUMBER_TITLE_REGEX);
     if (seriesMatch) {
       return {
-        title: cleanName(seriesMatch[2]),
-        author: cleanName(parts[0]),
-        series: cleanName(seriesMatch[1]),
+        title: cleanName(seriesMatch[2]!),
+        author: cleanName(parts[0]!),
+        series: cleanName(seriesMatch[1]!),
         asin,
       };
     }
     return {
       title: cleanName(titleSegment),
-      author: cleanName(parts[0]),
+      author: cleanName(parts[0]!),
       series: null,
       asin,
     };
@@ -366,12 +366,12 @@ export function parseFolderStructure(parts: string[]): {
 
   // Three or more folders: Author/Series/Title (take first, second-to-last, last)
   // Extract ASIN from the title segment (last part)
-  const { asin, cleaned } = extractASIN(parts[parts.length - 1]);
-  const titleSegment = cleaned || parts[parts.length - 1];
+  const { asin, cleaned } = extractASIN(parts[parts.length - 1]!);
+  const titleSegment = cleaned || parts[parts.length - 1]!;
   return {
     title: cleanName(titleSegment),
-    author: cleanName(parts[0]),
-    series: cleanName(parts[parts.length - 2]),
+    author: cleanName(parts[0]!),
+    series: cleanName(parts[parts.length - 2]!),
     asin,
   };
 }
@@ -392,28 +392,28 @@ export function parseFolderStructureRaw(parts: string[]): {
   }
 
   if (parts.length === 1) {
-    return parseSingleFolderRaw(parts[0]);
+    return parseSingleFolderRaw(parts[0]!);
   }
 
   if (parts.length === 2) {
-    const { asin, cleaned } = extractASIN(parts[1]);
-    const titleSegment = cleaned || parts[1];
+    const { asin, cleaned } = extractASIN(parts[1]!);
+    const titleSegment = cleaned || parts[1]!;
     if (isAllNumericSegments(titleSegment)) {
-      return { title: titleSegment, author: parts[0], series: null, asin };
+      return { title: titleSegment, author: parts[0]!, series: null, asin };
     }
     const seriesMatch = titleSegment.match(SERIES_NUMBER_TITLE_REGEX);
     if (seriesMatch) {
-      return { title: seriesMatch[2], author: parts[0], series: seriesMatch[1], asin };
+      return { title: seriesMatch[2]!, author: parts[0]!, series: seriesMatch[1]!, asin };
     }
-    return { title: titleSegment, author: parts[0], series: null, asin };
+    return { title: titleSegment, author: parts[0]!, series: null, asin };
   }
 
-  const { asin, cleaned } = extractASIN(parts[parts.length - 1]);
-  const titleSegment = cleaned || parts[parts.length - 1];
+  const { asin, cleaned } = extractASIN(parts[parts.length - 1]!);
+  const titleSegment = cleaned || parts[parts.length - 1]!;
   return {
     title: titleSegment,
-    author: parts[0],
-    series: parts[parts.length - 2],
+    author: parts[0]!,
+    series: parts[parts.length - 2]!,
     asin,
   };
 }
@@ -433,23 +433,23 @@ function parseSingleFolderRaw(folder: string): {
 
   const seriesNumberMatch = input.match(SERIES_NUMBER_TITLE_REGEX);
   if (seriesNumberMatch) {
-    return { title: seriesNumberMatch[2], author: null, series: seriesNumberMatch[1], asin };
+    return { title: seriesNumberMatch[2]!, author: null, series: seriesNumberMatch[1]!, asin };
   }
 
   const dashMatch = input.match(/^(.+?)\s*-\s*(.+)$/);
-  if (dashMatch && !/^\d+$/.test(dashMatch[1].trim())) {
-    return { title: dashMatch[2], author: dashMatch[1], series: null, asin };
+  if (dashMatch && !/^\d+$/.test(dashMatch[1]!.trim())) {
+    return { title: dashMatch[2]!, author: dashMatch[1]!, series: null, asin };
   }
 
   const parenMatch = input.match(/^(.+?)\s*[([](.+?)[)\]]$/);
   if (parenMatch) {
-    return { title: parenMatch[1], author: parenMatch[2], series: null, asin };
+    return { title: parenMatch[1]!, author: parenMatch[2]!, series: null, asin };
   }
 
   const byMatch = input.match(/^(.+?)\bby\b(.+)$/i);
   if (byMatch) {
-    const left = byMatch[1].trim();
-    const right = byMatch[2].trim();
+    const left = byMatch[1]!.trim();
+    const right = byMatch[2]!.trim();
     if (right && !/^\d+$/.test(left)) {
       return { title: left, author: right, series: null, asin };
     }
@@ -467,19 +467,19 @@ export function extractYear(name: string): number | undefined {
   // Check parenthesized year: (2017)
   const parenMatch = normalized.match(/\((\d{4})\)\s*$/);
   if (parenMatch) {
-    const y = parseInt(parenMatch[1], 10);
+    const y = parseInt(parenMatch[1]!, 10);
     if (y >= 1900 && y <= 2099) return y;
   }
   // Check bracketed year: [2017]
   const bracketMatch = normalized.match(/\[(\d{4})\]\s*$/);
   if (bracketMatch) {
-    const y = parseInt(bracketMatch[1], 10);
+    const y = parseInt(bracketMatch[1]!, 10);
     if (y >= 1900 && y <= 2099) return y;
   }
   // Check bare trailing year
   const bareMatch = normalized.match(BARE_YEAR_REGEX);
   if (bareMatch) {
-    const y = parseInt(bareMatch[1], 10);
+    const y = parseInt(bareMatch[1]!, 10);
     if (y >= 1900 && y <= 2099) return y;
   }
   return undefined;

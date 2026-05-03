@@ -58,8 +58,8 @@ export class BookService {
       .orderBy(bookNarrators.position);
 
     return {
-      ...bookResults[0].book,
-      importListName: bookResults[0].importListName ?? null,
+      ...bookResults[0]!.book,
+      importListName: bookResults[0]!.importListName ?? null,
       authors: authorResults.sort((a, b) => a.position - b.position).map((r) => r.author),
       narrators: narratorResults.sort((a, b) => a.position - b.position).map((r) => r.narrator),
     };
@@ -79,13 +79,13 @@ export class BookService {
         .limit(1);
 
       if (byAsin.length > 0) {
-        return this.getById(byAsin[0].id);
+        return this.getById(byAsin[0]!.id);
       }
     }
 
     // Check by title + position-0 author slug
     if (authorList && authorList.length > 0) {
-      const primarySlug = slugify(authorList[0].name);
+      const primarySlug = slugify(authorList[0]!.name);
       const byTitleAuthor = await this.db
         .select({ id: books.id })
         .from(books)
@@ -95,7 +95,7 @@ export class BookService {
         .limit(1);
 
       if (byTitleAuthor.length > 0) {
-        return this.getById(byTitleAuthor[0].id);
+        return this.getById(byTitleAuthor[0]!.id);
       }
     }
 
@@ -115,7 +115,7 @@ export class BookService {
         .limit(1);
 
       if (byTitle.length > 0) {
-        return this.getById(byTitle[0].id);
+        return this.getById(byTitle[0]!.id);
       }
     }
 
@@ -141,7 +141,7 @@ export class BookService {
     }
 
     for (let i = 0; i < uniqueAuthors.length; i++) {
-      const authorId = await findOrCreateAuthor(tx, uniqueAuthors[i].name, uniqueAuthors[i].asin);
+      const authorId = await findOrCreateAuthor(tx, uniqueAuthors[i]!.name, uniqueAuthors[i]!.asin);
       await tx
         .insert(bookAuthors)
         .values({ bookId, authorId, position: i });
@@ -167,7 +167,7 @@ export class BookService {
     }
 
     for (let i = 0; i < uniqueNarrators.length; i++) {
-      const narratorId = await findOrCreateNarrator(tx, uniqueNarrators[i]);
+      const narratorId = await findOrCreateNarrator(tx, uniqueNarrators[i]!);
       await tx
         .insert(bookNarrators)
         .values({ bookId, narratorId, position: i });
@@ -224,7 +224,7 @@ export class BookService {
         })
         .returning();
 
-      const id = result[0].id;
+      const id = result[0]!.id;
 
       await this.syncAuthors(tx, id, data.authors);
       if (data.narrators && data.narrators.length > 0) {

@@ -62,14 +62,14 @@ function splitBisacPath(genre: string): string {
   const parts = genre.split(/\s*\/\s*/).map((p) => p.trim()).filter(Boolean);
   if (parts.length <= 1) return genre.trim();
 
-  const leaf = parts[parts.length - 1];
-  const parent = parts[parts.length - 2];
+  const leaf = parts[parts.length - 1]!;
+  const parent = parts[parts.length - 2]!;
 
   // Drop "General" leaf
   if (leaf.toLowerCase() === 'general') {
     // If only "Fiction / Fantasy / General", return "Fantasy"
     // If just "Fiction / General", return "Fiction"
-    return parts.length > 2 ? parts[parts.length - 2] : parts[0];
+    return parts.length > 2 ? parts[parts.length - 2]! : parts[0]!;
   }
 
   // If parent is a generic category, combine leaf with context

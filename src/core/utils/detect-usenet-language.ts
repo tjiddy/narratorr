@@ -50,7 +50,7 @@ function decodeEntities(text: string): string {
 export function parseNzbName(xml: string): string | undefined {
   const match = /<meta\s+type="name">([^<]+)<\/meta>/i.exec(xml);
   if (!match) return undefined;
-  const text = decodeEntities(match[1]).trim();
+  const text = decodeEntities(match[1]!).trim();
   return text || undefined;
 }
 
@@ -61,7 +61,7 @@ export function parseNzbName(xml: string): string | undefined {
 export function parseNzbFileSubject(xml: string): string | undefined {
   const match = /<file\s[^>]*subject="([^"]*)"/i.exec(xml);
   if (!match) return undefined;
-  const text = decodeEntities(match[1]).trim();
+  const text = decodeEntities(match[1]!).trim();
   return text || undefined;
 }
 
@@ -109,7 +109,7 @@ export function parseNzbGroups(xml: string): string[] {
   const groupRegex = /<group>([^<]+)<\/group>/gi;
   let match: RegExpExecArray | null;
   while ((match = groupRegex.exec(xml)) !== null) {
-    const text = match[1].trim();
+    const text = match[1]!.trim();
     if (text) groups.push(text);
   }
   return groups;

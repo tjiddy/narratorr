@@ -35,7 +35,7 @@ export async function assertDeleteFlow(
   await user.click(getDeleteConfirmButton());
 
   await waitFor(() => {
-    expect(deleteApi.mock.calls[0][0]).toBe(expectedId);
+    expect(deleteApi.mock.calls[0]![0]).toBe(expectedId);
   });
 
   await assertSuccessToast(`${entityName} removed successfully`);

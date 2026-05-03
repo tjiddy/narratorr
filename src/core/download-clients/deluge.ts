@@ -157,7 +157,7 @@ export class DelugeClient implements DownloadClientAdapter {
     // Persist session cookie for subsequent authenticated requests
     const setCookie = response.headers.get('set-cookie');
     if (setCookie) {
-      this.sessionCookie = setCookie.split(';')[0];
+      this.sessionCookie = setCookie.split(';')[0]!;
     }
 
     this.authenticated = true;

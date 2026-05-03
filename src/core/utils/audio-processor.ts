@@ -76,9 +76,9 @@ export async function detectFfmpegPath(): Promise<string | null> {
  */
 export async function probeFfmpeg(ffmpegPath: string): Promise<string> {
   const { stdout } = await execFileAsync(ffmpegPath, ['-version']);
-  const firstLine = stdout.split('\n')[0];
+  const firstLine = stdout.split('\n')[0]!;
   const versionMatch = firstLine.match(/ffmpeg version (\S+)/);
-  return versionMatch ? versionMatch[1] : firstLine.trim();
+  return versionMatch ? versionMatch[1]! : firstLine.trim();
 }
 
 /**
@@ -99,7 +99,7 @@ export async function processAudioFiles(
   }
 
   // Skip processing for single m4b (already ABS-ready)
-  if (audioFiles.length === 1 && extname(audioFiles[0]).toLowerCase() === '.m4b') {
+  if (audioFiles.length === 1 && extname(audioFiles[0]!).toLowerCase() === '.m4b') {
     return { success: true, outputFiles: audioFiles };
   }
 
@@ -189,7 +189,7 @@ function spawnFfmpeg(
         if (match && options?.totalDuration && options.totalDuration > 0) {
           const now = Date.now();
           if (now - lastProgressTime >= 1000) {
-            const outTimeUs = parseInt(match[1], 10);
+            const outTimeUs = parseInt(match[1]!, 10);
             const percentage = Math.max(0, Math.min(1, outTimeUs / (options.totalDuration * 1_000_000)));
             options.onProgress?.('processing', percentage);
             lastProgressTime = now;
@@ -355,7 +355,7 @@ async function convertFiles(
   const encodeFn = async (): Promise<string[]> => {
     const results: string[] = [];
     for (let i = 0; i < audioFiles.length; i++) {
-      const filePath = audioFiles[i];
+      const filePath = audioFiles[i]!;
       const source = sourceMap.get(filePath);
 
       const stem = context.fileFormat

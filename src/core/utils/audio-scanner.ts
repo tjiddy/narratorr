@@ -200,7 +200,7 @@ function extractCoverArt(result: AudioScanResult, common: ICommonTagsResult, ski
   if (result.hasCoverArt || !common.picture?.length) return;
   result.hasCoverArt = true;
   if (!skipCover) {
-    const pic = common.picture[0];
+    const pic = common.picture[0]!;
     result.coverImage = Buffer.from(pic.data);
     result.coverMimeType = pic.format;
   }
@@ -260,9 +260,9 @@ function extractNarrator(
   // 3. Comment patterns: "narrated by", "read by", "performed by", "voice:"
   const commentEntries = common.comment;
   if (commentEntries && commentEntries.length > 0) {
-    const commentText = commentEntries[0].text ?? String(commentEntries[0]);
+    const commentText = commentEntries[0]!.text ?? String(commentEntries[0]!);
     const match = commentText.match(/(?:narrated|read|performed|voiced?)\s*(?:by\s*)?[:.]?\s*([^,.\n]+)/i);
-    if (match) return match[1].trim();
+    if (match) return match[1]!.trim();
   }
 
   // 4. Artist fallback — only if different from albumartist (author)

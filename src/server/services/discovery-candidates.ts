@@ -238,7 +238,7 @@ export function scoreCandidate(book: BookMetadata, reason: SuggestionReason, str
     if (new Date(book.publishedDate) >= twoYearsAgo) score += 10;
   }
   if (reason === 'series' && book.series?.[0]?.name && book.series[0].position != null) {
-    const gap = signals.seriesGaps.find(g => g.seriesName.toLowerCase() === book.series![0].name!.toLowerCase());
+    const gap = signals.seriesGaps.find(g => g.seriesName.toLowerCase() === book.series![0]!.name!.toLowerCase());
     if (gap && nearlyEqual(book.series[0].position!, gap.nextPosition)) score += 20;
   }
 

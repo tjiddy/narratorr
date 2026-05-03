@@ -78,7 +78,7 @@ export class BookListService {
     const where = conditions.length > 0 ? and(...conditions) : undefined;
 
     // Get total count (filters only, no pagination)
-    const [{ value: total }] = await this.db
+    const [{ value: total } = { value: 0 }] = await this.db
       .select({ value: countFn() })
       .from(books)
       .where(where);

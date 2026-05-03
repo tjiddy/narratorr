@@ -98,8 +98,8 @@ export function SortDropdown({ sortField, onSortFieldChange, sortDirection, onSo
       case ' ':
         e.preventDefault();
         if (focusIndex < sortOptions.length) {
-          onSortFieldChange(sortOptions[focusIndex].field);
-          onSortDirectionChange(sortOptions[focusIndex].direction);
+          onSortFieldChange(sortOptions[focusIndex]!.field);
+          onSortDirectionChange(sortOptions[focusIndex]!.direction);
           setFocusIndex(0);
           setOpen(false);
           triggerRef.current?.focus();

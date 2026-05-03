@@ -98,7 +98,7 @@ export class BookImportService {
           })
           .returning({ id: importJobs.id });
 
-        return { jobId: newJob.id };
+        return { jobId: newJob!.id };
       });
     } catch (error: unknown) {
       if (isActiveJobUniqueViolation(error)) {

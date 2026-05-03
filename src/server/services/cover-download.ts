@@ -24,7 +24,7 @@ export function isRemoteCoverUrl(url: string | null | undefined): boolean {
 /** Map Content-Type header to file extension, defaulting to jpg. */
 function contentTypeToExt(contentType: string | null): string {
   if (!contentType) return 'jpg';
-  const base = contentType.split(';')[0].trim();
+  const base = contentType.split(';')[0]!.trim();
   return mimeToExt(base) ?? 'jpg';
 }
 

@@ -106,7 +106,7 @@ export function extractSourceIndexerId(baseUrl: string): number | null {
     pathname = baseUrl;
   }
   const matches = [...pathname.matchAll(/\/(\d+)(?=[/]|$)/g)];
-  return matches.length ? parseInt(matches[matches.length - 1][1], 10) : null;
+  return matches.length ? parseInt(matches[matches.length - 1]![1]!, 10) : null;
 }
 
 /** Convert Readarr Fields[] to Narratorr internal settings */

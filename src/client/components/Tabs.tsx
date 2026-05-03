@@ -24,7 +24,7 @@ export function Tabs({ tabs, value, onChange, ariaLabel }: TabsProps) {
     if (e.key === 'ArrowLeft') nextIndex = (currentIndex - 1 + tabs.length) % tabs.length;
     if (nextIndex !== null) {
       e.preventDefault();
-      onChange(tabs[nextIndex].value);
+      onChange(tabs[nextIndex]!.value);
       tabRefs.current[nextIndex]?.focus();
     }
   }

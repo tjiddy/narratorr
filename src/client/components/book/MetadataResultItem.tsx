@@ -62,7 +62,7 @@ function MetadataDetails({ meta, showNarrators, showSeries, showDuration }: {
       )}
       {showSeries && meta.series && meta.series.length > 0 && (
         <p className="text-[10px] text-muted-foreground/40 truncate">
-          {meta.series[0].name}{meta.series[0].position != null ? ` #${meta.series[0].position}` : ''}
+          {meta.series[0]!.name}{meta.series[0]!.position != null ? ` #${meta.series[0]!.position}` : ''}
         </p>
       )}
       {showDuration && meta.duration != null && meta.duration > 0 && (

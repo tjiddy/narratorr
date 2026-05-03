@@ -334,7 +334,7 @@ export function parseTemplate(
 
   while ((match = tokenPattern.exec(template)) !== null) {
     const { name } = disambiguateTokenMatch(
-      match[1], match[2], match[3], match[4], allowedSet,
+      match[1], match[2]!, match[3], match[4], allowedSet,
     );
     if (!tokens.includes(name)) {
       tokens.push(name);

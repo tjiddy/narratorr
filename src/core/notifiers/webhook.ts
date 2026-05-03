@@ -37,7 +37,7 @@ function renderBody(template: string, event: NotificationEvent, payload: EventPa
     'health.message': payload.health?.message ?? '',
   };
 
-  return template.replace(/\{(\w+(?:\.\w+)*)\}/g, (match, key: string) => key in flat ? flat[key] : match);
+  return template.replace(/\{(\w+(?:\.\w+)*)\}/g, (match, key: string) => key in flat ? flat[key]! : match);
 }
 
 export class WebhookNotifier implements NotifierAdapter {

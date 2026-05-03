@@ -115,7 +115,7 @@ export const LibraryBookCard = memo(function LibraryBookCard({
         {/* Frosted info strip — always visible at bottom */}
         <div className="absolute inset-x-0 bottom-0 backdrop-blur-md bg-black/30 border-t border-white/5 transition-all duration-300 ease-out">
           {/* Status bar */}
-          <div className={`h-0.5 ${(bookStatusConfig[book.status] ?? bookStatusConfig.wanted).barClass}`} data-testid="status-bar" />
+          <div className={`h-0.5 ${(bookStatusConfig[book.status] ?? bookStatusConfig.wanted)!.barClass}`} data-testid="status-bar" />
           {/* Default: title + author */}
           <div className="px-3 py-2">
             <h3 className="text-sm font-semibold text-white leading-tight truncate drop-shadow-sm">{isCollapsed ? (book.seriesName || book.title) : book.title}</h3>
@@ -127,7 +127,7 @@ export const LibraryBookCard = memo(function LibraryBookCard({
             <div className="max-h-0 opacity-0 group-hover:max-h-16 group-hover:opacity-100 no-hover:max-h-16 no-hover:opacity-100 overflow-hidden transition-all duration-300 ease-out">
               <div className="px-3 pb-2 flex flex-wrap gap-x-3 gap-y-0.5">
                 {book.narrators.length > 0 && (
-                  <p className="text-[11px] text-white/50 truncate">{book.narrators[0].name}</p>
+                  <p className="text-[11px] text-white/50 truncate">{book.narrators[0]!.name}</p>
                 )}
                 {book.seriesName && (
                   <p className="text-[11px] text-amber-400/80 truncate">

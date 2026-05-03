@@ -149,7 +149,7 @@ export class RenameService {
 
     if (conflicting.length > 0) {
       throw new RenameError(
-        `Target path already belongs to "${conflicting[0].title}" (book #${conflicting[0].id})`,
+        `Target path already belongs to "${conflicting[0]!.title}" (book #${conflicting[0]!.id})`,
         'CONFLICT',
       );
     }

@@ -104,7 +104,7 @@ export class AuthService {
     if (result.length === 0) {
       throw new Error('Auth settings not initialized — call initialize() first');
     }
-    const raw = result[0].value as Record<string, unknown>;
+    const raw = result[0]!.value as Record<string, unknown>;
     return authConfigSchema.parse(decryptFields('auth', { ...raw }, getKey()));
   }
 
@@ -228,8 +228,19 @@ export class AuthService {
       return null;
     }
 
-    const user = result[0];
-    const [saltHex, hashHex] = user.passwordHash.split(':');
+    const user = result[0]!;
+    const parts = user.passwordHash.split(':');
+    const saltHex = parts[0];
+    const hashHex = parts[1];
+    if (parts.length !== 2 || saltHex === undefined || hashHex === undefined) {
+      // §6.4 — DB has a malformed passwordHash (no `:` separator). Treat as
+      // invalid credentials rather than a 500 — prevents an attacker from
+      // distinguishing "user exists with corrupt hash" from "wrong password".
+      // Logged at warn so operators see it; this should never happen with
+      // hashes produced by hashPassword().
+      this.log.warn({ username }, 'Auth: malformed passwordHash in DB');
+      return null;
+    }
     const salt = Buffer.from(saltHex, 'hex');
     const storedHash = Buffer.from(hashHex, 'hex');
 
@@ -305,12 +316,13 @@ export class AuthService {
 
   verifySessionCookie(cookie: string, secret: string): SessionVerifyResult | null {
     const parts = cookie.split('.');
-    if (parts.length !== 2) {
+    const payloadB64 = parts[0];
+    const signature = parts[1];
+    if (parts.length !== 2 || payloadB64 === undefined || signature === undefined) {
       this.log.debug('Auth: malformed session cookie');
       return null;
     }
 
-    const [payloadB64, signature] = parts;
     const expectedSig = createHmac('sha256', secret).update(payloadB64).digest('base64url');
 
     // SHA-256 both sides to a fixed length — avoids leaking signature length via early

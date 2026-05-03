@@ -169,7 +169,7 @@ export async function runRssJob(
     }
 
     if (ranked.length === 0) {
-      log.debug({ bookId, title: bookResults[0].title }, 'RSS match filtered out by quality pipeline');
+      log.debug({ bookId, title: bookResults[0]!.title }, 'RSS match filtered out by quality pipeline');
       continue;
     }
 

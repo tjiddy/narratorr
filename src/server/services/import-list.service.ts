@@ -65,7 +65,7 @@ export class ImportListService {
     }
     const result = await this.db.insert(importLists).values(toInsert).returning();
     this.log.info({ name: data.name, type: data.type }, 'Import list created');
-    return this.decryptRow(result[0]);
+    return this.decryptRow(result[0]!);
   }
 
   async update(id: number, data: Partial<NewImportList>): Promise<ImportListRow | null> {
@@ -196,7 +196,7 @@ export class ImportListService {
       const query = item.author ? `${item.title} ${item.author}` : item.title;
       const searchResults = await this.metadata.search(query);
       if (searchResults.books.length === 0) return { asin: item.asin, author: item.author };
-      const match = searchResults.books[0];
+      const match = searchResults.books[0]!;
       let asin = match.asin;
       // Follow providerId to detail endpoint for ASIN if search result didn't include one
       if (!asin && match.providerId) {
@@ -235,7 +235,7 @@ export class ImportListService {
       return;
     }
 
-    const newBook = insertResult[0];
+    const newBook = insertResult[0]!;
 
     // Insert author junction row if author is known
     if (enriched.author) {

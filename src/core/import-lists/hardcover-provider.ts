@@ -106,7 +106,7 @@ export class HardcoverProvider implements ImportListProvider {
     const data = await this.executeQuery();
 
     if (data.errors?.length) {
-      throw new ImportListError(this.name, `Hardcover GraphQL error: ${data.errors[0].message}`);
+      throw new ImportListError(this.name, `Hardcover GraphQL error: ${data.errors[0]!.message}`);
     }
 
     const books = this.listType === 'shelf'
@@ -175,7 +175,7 @@ export class HardcoverProvider implements ImportListProvider {
       }
       const data = parsed.data;
       if (data.errors?.length) {
-        return { success: false, message: `Hardcover GraphQL error: ${data.errors[0].message}` };
+        return { success: false, message: `Hardcover GraphQL error: ${data.errors[0]!.message}` };
       }
       if (!data.data?.__typename) {
         return { success: false, message: 'Hardcover probe returned no data.__typename field' };
