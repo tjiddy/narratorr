@@ -190,6 +190,7 @@ export class ImportListService {
     }
   }
 
+  // eslint-disable-next-line complexity -- passthrough/match/detail-followup branches w/ conditional-spread
   private async enrichItem(item: ImportListItem): Promise<{ asin?: string; author?: string }> {
     const passthrough = (): { asin?: string; author?: string } => ({
       ...(item.asin !== undefined && { asin: item.asin }),

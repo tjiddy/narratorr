@@ -194,28 +194,14 @@ export class MyAnonamouseIndexer implements IndexerAdapter {
         downloadUrl = await this.fetchTorrentAsDataUri(item.id, signal);
       }
 
+      const rawBytes = rawTitleBytesHex(item.title);
       if (!downloadUrl) {
         dropped.noUrl++;
-        const droppedRawBytes = rawTitleBytesHex(item.title);
-        debugTrace.push({
-          source: 'row',
-          reason: 'dropped:no-url',
-          rawTitle: item.title,
-          ...(droppedRawBytes !== undefined && { rawTitleBytes: droppedRawBytes }),
-          ...(guid !== undefined && { guid }),
-        });
+        debugTrace.push({ source: 'row', reason: 'dropped:no-url', rawTitle: item.title, ...(rawBytes !== undefined && { rawTitleBytes: rawBytes }), ...(guid !== undefined && { guid }) });
         continue;
       }
-
       results.push(this.mapItem(item, downloadUrl));
-      const keptRawBytes = rawTitleBytesHex(item.title);
-      debugTrace.push({
-        source: 'row',
-        reason: 'kept',
-        rawTitle: item.title,
-        ...(keptRawBytes !== undefined && { rawTitleBytes: keptRawBytes }),
-        ...(guid !== undefined && { guid }),
-      });
+      debugTrace.push({ source: 'row', reason: 'kept', rawTitle: item.title, ...(rawBytes !== undefined && { rawTitleBytes: rawBytes }), ...(guid !== undefined && { guid }) });
     }
 
     return {

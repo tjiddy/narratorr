@@ -190,6 +190,7 @@ export class NewznabIndexer implements IndexerAdapter {
     };
   }
 
+  // eslint-disable-next-line complexity -- field aggregation across attrs/enclosure with conditional-spread for omitting undefined optional fields
   private buildKeptResult(
     $item: ReturnType<cheerio.CheerioAPI>,
     $: cheerio.CheerioAPI,

@@ -28,6 +28,7 @@ function useMamDetection(watch?: UseFormWatch<CreateIndexerFormData>, setValue?:
   const [detectError, setDetectError] = useState<string | null>(null);
   const [isDetecting, setIsDetecting] = useState(false);
 
+  // eslint-disable-next-line complexity -- sentinel + setValue branches per detect-fail mode
   const detect = useCallback(async (mamId: string) => {
     if (!mamId.trim()) return;
     const isSentinel = mamId === '********';

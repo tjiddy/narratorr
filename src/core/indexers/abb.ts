@@ -45,6 +45,7 @@ export class AudioBookBayIndexer implements IndexerAdapter {
     if (config.proxyUrl !== undefined) this.proxyUrl = config.proxyUrl;
   }
 
+  // eslint-disable-next-line complexity -- multi-page pagination with conditional-spread for transport metadata
   async search(query: string, options?: SearchOptions): Promise<IndexerSearchResponse> {
     const results: SearchResult[] = [];
     const debugTrace: IndexerParseTrace[] = [];

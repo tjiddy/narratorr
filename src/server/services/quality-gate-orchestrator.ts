@@ -132,6 +132,7 @@ export class QualityGateOrchestrator {
   }
 
   /** Process a single completed download through the quality gate, with inline import on approval. */
+  // eslint-disable-next-line complexity -- approval-vs-rejection vs auto-grab branches with widened BlacklistAndRetryRequest
   async processOneDownload(downloadId: number): Promise<void> {
     const [ffprobePath2, row] = await Promise.all([this.resolveFfprobePath(), this.qualityGateService.getCompletedDownloadById(downloadId)]);
     if (!row) { this.log.warn({ downloadId }, 'Quality gate: processOneDownload — download not found or not completed'); return; }

@@ -167,6 +167,7 @@ class MatchJob {
     }
   }
 
+  // eslint-disable-next-line complexity -- audio-scan + ASIN + keyword + scoring branches with conditional-spread on MatchResult
   async matchSingleBook(book: MatchCandidate): Promise<MatchResult> {
     try {
       // Scan audio files for duration (used for runtime disambiguation)
