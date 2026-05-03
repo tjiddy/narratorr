@@ -532,7 +532,7 @@ describe('handleEdit — auto-check, confidence upgrade, slug-duplicate recheck 
     act(() => {
       result.current.handleEdit(nonDupIdx, {
         title: 'Book One', author: 'Author A', series: '',
-        metadata: preloadedMetadata,
+        ...(preloadedMetadata !== undefined && { metadata: preloadedMetadata }),
       });
     });
 

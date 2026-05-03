@@ -269,7 +269,7 @@ describe('SettingsService', () => {
 
     it('skips category when value is undefined', async () => {
       db.select.mockReturnValue(mockDbChain([])); // getAll() only
-      await service.update({ search: undefined });
+      await service.update({});
 
       expect(db.insert).not.toHaveBeenCalled();
     });

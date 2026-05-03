@@ -36,7 +36,7 @@ describe('DownloadProgress', () => {
   });
 
   it('omits bytes text when size is undefined', () => {
-    const download = createMockDownload({ progress: 0.5, size: undefined });
+    const download = createMockDownload({ progress: 0.5 });
     render(<DownloadProgress download={download} />);
 
     expect(screen.getByText('50%')).toBeInTheDocument();

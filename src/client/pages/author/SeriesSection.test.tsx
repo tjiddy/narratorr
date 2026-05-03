@@ -26,7 +26,7 @@ function renderSection(props: Partial<typeof defaultProps> & { books?: ReturnTyp
   const { books = [createMockBookMetadata()], libraryBooks, ...rest } = props;
   return render(
     <QueryClientProvider client={queryClient}>
-      <SeriesSection {...defaultProps} {...rest} books={books} libraryBooks={libraryBooks} />
+      <SeriesSection {...defaultProps} {...rest} books={books} {...(libraryBooks !== undefined && { libraryBooks })} />
     </QueryClientProvider>,
   );
 }
@@ -57,7 +57,7 @@ describe('SeriesSection', () => {
 
   it('hides Add All button when all books in library', () => {
     const book = createMockBookMetadata();
-    const libraryBooks = [createMockBook({ asin: book.asin })];
+    const libraryBooks = [createMockBook(book.asin !== undefined ? { asin: book.asin } : {})];
     renderSection({ books: [book], libraryBooks });
     expect(screen.queryByText(/Add All/)).not.toBeInTheDocument();
   });
@@ -65,7 +65,7 @@ describe('SeriesSection', () => {
   it('shows count of books not in library in Add All button', () => {
     const book1 = createMockBookMetadata();
     const book2 = createMockBookMetadata({ title: 'Words of Radiance', asin: 'B00DA6YEKS' });
-    const libraryBooks = [createMockBook({ asin: book1.asin })];
+    const libraryBooks = [createMockBook(book1.asin !== undefined ? { asin: book1.asin } : {})];
     renderSection({ books: [book1, book2], libraryBooks });
     expect(screen.getByText(/Add All \(1\)/)).toBeInTheDocument();
   });

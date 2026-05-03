@@ -407,7 +407,7 @@ describe('enrichBookFromAudio narrator splitting (issue #79)', () => {
       codec: 'mp3', bitrate: 128000, sampleRate: 44100, channels: 2,
       bitrateMode: 'cbr' as const, fileFormat: 'MPEG', fileCount: 1,
       totalSize: 1000, totalDuration: 100, hasCoverArt: false,
-      tagNarrator,
+      ...(tagNarrator !== undefined && { tagNarrator }),
     });
   }
 

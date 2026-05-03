@@ -100,8 +100,8 @@ function createOrchestrator(opts?: {
       eventHistory: inject<EventHistoryService>(eventHistory),
       broadcaster: inject<EventBroadcasterService>(broadcaster),
       blacklistService: inject<BlacklistService>(blacklistService),
-      retrySearchDeps: opts?.retrySearchDeps ? inject<RetrySearchDeps>(opts.retrySearchDeps) : undefined,
-      settingsService: opts?.settingsService ? inject<SettingsService>(opts.settingsService) : undefined,
+      ...(opts?.retrySearchDeps && { retrySearchDeps: inject<RetrySearchDeps>(opts.retrySearchDeps) }),
+      ...(opts?.settingsService && { settingsService: inject<SettingsService>(opts.settingsService) }),
     },
   );
   // nudgeImportWorker is required-wiring; wire here so existing tests that don't

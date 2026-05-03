@@ -25,7 +25,7 @@ describe('CoverImage', () => {
 
   it('shows fallback when src is undefined', () => {
     renderWithProviders(
-      <CoverImage src={undefined} alt="Test Book" fallback={<span>No Cover</span>} />,
+      <CoverImage alt="Test Book" fallback={<span>No Cover</span>} />,
     );
 
     expect(screen.getByText('No Cover')).toBeInTheDocument();

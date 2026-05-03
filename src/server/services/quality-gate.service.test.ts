@@ -47,7 +47,7 @@ function makeScan(overrides?: Partial<{ totalSize: number; totalDuration: number
   return {
     totalSize: overrides?.totalSize ?? 600_000_000,
     totalDuration: overrides?.totalDuration ?? 36000,
-    tagNarrator: overrides?.tagNarrator,
+    ...(overrides?.tagNarrator !== undefined && { tagNarrator: overrides.tagNarrator }),
     channels: overrides?.channels ?? 1,
     codec: overrides?.codec ?? 'AAC',
     bitrate: 128000, sampleRate: 44100, bitrateMode: 'cbr' as const,

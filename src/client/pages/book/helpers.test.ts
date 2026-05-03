@@ -78,7 +78,7 @@ describe('mergeBookData', () => {
 
     it('excludes duration from metaDots when both sources are null', () => {
       const book = createMockBook({ duration: null });
-      const result = mergeBookData(book, { duration: undefined });
+      const result = mergeBookData(book, {});
       expect(result.metaDots.some((d: string) => /\d+[hm]/.test(d))).toBe(false);
     });
   });

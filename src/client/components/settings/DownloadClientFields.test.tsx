@@ -24,12 +24,12 @@ function FieldWrapper({ type, clientId, dirty, isEdit, inModal }: { type: Downlo
       selectedType={type}
       register={register}
       errors={errors}
-      clientId={clientId}
       setValue={setValue}
       getValues={getValues}
-      isDirty={dirty}
-      isEdit={isEdit}
-      inModal={inModal}
+      {...(clientId !== undefined && { clientId })}
+      {...(dirty !== undefined && { isDirty: dirty })}
+      {...(isEdit !== undefined && { isEdit })}
+      {...(inModal !== undefined && { inModal })}
     />
   );
 }

@@ -24,7 +24,6 @@ const baseResult: SearchResult = {
   seeders: 10,
   author: 'Author',
   narrator: 'Narrator',
-  coverUrl: undefined,
 };
 
 const defaultProps = {
@@ -39,7 +38,7 @@ describe('ReleaseCard', () => {
   describe('#324 — quality badge when duration unknown (verify only)', () => {
     it('when bookDurationSeconds is undefined, no quality badge rendered', () => {
       mockCalculateQuality.mockReturnValue(null);
-      renderWithProviders(<ReleaseCard {...defaultProps} bookDurationSeconds={undefined} />);
+      renderWithProviders(<ReleaseCard {...defaultProps} />);
       expect(screen.queryByText(/MB\/hr/)).not.toBeInTheDocument();
     });
 
@@ -177,10 +176,11 @@ describe('ReleaseCard', () => {
 
     it('no badge when both identifiers on result are undefined', () => {
       mockCalculateQuality.mockReturnValue(null);
+      const { guid: _guid, infoHash: _infoHash, ...resultNoIds } = baseResult;
       renderWithProviders(
         <ReleaseCard
           {...defaultProps}
-          result={{ ...baseResult, guid: undefined, infoHash: undefined }}
+          result={resultNoIds}
           lastGrabGuid="some-guid"
           lastGrabInfoHash="some-hash"
         />,
@@ -191,10 +191,11 @@ describe('ReleaseCard', () => {
     // Null safety and falsy edge cases
     it('null guid on result does NOT match null lastGrabGuid (null ≠ null)', () => {
       mockCalculateQuality.mockReturnValue(null);
+      const { guid: _guid, infoHash: _infoHash, ...resultNoIds } = baseResult;
       renderWithProviders(
         <ReleaseCard
           {...defaultProps}
-          result={{ ...baseResult, guid: undefined, infoHash: undefined }}
+          result={resultNoIds}
           lastGrabGuid={null}
           lastGrabInfoHash={null}
         />,
@@ -219,7 +220,7 @@ describe('ReleaseCard', () => {
       renderWithProviders(
         <ReleaseCard
           {...defaultProps}
-          result={{ ...baseResult, infoHash: undefined }}
+          result={baseResult}
           lastGrabInfoHash={null}
         />,
       );
@@ -229,10 +230,11 @@ describe('ReleaseCard', () => {
     it('only one identifier populated on book, only the other on result → no match', () => {
       mockCalculateQuality.mockReturnValue(null);
       // Book has guid, result only has infoHash (no guid)
+      const { guid: _guid, ...resultNoGuid } = baseResult;
       renderWithProviders(
         <ReleaseCard
           {...defaultProps}
-          result={{ ...baseResult, guid: undefined, infoHash: 'hash-xyz' }}
+          result={{ ...resultNoGuid, infoHash: 'hash-xyz' }}
           lastGrabGuid="some-guid"
           lastGrabInfoHash={null}
         />,
@@ -248,7 +250,6 @@ describe('ReleaseCard', () => {
           {...defaultProps}
           result={{ ...baseResult, guid: 'match-guid' }}
           lastGrabGuid="match-guid"
-          existingBookSizeBytes={undefined}
         />,
       );
       expect(screen.getByText(IN_LIBRARY)).toBeInTheDocument();

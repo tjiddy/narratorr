@@ -25,16 +25,25 @@ function createMockLogger(): FastifyBaseLogger {
   } as unknown as FastifyBaseLogger;
 }
 
-function makeResult(overrides: Partial<SearchResult> = {}): SearchResult {
-  return {
+type MakeResultOverrides = { [K in keyof SearchResult]?: SearchResult[K] | undefined };
+
+function makeResult(overrides: MakeResultOverrides = {}): SearchResult {
+  const result: SearchResult = {
     title: 'Test Book',
     protocol: 'torrent',
     indexer: 'test',
     seeders: 10,
     size: 500 * 1024 * 1024,
     downloadUrl: 'magnet:?xt=urn:btih:aaa',
-    ...overrides,
   };
+  for (const [key, value] of Object.entries(overrides)) {
+    if (value === undefined) {
+      delete (result as unknown as Record<string, unknown>)[key];
+    } else {
+      (result as unknown as Record<string, unknown>)[key] = value;
+    }
+  }
+  return result;
 }
 
 const defaultQualitySettings = {
@@ -276,7 +285,7 @@ describe('searchAndGrabForBook', () => {
   });
 
   it('handles book with duration: undefined', async () => {
-    const undefinedDurationBook = { ...book, duration: undefined };
+    const { duration: _duration, ...undefinedDurationBook } = book;
     const result = await searchAndGrabForBook(undefinedDurationBook, indexerService, downloadService, defaultQualitySettings, log, blacklistService);
     expect(result).toEqual({ result: 'grabbed', title: 'Test Book' });
   });
@@ -572,42 +581,42 @@ describe('filterAndRankResults — maxDownloadSize', () => {
 
 
   it('filters result exceeding maxDownloadSize threshold', () => {
-    const { results } = filterAndRankResults([makeResult({ size: 6 * GB })], undefined, { grabFloor: 0, minSeeders: 0, protocolPreference: 'none', rejectWords: undefined, requiredWords: undefined, languages: undefined, narratorPriority: undefined, maxDownloadSize: 5 });
+    const { results } = filterAndRankResults([makeResult({ size: 6 * GB })], undefined, { grabFloor: 0, minSeeders: 0, protocolPreference: 'none', maxDownloadSize: 5 });
     expect(results).toHaveLength(0);
   });
 
   it('keeps result within maxDownloadSize threshold', () => {
-    const { results } = filterAndRankResults([makeResult({ size: 3 * GB })], undefined, { grabFloor: 0, minSeeders: 0, protocolPreference: 'none', rejectWords: undefined, requiredWords: undefined, languages: undefined, narratorPriority: undefined, maxDownloadSize: 5 });
+    const { results } = filterAndRankResults([makeResult({ size: 3 * GB })], undefined, { grabFloor: 0, minSeeders: 0, protocolPreference: 'none', maxDownloadSize: 5 });
     expect(results).toHaveLength(1);
   });
 
   it('keeps result exactly at maxDownloadSize threshold (inclusive <=)', () => {
-    const { results } = filterAndRankResults([makeResult({ size: 5 * GB })], undefined, { grabFloor: 0, minSeeders: 0, protocolPreference: 'none', rejectWords: undefined, requiredWords: undefined, languages: undefined, narratorPriority: undefined, maxDownloadSize: 5 });
+    const { results } = filterAndRankResults([makeResult({ size: 5 * GB })], undefined, { grabFloor: 0, minSeeders: 0, protocolPreference: 'none', maxDownloadSize: 5 });
     expect(results).toHaveLength(1);
   });
 
   it('filters result 1 byte over maxDownloadSize threshold', () => {
-    const { results } = filterAndRankResults([makeResult({ size: 5 * GB + 1 })], undefined, { grabFloor: 0, minSeeders: 0, protocolPreference: 'none', rejectWords: undefined, requiredWords: undefined, languages: undefined, narratorPriority: undefined, maxDownloadSize: 5 });
+    const { results } = filterAndRankResults([makeResult({ size: 5 * GB + 1 })], undefined, { grabFloor: 0, minSeeders: 0, protocolPreference: 'none', maxDownloadSize: 5 });
     expect(results).toHaveLength(0);
   });
 
   it('disables filter when maxDownloadSize is 0', () => {
-    const { results } = filterAndRankResults([makeResult({ size: 100 * GB })], undefined, { grabFloor: 0, minSeeders: 0, protocolPreference: 'none', rejectWords: undefined, requiredWords: undefined, languages: undefined, narratorPriority: undefined, maxDownloadSize: 0 });
+    const { results } = filterAndRankResults([makeResult({ size: 100 * GB })], undefined, { grabFloor: 0, minSeeders: 0, protocolPreference: 'none', maxDownloadSize: 0 });
     expect(results).toHaveLength(1);
   });
 
   it('passes result with undefined size when maxDownloadSize is set', () => {
-    const { results } = filterAndRankResults([makeResult({ size: undefined })], undefined, { grabFloor: 0, minSeeders: 0, protocolPreference: 'none', rejectWords: undefined, requiredWords: undefined, languages: undefined, narratorPriority: undefined, maxDownloadSize: 5 });
+    const { results } = filterAndRankResults([makeResult({ size: undefined })], undefined, { grabFloor: 0, minSeeders: 0, protocolPreference: 'none', maxDownloadSize: 5 });
     expect(results).toHaveLength(1);
   });
 
   it('passes result with size 0 when maxDownloadSize is set', () => {
-    const { results } = filterAndRankResults([makeResult({ size: 0 })], undefined, { grabFloor: 0, minSeeders: 0, protocolPreference: 'none', rejectWords: undefined, requiredWords: undefined, languages: undefined, narratorPriority: undefined, maxDownloadSize: 5 });
+    const { results } = filterAndRankResults([makeResult({ size: 0 })], undefined, { grabFloor: 0, minSeeders: 0, protocolPreference: 'none', maxDownloadSize: 5 });
     expect(results).toHaveLength(1);
   });
 
   it('applies filter even when book duration is unknown', () => {
-    const { results } = filterAndRankResults([makeResult({ size: 10 * GB })], undefined, { grabFloor: 0, minSeeders: 0, protocolPreference: 'none', rejectWords: undefined, requiredWords: undefined, languages: undefined, narratorPriority: undefined, maxDownloadSize: 5 });
+    const { results } = filterAndRankResults([makeResult({ size: 10 * GB })], undefined, { grabFloor: 0, minSeeders: 0, protocolPreference: 'none', maxDownloadSize: 5 });
     expect(results).toHaveLength(0);
   });
 
@@ -615,7 +624,7 @@ describe('filterAndRankResults — maxDownloadSize', () => {
     const { results } = filterAndRankResults([
         makeResult({ protocol: 'torrent', size: 10 * GB, seeders: 10 }),
         makeResult({ protocol: 'usenet', size: 10 * GB }),
-      ], undefined, { grabFloor: 0, minSeeders: 0, protocolPreference: 'none', rejectWords: undefined, requiredWords: undefined, languages: undefined, narratorPriority: undefined, maxDownloadSize: 5 });
+      ], undefined, { grabFloor: 0, minSeeders: 0, protocolPreference: 'none', maxDownloadSize: 5 });
     expect(results).toHaveLength(0);
   });
 
@@ -623,7 +632,7 @@ describe('filterAndRankResults — maxDownloadSize', () => {
     const small = makeResult({ title: 'Small Book', size: 2 * GB });
     const big = makeResult({ title: 'Big Pack', size: 30 * GB });
     const medium = makeResult({ title: 'Medium Book', size: 4 * GB });
-    const { results } = filterAndRankResults([small, big, medium], undefined, { grabFloor: 0, minSeeders: 0, protocolPreference: 'none', rejectWords: undefined, requiredWords: undefined, languages: undefined, narratorPriority: undefined, maxDownloadSize: 5 });
+    const { results } = filterAndRankResults([small, big, medium], undefined, { grabFloor: 0, minSeeders: 0, protocolPreference: 'none', maxDownloadSize: 5 });
     expect(results).toHaveLength(2);
     expect(results.map(r => r.title)).toContain('Small Book');
     expect(results.map(r => r.title)).toContain('Medium Book');
@@ -635,7 +644,7 @@ describe('filterAndRankResults — maxDownloadSize', () => {
         makeResult({ title: 'Good', protocol: 'torrent', seeders: 5, size: 2 * GB }),
         makeResult({ title: 'Too big', protocol: 'torrent', seeders: 5, size: 10 * GB }),
         makeResult({ title: 'No seeders', protocol: 'torrent', seeders: 0, size: 1 * GB }),
-      ], undefined, { grabFloor: 0, minSeeders: 3, protocolPreference: 'none', rejectWords: undefined, requiredWords: undefined, languages: undefined, narratorPriority: undefined, maxDownloadSize: 5 });
+      ], undefined, { grabFloor: 0, minSeeders: 3, protocolPreference: 'none', maxDownloadSize: 5 });
     expect(results).toHaveLength(1);
     expect(results[0]!.title).toBe('Good');
   });
@@ -645,7 +654,7 @@ describe('canonicalCompare — grabs tiebreaker (#272)', () => {
   it('higher grabs wins when matchScore, MB/hr, protocol, and language are equal', () => {
     const a = makeResult({ matchScore: 0.9, grabs: 1000, seeders: 5 });
     const b = makeResult({ matchScore: 0.9, grabs: 100, seeders: 5 });
-    const { results } = filterAndRankResults([b, a], undefined, { grabFloor: 0, minSeeders: 0, protocolPreference: 'none', rejectWords: undefined, requiredWords: undefined, languages: [] });
+    const { results } = filterAndRankResults([b, a], undefined, { grabFloor: 0, minSeeders: 0, protocolPreference: 'none', languages: [] });
     expect(results[0]!.grabs).toBe(1000);
     expect(results[1]!.grabs).toBe(100);
   });
@@ -653,7 +662,7 @@ describe('canonicalCompare — grabs tiebreaker (#272)', () => {
   it('title similarity (matchScore > 0.1 diff) beats grabs', () => {
     const a = makeResult({ matchScore: 0.9, grabs: 10 });
     const b = makeResult({ matchScore: 0.5, grabs: 10000 });
-    const { results } = filterAndRankResults([b, a], undefined, { grabFloor: 0, minSeeders: 0, protocolPreference: 'none', rejectWords: undefined, requiredWords: undefined, languages: [] });
+    const { results } = filterAndRankResults([b, a], undefined, { grabFloor: 0, minSeeders: 0, protocolPreference: 'none', languages: [] });
     expect(results[0]!.matchScore).toBe(0.9);
   });
 
@@ -661,21 +670,21 @@ describe('canonicalCompare — grabs tiebreaker (#272)', () => {
     // a has better MB/hr, b has better grabs
     const a = makeResult({ matchScore: 0.9, size: 1000 * 1024 * 1024, grabs: 10, seeders: 5 });
     const b = makeResult({ matchScore: 0.9, size: 100 * 1024 * 1024, grabs: 10000, seeders: 5 });
-    const { results } = filterAndRankResults([b, a], 3600, { grabFloor: 0, minSeeders: 0, protocolPreference: 'none', rejectWords: undefined, requiredWords: undefined, languages: [] });
+    const { results } = filterAndRankResults([b, a], 3600, { grabFloor: 0, minSeeders: 0, protocolPreference: 'none', languages: [] });
     expect(results[0]!.grabs).toBe(10); // higher MB/hr wins
   });
 
   it('grabs=undefined on one result, grabs=1000 on other → result with grabs wins', () => {
     const a = makeResult({ matchScore: 0.9, grabs: 1000, seeders: 5 });
     const b = makeResult({ matchScore: 0.9, grabs: undefined, seeders: 5 });
-    const { results } = filterAndRankResults([b, a], undefined, { grabFloor: 0, minSeeders: 0, protocolPreference: 'none', rejectWords: undefined, requiredWords: undefined, languages: [] });
+    const { results } = filterAndRankResults([b, a], undefined, { grabFloor: 0, minSeeders: 0, protocolPreference: 'none', languages: [] });
     expect(results[0]!.grabs).toBe(1000);
   });
 
   it('both grabs=undefined → falls through to seeders tiebreaker', () => {
     const a = makeResult({ matchScore: 0.9, grabs: undefined, seeders: 20 });
     const b = makeResult({ matchScore: 0.9, grabs: undefined, seeders: 5 });
-    const { results } = filterAndRankResults([b, a], undefined, { grabFloor: 0, minSeeders: 0, protocolPreference: 'none', rejectWords: undefined, requiredWords: undefined, languages: [] });
+    const { results } = filterAndRankResults([b, a], undefined, { grabFloor: 0, minSeeders: 0, protocolPreference: 'none', languages: [] });
     expect(results[0]!.seeders).toBe(20);
   });
 
@@ -683,7 +692,7 @@ describe('canonicalCompare — grabs tiebreaker (#272)', () => {
     // log10(11) ≈ 1.04, log10(101) ≈ 2.00 → clear separation
     const a = makeResult({ matchScore: 0.9, grabs: 100, seeders: 5 });
     const b = makeResult({ matchScore: 0.9, grabs: 10, seeders: 5 });
-    const { results } = filterAndRankResults([b, a], undefined, { grabFloor: 0, minSeeders: 0, protocolPreference: 'none', rejectWords: undefined, requiredWords: undefined, languages: [] });
+    const { results } = filterAndRankResults([b, a], undefined, { grabFloor: 0, minSeeders: 0, protocolPreference: 'none', languages: [] });
     expect(results[0]!.grabs).toBe(100);
     expect(results[1]!.grabs).toBe(10);
   });
@@ -691,7 +700,7 @@ describe('canonicalCompare — grabs tiebreaker (#272)', () => {
   it('grabs=0 → Math.log10(1)=0, lowest-popularity, not treated as missing', () => {
     const a = makeResult({ matchScore: 0.9, grabs: 100, seeders: 5 });
     const b = makeResult({ matchScore: 0.9, grabs: 0, seeders: 5 });
-    const { results } = filterAndRankResults([b, a], undefined, { grabFloor: 0, minSeeders: 0, protocolPreference: 'none', rejectWords: undefined, requiredWords: undefined, languages: [] });
+    const { results } = filterAndRankResults([b, a], undefined, { grabFloor: 0, minSeeders: 0, protocolPreference: 'none', languages: [] });
     expect(results[0]!.grabs).toBe(100);
     expect(results[1]!.grabs).toBe(0);
   });
@@ -701,14 +710,14 @@ describe('canonicalCompare — language tier (#272)', () => {
   it('language mismatch ranks below matching-language result within same tier', () => {
     const match = makeResult({ matchScore: 0.9, language: 'english', seeders: 5 });
     const mismatch = makeResult({ matchScore: 0.9, language: 'german', seeders: 5 });
-    const { results } = filterAndRankResults([mismatch, match], undefined, { grabFloor: 0, minSeeders: 0, protocolPreference: 'none', rejectWords: undefined, requiredWords: undefined, languages: ['english'] });
+    const { results } = filterAndRankResults([mismatch, match], undefined, { grabFloor: 0, minSeeders: 0, protocolPreference: 'none', languages: ['english'] });
     expect(results[0]!.language).toBe('english');
   });
 
   it('language mismatch ranks below unknown-language result (absence ≠ mismatch)', () => {
     const unknown = makeResult({ matchScore: 0.9, language: undefined, seeders: 5, title: 'Unknown' });
     const mismatch = makeResult({ matchScore: 0.9, language: 'german', seeders: 5, title: 'German' });
-    const { results } = filterAndRankResults([mismatch, unknown], undefined, { grabFloor: 0, minSeeders: 0, protocolPreference: 'none', rejectWords: undefined, requiredWords: undefined, languages: ['english'] });
+    const { results } = filterAndRankResults([mismatch, unknown], undefined, { grabFloor: 0, minSeeders: 0, protocolPreference: 'none', languages: ['english'] });
     // mismatch is filtered out, only unknown remains
     expect(results).toHaveLength(1);
     expect(results[0]!.language).toBeUndefined();
@@ -717,7 +726,7 @@ describe('canonicalCompare — language tier (#272)', () => {
   it('result with no language field → no penalty applied', () => {
     const noLang = makeResult({ matchScore: 0.9, seeders: 10, title: 'No Lang' });
     const withLang = makeResult({ matchScore: 0.9, language: 'english', seeders: 5, title: 'With Lang' });
-    const { results } = filterAndRankResults([withLang, noLang], undefined, { grabFloor: 0, minSeeders: 0, protocolPreference: 'none', rejectWords: undefined, requiredWords: undefined, languages: ['english'] });
+    const { results } = filterAndRankResults([withLang, noLang], undefined, { grabFloor: 0, minSeeders: 0, protocolPreference: 'none', languages: ['english'] });
     // Both pass filtering — noLang has no language (pass through), withLang matches
     expect(results[0]!.seeders).toBe(10); // higher seeders wins as tiebreaker
   });
@@ -725,14 +734,14 @@ describe('canonicalCompare — language tier (#272)', () => {
   it('language tier does not cross 0.1 matchScore gate (title similarity wins)', () => {
     const highScore = makeResult({ matchScore: 0.9, language: 'english', seeders: 5 });
     const lowScore = makeResult({ matchScore: 0.5, language: 'english', seeders: 5 });
-    const { results } = filterAndRankResults([lowScore, highScore], undefined, { grabFloor: 0, minSeeders: 0, protocolPreference: 'none', rejectWords: undefined, requiredWords: undefined, languages: ['english'] });
+    const { results } = filterAndRankResults([lowScore, highScore], undefined, { grabFloor: 0, minSeeders: 0, protocolPreference: 'none', languages: ['english'] });
     expect(results[0]!.matchScore).toBe(0.9); // higher title match wins
   });
 
   it('empty languages array → no language penalty applied to any result', () => {
     const german = makeResult({ matchScore: 0.9, language: 'german', seeders: 10, title: 'German' });
     const english = makeResult({ matchScore: 0.9, language: 'english', seeders: 5, title: 'English' });
-    const { results } = filterAndRankResults([english, german], undefined, { grabFloor: 0, minSeeders: 0, protocolPreference: 'none', rejectWords: undefined, requiredWords: undefined, languages: [] });
+    const { results } = filterAndRankResults([english, german], undefined, { grabFloor: 0, minSeeders: 0, protocolPreference: 'none', languages: [] });
     // No language preference → falls through to grabs/seeders
     expect(results[0]!.seeders).toBe(10);
   });
@@ -740,7 +749,7 @@ describe('canonicalCompare — language tier (#272)', () => {
   it('language match ranks equal to unknown-language result', () => {
     const match = makeResult({ matchScore: 0.9, language: 'english', seeders: 5, title: 'Match' });
     const unknown = makeResult({ matchScore: 0.9, language: undefined, seeders: 10, title: 'Unknown' });
-    const { results } = filterAndRankResults([match, unknown], undefined, { grabFloor: 0, minSeeders: 0, protocolPreference: 'none', rejectWords: undefined, requiredWords: undefined, languages: ['english'] });
+    const { results } = filterAndRankResults([match, unknown], undefined, { grabFloor: 0, minSeeders: 0, protocolPreference: 'none', languages: ['english'] });
     // Both are non-mismatch → tiebreaker is grabs/seeders (unknown has more seeders)
     expect(results[0]!.seeders).toBe(10);
   });
@@ -750,7 +759,7 @@ describe('filterAndRankResults — grabs tiebreaker (#272)', () => {
   it('auto-search selects higher-grabs result when title scores are equal', () => {
     const popular = makeResult({ matchScore: 0.9, grabs: 5000, seeders: 5, title: 'Popular' });
     const niche = makeResult({ matchScore: 0.9, grabs: 50, seeders: 5, title: 'Niche' });
-    const { results } = filterAndRankResults([niche, popular], undefined, { grabFloor: 0, minSeeders: 0, protocolPreference: 'none', rejectWords: undefined, requiredWords: undefined, languages: [] });
+    const { results } = filterAndRankResults([niche, popular], undefined, { grabFloor: 0, minSeeders: 0, protocolPreference: 'none', languages: [] });
     expect(results[0]!.title).toBe('Popular');
   });
 });
@@ -759,7 +768,7 @@ describe('canonicalCompare — language array', () => {
   it('no penalty when result language matches any selected language — both kept', () => {
     const english = makeResult({ matchScore: 0.9, language: 'english', seeders: 5 });
     const spanish = makeResult({ matchScore: 0.9, language: 'spanish', seeders: 10 });
-    const { results } = filterAndRankResults([english, spanish], undefined, { grabFloor: 0, minSeeders: 0, protocolPreference: 'none', rejectWords: undefined, requiredWords: undefined, languages: ['english', 'spanish'] });
+    const { results } = filterAndRankResults([english, spanish], undefined, { grabFloor: 0, minSeeders: 0, protocolPreference: 'none', languages: ['english', 'spanish'] });
     // Both match → both kept, english first (primary), spanish second
     expect(results).toHaveLength(2);
     expect(results[0]!.language).toBe('english'); // primary language
@@ -769,7 +778,7 @@ describe('canonicalCompare — language array', () => {
   it('penalty when result language does not match any selected language', () => {
     const match = makeResult({ matchScore: 0.9, language: 'english', seeders: 5, title: 'Match' });
     const mismatch = makeResult({ matchScore: 0.9, language: 'french', seeders: 10, title: 'Mismatch' });
-    const { results } = filterAndRankResults([mismatch, match], undefined, { grabFloor: 0, minSeeders: 0, protocolPreference: 'none', rejectWords: undefined, requiredWords: undefined, languages: ['english', 'spanish'] });
+    const { results } = filterAndRankResults([mismatch, match], undefined, { grabFloor: 0, minSeeders: 0, protocolPreference: 'none', languages: ['english', 'spanish'] });
     // french is filtered out
     expect(results).toHaveLength(1);
     expect(results[0]!.language).toBe('english');
@@ -778,7 +787,7 @@ describe('canonicalCompare — language array', () => {
   it('no penalty when result has no language (pass through)', () => {
     const noLang = makeResult({ matchScore: 0.9, seeders: 10, title: 'No Lang' });
     const match = makeResult({ matchScore: 0.9, language: 'english', seeders: 5, title: 'Match' });
-    const { results } = filterAndRankResults([match, noLang], undefined, { grabFloor: 0, minSeeders: 0, protocolPreference: 'none', rejectWords: undefined, requiredWords: undefined, languages: ['english'] });
+    const { results } = filterAndRankResults([match, noLang], undefined, { grabFloor: 0, minSeeders: 0, protocolPreference: 'none', languages: ['english'] });
     expect(results).toHaveLength(2);
     expect(results[0]!.seeders).toBe(10); // noLang passes through with higher seeders
   });
@@ -786,14 +795,14 @@ describe('canonicalCompare — language array', () => {
   it('no penalty when languages array is empty (filtering disabled)', () => {
     const french = makeResult({ matchScore: 0.9, language: 'french', seeders: 10 });
     const german = makeResult({ matchScore: 0.9, language: 'german', seeders: 5 });
-    const { results } = filterAndRankResults([german, french], undefined, { grabFloor: 0, minSeeders: 0, protocolPreference: 'none', rejectWords: undefined, requiredWords: undefined, languages: [] });
+    const { results } = filterAndRankResults([german, french], undefined, { grabFloor: 0, minSeeders: 0, protocolPreference: 'none', languages: [] });
     expect(results).toHaveLength(2); // all pass through
   });
 
   it('first entry used as primary for sort ranking — primary language outranks secondary', () => {
     const english = makeResult({ matchScore: 0.9, language: 'english', seeders: 5, grabs: 100, title: 'English' });
     const spanish = makeResult({ matchScore: 0.9, language: 'spanish', seeders: 5, grabs: 100, title: 'Spanish' });
-    const { results } = filterAndRankResults([spanish, english], undefined, { grabFloor: 0, minSeeders: 0, protocolPreference: 'none', rejectWords: undefined, requiredWords: undefined, languages: ['english', 'spanish'] });
+    const { results } = filterAndRankResults([spanish, english], undefined, { grabFloor: 0, minSeeders: 0, protocolPreference: 'none', languages: ['english', 'spanish'] });
     // English is primary (first entry) → ranks above Spanish
     expect(results[0]!.language).toBe('english');
     expect(results[1]!.language).toBe('spanish');
@@ -802,7 +811,7 @@ describe('canonicalCompare — language array', () => {
   it('primary language tiebreaker does not apply with single language', () => {
     const english = makeResult({ matchScore: 0.9, language: 'english', seeders: 5, grabs: 100 });
     const noLang = makeResult({ matchScore: 0.9, seeders: 5, grabs: 100, title: 'No Lang' });
-    const { results } = filterAndRankResults([noLang, english], undefined, { grabFloor: 0, minSeeders: 0, protocolPreference: 'none', rejectWords: undefined, requiredWords: undefined, languages: ['english'] });
+    const { results } = filterAndRankResults([noLang, english], undefined, { grabFloor: 0, minSeeders: 0, protocolPreference: 'none', languages: ['english'] });
     // Both match (english + unknown) — no sub-tier needed, stable order
     expect(results).toHaveLength(2);
   });
@@ -812,7 +821,7 @@ describe('filterAndRankResults — language filtering', () => {
   it('excludes results with explicit non-matching language', () => {
     const french = makeResult({ language: 'french', title: 'French Book' });
     const english = makeResult({ language: 'english', title: 'English Book' });
-    const { results } = filterAndRankResults([french, english], undefined, { grabFloor: 0, minSeeders: 0, protocolPreference: 'none', rejectWords: undefined, requiredWords: undefined, languages: ['english'] });
+    const { results } = filterAndRankResults([french, english], undefined, { grabFloor: 0, minSeeders: 0, protocolPreference: 'none', languages: ['english'] });
     expect(results).toHaveLength(1);
     expect(results[0]!.title).toBe('English Book');
   });
@@ -820,31 +829,31 @@ describe('filterAndRankResults — language filtering', () => {
   it('includes results matching any selected language', () => {
     const spanish = makeResult({ language: 'spanish', title: 'Spanish Book' });
     const english = makeResult({ language: 'english', title: 'English Book' });
-    const { results } = filterAndRankResults([spanish, english], undefined, { grabFloor: 0, minSeeders: 0, protocolPreference: 'none', rejectWords: undefined, requiredWords: undefined, languages: ['english', 'spanish'] });
+    const { results } = filterAndRankResults([spanish, english], undefined, { grabFloor: 0, minSeeders: 0, protocolPreference: 'none', languages: ['english', 'spanish'] });
     expect(results).toHaveLength(2);
   });
 
   it('passes through results with undefined language', () => {
     const noLang = makeResult({ language: undefined, title: 'Unknown Lang' });
-    const { results } = filterAndRankResults([noLang], undefined, { grabFloor: 0, minSeeders: 0, protocolPreference: 'none', rejectWords: undefined, requiredWords: undefined, languages: ['english'] });
+    const { results } = filterAndRankResults([noLang], undefined, { grabFloor: 0, minSeeders: 0, protocolPreference: 'none', languages: ['english'] });
     expect(results).toHaveLength(1);
   });
 
   it('passes through results with empty string language', () => {
     const emptyLang = makeResult({ language: '', title: 'Empty Lang' });
-    const { results } = filterAndRankResults([emptyLang], undefined, { grabFloor: 0, minSeeders: 0, protocolPreference: 'none', rejectWords: undefined, requiredWords: undefined, languages: ['english'] });
+    const { results } = filterAndRankResults([emptyLang], undefined, { grabFloor: 0, minSeeders: 0, protocolPreference: 'none', languages: ['english'] });
     expect(results).toHaveLength(1);
   });
 
   it('no filtering when languages array is empty', () => {
     const french = makeResult({ language: 'french' });
-    const { results } = filterAndRankResults([french], undefined, { grabFloor: 0, minSeeders: 0, protocolPreference: 'none', rejectWords: undefined, requiredWords: undefined, languages: [] });
+    const { results } = filterAndRankResults([french], undefined, { grabFloor: 0, minSeeders: 0, protocolPreference: 'none', languages: [] });
     expect(results).toHaveLength(1);
   });
 
   it('normalizes language comparison to lowercase', () => {
     const upper = makeResult({ language: 'English', title: 'Upper' });
-    const { results } = filterAndRankResults([upper], undefined, { grabFloor: 0, minSeeders: 0, protocolPreference: 'none', rejectWords: undefined, requiredWords: undefined, languages: ['english'] });
+    const { results } = filterAndRankResults([upper], undefined, { grabFloor: 0, minSeeders: 0, protocolPreference: 'none', languages: ['english'] });
     expect(results).toHaveLength(1);
   });
 });
@@ -919,7 +928,7 @@ describe('filterAndRankResults — disabled-gate short-circuit (#945)', () => {
     filterAndRankResults(
       [makeResult({ title: 'Anything goes' })],
       undefined,
-      { grabFloor: 0, minSeeders: 0, protocolPreference: 'none', rejectWords: undefined },
+      { grabFloor: 0, minSeeders: 0, protocolPreference: 'none' },
       log,
     );
     expect(log.debug).not.toHaveBeenCalledWith(
@@ -964,7 +973,7 @@ describe('filterAndRankResults — disabled-gate short-circuit (#945)', () => {
     filterAndRankResults(
       [makeResult({ size: 100 * GB })],
       undefined,
-      { grabFloor: 0, minSeeders: 0, protocolPreference: 'none', maxDownloadSize: undefined },
+      { grabFloor: 0, minSeeders: 0, protocolPreference: 'none' },
       log,
     );
     expect(log.debug).not.toHaveBeenCalledWith(
@@ -1301,7 +1310,7 @@ describe('canonicalCompare — indexer priority tiebreaker (#394)', () => {
   it('lower indexerPriority wins when all higher tiers are equal', () => {
     const a = makeResult({ matchScore: 0.9, indexerPriority: 10, grabs: 50, seeders: 5 });
     const b = makeResult({ matchScore: 0.9, indexerPriority: 50, grabs: 50, seeders: 5 });
-    const { results } = filterAndRankResults([b, a], undefined, { grabFloor: 0, minSeeders: 0, protocolPreference: 'none', rejectWords: undefined, requiredWords: undefined, languages: [] });
+    const { results } = filterAndRankResults([b, a], undefined, { grabFloor: 0, minSeeders: 0, protocolPreference: 'none', languages: [] });
     expect(results[0]!.indexerPriority).toBe(10);
     expect(results[1]!.indexerPriority).toBe(50);
   });
@@ -1309,7 +1318,7 @@ describe('canonicalCompare — indexer priority tiebreaker (#394)', () => {
   it('missing indexerPriority (undefined) treated as Infinity — loses to any defined priority', () => {
     const a = makeResult({ matchScore: 0.9, indexerPriority: 50, grabs: 50, seeders: 5 });
     const b = makeResult({ matchScore: 0.9, indexerPriority: undefined, grabs: 50, seeders: 5 });
-    const { results } = filterAndRankResults([b, a], undefined, { grabFloor: 0, minSeeders: 0, protocolPreference: 'none', rejectWords: undefined, requiredWords: undefined, languages: [] });
+    const { results } = filterAndRankResults([b, a], undefined, { grabFloor: 0, minSeeders: 0, protocolPreference: 'none', languages: [] });
     expect(results[0]!.indexerPriority).toBe(50);
     expect(results[1]!.indexerPriority).toBeUndefined();
   });
@@ -1317,7 +1326,7 @@ describe('canonicalCompare — indexer priority tiebreaker (#394)', () => {
   it('equal indexerPriority falls through to grabs tier', () => {
     const a = makeResult({ matchScore: 0.9, indexerPriority: 50, grabs: 1000, seeders: 5 });
     const b = makeResult({ matchScore: 0.9, indexerPriority: 50, grabs: 10, seeders: 5 });
-    const { results } = filterAndRankResults([b, a], undefined, { grabFloor: 0, minSeeders: 0, protocolPreference: 'none', rejectWords: undefined, requiredWords: undefined, languages: [] });
+    const { results } = filterAndRankResults([b, a], undefined, { grabFloor: 0, minSeeders: 0, protocolPreference: 'none', languages: [] });
     expect(results[0]!.grabs).toBe(1000);
     expect(results[1]!.grabs).toBe(10);
   });
@@ -1325,14 +1334,14 @@ describe('canonicalCompare — indexer priority tiebreaker (#394)', () => {
   it('priority tier does NOT override matchScore', () => {
     const a = makeResult({ matchScore: 0.9, indexerPriority: 99 });
     const b = makeResult({ matchScore: 0.5, indexerPriority: 1 });
-    const { results } = filterAndRankResults([b, a], undefined, { grabFloor: 0, minSeeders: 0, protocolPreference: 'none', rejectWords: undefined, requiredWords: undefined, languages: [] });
+    const { results } = filterAndRankResults([b, a], undefined, { grabFloor: 0, minSeeders: 0, protocolPreference: 'none', languages: [] });
     expect(results[0]!.matchScore).toBe(0.9);
   });
 
   it('priority tier does NOT override protocol preference', () => {
     const a = makeResult({ matchScore: 0.9, protocol: 'torrent', indexerPriority: 99 });
     const b = makeResult({ matchScore: 0.9, protocol: 'usenet', indexerPriority: 1 });
-    const { results } = filterAndRankResults([b, a], undefined, { grabFloor: 0, minSeeders: 0, protocolPreference: 'torrent', rejectWords: undefined, requiredWords: undefined, languages: [] });
+    const { results } = filterAndRankResults([b, a], undefined, { grabFloor: 0, minSeeders: 0, protocolPreference: 'torrent', languages: [] });
     expect(results[0]!.protocol).toBe('torrent');
   });
 
@@ -1340,7 +1349,7 @@ describe('canonicalCompare — indexer priority tiebreaker (#394)', () => {
     // a has better MB/hr (larger size = higher bitrate), b has better priority
     const a = makeResult({ matchScore: 0.9, size: 1000 * 1024 * 1024, indexerPriority: 99, grabs: 50, seeders: 5 });
     const b = makeResult({ matchScore: 0.9, size: 100 * 1024 * 1024, indexerPriority: 1, grabs: 50, seeders: 5 });
-    const { results } = filterAndRankResults([b, a], 3600, { grabFloor: 0, minSeeders: 0, protocolPreference: 'none', rejectWords: undefined, requiredWords: undefined, languages: [] });
+    const { results } = filterAndRankResults([b, a], 3600, { grabFloor: 0, minSeeders: 0, protocolPreference: 'none', languages: [] });
     expect(results[0]!.indexerPriority).toBe(99); // higher MB/hr wins despite worse priority
   });
 
@@ -1348,35 +1357,35 @@ describe('canonicalCompare — indexer priority tiebreaker (#394)', () => {
     // a matches preferred language, b has better priority
     const a = makeResult({ matchScore: 0.9, language: 'english', indexerPriority: 99, grabs: 50, seeders: 5 });
     const b = makeResult({ matchScore: 0.9, language: 'german', indexerPriority: 1, grabs: 50, seeders: 5 });
-    const { results } = filterAndRankResults([b, a], undefined, { grabFloor: 0, minSeeders: 0, protocolPreference: 'none', rejectWords: undefined, requiredWords: undefined, languages: ['english'] });
+    const { results } = filterAndRankResults([b, a], undefined, { grabFloor: 0, minSeeders: 0, protocolPreference: 'none', languages: ['english'] });
     expect(results[0]!.language).toBe('english'); // language match wins despite worse priority
   });
 
   it('priority 1 (best) vs priority 100 (worst) — 1 wins', () => {
     const a = makeResult({ matchScore: 0.9, indexerPriority: 1, grabs: 50, seeders: 5 });
     const b = makeResult({ matchScore: 0.9, indexerPriority: 100, grabs: 50, seeders: 5 });
-    const { results } = filterAndRankResults([b, a], undefined, { grabFloor: 0, minSeeders: 0, protocolPreference: 'none', rejectWords: undefined, requiredWords: undefined, languages: [] });
+    const { results } = filterAndRankResults([b, a], undefined, { grabFloor: 0, minSeeders: 0, protocolPreference: 'none', languages: [] });
     expect(results[0]!.indexerPriority).toBe(1);
   });
 
   it('priority 50 vs priority 50 — falls through to grabs', () => {
     const a = makeResult({ matchScore: 0.9, indexerPriority: 50, grabs: 500, seeders: 5 });
     const b = makeResult({ matchScore: 0.9, indexerPriority: 50, grabs: 5, seeders: 5 });
-    const { results } = filterAndRankResults([b, a], undefined, { grabFloor: 0, minSeeders: 0, protocolPreference: 'none', rejectWords: undefined, requiredWords: undefined, languages: [] });
+    const { results } = filterAndRankResults([b, a], undefined, { grabFloor: 0, minSeeders: 0, protocolPreference: 'none', languages: [] });
     expect(results[0]!.grabs).toBe(500);
   });
 
   it('both undefined — falls through to grabs (Infinity === Infinity)', () => {
     const a = makeResult({ matchScore: 0.9, indexerPriority: undefined, grabs: 800, seeders: 5 });
     const b = makeResult({ matchScore: 0.9, indexerPriority: undefined, grabs: 10, seeders: 5 });
-    const { results } = filterAndRankResults([b, a], undefined, { grabFloor: 0, minSeeders: 0, protocolPreference: 'none', rejectWords: undefined, requiredWords: undefined, languages: [] });
+    const { results } = filterAndRankResults([b, a], undefined, { grabFloor: 0, minSeeders: 0, protocolPreference: 'none', languages: [] });
     expect(results[0]!.grabs).toBe(800);
   });
 
   it('one undefined vs one defined — defined value wins', () => {
     const a = makeResult({ matchScore: 0.9, indexerPriority: 100, grabs: 50, seeders: 5 });
     const b = makeResult({ matchScore: 0.9, indexerPriority: undefined, grabs: 50, seeders: 5 });
-    const { results } = filterAndRankResults([b, a], undefined, { grabFloor: 0, minSeeders: 0, protocolPreference: 'none', rejectWords: undefined, requiredWords: undefined, languages: [] });
+    const { results } = filterAndRankResults([b, a], undefined, { grabFloor: 0, minSeeders: 0, protocolPreference: 'none', languages: [] });
     expect(results[0]!.indexerPriority).toBe(100);
   });
 });
@@ -1385,7 +1394,7 @@ describe('filterAndRankResults — indexer priority integration (#394)', () => {
   it('results from indexer with priority 10 rank above priority 50 when all other factors equal', () => {
     const a = makeResult({ matchScore: 0.9, indexerPriority: 10, grabs: 50, seeders: 5, indexer: 'MAM' });
     const b = makeResult({ matchScore: 0.9, indexerPriority: 50, grabs: 50, seeders: 5, indexer: 'Torznab' });
-    const { results } = filterAndRankResults([b, a], undefined, { grabFloor: 0, minSeeders: 0, protocolPreference: 'none', rejectWords: undefined, requiredWords: undefined, languages: [] });
+    const { results } = filterAndRankResults([b, a], undefined, { grabFloor: 0, minSeeders: 0, protocolPreference: 'none', languages: [] });
     expect(results[0]!.indexer).toBe('MAM');
     expect(results[1]!.indexer).toBe('Torznab');
   });
@@ -1393,7 +1402,7 @@ describe('filterAndRankResults — indexer priority integration (#394)', () => {
   it('all indexers sharing same priority produces identical ordering to current behavior', () => {
     const a = makeResult({ matchScore: 0.9, indexerPriority: 50, grabs: 1000, seeders: 5 });
     const b = makeResult({ matchScore: 0.9, indexerPriority: 50, grabs: 10, seeders: 5 });
-    const { results } = filterAndRankResults([b, a], undefined, { grabFloor: 0, minSeeders: 0, protocolPreference: 'none', rejectWords: undefined, requiredWords: undefined, languages: [] });
+    const { results } = filterAndRankResults([b, a], undefined, { grabFloor: 0, minSeeders: 0, protocolPreference: 'none', languages: [] });
     // With equal priority, falls through to grabs — higher grabs wins
     expect(results[0]!.grabs).toBe(1000);
     expect(results[1]!.grabs).toBe(10);
@@ -1681,35 +1690,35 @@ describe('filterAndRankResults — narrator priority', () => {
     it('narrator-match result beats non-match when priority is accuracy (Fair vs Good quality)', () => {
       const fairMatch = makeResult({ narrator: 'Kevin R. Free', size: sizeForMbhr(79), matchScore: 0.9 });
       const goodNoMatch = makeResult({ narrator: 'Someone Else', size: sizeForMbhr(80), matchScore: 0.9 });
-      const { results } = filterAndRankResults([goodNoMatch, fairMatch], BOOK_DURATION, { grabFloor: 0, minSeeders: 1, protocolPreference: 'none', rejectWords: undefined, requiredWords: undefined, languages: [], narratorPriority: narratorPriority });
+      const { results } = filterAndRankResults([goodNoMatch, fairMatch], BOOK_DURATION, { grabFloor: 0, minSeeders: 1, protocolPreference: 'none', languages: [], narratorPriority: narratorPriority });
       expect(results[0]!.narrator).toBe('Kevin R. Free');
     });
 
     it('narrator-match with 29 MB/hr does NOT beat non-match — below quality floor', () => {
       const lowMatch = makeResult({ narrator: 'Kevin R. Free', size: sizeForMbhr(29), matchScore: 0.9 });
       const goodNoMatch = makeResult({ narrator: 'Someone Else', size: sizeForMbhr(200), matchScore: 0.9 });
-      const { results } = filterAndRankResults([lowMatch, goodNoMatch], BOOK_DURATION, { grabFloor: 0, minSeeders: 1, protocolPreference: 'none', rejectWords: undefined, requiredWords: undefined, languages: [], narratorPriority: narratorPriority });
+      const { results } = filterAndRankResults([lowMatch, goodNoMatch], BOOK_DURATION, { grabFloor: 0, minSeeders: 1, protocolPreference: 'none', languages: [], narratorPriority: narratorPriority });
       expect(results[0]!.narrator).toBe('Someone Else');
     });
 
     it('narrator-match with exactly 30 MB/hr beats non-match — meets Low tier floor', () => {
       const lowMatch = makeResult({ narrator: 'Kevin R. Free', size: sizeForMbhr(30), matchScore: 0.9 });
       const goodNoMatch = makeResult({ narrator: 'Someone Else', size: sizeForMbhr(200), matchScore: 0.9 });
-      const { results } = filterAndRankResults([goodNoMatch, lowMatch], BOOK_DURATION, { grabFloor: 0, minSeeders: 1, protocolPreference: 'none', rejectWords: undefined, requiredWords: undefined, languages: [], narratorPriority: narratorPriority });
+      const { results } = filterAndRankResults([goodNoMatch, lowMatch], BOOK_DURATION, { grabFloor: 0, minSeeders: 1, protocolPreference: 'none', languages: [], narratorPriority: narratorPriority });
       expect(results[0]!.narrator).toBe('Kevin R. Free');
     });
 
     it('two narrator-matched results sorted by quality (higher quality wins)', () => {
       const fairMatch = makeResult({ narrator: 'Kevin R. Free', size: sizeForMbhr(79), matchScore: 0.9, title: 'A' });
       const goodMatch = makeResult({ narrator: 'Kevin R. Free', size: sizeForMbhr(200), matchScore: 0.9, title: 'B' });
-      const { results } = filterAndRankResults([fairMatch, goodMatch], BOOK_DURATION, { grabFloor: 0, minSeeders: 1, protocolPreference: 'none', rejectWords: undefined, requiredWords: undefined, languages: [], narratorPriority: narratorPriority });
+      const { results } = filterAndRankResults([fairMatch, goodMatch], BOOK_DURATION, { grabFloor: 0, minSeeders: 1, protocolPreference: 'none', languages: [], narratorPriority: narratorPriority });
       expect(results[0]!.title).toBe('B');
     });
 
     it('two non-matched results sorted by quality as today (no change)', () => {
       const fair = makeResult({ narrator: 'Someone', size: sizeForMbhr(79), matchScore: 0.9, title: 'A' });
       const good = makeResult({ narrator: 'Other', size: sizeForMbhr(200), matchScore: 0.9, title: 'B' });
-      const { results } = filterAndRankResults([fair, good], BOOK_DURATION, { grabFloor: 0, minSeeders: 1, protocolPreference: 'none', rejectWords: undefined, requiredWords: undefined, languages: [], narratorPriority: narratorPriority });
+      const { results } = filterAndRankResults([fair, good], BOOK_DURATION, { grabFloor: 0, minSeeders: 1, protocolPreference: 'none', languages: [], narratorPriority: narratorPriority });
       expect(results[0]!.title).toBe('B');
     });
 
@@ -1718,14 +1727,14 @@ describe('filterAndRankResults — narrator priority', () => {
       const unknownMatch = makeResult({ narrator: 'Kevin R. Free', size: undefined, matchScore: 0.9, title: 'Match' });
       const goodNoMatch = makeResult({ narrator: 'Someone Else', size: sizeForMbhr(200), matchScore: 0.9, title: 'NoMatch' });
       // Duration unknown path
-      const { results } = filterAndRankResults([goodNoMatch, unknownMatch], undefined, { grabFloor: 0, minSeeders: 1, protocolPreference: 'none', rejectWords: undefined, requiredWords: undefined, languages: [], narratorPriority: narratorPriority });
+      const { results } = filterAndRankResults([goodNoMatch, unknownMatch], undefined, { grabFloor: 0, minSeeders: 1, protocolPreference: 'none', languages: [], narratorPriority: narratorPriority });
       expect(results[0]!.title).toBe('Match');
     });
 
     it('match-score gate: score delta > 0.1 overrides narrator tier', () => {
       const lowScoreMatch = makeResult({ narrator: 'Kevin R. Free', size: sizeForMbhr(200), matchScore: 0.6 });
       const highScoreNoMatch = makeResult({ narrator: 'Someone Else', size: sizeForMbhr(200), matchScore: 0.8 });
-      const { results } = filterAndRankResults([lowScoreMatch, highScoreNoMatch], BOOK_DURATION, { grabFloor: 0, minSeeders: 1, protocolPreference: 'none', rejectWords: undefined, requiredWords: undefined, languages: [], narratorPriority: narratorPriority });
+      const { results } = filterAndRankResults([lowScoreMatch, highScoreNoMatch], BOOK_DURATION, { grabFloor: 0, minSeeders: 1, protocolPreference: 'none', languages: [], narratorPriority: narratorPriority });
       expect(results[0]!.narrator).toBe('Someone Else');
     });
   });
@@ -1742,14 +1751,14 @@ describe('filterAndRankResults — narrator priority', () => {
     it('empty bookNarrators array disables narrator tier', () => {
       const fair = makeResult({ narrator: 'Kevin R. Free', size: sizeForMbhr(79), matchScore: 0.9, title: 'Fair' });
       const good = makeResult({ narrator: 'Someone Else', size: sizeForMbhr(200), matchScore: 0.9, title: 'Good' });
-      const { results } = filterAndRankResults([fair, good], BOOK_DURATION, { grabFloor: 0, minSeeders: 1, protocolPreference: 'none', rejectWords: undefined, requiredWords: undefined, languages: [], narratorPriority: { bookNarrators: [] } });
+      const { results } = filterAndRankResults([fair, good], BOOK_DURATION, { grabFloor: 0, minSeeders: 1, protocolPreference: 'none', languages: [], narratorPriority: { bookNarrators: [] } });
       expect(results[0]!.title).toBe('Good');
     });
 
     it('undefined SearchResult.narrator treated as non-match (no crash)', () => {
       const noNarrator = makeResult({ size: sizeForMbhr(200), matchScore: 0.9, title: 'NoNarr' });
       const withNarrator = makeResult({ narrator: 'Kevin R. Free', size: sizeForMbhr(79), matchScore: 0.9, title: 'WithNarr' });
-      const { results } = filterAndRankResults([noNarrator, withNarrator], BOOK_DURATION, { grabFloor: 0, minSeeders: 1, protocolPreference: 'none', rejectWords: undefined, requiredWords: undefined, languages: [], narratorPriority: narratorPriority });
+      const { results } = filterAndRankResults([noNarrator, withNarrator], BOOK_DURATION, { grabFloor: 0, minSeeders: 1, protocolPreference: 'none', languages: [], narratorPriority: narratorPriority });
       expect(results[0]!.title).toBe('WithNarr');
     });
   });
@@ -1759,28 +1768,28 @@ describe('filterAndRankResults — narrator priority', () => {
       // "Kevin R. Free" normalizes to "kevin r free" — exact match after normalization
       const match = makeResult({ narrator: 'Kevin R Free', size: sizeForMbhr(79), matchScore: 0.9 });
       const noMatch = makeResult({ narrator: 'Someone Else', size: sizeForMbhr(200), matchScore: 0.9 });
-      const { results } = filterAndRankResults([noMatch, match], BOOK_DURATION, { grabFloor: 0, minSeeders: 1, protocolPreference: 'none', rejectWords: undefined, requiredWords: undefined, languages: [], narratorPriority: { bookNarrators: ['Kevin R. Free'] } });
+      const { results } = filterAndRankResults([noMatch, match], BOOK_DURATION, { grabFloor: 0, minSeeders: 1, protocolPreference: 'none', languages: [], narratorPriority: { bookNarrators: ['Kevin R. Free'] } });
       expect(results[0]!.narrator).toBe('Kevin R Free');
     });
 
     it('different person similar name below 0.8 threshold is not boosted', () => {
       const falseMatch = makeResult({ narrator: 'Mark Kramer', size: sizeForMbhr(79), matchScore: 0.9, title: 'False' });
       const good = makeResult({ narrator: 'Someone Else', size: sizeForMbhr(200), matchScore: 0.9, title: 'Good' });
-      const { results } = filterAndRankResults([falseMatch, good], BOOK_DURATION, { grabFloor: 0, minSeeders: 1, protocolPreference: 'none', rejectWords: undefined, requiredWords: undefined, languages: [], narratorPriority: { bookNarrators: ['Michael Kramer'] } });
+      const { results } = filterAndRankResults([falseMatch, good], BOOK_DURATION, { grabFloor: 0, minSeeders: 1, protocolPreference: 'none', languages: [], narratorPriority: { bookNarrators: ['Michael Kramer'] } });
       expect(results[0]!.title).toBe('Good');
     });
 
     it('multi-value result narrator tokenized before matching', () => {
       const multiNarr = makeResult({ narrator: 'Travis Baldree, Jeff Hays', size: sizeForMbhr(79), matchScore: 0.9 });
       const good = makeResult({ narrator: 'Someone Else', size: sizeForMbhr(200), matchScore: 0.9 });
-      const { results } = filterAndRankResults([good, multiNarr], BOOK_DURATION, { grabFloor: 0, minSeeders: 1, protocolPreference: 'none', rejectWords: undefined, requiredWords: undefined, languages: [], narratorPriority: { bookNarrators: ['Travis Baldree'] } });
+      const { results } = filterAndRankResults([good, multiNarr], BOOK_DURATION, { grabFloor: 0, minSeeders: 1, protocolPreference: 'none', languages: [], narratorPriority: { bookNarrators: ['Travis Baldree'] } });
       expect(results[0]!.narrator).toBe('Travis Baldree, Jeff Hays');
     });
 
     it('multi-narrator book uses max pairwise score', () => {
       const match = makeResult({ narrator: 'Kate Reading', size: sizeForMbhr(79), matchScore: 0.9 });
       const noMatch = makeResult({ narrator: 'Someone Else', size: sizeForMbhr(200), matchScore: 0.9 });
-      const { results } = filterAndRankResults([noMatch, match], BOOK_DURATION, { grabFloor: 0, minSeeders: 1, protocolPreference: 'none', rejectWords: undefined, requiredWords: undefined, languages: [], narratorPriority: { bookNarrators: ['Michael Kramer', 'Kate Reading'] } });
+      const { results } = filterAndRankResults([noMatch, match], BOOK_DURATION, { grabFloor: 0, minSeeders: 1, protocolPreference: 'none', languages: [], narratorPriority: { bookNarrators: ['Michael Kramer', 'Kate Reading'] } });
       expect(results[0]!.narrator).toBe('Kate Reading');
     });
   });
@@ -1789,14 +1798,14 @@ describe('filterAndRankResults — narrator priority', () => {
     it('priority accuracy with zero narrator matches falls back to quality ranking', () => {
       const fair = makeResult({ narrator: 'Nobody Match', size: sizeForMbhr(79), matchScore: 0.9, title: 'Fair' });
       const good = makeResult({ narrator: 'Also Nobody', size: sizeForMbhr(200), matchScore: 0.9, title: 'Good' });
-      const { results } = filterAndRankResults([fair, good], BOOK_DURATION, { grabFloor: 0, minSeeders: 1, protocolPreference: 'none', rejectWords: undefined, requiredWords: undefined, languages: [], narratorPriority: { bookNarrators: ['Specific Narrator'] } });
+      const { results } = filterAndRankResults([fair, good], BOOK_DURATION, { grabFloor: 0, minSeeders: 1, protocolPreference: 'none', languages: [], narratorPriority: { bookNarrators: ['Specific Narrator'] } });
       expect(results[0]!.title).toBe('Good');
     });
 
     it('priority accuracy with no book narrators falls back to quality ranking', () => {
       const fair = makeResult({ narrator: 'Kevin R. Free', size: sizeForMbhr(79), matchScore: 0.9, title: 'Fair' });
       const good = makeResult({ narrator: 'Someone', size: sizeForMbhr(200), matchScore: 0.9, title: 'Good' });
-      const { results } = filterAndRankResults([fair, good], BOOK_DURATION, { grabFloor: 0, minSeeders: 1, protocolPreference: 'none', rejectWords: undefined, requiredWords: undefined, languages: [], narratorPriority: { bookNarrators: [] } });
+      const { results } = filterAndRankResults([fair, good], BOOK_DURATION, { grabFloor: 0, minSeeders: 1, protocolPreference: 'none', languages: [], narratorPriority: { bookNarrators: [] } });
       expect(results[0]!.title).toBe('Good');
     });
   });
@@ -1908,13 +1917,13 @@ describe('filterAndRankResults — nzbName reject/required word filtering (#502)
 
   it('required words match against nzbName when present', () => {
     const results = [makeResult({ title: 'Clean Title', nzbName: 'NZB with unabridged inside' })];
-    const { results: filtered } = filterAndRankResults(results, base.bookDuration, { grabFloor: base.grabFloor, minSeeders: base.minSeeders, protocolPreference: base.protocolPreference, rejectWords: undefined, requiredWords: 'unabridged' });
+    const { results: filtered } = filterAndRankResults(results, base.bookDuration, { grabFloor: base.grabFloor, minSeeders: base.minSeeders, protocolPreference: base.protocolPreference, requiredWords: 'unabridged' });
     expect(filtered).toHaveLength(1);
   });
 
   it('required words fall back to rawTitle when nzbName is absent', () => {
     const results = [makeResult({ title: 'Clean Title', rawTitle: 'Raw with unabridged' })];
-    const { results: filtered } = filterAndRankResults(results, base.bookDuration, { grabFloor: base.grabFloor, minSeeders: base.minSeeders, protocolPreference: base.protocolPreference, rejectWords: undefined, requiredWords: 'unabridged' });
+    const { results: filtered } = filterAndRankResults(results, base.bookDuration, { grabFloor: base.grabFloor, minSeeders: base.minSeeders, protocolPreference: base.protocolPreference, requiredWords: 'unabridged' });
     expect(filtered).toHaveLength(1);
   });
 

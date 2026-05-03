@@ -41,7 +41,7 @@ describe('snapshotBookForEvent', () => {
   });
 
   it('returns null authorName when authors is null or undefined', () => {
-    const book = { title: 'T', authors: undefined, narrators: [{ name: 'N' }] };
+    const book = { title: 'T', narrators: [{ name: 'N' }] };
     const result = snapshotBookForEvent(book);
     expect(result.authorName).toBeNull();
   });
