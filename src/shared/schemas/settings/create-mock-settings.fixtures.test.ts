@@ -51,7 +51,7 @@ describe('createMockSettings', () => {
   describe('boundary / edge cases', () => {
     it('override with undefined value does not strip the default', () => {
       // EOPT PHASE 1 SKIPPED — needs human review
-      const settings = createMockSettings({ processing: { ffmpegPath: undefined } } as Parameters<typeof createMockSettings>[0]);
+      const settings = createMockSettings({ processing: { ffmpegPath: undefined } } as unknown as Parameters<typeof createMockSettings>[0]);
       expect(settings.processing.ffmpegPath).toBe(DEFAULT_SETTINGS.processing.ffmpegPath);
     });
 
