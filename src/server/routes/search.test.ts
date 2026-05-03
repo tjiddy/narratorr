@@ -72,9 +72,8 @@ describe('filterAndRankResults', () => {
   });
 
   it('passes through results with no size (cannot calculate) even when grabFloor is set', () => {
-    const results = [
-      makeResult({ size: undefined, title: 'No Size' }),
-    ];
+    const { size: _size, ...resultNoSize } = makeResult({ title: 'No Size' });
+    const results: SearchResult[] = [resultNoSize];
     const { results: filtered } = filterAndRankResults(results, ONE_HOUR, { grabFloor: 150, minSeeders: 0, protocolPreference: 'none' });
     expect(filtered).toHaveLength(1);
     expect(filtered[0]!.title).toBe('No Size');
@@ -215,7 +214,7 @@ describe('filterAndRankResults', () => {
 
     it('all results pass when required word list is undefined', () => {
       const results = [makeResult({ title: 'Any Book' })];
-      const { results: filtered } = filterAndRankResults(results, ONE_HOUR, { grabFloor: 0, minSeeders: 0, protocolPreference: 'none', rejectWords: '', requiredWords: undefined });
+      const { results: filtered } = filterAndRankResults(results, ONE_HOUR, { grabFloor: 0, minSeeders: 0, protocolPreference: 'none', rejectWords: '' });
       expect(filtered).toHaveLength(1);
     });
 

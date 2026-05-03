@@ -50,12 +50,12 @@ describe('ImportCard', () => {
 
   describe('confidence badges', () => {
     it('shows "Matching" badge when no match result exists (pending)', () => {
-      render(<ImportCard {...defaultProps} row={makeRow({ matchResult: undefined })} />);
+      render(<ImportCard {...defaultProps} row={makeRow()} />);
       expect(screen.getByText('Matching')).toBeInTheDocument();
     });
 
     it('renders pending badge with muted variant (ring-border/20) and spinner icon', () => {
-      render(<ImportCard {...defaultProps} row={makeRow({ matchResult: undefined })} />);
+      render(<ImportCard {...defaultProps} row={makeRow()} />);
       const badge = screen.getByTestId('badge');
       expect(badge).toHaveClass('bg-muted/50', 'ring-1', 'ring-border/20');
       expect(badge.firstChild?.nodeName.toLowerCase()).toBe('svg');
@@ -141,7 +141,7 @@ describe('ImportCard', () => {
     });
 
     it('shows file count when edited.metadata is absent (no match yet)', () => {
-      render(<ImportCard {...defaultProps} row={makeRow({ matchResult: undefined, edited: { title: 'Book Title', author: 'Author Name', series: '' } })} />);
+      render(<ImportCard {...defaultProps} row={makeRow({ edited: { title: 'Book Title', author: 'Author Name', series: '' } })} />);
       expect(screen.getByText(/12 files/)).toBeInTheDocument();
     });
 
@@ -200,7 +200,7 @@ describe('ImportCard', () => {
 
   describe('visual states', () => {
     it('dims pending rows (opacity-50)', () => {
-      const { container } = render(<ImportCard {...defaultProps} row={makeRow({ matchResult: undefined })} />);
+      const { container } = render(<ImportCard {...defaultProps} row={makeRow()} />);
       expect(container.firstChild).toHaveClass('opacity-50');
     });
 

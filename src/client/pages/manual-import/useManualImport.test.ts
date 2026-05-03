@@ -605,11 +605,12 @@ describe('useManualImport', () => {
 
       // Second edit: change only the title, keep same metadata
       act(() => {
+        const prevMetadata = result.current.state.rows[0]!.edited.metadata;
         result.current.actions.handleEdit(0, {
           title: 'Book A (Updated)',
           author: 'Author A',
           series: '',
-          metadata: result.current.state.rows[0]!.edited.metadata,
+          ...(prevMetadata !== undefined && { metadata: prevMetadata }),
         });
       });
 
@@ -1170,7 +1171,7 @@ describe('handleEdit — auto-check and confidence upgrade (#185)', () => {
       act(() => {
         result.current.actions.handleEdit(0, {
           title: 'Book A', author: 'Author A', series: '',
-          metadata: preloadedMetadata,
+          ...(preloadedMetadata !== undefined && { metadata: preloadedMetadata }),
         });
       });
 

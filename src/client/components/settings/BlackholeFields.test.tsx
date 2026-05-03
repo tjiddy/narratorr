@@ -18,7 +18,7 @@ function FieldWrapper({ isEdit, protocolError, watchDirError }: { isEdit?: boole
     setError('settings.watchDir', { type: 'validate', message: 'Watch directory is required' });
   }
 
-  return <BlackholeFields register={register} errors={errors} isEdit={isEdit} />;
+  return <BlackholeFields register={register} errors={errors} {...(isEdit !== undefined && { isEdit })} />;
 }
 
 describe('BlackholeFields', () => {

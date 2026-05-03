@@ -38,7 +38,7 @@ function renderBooksTab(books = [createMockBookMetadata()], searchTerm?: string)
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   return render(
     <QueryClientProvider client={queryClient}>
-      <BooksTabContent books={books} libraryBooks={undefined} queryClient={queryClient} searchTerm={searchTerm} />
+      <BooksTabContent books={books} libraryBooks={undefined} queryClient={queryClient} {...(searchTerm !== undefined && { searchTerm })} />
     </QueryClientProvider>,
   );
 }

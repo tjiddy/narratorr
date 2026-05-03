@@ -113,7 +113,7 @@ describe('enrichUsenetLanguages', () => {
       );
 
       const results = [
-        makeResult({ protocol: 'usenet', newsgroup: undefined, downloadUrl: 'http://nzb.test/1' }),
+        makeResult({ protocol: 'usenet', downloadUrl: 'http://nzb.test/1' }),
       ];
 
       await enrichUsenetLanguages(results, logger);
@@ -160,9 +160,8 @@ describe('enrichUsenetLanguages', () => {
     });
 
     it('skips results without downloadUrl', async () => {
-      const results = [
-        makeResult({ protocol: 'usenet', downloadUrl: undefined }),
-      ];
+      const { downloadUrl: _downloadUrl, ...resultNoUrl } = makeResult({ protocol: 'usenet' });
+      const results: SearchResult[] = [resultNoUrl];
 
       await enrichUsenetLanguages(results, logger);
 

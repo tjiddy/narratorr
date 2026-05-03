@@ -640,7 +640,7 @@ describe('IndexerFields', () => {
           settings: { mamId: '********', baseUrl: 'https://mam.example.com', useProxy: true, searchLanguages: [1], searchType: 'active', isVip: true, mamUsername: 'OldUser' },
         },
       });
-      return <IndexerFields selectedType="myanonamouse" register={register} errors={errors} watch={watch} setValue={setValue} indexerId={indexerId} />;
+      return <IndexerFields selectedType="myanonamouse" register={register} errors={errors} watch={watch} setValue={setValue} {...(indexerId !== undefined && { indexerId })} />;
     }
 
     it('#361 refresh with sentinel mamId and indexerId calls testIndexerConfig with id in payload', async () => {

@@ -97,7 +97,7 @@ describe('BookEditModal', () => {
     });
 
     it('shows "No metadata match" message when no metadata', () => {
-      renderModal({ initial: makeEditState({ metadata: undefined }), confidence: 'none' });
+      renderModal({ initial: makeEditState({}), confidence: 'none' });
       expect(screen.getByText(/No metadata match/)).toBeInTheDocument();
     });
 

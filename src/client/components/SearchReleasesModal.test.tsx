@@ -1877,10 +1877,12 @@ describe('SearchReleasesModal — streaming search (Phase 1/Phase 2)', () => {
     });
 
     it('renders "In library" badge on result card when book lastGrabInfoHash matches result infoHash (torrent path)', async () => {
+      const { guid: _guid0, ...result0NoGuid } = mockResults[0]!;
+      // PHASE 1 SKIPPED — needs human review
+      const { guid: _guid1, ...result1NoGuid } = mockResults[1]!;
       setStreamResults([
-        { ...mockResults[0], infoHash: 'abc123', guid: undefined },
-        // PHASE 1 SKIPPED — needs human review
-        { ...mockResults[1], infoHash: 'other-hash', guid: undefined },
+        { ...result0NoGuid, infoHash: 'abc123' },
+        { ...result1NoGuid, infoHash: 'other-hash' },
       ]);
       const bookWithHash = createMockBook({ lastGrabGuid: null, lastGrabInfoHash: 'abc123' });
 

@@ -23,8 +23,8 @@ const mockGetValues = vi.fn().mockReturnValue({
 function makeOptions(overrides: { selectedType?: DownloadClientType; clientId?: number; isDirty?: boolean } = {}) {
   return {
     selectedType: overrides.selectedType ?? 'qbittorrent',
-    clientId: overrides.clientId,
-    isDirty: overrides.isDirty,
+    ...(overrides.clientId !== undefined && { clientId: overrides.clientId }),
+    ...(overrides.isDirty !== undefined && { isDirty: overrides.isDirty }),
     getValues: mockGetValues as never,
   };
 }

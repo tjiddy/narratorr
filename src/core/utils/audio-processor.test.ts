@@ -333,7 +333,8 @@ describe('processAudioFiles', () => {
     setupConvertFile();
     mockSpawnSuccess();
 
-    const config: ProcessingConfig = { ...defaultConfig, bitrate: undefined };
+    const { bitrate: _bitrate, ...configWithoutBitrate } = defaultConfig;
+    const config: ProcessingConfig = configWithoutBitrate;
     const result = await processAudioFiles('/lib/book', config, defaultContext);
     expect(result.success).toBe(true);
 
@@ -650,7 +651,8 @@ describe('bitrate capping — sourceBitrateKbps', () => {
   });
 
   it('omits -b:a flag when config.bitrate is undefined regardless of sourceBitrateKbps', async () => {
-    const config: ProcessingConfig = { ...defaultConfig, bitrate: undefined, sourceBitrateKbps: 64 };
+    const { bitrate: _bitrate, ...configWithoutBitrate } = defaultConfig;
+    const config: ProcessingConfig = { ...configWithoutBitrate, sourceBitrateKbps: 64 };
     await processAudioFiles('/lib/book', config, defaultContext);
 
     const spawnArgs = mockSpawn.mock.calls[0]![1] as string[];

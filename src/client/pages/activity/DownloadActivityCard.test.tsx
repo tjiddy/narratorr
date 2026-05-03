@@ -49,7 +49,7 @@ describe('DownloadActivityCard', () => {
     });
 
     it('does not display size when absent', () => {
-      renderWithProviders(<DownloadActivityCard download={createMockDownload({ size: undefined })} />);
+      renderWithProviders(<DownloadActivityCard download={createMockDownload({})} />);
       expect(screen.queryByText(/MB|KB|GB/)).not.toBeInTheDocument();
     });
 
@@ -247,7 +247,7 @@ describe('DownloadActivityCard', () => {
     it('handles null quality gate data — shows reject buttons without comparison panel', () => {
       renderWithProviders(
         <DownloadActivityCard
-          download={createMockDownload({ status: 'pending_review', qualityGate: undefined })}
+          download={createMockDownload({ status: 'pending_review' })}
           onReject={vi.fn()}
           onRejectWithSearch={vi.fn()}
         />,
@@ -328,7 +328,7 @@ describe('DownloadActivityCard', () => {
     });
 
     it('renders without indexer name when indexerName is undefined', () => {
-      const { container } = renderWithProviders(<DownloadActivityCard download={createMockDownload({ indexerName: undefined })} />);
+      const { container } = renderWithProviders(<DownloadActivityCard download={createMockDownload({})} />);
       // no indexer span — just verify no crash and no extra text
       expect(container).toBeInTheDocument();
     });
@@ -373,7 +373,7 @@ describe('DownloadActivityCard', () => {
     it('both Reject and Reject & Search buttons render on pending_review downloads without qualityGate data', () => {
       renderWithProviders(
         <DownloadActivityCard
-          download={createMockDownload({ status: 'pending_review', qualityGate: undefined })}
+          download={createMockDownload({ status: 'pending_review' })}
           onReject={vi.fn()}
           onRejectWithSearch={vi.fn()}
         />,
@@ -389,7 +389,7 @@ describe('DownloadActivityCard', () => {
       const onReject = vi.fn();
       renderWithProviders(
         <DownloadActivityCard
-          download={createMockDownload({ status: 'pending_review', qualityGate: undefined })}
+          download={createMockDownload({ status: 'pending_review' })}
           onReject={onReject}
           onRejectWithSearch={vi.fn()}
         />,
@@ -404,7 +404,7 @@ describe('DownloadActivityCard', () => {
       const onRejectWithSearch = vi.fn();
       renderWithProviders(
         <DownloadActivityCard
-          download={createMockDownload({ status: 'pending_review', qualityGate: undefined })}
+          download={createMockDownload({ status: 'pending_review' })}
           onReject={vi.fn()}
           onRejectWithSearch={onRejectWithSearch}
         />,
@@ -484,7 +484,7 @@ describe('DownloadActivityCard', () => {
     it('shows spinner on Reject button only when reject-dismiss is pending for this card', () => {
       renderWithProviders(
         <DownloadActivityCard
-          download={createMockDownload({ status: 'pending_review', qualityGate: undefined })}
+          download={createMockDownload({ status: 'pending_review' })}
           onReject={vi.fn()}
           onRejectWithSearch={vi.fn()}
           isRejectingDismiss
@@ -498,7 +498,7 @@ describe('DownloadActivityCard', () => {
     it('shows spinner on Reject & Search button only when reject-with-search is pending for this card', () => {
       renderWithProviders(
         <DownloadActivityCard
-          download={createMockDownload({ status: 'pending_review', qualityGate: undefined })}
+          download={createMockDownload({ status: 'pending_review' })}
           onReject={vi.fn()}
           onRejectWithSearch={vi.fn()}
           isRejectingWithSearch
@@ -515,7 +515,7 @@ describe('DownloadActivityCard', () => {
     it('shows no spinner on either button when reject is pending for a different card', () => {
       renderWithProviders(
         <DownloadActivityCard
-          download={createMockDownload({ status: 'pending_review', qualityGate: undefined })}
+          download={createMockDownload({ status: 'pending_review' })}
           onReject={vi.fn()}
           onRejectWithSearch={vi.fn()}
         />,
@@ -529,7 +529,7 @@ describe('DownloadActivityCard', () => {
     it('disables both buttons on this card when either reject action is pending for this card', () => {
       renderWithProviders(
         <DownloadActivityCard
-          download={createMockDownload({ status: 'pending_review', qualityGate: undefined })}
+          download={createMockDownload({ status: 'pending_review' })}
           onReject={vi.fn()}
           onRejectWithSearch={vi.fn()}
           isRejectingDismiss
@@ -583,7 +583,7 @@ describe('DownloadActivityCard', () => {
     });
 
     it('renders title as plain text when bookId is undefined', () => {
-      renderWithProviders(<DownloadActivityCard download={createMockDownload({ bookId: undefined, title: 'No Book' })} />);
+      renderWithProviders(<DownloadActivityCard download={createMockDownload({ title: 'No Book' })} />);
       expect(screen.getByText('No Book')).toBeInTheDocument();
       expect(screen.queryByRole('link', { name: 'No Book' })).not.toBeInTheDocument();
     });
@@ -625,7 +625,7 @@ describe('DownloadActivityCard', () => {
 
     it('does not render timestamp when completedAt is undefined', () => {
       renderWithProviders(
-        <DownloadActivityCard download={createMockDownload({ completedAt: undefined })} compact />,
+        <DownloadActivityCard download={createMockDownload({})} compact />,
       );
       expect(screen.queryByText(/·.*ago/)).not.toBeInTheDocument();
     });

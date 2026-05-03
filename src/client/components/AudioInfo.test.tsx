@@ -15,7 +15,7 @@ describe('AudioInfo', () => {
   });
 
   it('renders nothing when audioCodec is undefined', () => {
-    const { container } = render(<AudioInfo book={makeBook({ audioCodec: undefined })} />);
+    const { container } = render(<AudioInfo book={makeBook()} />);
     expect(container).toBeEmptyDOMElement();
   });
 

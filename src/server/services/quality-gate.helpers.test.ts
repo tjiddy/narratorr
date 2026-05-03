@@ -21,7 +21,6 @@ const baseBook = {
 const baseScan = {
   totalSize: 600_000_000,
   totalDuration: 36000,
-  tagNarrator: undefined as string | undefined,
   codec: 'MP3',
   channels: 2,
 };

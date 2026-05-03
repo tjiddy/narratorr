@@ -126,7 +126,7 @@ describe('EmailNotifier', () => {
   });
 
   it('omits auth when no user provided', async () => {
-    const noAuthConfig = { ...config, user: undefined, pass: undefined };
+    const { user: _user, pass: _pass, ...noAuthConfig } = config;
     const notifier = new EmailNotifier(noAuthConfig);
     await notifier.send('on_grab', { event: 'on_grab' });
 

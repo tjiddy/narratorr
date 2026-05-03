@@ -93,7 +93,7 @@ function renderBookDetails(
   metadata?: MetadataBook | null,
 ) {
   return renderWithProviders(
-    <BookDetails libraryBook={makeBook(bookOverrides)} metadataBook={metadata} />,
+    <BookDetails libraryBook={makeBook(bookOverrides)} {...(metadata !== undefined && { metadataBook: metadata })} />,
   );
 }
 
@@ -161,7 +161,8 @@ describe('BookDetails', () => {
 
   describe('missing description', () => {
     it('renders sidebar without description section', () => {
-      renderBookDetails({ description: null }, { ...fullMetadata, description: undefined });
+      const { description: _description, ...metaNoDescription } = fullMetadata;
+      renderBookDetails({ description: null }, metaNoDescription);
 
       expect(screen.queryByText('About This Book')).not.toBeInTheDocument();
       expect(screen.getByText('Audio Quality')).toBeInTheDocument();
@@ -171,10 +172,11 @@ describe('BookDetails', () => {
 
   describe('missing audio info and genres', () => {
     it('renders description without sidebar when no audio or genres', () => {
+      const { genres: _genres, ...metaNoGenres } = fullMetadata;
       renderBookDetails({
         audioCodec: null,
         genres: null,
-      }, { ...fullMetadata, genres: undefined });
+      }, metaNoGenres);
 
       expect(screen.getByText('About This Book')).toBeInTheDocument();
       expect(screen.queryByText('Audio Quality')).not.toBeInTheDocument();
@@ -248,7 +250,8 @@ describe('BookDetails', () => {
 
   describe('audio only (no genres)', () => {
     it('renders audio quality without genres section', () => {
-      renderBookDetails({ genres: null }, { ...fullMetadata, genres: undefined });
+      const { genres: _genres, ...metaNoGenres } = fullMetadata;
+      renderBookDetails({ genres: null }, metaNoGenres);
 
       expect(screen.getByText('Audio Quality')).toBeInTheDocument();
       expect(screen.queryByText('Genres')).not.toBeInTheDocument();

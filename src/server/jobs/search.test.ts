@@ -82,7 +82,7 @@ const mockResult = (seeders: number, downloadUrl?: string): SearchResult => ({
   protocol: 'torrent',
   indexer: 'abb',
   seeders,
-  downloadUrl,
+  ...(downloadUrl !== undefined && { downloadUrl }),
 });
 
 describe('runSearchJob', () => {
@@ -880,7 +880,6 @@ describe('runUpgradeSearchJob', () => {
         seeders: 10,
         size: 500 * 1024 * 1024,
         downloadUrl: 'magnet:?xt=urn:btih:up2',
-        language: undefined,
       };
       const indexer = createMockIndexerService([result]);
       const download = createMockDownloadOrchestrator();

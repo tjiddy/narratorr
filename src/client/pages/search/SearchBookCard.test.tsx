@@ -35,7 +35,7 @@ function renderCard(bookOverrides = {}, libraryBooks?: ReturnType<typeof createM
   const book = createMockBookMetadata(bookOverrides);
   return render(
     <QueryClientProvider client={queryClient}>
-      <SearchBookCard book={book} index={0} libraryBooks={libraryBooks} queryClient={queryClient} />
+      <SearchBookCard book={book} index={0} {...(libraryBooks !== undefined && { libraryBooks })} queryClient={queryClient} />
     </QueryClientProvider>,
   );
 }
@@ -91,7 +91,7 @@ describe('SearchBookCard', () => {
 
   it('shows In Library badge when book is in library', () => {
     const book = createMockBookMetadata();
-    const libraryBooks = [createMockBook({ asin: book.asin })];
+    const libraryBooks = [createMockBook(book.asin !== undefined ? { asin: book.asin } : {})];
     renderCard({}, libraryBooks);
     expect(screen.getByText('In Library')).toBeInTheDocument();
   });

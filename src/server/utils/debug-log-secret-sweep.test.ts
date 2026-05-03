@@ -78,7 +78,7 @@ describe('debug-log secret sweep (#932 AC7)', () => {
   it('multi-part filter logs only title + reason + matchedPattern', () => {
     const { logger, debugCalls } = makeLogger();
     const results: SearchResult[] = [
-      makeUsenet({ nzbName: 'Book "28" of "30" - apikey=SHOULD-NOT-LEAK', language: undefined }),
+      makeUsenet({ nzbName: 'Book "28" of "30" - apikey=SHOULD-NOT-LEAK' }),
     ];
 
     const { rejectedTitles } = filterMultiPartUsenet(results);
@@ -99,7 +99,7 @@ describe('debug-log secret sweep (#932 AC7)', () => {
     const { logger, debugCalls } = makeLogger();
     const results: SearchResult[] = [
       makeUsenet({ language: 'german' }),
-      makeUsenet({ title: 'Mystery Book', language: undefined }),
+      makeUsenet({ title: 'Mystery Book' }),
       makeUsenet({ title: 'Banned Title M4B', language: 'english' }),
     ];
 

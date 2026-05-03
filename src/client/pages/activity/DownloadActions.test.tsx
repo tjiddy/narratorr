@@ -53,7 +53,7 @@ describe('DownloadActions', () => {
     });
 
     it('does not show retry button when bookId is undefined (defensive: missing field)', () => {
-      const download = createMockDownload({ status: 'failed', bookId: undefined });
+      const download = createMockDownload({ status: 'failed' });
       render(<DownloadActions download={download} onRetry={vi.fn()} />);
 
       expect(screen.queryByText('Retry')).not.toBeInTheDocument();

@@ -96,7 +96,7 @@ function createMockBlacklistService(blacklisted: Set<string> = new Set()): Black
  */
 const makeResult = (title: string, author?: string, overrides: Partial<SearchResult> = {}): SearchResult => ({
   title,
-  author,
+  ...(author !== undefined && { author }),
   protocol: 'torrent',
   indexer: 'TestNewznab',
   downloadUrl: `magnet:?xt=urn:btih:${title.replace(/\s/g, '')}`,
@@ -633,7 +633,7 @@ describe('rss tests — GUID blacklist filtering', () => {
 
     it('passes through usenet results with no infoHash and no guid', async () => {
       const wantedBooks = [makeWantedBook(1, 'Test Book', 'Author')];
-      const rssResults = [makeResult('Test Book', 'Author', { protocol: 'usenet', infoHash: undefined, guid: undefined })];
+      const rssResults = [makeResult('Test Book', 'Author', { protocol: 'usenet' })];
       const settings = createMockSettingsService({ rss: { enabled: true } });
       const { bookList, book } = createMockBookServices(wantedBooks);
       const indexer = createMockIndexerService(rssResults);
@@ -1102,7 +1102,7 @@ describe('#502 runRssJob — enrichment before filtering', () => {
     it('emits the language-undetermined passed log when RSS rejects on language', async () => {
       const wantedBooks = [makeWantedBook(1, 'Test Book', 'Author')];
       const rssResults = [
-        makeResult('Test Book', 'Author', { language: undefined }),
+        makeResult('Test Book', 'Author'),
       ];
       const settings = createMockSettingsService({
         rss: { enabled: true },

@@ -47,7 +47,7 @@ describe('EmptyState', () => {
     });
 
     it('renders with icon={undefined} — same as omitted', () => {
-      render(<EmptyState icon={undefined} title="Empty" subtitle="Sub" />);
+      render(<EmptyState title="Empty" subtitle="Sub" />);
       expect(screen.queryByTestId('mock-icon')).not.toBeInTheDocument();
       expect(screen.getByText('Sub')).toBeInTheDocument();
     });
