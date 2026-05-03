@@ -2228,6 +2228,7 @@ describe('#533 postProcessSearchResults — multi-part filter uses nzbName after
 
 describe('postProcessSearchResults — search-complete payload schema compatibility (#734 AC1)', () => {
   it('return type is structurally compatible with searchResponseSchema', () => {
+    // EOPT PHASE 1 SKIPPED — needs human review
     expectTypeOf<Awaited<ReturnType<typeof postProcessSearchResults>>>()
       .toEqualTypeOf<SearchResponsePayload>();
   });

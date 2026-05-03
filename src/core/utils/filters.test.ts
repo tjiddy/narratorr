@@ -51,6 +51,7 @@ describe('matchesLanguageFilter', () => {
 describe('filterByLanguage', () => {
   it('returns all items as kept when allowedLanguages is empty (no filter)', () => {
     const items = [{ language: 'english' }, { language: 'french' }, { language: undefined }];
+    // EOPT PHASE 1 SKIPPED — needs human review
     const result = filterByLanguage(items, []);
     expect(result.kept).toEqual(items);
     expect(result.dropped).toEqual([]);
@@ -59,6 +60,7 @@ describe('filterByLanguage', () => {
 
   it('passes through items with undefined language', () => {
     const items = [{ language: undefined }, { language: 'english' }];
+    // EOPT PHASE 1 SKIPPED — needs human review
     const result = filterByLanguage(items, ['english']);
     expect(result.kept).toHaveLength(2);
     expect(result.passedUndetermined).toEqual([{ language: undefined }]);
@@ -86,6 +88,7 @@ describe('filterByLanguage', () => {
       { language: undefined, id: 3 },
       { language: 'french', id: 4 },
     ];
+    // EOPT PHASE 1 SKIPPED — needs human review
     const result = filterByLanguage(items, ['english', 'french']);
     expect(result.kept).toEqual([
       { language: 'english', id: 1 },

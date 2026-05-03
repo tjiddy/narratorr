@@ -94,10 +94,12 @@ describe('searchResponseSchema', () => {
  */
 describe('schema/interface compatibility', () => {
   it('searchResultSchema is structurally compatible with SearchResult', () => {
+    // EOPT PHASE 1 SKIPPED — needs human review
     expectTypeOf<SearchResultPayload>().toEqualTypeOf<SearchResult>();
   });
 
   it('searchResponseSchema is structurally compatible with SearchResponse', () => {
+    // EOPT PHASE 1 SKIPPED — needs human review
     expectTypeOf<SearchResponsePayload>().toEqualTypeOf<SearchResponse>();
   });
 });
