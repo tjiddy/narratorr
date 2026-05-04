@@ -85,42 +85,7 @@ export class QualityGateOrchestrator {
           safeEmit(this.optional.broadcaster, 'download_status_change', { download_id: row.download.id, book_id: row.book.id, old_status: 'completed', new_status: 'checking' }, this.log);
         }
 
-        // Resolve save path
-        let savePath: string;
-        try {
-          ({ resolvedPath: savePath } = await resolveSavePath(row.download, this.downloadClientService, this.optional.remotePathMappingService));
-        } catch (error: unknown) {
-          this.log.error({ error: serializeError(error), downloadId: row.download.id }, 'Quality gate: failed to resolve save path');
-          await this.holdForProbeFailure(row.download, row.book, 'probe_failed', error);
-          continue;
-        }
-
-        // Probe audio files
-        let scanResult;
-        try {
-          scanResult = await scanAudioDirectory(savePath, {
-            skipCover: true,
-            ...(ffprobePath !== undefined && { ffprobePath }),
-            onWarn: (msg, payload) => this.log.warn(payload, msg),
-            onDebug: (msg, payload) => this.log.debug(payload, msg),
-          });
-        } catch (error: unknown) {
-          this.log.error({ error: serializeError(error), downloadId: row.download.id }, 'Quality gate: scan failed');
-          await this.holdForProbeFailure(row.download, row.book, 'probe_failed', error);
-          continue;
-        }
-
-        if (!scanResult) {
-          this.log.warn({ downloadId: row.download.id }, 'Quality gate: no audio files found');
-          await this.holdForProbeFailure(row.download, row.book, 'probe_failed', 'No audio files found');
-          continue;
-        }
-
-        // Get decision from service
-        const decision = await this.qualityGateService.processDownload(row.download, row.book, scanResult);
-
-        // Dispatch side effects based on decision
-        await this.dispatchSideEffects(decision.action, row.download, row.book, decision.reason, decision.statusTransition);
+        await this.processClaimedRow(row, ffprobePath);
       } catch (error: unknown) {
         this.log.error({ error: serializeError(error), downloadId: row.download.id }, 'Quality gate error');
         // Set pending_review with probeFailure on unhandled error
@@ -132,7 +97,6 @@ export class QualityGateOrchestrator {
   }
 
   /** Process a single completed download through the quality gate, with inline import on approval. */
-  // eslint-disable-next-line complexity -- approval-vs-rejection vs auto-grab branches with widened BlacklistAndRetryRequest
   async processOneDownload(downloadId: number): Promise<void> {
     const [ffprobePath2, row] = await Promise.all([this.resolveFfprobePath(), this.qualityGateService.getCompletedDownloadById(downloadId)]);
     if (!row) { this.log.warn({ downloadId }, 'Quality gate: processOneDownload — download not found or not completed'); return; }
@@ -156,32 +120,8 @@ export class QualityGateOrchestrator {
     }
 
     try {
-      let savePath: string;
-      try {
-        ({ resolvedPath: savePath } = await resolveSavePath(row.download, this.downloadClientService, this.optional.remotePathMappingService));
-      } catch (error: unknown) {
-        this.log.error({ error: serializeError(error), downloadId: row.download.id }, 'Quality gate: failed to resolve save path');
-        await this.holdForProbeFailure(row.download, row.book, 'probe_failed', error);
-        return;
-      }
-      let scanResult;
-      try {
-        scanResult = await scanAudioDirectory(savePath, {
-          skipCover: true,
-          ...(ffprobePath2 !== undefined && { ffprobePath: ffprobePath2 }),
-          onWarn: (msg, payload) => this.log.warn(payload, msg),
-          onDebug: (msg, payload) => this.log.debug(payload, msg),
-        });
-      } catch (error: unknown) {
-        this.log.error({ error: serializeError(error), downloadId: row.download.id }, 'Quality gate: scan failed');
-        await this.holdForProbeFailure(row.download, row.book, 'probe_failed', error);
-        return;
-      }
-      if (!scanResult) { this.log.warn({ downloadId: row.download.id }, 'Quality gate: no audio files found'); await this.holdForProbeFailure(row.download, row.book, 'probe_failed', 'No audio files found'); return; }
-
-      const decision = await this.qualityGateService.processDownload(row.download, row.book, scanResult);
-      await this.dispatchSideEffects(decision.action, row.download, row.book, decision.reason, decision.statusTransition);
-      if (decision.action === 'imported' && row.book) {
+      const decision = await this.processClaimedRow(row, ffprobePath2);
+      if (decision?.action === 'imported' && row.book) {
         // Best-effort fire-and-forget: enqueueAutoImport returns false on conflict
         // (already logged inside the helper). Do not throw, do not transition the
         // gate decision back to pending_review — another path already enqueued.
@@ -246,6 +186,54 @@ export class QualityGateOrchestrator {
   }
 
   private async resolveFfprobePath(): Promise<string | undefined> { const s = await this.optional.settingsService?.get('processing'); return resolveFfprobePathFromSettings(s?.ffmpegPath); }
+
+  /**
+   * Run the savePath → scan → decide → dispatch chain for a row that the caller
+   * has already claimed. Returns the decision, or `null` if a hold-for-probe-failure
+   * already fired (caller should treat that as "no decision").
+   *
+   * Caller-specific pre-flight (atomicClaim, SSE timing, book-status promotion,
+   * wired-deps fail-fast) and post-flight (outer catch, enqueueAutoImport,
+   * ServiceWireError handling) live in the callers.
+   */
+  private async processClaimedRow(
+    row: { download: DownloadRow; book: BookRow | null },
+    ffprobePath: string | undefined,
+  ): Promise<QualityDecision | null> {
+    let savePath: string;
+    try {
+      ({ resolvedPath: savePath } = await resolveSavePath(row.download, this.downloadClientService, this.optional.remotePathMappingService));
+    } catch (error: unknown) {
+      this.log.error({ error: serializeError(error), downloadId: row.download.id }, 'Quality gate: failed to resolve save path');
+      await this.holdForProbeFailure(row.download, row.book, 'probe_failed', error);
+      return null;
+    }
+
+    let scanResult;
+    try {
+      scanResult = await scanAudioDirectory(savePath, {
+        skipCover: true,
+        ...(ffprobePath !== undefined && { ffprobePath }),
+        onWarn: (msg, payload) => this.log.warn(payload, msg),
+        onDebug: (msg, payload) => this.log.debug(payload, msg),
+      });
+    } catch (error: unknown) {
+      this.log.error({ error: serializeError(error), downloadId: row.download.id }, 'Quality gate: scan failed');
+      await this.holdForProbeFailure(row.download, row.book, 'probe_failed', error);
+      return null;
+    }
+
+    if (!scanResult) {
+      this.log.warn({ downloadId: row.download.id }, 'Quality gate: no audio files found');
+      await this.holdForProbeFailure(row.download, row.book, 'probe_failed', 'No audio files found');
+      return null;
+    }
+
+    const decision = await this.qualityGateService.processDownload(row.download, row.book, scanResult);
+    await this.dispatchSideEffects(decision.action, row.download, row.book, decision.reason, decision.statusTransition);
+    return decision;
+  }
+
   /** Hold for probe failure: set pending_review + SSE + event recording. */
   private async holdForProbeFailure(
     download: DownloadRow,
