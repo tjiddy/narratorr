@@ -11,6 +11,10 @@ import { findOrCreateAuthor } from '../utils/find-or-create-person.js';
 import type { ImportListType } from '../../shared/import-list-registry.js';
 import { importListSettingsSchemas, type ImportListSettings } from '../../shared/schemas/import-list.js';
 import type { ImportListRow } from './types.js';
+import { triggerImmediateSearch, type ImmediateSearchDeps } from '../routes/trigger-immediate-search.js';
+import type { AppSettings } from '../../shared/schemas.js';
+
+type QualitySettings = AppSettings['quality'];
 
 /** Milliseconds per minute — used for sync interval calculations. */
 const MS_PER_MINUTE = 60_000;
@@ -36,6 +40,7 @@ export class ImportListService {
     private db: Db,
     private log: FastifyBaseLogger,
     private metadata?: MetadataService,
+    private searchDeps?: ImmediateSearchDeps,
   ) {}
 
   private decryptRow(row: ImportListRow): ImportListRow {
@@ -176,6 +181,8 @@ export class ImportListService {
 
     this.log.info({ id: list.id, name: list.name, itemCount: items.length }, 'Fetched items from provider');
 
+    const qualitySettings = this.searchDeps ? await this.searchDeps.settingsService.get('quality') : undefined;
+
     for (const item of items) {
       if (!item.title?.trim()) {
         this.log.warn({ listId: list.id, item }, 'Skipping item with empty/null title');
@@ -183,7 +190,7 @@ export class ImportListService {
       }
 
       try {
-        await this.processItem(item, list);
+        await this.processItem(item, list, qualitySettings);
       } catch (error: unknown) {
         this.log.warn({ listId: list.id, title: item.title, error: getErrorMessage(error) }, 'Failed to process import list item');
       }
@@ -220,7 +227,7 @@ export class ImportListService {
     }
   }
 
-  private async processItem(item: ImportListItem, list: ImportListRow): Promise<void> {
+  private async processItem(item: ImportListItem, list: ImportListRow, qualitySettings?: QualitySettings): Promise<void> {
     const enriched = await this.enrichItem(item);
 
     const insertResult = await this.db
@@ -232,7 +239,7 @@ export class ImportListService {
         status: 'wanted',
         enrichmentStatus: 'pending',
         importListId: list.id,
-        monitorForUpgrades: false,
+        monitorForUpgrades: qualitySettings?.monitorForUpgrades ?? false,
       })
       .onConflictDoNothing()
       .returning();
@@ -266,5 +273,13 @@ export class ImportListService {
     });
 
     this.log.info({ bookId: newBook.id, title: newBook.title, listName: list.name }, 'Book added from import list');
+
+    if (this.searchDeps && qualitySettings?.searchImmediately) {
+      const bookForSearch = {
+        ...newBook,
+        authors: enriched.author ? [{ name: enriched.author }] : [],
+      };
+      triggerImmediateSearch(bookForSearch, this.searchDeps, this.log);
+    }
   }
 }
