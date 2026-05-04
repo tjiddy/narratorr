@@ -97,6 +97,25 @@ export class IndexerService {
     return row ? this.decryptRow(row) : null;
   }
 
+  async getAllProwlarrManaged(): Promise<IndexerRow[]> {
+    const rows = await this.db
+      .select()
+      .from(indexers)
+      .where(eq(indexers.source, 'prowlarr'))
+      .orderBy(indexers.priority);
+    return rows.map((r) => this.decryptRow(r));
+  }
+
+  async getByIdProwlarrManaged(id: number): Promise<IndexerRow | null> {
+    const results = await this.db
+      .select()
+      .from(indexers)
+      .where(and(eq(indexers.id, id), eq(indexers.source, 'prowlarr')))
+      .limit(1);
+    const row = results[0] || null;
+    return row ? this.decryptRow(row) : null;
+  }
+
   /** Create or upsert a Prowlarr-sourced indexer (AC7, AC9) */
   async createOrUpsertProwlarr(data: {
     name: string;

@@ -497,7 +497,7 @@ describe('Prowlarr-compatible API v1 routes', () => {
 
   describe('GET /api/v1/indexer (AC3)', () => {
     it('returns all indexers in Readarr format as array', async () => {
-      (services.indexer.getAll as Mock).mockResolvedValue([mockTorznabIndexer, mockNewznabIndexer]);
+      (services.indexer.getAllProwlarrManaged as Mock).mockResolvedValue([mockTorznabIndexer, mockNewznabIndexer]);
 
       const res = await app.inject({ method: 'GET', url: '/api/v1/indexer' });
 
@@ -508,26 +508,28 @@ describe('Prowlarr-compatible API v1 routes', () => {
       expect(payload[1].implementation).toBe('Newznab');
     });
 
-    it('includes both Prowlarr-managed and manual indexers', async () => {
-      const manualIndexer = {
-        ...mockTorznabIndexer,
-        id: 3,
-        name: 'Manual Torznab',
-        source: null,
-        sourceIndexerId: null,
-      };
-      (services.indexer.getAll as Mock).mockResolvedValue([mockTorznabIndexer, manualIndexer]);
+    // #958 — Prowlarr's "Sync App Indexers" diffs the GET response against its
+    // managed set and DELETEs anything it doesn't recognize. Manual indexers
+    // (source: null) must be opaque on this surface so they aren't classified
+    // as stale and wiped. The route now calls getAllProwlarrManaged, which
+    // filters at the data layer; the manual row never reaches the response.
+    it('excludes manual (source: null) indexers from the Prowlarr-compat list (#958)', async () => {
+      // The filtered helper only returns prowlarr-managed rows. The manual
+      // row is filtered out at the service layer before the route sees it.
+      (services.indexer.getAllProwlarrManaged as Mock).mockResolvedValue([mockTorznabIndexer]);
 
       const res = await app.inject({ method: 'GET', url: '/api/v1/indexer' });
 
+      expect(res.statusCode).toBe(200);
       const payload = JSON.parse(res.payload);
-      expect(payload).toHaveLength(2);
+      expect(payload).toHaveLength(1);
+      expect(payload[0].id).toBe(mockTorznabIndexer.id);
     });
   });
 
   describe('GET /api/v1/indexer/:id (AC3)', () => {
     it('returns single indexer in Readarr format', async () => {
-      (services.indexer.getById as Mock).mockResolvedValue(mockTorznabIndexer);
+      (services.indexer.getByIdProwlarrManaged as Mock).mockResolvedValue(mockTorznabIndexer);
 
       const res = await app.inject({ method: 'GET', url: '/api/v1/indexer/1' });
 
@@ -539,18 +541,31 @@ describe('Prowlarr-compatible API v1 routes', () => {
     });
 
     it('returns 404 for non-existent id', async () => {
-      (services.indexer.getById as Mock).mockResolvedValue(null);
+      (services.indexer.getByIdProwlarrManaged as Mock).mockResolvedValue(null);
 
       const res = await app.inject({ method: 'GET', url: '/api/v1/indexer/999' });
 
       expect(res.statusCode).toBe(404);
       expect(JSON.parse(res.payload).message).toBeDefined();
     });
+
+    // #958 — direct probes by ID must also be opaque to non-Prowlarr rows.
+    // The filtered helper returns null for manual rows; the route surfaces 404
+    // so a Prowlarr-compat caller can never confirm a manual row's existence.
+    it('returns 404 for a manual (source: null) row even though the id exists (#958)', async () => {
+      // getByIdProwlarrManaged returns null when the row's source !== 'prowlarr',
+      // which is indistinguishable to the route from a missing row.
+      (services.indexer.getByIdProwlarrManaged as Mock).mockResolvedValue(null);
+
+      const res = await app.inject({ method: 'GET', url: '/api/v1/indexer/42' });
+
+      expect(res.statusCode).toBe(404);
+    });
   });
 
   describe('apiKey masking on GET responses (security)', () => {
     it('GET /api/v1/indexer/:id returns sentinel for apiKey, not plaintext', async () => {
-      (services.indexer.getById as Mock).mockResolvedValue(mockTorznabIndexer);
+      (services.indexer.getByIdProwlarrManaged as Mock).mockResolvedValue(mockTorznabIndexer);
 
       const res = await app.inject({ method: 'GET', url: '/api/v1/indexer/1' });
 
@@ -563,7 +578,7 @@ describe('Prowlarr-compatible API v1 routes', () => {
     });
 
     it('GET /api/v1/indexer masks apiKey on every row', async () => {
-      (services.indexer.getAll as Mock).mockResolvedValue([mockTorznabIndexer, mockNewznabIndexer]);
+      (services.indexer.getAllProwlarrManaged as Mock).mockResolvedValue([mockTorznabIndexer, mockNewznabIndexer]);
 
       const res = await app.inject({ method: 'GET', url: '/api/v1/indexer' });
 
@@ -579,7 +594,7 @@ describe('Prowlarr-compatible API v1 routes', () => {
     });
 
     it('non-secret fields (categories) pass through unmasked', async () => {
-      (services.indexer.getById as Mock).mockResolvedValue(mockTorznabIndexer);
+      (services.indexer.getByIdProwlarrManaged as Mock).mockResolvedValue(mockTorznabIndexer);
 
       const res = await app.inject({ method: 'GET', url: '/api/v1/indexer/1' });
 
@@ -590,7 +605,7 @@ describe('Prowlarr-compatible API v1 routes', () => {
 
     it('GET /api/v1/indexer/:id masks baseUrl when apiUrl is set (#742)', async () => {
       // apiUrl is a secret field — it may embed user:pass credentials.
-      (services.indexer.getById as Mock).mockResolvedValue(mockTorznabIndexer);
+      (services.indexer.getByIdProwlarrManaged as Mock).mockResolvedValue(mockTorznabIndexer);
 
       const res = await app.inject({ method: 'GET', url: '/api/v1/indexer/1' });
 
@@ -606,7 +621,7 @@ describe('Prowlarr-compatible API v1 routes', () => {
         ...mockTorznabIndexer,
         settings: { ...mockTorznabIndexer.settings, apiKey: '' },
       };
-      (services.indexer.getById as Mock).mockResolvedValue(indexerWithoutKey);
+      (services.indexer.getByIdProwlarrManaged as Mock).mockResolvedValue(indexerWithoutKey);
 
       const res = await app.inject({ method: 'GET', url: '/api/v1/indexer/1' });
 
@@ -616,6 +631,7 @@ describe('Prowlarr-compatible API v1 routes', () => {
     });
 
     it('sentinel value sent on PUT flows to IndexerService.update unchanged (sentinel passthrough is service-layer concern)', async () => {
+      (services.indexer.getByIdProwlarrManaged as Mock).mockResolvedValue(mockTorznabIndexer);
       (services.indexer.update as Mock).mockResolvedValue(mockTorznabIndexer);
 
       await app.inject({
@@ -643,6 +659,7 @@ describe('Prowlarr-compatible API v1 routes', () => {
 
   describe('PUT /api/v1/indexer/:id (AC3, AC5)', () => {
     it('updates indexer and returns 200 with Readarr-format response', async () => {
+      (services.indexer.getByIdProwlarrManaged as Mock).mockResolvedValue(mockTorznabIndexer);
       (services.indexer.update as Mock).mockResolvedValue(mockTorznabIndexer);
 
       const res = await app.inject({
@@ -657,7 +674,8 @@ describe('Prowlarr-compatible API v1 routes', () => {
     });
 
     it('returns 404 for non-existent id', async () => {
-      (services.indexer.update as Mock).mockResolvedValue(null);
+      // After #958 the source guard returns 404 before update is reached.
+      (services.indexer.getByIdProwlarrManaged as Mock).mockResolvedValue(null);
 
       const res = await app.inject({
         method: 'PUT',
@@ -666,6 +684,7 @@ describe('Prowlarr-compatible API v1 routes', () => {
       });
 
       expect(res.statusCode).toBe(404);
+      expect(services.indexer.update).not.toHaveBeenCalled();
     });
 
     it('returns 400 for unsupported implementation type', async () => {
@@ -679,6 +698,7 @@ describe('Prowlarr-compatible API v1 routes', () => {
     });
 
     it('updates even with unreachable URL (no connectivity check)', async () => {
+      (services.indexer.getByIdProwlarrManaged as Mock).mockResolvedValue(mockTorznabIndexer);
       (services.indexer.update as Mock).mockResolvedValue(mockTorznabIndexer);
 
       const res = await app.inject({
@@ -698,7 +718,7 @@ describe('Prowlarr-compatible API v1 routes', () => {
 
     it('preserves existing sourceIndexerId when baseUrl is the masked sentinel (#742 F1)', async () => {
       // Existing prowlarr-sourced row with sourceIndexerId=1
-      (services.indexer.getById as Mock).mockResolvedValue(mockTorznabIndexer);
+      (services.indexer.getByIdProwlarrManaged as Mock).mockResolvedValue(mockTorznabIndexer);
       (services.indexer.update as Mock).mockResolvedValue(mockTorznabIndexer);
 
       const res = await app.inject({
@@ -717,7 +737,7 @@ describe('Prowlarr-compatible API v1 routes', () => {
       });
 
       expect(res.statusCode).toBe(200);
-      expect(services.indexer.getById).toHaveBeenCalledWith(1);
+      expect(services.indexer.getByIdProwlarrManaged).toHaveBeenCalledWith(1);
       expect(services.indexer.update).toHaveBeenCalledWith(
         1,
         expect.objectContaining({
@@ -728,6 +748,10 @@ describe('Prowlarr-compatible API v1 routes', () => {
     });
 
     it('still derives sourceIndexerId from a fresh baseUrl when the client sends a real URL', async () => {
+      // After #958 the source guard runs unconditionally, so getByIdProwlarrManaged
+      // is always called. The semantically meaningful assertion is that update()
+      // receives the freshly-derived sourceIndexerId (42), not the stored one.
+      (services.indexer.getByIdProwlarrManaged as Mock).mockResolvedValue(mockTorznabIndexer);
       (services.indexer.update as Mock).mockResolvedValue(mockTorznabIndexer);
 
       const res = await app.inject({
@@ -743,16 +767,32 @@ describe('Prowlarr-compatible API v1 routes', () => {
       });
 
       expect(res.statusCode).toBe(200);
-      expect(services.indexer.getById).not.toHaveBeenCalled();
       expect(services.indexer.update).toHaveBeenCalledWith(
         1,
         expect.objectContaining({ sourceIndexerId: 42 }),
       );
     });
+
+    // #958 — manual rows must be opaque to PUT-by-id so the unconditional
+    // `source: 'prowlarr'` write in the update payload can't flip them.
+    it('returns 404 for a manual (source: null) row and does not call update (#958)', async () => {
+      // The filtered helper returns null for non-Prowlarr rows.
+      (services.indexer.getByIdProwlarrManaged as Mock).mockResolvedValue(null);
+
+      const res = await app.inject({
+        method: 'PUT',
+        url: '/api/v1/indexer/42',
+        payload: validTorznabBody,
+      });
+
+      expect(res.statusCode).toBe(404);
+      expect(services.indexer.update).not.toHaveBeenCalled();
+    });
   });
 
   describe('DELETE /api/v1/indexer/:id (AC3)', () => {
     it('deletes indexer and returns 200', async () => {
+      (services.indexer.getByIdProwlarrManaged as Mock).mockResolvedValue(mockTorznabIndexer);
       (services.indexer.delete as Mock).mockResolvedValue(true);
 
       const res = await app.inject({ method: 'DELETE', url: '/api/v1/indexer/1' });
@@ -761,11 +801,57 @@ describe('Prowlarr-compatible API v1 routes', () => {
     });
 
     it('returns 404 for non-existent id', async () => {
-      (services.indexer.delete as Mock).mockResolvedValue(false);
+      // After #958 the source guard returns 404 before delete is reached.
+      (services.indexer.getByIdProwlarrManaged as Mock).mockResolvedValue(null);
 
       const res = await app.inject({ method: 'DELETE', url: '/api/v1/indexer/999' });
 
       expect(res.statusCode).toBe(404);
+      expect(services.indexer.delete).not.toHaveBeenCalled();
+    });
+
+    // #958 — defensive guard: even if the GET filter regresses, manual rows
+    // must not be deletable through the Prowlarr-compat surface.
+    it('returns 404 for a manual (source: null) row and does not call delete (#958)', async () => {
+      (services.indexer.getByIdProwlarrManaged as Mock).mockResolvedValue(null);
+
+      const res = await app.inject({ method: 'DELETE', url: '/api/v1/indexer/42' });
+
+      expect(res.statusCode).toBe(404);
+      expect(services.indexer.delete).not.toHaveBeenCalled();
+    });
+  });
+
+  // AC6: full repro of the original "Sync All deletes manual indexers" bug.
+  // Walks through Prowlarr's actual sync flow and asserts each id-keyed
+  // operation is opaque to the manually-added row.
+  describe('Prowlarr Sync All — manual indexer protection (#958)', () => {
+    it('manual rows are filtered from GET; direct DELETE/PUT by their id return 404', async () => {
+      // Filtered list never includes the manual row (id=42).
+      (services.indexer.getAllProwlarrManaged as Mock).mockResolvedValue([mockTorznabIndexer]);
+      // Both id-keyed lookups return null for the manual id, regardless of
+      // whether the underlying row exists — the filter happens at the data
+      // layer, so non-Prowlarr rows are indistinguishable from missing rows.
+      (services.indexer.getByIdProwlarrManaged as Mock).mockResolvedValue(null);
+
+      const list = await app.inject({ method: 'GET', url: '/api/v1/indexer' });
+      expect(list.statusCode).toBe(200);
+      const listed = JSON.parse(list.payload) as Array<{ id: number }>;
+      expect(listed.map(r => r.id)).not.toContain(42);
+
+      const del = await app.inject({ method: 'DELETE', url: '/api/v1/indexer/42' });
+      expect(del.statusCode).toBe(404);
+
+      const put = await app.inject({
+        method: 'PUT',
+        url: '/api/v1/indexer/42',
+        payload: validTorznabBody,
+      });
+      expect(put.statusCode).toBe(404);
+
+      // The unfiltered mutators must never be reached for the manual row.
+      expect(services.indexer.delete).not.toHaveBeenCalled();
+      expect(services.indexer.update).not.toHaveBeenCalled();
     });
   });
 
@@ -876,7 +962,7 @@ describe('Prowlarr-compatible API v1 routes', () => {
     });
 
     it('maps internal apiUrl back to baseUrl field on read (masked — #742)', async () => {
-      (services.indexer.getById as Mock).mockResolvedValue(mockTorznabIndexer);
+      (services.indexer.getByIdProwlarrManaged as Mock).mockResolvedValue(mockTorznabIndexer);
 
       const res = await app.inject({ method: 'GET', url: '/api/v1/indexer/1' });
 
@@ -892,7 +978,7 @@ describe('Prowlarr-compatible API v1 routes', () => {
         row: mockTorznabIndexer,
         upserted: false,
       });
-      (services.indexer.getById as Mock).mockResolvedValue(mockTorznabIndexer);
+      (services.indexer.getByIdProwlarrManaged as Mock).mockResolvedValue(mockTorznabIndexer);
 
       // Create
       await app.inject({
@@ -918,7 +1004,7 @@ describe('Prowlarr-compatible API v1 routes', () => {
         ...mockTorznabIndexer,
         settings: { ...mockTorznabIndexer.settings, customField: 'customValue' },
       };
-      (services.indexer.getById as Mock).mockResolvedValue(indexerWithExtra);
+      (services.indexer.getByIdProwlarrManaged as Mock).mockResolvedValue(indexerWithExtra);
 
       const res = await app.inject({ method: 'GET', url: '/api/v1/indexer/1' });
       const payload = JSON.parse(res.payload);
@@ -956,7 +1042,7 @@ describe('Prowlarr-compatible API v1 routes', () => {
     });
 
     it('defaults apiPath to "/api" when not provided', async () => {
-      (services.indexer.getById as Mock).mockResolvedValue(mockTorznabIndexer);
+      (services.indexer.getByIdProwlarrManaged as Mock).mockResolvedValue(mockTorznabIndexer);
 
       const res = await app.inject({ method: 'GET', url: '/api/v1/indexer/1' });
       const payload = JSON.parse(res.payload);
@@ -970,7 +1056,7 @@ describe('Prowlarr-compatible API v1 routes', () => {
         ...mockTorznabIndexer,
         settings: { apiUrl: 'http://prowlarr:9696/1/', apiKey: 'abc123' },
       };
-      (services.indexer.getById as Mock).mockResolvedValue(indexerNoCategories);
+      (services.indexer.getByIdProwlarrManaged as Mock).mockResolvedValue(indexerNoCategories);
 
       const res = await app.inject({ method: 'GET', url: '/api/v1/indexer/1' });
       const payload = JSON.parse(res.payload);
@@ -984,7 +1070,7 @@ describe('Prowlarr-compatible API v1 routes', () => {
         ...mockTorznabIndexer,
         settings: { apiUrl: 'http://prowlarr:9696/1/', apiKey: 'abc123' },
       };
-      (services.indexer.getById as Mock).mockResolvedValue(indexerNoSeeders);
+      (services.indexer.getByIdProwlarrManaged as Mock).mockResolvedValue(indexerNoSeeders);
 
       const res = await app.inject({ method: 'GET', url: '/api/v1/indexer/1' });
       const payload = JSON.parse(res.payload);
@@ -998,7 +1084,7 @@ describe('Prowlarr-compatible API v1 routes', () => {
         ...mockTorznabIndexer,
         settings: { apiUrl: 'http://prowlarr:9696/1/', apiKey: 'abc123' },
       };
-      (services.indexer.getById as Mock).mockResolvedValue(indexerNoSeed);
+      (services.indexer.getByIdProwlarrManaged as Mock).mockResolvedValue(indexerNoSeed);
 
       const res = await app.inject({ method: 'GET', url: '/api/v1/indexer/1' });
       const payload = JSON.parse(res.payload);

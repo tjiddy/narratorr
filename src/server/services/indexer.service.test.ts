@@ -1,4 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import { createClient } from '@libsql/client';
+import { drizzle } from 'drizzle-orm/libsql';
 import { createMockDb, createMockLogger, inject, mockDbChain, createMockSettingsService } from '../__tests__/helpers.js';
 import { createMockDbIndexer } from '../__tests__/factories.js';
 import { IndexerService } from './indexer.service.js';
@@ -9,6 +11,36 @@ import { initializeKey, _resetKey, isEncrypted } from '../utils/secret-codec.js'
 
 const TEST_KEY = Buffer.from('a'.repeat(64), 'hex');
 const mockIndexer = createMockDbIndexer();
+
+/**
+ * Spin up a real in-memory libsql DB with the `indexers` table CREATEd from
+ * its drizzle schema definition. Used to prove SQL WHERE-predicate behavior
+ * for the #958 Prowlarr-compat filtering helpers — mockDbChain doesn't
+ * evaluate the where() expression, so a regression in the predicate would
+ * pass mocked tests.
+ *
+ * Schema kept inline so a column-name drift in src/db/schema.ts surfaces here
+ * (the rows we insert below would fail to bind), instead of silently breaking
+ * the predicate proof.
+ */
+async function loadProwlarrPredicateDb() {
+  const client = createClient({ url: ':memory:' });
+  const db = drizzle(client);
+  await client.execute(`
+    CREATE TABLE indexers (
+      id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+      name TEXT NOT NULL,
+      type TEXT NOT NULL,
+      enabled INTEGER NOT NULL DEFAULT 1,
+      priority INTEGER NOT NULL DEFAULT 50,
+      settings TEXT NOT NULL,
+      source TEXT,
+      source_indexer_id INTEGER,
+      created_at INTEGER NOT NULL DEFAULT (unixepoch())
+    )
+  `);
+  return { db, close: () => client.close() };
+}
 
 describe('IndexerService', () => {
   let db: ReturnType<typeof createMockDb>;
@@ -645,6 +677,191 @@ describe('IndexerService', () => {
 
         const result = await service.findByProwlarrSource(999);
         expect(result).toBeNull();
+      });
+    });
+
+    // #958 — filtered helpers backing the Prowlarr-compat GET surface. The
+    // chained where() filters source = 'prowlarr' so manual rows (source: null)
+    // and rows from other origins never reach the response.
+    //
+    // These suites are split across two backings:
+    //   - mockDbChain — ergonomic for shape/decryption assertions, but does NOT
+    //     evaluate the WHERE expression. A helper that omitted the source
+    //     predicate would still satisfy a mock-only test.
+    //   - real in-memory libsql + Drizzle (loadProwlarrPredicateDb) — actually
+    //     applies the SQL WHERE. This is what proves the predicate excludes a
+    //     persisted manual (source: null) row, satisfying the F1 contract.
+    describe('getAllProwlarrManaged', () => {
+      it('decrypts settings on returned rows (matches getAll behavior)', async () => {
+        const { encrypt } = await import('../utils/secret-codec.js');
+        const encryptedKey = encrypt('real-api-key', TEST_KEY);
+        const prowlarrRow = createMockDbIndexer({
+          id: 1,
+          source: 'prowlarr',
+          sourceIndexerId: 1,
+          settings: { apiKey: encryptedKey, hostname: 'tracker' },
+        });
+        db.select.mockReturnValue(mockDbChain([prowlarrRow]));
+
+        const result = await service.getAllProwlarrManaged();
+
+        expect((result[0]!.settings as { apiKey: string }).apiKey).toBe('real-api-key');
+      });
+    });
+
+    describe('getByIdProwlarrManaged', () => {
+      it('returns null when no row exists at the id', async () => {
+        db.select.mockReturnValue(mockDbChain([]));
+
+        const result = await service.getByIdProwlarrManaged(999);
+        expect(result).toBeNull();
+      });
+
+      it('decrypts settings on the returned row (matches getById behavior)', async () => {
+        const { encrypt } = await import('../utils/secret-codec.js');
+        const encryptedKey = encrypt('real-api-key', TEST_KEY);
+        const prowlarrRow = createMockDbIndexer({
+          id: 7,
+          source: 'prowlarr',
+          sourceIndexerId: 3,
+          settings: { apiKey: encryptedKey },
+        });
+        db.select.mockReturnValue(mockDbChain([prowlarrRow]));
+
+        const result = await service.getByIdProwlarrManaged(7);
+
+        expect((result!.settings as { apiKey: string }).apiKey).toBe('real-api-key');
+      });
+    });
+
+    // #958 F1 — predicate proof against a real SQL engine. mockDbChain ignores
+    // the where() expression, so a helper that drops `eq(source, 'prowlarr')`
+    // would still satisfy mocked tests. These tests run the helpers against an
+    // in-memory libsql DB seeded with both a manual (source: null) and a
+    // prowlarr row; the SQLite engine evaluates the WHERE clause for real, so
+    // any regression in the predicate fails the assertion.
+    describe('Prowlarr-managed helpers — real DB predicate proof (#958 F1)', () => {
+      type TestDb = Awaited<ReturnType<typeof loadProwlarrPredicateDb>>['db'];
+      let realDb: TestDb;
+      let realService: IndexerService;
+      let close: () => void;
+
+      beforeEach(async () => {
+        const loaded = await loadProwlarrPredicateDb();
+        realDb = loaded.db;
+        close = loaded.close;
+        realService = new IndexerService(
+          inject<Db>(realDb),
+          inject<FastifyBaseLogger>(createMockLogger()),
+        );
+      });
+
+      afterEach(() => {
+        close();
+      });
+
+      it('getAllProwlarrManaged excludes a persisted manual (source: null) row', async () => {
+        const { indexers } = await import('../../db/schema.js');
+        await realDb.insert(indexers).values([
+          {
+            name: 'Prowlarr Tracker',
+            type: 'torznab',
+            enabled: true,
+            priority: 50,
+            settings: { apiUrl: 'http://prowlarr/1/', apiKey: 'k' },
+            source: 'prowlarr',
+            sourceIndexerId: 1,
+          },
+          {
+            name: 'Manually Added',
+            type: 'torznab',
+            enabled: true,
+            priority: 50,
+            settings: { apiUrl: 'http://manual/', apiKey: 'k' },
+            source: null,
+            sourceIndexerId: null,
+          },
+        ]);
+
+        const result = await realService.getAllProwlarrManaged();
+
+        // The SQL engine evaluated `WHERE source = 'prowlarr'` — only the
+        // Prowlarr row comes back. If the helper dropped the predicate we'd
+        // get both rows here.
+        expect(result).toHaveLength(1);
+        expect(result[0]!.name).toBe('Prowlarr Tracker');
+        expect(result[0]!.source).toBe('prowlarr');
+      });
+
+      it('getAllProwlarrManaged excludes rows with non-prowlarr source values', async () => {
+        const { indexers } = await import('../../db/schema.js');
+        await realDb.insert(indexers).values([
+          {
+            name: 'Prowlarr', type: 'torznab', enabled: true, priority: 50,
+            settings: { apiUrl: 'http://x/', apiKey: 'k' },
+            source: 'prowlarr', sourceIndexerId: 1,
+          },
+          // A row with a non-null but non-'prowlarr' source must also be
+          // excluded — proves the predicate is `eq(...)`, not just IS NOT NULL.
+          {
+            name: 'Sonarr Synced', type: 'torznab', enabled: true, priority: 50,
+            settings: { apiUrl: 'http://x/', apiKey: 'k' },
+            source: 'sonarr', sourceIndexerId: 2,
+          },
+        ]);
+
+        const result = await realService.getAllProwlarrManaged();
+
+        expect(result).toHaveLength(1);
+        expect(result[0]!.source).toBe('prowlarr');
+      });
+
+      it('getByIdProwlarrManaged returns null for a persisted manual row at the requested id', async () => {
+        const { indexers } = await import('../../db/schema.js');
+        const inserted = await realDb
+          .insert(indexers)
+          .values({
+            name: 'Manually Added',
+            type: 'torznab',
+            enabled: true,
+            priority: 50,
+            settings: { apiUrl: 'http://manual/', apiKey: 'k' },
+            source: null,
+            sourceIndexerId: null,
+          })
+          .returning();
+        const manualId = inserted[0]!.id;
+
+        const result = await realService.getByIdProwlarrManaged(manualId);
+
+        // The id exists in the table — but the WHERE predicate filters it out
+        // because source !== 'prowlarr'. If the predicate were missing, this
+        // call would return the manual row.
+        expect(result).toBeNull();
+      });
+
+      it('getByIdProwlarrManaged returns the row when id matches AND source = prowlarr', async () => {
+        const { indexers } = await import('../../db/schema.js');
+        const inserted = await realDb
+          .insert(indexers)
+          .values({
+            name: 'Prowlarr Tracker',
+            type: 'torznab',
+            enabled: true,
+            priority: 50,
+            settings: { apiUrl: 'http://prowlarr/3/', apiKey: 'k' },
+            source: 'prowlarr',
+            sourceIndexerId: 3,
+          })
+          .returning();
+        const prowlarrId = inserted[0]!.id;
+
+        const result = await realService.getByIdProwlarrManaged(prowlarrId);
+
+        expect(result).not.toBeNull();
+        expect(result!.id).toBe(prowlarrId);
+        expect(result!.source).toBe('prowlarr');
+        expect(result!.name).toBe('Prowlarr Tracker');
       });
     });
 
