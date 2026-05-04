@@ -1,4 +1,5 @@
 import { useRef, type ReactNode } from 'react';
+import { requireDefined } from '../../shared/utils/assert.js';
 
 export interface TabItem {
   value: string;
@@ -24,7 +25,11 @@ export function Tabs({ tabs, value, onChange, ariaLabel }: TabsProps) {
     if (e.key === 'ArrowLeft') nextIndex = (currentIndex - 1 + tabs.length) % tabs.length;
     if (nextIndex !== null) {
       e.preventDefault();
-      onChange(tabs[nextIndex]!.value);
+      const nextTab = requireDefined(
+        tabs[nextIndex],
+        `Tabs: tabs[nextIndex=${nextIndex}] out of range (len=${tabs.length})`,
+      );
+      onChange(nextTab.value);
       tabRefs.current[nextIndex]?.focus();
     }
   }

@@ -8,6 +8,7 @@ import { statusConfig } from './helpers.js';
 import { DownloadProgress } from './DownloadProgress.js';
 import { DownloadActions } from './DownloadActions.js';
 import { QualityComparisonPanel } from './QualityComparisonPanel.js';
+import { requireDefined } from '../../../shared/utils/assert.js';
 
 function PendingReviewActions({
   onApprove,
@@ -264,7 +265,10 @@ export function DownloadActivityCard({
   index?: number;
   compact?: boolean;
 }) {
-  const config = (statusConfig[download.status] || statusConfig.queued)!;
+  const config = requireDefined(
+    statusConfig[download.status] || statusConfig.queued,
+    `DownloadActivityCard: statusConfig missing both "${download.status}" and fallback "queued"`,
+  );
   const StatusIcon = config.icon;
   const isPendingReview = download.status === 'pending_review';
 

@@ -7,6 +7,7 @@ import { resolveCoverUrl } from '@/lib/url-utils';
 import { BookOpenIcon, MoreVerticalIcon, BrokenLinkIcon } from '@/components/icons';
 import { useRetryImportAvailable } from '@/hooks/useRetryImportAvailable.js';
 import { BookContextMenu } from './BookContextMenu.js';
+import { requireDefined } from '../../../shared/utils/assert.js';
 
 // eslint-disable-next-line complexity -- card has inherent conditional rendering: cover, missing chip, collapsed badge, status bar, menu, hover expand
 export const LibraryBookCard = memo(function LibraryBookCard({
@@ -38,6 +39,10 @@ export const LibraryBookCard = memo(function LibraryBookCard({
   const canRetryImport = useRetryImportAvailable(book.id, book.status);
   const isMissing = book.status === 'missing' || book.status === 'failed';
   const isCollapsed = (collapsedCount ?? 0) > 0;
+  const statusBar = requireDefined(
+    bookStatusConfig[book.status] ?? bookStatusConfig.wanted,
+    `LibraryBookCard: bookStatusConfig missing both "${book.status}" and fallback "wanted"`,
+  );
 
   return (
     <div
@@ -115,7 +120,7 @@ export const LibraryBookCard = memo(function LibraryBookCard({
         {/* Frosted info strip — always visible at bottom */}
         <div className="absolute inset-x-0 bottom-0 backdrop-blur-md bg-black/30 border-t border-white/5 transition-all duration-300 ease-out">
           {/* Status bar */}
-          <div className={`h-0.5 ${(bookStatusConfig[book.status] ?? bookStatusConfig.wanted)!.barClass}`} data-testid="status-bar" />
+          <div className={`h-0.5 ${statusBar.barClass}`} data-testid="status-bar" />
           {/* Default: title + author */}
           <div className="px-3 py-2">
             <h3 className="text-sm font-semibold text-white leading-tight truncate drop-shadow-sm">{isCollapsed ? (book.seriesName || book.title) : book.title}</h3>
