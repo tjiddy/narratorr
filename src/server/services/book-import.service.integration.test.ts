@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { mkdtempSync, rmSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
@@ -191,6 +191,68 @@ describe('BookImportService — enqueue (#747 integration with real libsql)', ()
       .where(and(eq(importJobs.bookId, book!.id), inArray(importJobs.status, ['pending', 'processing'])));
     expect(activeRows).toHaveLength(1);
     expect(activeRows[0]!.id).toBe(first!.id);
+  });
+
+  it('rolls back the importJobs INSERT when the books UPDATE fails mid-tx (#799 AC1)', async () => {
+    // Atomicity proof against the real libsql DB. The retryImport path now
+    // wraps the importJobs INSERT and the books UPDATE in one transaction.
+    // Force the books UPDATE to throw inside the tx and assert the insert
+    // is rolled back: no pending row, books.status unchanged, nudge unfired.
+    const book = await seedBook({ status: 'failed' });
+    await db.insert(importJobs).values({
+      bookId: book!.id, type: 'manual', status: 'failed', metadata: '{"path":"/x"}',
+    });
+
+    const sabotagedDb = new Proxy(db, {
+      get(target, prop, receiver) {
+        if (prop === 'transaction') {
+          return (cb: (tx: unknown) => Promise<unknown>) =>
+            target.transaction(async (tx) => {
+              const sabotagedTx = new Proxy(tx as object, {
+                get(txTarget, txProp, txReceiver) {
+                  if (txProp === 'update') {
+                    return (table: unknown) => {
+                      if (table === books) {
+                        throw new Error('simulated books UPDATE failure');
+                      }
+                      // Forward non-target updates to the real tx handle.
+                      return (Reflect.get(txTarget, txProp, txReceiver) as
+                        (t: unknown) => unknown)(table);
+                    };
+                  }
+                  return Reflect.get(txTarget, txProp, txReceiver);
+                },
+              });
+              return cb(sabotagedTx);
+            });
+        }
+        return Reflect.get(target, prop, receiver);
+      },
+    }) as Db;
+
+    const sabotagedService = new BookImportService(sabotagedDb, inject(log));
+    const nudge = vi.fn();
+
+    await expect(sabotagedService.retryImport(book!.id, nudge)).rejects.toThrow(
+      'simulated books UPDATE failure',
+    );
+
+    // Rollback proven at the SQL layer: no active importJobs row was committed.
+    const activeRows = await db
+      .select()
+      .from(importJobs)
+      .where(and(
+        eq(importJobs.bookId, book!.id),
+        inArray(importJobs.status, ['pending', 'processing']),
+      ));
+    expect(activeRows).toHaveLength(0);
+
+    // books.status remains unchanged from its seeded value.
+    const [bookAfter] = await db.select().from(books).where(eq(books.id, book!.id));
+    expect(bookAfter!.status).toBe('failed');
+
+    // nudge must NOT fire on the rollback path.
+    expect(nudge).not.toHaveBeenCalled();
   });
 
   it('partial unique index does NOT reject rows with NULL book_id (orphan coexistence)', async () => {
