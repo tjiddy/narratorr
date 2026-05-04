@@ -119,6 +119,106 @@ describe('BookImportService', () => {
       expect(nudge).toHaveBeenCalledTimes(1);
     });
 
+    it('wraps the active-job INSERT and books UPDATE in a single db.transaction (#799 AC1)', async () => {
+      // Independent of select/insert/update assertions — protects the AC1
+      // boundary. A future refactor that removes `db.transaction(...)` and
+      // inlines the writes would still pass other retryImport tests but fail
+      // this one.
+      const failedJob = { id: 10, bookId: 1, type: 'manual', metadata: '{}' };
+      db.select
+        .mockReturnValueOnce(mockDbChain([{ id: 1, status: 'failed' }]))
+        .mockReturnValueOnce(mockDbChain([failedJob]))
+        .mockReturnValueOnce(mockDbChain([])); // in-tx pre-check
+      db.insert.mockReturnValueOnce(mockDbChain([{ id: 99 }]));
+      db.update.mockReturnValueOnce(mockDbChain([]));
+
+      await service.retryImport(1, nudge);
+
+      // retryImport opens exactly one transaction wrapping enqueue + books UPDATE.
+      // (enqueue does NOT open its own when given a tx, so total is 1.)
+      expect(db.transaction).toHaveBeenCalledTimes(1);
+      const txCallback = db.transaction.mock.calls[0]![0] as (tx: typeof db) => Promise<unknown>;
+      expect(typeof txCallback).toBe('function');
+
+      // Verify the callback owns BOTH the importJobs INSERT and the books UPDATE
+      // on the SAME tx handle — proving they share one transaction.
+      const txSelect = vi.fn().mockReturnValue(mockDbChain([])); // pre-check
+      const txInsert = vi.fn().mockReturnValue(mockDbChain([{ id: 100 }]));
+      const txUpdate = vi.fn().mockReturnValue(mockDbChain([]));
+      const txMock = { select: txSelect, insert: txInsert, update: txUpdate };
+      const cbResult = await txCallback(txMock as never);
+      expect(txInsert).toHaveBeenCalledTimes(1);
+      expect(txUpdate).toHaveBeenCalledTimes(1);
+      expect(cbResult).toEqual({ jobId: 100 });
+    });
+
+    it('nudges AFTER the transaction resolves, never inside it (#799 AC5)', async () => {
+      const failedJob = { id: 10, bookId: 1, type: 'manual', metadata: '{}' };
+      db.select
+        .mockReturnValueOnce(mockDbChain([{ id: 1, status: 'failed' }]))
+        .mockReturnValueOnce(mockDbChain([failedJob]))
+        .mockReturnValueOnce(mockDbChain([]));
+      db.insert.mockReturnValueOnce(mockDbChain([{ id: 99 }]));
+      db.update.mockReturnValueOnce(mockDbChain([]));
+
+      const callOrder: string[] = [];
+      db.transaction.mockImplementationOnce(async (cb: (tx: typeof db) => Promise<unknown>) => {
+        const r = await cb(db);
+        callOrder.push('transaction-done');
+        return r;
+      });
+      nudge.mockImplementation(() => { callOrder.push('nudge'); });
+
+      await service.retryImport(1, nudge);
+
+      expect(callOrder).toEqual(['transaction-done', 'nudge']);
+    });
+
+    it('does NOT nudge when the transaction throws (rollback path, #799 AC5)', async () => {
+      const failedJob = { id: 10, bookId: 1, type: 'manual', metadata: '{}' };
+      db.select
+        .mockReturnValueOnce(mockDbChain([{ id: 1, status: 'failed' }]))
+        .mockReturnValueOnce(mockDbChain([failedJob]));
+      db.transaction.mockImplementationOnce(async () => {
+        throw new Error('disk write failed');
+      });
+
+      await expect(service.retryImport(1, nudge)).rejects.toThrow('disk write failed');
+      expect(nudge).not.toHaveBeenCalled();
+    });
+
+    it('does NOT nudge when the in-tx pre-check finds an active job (rollback path, #799 AC5)', async () => {
+      const failedJob = { id: 10, bookId: 1, type: 'manual', metadata: '{}' };
+      db.select
+        .mockReturnValueOnce(mockDbChain([{ id: 1, status: 'failed' }])) // book
+        .mockReturnValueOnce(mockDbChain([failedJob]))                    // failed
+        .mockReturnValueOnce(mockDbChain([{ id: 7 }]));                   // in-tx active
+
+      const result = await service.retryImport(1, nudge);
+
+      expect(result).toEqual({ error: 'active-job-exists', status: 409 });
+      expect(nudge).not.toHaveBeenCalled();
+      // Crucial: books UPDATE must not run when enqueue short-circuits.
+      expect(db.update).not.toHaveBeenCalled();
+    });
+
+    it('translates a unique-index violation thrown from enqueue into active-job-exists (TOCTOU, #799 AC3)', async () => {
+      const failedJob = { id: 10, bookId: 1, type: 'manual', metadata: '{}' };
+      db.select
+        .mockReturnValueOnce(mockDbChain([{ id: 1, status: 'failed' }]))
+        .mockReturnValueOnce(mockDbChain([failedJob]))
+        .mockReturnValueOnce(mockDbChain([])); // pre-check sees no row (TOCTOU)
+      const indexErr = Object.assign(new Error('libsql failure'), {
+        cause: { message: 'UNIQUE constraint failed: idx_import_jobs_book_active' },
+      });
+      db.insert.mockReturnValueOnce(mockDbChain([], { error: indexErr }));
+
+      const result = await service.retryImport(1, nudge);
+
+      expect(result).toEqual({ error: 'active-job-exists', status: 409 });
+      expect(nudge).not.toHaveBeenCalled();
+    });
+
     it('orders failed-job lookup by desc(createdAt) AND desc(id) for deterministic tiebreaking', async () => {
       const failedJobChain = mockDbChain([
         { id: 10, bookId: 1, type: 'manual', metadata: '{}' },
@@ -252,6 +352,44 @@ describe('BookImportService', () => {
       expect(txSelect).toHaveBeenCalledTimes(1); // active-job pre-check on tx handle
       expect(txInsert).toHaveBeenCalledTimes(1); // insert on tx handle
       expect(cbResult).toEqual({ jobId: 51 });
+    });
+
+    it('uses the caller-provided tx and does NOT open a nested db.transaction (#799 shape B)', async () => {
+      // When the caller passes its own tx (e.g. retryImport), enqueue must
+      // route the pre-check + insert through THAT tx and skip opening its
+      // own — otherwise the writes wouldn't share the parent's atomicity.
+      const txSelect = vi.fn().mockReturnValue(mockDbChain([])); // no active row
+      const txInsert = vi.fn().mockReturnValue(mockDbChain([{ id: 88 }]));
+      const txMock = { select: txSelect, insert: txInsert };
+
+      const result = await service.enqueue(
+        { bookId: 5, type: 'auto', metadata: '{"downloadId":1}' },
+        inject(txMock),
+      );
+
+      expect(result).toEqual({ jobId: 88 });
+      expect(txSelect).toHaveBeenCalledTimes(1);
+      expect(txInsert).toHaveBeenCalledTimes(1);
+      // No nested transaction — the parent tx owns the boundary.
+      expect(db.transaction).not.toHaveBeenCalled();
+    });
+
+    it('propagates errors from the caller-provided tx (parent rolls back, #799 shape B)', async () => {
+      // When using a caller-provided tx, errors must propagate so the parent
+      // transaction can roll back. The defensive backstop only swallows
+      // unique-index violations on the OWN-tx path; on a caller tx, that
+      // would corrupt the parent.
+      const txSelect = vi.fn().mockReturnValue(mockDbChain([]));
+      const indexErr = Object.assign(new Error('libsql failure'), {
+        cause: { message: 'UNIQUE constraint failed: idx_import_jobs_book_active' },
+      });
+      const txInsert = vi.fn().mockReturnValue(mockDbChain([], { error: indexErr }));
+      const txMock = { select: txSelect, insert: txInsert };
+
+      await expect(
+        service.enqueue({ bookId: 5, type: 'auto', metadata: '{}' }, inject(txMock)),
+      ).rejects.toThrow('libsql failure');
+      expect(db.transaction).not.toHaveBeenCalled();
     });
 
     it('skips insert when pre-check inside the transaction finds an active row (TOCTOU guard) (F1)', async () => {
