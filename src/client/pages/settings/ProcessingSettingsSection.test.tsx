@@ -513,15 +513,14 @@ describe('ProcessingSettingsSection', () => {
       });
 
       await waitFor(() => {
-        expect(mockApi.updateSettings).toHaveBeenCalledWith(
-          expect.objectContaining({
-            processing: expect.objectContaining({
-              postProcessingScript: '',
-              postProcessingScriptTimeout: undefined,
-            }),
-          }),
-        );
+        expect(mockApi.updateSettings).toHaveBeenCalled();
       });
+      // Producer-omit pattern: NaN coerced to undefined results in
+      // postProcessingScriptTimeout key omission from the payload, not
+      // explicit undefined (eopt invariant per #939 AC4).
+      const payload = mockApi.updateSettings.mock.calls[0][0];
+      expect(payload.processing).toMatchObject({ postProcessingScript: '' });
+      expect(payload.processing).not.toHaveProperty('postProcessingScriptTimeout');
     });
 
     it('handles NaN postProcessingScriptTimeout when script is set — validation error fires', async () => {

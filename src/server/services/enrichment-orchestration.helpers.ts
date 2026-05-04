@@ -124,11 +124,11 @@ async function applyEnrichmentData(
 export interface ImportConfirmItem {
   path: string;
   title: string;
-  authorName?: string | null | undefined;
-  seriesName?: string | null | undefined;
-  asin?: string | null | undefined;
-  coverUrl?: string | null | undefined;
-  metadata?: BookMetadata | null | undefined;
+  authorName?: string | null;
+  seriesName?: string | null;
+  asin?: string | null;
+  coverUrl?: string | null;
+  metadata?: BookMetadata | null;
 }
 
 // ─── Enrichment input builders ──────────────────────────────────────────

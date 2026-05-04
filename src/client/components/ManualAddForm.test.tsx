@@ -98,10 +98,12 @@ describe('ManualAddForm', () => {
       await user.click(screen.getByRole('button', { name: /add book/i }));
 
       await waitFor(() => {
-        expect(api.addBook).toHaveBeenCalledWith(expect.objectContaining({
-          seriesPosition: undefined,
-        }));
+        expect(api.addBook).toHaveBeenCalled();
       });
+      // Producer-omit pattern: whitespace seriesPosition results in key
+      // omission, not explicit undefined (eopt invariant per #939 AC4).
+      const payload = (api.addBook as ReturnType<typeof vi.fn>).mock.calls[0][0];
+      expect(payload).not.toHaveProperty('seriesPosition');
     });
 
     // #287 — seriesPosition "0" regression coverage

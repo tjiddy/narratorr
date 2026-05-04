@@ -683,10 +683,14 @@ describe('LibraryPage', () => {
     }, { timeout: 2000 });
 
     await waitFor(() => {
-      expect(vi.mocked(api.getBooks)).toHaveBeenCalledWith(
-        expect.objectContaining({ search: undefined }),
-      );
-    });
+      // Producer-omit pattern: cleared search results in `search` key omission
+      // from the request, not explicit undefined (eopt invariant per #939 AC4).
+      // Check that at least one call had `search` omitted (typed-search call
+      // still has it set in mock history; clear-search call drops the key).
+      const calls = vi.mocked(api.getBooks).mock.calls;
+      const omitted = calls.some(([params]) => !('search' in (params ?? {})));
+      expect(omitted).toBe(true);
+    }, { timeout: 2000 });
   });
 
   it('combines search with status filter', async () => {
@@ -2538,8 +2542,10 @@ describe('LibraryPage — URL param restoration (#352)', () => {
     });
 
     const firstCallArgs = vi.mocked(api.getBooks).mock.calls[0]?.[0];
+    // Producer-omit pattern: absent `status` URL param results in key omission,
+    // not explicit undefined (eopt invariant per #939 AC4).
+    expect(firstCallArgs).not.toHaveProperty('status');
     expect(firstCallArgs).toMatchObject({
-      status: undefined,
       sortField: 'createdAt',
       sortDirection: 'desc',
       offset: 0,

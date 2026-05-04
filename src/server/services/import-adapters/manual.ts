@@ -5,6 +5,7 @@ import { manualImportJobPayloadSchema, type ImportAdapter, type ImportAdapterCon
 import type { ImportPipelineDeps } from '../import-orchestration.helpers.js';
 import type { AppSettings } from '../../../shared/schemas/settings/registry.js';
 import { copyToLibrary } from '../import-orchestration.helpers.js';
+import type { ImportConfirmItem } from '../library-scan.service.js';
 import { getAudioStats } from '../library-scan.helpers.js';
 import { orchestrateBookEnrichment, buildEnrichmentBookInput, buildBackgroundAudnexusConfig, buildImportedEventPayload, extractImportMetadata } from '../enrichment-orchestration.helpers.js';
 import { renameFilesWithTemplate } from '../../utils/paths.js';
@@ -60,13 +61,27 @@ export class ManualImportAdapter implements ImportAdapter {
     try {
       await ctx.setPhase('analyzing');
 
-      const extracted = extractImportMetadata(payload);
+      // Construct strict ImportConfirmItem from Zod-derived payload via producer-omit.
+      // Keeps the canonical DTO contract (?: T strict) instead of widening it
+      // to accept Zod's `?: T | undefined` inference shape (per AC4 #939).
+      const item: ImportConfirmItem = {
+        path: payload.path,
+        title: payload.title,
+        ...(payload.authorName !== undefined && { authorName: payload.authorName }),
+        ...(payload.seriesName !== undefined && { seriesName: payload.seriesName }),
+        ...(payload.coverUrl !== undefined && { coverUrl: payload.coverUrl }),
+        ...(payload.asin !== undefined && { asin: payload.asin }),
+        ...(payload.metadata !== undefined && { metadata: payload.metadata }),
+        ...(payload.forceImport !== undefined && { forceImport: payload.forceImport }),
+      };
+
+      const extracted = extractImportMetadata(item);
 
       let finalPath = payload.path;
       if (mode) {
         const librarySettings = await this.deps.settingsService.get('library');
         await ctx.setPhase('copying');
-        finalPath = await copyToLibrary(payload, extracted.meta ?? null, mode, this.deps, (progress, byteCounter) => {
+        finalPath = await copyToLibrary(item, extracted.meta ?? null, mode, this.deps, (progress, byteCounter) => {
           ctx.emitProgress('copying', progress, byteCounter);
         });
 

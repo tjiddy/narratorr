@@ -28,13 +28,13 @@ export type ImportMode = 'copy' | 'move';
 export interface ImportConfirmItem {
   path: string;
   title: string;
-  authorName?: string | undefined;
-  seriesName?: string | undefined;
-  coverUrl?: string | undefined;
-  asin?: string | undefined;
-  metadata?: BookMetadata | undefined;
+  authorName?: string;
+  seriesName?: string;
+  coverUrl?: string;
+  asin?: string;
+  metadata?: BookMetadata;
   /** When true, bypasses the title+author safety-net duplicate check */
-  forceImport?: boolean | undefined;
+  forceImport?: boolean;
 }
 
 export interface ScanResult {

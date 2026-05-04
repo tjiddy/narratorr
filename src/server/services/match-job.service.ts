@@ -29,8 +29,8 @@ export interface MatchResult {
   confidence: Confidence;
   bestMatch: BookMetadata | null;
   alternatives: BookMetadata[];
-  error?: string | undefined;
-  reason?: string | undefined;
+  error?: string;
+  reason?: string;
 }
 
 export interface MatchJobStatus {
@@ -272,9 +272,9 @@ class MatchJob {
       return {
         path: book.path,
         confidence,
-        reason,
         bestMatch: topScored.meta,
         alternatives: scored.slice(1).map(s => s.meta),
+        ...(reason !== undefined && { reason }),
       };
     } catch (error: unknown) {
       this.log.warn({ error: serializeError(error), path: book.path, title: book.title }, 'Match failed for book');
