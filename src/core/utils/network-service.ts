@@ -278,56 +278,64 @@ export async function resolveAndValidate(
  * API gives this hook only the hostname (no URL, no port).
  */
 export function makeValidatingLookup(hostnameAllowlist?: Set<string>): LookupFunction {
-  return (hostname, _options, callback) => {
+  return (hostname, options, callback) => {
+    // Node 24 + undici 8's `net.connect` dispatcher invokes lookup with
+    // `{ all: true }` and expects an array-form callback `(err, addresses[])`.
+    // The standalone `LookupFunction` form is `(err, address, family)`. Support
+    // both because callers in Node core and our own tests use both shapes.
+    const wantAll = (options as { all?: boolean } | undefined)?.all === true;
+    const cbAll = callback as unknown as (
+      err: NodeJS.ErrnoException | null,
+      addresses: { address: string; family: number }[],
+    ) => void;
+    const succeed = (address: string, family: number): void => {
+      if (wantAll) {
+        cbAll(null, [{ address, family }]);
+      } else {
+        callback(null, address, family);
+      }
+    };
+    const fail = (err: NodeJS.ErrnoException): void => {
+      if (wantAll) {
+        cbAll(err, []);
+      } else {
+        callback(err, '', 0);
+      }
+    };
+
     const normalized = normalizeHostname(hostname);
     if (isBlockedHostname(normalized)) {
-      callback(
-        new Error(`Refused: hostname ${normalized} is in the blocked cloud-metadata list`) as NodeJS.ErrnoException,
-        '',
-        0,
-      );
+      fail(new Error(`Refused: hostname ${normalized} is in the blocked cloud-metadata list`) as NodeJS.ErrnoException);
       return;
     }
     const allowed = hostnameAllowlist?.has(normalized.toLowerCase()) ?? false;
     if (isIpLiteral(normalized)) {
       if (isBlockedFetchAddress(normalized) && !allowed) {
-        callback(
-          new Error(`Refused: address ${normalized} is in the blocked range`) as NodeJS.ErrnoException,
-          '',
-          0,
-        );
+        fail(new Error(`Refused: address ${normalized} is in the blocked range`) as NodeJS.ErrnoException);
         return;
       }
-      callback(null, normalized, normalized.includes(':') ? 6 : 4);
+      succeed(normalized, normalized.includes(':') ? 6 : 4);
       return;
     }
     dnsLookup(normalized, { all: true, family: 0 })
       .then((answers) => {
         if (answers.length === 0) {
-          callback(
-            new Error(`Refused: DNS returned no answers for ${normalized}`) as NodeJS.ErrnoException,
-            '',
-            0,
-          );
+          fail(new Error(`Refused: DNS returned no answers for ${normalized}`) as NodeJS.ErrnoException);
           return;
         }
         for (const answer of answers) {
           if (isBlockedFetchAddress(answer.address) && !allowed) {
-            callback(
-              new Error(
-                `Refused: hostname ${normalized} resolved to ${answers.length} address(es); blocked address ${answer.address} is in the blocked range`,
-              ) as NodeJS.ErrnoException,
-              '',
-              0,
-            );
+            fail(new Error(
+              `Refused: hostname ${normalized} resolved to ${answers.length} address(es); blocked address ${answer.address} is in the blocked range`,
+            ) as NodeJS.ErrnoException);
             return;
           }
         }
         const chosen = answers[0]!;
-        callback(null, chosen.address, chosen.family);
+        succeed(chosen.address, chosen.family);
       })
       .catch((err: unknown) => {
-        callback(err as NodeJS.ErrnoException, '', 0);
+        fail(err as NodeJS.ErrnoException);
       });
   };
 }

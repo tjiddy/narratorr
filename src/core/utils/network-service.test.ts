@@ -1,9 +1,11 @@
-import { describe, it, expect, vi, beforeEach, afterEach, type Mock } from 'vitest';
+import { describe, it, expect, vi, beforeAll, beforeEach, afterAll, afterEach, type Mock } from 'vitest';
 
 vi.mock('node:dns/promises', () => ({
   lookup: vi.fn(),
 }));
 
+import http from 'node:http';
+import type { AddressInfo } from 'node:net';
 import { lookup as dnsLookup } from 'node:dns/promises';
 import { ProxyAgent } from 'undici';
 import {
@@ -1089,13 +1091,41 @@ describe('fetchWithSsrfRedirect', () => {
   });
 });
 
-// #966 F2 — dispatcher hostname allowlist wiring (direct, not bypassing
-// `createSsrfSafeDispatcher` via a separate `makeValidatingLookup` call). We
-// drive the dispatcher's connect.lookup hook end-to-end via undici fetch:
-// validatingLookup calls our mocked `node:dns/promises` lookup, then either
-// hands undici a private address (call permitted, fails downstream with a
-// connection-shaped error) or rejects via callback with "blocked range".
+// #966 F2/F3 — dispatcher hostname allowlist wiring (direct, not bypassing
+// `createSsrfSafeDispatcher` via a separate `makeValidatingLookup` call).
+//
+// Strategy: stand up an ephemeral HTTP server on 127.0.0.1 inside the test
+// (no ambient network dependency) and mock `node:dns/promises` to resolve
+// `prowlarr.lan` to that loopback address. `127.0.0.1` is itself in the
+// blocked range, so the hostname allowlist is what determines whether
+// validatingLookup permits the resolved address.
+//
+//   - Allowed-host case: lookup permits 127.0.0.1, undici connects, server
+//     replies 200. Asserting on a real status proves the allowlist argument
+//     was actually threaded into the dispatcher's `connect.lookup`.
+//   - Empty / no-arg / non-allowlisted cases: lookup refuses before any
+//     socket is opened; error message includes "blocked range".
 describe('createSsrfSafeDispatcher — hostname allowlist wiring (#966)', () => {
+  let server: http.Server;
+  let serverPort: number;
+
+  beforeAll(async () => {
+    server = http.createServer((_req, res) => {
+      res.writeHead(200, { 'Content-Type': 'text/plain' });
+      res.end('ok');
+    });
+    await new Promise<void>((resolve) => {
+      server.listen(0, '127.0.0.1', () => resolve());
+    });
+    serverPort = (server.address() as AddressInfo).port;
+  });
+
+  afterAll(async () => {
+    await new Promise<void>((resolve) => {
+      server.close(() => resolve());
+    });
+  });
+
   beforeEach(() => {
     mockedLookup.mockReset();
   });
@@ -1110,28 +1140,30 @@ describe('createSsrfSafeDispatcher — hostname allowlist wiring (#966)', () => 
     return `${error.message} ${causeMsg}`;
   }
 
-  it('dispatcher created with hostname allowlist permits a private DNS answer for an allowed hostname', async () => {
-    mockedLookup.mockResolvedValue([{ address: '192.168.0.22', family: 4 }]);
+  it('dispatcher created with hostname allowlist permits a private DNS answer for an allowed hostname (real connection succeeds)', async () => {
+    mockedLookup.mockResolvedValue([{ address: '127.0.0.1', family: 4 }]);
     const dispatcher = createSsrfSafeDispatcher(new Set(['prowlarr.lan']));
 
-    const error = await undiciFetch('http://prowlarr.lan/', {
+    const response = await undiciFetch(`http://prowlarr.lan:${serverPort}/`, {
       dispatcher,
       signal: AbortSignal.timeout(2000),
-    } as Parameters<typeof undiciFetch>[1]).catch((e: unknown) => e);
+    } as Parameters<typeof undiciFetch>[1]);
 
-    // Lookup permitted → undici tried to connect to 192.168.0.22 and failed
-    // with a connection-shaped error. The refusal-shaped message must NOT appear.
-    expect(error).toBeInstanceOf(Error);
-    expect(refusalMessage(error)).not.toMatch(/blocked range/);
+    // Lookup permitted prowlarr.lan → 127.0.0.1 because of the allowlist;
+    // undici connected to our local server and got a real 200. If
+    // createSsrfSafeDispatcher stopped forwarding hostnameAllowlist, the
+    // lookup would refuse 127.0.0.1 (blocked range) and this would throw.
+    expect(response.status).toBe(200);
+    expect(await response.text()).toBe('ok');
 
     await dispatcher.close();
   });
 
   it('dispatcher created with empty hostname allowlist refuses private DNS at the lookup', async () => {
-    mockedLookup.mockResolvedValue([{ address: '192.168.0.22', family: 4 }]);
+    mockedLookup.mockResolvedValue([{ address: '127.0.0.1', family: 4 }]);
     const dispatcher = createSsrfSafeDispatcher(new Set());
 
-    const error = await undiciFetch('http://prowlarr.lan/', {
+    const error = await undiciFetch(`http://prowlarr.lan:${serverPort}/`, {
       dispatcher,
       signal: AbortSignal.timeout(2000),
     } as Parameters<typeof undiciFetch>[1]).catch((e: unknown) => e);
@@ -1143,10 +1175,10 @@ describe('createSsrfSafeDispatcher — hostname allowlist wiring (#966)', () => 
   });
 
   it('dispatcher created without an argument refuses private DNS (regression guard for cover-art / enrich)', async () => {
-    mockedLookup.mockResolvedValue([{ address: '192.168.0.22', family: 4 }]);
+    mockedLookup.mockResolvedValue([{ address: '127.0.0.1', family: 4 }]);
     const dispatcher = createSsrfSafeDispatcher();
 
-    const error = await undiciFetch('http://prowlarr.lan/', {
+    const error = await undiciFetch(`http://prowlarr.lan:${serverPort}/`, {
       dispatcher,
       signal: AbortSignal.timeout(2000),
     } as Parameters<typeof undiciFetch>[1]).catch((e: unknown) => e);
@@ -1158,10 +1190,10 @@ describe('createSsrfSafeDispatcher — hostname allowlist wiring (#966)', () => 
   });
 
   it('dispatcher with hostname allowlist still refuses a non-allowlisted hostname resolving to a private IP', async () => {
-    mockedLookup.mockResolvedValue([{ address: '192.168.0.22', family: 4 }]);
+    mockedLookup.mockResolvedValue([{ address: '127.0.0.1', family: 4 }]);
     const dispatcher = createSsrfSafeDispatcher(new Set(['prowlarr.lan']));
 
-    const error = await undiciFetch('http://attacker.example.com/', {
+    const error = await undiciFetch(`http://attacker.example.com:${serverPort}/`, {
       dispatcher,
       signal: AbortSignal.timeout(2000),
     } as Parameters<typeof undiciFetch>[1]).catch((e: unknown) => e);
