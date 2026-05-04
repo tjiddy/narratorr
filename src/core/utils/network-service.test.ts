@@ -1030,4 +1030,145 @@ describe('fetchWithSsrfRedirect', () => {
     await fetchWithSsrfRedirect('https://cdn.example.com/file');
     expect(fetchSpy).toHaveBeenCalledOnce();
   });
+
+  // #966 F1 — production redirect walker threads lanAllowlist into pre-flight
+  describe('LAN allowlist propagation (#966)', () => {
+    it('permits an allowlisted private start URL host:port to reach the fetch', async () => {
+      const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+        new Response('done', { status: 200 }),
+      );
+
+      const response = await fetchWithSsrfRedirect('http://192.168.0.22:9696/dl/foo.torrent', {
+        lanAllowlist: new Set(['192.168.0.22:9696']),
+      });
+
+      expect(response.status).toBe(200);
+      expect(fetchSpy).toHaveBeenCalledTimes(1);
+      expect(fetchSpy).toHaveBeenCalledWith(
+        'http://192.168.0.22:9696/dl/foo.torrent',
+        expect.objectContaining({ redirect: 'manual' }),
+      );
+    });
+
+    it('refuses a redirect to a different private host:port before the second fetch', async () => {
+      const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(
+        makeRedirect('http://192.168.0.99:9696/admin'),
+      );
+
+      await expect(
+        fetchWithSsrfRedirect('http://192.168.0.22:9696/dl/foo.torrent', {
+          lanAllowlist: new Set(['192.168.0.22:9696']),
+        }),
+      ).rejects.toThrow(/Refused/);
+      expect(fetchSpy).toHaveBeenCalledTimes(1);
+    });
+
+    it('refuses a redirect to the same hostname on a different (non-allowlisted) port before the second fetch', async () => {
+      const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(
+        makeRedirect('http://192.168.0.22:8080/elsewhere'),
+      );
+
+      await expect(
+        fetchWithSsrfRedirect('http://192.168.0.22:9696/dl/foo.torrent', {
+          lanAllowlist: new Set(['192.168.0.22:9696']),
+        }),
+      ).rejects.toThrow(/Refused/);
+      expect(fetchSpy).toHaveBeenCalledTimes(1);
+    });
+
+    it('start URL not in allowlist is refused even though lanAllowlist is supplied', async () => {
+      const fetchSpy = vi.spyOn(globalThis, 'fetch');
+
+      await expect(
+        fetchWithSsrfRedirect('http://192.168.0.22:9696/dl/foo.torrent', {
+          lanAllowlist: new Set(['192.168.0.22:8080']),
+        }),
+      ).rejects.toThrow(/Refused/);
+      expect(fetchSpy).not.toHaveBeenCalled();
+    });
+  });
+});
+
+// #966 F2 — dispatcher hostname allowlist wiring (direct, not bypassing
+// `createSsrfSafeDispatcher` via a separate `makeValidatingLookup` call). We
+// drive the dispatcher's connect.lookup hook end-to-end via undici fetch:
+// validatingLookup calls our mocked `node:dns/promises` lookup, then either
+// hands undici a private address (call permitted, fails downstream with a
+// connection-shaped error) or rejects via callback with "blocked range".
+describe('createSsrfSafeDispatcher — hostname allowlist wiring (#966)', () => {
+  beforeEach(() => {
+    mockedLookup.mockReset();
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  function refusalMessage(error: unknown): string {
+    if (!(error instanceof Error)) return '';
+    const causeMsg = (error as { cause?: { message?: string } }).cause?.message ?? '';
+    return `${error.message} ${causeMsg}`;
+  }
+
+  it('dispatcher created with hostname allowlist permits a private DNS answer for an allowed hostname', async () => {
+    mockedLookup.mockResolvedValue([{ address: '192.168.0.22', family: 4 }]);
+    const dispatcher = createSsrfSafeDispatcher(new Set(['prowlarr.lan']));
+
+    const error = await undiciFetch('http://prowlarr.lan/', {
+      dispatcher,
+      signal: AbortSignal.timeout(2000),
+    } as Parameters<typeof undiciFetch>[1]).catch((e: unknown) => e);
+
+    // Lookup permitted → undici tried to connect to 192.168.0.22 and failed
+    // with a connection-shaped error. The refusal-shaped message must NOT appear.
+    expect(error).toBeInstanceOf(Error);
+    expect(refusalMessage(error)).not.toMatch(/blocked range/);
+
+    await dispatcher.close();
+  });
+
+  it('dispatcher created with empty hostname allowlist refuses private DNS at the lookup', async () => {
+    mockedLookup.mockResolvedValue([{ address: '192.168.0.22', family: 4 }]);
+    const dispatcher = createSsrfSafeDispatcher(new Set());
+
+    const error = await undiciFetch('http://prowlarr.lan/', {
+      dispatcher,
+      signal: AbortSignal.timeout(2000),
+    } as Parameters<typeof undiciFetch>[1]).catch((e: unknown) => e);
+
+    expect(error).toBeInstanceOf(Error);
+    expect(refusalMessage(error)).toMatch(/blocked range/);
+
+    await dispatcher.close();
+  });
+
+  it('dispatcher created without an argument refuses private DNS (regression guard for cover-art / enrich)', async () => {
+    mockedLookup.mockResolvedValue([{ address: '192.168.0.22', family: 4 }]);
+    const dispatcher = createSsrfSafeDispatcher();
+
+    const error = await undiciFetch('http://prowlarr.lan/', {
+      dispatcher,
+      signal: AbortSignal.timeout(2000),
+    } as Parameters<typeof undiciFetch>[1]).catch((e: unknown) => e);
+
+    expect(error).toBeInstanceOf(Error);
+    expect(refusalMessage(error)).toMatch(/blocked range/);
+
+    await dispatcher.close();
+  });
+
+  it('dispatcher with hostname allowlist still refuses a non-allowlisted hostname resolving to a private IP', async () => {
+    mockedLookup.mockResolvedValue([{ address: '192.168.0.22', family: 4 }]);
+    const dispatcher = createSsrfSafeDispatcher(new Set(['prowlarr.lan']));
+
+    const error = await undiciFetch('http://attacker.example.com/', {
+      dispatcher,
+      signal: AbortSignal.timeout(2000),
+    } as Parameters<typeof undiciFetch>[1]).catch((e: unknown) => e);
+
+    expect(error).toBeInstanceOf(Error);
+    expect(refusalMessage(error)).toMatch(/blocked range/);
+
+    await dispatcher.close();
+  });
 });
