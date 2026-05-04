@@ -2,6 +2,7 @@ import { useRef, useState, useEffect, useCallback } from 'react';
 import { ChevronDownIcon } from '@/components/icons';
 import { FilterPill } from '@/components/FilterPill.js';
 import { ToolbarDropdown } from '@/components/ToolbarDropdown';
+import { requireDefined } from '../../../shared/utils/assert.js';
 import type { SortField, SortDirection } from './helpers.js';
 
 export interface SortProps {
@@ -98,8 +99,12 @@ export function SortDropdown({ sortField, onSortFieldChange, sortDirection, onSo
       case ' ':
         e.preventDefault();
         if (focusIndex < sortOptions.length) {
-          onSortFieldChange(sortOptions[focusIndex]!.field);
-          onSortDirectionChange(sortOptions[focusIndex]!.direction);
+          const option = requireDefined(
+            sortOptions[focusIndex],
+            `SortDropdown: sortOptions[focusIndex=${focusIndex}] out of range (len=${sortOptions.length})`,
+          );
+          onSortFieldChange(option.field);
+          onSortDirectionChange(option.direction);
           setFocusIndex(0);
           setOpen(false);
           triggerRef.current?.focus();

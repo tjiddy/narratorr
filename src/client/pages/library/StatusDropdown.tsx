@@ -2,6 +2,7 @@ import { useRef, useState, useEffect, useCallback } from 'react';
 import { ChevronDownIcon } from '@/components/icons';
 import { FilterPill } from '@/components/FilterPill.js';
 import { ToolbarDropdown } from '@/components/ToolbarDropdown';
+import { requireDefined } from '../../../shared/utils/assert.js';
 import { filterTabs, type StatusFilter } from './helpers.js';
 
 export function StatusDropdown({
@@ -55,7 +56,11 @@ export function StatusDropdown({
       case ' ':
         e.preventDefault();
         if (focusIndex < filterTabs.length) {
-          onStatusFilterChange(filterTabs[focusIndex]!.key);
+          const tab = requireDefined(
+            filterTabs[focusIndex],
+            `StatusDropdown: filterTabs[focusIndex=${focusIndex}] out of range (len=${filterTabs.length})`,
+          );
+          onStatusFilterChange(tab.key);
           setFocusIndex(0);
           setOpen(false);
           triggerRef.current?.focus();

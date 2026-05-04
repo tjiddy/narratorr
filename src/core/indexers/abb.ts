@@ -13,6 +13,7 @@ import { fetchWithProxy } from './fetch.js';
 import { isProxyRelatedError } from './errors.js';
 import { fetchWithProxyAgent, resolveProxyIp } from './proxy.js';
 import { getErrorMessage } from '../../shared/error-message.js';
+import { requireDefined } from '../../shared/utils/assert.js';
 import { INDEXER_TIMEOUT_MS } from '../utils/constants.js';
 
 export interface ABBConfig {
@@ -378,7 +379,10 @@ export class AudioBookBayIndexer implements IndexerAdapter {
   }
 
   private getNextUserAgent(): string {
-    const ua = DEFAULT_USER_AGENTS[this.userAgentIndex]!;
+    const ua = requireDefined(
+      DEFAULT_USER_AGENTS[this.userAgentIndex],
+      `ABBIndexer: DEFAULT_USER_AGENTS[userAgentIndex=${this.userAgentIndex}] out of range (len=${DEFAULT_USER_AGENTS.length})`,
+    );
     this.userAgentIndex = (this.userAgentIndex + 1) % DEFAULT_USER_AGENTS.length;
     return ua;
   }
