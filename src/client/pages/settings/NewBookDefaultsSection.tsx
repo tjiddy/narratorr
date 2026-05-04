@@ -25,7 +25,7 @@ export function NewBookDefaultsSection() {
     <SettingsSection
       icon={<SparklesIcon className="w-5 h-5 text-primary" />}
       title="When a New Book Is Added"
-      description="Applied when books are added manually or via import lists, RSS sync, and discovery"
+      description="Applied when books are added manually or via import lists or discovery"
     >
       <form onSubmit={handleSubmit((data) => onSubmit(data))} className="space-y-4">
         <div className="flex items-center justify-between">

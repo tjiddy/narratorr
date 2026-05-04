@@ -190,7 +190,13 @@ export async function createServices(db: Db, log: FastifyBaseLogger): Promise<Se
   const mergeService = new MergeService(db, book, settings, log, eventHistory, eventBroadcaster);
   const retryBudget = new RetryBudget();
   const backup = new BackupService(config.configPath, config.dbPath, settings, log);
-  const importList = new ImportListService(db, log, metadata);
+  const importList = new ImportListService(db, log, metadata, {
+    indexerSearchService: indexerSearch,
+    downloadOrchestrator,
+    settingsService: settings,
+    blacklistService,
+    eventBroadcaster,
+  });
   const taskRegistry = new TaskRegistry();
   const discovery = new DiscoveryService(db, log, metadata, settings);
   const bulkOperation = new BulkOperationService(db, renameService, taggingService, settings, book, log);
