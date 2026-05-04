@@ -7,13 +7,17 @@ vi.mock('node:dns/promises', () => ({
 import { lookup as dnsLookup } from 'node:dns/promises';
 import { ProxyAgent } from 'undici';
 import {
+  createSsrfSafeDispatcher,
   fetchWithOptionalDispatcher,
   fetchWithSsrfRedirect,
   fetchWithTimeout,
   isBlockedFetchAddress,
   isBlockedHostname,
   isIpLiteral,
+  makeValidatingLookup,
   MAX_REDIRECTS,
+  normalizedHostnameFromUrl,
+  normalizedHostPortFromUrl,
   normalizeHostname,
   resolveAndValidate,
   undiciFetch,
@@ -461,6 +465,150 @@ describe('resolveAndValidate', () => {
       expect(result).toEqual(['2606:4700:4700::1111']);
       expect(mockedLookup).not.toHaveBeenCalled();
     });
+  });
+});
+
+// #966 — LAN allowlist for Prowlarr-on-private-IP grabs
+describe('normalizedHostPortFromUrl / normalizedHostnameFromUrl', () => {
+  it('emits scheme-default port when omitted (http → 80, https → 443)', () => {
+    expect(normalizedHostPortFromUrl(new URL('http://prowlarr.lan/'))).toBe('prowlarr.lan:80');
+    expect(normalizedHostPortFromUrl(new URL('https://prowlarr.lan/'))).toBe('prowlarr.lan:443');
+  });
+
+  it('preserves explicit port', () => {
+    expect(normalizedHostPortFromUrl(new URL('http://192.168.0.22:9696/'))).toBe('192.168.0.22:9696');
+  });
+
+  it('lowercases hostname', () => {
+    expect(normalizedHostPortFromUrl(new URL('http://PROWLARR:3000/'))).toBe('prowlarr:3000');
+    expect(normalizedHostnameFromUrl(new URL('http://PROWLARR:3000/'))).toBe('prowlarr');
+  });
+
+  it('strips IPv6 brackets', () => {
+    expect(normalizedHostPortFromUrl(new URL('http://[::1]:8080/'))).toBe('::1:8080');
+    expect(normalizedHostnameFromUrl(new URL('http://[::1]:8080/'))).toBe('::1');
+  });
+});
+
+describe('resolveAndValidate (LAN allowlist, #966)', () => {
+  beforeEach(() => {
+    mockedLookup.mockReset();
+  });
+
+  it('permits a private DNS answer when host:port is in the lanAllowlist', async () => {
+    mockedLookup.mockResolvedValueOnce([{ address: '192.168.0.22', family: 4 }]);
+    const result = await resolveAndValidate('prowlarr', {
+      lanAllowlist: new Set(['prowlarr:3000']),
+      normalizedHostPort: 'prowlarr:3000',
+    });
+    expect(result).toEqual(['192.168.0.22']);
+  });
+
+  it('refuses a private DNS answer when host:port is NOT in the lanAllowlist (port mismatch)', async () => {
+    mockedLookup.mockResolvedValueOnce([{ address: '192.168.0.22', family: 4 }]);
+    await expect(
+      resolveAndValidate('prowlarr', {
+        lanAllowlist: new Set(['prowlarr:3000']),
+        normalizedHostPort: 'prowlarr:9696',
+      }),
+    ).rejects.toThrow(/Refused/);
+  });
+
+  it('empty lanAllowlist does NOT degrade to permissive (private IPs still blocked)', async () => {
+    mockedLookup.mockResolvedValueOnce([{ address: '192.168.0.22', family: 4 }]);
+    await expect(
+      resolveAndValidate('prowlarr', {
+        lanAllowlist: new Set(),
+        normalizedHostPort: 'prowlarr:3000',
+      }),
+    ).rejects.toThrow(/Refused/);
+  });
+
+  it('permits a private IP literal when host:port matches', async () => {
+    const result = await resolveAndValidate('192.168.0.22', {
+      lanAllowlist: new Set(['192.168.0.22:9696']),
+      normalizedHostPort: '192.168.0.22:9696',
+    });
+    expect(result).toEqual(['192.168.0.22']);
+  });
+});
+
+describe('makeValidatingLookup / createSsrfSafeDispatcher (LAN allowlist, #966)', () => {
+  function call(lookupFn: ReturnType<typeof makeValidatingLookup>, hostname: string): Promise<{ err: unknown; address: unknown; family: unknown }> {
+    return new Promise((resolve) => {
+      lookupFn(hostname, {}, (err, address, family) => {
+        resolve({ err, address, family });
+      });
+    });
+  }
+
+  beforeEach(() => {
+    mockedLookup.mockReset();
+  });
+
+  it('createSsrfSafeDispatcher() (no arg) blocks private IPs (regression guard for cover-art / enrich call sites)', async () => {
+    mockedLookup.mockResolvedValueOnce([{ address: '192.168.1.1', family: 4 }]);
+    const dispatcher = createSsrfSafeDispatcher();
+    // Pull the lookup hook out of the configured Agent connect options for direct test.
+    const lookupFn = makeValidatingLookup();
+    const { err } = await call(lookupFn, 'rebind.example.com');
+    expect(err).toBeInstanceOf(Error);
+    await dispatcher.close();
+  });
+
+  it('createSsrfSafeDispatcher(new Set()) (empty allowlist) still blocks private IPs at socket time', async () => {
+    mockedLookup.mockResolvedValueOnce([{ address: '192.168.1.1', family: 4 }]);
+    const dispatcher = createSsrfSafeDispatcher(new Set());
+    const lookupFn = makeValidatingLookup(new Set());
+    const { err } = await call(lookupFn, 'rebind.example.com');
+    expect(err).toBeInstanceOf(Error);
+    await dispatcher.close();
+  });
+
+  it('hostname allowlist permits a private DNS answer for a hostname in the set', async () => {
+    mockedLookup.mockResolvedValueOnce([{ address: '192.168.0.22', family: 4 }]);
+    const lookupFn = makeValidatingLookup(new Set(['prowlarr']));
+    const { err, address, family } = await call(lookupFn, 'prowlarr');
+    expect(err).toBeNull();
+    expect(address).toBe('192.168.0.22');
+    expect(family).toBe(4);
+  });
+
+  it('hostname allowlist refuses private DNS answer for a hostname NOT in the set', async () => {
+    mockedLookup.mockResolvedValueOnce([{ address: '192.168.0.22', family: 4 }]);
+    const lookupFn = makeValidatingLookup(new Set(['prowlarr']));
+    const { err } = await call(lookupFn, 'attacker.example.com');
+    expect(err).toBeInstanceOf(Error);
+  });
+
+  it('DNS rebinding scenario: pre-flight allows by host:port, socket-time allows by hostname', async () => {
+    mockedLookup.mockResolvedValueOnce([{ address: '192.168.0.22', family: 4 }]);
+    const preflight = await resolveAndValidate('prowlarr.lan', {
+      lanAllowlist: new Set(['prowlarr.lan:3000']),
+      normalizedHostPort: 'prowlarr.lan:3000',
+    });
+    expect(preflight).toEqual(['192.168.0.22']);
+
+    mockedLookup.mockResolvedValueOnce([{ address: '192.168.0.22', family: 4 }]);
+    const lookupFn = makeValidatingLookup(new Set(['prowlarr.lan']));
+    const { err, address } = await call(lookupFn, 'prowlarr.lan');
+    expect(err).toBeNull();
+    expect(address).toBe('192.168.0.22');
+  });
+
+  it('DNS rebinding scenario: a different hostname resolving to the same private IP is refused at both layers', async () => {
+    mockedLookup.mockResolvedValueOnce([{ address: '192.168.0.22', family: 4 }]);
+    await expect(
+      resolveAndValidate('attacker.example.com', {
+        lanAllowlist: new Set(['prowlarr.lan:3000']),
+        normalizedHostPort: 'attacker.example.com:3000',
+      }),
+    ).rejects.toThrow(/Refused/);
+
+    mockedLookup.mockResolvedValueOnce([{ address: '192.168.0.22', family: 4 }]);
+    const lookupFn = makeValidatingLookup(new Set(['prowlarr.lan']));
+    const { err } = await call(lookupFn, 'attacker.example.com');
+    expect(err).toBeInstanceOf(Error);
   });
 });
 

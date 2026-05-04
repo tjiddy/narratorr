@@ -20,6 +20,25 @@ export type DownloadArtifact =
 const DATA_TORRENT_URI_PREFIX = 'data:application/x-bittorrent;base64,';
 const DATA_NZB_URI_PREFIX = 'data:application/x-nzb;base64,';
 
+/**
+ * Two-layer allowlist that lets a torrent fetch reach LAN-hosted indexers
+ * (the universal Prowlarr setup) without widening the SSRF policy:
+ *
+ * - `hostPort` — pre-flight host:port-exact set used by `fetchWithSsrfRedirect`.
+ *   Authoritative; a redirect to a different LAN host:port is refused.
+ * - `hostname` — socket-time hostname-only set used by the dispatcher's
+ *   `connect.lookup` hook (defeats DNS rebinding between pre-flight and
+ *   socket connect). Port-level specificity is enforced upstream by pre-flight.
+ *
+ * Both sets are derived from the same parsed-URL pass (see
+ * `download.service.ts:grab`) — never by splitting host:port strings, which
+ * would be ambiguous for unbracketed IPv6 literals like `::1:8080`.
+ */
+export interface LanAllowlist {
+  hostPort: Set<string>;
+  hostname: Set<string>;
+}
+
 // ── DownloadUrl value object ──────────────────────────────────────────
 export class DownloadUrl {
   constructor(
@@ -39,7 +58,7 @@ export class DownloadUrl {
     return this.raw.startsWith(DATA_TORRENT_URI_PREFIX) || this.raw.startsWith(DATA_NZB_URI_PREFIX);
   }
 
-  async resolve(): Promise<DownloadArtifact> {
+  async resolve(lanAllowlist?: LanAllowlist): Promise<DownloadArtifact> {
     if (this.isMagnet) {
       return this.resolveMagnet();
     }
@@ -54,7 +73,7 @@ export class DownloadUrl {
     }
 
     if (this.isHttp) {
-      return this.resolveHttp(this.raw);
+      return this.resolveHttp(this.raw, lanAllowlist);
     }
 
     throw new Error('Unsupported URL scheme — only magnet:, http:, https:, and data: URIs are supported');
@@ -86,10 +105,13 @@ export class DownloadUrl {
     return { type: 'torrent-bytes', data: buffer, infoHash };
   }
 
-  private async resolveHttp(url: string): Promise<DownloadArtifact> {
-    const dispatcher = createSsrfSafeDispatcher();
+  private async resolveHttp(url: string, lanAllowlist?: LanAllowlist): Promise<DownloadArtifact> {
+    const dispatcher = createSsrfSafeDispatcher(lanAllowlist?.hostname);
     try {
-      const response = await fetchWithSsrfRedirect(url, { dispatcher });
+      const response = await fetchWithSsrfRedirect(url, {
+        dispatcher,
+        ...(lanAllowlist && { lanAllowlist: lanAllowlist.hostPort }),
+      });
 
       if (!response.ok) {
         await response.body?.cancel().catch(() => { /* best-effort */ });

@@ -231,7 +231,7 @@ export async function createServices(db: Db, log: FastifyBaseLogger): Promise<Se
   // Phase 2: wire required cyclic deps now that every instance exists.
   // Each service throws ServiceWireError if methods using these deps are
   // invoked before wire(), or if wire() is called more than once.
-  download.wire({ retrySearchDeps });
+  download.wire({ retrySearchDeps, indexerService: indexer });
   eventHistory.wire({ retrySearchDeps });
   importOrchestrator.wire({ bookImportService: bookImport, blacklistService, retrySearchDeps, nudgeImportWorker });
   libraryScan.wire({ nudgeImportWorker });

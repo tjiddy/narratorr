@@ -180,21 +180,73 @@ function isBlockedIpv6(ip: string): boolean {
 }
 
 /**
+ * Default port for a URL scheme. Used by `normalizedHostPortFromUrl` so the
+ * pre-flight allowlist key matches whether the apiUrl literal carried an
+ * explicit port or relied on the scheme default.
+ */
+function defaultPortForScheme(protocol: string): string {
+  return protocol === 'https:' ? '443' : '80';
+}
+
+/**
+ * Derive a canonical `host:port` key from a parsed URL. Lowercased hostname,
+ * scheme-default port when omitted, IPv6 brackets stripped from `URL.hostname`.
+ *
+ * Consumes a parsed URL (never a string) so unbracketed-IPv6 split-on-colon
+ * ambiguity (e.g. `::1:8080`) is impossible.
+ */
+export function normalizedHostPortFromUrl(parsed: URL): string {
+  const hostname = normalizeHostname(parsed.hostname).toLowerCase();
+  const port = parsed.port || defaultPortForScheme(parsed.protocol);
+  return `${hostname}:${port}`;
+}
+
+/**
+ * Derive a canonical hostname key from a parsed URL — lowercased, with IPv6
+ * brackets stripped. The companion to `normalizedHostPortFromUrl` for the
+ * socket-time hostname-only allowlist used by `validatingLookup`.
+ */
+export function normalizedHostnameFromUrl(parsed: URL): string {
+  return normalizeHostname(parsed.hostname).toLowerCase();
+}
+
+/**
+ * Options for `resolveAndValidate`. When both `lanAllowlist` and
+ * `normalizedHostPort` are present, a private/loopback DNS answer is permitted
+ * iff `lanAllowlist.has(normalizedHostPort)` — the host:port literal must match
+ * a configured indexer's apiUrl host:port.
+ */
+export interface ResolveAndValidateOptions {
+  lanAllowlist?: Set<string>;
+  normalizedHostPort?: string;
+}
+
+/**
  * Resolve a hostname (or accept an IP literal) and validate every answer
  * against the SSRF block policy. Throws if the hostname is in the cloud-metadata
  * allowlist, the IP literal is blocked, or any DNS answer is blocked.
+ *
+ * When `opts.lanAllowlist` and `opts.normalizedHostPort` are both supplied and
+ * the host:port is in the allowlist, private/loopback addresses are permitted
+ * (used by the Prowlarr-on-LAN download-fetch path; see #966).
  *
  * Used both as a pre-flight check before invoking fetch (early refusal +
  * testability via `vi.mock('node:dns/promises')`) and inside the dispatcher's
  * `connect.lookup` hook (defense against DNS rebinding).
  */
-export async function resolveAndValidate(hostname: string): Promise<string[]> {
+export async function resolveAndValidate(
+  hostname: string,
+  opts: ResolveAndValidateOptions = {},
+): Promise<string[]> {
   const normalized = normalizeHostname(hostname);
   if (isBlockedHostname(normalized)) {
     throw new Error(`Refused: hostname ${normalized} is in the blocked cloud-metadata list`);
   }
+  const allowed = opts.lanAllowlist && opts.normalizedHostPort
+    ? opts.lanAllowlist.has(opts.normalizedHostPort)
+    : false;
   if (isIpLiteral(normalized)) {
-    if (isBlockedFetchAddress(normalized)) {
+    if (isBlockedFetchAddress(normalized) && !allowed) {
       throw new Error(`Refused: address ${normalized} is in the blocked range`);
     }
     return [normalized];
@@ -204,7 +256,7 @@ export async function resolveAndValidate(hostname: string): Promise<string[]> {
     throw new Error(`Refused: DNS returned no answers for ${normalized}`);
   }
   for (const answer of answers) {
-    if (isBlockedFetchAddress(answer.address)) {
+    if (isBlockedFetchAddress(answer.address) && !allowed) {
       throw new Error(
         `Refused: hostname ${normalized} resolved to ${answers.length} address(es); blocked address ${answer.address} is in the blocked range`,
       );
@@ -214,76 +266,92 @@ export async function resolveAndValidate(hostname: string): Promise<string[]> {
 }
 
 /**
- * Socket-bound DNS validation for the undici Agent's connect path. Resolves
- * every A/AAAA answer for the destination hostname, refuses if any answer
- * fails the block policy, and returns one of the validated answers to the
- * connecting socket. This binds validation to the same resolution the socket
- * connects to, defeating DNS rebinding.
+ * Build a socket-bound DNS validator for the undici Agent's connect path.
+ * Resolves every A/AAAA answer for the destination hostname, refuses if any
+ * answer fails the block policy, and returns one of the validated answers to
+ * the connecting socket. This binds validation to the same resolution the
+ * socket connects to, defeating DNS rebinding.
  *
- * Exported so its rebinding-protection behavior is directly testable —
- * fetch-stubbed service tests can't exercise the dispatcher path.
+ * The optional `hostnameAllowlist` permits private/loopback addresses for
+ * hostnames in the closed-over set. Port-level specificity is enforced
+ * upstream by `fetchWithSsrfRedirect`'s pre-flight — Node's `LookupFunction`
+ * API gives this hook only the hostname (no URL, no port).
  */
-export const validatingLookup: LookupFunction = (hostname, _options, callback) => {
-  const normalized = normalizeHostname(hostname);
-  if (isBlockedHostname(normalized)) {
-    callback(
-      new Error(`Refused: hostname ${normalized} is in the blocked cloud-metadata list`) as NodeJS.ErrnoException,
-      '',
-      0,
-    );
-    return;
-  }
-  if (isIpLiteral(normalized)) {
-    if (isBlockedFetchAddress(normalized)) {
+export function makeValidatingLookup(hostnameAllowlist?: Set<string>): LookupFunction {
+  return (hostname, _options, callback) => {
+    const normalized = normalizeHostname(hostname);
+    if (isBlockedHostname(normalized)) {
       callback(
-        new Error(`Refused: address ${normalized} is in the blocked range`) as NodeJS.ErrnoException,
+        new Error(`Refused: hostname ${normalized} is in the blocked cloud-metadata list`) as NodeJS.ErrnoException,
         '',
         0,
       );
       return;
     }
-    callback(null, normalized, normalized.includes(':') ? 6 : 4);
-    return;
-  }
-  dnsLookup(normalized, { all: true, family: 0 })
-    .then((answers) => {
-      if (answers.length === 0) {
+    const allowed = hostnameAllowlist?.has(normalized.toLowerCase()) ?? false;
+    if (isIpLiteral(normalized)) {
+      if (isBlockedFetchAddress(normalized) && !allowed) {
         callback(
-          new Error(`Refused: DNS returned no answers for ${normalized}`) as NodeJS.ErrnoException,
+          new Error(`Refused: address ${normalized} is in the blocked range`) as NodeJS.ErrnoException,
           '',
           0,
         );
         return;
       }
-      for (const answer of answers) {
-        if (isBlockedFetchAddress(answer.address)) {
+      callback(null, normalized, normalized.includes(':') ? 6 : 4);
+      return;
+    }
+    dnsLookup(normalized, { all: true, family: 0 })
+      .then((answers) => {
+        if (answers.length === 0) {
           callback(
-            new Error(
-              `Refused: hostname ${normalized} resolved to ${answers.length} address(es); blocked address ${answer.address} is in the blocked range`,
-            ) as NodeJS.ErrnoException,
+            new Error(`Refused: DNS returned no answers for ${normalized}`) as NodeJS.ErrnoException,
             '',
             0,
           );
           return;
         }
-      }
-      const chosen = answers[0]!;
-      callback(null, chosen.address, chosen.family);
-    })
-    .catch((err: unknown) => {
-      callback(err as NodeJS.ErrnoException, '', 0);
-    });
-};
+        for (const answer of answers) {
+          if (isBlockedFetchAddress(answer.address) && !allowed) {
+            callback(
+              new Error(
+                `Refused: hostname ${normalized} resolved to ${answers.length} address(es); blocked address ${answer.address} is in the blocked range`,
+              ) as NodeJS.ErrnoException,
+              '',
+              0,
+            );
+            return;
+          }
+        }
+        const chosen = answers[0]!;
+        callback(null, chosen.address, chosen.family);
+      })
+      .catch((err: unknown) => {
+        callback(err as NodeJS.ErrnoException, '', 0);
+      });
+  };
+}
+
+/**
+ * Default validator with no hostname allowlist — exported so its
+ * rebinding-protection behavior is directly testable (fetch-stubbed service
+ * tests can't exercise the dispatcher path).
+ */
+export const validatingLookup: LookupFunction = makeValidatingLookup();
 
 /**
  * Create an undici Agent whose socket lookup re-runs the SSRF block policy
  * for every connect. Reused across redirect hops — every hop gets re-validated
  * because each hop opens a new socket.
+ *
+ * `hostnameAllowlist` permits private/loopback addresses for hostnames in the
+ * set. Used by the torrent-download path for LAN-hosted indexer apiUrls; cover
+ * art and Usenet language enrichment continue to call without an argument.
  */
-export function createSsrfSafeDispatcher(): Agent {
+export function createSsrfSafeDispatcher(hostnameAllowlist?: Set<string>): Agent {
   return new Agent({
     connect: {
-      lookup: validatingLookup,
+      lookup: makeValidatingLookup(hostnameAllowlist),
     },
   });
 }
@@ -313,6 +381,17 @@ export interface FetchWithSsrfRedirectOptions {
   dispatcher?: unknown;
   timeoutMs?: number;
   maxHops?: number;
+  /**
+   * Pre-flight host:port allowlist. When set, a hop whose canonical
+   * `host:port` (lowercased hostname, scheme-default port if absent, IPv6
+   * brackets stripped) is in the set may resolve to a private/loopback
+   * address without being refused. Hops not in the set are refused as today.
+   *
+   * Authoritative for host:port-exact matching. Pair with the hostname-only
+   * allowlist on the dispatcher (defense-in-depth at socket time; see
+   * `createSsrfSafeDispatcher`).
+   */
+  lanAllowlist?: Set<string>;
 }
 
 /**
@@ -331,7 +410,7 @@ export async function fetchWithSsrfRedirect(
   startUrl: string,
   opts: FetchWithSsrfRedirectOptions = {},
 ): Promise<Response> {
-  const { dispatcher, timeoutMs = HTTP_DOWNLOAD_TIMEOUT_MS, maxHops = MAX_REDIRECTS } = opts;
+  const { dispatcher, timeoutMs = HTTP_DOWNLOAD_TIMEOUT_MS, maxHops = MAX_REDIRECTS, lanAllowlist } = opts;
   const visited = new Set<string>();
   let currentUrl = startUrl;
 
@@ -342,7 +421,10 @@ export async function fetchWithSsrfRedirect(
     visited.add(currentUrl);
 
     const parsed = new URL(currentUrl);
-    await resolveAndValidate(parsed.hostname);
+    await resolveAndValidate(parsed.hostname, {
+      ...(lanAllowlist && { lanAllowlist }),
+      normalizedHostPort: normalizedHostPortFromUrl(parsed),
+    });
 
     const fetchOptions: DispatcherFetchInit = {
       redirect: 'manual',

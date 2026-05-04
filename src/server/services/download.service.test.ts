@@ -2,6 +2,7 @@ import { describe, it, expect, beforeEach, vi, type Mock } from 'vitest';
 import { createMockDb, createMockLogger, inject, mockDbChain, createMockSettingsService } from '../__tests__/helpers.js';
 import { DownloadService, DownloadError, DuplicateDownloadError } from './download.service.js';
 import { type DownloadClientService } from './download-client.service.js';
+import { DownloadUrl } from '../../core/utils/download-url.js';
 import type { FastifyBaseLogger } from 'fastify';
 import type { Db } from '../../db/index.js';
 import { SQLiteSyncDialect } from 'drizzle-orm/sqlite-core';
@@ -420,6 +421,133 @@ describe('DownloadService', () => {
 
       const insertValues = db.insert.mock.results[0]!.value.values.mock.calls[0][0];
       expect(insertValues.indexerId).toBe(42);
+    });
+
+    // #966 — LAN allowlist construction for HTTP torrent grabs
+    describe('LAN allowlist (#966)', () => {
+      const httpTorrentUrl = 'http://192.168.0.22:9696/dl/foo.torrent';
+
+      function setupCommonGrabMocks(): void {
+        const mockAdapter = {
+          addDownload: vi.fn().mockResolvedValue('ext-123'),
+          removeDownload: vi.fn(),
+        };
+        (clientService.getFirstEnabledForProtocol as Mock).mockResolvedValue({ id: 1, name: 'qBit' });
+        (clientService.getAdapter as Mock).mockResolvedValue(mockAdapter);
+        db.insert.mockReturnValue(mockDbChain([{ id: 1 }]));
+        db.update.mockReturnValue(mockDbChain());
+        db.select.mockReturnValue(mockDbChain([{ download: mockDownload, book: mockBook }]));
+      }
+
+      it('builds host:port + hostname allowlist from IndexerService.getAll() for torrent HTTP grabs', async () => {
+        setupCommonGrabMocks();
+        const indexerService = {
+          getAll: vi.fn().mockResolvedValue([
+            { id: 1, name: 'Prowlarr', settings: { apiUrl: 'http://192.168.0.22:9696/api' } },
+            { id: 2, name: 'Torznab', settings: { apiUrl: 'http://prowlarr.lan/api' } },
+          ]),
+        };
+        service.wire({ retrySearchDeps: {} as never, indexerService: indexerService as never });
+
+        const resolveSpy = vi.spyOn(DownloadUrl.prototype, 'resolve').mockResolvedValue({
+          type: 'torrent-bytes', data: Buffer.from('x'), infoHash: 'a'.repeat(40),
+        });
+
+        await service.grab({ downloadUrl: httpTorrentUrl, title: 'Test', protocol: 'torrent' });
+
+        expect(indexerService.getAll).toHaveBeenCalledTimes(1);
+        const call = resolveSpy.mock.calls[0]!;
+        const allowlist = call[0]!;
+        expect(allowlist.hostPort).toEqual(new Set(['192.168.0.22:9696', 'prowlarr.lan:80']));
+        expect(allowlist.hostname).toEqual(new Set(['192.168.0.22', 'prowlarr.lan']));
+
+        resolveSpy.mockRestore();
+      });
+
+      it('skips indexers with null/empty/un-parseable apiUrl', async () => {
+        setupCommonGrabMocks();
+        const indexerService = {
+          getAll: vi.fn().mockResolvedValue([
+            { id: 1, name: 'Prowlarr', settings: { apiUrl: 'http://192.168.0.22:9696/api' } },
+            { id: 2, name: 'NoUrl', settings: { apiUrl: '' } },
+            { id: 3, name: 'NullSettings', settings: null },
+            { id: 4, name: 'NoApiKey', settings: {} },
+            { id: 5, name: 'Unparseable', settings: { apiUrl: 'not a url' } },
+          ]),
+        };
+        service.wire({ retrySearchDeps: {} as never, indexerService: indexerService as never });
+
+        const resolveSpy = vi.spyOn(DownloadUrl.prototype, 'resolve').mockResolvedValue({
+          type: 'torrent-bytes', data: Buffer.from('x'), infoHash: 'a'.repeat(40),
+        });
+
+        await service.grab({ downloadUrl: httpTorrentUrl, title: 'Test', protocol: 'torrent' });
+
+        const allowlist = resolveSpy.mock.calls[0]![0]!;
+        expect(allowlist.hostPort).toEqual(new Set(['192.168.0.22:9696']));
+        expect(allowlist.hostname).toEqual(new Set(['192.168.0.22']));
+
+        resolveSpy.mockRestore();
+      });
+
+      it('does NOT call IndexerService.getAll() for magnet grabs (allowlist undefined)', async () => {
+        setupCommonGrabMocks();
+        const indexerService = { getAll: vi.fn().mockResolvedValue([]) };
+        service.wire({ retrySearchDeps: {} as never, indexerService: indexerService as never });
+
+        const resolveSpy = vi.spyOn(DownloadUrl.prototype, 'resolve').mockResolvedValue({
+          type: 'magnet-uri', uri: 'magnet:x', infoHash: 'a'.repeat(40),
+        });
+
+        await service.grab({
+          downloadUrl: 'magnet:?xt=urn:btih:aaf4c61ddcc5e8a2dabede0f3b482cd9aea9434d',
+          title: 'Test',
+        });
+
+        expect(indexerService.getAll).not.toHaveBeenCalled();
+        expect(resolveSpy).toHaveBeenCalledWith(undefined);
+        resolveSpy.mockRestore();
+      });
+
+      it('does NOT call IndexerService.getAll() for usenet HTTP grabs', async () => {
+        setupCommonGrabMocks();
+        const indexerService = { getAll: vi.fn().mockResolvedValue([]) };
+        service.wire({ retrySearchDeps: {} as never, indexerService: indexerService as never });
+
+        const resolveSpy = vi.spyOn(DownloadUrl.prototype, 'resolve').mockResolvedValue({
+          type: 'nzb-url', url: 'https://nzb.example.com/dl',
+        });
+
+        await service.grab({
+          downloadUrl: 'https://nzb.example.com/dl',
+          title: 'Test',
+          protocol: 'usenet',
+        });
+
+        expect(indexerService.getAll).not.toHaveBeenCalled();
+        expect(resolveSpy).toHaveBeenCalledWith(undefined);
+        resolveSpy.mockRestore();
+      });
+
+      it('does NOT call IndexerService.getAll() for data: URI grabs', async () => {
+        setupCommonGrabMocks();
+        const indexerService = { getAll: vi.fn().mockResolvedValue([]) };
+        service.wire({ retrySearchDeps: {} as never, indexerService: indexerService as never });
+
+        const resolveSpy = vi.spyOn(DownloadUrl.prototype, 'resolve').mockResolvedValue({
+          type: 'torrent-bytes', data: Buffer.from('x'), infoHash: 'a'.repeat(40),
+        });
+
+        await service.grab({
+          downloadUrl: 'data:application/x-bittorrent;base64,AA==',
+          title: 'Test',
+          protocol: 'torrent',
+        });
+
+        expect(indexerService.getAll).not.toHaveBeenCalled();
+        expect(resolveSpy).toHaveBeenCalledWith(undefined);
+        resolveSpy.mockRestore();
+      });
     });
 
   });
@@ -1084,7 +1212,7 @@ describe('DownloadService', () => {
           log: retryLog,
         };
         retryService = new DownloadService(inject<Db>(db), clientService, inject<FastifyBaseLogger>(createMockLogger()));
-        retryService.wire({ retrySearchDeps: mockRetryDeps as never });
+        retryService.wire({ retrySearchDeps: mockRetryDeps as never, indexerService: { getAll: vi.fn().mockResolvedValue([]) } as never });
       });
 
       it('returns retried and deletes old record on successful retry', async () => {
@@ -1184,7 +1312,7 @@ describe('DownloadService', () => {
 
         const retryLogLocal = createMockLogger();
         const svc = new DownloadService(inject<Db>(db), clientService, inject<FastifyBaseLogger>(retryLogLocal));
-        svc.wire({ retrySearchDeps: mockRetryDeps as never });
+        svc.wire({ retrySearchDeps: mockRetryDeps as never, indexerService: { getAll: vi.fn().mockResolvedValue([]) } as never });
 
         const result = await svc.retry(1);
 
@@ -1903,7 +2031,7 @@ describe('DownloadService', () => {
   describe('required-wiring contract', () => {
     it('wire() called twice throws ServiceWireError', () => {
       const svc = new DownloadService(inject<Db>(db), clientService, inject<FastifyBaseLogger>(createMockLogger()));
-      const deps = { retrySearchDeps: {} as never };
+      const deps = { retrySearchDeps: {} as never, indexerService: { getAll: vi.fn().mockResolvedValue([]) } as never };
       svc.wire(deps);
       expect(() => svc.wire(deps)).toThrow(/DownloadService\.wire\(\) called more than once/);
     });
