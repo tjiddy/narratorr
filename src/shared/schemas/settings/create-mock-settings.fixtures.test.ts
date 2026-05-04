@@ -50,8 +50,23 @@ describe('createMockSettings', () => {
 
   describe('boundary / edge cases', () => {
     it('override with undefined value does not strip the default', () => {
-      const settings = createMockSettings({ processing: { ffmpegPath: undefined } } as unknown as Parameters<typeof createMockSettings>[0]);
+      const settings = createMockSettings({ processing: { ffmpegPath: undefined } });
       expect(settings.processing.ffmpegPath).toBe(DEFAULT_SETTINGS.processing.ffmpegPath);
+    });
+
+    it('DeepPartial accepts explicit-undefined at every nesting level (compile-time)', () => {
+      // Category-level undefined
+      const a = createMockSettings({ processing: undefined });
+      // Nested-leaf undefined (siblings to the existing ffmpegPath case)
+      const b = createMockSettings({ processing: { maxConcurrentProcessing: undefined } });
+      const c = createMockSettings({ search: { enabled: undefined } });
+      // Deeper: one level beyond a category-leaf (Record-keyed nested object)
+      const d = createMockSettings({ discovery: { weightMultipliers: { author: undefined } } });
+      // Runtime sanity: each call returns full defaults (undefined doesn't strip)
+      expect(a.processing).toEqual(DEFAULT_SETTINGS.processing);
+      expect(b.processing.maxConcurrentProcessing).toBe(DEFAULT_SETTINGS.processing.maxConcurrentProcessing);
+      expect(c.search.enabled).toBe(DEFAULT_SETTINGS.search.enabled);
+      expect(d.discovery.weightMultipliers.author).toBe(DEFAULT_SETTINGS.discovery.weightMultipliers.author);
     });
 
     it('preserves falsy-but-valid values: minFreeSpaceGB: 0', () => {
