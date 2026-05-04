@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { screen, waitFor } from '@testing-library/react';
+import { screen, waitFor, fireEvent } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { renderWithProviders } from '@/__tests__/helpers';
 import { createMockDownloadClient } from '@/__tests__/factories';
@@ -278,6 +278,21 @@ describe('DownloadClientsSettings', () => {
 
       expect(screen.getByTestId('modal-backdrop')).toBeInTheDocument();
       expect(screen.getByText('Edit Download Client')).toBeInTheDocument();
+    });
+
+    it('backdrop click does not close modal and preserves filled field value', async () => {
+      const user = userEvent.setup();
+      renderWithProviders(<DownloadClientsSettings />);
+      await waitForListLoad('My qBittorrent');
+
+      await user.click(screen.getByRole('button', { name: 'Add Client' }));
+      const nameInput = screen.getByPlaceholderText('qBittorrent');
+      await user.type(nameInput, 'Draft Client');
+
+      fireEvent.click(screen.getByTestId('modal-backdrop'));
+
+      expect(screen.getByTestId('modal-backdrop')).toBeInTheDocument();
+      expect(screen.getByPlaceholderText('qBittorrent')).toHaveValue('Draft Client');
     });
   });
 });

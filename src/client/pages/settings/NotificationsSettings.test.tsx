@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { screen, waitFor } from '@testing-library/react';
+import { screen, waitFor, fireEvent } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { renderWithProviders } from '@/__tests__/helpers';
 import { createMockNotifier } from '@/__tests__/factories';
@@ -270,6 +270,21 @@ describe('NotificationsSettings', () => {
       // Escape should NOT close modal while pending
       document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', cancelable: true }));
       expect(screen.getByTestId('modal-backdrop')).toBeInTheDocument();
+    });
+
+    it('backdrop click does not close modal and preserves filled field value', async () => {
+      const user = userEvent.setup();
+      renderWithProviders(<NotificationsSettings />);
+      await waitForListLoad('My Discord');
+
+      await user.click(screen.getByText('Add Notifier').closest('button')!);
+      const nameInput = screen.getByPlaceholderText('My Webhook');
+      await user.type(nameInput, 'Draft Notifier');
+
+      fireEvent.click(screen.getByTestId('modal-backdrop'));
+
+      expect(screen.getByTestId('modal-backdrop')).toBeInTheDocument();
+      expect(screen.getByPlaceholderText('My Webhook')).toHaveValue('Draft Notifier');
     });
   });
 

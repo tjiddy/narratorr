@@ -171,7 +171,7 @@ export function CrudSettingsPage<TItem extends { id: number; name: string }, TFo
         return (
           <Modal
             onClose={handleModalClose}
-            closeOnBackdropClick={!isMutationPending}
+            closeOnBackdropClick={false}
             scrollable
             className="w-full max-w-3xl"
           >

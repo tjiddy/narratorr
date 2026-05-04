@@ -345,25 +345,11 @@ describe('CrudSettingsPage', () => {
       expect(addButton).not.toBeDisabled();
     });
 
-    it('modal closes when backdrop clicked and no mutation is pending', async () => {
+    it('modal does NOT close when backdrop is clicked (regardless of mutation state)', async () => {
       const handleToggleForm = vi.fn();
       mockUseCrudSettings.mockReturnValue(createMockHookReturn({
         state: { showForm: true },
         actions: { handleToggleForm },
-      }));
-      const user = userEvent.setup();
-      render(<CrudSettingsPage {...modalProps} />);
-
-      await user.click(screen.getByTestId('modal-backdrop'));
-      expect(handleToggleForm).toHaveBeenCalledOnce();
-    });
-
-    it('modal does NOT close when backdrop clicked and create mutation is pending', async () => {
-      const handleToggleForm = vi.fn();
-      mockUseCrudSettings.mockReturnValue(createMockHookReturn({
-        state: { showForm: true },
-        actions: { handleToggleForm },
-        mutations: { createMutation: { mutate: vi.fn(), isPending: true } },
       }));
       const user = userEvent.setup();
       render(<CrudSettingsPage {...modalProps} />);
@@ -411,7 +397,7 @@ describe('CrudSettingsPage', () => {
       expect(handleCancelEdit).not.toHaveBeenCalled();
     });
 
-    it('edit modal closes on backdrop click when update mutation is not pending', async () => {
+    it('edit modal does NOT close on backdrop click', async () => {
       const items = [{ id: 1, name: 'Widget A' }];
       const handleCancelEdit = vi.fn();
       const handleToggleForm = vi.fn();
@@ -424,7 +410,7 @@ describe('CrudSettingsPage', () => {
       render(<CrudSettingsPage {...modalProps} renderCard={vi.fn(() => <div>edit</div>)} />);
 
       await user.click(screen.getByTestId('modal-backdrop'));
-      expect(handleCancelEdit).toHaveBeenCalledOnce();
+      expect(handleCancelEdit).not.toHaveBeenCalled();
       expect(handleToggleForm).not.toHaveBeenCalled();
     });
 
