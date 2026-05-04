@@ -245,9 +245,12 @@ describe('createServices', () => {
 
     const retrySearchDepsResult = vi.mocked(createRetrySearchDeps).mock.results[0]!.value;
 
+    const { IndexerService } = await import('../services/index.js');
     const downloadInstance = vi.mocked(DownloadService).mock.instances[0] as unknown as { wire: ReturnType<typeof vi.fn> };
     expect(downloadInstance.wire).toHaveBeenCalledOnce();
-    expect(downloadInstance.wire).toHaveBeenCalledWith({ retrySearchDeps: retrySearchDepsResult });
+    const downloadWireArg = downloadInstance.wire.mock.calls[0]![0];
+    expect(downloadWireArg.retrySearchDeps).toBe(retrySearchDepsResult);
+    expect(downloadWireArg.indexerService).toBeInstanceOf(IndexerService);
 
     const eventHistoryInstance = vi.mocked(EventHistoryService).mock.instances[0] as unknown as { wire: ReturnType<typeof vi.fn> };
     expect(eventHistoryInstance.wire).toHaveBeenCalledOnce();

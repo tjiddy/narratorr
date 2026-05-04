@@ -3,11 +3,13 @@ import { type Db } from '../../db/index.js';
 import type { FastifyBaseLogger } from 'fastify';
 import { downloads, books, indexers, importJobs } from '../../db/schema.js';
 import type { DownloadProtocol } from '../../core/index.js';
-import { DownloadUrl } from '../../core/utils/download-url.js';
+import { DownloadUrl, type LanAllowlist } from '../../core/utils/download-url.js';
+import { normalizedHostPortFromUrl, normalizedHostnameFromUrl } from '../../core/utils/network-service.js';
 import type { DownloadArtifact } from '../../core/download-clients/types.js';
 import { getInProgressStatuses, getTerminalStatuses, getCompletedStatuses, isTerminalStatus, getReplaceableStatuses } from '../../shared/download-status-registry.js';
 import type { DownloadStatus } from '../../shared/schemas/activity.js';
 import { type DownloadClientService } from './download-client.service.js';
+import type { IndexerService } from './indexer.service.js';
 import { sanitizeLogUrl } from '../utils/sanitize-log-url.js';
 import { type CreateEventInput } from './event-history.service.js';
 import { retrySearch, type RetrySearchDeps } from './retry-search.js';
@@ -48,6 +50,7 @@ export class DuplicateDownloadError extends Error {
 
 export interface DownloadServiceWireDeps {
   retrySearchDeps: RetrySearchDeps;
+  indexerService: IndexerService;
 }
 
 export class DownloadService {
@@ -207,6 +210,33 @@ export class DownloadService {
     }));
   }
 
+  /**
+   * Build the host:port + hostname allowlist from configured indexer apiUrls
+   * so a torrent fetch can reach a LAN-hosted Prowlarr (#966). Indexers with
+   * empty/missing/un-parseable apiUrl produce no entries.
+   */
+  private async buildLanAllowlist(): Promise<LanAllowlist> {
+    const { indexerService } = this.wired.require();
+    const indexers = await indexerService.getAll();
+    const hostPort = new Set<string>();
+    const hostname = new Set<string>();
+    for (const row of indexers) {
+      const settings = (row.settings ?? {}) as Record<string, unknown>;
+      const apiUrl = typeof settings.apiUrl === 'string' ? settings.apiUrl.trim() : '';
+      if (!apiUrl) continue;
+      let parsed: URL;
+      try {
+        parsed = new URL(apiUrl);
+      } catch {
+        this.log.debug({ indexerId: row.id, indexerName: row.name }, 'Skipping un-parseable indexer apiUrl in LAN allowlist');
+        continue;
+      }
+      hostPort.add(normalizedHostPortFromUrl(parsed));
+      hostname.add(normalizedHostnameFromUrl(parsed));
+    }
+    return { hostPort, hostname };
+  }
+
   /** Send a pre-resolved artifact to the client and return the external ID. */
   private async sendToClient(artifact: DownloadArtifact, protocol: DownloadProtocol): Promise<{ externalId: string | null; clientId: number; clientType: string; clientName: string }> {
     const client = await this.downloadClientService.getFirstEnabledForProtocol(protocol);
@@ -280,9 +310,13 @@ export class DownloadService {
 
     const protocol = params.protocol ?? 'torrent';
 
-    // Resolve the download URL into a typed artifact
+    // Resolve the download URL into a typed artifact. Only the torrent HTTP
+    // path needs the LAN allowlist — magnet, data:, and usenet-passthrough
+    // grabs return artifacts without an outbound HTTP fetch (#966).
     const downloadUrlObj = new DownloadUrl(params.downloadUrl, protocol);
-    const artifact = await downloadUrlObj.resolve();
+    const isTorrentHttp = protocol === 'torrent' && downloadUrlObj.isHttp;
+    const lanAllowlist = isTorrentHttp ? await this.buildLanAllowlist() : undefined;
+    const artifact = await downloadUrlObj.resolve(lanAllowlist);
 
     // Extract info hash from artifact (torrent-bytes and magnet-uri have it; nzb-url does not)
     const infoHash = 'infoHash' in artifact ? artifact.infoHash : null;

@@ -25,7 +25,10 @@ vi.mock('./network-service.js', async (importActual) => {
       if (visited.has(cur)) throw new Error('Redirect loop detected');
       visited.add(cur);
       const parsed = new URL(cur);
-      await actual.resolveAndValidate(parsed.hostname);
+      await actual.resolveAndValidate(parsed.hostname, {
+        ...(opts.lanAllowlist && { lanAllowlist: opts.lanAllowlist }),
+        normalizedHostPort: actual.normalizedHostPortFromUrl(parsed),
+      });
       const response = await globalThis.fetch(cur, {
         redirect: 'manual',
         signal: AbortSignal.timeout(opts.timeoutMs ?? 30_000),
@@ -560,6 +563,165 @@ describe('DownloadUrl', () => {
 
         expect(dispatcherCloseSpy).toHaveBeenCalledTimes(1);
       });
+    });
+  });
+
+  // #966 — LAN allowlist for Prowlarr-on-private-IP grabs
+  describe('resolve() — LAN allowlist (#966)', () => {
+    it('fetch succeeds when target host:port is in allowlist and resolves to a private IP', async () => {
+      mockedDnsLookup.mockReset();
+      mockedDnsLookup.mockResolvedValue([{ address: '192.168.0.22', family: 4 }]);
+      const { buffer, expectedHash } = fakeTorrentBuffer();
+      mockFetch.mockResolvedValueOnce(mockResponse(buffer, {
+        status: 200,
+        headers: { 'Content-Type': 'application/x-bittorrent' },
+      }));
+
+      const dl = new DownloadUrl('http://192.168.0.22:9696/dl/foo.torrent', 'torrent');
+      const artifact = await dl.resolve({
+        hostPort: new Set(['192.168.0.22:9696']),
+        hostname: new Set(['192.168.0.22']),
+      });
+
+      expect(artifact.type).toBe('torrent-bytes');
+      expect((artifact as Extract<DownloadArtifact, { type: 'torrent-bytes' }>).infoHash).toBe(expectedHash);
+    });
+
+    it('fetch is refused when target host:port is NOT in allowlist (different host:port)', async () => {
+      mockedDnsLookup.mockReset();
+      mockedDnsLookup.mockResolvedValue([{ address: '192.168.0.22', family: 4 }]);
+
+      const dl = new DownloadUrl('http://192.168.0.22:9696/dl/foo.torrent', 'torrent');
+      const error = await dl.resolve({
+        hostPort: new Set(['192.168.0.22:8080']),
+        hostname: new Set(['192.168.0.22']),
+      }).catch((e: Error) => e);
+
+      expect(error).toBeInstanceOf(Error);
+      expect((error as Error).message).toMatch(/^Download failed:/);
+      expect(mockFetch).not.toHaveBeenCalled();
+    });
+
+    it('default-port normalization for http (allowlist key has :80)', async () => {
+      mockedDnsLookup.mockReset();
+      mockedDnsLookup.mockResolvedValue([{ address: '192.168.0.22', family: 4 }]);
+      const { buffer } = fakeTorrentBuffer();
+      mockFetch.mockResolvedValueOnce(mockResponse(buffer, {
+        status: 200,
+        headers: { 'Content-Type': 'application/x-bittorrent' },
+      }));
+
+      const dl = new DownloadUrl('http://192.168.0.22/foo.torrent', 'torrent');
+      const artifact = await dl.resolve({
+        hostPort: new Set(['192.168.0.22:80']),
+        hostname: new Set(['192.168.0.22']),
+      });
+
+      expect(artifact.type).toBe('torrent-bytes');
+    });
+
+    it('default-port normalization for https (allowlist key has :443)', async () => {
+      mockedDnsLookup.mockReset();
+      mockedDnsLookup.mockResolvedValue([{ address: '192.168.0.22', family: 4 }]);
+      const { buffer } = fakeTorrentBuffer();
+      mockFetch.mockResolvedValueOnce(mockResponse(buffer, {
+        status: 200,
+        headers: { 'Content-Type': 'application/x-bittorrent' },
+      }));
+
+      const dl = new DownloadUrl('https://prowlarr.lan/foo.torrent', 'torrent');
+      const artifact = await dl.resolve({
+        hostPort: new Set(['prowlarr.lan:443']),
+        hostname: new Set(['prowlarr.lan']),
+      });
+
+      expect(artifact.type).toBe('torrent-bytes');
+    });
+
+    it('uppercase target hostname matches lowercase allowlist keys', async () => {
+      mockedDnsLookup.mockReset();
+      mockedDnsLookup.mockResolvedValue([{ address: '192.168.0.22', family: 4 }]);
+      const { buffer } = fakeTorrentBuffer();
+      mockFetch.mockResolvedValueOnce(mockResponse(buffer, {
+        status: 200,
+        headers: { 'Content-Type': 'application/x-bittorrent' },
+      }));
+
+      const dl = new DownloadUrl('http://PROWLARR:3000/foo.torrent', 'torrent');
+      const artifact = await dl.resolve({
+        hostPort: new Set(['prowlarr:3000']),
+        hostname: new Set(['prowlarr']),
+      });
+
+      expect(artifact.type).toBe('torrent-bytes');
+    });
+
+    it('redirect to a different LAN host:port not in allowlist is refused (pre-flight)', async () => {
+      mockedDnsLookup.mockReset();
+      mockedDnsLookup
+        .mockResolvedValueOnce([{ address: '192.168.0.22', family: 4 }]) // hop 0 OK
+        .mockResolvedValueOnce([{ address: '192.168.0.99', family: 4 }]); // hop 1 not allowlisted
+
+      mockFetch.mockResolvedValueOnce(
+        new Response(null, { status: 302, headers: { Location: 'http://192.168.0.99:9696/admin' } }),
+      );
+
+      const dl = new DownloadUrl('http://192.168.0.22:9696/dl/foo.torrent', 'torrent');
+      const error = await dl.resolve({
+        hostPort: new Set(['192.168.0.22:9696']),
+        hostname: new Set(['192.168.0.22']),
+      }).catch((e: Error) => e);
+
+      expect(error).toBeInstanceOf(Error);
+      expect((error as Error).message).toMatch(/^Download failed:/);
+      expect(mockFetch).toHaveBeenCalledTimes(1);
+    });
+
+    it('redirect to same hostname on a different port not in allowlist is refused', async () => {
+      mockedDnsLookup.mockReset();
+      mockedDnsLookup.mockResolvedValue([{ address: '192.168.0.22', family: 4 }]);
+
+      mockFetch.mockResolvedValueOnce(
+        new Response(null, { status: 302, headers: { Location: 'http://192.168.0.22:8080/elsewhere' } }),
+      );
+
+      const dl = new DownloadUrl('http://192.168.0.22:9696/dl/foo.torrent', 'torrent');
+      const error = await dl.resolve({
+        hostPort: new Set(['192.168.0.22:9696']),
+        hostname: new Set(['192.168.0.22']),
+      }).catch((e: Error) => e);
+
+      expect(error).toBeInstanceOf(Error);
+      expect((error as Error).message).toMatch(/^Download failed:/);
+      expect(mockFetch).toHaveBeenCalledTimes(1);
+    });
+
+    it('IPv6 unbracketed host:port literal matches', async () => {
+      mockedDnsLookup.mockReset();
+      const { buffer } = fakeTorrentBuffer();
+      mockFetch.mockResolvedValueOnce(mockResponse(buffer, {
+        status: 200,
+        headers: { 'Content-Type': 'application/x-bittorrent' },
+      }));
+
+      const dl = new DownloadUrl('http://[::1]:8080/foo.torrent', 'torrent');
+      const artifact = await dl.resolve({
+        hostPort: new Set(['::1:8080']),
+        hostname: new Set(['::1']),
+      });
+
+      expect(artifact.type).toBe('torrent-bytes');
+    });
+
+    it('magnet URI ignores allowlist (no HTTP fetch attempted)', async () => {
+      const dl = new DownloadUrl(buildMagnetUri(KNOWN_HEX_HASH), 'torrent');
+      const artifact = await dl.resolve({
+        hostPort: new Set(['192.168.0.22:9696']),
+        hostname: new Set(['192.168.0.22']),
+      });
+
+      expect(artifact.type).toBe('magnet-uri');
+      expect(mockFetch).not.toHaveBeenCalled();
     });
   });
 
