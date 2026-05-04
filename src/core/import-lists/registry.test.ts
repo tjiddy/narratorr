@@ -86,7 +86,7 @@ describe('Import List IMPORT_LIST_ADAPTER_FACTORIES', () => {
       // Producer-omit pattern: undefined shelfId is dropped from the
       // constructor payload, not passed through as explicit undefined
       // (eopt invariant per #939 AC4).
-      const ctorArg = vi.mocked(HardcoverProvider).mock.calls[0][0];
+      const ctorArg = vi.mocked(HardcoverProvider).mock.calls[0]![0];
       expect(ctorArg).not.toHaveProperty('shelfId');
     });
 

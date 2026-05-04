@@ -518,7 +518,7 @@ describe('ProcessingSettingsSection', () => {
       // Producer-omit pattern: NaN coerced to undefined results in
       // postProcessingScriptTimeout key omission from the payload, not
       // explicit undefined (eopt invariant per #939 AC4).
-      const payload = mockApi.updateSettings.mock.calls[0][0];
+      const payload = mockApi.updateSettings.mock.calls[0]![0];
       expect(payload.processing).toMatchObject({ postProcessingScript: '' });
       expect(payload.processing).not.toHaveProperty('postProcessingScriptTimeout');
     });

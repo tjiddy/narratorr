@@ -29,6 +29,25 @@ function parseManualPayload(jobId: number, raw: string): ManualImportJobPayload 
   return result.data;
 }
 
+/**
+ * Construct a strict ImportConfirmItem from a Zod-derived ManualImportJobPayload.
+ * Producer-omit at the boundary: each optional field is conditional-spread when
+ * defined so the resulting object satisfies ImportConfirmItem's `?: T` strict
+ * optionals (eopt invariant per #939 AC4) without widening the canonical DTO.
+ */
+function toImportConfirmItem(payload: ManualImportJobPayload): ImportConfirmItem {
+  return {
+    path: payload.path,
+    title: payload.title,
+    ...(payload.authorName !== undefined && { authorName: payload.authorName }),
+    ...(payload.seriesName !== undefined && { seriesName: payload.seriesName }),
+    ...(payload.coverUrl !== undefined && { coverUrl: payload.coverUrl }),
+    ...(payload.asin !== undefined && { asin: payload.asin }),
+    ...(payload.metadata !== undefined && { metadata: payload.metadata }),
+    ...(payload.forceImport !== undefined && { forceImport: payload.forceImport }),
+  };
+}
+
 export class ManualImportAdapter implements ImportAdapter {
   readonly type = 'manual' as const;
 
@@ -61,20 +80,7 @@ export class ManualImportAdapter implements ImportAdapter {
     try {
       await ctx.setPhase('analyzing');
 
-      // Construct strict ImportConfirmItem from Zod-derived payload via producer-omit.
-      // Keeps the canonical DTO contract (?: T strict) instead of widening it
-      // to accept Zod's `?: T | undefined` inference shape (per AC4 #939).
-      const item: ImportConfirmItem = {
-        path: payload.path,
-        title: payload.title,
-        ...(payload.authorName !== undefined && { authorName: payload.authorName }),
-        ...(payload.seriesName !== undefined && { seriesName: payload.seriesName }),
-        ...(payload.coverUrl !== undefined && { coverUrl: payload.coverUrl }),
-        ...(payload.asin !== undefined && { asin: payload.asin }),
-        ...(payload.metadata !== undefined && { metadata: payload.metadata }),
-        ...(payload.forceImport !== undefined && { forceImport: payload.forceImport }),
-      };
-
+      const item = toImportConfirmItem(payload);
       const extracted = extractImportMetadata(item);
 
       let finalPath = payload.path;

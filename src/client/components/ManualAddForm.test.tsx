@@ -102,7 +102,7 @@ describe('ManualAddForm', () => {
       });
       // Producer-omit pattern: whitespace seriesPosition results in key
       // omission, not explicit undefined (eopt invariant per #939 AC4).
-      const payload = (api.addBook as ReturnType<typeof vi.fn>).mock.calls[0][0];
+      const payload = (api.addBook as ReturnType<typeof vi.fn>).mock.calls[0]![0];
       expect(payload).not.toHaveProperty('seriesPosition');
     });
 
