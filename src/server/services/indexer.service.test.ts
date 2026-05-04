@@ -648,6 +648,85 @@ describe('IndexerService', () => {
       });
     });
 
+    // #958 — filtered helpers backing the Prowlarr-compat GET surface. The
+    // chained where() filters source = 'prowlarr' so manual rows (source: null)
+    // and rows from other origins never reach the response.
+    describe('getAllProwlarrManaged', () => {
+      it('selects only rows with source = prowlarr (filter applied at data layer)', async () => {
+        const prowlarrRow = createMockDbIndexer({ id: 1, source: 'prowlarr', sourceIndexerId: 1 });
+        const chain = mockDbChain([prowlarrRow]);
+        db.select.mockReturnValue(chain);
+
+        const result = await service.getAllProwlarrManaged();
+
+        expect(result).toHaveLength(1);
+        expect(result[0]!.source).toBe('prowlarr');
+        // Verify the SQL `where` clause is applied — the route can't bypass it.
+        expect((chain as { where: ReturnType<typeof vi.fn> }).where).toHaveBeenCalled();
+      });
+
+      it('decrypts settings on returned rows (matches getAll behavior)', async () => {
+        const { encrypt } = await import('../utils/secret-codec.js');
+        const encryptedKey = encrypt('real-api-key', TEST_KEY);
+        const prowlarrRow = createMockDbIndexer({
+          id: 1,
+          source: 'prowlarr',
+          sourceIndexerId: 1,
+          settings: { apiKey: encryptedKey, hostname: 'tracker' },
+        });
+        db.select.mockReturnValue(mockDbChain([prowlarrRow]));
+
+        const result = await service.getAllProwlarrManaged();
+
+        expect((result[0]!.settings as { apiKey: string }).apiKey).toBe('real-api-key');
+      });
+    });
+
+    describe('getByIdProwlarrManaged', () => {
+      it('returns the row when id matches AND source = prowlarr', async () => {
+        const prowlarrRow = createMockDbIndexer({ id: 7, source: 'prowlarr', sourceIndexerId: 3 });
+        db.select.mockReturnValue(mockDbChain([prowlarrRow]));
+
+        const result = await service.getByIdProwlarrManaged(7);
+
+        expect(result).not.toBeNull();
+        expect(result!.id).toBe(7);
+        expect(result!.source).toBe('prowlarr');
+      });
+
+      it('returns null when the id exists but source !== prowlarr (manual row)', async () => {
+        // The combined WHERE filters source = 'prowlarr', so a manual row at
+        // the same id produces an empty result set — same shape as missing.
+        db.select.mockReturnValue(mockDbChain([]));
+
+        const result = await service.getByIdProwlarrManaged(42);
+        expect(result).toBeNull();
+      });
+
+      it('returns null when no row exists at the id', async () => {
+        db.select.mockReturnValue(mockDbChain([]));
+
+        const result = await service.getByIdProwlarrManaged(999);
+        expect(result).toBeNull();
+      });
+
+      it('decrypts settings on the returned row (matches getById behavior)', async () => {
+        const { encrypt } = await import('../utils/secret-codec.js');
+        const encryptedKey = encrypt('real-api-key', TEST_KEY);
+        const prowlarrRow = createMockDbIndexer({
+          id: 7,
+          source: 'prowlarr',
+          sourceIndexerId: 3,
+          settings: { apiKey: encryptedKey },
+        });
+        db.select.mockReturnValue(mockDbChain([prowlarrRow]));
+
+        const result = await service.getByIdProwlarrManaged(7);
+
+        expect((result!.settings as { apiKey: string }).apiKey).toBe('real-api-key');
+      });
+    });
+
     describe('createOrUpsertProwlarr', () => {
       it('inserts new row when no existing prowlarr-sourced row matches sourceIndexerId', async () => {
         // findByProwlarrSource returns nothing

@@ -277,14 +277,14 @@ function registerIndexerRoutes(app: FastifyInstance, indexerService: IndexerServ
   app.get('/api/v1/indexer/schema', async () => [makeSchemaTemplate('Torznab'), makeSchemaTemplate('Newznab')]);
 
   app.get('/api/v1/indexer', async () => {
-    const all = await indexerService.getAll();
+    const all = await indexerService.getAllProwlarrManaged();
     return all.map(row => toReadarrIndexer(row));
   });
 
   app.get<{ Params: { id: string } }>('/api/v1/indexer/:id', async (request, reply) => {
     const id = parseInt(request.params.id, 10);
     if (isNaN(id)) return reply.status(404).send({ message: 'Indexer not found' });
-    const row = await indexerService.getById(id);
+    const row = await indexerService.getByIdProwlarrManaged(id);
     if (!row) return reply.status(404).send({ message: 'Indexer not found' });
     return toReadarrIndexer(row);
   });
@@ -326,15 +326,18 @@ function registerIndexerRoutes(app: FastifyInstance, indexerService: IndexerServ
 
       const { mapping, settings, sourceIndexerId: derivedSourceIndexerId } = parseReadarrBody(body);
 
-      // When the client re-submits the masked baseUrl sentinel (apiUrl is now a
-      // secret field, #742), the derived sourceIndexerId is null because the
-      // sentinel has no numeric path segment. Preserve the existing row's
-      // sourceIndexerId so the row keeps its Prowlarr identity and stays
-      // upsert-targetable on subsequent syncs.
+      // Source guard (#958): PUT keys on row id, so a known manual-row id could
+      // be flipped to source: 'prowlarr' by the unconditional `source` write
+      // below. Resolve the existing Prowlarr-managed row up front; manual rows
+      // and non-existent ids both fall through to 404. The same lookup also
+      // satisfies the sentinel-`apiUrl` `sourceIndexerId` preservation branch
+      // (#742), so we never need a second DB read.
+      const existing = await indexerService.getByIdProwlarrManaged(id);
+      if (!existing) return reply.status(404).send({ message: 'Indexer not found' });
+
       let sourceIndexerId = derivedSourceIndexerId;
       if (typeof settings.apiUrl === 'string' && isSentinel(settings.apiUrl)) {
-        const existing = await indexerService.getById(id);
-        if (existing) sourceIndexerId = existing.sourceIndexerId;
+        sourceIndexerId = existing.sourceIndexerId;
       }
 
       const updated = await indexerService.update(id, {
@@ -356,6 +359,11 @@ function registerIndexerRoutes(app: FastifyInstance, indexerService: IndexerServ
   app.delete<{ Params: { id: string } }>('/api/v1/indexer/:id', async (request, reply) => {
     const id = parseInt(request.params.id, 10);
     if (isNaN(id)) return reply.status(404).send({ message: 'Indexer not found' });
+    // Source guard (#958): manual rows must be opaque to the Prowlarr-compat
+    // surface. Probe via the filtered helper so a known manual-row id returns
+    // 404 instead of falling through to the unconditional `delete()`.
+    const existing = await indexerService.getByIdProwlarrManaged(id);
+    if (!existing) return reply.status(404).send({ message: 'Indexer not found' });
     const deleted = await indexerService.delete(id);
     if (!deleted) return reply.status(404).send({ message: 'Indexer not found' });
     request.log.info({ id }, 'Prowlarr indexer deleted');
