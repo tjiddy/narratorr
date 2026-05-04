@@ -4,13 +4,13 @@ import { PlusIcon, CheckIcon, XIcon } from '@/components/icons';
 
 interface SettingsFormActionsProps {
   isEdit: boolean;
-  isPending?: boolean;
-  testingForm?: boolean;
+  isPending?: boolean | undefined;
+  testingForm?: boolean | undefined;
   onFormTest: () => void;
-  onCancel?: () => void;
+  onCancel?: (() => void) | undefined;
   entityLabel: string;
-  testDisabled?: boolean;
-  testDisabledTitle?: string;
+  testDisabled?: boolean | undefined;
+  testDisabledTitle?: string | undefined;
 }
 
 export function SettingsFormActions({

@@ -73,8 +73,8 @@ export function useLibraryImport() {
             title: match.bestMatch.title,
             author: match.bestMatch.authors?.[0]?.name ?? row.edited.author,
             series: match.bestMatch.series?.[0]?.name ?? row.edited.series,
-            coverUrl: match.bestMatch.coverUrl,
-            asin: match.bestMatch.asin,
+            ...(match.bestMatch.coverUrl !== undefined && { coverUrl: match.bestMatch.coverUrl }),
+            ...(match.bestMatch.asin !== undefined && { asin: match.bestMatch.asin }),
             metadata: match.bestMatch,
           },
         };
@@ -118,7 +118,7 @@ export function useLibraryImport() {
         .map(d => ({
           path: d.path,
           title: d.parsedTitle,
-          author: d.parsedAuthor || undefined,
+          ...(d.parsedAuthor && { author: d.parsedAuthor }),
         }));
       if (candidates.length > 0) {
         startMatching(candidates);
@@ -176,7 +176,7 @@ export function useLibraryImport() {
       const autoCheck = !r.selected && state.metadata ? true : r.selected;
       const matchResult = upgradeMatchConfidence(r.matchResult, state.metadata, r.edited.metadata);
 
-      let updatedBook = r.book;
+      let updatedBook: DiscoveredBook = r.book;
 
       // Slug-duplicate recheck: if this was a slug-duplicate, see if edited title+author no longer collides.
       // Exact title equality matches the backend's findDuplicate() contract.
@@ -190,7 +190,8 @@ export function useLibraryImport() {
         }
       }
 
-      return { ...r, book: updatedBook, edited: state, selected: autoCheck, matchResult };
+      const updated: ImportRow = { ...r, book: updatedBook, edited: state, selected: autoCheck, ...(matchResult !== undefined && { matchResult }) };
+      return updated;
     }));
   }, [bookIdentifiers]);
 
@@ -199,11 +200,11 @@ export function useLibraryImport() {
     const items: ImportConfirmItem[] = selected.map(r => ({
       path: r.book.path,
       title: r.edited.title,
-      authorName: r.edited.author || undefined,
-      seriesName: r.edited.series || undefined,
-      coverUrl: r.edited.coverUrl,
-      asin: r.edited.asin,
-      metadata: r.edited.metadata,
+      ...(r.edited.author && { authorName: r.edited.author }),
+      ...(r.edited.series && { seriesName: r.edited.series }),
+      ...(r.edited.coverUrl !== undefined && { coverUrl: r.edited.coverUrl }),
+      ...(r.edited.asin !== undefined && { asin: r.edited.asin }),
+      ...(r.edited.metadata !== undefined && { metadata: r.edited.metadata }),
       ...(r.book.isDuplicate ? { forceImport: true } : {}),
     }));
     registerMutation.mutate(items);
@@ -224,7 +225,7 @@ export function useLibraryImport() {
       .map(r => ({
         path: r.book.path,
         title: r.edited.title,
-        author: r.edited.author || undefined,
+        ...(r.edited.author && { author: r.edited.author }),
       }));
     if (candidates.length > 0) {
       prevMatchCountRef.current = 0;

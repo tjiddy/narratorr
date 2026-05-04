@@ -231,6 +231,7 @@ export function extractASIN(input: string): { asin: string | undefined; cleaned:
 
 // ─── Folder Structure Parsing ───────────────────────────────────────
 
+// eslint-disable-next-line complexity -- pattern-matching cascade with conditional-spread for asin omission
 function parseSingleFolder(folder: string): {
   title: string;
   author: string | null;
@@ -245,7 +246,7 @@ function parseSingleFolder(folder: string): {
   // Guard: all-numeric date-like inputs ('11-22-63', '1.5') are titles, not
   // Series–NN–Title — short-circuit before pattern matching.
   if (isAllNumericSegments(input)) {
-    return { title: input, author: null, series: null, asin };
+    return { title: input, author: null, series: null, ...(asin !== undefined && { asin }) };
   }
 
   // Pattern: "Series – NN – Title" or "Series - NN - Title"
@@ -255,7 +256,7 @@ function parseSingleFolder(folder: string): {
       title: cleanName(seriesNumberMatch[2]!),
       author: null,
       series: cleanName(seriesNumberMatch[1]!),
-      asin,
+      ...(asin !== undefined && { asin }),
     };
   }
 
@@ -266,7 +267,7 @@ function parseSingleFolder(folder: string): {
       title: cleanName(dashMatch[2]!),
       author: cleanName(dashMatch[1]!),
       series: null,
-      asin,
+      ...(asin !== undefined && { asin }),
     };
   }
 
@@ -277,7 +278,7 @@ function parseSingleFolder(folder: string): {
       title: cleanName(parenMatch[1]!),
       author: cleanName(parenMatch[2]!),
       series: null,
-      asin,
+      ...(asin !== undefined && { asin }),
     };
   }
 
@@ -292,7 +293,7 @@ function parseSingleFolder(folder: string): {
         title: cleanName(left),
         author: cleanName(right),
         series: null,
-        asin,
+        ...(asin !== undefined && { asin }),
       };
     }
   }
@@ -302,7 +303,7 @@ function parseSingleFolder(folder: string): {
     title: cleaned ? cleanName(input) : cleanName(folder),
     author: null,
     series: null,
-    asin,
+    ...(asin !== undefined && { asin }),
   };
 }
 
@@ -344,7 +345,7 @@ export function parseFolderStructure(parts: string[]): {
         title: titleSegment,
         author: cleanName(parts[0]!),
         series: null,
-        asin,
+        ...(asin !== undefined && { asin }),
       };
     }
     const seriesMatch = titleSegment.match(SERIES_NUMBER_TITLE_REGEX);
@@ -353,14 +354,14 @@ export function parseFolderStructure(parts: string[]): {
         title: cleanName(seriesMatch[2]!),
         author: cleanName(parts[0]!),
         series: cleanName(seriesMatch[1]!),
-        asin,
+        ...(asin !== undefined && { asin }),
       };
     }
     return {
       title: cleanName(titleSegment),
       author: cleanName(parts[0]!),
       series: null,
-      asin,
+      ...(asin !== undefined && { asin }),
     };
   }
 
@@ -372,7 +373,7 @@ export function parseFolderStructure(parts: string[]): {
     title: cleanName(titleSegment),
     author: cleanName(parts[0]!),
     series: cleanName(parts[parts.length - 2]!),
-    asin,
+    ...(asin !== undefined && { asin }),
   };
 }
 
@@ -399,13 +400,13 @@ export function parseFolderStructureRaw(parts: string[]): {
     const { asin, cleaned } = extractASIN(parts[1]!);
     const titleSegment = cleaned || parts[1]!;
     if (isAllNumericSegments(titleSegment)) {
-      return { title: titleSegment, author: parts[0]!, series: null, asin };
+      return { title: titleSegment, author: parts[0]!, series: null, ...(asin !== undefined && { asin }) };
     }
     const seriesMatch = titleSegment.match(SERIES_NUMBER_TITLE_REGEX);
     if (seriesMatch) {
-      return { title: seriesMatch[2]!, author: parts[0]!, series: seriesMatch[1]!, asin };
+      return { title: seriesMatch[2]!, author: parts[0]!, series: seriesMatch[1]!, ...(asin !== undefined && { asin }) };
     }
-    return { title: titleSegment, author: parts[0]!, series: null, asin };
+    return { title: titleSegment, author: parts[0]!, series: null, ...(asin !== undefined && { asin }) };
   }
 
   const { asin, cleaned } = extractASIN(parts[parts.length - 1]!);
@@ -414,10 +415,11 @@ export function parseFolderStructureRaw(parts: string[]): {
     title: titleSegment,
     author: parts[0]!,
     series: parts[parts.length - 2]!,
-    asin,
+    ...(asin !== undefined && { asin }),
   };
 }
 
+// eslint-disable-next-line complexity -- pattern-matching cascade with conditional-spread for asin omission
 function parseSingleFolderRaw(folder: string): {
   title: string;
   author: string | null;
@@ -428,22 +430,22 @@ function parseSingleFolderRaw(folder: string): {
   const input = cleaned || folder;
 
   if (isAllNumericSegments(input)) {
-    return { title: input, author: null, series: null, asin };
+    return { title: input, author: null, series: null, ...(asin !== undefined && { asin }) };
   }
 
   const seriesNumberMatch = input.match(SERIES_NUMBER_TITLE_REGEX);
   if (seriesNumberMatch) {
-    return { title: seriesNumberMatch[2]!, author: null, series: seriesNumberMatch[1]!, asin };
+    return { title: seriesNumberMatch[2]!, author: null, series: seriesNumberMatch[1]!, ...(asin !== undefined && { asin }) };
   }
 
   const dashMatch = input.match(/^(.+?)\s*-\s*(.+)$/);
   if (dashMatch && !/^\d+$/.test(dashMatch[1]!.trim())) {
-    return { title: dashMatch[2]!, author: dashMatch[1]!, series: null, asin };
+    return { title: dashMatch[2]!, author: dashMatch[1]!, series: null, ...(asin !== undefined && { asin }) };
   }
 
   const parenMatch = input.match(/^(.+?)\s*[([](.+?)[)\]]$/);
   if (parenMatch) {
-    return { title: parenMatch[1]!, author: parenMatch[2]!, series: null, asin };
+    return { title: parenMatch[1]!, author: parenMatch[2]!, series: null, ...(asin !== undefined && { asin }) };
   }
 
   const byMatch = input.match(/^(.+?)\bby\b(.+)$/i);
@@ -451,11 +453,11 @@ function parseSingleFolderRaw(folder: string): {
     const left = byMatch[1]!.trim();
     const right = byMatch[2]!.trim();
     if (right && !/^\d+$/.test(left)) {
-      return { title: left, author: right, series: null, asin };
+      return { title: left, author: right, series: null, ...(asin !== undefined && { asin }) };
     }
   }
 
-  return { title: cleaned ? input : folder, author: null, series: null, asin };
+  return { title: cleaned ? input : folder, author: null, series: null, ...(asin !== undefined && { asin }) };
 }
 
 /**

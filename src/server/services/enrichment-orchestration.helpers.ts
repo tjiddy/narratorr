@@ -22,11 +22,11 @@ export interface EnrichmentBookInput {
 }
 
 export interface AudnexusConfig {
-  primaryAsin?: string | null;
-  alternateAsins?: string[];
-  existingNarrator?: string | null;
-  existingDuration?: number | null;
-  existingGenres?: string[] | null;
+  primaryAsin?: string | null | undefined;
+  alternateAsins?: string[] | undefined;
+  existingNarrator?: string | null | undefined;
+  existingDuration?: number | null | undefined;
+  existingGenres?: string[] | null | undefined;
 }
 
 export interface EnrichmentDeps {
@@ -97,8 +97,8 @@ export async function applyAudnexusEnrichment(
 async function applyEnrichmentData(
   bookId: number,
   asin: string,
-  data: { duration?: number; narrators?: string[]; genres?: string[] },
-  opts: { primaryAsin?: string | null; existingNarrator?: string | null; existingDuration?: number | null; existingGenres?: string[] | null },
+  data: { duration?: number | undefined; narrators?: string[] | undefined; genres?: string[] | undefined },
+  opts: { primaryAsin?: string | null | undefined; existingNarrator?: string | null | undefined; existingDuration?: number | null | undefined; existingGenres?: string[] | null | undefined },
   deps: Pick<EnrichmentDeps, 'db' | 'log' | 'bookService'>,
 ): Promise<void> {
   const updates: Partial<{ enrichmentStatus: EnrichmentStatus; asin: string; duration: number; updatedAt: Date }> = {
@@ -161,10 +161,10 @@ export function buildAudnexusConfig(
 
 export function buildImportedEventPayload(
   bookId: number,
-  item: { title: string; authorName?: string | null },
+  item: { title: string; authorName?: string | null | undefined },
   narratorName: string | null,
   finalPath: string,
-  mode?: string | null,
+  mode?: string | null | undefined,
 ) {
   return {
     bookId,
@@ -199,7 +199,7 @@ export function extractImportMetadata(item: ImportConfirmItem) {
 }
 
 export function buildBackgroundAudnexusConfig(
-  item: { asin?: string | null },
+  item: { asin?: string | null | undefined },
   extracted: ReturnType<typeof extractImportMetadata>,
   existingGenres: string[] | null,
 ): AudnexusConfig {

@@ -6,9 +6,9 @@ import { type GrabPayload } from '../../../shared/schemas/search.js';
 export type { SearchResult, DownloadProtocol } from '../../../core/indexers/types.js';
 
 export interface SearchContext {
-  author?: string;
-  title?: string;
-  bookDuration?: number;
+  author?: string | undefined;
+  title?: string | undefined;
+  bookDuration?: number | undefined;
 }
 
 export interface SearchResponse {

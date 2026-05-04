@@ -108,7 +108,7 @@ export class DownloadService {
 
     const data = results.map((r) => ({
       ...r.download,
-      book: r.book || undefined,
+      ...(r.book && { book: r.book }),
       indexerName: r.indexer?.name ?? null,
     }));
 
@@ -132,7 +132,7 @@ export class DownloadService {
 
     return {
       ...results[0]!.download,
-      book: results[0]!.book || undefined,
+      ...(results[0]!.book && { book: results[0]!.book }),
       indexerName: results[0]!.indexer?.name ?? null,
     };
   }
@@ -154,7 +154,7 @@ export class DownloadService {
 
     return results.map((r) => ({
       ...r.download,
-      book: r.book || undefined,
+      ...(r.book && { book: r.book }),
       indexerName: r.indexer?.name ?? null,
     }));
   }
@@ -202,7 +202,7 @@ export class DownloadService {
 
     return results.map((r) => ({
       ...r.download,
-      book: r.book || undefined,
+      ...(r.book && { book: r.book }),
       indexerName: r.indexer?.name ?? null,
     }));
   }
@@ -264,15 +264,15 @@ export class DownloadService {
   async grab(params: {
     downloadUrl: string;
     title: string;
-    protocol?: DownloadProtocol;
-    bookId?: number;
-    indexerId?: number;
-    size?: number;
-    seeders?: number;
-    guid?: string;
-    skipDuplicateCheck?: boolean;
-    replaceExisting?: boolean;
-    source?: CreateEventInput['source'];
+    protocol?: DownloadProtocol | undefined;
+    bookId?: number | undefined;
+    indexerId?: number | undefined;
+    size?: number | undefined;
+    seeders?: number | undefined;
+    guid?: string | undefined;
+    skipDuplicateCheck?: boolean | undefined;
+    replaceExisting?: boolean | undefined;
+    source?: CreateEventInput['source'] | undefined;
   }): Promise<DownloadWithBook> {
     if (params.bookId && !params.skipDuplicateCheck) {
       await this.checkDuplicateDownloads(params.bookId, params.replaceExisting);

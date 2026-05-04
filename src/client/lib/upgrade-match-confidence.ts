@@ -24,7 +24,8 @@ export function upgradeMatchConfidence(
     return { ...matchResult, confidence: 'medium' };
   }
   if (matchResult.confidence === 'medium' && newMetadata !== currentEditedMetadata) {
-    return { ...matchResult, confidence: 'high', reason: undefined };
+    const { reason: _reason, ...rest } = matchResult;
+    return { ...rest, confidence: 'high' };
   }
   return matchResult;
 }

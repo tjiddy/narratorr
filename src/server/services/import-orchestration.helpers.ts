@@ -32,7 +32,7 @@ export interface ImportPipelineDeps {
   settingsService: SettingsService;
   eventHistory: EventHistoryService;
   enrichmentDeps: EnrichmentDeps;
-  broadcaster?: EventBroadcasterService;
+  broadcaster?: EventBroadcasterService | undefined;
 }
 
 // eslint-disable-next-line complexity -- copy/move pipeline with verification and retry logic

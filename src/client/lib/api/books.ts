@@ -57,20 +57,20 @@ export interface BookWithAuthor {
 
 export interface CreateBookPayload {
   title: string;
-  authors?: { name: string; asin?: string }[];
-  narrators?: string[];
-  description?: string;
-  coverUrl?: string;
-  asin?: string;
-  isbn?: string;
-  seriesName?: string;
-  seriesPosition?: number;
-  duration?: number;
-  publishedDate?: string;
-  genres?: string[];
-  providerId?: string;
-  monitorForUpgrades?: boolean;
-  searchImmediately?: boolean;
+  authors?: { name: string; asin?: string | undefined }[] | undefined;
+  narrators?: string[] | undefined;
+  description?: string | undefined;
+  coverUrl?: string | undefined;
+  asin?: string | undefined;
+  isbn?: string | undefined;
+  seriesName?: string | undefined;
+  seriesPosition?: number | undefined;
+  duration?: number | undefined;
+  publishedDate?: string | undefined;
+  genres?: string[] | undefined;
+  providerId?: string | undefined;
+  monitorForUpgrades?: boolean | undefined;
+  searchImmediately?: boolean | undefined;
 }
 
 
@@ -87,15 +87,15 @@ export interface BookFile {
 }
 
 export interface UpdateBookPayload {
-  title?: string;
-  authors?: { name: string; asin?: string }[];
-  narrators?: string[];
-  description?: string;
-  coverUrl?: string;
-  status?: BookStatus;
-  seriesName?: string | null;
-  seriesPosition?: number | null;
-  monitorForUpgrades?: boolean;
+  title?: string | undefined;
+  authors?: { name: string; asin?: string | undefined }[] | undefined;
+  narrators?: string[] | undefined;
+  description?: string | undefined;
+  coverUrl?: string | undefined;
+  status?: BookStatus | undefined;
+  seriesName?: string | null | undefined;
+  seriesPosition?: number | null | undefined;
+  monitorForUpgrades?: boolean | undefined;
 }
 
 export interface RenameResult {

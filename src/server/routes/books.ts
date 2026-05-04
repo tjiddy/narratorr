@@ -169,8 +169,8 @@ export async function booksRoutes(app: FastifyInstance, deps: BookRouteDeps) {
     async (request) => {
       const { status, search, sortField, sortDirection, limit, offset } = request.query;
       request.log.debug({ status, search, sortField, limit, offset }, 'Fetching books');
-      const pagination = { limit: limit ?? DEFAULT_LIMITS.books, offset };
-      return bookListService.getAll(status, pagination, { slim: true, search, sortField, sortDirection });
+      const pagination = { limit: limit ?? DEFAULT_LIMITS.books, ...(offset !== undefined && { offset }) };
+      return bookListService.getAll(status, pagination, { slim: true, ...(search !== undefined && { search }), ...(sortField !== undefined && { sortField }), ...(sortDirection !== undefined && { sortDirection }) });
     },
   );
 

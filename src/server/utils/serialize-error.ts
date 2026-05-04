@@ -3,10 +3,10 @@ import { sanitizeLogUrl } from './sanitize-log-url.js';
 /** Serialized error shape safe for Pino JSON logging. */
 export interface SerializedError {
   message: string;
-  stack?: string;
+  stack?: string | undefined;
   type: string;
-  code?: string;
-  cause?: SerializedError;
+  code?: string | undefined;
+  cause?: SerializedError | undefined;
 }
 
 const MAX_CAUSE_DEPTH = 5;

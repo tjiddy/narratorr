@@ -50,15 +50,15 @@ async function readExistingTags(filePath: string): Promise<Partial<TagMetadata>>
   try {
     const metadata = await parseFile(filePath);
     const common = metadata.common;
-    return {
-      artist: common.artist || undefined,
-      albumArtist: common.albumartist || undefined,
-      album: common.album || undefined,
-      title: common.title || undefined,
-      composer: common.composer?.[0] || undefined,
-      grouping: common.grouping || undefined,
-      track: common.track?.no ?? undefined,
-    };
+    const result: Partial<TagMetadata> = {};
+    if (common.artist) result.artist = common.artist;
+    if (common.albumartist) result.albumArtist = common.albumartist;
+    if (common.album) result.album = common.album;
+    if (common.title) result.title = common.title;
+    if (common.composer?.[0]) result.composer = common.composer[0];
+    if (common.grouping) result.grouping = common.grouping;
+    if (common.track?.no != null) result.track = common.track.no;
+    return result;
   } catch {
     return {};
   }
@@ -134,7 +134,7 @@ function resolveTags(
 
   if (desired.track != null && existing.track == null) {
     resolved.track = desired.track;
-    resolved.trackTotal = desired.trackTotal;
+    if (desired.trackTotal != null) resolved.trackTotal = desired.trackTotal;
     hasAnyTag = true;
   }
 
@@ -270,11 +270,11 @@ export class TaggingService {
     bookPath: string,
     metadata: {
       title: string;
-      authorName?: string | null;
-      narrator?: string | null;
-      seriesName?: string | null;
-      seriesPosition?: number | null;
-      coverUrl?: string | null;
+      authorName?: string | null | undefined;
+      narrator?: string | null | undefined;
+      seriesName?: string | null | undefined;
+      seriesPosition?: number | null | undefined;
+      coverUrl?: string | null | undefined;
     },
     ffmpegPath: string,
     mode: TagMode,
@@ -308,12 +308,11 @@ export class TaggingService {
     for (let i = 0; i < audioFiles.length; i++) {
       const filePath = audioFiles[i]!;
       const tags: TagMetadata = {
-        artist: metadata.authorName || undefined,
-        albumArtist: metadata.authorName || undefined,
         album: metadata.title,
         title: metadata.title,
-        composer: metadata.narrator || undefined,
-        grouping: metadata.seriesName || undefined,
+        ...(metadata.authorName && { artist: metadata.authorName, albumArtist: metadata.authorName }),
+        ...(metadata.narrator && { composer: metadata.narrator }),
+        ...(metadata.seriesName && { grouping: metadata.seriesName }),
       };
 
       // Track numbers only for multi-file books

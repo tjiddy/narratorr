@@ -24,11 +24,11 @@ export type { BookEditState } from './types.js';
 interface BookEditModalProps {
   book: DiscoveredBook;
   initial: BookEditState;
-  confidence?: 'high' | 'medium' | 'none';
-  alternatives?: BookMetadata[];
+  confidence?: 'high' | 'medium' | 'none' | undefined;
+  alternatives?: BookMetadata[] | undefined;
   onSave: (state: BookEditState) => void;
   onClose: () => void;
-  isOpen?: boolean;
+  isOpen?: boolean | undefined;
 }
 
 // eslint-disable-next-line max-lines-per-function, complexity -- metadata edit form with preview, search, and multi-field validation

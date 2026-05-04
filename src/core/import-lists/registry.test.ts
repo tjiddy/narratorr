@@ -81,11 +81,13 @@ describe('Import List IMPORT_LIST_ADAPTER_FACTORIES', () => {
       expect(HardcoverProvider).toHaveBeenCalledWith({ apiKey: 'key', listType: 'shelf', shelfId: 123 });
     });
 
-    it('hardcover factory passes undefined shelfId through unchanged', () => {
+    it('hardcover factory omits shelfId when undefined', () => {
       IMPORT_LIST_ADAPTER_FACTORIES.hardcover({ apiKey: 'key', listType: 'trending', shelfId: undefined });
-      expect(HardcoverProvider).toHaveBeenCalledWith(
-        expect.objectContaining({ shelfId: undefined }),
-      );
+      // Producer-omit pattern: undefined shelfId is dropped from the
+      // constructor payload, not passed through as explicit undefined
+      // (eopt invariant per #939 AC4).
+      const ctorArg = vi.mocked(HardcoverProvider).mock.calls[0]![0];
+      expect(ctorArg).not.toHaveProperty('shelfId');
     });
 
     it('hardcover factory passes through explicit numeric shelfId', () => {

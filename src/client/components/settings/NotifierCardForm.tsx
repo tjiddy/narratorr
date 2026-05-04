@@ -20,10 +20,10 @@ interface NotifierCardFormProps {
   watchedEvents: NotificationEvent[];
   onSubmit: (data: CreateNotifierFormData) => void;
   onFormTest: (data: CreateNotifierFormData & { id?: number }) => void;
-  onCancel?: () => void;
-  isPending?: boolean;
-  testingForm?: boolean;
-  formTestResult?: TestResult | null;
+  onCancel?: (() => void) | undefined;
+  isPending?: boolean | undefined;
+  testingForm?: boolean | undefined;
+  formTestResult?: TestResult | null | undefined;
   onEventToggle: (event: NotificationEvent) => void;
 }
 

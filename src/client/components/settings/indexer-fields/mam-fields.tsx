@@ -28,6 +28,7 @@ function useMamDetection(watch?: UseFormWatch<CreateIndexerFormData>, setValue?:
   const [detectError, setDetectError] = useState<string | null>(null);
   const [isDetecting, setIsDetecting] = useState(false);
 
+  // eslint-disable-next-line complexity -- sentinel + setValue branches per detect-fail mode
   const detect = useCallback(async (mamId: string) => {
     if (!mamId.trim()) return;
     const isSentinel = mamId === '********';
@@ -53,11 +54,12 @@ function useMamDetection(watch?: UseFormWatch<CreateIndexerFormData>, setValue?:
       await ensureMinDuration();
 
       if (result.success && result.metadata) {
-        const status: MamStatus = {
+        const classname = result.metadata.classname as string | undefined;
+          const status: MamStatus = {
           username: result.metadata.username as string,
-          classname: result.metadata.classname as string | undefined,
           isVip: result.metadata.isVip as boolean,
-          ip: result.ip,
+          ...(classname !== undefined && { classname }),
+        ...(result.ip !== undefined && { ip: result.ip }),
         };
         setMamStatus(status);
         persistMamFields(setValue, status);
@@ -148,11 +150,12 @@ function deriveInitialMamStatus(watch?: UseFormWatch<CreateIndexerFormData>): Ma
 }
 
 function metadataToMamStatus(metadata: Record<string, unknown>, ip?: string): MamStatus {
-  return {
+  const classname = metadata.classname as string | undefined;
+    return {
     username: metadata.username as string || '',
-    classname: metadata.classname as string | undefined,
     isVip: metadata.isVip as boolean,
-    ip,
+    ...(classname !== undefined && { classname }),
+  ...(ip !== undefined && { ip }),
   };
 }
 

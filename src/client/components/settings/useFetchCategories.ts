@@ -7,8 +7,8 @@ import { getErrorMessage } from '@/lib/error-message.js';
 
 interface UseFetchCategoriesOptions {
   selectedType: DownloadClientType;
-  clientId?: number;
-  isDirty?: boolean;
+  clientId?: number | undefined;
+  isDirty?: boolean | undefined;
   getValues: UseFormGetValues<CreateDownloadClientFormData>;
 }
 

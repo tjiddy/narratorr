@@ -136,10 +136,10 @@ export class IndexerSearchService {
 
     // Score results against search context when title is provided
     if (options?.title) {
-      const context = { title: options.title, author: options.author };
+      const context = { title: options.title, ...(options.author !== undefined && { author: options.author }) };
       for (const result of results) {
         result.matchScore = scoreResult(
-          { title: result.title, author: result.author },
+          { title: result.title, ...(result.author !== undefined && { author: result.author }) },
           context,
         );
       }
@@ -222,10 +222,10 @@ export class IndexerSearchService {
 
     // Score results
     if (options?.title) {
-      const context = { title: options.title, author: options.author };
+      const context = { title: options.title, ...(options.author !== undefined && { author: options.author }) };
       for (const result of results) {
         result.matchScore = scoreResult(
-          { title: result.title, author: result.author },
+          { title: result.title, ...(result.author !== undefined && { author: result.author }) },
           context,
         );
       }

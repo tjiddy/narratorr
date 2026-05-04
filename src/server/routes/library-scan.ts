@@ -33,7 +33,7 @@ function toAuthorName(a: string | { name: string }): string {
 }
 
 /** Map a BookMetadata result to the scan-debug response shape. */
-function toSearchResultItem(r: { title: string; authors?: (string | { name: string })[]; asin?: string; providerId?: string }) {
+function toSearchResultItem(r: { title: string; authors?: (string | { name: string })[] | undefined; asin?: string | undefined; providerId?: string | undefined }) {
   return {
     title: r.title,
     authors: r.authors?.map(toAuthorName) ?? [],

@@ -18,11 +18,11 @@ import { parseDoubleEncodedNames, parseMamSize } from './mam-helpers.js';
 
 export interface MAMConfig {
   mamId: string;
-  baseUrl?: string;
-  proxyUrl?: string;
+  baseUrl?: string | undefined;
+  proxyUrl?: string | undefined;
   searchLanguages: number[];
   searchType: string;
-  isVip?: boolean;
+  isVip?: boolean | undefined;
 }
 
 const DEFAULT_BASE_URL = 'https://www.myanonamouse.net';
@@ -85,10 +85,10 @@ export class MyAnonamouseIndexer implements IndexerAdapter {
   constructor(config: MAMConfig, name?: string) {
     this.mamId = config.mamId;
     this.baseUrl = normalizeBaseUrl(config.baseUrl || DEFAULT_BASE_URL);
-    this.proxyUrl = config.proxyUrl;
+    if (config.proxyUrl !== undefined) this.proxyUrl = config.proxyUrl;
     this.searchLanguages = config.searchLanguages;
     this.searchType = config.searchType;
-    this.isVip = config.isVip;
+    if (config.isVip !== undefined) this.isVip = config.isVip;
     this.name = name || 'MyAnonamouse';
   }
 
@@ -185,7 +185,7 @@ export class MyAnonamouseIndexer implements IndexerAdapter {
       const guid = item.id != null ? String(item.id) : undefined;
       if (!item.title) {
         dropped.emptyTitle++;
-        debugTrace.push({ source: 'row', reason: 'dropped:empty-title', guid });
+        debugTrace.push({ source: 'row', reason: 'dropped:empty-title', ...(guid !== undefined && { guid }) });
         continue;
       }
 
@@ -194,26 +194,14 @@ export class MyAnonamouseIndexer implements IndexerAdapter {
         downloadUrl = await this.fetchTorrentAsDataUri(item.id, signal);
       }
 
+      const rawBytes = rawTitleBytesHex(item.title);
       if (!downloadUrl) {
         dropped.noUrl++;
-        debugTrace.push({
-          source: 'row',
-          reason: 'dropped:no-url',
-          rawTitle: item.title,
-          rawTitleBytes: rawTitleBytesHex(item.title),
-          guid,
-        });
+        debugTrace.push({ source: 'row', reason: 'dropped:no-url', rawTitle: item.title, ...(rawBytes !== undefined && { rawTitleBytes: rawBytes }), ...(guid !== undefined && { guid }) });
         continue;
       }
-
       results.push(this.mapItem(item, downloadUrl));
-      debugTrace.push({
-        source: 'row',
-        reason: 'kept',
-        rawTitle: item.title,
-        rawTitleBytes: rawTitleBytesHex(item.title),
-        guid,
-      });
+      debugTrace.push({ source: 'row', reason: 'kept', rawTitle: item.title, ...(rawBytes !== undefined && { rawTitleBytes: rawBytes }), ...(guid !== undefined && { guid }) });
     }
 
     return {
@@ -227,20 +215,27 @@ export class MyAnonamouseIndexer implements IndexerAdapter {
     const isFreeleech = item.free || item.personal_freeleech || (item.fl_vip && this.isVip);
     const isVipOnly = item.vip;
 
-    return {
+    const author = parseDoubleEncodedNames(orUndef(item.author_info));
+      const narrator = parseDoubleEncodedNames(orUndef(item.narrator_info));
+      const guid = item.id != null ? String(item.id) : undefined;
+      const size = parseMamSize(orUndef(item.size));
+      const seeders = orUndef(item.seeders);
+      const leechers = orUndef(item.leechers);
+      const language = normalizeLanguage(orUndef(item.lang_code));
+      return {
       title: item.title!,
-      author: parseDoubleEncodedNames(orUndef(item.author_info)),
-      narrator: parseDoubleEncodedNames(orUndef(item.narrator_info)),
+      ...(author !== undefined && { author }),
+      ...(narrator !== undefined && { narrator }),
       protocol: 'torrent',
-      guid: item.id != null ? String(item.id) : undefined,
-      downloadUrl,
-      size: parseMamSize(orUndef(item.size)),
-      seeders: orUndef(item.seeders),
-      leechers: orUndef(item.leechers),
-      language: normalizeLanguage(orUndef(item.lang_code)),
-      indexer: this.name,
-      isFreeleech: isFreeleech || undefined,
-      isVipOnly: isVipOnly || undefined,
+      ...(guid !== undefined && { guid }),
+      ...(downloadUrl !== undefined && { downloadUrl }),
+    ...(size !== undefined && { size }),
+    ...(seeders !== undefined && { seeders }),
+    ...(leechers !== undefined && { leechers }),
+    ...(language !== undefined && { language }),
+    indexer: this.name,
+    ...(isFreeleech && { isFreeleech: true }),
+    ...(isVipOnly && { isVipOnly: true }),
     };
   }
 

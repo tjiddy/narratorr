@@ -7,12 +7,12 @@ import { ToolbarDropdown } from '@/components/ToolbarDropdown';
 
 interface BookHeroProps {
   title: string;
-  subtitle?: string;
-  authorName?: string;
-  authorAsin?: string | null;
-  narratorNames?: string;
-  coverUrl?: string;
-  updatedAt?: string;
+  subtitle?: string | undefined;
+  authorName?: string | undefined;
+  authorAsin?: string | null | undefined;
+  narratorNames?: string | undefined;
+  coverUrl?: string | undefined;
+  updatedAt?: string | undefined;
   metaDots: string[];
   statusLabel: string;
   statusDotClass: string;
@@ -25,37 +25,37 @@ interface BookHeroProps {
   onRetagClick: () => void;
   isRetagging: boolean;
   retagDisabled: boolean;
-  retagTooltip?: string;
-  onRefreshScanClick?: () => void;
-  isRefreshingScanning?: boolean;
-  showRefreshScan?: boolean;
+  retagTooltip?: string | undefined;
+  onRefreshScanClick?: (() => void) | undefined;
+  isRefreshingScanning?: boolean | undefined;
+  showRefreshScan?: boolean | undefined;
   onMergeClick: () => void;
   isMerging: boolean;
-  mergePhase?: string;
+  mergePhase?: string | undefined;
   canMerge: boolean;
   mergeDisabled: boolean;
-  mergeTooltip?: string;
+  mergeTooltip?: string | undefined;
   onRemoveClick: () => void;
   isRemoving: boolean;
-  showWrongRelease?: boolean;
-  onWrongReleaseClick?: () => void;
-  isWrongReleasing?: boolean;
-  importListName?: string | null;
+  showWrongRelease?: boolean | undefined;
+  onWrongReleaseClick?: (() => void) | undefined;
+  isWrongReleasing?: boolean | undefined;
+  importListName?: string | null | undefined;
   monitorForUpgrades: boolean;
   onMonitorToggle: () => void;
   isMonitorToggling: boolean;
   /** Preview object URL from file picker or paste. Null when no preview active. */
-  previewUrl?: string | null;
+  previewUrl?: string | null | undefined;
   /** Called when user selects a file via the file picker. */
-  onCoverFileSelect?: (file: File) => void;
+  onCoverFileSelect?: ((file: File) => void) | undefined;
   /** Called when user confirms the preview (checkmark). */
-  onCoverConfirm?: () => void;
+  onCoverConfirm?: (() => void) | undefined;
   /** Called when user cancels the preview (X). */
-  onCoverCancel?: () => void;
+  onCoverCancel?: (() => void) | undefined;
   /** Whether a cover upload is in progress. */
-  isUploadingCover?: boolean;
-  onRetryImportClick?: () => void;
-  isRetryingImport?: boolean;
+  isUploadingCover?: boolean | undefined;
+  onRetryImportClick?: (() => void) | undefined;
+  isRetryingImport?: boolean | undefined;
   children?: React.ReactNode;
 }
 

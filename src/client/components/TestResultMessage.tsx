@@ -2,8 +2,8 @@ import { CheckIcon, AlertCircleIcon } from '@/components/icons';
 
 interface TestResultMessageProps {
   success: boolean;
-  message?: string;
-  warning?: string;
+  message?: string | undefined;
+  warning?: string | undefined;
   successText?: string;
   failureText?: string;
 }

@@ -20,9 +20,9 @@ export interface ProcessingConfig {
   ffmpegPath: string;
   outputFormat: 'm4b' | 'mp3';
   /** Target bitrate in kbps. When omitted, the original bitrate is preserved (copy codec where possible). */
-  bitrate?: number;
+  bitrate?: number | undefined;
   /** Source bitrate in kbps (converted from bps at the call site). When set, effective bitrate is min(source, target) to prevent upsampling. */
-  sourceBitrateKbps?: number;
+  sourceBitrateKbps?: number | undefined;
   mergeBehavior: 'always' | 'multi-file-only' | 'never';
 }
 
@@ -306,9 +306,9 @@ async function mergeFiles(
 
     await spawnFfmpeg(config.ffmpegPath, args, {
       totalDuration,
-      onProgress: callbacks?.onProgress,
-      onStderr: callbacks?.onStderr,
-      signal,
+      ...(callbacks?.onProgress !== undefined && { onProgress: callbacks.onProgress }),
+      ...(callbacks?.onStderr !== undefined && { onStderr: callbacks.onStderr }),
+      ...(signal !== undefined && { signal }),
     });
 
     return [outputPath];
@@ -327,7 +327,7 @@ async function mergeFiles(
     return {
       success: true,
       outputFiles: result.outputFiles,
-      warnings: result.warnings.length > 0 ? result.warnings : undefined,
+      ...(result.warnings.length > 0 && { warnings: result.warnings }),
     };
   } catch (error: unknown) {
     await cleanupTempFiles(concatPath, join(targetDir, '_metadata.txt')).catch(() => {});
@@ -384,7 +384,10 @@ async function convertFiles(
       if (config.outputFormat === 'm4b') args.push('-f', 'mp4');
       args.push('-progress', 'pipe:1', writePath);
 
-      await spawnFfmpeg(config.ffmpegPath, args, { onStderr: callbacks?.onStderr, signal });
+      await spawnFfmpeg(config.ffmpegPath, args, {
+        ...(callbacks?.onStderr !== undefined && { onStderr: callbacks.onStderr }),
+        ...(signal !== undefined && { signal }),
+      });
 
       // rename() atomically replaces outputPath. Don't unlink first — that creates a data-loss
       // window if the rename fails. CLAUDE.md gotcha: "rename() is atomic — just rename over the target."
@@ -403,7 +406,7 @@ async function convertFiles(
   return {
     success: true,
     outputFiles: result.outputFiles,
-    warnings: result.warnings.length > 0 ? result.warnings : undefined,
+    ...(result.warnings.length > 0 && { warnings: result.warnings }),
   };
 }
 

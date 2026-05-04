@@ -91,15 +91,26 @@ describe('searchResponseSchema', () => {
  * and the existing TS interfaces that describe the same shapes today. If the
  * Zod schemas drift from the canonical interfaces, these assertions fail at
  * `pnpm typecheck` so silent skew can't ship.
+ *
+ * Zod's `.optional()` infers `?: T | undefined`, but the canonical DTOs use
+ * `?: T` (strict optional, no explicit-undefined) — under `exactOptionalPropertyTypes`
+ * those are different types. `TightenOptional<T>` strips the `| undefined`
+ * representation artifact so the assertion catches real key/value drift,
+ * not the Zod inference shape.
  */
+type TightenOptional<T> = {
+  [K in keyof T as undefined extends T[K] ? never : K]: T[K];
+} & {
+  [K in keyof T as undefined extends T[K] ? K : never]?: Exclude<T[K], undefined>;
+};
+
 describe('schema/interface compatibility', () => {
   it('searchResultSchema is structurally compatible with SearchResult', () => {
-    // EOPT PHASE 1 SKIPPED — needs human review
-    expectTypeOf<SearchResultPayload>().toEqualTypeOf<SearchResult>();
+    expectTypeOf<TightenOptional<SearchResultPayload>>().branded.toEqualTypeOf<SearchResult>();
   });
 
   it('searchResponseSchema is structurally compatible with SearchResponse', () => {
-    // EOPT PHASE 1 SKIPPED — needs human review
-    expectTypeOf<SearchResponsePayload>().toEqualTypeOf<SearchResponse>();
+    type TightSearchResponse = Omit<SearchResponsePayload, 'results'> & { results: TightenOptional<SearchResultPayload>[] };
+    expectTypeOf<TightSearchResponse>().branded.toEqualTypeOf<SearchResponse>();
   });
 });

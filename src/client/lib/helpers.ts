@@ -6,7 +6,7 @@ export function mapBookMetadataToPayload(
 ): CreateBookPayload {
   return {
     title: book.title,
-    authors: book.authors.map((a) => ({ name: a.name, asin: a.asin })),
+    authors: book.authors.map((a) => ({ name: a.name, ...(a.asin !== undefined && { asin: a.asin }) })),
     narrators: book.narrators,
     description: book.description,
     coverUrl: book.coverUrl,

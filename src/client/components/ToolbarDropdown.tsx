@@ -21,7 +21,7 @@ export function ToolbarDropdown({
   triggerRef: RefObject<HTMLElement | null>;
   open: boolean;
   onClose: () => void;
-  inModal?: boolean;
+  inModal?: boolean | undefined;
   children: ReactNode;
 }) {
   const panelRef = useRef<HTMLDivElement>(null);

@@ -14,7 +14,7 @@ export function SeriesSection({
 }: {
   name: string;
   books: BookMetadata[];
-  libraryBooks?: (BookIdentifier | BookWithAuthor)[];
+  libraryBooks?: (BookIdentifier | BookWithAuthor)[] | undefined;
   onAddBook: (book: BookMetadata, overrides?: { searchImmediately: boolean; monitorForUpgrades: boolean }) => void;
   onAddAll: () => void;
   addingAsins: Set<string>;

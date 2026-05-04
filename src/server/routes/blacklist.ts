@@ -27,7 +27,7 @@ export async function blacklistRoutes(app: FastifyInstance, blacklistService: Bl
     async (request) => {
       const { limit, offset } = request.query;
       request.log.debug({ limit, offset }, 'Fetching blacklist');
-      const pagination = { limit: limit ?? DEFAULT_LIMITS.blacklist, offset };
+      const pagination = { limit: limit ?? DEFAULT_LIMITS.blacklist, ...(offset !== undefined && { offset }) };
       return blacklistService.getAll(pagination);
     },
   );

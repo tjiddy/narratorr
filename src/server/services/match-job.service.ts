@@ -21,7 +21,7 @@ export type Confidence = 'high' | 'medium' | 'none';
 export interface MatchCandidate {
   path: string;
   title: string;
-  author?: string;
+  author?: string | undefined;
 }
 
 export interface MatchResult {
@@ -167,6 +167,7 @@ class MatchJob {
     }
   }
 
+  // eslint-disable-next-line complexity -- audio-scan + ASIN + keyword + scoring branches with conditional-spread on MatchResult
   async matchSingleBook(book: MatchCandidate): Promise<MatchResult> {
     try {
       // Scan audio files for duration (used for runtime disambiguation)
@@ -195,7 +196,7 @@ class MatchJob {
         title: book.title,
         author: book.author,
         log: this.log,
-        options: { title: book.title, author: book.author },
+        options: { title: book.title, ...(book.author !== undefined && { author: book.author }) },
       });
 
       if (trace.results.length === 0) {
@@ -271,9 +272,9 @@ class MatchJob {
       return {
         path: book.path,
         confidence,
-        reason,
         bestMatch: topScored.meta,
         alternatives: scored.slice(1).map(s => s.meta),
+        ...(reason !== undefined && { reason }),
       };
     } catch (error: unknown) {
       this.log.warn({ error: serializeError(error), path: book.path, title: book.title }, 'Match failed for book');
@@ -357,11 +358,11 @@ function rankResults(
   detailed: BookMetadata[],
   book: MatchCandidate,
 ): { meta: BookMetadata; score: number }[] {
-  const context = { title: book.title, author: book.author };
+  const context = { title: book.title, ...(book.author !== undefined && { author: book.author }) };
   const scored = detailed.map(meta => ({
     meta,
     score: scoreResult(
-      { title: meta.title, author: meta.authors?.[0]?.name },
+      { title: meta.title, ...(meta.authors?.[0]?.name !== undefined && { author: meta.authors[0].name }) },
       context,
     ),
   }));

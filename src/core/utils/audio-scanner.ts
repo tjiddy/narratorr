@@ -36,13 +36,13 @@ export interface AudioScanResult {
 
 export interface AudioScanOptions {
   /** When true, detect cover art presence but skip buffer extraction */
-  skipCover?: boolean;
+  skipCover?: boolean | undefined;
   /** Path to ffprobe binary — when provided, duration is sourced from ffprobe instead of music-metadata */
-  ffprobePath?: string;
+  ffprobePath?: string | undefined;
   /** Diagnostic warning callback (e.g. ffprobe/music-metadata duration mismatch). Caller maps to its logger. */
-  onWarn?: (msg: string, payload?: Record<string, unknown>) => void;
+  onWarn?: ((msg: string, payload?: Record<string, unknown>) => void) | undefined;
   /** Diagnostic debug callback (e.g. ffprobe failure → music-metadata fallback). Caller maps to its logger. */
-  onDebug?: (msg: string, payload?: Record<string, unknown>) => void;
+  onDebug?: ((msg: string, payload?: Record<string, unknown>) => void) | undefined;
 }
 
 /**
@@ -184,12 +184,17 @@ function extractTagInfo(
   common: ICommonTagsResult,
   native?: Record<string, Array<{ id: string; value: unknown }>>,
 ): void {
-  result.tagTitle = common.title || common.album;
-  result.tagAuthor = common.albumartist || common.artist;
-  result.tagNarrator = extractNarrator(common, native);
-  result.tagSeries = common.grouping;
-  result.tagYear = common.year?.toString();
-  result.tagPublisher = common.label?.[0];
+  const tagTitle = common.title || common.album;
+  if (tagTitle !== undefined) result.tagTitle = tagTitle;
+  const tagAuthor = common.albumartist || common.artist;
+  if (tagAuthor !== undefined) result.tagAuthor = tagAuthor;
+  const tagNarrator = extractNarrator(common, native);
+  if (tagNarrator !== undefined) result.tagNarrator = tagNarrator;
+  if (common.grouping !== undefined) result.tagSeries = common.grouping;
+  const tagYear = common.year?.toString();
+  if (tagYear !== undefined) result.tagYear = tagYear;
+  const tagPublisher = common.label?.[0];
+  if (tagPublisher !== undefined) result.tagPublisher = tagPublisher;
 
   if (common.track?.no && common.grouping) {
     result.tagSeriesPosition = common.track.no;

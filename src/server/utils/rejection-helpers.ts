@@ -7,24 +7,24 @@ import { serializeError } from './serialize-error.js';
 
 
 export interface BlacklistIdentifiers {
-  infoHash?: string;
-  guid?: string;
+  infoHash?: string | undefined;
+  guid?: string | undefined;
   title: string;
-  bookId?: number;
+  bookId?: number | undefined;
 }
 
 export interface BlacklistAndRetryRequest {
   identifiers: BlacklistIdentifiers;
   reason: BlacklistReason;
   book: { id: number } | null;
-  blacklistService?: BlacklistService;
-  retrySearchDeps?: RetrySearchDeps;
-  settingsService?: SettingsService;
+  blacklistService?: BlacklistService | undefined;
+  retrySearchDeps?: RetrySearchDeps | undefined;
+  settingsService?: SettingsService | undefined;
   log: FastifyBaseLogger;
   /** When true, bypass the redownloadFailed setting and always trigger retry search. */
-  overrideRetry?: boolean;
+  overrideRetry?: boolean | undefined;
   /** Blacklist type — defaults to 'permanent' if omitted (existing behavior unchanged). */
-  blacklistType?: 'temporary' | 'permanent';
+  blacklistType?: 'temporary' | 'permanent' | undefined;
 }
 
 /**

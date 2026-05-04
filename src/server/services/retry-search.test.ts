@@ -501,18 +501,18 @@ describe('retrySearch — GUID blacklist filtering', () => {
     );
   });
 
-  it('passes undefined guid to grab() when not available', async () => {
+  it('omits guid from grab() when not available on the search result', async () => {
     const deps = createDeps();
 
     const result = await retrySearch(1, deps);
 
     expect(result.outcome).toBe('retried');
-    expect(deps.downloadOrchestrator.grab).toHaveBeenCalledWith(
-      expect.objectContaining({
-        guid: undefined,
-        downloadUrl: 'magnet:?xt=urn:btih:def456',
-      }),
-    );
+    expect(deps.downloadOrchestrator.grab).toHaveBeenCalled();
+    // Producer-omit pattern: missing guid is dropped from the GrabParams
+    // payload, not passed as explicit undefined (eopt invariant per #939 AC4).
+    const grabArg = vi.mocked(deps.downloadOrchestrator.grab).mock.calls[0]![0];
+    expect(grabArg).toMatchObject({ downloadUrl: 'magnet:?xt=urn:btih:def456' });
+    expect(grabArg).not.toHaveProperty('guid');
   });
 
   it('forwards indexerId from best search result to downloadOrchestrator.grab', async () => {

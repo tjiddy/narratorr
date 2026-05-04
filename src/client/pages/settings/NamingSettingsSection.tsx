@@ -77,11 +77,11 @@ interface FormatFieldProps {
   label: string;
   ariaLabel: string;
   placeholder: string;
-  error?: FieldError;
+  error?: FieldError | undefined;
   preview: string;
   previewNoSeries: string;
-  previewMultiFile?: string;
-  previewSuffix?: string;
+  previewMultiFile?: string | undefined;
+  previewSuffix?: string | undefined;
   warnings?: ReactNode;
   onOpenTokenModal: () => void;
   onInsertToken: (token: string) => void;

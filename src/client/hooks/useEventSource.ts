@@ -253,7 +253,7 @@ function updateMergeProgressFromEvent(type: SSEEventType, data: SSEEventPayloads
     setMergeProgress(d.book_id, {
       bookTitle: d.book_title,
       phase: d.phase,
-      percentage: d.percentage,
+      ...(d.percentage !== undefined && { percentage: d.percentage }),
     });
   } else if (type === 'merge_complete') {
     const d = asPayload<'merge_complete'>(data);
@@ -262,7 +262,7 @@ function updateMergeProgressFromEvent(type: SSEEventType, data: SSEEventPayloads
       phase: 'complete',
       outcome: 'success',
       message: d.message,
-      enrichmentWarning: d.enrichmentWarning,
+      ...(d.enrichmentWarning !== undefined && { enrichmentWarning: d.enrichmentWarning }),
     });
   } else if (type === 'merge_failed') {
     const d = asPayload<'merge_failed'>(data);

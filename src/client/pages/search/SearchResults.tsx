@@ -37,13 +37,13 @@ export function SearchResults({
       value: 'books',
       label: 'Books',
       icon: <BookOpenIcon className="w-4 h-4" />,
-      badge: results.books.length > 0 ? `(${results.books.length})` : undefined,
+      ...(results.books.length > 0 && { badge: `(${results.books.length})` }),
     },
     {
       value: 'authors',
       label: 'Authors',
       icon: <UsersIcon className="w-4 h-4" />,
-      badge: results.authors.length > 0 ? `(${results.authors.length})` : undefined,
+      ...(results.authors.length > 0 && { badge: `(${results.authors.length})` }),
     },
   ];
 

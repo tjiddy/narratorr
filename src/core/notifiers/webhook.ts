@@ -5,9 +5,9 @@ import { getErrorMessage } from '../../shared/error-message.js';
 
 export interface WebhookConfig {
   url: string;
-  method?: 'POST' | 'PUT';
-  headers?: Record<string, string>;
-  bodyTemplate?: string;
+  method?: 'POST' | 'PUT' | undefined;
+  headers?: Record<string, string> | undefined;
+  bodyTemplate?: string | undefined;
 }
 
 /** Replace `{token.path}` placeholders with values from the payload. */

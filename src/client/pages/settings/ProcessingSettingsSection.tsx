@@ -64,7 +64,7 @@ function toPayload(data: ProcessingFormData) {
       mergeBehavior: data.mergeBehavior,
       maxConcurrentProcessing: data.maxConcurrentProcessing,
       postProcessingScript: data.postProcessingScript,
-      postProcessingScriptTimeout: data.postProcessingScriptTimeout,
+      ...(data.postProcessingScriptTimeout !== undefined && { postProcessingScriptTimeout: data.postProcessingScriptTimeout }),
     },
     tagging: {
       enabled: data.taggingEnabled,

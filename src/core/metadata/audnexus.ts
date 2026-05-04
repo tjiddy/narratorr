@@ -143,10 +143,11 @@ function mapSeriesRefs(
   const out: Array<{ name: string; position?: number; asin?: string }> = [];
   for (const ref of [d.seriesPrimary, d.seriesSecondary]) {
     if (ref?.name) {
+      const position = ref.position != null ? parseFloat(ref.position) || undefined : undefined;
       out.push({
         name: ref.name,
-        position: ref.position != null ? parseFloat(ref.position) || undefined : undefined,
-        asin: ref.asin ?? undefined,
+        ...(position !== undefined && { position }),
+        ...(ref.asin && { asin: ref.asin }),
       });
     }
   }
@@ -156,7 +157,7 @@ function mapSeriesRefs(
 function mapBookAuthors(d: AudnexusBookDetail): Array<{ name: string; asin?: string }> {
   return (d.authors ?? []).map((a) => ({
     name: a.name ?? '',
-    asin: a.asin ?? undefined,
+    ...(a.asin && { asin: a.asin }),
   }));
 }
 

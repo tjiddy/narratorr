@@ -7,7 +7,7 @@ import { XIcon } from '@/components/icons';
 interface ManualAddFormModalProps {
   isOpen: boolean;
   onClose: () => void;
-  defaultTitle?: string;
+  defaultTitle?: string | undefined;
 }
 
 export function ManualAddFormModal({ isOpen, onClose, defaultTitle }: ManualAddFormModalProps) {

@@ -21,14 +21,14 @@ export class EventHistoryServiceError extends Error {
 }
 
 export interface CreateEventInput {
-  bookId?: number | null;
+  bookId?: number | null | undefined;
   bookTitle: string;
-  authorName?: string | null;
-  narratorName?: string | null;
-  downloadId?: number | null;
+  authorName?: string | null | undefined;
+  narratorName?: string | null | undefined;
+  downloadId?: number | null | undefined;
   eventType: EventType;
   source: EventSource;
-  reason?: Record<string, unknown> | null;
+  reason?: Record<string, unknown> | null | undefined;
 }
 
 export interface EventHistoryServiceWireDeps {

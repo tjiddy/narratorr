@@ -123,8 +123,8 @@ export function CredentialsSection({
   envBypass = false,
 }: {
   hasUser: boolean;
-  currentUsername?: string;
-  envBypass?: boolean;
+  currentUsername?: string | undefined;
+  envBypass?: boolean | undefined;
 }) {
   const deleteMutation = useMutationWithToast({
     mutationFn: () => api.authDeleteCredentials(),
@@ -143,7 +143,7 @@ export function CredentialsSection({
         <SetupForm />
       ) : (
         <ChangePasswordForm
-          currentUsername={currentUsername}
+          {...(currentUsername !== undefined && { currentUsername })}
           showRemoveButton={envBypass && hasUser}
           onRemove={() => deleteMutation.mutate()}
           isRemoving={deleteMutation.isPending}

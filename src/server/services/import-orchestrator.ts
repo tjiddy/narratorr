@@ -164,8 +164,8 @@ export class ImportOrchestrator {
       const { blacklistService, retrySearchDeps } = this.wired.require();
       blacklistAndRetrySearch({
         identifiers: {
-          infoHash: ctx.infoHash ?? undefined,
-          guid: ctx.guid ?? undefined,
+          ...(ctx.infoHash != null && { infoHash: ctx.infoHash }),
+          ...(ctx.guid != null && { guid: ctx.guid }),
           title: ctx.downloadTitle,
           bookId: ctx.bookId,
         },

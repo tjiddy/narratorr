@@ -17,7 +17,7 @@ export type HealthState = 'healthy' | 'warning' | 'error';
 export interface HealthCheckResult {
   checkName: string;
   state: HealthState;
-  message?: string;
+  message?: string | undefined;
 }
 
 export interface SystemDeps {

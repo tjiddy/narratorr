@@ -24,10 +24,10 @@ export function ReleaseCard({
   isBlacklisting,
 }: {
   result: SearchResult;
-  bookDurationSeconds?: number;
-  existingBookSizeBytes?: number;
-  lastGrabGuid?: string | null;
-  lastGrabInfoHash?: string | null;
+  bookDurationSeconds?: number | undefined;
+  existingBookSizeBytes?: number | undefined;
+  lastGrabGuid?: string | null | undefined;
+  lastGrabInfoHash?: string | null | undefined;
   onGrab: () => void;
   onBlacklist: () => void;
   isGrabbing: boolean;

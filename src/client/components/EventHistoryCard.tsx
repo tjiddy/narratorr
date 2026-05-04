@@ -51,12 +51,12 @@ function EventCardActions({ eventId, downloadId, canRetry, isActionable, onRetry
   downloadId: number | null;
   canRetry: boolean;
   isActionable: boolean;
-  onRetry?: (downloadId: number) => void;
-  isRetrying?: boolean;
-  onMarkFailed?: (id: number) => void;
-  isMarkingFailed?: boolean;
-  onDelete?: (id: number) => void;
-  isDeleting?: boolean;
+  onRetry?: ((downloadId: number) => void) | undefined;
+  isRetrying?: boolean | undefined;
+  onMarkFailed?: ((id: number) => void) | undefined;
+  isMarkingFailed?: boolean | undefined;
+  onDelete?: ((id: number) => void) | undefined;
+  isDeleting?: boolean | undefined;
 }) {
   return (
     <div className="flex items-center gap-2 shrink-0">

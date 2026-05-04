@@ -78,7 +78,7 @@ export function notifyImportComplete(args: NotifyImportCompleteArgs): void {
   fireAndForget(
     notifierService.notify('on_import', {
       event: 'on_import',
-      book: { title: bookTitle, author: authorName ?? undefined },
+      book: { title: bookTitle, ...(authorName != null && { author: authorName }) },
       import: { libraryPath: targetPath, fileCount },
     }),
     log,

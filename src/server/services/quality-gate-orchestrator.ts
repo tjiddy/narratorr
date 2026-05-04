@@ -100,7 +100,7 @@ export class QualityGateOrchestrator {
         try {
           scanResult = await scanAudioDirectory(savePath, {
             skipCover: true,
-            ffprobePath,
+            ...(ffprobePath !== undefined && { ffprobePath }),
             onWarn: (msg, payload) => this.log.warn(payload, msg),
             onDebug: (msg, payload) => this.log.debug(payload, msg),
           });
@@ -132,6 +132,7 @@ export class QualityGateOrchestrator {
   }
 
   /** Process a single completed download through the quality gate, with inline import on approval. */
+  // eslint-disable-next-line complexity -- approval-vs-rejection vs auto-grab branches with widened BlacklistAndRetryRequest
   async processOneDownload(downloadId: number): Promise<void> {
     const [ffprobePath2, row] = await Promise.all([this.resolveFfprobePath(), this.qualityGateService.getCompletedDownloadById(downloadId)]);
     if (!row) { this.log.warn({ downloadId }, 'Quality gate: processOneDownload — download not found or not completed'); return; }
@@ -167,7 +168,7 @@ export class QualityGateOrchestrator {
       try {
         scanResult = await scanAudioDirectory(savePath, {
           skipCover: true,
-          ffprobePath: ffprobePath2,
+          ...(ffprobePath2 !== undefined && { ffprobePath: ffprobePath2 }),
           onWarn: (msg, payload) => this.log.warn(payload, msg),
           onDebug: (msg, payload) => this.log.debug(payload, msg),
         });
@@ -304,10 +305,10 @@ export class QualityGateOrchestrator {
     if (retry) {
       await blacklistAndRetrySearch({
         identifiers: {
-          infoHash: download.infoHash ?? undefined,
-          guid: download.guid ?? undefined,
+          ...(download.infoHash != null && { infoHash: download.infoHash }),
+          ...(download.guid != null && { guid: download.guid }),
           title: download.title,
-          bookId: download.bookId ?? undefined,
+          ...(download.bookId != null && { bookId: download.bookId }),
         },
         reason: 'bad_quality',
         book,

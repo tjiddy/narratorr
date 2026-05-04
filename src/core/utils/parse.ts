@@ -206,7 +206,7 @@ function matchPattern(working: string, result: ParsedTitle): ParsedTitle {
   if (possessiveMatch) {
     result.author = cleanField(possessiveMatch[1]!);
     result.series = cleanField(possessiveMatch[2]!);
-    result.seriesPosition = possessiveMatch[3];
+    if (possessiveMatch[3] !== undefined) result.seriesPosition = possessiveMatch[3];
     result.title = cleanField(possessiveMatch[4]!);
     return finalClean(result);
   }
@@ -222,7 +222,7 @@ function matchPattern(working: string, result: ParsedTitle): ParsedTitle {
     const seriesNum = seriesPart.match(/^(.+?)\s*(?:Bk|Book|Vol|Part|Day|Band|Tome)?\s*(\d+)\s*$/i)
       || seriesPart.match(/^(.+?)\s+(\d+)$/);
     result.series = seriesNum ? cleanField(seriesNum[1]!) : cleanField(seriesPart);
-    if (seriesNum) result.seriesPosition = seriesNum[2];
+    if (seriesNum && seriesNum[2] !== undefined) result.seriesPosition = seriesNum[2];
     return finalClean(result);
   }
 

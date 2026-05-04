@@ -247,7 +247,7 @@ export class MergeService {
       this.log.info({ bookId, outputPath, filesReplaced: topLevelAudioFiles.length }, 'Book merged to M4B');
       const message = `Merged ${topLevelAudioFiles.length} files into ${basename(stagedM4b)}`;
       this.emitMergeComplete(bookId, book.title, message, enrichmentWarning);
-      return { bookId, outputFile: outputPath, filesReplaced: topLevelAudioFiles.length, message, enrichmentWarning };
+      return { bookId, outputFile: outputPath, filesReplaced: topLevelAudioFiles.length, message, ...(enrichmentWarning !== undefined && { enrichmentWarning }) };
     } catch (error: unknown) {
       const errorMessage = getErrorMessage(error);
       const reason: MergeFailedReason = controller.signal.aborted ? 'cancelled' : 'error';
@@ -289,8 +289,8 @@ export class MergeService {
     const processingResult = await processAudioFiles(stagingDir, {
       ffmpegPath: processingSettings.ffmpegPath,
       outputFormat: 'm4b',
-      bitrate: targetBitrateKbps,
-      sourceBitrateKbps,
+      ...(targetBitrateKbps !== undefined && { bitrate: targetBitrateKbps }),
+      ...(sourceBitrateKbps !== undefined && { sourceBitrateKbps }),
       mergeBehavior: 'always',
     }, {
       author: authorName,
@@ -312,7 +312,7 @@ export class MergeService {
 
     const ffprobePathVerify = resolveFfprobePathFromSettings(processingSettings.ffmpegPath);
     const scanResult = await scanAudioDirectory(stagingDir, {
-      ffprobePath: ffprobePathVerify,
+      ...(ffprobePathVerify !== undefined && { ffprobePath: ffprobePathVerify }),
       onWarn: (msg, payload) => this.log.warn(payload, msg),
       onDebug: (msg, payload) => this.log.debug(payload, msg),
     });

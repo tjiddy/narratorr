@@ -2,7 +2,7 @@ import type { IndexerFieldsProps } from './types.js';
 import type { IndexerType } from '../../../../shared/indexer-registry.js';
 import { FlareSolverrField } from './flaresolverr-field.js';
 
-export function ApiFields({ register, errors, selectedType, prowlarrManaged }: Pick<IndexerFieldsProps, 'register' | 'errors'> & { selectedType: IndexerType; prowlarrManaged?: boolean }) {
+export function ApiFields({ register, errors, selectedType, prowlarrManaged }: Pick<IndexerFieldsProps, 'register' | 'errors'> & { selectedType: IndexerType; prowlarrManaged?: boolean | undefined }) {
   const readOnlyClass = prowlarrManaged ? 'opacity-60 cursor-not-allowed' : '';
   return (
     <>

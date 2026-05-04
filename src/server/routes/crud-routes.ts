@@ -14,8 +14,8 @@ interface CrudService {
   create(data: unknown): Promise<unknown>;
   update(id: number, data: unknown): Promise<unknown | null>;
   delete(id: number): Promise<boolean>;
-  test(id: number): Promise<{ success: boolean; message?: string; ip?: string; metadata?: Record<string, unknown> }>;
-  testConfig(data: { type: string; settings: Record<string, unknown>; id?: number }): Promise<{ success: boolean; message?: string; ip?: string; metadata?: Record<string, unknown> }>;
+  test(id: number): Promise<{ success: boolean; message?: string | undefined; ip?: string | undefined; metadata?: Record<string, unknown> | undefined }>;
+  testConfig(data: { type: string; settings: Record<string, unknown>; id?: number | undefined }): Promise<{ success: boolean; message?: string | undefined; ip?: string | undefined; metadata?: Record<string, unknown> | undefined }>;
 }
 
 interface CrudRouteOptions {

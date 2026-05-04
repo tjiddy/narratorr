@@ -94,7 +94,7 @@ export class ImportListService {
     return true;
   }
 
-  async testConfig(data: { type: string; settings: Record<string, unknown>; id?: number }): Promise<{ success: boolean; message?: string }> {
+  async testConfig(data: { type: string; settings: Record<string, unknown>; id?: number }): Promise<{ success: boolean; message?: string | undefined }> {
     try {
       const factory = IMPORT_LIST_ADAPTER_FACTORIES[data.type as keyof typeof IMPORT_LIST_ADAPTER_FACTORIES];
       if (!factory) return { success: false, message: `Unknown provider type: ${data.type}` };
@@ -118,7 +118,7 @@ export class ImportListService {
     }
   }
 
-  async test(id: number): Promise<{ success: boolean; message?: string }> {
+  async test(id: number): Promise<{ success: boolean; message?: string | undefined }> {
     const list = await this.getById(id);
     if (!list) return { success: false, message: 'Import list not found' };
     return this.testConfig({ type: list.type, settings: list.settings as Record<string, unknown> });
@@ -190,12 +190,17 @@ export class ImportListService {
     }
   }
 
+  // eslint-disable-next-line complexity -- passthrough/match/detail-followup branches w/ conditional-spread
   private async enrichItem(item: ImportListItem): Promise<{ asin?: string; author?: string }> {
-    if (!this.metadata || item.asin) return { asin: item.asin, author: item.author };
+    const passthrough = (): { asin?: string; author?: string } => ({
+      ...(item.asin !== undefined && { asin: item.asin }),
+      ...(item.author !== undefined && { author: item.author }),
+    });
+    if (!this.metadata || item.asin) return passthrough();
     try {
       const query = item.author ? `${item.title} ${item.author}` : item.title;
       const searchResults = await this.metadata.search(query);
-      if (searchResults.books.length === 0) return { asin: item.asin, author: item.author };
+      if (searchResults.books.length === 0) return passthrough();
       const match = searchResults.books[0]!;
       let asin = match.asin;
       // Follow providerId to detail endpoint for ASIN if search result didn't include one
@@ -203,13 +208,15 @@ export class ImportListService {
         const detail = await this.metadata.getBook(match.providerId);
         if (detail?.asin) asin = detail.asin;
       }
+      const enrichedAsin = asin || item.asin;
+      const enrichedAuthor = item.author || match.authors?.[0]?.name;
       return {
-        asin: asin || item.asin,
-        author: item.author || match.authors?.[0]?.name,
+        ...(enrichedAsin !== undefined && { asin: enrichedAsin }),
+        ...(enrichedAuthor !== undefined && { author: enrichedAuthor }),
       };
     } catch (error: unknown) {
       this.log.warn({ title: item.title, error: getErrorMessage(error) }, 'Metadata enrichment failed');
-      return { asin: item.asin, author: item.author };
+      return passthrough();
     }
   }
 

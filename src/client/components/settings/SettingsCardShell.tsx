@@ -13,15 +13,15 @@ interface SettingsCardShellProps {
   subtitle: string;
   enabled: boolean;
   itemId: number;
-  onEdit?: () => void;
-  onTest?: (id: number) => void;
-  onDelete?: () => void;
-  testingId?: number | null;
-  testResult?: IdTestResult | null;
+  onEdit?: (() => void) | undefined;
+  onTest?: ((id: number) => void) | undefined;
+  onDelete?: (() => void) | undefined;
+  testingId?: number | null | undefined;
+  testResult?: IdTestResult | null | undefined;
   testResultTexts?: { success: string; failure: string };
-  testDisabled?: boolean;
-  testDisabledTitle?: string;
-  animationDelay?: string;
+  testDisabled?: boolean | undefined;
+  testDisabledTitle?: string | undefined;
+  animationDelay?: string | undefined;
   children?: React.ReactNode;
 }
 

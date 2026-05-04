@@ -11,7 +11,7 @@ export interface LibraryGridViewProps {
   onClick: (bookId: number) => void;
   onSearchReleases: (book: BookWithAuthor) => void;
   onRemove: (book: BookWithAuthor) => void;
-  onRetryImport?: (book: BookWithAuthor) => void;
+  onRetryImport?: ((book: BookWithAuthor) => void) | undefined;
 }
 
 export function LibraryGridView({

@@ -17,9 +17,9 @@ interface ImportCardProps {
   onToggle: () => void;
   onEdit: () => void;
   /** When true, path-duplicates suppress checkbox+edit; slug-duplicates suppress checkbox but show edit */
-  lockDuplicates?: boolean;
+  lockDuplicates?: boolean | undefined;
   /** Pre-computed relative path to display instead of the auto-shortened absolute path */
-  relativePath?: string;
+  relativePath?: string | undefined;
 }
 
 const confidenceVariant = {
@@ -40,7 +40,7 @@ const confidenceLabel = {
   none: 'No Match',
 } as const;
 
-function ConfidenceBadge({ confidence, reason }: { confidence?: Confidence; reason?: string }) {
+function ConfidenceBadge({ confidence, reason }: { confidence?: Confidence | undefined; reason?: string | undefined }) {
   if (!confidence) {
     return (
       <Badge variant="muted" icon={LoadingSpinner}>

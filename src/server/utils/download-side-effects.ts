@@ -124,7 +124,7 @@ export function notifyGrab(args: NotifyGrabArgs): void {
     notifierService.notify('on_grab', {
       event: 'on_grab',
       book: { title },
-      release: { title, size },
+      release: { title, ...(size !== undefined && { size }) },
     }),
     log,
     'Failed to send grab notification',

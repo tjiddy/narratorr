@@ -5,6 +5,7 @@ import { manualImportJobPayloadSchema, type ImportAdapter, type ImportAdapterCon
 import type { ImportPipelineDeps } from '../import-orchestration.helpers.js';
 import type { AppSettings } from '../../../shared/schemas/settings/registry.js';
 import { copyToLibrary } from '../import-orchestration.helpers.js';
+import type { ImportConfirmItem } from '../library-scan.service.js';
 import { getAudioStats } from '../library-scan.helpers.js';
 import { orchestrateBookEnrichment, buildEnrichmentBookInput, buildBackgroundAudnexusConfig, buildImportedEventPayload, extractImportMetadata } from '../enrichment-orchestration.helpers.js';
 import { renameFilesWithTemplate } from '../../utils/paths.js';
@@ -26,6 +27,25 @@ function parseManualPayload(jobId: number, raw: string): ManualImportJobPayload 
     throw new Error(`Invalid manual import payload for job ${jobId}: shape mismatch`, { cause: result.error });
   }
   return result.data;
+}
+
+/**
+ * Construct a strict ImportConfirmItem from a Zod-derived ManualImportJobPayload.
+ * Producer-omit at the boundary: each optional field is conditional-spread when
+ * defined so the resulting object satisfies ImportConfirmItem's `?: T` strict
+ * optionals (eopt invariant per #939 AC4) without widening the canonical DTO.
+ */
+function toImportConfirmItem(payload: ManualImportJobPayload): ImportConfirmItem {
+  return {
+    path: payload.path,
+    title: payload.title,
+    ...(payload.authorName !== undefined && { authorName: payload.authorName }),
+    ...(payload.seriesName !== undefined && { seriesName: payload.seriesName }),
+    ...(payload.coverUrl !== undefined && { coverUrl: payload.coverUrl }),
+    ...(payload.asin !== undefined && { asin: payload.asin }),
+    ...(payload.metadata !== undefined && { metadata: payload.metadata }),
+    ...(payload.forceImport !== undefined && { forceImport: payload.forceImport }),
+  };
 }
 
 export class ManualImportAdapter implements ImportAdapter {
@@ -60,13 +80,14 @@ export class ManualImportAdapter implements ImportAdapter {
     try {
       await ctx.setPhase('analyzing');
 
-      const extracted = extractImportMetadata(payload);
+      const item = toImportConfirmItem(payload);
+      const extracted = extractImportMetadata(item);
 
       let finalPath = payload.path;
       if (mode) {
         const librarySettings = await this.deps.settingsService.get('library');
         await ctx.setPhase('copying');
-        finalPath = await copyToLibrary(payload, extracted.meta ?? null, mode, this.deps, (progress, byteCounter) => {
+        finalPath = await copyToLibrary(item, extracted.meta ?? null, mode, this.deps, (progress, byteCounter) => {
           ctx.emitProgress('copying', progress, byteCounter);
         });
 

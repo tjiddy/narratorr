@@ -56,7 +56,7 @@ export async function refreshScanBook(
 
   const scanResult = await scanAudioDirectory(book.path, {
     skipCover: true,
-    ffprobePath,
+    ...(ffprobePath !== undefined && { ffprobePath }),
     onWarn: (msg, payload) => log.warn(payload, msg),
     onDebug: (msg, payload) => log.debug(payload, msg),
   });

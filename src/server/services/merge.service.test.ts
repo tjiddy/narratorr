@@ -211,7 +211,7 @@ describe('MergeService', () => {
       );
     });
 
-    it('passes sourceBitrateKbps as undefined when book.audioBitrate is null', async () => {
+    it('omits sourceBitrateKbps when book.audioBitrate is null', async () => {
       // mockBook has audioBitrate: null by default
       const { service } = createService();
       setupHappyPath();
@@ -219,13 +219,12 @@ describe('MergeService', () => {
       await service.enqueueMerge(42);
       await settle();
 
-      expect(processAudioFiles).toHaveBeenCalledWith(
-        STAGING_DIR,
-        expect.objectContaining({ sourceBitrateKbps: undefined }),
-        expect.any(Object),
-        expect.any(Object),
-        expect.any(AbortSignal),
-      );
+      // Producer-omit pattern: null audioBitrate results in sourceBitrateKbps
+      // key omission from the ProcessingConfig, not explicit undefined
+      // (eopt invariant per #939 AC4).
+      expect(processAudioFiles).toHaveBeenCalled();
+      const config = vi.mocked(processAudioFiles).mock.calls[0]![1];
+      expect(config).not.toHaveProperty('sourceBitrateKbps');
     });
 
     it('emits debug log when source bitrate is lower than target', async () => {

@@ -27,15 +27,15 @@ export interface ScoredCandidate {
   asin: string;
   title: string;
   authorName: string;
-  authorAsin?: string;
-  narratorName?: string;
-  coverUrl?: string;
-  duration?: number;
-  publishedDate?: string;
-  language?: string;
-  genres?: string[];
-  seriesName?: string;
-  seriesPosition?: number;
+  authorAsin?: string | undefined;
+  narratorName?: string | undefined;
+  coverUrl?: string | undefined;
+  duration?: number | undefined;
+  publishedDate?: string | undefined;
+  language?: string | undefined;
+  genres?: string[] | undefined;
+  seriesName?: string | undefined;
+  seriesPosition?: number | undefined;
   reason: SuggestionReason;
   reasonContext: string;
   score: number;
@@ -86,7 +86,7 @@ export async function queryAuthorCandidates(deps: QueryDeps, signals: LibrarySig
       const cap = new Map<string, number>();
       ctx.queriedAuthor = name;
       filterAndScore(results, 'author', () => `New from ${name} — you have ${signals.authorAffinity.get(name)?.count ?? 0} of their books`, strength, ctx, map, cap);
-      ctx.queriedAuthor = undefined;
+      delete ctx.queriedAuthor;
     } catch (error: unknown) { deps.log.warn({ error: serializeError(error) }, `Discovery: author query failed for ${name}`); }
   }
 }
