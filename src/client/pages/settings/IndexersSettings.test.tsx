@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { screen, waitFor } from '@testing-library/react';
+import { screen, waitFor, fireEvent } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { renderWithProviders } from '@/__tests__/helpers';
 import { createMockIndexer } from '@/__tests__/factories';
@@ -268,6 +268,21 @@ describe('IndexersSettings', () => {
 
       expect(screen.getByTestId('modal-backdrop')).toBeInTheDocument();
       expect(screen.getByText('Edit Indexer')).toBeInTheDocument();
+    });
+
+    it('backdrop click does not close modal and preserves filled field value', async () => {
+      const user = userEvent.setup();
+      renderWithProviders(<IndexersSettings />);
+      await waitForListLoad('My ABB');
+
+      await user.click(screen.getByRole('button', { name: 'Add Indexer' }));
+      const nameInput = screen.getByPlaceholderText('Newznab');
+      await user.type(nameInput, 'Draft Indexer');
+
+      fireEvent.click(screen.getByTestId('modal-backdrop'));
+
+      expect(screen.getByTestId('modal-backdrop')).toBeInTheDocument();
+      expect(screen.getByPlaceholderText('Newznab')).toHaveValue('Draft Indexer');
     });
   });
 });

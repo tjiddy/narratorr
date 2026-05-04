@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { screen, waitFor } from '@testing-library/react';
+import { screen, waitFor, fireEvent } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { renderWithProviders } from '@/__tests__/helpers';
 import { ImportListsSettings } from './ImportListsSettings';
@@ -632,6 +632,26 @@ describe('ImportListsSettings', () => {
 
       document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', cancelable: true }));
       expect(screen.getByTestId('modal-backdrop')).toBeInTheDocument();
+    });
+
+    it('backdrop click does not close modal and preserves filled field value', async () => {
+      (api.getImportLists as Mock).mockResolvedValue([]);
+      const user = userEvent.setup();
+      renderWithProviders(<ImportListsSettings />);
+
+      await waitFor(() => {
+        expect(screen.getByText('No import lists configured')).toBeInTheDocument();
+      });
+
+      await user.click(screen.getByText('Add Import List').closest('button')!);
+      const nameInput = screen.getByLabelText('Name');
+      await user.clear(nameInput);
+      await user.type(nameInput, 'Draft List');
+
+      fireEvent.click(screen.getByTestId('modal-backdrop'));
+
+      expect(screen.getByTestId('modal-backdrop')).toBeInTheDocument();
+      expect(screen.getByLabelText('Name')).toHaveValue('Draft List');
     });
   });
 
