@@ -130,14 +130,20 @@ describe('folder-parsing (extracted from library-scan.service)', () => {
       expect(result).toEqual({ title: 'Project Hail Mary', author: 'Andy Weir', series: null });
     });
 
-    it('parses "Title (Author)" pattern', () => {
+    // Issue #977: the old "Title (Author)" / "Title [Author]" heuristic produced
+    // wrong-direction parses on the much-more-common Title(Series) / Title[MediaTag]
+    // shapes. Path 1 is now strictly conservative — the parens content is stripped
+    // by NARRATOR_PAREN_REGEX (parens) or bracketTagStrip (brackets), and author
+    // falls through to null. A future Path 2 (heuristic candidate-generator with
+    // metadata validation) will recover legitimate Title(Author) cases.
+    it('"Title (Author)" no longer parses as title+author — parens content is stripped, author=null', () => {
       const result = parseFolderStructure(['Dune (Frank Herbert)']);
-      expect(result).toEqual({ title: 'Dune', author: 'Frank Herbert', series: null });
+      expect(result).toEqual({ title: 'Dune', author: null, series: null });
     });
 
-    it('parses "Title [Author]" pattern', () => {
+    it('"Title [Author]" no longer parses as title+author — brackets content is stripped, author=null', () => {
       const result = parseFolderStructure(['Dune [Frank Herbert]']);
-      expect(result).toEqual({ title: 'Dune', author: 'Frank Herbert', series: null });
+      expect(result).toEqual({ title: 'Dune', author: null, series: null });
     });
 
     it('parses "Series – NN – Title" pattern with en-dash', () => {
@@ -196,6 +202,70 @@ describe('folder-parsing (extracted from library-scan.service)', () => {
         expect(result.author).toBe('Author');
         expect(result.title).toBe('Real Title');
         expect(result.series).toBeNull();
+      });
+    });
+
+    describe('parens/bracket-as-author removal (issue #977)', () => {
+      it('AC1: Blood Ties (World of Warcraft) → title-only, parens stripped by NARRATOR_PAREN_REGEX', () => {
+        expect(parseFolderStructure(['Blood Ties (World of Warcraft)'])).toEqual({
+          title: 'Blood Ties', author: null, series: null,
+        });
+      });
+
+      it('AC2: Brandon Sanderson - The Way of Kings - The Stormlight Archive 1 [GA] → author=Brandon Sanderson, title without [GA]', () => {
+        const result = parseFolderStructure(['Brandon Sanderson - The Way of Kings - The Stormlight Archive 1 [GA]']);
+        expect(result.author).toBe('Brandon Sanderson');
+        expect(result.title).toBe('The Way of Kings - The Stormlight Archive 1');
+        expect(result.series).toBeNull();
+        // Critical: author must NOT be 'GA' (the previous wrong-direction parse)
+        expect(result.author).not.toBe('GA');
+      });
+
+      it('AC3: Christie Golden - Sylvanas (World of Warcraft) → author=Christie Golden, title=Sylvanas', () => {
+        const result = parseFolderStructure(['Christie Golden - Sylvanas (World of Warcraft)']);
+        expect(result.author).toBe('Christie Golden');
+        expect(result.title).toBe('Sylvanas');
+        expect(result.series).toBeNull();
+      });
+
+      it('Sylvanas (World of Warcraft) → title-only fallback', () => {
+        expect(parseFolderStructure(['Sylvanas (World of Warcraft)'])).toEqual({
+          title: 'Sylvanas', author: null, series: null,
+        });
+      });
+
+      it('The Hobbit (J.R.R. Tolkien) → title-only with parens content kept (deliberate regression: Path 2 will recover via metadata)', () => {
+        // Path 1 regression: previously author='J.R.R. Tolkien'. Now author=null
+        // and the parens content survives because normalizeFolderName converts
+        // 'J.R.R.' dots to spaces, producing 'J R R Tolkien' (4 tokens) which
+        // exceeds NARRATOR_PAREN_REGEX's 1-3 word limit. Path 2 (metadata-driven
+        // candidate generation) will recover the legitimate Title(Author) case.
+        const result = parseFolderStructure(['The Hobbit (J.R.R. Tolkien)']);
+        expect(result.author).toBeNull();
+        expect(result.series).toBeNull();
+        expect(result.title).toBe('The Hobbit (J R R Tolkien)');
+      });
+    });
+
+    describe('bracket-tag stripping in multi-part paths (issue #977)', () => {
+      it('AC8: ASIN extraction still works (extractASIN runs before bracketTagStrip)', () => {
+        const result = parseFolderStructure(['Some Title [B0123ABCD4]']);
+        expect(result.asin).toBe('B0123ABCD4');
+        expect(result.title).toBe('Some Title');
+        expect(result.title).not.toContain('B0123ABCD4');
+      });
+
+      it('2-part: Andy Weir/Project Hail Mary [Unabridged] strips [Unabridged]', () => {
+        const result = parseFolderStructure(['Andy Weir', 'Project Hail Mary [Unabridged]']);
+        expect(result.title).toBe('Project Hail Mary');
+        expect(result.author).toBe('Andy Weir');
+      });
+
+      it('3-part: Sanderson/Stormlight/Way of Kings [GA] strips [GA] from title', () => {
+        const result = parseFolderStructure(['Sanderson', 'Stormlight', 'Way of Kings [GA]']);
+        expect(result.title).toBe('Way of Kings');
+        expect(result.series).toBe('Stormlight');
+        expect(result.author).toBe('Sanderson');
       });
     });
   });
@@ -263,8 +333,32 @@ describe('folder-parsing (extracted from library-scan.service)', () => {
       expect(cleanName('MP3')).toBe('MP3');
     });
 
-    it('preserves non-codec bracket tags like [GA]', () => {
-      expect(cleanName('Title [GA]')).toBe('Title [GA]');
+    it('strips non-year bracket media tags like [GA]', () => {
+      expect(cleanName('Title [GA]')).toBe('Title');
+    });
+
+    it('strips [Unabridged] bracket tag', () => {
+      expect(cleanName('Title [Unabridged]')).toBe('Title');
+    });
+
+    it('strips [Audible Studios] bracket tag', () => {
+      expect(cleanName('Title [Audible Studios]')).toBe('Title');
+    });
+
+    it('strips [Full-Cast] bracket tag', () => {
+      expect(cleanName('Title [Full-Cast]')).toBe('Title');
+    });
+
+    it('strips [Retail] bracket tag', () => {
+      expect(cleanName('Title [Retail]')).toBe('Title');
+    });
+
+    it('strips multiple bracket tags from one string', () => {
+      expect(cleanName('Some Title [Unabridged] [v2]')).toBe('Some Title');
+    });
+
+    it('preserves empty bracket strip behavior for "Some Title []"', () => {
+      expect(cleanName('Some Title []')).toBe('Some Title');
     });
 
     describe('all-numeric date-like inputs (issue #701)', () => {
@@ -295,12 +389,12 @@ describe('folder-parsing (extracted from library-scan.service)', () => {
   });
 
   describe('cleanNameWithTrace', () => {
-    it('returns all 10 steps with before/after values', () => {
+    it('returns all 11 steps with before/after values', () => {
       const trace = cleanNameWithTrace('Title');
-      expect(trace.steps).toHaveLength(10);
+      expect(trace.steps).toHaveLength(11);
       expect(trace.steps.map(s => s.name)).toEqual([
         'leadingNumeric', 'seriesMarker', 'normalize',
-        'yearParenStrip', 'yearBracketStrip', 'yearBareStrip',
+        'yearParenStrip', 'yearBracketStrip', 'bracketTagStrip', 'yearBareStrip',
         'emptyParenStrip', 'emptyBracketStrip', 'narratorParen', 'dedup',
       ]);
     });
@@ -347,7 +441,7 @@ describe('folder-parsing (extracted from library-scan.service)', () => {
     describe('all-numeric date-like inputs (issue #701)', () => {
       it('every step is a no-op for 11-22-63', () => {
         const trace = cleanNameWithTrace('11-22-63');
-        expect(trace.steps).toHaveLength(10);
+        expect(trace.steps).toHaveLength(11);
         for (const step of trace.steps) {
           expect(step.output).toBe('11-22-63');
         }
@@ -356,7 +450,7 @@ describe('folder-parsing (extracted from library-scan.service)', () => {
 
       it('every step is a no-op for 11.22.63 (normalize would otherwise turn dots to spaces)', () => {
         const trace = cleanNameWithTrace('11.22.63');
-        expect(trace.steps).toHaveLength(10);
+        expect(trace.steps).toHaveLength(11);
         for (const step of trace.steps) {
           expect(step.output).toBe('11.22.63');
         }
@@ -423,16 +517,19 @@ describe('folder-parsing (extracted from library-scan.service)', () => {
       expect(result.title).toBe('Project Hail Mary');
     });
 
-    it('returns raw "Title (Author)" without cleaning', () => {
+    // Issue #977: parens-as-author heuristic was removed from parseSingleFolderRaw
+    // too. With no dash/by/series-NN match, these fall through to title-only with
+    // the raw string preserved (raw must stay raw — no bracket stripping either).
+    it('returns raw "Title (Author)" as title-only (parens heuristic removed)', () => {
       const result = parseFolderStructureRaw(['Dune (Frank Herbert)']);
-      expect(result.title).toBe('Dune');
-      expect(result.author).toBe('Frank Herbert');
+      expect(result.title).toBe('Dune (Frank Herbert)');
+      expect(result.author).toBeNull();
     });
 
-    it('returns raw "Title [Author]" without cleaning', () => {
+    it('returns raw "Title [Author]" as title-only (parens heuristic removed; raw preserves brackets)', () => {
       const result = parseFolderStructureRaw(['Dune [Frank Herbert]']);
-      expect(result.title).toBe('Dune');
-      expect(result.author).toBe('Frank Herbert');
+      expect(result.title).toBe('Dune [Frank Herbert]');
+      expect(result.author).toBeNull();
     });
 
     it('returns raw "Title by Author" without cleaning', () => {
@@ -629,10 +726,12 @@ describe('folder-parsing (extracted from library-scan.service)', () => {
     });
 
     describe('negative cases (no false positives)', () => {
-      it('does not match [Author Name] — author parsed normally', () => {
+      it('does not match [Author Name] as ASIN — bracket content is stripped, author=null (issue #977)', () => {
         const result = parseFolderStructure(['Dune [Frank Herbert]']);
         expect(result.asin).toBeUndefined();
-        expect(result.author).toBe('Frank Herbert');
+        // Issue #977: bracket-as-author heuristic was removed; bracketTagStrip
+        // step in cleanName removes the brackets, leaving title-only output.
+        expect(result.author).toBeNull();
         expect(result.title).toBe('Dune');
       });
 
@@ -712,12 +811,14 @@ describe('folder-parsing (extracted from library-scan.service)', () => {
 
   describe('extraction integrity', () => {
     it('parseFolderStructure returns identical results after extraction', () => {
-      // Same test cases from library-scan.service.test.ts
+      // Same test cases from library-scan.service.test.ts. The 'Title (Author)'
+      // case was updated for issue #977: parens-as-author heuristic removed, so
+      // parens content is stripped by NARRATOR_PAREN_REGEX with author=null.
       const cases: [string[], { title: string; author: string | null; series: string | null }][] = [
         [['Author', 'Title'], { title: 'Title', author: 'Author', series: null }],
         [['Author', 'Series', 'Title'], { title: 'Title', author: 'Author', series: 'Series' }],
         [['Author - Title'], { title: 'Title', author: 'Author', series: null }],
-        [['Title (Author)'], { title: 'Title', author: 'Author', series: null }],
+        [['Title (Author)'], { title: 'Title', author: null, series: null }],
         [[], { title: 'Unknown', author: null, series: null }],
       ];
       for (const [parts, expected] of cases) {
