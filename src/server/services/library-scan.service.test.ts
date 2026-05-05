@@ -68,20 +68,22 @@ describe('parseFolderStructure', () => {
     });
   });
 
-  it('parses "Title (Author)" single folder', () => {
+  // Issue #977: parens/bracket-as-author heuristic removed; both cases now fall
+  // through to title-only with parens/brackets content stripped by cleanName.
+  it('"Title (Author)" single folder → title-only (parens stripped, author=null)', () => {
     const result = parseFolderStructure(['Dune (Frank Herbert)']);
     expect(result).toEqual({
       title: 'Dune',
-      author: 'Frank Herbert',
+      author: null,
       series: null,
     });
   });
 
-  it('parses "Title [Author]" single folder', () => {
+  it('"Title [Author]" single folder → title-only (brackets stripped, author=null)', () => {
     const result = parseFolderStructure(['Dune [Frank Herbert]']);
     expect(result).toEqual({
       title: 'Dune',
-      author: 'Frank Herbert',
+      author: null,
       series: null,
     });
   });
@@ -1786,11 +1788,11 @@ describe('scanDirectory() — duplicateReason field (#133)', () => {
         });
       });
 
-      it('preserves Title (Author) parsing', () => {
+      it('"Title (Author)" → title-only after issue #977 (parens stripped, author=null)', () => {
         const result = parseFolderStructure(['Dune (Frank Herbert)']);
         expect(result).toEqual({
           title: 'Dune',
-          author: 'Frank Herbert',
+          author: null,
           series: null,
         });
       });
@@ -2271,17 +2273,17 @@ describe('scanDirectory() — within-scan duplicate detection (#342)', () => {
     });
   });
 
-  describe('parseSingleFolder regression (issue #426)', () => {
-    it('"BookTitle (Author Name)" still parses as title + author', () => {
+  describe('parseSingleFolder regression (issue #426 / updated for #977)', () => {
+    it('"BookTitle (Author Name)" → title-only after issue #977 (parens stripped, author=null)', () => {
       const result = parseFolderStructure(['Dune (Frank Herbert)']);
       expect(result.title).toBe('Dune');
-      expect(result.author).toBe('Frank Herbert');
+      expect(result.author).toBeNull();
     });
 
-    it('"BookTitle [Author Name]" still parses as title + author', () => {
+    it('"BookTitle [Author Name]" → title-only after issue #977 (brackets stripped, author=null)', () => {
       const result = parseFolderStructure(['Dune [Frank Herbert]']);
       expect(result.title).toBe('Dune');
-      expect(result.author).toBe('Frank Herbert');
+      expect(result.author).toBeNull();
     });
 
     it('"Author - BookTitle (Narrator)" strips narrator from title via cleanName', () => {

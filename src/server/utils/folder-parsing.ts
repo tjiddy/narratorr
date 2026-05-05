@@ -85,11 +85,13 @@ export function cleanName(name: string): string {
   const withoutSeries = stripped.replace(SERIES_MARKER_REGEX, '');
 
   let result = normalizeFolderName(withoutSeries)
-    .replace(/\s*\(\d{4}\)$/, '') // Remove trailing year like "(2020)"
-    .replace(/\s*\[\d{4}\]$/, '') // Remove trailing year like "[2020]"
-    .replace(BARE_YEAR_REGEX, '') // Remove bare trailing year like "2017"
-    .replace(/\s*\(\s*\)/g, '')   // Remove empty parentheses (e.g. after codec strip)
-    .replace(/\s*\[\s*\]/g, '')   // Remove empty brackets (e.g. after codec strip)
+    .replace(/\s*\(\d{4}\)$/, '')       // Remove trailing year like "(2020)"
+    .replace(/\s*\[\d{4}\]$/, '')       // Remove trailing year like "[2020]"
+    .replace(/\s*\[[^\]]*\]/g, ' ')     // Strip any [bracketed-content] as media tag (e.g. [GA], [Unabridged]).
+    .replace(BARE_YEAR_REGEX, '')       // Remove bare trailing year like "2017"
+    .replace(/\s*\(\s*\)/g, '')         // Remove empty parentheses (e.g. after codec strip)
+    .replace(/\s*\[\s*\]/g, '')         // Remove empty brackets (e.g. after codec strip)
+    .replace(/\s{2,}/g, ' ')            // Collapse whitespace introduced by bracketTagStrip mid-string
     .trim();
 
   // Strip trailing narrator-style parenthetical (1-3 word name, not codec/year)
@@ -129,11 +131,11 @@ export function cleanName(name: string): string {
  */
 export function cleanNameWithTrace(name: string): CleanNameTraceResult {
   // Mirror cleanName's all-numeric short-circuit: every step is a no-op so
-  // consumers still see the full 10-step trace shape.
+  // consumers still see the full 11-step trace shape.
   if (isAllNumericSegments(name)) {
     const steps: CleanNameStep[] = [
       'leadingNumeric', 'seriesMarker', 'normalize',
-      'yearParenStrip', 'yearBracketStrip', 'yearBareStrip',
+      'yearParenStrip', 'yearBracketStrip', 'bracketTagStrip', 'yearBareStrip',
       'emptyParenStrip', 'emptyBracketStrip', 'narratorParen', 'dedup',
     ].map(stepName => ({ name: stepName, output: name }));
     return { input: name, steps, result: name };
@@ -165,22 +167,26 @@ export function cleanNameWithTrace(name: string): CleanNameTraceResult {
   current = current.replace(/\s*\[\d{4}\]$/, '');
   steps.push({ name: 'yearBracketStrip', output: current });
 
-  // Step 6: yearBareStrip
+  // Step 6: bracketTagStrip — strip any [bracketed-content] as media tag (e.g. [GA], [Unabridged])
+  current = current.replace(/\s*\[[^\]]*\]/g, ' ').replace(/\s{2,}/g, ' ').trim();
+  steps.push({ name: 'bracketTagStrip', output: current });
+
+  // Step 7: yearBareStrip
   current = current.replace(BARE_YEAR_REGEX, '');
   steps.push({ name: 'yearBareStrip', output: current });
 
-  // Step 7: emptyParenStrip
+  // Step 8: emptyParenStrip
   current = current.replace(/\s*\(\s*\)/g, '');
   steps.push({ name: 'emptyParenStrip', output: current });
 
-  // Step 8: emptyBracketStrip
+  // Step 9: emptyBracketStrip
   current = current.replace(/\s*\[\s*\]/g, '');
   steps.push({ name: 'emptyBracketStrip', output: current });
 
   // Trim after bracket/paren removal (mirrors cleanName's .trim())
   current = current.trim();
 
-  // Step 9: narratorParen
+  // Step 10: narratorParen
   const narratorMatch = current.match(NARRATOR_PAREN_REGEX);
   if (narratorMatch) {
     const content = narratorMatch[1];
@@ -191,7 +197,7 @@ export function cleanNameWithTrace(name: string): CleanNameTraceResult {
   }
   steps.push({ name: 'narratorParen', output: current });
 
-  // Step 10: dedup
+  // Step 11: dedup
   const dashParts = current.split(/\s*[–-]\s*/);
   if (dashParts.length === 2) {
     const left = dashParts[0]!
@@ -271,17 +277,6 @@ function parseSingleFolder(folder: string): {
     };
   }
 
-  // Pattern: "Title (Author)" or "Title [Author]"
-  const parenMatch = input.match(/^(.+?)\s*[([](.+?)[)\]]$/);
-  if (parenMatch) {
-    return {
-      title: cleanName(parenMatch[1]!),
-      author: cleanName(parenMatch[2]!),
-      series: null,
-      ...(asin !== undefined && { asin }),
-    };
-  }
-
   // Pattern: "Title by Author" (word-boundary, not inside words like "Standby")
   const byMatch = input.match(/^(.+?)\bby\b(.+)$/i);
   if (byMatch) {
@@ -313,8 +308,6 @@ function parseSingleFolder(folder: string): {
  *
  * Patterns for single-folder parsing:
  * - Author - Title
- * - Title (Author)
- * - Title [Author]
  * - Title by Author
  * - Series – NN – Title
  * - Title only
@@ -329,7 +322,7 @@ export function parseFolderStructure(parts: string[]): {
     return { title: 'Unknown', author: null, series: null };
   }
 
-  // Single folder: try to parse "Author - Title" or "Title (Author)"
+  // Single folder: try to parse "Author - Title" or other patterns
   if (parts.length === 1) {
     const folder = parts[0]!;
     return parseSingleFolder(folder);
@@ -441,11 +434,6 @@ function parseSingleFolderRaw(folder: string): {
   const dashMatch = input.match(/^(.+?)\s*-\s*(.+)$/);
   if (dashMatch && !/^\d+$/.test(dashMatch[1]!.trim())) {
     return { title: dashMatch[2]!, author: dashMatch[1]!, series: null, ...(asin !== undefined && { asin }) };
-  }
-
-  const parenMatch = input.match(/^(.+?)\s*[([](.+?)[)\]]$/);
-  if (parenMatch) {
-    return { title: parenMatch[1]!, author: parenMatch[2]!, series: null, ...(asin !== undefined && { asin }) };
   }
 
   const byMatch = input.match(/^(.+?)\bby\b(.+)$/i);

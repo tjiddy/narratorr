@@ -212,7 +212,7 @@ describe('POST /api/library/scan-debug', () => {
       (services.book.findDuplicate as ReturnType<typeof vi.fn>).mockResolvedValue(null);
     });
 
-    it('includes all 10 cleaning sub-steps in trace', async () => {
+    it('includes all 11 cleaning sub-steps in trace', async () => {
       const res = await app.inject({
         method: 'POST',
         url: '/api/library/scan-debug',
@@ -220,10 +220,10 @@ describe('POST /api/library/scan-debug', () => {
       });
 
       const body = JSON.parse(res.payload);
-      expect(body.cleaning.title.steps).toHaveLength(10);
+      expect(body.cleaning.title.steps).toHaveLength(11);
       expect(body.cleaning.title.steps.map((s: { name: string }) => s.name)).toEqual([
         'leadingNumeric', 'seriesMarker', 'normalize',
-        'yearParenStrip', 'yearBracketStrip', 'yearBareStrip',
+        'yearParenStrip', 'yearBracketStrip', 'bracketTagStrip', 'yearBareStrip',
         'emptyParenStrip', 'emptyBracketStrip', 'narratorParen', 'dedup',
       ]);
     });
@@ -244,7 +244,7 @@ describe('POST /api/library/scan-debug', () => {
       expect(body.cleaning.title.result).toBe('Title');
     });
 
-    it('preserves non-codec bracket tag like [GA]', async () => {
+    it('strips non-year bracket media tags like [GA] (issue #977)', async () => {
       const res = await app.inject({
         method: 'POST',
         url: '/api/library/scan-debug',
@@ -252,7 +252,10 @@ describe('POST /api/library/scan-debug', () => {
       });
 
       const body = JSON.parse(res.payload);
-      expect(body.cleaning.title.result).toBe('Title [GA]');
+      expect(body.cleaning.title.result).toBe('Title');
+      // bracketTagStrip step shows the actual transformation
+      const bracketTagStep = body.cleaning.title.steps.find((s: { name: string }) => s.name === 'bracketTagStrip');
+      expect(bracketTagStep.output).toBe('Title');
     });
   });
 
