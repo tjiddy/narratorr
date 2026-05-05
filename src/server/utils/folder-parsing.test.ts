@@ -205,6 +205,245 @@ describe('folder-parsing (extracted from library-scan.service)', () => {
       });
     });
 
+    describe('targeted parser rules (issue #980)', () => {
+      describe('P4 — "Series, Book NN - Title"', () => {
+        it('Discworld, Book 16 - Soul Music (Read by Nigel Planer) → series + seriesPosition + title (with P5 strip)', () => {
+          expect(parseFolderStructure(['Discworld, Book 16 - Soul Music (Read by Nigel Planer)'])).toEqual({
+            series: 'Discworld', title: 'Soul Music', author: null, seriesPosition: 16,
+          });
+        });
+
+        it('Discworld, Book 38 - I Shall Wear Midnight (Read by Stephen Briggs) → series + seriesPosition + title', () => {
+          expect(parseFolderStructure(['Discworld, Book 38 - I Shall Wear Midnight (Read by Stephen Briggs)'])).toEqual({
+            series: 'Discworld', title: 'I Shall Wear Midnight', author: null, seriesPosition: 38,
+          });
+        });
+
+        it('Discworld, Book 7 - Pyramids (no narrator paren) → series + title only', () => {
+          expect(parseFolderStructure(['Discworld, Book 7 - Pyramids'])).toEqual({
+            series: 'Discworld', title: 'Pyramids', author: null, seriesPosition: 7,
+          });
+        });
+
+        it('Foo, Book 99 alone (no dash) does NOT match P4 — falls through to title-only via cleanName seriesMarker strip', () => {
+          const result = parseFolderStructure(['Foo, Book 99']);
+          expect(result.series).toBeNull();
+          expect(result.author).toBeNull();
+          expect(result.title).toBe('Foo');
+          expect(result.seriesPosition).toBeUndefined();
+        });
+      });
+
+      describe('P5 — "(Read by NAME)" / "(Narrated by NAME)" parens regardless of word count', () => {
+        it('cleanName strips 4-word "(Read by ...)"', () => {
+          expect(cleanName('Soul Music (Read by Nigel Planer)')).toBe('Soul Music');
+        });
+
+        it('cleanName strips "(Narrated by ...)"', () => {
+          expect(cleanName('Foo (Narrated by Some Long Multi-Word Reader)')).toBe('Foo');
+        });
+      });
+
+      describe('P6 — edition-annotation parens', () => {
+        it('cleanName strips "(2007 Full Cast Recording)" via year prefix', () => {
+          expect(cleanName('Dune (2007 Full Cast Recording)')).toBe('Dune');
+        });
+
+        it('cleanName strips "(20th Anniversary Edition)" via ordinal prefix', () => {
+          expect(cleanName('Heir to the Empire (20th Anniversary Edition)')).toBe('Heir to the Empire');
+        });
+
+        it("cleanName strips \"(Director's Cut)\" via Cut keyword", () => {
+          expect(cleanName("Title (Director's Cut)")).toBe('Title');
+        });
+
+        it('cleanName strips "(The Extended Cut Edition)" via keyword', () => {
+          expect(cleanName('Title (The Extended Cut Edition)')).toBe('Title');
+        });
+
+        it('cleanName preserves "(Foo Bar Baz Qux)" — no edition keyword, year, or ordinal prefix', () => {
+          expect(cleanName('Title (Foo Bar Baz Qux)')).toBe('Title (Foo Bar Baz Qux)');
+        });
+
+        it('cleanName preserves "(Dr Stephen King Jr)" — no edition keyword (4 words bypasses NARRATOR_PAREN_REGEX cap)', () => {
+          expect(cleanName('Title (Dr Stephen King Jr)')).toBe('Title (Dr Stephen King Jr)');
+        });
+
+        it('parseFolderStructure: Frank Herbert - Dune (2007 Full Cast Recording) → P6 strips paren after dash heuristic', () => {
+          expect(parseFolderStructure(['Frank Herbert - Dune (2007 Full Cast Recording)'])).toEqual({
+            author: 'Frank Herbert', title: 'Dune', series: null,
+          });
+        });
+      });
+
+      describe('P8 — recursive "Author - Series" split in 2-part author segment', () => {
+        it("Douglas Adams - The Hitchhikers Guide.../1-The Hitchhikers Guide... → author + series + title (cleaned)", () => {
+          const result = parseFolderStructure([
+            'Douglas Adams - The Hitchhikers Guide to the Galaxy',
+            '1-The Hitchhikers Guide To The Galaxy',
+          ]);
+          expect(result.author).toBe('Douglas Adams');
+          expect(result.series).toBe('The Hitchhikers Guide to the Galaxy');
+          expect(result.title).toBe('The Hitchhikers Guide To The Galaxy');
+        });
+
+        it('Sanderson - Mistborn/01 - The Final Empire → author=Sanderson, series=Mistborn, title=The Final Empire', () => {
+          const result = parseFolderStructure(['Sanderson - Mistborn', '01 - The Final Empire']);
+          expect(result.author).toBe('Sanderson');
+          expect(result.series).toBe('Mistborn');
+          expect(result.title).toBe('The Final Empire');
+        });
+
+        it('raw mirror: Douglas Adams - The Hitchhikers Guide.../1-The Hitchhikers Guide... → P8 recurses via parseSingleFolderRaw', () => {
+          const result = parseFolderStructureRaw([
+            'Douglas Adams - The Hitchhikers Guide to the Galaxy',
+            '1-The Hitchhikers Guide To The Galaxy',
+          ]);
+          expect(result.author).toBe('Douglas Adams');
+          expect(result.series).toBe('The Hitchhikers Guide to the Galaxy');
+          expect(result.title).toBe('1-The Hitchhikers Guide To The Galaxy');
+        });
+
+        it('Just Author/Title (no dash in author segment) → existing 2-part behavior, series=null', () => {
+          const result = parseFolderStructure(['Just Author', 'Title']);
+          expect(result.author).toBe('Just Author');
+          expect(result.title).toBe('Title');
+          expect(result.series).toBeNull();
+        });
+
+        it('Douglas Adams – Hitchhiker/Title (en-dash author segment) → P8 does NOT fire; whole segment is author', () => {
+          const result = parseFolderStructure(['Douglas Adams – Hitchhiker', 'Title']);
+          expect(result.author).toBe('Douglas Adams – Hitchhiker');
+          expect(result.series).toBeNull();
+        });
+      });
+
+      describe('P9 — Last, First author swap (after dash/by heuristics)', () => {
+        it('Liu, Cixin - The Three-Body Problem → author swapped to "Cixin Liu"', () => {
+          const result = parseFolderStructure(['Liu, Cixin - The Three-Body Problem']);
+          expect(result.author).toBe('Cixin Liu');
+          expect(result.title).toBe('The Three-Body Problem');
+        });
+
+        it('Asimov, Isaac - Foundation → author swapped to "Isaac Asimov"', () => {
+          const result = parseFolderStructure(['Asimov, Isaac - Foundation']);
+          expect(result.author).toBe('Isaac Asimov');
+          expect(result.title).toBe('Foundation');
+        });
+
+        it('Foo, Bar Baz - Title (3+ tokens after comma) → no swap', () => {
+          const result = parseFolderStructure(['Foo, Bar Baz - Title']);
+          expect(result.author).toBe('Foo, Bar Baz');
+          expect(result.title).toBe('Title');
+        });
+      });
+
+      describe('P10 — "<series> NN - <title>" mid-title pattern', () => {
+        describe('precheck (no-author path, fires before dash heuristic)', () => {
+          it('Murderbot Diaries 07 - System Collapse → series + seriesPosition + title, author=null', () => {
+            expect(parseFolderStructure(['Murderbot Diaries 07 - System Collapse'])).toEqual({
+              series: 'Murderbot Diaries', title: 'System Collapse', author: null, seriesPosition: 7,
+            });
+          });
+
+          it('Three Body 01 - The Three-Body Problem → series + seriesPosition + title, author=null', () => {
+            expect(parseFolderStructure(['Three Body 01 - The Three-Body Problem'])).toEqual({
+              series: 'Three Body', title: 'The Three-Body Problem', author: null, seriesPosition: 1,
+            });
+          });
+
+          it('Foo 07 - Title (single-word series) → series=Foo, seriesPosition=7, title=Title', () => {
+            expect(parseFolderStructure(['Foo 07 - Title'])).toEqual({
+              series: 'Foo', title: 'Title', author: null, seriesPosition: 7,
+            });
+          });
+
+          it('Author - Title (no number) → P10 regex does not match; dash heuristic resolves', () => {
+            const result = parseFolderStructure(['Author - Title']);
+            expect(result.author).toBe('Author');
+            expect(result.title).toBe('Title');
+            expect(result.series).toBeNull();
+            expect(result.seriesPosition).toBeUndefined();
+          });
+
+          it('01 - Title (digit-only prefix) → P10 regex does not match; existing leadingNumeric strip behavior', () => {
+            const result = parseFolderStructure(['01 - Title']);
+            expect(result.title).toBe('Title');
+            expect(result.author).toBeNull();
+            expect(result.series).toBeNull();
+          });
+        });
+
+        describe('postprocess (author-dash path, fires after dash heuristic)', () => {
+          it('Martha Wells - Murderbot Diaries 07 - System Collapse → author + series + seriesPosition + title', () => {
+            expect(parseFolderStructure(['Martha Wells - Murderbot Diaries 07 - System Collapse'])).toEqual({
+              author: 'Martha Wells', series: 'Murderbot Diaries', title: 'System Collapse', seriesPosition: 7,
+            });
+          });
+
+          it('Liu, Cixin - Three Body 01 - The Three-Body Problem 2014 mp3 → P9 + P10-postprocess + cleanName year/codec strip', () => {
+            expect(parseFolderStructure(['Liu, Cixin - Three Body 01 - The Three-Body Problem 2014 mp3'])).toEqual({
+              author: 'Cixin Liu', series: 'Three Body', title: 'The Three-Body Problem', seriesPosition: 1,
+            });
+          });
+        });
+      });
+
+      describe('P15 — whole-input lowercase kebab-case bail', () => {
+        it('believe-me → author=null, series=null', () => {
+          const result = parseFolderStructure(['believe-me']);
+          expect(result.author).toBeNull();
+          expect(result.series).toBeNull();
+        });
+
+        it('dont-look-up (3 segments) → author=null, series=null', () => {
+          const result = parseFolderStructure(['dont-look-up']);
+          expect(result.author).toBeNull();
+          expect(result.series).toBeNull();
+        });
+
+        it('apple-pie-recipes (3 segments) → author=null, series=null', () => {
+          const result = parseFolderStructure(['apple-pie-recipes']);
+          expect(result.author).toBeNull();
+          expect(result.series).toBeNull();
+        });
+
+        it('Author - Title (capitalized) → P15 does not fire; dash heuristic resolves', () => {
+          const result = parseFolderStructure(['Author - Title']);
+          expect(result.author).toBe('Author');
+          expect(result.title).toBe('Title');
+        });
+
+        it('lowercase title (space, no hyphens) → P15 does not fire', () => {
+          const result = parseFolderStructure(['lowercase title']);
+          expect(result.author).toBeNull();
+          expect(result.title).toBe('lowercase title');
+        });
+      });
+
+      describe('post-#977 + P5/P6: "Title by Author (annotation)"', () => {
+        it('The Martian by Andy Weir (alt) → author=Andy Weir, title=The Martian (narratorParen strips "(alt)")', () => {
+          expect(parseFolderStructure(['The Martian by Andy Weir (alt)'])).toEqual({
+            author: 'Andy Weir', title: 'The Martian', series: null,
+          });
+        });
+      });
+
+      describe('regression checks (post-#977)', () => {
+        it('Blood Ties (World of Warcraft) still title-only', () => {
+          expect(parseFolderStructure(['Blood Ties (World of Warcraft)'])).toEqual({
+            title: 'Blood Ties', author: null, series: null,
+          });
+        });
+
+        it('Brandon Sanderson - The Way of Kings - The Stormlight Archive 1 [GA] still strips [GA]', () => {
+          const result = parseFolderStructure(['Brandon Sanderson - The Way of Kings - The Stormlight Archive 1 [GA]']);
+          expect(result.author).toBe('Brandon Sanderson');
+          expect(result.title).not.toContain('[GA]');
+        });
+      });
+    });
+
     describe('parens/bracket-as-author removal (issue #977)', () => {
       it('AC1: Blood Ties (World of Warcraft) → title-only, parens stripped by NARRATOR_PAREN_REGEX', () => {
         expect(parseFolderStructure(['Blood Ties (World of Warcraft)'])).toEqual({
@@ -389,13 +628,15 @@ describe('folder-parsing (extracted from library-scan.service)', () => {
   });
 
   describe('cleanNameWithTrace', () => {
-    it('returns all 11 steps with before/after values', () => {
+    it('returns all 13 steps with before/after values', () => {
       const trace = cleanNameWithTrace('Title');
-      expect(trace.steps).toHaveLength(11);
+      expect(trace.steps).toHaveLength(13);
       expect(trace.steps.map(s => s.name)).toEqual([
         'leadingNumeric', 'seriesMarker', 'normalize',
         'yearParenStrip', 'yearBracketStrip', 'bracketTagStrip', 'yearBareStrip',
-        'emptyParenStrip', 'emptyBracketStrip', 'narratorParen', 'dedup',
+        'emptyParenStrip', 'emptyBracketStrip',
+        'narratorPrefixStrip', 'editionParenStrip',
+        'narratorParen', 'dedup',
       ]);
     });
 
@@ -441,7 +682,7 @@ describe('folder-parsing (extracted from library-scan.service)', () => {
     describe('all-numeric date-like inputs (issue #701)', () => {
       it('every step is a no-op for 11-22-63', () => {
         const trace = cleanNameWithTrace('11-22-63');
-        expect(trace.steps).toHaveLength(11);
+        expect(trace.steps).toHaveLength(13);
         for (const step of trace.steps) {
           expect(step.output).toBe('11-22-63');
         }
@@ -450,7 +691,7 @@ describe('folder-parsing (extracted from library-scan.service)', () => {
 
       it('every step is a no-op for 11.22.63 (normalize would otherwise turn dots to spaces)', () => {
         const trace = cleanNameWithTrace('11.22.63');
-        expect(trace.steps).toHaveLength(11);
+        expect(trace.steps).toHaveLength(13);
         for (const step of trace.steps) {
           expect(step.output).toBe('11.22.63');
         }

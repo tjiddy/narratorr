@@ -28,6 +28,43 @@ const NARRATOR_PAREN_REGEX = /\s*\((?!(?:19|20)\d{2}\))(\S+(?:\s+\S+){0,2})\)\s*
 /** Matches an Audible ASIN in brackets: B0 + 8 alphanumeric chars (case-insensitive). Non-global. */
 const ASIN_REGEX = /\[B0[A-Z0-9]{8}\]/i;
 
+/** P5: trailing parens beginning with "Read by" or "Narrated by" — strip regardless of word count. */
+const NARRATOR_PREFIX_PAREN_REGEX = /\s*\((?:Read|Narrated)\s+by\b[^)]*\)\s*$/i;
+
+/**
+ * P6 single-paren extractor (capture content of trailing parens). Used to gate
+ * stripping on year-prefix / ordinal-prefix / edition keyword.
+ */
+const TRAILING_PAREN_REGEX = /\s*\(([^)]+)\)\s*$/;
+const EDITION_PAREN_YEAR_PREFIX = /^(?:19|20)\d{2}\b/;
+const EDITION_PAREN_ORDINAL_PREFIX = /^\d+(?:st|nd|rd|th)\b/i;
+const EDITION_PAREN_KEYWORD = /\b(?:Edition|Recording|Cut|Version|Mix)\b/i;
+
+function isEditionParen(content: string): boolean {
+  return EDITION_PAREN_YEAR_PREFIX.test(content)
+    || EDITION_PAREN_ORDINAL_PREFIX.test(content)
+    || EDITION_PAREN_KEYWORD.test(content);
+}
+
+/** P4: `Series, Book NN - Title` — only fires when the left of the first ` - ` ends with `, Book NN`. */
+const SERIES_BOOK_DASH_TITLE_REGEX = /^(.+?),\s*book\s+(\d+)\s*-\s*(.+)$/i;
+
+/** P15: whole input is lowercase kebab-case (letters + hyphens only, 2+ segments). */
+const KEBAB_CASE_REGEX = /^[a-z]+(?:-[a-z]+)+$/;
+
+/** P10: `<words> NN - <subtitle>` — used for both precheck (before dash heuristic) and postprocess (on resolved title). */
+const WORDS_NUM_DASH_TITLE_REGEX = /^(.+?)\s+(\d+)\s*-\s*(.+)$/;
+
+/** P9: `Last, First` author convention — exactly two name-shaped tokens around a comma. */
+const LAST_FIRST_AUTHOR_REGEX = /^([\w'.-]+),\s*([\w'.-]+)$/;
+
+/** Apply P9 swap: `Last, First` → `First Last`. No-op if pattern doesn't match. */
+function applyLastFirstSwap(author: string): string {
+  const match = author.match(LAST_FIRST_AUTHOR_REGEX);
+  if (match) return `${match[2]} ${match[1]}`;
+  return author;
+}
+
 /**
  * Matches inputs that are entirely numeric segments separated by dash, en-dash,
  * dot, or slash (e.g. '11-22-63', '11.22.63', '1-5', '1.5').
@@ -94,6 +131,18 @@ export function cleanName(name: string): string {
     .replace(/\s{2,}/g, ' ')            // Collapse whitespace introduced by bracketTagStrip mid-string
     .trim();
 
+  // P5: strip trailing "(Read by …)" / "(Narrated by …)" regardless of word count
+  const narratorPrefixed = result.replace(NARRATOR_PREFIX_PAREN_REGEX, '').trim();
+  if (narratorPrefixed && narratorPrefixed !== result) result = narratorPrefixed;
+
+  // P6: strip trailing parens whose content is an edition annotation
+  // (year-prefix, ordinal-prefix, or contains Edition/Recording/Cut/Version/Mix)
+  const editionMatch = result.match(TRAILING_PAREN_REGEX);
+  if (editionMatch && isEditionParen(editionMatch[1]!)) {
+    const stripped = result.replace(TRAILING_PAREN_REGEX, '').trim();
+    if (stripped) result = stripped;
+  }
+
   // Strip trailing narrator-style parenthetical (1-3 word name, not codec/year)
   const narratorMatch = result.match(NARRATOR_PAREN_REGEX);
   if (narratorMatch) {
@@ -131,12 +180,14 @@ export function cleanName(name: string): string {
  */
 export function cleanNameWithTrace(name: string): CleanNameTraceResult {
   // Mirror cleanName's all-numeric short-circuit: every step is a no-op so
-  // consumers still see the full 11-step trace shape.
+  // consumers still see the full 13-step trace shape.
   if (isAllNumericSegments(name)) {
     const steps: CleanNameStep[] = [
       'leadingNumeric', 'seriesMarker', 'normalize',
       'yearParenStrip', 'yearBracketStrip', 'bracketTagStrip', 'yearBareStrip',
-      'emptyParenStrip', 'emptyBracketStrip', 'narratorParen', 'dedup',
+      'emptyParenStrip', 'emptyBracketStrip',
+      'narratorPrefixStrip', 'editionParenStrip',
+      'narratorParen', 'dedup',
     ].map(stepName => ({ name: stepName, output: name }));
     return { input: name, steps, result: name };
   }
@@ -186,7 +237,20 @@ export function cleanNameWithTrace(name: string): CleanNameTraceResult {
   // Trim after bracket/paren removal (mirrors cleanName's .trim())
   current = current.trim();
 
-  // Step 10: narratorParen
+  // Step 10: narratorPrefixStrip — "(Read by …)" / "(Narrated by …)" at end
+  const narratorPrefixed = current.replace(NARRATOR_PREFIX_PAREN_REGEX, '').trim();
+  if (narratorPrefixed && narratorPrefixed !== current) current = narratorPrefixed;
+  steps.push({ name: 'narratorPrefixStrip', output: current });
+
+  // Step 11: editionParenStrip — year/ordinal-prefixed parens or edition keywords
+  const editionMatch = current.match(TRAILING_PAREN_REGEX);
+  if (editionMatch && isEditionParen(editionMatch[1]!)) {
+    const stripped = current.replace(TRAILING_PAREN_REGEX, '').trim();
+    if (stripped) current = stripped;
+  }
+  steps.push({ name: 'editionParenStrip', output: current });
+
+  // Step 12: narratorParen
   const narratorMatch = current.match(NARRATOR_PAREN_REGEX);
   if (narratorMatch) {
     const content = narratorMatch[1];
@@ -197,7 +261,7 @@ export function cleanNameWithTrace(name: string): CleanNameTraceResult {
   }
   steps.push({ name: 'narratorParen', output: current });
 
-  // Step 11: dedup
+  // Step 13: dedup
   const dashParts = current.split(/\s*[–-]\s*/);
   if (dashParts.length === 2) {
     const left = dashParts[0]!
@@ -241,17 +305,19 @@ function parseSingleFolder(folder: string): {
   title: string;
   author: string | null;
   series: string | null;
+  seriesPosition?: number;
   asin?: string;
 } {
   // Extract ASIN bracket before any other pattern matching
   const { asin, cleaned } = extractASIN(folder);
   // Use cleaned input for pattern matching; fall back to original if cleaned is empty
   const input = cleaned || folder;
+  const asinTail = asin !== undefined ? { asin } : {};
 
   // Guard: all-numeric date-like inputs ('11-22-63', '1.5') are titles, not
   // Series–NN–Title — short-circuit before pattern matching.
   if (isAllNumericSegments(input)) {
-    return { title: input, author: null, series: null, ...(asin !== undefined && { asin }) };
+    return { title: input, author: null, series: null, ...asinTail };
   }
 
   // Pattern: "Series – NN – Title" or "Series - NN - Title"
@@ -261,19 +327,45 @@ function parseSingleFolder(folder: string): {
       title: cleanName(seriesNumberMatch[2]!),
       author: null,
       series: cleanName(seriesNumberMatch[1]!),
-      ...(asin !== undefined && { asin }),
+      ...asinTail,
+    };
+  }
+
+  // P4: "Series, Book NN - Title" — left of first ` - ` ends with `, Book NN`
+  const seriesBookMatch = input.match(SERIES_BOOK_DASH_TITLE_REGEX);
+  if (seriesBookMatch) {
+    return {
+      title: cleanName(seriesBookMatch[3]!),
+      author: null,
+      series: cleanName(seriesBookMatch[1]!),
+      seriesPosition: parseInt(seriesBookMatch[2]!, 10),
+      ...asinTail,
+    };
+  }
+
+  // P15: whole-input lowercase kebab-case → bail to title-only
+  if (KEBAB_CASE_REGEX.test(input)) {
+    return { title: cleanName(input), author: null, series: null, ...asinTail };
+  }
+
+  // P10-precheck (no-author path): "<series> NN - <title>" with no ` - ` in series
+  const p10Pre = input.match(WORDS_NUM_DASH_TITLE_REGEX);
+  if (p10Pre && !p10Pre[1]!.includes(' - ')) {
+    return {
+      title: cleanName(p10Pre[3]!),
+      author: null,
+      series: cleanName(p10Pre[1]!),
+      seriesPosition: parseInt(p10Pre[2]!, 10),
+      ...asinTail,
     };
   }
 
   // Pattern: "Author - Title" (skip if left side is just a number like "01 - Title")
   const dashMatch = input.match(/^(.+?)\s*-\s*(.+)$/);
   if (dashMatch && !/^\d+$/.test(dashMatch[1]!.trim())) {
-    return {
-      title: cleanName(dashMatch[2]!),
-      author: cleanName(dashMatch[1]!),
-      series: null,
-      ...(asin !== undefined && { asin }),
-    };
+    const author = applyLastFirstSwap(cleanName(dashMatch[1]!));
+    const title = cleanName(dashMatch[2]!);
+    return applyP10Postprocess(title, author, asinTail);
   }
 
   // Pattern: "Title by Author" (word-boundary, not inside words like "Standby")
@@ -283,12 +375,9 @@ function parseSingleFolder(folder: string): {
     const right = byMatch[2]!.trim();
     // Guard: left side must not be just numbers, right side must be non-empty
     if (right && !/^\d+$/.test(left)) {
-      return {
-        title: cleanName(left),
-        author: cleanName(right),
-        series: null,
-        ...(asin !== undefined && { asin }),
-      };
+      const author = applyLastFirstSwap(cleanName(right));
+      const title = cleanName(left);
+      return applyP10Postprocess(title, author, asinTail);
     }
   }
 
@@ -297,8 +386,49 @@ function parseSingleFolder(folder: string): {
     title: cleaned ? cleanName(input) : cleanName(folder),
     author: null,
     series: null,
-    ...(asin !== undefined && { asin }),
+    ...asinTail,
   };
+}
+
+/**
+ * P10-postprocess (author-dash path): if a resolved title still looks like
+ * `<series> NN - <subtitle>`, decompose it. Preserves the already-resolved author.
+ */
+function applyP10Postprocess(
+  title: string,
+  author: string,
+  asinTail: { asin?: string },
+): { title: string; author: string | null; series: string | null; seriesPosition?: number; asin?: string } {
+  const match = title.match(WORDS_NUM_DASH_TITLE_REGEX);
+  if (match) {
+    return {
+      title: cleanName(match[3]!),
+      author,
+      series: cleanName(match[1]!),
+      seriesPosition: parseInt(match[2]!, 10),
+      ...asinTail,
+    };
+  }
+  return { title, author, series: null, ...asinTail };
+}
+
+/** Raw variant of P10-postprocess — no cleanName applied. */
+function applyP10PostprocessRaw(
+  title: string,
+  author: string,
+  asinTail: { asin?: string },
+): { title: string; author: string | null; series: string | null; seriesPosition?: number; asin?: string } {
+  const match = title.match(WORDS_NUM_DASH_TITLE_REGEX);
+  if (match) {
+    return {
+      title: match[3]!,
+      author,
+      series: match[1]!,
+      seriesPosition: parseInt(match[2]!, 10),
+      ...asinTail,
+    };
+  }
+  return { title, author, series: null, ...asinTail };
 }
 
 /**
@@ -315,6 +445,7 @@ export function parseFolderStructure(parts: string[]): {
   title: string;
   author: string | null;
   series: string | null;
+  seriesPosition?: number;
   asin?: string;
 } {
   if (parts.length === 0) {
@@ -332,11 +463,15 @@ export function parseFolderStructure(parts: string[]): {
   if (parts.length === 2) {
     const { asin, cleaned } = extractASIN(parts[1]!);
     const titleSegment = cleaned || parts[1]!;
+
+    // P8: detect "Author - Series" in author segment (ASCII hyphen only)
+    const { author: p8Author, series: p8Series } = splitAuthorSegment(parts[0]!);
+
     if (isAllNumericSegments(titleSegment)) {
       return {
         title: titleSegment,
-        author: cleanName(parts[0]!),
-        series: null,
+        author: p8Author,
+        series: p8Series,
         ...(asin !== undefined && { asin }),
       };
     }
@@ -344,15 +479,16 @@ export function parseFolderStructure(parts: string[]): {
     if (seriesMatch) {
       return {
         title: cleanName(seriesMatch[2]!),
-        author: cleanName(parts[0]!),
+        author: p8Author,
+        // SERIES_NUMBER_TITLE in title segment wins over P8's series-from-author
         series: cleanName(seriesMatch[1]!),
         ...(asin !== undefined && { asin }),
       };
     }
     return {
       title: cleanName(titleSegment),
-      author: cleanName(parts[0]!),
-      series: null,
+      author: p8Author,
+      series: p8Series,
       ...(asin !== undefined && { asin }),
     };
   }
@@ -370,6 +506,33 @@ export function parseFolderStructure(parts: string[]): {
 }
 
 /**
+ * P8: split a 2-part `Author - Series` first segment into separate fields.
+ * Falls back to whole-segment author when there's no ASCII ` - ` to split on
+ * or the recursive parse can't resolve an author.
+ */
+function splitAuthorSegment(segment: string): { author: string; series: string | null } {
+  if (!segment.includes(' - ')) {
+    return { author: cleanName(segment), series: null };
+  }
+  const sub = parseSingleFolder(segment);
+  if (sub.author && sub.title) {
+    return { author: sub.author, series: sub.title };
+  }
+  return { author: cleanName(segment), series: null };
+}
+
+function splitAuthorSegmentRaw(segment: string): { author: string; series: string | null } {
+  if (!segment.includes(' - ')) {
+    return { author: segment, series: null };
+  }
+  const sub = parseSingleFolderRaw(segment);
+  if (sub.author && sub.title) {
+    return { author: sub.author, series: sub.title };
+  }
+  return { author: segment, series: null };
+}
+
+/**
  * Like parseFolderStructure, but returns the raw (pre-cleanName) values.
  * Used by the scan-debug endpoint to build cleaning traces from the actual
  * raw segments rather than the already-cleaned parser output.
@@ -378,6 +541,7 @@ export function parseFolderStructureRaw(parts: string[]): {
   title: string;
   author: string | null;
   series: string | null;
+  seriesPosition?: number;
   asin?: string;
 } {
   if (parts.length === 0) {
@@ -391,14 +555,18 @@ export function parseFolderStructureRaw(parts: string[]): {
   if (parts.length === 2) {
     const { asin, cleaned } = extractASIN(parts[1]!);
     const titleSegment = cleaned || parts[1]!;
+
+    // P8: split `Author - Series` from raw author segment
+    const { author: p8Author, series: p8Series } = splitAuthorSegmentRaw(parts[0]!);
+
     if (isAllNumericSegments(titleSegment)) {
-      return { title: titleSegment, author: parts[0]!, series: null, ...(asin !== undefined && { asin }) };
+      return { title: titleSegment, author: p8Author, series: p8Series, ...(asin !== undefined && { asin }) };
     }
     const seriesMatch = titleSegment.match(SERIES_NUMBER_TITLE_REGEX);
     if (seriesMatch) {
-      return { title: seriesMatch[2]!, author: parts[0]!, series: seriesMatch[1]!, ...(asin !== undefined && { asin }) };
+      return { title: seriesMatch[2]!, author: p8Author, series: seriesMatch[1]!, ...(asin !== undefined && { asin }) };
     }
-    return { title: titleSegment, author: parts[0]!, series: null, ...(asin !== undefined && { asin }) };
+    return { title: titleSegment, author: p8Author, series: p8Series, ...(asin !== undefined && { asin }) };
   }
 
   const { asin, cleaned } = extractASIN(parts[parts.length - 1]!);
@@ -415,23 +583,55 @@ function parseSingleFolderRaw(folder: string): {
   title: string;
   author: string | null;
   series: string | null;
+  seriesPosition?: number;
   asin?: string;
 } {
   const { asin, cleaned } = extractASIN(folder);
   const input = cleaned || folder;
+  const asinTail = asin !== undefined ? { asin } : {};
 
   if (isAllNumericSegments(input)) {
-    return { title: input, author: null, series: null, ...(asin !== undefined && { asin }) };
+    return { title: input, author: null, series: null, ...asinTail };
   }
 
   const seriesNumberMatch = input.match(SERIES_NUMBER_TITLE_REGEX);
   if (seriesNumberMatch) {
-    return { title: seriesNumberMatch[2]!, author: null, series: seriesNumberMatch[1]!, ...(asin !== undefined && { asin }) };
+    return { title: seriesNumberMatch[2]!, author: null, series: seriesNumberMatch[1]!, ...asinTail };
+  }
+
+  // P4: "Series, Book NN - Title" — raw substrings preserved
+  const seriesBookMatch = input.match(SERIES_BOOK_DASH_TITLE_REGEX);
+  if (seriesBookMatch) {
+    return {
+      title: seriesBookMatch[3]!,
+      author: null,
+      series: seriesBookMatch[1]!,
+      seriesPosition: parseInt(seriesBookMatch[2]!, 10),
+      ...asinTail,
+    };
+  }
+
+  // P15: whole-input lowercase kebab-case → bail to title-only
+  if (KEBAB_CASE_REGEX.test(input)) {
+    return { title: input, author: null, series: null, ...asinTail };
+  }
+
+  // P10-precheck (no-author path)
+  const p10Pre = input.match(WORDS_NUM_DASH_TITLE_REGEX);
+  if (p10Pre && !p10Pre[1]!.includes(' - ')) {
+    return {
+      title: p10Pre[3]!,
+      author: null,
+      series: p10Pre[1]!,
+      seriesPosition: parseInt(p10Pre[2]!, 10),
+      ...asinTail,
+    };
   }
 
   const dashMatch = input.match(/^(.+?)\s*-\s*(.+)$/);
   if (dashMatch && !/^\d+$/.test(dashMatch[1]!.trim())) {
-    return { title: dashMatch[2]!, author: dashMatch[1]!, series: null, ...(asin !== undefined && { asin }) };
+    const author = applyLastFirstSwap(dashMatch[1]!);
+    return applyP10PostprocessRaw(dashMatch[2]!, author, asinTail);
   }
 
   const byMatch = input.match(/^(.+?)\bby\b(.+)$/i);
@@ -439,11 +639,12 @@ function parseSingleFolderRaw(folder: string): {
     const left = byMatch[1]!.trim();
     const right = byMatch[2]!.trim();
     if (right && !/^\d+$/.test(left)) {
-      return { title: left, author: right, series: null, ...(asin !== undefined && { asin }) };
+      const author = applyLastFirstSwap(right);
+      return applyP10PostprocessRaw(left, author, asinTail);
     }
   }
 
-  return { title: cleaned ? input : folder, author: null, series: null, ...(asin !== undefined && { asin }) };
+  return { title: cleaned ? input : folder, author: null, series: null, ...asinTail };
 }
 
 /**

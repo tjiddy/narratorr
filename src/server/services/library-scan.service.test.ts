@@ -2216,9 +2216,9 @@ describe('scanDirectory() — within-scan duplicate detection (#342)', () => {
         expect(result.title).not.toContain('[]');
       });
 
-      it('preserves non-empty parentheticals with >3 words', () => {
+      it('strips edition-annotation parens like "(The Extended Cut Edition)" via P6', () => {
         const result = parseFolderStructure(['Author', 'BookTitle (The Extended Cut Edition)']);
-        expect(result.title).toBe('BookTitle (The Extended Cut Edition)');
+        expect(result.title).toBe('BookTitle');
       });
     });
 
