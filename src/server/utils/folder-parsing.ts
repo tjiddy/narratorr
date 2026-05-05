@@ -237,7 +237,6 @@ export function extractASIN(input: string): { asin: string | undefined; cleaned:
 
 // ─── Folder Structure Parsing ───────────────────────────────────────
 
-// eslint-disable-next-line complexity -- pattern-matching cascade with conditional-spread for asin omission
 function parseSingleFolder(folder: string): {
   title: string;
   author: string | null;
@@ -412,7 +411,6 @@ export function parseFolderStructureRaw(parts: string[]): {
   };
 }
 
-// eslint-disable-next-line complexity -- pattern-matching cascade with conditional-spread for asin omission
 function parseSingleFolderRaw(folder: string): {
   title: string;
   author: string | null;
