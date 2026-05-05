@@ -103,182 +103,69 @@ export function normalizeFolderName(name: string): string {
 }
 
 export function cleanName(name: string): string {
-  // All-numeric segment inputs ('11-22-63', '11.22.63', '1.5') are date-like
-  // titles. Return unchanged — every step downstream would corrupt them: the
-  // leading-numeric strip eats the first segment, normalizeFolderName turns
-  // dots into spaces, and the bare-year strip can drop a trailing 4-digit
-  // segment. One early return covers all of these.
-  if (isAllNumericSegments(name)) return name;
-
-  // Strip leading number prefixes (track/series position):
-  //   '01 - Title', '01. Title', '01.- Title', '6.5 - Title', '6.5 – Title'
-  // Decimal positions checked first so '6.5' isn't split into '6.' + '5'.
-  const stripped = name
-    .replace(/^\d+\.\d+\s*[–-]\s*/, '')          // decimal + dash: '6.5 - ', '6.5 – '
-    .replace(/^\d+[.\s]*[–-]\s*/, '')             // integer + dash: '01 - ', '01.- '
-    .replace(/^\d+\.(?!\d)\s*/, '');              // integer + dot (not decimal): '01. '
-
-  // Strip series markers (", Book 01", ", Vol 3", ", Volume 12") before dedup
-  const withoutSeries = stripped.replace(SERIES_MARKER_REGEX, '');
-
-  let result = normalizeFolderName(withoutSeries)
-    .replace(/\s*\(\d{4}\)$/, '')       // Remove trailing year like "(2020)"
-    .replace(/\s*\[\d{4}\]$/, '')       // Remove trailing year like "[2020]"
-    .replace(/\s*\[[^\]]*\]/g, ' ')     // Strip any [bracketed-content] as media tag (e.g. [GA], [Unabridged]).
-    .replace(BARE_YEAR_REGEX, '')       // Remove bare trailing year like "2017"
-    .replace(/\s*\(\s*\)/g, '')         // Remove empty parentheses (e.g. after codec strip)
-    .replace(/\s*\[\s*\]/g, '')         // Remove empty brackets (e.g. after codec strip)
-    .replace(/\s{2,}/g, ' ')            // Collapse whitespace introduced by bracketTagStrip mid-string
-    .trim();
-
-  // P5: strip trailing "(Read by …)" / "(Narrated by …)" regardless of word count
-  const narratorPrefixed = result.replace(NARRATOR_PREFIX_PAREN_REGEX, '').trim();
-  if (narratorPrefixed && narratorPrefixed !== result) result = narratorPrefixed;
-
-  // P6: strip trailing parens whose content is an edition annotation
-  // (year-prefix, ordinal-prefix, or contains Edition/Recording/Cut/Version/Mix)
-  const editionMatch = result.match(TRAILING_PAREN_REGEX);
-  if (editionMatch && isEditionParen(editionMatch[1]!)) {
-    const stripped = result.replace(TRAILING_PAREN_REGEX, '').trim();
-    if (stripped) result = stripped;
-  }
-
-  // Strip trailing narrator-style parenthetical (1-3 word name, not codec/year)
-  const narratorMatch = result.match(NARRATOR_PAREN_REGEX);
-  if (narratorMatch) {
-    const content = narratorMatch[1]!;
-    // Don't strip if content is a known codec tag (already handled, but guard against edge cases)
-    if (!CODEC_TEST_REGEX.test(content)) {
-      const beforeParen = result.replace(NARRATOR_PAREN_REGEX, '').trim();
-      if (beforeParen) result = beforeParen;
-    }
-  }
-
-  // Deduplicate repeated title segments: "Title 01 – Title" → "Title"
-  // Handles patterns like "Dungeon Crawler Carl 01 – Dungeon Crawler Carl"
-  // and "The Hunger Games, Book 01 – The Hunger Games"
-  const dashParts = result.split(/\s*[–-]\s*/);
-  if (dashParts.length === 2) {
-    const left = dashParts[0]!
-      .replace(SERIES_MARKER_REGEX, '')   // strip ", Book 01" etc. from left
-      .replace(/\s*\d+\s*$/, '')          // strip trailing number like "01"
-      .trim();
-    const right = dashParts[1]!.trim();
-    if (left.toLowerCase() === right.toLowerCase() && right) {
-      result = right;
-    }
-  }
-
-  // Fall back to original name when normalization strips everything
-  return result || name.trim();
+  return cleanNameWithTrace(name).result;
 }
 
+/** Pipeline steps for cleanName/cleanNameWithTrace. Order matters — see step names below. */
+const CLEAN_NAME_PIPELINE: ReadonlyArray<readonly [string, (s: string) => string]> = [
+  ['leadingNumeric', s => s
+    .replace(/^\d+\.\d+\s*[–-]\s*/, '')
+    .replace(/^\d+[.\s]*[–-]\s*/, '')
+    .replace(/^\d+\.(?!\d)\s*/, '')],
+  ['seriesMarker', s => s.replace(SERIES_MARKER_REGEX, '')],
+  ['normalize', s => normalizeFolderName(s)],
+  ['yearParenStrip', s => s.replace(/\s*\(\d{4}\)$/, '')],
+  ['yearBracketStrip', s => s.replace(/\s*\[\d{4}\]$/, '')],
+  ['bracketTagStrip', s => s.replace(/\s*\[[^\]]*\]/g, ' ').replace(/\s{2,}/g, ' ').trim()],
+  ['yearBareStrip', s => s.replace(BARE_YEAR_REGEX, '')],
+  ['emptyParenStrip', s => s.replace(/\s*\(\s*\)/g, '')],
+  ['emptyBracketStrip', s => s.replace(/\s*\[\s*\]/g, '').trim()],
+  ['narratorPrefixStrip', s => {
+    const stripped = s.replace(NARRATOR_PREFIX_PAREN_REGEX, '').trim();
+    return stripped && stripped !== s ? stripped : s;
+  }],
+  ['editionParenStrip', s => {
+    const m = s.match(TRAILING_PAREN_REGEX);
+    if (!m || !isEditionParen(m[1]!)) return s;
+    const stripped = s.replace(TRAILING_PAREN_REGEX, '').trim();
+    return stripped || s;
+  }],
+  ['narratorParen', s => {
+    const m = s.match(NARRATOR_PAREN_REGEX);
+    if (!m || CODEC_TEST_REGEX.test(m[1]!)) return s;
+    const stripped = s.replace(NARRATOR_PAREN_REGEX, '').trim();
+    return stripped || s;
+  }],
+  ['dedup', s => {
+    const parts = s.split(/\s*[–-]\s*/);
+    if (parts.length !== 2) return s;
+    const left = parts[0]!.replace(SERIES_MARKER_REGEX, '').replace(/\s*\d+\s*$/, '').trim();
+    const right = parts[1]!.trim();
+    return (left.toLowerCase() === right.toLowerCase() && right) ? right : s;
+  }],
+];
+
 /**
- * Trace-mode cleanName: runs the same pipeline as cleanName() but records
- * intermediate output after each transformation step.
- * Guarantees trace stays in sync with cleanName() by sharing the same logic.
+ * Trace-mode cleanName: runs the cleanName pipeline and records intermediate
+ * output after each transformation step. cleanName() returns the final result;
+ * both share the CLEAN_NAME_PIPELINE table so traces stay in sync.
  */
 export function cleanNameWithTrace(name: string): CleanNameTraceResult {
-  // Mirror cleanName's all-numeric short-circuit: every step is a no-op so
-  // consumers still see the full 13-step trace shape.
+  // All-numeric date-like inputs ('11-22-63', '1.5') are returned unchanged —
+  // every pipeline step would corrupt them (leadingNumeric eats the first
+  // segment, normalizeFolderName turns dots into spaces, etc.).
   if (isAllNumericSegments(name)) {
-    const steps: CleanNameStep[] = [
-      'leadingNumeric', 'seriesMarker', 'normalize',
-      'yearParenStrip', 'yearBracketStrip', 'bracketTagStrip', 'yearBareStrip',
-      'emptyParenStrip', 'emptyBracketStrip',
-      'narratorPrefixStrip', 'editionParenStrip',
-      'narratorParen', 'dedup',
-    ].map(stepName => ({ name: stepName, output: name }));
+    const steps = CLEAN_NAME_PIPELINE.map(([stepName]) => ({ name: stepName, output: name }));
     return { input: name, steps, result: name };
   }
 
   const steps: CleanNameStep[] = [];
   let current = name;
-
-  // Step 1: leadingNumeric
-  current = current
-    .replace(/^\d+\.\d+\s*[–-]\s*/, '')
-    .replace(/^\d+[.\s]*[–-]\s*/, '')
-    .replace(/^\d+\.(?!\d)\s*/, '');
-  steps.push({ name: 'leadingNumeric', output: current });
-
-  // Step 2: seriesMarker
-  current = current.replace(SERIES_MARKER_REGEX, '');
-  steps.push({ name: 'seriesMarker', output: current });
-
-  // Step 3: normalize
-  current = normalizeFolderName(current);
-  steps.push({ name: 'normalize', output: current });
-
-  // Step 4: yearParenStrip
-  current = current.replace(/\s*\(\d{4}\)$/, '');
-  steps.push({ name: 'yearParenStrip', output: current });
-
-  // Step 5: yearBracketStrip
-  current = current.replace(/\s*\[\d{4}\]$/, '');
-  steps.push({ name: 'yearBracketStrip', output: current });
-
-  // Step 6: bracketTagStrip — strip any [bracketed-content] as media tag (e.g. [GA], [Unabridged])
-  current = current.replace(/\s*\[[^\]]*\]/g, ' ').replace(/\s{2,}/g, ' ').trim();
-  steps.push({ name: 'bracketTagStrip', output: current });
-
-  // Step 7: yearBareStrip
-  current = current.replace(BARE_YEAR_REGEX, '');
-  steps.push({ name: 'yearBareStrip', output: current });
-
-  // Step 8: emptyParenStrip
-  current = current.replace(/\s*\(\s*\)/g, '');
-  steps.push({ name: 'emptyParenStrip', output: current });
-
-  // Step 9: emptyBracketStrip
-  current = current.replace(/\s*\[\s*\]/g, '');
-  steps.push({ name: 'emptyBracketStrip', output: current });
-
-  // Trim after bracket/paren removal (mirrors cleanName's .trim())
-  current = current.trim();
-
-  // Step 10: narratorPrefixStrip — "(Read by …)" / "(Narrated by …)" at end
-  const narratorPrefixed = current.replace(NARRATOR_PREFIX_PAREN_REGEX, '').trim();
-  if (narratorPrefixed && narratorPrefixed !== current) current = narratorPrefixed;
-  steps.push({ name: 'narratorPrefixStrip', output: current });
-
-  // Step 11: editionParenStrip — year/ordinal-prefixed parens or edition keywords
-  const editionMatch = current.match(TRAILING_PAREN_REGEX);
-  if (editionMatch && isEditionParen(editionMatch[1]!)) {
-    const stripped = current.replace(TRAILING_PAREN_REGEX, '').trim();
-    if (stripped) current = stripped;
+  for (const [stepName, fn] of CLEAN_NAME_PIPELINE) {
+    current = fn(current);
+    steps.push({ name: stepName, output: current });
   }
-  steps.push({ name: 'editionParenStrip', output: current });
-
-  // Step 12: narratorParen
-  const narratorMatch = current.match(NARRATOR_PAREN_REGEX);
-  if (narratorMatch) {
-    const content = narratorMatch[1];
-    if (!CODEC_TEST_REGEX.test(content!)) {
-      const beforeParen = current.replace(NARRATOR_PAREN_REGEX, '').trim();
-      if (beforeParen) current = beforeParen;
-    }
-  }
-  steps.push({ name: 'narratorParen', output: current });
-
-  // Step 13: dedup
-  const dashParts = current.split(/\s*[–-]\s*/);
-  if (dashParts.length === 2) {
-    const left = dashParts[0]!
-      .replace(SERIES_MARKER_REGEX, '')
-      .replace(/\s*\d+\s*$/, '')
-      .trim();
-    const right = dashParts[1]!.trim();
-    if (left.toLowerCase() === right.toLowerCase() && right) {
-      current = right;
-    }
-  }
-  steps.push({ name: 'dedup', output: current });
-
-  // Fall back to original name when normalization strips everything
-  const result = current || name.trim();
-
-  return { input: name, steps, result };
+  return { input: name, steps, result: current || name.trim() };
 }
 
 // ─── ASIN Extraction ────────────────────────────────────────────────
