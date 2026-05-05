@@ -13,8 +13,8 @@ export const CODEC_TEST_REGEX = new RegExp(`\\b(${CODEC_TAGS.join('|')})\\b`, 'i
 /** Matches a bare 4-digit year (1900–2099) at end of string. */
 const BARE_YEAR_REGEX = /\b((?:19|20)\d{2})\s*$/;
 
-/** Matches "Series – NN – Title" or "Series - NN - Title" (dash or en-dash separators). */
-const SERIES_NUMBER_TITLE_REGEX = /^(.+?)\s*[–-]\s*\d+\s*[–-]\s*(.+)$/;
+/** Matches "Series – NN – Title" or "Series - NN - Title" (dash or en-dash separators). Captures NN as group 2. */
+const SERIES_NUMBER_TITLE_REGEX = /^(.+?)\s*[–-]\s*(\d+)\s*[–-]\s*(.+)$/;
 
 /** Matches trailing ", Book NN", ", Vol NN", ", Volume NN" series markers. */
 const SERIES_MARKER_REGEX = /,\s*(?:book|vol(?:ume)?)\s+\d+\s*$/i;
@@ -211,16 +211,20 @@ function parseSingleFolder(folder: string): {
   const seriesNumberMatch = input.match(SERIES_NUMBER_TITLE_REGEX);
   if (seriesNumberMatch) {
     return {
-      title: cleanName(seriesNumberMatch[2]!),
+      title: cleanName(seriesNumberMatch[3]!),
       author: null,
       series: cleanName(seriesNumberMatch[1]!),
+      seriesPosition: parseInt(seriesNumberMatch[2]!, 10),
       ...asinTail,
     };
   }
 
-  // P4: "Series, Book NN - Title" — left of first ` - ` ends with `, Book NN`
+  // P4: "Series, Book NN - Title" — left of first ` - ` ends with `, Book NN`.
+  // Guard: reject when the pre-book prefix already contains ` - ` (would mean a
+  // later `, Book NN -` matched instead of the first dash, e.g.
+  // `Author - Discworld, Book 16 - Soul Music` belongs to the dash heuristic).
   const seriesBookMatch = input.match(SERIES_BOOK_DASH_TITLE_REGEX);
-  if (seriesBookMatch) {
+  if (seriesBookMatch && !seriesBookMatch[1]!.includes(' - ')) {
     return {
       title: cleanName(seriesBookMatch[3]!),
       author: null,
@@ -365,10 +369,11 @@ export function parseFolderStructure(parts: string[]): {
     const seriesMatch = titleSegment.match(SERIES_NUMBER_TITLE_REGEX);
     if (seriesMatch) {
       return {
-        title: cleanName(seriesMatch[2]!),
+        title: cleanName(seriesMatch[3]!),
         author: p8Author,
         // SERIES_NUMBER_TITLE in title segment wins over P8's series-from-author
         series: cleanName(seriesMatch[1]!),
+        seriesPosition: parseInt(seriesMatch[2]!, 10),
         ...(asin !== undefined && { asin }),
       };
     }
@@ -451,7 +456,13 @@ export function parseFolderStructureRaw(parts: string[]): {
     }
     const seriesMatch = titleSegment.match(SERIES_NUMBER_TITLE_REGEX);
     if (seriesMatch) {
-      return { title: seriesMatch[2]!, author: p8Author, series: seriesMatch[1]!, ...(asin !== undefined && { asin }) };
+      return {
+        title: seriesMatch[3]!,
+        author: p8Author,
+        series: seriesMatch[1]!,
+        seriesPosition: parseInt(seriesMatch[2]!, 10),
+        ...(asin !== undefined && { asin }),
+      };
     }
     return { title: titleSegment, author: p8Author, series: p8Series, ...(asin !== undefined && { asin }) };
   }
@@ -483,12 +494,19 @@ function parseSingleFolderRaw(folder: string): {
 
   const seriesNumberMatch = input.match(SERIES_NUMBER_TITLE_REGEX);
   if (seriesNumberMatch) {
-    return { title: seriesNumberMatch[2]!, author: null, series: seriesNumberMatch[1]!, ...asinTail };
+    return {
+      title: seriesNumberMatch[3]!,
+      author: null,
+      series: seriesNumberMatch[1]!,
+      seriesPosition: parseInt(seriesNumberMatch[2]!, 10),
+      ...asinTail,
+    };
   }
 
-  // P4: "Series, Book NN - Title" — raw substrings preserved
+  // P4: "Series, Book NN - Title" — raw substrings preserved.
+  // Same first-dash guard as parseSingleFolder.
   const seriesBookMatch = input.match(SERIES_BOOK_DASH_TITLE_REGEX);
-  if (seriesBookMatch) {
+  if (seriesBookMatch && !seriesBookMatch[1]!.includes(' - ')) {
     return {
       title: seriesBookMatch[3]!,
       author: null,

@@ -1680,6 +1680,7 @@ describe('scanDirectory() — duplicateReason field (#133)', () => {
           title: 'The Heroes',
           author: 'Joe Abercrombie',
           series: 'First Law World',
+          seriesPosition: 2,
         });
       });
 
@@ -1689,6 +1690,7 @@ describe('scanDirectory() — duplicateReason field (#133)', () => {
           title: 'Title',
           author: 'Author',
           series: 'Series',
+          seriesPosition: 2,
         });
       });
 
@@ -1709,6 +1711,7 @@ describe('scanDirectory() — duplicateReason field (#133)', () => {
           title: 'The Heroes',
           author: null,
           series: 'First Law World',
+          seriesPosition: 2,
         });
       });
 
@@ -1718,6 +1721,7 @@ describe('scanDirectory() — duplicateReason field (#133)', () => {
           title: 'Harry Potter and the Philosopher\'s Stone',
           author: null,
           series: 'Harry Potter',
+          seriesPosition: 1,
         });
       });
 
@@ -1727,6 +1731,7 @@ describe('scanDirectory() — duplicateReason field (#133)', () => {
           title: 'Before They Are Hanged',
           author: null,
           series: 'The First Law Trilogy',
+          seriesPosition: 2,
         });
       });
     });
@@ -1738,6 +1743,7 @@ describe('scanDirectory() — duplicateReason field (#133)', () => {
           title: 'Title',
           author: null,
           series: 'Series',
+          seriesPosition: 2,
         });
       });
 
@@ -1747,6 +1753,7 @@ describe('scanDirectory() — duplicateReason field (#133)', () => {
           title: 'Title',
           author: null,
           series: 'Series',
+          seriesPosition: 2,
         });
       });
 
@@ -1756,6 +1763,7 @@ describe('scanDirectory() — duplicateReason field (#133)', () => {
           title: 'Title',
           author: null,
           series: 'Series',
+          seriesPosition: 2,
         });
       });
     });
@@ -1805,6 +1813,7 @@ describe('scanDirectory() — duplicateReason field (#133)', () => {
           title: 'Title',
           author: null,
           series: 'Series',
+          seriesPosition: 1,
         });
       });
 
@@ -1814,6 +1823,7 @@ describe('scanDirectory() — duplicateReason field (#133)', () => {
           title: 'Title',
           author: null,
           series: 'Series',
+          seriesPosition: 999,
         });
       });
 
@@ -1823,6 +1833,7 @@ describe('scanDirectory() — duplicateReason field (#133)', () => {
           title: 'Title',
           author: null,
           series: 'Series',
+          seriesPosition: 1,
         });
       });
     });
@@ -1834,6 +1845,7 @@ describe('scanDirectory() — duplicateReason field (#133)', () => {
           title: 'Title',
           author: null,
           series: 'Series',
+          seriesPosition: 1,
         });
       });
 
@@ -1843,6 +1855,7 @@ describe('scanDirectory() — duplicateReason field (#133)', () => {
           title: 'Title',
           author: null,
           series: 'Series',
+          seriesPosition: 1,
         });
       });
 
@@ -1853,6 +1866,7 @@ describe('scanDirectory() — duplicateReason field (#133)', () => {
           title: 'The Second Book',
           author: null,
           series: 'Series',
+          seriesPosition: 1,
         });
 
         // Legitimate numeric title preserved

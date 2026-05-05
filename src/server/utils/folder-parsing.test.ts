@@ -863,6 +863,106 @@ describe('folder-parsing (extracted from library-scan.service)', () => {
       });
     });
 
+    describe('targeted raw-mirror coverage (issue #980 review F3)', () => {
+      it('raw P4: Discworld, Book 16 - Soul Music → raw series + seriesPosition + title (no narrator strip)', () => {
+        const result = parseFolderStructureRaw(['Discworld, Book 16 - Soul Music (Read by Nigel Planer)']);
+        expect(result.series).toBe('Discworld');
+        expect(result.title).toBe('Soul Music (Read by Nigel Planer)');
+        expect(result.seriesPosition).toBe(16);
+        expect(result.author).toBeNull();
+      });
+
+      it('raw P4 first-dash guard: Author - Discworld, Book 16 - Soul Music does NOT match P4 (would have set series=`Author - Discworld`)', () => {
+        const result = parseFolderStructureRaw(['Author - Discworld, Book 16 - Soul Music']);
+        expect(result.author).toBe('Author');
+        // P4 would have produced series=`Author - Discworld` and author=null. Confirm guard rejected.
+        expect(result.series).not.toBe('Author - Discworld');
+        // The dash heuristic + raw P10-postprocess produces a downstream parse;
+        // the load-bearing assertion here is that the author is "Author" and P4 did not preempt.
+      });
+
+      it('raw P9: Liu, Cixin - Three Body 01 - Title (raw) → swapped author, raw P10-postprocess fires', () => {
+        const result = parseFolderStructureRaw(['Liu, Cixin - Three Body 01 - The Three-Body Problem']);
+        expect(result.author).toBe('Cixin Liu');
+        expect(result.series).toBe('Three Body');
+        expect(result.title).toBe('The Three-Body Problem');
+        expect(result.seriesPosition).toBe(1);
+      });
+
+      it('raw P9: Asimov, Isaac - Foundation → swapped author, no series', () => {
+        const result = parseFolderStructureRaw(['Asimov, Isaac - Foundation']);
+        expect(result.author).toBe('Isaac Asimov');
+        expect(result.title).toBe('Foundation');
+      });
+
+      it('raw P10-precheck: Murderbot Diaries 07 - System Collapse → series + position + title, author=null (raw)', () => {
+        const result = parseFolderStructureRaw(['Murderbot Diaries 07 - System Collapse']);
+        expect(result.series).toBe('Murderbot Diaries');
+        expect(result.title).toBe('System Collapse');
+        expect(result.seriesPosition).toBe(7);
+        expect(result.author).toBeNull();
+      });
+
+      it('raw P10-postprocess: Martha Wells - Murderbot Diaries 07 - System Collapse → author + series + position', () => {
+        const result = parseFolderStructureRaw(['Martha Wells - Murderbot Diaries 07 - System Collapse']);
+        expect(result.author).toBe('Martha Wells');
+        expect(result.series).toBe('Murderbot Diaries');
+        expect(result.title).toBe('System Collapse');
+        expect(result.seriesPosition).toBe(7);
+      });
+
+      it('raw P15: believe-me → author=null, series=null, raw title preserved', () => {
+        const result = parseFolderStructureRaw(['believe-me']);
+        expect(result.author).toBeNull();
+        expect(result.series).toBeNull();
+        expect(result.title).toBe('believe-me');
+      });
+
+      it('raw P15: dont-look-up → author=null, series=null', () => {
+        const result = parseFolderStructureRaw(['dont-look-up']);
+        expect(result.author).toBeNull();
+        expect(result.series).toBeNull();
+      });
+
+      it('raw SERIES_NUMBER_TITLE: Series - 02 - Title (1-part) → series + position + title (issue #980 review F1)', () => {
+        const result = parseFolderStructureRaw(['Stormlight Archive - 1 - The Way of Kings']);
+        expect(result.series).toBe('Stormlight Archive');
+        expect(result.title).toBe('The Way of Kings');
+        expect(result.seriesPosition).toBe(1);
+      });
+
+      it('raw SERIES_NUMBER_TITLE: Author/Series - 02 - Title (2-part) → series + position + title (issue #980 review F1)', () => {
+        const result = parseFolderStructureRaw(['Author', 'Series - 02 - Title']);
+        expect(result.author).toBe('Author');
+        expect(result.series).toBe('Series');
+        expect(result.title).toBe('Title');
+        expect(result.seriesPosition).toBe(2);
+      });
+    });
+
+    describe('seriesPosition propagation in cleaned SERIES_NUMBER_TITLE branches (issue #980 review F1)', () => {
+      it('1-part Stormlight Archive – 1 – The Way of Kings → seriesPosition=1', () => {
+        const result = parseFolderStructure(['Stormlight Archive – 1 – The Way of Kings']);
+        expect(result.seriesPosition).toBe(1);
+      });
+
+      it('2-part Author/Stormlight Archive - 1 - The Way of Kings → seriesPosition=1', () => {
+        const result = parseFolderStructure(['Brandon Sanderson', 'Stormlight Archive - 1 - The Way of Kings']);
+        expect(result.seriesPosition).toBe(1);
+      });
+    });
+
+    describe('P4 first-dash guard (issue #980 review F2)', () => {
+      it('cleaned: "Author - Discworld, Book 16 - Soul Music" does NOT match P4 (would have set series=`Author - Discworld`)', () => {
+        const result = parseFolderStructure(['Author - Discworld, Book 16 - Soul Music']);
+        // P4 without the guard would have returned series=`Author - Discworld`,
+        // author=null, seriesPosition=16. With the guard it falls through to the
+        // dash heuristic, which resolves author='Author'.
+        expect(result.author).toBe('Author');
+        expect(result.series).not.toBe('Author - Discworld');
+      });
+    });
+
     it('stays branch-aligned with cleaned parser for all patterns', () => {
       const cases: string[][] = [
         [],
