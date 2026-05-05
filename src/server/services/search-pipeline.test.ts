@@ -129,6 +129,11 @@ describe('buildSearchQuery', () => {
       .toBe('11 22 63');
   });
 
+  it('strips semicolons', () => {
+    expect(buildSearchQuery({ title: 'Dune; Messiah', authors: null }))
+      .toBe('Dune Messiah');
+  });
+
   it('passes plain title and author through unchanged', () => {
     expect(buildSearchQuery({ title: 'Mistborn', authors: [{ name: 'Brandon Sanderson' }] }))
       .toBe('Mistborn Brandon Sanderson');
