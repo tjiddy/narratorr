@@ -31,20 +31,20 @@ describe('ImportBatchBanner', () => {
       expect(screen.getByText(/0 of 1 processed/)).toBeInTheDocument();
     });
 
-    it('renders when most recent terminal job completed <60s ago', () => {
+    it('renders when most recent terminal job completed <5s ago', () => {
       const job = makeJob({
         status: 'completed',
-        completedAt: new Date(NOW - 30_000).toISOString(),
+        completedAt: new Date(NOW - 2_000).toISOString(),
       });
       renderWithProviders(<ImportBatchBanner jobs={[job]} now={NOW} />);
 
       expect(screen.getByText(/1 of 1 processed/)).toBeInTheDocument();
     });
 
-    it('hides when all jobs terminal and completedAt >60s ago', () => {
+    it('hides when all jobs terminal and completedAt >5s ago', () => {
       const job = makeJob({
         status: 'completed',
-        completedAt: new Date(NOW - 90_000).toISOString(),
+        completedAt: new Date(NOW - 10_000).toISOString(),
       });
       const { container } = renderWithProviders(<ImportBatchBanner jobs={[job]} now={NOW} />);
 
@@ -60,8 +60,8 @@ describe('ImportBatchBanner', () => {
   describe('counts', () => {
     it('shows correct X of Y processed, A imported, B failed', () => {
       const jobs = [
-        makeJob({ id: 1, status: 'completed', completedAt: new Date(NOW - 10_000).toISOString() }),
-        makeJob({ id: 2, status: 'failed', completedAt: new Date(NOW - 5_000).toISOString() }),
+        makeJob({ id: 1, status: 'completed', completedAt: new Date(NOW - 2_000).toISOString() }),
+        makeJob({ id: 2, status: 'failed', completedAt: new Date(NOW - 1_000).toISOString() }),
         makeJob({ id: 3, status: 'processing' }),
         makeJob({ id: 4, status: 'pending' }),
       ];
@@ -75,7 +75,7 @@ describe('ImportBatchBanner', () => {
   describe('failed link', () => {
     it('"B failed →" link rendered when B > 0', () => {
       const jobs = [
-        makeJob({ id: 1, status: 'failed', completedAt: new Date(NOW - 5_000).toISOString() }),
+        makeJob({ id: 1, status: 'failed', completedAt: new Date(NOW - 1_000).toISOString() }),
       ];
       renderWithProviders(<ImportBatchBanner jobs={jobs} now={NOW} />);
 

@@ -3,7 +3,7 @@ import { Link } from 'react-router-dom';
 import { DownloadCloudIcon } from '@/components/icons';
 import type { ImportJobWithBook } from '@/lib/api/import-jobs';
 
-const COOLDOWN_MS = 60_000;
+const COOLDOWN_MS = 5_000;
 
 export interface ImportBatchBannerProps {
   jobs: ImportJobWithBook[];
