@@ -66,6 +66,17 @@ function applyLastFirstSwap(author: string): string {
 }
 
 /**
+ * Match `regex` against `input` but only return the match when group 1 has no
+ * ` - ` — enforces "left of FIRST dash" boundary for P4 and P10-precheck so
+ * inputs like `Author - Discworld, Book 16 - Title` fall through to the dash
+ * heuristic instead of being preempted.
+ */
+function matchFirstDashOnly(input: string, regex: RegExp): RegExpMatchArray | null {
+  const m = input.match(regex);
+  return m && !m[1]!.includes(' - ') ? m : null;
+}
+
+/**
  * Matches inputs that are entirely numeric segments separated by dash, en-dash,
  * dot, or slash (e.g. '11-22-63', '11.22.63', '1-5', '1.5').
  * Used to short-circuit Series–NN–Title matching and the leading-numeric strip,
@@ -219,12 +230,9 @@ function parseSingleFolder(folder: string): {
     };
   }
 
-  // P4: "Series, Book NN - Title" — left of first ` - ` ends with `, Book NN`.
-  // Guard: reject when the pre-book prefix already contains ` - ` (would mean a
-  // later `, Book NN -` matched instead of the first dash, e.g.
-  // `Author - Discworld, Book 16 - Soul Music` belongs to the dash heuristic).
-  const seriesBookMatch = input.match(SERIES_BOOK_DASH_TITLE_REGEX);
-  if (seriesBookMatch && !seriesBookMatch[1]!.includes(' - ')) {
+  // P4: "Series, Book NN - Title" — left of FIRST ` - ` ends with `, Book NN`.
+  const seriesBookMatch = matchFirstDashOnly(input, SERIES_BOOK_DASH_TITLE_REGEX);
+  if (seriesBookMatch) {
     return {
       title: cleanName(seriesBookMatch[3]!),
       author: null,
@@ -240,8 +248,8 @@ function parseSingleFolder(folder: string): {
   }
 
   // P10-precheck (no-author path): "<series> NN - <title>" with no ` - ` in series
-  const p10Pre = input.match(WORDS_NUM_DASH_TITLE_REGEX);
-  if (p10Pre && !p10Pre[1]!.includes(' - ')) {
+  const p10Pre = matchFirstDashOnly(input, WORDS_NUM_DASH_TITLE_REGEX);
+  if (p10Pre) {
     return {
       title: cleanName(p10Pre[3]!),
       author: null,
@@ -256,7 +264,7 @@ function parseSingleFolder(folder: string): {
   if (dashMatch && !/^\d+$/.test(dashMatch[1]!.trim())) {
     const author = applyLastFirstSwap(cleanName(dashMatch[1]!));
     const title = cleanName(dashMatch[2]!);
-    return applyP10Postprocess(title, author, asinTail);
+    return applyP10Postprocess(title, author, asinTail, cleanName);
   }
 
   // Pattern: "Title by Author" (word-boundary, not inside words like "Standby")
@@ -268,7 +276,7 @@ function parseSingleFolder(folder: string): {
     if (right && !/^\d+$/.test(left)) {
       const author = applyLastFirstSwap(cleanName(right));
       const title = cleanName(left);
-      return applyP10Postprocess(title, author, asinTail);
+      return applyP10Postprocess(title, author, asinTail, cleanName);
     }
   }
 
@@ -281,45 +289,29 @@ function parseSingleFolder(folder: string): {
   };
 }
 
+/** Identity transform — used as `transform` for raw parser variants that skip cleanName. */
+const identity = (s: string): string => s;
+
 /**
  * P10-postprocess (author-dash path): if a resolved title still looks like
  * `<series> NN - <subtitle>`, decompose it. Preserves the already-resolved author.
+ * `transform` is `cleanName` for the cleaned parser, `identity` for raw.
  */
 function applyP10Postprocess(
   title: string,
   author: string,
   asinTail: { asin?: string },
+  transform: (s: string) => string,
 ): { title: string; author: string | null; series: string | null; seriesPosition?: number; asin?: string } {
-  const match = title.match(WORDS_NUM_DASH_TITLE_REGEX);
-  if (match) {
-    return {
-      title: cleanName(match[3]!),
-      author,
-      series: cleanName(match[1]!),
-      seriesPosition: parseInt(match[2]!, 10),
-      ...asinTail,
-    };
-  }
-  return { title, author, series: null, ...asinTail };
-}
-
-/** Raw variant of P10-postprocess — no cleanName applied. */
-function applyP10PostprocessRaw(
-  title: string,
-  author: string,
-  asinTail: { asin?: string },
-): { title: string; author: string | null; series: string | null; seriesPosition?: number; asin?: string } {
-  const match = title.match(WORDS_NUM_DASH_TITLE_REGEX);
-  if (match) {
-    return {
-      title: match[3]!,
-      author,
-      series: match[1]!,
-      seriesPosition: parseInt(match[2]!, 10),
-      ...asinTail,
-    };
-  }
-  return { title, author, series: null, ...asinTail };
+  const m = title.match(WORDS_NUM_DASH_TITLE_REGEX);
+  if (!m) return { title, author, series: null, ...asinTail };
+  return {
+    title: transform(m[3]!),
+    author,
+    series: transform(m[1]!),
+    seriesPosition: parseInt(m[2]!, 10),
+    ...asinTail,
+  };
 }
 
 /**
@@ -356,7 +348,7 @@ export function parseFolderStructure(parts: string[]): {
     const titleSegment = cleaned || parts[1]!;
 
     // P8: detect "Author - Series" in author segment (ASCII hyphen only)
-    const { author: p8Author, series: p8Series } = splitAuthorSegment(parts[0]!);
+    const { author: p8Author, series: p8Series } = splitAuthorSegment(parts[0]!, parseSingleFolder, cleanName);
 
     if (isAllNumericSegments(titleSegment)) {
       return {
@@ -400,28 +392,17 @@ export function parseFolderStructure(parts: string[]): {
 /**
  * P8: split a 2-part `Author - Series` first segment into separate fields.
  * Falls back to whole-segment author when there's no ASCII ` - ` to split on
- * or the recursive parse can't resolve an author.
+ * or the recursive parse can't resolve an author. `parser` selects cleaned vs raw.
  */
-function splitAuthorSegment(segment: string): { author: string; series: string | null } {
-  if (!segment.includes(' - ')) {
-    return { author: cleanName(segment), series: null };
-  }
-  const sub = parseSingleFolder(segment);
-  if (sub.author && sub.title) {
-    return { author: sub.author, series: sub.title };
-  }
-  return { author: cleanName(segment), series: null };
-}
-
-function splitAuthorSegmentRaw(segment: string): { author: string; series: string | null } {
-  if (!segment.includes(' - ')) {
-    return { author: segment, series: null };
-  }
-  const sub = parseSingleFolderRaw(segment);
-  if (sub.author && sub.title) {
-    return { author: sub.author, series: sub.title };
-  }
-  return { author: segment, series: null };
+function splitAuthorSegment(
+  segment: string,
+  parser: typeof parseSingleFolder | typeof parseSingleFolderRaw,
+  transform: (s: string) => string,
+): { author: string; series: string | null } {
+  if (!segment.includes(' - ')) return { author: transform(segment), series: null };
+  const sub = parser(segment);
+  if (sub.author && sub.title) return { author: sub.author, series: sub.title };
+  return { author: transform(segment), series: null };
 }
 
 /**
@@ -449,7 +430,7 @@ export function parseFolderStructureRaw(parts: string[]): {
     const titleSegment = cleaned || parts[1]!;
 
     // P8: split `Author - Series` from raw author segment
-    const { author: p8Author, series: p8Series } = splitAuthorSegmentRaw(parts[0]!);
+    const { author: p8Author, series: p8Series } = splitAuthorSegment(parts[0]!, parseSingleFolderRaw, identity);
 
     if (isAllNumericSegments(titleSegment)) {
       return { title: titleSegment, author: p8Author, series: p8Series, ...(asin !== undefined && { asin }) };
@@ -504,9 +485,8 @@ function parseSingleFolderRaw(folder: string): {
   }
 
   // P4: "Series, Book NN - Title" — raw substrings preserved.
-  // Same first-dash guard as parseSingleFolder.
-  const seriesBookMatch = input.match(SERIES_BOOK_DASH_TITLE_REGEX);
-  if (seriesBookMatch && !seriesBookMatch[1]!.includes(' - ')) {
+  const seriesBookMatch = matchFirstDashOnly(input, SERIES_BOOK_DASH_TITLE_REGEX);
+  if (seriesBookMatch) {
     return {
       title: seriesBookMatch[3]!,
       author: null,
@@ -522,8 +502,8 @@ function parseSingleFolderRaw(folder: string): {
   }
 
   // P10-precheck (no-author path)
-  const p10Pre = input.match(WORDS_NUM_DASH_TITLE_REGEX);
-  if (p10Pre && !p10Pre[1]!.includes(' - ')) {
+  const p10Pre = matchFirstDashOnly(input, WORDS_NUM_DASH_TITLE_REGEX);
+  if (p10Pre) {
     return {
       title: p10Pre[3]!,
       author: null,
@@ -536,7 +516,7 @@ function parseSingleFolderRaw(folder: string): {
   const dashMatch = input.match(/^(.+?)\s*-\s*(.+)$/);
   if (dashMatch && !/^\d+$/.test(dashMatch[1]!.trim())) {
     const author = applyLastFirstSwap(dashMatch[1]!);
-    return applyP10PostprocessRaw(dashMatch[2]!, author, asinTail);
+    return applyP10Postprocess(dashMatch[2]!, author, asinTail, identity);
   }
 
   const byMatch = input.match(/^(.+?)\bby\b(.+)$/i);
@@ -545,7 +525,7 @@ function parseSingleFolderRaw(folder: string): {
     const right = byMatch[2]!.trim();
     if (right && !/^\d+$/.test(left)) {
       const author = applyLastFirstSwap(right);
-      return applyP10PostprocessRaw(left, author, asinTail);
+      return applyP10Postprocess(left, author, asinTail, identity);
     }
   }
 
