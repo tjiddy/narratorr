@@ -2629,7 +2629,6 @@ describe('DiscoveryService — refreshSuggestions upsert (real libsql)', () => {
         asin: 'SEED1',
         status: 'imported',
         enrichmentStatus: 'enriched',
-        language: 'english',
       })
       .returning();
     await db.insert(bookAuthors).values({ bookId: book!.id, authorId: author!.id, position: 0 });
