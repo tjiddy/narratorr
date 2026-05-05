@@ -1,7 +1,12 @@
-import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { afterEach, describe, it, expect, beforeEach, vi } from 'vitest';
+import { mkdtempSync, rmSync } from 'fs';
+import { tmpdir } from 'os';
+import { join } from 'path';
+import { eq } from 'drizzle-orm';
 import { createMockDb, createMockLogger, mockDbChain, inject, createMockSettingsService } from '../__tests__/helpers.js';
 import type { FastifyBaseLogger } from 'fastify';
-import type { Db } from '../../db/index.js';
+import { createDb, runMigrations, type Db } from '../../db/index.js';
+import { suggestions, books, authors, bookAuthors } from '../../db/schema.js';
 import { DiscoveryService } from './discovery.service.js';
 import { computeWeightMultipliers } from './discovery-weights.js';
 import { SQLiteSyncDialect } from 'drizzle-orm/sqlite-core';
@@ -2572,5 +2577,137 @@ describe('DiscoveryService', () => {
         expect(db.delete).toHaveBeenCalled();
       });
     });
+  });
+});
+
+// ===== Real-libsql integration: covers refreshSuggestions upsert SET clause =====
+//
+// Mocked-DB tests can't catch invalid SQL identifiers in the ON CONFLICT DO UPDATE
+// SET clause because the SQL is never executed. This block exercises the full
+// upsert path against a real libsql DB so identifier mismatches surface as test
+// failures instead of runtime 500s.
+
+describe('DiscoveryService — refreshSuggestions upsert (real libsql)', () => {
+  let dir: string;
+  let db: Db;
+  let service: DiscoveryService;
+  const log = createMockLogger();
+
+  const mockMetadata = {
+    searchBooksForDiscovery: vi.fn(),
+  };
+
+  beforeEach(async () => {
+    dir = mkdtempSync(join(tmpdir(), 'discovery-upsert-'));
+    const dbFile = join(dir, 'narratorr.db');
+    await runMigrations(dbFile);
+    db = createDb(dbFile);
+
+    const settingsService = createMockSettingsService({
+      discovery: { enabled: true, intervalHours: 24, maxSuggestionsPerAuthor: 5 },
+      metadata: { audibleRegion: 'us' },
+    });
+
+    service = new DiscoveryService(
+      db,
+      inject<FastifyBaseLogger>(log),
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      mockMetadata as any,
+      settingsService,
+    );
+
+    // Seed an imported book so analyzeLibrary produces non-empty signals
+    // (otherwise refreshSuggestions short-circuits before the upsert path).
+    const [author] = await db
+      .insert(authors)
+      .values({ name: 'Author A', slug: 'author-a' })
+      .returning();
+    const [book] = await db
+      .insert(books)
+      .values({
+        title: 'Seed Book',
+        asin: 'SEED1',
+        status: 'imported',
+        enrichmentStatus: 'enriched',
+        language: 'english',
+      })
+      .returning();
+    await db.insert(bookAuthors).values({ bookId: book!.id, authorId: author!.id, position: 0 });
+
+    mockMetadata.searchBooksForDiscovery.mockReset();
+  });
+
+  afterEach(() => {
+    db.$client.close();
+    try {
+      rmSync(dir, { recursive: true, force: true });
+    } catch {
+      // libsql may keep file handles on Windows
+    }
+  });
+
+  it('second refresh upserts in place — exercises ON CONFLICT SET clause without identifier errors', async () => {
+    // Same candidate returned on both refreshes; second call hits ON CONFLICT
+    // and fires the SET clause that previously referenced excluded."authorAsin"
+    // (camelCase) and crashed with `no such column`.
+    const candidate = {
+      asin: 'NEWBOOK1',
+      title: 'New Book',
+      authors: [{ name: 'Author A' }],
+      language: 'english',
+    };
+
+    mockMetadata.searchBooksForDiscovery.mockResolvedValue({ books: [candidate], warnings: [] });
+
+    // First refresh — inserts. SET clause not executed (no conflicts yet).
+    const first = await service.refreshSuggestions();
+    expect(first.added).toBeGreaterThanOrEqual(1);
+
+    const afterFirst = await db.select().from(suggestions).where(eq(suggestions.asin, 'NEWBOOK1'));
+    expect(afterFirst).toHaveLength(1);
+    const refreshedAtFirst = afterFirst[0]!.refreshedAt;
+
+    // Wait a tick so refreshed_at advances on the second insert.
+    await new Promise((r) => setTimeout(r, 1100));
+
+    // Second refresh — same ASIN, hits ON CONFLICT, fires SET clause.
+    // Before the fix this threw `SqliteError: no such column: excluded.authorAsin`.
+    await expect(service.refreshSuggestions()).resolves.not.toThrow();
+
+    const afterSecond = await db.select().from(suggestions).where(eq(suggestions.asin, 'NEWBOOK1'));
+    expect(afterSecond).toHaveLength(1);
+    expect(afterSecond[0]!.refreshedAt.getTime()).toBeGreaterThan(refreshedAtFirst.getTime());
+  });
+
+  it('preserves snoozed suggestions across refresh — snooze_until short-circuits the SET clause', async () => {
+    // Pre-seed a snoozed pending row, then refresh with the same ASIN.
+    // The SET clause's `CASE WHEN snooze_until IS NOT NULL` branch must
+    // preserve existing reason/reasonContext rather than overwrite them.
+    const snoozeUntil = new Date(Date.now() + 24 * 60 * 60 * 1000);
+    await db.insert(suggestions).values({
+      asin: 'SNOOZED1',
+      title: 'Snoozed Book',
+      authorName: 'Author A',
+      reason: 'author',
+      reasonContext: 'original-context',
+      score: 50,
+      status: 'pending',
+      refreshedAt: new Date(Date.now() - 60_000),
+      snoozeUntil,
+    });
+
+    mockMetadata.searchBooksForDiscovery.mockResolvedValue({
+      books: [{ asin: 'SNOOZED1', title: 'Snoozed Book', authors: [{ name: 'Author A' }], language: 'english' }],
+      warnings: [],
+    });
+
+    await expect(service.refreshSuggestions()).resolves.not.toThrow();
+
+    const after = await db.select().from(suggestions).where(eq(suggestions.asin, 'SNOOZED1'));
+    expect(after).toHaveLength(1);
+    expect(after[0]!.reasonContext).toBe('original-context'); // snooze branch held
+    // SQLite integer timestamps are second-precision; allow round-trip truncation
+    expect(after[0]!.snoozeUntil).not.toBeNull();
+    expect(Math.abs((after[0]!.snoozeUntil!.getTime() - snoozeUntil.getTime()))).toBeLessThan(1100);
   });
 });

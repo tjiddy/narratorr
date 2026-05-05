@@ -238,12 +238,15 @@ export class DiscoveryService {
         .onConflictDoUpdate({
           target: suggestions.asin,
           set: {
+            // `excluded.*` references the SQLite column names (snake_case),
+            // not the Drizzle JS field names. Quoted camelCase identifiers
+            // resolve to "no such column" errors at runtime.
             score: sql`excluded.score`,
-            authorAsin: sql`excluded."authorAsin"`,
-            refreshedAt: sql`excluded."refreshedAt"`,
+            authorAsin: sql`excluded.author_asin`,
+            refreshedAt: sql`excluded.refreshed_at`,
             reason: sql`CASE WHEN ${suggestions.snoozeUntil} IS NOT NULL THEN ${suggestions.reason} ELSE excluded.reason END`,
-            reasonContext: sql`CASE WHEN ${suggestions.snoozeUntil} IS NOT NULL THEN ${suggestions.reasonContext} ELSE excluded."reasonContext" END`,
-            snoozeUntil: sql`CASE WHEN ${suggestions.snoozeUntil} IS NOT NULL AND ${suggestions.snoozeUntil} <= excluded."refreshedAt" THEN NULL ELSE ${suggestions.snoozeUntil} END`,
+            reasonContext: sql`CASE WHEN ${suggestions.snoozeUntil} IS NOT NULL THEN ${suggestions.reasonContext} ELSE excluded.reason_context END`,
+            snoozeUntil: sql`CASE WHEN ${suggestions.snoozeUntil} IS NOT NULL AND ${suggestions.snoozeUntil} <= excluded.refreshed_at THEN NULL ELSE ${suggestions.snoozeUntil} END`,
           },
         });
     }
