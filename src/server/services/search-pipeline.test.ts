@@ -83,6 +83,66 @@ describe('buildSearchQuery', () => {
     expect(buildSearchQuery({ title: '', authors: null }))
       .toBe('');
   });
+
+  it('strips trailing parenthetical series annotation, keeping inner words', () => {
+    expect(buildSearchQuery({ title: 'Blood Ties (World of Warcraft: Midnight)', authors: [{ name: 'Christie Golden' }] }))
+      .toBe('Blood Ties World of Warcraft Midnight Christie Golden');
+  });
+
+  it('strips colon subtitle separator', () => {
+    expect(buildSearchQuery({ title: 'Dune: Messiah', authors: null }))
+      .toBe('Dune Messiah');
+  });
+
+  it('strips bracket edition tag, keeping inner words', () => {
+    expect(buildSearchQuery({ title: 'Mistborn [Audible Studios]', authors: null }))
+      .toBe('Mistborn Audible Studios');
+  });
+
+  it('strips multiple delimiters in one title', () => {
+    expect(buildSearchQuery({ title: 'Foundation (Robot Series, Book 0): Prequel', authors: null }))
+      .toBe('Foundation Robot Series Book 0 Prequel');
+  });
+
+  it('strips brace edition tag, keeping inner words', () => {
+    expect(buildSearchQuery({ title: 'Mistborn {Box Set}', authors: null }))
+      .toBe('Mistborn Box Set');
+  });
+
+  it('strips dots from spaced author initials', () => {
+    expect(buildSearchQuery({ title: 'The Big Door Prize', authors: [{ name: 'M. O. Walsh' }] }))
+      .toBe('The Big Door Prize M O Walsh');
+  });
+
+  it('strips dots from no-space author initials', () => {
+    expect(buildSearchQuery({ title: 'The Hobbit', authors: [{ name: 'J.R.R. Tolkien' }] }))
+      .toBe('The Hobbit J R R Tolkien');
+  });
+
+  it('strips dots from author title prefix', () => {
+    expect(buildSearchQuery({ title: 'Doctor Strange', authors: [{ name: 'Dr. Strange' }] }))
+      .toBe('Doctor Strange Dr Strange');
+  });
+
+  it('strips dots from numeric titles (indexers tokenize dots themselves)', () => {
+    expect(buildSearchQuery({ title: '11.22.63', authors: null }))
+      .toBe('11 22 63');
+  });
+
+  it('strips semicolons', () => {
+    expect(buildSearchQuery({ title: 'Dune; Messiah', authors: null }))
+      .toBe('Dune Messiah');
+  });
+
+  it('passes plain title and author through unchanged', () => {
+    expect(buildSearchQuery({ title: 'Mistborn', authors: [{ name: 'Brandon Sanderson' }] }))
+      .toBe('Mistborn Brandon Sanderson');
+  });
+
+  it('collapses whitespace introduced by stripped punctuation', () => {
+    expect(buildSearchQuery({ title: 'Foo  (Bar)  Baz', authors: null }))
+      .toBe('Foo Bar Baz');
+  });
 });
 
 describe('searchAndGrabForBook', () => {
