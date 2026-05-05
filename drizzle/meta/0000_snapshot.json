@@ -1,7 +1,7 @@
 {
   "version": "6",
   "dialect": "sqlite",
-  "id": "97de107c-de4a-44f5-9359-8eb02cd1589f",
+  "id": "5de23c94-76fb-440e-9244-df015d5ff20a",
   "prevId": "00000000-0000-0000-0000-000000000000",
   "tables": {
     "authors": {
@@ -31,35 +31,6 @@
         "asin": {
           "name": "asin",
           "type": "text",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
-        },
-        "image_url": {
-          "name": "image_url",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
-        },
-        "bio": {
-          "name": "bio",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
-        },
-        "monitored": {
-          "name": "monitored",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false,
-          "default": false
-        },
-        "last_checked_at": {
-          "name": "last_checked_at",
-          "type": "integer",
           "primaryKey": false,
           "notNull": false,
           "autoincrement": false
@@ -173,19 +144,21 @@
         }
       },
       "indexes": {
-        "idx_blacklist_info_hash": {
-          "name": "idx_blacklist_info_hash",
+        "idx_blacklist_info_hash_unique": {
+          "name": "idx_blacklist_info_hash_unique",
           "columns": [
             "info_hash"
           ],
-          "isUnique": false
+          "isUnique": true,
+          "where": "info_hash IS NOT NULL"
         },
-        "idx_blacklist_guid": {
-          "name": "idx_blacklist_guid",
+        "idx_blacklist_guid_unique": {
+          "name": "idx_blacklist_guid_unique",
           "columns": [
             "guid"
           ],
-          "isUnique": false
+          "isUnique": true,
+          "where": "guid IS NOT NULL"
         },
         "idx_blacklist_book_id": {
           "name": "idx_blacklist_book_id",
@@ -1195,6 +1168,14 @@
             "created_at"
           ],
           "isUnique": false
+        },
+        "idx_import_jobs_book_active": {
+          "name": "idx_import_jobs_book_active",
+          "columns": [
+            "book_id"
+          ],
+          "isUnique": true,
+          "where": "status IN ('pending', 'processing')"
         }
       },
       "foreignKeys": {

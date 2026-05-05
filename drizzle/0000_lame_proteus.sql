@@ -3,10 +3,6 @@ CREATE TABLE `authors` (
 	`name` text NOT NULL,
 	`slug` text NOT NULL,
 	`asin` text,
-	`image_url` text,
-	`bio` text,
-	`monitored` integer DEFAULT false NOT NULL,
-	`last_checked_at` integer,
 	`created_at` integer DEFAULT (unixepoch()) NOT NULL,
 	`updated_at` integer DEFAULT (unixepoch()) NOT NULL
 );
@@ -26,8 +22,8 @@ CREATE TABLE `blacklist` (
 	FOREIGN KEY (`book_id`) REFERENCES `books`(`id`) ON UPDATE no action ON DELETE set null
 );
 --> statement-breakpoint
-CREATE INDEX `idx_blacklist_info_hash` ON `blacklist` (`info_hash`);--> statement-breakpoint
-CREATE INDEX `idx_blacklist_guid` ON `blacklist` (`guid`);--> statement-breakpoint
+CREATE UNIQUE INDEX `idx_blacklist_info_hash_unique` ON `blacklist` (`info_hash`) WHERE info_hash IS NOT NULL;--> statement-breakpoint
+CREATE UNIQUE INDEX `idx_blacklist_guid_unique` ON `blacklist` (`guid`) WHERE guid IS NOT NULL;--> statement-breakpoint
 CREATE INDEX `idx_blacklist_book_id` ON `blacklist` (`book_id`);--> statement-breakpoint
 CREATE TABLE `book_authors` (
 	`book_id` integer NOT NULL,
@@ -168,6 +164,7 @@ CREATE TABLE `import_jobs` (
 );
 --> statement-breakpoint
 CREATE INDEX `idx_import_jobs_status_created` ON `import_jobs` (`status`,`created_at`);--> statement-breakpoint
+CREATE UNIQUE INDEX `idx_import_jobs_book_active` ON `import_jobs` (`book_id`) WHERE status IN ('pending', 'processing');--> statement-breakpoint
 CREATE TABLE `import_lists` (
 	`id` integer PRIMARY KEY AUTOINCREMENT NOT NULL,
 	`name` text NOT NULL,

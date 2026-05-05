@@ -5,29 +5,8 @@
     {
       "idx": 0,
       "version": "6",
-      "when": 1777049451574,
-      "tag": "0000_slimy_johnny_storm",
-      "breakpoints": true
-    },
-    {
-      "idx": 1,
-      "version": "6",
-      "when": 1777355560681,
-      "tag": "0001_flashy_doctor_strange",
-      "breakpoints": true
-    },
-    {
-      "idx": 2,
-      "version": "6",
-      "when": 1777483981455,
-      "tag": "0002_dizzy_captain_cross",
-      "breakpoints": true
-    },
-    {
-      "idx": 3,
-      "version": "6",
-      "when": 1777506217883,
-      "tag": "0003_sweet_dorian_gray",
+      "when": 1777938164928,
+      "tag": "0000_lame_proteus",
       "breakpoints": true
     }
   ]
