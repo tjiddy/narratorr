@@ -212,7 +212,7 @@ describe('POST /api/library/scan-debug', () => {
       (services.book.findDuplicate as ReturnType<typeof vi.fn>).mockResolvedValue(null);
     });
 
-    it('includes all 11 cleaning sub-steps in trace', async () => {
+    it('includes all 13 cleaning sub-steps in trace', async () => {
       const res = await app.inject({
         method: 'POST',
         url: '/api/library/scan-debug',
@@ -220,11 +220,13 @@ describe('POST /api/library/scan-debug', () => {
       });
 
       const body = JSON.parse(res.payload);
-      expect(body.cleaning.title.steps).toHaveLength(11);
+      expect(body.cleaning.title.steps).toHaveLength(13);
       expect(body.cleaning.title.steps.map((s: { name: string }) => s.name)).toEqual([
         'leadingNumeric', 'seriesMarker', 'normalize',
         'yearParenStrip', 'yearBracketStrip', 'bracketTagStrip', 'yearBareStrip',
-        'emptyParenStrip', 'emptyBracketStrip', 'narratorParen', 'dedup',
+        'emptyParenStrip', 'emptyBracketStrip',
+        'narratorPrefixStrip', 'editionParenStrip',
+        'narratorParen', 'dedup',
       ]);
     });
 
@@ -242,6 +244,70 @@ describe('POST /api/library/scan-debug', () => {
       const normalizeStep = body.cleaning.title.steps.find((s: { name: string }) => s.name === 'normalize');
       expect(normalizeStep.output).toBe('Title');
       expect(body.cleaning.title.result).toBe('Title');
+    });
+
+    it('P5: strips "(Read by ...)" from cleaned title (issue #980)', async () => {
+      (services.metadata.searchBooks as ReturnType<typeof vi.fn>).mockResolvedValue([]);
+      (services.book.findDuplicate as ReturnType<typeof vi.fn>).mockResolvedValue(null);
+
+      const res = await app.inject({
+        method: 'POST',
+        url: '/api/library/scan-debug',
+        payload: { folderName: 'Author/Soul Music (Read by Nigel Planer)' },
+      });
+
+      const body = JSON.parse(res.payload);
+      expect(body.cleaning.title.result).toBe('Soul Music');
+      const step = body.cleaning.title.steps.find((s: { name: string }) => s.name === 'narratorPrefixStrip');
+      expect(step.output).toBe('Soul Music');
+    });
+
+    it('P6: strips edition-annotation parens like "(2007 Full Cast Recording)" (issue #980)', async () => {
+      (services.metadata.searchBooks as ReturnType<typeof vi.fn>).mockResolvedValue([]);
+      (services.book.findDuplicate as ReturnType<typeof vi.fn>).mockResolvedValue(null);
+
+      const res = await app.inject({
+        method: 'POST',
+        url: '/api/library/scan-debug',
+        payload: { folderName: 'Frank Herbert/Dune (2007 Full Cast Recording)' },
+      });
+
+      const body = JSON.parse(res.payload);
+      expect(body.cleaning.title.result).toBe('Dune');
+      const step = body.cleaning.title.steps.find((s: { name: string }) => s.name === 'editionParenStrip');
+      expect(step.output).toBe('Dune');
+    });
+
+    it('P4: routes "Discworld, Book 16 - Soul Music" through parsing as series + title (issue #980)', async () => {
+      (services.metadata.searchBooks as ReturnType<typeof vi.fn>).mockResolvedValue([]);
+      (services.book.findDuplicate as ReturnType<typeof vi.fn>).mockResolvedValue(null);
+
+      const res = await app.inject({
+        method: 'POST',
+        url: '/api/library/scan-debug',
+        payload: { folderName: 'Discworld, Book 16 - Soul Music' },
+      });
+
+      const body = JSON.parse(res.payload);
+      expect(body.parsing.raw.series).toBe('Discworld');
+      expect(body.parsing.raw.title).toBe('Soul Music');
+      expect(body.parsing.raw.author).toBeNull();
+    });
+
+    it('P8: 2-part Hitchhiker raw output yields cleaning.author.result === "Douglas Adams" (issue #980)', async () => {
+      (services.metadata.searchBooks as ReturnType<typeof vi.fn>).mockResolvedValue([]);
+      (services.book.findDuplicate as ReturnType<typeof vi.fn>).mockResolvedValue(null);
+
+      const res = await app.inject({
+        method: 'POST',
+        url: '/api/library/scan-debug',
+        payload: { folderName: 'Douglas Adams - The Hitchhikers Guide to the Galaxy/1-The Hitchhikers Guide To The Galaxy' },
+      });
+
+      const body = JSON.parse(res.payload);
+      expect(body.cleaning.author.result).toBe('Douglas Adams');
+      expect(body.cleaning.series.result).toBe('The Hitchhikers Guide to the Galaxy');
+      expect(body.parsing.pattern).toBe('2-part');
     });
 
     it('strips non-year bracket media tags like [GA] (issue #977)', async () => {
