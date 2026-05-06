@@ -2,6 +2,7 @@ import { describe, it, expect, vi } from 'vitest';
 import type { AudioScanResult } from '../../core/utils/audio-scanner.js';
 import type { BookMetadata } from '../../core/metadata/index.js';
 import type { MatchCandidate } from './match-job.service.js';
+import type * as FolderParsing from '../utils/folder-parsing.js';
 
 // Spy on cleanTagTitle so a single test can force the empty-cleaned-title path
 // (the deriveTagQuery guard at match-job.helpers.ts is otherwise unreachable
@@ -9,7 +10,7 @@ import type { MatchCandidate } from './match-job.service.js';
 // The factory passes the actual implementation through, so all other tests run
 // against real cleanTagTitle behavior.
 vi.mock('../utils/folder-parsing.js', async (importActual) => {
-  const actual = await importActual<typeof import('../utils/folder-parsing.js')>();
+  const actual = await importActual<typeof FolderParsing>();
   return { ...actual, cleanTagTitle: vi.fn(actual.cleanTagTitle) };
 });
 
