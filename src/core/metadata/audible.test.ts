@@ -221,6 +221,114 @@ describe('AudibleProvider', () => {
       const book = await provider.getBook('B000UNKNOWN');
       expect(book).toBeNull();
     });
+
+    // ── #985 Stub-product rejection ────────────────────────────────────────
+    // Audible's region-mismatched ASIN responses can return a parseable product
+    // with empty title and/or empty authors. getBook must treat these as misses.
+    it('returns null when upstream product has empty title (region-mismatched stub)', async () => {
+      server.use(
+        http.get('https://api.audible.com/1.0/catalog/products/:asin', () => {
+          return HttpResponse.json({
+            product: {
+              asin: 'B0D6PCZ98M',
+              title: '',
+              authors: [{ name: 'Suzanne Collins' }],
+            },
+          });
+        }),
+      );
+
+      const book = await provider.getBook('B0D6PCZ98M');
+      expect(book).toBeNull();
+    });
+
+    it('returns null when upstream product has empty authors array', async () => {
+      server.use(
+        http.get('https://api.audible.com/1.0/catalog/products/:asin', () => {
+          return HttpResponse.json({
+            product: {
+              asin: 'B0D6PCZ98M',
+              title: 'Sunrise on the Reaping',
+              authors: [],
+            },
+          });
+        }),
+      );
+
+      const book = await provider.getBook('B0D6PCZ98M');
+      expect(book).toBeNull();
+    });
+
+    it('returns null when upstream product has both empty title and empty authors', async () => {
+      server.use(
+        http.get('https://api.audible.com/1.0/catalog/products/:asin', () => {
+          return HttpResponse.json({
+            product: {
+              asin: 'B0D6PCZ98M',
+              title: '',
+              authors: [],
+            },
+          });
+        }),
+      );
+
+      const book = await provider.getBook('B0D6PCZ98M');
+      expect(book).toBeNull();
+    });
+
+    it('returns null when upstream product has whitespace-only title', async () => {
+      server.use(
+        http.get('https://api.audible.com/1.0/catalog/products/:asin', () => {
+          return HttpResponse.json({
+            product: {
+              asin: 'B0D6PCZ98M',
+              title: '   ',
+              authors: [{ name: 'Suzanne Collins' }],
+            },
+          });
+        }),
+      );
+
+      const book = await provider.getBook('B0D6PCZ98M');
+      expect(book).toBeNull();
+    });
+
+    it('returns null when authors contain only whitespace-name entries', async () => {
+      server.use(
+        http.get('https://api.audible.com/1.0/catalog/products/:asin', () => {
+          return HttpResponse.json({
+            product: {
+              asin: 'B0D6PCZ98M',
+              title: 'Some Book',
+              authors: [{ name: '   ' }],
+            },
+          });
+        }),
+      );
+
+      const book = await provider.getBook('B0D6PCZ98M');
+      expect(book).toBeNull();
+    });
+
+    it('returns the book unchanged for a valid response (non-empty title and at least one author)', async () => {
+      server.use(
+        http.get('https://api.audible.com/1.0/catalog/products/:asin', () => {
+          return HttpResponse.json({
+            product: {
+              asin: 'B0D6PCZ98M',
+              title: 'Sunrise on the Reaping',
+              authors: [{ name: 'Suzanne Collins' }],
+              language: 'english',
+            },
+          });
+        }),
+      );
+
+      const book = await provider.getBook('B0D6PCZ98M');
+      expect(book).not.toBeNull();
+      expect(book!.title).toBe('Sunrise on the Reaping');
+      expect(book!.authors).toEqual([{ name: 'Suzanne Collins' }]);
+    });
   });
 
   describe('regional TLD', () => {
@@ -523,22 +631,30 @@ describe('AudibleProvider', () => {
       }
     });
 
-    it('handles product with empty authors array', async () => {
+    it('searchBooks filters stub products (empty authors) without dropping valid siblings', async () => {
       server.use(
         http.get('https://api.audible.com/1.0/catalog/products', () => {
           return HttpResponse.json({
-            products: [{
-              asin: 'B000TEST',
-              title: 'No Authors',
-              authors: [],
-            }],
+            products: [
+              {
+                asin: 'B000STUB',
+                title: 'No Authors',
+                authors: [],
+              },
+              {
+                asin: 'B000GOOD',
+                title: 'Real Book',
+                authors: [{ name: 'Real Author' }],
+              },
+            ],
           });
         }),
       );
 
       const { books } = await provider.searchBooks('test');
       expect(books).toHaveLength(1);
-      expect(books[0]!.authors).toEqual([]);
+      expect(books[0]!.asin).toBe('B000GOOD');
+      expect(books[0]!.title).toBe('Real Book');
     });
 
     it('getBook throws TransientError on malformed JSON response', async () => {

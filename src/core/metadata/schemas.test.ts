@@ -23,6 +23,22 @@ describe('AuthorRefSchema', () => {
     const result = AuthorRefSchema.safeParse({ asin: 'B001H6UJO8' });
     expect(result.success).toBe(false);
   });
+
+  it('rejects empty name', () => {
+    const result = AuthorRefSchema.safeParse({ name: '' });
+    expect(result.success).toBe(false);
+  });
+
+  it('rejects whitespace-only name', () => {
+    const result = AuthorRefSchema.safeParse({ name: '   ' });
+    expect(result.success).toBe(false);
+  });
+
+  it('trims surrounding whitespace from name', () => {
+    const result = AuthorRefSchema.safeParse({ name: '  Brandon Sanderson  ' });
+    expect(result.success).toBe(true);
+    if (result.success) expect(result.data.name).toBe('Brandon Sanderson');
+  });
 });
 
 describe('SeriesRefSchema', () => {
@@ -94,8 +110,36 @@ describe('BookMetadataSchema', () => {
 
   it('rejects empty authors array', () => {
     const result = BookMetadataSchema.safeParse({ title: 'Book', authors: [] });
-    // Empty array is technically valid for z.array(), but let's verify
+    expect(result.success).toBe(false);
+  });
+
+  it('rejects empty title string', () => {
+    const result = BookMetadataSchema.safeParse({ title: '', authors: [{ name: 'Author' }] });
+    expect(result.success).toBe(false);
+  });
+
+  it('rejects whitespace-only title', () => {
+    const result = BookMetadataSchema.safeParse({ title: '   ', authors: [{ name: 'Author' }] });
+    expect(result.success).toBe(false);
+  });
+
+  it('rejects authors array containing only an empty-name author', () => {
+    const result = BookMetadataSchema.safeParse({ title: 'Book', authors: [{ name: '' }] });
+    expect(result.success).toBe(false);
+  });
+
+  it('rejects authors array containing only a whitespace-name author', () => {
+    const result = BookMetadataSchema.safeParse({ title: 'Book', authors: [{ name: '   ' }] });
+    expect(result.success).toBe(false);
+  });
+
+  it('trims surrounding whitespace from title on successful parse', () => {
+    const result = BookMetadataSchema.safeParse({
+      title: '  Foo  ',
+      authors: [{ name: 'Author' }],
+    });
     expect(result.success).toBe(true);
+    if (result.success) expect(result.data.title).toBe('Foo');
   });
 
   it('rejects invalid coverUrl', () => {

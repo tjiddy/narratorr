@@ -661,6 +661,36 @@ describe('POST /api/library/scan-debug', () => {
       expect(body.search.results[0].title).toBe('Fallback');
     });
 
+    // ── #985 region-mismatched ASIN regression ───────────────────────────
+    // Production cause: Audible's region-mismatched ASIN responses can return
+    // a parseable but content-empty product. Provider-level rejection lives in
+    // audible.test.ts (#985); this case asserts scan-debug-level behavior when
+    // metadataService.getBook resolves null for the ASIN — keyword fallback
+    // must run on the parsed folder title, not on the ASIN itself.
+    it('falls back to keyword search on the parsed folder title when getBook returns null for region-mismatched ASIN', async () => {
+      (services.metadata.getBook as ReturnType<typeof vi.fn>)
+        .mockResolvedValue(null);
+      (services.metadata.searchBooks as ReturnType<typeof vi.fn>)
+        .mockResolvedValue([{ title: 'Sunrise on the Reaping', authors: [{ name: 'Suzanne Collins' }], asin: 'B0D2KCFS6Y', providerId: 'us-B0D2KCFS6Y' }]);
+      (services.book.findDuplicate as ReturnType<typeof vi.fn>)
+        .mockResolvedValue(null);
+
+      const res = await app.inject({
+        method: 'POST',
+        url: '/api/library/scan-debug',
+        payload: { folderName: 'Sunrise on the Reaping [B0D6PCZ98M]' },
+      });
+
+      const body = res.json();
+      expect(res.statusCode).toBe(200);
+      expect(body.search.directLookup).toEqual({ asin: 'B0D6PCZ98M', hit: false });
+      // initialQuery is the parsed/cleaned folder title, NOT the ASIN
+      expect(body.search.initialQuery).not.toBe('B0D6PCZ98M');
+      expect(body.search.initialQuery).toContain('Sunrise on the Reaping');
+      expect(body.search.results).toHaveLength(1);
+      expect(body.search.results[0].title).toBe('Sunrise on the Reaping');
+    });
+
     it('returns search.directLookup as null when no ASIN detected', async () => {
       (services.metadata.searchBooks as ReturnType<typeof vi.fn>)
         .mockResolvedValue([{ title: 'Title', authors: [{ name: 'Author' }], asin: null, providerId: null }]);
