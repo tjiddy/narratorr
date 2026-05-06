@@ -156,6 +156,38 @@ describe('getAudioStats', () => {
     }
   });
 
+  describe('file-path input (single-file audiobooks)', () => {
+    it('audio file path returns { fileCount: 1, totalSize: <fileSize> }', async () => {
+      const filePath = join(root, 'standalone.m4b');
+      await writeFile(filePath, Buffer.alloc(4321));
+
+      const result = await getAudioStats(filePath, inject<FastifyBaseLogger>(log));
+      expect(result).toEqual({ fileCount: 1, totalSize: 4321 });
+    });
+
+    it('non-audio file path returns { fileCount: 0, totalSize: 0 }', async () => {
+      const filePath = join(root, 'cover.jpg');
+      await writeFile(filePath, Buffer.alloc(999));
+
+      const result = await getAudioStats(filePath, inject<FastifyBaseLogger>(log));
+      expect(result).toEqual({ fileCount: 0, totalSize: 0 });
+    });
+
+    it('audio file path is recognized case-insensitively', async () => {
+      const filePath = join(root, 'BOOK.MP3');
+      await writeFile(filePath, Buffer.alloc(50));
+
+      const result = await getAudioStats(filePath, inject<FastifyBaseLogger>(log));
+      expect(result).toEqual({ fileCount: 1, totalSize: 50 });
+    });
+
+    it('missing file path returns zeros and logs warn', async () => {
+      const result = await getAudioStats(join(root, 'nope.m4b'), inject<FastifyBaseLogger>(log));
+      expect(result).toEqual({ fileCount: 0, totalSize: 0 });
+      expect(log.warn).toHaveBeenCalled();
+    });
+  });
+
   it.skipIf(process.platform === 'win32')('silently ignores symlink entries (Dirent#isFile / #isDirectory both false for symlinks under withFileTypes)', async () => {
     // Windows requires admin or Developer Mode to call fs.symlink(). CI runs
     // on Linux where the test exercises the real path.

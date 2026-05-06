@@ -108,4 +108,51 @@ describe('streamCopyWithProgress', () => {
     const copied = await readFile(join(destDir, 'single.m4b'));
     expect(copied).toEqual(content);
   });
+
+  describe('single-file source (single-file audiobooks)', () => {
+    it('copies single file source into destDir/<basename> with byte-equal content', async () => {
+      const content = Buffer.alloc(2048, 'a');
+      const srcFile = join(srcDir, 'standalone.m4b');
+      await writeFile(srcFile, content);
+      const onProgress = vi.fn();
+
+      await streamCopyWithProgress(srcFile, destDir, onProgress);
+
+      const copied = await readFile(join(destDir, 'standalone.m4b'));
+      expect(copied).toEqual(content);
+    });
+
+    it('reports final progress (1.0, current=size, total=size) for single-file source', async () => {
+      const size = 4096;
+      const srcFile = join(srcDir, 'book.mp3');
+      await writeFile(srcFile, Buffer.alloc(size));
+      const onProgress = vi.fn();
+
+      await streamCopyWithProgress(srcFile, destDir, onProgress);
+
+      expect(onProgress).toHaveBeenCalled();
+      const lastCall = onProgress.mock.calls[onProgress.mock.calls.length - 1];
+      expect(lastCall![0]).toBeCloseTo(1.0, 1);
+      expect(lastCall![1]).toMatchObject({ current: size, total: size });
+    });
+
+    it('throws ENOENT for non-existent source path', async () => {
+      const onProgress = vi.fn();
+      await expect(
+        streamCopyWithProgress(join(srcDir, 'missing.m4b'), destDir, onProgress),
+      ).rejects.toMatchObject({ code: 'ENOENT' });
+    });
+
+    it('creates destDir if missing before copying single file', async () => {
+      const content = Buffer.alloc(100, 'z');
+      const srcFile = join(srcDir, 'one.m4b');
+      await writeFile(srcFile, content);
+      const newDest = join(destDir, 'subdir-not-yet-created');
+
+      await streamCopyWithProgress(srcFile, newDest, vi.fn());
+
+      const copied = await readFile(join(newDest, 'one.m4b'));
+      expect(copied).toEqual(content);
+    });
+  });
 });

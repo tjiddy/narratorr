@@ -591,6 +591,62 @@ describe('LibraryScanService', () => {
       expect(result.totalFolders).toBe(1);
     });
 
+    it('handles single-file discoveries: parses Author/Filename.m4b and folder-book together (#982)', async () => {
+      // Mixed-content shape from production: standalone .m4b at library root alongside folder books.
+      // discoverBooks emits the file path directly; the service must parse the filename
+      // (extension stripped) and produce a usable DiscoveredBook row.
+      vi.mocked(discoverBooks).mockResolvedValue([
+        {
+          path: '/audiobooks/Doctor Sleep.m4b',
+          folderParts: ['Doctor Sleep.m4b'],
+          audioFileCount: 1,
+          totalSize: 1_000_000,
+        },
+        {
+          path: '/audiobooks/Brandon Sanderson - The Way of Kings.m4b',
+          folderParts: ['Brandon Sanderson - The Way of Kings.m4b'],
+          audioFileCount: 1,
+          totalSize: 2_000_000,
+        },
+        {
+          path: '/audiobooks/The Stand by Stephen King',
+          folderParts: ['The Stand by Stephen King'],
+          audioFileCount: 12,
+          totalSize: 50_000_000,
+        },
+      ]);
+      mockPreFetch([], []);
+
+      const result = await service.scanDirectory('/audiobooks');
+
+      expect(result.discoveries).toHaveLength(3);
+      const byPath = Object.fromEntries(result.discoveries.map(d => [d.path, d]));
+
+      // Single-file with no author info → title-only (extension stripped)
+      expect(byPath['/audiobooks/Doctor Sleep.m4b']).toMatchObject({
+        path: '/audiobooks/Doctor Sleep.m4b',
+        parsedTitle: 'Doctor Sleep',
+        parsedAuthor: null,
+        fileCount: 1,
+        totalSize: 1_000_000,
+        isDuplicate: false,
+      });
+
+      // Single-file in "Author - Title.m4b" form parses through the same dash heuristic as folders
+      expect(byPath['/audiobooks/Brandon Sanderson - The Way of Kings.m4b']).toMatchObject({
+        parsedTitle: 'The Way of Kings',
+        parsedAuthor: 'Brandon Sanderson',
+        fileCount: 1,
+      });
+
+      // Folder book is unaffected
+      expect(byPath['/audiobooks/The Stand by Stephen King']).toMatchObject({
+        parsedTitle: 'The Stand',
+        parsedAuthor: 'Stephen King',
+        fileCount: 12,
+      });
+    });
+
     it('marks folders that already exist by path in DB as isDuplicate: true', async () => {
       vi.mocked(discoverBooks).mockResolvedValue([
         {
