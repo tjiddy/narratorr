@@ -62,6 +62,7 @@ const audibleProductSchema = z.object({
     title: z.string().nullish(),
   }).passthrough()).nullish(),
   format_type: z.string().nullish(),
+  content_delivery_type: z.string().nullish(),
 }).passthrough();
 
 const audibleProductsResponseSchema = z.object({
@@ -295,6 +296,7 @@ function mapProduct(product: AudibleProduct): Record<string, unknown> {
       ? product.runtime_length_min
       : undefined,
     formatType: product.format_type || undefined,
+    contentDeliveryType: product.content_delivery_type || undefined,
   };
 }
 
