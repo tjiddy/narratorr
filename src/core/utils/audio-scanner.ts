@@ -270,8 +270,8 @@ function parseAuthors(rawAuthor: string | undefined): { tagAuthor?: string; tagA
   if (!rawAuthor) return {};
   const parts = rawAuthor.split(/[,;&]/).map(s => s.trim()).filter(s => s.length > 0);
   if (parts.length === 0) return {};
-  if (parts.length === 1) return { tagAuthor: parts[0] };
-  return { tagAuthor: parts[0], tagAdditionalArtists: parts.slice(1).join(', ') };
+  if (parts.length === 1) return { tagAuthor: parts[0]! };
+  return { tagAuthor: parts[0]!, tagAdditionalArtists: parts.slice(1).join(', ') };
 }
 
 function extractCoverArt(result: AudioScanResult, common: ICommonTagsResult, skipCover: boolean): void {
