@@ -314,6 +314,16 @@ describe('tagTitleScore', () => {
     const meta = makeBook({ title: 'Discworld', series: [{ name: 'Discworld' }] });
     expect(tagTitleScore('Discworld', meta)).toBeCloseTo(1.0, 5);
   });
+
+  it('strips publisher decoration from result.title before composition', () => {
+    const meta = makeBook({ title: 'The Last Hero (Full Audiobook)', series: [{ name: 'Discworld' }] });
+    expect(tagTitleScore('The Last Hero: Discworld', meta)).toBeCloseTo(1.0, 5);
+  });
+
+  it('strips decoration from series.name before composition', () => {
+    const meta = makeBook({ title: 'Eric', series: [{ name: 'Discworld [Bonus]' }] });
+    expect(tagTitleScore('Eric: Discworld', meta)).toBeCloseTo(1.0, 5);
+  });
 });
 
 // ============================================================================

@@ -89,8 +89,8 @@ const TAG_AUTHOR_WEIGHT = 0.4;
  * `scores.length > 0 ? Math.max(...scores) : 0` form returns `0` instead.
  */
 export function tagTitleScore(input: string, result: BookMetadata): number {
-  const title = result.title ?? '';
-  const seriesName = result.series?.[0]?.name ?? '';
+  const title = cleanTagTitle(result.title ?? '');
+  const seriesName = cleanTagTitle(result.series?.[0]?.name ?? '');
   const seriesPos = result.series?.[0]?.position;
   const candidates: string[] = [title];
   if (seriesName) {
