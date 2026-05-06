@@ -469,6 +469,256 @@ describe('MetadataService', () => {
       });
     });
 
+    describe('language filtering (#1004)', () => {
+      const mockSettingsService = { get: vi.fn(), getAll: vi.fn(), set: vi.fn() };
+      let serviceWithSettings: MetadataService;
+
+      const setLanguages = (languages: string[], rejectWords = '', minDurationMinutes = 0) => {
+        mockSettingsService.get.mockImplementation((key: string) => {
+          if (key === 'quality') return Promise.resolve({ rejectWords, requiredWords: '', grabFloor: 0, minSeeders: 1, protocolPreference: 'none', searchImmediately: false, monitorForUpgrades: false });
+          if (key === 'metadata') return Promise.resolve({ audibleRegion: 'us', languages, minDurationMinutes });
+          return Promise.resolve({});
+        });
+      };
+
+      beforeEach(() => {
+        mockSettingsService.get.mockReset();
+        serviceWithSettings = new MetadataService(inject<FastifyBaseLogger>(mockLog), undefined, mockSettingsService as never);
+      });
+
+      it('searchBooks: filters out non-matching languages (english only)', async () => {
+        setLanguages(['english']);
+        mockAudibleProvider.searchBooks.mockResolvedValueOnce({
+          books: [
+            { title: 'English Book', language: 'english' },
+            { title: 'Spanish Book', language: 'spanish' },
+            { title: 'German Book', language: 'german' },
+          ],
+        });
+
+        const result = await serviceWithSettings.searchBooks('query');
+        expect(result).toEqual([{ title: 'English Book', language: 'english' }]);
+      });
+
+      it('searchBooks: keeps books matching any of multiple configured languages', async () => {
+        setLanguages(['english', 'spanish']);
+        mockAudibleProvider.searchBooks.mockResolvedValueOnce({
+          books: [
+            { title: 'English Book', language: 'english' },
+            { title: 'Spanish Book', language: 'spanish' },
+            { title: 'German Book', language: 'german' },
+          ],
+        });
+
+        const result = await serviceWithSettings.searchBooks('query');
+        expect(result).toEqual([
+          { title: 'English Book', language: 'english' },
+          { title: 'Spanish Book', language: 'spanish' },
+        ]);
+      });
+
+      it('searchBooks: returns all books when languages array is empty (filter disabled)', async () => {
+        setLanguages([]);
+        const allBooks = [
+          { title: 'Spanish Book', language: 'spanish' },
+          { title: 'English Book', language: 'english' },
+          { title: 'German Book', language: 'german' },
+        ];
+        mockAudibleProvider.searchBooks.mockResolvedValueOnce({ books: allBooks });
+
+        const result = await serviceWithSettings.searchBooks('query');
+        expect(result).toEqual(allBooks);
+      });
+
+      it('searchBooks: passes through books with no language field', async () => {
+        setLanguages(['english']);
+        mockAudibleProvider.searchBooks.mockResolvedValueOnce({
+          books: [
+            { title: 'No Language' },
+            { title: 'English Book', language: 'english' },
+            { title: 'Spanish Book', language: 'spanish' },
+          ],
+        });
+
+        const result = await serviceWithSettings.searchBooks('query');
+        expect(result).toEqual([
+          { title: 'No Language' },
+          { title: 'English Book', language: 'english' },
+        ]);
+      });
+
+      it('searchBooksForDiscovery: filters out non-matching languages', async () => {
+        setLanguages(['english']);
+        mockAudibleProvider.searchBooks.mockResolvedValueOnce({
+          books: [
+            { title: 'English Book', language: 'english' },
+            { title: 'Spanish Book', language: 'spanish' },
+            { title: 'German Book', language: 'german' },
+          ],
+        });
+
+        const result = await serviceWithSettings.searchBooksForDiscovery('Author');
+        expect(result.books).toEqual([{ title: 'English Book', language: 'english' }]);
+      });
+
+      it('searchBooksForDiscovery: returns all books when languages empty', async () => {
+        setLanguages([]);
+        const allBooks = [
+          { title: 'Spanish', language: 'spanish' },
+          { title: 'English', language: 'english' },
+        ];
+        mockAudibleProvider.searchBooks.mockResolvedValueOnce({ books: allBooks });
+
+        const result = await serviceWithSettings.searchBooksForDiscovery('Author');
+        expect(result.books).toEqual(allBooks);
+      });
+
+      // ── AC5: real-world fixture for Eric (Terry Pratchett) ─────────────
+      it('searchBooks: tag-pass against Eric multi-language fixture returns only english unabridged', async () => {
+        setLanguages(['english'], 'Abridged');
+        mockAudibleProvider.searchBooks.mockResolvedValueOnce({
+          books: [
+            { title: 'Eric', language: 'english', formatType: 'abridged', duration: 176, authors: [{ name: 'Terry Pratchett' }] },
+            { title: 'Eric', language: 'english', formatType: 'unabridged', duration: 238, authors: [{ name: 'Terry Pratchett' }] },
+            { title: 'Eric', language: 'spanish', formatType: 'unabridged', duration: 266, authors: [{ name: 'Terry Pratchett' }] },
+            { title: 'Eric', language: 'german', formatType: 'unabridged', duration: 297, authors: [{ name: 'Terry Pratchett' }] },
+          ],
+        });
+
+        const result = await serviceWithSettings.searchBooks('Eric Discworld Terry Pratchett', { title: 'Eric', author: 'Terry Pratchett' });
+        expect(result).toEqual([
+          { title: 'Eric', language: 'english', formatType: 'unabridged', duration: 238, authors: [{ name: 'Terry Pratchett' }] },
+        ]);
+      });
+
+      // ── AC5: Dark Forest fixture — only spanish edition exists, language filter clears all ─
+      it('searchBooks: Dark Forest fixture (only spanish result) returns empty after language filter', async () => {
+        setLanguages(['english']);
+        mockAudibleProvider.searchBooks.mockResolvedValueOnce({
+          books: [
+            { title: 'El bosque oscuro [The Dark Forest]', language: 'spanish', duration: 1359, authors: [{ name: 'Cixin Liu' }] },
+          ],
+        });
+
+        const result = await serviceWithSettings.searchBooks('The Dark Forest Cixin Liu');
+        expect(result).toEqual([]);
+      });
+    });
+
+    // ── AC9: symmetric fail-open coverage across all four surfaces ────────
+    describe('symmetric fail-open (#1004)', () => {
+      const mockSettingsService = { get: vi.fn(), getAll: vi.fn(), set: vi.fn() };
+      let serviceWithSettings: MetadataService;
+
+      beforeEach(() => {
+        mockSettingsService.get.mockReset();
+        serviceWithSettings = new MetadataService(inject<FastifyBaseLogger>(mockLog), undefined, mockSettingsService as never);
+      });
+
+      // metadata slice fails — language + duration skipped, rejectWords still runs
+      const stubMetadataFails = () => {
+        mockSettingsService.get.mockImplementation((key: string) => {
+          if (key === 'quality') return Promise.resolve({ rejectWords: 'Virtual Voice', requiredWords: '', grabFloor: 0, minSeeders: 1, protocolPreference: 'none', searchImmediately: false, monitorForUpgrades: false });
+          if (key === 'metadata') return Promise.reject(new Error('DB unavailable'));
+          return Promise.resolve({});
+        });
+      };
+
+      // quality slice fails — rejectWords skipped, language + duration still run
+      const stubQualityFails = () => {
+        mockSettingsService.get.mockImplementation((key: string) => {
+          if (key === 'quality') return Promise.reject(new Error('DB unavailable'));
+          if (key === 'metadata') return Promise.resolve({ audibleRegion: 'us', languages: ['english'], minDurationMinutes: 30 });
+          return Promise.resolve({});
+        });
+      };
+
+      const fixture = () => [
+        { title: 'Real', language: 'english', duration: 768, authors: [{ name: 'A' }], narrators: ['Jim Dale'] },
+        { title: 'Spanish', language: 'spanish', duration: 768, authors: [{ name: 'A' }], narrators: ['Jim Dale'] },
+        { title: 'Short', language: 'english', duration: 18, authors: [{ name: 'A' }], narrators: ['Jim Dale'] },
+        { title: 'Knockoff', language: 'english', duration: 768, authors: [{ name: 'B' }], narrators: ['Virtual Voice'] },
+      ];
+
+      it('searchBooks: metadata-slice failure leaves rejectWords applied', async () => {
+        stubMetadataFails();
+        mockAudibleProvider.searchBooks.mockResolvedValueOnce({ books: fixture() });
+
+        const result = await serviceWithSettings.searchBooks('query');
+        // rejectWords drops Knockoff; language + duration skipped (Spanish + Short remain)
+        expect(result.map((b) => b.title)).toEqual(['Real', 'Spanish', 'Short']);
+        expect(mockLog.warn).toHaveBeenCalled();
+      });
+
+      it('searchBooks: quality-slice failure leaves language + duration applied', async () => {
+        stubQualityFails();
+        mockAudibleProvider.searchBooks.mockResolvedValueOnce({ books: fixture() });
+
+        const result = await serviceWithSettings.searchBooks('query');
+        // rejectWords skipped → Knockoff remains; language drops Spanish; duration drops Short
+        expect(result.map((b) => b.title)).toEqual(['Real', 'Knockoff']);
+        expect(mockLog.warn).toHaveBeenCalled();
+      });
+
+      it('searchBooksForDiscovery: metadata-slice failure leaves rejectWords applied', async () => {
+        stubMetadataFails();
+        mockAudibleProvider.searchBooks.mockResolvedValueOnce({ books: fixture() });
+
+        const result = await serviceWithSettings.searchBooksForDiscovery('query');
+        expect(result.books.map((b) => b.title)).toEqual(['Real', 'Spanish', 'Short']);
+      });
+
+      it('searchBooksForDiscovery: quality-slice failure leaves language + duration applied', async () => {
+        stubQualityFails();
+        mockAudibleProvider.searchBooks.mockResolvedValueOnce({ books: fixture() });
+
+        const result = await serviceWithSettings.searchBooksForDiscovery('query');
+        expect(result.books.map((b) => b.title)).toEqual(['Real', 'Knockoff']);
+      });
+
+      it('search: metadata-slice failure leaves rejectWords applied (books only)', async () => {
+        stubMetadataFails();
+        mockAudibleProvider.searchBooks.mockResolvedValueOnce({ books: fixture() });
+        mockAudibleProvider.searchAuthors.mockResolvedValueOnce([]);
+        mockAudibleProvider.searchSeries.mockResolvedValueOnce([]);
+
+        const result = await serviceWithSettings.search('query');
+        expect(result.books.map((b) => b.title)).toEqual(['Real', 'Spanish', 'Short']);
+      });
+
+      it('search: quality-slice failure leaves language + duration applied (books only)', async () => {
+        stubQualityFails();
+        mockAudibleProvider.searchBooks.mockResolvedValueOnce({ books: fixture() });
+        mockAudibleProvider.searchAuthors.mockResolvedValueOnce([]);
+        mockAudibleProvider.searchSeries.mockResolvedValueOnce([]);
+
+        const result = await serviceWithSettings.search('query');
+        expect(result.books.map((b) => b.title)).toEqual(['Real', 'Knockoff']);
+      });
+
+      // ── AC4: filterAuthorBooks behavior diff under metadata-slice failure ─
+      // Previously bailed early returning ALL books unfiltered. New symmetric model
+      // applies rejectWords still and skips only the metadata-dependent filters.
+      it('getAuthorBooks: metadata-slice failure leaves rejectWords applied (behavior diff vs old early-bail)', async () => {
+        stubMetadataFails();
+        mockAudnexus.getAuthor.mockResolvedValueOnce({ name: 'Author', asin: 'B123' });
+        mockAudibleProvider.searchBooks.mockResolvedValueOnce({ books: fixture() });
+
+        const result = await serviceWithSettings.getAuthorBooks('B123');
+        expect(result.map((b) => b.title)).toEqual(['Real', 'Spanish', 'Short']);
+        expect(mockLog.warn).toHaveBeenCalled();
+      });
+
+      it('getAuthorBooks: quality-slice failure leaves language + duration applied', async () => {
+        stubQualityFails();
+        mockAudnexus.getAuthor.mockResolvedValueOnce({ name: 'Author', asin: 'B123' });
+        mockAudibleProvider.searchBooks.mockResolvedValueOnce({ books: fixture() });
+
+        const result = await serviceWithSettings.getAuthorBooks('B123');
+        expect(result.map((b) => b.title)).toEqual(['Real', 'Knockoff']);
+      });
+    });
+
     describe('min-duration filtering (#987)', () => {
       const mockSettingsService = { get: vi.fn(), getAll: vi.fn(), set: vi.fn() };
       let serviceWithSettings: MetadataService;

@@ -87,9 +87,7 @@ export class MetadataService {
     const authors = await this.withThrottledSearch(provider, 'searchAuthors', (p) => p.searchAuthors(query), warnings);
     const series = await this.withThrottledSearch(provider, 'searchSeries', (p) => p.searchSeries(query), warnings);
 
-    const languageFiltered = await this.filterBooksByLanguage(books);
-    const rejectFiltered = await this.filterRejectedBooks(languageFiltered);
-    const filteredBooks = await this.filterByMinDuration(rejectFiltered);
+    const filteredBooks = await this.applyBookFilters(books);
 
     this.log.debug(
       { books: filteredBooks.length, authors: authors.length, series: series.length },
@@ -136,8 +134,7 @@ export class MetadataService {
     const result = await this.withThrottle<SearchBooksResult>('searchBooks', (provider) => provider.searchBooks(query, options), { books: [] }, { query });
     const books = result.books;
     this.logParseDrop(result, this.providers[0]?.name);
-    const rejectFiltered = await this.filterRejectedBooks(books);
-    const filtered = await this.filterByMinDuration(rejectFiltered);
+    const filtered = await this.applyBookFilters(books);
     this.log.debug(
       { query, provider: this.providers[0]?.name, resultCount: filtered.length, filteredOut: books.length - filtered.length },
       'searchBooks completed',
@@ -173,8 +170,7 @@ export class MetadataService {
       warnings,
     );
 
-    const rejectFiltered = await this.filterRejectedBooks(books);
-    const filtered = await this.filterByMinDuration(rejectFiltered);
+    const filtered = await this.applyBookFilters(books);
     return { books: filtered, warnings };
   }
 
@@ -211,7 +207,17 @@ export class MetadataService {
       { books: [] },
     );
 
-    return this.filterAuthorBooks(result.books);
+    return this.applyBookFilters(result.books);
+  }
+
+  // Single source of truth for the metadata filter chain.
+  // Each helper reads its own settings slice and fails open independently —
+  // see issue #1004 for the symmetric fail-open model.
+  private async applyBookFilters(books: BookMetadata[]): Promise<BookMetadata[]> {
+    if (books.length === 0) return books;
+    const rejectFiltered = await this.filterRejectedBooks(books);
+    const languageFiltered = await this.filterBooksByLanguage(rejectFiltered);
+    return this.filterByMinDuration(languageFiltered);
   }
 
   private async filterBooksByLanguage(books: BookMetadata[]): Promise<BookMetadata[]> {
@@ -251,23 +257,6 @@ export class MetadataService {
       const surface = `${book.title} ${book.subtitle ?? ''} ${authorNames} ${narrators} ${book.formatType ?? ''}`.toLowerCase();
       return !rejectList.some((word) => matchesRejectWord(surface, word));
     });
-  }
-
-  private async filterAuthorBooks(books: BookMetadata[]): Promise<BookMetadata[]> {
-    if (!this.settingsService) return books;
-
-    let languages: readonly string[];
-    try {
-      const metadata = await this.settingsService.get('metadata');
-      languages = metadata.languages;
-    } catch (error: unknown) {
-      this.log.warn({ error: serializeError(error) }, 'Failed to read language settings for author book filtering — returning unfiltered results');
-      return books;
-    }
-
-    const rejectFiltered = await this.filterRejectedBooks(books);
-    const languageFiltered = filterByLanguage(rejectFiltered, languages).kept;
-    return this.filterByMinDuration(languageFiltered);
   }
 
   private async filterByMinDuration(books: BookMetadata[]): Promise<BookMetadata[]> {
