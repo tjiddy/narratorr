@@ -23,6 +23,7 @@ const REGION_LABELS: Record<string, string> = {
 const filteringFormSchema = z.object({
   audibleRegion: audibleRegionSchema,
   languages: z.array(z.string()),
+  minDurationMinutes: z.number().int().nonnegative(),
   rejectWords: z.string(),
   requiredWords: z.string(),
 });
@@ -33,6 +34,7 @@ function toFormData(settings: AppSettings): FilteringFormData {
   return {
     audibleRegion: settings.metadata.audibleRegion,
     languages: [...settings.metadata.languages],
+    minDurationMinutes: settings.metadata.minDurationMinutes,
     rejectWords: settings.quality.rejectWords,
     requiredWords: settings.quality.requiredWords,
   };
@@ -40,7 +42,11 @@ function toFormData(settings: AppSettings): FilteringFormData {
 
 function toPayload(data: FilteringFormData) {
   return {
-    metadata: { audibleRegion: data.audibleRegion, languages: data.languages as CanonicalLanguage[] },
+    metadata: {
+      audibleRegion: data.audibleRegion,
+      languages: data.languages as CanonicalLanguage[],
+      minDurationMinutes: data.minDurationMinutes,
+    },
     quality: {
       rejectWords: data.rejectWords,
       requiredWords: data.requiredWords,
@@ -106,6 +112,22 @@ export function FilteringSettingsSection() {
           </div>
           <p className="text-sm text-muted-foreground mt-2">
             Search results in unselected languages are excluded. Results with no language metadata always pass through. Deselect all for unrestricted search.
+          </p>
+        </div>
+
+        <div>
+          <label htmlFor="minDurationMinutes" className="block text-sm font-medium mb-2">Minimum Duration (minutes)</label>
+          <input
+            id="minDurationMinutes"
+            type="number"
+            min={0}
+            step={1}
+            {...register('minDurationMinutes', { valueAsNumber: true })}
+            className="w-full px-4 py-3 bg-background border border-border rounded-xl focus-ring focus:border-transparent transition-all"
+            placeholder="0"
+          />
+          <p className="text-sm text-muted-foreground mt-2">
+            Filter out promotional excerpts, TTS knockoffs, and supplementary clips. Set to 0 to disable. Recommended: 30 minutes.
           </p>
         </div>
 

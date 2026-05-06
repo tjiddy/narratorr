@@ -92,6 +92,44 @@ describe('FilteringSettingsSection', () => {
     });
   });
 
+  it('renders minimum-duration input with server value (#987)', async () => {
+    mockApi.getSettings.mockResolvedValue(
+      createMockSettings({
+        metadata: { audibleRegion: 'us', languages: ['english'], minDurationMinutes: 30 },
+        quality: { rejectWords: 'German', requiredWords: 'M4B' },
+      }),
+    );
+    renderWithProviders(<FilteringSettingsSection />);
+
+    await waitFor(() => {
+      expect(screen.getByLabelText('Minimum Duration (minutes)')).toHaveValue(30);
+    });
+  });
+
+  it('saves minDurationMinutes through the metadata half of the split payload (#987)', async () => {
+    mockApi.updateSettings.mockResolvedValue(mockSettings);
+    const user = userEvent.setup();
+    renderWithProviders(<FilteringSettingsSection />);
+
+    // Wait for the loaded mockSettings to populate the form (rather than just the defaults)
+    await waitFor(() => {
+      expect(screen.getByLabelText('Reject Words')).toHaveValue('German');
+    });
+
+    const durationInput = screen.getByLabelText('Minimum Duration (minutes)');
+    await user.tripleClick(durationInput);
+    await user.keyboard('30');
+
+    await user.click(screen.getByRole('button', { name: /save/i }));
+
+    await waitFor(() => {
+      expect(mockApi.updateSettings).toHaveBeenCalledWith({
+        metadata: { audibleRegion: 'us', languages: ['english'], minDurationMinutes: 30 },
+        quality: { rejectWords: 'German', requiredWords: 'M4B' },
+      });
+    });
+  });
+
   it('renders required words input with server value', async () => {
     renderWithProviders(<FilteringSettingsSection />);
 
@@ -139,7 +177,7 @@ describe('FilteringSettingsSection', () => {
 
     await waitFor(() => {
       expect(mockApi.updateSettings).toHaveBeenCalledWith({
-        metadata: { audibleRegion: 'us', languages: ['english'] },
+        metadata: { audibleRegion: 'us', languages: ['english'], minDurationMinutes: 0 },
         quality: { rejectWords: 'Abridged', requiredWords: 'M4B' },
       });
     });
@@ -160,7 +198,7 @@ describe('FilteringSettingsSection', () => {
 
     await waitFor(() => {
       expect(mockApi.updateSettings).toHaveBeenCalledWith({
-        metadata: { audibleRegion: 'de', languages: ['english'] },
+        metadata: { audibleRegion: 'de', languages: ['english'], minDurationMinutes: 0 },
         quality: { rejectWords: 'German', requiredWords: 'M4B' },
       });
     });

@@ -98,7 +98,7 @@ describe('settingsRegistry', () => {
     });
 
     it('metadata defaults have audibleRegion us', () => {
-      expect(DEFAULT_SETTINGS.metadata).toEqual({ audibleRegion: 'us', languages: ['english'] });
+      expect(DEFAULT_SETTINGS.metadata).toEqual({ audibleRegion: 'us', languages: ['english'], minDurationMinutes: 0 });
     });
 
     it('processing defaults have all expected values', () => {
