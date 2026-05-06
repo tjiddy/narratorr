@@ -363,6 +363,15 @@ describe('retrySearch', () => {
     expect(result.outcome).toBe('no_candidates');
     expect(deps.downloadOrchestrator.grab).not.toHaveBeenCalled();
     expect(deps.log.debug).toHaveBeenCalledWith(
+      expect.objectContaining({
+        title: 'The Way of Kings [MP3 64kbps]',
+        reason: 'below-min-size',
+        sizeBytes: 5 * 1024 * 1024,
+        minBytes: 50 * 1024 * 1024,
+      }),
+      'Quality filter dropped result',
+    );
+    expect(deps.log.debug).toHaveBeenCalledWith(
       { inputCount: 1, outputCount: 0 },
       'Quality gate filtering applied',
     );
