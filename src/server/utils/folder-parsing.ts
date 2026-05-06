@@ -2,6 +2,21 @@
 // Extracted from library-scan.service.ts for shared use by scan and debug endpoints.
 // All functions are pure (no `this`, no I/O).
 
+import { extname } from 'node:path';
+import { AUDIO_EXTENSIONS } from '../../core/utils/audio-constants.js';
+
+/**
+ * Strip a recognized audio extension from a path segment. Used for single-file
+ * book discoveries where folderParts ends with a filename like 'Book.m4b' —
+ * downstream parsers expect folder-style names without extensions.
+ */
+function stripAudioExtension(segment: string): string {
+  const ext = extname(segment).toLowerCase();
+  if (!AUDIO_EXTENSIONS.has(ext)) return segment;
+  const stripped = segment.slice(0, -ext.length);
+  return stripped || segment;
+}
+
 // ─── Regex Constants ────────────────────────────────────────────────
 
 /** Codec/format tags to strip from folder names (case-insensitive, word-boundary). */
@@ -337,15 +352,15 @@ export function parseFolderStructure(parts: string[]): {
 
   // Single folder: try to parse "Author - Title" or other patterns
   if (parts.length === 1) {
-    const folder = parts[0]!;
+    const folder = stripAudioExtension(parts[0]!);
     return parseSingleFolder(folder);
   }
 
   // Two folders: Author/Title (or Author/Series – NN – Title)
   // Extract ASIN from the title segment (2-part branch bypasses parseSingleFolder)
   if (parts.length === 2) {
-    const { asin, cleaned } = extractASIN(parts[1]!);
-    const titleSegment = cleaned || parts[1]!;
+    const { asin, cleaned } = extractASIN(stripAudioExtension(parts[1]!));
+    const titleSegment = cleaned || stripAudioExtension(parts[1]!);
 
     // P8: detect "Author - Series" in author segment (ASCII hyphen only)
     const { author: p8Author, series: p8Series } = splitAuthorSegment(parts[0]!, parseSingleFolder, cleanName);
@@ -379,8 +394,9 @@ export function parseFolderStructure(parts: string[]): {
 
   // Three or more folders: Author/Series/Title (take first, second-to-last, last)
   // Extract ASIN from the title segment (last part)
-  const { asin, cleaned } = extractASIN(parts[parts.length - 1]!);
-  const titleSegment = cleaned || parts[parts.length - 1]!;
+  const lastSegment = stripAudioExtension(parts[parts.length - 1]!);
+  const { asin, cleaned } = extractASIN(lastSegment);
+  const titleSegment = cleaned || lastSegment;
   return {
     title: cleanName(titleSegment),
     author: cleanName(parts[0]!),
@@ -422,12 +438,12 @@ export function parseFolderStructureRaw(parts: string[]): {
   }
 
   if (parts.length === 1) {
-    return parseSingleFolderRaw(parts[0]!);
+    return parseSingleFolderRaw(stripAudioExtension(parts[0]!));
   }
 
   if (parts.length === 2) {
-    const { asin, cleaned } = extractASIN(parts[1]!);
-    const titleSegment = cleaned || parts[1]!;
+    const { asin, cleaned } = extractASIN(stripAudioExtension(parts[1]!));
+    const titleSegment = cleaned || stripAudioExtension(parts[1]!);
 
     // P8: split `Author - Series` from raw author segment
     const { author: p8Author, series: p8Series } = splitAuthorSegment(parts[0]!, parseSingleFolderRaw, identity);
@@ -448,8 +464,9 @@ export function parseFolderStructureRaw(parts: string[]): {
     return { title: titleSegment, author: p8Author, series: p8Series, ...(asin !== undefined && { asin }) };
   }
 
-  const { asin, cleaned } = extractASIN(parts[parts.length - 1]!);
-  const titleSegment = cleaned || parts[parts.length - 1]!;
+  const lastSegment = stripAudioExtension(parts[parts.length - 1]!);
+  const { asin, cleaned } = extractASIN(lastSegment);
+  const titleSegment = cleaned || lastSegment;
   return {
     title: titleSegment,
     author: parts[0]!,

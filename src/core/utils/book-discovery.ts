@@ -150,16 +150,28 @@ function collectBooks(info: DirInfo, rootPath: string, results: DiscoveredFolder
   const hasOwnAudio = info.audioFiles.length > 0;
   const audioChildren = info.children.filter(c => countAudioFilesDeep(c) > 0);
 
+  // Pre-evaluate disc-merge eligibility — used to decide whether loose files in
+  // a mixed-content folder are bonus tracks (skip) or standalone books (emit).
+  const immediateAudioChildren = info.children.filter(c => c.audioFiles.length > 0);
+  const { discChildren, allSameTitle } = findMergeableDiscChildren(immediateAudioChildren);
+  const willDiscMerge = discChildren.length >= 2
+    && discChildren.length === immediateAudioChildren.length
+    && allSameTitle;
+
   if (hasOwnAudio && audioChildren.length > 0) {
-    // Mixed-content folder: has loose audio files AND subfolders with audio.
-    // Skip the loose files and fall through to disc-merge / recursion below.
-    log?.debug(
-      {
-        path: info.path,
-        skippedFiles: info.audioFiles.map(f => f.path),
-      },
-      'Skipping loose audio files in mixed-content folder',
-    );
+    if (willDiscMerge) {
+      // Multi-disc book; loose files are bonus tracks. Skip and fall through to disc-merge.
+      log?.debug(
+        { path: info.path, skippedFiles: info.audioFiles.map(f => f.path) },
+        'Skipping loose bonus audio in disc-merge folder',
+      );
+    } else {
+      // Mixed library: each loose file is its own single-file book.
+      for (const file of info.audioFiles) {
+        const fileInfo: DirInfo = { path: file.path, audioFiles: [file], children: [] };
+        results.push(makeFolderEntry(fileInfo, rootPath, [file]));
+      }
+    }
   } else if (hasOwnAudio) {
     // Pure leaf book folder — no audio-containing children
     log?.debug({ path: info.path, audioFiles: info.audioFiles.length }, 'Leaf book folder');
@@ -167,12 +179,7 @@ function collectBooks(info: DirInfo, rootPath: string, results: DiscoveredFolder
     return;
   }
 
-  // Check for disc folder pattern: 2+ immediate children with audio whose names
-  // match disc/CD naming conventions (bare: "CD1", "Disc 2"; titled: "BookTitle (Disc 01)")
-  const immediateAudioChildren = info.children.filter(c => c.audioFiles.length > 0);
-  const { discChildren, allSameTitle } = findMergeableDiscChildren(immediateAudioChildren);
-
-  if (discChildren.length >= 2 && discChildren.length === immediateAudioChildren.length && allSameTitle) {
+  if (willDiscMerge) {
     // All audio children are disc folders with compatible titles — merge into parent
     const allAudioFiles = discChildren.flatMap(c => collectAllAudioFiles(c));
     log?.debug(
