@@ -49,6 +49,64 @@ describe('folder-parsing (extracted from library-scan.service)', () => {
       expect(result.series).toBe('Series');
     });
 
+    describe('audio extension stripping for single-file discoveries (issue #982)', () => {
+      it.each(['.m4b', '.mp3', '.m4a', '.flac', '.ogg', '.opus', '.wma', '.aac'])(
+        '1-part: strips %s extension before parsing',
+        (ext) => {
+          const result = parseFolderStructure([`Doctor Sleep${ext}`]);
+          expect(result).toEqual({ title: 'Doctor Sleep', author: null, series: null });
+        },
+      );
+
+      it('1-part Author - Title.m4b → author + title (extension stripped)', () => {
+        const result = parseFolderStructure(['Brandon Sanderson - The Way of Kings.m4b']);
+        expect(result).toMatchObject({
+          title: 'The Way of Kings',
+          author: 'Brandon Sanderson',
+          series: null,
+        });
+      });
+
+      it('1-part Title by Author.mp3 → author + title (extension stripped)', () => {
+        const result = parseFolderStructure(['The Stand by Stephen King.mp3']);
+        expect(result).toMatchObject({
+          title: 'The Stand',
+          author: 'Stephen King',
+          series: null,
+        });
+      });
+
+      it('2-part Author/Title.m4b → author + title (extension stripped from title segment)', () => {
+        const result = parseFolderStructure(['Stephen King', 'Doctor Sleep.m4b']);
+        expect(result).toMatchObject({
+          title: 'Doctor Sleep',
+          author: 'Stephen King',
+          series: null,
+        });
+      });
+
+      it('3-part Author/Series/Title.flac → author + series + title (extension stripped)', () => {
+        const result = parseFolderStructure(['Brandon Sanderson', 'Stormlight Archive', 'The Way of Kings.flac']);
+        expect(result).toMatchObject({
+          title: 'The Way of Kings',
+          author: 'Brandon Sanderson',
+          series: 'Stormlight Archive',
+        });
+      });
+
+      it('does not strip non-audio extensions (.txt is not in AUDIO_EXTENSIONS)', () => {
+        // Title still flows through cleanName afterwards (which normalises dots to
+        // spaces); the assertion is that the .txt suffix is NOT removed before parsing.
+        const result = parseFolderStructure(['Book.txt']);
+        expect(result.title).not.toBe('Book');
+      });
+
+      it('extension match is case-insensitive', () => {
+        const result = parseFolderStructure(['Doctor Sleep.M4B']);
+        expect(result).toEqual({ title: 'Doctor Sleep', author: null, series: null });
+      });
+    });
+
     describe('2-part with all-numeric date-like title (issue #701)', () => {
       it('Stephen King/11-22-63 → title=11-22-63, author=Stephen King, no series', () => {
         expect(parseFolderStructure(['Stephen King', '11-22-63'])).toEqual({
@@ -805,6 +863,32 @@ describe('folder-parsing (extracted from library-scan.service)', () => {
       expect(result.author).toBe('Author Name');
       expect(result.title).toBe('Title MP3');
       expect(result.series).toBeNull();
+    });
+
+    describe('audio extension stripping for single-file discoveries (issue #982)', () => {
+      it('1-part: strips .m4b before raw parsing', () => {
+        const result = parseFolderStructureRaw(['Doctor Sleep.m4b']);
+        expect(result).toMatchObject({ title: 'Doctor Sleep', author: null });
+      });
+
+      it('1-part Author - Title.mp3 → raw author + title (extension stripped)', () => {
+        const result = parseFolderStructureRaw(['Brandon Sanderson - The Way of Kings.mp3']);
+        expect(result.author).toBe('Brandon Sanderson');
+        expect(result.title).toBe('The Way of Kings');
+      });
+
+      it('2-part Author/Title.flac → raw author + title (extension stripped from title segment)', () => {
+        const result = parseFolderStructureRaw(['Stephen King', 'Doctor Sleep.flac']);
+        expect(result.author).toBe('Stephen King');
+        expect(result.title).toBe('Doctor Sleep');
+      });
+
+      it('3-part last-segment .ogg extension stripped, intermediate segments untouched', () => {
+        const result = parseFolderStructureRaw(['Author', 'Series', 'Title.ogg']);
+        expect(result.title).toBe('Title');
+        expect(result.series).toBe('Series');
+        expect(result.author).toBe('Author');
+      });
     });
 
     it('returns raw 2-part with Series–NN–Title in second segment', () => {

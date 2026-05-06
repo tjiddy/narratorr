@@ -6,14 +6,30 @@ import type { DiscoveredBook } from '../../shared/schemas/library-scan.js';
 import { serializeError } from '../utils/serialize-error.js';
 
 
-export async function getAudioStats(dirPath: string, log: FastifyBaseLogger): Promise<{ fileCount: number; totalSize: number }> {
+export async function getAudioStats(path: string, log: FastifyBaseLogger): Promise<{ fileCount: number; totalSize: number }> {
+  let stats;
+  try {
+    stats = await stat(path);
+  } catch (error: unknown) {
+    log.warn({ error: serializeError(error), path }, 'Error getting audio stats');
+    return { fileCount: 0, totalSize: 0 };
+  }
+
+  // Single-file path: count it as one audio file (or zero for non-audio).
+  if (stats.isFile()) {
+    if (AUDIO_EXTENSIONS.has(extname(path).toLowerCase())) {
+      return { fileCount: 1, totalSize: stats.size };
+    }
+    return { fileCount: 0, totalSize: 0 };
+  }
+
   let fileCount = 0;
   let totalSize = 0;
 
   try {
-    const entries = await readdir(dirPath, { withFileTypes: true });
+    const entries = await readdir(path, { withFileTypes: true });
     for (const entry of entries) {
-      const entryPath = join(dirPath, entry.name);
+      const entryPath = join(path, entry.name);
       if (entry.isFile()) {
         if (AUDIO_EXTENSIONS.has(extname(entry.name).toLowerCase())) {
           fileCount++;
@@ -27,7 +43,7 @@ export async function getAudioStats(dirPath: string, log: FastifyBaseLogger): Pr
       }
     }
   } catch (error: unknown) {
-    log.warn({ error: serializeError(error), path: dirPath }, 'Error getting audio stats');
+    log.warn({ error: serializeError(error), path }, 'Error getting audio stats');
   }
 
   return { fileCount, totalSize };
