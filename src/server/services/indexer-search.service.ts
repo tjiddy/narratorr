@@ -13,6 +13,7 @@ import { getErrorMessage } from '../utils/error-message.js';
 import { serializeError } from '../utils/serialize-error.js';
 import { logIndexerSearchTrace } from './indexer-search-trace.js';
 import { preSearchRefresh } from './indexer-pre-search-refresh.js';
+import { cleanIndexerQuery, cleanIndexerSearchOptions } from './indexer-query.js';
 import type { IndexerService } from './indexer.service.js';
 import type { IndexerRow } from './types.js';
 
@@ -96,9 +97,15 @@ export class IndexerSearchService {
   }
 
   async searchAll(query: string, options?: SearchOptions): Promise<SearchResult[]> {
-    const { enabledIndexers, searchOptions } = await this.getEnabledIndexerRows(options);
+    const transportQuery = cleanIndexerQuery(query);
+    if (!transportQuery) {
+      this.log.debug({ originalQuery: query }, 'Search skipped — query empty after normalization');
+      return [];
+    }
+    const cleanedOptions = cleanIndexerSearchOptions(options);
+    const { enabledIndexers, searchOptions } = await this.getEnabledIndexerRows(cleanedOptions);
 
-    this.log.debug({ query, indexers: enabledIndexers.map(i => i.name), count: enabledIndexers.length }, 'Searching enabled indexers');
+    this.log.debug({ query: transportQuery, indexers: enabledIndexers.map(i => i.name), count: enabledIndexers.length }, 'Searching enabled indexers');
 
     const settlements = await Promise.allSettled(
       enabledIndexers.map(async (indexer) => {
@@ -110,7 +117,7 @@ export class IndexerSearchService {
           throw new Error(refresh.error ?? 'Indexer skipped');
         }
 
-        const response = await adapter.search(query, searchOptions);
+        const response = await adapter.search(transportQuery, searchOptions);
         logIndexerSearchTrace(this.log, indexer, response);
         const mapped = response.results.map(r => ({ ...r, indexerId: indexer.id, indexerPriority: indexer.priority }));
         this.parseReleaseNames(mapped, indexer.name);
@@ -128,13 +135,16 @@ export class IndexerSearchService {
         results.push(...settlement.value);
       } else {
         perIndexerCounts[name] = 0;
-        this.log.warn({ indexer: name, query, error: serializeError(settlement.reason) }, 'Error searching indexer');
+        this.log.warn({ indexer: name, query: transportQuery, error: serializeError(settlement.reason) }, 'Error searching indexer');
       }
     }
 
-    this.log.debug({ query, indexerCount: enabledIndexers.length, perIndexerCounts }, 'Search aggregated across indexers');
+    this.log.debug({ query: transportQuery, indexerCount: enabledIndexers.length, perIndexerCounts }, 'Search aggregated across indexers');
 
-    // Score results against search context when title is provided
+    // Score results against search context when title is provided. Use RAW
+    // options (NOT cleaned transport values) — scoreResult runs Dice on the
+    // result side raw, so cleaning the context side asymmetrically would drop
+    // matchScore by 0.4-0.7 on punctuated cases. See #1015.
     if (options?.title) {
       const context = { title: options.title, ...(options.author !== undefined && { author: options.author }) };
       for (const result of results) {
@@ -166,9 +176,15 @@ export class IndexerSearchService {
       onCancelled?: (indexerId: number, name: string) => void;
     },
   ): Promise<SearchResult[]> {
-    const { enabledIndexers, searchOptions } = await this.getEnabledIndexerRows(options);
+    const transportQuery = cleanIndexerQuery(query);
+    if (!transportQuery) {
+      this.log.debug({ originalQuery: query }, 'Streaming search skipped — query empty after normalization');
+      return [];
+    }
+    const cleanedOptions = cleanIndexerSearchOptions(options);
+    const { enabledIndexers, searchOptions } = await this.getEnabledIndexerRows(cleanedOptions);
 
-    this.log.debug({ query, indexers: enabledIndexers.map(i => i.name), count: enabledIndexers.length }, 'Streaming search started');
+    this.log.debug({ query: transportQuery, indexers: enabledIndexers.map(i => i.name), count: enabledIndexers.length }, 'Streaming search started');
 
     const perIndexerResults = new Map<number, SearchResult[]>();
 
@@ -188,7 +204,7 @@ export class IndexerSearchService {
             return;
           }
 
-          const response = await adapter.search(query, { ...searchOptions, signal });
+          const response = await adapter.search(transportQuery, { ...searchOptions, signal });
           logIndexerSearchTrace(this.log, indexer, response);
           const elapsedMs = Date.now() - indexerStartMs;
           const mapped = response.results.map(r => ({ ...r, indexerId: indexer.id, indexerPriority: indexer.priority }));
@@ -204,7 +220,7 @@ export class IndexerSearchService {
             return;
           }
           const message = getErrorMessage(error);
-          this.log.warn({ indexer: indexer.name, query, error: serializeError(error) }, 'Error searching indexer');
+          this.log.warn({ indexer: indexer.name, query: transportQuery, error: serializeError(error) }, 'Error searching indexer');
           callbacks.onError(indexer.id, indexer.name, message, elapsedMs);
         }
       }),
@@ -218,9 +234,9 @@ export class IndexerSearchService {
       perIndexerCounts[indexer.name] = indexerResults.length;
       results.push(...indexerResults);
     }
-    this.log.debug({ query, indexerCount: enabledIndexers.length, perIndexerCounts }, 'Search aggregated across indexers');
+    this.log.debug({ query: transportQuery, indexerCount: enabledIndexers.length, perIndexerCounts }, 'Search aggregated across indexers');
 
-    // Score results
+    // Score against RAW options (see searchAll for rationale).
     if (options?.title) {
       const context = { title: options.title, ...(options.author !== undefined && { author: options.author }) };
       for (const result of results) {
