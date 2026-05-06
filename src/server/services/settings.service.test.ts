@@ -689,7 +689,7 @@ describe('migrateLanguageSettings', () => {
 describe('migrateRejectWordsDefault', () => {
   let db: ReturnType<typeof createMockDb>;
   let service: SettingsService;
-  const NEW_DEFAULT = 'Virtual Voice, Free Excerpt, Sample, Behind the Scenes';
+  const NEW_DEFAULT = 'Virtual Voice, Free Excerpt, Sample, Behind the Scenes, Abridged';
   const FLAG_ID = 'rejectWords-defaults-v1';
 
   // Helper: extract { table, row } for the Nth insert call.
@@ -888,6 +888,165 @@ describe('migrateRejectWordsDefault', () => {
     // Read after migration should hit DB (cache invalidated) and see new value
     const after = await service.get('quality');
     expect(after.rejectWords).toBe(NEW_DEFAULT);
+  });
+});
+
+describe('migrateRejectWordsAbridgedDefault (#993)', () => {
+  let db: ReturnType<typeof createMockDb>;
+  let service: SettingsService;
+  const OLD_PACKAGED_DEFAULT = 'Virtual Voice, Free Excerpt, Sample, Behind the Scenes';
+  const NEW_PACKAGED_DEFAULT = 'Virtual Voice, Free Excerpt, Sample, Behind the Scenes, Abridged';
+  const FLAG_ID = 'rejectWords-defaults-v2-abridged';
+
+  function insertCall(n: number): { table: unknown; row: unknown } {
+    const tableArg = db.insert.mock.calls[n]![0];
+    const chain = db.insert.mock.results[n]!.value as { values: { mock: { calls: Array<Array<unknown>> } } };
+    const row = chain.values.mock.calls[n]![0];
+    return { table: tableArg, row };
+  }
+
+  beforeEach(() => {
+    initializeKey(TEST_KEY);
+    db = createMockDb();
+    service = new SettingsService(inject<Db>(db), inject<FastifyBaseLogger>(createMockLogger()));
+  });
+
+  afterEach(() => {
+    _resetKey();
+  });
+
+  it('writes new default when stored rejectWords is exactly the OLD packaged default', async () => {
+    let callCount = 0;
+    db.select.mockImplementation(() => {
+      callCount++;
+      if (callCount === 1) return mockDbChain([]); // v2 flag check — not present
+      if (callCount === 2) return mockDbChain([{ key: 'quality', value: { grabFloor: 0, rejectWords: OLD_PACKAGED_DEFAULT } }]);
+      return mockDbChain([]);
+    });
+    db.insert.mockReturnValue(mockDbChain());
+
+    await service.migrateRejectWordsAbridgedDefault();
+
+    // Two writes: quality update + flag insert
+    expect(db.insert.mock.calls.length).toBe(2);
+    const qualityWrite = insertCall(0);
+    expect(qualityWrite.table).toBe(settings);
+    expect(qualityWrite.row).toMatchObject({ key: 'quality', value: expect.objectContaining({ rejectWords: NEW_PACKAGED_DEFAULT, grabFloor: 0 }) });
+
+    const flagWrite = insertCall(1);
+    expect(flagWrite.table).toBe(settingsMigrations);
+    expect(flagWrite.row).toEqual({ id: FLAG_ID });
+  });
+
+  it('skips quality write when user customized rejectWords (anything other than OLD default), but marks flag applied', async () => {
+    let callCount = 0;
+    db.select.mockImplementation(() => {
+      callCount++;
+      if (callCount === 1) return mockDbChain([]);
+      if (callCount === 2) return mockDbChain([{ key: 'quality', value: { grabFloor: 0, rejectWords: 'Virtual Voice, Free Excerpt' } }]);
+      return mockDbChain([]);
+    });
+    db.insert.mockReturnValue(mockDbChain());
+
+    await service.migrateRejectWordsAbridgedDefault();
+
+    expect(db.insert.mock.calls.length).toBe(1);
+    const flagWrite = insertCall(0);
+    expect(flagWrite.table).toBe(settingsMigrations);
+    expect(flagWrite.row).toEqual({ id: FLAG_ID });
+  });
+
+  it('skips quality write when stored rejectWords is empty (deliberately cleared post-v1), but marks flag applied', async () => {
+    let callCount = 0;
+    db.select.mockImplementation(() => {
+      callCount++;
+      if (callCount === 1) return mockDbChain([]);
+      if (callCount === 2) return mockDbChain([{ key: 'quality', value: { grabFloor: 0, rejectWords: '' } }]);
+      return mockDbChain([]);
+    });
+    db.insert.mockReturnValue(mockDbChain());
+
+    await service.migrateRejectWordsAbridgedDefault();
+
+    expect(db.insert.mock.calls.length).toBe(1);
+    expect(insertCall(0).table).toBe(settingsMigrations);
+    expect(insertCall(0).row).toEqual({ id: FLAG_ID });
+  });
+
+  it('skips quality write when already on the new default, but marks flag applied', async () => {
+    let callCount = 0;
+    db.select.mockImplementation(() => {
+      callCount++;
+      if (callCount === 1) return mockDbChain([]);
+      if (callCount === 2) return mockDbChain([{ key: 'quality', value: { grabFloor: 0, rejectWords: NEW_PACKAGED_DEFAULT } }]);
+      return mockDbChain([]);
+    });
+    db.insert.mockReturnValue(mockDbChain());
+
+    await service.migrateRejectWordsAbridgedDefault();
+
+    expect(db.insert.mock.calls.length).toBe(1);
+    expect(insertCall(0).table).toBe(settingsMigrations);
+    expect(insertCall(0).row).toEqual({ id: FLAG_ID });
+  });
+
+  it('skips quality write when no quality row exists, but marks flag applied', async () => {
+    let callCount = 0;
+    db.select.mockImplementation(() => {
+      callCount++;
+      if (callCount === 1) return mockDbChain([]);
+      if (callCount === 2) return mockDbChain([]);
+      return mockDbChain([]);
+    });
+    db.insert.mockReturnValue(mockDbChain());
+
+    await service.migrateRejectWordsAbridgedDefault();
+
+    expect(db.insert.mock.calls.length).toBe(1);
+    expect(insertCall(0).table).toBe(settingsMigrations);
+    expect(insertCall(0).row).toEqual({ id: FLAG_ID });
+  });
+
+  it('is idempotent: returns early when v2 flag is already set, no quality row read', async () => {
+    db.select.mockReturnValueOnce(mockDbChain([{ id: FLAG_ID, appliedAt: new Date() }]));
+
+    await service.migrateRejectWordsAbridgedDefault();
+
+    expect(db.insert).not.toHaveBeenCalled();
+    expect(db.select).toHaveBeenCalledTimes(1);
+  });
+
+  it('preserves other quality fields when upgrading the OLD default', async () => {
+    let callCount = 0;
+    db.select.mockImplementation(() => {
+      callCount++;
+      if (callCount === 1) return mockDbChain([]);
+      if (callCount === 2) return mockDbChain([{ key: 'quality', value: { grabFloor: 50, protocolPreference: 'torrent', minSeeders: 10, rejectWords: OLD_PACKAGED_DEFAULT, requiredWords: 'M4B' } }]);
+      return mockDbChain([]);
+    });
+    db.insert.mockReturnValue(mockDbChain());
+
+    await service.migrateRejectWordsAbridgedDefault();
+
+    const qualityWrite = insertCall(0);
+    expect(qualityWrite.table).toBe(settings);
+    expect((qualityWrite.row as { value: Record<string, unknown> }).value).toEqual({
+      grabFloor: 50,
+      protocolPreference: 'torrent',
+      minSeeders: 10,
+      rejectWords: NEW_PACKAGED_DEFAULT,
+      requiredWords: 'M4B',
+    });
+  });
+
+  it('logs warning and does not throw on DB error', async () => {
+    db.select.mockImplementation(() => { throw new Error('DB connection failed'); });
+    const log = createMockLogger();
+    const failingService = new SettingsService(inject<Db>(db), inject<FastifyBaseLogger>(log));
+
+    await failingService.migrateRejectWordsAbridgedDefault();
+
+    expect(log.warn).toHaveBeenCalled();
   });
 });
 

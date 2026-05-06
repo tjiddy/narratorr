@@ -246,4 +246,50 @@ export class SettingsService {
       this.log.warn({ error: serializeError(error), migration: MIGRATION_ID }, 'rejectWords defaults migration failed — will retry on next boot');
     }
   }
+
+  /**
+   * One-time write migration: when an install ran v1 and stored exactly the OLD
+   * packaged default (#986's initial value, before #993 appended `Abridged`),
+   * upgrade it to the new packaged default. Customized values, deliberately-cleared
+   * empty strings, and already-on-new-default values are left alone. The v2 flag
+   * is marked applied unconditionally so a subsequent boot is a strict no-op.
+   *
+   * Compares against a HARDCODED OLD default literal — NOT against the current
+   * `DEFAULT_REJECT_WORDS`, which is the new value. A future addition would ship
+   * a v3 migration with its own hardcoded comparison string.
+   */
+  async migrateRejectWordsAbridgedDefault(): Promise<void> {
+    const MIGRATION_ID = 'rejectWords-defaults-v2-abridged';
+    const OLD_DEFAULT = 'Virtual Voice, Free Excerpt, Sample, Behind the Scenes';
+    const NEW_DEFAULT = 'Virtual Voice, Free Excerpt, Sample, Behind the Scenes, Abridged';
+    try {
+      const flagRow = await this.db
+        .select()
+        .from(settingsMigrations)
+        .where(eq(settingsMigrations.id, MIGRATION_ID))
+        .limit(1);
+      if (flagRow.length > 0) return;
+
+      const qualityRow = await this.db.select().from(settings).where(eq(settings.key, 'quality')).limit(1);
+      if (qualityRow.length > 0) {
+        const stored = { ...(qualityRow[0]!.value as Record<string, unknown>) };
+        if (stored.rejectWords === OLD_DEFAULT) {
+          stored.rejectWords = NEW_DEFAULT;
+          await this.db
+            .insert(settings)
+            .values({ key: 'quality', value: stored })
+            .onConflictDoUpdate({ target: settings.key, set: { value: stored } });
+          this.invalidateCache('quality');
+          this.log.info({ migration: MIGRATION_ID }, 'Appended Abridged to legacy packaged rejectWords default');
+        }
+      }
+
+      await this.db
+        .insert(settingsMigrations)
+        .values({ id: MIGRATION_ID })
+        .onConflictDoNothing();
+    } catch (error: unknown) {
+      this.log.warn({ error: serializeError(error), migration: MIGRATION_ID }, 'rejectWords abridged migration failed — will retry on next boot');
+    }
+  }
 }
