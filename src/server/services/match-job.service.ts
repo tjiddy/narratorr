@@ -1,5 +1,4 @@
 import { randomUUID } from 'node:crypto';
-import { basename } from 'node:path';
 import type { FastifyBaseLogger } from 'fastify';
 import type { MetadataService } from './metadata.service.js';
 import type { BookMetadata } from '../../core/metadata/index.js';
@@ -7,14 +6,13 @@ import { scanAudioDirectory, type AudioScanResult } from '../../core/utils/audio
 import { resolveFfprobePathFromSettings } from '../../core/utils/ffprobe-path.js';
 import type { SettingsService } from './settings.service.js';
 import { Semaphore } from '../utils/semaphore.js';
-import { scoreResult, diceCoefficient, normalizeNarrator } from '../../core/utils/similarity.js';
-import { extractYear, cleanTagTitle } from '../utils/folder-parsing.js';
+import { diceCoefficient, normalizeNarrator } from '../../core/utils/similarity.js';
+import { cleanTagTitle } from '../utils/folder-parsing.js';
 import { searchWithSwapRetryTrace } from '../utils/search-helpers.js';
 import { getErrorMessage } from '../utils/error-message.js';
 import { serializeError } from '../utils/serialize-error.js';
+import { deriveTagQuery, rankResults, rankResultsCleaned, resolveConfidenceFromDuration } from './match-job.helpers.js';
 
-
-// ============ Types ============
 
 export type Confidence = 'high' | 'medium' | 'none';
 
@@ -41,13 +39,8 @@ export interface MatchJobStatus {
   results: MatchResult[];
 }
 
-// ============ Service ============
-
 const MAX_CONCURRENCY = 5;
 const TTL_MS = 10 * 60 * 1000; // 10 minutes after completion
-const DURATION_THRESHOLD_STRICT = 0.05; // 5% tolerance for weaker matches
-const DURATION_THRESHOLD_RELAXED = 0.15; // 15% tolerance for high-confidence matches
-const COMBINED_SCORE_GATE = 0.95; // Score threshold for relaxed duration matching
 const TITLE_SIMILARITY_FLOOR = 0.5; // Below this, confidence is 'none'
 const TAG_AUTHOR_PREDICATE_FLOOR = 0.7; // Tag-pass author-name dice threshold (#984)
 
@@ -296,15 +289,10 @@ class MatchJob {
     }
   }
 
-  /**
-   * Pass 1 — tag-derived match (#984). Returns a MatchResult when the embedded
-   * tags produce an accepted match (top result clears title floor + author
-   * predicate). Returns null in any failure mode (no tags, zero results, floor
-   * fail, predicate fail, unexpected throw) so the caller falls through to the
-   * filename-derived path. Does NOT use searchWithSwapRetryTrace — tag.title and
-   * tag.albumartist are structurally distinct, so swap retry would only produce
-   * false positives.
-   */
+  // Pass 1 — tag-derived match (#984). Returns null on any failure (no tags,
+  // zero results, floor fail, predicate fail, unexpected throw); caller falls
+  // through to filename-derived. Bypasses searchWithSwapRetryTrace — tag.title
+  // and tag.albumartist are structurally distinct, no swap-on-zero needed.
   private async tryTagDerivedMatch(
     book: MatchCandidate,
     audioResult: AudioScanResult | null,
@@ -315,10 +303,36 @@ class MatchJob {
 
     this.log.debug({ path: book.path, tagTitle: tagQuery.title, tagAuthor: tagQuery.author }, 'Tag-derived metadata search');
 
-    let tagResults: BookMetadata[];
+    const tagResults = await this.runTagSearch(book, tagQuery);
+    if (!tagResults || tagResults.length === 0) return null;
+
+    const detailed = await this.fetchDetails(tagResults);
+    if (detailed.length === 0) return null;
+
+    const scored = rankResultsCleaned(detailed, tagQuery);
+    const top = scored[0];
+    if (!top) return null;
+
+    if (!this.tagPassPredicatesPass(book, tagQuery, top)) return null;
+
+    if (scored.length === 1) {
+      return { path: book.path, confidence: 'high', bestMatch: top.meta, alternatives: [] };
+    }
+
+    const { confidence, reason } = resolveConfidenceFromDuration(scored, duration);
+    return {
+      path: book.path,
+      confidence,
+      bestMatch: top.meta,
+      alternatives: scored.slice(1).map(s => s.meta),
+      ...(reason !== undefined && { reason }),
+    };
+  }
+
+  /** Tag-pass searchBooks call with AC13 inner try/catch. Returns null on throw. */
+  private async runTagSearch(book: MatchCandidate, tagQuery: { title: string; author: string }): Promise<BookMetadata[] | null> {
     try {
-      const query = `${tagQuery.title} ${tagQuery.author}`;
-      tagResults = await this.metadataService.searchBooks(query, {
+      return await this.metadataService.searchBooks(`${tagQuery.title} ${tagQuery.author}`, {
         title: tagQuery.title,
         author: tagQuery.author,
       });
@@ -329,29 +343,22 @@ class MatchJob {
       );
       return null;
     }
+  }
 
-    if (tagResults.length === 0) {
-      this.log.debug({ path: book.path }, 'Tag-derived search returned zero results — falling through');
-      return null;
-    }
-
-    const detailed = await this.fetchDetails(tagResults);
-    if (detailed.length === 0) return null;
-
-    const scored = rankResultsCleaned(detailed, tagQuery);
-    const top = scored[0];
-    if (!top) return null;
-
-    const cleanedTopTitle = cleanTagTitle(top.meta.title ?? '');
-    const titleFloor = top.meta.title ? diceCoefficient(cleanedTopTitle, tagQuery.title) : 0;
+  /** AC5 — title floor + author predicate gate for the tag pass. Logs at debug on failure. */
+  private tagPassPredicatesPass(
+    book: MatchCandidate,
+    tagQuery: { title: string; author: string },
+    top: { meta: BookMetadata; score: number },
+  ): boolean {
+    const titleFloor = top.meta.title ? diceCoefficient(cleanTagTitle(top.meta.title), tagQuery.title) : 0;
     if (titleFloor < TITLE_SIMILARITY_FLOOR) {
       this.log.debug(
         { path: book.path, titleSimilarity: titleFloor.toFixed(2), bestTitle: top.meta.title },
         'Tag-derived top result below title floor — falling through',
       );
-      return null;
+      return false;
     }
-
     const topAuthor = top.meta.authors?.[0]?.name;
     const authorScore = topAuthor
       ? diceCoefficient(normalizeNarrator(topAuthor), normalizeNarrator(tagQuery.author))
@@ -361,37 +368,9 @@ class MatchJob {
         { path: book.path, topResultAuthor: topAuthor, tagAuthor: tagQuery.author, score: authorScore.toFixed(2) },
         'tag-author predicate failed — falling through to filename-derived path',
       );
-      return null;
+      return false;
     }
-
-    if (scored.length === 1) {
-      this.log.debug(
-        { path: book.path, title: top.meta.title, score: top.score.toFixed(2) },
-        'Tag-derived single result — high confidence',
-      );
-      return { path: book.path, confidence: 'high', bestMatch: top.meta, alternatives: [] };
-    }
-
-    const { confidence, reason } = resolveConfidenceFromDuration(scored, duration);
-    this.log.debug(
-      {
-        path: book.path,
-        confidence,
-        resultCount: scored.length,
-        topScore: top.score.toFixed(2),
-        bestTitle: top.meta.title,
-        hasDuration: !!duration,
-        matchDuration: top.meta.duration,
-      },
-      confidence === 'high' ? 'Tag-derived duration-verified high confidence' : reason ?? 'Tag-derived multiple results — medium confidence',
-    );
-    return {
-      path: book.path,
-      confidence,
-      bestMatch: top.meta,
-      alternatives: scored.slice(1).map(s => s.meta),
-      ...(reason !== undefined && { reason }),
-    };
+    return true;
   }
 
   private async fetchDetails(results: BookMetadata[]): Promise<BookMetadata[]> {
@@ -417,122 +396,3 @@ class MatchJob {
   }
 }
 
-/** Format minutes as hours with 1 decimal place. */
-function formatHours(minutes: number): string {
-  return (minutes / 60).toFixed(1);
-}
-
-interface DurationConfidenceResult {
-  confidence: Confidence;
-  reason?: string;
-}
-
-/**
- * Determines confidence from duration data without overriding the similarity-ranked winner.
- * The bestMatch stays as the top similarity-ranked result; duration only affects confidence level.
- */
-function resolveConfidenceFromDuration(
-  scored: { meta: BookMetadata; score: number }[],
-  duration: number | undefined,
-): DurationConfidenceResult {
-  if (!duration || duration <= 0) {
-    return { confidence: 'medium', reason: 'Multiple results — no duration data to disambiguate' };
-  }
-
-  const topResult = scored[0]!;
-  // If the top-ranked result has duration data, use it for confidence
-  if (topResult.meta.duration && topResult.meta.duration > 0) {
-    const distance = Math.abs(topResult.meta.duration - duration) / duration;
-    const threshold = topResult.score >= COMBINED_SCORE_GATE
-      ? DURATION_THRESHOLD_RELAXED
-      : DURATION_THRESHOLD_STRICT;
-    if (distance <= threshold) {
-      return { confidence: 'high' };
-    }
-    return {
-      confidence: 'medium',
-      reason: `Duration mismatch — scanned ${formatHours(duration)}hrs vs expected ${formatHours(topResult.meta.duration)}hrs`,
-    };
-  }
-
-  // Top result has no duration — cannot verify
-  return { confidence: 'medium', reason: 'Best match missing duration — cannot verify' };
-}
-
-/**
- * Build a tag-derived search query from the AudioScanResult, applying
- * cleanTagTitle to tagTitle. Returns null when the scan lacks usable tags
- * (missing title or author after trimming) — caller falls through to Pass 2.
- * tagAuthor is already first-comma-segment from the scanner; we just trim.
- */
-function deriveTagQuery(audioResult: AudioScanResult | null): { title: string; author: string } | null {
-  if (!audioResult) return null;
-  const rawTitle = audioResult.tagTitle?.trim();
-  const rawAuthor = audioResult.tagAuthor?.trim();
-  if (!rawTitle || !rawAuthor) return null;
-  const cleanedTitle = cleanTagTitle(rawTitle).trim();
-  if (!cleanedTitle) return null;
-  return { title: cleanedTitle, author: rawAuthor };
-}
-
-/**
- * Scores and ranks tag-pass results by similarity, applying cleanTagTitle to
- * BOTH the result title and the input title before dice scoring (AC7). The
- * input context is already cleaned in deriveTagQuery; here we only need to
- * normalize the result side. No year tiebreaker — tag context doesn't carry
- * folder year.
- */
-function rankResultsCleaned(
-  detailed: BookMetadata[],
-  tagQuery: { title: string; author: string },
-): { meta: BookMetadata; score: number }[] {
-  const scored = detailed.map(meta => ({
-    meta,
-    score: scoreResult(
-      {
-        ...(meta.title !== undefined && { title: cleanTagTitle(meta.title) }),
-        ...(meta.authors?.[0]?.name !== undefined && { author: meta.authors[0].name }),
-      },
-      tagQuery,
-    ),
-  }));
-  scored.sort((a, b) => b.score - a.score);
-  return scored;
-}
-
-/** Scores and ranks results by title+author similarity with year tiebreaker. */
-function rankResults(
-  detailed: BookMetadata[],
-  book: MatchCandidate,
-): { meta: BookMetadata; score: number }[] {
-  const context = { title: book.title, ...(book.author !== undefined && { author: book.author }) };
-  const scored = detailed.map(meta => ({
-    meta,
-    score: scoreResult(
-      { title: meta.title, ...(meta.authors?.[0]?.name !== undefined && { author: meta.authors[0].name }) },
-      context,
-    ),
-  }));
-
-  const folderYear = extractYear(basename(book.path));
-
-  scored.sort((a, b) => {
-    if (Math.abs(a.score - b.score) < 0.001 && folderYear) {
-      const aYear = parsePublishedYear(a.meta.publishedDate);
-      const bYear = parsePublishedYear(b.meta.publishedDate);
-      const aMatch = aYear === folderYear ? 1 : 0;
-      const bMatch = bYear === folderYear ? 1 : 0;
-      if (aMatch !== bMatch) return bMatch - aMatch;
-    }
-    return b.score - a.score;
-  });
-
-  return scored;
-}
-
-/** Extracts a 4-digit year from a publishedDate string (e.g., "2011-06-14" → 2011). */
-function parsePublishedYear(date: string | undefined): number | undefined {
-  if (!date) return undefined;
-  const match = date.match(/\b(\d{4})\b/);
-  return match ? parseInt(match[1]!, 10) : undefined;
-}
