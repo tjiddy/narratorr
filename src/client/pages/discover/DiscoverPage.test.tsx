@@ -565,6 +565,40 @@ describe('DiscoverPage', () => {
       expect(screen.queryByText('Abridged English Book')).not.toBeInTheDocument();
       expect(screen.queryByText('Good German Book')).not.toBeInTheDocument();
     });
+
+    // ===== #993 — word-boundary matching =====
+
+    it('does NOT hide "Unabridged" titles when rejectWords is "Abridged" (collision protection)', async () => {
+      mockApi.getSettings.mockResolvedValue(makeSettings({ rejectWords: 'Abridged' }));
+      mockApi.getDiscoverSuggestions.mockResolvedValue([
+        makeSuggestion({ id: 1, title: 'The Unabridged Edition' }),
+        makeSuggestion({ id: 2, title: 'The Abridged Version' }),
+      ]);
+      mockApi.getBookStats.mockResolvedValue(makeStats());
+
+      renderWithProviders(<DiscoverPage />);
+
+      await waitFor(() => {
+        expect(screen.getByText('The Unabridged Edition')).toBeInTheDocument();
+      });
+      expect(screen.queryByText('The Abridged Version')).not.toBeInTheDocument();
+    });
+
+    it('"Sample" hides "Sample Chapters" but not "Sampleyana" (word boundary)', async () => {
+      mockApi.getSettings.mockResolvedValue(makeSettings({ rejectWords: 'Sample' }));
+      mockApi.getDiscoverSuggestions.mockResolvedValue([
+        makeSuggestion({ id: 1, title: 'Sample Chapters' }),
+        makeSuggestion({ id: 2, title: 'Sampleyana' }),
+      ]);
+      mockApi.getBookStats.mockResolvedValue(makeStats());
+
+      renderWithProviders(<DiscoverPage />);
+
+      await waitFor(() => {
+        expect(screen.getByText('Sampleyana')).toBeInTheDocument();
+      });
+      expect(screen.queryByText('Sample Chapters')).not.toBeInTheDocument();
+    });
   });
 
   describe('add mutation with overrides', () => {

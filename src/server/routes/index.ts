@@ -211,6 +211,9 @@ export async function createServices(db: Db, log: FastifyBaseLogger): Promise<Se
   // Replace legacy empty rejectWords with packaged defaults (one-time, idempotent)
   await settings.migrateRejectWordsDefault();
 
+  // Append `Abridged` to legacy packaged rejectWords default (one-time, idempotent)
+  await settings.migrateRejectWordsAbridgedDefault();
+
   // Health check service with system deps
   const { resolveProxyIp } = await import('../../core/indexers/proxy.js');
   const healthCheck = new HealthCheckService(

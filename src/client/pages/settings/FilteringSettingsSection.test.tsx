@@ -100,6 +100,28 @@ describe('FilteringSettingsSection', () => {
     });
   });
 
+  // ===== #993 — UI copy reflects new defaults + format-type surface =====
+
+  it('reject words placeholder includes Abridged in the new packaged default', async () => {
+    renderWithProviders(<FilteringSettingsSection />);
+
+    const placeholder = await screen.findByPlaceholderText(
+      'Virtual Voice, Free Excerpt, Sample, Behind the Scenes, Abridged',
+    );
+    expect(placeholder).toBeInTheDocument();
+  });
+
+  it('reject words help text mentions format type in the surface description', async () => {
+    renderWithProviders(<FilteringSettingsSection />);
+
+    await waitFor(() => {
+      expect(screen.getByLabelText('Reject Words')).toBeInTheDocument();
+    });
+    expect(
+      screen.getByText(/title, subtitle, author, narrator, or format type/i),
+    ).toBeInTheDocument();
+  });
+
   it('saves split payload: metadata.audibleRegion + quality filtering fields', async () => {
     mockApi.updateSettings.mockResolvedValue(mockSettings);
     const user = userEvent.setup();

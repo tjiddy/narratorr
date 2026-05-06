@@ -4,7 +4,7 @@ import { stripDefaults } from './strip-defaults.js';
 export const protocolPreferenceSchema = z.enum(['usenet', 'torrent', 'none']);
 export type ProtocolPreference = z.infer<typeof protocolPreferenceSchema>;
 
-export const DEFAULT_REJECT_WORDS = 'Virtual Voice, Free Excerpt, Sample, Behind the Scenes';
+export const DEFAULT_REJECT_WORDS = 'Virtual Voice, Free Excerpt, Sample, Behind the Scenes, Abridged';
 
 export const qualitySettingsSchema = z.object({
   grabFloor: z.number().nonnegative().default(0),

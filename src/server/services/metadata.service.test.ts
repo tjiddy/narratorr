@@ -401,6 +401,72 @@ describe('MetadataService', () => {
         expect(result.authors).toEqual([{ name: 'Virtual Voice Author' }]);
         expect(result.series).toEqual([{ name: 'Virtual Voice Series' }]);
       });
+
+      // ===== #993 — formatType surface + word-boundary matching =====
+
+      it('filters abridged books via formatType surface', async () => {
+        setRejectWords('Abridged');
+        mockAudibleProvider.searchBooks.mockResolvedValueOnce({
+          books: [
+            { title: 'Clean Book', authors: [{ name: 'X' }], formatType: 'unabridged' },
+            { title: 'Old Cassette Edition', authors: [{ name: 'X' }], formatType: 'abridged' },
+          ],
+        });
+
+        const result = await serviceWithSettings.searchBooks('query');
+        expect(result).toEqual([{ title: 'Clean Book', authors: [{ name: 'X' }], formatType: 'unabridged' }]);
+      });
+
+      it('does NOT filter unabridged books when rejectWords is "Abridged" (word-boundary protection)', async () => {
+        setRejectWords('Abridged');
+        mockAudibleProvider.searchBooks.mockResolvedValueOnce({
+          books: [
+            { title: 'A Book', authors: [{ name: 'X' }], formatType: 'unabridged' },
+          ],
+        });
+
+        const result = await serviceWithSettings.searchBooks('query');
+        expect(result).toHaveLength(1);
+        expect(result[0]!.formatType).toBe('unabridged');
+      });
+
+      it('Sample matches "Sample Chapters" but not "Sampleyana" (word boundary)', async () => {
+        setRejectWords('Sample');
+        mockAudibleProvider.searchBooks.mockResolvedValueOnce({
+          books: [
+            { title: 'Sample Chapters', authors: [{ name: 'X' }] },
+            { title: 'Sampleyana', authors: [{ name: 'X' }] },
+          ],
+        });
+
+        const result = await serviceWithSettings.searchBooks('query');
+        expect(result).toEqual([{ title: 'Sampleyana', authors: [{ name: 'X' }] }]);
+      });
+
+      it('multi-word phrase "Behind the Scenes" still filters correctly with word boundaries', async () => {
+        setRejectWords('Behind the Scenes');
+        mockAudibleProvider.searchBooks.mockResolvedValueOnce({
+          books: [
+            { title: 'Real Book', authors: [{ name: 'X' }] },
+            { title: 'Behind the Scenes Featurette', authors: [{ name: 'X' }] },
+          ],
+        });
+
+        const result = await serviceWithSettings.searchBooks('query');
+        expect(result).toEqual([{ title: 'Real Book', authors: [{ name: 'X' }] }]);
+      });
+
+      it('with empty rejectWords, abridged books are NOT filtered (override path preserved)', async () => {
+        setRejectWords('');
+        const books = [
+          { title: 'A Book', authors: [{ name: 'X' }], formatType: 'abridged' },
+          { title: 'Another', authors: [{ name: 'X' }], formatType: 'unabridged' },
+        ];
+        mockAudibleProvider.searchBooks.mockResolvedValueOnce({ books });
+
+        const result = await serviceWithSettings.searchBooks('query');
+        expect(result).toEqual(books);
+      });
     });
   });
 

@@ -294,6 +294,7 @@ function mapProduct(product: AudibleProduct): Record<string, unknown> {
     duration: product.runtime_length_min && !isNaN(product.runtime_length_min)
       ? product.runtime_length_min
       : undefined,
+    formatType: product.format_type || undefined,
   };
 }
 

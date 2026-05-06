@@ -30,6 +30,7 @@ export const BookMetadataSchema = z.object({
   duration: z.number().optional(),
   genres: z.array(z.string()).optional(),
   relevance: z.number().optional(),
+  formatType: z.string().optional(),
 });
 
 export const AuthorMetadataSchema = z.object({
