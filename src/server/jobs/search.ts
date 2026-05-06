@@ -194,6 +194,7 @@ export async function runUpgradeSearchJob(
         requiredWords: qualitySettings.requiredWords,
         languages: metadataSettings.languages,
         narratorPriority,
+        minDownloadSize: qualitySettings.minDownloadSize,
         maxDownloadSize: qualitySettings.maxDownloadSize,
       }, log);
       if (results.length < searchInputCount) {

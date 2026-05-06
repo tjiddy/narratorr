@@ -341,6 +341,33 @@ describe('retrySearch', () => {
     );
   });
 
+  it('filters undersized candidates via minDownloadSize and logs quality gate filtering', async () => {
+    const undersizedResult = {
+      ...mockSearchResult,
+      size: 5 * 1024 * 1024, // 5MB — below 50MB threshold
+      downloadUrl: 'magnet:?xt=urn:btih:tinyspam',
+      infoHash: 'tinyspam123',
+    };
+    const settings = createMockSettingsService({
+      quality: { minDownloadSize: 50 },
+    });
+    const deps = createDeps({
+      settingsService: settings,
+      indexerSearchService: inject<IndexerSearchService>({
+        searchAll: vi.fn().mockResolvedValue([undersizedResult]),
+      }),
+    });
+
+    const result = await retrySearch(1, deps);
+
+    expect(result.outcome).toBe('no_candidates');
+    expect(deps.downloadOrchestrator.grab).not.toHaveBeenCalled();
+    expect(deps.log.debug).toHaveBeenCalledWith(
+      { inputCount: 1, outputCount: 0 },
+      'Quality gate filtering applied',
+    );
+  });
+
   it('handles book with no active indexers (empty results)', async () => {
     const deps = createDeps({
       indexerSearchService: inject<IndexerSearchService>({

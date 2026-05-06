@@ -109,6 +109,7 @@ export async function retrySearch(
       requiredWords: qualitySettings.requiredWords,
       languages: metadataSettings.languages,
       ...(narratorPriority !== undefined && { narratorPriority }),
+      minDownloadSize: qualitySettings.minDownloadSize,
       maxDownloadSize: qualitySettings.maxDownloadSize,
     }, log);
     if (results.length < retryInputCount) {

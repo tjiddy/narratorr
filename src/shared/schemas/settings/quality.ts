@@ -10,6 +10,7 @@ export const qualitySettingsSchema = z.object({
   grabFloor: z.number().nonnegative().default(0),
   protocolPreference: protocolPreferenceSchema.default('none'),
   minSeeders: z.number().int().nonnegative().default(1),
+  minDownloadSize: z.number().nonnegative().default(0),
   maxDownloadSize: z.number().nonnegative().default(5),
   searchImmediately: z.boolean().default(false),
   monitorForUpgrades: z.boolean().default(false),
@@ -25,6 +26,7 @@ export const qualityFormSchema = stripDefaults(qualitySettingsSchema) as z.ZodOb
   grabFloor: z.ZodNumber;
   protocolPreference: typeof protocolPreferenceSchema;
   minSeeders: z.ZodNumber;
+  minDownloadSize: z.ZodNumber;
   maxDownloadSize: z.ZodNumber;
   searchImmediately: z.ZodBoolean;
   monitorForUpgrades: z.ZodBoolean;

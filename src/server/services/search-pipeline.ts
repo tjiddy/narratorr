@@ -14,7 +14,7 @@ import { safeEmit } from '../utils/safe-emit.js';
 import { ensureError } from '../utils/ensure-error.js';
 import { buildGrabPayload } from './grab-payload.js';
 import { parseWordList } from '../../shared/parse-word-list.js';
-import { BYTES_PER_GB } from '../../shared/constants.js';
+import { BYTES_PER_GB, BYTES_PER_MB } from '../../shared/constants.js';
 
 /**
  * Strip punctuation that fragments indexer Torznab queries while preserving
@@ -64,6 +64,7 @@ export interface SearchFilterOptions {
   requiredWords?: string | undefined;
   languages?: readonly string[] | undefined;
   narratorPriority?: NarratorPriority | undefined;
+  minDownloadSize?: number | undefined;
   maxDownloadSize?: number | undefined;
 }
 
@@ -99,9 +100,10 @@ function buildQualityGates(
   durationUnknown: boolean,
   options: SearchFilterOptions,
 ): Gate[] {
-  const { grabFloor, minSeeders, rejectWords, requiredWords, maxDownloadSize } = options;
+  const { grabFloor, minSeeders, rejectWords, requiredWords, minDownloadSize, maxDownloadSize } = options;
   const rejectList = parseWordList(rejectWords);
   const requiredList = parseWordList(requiredWords);
+  const minBytes = minDownloadSize && minDownloadSize > 0 ? minDownloadSize * BYTES_PER_MB : 0;
   const maxBytes = maxDownloadSize && maxDownloadSize > 0 ? maxDownloadSize * BYTES_PER_GB : 0;
 
   return [
@@ -156,6 +158,15 @@ function buildQualityGates(
       },
     },
     {
+      reason: 'below-min-size',
+      enabled: minBytes > 0,
+      evaluate: (r) => {
+        if (!r.size || r.size <= 0) return { keep: true };
+        if (r.size >= minBytes) return { keep: true };
+        return { keep: false, logFields: { sizeBytes: r.size, minBytes } };
+      },
+    },
+    {
       reason: 'over-max-size',
       enabled: maxBytes > 0,
       evaluate: (r) => {
@@ -174,7 +185,7 @@ function buildQualityGates(
  *
  * Quality gates run sequentially (gate N sees the output of gate N-1) in
  * canonical order: reject-word → required-word → ebook-only → min-seeders →
- * grab-floor → max-size. Language partitioning runs after the gate array
+ * grab-floor → min-size → max-size. Language partitioning runs after the gate array
  * because it emits two log branches (mismatch dropped + undetermined passed)
  * that don't fit the keep/drop shape.
  *
@@ -293,6 +304,7 @@ export async function postProcessSearchResults(
     rejectWords: qualitySettings.rejectWords,
     requiredWords: qualitySettings.requiredWords,
     languages: metadataSettings.languages,
+    minDownloadSize: qualitySettings.minDownloadSize,
     maxDownloadSize: qualitySettings.maxDownloadSize,
   }, logger);
   if (ranked.results.length < inputCount) logger.debug({ inputCount, outputCount: ranked.results.length }, 'Quality gate filtering applied');

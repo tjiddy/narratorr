@@ -75,6 +75,7 @@ export const settingsRegistry = {
       grabFloor: 0,
       protocolPreference: 'none' as const,
       minSeeders: 1,
+      minDownloadSize: 0,
       maxDownloadSize: 5,
       searchImmediately: false,
       monitorForUpgrades: false,
