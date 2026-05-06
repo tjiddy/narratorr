@@ -4,6 +4,8 @@ import { stripDefaults } from './strip-defaults.js';
 export const protocolPreferenceSchema = z.enum(['usenet', 'torrent', 'none']);
 export type ProtocolPreference = z.infer<typeof protocolPreferenceSchema>;
 
+export const DEFAULT_REJECT_WORDS = 'Virtual Voice, Free Excerpt, Sample, Behind the Scenes';
+
 export const qualitySettingsSchema = z.object({
   grabFloor: z.number().nonnegative().default(0),
   protocolPreference: protocolPreferenceSchema.default('none'),
@@ -11,7 +13,7 @@ export const qualitySettingsSchema = z.object({
   maxDownloadSize: z.number().nonnegative().default(5),
   searchImmediately: z.boolean().default(false),
   monitorForUpgrades: z.boolean().default(false),
-  rejectWords: z.string().default(''),
+  rejectWords: z.string().default(DEFAULT_REJECT_WORDS),
   requiredWords: z.string().default(''),
 });
 

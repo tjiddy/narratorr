@@ -152,6 +152,7 @@ describe('createServices', () => {
       this.get = vi.fn().mockResolvedValue({ audibleRegion: 'us' });
       this.bootstrapProcessingDefaults = vi.fn().mockResolvedValue(undefined);
       this.migrateLanguageSettings = vi.fn().mockResolvedValue(undefined);
+      this.migrateRejectWordsDefault = vi.fn().mockResolvedValue(undefined);
     } as never);
 
     const { createServices } = await import('./index.js');
@@ -180,6 +181,32 @@ describe('createServices', () => {
       this.get = vi.fn().mockResolvedValue({ audibleRegion: 'us' });
       this.bootstrapProcessingDefaults = vi.fn().mockResolvedValue(undefined);
       this.migrateLanguageSettings = mockMigrate;
+      this.migrateRejectWordsDefault = vi.fn().mockResolvedValue(undefined);
+    } as never);
+
+    const { createServices } = await import('./index.js');
+    const db = {} as unknown as Db;
+    const log = {
+      info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn(),
+      child: vi.fn().mockReturnThis(), trace: vi.fn(), fatal: vi.fn(),
+    } as unknown as FastifyBaseLogger;
+
+    await createServices(db, log);
+
+    expect(mockMigrate).toHaveBeenCalledOnce();
+  });
+
+  // ===== #986 — migrateRejectWordsDefault called on startup =====
+  it('invokes migrateRejectWordsDefault on startup', async () => {
+    const { SettingsService } = await import('../services/index.js');
+
+    const mockMigrate = vi.fn().mockResolvedValue(undefined);
+
+    vi.mocked(SettingsService).mockImplementation(function(this: Record<string, unknown>) {
+      this.get = vi.fn().mockResolvedValue({ audibleRegion: 'us' });
+      this.bootstrapProcessingDefaults = vi.fn().mockResolvedValue(undefined);
+      this.migrateLanguageSettings = vi.fn().mockResolvedValue(undefined);
+      this.migrateRejectWordsDefault = mockMigrate;
     } as never);
 
     const { createServices } = await import('./index.js');
@@ -205,6 +232,7 @@ describe('createServices', () => {
       this.get = vi.fn().mockResolvedValue({ audibleRegion: 'us' });
       this.bootstrapProcessingDefaults = mockBootstrap;
       this.migrateLanguageSettings = vi.fn().mockResolvedValue(undefined);
+      this.migrateRejectWordsDefault = vi.fn().mockResolvedValue(undefined);
     } as never);
 
     const { createServices } = await import('./index.js');
@@ -232,6 +260,7 @@ describe('createServices', () => {
       this.get = vi.fn().mockResolvedValue({ audibleRegion: 'us' });
       this.bootstrapProcessingDefaults = vi.fn().mockResolvedValue(undefined);
       this.migrateLanguageSettings = vi.fn().mockResolvedValue(undefined);
+      this.migrateRejectWordsDefault = vi.fn().mockResolvedValue(undefined);
     } as never);
 
     const { createServices } = await import('./index.js');
@@ -283,6 +312,7 @@ describe('createServices', () => {
       this.get = vi.fn().mockResolvedValue({ audibleRegion: 'us' });
       this.bootstrapProcessingDefaults = vi.fn().mockResolvedValue(undefined);
       this.migrateLanguageSettings = vi.fn().mockResolvedValue(undefined);
+      this.migrateRejectWordsDefault = vi.fn().mockResolvedValue(undefined);
     } as never);
 
     const { createServices } = await import('./index.js');

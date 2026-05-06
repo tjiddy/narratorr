@@ -116,10 +116,10 @@ export function FilteringSettingsSection() {
             type="text"
             {...register('rejectWords')}
             className="w-full px-4 py-3 bg-background border border-border rounded-xl focus-ring focus:border-transparent transition-all"
-            placeholder="German, Abridged, Full Cast, Dramatized"
+            placeholder="Virtual Voice, Free Excerpt, Sample, Behind the Scenes"
           />
           <p className="text-sm text-muted-foreground mt-2">
-            Comma-separated words. Releases with titles matching any word are excluded from search results.
+            Comma-separated words. Releases or metadata results matching any word in title, subtitle, author, or narrator are excluded.
           </p>
         </div>
 

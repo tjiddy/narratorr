@@ -4,6 +4,7 @@ import { SettingsService } from './settings.service.js';
 import type { UpdateSettingsInput } from '../../shared/schemas/settings/registry.js';
 import type { FastifyBaseLogger } from 'fastify';
 import type { Db } from '../../db/index.js';
+import { settings, settingsMigrations } from '../../db/schema.js';
 import { initializeKey, _resetKey, isEncrypted } from '../utils/secret-codec.js';
 
 const TEST_KEY = Buffer.from('a'.repeat(64), 'hex');
@@ -682,6 +683,211 @@ describe('migrateLanguageSettings', () => {
     await service.migrateLanguageSettings();
 
     expect(log.warn).toHaveBeenCalled();
+  });
+});
+
+describe('migrateRejectWordsDefault', () => {
+  let db: ReturnType<typeof createMockDb>;
+  let service: SettingsService;
+  const NEW_DEFAULT = 'Virtual Voice, Free Excerpt, Sample, Behind the Scenes';
+  const FLAG_ID = 'rejectWords-defaults-v1';
+
+  // Helper: extract { table, row } for the Nth insert call.
+  // db.insert.mockReturnValue(...) hands the SAME chain to every call, so
+  // chain.values.mock.calls accumulates across all inserts; index by `n`
+  // to find the row paired with the Nth insert.
+  function insertCall(n: number): { table: unknown; row: unknown } {
+    const tableArg = db.insert.mock.calls[n]![0];
+    const chain = db.insert.mock.results[n]!.value as { values: { mock: { calls: Array<Array<unknown>> } } };
+    const row = chain.values.mock.calls[n]![0];
+    return { table: tableArg, row };
+  }
+
+  beforeEach(() => {
+    initializeKey(TEST_KEY);
+    db = createMockDb();
+    service = new SettingsService(inject<Db>(db), inject<FastifyBaseLogger>(createMockLogger()));
+  });
+
+  afterEach(() => {
+    _resetKey();
+  });
+
+  it('writes new default rejectWords when stored quality.rejectWords is empty string (legacy)', async () => {
+    let callCount = 0;
+    db.select.mockImplementation(() => {
+      callCount++;
+      if (callCount === 1) return mockDbChain([]); // migration flag check
+      if (callCount === 2) return mockDbChain([{ key: 'quality', value: { grabFloor: 0, rejectWords: '' } }]);
+      return mockDbChain([]);
+    });
+    db.insert.mockReturnValue(mockDbChain());
+
+    await service.migrateRejectWordsDefault();
+
+    // Two writes expected: quality update + flag insert
+    expect(db.insert.mock.calls.length).toBe(2);
+    const qualityWrite = insertCall(0);
+    expect(qualityWrite.table).toBe(settings);
+    expect(qualityWrite.row).toMatchObject({ key: 'quality', value: expect.objectContaining({ rejectWords: NEW_DEFAULT, grabFloor: 0 }) });
+
+    // Flag write: must target settingsMigrations with the exact durable id.
+    const flagWrite = insertCall(1);
+    expect(flagWrite.table).toBe(settingsMigrations);
+    expect(flagWrite.row).toEqual({ id: FLAG_ID });
+  });
+
+  it('skips quality write when stored rejectWords is non-empty (user customized) but still marks flag applied with the correct id', async () => {
+    let callCount = 0;
+    db.select.mockImplementation(() => {
+      callCount++;
+      if (callCount === 1) return mockDbChain([]); // flag check — not run
+      if (callCount === 2) return mockDbChain([{ key: 'quality', value: { grabFloor: 0, rejectWords: 'My Custom Word' } }]);
+      return mockDbChain([]);
+    });
+    db.insert.mockReturnValue(mockDbChain());
+
+    await service.migrateRejectWordsDefault();
+
+    // Only one insert: the flag.
+    expect(db.insert.mock.calls.length).toBe(1);
+    const flagWrite = insertCall(0);
+    expect(flagWrite.table).toBe(settingsMigrations);
+    expect(flagWrite.row).toEqual({ id: FLAG_ID });
+  });
+
+  it('skips quality write and marks flag applied with the correct id when no quality row exists', async () => {
+    let callCount = 0;
+    db.select.mockImplementation(() => {
+      callCount++;
+      if (callCount === 1) return mockDbChain([]); // flag check — not run
+      if (callCount === 2) return mockDbChain([]); // no quality row
+      return mockDbChain([]);
+    });
+    db.insert.mockReturnValue(mockDbChain());
+
+    await service.migrateRejectWordsDefault();
+
+    // Only one insert: the flag.
+    expect(db.insert.mock.calls.length).toBe(1);
+    const flagWrite = insertCall(0);
+    expect(flagWrite.table).toBe(settingsMigrations);
+    expect(flagWrite.row).toEqual({ id: FLAG_ID });
+  });
+
+  it('end-to-end: no-row install -> migration sets flag -> user later clears rejectWords -> rerun does not re-migrate', async () => {
+    // First boot: no quality row, no flag row — migration writes only the flag.
+    let phase1Calls = 0;
+    db.select.mockImplementation(() => {
+      phase1Calls++;
+      if (phase1Calls === 1) return mockDbChain([]); // flag check
+      if (phase1Calls === 2) return mockDbChain([]); // no quality row
+      return mockDbChain([]);
+    });
+    db.insert.mockReturnValue(mockDbChain());
+
+    await service.migrateRejectWordsDefault();
+
+    expect(db.insert.mock.calls.length).toBe(1);
+    expect(insertCall(0).table).toBe(settingsMigrations);
+    expect(insertCall(0).row).toEqual({ id: FLAG_ID });
+
+    // Simulate a later boot: user has now written quality with empty rejectWords (deliberate clear),
+    // and the flag row from the first boot is present. Migration must NOT re-fire.
+    db.insert.mockClear();
+    db.select.mockReset();
+    db.select.mockReturnValueOnce(mockDbChain([{ id: FLAG_ID, appliedAt: new Date() }]));
+
+    await service.migrateRejectWordsDefault();
+
+    // No writes whatsoever — '' stays ''.
+    expect(db.insert).not.toHaveBeenCalled();
+    // Only the flag check happened; no quality read either.
+    expect(db.select).toHaveBeenCalledTimes(1);
+  });
+
+  it('is idempotent: returns early when migration flag is already set', async () => {
+    db.select.mockReturnValueOnce(mockDbChain([{ id: 'rejectWords-defaults-v1', appliedAt: new Date() }]));
+
+    await service.migrateRejectWordsDefault();
+
+    expect(db.insert).not.toHaveBeenCalled();
+    // Only one DB read — the flag check
+    expect(db.select).toHaveBeenCalledTimes(1);
+  });
+
+  it('post-migration user-cleared empty string is preserved (does not re-migrate)', async () => {
+    // Flag is already set from the previous run
+    db.select.mockReturnValueOnce(mockDbChain([{ id: 'rejectWords-defaults-v1', appliedAt: new Date() }]));
+
+    await service.migrateRejectWordsDefault();
+
+    // No writes — stored '' stays '' on subsequent reads
+    expect(db.insert).not.toHaveBeenCalled();
+  });
+
+  it('logs warning and does not throw on DB error', async () => {
+    db.select.mockImplementation(() => { throw new Error('DB connection failed'); });
+    const log = createMockLogger();
+    const failingService = new SettingsService(inject<Db>(db), inject<FastifyBaseLogger>(log));
+
+    await failingService.migrateRejectWordsDefault();
+
+    expect(log.warn).toHaveBeenCalled();
+  });
+
+  it('preserves other quality fields when overwriting empty rejectWords', async () => {
+    let callCount = 0;
+    db.select.mockImplementation(() => {
+      callCount++;
+      if (callCount === 1) return mockDbChain([]);
+      if (callCount === 2) return mockDbChain([{ key: 'quality', value: { grabFloor: 50, protocolPreference: 'torrent', minSeeders: 10, rejectWords: '', requiredWords: 'M4B' } }]);
+      return mockDbChain([]);
+    });
+    db.insert.mockReturnValue(mockDbChain());
+
+    await service.migrateRejectWordsDefault();
+
+    const qualityWrite = insertCall(0);
+    expect(qualityWrite.table).toBe(settings);
+    expect((qualityWrite.row as { value: Record<string, unknown> }).value).toEqual({
+      grabFloor: 50,
+      protocolPreference: 'torrent',
+      minSeeders: 10,
+      rejectWords: NEW_DEFAULT,
+      requiredWords: 'M4B',
+    });
+    // Flag identity backstop on this path too.
+    const flagWrite = insertCall(1);
+    expect(flagWrite.table).toBe(settingsMigrations);
+    expect(flagWrite.row).toEqual({ id: FLAG_ID });
+  });
+
+  it('invalidates quality cache after legacy-default write', async () => {
+    let callCount = 0;
+    db.select.mockImplementation(() => {
+      callCount++;
+      // 1st call: prime cache with legacy ''
+      if (callCount === 1) return mockDbChain([{ key: 'quality', value: { grabFloor: 0, rejectWords: '' } }]);
+      // 2nd call: migration flag check (no flag yet)
+      if (callCount === 2) return mockDbChain([]);
+      // 3rd call: migration reads raw quality blob
+      if (callCount === 3) return mockDbChain([{ key: 'quality', value: { grabFloor: 0, rejectWords: '' } }]);
+      // 4th call onward: post-migration get returns new value (cache miss)
+      return mockDbChain([{ key: 'quality', value: { grabFloor: 0, rejectWords: NEW_DEFAULT } }]);
+    });
+    db.insert.mockReturnValue(mockDbChain());
+
+    // Prime cache with legacy value
+    const before = await service.get('quality');
+    expect(before.rejectWords).toBe('');
+
+    // Run migration — should invalidate cache after writing new defaults
+    await service.migrateRejectWordsDefault();
+
+    // Read after migration should hit DB (cache invalidated) and see new value
+    const after = await service.get('quality');
+    expect(after.rejectWords).toBe(NEW_DEFAULT);
   });
 });
 

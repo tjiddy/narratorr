@@ -6,7 +6,7 @@ import { generalSettingsSchema } from './general.js';
 import { metadataSettingsSchema } from './metadata.js';
 import { processingSettingsSchema, processingFormSchema } from './processing.js';
 import { taggingSettingsSchema } from './tagging.js';
-import { qualitySettingsSchema } from './quality.js';
+import { qualitySettingsSchema, DEFAULT_REJECT_WORDS } from './quality.js';
 import { networkSettingsSchema } from './network.js';
 import { rssSettingsSchema } from './rss.js';
 import { systemSettingsSchema } from './system.js';
@@ -78,7 +78,7 @@ export const settingsRegistry = {
       maxDownloadSize: 5,
       searchImmediately: false,
       monitorForUpgrades: false,
-      rejectWords: '',
+      rejectWords: DEFAULT_REJECT_WORDS,
       requiredWords: '',
     },
   }),

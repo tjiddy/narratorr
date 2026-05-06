@@ -151,7 +151,7 @@ describe('settingsRegistry', () => {
         maxDownloadSize: 5,
         searchImmediately: false,
         monitorForUpgrades: false,
-        rejectWords: '',
+        rejectWords: 'Virtual Voice, Free Excerpt, Sample, Behind the Scenes',
         requiredWords: '',
       });
     });

@@ -253,6 +253,155 @@ describe('MetadataService', () => {
       expect(result).toEqual(mockBooks);
       expect(mockAudibleProvider.searchBooks).toHaveBeenCalledWith('query', undefined);
     });
+
+    describe('reject-words filtering (#986)', () => {
+      const mockSettingsService = { get: vi.fn(), getAll: vi.fn(), set: vi.fn() };
+      let serviceWithSettings: MetadataService;
+
+      const setRejectWords = (rejectWords: string) => {
+        mockSettingsService.get.mockImplementation((key: string) => {
+          if (key === 'quality') return Promise.resolve({ rejectWords, requiredWords: '', grabFloor: 0, minSeeders: 1, protocolPreference: 'none', searchImmediately: false, monitorForUpgrades: false });
+          if (key === 'metadata') return Promise.resolve({ audibleRegion: 'us', languages: [] });
+          return Promise.resolve({});
+        });
+      };
+
+      beforeEach(() => {
+        mockSettingsService.get.mockReset();
+        serviceWithSettings = new MetadataService(inject<FastifyBaseLogger>(mockLog), undefined, mockSettingsService as never);
+      });
+
+      it('filters books with reject word in narrators (Virtual Voice knockoff)', async () => {
+        setRejectWords('Virtual Voice');
+        mockAudibleProvider.searchBooks.mockResolvedValueOnce({
+          books: [
+            { title: 'Real Book', authors: [{ name: 'Real Author' }], narrators: ['Jim Dale'] },
+            { title: 'Fake Knockoff', authors: [{ name: 'Random Spammer' }], narrators: ['Virtual Voice'] },
+          ],
+        });
+
+        const result = await serviceWithSettings.searchBooks('query');
+        expect(result).toEqual([{ title: 'Real Book', authors: [{ name: 'Real Author' }], narrators: ['Jim Dale'] }]);
+      });
+
+      it('filters books with reject word in author name', async () => {
+        setRejectWords('Amy McMahon');
+        mockAudibleProvider.searchBooks.mockResolvedValueOnce({
+          books: [
+            { title: 'Sunrise on the Reaping', authors: [{ name: 'Suzanne Collins' }], narrators: [] },
+            { title: 'Sunrise on the Reaping', authors: [{ name: 'Amy McMahon' }], narrators: ['Virtual Voice'] },
+          ],
+        });
+
+        const result = await serviceWithSettings.searchBooks('query');
+        expect(result).toHaveLength(1);
+        expect(result[0]!.authors![0]!.name).toBe('Suzanne Collins');
+      });
+
+      it('filters books with reject word in title (case-insensitive)', async () => {
+        setRejectWords('Free Excerpt');
+        mockAudibleProvider.searchBooks.mockResolvedValueOnce({
+          books: [
+            { title: 'Real Book', authors: [{ name: 'X' }] },
+            { title: 'Free Excerpt — Chapter 1', authors: [{ name: 'X' }] },
+            { title: 'free EXCERPT teaser', authors: [{ name: 'X' }] },
+          ],
+        });
+
+        const result = await serviceWithSettings.searchBooks('query');
+        expect(result).toEqual([{ title: 'Real Book', authors: [{ name: 'X' }] }]);
+      });
+
+      it('filters books with reject word in subtitle', async () => {
+        setRejectWords('Sample');
+        mockAudibleProvider.searchBooks.mockResolvedValueOnce({
+          books: [
+            { title: 'Clean', subtitle: 'Unabridged', authors: [{ name: 'X' }] },
+            { title: 'Looks Real', subtitle: 'A Sample for the audiobook', authors: [{ name: 'X' }] },
+          ],
+        });
+
+        const result = await serviceWithSettings.searchBooks('query');
+        expect(result).toEqual([{ title: 'Clean', subtitle: 'Unabridged', authors: [{ name: 'X' }] }]);
+      });
+
+      it('returns all books when rejectWords is empty', async () => {
+        setRejectWords('');
+        const allBooks = [
+          { title: 'Real', authors: [{ name: 'A' }], narrators: ['Virtual Voice'] },
+          { title: 'Free Excerpt teaser', authors: [{ name: 'B' }] },
+        ];
+        mockAudibleProvider.searchBooks.mockResolvedValueOnce({ books: allBooks });
+
+        const result = await serviceWithSettings.searchBooks('query');
+        expect(result).toEqual(allBooks);
+      });
+
+      it('returns unfiltered results when settings lookup throws (fail-open)', async () => {
+        mockSettingsService.get.mockRejectedValue(new Error('DB unavailable'));
+        const allBooks = [
+          { title: 'Real', authors: [{ name: 'A' }] },
+          { title: 'Free Excerpt teaser', authors: [{ name: 'B' }] },
+        ];
+        mockAudibleProvider.searchBooks.mockResolvedValueOnce({ books: allBooks });
+
+        const result = await serviceWithSettings.searchBooks('query');
+        expect(result).toEqual(allBooks);
+        expect(mockLog.warn).toHaveBeenCalled();
+      });
+
+      it('returns unfiltered results when no SettingsService injected', async () => {
+        const allBooks = [{ title: 'Free Excerpt teaser', authors: [{ name: 'B' }] }];
+        mockAudibleProvider.searchBooks.mockResolvedValueOnce({ books: allBooks });
+
+        const result = await service.searchBooks('query');
+        expect(result).toEqual(allBooks);
+      });
+
+      it('handles books with missing authors/narrators gracefully', async () => {
+        setRejectWords('virtual voice');
+        mockAudibleProvider.searchBooks.mockResolvedValueOnce({
+          books: [
+            { title: 'No Authors Field', narrators: ['Virtual Voice'] } as never,
+            { title: 'No Narrators Field', authors: [{ name: 'Real' }] } as never,
+          ],
+        });
+
+        const result = await serviceWithSettings.searchBooks('query');
+        expect(result).toEqual([{ title: 'No Narrators Field', authors: [{ name: 'Real' }] }]);
+      });
+
+      it('searchBooksForDiscovery applies the same reject-words filter', async () => {
+        setRejectWords('Virtual Voice');
+        mockAudibleProvider.searchBooks.mockResolvedValueOnce({
+          books: [
+            { title: 'Real', authors: [{ name: 'A' }], narrators: ['Jim Dale'] },
+            { title: 'Fake', authors: [{ name: 'B' }], narrators: ['Virtual Voice'] },
+          ],
+        });
+
+        const result = await serviceWithSettings.searchBooksForDiscovery('Author Name');
+        expect(result.books).toEqual([{ title: 'Real', authors: [{ name: 'A' }], narrators: ['Jim Dale'] }]);
+      });
+
+      it('search() filters the books array but leaves authors and series untouched', async () => {
+        setRejectWords('Virtual Voice');
+        mockAudibleProvider.searchBooks.mockResolvedValueOnce({
+          books: [
+            { title: 'Real', authors: [{ name: 'A' }], narrators: ['Jim Dale'] },
+            { title: 'Fake', authors: [{ name: 'Virtual Voice Inc' }], narrators: ['Virtual Voice'] },
+          ],
+        });
+        mockAudibleProvider.searchAuthors.mockResolvedValueOnce([{ name: 'Virtual Voice Author' }]);
+        mockAudibleProvider.searchSeries.mockResolvedValueOnce([{ name: 'Virtual Voice Series' }]);
+
+        const result = await serviceWithSettings.search('query');
+        expect(result.books).toEqual([{ title: 'Real', authors: [{ name: 'A' }], narrators: ['Jim Dale'] }]);
+        // rejectWords should not affect author or series sub-results
+        expect(result.authors).toEqual([{ name: 'Virtual Voice Author' }]);
+        expect(result.series).toEqual([{ name: 'Virtual Voice Series' }]);
+      });
+    });
   });
 
   describe('searchAuthors', () => {

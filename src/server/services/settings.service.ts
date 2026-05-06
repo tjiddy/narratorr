@@ -1,7 +1,7 @@
 import { eq } from 'drizzle-orm';
 import type { Db } from '../../db/index.js';
 import type { FastifyBaseLogger } from 'fastify';
-import { settings } from '../../db/schema.js';
+import { settings, settingsMigrations } from '../../db/schema.js';
 import {
   type AppSettings,
   type SettingsCategory,
@@ -10,6 +10,7 @@ import {
   DEFAULT_SETTINGS,
   CATEGORY_SCHEMAS,
 } from '../../shared/schemas.js';
+import { DEFAULT_REJECT_WORDS } from '../../shared/schemas/settings/quality.js';
 import { normalizeLanguage } from '../../core/utils/language-codes.js';
 import { CANONICAL_LANGUAGES } from '../../shared/language-constants.js';
 import { encryptFields, decryptFields, resolveSentinelFields, getKey, getSecretFieldNames, type SecretEntity } from '../utils/secret-codec.js';
@@ -203,6 +204,46 @@ export class SettingsService {
       this.invalidateCache('quality');
     } catch (error: unknown) {
       this.log.warn({ error: serializeError(error) }, 'Language settings migration failed — fresh defaults will apply');
+    }
+  }
+
+  /**
+   * One-time write migration: when a legacy install stored `quality.rejectWords`
+   * as the empty-string literal default, replace it with the new packaged
+   * defaults. The migration flag is marked applied unconditionally — including
+   * when no quality row exists or when the user already customized the value —
+   * so that a future user-cleared `''` is never re-treated as legacy.
+   */
+  async migrateRejectWordsDefault(): Promise<void> {
+    const MIGRATION_ID = 'rejectWords-defaults-v1';
+    try {
+      const flagRow = await this.db
+        .select()
+        .from(settingsMigrations)
+        .where(eq(settingsMigrations.id, MIGRATION_ID))
+        .limit(1);
+      if (flagRow.length > 0) return;
+
+      const qualityRow = await this.db.select().from(settings).where(eq(settings.key, 'quality')).limit(1);
+      if (qualityRow.length > 0) {
+        const stored = { ...(qualityRow[0]!.value as Record<string, unknown>) };
+        if (stored.rejectWords === '') {
+          stored.rejectWords = DEFAULT_REJECT_WORDS;
+          await this.db
+            .insert(settings)
+            .values({ key: 'quality', value: stored })
+            .onConflictDoUpdate({ target: settings.key, set: { value: stored } });
+          this.invalidateCache('quality');
+          this.log.info({ migration: MIGRATION_ID }, 'Migrated legacy empty rejectWords to packaged defaults');
+        }
+      }
+
+      await this.db
+        .insert(settingsMigrations)
+        .values({ id: MIGRATION_ID })
+        .onConflictDoNothing();
+    } catch (error: unknown) {
+      this.log.warn({ error: serializeError(error), migration: MIGRATION_ID }, 'rejectWords defaults migration failed — will retry on next boot');
     }
   }
 }

@@ -87,7 +87,8 @@ export class MetadataService {
     const authors = await this.withThrottledSearch(provider, 'searchAuthors', (p) => p.searchAuthors(query), warnings);
     const series = await this.withThrottledSearch(provider, 'searchSeries', (p) => p.searchSeries(query), warnings);
 
-    const filteredBooks = await this.filterBooksByLanguage(books);
+    const languageFiltered = await this.filterBooksByLanguage(books);
+    const filteredBooks = await this.filterRejectedBooks(languageFiltered);
 
     this.log.debug(
       { books: filteredBooks.length, authors: authors.length, series: series.length },
@@ -134,8 +135,12 @@ export class MetadataService {
     const result = await this.withThrottle<SearchBooksResult>('searchBooks', (provider) => provider.searchBooks(query, options), { books: [] }, { query });
     const books = result.books;
     this.logParseDrop(result, this.providers[0]?.name);
-    this.log.debug({ query, provider: this.providers[0]?.name, resultCount: books.length }, 'searchBooks completed');
-    return books;
+    const filtered = await this.filterRejectedBooks(books);
+    this.log.debug(
+      { query, provider: this.providers[0]?.name, resultCount: filtered.length, filteredOut: books.length - filtered.length },
+      'searchBooks completed',
+    );
+    return filtered;
   }
 
   async searchBooksForDiscovery(
@@ -166,7 +171,8 @@ export class MetadataService {
       warnings,
     );
 
-    return { books, warnings };
+    const filtered = await this.filterRejectedBooks(books);
+    return { books: filtered, warnings };
   }
 
   async getAuthor(id: string): Promise<AuthorMetadata | null> {
@@ -220,36 +226,44 @@ export class MetadataService {
     return filterByLanguage(books, languages).kept;
   }
 
-  private async filterAuthorBooks(books: BookMetadata[]): Promise<BookMetadata[]> {
+  private async filterRejectedBooks(books: BookMetadata[]): Promise<BookMetadata[]> {
     if (!this.settingsService) return books;
+    if (books.length === 0) return books;
 
     let rejectWords: string;
-    let languages: readonly string[];
     try {
-      const [quality, metadata] = await Promise.all([
-        this.settingsService.get('quality'),
-        this.settingsService.get('metadata'),
-      ]);
+      const quality = await this.settingsService.get('quality');
       rejectWords = quality.rejectWords;
-      languages = metadata.languages;
     } catch (error: unknown) {
-      this.log.warn({ error: serializeError(error) }, 'Failed to read settings for author book filtering — returning unfiltered results');
+      this.log.warn({ error: serializeError(error) }, 'Failed to read reject-words setting — returning unfiltered results');
       return books;
     }
 
-    let filtered = books;
-
     const rejectList = parseWordList(rejectWords);
-    if (rejectList.length > 0) {
-      filtered = filtered.filter((book) => {
-        const surface = `${book.title} ${book.subtitle ?? ''}`.toLowerCase();
-        return !rejectList.some((word) => surface.includes(word));
-      });
+    if (rejectList.length === 0) return books;
+
+    return books.filter((book) => {
+      const authorNames = (book.authors ?? []).map((a) => a.name).join(' ');
+      const narrators = (book.narrators ?? []).join(' ');
+      const surface = `${book.title} ${book.subtitle ?? ''} ${authorNames} ${narrators}`.toLowerCase();
+      return !rejectList.some((word) => surface.includes(word));
+    });
+  }
+
+  private async filterAuthorBooks(books: BookMetadata[]): Promise<BookMetadata[]> {
+    if (!this.settingsService) return books;
+
+    let languages: readonly string[];
+    try {
+      const metadata = await this.settingsService.get('metadata');
+      languages = metadata.languages;
+    } catch (error: unknown) {
+      this.log.warn({ error: serializeError(error) }, 'Failed to read language settings for author book filtering — returning unfiltered results');
+      return books;
     }
 
-    filtered = filterByLanguage(filtered, languages).kept;
-
-    return filtered;
+    const rejectFiltered = await this.filterRejectedBooks(books);
+    return filterByLanguage(rejectFiltered, languages).kept;
   }
 
   async getBook(id: string): Promise<BookMetadata | null> {

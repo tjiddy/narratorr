@@ -371,3 +371,10 @@ export const settings = sqliteTable('settings', {
   key: text('key').primaryKey(),
   value: text('value', { mode: 'json' }).notNull().$type<unknown>(),
 });
+
+export const settingsMigrations = sqliteTable('settings_migrations', {
+  id: text('id').primaryKey(),
+  appliedAt: integer('applied_at', { mode: 'timestamp' })
+    .notNull()
+    .default(sql`(unixepoch())`),
+});
