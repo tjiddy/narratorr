@@ -41,6 +41,15 @@ describe('MetadataService', () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    // Per-mock reset drains stale `*Once()` queues — `clearAllMocks` does not (see CLAUDE.md).
+    // Avoids `resetAllMocks` so the module-mock factories above stay intact.
+    mockAudibleProvider.searchAuthors.mockReset();
+    mockAudibleProvider.searchBooks.mockReset();
+    mockAudibleProvider.searchSeries.mockReset();
+    mockAudibleProvider.getBook.mockReset();
+    mockAudibleProvider.test.mockReset();
+    mockAudnexus.getBook.mockReset();
+    mockAudnexus.getAuthor.mockReset();
     // Reset mock return values
     mockAudibleProvider.searchAuthors.mockResolvedValue([]);
     mockAudibleProvider.searchBooks.mockResolvedValue({ books: [] });
