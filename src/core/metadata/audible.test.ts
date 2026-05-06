@@ -101,6 +101,50 @@ describe('AudibleProvider', () => {
       expect(books[0]!.publishedDate).toBe('2015-11-20');
     });
 
+    it('extracts format_type as formatType (unabridged)', async () => {
+      // Fixture sets format_type: "unabridged" on both products
+      const { books } = await provider.searchBooks('Harry Potter');
+
+      expect(books[0]!.formatType).toBe('unabridged');
+    });
+
+    it('extracts format_type as formatType (abridged)', async () => {
+      server.use(
+        http.get('https://api.audible.com/1.0/catalog/products', () => {
+          return HttpResponse.json({
+            products: [{
+              asin: 'B000ABRIDGED',
+              title: 'Abridged Test Book',
+              authors: [{ name: 'Author' }],
+              format_type: 'abridged',
+            }],
+          });
+        }),
+      );
+
+      const { books } = await provider.searchBooks('test');
+      expect(books).toHaveLength(1);
+      expect(books[0]!.formatType).toBe('abridged');
+    });
+
+    it('leaves formatType undefined when product has no format_type', async () => {
+      server.use(
+        http.get('https://api.audible.com/1.0/catalog/products', () => {
+          return HttpResponse.json({
+            products: [{
+              asin: 'B000NOFMT',
+              title: 'No Format Book',
+              authors: [{ name: 'Author' }],
+            }],
+          });
+        }),
+      );
+
+      const { books } = await provider.searchBooks('test');
+      expect(books).toHaveLength(1);
+      expect(books[0]!.formatType).toBeUndefined();
+    });
+
     it('throws TransientError on API error (5xx)', async () => {
       server.use(
         http.get('https://api.audible.com/1.0/catalog/products', () => {
