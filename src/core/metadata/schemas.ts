@@ -1,7 +1,7 @@
 import { z } from 'zod';
 
 export const AuthorRefSchema = z.object({
-  name: z.string(),
+  name: z.string().trim().min(1),
   asin: z.string().optional(),
 });
 
@@ -17,9 +17,9 @@ export const BookMetadataSchema = z.object({
   isbn: z.string().optional(),
   goodreadsId: z.string().optional(),
   providerId: z.string().optional(),
-  title: z.string(),
+  title: z.string().trim().min(1),
   subtitle: z.string().optional(),
-  authors: z.array(AuthorRefSchema),
+  authors: z.array(AuthorRefSchema).min(1),
   narrators: z.array(z.string()).optional(),
   series: z.array(SeriesRefSchema).optional(),
   description: z.string().optional(),
