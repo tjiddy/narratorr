@@ -41,6 +41,15 @@ describe('MetadataService', () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    // Per-mock reset drains stale `*Once()` queues — `clearAllMocks` does not (see CLAUDE.md).
+    // Avoids `resetAllMocks` so the module-mock factories above stay intact.
+    mockAudibleProvider.searchAuthors.mockReset();
+    mockAudibleProvider.searchBooks.mockReset();
+    mockAudibleProvider.searchSeries.mockReset();
+    mockAudibleProvider.getBook.mockReset();
+    mockAudibleProvider.test.mockReset();
+    mockAudnexus.getBook.mockReset();
+    mockAudnexus.getAuthor.mockReset();
     // Reset mock return values
     mockAudibleProvider.searchAuthors.mockResolvedValue([]);
     mockAudibleProvider.searchBooks.mockResolvedValue({ books: [] });
@@ -880,6 +889,83 @@ describe('MetadataService', () => {
 
         const result = await serviceWithSettings.getAuthorBooks('B123');
         expect(result).toEqual([{ title: 'Real', authors: [{ name: 'X' }], duration: 768 }]);
+      });
+    });
+
+    describe('podcast filtering (#1013)', () => {
+      it('drops books with contentDeliveryType === "PodcastParent"', async () => {
+        mockAudibleProvider.searchBooks.mockResolvedValueOnce({
+          books: [
+            { title: 'The Last Hero', authors: [{ name: 'Terry Pratchett' }], contentDeliveryType: 'SinglePartBook' },
+            { title: 'Discworld 27 - The Last Hero', authors: [{ name: 'Terry Pratchett' }], contentDeliveryType: 'PodcastParent' },
+          ],
+        });
+
+        const result = await service.searchBooks('The Last Hero');
+        expect(result).toEqual([
+          { title: 'The Last Hero', authors: [{ name: 'Terry Pratchett' }], contentDeliveryType: 'SinglePartBook' },
+        ]);
+      });
+
+      it('drops books with contentDeliveryType === "Periodical"', async () => {
+        mockAudibleProvider.searchBooks.mockResolvedValueOnce({
+          books: [
+            { title: 'Real Book', authors: [{ name: 'X' }], contentDeliveryType: 'MultiPartBook' },
+            { title: 'Old Magazine', authors: [{ name: 'X' }], contentDeliveryType: 'Periodical' },
+          ],
+        });
+
+        const result = await service.searchBooks('query');
+        expect(result).toEqual([
+          { title: 'Real Book', authors: [{ name: 'X' }], contentDeliveryType: 'MultiPartBook' },
+        ]);
+      });
+
+      it('keeps books with contentDeliveryType === undefined (fallback-to-keep)', async () => {
+        mockAudibleProvider.searchBooks.mockResolvedValueOnce({
+          books: [
+            { title: 'Audnexus-Origin Book', authors: [{ name: 'X' }] },
+            { title: 'Older Audible Record', authors: [{ name: 'X' }] },
+          ],
+        });
+
+        const result = await service.searchBooks('query');
+        expect(result).toEqual([
+          { title: 'Audnexus-Origin Book', authors: [{ name: 'X' }] },
+          { title: 'Older Audible Record', authors: [{ name: 'X' }] },
+        ]);
+      });
+
+      it('keeps books with unrecognized contentDeliveryType (blacklist semantics, not whitelist)', async () => {
+        mockAudibleProvider.searchBooks.mockResolvedValueOnce({
+          books: [
+            { title: 'Box Set', authors: [{ name: 'X' }], contentDeliveryType: 'MultiPartBookCollection' },
+            { title: 'Future Variant', authors: [{ name: 'X' }], contentDeliveryType: 'SomeNewShape' },
+          ],
+        });
+
+        const result = await service.searchBooks('query');
+        expect(result).toEqual([
+          { title: 'Box Set', authors: [{ name: 'X' }], contentDeliveryType: 'MultiPartBookCollection' },
+          { title: 'Future Variant', authors: [{ name: 'X' }], contentDeliveryType: 'SomeNewShape' },
+        ]);
+      });
+
+      it('logs a debug entry with title + contentDeliveryType when dropping a podcast', async () => {
+        mockAudibleProvider.searchBooks.mockResolvedValueOnce({
+          books: [
+            { title: 'Discworld 27 - The Last Hero', authors: [{ name: 'Terry Pratchett' }], contentDeliveryType: 'PodcastParent' },
+          ],
+        });
+
+        await service.searchBooks('The Last Hero');
+        expect(mockLog.debug).toHaveBeenCalledWith(
+          expect.objectContaining({
+            title: 'Discworld 27 - The Last Hero',
+            contentDeliveryType: 'PodcastParent',
+          }),
+          expect.stringContaining('Dropping non-audiobook'),
+        );
       });
     });
   });

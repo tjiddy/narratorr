@@ -42,6 +42,8 @@ export interface MetadataServiceConfig {
 }
 
 export class MetadataService {
+  private static readonly KNOWN_PODCAST_TYPES = new Set(['PodcastParent', 'Periodical']);
+
   private providers: MetadataSearchProvider[] = [];
   private audnexus: MetadataEnrichmentProvider;
   private throttle = new RequestThrottle();
@@ -215,9 +217,22 @@ export class MetadataService {
   // see issue #1004 for the symmetric fail-open model.
   private async applyBookFilters(books: BookMetadata[]): Promise<BookMetadata[]> {
     if (books.length === 0) return books;
-    const rejectFiltered = await this.filterRejectedBooks(books);
+    const audiobooksOnly = this.filterToAudiobooksOnly(books);
+    const rejectFiltered = await this.filterRejectedBooks(audiobooksOnly);
     const languageFiltered = await this.filterBooksByLanguage(rejectFiltered);
     return this.filterByMinDuration(languageFiltered);
+  }
+
+  private filterToAudiobooksOnly(books: BookMetadata[]): BookMetadata[] {
+    return books.filter((book) => {
+      if (book.contentDeliveryType === undefined) return true;
+      if (!MetadataService.KNOWN_PODCAST_TYPES.has(book.contentDeliveryType)) return true;
+      this.log.debug(
+        { title: book.title, contentDeliveryType: book.contentDeliveryType },
+        'Dropping non-audiobook from search results',
+      );
+      return false;
+    });
   }
 
   private async filterBooksByLanguage(books: BookMetadata[]): Promise<BookMetadata[]> {

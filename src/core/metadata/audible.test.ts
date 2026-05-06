@@ -145,6 +145,59 @@ describe('AudibleProvider', () => {
       expect(books[0]!.formatType).toBeUndefined();
     });
 
+    it('extracts content_delivery_type as contentDeliveryType from canonical fixture', async () => {
+      // Fixture sets content_delivery_type: "SinglePartBook" on both products
+      const { books } = await provider.searchBooks('Harry Potter');
+
+      expect(books[0]!.contentDeliveryType).toBe('SinglePartBook');
+    });
+
+    it('maps falsy content_delivery_type values (null / "") to undefined', async () => {
+      server.use(
+        http.get('https://api.audible.com/1.0/catalog/products', () => {
+          return HttpResponse.json({
+            products: [
+              {
+                asin: 'B000NULLCDT',
+                title: 'Null CDT',
+                authors: [{ name: 'Author' }],
+                content_delivery_type: null,
+              },
+              {
+                asin: 'B000EMPTYCDT',
+                title: 'Empty CDT',
+                authors: [{ name: 'Author' }],
+                content_delivery_type: '',
+              },
+            ],
+          });
+        }),
+      );
+
+      const { books } = await provider.searchBooks('test');
+      expect(books).toHaveLength(2);
+      expect(books[0]!.contentDeliveryType).toBeUndefined();
+      expect(books[1]!.contentDeliveryType).toBeUndefined();
+    });
+
+    it('leaves contentDeliveryType undefined when product has no content_delivery_type', async () => {
+      server.use(
+        http.get('https://api.audible.com/1.0/catalog/products', () => {
+          return HttpResponse.json({
+            products: [{
+              asin: 'B000NOCDT',
+              title: 'No CDT Book',
+              authors: [{ name: 'Author' }],
+            }],
+          });
+        }),
+      );
+
+      const { books } = await provider.searchBooks('test');
+      expect(books).toHaveLength(1);
+      expect(books[0]!.contentDeliveryType).toBeUndefined();
+    });
+
     it('throws TransientError on API error (5xx)', async () => {
       server.use(
         http.get('https://api.audible.com/1.0/catalog/products', () => {
