@@ -4,6 +4,7 @@ import { type BlacklistService } from '../services/blacklist.service.js';
 import { type SettingsService } from '../services/settings.service.js';
 import { type SearchSessionManager } from '../services/search-session.js';
 import { postProcessSearchResults } from '../services/search-pipeline.js';
+import { cleanIndexerQuery } from '../services/indexer-query.js';
 import { searchQuerySchema, type SearchQuery } from '../../shared/schemas.js';
 import type {
   SearchStartEvent,
@@ -38,6 +39,12 @@ export async function searchStreamRoutes(
 
       if (bookDuration === null) {
         return reply.status(400).send({ error: 'bookDuration must be a positive number' });
+      }
+
+      // Reject queries that collapse to empty after punctuation cleanup before
+      // we open the SSE stream — keeps the failure as a normal HTTP response.
+      if (!cleanIndexerQuery(q)) {
+        return reply.status(400).send({ error: 'Search query is empty after punctuation cleanup' });
       }
 
       // Query enabled indexers before starting SSE stream

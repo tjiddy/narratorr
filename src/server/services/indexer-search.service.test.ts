@@ -1252,4 +1252,239 @@ describe('IndexerSearchService', () => {
       expect(results[0]!.indexerPriority).toBe(50);
     });
   });
+
+  // ── #1015 Centralized indexer-query cleaning at the service seam ──────────
+  describe('#1015 — centralized indexer-query cleaning', () => {
+    describe('searchAll — transport cleaning', () => {
+      it('passes a cleaned transportQuery to adapter.search for parens/colon input', async () => {
+        db.select.mockReturnValue(mockDbChain([mockIndexer]));
+        const mockAdapter = {
+          type: 'abb', name: 'AudioBookBay',
+          search: vi.fn().mockResolvedValue(searchResponse([])),
+          test: vi.fn(),
+        };
+        vi.spyOn(service, 'getAdapter').mockResolvedValue(mockAdapter as never);
+
+        await searchService.searchAll('Blood Ties (World of Warcraft: Midnight)');
+
+        expect(mockAdapter.search).toHaveBeenCalledWith(
+          'Blood Ties World of Warcraft Midnight',
+          undefined,
+        );
+      });
+
+      it('cleans options.author dotted initials before passing to adapter.search', async () => {
+        db.select.mockReturnValue(mockDbChain([mockIndexer]));
+        const mockAdapter = {
+          type: 'abb', name: 'AudioBookBay',
+          search: vi.fn().mockResolvedValue(searchResponse([])),
+          test: vi.fn(),
+        };
+        vi.spyOn(service, 'getAdapter').mockResolvedValue(mockAdapter as never);
+
+        await searchService.searchAll('The Big Door Prize', {
+          title: 'The Big Door Prize',
+          author: 'M. O. Walsh',
+        });
+
+        expect(mockAdapter.search).toHaveBeenCalledWith(
+          'The Big Door Prize',
+          expect.objectContaining({
+            title: 'The Big Door Prize',
+            author: 'M O Walsh',
+          }),
+        );
+      });
+
+      it('cleans options.title before passing to adapter.search (forward-compat)', async () => {
+        db.select.mockReturnValue(mockDbChain([mockIndexer]));
+        const mockAdapter = {
+          type: 'abb', name: 'AudioBookBay',
+          search: vi.fn().mockResolvedValue(searchResponse([])),
+          test: vi.fn(),
+        };
+        vi.spyOn(service, 'getAdapter').mockResolvedValue(mockAdapter as never);
+
+        await searchService.searchAll('Dune Messiah', { title: 'Dune: Messiah' });
+
+        const passedOptions = mockAdapter.search.mock.calls[0]![1];
+        expect(passedOptions.title).toBe('Dune Messiah');
+      });
+
+      it('preserves limit and languages on cleaned options', async () => {
+        db.select.mockReturnValue(mockDbChain([mockIndexer]));
+        const mockAdapter = {
+          type: 'abb', name: 'AudioBookBay',
+          search: vi.fn().mockResolvedValue(searchResponse([])),
+          test: vi.fn(),
+        };
+        vi.spyOn(service, 'getAdapter').mockResolvedValue(mockAdapter as never);
+
+        await searchService.searchAll('test', {
+          title: 'Dune: Messiah',
+          limit: 25,
+          languages: ['english'],
+        });
+
+        const passedOptions = mockAdapter.search.mock.calls[0]![1];
+        expect(passedOptions.title).toBe('Dune Messiah');
+        expect(passedOptions.limit).toBe(25);
+        expect(passedOptions.languages).toEqual(['english']);
+      });
+    });
+
+    describe('searchAllStreaming — transport cleaning', () => {
+      it('passes a cleaned transportQuery to adapter.search', async () => {
+        db.select.mockReturnValue(mockDbChain([mockIndexer]));
+        const mockAdapter = {
+          type: 'abb', name: 'AudioBookBay',
+          search: vi.fn().mockResolvedValue(searchResponse([])),
+          test: vi.fn(),
+        };
+        vi.spyOn(service, 'getAdapter').mockResolvedValue(mockAdapter as never);
+
+        const controllers = new Map([[mockIndexer.id, new AbortController()]]);
+        await searchService.searchAllStreaming(
+          'Blood Ties (World of Warcraft: Midnight)',
+          undefined,
+          controllers,
+          { onComplete: vi.fn(), onError: vi.fn() },
+        );
+
+        expect(mockAdapter.search.mock.calls[0]![0]).toBe(
+          'Blood Ties World of Warcraft Midnight',
+        );
+      });
+
+      it('preserves per-indexer signal alongside cleaned options', async () => {
+        db.select.mockReturnValue(mockDbChain([mockIndexer]));
+        const mockAdapter = {
+          type: 'abb', name: 'AudioBookBay',
+          search: vi.fn().mockResolvedValue(searchResponse([])),
+          test: vi.fn(),
+        };
+        vi.spyOn(service, 'getAdapter').mockResolvedValue(mockAdapter as never);
+
+        const controller = new AbortController();
+        const controllers = new Map([[mockIndexer.id, controller]]);
+
+        await searchService.searchAllStreaming(
+          'test',
+          { title: 'Dune: Messiah', author: 'M. O. Walsh' },
+          controllers,
+          { onComplete: vi.fn(), onError: vi.fn() },
+        );
+
+        const passedOptions = mockAdapter.search.mock.calls[0]![1];
+        expect(passedOptions.title).toBe('Dune Messiah');
+        expect(passedOptions.author).toBe('M O Walsh');
+        expect(passedOptions.signal).toBe(controller.signal);
+      });
+    });
+
+    describe('ranking context stays raw', () => {
+      it('searchAll: matchScore is 1.0 for exact-match raw context with dots (NOT cleaned)', async () => {
+        db.select.mockReturnValue(mockDbChain([mockIndexer]));
+        const mockAdapter = {
+          type: 'abb', name: 'AudioBookBay',
+          search: vi.fn().mockResolvedValue(searchResponse([
+            // Result side arrives raw from indexer with the original punctuation
+            { title: '11.22.63', indexer: 'ABB', protocol: 'torrent' },
+          ])),
+          test: vi.fn(),
+        };
+        vi.spyOn(service, 'getAdapter').mockResolvedValue(mockAdapter as never);
+
+        const results = await searchService.searchAll('11.22.63', { title: '11.22.63' });
+
+        expect(results[0]!.matchScore).toBe(1);
+      });
+
+      it('searchAll: matchScore is 1.0 for exact-match raw author context with dotted initials', async () => {
+        db.select.mockReturnValue(mockDbChain([mockIndexer]));
+        const mockAdapter = {
+          type: 'abb', name: 'AudioBookBay',
+          search: vi.fn().mockResolvedValue(searchResponse([
+            { title: 'The Big Door Prize', author: 'M. O. Walsh', indexer: 'ABB', protocol: 'torrent' },
+          ])),
+          test: vi.fn(),
+        };
+        vi.spyOn(service, 'getAdapter').mockResolvedValue(mockAdapter as never);
+
+        const results = await searchService.searchAll('The Big Door Prize', {
+          title: 'The Big Door Prize',
+          author: 'M. O. Walsh',
+        });
+
+        expect(results[0]!.matchScore).toBe(1);
+      });
+
+      it('searchAllStreaming: matchScore is 1.0 for exact-match raw context with dots', async () => {
+        db.select.mockReturnValue(mockDbChain([mockIndexer]));
+        const mockAdapter = {
+          type: 'abb', name: 'AudioBookBay',
+          search: vi.fn().mockResolvedValue(searchResponse([
+            { title: '11.22.63', indexer: 'ABB', protocol: 'torrent' },
+          ])),
+          test: vi.fn(),
+        };
+        vi.spyOn(service, 'getAdapter').mockResolvedValue(mockAdapter as never);
+
+        const controllers = new Map([[mockIndexer.id, new AbortController()]]);
+        const results = await searchService.searchAllStreaming(
+          '11.22.63',
+          { title: '11.22.63' },
+          controllers,
+          { onComplete: vi.fn(), onError: vi.fn() },
+        );
+
+        expect(results[0]!.matchScore).toBe(1);
+      });
+    });
+
+    describe('empty-query short-circuit', () => {
+      it('searchAll returns [] without calling adapter when query cleans to empty', async () => {
+        db.select.mockReturnValue(mockDbChain([mockIndexer]));
+        const mockAdapter = {
+          type: 'abb', name: 'AudioBookBay',
+          search: vi.fn(),
+          test: vi.fn(),
+        };
+        vi.spyOn(service, 'getAdapter').mockResolvedValue(mockAdapter as never);
+
+        const results = await searchService.searchAll('()');
+
+        expect(results).toEqual([]);
+        expect(mockAdapter.search).not.toHaveBeenCalled();
+      });
+
+      it('searchAllStreaming returns [] and fires no callbacks when query cleans to empty', async () => {
+        db.select.mockReturnValue(mockDbChain([mockIndexer]));
+        const mockAdapter = {
+          type: 'abb', name: 'AudioBookBay',
+          search: vi.fn(),
+          test: vi.fn(),
+        };
+        vi.spyOn(service, 'getAdapter').mockResolvedValue(mockAdapter as never);
+
+        const onComplete = vi.fn();
+        const onError = vi.fn();
+        const onCancelled = vi.fn();
+        const controllers = new Map([[mockIndexer.id, new AbortController()]]);
+
+        const results = await searchService.searchAllStreaming(
+          '...',
+          undefined,
+          controllers,
+          { onComplete, onError, onCancelled },
+        );
+
+        expect(results).toEqual([]);
+        expect(mockAdapter.search).not.toHaveBeenCalled();
+        expect(onComplete).not.toHaveBeenCalled();
+        expect(onError).not.toHaveBeenCalled();
+        expect(onCancelled).not.toHaveBeenCalled();
+      });
+    });
+  });
 });

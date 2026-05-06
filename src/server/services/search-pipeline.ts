@@ -15,25 +15,7 @@ import { ensureError } from '../utils/ensure-error.js';
 import { buildGrabPayload } from './grab-payload.js';
 import { parseWordList, matchesRejectWord } from '../../shared/parse-word-list.js';
 import { BYTES_PER_GB, BYTES_PER_MB } from '../../shared/constants.js';
-
-/**
- * Strip punctuation that fragments indexer Torznab queries while preserving
- * inner words and letters. Replaces parens/brackets/braces/dots/colons/
- * semicolons/commas with spaces, then collapses whitespace. Indexers tokenize
- * the same characters on their side, so dropping them client-side does not
- * lose matches and prevents zero-result queries from titles like
- * `Blood Ties (World of Warcraft: Midnight)` or authors like `M. O. Walsh`.
- *
- * Distinct from `cleanName` in `folder-parsing.ts` — that strips trailing
- * parens *and their content* for narrator annotations during library import.
- * This cleaner is for indexer-query construction only.
- */
-function cleanIndexerQuery(s: string): string {
-  return s
-    .replace(/[()[\]{}.:;,]/g, ' ')
-    .replace(/\s+/g, ' ')
-    .trim();
-}
+import { cleanIndexerQuery } from './indexer-query.js';
 
 /** Build a search query string from a book's title and primary author. */
 export function buildSearchQuery(book: { title: string; authors?: Array<{ name: string }> | null }): string {

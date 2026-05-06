@@ -212,6 +212,32 @@ describe('searchStreamRoutes', () => {
       expect(onClose).toHaveBeenCalledWith('close', expect.any(Function));
     });
 
+    it('returns 400 without opening SSE stream when query cleans to empty (parens-only)', async () => {
+      const { reply, request, writeHead, hijack } = createMockReplyAndRequest();
+      (request as { query: Record<string, unknown> }).query = { q: '()', limit: 50 };
+
+      await streamHandler!(request, reply);
+
+      expect(reply.status).toHaveBeenCalledWith(400);
+      expect(reply.send).toHaveBeenCalledWith(
+        expect.objectContaining({ error: expect.stringMatching(/empty/i) }),
+      );
+      expect(writeHead).not.toHaveBeenCalled();
+      expect(hijack).not.toHaveBeenCalled();
+      expect(indexerService.searchAllStreaming).not.toHaveBeenCalled();
+    });
+
+    it('returns 400 for dots-only query (cleaner strips them)', async () => {
+      const { reply, request, writeHead } = createMockReplyAndRequest();
+      (request as { query: Record<string, unknown> }).query = { q: '...', limit: 50 };
+
+      await streamHandler!(request, reply);
+
+      expect(reply.status).toHaveBeenCalledWith(400);
+      expect(writeHead).not.toHaveBeenCalled();
+      expect(indexerService.searchAllStreaming).not.toHaveBeenCalled();
+    });
+
     it('calls reply.hijack() before any reply.raw.write() calls', async () => {
       const callOrder: string[] = [];
       const { reply, request } = createMockReplyAndRequest();
