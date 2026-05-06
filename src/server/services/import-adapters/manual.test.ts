@@ -251,6 +251,117 @@ describe('ManualImportAdapter', () => {
       expect(vi.mocked(fs.mkdir)).not.toHaveBeenCalledWith(TARGET_PATH, expect.anything());
     });
 
+    describe('single-file payloads (issue #982)', () => {
+      // Helper: pull the {path, size, ...} update from the shared setMock call log.
+      // The adapter calls db.update(books).set(...) twice: once for path/size, once for status.
+      // We filter by the presence of `path` to grab the persistence update.
+      function findPathSizeUpdate(): { path: unknown; size: unknown } | undefined {
+        const updateResults = mockDb.update.mock.results;
+        if (updateResults.length === 0) return undefined;
+        const setMock = (updateResults[0]!.value as { set: ReturnType<typeof vi.fn> }).set;
+        const call = setMock.mock.calls.find((c: unknown[]) => {
+          const arg = c[0] as Record<string, unknown>;
+          return arg && typeof arg === 'object' && 'path' in arg && 'size' in arg;
+        });
+        return call ? (call[0] as { path: unknown; size: unknown }) : undefined;
+      }
+
+      it('pointer mode + file-path payload: persists source file path with the file byte size', async () => {
+        const { getAudioStats } = await import('../library-scan.helpers.js');
+        // Pointer mode: getAudioStats sees the file path directly, returns single-file stats.
+        vi.mocked(getAudioStats).mockResolvedValueOnce({ fileCount: 1, totalSize: 12_345 });
+
+        const payload: ManualImportJobPayload = {
+          path: '/audiobooks/Doctor Sleep.m4b',
+          title: 'Test Book',
+          authorName: 'Author',
+          // mode omitted = pointer
+        };
+        const job = makeJob({ metadata: JSON.stringify(payload) });
+
+        await adapter.process(job, ctx);
+
+        // getAudioStats was called with the source file path (no copy/rename phase)
+        expect(vi.mocked(getAudioStats)).toHaveBeenCalledWith(
+          '/audiobooks/Doctor Sleep.m4b',
+          expect.anything(),
+        );
+
+        const persisted = findPathSizeUpdate();
+        expect(persisted).toMatchObject({
+          path: '/audiobooks/Doctor Sleep.m4b',
+          size: 12_345,
+        });
+      });
+
+      it('mode=copy + file-path payload: streamCopyWithProgress receives file source, persists target dir and copied-file size', async () => {
+        const { streamCopyWithProgress } = await import('../streaming-copy.helpers.js');
+        const { getAudioStats } = await import('../library-scan.helpers.js');
+        // After copy, getAudioStats is called against the target directory; size reflects copied file.
+        vi.mocked(getAudioStats).mockResolvedValueOnce({ fileCount: 1, totalSize: 67_890 });
+
+        const payload: ManualImportJobPayload = {
+          path: '/audiobooks/Doctor Sleep.m4b',
+          title: 'Test Book',
+          authorName: 'Author',
+          mode: 'copy',
+        };
+        const job = makeJob({ metadata: JSON.stringify(payload) });
+
+        await adapter.process(job, ctx);
+
+        // The source forwarded to the streaming copy is the original file path
+        expect(vi.mocked(streamCopyWithProgress)).toHaveBeenCalledWith(
+          '/audiobooks/Doctor Sleep.m4b',
+          TARGET_PATH,
+          expect.any(Function),
+        );
+
+        // After copy completes, books.path is the target directory and size is the
+        // copied-file size returned by getAudioStats(targetPath).
+        const persisted = findPathSizeUpdate();
+        expect(persisted).toMatchObject({
+          path: TARGET_PATH,
+          size: 67_890,
+        });
+      });
+
+      it('mode=move + file-path payload: persists target dir + size and removes the source file', async () => {
+        const fs = await import('node:fs/promises');
+        const { streamCopyWithProgress } = await import('../streaming-copy.helpers.js');
+        const { getAudioStats } = await import('../library-scan.helpers.js');
+        vi.mocked(getAudioStats).mockResolvedValueOnce({ fileCount: 1, totalSize: 33_333 });
+
+        const payload: ManualImportJobPayload = {
+          path: '/audiobooks/Doctor Sleep.m4b',
+          title: 'Test Book',
+          authorName: 'Author',
+          mode: 'move',
+        };
+        const job = makeJob({ metadata: JSON.stringify(payload) });
+
+        await adapter.process(job, ctx);
+
+        expect(vi.mocked(streamCopyWithProgress)).toHaveBeenCalledWith(
+          '/audiobooks/Doctor Sleep.m4b',
+          TARGET_PATH,
+          expect.any(Function),
+        );
+
+        // Move removes the original source file after copy verification
+        expect(vi.mocked(fs.rm)).toHaveBeenCalledWith(
+          '/audiobooks/Doctor Sleep.m4b',
+          { recursive: true },
+        );
+
+        const persisted = findPathSizeUpdate();
+        expect(persisted).toMatchObject({
+          path: TARGET_PATH,
+          size: 33_333,
+        });
+      });
+    });
+
     it('throws when bookId is null (before any fs primitive or streamCopyWithProgress call)', async () => {
       const fs = await import('node:fs/promises');
       const { streamCopyWithProgress } = await import('../streaming-copy.helpers.js');
