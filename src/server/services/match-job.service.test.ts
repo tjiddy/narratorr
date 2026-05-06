@@ -2332,5 +2332,286 @@ describe('MatchJobService', () => {
         expect(result!.bestMatch?.title).toBe('The Sandman: Act II');
       });
     });
+
+    // ========================================================================
+    // #1007 — production failure recovery: each of the seven cases that fell
+    // through under the old single-form cleanTagTitle pipeline now resolves
+    // via multi-form composition against series[].
+    // ========================================================================
+
+    describe('#1007 production failure recovery (multi-form scoring against series[])', () => {
+      it('Eric: tagTitle "Eric: Discworld" composes against series=[{name:"Discworld"}]', async () => {
+        vi.mocked(scanAudioDirectory).mockResolvedValue(
+          makeTaggedScan('Eric: Discworld, Book 9', 'Terry Pratchett'),
+        );
+        vi.mocked(metadataService.searchBooks).mockResolvedValue([
+          makeBookMetadata({
+            title: 'Eric',
+            authors: [{ name: 'Terry Pratchett' }],
+            series: [{ name: 'Discworld', position: 9 }],
+            providerId: 'p1',
+          }),
+        ]);
+        vi.mocked(metadataService.getBook).mockResolvedValue(
+          makeBookMetadata({
+            title: 'Eric',
+            authors: [{ name: 'Terry Pratchett' }],
+            series: [{ name: 'Discworld', position: 9 }],
+            providerId: 'p1',
+            asin: 'B1',
+          }),
+        );
+
+        const id = service.createJob([taggedCandidate]);
+        await waitForJob(service, id);
+
+        const result = service.getJob(id)!.results[0];
+        expect(result!.confidence).toBe('high');
+        expect(result!.bestMatch?.title).toBe('Eric');
+      });
+
+      it('Dark Forest: post-#1004 English-only fixture composes title + ":" + series.name to dice ≈ 1.0', async () => {
+        // Dark Forest depended on #1004 dropping the Spanish edition before scoring.
+        // Test fixture reflects post-#1004 state: only English candidates.
+        vi.mocked(scanAudioDirectory).mockResolvedValue(
+          makeTaggedScan('The Dark Forest: The Three-Body Problem', 'Cixin Liu'),
+        );
+        vi.mocked(metadataService.searchBooks).mockResolvedValue([
+          makeBookMetadata({
+            title: 'The Dark Forest',
+            authors: [{ name: 'Cixin Liu' }],
+            series: [{ name: 'The Three-Body Problem', position: 2 }],
+            providerId: 'p1',
+          }),
+        ]);
+        vi.mocked(metadataService.getBook).mockResolvedValue(
+          makeBookMetadata({
+            title: 'The Dark Forest',
+            authors: [{ name: 'Cixin Liu' }],
+            series: [{ name: 'The Three-Body Problem', position: 2 }],
+            providerId: 'p1',
+            asin: 'B2',
+          }),
+        );
+
+        const id = service.createJob([taggedCandidate]);
+        await waitForJob(service, id);
+
+        const result = service.getJob(id)!.results[0];
+        expect(result!.confidence).toBe('high');
+        expect(result!.bestMatch?.title).toBe('The Dark Forest');
+      });
+
+      it('Armageddon: tagTitle "Armageddon: Expeditionary Force" composes against series', async () => {
+        vi.mocked(scanAudioDirectory).mockResolvedValue(
+          makeTaggedScan('Armageddon: Expeditionary Force', 'Craig Alanson'),
+        );
+        vi.mocked(metadataService.searchBooks).mockResolvedValue([
+          makeBookMetadata({
+            title: 'Armageddon',
+            authors: [{ name: 'Craig Alanson' }],
+            series: [{ name: 'Expeditionary Force', position: 8 }],
+            providerId: 'p1',
+          }),
+        ]);
+        vi.mocked(metadataService.getBook).mockResolvedValue(
+          makeBookMetadata({
+            title: 'Armageddon',
+            authors: [{ name: 'Craig Alanson' }],
+            series: [{ name: 'Expeditionary Force', position: 8 }],
+            providerId: 'p1',
+            asin: 'B3',
+          }),
+        );
+
+        const id = service.createJob([taggedCandidate]);
+        await waitForJob(service, id);
+
+        const result = service.getJob(id)!.results[0];
+        expect(result!.confidence).toBe('high');
+        expect(result!.bestMatch?.title).toBe('Armageddon');
+      });
+
+      it('Imagine Me: dash-separator form composes via "title - series.name" candidate', async () => {
+        vi.mocked(scanAudioDirectory).mockResolvedValue(
+          makeTaggedScan('Imagine Me - Shatter Me Series, Book 6', 'Tahereh Mafi'),
+        );
+        vi.mocked(metadataService.searchBooks).mockResolvedValue([
+          makeBookMetadata({
+            title: 'Imagine Me',
+            authors: [{ name: 'Tahereh Mafi' }],
+            series: [{ name: 'Shatter Me', position: 6 }],
+            providerId: 'p1',
+          }),
+        ]);
+        vi.mocked(metadataService.getBook).mockResolvedValue(
+          makeBookMetadata({
+            title: 'Imagine Me',
+            authors: [{ name: 'Tahereh Mafi' }],
+            series: [{ name: 'Shatter Me', position: 6 }],
+            providerId: 'p1',
+            asin: 'B4',
+          }),
+        );
+
+        const id = service.createJob([taggedCandidate]);
+        await waitForJob(service, id);
+
+        const result = service.getJob(id)!.results[0];
+        expect(result!.confidence).not.toBe('none');
+        expect(result!.bestMatch?.title).toBe('Imagine Me');
+      });
+
+      it('Zero Hour: cleanTagTitle strips "(Unabridged)" before series-marker, then multi-form composes', async () => {
+        // Pipeline order check: tagTitle "Zero Hour: Expeditionary Force, Book 5 (Unabridged)"
+        //   bracket-strip: no change → trailing-paren strip: removes "(Unabridged)" (NOT an edition paren)
+        //   → series-marker strip: removes ", Book 5" → "Zero Hour: Expeditionary Force"
+        // Multi-form composition then matches series=[{name:"Expeditionary Force"}].
+        vi.mocked(scanAudioDirectory).mockResolvedValue(
+          makeTaggedScan('Zero Hour: Expeditionary Force, Book 5 (Unabridged)', 'Craig Alanson'),
+        );
+        vi.mocked(metadataService.searchBooks).mockResolvedValue([
+          makeBookMetadata({
+            title: 'Zero Hour',
+            authors: [{ name: 'Craig Alanson' }],
+            series: [{ name: 'Expeditionary Force', position: 5 }],
+            providerId: 'p1',
+          }),
+        ]);
+        vi.mocked(metadataService.getBook).mockResolvedValue(
+          makeBookMetadata({
+            title: 'Zero Hour',
+            authors: [{ name: 'Craig Alanson' }],
+            series: [{ name: 'Expeditionary Force', position: 5 }],
+            providerId: 'p1',
+            asin: 'B5',
+          }),
+        );
+
+        const id = service.createJob([taggedCandidate]);
+        await waitForJob(service, id);
+
+        const result = service.getJob(id)!.results[0];
+        expect(result!.confidence).toBe('high');
+        expect(result!.bestMatch?.title).toBe('Zero Hour');
+      });
+
+      it('World War 3.1: cleanTagTitle preserves dots — Audible title= param is dot-sensitive', async () => {
+        // Pre-#1007: cleanTagTitle delegated to cleanName, which replaced "." with " ".
+        // Result was "World War 3 1", which Audible rejects token-wise.
+        vi.mocked(scanAudioDirectory).mockResolvedValue(
+          makeTaggedScan('World War 3.1', 'John Birmingham'),
+        );
+        vi.mocked(metadataService.searchBooks).mockResolvedValue([
+          makeBookMetadata({
+            title: 'World War 3.1',
+            authors: [{ name: 'John Birmingham' }],
+            providerId: 'p1',
+          }),
+        ]);
+        vi.mocked(metadataService.getBook).mockResolvedValue(
+          makeBookMetadata({
+            title: 'World War 3.1',
+            authors: [{ name: 'John Birmingham' }],
+            providerId: 'p1',
+            asin: 'B6',
+          }),
+        );
+
+        const id = service.createJob([taggedCandidate]);
+        await waitForJob(service, id);
+
+        const result = service.getJob(id)!.results[0];
+        expect(result!.confidence).toBe('high');
+        expect(result!.bestMatch?.title).toBe('World War 3.1');
+        // The tag-derived title is passed to searchBooks WITHOUT dot-stripping
+        expect(metadataService.searchBooks).toHaveBeenCalledWith(
+          'World War 3.1 John Birmingham',
+          { title: 'World War 3.1', author: 'John Birmingham' },
+        );
+      });
+
+      it('Final Empire: extended series-marker strips space-prefixed "trilogy book 1"; passes 0.5 floor', async () => {
+        vi.mocked(scanAudioDirectory).mockResolvedValue(
+          makeTaggedScan('The Final Empire Mistborn trilogy book 1', 'Brandon Sanderson'),
+        );
+        vi.mocked(metadataService.searchBooks).mockResolvedValue([
+          makeBookMetadata({
+            title: 'The Final Empire',
+            authors: [{ name: 'Brandon Sanderson' }],
+            series: [{ name: 'Mistborn', position: 1 }],
+            providerId: 'p1',
+          }),
+        ]);
+        vi.mocked(metadataService.getBook).mockResolvedValue(
+          makeBookMetadata({
+            title: 'The Final Empire',
+            authors: [{ name: 'Brandon Sanderson' }],
+            series: [{ name: 'Mistborn', position: 1 }],
+            providerId: 'p1',
+            asin: 'B7',
+          }),
+        );
+
+        const id = service.createJob([taggedCandidate]);
+        await waitForJob(service, id);
+
+        const result = service.getJob(id)!.results[0];
+        // Either high or medium — passes the 0.5 title floor that pre-#1007 single-form would fail
+        expect(result!.confidence).not.toBe('none');
+        expect(result!.bestMatch?.title).toBe('The Final Empire');
+      });
+
+      it('AC13 predicate-gate regression: Eric-shape passes the 0.5 floor with multi-form, would fail with single-form', async () => {
+        // Without applying tagTitleScore in tagPassPredicatesPass, the rank-side fix is no-op:
+        // single-form dice(cleanTagTitle("Eric"), "Eric: Discworld") ≈ 0.4 < 0.5 floor → fall-through.
+        // With tagTitleScore in the predicate, the composed candidate "Eric: Discworld" matches
+        // the input dice = 1.0 → passes the floor → the candidate is accepted.
+        vi.mocked(scanAudioDirectory).mockResolvedValue(
+          makeTaggedScan('Eric: Discworld, Book 9', 'Terry Pratchett'),
+        );
+        vi.mocked(metadataService.searchBooks).mockResolvedValue([
+          makeBookMetadata({
+            title: 'Eric',
+            authors: [{ name: 'Terry Pratchett' }],
+            series: [{ name: 'Discworld', position: 9 }],
+            providerId: 'p1',
+          }),
+        ]);
+        vi.mocked(metadataService.getBook).mockResolvedValue(null);
+
+        const id = service.createJob([taggedCandidate]);
+        await waitForJob(service, id);
+
+        const result = service.getJob(id)!.results[0];
+        // The candidate is accepted (not 'none' from floor failure)
+        expect(result!.confidence).not.toBe('none');
+        expect(result!.bestMatch?.title).toBe('Eric');
+        // Tag pass succeeded — only ONE searchBooks call, no Pass 2 fallback
+        expect(metadataService.searchBooks).toHaveBeenCalledTimes(1);
+      });
+
+      it('Jaina double-colon: composes via "series.name: title" preserving nested-series form', async () => {
+        vi.mocked(scanAudioDirectory).mockResolvedValue(
+          makeTaggedScan('World of Warcraft: Jaina Proudmoore: Tides of War', 'Christie Golden'),
+        );
+        vi.mocked(metadataService.searchBooks).mockResolvedValue([
+          makeBookMetadata({
+            title: 'Jaina Proudmoore: Tides of War',
+            authors: [{ name: 'Christie Golden' }],
+            series: [{ name: 'World of Warcraft' }],
+            providerId: 'p1',
+          }),
+        ]);
+        vi.mocked(metadataService.getBook).mockResolvedValue(null);
+
+        const id = service.createJob([taggedCandidate]);
+        await waitForJob(service, id);
+
+        const result = service.getJob(id)!.results[0];
+        expect(result!.confidence).not.toBe('none');
+        expect(result!.bestMatch?.title).toBe('Jaina Proudmoore: Tides of War');
+      });
+    });
   });
 });

@@ -55,11 +55,18 @@ const EDITION_PAREN_YEAR_PREFIX = /^(?:19|20)\d{2}\b/;
 const EDITION_PAREN_ORDINAL_PREFIX = /^\d+(?:st|nd|rd|th)\b/i;
 const EDITION_PAREN_KEYWORD = /\b(?:Edition|Recording|Cut|Version|Mix)\b/i;
 
-function isEditionParen(content: string): boolean {
+export function isEditionParen(content: string): boolean {
   return EDITION_PAREN_YEAR_PREFIX.test(content)
     || EDITION_PAREN_ORDINAL_PREFIX.test(content)
     || EDITION_PAREN_KEYWORD.test(content);
 }
+
+/** Extended series-marker regex used by `cleanTagTitle` only.
+ * Catches comma-prefixed AND space-prefixed forms: `, Book 9`, ` book 1`,
+ * `trilogy book 1`, `saga book 5`, `series book 3`, `chronicles vol 2`.
+ * cleanName uses the stricter comma-only `SERIES_MARKER_REGEX` because folder
+ * names rely on the comma to disambiguate from titles ending in `<word> N`. */
+const TAG_TITLE_SERIES_MARKER_REGEX = /[\s,]+(?:saga|trilogy|series|cycle|chronicles)?\s*(?:book|vol(?:ume)?)\s+\d+\s*$/i;
 
 /** P4: `Series, Book NN - Title` — only fires when the left of the first ` - ` ends with `, Book NN`. */
 const SERIES_BOOK_DASH_TITLE_REGEX = /^(.+?),\s*book\s+(\d+)\s*-\s*(.+)$/i;
@@ -133,16 +140,23 @@ export function cleanName(name: string): string {
 }
 
 /**
- * Clean a tag-derived title. Tag values are pre-structured (tag.title is the
- * title only, no author baked in), so we delegate to cleanName for the existing
- * normalization pipeline. Same-prefix volumes (Sandman: Act I/II/III) stay
- * distinguishable because cleanName has no colon-stripping or post-dash
- * subtitle-strip rule. Symmetric application during scoring (input + Audible
- * response both run through this helper) ensures equivalent inputs produce
- * dice = 1.0 even after cleanName's dot→space and ', Book N' transforms.
+ * Clean a tag-derived title. Tag conventions differ from folder conventions:
+ * tag titles preserve dots (`World War 3.1`), colons (`Eric: Discworld`),
+ * dashes, and edition parens (`(2006)`, `(2006 Edition)`). The pipeline applies
+ * exactly three transforms in this order:
+ *   1. bracket-tag strip (`[Dramatized Adaptation]`, `[GA]`, etc.)
+ *   2. trailing 1-3 word paren strip, gated by `isEditionParen` so true edition
+ *      labels survive but media markers like `(Unabridged)` and narrator names
+ *      are removed. Must run BEFORE step 3 — anchored series-marker regex
+ *      requires the suffix to be at end-of-string.
+ *   3. extended series-marker strip — comma- AND space-prefixed forms with
+ *      optional series-keyword (saga/trilogy/series/cycle/chronicles).
  */
 export function cleanTagTitle(s: string): string {
-  return cleanName(s);
+  let result = s.replace(/\s*\[[^\]]*\]/g, ' ').replace(/\s{2,}/g, ' ').trim();
+  const m = result.match(NARRATOR_PAREN_REGEX);
+  if (m && !isEditionParen(m[1]!)) result = result.replace(NARRATOR_PAREN_REGEX, '').trim() || result;
+  return result.replace(TAG_TITLE_SERIES_MARKER_REGEX, '').trim() || s;
 }
 
 /** Pipeline steps for cleanName/cleanNameWithTrace. Order matters — see step names below. */

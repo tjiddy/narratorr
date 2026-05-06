@@ -7,11 +7,10 @@ import { resolveFfprobePathFromSettings } from '../../core/utils/ffprobe-path.js
 import type { SettingsService } from './settings.service.js';
 import { Semaphore } from '../utils/semaphore.js';
 import { diceCoefficient, normalizeNarrator } from '../../core/utils/similarity.js';
-import { cleanTagTitle } from '../utils/folder-parsing.js';
 import { searchWithSwapRetryTrace } from '../utils/search-helpers.js';
 import { getErrorMessage } from '../utils/error-message.js';
 import { serializeError } from '../utils/serialize-error.js';
-import { deriveTagQuery, rankResults, rankResultsCleaned, resolveConfidenceFromDuration, type TagQuery } from './match-job.helpers.js';
+import { deriveTagQuery, rankResults, rankResultsCleaned, resolveConfidenceFromDuration, tagTitleScore, type TagQuery } from './match-job.helpers.js';
 
 
 export type Confidence = 'high' | 'medium' | 'none';
@@ -351,7 +350,7 @@ class MatchJob {
     tagQuery: TagQuery,
     top: { meta: BookMetadata; score: number },
   ): boolean {
-    const titleFloor = top.meta.title ? diceCoefficient(cleanTagTitle(top.meta.title), tagQuery.title) : 0;
+    const titleFloor = tagTitleScore(tagQuery.title, top.meta);
     if (titleFloor < TITLE_SIMILARITY_FLOOR) {
       this.log.debug(
         { path: book.path, titleSimilarity: titleFloor.toFixed(2), bestTitle: top.meta.title },

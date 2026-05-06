@@ -1,7 +1,7 @@
 import { basename } from 'node:path';
 import type { BookMetadata } from '../../core/metadata/index.js';
 import type { AudioScanResult } from '../../core/utils/audio-scanner.js';
-import { normalizeNarrator, scoreResult } from '../../core/utils/similarity.js';
+import { diceCoefficient, normalizeNarrator, scoreResult } from '../../core/utils/similarity.js';
 import { cleanTagTitle, extractYear } from '../utils/folder-parsing.js';
 import type { Confidence, MatchCandidate } from './match-job.service.js';
 
@@ -67,15 +67,57 @@ export function deriveTagQuery(audioResult: AudioScanResult | null): TagQuery | 
   return { title: cleanedTitle, author: rawAuthor, ...(tagYear ? { year: tagYear } : {}) };
 }
 
+const TAG_TITLE_WEIGHT = 0.6;
+const TAG_AUTHOR_WEIGHT = 0.4;
+
 /**
- * Tag-pass scoring: applies cleanTagTitle to BOTH the result title and the
- * input title before dice scoring (AC7). The input context is already cleaned
- * in deriveTagQuery; here we only need to normalize the result side.
+ * Multi-form title score for a tag-derived input against a book-metadata
+ * candidate. Composes 1-6 candidate strings from `result.title` and
+ * `result.series[0]` and returns the max dice across them.
  *
- * Author normalization is symmetric with the predicate gate at
- * `match-job.service.ts:tagPassPredicatesPass` — both sides go through
- * normalizeNarrator so dice scores reflect semantic similarity, not
- * punctuation noise (e.g. "M O Walsh" vs "M. O. Walsh" → 1.0, not ~0.6).
+ * Why composition: Audible's canonical title is short — series annotation lives
+ * in the structured `series[]` field, not the title string. Tag titles inline
+ * series. Symmetric cleaning of both sides produces dice ≈ 0.4 because the two
+ * sides carry different content. Composing `title + ': ' + series.name` (and
+ * the dash/order/position variants) lets the input match its semantic
+ * equivalent, so an Eric-shape (`title="Eric"`, `series=[{name:"Discworld"}]`,
+ * input="Eric: Discworld") scores 1.0.
+ *
+ * Empty-array guard: `Math.max(...[])` returns `-Infinity`. Without the guard,
+ * a result with `title === undefined` and missing/empty `series[].name` would
+ * silently return `-Infinity` and pass any floor check downstream. The
+ * `scores.length > 0 ? Math.max(...scores) : 0` form returns `0` instead.
+ */
+export function tagTitleScore(input: string, result: BookMetadata): number {
+  const title = result.title ?? '';
+  const seriesName = result.series?.[0]?.name ?? '';
+  const seriesPos = result.series?.[0]?.position;
+  const candidates: string[] = [title];
+  if (seriesName) {
+    candidates.push(
+      `${title}: ${seriesName}`,
+      `${title} - ${seriesName}`,
+      `${seriesName}: ${title}`,
+      `${seriesName} - ${title}`,
+    );
+    if (seriesPos !== undefined) {
+      candidates.push(`${seriesName}: ${title}, Book ${seriesPos}`);
+    }
+  }
+  const scores = candidates.filter(c => c.length > 0).map(c => diceCoefficient(input, c));
+  return scores.length > 0 ? Math.max(...scores) : 0;
+}
+
+/**
+ * Tag-pass scoring: composes the result-side title from `result.title` +
+ * `result.series[0]` via `tagTitleScore`, removing the cleanName-derived
+ * symmetry assumption from #984. Author side is preserved exactly from #995 —
+ * normalizeNarrator on both sides so dice scores reflect semantic similarity,
+ * not punctuation noise.
+ *
+ * Title/author weighting (0.6 / 0.4) mirrors `scoreResult` at
+ * `src/core/utils/similarity.ts:62-84`; we re-derive the combined score
+ * inline because we no longer call `scoreResult` for the title side.
  *
  * Year tiebreaker (#995): when dice scores are tied within 0.001 and tagQuery
  * carries a year hint from the audio tags, candidates whose publishedDate year
@@ -87,16 +129,20 @@ export function rankResultsCleaned(
   tagQuery: TagQuery,
 ): { meta: BookMetadata; score: number }[] {
   const normalizedAuthor = normalizeNarrator(tagQuery.author);
-  const scored = detailed.map(meta => ({
-    meta,
-    score: scoreResult(
-      {
-        ...(meta.title !== undefined && { title: cleanTagTitle(meta.title) }),
-        ...(meta.authors?.[0]?.name !== undefined && { author: normalizeNarrator(meta.authors[0].name) }),
-      },
-      { title: tagQuery.title, author: normalizedAuthor },
-    ),
-  }));
+  const scored = detailed.map(meta => {
+    const titleScore = tagTitleScore(tagQuery.title, meta);
+    const resultAuthor = meta.authors?.[0]?.name;
+    const authorScore = resultAuthor
+      ? diceCoefficient(normalizeNarrator(resultAuthor), normalizedAuthor)
+      : 0;
+    const titleWeight = meta.title !== undefined ? TAG_TITLE_WEIGHT : 0;
+    const authorWeight = resultAuthor !== undefined ? TAG_AUTHOR_WEIGHT : 0;
+    const totalWeight = titleWeight + authorWeight;
+    const score = totalWeight > 0
+      ? (titleScore * titleWeight + authorScore * authorWeight) / totalWeight
+      : 0;
+    return { meta, score };
+  });
 
   const tagYear = tagQuery.year ? parseInt(tagQuery.year, 10) : undefined;
   scored.sort((a, b) => {

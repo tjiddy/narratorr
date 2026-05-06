@@ -1336,48 +1336,95 @@ describe('folder-parsing (extracted from library-scan.service)', () => {
     });
   });
 
-  describe('cleanTagTitle (#984)', () => {
-    it('preserves colon-subtitle (cleanName has no colon-strip rule)', () => {
+  describe('cleanTagTitle (#1007)', () => {
+    it('preserves colon-subtitle (no colon-strip rule)', () => {
       expect(cleanTagTitle('The Sandman: Act II')).toBe('The Sandman: Act II');
       expect(cleanTagTitle('Mistborn: The Final Empire')).toBe('Mistborn: The Final Empire');
     });
 
-    it('strips ", Book N" series marker — symmetric application keeps dice = 1.0', () => {
-      // cleanName seriesMarker step strips trailing ", Book N"
+    it('preserves multi-colon nested-series form (Jaina double-colon)', () => {
+      expect(cleanTagTitle('World of Warcraft: Jaina Proudmoore: Tides of War')).toBe(
+        'World of Warcraft: Jaina Proudmoore: Tides of War',
+      );
+    });
+
+    it('preserves dots — Audible title= param is dot-sensitive', () => {
+      expect(cleanTagTitle('World War 3.1')).toBe('World War 3.1');
+    });
+
+    it('preserves initials and colon together', () => {
+      expect(cleanTagTitle('M. O. Walsh: The Big Door Prize')).toBe('M. O. Walsh: The Big Door Prize');
+    });
+
+    it('strips comma-prefixed series marker `, Book N`', () => {
       expect(cleanTagTitle('Eric: Discworld, Book 9')).toBe('Eric: Discworld');
     });
 
-    it('strips bracket tags via cleanName bracketTagStrip', () => {
+    it('strips dash-form series marker — preserves dash separator', () => {
+      expect(cleanTagTitle('Imagine Me - Shatter Me Series, Book 6')).toBe('Imagine Me - Shatter Me Series');
+    });
+
+    it('strips space-prefixed `trilogy book N` form', () => {
+      expect(cleanTagTitle('The Final Empire Mistborn trilogy book 1')).toBe('The Final Empire Mistborn');
+    });
+
+    it('strips `(Unabridged)` paren before series marker so anchored regex matches', () => {
+      expect(cleanTagTitle('Zero Hour: Expeditionary Force, Book 5 (Unabridged)')).toBe('Zero Hour: Expeditionary Force');
+    });
+
+    it('strips bracket tags', () => {
       expect(cleanTagTitle('The Atlantis Gene [Dramatized Adaptation]')).toBe('The Atlantis Gene');
+    });
+
+    it('preserves bare-year paren — NARRATOR_PAREN_REGEX lookahead excludes (YYYY)', () => {
+      expect(cleanTagTitle('Brave New World (2006)')).toBe('Brave New World (2006)');
+    });
+
+    it('preserves year-prefix edition paren', () => {
+      expect(cleanTagTitle('World War Z (2006 Edition)')).toBe('World War Z (2006 Edition)');
+    });
+
+    it('preserves ordinal-prefix edition paren', () => {
+      expect(cleanTagTitle('The Stand (10th Anniversary Edition)')).toBe('The Stand (10th Anniversary Edition)');
+    });
+
+    it('preserves edition-keyword paren', () => {
+      expect(cleanTagTitle('Some Title (Special Edition)')).toBe('Some Title (Special Edition)');
+    });
+
+    it('strips narrator paren (not an edition)', () => {
+      expect(cleanTagTitle('Title (William Hope)')).toBe('Title');
+    });
+
+    it('preserves all-numeric date-like input', () => {
+      expect(cleanTagTitle('11-22-63')).toBe('11-22-63');
     });
 
     it('preserves kebab-case slug input', () => {
       expect(cleanTagTitle('believe-me')).toBe('believe-me');
     });
 
-    it('normalizes dots to spaces (symmetric application keeps dice = 1.0)', () => {
-      // cleanName normalize step replaces [_.] with space
-      expect(cleanTagTitle('World War 3.1')).toBe('World War 3 1');
+    it('returns empty for empty input', () => {
+      expect(cleanTagTitle('')).toBe('');
     });
 
-    it('passes through pure-numeric segment input unchanged (all-numeric guard)', () => {
-      expect(cleanTagTitle('11-22-63')).toBe('11-22-63');
-      expect(cleanTagTitle('1.5')).toBe('1.5');
+    it('falls back to original on whitespace-only input (intermediate result empties)', () => {
+      // Bracket-strip + trim drops whitespace-only to ''; series-marker no-op; `result || s` returns the original.
+      expect(cleanTagTitle('   ')).toBe('   ');
     });
 
-    it('symmetric application: equivalent inputs produce identical output', () => {
-      // Both sides of the dice comparison normalize the same way
-      expect(cleanTagTitle('Eric: Discworld, Book 9')).toBe(cleanTagTitle('Eric: Discworld, Book 9'));
-      expect(cleanTagTitle('World War 3.1')).toBe(cleanTagTitle('World War 3 1'));
+    it('does not strip "Book N" without leading separator (regex requires [\\s,]+)', () => {
+      expect(cleanTagTitle('Book 1')).toBe('Book 1');
     });
 
-    it('same-prefix volume disambiguation — colons survive so Acts stay distinct', () => {
-      const actI = cleanTagTitle('The Sandman: Act I');
-      const actII = cleanTagTitle('The Sandman: Act II');
-      const actIII = cleanTagTitle('The Sandman: Act III');
-      expect(actI).not.toBe(actII);
-      expect(actII).not.toBe(actIII);
-      expect(actI).toBe('The Sandman: Act I');
+    it('does not strip a trailing digit alone — series-marker requires book/vol keyword', () => {
+      expect(cleanTagTitle('World War 3')).toBe('World War 3');
+    });
+
+    it('same-prefix volume disambiguation — Acts stay distinct', () => {
+      expect(cleanTagTitle('The Sandman: Act I')).toBe('The Sandman: Act I');
+      expect(cleanTagTitle('The Sandman: Act II')).toBe('The Sandman: Act II');
+      expect(cleanTagTitle('The Sandman: Act III')).toBe('The Sandman: Act III');
     });
   });
 
