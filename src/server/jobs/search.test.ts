@@ -862,6 +862,40 @@ describe('runUpgradeSearchJob', () => {
       );
     });
 
+    it('forwards minDownloadSize from settings: drops undersized upgrade candidates before grab', async () => {
+      const book = makeMonitoredBook();
+      const settings = createMockSettingsService({
+        search: { enabled: true, intervalMinutes: 60 },
+        quality: { grabFloor: 0, minSeeders: 0, protocolPreference: 'none', minDownloadSize: 50, maxDownloadSize: 0 },
+      });
+      const books = createMockBookService([book]);
+      // 5 MB result — would otherwise be a higher MB/hr than the existing 100 MB/hr only with bad math, but the min-size gate must drop it before any quality comparison.
+      const undersized: SearchResult = {
+        title: 'Tracker test upload',
+        protocol: 'torrent',
+        indexer: 'test',
+        seeders: 10,
+        size: 5 * 1024 * 1024,
+        downloadUrl: 'magnet:?xt=urn:btih:tinyspam',
+      };
+      const indexer = createMockIndexerService([undersized]);
+      const download = createMockDownloadOrchestrator();
+
+      const result = await runUpgradeSearchJob(settings, books, indexer, download, inject<FastifyBaseLogger>(log));
+
+      expect(result.grabbed).toBe(0);
+      expect(download.grab).not.toHaveBeenCalled();
+      expect(log.debug).toHaveBeenCalledWith(
+        expect.objectContaining({
+          title: 'Tracker test upload',
+          reason: 'below-min-size',
+          sizeBytes: 5 * 1024 * 1024,
+          minBytes: 50 * 1024 * 1024,
+        }),
+        'Quality filter dropped result',
+      );
+    });
+
     it('emits the language-undetermined passed log when upgrade search filters undetected-language candidate', async () => {
       const book = makeMonitoredBook();
       const settings = createMockSettingsService({

@@ -478,6 +478,35 @@ describe('runRssJob', () => {
     );
   });
 
+  it('forwards minDownloadSize from settings: drops undersized RSS items before grab', async () => {
+    const wantedBooks = [makeWantedBook(1, 'Test Book', 'Author')];
+    const rssResults = [
+      makeResult('Test Book', 'Author', { size: 5 * 1024 * 1024, downloadUrl: 'magnet:tinyspam' }),
+    ];
+    const settings = createMockSettingsService({
+      rss: { enabled: true },
+      quality: { grabFloor: 0, minSeeders: 0, protocolPreference: 'none', minDownloadSize: 50, maxDownloadSize: 0 },
+    });
+    const { bookList, book } = createMockBookServices(wantedBooks);
+    const indexer = createMockIndexerService(rssResults);
+    const download = createMockDownloadOrchestrator();
+    const blacklist = createMockBlacklistService();
+
+    const result = await runRssJob(settings, bookList, book, indexer, download, blacklist, inject<FastifyBaseLogger>(log));
+
+    expect(result.grabbed).toBe(0);
+    expect(download.grab).not.toHaveBeenCalled();
+    expect(log.debug).toHaveBeenCalledWith(
+      expect.objectContaining({
+        title: 'Test Book',
+        reason: 'below-min-size',
+        sizeBytes: 5 * 1024 * 1024,
+        minBytes: 50 * 1024 * 1024,
+      }),
+      'Quality filter dropped result',
+    );
+  });
+
   it('grabs the best-ranked item (not just best match score) when multiple items match same book', async () => {
     const wantedBooks = [makeWantedBook(1, 'Test Book', 'Author')];
     const rssResults = [

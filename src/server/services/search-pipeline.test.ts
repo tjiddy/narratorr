@@ -2065,6 +2065,33 @@ describe('postProcessSearchResults — maxDownloadSize', () => {
       'Quality gate filtering applied',
     );
   });
+
+  it('forwards minDownloadSize from settings: drops undersized results', async () => {
+    const log = createMockLogger();
+    const blacklist = {
+      getBlacklistedIdentifiers: vi.fn().mockResolvedValue({ blacklistedHashes: new Set(), blacklistedGuids: new Set() }),
+    } as unknown as BlacklistService;
+    const settings = createMockSettingsServiceInline({ minDownloadSize: 50 });
+
+    const results = [
+      makeResult({ title: 'Tracker test', size: 5 * MB }),
+      makeResult({ title: 'Real Book', size: 500 * MB }),
+    ];
+
+    const output = await postProcessSearchResults(results, 3600, blacklist, settings, log);
+
+    expect(output.results).toHaveLength(1);
+    expect(output.results[0]!.title).toBe('Real Book');
+    expect(log.debug).toHaveBeenCalledWith(
+      expect.objectContaining({
+        title: 'Tracker test',
+        reason: 'below-min-size',
+        sizeBytes: 5 * MB,
+        minBytes: 50 * MB,
+      }),
+      'Quality filter dropped result',
+    );
+  });
 });
 
 describe('filterAndRankResults — nzbName reject/required word filtering (#502)', () => {
