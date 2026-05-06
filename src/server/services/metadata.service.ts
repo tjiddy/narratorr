@@ -88,7 +88,8 @@ export class MetadataService {
     const series = await this.withThrottledSearch(provider, 'searchSeries', (p) => p.searchSeries(query), warnings);
 
     const languageFiltered = await this.filterBooksByLanguage(books);
-    const filteredBooks = await this.filterRejectedBooks(languageFiltered);
+    const rejectFiltered = await this.filterRejectedBooks(languageFiltered);
+    const filteredBooks = await this.filterByMinDuration(rejectFiltered);
 
     this.log.debug(
       { books: filteredBooks.length, authors: authors.length, series: series.length },
@@ -135,7 +136,8 @@ export class MetadataService {
     const result = await this.withThrottle<SearchBooksResult>('searchBooks', (provider) => provider.searchBooks(query, options), { books: [] }, { query });
     const books = result.books;
     this.logParseDrop(result, this.providers[0]?.name);
-    const filtered = await this.filterRejectedBooks(books);
+    const rejectFiltered = await this.filterRejectedBooks(books);
+    const filtered = await this.filterByMinDuration(rejectFiltered);
     this.log.debug(
       { query, provider: this.providers[0]?.name, resultCount: filtered.length, filteredOut: books.length - filtered.length },
       'searchBooks completed',
@@ -171,7 +173,8 @@ export class MetadataService {
       warnings,
     );
 
-    const filtered = await this.filterRejectedBooks(books);
+    const rejectFiltered = await this.filterRejectedBooks(books);
+    const filtered = await this.filterByMinDuration(rejectFiltered);
     return { books: filtered, warnings };
   }
 
@@ -263,7 +266,26 @@ export class MetadataService {
     }
 
     const rejectFiltered = await this.filterRejectedBooks(books);
-    return filterByLanguage(rejectFiltered, languages).kept;
+    const languageFiltered = filterByLanguage(rejectFiltered, languages).kept;
+    return this.filterByMinDuration(languageFiltered);
+  }
+
+  private async filterByMinDuration(books: BookMetadata[]): Promise<BookMetadata[]> {
+    if (!this.settingsService) return books;
+    if (books.length === 0) return books;
+
+    let minDurationMinutes: number;
+    try {
+      const metadata = await this.settingsService.get('metadata');
+      minDurationMinutes = metadata.minDurationMinutes;
+    } catch (error: unknown) {
+      this.log.warn({ error: serializeError(error) }, 'Failed to read minDurationMinutes setting — returning unfiltered results');
+      return books;
+    }
+
+    if (minDurationMinutes <= 0) return books;
+
+    return books.filter((book) => book.duration == null || book.duration >= minDurationMinutes);
   }
 
   async getBook(id: string): Promise<BookMetadata | null> {

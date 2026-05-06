@@ -402,6 +402,170 @@ describe('MetadataService', () => {
         expect(result.series).toEqual([{ name: 'Virtual Voice Series' }]);
       });
     });
+
+    describe('min-duration filtering (#987)', () => {
+      const mockSettingsService = { get: vi.fn(), getAll: vi.fn(), set: vi.fn() };
+      let serviceWithSettings: MetadataService;
+
+      const setMinDuration = (minDurationMinutes: number, rejectWords = '') => {
+        mockSettingsService.get.mockImplementation((key: string) => {
+          if (key === 'quality') return Promise.resolve({ rejectWords, requiredWords: '', grabFloor: 0, minSeeders: 1, protocolPreference: 'none', searchImmediately: false, monitorForUpgrades: false });
+          if (key === 'metadata') return Promise.resolve({ audibleRegion: 'us', languages: [], minDurationMinutes });
+          return Promise.resolve({});
+        });
+      };
+
+      beforeEach(() => {
+        mockSettingsService.get.mockReset();
+        serviceWithSettings = new MetadataService(inject<FastifyBaseLogger>(mockLog), undefined, mockSettingsService as never);
+      });
+
+      it('searchBooks: filters books with duration below threshold and keeps null/undefined duration', async () => {
+        setMinDuration(30);
+        mockAudibleProvider.searchBooks.mockResolvedValueOnce({
+          books: [
+            { title: 'Knockoff', authors: [{ name: 'X' }], duration: 18 },
+            { title: 'Real', authors: [{ name: 'X' }], duration: 768 },
+            { title: 'Unknown', authors: [{ name: 'X' }] },
+          ],
+        });
+
+        const result = await serviceWithSettings.searchBooks('query');
+        expect(result).toEqual([
+          { title: 'Real', authors: [{ name: 'X' }], duration: 768 },
+          { title: 'Unknown', authors: [{ name: 'X' }] },
+        ]);
+      });
+
+      it('searchBooks: returns all books when minDurationMinutes is 0 (filter disabled)', async () => {
+        setMinDuration(0);
+        const allBooks = [
+          { title: 'Short', authors: [{ name: 'X' }], duration: 18 },
+          { title: 'Long', authors: [{ name: 'X' }], duration: 768 },
+          { title: 'Unknown', authors: [{ name: 'X' }] },
+        ];
+        mockAudibleProvider.searchBooks.mockResolvedValueOnce({ books: allBooks });
+
+        const result = await serviceWithSettings.searchBooks('query');
+        expect(result).toEqual(allBooks);
+      });
+
+      it('searchBooks: passes through duration exactly at threshold (>=)', async () => {
+        setMinDuration(30);
+        mockAudibleProvider.searchBooks.mockResolvedValueOnce({
+          books: [
+            { title: 'Just Below', authors: [{ name: 'X' }], duration: 29 },
+            { title: 'At Threshold', authors: [{ name: 'X' }], duration: 30 },
+          ],
+        });
+
+        const result = await serviceWithSettings.searchBooks('query');
+        expect(result).toEqual([{ title: 'At Threshold', authors: [{ name: 'X' }], duration: 30 }]);
+      });
+
+      it('search(): filters duration on books while leaving authors/series untouched', async () => {
+        setMinDuration(30);
+        mockAudibleProvider.searchBooks.mockResolvedValueOnce({
+          books: [
+            { title: 'Knockoff', authors: [{ name: 'X' }], duration: 18 },
+            { title: 'Real', authors: [{ name: 'X' }], duration: 768 },
+            { title: 'Unknown', authors: [{ name: 'X' }] },
+          ],
+        });
+        mockAudibleProvider.searchAuthors.mockResolvedValueOnce([{ name: 'Some Author' }]);
+        mockAudibleProvider.searchSeries.mockResolvedValueOnce([{ name: 'Some Series' }]);
+
+        const result = await serviceWithSettings.search('query');
+        expect(result.books).toEqual([
+          { title: 'Real', authors: [{ name: 'X' }], duration: 768 },
+          { title: 'Unknown', authors: [{ name: 'X' }] },
+        ]);
+        expect(result.authors).toEqual([{ name: 'Some Author' }]);
+        expect(result.series).toEqual([{ name: 'Some Series' }]);
+      });
+
+      it('searchBooksForDiscovery: applies the same min-duration filter', async () => {
+        setMinDuration(30);
+        mockAudibleProvider.searchBooks.mockResolvedValueOnce({
+          books: [
+            { title: 'Knockoff', authors: [{ name: 'X' }], duration: 18 },
+            { title: 'Real', authors: [{ name: 'X' }], duration: 768 },
+          ],
+        });
+
+        const result = await serviceWithSettings.searchBooksForDiscovery('Author');
+        expect(result.books).toEqual([{ title: 'Real', authors: [{ name: 'X' }], duration: 768 }]);
+      });
+
+      it('getBook: does NOT apply min-duration filter (direct ASIN lookup is authoritative)', async () => {
+        setMinDuration(30);
+        mockAudibleProvider.getBook.mockResolvedValueOnce({ title: 'Short Book', duration: 18 });
+
+        const result = await serviceWithSettings.getBook('B000SHORT');
+        expect(result).toEqual({ title: 'Short Book', duration: 18 });
+      });
+
+      it('enrichBook: does NOT apply min-duration filter (direct ASIN lookup is authoritative)', async () => {
+        setMinDuration(30);
+        mockAudnexus.getBook.mockResolvedValueOnce({ title: 'Short Book', duration: 18 });
+
+        const result = await serviceWithSettings.enrichBook('B000SHORT');
+        expect(result).toEqual({ title: 'Short Book', duration: 18 });
+      });
+
+      it('stacks with rejectWords: a book hit by both filters is dropped exactly once', async () => {
+        setMinDuration(30, 'Virtual Voice');
+        mockAudibleProvider.searchBooks.mockResolvedValueOnce({
+          books: [
+            { title: 'Real', authors: [{ name: 'X' }], duration: 768 },
+            { title: 'Knockoff', authors: [{ name: 'X' }], narrators: ['Virtual Voice'], duration: 18 },
+          ],
+        });
+
+        const result = await serviceWithSettings.searchBooks('query');
+        expect(result).toEqual([{ title: 'Real', authors: [{ name: 'X' }], duration: 768 }]);
+      });
+
+      it('returns unfiltered results when settings lookup throws (fail-open)', async () => {
+        // First call (rejectWords) succeeds, second call (min-duration) throws — exercise duration fail-open path
+        mockSettingsService.get.mockImplementation((key: string) => {
+          if (key === 'quality') return Promise.resolve({ rejectWords: '', requiredWords: '', grabFloor: 0, minSeeders: 1, protocolPreference: 'none', searchImmediately: false, monitorForUpgrades: false });
+          if (key === 'metadata') return Promise.reject(new Error('DB unavailable'));
+          return Promise.resolve({});
+        });
+        const allBooks = [
+          { title: 'Short', authors: [{ name: 'X' }], duration: 18 },
+          { title: 'Long', authors: [{ name: 'X' }], duration: 768 },
+        ];
+        mockAudibleProvider.searchBooks.mockResolvedValueOnce({ books: allBooks });
+
+        const result = await serviceWithSettings.searchBooks('query');
+        expect(result).toEqual(allBooks);
+        expect(mockLog.warn).toHaveBeenCalled();
+      });
+
+      it('returns unfiltered results when no SettingsService injected', async () => {
+        const allBooks = [{ title: 'Short', authors: [{ name: 'X' }], duration: 18 }];
+        mockAudibleProvider.searchBooks.mockResolvedValueOnce({ books: allBooks });
+
+        const result = await service.searchBooks('query');
+        expect(result).toEqual(allBooks);
+      });
+
+      it('getAuthorBooks (filterAuthorBooks) applies the same min-duration filter', async () => {
+        setMinDuration(30);
+        mockAudnexus.getAuthor.mockResolvedValueOnce({ name: 'Author', asin: 'B123' });
+        mockAudibleProvider.searchBooks.mockResolvedValueOnce({
+          books: [
+            { title: 'Knockoff', authors: [{ name: 'X' }], duration: 18 },
+            { title: 'Real', authors: [{ name: 'X' }], duration: 768 },
+          ],
+        });
+
+        const result = await serviceWithSettings.getAuthorBooks('B123');
+        expect(result).toEqual([{ title: 'Real', authors: [{ name: 'X' }], duration: 768 }]);
+      });
+    });
   });
 
   describe('searchAuthors', () => {
