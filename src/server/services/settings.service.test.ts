@@ -9,6 +9,20 @@ import { initializeKey, _resetKey, isEncrypted } from '../utils/secret-codec.js'
 
 const TEST_KEY = Buffer.from('a'.repeat(64), 'hex');
 
+// Extract { table, row } for the Nth insert call.
+// db.insert.mockReturnValue(...) hands the SAME chain to every call, so
+// chain.values.mock.calls accumulates across all inserts; index by `n`
+// to find the row paired with the Nth insert.
+function getInsertCall(
+  db: ReturnType<typeof createMockDb>,
+  n: number,
+): { table: unknown; row: unknown } {
+  const tableArg = db.insert.mock.calls[n]![0];
+  const chain = db.insert.mock.results[n]!.value as { values: { mock: { calls: Array<Array<unknown>> } } };
+  const row = chain.values.mock.calls[n]![0];
+  return { table: tableArg, row };
+}
+
 describe('SettingsService', () => {
   let db: ReturnType<typeof createMockDb>;
   let service: SettingsService;
@@ -692,17 +706,6 @@ describe('migrateRejectWordsDefault', () => {
   const NEW_DEFAULT = 'Virtual Voice, Free Excerpt, Sample, Behind the Scenes, Abridged';
   const FLAG_ID = 'rejectWords-defaults-v1';
 
-  // Helper: extract { table, row } for the Nth insert call.
-  // db.insert.mockReturnValue(...) hands the SAME chain to every call, so
-  // chain.values.mock.calls accumulates across all inserts; index by `n`
-  // to find the row paired with the Nth insert.
-  function insertCall(n: number): { table: unknown; row: unknown } {
-    const tableArg = db.insert.mock.calls[n]![0];
-    const chain = db.insert.mock.results[n]!.value as { values: { mock: { calls: Array<Array<unknown>> } } };
-    const row = chain.values.mock.calls[n]![0];
-    return { table: tableArg, row };
-  }
-
   beforeEach(() => {
     initializeKey(TEST_KEY);
     db = createMockDb();
@@ -727,12 +730,12 @@ describe('migrateRejectWordsDefault', () => {
 
     // Two writes expected: quality update + flag insert
     expect(db.insert.mock.calls.length).toBe(2);
-    const qualityWrite = insertCall(0);
+    const qualityWrite = getInsertCall(db, 0);
     expect(qualityWrite.table).toBe(settings);
     expect(qualityWrite.row).toMatchObject({ key: 'quality', value: expect.objectContaining({ rejectWords: NEW_DEFAULT, grabFloor: 0 }) });
 
     // Flag write: must target settingsMigrations with the exact durable id.
-    const flagWrite = insertCall(1);
+    const flagWrite = getInsertCall(db, 1);
     expect(flagWrite.table).toBe(settingsMigrations);
     expect(flagWrite.row).toEqual({ id: FLAG_ID });
   });
@@ -751,7 +754,7 @@ describe('migrateRejectWordsDefault', () => {
 
     // Only one insert: the flag.
     expect(db.insert.mock.calls.length).toBe(1);
-    const flagWrite = insertCall(0);
+    const flagWrite = getInsertCall(db, 0);
     expect(flagWrite.table).toBe(settingsMigrations);
     expect(flagWrite.row).toEqual({ id: FLAG_ID });
   });
@@ -770,7 +773,7 @@ describe('migrateRejectWordsDefault', () => {
 
     // Only one insert: the flag.
     expect(db.insert.mock.calls.length).toBe(1);
-    const flagWrite = insertCall(0);
+    const flagWrite = getInsertCall(db, 0);
     expect(flagWrite.table).toBe(settingsMigrations);
     expect(flagWrite.row).toEqual({ id: FLAG_ID });
   });
@@ -789,8 +792,8 @@ describe('migrateRejectWordsDefault', () => {
     await service.migrateRejectWordsDefault();
 
     expect(db.insert.mock.calls.length).toBe(1);
-    expect(insertCall(0).table).toBe(settingsMigrations);
-    expect(insertCall(0).row).toEqual({ id: FLAG_ID });
+    expect(getInsertCall(db, 0).table).toBe(settingsMigrations);
+    expect(getInsertCall(db, 0).row).toEqual({ id: FLAG_ID });
 
     // Simulate a later boot: user has now written quality with empty rejectWords (deliberate clear),
     // and the flag row from the first boot is present. Migration must NOT re-fire.
@@ -848,7 +851,7 @@ describe('migrateRejectWordsDefault', () => {
 
     await service.migrateRejectWordsDefault();
 
-    const qualityWrite = insertCall(0);
+    const qualityWrite = getInsertCall(db, 0);
     expect(qualityWrite.table).toBe(settings);
     expect((qualityWrite.row as { value: Record<string, unknown> }).value).toEqual({
       grabFloor: 50,
@@ -858,7 +861,7 @@ describe('migrateRejectWordsDefault', () => {
       requiredWords: 'M4B',
     });
     // Flag identity backstop on this path too.
-    const flagWrite = insertCall(1);
+    const flagWrite = getInsertCall(db, 1);
     expect(flagWrite.table).toBe(settingsMigrations);
     expect(flagWrite.row).toEqual({ id: FLAG_ID });
   });
@@ -898,13 +901,6 @@ describe('migrateRejectWordsAbridgedDefault (#993)', () => {
   const NEW_PACKAGED_DEFAULT = 'Virtual Voice, Free Excerpt, Sample, Behind the Scenes, Abridged';
   const FLAG_ID = 'rejectWords-defaults-v2-abridged';
 
-  function insertCall(n: number): { table: unknown; row: unknown } {
-    const tableArg = db.insert.mock.calls[n]![0];
-    const chain = db.insert.mock.results[n]!.value as { values: { mock: { calls: Array<Array<unknown>> } } };
-    const row = chain.values.mock.calls[n]![0];
-    return { table: tableArg, row };
-  }
-
   beforeEach(() => {
     initializeKey(TEST_KEY);
     db = createMockDb();
@@ -929,11 +925,11 @@ describe('migrateRejectWordsAbridgedDefault (#993)', () => {
 
     // Two writes: quality update + flag insert
     expect(db.insert.mock.calls.length).toBe(2);
-    const qualityWrite = insertCall(0);
+    const qualityWrite = getInsertCall(db, 0);
     expect(qualityWrite.table).toBe(settings);
     expect(qualityWrite.row).toMatchObject({ key: 'quality', value: expect.objectContaining({ rejectWords: NEW_PACKAGED_DEFAULT, grabFloor: 0 }) });
 
-    const flagWrite = insertCall(1);
+    const flagWrite = getInsertCall(db, 1);
     expect(flagWrite.table).toBe(settingsMigrations);
     expect(flagWrite.row).toEqual({ id: FLAG_ID });
   });
@@ -951,7 +947,7 @@ describe('migrateRejectWordsAbridgedDefault (#993)', () => {
     await service.migrateRejectWordsAbridgedDefault();
 
     expect(db.insert.mock.calls.length).toBe(1);
-    const flagWrite = insertCall(0);
+    const flagWrite = getInsertCall(db, 0);
     expect(flagWrite.table).toBe(settingsMigrations);
     expect(flagWrite.row).toEqual({ id: FLAG_ID });
   });
@@ -969,8 +965,8 @@ describe('migrateRejectWordsAbridgedDefault (#993)', () => {
     await service.migrateRejectWordsAbridgedDefault();
 
     expect(db.insert.mock.calls.length).toBe(1);
-    expect(insertCall(0).table).toBe(settingsMigrations);
-    expect(insertCall(0).row).toEqual({ id: FLAG_ID });
+    expect(getInsertCall(db, 0).table).toBe(settingsMigrations);
+    expect(getInsertCall(db, 0).row).toEqual({ id: FLAG_ID });
   });
 
   it('skips quality write when already on the new default, but marks flag applied', async () => {
@@ -986,8 +982,8 @@ describe('migrateRejectWordsAbridgedDefault (#993)', () => {
     await service.migrateRejectWordsAbridgedDefault();
 
     expect(db.insert.mock.calls.length).toBe(1);
-    expect(insertCall(0).table).toBe(settingsMigrations);
-    expect(insertCall(0).row).toEqual({ id: FLAG_ID });
+    expect(getInsertCall(db, 0).table).toBe(settingsMigrations);
+    expect(getInsertCall(db, 0).row).toEqual({ id: FLAG_ID });
   });
 
   it('skips quality write when no quality row exists, but marks flag applied', async () => {
@@ -1003,8 +999,8 @@ describe('migrateRejectWordsAbridgedDefault (#993)', () => {
     await service.migrateRejectWordsAbridgedDefault();
 
     expect(db.insert.mock.calls.length).toBe(1);
-    expect(insertCall(0).table).toBe(settingsMigrations);
-    expect(insertCall(0).row).toEqual({ id: FLAG_ID });
+    expect(getInsertCall(db, 0).table).toBe(settingsMigrations);
+    expect(getInsertCall(db, 0).row).toEqual({ id: FLAG_ID });
   });
 
   it('is idempotent: returns early when v2 flag is already set, no quality row read', async () => {
@@ -1028,7 +1024,7 @@ describe('migrateRejectWordsAbridgedDefault (#993)', () => {
 
     await service.migrateRejectWordsAbridgedDefault();
 
-    const qualityWrite = insertCall(0);
+    const qualityWrite = getInsertCall(db, 0);
     expect(qualityWrite.table).toBe(settings);
     expect((qualityWrite.row as { value: Record<string, unknown> }).value).toEqual({
       grabFloor: 50,
