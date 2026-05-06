@@ -335,6 +335,27 @@ function parseSingleFolder(folder: string): {
 const identity = (s: string): string => s;
 
 /**
+ * Build the canonical 3-capture seriesPosition return shape from a regex match.
+ * Used by every `Series N - Title` branch (1-part, 2-part, P4, P10) — they all
+ * produce identical { title, author, series, seriesPosition } output, just with
+ * different captures and `transform` (cleanName for cleaned, identity for raw).
+ */
+function seriesPosResult(
+  match: RegExpMatchArray,
+  author: string | null,
+  asinTail: { asin?: string },
+  transform: (s: string) => string,
+): { title: string; author: string | null; series: string; seriesPosition: number; asin?: string } {
+  return {
+    title: transform(match[3]!),
+    author,
+    series: transform(match[1]!),
+    seriesPosition: parseInt(match[2]!, 10),
+    ...asinTail,
+  };
+}
+
+/**
  * P10-postprocess (author-dash path): if a resolved title still looks like
  * `<series> NN - <subtitle>`, decompose it. Preserves the already-resolved author.
  * `transform` is `cleanName` for the cleaned parser, `identity` for raw.
@@ -347,13 +368,7 @@ function applyP10Postprocess(
 ): { title: string; author: string | null; series: string | null; seriesPosition?: number; asin?: string } {
   const m = title.match(WORDS_NUM_DASH_TITLE_REGEX);
   if (!m) return { title, author, series: null, ...asinTail };
-  return {
-    title: transform(m[3]!),
-    author,
-    series: transform(m[1]!),
-    seriesPosition: parseInt(m[2]!, 10),
-    ...asinTail,
-  };
+  return seriesPosResult(m, author, asinTail, transform);
 }
 
 /**
@@ -400,36 +415,15 @@ export function parseFolderStructure(parts: string[]): {
         ...(asin !== undefined && { asin }),
       };
     }
+    const asinTail = asin !== undefined ? { asin } : {};
+    // SERIES_NUMBER_TITLE in title segment wins over P8's series-from-author
     const seriesMatch = titleSegment.match(SERIES_NUMBER_TITLE_REGEX);
-    if (seriesMatch) {
-      return {
-        title: cleanName(seriesMatch[3]!),
-        author: p8Author,
-        // SERIES_NUMBER_TITLE in title segment wins over P8's series-from-author
-        series: cleanName(seriesMatch[1]!),
-        seriesPosition: parseInt(seriesMatch[2]!, 10),
-        ...(asin !== undefined && { asin }),
-      };
-    }
-    // P10-precheck (2-part path): "<series> NN - <title>" with no ` - ` in series.
-    // Mirrors parseSingleFolder's p10Pre fallback so flat-pack splits like
-    // 'Sanderson/Mistborn 01 - The Final Empire.mp3' resolve to series + position + title.
+    if (seriesMatch) return seriesPosResult(seriesMatch, p8Author, asinTail, cleanName);
+    // P10-precheck (2-part): mirrors parseSingleFolder's p10Pre so flat-pack splits
+    // like 'Sanderson/Mistborn 01 - The Final Empire.mp3' resolve series+position+title.
     const p10TwoPart = matchFirstDashOnly(titleSegment, WORDS_NUM_DASH_TITLE_REGEX);
-    if (p10TwoPart) {
-      return {
-        title: cleanName(p10TwoPart[3]!),
-        author: p8Author,
-        series: cleanName(p10TwoPart[1]!),
-        seriesPosition: parseInt(p10TwoPart[2]!, 10),
-        ...(asin !== undefined && { asin }),
-      };
-    }
-    return {
-      title: cleanName(titleSegment),
-      author: p8Author,
-      series: p8Series,
-      ...(asin !== undefined && { asin }),
-    };
+    if (p10TwoPart) return seriesPosResult(p10TwoPart, p8Author, asinTail, cleanName);
+    return { title: cleanName(titleSegment), author: p8Author, series: p8Series, ...asinTail };
   }
 
   // Three or more folders: Author/Series/Title (take first, second-to-last, last)
@@ -491,29 +485,13 @@ export function parseFolderStructureRaw(parts: string[]): {
     if (isAllNumericSegments(titleSegment)) {
       return { title: titleSegment, author: p8Author, series: p8Series, ...(asin !== undefined && { asin }) };
     }
+    const asinTail = asin !== undefined ? { asin } : {};
     const seriesMatch = titleSegment.match(SERIES_NUMBER_TITLE_REGEX);
-    if (seriesMatch) {
-      return {
-        title: seriesMatch[3]!,
-        author: p8Author,
-        series: seriesMatch[1]!,
-        seriesPosition: parseInt(seriesMatch[2]!, 10),
-        ...(asin !== undefined && { asin }),
-      };
-    }
-    // P10-precheck (raw 2-part) — mirrors the cleaned branch so scan-debug
-    // raw/cleaned outputs stay aligned for `Series NN - Title` shapes.
+    if (seriesMatch) return seriesPosResult(seriesMatch, p8Author, asinTail, identity);
+    // P10-precheck (raw 2-part) — mirrors the cleaned branch.
     const p10TwoPart = matchFirstDashOnly(titleSegment, WORDS_NUM_DASH_TITLE_REGEX);
-    if (p10TwoPart) {
-      return {
-        title: p10TwoPart[3]!,
-        author: p8Author,
-        series: p10TwoPart[1]!,
-        seriesPosition: parseInt(p10TwoPart[2]!, 10),
-        ...(asin !== undefined && { asin }),
-      };
-    }
-    return { title: titleSegment, author: p8Author, series: p8Series, ...(asin !== undefined && { asin }) };
+    if (p10TwoPart) return seriesPosResult(p10TwoPart, p8Author, asinTail, identity);
+    return { title: titleSegment, author: p8Author, series: p8Series, ...asinTail };
   }
 
   const lastSegment = stripAudioExtension(parts[parts.length - 1]!);
