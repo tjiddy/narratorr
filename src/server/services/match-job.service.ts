@@ -11,7 +11,7 @@ import { cleanTagTitle } from '../utils/folder-parsing.js';
 import { searchWithSwapRetryTrace } from '../utils/search-helpers.js';
 import { getErrorMessage } from '../utils/error-message.js';
 import { serializeError } from '../utils/serialize-error.js';
-import { deriveTagQuery, rankResults, rankResultsCleaned, resolveConfidenceFromDuration } from './match-job.helpers.js';
+import { deriveTagQuery, rankResults, rankResultsCleaned, resolveConfidenceFromDuration, type TagQuery } from './match-job.helpers.js';
 
 
 export type Confidence = 'high' | 'medium' | 'none';
@@ -330,7 +330,7 @@ class MatchJob {
   }
 
   /** Tag-pass searchBooks call with AC13 inner try/catch. Returns null on throw. */
-  private async runTagSearch(book: MatchCandidate, tagQuery: { title: string; author: string }): Promise<BookMetadata[] | null> {
+  private async runTagSearch(book: MatchCandidate, tagQuery: TagQuery): Promise<BookMetadata[] | null> {
     try {
       return await this.metadataService.searchBooks(`${tagQuery.title} ${tagQuery.author}`, {
         title: tagQuery.title,
@@ -348,7 +348,7 @@ class MatchJob {
   /** AC5 — title floor + author predicate gate for the tag pass. Logs at debug on failure. */
   private tagPassPredicatesPass(
     book: MatchCandidate,
-    tagQuery: { title: string; author: string },
+    tagQuery: TagQuery,
     top: { meta: BookMetadata; score: number },
   ): boolean {
     const titleFloor = top.meta.title ? diceCoefficient(cleanTagTitle(top.meta.title), tagQuery.title) : 0;

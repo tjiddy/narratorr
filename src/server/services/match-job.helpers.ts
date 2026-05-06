@@ -1,7 +1,7 @@
 import { basename } from 'node:path';
 import type { BookMetadata } from '../../core/metadata/index.js';
 import type { AudioScanResult } from '../../core/utils/audio-scanner.js';
-import { scoreResult } from '../../core/utils/similarity.js';
+import { normalizeNarrator, scoreResult } from '../../core/utils/similarity.js';
 import { cleanTagTitle, extractYear } from '../utils/folder-parsing.js';
 import type { Confidence, MatchCandidate } from './match-job.service.js';
 
@@ -43,41 +43,72 @@ export function resolveConfidenceFromDuration(
   return { confidence: 'medium', reason: 'Best match missing duration — cannot verify' };
 }
 
+export interface TagQuery {
+  title: string;
+  author: string;
+  year?: string;
+}
+
 /**
  * Build a tag-derived search query from the AudioScanResult, applying
  * cleanTagTitle to tagTitle. Returns null when the scan lacks usable tags
  * (missing title or author after trimming) — caller falls through to Pass 2.
+ * `year` is carried through (when present in tags) for use by the
+ * rankResultsCleaned tiebreaker; missing tagYear is fine — tiebreaker no-ops.
  */
-export function deriveTagQuery(audioResult: AudioScanResult | null): { title: string; author: string } | null {
+export function deriveTagQuery(audioResult: AudioScanResult | null): TagQuery | null {
   if (!audioResult) return null;
   const rawTitle = audioResult.tagTitle?.trim();
   const rawAuthor = audioResult.tagAuthor?.trim();
   if (!rawTitle || !rawAuthor) return null;
   const cleanedTitle = cleanTagTitle(rawTitle).trim();
   if (!cleanedTitle) return null;
-  return { title: cleanedTitle, author: rawAuthor };
+  const tagYear = audioResult.tagYear?.trim();
+  return { title: cleanedTitle, author: rawAuthor, ...(tagYear ? { year: tagYear } : {}) };
 }
 
 /**
  * Tag-pass scoring: applies cleanTagTitle to BOTH the result title and the
  * input title before dice scoring (AC7). The input context is already cleaned
  * in deriveTagQuery; here we only need to normalize the result side.
+ *
+ * Author normalization is symmetric with the predicate gate at
+ * `match-job.service.ts:tagPassPredicatesPass` — both sides go through
+ * normalizeNarrator so dice scores reflect semantic similarity, not
+ * punctuation noise (e.g. "M O Walsh" vs "M. O. Walsh" → 1.0, not ~0.6).
+ *
+ * Year tiebreaker (#995): when dice scores are tied within 0.001 and tagQuery
+ * carries a year hint from the audio tags, candidates whose publishedDate year
+ * matches tagYear rank first. Tag-derived only — folder year is NOT consulted
+ * here (Pass 2's signal stays out of Pass 1).
  */
 export function rankResultsCleaned(
   detailed: BookMetadata[],
-  tagQuery: { title: string; author: string },
+  tagQuery: TagQuery,
 ): { meta: BookMetadata; score: number }[] {
+  const normalizedAuthor = normalizeNarrator(tagQuery.author);
   const scored = detailed.map(meta => ({
     meta,
     score: scoreResult(
       {
         ...(meta.title !== undefined && { title: cleanTagTitle(meta.title) }),
-        ...(meta.authors?.[0]?.name !== undefined && { author: meta.authors[0].name }),
+        ...(meta.authors?.[0]?.name !== undefined && { author: normalizeNarrator(meta.authors[0].name) }),
       },
-      tagQuery,
+      { title: tagQuery.title, author: normalizedAuthor },
     ),
   }));
-  scored.sort((a, b) => b.score - a.score);
+
+  const tagYear = tagQuery.year ? parseInt(tagQuery.year, 10) : undefined;
+  scored.sort((a, b) => {
+    if (Math.abs(a.score - b.score) < 0.001 && tagYear) {
+      const aYear = parsePublishedYear(a.meta.publishedDate);
+      const bYear = parsePublishedYear(b.meta.publishedDate);
+      const aMatch = aYear === tagYear ? 1 : 0;
+      const bMatch = bYear === tagYear ? 1 : 0;
+      if (aMatch !== bMatch) return bMatch - aMatch;
+    }
+    return b.score - a.score;
+  });
   return scored;
 }
 
@@ -109,7 +140,8 @@ export function rankResults(
   return scored;
 }
 
-function parsePublishedYear(date: string | undefined): number | undefined {
+/** Extract the first 4-digit year from a publishedDate string (e.g. '2011-06-14' → 2011). */
+export function parsePublishedYear(date: string | undefined): number | undefined {
   if (!date) return undefined;
   const match = date.match(/\b(\d{4})\b/);
   return match ? parseInt(match[1]!, 10) : undefined;
