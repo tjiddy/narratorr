@@ -154,24 +154,10 @@ function collectBooks(info: DirInfo, rootPath: string, results: DiscoveredFolder
   // a mixed-content folder are bonus tracks (skip) or standalone books (emit).
   const immediateAudioChildren = info.children.filter(c => c.audioFiles.length > 0);
   const { discChildren, allSameTitle } = findMergeableDiscChildren(immediateAudioChildren);
-  const willDiscMerge = discChildren.length >= 2
-    && discChildren.length === immediateAudioChildren.length
-    && allSameTitle;
+  const willDiscMerge = isDiscMergeable(discChildren, immediateAudioChildren, allSameTitle);
 
   if (hasOwnAudio && audioChildren.length > 0) {
-    if (willDiscMerge) {
-      // Multi-disc book; loose files are bonus tracks. Skip and fall through to disc-merge.
-      log?.debug(
-        { path: info.path, skippedFiles: info.audioFiles.map(f => f.path) },
-        'Skipping loose bonus audio in disc-merge folder',
-      );
-    } else {
-      // Mixed library: each loose file is its own single-file book.
-      for (const file of info.audioFiles) {
-        const fileInfo: DirInfo = { path: file.path, audioFiles: [file], children: [] };
-        results.push(makeFolderEntry(fileInfo, rootPath, [file]));
-      }
-    }
+    handleMixedContentLooseAudio(info, rootPath, results, willDiscMerge, log);
   } else if (hasOwnAudio) {
     // Pure leaf book folder — no audio-containing children
     log?.debug({ path: info.path, audioFiles: info.audioFiles.length }, 'Leaf book folder');
@@ -180,19 +166,7 @@ function collectBooks(info: DirInfo, rootPath: string, results: DiscoveredFolder
   }
 
   if (willDiscMerge) {
-    // All audio children are disc folders with compatible titles — merge into parent
-    const allAudioFiles = discChildren.flatMap(c => collectAllAudioFiles(c));
-    log?.debug(
-      {
-        path: info.path,
-        discFolders: discChildren.map(c => c.path),
-        mergedAudioFiles: allAudioFiles.length,
-      },
-      'Disc folder merge',
-    );
-    results.push(makeFolderEntry(info, rootPath, allAudioFiles));
-
-    // Still recurse into children that aren't disc folders (could have deeper books)
+    mergeDiscChildren(info, rootPath, results, discChildren, log);
     for (const child of info.children) {
       if (!discChildren.includes(child)) {
         collectBooks(child, rootPath, results, log);
@@ -201,17 +175,57 @@ function collectBooks(info: DirInfo, rootPath: string, results: DiscoveredFolder
     return;
   }
 
-  // No audio here, not a disc pattern — recurse into children
   for (const child of audioChildren) {
     collectBooks(child, rootPath, results, log);
   }
-
-  // Also recurse into non-audio children (may have deeper books)
   for (const child of info.children) {
     if (!audioChildren.includes(child)) {
       collectBooks(child, rootPath, results, log);
     }
   }
+}
+
+function isDiscMergeable(discChildren: DirInfo[], immediateAudioChildren: DirInfo[], allSameTitle: boolean): boolean {
+  return discChildren.length >= 2
+    && discChildren.length === immediateAudioChildren.length
+    && allSameTitle;
+}
+
+function handleMixedContentLooseAudio(
+  info: DirInfo,
+  rootPath: string,
+  results: DiscoveredFolder[],
+  willDiscMerge: boolean,
+  log?: DiscoveryLogger,
+): void {
+  if (willDiscMerge) {
+    // Multi-disc book; loose files are bonus tracks. Skip and fall through to disc-merge.
+    log?.debug(
+      { path: info.path, skippedFiles: info.audioFiles.map(f => f.path) },
+      'Skipping loose bonus audio in disc-merge folder',
+    );
+    return;
+  }
+  // Mixed library: each loose file is its own single-file book.
+  for (const file of info.audioFiles) {
+    const fileInfo: DirInfo = { path: file.path, audioFiles: [file], children: [] };
+    results.push(makeFolderEntry(fileInfo, rootPath, [file]));
+  }
+}
+
+function mergeDiscChildren(
+  info: DirInfo,
+  rootPath: string,
+  results: DiscoveredFolder[],
+  discChildren: DirInfo[],
+  log?: DiscoveryLogger,
+): void {
+  const allAudioFiles = discChildren.flatMap(c => collectAllAudioFiles(c));
+  log?.debug(
+    { path: info.path, discFolders: discChildren.map(c => c.path), mergedAudioFiles: allAudioFiles.length },
+    'Disc folder merge',
+  );
+  results.push(makeFolderEntry(info, rootPath, allAudioFiles));
 }
 
 function countAudioFilesDeep(info: DirInfo): number {
