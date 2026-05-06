@@ -3,12 +3,12 @@ import { basename } from 'node:path';
 import type { FastifyBaseLogger } from 'fastify';
 import type { MetadataService } from './metadata.service.js';
 import type { BookMetadata } from '../../core/metadata/index.js';
-import { scanAudioDirectory } from '../../core/utils/audio-scanner.js';
+import { scanAudioDirectory, type AudioScanResult } from '../../core/utils/audio-scanner.js';
 import { resolveFfprobePathFromSettings } from '../../core/utils/ffprobe-path.js';
 import type { SettingsService } from './settings.service.js';
 import { Semaphore } from '../utils/semaphore.js';
-import { scoreResult, diceCoefficient } from '../../core/utils/similarity.js';
-import { extractYear } from '../utils/folder-parsing.js';
+import { scoreResult, diceCoefficient, normalizeNarrator } from '../../core/utils/similarity.js';
+import { extractYear, cleanTagTitle } from '../utils/folder-parsing.js';
 import { searchWithSwapRetryTrace } from '../utils/search-helpers.js';
 import { getErrorMessage } from '../utils/error-message.js';
 import { serializeError } from '../utils/serialize-error.js';
@@ -49,6 +49,7 @@ const DURATION_THRESHOLD_STRICT = 0.05; // 5% tolerance for weaker matches
 const DURATION_THRESHOLD_RELAXED = 0.15; // 15% tolerance for high-confidence matches
 const COMBINED_SCORE_GATE = 0.95; // Score threshold for relaxed duration matching
 const TITLE_SIMILARITY_FLOOR = 0.5; // Below this, confidence is 'none'
+const TAG_AUTHOR_PREDICATE_FLOOR = 0.7; // Tag-pass author-name dice threshold (#984)
 
 export class MatchJobService {
   private jobs = new Map<string, MatchJob>();
@@ -167,14 +168,15 @@ class MatchJob {
     }
   }
 
-  // eslint-disable-next-line complexity -- audio-scan + ASIN + keyword + scoring branches with conditional-spread on MatchResult
+  // eslint-disable-next-line complexity -- audio-scan + tag-pass + filename-pass + scoring branches with conditional-spread on MatchResult
   async matchSingleBook(book: MatchCandidate): Promise<MatchResult> {
     try {
-      // Scan audio files for duration (used for runtime disambiguation)
+      // Scan audio files for duration (used for runtime disambiguation) AND tag fields
       let duration: number | undefined;
+      let audioResult: AudioScanResult | null = null;
       try {
         const ffprobePath = await this.resolveFfprobePath();
-        const audioResult = await scanAudioDirectory(book.path, {
+        audioResult = await scanAudioDirectory(book.path, {
           skipCover: true,
           ffprobePath,
           onWarn: (msg, payload) => this.log.warn(payload, msg),
@@ -189,7 +191,13 @@ class MatchJob {
         this.log.debug({ error: serializeError(error), path: book.path }, 'Audio scan failed — proceeding without duration');
       }
 
-      // Send structured search params when title/author available, with swap retry
+      // Pass 1 — tag-derived search (#984). Fires when both tagTitle and tagAuthor
+      // are populated. Bypasses searchWithSwapRetryTrace (no swap-on-zero) because
+      // tag.title and tag.albumartist are structurally distinct fields.
+      const tagResult = await this.tryTagDerivedMatch(book, audioResult, duration);
+      if (tagResult) return tagResult;
+
+      // Pass 2 — filename-derived search via swap-retry wrapper (existing path).
       this.log.debug({ path: book.path, title: book.title, author: book.author, duration }, 'Searching metadata for book');
       const trace = await searchWithSwapRetryTrace({
         searchFn: (q, opts) => this.metadataService.searchBooks(q, opts),
@@ -288,6 +296,104 @@ class MatchJob {
     }
   }
 
+  /**
+   * Pass 1 — tag-derived match (#984). Returns a MatchResult when the embedded
+   * tags produce an accepted match (top result clears title floor + author
+   * predicate). Returns null in any failure mode (no tags, zero results, floor
+   * fail, predicate fail, unexpected throw) so the caller falls through to the
+   * filename-derived path. Does NOT use searchWithSwapRetryTrace — tag.title and
+   * tag.albumartist are structurally distinct, so swap retry would only produce
+   * false positives.
+   */
+  private async tryTagDerivedMatch(
+    book: MatchCandidate,
+    audioResult: AudioScanResult | null,
+    duration: number | undefined,
+  ): Promise<MatchResult | null> {
+    const tagQuery = deriveTagQuery(audioResult);
+    if (!tagQuery) return null;
+
+    this.log.debug({ path: book.path, tagTitle: tagQuery.title, tagAuthor: tagQuery.author }, 'Tag-derived metadata search');
+
+    let tagResults: BookMetadata[];
+    try {
+      const query = `${tagQuery.title} ${tagQuery.author}`;
+      tagResults = await this.metadataService.searchBooks(query, {
+        title: tagQuery.title,
+        author: tagQuery.author,
+      });
+    } catch (error: unknown) {
+      this.log.warn(
+        { error: serializeError(error), path: book.path, tagTitle: tagQuery.title, tagAuthor: tagQuery.author },
+        'tag-search provider error — falling through to filename-derived path',
+      );
+      return null;
+    }
+
+    if (tagResults.length === 0) {
+      this.log.debug({ path: book.path }, 'Tag-derived search returned zero results — falling through');
+      return null;
+    }
+
+    const detailed = await this.fetchDetails(tagResults);
+    if (detailed.length === 0) return null;
+
+    const scored = rankResultsCleaned(detailed, tagQuery);
+    const top = scored[0];
+    if (!top) return null;
+
+    const cleanedTopTitle = cleanTagTitle(top.meta.title ?? '');
+    const titleFloor = top.meta.title ? diceCoefficient(cleanedTopTitle, tagQuery.title) : 0;
+    if (titleFloor < TITLE_SIMILARITY_FLOOR) {
+      this.log.debug(
+        { path: book.path, titleSimilarity: titleFloor.toFixed(2), bestTitle: top.meta.title },
+        'Tag-derived top result below title floor — falling through',
+      );
+      return null;
+    }
+
+    const topAuthor = top.meta.authors?.[0]?.name;
+    const authorScore = topAuthor
+      ? diceCoefficient(normalizeNarrator(topAuthor), normalizeNarrator(tagQuery.author))
+      : 0;
+    if (authorScore < TAG_AUTHOR_PREDICATE_FLOOR) {
+      this.log.debug(
+        { path: book.path, topResultAuthor: topAuthor, tagAuthor: tagQuery.author, score: authorScore.toFixed(2) },
+        'tag-author predicate failed — falling through to filename-derived path',
+      );
+      return null;
+    }
+
+    if (scored.length === 1) {
+      this.log.debug(
+        { path: book.path, title: top.meta.title, score: top.score.toFixed(2) },
+        'Tag-derived single result — high confidence',
+      );
+      return { path: book.path, confidence: 'high', bestMatch: top.meta, alternatives: [] };
+    }
+
+    const { confidence, reason } = resolveConfidenceFromDuration(scored, duration);
+    this.log.debug(
+      {
+        path: book.path,
+        confidence,
+        resultCount: scored.length,
+        topScore: top.score.toFixed(2),
+        bestTitle: top.meta.title,
+        hasDuration: !!duration,
+        matchDuration: top.meta.duration,
+      },
+      confidence === 'high' ? 'Tag-derived duration-verified high confidence' : reason ?? 'Tag-derived multiple results — medium confidence',
+    );
+    return {
+      path: book.path,
+      confidence,
+      bestMatch: top.meta,
+      alternatives: scored.slice(1).map(s => s.meta),
+      ...(reason !== undefined && { reason }),
+    };
+  }
+
   private async fetchDetails(results: BookMetadata[]): Promise<BookMetadata[]> {
     const detailed: BookMetadata[] = [];
     for (const result of results) {
@@ -351,6 +457,47 @@ function resolveConfidenceFromDuration(
 
   // Top result has no duration — cannot verify
   return { confidence: 'medium', reason: 'Best match missing duration — cannot verify' };
+}
+
+/**
+ * Build a tag-derived search query from the AudioScanResult, applying
+ * cleanTagTitle to tagTitle. Returns null when the scan lacks usable tags
+ * (missing title or author after trimming) — caller falls through to Pass 2.
+ * tagAuthor is already first-comma-segment from the scanner; we just trim.
+ */
+function deriveTagQuery(audioResult: AudioScanResult | null): { title: string; author: string } | null {
+  if (!audioResult) return null;
+  const rawTitle = audioResult.tagTitle?.trim();
+  const rawAuthor = audioResult.tagAuthor?.trim();
+  if (!rawTitle || !rawAuthor) return null;
+  const cleanedTitle = cleanTagTitle(rawTitle).trim();
+  if (!cleanedTitle) return null;
+  return { title: cleanedTitle, author: rawAuthor };
+}
+
+/**
+ * Scores and ranks tag-pass results by similarity, applying cleanTagTitle to
+ * BOTH the result title and the input title before dice scoring (AC7). The
+ * input context is already cleaned in deriveTagQuery; here we only need to
+ * normalize the result side. No year tiebreaker — tag context doesn't carry
+ * folder year.
+ */
+function rankResultsCleaned(
+  detailed: BookMetadata[],
+  tagQuery: { title: string; author: string },
+): { meta: BookMetadata; score: number }[] {
+  const scored = detailed.map(meta => ({
+    meta,
+    score: scoreResult(
+      {
+        ...(meta.title !== undefined && { title: cleanTagTitle(meta.title) }),
+        ...(meta.authors?.[0]?.name !== undefined && { author: meta.authors[0].name }),
+      },
+      tagQuery,
+    ),
+  }));
+  scored.sort((a, b) => b.score - a.score);
+  return scored;
 }
 
 /** Scores and ranks results by title+author similarity with year tiebreaker. */

@@ -6,10 +6,17 @@ import { AUDIO_EXTENSIONS } from './audio-constants.js';
 import { collectAudioFilePaths } from './collect-audio-files.js';
 
 export interface AudioScanResult {
-  // From tags (first file with tags wins)
+  // From tags (first file with tags wins, except tagTitle for multi-file scans —
+  // see resolveMultiFileAlbum for the cross-file album-consistency rule)
   tagNarrator?: string;
   tagTitle?: string;
   tagAuthor?: string;
+  /**
+   * Remaining tokens from a comma/semicolon/ampersand-split `albumartist`
+   * after the first segment (which becomes `tagAuthor`). Independent of
+   * `tagNarrator`. Joined with `, ` for caller convenience.
+   */
+  tagAdditionalArtists?: string;
   tagSeries?: string;
   tagSeriesPosition?: number;
   tagYear?: string;
@@ -123,7 +130,10 @@ export async function scanAudioDirectory(
     hasCoverArt: false,
   };
 
-  let tagsExtracted = false;
+  const isMultiFile = audioFiles.length > 1;
+  const fileAlbums: Array<string | undefined> = [];
+  let firstTaggedCommon: ICommonTagsResult | null = null;
+  let firstTaggedNative: Record<string, Array<{ id: string; value: unknown }>> | undefined;
   let technicalExtracted = false;
 
   for (const filePath of audioFiles) {
@@ -143,21 +153,48 @@ export async function scanAudioDirectory(
         technicalExtracted = true;
       }
 
-      if (!tagsExtracted && (metadata.common.title || metadata.common.album || metadata.common.artist)) {
-        extractTagInfo(result, metadata.common, metadata.native);
-        tagsExtracted = true;
+      if (isMultiFile) {
+        const album = metadata.common.album?.trim();
+        fileAlbums.push(album && album.length > 0 ? album : undefined);
+      }
+
+      if (firstTaggedCommon === null && (metadata.common.title || metadata.common.album || metadata.common.artist)) {
+        firstTaggedCommon = metadata.common;
+        firstTaggedNative = metadata.native;
       }
 
       extractCoverArt(result, metadata.common, skipCover);
       extractChapterCount(result, metadata);
     } catch {
+      if (isMultiFile) fileAlbums.push(undefined);
       continue;
     }
+  }
+
+  if (firstTaggedCommon !== null) {
+    const multiFileTagTitle = isMultiFile ? resolveMultiFileAlbum(fileAlbums) : undefined;
+    extractTagInfo(result, firstTaggedCommon, firstTaggedNative, isMultiFile, multiFileTagTitle);
   }
 
   if (!result.codec) return null;
 
   return result;
+}
+
+/**
+ * For multi-file scans, accept the cross-file `tag.album` as the book title
+ * only when every file has a non-empty album value, all values match, and the
+ * value is not a disc-pattern (e.g. "Disc 1", "CD 02"). Returns undefined
+ * otherwise — multi-file scans NEVER fall back to common.title because that is
+ * chapter-level by convention for chapter-encoded audiobooks.
+ */
+function resolveMultiFileAlbum(fileAlbums: Array<string | undefined>): string | undefined {
+  if (fileAlbums.length === 0) return undefined;
+  if (fileAlbums.some(a => !a)) return undefined;
+  const first = fileAlbums[0]!;
+  if (!fileAlbums.every(a => a === first)) return undefined;
+  if (/^(disc|cd)\s*\d+$/i.test(first)) return undefined;
+  return first;
 }
 
 function extractTechnicalInfo(
@@ -182,12 +219,24 @@ function extractTechnicalInfo(
 function extractTagInfo(
   result: AudioScanResult,
   common: ICommonTagsResult,
-  native?: Record<string, Array<{ id: string; value: unknown }>>,
+  native: Record<string, Array<{ id: string; value: unknown }>> | undefined,
+  isMultiFile: boolean,
+  multiFileTagTitle: string | undefined,
 ): void {
-  const tagTitle = common.title || common.album;
+  const tagTitle = isMultiFile ? multiFileTagTitle : (common.title || common.album);
   if (tagTitle !== undefined) result.tagTitle = tagTitle;
-  const tagAuthor = common.albumartist || common.artist;
-  if (tagAuthor !== undefined) result.tagAuthor = tagAuthor;
+
+  const rawAuthor = common.albumartist || common.artist;
+  if (rawAuthor) {
+    const parts = rawAuthor.split(/[,;&]/).map(s => s.trim()).filter(s => s.length > 0);
+    if (parts.length > 0) {
+      result.tagAuthor = parts[0];
+      if (parts.length > 1) {
+        result.tagAdditionalArtists = parts.slice(1).join(', ');
+      }
+    }
+  }
+
   const tagNarrator = extractNarrator(common, native);
   if (tagNarrator !== undefined) result.tagNarrator = tagNarrator;
   if (common.grouping !== undefined) result.tagSeries = common.grouping;
