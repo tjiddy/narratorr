@@ -2191,6 +2191,12 @@ describe('MatchJobService', () => {
           'The Way of Kings Brandon Sanderson',
           { title: 'The Way of Kings', author: 'Brandon Sanderson' },
         );
+        // AC13 case 1: zero-results path is the throttled-provider-failure path; the
+        // tag-search warn log must NOT fire (only an unexpected throw should warn).
+        expect(log.warn).not.toHaveBeenCalledWith(
+          expect.anything(),
+          'tag-search provider error — falling through to filename-derived path',
+        );
       });
 
       it('top result fails title floor — falls through to Pass 2', async () => {
