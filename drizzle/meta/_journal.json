@@ -8,6 +8,13 @@
       "when": 1777938164928,
       "tag": "0000_lame_proteus",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "6",
+      "when": 1778040913358,
+      "tag": "0001_dizzy_joseph",
+      "breakpoints": true
     }
   ]
 }

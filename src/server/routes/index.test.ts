@@ -152,6 +152,7 @@ describe('createServices', () => {
       this.get = vi.fn().mockResolvedValue({ audibleRegion: 'us' });
       this.bootstrapProcessingDefaults = vi.fn().mockResolvedValue(undefined);
       this.migrateLanguageSettings = vi.fn().mockResolvedValue(undefined);
+      this.migrateRejectWordsDefault = vi.fn().mockResolvedValue(undefined);
     } as never);
 
     const { createServices } = await import('./index.js');
@@ -180,6 +181,7 @@ describe('createServices', () => {
       this.get = vi.fn().mockResolvedValue({ audibleRegion: 'us' });
       this.bootstrapProcessingDefaults = vi.fn().mockResolvedValue(undefined);
       this.migrateLanguageSettings = mockMigrate;
+      this.migrateRejectWordsDefault = vi.fn().mockResolvedValue(undefined);
     } as never);
 
     const { createServices } = await import('./index.js');
@@ -205,6 +207,7 @@ describe('createServices', () => {
       this.get = vi.fn().mockResolvedValue({ audibleRegion: 'us' });
       this.bootstrapProcessingDefaults = mockBootstrap;
       this.migrateLanguageSettings = vi.fn().mockResolvedValue(undefined);
+      this.migrateRejectWordsDefault = vi.fn().mockResolvedValue(undefined);
     } as never);
 
     const { createServices } = await import('./index.js');
@@ -232,6 +235,7 @@ describe('createServices', () => {
       this.get = vi.fn().mockResolvedValue({ audibleRegion: 'us' });
       this.bootstrapProcessingDefaults = vi.fn().mockResolvedValue(undefined);
       this.migrateLanguageSettings = vi.fn().mockResolvedValue(undefined);
+      this.migrateRejectWordsDefault = vi.fn().mockResolvedValue(undefined);
     } as never);
 
     const { createServices } = await import('./index.js');
@@ -283,6 +287,7 @@ describe('createServices', () => {
       this.get = vi.fn().mockResolvedValue({ audibleRegion: 'us' });
       this.bootstrapProcessingDefaults = vi.fn().mockResolvedValue(undefined);
       this.migrateLanguageSettings = vi.fn().mockResolvedValue(undefined);
+      this.migrateRejectWordsDefault = vi.fn().mockResolvedValue(undefined);
     } as never);
 
     const { createServices } = await import('./index.js');
