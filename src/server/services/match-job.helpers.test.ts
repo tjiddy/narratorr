@@ -21,6 +21,7 @@ import {
   rankResults,
   resolveConfidenceFromDuration,
   parsePublishedYear,
+  tagTitleScore,
 } from './match-job.helpers.js';
 
 // -------- Factories --------
@@ -220,6 +221,110 @@ describe('rankResultsCleaned year tiebreaker', () => {
     const ranked = rankResultsCleaned([a, b], { title: 'Mistborn', author: 'Brandon Sanderson', year: '2006' });
     // No candidate matches 2006 — neither gets promoted; input order preserved
     expect(ranked[0]!.meta.publishedDate).toBe('2008');
+  });
+});
+
+// ============================================================================
+// tagTitleScore — multi-form composition against series[]
+// ============================================================================
+
+describe('tagTitleScore', () => {
+  it('returns dice on title alone when result has no series[]', () => {
+    const meta = makeBook({ title: 'Brave New World', authors: [{ name: 'Aldous Huxley' }] });
+    expect(tagTitleScore('Brave New World', meta)).toBeCloseTo(1.0, 5);
+  });
+
+  it('Eric shape — composes title + ": " + series.name and recovers dice = 1.0', () => {
+    const meta = makeBook({ title: 'Eric', series: [{ name: 'Discworld' }] });
+    expect(tagTitleScore('Eric: Discworld', meta)).toBeCloseTo(1.0, 5);
+  });
+
+  it('series-prefix colon (Mistborn shape) — composes series.name + ": " + title', () => {
+    const meta = makeBook({ title: 'The Final Empire', series: [{ name: 'Mistborn' }] });
+    expect(tagTitleScore('Mistborn: The Final Empire', meta)).toBeCloseTo(1.0, 5);
+  });
+
+  it('dash-form composition (Imagine Me shape)', () => {
+    const meta = makeBook({ title: 'Imagine Me', series: [{ name: 'Shatter Me' }] });
+    // Best composed candidate `Imagine Me - Shatter Me` vs input `Imagine Me - Shatter Me Series`
+    // (the trailing " Series" word produces some bigram variance — ~0.86 dice — well above the 0.5 floor)
+    expect(tagTitleScore('Imagine Me - Shatter Me Series', meta)).toBeGreaterThan(0.8);
+  });
+
+  it('uses series[0] only when multiple series entries are present', () => {
+    const meta = makeBook({
+      title: 'Mistborn',
+      series: [{ name: 'Cosmere' }, { name: 'Mistborn Era 1' }],
+    });
+    // Composition uses Cosmere (index 0); Mistborn Era 1 is ignored
+    expect(tagTitleScore('Cosmere: Mistborn', meta)).toBeCloseTo(1.0, 5);
+    // The series[1] composition is NOT used — input matching series[1] scores lower than input matching series[0]
+    expect(tagTitleScore('Mistborn Era 1: Mistborn', meta)).toBeLessThan(
+      tagTitleScore('Cosmere: Mistborn', meta),
+    );
+  });
+
+  it('includes "series: title, Book N" when series[0].position is set', () => {
+    const meta = makeBook({ title: 'The Final Empire', series: [{ name: 'Mistborn', position: 1 }] });
+    // The position-form candidate exists; verify the Math.max picks it for matching input
+    expect(tagTitleScore('Mistborn: The Final Empire, Book 1', meta)).toBeCloseTo(1.0, 5);
+  });
+
+  it('treats series[0].position === 0 as a valid value, not falsy-skipped', () => {
+    const meta = makeBook({ title: 'Prelude', series: [{ name: 'Sample', position: 0 }] });
+    // If `if (seriesPos)` were used (falsy check), position 0 would be excluded.
+    // Guard is `seriesPos !== undefined`, so the position-form candidate is built.
+    expect(tagTitleScore('Sample: Prelude, Book 0', meta)).toBeCloseTo(1.0, 5);
+  });
+
+  it('handles fractional positions in stringification', () => {
+    const meta = makeBook({ title: 'Story', series: [{ name: 'Saga', position: 1.5 }] });
+    expect(tagTitleScore('Saga: Story, Book 1.5', meta)).toBeCloseTo(1.0, 5);
+  });
+
+  it('falls back to title alone when series[0].name is empty string', () => {
+    const meta = makeBook({ title: 'Standalone', series: [{ name: '' }] });
+    // Empty-name candidate filters out; only the bare title candidate exists.
+    expect(tagTitleScore('Standalone', meta)).toBeCloseTo(1.0, 5);
+  });
+
+  it('falls back to title alone when series[] is empty', () => {
+    const meta = makeBook({ title: 'Standalone', series: [] });
+    expect(tagTitleScore('Standalone', meta)).toBeCloseTo(1.0, 5);
+  });
+
+  it('returns 0 (NOT -Infinity) when title is undefined and series has no name', () => {
+    // Pins AC7 — Math.max(...[]) returns -Infinity in JS. Without the explicit
+    // `scores.length > 0 ? Math.max(...scores) : 0` guard, this test would
+    // return -Infinity and silently pass any floor check downstream.
+    const meta = makeBook({ title: undefined as unknown as string, series: [] });
+    expect(tagTitleScore('Anything', meta)).toBe(0);
+  });
+
+  it('handles result.title === series[0].name (duplicate composed strings) without distortion', () => {
+    const meta = makeBook({ title: 'Discworld', series: [{ name: 'Discworld' }] });
+    expect(tagTitleScore('Discworld', meta)).toBeCloseTo(1.0, 5);
+  });
+});
+
+// ============================================================================
+// rankResultsCleaned — multi-form scoring with series[]
+// ============================================================================
+
+describe('rankResultsCleaned multi-form', () => {
+  it('Eric shape — promotes series-composed candidate above title-only', () => {
+    const eric = makeBook({ title: 'Eric', series: [{ name: 'Discworld' }], authors: [{ name: 'Terry Pratchett' }] });
+    const wrong = makeBook({ title: 'Going Postal', series: [{ name: 'Discworld' }], authors: [{ name: 'Terry Pratchett' }] });
+    const ranked = rankResultsCleaned([wrong, eric], { title: 'Eric: Discworld', author: 'Terry Pratchett' });
+    expect(ranked[0]!.meta.title).toBe('Eric');
+  });
+
+  it('passes the 0.5 title floor for an Eric-shape that single-form dice would fail', () => {
+    // Pre-#1007 single-form: cleanTagTitle("Eric") vs "Eric: Discworld" ≈ 0.4 — fails 0.5 floor.
+    // With multi-form: composed "Eric: Discworld" vs input "Eric: Discworld" = 1.0 — title score easily passes.
+    const eric = makeBook({ title: 'Eric', series: [{ name: 'Discworld' }], authors: [{ name: 'Terry Pratchett' }] });
+    const ranked = rankResultsCleaned([eric], { title: 'Eric: Discworld', author: 'Terry Pratchett' });
+    expect(ranked[0]!.score).toBeGreaterThan(0.6);
   });
 });
 
