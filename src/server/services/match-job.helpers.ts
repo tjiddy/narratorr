@@ -75,13 +75,21 @@ const TAG_AUTHOR_WEIGHT = 0.4;
  * candidate. Composes 1-6 candidate strings from `result.title` and
  * `result.series[0]` and returns the max dice across them.
  *
- * Why composition: Audible's canonical title is short — series annotation lives
- * in the structured `series[]` field, not the title string. Tag titles inline
- * series. Symmetric cleaning of both sides produces dice ≈ 0.4 because the two
- * sides carry different content. Composing `title + ': ' + series.name` (and
- * the dash/order/position variants) lets the input match its semantic
- * equivalent, so an Eric-shape (`title="Eric"`, `series=[{name:"Discworld"}]`,
- * input="Eric: Discworld") scores 1.0.
+ * Two distinct concerns, both load-bearing:
+ *
+ * 1. Symmetric cleaning (#1011) — `cleanTagTitle` runs on `result.title` AND
+ *    `result.series[0].name` so publisher decoration like "(Full Audiobook)"
+ *    or "[Bonus]" doesn't poison dice. The input is already cleaned upstream
+ *    by `deriveTagQuery`, so cleaning the result side restores symmetry.
+ *
+ * 2. Multi-form composition — Audible's canonical title is short; series
+ *    annotation lives in the structured `series[]` field, not the title
+ *    string. Tag titles inline series. Cleaning alone produces dice ≈ 0.4
+ *    on Eric-shape inputs because the two sides carry different content.
+ *    Composing `title + ': ' + series.name` (and the dash/order/position
+ *    variants) lets the input match its semantic equivalent, so an
+ *    Eric-shape (`title="Eric"`, `series=[{name:"Discworld"}]`,
+ *    input="Eric: Discworld") scores 1.0.
  *
  * Empty-array guard: `Math.max(...[])` returns `-Infinity`. Without the guard,
  * a result with `title === undefined` and missing/empty `series[].name` would
