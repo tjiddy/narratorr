@@ -154,13 +154,9 @@ export function cleanName(name: string): string {
  */
 export function cleanTagTitle(s: string): string {
   let result = s.replace(/\s*\[[^\]]*\]/g, ' ').replace(/\s{2,}/g, ' ').trim();
-  const narratorMatch = result.match(NARRATOR_PAREN_REGEX);
-  if (narratorMatch && !isEditionParen(narratorMatch[1]!)) {
-    const stripped = result.replace(NARRATOR_PAREN_REGEX, '').trim();
-    if (stripped) result = stripped;
-  }
-  result = result.replace(TAG_TITLE_SERIES_MARKER_REGEX, '').trim();
-  return result || s;
+  const m = result.match(NARRATOR_PAREN_REGEX);
+  if (m && !isEditionParen(m[1]!)) result = result.replace(NARRATOR_PAREN_REGEX, '').trim() || result;
+  return result.replace(TAG_TITLE_SERIES_MARKER_REGEX, '').trim() || s;
 }
 
 /** Pipeline steps for cleanName/cleanNameWithTrace. Order matters — see step names below. */
