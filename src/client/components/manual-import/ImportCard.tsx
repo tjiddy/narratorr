@@ -122,7 +122,7 @@ export function ImportCard({ row, onToggle, onEdit, lockDuplicates, relativePath
       </div>
 
       {/* Author + narrator/size */}
-      <div className="hidden sm:block w-48 shrink-0 text-right">
+      <div className="hidden sm:block w-64 shrink-0 text-right">
         <p className="text-sm text-muted-foreground truncate">
           {displayAuthor || <span className="italic text-muted-foreground/40">Unknown</span>}
         </p>
