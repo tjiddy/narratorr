@@ -244,11 +244,20 @@ describe('tagTitleScore', () => {
     expect(tagTitleScore('Mistborn: The Final Empire', meta)).toBeCloseTo(1.0, 5);
   });
 
-  it('dash-form composition (Imagine Me shape)', () => {
+  it('dash-form composition title - series (Imagine Me shape)', () => {
     const meta = makeBook({ title: 'Imagine Me', series: [{ name: 'Shatter Me' }] });
     // Best composed candidate `Imagine Me - Shatter Me` vs input `Imagine Me - Shatter Me Series`
     // (the trailing " Series" word produces some bigram variance — ~0.86 dice — well above the 0.5 floor)
     expect(tagTitleScore('Imagine Me - Shatter Me Series', meta)).toBeGreaterThan(0.8);
+  });
+
+  it('series-prefix dash — composes series.name + " - " + title (deletion-proof for `series - title`)', () => {
+    // Input matches ONLY the series-prefix dash form. The four other candidates
+    // ("Eric", "Eric: Discworld", "Eric - Discworld", "Discworld: Eric") all
+    // score below 1.0 against "Discworld - Eric"; deleting the `series - title`
+    // candidate from tagTitleScore would drop this test's score to ≈ 0.83.
+    const meta = makeBook({ title: 'Eric', series: [{ name: 'Discworld' }] });
+    expect(tagTitleScore('Discworld - Eric', meta)).toBeCloseTo(1.0, 5);
   });
 
   it('uses series[0] only when multiple series entries are present', () => {
