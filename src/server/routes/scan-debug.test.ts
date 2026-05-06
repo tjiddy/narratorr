@@ -294,6 +294,23 @@ describe('POST /api/library/scan-debug', () => {
       expect(body.parsing.raw.author).toBeNull();
     });
 
+    it('2-part flat-pack split (Sanderson/Mistborn 01 - The Final Empire.mp3) routes through P10 fallback (issue #1016)', async () => {
+      (services.metadata.searchBooks as ReturnType<typeof vi.fn>).mockResolvedValue([]);
+      (services.book.findDuplicate as ReturnType<typeof vi.fn>).mockResolvedValue(null);
+
+      const res = await app.inject({
+        method: 'POST',
+        url: '/api/library/scan-debug',
+        payload: { folderName: 'Sanderson/Mistborn 01 - The Final Empire.mp3' },
+      });
+
+      const body = JSON.parse(res.payload);
+      expect(res.statusCode).toBe(200);
+      expect(body.parsing.raw.title).toBe('The Final Empire');
+      expect(body.parsing.raw.series).toBe('Mistborn');
+      expect(body.cleaning.title.result).toBe('The Final Empire');
+    });
+
     it('P8: 2-part Hitchhiker raw output yields cleaning.author.result === "Douglas Adams" (issue #980)', async () => {
       (services.metadata.searchBooks as ReturnType<typeof vi.fn>).mockResolvedValue([]);
       (services.book.findDuplicate as ReturnType<typeof vi.fn>).mockResolvedValue(null);

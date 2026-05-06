@@ -1037,6 +1037,68 @@ describe('folder-parsing (extracted from library-scan.service)', () => {
       });
     });
 
+    describe('2-part P10 fallback for "Series NN - Title" / "Series - NN - Title" (issue #1016)', () => {
+      it('cleaned: Sanderson / Mistborn 01 - The Final Empire (space-separated) → series + position + title', () => {
+        const result = parseFolderStructure(['Sanderson', 'Mistborn 01 - The Final Empire']);
+        expect(result).toEqual({
+          author: 'Sanderson',
+          series: 'Mistborn',
+          seriesPosition: 1,
+          title: 'The Final Empire',
+        });
+      });
+
+      it('cleaned: Sanderson / Mistborn 01 - The Final Empire.mp3 (audio extension) → series + position + title', () => {
+        const result = parseFolderStructure(['Sanderson', 'Mistborn 01 - The Final Empire.mp3']);
+        expect(result).toEqual({
+          author: 'Sanderson',
+          series: 'Mistborn',
+          seriesPosition: 1,
+          title: 'The Final Empire',
+        });
+      });
+
+      it('cleaned: Sanderson / Mistborn - 01 - The Final Empire (hyphenated) → series + position + title (existing SERIES_NUMBER branch)', () => {
+        const result = parseFolderStructure(['Sanderson', 'Mistborn - 01 - The Final Empire']);
+        expect(result).toEqual({
+          author: 'Sanderson',
+          series: 'Mistborn',
+          seriesPosition: 1,
+          title: 'The Final Empire',
+        });
+      });
+
+      it('raw: Sanderson / Mistborn 01 - The Final Empire (space-separated) → series + position + title (uncleaned)', () => {
+        const result = parseFolderStructureRaw(['Sanderson', 'Mistborn 01 - The Final Empire']);
+        expect(result).toEqual({
+          author: 'Sanderson',
+          series: 'Mistborn',
+          seriesPosition: 1,
+          title: 'The Final Empire',
+        });
+      });
+
+      it('raw: Sanderson / Mistborn 01 - The Final Empire.mp3 → series + position + title (extension stripped)', () => {
+        const result = parseFolderStructureRaw(['Sanderson', 'Mistborn 01 - The Final Empire.mp3']);
+        expect(result).toEqual({
+          author: 'Sanderson',
+          series: 'Mistborn',
+          seriesPosition: 1,
+          title: 'The Final Empire',
+        });
+      });
+
+      it('raw: Sanderson / Mistborn - 01 - The Final Empire (hyphenated) → series + position + title (existing branch)', () => {
+        const result = parseFolderStructureRaw(['Sanderson', 'Mistborn - 01 - The Final Empire']);
+        expect(result).toEqual({
+          author: 'Sanderson',
+          series: 'Mistborn',
+          seriesPosition: 1,
+          title: 'The Final Empire',
+        });
+      });
+    });
+
     describe('P4 first-dash guard (issue #980 review F2)', () => {
       it('cleaned: "Author - Discworld, Book 16 - Soul Music" does NOT match P4 (would have set series=`Author - Discworld`)', () => {
         const result = parseFolderStructure(['Author - Discworld, Book 16 - Soul Music']);

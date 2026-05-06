@@ -611,10 +611,10 @@ describe('discoverBooks', () => {
       expect.objectContaining({ rootPath: '/audiobooks', discovered: 1 }),
       'Book discovery complete',
     );
-    // Leaf book folder debug
+    // Leaf folder classifier decision/reason
     expect(log.debug).toHaveBeenCalledWith(
-      expect.objectContaining({ audioFiles: 1 }),
-      'Leaf book folder',
+      expect.objectContaining({ fileCount: 1, decision: 'merge', reason: 'single-file' }),
+      'Leaf folder classified',
     );
   });
 
@@ -1328,6 +1328,100 @@ describe('discoverBooks', () => {
         expect(result[0]!.audioFileCount).toBe(2);
         expect(result[0]!.totalSize).toBe(3500);
       });
+    });
+  });
+
+  // ---- Leaf folder classifier merge/split (issue #1016) ----
+
+  describe('leaf folder classifier merge/split', () => {
+    const LARGE_BOOK = 340 * 1024 * 1024;
+    const SMALL_CHAPTER = 30 * 1024 * 1024;
+
+    it('AC4: series-collection of 3 distinct large named files emits 3 entries', async () => {
+      setupFs({
+        '/audiobooks': [{ name: 'Sanderson', isFile: false }],
+        '/audiobooks/Sanderson': [{ name: 'Mistborn Trilogy', isFile: false }],
+        '/audiobooks/Sanderson/Mistborn Trilogy': [
+          { name: 'Mistborn 01 - The Final Empire.mp3', isFile: true, size: LARGE_BOOK },
+          { name: 'Mistborn 02 - The Well of Ascension.mp3', isFile: true, size: LARGE_BOOK },
+          { name: 'Mistborn 03 - The Hero of Ages.mp3', isFile: true, size: LARGE_BOOK },
+        ],
+      });
+
+      const result = await discoverBooks('/audiobooks');
+      expect(result).toHaveLength(3);
+      const paths = result.map(r => r.path).sort();
+      expect(paths).toEqual([
+        '/audiobooks/Sanderson/Mistborn Trilogy/Mistborn 01 - The Final Empire.mp3',
+        '/audiobooks/Sanderson/Mistborn Trilogy/Mistborn 02 - The Well of Ascension.mp3',
+        '/audiobooks/Sanderson/Mistborn Trilogy/Mistborn 03 - The Hero of Ages.mp3',
+      ]);
+      const first = result.find(r => r.path.endsWith('Final Empire.mp3'))!;
+      expect(first.audioFileCount).toBe(1);
+      expect(first.totalSize).toBe(LARGE_BOOK);
+      expect(first.folderParts).toEqual([
+        'Sanderson', 'Mistborn Trilogy', 'Mistborn 01 - The Final Empire.mp3',
+      ]);
+    });
+
+    it('AC5: chapter-encoded book with 30 small Chapter NN files emits 1 entry', async () => {
+      const entries = Array.from({ length: 30 }, (_, i) => ({
+        name: `Chapter ${String(i + 1).padStart(2, '0')} - Title ${i + 1}.mp3`,
+        isFile: true,
+        size: SMALL_CHAPTER,
+      }));
+      setupFs({
+        '/audiobooks': [{ name: 'Eric', isFile: false }],
+        '/audiobooks/Eric': entries,
+      });
+
+      const result = await discoverBooks('/audiobooks');
+      expect(result).toHaveLength(1);
+      expect(result[0]!.path).toBe('/audiobooks/Eric');
+      expect(result[0]!.audioFileCount).toBe(30);
+    });
+
+    it('AC6: flattened-disc fixture (Disc NN files in one folder) emits 1 entry', async () => {
+      const entries = Array.from({ length: 12 }, (_, i) => ({
+        name: `BookTitle - Disc ${String(i + 1).padStart(2, '0')}.mp3`,
+        isFile: true,
+        size: 600 * 1024 * 1024,
+      }));
+      setupFs({
+        '/audiobooks': [{ name: 'BookTitle', isFile: false }],
+        '/audiobooks/BookTitle': entries,
+      });
+
+      const result = await discoverBooks('/audiobooks');
+      expect(result).toHaveLength(1);
+      expect(result[0]!.path).toBe('/audiobooks/BookTitle');
+      expect(result[0]!.audioFileCount).toBe(12);
+    });
+
+    it('AC7: Mistborn Trilogy with bare Mistborn 0N files merges via duplicate-normalized-stems', async () => {
+      setupFs({
+        '/audiobooks': [{ name: 'Mistborn Trilogy', isFile: false }],
+        '/audiobooks/Mistborn Trilogy': [
+          { name: 'Mistborn 01.mp3', isFile: true, size: LARGE_BOOK },
+          { name: 'Mistborn 02.mp3', isFile: true, size: LARGE_BOOK },
+          { name: 'Mistborn 03.mp3', isFile: true, size: LARGE_BOOK },
+        ],
+      });
+
+      const log: DiscoveryLogger = { debug: vi.fn() };
+      const result = await discoverBooks('/audiobooks', { log });
+      expect(result).toHaveLength(1);
+      expect(result[0]!.path).toBe('/audiobooks/Mistborn Trilogy');
+      expect(result[0]!.audioFileCount).toBe(3);
+      // Pin the specific guard reason — duplicate-normalized-stems fires before
+      // title-content because all three files normalize to 'Mistborn'.
+      expect(log.debug).toHaveBeenCalledWith(
+        expect.objectContaining({
+          decision: 'merge',
+          reason: 'duplicate-normalized-stems',
+        }),
+        'Leaf folder classified',
+      );
     });
   });
 });
