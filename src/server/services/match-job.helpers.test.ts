@@ -1,7 +1,19 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import type { AudioScanResult } from '../../core/utils/audio-scanner.js';
 import type { BookMetadata } from '../../core/metadata/index.js';
 import type { MatchCandidate } from './match-job.service.js';
+
+// Spy on cleanTagTitle so a single test can force the empty-cleaned-title path
+// (the deriveTagQuery guard at match-job.helpers.ts is otherwise unreachable
+// because cleanName falls back to `name.trim()` whenever the pipeline empties).
+// The factory passes the actual implementation through, so all other tests run
+// against real cleanTagTitle behavior.
+vi.mock('../utils/folder-parsing.js', async (importActual) => {
+  const actual = await importActual<typeof import('../utils/folder-parsing.js')>();
+  return { ...actual, cleanTagTitle: vi.fn(actual.cleanTagTitle) };
+});
+
+import { cleanTagTitle } from '../utils/folder-parsing.js';
 import {
   deriveTagQuery,
   rankResultsCleaned,
@@ -91,6 +103,15 @@ describe('deriveTagQuery', () => {
     const scan = makeAudioScan({ tagTitle: 'Mistborn', tagAuthor: 'Brandon Sanderson', tagYear: '   ' });
     const result = deriveTagQuery(scan);
     expect(result).not.toHaveProperty('year');
+  });
+
+  it('returns null when cleanTagTitle reduces title to empty', () => {
+    // Pins the cleanedTitle guard at match-job.helpers.ts:57 — if the guard is
+    // removed, deriveTagQuery would return { title: '', author: 'X' } and this
+    // test would fail. The mock forces the otherwise-unreachable branch.
+    vi.mocked(cleanTagTitle).mockReturnValueOnce('');
+    const scan = makeAudioScan({ tagTitle: 'looks-non-empty', tagAuthor: 'X' });
+    expect(deriveTagQuery(scan)).toBeNull();
   });
 });
 
