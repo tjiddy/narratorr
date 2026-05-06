@@ -142,7 +142,7 @@ describe('QualitySettingsSection', () => {
 
     await waitFor(() => {
       expect(mockApi.updateSettings).toHaveBeenCalledWith({
-        quality: { grabFloor: 100, minSeeders: 3, maxDownloadSize: 5 },
+        quality: { grabFloor: 100, minSeeders: 3, minDownloadSize: 0, maxDownloadSize: 5 },
       });
     });
 
@@ -272,6 +272,68 @@ describe('QualitySettingsSection', () => {
     await user.keyboard('10');
 
     expect(screen.getByRole('button', { name: /save/i })).toBeInTheDocument();
+  });
+
+  it('renders min download size field with MB unit in label', async () => {
+    renderWithProviders(<QualitySettingsSection />);
+
+    await waitFor(() => {
+      expect(screen.getByLabelText('Min Download Size (MB)')).toBeInTheDocument();
+    });
+  });
+
+  it('loads minDownloadSize setting value into form', async () => {
+    const settings = createMockSettings({ quality: { grabFloor: 50, minSeeders: 3, minDownloadSize: 50 } });
+    mockApi.getSettings.mockResolvedValue(settings);
+    renderWithProviders(<QualitySettingsSection />);
+
+    await waitFor(() => {
+      expect(screen.getByLabelText('Min Download Size (MB)')).toHaveValue(50);
+    });
+  });
+
+  it('includes minDownloadSize in save payload', async () => {
+    mockApi.updateSettings.mockResolvedValue(mockSettings);
+    const user = userEvent.setup();
+    renderWithProviders(<QualitySettingsSection />);
+
+    await waitFor(() => {
+      expect(screen.getByLabelText('Min Download Size (MB)')).toBeInTheDocument();
+    });
+
+    const input = screen.getByLabelText('Min Download Size (MB)');
+    await user.tripleClick(input);
+    await user.keyboard('50');
+
+    await user.click(screen.getByRole('button', { name: /save/i }));
+
+    await waitFor(() => {
+      expect(mockApi.updateSettings).toHaveBeenCalledWith(
+        expect.objectContaining({
+          quality: expect.objectContaining({ minDownloadSize: 50 }),
+        }),
+      );
+    });
+  });
+
+  it('blocks submit when minDownloadSize is negative', async () => {
+    const user = userEvent.setup();
+    renderWithProviders(<QualitySettingsSection />);
+
+    await waitFor(() => {
+      expect(screen.getByLabelText('Min Download Size (MB)')).toBeInTheDocument();
+    });
+
+    const input = screen.getByLabelText('Min Download Size (MB)');
+    await user.clear(input);
+    await user.type(input, '-1');
+
+    await act(async () => {
+      fireEvent.submit(screen.getByRole('button', { name: /save/i }).closest('form')!);
+    });
+
+    expect(screen.getByText(/too small/i)).toBeInTheDocument();
+    expect(mockApi.updateSettings).not.toHaveBeenCalled();
   });
 
   it('shows error toast on save failure', async () => {

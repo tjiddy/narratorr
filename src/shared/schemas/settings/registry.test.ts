@@ -148,6 +148,7 @@ describe('settingsRegistry', () => {
         grabFloor: 0,
         protocolPreference: 'none',
         minSeeders: 1,
+        minDownloadSize: 0,
         maxDownloadSize: 5,
         searchImmediately: false,
         monitorForUpgrades: false,
@@ -680,6 +681,7 @@ describe('settingsRegistry', () => {
         grabFloor: 0,
         protocolPreference: 'none',
         minSeeders: 1,
+        minDownloadSize: 0,
         maxDownloadSize: 5,
         searchImmediately: false,
         monitorForUpgrades: false,
@@ -719,6 +721,28 @@ describe('settingsRegistry', () => {
         requiredWords: '',
       });
       expect(result.success).toBe(false);
+    });
+
+    it('qualitySettingsSchema parses empty input with default minDownloadSize: 0', () => {
+      const result = settingsRegistry.quality.schema.safeParse({});
+      expect(result.success).toBe(true);
+      if (result.success) {
+        expect(result.data.minDownloadSize).toBe(0);
+      }
+    });
+
+    it('qualitySettingsSchema rejects negative minDownloadSize', () => {
+      const result = settingsRegistry.quality.schema.safeParse({ minDownloadSize: -1 });
+      expect(result.success).toBe(false);
+    });
+
+    it('qualityFormSchema.pick({ minDownloadSize: true }) parses a valid number', () => {
+      const picked = qualityFormSchema.pick({ minDownloadSize: true });
+      const result = picked.safeParse({ minDownloadSize: 50 });
+      expect(result.success).toBe(true);
+      if (result.success) {
+        expect(result.data.minDownloadSize).toBe(50);
+      }
     });
   });
 

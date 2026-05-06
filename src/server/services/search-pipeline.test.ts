@@ -8,7 +8,7 @@ import { DuplicateDownloadError } from './download.service.js';
 import type { EventBroadcasterService } from './event-broadcaster.service.js';
 import type { FastifyBaseLogger } from 'fastify';
 import type { SearchResult } from '../../core/index.js';
-import { BYTES_PER_GB as GB } from '../../shared/constants.js';
+import { BYTES_PER_GB as GB, BYTES_PER_MB as MB } from '../../shared/constants.js';
 import type { SearchResponsePayload, SearchResultPayload } from '../../shared/schemas/search-stream.js';
 
 function createMockLogger(): FastifyBaseLogger {
@@ -707,6 +707,119 @@ describe('filterAndRankResults — maxDownloadSize', () => {
       ], undefined, { grabFloor: 0, minSeeders: 3, protocolPreference: 'none', maxDownloadSize: 5 });
     expect(results).toHaveLength(1);
     expect(results[0]!.title).toBe('Good');
+  });
+});
+
+describe('filterAndRankResults — minDownloadSize', () => {
+  it('filters result below minDownloadSize threshold', () => {
+    const { results } = filterAndRankResults([makeResult({ size: 5 * MB })], undefined, { grabFloor: 0, minSeeders: 0, protocolPreference: 'none', minDownloadSize: 50 });
+    expect(results).toHaveLength(0);
+  });
+
+  it('keeps result above minDownloadSize threshold', () => {
+    const { results } = filterAndRankResults([makeResult({ size: 100 * MB })], undefined, { grabFloor: 0, minSeeders: 0, protocolPreference: 'none', minDownloadSize: 50 });
+    expect(results).toHaveLength(1);
+  });
+
+  it('keeps result exactly at minDownloadSize threshold (inclusive >=)', () => {
+    const { results } = filterAndRankResults([makeResult({ size: 50 * MB })], undefined, { grabFloor: 0, minSeeders: 0, protocolPreference: 'none', minDownloadSize: 50 });
+    expect(results).toHaveLength(1);
+  });
+
+  it('filters result 1 byte under minDownloadSize threshold', () => {
+    const { results } = filterAndRankResults([makeResult({ size: 50 * MB - 1 })], undefined, { grabFloor: 0, minSeeders: 0, protocolPreference: 'none', minDownloadSize: 50 });
+    expect(results).toHaveLength(0);
+  });
+
+  it('disables filter when minDownloadSize is 0', () => {
+    const { results } = filterAndRankResults([makeResult({ size: 1 * MB })], undefined, { grabFloor: 0, minSeeders: 0, protocolPreference: 'none', minDownloadSize: 0 });
+    expect(results).toHaveLength(1);
+  });
+
+  it('passes result with undefined size when minDownloadSize is set', () => {
+    const { results } = filterAndRankResults([makeResult({ size: undefined })], undefined, { grabFloor: 0, minSeeders: 0, protocolPreference: 'none', minDownloadSize: 50 });
+    expect(results).toHaveLength(1);
+  });
+
+  it('passes result with size 0 when minDownloadSize is set', () => {
+    const { results } = filterAndRankResults([makeResult({ size: 0 })], undefined, { grabFloor: 0, minSeeders: 0, protocolPreference: 'none', minDownloadSize: 50 });
+    expect(results).toHaveLength(1);
+  });
+
+  it('applies filter to both torrent and usenet results', () => {
+    const { results } = filterAndRankResults([
+        makeResult({ protocol: 'torrent', size: 5 * MB, seeders: 10 }),
+        makeResult({ protocol: 'usenet', size: 5 * MB }),
+      ], undefined, { grabFloor: 0, minSeeders: 0, protocolPreference: 'none', minDownloadSize: 50 });
+    expect(results).toHaveLength(0);
+  });
+
+  it('mixed: only undersized results removed, others retained', () => {
+    const tiny = makeResult({ title: 'Tracker test', size: 5 * MB });
+    const real = makeResult({ title: 'Real Book', size: 500 * MB });
+    const big = makeResult({ title: 'Big Pack', size: 2 * GB });
+    const { results } = filterAndRankResults([tiny, real, big], undefined, { grabFloor: 0, minSeeders: 0, protocolPreference: 'none', minDownloadSize: 50 });
+    expect(results).toHaveLength(2);
+    expect(results.map(r => r.title)).toContain('Real Book');
+    expect(results.map(r => r.title)).toContain('Big Pack');
+    expect(results.map(r => r.title)).not.toContain('Tracker test');
+  });
+
+  it('combines with maxDownloadSize: rejects both undersized and oversized', () => {
+    const { results } = filterAndRankResults([
+        makeResult({ title: 'Tiny', size: 5 * MB }),
+        makeResult({ title: 'Just right', size: 500 * MB }),
+        makeResult({ title: 'Big', size: 1 * GB }),
+        makeResult({ title: 'Huge', size: 6 * GB }),
+      ], undefined, { grabFloor: 0, minSeeders: 0, protocolPreference: 'none', minDownloadSize: 50, maxDownloadSize: 5 });
+    expect(results.map(r => r.title).sort()).toEqual(['Big', 'Just right']);
+  });
+
+  it('min-size drop log carries the correctly-converted minBytes (MB → bytes)', () => {
+    const log = createMockLogger();
+    filterAndRankResults(
+      [makeResult({ title: 'Tracker test', size: 5 * MB })],
+      undefined,
+      { grabFloor: 0, minSeeders: 0, protocolPreference: 'none', minDownloadSize: 50 },
+      log,
+    );
+    expect(log.debug).toHaveBeenCalledWith(
+      expect.objectContaining({
+        title: 'Tracker test',
+        reason: 'below-min-size',
+        sizeBytes: 5 * MB,
+        minBytes: 50 * MB,
+      }),
+      'Quality filter dropped result',
+    );
+  });
+
+  it('min-size gate does not fire when minDownloadSize is 0', () => {
+    const log = createMockLogger();
+    filterAndRankResults(
+      [makeResult({ size: 1 * MB })],
+      undefined,
+      { grabFloor: 0, minSeeders: 0, protocolPreference: 'none', minDownloadSize: 0 },
+      log,
+    );
+    expect(log.debug).not.toHaveBeenCalledWith(
+      expect.objectContaining({ reason: 'below-min-size' }),
+      expect.any(String),
+    );
+  });
+
+  it('min-size gate does not fire when minDownloadSize is undefined', () => {
+    const log = createMockLogger();
+    filterAndRankResults(
+      [makeResult({ size: 1 * MB })],
+      undefined,
+      { grabFloor: 0, minSeeders: 0, protocolPreference: 'none' },
+      log,
+    );
+    expect(log.debug).not.toHaveBeenCalledWith(
+      expect.objectContaining({ reason: 'below-min-size' }),
+      expect.any(String),
+    );
   });
 });
 

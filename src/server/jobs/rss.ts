@@ -162,6 +162,7 @@ export async function runRssJob(
       requiredWords: qualitySettings.requiredWords,
       languages: metadataSettings.languages,
       narratorPriority,
+      minDownloadSize: qualitySettings.minDownloadSize,
       maxDownloadSize: qualitySettings.maxDownloadSize,
     }, log);
     if (ranked.length < rssInputCount) {

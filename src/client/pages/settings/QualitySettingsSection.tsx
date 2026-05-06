@@ -5,7 +5,7 @@ import { useSettingsForm } from '@/hooks/useSettingsForm';
 import { DEFAULT_SETTINGS, qualityFormSchema, type AppSettings } from '../../../shared/schemas.js';
 import { SettingsSection } from './SettingsSection';
 
-const qualityGateFormSchema = qualityFormSchema.pick({ grabFloor: true, minSeeders: true, maxDownloadSize: true });
+const qualityGateFormSchema = qualityFormSchema.pick({ grabFloor: true, minSeeders: true, minDownloadSize: true, maxDownloadSize: true });
 
 type QualityGateFormData = z.infer<typeof qualityGateFormSchema>;
 
@@ -15,11 +15,13 @@ export function QualitySettingsSection() {
     defaultValues: {
       grabFloor: DEFAULT_SETTINGS.quality.grabFloor,
       minSeeders: DEFAULT_SETTINGS.quality.minSeeders,
+      minDownloadSize: DEFAULT_SETTINGS.quality.minDownloadSize,
       maxDownloadSize: DEFAULT_SETTINGS.quality.maxDownloadSize,
     },
     select: (s: AppSettings) => ({
       grabFloor: s.quality.grabFloor,
       minSeeders: s.quality.minSeeders,
+      minDownloadSize: s.quality.minDownloadSize,
       maxDownloadSize: s.quality.maxDownloadSize,
     }),
     toPayload: (d) => ({ quality: d }),
@@ -70,6 +72,25 @@ export function QualitySettingsSection() {
           )}
           <p className="text-sm text-muted-foreground mt-2">
             Torrent results with fewer seeders are hidden. Does not affect Usenet results. Set to 0 to disable.
+          </p>
+        </div>
+
+        <div>
+          <label htmlFor="minDownloadSize" className="block text-sm font-medium mb-2">Min Download Size (MB)</label>
+          <input
+            id="minDownloadSize"
+            type="number"
+            {...register('minDownloadSize', { valueAsNumber: true })}
+            className={errorInputClass(!!errors.minDownloadSize)}
+            min={0}
+            step="any"
+            placeholder="0"
+          />
+          {errors.minDownloadSize && (
+            <p className="text-sm text-destructive mt-1">{errors.minDownloadSize.message}</p>
+          )}
+          <p className="text-sm text-muted-foreground mt-2">
+            Minimum download size in MB. Filters out tracker-test uploads, single-track previews, and corrupted partial releases. Try 50 to start. Set to 0 to disable.
           </p>
         </div>
 
