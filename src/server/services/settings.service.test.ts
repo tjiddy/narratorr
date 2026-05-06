@@ -812,32 +812,27 @@ describe('migrateRejectWordsDefault', () => {
     let callCount = 0;
     db.select.mockImplementation(() => {
       callCount++;
-      if (callCount === 1) return mockDbChain([]); // flag check
-      if (callCount === 2) return mockDbChain([{ key: 'quality', value: { grabFloor: 0, rejectWords: '' } }]);
-      // Subsequent get('quality') — returns the new written value
+      // 1st call: prime cache with legacy ''
+      if (callCount === 1) return mockDbChain([{ key: 'quality', value: { grabFloor: 0, rejectWords: '' } }]);
+      // 2nd call: migration flag check (no flag yet)
+      if (callCount === 2) return mockDbChain([]);
+      // 3rd call: migration reads raw quality blob
+      if (callCount === 3) return mockDbChain([{ key: 'quality', value: { grabFloor: 0, rejectWords: '' } }]);
+      // 4th call onward: post-migration get returns new value (cache miss)
       return mockDbChain([{ key: 'quality', value: { grabFloor: 0, rejectWords: NEW_DEFAULT } }]);
     });
     db.insert.mockReturnValue(mockDbChain());
 
-    // Prime the cache with a get() before migration
-    db.select.mockReturnValueOnce(mockDbChain([{ key: 'quality', value: { grabFloor: 0, rejectWords: '' } }]));
-    await service.get('quality');
-    db.select.mockClear();
+    // Prime cache with legacy value
+    const before = await service.get('quality');
+    expect(before.rejectWords).toBe('');
 
-    // Reset for migration: flag check → quality read → post-write get
-    let postCount = 0;
-    db.select.mockImplementation(() => {
-      postCount++;
-      if (postCount === 1) return mockDbChain([]); // flag check
-      if (postCount === 2) return mockDbChain([{ key: 'quality', value: { grabFloor: 0, rejectWords: '' } }]);
-      return mockDbChain([{ key: 'quality', value: { grabFloor: 0, rejectWords: NEW_DEFAULT } }]);
-    });
-
+    // Run migration — should invalidate cache after writing new defaults
     await service.migrateRejectWordsDefault();
 
-    // Read after migration should hit the DB (cache invalidated), not return cached ''
-    const result = await service.get('quality');
-    expect(result.rejectWords).toBe(NEW_DEFAULT);
+    // Read after migration should hit DB (cache invalidated) and see new value
+    const after = await service.get('quality');
+    expect(after.rejectWords).toBe(NEW_DEFAULT);
   });
 });
 
