@@ -4,6 +4,7 @@ import {
   parseFolderStructureRaw,
   cleanName,
   cleanNameWithTrace,
+  cleanTagTitle,
   extractYear,
   extractASIN,
   normalizeFolderName,
@@ -1332,6 +1333,51 @@ describe('folder-parsing (extracted from library-scan.service)', () => {
       const trace = cleanNameWithTrace('Other Title (Ray Porter)');
       expect(name).toBe('Title');
       expect(trace.result).toBe('Other Title');
+    });
+  });
+
+  describe('cleanTagTitle (#984)', () => {
+    it('preserves colon-subtitle (cleanName has no colon-strip rule)', () => {
+      expect(cleanTagTitle('The Sandman: Act II')).toBe('The Sandman: Act II');
+      expect(cleanTagTitle('Mistborn: The Final Empire')).toBe('Mistborn: The Final Empire');
+    });
+
+    it('strips ", Book N" series marker — symmetric application keeps dice = 1.0', () => {
+      // cleanName seriesMarker step strips trailing ", Book N"
+      expect(cleanTagTitle('Eric: Discworld, Book 9')).toBe('Eric: Discworld');
+    });
+
+    it('strips bracket tags via cleanName bracketTagStrip', () => {
+      expect(cleanTagTitle('The Atlantis Gene [Dramatized Adaptation]')).toBe('The Atlantis Gene');
+    });
+
+    it('preserves kebab-case slug input', () => {
+      expect(cleanTagTitle('believe-me')).toBe('believe-me');
+    });
+
+    it('normalizes dots to spaces (symmetric application keeps dice = 1.0)', () => {
+      // cleanName normalize step replaces [_.] with space
+      expect(cleanTagTitle('World War 3.1')).toBe('World War 3 1');
+    });
+
+    it('passes through pure-numeric segment input unchanged (all-numeric guard)', () => {
+      expect(cleanTagTitle('11-22-63')).toBe('11-22-63');
+      expect(cleanTagTitle('1.5')).toBe('1.5');
+    });
+
+    it('symmetric application: equivalent inputs produce identical output', () => {
+      // Both sides of the dice comparison normalize the same way
+      expect(cleanTagTitle('Eric: Discworld, Book 9')).toBe(cleanTagTitle('Eric: Discworld, Book 9'));
+      expect(cleanTagTitle('World War 3.1')).toBe(cleanTagTitle('World War 3 1'));
+    });
+
+    it('same-prefix volume disambiguation — colons survive so Acts stay distinct', () => {
+      const actI = cleanTagTitle('The Sandman: Act I');
+      const actII = cleanTagTitle('The Sandman: Act II');
+      const actIII = cleanTagTitle('The Sandman: Act III');
+      expect(actI).not.toBe(actII);
+      expect(actII).not.toBe(actIII);
+      expect(actI).toBe('The Sandman: Act I');
     });
   });
 

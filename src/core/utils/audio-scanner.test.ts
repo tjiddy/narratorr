@@ -337,6 +337,171 @@ describe('scanAudioDirectory', () => {
     expect(result!.tagNarrator).toBe('Narrator Name');
   });
 
+  describe('tagAuthor comma-split (#984)', () => {
+    it('splits comma-separated albumartist into tagAuthor + tagAdditionalArtists', async () => {
+      mockReaddir.mockResolvedValue([makeDirent('book.m4b', true)] as never);
+      mockStat.mockResolvedValue({ isFile: () => false, isDirectory: () => true, size: 10_000_000 } as never);
+      mockParseFile.mockResolvedValue(makeMetadata({
+        common: {
+          title: 'Leviathan Wakes',
+          albumartist: 'James S. A. Corey, Jefferson Mays',
+          composer: undefined,
+        },
+      }) as never);
+
+      const result = await scanAudioDirectory('/audiobooks/test');
+      expect(result!.tagAuthor).toBe('James S. A. Corey');
+      expect(result!.tagAdditionalArtists).toBe('Jefferson Mays');
+    });
+
+    it('splits semicolon and ampersand delimiters', async () => {
+      mockReaddir.mockResolvedValue([makeDirent('book.m4b', true)] as never);
+      mockStat.mockResolvedValue({ isFile: () => false, isDirectory: () => true, size: 10_000_000 } as never);
+      mockParseFile.mockResolvedValue(makeMetadata({
+        common: {
+          title: 'Book',
+          albumartist: 'Author One; Narrator A & Narrator B',
+          composer: undefined,
+        },
+      }) as never);
+
+      const result = await scanAudioDirectory('/audiobooks/test');
+      expect(result!.tagAuthor).toBe('Author One');
+      expect(result!.tagAdditionalArtists).toBe('Narrator A, Narrator B');
+    });
+
+    it('does not set tagAdditionalArtists when only one author', async () => {
+      mockReaddir.mockResolvedValue([makeDirent('book.m4b', true)] as never);
+      mockStat.mockResolvedValue({ isFile: () => false, isDirectory: () => true, size: 10_000_000 } as never);
+      mockParseFile.mockResolvedValue(makeMetadata({
+        common: {
+          title: 'Book',
+          albumartist: 'Solo Author',
+          composer: undefined,
+        },
+      }) as never);
+
+      const result = await scanAudioDirectory('/audiobooks/test');
+      expect(result!.tagAuthor).toBe('Solo Author');
+      expect(result!.tagAdditionalArtists).toBeUndefined();
+    });
+
+    it('populates tagAdditionalArtists independently of tagNarrator (AC9)', async () => {
+      mockReaddir.mockResolvedValue([makeDirent('book.m4b', true)] as never);
+      mockStat.mockResolvedValue({ isFile: () => false, isDirectory: () => true, size: 10_000_000 } as never);
+      // composer populates tagNarrator; albumartist comma-list still surfaces tagAdditionalArtists
+      mockParseFile.mockResolvedValue(makeMetadata({
+        common: {
+          title: 'Book',
+          albumartist: 'Author A, Narrator B, Narrator C',
+          composer: ['Bel Powley'],
+        },
+      }) as never);
+
+      const result = await scanAudioDirectory('/audiobooks/test');
+      expect(result!.tagAuthor).toBe('Author A');
+      expect(result!.tagAdditionalArtists).toBe('Narrator B, Narrator C');
+      expect(result!.tagNarrator).toBe('Bel Powley');
+    });
+
+    it('drops empty entries from comma-split', async () => {
+      mockReaddir.mockResolvedValue([makeDirent('book.m4b', true)] as never);
+      mockStat.mockResolvedValue({ isFile: () => false, isDirectory: () => true, size: 10_000_000 } as never);
+      mockParseFile.mockResolvedValue(makeMetadata({
+        common: {
+          title: 'Book',
+          albumartist: 'Author One,, , Narrator',
+          composer: undefined,
+        },
+      }) as never);
+
+      const result = await scanAudioDirectory('/audiobooks/test');
+      expect(result!.tagAuthor).toBe('Author One');
+      expect(result!.tagAdditionalArtists).toBe('Narrator');
+    });
+  });
+
+  describe('multi-file album consistency (#984 AC8)', () => {
+    function setupMultiFileScan(perFileCommon: Array<Record<string, unknown>>) {
+      const dirents = perFileCommon.map((_, i) => makeDirent(`ch${i + 1}.mp3`, true));
+      mockReaddir.mockResolvedValue(dirents as never);
+      mockStat.mockResolvedValue({ isFile: () => false, isDirectory: () => true, size: 10_000_000 } as never);
+
+      let call = 0;
+      mockParseFile.mockImplementation(async () => {
+        const common = perFileCommon[call++];
+        return makeMetadata({ common }) as never;
+      });
+    }
+
+    it('uses consistent non-disc album as tagTitle', async () => {
+      setupMultiFileScan([
+        { title: 'Chapter 1', album: 'Harry Potter', albumartist: 'J.K. Rowling', composer: undefined },
+        { title: 'Chapter 2', album: 'Harry Potter', albumartist: 'J.K. Rowling', composer: undefined },
+        { title: 'Chapter 3', album: 'Harry Potter', albumartist: 'J.K. Rowling', composer: undefined },
+      ]);
+
+      const result = await scanAudioDirectory('/audiobooks/HP');
+      expect(result!.tagTitle).toBe('Harry Potter');
+      expect(result!.tagAuthor).toBe('J.K. Rowling');
+    });
+
+    it('leaves tagTitle undefined when one file has missing album (chapter common.title is NOT used)', async () => {
+      setupMultiFileScan([
+        { title: 'Chapter 1', album: 'Harry Potter', albumartist: 'J.K. Rowling', composer: undefined },
+        { title: 'Chapter 2', album: undefined, albumartist: 'J.K. Rowling', composer: undefined },
+        { title: 'Chapter 3', album: 'Harry Potter', albumartist: 'J.K. Rowling', composer: undefined },
+      ]);
+
+      const result = await scanAudioDirectory('/audiobooks/HP');
+      expect(result!.tagTitle).toBeUndefined();
+      // tagAuthor still derived from albumartist of the first tagged file
+      expect(result!.tagAuthor).toBe('J.K. Rowling');
+    });
+
+    it('leaves tagTitle undefined when files disagree on album', async () => {
+      setupMultiFileScan([
+        { title: 'Ch 1', album: 'Album A', albumartist: 'Author', composer: undefined },
+        { title: 'Ch 2', album: 'Album A', albumartist: 'Author', composer: undefined },
+        { title: 'Ch 3', album: 'Album B', albumartist: 'Author', composer: undefined },
+      ]);
+
+      const result = await scanAudioDirectory('/audiobooks/test');
+      expect(result!.tagTitle).toBeUndefined();
+    });
+
+    it('leaves tagTitle undefined when consistent album matches disc-pattern', async () => {
+      setupMultiFileScan([
+        { title: 'Track 1', album: 'Disc 1', albumartist: 'Author', composer: undefined },
+        { title: 'Track 2', album: 'Disc 1', albumartist: 'Author', composer: undefined },
+      ]);
+
+      const result = await scanAudioDirectory('/audiobooks/test');
+      expect(result!.tagTitle).toBeUndefined();
+    });
+
+    it('leaves tagTitle undefined when consistent album matches CD-pattern (case-insensitive)', async () => {
+      setupMultiFileScan([
+        { title: 'Track 1', album: 'cd 02', albumartist: 'Author', composer: undefined },
+        { title: 'Track 2', album: 'cd 02', albumartist: 'Author', composer: undefined },
+      ]);
+
+      const result = await scanAudioDirectory('/audiobooks/test');
+      expect(result!.tagTitle).toBeUndefined();
+    });
+
+    it('uses album even when every file has chapter-name common.title', async () => {
+      // Album wins; common.title (chapter names) is never used as fallback for multi-file.
+      setupMultiFileScan([
+        { title: 'Same Chapter', album: 'The Real Book', albumartist: 'Author', composer: undefined },
+        { title: 'Same Chapter', album: 'The Real Book', albumartist: 'Author', composer: undefined },
+      ]);
+
+      const result = await scanAudioDirectory('/audiobooks/test');
+      expect(result!.tagTitle).toBe('The Real Book');
+    });
+  });
+
   it('handles missing optional tags', async () => {
     mockReaddir.mockResolvedValue([
       makeDirent('track.mp3', true),

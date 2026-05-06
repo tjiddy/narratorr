@@ -1,20 +1,18 @@
 import { randomUUID } from 'node:crypto';
-import { basename } from 'node:path';
 import type { FastifyBaseLogger } from 'fastify';
 import type { MetadataService } from './metadata.service.js';
 import type { BookMetadata } from '../../core/metadata/index.js';
-import { scanAudioDirectory } from '../../core/utils/audio-scanner.js';
+import { scanAudioDirectory, type AudioScanResult } from '../../core/utils/audio-scanner.js';
 import { resolveFfprobePathFromSettings } from '../../core/utils/ffprobe-path.js';
 import type { SettingsService } from './settings.service.js';
 import { Semaphore } from '../utils/semaphore.js';
-import { scoreResult, diceCoefficient } from '../../core/utils/similarity.js';
-import { extractYear } from '../utils/folder-parsing.js';
+import { diceCoefficient, normalizeNarrator } from '../../core/utils/similarity.js';
+import { cleanTagTitle } from '../utils/folder-parsing.js';
 import { searchWithSwapRetryTrace } from '../utils/search-helpers.js';
 import { getErrorMessage } from '../utils/error-message.js';
 import { serializeError } from '../utils/serialize-error.js';
+import { deriveTagQuery, rankResults, rankResultsCleaned, resolveConfidenceFromDuration } from './match-job.helpers.js';
 
-
-// ============ Types ============
 
 export type Confidence = 'high' | 'medium' | 'none';
 
@@ -41,14 +39,10 @@ export interface MatchJobStatus {
   results: MatchResult[];
 }
 
-// ============ Service ============
-
 const MAX_CONCURRENCY = 5;
 const TTL_MS = 10 * 60 * 1000; // 10 minutes after completion
-const DURATION_THRESHOLD_STRICT = 0.05; // 5% tolerance for weaker matches
-const DURATION_THRESHOLD_RELAXED = 0.15; // 15% tolerance for high-confidence matches
-const COMBINED_SCORE_GATE = 0.95; // Score threshold for relaxed duration matching
 const TITLE_SIMILARITY_FLOOR = 0.5; // Below this, confidence is 'none'
+const TAG_AUTHOR_PREDICATE_FLOOR = 0.7; // Tag-pass author-name dice threshold (#984)
 
 export class MatchJobService {
   private jobs = new Map<string, MatchJob>();
@@ -167,14 +161,15 @@ class MatchJob {
     }
   }
 
-  // eslint-disable-next-line complexity -- audio-scan + ASIN + keyword + scoring branches with conditional-spread on MatchResult
+  // eslint-disable-next-line complexity -- audio-scan + tag-pass + filename-pass + scoring branches with conditional-spread on MatchResult
   async matchSingleBook(book: MatchCandidate): Promise<MatchResult> {
     try {
-      // Scan audio files for duration (used for runtime disambiguation)
+      // Scan audio files for duration (used for runtime disambiguation) AND tag fields
       let duration: number | undefined;
+      let audioResult: AudioScanResult | null = null;
       try {
         const ffprobePath = await this.resolveFfprobePath();
-        const audioResult = await scanAudioDirectory(book.path, {
+        audioResult = await scanAudioDirectory(book.path, {
           skipCover: true,
           ffprobePath,
           onWarn: (msg, payload) => this.log.warn(payload, msg),
@@ -189,7 +184,13 @@ class MatchJob {
         this.log.debug({ error: serializeError(error), path: book.path }, 'Audio scan failed — proceeding without duration');
       }
 
-      // Send structured search params when title/author available, with swap retry
+      // Pass 1 — tag-derived search (#984). Fires when both tagTitle and tagAuthor
+      // are populated. Bypasses searchWithSwapRetryTrace (no swap-on-zero) because
+      // tag.title and tag.albumartist are structurally distinct fields.
+      const tagResult = await this.tryTagDerivedMatch(book, audioResult, duration);
+      if (tagResult) return tagResult;
+
+      // Pass 2 — filename-derived search via swap-retry wrapper (existing path).
       this.log.debug({ path: book.path, title: book.title, author: book.author, duration }, 'Searching metadata for book');
       const trace = await searchWithSwapRetryTrace({
         searchFn: (q, opts) => this.metadataService.searchBooks(q, opts),
@@ -288,6 +289,90 @@ class MatchJob {
     }
   }
 
+  // Pass 1 — tag-derived match (#984). Returns null on any failure (no tags,
+  // zero results, floor fail, predicate fail, unexpected throw); caller falls
+  // through to filename-derived. Bypasses searchWithSwapRetryTrace — tag.title
+  // and tag.albumartist are structurally distinct, no swap-on-zero needed.
+  private async tryTagDerivedMatch(
+    book: MatchCandidate,
+    audioResult: AudioScanResult | null,
+    duration: number | undefined,
+  ): Promise<MatchResult | null> {
+    const tagQuery = deriveTagQuery(audioResult);
+    if (!tagQuery) return null;
+
+    this.log.debug({ path: book.path, tagTitle: tagQuery.title, tagAuthor: tagQuery.author }, 'Tag-derived metadata search');
+
+    const tagResults = await this.runTagSearch(book, tagQuery);
+    if (!tagResults || tagResults.length === 0) return null;
+
+    const detailed = await this.fetchDetails(tagResults);
+    if (detailed.length === 0) return null;
+
+    const scored = rankResultsCleaned(detailed, tagQuery);
+    const top = scored[0];
+    if (!top) return null;
+
+    if (!this.tagPassPredicatesPass(book, tagQuery, top)) return null;
+
+    if (scored.length === 1) {
+      return { path: book.path, confidence: 'high', bestMatch: top.meta, alternatives: [] };
+    }
+
+    const { confidence, reason } = resolveConfidenceFromDuration(scored, duration);
+    return {
+      path: book.path,
+      confidence,
+      bestMatch: top.meta,
+      alternatives: scored.slice(1).map(s => s.meta),
+      ...(reason !== undefined && { reason }),
+    };
+  }
+
+  /** Tag-pass searchBooks call with AC13 inner try/catch. Returns null on throw. */
+  private async runTagSearch(book: MatchCandidate, tagQuery: { title: string; author: string }): Promise<BookMetadata[] | null> {
+    try {
+      return await this.metadataService.searchBooks(`${tagQuery.title} ${tagQuery.author}`, {
+        title: tagQuery.title,
+        author: tagQuery.author,
+      });
+    } catch (error: unknown) {
+      this.log.warn(
+        { error: serializeError(error), path: book.path, tagTitle: tagQuery.title, tagAuthor: tagQuery.author },
+        'tag-search provider error — falling through to filename-derived path',
+      );
+      return null;
+    }
+  }
+
+  /** AC5 — title floor + author predicate gate for the tag pass. Logs at debug on failure. */
+  private tagPassPredicatesPass(
+    book: MatchCandidate,
+    tagQuery: { title: string; author: string },
+    top: { meta: BookMetadata; score: number },
+  ): boolean {
+    const titleFloor = top.meta.title ? diceCoefficient(cleanTagTitle(top.meta.title), tagQuery.title) : 0;
+    if (titleFloor < TITLE_SIMILARITY_FLOOR) {
+      this.log.debug(
+        { path: book.path, titleSimilarity: titleFloor.toFixed(2), bestTitle: top.meta.title },
+        'Tag-derived top result below title floor — falling through',
+      );
+      return false;
+    }
+    const topAuthor = top.meta.authors?.[0]?.name;
+    const authorScore = topAuthor
+      ? diceCoefficient(normalizeNarrator(topAuthor), normalizeNarrator(tagQuery.author))
+      : 0;
+    if (authorScore < TAG_AUTHOR_PREDICATE_FLOOR) {
+      this.log.debug(
+        { path: book.path, topResultAuthor: topAuthor, tagAuthor: tagQuery.author, score: authorScore.toFixed(2) },
+        'tag-author predicate failed — falling through to filename-derived path',
+      );
+      return false;
+    }
+    return true;
+  }
+
   private async fetchDetails(results: BookMetadata[]): Promise<BookMetadata[]> {
     const detailed: BookMetadata[] = [];
     for (const result of results) {
@@ -311,81 +396,3 @@ class MatchJob {
   }
 }
 
-/** Format minutes as hours with 1 decimal place. */
-function formatHours(minutes: number): string {
-  return (minutes / 60).toFixed(1);
-}
-
-interface DurationConfidenceResult {
-  confidence: Confidence;
-  reason?: string;
-}
-
-/**
- * Determines confidence from duration data without overriding the similarity-ranked winner.
- * The bestMatch stays as the top similarity-ranked result; duration only affects confidence level.
- */
-function resolveConfidenceFromDuration(
-  scored: { meta: BookMetadata; score: number }[],
-  duration: number | undefined,
-): DurationConfidenceResult {
-  if (!duration || duration <= 0) {
-    return { confidence: 'medium', reason: 'Multiple results — no duration data to disambiguate' };
-  }
-
-  const topResult = scored[0]!;
-  // If the top-ranked result has duration data, use it for confidence
-  if (topResult.meta.duration && topResult.meta.duration > 0) {
-    const distance = Math.abs(topResult.meta.duration - duration) / duration;
-    const threshold = topResult.score >= COMBINED_SCORE_GATE
-      ? DURATION_THRESHOLD_RELAXED
-      : DURATION_THRESHOLD_STRICT;
-    if (distance <= threshold) {
-      return { confidence: 'high' };
-    }
-    return {
-      confidence: 'medium',
-      reason: `Duration mismatch — scanned ${formatHours(duration)}hrs vs expected ${formatHours(topResult.meta.duration)}hrs`,
-    };
-  }
-
-  // Top result has no duration — cannot verify
-  return { confidence: 'medium', reason: 'Best match missing duration — cannot verify' };
-}
-
-/** Scores and ranks results by title+author similarity with year tiebreaker. */
-function rankResults(
-  detailed: BookMetadata[],
-  book: MatchCandidate,
-): { meta: BookMetadata; score: number }[] {
-  const context = { title: book.title, ...(book.author !== undefined && { author: book.author }) };
-  const scored = detailed.map(meta => ({
-    meta,
-    score: scoreResult(
-      { title: meta.title, ...(meta.authors?.[0]?.name !== undefined && { author: meta.authors[0].name }) },
-      context,
-    ),
-  }));
-
-  const folderYear = extractYear(basename(book.path));
-
-  scored.sort((a, b) => {
-    if (Math.abs(a.score - b.score) < 0.001 && folderYear) {
-      const aYear = parsePublishedYear(a.meta.publishedDate);
-      const bYear = parsePublishedYear(b.meta.publishedDate);
-      const aMatch = aYear === folderYear ? 1 : 0;
-      const bMatch = bYear === folderYear ? 1 : 0;
-      if (aMatch !== bMatch) return bMatch - aMatch;
-    }
-    return b.score - a.score;
-  });
-
-  return scored;
-}
-
-/** Extracts a 4-digit year from a publishedDate string (e.g., "2011-06-14" → 2011). */
-function parsePublishedYear(date: string | undefined): number | undefined {
-  if (!date) return undefined;
-  const match = date.match(/\b(\d{4})\b/);
-  return match ? parseInt(match[1]!, 10) : undefined;
-}

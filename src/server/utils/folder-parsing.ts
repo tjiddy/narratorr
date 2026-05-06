@@ -132,6 +132,19 @@ export function cleanName(name: string): string {
   return cleanNameWithTrace(name).result;
 }
 
+/**
+ * Clean a tag-derived title. Tag values are pre-structured (tag.title is the
+ * title only, no author baked in), so we delegate to cleanName for the existing
+ * normalization pipeline. Same-prefix volumes (Sandman: Act I/II/III) stay
+ * distinguishable because cleanName has no colon-stripping or post-dash
+ * subtitle-strip rule. Symmetric application during scoring (input + Audible
+ * response both run through this helper) ensures equivalent inputs produce
+ * dice = 1.0 even after cleanName's dot→space and ', Book N' transforms.
+ */
+export function cleanTagTitle(s: string): string {
+  return cleanName(s);
+}
+
 /** Pipeline steps for cleanName/cleanNameWithTrace. Order matters — see step names below. */
 const CLEAN_NAME_PIPELINE: ReadonlyArray<readonly [string, (s: string) => string]> = [
   ['leadingNumeric', s => s

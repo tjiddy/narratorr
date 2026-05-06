@@ -6,10 +6,17 @@ import { AUDIO_EXTENSIONS } from './audio-constants.js';
 import { collectAudioFilePaths } from './collect-audio-files.js';
 
 export interface AudioScanResult {
-  // From tags (first file with tags wins)
+  // From tags (first file with tags wins, except tagTitle for multi-file scans —
+  // see resolveMultiFileAlbum for the cross-file album-consistency rule)
   tagNarrator?: string;
   tagTitle?: string;
   tagAuthor?: string;
+  /**
+   * Remaining tokens from a comma/semicolon/ampersand-split `albumartist`
+   * after the first segment (which becomes `tagAuthor`). Independent of
+   * `tagNarrator`. Joined with `, ` for caller convenience.
+   */
+  tagAdditionalArtists?: string;
   tagSeries?: string;
   tagSeriesPosition?: number;
   tagYear?: string;
@@ -123,41 +130,88 @@ export async function scanAudioDirectory(
     hasCoverArt: false,
   };
 
-  let tagsExtracted = false;
+  const isMultiFile = audioFiles.length > 1;
+  const fileAlbums: Array<string | undefined> = [];
+  let firstTaggedCommon: ICommonTagsResult | null = null;
+  let firstTaggedNative: Record<string, Array<{ id: string; value: unknown }>> | undefined;
   let technicalExtracted = false;
 
   for (const filePath of audioFiles) {
-    try {
-      const fileStat = await stat(filePath);
-      result.totalSize += fileStat.size;
-
-      const metadata = await parseFile(filePath);
-
-      const fileDuration = await resolveFileDuration(filePath, metadata.format.duration, ffprobePath, onWarn, onDebug);
-      if (fileDuration) {
-        result.totalDuration += fileDuration;
-      }
-
-      if (!technicalExtracted && metadata.format.codec) {
-        extractTechnicalInfo(result, metadata.format, filePath);
-        technicalExtracted = true;
-      }
-
-      if (!tagsExtracted && (metadata.common.title || metadata.common.album || metadata.common.artist)) {
-        extractTagInfo(result, metadata.common, metadata.native);
-        tagsExtracted = true;
-      }
-
-      extractCoverArt(result, metadata.common, skipCover);
-      extractChapterCount(result, metadata);
-    } catch {
+    const metadata = await processOneFile(filePath, result, { skipCover, ffprobePath, onWarn, onDebug });
+    if (!metadata) {
+      if (isMultiFile) fileAlbums.push(undefined);
       continue;
     }
+
+    if (!technicalExtracted && metadata.format.codec) {
+      extractTechnicalInfo(result, metadata.format, filePath);
+      technicalExtracted = true;
+    }
+
+    if (isMultiFile) recordFileAlbum(metadata.common.album, fileAlbums);
+
+    if (firstTaggedCommon === null && hasTagSignal(metadata.common)) {
+      firstTaggedCommon = metadata.common;
+      firstTaggedNative = metadata.native;
+    }
+  }
+
+  if (firstTaggedCommon !== null) {
+    const multiFileTagTitle = isMultiFile ? resolveMultiFileAlbum(fileAlbums) : undefined;
+    extractTagInfo(result, firstTaggedCommon, firstTaggedNative, isMultiFile, multiFileTagTitle);
   }
 
   if (!result.codec) return null;
 
   return result;
+}
+
+/** Per-file scan: parses metadata, accumulates totals, extracts cover+chapters. Returns null on failure. */
+async function processOneFile(
+  filePath: string,
+  result: AudioScanResult,
+  options: { skipCover: boolean; ffprobePath?: string | undefined; onWarn?: AudioScanOptions['onWarn']; onDebug?: AudioScanOptions['onDebug'] },
+): Promise<Awaited<ReturnType<typeof parseFile>> | null> {
+  try {
+    const fileStat = await stat(filePath);
+    result.totalSize += fileStat.size;
+
+    const metadata = await parseFile(filePath);
+
+    const fileDuration = await resolveFileDuration(filePath, metadata.format.duration, options.ffprobePath, options.onWarn, options.onDebug);
+    if (fileDuration) result.totalDuration += fileDuration;
+
+    extractCoverArt(result, metadata.common, options.skipCover);
+    extractChapterCount(result, metadata);
+    return metadata;
+  } catch {
+    return null;
+  }
+}
+
+function recordFileAlbum(album: string | undefined, fileAlbums: Array<string | undefined>): void {
+  const trimmed = album?.trim();
+  fileAlbums.push(trimmed && trimmed.length > 0 ? trimmed : undefined);
+}
+
+function hasTagSignal(common: ICommonTagsResult): boolean {
+  return Boolean(common.title || common.album || common.artist);
+}
+
+/**
+ * For multi-file scans, accept the cross-file `tag.album` as the book title
+ * only when every file has a non-empty album value, all values match, and the
+ * value is not a disc-pattern (e.g. "Disc 1", "CD 02"). Returns undefined
+ * otherwise — multi-file scans NEVER fall back to common.title because that is
+ * chapter-level by convention for chapter-encoded audiobooks.
+ */
+function resolveMultiFileAlbum(fileAlbums: Array<string | undefined>): string | undefined {
+  if (fileAlbums.length === 0) return undefined;
+  if (fileAlbums.some(a => !a)) return undefined;
+  const first = fileAlbums[0]!;
+  if (!fileAlbums.every(a => a === first)) return undefined;
+  if (/^(disc|cd)\s*\d+$/i.test(first)) return undefined;
+  return first;
 }
 
 function extractTechnicalInfo(
@@ -182,12 +236,17 @@ function extractTechnicalInfo(
 function extractTagInfo(
   result: AudioScanResult,
   common: ICommonTagsResult,
-  native?: Record<string, Array<{ id: string; value: unknown }>>,
+  native: Record<string, Array<{ id: string; value: unknown }>> | undefined,
+  isMultiFile: boolean,
+  multiFileTagTitle: string | undefined,
 ): void {
-  const tagTitle = common.title || common.album;
+  const tagTitle = pickTagTitle(common, isMultiFile, multiFileTagTitle);
   if (tagTitle !== undefined) result.tagTitle = tagTitle;
-  const tagAuthor = common.albumartist || common.artist;
-  if (tagAuthor !== undefined) result.tagAuthor = tagAuthor;
+
+  const authors = parseAuthors(common.albumartist || common.artist);
+  if (authors.tagAuthor !== undefined) result.tagAuthor = authors.tagAuthor;
+  if (authors.tagAdditionalArtists !== undefined) result.tagAdditionalArtists = authors.tagAdditionalArtists;
+
   const tagNarrator = extractNarrator(common, native);
   if (tagNarrator !== undefined) result.tagNarrator = tagNarrator;
   if (common.grouping !== undefined) result.tagSeries = common.grouping;
@@ -199,6 +258,20 @@ function extractTagInfo(
   if (common.track?.no && common.grouping) {
     result.tagSeriesPosition = common.track.no;
   }
+}
+
+function pickTagTitle(common: ICommonTagsResult, isMultiFile: boolean, multiFileTagTitle: string | undefined): string | undefined {
+  if (isMultiFile) return multiFileTagTitle;
+  return common.title || common.album;
+}
+
+/** Split an albumartist string on commas/semicolons/ampersands. First non-empty token = primary author. */
+function parseAuthors(rawAuthor: string | undefined): { tagAuthor?: string; tagAdditionalArtists?: string } {
+  if (!rawAuthor) return {};
+  const parts = rawAuthor.split(/[,;&]/).map(s => s.trim()).filter(s => s.length > 0);
+  if (parts.length === 0) return {};
+  if (parts.length === 1) return { tagAuthor: parts[0]! };
+  return { tagAuthor: parts[0]!, tagAdditionalArtists: parts.slice(1).join(', ') };
 }
 
 function extractCoverArt(result: AudioScanResult, common: ICommonTagsResult, skipCover: boolean): void {

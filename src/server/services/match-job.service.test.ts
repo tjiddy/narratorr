@@ -2030,4 +2030,307 @@ describe('MatchJobService', () => {
       expect(result!.confidence).toBe('none');
     });
   });
+
+  // ── #984 Tag-first matching ──────────────────────────────────────────
+  describe('tag-first matching (#984)', () => {
+    function makeTaggedScan(tagTitle: string, tagAuthor: string, totalDuration = 36000) {
+      return {
+        codec: 'AAC',
+        bitrate: 128000,
+        sampleRate: 44100,
+        channels: 2,
+        bitrateMode: 'cbr' as const,
+        fileFormat: 'm4b',
+        totalDuration,
+        totalSize: 100_000_000,
+        fileCount: 1,
+        hasCoverArt: false,
+        tagTitle,
+        tagAuthor,
+      };
+    }
+
+    const taggedCandidate: MatchCandidate = {
+      // Folder name parses messily; tags carry the truth
+      path: '/audiobooks/Eric Discworld, Book 11.m4b',
+      title: 'Eric Discworld',
+      author: 'Eric Discworld',
+    };
+
+    describe('Pass 1 fires when tagTitle and tagAuthor are populated', () => {
+      it('first searchBooks call carries the tag-derived title/author (cleanTagTitle applied)', async () => {
+        // tag.title 'Eric: Discworld, Book 9' cleans to 'Eric: Discworld' (cleanName seriesMarker strip)
+        vi.mocked(scanAudioDirectory).mockResolvedValue(
+          makeTaggedScan('Eric: Discworld, Book 9', 'Terry Pratchett'),
+        );
+        vi.mocked(metadataService.searchBooks).mockResolvedValue([
+          makeBookMetadata({ title: 'Eric: Discworld, Book 9', authors: [{ name: 'Terry Pratchett' }], providerId: 'p1' }),
+        ]);
+        vi.mocked(metadataService.getBook).mockResolvedValue(
+          makeBookMetadata({ title: 'Eric: Discworld, Book 9', authors: [{ name: 'Terry Pratchett' }], providerId: 'p1', asin: 'B1' }),
+        );
+
+        const id = service.createJob([taggedCandidate]);
+        await waitForJob(service, id);
+
+        // Tag pass fires first — only ONE searchBooks call (no Pass 2 fallback)
+        expect(metadataService.searchBooks).toHaveBeenCalledTimes(1);
+        expect(metadataService.searchBooks).toHaveBeenNthCalledWith(
+          1,
+          'Eric: Discworld Terry Pratchett',
+          { title: 'Eric: Discworld', author: 'Terry Pratchett' },
+        );
+        const result = service.getJob(id)!.results[0];
+        expect(result!.confidence).toBe('high');
+        expect(result!.bestMatch?.title).toBe('Eric: Discworld, Book 9');
+      });
+
+      it('does NOT fall through to Pass 2 when tag-derived match is accepted', async () => {
+        vi.mocked(scanAudioDirectory).mockResolvedValue(
+          makeTaggedScan('The Final Empire', 'Brandon Sanderson'),
+        );
+        vi.mocked(metadataService.searchBooks).mockResolvedValue([
+          makeBookMetadata({ title: 'The Final Empire', authors: [{ name: 'Brandon Sanderson' }], providerId: 'p1' }),
+        ]);
+        vi.mocked(metadataService.getBook).mockResolvedValue(
+          makeBookMetadata({ title: 'The Final Empire', authors: [{ name: 'Brandon Sanderson' }], providerId: 'p1', asin: 'B1' }),
+        );
+
+        const id = service.createJob([taggedCandidate]);
+        await waitForJob(service, id);
+
+        // Pass 2 would issue ANOTHER searchBooks call with filename-derived params
+        expect(metadataService.searchBooks).toHaveBeenCalledTimes(1);
+      });
+    });
+
+    describe('Pass 1 is skipped when scan lacks usable tags', () => {
+      it('skips when scan returns null', async () => {
+        vi.mocked(scanAudioDirectory).mockResolvedValue(null);
+        vi.mocked(metadataService.searchBooks).mockResolvedValue([]);
+
+        const id = service.createJob([sampleCandidate]);
+        await waitForJob(service, id);
+
+        // Only Pass 2 fires — single searchBooks call with filename-derived params
+        expect(metadataService.searchBooks).toHaveBeenCalledWith(
+          'The Way of Kings Brandon Sanderson',
+          { title: 'The Way of Kings', author: 'Brandon Sanderson' },
+        );
+      });
+
+      it('skips when tagTitle is empty', async () => {
+        vi.mocked(scanAudioDirectory).mockResolvedValue(makeTaggedScan('', 'Brandon Sanderson'));
+        // Return a result so Pass 2 doesn't trigger swap retry
+        vi.mocked(metadataService.searchBooks).mockResolvedValue([
+          makeBookMetadata({ title: 'The Way of Kings', providerId: 'p1' }),
+        ]);
+        vi.mocked(metadataService.getBook).mockResolvedValue(null);
+
+        const id = service.createJob([sampleCandidate]);
+        await waitForJob(service, id);
+
+        // Pass 1 skipped → only ONE searchBooks call (Pass 2)
+        expect(metadataService.searchBooks).toHaveBeenCalledTimes(1);
+        // First (and only) call carries filename-derived params, not tag-derived
+        expect(metadataService.searchBooks).toHaveBeenNthCalledWith(
+          1,
+          'The Way of Kings Brandon Sanderson',
+          { title: 'The Way of Kings', author: 'Brandon Sanderson' },
+        );
+      });
+
+      it('skips when tagAuthor is empty', async () => {
+        vi.mocked(scanAudioDirectory).mockResolvedValue(makeTaggedScan('The Way of Kings', ''));
+        vi.mocked(metadataService.searchBooks).mockResolvedValue([
+          makeBookMetadata({ title: 'The Way of Kings', providerId: 'p1' }),
+        ]);
+        vi.mocked(metadataService.getBook).mockResolvedValue(null);
+
+        const id = service.createJob([sampleCandidate]);
+        await waitForJob(service, id);
+
+        expect(metadataService.searchBooks).toHaveBeenCalledTimes(1);
+        expect(metadataService.searchBooks).toHaveBeenNthCalledWith(
+          1,
+          'The Way of Kings Brandon Sanderson',
+          { title: 'The Way of Kings', author: 'Brandon Sanderson' },
+        );
+      });
+    });
+
+    describe('Pass 1 fall-through cases (AC6)', () => {
+      it('zero results from tag pass — NO swap retry, falls through to Pass 2', async () => {
+        vi.mocked(scanAudioDirectory).mockResolvedValue(
+          makeTaggedScan('Tag Title', 'Tag Author'),
+        );
+        // First call (tag pass) → 0; second call (Pass 2) → success
+        vi.mocked(metadataService.searchBooks)
+          .mockResolvedValueOnce([])
+          .mockResolvedValueOnce([
+            makeBookMetadata({ title: 'The Way of Kings', providerId: 'p1' }),
+          ]);
+        vi.mocked(metadataService.getBook).mockResolvedValue(
+          makeBookMetadata({ title: 'The Way of Kings', providerId: 'p1', asin: 'B1' }),
+        );
+
+        const id = service.createJob([sampleCandidate]);
+        await waitForJob(service, id);
+
+        // Exactly TWO searchBooks calls: tag pass + Pass 2 initial. NO swap retry on the tag pass.
+        expect(metadataService.searchBooks).toHaveBeenCalledTimes(2);
+        // First call uses tag-derived params
+        expect(metadataService.searchBooks).toHaveBeenNthCalledWith(
+          1,
+          'Tag Title Tag Author',
+          { title: 'Tag Title', author: 'Tag Author' },
+        );
+        // Second call uses filename-derived params (no swap variant in argument shape)
+        expect(metadataService.searchBooks).toHaveBeenNthCalledWith(
+          2,
+          'The Way of Kings Brandon Sanderson',
+          { title: 'The Way of Kings', author: 'Brandon Sanderson' },
+        );
+        // AC13 case 1: zero-results path is the throttled-provider-failure path; the
+        // tag-search warn log must NOT fire (only an unexpected throw should warn).
+        expect(log.warn).not.toHaveBeenCalledWith(
+          expect.anything(),
+          'tag-search provider error — falling through to filename-derived path',
+        );
+      });
+
+      it('top result fails title floor — falls through to Pass 2', async () => {
+        vi.mocked(scanAudioDirectory).mockResolvedValue(
+          makeTaggedScan('Tag Title', 'Brandon Sanderson'),
+        );
+        vi.mocked(metadataService.searchBooks)
+          .mockResolvedValueOnce([
+            makeBookMetadata({ title: 'Wildly Different Book', authors: [{ name: 'Brandon Sanderson' }], providerId: 'p1' }),
+          ])
+          .mockResolvedValueOnce([
+            makeBookMetadata({ title: 'The Way of Kings', authors: [{ name: 'Brandon Sanderson' }], providerId: 'p2' }),
+          ]);
+        vi.mocked(metadataService.getBook).mockResolvedValue(null);
+
+        const id = service.createJob([sampleCandidate]);
+        await waitForJob(service, id);
+
+        const result = service.getJob(id)!.results[0];
+        // Pass 2 wins
+        expect(metadataService.searchBooks).toHaveBeenCalledTimes(2);
+        expect(result!.bestMatch?.title).toBe('The Way of Kings');
+      });
+
+      it('top result passes title floor but fails author predicate — falls through (AC5)', async () => {
+        vi.mocked(scanAudioDirectory).mockResolvedValue(
+          makeTaggedScan('The Final Empire', 'Suzanne Collins'),
+        );
+        // Tag pass: top result has matching title but completely different author
+        vi.mocked(metadataService.searchBooks)
+          .mockResolvedValueOnce([
+            makeBookMetadata({ title: 'The Final Empire', authors: [{ name: 'Brandon Sanderson' }], providerId: 'p1' }),
+          ])
+          .mockResolvedValueOnce([
+            makeBookMetadata({ title: 'The Way of Kings', authors: [{ name: 'Brandon Sanderson' }], providerId: 'p2' }),
+          ]);
+        vi.mocked(metadataService.getBook).mockResolvedValue(null);
+
+        const id = service.createJob([sampleCandidate]);
+        await waitForJob(service, id);
+
+        const result = service.getJob(id)!.results[0];
+        // Predicate fail → fall through to Pass 2
+        expect(metadataService.searchBooks).toHaveBeenCalledTimes(2);
+        expect(result!.bestMatch?.title).toBe('The Way of Kings');
+      });
+
+      it('AC13 case 2: unexpected throw from tag-pass searchBooks emits warn log + falls through', async () => {
+        vi.mocked(scanAudioDirectory).mockResolvedValue(
+          makeTaggedScan('Tag Title', 'Tag Author'),
+        );
+        vi.mocked(metadataService.searchBooks)
+          .mockRejectedValueOnce(new Error('service-internal failure'))
+          .mockResolvedValueOnce([
+            makeBookMetadata({ title: 'The Way of Kings', providerId: 'p1' }),
+          ]);
+        vi.mocked(metadataService.getBook).mockResolvedValue(
+          makeBookMetadata({ title: 'The Way of Kings', providerId: 'p1', asin: 'B1' }),
+        );
+
+        const id = service.createJob([sampleCandidate]);
+        await waitForJob(service, id);
+
+        const result = service.getJob(id)!.results[0];
+        expect(result!.confidence).toBe('high');
+        expect(result!.bestMatch?.title).toBe('The Way of Kings');
+        // Warn log emitted with tag-search context
+        expect(log.warn).toHaveBeenCalledWith(
+          expect.objectContaining({
+            tagTitle: 'Tag Title',
+            tagAuthor: 'Tag Author',
+          }),
+          'tag-search provider error — falling through to filename-derived path',
+        );
+      });
+
+      it('AC13 case 2 + Pass 2 also throws: outer catch returns none with Pass 2 error preserved', async () => {
+        vi.mocked(scanAudioDirectory).mockResolvedValue(
+          makeTaggedScan('Tag Title', 'Tag Author'),
+        );
+        vi.mocked(metadataService.searchBooks)
+          .mockRejectedValueOnce(new Error('tag-pass failure'))
+          .mockRejectedValueOnce(new Error('pass-2 failure'));
+
+        const id = service.createJob([sampleCandidate]);
+        await waitForJob(service, id);
+
+        const result = service.getJob(id)!.results[0];
+        expect(result!.confidence).toBe('none');
+        expect(result!.error).toBe('pass-2 failure');
+        // Tag-pass warn log fired before outer catch caught Pass 2 error
+        expect(log.warn).toHaveBeenCalledWith(
+          expect.objectContaining({ tagTitle: 'Tag Title' }),
+          'tag-search provider error — falling through to filename-derived path',
+        );
+      });
+    });
+
+    describe('symmetric cleanTagTitle scoring (AC7)', () => {
+      it('input "Eric: Discworld, Book 9" matches Audible "Eric: Discworld, Book 9" exactly (dice = 1.0 after cleaning)', async () => {
+        vi.mocked(scanAudioDirectory).mockResolvedValue(
+          makeTaggedScan('Eric: Discworld, Book 9', 'Terry Pratchett'),
+        );
+        vi.mocked(metadataService.searchBooks).mockResolvedValue([
+          makeBookMetadata({ title: 'Eric: Discworld, Book 9', authors: [{ name: 'Terry Pratchett' }], providerId: 'p1' }),
+        ]);
+        vi.mocked(metadataService.getBook).mockResolvedValue(
+          makeBookMetadata({ title: 'Eric: Discworld, Book 9', authors: [{ name: 'Terry Pratchett' }], providerId: 'p1', asin: 'B1' }),
+        );
+
+        const id = service.createJob([taggedCandidate]);
+        await waitForJob(service, id);
+
+        const result = service.getJob(id)!.results[0];
+        expect(result!.confidence).toBe('high');
+      });
+
+      it('AC7.5 same-prefix volume disambiguation: "Sandman: Act II" picks Act II over Act I/III', async () => {
+        vi.mocked(scanAudioDirectory).mockResolvedValue(
+          makeTaggedScan('The Sandman: Act II', 'Neil Gaiman'),
+        );
+        vi.mocked(metadataService.searchBooks).mockResolvedValue([
+          makeBookMetadata({ title: 'The Sandman: Act I', authors: [{ name: 'Neil Gaiman' }], providerId: 'p1' }),
+          makeBookMetadata({ title: 'The Sandman: Act II', authors: [{ name: 'Neil Gaiman' }], providerId: 'p2' }),
+          makeBookMetadata({ title: 'The Sandman: Act III', authors: [{ name: 'Neil Gaiman' }], providerId: 'p3' }),
+        ]);
+        vi.mocked(metadataService.getBook).mockResolvedValue(null);
+
+        const id = service.createJob([taggedCandidate]);
+        await waitForJob(service, id);
+
+        const result = service.getJob(id)!.results[0];
+        expect(result!.bestMatch?.title).toBe('The Sandman: Act II');
+      });
+    });
+  });
 });
