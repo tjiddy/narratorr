@@ -14,7 +14,7 @@ import {
   type SearchBooksResult,
 } from '../../core/index.js';
 import { filterByLanguage } from '../../core/utils/index.js';
-import { parseWordList } from '../../shared/parse-word-list.js';
+import { parseWordList, matchesRejectWord } from '../../shared/parse-word-list.js';
 import type { SettingsService } from './settings.service.js';
 import { getErrorMessage } from '../utils/error-message.js';
 import { serializeError } from '../utils/serialize-error.js';
@@ -245,8 +245,8 @@ export class MetadataService {
     return books.filter((book) => {
       const authorNames = (book.authors ?? []).map((a) => a.name).join(' ');
       const narrators = (book.narrators ?? []).join(' ');
-      const surface = `${book.title} ${book.subtitle ?? ''} ${authorNames} ${narrators}`.toLowerCase();
-      return !rejectList.some((word) => surface.includes(word));
+      const surface = `${book.title} ${book.subtitle ?? ''} ${authorNames} ${narrators} ${book.formatType ?? ''}`.toLowerCase();
+      return !rejectList.some((word) => matchesRejectWord(surface, word));
     });
   }
 

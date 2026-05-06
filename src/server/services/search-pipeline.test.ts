@@ -1110,6 +1110,47 @@ describe('filterAndRankResults — disabled-gate short-circuit (#945)', () => {
     );
   });
 
+  // ===== #993 — word-boundary matching for reject-word gate =====
+
+  it('reject-word gate matches "Sample" at word boundary in "Sample.Audiobook.MP3"', () => {
+    const log = createMockLogger();
+    const { results } = filterAndRankResults(
+      [makeResult({ title: 'Sample.Audiobook.MP3', nzbName: 'Sample.Audiobook.MP3' })],
+      undefined,
+      { grabFloor: 0, minSeeders: 0, protocolPreference: 'none', rejectWords: 'Sample' },
+      log,
+    );
+    expect(results).toHaveLength(0);
+    expect(log.debug).toHaveBeenCalledWith(
+      expect.objectContaining({ reason: 'reject-word-match', matchedWord: 'sample' }),
+      'Quality filter dropped result',
+    );
+  });
+
+  it('reject-word gate does NOT match "Sample" against "Sampleyana" (no word boundary inside word)', () => {
+    const log = createMockLogger();
+    const { results } = filterAndRankResults(
+      [makeResult({ title: 'Sampleyana.Audiobook.MP3', nzbName: 'Sampleyana.Audiobook.MP3' })],
+      undefined,
+      { grabFloor: 0, minSeeders: 0, protocolPreference: 'none', rejectWords: 'Sample' },
+      log,
+    );
+    expect(results).toHaveLength(1);
+    expect(log.debug).not.toHaveBeenCalledWith(
+      expect.objectContaining({ reason: 'reject-word-match' }),
+      expect.any(String),
+    );
+  });
+
+  it('reject-word gate does NOT match "Abridged" against "unabridged" release (the abridged/unabridged collision)', () => {
+    const { results } = filterAndRankResults(
+      [makeResult({ title: 'Dune.Unabridged.M4B', nzbName: 'Dune.Unabridged.M4B' })],
+      undefined,
+      { grabFloor: 0, minSeeders: 0, protocolPreference: 'none', rejectWords: 'Abridged' },
+    );
+    expect(results).toHaveLength(1);
+  });
+
   it('required-word gate does not fire when requiredWords is empty', () => {
     const log = createMockLogger();
     // No required words means everything passes — even a result that would

@@ -12,7 +12,7 @@ import { SUGGESTION_REASONS, SUGGESTION_REASON_REGISTRY, type SuggestionReason }
 import { SuggestionCard } from './SuggestionCard.js';
 import { DiscoverEmpty } from './DiscoverEmpty.js';
 import { DiscoverSkeleton } from './DiscoverSkeleton.js';
-import { parseWordList } from '../../../shared/parse-word-list.js';
+import { parseWordList, matchesRejectWord } from '../../../shared/parse-word-list.js';
 
 type ReasonFilter = 'all' | SuggestionReason;
 
@@ -133,7 +133,10 @@ export function DiscoverPage() {
       result = result.filter((s) => !s.language || langSet.has(s.language.toLowerCase()));
     }
     if (rejectWords.length > 0) {
-      result = result.filter((s) => !rejectWords.some((w) => s.title.toLowerCase().includes(w)));
+      result = result.filter((s) => {
+        const surface = s.title.toLowerCase();
+        return !rejectWords.some((w) => matchesRejectWord(surface, w));
+      });
     }
     return result;
   }, [suggestions, filter, configuredLanguages, rejectWords]);

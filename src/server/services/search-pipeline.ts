@@ -13,7 +13,7 @@ import type { EventBroadcasterService } from './event-broadcaster.service.js';
 import { safeEmit } from '../utils/safe-emit.js';
 import { ensureError } from '../utils/ensure-error.js';
 import { buildGrabPayload } from './grab-payload.js';
-import { parseWordList } from '../../shared/parse-word-list.js';
+import { parseWordList, matchesRejectWord } from '../../shared/parse-word-list.js';
 import { BYTES_PER_GB, BYTES_PER_MB } from '../../shared/constants.js';
 
 /**
@@ -112,7 +112,7 @@ function buildQualityGates(
       enabled: rejectList.length > 0,
       evaluate: (r) => {
         const sourceTitle = (r.nzbName || r.rawTitle || r.title).toLowerCase();
-        const matched = rejectList.find((word) => sourceTitle.includes(word));
+        const matched = rejectList.find((word) => matchesRejectWord(sourceTitle, word));
         return matched ? { keep: false, logFields: { matchedWord: matched } } : { keep: true };
       },
     },
