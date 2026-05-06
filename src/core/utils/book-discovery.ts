@@ -1,6 +1,7 @@
 import { readdir, stat } from 'node:fs/promises';
 import { join, extname, relative, basename } from 'node:path';
 import { AUDIO_EXTENSIONS } from './audio-constants.js';
+import { classifyLeafFolder } from './book-classifier.js';
 
 /** Minimal logger interface — matches Pino/Fastify logger shape */
 export interface DiscoveryLogger {
@@ -159,9 +160,7 @@ function collectBooks(info: DirInfo, rootPath: string, results: DiscoveredFolder
   if (hasOwnAudio && audioChildren.length > 0) {
     handleMixedContentLooseAudio(info, rootPath, results, willDiscMerge, log);
   } else if (hasOwnAudio) {
-    // Pure leaf book folder — no audio-containing children
-    log?.debug({ path: info.path, audioFiles: info.audioFiles.length }, 'Leaf book folder');
-    results.push(makeFolderEntry(info, rootPath, info.audioFiles));
+    handleLeafFolder(info, rootPath, results, log);
     return;
   }
 
@@ -189,6 +188,32 @@ function isDiscMergeable(discChildren: DirInfo[], immediateAudioChildren: DirInf
   return discChildren.length >= 2
     && discChildren.length === immediateAudioChildren.length
     && allSameTitle;
+}
+
+function handleLeafFolder(
+  info: DirInfo,
+  rootPath: string,
+  results: DiscoveredFolder[],
+  log?: DiscoveryLogger,
+): void {
+  const classification = classifyLeafFolder(info.audioFiles);
+  log?.debug(
+    {
+      path: info.path,
+      fileCount: info.audioFiles.length,
+      decision: classification.decision,
+      reason: classification.reason,
+    },
+    'Leaf folder classified',
+  );
+  if (classification.decision === 'split') {
+    for (const file of info.audioFiles) {
+      const fileInfo: DirInfo = { path: file.path, audioFiles: [file], children: [] };
+      results.push(makeFolderEntry(fileInfo, rootPath, [file]));
+    }
+    return;
+  }
+  results.push(makeFolderEntry(info, rootPath, info.audioFiles));
 }
 
 function handleMixedContentLooseAudio(
