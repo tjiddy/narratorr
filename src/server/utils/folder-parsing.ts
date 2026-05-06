@@ -411,6 +411,19 @@ export function parseFolderStructure(parts: string[]): {
         ...(asin !== undefined && { asin }),
       };
     }
+    // P10-precheck (2-part path): "<series> NN - <title>" with no ` - ` in series.
+    // Mirrors parseSingleFolder's p10Pre fallback so flat-pack splits like
+    // 'Sanderson/Mistborn 01 - The Final Empire.mp3' resolve to series + position + title.
+    const p10TwoPart = matchFirstDashOnly(titleSegment, WORDS_NUM_DASH_TITLE_REGEX);
+    if (p10TwoPart) {
+      return {
+        title: cleanName(p10TwoPart[3]!),
+        author: p8Author,
+        series: cleanName(p10TwoPart[1]!),
+        seriesPosition: parseInt(p10TwoPart[2]!, 10),
+        ...(asin !== undefined && { asin }),
+      };
+    }
     return {
       title: cleanName(titleSegment),
       author: p8Author,
@@ -485,6 +498,18 @@ export function parseFolderStructureRaw(parts: string[]): {
         author: p8Author,
         series: seriesMatch[1]!,
         seriesPosition: parseInt(seriesMatch[2]!, 10),
+        ...(asin !== undefined && { asin }),
+      };
+    }
+    // P10-precheck (raw 2-part) — mirrors the cleaned branch so scan-debug
+    // raw/cleaned outputs stay aligned for `Series NN - Title` shapes.
+    const p10TwoPart = matchFirstDashOnly(titleSegment, WORDS_NUM_DASH_TITLE_REGEX);
+    if (p10TwoPart) {
+      return {
+        title: p10TwoPart[3]!,
+        author: p8Author,
+        series: p10TwoPart[1]!,
+        seriesPosition: parseInt(p10TwoPart[2]!, 10),
         ...(asin !== undefined && { asin }),
       };
     }
