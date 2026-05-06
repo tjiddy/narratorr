@@ -8,43 +8,6 @@ interface SearchOptions {
 
 type SearchFn = (query: string, options?: SearchOptions) => Promise<BookMetadata[]>;
 
-/**
- * Search for books with automatic author/title swap retry on zero results.
- *
- * When an initial search returns no results and both title and author are provided,
- * retries the search with title and author swapped. This handles cases where folder
- * names have author and title in the wrong order.
- *
- * Used by matchSingleBook() to retry on zero results.
- */
-export async function searchWithSwapRetry(args: {
-  searchFn: SearchFn;
-  title: string;
-  author: string | undefined;
-  log: FastifyBaseLogger;
-  options?: SearchOptions;
-}): Promise<BookMetadata[]> {
-  const { searchFn, title, author, log, options } = args;
-
-  const query = author ? `${title} ${author}` : title;
-  const results = await searchFn(query, options);
-
-  if (results.length > 0 || !author) {
-    return results;
-  }
-
-  // Swap retry: try with author as title and title as author
-  log.debug({ title, author }, 'Zero results — retrying with swapped author/title');
-  const swappedQuery = `${author} ${title}`;
-  const swappedOptions = options
-    ? { ...options, title: author, author: title }
-    : undefined;
-
-  return searchFn(swappedQuery, swappedOptions);
-}
-
-// ─── Trace Types ────────────────────────────────────────────────────
-
 export interface SearchTraceResult {
   initialQuery: string;
   initialResultCount: number;
@@ -54,9 +17,16 @@ export interface SearchTraceResult {
 }
 
 /**
- * Trace-mode variant of searchWithSwapRetry.
- * Returns the same results but also captures query strings and whether swap was triggered.
- * Does NOT modify the existing searchWithSwapRetry contract.
+ * Search for books with automatic author/title swap retry on zero results,
+ * returning a trace of the queries issued and whether the swap path fired.
+ *
+ * Builds the initial query as `${title} ${author}` (or `title` alone when no
+ * author is provided). When the initial search returns zero results and an
+ * author is present, retries with title and author swapped — this handles
+ * folder names where author and title are in the wrong order. The returned
+ * `SearchTraceResult` captures `initialQuery`, `initialResultCount`,
+ * `swapRetry`, and `swapQuery` so callers can replay the search→enrich
+ * pipeline from the audit log.
  */
 export async function searchWithSwapRetryTrace(args: {
   searchFn: SearchFn;
