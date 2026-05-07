@@ -4,6 +4,7 @@
 
 import { extname } from 'node:path';
 import { AUDIO_EXTENSIONS } from '../../core/utils/audio-constants.js';
+import { tryTitleDashSeriesBook, tryCrossSegmentAgreement } from './folder-parsing-patterns.js';
 
 /**
  * Strip a recognized audio extension from a path segment. Used for single-file
@@ -38,7 +39,7 @@ const SERIES_MARKER_REGEX = /,\s*(?:book|vol(?:ume)?)\s+\d+\s*$/i;
  * Matches trailing parenthetical containing a person's name (1-3 words).
  * Does NOT match: years (2020), codec tags (handled by CODEC_REGEX), or long subtitles (>3 words).
  */
-const NARRATOR_PAREN_REGEX = /\s*\((?!(?:19|20)\d{2}\))(\S+(?:\s+\S+){0,2})\)\s*$/;
+export const NARRATOR_PAREN_REGEX = /\s*\((?!(?:19|20)\d{2}\))(\S+(?:\s+\S+){0,2})\)\s*$/;
 
 /** Matches an Audible ASIN in brackets: B0 + 8 alphanumeric chars (case-insensitive). Non-global. */
 const ASIN_REGEX = /\[B0[A-Z0-9]{8}\]/i;
@@ -81,7 +82,7 @@ const WORDS_NUM_DASH_TITLE_REGEX = /^(.+?)\s+(\d+)\s*-\s*(.+)$/;
 const LAST_FIRST_AUTHOR_REGEX = /^([\w'.-]+),\s*([\w'.-]+)$/;
 
 /** Apply P9 swap: `Last, First` → `First Last`. No-op if pattern doesn't match. */
-function applyLastFirstSwap(author: string): string {
+export function applyLastFirstSwap(author: string): string {
   const match = author.match(LAST_FIRST_AUTHOR_REGEX);
   if (match) return `${match[2]} ${match[1]}`;
   return author;
@@ -267,7 +268,7 @@ function parseSingleFolder(folder: string): {
       title: cleanName(seriesNumberMatch[3]!),
       author: null,
       series: cleanName(seriesNumberMatch[1]!),
-      seriesPosition: parseInt(seriesNumberMatch[2]!, 10),
+      seriesPosition: parseFloat(seriesNumberMatch[2]!),
       ...asinTail,
     };
   }
@@ -279,10 +280,13 @@ function parseSingleFolder(folder: string): {
       title: cleanName(seriesBookMatch[3]!),
       author: null,
       series: cleanName(seriesBookMatch[1]!),
-      seriesPosition: parseInt(seriesBookMatch[2]!, 10),
+      seriesPosition: parseFloat(seriesBookMatch[2]!),
       ...asinTail,
     };
   }
+
+  const titleDashSeries = tryTitleDashSeriesBook(input, asinTail, cleanName);
+  if (titleDashSeries) return titleDashSeries;
 
   // P15: whole-input lowercase kebab-case → bail to title-only
   if (KEBAB_CASE_REGEX.test(input)) {
@@ -296,7 +300,7 @@ function parseSingleFolder(folder: string): {
       title: cleanName(p10Pre[3]!),
       author: null,
       series: cleanName(p10Pre[1]!),
-      seriesPosition: parseInt(p10Pre[2]!, 10),
+      seriesPosition: parseFloat(p10Pre[2]!),
       ...asinTail,
     };
   }
@@ -350,7 +354,7 @@ function seriesPosResult(
     title: transform(match[3]!),
     author,
     series: transform(match[1]!),
-    seriesPosition: parseInt(match[2]!, 10),
+    seriesPosition: parseFloat(match[2]!),
     ...asinTail,
   };
 }
@@ -423,7 +427,8 @@ export function parseFolderStructure(parts: string[]): {
     // like 'Sanderson/Mistborn 01 - The Final Empire.mp3' resolve series+position+title.
     const p10TwoPart = matchFirstDashOnly(titleSegment, WORDS_NUM_DASH_TITLE_REGEX);
     if (p10TwoPart) return seriesPosResult(p10TwoPart, p8Author, asinTail, cleanName);
-    return { title: cleanName(titleSegment), author: p8Author, series: p8Series, ...asinTail };
+    const cs = tryCrossSegmentAgreement(parts[0]!, titleSegment, asinTail, cleanName);
+    return cs ?? { title: cleanName(titleSegment), author: p8Author, series: p8Series, ...asinTail };
   }
 
   // Three or more folders: Author/Series/Title (take first, second-to-last, last)
@@ -491,7 +496,8 @@ export function parseFolderStructureRaw(parts: string[]): {
     // P10-precheck (raw 2-part) — mirrors the cleaned branch.
     const p10TwoPart = matchFirstDashOnly(titleSegment, WORDS_NUM_DASH_TITLE_REGEX);
     if (p10TwoPart) return seriesPosResult(p10TwoPart, p8Author, asinTail, identity);
-    return { title: titleSegment, author: p8Author, series: p8Series, ...asinTail };
+    const cs = tryCrossSegmentAgreement(parts[0]!, titleSegment, asinTail, identity);
+    return cs ?? { title: titleSegment, author: p8Author, series: p8Series, ...asinTail };
   }
 
   const lastSegment = stripAudioExtension(parts[parts.length - 1]!);
@@ -526,7 +532,7 @@ function parseSingleFolderRaw(folder: string): {
       title: seriesNumberMatch[3]!,
       author: null,
       series: seriesNumberMatch[1]!,
-      seriesPosition: parseInt(seriesNumberMatch[2]!, 10),
+      seriesPosition: parseFloat(seriesNumberMatch[2]!),
       ...asinTail,
     };
   }
@@ -538,10 +544,13 @@ function parseSingleFolderRaw(folder: string): {
       title: seriesBookMatch[3]!,
       author: null,
       series: seriesBookMatch[1]!,
-      seriesPosition: parseInt(seriesBookMatch[2]!, 10),
+      seriesPosition: parseFloat(seriesBookMatch[2]!),
       ...asinTail,
     };
   }
+
+  const titleDashSeries = tryTitleDashSeriesBook(input, asinTail, identity);
+  if (titleDashSeries) return titleDashSeries;
 
   // P15: whole-input lowercase kebab-case → bail to title-only
   if (KEBAB_CASE_REGEX.test(input)) {
@@ -555,7 +564,7 @@ function parseSingleFolderRaw(folder: string): {
       title: p10Pre[3]!,
       author: null,
       series: p10Pre[1]!,
-      seriesPosition: parseInt(p10Pre[2]!, 10),
+      seriesPosition: parseFloat(p10Pre[2]!),
       ...asinTail,
     };
   }
