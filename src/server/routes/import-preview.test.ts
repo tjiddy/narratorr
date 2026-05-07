@@ -122,16 +122,18 @@ describe('GET /api/import/preview/:token', () => {
     expect(res.statusCode).toBe(404);
   });
 
-  it('returns 403 when path.relative returns an absolute path (Windows different-drive simulation)', async () => {
-    // On Windows, `relative('C:\\root', 'D:\\file')` returns an absolute path
-    // (the destination as-is) rather than a `..`-prefixed string. The route
-    // guards against this with `isAbsolute(rel)` alongside the `..` check.
-    // Linux CI cannot produce this naturally, so we mock `relative` for one call
-    // to verify the conditional fires and returns 403 (vs streaming the file).
+  it('returns 403 when path.relative returns an absolute path', async () => {
+    // The route's containment check has TWO guards: `rel.startsWith('..')` AND
+    // `isAbsolute(rel)`. The second covers Windows cross-drive where
+    // `relative('C:\\root', 'D:\\file')` returns the destination as-is rather
+    // than a `..`-prefixed string. We can't produce that natively on Linux CI,
+    // so we mock `relative` to return a path that's absolute on the test platform
+    // (Linux: '/...', Windows: also accepts '/...' as absolute) and verify the
+    // `isAbsolute(rel)` branch fires and returns 403 vs streaming the file.
     const file = join(workDir, 'track.mp3');
     await writeFile(file, Buffer.alloc(64));
     const token = mintPreviewToken(file, workDir);
-    vi.mocked(relative).mockReturnValueOnce('D:\\elsewhere\\leak.mp3');
+    vi.mocked(relative).mockReturnValueOnce('/elsewhere/leak.mp3');
 
     const res = await app.inject({ method: 'GET', url: `/api/import/preview/${token}` });
 
