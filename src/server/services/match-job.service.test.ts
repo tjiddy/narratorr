@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { createMockLogger, inject } from '../__tests__/helpers.js';
-import { MatchJobService, type MatchCandidate } from './match-job.service.js';
+import { MatchJobService, capConfidence, type MatchCandidate } from './match-job.service.js';
 import type { FastifyBaseLogger } from 'fastify';
 import type { MetadataService } from './metadata.service.js';
 import type { SettingsService } from './settings.service.js';
@@ -2610,6 +2610,311 @@ describe('MatchJobService', () => {
         const result = service.getJob(id)!.results[0];
         expect(result!.confidence).not.toBe('none');
         expect(result!.bestMatch?.title).toBe('Jaina Proudmoore: Tides of War');
+      });
+    });
+
+    // ── #1036 Tag-search planner: ordered retry attempts ─────────────────
+    describe('#1036 tag-search planner — ordered retry attempts', () => {
+      function makeRichScan(
+        tagTitle: string,
+        tagAuthor: string,
+        extras: { tagAlbum?: string; tagAsin?: string; totalDuration?: number } = {},
+      ) {
+        return {
+          codec: 'AAC',
+          bitrate: 128000,
+          sampleRate: 44100,
+          channels: 2,
+          bitrateMode: 'cbr' as const,
+          fileFormat: 'm4b',
+          totalDuration: extras.totalDuration ?? 36000,
+          totalSize: 100_000_000,
+          fileCount: 1,
+          hasCoverArt: false,
+          tagTitle,
+          tagAuthor,
+          ...(extras.tagAlbum !== undefined && { tagAlbum: extras.tagAlbum }),
+          ...(extras.tagAsin !== undefined && { tagAsin: extras.tagAsin }),
+        };
+      }
+
+      const candidate: MatchCandidate = {
+        path: '/audiobooks/Some Folder',
+        title: 'Some Folder',
+        author: 'Some Author',
+      };
+
+      it('AC20 — Dark Forest: exact attempt zero results, album attempt wins with medium cap', async () => {
+        // Tag title is over-specified with `: The Three-Body Problem, Book 2` — exact
+        // search returns zero. Album-derived `The Dark Forest` finds the book.
+        vi.mocked(scanAudioDirectory).mockResolvedValue(
+          makeRichScan('The Dark Forest: The Three-Body Problem, Book 2', 'Cixin Liu', {
+            tagAlbum: 'The Dark Forest (Unabridged)',
+          }),
+        );
+        vi.mocked(metadataService.searchBooks)
+          .mockResolvedValueOnce([])
+          .mockResolvedValueOnce([
+            makeBookMetadata({
+              title: 'The Dark Forest',
+              authors: [{ name: 'Cixin Liu' }],
+              providerId: 'p1',
+              duration: 600,
+            }),
+          ]);
+        vi.mocked(metadataService.getBook).mockResolvedValue(null);
+
+        const id = service.createJob([candidate]);
+        await waitForJob(service, id);
+
+        const result = service.getJob(id)!.results[0];
+        expect(result!.bestMatch?.title).toBe('The Dark Forest');
+        // Cap forces medium even on a single-result shortcut path
+        expect(result!.confidence).toBe('medium');
+        // Both planner attempts ran, no Pass 2 fallback
+        expect(metadataService.searchBooks).toHaveBeenCalledTimes(2);
+        expect(metadataService.searchBooks).toHaveBeenNthCalledWith(
+          2,
+          'The Dark Forest Cixin Liu',
+          { title: 'The Dark Forest', author: 'Cixin Liu' },
+        );
+      });
+
+      it('AC21 — Imagine Me (multi-file album): album candidate cleans `- Series, Book N`', async () => {
+        vi.mocked(scanAudioDirectory).mockResolvedValue(
+          makeRichScan('Imagine Me - Part 3', 'Tahereh Mafi', {
+            tagAlbum: 'Imagine Me - Shatter Me Series, Book 6',
+          }),
+        );
+        // Exact attempt fails (zero), album wins
+        vi.mocked(metadataService.searchBooks)
+          .mockResolvedValueOnce([])
+          .mockResolvedValueOnce([
+            makeBookMetadata({
+              title: 'Imagine Me',
+              authors: [{ name: 'Tahereh Mafi' }],
+              providerId: 'p1',
+              duration: 600,
+            }),
+          ]);
+        vi.mocked(metadataService.getBook).mockResolvedValue(null);
+
+        const id = service.createJob([candidate]);
+        await waitForJob(service, id);
+
+        const result = service.getJob(id)!.results[0];
+        expect(result!.bestMatch?.title).toBe('Imagine Me');
+        expect(result!.confidence).toBe('medium');
+        expect(metadataService.searchBooks).toHaveBeenNthCalledWith(
+          2,
+          'Imagine Me Tahereh Mafi',
+          { title: 'Imagine Me', author: 'Tahereh Mafi' },
+        );
+      });
+
+      it('AC22 — Reacher: exact attempt fails, strip-leading-series produces `Second Son`', async () => {
+        vi.mocked(scanAudioDirectory).mockResolvedValue(
+          makeRichScan('Reacher 00.15-Second Son', 'Lee Child'),
+        );
+        vi.mocked(metadataService.searchBooks)
+          .mockResolvedValueOnce([])
+          .mockResolvedValueOnce([
+            makeBookMetadata({
+              title: 'Second Son',
+              authors: [{ name: 'Lee Child' }],
+              providerId: 'p1',
+              duration: 600,
+            }),
+          ]);
+        vi.mocked(metadataService.getBook).mockResolvedValue(null);
+
+        const id = service.createJob([candidate]);
+        await waitForJob(service, id);
+
+        const result = service.getJob(id)!.results[0];
+        expect(result!.bestMatch?.title).toBe('Second Son');
+        expect(result!.confidence).toBe('medium');
+        expect(metadataService.searchBooks).toHaveBeenNthCalledWith(
+          2,
+          'Second Son Lee Child',
+          { title: 'Second Son', author: 'Lee Child' },
+        );
+      });
+
+      it('AC23 — ASIN kill-shot returns immediately, no planner attempts fire', async () => {
+        vi.mocked(scanAudioDirectory).mockResolvedValue(
+          makeRichScan('Anything', 'Anyone', { tagAsin: 'B07KILLSHT' }),
+        );
+        vi.mocked(metadataService.getBook).mockResolvedValue(
+          makeBookMetadata({ title: 'Real Book Title', providerId: 'p1', asin: 'B07KILLSHT' }),
+        );
+
+        const id = service.createJob([candidate]);
+        await waitForJob(service, id);
+
+        const result = service.getJob(id)!.results[0];
+        expect(result!.bestMatch?.title).toBe('Real Book Title');
+        expect(result!.confidence).toBe('high');
+        // No searchBooks call — ASIN kill-shot returns before the planner loop
+        expect(metadataService.searchBooks).not.toHaveBeenCalled();
+        expect(metadataService.getBook).toHaveBeenCalledWith('B07KILLSHT');
+      });
+
+      it('AC23 — ASIN miss falls through to planner attempts', async () => {
+        vi.mocked(scanAudioDirectory).mockResolvedValue(
+          makeRichScan('Some Book', 'Some Author', { tagAsin: 'B07MISSXXX' }),
+        );
+        // ASIN kill-shot returns null → planner runs
+        vi.mocked(metadataService.getBook).mockResolvedValueOnce(null);
+        vi.mocked(metadataService.searchBooks).mockResolvedValueOnce([
+          makeBookMetadata({
+            title: 'Some Book',
+            authors: [{ name: 'Some Author' }],
+            providerId: 'p1',
+            duration: 600,
+          }),
+        ]);
+        vi.mocked(metadataService.getBook).mockResolvedValue(null);
+
+        const id = service.createJob([candidate]);
+        await waitForJob(service, id);
+
+        const result = service.getJob(id)!.results[0];
+        expect(result!.bestMatch?.title).toBe('Some Book');
+        expect(metadataService.searchBooks).toHaveBeenCalledTimes(1);
+      });
+
+      it('AC18/AC19 — single-result shortcut still applies cap (medium for stripped attempt)', async () => {
+        vi.mocked(scanAudioDirectory).mockResolvedValue(
+          makeRichScan('Imagine Me - Part 5', 'Tahereh Mafi'),
+        );
+        // Exact attempt fails, strip-trailing-part wins with single result.
+        // Without the cap, single-result shortcut returns 'high'; cap forces 'medium'.
+        vi.mocked(metadataService.searchBooks)
+          .mockResolvedValueOnce([])
+          .mockResolvedValueOnce([
+            makeBookMetadata({
+              title: 'Imagine Me',
+              authors: [{ name: 'Tahereh Mafi' }],
+              providerId: 'p1',
+            }),
+          ]);
+        vi.mocked(metadataService.getBook).mockResolvedValue(null);
+
+        const id = service.createJob([candidate]);
+        await waitForJob(service, id);
+
+        const result = service.getJob(id)!.results[0];
+        expect(result!.confidence).toBe('medium');
+      });
+
+      it('AC18 — multi-result duration-derived path also caps to medium for stripped attempt', async () => {
+        vi.mocked(scanAudioDirectory).mockResolvedValue(
+          makeRichScan('Imagine Me - Part 5', 'Tahereh Mafi', { totalDuration: 36000 }),
+        );
+        vi.mocked(metadataService.searchBooks)
+          .mockResolvedValueOnce([])
+          .mockResolvedValueOnce([
+            makeBookMetadata({ title: 'Imagine Me', authors: [{ name: 'Tahereh Mafi' }], providerId: 'p1', duration: 600 }),
+            makeBookMetadata({ title: 'Imagine Me Too', authors: [{ name: 'Tahereh Mafi' }], providerId: 'p2', duration: 800 }),
+          ]);
+        vi.mocked(metadataService.getBook).mockResolvedValue(null);
+
+        const id = service.createJob([candidate]);
+        await waitForJob(service, id);
+
+        const result = service.getJob(id)!.results[0];
+        // Without cap, duration would lift to 'high' (top.duration=600min ~= 600min scanned).
+        // Cap forces medium because the winning attempt was strip-trailing-part.
+        expect(result!.confidence).toBe('medium');
+      });
+
+      it('AC17 — capConfidence semantics: caps high to medium, leaves medium/none/high alone', () => {
+        expect(capConfidence('high', 'medium')).toBe('medium');
+        expect(capConfidence('medium', 'medium')).toBe('medium');
+        expect(capConfidence('none', 'medium')).toBe('none');
+        expect(capConfidence('high', 'high')).toBe('high');
+      });
+
+      it('AC26 — provider rate-limit on first attempt: subsequent attempts also return [] via service gate', async () => {
+        vi.mocked(scanAudioDirectory).mockResolvedValue(
+          makeRichScan('Imagine Me - Part 3', 'Tahereh Mafi', {
+            tagAlbum: 'Imagine Me - Shatter Me Series, Book 6',
+          }),
+        );
+        // Service-level rate-limit: first call sets state, all subsequent calls
+        // return [] without invoking provider. The mock here represents the
+        // post-gate behavior — every call returns [].
+        vi.mocked(metadataService.searchBooks).mockResolvedValue([]);
+        // Pass 2 also gets [] (still rate-limited)
+        vi.mocked(metadataService.getBook).mockResolvedValue(null);
+
+        const id = service.createJob([candidate]);
+        await waitForJob(service, id);
+
+        const result = service.getJob(id)!.results[0];
+        expect(result!.confidence).toBe('none');
+        // Planner exhausted all attempts, fell through to Pass 2 — but no warn
+        // log fires because the service-level swallow returns [] rather than throwing.
+        expect(log.warn).not.toHaveBeenCalledWith(
+          expect.anything(),
+          'tag-search provider error — falling through to filename-derived path',
+        );
+      });
+
+      it('AC15 — predicate-fail on first attempt continues to next attempt instead of falling through', async () => {
+        vi.mocked(scanAudioDirectory).mockResolvedValue(
+          makeRichScan('The Dark Forest: The Three-Body Problem, Book 2', 'Cixin Liu', {
+            tagAlbum: 'The Dark Forest (Unabridged)',
+          }),
+        );
+        // Exact attempt: returns a wrong-author result (predicate fails on author)
+        // Album attempt: returns the right book
+        vi.mocked(metadataService.searchBooks)
+          .mockResolvedValueOnce([
+            makeBookMetadata({
+              title: 'The Dark Forest: The Three-Body Problem, Book 2',
+              authors: [{ name: 'Wrong Author Entirely' }],
+              providerId: 'p1',
+            }),
+          ])
+          .mockResolvedValueOnce([
+            makeBookMetadata({
+              title: 'The Dark Forest',
+              authors: [{ name: 'Cixin Liu' }],
+              providerId: 'p2',
+            }),
+          ]);
+        vi.mocked(metadataService.getBook).mockResolvedValue(null);
+
+        const id = service.createJob([candidate]);
+        await waitForJob(service, id);
+
+        const result = service.getJob(id)!.results[0];
+        expect(result!.bestMatch?.title).toBe('The Dark Forest');
+      });
+
+      it('logs debug per attempt with title/author/source/candidateCount (AC30)', async () => {
+        vi.mocked(scanAudioDirectory).mockResolvedValue(
+          makeRichScan('Test Book', 'Test Author'),
+        );
+        vi.mocked(metadataService.searchBooks).mockResolvedValueOnce([
+          makeBookMetadata({ title: 'Test Book', authors: [{ name: 'Test Author' }], providerId: 'p1' }),
+        ]);
+        vi.mocked(metadataService.getBook).mockResolvedValue(null);
+
+        const id = service.createJob([candidate]);
+        await waitForJob(service, id);
+
+        expect(log.debug).toHaveBeenCalledWith(
+          expect.objectContaining({
+            tagTitle: 'Test Book',
+            tagAuthor: 'Test Author',
+            source: 'exact',
+            candidateCount: 1,
+          }),
+          'Tag-search attempt fired',
+        );
       });
     });
   });
