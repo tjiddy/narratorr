@@ -21,6 +21,19 @@ export interface AudioScanResult {
   tagSeriesPosition?: number;
   tagYear?: string;
   tagPublisher?: string;
+  /**
+   * Raw album from native tags. Multi-file: cross-file consensus (all agree,
+   * non-empty, non-disc-pattern). Single-file: `common.album.trim()` when
+   * non-empty and not a disc-pattern. Stored independently of `tagTitle` so
+   * the tag-search planner can use it as a recovery candidate when the
+   * tag title carries annotation noise.
+   */
+  tagAlbum?: string;
+  /**
+   * Audible ASIN extracted from native tags (iTunes :ASIN/cnID atoms, ID3v2
+   * comment frames, or `common.podcastIdentifier`). Uppercase-normalized.
+   */
+  tagAsin?: string;
   coverImage?: Buffer;
   coverMimeType?: string;
   /** Whether any audio file contains embedded cover art */
@@ -157,8 +170,8 @@ export async function scanAudioDirectory(
   }
 
   if (firstTaggedCommon !== null) {
-    const multiFileTagTitle = isMultiFile ? resolveMultiFileAlbum(fileAlbums) : undefined;
-    extractTagInfo(result, firstTaggedCommon, firstTaggedNative, isMultiFile, multiFileTagTitle);
+    const multiFileTagAlbum = isMultiFile ? resolveMultiFileAlbum(fileAlbums) : undefined;
+    extractTagInfo(result, firstTaggedCommon, firstTaggedNative, isMultiFile, multiFileTagAlbum);
   }
 
   if (!result.codec) return null;
@@ -238,10 +251,16 @@ function extractTagInfo(
   common: ICommonTagsResult,
   native: Record<string, Array<{ id: string; value: unknown }>> | undefined,
   isMultiFile: boolean,
-  multiFileTagTitle: string | undefined,
+  multiFileTagAlbum: string | undefined,
 ): void {
-  const tagTitle = pickTagTitle(common, isMultiFile, multiFileTagTitle);
+  const tagTitle = pickTagTitle(common, isMultiFile, multiFileTagAlbum);
   if (tagTitle !== undefined) result.tagTitle = tagTitle;
+
+  const tagAlbum = pickTagAlbum(common, isMultiFile, multiFileTagAlbum);
+  if (tagAlbum !== undefined) result.tagAlbum = tagAlbum;
+
+  const tagAsin = extractAsin(common, native);
+  if (tagAsin !== undefined) result.tagAsin = tagAsin;
 
   const authors = parseAuthors(common.albumartist || common.artist);
   if (authors.tagAuthor !== undefined) result.tagAuthor = authors.tagAuthor;
@@ -260,9 +279,81 @@ function extractTagInfo(
   }
 }
 
-function pickTagTitle(common: ICommonTagsResult, isMultiFile: boolean, multiFileTagTitle: string | undefined): string | undefined {
-  if (isMultiFile) return multiFileTagTitle;
+function pickTagTitle(common: ICommonTagsResult, isMultiFile: boolean, multiFileTagAlbum: string | undefined): string | undefined {
+  if (isMultiFile) return multiFileTagAlbum;
   return common.title || common.album;
+}
+
+const DISC_PATTERN_REGEX = /^(disc|cd)\s*\d+$/i;
+
+function pickTagAlbum(
+  common: ICommonTagsResult,
+  isMultiFile: boolean,
+  multiFileTagAlbum: string | undefined,
+): string | undefined {
+  if (isMultiFile) return multiFileTagAlbum;
+  const album = common.album?.trim();
+  if (!album) return undefined;
+  if (DISC_PATTERN_REGEX.test(album)) return undefined;
+  return album;
+}
+
+const ASIN_REGEX = /\bB[A-Z0-9]{9}\b/;
+
+/**
+ * Extract an Audible ASIN (B0 + 8 alphanumeric, uppercase-normalized) from
+ * native tags. Checks MP4 atoms (`iTunes:ASIN`, `cnID`), ID3v2 comment frames,
+ * and `common.podcastIdentifier`. Returns the first match found. Empty/missing
+ * → undefined.
+ */
+function extractAsin(
+  common: ICommonTagsResult,
+  native: Record<string, Array<{ id: string; value: unknown }>> | undefined,
+): string | undefined {
+  const fromNative = scanNativeForAsin(native);
+  if (fromNative !== undefined) return fromNative;
+  const fromComment = scanCommentForAsin(common.comment);
+  if (fromComment !== undefined) return fromComment;
+  const podcastId = (common as { podcastIdentifier?: string }).podcastIdentifier;
+  if (typeof podcastId === 'string') {
+    const match = podcastId.toUpperCase().match(ASIN_REGEX);
+    if (match) return match[0];
+  }
+  return undefined;
+}
+
+function scanNativeForAsin(
+  native: Record<string, Array<{ id: string; value: unknown }>> | undefined,
+): string | undefined {
+  if (!native) return undefined;
+  for (const tags of Object.values(native)) {
+    for (const tag of tags) {
+      if (typeof tag.value === 'string') {
+        const match = tag.value.toUpperCase().match(ASIN_REGEX);
+        if (match) return match[0];
+      } else if (tag.value && typeof tag.value === 'object') {
+        // ID3v2 COMM frames carry { description, text } objects
+        const text = (tag.value as { text?: unknown }).text;
+        if (typeof text === 'string') {
+          const match = text.toUpperCase().match(ASIN_REGEX);
+          if (match) return match[0];
+        }
+      }
+    }
+  }
+  return undefined;
+}
+
+function scanCommentForAsin(comment: ICommonTagsResult['comment']): string | undefined {
+  if (!comment || comment.length === 0) return undefined;
+  for (const entry of comment) {
+    const text = entry?.text ?? (typeof entry === 'string' ? entry : undefined);
+    if (typeof text === 'string') {
+      const match = text.toUpperCase().match(ASIN_REGEX);
+      if (match) return match[0];
+    }
+  }
+  return undefined;
 }
 
 /** Split an albumartist string on commas/semicolons/ampersands. First non-empty token = primary author. */

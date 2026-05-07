@@ -502,6 +502,152 @@ describe('scanAudioDirectory', () => {
     });
   });
 
+  describe('tagAlbum (#1036 AC2)', () => {
+    function setupMultiFileScan(perFileCommon: Array<Record<string, unknown>>) {
+      const dirents = perFileCommon.map((_, i) => makeDirent(`ch${i + 1}.mp3`, true));
+      mockReaddir.mockResolvedValue(dirents as never);
+      mockStat.mockResolvedValue({ isFile: () => false, isDirectory: () => true, size: 10_000_000 } as never);
+      let call = 0;
+      mockParseFile.mockImplementation(async () => {
+        const common = perFileCommon[call++];
+        return makeMetadata({ common }) as never;
+      });
+    }
+
+    it('single-file: populates tagAlbum from common.album when title differs (Dark Forest case)', async () => {
+      mockReaddir.mockResolvedValue([makeDirent('book.m4b', true)] as never);
+      mockStat.mockResolvedValue({ isFile: () => false, isDirectory: () => true, size: 10_000_000 } as never);
+      mockParseFile.mockResolvedValue(makeMetadata({
+        common: {
+          title: 'The Dark Forest: The Three-Body Problem, Book 2',
+          album: 'The Dark Forest (Unabridged)',
+          albumartist: 'Cixin Liu',
+          composer: undefined,
+        },
+      }) as never);
+
+      const result = await scanAudioDirectory('/audiobooks/dark-forest');
+      expect(result!.tagTitle).toBe('The Dark Forest: The Three-Body Problem, Book 2');
+      expect(result!.tagAlbum).toBe('The Dark Forest (Unabridged)');
+    });
+
+    it('single-file: tagAlbum undefined when album matches disc-pattern', async () => {
+      mockReaddir.mockResolvedValue([makeDirent('book.m4b', true)] as never);
+      mockStat.mockResolvedValue({ isFile: () => false, isDirectory: () => true, size: 10_000_000 } as never);
+      mockParseFile.mockResolvedValue(makeMetadata({
+        common: { title: 'Real Title', album: 'Disc 1', albumartist: 'Author', composer: undefined },
+      }) as never);
+
+      const result = await scanAudioDirectory('/audiobooks/test');
+      expect(result!.tagAlbum).toBeUndefined();
+    });
+
+    it('single-file: tagAlbum undefined when album is empty', async () => {
+      mockReaddir.mockResolvedValue([makeDirent('book.m4b', true)] as never);
+      mockStat.mockResolvedValue({ isFile: () => false, isDirectory: () => true, size: 10_000_000 } as never);
+      mockParseFile.mockResolvedValue(makeMetadata({
+        common: { title: 'Real Title', album: '   ', albumartist: 'Author', composer: undefined },
+      }) as never);
+
+      const result = await scanAudioDirectory('/audiobooks/test');
+      expect(result!.tagAlbum).toBeUndefined();
+    });
+
+    it('single-file: tagAlbum undefined when album is missing', async () => {
+      mockReaddir.mockResolvedValue([makeDirent('book.m4b', true)] as never);
+      mockStat.mockResolvedValue({ isFile: () => false, isDirectory: () => true, size: 10_000_000 } as never);
+      mockParseFile.mockResolvedValue(makeMetadata({
+        common: { title: 'Real Title', album: undefined, albumartist: 'Author', composer: undefined },
+      }) as never);
+
+      const result = await scanAudioDirectory('/audiobooks/test');
+      expect(result!.tagAlbum).toBeUndefined();
+    });
+
+    it('multi-file: populates tagAlbum from cross-file consensus', async () => {
+      setupMultiFileScan([
+        { title: 'Ch 1', album: 'Imagine Me - Shatter Me Series, Book 6', albumartist: 'Tahereh Mafi', composer: undefined },
+        { title: 'Ch 2', album: 'Imagine Me - Shatter Me Series, Book 6', albumartist: 'Tahereh Mafi', composer: undefined },
+      ]);
+
+      const result = await scanAudioDirectory('/audiobooks/imagine-me');
+      expect(result!.tagAlbum).toBe('Imagine Me - Shatter Me Series, Book 6');
+      expect(result!.tagTitle).toBe('Imagine Me - Shatter Me Series, Book 6');
+    });
+
+    it('multi-file: tagAlbum undefined when files disagree', async () => {
+      setupMultiFileScan([
+        { title: 'Ch 1', album: 'Album A', albumartist: 'Author', composer: undefined },
+        { title: 'Ch 2', album: 'Album B', albumartist: 'Author', composer: undefined },
+      ]);
+
+      const result = await scanAudioDirectory('/audiobooks/test');
+      expect(result!.tagAlbum).toBeUndefined();
+    });
+  });
+
+  describe('tagAsin (#1036 AC3)', () => {
+    it('extracts ASIN from MP4 iTunes:ASIN atom', async () => {
+      mockReaddir.mockResolvedValue([makeDirent('book.m4b', true)] as never);
+      mockStat.mockResolvedValue({ isFile: () => false, isDirectory: () => true, size: 10_000_000 } as never);
+      mockParseFile.mockResolvedValue(makeMetadata({
+        common: { title: 'Test', albumartist: 'Author', composer: undefined },
+        native: {
+          iTunes: [{ id: '----:com.apple.iTunes:ASIN', value: 'B07ABCDEFG' }],
+        },
+      }) as never);
+
+      const result = await scanAudioDirectory('/audiobooks/test');
+      expect(result!.tagAsin).toBe('B07ABCDEFG');
+    });
+
+    it('extracts ASIN from ID3v2 comment frame text', async () => {
+      mockReaddir.mockResolvedValue([makeDirent('track.mp3', true)] as never);
+      mockStat.mockResolvedValue({ isFile: () => false, isDirectory: () => true, size: 10_000_000 } as never);
+      mockParseFile.mockResolvedValue(makeMetadata({
+        common: {
+          title: 'Test',
+          albumartist: 'Author',
+          composer: undefined,
+          comment: [{ text: 'Audible ASIN: B0XXXXXXXX. Some other text.' }],
+        },
+      }) as never);
+
+      const result = await scanAudioDirectory('/audiobooks/test');
+      expect(result!.tagAsin).toBe('B0XXXXXXXX');
+    });
+
+    it('uppercase-normalizes lowercase ASIN values', async () => {
+      mockReaddir.mockResolvedValue([makeDirent('book.m4b', true)] as never);
+      mockStat.mockResolvedValue({ isFile: () => false, isDirectory: () => true, size: 10_000_000 } as never);
+      mockParseFile.mockResolvedValue(makeMetadata({
+        common: { title: 'Test', albumartist: 'Author', composer: undefined },
+        native: {
+          iTunes: [{ id: 'asin', value: 'b08abcdefg' }],
+        },
+      }) as never);
+
+      const result = await scanAudioDirectory('/audiobooks/test');
+      expect(result!.tagAsin).toBe('B08ABCDEFG');
+    });
+
+    it('returns undefined when no ASIN-matching content is present', async () => {
+      mockReaddir.mockResolvedValue([makeDirent('book.m4b', true)] as never);
+      mockStat.mockResolvedValue({ isFile: () => false, isDirectory: () => true, size: 10_000_000 } as never);
+      mockParseFile.mockResolvedValue(makeMetadata({
+        common: {
+          title: 'Test',
+          albumartist: 'Author',
+          composer: undefined,
+          comment: [{ text: 'just a generic comment' }],
+        },
+      }) as never);
+
+      const result = await scanAudioDirectory('/audiobooks/test');
+      expect(result!.tagAsin).toBeUndefined();
+    });
+  });
+
   it('handles missing optional tags', async () => {
     mockReaddir.mockResolvedValue([
       makeDirent('track.mp3', true),

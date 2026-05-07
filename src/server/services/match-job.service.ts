@@ -11,6 +11,7 @@ import { searchWithSwapRetryTrace } from '../utils/search-helpers.js';
 import { getErrorMessage } from '../utils/error-message.js';
 import { serializeError } from '../utils/serialize-error.js';
 import { deriveTagQuery, rankResults, rankResultsCleaned, resolveConfidenceFromDuration, tagTitleScore, type TagQuery } from './match-job.helpers.js';
+import { planTagSearchAttempts, type TagSearchAttempt, type TagSearchOutcome } from './tag-search-planner.js';
 
 
 export type Confidence = 'high' | 'medium' | 'none';
@@ -42,6 +43,17 @@ const MAX_CONCURRENCY = 5;
 const TTL_MS = 10 * 60 * 1000; // 10 minutes after completion
 const TITLE_SIMILARITY_FLOOR = 0.5; // Below this, confidence is 'none'
 const TAG_AUTHOR_PREDICATE_FLOOR = 0.7; // Tag-pass author-name dice threshold (#984)
+
+/**
+ * Cap a computed Confidence at the planner-attempt's `maxConfidence`. Stripped
+ * attempts (album/strip-leading-series/etc.) emit `'medium'` as their cap so
+ * downstream Review/Verified UI can flag them for human attention even when
+ * the duration check would otherwise bless them as `'high'`.
+ */
+export function capConfidence(c: Confidence, cap: 'high' | 'medium'): Confidence {
+  if (cap === 'medium' && c === 'high') return 'medium';
+  return c;
+}
 
 export class MatchJobService {
   private jobs = new Map<string, MatchJob>();
@@ -288,60 +300,137 @@ class MatchJob {
     }
   }
 
-  // Pass 1 — tag-derived match (#984). Returns null on any failure (no tags,
-  // zero results, floor fail, predicate fail, unexpected throw); caller falls
-  // through to filename-derived. Bypasses searchWithSwapRetryTrace — tag.title
-  // and tag.albumartist are structurally distinct, no swap-on-zero needed.
+  // Pass 1 — tag-derived match (#984, #1036). Returns null on any failure
+  // (no tags, zero results across all attempts, floor fail, predicate fail,
+  // unexpected throw); caller falls through to filename-derived. Bypasses
+  // searchWithSwapRetryTrace — tag.title and tag.albumartist are structurally
+  // distinct, no swap-on-zero needed.
   private async tryTagDerivedMatch(
     book: MatchCandidate,
     audioResult: AudioScanResult | null,
     duration: number | undefined,
   ): Promise<MatchResult | null> {
     const tagQuery = deriveTagQuery(audioResult);
-    if (!tagQuery) return null;
+    if (!tagQuery || !audioResult) return null;
 
     this.log.debug({ path: book.path, tagTitle: tagQuery.title, tagAuthor: tagQuery.author }, 'Tag-derived metadata search');
 
-    const tagResults = await this.runTagSearch(book, tagQuery);
-    if (!tagResults || tagResults.length === 0) return null;
+    const outcome = await this.runTagSearch(book, audioResult, tagQuery);
+    if (!outcome) return null;
 
-    const detailed = await this.fetchDetails(tagResults);
-    if (detailed.length === 0) return null;
-
-    const scored = rankResultsCleaned(detailed, tagQuery);
-    const top = scored[0];
-    if (!top) return null;
-
-    if (!this.tagPassPredicatesPass(book, tagQuery, top)) return null;
+    const { scored, attempt } = outcome;
+    const top = scored[0]!;
 
     if (scored.length === 1) {
-      return { path: book.path, confidence: 'high', bestMatch: top.meta, alternatives: [] };
+      return {
+        path: book.path,
+        confidence: capConfidence('high', attempt.maxConfidence),
+        bestMatch: top.meta,
+        alternatives: [],
+      };
     }
 
     const { confidence, reason } = resolveConfidenceFromDuration(scored, duration);
     return {
       path: book.path,
-      confidence,
+      confidence: capConfidence(confidence, attempt.maxConfidence),
       bestMatch: top.meta,
       alternatives: scored.slice(1).map(s => s.meta),
       ...(reason !== undefined && { reason }),
     };
   }
 
-  /** Tag-pass searchBooks call with AC13 inner try/catch. Returns null on throw. */
-  private async runTagSearch(book: MatchCandidate, tagQuery: TagQuery): Promise<BookMetadata[] | null> {
+  /**
+   * Tag-pass search. Runs an ASIN kill-shot when available, otherwise loops
+   * planner attempts (search → fetchDetails → rank → predicate). Returns the
+   * first attempt that passes predicates; null when all attempts exhaust.
+   */
+  private async runTagSearch(
+    book: MatchCandidate,
+    audioResult: AudioScanResult,
+    tagQuery: TagQuery,
+  ): Promise<TagSearchOutcome | null> {
+    if (audioResult.tagAsin) {
+      const asinHit = await this.tryAsinKillShot(book, audioResult.tagAsin, tagQuery);
+      if (asinHit) return asinHit;
+    }
+
+    const attempts = planTagSearchAttempts(audioResult, tagQuery);
+    for (const attempt of attempts) {
+      const outcome = await this.tryAttempt(book, tagQuery, attempt);
+      if (outcome) return outcome;
+    }
+    this.log.debug(
+      { path: book.path, tagTitle: tagQuery.title, attemptCount: attempts.length },
+      'Tag-search planner exhausted all attempts — falling through',
+    );
+    return null;
+  }
+
+  /** ASIN kill-shot. Returns outcome when getBook succeeds; null on miss/throw. */
+  private async tryAsinKillShot(
+    book: MatchCandidate,
+    tagAsin: string,
+    tagQuery: TagQuery,
+  ): Promise<TagSearchOutcome | null> {
     try {
-      return await this.metadataService.searchBooks(`${tagQuery.title} ${tagQuery.author}`, {
-        title: tagQuery.title,
-        author: tagQuery.author,
+      const found = await this.metadataService.getBook(tagAsin);
+      if (found) {
+        this.log.debug({ path: book.path, tagAsin, title: found.title }, 'Tag-search ASIN kill-shot hit');
+        return {
+          scored: [{ meta: found, score: 1.0 }],
+          attempt: { title: found.title ?? tagQuery.title, author: tagQuery.author, source: 'asin-tag', maxConfidence: 'high' },
+        };
+      }
+    } catch (error: unknown) {
+      this.log.warn(
+        { error: serializeError(error), path: book.path, tagAsin },
+        'tag-search provider error — falling through to filename-derived path',
+      );
+    }
+    return null;
+  }
+
+  /** One planner attempt: search → fetchDetails → rank → predicate. Returns outcome or null. */
+  private async tryAttempt(
+    book: MatchCandidate,
+    tagQuery: TagQuery,
+    attempt: TagSearchAttempt,
+  ): Promise<TagSearchOutcome | null> {
+    let candidates: BookMetadata[];
+    try {
+      candidates = await this.metadataService.searchBooks(`${attempt.title} ${attempt.author}`, {
+        title: attempt.title,
+        author: attempt.author,
       });
     } catch (error: unknown) {
       this.log.warn(
-        { error: serializeError(error), path: book.path, tagTitle: tagQuery.title, tagAuthor: tagQuery.author },
+        { error: serializeError(error), path: book.path, tagTitle: attempt.title, tagAuthor: attempt.author, attemptSource: attempt.source },
         'tag-search provider error — falling through to filename-derived path',
       );
       return null;
     }
+    this.log.debug(
+      { path: book.path, tagTitle: attempt.title, tagAuthor: attempt.author, source: attempt.source, candidateCount: candidates.length },
+      'Tag-search attempt fired',
+    );
+    if (candidates.length === 0) return null;
+
+    const detailed = await this.fetchDetails(candidates);
+    if (detailed.length === 0) return null;
+
+    const attemptQuery: TagQuery = { title: attempt.title, author: attempt.author, ...(tagQuery.year ? { year: tagQuery.year } : {}) };
+    const scored = rankResultsCleaned(detailed, attemptQuery);
+    const top = scored[0];
+    if (!top) return null;
+
+    if (!this.tagPassPredicatesPass(book, attemptQuery, top)) return null;
+
+    this.log.debug(
+      { path: book.path, source: attempt.source, originalTagTitle: tagQuery.title, attemptTitle: attempt.title, bestTitle: top.meta.title },
+      'Tag-search attempt won',
+    );
+    return { scored, attempt };
   }
 
   /** AC5 — title floor + author predicate gate for the tag pass. Logs at debug on failure. */
