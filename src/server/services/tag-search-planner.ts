@@ -65,7 +65,7 @@ export function planTagSearchAttempts(
   }
 
   const stripLeadingSeries = tagQuery.title
-    .replace(/^[A-Za-z][\w\s'\-]*?\s+\d+(?:\.\d+)?\s*[-–—]\s*/, '')
+    .replace(/^[A-Za-z][\w\s'-]*?\s+\d+(?:\.\d+)?\s*[-–—]\s*/, '')
     .trim();
   if (stripLeadingSeries && stripLeadingSeries !== tagQuery.title) {
     add({ title: stripLeadingSeries, author: tagQuery.author, source: 'strip-leading-series', maxConfidence: 'medium' });

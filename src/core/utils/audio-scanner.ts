@@ -262,6 +262,14 @@ function extractTagInfo(
   const tagAsin = extractAsin(common, native);
   if (tagAsin !== undefined) result.tagAsin = tagAsin;
 
+  assignTagFields(result, common, native);
+}
+
+function assignTagFields(
+  result: AudioScanResult,
+  common: ICommonTagsResult,
+  native: Record<string, Array<{ id: string; value: unknown }>> | undefined,
+): void {
   const authors = parseAuthors(common.albumartist || common.artist);
   if (authors.tagAuthor !== undefined) result.tagAuthor = authors.tagAuthor;
   if (authors.tagAdditionalArtists !== undefined) result.tagAdditionalArtists = authors.tagAdditionalArtists;

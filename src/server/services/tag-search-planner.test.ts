@@ -1,7 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { planTagSearchAttempts, MAX_TAG_SEARCH_ATTEMPTS } from './tag-search-planner.js';
 import type { AudioScanResult } from '../../core/utils/audio-scanner.js';
-import type { TagQuery } from './match-job.helpers.js';
 
 function makeScan(overrides: Partial<AudioScanResult> = {}): AudioScanResult {
   return {
