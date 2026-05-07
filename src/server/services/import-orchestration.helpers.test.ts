@@ -8,7 +8,7 @@ import type { SettingsService } from './settings.service.js';
 import type { EventHistoryService } from './event-history.service.js';
 import type { EventBroadcasterService } from './event-broadcaster.service.js';
 import type { EnrichmentDeps } from './enrichment-orchestration.helpers.js';
-import { confirmImport, type ImportPipelineDeps } from './import-orchestration.helpers.js';
+import { confirmImport, copyToLibrary, type ImportPipelineDeps } from './import-orchestration.helpers.js';
 
 vi.mock('./enrichment-orchestration.helpers.js', async () => ({
   ...(await vi.importActual('./enrichment-orchestration.helpers.js')),
@@ -263,6 +263,122 @@ describe('confirmImport — import_jobs creation (#635)', () => {
       eventType: 'book_added',
       source: 'manual',
     }));
+  });
+
+  it('forwards narrators and seriesPosition through to bookService.create payload (#1028)', async () => {
+    mockBookService.create.mockResolvedValueOnce({ id: 42, title: 'Test', status: 'importing' });
+
+    await confirmImport(
+      [{
+        path: '/a',
+        title: 'Test',
+        authorName: 'Author',
+        narrators: ['Jim Dale'],
+        seriesPosition: 27,
+        seriesName: 'Discworld',
+      }],
+      deps,
+      'copy',
+      nudgeWorker,
+    );
+
+    expect(mockBookService.create).toHaveBeenCalledWith(expect.objectContaining({
+      narrators: ['Jim Dale'],
+      seriesPosition: 27,
+      seriesName: 'Discworld',
+    }));
+  });
+
+  it('forwards seriesPosition: 0 through to bookService.create (regression guard) (#1028)', async () => {
+    mockBookService.create.mockResolvedValueOnce({ id: 42, title: 'Test', status: 'importing' });
+
+    await confirmImport(
+      [{ path: '/a', title: 'Test', seriesName: 'Series', seriesPosition: 0 }],
+      deps,
+      'copy',
+      nudgeWorker,
+    );
+
+    const callArgs = mockBookService.create.mock.calls[0]![0] as { seriesPosition: number | undefined };
+    expect(callArgs.seriesPosition).toBe(0);
+  });
+});
+
+describe('copyToLibrary — token precedence (#1028)', () => {
+  // The same-path short-circuit lets us read the rendered targetPath without performing fs ops.
+  function buildDeps(folderFormat: string): ImportPipelineDeps {
+    const log = createMockLogger();
+    return {
+      db: inject<Db>({}),
+      log,
+      bookService: inject<BookService>({}),
+      bookImportService: inject<BookImportService>({}),
+      settingsService: inject<SettingsService>(createMockSettingsService({
+        library: { path: '/library', folderFormat },
+      })),
+      eventHistory: inject<EventHistoryService>({ create: vi.fn() }),
+      enrichmentDeps: {} as EnrichmentDeps,
+    };
+  }
+
+  it('item.seriesPosition wins over meta.series[0].position', async () => {
+    const deps = buildDeps('{author}/{series} #{seriesPosition}/{title}');
+    const targetPath = '/library/Author/Discworld #5/Title';
+    const path = await copyToLibrary(
+      { path: targetPath, title: 'Title', authorName: 'Author', seriesName: 'Discworld', seriesPosition: 5 },
+      { title: 'Title', authors: [{ name: 'Author' }], series: [{ name: 'Discworld', position: 99 }] },
+      'copy',
+      deps,
+    );
+    expect(path).toBe(targetPath);
+  });
+
+  it('item.narrators wins over meta.narrators in {narrator} token', async () => {
+    const deps = buildDeps('{narrator}/{title}');
+    const targetPath = '/library/Jim Dale/Title';
+    const path = await copyToLibrary(
+      { path: targetPath, title: 'Title', authorName: 'Author', narrators: ['Jim Dale'] },
+      { title: 'Title', authors: [{ name: 'Author' }], narrators: ['Stephen Fry'] },
+      'copy',
+      deps,
+    );
+    expect(path).toBe(targetPath);
+  });
+
+  it('item.seriesPosition: 0 wins over meta (regression guard for falsy)', async () => {
+    const deps = buildDeps('{author}/{series} #{seriesPosition}/{title}');
+    const targetPath = '/library/Author/Prequels #0/Title';
+    const path = await copyToLibrary(
+      { path: targetPath, title: 'Title', authorName: 'Author', seriesName: 'Prequels', seriesPosition: 0 },
+      { title: 'Title', authors: [{ name: 'Author' }], series: [{ name: 'Prequels', position: 99 }] },
+      'copy',
+      deps,
+    );
+    expect(path).toBe(targetPath);
+  });
+
+  it('falls back to meta.series[0].position when item.seriesPosition is undefined', async () => {
+    const deps = buildDeps('{author}/{series} #{seriesPosition}/{title}');
+    const targetPath = '/library/Author/Discworld #99/Title';
+    const path = await copyToLibrary(
+      { path: targetPath, title: 'Title', authorName: 'Author', seriesName: 'Discworld' },
+      { title: 'Title', authors: [{ name: 'Author' }], series: [{ name: 'Discworld', position: 99 }] },
+      'copy',
+      deps,
+    );
+    expect(path).toBe(targetPath);
+  });
+
+  it('falls back to meta.narrators when item.narrators is empty', async () => {
+    const deps = buildDeps('{narrator}/{title}');
+    const targetPath = '/library/Stephen Fry/Title';
+    const path = await copyToLibrary(
+      { path: targetPath, title: 'Title', authorName: 'Author' },
+      { title: 'Title', authors: [{ name: 'Author' }], narrators: ['Stephen Fry'] },
+      'copy',
+      deps,
+    );
+    expect(path).toBe(targetPath);
   });
 });
 

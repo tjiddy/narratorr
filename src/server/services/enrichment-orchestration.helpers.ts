@@ -126,6 +126,8 @@ export interface ImportConfirmItem {
   title: string;
   authorName?: string | null;
   seriesName?: string | null;
+  narrators?: string[];
+  seriesPosition?: number;
   asin?: string | null;
   coverUrl?: string | null;
   metadata?: BookMetadata | null;
@@ -184,14 +186,17 @@ export function buildImportedEventPayload(
  */
 export function extractImportMetadata(item: ImportConfirmItem) {
   const meta = item.metadata ?? null;
-  const narratorName = meta?.narrators?.[0] ?? null;
+  const narratorName = item.narrators?.[0] ?? meta?.narrators?.[0] ?? null;
   const duration = meta?.duration ?? null;
   const coverUrl = item.coverUrl || meta?.coverUrl || null;
+  const enrichmentNarrators = item.narrators?.length
+    ? item.narrators.map(name => ({ name }))
+    : (meta?.narrators?.length ? meta.narrators.map(name => ({ name })) : null);
   return {
     meta,
     narratorName,
     bookInput: {
-      narrators: narratorName ? [{ name: narratorName }] : null,
+      narrators: enrichmentNarrators,
       duration,
       coverUrl,
     },
@@ -227,9 +232,9 @@ export function buildBookCreatePayload(
     authors: (meta?.authors && meta.authors.length > 1)
       ? meta.authors
       : (item.authorName ? [{ name: item.authorName }] : (meta?.authors?.length ? meta.authors : [])),
-    narrators: meta?.narrators,
+    narrators: item.narrators?.length ? item.narrators : meta?.narrators,
     seriesName: item.seriesName || meta?.series?.[0]?.name,
-    seriesPosition: meta?.series?.[0]?.position,
+    seriesPosition: item.seriesPosition !== undefined ? item.seriesPosition : meta?.series?.[0]?.position,
     coverUrl: item.coverUrl || meta?.coverUrl,
     asin: item.asin || meta?.asin,
     isbn: meta?.isbn,

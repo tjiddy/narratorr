@@ -785,6 +785,97 @@ describe('ManualImportAdapter', () => {
       }
     });
 
+    it('parseManualPayload accepts narrators and seriesPosition (incl. 0) (#1028)', async () => {
+      const payload: ManualImportJobPayload = {
+        path: '/audiobooks/Author/Title',
+        title: 'Test Book',
+        authorName: 'Author',
+        narrators: ['Jim Dale'],
+        seriesName: 'Discworld',
+        seriesPosition: 0,
+        mode: 'copy',
+      };
+      const job = makeJob({ metadata: JSON.stringify(payload) });
+      // Should not throw — schema accepts the new fields incl. 0
+      await adapter.process(job, ctx);
+      expect(setPhase).toHaveBeenCalled();
+    });
+
+    it('failure path: payload.narrators wins over payload.metadata.narrators[0] (F11/#1028)', async () => {
+      const { streamCopyWithProgress } = await import('../streaming-copy.helpers.js');
+      vi.mocked(streamCopyWithProgress).mockRejectedValueOnce(new Error('Disk full'));
+
+      const payload: ManualImportJobPayload = {
+        path: '/audiobooks/Author/Title',
+        title: 'Test Book',
+        authorName: 'Author',
+        mode: 'copy',
+        narrators: ['Jim Dale'],
+        metadata: {
+          title: 'Test Book',
+          authors: [{ name: 'Author' }],
+          narrators: ['Stephen Fry'],
+        },
+      };
+      const job = makeJob({ metadata: JSON.stringify(payload) });
+
+      await expect(adapter.process(job, ctx)).rejects.toThrow('Disk full');
+
+      expect(mockEventHistory.create).toHaveBeenCalledWith(expect.objectContaining({
+        eventType: 'import_failed',
+        narratorName: 'Jim Dale',
+      }));
+    });
+
+    it('failure path: falls back to metadata narrator when item has none (regression guard) (#1028)', async () => {
+      const { streamCopyWithProgress } = await import('../streaming-copy.helpers.js');
+      vi.mocked(streamCopyWithProgress).mockRejectedValueOnce(new Error('Disk full'));
+
+      const payload: ManualImportJobPayload = {
+        path: '/audiobooks/Author/Title',
+        title: 'Test Book',
+        authorName: 'Author',
+        mode: 'copy',
+        metadata: {
+          title: 'Test Book',
+          authors: [{ name: 'Author' }],
+          narrators: ['Stephen Fry'],
+        },
+      };
+      const job = makeJob({ metadata: JSON.stringify(payload) });
+
+      await expect(adapter.process(job, ctx)).rejects.toThrow('Disk full');
+
+      expect(mockEventHistory.create).toHaveBeenCalledWith(expect.objectContaining({
+        eventType: 'import_failed',
+        narratorName: 'Stephen Fry',
+      }));
+    });
+
+    it('imported event: payload.narrators wins as narratorName argument (F8/#1028)', async () => {
+      const payload: ManualImportJobPayload = {
+        path: '/audiobooks/Author/Title',
+        title: 'Test Book',
+        authorName: 'Author',
+        mode: 'copy',
+        narrators: ['Jim Dale'],
+        metadata: {
+          title: 'Test Book',
+          authors: [{ name: 'Author' }],
+          narrators: ['Stephen Fry'],
+        },
+      };
+      const job = makeJob({ metadata: JSON.stringify(payload) });
+
+      await adapter.process(job, ctx);
+
+      expect(mockEventHistory.create).toHaveBeenCalledWith(expect.objectContaining({
+        eventType: 'imported',
+        source: 'manual',
+        narratorName: 'Jim Dale',
+      }));
+    });
+
     it('failure path: narratorName is null when payload.metadata is undefined (#672)', async () => {
       const { streamCopyWithProgress } = await import('../streaming-copy.helpers.js');
       vi.mocked(streamCopyWithProgress).mockRejectedValueOnce(new Error('Disk full'));

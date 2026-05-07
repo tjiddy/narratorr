@@ -4,6 +4,8 @@ export interface BookEditState {
   title: string;
   author: string;
   series: string;
+  narrators?: string[] | undefined;
+  seriesPosition?: number | undefined;
   coverUrl?: string | undefined;
   asin?: string | undefined;
   metadata?: BookMetadata | undefined;

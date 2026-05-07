@@ -53,8 +53,10 @@ export async function copyToLibrary(
     {
       title: item.title,
       seriesName: item.seriesName || meta?.series?.[0]?.name,
-      seriesPosition: meta?.series?.[0]?.position,
-      narrators: meta?.narrators?.length ? meta.narrators.map(n => ({ name: n })) : undefined,
+      seriesPosition: item.seriesPosition !== undefined ? item.seriesPosition : meta?.series?.[0]?.position,
+      narrators: item.narrators?.length
+        ? item.narrators.map(name => ({ name }))
+        : (meta?.narrators?.length ? meta.narrators.map(n => ({ name: n })) : undefined),
       publishedDate: meta?.publishedDate,
     },
     item.authorName ?? null,

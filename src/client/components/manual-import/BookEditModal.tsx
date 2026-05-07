@@ -38,6 +38,10 @@ export function BookEditModal({ book, initial, confidence, alternatives, onSave,
   const [title, setTitle] = useState(initial.title);
   const [author, setAuthor] = useState(initial.author);
   const [series, setSeries] = useState(initial.series);
+  const [narrators, setNarrators] = useState<string>(initial.narrators?.join(', ') ?? '');
+  const [seriesPosition, setSeriesPosition] = useState<string>(
+    initial.seriesPosition !== undefined ? String(initial.seriesPosition) : '',
+  );
   const [selectedMetadata, setSelectedMetadata] = useState<BookMetadata | null>(initial.metadata ?? null);
 
   const initialResults = (() => {
@@ -62,6 +66,8 @@ export function BookEditModal({ book, initial, confidence, alternatives, onSave,
       setAuthor(meta.authors[0].name);
     }
     setSeries(meta.series?.[0]?.name ?? '');
+    setNarrators(meta.narrators?.join(', ') ?? '');
+    setSeriesPosition(meta.series?.[0]?.position !== undefined ? String(meta.series[0].position) : '');
   };
 
   const handleSearch = () => {
@@ -70,10 +76,25 @@ export function BookEditModal({ book, initial, confidence, alternatives, onSave,
   };
 
   const handleSave = () => {
+    const parsedNarrators = narrators
+      .split(',')
+      .map(n => n.trim())
+      .filter(Boolean);
+
+    const trimmedSeries = series.trim();
+    const numericPosition = seriesPosition.trim() ? Number(seriesPosition.trim()) : undefined;
+    // Number.isFinite (not !Number.isNaN) — rejects Infinity too, since `Number('1e999') === Infinity`
+    // would JSON-serialize to `null` and be rejected by the route's `z.number()` schema.
+    const parsedPosition = (trimmedSeries && numericPosition !== undefined && Number.isFinite(numericPosition))
+      ? numericPosition
+      : undefined;
+
     onSave({
       title: title.trim(),
       author: author.trim(),
-      series: series.trim(),
+      series: trimmedSeries,
+      ...(parsedNarrators.length > 0 && { narrators: parsedNarrators }),
+      ...(parsedPosition !== undefined && { seriesPosition: parsedPosition }),
       coverUrl: selectedMetadata?.coverUrl,
       asin: selectedMetadata?.asin,
       metadata: selectedMetadata ?? undefined,
@@ -182,6 +203,29 @@ export function BookEditModal({ book, initial, confidence, alternatives, onSave,
                   value={series}
                   onChange={(e) => setSeries(e.target.value)}
                   className="w-full px-3 py-2 glass-card rounded-xl text-sm focus-ring"
+                />
+              </div>
+            </div>
+            <div className="grid grid-cols-3 gap-3">
+              <div className="col-span-2">
+                <label htmlFor="edit-narrators" className="block text-xs font-medium text-muted-foreground mb-1.5">Narrators</label>
+                <input
+                  id="edit-narrators"
+                  type="text"
+                  value={narrators}
+                  onChange={(e) => setNarrators(e.target.value)}
+                  className="w-full px-3 py-2 glass-card rounded-xl text-sm focus-ring"
+                />
+              </div>
+              <div>
+                <label htmlFor="edit-series-position" className="block text-xs font-medium text-muted-foreground mb-1.5">Series Position</label>
+                <input
+                  id="edit-series-position"
+                  type="number"
+                  value={seriesPosition}
+                  onChange={(e) => setSeriesPosition(e.target.value)}
+                  disabled={!series.trim()}
+                  className="w-full px-3 py-2 glass-card rounded-xl text-sm focus-ring disabled:opacity-40 disabled:cursor-not-allowed"
                 />
               </div>
             </div>
