@@ -297,6 +297,17 @@ export class MetadataService {
 
   async getBook(id: string): Promise<BookMetadata | null> {
     const result = await this.withThrottle('getBook', (provider) => provider.getBook(id), null, { query: id });
+    if (
+      result
+      && result.contentDeliveryType !== undefined
+      && MetadataService.KNOWN_PODCAST_TYPES.has(result.contentDeliveryType)
+    ) {
+      this.log.debug(
+        { id, title: result.title, contentDeliveryType: result.contentDeliveryType },
+        'Direct lookup dropped — non-audiobook content type',
+      );
+      return null;
+    }
     this.log.debug({ id, provider: this.providers[0]?.name, found: result !== null }, 'getBook completed');
     return result;
   }
