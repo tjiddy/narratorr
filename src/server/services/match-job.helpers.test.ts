@@ -16,6 +16,7 @@ vi.mock('../utils/folder-parsing.js', async (importActual) => {
 
 import { cleanTagTitle } from '../utils/folder-parsing.js';
 import {
+  cleanTagAuthor,
   deriveTagQuery,
   rankResultsCleaned,
   rankResults,
@@ -114,6 +115,48 @@ describe('deriveTagQuery', () => {
     vi.mocked(cleanTagTitle).mockReturnValueOnce('');
     const scan = makeAudioScan({ tagTitle: 'looks-non-empty', tagAuthor: 'X' });
     expect(deriveTagQuery(scan)).toBeNull();
+  });
+
+  it('strips trailing "(audio)" suffix from tagAuthor before search (#1030)', () => {
+    const scan = makeAudioScan({ tagTitle: 'Dune', tagAuthor: 'Frank Herbert (audio)' });
+    expect(deriveTagQuery(scan)).toEqual({ title: 'Dune', author: 'Frank Herbert' });
+  });
+
+  it('returns null when tagAuthor is paren-only (cleans to empty) (#1030)', () => {
+    const scan = makeAudioScan({ tagTitle: 'X', tagAuthor: '(Various)' });
+    expect(deriveTagQuery(scan)).toBeNull();
+  });
+});
+
+// ============================================================================
+// cleanTagAuthor (#1030)
+// ============================================================================
+
+describe('cleanTagAuthor', () => {
+  it('strips trailing "(audio)" suffix', () => {
+    expect(cleanTagAuthor('Frank Herbert (audio)')).toBe('Frank Herbert');
+  });
+
+  it('strips trailing "(audio)" from multi-author strings', () => {
+    expect(cleanTagAuthor('Brian Herbert & Keven J. Anderson (audio)')).toBe(
+      'Brian Herbert & Keven J. Anderson',
+    );
+  });
+
+  it('preserves embedded mid-string parens', () => {
+    expect(cleanTagAuthor('Robert (Bob) Smith')).toBe('Robert (Bob) Smith');
+  });
+
+  it('leaves already-clean authors unchanged', () => {
+    expect(cleanTagAuthor('Brandon Sanderson')).toBe('Brandon Sanderson');
+  });
+
+  it('strips paren-only author to empty string', () => {
+    expect(cleanTagAuthor('(Various)')).toBe('');
+  });
+
+  it('strips trailing "(Read by ...)" narrator credit', () => {
+    expect(cleanTagAuthor('Stephen King (Read by Stephen King)')).toBe('Stephen King');
   });
 });
 

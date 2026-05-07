@@ -50,11 +50,25 @@ export interface TagQuery {
 }
 
 /**
+ * Strip a trailing parenthetical suffix from a tag-derived author string.
+ * Tagger tools commonly auto-append markers like `(audio)` or `(Read by ...)`
+ * that break Audible's structured `author=` exact-match search. Only the
+ * rightmost trailing paren is stripped — embedded parens (e.g. `Robert (Bob) Smith`)
+ * are usually meaningful aliases and stay intact. Unlike `cleanTagTitle`, this
+ * is unconditional: edition metadata is essentially never meaningful on the
+ * author side, so no `isEditionParen` gate.
+ */
+export function cleanTagAuthor(s: string): string {
+  return s.replace(/\s*\([^)]*\)\s*$/, '').trim();
+}
+
+/**
  * Build a tag-derived search query from the AudioScanResult, applying
- * cleanTagTitle to tagTitle. Returns null when the scan lacks usable tags
- * (missing title or author after trimming) — caller falls through to Pass 2.
- * `year` is carried through (when present in tags) for use by the
- * rankResultsCleaned tiebreaker; missing tagYear is fine — tiebreaker no-ops.
+ * cleanTagTitle to tagTitle and cleanTagAuthor to tagAuthor. Returns null when
+ * the scan lacks usable tags (missing title or author after cleaning) — caller
+ * falls through to Pass 2. `year` is carried through (when present in tags)
+ * for use by the rankResultsCleaned tiebreaker; missing tagYear is fine —
+ * tiebreaker no-ops.
  */
 export function deriveTagQuery(audioResult: AudioScanResult | null): TagQuery | null {
   if (!audioResult) return null;
@@ -63,8 +77,10 @@ export function deriveTagQuery(audioResult: AudioScanResult | null): TagQuery | 
   if (!rawTitle || !rawAuthor) return null;
   const cleanedTitle = cleanTagTitle(rawTitle).trim();
   if (!cleanedTitle) return null;
+  const cleanedAuthor = cleanTagAuthor(rawAuthor);
+  if (!cleanedAuthor) return null;
   const tagYear = audioResult.tagYear?.trim();
-  return { title: cleanedTitle, author: rawAuthor, ...(tagYear ? { year: tagYear } : {}) };
+  return { title: cleanedTitle, author: cleanedAuthor, ...(tagYear ? { year: tagYear } : {}) };
 }
 
 const TAG_TITLE_WEIGHT = 0.6;

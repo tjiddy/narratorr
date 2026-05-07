@@ -2084,6 +2084,31 @@ describe('MatchJobService', () => {
         expect(result!.bestMatch?.title).toBe('Eric: Discworld, Book 9');
       });
 
+      it('strips trailing "(audio)" suffix from tagAuthor before Audible search (#1030)', async () => {
+        // UAT-confirmed Dune mega-pack case: tagAuthor "Frank Herbert (audio)"
+        // over-specifies Audible's structured author= field, returning zero results.
+        // deriveTagQuery -> cleanTagAuthor must strip the suffix so the search
+        // string AND structured options carry the clean "Frank Herbert".
+        vi.mocked(scanAudioDirectory).mockResolvedValue(
+          makeTaggedScan('Dune', 'Frank Herbert (audio)'),
+        );
+        vi.mocked(metadataService.searchBooks).mockResolvedValue([
+          makeBookMetadata({ title: 'Dune', authors: [{ name: 'Frank Herbert' }], providerId: 'p1' }),
+        ]);
+        vi.mocked(metadataService.getBook).mockResolvedValue(
+          makeBookMetadata({ title: 'Dune', authors: [{ name: 'Frank Herbert' }], providerId: 'p1', asin: 'B1' }),
+        );
+
+        const id = service.createJob([taggedCandidate]);
+        await waitForJob(service, id);
+
+        expect(metadataService.searchBooks).toHaveBeenNthCalledWith(
+          1,
+          'Dune Frank Herbert',
+          { title: 'Dune', author: 'Frank Herbert' },
+        );
+      });
+
       it('does NOT fall through to Pass 2 when tag-derived match is accepted', async () => {
         vi.mocked(scanAudioDirectory).mockResolvedValue(
           makeTaggedScan('The Final Empire', 'Brandon Sanderson'),
