@@ -1,6 +1,8 @@
 import type { FastifyBaseLogger } from 'fastify';
 import {
   AudnexusProvider,
+  AuthorMetadataSchema,
+  SeriesMetadataSchema,
   METADATA_SEARCH_PROVIDER_FACTORIES,
   RateLimitError,
   TransientError,
@@ -80,16 +82,17 @@ export class MetadataService {
 
     this.log.debug({ query, provider: provider.name }, 'Metadata search requested');
 
-    // Call each sub-search through throttle individually to prevent bursting
     const books = await this.withThrottledSearch(provider, 'searchBooks', async (p) => {
       const result = await p.searchBooks(query);
       this.logParseDrop(result, p.name);
       return result.books;
     }, warnings);
-    const authors = await this.withThrottledSearch(provider, 'searchAuthors', (p) => p.searchAuthors(query), warnings);
-    const series = await this.withThrottledSearch(provider, 'searchSeries', (p) => p.searchSeries(query), warnings);
 
     const filteredBooks = await this.applyBookFilters(books);
+    // Derive authors/series from the FILTERED book list so podcast-derived
+    // entities (dropped by applyBookFilters) cannot leak through. See #1020.
+    const authors = deriveAuthorsFromBooks(filteredBooks);
+    const series = deriveSeriesFromBooks(filteredBooks);
 
     this.log.debug(
       { books: filteredBooks.length, authors: authors.length, series: series.length },
@@ -398,4 +401,38 @@ export class MetadataService {
       return fallback;
     }
   }
+}
+
+// First-occurrence-wins, name-keyed dedup mirrors the Audible provider's
+// historic searchAuthors/searchSeries semantics. Pure relocation, not a
+// behavior change for retained books — see #1020.
+function deriveAuthorsFromBooks(books: BookMetadata[]): AuthorMetadata[] {
+  const authorMap = new Map<string, AuthorMetadata>();
+  for (const book of books) {
+    for (const authorRef of book.authors ?? []) {
+      if (authorMap.has(authorRef.name)) continue;
+      const parsed = AuthorMetadataSchema.safeParse({
+        name: authorRef.name,
+        asin: authorRef.asin,
+      });
+      if (parsed.success) authorMap.set(authorRef.name, parsed.data);
+    }
+  }
+  return Array.from(authorMap.values());
+}
+
+function deriveSeriesFromBooks(books: BookMetadata[]): SeriesMetadata[] {
+  const seriesMap = new Map<string, SeriesMetadata>();
+  for (const book of books) {
+    for (const seriesRef of book.series ?? []) {
+      if (seriesMap.has(seriesRef.name)) continue;
+      const parsed = SeriesMetadataSchema.safeParse({
+        name: seriesRef.name,
+        asin: seriesRef.asin,
+        books: [],
+      });
+      if (parsed.success) seriesMap.set(seriesRef.name, parsed.data);
+    }
+  }
+  return Array.from(seriesMap.values());
 }

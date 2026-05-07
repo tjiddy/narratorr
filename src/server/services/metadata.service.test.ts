@@ -64,28 +64,31 @@ describe('MetadataService', () => {
   });
 
   describe('search', () => {
-    it('calls searchBooks, searchAuthors, searchSeries on search provider', async () => {
+    it('calls searchBooks once and does NOT call provider.searchAuthors / searchSeries (#1020)', async () => {
       const result = await service.search('test query');
       expect(result.books).toEqual([]);
       expect(result.authors).toEqual([]);
       expect(result.series).toEqual([]);
       expect(mockAudibleProvider.searchBooks).toHaveBeenCalledWith('test query');
-      expect(mockAudibleProvider.searchAuthors).toHaveBeenCalledWith('test query');
-      expect(mockAudibleProvider.searchSeries).toHaveBeenCalledWith('test query');
+      expect(mockAudibleProvider.searchBooks).toHaveBeenCalledTimes(1);
+      expect(mockAudibleProvider.searchAuthors).not.toHaveBeenCalled();
+      expect(mockAudibleProvider.searchSeries).not.toHaveBeenCalled();
     });
 
-    it('returns results from search provider', async () => {
-      const mockBooks = [{ title: 'Book A' }];
-      const mockAuthors = [{ name: 'Author A' }];
-      const mockSeries = [{ name: 'Series A' }];
+    it('derives authors and series from the returned books (#1020)', async () => {
+      const mockBooks = [
+        {
+          title: 'Book A',
+          authors: [{ name: 'Author A', asin: 'AUTH001' }],
+          series: [{ name: 'Series A', asin: 'SER001' }],
+        },
+      ];
       mockAudibleProvider.searchBooks.mockResolvedValueOnce({ books: mockBooks });
-      mockAudibleProvider.searchAuthors.mockResolvedValueOnce(mockAuthors);
-      mockAudibleProvider.searchSeries.mockResolvedValueOnce(mockSeries);
 
       const result = await service.search('query');
       expect(result.books).toEqual(mockBooks);
-      expect(result.authors).toEqual(mockAuthors);
-      expect(result.series).toEqual(mockSeries);
+      expect(result.authors).toEqual([{ name: 'Author A', asin: 'AUTH001' }]);
+      expect(result.series).toEqual([{ name: 'Series A', asin: 'SER001', books: [] }]);
     });
 
     describe('language filtering', () => {
@@ -239,16 +242,141 @@ describe('MetadataService', () => {
         expect(result.books).toEqual([]);
       });
 
-      it('does not filter authors or series results', async () => {
+      it('derives authors and series only from language-kept books (#1020)', async () => {
         mockAudibleProvider.searchBooks.mockResolvedValueOnce({
-          books: [{ title: 'English Book', language: 'english' }],
+          books: [
+            {
+              title: 'English Book',
+              language: 'english',
+              authors: [{ name: 'English Author' }],
+              series: [{ name: 'English Series' }],
+            },
+            {
+              title: 'German Book',
+              language: 'german',
+              authors: [{ name: 'German Author' }],
+              series: [{ name: 'German Series' }],
+            },
+          ],
         });
-        mockAudibleProvider.searchAuthors.mockResolvedValueOnce([{ name: 'German Author' }]);
-        mockAudibleProvider.searchSeries.mockResolvedValueOnce([{ name: 'German Series' }]);
 
         const result = await serviceWithSettings.search('test');
-        expect(result.authors).toEqual([{ name: 'German Author' }]);
-        expect(result.series).toEqual([{ name: 'German Series' }]);
+        expect(result.books.map((b) => b.title)).toEqual(['English Book']);
+        expect(result.authors).toEqual([{ name: 'English Author' }]);
+        expect(result.series).toEqual([{ name: 'English Series', books: [] }]);
+      });
+    });
+
+    describe('podcast-derived authors/series filtering (#1020)', () => {
+      // AC4
+      it('returns empty authors and series when every book is filtered as a podcast', async () => {
+        mockAudibleProvider.searchBooks.mockResolvedValueOnce({
+          books: [
+            {
+              title: 'Joe Rogan Experience',
+              authors: [{ name: 'Joe Rogan' }],
+              series: [{ name: 'JRE' }],
+              contentDeliveryType: 'PodcastParent',
+            },
+            {
+              title: 'The Daily',
+              authors: [{ name: 'Michael Barbaro' }],
+              series: [{ name: 'NYT Daily' }],
+              contentDeliveryType: 'Periodical',
+            },
+          ],
+        });
+
+        const result = await service.search('joe rogan');
+        expect(result.books).toEqual([]);
+        expect(result.authors).toEqual([]);
+        expect(result.series).toEqual([]);
+      });
+
+      // AC5
+      it('derives authors and series only from the audiobook subset when results mix audiobooks and podcasts', async () => {
+        mockAudibleProvider.searchBooks.mockResolvedValueOnce({
+          books: [
+            {
+              title: 'Brandon Sanderson - Mistborn',
+              authors: [{ name: 'Brandon Sanderson', asin: 'AUTH_BS' }],
+              series: [{ name: 'Mistborn', asin: 'SER_MB' }],
+              contentDeliveryType: 'SinglePartBook',
+            },
+            {
+              title: 'Brandon Sanderson Podcast',
+              authors: [{ name: 'Podcast Host' }],
+              series: [{ name: 'Podcast Series' }],
+              contentDeliveryType: 'PodcastParent',
+            },
+          ],
+        });
+
+        const result = await service.search('brandon sanderson');
+        expect(result.books.map((b) => b.title)).toEqual(['Brandon Sanderson - Mistborn']);
+        expect(result.authors).toEqual([{ name: 'Brandon Sanderson', asin: 'AUTH_BS' }]);
+        expect(result.series).toEqual([{ name: 'Mistborn', asin: 'SER_MB', books: [] }]);
+      });
+
+      // AC6
+      it('keeps authors and series derived from books with contentDeliveryType === undefined (Audnexus fallback-to-keep)', async () => {
+        mockAudibleProvider.searchBooks.mockResolvedValueOnce({
+          books: [
+            {
+              title: 'Audnexus-Origin Book',
+              authors: [{ name: 'Older Audible Author' }],
+              series: [{ name: 'Older Audible Series' }],
+            },
+            {
+              title: 'Modern Audible Book',
+              authors: [{ name: 'Modern Author' }],
+              series: [{ name: 'Modern Series' }],
+              contentDeliveryType: 'SinglePartBook',
+            },
+          ],
+        });
+
+        const result = await service.search('query');
+        expect(result.books).toHaveLength(2);
+        expect(result.authors).toEqual([
+          { name: 'Older Audible Author' },
+          { name: 'Modern Author' },
+        ]);
+        expect(result.series).toEqual([
+          { name: 'Older Audible Series', books: [] },
+          { name: 'Modern Series', books: [] },
+        ]);
+      });
+
+      it('first-occurrence-wins dedup: later book with same author name does NOT overwrite an earlier asin-less entry', async () => {
+        mockAudibleProvider.searchBooks.mockResolvedValueOnce({
+          books: [
+            {
+              title: 'First Book',
+              authors: [{ name: 'Shared Author' }],
+            },
+            {
+              title: 'Second Book',
+              authors: [{ name: 'Shared Author', asin: 'AUTH_LATE' }],
+              series: [{ name: 'Shared Series', asin: 'SER_LATE' }],
+            },
+            {
+              title: 'Third Book',
+              series: [{ name: 'Shared Series' }],
+              authors: [{ name: 'Other' }],
+            },
+          ],
+        });
+
+        const result = await service.search('dedup');
+        // First occurrence wins: 'Shared Author' carries no asin, 'Shared Series' carries the asin from book #2.
+        expect(result.authors).toEqual([
+          { name: 'Shared Author' },
+          { name: 'Other' },
+        ]);
+        expect(result.series).toEqual([
+          { name: 'Shared Series', asin: 'SER_LATE', books: [] },
+        ]);
       });
     });
   });
@@ -393,22 +521,32 @@ describe('MetadataService', () => {
         expect(result.books).toEqual([{ title: 'Real', authors: [{ name: 'A' }], narrators: ['Jim Dale'] }]);
       });
 
-      it('search() filters the books array but leaves authors and series untouched', async () => {
+      it('search() derives authors/series only from rejectWords-kept books (#1020)', async () => {
         setRejectWords('Virtual Voice');
         mockAudibleProvider.searchBooks.mockResolvedValueOnce({
           books: [
-            { title: 'Real', authors: [{ name: 'A' }], narrators: ['Jim Dale'] },
-            { title: 'Fake', authors: [{ name: 'Virtual Voice Inc' }], narrators: ['Virtual Voice'] },
+            {
+              title: 'Real',
+              authors: [{ name: 'A' }],
+              series: [{ name: 'Real Series' }],
+              narrators: ['Jim Dale'],
+            },
+            {
+              title: 'Fake',
+              authors: [{ name: 'Virtual Voice Inc' }],
+              series: [{ name: 'Virtual Voice Series' }],
+              narrators: ['Virtual Voice'],
+            },
           ],
         });
-        mockAudibleProvider.searchAuthors.mockResolvedValueOnce([{ name: 'Virtual Voice Author' }]);
-        mockAudibleProvider.searchSeries.mockResolvedValueOnce([{ name: 'Virtual Voice Series' }]);
 
         const result = await serviceWithSettings.search('query');
-        expect(result.books).toEqual([{ title: 'Real', authors: [{ name: 'A' }], narrators: ['Jim Dale'] }]);
-        // rejectWords should not affect author or series sub-results
-        expect(result.authors).toEqual([{ name: 'Virtual Voice Author' }]);
-        expect(result.series).toEqual([{ name: 'Virtual Voice Series' }]);
+        expect(result.books).toEqual([
+          { title: 'Real', authors: [{ name: 'A' }], series: [{ name: 'Real Series' }], narrators: ['Jim Dale'] },
+        ]);
+        // Authors/series are derived from kept books only — Virtual Voice entries are gone.
+        expect(result.authors).toEqual([{ name: 'A' }]);
+        expect(result.series).toEqual([{ name: 'Real Series', books: [] }]);
       });
 
       // ===== #993 — formatType surface + word-boundary matching =====
@@ -788,25 +926,44 @@ describe('MetadataService', () => {
         expect(result).toEqual([{ title: 'At Threshold', authors: [{ name: 'X' }], duration: 30 }]);
       });
 
-      it('search(): filters duration on books while leaving authors/series untouched', async () => {
+      it('search(): derives authors/series only from duration-kept books (#1020)', async () => {
         setMinDuration(30);
         mockAudibleProvider.searchBooks.mockResolvedValueOnce({
           books: [
-            { title: 'Knockoff', authors: [{ name: 'X' }], duration: 18 },
-            { title: 'Real', authors: [{ name: 'X' }], duration: 768 },
-            { title: 'Unknown', authors: [{ name: 'X' }] },
+            {
+              title: 'Knockoff',
+              authors: [{ name: 'Knockoff Author' }],
+              series: [{ name: 'Knockoff Series' }],
+              duration: 18,
+            },
+            {
+              title: 'Real',
+              authors: [{ name: 'Real Author' }],
+              series: [{ name: 'Real Series' }],
+              duration: 768,
+            },
+            {
+              title: 'Unknown',
+              authors: [{ name: 'Unknown Author' }],
+              series: [{ name: 'Unknown Series' }],
+            },
           ],
         });
-        mockAudibleProvider.searchAuthors.mockResolvedValueOnce([{ name: 'Some Author' }]);
-        mockAudibleProvider.searchSeries.mockResolvedValueOnce([{ name: 'Some Series' }]);
 
         const result = await serviceWithSettings.search('query');
         expect(result.books).toEqual([
-          { title: 'Real', authors: [{ name: 'X' }], duration: 768 },
-          { title: 'Unknown', authors: [{ name: 'X' }] },
+          { title: 'Real', authors: [{ name: 'Real Author' }], series: [{ name: 'Real Series' }], duration: 768 },
+          { title: 'Unknown', authors: [{ name: 'Unknown Author' }], series: [{ name: 'Unknown Series' }] },
         ]);
-        expect(result.authors).toEqual([{ name: 'Some Author' }]);
-        expect(result.series).toEqual([{ name: 'Some Series' }]);
+        // Authors/series are derived from kept books — Knockoff is dropped.
+        expect(result.authors).toEqual([
+          { name: 'Real Author' },
+          { name: 'Unknown Author' },
+        ]);
+        expect(result.series).toEqual([
+          { name: 'Real Series', books: [] },
+          { name: 'Unknown Series', books: [] },
+        ]);
       });
 
       it('searchBooksForDiscovery: applies the same min-duration filter', async () => {
