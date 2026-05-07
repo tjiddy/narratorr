@@ -1,5 +1,6 @@
 import { z } from 'zod';
-import { BookMetadataSchema, AuthorMetadataSchema, SeriesMetadataSchema } from './schemas.js';
+import { BookMetadataSchema } from './schemas.js';
+import { deriveAuthorsFromBooks, deriveSeriesFromBooks } from './derivation.js';
 import { MetadataError, RateLimitError, TransientError } from './errors.js';
 import { REGION_LANGUAGES } from './region-languages.js';
 import { AUDIBLE_TIMEOUT_MS } from '../utils/constants.js';
@@ -132,38 +133,13 @@ export class AudibleProvider implements MetadataSearchProvider {
   async searchAuthors(query: string): Promise<AuthorMetadata[]> {
     // Audible doesn't have a dedicated author search — extract from book results
     const { books } = await this.searchBooks(query);
-    const authorMap = new Map<string, AuthorMetadata>();
-    for (const book of books) {
-      for (const authorRef of book.authors) {
-        if (!authorMap.has(authorRef.name)) {
-          const mapped = AuthorMetadataSchema.safeParse({
-            name: authorRef.name,
-            asin: authorRef.asin,
-          });
-          if (mapped.success) authorMap.set(authorRef.name, mapped.data);
-        }
-      }
-    }
-    return Array.from(authorMap.values());
+    return deriveAuthorsFromBooks(books);
   }
 
   async searchSeries(query: string): Promise<SeriesMetadata[]> {
     // Audible doesn't have a dedicated series search — extract from book results
     const { books } = await this.searchBooks(query);
-    const seriesMap = new Map<string, SeriesMetadata>();
-    for (const book of books) {
-      for (const seriesRef of book.series ?? []) {
-        if (!seriesMap.has(seriesRef.name)) {
-          const mapped = SeriesMetadataSchema.safeParse({
-            name: seriesRef.name,
-            asin: seriesRef.asin,
-            books: [],
-          });
-          if (mapped.success) seriesMap.set(seriesRef.name, mapped.data);
-        }
-      }
-    }
-    return Array.from(seriesMap.values());
+    return deriveSeriesFromBooks(books);
   }
 
   async getBook(asin: string): Promise<BookMetadata | null> {

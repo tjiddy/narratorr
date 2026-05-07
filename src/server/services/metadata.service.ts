@@ -1,8 +1,8 @@
 import type { FastifyBaseLogger } from 'fastify';
 import {
   AudnexusProvider,
-  AuthorMetadataSchema,
-  SeriesMetadataSchema,
+  deriveAuthorsFromBooks,
+  deriveSeriesFromBooks,
   METADATA_SEARCH_PROVIDER_FACTORIES,
   RateLimitError,
   TransientError,
@@ -401,38 +401,4 @@ export class MetadataService {
       return fallback;
     }
   }
-}
-
-// First-occurrence-wins, name-keyed dedup mirrors the Audible provider's
-// historic searchAuthors/searchSeries semantics. Pure relocation, not a
-// behavior change for retained books — see #1020.
-function deriveAuthorsFromBooks(books: BookMetadata[]): AuthorMetadata[] {
-  const authorMap = new Map<string, AuthorMetadata>();
-  for (const book of books) {
-    for (const authorRef of book.authors ?? []) {
-      if (authorMap.has(authorRef.name)) continue;
-      const parsed = AuthorMetadataSchema.safeParse({
-        name: authorRef.name,
-        asin: authorRef.asin,
-      });
-      if (parsed.success) authorMap.set(authorRef.name, parsed.data);
-    }
-  }
-  return Array.from(authorMap.values());
-}
-
-function deriveSeriesFromBooks(books: BookMetadata[]): SeriesMetadata[] {
-  const seriesMap = new Map<string, SeriesMetadata>();
-  for (const book of books) {
-    for (const seriesRef of book.series ?? []) {
-      if (seriesMap.has(seriesRef.name)) continue;
-      const parsed = SeriesMetadataSchema.safeParse({
-        name: seriesRef.name,
-        asin: seriesRef.asin,
-        books: [],
-      });
-      if (parsed.success) seriesMap.set(seriesRef.name, parsed.data);
-    }
-  }
-  return Array.from(seriesMap.values());
 }
