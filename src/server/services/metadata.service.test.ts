@@ -1147,6 +1147,76 @@ describe('MetadataService', () => {
       expect(result).toEqual(mockBook);
       expect(mockAudibleProvider.getBook).toHaveBeenCalledWith('B123');
     });
+
+    it('returns null when contentDeliveryType is PodcastParent', async () => {
+      mockAudibleProvider.getBook.mockResolvedValueOnce({
+        title: 'A Podcast',
+        contentDeliveryType: 'PodcastParent',
+      });
+
+      const result = await service.getBook('B000PODCAST');
+      expect(result).toBeNull();
+    });
+
+    it('returns null when contentDeliveryType is Periodical', async () => {
+      mockAudibleProvider.getBook.mockResolvedValueOnce({
+        title: 'A Magazine',
+        contentDeliveryType: 'Periodical',
+      });
+
+      const result = await service.getBook('B000MAG');
+      expect(result).toBeNull();
+    });
+
+    it('returns book when contentDeliveryType is SinglePartBook', async () => {
+      const mockBook = { title: 'A Real Book', contentDeliveryType: 'SinglePartBook' };
+      mockAudibleProvider.getBook.mockResolvedValueOnce(mockBook);
+
+      const result = await service.getBook('B000BOOK');
+      expect(result).toEqual(mockBook);
+    });
+
+    it('returns book when contentDeliveryType is undefined (fallback-to-keep)', async () => {
+      const mockBook = { title: 'Legacy Book' };
+      mockAudibleProvider.getBook.mockResolvedValueOnce(mockBook);
+
+      const result = await service.getBook('B000LEGACY');
+      expect(result).toEqual(mockBook);
+    });
+
+    it('returns book when contentDeliveryType is an unknown variant (blacklist semantics)', async () => {
+      const mockBook = { title: 'Future Book', contentDeliveryType: 'MultiPartBookCollection' };
+      mockAudibleProvider.getBook.mockResolvedValueOnce(mockBook);
+
+      const result = await service.getBook('B000FUTURE');
+      expect(result).toEqual(mockBook);
+    });
+
+    it('logs at debug level with { id, title, contentDeliveryType } when dropping a podcast', async () => {
+      mockAudibleProvider.getBook.mockResolvedValueOnce({
+        title: 'A Podcast',
+        contentDeliveryType: 'PodcastParent',
+      });
+
+      await service.getBook('B000PODCAST');
+
+      const debugSpy = mockLog.debug as ReturnType<typeof vi.fn>;
+      const dropCalls = debugSpy.mock.calls.filter(
+        ([, msg]) => msg === 'Direct lookup dropped — non-audiobook content type',
+      );
+      expect(dropCalls).toHaveLength(1);
+      expect(dropCalls[0]?.[0]).toEqual({
+        id: 'B000PODCAST',
+        title: 'A Podcast',
+        contentDeliveryType: 'PodcastParent',
+      });
+      // Distinct from the search-path filter message so log-grep can tell the
+      // two drop sites apart.
+      const searchPathCalls = debugSpy.mock.calls.filter(
+        ([, msg]) => msg === 'Dropping non-audiobook from search results',
+      );
+      expect(searchPathCalls).toHaveLength(0);
+    });
   });
 
   describe('getAuthor', () => {
