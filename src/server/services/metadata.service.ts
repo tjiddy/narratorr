@@ -1,6 +1,8 @@
 import type { FastifyBaseLogger } from 'fastify';
 import {
   AudnexusProvider,
+  deriveAuthorsFromBooks,
+  deriveSeriesFromBooks,
   METADATA_SEARCH_PROVIDER_FACTORIES,
   RateLimitError,
   TransientError,
@@ -80,16 +82,17 @@ export class MetadataService {
 
     this.log.debug({ query, provider: provider.name }, 'Metadata search requested');
 
-    // Call each sub-search through throttle individually to prevent bursting
     const books = await this.withThrottledSearch(provider, 'searchBooks', async (p) => {
       const result = await p.searchBooks(query);
       this.logParseDrop(result, p.name);
       return result.books;
     }, warnings);
-    const authors = await this.withThrottledSearch(provider, 'searchAuthors', (p) => p.searchAuthors(query), warnings);
-    const series = await this.withThrottledSearch(provider, 'searchSeries', (p) => p.searchSeries(query), warnings);
 
     const filteredBooks = await this.applyBookFilters(books);
+    // Derive authors/series from the FILTERED book list so podcast-derived
+    // entities (dropped by applyBookFilters) cannot leak through. See #1020.
+    const authors = deriveAuthorsFromBooks(filteredBooks);
+    const series = deriveSeriesFromBooks(filteredBooks);
 
     this.log.debug(
       { books: filteredBooks.length, authors: authors.length, series: series.length },
