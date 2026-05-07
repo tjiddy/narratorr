@@ -96,14 +96,55 @@ export class IndexerSearchService {
     return { enabledIndexers, searchOptions };
   }
 
-  async searchAll(query: string, options?: SearchOptions): Promise<SearchResult[]> {
+  /**
+   * Shared search preamble: clean transport query + options, fetch enabled indexers
+   * with language injection. Returns null when query collapses to empty so callers
+   * can short-circuit. Centralizes the transport-cleaning + short-circuit logic so
+   * searchAll and searchAllStreaming can't drift apart on the load-bearing
+   * transport/ranking split (#1015).
+   */
+  private async prepareSearch(
+    query: string,
+    options: SearchOptions | undefined,
+    context: 'searchAll' | 'searchAllStreaming',
+  ): Promise<{
+    transportQuery: string;
+    searchOptions: SearchOptions | undefined;
+    enabledIndexers: IndexerRow[];
+  } | null> {
     const transportQuery = cleanIndexerQuery(query);
     if (!transportQuery) {
-      this.log.debug({ originalQuery: query }, 'Search skipped — query empty after normalization');
-      return [];
+      this.log.debug({ originalQuery: query, context }, 'Search skipped — query empty after normalization');
+      return null;
     }
     const cleanedOptions = cleanIndexerSearchOptions(options);
     const { enabledIndexers, searchOptions } = await this.getEnabledIndexerRows(cleanedOptions);
+    return { transportQuery, searchOptions, enabledIndexers };
+  }
+
+  /**
+   * Shared scoring postamble: matchScore against RAW options (NOT cleaned
+   * transport values) + sort descending. Centralizes the transport/ranking
+   * split — scoreResult runs Dice on the result side raw, so cleaning the
+   * context side asymmetrically would drop matchScore by 0.4-0.7 on
+   * punctuated cases. See #1015.
+   */
+  private applyMatchScore(results: SearchResult[], options: SearchOptions | undefined): void {
+    if (!options?.title) return;
+    const context = { title: options.title, ...(options.author !== undefined && { author: options.author }) };
+    for (const result of results) {
+      result.matchScore = scoreResult(
+        { title: result.title, ...(result.author !== undefined && { author: result.author }) },
+        context,
+      );
+    }
+    results.sort((a, b) => (b.matchScore ?? 0) - (a.matchScore ?? 0));
+  }
+
+  async searchAll(query: string, options?: SearchOptions): Promise<SearchResult[]> {
+    const prep = await this.prepareSearch(query, options, 'searchAll');
+    if (!prep) return [];
+    const { transportQuery, searchOptions, enabledIndexers } = prep;
 
     this.log.debug({ query: transportQuery, indexers: enabledIndexers.map(i => i.name), count: enabledIndexers.length }, 'Searching enabled indexers');
 
@@ -141,21 +182,7 @@ export class IndexerSearchService {
 
     this.log.debug({ query: transportQuery, indexerCount: enabledIndexers.length, perIndexerCounts }, 'Search aggregated across indexers');
 
-    // Score results against search context when title is provided. Use RAW
-    // options (NOT cleaned transport values) — scoreResult runs Dice on the
-    // result side raw, so cleaning the context side asymmetrically would drop
-    // matchScore by 0.4-0.7 on punctuated cases. See #1015.
-    if (options?.title) {
-      const context = { title: options.title, ...(options.author !== undefined && { author: options.author }) };
-      for (const result of results) {
-        result.matchScore = scoreResult(
-          { title: result.title, ...(result.author !== undefined && { author: result.author }) },
-          context,
-        );
-      }
-      // Sort by matchScore descending
-      results.sort((a, b) => (b.matchScore ?? 0) - (a.matchScore ?? 0));
-    }
+    this.applyMatchScore(results, options);
 
     this.log.debug({ totalResults: results.length }, 'Search complete');
     return results;
@@ -176,13 +203,9 @@ export class IndexerSearchService {
       onCancelled?: (indexerId: number, name: string) => void;
     },
   ): Promise<SearchResult[]> {
-    const transportQuery = cleanIndexerQuery(query);
-    if (!transportQuery) {
-      this.log.debug({ originalQuery: query }, 'Streaming search skipped — query empty after normalization');
-      return [];
-    }
-    const cleanedOptions = cleanIndexerSearchOptions(options);
-    const { enabledIndexers, searchOptions } = await this.getEnabledIndexerRows(cleanedOptions);
+    const prep = await this.prepareSearch(query, options, 'searchAllStreaming');
+    if (!prep) return [];
+    const { transportQuery, searchOptions, enabledIndexers } = prep;
 
     this.log.debug({ query: transportQuery, indexers: enabledIndexers.map(i => i.name), count: enabledIndexers.length }, 'Streaming search started');
 
@@ -236,17 +259,7 @@ export class IndexerSearchService {
     }
     this.log.debug({ query: transportQuery, indexerCount: enabledIndexers.length, perIndexerCounts }, 'Search aggregated across indexers');
 
-    // Score against RAW options (see searchAll for rationale).
-    if (options?.title) {
-      const context = { title: options.title, ...(options.author !== undefined && { author: options.author }) };
-      for (const result of results) {
-        result.matchScore = scoreResult(
-          { title: result.title, ...(result.author !== undefined && { author: result.author }) },
-          context,
-        );
-      }
-      results.sort((a, b) => (b.matchScore ?? 0) - (a.matchScore ?? 0));
-    }
+    this.applyMatchScore(results, options);
 
     this.log.debug({ totalResults: results.length }, 'Streaming search complete');
     return results;
