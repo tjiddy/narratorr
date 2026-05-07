@@ -655,6 +655,19 @@ describe('MetadataService', () => {
         expect(result).toEqual([ensemble]);
       });
 
+      it('does NOT reject a book whose narrators include "unknown" literal', async () => {
+        setRejectWords('Unknown');
+        const ensemble = {
+          title: 'A Quiet Production',
+          authors: [{ name: 'Real Author' }],
+          narrators: ['Jane Doe', 'unknown'],
+        };
+        mockAudibleProvider.searchBooks.mockResolvedValueOnce({ books: [ensemble] });
+
+        const result = await serviceWithSettings.searchBooks('query');
+        expect(result).toEqual([ensemble]);
+      });
+
       it('rejectWord "Various Voices" DOES reject a real narrator "Various Voices Studio" (exact-set, not substring)', async () => {
         setRejectWords('Various Voices');
         mockAudibleProvider.searchBooks.mockResolvedValueOnce({
