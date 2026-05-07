@@ -30,6 +30,8 @@ export interface ImportConfirmItem {
   title: string;
   authorName?: string;
   seriesName?: string;
+  narrators?: string[];
+  seriesPosition?: number;
   coverUrl?: string;
   asin?: string;
   metadata?: BookMetadata;

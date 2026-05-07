@@ -694,3 +694,179 @@ describe('save behavior (#185)', () => {
   });
 });
 
+describe('narrators and series position (#1028)', () => {
+  function renderModal(overrides?: Record<string, unknown>) {
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const defaults = {
+      book: makeBook(),
+      initial: makeEditState(),
+      onSave: vi.fn(),
+      onClose: vi.fn(),
+    };
+    return render(
+      <QueryClientProvider client={queryClient}>
+        <BookEditModal {...defaults} {...overrides} />
+      </QueryClientProvider>,
+    );
+  }
+
+  it('renders Narrators and Series Position labelled inputs', () => {
+    renderModal();
+    expect(screen.getByLabelText('Narrators')).toBeInTheDocument();
+    expect(screen.getByLabelText('Series Position')).toBeInTheDocument();
+  });
+
+  it('Series Position is disabled when Series is empty', () => {
+    renderModal({ initial: makeEditState({ series: '' }) });
+    const positionInput = screen.getByLabelText('Series Position') as HTMLInputElement;
+    expect(positionInput).toBeDisabled();
+  });
+
+  it('Series Position becomes enabled when Series gains a value', async () => {
+    renderModal({ initial: makeEditState({ series: '' }) });
+    const positionInput = screen.getByLabelText('Series Position') as HTMLInputElement;
+    expect(positionInput).toBeDisabled();
+
+    const seriesInput = screen.getByLabelText('Series') as HTMLInputElement;
+    await userEvent.type(seriesInput, 'Discworld');
+
+    await waitFor(() => {
+      expect(positionInput).toBeEnabled();
+    });
+  });
+
+  it('picking a metadata result populates Narrators and Series Position', async () => {
+    const alt = makeMetadata({
+      title: 'Pick Me',
+      narrators: ['Jim Dale', 'Stephen Fry'],
+      series: [{ name: 'Discworld', position: 27 }],
+      providerId: 'pick',
+    });
+    renderModal({
+      initial: makeEditState({ metadata: makeMetadata({ providerId: 'best' }) }),
+      alternatives: [alt],
+    });
+
+    await userEvent.click(screen.getByText('Pick Me'));
+
+    await waitFor(() => {
+      expect((screen.getByLabelText('Narrators') as HTMLInputElement).value).toBe('Jim Dale, Stephen Fry');
+      expect((screen.getByLabelText('Series Position') as HTMLInputElement).value).toBe('27');
+    });
+  });
+
+  it('handleSave parses comma-separated narrators into trimmed array', async () => {
+    const onSave = vi.fn();
+    renderModal({ onSave });
+
+    const narratorsInput = screen.getByLabelText('Narrators') as HTMLInputElement;
+    await userEvent.type(narratorsInput, 'Jim Dale, Stephen Fry');
+
+    await userEvent.click(screen.getByText('Save'));
+    await waitFor(() => {
+      expect(onSave).toHaveBeenCalledWith(expect.objectContaining({
+        narrators: ['Jim Dale', 'Stephen Fry'],
+      }));
+    });
+  });
+
+  it('handleSave omits narrators when input is empty', async () => {
+    const onSave = vi.fn();
+    renderModal({ onSave });
+
+    await userEvent.click(screen.getByText('Save'));
+    await waitFor(() => {
+      const arg = onSave.mock.calls[0]?.[0] as Record<string, unknown>;
+      expect(arg).not.toHaveProperty('narrators');
+    });
+  });
+
+  it('handleSave emits seriesPosition for fractional input like 1.5', async () => {
+    const onSave = vi.fn();
+    renderModal({ onSave });
+
+    const positionInput = screen.getByLabelText('Series Position') as HTMLInputElement;
+    await userEvent.type(positionInput, '1.5');
+
+    await userEvent.click(screen.getByText('Save'));
+    await waitFor(() => {
+      expect(onSave).toHaveBeenCalledWith(expect.objectContaining({
+        seriesPosition: 1.5,
+      }));
+    });
+  });
+
+  it('handleSave omits seriesPosition for blank input', async () => {
+    const onSave = vi.fn();
+    renderModal({ onSave });
+
+    await userEvent.click(screen.getByText('Save'));
+    await waitFor(() => {
+      const arg = onSave.mock.calls[0]?.[0] as Record<string, unknown>;
+      expect(arg).not.toHaveProperty('seriesPosition');
+    });
+  });
+
+  it('after metadata populates narrators, clearing the field omits narrators on save', async () => {
+    const onSave = vi.fn();
+    const meta = makeMetadata({ narrators: ['Jim Dale'] });
+    renderModal({ onSave, initial: makeEditState({ metadata: meta, narrators: ['Jim Dale'] }) });
+
+    const narratorsInput = screen.getByLabelText('Narrators') as HTMLInputElement;
+    await userEvent.clear(narratorsInput);
+
+    await userEvent.click(screen.getByText('Save'));
+    await waitFor(() => {
+      const arg = onSave.mock.calls[0]?.[0] as Record<string, unknown>;
+      expect(arg).not.toHaveProperty('narrators');
+    });
+  });
+
+  it('F5 regression: clearing Series after entering Position drops seriesPosition on save', async () => {
+    const onSave = vi.fn();
+    renderModal({ onSave, initial: makeEditState({ series: 'Discworld' }) });
+
+    const positionInput = screen.getByLabelText('Series Position') as HTMLInputElement;
+    await userEvent.type(positionInput, '27');
+
+    const seriesInput = screen.getByLabelText('Series') as HTMLInputElement;
+    await userEvent.clear(seriesInput);
+
+    await userEvent.click(screen.getByText('Save'));
+    await waitFor(() => {
+      const arg = onSave.mock.calls[0]?.[0] as Record<string, unknown>;
+      expect(arg).not.toHaveProperty('seriesPosition');
+    });
+  });
+
+  it('F9 regression: numeric input parsing to Infinity (1e999) drops seriesPosition', async () => {
+    const onSave = vi.fn();
+    renderModal({ onSave, initial: makeEditState({ series: 'Discworld' }) });
+
+    const positionInput = screen.getByLabelText('Series Position') as HTMLInputElement;
+    const { fireEvent } = await import('@testing-library/react');
+    fireEvent.change(positionInput, { target: { value: '1e999' } });
+
+    await userEvent.click(screen.getByText('Save'));
+    await waitFor(() => {
+      const arg = onSave.mock.calls[0]?.[0] as Record<string, unknown>;
+      expect(arg).not.toHaveProperty('seriesPosition');
+    });
+  });
+
+  it('F9 regression: numeric input parsing to -Infinity (-1e999) drops seriesPosition', async () => {
+    const onSave = vi.fn();
+    renderModal({ onSave, initial: makeEditState({ series: 'Discworld' }) });
+
+    const positionInput = screen.getByLabelText('Series Position') as HTMLInputElement;
+    const { fireEvent } = await import('@testing-library/react');
+    fireEvent.change(positionInput, { target: { value: '-1e999' } });
+
+    await userEvent.click(screen.getByText('Save'));
+    await waitFor(() => {
+      const arg = onSave.mock.calls[0]?.[0] as Record<string, unknown>;
+      expect(arg).not.toHaveProperty('seriesPosition');
+    });
+  });
+});
+

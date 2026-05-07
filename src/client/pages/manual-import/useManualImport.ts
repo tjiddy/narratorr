@@ -5,7 +5,7 @@ import { toast } from 'sonner';
 import { api, type ImportMode, type ImportConfirmItem, type MatchResult } from '@/lib/api';
 import { queryKeys } from '@/lib/queryKeys';
 import { useMatchJob } from '@/hooks/useMatchJob';
-import type { ImportRow, BookEditState } from '@/components/manual-import';
+import { buildEditedFromBestMatch, type ImportRow, type BookEditState } from '@/components/manual-import';
 import { isPathInsideLibrary } from '@/lib/pathUtils.js';
 import { getErrorMessage } from '@/lib/error-message.js';
 import { upgradeMatchConfidence } from '@/lib/upgrade-match-confidence.js';
@@ -55,14 +55,7 @@ export function useManualImport({ onScanSuccess, libraryPath }: UseManualImportO
           ...row,
           matchResult: match,
           selected,
-          edited: {
-            title: match.bestMatch.title,
-            author: match.bestMatch.authors?.[0]?.name ?? row.edited.author,
-            series: match.bestMatch.series?.[0]?.name ?? row.edited.series,
-            ...(match.bestMatch.coverUrl !== undefined && { coverUrl: match.bestMatch.coverUrl }),
-            ...(match.bestMatch.asin !== undefined && { asin: match.bestMatch.asin }),
-            metadata: match.bestMatch,
-          },
+          edited: buildEditedFromBestMatch(match.bestMatch, row.edited),
         };
       }
       return { ...row, matchResult: match, selected };
@@ -163,6 +156,8 @@ export function useManualImport({ onScanSuccess, libraryPath }: UseManualImportO
       title: r.edited.title,
       ...(r.edited.author && { authorName: r.edited.author }),
       ...(r.edited.series && { seriesName: r.edited.series }),
+      ...(r.edited.narrators?.length && { narrators: r.edited.narrators }),
+      ...(r.edited.seriesPosition !== undefined && { seriesPosition: r.edited.seriesPosition }),
       ...(r.edited.coverUrl !== undefined && { coverUrl: r.edited.coverUrl }),
       ...(r.edited.asin !== undefined && { asin: r.edited.asin }),
       ...(r.edited.metadata !== undefined && { metadata: r.edited.metadata }),

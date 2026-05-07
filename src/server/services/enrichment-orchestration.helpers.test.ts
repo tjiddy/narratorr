@@ -181,3 +181,112 @@ describe('applyAudnexusEnrichment', () => {
     );
   });
 });
+
+describe('extractImportMetadata (#1028)', () => {
+  it('item.narrators wins over meta.narrators for both narratorName and bookInput.narrators', async () => {
+    const { extractImportMetadata } = await import('./enrichment-orchestration.helpers.js');
+    const result = extractImportMetadata({
+      path: '/audiobooks/Book',
+      title: 'Book',
+      narrators: ['Jim Dale', 'Stephen Fry'],
+      metadata: { title: 'Book', authors: [{ name: 'Author' }], narrators: ['Other Narrator'] },
+    });
+    expect(result.narratorName).toBe('Jim Dale');
+    expect(result.bookInput.narrators).toEqual([{ name: 'Jim Dale' }, { name: 'Stephen Fry' }]);
+  });
+
+  it('falls back to meta.narrators when item.narrators is absent', async () => {
+    const { extractImportMetadata } = await import('./enrichment-orchestration.helpers.js');
+    const result = extractImportMetadata({
+      path: '/audiobooks/Book',
+      title: 'Book',
+      metadata: { title: 'Book', authors: [{ name: 'Author' }], narrators: ['Stephen Fry'] },
+    });
+    expect(result.narratorName).toBe('Stephen Fry');
+    expect(result.bookInput.narrators).toEqual([{ name: 'Stephen Fry' }]);
+  });
+
+  it('returns manual narrator when no metadata is present', async () => {
+    const { extractImportMetadata } = await import('./enrichment-orchestration.helpers.js');
+    const result = extractImportMetadata({
+      path: '/audiobooks/Book',
+      title: 'Book',
+      narrators: ['Jim Dale'],
+    });
+    expect(result.narratorName).toBe('Jim Dale');
+    expect(result.bookInput.narrators).toEqual([{ name: 'Jim Dale' }]);
+  });
+
+  it('returns null narratorName and null narrators when neither is present', async () => {
+    const { extractImportMetadata } = await import('./enrichment-orchestration.helpers.js');
+    const result = extractImportMetadata({
+      path: '/audiobooks/Book',
+      title: 'Book',
+    });
+    expect(result.narratorName).toBeNull();
+    expect(result.bookInput.narrators).toBeNull();
+  });
+});
+
+describe('buildBookCreatePayload (#1028)', () => {
+  it('item.narrators overrides meta.narrators', async () => {
+    const { buildBookCreatePayload } = await import('./enrichment-orchestration.helpers.js');
+    const payload = buildBookCreatePayload(
+      { path: '/x', title: 'T', narrators: ['Jim Dale'] },
+      { title: 'T', authors: [{ name: 'A' }], narrators: ['Stephen Fry'] },
+      'importing',
+    );
+    expect(payload.narrators).toEqual(['Jim Dale']);
+  });
+
+  it('falls back to meta.narrators when item.narrators is empty array', async () => {
+    const { buildBookCreatePayload } = await import('./enrichment-orchestration.helpers.js');
+    const payload = buildBookCreatePayload(
+      { path: '/x', title: 'T', narrators: [] },
+      { title: 'T', authors: [{ name: 'A' }], narrators: ['Stephen Fry'] },
+      'importing',
+    );
+    expect(payload.narrators).toEqual(['Stephen Fry']);
+  });
+
+  it('falls back to meta.narrators when item.narrators is undefined', async () => {
+    const { buildBookCreatePayload } = await import('./enrichment-orchestration.helpers.js');
+    const payload = buildBookCreatePayload(
+      { path: '/x', title: 'T' },
+      { title: 'T', authors: [{ name: 'A' }], narrators: ['Stephen Fry'] },
+      'importing',
+    );
+    expect(payload.narrators).toEqual(['Stephen Fry']);
+  });
+
+  it('item.seriesPosition: 0 wins over meta.series[0].position (regression guard)', async () => {
+    const { buildBookCreatePayload } = await import('./enrichment-orchestration.helpers.js');
+    const payload = buildBookCreatePayload(
+      { path: '/x', title: 'T', seriesPosition: 0 },
+      { title: 'T', authors: [{ name: 'A' }], series: [{ name: 'S', position: 99 }] },
+      'importing',
+    );
+    expect(payload.seriesPosition).toBe(0);
+  });
+
+  it('item.seriesPosition: 1.5 wins over meta', async () => {
+    const { buildBookCreatePayload } = await import('./enrichment-orchestration.helpers.js');
+    const payload = buildBookCreatePayload(
+      { path: '/x', title: 'T', seriesPosition: 1.5 },
+      { title: 'T', authors: [{ name: 'A' }], series: [{ name: 'S', position: 99 }] },
+      'importing',
+    );
+    expect(payload.seriesPosition).toBe(1.5);
+  });
+
+  it('leaves both undefined when item-empty and meta-empty', async () => {
+    const { buildBookCreatePayload } = await import('./enrichment-orchestration.helpers.js');
+    const payload = buildBookCreatePayload(
+      { path: '/x', title: 'T' },
+      null,
+      'importing',
+    );
+    expect(payload.narrators).toBeUndefined();
+    expect(payload.seriesPosition).toBeUndefined();
+  });
+});

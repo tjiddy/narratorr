@@ -40,6 +40,8 @@ export const importConfirmItemSchema = z.object({
   title: z.string().trim().min(1),
   authorName: z.string().optional(),
   seriesName: z.string().optional(),
+  narrators: z.array(z.string().trim().min(1)).optional(),
+  seriesPosition: z.number().optional(),
   coverUrl: z.string().optional(),
   asin: z.string().optional(),
   // BookMetadata pass-through — validated upstream by the metadata provider, not here

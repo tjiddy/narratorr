@@ -199,6 +199,49 @@ describe('library-scan routes', () => {
       );
     });
 
+    it('forwards narrators and seriesPosition to the service (#1028)', async () => {
+      (services.libraryScan.confirmImport as ReturnType<typeof vi.fn>)
+        .mockResolvedValue({ accepted: 1 });
+
+      const res = await app.inject({
+        method: 'POST',
+        url: '/api/library/import/confirm',
+        payload: {
+          books: [{
+            path: '/a/b',
+            title: 'Book',
+            authorName: 'Author',
+            narrators: ['Jim Dale'],
+            seriesPosition: 27,
+          }],
+        },
+      });
+
+      expect(res.statusCode).toBe(202);
+      expect(services.libraryScan.confirmImport).toHaveBeenCalledWith(
+        [expect.objectContaining({ narrators: ['Jim Dale'], seriesPosition: 27 })],
+        undefined,
+      );
+    });
+
+    it('round-trips seriesPosition: 0 from request body to service (#1028)', async () => {
+      (services.libraryScan.confirmImport as ReturnType<typeof vi.fn>)
+        .mockResolvedValue({ accepted: 1 });
+
+      const res = await app.inject({
+        method: 'POST',
+        url: '/api/library/import/confirm',
+        payload: {
+          books: [{ path: '/a/b', title: 'Book', authorName: 'Author', seriesPosition: 0 }],
+        },
+      });
+
+      expect(res.statusCode).toBe(202);
+      const calls = (services.libraryScan.confirmImport as ReturnType<typeof vi.fn>).mock.calls;
+      const items = calls[0]![0] as Array<Record<string, unknown>>;
+      expect(items[0]!.seriesPosition).toBe(0);
+    });
+
     it('returns 500 on confirmImport error', async () => {
       (services.libraryScan.confirmImport as ReturnType<typeof vi.fn>)
         .mockRejectedValue(new Error('DB write failed'));

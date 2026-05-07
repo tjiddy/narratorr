@@ -6,7 +6,7 @@ import { api, type ImportConfirmItem, type MatchResult } from '@/lib/api';
 import { queryKeys } from '@/lib/queryKeys';
 import { useMatchJob } from '@/hooks/useMatchJob';
 import { slugify } from '../../../shared/utils.js';
-import type { ImportRow, BookEditState } from '@/components/manual-import';
+import { buildEditedFromBestMatch, type ImportRow, type BookEditState } from '@/components/manual-import';
 import type { DiscoveredBook } from '@/lib/api';
 import { getErrorMessage } from '@/lib/error-message.js';
 import { upgradeMatchConfidence } from '@/lib/upgrade-match-confidence.js';
@@ -69,14 +69,7 @@ export function useLibraryImport() {
           ...row,
           matchResult: match,
           selected,
-          edited: {
-            title: match.bestMatch.title,
-            author: match.bestMatch.authors?.[0]?.name ?? row.edited.author,
-            series: match.bestMatch.series?.[0]?.name ?? row.edited.series,
-            ...(match.bestMatch.coverUrl !== undefined && { coverUrl: match.bestMatch.coverUrl }),
-            ...(match.bestMatch.asin !== undefined && { asin: match.bestMatch.asin }),
-            metadata: match.bestMatch,
-          },
+          edited: buildEditedFromBestMatch(match.bestMatch, row.edited),
         };
       }
       return { ...row, matchResult: match, selected };
@@ -202,6 +195,8 @@ export function useLibraryImport() {
       title: r.edited.title,
       ...(r.edited.author && { authorName: r.edited.author }),
       ...(r.edited.series && { seriesName: r.edited.series }),
+      ...(r.edited.narrators?.length && { narrators: r.edited.narrators }),
+      ...(r.edited.seriesPosition !== undefined && { seriesPosition: r.edited.seriesPosition }),
       ...(r.edited.coverUrl !== undefined && { coverUrl: r.edited.coverUrl }),
       ...(r.edited.asin !== undefined && { asin: r.edited.asin }),
       ...(r.edited.metadata !== undefined && { metadata: r.edited.metadata }),

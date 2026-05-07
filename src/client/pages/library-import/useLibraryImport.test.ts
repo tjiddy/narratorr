@@ -283,6 +283,82 @@ describe('useLibraryImport hook (#133)', () => {
     );
   });
 
+  it('handleRegister forwards edited.narrators and seriesPosition (#1028)', async () => {
+    mockConfirmImport.mockResolvedValue({ accepted: 1 });
+    const { result } = renderHook(() => useLibraryImport(), { wrapper: createWrapper() });
+    await waitFor(() => expect(result.current.step).toBe('review'));
+
+    const nonDupIdx = result.current.rows.findIndex(r => !r.book.isDuplicate);
+
+    act(() => {
+      result.current.handleEdit(nonDupIdx, {
+        title: 'Book One',
+        author: 'Author A',
+        series: 'Discworld',
+        narrators: ['Jim Dale'],
+        seriesPosition: 27,
+      });
+    });
+
+    await act(async () => { result.current.handleRegister(); });
+
+    expect(mockConfirmImport).toHaveBeenCalledWith(
+      expect.arrayContaining([
+        expect.objectContaining({
+          narrators: ['Jim Dale'],
+          seriesPosition: 27,
+        }),
+      ]),
+      undefined,
+    );
+  });
+
+  it('handleRegister forwards seriesPosition: 0 (regression guard) (#1028)', async () => {
+    mockConfirmImport.mockResolvedValue({ accepted: 1 });
+    const { result } = renderHook(() => useLibraryImport(), { wrapper: createWrapper() });
+    await waitFor(() => expect(result.current.step).toBe('review'));
+
+    const nonDupIdx = result.current.rows.findIndex(r => !r.book.isDuplicate);
+
+    act(() => {
+      result.current.handleEdit(nonDupIdx, {
+        title: 'Book One',
+        author: 'Author A',
+        series: 'Series',
+        seriesPosition: 0,
+      });
+    });
+
+    await act(async () => { result.current.handleRegister(); });
+
+    const items = (mockConfirmImport.mock.calls[0]![0]) as Array<Record<string, unknown>>;
+    const found = items.find((b) => b.path === '/audiobooks/AuthorA/Book1');
+    expect(found?.seriesPosition).toBe(0);
+  });
+
+  it('handleRegister does not forward narrators when empty array (#1028)', async () => {
+    mockConfirmImport.mockResolvedValue({ accepted: 1 });
+    const { result } = renderHook(() => useLibraryImport(), { wrapper: createWrapper() });
+    await waitFor(() => expect(result.current.step).toBe('review'));
+
+    const nonDupIdx = result.current.rows.findIndex(r => !r.book.isDuplicate);
+
+    act(() => {
+      result.current.handleEdit(nonDupIdx, {
+        title: 'Book One',
+        author: 'Author A',
+        series: '',
+        narrators: [],
+      });
+    });
+
+    await act(async () => { result.current.handleRegister(); });
+
+    const items = (mockConfirmImport.mock.calls[0]![0]) as Array<Record<string, unknown>>;
+    const found = items.find((b) => b.path === '/audiobooks/AuthorA/Book1');
+    expect(found).not.toHaveProperty('narrators');
+  });
+
   it('Register error path: toast.error shown when confirmImport rejects', async () => {
     mockConfirmImport.mockRejectedValue(new Error('network failure'));
 
@@ -1100,6 +1176,100 @@ describe('empty result edge case', () => {
 
       await waitFor(() => { expect(result.current.step).toBe('review'); });
       expect(result.current.emptyResult).toBe(false);
+    });
+  });
+
+  describe('mergeMatchResults seeds narrators + seriesPosition (#1028)', () => {
+    const scanWithSingleNew: ScanResult = {
+      discoveries: [
+        { path: '/audiobooks/AuthorA/Book1', parsedTitle: 'Book One', parsedAuthor: 'Author A', parsedSeries: null, fileCount: 3, totalSize: 100000, isDuplicate: false },
+      ],
+      totalFolders: 1,
+    };
+
+    it('seeds edited.narrators and edited.seriesPosition from bestMatch', async () => {
+      mockScanDirectory.mockReset().mockResolvedValue(scanWithSingleNew);
+      mockStartMatchJob.mockClear().mockResolvedValue({ jobId: 'job-1' });
+      mockGetMatchJob.mockResolvedValue({
+        id: 'job-1',
+        status: 'completed',
+        total: 1,
+        matched: 1,
+        results: [{
+          path: '/audiobooks/AuthorA/Book1',
+          confidence: 'high',
+          bestMatch: {
+            title: 'Book One',
+            authors: [{ name: 'Author A' }],
+            narrators: ['Jim Dale'],
+            series: [{ name: 'Discworld', position: 27 }],
+          },
+          alternatives: [],
+        }],
+      });
+
+      const { result } = renderHook(() => useLibraryImport(), { wrapper: createWrapper() });
+      await waitFor(() => { expect(result.current.step).toBe('review'); });
+
+      await waitFor(() => {
+        expect(result.current.rows[0]!.edited.narrators).toEqual(['Jim Dale']);
+        expect(result.current.rows[0]!.edited.seriesPosition).toBe(27);
+      }, { timeout: 5000 });
+    });
+
+    it('preserves seriesPosition: 0 from bestMatch (regression guard)', async () => {
+      mockScanDirectory.mockReset().mockResolvedValue(scanWithSingleNew);
+      mockStartMatchJob.mockClear().mockResolvedValue({ jobId: 'job-1' });
+      mockGetMatchJob.mockResolvedValue({
+        id: 'job-1',
+        status: 'completed',
+        total: 1,
+        matched: 1,
+        results: [{
+          path: '/audiobooks/AuthorA/Book1',
+          confidence: 'high',
+          bestMatch: {
+            title: 'Book One',
+            authors: [{ name: 'Author A' }],
+            series: [{ name: 'Prequels', position: 0 }],
+          },
+          alternatives: [],
+        }],
+      });
+
+      const { result } = renderHook(() => useLibraryImport(), { wrapper: createWrapper() });
+      await waitFor(() => { expect(result.current.step).toBe('review'); });
+
+      await waitFor(() => {
+        expect(result.current.rows[0]!.edited.seriesPosition).toBe(0);
+      }, { timeout: 5000 });
+    });
+
+    it('omits narrators/seriesPosition when bestMatch lacks them', async () => {
+      mockScanDirectory.mockReset().mockResolvedValue(scanWithSingleNew);
+      mockStartMatchJob.mockClear().mockResolvedValue({ jobId: 'job-1' });
+      mockGetMatchJob.mockResolvedValue({
+        id: 'job-1',
+        status: 'completed',
+        total: 1,
+        matched: 1,
+        results: [{
+          path: '/audiobooks/AuthorA/Book1',
+          confidence: 'high',
+          bestMatch: { title: 'Book One', authors: [{ name: 'Author A' }] },
+          alternatives: [],
+        }],
+      });
+
+      const { result } = renderHook(() => useLibraryImport(), { wrapper: createWrapper() });
+      await waitFor(() => { expect(result.current.step).toBe('review'); });
+
+      await waitFor(() => {
+        expect(result.current.rows[0]!.matchResult?.confidence).toBe('high');
+      }, { timeout: 5000 });
+
+      expect(result.current.rows[0]!.edited).not.toHaveProperty('narrators');
+      expect(result.current.rows[0]!.edited).not.toHaveProperty('seriesPosition');
     });
   });
 });

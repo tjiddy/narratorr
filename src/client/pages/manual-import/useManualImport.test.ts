@@ -616,6 +616,190 @@ describe('useManualImport', () => {
       expect(result.current.state.rows[0]!.edited.metadata?.narrators).toEqual(['Jim Dale']);
     });
 
+    it('handleImport forwards edited.narrators and seriesPosition (#1028)', async () => {
+      vi.mocked(api.scanDirectory).mockResolvedValue(SCAN_RESULT);
+      vi.mocked(api.confirmImport).mockResolvedValue({ accepted: 1 });
+
+      const { result } = renderHook(() => useManualImport(), { wrapper: createWrapper() });
+      act(() => { result.current.state.setScanPath('/audiobooks'); });
+      await act(async () => { result.current.actions.handleScan(); });
+      await waitFor(() => { expect(result.current.state.rows).toHaveLength(2); });
+
+      act(() => {
+        result.current.actions.handleEdit(0, {
+          title: 'Book A',
+          author: 'Author A',
+          series: 'Discworld',
+          narrators: ['Jim Dale'],
+          seriesPosition: 27,
+        });
+        result.current.actions.handleToggle(1);
+      });
+
+      await act(async () => { result.current.actions.handleImport(); });
+      await waitFor(() => { expect(api.confirmImport).toHaveBeenCalled(); });
+
+      const [items] = vi.mocked(api.confirmImport).mock.calls[0]!;
+      expect(items[0]!.narrators).toEqual(['Jim Dale']);
+      expect(items[0]!.seriesPosition).toBe(27);
+    });
+
+    it('handleImport forwards seriesPosition: 0 (regression guard against falsy drop) (#1028)', async () => {
+      vi.mocked(api.scanDirectory).mockResolvedValue(SCAN_RESULT);
+      vi.mocked(api.confirmImport).mockResolvedValue({ accepted: 1 });
+
+      const { result } = renderHook(() => useManualImport(), { wrapper: createWrapper() });
+      act(() => { result.current.state.setScanPath('/audiobooks'); });
+      await act(async () => { result.current.actions.handleScan(); });
+      await waitFor(() => { expect(result.current.state.rows).toHaveLength(2); });
+
+      act(() => {
+        result.current.actions.handleEdit(0, {
+          title: 'Book A',
+          author: 'Author A',
+          series: 'Series',
+          seriesPosition: 0,
+        });
+        result.current.actions.handleToggle(1);
+      });
+
+      await act(async () => { result.current.actions.handleImport(); });
+      await waitFor(() => { expect(api.confirmImport).toHaveBeenCalled(); });
+
+      const [items] = vi.mocked(api.confirmImport).mock.calls[0]!;
+      expect(items[0]!.seriesPosition).toBe(0);
+    });
+
+    it('handleImport does not forward narrators when empty array (#1028)', async () => {
+      vi.mocked(api.scanDirectory).mockResolvedValue(SCAN_RESULT);
+      vi.mocked(api.confirmImport).mockResolvedValue({ accepted: 1 });
+
+      const { result } = renderHook(() => useManualImport(), { wrapper: createWrapper() });
+      act(() => { result.current.state.setScanPath('/audiobooks'); });
+      await act(async () => { result.current.actions.handleScan(); });
+      await waitFor(() => { expect(result.current.state.rows).toHaveLength(2); });
+
+      act(() => {
+        result.current.actions.handleEdit(0, {
+          title: 'Book A',
+          author: 'Author A',
+          series: '',
+          narrators: [],
+        });
+        result.current.actions.handleToggle(1);
+      });
+
+      await act(async () => { result.current.actions.handleImport(); });
+      await waitFor(() => { expect(api.confirmImport).toHaveBeenCalled(); });
+
+      const [items] = vi.mocked(api.confirmImport).mock.calls[0]!;
+      expect(items[0]).not.toHaveProperty('narrators');
+    });
+
+    it('mergeMatchResults seeds edited narrators and seriesPosition from bestMatch (#1028)', async () => {
+      vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] });
+      try {
+        vi.mocked(api.scanDirectory).mockResolvedValue(SCAN_RESULT);
+        vi.mocked(api.getMatchJob).mockResolvedValue({
+          id: 'job-123',
+          status: 'completed',
+          matched: 1,
+          total: 2,
+          results: [{
+            path: '/audiobooks/Book A',
+            confidence: 'high',
+            bestMatch: {
+              title: 'Book A',
+              authors: [{ name: 'Author A' }],
+              narrators: ['Jim Dale'],
+              series: [{ name: 'Discworld', position: 27 }],
+            },
+            alternatives: [],
+          }],
+        });
+
+        const { result } = renderHook(() => useManualImport(), { wrapper: createWrapper() });
+        act(() => { result.current.state.setScanPath('/audiobooks'); });
+        await act(async () => { result.current.actions.handleScan(); });
+        await waitFor(() => { expect(result.current.state.rows).toHaveLength(2); });
+
+        await act(async () => { await vi.advanceTimersByTimeAsync(2100); });
+
+        expect(result.current.state.rows[0]!.edited.narrators).toEqual(['Jim Dale']);
+        expect(result.current.state.rows[0]!.edited.seriesPosition).toBe(27);
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it('mergeMatchResults preserves seriesPosition: 0 (falsy regression at merge boundary) (#1028)', async () => {
+      vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] });
+      try {
+        vi.mocked(api.scanDirectory).mockResolvedValue(SCAN_RESULT);
+        vi.mocked(api.getMatchJob).mockResolvedValue({
+          id: 'job-123',
+          status: 'completed',
+          matched: 1,
+          total: 2,
+          results: [{
+            path: '/audiobooks/Book A',
+            confidence: 'high',
+            bestMatch: {
+              title: 'Book A',
+              authors: [{ name: 'Author A' }],
+              series: [{ name: 'Prequels', position: 0 }],
+            },
+            alternatives: [],
+          }],
+        });
+
+        const { result } = renderHook(() => useManualImport(), { wrapper: createWrapper() });
+        act(() => { result.current.state.setScanPath('/audiobooks'); });
+        await act(async () => { result.current.actions.handleScan(); });
+        await waitFor(() => { expect(result.current.state.rows).toHaveLength(2); });
+
+        await act(async () => { await vi.advanceTimersByTimeAsync(2100); });
+
+        expect(result.current.state.rows[0]!.edited.seriesPosition).toBe(0);
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it('mergeMatchResults omits narrators/seriesPosition when bestMatch lacks them (#1028)', async () => {
+      vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] });
+      try {
+        vi.mocked(api.scanDirectory).mockResolvedValue(SCAN_RESULT);
+        vi.mocked(api.getMatchJob).mockResolvedValue({
+          id: 'job-123',
+          status: 'completed',
+          matched: 1,
+          total: 2,
+          results: [{
+            path: '/audiobooks/Book A',
+            confidence: 'high',
+            bestMatch: {
+              title: 'Book A',
+              authors: [{ name: 'Author A' }],
+            },
+            alternatives: [],
+          }],
+        });
+
+        const { result } = renderHook(() => useManualImport(), { wrapper: createWrapper() });
+        act(() => { result.current.state.setScanPath('/audiobooks'); });
+        await act(async () => { result.current.actions.handleScan(); });
+        await waitFor(() => { expect(result.current.state.rows).toHaveLength(2); });
+
+        await act(async () => { await vi.advanceTimersByTimeAsync(2100); });
+
+        expect(result.current.state.rows[0]!.edited).not.toHaveProperty('narrators');
+        expect(result.current.state.rows[0]!.edited).not.toHaveProperty('seriesPosition');
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
     it('mergeMatchResults seeds edited.metadata.narrators from bestMatch.narrators on first arrival', async () => {
       vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] });
       try {

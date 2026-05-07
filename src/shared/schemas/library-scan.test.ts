@@ -98,6 +98,66 @@ import {
   discoveredBookSchema,
 } from './library-scan.js';
 
+describe('importConfirmItemSchema — narrators and seriesPosition (#1028)', () => {
+  const validItem = { path: '/books/file.mp3', title: 'My Book' };
+
+  it('round-trips narrators and seriesPosition', () => {
+    const result = importConfirmItemSchema.safeParse({
+      ...validItem,
+      narrators: ['Jim Dale', 'Stephen Fry'],
+      seriesPosition: 5,
+    });
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.narrators).toEqual(['Jim Dale', 'Stephen Fry']);
+      expect(result.data.seriesPosition).toBe(5);
+    }
+  });
+
+  it('preserves seriesPosition: 0 (regression guard against falsy drop)', () => {
+    const result = importConfirmItemSchema.safeParse({ ...validItem, seriesPosition: 0 });
+    expect(result.success).toBe(true);
+    if (result.success) expect(result.data.seriesPosition).toBe(0);
+  });
+
+  it('accepts fractional seriesPosition like 1.5', () => {
+    const result = importConfirmItemSchema.safeParse({ ...validItem, seriesPosition: 1.5 });
+    expect(result.success).toBe(true);
+    if (result.success) expect(result.data.seriesPosition).toBe(1.5);
+  });
+
+  it('rejects whitespace-only narrator entries', () => {
+    const result = importConfirmItemSchema.safeParse({ ...validItem, narrators: ['  '] });
+    expect(result.success).toBe(false);
+  });
+
+  it('omits both fields when not provided', () => {
+    const result = importConfirmItemSchema.safeParse(validItem);
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.narrators).toBeUndefined();
+      expect(result.data.seriesPosition).toBeUndefined();
+    }
+  });
+});
+
+describe('manualImportJobPayloadSchema — narrators and seriesPosition flow through (#1028)', () => {
+  it('inherits narrators and seriesPosition from base schema (incl. 0)', async () => {
+    const { manualImportJobPayloadSchema } = await import('../../server/services/import-adapters/types.js');
+    const result = manualImportJobPayloadSchema.safeParse({
+      path: '/books/file.mp3',
+      title: 'My Book',
+      narrators: ['Jim Dale'],
+      seriesPosition: 0,
+    });
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.narrators).toEqual(['Jim Dale']);
+      expect(result.data.seriesPosition).toBe(0);
+    }
+  });
+});
+
 describe('duplicateReasonSchema — within-scan variant (#342)', () => {
   it('accepts within-scan value', () => {
     const result = duplicateReasonSchema.safeParse('within-scan');
