@@ -7,11 +7,19 @@ import {
 } from 'fastify-type-provider-zod';
 import { mkdtemp, mkdir, writeFile, rm, symlink } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, relative } from 'node:path';
 import { Buffer } from 'node:buffer';
 import { initializeKey, _resetKey } from '../utils/secret-codec.js';
 import { mintPreviewToken } from '../services/preview-token.js';
 import { importPreviewRoute } from './import-preview.js';
+
+// Mock node:path's `relative` with fall-through to actual implementation;
+// individual tests can override per-call to simulate Windows cross-drive
+// scenarios that Linux CI cannot produce naturally.
+vi.mock('node:path', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('node:path')>();
+  return { ...actual, relative: vi.fn(actual.relative) };
+});
 
 const TEST_KEY = Buffer.alloc(32, 0xcd);
 
@@ -112,6 +120,23 @@ describe('GET /api/import/preview/:token', () => {
     const res = await app.inject({ method: 'GET', url: `/api/import/preview/${token}` });
 
     expect(res.statusCode).toBe(404);
+  });
+
+  it('returns 403 when path.relative returns an absolute path (Windows different-drive simulation)', async () => {
+    // On Windows, `relative('C:\\root', 'D:\\file')` returns an absolute path
+    // (the destination as-is) rather than a `..`-prefixed string. The route
+    // guards against this with `isAbsolute(rel)` alongside the `..` check.
+    // Linux CI cannot produce this naturally, so we mock `relative` for one call
+    // to verify the conditional fires and returns 403 (vs streaming the file).
+    const file = join(workDir, 'track.mp3');
+    await writeFile(file, Buffer.alloc(64));
+    const token = mintPreviewToken(file, workDir);
+    vi.mocked(relative).mockReturnValueOnce('D:\\elsewhere\\leak.mp3');
+
+    const res = await app.inject({ method: 'GET', url: `/api/import/preview/${token}` });
+
+    expect(res.statusCode).toBe(403);
+    expect(JSON.parse(res.body).error).toMatch(/outside scan root/i);
   });
 
   it('rejects symlink that resolves outside scanRoot (403)', async () => {
