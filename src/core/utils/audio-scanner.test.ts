@@ -696,6 +696,26 @@ describe('scanAudioDirectory', () => {
       const result = await scanAudioDirectory('/audiobooks/test');
       expect(result!.tagAsin).toBe('B0COMMXXXX');
     });
+
+    it('F3 — extracts ASIN from common.podcastIdentifier and uppercase-normalizes', async () => {
+      // No native or comment ASIN sources — only podcastIdentifier carries the
+      // token, in lowercase. Asserts the dedicated extractAsin branch at
+      // audio-scanner.ts:325-329 normalizes to uppercase and surfaces the match.
+      mockReaddir.mockResolvedValue([makeDirent('book.m4b', true)] as never);
+      mockStat.mockResolvedValue({ isFile: () => false, isDirectory: () => true, size: 10_000_000 } as never);
+      mockParseFile.mockResolvedValue(makeMetadata({
+        common: {
+          title: 'Test',
+          albumartist: 'Author',
+          composer: undefined,
+          podcastIdentifier: 'b07podcast',
+        },
+        native: {},
+      }) as never);
+
+      const result = await scanAudioDirectory('/audiobooks/test');
+      expect(result!.tagAsin).toBe('B07PODCAST');
+    });
   });
 
   it('handles missing optional tags', async () => {
