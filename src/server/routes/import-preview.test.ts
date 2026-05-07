@@ -17,6 +17,7 @@ import { importPreviewRoute } from './import-preview.js';
 // individual tests can override per-call to simulate Windows cross-drive
 // scenarios that Linux CI cannot produce naturally.
 vi.mock('node:path', async (importOriginal) => {
+  // eslint-disable-next-line @typescript-eslint/consistent-type-imports
   const actual = await importOriginal<typeof import('node:path')>();
   return { ...actual, relative: vi.fn(actual.relative) };
 });

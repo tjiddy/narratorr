@@ -34,7 +34,6 @@ function createMockMetadataService(): MetadataService {
     searchBooks: vi.fn().mockResolvedValue([]),
     getBook: vi.fn().mockResolvedValue(null),
     search: vi.fn(),
-    searchAuthors: vi.fn(),
     searchSeries: vi.fn(),
     getAuthor: vi.fn(),
     getAuthorBooks: vi.fn(),

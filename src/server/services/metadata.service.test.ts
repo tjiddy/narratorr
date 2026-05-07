@@ -9,7 +9,6 @@ const mockFactories = vi.mocked(METADATA_SEARCH_PROVIDER_FACTORIES);
 const mockAudibleProvider = {
   name: 'Audible.com',
   type: 'audible',
-  searchAuthors: vi.fn().mockResolvedValue([]),
   searchBooks: vi.fn().mockResolvedValue({ books: [] }),
   searchSeries: vi.fn().mockResolvedValue([]),
   getBook: vi.fn().mockResolvedValue(null),
@@ -43,7 +42,6 @@ describe('MetadataService', () => {
     vi.clearAllMocks();
     // Per-mock reset drains stale `*Once()` queues — `clearAllMocks` does not (see CLAUDE.md).
     // Avoids `resetAllMocks` so the module-mock factories above stay intact.
-    mockAudibleProvider.searchAuthors.mockReset();
     mockAudibleProvider.searchBooks.mockReset();
     mockAudibleProvider.searchSeries.mockReset();
     mockAudibleProvider.getBook.mockReset();
@@ -51,7 +49,6 @@ describe('MetadataService', () => {
     mockAudnexus.getBook.mockReset();
     mockAudnexus.getAuthor.mockReset();
     // Reset mock return values
-    mockAudibleProvider.searchAuthors.mockResolvedValue([]);
     mockAudibleProvider.searchBooks.mockResolvedValue({ books: [] });
     mockAudibleProvider.searchSeries.mockResolvedValue([]);
     mockAudibleProvider.getBook.mockResolvedValue(null);
@@ -64,14 +61,13 @@ describe('MetadataService', () => {
   });
 
   describe('search', () => {
-    it('calls searchBooks once and does NOT call provider.searchAuthors / searchSeries (#1020)', async () => {
+    it('calls searchBooks once and does NOT call provider.searchSeries (#1020)', async () => {
       const result = await service.search('test query');
       expect(result.books).toEqual([]);
       expect(result.authors).toEqual([]);
       expect(result.series).toEqual([]);
       expect(mockAudibleProvider.searchBooks).toHaveBeenCalledWith('test query');
       expect(mockAudibleProvider.searchBooks).toHaveBeenCalledTimes(1);
-      expect(mockAudibleProvider.searchAuthors).not.toHaveBeenCalled();
       expect(mockAudibleProvider.searchSeries).not.toHaveBeenCalled();
     });
 
@@ -116,7 +112,6 @@ describe('MetadataService', () => {
             { title: 'German Book', language: 'german' },
           ],
         });
-        mockAudibleProvider.searchAuthors.mockResolvedValueOnce([]);
         mockAudibleProvider.searchSeries.mockResolvedValueOnce([]);
 
         const result = await serviceWithSettings.search('test');
@@ -130,7 +125,6 @@ describe('MetadataService', () => {
             { title: 'English Book', language: 'english' },
           ],
         });
-        mockAudibleProvider.searchAuthors.mockResolvedValueOnce([]);
         mockAudibleProvider.searchSeries.mockResolvedValueOnce([]);
 
         const result = await serviceWithSettings.search('test');
@@ -150,7 +144,6 @@ describe('MetadataService', () => {
             { title: 'English Book', language: 'english' },
           ],
         });
-        mockAudibleProvider.searchAuthors.mockResolvedValueOnce([]);
         mockAudibleProvider.searchSeries.mockResolvedValueOnce([]);
 
         const result = await serviceWithSettings.search('test');
@@ -165,7 +158,6 @@ describe('MetadataService', () => {
             { title: 'German Book', language: 'German' },
           ],
         });
-        mockAudibleProvider.searchAuthors.mockResolvedValueOnce([]);
         mockAudibleProvider.searchSeries.mockResolvedValueOnce([]);
 
         const result = await serviceWithSettings.search('test');
@@ -189,7 +181,6 @@ describe('MetadataService', () => {
             { title: 'German Book', language: 'german' },
           ],
         });
-        mockAudibleProvider.searchAuthors.mockResolvedValueOnce([]);
         mockAudibleProvider.searchSeries.mockResolvedValueOnce([]);
 
         const result = await serviceWithSettings.search('test');
@@ -205,7 +196,6 @@ describe('MetadataService', () => {
           { title: 'German Book', language: 'german' },
         ];
         mockAudibleProvider.searchBooks.mockResolvedValueOnce({ books: allBooks });
-        mockAudibleProvider.searchAuthors.mockResolvedValueOnce([]);
         mockAudibleProvider.searchSeries.mockResolvedValueOnce([]);
 
         const result = await service.search('test');
@@ -220,7 +210,6 @@ describe('MetadataService', () => {
           { title: 'German Book', language: 'german' },
         ];
         mockAudibleProvider.searchBooks.mockResolvedValueOnce({ books: allBooks });
-        mockAudibleProvider.searchAuthors.mockResolvedValueOnce([]);
         mockAudibleProvider.searchSeries.mockResolvedValueOnce([]);
 
         const result = await serviceWithSettings.search('test');
@@ -235,7 +224,6 @@ describe('MetadataService', () => {
             { title: 'French Book', language: 'french' },
           ],
         });
-        mockAudibleProvider.searchAuthors.mockResolvedValueOnce([]);
         mockAudibleProvider.searchSeries.mockResolvedValueOnce([]);
 
         const result = await serviceWithSettings.search('test');
@@ -826,7 +814,6 @@ describe('MetadataService', () => {
       it('search: metadata-slice failure leaves rejectWords applied (books only)', async () => {
         stubMetadataFails();
         mockAudibleProvider.searchBooks.mockResolvedValueOnce({ books: fixture() });
-        mockAudibleProvider.searchAuthors.mockResolvedValueOnce([]);
         mockAudibleProvider.searchSeries.mockResolvedValueOnce([]);
 
         const result = await serviceWithSettings.search('query');
@@ -836,7 +823,6 @@ describe('MetadataService', () => {
       it('search: quality-slice failure leaves language + duration applied (books only)', async () => {
         stubQualityFails();
         mockAudibleProvider.searchBooks.mockResolvedValueOnce({ books: fixture() });
-        mockAudibleProvider.searchAuthors.mockResolvedValueOnce([]);
         mockAudibleProvider.searchSeries.mockResolvedValueOnce([]);
 
         const result = await serviceWithSettings.search('query');
@@ -1124,17 +1110,6 @@ describe('MetadataService', () => {
           expect.stringContaining('Dropping non-audiobook'),
         );
       });
-    });
-  });
-
-  describe('searchAuthors', () => {
-    it('delegates to search provider', async () => {
-      const mockAuthors = [{ name: 'Test Author' }];
-      mockAudibleProvider.searchAuthors.mockResolvedValueOnce(mockAuthors);
-
-      const result = await service.searchAuthors('query');
-      expect(result).toEqual(mockAuthors);
-      expect(mockAudibleProvider.searchAuthors).toHaveBeenCalledWith('query');
     });
   });
 
@@ -1696,11 +1671,6 @@ describe('MetadataService', () => {
 
     it('searchBooks returns empty array', async () => {
       const result = await emptyService.searchBooks('test');
-      expect(result).toEqual([]);
-    });
-
-    it('searchAuthors returns empty array', async () => {
-      const result = await emptyService.searchAuthors('test');
       expect(result).toEqual([]);
     });
 

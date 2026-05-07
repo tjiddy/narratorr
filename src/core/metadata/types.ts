@@ -37,7 +37,6 @@ export interface MetadataProviderBase {
 /** Search provider — catalog search, book/series detail, connectivity test. */
 export interface MetadataSearchProvider extends MetadataProviderBase {
   searchBooks(query: string, options?: SearchBooksOptions): Promise<SearchBooksResult>;
-  searchAuthors(query: string): Promise<AuthorMetadata[]>;
   searchSeries(query: string): Promise<SeriesMetadata[]>;
   getBook(id: string): Promise<BookMetadata | null>;
   test(): Promise<{ success: boolean; message?: string }>;
