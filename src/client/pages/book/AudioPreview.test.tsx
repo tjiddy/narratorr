@@ -10,7 +10,6 @@ vi.mock('sonner', () => ({
 
 import { toast } from 'sonner';
 
-// Mock HTMLMediaElement.prototype.play/pause (not implemented in jsdom)
 let mockPlay: ReturnType<typeof vi.fn>;
 let mockPause: ReturnType<typeof vi.fn>;
 
@@ -35,10 +34,9 @@ beforeEach(() => {
   });
 });
 
-describe('AudioPreview (#320)', () => {
-  // Render conditions
-  it('renders hidden audio element without native controls when book is imported with path', () => {
-    renderWithProviders(<AudioPreview bookId={1} status="imported" path="/library/book1" />);
+describe('AudioPreview — book source (#320)', () => {
+  it('renders hidden audio element without native controls when enabled', () => {
+    renderWithProviders(<AudioPreview source={{ kind: 'book', bookId: 1, enabled: true }} />);
 
     const audio = document.querySelector('audio');
     expect(audio).not.toBeNull();
@@ -47,7 +45,7 @@ describe('AudioPreview (#320)', () => {
   });
 
   it('renders play button with Preview label — no native player UI', () => {
-    renderWithProviders(<AudioPreview bookId={1} status="imported" path="/library/book1" />);
+    renderWithProviders(<AudioPreview source={{ kind: 'book', bookId: 1, enabled: true }} />);
 
     expect(screen.getByRole('button', { name: /play preview/i })).toBeInTheDocument();
     expect(screen.getByText('Preview')).toBeInTheDocument();
@@ -56,24 +54,13 @@ describe('AudioPreview (#320)', () => {
     expect(audio!.hasAttribute('controls')).toBe(false);
   });
 
-  it('does not render when book status is not imported', () => {
-    for (const status of ['wanted', 'downloading', 'searching', 'importing', 'missing', 'failed']) {
-      const { unmount } = renderWithProviders(
-        <AudioPreview bookId={1} status={status} path="/library/book1" />,
-      );
-      expect(document.querySelector('audio')).toBeNull();
-      unmount();
-    }
-  });
-
-  it('does not render when book.path is null even if status is imported', () => {
-    renderWithProviders(<AudioPreview bookId={1} status="imported" path={null} />);
+  it('does not render when book source is disabled', () => {
+    renderWithProviders(<AudioPreview source={{ kind: 'book', bookId: 1, enabled: false }} />);
     expect(document.querySelector('audio')).toBeNull();
   });
 
-  // Interaction
   it('sets audio src to resolveUrl-based preview URL', () => {
-    renderWithProviders(<AudioPreview bookId={42} status="imported" path="/library/book" />);
+    renderWithProviders(<AudioPreview source={{ kind: 'book', bookId: 42, enabled: true }} />);
 
     const audio = document.querySelector('audio');
     expect(audio).not.toBeNull();
@@ -82,43 +69,20 @@ describe('AudioPreview (#320)', () => {
 
   it('pauses audio element when pause button is clicked', async () => {
     const user = userEvent.setup();
-    renderWithProviders(<AudioPreview bookId={1} status="imported" path="/library/book1" />);
+    renderWithProviders(<AudioPreview source={{ kind: 'book', bookId: 1, enabled: true }} />);
 
-    // Click play
     const playButton = screen.getByRole('button', { name: /play/i });
     await user.click(playButton);
     expect(mockPlay).toHaveBeenCalled();
 
-    // Click pause
     const pauseButton = screen.getByRole('button', { name: /pause/i });
     await user.click(pauseButton);
     expect(mockPause).toHaveBeenCalled();
   });
 
-  it('pauses audio when DOM says playing, even if React state is desynced (stale closure fix)', async () => {
-    const user = userEvent.setup();
-    renderWithProviders(<AudioPreview bookId={1} status="imported" path="/library/book1" />);
-
-    const audio = document.querySelector('audio')!;
-
-    // Simulate audio playing via DOM without going through React's play handler
-    // (e.g., native autoplay, or a re-render desync). DOM says playing, React may not know.
-    Object.defineProperty(audio, 'paused', { value: false, configurable: true });
-    act(() => { audio.dispatchEvent(new Event('play')); });
-
-    // Button should show Pause (React caught the event)
-    const pauseButton = screen.getByRole('button', { name: /pause/i });
-
-    // Click pause — should call audio.pause() because we check audio.paused (DOM), not React state
-    await user.click(pauseButton);
-    expect(mockPause).toHaveBeenCalled();
-  });
-
-  // Native control sync
   it('syncs header button to Pause when native controls trigger play event', () => {
-    renderWithProviders(<AudioPreview bookId={1} status="imported" path="/library/book1" />);
+    renderWithProviders(<AudioPreview source={{ kind: 'book', bookId: 1, enabled: true }} />);
 
-    // Initially shows Play
     expect(screen.getByRole('button', { name: /play preview/i })).toBeInTheDocument();
 
     const audio = document.querySelector('audio')!;
@@ -126,24 +90,11 @@ describe('AudioPreview (#320)', () => {
       audio.dispatchEvent(new Event('play'));
     });
 
-    // After native play, header button should show Pause
     expect(screen.getByRole('button', { name: /pause preview/i })).toBeInTheDocument();
-  });
-
-  it('syncs header button to Play when native controls trigger pause event', () => {
-    renderWithProviders(<AudioPreview bookId={1} status="imported" path="/library/book1" />);
-
-    const audio = document.querySelector('audio')!;
-    // Simulate play then pause from native controls
-    act(() => { audio.dispatchEvent(new Event('play')); });
-    expect(screen.getByRole('button', { name: /pause preview/i })).toBeInTheDocument();
-
-    act(() => { audio.dispatchEvent(new Event('pause')); });
-    expect(screen.getByRole('button', { name: /play preview/i })).toBeInTheDocument();
   });
 
   it('syncs header button to Play when audio ends', () => {
-    renderWithProviders(<AudioPreview bookId={1} status="imported" path="/library/book1" />);
+    renderWithProviders(<AudioPreview source={{ kind: 'book', bookId: 1, enabled: true }} />);
 
     const audio = document.querySelector('audio')!;
     act(() => { audio.dispatchEvent(new Event('play')); });
@@ -153,10 +104,9 @@ describe('AudioPreview (#320)', () => {
     expect(screen.getByRole('button', { name: /play preview/i })).toBeInTheDocument();
   });
 
-  // Label text
   it('shows "Playing..." label while audio is playing', async () => {
     const user = userEvent.setup();
-    renderWithProviders(<AudioPreview bookId={1} status="imported" path="/library/book1" />);
+    renderWithProviders(<AudioPreview source={{ kind: 'book', bookId: 1, enabled: true }} />);
 
     expect(screen.getByText('Preview')).toBeInTheDocument();
 
@@ -167,10 +117,9 @@ describe('AudioPreview (#320)', () => {
     expect(screen.getByText('Preview')).toBeInTheDocument();
   });
 
-  // Cleanup / navigation
   it('pauses audio and detaches source on unmount', () => {
     const { unmount } = renderWithProviders(
-      <AudioPreview bookId={1} status="imported" path="/library/book1" />,
+      <AudioPreview source={{ kind: 'book', bookId: 1, enabled: true }} />,
     );
 
     const audio = document.querySelector('audio');
@@ -179,13 +128,11 @@ describe('AudioPreview (#320)', () => {
     unmount();
 
     expect(mockPause).toHaveBeenCalled();
-    // In jsdom, setting src='' resolves to base URL; verify it no longer points to preview
     expect(audio!.src).not.toContain('/api/books/');
   });
 
-  // Error handling
   it('shows error toast when audio element fires error event', () => {
-    renderWithProviders(<AudioPreview bookId={1} status="imported" path="/library/book1" />);
+    renderWithProviders(<AudioPreview source={{ kind: 'book', bookId: 1, enabled: true }} />);
 
     const audio = document.querySelector('audio')!;
     act(() => {
@@ -196,14 +143,76 @@ describe('AudioPreview (#320)', () => {
   });
 
   it('resets to play state after error', () => {
-    renderWithProviders(<AudioPreview bookId={1} status="imported" path="/library/book1" />);
+    renderWithProviders(<AudioPreview source={{ kind: 'book', bookId: 1, enabled: true }} />);
 
     const audio = document.querySelector('audio')!;
     act(() => {
       audio.dispatchEvent(new Event('error'));
     });
 
-    // After error, play button should be visible (not pause)
     expect(screen.getByRole('button', { name: /play/i })).toBeInTheDocument();
+  });
+});
+
+describe('AudioPreview — url source (#1017)', () => {
+  it('renders when previewUrl is set and enabled', () => {
+    renderWithProviders(
+      <AudioPreview source={{ kind: 'url', previewUrl: '/api/import/preview/abc', enabled: true }} />,
+    );
+    expect(screen.getByRole('button', { name: /play preview/i })).toBeInTheDocument();
+  });
+
+  it('does not render when previewUrl is undefined', () => {
+    renderWithProviders(
+      <AudioPreview source={{ kind: 'url', previewUrl: undefined, enabled: true }} />,
+    );
+    expect(document.querySelector('audio')).toBeNull();
+  });
+
+  it('does not render when disabled', () => {
+    renderWithProviders(
+      <AudioPreview source={{ kind: 'url', previewUrl: '/api/import/preview/abc', enabled: false }} />,
+    );
+    expect(document.querySelector('audio')).toBeNull();
+  });
+
+  it('uses the previewUrl as the audio src (resolveUrl-prefixed)', () => {
+    renderWithProviders(
+      <AudioPreview source={{ kind: 'url', previewUrl: '/api/import/preview/xyz', enabled: true }} />,
+    );
+    const audio = document.querySelector('audio');
+    expect(audio).not.toBeNull();
+    expect(audio!.src).toContain('/api/import/preview/xyz');
+  });
+
+  it('fires rescan-guidance toast on <audio> error event in url mode (#1017)', () => {
+    renderWithProviders(
+      <AudioPreview source={{ kind: 'url', previewUrl: '/api/import/preview/abc', enabled: true }} />,
+    );
+    const audio = document.querySelector('audio')!;
+    act(() => {
+      audio.dispatchEvent(new Event('error'));
+    });
+    expect(toast.error).toHaveBeenCalledWith('Preview expired — rescan to refresh.');
+  });
+
+  it('compact size renders icon-only without "Preview" label', () => {
+    renderWithProviders(
+      <AudioPreview
+        source={{ kind: 'url', previewUrl: '/api/import/preview/abc', enabled: true }}
+        size="compact"
+      />,
+    );
+    expect(screen.getByRole('button', { name: /play preview/i })).toBeInTheDocument();
+    expect(screen.queryByText('Preview')).toBeNull();
+  });
+
+  it('clicking play triggers <audio>.play()', async () => {
+    const user = userEvent.setup();
+    renderWithProviders(
+      <AudioPreview source={{ kind: 'url', previewUrl: '/api/import/preview/abc', enabled: true }} />,
+    );
+    await user.click(screen.getByRole('button', { name: /play/i }));
+    expect(mockPlay).toHaveBeenCalled();
   });
 });

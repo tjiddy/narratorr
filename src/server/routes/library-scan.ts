@@ -20,6 +20,7 @@ import {
   type ScanDebugTrace,
 } from '../../shared/schemas.js';
 import { serializeError } from '../utils/serialize-error.js';
+import { mintPreviewToken } from '../services/preview-token.js';
 
 
 type ScanDirectoryBody = z.infer<typeof scanDirectoryBodySchema>;
@@ -80,7 +81,14 @@ export async function libraryScanRoutes(
 
       try {
         const result = await libraryScan.scanDirectory(path);
-        return scanResultSchema.parse(result);
+        const decorated = {
+          ...result,
+          discoveries: result.discoveries.map(d => ({
+            ...d,
+            previewUrl: `/api/import/preview/${mintPreviewToken(d.path, path)}`,
+          })),
+        };
+        return scanResultSchema.parse(decorated);
       } catch (error: unknown) {
         request.log.error({ error: serializeError(error) }, 'Directory scan failed');
         return reply.status(500).send({

@@ -71,6 +71,7 @@ import { registerImportAdapter } from '../services/import-adapters/registry.js';
 import { ManualImportAdapter } from '../services/import-adapters/manual.js';
 import { AutoImportAdapter } from '../services/import-adapters/auto.js';
 import { retryImportRoute } from './retry-import.js';
+import { importPreviewRoute } from './import-preview.js';
 
 export interface Services {
   settings: SettingsService;
@@ -304,6 +305,7 @@ const routeRegistry: RouteFactory[] = [
   }),
   (app, s) => bulkOperationsRoutes(app, s.bulkOperation),
   (app, s) => retryImportRoute(app, s.bookImport, () => s.importQueueWorker.nudge()),
+  (app) => importPreviewRoute(app),
 ];
 
 export { routeRegistry };
