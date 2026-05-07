@@ -1485,6 +1485,39 @@ describe('IndexerSearchService', () => {
         expect(onError).not.toHaveBeenCalled();
         expect(onCancelled).not.toHaveBeenCalled();
       });
+
+      it('searchAll empty-query short-circuit logs the unified canonical message with context: "searchAll"', async () => {
+        const log = createMockLogger();
+        const svc = new IndexerService(inject<Db>(db), inject<FastifyBaseLogger>(log));
+        const searchSvc = new IndexerSearchService(inject<Db>(db), inject<FastifyBaseLogger>(log), svc);
+        db.select.mockReturnValue(mockDbChain([mockIndexer]));
+
+        await searchSvc.searchAll('()');
+
+        expect(log.debug).toHaveBeenCalledWith(
+          { originalQuery: '()', context: 'searchAll' },
+          'Search skipped — query empty after normalization',
+        );
+      });
+
+      it('searchAllStreaming empty-query short-circuit logs the unified canonical message with context: "searchAllStreaming"', async () => {
+        const log = createMockLogger();
+        const svc = new IndexerService(inject<Db>(db), inject<FastifyBaseLogger>(log));
+        const searchSvc = new IndexerSearchService(inject<Db>(db), inject<FastifyBaseLogger>(log), svc);
+        db.select.mockReturnValue(mockDbChain([mockIndexer]));
+
+        await searchSvc.searchAllStreaming(
+          '...',
+          undefined,
+          new Map([[mockIndexer.id, new AbortController()]]),
+          { onComplete: vi.fn(), onError: vi.fn(), onCancelled: vi.fn() },
+        );
+
+        expect(log.debug).toHaveBeenCalledWith(
+          { originalQuery: '...', context: 'searchAllStreaming' },
+          'Search skipped — query empty after normalization',
+        );
+      });
     });
   });
 });
