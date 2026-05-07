@@ -4,6 +4,7 @@ import { createTestApp, createMockServices, resetMockServices } from '../__tests
 import type { Services } from './index.js';
 import { ScanInProgressError, LibraryPathError } from '../services/library-scan.service.js';
 import { initializeKey, _resetKey } from '../utils/secret-codec.js';
+import { verifyPreviewToken } from '../services/preview-token.js';
 
 describe('library-scan routes', () => {
   let app: Awaited<ReturnType<typeof createTestApp>>;
@@ -56,6 +57,58 @@ describe('library-scan routes', () => {
       expect(body.discoveries).toHaveLength(1);
       expect(body.discoveries[0].parsedTitle).toBe('Title');
       expect(body.totalFolders).toBe(2);
+    });
+
+    // #1017 — scan response must decorate each discovery with a signed previewUrl
+    it('decorates each discovery with a previewUrl whose token verifies to { path, scanRoot }', async () => {
+      const mockResult = {
+        discoveries: [
+          {
+            path: '/audiobooks/Author/Title',
+            parsedTitle: 'Title',
+            parsedAuthor: 'Author',
+            parsedSeries: null,
+            fileCount: 5,
+            totalSize: 500000,
+            isDuplicate: false,
+          },
+          {
+            path: '/audiobooks/Author/Other',
+            parsedTitle: 'Other',
+            parsedAuthor: 'Author',
+            parsedSeries: null,
+            fileCount: 3,
+            totalSize: 300000,
+            isDuplicate: false,
+          },
+        ],
+        totalFolders: 2,
+      };
+
+      (services.libraryScan.scanDirectory as ReturnType<typeof vi.fn>)
+        .mockResolvedValue(mockResult);
+
+      const res = await app.inject({
+        method: 'POST',
+        url: '/api/library/import/scan',
+        payload: { path: '/audiobooks' },
+      });
+
+      expect(res.statusCode).toBe(200);
+      const body = JSON.parse(res.payload);
+      expect(body.discoveries).toHaveLength(2);
+
+      for (const [i, expected] of mockResult.discoveries.entries()) {
+        const previewUrl = body.discoveries[i].previewUrl as string;
+        expect(previewUrl).toMatch(/^\/api\/import\/preview\/[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/);
+
+        const token = previewUrl.replace('/api/import/preview/', '');
+        const payload = verifyPreviewToken(token);
+        expect(payload).not.toBeNull();
+        expect(payload!.purpose).toBe('audio-preview');
+        expect(payload!.path).toBe(expected.path);
+        expect(payload!.scanRoot).toBe('/audiobooks');
+      }
     });
 
     it('returns 400 when path is missing', async () => {

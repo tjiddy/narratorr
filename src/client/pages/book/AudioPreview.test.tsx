@@ -185,7 +185,7 @@ describe('AudioPreview — url source (#1017)', () => {
     expect(audio!.src).toContain('/api/import/preview/xyz');
   });
 
-  it('fires error toast on <audio> error event in url mode', () => {
+  it('fires rescan-guidance toast on <audio> error event in url mode (#1017)', () => {
     renderWithProviders(
       <AudioPreview source={{ kind: 'url', previewUrl: '/api/import/preview/abc', enabled: true }} />,
     );
@@ -193,7 +193,7 @@ describe('AudioPreview — url source (#1017)', () => {
     act(() => {
       audio.dispatchEvent(new Event('error'));
     });
-    expect(toast.error).toHaveBeenCalledWith('Could not load audio preview');
+    expect(toast.error).toHaveBeenCalledWith('Preview expired — rescan to refresh.');
   });
 
   it('compact size renders icon-only without "Preview" label', () => {

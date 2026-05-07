@@ -27,10 +27,14 @@ export function AudioPreview({ source, size = 'default' }: AudioPreviewProps) {
 
   const { canPreview, url } = resolveSourceUrl(source);
 
+  const errorMessage = source.kind === 'url'
+    ? 'Preview expired — rescan to refresh.'
+    : 'Could not load audio preview';
+
   const handleError = useCallback(() => {
-    toast.error('Could not load audio preview');
+    toast.error(errorMessage);
     setIsPlaying(false);
-  }, []);
+  }, [errorMessage]);
 
   const handlePlay = useCallback(() => setIsPlaying(true), []);
   const handlePause = useCallback(() => setIsPlaying(false), []);
