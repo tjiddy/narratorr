@@ -22,7 +22,11 @@ describe('classifyLeafFolder', () => {
         '/lib/Mistborn Trilogy/Mistborn 02 - The Well of Ascension.mp3',
         '/lib/Mistborn Trilogy/Mistborn 03 - The Hero of Ages.mp3',
       ]));
-      expect(result).toEqual({ decision: 'split', reason: 'distinct-large-files-no-marker' });
+      expect(result).toEqual({
+        decision: 'split',
+        reason: 'distinct-large-files-no-marker',
+        sizeEvidence: { largeCount: 3, largeRatio: 1 },
+      });
     });
 
     it('2: 30 chapter-prefixed files merge', () => {
@@ -115,7 +119,11 @@ describe('classifyLeafFolder', () => {
       const result = classifyLeafFolder(uniformLarge(
         titles.map(t => `/lib/Sanderson/${t}.mp3`),
       ));
-      expect(result).toEqual({ decision: 'split', reason: 'distinct-large-files-no-marker' });
+      expect(result).toEqual({
+        decision: 'split',
+        reason: 'distinct-large-files-no-marker',
+        sizeEvidence: { largeCount: 13, largeRatio: 1 },
+      });
     });
 
     it('12: 50 distinct large files exceed split cap', () => {
@@ -168,7 +176,11 @@ describe('classifyLeafFolder', () => {
       // Use distinct stems so duplicate-normalized-stems doesn't fire
       const paths = Array.from({ length: 30 }, (_, i) => `/lib/Pack/UniqueBook${i}.mp3`);
       const result = classifyLeafFolder(uniformLarge(paths));
-      expect(result).toEqual({ decision: 'split', reason: 'distinct-large-files-no-marker' });
+      expect(result).toEqual({
+        decision: 'split',
+        reason: 'distinct-large-files-no-marker',
+        sizeEvidence: { largeCount: 30, largeRatio: 1 },
+      });
     });
 
     it('count = 31 with split-eligible files → merge (count-exceeds-cap)', () => {
@@ -186,10 +198,17 @@ describe('classifyLeafFolder', () => {
         { path: '/lib/Pack/StoryDelta.mp3', size: LARGE },
         { path: '/lib/Pack/StoryEpsilon.mp3', size: SHORT_STORY },
       ]));
-      expect(result).toEqual({ decision: 'split', reason: 'distinct-large-files-no-marker' });
+      expect(result).toEqual({
+        decision: 'split',
+        reason: 'distinct-large-files-no-marker',
+        sizeEvidence: { largeCount: 4, largeRatio: 0.8 },
+      });
     });
 
-    it('60% large files trips size guard', () => {
+    // Behavioral flip from #1035: under the old single-ratio guard 60% large
+    // merged. The new condition 2 (largeCount ≥ 3 AND largeRatio ≥ 0.5)
+    // catches mixed-size series collections so 3-of-5 large now splits.
+    it('60% large files now splits via condition 2 (3 large, 0.6 ratio)', () => {
       const result = classifyLeafFolder(files([
         { path: '/lib/Pack/StoryAlpha.mp3', size: LARGE },
         { path: '/lib/Pack/StoryBeta.mp3', size: LARGE },
@@ -197,7 +216,153 @@ describe('classifyLeafFolder', () => {
         { path: '/lib/Pack/StoryDelta.mp3', size: SHORT_STORY },
         { path: '/lib/Pack/StoryEpsilon.mp3', size: SHORT_STORY },
       ]));
+      expect(result).toEqual({
+        decision: 'split',
+        reason: 'distinct-large-files-no-marker',
+        sizeEvidence: { largeCount: 3, largeRatio: 0.6 },
+      });
+    });
+  });
+
+  describe('three-condition size evidence (issue #1035)', () => {
+    // ratio ≥ 0.8 path is exercised by the Mistborn trilogy test (case 1).
+
+    it('AC5: Reacher (21 large + 7 small distinct stems) splits with raw sizeEvidence', () => {
+      const novels = [
+        'Killing Floor', 'Die Trying', 'Tripwire', 'Running Blind', 'Echo Burning',
+        'Without Fail', 'Persuader', 'The Enemy', 'One Shot', 'The Hard Way',
+        'Bad Luck and Trouble', 'Nothing to Lose', 'Gone Tomorrow', '61 Hours',
+        'Worth Dying For', 'The Affair', 'A Wanted Man', 'Never Go Back',
+        'Personal', 'Make Me', 'Night School',
+      ];
+      const novellas = [
+        'Second Son', 'Deep Down', 'High Heat', 'Not a Drill', 'Small Wars',
+        'James Penney', 'Everyone Talks Too Much',
+      ];
+      const result = classifyLeafFolder([
+        ...novels.map(t => ({ path: `/lib/Reacher/${t}.mp3`, size: LARGE })),
+        ...novellas.map(t => ({ path: `/lib/Reacher/${t}.mp3`, size: SHORT_STORY })),
+      ]);
+      expect(result.decision).toBe('split');
+      expect(result.reason).toBe('distinct-large-files-no-marker');
+      expect(result.sizeEvidence?.largeCount).toBe(21);
+      expect(result.sizeEvidence?.largeRatio).toBeCloseTo(21 / 28);
+    });
+
+    // AC6 is covered by "60% large files now splits via condition 2" above.
+
+    it('AC7: 25 files, 10 large + 15 small splits via condition 3 (floor)', () => {
+      const large = Array.from({ length: 10 }, (_, i) => ({
+        path: `/lib/Big/Novel ${String.fromCharCode(65 + i)}.mp3`,
+        size: LARGE,
+      }));
+      const small = Array.from({ length: 15 }, (_, i) => ({
+        path: `/lib/Big/Story-${i}.mp3`,
+        size: SHORT_STORY,
+      }));
+      const result = classifyLeafFolder([...large, ...small]);
+      expect(result).toEqual({
+        decision: 'split',
+        reason: 'distinct-large-files-no-marker',
+        sizeEvidence: { largeCount: 10, largeRatio: 10 / 25 },
+      });
+    });
+
+    it('AC8: 25 files, 9 large + 16 small merges (floor counter-test)', () => {
+      const large = Array.from({ length: 9 }, (_, i) => ({
+        path: `/lib/Big/Novel ${String.fromCharCode(65 + i)}.mp3`,
+        size: LARGE,
+      }));
+      const small = Array.from({ length: 16 }, (_, i) => ({
+        path: `/lib/Big/Story-${i}.mp3`,
+        size: SHORT_STORY,
+      }));
+      const result = classifyLeafFolder([...large, ...small]);
+      expect(result.decision).toBe('merge');
       expect(result.reason).toBe('files-too-small-for-full-books');
+    });
+
+    it('AC9: ratio exactly 0.5 with 3 large splits via condition 2 (boundary inclusive)', () => {
+      const result = classifyLeafFolder(files([
+        { path: '/lib/Mid/Alpha.mp3', size: LARGE },
+        { path: '/lib/Mid/Beta.mp3', size: LARGE },
+        { path: '/lib/Mid/Gamma.mp3', size: LARGE },
+        { path: '/lib/Mid/Delta.mp3', size: SHORT_STORY },
+        { path: '/lib/Mid/Epsilon.mp3', size: SHORT_STORY },
+        { path: '/lib/Mid/Zeta.mp3', size: SHORT_STORY },
+      ]));
+      expect(result).toEqual({
+        decision: 'split',
+        reason: 'distinct-large-files-no-marker',
+        sizeEvidence: { largeCount: 3, largeRatio: 0.5 },
+      });
+    });
+
+    it('AC11: 30 small distinct titleful stems with no marker merges', () => {
+      const result = classifyLeafFolder(
+        Array.from({ length: 30 }, (_, i) => ({
+          path: `/lib/HP/UniqueTitle${i}.mp3`,
+          size: SHORT_STORY,
+        })),
+      );
+      expect(result.decision).toBe('merge');
+      expect(result.reason).toBe('files-too-small-for-full-books');
+    });
+
+    it('AC13: 1 large + 1 small (tiny ambiguous) merges', () => {
+      const result = classifyLeafFolder(files([
+        { path: '/lib/Two/Alpha.mp3', size: LARGE },
+        { path: '/lib/Two/Beta.mp3', size: SHORT_STORY },
+      ]));
+      expect(result.decision).toBe('merge');
+      expect(result.reason).toBe('files-too-small-for-full-books');
+    });
+
+    it('AC18: 2 of 4 large (counter-test) merges', () => {
+      const result = classifyLeafFolder(files([
+        { path: '/lib/Four/Alpha.mp3', size: LARGE },
+        { path: '/lib/Four/Beta.mp3', size: LARGE },
+        { path: '/lib/Four/Gamma.mp3', size: SHORT_STORY },
+        { path: '/lib/Four/Delta.mp3', size: SHORT_STORY },
+      ]));
+      expect(result.decision).toBe('merge');
+      expect(result.reason).toBe('files-too-small-for-full-books');
+    });
+  });
+
+  describe('guard precedence vs size evidence (issue #1035)', () => {
+    it('AC14: duplicate-stems fires before size when 21 of 28 are large but stems normalize to "Reacher"', () => {
+      const result = classifyLeafFolder(
+        Array.from({ length: 28 }, (_, i) => ({
+          path: `/lib/Reacher/Reacher ${String(i + 1).padStart(2, '0')}.mp3`,
+          size: i < 21 ? LARGE : SHORT_STORY,
+        })),
+      );
+      expect(result).toEqual({ decision: 'merge', reason: 'duplicate-normalized-stems' });
+    });
+
+    it('AC15: marker fires before size when stems contain "Chapter N" and sizes mixed', () => {
+      const result = classifyLeafFolder(
+        Array.from({ length: 28 }, (_, i) => ({
+          path: `/lib/Mixed/Chapter ${String(i + 1).padStart(2, '0')}.mp3`,
+          size: i < 21 ? LARGE : SHORT_STORY,
+        })),
+      );
+      expect(result).toEqual({ decision: 'merge', reason: 'chapter-disc-part-marker' });
+    });
+
+    it('AC16: title-content fires before size when 5 large files normalize to <3 alpha stems', () => {
+      // After normalizeStemForComparison strips trailing " <digits>", each stem
+      // is two alpha chars (Aa, Bb, …) — distinct lowercased and not a marker
+      // keyword, so this guard exercises the title-content branch in isolation.
+      const result = classifyLeafFolder(files([
+        { path: '/lib/Tiny/Aa 01.mp3', size: 200 * BYTES_PER_MB },
+        { path: '/lib/Tiny/Bb 02.mp3', size: 200 * BYTES_PER_MB },
+        { path: '/lib/Tiny/Cc 03.mp3', size: 200 * BYTES_PER_MB },
+        { path: '/lib/Tiny/Dd 04.mp3', size: 200 * BYTES_PER_MB },
+        { path: '/lib/Tiny/Ee 05.mp3', size: 200 * BYTES_PER_MB },
+      ]));
+      expect(result).toEqual({ decision: 'merge', reason: 'normalized-stem-lacks-title-content' });
     });
   });
 

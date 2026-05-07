@@ -204,6 +204,12 @@ function handleLeafFolder(
       decision: classification.decision,
       reason: classification.reason,
       stems: info.audioFiles.map(f => basename(f.path, extname(f.path))),
+      ...(classification.sizeEvidence
+        ? {
+            largeCount: classification.sizeEvidence.largeCount,
+            largeRatio: classification.sizeEvidence.largeRatio,
+          }
+        : {}),
     },
     'Leaf folder classified',
   );
